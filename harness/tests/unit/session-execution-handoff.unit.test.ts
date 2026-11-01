@@ -15,7 +15,7 @@ import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecution
 import type { UnitCaseResult } from '../run-unit';
 import { repairInvocationCompleted } from '../../scripts/utils/goal-runner-phase';
 import { runGoalRuntimeChain, setupGoalRuntimeHost } from './goal-runner-testing-integrity.unit.test';
-import { runGoalModeSessionStep } from '../../scripts/goal-mode-entry';
+import { runGoalModeSessionStep as runGoalModeSessionStepUnchecked } from '../../scripts/goal-mode-entry';
 import { loadGoalManifestFromRun } from '../../scripts/utils/goal-manifest';
 import * as goalManifest from '../../scripts/utils/goal-manifest';
 import { execFileSync, spawn } from 'child_process';
@@ -25,6 +25,10 @@ import { interruptedIssuanceCli, reusedGatePidCli, junctionSessionCli } from '..
 import { reconcileGuardianOwnership } from '../../scripts/utils/goal-containment-reconcile';
 import { invokeAgentHeadless } from '../../scripts/utils/agent-invoke';
 import { invocationCompleted } from '../../scripts/utils/invocation-completion';
+import { withRuntimeTest, type RuntimeTestControl } from '../utils/runtime-test-control';
+const runGoalModeSessionStep = (options: Parameters<typeof runGoalModeSessionStepUnchecked>[0], testControl: RuntimeTestControl = {}) =>
+  withRuntimeTest({ root: options.projectRoot, ...testControl }, () => runGoalModeSessionStepUnchecked(options));
+
 
 const hash = (text: string) => createHash('sha256').update(text).digest('hex');
 function fixture() {
@@ -101,6 +105,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
     if (process.platform !== 'win32') return;
     const f = fixture();
     let child: ReturnType<typeof spawn> | undefined;
+    let done: Promise<{ status: number | null; signal: NodeJS.Signals | null; pid: number | undefined; stdout: string }> | undefined;
     let stdout = '', stderr = '';
     try {
       const frameworkRoot = path.join(f.root, 'framework');
@@ -119,10 +124,13 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
       const entry = path.resolve(__dirname, '../../scripts/goal-mode-entry.ts');
       const args = ['-r', require.resolve('ts-node/register/transpile-only'), entry, '--feature', 'demo', '--run-id', 'run-1', '--adapter', 'generic', '--run-mode', 'attended',
         '--project-root', f.root, '--framework-root', frameworkRoot, '--request', path.resolve(f.runDir, issued.reference.path)];
-      const cli = (action: string) => JSON.parse(execFileSync(process.execPath, [...args, action], { cwd: path.resolve(__dirname, '../..'), encoding: 'utf8', timeout: 30000 }));
+      const cli = (action: string) => JSON.parse(withRuntimeTest({ root: f.root }, () => execFileSync(process.execPath, [...args, action],
+        { cwd: path.resolve(__dirname, '../..'), encoding: 'utf8', timeout: 30000 })));
       child = spawn(process.execPath, [...args, '--execute-request'], { cwd: path.resolve(__dirname, '../..'), windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
       child.stdout!.on('data', chunk => { stdout += String(chunk); }); child.stderr!.on('data', chunk => { stderr += String(chunk); });
-      const done = new Promise<number | null>(resolve => child!.once('exit', resolve));
+      done = withRuntimeTest({ root: f.root, timeoutMs: 120_000 }, () => new Promise<{ status: number | null; signal: NodeJS.Signals | null; pid: number | undefined; stdout: string }>((resolve, reject) => {
+        child!.once('close', (status, signal) => resolve({ status, signal, pid: child?.pid, stdout })); child!.once('error', reject);
+      }));
       const deadline = Date.now() + 20000;
       while ((!fs.existsSync(path.join(f.root, 'execution-count.txt')) || !sessionEvents(f.runDir).some(event => event.type === 'agent_process_bound')) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50));
       assert(fs.existsSync(path.join(f.root, 'execution-count.txt')), stderr || stdout);
@@ -160,7 +168,8 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
       assert.equal(narrowed.status, 'failed', 'legacy full-access defaults expanded this request’s narrower authorization');
       assert.equal(fs.readFileSync(path.join(f.root, 'execution-count.txt'), 'utf8'), 'once\nonce\n', 'an adapter without the narrower permission capability was started at full access');
     } finally {
-      if (child && child.exitCode === null) { child.kill(); await new Promise(resolve => child!.once('exit', resolve)); }
+      if (child?.pid && child.exitCode === null && child.signalCode === null) child.kill();
+      if (done) await done;
       f.cleanup();
     }
   },
@@ -297,6 +306,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
     const original = probes.defaultProcessProbe;
     try {
       await assert.rejects(() => runGoalRuntimeChain(root, { adapter: 'codex', runId, freshEndPhase: 'spec', viaSessionStep: true,
+        testControl: { expectedInterruption: 'pause before executor report' },
         onSpec: () => { throw new Error('pause before executor report'); } }), /pause before executor report/);
       const manifest = loadGoalManifestFromRun(root, runId, { feature: 'bc-openCard' });
       const runDir = path.resolve(root, manifest.report_dir), issued = readSessionExecution(runDir)!;
@@ -331,6 +341,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
         manifests.buildGoalManifestFromInput = (input, options) => build({ ...input, budget: { max_total_turns: 1 } }, options);
         let interrupted = false;
         await runGoalRuntimeChain(root, { adapter: 'codex', runId, freshEndPhase: 'spec', viaSessionStep: true,
+          testControl: { expectedInterruption: 'one-turn gate interruption after accepted report' },
           afterHarnessPass: () => { interrupted = true; throw new Error('one-turn gate interruption after accepted report'); } });
         assert(interrupted);
         budgets.checkRunBudget = (...args: Parameters<typeof check>) => { consumed.push(args[0]); return check(...args); };
@@ -586,6 +597,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
     try {
       try {
         await runGoalRuntimeChain(root, { adapter: 'codex', runId, freshEndPhase: 'ut', viaSessionStep: true,
+          testControl: { expectedInterruption: 'injected session formal gate interruption' },
           afterHarnessPass: ({ phase }) => { if (phase === 'spec' && !interrupted) { interrupted = true; throw new Error('injected session formal gate interruption'); } },
         });
       } catch (error) { assert.match(String(error), /injected session formal gate interruption/); }
@@ -646,6 +658,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
     const root = setupGoalRuntimeHost('codex').root; const runId = 'session-real-waiting';
     try {
       await assert.rejects(() => runGoalRuntimeChain(root, { adapter: 'codex', runId, freshEndPhase: 'spec', viaSessionStep: true,
+        testControl: { expectedInterruption: 'client paused with the original pending request' },
         onSpec: () => { throw new Error('client paused with the original pending request'); },
       }), /client paused/);
       const manifest = loadGoalManifestFromRun(root, runId, { feature: 'bc-openCard' }); const runDir = path.resolve(root, manifest.report_dir);
@@ -684,6 +697,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
       exports.buildGoalManifestFromInput = (input: Record<string, unknown>, options: Parameters<typeof original>[1]) => original({ ...input,
         budget: { max_total_turns: 2, max_retries_per_phase: 1 }, unattended: { write_mode: 'full-access', approval_mode: 'never', timeout_seconds: 0.01 } }, options);
       await assert.rejects(() => runGoalRuntimeChain(root, { adapter: 'codex', runId, freshEndPhase: 'spec', viaSessionStep: true,
+        testControl: { expectedInterruption: 'client exited without reporting' },
         onSpec: () => { execFileSync(process.execPath, ['-e', 'setTimeout(() => {}, 25)']); throw new Error('client exited without reporting'); },
       }), /client exited without reporting/);
       const manifest = loadGoalManifestFromRun(root, runId, { feature: 'bc-openCard' }); const runDir = path.resolve(root, manifest.report_dir);

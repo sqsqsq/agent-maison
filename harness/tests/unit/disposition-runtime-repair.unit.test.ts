@@ -132,7 +132,8 @@ cases.push({
       }
     });
     let b: Awaited<ReturnType<typeof s16Born>>;
-    try { b = await s16Born(s, { entry: 'detach', preauth: false, extra: { authorizeAutonomy: false } }); }
+    try { b = await s16Born(s, { entry: 'detach', preauth: false, extra: { authorizeAutonomy: false,
+      testControl: { expectedInterruption: 'bounded transport interruption after the original author returned and before its gate' } } }); }
     finally { restore(); }
     let supervisor: Awaited<ReturnType<typeof superviseOnce>> | undefined;
     let resumed: Awaited<ReturnType<typeof requestVia>> | undefined;

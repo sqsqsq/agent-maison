@@ -1,3 +1,8 @@
+import * as fs from 'fs';
+import * as path from 'path';
+
+export const BLUEPRINT_SCHEMA = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../schemas/app-component-blueprint.schema.json'), 'utf8')) as Record<string, any>;
+
 export type BlueprintSeverity = 'BLOCKER' | 'WARN';
 
 export interface BlueprintIssue {
@@ -103,4 +108,47 @@ export function hasOwn(record: BlueprintRecord, key: string): boolean {
 
 export function uniqueStrings(values: string[]): string[] {
   return [...new Set(values)];
+}
+
+/** Schema-owned machine fields are excluded; business provenance remains part of the design. */
+export function blueprintAuthorContent(blueprint: BlueprintRecord, includeQuestioning = false, progressOnly = false): BlueprintRecord {
+  const copy = structuredClone(blueprint);
+  const strip = (record: BlueprintRecord | undefined, properties: Record<string, any>): void => {
+    if (!record) return;
+    for (const [key, field] of Object.entries(properties)) {
+      if (field.readOnly === true || progressOnly && field['x-progress'] === false) delete record[key];
+    }
+  };
+  strip(copy, BLUEPRINT_SCHEMA.properties);
+  strip(asRecord(copy.discovery), BLUEPRINT_SCHEMA.properties.discovery.properties);
+  const review = asRecord(copy.review_summary);
+  strip(review, BLUEPRINT_SCHEMA.properties.review_summary.properties);
+  if (review) {
+    if (!includeQuestioning) delete review.questioning;
+    else {
+      const questioning = asRecord(review.questioning);
+      strip(questioning, BLUEPRINT_SCHEMA.$defs.questioning.properties);
+      for (const item of asRecords(questioning?.items)) strip(item, BLUEPRINT_SCHEMA.$defs.questioningItem.properties);
+    }
+    if (!Object.keys(review).length) delete copy.review_summary;
+  }
+  {
+    const visit = (value: unknown): void => {
+      if (Array.isArray(value)) { value.forEach(visit); return; }
+      const record = asRecord(value);
+      if (!record) return;
+      const provenance = asRecord(record.provenance);
+      if (provenance) for (const [key, field] of Object.entries(BLUEPRINT_SCHEMA.$defs.provenance.properties) as Array<[string, Record<string, unknown>]>) {
+        if (field['x-progress'] === false) delete provenance[key];
+      }
+      Object.values(record).forEach(visit);
+    };
+    visit(copy);
+  }
+  return copy;
+}
+
+export function renderBlueprintFieldResponsibilities(): string {
+  const fields = BLUEPRINT_SCHEMA.properties;
+  return `机器维护技术编号、${Object.keys(fields).filter(key => fields[key].readOnly).join('、')}、discovery.source_fingerprint、review_summary.admission整块及质询身份外壳/question_id。作者负责适用性、业务scope/gap、契约、设计取舍、验收和业务provenance；Q只交实质items，不自报调用事实。`;
 }

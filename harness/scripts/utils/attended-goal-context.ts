@@ -36,6 +36,8 @@ export function validateAttendedGoalContext(input: {
   ownerId: string;
   ownerEpoch: number;
   nowMs?: number;
+  /** Public checking selects a family while the signed request remains the actor identity. */
+  checkFamily?: boolean;
 }): AttendedGoalContext {
   const feature = input.feature.trim();
   const runId = input.runId.trim();
@@ -43,7 +45,7 @@ export function validateAttendedGoalContext(input: {
   const attemptId = input.attemptId.trim();
   const ownerId = input.ownerId.trim();
   const ownerEpoch = input.ownerEpoch;
-  if (!feature || !runId || !phase || !attemptId || !ownerId || !Number.isInteger(ownerEpoch) || ownerEpoch < 1) {
+  if (!feature || !runId || !phase && !input.checkFamily || !attemptId || !ownerId || !Number.isInteger(ownerEpoch) || ownerEpoch < 1) {
     throw new Error('[attended-goal-context] feature/run/phase/attempt/owner/epoch 上下文必须完整');
   }
   const config = loadFrameworkConfig(input.projectRoot);
@@ -53,7 +55,6 @@ export function validateAttendedGoalContext(input: {
     throw new Error('[attended-goal-context] manifest run/feature mismatch');
   }
   const runDir = path.resolve(input.projectRoot, ...manifest.report_dir.split('/'));
-  const identity = { runId, phase, attemptId, ownerId, ownerEpoch };
   const control = assertFencedOwner(
     runDir,
     { run_id: runId, owner_id: ownerId, epoch: ownerEpoch },
@@ -99,22 +100,28 @@ export function validateAttendedGoalContext(input: {
   if (!issued) {
     throw new Error('[attended-goal-context] 当前 owner fence 未签发 phase_start');
   }
-  if (issued.phase !== phase || issued.attempt_id !== attemptId) {
+  const actorPhase = input.checkFamily && typeof issued.phase === 'string' ? issued.phase : phase;
+  if (!actorPhase || issued.phase !== actorPhase || issued.attempt_id !== attemptId) {
     throw new Error(
       `[attended-goal-context] phase/attempt 未与当前签发记录精确匹配：` +
       `issued=${String(issued.phase)}/${String(issued.attempt_id)} ` +
       `received=${phase}/${attemptId}`,
     );
   }
+  if (input.checkFamily && phase !== actorPhase && !issued.handoff_request) throw new Error('[attended-goal-context] checking family requires the original signed execution request');
   if (issued.handoff_request) {
     const reference = issued.handoff_request as import('./session-execution-handoff').HandoffReference;
     const request = readHandoffMaterial<SessionExecutionRequest>(runDir, reference);
     if (request.context.owner.owner_id !== ownerId || request.context.owner.epoch !== ownerEpoch
-      || request.context.phase !== phase || request.context.attemptId !== attemptId
+      || request.context.phase !== actorPhase || request.context.attemptId !== attemptId
+      || input.checkFamily && (request.context.runId !== runId || request.context.feature !== feature
+        || request.context.owner.run_id !== runId || path.resolve(request.context.projectRoot) !== path.resolve(input.projectRoot)
+        || path.resolve(request.context.runDir) !== runDir)
       || sessionExecutionDeadlineMs(request) <= (input.nowMs ?? Date.now())) throw new Error('[attended-goal-context] signed execution window is stale or expired');
-    if (loaded.events.some(event => event.type === 'agent_invoke_end' && event.handoff_report?.request_sha256 === reference.sha256)) {
+    if (loaded.events.some(event => event.type === 'agent_invoke_end' && (event.handoff_report?.request_sha256 === reference.sha256
+      || input.checkFamily && event.invoke_id === request.invoke_id))) {
       throw new Error('[attended-goal-context] execution window has already been returned');
     }
   }
-  return { manifest, control, runDir, identity };
+  return { manifest, control, runDir, identity: { runId, phase: actorPhase, attemptId, ownerId, ownerEpoch } };
 }

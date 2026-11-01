@@ -78,7 +78,7 @@ export const IDENTITY_NEUTRAL_EVIDENCE = 'ref-content@1';
  * null = 登记路径但算不出（不能证明等价）。登记：canonical CU、Feature 目录的三份派生投影文件、CU 所属蓝图——
  * 蓝图条目在本 Feature 里只代表「本 CU 消费的权威内容」，摘要取 CU 中立视图（已展开全部消费目标，所有权引用不展开）。
  */
-function identityNeutralEvidenceDigest(projectRoot: string, feature: string, absPath: string, authorityReaders?: IdentityNeutralDigestReaders): string | null | undefined {
+export function identityNeutralEvidenceDigest(projectRoot: string, feature: string, absPath: string, authorityReaders?: IdentityNeutralDigestReaders): string | null | undefined {
   /* eslint-disable @typescript-eslint/no-require-imports */
   const { tryParseCuFeatureId } = require('./feature-identity') as typeof import('./feature-identity');
   const identity = tryParseCuFeatureId(feature);
@@ -493,6 +493,7 @@ export function resolvePhaseEvidenceManifest(opts: ResolveManifestOptions): Phas
     const hash = isFacts ? factsEvidenceHash(absPath, String(phase)) : stagedHashes.get(rel) ?? neutral ?? sha256File(absPath);
     entryMap.set(rel, { path: rel, role, sha256: hash, exists: hash !== null, ...(isFacts ? { facts_phase: String(phase) } : {}), ...(neutral ? { identity_neutral: IDENTITY_NEUTRAL_EVIDENCE } : {}), ...(ownerPhase ? { owner_phase: ownerPhase } : {}) });
   };
+  let observedSourceHash: ReturnType<typeof createObservedSourceHashReader> | undefined;
   const addBoundInput = (dep: import('./capability-resolution').ResolutionDependency): void => {
     const rel = toPosixRel(projectRoot, dep.path);
     const owner = opts.factsContext?.source_owners?.[rel];
@@ -500,7 +501,11 @@ export function resolvePhaseEvidenceManifest(opts: ResolveManifestOptions): Phas
       addEntry(dep.path, 'output', String(phase));
       return;
     }
-    if (sha256File(dep.path) !== dep.sha256 || fs.existsSync(dep.path) !== dep.exists) throw new Error(`input binding stale: ${dep.path}`);
+    if (sha256File(dep.path) !== dep.sha256 || fs.existsSync(dep.path) !== dep.exists) {
+      const runId = opts.factsContext?.subject && 'run_id' in opts.factsContext.subject ? opts.factsContext.subject.run_id : undefined;
+      observedSourceHash ??= createObservedSourceHashReader(projectRoot, feature, { frameworkRoot: opts.frameworkRoot, runId });
+      if (!observedSourceHash({ path: rel, sha256: dep.sha256, exists: dep.exists, role: 'input' }, '')) throw new Error(`input binding stale: ${dep.path}`);
+    }
     addEntry(dep.path, 'input', owner);
   };
 
@@ -863,7 +868,9 @@ export function verifyPhaseEvidenceManifestWithStagedOutputs(input: {
 }
 
 /** Same owned-write transition proof for freshness and facts re-admission, even while the owner still fails. */
-export function createObservedSourceHashReader(projectRoot: string, feature: string, opts: EvidenceSemanticOptions = {}):
+export function createObservedSourceHashReader(projectRoot: string, feature: string, opts: EvidenceSemanticOptions & {
+  ownershipEvents?: readonly import('./goal-runner-phase').GoalRunEvent[];
+} = {}):
   (entry: EvidenceEntry, manifestPhase: string, excludedOwnerPhase?: string) => { exists: boolean; sha256: string | null } | null {
   const sourceTransitions = new Map<string, Array<{ phase: string; before: string | null; after: string | null }>>();
   const evidenceRunId = opts.runId;
@@ -872,20 +879,26 @@ export function createObservedSourceHashReader(projectRoot: string, feature: str
       const { loadGoalManifestFromRun } = require('./goal-manifest') as typeof import('./goal-manifest');
       const { loadAuthoritativeEvents } = require('./goal-runner-phase') as typeof import('./goal-runner-phase');
       const manifest = loadGoalManifestFromRun(projectRoot, evidenceRunId, { feature });
-      const events = loadAuthoritativeEvents(path.resolve(projectRoot, manifest.report_dir, 'events.jsonl'));
-      const { readRunBoundContracts } = require('./capability-resolution') as typeof import('./capability-resolution');
-      const { loadFeatureContracts, phaseContractIndex } = require('./skill-contract') as typeof import('./skill-contract');
+      const events = opts.ownershipEvents ?? loadAuthoritativeEvents(path.resolve(projectRoot, manifest.report_dir, 'events.jsonl'));
       const framework = opts?.frameworkRoot ?? guessFrameworkRoot(projectRoot);
       if (framework) {
-        const contracts = readRunBoundContracts(projectRoot, framework, feature, evidenceRunId, opts.authorityReaders);
-        const sourceOwners = new Set([...phaseContractIndex(loadFeatureContracts(framework))]
-          .filter(([, contract]) => contract.phase.produces.some(output => output.kind === 'source')).map(([phase]) => phase));
-        const { projectImplementationModules } = require('./diff-scope') as typeof import('./diff-scope');
-        const sourcePrefixes = projectImplementationModules(projectRoot, contracts.modules).map(module => module.package_path + '/');
-        for (const event of events) {
-          if (event.type !== 'phase_write_observed' || !event.phase || !sourceOwners.has(event.phase)) continue;
+        const { resolveFactsPhaseOwnedSources } = require('./capability-resolution-entry-input') as typeof import('./capability-resolution-entry-input');
+        const allowedByPhase = new Map<string, Set<string>>();
+        for (const [index, event] of events.entries()) {
+          if (event.type !== 'phase_write_observed' || !event.phase || !event.invoke_id) continue;
+          const start = [...events.slice(0, index)].reverse().find(row => row.type === 'agent_invoke_start' && row.phase === event.phase && row.invoke_id === event.invoke_id);
+          const context = start?.facts_context;
+          if (!context || !('run_id' in context.subject) || context.subject.run_id !== evidenceRunId || context.subject.feature !== feature) continue;
+          if (!allowedByPhase.has(event.phase)) {
+            const candidates = events.filter(row => row.type === 'phase_write_observed' && row.phase === event.phase)
+              .flatMap(row => (row as { owned?: Array<{ path: string }> }).owned ?? []);
+            allowedByPhase.set(event.phase, resolveFactsPhaseOwnedSources({ projectRoot, feature, runId: evidenceRunId,
+              frameworkRoot: framework, phase: event.phase, authorityReaders: opts.authorityReaders }, { ...context,
+              source_owners: { ...context.source_owners, ...Object.fromEntries(candidates.map(row => [row.path, event.phase!])) } }));
+          }
           const owned = (event as unknown as { owned?: Array<{ path: string; pre_sha256: string | null; post_sha256: string | null }> }).owned ?? [];
-          for (const write of owned) if (sourcePrefixes.some(prefix => write.path.startsWith(prefix))) {
+          const hash = (value: unknown): value is string | null => value === null || typeof value === 'string' && /^[a-f0-9]{64}$/i.test(value);
+          for (const write of owned) if (allowedByPhase.get(event.phase)!.has(write.path) && hash(write.pre_sha256) && hash(write.post_sha256)) {
             const transitions = sourceTransitions.get(write.path) ?? [];
             transitions.push({ phase: event.phase, before: write.pre_sha256, after: write.post_sha256 });
             sourceTransitions.set(write.path, transitions);

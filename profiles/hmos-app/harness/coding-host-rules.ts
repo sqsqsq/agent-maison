@@ -1398,6 +1398,7 @@ export function compileProject(ctx: ProjectCompileContext): ProjectCompileResult
     ),
     failure_kind: failure.kind,
     blocking_class: resolveCompileBlockingClass(failure.kind),
+    structured: { compiler_diagnostics: structuredClone(res.errors ?? []) },
     suggestion: failure.suggestion,
   }), execution: res };
 }

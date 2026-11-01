@@ -63,8 +63,9 @@ import { loadGoalRunManifestFromRun, isInitialDesignManifest } from '../../scrip
 import { readOriginalDeliveryBudget } from '../../scripts/utils/delivery-origin';
 import { writeLocalConfig } from '../../scripts/utils/framework-local-config';
 import { initializeFidelityRouting } from '../../scripts/utils/goal-preflight';
-import { acceptChangeUnitDecomposition, deriveDesignPreparationReadiness, reviseChangeUnitContent } from '../../scripts/utils/change-unit-design-preparation';
+import { acceptChangeUnitDecomposition, deriveDesignPreparationReadiness } from '../../scripts/utils/change-unit-design-preparation';
 import { probeDesignAuthorityRecovered } from '../../scripts/utils/condition-wait';
+import { runRuntimeTestChild, withRuntimeTest } from '../utils/runtime-test-control';
 
 const cases: Array<{ name: string; run: () => Promise<void> }> = [];
 function test(name: string, run: () => Promise<void>): void { cases.push({ name, run }); }
@@ -1540,7 +1541,7 @@ test('4f combined 新 CU UI unknown→spec 调研物化→coding/review→L3 返
   }
 });
 
-for (const oldCu of [false, true]) test(`66457a08 real entry: ${oldCu ? 'old CU→plan summary→design-owner halt→revision→probe ready' : 'selection closure derived→accept/readiness→in-memory fidelity→spec→plan PASS'}`, async () => {
+for (const oldCu of [false, true]) test(`66457a08 real entry: ${oldCu ? 'derived ref auto-closure; original B2 unknown design→owner halt→formal readiness recovery' : 'selection closure derived→accept/readiness→in-memory fidelity→spec→plan PASS'}`, async () => {
   const project = provisionRealChainProject();
   try {
     scaffoldRealChainHost(project, 'claude'); writeHostFile(project.root, 'CLAUDE.md', '# CLAUDE\n');
@@ -1572,18 +1573,45 @@ for (const oldCu of [false, true]) test(`66457a08 real entry: ${oldCu ? 'old CU�
     assert(asChangeUnitArtifact(loadCanonicalChangeUnit(cu.root, 'ledger-app-blueprint', 'ledger-refresh').changeUnit).design_refs.some(ref => ref.target.id === 'ledger-ui-selection'), 'normal accept must publish the derived selection closure');
     const readiness = deriveDesignPreparationReadiness(cu.root, 'ledger-app-blueprint');
     assert(readiness.ready, JSON.stringify(readiness));
+    let restoreOwnerDefinition: (() => ReturnType<typeof deriveDesignPreparationReadiness>) | undefined;
+    if (oldCu) {
+      const blueprintFile = path.join(workspace, 'blueprint/component-blueprint.yaml');
+      const originalBlueprint = YAML.parse(fs.readFileSync(blueprintFile, 'utf8'));
+      const ownerRef = asChangeUnitArtifact(loadCanonicalChangeUnit(cu.root, 'ledger-app-blueprint', 'ledger-refresh').changeUnit)
+        .design_refs.find(ref => ref.target.kind === 'node' && ref.target.id === 'ledger-domain');
+      assert(ownerRef, 'the original CU must really consume the unresolved design node');
+      const originalNode = asRecord(resolveBlueprintTarget(originalBlueprint, ownerRef!.target));
+      assert(originalNode, 'the canonical design node must exist before the original run');
+      const savedNode = structuredClone(originalNode!);
+      const publishOwnerDefinition = (unresolved: boolean) => {
+        const bp = YAML.parse(fs.readFileSync(blueprintFile, 'utf8'));
+        const node = asRecord(resolveBlueprintTarget(bp, ownerRef!.target));
+        assert(node, 'the owner must repair the same stable design target');
+        if (unresolved) node!.knowledge_state = 'unknown';
+        else { for (const key of Object.keys(node!)) delete node![key]; Object.assign(node!, structuredClone(savedNode)); }
+        bp.revision = Number(bp.revision) + 1;
+        for (const result of asRecords(bp.derived_results)) result.input_revision = bp.revision;
+        fs.writeFileSync(blueprintFile, YAML.stringify(bp));
+        clearFrameworkConfigCache();
+        return deriveDesignPreparationReadiness(cu.root, 'ledger-app-blueprint');
+      };
+      const unresolved = publishOwnerDefinition(true);
+      assert(unresolved.blueprintRefs.skipped.some(row => row.change_unit_id === 'ledger-refresh'),
+        'a real unresolved design must prevent carrying this CU forward: ' + JSON.stringify(unresolved));
+      restoreOwnerDefinition = () => publishOwnerDefinition(false);
+    }
     const ref = `${cuRel(cu)}/ux-reference/ledger.png`;
     writeHostBytes(cu.root, ref, fs.readFileSync(path.join(cu.root, REAL_CHAIN_PNG_EXISTING)));
     const requirement = oldCu ? CU_REQUIREMENT : `新增账目页面，按参考图 ${ref} 逐像素 1:1 复现，并验证业务入口。`;
     writeHostFile(cu.root, 'doc/selection-request.md', requirement);
-    const prepare = spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'), path.join(cu.harnessDir, 'scripts/goal-mode-entry.ts'),
+    const prepare = withRuntimeTest({ root: cu.root }, () => spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'), path.join(cu.harnessDir, 'scripts/goal-mode-entry.ts'),
       '--prepare-scope', '--project-root', cu.root, '--framework-root', cu.frameworkRoot, '--feature', cu.feature,
       '--completion-target', 'feature', '--requested-results', '交付账本页面', '--requested-phases', 'plan,coding,review,ut,testing',
       '--requirement-file', 'doc/selection-request.md', '--impact-behavior-change', String(!oldCu), '--impact-reason', oldCu ? '内部账本变更' : '新增界面', '--impact-basis', CU_SOURCE],
-      { cwd: cu.root, encoding: 'utf8', timeout: 60000, env: { ...process.env, TS_NODE_PROJECT: path.join(cu.harnessDir, 'tsconfig.json') } });
+      { cwd: cu.root, encoding: 'utf8', timeout: 60000, env: { ...process.env, TS_NODE_PROJECT: path.join(cu.harnessDir, 'tsconfig.json') } }));
     assert(prepare.status === 0, prepare.stdout + prepare.stderr);
     const birth = JSON.parse(prepare.stdout.slice(prepare.stdout.indexOf('{'))).phase_chain as string[];
-    assert(birth[0] === (oldCu ? 'plan' : 'spec'), prepare.stdout);
+    assert(oldCu ? ['spec', 'plan'].includes(birth[0]) : birth[0] === 'spec', prepare.stdout);
     assert(!fs.existsSync(path.join(cu.root, `${cuRel(cu)}/spec/reports/fidelity-intent.json`)), 'prepare must not write fidelity');
     git(cu.root, ['add', '-A']); git(cu.root, ['commit', '-qm', 'selection handoff baseline']);
     const probe = await runGoalRuntimeChain(cu.root, {
@@ -1593,7 +1621,9 @@ for (const oldCu of [false, true]) test(`66457a08 real entry: ${oldCu ? 'old CU�
       freshManifestContent: YAML.stringify({ feature: cu.feature, requirement, requirement_source_files: ['doc/selection-request.md'],
         budget: { max_total_turns: 4 }, unattended: { write_mode: 'full-access', approval_mode: 'never', max_turns: 20 } }),
       onSpec: ctx => {
-        cu.runId = ctx.runId; writeCuSpecMaterials(cu);
+        cu.runId = ctx.runId;
+        if (oldCu) { writeCuSpecDraft(cu); return; }
+        writeCuSpecMaterials(cu);
         writeHostFile(cu.root, `${cuRel(cu)}/spec/spec.md`, '# 页面定义\n```yaml\nui_change: new_or_changed\nfidelity_target: pixel_1to1\nvisual_handoff:\n  kind: repo_assets\n  authoritative_refs:\n    - id: ledger\n      path: ' + ref + '\n```\n');
         writeHostFile(cu.root, `${cuRel(cu)}/spec/ui-spec.yaml`, YAML.stringify({ schema_version: '1.0', verified: 'verified', verified_method: 'vl_multimodal',
           screens: [{ id: 'ledger', ref_id: 'ledger', priority: 'P1', root: { type: 'navigation_frame', order: 0, children: [{ id: 'value', type: 'content_display', order: 0, text: '余额' }] } }],
@@ -1601,38 +1631,34 @@ for (const oldCu of [false, true]) test(`66457a08 real entry: ${oldCu ? 'old CU�
         writeAgentEvents(ctx.outputLogPath, [claudeReadEventLine(ref)]); if (ctx.attempt > 1) publishVerifier(cu, 'spec');
       },
       onPlan: ctx => {
-        cu.runId = ctx.runId; writeCuPlanMaterials(cu);
+        cu.runId = ctx.runId;
+        if (oldCu) { writeCuFacts(cu, 'plan'); return; }
+        writeCuPlanMaterials(cu);
         const file = path.join(cu.root, `${cuRel(cu)}/contracts.yaml`); const contracts = YAML.parse(fs.readFileSync(file, 'utf8'));
         contracts.change_unit.design_ref_mappings.find((m: any) => m.design_ref.target.id === 'ledger-ui-selection').implementation_refs = names.map(name => `planned:${CU_SOURCE}#${name}`);
         fs.writeFileSync(file, YAML.stringify(contracts));
         writeHostFile(cu.root, `${cuRel(cu)}/plan/visual-parity.yaml`, YAML.stringify({ mappings: { assets: [], tokens: [{ ui_spec_key: 'gap', contract_resource_key: 'gap' }], components: [] } }));
-        if (oldCu) {
-          // Existing canonical content with the pre-fix omission, discovered during plan.
-          const legacy = loadCanonicalChangeUnit(cu.root, 'ledger-app-blueprint', 'ledger-refresh');
-          const content = asChangeUnitArtifact(legacy.changeUnit);
-          content.design_refs = content.design_refs.filter(r => r.target.id !== 'ledger-ui-selection');
-          fs.writeFileSync(legacy.canonicalPath, YAML.stringify(content));
-          contracts.change_unit.change_unit_ref = createChangeUnitRef(loadCanonicalChangeUnit(cu.root, 'ledger-app-blueprint', 'ledger-refresh'));
-          fs.writeFileSync(file, YAML.stringify(contracts));
-        }
         if (ctx.attempt > 1) publishVerifier(cu, 'plan');
       },
     });
-    assert(probe.invokedPhases[0] === (oldCu ? 'plan' : 'spec') && !probe.invokedPhases.includes('coding'), JSON.stringify(probe.invokedPhases));
+    assert(!probe.invokedPhases.includes('coding'), 'construction must not pass an unresolved design: ' + JSON.stringify(probe.invokedPhases));
     if (oldCu) {
-      assert(probe.invokedPhases.filter(p => p === 'plan').length === 1, JSON.stringify(probe.invokedPhases));
-      assert(readSummary(cu, 'plan')?.blockers?.some(c => c.id === 'change_unit_design_closure_incomplete'), dumpPhase(cu, 'plan'));
-      assert(probe.events.some(e => e.type === 'phase_halt' && e.halt_reason === 'execution_scope_unresolved' && e.probe === 'design_authority_projectable'), JSON.stringify(probe.events.slice(-8)));
-      const check = () => probeDesignAuthorityRecovered(cu.root, cu.feature, 'plan', ['change_unit_design_closure_incomplete'], cu.runId);
-      assert(!check().ready, 'unrepaired CU must not wake');
+      const halt = [...probe.events].reverse().find(event => event.type === 'phase_halt' && asRecord(event.design_authority)?.class === 'B2');
+      assert(halt, 'the real unresolved design must stop at its owner: ' + JSON.stringify(probe.events.slice(-8)));
+      assert(!probe.events.some(event => event.type === 'feature_completion_generated'), 'an unresolved design cannot be completion');
+      cu.runId ??= path.basename(probe.reportDir);
+      const check = () => probeDesignAuthorityRecovered(cu.root, cu.feature, String(halt!.phase), ['change_unit_blueprint_ref_stale'], cu.runId);
+      assert(!check().ready, 'unresolved design must not wake');
       writeHostFile(cu.root, `${cuRel(cu)}/repair-notes.md`, '已修复（仅说明，无定义变化）');
       assert(!check().ready, 'notes alone must not wake');
-      const before = loadCanonicalChangeUnit(cu.root, 'ledger-app-blueprint', 'ledger-refresh');
-      const fixed = asChangeUnitArtifact(before.changeUnit);
-      fixed.design_refs.push({ ...fixed.component_blueprint_ref, target: { kind: 'decision', id: 'ledger-ui-selection' } });
-      const revision = reviseChangeUnitContent(cu.root, 'ledger-app-blueprint', [{ expectedRef: createChangeUnitRef(before), candidate: { providerId: 'consumer-validated-decomposition', artifact: fixed } }]);
-      assert(revision.revised.length === 1 && check().ready, JSON.stringify({ revised: revision.revised.length, probe: check() }));
-    } else for (const phase of ['spec', 'plan']) assert(readSummary(cu, phase)?.verdict === 'PASS' && readSummary(cu, phase)?.closure_status === 'closed', dumpPhase(cu, phase));
+      const repaired = restoreOwnerDefinition!();
+      assert(repaired.blueprintRefs.bumped.some(row => row.change_unit_id === 'ledger-refresh')
+        && !repaired.blueprintRefs.skipped.some(row => row.change_unit_id === 'ledger-refresh') && check().ready,
+        'only the formal owner revision and normal readiness reconciliation can recover: ' + JSON.stringify({ repaired, probe: check() }));
+    } else {
+      assert(probe.invokedPhases[0] === 'spec', JSON.stringify(probe.invokedPhases));
+      for (const phase of ['spec', 'plan']) assert(readSummary(cu, phase)?.verdict === 'PASS' && readSummary(cu, phase)?.closure_status === 'closed', dumpPhase(cu, phase));
+    }
   } finally { if (!DEBUG) fs.rmSync(project.root, { recursive: true, force: true }); else console.log('--- kept root', project.root); clearFrameworkConfigCache(); }
 });
 
@@ -1755,8 +1781,8 @@ test('real-chain 正例：spec→testing 六阶段真实 harness 全链 PASS + c
 });
 
 function deliveryCli(p: RealChainProject, script: string, args: string[], nodeArgs: string[] = []) {
-  const result = spawnSync(process.execPath, [...nodeArgs, require.resolve('ts-node/dist/bin.js'), '--transpile-only', path.join(p.harnessDir, 'scripts', script), ...args],
-    { cwd: p.harnessDir, encoding: 'utf8', env: { ...process.env, MAISON_GOAL_CHECKPOINT_DIR: path.join(p.root, '.test-checkpoints') } });
+  const result = runRuntimeTestChild({ root: p.root }, () => spawnSync(process.execPath, [...nodeArgs, require.resolve('ts-node/dist/bin.js'), '--transpile-only', path.join(p.harnessDir, 'scripts', script), ...args],
+    { cwd: p.harnessDir, encoding: 'utf8', env: { ...process.env, MAISON_GOAL_CHECKPOINT_DIR: path.join(p.root, '.test-checkpoints') } }));
   const stdout = result.stdout ?? '';
   let json: any;
   try { json = JSON.parse(stdout.slice(stdout.indexOf('{'))); } catch { /* Include real CLI diagnostics in the assertion. */ }
@@ -1804,13 +1830,13 @@ test('5f8c2d70 managed raw entry births its original root before design and pres
     assert(fs.readFileSync(first.json.manifest).equals(birthBytes), 'same raw request must rejoin its exact root');
     let calls = 0;
     const waiting = 'Bounded transport observes the real initial author task; no design, admission or construction result is supplied.';
-    const code = await new GoalPhaseRuntime({ args: ['--manifest', input, '--project-root', p.root, '--framework-root', p.frameworkRoot, '--foreground-ok', '--authorize-autonomy'],
+    const code = await withRuntimeTest({ root: p.root }, () => new GoalPhaseRuntime({ args: ['--manifest', input, '--project-root', p.root, '--framework-root', p.frameworkRoot, '--foreground-ok', '--authorize-autonomy'],
       authorization: { mode: 'goal_mode', autonomyAuthorized: true }, executor: { async execute(context) {
         calls++;
         assert(context.runId === original.run_id && context.feature === feature && context.phase === 'initial-design-author', 'unadmitted input must reach its original design author, never a construction executor');
         assert(context.instruction?.includes(CU_REQUIREMENT) && context.instruction.includes('request.md') && context.instruction.includes('app-component-blueprint.schema.json'), 'the actual author task must contain the request, source and real design schema');
         return { status: 'waiting', phase: context.phase, details: waiting, exitCode: 0, stdout: '', stderr: '', command: 'bounded-raw-entry-observer' };
-      } } }).run();
+      } } }).run());
     assert((code === 1 || code === 3) && calls === 1, 'the bounded waiting author must stop the real runtime after one task');
     const after = rows();
     assert(after.filter(event => event.type === 'run_created').length === 1 && after.filter(event => event.type === 'agent_invoke_start').length === 1, 'backend manifest entry must reuse the actual root birth');

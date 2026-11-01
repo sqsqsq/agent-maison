@@ -189,7 +189,9 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
       for (const typed of [false, true]) {
         const files = collect(typed);
         for (const name of ['knowledge/practices.md', 'knowledge/architecture.md', 'knowledge/components.yaml', 'src/demo/value.ts']) assert(files.some(file => file.label === name), `${typed}: ${name}`);
-        assert.equal(files.filter(file => targetFiles.includes(file.label)).length, 201, '合同明确的第 201 个目标不能丢失');
+        assert.equal(files.filter(file => targetFiles.includes(file.label)).length, 201, '合同明确的第 201 个目标不能丢失：' + JSON.stringify({ typed,
+          actual: files.filter(file => targetFiles.includes(file.label)).length,
+          missing: targetFiles.filter(file => !files.some(entry => entry.label === file)) }));
         const prompt = assembleAIPrompt(path.join(fw, 'harness'), root, 'review', feature, files, '{}', '', undefined, undefined, fw);
         assert(prompt.includes('shared-value') && prompt.includes('knowledge/architecture.md'));
         assert.equal(files.find(file => file.label === 'knowledge/architecture.md')?.kind, 'path');

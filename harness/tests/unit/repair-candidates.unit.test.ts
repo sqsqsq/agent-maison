@@ -22,6 +22,9 @@ import {
   restoreBacktrackCandidatesFromEvents,
   roundFingerprintOfCandidates,
   validateRepairCandidatesShape,
+  verifiedRepairDeclineResponses,
+  testStrengthVerification,
+  repairDeclineContextFiles,
 } from '../../scripts/utils/repair-candidates';
 import { mapCategoryToChainPhase } from '../../scripts/utils/correction-routing';
 // D1/D3（plan 3a7f9c12）：真实生产件——UT 失败格式器、ut-host 归因判据、runner 的归因回退解析器。
@@ -43,6 +46,7 @@ import type { AssessRecommendation, AssessResult, ReconcileObservationV1 } from 
 import type { UnitCaseResult } from '../run-unit';
 
 import * as path from 'path';
+import * as YAML from 'yaml';
 import { loadWorkflowSpec } from '../../workflow-loader';
 import { loadArtifactInventory, loadFeatureContracts, phaseContractIndex } from '../../scripts/utils/skill-contract';
 import type { RepairResponsibilityContext } from '../../scripts/utils/repair-responsibility';
@@ -237,6 +241,37 @@ export const UT_REAL_ASSERTION_CHECK = (() => {
 
 export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
+  run(results, 'P2 C test text differences need current independent strength judgment instead of phase permission or author PASS', () => {
+    const check = { id: 'coding_existing_test_preserved', details: 'tests/value.test.ts：用例/断言发生变化\n新增真实失败路径断言', affected_files: ['tests/value.test.ts'] };
+    for (const verdict of ['confirmed', 'refuted', 'unclear']) {
+      const body = '```issue-verification\n' + YAML.stringify([{ issue: check.id, verdict, evidence: check.details + '\n实际覆盖与授权已核对。' }]) + '```';
+      const input = { check, verifierReportText: body, verifierSubjectCurrent: true };
+      assert(testStrengthVerification(input)?.verdict === verdict, 'keep the actual independent business decision');
+      assert(testStrengthVerification({ ...input, verifierSubjectCurrent: false }) === null, 'author claims or stale materials cannot judge strength');
+      assert(testStrengthVerification({ ...input, verifierReportText: body.replace('新增真实失败路径断言', 'ignored full fact') }) === null,
+        'the response must cover the complete original comparison fact');
+      assert(testStrengthVerification({ ...input, verifierReportText: body.split('tests/value.test.ts').join('tests/other.test.ts') }) === null, 'wrong test target cannot close the risk');
+    }
+    assert(testStrengthVerification({ check, verifierReportText: 'PASS', verifierSubjectCurrent: true }) === null, 'a bare PASS is not independent verification');
+  });
+  run(results, 'P2 C structured refusal keeps multiline original reasons and requires the current independent response', () => {
+    const basis = '原请求明确不包含此行为。\n\n真实测试反证保留补偿路径。';
+    const fp = 'a'.repeat(64);
+    const state = { id: 'CR-1', summary: 'claimed defect', declined_rounds: 1, rebuttal_used: false,
+      basis: { text: basis, run_id: 'run', round: { run_id: 'run', ts: '2026-10-29T00:00:00Z' } }, first_declined_round: null };
+    const declines = new Map([[fp, state]]);
+    for (const verdict of ['confirmed', 'refuted', 'unclear']) {
+      const report = '```issue-verification\n- issue: CR-1\n  verdict: ' + verdict + '\n  evidence: |\n    原请求明确不包含此行为。\n\n    真实测试反证保留补偿路径。\n```';
+      const current = verifiedRepairDeclineResponses({ verifierReportText: report, verifierSubjectCurrent: true, declines });
+      assert(current.length === 1 && current[0].verdict === verdict && current[0].evidence === basis, 'the independent response and full refusal must remain intact');
+      assert(verifiedRepairDeclineResponses({ verifierReportText: report, verifierSubjectCurrent: false, declines }).length === 0, 'old reports cannot decide a current refusal');
+      assert(verifiedRepairDeclineResponses({ verifierReportText: report.replace('真实测试反证保留补偿路径。', 'ignored second paragraph'), verifierSubjectCurrent: true, declines }).length === 0,
+        'a partial quotation does not show that the verifier read the refusal');
+      const conflicting = report.replace('\n```', '\n- issue: repair_candidate:' + fp + '\n  verdict: refuted\n  evidence: |\n    原请求明确不包含此行为。\n\n    真实测试反证保留补偿路径。\n```');
+      assert(verifiedRepairDeclineResponses({ verifierReportText: conflicting, verifierSubjectCurrent: true, declines }).length === 0,
+        'two aliases for one finding cannot hide conflicting independent responses');
+    }
+  });
   run(results, 'optional verified repair_owner cannot override the actual repair object or the finite test boundary', () => {
     const make = (file: string, owner: string, verdict = 'confirmed') => collectReviewRepairCandidates({
       reportText: reviewReport({ verdict: '不通过', rows: [{ ...CR1, files: file }] }), reportValidityBlocked: false,
@@ -1015,7 +1050,8 @@ export function runAll(): UnitCaseResult[] {
       deferred: false, summary_fingerprint: 'x', evidence_fingerprint: 'x',
     });
     const cands = ['CR-001', 'CR-002', 'CR-003'].map(id => ({
-      id, category: 'coding' as const, item_fingerprint: itemFingerprintOf(id, ['a.ets'], 'fix'),
+      id, category: 'coding' as const, files: ['02-Feature/F/src/main/ets/A.ets'],
+      item_fingerprint: itemFingerprintOf(id, ['02-Feature/F/src/main/ets/A.ets'], 'fix'),
     }));
     // 候选挂在 **phase 观测**（唯一真源=summary），不再经 reconcile 复制
     const observation = {
@@ -1061,7 +1097,7 @@ export function runAll(): UnitCaseResult[] {
           ? {
               repair_candidates: [{
                 id: 'visual_diff:add_card_home', category: 'coding' as const,
-                item_fingerprint: 'e'.repeat(64), summary: 'must_fix 原文',
+                item_fingerprint: 'e'.repeat(64), summary: 'must_fix 原文', files: ['02-Feature/F/src/main/ets/A.ets'],
               }],
             }
           : {}),
@@ -1097,7 +1133,7 @@ export function runAll(): UnitCaseResult[] {
         closure: 'closed' as const, assurance: 'full', required_assurance: null, assurance_satisfied: true,
         deferred: false, summary_fingerprint: 'x', evidence_fingerprint: 'x',
         ...(p === current
-          ? { repair_candidates: [{ id: 'scope_consistency_with_spec', category: 'spec' as const, item_fingerprint: 'a'.repeat(64) }] }
+          ? { repair_candidates: [{ id: 'scope_consistency_with_spec', category: 'spec' as const, item_fingerprint: 'a'.repeat(64), files: ['doc/features/f1/acceptance.yaml'] }] }
           : {}),
       })),
       fingerprints: { workflow: 'w', track: 't', goal: 'g', run_attempt: 'r', summaries: 's', evidence: 'e', reconcile: 'rc', observed: 'o' },
@@ -1232,6 +1268,10 @@ export function runAll(): UnitCaseResult[] {
         materialized_adapters: ['cursor'],
       }));
       clearFrameworkConfigCache();
+      const moduleRoot = path.join(root, '02-Feature/F');
+      fs.mkdirSync(path.join(moduleRoot, 'src'), { recursive: true });
+      fs.writeFileSync(path.join(moduleRoot, 'oh-package.json5'), JSON.stringify({ name: 'F', version: '1.0.0' }));
+      fs.writeFileSync(path.join(moduleRoot, 'src/A.ets'), 'export class A {}\n');
       // **磁盘上的真实 summary.json**（含候选）——assessFeature 自己去读，不手工构造观测
       const cand = {
         id: 'CR-001', category: 'coding', files: ['02-Feature/F/src/A.ets'],
@@ -1521,25 +1561,52 @@ export function runAll(): UnitCaseResult[] {
     return { goal, C, P, coding, plan, ts, line, toCoding, declined };
   };
 
-  run(results, '返修 1a/1b：拒修只认候选自己责任阶段的账本', () => {
+  run(results, '返修 1a/1b：同单元作者跨方法拒修保留，run、窗口与指纹仍必须绑定', () => {
     const { C, line, toCoding, declined } = ownerFixture();
-    // a：同 run、同窗口、同指纹、引文逐字，只是写在非责任阶段的账本里
-    for (const other of ['review', 'ut', 'testing']) {
-      assert(declined([toCoding], { [other]: [line(C)] }, C) === 0, `${other} 账本里指向 coding 候选的拒修不得生效`);
+    for (const method of ['coding', 'review', 'ut', 'testing']) {
+      assert(declined([toCoding], { [method]: [line(C)] }, C) === 1, `${method} 原账本中的同单元完整论据不能被phase身份裁掉`);
+      assert(declined([toCoding], { [method]: [{ ...line(C), run_id: 'other-run' }] }, C) === 0, '其它run的拒修不能混入');
+      assert(declined([toCoding], { [method]: [{ ...line(C), ts: '2026-01-01T00:00:00.000Z' }] }, C) === 0, '窗口前的旧拒修不能混入');
+      assert(declined([toCoding], { [method]: [line('other-candidate')] }, C) === 0, '其它指纹的拒修不能混入');
     }
-    // b：写在责任阶段 coding 的账本里
-    assert(declined([toCoding], { coding: [line(C)] }, C) === 1, 'coding 账本里的拒修生效');
   });
 
-  run(results, '返修 1c：mixed-owner 下非目标责任方在自己账本里的拒修生效，写在目标阶段账本里不生效', () => {
+  run(results, '返修 1c：mixed-owner 的原候选与论据按真实指纹对应，不按回退队列裁权', () => {
     const { goal, C, P, coding, plan, ts, line, declined } = ownerFixture();
     // c：mixed-owner，回退到 plan
     const toPlan = { type: 'phase_backtrack_requested', ts, to_phase: 'plan', invalidated_phases: ['plan', 'coding', 'review', 'ut', 'testing'], candidates: [plan, coding] };
     assert(declined([toPlan], { coding: [line(C)] }, C) === 1, '非目标责任方（coding）照写法说明写下的拒修生效');
-    assert(declined([toPlan], { plan: [line(C)] }, C) === 0, 'coding 候选的拒修写在 plan 账本里不生效');
+    assert(declined([toPlan], { plan: [line(C)] }, C) === 1, '同单元作者在plan方法写下coding候选的完整论据仍应公开核验');
     const onlyPlan = resolveRepairDeclineState({ runs: [{ run_id: 'R', events: [toPlan] }], ledgers: { plan: [line(P)] }, requirementText: goal });
     assert(onlyPlan.get(P)?.basis?.round.ts === ts && (onlyPlan.get(C)?.declined_rounds ?? 0) === 0,
-      '目标阶段自身候选的拒修成立，不依赖其他责任阶段表态（零改动豁免只看目标阶段的候选）');
+      '候选自身论据不能被另一候选借用');
+  });
+
+  run(results, 'P2 C 原目标引文与事实拒修都公开给独立核验，其它run、窗口和指纹不混入', () => {
+    const fs = require('fs') as typeof import('fs');
+    const os = require('os') as typeof import('os');
+    const { headlessLedgerPath } = require('../../scripts/utils/headless-assumptions') as typeof import('../../scripts/utils/headless-assumptions');
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'repair-decline-context-'));
+    try {
+      const { C, line, toCoding } = ownerFixture();
+      const runDir = path.join(root, 'doc/features/f/goal-runs/R');
+      fs.mkdirSync(runDir, { recursive: true });
+      fs.writeFileSync(path.join(runDir, 'events.jsonl'), JSON.stringify(toCoding) + '\n');
+      const file = headlessLedgerPath(root, 'f', 'ut');
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      const entry = { ...line(C), decision_id: 'actual-quote', phase: 'ut', class: 'assumption', must_review: true, source: 'agent' };
+      const fact = { ...entry, decision_id: 'actual-fact', decision: 'declined: 请核对原报告与真实diff，目前无证据支持此缺陷' };
+      const rows = [entry, fact, { ...entry, decision_id: 'foreign-run', run_id: 'other', decision: 'declined: FOREIGN_RUN' },
+        { ...entry, decision_id: 'foreign-candidate', gate_id: 'repair_candidate:other', decision: 'declined: FOREIGN_CANDIDATE' },
+        { ...entry, decision_id: 'old-window', ts: '2026-01-01T00:00:00.000Z', decision: 'declined: OLD_WINDOW' }];
+      fs.writeFileSync(file, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
+      const context = repairDeclineContextFiles(root, 'f', 'R', fixtureFramework);
+      const body = context.map(item => item.content).join('\n');
+      assert(body.includes(entry.decision) && body.includes(fact.decision), '目标引文不能因没有文件证据被丢掉；事实拒修也不是已成立结论');
+      assert(context.some(item => item.label === path.relative(root, file).replace(/\\/g, '/')), '仍指向真实原账本，不造第二材料原件');
+      assert(!body.includes('FOREIGN_RUN') && !body.includes('FOREIGN_CANDIDATE') && !body.includes('OLD_WINDOW'), '无关原行不属于本次公开材料');
+      assert(body.includes('issue-verification') && body.includes('confirmed/refuted/unclear'), '仍交现有独立核验，不能以拒修自动结案');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
   });
 
   return results;

@@ -29,7 +29,7 @@ import { performance } from 'perf_hooks';
 import { selectSuites } from './utils/select-suites';
 import { writeUnitFailureReport } from './utils/unit-failure-report';
 import { runSuiteProcesses, UnitSuiteTask } from './utils/unit-suite-processes';
-import { executeUnitModule, filterLegacyCases, SelectableUnitModule, UnitExecutionTiming } from './utils/unit-case-selection';
+import { filterLegacyCases, UnitExecutionTiming } from './utils/unit-case-selection';
 
 export interface UnitCaseResult {
   name: string;
@@ -73,6 +73,8 @@ const CORE_SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean
   { id: 'c6-s2-recovery', modulePath: './unit/c6-s2-recovery.unit.test', releaseOnly: true },
   { id: 'fe4512-owner-repair-runtime', modulePath: './unit/fe4512-owner-repair-runtime.unit.test', releaseOnly: true },
   { id: 'current-disposition-recovery', modulePath: './unit/current-disposition-recovery.unit.test' },
+  { id: 'completion-running', modulePath: './unit/completion-running.unit.test' },
+  { id: 'completion-tools', modulePath: './unit/completion-tools.unit.test' },
   { id: 'disposition-runtime-repair', modulePath: './unit/disposition-runtime-repair.unit.test', releaseOnly: true },
   { id: 'testing-same-invocation-failure', modulePath: './unit/testing-same-invocation-failure.unit.test' },
   { id: 'responsibility-host-replay', modulePath: './unit/responsibility-host-replay.unit.test' },
@@ -410,6 +412,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean
   { id: 'goal-checkpoint', modulePath: './unit/goal-checkpoint.unit.test' },
   { id: 'run-unit-filter', modulePath: './unit/run-unit-filter.unit.test' },
   { id: 'run-unit-processes', modulePath: './unit/run-unit-processes.unit.test' },
+  { id: 'runtime-test-control', modulePath: './unit/runtime-test-control.unit.test' },
   { id: 'gate-fingerprint', modulePath: './unit/gate-fingerprint.unit.test' },
   { id: 'process-integrity', modulePath: './unit/process-integrity.unit.test' },
   { id: 'unlock-wording-c9f4e7a2', modulePath: './unit/unlock-wording-c9f4e7a2.unit.test' },
@@ -623,50 +626,12 @@ async function main(): Promise<void> {
       printSuiteTiming(measurement);
       continue;
     }
-    if (mode === 'workers') {
-      tasks.push({ id: suite.id, modulePath: fullPath, selector: caseNameFilter, requirePreselection: caseSelector !== undefined });
-      continue;
-    }
-    const loadStartedAt = performance.now();
-    let executionStartedAt: number | undefined;
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const mod = require(suite.modulePath) as SelectableUnitModule;
-      measurement.loadMs = performance.now() - loadStartedAt;
-      if (typeof mod.runAll !== 'function') {
-        console.log(`  [FAIL] suite ${suite.id} 未导出 runAll()`);
-        measurement.status = 'load-error';
-        measurement.ok = false;
-        measurement.error = '未导出 runAll()';
-        measurement.results = [{ name: '<suite-load>', ok: false, error: '未导出 runAll()' }];
-        summaries.push(measurement);
-        continue;
-      }
-      executionStartedAt = performance.now();
-      const selected = await executeUnitModule(mod, suite.id, caseNameFilter, caseSelector !== undefined);
-      measurement.executionMs = performance.now() - executionStartedAt;
-      measurement.matchedCaseCount = selected.matchedCaseCount;
-      measurement.executionTimings = selected.executionTimings;
-      const filtered = caseSelector !== undefined ? selected.results : filterLegacyCases(selected.results, caseNameFilter);
-      measurement.status = 'completed';
-      measurement.results = filtered;
-      measurement.ok = filtered.every(r => r.ok);
-      summaries.push(measurement);
-    } catch (error) {
-      measurement.status = executionStartedAt === undefined ? 'load-error' : 'run-error';
-      measurement.ok = false;
-      measurement.error = error instanceof Error ? error.stack ?? error.message : String(error);
-      if (executionStartedAt === undefined) measurement.loadMs = performance.now() - loadStartedAt;
-      else measurement.executionMs = performance.now() - executionStartedAt;
-      throw error;
-    } finally {
-      measurement.totalMs = performance.now() - suiteStartedAt;
-      printSuiteTiming(measurement);
-    }
+    // Serial remains one-at-a-time, with the same outer protection against a blocked event loop.
+    tasks.push({ id: suite.id, modulePath: fullPath, selector: caseNameFilter, requirePreselection: caseSelector !== undefined });
   }
 
-  if (mode === 'workers') {
-    const workerResults = new Map((await runSuiteProcesses(tasks, workers)).map(result => [result.id, result]));
+  {
+    const workerResults = new Map((await runSuiteProcesses(tasks, mode === 'serial' ? 1 : workers)).map(result => [result.id, result]));
     summaries.length = 0;
     for (const measurement of measurements) {
       const result = workerResults.get(measurement.id);

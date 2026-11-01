@@ -243,20 +243,40 @@ function checkFactsFile(
     // the existing write boundary below remain necessary before treating one as writable.
     if (phase === 'ut') for (const source of invocation.source_paths) if (invocation.source_owners?.[source] === phase) currentTargets.add(path.resolve(projectRoot, source));
     let admission: FactsInvocationContext | undefined;
-    const { loadFactsInvocationContext, resolveFactsPhaseOwnedSources } = require('./capability-resolution-entry-input') as typeof import('./capability-resolution-entry-input');
+    const { loadFactsInvocationContext, loadFormalFactsObservation, resolveFactsPhaseOwnedSources } = require('./capability-resolution-entry-input') as typeof import('./capability-resolution-entry-input');
+    let formal: ReturnType<typeof loadFormalFactsObservation>;
     if ('run_id' in invocation.subject) {
       try {
-        admission = loadFactsInvocationContext({ projectRoot, frameworkRoot: options?.frameworkRoot, feature: invocation.subject.feature, phase, runId: invocation.subject.run_id,
-          attemptId: options?.goalAttemptId ?? process.env.MAISON_GOAL_ATTEMPT });
+        const lookup = { projectRoot, frameworkRoot: options?.frameworkRoot, feature: invocation.subject.feature, phase, runId: invocation.subject.run_id,
+          attemptId: options?.goalAttemptId ?? process.env.MAISON_GOAL_ATTEMPT };
+        formal = loadFormalFactsObservation(lookup);
+        admission = formal?.context ?? loadFactsInvocationContext(lookup);
       } catch { /* No verifiable admission: strict dependency comparison below. */ }
     }
+    const actorPhase = admission && 'run_id' in invocation.subject && process.env.MAISON_GOAL_RUN_ID === invocation.subject.run_id
+      && process.env.MAISON_GOAL_ATTEMPT === (options?.goalAttemptId ?? process.env.MAISON_GOAL_ATTEMPT)
+      ? process.env.MAISON_GOAL_ATTEMPT_PHASE?.trim() || phase : phase;
+    let invocationPre: import('./phase-write-boundary').PhaseInvocationSnapshot | undefined;
+    if (admission && 'run_id' in invocation.subject) try {
+      const { loadGoalManifestFromRun } = require('./goal-manifest') as typeof import('./goal-manifest');
+      const { executionRequestForInvoke } = require('./session-execution-handoff') as typeof import('./session-execution-handoff');
+      const manifest = loadGoalManifestFromRun(projectRoot, invocation.subject.run_id, { feature: invocation.subject.feature });
+      const request = executionRequestForInvoke(path.resolve(projectRoot, manifest.report_dir))?.request;
+      if (request?.context.phase === actorPhase && request.context.runId === invocation.subject.run_id
+        && request.context.feature === invocation.subject.feature && request.context.attemptId === (options?.goalAttemptId ?? process.env.MAISON_GOAL_ATTEMPT)
+        && request.pre_snapshot && !request.pre_snapshot.failureReason) invocationPre = request.pre_snapshot;
+    } catch { /* Without the original P1 preimage, missing research stays strict. */ }
     const ownedSources = 'feature' in invocation.subject ? resolveFactsPhaseOwnedSources({ projectRoot,
-      frameworkRoot: options?.frameworkRoot ?? path.resolve(__dirname, '../../..'), feature: invocation.subject.feature, phase,
+      frameworkRoot: options?.frameworkRoot ?? path.resolve(__dirname, '../../..'), feature: invocation.subject.feature, phase: actorPhase,
       ...('run_id' in invocation.subject ? { runId: invocation.subject.run_id } : {}) }, invocation) : new Set<string>();
-    const mayAdvanceSource = (source: string, hash: string | null): boolean => ownedSources.has(source)
-      && currentTargets.has(path.resolve(projectRoot, source)) && invocation.source_owners?.[source] === phase
+    for (const source of ownedSources) if (admission?.source_owners?.[source] === actorPhase) currentTargets.add(path.resolve(projectRoot, source));
+    const mayAdvanceSource = (source: string, hash: string | null): boolean => (!!formal?.sources.get(source)?.written
+      && formal.sources.get(source)?.sha256 === hash) || ownedSources.has(source)
+      && currentTargets.has(path.resolve(projectRoot, source)) && invocation.source_owners?.[source] === actorPhase
       && ('run_id' in invocation.subject
-        ? !!admission?.baseline && admission.baseline.fingerprint === invocation.baseline?.fingerprint && admission.source_owners?.[source] === phase
+        ? !!admission && (invocation.baseline ? admission.baseline?.fingerprint === invocation.baseline.fingerprint
+          : !!invocationPre && !admission.baseline && admission.first_phase === invocation.first_phase)
+          && admission.source_owners?.[source] === actorPhase
         : !!invocation.baseline);
     const { createObservedSourceHashReader } = require('./phase-evidence-manifest') as typeof import('./phase-evidence-manifest');
     const inheritedSourceHash = invocation.baseline && 'run_id' in invocation.subject
@@ -300,6 +320,7 @@ function checkFactsFile(
         try { hash = crypto.createHash('sha256').update(fs.readFileSync(absolute)).digest('hex'); } catch { /* Strict unreadable check below. */ }
         const before = (admission?.baseline ?? invocation.baseline)?.dependencies.find(dep => path.resolve(dep.path) === absolute);
         let changedInPhase = before ? before.exists !== fs.existsSync(absolute) || before.sha256 !== hash
+          : invocationPre ? (invocationPre.entries.find(entry => entry.path === source)?.sha256 ?? null) !== hash
           : !!admission && !admission.source_paths.includes(source);
         if (!before && !admission && 'feature' in invocation.subject && !('run_id' in invocation.subject)) {
           const baseline = resolveEffectiveDiffBaseline(projectRoot, invocation.subject.feature);
@@ -307,7 +328,9 @@ function checkFactsFile(
           changedInPhase = !!diff?.executed && diff.entries.some(entry => entry.path === source && entry.status === 'A');
         }
         // 既有下游合法新增原件只承接来源，不声称本作者已读，也不改写原 facts 基线。
-        if (!before && inheritedSourceHash?.({ path: source, role: 'input', exists: false, sha256: null }, phase)) {
+        if (formal?.sources.get(source)?.sha256 === hash) {
+          ledgerWarn('context_exploration_facts_scope_coverage', `当前正式门按同单元已完成调用的原件承接当前来源：${source}；不补写旧作者研究。`, registrationSuggestion(source));
+        } else if (!before && inheritedSourceHash?.({ path: source, role: 'input', exists: false, sha256: null }, phase)) {
           // 原 phase_write_observed 的连续哈希与当前字节已核对，继续由真实业务 gate 验证。
         } else if (changedInPhase && mayAdvanceSource(source, hash)) {
           ownedSourceDelta = true;

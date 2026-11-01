@@ -223,7 +223,8 @@ async function replayS2(mode: 'success' | 'budget-full' | 'without-entry-evidenc
         try { replies.push(verifyDeliveredCurrentEvidence(root, ctx.prompt, feature)); }
         catch (error) { console.error('[c6-s2-verifier-error]', (error as Error).stack); throw error; } },
     };
-    let probe = await runGoalRuntimeChain(root, runOptions);
+    let probe = await runGoalRuntimeChain(root, { ...runOptions,
+      testControl: mode === 'terminal-interrupt' ? { expectedInterruption: 'controlled cut after terminal verification dispatch' } : undefined });
     if (mode === 'terminal-stale' || mode === 'terminal-mixed') {
         assert.equal(probe.exitCode, 1);
         const events = fs.readFileSync(eventsPath, 'utf8').trim().split('\n').map(line => JSON.parse(line)) as GoalRunEvent[];

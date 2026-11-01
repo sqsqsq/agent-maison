@@ -243,3 +243,11 @@ export function parseVerifierRequest(text: string | null | undefined): VerifierR
     ...fields,
   };
 }
+
+/** Read the existing request JSON appended to an executor instruction, including session footers. */
+export function parseVerifierRequestFromInstruction(instruction: string | null | undefined): VerifierRequest | null {
+  if (!instruction) return null;
+  const fragment = instruction.slice(instruction.lastIndexOf('\n{') + 1);
+  const end = fragment.indexOf('\n}');
+  return parseVerifierRequest(end < 0 ? fragment.split(/\r?\n/, 1)[0] : fragment.slice(0, end + 2));
+}

@@ -23,7 +23,8 @@ import { freezeExistingGoalDelivery } from '../utils/existing-goal-delivery-fixt
 import * as fs from 'fs';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
-import { RESULT_MARK, setupMinimalHost, type GoalRunOutcome } from '../helpers/goal-run-driver';
+import { runRuntimeTestChild } from '../utils/runtime-test-control';
+import { expectedDriverInterruption, RESULT_MARK, setupMinimalHost, type GoalRunOutcome } from '../helpers/goal-run-driver';
 import type { UnitCaseResult } from '../run-unit';
 
 const DRIVER = path.resolve(__dirname, '..', 'helpers', 'goal-run-driver.ts');
@@ -34,11 +35,11 @@ function assert(cond: boolean, msg: string): void {
 }
 
 function runDriver(scenario: string, feature: string, projectRoot: string): GoalRunOutcome {
-  const r = spawnSync(
+  const r = runRuntimeTestChild({ root: projectRoot, expectedInterruption: expectedDriverInterruption(scenario) }, () => spawnSync(
     process.execPath,
     [TS_NODE, '--transpile-only', DRIVER, scenario, feature, '-', projectRoot],
     { encoding: 'utf-8', timeout: 300_000, cwd: path.resolve(__dirname, '..', '..') },
-  );
+  ));
   const at = (r.stdout ?? '').lastIndexOf(RESULT_MARK);
   if (at < 0) {
     throw new Error(

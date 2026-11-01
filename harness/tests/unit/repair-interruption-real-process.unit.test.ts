@@ -27,7 +27,7 @@ import {
 } from '../../scripts/utils/agent-invoke';
 import { clearFrameworkConfigCache } from '../../config';
 import {
-  runGoalRuntimeChain, setupGoalRuntimeHost, PRODUCT_ASSERTION_CHECK, writeCleanTesting,
+  runGoalRuntimeChain, setupGoalRuntimeHost, productAssertionCheck, writeCleanTesting,
 } from './goal-runner-testing-integrity.unit.test';
 import type { UnitCaseResult } from '../run-unit';
 
@@ -128,8 +128,8 @@ async function withRealTransport<T>(modeFor: (phase: string, attempt: number) =>
 type Ev = Record<string, unknown>;
 const ofType = (events: Ev[], type: string, phase?: string): Ev[] => events.filter(e => e.type === type && (phase === undefined || e.phase === phase));
 const completedRun = (events: Ev[]): boolean => events.some(e => e.type === 'run_end' && ['COMPLETED', 'CHAIN_SLICE_COMPLETED'].includes(String(e.status)));
-const testingFailsOnce = ({ phase, attempt }: { phase: string; attempt: number }) =>
-  phase === 'testing' && attempt === 1 ? { checks: [PRODUCT_ASSERTION_CHECK] } : null;
+const testingFailsOnce = (root: string) => ({ phase, attempt }: { phase: string; attempt: number }) =>
+  phase === 'testing' && attempt === 1 ? { checks: [productAssertionCheck(root)] } : null;
 
 const cases: Array<{ name: string; run: () => Promise<void> }> = [];
 const test = (name: string, run: () => Promise<void>) => cases.push({ name, run });
@@ -142,7 +142,7 @@ for (const mode of ['kill', 'exit-no-terminal'] as const) {
         (phase, attempt) => (phase === 'coding' && attempt === 2 ? mode : 'complete'),
         () => runGoalRuntimeChain(root, {
           adapter: 'codex', runId: `real-interrupt-${mode}`, onCoding: () => {},
-          onTesting: ({ root: r }) => writeCleanTesting(r), onHarnessSummary: testingFailsOnce,
+          onTesting: ({ root: r }) => writeCleanTesting(r), onHarnessSummary: testingFailsOnce(root),
         }),
       );
       const events = probe.events;
@@ -185,7 +185,7 @@ test('[真实子进程：spawn/终止/事件解析，不等于真实 Codex CLI �
   try {
     const { value: probe, invokes } = await withRealTransport(lingerAt, () => runGoalRuntimeChain(root, {
       adapter: 'codex', runId: 'real-cleanup-exit', onCoding: () => {},
-      onTesting: ({ root: r }) => writeCleanTesting(r), onHarnessSummary: testingFailsOnce,
+      onTesting: ({ root: r }) => writeCleanTesting(r), onHarnessSummary: testingFailsOnce(root),
     }));
     const events = probe.events;
     assert.strictEqual(invokes.length, ofType(events, 'agent_invoke_start').length, '每次阶段调用都必须经真实子进程');
@@ -204,7 +204,8 @@ test('[真实子进程：spawn/终止/事件解析，不等于真实 Codex CLI �
     let crashed = false;
     const { value: first } = await withRealTransport(lingerAt, () => runGoalRuntimeChain(root2, {
       adapter: 'codex', runId: 'real-cleanup-crash', onCoding: () => {},
-      onTesting: ({ root: r }) => writeCleanTesting(r), onHarnessSummary: testingFailsOnce,
+      testControl: { expectedInterruption: 'gate crash after completed cleanup' },
+      onTesting: ({ root: r }) => writeCleanTesting(r), onHarnessSummary: testingFailsOnce(root2),
       afterHarnessPass: ({ phase, root: r, runId }) => {
         if (phase !== 'coding') return;
         const rows = fs.readFileSync(path.join(r, `doc/features/bc-openCard/goal-runs/${runId}/events.jsonl`), 'utf8')

@@ -601,6 +601,15 @@ export function isEffectivePhasePass(event: ScopeHistoryEvent): boolean {
 /** Derived causal state only: history remains immutable and file mtimes never establish a PASS. */
 export function scopeProofHistory(birth: ExecutionScope, events: readonly ScopeHistoryEvent[], order: readonly string[], currentPhasePass?: string, workflow?: WorkflowSpec, dependencyContext: Pick<ScopeDependencyContext, 'inputOwners' | 'inputEdges'> = {}) {
   let scope = birth;
+  const definitionProofs = new Map<string, InputBinding[]>();
+  const inputProofs = (obligation?: ExecutionObligation): InputBinding[] | undefined =>
+    obligation && obligation.applicability === 'required' && acceptsDefinitionInputProof(obligation.kind)
+      && obligation.satisfied_by?.length && obligation.satisfied_by.every(ref => 'input_id' in ref)
+      ? obligation.satisfied_by as InputBinding[] : undefined;
+  for (const obligation of birth.obligations) {
+    const inputs = inputProofs(obligation);
+    if (inputs) definitionProofs.set(obligation.id, structuredClone(inputs));
+  }
   const invalidated = new Set<string>();
   const passed = new Set<string>();
   const invalidatedAt = new Map<string, string>();
@@ -610,6 +619,21 @@ export function scopeProofHistory(birth: ExecutionScope, events: readonly ScopeH
     let revoked: string[] = [];
     if (event.type === 'scope_revised' && event.execution_scope) {
       revoked = scopeRevisionInvalidations(scope, event.execution_scope, order, passed, workflow, dependencyContext);
+      const explicitlyWithdrawn = scope.obligations.some(before => inputProofs(before)
+        && !event.execution_scope!.obligations.find(after => after.id === before.id)?.satisfied_by?.length);
+      for (const [id, inputs] of definitionProofs) {
+        const after = event.execution_scope.obligations.find(obligation => obligation.id === id);
+        if (!after || after.applicability !== 'required' || !inputs.every(proof => after.basis.some(binding =>
+          binding.input_id === proof.input_id && binding.content_fingerprint === proof.content_fingerprint
+            && executionScopeFingerprint(binding.source) === executionScopeFingerprint(proof.source)))) definitionProofs.delete(id);
+      }
+      for (const obligation of event.execution_scope.obligations) {
+        const inputs = inputProofs(obligation);
+        if (inputs) definitionProofs.set(obligation.id, structuredClone(inputs));
+      }
+      if (explicitlyWithdrawn) for (const [id] of definitionProofs) {
+        if (revoked.includes(event.execution_scope.obligations.find(obligation => obligation.id === id)!.owner_phase)) definitionProofs.delete(id);
+      }
       scope = event.execution_scope;
       revisions.set(index, revoked);
     } else if (event.type === 'phase_backtrack_requested') {
@@ -622,19 +646,24 @@ export function scopeProofHistory(birth: ExecutionScope, events: readonly ScopeH
     for (const phase of revoked) {
       invalidated.add(phase); passed.delete(phase);
       invalidatedAt.set(phase, event.ts ?? event.applied_at ?? '');
+      if (event.type === 'phase_invalidated' || event.type === 'phase_backtrack_requested') {
+        for (const [id] of definitionProofs) if (scope.obligations.find(obligation => obligation.id === id)?.owner_phase === phase) definitionProofs.delete(id);
+      }
     }
     if (event.type === 'phase_verdict' && event.phase && event.action !== 'retry') {
       if (isEffectivePhasePass(event)) { invalidated.delete(event.phase); passed.add(event.phase); }
       else passed.delete(event.phase);
     }
   });
-  return { scope, invalidated, passed, invalidatedAt, revisions };
+  return { scope, invalidated, passed, invalidatedAt, revisions, definitionProofs };
 }
 
 /** The queue is a view of effective duties; historical outcomes cannot independently skip it. */
 export function effectiveScopeView(input: {
   birth: ExecutionScope; events: readonly ScopeHistoryEvent[]; workflow: WorkflowSpec;
   proofs?: ReadonlyMap<string, ScopeEvidenceRef>;
+  /** Existing accepted definition inputs, revalidated by the read action; never a new proof claim. */
+  definitionProofs?: ReadonlyMap<string, readonly InputBinding[]>;
   stalePhases?: readonly string[];
   reopen?: string;
   inputOwners?: ScopeDependencyContext['inputOwners'];
@@ -645,11 +674,25 @@ export function effectiveScopeView(input: {
   const history = scopeProofHistory(input.birth, input.events, order, undefined, input.workflow, input);
   const scope = structuredClone(history.scope);
   const invalid = new Set([...history.invalidated].filter(phase => !input.proofs?.has(phase)));
-  for (const phase of [...affectedScopePhases(input.stalePhases ?? [], order, { ...input, scope }), ...affectedScopePhases(input.reopen ? [input.reopen] : [], order, { ...input, scope })]) invalid.add(phase);
+  const reopened = affectedScopePhases(input.reopen ? [input.reopen] : [], order, { ...input, scope });
+  for (const phase of [...affectedScopePhases(input.stalePhases ?? [], order, { ...input, scope }), ...reopened]) invalid.add(phase);
   for (const obligation of scope.obligations) {
     if (obligation.applicability !== 'required') continue;
-    if (invalid.has(obligation.owner_phase)) delete obligation.satisfied_by;
-    else if (input.proofs?.has(obligation.owner_phase)) obligation.satisfied_by = [input.proofs.get(obligation.owner_phase)!];
+    const definition = input.definitionProofs?.has(obligation.id) ? history.definitionProofs.get(obligation.id) : undefined;
+    if (definition?.length && !reopened.includes(obligation.owner_phase)) obligation.satisfied_by = structuredClone([...definition]);
+    else if (invalid.has(obligation.owner_phase)) delete obligation.satisfied_by;
+    else if (input.proofs?.has(obligation.owner_phase)
+      && !(acceptsDefinitionInputProof(obligation.kind) && obligation.satisfied_by?.length
+        && obligation.satisfied_by.every(ref => 'input_id' in ref))) {
+      // A validated definition binding is the fulfilled duty itself. Do not replace it with
+      // a broader phase report whose unrelated implementation/context inputs may later change.
+      obligation.satisfied_by = [input.proofs.get(obligation.owner_phase)!];
+    }
+  }
+  for (const phase of [...invalid]) {
+    const duties = scope.obligations.filter(obligation => obligation.owner_phase === phase && obligation.applicability !== 'not_applicable');
+    if (!reopened.includes(phase) && duties.length && duties.every(obligation => obligation.applicability === 'required'
+      && history.definitionProofs.has(obligation.id) && input.definitionProofs?.has(obligation.id))) invalid.delete(phase);
   }
   const projected = projectScopeSchedule(scope, input.workflow, input);
   // A direct authorized backtrack is itself an existing instruction to re-run the owner,

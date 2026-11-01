@@ -1,3 +1,5 @@
+import { resolveCompletionDisposition, readPhaseChecks } from './utils/verify-feature-completion';
+import { phaseCompletionProblems } from './utils/check-disposition';
 // ============================================================================
 // 阶段完成回执校验脚本（Layer 2 凭证检查）
 // ============================================================================
@@ -43,7 +45,7 @@ import {
 import { loadFeatureTrackDecl } from './utils/feature-track';
 import { normalizePhaseId } from './utils/phase-alias';
 import { assertGateFingerprintFresh, computeGateFingerprint } from './utils/gate-fingerprint';
-import { finalizePhaseClosure } from './utils/phase-closure-finalizer';
+import { finalizePhaseClosure, preparePhaseRepairFeedback } from './utils/phase-closure-finalizer';
 import { assessAndRenderNextStep } from './utils/assess-renderer';
 import { isClaudeKernelAdapter } from './utils/types';
 import { scanCommandForPreloadInjection } from './utils/process-integrity';
@@ -66,7 +68,7 @@ import {
 } from './utils/multimodal-evidence-gate';
 import {
   loadVerifierEvidence,
-  findPriorPassVerifierEvidence,
+  findSameMaterialVerifierEvidence,
   loadVerifierReportTextOrNull,
   readSummaryVerifierSubjectId,
   type VerifierEvidence,
@@ -80,7 +82,6 @@ import { resolveVerifierSubagentDeclared } from './utils/adapter-catalog';
 import { SUMMARY_SCHEMA_VERSION_CURRENT } from './utils/quality-axes';
 import { recomputePhaseEvidenceStaleness } from './utils/phase-evidence-manifest';
 import { RECEIPT_PROJECTION_SCHEMA } from './utils/receipt-scaffold';
-import { diffVerifierMaterial, readVerifierMaterialOrNull } from './utils/verifier-material';
 import type { VerifierClosureRecord } from './utils/types';
 import { resolveContextAdapterImageInput } from './utils/multimodal-probe';
 import type { HarnessRunSummary, SoftAdvisory } from './utils/types';
@@ -276,6 +277,14 @@ function main(): void {
         `\n   project_profile=${resolvedProfile.name} 已禁用该阶段（phases_disabled），跳过回执强制校验 → exit 0\n`,
     );
     process.exit(0);
+  }
+  if (!requestedSkipStateSync) {
+    try {
+      preparePhaseRepairFeedback({ projectRoot, frameworkRoot, feature, phase, ...(runId ? { goalRunId: runId } : {}) });
+    } catch (error) {
+      console.error(`❌ 修订反馈准备失败：${(error as Error).message}`);
+      process.exit(1);
+    }
   }
 
   // C2 verification-matrix：track/mode/config → evidence policy 求解。
@@ -569,20 +578,6 @@ function main(): void {
             `期望 ${feature}/${phase}（canonical path 按 feature/phase 解析，防串目录/串阶段）。`,
         });
       }
-      if ((slimSummary.verdict ?? '').toUpperCase() !== 'PASS') {
-        issues.push({
-          id: 'slim_summary_not_pass',
-          severity: 'BLOCKER',
-          message: `本次 base summary verdict=${slimSummary.verdict ?? '<missing>'}，必须为 PASS（含 INCOMPLETE 不放行）。`,
-        });
-      }
-      if (slimSummary.blocker_count !== 0) {
-        issues.push({
-          id: 'slim_summary_blockers_present',
-          severity: 'BLOCKER',
-          message: `本次 base summary blocker_count=${slimSummary.blocker_count ?? '<missing>'}，必须为 0。`,
-        });
-      }
       const staleReason = assertGateFingerprintFresh(slimSummary, frameworkRootFromHere(), phase);
       if (staleReason) {
         issues.push({
@@ -732,43 +727,31 @@ function main(): void {
   } else {
     const verifierSubjectId = readSummaryVerifierSubjectId(projectRoot, feature, phase, frameworkRoot);
     if (verifierSubjectId) {
-      const loaded = loadVerifierEvidence(projectRoot, feature, phase, { frameworkRoot });
-      // plan 07a41ec6 T7：当前 subject 无报告，但本 phase 历史已有 PASS → 沿用（completed_with_prior_review），
-      // 把未重审的材料差异如实登记；从未 PASS 过才是 BLOCKER（至少要完整审一次）。
-      const priorPass =
-        !loaded.ok && loaded.code === 'report_missing'
-          ? findPriorPassVerifierEvidence(projectRoot, feature, phase, { frameworkRoot, excludeSubject: verifierSubjectId })
-          : null;
-      if (!loaded.ok && priorPass) {
-        const reportsDirAbs = featurePhaseReportsDir(projectRoot, feature, phase, frameworkRoot);
-        const notReverified = diffVerifierMaterial(
-          readVerifierMaterialOrNull(reportsDirAbs, priorPass.subject_id),
-          readVerifierMaterialOrNull(reportsDirAbs, verifierSubjectId),
-        );
-        verifierEvidence = priorPass;
-        observed.verifier = 'provided';
-        verifierClosure = {
-          mode: 'completed_with_prior_review',
-          reviewed_subject_id: priorPass.subject_id,
-          current_subject_id: verifierSubjectId,
-          current_material_not_reverified: notReverified,
-        };
-        warnings.push({
-          id: 'verifier_prior_pass_reused',
-          severity: 'MAJOR',
-          message:
-            `verifier 沿用既往 PASS（subject ${priorPass.subject_id.slice(0, 12)}…，${priorPass.md_path_rel}）；` +
-            `当前材料未经重审：${notReverified.join('、') || '（无差异记录）'}。` +
-            '语义结论只在首轮完整审查，之后只核对；如确需对当前材料重审，把 summary.verifier_request 指向的 request JSON 整段投给 verifier。',
-        });
-      } else if (!loaded.ok) {
+      let loaded = loadVerifierEvidence(projectRoot, feature, phase, { frameworkRoot });
+      if (!loaded.ok && loaded.code === 'report_missing') {
+        let resolvedInputs: import('./utils/capability-resolution').ResolvedPhaseInputs | undefined;
+        try {
+          const entry = require('./utils/capability-resolution-entry-input') as typeof import('./utils/capability-resolution-entry-input');
+          const resolver = require('./utils/capability-resolution') as typeof import('./utils/capability-resolution');
+          const input = entry.resolveCapabilityResolutionEntryInput({ projectRoot, frameworkRoot, feature, phase,
+            featuresDir: relFeaturesDir(projectRoot), goalRunId: runId, goalAttemptId: process.env.MAISON_GOAL_ATTEMPT });
+          resolvedInputs = resolver.resolveCapabilityInputs({ projectRoot, frameworkRoot, feature, phase, track, ...input }).inputs;
+        } catch { /* Without original input facts, a legacy result cannot prove equivalence. */ }
+        const same = findSameMaterialVerifierEvidence(projectRoot, feature, phase, verifierSubjectId, { frameworkRoot, resolvedInputs });
+        if (same) {
+          loaded = { ok: true, evidence: same };
+          if (same.verdict === 'PASS') verifierClosure = { mode: 'completed_with_prior_review', reviewed_subject_id: same.subject_id,
+            current_subject_id: verifierSubjectId, current_material_not_reverified: [] };
+        }
+      }
+      if (!loaded.ok) {
         observed.verifier = 'missing';
         issues.push({
           id: `verifier_evidence_${loaded.code}`,
           severity: 'BLOCKER',
           message:
             `【verifier 证据校验失败】${loaded.message}` +
-            (loaded.code === 'report_missing' ? '（本 phase 尚无任何 PASS 的 verifier 报告可沿用——至少要完整审一次。）' : ''),
+            (loaded.code === 'report_missing' ? '（当前材料尚无可证明等价的原核验；只补缺失或受影响核验。）' : ''),
         });
       } else {
         verifierEvidence = loaded.evidence;
@@ -1129,6 +1112,25 @@ function main(): void {
   // fail-closed 对账由上方 slim summary 段承载（slim_summary_run_identity_unavailable）。
 
   // --------------------------------------------------------------------
+  if (isSlim && slimSummary) {
+    let currentRunReadable = true;
+    if (runId) {
+      try { loadGoalManifestFromRun(projectRoot, runId, { feature }); }
+      catch (error) {
+        currentRunReadable = false;
+        issues.push({ id: 'slim_summary_run_identity_unavailable', severity: 'BLOCKER',
+          message: `当前运行身份不可核实；恢复原manifest后重验，不以summary自报run_id代替：${(error as Error).message}` });
+      }
+    }
+    if (currentRunReadable) {
+      const disposition = resolveCompletionDisposition({ projectRoot, frameworkRoot, feature, chain: [phase], runId, workflow: workflowSpecForPlan,
+        currentResults: [{ phase, summary: slimSummary, checks: readPhaseChecks(projectRoot, feature, phase, slimSummary) }] });
+      const pending = phaseCompletionProblems(disposition, [phase]);
+      if (pending.length) issues.push({ id: 'slim_summary_not_pass', severity: 'BLOCKER',
+        message: '当前统一处置仍未满足：' + pending.map(problem => problem.id + ': ' + problem.detail).join('；') });
+    }
+  }
+
   // 输出
   // --------------------------------------------------------------------
 
@@ -1175,7 +1177,7 @@ function main(): void {
     }
     console.log('');
     console.log(
-      '阶段闭环判定（全局入口 §5.1）：脚本 verdict PASS ∧ 全部 required 证据已提供，可放行' +
+      '当前正式检查提交：统一处置无本职责未完项，原脚本比较/执行统计保留' +
         `（evidence_profile=${profileResolved}）。\n`,
     );
 

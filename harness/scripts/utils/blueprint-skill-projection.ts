@@ -6,13 +6,13 @@ import { resolveFeatureArtifact, loadFrameworkConfig, featureFilePath } from '..
 import { loadWorkflowSpec } from '../../workflow-loader';
 import { loadEffectiveExecutionScope, resolveEffectiveScopeSource } from './goal-run-creation';
 import { resolveExecutionScope, findSubtractedRequiredObligations, type ExecutionScope, type ExecutionScopeInput } from './execution-scope';
-import { readScopeAcceptance, collectResolvedScopeFacts, recomputeDefinitionFacts } from './feature-track';
+import { readScopeAcceptance, collectResolvedScopeFacts, recomputeDefinitionFacts, featureTrackDeclPath } from './feature-track';
 import { loadGoalManifestFromRun } from './goal-manifest';
 import { asRecord, asRecords, asStrings, type BlueprintRecord } from './component-blueprint-model';
 import { resolveBlueprintTarget } from './blueprint-addressing';
 import type { ComponentBlueprintRef } from './component-blueprint-model';
 import type { ChangeUnitArtifact } from './change-unit-model';
-import { componentBlueprintPath, resolveComponentBlueprintRef } from './component-blueprint-path';
+import { componentBlueprintPath, loadCanonicalBlueprint, resolveComponentBlueprintRef, resolveComponentBlueprintRefFromLoaded, validateComponentBlueprintRefShape } from './component-blueprint-path';
 import { parseChangeUnitFeatureId, loadCanonicalChangeUnit, asChangeUnitArtifact, changeUnitPath, BLUEPRINT_REF_STALE_ISSUE } from './change-unit-path';
 import { validateChangeUnitDesign } from './change-unit-design-gate';
 import { validateChangeUnit } from './change-unit-validator';
@@ -26,9 +26,9 @@ import { SpecLoader, normalizeUseCasePortCalls } from './spec-loader';
 import { inspectTypedConstructionContent } from './design-content-checks';
 import { checkUseCaseSpecSchema } from '../check-ut';
 import type { AcceptanceSpec, CheckContext, CheckResult, ContractsSpec } from './types';
-import type { ResolutionDependency, InputBinding } from './capability-resolution';
+import { readBoundInput, type ResolutionDependency, type InputBinding } from './capability-resolution';
 import { resolveCheckDisposition } from './check-disposition';
-import { identityNeutralDigest, type IdentityNeutralDigestReaders } from './identity-neutral-digest';
+import { createIdentityNeutralDigestReaders, identityNeutralDigest, type IdentityNeutralDigestReaders } from './identity-neutral-digest';
 import { classifyGoalRunsDir } from './fidelity-shared';
 import { ArtifactSchemaError, resolveArtifactContent } from './artifact-content';
 
@@ -74,9 +74,20 @@ export function designScopeRevisionChecks(ctx: CheckContext, checks: CheckResult
   const resolved = ctx.resolvedInputs.values[inputId];
   if (resolved?.state !== 'resolved') return [];
   const legacyRoot = inferLegacyProjectRoot(ctx.projectRoot, scope);
-  const located = (binding: InputBinding): string => canonical({ ...binding, dependencies: binding.dependencies.map(dependency =>
-    ({ ...dependency, path: resolveDependencyPath(ctx.projectRoot, dependency.path, legacyRoot) })) });
-  if (scope.obligations.some(obligation => obligation.kind === kind && obligation.basis.some(binding => located(binding) === located(resolved.binding)))) return [];
+  const located = (binding: InputBinding, includeRawHash = true): string => canonical({ ...binding, dependencies: binding.dependencies.map(dependency => {
+    const { sha256, ...identity } = dependency;
+    return { ...identity, ...(includeRawHash ? { sha256 } : {}), path: resolveDependencyPath(ctx.projectRoot, dependency.path, legacyRoot) };
+  }) });
+  if (scope.obligations.some(obligation => obligation.kind === kind && obligation.basis.some(binding => {
+    if (located(binding) === located(resolved.binding)) return true;
+    if (located(binding, false) !== located(resolved.binding, false)) return false;
+    try {
+      // Only raw bytes drifted; the original binding reader still has to prove the same parsed authority.
+      readBoundInput({ projectRoot: ctx.projectRoot, frameworkRoot: ctx.frameworkRoot, feature: ctx.feature, phase: ctx.phase,
+        track: 'full', inputContext: ctx.resolvedInputs!.context }, binding, legacyRoot);
+      return true;
+    } catch { return false; }
+  }))) return [];
   const remaining = [...new Set(scope.obligations.filter(obligation => obligation.applicability === 'required' && !obligation.satisfied_by?.length && obligation.owner_phase !== ctx.phase).map(obligation => obligation.owner_phase))];
   // 请求动作按终点二分：feature 终点仍是「除本阶段外还剩哪些责任阶段」；request 终点是单职责请求，
   // 请求动作**就是它自己**——结构上不可能新增阶段（`feature-track.ts` 另有一道 fail-closed 校验兜底）。
@@ -189,7 +200,7 @@ function repointProjectionText(text: string, source: string, cu: ChangeUnitArtif
   return next;
 }
 
-/** 冻结输入已记录的中立摘要证明；只认仍对应当前文件字节的 artifact 绑定。 */
+/** 原输入已记录的中立摘要证明；只认仍对应当前文件字节的 artifact 绑定。 */
 function recordedArtifactFingerprints(projectRoot: string, feature: string, artifact: string, file: string): string[] {
   const runIds = classifyGoalRunsDir(featureFilePath(projectRoot, feature, 'goal-runs')).runs;
   const fingerprints = new Set<string>();
@@ -201,6 +212,19 @@ function recordedArtifactFingerprints(projectRoot: string, feature: string, arti
       if (binding.dependencies.some(dep => path.resolve(projectRoot, dep.path) === path.resolve(file) && dep.exists && dep.sha256 === digest(file))) fingerprints.add(binding.content_fingerprint);
     }
   }
+  try {
+    const candidate = asRecord(asRecord(YAML.parse(fs.readFileSync(featureTrackDeclPath(projectRoot, feature), 'utf8')))?.execution_scope);
+    for (const record of asRecords(candidate?.facts).flatMap(row => [...asRecords(row.basis), ...asRecords(row.satisfied_by)])) {
+      try {
+        const binding = record as unknown as InputBinding;
+        if (typeof binding.input_id !== 'string' || binding.source.kind !== 'artifact' || binding.source.artifact !== artifact) continue;
+        if (!binding.source_refs.some(ref => path.resolve(projectRoot, ref) === path.resolve(file))) continue;
+        if (!binding.dependencies.some(dep => dep.role === 'artifact' && path.resolve(projectRoot, dep.path) === path.resolve(file)
+          && dep.exists && dep.sha256 === digest(file))) continue;
+        fingerprints.add(binding.content_fingerprint);
+      } catch { /* 缺原完整绑定或当前原件已变，不取得机械刷新依据。 */ }
+    }
+  } catch { /* 未保存候选时仍只消费原冻结依据。 */ }
   return [...fingerprints];
 }
 
@@ -244,18 +268,27 @@ export class BlueprintContentError extends Error {
 }
 
 /** 同一目标被引用即整体继承；数组按原行身份合并，对象只接受完整相等。无 IO/门禁/授权裁决。 */
-export function mergeBlueprintTargetContent(selected: BlueprintContentTarget[], field: 'acceptance' | 'contracts' | 'use_cases'): BlueprintRecord | undefined {
+export function mergeBlueprintTargetContent(selected: BlueprintContentTarget[], field: 'acceptance' | 'contracts' | 'use_cases', onError?: (error: unknown) => void): BlueprintRecord | undefined {
   const parts = selected.filter(({ target }) => target[field] !== undefined);
   if (!parts.length) return undefined;
   const locate = (part: BlueprintContentTarget, at: string = field): DesignAuthorityLocation => ({ blueprint_id: part.ref.blueprint_id, target: part.ref.target, field: at });
   const result: BlueprintRecord = {};
+  let failed = false;
+  const reject = (error: BlueprintContentError): void => {
+    if (!onError) throw error;
+    failed = true; onError(error);
+  };
   for (const part of parts) {
-    if (asRecord(part.target.provenance)?.evidence_strength !== 'authoritative') throw new BlueprintContentError('authority_target_provenance_missing', `component-design: ${part.ref.target.id} 缺获准来源`, [locate(part)]);
+    if (asRecord(part.target.provenance)?.evidence_strength !== 'authoritative') {
+      reject(new BlueprintContentError('authority_target_provenance_missing', `component-design: ${part.ref.target.id} 缺获准来源`, [locate(part)]));
+      continue;
+    }
     const record = asRecord(part.target[field]);
     if (!record) {
       const prose = typeof part.target[field] === 'string' && !!(part.target[field] as string).trim();
       const locations = selected.flatMap(item => (['acceptance', 'contracts', 'use_cases'] as const).flatMap(key => typeof item.target[key] === 'string' && !!(item.target[key] as string).trim() ? [locate(item, key)] : []));
-      throw new BlueprintContentError(prose ? 'authority_content_not_machine_structure' : 'authority_content_missing', `${field} 必须是机器结构；文本需交责任 Skill 澄清`, prose ? locations : [locate(part)]);
+      reject(new BlueprintContentError(prose ? 'authority_content_not_machine_structure' : 'authority_content_missing', `${field} 必须是机器结构；文本需交责任 Skill 澄清`, prose ? locations : [locate(part)]));
+      continue;
     }
     for (const [key, value] of Object.entries(record)) {
       if (field === 'contracts' && key === 'change_unit') continue;
@@ -265,38 +298,53 @@ export function mergeBlueprintTargetContent(selected: BlueprintContentTarget[], 
         for (const item of value) {
           if (rows.some(old => canonical(old) === canonical(item))) continue;
           const id = projectionRowIdentity(item);
-          if (id && rows.some(old => projectionRowIdentity(old) === id)) throw new BlueprintContentError('authority_content_conflict', `component-design/外部 owner: ${field}.${key} 同一标识内容冲突`, parts.map(item => locate(item, `${field}.${key}`)));
+          if (id && rows.some(old => projectionRowIdentity(old) === id)) {
+            reject(new BlueprintContentError('authority_content_conflict', `component-design/外部 owner: ${field}.${key} 同一标识 ${id} 内容冲突`, parts.map(item => locate(item, `${field}.${key}`))));
+            continue;
+          }
           rows.push(structuredClone(item));
         }
-      } else if (canonical(result[key]) !== canonical(value)) throw new BlueprintContentError('authority_content_conflict', `component-design/外部 owner: ${field}.${key} 存在冲突`, parts.map(item => locate(item, `${field}.${key}`)));
+      } else if (canonical(result[key]) !== canonical(value)) reject(new BlueprintContentError('authority_content_conflict', `component-design/外部 owner: ${field}.${key} 存在冲突`, parts.map(item => locate(item, `${field}.${key}`))));
     }
   }
-  return result;
+  return failed ? undefined : result;
 }
 
 /** 原投影与人读文档唯一的目标选取/合并内核；完整身份与语义检查仍在 derive 中。 */
-export function selectBlueprintSkillContent(blueprint: BlueprintRecord, cu: ChangeUnitArtifact): { selected: BlueprintContentTarget[]; acceptance?: BlueprintRecord; contracts?: BlueprintRecord; useCases?: BlueprintRecord } {
-  const selected = cu.design_refs.map(ref => {
-    const content = structuredClone(resolveBlueprintTarget(blueprint, ref.target));
-    if (ref.target.kind === 'flow') for (const state of asRecords(asRecord(content.contracts)?.state_management)) if (state.design_ref === undefined) state.design_ref = ref;
-    return { ref, target: content };
+export function selectBlueprintSkillContent(blueprint: BlueprintRecord, cu: ChangeUnitArtifact, onError?: (error: unknown) => void): { selected: BlueprintContentTarget[]; acceptance?: BlueprintRecord; contracts?: BlueprintRecord; useCases?: BlueprintRecord } {
+  const attempt = <T>(read: () => T): T | undefined => {
+    try { return read(); } catch (error) { if (!onError) throw error; onError(error); return undefined; }
+  };
+  const selected = cu.design_refs.flatMap(ref => {
+    const target = attempt(() => structuredClone(resolveBlueprintTarget(blueprint, ref.target)));
+    if (!target) return [];
+    if (ref.target.kind === 'flow') for (const state of asRecords(asRecord(target.contracts)?.state_management)) if (state.design_ref === undefined) state.design_ref = ref;
+    return [{ ref, target }];
   });
-  return { selected, acceptance: mergeBlueprintTargetContent(selected, 'acceptance'), contracts: mergeBlueprintTargetContent(selected, 'contracts'), useCases: mergeBlueprintTargetContent(selected, 'use_cases') };
+  const contracts = attempt(() => mergeBlueprintTargetContent(selected, 'contracts', onError));
+  for (const state of asRecords(contracts?.state_management)) {
+    if (state.design_ref !== undefined || typeof state.owner_ref !== 'string') continue;
+    const flows = selected.filter(({ ref, target }) => ref.target.kind === 'flow' && asRecord(target.state_owner)?.ref === state.owner_ref);
+    if (flows.length === 1) state.design_ref = structuredClone(flows[0].ref);
+  }
+  return { selected, acceptance: attempt(() => mergeBlueprintTargetContent(selected, 'acceptance', onError)), contracts,
+    useCases: attempt(() => mergeBlueprintTargetContent(selected, 'use_cases', onError)) };
 }
 
 /**
  * 蓝图任意深度的 `source_ref`（需求的 current-scope 来源、契约与事实的 provenance、选型证据……）指向的项目内现存文件
  *（绝对路径，按出现顺序去重）。投影的依赖记录与无人值守修复的保护集合共用这一份解析。
  */
-export function blueprintSourceRefFiles(projectRoot: string, blueprint: unknown): string[] {
+export function blueprintSourceRefFiles(projectRoot: string, blueprint: unknown, includeMissing = false): string[] {
   const files: string[] = [];
   const visit = (value: unknown): void => {
     if (!value || typeof value !== 'object') return;
     for (const [key, child] of Object.entries(value)) {
       if (key === 'source_ref' && typeof child === 'string') {
+        if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(child) && !/^[A-Za-z]:[\\/]/.test(child)) continue;
         const file = path.resolve(projectRoot, child.split('#')[0]);
         const actual = existingProjectPathSpelling(projectRoot, file);
-        if (!files.includes(file) && actual && fs.statSync(actual).isFile()) files.push(file);
+        if (!files.includes(file) && (includeMissing || isInsideProjectRoot(projectRoot, file) && actual && fs.statSync(actual).isFile())) files.push(file);
       } else visit(child);
     }
   };
@@ -320,35 +368,75 @@ export function deriveBlueprintSkillInput(projectRoot: string, feature: string, 
   };
   if (!feature.startsWith('cu-')) return { state: 'absent', dependencies, detail: 'blueprint projection requires canonical CU context' };
   let reason: DesignAuthorityInvalidReason = 'other';
-  let codes: string[] = [];
-  let locations: DesignAuthorityLocation[] = [];
-  const fail: (failed: string | string[], message: string, at?: DesignAuthorityLocation[]) => never = (failed, message, at = []) => { codes = [failed].flat(); locations = at; throw new Error(message); };
+  const codes: string[] = [];
+  const messages: string[] = [];
+  const locations: DesignAuthorityLocation[] = [];
+  const fail = (failed: string | string[], message: string, at: DesignAuthorityLocation[] = []): void => {
+    for (const code of [failed].flat()) if (!codes.includes(code)) codes.push(code);
+    if (!messages.includes(message)) messages.push(message);
+    for (const location of at) if (!locations.some(old => canonical(old) === canonical(location))) locations.push(location);
+  };
+  const recordError = (error: unknown): void => {
+    if (error instanceof ArtifactSchemaError) throw error;
+    const thrown = (error as { code?: unknown }).code;
+    fail(typeof thrown === 'string' ? thrown : [], String(error), error instanceof BlueprintContentError ? error.locations : []);
+  };
+  const attempt = <T>(read: () => T): T | undefined => {
+    try { return read(); } catch (error) { recordError(error); return undefined; }
+  };
+  const invalid = (): BlueprintSkillProjection => ({ state: 'invalid', dependencies, detail: messages.join('\n'), reason, codes,
+    ...(locations.length ? { locations } : {}) });
+  const sources = new Map<string, ReturnType<typeof loadCanonicalBlueprint>>();
+  const checkedSources = new Set<string>();
+  const resolveRef: typeof resolveComponentBlueprintRef = (root, ref) => {
+    if (authorityReaders?.blueprint) return authorityReaders.blueprint(root, ref);
+    const identity = validateComponentBlueprintRefShape(ref);
+    const key = componentBlueprintPath(root, identity.blueprint_id);
+    let source = sources.get(key);
+    if (!source) { source = loadCanonicalBlueprint(root, identity.blueprint_id); sources.set(key, source); }
+    if (checkedSources.has(key)) return resolveComponentBlueprintRefFromLoaded(source, ref);
+    try {
+      const resolved = resolveComponentBlueprintRef(root, ref, source);
+      checkedSources.add(key);
+      return resolved;
+    }
+    catch (error) {
+      if ((error as { code?: string }).code !== 'component_blueprint_invalid') throw error;
+      recordError(error);
+      checkedSources.add(key);
+      // Invalid admission cannot authorize a write, but exact identity still permits independent diagnostics.
+      return resolveComponentBlueprintRefFromLoaded(source, ref);
+    }
+  };
   try {
     const identity = parseChangeUnitFeatureId(feature);
     const loaded = (authorityReaders?.loadChangeUnit ?? loadCanonicalChangeUnit)(projectRoot, identity.blueprintId, identity.changeUnitId);
     depend(loaded.canonicalPath);
     const cu = asChangeUnitArtifact(loaded.changeUnit);
-    const cuIssues = (authorityReaders?.changeUnitIssues ? authorityReaders.changeUnitIssues(projectRoot, loaded) : validateChangeUnit(loaded.changeUnit, { projectRoot, canonicalPath: loaded.canonicalPath, resolveBlueprintRef: authorityReaders?.blueprint })).filter(issue => issue.severity === 'BLOCKER');
+    const cuIssues = (authorityReaders?.changeUnitIssues ? authorityReaders.changeUnitIssues(projectRoot, loaded) : validateChangeUnit(loaded.changeUnit, { projectRoot, canonicalPath: loaded.canonicalPath, resolveBlueprintRef: resolveRef })).filter(issue => issue.severity === 'BLOCKER');
     if (cuIssues.length) {
       if (cuIssues.every(issue => issue.id === BLUEPRINT_REF_STALE_ISSUE)) reason = 'blueprint_ref_stale';
       fail(cuIssues.map(issue => issue.id), 'component-design: ' + cuIssues.map(issue => issue.message).join('; '));
     }
-    const parent = (authorityReaders?.blueprint ?? resolveComponentBlueprintRef)(projectRoot, cu.component_blueprint_ref);
+    const parent = resolveRef(projectRoot, cu.component_blueprint_ref);
     depend(parent.canonicalPath);
     for (const file of blueprintSourceRefFiles(projectRoot, parent.blueprint)) depend(file);
-    const design = validateChangeUnitDesign(projectRoot, loaded.changeUnit, { resolveBlueprintRef: authorityReaders?.blueprint });
+    const design = validateChangeUnitDesign(projectRoot, loaded.changeUnit, { resolveBlueprintRef: resolveRef });
     if (design.verdict !== 'constructable') fail(design.issues.map(i => i.id), `component-design: ${design.issues.map(i => i.message).join('; ')}`);
-    for (const ref of cu.design_refs) depend((authorityReaders?.blueprint ?? resolveComponentBlueprintRef)(projectRoot, ref).canonicalPath);
-    const bundle = selectBlueprintSkillContent(parent.blueprint, cu);
+    for (const ref of cu.design_refs) attempt(() => depend(resolveRef(projectRoot, ref).canonicalPath));
+    const bundle = selectBlueprintSkillContent(parent.blueprint, cu, recordError);
     const selected = bundle.selected;
     const source = `derive.blueprint-${kind}:${loaded.artifactSha256}:${cu.component_blueprint_ref.artifact_sha256}`;
     const acceptance = bundle.acceptance;
     const construction = kind === 'contracts' && bundle.contracts
-      ? projectComponentSelections(projectRoot, bundle.contracts as unknown as ContractsSpec, cu, authorityReaders?.blueprint) as unknown as BlueprintRecord : undefined;
+      ? attempt(() => projectComponentSelections(projectRoot, bundle.contracts as unknown as ContractsSpec, cu, resolveRef)) as unknown as BlueprintRecord | undefined : undefined;
     const useCases = bundle.useCases;
+    for (const [field, value] of [['acceptance', acceptance], ['contracts', bundle.contracts], ['use_cases', useCases]] as const) {
+      if (!value && selected.some(({ target }) => target[field] !== undefined)) fail([], `因 ${field} 来源内容不能确定合并，未能检查依赖该内容的投影；其余独立检查继续，不能签为通过。`);
+    }
     const raw = kind === 'acceptance' ? acceptance : construction;
     const absent: BlueprintSkillProjection = { state: 'absent', dependencies, detail: `${kind === 'acceptance' ? 'spec' : 'plan'}: 缺精确 ${kind} 内容，design_refs/verification_refs 不等价于设计` };
-    if (!acceptance && !construction && !useCases) return absent;
+    if (!acceptance && !construction && !useCases) return messages.length ? invalid() : absent;
     if (raw) { raw.feature = feature; raw.source = source; }
     if (acceptance) { acceptance.feature = feature; acceptance.source = `derive.blueprint-acceptance:${loaded.artifactSha256}:${cu.component_blueprint_ref.artifact_sha256}`; }
     if (useCases) { useCases.feature = feature; useCases.source = `derive.blueprint-contracts:${loaded.artifactSha256}:${cu.component_blueprint_ref.artifact_sha256}`; }
@@ -357,22 +445,27 @@ export function deriveBlueprintSkillInput(projectRoot: string, feature: string, 
     if (parsed.shape_issues?.length) fail('authority_projection_shape_invalid', parsed.shape_issues.join('; '));
     const projectionContext = { projectRoot, frameworkRoot, feature, featureSpec: parsed, phaseRule: {} } as CheckContext;
     if (parsed.useCases && !construction) {
-      const failures = checkUseCaseSpecSchema(projectionContext).filter(check => check.status === 'FAIL');
+      const failures = attempt(() => checkUseCaseSpecSchema(projectionContext).filter(check => check.status === 'FAIL')) ?? [];
       if (failures.length) fail('authority_construction_content_incomplete', 'plan: ' + failures.map(check => check.details).join('; '));
     }
     if (parsed.acceptance) {
       const ctx = projectionContext;
-      const content = checkAcceptanceContent(ctx);
+      const content = attempt(() => checkAcceptanceContent(ctx)) ?? [];
       if (content.some(check => check.status === 'FAIL')) fail('authority_acceptance_content_invalid', 'spec: ' + content.map(check => check.details).join('; '));
       const covered = new Set([...parsed.acceptance.criteria, ...(parsed.acceptance.boundaries ?? [])].map(item => item.id.toUpperCase()));
       const unmapped = cu.target_predicates.filter(predicate => !predicate.verification_refs.flatMap(extractAcceptanceIdRefs).some(id => covered.has(id)));
       if (unmapped.length) fail('authority_predicate_acceptance_unmapped', 'spec: CU predicate 缺明确验收 ID 映射：' + unmapped.map(predicate => predicate.predicate_id).join(', '));
-      const failures = [...checkAcceptanceUtLayerComplete(ctx, (_c, _s, id) => id), ...checkAcceptanceDeviceFocusPresent(ctx, (_c, _s, id) => id), ...checkAcceptanceLinkedUseCases(ctx), ...evaluateAcceptanceFlowStructure(projectRoot, feature, parsed.acceptance, 'declared')].filter(check => check.status === 'FAIL');
+      const failures = [
+        ...(attempt(() => checkAcceptanceUtLayerComplete(ctx, (_c, _s, id) => id)) ?? []),
+        ...(attempt(() => checkAcceptanceDeviceFocusPresent(ctx, (_c, _s, id) => id)) ?? []),
+        ...(attempt(() => checkAcceptanceLinkedUseCases(ctx)) ?? []),
+        ...(attempt(() => evaluateAcceptanceFlowStructure(projectRoot, feature, parsed.acceptance!, 'declared')) ?? []),
+      ].filter(check => check.status === 'FAIL');
       if (failures.length) fail('authority_acceptance_content_invalid', 'spec: ' + failures.map(check => check.details).join('; '));
     }
     if (construction) {
       const contracts = parsed.contracts!;
-      const contentIssues = checkTypedConstructionContent(projectionContext).filter(check => check.status === 'FAIL');
+      const contentIssues = attempt(() => checkTypedConstructionContent(projectionContext).filter(check => check.status === 'FAIL')) ?? [];
       if (contentIssues.length) fail('authority_construction_content_incomplete', 'plan: ' + contentIssues.map(check => check.details).join('; '));
 
       const closure = resolveContractFileReferences(projectRoot, contracts);
@@ -384,19 +477,37 @@ export function deriveBlueprintSkillInput(projectRoot: string, feature: string, 
         }
       }
       if (closure.invalid_paths.length) fail('authority_contract_write_set_open', 'plan: 非法文件引用：' + closure.invalid_paths.map(issue => issue.message).join('; '));
-      const projection = validateChangeUnitFeatureProjection(projectRoot, feature, contracts, parsed.acceptance, !!parsed.useCases, 'plan', [], { changeUnitOverride: cu, designOnly: true, resolveBlueprintRef: authorityReaders?.blueprint });
+      const projection = validateChangeUnitFeatureProjection(projectRoot, feature, contracts, parsed.acceptance, !!parsed.useCases, 'plan', [], { changeUnitOverride: cu, designOnly: true, resolveBlueprintRef: resolveRef });
       if (projection.issues.length) fail(projection.issues.flatMap(i => i.codes ?? [i.id]), 'plan/component-design: ' + projection.issues.map(i => i.message).join('; '));
     }
+    if (messages.length) return invalid();
     const normalized = { ...(parsed.acceptance ? { 'acceptance@1': parsed.acceptance } : {}), ...(parsed.contracts ? { 'contracts@1': parsed.contracts } : {}), ...(parsed.useCases ? { 'use-cases@1': parsed.useCases } : {}) };
     if (!raw) return { ...absent, artifacts: normalized };
     return { state: 'resolved', dependencies, value: kind === 'acceptance' ? parsed.acceptance : parsed.contracts, artifacts: normalized };
   } catch (error) {
-    if (error instanceof ArtifactSchemaError) throw error;
-    // 解析器错误（ChangeUnitResolutionError / ComponentBlueprintResolutionError / FeatureIdentityError）自带 code；未编码的抛错留空（分类默认 B2）。
-    const thrown = (error as { code?: unknown }).code;
-    if (error instanceof BlueprintContentError) locations = error.locations;
-    return { state: 'invalid', dependencies, detail: String(error), reason, codes: codes.length ? codes : typeof thrown === 'string' ? [thrown] : [], ...(locations.length ? { locations } : {}) };
+    recordError(error);
+    return invalid();
   }
+}
+
+/** Current unpublished content diagnostics through the same consumer; never an input binding or publication. */
+export function deriveBlueprintCandidateSkillInput(projectRoot: string, feature: string, frameworkRoot: string, kind: BlueprintProjectionKind,
+  candidate: { blueprint: BlueprintRecord; changeUnit: ChangeUnitArtifact }): BlueprintSkillProjection {
+  const readers = createIdentityNeutralDigestReaders();
+  const originalUnit = loadCanonicalChangeUnit(projectRoot, candidate.changeUnit.blueprint_id, candidate.changeUnit.change_unit_id);
+  const originalBlueprint = loadCanonicalBlueprint(projectRoot, candidate.changeUnit.blueprint_id);
+  readers.loadChangeUnit = (root, blueprint, unit) => blueprint === candidate.changeUnit.blueprint_id && unit === candidate.changeUnit.change_unit_id
+    ? { ...originalUnit, changeUnit: { ...candidate.changeUnit } } : loadCanonicalChangeUnit(root, blueprint, unit);
+  readers.blueprint = (_root, value) => {
+    const ref = validateComponentBlueprintRefShape(value);
+    // Unpublished targets may be new; their source identity must still name the actual locked baseline.
+    const resolved = resolveComponentBlueprintRefFromLoaded(originalBlueprint,
+      { ...ref, target: asChangeUnitArtifact(originalUnit.changeUnit).component_blueprint_ref.target });
+    return { ...resolved, ref, blueprint: candidate.blueprint, target: resolveBlueprintTarget(candidate.blueprint, ref.target) };
+  };
+  readers.changeUnitIssues = (root, loaded) => validateChangeUnit(loaded.changeUnit,
+    { projectRoot: root, canonicalPath: loaded.canonicalPath, resolveBlueprintRef: readers.blueprint });
+  return deriveBlueprintSkillInput(projectRoot, feature, frameworkRoot, kind, readers);
 }
 
 export interface AuthoritativeDriftItem { id: string; field: string; expected: unknown; actual: unknown }
@@ -547,9 +658,12 @@ export function designWriteSetExpansion(projectRoot: string, expected: Contracts
   });
 }
 
-export function checkAuthoritativeContentAligned(ctx: CheckContext, kind: BlueprintProjectionKind): CheckResult[] {
+export function checkAuthoritativeContentAligned(ctx: CheckContext, kind: BlueprintProjectionKind, candidateProjection?: BlueprintSkillProjection): CheckResult[] {
+  if (candidateProjection && candidateProjection.state !== 'invalid') return [];
   const value = kind === 'acceptance' ? ctx.featureSpec.acceptance : ctx.featureSpec.contracts;
-  const drift = authoritativeContentDrift(ctx.projectRoot, ctx.feature, ctx.frameworkRoot, kind, value, kind === 'contracts' ? { useCases: ctx.featureSpec.useCases } : undefined);
+  const drift: AuthoritativeContentDrift = candidateProjection ? { state: 'invalid', detail: candidateProjection.detail ?? 'blueprint projection invalid',
+    reason: candidateProjection.reason ?? 'other', codes: candidateProjection.codes ?? [], locations: candidateProjection.locations }
+    : authoritativeContentDrift(ctx.projectRoot, ctx.feature, ctx.frameworkRoot, kind, value, kind === 'contracts' ? { useCases: ctx.featureSpec.useCases } : undefined);
   if (drift.state === 'not_applicable') return [];
   const file = `${kind}.yaml`;
   const base = { id: 'authoritative_content_aligned', category: 'traceability' as const, severity: 'BLOCKER' as const, description: `手写 ${file} 与当前设计权威按稳定 ID 逐字段对齐`, affected_files: [featureFilePath(ctx.projectRoot, ctx.feature, file)] };
@@ -557,7 +671,8 @@ export function checkAuthoritativeContentAligned(ctx: CheckContext, kind: Bluepr
   // 无效分支责任在链外的设计 owner（plan f7045213 最终评审返修二）：既有字段 repair_owner='external' 让 goal 首次即停交设计 owner；漂移分支不标。
   if (drift.state === 'invalid') return [{ ...base, status: 'FAIL', repair_owner: 'external', structured: { kind: 'design_authority', reason: drift.reason, codes: drift.codes, ...(drift.locations ? { locations: drift.locations } : {}) }, details: describeAuthoritativeDrift(drift, kind)!, suggestion: '设计权威投影自身不可用：回设计 owner 修复蓝图 / CU 后重跑。' }];
   const details = drift.items.map(item => `${driftLabel(item)}: 期望=${JSON.stringify(item.expected)} 实际=${JSON.stringify(item.actual)}`).join('\n');
-  return [{ ...base, status: 'FAIL', details, suggestion: `按设计权威改写 ${file}，保留不冲突的补充。` }];
+  return [{ ...base, status: 'FAIL', details, structured: { authoritative_content_drift: { artifact: kind, items: drift.items } },
+    suggestion: `按设计权威改写 ${file}，保留不冲突的补充。` }];
 }
 
 /**

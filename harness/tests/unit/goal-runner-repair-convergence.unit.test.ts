@@ -39,7 +39,9 @@ import { hashScreenshotFile } from '../../../profiles/hmos-app/harness/visual-di
 import { clearFrameworkConfigCache } from '../../config';
 import { buildGoalManifestFromInput } from '../../scripts/utils/goal-manifest';
 import { createGoalRun } from '../../scripts/utils/goal-run-creation';
-import { loadWorkflowSpec } from '../../workflow-loader';
+import { fixture as unitFixture } from './standalone-coding-review.unit.test';
+import { repairResponsibilityContext } from '../../scripts/utils/repair-responsibility';
+import { resolveCurrentDisposition } from '../../scripts/utils/check-disposition';
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(message);
@@ -528,45 +530,53 @@ export function runAll(): UnitCaseResult[] {
   // repair_candidates=[]（D1 之后 12 条 minor 不再物化）、visual_diff WARN 留台账、
   // backtracks_used=2。只断言 assess 不再请求第三次回退；不断言任何 run 终态（旧 TERMINAL 不改写）。
   run('B07-V6 决策重放：i13 形状 + repair_candidates=[] → assess 不返回 rerun_phase/backtrack_to_phase', () => {
-    const H = 'a'.repeat(64);
-    const chain = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'];
-    const phaseObs = (phase: string, extra: Partial<AssessPhaseObservation> = {}): AssessPhaseObservation => ({
-      phase, summary_state: 'current', schema_version: '1.2', verdict: 'PASS', closure: 'closed',
-      assurance: 'full', required_assurance: null, assurance_satisfied: null, deferred: false,
-      summary_fingerprint: H, evidence_fingerprint: H, ...extra,
-    });
-    const i13Defects = Array.from({ length: 12 }, (_, i) => `visual|screen|minor#${i}`);
-    const observe = (candidates: AssessPhaseObservation['repair_candidates']): AssessObservation => ({
-      schema_version: '1.0', feature: 'bc-openCard', workflow: 'spec-driven', track: 'full', goal_end: 'testing',
-      responsibility: { frameworkRoot: path.resolve(__dirname, '../../..'), workflow: loadWorkflowSpec(path.resolve(__dirname, '../../..'), 'spec-driven') },
-      phases: chain.map(p => phaseObs(p, p === 'testing' ? { repair_candidates: candidates } : {})),
-      fingerprints: { workflow: H, track: H, goal: H, run_attempt: H, summaries: H, evidence: H, reconcile: H, observed: H },
-      reconcile: {
-        schema_version: '1.0', state: 'active',
-        phase_outcome: { phase: 'testing', verdict: 'PASS', legacy_action: 'advance' },
-        blockers: [],
-        deterministic_defects: i13Defects,
-        residual_fingerprints: i13Defects,
-        budgets: { retries_used: 0, max_retries_per_phase: 2, backtracks_used: 2 },
-        repair_convergence: { eligible_empty: false, open_signal_count: 12, attempted_signal_count: 1 },
-      },
-    });
-    // 对照：改动前 12 条 minor 各成一条 coding 候选 → assess 请求回 coding（第三次回退）
-    const candidates = i13Defects.map((fp, i) => ({
-      id: `visual_diff:screen${i}`, category: 'coding' as const, item_fingerprint: FP_A.slice(0, 63) + String(i % 10),
-    }));
-    const missingContext = assessObservation({ ...observe(candidates), responsibility: undefined });
-    assert(missingContext.recommendation.phase === null && missingContext.recommendation.reason.includes('backtrack_target_absent'), '缺真实职责契约仍须报告缺口，不能用coding或队首兜底');
-    const before = assessObservation(observe(candidates));
-    assert(before.recommendation.action === 'rerun_phase' && before.recommendation.phase === 'coding'
-      && before.recommendation.runner_action === 'backtrack_to_phase',
-      `对照（候选非空）应请求回 coding：${JSON.stringify(before.recommendation)}`);
-    // D1 之后：候选为空，deterministic_defects 仍 12 条（只是诊断投影，不决定路由）
-    const after = assessObservation(observe([]));
-    assert(after.recommendation.action !== 'rerun_phase',
-      `不得再 rerun_phase：${JSON.stringify(after.recommendation)}`);
-    assert(after.recommendation.runner_action !== 'backtrack_to_phase',
-      `不得再 backtrack_to_phase：${JSON.stringify(after.recommendation)}`);
+    const unit = unitFixture();
+    try {
+      const H = 'a'.repeat(64);
+      const chain = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'];
+      const phaseObs = (phase: string, extra: Partial<AssessPhaseObservation> = {}): AssessPhaseObservation => ({
+        phase, summary_state: 'current', schema_version: '1.2', verdict: 'PASS', closure: 'closed',
+        assurance: 'full', required_assurance: null, assurance_satisfied: null, deferred: false,
+        summary_fingerprint: H, evidence_fingerprint: H, ...extra,
+      });
+      const i13Defects = Array.from({ length: 12 }, (_, i) => `visual|screen|minor#${i}`);
+      const observe = (candidates: AssessPhaseObservation['repair_candidates']): AssessObservation => ({
+        schema_version: '1.0', feature: unit.manifest.feature, workflow: 'spec-driven', track: 'full', goal_end: 'testing',
+        responsibility: repairResponsibilityContext({ projectRoot: unit.root, frameworkRoot: path.resolve(__dirname, '../../..'), feature: unit.manifest.feature, runId: unit.manifest.run_id }),
+        currentDisposition: resolveCurrentDisposition({ endpoint: 'feature-completion', phases: [{ phase: 'testing', verdict: 'PASS', schemaCurrent: true, closureCommitted: true,
+          openFindings: candidates?.map(candidate => ({ id: candidate.id, detail: candidate.summary!, owner: 'coding', source_phase: candidate.source_phase })) }] }),
+        phases: chain.map(p => phaseObs(p, p === 'testing' ? { repair_candidates: candidates } : {})),
+        fingerprints: { workflow: H, track: H, goal: H, run_attempt: H, summaries: H, evidence: H, reconcile: H, observed: H },
+        reconcile: {
+          schema_version: '1.0', state: 'active',
+          phase_outcome: { phase: 'testing', verdict: 'PASS', legacy_action: 'advance' },
+          blockers: [],
+          deterministic_defects: i13Defects,
+          residual_fingerprints: i13Defects,
+          budgets: { retries_used: 0, max_retries_per_phase: 2, backtracks_used: 2 },
+          repair_convergence: { eligible_empty: false, open_signal_count: 12, attempted_signal_count: 1 },
+        },
+      });
+      // 对照是已有当前核实结论的产品工作；历史 minor 计数本身不构成授权。
+      const candidates = i13Defects.map((fp, i) => ({
+        id: `visual_diff:screen${i}`, category: 'coding' as const, item_fingerprint: FP_A.slice(0, 63) + String(i % 10),
+        files: [], source_phase: 'testing', summary: `当前已核实产品问题 ${i}`,
+      }));
+      const missingContext = assessObservation({ ...observe(candidates), responsibility: undefined });
+      assert(missingContext.recommendation.phase === null && missingContext.recommendation.reason.includes('backtrack_target_absent'), '缺真实职责契约仍须报告缺口，不能用coding或队首兜底');
+      const missingView = assessObservation({ ...observe(candidates), currentDisposition: undefined });
+      assert(missingView.recommendation.phase === null && missingView.recommendation.reason.includes('backtrack_target_absent'), 'unit写域不等于纯候选已核验，缺当前view仍不可派活');
+      const before = assessObservation(observe(candidates));
+      assert(before.recommendation.action === 'rerun_phase' && before.recommendation.phase === 'coding'
+        && before.recommendation.runner_action === 'backtrack_to_phase',
+        `对照（候选非空）应请求回 coding：${JSON.stringify(before.recommendation)}`);
+      // D1 之后：候选为空，deterministic_defects 仍 12 条（只是诊断投影，不决定路由）
+      const after = assessObservation(observe([]));
+      assert(after.recommendation.action !== 'rerun_phase',
+        `不得再 rerun_phase：${JSON.stringify(after.recommendation)}`);
+      assert(after.recommendation.runner_action !== 'backtrack_to_phase',
+        `不得再 backtrack_to_phase：${JSON.stringify(after.recommendation)}`);
+    } finally { clearFrameworkConfigCache(); fs.rmSync(unit.root, { recursive: true, force: true }); }
   });
 
   // ------------------------------------------------------------------------

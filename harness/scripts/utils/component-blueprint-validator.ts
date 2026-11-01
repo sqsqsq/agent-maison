@@ -1,5 +1,3 @@
-import * as fs from 'fs';
-import * as path from 'path';
 import {
   BLUEPRINT_ARTIFACT,
   BlueprintIssue,
@@ -7,6 +5,7 @@ import {
   asRecord,
   asRecords,
   issue,
+  BLUEPRINT_SCHEMA,
 } from './component-blueprint-model';
 import { validateLiteSchema } from './lite-json-schema';
 import { stableAddressIndex } from './blueprint-addressing';
@@ -35,10 +34,6 @@ export interface ComponentBlueprintValidationContext {
   sourceCache?: Map<string, unknown>;
 }
 
-function loadBlueprintSchema(): Record<string, unknown> {
-  return JSON.parse(fs.readFileSync(path.resolve(__dirname, '..', '..', 'schemas', 'app-component-blueprint.schema.json'), 'utf8')) as Record<string, unknown>;
-}
-
 export function validateComponentBlueprint(
   value: unknown,
   context: ComponentBlueprintValidationContext = {},
@@ -56,7 +51,7 @@ export function validateComponentBlueprintUpstream(
   context: ComponentBlueprintValidationContext = {},
 ): BlueprintIssue[] {
   const out: BlueprintIssue[] = [];
-  for (const violation of validateLiteSchema(blueprint, loadBlueprintSchema())) {
+  for (const violation of validateLiteSchema(blueprint, BLUEPRINT_SCHEMA)) {
     out.push(issue('component_blueprint_schema_invalid', violation.path, violation.message));
   }
   if (blueprint.artifact !== BLUEPRINT_ARTIFACT) {

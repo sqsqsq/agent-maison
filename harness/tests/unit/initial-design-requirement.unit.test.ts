@@ -2,8 +2,9 @@ import '../utils/transpile-only-env';
 import assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
+import { createHash } from 'crypto';
 import { clearFrameworkConfigCache } from '../../config';
-import { prepareGoalModeRun, runGoalModeSessionStep } from '../../scripts/goal-mode-entry';
+import { prepareGoalModeRun, runGoalModeSessionStep as runGoalModeSessionStepUnchecked } from '../../scripts/goal-mode-entry';
 import { buildInitialDesignGoalManifest, isInitialDesignManifest } from '../../scripts/utils/goal-manifest';
 import { createGoalRun } from '../../scripts/utils/goal-run-creation';
 import { currentOriginalDelivery, readOriginalDeliveryBudget } from '../../scripts/utils/delivery-origin';
@@ -11,6 +12,11 @@ import { enumerateCanonicalChangeUnits } from '../../scripts/utils/change-unit-p
 import { BLUEPRINT_ID, withFreshCuHost } from './lifecycle-evolution.unit.test';
 import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
 import type { UnitCaseResult } from '../run-unit';
+import { reportFixtureQuestioning, seedLedgerQuestioningInput } from '../utils/initial-questioning-fixture';
+import { withRuntimeTest, type RuntimeTestControl } from '../utils/runtime-test-control';
+const runGoalModeSessionStep = (options: Parameters<typeof runGoalModeSessionStepUnchecked>[0], testControl: RuntimeTestControl = {}) =>
+  withRuntimeTest({ root: options.projectRoot, ...testControl }, () => runGoalModeSessionStepUnchecked(options));
+
 
 type Json = Record<string, any>;
 type Scenario = 'completed' | 'unfinished' | 'source';
@@ -20,6 +26,7 @@ const increment = '新增要求：本地账目金额格式必须保持两位小�
 
 async function scenario(mode: Scenario): Promise<void> {
   await withFreshCuHost(async host => {
+    seedLedgerQuestioningInput(host.root);
     const configFile = path.join(host.root, 'framework.config.json');
     const config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
     config.project_profile.name = 'hmos-app';
@@ -59,16 +66,35 @@ async function scenario(mode: Scenario): Promise<void> {
     assert(audit && audit.target_run_id === old.run_id);
     assert.equal(audit.delivery_cycle_boundary, mode === 'completed' ? old.run_id : undefined);
     assert.equal(readOriginalDeliveryBudget(host.root, prepared.manifest)!.totalTurns, mode === 'completed' ? 0 : 1);
-    const next = await runGoalModeSessionStep({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: BLUEPRINT_ID,
-      runId: prepared.manifest.run_id, adapter: 'claude', runMode: 'attended', authorization }) as Json;
+    const options = { projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: BLUEPRINT_ID,
+      runId: prepared.manifest.run_id, adapter: 'claude', runMode: 'attended', authorization };
+    let next = await runGoalModeSessionStep(options) as Json, questions = 0;
+    if (next.phase === 'design-repair-questioning') {
+      const first = JSON.parse(fs.readFileSync(next.request.path, 'utf8'));
+      assert(first.context.instruction.includes(increment), 'the independent role must receive the full new substantive request');
+      next = await reportFixtureQuestioning(options, next, prepared.runDir, path.join(prepared.runDir, 'design-repair/component-blueprint.yaml'), questioning => {
+        Object.assign((questioning.items as Json[])[0], { disposition: 'blocker', question: '新增金额格式要求是否有对应设计及验收？', answer: `原设计尚未覆盖本次完整增量：${increment}` });
+      }) as Json;
+      questions++;
+    }
     assert.equal(next.type, 'phase_execute_request', JSON.stringify(next));
-    assert.equal(next.phase, 'design-repair-author', 'the old blueprint/P3 must not complete the new substantive request');
+    assert.equal(next.phase, 'design-repair-author', 'a real current independent denial must reach the original design author');
     const request: Json = JSON.parse(fs.readFileSync(next.request.path, 'utf8'));
     assert(request.context.instruction.includes(increment));
-    assert(request.context.instruction.includes('仅附加来源路径'));
-    assert(!fs.existsSync(path.join(prepared.runDir, 'design-repair/change-unit.yaml')), 'a blueprint-level request must not invent a CU target');
+    if (questions) assert(request.context.instruction.includes('原设计尚未覆盖本次完整增量'), 'the actual denial must remain in author feedback');
+    assert(request.context.instruction.includes(originalRequirement), 'the author must retain the original request as well as the complete increment');
+    if (mode === 'source') {
+      assert.deepEqual(prepared.manifest.requirement_source_files, ['doc/requirement.md']);
+      const actualSource = request.pre_snapshot.entries.find((entry: Json) => entry.path === 'doc/requirement.md');
+      assert.equal(actualSource?.sha256, createHash('sha256').update(fs.readFileSync(source)).digest('hex'), 'the actual request must bind the changed source bytes, rather than old coverage');
+    }
+    const cuDraft = path.join(prepared.runDir, 'design-repair/change-unit.yaml');
+    assert(!fs.existsSync(cuDraft), `a blueprint-level request must not invent a CU target: ${JSON.stringify({ phase: next.phase,
+      candidate: fs.existsSync(cuDraft) ? fs.readFileSync(cuDraft, 'utf8') : undefined,
+      repairs: fs.readFileSync(path.join(prepared.runDir, 'events.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line)).filter(row => row.type === 'design_authority_repair') })}`);
     assert(!('execution_scope' in prepared.manifest));
-    assert.equal(readOriginalDeliveryBudget(host.root, prepared.manifest)!.totalTurns, mode === 'completed' ? 1 : 2);
+    const expectedTurns = (mode === 'completed' ? 1 : 2) + questions;
+    assert.equal(readOriginalDeliveryBudget(host.root, prepared.manifest)!.totalTurns, expectedTurns);
     assert.equal(currentOriginalDelivery(host.root, old).run_id, mode === 'completed' ? old.run_id : prepared.manifest.run_id);
     const repeated = prepareGoalModeRun({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: BLUEPRINT_ID,
       adapter: 'claude', requirement, ...(mode === 'source' ? { requirementSourceFiles: ['doc/requirement.md'] } : {}) });
@@ -80,7 +106,7 @@ async function scenario(mode: Scenario): Promise<void> {
         adapter: 'claude', requirement: '用户再次替换目标：先处理金额格式并保留原有恢复义务。' }), /尚未报告的签发窗口[\s\S]*--report-result/);
       assert.deepEqual(fs.readFileSync(next.request.path), pendingBytes);
       assert.deepEqual(fs.readFileSync(path.join(prepared.runDir, 'events.jsonl')), runEvents);
-      assert.equal(readOriginalDeliveryBudget(host.root, prepared.manifest)!.totalTurns, 2);
+      assert.equal(readOriginalDeliveryBudget(host.root, prepared.manifest)!.totalTurns, expectedTurns);
     }
     assert.deepEqual(fs.readFileSync(created.manifestPath), oldManifest);
     assert.deepEqual(fs.readFileSync(created.eventsPath), oldEvents);

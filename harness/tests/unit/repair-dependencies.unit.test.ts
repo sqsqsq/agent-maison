@@ -17,6 +17,7 @@ import { collectPhaseCompletionIssues } from '../../scripts/utils/verify-feature
 import { resolveWorkflowSpec } from '../../workflow-loader';
 import type { ScopeHistoryEvent } from '../../scripts/utils/execution-scope';
 import type { CheckResult } from '../../scripts/utils/types';
+import { loadFeatureContracts, phaseContractIndex } from '../../scripts/utils/skill-contract';
 
 const FRAMEWORK = path.resolve(__dirname, '../../..');
 const workflow = loadWorkflowSpec(FRAMEWORK, 'obligation-driven');
@@ -101,7 +102,9 @@ const cases: Array<{ name: string; run(): void }> = [
       const resolvedEvents = [...failed, { type: 'phase_verdict', phase: 'plan', verdict: 'PASS', action: 'advance' }];
       writeRunEvents(f.root, f.feature, 'RUN1', resolvedEvents);
       const resolved = resolveCurrentScopeView(options);
-      assert.deepEqual(resolved.phase_chain, [], 'the original fresh descendant PASS proofs must survive a resolved upstream observation');
+      assert.deepEqual(resolved.phase_chain, [], JSON.stringify({ reason: 'the original fresh descendant PASS proofs must survive a resolved upstream observation',
+        phase_chain: resolved.phase_chain, problems: collectPhaseCompletionIssues({ projectRoot: f.root, frameworkRoot: f.frameworkRoot,
+          feature: f.feature, chain, workflow: currentWorkflow, executionScope: resolved, runId: 'RUN1' }) }));
       assert.deepEqual(collectPhaseCompletionIssues({ projectRoot: f.root, frameworkRoot: f.frameworkRoot, feature: f.feature, chain,
         workflow: currentWorkflow, executionScope: resolved, runId: 'RUN1' }), []);
       for (const event of [{ type: 'phase_invalidated', phase: 'coding' },
@@ -140,8 +143,11 @@ const cases: Array<{ name: string; run(): void }> = [
     assert.strictEqual(mapCategoryToPhase('verification', workflow, 'full'), null);
     assert.strictEqual(mapCategoryToChainPhase('spec', ['coding', 'review'], 'full'), null);
     const custom: WorkflowSpec = { schema_version: '1.2', name: 'custom', artifacts: [{ id: 'build', scope: 'feature', requires: [], obligation_provider_id: 'obligations.coding' }, { id: 'unit-check', scope: 'feature', requires: ['build'], obligation_provider_id: 'obligations.ut' }] };
-    assert.strictEqual(mapCategoryToPhase('coding', custom, 'full'), 'build');
-    assert.strictEqual(mapCategoryToPhase('verification', custom, 'full'), 'unit-check');
+    assert.strictEqual(mapCategoryToPhase('coding', custom, 'full'), null, 'a provider label without its actual Skill capability cannot create an executable correction entry');
+    const available = phaseContractIndex(loadFeatureContracts(FRAMEWORK));
+    const skillContracts = new Map([['build', available.get('coding')!], ['unit-check', available.get('ut')!]]);
+    assert.strictEqual(mapCategoryToPhase('coding', custom, 'full', { skillContracts }), 'build');
+    assert.strictEqual(mapCategoryToPhase('verification', custom, 'full', { skillContracts }), 'unit-check');
     const scope = scopeFor(['coding', 'review', 'ut', 'testing']);
     const routed = classifyCorrection({ answers: { requirement_changed: false, contract_changed: false, code_change_needed: false }, spec: workflow, track: 'full', closedPhases: ['review', 'ut', 'testing'], context: { executionScope: scope, target: { owner: 'ut' } } });
     assert.strictEqual(routed.root_layer, 'ut'); assert.deepStrictEqual(routed.revalidate.map(item => item.phase), ['ut', 'testing']);

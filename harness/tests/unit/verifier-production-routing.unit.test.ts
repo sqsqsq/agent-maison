@@ -46,7 +46,7 @@ import { buildGoalManifestFromInput } from '../../scripts/utils/goal-manifest';
 import { resolveResumedBudget, loadAuthoritativeEvents } from '../../scripts/utils/goal-runner-phase';
 import { buildVerifierMaterialView } from '../../scripts/utils/verifier-material';
 import { computeGateFingerprint } from '../../scripts/utils/gate-fingerprint';
-import { finalizePhaseClosure } from '../../scripts/utils/phase-closure-finalizer';
+import { finalizePhaseClosure, preparePhaseRepairFeedback } from '../../scripts/utils/phase-closure-finalizer';
 import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
 import { makeVerifierProject, reportsDirOf, rmDir, writeFile } from '../utils/verifier-project-fixture';
 import type { CheckResult, HarnessRunSummary, Phase, ScriptReport } from '../../scripts/utils/types';
@@ -648,22 +648,23 @@ function caseE_repairCandidatesSubjectAnchoring(): void {
     });
     const receiptRel = 'doc/features/demo/ut/phase-completion-receipt.md';
     writeFile(path.join(root, receiptRel), '# receipt\n');
-    const finalized = finalizePhaseClosure({
+    const feedback = preparePhaseRepairFeedback({ projectRoot: root, frameworkRoot: FRAMEWORK_ROOT, feature: 'demo', phase: 'ut' });
+    let refused = '';
+    try { finalizePhaseClosure({
       projectRoot: root,
       frameworkRoot: FRAMEWORK_ROOT,
       feature: 'demo',
       phase: 'ut',
       blockerCount: 0,
       persistPhaseState: () => {},
-    });
-    const closed = finalized.summary as HarnessRunSummary;
-    assert(closed.closure_status === 'closed', '前提：应真的闭环');
-    assert(closed.verifier_subject_id === subjectB, '闭环不得改变当前 subject');
+    }); } catch (error) { refused = (error as Error).message; }
+    assert(refused.includes('open_finding:device_ac_delegation'), '真实独核发现未修复不得闭环：' + refused);
+    const closed = JSON.parse(fs.readFileSync(path.join(dir, 'summary.json'), 'utf8')) as HarnessRunSummary;
+    assert(closed.closure_status !== 'closed', '原负面业务事实必须保持未完成');
+    assert(closed.verifier_subject_id === subjectB, '反馈准备不得改变当前 subject');
     assert(
-      (closed.repair_candidates ?? []).length > 0,
-      'closed summary 必须带上按**当前已验真证据**重算的候选——' +
-        '闭环改走 --sync-closure 后，首轮 writer 那次（verifier 还没跑）是唯一机会的话，' +
-        `verifier 依赖的候选就永远进不了闭环产物：${JSON.stringify(closed.repair_candidates)}`,
+      (feedback?.repairCandidates ?? []).length > 0,
+      '显式准备须提供当前已验真发现的候选，拒绝完成不得吞掉它：' + JSON.stringify(feedback),
     );
   } finally {
     rmDir(root);
@@ -744,20 +745,24 @@ function caseE2_closureRecomputeKeepsFailureKind(): void {
     });
     const receiptRel = 'doc/features/demo/ut/phase-completion-receipt.md';
     writeFile(path.join(root, receiptRel), '# receipt\n');
-    const finalized = finalizePhaseClosure({
+    const feedback = preparePhaseRepairFeedback({ projectRoot: root, frameworkRoot: FRAMEWORK_ROOT, feature: 'demo', phase: 'ut' });
+    let refused = '';
+    try { finalizePhaseClosure({
       projectRoot: root,
       frameworkRoot: FRAMEWORK_ROOT,
       feature: 'demo',
       phase: 'ut',
       blockerCount: 0,
       persistPhaseState: () => {},
-    });
-    const closed = finalized.summary as HarnessRunSummary;
-    const got = (closed.repair_candidates ?? []).find((c) => c.id === 'ut_product_assertion_failure');
+    }); } catch (error) { refused = (error as Error).message; }
+    assert(refused.includes('open_finding:ut_product_assertion_failure'), '实际产品失败不得闭环：' + refused);
+    const closed = JSON.parse(fs.readFileSync(path.join(dir, 'summary.json'), 'utf8')) as HarnessRunSummary;
+    assert(closed.closure_status !== 'closed', '产品失败仍未修复');
+    const got = (feedback?.repairCandidates ?? []).find((c) => c.id === 'ut_product_assertion_failure');
     assert(
       Boolean(got),
       '闭环重算必须保留机器归因（failure_kind=code_regression）——字段名写错会让这条候选静默消失：' +
-        JSON.stringify(closed.repair_candidates),
+        JSON.stringify(feedback?.repairCandidates),
     );
     assert(got?.category === 'coding', `候选须归到 coding，实得 ${got?.category}`);
   } finally {
@@ -1115,7 +1120,7 @@ function caseH_diagnosisEligibilityAndPromptNotice(): void {
           repairDiagnosis: { failedCheckIds: ['negative_verdict_closure'], reason: 'test-reason-sentinel' },
         },
       );
-      assert(withNotice.includes('本轮为产品失败诊断'), '诊断分支必须在正文附加说明');
+      assert(withNotice.includes('本轮为独立问题诊断'), '诊断分支必须在正文附加说明');
       assert(withNotice.includes('negative_verdict_closure'), '必须列出已放行的失败 check');
       assert(withNotice.includes('test-reason-sentinel'), '必须转述放行理由');
       assert(/blocker_count/.test(withNotice), '必须明确终态计数口径（D3）');
@@ -1123,18 +1128,19 @@ function caseH_diagnosisEligibilityAndPromptNotice(): void {
       // 例外句（同一事实的两处承载）不得再断言"无 BLOCKER SKIP"，须用同一新短语。
       const NA_SKIP_PHRASE = '也没有未标注为已确认不适用的 BLOCKER SKIP';
       assert(!withNotice.includes('没有**其它 BLOCKER 级 FAIL/SKIP'), '诊断说明不得残留旧句"无 BLOCKER SKIP"');
-      assert(withNotice.includes(NA_SKIP_PHRASE), `诊断说明须含新短语：${NA_SKIP_PHRASE}`);
+      assert(withNotice.includes('其它 FAIL、SKIP、未解析输入以及设备/编译/工具缺口以原报告为准，仍须分别处理。'), '诊断不得将其它缺口当作已满足');
+      assert(withNotice.includes('不能覆盖其它未解决的问题或缺失执行'), '对应待办的有效反证不能关闭其它未完项');
       const verifyUtTpl = fs.readFileSync(path.join(HARNESS_ROOT, 'prompts', 'verify-ut.md'), 'utf-8');
       assert(!verifyUtTpl.includes('且没有其它 BLOCKER FAIL/SKIP'), 'verify-ut.md 例外句不得残留旧句');
       assert(verifyUtTpl.includes(NA_SKIP_PHRASE), `verify-ut.md 例外句须含新短语：${NA_SKIP_PHRASE}`);
       const onDisk = fs.readFileSync(path.join(reportsDirOf(root, 'demo', 'review'), 'ai-prompt.md'), 'utf-8');
-      assert(onDisk.includes('本轮为产品失败诊断'), '落盘的 ai-prompt.md 同样带说明（verifier 读的是磁盘原件）');
+      assert(onDisk.includes('本轮为独立问题诊断'), '落盘的 ai-prompt.md 同样带说明（verifier 读的是磁盘原件）');
 
       const without = assembleAIPrompt(
         fakeHarness, root, 'review' as Phase, 'demo', [], '{"checks":[]}', 'rule: {}',
         undefined, undefined, FRAMEWORK_ROOT, { verifierPromptRel: rel },
       );
-      assert(!without.includes('本轮为产品失败诊断'), '常规验证请求的正文一字不变');
+      assert(!without.includes('本轮为独立问题诊断'), '常规验证请求的正文一字不变');
     } finally {
       fs.rmSync(fakeHarness, { recursive: true, force: true });
       rmDir(root);

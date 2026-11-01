@@ -503,6 +503,24 @@ const cases: Array<{ name: string; run: () => void }> = [
   },
 ];
 
+cases.push({ name: 'P2 registered native failure is one known repair, not another unknown quality axis', run() {
+  const phase = { phase: 'testing', verdict: 'FAIL', schemaCurrent: true, closureCommitted: false,
+    checks: [{ id: 'native_assertion', status: 'FAIL' as const, severity: 'BLOCKER' as const }],
+    openFindings: [{ id: 'native_assertion', detail: 'the executed case still fails', owner: 'coding', evidence: ['case:TC-1#step:0'] }],
+    axes: { functional: { applicable: true, required_for_release: true, verdict: 'FAIL', source_checks: ['native_assertion'] } } };
+  const known = resolveCurrentDisposition({ endpoint: 'request', phases: [phase] });
+  assert.strictEqual(known.completionBlocking.length, 1);
+  assert.strictEqual(known.completionBlocking[0].action, 'repair');
+  assert.strictEqual(known.completionBlocking[0].owner, 'coding');
+  assert.deepStrictEqual(known.completionBlocking[0].evidence, ['case:TC-1#step:0']);
+  const unknown = resolveCurrentDisposition({ endpoint: 'request', phases: [{ ...phase,
+    axes: { functional: { ...phase.axes.functional, source_checks: ['another_check'] } } }] });
+  assert(unknown.completionBlocking.some(problem => problem.id === 'quality_axis_verified' && problem.action === 'verify'));
+  const unverified = resolveCurrentDisposition({ endpoint: 'request', phases: [{ ...phase,
+    openFindings: [{ ...phase.openFindings[0], verificationRequired: true }] }] });
+  assert(unverified.completionBlocking.some(problem => problem.action === 'verify'));
+} });
+
 export function runAll(): UnitCaseResult[] {
   const out: UnitCaseResult[] = [];
   for (const c of cases) {

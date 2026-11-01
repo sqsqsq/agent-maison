@@ -8,9 +8,11 @@ import {
   issue,
   nonEmptyString,
 } from './component-blueprint-model';
-import type { CurrentScopeItem } from './blueprint-requirement-traceability';
+import { resolveCurrentScopeSource, type CurrentScopeItem } from './blueprint-requirement-traceability';
 import { resolveAdmittedModules } from './component-assets';
 import { loadGlossary, lookupTerm } from './glossary-parser';
+import { createAppViewInstances } from './blueprint-views';
+import { currentBlueprintSliceId } from './blueprint-admission';
 
 export interface DiscoveryInput {
   assertion_id: string;
@@ -128,6 +130,76 @@ export function buildDiscoveryBundle(inputs: DiscoveryInput[]): BlueprintRecord 
   return { source_fingerprint: fingerprintDiscoveryInputs(inputs), facts, conflicts };
 }
 
+/** Use the existing source resolver; an unreadable source stays visible for its original validator. */
+export function prepareBlueprintSourceItems(projectRoot: string, sourceRefs: readonly string[], observedAt: string): CurrentScopeItem[] {
+  return [...new Set(sourceRefs)].map(sourceRef => {
+    let sourceSha: string | undefined;
+    try { sourceSha = resolveCurrentScopeSource(projectRoot, sourceRef).source_sha256; }
+    catch { /* Keep the source and missing hash so the shared validator reports the actual gap. */ }
+    return {
+      item_id: `requirement:${crypto.createHash('sha256').update(sourceRef).digest('hex')}`,
+      kind: 'requirement', source_ref: sourceRef,
+      ...(sourceSha ? { source_sha256: sourceSha } : {}),
+      provenance: { source_kind: 'requirement', source_ref: sourceRef, observed_at: observedAt,
+        evidence_strength: 'authoritative', extraction_method: 'runtime_requirement_source' },
+    };
+  });
+}
+
+/** Prepare known structure before authoring; no applicability, decision or answer is inferred. */
+export function prepareBlueprintDesignDraft(blueprint: BlueprintRecord | undefined, context: {
+  blueprintId: string; componentId?: string; sourceRef?: string; observedAt?: string;
+  currentScopeItems?: readonly CurrentScopeItem[];
+}): BlueprintRecord {
+  const draft = structuredClone(blueprint ?? {});
+  if (draft.artifact === undefined) draft.artifact = 'component-blueprint@1';
+  if (draft.blueprint_id === undefined) draft.blueprint_id = context.blueprintId;
+  if (draft.component_id === undefined) draft.component_id = context.componentId ?? context.blueprintId;
+  if (draft.revision === undefined) draft.revision = 1;
+  if (draft.design_views === undefined || Array.isArray(draft.design_views)) {
+    const views = asRecords(draft.design_views);
+    const generated = createAppViewInstances(Object.fromEntries(views.map(view => [String(view.view_id), view])));
+    draft.design_views = [
+      ...(Array.isArray(draft.design_views) ? draft.design_views : []).map(value => {
+        const view = asRecord(value);
+        return view ? { ...generated.find(seed => seed.view_id === view.view_id), ...view } : value;
+      }),
+      ...generated.filter(seed => !views.some(view => view.view_id === seed.view_id)),
+    ];
+  }
+  if (draft.discovery === undefined) draft.discovery = {};
+  const discovery = asRecord(draft.discovery);
+  if (discovery) {
+    const inputs = asRecords(discovery.facts).map(fact => ({ assertion_id: String(fact.fact_id ?? ''), subject: fact.subject, value: fact.value,
+      ...asRecord(fact.provenance) })) as DiscoveryInput[];
+    const bundle = buildDiscoveryBundle(inputs);
+    if (discovery.facts === undefined) discovery.facts = bundle.facts;
+    if (discovery.conflicts === undefined) discovery.conflicts = bundle.conflicts;
+    if (discovery.inputs === undefined) discovery.inputs = { current_scope_items: [] };
+    const inputsRecord = asRecord(discovery.inputs);
+    if (inputsRecord && (inputsRecord.current_scope_items === undefined || Array.isArray(inputsRecord.current_scope_items))) {
+      const items = inputsRecord.current_scope_items === undefined ? [] : inputsRecord.current_scope_items as unknown[];
+      for (const item of context.currentScopeItems ?? []) {
+        const current = asRecords(items).find(existing => existing.source_ref === item.source_ref);
+        if (current) {
+          if (current.source_sha256 === undefined && item.source_sha256) current.source_sha256 = item.source_sha256;
+        } else items.push(structuredClone(item));
+      }
+      inputsRecord.current_scope_items = items;
+    }
+    if (discovery.requirement_traceability === undefined) discovery.requirement_traceability = [];
+  }
+  for (const key of ['relations', 'contracts', 'providers', 'derived_results']) if (draft[key] === undefined) draft[key] = [];
+  if (draft.decisions_and_gaps === undefined) draft.decisions_and_gaps = { decisions: [], gaps: [] };
+  if (draft.app_lens === undefined) draft.app_lens = {};
+  if (draft.review_summary === undefined) draft.review_summary = {};
+  if (draft.provenance === undefined && context.sourceRef && context.observedAt) draft.provenance = {
+    source_kind: 'requirement', source_ref: context.sourceRef, observed_at: context.observedAt,
+    evidence_strength: 'authoritative', extraction_method: 'runtime_design_preparation',
+  };
+  return draft;
+}
+
 export function discoveryHasTrustedCurrentFacts(discovery: BlueprintRecord): boolean {
   return asRecords(discovery.facts).some(fact => {
     const provenance = fact.provenance as BlueprintRecord | undefined;
@@ -173,7 +245,7 @@ export function validateTerminologyFacts(blueprint: BlueprintRecord, projectRoot
   const admitted = projectRoot ? resolveAdmittedModules(projectRoot, blueprint, architecture) : undefined;
   const glossary = projectRoot ? loadGlossary(projectRoot) : undefined;
   const gaps = asRecords(asRecord(blueprint.decisions_and_gaps)?.gaps);
-  const currentSliceId = asRecord(asRecord(asRecord(blueprint.review_summary)?.admission)?.current_slice)?.slice_id;
+  const currentSliceId = currentBlueprintSliceId(blueprint);
   facts.forEach((fact, index) => {
     if (!String(fact.subject ?? '').startsWith('term:')) return;
     const at = `$.discovery.facts[${index}]`;

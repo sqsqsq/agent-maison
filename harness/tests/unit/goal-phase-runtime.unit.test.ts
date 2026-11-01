@@ -29,6 +29,7 @@ import {
 import {
   runGoalRuntimeChain,
   setupGoalRuntimeHost,
+  backdateLastRunEnd,
   type RunProbe,
   PRODUCT_FILE,
 } from './goal-runner-testing-integrity.unit.test';
@@ -40,8 +41,12 @@ import {
 import { resolveGoalRunBaseline } from '../../scripts/utils/goal-run-baseline';
 import { resolveGoalRunHeadSha } from '../../scripts/utils/goal-run-creation';
 import { writeHandoffRequest } from '../../scripts/utils/goal-handoff';
-import { runGoalModeSessionStep } from '../../scripts/goal-mode-entry';
+import { runGoalModeSessionStep as runGoalModeSessionStepUnchecked } from '../../scripts/goal-mode-entry';
 import { readSessionExecution, acceptedSessionReport } from '../../scripts/utils/session-execution-handoff';
+import { withRuntimeTest, type RuntimeTestControl } from '../utils/runtime-test-control';
+const runGoalModeSessionStep = (options: Parameters<typeof runGoalModeSessionStepUnchecked>[0], testControl: RuntimeTestControl = {}) =>
+  withRuntimeTest({ root: options.projectRoot, ...testControl }, () => runGoalModeSessionStepUnchecked(options));
+
 
 export interface UnitCaseResult { name: string; ok: boolean; error?: string }
 interface Case { name: string; run: () => void | Promise<void> }
@@ -108,6 +113,7 @@ const cases: Case[] = [{
     let injected = false;
     try {
       try { await runGoalRuntimeChain(root, { adapter: 'codex', runId, freshEndPhase: 'spec', viaSessionStep: true,
+        testControl: { expectedInterruption: 'injected unbound report commit interruption' },
         onSpec: () => { nodeFs.appendFileSync = ((...args: Parameters<typeof fs.appendFileSync>) => {
           if (!injected && path.basename(String(args[0])) === 'events.jsonl' && String(args[1]).includes('"type":"agent_invoke_end"')) { injected = true; throw new Error('injected unbound report commit interruption'); }
           return append(...args);
@@ -142,6 +148,7 @@ const cases: Case[] = [{
     try {
       try {
         await runGoalRuntimeChain(root, { adapter: 'codex', runId, freshEndPhase: 'plan', viaSessionStep: true,
+          testControl: { expectedInterruption: 'injected plan receipt interruption' },
           onPlan: () => {
             fs.appendFileSync(resolveFeatureArtifact(root, 'bc-openCard', 'contracts.yaml').actualPath, '\n# original plan output\n');
             nodeFs.appendFileSync = ((...args: Parameters<typeof fs.appendFileSync>) => {
@@ -190,6 +197,7 @@ const cases: Case[] = [{
       try {
         try {
           await runGoalRuntimeChain(root, { adapter: 'codex', runId, freshEndPhase: 'spec', viaSessionStep: true,
+            testControl: { expectedInterruption: 'injected receipt' },
             onSpec: () => {
               nodeFs.appendFileSync(path.join(root, 'doc/features/bc-openCard/spec/spec.md'), '\nOriginal executor output before report.\n');
               nodeFs.appendFileSync = ((...args: Parameters<typeof fs.appendFileSync>) => {
@@ -383,11 +391,39 @@ const cases: Case[] = [{
         assert(verdict?.blocker_signature !== 'agent_timeout@ut', JSON.stringify(verdict));
         assert(String(verdict?.harness_error_excerpt).includes('CURRENT_NO_SUMMARY_1'), JSON.stringify(verdict));
         assert(!String(verdict?.harness_error_excerpt).includes('\n'), 'event diagnostic must remain one line');
+        assert(probe.exitCode !== 0 && probe.harnessPhases.filter(phase => phase === 'ut').length === 1,
+          'a failed gate without a conclusion must naturally leave the runtime instead of repeating unchanged checks');
+        assert(probe.invokedPhases.filter(phase => phase === 'ut').length === 1
+          && probe.events.some(event => event.type === 'phase_halt' && event.run_disposition === 'WAITING')
+          && !probe.events.some(event => event.type === 'run_end' && event.status === 'INTERRUPTED'),
+          'the original completed author and an actionable recovery exit must survive without external quiesce');
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }
     },
   },
+  ...(['tool', 'input'] as const).map(recovery => ({
+    name: `P2 missing gate conclusion naturally resumes after real ${recovery} recovery without another author`,
+    run: async () => {
+      const root = setupGoalRuntimeHost('codex').root;
+      let unavailable = true;
+      const options = { adapter: 'codex', runId: `absent-summary-recovery-${recovery}`, freshEndPhase: 'spec',
+        onHarnessFailureWithoutSummary: ({ phase }: { phase: string }) => phase === 'spec' && unavailable ? 'CURRENT_WRITER_UNAVAILABLE' : null };
+      try {
+        const held = await runGoalRuntimeChain(root, options);
+        assert(held.exitCode !== 0 && held.invokedPhases.join(',') === 'spec' && held.harnessPhases.join(',') === 'spec',
+          'the first gate must run and then return its real unresolved conclusion');
+        unavailable = false;
+        if (recovery === 'input') fs.appendFileSync(path.join(root, PRODUCT_FILE), '\n// restored gate input\n');
+        backdateLastRunEnd(root, path.basename(held.reportDir));
+        const resumed = await runGoalRuntimeChain(root, { ...options, resume: path.basename(held.reportDir), forceResume: true, skipLegacySeal: true });
+        assert(resumed.exitCode === 0 && resumed.invokedPhases.length === 0 && resumed.harnessPhases.join(',') === 'spec',
+          JSON.stringify({ exit: resumed.exitCode, authors: resumed.invokedPhases, gates: resumed.harnessPhases,
+            halt: resumed.events.filter(event => event.type === 'phase_halt' || event.type === 'run_end') }));
+        assert(!resumed.events.some(event => event.type === 'run_end' && event.status === 'INTERRUPTED'), 'recovery relied on an external stop');
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    },
+  })),
   {
     name: 'P2-T1/T4 stale content report never drives three current UT preflight failures',
     run: async () => {
@@ -450,7 +486,13 @@ const cases: Case[] = [{
         }
         assert(probe.utPrompts[1].includes('FRESH_COMPILE_'), 'first retry must consume the fresh failure');
         assert(probe.utPrompts[2].includes('CURRENT_BINDING_2'), 'second retry must consume the current stale-attempt diagnostic');
-        assert(!oldIds.some(id => probe.utPrompts[2].includes(id)), `old signature drove later retry: ${probe.utPrompts[2]}`);
+        const currentFailure = probe.utPrompts[2].match(/Last attempt of this phase failed\. The harness verdict and BLOCKER evidence:\n\n```\n([\s\S]*?)\n```/)?.[1];
+        assert(currentFailure?.includes('CURRENT_BINDING_2') && !oldIds.some(id => currentFailure.includes(id)),
+          `old signature drove the current retry evidence: ${currentFailure}`);
+        const retainedFeedback = probe.utPrompts[2].split('## 当前工作单元的全部反馈\n')[1] ?? '';
+        assert(oldIds.every(id => retainedFeedback.includes(id)), 'a later checker failure silently discharged the original verified failures');
+        assert(probe.exitCode !== 0 && probe.invokedPhases.filter(phase => phase === 'ut').length === 3
+          && !probe.events.some(event => event.type === 'run_end' && event.status === 'INTERRUPTED'), 'stale-check recovery must naturally report its real failure');
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }
@@ -1145,6 +1187,7 @@ const cases: Case[] = [{
       try {
         let interrupted = false;
         try { await runGoalRuntimeChain(root, { adapter: 'codex', runId, freshEndPhase: 'spec', viaSessionStep: true,
+          testControl: { expectedInterruption: 'test cut before any execution report' },
           onSpec: () => { throw new Error('test cut before any execution report'); },
         }); } catch (error) { interrupted = String(error).includes('test cut'); }
         assert(interrupted, 'the test did not leave its real signed request pending');

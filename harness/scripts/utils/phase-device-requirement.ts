@@ -13,7 +13,7 @@
 // 未声明 = 不需要设备（generic profile 天然全 false，行为与本改动前一致）。
 // ============================================================================
 
-import { isCapabilitySkipped } from '../../capability-registry';
+import { getCapability, isCapabilitySkipped } from '../../capability-registry';
 import type { CapabilityKey, HarnessResolvedProfile } from './types';
 import type { FeaturePhase } from './phase-transition-policy';
 import { PHASE_CAPABILITY_MAP } from './phase-personal-prerequisites';
@@ -42,6 +42,14 @@ export function phaseRequiresDevice(
   if (declared.size === 0) return false;
   const caps = PHASE_CAPABILITY_MAP[phase as FeaturePhase] ?? [];
   return caps.some(capKey => declared.has(capKey) && !isCapabilitySkipped(resolved, capKey));
+}
+
+/** Native providers own reuse/force-fresh even when their transport needs no physical device. */
+export function phaseHasNativeExecution(phase: string, resolved: HarnessResolvedProfile): boolean {
+  return (PHASE_CAPABILITY_MAP[phase as FeaturePhase] ?? []).some(key => {
+    const capability = getCapability(resolved, key);
+    return !!capability && capability.severity !== 'SKIP';
+  });
 }
 
 /** 链路中任一 phase 需要设备（goal 启动期决定是否需要 device policy 授权） */

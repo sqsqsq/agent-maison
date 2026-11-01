@@ -14,6 +14,9 @@ import {
   hasIntegrityBlocker,
   isAllFrameworkBugBlockers,
   shouldHaltNoProgress,
+  evaluateCompletionProgress,
+  completionProblemSignature,
+  type CompletionEvaluation,
   snapshotArtifacts,
   stripRetiredFrameworkIntegrityForCurrentRun,
   SIGNATURE_HALT_KINDS,
@@ -71,11 +74,26 @@ import { clearFrameworkConfigCache } from '../../config';
 import { loadResolvedProfile } from '../../profile-loader';
 import type { GoalManifest } from '../../scripts/utils/goal-manifest';
 import type { UnitCaseResult } from '../run-unit';
+import { resolveCurrentDisposition, type CurrentDispositionProblem } from '../../scripts/utils/check-disposition';
 
 const FRAMEWORK_ROOT = path.resolve(__dirname, '../../..');
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(message);
+}
+
+function completionEvaluation(hash: string, problems: CurrentDispositionProblem[], key = 'request/auth/acceptance-v1'): CompletionEvaluation {
+  return {
+    acceptanceKey: key,
+    inputs: { 'src/business.ts': { exists: true, contentHash: hash.repeat(64) } },
+    disposition: resolveCurrentDisposition({ endpoint: 'request', phases: [], additionalProblems: problems }),
+    completed: true,
+  };
+}
+
+function verifiedProblem(ref: string, id = `open_finding:${ref}`): CurrentDispositionProblem {
+  return { phase: 'review', id, action: 'repair', affects: 'completion', severity: 'BLOCKER',
+    detail: `verified failure of ${ref}`, files: ['src/business.ts'], evidence: [ref] };
 }
 
 const MINIMAL_MANIFEST: GoalManifest = {
@@ -144,6 +162,151 @@ function loadTestResolvedProfile(root: string) {
 export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
   const cases: Array<{ name: string; run: () => void }> = [
+    {
+      name: 'P2 check-family progress compares completed local facts while preserving other milestones and P1 constraints in the full view',
+      run: () => {
+        const repair = verifiedProblem('acceptance:AC-1');
+        const other: CurrentDispositionProblem = { phase: 'testing', id: 'open_finding:pending-other', action: 'verify', affects: 'completion', severity: 'BLOCKER', detail: 'independent verification pending' };
+        const protectedWrite: CurrentDispositionProblem = { phase: '*', id: 'phase_write_containment_unresolved', action: 'verify', affects: 'completion', severity: 'BLOCKER', detail: 'P1 recovery remains required' };
+        const previous = { ...completionEvaluation('a', [repair, other, protectedWrite]), checkFamilies: ['review'] };
+        const current = { ...completionEvaluation('b', [repair, other, protectedWrite]), checkFamilies: ['review'] };
+        const result = evaluateCompletionProgress({ previous, current, feedbackDelivered: true });
+        assert(result.halt && result.evaluation === current, '其它里程碑未知永久遮挡了当前已完成检查的收敛');
+        assert(!current.disposition.completionEligible && current.disposition.completionBlocking.length === 3, '比较slice清掉了其它必需未知或P1写界');
+        const otherChanged = { ...completionEvaluation('a', [repair, { ...other, id: 'required_provider', action: 'wait' }, protectedWrite]), checkFamilies: ['review'] };
+        const reused = evaluateCompletionProgress({ previous, current: otherChanged, feedbackDelivered: true });
+        assert(reused.reused && !reused.halt && reused.evaluation === otherChanged, '仅其它范围事实变动制造了本族新评估或丢失完整事实');
+        const utFailure = { ...verifiedProblem('acceptance:AC-2/case:UT-1'), phase: 'ut' };
+        const oldFullView = { ...completionEvaluation('a', [repair, utFailure, protectedWrite]), checkFamilies: ['review'] };
+        const globallyImproved = { ...completionEvaluation('b', [repair, protectedWrite]), checkFamilies: ['review'] };
+        assert(!evaluateCompletionProgress({ previous: oldFullView, current: globallyImproved, feedbackDelivered: true }).halt, '其它族已核实旧义务真实闭合时仍因本族旧错中断');
+        const utUnknown = { ...completionEvaluation('b', [repair, { ...utFailure, id: 'required_ut_check', action: 'verify' }, protectedWrite]), checkFamilies: ['review'] };
+        assert(evaluateCompletionProgress({ previous: oldFullView, current: utUnknown, feedbackDelivered: true }).halt, '其它族unknown被冒充已解决，或永久遮挡本族已完成比较');
+      },
+    },
+    {
+      name: 'P2 check-family progress keeps local unknowns and different family history incomparable',
+      run: () => {
+        const repair = verifiedProblem('acceptance:AC-1');
+        const pending: CurrentDispositionProblem = { phase: 'format', source_phase: 'review', id: 'review_result', action: 'verify', affects: 'completion', severity: 'BLOCKER', detail: 'local verification is unfinished' };
+        const previous = { ...completionEvaluation('a', [repair, pending]), checkFamilies: ['review'] };
+        const current = { ...completionEvaluation('b', [repair, pending]), checkFamilies: ['review'] };
+        assert(!evaluateCompletionProgress({ previous, current, feedbackDelivered: true }).halt, '本族待验证被假作已完成失败');
+        const different = { ...previous, checkFamilies: ['coding'] };
+        const ready = { ...completionEvaluation('c', [repair]), checkFamilies: ['review'] };
+        const rebase = evaluateCompletionProgress({ previous: different, current: ready, feedbackDelivered: true });
+        assert(rebase.evaluation === ready && !rebase.halt, '不同检查范围借用了旧基线');
+        const middle = { ...completionEvaluation('b', [verifiedProblem('acceptance:AC-2')]), checkFamilies: ['review'] };
+        assert(!evaluateCompletionProgress({ previous: middle, current: ready, history: [{ ...ready, checkFamilies: ['coding'] }], feedbackDelivered: true }).halt, '不同检查族历史被借作往复证据');
+      },
+    },
+    {
+      name: 'P2 completion progress: unchanged failed facts reuse the same evaluation without advancing or completing',
+      run: () => {
+        const problem = verifiedProblem('acceptance:AC-1');
+        const previous = completionEvaluation('a', [problem]);
+        const current = completionEvaluation('a', [{ ...problem, id: 'open_finding:renumbered', detail: 'rewritten prose' }]);
+        const result = evaluateCompletionProgress({ previous, current, feedbackDelivered: true });
+        assert(result.reused && result.evaluation === previous && !result.halt, '重复读取不应购买新的比较窗口或中断');
+        assert(!result.evaluation!.disposition.completionEligible && result.evaluation!.disposition.completionBlocking.length === 1, '复用清掉了原FAIL');
+        const returned = evaluateCompletionProgress({ previous, current, feedbackDelivered: true, authorReturned: true });
+        assert(!returned.reused && returned.evaluation === current && returned.halt, '真实作者收反馈后交回且完整复验仍同差额，不能无限借复用避开收敛');
+        const noFeedback = evaluateCompletionProgress({ previous, current, feedbackDelivered: false, authorReturned: true });
+        assert(noFeedback.reused && !noFeedback.halt, '未送达必修反馈却借作者交回停机');
+        assert(!evaluateCompletionProgress({ previous, current: { ...current, completed: false }, feedbackDelivered: true, authorReturned: true }).halt,
+          '真实交回不能代替尚未完成的本族验证');
+      },
+    },
+    {
+      name: 'P2 completion progress: changed bytes with unchanged verified obligations halt only after feedback and completed verification',
+      run: () => {
+        const previous = completionEvaluation('a', [verifiedProblem('acceptance:AC-1')]);
+        const current = completionEvaluation('b', [verifiedProblem('acceptance:AC-1', 'open_finding:new-label')]);
+        assert(evaluateCompletionProgress({ previous, current, feedbackDelivered: true }).halt, '字节变化不能洗掉已完成核验的无验收改善');
+        assert(!evaluateCompletionProgress({ previous, current, feedbackDelivered: false }).halt, '反馈尚未送达就停了作者');
+        const unfinished = { ...current, completed: false };
+        const pending = evaluateCompletionProgress({ previous, current: unfinished, feedbackDelivered: true });
+        assert(!pending.halt && pending.evaluation === previous && !pending.reused, '未评完推进了比较基线');
+        const guard = { failureKind: 'code_regression' as const, priorBlockerSignature: 'legacy', currentBlockerSignature: 'legacy',
+          priorArtifactSnapshot: previous.inputs, currentArtifactSnapshot: current.inputs, previousEvaluation: previous, currentEvaluation: current };
+        assert(!shouldHaltNoProgress(guard), '薄兼容入口虚构反馈已送达');
+        assert(shouldHaltNoProgress({ ...guard, feedbackDelivered: true }), '布尔入口没有消费同一完成判据');
+      },
+    },
+    {
+      name: 'P2 completion progress: real subitem resolution or a new verified subitem can progress with the same count or no file edits',
+      run: () => {
+        const first = verifiedProblem('acceptance:AC-1/case:invalid_otp');
+        const second = verifiedProblem('acceptance:AC-2/case:expired_otp');
+        const previous = completionEvaluation('a', [first, second]);
+        const replaced = completionEvaluation('b', [second, verifiedProblem('acceptance:AC-3/case:locked_account')]);
+        assert(!evaluateCompletionProgress({ previous, current: replaced, feedbackDelivered: true }).halt, '同数量的真实子项变化被吞掉');
+        const evidenceResolved = completionEvaluation('a', [second]);
+        const result = evaluateCompletionProgress({ previous, current: evidenceResolved, feedbackDelivered: true });
+        assert(result.evaluation === evidenceResolved && !result.reused && !result.halt, '新的独立证据未能在无文件改动时关闭子项');
+        assert(completionProblemSignature(previous.disposition) !== completionProblemSignature(replaced.disposition), '同文件的不同真实对象被合并');
+      },
+    },
+    {
+      name: 'P2 completion progress: repeated A to B to A obligations pause, while an acceptance version change resets the window',
+      run: () => {
+        const first = completionEvaluation('a', [verifiedProblem('acceptance:AC-1')]);
+        const previous = completionEvaluation('b', [verifiedProblem('acceptance:AC-2')]);
+        const current = completionEvaluation('c', [verifiedProblem('acceptance:AC-1', 'open_finding:another-id')]);
+        assert(evaluateCompletionProgress({ previous, current, history: [first], feedbackDelivered: true }).halt, '问题往复通过重编号逃过收敛');
+        const otherVersion = completionEvaluation('d', [verifiedProblem('acceptance:AC-1')], 'request/auth/acceptance-v2');
+        assert(!evaluateCompletionProgress({ previous, current: otherVersion, history: [first], feedbackDelivered: true }).halt, '新验收借旧窗口停机');
+        assert(!evaluateCompletionProgress({ previous, current, history: [first, otherVersion], feedbackDelivered: true }).halt, '版本切换后借了更早的同名版本窗口');
+        assert(!evaluateCompletionProgress({ previous, current, history: [{ ...first, completed: false }], feedbackDelivered: true }).halt, '未完成历史被拿来证明问题往复');
+      },
+    },
+    {
+      name: 'P2 completion progress: unreadable or empty inputs cannot advance; a real new relevant set establishes a fresh baseline',
+      run: () => {
+        const previous = completionEvaluation('a', [verifiedProblem('acceptance:AC-1')]);
+        const current = completionEvaluation('b', [verifiedProblem('acceptance:AC-1')]);
+        for (const inputs of [{}, { 'src/business.ts': { exists: true, contentHash: '' } }] as import('../../scripts/utils/goal-failure-classifier').ArtifactSnapshot[]) {
+          const result = evaluateCompletionProgress({ previous, current: { ...current, inputs }, feedbackDelivered: true });
+          assert(result.evaluation === previous && !result.reused && !result.halt, '空/读失败被算成一次完成评估');
+        }
+        const first = evaluateCompletionProgress({ previous: { ...previous, completed: false }, current, feedbackDelivered: true });
+        assert(first.evaluation === current && !first.halt, '无可信旧完成结果时没有建立真实新基线');
+        const expanded = { ...current, inputs: { ...current.inputs, 'src/new.ts': { exists: true, contentHash: 'c'.repeat(64) } } };
+        assert(evaluateCompletionProgress({ previous, current: expanded, feedbackDelivered: true }).evaluation === expanded, '新增源码后永远卡在旧key集合unknown');
+        const unchanged = evaluateCompletionProgress({ previous: expanded, current: { ...expanded }, feedbackDelivered: true });
+        assert(unchanged.reused && !unchanged.halt, '新集合的重复读取没有复用');
+        const edited = { ...expanded, inputs: { ...expanded.inputs, 'src/new.ts': { exists: true, contentHash: 'd'.repeat(64) } } };
+        assert(evaluateCompletionProgress({ previous: expanded, current: edited, feedbackDelivered: true }).halt, '新可信集合后真实修改仍无改善未收敛');
+      },
+    },
+    {
+      name: 'P2 completion progress: findings without verified object refs remain unknown even if files or arbitrary labels repeat',
+      run: () => {
+        const problem = { ...verifiedProblem('acceptance:AC-1'), evidence: [] };
+        const previous = completionEvaluation('a', [problem]);
+        const current = completionEvaluation('b', [{ ...problem, id: 'open_finding:any-new-id', detail: 'different prose' }]);
+        assert(!evaluateCompletionProgress({ previous, current, feedbackDelivered: true }).halt, '只有同文件/文字就假定了同一真实子项');
+        assert(!evaluateCompletionProgress({ previous, current: { ...current, inputs: previous.inputs }, feedbackDelivered: true }).reused, '缺对象身份仍复用了不同未知发现');
+      },
+    },
+    {
+      name: 'P2 completion progress: wait verification disclosure and unrecovered write facts survive reuse and cannot be signed away',
+      run: () => {
+        const repair = verifiedProblem('acceptance:AC-1');
+        const previous = completionEvaluation('a', [repair]);
+        for (const action of ['verify', 'wait', 'disclose'] as const) {
+          const current = completionEvaluation('a', [repair, { phase: 'coding', id: action === 'verify' ? 'phase_write_containment_unresolved' : 'required_provider',
+            action, affects: action === 'disclose' ? 'release' : 'completion', severity: 'BLOCKER', detail: 'existing unresolved fact' }]);
+          const result = evaluateCompletionProgress({ previous, current, feedbackDelivered: true });
+          assert(!result.reused && !result.halt && result.evaluation === current, `${action}新事实被旧repair子集复用遮掉`);
+          assert(!current.disposition.completionEligible, '未恢复约束被签成完成');
+          if (action !== 'disclose') assert(!evaluateCompletionProgress({ previous: current,
+            current: { ...current, inputs: completionEvaluation('b', []).inputs }, feedbackDelivered: true }).halt, '尚待验证/等待被当成已完成验收失败');
+          const reused = evaluateCompletionProgress({ previous: current, current: { ...current }, feedbackDelivered: true });
+          assert(reused.reused && reused.evaluation === current && !reused.halt, '同事实复用不应清除未恢复约束');
+        }
+      },
+    },
     {
       name: 'classifyFailureKind: spec_file_exists → deterministic_gate',
       run: () => {
@@ -615,8 +778,8 @@ export function runAll(): UnitCaseResult[] {
         assert(passNoBlockers.verdict === 'PASS' && passNoBlockers.blockers.length === 0, '原始门禁结论不得被改写');
         const missing = { 'device-test-evidence.json': { exists: false, contentHash: '' } };
         const restored = { 'device-test-evidence.json': { exists: true, contentHash: 'actual-new-input' } };
-        assert(shouldHaltNoProgress({ failureKind: 'deterministic_gate_or_artifact_missing', priorBlockerSignature: inputGap.blockerSignature,
-          currentBlockerSignature: inputGap.blockerSignature, priorArtifactSnapshot: missing, currentArtifactSnapshot: missing }), '同缺口同输入使用既有无进展出口');
+        assert(!shouldHaltNoProgress({ failureKind: 'deterministic_gate_or_artifact_missing', priorBlockerSignature: inputGap.blockerSignature,
+          currentBlockerSignature: inputGap.blockerSignature, priorArtifactSnapshot: missing, currentArtifactSnapshot: missing }), '旧缺口签名不能假作已完成业务评估');
         assert(!shouldHaltNoProgress({ failureKind: 'deterministic_gate_or_artifact_missing', priorBlockerSignature: inputGap.blockerSignature,
           currentBlockerSignature: inputGap.blockerSignature, priorArtifactSnapshot: missing, currentArtifactSnapshot: restored }), '真实输入补齐仍允许原恢复通路继续');
         // ② 同① 但有 runtime 失败事实（超时/agent 失败/非零退出/closure 错误/可信缺陷任一）
@@ -967,7 +1130,7 @@ export function runAll(): UnitCaseResult[] {
       },
     },
     {
-      name: 'shouldHaltNoProgress: terminology + spec.md content change → no halt',
+      name: 'P2 shouldHaltNoProgress: terminology artifact changes without completed acceptance facts remain unknown',
       run: () => {
         const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'goal-term-'));
         const rel = 'doc/features/f/spec/spec.md';
@@ -986,57 +1149,61 @@ export function runAll(): UnitCaseResult[] {
             priorArtifactSnapshot: priorSnap,
             currentArtifactSnapshot: currentSnap,
           }),
-          'spec content progressed — should not halt',
+          '没有已完成验收事实，不能仅凭spec字节判断停机',
         );
         fs.rmSync(tmp, { recursive: true, force: true });
       },
     },
     {
-      name: 'shouldHaltNoProgress: same signature + missing file → halt',
+      name: 'P2 shouldHaltNoProgress: repeated missing-file result is reused without a new comparison',
       run: () => {
         const sig = 'spec_file_exists';
         const snap = { 'doc/features/f/spec/spec.md': { exists: false, contentHash: '' } };
+        const previous = { ...completionEvaluation('a', [verifiedProblem('artifact:spec.md')]), inputs: snap };
+        const current = { ...previous };
         assert(
-          shouldHaltNoProgress({
+          !shouldHaltNoProgress({
             failureKind: 'deterministic_gate_or_artifact_missing',
             priorBlockerSignature: sig,
             currentBlockerSignature: sig,
             priorArtifactSnapshot: snap,
             currentArtifactSnapshot: snap,
+            previousEvaluation: previous, currentEvaluation: current, feedbackDelivered: true,
           }),
-          'expected halt',
+          '同输入读取原失败不能推进比较窗口或停机',
         );
+        assert(evaluateCompletionProgress({ previous, current, feedbackDelivered: true }).reused, '真实缺文件结果也应复用');
       },
     },
     {
-      name: 'shouldHaltNoProgress: code_regression 相关集合未知时同签名重复即停（plan e7a2c4f1 §3.6 覆盖 1f3d7a92 §3.3 的有界重试出路）',
+      name: 'P2 shouldHaltNoProgress: unknown relevant targets cannot prove an evaluated lack of progress',
       run: () => {
         assert(
-          shouldHaltNoProgress({
+          !shouldHaltNoProgress({
             failureKind: 'code_regression',
             priorBlockerSignature: 'x',
             currentBlockerSignature: 'x',
             priorArtifactSnapshot: {},
             currentArtifactSnapshot: {},
           }),
-          '相关集合未知＝没解析出可修目标＝本阶段无路可走，不得再烧满 max_retries_per_phase',
+          '相关集合未知不能假装已完成的无改善评估',
         );
       },
     },
     {
-      name: 'shouldHaltNoProgress: code_regression 仅在相关集合已知且未变化时 halt，真实修复放行',
+      name: 'P2 shouldHaltNoProgress: legacy snapshots are diagnostic without completed acceptance facts',
       run: () => {
         const before = { 'src/a.ts': { exists: true, contentHash: 'a' } };
         for (const prior of [null, {}]) {
           assert(!shouldHaltNoProgress({
             failureKind: 'code_regression', priorBlockerSignature: 'case-fail', currentBlockerSignature: 'case-fail',
             priorArtifactSnapshot: prior, currentArtifactSnapshot: before, relevantEvidenceKnown: true,
-          }), '缺少可比 prior baseline 时必须保留有界重试');
+          }), '缺少可比 prior baseline 时保持未知，不判无进展');
         }
-        assert(shouldHaltNoProgress({
+        assert(!shouldHaltNoProgress({
           failureKind: 'code_regression', priorBlockerSignature: 'case-fail', currentBlockerSignature: 'case-fail',
           priorArtifactSnapshot: before, currentArtifactSnapshot: before, relevantEvidenceKnown: true,
-        }), '已知相关文件未变应提前收敛');
+        }), '只有旧签名/快照不得虚构已完成核验');
         assert(!shouldHaltNoProgress({
           failureKind: 'code_regression', priorBlockerSignature: 'case-fail', currentBlockerSignature: 'case-fail',
           priorArtifactSnapshot: before,
@@ -1069,52 +1236,52 @@ export function runAll(): UnitCaseResult[] {
       },
     },
     {
-      name: 'T6 shouldHaltNoProgress: toolchain 同 signature 重复 → halt（不吃视觉预算）',
+      name: 'P2 shouldHaltNoProgress: legacy toolchain signatures alone do not decide business convergence',
       run: () => {
         assert(
-          shouldHaltNoProgress({
+          !shouldHaltNoProgress({
             failureKind: 'toolchain',
             priorBlockerSignature: 'device_test_build',
             currentBlockerSignature: 'device_test_build',
             priorArtifactSnapshot: {},
             currentArtifactSnapshot: {},
           }),
-          'toolchain 反复应 halt',
+          '真实工具/环境等待由当前处置负责，不用旧signature冒充完成评估',
         );
       },
     },
     {
-      name: 'T6 shouldHaltNoProgress: capture 同 signature 重复 → halt',
+      name: 'P2 shouldHaltNoProgress: legacy capture signatures without a completed evaluation remain unknown',
       run: () => {
         assert(
-          shouldHaltNoProgress({
+          !shouldHaltNoProgress({
             failureKind: 'capture',
             priorBlockerSignature: 'visual_diff_capture',
             currentBlockerSignature: 'visual_diff_capture',
             priorArtifactSnapshot: {},
             currentArtifactSnapshot: {},
           }),
-          'capture 反复应 halt',
+          'capture旧签名不能证明验收无改善',
         );
       },
     },
     {
-      name: 'T6 shouldHaltNoProgress: visual_gap 同门禁 signature 重复（无改善）→ 熔断 halt',
+      name: 'P2 shouldHaltNoProgress: visual check IDs without actual comparable evaluations cannot halt',
       run: () => {
         assert(
-          shouldHaltNoProgress({
+          !shouldHaltNoProgress({
             failureKind: 'visual_gap',
             priorBlockerSignature: 'visual_diff|visual_diff_layout_divergence',
             currentBlockerSignature: 'visual_diff|visual_diff_layout_divergence',
             priorArtifactSnapshot: {},
             currentArtifactSnapshot: {},
           }),
-          'visual_gap 同门禁无改善应熔断',
+          '只比较视觉门禁ID没有验收差额事实',
         );
       },
     },
     {
-      name: 'T6 shouldHaltNoProgress: visual_gap signature 变化（移除一项门禁=有改善）→ 不 halt',
+      name: 'P2 shouldHaltNoProgress: changing legacy visual check labels cannot manufacture an evaluated halt',
       run: () => {
         assert(
           !shouldHaltNoProgress({
@@ -1124,7 +1291,7 @@ export function runAll(): UnitCaseResult[] {
             priorArtifactSnapshot: {},
             currentArtifactSnapshot: {},
           }),
-          'visual 门禁减少=有进展，应继续重试',
+          '仅有旧门禁签名变化，没有可比较的完成评估',
         );
       },
     },
@@ -2475,7 +2642,7 @@ export function runAll(): UnitCaseResult[] {
       },
     },
     {
-      name: 'P0-B shouldHaltNoProgress: agent_timeout 同专用 signature + 产物零变化 → halt；产物变化 → 续作',
+      name: 'P2 shouldHaltNoProgress: a transport timeout and byte snapshot are not a completed acceptance evaluation',
       run: () => {
         const sig = 'agent_timeout@spec';
         const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'goal-timeout-prog-'));
@@ -2485,14 +2652,14 @@ export function runAll(): UnitCaseResult[] {
         fs.writeFileSync(abs, 'partial-v1', 'utf-8');
         const snap1 = snapshotArtifacts(tmp, [rel]);
         assert(
-          shouldHaltNoProgress({
+          !shouldHaltNoProgress({
             failureKind: 'agent_timeout',
             priorBlockerSignature: sig,
             currentBlockerSignature: sig,
             priorArtifactSnapshot: snap1,
             currentArtifactSnapshot: snap1,
           }),
-          '零进展连续超时应熔断（不再空 signature 逃逸）',
+          '运输超时不得冒充完成评估而中断业务作者',
         );
         fs.writeFileSync(abs, 'partial-v2 更多章节', 'utf-8');
         const snap2 = snapshotArtifacts(tmp, [rel]);
@@ -2754,7 +2921,7 @@ export function runAll(): UnitCaseResult[] {
       },
     },
     {
-      name: 'P3-T12 identical signature with a known but unchanged relevant set halts on the second attempt; notes and timestamps are not progress',
+      name: 'P2 unchanged relevant inputs and notes do not manufacture a new completed evaluation from legacy signatures',
       run: () => {
         const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'jdg-t12-'));
         try {
@@ -2778,7 +2945,7 @@ export function runAll(): UnitCaseResult[] {
           assert(!artifactsProgressed(priorSnap, currentSnap), 'mtime 刷新不得算进展');
           const sig = 'testing::TC-005::assertion_mismatch';
           assert(
-            shouldHaltNoProgress({
+            !shouldHaltNoProgress({
               failureKind: 'code_regression',
               priorBlockerSignature: sig,
               currentBlockerSignature: sig,
@@ -2786,7 +2953,7 @@ export function runAll(): UnitCaseResult[] {
               currentArtifactSnapshot: currentSnap,
               relevantEvidenceKnown: related.length > 0,
             }),
-            '相关集合已知但零变化——第二次同签名即停（现状正确，本 plan 不放宽）',
+            '未提供完成评估，不能以重复读取旧快照中断作者',
           );
         } finally {
           fs.rmSync(tmp, { recursive: true, force: true });
@@ -2794,7 +2961,7 @@ export function runAll(): UnitCaseResult[] {
       },
     },
     {
-      name: 'P3-T13 an empty or unknown relevant set stops via the existing no_progress_guard with a "relevant targets unknown" reason instead of exhausting max_retries',
+      name: 'P2 unknown relevant targets preserve their diagnostic without a fabricated no-progress conclusion',
       run: () => {
         // 重放 a70eb7（i12/i13/i14）与 f829b8 的同签名序列形态：产品已修完，
         // 剩下的 3 次 testing 失败 signature 逐字相同、产物零变化、相关集合为空。
@@ -2815,7 +2982,7 @@ export function runAll(): UnitCaseResult[] {
           ['prior 为 null（首次可比基线缺失）', null, {}],
         ] as const) {
           assert(
-            shouldHaltNoProgress({
+            !shouldHaltNoProgress({
               failureKind: 'code_regression',
               priorBlockerSignature: sig,
               currentBlockerSignature: sig,
@@ -2823,7 +2990,7 @@ export function runAll(): UnitCaseResult[] {
               currentArtifactSnapshot: current,
               relevantEvidenceKnown: related.length > 0,
             }),
-            `${label}：相关集合未知/为空＝无可修目标，同签名重复即停，不得再烧满 max_retries_per_phase`,
+            `${label}：相关集合未知/为空，无法证明一次已完成的验收评估`,
           );
         }
         // 首次失败（无 prior signature）不得被这条收紧提前判死

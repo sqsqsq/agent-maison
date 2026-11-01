@@ -34,8 +34,9 @@ import * as path from 'path';
 
 import { featurePhaseReportsDir } from '../../config';
 import type { VerifierClosureRecord } from './types';
-import { diffVerifierMaterial, readVerifierMaterialOrNull } from './verifier-material';
+import { readVerifierMaterialOrNull, verifierMaterialsEquivalent, type VerifierMaterialView } from './verifier-material';
 import { parseResultBlock, SUBJECT_ID_PATTERN, verifierReportMdFilename } from './verifier-subject';
+import type { ResolvedPhaseInputs } from './capability-resolution';
 
 export function verifierReportMdPath(reportsDir: string, subjectId: string): string {
   return path.join(reportsDir, verifierReportMdFilename(subjectId));
@@ -71,6 +72,7 @@ export type LoadVerifierEvidenceResult =
 
 export interface LoadVerifierEvidenceOptions {
   frameworkRoot?: string;
+  resolvedInputs?: ResolvedPhaseInputs;
 }
 
 /** 恢复话术**唯一出处**：只指向重跑 verifier + 重写报告，绝不指向改文书。 */
@@ -148,15 +150,13 @@ export function loadVerifierEvidence(
 }
 
 /**
- * plan 07a41ec6 T7：本 phase 历史上**验真通过且 verdict=PASS** 的最新报告（按文件 mtime）。
- * 当前 subject 无报告时 check-receipt 用它沿用闭环（completed_with_prior_review）；
- * 从未 PASS 过 → null → 仍是 BLOCKER（至少要完整审一次）。
+ * Latest public, validated report. FAIL is a useful review baseline and is never hidden by an older PASS.
  */
-export function findPriorPassVerifierEvidence(
+export function findPriorVerifierEvidence(
   projectRoot: string,
   feature: string,
   phase: string,
-  opts?: LoadVerifierEvidenceOptions & { excludeSubject?: string | null },
+  opts?: LoadVerifierEvidenceOptions & { excludeSubject?: string | null; verdict?: 'PASS' | 'FAIL'; material?: VerifierMaterialView },
 ): VerifierEvidence | null {
   const dir = resolveReportsDir(projectRoot, feature, phase, opts?.frameworkRoot);
   if (!fs.existsSync(dir)) return null;
@@ -165,7 +165,8 @@ export function findPriorPassVerifierEvidence(
     const m = /^verifier\.report\.([0-9a-f]{64})\.md$/.exec(name);
     if (!m || m[1] === opts?.excludeSubject) continue;
     const loaded = loadVerifierEvidenceForSubject(projectRoot, feature, phase, m[1], opts);
-    if (!loaded.ok || loaded.evidence.verdict !== 'PASS') continue;
+    if (!loaded.ok || opts?.verdict && loaded.evidence.verdict !== opts.verdict) continue;
+    if (opts?.material && !verifierMaterialsEquivalent(readVerifierMaterialOrNull(dir, m[1]), opts.material, projectRoot, opts.resolvedInputs)) continue;
     let mtime = 0;
     try {
       mtime = fs.statSync(loaded.evidence.md_path_abs).mtimeMs;
@@ -177,10 +178,31 @@ export function findPriorPassVerifierEvidence(
   return best?.evidence ?? null;
 }
 
+/** Compatibility reader for historical PASS baselines; this alone grants no current review. */
+export function findPriorPassVerifierEvidence(projectRoot: string, feature: string, phase: string,
+  opts?: LoadVerifierEvidenceOptions & { excludeSubject?: string | null }): VerifierEvidence | null {
+  return findPriorVerifierEvidence(projectRoot, feature, phase, { ...opts, verdict: 'PASS' });
+}
+
+/** Same material may reuse the real original report, including a real FAIL; unrelated prior PASS is only context. */
+export function findSameMaterialVerifierEvidence(projectRoot: string, feature: string, phase: string, currentSubject: string,
+  opts?: LoadVerifierEvidenceOptions): VerifierEvidence | null {
+  const currentReport = loadVerifierEvidenceForSubject(projectRoot, feature, phase, currentSubject, opts);
+  if (currentReport.ok || currentReport.code !== 'report_missing') return null;
+  const dir = resolveReportsDir(projectRoot, feature, phase, opts?.frameworkRoot);
+  const current = readVerifierMaterialOrNull(dir, currentSubject);
+  if (!current) return null;
+  const previous = findPriorVerifierEvidence(projectRoot, feature, phase, { ...opts, excludeSubject: currentSubject, material: current });
+  if (!previous) return null;
+  const material = readVerifierMaterialOrNull(dir, previous.subject_id);
+  return verifierMaterialsEquivalent(material, current, projectRoot, opts?.resolvedInputs) ? previous : null;
+}
+
 /**
  * plan 07a41ec6 T7：闭环定稿时 verifier 结论来源的**唯一派生口径**（runner finalize /
  * check-receipt CLI / sync-closure 三条路径同一函数）：当前 subject 自身已验真 → null（不登记）；
- * 当前 subject 无报告但本 phase 历史已有 PASS → completed_with_prior_review + 未重审材料差异；
+ * Only an identical, readable material view may retain the existing reviewed original;
+ * changed or unavailable material requires independent verification.
  * 其余（能力未启用 / 从未 PASS）→ null。
  */
 export function deriveVerifierClosureRecord(
@@ -188,22 +210,19 @@ export function deriveVerifierClosureRecord(
   feature: string,
   phase: string,
   frameworkRoot?: string,
+  options?: Pick<LoadVerifierEvidenceOptions, 'resolvedInputs'>,
 ): VerifierClosureRecord | null {
   const current = readSummaryVerifierSubjectId(projectRoot, feature, phase, frameworkRoot);
   if (!current) return null;
   const loaded = loadVerifierEvidenceForSubject(projectRoot, feature, phase, current, { frameworkRoot });
   if (loaded.ok || loaded.code !== 'report_missing') return null;
-  const prior = findPriorPassVerifierEvidence(projectRoot, feature, phase, { frameworkRoot, excludeSubject: current });
-  if (!prior) return null;
-  const dir = resolveReportsDir(projectRoot, feature, phase, frameworkRoot);
+  const prior = findSameMaterialVerifierEvidence(projectRoot, feature, phase, current, { frameworkRoot, ...options });
+  if (!prior || prior.verdict !== 'PASS') return null;
   return {
     mode: 'completed_with_prior_review',
     reviewed_subject_id: prior.subject_id,
     current_subject_id: current,
-    current_material_not_reverified: diffVerifierMaterial(
-      readVerifierMaterialOrNull(dir, prior.subject_id),
-      readVerifierMaterialOrNull(dir, current),
-    ),
+    current_material_not_reverified: [],
   };
 }
 

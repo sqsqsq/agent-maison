@@ -4,12 +4,12 @@ import * as path from 'path';
 import { clearFrameworkConfigCache, featurePhaseReportsDir, resolveFeatureArtifact } from '../../config';
 import { resolvePhaseVerdict, writeRunSummaryBase } from '../../harness-runner';
 import { generateScriptReport } from '../../scripts/utils/report-generator';
-import { buildVerifierMaterialView, writeVerifierMaterial } from '../../scripts/utils/verifier-material';
+import { buildVerifierMaterialView, writeVerifierMaterial, verifierMaterialFileHash } from '../../scripts/utils/verifier-material';
 import { canProduceVerifierRequest, resolveVerifierPlan, workflowVerifierPrompt } from '../../scripts/utils/verifier-plan';
 import { resolveEvidencePolicy } from '../../scripts/utils/runtime-policy';
 import { computeGateFingerprint } from '../../scripts/utils/gate-fingerprint';
 import { loadWorkflowSpec } from '../../workflow-loader';
-import { __testing_recomputeClosureRepairCandidates, finalizePhaseClosure } from '../../scripts/utils/phase-closure-finalizer';
+import { __testing_recomputeClosureRepairCandidates, finalizePhaseClosure, preparePhaseRepairFeedback } from '../../scripts/utils/phase-closure-finalizer';
 import { readPhaseRepairIssues, phaseIssuesForVerifierSubject, buildSummaryRepairCandidates,
   verifiedPhaseDesignFindings, verifiedPhaseRepairIssues, buildCurrentVerifierDiagnosisContext, findUnreadableDiagnosisChecks, itemFingerprintOf, resolveRepairDeclineState, readableIssueEvidence } from '../../scripts/utils/repair-candidates';
 import { publishFixtureVerifierEvidence, fixtureSubjectId } from '../utils/verifier-evidence-fixture';
@@ -218,13 +218,14 @@ export function runAll(): UnitCaseResult[] {
       const proposal = resolveFeatureArtifact(root, feature, 'upstream-issues.md').canonicalPath;
       writeFile(proposal, issue(authority));
       const diagnosis = buildVerifierMaterialView(input);
-      assert.strictEqual(diagnosis.files.find(file => file.path === authority)?.sha256, sha256File(path.join(root, authority)));
+      assert.strictEqual(diagnosis.files.find(file => file.path === authority)?.sha256,
+        verifierMaterialFileHash({ projectRoot: root, feature, phase: 'coding', file: authority }));
       const subject = fixtureSubjectId('actual-diagnosis');
       writeVerifierMaterial(featurePhaseReportsDir(root, feature, 'coding', FW), subject, diagnosis);
       assert(phaseIssuesForVerifierSubject(root, feature, 'coding', subject, FW));
       const bytes = fs.readFileSync(path.join(root, authority));
       try {
-        fs.appendFileSync(path.join(root, authority), '\n# changed diagnostic original text\n');
+        fs.writeFileSync(path.join(root, authority), bytes.toString('utf8').replace('Ledger data is persisted', 'Changed business claim: ledger data is persisted'));
         assert.strictEqual(phaseIssuesForVerifierSubject(root, feature, 'coding', subject, FW), null);
       } finally { fs.writeFileSync(path.join(root, authority), bytes); }
       fs.unlinkSync(proposal);
@@ -255,10 +256,12 @@ export function runAll(): UnitCaseResult[] {
       const base = writer(root, 'coding', [passed]);
       const dir = featurePhaseReportsDir(root, FEATURE, 'coding', FW);
       publishFixtureVerifierEvidence({ projectRoot: root, reportsDir: dir, feature: FEATURE, phase: 'coding', subjectId: base.verifier_subject_id, reportText: verification(), skipSummaryPatch: true });
-      const closed = finalizePhaseClosure({ projectRoot: root, frameworkRoot: FW, feature: FEATURE, phase: 'coding',
-        prepareEvidence: () => ({ extraInputs: [], extraOutputs: [], requirementSha: null }), persistPhaseState: () => undefined, assessAfterCommit: () => undefined });
-      assert.strictEqual(closed.summary.closure_status, 'closed');
-      assert.strictEqual(closed.summary.repair_candidates?.[0]?.source_phase, 'coding');
+      const feedback = preparePhaseRepairFeedback({ projectRoot: root, frameworkRoot: FW, feature: FEATURE, phase: 'coding' });
+      assert.strictEqual(feedback?.repairCandidates?.[0]?.source_phase, 'coding');
+      assert(feedback?.disposition.completionBlocking.some(problem => problem.id === 'open_finding:UP-001'));
+      assert.throws(() => finalizePhaseClosure({ projectRoot: root, frameworkRoot: FW, feature: FEATURE, phase: 'coding',
+        prepareEvidence: () => ({ extraInputs: [], extraOutputs: [], requirementSha: null }), persistPhaseState: () => undefined, assessAfterCommit: () => undefined }), /open_finding:UP-001/);
+      assert.notStrictEqual(JSON.parse(fs.readFileSync(path.join(dir, 'summary.json'), 'utf8')).closure_status, 'closed');
     })],
     ['factual refusals require independent confirmation; old subject and renamed ID cannot re-dispatch', () => withProject(root => {
       writeIssues(root, 'coding');

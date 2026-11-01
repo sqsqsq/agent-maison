@@ -1,3 +1,4 @@
+import type { GoalRunEvent } from './goal-runner-phase';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -343,4 +344,32 @@ export function renderPhaseWriteBoundaryGuidance(
     ...(currentPhase === 'coding' ? ['- Finite compatibility repair: existing test imports/types/data/doubles directly broken by this implementation may be repaired only while coding_existing_test_preserved confirms real pre-repair originals and unchanged existing cases/assertions, with no new test/assertion/skip. New or changed test logic belongs to UT. In the existing coding report list each changed test datum/double, the actual edit and its implementation-related reason; review verifies the actual diff. A preservation PASS is not a business-cause explanation or a test PASS.'] : []),
     '- `goal-runs/**`, closure state, manifests, pointers, summaries, and evidence refreshes are runner-owned. Do not edit them.',
   ];
+}
+
+export function authorWritePreimages(events: readonly GoalRunEvent[]): Map<string, string | null> {
+  const out = new Map<string, string | null>();
+  const ownRecoveries = new Set((events as readonly Record<string, any>[]).filter(event => event.type === 'phase_backtrack_requested' && event.reason === 'phase_write_violation'
+    && typeof event.invoke_id === 'string' && typeof event.from_phase === 'string' && event.from_phase === event.to_phase).map(event => event.invoke_id));
+  for (const event of events as readonly Record<string, any>[]) {
+    if (event.type === 'phase_write_violation' && Array.isArray(event.violations)) for (const value of event.violations) {
+      const row = value as { path?: unknown; violation?: unknown; pre_sha256?: unknown };
+      if ((row.violation === 'outside_authority' || row.violation === 'wrong_phase' && ownRecoveries.has(event.invoke_id))
+        && typeof row.path === 'string' && !out.has(row.path) && (row.pre_sha256 === null || typeof row.pre_sha256 === 'string')) out.set(row.path, row.pre_sha256 as string | null);
+    }
+    if (event.type === 'phase_write_observed') for (const row of [...(event.observations ?? []), ...(event.owned ?? [])]) {
+      if (out.has(row.path) && out.get(row.path) === row.post_sha256) out.delete(row.path);
+    }
+  }
+  return out;
+}
+
+
+export function unrestoredAuthorWrites(projectRoot: string, events: readonly GoalRunEvent[]): Map<string, string | null> {
+  return new Map([...authorWritePreimages(events)].filter(([file, before]) => {
+    const absolute = path.resolve(projectRoot, file);
+    if (!absolute.startsWith(path.resolve(projectRoot) + path.sep)) return true;
+    if (!fs.existsSync(absolute)) return before !== null;
+    if (!fs.lstatSync(absolute).isFile() || fs.lstatSync(absolute).isSymbolicLink()) return true;
+    return crypto.createHash('sha256').update(fs.readFileSync(absolute)).digest('hex') !== before;
+  }));
 }

@@ -6,7 +6,8 @@ import { applyInvalidationsToResume, replayAttemptedSignalIdentities } from '../
 import { decideRunContinuation } from '../../scripts/utils/goal-run-creation';
 import { prepareGoalModeRun } from '../../scripts/goal-mode-entry';
 import { superviseRun } from '../../scripts/utils/goal-supervisor';
-import { runGoalRuntimeChain, setupGoalRuntimeHost, PRODUCT_ASSERTION_CHECK, writeVisualDiff, writeCleanTesting, seedI11Host, writeI11VisualDiff, runRealVisualGate } from './goal-runner-testing-integrity.unit.test';
+import { runGoalRuntimeChain, setupGoalRuntimeHost, productAssertionCheck, writeCleanTesting, seedI11Host, writeI11VisualDiff, runRealVisualGate,
+  seedSignalHost, writeCurrentSignals, currentSignalGateChecks, PRODUCT_FILE } from './goal-runner-testing-integrity.unit.test';
 import { applyProviderReviewToScreen, validateVisualProviderReviewPayload } from '../../../profiles/hmos-app/harness/visual-provider-review';
 import { loadVisualScreenVerdicts } from '../../scripts/utils/execution-channel-evidence';
 import type { VisualDiffScreenEntry } from '../../../profiles/hmos-app/harness/visual-diff-check';
@@ -16,6 +17,7 @@ import { loadGoalManifestFromRun } from '../../scripts/utils/goal-manifest';
 import { projectGoalProgress } from '../../scripts/utils/goal-progress';
 import { loadGoalReportJson, writeGoalReport, renderPhaseDispositionCell } from '../../scripts/utils/goal-report-generator';
 import { loadWorkflowSpec } from '../../workflow-loader';
+import { matchesUnitCase, selectedUnitCases, startCaseTiming, type SelectedUnitCases, type UnitExecutionTiming } from '../utils/unit-case-selection';
 
 const fp = 'a'.repeat(64);
 const request = { type: 'phase_backtrack_requested', to_phase: 'coding', invalidated_phases: ['coding', 'review'],
@@ -45,25 +47,49 @@ test('invocation completion and historical fallback are exact and reject missing
 for (const kind of ['native-timeout', 'provider-terminal'] as const) test(`${kind}: real request producer and runtime retain interrupted owner after static PASS`, async () => {
   const root = setupGoalRuntimeHost('codex').root;
   try {
+    if (kind === 'provider-terminal') seedSignalHost(root);
+    let interruptedOwner = false;
+    const repaired = (r: string) => fs.readFileSync(path.join(r, PRODUCT_FILE), 'utf8').includes('r4-provider-owner-fixed');
+    const observeProvider = ({ root: r }: { root: string }) => {
+      writeCurrentSignals(r, [], []);
+      const file = path.join(r, 'doc/features/bc-openCard/device-testing/device-screenshots/visual-diff.json');
+      const doc = JSON.parse(fs.readFileSync(file, 'utf8'));
+      const fixed = repaired(r);
+      applyProviderReviewToScreen(doc.screens[0], { screen_id: 'add_card_home', must_fix: fixed ? [] : ['repair blocked control'],
+        defects: fixed ? [] : [{ class: 'clipping', element: 'hc_page_title', bbox: [0.1, 0.2, 0.3, 0.4], severity: 'blocker', note: 'blocked control', must_fix_refs: [0] }],
+        region_attest: doc.screens[0].region_attest },
+      { invokeId: 'critic-i1', provider: { adapter: 'claude', model: 'm' }, hardPixel: false, evaluatedScreenshotHash: doc.screens[0].screenshot_hash });
+      fs.writeFileSync(file, JSON.stringify(doc));
+    };
     const probe = await runGoalRuntimeChain(root, {
-      adapter: 'codex', runId: 'repair-continuity-' + kind, onCoding: () => {},
-      onTesting: ({ root: r, attempt }) => {
-        if (kind === 'provider-terminal' && attempt === 1) {
-          writeVisualDiff(r, [{ id: 'add_card_home', verdict: 'pending', mustFix: [] }]);
-          const file = path.join(r, 'doc/features/bc-openCard/device-testing/device-screenshots/visual-diff.json');
-          const doc = JSON.parse(fs.readFileSync(file, 'utf8'));
-          applyProviderReviewToScreen(doc.screens[0], { screen_id: 'add_card_home', must_fix: ['repair blocked control'],
-            defects: [{ class: 'clipping', element: 'hc_title', severity: 'blocker', note: 'blocked control', must_fix_refs: [0] }] },
-          { invokeId: 'critic-i1', provider: { adapter: 'claude', model: 'm' }, evaluatedScreenshotHash: doc.screens[0].screenshot_hash });
-          fs.writeFileSync(file, JSON.stringify(doc));
-        } else writeCleanTesting(r);
+      adapter: 'codex', runId: 'repair-continuity-' + kind,
+      onCoding: ({ root: r, prompt }) => {
+        if (kind === 'provider-terminal' && interruptedOwner && prompt.includes('repair blocked control')) {
+          fs.writeFileSync(path.join(r, PRODUCT_FILE), 'struct AllBanksPage { build() { Text("r4-provider-owner-fixed") } }');
+        }
       },
+      onTesting: ({ root: r }) => {
+        if (kind === 'provider-terminal') observeProvider({ root: r });
+        else writeCleanTesting(r);
+      },
+      ...(kind === 'provider-terminal' ? { onTestingHarness: observeProvider, testingGateChecks: currentSignalGateChecks } : {}),
       onHarnessSummary: ({ phase, attempt }) => kind === 'native-timeout' && phase === 'testing' && attempt === 1
-        ? { checks: [PRODUCT_ASSERTION_CHECK] } : null,
-      invokeResultFor: (phase, attempt) => phase === 'coding' && attempt === 2
-        ? { exitCode: 1, ...(kind === 'native-timeout' ? { timed_out: true } : { terminal_failure_observed: true }), stderr: 'interrupted owner' }
-        : phase === 'coding' && attempt === 3 ? { exitCode: 1, completion_observed: true } : null,
+        ? { checks: [productAssertionCheck(root)] } : null,
+      invokeResultFor: (phase, attempt) => {
+        if (phase === 'coding' && attempt === 2) {
+          interruptedOwner = true;
+          return { exitCode: 1, ...(kind === 'native-timeout' ? { timed_out: true } : { terminal_failure_observed: true }), stderr: 'interrupted owner' };
+        }
+        return phase === 'coding' && (kind === 'provider-terminal' ? repaired(root) : attempt === 3)
+          ? { exitCode: 1, completion_observed: true } : null;
+      },
     });
+    if (kind === 'provider-terminal') {
+      assert.strictEqual(probe.exitCode, 0, JSON.stringify(probe.events.slice(-5)));
+      assert.ok(probe.events.some(event => event.type === 'run_end' && event.status === 'CHAIN_SLICE_COMPLETED'), 'actual repaired product must naturally complete');
+      assert.ok(repaired(root), 'completed owner must actually repair the current product');
+      assert.ok(!probe.events.some(event => event.type === 'phase_halt' && ['budget_turns', 'no_progress_guard'].includes(String(event.halt_reason))), 'productive repair cannot finish by a quota or no-progress stop');
+    }
     const requests = probe.events.filter(e => e.type === 'phase_backtrack_requested');
     assert.strictEqual(requests.length, 1, JSON.stringify(requests));
     const ends = probe.events.filter(e => e.type === 'agent_invoke_end' && e.phase === 'coding');
@@ -71,6 +97,7 @@ for (const kind of ['native-timeout', 'provider-terminal'] as const) test(`${kin
     const interrupted = ends[1];
     const nextStart = probe.events.findIndex(e => e.type === 'agent_invoke_start' && e.invoke_id === ends[2].invoke_id);
     const window = probe.events.slice(probe.events.indexOf(interrupted), nextStart);
+    assert.strictEqual(repairInvocationCompleted(probe.events.slice(0, nextStart), 'coding', String(interrupted.invoke_id)), false, 'the actual interrupted owner is not a completed repair opportunity');
     assert.ok(!window.some(e => e.type === 'phase_backtrack_completed'), JSON.stringify(window));
     assert.ok(window.some(e => e.type === 'phase_verdict' && e.action === 'retry' && e.verdict !== 'PASS'), JSON.stringify(window));
     assert.strictEqual(ends[2].completion_observed, true, 'completion must be produced on end before the gate');
@@ -116,7 +143,7 @@ test('a third productive native backtrack retains hard resource accounting in th
         if (attempt > 1) fs.writeFileSync(path.join(r, '02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets'), `struct AllBanksPage { build() { Text("fix${attempt}") } }`);
       },
       onHarnessSummary: ({ phase, attempt }) => phase === 'testing' && attempt <= 3 ? { checks: [
-        { ...PRODUCT_ASSERTION_CHECK, id: `testing_failure_routing_TC-005_s${20 + attempt}` },
+        productAssertionCheck(root, { stepIndex: 20 + attempt }),
       ] } : null,
     });
     assert.strictEqual(probe.events.filter(e => e.type === 'phase_backtrack_requested').length, 3);
@@ -171,8 +198,9 @@ test('real completion-observed cleanup exit1 plus gate crash resumes validation-
   try {
     let crashed = false;
     const first = await runGoalRuntimeChain(root, { adapter: 'codex', runId: 'completion-cleanup-crash', onCoding: () => {},
+      testControl: { expectedInterruption: 'gate crash after completed cleanup' },
       onTesting: ({ root: r }) => writeCleanTesting(r),
-      onHarnessSummary: ({ phase, attempt }) => phase === 'testing' && attempt === 1 ? { checks: [PRODUCT_ASSERTION_CHECK] } : null,
+      onHarnessSummary: ({ phase, attempt }) => phase === 'testing' && attempt === 1 ? { checks: [productAssertionCheck(root)] } : null,
       invokeResultFor: (phase, attempt) => phase === 'coding' && attempt === 2 ? { exitCode: 1, completion_observed: true } : null,
       afterHarnessPass: ({ phase, root: r, runId }) => {
         if (phase !== 'coding') return;
@@ -200,8 +228,9 @@ test('real native interrupted end survives a gate crash and resumes its original
   try {
     let crashed = false;
     const first = await runGoalRuntimeChain(root, { adapter: 'codex', runId: 'repair-gate-crash', onCoding: () => {},
+      testControl: { expectedInterruption: 'gate crash after interrupted end' },
       onTesting: ({ root: r }) => writeCleanTesting(r),
-      onHarnessSummary: ({ phase, attempt }) => phase === 'testing' && attempt === 1 ? { checks: [PRODUCT_ASSERTION_CHECK] } : null,
+      onHarnessSummary: ({ phase, attempt }) => phase === 'testing' && attempt === 1 ? { checks: [productAssertionCheck(root)] } : null,
       invokeResultFor: (phase, attempt) => phase === 'coding' && attempt === 2 ? { exitCode: 1, timed_out: true } : null,
       afterHarnessPass: ({ phase, root: r, runId }) => {
         if (phase !== 'coding') return;
@@ -226,10 +255,8 @@ for (const severity of ['minor', 'major', 'blocker'] as const) for (const hard o
     try {
       seedI11Host(root);
       let gate: ReturnType<typeof runRealVisualGate> | undefined;
-      const probe = await runGoalRuntimeChain(root, {
-        adapter: 'codex', runId: `visual-effective-${severity}-${hard}`, freshRequirement: hard ? '添卡流程必须像素级还原参考截图，不接受降级。' : '添卡流程页面按参考截图 1:1 还原。',
-        onTesting: ({ root: r, attempt }) => {
-          if (attempt !== 1) { writeCleanTesting(r); return; }
+      const observeProvider = ({ root: r }: { root: string }) => {
+          const fixed = fs.readFileSync(path.join(r, PRODUCT_FILE), 'utf8').includes('r4-visual-effective-fixed');
           writeI11VisualDiff(r);
           const file = path.join(r, 'doc/features/bc-openCard/device-testing/device-screenshots/visual-diff.json');
           const doc = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -237,24 +264,34 @@ for (const severity of ['minor', 'major', 'blocker'] as const) for (const hard o
             refAbs: '', shotAbs: '', screenshotRel: s.screenshot_path }));
           const body = JSON.stringify({ schema_version: '1.0', run_id: 'R', attempt_id: 'A', image_hashes: targets.flatMap((t: { refHash: string; shotHash: string }) => [t.refHash, t.shotHash]),
             screens: doc.screens.map((s: VisualDiffScreenEntry, i: number) => ({ screen_id: s.screen_id, reference_image_hash: targets[i].refHash, evaluated_screenshot_hash: targets[i].shotHash,
-              must_fix: s.must_fix, defects: s.defects!.map(d => ({ ...d, severity })), region_attest: s.region_attest })) });
+              must_fix: fixed ? [] : s.must_fix, defects: fixed ? [] : s.defects!.map(d => ({ ...d, severity })), region_attest: (s.region_attest ?? []).map(region => fixed ? { ...region, verdict: 'no_diff' } : region) })) });
           const parsed = validateVisualProviderReviewPayload(body, { targets, runId: 'R', attemptId: 'A', requireRegionAttest: false });
           assert.ok(parsed.ok, JSON.stringify(parsed));
           if (!parsed.ok) return;
           doc.screens.forEach((s: VisualDiffScreenEntry, i: number) => {
             s.must_fix = []; s.defects = []; s.region_attest = [];
             applyProviderReviewToScreen(s, parsed.screens[i], { invokeId: 'provider-real-payload', provider: { adapter: 'claude', model: 'm' }, hardPixel: hard, evaluatedScreenshotHash: s.screenshot_hash });
-            assert.strictEqual(s.verdict, severity === 'minor' || (severity === 'major' && !hard) ? 'warn' : 'fail');
+            assert.strictEqual(s.verdict, fixed ? 'pass' : severity === 'minor' || (severity === 'major' && !hard) ? 'warn' : 'fail');
           });
           fs.writeFileSync(file, JSON.stringify(doc));
+      };
+      const probe = await runGoalRuntimeChain(root, {
+        adapter: 'codex', runId: `visual-effective-${severity}-${hard}`, freshRequirement: hard ? '添卡流程必须像素级还原参考截图，不接受降级。' : '添卡流程页面按参考截图 1:1 还原。',
+        onTesting: observeProvider, onTestingHarness: observeProvider,
+        onCoding: ({ root: r, prompt }) => {
+          if (prompt.includes('visual_diff:card_type_sheet') || prompt.includes('visual_diff:sms_verification_sheet')) {
+            fs.writeFileSync(path.join(r, PRODUCT_FILE), 'struct AllBanksPage { build() { Text("r4-visual-effective-fixed") } }');
+          }
         },
         testingGateChecks: ({ root: r, feature, fields }) => {
-          if (gate) return null;
-          gate = runRealVisualGate(r, feature, fields);
-          return [{ id: 'test_plan_exists', category: 'structure', description: 'functional fact', severity: 'BLOCKER', status: 'PASS', details: 'test transport functional fact' }, gate];
+          const current = runRealVisualGate(r, feature, fields);
+          gate ??= current;
+          return [{ id: 'test_plan_exists', category: 'structure', description: 'functional fact', severity: 'BLOCKER', status: 'PASS', details: 'test transport functional fact' }, current];
         },
       });
       assert.ok(gate);
+      assert.strictEqual(probe.exitCode, 0, JSON.stringify(probe.events.slice(-5)));
+      assert.ok(probe.events.some(event => event.type === 'run_end' && event.status === 'CHAIN_SLICE_COMPLETED'), 'provider cases must naturally complete current verification');
       const structured = gate!.structured as { channel_evidence_usable: boolean; downgraded_screens: string[] };
       const requests = probe.events.filter(e => e.type === 'phase_backtrack_requested');
       const pathDebt = path.join(root, 'doc/features/bc-openCard/visual-debt.json');
@@ -268,14 +305,22 @@ for (const severity of ['minor', 'major', 'blocker'] as const) for (const hard o
       } else {
         assert.ok(requests.some(e => (e.candidates as Array<{ id: string }>).some(c => c.id.startsWith('visual_diff:'))), JSON.stringify(requests));
         assert.strictEqual(structured.channel_evidence_usable, false);
+        assert.ok(fs.readFileSync(path.join(root, PRODUCT_FILE), 'utf8').includes('r4-visual-effective-fixed'), 'a real blocker cannot be waived by the soft/effective flag; the delivered current finding must be repaired');
       }
     } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
   });
 }
 
-export async function runAll(): Promise<UnitCaseResult[]> {
+export async function runSelectedCases(selector?: string): Promise<SelectedUnitCases> {
   const results: UnitCaseResult[] = [];
-  for (const c of cases) try { await c.run(); results.push({ name: c.name, ok: true }); }
-  catch (e) { results.push({ name: c.name, ok: false, error: String((e as Error).message) }); }
-  return results;
+  const timings: UnitExecutionTiming[] = [];
+  for (const c of cases.filter(c => matchesUnitCase(c.name, selector))) {
+    const endTiming = startCaseTiming([c.name], timings);
+    try { await c.run(); results.push({ name: c.name, ok: true }); }
+    catch (e) { results.push({ name: c.name, ok: false, error: String((e as Error).message) }); }
+    finally { endTiming(); }
+  }
+  return selectedUnitCases(results, selector, timings);
 }
+
+export async function runAll(): Promise<UnitCaseResult[]> { return (await runSelectedCases()).results; }

@@ -18,7 +18,8 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
-import { RESULT_MARK, type GoalRunOutcome } from '../helpers/goal-run-driver';
+import { runRuntimeTestChild } from '../utils/runtime-test-control';
+import { expectedDriverInterruption, RESULT_MARK, type GoalRunOutcome } from '../helpers/goal-run-driver';
 import type { UnitCaseResult } from '../run-unit';
 import { buildProductSelectionUnresolvedGuidance } from '../../scripts/utils/await-confirm-guidance';
 import { recordProductSelection } from '../../scripts/record-product-selection';
@@ -97,7 +98,7 @@ function setupMultiCandidateHost(): { root: string } {
 
 /** spawn 子进程 driver（真实 goalMain 只在子进程内跑；父进程零 import/调用 goalMain）。 */
 function runDriver(projectRoot: string, envSpec?: string, scenario = 'product_selection_halt'): GoalRunOutcome {
-  const r = spawnSync(
+  const r = runRuntimeTestChild({ root: projectRoot, expectedInterruption: expectedDriverInterruption(scenario) }, () => spawnSync(
     process.execPath,
     [
       TS_NODE, '--transpile-only', DRIVER,
@@ -105,7 +106,7 @@ function runDriver(projectRoot: string, envSpec?: string, scenario = 'product_se
       ...(envSpec ? [envSpec] : []),
     ],
     { encoding: 'utf-8', timeout: 300_000, cwd: path.resolve(__dirname, '..', '..') },
-  );
+  ));
   const at = (r.stdout ?? '').lastIndexOf(RESULT_MARK);
   if (at < 0) {
     throw new Error(

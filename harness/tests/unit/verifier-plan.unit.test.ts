@@ -519,6 +519,17 @@ function case8_goalBalancedProductionWiring(): void {
 }
 
 const CASES: Array<{ name: string; fn: () => void }> = [{ name: '② workflow 未声明 verifier_prompt = 不适用，不得 fallback 造模板', fn: case2_workflowSilenceMeansNotApplicable },
+  { name: 'P2 C actual test-strength facts can reach independent verification without washing other FAIL or inventing a test object', fn: () => {
+    const check = { id: 'coding_existing_test_preserved', severity: 'BLOCKER', status: 'FAIL', details: 'tests/value.test.ts：actual assertion change', affected_files: ['tests/value.test.ts'] };
+    const base = { phase: 'coding', checks: [check, BLOCKER_FAIL('coding_compile')], hasBlockedCapability: true };
+    const result = eligibility(base);
+    assert(result.allowed && result.kind === 'repair_diagnosis' && result.diagnosticCheckIds.length === 1, 'independent readable test facts cannot be hidden by unrelated compile/environment gaps');
+    assert(check.status === 'FAIL' && base.checks[1].status === 'FAIL', 'eligibility cannot rewrite original failure truth');
+    assert(!eligibility({ ...base, checks: [{ ...check, affected_files: [] }] }).allowed, 'missing actual test objects cannot create a diagnostic request');
+    assert(!eligibility({ ...base, checks: [BLOCKER_FAIL('coding_compile')] }).allowed, 'unrelated product failures are not a test-strength qualification');
+    assert(!eligibility({ ...base, planMode: 'disabled' }).allowed, 'a disabled verifier cannot be silently invented');
+    assert(eligibility({ ...base, scriptVerdict: 'INCOMPLETE' }).allowed, 'unexecuted independent tools stay incomplete while readable strength facts may be checked');
+  } },
   { name: '③ full + 已登记 adapter = enabled；balanced 按保留集分流 off', fn: case3_fullEnabledAndBalancedSplit },
   { name: '④ 三模式同判；adapter 无审查员 → disabled/adapter_has_no_reviewer', fn: case4_modeAgnosticAndReviewerDisclosure },
   { name: '⑤ profile 禁用 phase 优先于 policy 与 adapter 能力', fn: case5_profileDisabledWins },

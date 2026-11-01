@@ -33,6 +33,7 @@ import {
   type PhaseVerdictAction,
 } from './phase-transition-policy';
 import { resolveRepairResponsibility, repairResponsibilityContext, type RepairResponsibilityContext } from './repair-responsibility';
+import { validateRepairEvidenceRef, type RepairEvidenceRef } from './repair-candidates';
 import {
   SUMMARY_ASSURANCE_SCHEMA_VERSIONS,
   SUMMARY_SCHEMA_VERSION_CURRENT,
@@ -46,7 +47,7 @@ import { collectBlockedCapabilityFacts, type BlockedCapabilityFact } from './cap
 import { assessFeature as assessFeatureCompletion } from './feature-assessment';
 import { resolveChangeUnitExpectedExecution } from './change-unit-completion';
 import type { CapabilityResolution } from './capability-resolution';
-import { requiredSummaryCheckGaps, type CurrentDisposition } from './check-disposition';
+import { requiredSummaryCheckGaps, phaseCompletionProblems, type CurrentDisposition } from './check-disposition';
 import { resolveCompletionDisposition } from './verify-feature-completion';
 import { nextIndependentPhase } from './upstream-verdict-gate';
 
@@ -130,7 +131,8 @@ export interface AssessPhaseObservation {
    * （**唯一真源=summary.repair_candidates[]**；assess 直读，不经 reconcile 复制——
    * goal/manual/batch 三链共用同一判断，codex review 冻结项③）。
    */
-  repair_candidates?: Array<{ id: string; category: 'spec' | 'plan' | 'coding' | 'verification'; files?: string[]; item_fingerprint: string; summary?: string }>;
+  repair_candidates?: Array<{ id: string; category: 'spec' | 'plan' | 'coding' | 'verification'; files?: string[]; item_fingerprint: string; summary?: string;
+    evidence_refs?: RepairEvidenceRef[]; source_phase?: string; identity_schema?: 'signal@1' }>;
   summary_state: 'missing' | 'corrupt' | 'legacy' | 'current';
   schema_version: string | null;
   verdict: string | null;
@@ -243,6 +245,7 @@ export interface AssessFeatureOptions {
   authorityReaders?: IdentityNeutralDigestReaders;
   projectRoot: string;
   frameworkRoot?: string;
+  workflow?: ReturnType<typeof resolveWorkflowSpec>;
   feature: string;
   goalEnd?: string;
   minimumAssurance?: Record<string, MinimumAssurance>;
@@ -332,6 +335,9 @@ function readRepairCandidatesFromSummary(
       item_fingerprint: c.item_fingerprint,
       ...(Array.isArray(c.files) ? { files: c.files.filter((file): file is string => typeof file === 'string') } : {}),
       ...(typeof c.summary === 'string' ? { summary: c.summary } : {}),
+      ...(Array.isArray(c.evidence_refs) ? { evidence_refs: c.evidence_refs.filter((ref): ref is RepairEvidenceRef => validateRepairEvidenceRef(ref).length === 0) } : {}),
+      ...(typeof c.source_phase === 'string' ? { source_phase: c.source_phase } : typeof summary.phase === 'string' ? { source_phase: summary.phase } : {}),
+      ...(c.identity_schema === 'signal@1' ? { identity_schema: c.identity_schema } : {}),
     });
   }
   return out;
@@ -461,18 +467,18 @@ function collectPrunedPropagations(
 }
 export function observeFeatureState(options: AssessFeatureOptions): AssessObservation {
   options = { ...options, authorityReaders: options.authorityReaders ?? createIdentityNeutralDigestReaders() };
-  let workflow = resolveWorkflowSpec(options.projectRoot, {
+  let workflow = options.workflow ?? resolveWorkflowSpec(options.projectRoot, {
     frameworkRoot: options.frameworkRoot,
   });
   // D1 §6.4：删掉「有 runId 才读范围」的三元——统一入口在无 run 时读 feature 冻结记录。
   const scope = loadEffectiveExecutionScope(options.projectRoot, options.feature, options.runId, options.frameworkRoot, options.reconcile?.phase_outcome?.phase, options.authorityReaders);
   const run = options.runId && fs.existsSync(featureFilePath(options.projectRoot, options.feature, 'goal-runs/' + options.runId + '/manifest.json')) ? loadGoalManifestFromRun(options.projectRoot, options.runId, { feature: options.feature }) : undefined;
-  if (run) workflow = workflowForExistingRun(workflow, run, options.frameworkRoot ?? path.resolve(__dirname, '../../..'), options.projectRoot);
+  if (run && !options.workflow) workflow = workflowForExistingRun(workflow, run, options.frameworkRoot ?? path.resolve(__dirname, '../../..'), options.projectRoot);
   const track = scope ? 'full' : resolveFeatureTrack(loadFeatureTrackDecl(options.projectRoot, options.feature, options.runId));
   const allPhases = scope ? executionCompletionPhases(scope) : run?.phase_chain ?? resolvePhaseChain(workflow, track).featureOrdered.map(String);
-  if (allPhases.length === 0) throw new Error(`[assess] workflow=${workflow.name} track=${track} 无 feature phase`);
-  const goalEnd = scope ? allPhases[allPhases.length - 1] : options.goalEnd ?? allPhases[allPhases.length - 1];
-  const phases = sliceThrough(allPhases, goalEnd);
+  if (allPhases.length === 0 && !scope) throw new Error(`[assess] workflow=${workflow.name} track=${track} 无 feature phase`);
+  const goalEnd = scope ? allPhases.at(-1) ?? options.goalEnd ?? run?.end_phase ?? '' : options.goalEnd ?? allPhases[allPhases.length - 1];
+  const phases = allPhases.length ? sliceThrough(allPhases, goalEnd) : [];
   const frameworkRoot = options.frameworkRoot ??
     path.resolve(__dirname, '..', '..', '..');
   const staleness = new Map(
@@ -524,6 +530,11 @@ export function observeFeatureState(options: AssessFeatureOptions): AssessObserv
         evidence_fingerprint: fileHash(evidencePath),
       };
     }
+    const currentCandidates = (require('./phase-closure-finalizer') as typeof import('./phase-closure-finalizer')).readCurrentPhaseRepairCandidates({
+      projectRoot: options.projectRoot, frameworkRoot, feature: options.feature, phase, goalRunId: options.runId,
+      authorityReaders: options.authorityReaders, executionScope: scope, workflow,
+    }, reportsDir, summary);
+    const repairSummary = currentCandidates === undefined ? summary : { ...summary, repair_candidates: currentCandidates };
     const schemaVersion = typeof summary.schema_version === 'string' ? summary.schema_version : null;
     // plan a9d4e7c2 T3：assurance 闭环域 = 1.2 ∪ 1.3；把当代 1.3 判成 legacy 会让
     // 刚闭环的阶段整链退回 legacy_unverified。
@@ -575,8 +586,8 @@ export function observeFeatureState(options: AssessFeatureOptions): AssessObserv
       required_assurance: requiredAssurance,
       assurance_satisfied: assuranceSatisfied,
       // 责任阶段统一路由：直读 summary 的可信候选（唯一真源）——三模式共用
-      ...(readRepairCandidatesFromSummary(summary).length > 0
-        ? { repair_candidates: readRepairCandidatesFromSummary(summary) }
+      ...(readRepairCandidatesFromSummary(repairSummary).length > 0
+        ? { repair_candidates: readRepairCandidatesFromSummary(repairSummary) }
         : {}),
       // capability 输入缺口（本地或有 upstream producer）走 failed/owner route；
       // 显式 device/external/completion deferred 仍保持 deferred。
@@ -731,7 +742,8 @@ function gapsFromObservation(observation: AssessObservation): AssessGap[] {
       gaps.push({ phase: phase.phase, kind: 'deferred', detail: `verdict=${phase.verdict ?? 'unknown'}` });
       continue;
     }
-    if (phase.verdict !== 'PASS') {
+    if (phase.verdict !== 'PASS' && (!observation.currentDisposition
+      || phaseCompletionProblems(observation.currentDisposition, [phase.phase]).length > 0)) {
       // plan c8e5b3f1 t2 D：本地 blocked capability 时把泛化 detail 丰富为 capability/input/attempt
       // + 修复动作（gap.kind 仍为 failed → recommendation 仍 rerun_phase）。无本地 blocked 时保持原样。
       const blocked = phase.blocked_capabilities ?? [];
@@ -887,7 +899,8 @@ function recommendationForObservation(
     if (reconcile?.state === 'active' && currentPhase && candidates.length > 0) {
       const chainPhases = observation.phases.map((p) => p.phase);
       const responsibilities = candidates.map(candidate => resolveRepairResponsibility({ ...observation.responsibility, currentPhase,
-        target: { files: candidate.files, category: candidate.category, summary: candidate.summary } }));
+        currentDisposition: observation.currentDisposition,
+        target: candidate }));
       const targets = responsibilities
         .filter(result => result.action !== 'unavailable' && result.action !== 'design').map(result => result.owner)
         .filter((p): p is string => p !== null && p !== currentPhase);

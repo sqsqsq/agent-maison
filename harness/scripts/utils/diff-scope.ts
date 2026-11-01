@@ -192,12 +192,12 @@ export function implementationFiles(projectRoot: string, feature: string, contra
 }
 
 /** Removed/renamed source stays available to semantic review without pretending it exists now. */
-export function implementationChangeContext(projectRoot: string, feature: string, runId?: string, modules: Array<{ name?: string; package_path?: string }> = []): import('./types').ContextFileEntry[] {
+export function readImplementationChangeContext(projectRoot: string, feature: string, runId?: string, modules: Array<{ name?: string; package_path?: string }> = []): import('./types').ContextFileEntry[] | null {
   try {
     const baseline = resolveEffectiveDiffBaseline(projectRoot, feature, runId);
-    if (!baseline.available) return [];
+    if (!baseline.available) return null;
     const diff = diffChangedFilesWithStatus({ projectRoot, baseRef: baseline.baseSha });
-    if (!diff.executed) return [];
+    if (!diff.executed) return null;
     const prefixes = [...layerDirPrefixes(projectRoot), ...projectImplementationModules(projectRoot, modules).map(module => toDirPrefix(module.package_path))];
     const entries = diff.entries.filter(entry => isUnderLayerDir(entry.path, prefixes)
       || !!entry.oldPath && isUnderLayerDir(entry.oldPath, prefixes));
@@ -212,5 +212,9 @@ export function implementationChangeContext(projectRoot: string, feature: string
       result.push({ label: '(before ' + baseline.baseSha + ') ' + prior, kind: 'text', content: bytes.toString('utf8') });
     }
     return result;
-  } catch { return []; }
+  } catch { return null; }
+}
+
+export function implementationChangeContext(projectRoot: string, feature: string, runId?: string, modules: Array<{ name?: string; package_path?: string }> = []): import('./types').ContextFileEntry[] {
+  return readImplementationChangeContext(projectRoot, feature, runId, modules) ?? [];
 }

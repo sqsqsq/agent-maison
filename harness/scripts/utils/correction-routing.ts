@@ -9,9 +9,10 @@
 // 本模块只做**确定性判定**（纯函数）：答案来自当前 correction request 的结构化分类；
 // 重验≠重做：revalidate = 落点 phase + 其下游**已闭环** phase 的脚本门禁。
 
+import * as path from 'path';
 import type { WorkflowSpec } from '../../workflow-loader';
 import { resolvePhaseChain, type FeatureTrack } from './runtime-policy';
-import { resolveRepairResponsibility, type RepairResponsibilityContext, type RepairResponsibilityTarget } from './repair-responsibility';
+import { repairResponsibilityContext, resolveRepairResponsibility, type RepairResponsibilityContext, type RepairResponsibilityTarget } from './repair-responsibility';
 import { affectedScopePhases } from './execution-scope';
 
 // --------------------------------------------------------------------------
@@ -60,8 +61,14 @@ export function mapCategoryToPhase(
   track: FeatureTrack,
   context: RepairResponsibilityContext & { target?: RepairResponsibilityTarget } = {},
 ): string | null {
-  const result = resolveRepairResponsibility({ ...context, workflow: spec, target: { ...context.target, category } });
-  return result.action === 'unavailable' ? null : result.owner;
+  let resolved: RepairResponsibilityContext;
+  try { resolved = repairResponsibilityContext({ frameworkRoot: path.resolve(__dirname, '../../..'), ...context, workflow: spec }); }
+  catch { return null; }
+  const { owner } = resolveRepairResponsibility({ ...resolved, target: { ...context.target, category } });
+  if (!owner || !spec.artifacts.some(artifact => artifact.id === owner)
+    || !resolved.skillContracts?.has(owner) || resolved.profile?.phasesDisabled.has(owner)) return null;
+  // This is a responsibility suggestion; execution separately checks the real unit view and write boundary.
+  return owner;
 }
 
 /** Chain-only legacy readers can identify a canonical owner, but cannot invent one from position. */

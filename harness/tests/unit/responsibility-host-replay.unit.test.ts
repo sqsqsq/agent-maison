@@ -10,9 +10,9 @@ import { checkFactsArtifact, factsBaselineFingerprint, findPhaseDeltaSection, ty
 import { parseContextExploration } from '../../scripts/utils/context-exploration';
 import { loadCompletedFactsBaseline, loadFactsInvocationContext, resolveCapabilityResolutionEntryInput } from '../../scripts/utils/capability-resolution-entry-input';
 import { createObservedSourceHashReader, loadPhaseEvidenceManifest, recomputePhaseEvidenceStaleness } from '../../scripts/utils/phase-evidence-manifest';
-import { compareExistingTestPreservation } from '../../scripts/utils/repair-responsibility';
+import { compareExistingTestPreservation, codingTestPreservation, repairResponsibilityContext, workUnitMayWritePath } from '../../scripts/utils/repair-responsibility';
 import { checkCodingExistingTestPreserved } from '../../scripts/check-coding';
-import { collectReviewRepairCandidates, scopeRevisionInputFromRepairCandidates } from '../../scripts/utils/repair-candidates';
+import { collectReviewRepairCandidates, scopeRevisionInputFromRepairCandidates, testStrengthVerification } from '../../scripts/utils/repair-candidates';
 import { resolveCapabilityInputs } from '../../scripts/utils/capability-resolution';
 import { SpecLoader } from '../../scripts/utils/spec-loader';
 import { loadResolvedProfile } from '../../profile-loader';
@@ -20,7 +20,9 @@ import type { CheckContext } from '../../scripts/utils/types';
 import { researchSnapshotFacts } from '../fixtures/host-snapshot-3.1.0/migrate';
 import { copyTree } from '../fixtures/host-snapshot-3.1.0/generate';
 import { provisionRealChainProject, provisionFrameworkUnder, scaffoldRealChainHost, git, writeHostFile, REAL_CHAIN_REQUIREMENT } from '../utils/real-chain-host';
-import { writeSpecMaterials, writePlanMaterials, writeCodingMaterials, writeReviewMaterials, writeUtMaterials, writeTestPlan, publishVerifier, publishRequestedVerifier, readSummary, dumpPhase } from './real-chain.unit.test';
+import { writeSpecMaterials, writePlanMaterials, writeCodingMaterials, writeReviewMaterials, writeUtMaterials, writeTestPlan, publishRequestedVerifier, readDeliveredVerifierRequest, readSummary, dumpPhase } from './real-chain.unit.test';
+import { readVerifierMaterialOrNull, computeMaterialSha256, verifierMaterialFileMatchesCurrent } from '../../scripts/utils/verifier-material';
+import { loadVerifierEvidenceForSubject, verifierReportMdPath } from '../../scripts/utils/verifier-evidence';
 import { runGateHarness } from './real-chain-seams.unit.test';
 import { runGoalRuntimeChain } from './goal-runner-testing-integrity.unit.test';
 import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
@@ -33,6 +35,8 @@ import { matchesUnitCase, selectedUnitCases, startCaseTiming, type SelectedUnitC
 import type { UnitCaseResult } from '../run-unit';
 
 const frameworkRoot = path.resolve(__dirname, '../../..');
+// The worker replaces TMP/TEMP and deletes that whole tree; retained originals use the system Temp.
+const evidenceTemp = process.platform === 'win32' && process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Temp') : os.tmpdir();
 const historyRoot = path.resolve(__dirname, '../fixtures/host-recovery-history');
 const group = '20261022/20261022T103904Z-179a73';
 const recorded = path.join(historyRoot, group);
@@ -93,7 +97,7 @@ async function replayCR001Runtime(adoptNonCompatibility = false): Promise<void> 
     const baselines: string[] = [];
     let fixed = false;
     let adoptionPreservedBytes = false;
-    let returningOwnerGateChecked = false;
+    let verifiedStrengthFailure = false;
     const adoptionViews: unknown[] = [];
     const admission = (ctx: { runId: string; goalAttemptId?: string; phase: string }): FactsInvocationContext | undefined =>
       resolveCapabilityResolutionEntryInput({ projectRoot: project.root, frameworkRoot: project.frameworkRoot, feature: project.feature,
@@ -113,24 +117,13 @@ async function replayCR001Runtime(adoptNonCompatibility = false): Promise<void> 
       onSpec: ctx => {
         project.runId = ctx.runId;
         authorMaterials(ctx, () => writeSpecMaterials(project));
-        if (ctx.attempt > 1) publishVerifier(project, 'spec');
       },
-      onPlan: ctx => { project.runId = ctx.runId; authorMaterials(ctx, () => writePlanMaterials(project)); if (ctx.attempt > 1) publishVerifier(project, 'plan'); },
+      onPlan: ctx => { project.runId = ctx.runId; authorMaterials(ctx, () => writePlanMaterials(project)); },
       onCoding: ctx => {
         project.runId = ctx.runId;
         const entry = admission(ctx);
         if (entry?.baseline) baselines.push(entry.baseline.fingerprint);
         const events = loadAuthoritativeEvents(featureFilePath(project.root, project.feature, `goal-runs/${ctx.runId}/events.jsonl`));
-        if (adoptNonCompatibility && events.some(event => event.type === 'phase_verdict' && event.phase === 'ut' && event.verdict === 'PASS' && event.action !== 'advance' && event.action !== 'retry')) {
-          const loader = new SpecLoader(project.root, undefined, undefined, project.frameworkRoot);
-          const formal: CheckContext = { projectRoot: project.root, frameworkRoot: project.frameworkRoot, frameworkRel: 'framework', harnessRoot: project.harnessDir, phase: 'coding', feature: project.feature,
-            phaseRule: loader.loadPhaseRule('coding'), featureSpec: loader.loadFeatureSpec(project.feature), resolvedProfile: loadResolvedProfile(project.root, loadFrameworkConfig(project.root), project.frameworkRoot) };
-          const savedRun = process.env.MAISON_GOAL_RUN_ID;
-          process.env.MAISON_GOAL_RUN_ID = ctx.runId;
-          try { assert(checkCodingExistingTestPreserved(formal).every(check => check.status === 'PASS'), 'a real UT PASS handed back to coding still carries its verified current bytes'); }
-          finally { if (savedRun === undefined) delete process.env.MAISON_GOAL_RUN_ID; else process.env.MAISON_GOAL_RUN_ID = savedRun; }
-          returningOwnerGateChecked = true;
-        }
         const repair = events.some(event => event.type === 'phase_backtrack_requested' && (event as { candidates?: Array<{ id: string }> }).candidates?.some(candidate => candidate.id === 'CR-001'));
         authorMaterials(ctx, () => {
           writeCodingMaterials(project);
@@ -139,7 +132,11 @@ async function replayCR001Runtime(adoptNonCompatibility = false): Promise<void> 
         }, entry);
         const currentFacts = featureFilePath(project.root, project.feature, 'context/facts.md');
         fs.appendFileSync(currentFacts, `\n## phase_delta: coding\n| 路径 | 事实 | 影响 |\n|---|---|---|\n| ${project.modulePath}/src/main/ets/data/model/BankInfo.ets | 原接口新增必填 supportedCardTypes | 旧 typed fixture 必须兼容 |\n`);
-        if (ctx.attempt > 1) publishVerifier(project, 'coding');
+        fs.appendFileSync(path.join(frameworkRoot, 'harness/reports/72b6f0d9/p2/c-host-cr001-author-observation.jsonl'), JSON.stringify({
+          run: ctx.runId, attempt: ctx.goalAttemptId, repair, fixed, actualFeedbackContainsIssue: ctx.prompt.includes('CR-001'),
+          spyHash: sha(fs.readFileSync(path.join(project.root, adaptedSpy))), expectedRepairedHash: sha(repaired),
+          repairRequests: events.filter(event => event.type === 'phase_backtrack_requested'),
+        }) + '\n');
       },
       onReview: ctx => {
         project.runId = ctx.runId;
@@ -153,12 +150,8 @@ async function replayCR001Runtime(adoptNonCompatibility = false): Promise<void> 
           runGateHarness(project, 'review', undefined, ctx.goalAttemptId ?? '', { HARNESS_HDC_TARGET: 'fake-device', MAISON_DEVICE_TARGET_KIND: 'physical' }, 'agent');
           const subject = readSummary(project, 'review')?.verifier_subject_id;
           assert(subject, dumpPhase(project, 'review'));
-          publishFixtureVerifierEvidence({ projectRoot: project.root, reportsDir: featurePhaseReportsDir(project.root, project.feature, 'review', project.frameworkRoot),
-            feature: project.feature, phase: 'review', subjectId: subject, skipSummaryPatch: true,
-            reportText: `\`\`\`issue-verification\n${confirmed}\n\`\`\`` });
         } else {
           assert.equal(fs.readFileSync(path.join(project.root, adaptedSpy), 'utf8'), repaired);
-          if (ctx.attempt > 1) publishVerifier(project, 'review');
         }
       },
       onUt: ctx => {
@@ -178,20 +171,85 @@ async function replayCR001Runtime(adoptNonCompatibility = false): Promise<void> 
         }
         // UT采纳必须真实执行当前字节并完成当前独立核实；第一次调用也不能等下次作者补报告。
         runGateHarness(project, 'ut', undefined, ctx.goalAttemptId ?? '', { HARNESS_HDC_TARGET: 'fake-device', MAISON_DEVICE_TARGET_KIND: 'physical' }, 'agent');
-        publishVerifier(project, 'ut');
       },
-      onTesting: ctx => { project.runId = ctx.runId; authorMaterials(ctx, () => writeTestPlan(project)); if (ctx.attempt > 1) publishVerifier(project, 'testing'); },
-      onOutOfChain: ctx => { assert(publishRequestedVerifier(project, ctx), `unexpected model purpose: ${ctx.phase}`); },
+      onTesting: ctx => { project.runId = ctx.runId; authorMaterials(ctx, () => writeTestPlan(project)); },
+      onOutOfChain: ctx => {
+        const request = readDeliveredVerifierRequest(project, ctx); assert(request, `unexpected model purpose: ${ctx.phase}`);
+        project.runId = ctx.runId;
+        const reportsDir = featurePhaseReportsDir(project.root, project.feature, request.phase, project.frameworkRoot);
+        const material = readVerifierMaterialOrNull(reportsDir, request.subject_id);
+        assert(material && material.material_sha256 === request.material_sha256 && computeMaterialSha256(material) === request.material_sha256,
+          'the independent callback must read the actual current material original');
+        for (const file of material.files) {
+          const absolute = path.resolve(project.root, file.path), relative = path.relative(project.root, absolute);
+          assert(relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative), 'material reads stay in the isolated project namespace');
+          assert(verifierMaterialFileMatchesCurrent({ projectRoot: project.root, feature: project.feature, material, file: file.path }), file.path);
+          if (file.sha256 !== null) fs.readFileSync(absolute);
+        }
+        if (fs.existsSync(verifierReportMdPath(reportsDir, request.subject_id))) {
+          assert(publishRequestedVerifier(project, ctx), 'preserve the existing original verdict, never rewrite a negative answer to clear a loop');
+          return;
+        }
+        let reportText = `# verifier — ${project.feature} / ${request.phase}\n\n读取当前请求与真实文件；本报告不替代尚未执行的UT/设备证据。\n`;
+        if (request.phase === 'review' && !fixed) reportText += '\n```issue-verification\n'
+          + confirmed.split('02-Feature/WalletMain').join(project.modulePath) + '\n```\n';
+        if (request.phase === 'coding') {
+          const script = JSON.parse(fs.readFileSync(path.join(reportsDir, 'script-report.json'), 'utf8'));
+          const strength = script.checks.find((check: { id: string; affected_files?: string[] }) => check.id === 'coding_existing_test_preserved' && check.affected_files?.length);
+          if (strength) {
+            assert(typeof strength.details === 'string' && strength.details.trim());
+            for (const file of strength.affected_files as string[]) {
+              const absolute = path.resolve(project.root, file), relative = path.relative(project.root, absolute).replace(/\\/g, '/');
+              assert(!relative.startsWith('../') && !path.isAbsolute(relative), 'the verifier reads only its actual isolated project');
+              const bytes = fs.readFileSync(absolute, 'utf8');
+              assert(codingTestPreservation({ projectRoot: project.root, feature: project.feature, runId: ctx.runId, file: relative }).preserved
+                || relative === adaptedSpy && bytes === repaired, 'only the known original fixture repair can receive this positive independent judgment');
+            }
+            reportText += '\n```issue-verification\n' + YAML.stringify([{ issue: strength.id, verdict: 'refuted',
+              evidence: `${strength.details}\n${strength.affected_files.join('\n')}\n独立读取当前完整测试原件及原写入前像：本例旧断言未被删除或跳过，原Spy fixture只承接已核required字段；已知新增辅助断言没有替代原用例。此裁决只反证删弱，不将未执行的UT/设备结果签成通过，后续真实检查仍必需。` }]) + '```\n';
+          }
+        }
+        publishFixtureVerifierEvidence({ projectRoot: project.root, reportsDir, feature: project.feature, phase: request.phase,
+          subjectId: request.subject_id, reportText, skipSummaryPatch: true });
+        const accepted = loadVerifierEvidenceForSubject(project.root, project.feature, request.phase, request.subject_id, { frameworkRoot: project.frameworkRoot });
+        assert(accepted.ok, JSON.stringify(accepted));
+        if (request.phase === 'coding') {
+          const script = JSON.parse(fs.readFileSync(path.join(reportsDir, 'script-report.json'), 'utf8'));
+          const strength = script.checks.find((check: { id: string; affected_files?: string[] }) => check.id === 'coding_existing_test_preserved' && check.affected_files?.length);
+          if (strength) {
+            assert.equal(testStrengthVerification({ check: strength, verifierReportText: accepted.evidence.report_text,
+              verifierSubjectCurrent: true })?.verdict, 'refuted', 'the current full comparison and every actual test file must have an independent judgment');
+            if (strength.status === 'FAIL') verifiedStrengthFailure = true;
+          }
+        }
+        if (request.phase === 'review' && !fixed) {
+          const currentReport = fs.readFileSync(featureFilePath(project.root, project.feature, 'review/review-report.md'), 'utf8');
+          const candidates = collectReviewRepairCandidates({ responsibility: { projectRoot: project.root, frameworkRoot: project.frameworkRoot,
+            feature: project.feature, runId: ctx.runId, currentPhase: 'review' }, reportText: currentReport,
+            verifierReportText: accepted.evidence.report_text, reportValidityBlocked: false, verifierSubjectCurrent: true });
+          fs.writeFileSync(path.join(frameworkRoot, 'harness/reports/72b6f0d9/p2/c-host-cr001-live-publisher.json'), JSON.stringify({
+            request, candidates, verifier: accepted.evidence, currentReport,
+          }, null, 2) + '\n');
+          assert(candidates.some(candidate => candidate.id === 'CR-001'), 'the actual independent original must yield the original repair object: ' + JSON.stringify(candidates));
+        }
+      },
     });
     const failure = ['coding', 'review', 'ut', 'testing'].map(phase => dumpPhase(project, phase)).join('\n');
     if (adoptNonCompatibility) {
       const reports = path.resolve(frameworkRoot, 'harness/reports/c2f7a91e');
       fs.writeFileSync(path.join(reports, 'ut-adoption-state.json'), JSON.stringify(adoptionViews, null, 2) + '\n');
-      const snapshot = path.join(reports, 'ut-adoption-project');
-      assert.equal(path.dirname(snapshot), reports);
-      fs.rmSync(snapshot, { recursive: true, force: true });
+      const snapshot = fs.mkdtempSync(path.join(evidenceTemp, 'ut-adoption-project-'));
       copyTree(project.root, snapshot, true);
       fs.cpSync(path.join(project.root, '.git'), path.join(snapshot, '.git'), { recursive: true });
+      fs.writeFileSync(path.join(reports, 'ut-adoption-project-reference.json'), JSON.stringify({ path: snapshot, source: 'isolated runtime fixture; not a real host' }, null, 2) + '\n');
+    }
+    if (probe.exitCode !== 0) {
+      const snapshot = fs.mkdtempSync(path.join(evidenceTemp, 'cr001-failed-project-'));
+      copyTree(project.root, snapshot, true);
+      fs.cpSync(path.join(project.root, '.git'), path.join(snapshot, '.git'), { recursive: true });
+      fs.writeFileSync(path.join(frameworkRoot, 'harness/reports/72b6f0d9/p2/c-host-cr001-failed-project-reference.json'), JSON.stringify({
+        path: snapshot, source: 'isolated test project, actual failed runtime originals; no framework junction',
+      }, null, 2) + '\n');
     }
     assert.equal(probe.exitCode, 0, `${failure}\n${JSON.stringify(probe.events.slice(-8))}`);
     const reviewFail = probe.events.findIndex(event => event.type === 'phase_verdict' && event.phase === 'review' && event.verdict === 'FAIL');
@@ -208,12 +266,13 @@ async function replayCR001Runtime(adoptNonCompatibility = false): Promise<void> 
     const assessment = assessFeature(project.root, project.feature, { ...resolveChangeUnitExpectedExecution(project.root, project.feature, false, project.frameworkRoot), frameworkRoot: project.frameworkRoot });
     assert(assessment.complete, JSON.stringify(assessment.obligations.filter(obligation => obligation.status === 'uncovered')));
     const codingReport = JSON.parse(fs.readFileSync(featureFilePath(project.root, project.feature, 'coding/reports/script-report.json'), 'utf8'));
-    assert(codingReport.checks.some((check: { id: string; status: string }) => check.id === 'coding_existing_test_preserved' && check.status === 'PASS'), 'production preservation check must approve the real two-line repair');
+    assert(codingReport.checks.some((check: { id: string; status: string }) => check.id === 'coding_existing_test_preserved'
+      && check.status === (adoptNonCompatibility ? 'FAIL' : 'PASS')), adoptNonCompatibility
+      ? 'the added assertion keeps its raw comparison FAIL; only the actual independent judgment may close that task'
+      : 'production preservation check must approve the real two-line repair');
     if (adoptNonCompatibility) {
-      assert(returningOwnerGateChecked, 'the real owner return must exercise the formal coding gate directly');
       assert(adoptionPreservedBytes, 'UT must actually validate and adopt these bytes without rewriting the original error');
-      const firstUt = probe.events.findIndex(event => event.type === 'phase_verdict' && event.phase === 'ut' && event.verdict === 'PASS');
-      assert(probe.events.some((event, index) => index > reentry && index < firstUt && event.type === 'phase_verdict' && event.phase === 'coding' && event.verdict === 'FAIL'), 'unadopted assertion changes must fail first');
+      assert(verifiedStrengthFailure, 'retain the real raw comparison FAIL and current full-material independent refutation; an old phase order cannot replace either fact');
       const loader = new SpecLoader(project.root, undefined, undefined, project.frameworkRoot);
       const ctx: CheckContext = { projectRoot: project.root, frameworkRoot: project.frameworkRoot, frameworkRel: 'framework', harnessRoot: project.harnessDir, phase: 'coding', feature: project.feature,
         phaseRule: loader.loadPhaseRule('coding'), featureSpec: loader.loadFeatureSpec(project.feature), resolvedProfile: loadResolvedProfile(project.root, loadFrameworkConfig(project.root), project.frameworkRoot) };
@@ -384,10 +443,14 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
       const pathOwnerCandidates = collectReviewRepairCandidates({ responsibility, reportText: report, verifierReportText: pathOwnerVerifier, reportValidityBlocked: false });
       assert(pathOwnerCandidates.some(candidate => candidate.id === 'CR-001' && candidate.category === 'coding' && candidate.files.includes(spy)), '已核验原测试owner不应抹掉共享resolver确认的合法兼容修改者：' + JSON.stringify(pathOwnerCandidates));
       const reviewOnly = { ...manifest.execution_scope!, completion_target: 'request' as const, requested_results: ['review'], phase_chain: ['review'], reused_phases: [], obligations: [], unresolved: [] };
-      assert(!collectReviewRepairCandidates({ responsibility: { ...responsibility, executionScope: reviewOnly }, reportText: report, verifierReportText: pathOwnerVerifier, reportValidityBlocked: false })
-        .some(candidate => candidate.id === 'CR-001'), '产物owner与验证签发者一致不能为review-only授coding修改权');
+      const readonlyReview = repairResponsibilityContext({ ...responsibility, executionScope: reviewOnly, executionRole: 'verifier' });
+      assert(collectReviewRepairCandidates({ responsibility: readonlyReview, reportText: report, verifierReportText: pathOwnerVerifier, reportValidityBlocked: false })
+        .some(candidate => candidate.id === 'CR-001' && candidate.category === 'coding'), '独立诊断保留已核实的真实修改建议，不以phase队列裁掉问题');
+      assert(readonlyReview.contracts && !workUnitMayWritePath(readonlyReview.contracts, spy) && !workUnitMayWritePath(readonlyReview.contracts, bankInfo),
+        '产物owner与验证签发者一致也不能为当前独立review授予测试或产品源码修改权');
       fs.appendFileSync(path.join(root, spy), "\nexport function extraAssertion(): void { expect(true).assertTrue(); }\n");
-      assert(checkCodingExistingTestPreserved(ctx).some(check => check.id === 'coding_existing_test_preserved' && check.status === 'FAIL' && check.repair_owner === 'ut'));
+      assert(checkCodingExistingTestPreserved(ctx).some(check => check.id === 'coding_existing_test_preserved' && check.status === 'FAIL'
+        && check.severity === 'BLOCKER' && check.repair_owner === undefined && check.affected_files?.includes(spy)));
       const changedAssertion = collectReviewRepairCandidates({ responsibility, reportText: report, verifierReportText: pathOwnerVerifier, reportValidityBlocked: false });
       assert(changedAssertion.some(candidate => candidate.id === 'CR-001' && candidate.category === 'verification')
         && !changedAssertion.some(candidate => candidate.id === 'CR-001' && candidate.category === 'coding'), '改断言后不能沿角色一致性取得有限兼容许可');

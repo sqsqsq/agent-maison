@@ -4,6 +4,7 @@ import { performance } from 'perf_hooks';
 import type { UnitWorkerResult } from './utils/unit-suite-processes';
 import type { UnitCaseResult } from './run-unit';
 import { executeUnitModule, SelectableUnitModule } from './utils/unit-case-selection';
+import { mergeRuntimeTestFailures } from './utils/runtime-test-control';
 
 const [id, modulePath, selectionJson] = process.argv.slice(2);
 const result: UnitWorkerResult = {
@@ -35,6 +36,7 @@ void (async () => {
     if (executionStartedAt === undefined) result.loadMs = performance.now() - loadedAt;
     else result.executionMs = performance.now() - executionStartedAt;
   } finally {
+    if (mergeRuntimeTestFailures(result.results)) result.ok = false;
     const cleaned = cleanupStrict();
     if (!cleaned.ok) {
       const error = `临时 trust 根清理失败，遗留：${cleaned.leftoverPath}`;

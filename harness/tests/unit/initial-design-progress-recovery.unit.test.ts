@@ -10,6 +10,7 @@ import * as YAML from 'yaml';
 import { provisionFrameworkUnder, git, SOURCE_REPO_ROOT } from '../utils/real-chain-host';
 import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
 import type { UnitCaseResult } from '../run-unit';
+import { withRuntimeTest } from '../utils/runtime-test-control';
 
 const FIXTURE = path.resolve(__dirname, '../fixtures/host-recovery-history/20261029-a21473');
 const REPORT = path.join(SOURCE_REPO_ROOT, 'harness/reports/initial-design-progress-20261029');
@@ -79,9 +80,9 @@ const runtime=require(${JSON.stringify(path.join(harnessDir, 'scripts/goal-phase
     const environment: NodeJS.ProcessEnv = { ...process.env, MAISON_GOAL_CHECKPOINT_DIR: path.join(root, '.trust') };
     for (const key of Object.keys(environment)) if (/^MAISON_GOAL_(?!CHECKPOINT_DIR)/i.test(key)) delete environment[key];
     const execute = (label: string, script: string, args: string[], guarded = false): any => {
-      const result = spawnSync(process.execPath, [path.join(harnessDir, 'node_modules/ts-node/dist/bin.js'), '--transpile-only',
+      const result = withRuntimeTest({ root: root }, () => spawnSync(process.execPath, [path.join(harnessDir, 'node_modules/ts-node/dist/bin.js'), '--transpile-only',
         ...(guarded ? ['--require', guard] : []), path.join(harnessDir, 'scripts', script + '.ts'), '--project-root', root, ...args],
-      { cwd: harnessDir, env: environment, encoding: 'utf8', windowsHide: true, timeout: 60_000, maxBuffer: 8 * 1024 * 1024 });
+      { cwd: harnessDir, env: environment, encoding: 'utf8', windowsHide: true, timeout: 60_000, maxBuffer: 8 * 1024 * 1024 }));
       write(REPORT, `a21473-${label}.stdout.log`, result.stdout || ''); write(REPORT, `a21473-${label}.stderr.log`, result.stderr || '');
       assert(!result.error, String(result.error));
       return { result, value: JSON.parse(result.stdout.trim()) };
@@ -125,9 +126,9 @@ const runtime=require(${JSON.stringify(path.join(harnessDir, 'scripts/goal-phase
     assert(!added.some(row => row.type === 'agent_invoke_end'), 'The issued decomposition is not executed');
     assert(!added.some(row => row.type === 'agent_process_bound'));
     assert(!added.some(row => row.type === 'run_created' || row.type === 'run_end' && row.status === 'COMPLETED'));
-    const inspection = spawnSync(process.execPath, ['-r', path.join(harnessDir, 'node_modules/ts-node/register/transpile-only'), '-e',
+    const inspection = withRuntimeTest({ root: root }, () => spawnSync(process.execPath, ['-r', path.join(harnessDir, 'node_modules/ts-node/register/transpile-only'), '-e',
       `const fs=require('fs');const dir=${JSON.stringify(path.join(root, RUN))};const session=require(${JSON.stringify(path.join(harnessDir, 'scripts/utils/session-execution-handoff'))});const budget=require(${JSON.stringify(path.join(harnessDir, 'scripts/utils/delivery-origin'))}).readOriginalDeliveryBudget(${JSON.stringify(root)},JSON.parse(fs.readFileSync(dir+'/manifest.json','utf8')));const issued=session.readSessionExecution(dir);if(!issued)throw Error('No signed request');console.log(JSON.stringify({signed_request:issued.reference,total_turns:budget.totalTurns,max_total_turns:budget.budget.max_total_turns,active_ms:budget.priorActiveMs}));`],
-    { cwd: harnessDir, env: environment, encoding: 'utf8', windowsHide: true, timeout: 30_000 });
+    { cwd: harnessDir, env: environment, encoding: 'utf8', windowsHide: true, timeout: 30_000 }));
     assert.equal(inspection.status, 0, inspection.stderr + inspection.stdout);
     const actual = JSON.parse(inspection.stdout.trim());
     assert.equal(actual.total_turns, 7); assert.equal(actual.max_total_turns, 30);

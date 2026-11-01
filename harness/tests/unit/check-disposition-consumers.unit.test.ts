@@ -22,6 +22,7 @@ import {
   collectDisclosedFailures,
   isBlockingCheck,
   resolveCheckDisposition,
+  resolveCurrentDisposition,
   withDispositionTableForTest,
   type DispositionEntry,
 } from '../../scripts/utils/check-disposition';
@@ -302,7 +303,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     },
   },
   {
-    name: 'A6 聚合去重两个方向；只由阻断跳过引起时：归因不是代码回归、签名非空、无进展守卫生效',
+    name: 'A6 聚合去重两个方向：归因与签名保真，未知完成评估不触发无进展',
     run: () => {
       // 方向一：源失败已表达 → 聚合项不进清单、计数与签名，但照常参与结论
       const src = check('p4_src_gate', 'BLOCKER', 'FAIL');
@@ -327,10 +328,10 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         assert.strictEqual(failureKind, 'deterministic_gate_or_artifact_missing', `归因=${failureKind}`);
         const projection = buildCurrentAttemptFailureProjection({ decisionSummary: summary as never, failureKind, phase: 'testing', hasRuntimeFailureEvidence: false });
         assert.strictEqual(projection.blockerSignature, 'testing_run_status');
-        assert(shouldHaltNoProgress({
+        assert(!shouldHaltNoProgress({
           failureKind, priorBlockerSignature: projection.blockerSignature, currentBlockerSignature: projection.blockerSignature,
           priorArtifactSnapshot: {}, currentArtifactSnapshot: {},
-        }), '同签名零进展须熔断');
+        }), '旧签名/空快照不能冒充已完成的验收评估');
         // 方向一经真实写入器：计数与清单一致
         const withSource = writeRunSummaryBase(root, generateScriptReport('', 'testing', 'demo', root, dedup, FRAMEWORK_ROOT), FRAMEWORK_ROOT);
         assert.deepStrictEqual(withSource.blockers.map(b => b.id), ['p4_src_gate']);
@@ -710,7 +711,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     },
   },
   {
-    name: '最终评审返修一：authoritative_content_aligned 的真实 affected_files（绝对路径）经 summary → 快照，修掉一处差异即判有进展；一字节不改仍判无进展',
+    name: 'P2 authoritative_content_aligned 真实字段差额与快照：重复读取复用，修掉一处继续，元数据改动仍无改善才收敛',
     run: () => {
       const { loadHostSnapshot, SNAPSHOT_CU_FEATURE } = require('../fixtures/host-snapshot-3.1.0/generate') as typeof import('../fixtures/host-snapshot-3.1.0/generate');
       const { handWriteProjections } = require('./component-design-handoff.unit.test') as typeof import('./component-design-handoff.unit.test');
@@ -736,7 +737,13 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         const summary = writeRunSummaryBase(root, generateScriptReport('', 'spec', feature, root, [gate!], fw), fw);
         const kind = gc.classifyFailureKind(summary as never);
         const files = gc.extractDeterministicAffectedFiles(summary as never);
-        return { gate: gate!, kind, files, signature: gc.buildEffectiveBlockerSignature(summary as never, kind, 'spec'), snapshot: gc.snapshotArtifacts(root, files) };
+        const snapshot = gc.snapshotArtifacts(root, files);
+        assert((gate.structured as { authoritative_content_drift?: { items?: unknown[] } } | undefined)?.authoritative_content_drift?.items?.length,
+          'the original check must carry its actual field facts; consumers must not recompute drift');
+        const disposition = resolveCurrentDisposition({ endpoint: 'request', phases: [{ phase: 'spec', checks: [gate],
+          verdict: summary.verdict, schemaCurrent: true, closureCommitted: false }] });
+        const evaluation = { acceptanceKey: 'fixture/authorization/authoritative-acceptance', inputs: snapshot, disposition, completed: true };
+        return { gate: gate!, kind, files, signature: gc.buildEffectiveBlockerSignature(summary as never, kind, 'spec'), snapshot, evaluation };
       };
       try {
         clearFrameworkConfigCache();
@@ -749,10 +756,12 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         const [entry] = Object.values(first.snapshot);
         assert(entry?.exists === true && entry.contentHash.length === 64, `快照必须读到真实文件：${JSON.stringify(first.snapshot)}`);
 
-        // 反向：一字节不改 → 同签名、快照不变 → 无进展守卫照常要求停机
+        // 同输入、同事实只复用；原FAIL仍保留，不能购买第二个比较窗口。
         const same = round();
         assert.strictEqual(same.signature, first.signature);
-        assert.strictEqual(gc.shouldHaltNoProgress({ failureKind: same.kind, priorBlockerSignature: first.signature, currentBlockerSignature: same.signature, priorArtifactSnapshot: first.snapshot, currentArtifactSnapshot: same.snapshot }), true, '未修改时仍须判无进展');
+        const repeated = gc.evaluateCompletionProgress({ previous: first.evaluation, current: same.evaluation, feedbackDelivered: true });
+        assert.strictEqual(repeated.reused, true); assert.strictEqual(repeated.halt, false);
+        assert.strictEqual(repeated.evaluation?.disposition.completionEligible, false, '复用不得清掉原FAIL');
 
         // 正例：只修一处差异、保留另一处 → 仍 FAIL、同签名，但检测到修改，守卫不停机
         editAc1(ac => { ac.description = 'refresh and recover'; });
@@ -760,7 +769,10 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         assert(/AC-1\.expected_result/.test(second.gate.details) && !/AC-1\.description/.test(second.gate.details), `前提：只剩一处差异：${second.gate.details}`);
         assert.strictEqual(second.signature, first.signature, '前提：签名相同（只看快照判进展）');
         assert.strictEqual(gc.artifactsProgressed(first.snapshot, second.snapshot), true, '修掉一处差异必须检测到修改');
-        assert.strictEqual(gc.shouldHaltNoProgress({ failureKind: second.kind, priorBlockerSignature: first.signature, currentBlockerSignature: second.signature, priorArtifactSnapshot: first.snapshot, currentArtifactSnapshot: second.snapshot }), false, '真实修复不得被判无进展');
+        assert.strictEqual(gc.evaluateCompletionProgress({ previous: first.evaluation, current: second.evaluation, feedbackDelivered: true }).halt, false, '真实字段缺口减少不得被判无进展');
+        fs.appendFileSync(acceptanceFile, '\n# metadata-only byte change\n');
+        const metadataOnly = round();
+        assert.strictEqual(gc.evaluateCompletionProgress({ previous: second.evaluation, current: metadataOnly.evaluation, feedbackDelivered: true }).halt, true, '真实复验后仍同一字段缺口，改字节不能冒充验收改善');
 
         // 同一文件以相对 / 绝对两种写法传入，快照键一致
         const rel = path.relative(root, acceptanceFile);

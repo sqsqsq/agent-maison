@@ -21,13 +21,50 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
-import { writeReceiptManifestPointer } from '../utils/completion-chain-seed';
+import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
 import { freezeExistingGoalDelivery } from '../utils/existing-goal-delivery-fixture';
+import { withRuntimeTest, type RuntimeTestControl } from '../utils/runtime-test-control';
 
 export const RESULT_MARK = '<<goal-run-result>>';
 
+export function expectedDriverInterruption(scenario: string): string | undefined {
+  return ['crash_after_scope_event', 'crash_scope_in_run', 'successor_source_crash'].includes(scenario)
+    ? 'injected crash after phase_backtrack_requested' : undefined;
+}
+
 /** 缺省 framework 根＝本开发仓（单测用）；smoke 会显式传 clone 出来的发布件根。 */
 const DEV_FRAMEWORK_ROOT = path.resolve(__dirname, '../../..');
+
+/** Real request preparation for finite verifier fixtures; business replies remain the caller's responsibility. */
+export function prepareFixtureVerifierMaterial(input: {
+  projectRoot: string; frameworkRoot: string; report: import('../../scripts/utils/types').ScriptReport;
+  options: NonNullable<Parameters<typeof import('../../harness-runner').writeRunSummaryBase>[3]>;
+}): NonNullable<Parameters<typeof import('../../harness-runner').writeRunSummaryBase>[3]> {
+  const { projectRoot, frameworkRoot, report, options } = input;
+  if (options.verifierPlan?.mode !== 'enabled' || options.verifierMaterial) return options;
+  const modules = <T>(relative: string): T => require(path.join(frameworkRoot, relative)) as T;
+  const material = modules<typeof import('../../scripts/utils/verifier-material')>('harness/scripts/utils/verifier-material');
+  const generator = modules<typeof import('../../scripts/utils/report-generator')>('harness/scripts/utils/report-generator');
+  const evidence = modules<typeof import('../../scripts/utils/phase-evidence-manifest')>('harness/scripts/utils/phase-evidence-manifest');
+  const { SpecLoader } = modules<typeof import('../../scripts/utils/spec-loader')>('harness/scripts/utils/spec-loader');
+  const { computeGateFingerprint } = modules<typeof import('../../scripts/utils/gate-fingerprint')>('harness/scripts/utils/gate-fingerprint');
+  const YAML = require('yaml') as typeof import('yaml');
+  const runtime = evidence.createRuntimeArtifactPredicate({ projectRoot, frameworkRoot, feature: report.feature, phase: report.phase });
+  const actual = evidence.resolvePhaseEvidenceManifest({ projectRoot, frameworkRoot, feature: report.feature, phase: report.phase,
+    resolvedInputs: options.resolvedInputs, factsContext: options.factsContext });
+  const paths = [...new Set([...actual.inputs, ...actual.outputs].filter(file => file.exists && !runtime(file.path)).map(file => file.path))];
+  const contextFiles = paths.filter(file => fs.statSync(path.resolve(projectRoot, file)).isFile())
+    .map(file => ({ label: file, kind: 'path' as const, content: '' }));
+  const rule = YAML.stringify(new SpecLoader(projectRoot, undefined, undefined, frameworkRoot).loadPhaseRule(report.phase));
+  const harnessRoot = path.join(frameworkRoot, 'harness');
+  const verifierPromptRel = options.verifierPlan.verifier_prompt ?? undefined;
+  generator.assembleAIPrompt(harnessRoot, projectRoot, report.phase, report.feature, contextFiles, JSON.stringify(report), rule,
+    undefined, undefined, frameworkRoot, { verifierPromptRel });
+  return { ...options, verifierMaterial: material.buildVerifierMaterialView({ projectRoot, frameworkRoot,
+    feature: report.feature, phase: report.phase, checks: report.checks, contextFiles, phaseRuleText: rule,
+    gateFingerprint: computeGateFingerprint(frameworkRoot, report.phase), resolvedInputs: options.resolvedInputs, factsContext: options.factsContext,
+    templateText: generator.loadVerifierPromptTemplate(harnessRoot, report.phase, undefined, verifierPromptRel) }) };
+}
 
 /**
  * **从指定 framework 根动态加载被测实现**（codex 第八批 P1）。
@@ -108,6 +145,7 @@ export interface GoalRunOutcome {
   eventTypes: string[];
   /** 注入 agent 被调用次数——死在 phase 之前时应为 0 */
   agentCalls: number;
+  receiptDiagnostics?: Array<{ phase: string; status: string; message?: string }>;
   /** 宿主 goal-runs 下最新 run 的 id（park→resume 两段式场景用；无 run 目录为 null） */
   runId: string | null;
   /**
@@ -381,8 +419,17 @@ async function runScenario(args: {
   projectRoot: string;
   /** 场景附加参数：resume_after_park 传要续跑的 runId */
   extra?: string;
+  testControl?: RuntimeTestControl;
 }): Promise<GoalRunOutcome> {
+  const expectedInterruption = expectedDriverInterruption(args.scenario);
+  return withRuntimeTest({ expectedInterruption, ...args.testControl, root: args.projectRoot }, async () => {
   const { scenario, feature, frameworkRoot, projectRoot: root, extra } = args;
+  // Real check-receipt resolves workflows through the host's framework reference as well.
+  const localWorkflows = path.join(root, 'framework', 'workflows');
+  const selectedWorkflows = path.join(frameworkRoot, 'workflows');
+  if (path.resolve(localWorkflows) !== path.resolve(selectedWorkflows)) {
+    fs.cpSync(selectedWorkflows, localWorkflows, { recursive: true, force: false });
+  }
   const isSupervisorScenario = scenario === 'supervisor_probe_wake';
   const { goal, config } = loadFrameworkModules(frameworkRoot);
   const scope = require(path.join(frameworkRoot, 'harness/scripts/utils/scope-replan')) as {
@@ -392,16 +439,42 @@ async function runScenario(args: {
 
   (goal.__testing_setRepoLayout as (l: unknown) => void)(deriveRepoLayout(root, frameworkRoot));
   let agentCalls = 0;
+  const receiptDiagnostics: Array<{ phase: string; status: string; message?: string }> = [];
   let crashMutationInjected = false;
   let utSourceMutationInjected = false;
+  const checksConstructionScope = scenario === 'crash_scope_in_run' || scenario === 'crash_rerequest';
+  const constructionScopeCheck = (): import('../../scripts/utils/types').CheckResult => {
+    const { SpecLoader } = require(path.join(frameworkRoot, 'harness/scripts/utils/spec-loader')) as typeof import('../../scripts/utils/spec-loader');
+    const { parseScope } = require(path.join(frameworkRoot, 'harness/scripts/utils/scope-parser')) as typeof import('../../scripts/utils/scope-parser');
+    const { resolveModulePathPrefixes } = require(path.join(frameworkRoot, 'harness/scripts/utils/diff-scope')) as typeof import('../../scripts/utils/diff-scope');
+    const contracts = new SpecLoader(root, undefined, undefined, frameworkRoot).loadFeatureSpec(feature).contracts;
+    const planFile = `doc/features/${feature}/plan/plan.md`, contractsFile = `doc/features/${feature}/contracts.yaml`;
+    const plan = parseScope(fs.readFileSync(path.join(root, planFile), 'utf8'));
+    const modules = contracts?.modules ?? [];
+    const prefixes = resolveModulePathPrefixes(root, modules.map(module => module.name), modules);
+    const outside = (contracts?.files ?? []).filter(file => !prefixes.allowedPrefixes.some(prefix => file.replace(/\\/g, '/').startsWith(prefix)));
+    const valid = !!plan.scope && modules.length > 0 && !!contracts?.files.length && !prefixes.unmapped.length && !outside.length;
+    return { id: 'scope_declaration', category: 'structure', description: 'current construction contract agrees with its own public modules',
+      status: valid ? 'PASS' : 'FAIL', severity: 'BLOCKER', repair_owner: 'plan', affected_files: [contractsFile, planFile],
+      details: `Current plan modules (observation, not write permission): ${JSON.stringify(plan.scope?.in_scope_modules ?? [])}; `
+        + `contracts.modules=${JSON.stringify(modules)}; contracts.files outside those declared module packages=${JSON.stringify(outside)}; unmapped=${JSON.stringify(prefixes.unmapped)}.` };
+  };
   (goal.__testing_setInvokeAgent as (f: unknown) => void)(async (
     _plan: unknown, _agentRoot: unknown, invokeOpts: { outputLogPath?: string } = {},
   ) => {
     agentCalls += 1;
     const phase = /[\\/]phases[\\/]([a-z-]+)[\\/]/.exec(invokeOpts.outputLogPath ?? '')?.[1] ?? '';
-    // plan 4e6fb3b6 §8 S8：崩溃后重发同一请求时，plan 执行者（替身）按回退交接重新裁决范围、把 contracts 收回范围内文件——
-    // 这是 plan 阶段自己的工作，不是测试在恢复前手工预修。
-    if (scenario === 'crash_rerequest' && phase === 'plan') writeFixtureContracts(root, feature, [FIXTURE_PRODUCT_FILE]);
+    if (scenario === 'crash_rerequest' && phase === 'plan') {
+      const summaryFile = path.join(root, `doc/features/${feature}/coding/reports/summary.json`);
+      const current = fs.existsSync(summaryFile) ? JSON.parse(fs.readFileSync(summaryFile, 'utf8')) : null;
+      const feedback = current?.blockers?.find((check: { id?: string; repair_owner?: string }) => check.id === 'scope_declaration' && check.repair_owner === 'plan');
+      const delivered = JSON.stringify(_plan);
+      const activeRun = /[\\/]goal-runs[\\/]([^\\/]+)/.exec(invokeOpts.outputLogPath ?? '')?.[1];
+      // Hard machine findings need their current report and delivered feedback, not a forbidden AI request.
+      if (feedback && current.run_id === activeRun
+        && delivered.includes('scope_declaration') && delivered.includes(FIXTURE_OUT_OF_SCOPE_FILE)
+        && constructionScopeCheck().status === 'FAIL') writeFixtureContracts(root, feature, [FIXTURE_PRODUCT_FILE]);
+    }
     if (scenario === 'ut_source_mutation' && phase === 'ut' && !utSourceMutationInjected) {
       utSourceMutationInjected = true;
       w(root, FIXTURE_PRODUCT_FILE,
@@ -427,16 +500,18 @@ async function runScenario(args: {
     const req = (rel: string): Record<string, unknown> =>
       require(path.join(frameworkRoot, rel)) as Record<string, unknown>;
     // ---- 写盘 harness 桩（与 goal-runner-testing-integrity 同源形态）----
-    // 桩必须把 receipt/verifier/summary(1.2)/evidence-manifest 写到盘：runner 的
-    // 截断链 preflight 与 closure finalizer 消费的是**文件**，内存 PASS 走不通全链。
-    // 生产 evidence/attestation writer 从被测 frameworkRoot 动态取；历史回执 shape 用测试 helper。
-    const closure = req('harness/scripts/utils/closure-attestation');
-    const pem = req('harness/scripts/utils/phase-evidence-manifest');
+    // The bounded checker reads actual current inputs; production writers derive its report and closure.
+    const pem = req('harness/scripts/utils/phase-evidence-manifest') as typeof import('../../scripts/utils/phase-evidence-manifest');
     const fidelity = req('harness/scripts/utils/fidelity-shared');
+    const reports = req('harness/scripts/utils/report-generator') as typeof import('../../scripts/utils/report-generator');
+    const summaryWriter = req('harness/harness-runner') as typeof import('../../harness-runner');
+    const verifier = req('harness/scripts/utils/verifier-plan') as typeof import('../../scripts/utils/verifier-plan');
+    const workflows = req('harness/workflow-loader') as typeof import('../../workflow-loader');
     (goal.__testing_setRunHarnessPhase as (f: unknown) => void)(async (
       pr: string, _fr: string, ph: string, feat: string, _dry: boolean,
-      gm?: { run_id?: string },
+      gm?: { run_id?: string }, roundIdentity?: { runId: string; attemptId: string },
     ) => {
+      const startedAt = new Date().toISOString();
       const phaseDir = path.join(pr, 'doc', 'features', feat, String(ph));
       const dir = path.join(phaseDir, 'reports');
       fs.mkdirSync(dir, { recursive: true });
@@ -470,7 +545,7 @@ async function runScenario(args: {
                   details_excerpt: 'ut_hvigor_build 已 FAIL，test 阶段自动短路。',
                 },
               ]
-            : (scenario === 'crash_scope_in_run' || scenario === 'successor_source_crash')
+            : scenario === 'successor_source_crash'
               && String(ph) === 'coding' && !crashMutationInjected
               ? [{
                   id: 'coding_scope_declared',
@@ -494,72 +569,59 @@ async function runScenario(args: {
         crashMutationInjected = true;
         writeFixtureContracts(root, feat, [FIXTURE_PRODUCT_FILE, FIXTURE_OUT_OF_SCOPE_FILE]);
       }
-      if (failureBlockers) {
-        // 失败轮不写 receipt/closure；只留下与正式 summary 同形的 blocker，
-        // 让 runner 真实走 source-drift / build-attribution 分支。
-        fs.writeFileSync(path.join(dir, 'summary.json'), JSON.stringify({
-          schema_version: '1.2', assurance: 'full',
-          capability_resolutions: [], capability_resolution_contract_fingerprint: null,
-          verdict: 'FAIL', blocker_count: failureBlockers.length,
-          receipt_status: 'missing', closure_status: 'open', next_action: 'fix_blockers',
-          report_validity: 'PASS', release_readiness: 'BLOCKED', completion_status: 'complete',
-          blockers: failureBlockers, checks: [],
-        }, null, 2), 'utf-8');
-        return { exitCode: 1, timedOut: false };
-      }
-      fs.writeFileSync(path.join(phaseDir, 'phase-completion-receipt.md'), [
-        `# ${String(ph)} 阶段完成回执`, '',
-        `- 模块: ${feat}`, `- 阶段: ${String(ph)}`, '- 结论: PASS',
-        '- 脚本 harness: 退出码 0，零 BLOCKER', '- verifier: PASS', '',
-      ].join('\n'), 'utf-8');
-      fs.writeFileSync(path.join(dir, 'verifier.report.md'), '# verifier\nverdict: PASS\n', 'utf-8');
-      if (String(ph) === 'review') {
-        (closure.writeReviewClosureAttestation as (a: unknown) => void)({
-          projectRoot: pr, feature: feat, expectProductSources: true,
-          gateFingerprint: 'goal-run-driver', runIdentity: null,
-        });
-      }
-      const axis = (verdict: string): Record<string, unknown> => ({
-        applicable: true, required_for_release: true, verdict,
-        blocking_class: null, source_checks: [], resolution: null,
-      });
-      fs.writeFileSync(path.join(dir, 'summary.json'), JSON.stringify({
-        schema_version: '1.2', assurance: 'full',
-        capability_resolutions: [], capability_resolution_contract_fingerprint: null,
-        verdict: 'PASS', blocker_count: 0, receipt_status: 'missing', closure_status: 'open',
-        next_action: 'run_receipt',
-        report_validity: 'PASS', release_readiness: 'READY',
-        completion_status: 'complete',
-        quality_axes: {
-          functional: axis('PASS'), visual: axis('PASS'),
-          asset: axis('PASS'), evidence: axis('PASS'),
-        },
-        blockers: [], checks: [],
-      }, null, 2), 'utf-8');
+      const envKeys = ['MAISON_GOAL_RUN_ID', 'MAISON_GOAL_ATTEMPT', 'MAISON_GOAL_ATTEMPT_PHASE', 'MAISON_GOAL_RUNNER', 'MAISON_GOAL_GATE_HARNESS'];
+      const previous = new Map(envKeys.map(key => [key, process.env[key]]));
+      Object.assign(process.env, { MAISON_GOAL_RUN_ID: roundIdentity?.runId ?? gm?.run_id ?? '', MAISON_GOAL_ATTEMPT: roundIdentity?.attemptId ?? '',
+        MAISON_GOAL_ATTEMPT_PHASE: String(ph), MAISON_GOAL_RUNNER: '1', MAISON_GOAL_GATE_HARNESS: '1' });
       try {
-        const manifest = (pem.resolvePhaseEvidenceManifest as (a: unknown) => unknown)({
-          projectRoot: pr, feature: feat, phase: String(ph),
-          extraInputs: [], extraOutputs: [],
-          requirementSha: gm?.run_id
-            ? (fidelity.computeRunRequirementSha as (...a: unknown[]) => unknown)(pr, feat, gm.run_id, 'doc/features')
-            : null,
-        });
-        const written = (pem.writePhaseEvidenceManifest as (r: string, m: unknown) => { absPath: string; sha256: string })(pr, manifest);
-        const rel = path.relative(pr, written.absPath).split(path.sep).join('/');
-        writeReceiptManifestPointer(pr, feat, String(ph), rel, written.sha256);
-      } catch { /* manifest 失败 → 后续门如实红（非本场景被测对象） */ }
-      return { exitCode: 0, timedOut: false };
+        const current = pem.resolvePhaseEvidenceManifest({ projectRoot: pr, frameworkRoot, feature: feat, phase: String(ph),
+          requirementSha: gm?.run_id ? (fidelity.computeRunRequirementSha as (...a: unknown[]) => string)(pr, feat, gm.run_id, 'doc/features') : null });
+        const runtimeFile = pem.createRuntimeArtifactPredicate({ projectRoot: pr, frameworkRoot, feature: feat, phase: String(ph) });
+        const read = [...new Set([...current.inputs, ...current.outputs].filter(entry => entry.exists && !runtimeFile(entry.path)).map(entry => entry.path))];
+        const observations = read.map(file => `${file}: ${fs.readFileSync(path.resolve(pr, file)).length} actual bytes read`);
+        const checks: import('../../scripts/utils/types').CheckResult[] = failureBlockers ? failureBlockers.map(blocker => ({
+          id: blocker.id, category: 'structure', description: 'bounded recovery fault injection', status: 'FAIL', severity: 'BLOCKER',
+          failure_kind: blocker.classification, details: blocker.details_excerpt,
+        })) : [{ id: 'file_completeness', category: 'structure', description: 'controlled gate reads actual current phase inputs', severity: 'BLOCKER',
+          status: read.length ? 'PASS' : 'SKIP', details: observations.join('\n') || 'No current readable input; this gate remains unexecuted.', affected_files: read }];
+        const scopeCheck = checksConstructionScope ? constructionScopeCheck() : undefined;
+        if (scopeCheck) checks.push(scopeCheck);
+        const report = reports.generateScriptReport(path.join(frameworkRoot, 'harness'), ph as import('../../scripts/utils/types').Phase, feat, pr, checks, frameworkRoot);
+        const plan = verifier.resolveVerifierPlan({ phase: ph, track: 'full', runtimeMode: 'goal', policy: { verifier: 'required' },
+          workflowVerifierPrompt: verifier.workflowVerifierPrompt(workflows.loadWorkflowSpec(frameworkRoot, 'spec-driven'), ph), adapterHasVerifierSubagent: true });
+        const writerOptions = prepareFixtureVerifierMaterial({ projectRoot: pr, frameworkRoot, report, options: { verifierPlan: plan } });
+        let summary = summaryWriter.writeRunSummaryBase(pr, report, frameworkRoot, writerOptions);
+        if (!failureBlockers && scopeCheck?.status !== 'FAIL' && summary.verifier_subject_id) {
+          publishFixtureVerifierEvidence({ projectRoot: pr, reportsDir: dir, feature: feat, phase: ph, subjectId: summary.verifier_subject_id, skipSummaryPatch: true,
+            ...(scopeCheck ? { reportText: `Current contracts and module packages agree. ${scopeCheck.details}` } : {}) });
+          summary = summaryWriter.writeRunSummaryBase(pr, report, frameworkRoot, writerOptions);
+        }
+        const tracePath = path.join(dir, 'trace.json');
+        let startCommit: string | undefined;
+        if (fs.existsSync(tracePath)) {
+          try { startCommit = (JSON.parse(fs.readFileSync(tracePath, 'utf8')) as { start_commit?: string }).start_commit; } catch { /* This real checker run produces a new trace. */ }
+        }
+        if (!startCommit) {
+          const head = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: pr, encoding: 'utf8', windowsHide: true });
+          if (head.status === 0) startCommit = head.stdout.trim();
+        }
+        // Same minimal trace header as recordStartCommit, plus only this checker's actual reads; no model metrics invented.
+        fs.writeFileSync(tracePath, JSON.stringify({ schema_version: '1.0.0', phase: String(ph), feature: feat,
+          started_at: startedAt, ended_at: new Date().toISOString(), start_commit: startCommit,
+          tool_calls: read.length ? [{ name: 'Read', count: read.length }] : [], checked_inputs: read }, null, 2) + '\n');
+        return { exitCode: summary.verdict === 'PASS' ? 0 : 1, timedOut: false };
+      } finally { for (const [key, value] of previous) { if (value === undefined) delete process.env[key]; else process.env[key] = value; } }
     });
     // capability gate 桩（无缺口放行）——它排在设备门之前，而设备 capability 的
     // provider 恰是临时宿主必缺的设备工具链；不桩它就永远走不到设备门（缝头注详述）
     (goal.__testing_setInvokeCapabilityGate as (f: unknown) => void)(() => null);
-    // 闭环探针桩——tryValidateReceipt 会 spawn 真 check-receipt 子进程，tmp host
-    // 必然 error（closure_probe_error，实证）；缝头注自述它就是为此存在
-    (goal.__testing_setValidateReceipt as (f: unknown) => void)(
-      (_hr: string, _pr: string, ph: string, feat: string) => ({
-        status: 'passed', receipt_path: `doc/features/${feat}/${ph}/phase-completion-receipt.md`, exit_code: 0,
-      }),
-    );
+    // Observe the real validator; do not substitute its status or manufacture closure.
+    const receipt = req('harness/scripts/utils/phase-state') as typeof import('../../scripts/utils/phase-state');
+    (goal.__testing_setValidateReceipt as (f: unknown) => void)((...args: Parameters<typeof receipt.tryValidateReceipt>) => {
+      const result = receipt.tryValidateReceipt(...args);
+      receiptDiagnostics.push({ phase: args[2], status: result.status, message: result.message });
+      return result;
+    });
     // 【cache_miss_in_run 场景已删除 · pass snapshot 退役（runner-owned-machine-facts）】
     // 设备门桩：两种形态——
     // · BLOCKED（halted:false + externalBlocked，fa0663 同形）：park / 仍锁 resume；
@@ -743,6 +805,19 @@ async function runScenario(args: {
 
   let exitCode: number | null = null;
   let error: string | null = null;
+  const reconcileBoundary = require(path.join(frameworkRoot, 'harness/scripts/utils/goal-reconcile-boundary')) as typeof import('../../scripts/utils/goal-reconcile-boundary');
+  const createBoundary = reconcileBoundary.createGoalReconcileBoundary;
+  if (scenario === 'crash_scope_in_run') {
+    let cut = false;
+    reconcileBoundary.createGoalReconcileBoundary = writer => createBoundary(event => {
+      writer(event);
+      if (!cut && event.type === 'phase_backtrack_requested' && event.to_phase === 'plan'
+        && (event.from_phase ?? event.phase) === 'coding' && constructionScopeCheck().status === 'FAIL') {
+        cut = true;
+        throw new Error(expectedDriverInterruption(scenario));
+      }
+    });
+  }
   try {
     // plan 4e6fb3b6 §5.1：设备停放场景的停机带探针，停放前 runtime 会先进程内等待（生产默认 15 分钟）。
     // driver 经 runtime 启动入参把上限调小，并不去碰本机真实设备（探针恒未就绪）——停放语义不变。
@@ -759,6 +834,8 @@ async function runScenario(args: {
         });
   } catch (e) {
     error = (e as Error).message;
+  } finally {
+    reconcileBoundary.createGoalReconcileBoundary = createBoundary;
   }
   if (isSupervisorScenario && supervisorSpawnRecord) {
     const deadline = Date.now() + 2_000;
@@ -783,6 +860,7 @@ async function runScenario(args: {
     error,
     eventTypes: all.map(e => e.type),
     agentCalls,
+    receiptDiagnostics,
     runId: finalRunId,
     phaseStartsThisCall: all.slice(preCount)
       .filter(e => e.type === 'phase_start' && typeof e.phase === 'string')
@@ -831,6 +909,7 @@ async function runScenario(args: {
   scope.__testing_setAfterInvalidationRequested?.(null);
   // 宿主目录**不在此删**——谁建谁删，见 runScenario 的 projectRoot 注释
   return out;
+  });
 }
 
 if (require.main === module) {
@@ -866,6 +945,6 @@ if (require.main === module) {
     })
     .catch(e => {
       process.stdout.write(`\n${RESULT_MARK}${JSON.stringify({ driverError: (e as Error).message })}\n`);
-      process.exit(0);
+      process.exit(1);
     });
 }

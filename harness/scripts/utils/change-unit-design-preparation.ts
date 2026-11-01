@@ -89,8 +89,6 @@ export function evaluateDesignPreparationEntry(
     }));
     if (issues.length > 0) {
       reasons.push(`blueprint_not_admitted:${issues.map(item => item.id).join(',')}`);
-    } else if (asRecord(asRecord(loaded.blueprint.review_summary)?.admission)?.status !== 'pass') {
-      reasons.push('blueprint_admission_not_pass');
     } else {
       blueprintAdmitted = true;
     }
@@ -632,11 +630,10 @@ export function deriveDesignPreparationReadiness(
     .filter(loaded => !retired.has(String(loaded.changeUnit.change_unit_id)));
   const perUnit = units.map(loaded => {
     const design = validateChangeUnitDesign(projectRoot, loaded.changeUnit);
-    const projectionIssues = design.verdict === 'constructable'
-      ? (['acceptance', 'contracts'] as const).flatMap(kind => {
-        const projection = deriveBlueprintSkillInput(projectRoot, deriveChangeUnitFeatureId(blueprintId, String(loaded.changeUnit.change_unit_id)), resolveProbeFrameworkRoot(projectRoot, __dirname), kind);
-        return projection.state === 'invalid' ? [{ kind, codes: projection.codes ?? [], detail: projection.detail }] : [];
-      }) : [];
+    const projectionIssues = (['acceptance', 'contracts'] as const).flatMap(kind => {
+      const projection = deriveBlueprintSkillInput(projectRoot, deriveChangeUnitFeatureId(blueprintId, String(loaded.changeUnit.change_unit_id)), resolveProbeFrameworkRoot(projectRoot, __dirname), kind);
+      return projection.state === 'invalid' ? [{ kind, codes: projection.codes ?? [], detail: projection.detail }] : [];
+    });
     return {
       changeUnitId: String(loaded.changeUnit.change_unit_id),
       verdict: projectionIssues.length ? 'blocked' : design.verdict as string,

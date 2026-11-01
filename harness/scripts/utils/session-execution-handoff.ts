@@ -199,8 +199,8 @@ export function observeSessionExecution(runDir: string, issued: IssuedSessionExe
     settled };
 }
 
-/** The same saved request locates process and session observations; it grants no new authority. */
-export function executionRequestForInvoke(runDir: string, invokeId?: string): IssuedSessionExecution | null {
+/** Read original request material for evidence; copied paths do not authorize current execution. */
+export function readExecutionRequestOriginal(runDir: string, invokeId?: string): IssuedSessionExecution | null {
   const events = loadAuthoritativeEvents(path.join(runDir, 'events.jsonl'));
   const start = [...events].reverse().find(event => event.type === 'agent_invoke_start' && (!invokeId || event.invoke_id === invokeId));
   if (!start?.invoke_id || !start.phase) return null;
@@ -213,8 +213,15 @@ export function executionRequestForInvoke(runDir: string, invokeId?: string): Is
   const bytes = fs.readFileSync(inside(runDir, path.join(path.dirname(directory), files[0])));
   const request = JSON.parse(bytes.toString('utf8')) as SessionExecutionRequest;
   if (request.invoke_id !== start.invoke_id || request.context.phase !== start.phase) throw new Error('[session-handoff] execution request identity mismatch');
-  if (path.resolve(request.context.runDir) !== path.resolve(runDir)) return null; // Historical copied material is evidence, never current execution authority.
   return { request, event: start, reference: { path: path.relative(runDir, path.join(path.dirname(directory), files[0])).replace(/\\/g, '/'), sha256: digest(bytes) } };
+}
+
+/** The same saved request locates current observations; preserve the existing process authority boundary. */
+export function executionRequestForInvoke(runDir: string, invokeId?: string): IssuedSessionExecution | null {
+  const original = readExecutionRequestOriginal(runDir, invokeId);
+  if (!original) return null;
+  if (original.event.type === 'phase_start' && original.event.handoff_request) return original;
+  return path.resolve(original.request.context.runDir) === path.resolve(runDir) ? original : null;
 }
 
 /** Stop only an exact existing native binding. Unknown external executions cannot be force-re-signed. */

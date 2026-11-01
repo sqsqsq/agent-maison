@@ -833,12 +833,12 @@ const cases: Array<{ name: string; run: () => void }> = [
         delete env.MAISON_GOAL_GATE_HARNESS;
         delete env.MAISON_GOAL_ALLOW_NESTED;
         env.MAISON_GOAL_CHECKPOINT_DIR = cpOut;
-        const r = require('child_process').spawnSync(process.execPath, [
+        const r = withRuntimeTest({ root: temp }, () => require('child_process').spawnSync(process.execPath, [
           '-r', 'ts-node/register/transpile-only', 'scripts/goal-runner.ts',
           '--feature', 'f1', '--requirement', 'dry byteid probe',
           '--start', 'spec', '--end', 'spec',
           '--dry-run', '--adapter', 'cursor', '--override-adapter',
-        ], { cwd: fhar, env, encoding: 'utf-8', timeout: 300_000 }) as {
+        ], { cwd: fhar, env, encoding: 'utf-8', timeout: 300_000 })) as {
           status: number | null; stdout: string; stderr: string;
         };
         if (r.status === null) throw new Error(`dry-run 超时/未退出：${(r.stderr || '').slice(-500)}`);
@@ -1079,3 +1079,4 @@ if (require.main === module) {
   process.exit(r.every(x => x.ok) ? 0 : 1);
 }
 import { matchesUnitCase, selectedUnitCases } from '../utils/unit-case-selection';
+import { withRuntimeTest } from '../utils/runtime-test-control';

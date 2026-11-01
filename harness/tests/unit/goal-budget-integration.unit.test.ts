@@ -115,10 +115,12 @@ function seedFailedRun(s: Snapshot, source: string, runId: string, supersedes: s
 function addSourceBacktrack(s: Snapshot, source: string): void {
   const file = runFile(s.root, B1_FEATURE, source, 'events.jsonl');
   const lines = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean);
+  const prior = lines.filter(line => JSON.parse(line).type === 'phase_backtrack_requested').length;
   const end = lines.findIndex(line => JSON.parse(line).type === 'run_end');
   const ts = JSON.parse(lines[end - 1]).ts;
   lines.splice(end, 0, JSON.stringify({ ts, type: 'phase_backtrack_requested', from_phase: 'testing', to_phase: 'coding', invalidated_phases: ['coding'] }));
   fs.writeFileSync(file, lines.join('\n') + '\n');
+  assert(countType(eventsOf(s, source), 'phase_backtrack_requested') === prior + 1, '只追加当前夹具明确的一次回退，不抹掉正式迁移的真实回退');
 }
 
 function recordState(s: Snapshot): string {
@@ -184,7 +186,7 @@ const b1Cases: TestCase[] = [
     run: () => withAe92d8(async (s, source) => {
       assert(recordState(s) === 'ok', `前提：F 完成记录可信（record=${recordState(s)}）`);
       const F_TURNS = countType(eventsOf(s, source), 'agent_invoke_start');
-      assert(countType(eventsOf(s, source), 'phase_backtrack_requested') === 1 && F_TURNS > 0, '前提：F 自带 1 次回退与若干轮');
+      assert(countType(eventsOf(s, source), 'phase_backtrack_requested') > 0 && F_TURNS > 0, '前提：F 自带真实回退与调用，完成边界须排除其全部既有消耗');
       const { successor, turns, backtracks } = await bornSuccessor(s, source);
       const audits = eventsOf(s, successor).filter(e => e.type === 'supersede') as Array<GoalRunEvent & { target_run_id?: string; delivery_cycle_boundary?: string }>;
       assert(audits.length === 3 && audits.every(e => e.delivery_cycle_boundary === source), `每条 supersede 审计应带边界 ${source}：${JSON.stringify(audits)}`);

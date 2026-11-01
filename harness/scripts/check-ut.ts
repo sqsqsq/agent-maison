@@ -4424,7 +4424,7 @@ const checker: PhaseChecker = {
 
     // --- blind-visual-hardening d1 切片一：上游裁决传播（review 不通过不得进 ut）---
     featureGate('upstream_verdict_gate', () =>
-      checkUpstreamVerdictGate({ projectRoot: ctx.projectRoot, feature: ctx.feature, phase: 'ut', runId: ctx.resolvedInputs ? process.env.MAISON_GOAL_RUN_ID : undefined }));
+      checkUpstreamVerdictGate({ projectRoot: ctx.projectRoot, feature: ctx.feature, phase: 'ut', frameworkRoot: ctx.frameworkRoot, resolvedInputs: ctx.resolvedInputs, runId: ctx.resolvedInputs ? process.env.MAISON_GOAL_RUN_ID : undefined }));
 
     if (featureGatesActive) {
       results.push(

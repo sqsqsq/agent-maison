@@ -607,9 +607,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       )[0];
       assertEq(mixed.status, 'PASS', `分优先级 100% 不得冒充总体：${mixed.details}`);
 
-      // ⑧ **summary 腿（事故正形态）**：报告 16/16"通过"、100%，与同阶段
-      //    testing/reports/summary.json verdict=FAIL 并存。summary 走既有唯一读入口
-      //    readUpstreamPhaseView；manifest 用**生产 writer** 冻结，freshness 才是真 fresh。
+      // ⑧ 当前同轮检查裁决与统计交叉核对；上一轮 fresh FAIL 仍在盘，不能自锁当前结果。
       const CLEAN = '## 通过率统计\nP0 通过率 100%，P1 通过率 100%，总计 100%\n' + execTable('通过');
       const noSummary = checkPassRateCalculated(ctxT, CLEAN)[0];
       assertEq(noSummary.status, 'PASS', `无 summary 不干预：${noSummary.details}`);
@@ -635,15 +633,23 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         path.relative(root, written.absPath).split(path.sep).join('/'),
         written.sha256,
       );
-      const contradiction = checkPassRateCalculated(ctxT, CLEAN)[0];
-      assertEq(contradiction.status, 'FAIL', '报告全过 vs 机器 verdict=FAIL（fresh）须 FAIL');
+      const currentFailure = { ...chk('visual_diff', 'FAIL', 'BLOCKER'), category: 'structure' as const, description: '本轮视觉检查失败', details: '当前视觉缺陷仍存在' };
+      const contradiction = checkPassRateCalculated(ctxT, CLEAN, [], [currentFailure])[0];
+      assertEq(contradiction.status, 'FAIL', '报告全过 vs 同轮机器 verdict=FAIL 须 FAIL');
       assertTrue(/verdict=FAIL/.test(contradiction.details), contradiction.details);
       assertTrue(/visual_diff/.test(contradiction.details), `须点名 blocker：${contradiction.details}`);
+      const currentPass = { ...currentFailure, status: 'PASS' as const, details: '本轮原视觉缺陷已复核消除' };
+      assertEq(checkPassRateCalculated(ctxT, CLEAN, [], [currentPass])[0].status, 'PASS', '同轮PASS不能被旧fresh FAIL summary自锁');
+      const { executeCheck } = require('../../scripts/utils/check-execution') as typeof import('../../scripts/utils/check-execution');
+      const requiredGap = executeCheck(ctxT, () => { throw new Error('本轮必需视觉核实未执行'); }, 'visual_diff')[0];
+      assertEq(checkPassRateCalculated(ctxT, CLEAN, [], [requiredGap])[0].status, 'FAIL', '同轮必需检查缺口不能宣称全部通过');
+      assertEq(checkPassRateCalculated(ctxT, CLEAN)[0].status, 'PASS', '缺同轮检查不从旧summary回填当前FAIL');
 
       // 同一份 fresh 的负面 summary 下，如实报告（表里不写通过、通过率 0%）不受牵连
       const honestUnderFail = checkPassRateCalculated(
         ctxT,
         '## 通过率统计\nP0 验收通过率 0%，P1 验收通过率 0%，总计 0%\n' + execTable('失败'),
+        [], [currentFailure],
       )[0];
       assertEq(honestUnderFail.status, 'PASS', `如实报告不受负面裁决牵连：${honestUnderFail.details}`);
 

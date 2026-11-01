@@ -5,6 +5,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import * as crypto from 'crypto';
 import { spawnSync } from 'child_process';
 import {
   featureDir,
@@ -26,7 +27,9 @@ import {
   type PolicySnapshot,
 } from './runtime-policy';
 import { loadFeatureTrackDecl } from './feature-track';
-import { finalizePhaseClosure } from './phase-closure-finalizer';
+import { finalizePhaseClosure, preparePhaseRepairFeedback } from './phase-closure-finalizer';
+import { readReusableCheckResult } from './verify-feature-completion';
+import { loadPhaseEvidenceManifest, recomputeManifestAggregate, writePhaseEvidenceManifest } from './phase-evidence-manifest';
 import { deleteEnvKeyCaseInsensitive } from './process-integrity';
 
 /** Feature phase id（由 workflow 定义；不再限定 canonical 枚举——C0 runtime-policy-core 收编）。 */
@@ -400,19 +403,22 @@ export function tryValidateReceipt(
   if (result.status === 0) {
     return { status: 'passed', receipt_path: receiptRel, exit_code: 0 };
   }
+  const stderr = result.stderr || result.error?.message || 'unknown';
+  const resultAt = stderr.indexOf('❌ BLOCKER — 完成回执校验未通过');
+  const diagnostic = resultAt >= 0 ? stderr.slice(resultAt) : stderr;
   if (result.status === 1) {
     return {
       status: 'failed',
       receipt_path: receiptRel,
       exit_code: 1,
-      message: (result.stderr ?? '').slice(0, 800),
+      message: diagnostic,
     };
   }
   return {
     status: 'error',
     receipt_path: receiptRel,
     exit_code: result.status ?? -1,
-    message: (result.stderr ?? result.error?.message ?? 'unknown').slice(0, 800),
+    message: diagnostic,
   };
 }
 
@@ -431,8 +437,14 @@ export function patchSummaryClosureStatus(
   if (!fs.existsSync(summaryPath)) {
     return false;
   }
+  let before: string | undefined;
   try {
-    const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf-8')) as Record<string, unknown>;
+    before = fs.readFileSync(summaryPath, 'utf-8');
+    const summary = JSON.parse(before) as Record<string, unknown>;
+    const bound = summary.closure_status !== 'closed' && patch.closure_status !== 'closed'
+      && readReusableCheckResult({ projectRoot, feature, phase, frameworkRoot,
+        runId: typeof summary.run_id === 'string' ? summary.run_id : undefined });
+    const evidence = bound ? loadPhaseEvidenceManifest(projectRoot, feature, phase) : null;
     if (patch.closure_status !== undefined) {
       summary.closure_status = patch.closure_status;
     }
@@ -442,9 +454,18 @@ export function patchSummaryClosureStatus(
     if (patch.next_action !== undefined) {
       summary.next_action = patch.next_action;
     }
-    fs.writeFileSync(summaryPath, JSON.stringify(summary, null, 2), 'utf-8');
+    const after = JSON.stringify(summary, null, 2);
+    fs.writeFileSync(summaryPath, after, 'utf-8');
+    const output = evidence?.manifest.outputs.find(entry => path.resolve(projectRoot, entry.path) === summaryPath);
+    if (before !== after && evidence?.integrityOk && output?.sha256 === crypto.createHash('sha256').update(before).digest('hex')) {
+      output.sha256 = crypto.createHash('sha256').update(after).digest('hex');
+      evidence.manifest.aggregate_sha256 = recomputeManifestAggregate(evidence.manifest);
+      writePhaseEvidenceManifest(projectRoot, evidence.manifest);
+    }
     return true;
   } catch {
+    // These flags are diagnostic. If their binding cannot be published, keep the preceding result.
+    if (before !== undefined) try { fs.writeFileSync(summaryPath, before, 'utf-8'); } catch { /* best-effort original contract */ }
     return false;
   }
 }
@@ -469,7 +490,7 @@ export function applyClosurePatchFromReceiptValidation(
 
 export interface SyncClosureResult {
   exitCode: number;
-  /** Present only when receipt passed but the atomic closure commit failed. */
+  /** Explicit feedback preparation or atomic closure commit failed. */
   finalizationError?: string;
 }
 
@@ -493,6 +514,13 @@ export function runSyncClosureDetailed(
   // 非 goal 调用（harness-runner 的 --sync-closure 等）省略本参数即保持现状。
   opts?: { goalIdentity?: { runId: string; attemptId: string; attemptPhase: string; modelPin?: string } },
 ): SyncClosureResult {
+  try {
+    preparePhaseRepairFeedback({ projectRoot, frameworkRoot: frameworkRoot ?? path.resolve(harnessRoot, '..'), feature, phase });
+  } catch (error) {
+    const message = (error as Error).message;
+    console.error(`❌ sync-closure: 修订反馈准备失败：${message}`);
+    return { exitCode: 1, finalizationError: message };
+  }
   const receiptValidation = tryValidateReceipt(harnessRoot, projectRoot, phase, feature, {
     ...(opts?.goalIdentity ? { goalIdentity: opts.goalIdentity } : {}),
   });

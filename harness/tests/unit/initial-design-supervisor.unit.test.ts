@@ -13,7 +13,7 @@ import { createGoalRun } from '../../scripts/utils/goal-run-creation';
 import { casAcquireRunOwner, ensureRunControl, releaseRunOwner } from '../../scripts/utils/goal-run-control';
 import { deriveChangeUnitFeatureId, asChangeUnitArtifact, createChangeUnitRef, loadCanonicalChangeUnit } from '../../scripts/utils/change-unit-path';
 import { resolveOriginalDeliveryExecution } from '../../scripts/utils/delivery-origin';
-import { runGoalModeSessionStep } from '../../scripts/goal-mode-entry';
+import { runGoalModeSessionStep as runGoalModeSessionStepUnchecked } from '../../scripts/goal-mode-entry';
 import * as phaseRuntime from '../../scripts/goal-phase-runtime';
 import { readInitialDesignDelivery } from '../../scripts/utils/initial-design-delivery';
 import { enumerateCanonicalChangeUnits } from '../../scripts/utils/change-unit-path';
@@ -26,6 +26,10 @@ import { fixture } from './blueprint-skill-projection.unit.test';
 import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
 import type { UnitCaseResult } from '../run-unit';
 import type { ProcessProbe } from '../../scripts/utils/device-session';
+import { withRuntimeTest, type RuntimeTestControl } from '../utils/runtime-test-control';
+const runGoalModeSessionStep = (options: Parameters<typeof runGoalModeSessionStepUnchecked>[0], testControl: RuntimeTestControl = {}) =>
+  withRuntimeTest({ root: options.projectRoot, ...testControl }, () => runGoalModeSessionStepUnchecked(options));
+
 
 const BLUEPRINT = 'ledger-app-blueprint';
 const FRAMEWORK = path.resolve(__dirname, '../../..');

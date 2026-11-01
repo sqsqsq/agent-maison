@@ -5,6 +5,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as YAML from 'yaml';
+import { createHash } from 'crypto';
 
 import { clearFrameworkConfigCache, featurePhaseReportsDir, relFeaturesDir, resolveFeatureArtifact, loadFrameworkConfig } from '../../config';
 import {
@@ -15,7 +16,14 @@ import {
   readVerifierMaterialOrNull,
   verifierMaterialFilename,
   writeVerifierMaterial,
+  independentVerificationContext,
+  collectTestStrengthContext,
+  computeMaterialSha256,
+  verifierMaterialsEquivalent,
+  verifierMaterialFileMatchesCurrent,
+  verifierMaterialFileHash,
 } from '../../scripts/utils/verifier-material';
+import { stableStringify } from '../../scripts/utils/phase-evidence-manifest';
 import type { ContextFileEntry } from '../../scripts/utils/types';
 import type { UnitCaseResult } from '../run-unit';
 import { copyC6HostReplay } from '../utils/c6-host-replay';
@@ -26,15 +34,19 @@ import { readCurrentDispositionInput } from '../../scripts/utils/verify-feature-
 import { resolveCurrentDisposition } from '../../scripts/utils/check-disposition';
 import { resolveCapabilityResolutionEntryInput } from '../../scripts/utils/capability-resolution-entry-input';
 import { resolveCapabilityInputs } from '../../scripts/utils/capability-resolution';
+import type { ResolvedPhaseInputs } from '../../scripts/utils/capability-resolution';
 import { designScopeRevisionChecks } from '../../scripts/utils/blueprint-skill-projection';
 import type { CheckContext } from '../../scripts/utils/types';
 import { readPhaseRepairIssues, verifierSemanticChecks } from '../../scripts/utils/repair-candidates';
 import { finalizePhaseClosure } from '../../scripts/utils/phase-closure-finalizer';
 import { computeGateFingerprint } from '../../scripts/utils/gate-fingerprint';
 import { phaseCompletionProblems } from '../../scripts/utils/check-disposition';
+import { createIndependentQuestioningResult, requiredQuestioningScopes, validateBlueprintQuestioning, independentQuestioningBlockers } from '../../scripts/utils/blueprint-questioning';
 import { setupRunlessProject } from './execution-scope.unit.test';
 import { ensureFeatureExecutionScopeFrozen } from '../../scripts/utils/feature-execution-scope';
 import { loadResolvedProfile } from '../../profile-loader';
+import { fixture as codingFixture } from './standalone-coding-review.unit.test';
+import { computeManifestIdentityFields, diffManifestIdentityFields } from '../../scripts/utils/goal-manifest';
 import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
 
 const FEATURE = 'vm-fixture';
@@ -67,6 +79,188 @@ function countAcceptanceCollections<T>(run: () => T): { result: T; count: number
 }
 
 const cases: Array<{ name: string; run: () => void }> = [
+  {
+    name: 'P2 actual run control manifest budget is material-neutral; requirement, write authority and non-control files remain binding',
+    run: () => {
+      const f = codingFixture(false, true), file = path.join(f.root, f.manifest.report_dir, 'manifest.json');
+      const relative = path.relative(f.root, file).replace(/\\/g, '/'), original = fs.readFileSync(file, 'utf8');
+      const manifest = JSON.parse(original), identity = computeManifestIdentityFields(manifest);
+      const hash = (target = relative) => verifierMaterialFileHash({ projectRoot: f.root, feature: 'demo', phase: 'coding', file: target });
+      const build = () => buildVerifierMaterialView({ projectRoot: f.root, frameworkRoot: path.resolve(__dirname, '../../..'), feature: 'demo', phase: 'coding',
+        runId: f.manifest.run_id, gateFingerprint: null, phaseRuleText: 'rule', templateText: 'template', checks: CHECKS,
+        contextFiles: [{ label: relative, kind: 'path', content: 'Read the actual original control file.' }] });
+      try {
+        const before = hash(), material = build();
+        manifest.budget.max_total_turns += 17;
+        manifest.created_at = '2026-10-30T00:00:00.000Z';
+        fs.writeFileSync(file, JSON.stringify(manifest));
+        assert.equal(hash(), before, 'one public control budget must not purchase another verifier');
+        assert.equal(build().material_sha256, material.material_sha256, 'producer and consumer share the single projection');
+        assert(verifierMaterialFileMatchesCurrent({ projectRoot: f.root, feature: 'demo', material, file: relative }));
+        assert(diffManifestIdentityFields(identity, computeManifestIdentityFields(manifest)).includes('budget'), 'budget authorization still sees the actual edit');
+        manifest.requirement += ' plus a real new business result'; fs.writeFileSync(file, JSON.stringify(manifest));
+        assert.notEqual(hash(), before);
+        assert(!verifierMaterialFileMatchesCurrent({ projectRoot: f.root, feature: 'demo', material, file: relative }));
+        Object.assign(manifest, JSON.parse(original));
+        manifest.unattended = { ...manifest.unattended, write_mode: 'workspace-write', approval_mode: 'always', allowed_tools: ['Read'] };
+        fs.writeFileSync(file, JSON.stringify(manifest)); assert.notEqual(hash(), before, 'real write/approval/tool authority remains visible');
+        fs.writeFileSync(file, original);
+        const copy = put(f.root, 'business/manifest.json', original), copiedHash = hash(copy);
+        const copied = JSON.parse(original); copied.budget.max_total_turns += 1; fs.writeFileSync(copy, JSON.stringify(copied));
+        assert.notEqual(hash(copy), copiedHash, 'a matching filename or copied shape is not the original run control');
+        const born = path.join(path.dirname(file), 'events.jsonl'), events = fs.readFileSync(born);
+        fs.writeFileSync(born, ''); const unproven = hash();
+        fs.writeFileSync(file, JSON.stringify(copied)); assert.notEqual(hash(), unproven, 'no real birth/start evidence means no special projection');
+        fs.writeFileSync(born, events);
+      } finally { clearFrameworkConfigCache(); fs.rmSync(f.root, { recursive: true, force: true }); }
+    },
+  },
+  {
+    name: 'P2 C Q uses the single machine envelope and stable IDs without frontier quota or loss of substantive denial',
+    run: () => {
+      const blueprint = { design_views: [], relations: [], review_summary: { authored_by: 'author' } } as Record<string, any>;
+      const items = [...requiredQuestioningScopes(blueprint)].map(([ref, kind]) => ({ question: 'Is this scope sufficiently justified?', owner: 'design', scope_kind: kind,
+        scope_ref: ref, disposition: 'not_applicable', verification_refs: ['request:original'], provenance: { source_kind: 'requirement', source_ref: 'request.md', observed_at: '2026-10-29', evidence_strength: 'authoritative', extraction_method: 'read' } }));
+      const result = createIndependentQuestioningResult({ providerId: 'independent', authoredBy: 'author', items });
+      blueprint.review_summary.questioning = result;
+      assert.deepEqual(validateBlueprintQuestioning(blueprint), [], 'a legal independent answer remains valid');
+      assert(!('frontier_budget' in result) && !('repeated_frontier_count' in result));
+      assert.deepEqual((result.items as Record<string, unknown>[]).map(item => item.question_id),
+        (createIndependentQuestioningResult({ providerId: 'independent', authoredBy: 'author', items }).items as Record<string, unknown>[]).map(item => item.question_id));
+      assert.deepEqual((result.items as Record<string, unknown>[]).map(item => item.question_id),
+        (createIndependentQuestioningResult({ providerId: 'independent', authoredBy: 'author', items: items.map(item => ({ ...item, question_id: 'self-selected-new-id' })) }).items as Record<string, unknown>[]).map(item => item.question_id));
+      const previous = { ...result, items: (result.items as Record<string, unknown>[]).map((item, i) => ({ ...item, question_id: `legacy-${i}` })) };
+      assert.equal((createIndependentQuestioningResult({ providerId: 'independent', authoredBy: 'author', items, previous }).items as Record<string, unknown>[])[0].question_id, 'legacy-0', 'known historical IDs remain stable');
+      (result.items as Record<string, unknown>[])[0].disposition = 'blocker';
+      (result.items as Record<string, unknown>[])[0].answer = 'Original acceptance is contradicted by the actual recovery path.';
+      blueprint.review_summary.questioning = { ...result, frontier_budget: 0, repeated_frontier_count: 1000 };
+      assert(!validateBlueprintQuestioning(blueprint).some(item => item.id === 'blueprint_questioning_frontier_budget_exceeded'));
+      assert.equal(independentQuestioningBlockers(blueprint).length, 1, 'retiring execution counters cannot erase Q business denial');
+      assert(validateBlueprintQuestioning(blueprint).some(item => item.id === 'blueprint_admission_false_pass'
+        && item.path === '$.review_summary.questioning.items[0].disposition' && item.message.includes('actual recovery path')),
+      'the sole Q validator must preserve the concrete negative answer for every canonical consumer');
+      const { loadHostSnapshot } = require('../fixtures/host-snapshot-3.1.0/generate') as typeof import('../fixtures/host-snapshot-3.1.0/generate');
+      const { loadCanonicalBlueprint } = require('../../scripts/utils/component-blueprint-path') as typeof import('../../scripts/utils/component-blueprint-path');
+      const { checkCanonicalComponentBlueprint } = require('../../scripts/check-component-blueprint') as typeof import('../../scripts/check-component-blueprint');
+      const { writeBackAdmission } = require('../../scripts/utils/design-repair-unattended') as typeof import('../../scripts/utils/design-repair-unattended');
+      const host = loadHostSnapshot();
+      try {
+        const configFile = path.join(host.root, 'framework.config.json');
+        const config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+        config.project_profile = { name: 'hmos-app', sub_variant: 'app' };
+        fs.writeFileSync(configFile, JSON.stringify(config)); clearFrameworkConfigCache();
+        const canonical = loadCanonicalBlueprint(host.root, 'ledger-app-blueprint');
+        const entry = (canonical.blueprint.review_summary as any).questioning.items.find((item: any) => item.scope_ref === 'view:logical');
+        assert(entry, 'the real snapshot must carry the logical Q result');
+        assert(!checkCanonicalComponentBlueprint(host.root, 'ledger-app-blueprint').issues.some(item => item.severity === 'BLOCKER'), 'the original legal canonical blueprint passes');
+        entry.disposition = 'blocker'; entry.answer = 'The actual recovery path contradicts the original acceptance.';
+        const admission = writeBackAdmission(canonical.blueprint, { projectRoot: host.root, canonicalPath: canonical.canonicalPath });
+        assert.notEqual(admission.status, 'pass', 'machine admission cannot override a real independent denial');
+        fs.writeFileSync(canonical.canonicalPath, YAML.stringify(canonical.blueprint));
+        const denied = checkCanonicalComponentBlueprint(host.root, 'ledger-app-blueprint').issues;
+        assert(denied.some(item => item.id === 'blueprint_admission_false_pass' && item.message.includes(entry.answer)), 'the public canonical checker receives the same actual Q denial');
+      } finally { clearFrameworkConfigCache(); fs.rmSync(host.root, { recursive: true, force: true }); }
+    },
+  },
+  {
+    name: 'P2 C test strength materials follow applicable unit acceptance across check families instead of requiring a prior design failure',
+    run: () => {
+      const root = mkProject();
+      try {
+        put(root, 'framework.config.json', JSON.stringify({ schema_version: '1.1', project_name: 'strength', project_profile: { name: 'hmos-app' },
+          architecture: { outer_layers: [{ id: '02-Feature', can_depend_on: [], intra_layer_deps: 'dag' }], module_inner_layers: ['shared'], inner_dependency_direction: 'upward', cross_module_exports_file: 'index.ets' },
+          paths: { features_dir: 'doc/features', docs_committed: false } })); clearFrameworkConfigCache();
+        const source = '02-Feature/Value/src/main/ets/Value.ets', test = '02-Feature/Value/src/ohosTest/ets/test/Value.test.ets';
+        put(root, source, 'export function value() { return 42; }');
+        put(root, test, "it('failure path', 0, () => { expect(value()).assertEqual(42); });");
+        put(root, `doc/features/${FEATURE}/contracts.yaml`, YAML.stringify({ feature: FEATURE, files: [source, test], modules: [{ name: 'Value', package_path: '02-Feature/Value' }] }));
+        put(root, `doc/features/${FEATURE}/acceptance.yaml`, YAML.stringify({ feature: FEATURE, criteria: [{ id: 'AC-1', description: 'value is observable', ut_layer: 'unit' }] }));
+        put(root, `doc/features/${FEATURE}/ut/reports/coverage-evidence.json`, JSON.stringify({ schema_version: '1.0', feature: FEATURE,
+          mappings: [{ scope_id: 'AC-1', scope_kind: 'acceptance_criterion', evidence_source: 'ut_tags', evidence_ref: test },
+            { scope_id: 'AC-1', scope_kind: 'acceptance_criterion', evidence_source: 'ut_tags', evidence_ref: '../../outside/src/ohosTest/private.ets' }] }));
+        for (const phase of ['coding', 'review', 'ut', 'testing']) {
+          const entries = collectTestStrengthContext({ projectRoot: root, frameworkRoot: path.resolve(__dirname, '../../..'), feature: FEATURE, phase });
+          assert(entries.some(entry => entry.label === test), `${phase}: actual assertions were not delivered`);
+          assert(entries.some(entry => entry.label === source), `${phase}: actual product call chain was not delivered`);
+          assert(entries.some(entry => entry.label.includes('existing assertion evidence')) && entries.some(entry => entry.content.includes('AC-1')),
+            'machine weakening evidence and applicable acceptance must remain visible without self-signing sufficiency');
+          assert(entries.some(entry => entry.label === '(test source reference gap)') && !entries.some(entry => entry.label.startsWith('../')),
+            'a bad reference is diagnosed without reading it or dropping valid material');
+        }
+      } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+    },
+  },
+  {
+    name: 'P2 C incremental verification receives public originals, open findings and actual dependency changes without author-private state',
+    run: () => {
+      const root = mkProject();
+      try {
+        put(root, 'src/a.ets', 'old');
+        const build = () => buildVerifierMaterialView({ projectRoot: root, feature: FEATURE, phase: 'review', gateFingerprint: null,
+          phaseRuleText: 'rule', templateText: 'template', checks: CHECKS, contextFiles: [{ label: 'src/a.ets', kind: 'path', content: '' }] });
+        const before = build(); put(root, 'src/a.ets', 'current'); const current = build();
+        const context = independentVerificationContext({ previousReport: { feature: FEATURE, phase: 'review', subject_id: 'a'.repeat(64), verdict: 'FAIL', blocker_count: 1,
+          report_text: 'public denial', md_path_abs: path.join(root, 'public-original.md'), md_path_rel: 'public-original.md' }, previousMaterial: before, currentMaterial: current,
+          actualDiff: [{ label: '(actual diff)', content: '-old\n+current' }], openFindings: { phase: 'review', reportPath: 'public-original.md', reportText: 'public denial', rows: [
+            { id: 'CR-1', classification: 'implementation', severity: 'BLOCKER', state: 'open', files: ['src/a.ets'], summary: 'failure recovery is absent' }], evidenceFiles: [], diagnostics: ['one old reference unavailable'] },
+          affectedDependencies: [{ path: 'src/a.ets', exists: true, sha256: 'b'.repeat(64), role: 'derive' }],
+          currentEvidence: [{ label: '(actual execution)', content: 'real execution still fails' }], declineContext: [{ label: '(refusal original)', content: 'declined: full original reason\n\nsecond paragraph' }] });
+        const text = context.map(entry => entry.label + '\n' + entry.content).join('\n');
+        for (const expected of ['public-original.md', 'CR-1', '-old\n+current', 'src/a.ets', 'one old reference unavailable', 'real execution still fails', 'second paragraph']) assert(text.includes(expected), expected);
+        assert(text.includes('增量复核') && text.includes('confirmed/refuted/unclear'));
+        const unknown = independentVerificationContext({ previousReport: null, previousMaterial: before, currentMaterial: current, actualDiff: null });
+        assert(unknown[0].content.includes('完整核验') && unknown[0].content.includes('HEAD'));
+      } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+    },
+  },
+  {
+    name: 'P2 C blueprint review material ignores schema machine metadata while preserving independent denial and business provenance',
+    run: () => {
+      const root = mkProject();
+      try {
+        const blueprint: Record<string, any> = { artifact: 'component-blueprint@1', blueprint_id: 'review-unit', revision: 1,
+          provenance: { source_kind: 'requirement', source_ref: 'request.md', observed_at: 'before', evidence_strength: 'authoritative', extraction_method: 'read' },
+          review_summary: { admission: { status: 'blocker' }, questioning: { provider_id: 'old-provider', isolated_context: true, status: 'complete', writes_ssot: false,
+            items: [{ question_id: 'old-id', question: 'Does recovery work?', owner: 'author', scope_kind: 'view', scope_ref: 'view:runtime', disposition: 'blocker', answer: 'Missing compensation.' }] } } };
+        const write = () => put(root, 'blueprint.yaml', YAML.stringify(blueprint));
+        const resolved = (): ResolvedPhaseInputs => ({ phase: 'review', context: { schema_version: '1.1', subject: { feature: FEATURE }, obligations: {}, required_outputs: [] },
+          artifacts: {}, values: { contracts: { state: 'resolved', value: { modules: [], files: [] }, binding: { input_id: 'contracts',
+            source: { kind: 'derive', provider_id: 'derive.blueprint-contracts' }, source_refs: ['blueprint.yaml'],
+            content_fingerprint: 'a'.repeat(64), dependencies: [{ path: path.join(root, 'blueprint.yaml'), exists: true, role: 'artifact',
+              sha256: createHash('sha256').update(fs.readFileSync(path.join(root, 'blueprint.yaml'))).digest('hex') }] } } } });
+        const build = () => buildVerifierMaterialView({ projectRoot: root, feature: FEATURE, phase: 'review', gateFingerprint: null,
+          phaseRuleText: 'rule', templateText: 'template', checks: CHECKS, resolvedInputs: resolved(), contextFiles: [{ label: 'blueprint.yaml', kind: 'path', content: '' }] });
+        write(); const before = build();
+        const inputs = resolved();
+        const oldBindingHash = createHash('sha256').update(stableStringify(Object.entries(inputs.values)
+          .map(([id, value]) => [id, value.state === 'resolved' ? value.binding : value]))).digest('hex');
+        const legacy = { ...before, schema: 'maison-verifier-material@1', input_bindings_sha256: oldBindingHash,
+          files: before.files.map(file => file.path === 'blueprint.yaml' ? { ...file, sha256: createHash('sha256').update(fs.readFileSync(path.join(root, file.path))).digest('hex') } : file) };
+        legacy.material_sha256 = computeMaterialSha256(legacy);
+        assert(verifierMaterialFileMatchesCurrent({ projectRoot: root, feature: FEATURE, material: before, file: 'blueprint.yaml' }), 'the current consumer uses the same versioned projection as the producer');
+        assert(verifierMaterialFileMatchesCurrent({ projectRoot: root, feature: FEATURE, material: legacy, file: 'blueprint.yaml' }), 'legacy raw originals keep their original schema recipe');
+        assert(!verifierMaterialFileMatchesCurrent({ projectRoot: root, feature: FEATURE, material: { ...legacy, schema: before.schema }, file: 'blueprint.yaml' }), 'a current-schema record cannot silently choose a raw or unrelated digest');
+        assert(verifierMaterialsEquivalent(legacy, before, root, inputs), 'original bound bytes and inputs prove a pure historical representation migration');
+        assert(!verifierMaterialsEquivalent(legacy, before, root), 'a missing original input basis cannot be guessed from HEAD or author claims');
+        blueprint.revision++; blueprint.provenance.observed_at = 'later'; blueprint.review_summary.admission.status = 'pass';
+        blueprint.review_summary.questioning.provider_id = 'new-provider'; blueprint.review_summary.questioning.items[0].question_id = 'new-id'; write();
+        assert.equal(build().material_sha256, before.material_sha256, 'machine envelopes cannot purchase another Q');
+        assert(verifierMaterialFileMatchesCurrent({ projectRoot: root, feature: FEATURE, material: before, file: 'blueprint.yaml' }));
+        assert(verifierMaterialsEquivalent(before, build(), root), 'already-normalized current evidence remains reusable across machine metadata writes');
+        blueprint.review_summary.summary = 'The author now claims a different recovery guarantee.'; write();
+        assert.notEqual(build().material_sha256, before.material_sha256, 'an actual author statement is independent review material even when it is not proof of progress');
+        assert(!verifierMaterialFileMatchesCurrent({ projectRoot: root, feature: FEATURE, material: before, file: 'blueprint.yaml' }));
+        delete blueprint.review_summary.summary;
+        blueprint.review_summary.questioning.summary = 'The public Q business conclusion changed.'; write();
+        assert.notEqual(build().material_sha256, before.material_sha256, 'public substantive Q summary cannot be dropped as a progress-only field');
+        delete blueprint.review_summary.questioning.summary;
+        blueprint.review_summary.questioning.items[0].answer = 'An independent new counterexample proves compensation is wrong.'; write();
+        assert.notEqual(build().material_sha256, before.material_sha256, 'Q business denial cannot be stripped with its envelope');
+        blueprint.review_summary.questioning.items[0].answer = 'Missing compensation.'; blueprint.provenance.source_ref = 'different-request.md'; write();
+        assert.notEqual(build().material_sha256, before.material_sha256, 'business provenance remains review material');
+      } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+    },
+  },
   {
     name: 'current acceptance anchors use the profile filename and preserve original or unavailable profile semantics',
     run: () => {
@@ -156,7 +350,10 @@ const cases: Array<{ name: string; run: () => void }> = [
         const nativeFacts = nativeHost.currentUtExecutionInputs;
         try {
           nativeHost.currentUtExecutionInputs = undefined as unknown as typeof nativeFacts;
-          assert.deepEqual(collectCurrentAcceptanceEvidence(options), [], 'a profile without current native facts retains ordinary verification semantics');
+          const withoutNative = collectCurrentAcceptanceEvidence(options);
+          assert(withoutNative.some(file => file.label.endsWith('bank_open_card_ut.test.ets'))
+            && !withoutNative.some(file => file.label.endsWith('frozen.ut-result.WalletMain.json')),
+            'without native qualification the verifier still reads assertions, but receives no validated frozen execution proof');
         } finally { nativeHost.currentUtExecutionInputs = nativeFacts; }
         assert(!evidence.some(file => /\/(?:summary|script-report|ac-coverage)\.json$/.test(file.label)), 'mutable latest reports are not plan materials');
         const countedEntry = countAcceptanceCollections(current);
@@ -237,7 +434,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         const finding = verifierSemanticChecks(originalIssues.reportText, 'plan', f.feature).find(row => row.id === issueRow.id)!;
         const confirmedBody = '```yaml\n' + YAML.stringify({ verification_result: { feature: f.feature, phase: 'plan', checks: [finding],
           summary: { pass: 0, fail: 1, blockers: 0, verdict: 'PASS' } } }) + '```\n```issue-verification\n- issue: ' + issueRow.id
-          + '\n  verdict: confirmed\n  repair_owner: plan\n  evidence: plan.md contracts.yaml | ' + issueRow.summary + '\n```';
+          + '\n  verdict: confirmed\n  repair_owner: plan\n' + YAML.stringify({ evidence: 'plan.md contracts.yaml | ' + issueRow.summary }).split('\n').filter(Boolean).map(line => '  ' + line).join('\n') + '\n```';
         publishFixtureVerifierEvidence({ projectRoot: f.root, reportsDir: reports, feature: f.feature, phase: 'plan', subjectId: confirmedRequest.verifier_subject_id,
           reportText: confirmedBody, skipSummaryPatch: true });
         const confirmed = writeRunSummaryBase(f.root, script, frameworkRoot, { verifierMaterial: confirmedView,
@@ -428,12 +625,14 @@ const cases: Array<{ name: string; run: () => void }> = [
           ...(goalBriefText === undefined ? {} : { goalBriefText }),
         } as Parameters<typeof buildVerifierMaterialView>[0]);
         const none = mk();
-        assert.strictEqual(none.material_sha256, GOLDEN_WITHOUT_BRIEF, '未传简报时材料指纹必须与改动前相同');
-        assert.strictEqual(mk('').material_sha256, GOLDEN_WITHOUT_BRIEF, '简报为空串时材料指纹必须与改动前相同');
+        const oldView = { ...none, schema: 'maison-verifier-material@1' };
+        assert.strictEqual(computeMaterialSha256(oldView), GOLDEN_WITHOUT_BRIEF, 'old schema business material retains its original known fingerprint');
+        assert(verifierMaterialsEquivalent({ ...oldView, material_sha256: GOLDEN_WITHOUT_BRIEF }, none, root), 'a pure representation migration retains valid historical review');
+        assert.strictEqual(mk('').material_sha256, none.material_sha256, 'empty brief does not change the current material');
         const withBrief = mk('## 目标简报（goal brief）\n\n### 判定办法\n\n按目标裁决。');
         const briefSha = (withBrief as unknown as { goal_brief_sha256?: string }).goal_brief_sha256 ?? '';
         assert.strictEqual(briefSha.length, 64, '有简报时分量为 sha256');
-        assert.notStrictEqual(withBrief.material_sha256, GOLDEN_WITHOUT_BRIEF, '简报进入材料指纹');
+        assert.notStrictEqual(withBrief.material_sha256, none.material_sha256, '简报进入材料指纹');
         assert.deepStrictEqual(diffVerifierMaterial(none, withBrief), ['goal_brief']);
         assert.notStrictEqual(mk('## 目标简报（goal brief）\n\n### 判定办法\n\n按目标裁决。\n- 新排除项').material_sha256,
           withBrief.material_sha256, '简报内容变 → 换指纹');

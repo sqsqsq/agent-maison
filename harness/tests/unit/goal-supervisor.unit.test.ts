@@ -40,6 +40,7 @@ import {
 } from '../../scripts/utils/goal-adapter-capability';
 import { evaluateDeviceReadinessProbe } from '../../scripts/utils/device-readiness-gate';
 import type { AgentInvokeOptions } from '../../scripts/utils/agent-invoke';
+import { matchesUnitCase, selectedUnitCases } from '../utils/unit-case-selection';
 
 function assert(condition: unknown, message: string): void {
   if (!condition) throw new Error(message);
@@ -602,18 +603,40 @@ asyncCases.push(
     run: async () => {
       const probeAt: number[] = [];
       const recheckBudgets: number[] = [];
-      const t0 = Date.now();
-      const ok = await waitForConditionRecovery({
-        phase: 'ut', probe: 'device_readiness', blockedBy: 'device_not_ready',
-        availableMs: 150, maxWaitMs: 5_000, pollMs: 40,
-        runProbe: () => { probeAt.push(Date.now() - t0); return { ready: true }; },
-        recheck: async (remainingMs) => { recheckBudgets.push(remainingMs); return false; },
-        emit: () => undefined,
-      });
-      assert(ok === false, '一直未恢复应超时');
-      assert(probeAt.every((ms) => ms < 150), `到上限后不得再探测：${JSON.stringify(probeAt)}`);
-      assert(recheckBudgets.length === probeAt.length && recheckBudgets.every((b) => b > 0 && b <= 150),
-        `重查拿到的须是剩余额度：${JSON.stringify(recheckBudgets)}`);
+      const originalNow = Date.now, originalTimeout = global.setTimeout;
+      let clock = 1_000, startedAt = clock;
+      const advances = [55, 46, 48, 1];
+      const events: Array<Record<string, unknown>> = [];
+      try {
+        Date.now = () => clock;
+        // Model delayed wakeups without racing the caller's earlier timestamp against the function's deadline.
+        global.setTimeout = ((callback: () => void, delay = 0) => {
+          clock += advances.shift() ?? delay;
+          queueMicrotask(callback);
+        }) as unknown as typeof setTimeout;
+        const ok = await waitForConditionRecovery({
+          phase: 'ut', probe: 'device_readiness', blockedBy: 'device_not_ready',
+          availableMs: 150, maxWaitMs: 5_000, pollMs: 40,
+          runProbe: () => { probeAt.push(clock - startedAt); return { ready: true }; },
+          recheck: async (remainingMs) => { recheckBudgets.push(remainingMs); return false; },
+          emit: event => { events.push(event); if (event.type === 'condition_wait_started') startedAt = clock; },
+        });
+        assert(ok === false && clock - startedAt === 150, '一直未恢复应在真实截止收尾');
+        assert(probeAt.length === 4 && probeAt.every(ms => ms < 150), `到上限后不得再探测：${JSON.stringify(probeAt)}`);
+        assert(JSON.stringify(recheckBudgets) === '[150,95,49,1]', `重查拿到的须是正剩余额度：${JSON.stringify(recheckBudgets)}`);
+        assert(events.map(event => event.type).join(',') === 'condition_wait_started,condition_wait_timeout', JSON.stringify(events));
+
+        let lateProbes = 0, lateRechecks = 0;
+        const expired = await waitForConditionRecovery({
+          phase: 'ut', probe: 'device_readiness', blockedBy: 'device_not_ready',
+          availableMs: 150, maxWaitMs: 5_000, pollMs: 40,
+          runProbe: () => { lateProbes++; return { ready: true }; },
+          recheck: async () => { lateRechecks++; return true; },
+          emit: event => { if (event.type === 'condition_wait_started') clock += 150; },
+        });
+        assert(expired === false && lateProbes === 0 && lateRechecks === 0,
+          '开始事件同步耗尽额度后，不得发起首探或重查');
+      } finally { Date.now = originalNow; global.setTimeout = originalTimeout; }
     },
   },
   {
@@ -1004,8 +1027,8 @@ asyncCases.push(
   },
 );
 
-export async function runAll(): Promise<Array<{ name: string; ok: boolean; error?: string }>> {
-  const out = cases.map((testCase) => {
+export async function runAll(selector?: string): Promise<Array<{ name: string; ok: boolean; error?: string }>> {
+  const out = cases.filter(testCase => matchesUnitCase(testCase.name, selector)).map((testCase) => {
     try {
       testCase.run();
       return { name: testCase.name, ok: true };
@@ -1013,7 +1036,7 @@ export async function runAll(): Promise<Array<{ name: string; ok: boolean; error
       return { name: testCase.name, ok: false, error: (error as Error).message };
     }
   });
-  for (const testCase of asyncCases) {
+  for (const testCase of asyncCases.filter(testCase => matchesUnitCase(testCase.name, selector))) {
     try {
       await testCase.run();
       out.push({ name: testCase.name, ok: true });
@@ -1022,4 +1045,8 @@ export async function runAll(): Promise<Array<{ name: string; ok: boolean; error
     }
   }
   return out;
+}
+
+export async function runSelectedCases(selector?: string) {
+  return selectedUnitCases(await runAll(selector), selector, []);
 }

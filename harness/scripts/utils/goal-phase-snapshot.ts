@@ -6,7 +6,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { featurePhaseReportsDir, resolveFeatureArtifact } from '../../config';
 import type { FeaturePhase } from './phase-transition-policy';
-import { loadVerifierEvidence, loadVerifierEvidenceForSubject } from './verifier-evidence';
+import { loadVerifierEvidence, findSameMaterialVerifierEvidence } from './verifier-evidence';
 
 /**
  * 快照名保持**稳定**（下游按固定名读存档），但 verifier 两份产物的**源文件**不再按固定名
@@ -84,17 +84,13 @@ export function snapshotPhaseHarness(
   // summary.json，与 loader 的锚同源，不新读第三份文件。
   let loaded = loadVerifierEvidence(projectRoot, feature, phase, { frameworkRoot });
   let reused = false;
-  if (!loaded.ok) {
-    const reusedSubject = readReusedSubjectId(snapshot_files['summary.json'], projectRoot);
-    if (reusedSubject) {
-      const fallback = loadVerifierEvidenceForSubject(projectRoot, feature, phase, reusedSubject, {
-        frameworkRoot,
-      });
-      if (fallback.ok) {
-        loaded = fallback;
-        reused = true;
-      }
-    }
+  if (!loaded.ok && loaded.code === 'report_missing') {
+    try {
+      const summaryFile = snapshot_files['summary.json'];
+      const subject = summaryFile ? JSON.parse(fs.readFileSync(path.join(projectRoot, summaryFile), 'utf8')).verifier_subject_id : undefined;
+      const same = typeof subject === 'string' ? findSameMaterialVerifierEvidence(projectRoot, feature, phase, subject, { frameworkRoot }) : null;
+      if (same) { loaded = { ok: true, evidence: same }; reused = true; }
+    } catch { /* Missing or changed material stays unverified. */ }
   }
   if (loaded.ok) {
     copyInto(loaded.evidence.md_path_abs, 'verifier.report.md');
@@ -117,15 +113,3 @@ export function snapshotPhaseHarness(
 }
 
 /** 从**已复制进快照目录**的 summary.json 取被沿用的 subject（缺文件/坏 JSON/无该字段=null，不抛）。 */
-function readReusedSubjectId(summaryRel: string | null, projectRoot: string): string | null {
-  if (!summaryRel) return null;
-  try {
-    const parsed = JSON.parse(
-      fs.readFileSync(path.join(projectRoot, summaryRel), 'utf-8'),
-    ) as { verifier_closure?: { reviewed_subject_id?: unknown } };
-    const raw = parsed?.verifier_closure?.reviewed_subject_id;
-    return typeof raw === 'string' && raw.trim() ? raw.trim() : null;
-  } catch {
-    return null;
-  }
-}

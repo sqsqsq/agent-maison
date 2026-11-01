@@ -7,9 +7,13 @@ import * as os from 'os';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
 import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
-import { SUMMARY_SCHEMA_VERSION_CURRENT } from '../../scripts/utils/quality-axes';
 import { computeGateFingerprint } from '../../scripts/utils/gate-fingerprint';
-import { computeProductWorktreeDigest } from '../../scripts/utils/worktree-digest';
+import { generateScriptReport, assembleAIPrompt, loadVerifierPromptTemplate } from '../../scripts/utils/report-generator';
+import { buildVerifierMaterialView } from '../../scripts/utils/verifier-material';
+import { resolveVerifierPlan, workflowVerifierPrompt } from '../../scripts/utils/verifier-plan';
+import { loadWorkflowSpec } from '../../workflow-loader';
+import { SpecLoader } from '../../scripts/utils/spec-loader';
+import { writeRunSummaryBase } from '../../harness-runner';
 
 import {
   applyReceiptPathReconcileCandidate,
@@ -96,45 +100,26 @@ function writeModernArtifacts(root: string): { traceRel: string; verifierRel: st
     JSON.stringify({ feature: 'demo', phase: 'review', verdict: 'PASS' }, null, 2),
   );
   writeFile(path.join(root, verifierRel), 'verdict: PASS\n');
-  // plan e5b8c3f7：check-receipt 的 verifier 面已改判身份验真——modern 侧必须有
-  // summary.verifier_subject_id + 同形的 verifier.report.<subject>.md，否则命中"旧件"分派。
-  const modernReportsDir = path.join(root, 'doc/features/demo/review/reports');
-  writeFile(
-    path.join(modernReportsDir, 'summary.json'),
-    JSON.stringify(
-      {
-        // The legacy-receipt compat branch still reads schema_version, so the fixture
-        // carries the current generation. Verifier evidence no longer dispatches on it
-        // (plan d2f7a9c4).
-        schema_version: SUMMARY_SCHEMA_VERSION_CURRENT,
-        phase: 'review',
-        feature: 'demo',
-        verdict: 'PASS',
-        blocker_count: 0,
-        fail_count: 0, warn_count: 0,
-        script_report: 'doc/features/demo/review/reports/script-report.json',
-        merged_report: 'doc/features/demo/review/reports/merged-report.md',
-        summary_json: 'doc/features/demo/review/reports/summary.json',
-        run_statuses: [], readiness_signals: [], blocking_warnings: [], blocking_skips: [], blockers: [],
-        next_action: 'run_verifier_then_receipt',
-        assurance: 'not_applicable', capability_resolutions: [], capability_resolution_contract_fingerprint: null,
-        source_commit_sha: spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).stdout.trim(),
-        worktree_digest: computeProductWorktreeDigest(root, ['app']),
-        // reconcile 会把 script_harness.report_dir 一并改指到 modern reports 目录，
-        // 于是本 summary 也要带当前门禁集指纹，否则命中既有的 gate_fingerprint_stale。
-        gate_fingerprint: computeGateFingerprint(path.resolve(__dirname, '..', '..', '..'), 'review'),
-        closure_status: 'open',
-      },
-      null,
-      2,
-    ),
-  );
-  publishFixtureVerifierEvidence({
-    projectRoot: root,
-    reportsDir: modernReportsDir,
-    feature: 'demo',
-    phase: 'review',
-  });
+  const frameworkRoot = path.resolve(__dirname, '../../..'), harnessRoot = path.join(frameworkRoot, 'harness');
+  const sourceFile = 'app/value.ts';
+  writeFile(path.join(root, sourceFile), 'export const value = 1;\n');
+  const actual = fs.readFileSync(path.join(root, sourceFile), 'utf8');
+  const report = generateScriptReport(harnessRoot, 'review', 'demo', root, [{ id: 'reconcile_current_source_read', category: 'structure',
+    description: 'Read the current isolated source before receipt reconciliation', severity: 'MAJOR', status: actual.trim() ? 'PASS' : 'FAIL',
+    details: 'Read actual current source: ' + sourceFile, affected_files: [sourceFile] }], frameworkRoot);
+  const plan = resolveVerifierPlan({ phase: 'review', track: 'full', runtimeMode: 'interactive', policy: { verifier: 'required' },
+    workflowVerifierPrompt: workflowVerifierPrompt(loadWorkflowSpec(frameworkRoot, 'spec-driven'), 'review'), adapterHasVerifierSubagent: true, adapterName: 'claude' });
+  const rule = JSON.stringify(new SpecLoader(root, undefined, undefined, frameworkRoot).loadPhaseRule('review'));
+  const contextFiles = [{ label: sourceFile, kind: 'path' as const, content: actual }];
+  assembleAIPrompt(harnessRoot, root, 'review', 'demo', contextFiles, JSON.stringify(report), rule, undefined, undefined, frameworkRoot,
+    { verifierPromptRel: plan.verifier_prompt! });
+  const material = buildVerifierMaterialView({ projectRoot: root, frameworkRoot, feature: 'demo', phase: 'review',
+    gateFingerprint: computeGateFingerprint(frameworkRoot, 'review'), phaseRuleText: rule,
+    templateText: loadVerifierPromptTemplate(harnessRoot, 'review', undefined, plan.verifier_prompt!), checks: report.checks, contextFiles });
+  const summary = writeRunSummaryBase(root, report, frameworkRoot, { verifierPlan: plan, verifierMaterial: material });
+  assert(!!summary.verifier_subject_id && !!summary.verifier_request, 'the actual source report must produce its independent request');
+  publishFixtureVerifierEvidence({ projectRoot: root, reportsDir: path.join(root, 'doc/features/demo/review/reports'),
+    feature: 'demo', phase: 'review', subjectId: summary.verifier_subject_id, skipSummaryPatch: true });
   writeFile(
     path.join(root, 'doc/features/demo/review/context-exploration.md'),
     'ready_to_produce: true\n',

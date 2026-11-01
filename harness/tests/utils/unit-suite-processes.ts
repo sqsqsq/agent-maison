@@ -7,8 +7,9 @@ import { StringDecoder } from 'string_decoder';
 import type { Readable, Writable } from 'stream';
 import type { UnitCaseResult } from '../run-unit';
 import type { UnitExecutionTiming } from './unit-case-selection';
+import { mergeRuntimeTestFailures, preserveRuntimeTestEvidence, runtimeTestFailures, testTimeout, TEST_CASE_TIMEOUT_MS, TEST_RUN_TIMEOUT_MS, TEST_SUITE_TIMEOUT_MS, TEST_WORKER_CLOSE_TIMEOUT_MS } from './runtime-test-control';
 
-export interface UnitSuiteTask { id: string; modulePath: string; selector?: string; requirePreselection?: boolean }
+export interface UnitSuiteTask { id: string; modulePath: string; selector?: string; requirePreselection?: boolean; timeoutMs?: number; closeTimeoutMs?: number }
 export interface UnitWorkerResult {
   id: string;
   status: 'completed' | 'load-error' | 'run-error' | 'worker-error' | 'not-run';
@@ -129,17 +130,55 @@ export async function runSuiteProcesses(
     let result: UnitWorkerResult | undefined;
     let startupMs: number | null = null;
     let spawnError: string | undefined;
+    let timeoutError: string | undefined;
+    let timeoutCaseNames: readonly string[] = [];
+    const runtimeErrors: Array<{ error: string; caseNames?: readonly string[] }> = [];
+    const roots = new Set<string>([tmp]);
+    const evidenceFiles = new Set<string>();
+    const deadlines = new Map<string, ReturnType<typeof setTimeout>>();
+    const suiteTimeout = testTimeout(task.timeoutMs, Math.max(TEST_SUITE_TIMEOUT_MS, (timings[task.id] ?? 0) * 2 + 15 * 60_000));
     let child: ChildProcess;
+    const closeStreams = (): void => {
+      child.stdout?.destroy(); child.stderr?.destroy();
+      if (child.connected) child.disconnect();
+    };
+    const expire = async (label: string, caseNames: readonly string[] = []): Promise<void> => {
+      if (timeoutError || !active.has(child)) return;
+      let originals: string;
+      try { originals = preserveRuntimeTestEvidence([...roots], label, caseNames, [...evidenceFiles]); }
+      catch (error) { originals = `preservation failed: ${String(error)}`; }
+      timeoutError = `${label}\noriginals: ${originals}`;
+      timeoutCaseNames = caseNames;
+      if (child.pid && child.exitCode === null && child.signalCode === null) {
+        const { killProcessTree } = await import('../../scripts/utils/agent-invoke');
+        if (!active.has(child)) return;
+        if (child.exitCode !== null || child.signalCode !== null) { closeStreams(); return; }
+        const killed = await killProcessTree(child.pid);
+        if (killed.kill_error) {
+          timeoutError += `\ncleanup: ${killed.kill_error}`;
+          if (active.has(child) && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+        }
+      } else closeStreams();
+    };
+    const arm = (id: string, ms: number, label: string, caseNames: readonly string[] = []): void => {
+      const old = deadlines.get(id); if (old) clearTimeout(old);
+      deadlines.set(id, setTimeout(() => { void expire(label, caseNames); }, ms));
+    };
+    const disarm = (id: string): void => { const timer = deadlines.get(id); if (timer) clearTimeout(timer); deadlines.delete(id); };
     const finish = (code: number | null, signal: string | null): void => {
       active.delete(child);
+      for (const timer of deadlines.values()) clearTimeout(timer);
       const totalMs = performance.now() - started;
+      const lateFailures = runtimeTestFailures(path.join(tmp, 'runtime-test-failures'));
       const cleanupError = cleanupWorkerTemp(tmp);
-      if (!result) result = workerFailure(task.id, spawnError ?? interrupted ?? `worker 未返回结果（exit=${code}, signal=${signal}）`);
-      if (code !== 0 || signal || cleanupError) {
-        const error = cleanupError ?? spawnError ?? interrupted ?? `worker 非零退出（exit=${code}, signal=${signal}）`;
+      if (!result) result = workerFailure(task.id, timeoutError ?? spawnError ?? interrupted ?? `worker 未返回结果（exit=${code}, signal=${signal}）`);
+      if (mergeRuntimeTestFailures(result.results, [...lateFailures, ...runtimeErrors,
+        ...(timeoutError ? [{ error: timeoutError, caseNames: timeoutCaseNames }] : [])])) result.ok = false;
+      if (code !== 0 || signal || cleanupError || timeoutError) {
+        const error = timeoutError ?? cleanupError ?? spawnError ?? interrupted ?? `worker 非零退出（exit=${code}, signal=${signal}）`;
         result.ok = false;
         result.error = result.error ? `${result.error}\n${error}` : error;
-        if (!result.results.some(c => !c.ok && c.name.startsWith('<suite-'))) {
+        if (!result.results.some(c => !c.ok && (c.name.startsWith('<suite-') || c.error?.includes(error)))) {
           result.results.push({ name: '<suite-worker>', ok: false, error });
         }
         if (result.status === 'completed') result.status = 'worker-error';
@@ -155,7 +194,7 @@ export async function runSuiteProcesses(
         JSON.stringify({ selector: task.selector, requirePreselection: task.requirePreselection })], {
         cwd: path.resolve(__dirname, '..', '..'),
         execArgv: ['-r', 'ts-node/register'],
-        env: { ...process.env, TMP: tmp, TEMP: tmp, TMPDIR: tmp },
+        env: { ...process.env, TMP: tmp, TEMP: tmp, TMPDIR: tmp, MAISON_TEST_CONTROL_DIR: path.join(tmp, 'runtime-test-failures') },
         stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
         detached: process.platform !== 'win32',
       });
@@ -166,13 +205,30 @@ export async function runSuiteProcesses(
       return;
     }
     active.add(child);
+    arm('suite', suiteTimeout, `test suite ${task.id} timeout after ${suiteTimeout}ms`);
     if (child.stdout) forwardSuiteLines(child.stdout, process.stdout, task.id);
     if (child.stderr) forwardSuiteLines(child.stderr, process.stderr, task.id);
     child.on('message', message => {
       if (!message || typeof message !== 'object') return;
-      const packet = message as { type?: string; result?: UnitWorkerResult };
+      const packet = message as { type?: string; id?: string; root?: string; roots?: string[]; timeoutMs?: number; caseNames?: string[]; evidenceFiles?: string[]; error?: string; result?: UnitWorkerResult };
       if (packet.type === 'run-start') startupMs = performance.now() - started;
-      if (packet.type === 'result' && packet.result) result = packet.result;
+      if (packet.type === 'result' && packet.result) {
+        if (!result) {
+          const grace = testTimeout(task.closeTimeoutMs, TEST_WORKER_CLOSE_TIMEOUT_MS);
+          arm('result-close', grace, `test worker close timeout after result: ${task.id} (${grace}ms)`);
+        }
+        result = packet.result;
+      }
+      if (packet.root) roots.add(packet.root);
+      for (const root of packet.roots ?? []) roots.add(root);
+      for (const file of packet.evidenceFiles ?? []) evidenceFiles.add(file);
+      if (packet.type === 'test-runtime-failure' && packet.error) runtimeErrors.push({ error: packet.error, caseNames: packet.caseNames });
+      if (packet.type === 'test-run-start' && packet.id) arm(packet.id,
+        testTimeout(packet.timeoutMs, TEST_RUN_TIMEOUT_MS), `test invocation timeout: ${packet.root ?? task.id}`, packet.caseNames);
+      if (packet.type === 'test-case-start' && packet.id) arm(packet.id,
+        testTimeout(packet.timeoutMs, TEST_CASE_TIMEOUT_MS), `test case timeout: ${(packet.caseNames ?? []).join(', ')}`, packet.caseNames);
+      if ((packet.type === 'test-run-end' || packet.type === 'test-case-end') && packet.id) disarm(packet.id);
+      if (packet.type === 'test-run-timeout') void expire(`test invocation timeout: ${packet.root ?? task.id}`, packet.caseNames);
     });
     child.on('error', error => { spawnError = String(error); });
     // close 在退出及两条输出流收尾之后；收到 IPC 结果不能提前判 PASS。

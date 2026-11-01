@@ -4,7 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as YAML from 'yaml';
 import { createHash } from 'crypto';
-import { deriveBlueprintSkillInput, materializeBlueprintSkillInputs, BlueprintProjectionPreparationError, designScopeRevisionChecks, checkTypedConstructionContent, checkAuthoritativeContentAligned, diagnoseBlueprintSkillAuthority, diagnoseDesignAuthority } from '../../scripts/utils/blueprint-skill-projection';
+import { deriveBlueprintSkillInput, materializeBlueprintSkillInputs, BlueprintProjectionPreparationError, designScopeRevisionChecks, checkTypedConstructionContent, checkAuthoritativeContentAligned, diagnoseBlueprintSkillAuthority, diagnoseDesignAuthority, selectBlueprintSkillContent } from '../../scripts/utils/blueprint-skill-projection';
 import { resolveBlueprintTarget } from '../../scripts/utils/blueprint-addressing';
 import { asRecord, type BlueprintRecord, type ComponentBlueprintRef } from '../../scripts/utils/component-blueprint-model';
 import { resolveFeatureArtifact, clearFrameworkConfigCache, loadFrameworkConfig } from '../../config';
@@ -27,7 +27,7 @@ import type { WorkflowSpec } from '../../workflow-loader';
 import { collectContextFiles } from '../../harness-runner';
 import { initializeFidelityRouting } from '../../scripts/utils/goal-preflight';
 import { spawnSync } from 'child_process';
-import { readScopeAcceptance } from '../../scripts/utils/feature-track';
+import { readScopeAcceptance, prepareChangeUnitScopeInput, prepareFeatureScopeCandidate } from '../../scripts/utils/feature-track';
 import { checkAcceptanceContent } from '../../scripts/utils/check-acceptance';
 import { checkUseCaseSpecSchema } from '../../scripts/check-ut';
 import { diagnoseBlueprintContent } from '../../scripts/utils/component-blueprint-validator';
@@ -91,6 +91,102 @@ export function planContracts(f: ReturnType<typeof fixture>): ContractsSpec & { 
 }
 
 const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Promise<void> }> = [
+  { name: 'P2 invalid parent retains its blocker while independently checking exact-bound runtime content', run(f) {
+    const doc = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
+    const cu = YAML.parse(fs.readFileSync(f.cuFile, 'utf8'));
+    doc.design_views[0].purpose = '';
+    const flowRef = cu.design_refs.find((ref: ComponentBlueprintRef) => ref.target.kind === 'flow');
+    const flow = asRecord(resolveBlueprintTarget(doc, flowRef.target))!;
+    delete ((flow.contracts as BlueprintRecord).state_management as BlueprintRecord[])[0].owner_ref;
+    fs.writeFileSync(f.blueprintFile, YAML.stringify(doc)); f.bind();
+    const projection = deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, 'contracts');
+    assert.equal(projection.state, 'invalid');
+    assert(projection.codes?.includes('component_blueprint_invalid'), projection.detail);
+    assert(projection.codes?.includes('change_unit_runtime_owner_contract_missing'), projection.detail);
+    assert(!projection.value && !projection.artifacts, '只读精确来源诊断被误当成已准入投影');
+    assert.throws(() => materializeBlueprintSkillInputs(f.root, f.feature, frameworkRoot), BlueprintProjectionPreparationError);
+  } },
+  { name: 'P2 conflicting invalid_otp and contract versions are both reported without choosing business truth', run(f) {
+    const doc = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
+    const cu = YAML.parse(fs.readFileSync(f.cuFile, 'utf8'));
+    const first = asRecord(resolveBlueprintTarget(doc, cu.design_refs[0].target))!;
+    const second = asRecord(resolveBlueprintTarget(doc, cu.design_refs[1].target))!;
+    first.acceptance = { criteria: [{ id: 'invalid_otp', expected_result: 'reject the request' }] };
+    second.acceptance = { criteria: [{ id: 'invalid_otp', expected_result: 'accept the request' }] };
+    second.provenance = { ...asRecord(second.provenance), evidence_strength: 'authoritative' };
+    second.contracts = { version: 'contradictory-contract-version' };
+    fs.writeFileSync(f.blueprintFile, YAML.stringify(doc)); f.bind();
+    const before = fs.readFileSync(f.blueprintFile);
+    const projection = deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, 'contracts');
+    assert.equal(projection.state, 'invalid');
+    assert(projection.detail?.includes('invalid_otp') && projection.detail?.includes('contracts.version'), projection.detail);
+    assert(projection.detail?.includes('未能检查依赖该内容'), '未披露真实依赖未知');
+    assert(!projection.value && !projection.artifacts, '冲突来源被任选一方投影为权威');
+    assert.throws(() => materializeBlueprintSkillInputs(f.root, f.feature, frameworkRoot), BlueprintProjectionPreparationError);
+    assert(fs.readFileSync(f.blueprintFile).equals(before));
+  } },
+  { name: 'P2 readiness collects the blocked CU, missing Phone use-case and independent runtime mapping in one production evaluation', run(f) {
+    const doc = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
+    const cu = YAML.parse(fs.readFileSync(f.cuFile, 'utf8'));
+    const node = asRecord(resolveBlueprintTarget(doc, cu.design_refs[0].target))!;
+    ((node.acceptance as BlueprintRecord).criteria as BlueprintRecord[])[0].linked_flow = 'Phone';
+    const flowRef = cu.design_refs.find((ref: ComponentBlueprintRef) => ref.target.kind === 'flow');
+    const flow = asRecord(resolveBlueprintTarget(doc, flowRef.target))!;
+    delete ((flow.contracts as BlueprintRecord).state_management as BlueprintRecord[])[0].owner_ref;
+    cu.touches[0].design_ref = cu.design_refs[0];
+    fs.writeFileSync(f.blueprintFile, YAML.stringify(doc)); fs.writeFileSync(f.cuFile, YAML.stringify(cu)); f.bind();
+    const before = fs.readFileSync(f.blueprintFile);
+    const readiness = deriveDesignPreparationReadiness(f.root, 'ledger-app-blueprint');
+    const unit = readiness.perUnit.find(row => row.changeUnitId === 'ledger-refresh')!;
+    assert(!readiness.ready && unit.issueIds.includes('change_unit_touch_development_owner_missing'), JSON.stringify(unit));
+    assert(unit.issueIds.includes('authority_acceptance_content_invalid'), JSON.stringify(unit));
+    assert(unit.issueIds.includes('change_unit_runtime_owner_contract_missing'), JSON.stringify(unit));
+    assert(unit.projectionIssues.some(row => row.detail?.includes('AC-1: linked_flow/linked_branch 无法解析')), JSON.stringify(unit));
+    assert.equal(((node.acceptance as BlueprintRecord).criteria as BlueprintRecord[])[0].linked_flow, 'Phone', '机器改写了缺失引用');
+    assert.throws(() => materializeBlueprintSkillInputs(f.root, f.feature, frameworkRoot), BlueprintProjectionPreparationError);
+    assert(fs.readFileSync(f.blueprintFile).equals(before), '汇总诊断改了canonical业务');
+    assert(!fs.existsSync(resolveFeatureArtifact(f.root, f.feature, 'acceptance.yaml').actualPath), 'invalid投影写出了部分PASS产物');
+  } },
+  { name: 'P2 exact known flow relation projects mechanically regardless of record location; ambiguity stays unresolved', run(f) {
+    const doc = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
+    const cu = YAML.parse(fs.readFileSync(f.cuFile, 'utf8'));
+    const node = asRecord(resolveBlueprintTarget(doc, cu.design_refs[0].target))!;
+    const flowRef = cu.design_refs.find((ref: ComponentBlueprintRef) => ref.target.kind === 'flow');
+    const flow = asRecord(resolveBlueprintTarget(doc, flowRef.target))!;
+    (node.contracts as BlueprintRecord).state_management = (flow.contracts as BlueprintRecord).state_management;
+    delete flow.contracts;
+    fs.writeFileSync(f.blueprintFile, YAML.stringify(doc)); f.bind();
+    const projected = deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, 'contracts');
+    assert.equal(projected.state, 'resolved', projected.detail);
+    assert.deepEqual((projected.value as ContractsSpec).state_management![0].design_ref?.target, flowRef.target);
+    materializeBlueprintSkillInputs(f.root, f.feature, frameworkRoot);
+    const saved = YAML.parse(fs.readFileSync(resolveFeatureArtifact(f.root, f.feature, 'contracts.yaml').actualPath, 'utf8'));
+    assert.deepEqual(saved.state_management[0].design_ref.target, flowRef.target, '原writer未落盘机械映射');
+    const second = structuredClone(flow); second.flow_id = 'ambiguous-flow';
+    const runtime = doc.design_views.find((view: BlueprintRecord) => view.view_id === 'runtime'); runtime.runtime_data_flows.push(second);
+    cu.design_refs.push({ ...flowRef, target: { ...flowRef.target, id: 'ambiguous-flow' } });
+    const merged = selectBlueprintSkillContent(doc, cu);
+    assert.equal((merged.contracts!.state_management as BlueprintRecord[])[0].design_ref, undefined, '共享owner的含糊关系被机器猜定');
+  } },
+  { name: 'P2 scope arguments use original request and current required obligations through the sole candidate writer', run(f) {
+    materializeBlueprintSkillInputs(f.root, f.feature, frameworkRoot);
+    const cu = asChangeUnitArtifact(loadCanonicalChangeUnit(f.root, 'ledger-app-blueprint', 'ledger-refresh').changeUnit);
+    const request = { projectRoot: f.root, frameworkRoot, changeUnit: cu, requirement: 'Refresh the ledger using the approved design', requestedResults: ['refreshed ledger'], requestedPhases: ['coding'] };
+    const first = prepareFeatureScopeCandidate(prepareChangeUnitScopeInput(request));
+    const args = prepareChangeUnitScopeInput({ ...request, obligations: first.scope.obligations, overwrite: true });
+    assert.equal(args.feature, f.feature);
+    assert.equal(args.requirement, request.requirement);
+    assert.equal(args.impact, undefined, '未知impact被默认填假');
+    assert.deepEqual(args.requestedResults, request.requestedResults);
+    assert(args.requestedPhases.includes('coding'));
+    const empty = prepareChangeUnitScopeInput({ ...request, requestedPhases: [], obligations: [] });
+    assert.deepEqual(empty.requestedPhases, [], '授权域或默认全阶段被冒充请求动作');
+    assert.throws(() => prepareFeatureScopeCandidate(empty), /requested-phases/);
+    const next = prepareFeatureScopeCandidate(args);
+    assert(next.candidate.request.requirement_basis, '未走原哈希绑定链');
+    assert.deepEqual(next.candidate.request.requested_phases, args.requestedPhases);
+    assert.equal(prepareFeatureScopeCandidate(args).state, 'unchanged', '同参数重复准备不幂等');
+  } },
   { name: 'f3b8e6a1 authority preparation: invalid canonical construction reaches the design diagnosis without a scope', run(f) {
     const doc = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
     const cu = YAML.parse(fs.readFileSync(f.cuFile, 'utf8'));
@@ -127,6 +223,11 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
       featureSpec: { contracts } } as CheckContext, 'contracts');
     assert(checks.some(check => check.status === 'FAIL'));
     assert(!checks.some(check => check.repair_owner === 'external'));
+    const producer = checks.find(check => check.status === 'FAIL')!;
+    const facts = (producer.structured as { authoritative_content_drift: { artifact: string; items: Array<{ id: string; field: string }> } }).authoritative_content_drift;
+    assert.equal(facts.artifact, 'contracts');
+    assert(facts.items.length > 0 && facts.items.every(item => producer.details.includes(item.id)), '结构化事实必须保留同一次检查的完整字段差额与原诊断');
+    assert.deepEqual(producer.affected_files, [file]);
   } },
   { name: '1804 independent projection CLI scopes spec and plan; invalid phases write nothing', run(f) {
     for (const name of ['acceptance.yaml', 'contracts.yaml', 'use-cases.yaml']) fs.rmSync(resolveFeatureArtifact(f.root, f.feature, name).actualPath, { force: true });

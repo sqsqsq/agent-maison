@@ -480,9 +480,8 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     },
   },
   {
-    // plan e6b3f8d2 t1：silent watchdog 生产链已删除（从未启用的第二判死权威）——
-    // 回归改为**源码锚定**：写侧不得再出现常量/选项/定时器/kill reason 任何一处。
-    name: 'silent watchdog 生产链已删除（写侧零残留；读侧字段保留供历史事件兼容）',
+    // 旧 silent watchdog 的失败事实不复活；当前 CLI 静默卡死只沿原中断未知链收口。
+    name: '旧 silent watchdog 写侧不复活；历史字段兼容与当前卡死中断分离',
     run: () => {
       const src = fs.readFileSync(
         path.resolve(__dirname, '../../scripts/utils/agent-invoke.ts'),

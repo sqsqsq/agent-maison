@@ -6,8 +6,8 @@ import * as path from 'path';
 import { createHash } from 'crypto';
 import * as YAML from 'yaml';
 import { clearFrameworkConfigCache, featureFilePath } from '../../config';
-import { prepareGoalModeRun, runGoalModeSessionStep } from '../../scripts/goal-mode-entry';
-import { readOriginalDeliveryBudget, readOriginalDeliveryRuns } from '../../scripts/utils/delivery-origin';
+import { prepareGoalModeRun, runGoalModeSessionStep as runGoalModeSessionStepUnchecked } from '../../scripts/goal-mode-entry';
+import { originalDeliveryForManifest, readOriginalDeliveryBudget, readOriginalDeliveryRuns } from '../../scripts/utils/delivery-origin';
 import { buildGoalManifestFromInput, buildInitialDesignGoalManifest, computeManifestIdentityFields,
   loadGoalRunManifestFromRun, type GoalManifest, type GoalRunManifest, type InitialDesignGoalManifest } from '../../scripts/utils/goal-manifest';
 import { assertGoalRunAttachable, buildSupersedeAuditEvent, createGoalRun, decideRunContinuation } from '../../scripts/utils/goal-run-creation';
@@ -21,6 +21,11 @@ import { withFreshCuHost } from './lifecycle-evolution.unit.test';
 import { withRunDisposition } from '../../scripts/utils/adjudication';
 import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
 import type { UnitCaseResult } from '../run-unit';
+import { reportFixtureQuestioning, seedLedgerQuestioningInput } from '../utils/initial-questioning-fixture';
+import { withRuntimeTest, type RuntimeTestControl } from '../utils/runtime-test-control';
+const runGoalModeSessionStep = (options: Parameters<typeof runGoalModeSessionStepUnchecked>[0], testControl: RuntimeTestControl = {}) =>
+  withRuntimeTest({ root: options.projectRoot, ...testControl }, () => runGoalModeSessionStepUnchecked(options));
+
 
 const FRAMEWORK = path.resolve(__dirname, '../../..');
 const BLUEPRINT = 'ledger-app-blueprint';
@@ -272,6 +277,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
   {
     name: 'f3b8e6a1 public budget control: a real root override resumes its exhausted original child once and the exhausted new limit cannot revive it again',
     async run() { await withFreshCuHost(async host => {
+      seedLedgerQuestioningInput(host.root);
       const workspace = path.resolve(featureFilePath(host.root, BLUEPRINT, ''));
       for (const unit of enumerateCanonicalChangeUnits(host.root, BLUEPRINT)) {
         if (unit.changeUnit.change_unit_id === 'ledger-refresh') continue;
@@ -321,10 +327,17 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
       assert.equal(events(host, current).filter(row => row.type === 'agent_invoke_start').length, priorCalls, 'rejected unapproved budget cannot dispatch a child invocation');
       assert.deepEqual(fs.readFileSync(prepared.manifestPath), childBytes);
       assert.throws(() => readOriginalDeliveryBudget(host.root, current), /changed without/);
-      const resumed = await runGoalModeSessionStep({ ...controls, overrideManifest: true });
+      let resumed = await runGoalModeSessionStep({ ...controls, overrideManifest: true });
+      let actualQuestions = 0;
+      if (resumed.type === 'phase_execute_request' && resumed.phase === 'initial-design-questioning') {
+        resumed = await reportFixtureQuestioning(controls, resumed, runDir(host, original),
+          path.join(host.root, 'doc/features', BLUEPRINT, 'blueprint/component-blueprint.yaml'));
+        actualQuestions++;
+      }
       assert.equal(events(host, original).filter(row => row.type === 'manifest_identity_rebase').length, oldRebases + 1, 'the public runtime, not this test, must accept the override');
       assert.equal(resumed.type, 'phase_execute_request', JSON.stringify(resumed));
-      assert.equal(resumed.run_id, current.run_id, 'the signed request must continue the same canonical child');
+      assert.equal(resumed.run_id, current.run_id, `the signed request must continue the same canonical child: ${JSON.stringify({ actual: resumed,
+        rootTail: events(host, original).slice(-5), childTail: events(host, current).slice(-5) })}`);
       assert.equal(resumed.feature, current.feature);
       const afterChild = fs.readFileSync(prepared.manifestPath);
       if (!afterChild.equals(childBytes)) {
@@ -339,7 +352,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
       }
       const beforeFinal = readOriginalDeliveryBudget(host.root, current)!;
       assert.equal(beforeFinal.budget.max_total_turns, 60);
-      assert.equal(beforeFinal.totalTurns, 21, '20 consumed calls plus the actual newly signed child request');
+      assert.equal(beforeFinal.totalTurns, 21 + actualQuestions, '20 consumed calls, any real current Q and the newly signed child each count once');
       seedCalls(60 - beforeFinal.totalTurns, 'second-allowance');
       const reference = resumed.request as { path: string };
       await runGoalModeSessionStep({ ...controls, requestPath: reference.path,
@@ -351,9 +364,24 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
       const childDirectory = path.dirname(prepared.runDir);
       const runIds = fs.readdirSync(childDirectory).filter(name => !name.startsWith('.')).sort();
       const decision = decideRunContinuation({ projectRoot: host.root, feature: current.feature, call: { requirement } });
-      assert.equal(decision.kind, 'hold', 'the already-consumed root increase is not a new budget change after the later stop');
-      await assert.rejects(() => runGoalModeSessionStep(controls), /本次请求没有带来任何变化[\s\S]*budget_turns/,
-        'the public preparation API must preserve the normal no-change refusal after the new allowance is exhausted');
+      const currentOriginal = originalDeliveryForManifest(host.root, current);
+      assert(currentOriginal, 'the canonical child must resolve its actual current original delivery');
+      const beforeStarts = readOriginalDeliveryRuns(host.root, currentOriginal).flatMap(run => run.events).filter(row => row.type === 'agent_invoke_start').length;
+      let repeated: Awaited<ReturnType<typeof runGoalModeSessionStep>> | undefined;
+      let refusal: unknown;
+      try { repeated = await runGoalModeSessionStep(controls); } catch (error) { refusal = error; }
+      const diagnostic = JSON.stringify({ decision, repeated, actualError: refusal instanceof Error ? { message: refusal.message, stack: refusal.stack } : refusal,
+        totalTurns: readOriginalDeliveryBudget(host.root, current)!.totalTurns,
+        rootCuts: events(host, original).filter(row => row.type !== undefined && ['run_created', 'manifest_identity_rebase', 'run_end'].includes(row.type)),
+        childEnds: events(host, current).filter(row => row.type === 'run_end') });
+      assert(typeof diagnostic === 'string', 'the actual refusal diagnostic must serialize to text');
+      if (refusal) assert.match(String(refusal), /本次请求没有带来任何变化[\s\S]*budget_turns/, diagnostic);
+      else {
+        assert.equal(repeated?.type, 'goal_session_result', diagnostic);
+        assert.equal((repeated as { result?: { halt_reason?: string } })?.result?.halt_reason, 'budget_turns', diagnostic);
+        assert.equal(repeated?.run_id, original.run_id, diagnostic);
+      }
+      assert.equal(readOriginalDeliveryRuns(host.root, currentOriginal).flatMap(run => run.events).filter(row => row.type === 'agent_invoke_start').length, beforeStarts, diagnostic);
       assert.equal(readOriginalDeliveryBudget(host.root, current)!.totalTurns, 60);
       assert.deepEqual(fs.readdirSync(childDirectory).filter(name => !name.startsWith('.')).sort(), runIds);
       assert.deepEqual(fs.readFileSync(prepared.manifestPath), childBytes);

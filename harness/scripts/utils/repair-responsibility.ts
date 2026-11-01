@@ -31,6 +31,8 @@ import type { ContractsSpec, HarnessResolvedProfile } from './types';
 import type { CorrectionCategory } from './correction-routing';
 import type { ExecutionScope } from './execution-scope';
 import type { WorkflowSpec } from '../../workflow-loader';
+import type { RepairEvidenceRef } from './repair-candidates';
+import type { CurrentDisposition, CurrentDispositionProblem } from './check-disposition';
 import { extractUtItBlocks } from './ut-it-blocks';
 import * as ts from 'typescript';
 
@@ -425,6 +427,11 @@ export function readRepairResponsibilityContracts(
 }
 
 export interface RepairResponsibilityTarget {
+  id?: string;
+  source_phase?: string;
+  /** Existing candidate identity, checked against the current producer's object reference. */
+  item_fingerprint?: string;
+  identity_schema?: 'signal@1';
   files?: readonly string[];
   category?: CorrectionCategory;
   summary?: string;
@@ -434,9 +441,13 @@ export interface RepairResponsibilityTarget {
   factsOwner?: string;
   compatibilityPreserved?: boolean;
   designAuthority?: boolean;
+  /** Existing readonly native object locators; never source write paths. */
+  evidence_refs?: readonly RepairEvidenceRef[];
 }
 
 export interface RepairResponsibilityContext {
+  /** The same synchronous producer/verifier disposition used by the caller; never persisted. */
+  currentDisposition?: CurrentDisposition;
   authorityReaders?: IdentityNeutralDigestReaders;
   projectRoot?: string;
   frameworkRoot?: string;
@@ -533,7 +544,7 @@ export function repairResponsibilityContext(input: RepairResponsibilityContext):
   }
   const scope = input.executionScope ?? resolveEffectiveScopeSource(input.projectRoot, input.feature, input.runId)?.scope;
   const contracts = input.contracts ?? readRepairResponsibilityContracts({ projectRoot: input.projectRoot, frameworkRoot: input.frameworkRoot,
-    feature: input.feature, runId: input.runId, pendingOwnerPhase: input.currentPhase, authorityReaders: input.authorityReaders, executionRole: input.executionRole,
+    feature: input.feature, runId: input.runId, pendingOwnerPhase: input.currentPhase, authorityReaders: input.authorityReaders, executionRole: input.executionRole ?? 'author',
     phaseOrder: workflow.artifacts.map(artifact => artifact.id), track: 'full', profileDir: profile.profileDir,
     productLayerDirs: (config.architecture?.outer_layers ?? []).map(layer => layer.id),
     resolveUtSourceRoots: tryLoadUtSourceRootResolver(profile.profileDir) ?? undefined });
@@ -552,6 +563,19 @@ function ownerCategory(owner: string, context: RepairResponsibilityContext): Cor
   return null;
 }
 
+/** Object identity comes from the current common view, not a category or another evidence parser. */
+function currentRepairObject(context: RepairResponsibilityContext, target: RepairResponsibilityTarget): CurrentDispositionProblem | undefined {
+  if (!context.currentDisposition || !target.id || !target.source_phase) return undefined;
+  let matches = context.currentDisposition.problems.filter(problem =>
+    (problem.id === target.id || problem.id === `open_finding:${target.id}`)
+    && (problem.source_phase ?? problem.phase) === target.source_phase);
+  if (target.identity_schema === 'signal@1' || matches.some(problem => problem.evidence?.some(ref => ref.startsWith('visual:')))) {
+    matches = matches.filter(problem => !!target.item_fingerprint && problem.evidence?.some(ref => ref.startsWith('visual:')
+      && crypto.createHash('sha256').update(ref.slice('visual:'.length)).digest('hex') === target.item_fingerprint));
+  }
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
 /** Shared in-memory decision. Unknown targets stay unknown rather than falling back to coding/the queue head. */
 export function resolveRepairResponsibility(input: RepairResponsibilityContext & { target: RepairResponsibilityTarget }): RepairResponsibility {
   let context: RepairResponsibilityContext;
@@ -559,6 +583,7 @@ export function resolveRepairResponsibility(input: RepairResponsibilityContext &
   catch (error) { return { target: input.target, owner: null, category: input.target.category ?? null,
     roles: { introducedBy: input.target.introducedBy ?? null, legalModifier: null, verifier: null }, action: 'unavailable', reason: String(error) }; }
   const target = input.target;
+  const currentObject = currentRepairObject(context, target);
   const rawContracts = context.contracts;
   const matches = rawContracts ? (target.files ?? []).map(file => {
     const normalized = normalizeResponsibilityPath(rawContracts.projectRoot, file);
@@ -577,7 +602,7 @@ export function resolveRepairResponsibility(input: RepairResponsibilityContext &
       matches.push(owners.length === 1 ? owners[0] : null);
     }
   }
-  let owner: string | null = target.factsOwner ?? target.owner ?? null;
+  let owner: string | null = target.factsOwner ?? (!target.files?.length ? currentObject?.owner : undefined) ?? target.owner ?? null;
   const knownMatches = matches.filter((value): value is string => !!value);
   const pathOwner = knownMatches.length === (target.files?.length ?? 0) && knownMatches.length && new Set(knownMatches).size === 1 ? knownMatches[0] : null;
   const targetConflict = !!target.owner && !!pathOwner && target.owner !== pathOwner
@@ -594,10 +619,10 @@ export function resolveRepairResponsibility(input: RepairResponsibilityContext &
   const verifierCheck = owner ? phaseContracts.get(owner)?.phase.verifies.check : undefined;
   const verifier = verifierCheck ? [...phaseContracts].find(([, indexed]) => indexed.phase.verifies.check === verifierCheck)?.[0] ?? null : null;
   let category = owner ? ownerCategory(owner, context) ?? target.category ?? null : target.category ?? null;
-  const workUnitRole = context.executionRole ?? context.contracts?.executionRole;
-  const compatible = !workUnitRole && (target.compatibilityPreserved ?? (category === 'verification' && !!context.projectRoot && !!context.feature && !!target.files?.length
+  const workUnitRole = context.executionRole ?? context.contracts?.executionRole ?? (context.contracts ? 'author' : undefined);
+  const compatible = target.compatibilityPreserved ?? (category === 'verification' && !!context.projectRoot && !!context.feature && !!target.files?.length
     && target.files.every(file => (target.owner === 'coding' || hasImplementationTypeCompatibilityChange({ projectRoot: context.projectRoot!, feature: context.feature!, runId: context.runId, file }))
-      && codingTestPreservation({ projectRoot: context.projectRoot!, feature: context.feature!, runId: context.runId, file }).preserved)));
+      && codingTestPreservation({ projectRoot: context.projectRoot!, feature: context.feature!, runId: context.runId, file }).preserved));
   if (category === 'verification' && compatible && context.workflow?.artifacts.some(artifact => ownerCategory(artifact.id, context) === 'coding')) {
     owner = context.workflow.artifacts.find(artifact => ownerCategory(artifact.id, context) === 'coding')!.id;
     category = 'coding';
@@ -606,11 +631,16 @@ export function resolveRepairResponsibility(input: RepairResponsibilityContext &
   const result = (action: RepairResponsibility['action'], reason: string): RepairResponsibility => ({ target, owner, category, roles, action, reason });
   if (workUnitRole) {
     if (target.designAuthority) return result('design', '共享设计沿原设计权威链裁决、发布并重绑');
-    const boundary = context.contracts && { ...context.contracts, executionRole: context.executionRole ?? context.contracts.executionRole };
-    if (!boundary || !target.files?.length || !target.files.every(file => workUnitMayWritePath(boundary, file))) {
+    // This answers who may repair, not what the currently reading verifier may write.
+    const boundary = context.contracts && { ...context.contracts, executionRole: 'author' as const };
+    const unitWritable = !!boundary && !!context.projectRoot && !!context.feature
+      && path.resolve(boundary.projectRoot) === path.resolve(context.projectRoot) && boundary.feature === context.feature
+      && boundary.domains.some(domain => workUnitMayWritePath(boundary, domain.path));
+    const verifiedObject = !target.files?.length && currentObject?.action === 'repair' && unitWritable;
+    if (!boundary || !(target.files?.length ? target.files.every(file => workUnitMayWritePath(boundary, file)) : verifiedObject)) {
       return result('unavailable', '修复对象不在当前工作单元写权内，或属于原输入、共享发布、框架或正式核验结果');
     }
-    if (boundary.executionRole === 'verifier') return result('unavailable', '独立核验只返回本次结果原件，产品修复交原工作单元作者');
+    if (verifiedObject) return result('current', '当前工作单元作者按同一当前处置调查已核实业务对象；源码定位后仍须遵守原写界，证据路径不授予写权');
     return result('current', '当前工作单元作者可修复授权内实现、测试源码与设计候选；断言强度和适用验收仍需独立核验');
   }
   if (targetConflict) return result('unavailable', '已核实责任声明与真实修复对象不一致；修复对象不能由报错/诊断文件替代，请原提出方更正对象后重新核实');
@@ -619,19 +649,12 @@ export function resolveRepairResponsibility(input: RepairResponsibilityContext &
   if (!context.workflow?.artifacts.some(artifact => artifact.id === owner)) return result('unavailable', `${owner} 的职责已确定，但当前 workflow 无可用能力`);
   if (context.projectRoot && !context.skillContracts?.has(owner)) return result('unavailable', `${owner} 的职责已确定，但当前缺少可执行 Skill 契约`);
   if (context.profile?.phasesDisabled.has(owner)) return result('unavailable', `${owner} 的职责已确定，但当前 profile/实例已禁用该能力`);
-  const scope = context.executionScope;
-  const { authorizedScopePhases } = require('./execution-scope') as typeof import('./execution-scope');
-  if (scope && !authorizedScopePhases(scope, context.workflow).includes(owner)) return result('unavailable', `本次请求未授权 ${owner} 的修改职责`);
-  if (owner === input.currentPhase) return result('current', '本阶段在原授权内修复后由原接口复验');
-  const obligations = scope?.obligations.filter(obligation => obligation.owner_phase === owner && obligation.applicability === 'required') ?? [];
-  if (obligations.some(obligation => obligation.satisfied_by?.length) || scope?.reused_phases.some(phase => phase.phase === owner)) return result('reopen', '已有负责方成果发现真实缺陷，沿原义务重开并撤销受影响证明');
-  if (scope?.phase_chain.includes(owner)) return result('handoff', '交给尚待执行且不依赖该待修结论的真实负责方');
-  return result('include', '在原请求授权内经既有范围修订纳入必要责任义务');
+  return result('unavailable', '职责已识别，但缺少当前工作单元的真实产物与授权视图；不能用phase队列授予修改权');
 }
 
 /** Reuse the UT parser; ambiguous syntax never acquires the finite coding exemption. */
 export function compareExistingTestPreservation(before: string | undefined, after: string): { preserved: boolean; reason: string } {
-  if (before === undefined) return { preserved: false, reason: '无法取得本次修补前的真实测试原件；交 UT 核验' };
+  if (before === undefined) return { preserved: false, reason: '无法取得本次修补前的真实测试原件；交独立核验' };
   const inspect = (text: string): { pieces: string[]; disabled: string[]; error?: string } => {
     const source = ts.createSourceFile('test.ts', text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
     if ((source as ts.SourceFile & { parseDiagnostics: readonly ts.Diagnostic[] }).parseDiagnostics.length) return { pieces: [], disabled: [], error: '测试源码解析不确定' };
@@ -656,17 +679,24 @@ export function compareExistingTestPreservation(before: string | undefined, afte
   const old = inspect(before), current = inspect(after);
   if (old.error || current.error) return { preserved: false, reason: old.error ?? current.error! };
   const preserved = JSON.stringify(old.pieces) === JSON.stringify(current.pieces) && JSON.stringify(old.disabled) === JSON.stringify(current.disabled);
-  return { preserved, reason: preserved ? '既有用例定义与断言原样保留，未新增测试、断言或跳过声明' : '用例定义、断言或跳过声明发生变化；交真实 UT 负责方修复/核验' };
+  return { preserved, reason: preserved ? '既有用例定义与断言原样保留，未新增测试、断言或跳过声明' : '用例定义、断言或跳过声明发生变化；需独立核验当前授权验收与断言强度' };
 }
 
 /** Existing pre-write hashes select the original; an older run Git version is never substituted. */
-export function codingTestPreservation(input: { projectRoot: string; feature: string; file: string; runId?: string }): { preserved: boolean; reason: string } {
+export function codingTestPreservation(input: { projectRoot: string; feature: string; file: string; runId?: string }): { preserved: boolean; reason: string; beforeText?: string } {
+  const { validateProjectRelativePath, isInsideProjectRoot } = require('./project-relative-path') as typeof import('./project-relative-path');
+  try {
+    const file = validateProjectRelativePath(input.projectRoot, input.file, 'existing test source');
+    const absolute = path.resolve(input.projectRoot, file);
+    if (fs.existsSync(absolute) && !isInsideProjectRoot(fs.realpathSync(input.projectRoot), fs.realpathSync(absolute))) throw new Error('symlink escapes project');
+    input = { ...input, file };
+  } catch (error) { return { preserved: false, reason: `测试引用不在当前工程内：${(error as Error).message}` }; }
   const { readFileAtRef, resolveEffectiveDiffBaseline } = require('./git-diff') as typeof import('./git-diff');
   const baseline = resolveEffectiveDiffBaseline(input.projectRoot, input.feature, input.runId);
   if (!baseline.available) return { preserved: false, reason: baseline.reason };
   const original = readFileAtRef(input.projectRoot, baseline.baseSha, input.file);
   let expected: string | null | undefined;
-  let codingStarted = false;
+  let authorWriteStarted = false;
   if (input.runId) {
     const { loadLineageRunEvents } = require('./goal-run-creation') as typeof import('./goal-run-creation');
     for (const event of loadLineageRunEvents(input.projectRoot, input.feature, input.runId)) {
@@ -674,17 +704,19 @@ export function codingTestPreservation(input: { projectRoot: string; feature: st
       const rows = [...((event as { owned?: Array<{ path: string; pre_sha256?: string | null; post_sha256?: string | null }> }).owned ?? []),
         ...((event as { observations?: Array<{ path: string; pre_sha256?: string | null; post_sha256?: string | null }> }).observations ?? [])];
       for (const row of rows.filter(row => row.path === input.file)) {
-        if (event.phase === 'ut') { expected = row.post_sha256; codingStarted = false; }
-        else if (event.phase === 'coding' && !codingStarted) { expected = row.pre_sha256; codingStarted = true; }
+        if (event.phase === 'ut') { expected = row.post_sha256 === undefined ? 'unverifiable' : row.post_sha256; authorWriteStarted = false; }
+        else if (!authorWriteStarted) { expected = row.pre_sha256 === undefined ? 'unverifiable' : row.pre_sha256; authorWriteStarted = true; }
       }
     }
   }
   const originalHash = original ? crypto.createHash('sha256').update(original).digest('hex') : null;
-  if (expected !== undefined && expected !== originalHash) return { preserved: false, reason: '真实前置测试版本不在可读取的 Git 原件中；不能用更旧 run baseline 代替，交 UT 核验' };
+  if (expected !== undefined && expected !== originalHash) return { preserved: false, reason: '真实前置测试版本不在可读取的 Git 原件中；不能用更旧 run baseline 代替，交独立核验' };
+  const before = expected === undefined || original === null || original === undefined ? {} : { beforeText: original.toString('utf8') };
   let after: string;
   try { after = fs.readFileSync(path.resolve(input.projectRoot, input.file), 'utf8'); }
-  catch { return { preserved: false, reason: '测试文件删除或不可读取；交 UT 核验' }; }
-  return compareExistingTestPreservation(original?.toString('utf8'), after);
+  catch { return { preserved: false, reason: '测试文件删除或不可读取；交独立核验', ...before }; }
+  return { ...compareExistingTestPreservation(original?.toString('utf8'), after),
+    ...before };
 }
 
 /** A concrete old typed fixture broken by this implementation's newly-required fields. */

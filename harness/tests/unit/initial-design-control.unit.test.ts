@@ -18,12 +18,16 @@ import { readOriginalDeliveryBudget } from '../../scripts/utils/delivery-origin'
 import { projectInitialDesignDelivery } from '../../scripts/utils/initial-design-delivery';
 import { readSessionExecution, acceptedSessionReport, type SessionExecutionRequest } from '../../scripts/utils/session-execution-handoff';
 import { readLockRecord, isLockStale, FEATURE_LOCK_NAME } from '../../scripts/utils/goal-run-lock';
-import { readRunControl } from '../../scripts/utils/goal-run-control';
+import { readRunControl, renewSessionLease } from '../../scripts/utils/goal-run-control';
+import { defaultProcessProbe } from '../../scripts/utils/device-session';
+import { reconcileGuardianOwnership, terminateGuardianProcessOnly, awaitGuardianGone } from '../../scripts/utils/goal-containment-reconcile';
 import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
 import type { UnitCaseResult } from '../run-unit';
+import { withRuntimeTest } from '../utils/runtime-test-control';
 
 const BLUEPRINT = 'ledger-app-blueprint';
 const ROOT_ID = 'control-root', CHILD_ID = 'control-child';
+const CLI_TIMEOUT_MS = 90_000;
 const pause = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 const sha = (bytes: Buffer | string) => createHash('sha256').update(bytes).digest('hex');
 const json = (file: string): any => JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -77,7 +81,8 @@ function env(f: Family): NodeJS.ProcessEnv {
   return value;
 }
 function cli(f: Family, action: string[], label: string): any {
-  const result = spawnSync(process.execPath, cliArgs(f, action), { cwd: f.harnessDir, env: env(f), encoding: 'utf8', timeout: 90_000, windowsHide: true });
+  const result = withRuntimeTest({ root: f.root }, () => spawnSync(process.execPath, cliArgs(f, action),
+    { cwd: f.harnessDir, env: env(f), encoding: 'utf8', timeout: CLI_TIMEOUT_MS, windowsHide: true }));
   write(f.root, `observations/${label}.stdout.log`, result.stdout || ''); write(f.root, `observations/${label}.stderr.log`, result.stderr || '');
   assert(!result.error, String(result.error));
   const line = result.stdout.trim().split(/\r?\n/).reverse().find(line => line.startsWith('{'));
@@ -121,7 +126,7 @@ function preserve(f: Family, label: string, extra: Record<string, unknown>): str
   const directory = path.resolve(__dirname, `../../reports/f3b8e6a1/${label}-${Date.now()}`);
   fs.mkdirSync(directory, { recursive: true });
   for (const file of ['first-next.stdout.log', 'first-next.stderr.log', 'busy-next.stdout.log', 'busy-next.stderr.log', 'report.stdout.log', 'report.stderr.log',
-    'dead-pid-next.stdout.log', 'dead-pid-next.stderr.log', 'budget-next.stdout.log', 'budget-report.stdout.log', 'native-gates.jsonl']) {
+    'dead-pid-next.stdout.log', 'dead-pid-next.stderr.log', 'budget-next.stdout.log', 'budget-report.stdout.log', 'native-gates.jsonl', 'n1-timeline.json']) {
     const source = path.join(f.root, 'observations', file); if (fs.existsSync(source)) fs.copyFileSync(source, path.join(directory, file));
   }
   fs.copyFileSync(path.join(f.rootDir, 'events.jsonl'), path.join(directory, 'root.events.jsonl'));
@@ -138,18 +143,26 @@ const cases: Array<{ name: string; run(): Promise<void> }> = [{
     assert.equal(first.run_id, CHILD_ID); const request = json(first.request.path) as SessionExecutionRequest;
     prepareCoding(f, request);
     const out = fs.openSync(path.join(f.root, 'observations/report.stdout.log'), 'w'), err = fs.openSync(path.join(f.root, 'observations/report.stderr.log'), 'w');
+    const reporterStartedAt = Date.now();
     const reporter = spawn(process.execPath, cliArgs(f, ['--request', first.request.path, '--report-result', JSON.stringify({ phase: 'coding', status: 'passed' })]),
       { cwd: f.harnessDir, env: env(f), stdio: ['ignore', out, err], windowsHide: true, detached: process.platform !== 'win32' });
     fs.closeSync(out); fs.closeSync(err);
-    const exited = new Promise<void>((resolve, reject) => { reporter.once('exit', () => resolve()); reporter.once('error', reject); });
+    const closed = withRuntimeTest({ root: f.root, timeoutMs: 3 * CLI_TIMEOUT_MS,
+      expectedInterruption: process.platform === 'win32' ? 'test child exited without runtime result' : 'test child terminated by signal: SIGKILL' },
+    () => new Promise<{ status: number | null; signal: NodeJS.Signals | null; pid: number | undefined; stdout: string }>((resolve, reject) => {
+      reporter.once('close', (status, signal) => resolve({ status, signal, pid: reporter.pid,
+        stdout: fs.readFileSync(path.join(f.root, 'observations/report.stdout.log'), 'utf8') })); reporter.once('error', reject);
+    }));
     try {
       const nativeFile = path.join(f.root, 'observations/native-gates.jsonl'), childEvents = path.join(f.childDir, 'events.jsonl'), rootEvents = path.join(f.rootDir, 'events.jsonl');
-      const deadline = Date.now() + 40_000;
+      const deadline = Date.now() + CLI_TIMEOUT_MS;
       while (Date.now() < deadline && !rows(nativeFile).some(row => row.kind === 'enter')) {
         assert(reporter.pid && alive(reporter.pid), fs.readFileSync(path.join(f.root, 'observations/report.stderr.log'), 'utf8'));
         await pause(50);
       }
       assert(rows(nativeFile).some(row => row.kind === 'enter'), 'the original machine gate must enter its native compile seam');
+      const nativeEntryMs = rows(nativeFile).find(row => row.kind === 'enter')!.at_ms - reporterStartedAt;
+      console.log(`N1 actual native entry after ${nativeEntryMs}ms`);
       const pending = readSessionExecution(f.childDir); assert(pending && acceptedSessionReport(f.childDir, pending));
       const featureLock = featureFilePath(f.root, f.feature, path.join('goal-runs', FEATURE_LOCK_NAME));
       const held = readLockRecord(featureLock)!; assert.equal(held.pid, reporter.pid); assert(!isLockStale(held));
@@ -163,26 +176,60 @@ const cases: Array<{ name: string; run(): Promise<void> }> = [{
       assert.equal(rows(childEvents).filter(row => row.type === 'agent_invoke_start').length, childBefore.filter(row => row.type === 'agent_invoke_start').length);
       const oldControl = readRunControl(f.childDir, CHILD_ID)!;
       assert.equal(oldControl.owner?.kind, 'session'); assert(Date.parse(oldControl.owner!.lease_expires_at!) > Date.now());
-      ownedReporter(f, reporter, false); await exited;
+      ownedReporter(f, reporter, false); await closed;
       assert(isLockStale(readLockRecord(featureLock)!));
-      const leaseDeadline = Date.parse(oldControl.owner!.lease_expires_at!); assert(leaseDeadline > Date.now());
-      const resumedAt = Date.now(); const resumed = cli(f, ['--next'], 'dead-pid-next');
+      // Test precondition: the dead reporter keeps its fence with a lease longer than the 90s CLI envelope.
+      const retainedControl = renewSessionLease(f.childDir, { run_id: CHILD_ID, owner_id: oldControl.owner!.owner_id, epoch: oldControl.current_epoch }, 5 * 60_000);
+      const { lease_expires_at: _oldLease, ...oldOwner } = oldControl.owner!;
+      const { lease_expires_at: _retainedLease, ...retainedOwner } = retainedControl.owner!;
+      assert.deepEqual(retainedOwner, oldOwner, 'fixture renewal must not alter the dead reporter owner or authority');
+      assert.equal(retainedControl.current_epoch, oldControl.current_epoch);
+      const leaseDeadline = Date.parse(retainedControl.owner!.lease_expires_at!); assert(leaseDeadline > Date.now() + CLI_TIMEOUT_MS);
+      const resumedAt = Date.now();
+      write(f.root, 'observations/n1-timeline.json', JSON.stringify({ reporter_started_at: reporterStartedAt, reporter_pid: reporter.pid,
+        original_control: oldControl, retained_control: retainedControl, lease_deadline: leaseDeadline, resumed_at: resumedAt, cli_timeout_ms: CLI_TIMEOUT_MS }, null, 2) + '\n');
+      const resumed = cli(f, ['--next'], 'dead-pid-next');
       const after = rows(childEvents), native = rows(nativeFile);
       assert(native.filter(row => row.kind === 'enter').length >= 2, 'dead PID must immediately rejoin the accepted gate rather than wait for the logical lease');
       assert(resumedAt < leaseDeadline, 'the resume began before lease expiry');
+      const recovered = after.find(row => row.type === 'resume' && Date.parse(row.ts) >= resumedAt);
+      assert(recovered && Date.parse(recovered.ts) < leaseDeadline, 'the actual recovery must begin while the retained lease is still valid');
       assert(native.filter(row => row.kind === 'enter')[1].at_ms < leaseDeadline, 'the replacement machine gate must actually enter before the still-valid lease expires');
       assert.equal(after.filter(row => row.type === 'agent_invoke_start' && row.phase === 'coding').length, 1, 'the accepted coding author is not replayed');
       assert(native.every(row => !row.live_prior_pids?.length), 'the original guardian must settle before its replacement gate runs');
       assert(!rows(rootEvents).some(row => row.type === 'run_end' && row.status === 'INTERRUPTED'));
       for (const [file, hash] of Object.entries(f.copiedSourceHashes)) assert.equal(sha(fs.readFileSync(path.join(f.harnessDir, file))), hash, 'all control processes must use one unchanged copied kernel');
       const artifacts = preserve(f, 'control-live-dead', { root_before_sha256: sha(rootBefore), root_after_busy_sha256: sha(rootAfterBusy), held_feature_lock: held, session_control_before_kill: oldControl,
-        lease_deadline: new Date(leaseDeadline).toISOString(), resumed_at: new Date(resumedAt).toISOString(), native });
+        session_control_after_reporter_exit: retainedControl, lease_deadline: new Date(leaseDeadline).toISOString(), resumed_at: new Date(resumedAt).toISOString(), reporter_started_at: reporterStartedAt, native_entry_ms: nativeEntryMs, native });
       write(artifacts, 'root.events.before.jsonl', rootBefore.toString('utf8')); write(artifacts, 'root.events.after-busy.jsonl', rootAfterBusy.toString('utf8'));
       write(path.resolve(__dirname, '../../..'), 'harness/reports/f3b8e6a1/initial-design-control-process.json', JSON.stringify({ status: 'PASS', root: f.root, first, busy: second, resumed,
         artifacts, copied_source_hashes: f.copiedSourceHashes,
-        lease_deadline: new Date(leaseDeadline).toISOString(), resumed_at: new Date(resumedAt).toISOString(), native,
+        lease_deadline: new Date(leaseDeadline).toISOString(), resumed_at: new Date(resumedAt).toISOString(), retained_control: retainedControl,
+        reporter_started_at: reporterStartedAt, native_entry_ms: nativeEntryMs, native,
         boundary: 'Prepared CU control counterexample only. Real public CLI, locks, report acceptance, original harness/checkers and process guardian; bounded model and compile-tool transport substitutes. No paid model or device.' }, null, 2) + '\n');
-    } finally { if (reporter.pid && alive(reporter.pid)) { ownedReporter(f, reporter, true); await exited; } }
+    } catch (error) {
+      console.error('N1 original failure:', error);
+      try { preserve(f, 'control-live-dead-failed', { error: (error as Error).stack, reporter_pid: reporter.pid, reporter_started_at: reporterStartedAt, reporter_exit_code: reporter.exitCode, reporter_signal: reporter.signalCode }); }
+      catch (evidenceError) { console.error('N1 failure evidence:', evidenceError); }
+      throw error;
+    } finally {
+      if (reporter.pid && alive(reporter.pid)) ownedReporter(f, reporter, true);
+      // Teardown still awaits close after the test deliberately killed the reporter PID.
+      await closed;
+      const probe = defaultProcessProbe(), forced: number[] = [];
+      for (const bound of rows(path.join(f.childDir, 'events.jsonl')).filter(row => row.type === 'harness_start' && row.pid && alive(row.pid))) {
+        const state = reconcileGuardianOwnership([{ ...bound, type: 'agent_process_bound' }], probe);
+        assert(state.kind === 'outcomes' && state.items.length === 1, `N1 gate cleanup lacks its original binding: ${JSON.stringify(bound)}`);
+        const item = state.items[0];
+        if (item.kind === 'guardian_gone' || item.kind === 'guardian_identity_unverifiable' && item.identity_mismatch) continue;
+        assert(item.kind === 'guardian_alive_matching', `N1 cannot safely clean an unverifiable gate: ${JSON.stringify(item)}`);
+        if (awaitGuardianGone(item.bound.pid)) continue;
+        const stopped = process.platform === 'win32' ? terminateGuardianProcessOnly(item.bound.pid) : probe.killTree(item.bound.pid);
+        assert(stopped && awaitGuardianGone(item.bound.pid), `N1 owned gate did not stop: ${JSON.stringify(item.bound)}`);
+        forced.push(item.bound.pid);
+      }
+      assert.equal(forced.length, 0, `N1 leaked bound gates required forced teardown: ${forced.join(', ')}`);
+    }
   }); },
 }, {
   name: 'N2 N3 public child budget halt exposes the real root manifest recovery guidance and shared projection fields',
@@ -193,7 +240,10 @@ const cases: Array<{ name: string; run(): Promise<void> }> = [{
     assert.equal(stopped.type, 'goal_session_result'); assert.equal(stopped.result.halt_reason, 'budget_turns');
     const view = projectInitialDesignDelivery({ projectRoot: f.root, frameworkRoot: f.frameworkRoot, manifest: f.original });
     assert.equal(view.status, 'HALTED'); assert.equal(view.complete, false);
-    assert.deepEqual(stopped.result.recovery, view.recovery); assert.deepEqual(stopped.result.issues, view.issues); assert.deepEqual(stopped.result.current, view.current);
+    assert.deepEqual(stopped.result.recovery, view.recovery); assert.deepEqual(stopped.result.issues, view.issues);
+    const projectedCurrent = view.current && { ...view.current };
+    if (projectedCurrent?.deadline === undefined) delete projectedCurrent?.deadline;
+    assert.deepEqual(stopped.result.current, projectedCurrent, 'the public JSON omits only the absent optional deadline; any real deadline and identity remain exact');
     assert.equal(stopped.result.halt_reason, view.halt_reason); assert.equal(stopped.result.next_action, view.next_action);
     const guidance = JSON.stringify(stopped.result.recovery);
     assert(guidance.includes(path.join(f.rootDir, 'manifest.json').replace(/\\/g, '\\\\')) || guidance.includes(path.join(f.rootDir, 'manifest.json').replace(/\\/g, '/')), guidance);

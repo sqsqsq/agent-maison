@@ -178,7 +178,8 @@ export function runContentWarnCases(): UnitCaseResult[] {
         try {
           const ready = deriveDesignPreparationReadiness(root, BLUEPRINT_ID);
           // Diagnostic messages include current blueprint hashes; compare the admission fields.
-          const perUnit = ready.perUnit.map(({ issues, ...unit }) => ({ ...unit, issues: issues.map(({ message, ...issue }) => issue) }));
+          const perUnit = ready.perUnit.map(({ issues, projectionIssues, ...unit }) => ({ ...unit,
+            issues: issues.map(({ message, ...issue }) => issue), projectionIssues: projectionIssues.map(({ detail, ...projection }) => projection) }));
           return { ready: ready.ready, nextEntry: ready.nextEntry, perUnit, entersConstruction: ready.entersConstruction };
         } catch (error) {
           assert(String(error).includes('blueprint') || String(error).includes('蓝图'), `readiness 抛出无关错误：${String(error)}`);
@@ -325,7 +326,8 @@ export function runAll(): UnitCaseResult[] {
         try {
           const ready = deriveDesignPreparationReadiness(root, BLUEPRINT_ID);
           // Diagnostic messages include current blueprint hashes; compare the admission fields.
-          const perUnit = ready.perUnit.map(({ issues, ...unit }) => ({ ...unit, issues: issues.map(({ message, ...issue }) => issue) }));
+          const perUnit = ready.perUnit.map(({ issues, projectionIssues, ...unit }) => ({ ...unit,
+            issues: issues.map(({ message, ...issue }) => issue), projectionIssues: projectionIssues.map(({ detail, ...projection }) => projection) }));
           return { ready: ready.ready, nextEntry: ready.nextEntry, perUnit, entersConstruction: ready.entersConstruction };
         } catch (error) {
           assert(String(error).includes('blueprint') || String(error).includes('蓝图'), `readiness 抛出无关错误：${String(error)}`);
@@ -360,7 +362,8 @@ export function runAll(): UnitCaseResult[] {
       const readiness = () => {
         try {
           const ready = deriveDesignPreparationReadiness(root, BLUEPRINT_ID);
-          const perUnit = ready.perUnit.map(({ issues, ...unit }) => ({ ...unit, issues: issues.map(({ message, ...issue }) => issue) }));
+          const perUnit = ready.perUnit.map(({ issues, projectionIssues, ...unit }) => ({ ...unit,
+            issues: issues.map(({ message, ...issue }) => issue), projectionIssues: projectionIssues.map(({ detail, ...projection }) => projection) }));
           return { ready: ready.ready, nextEntry: ready.nextEntry, perUnit, entersConstruction: ready.entersConstruction };
         } catch (error) {
           assert(String(error).includes('blueprint') || String(error).includes('蓝图'), `readiness 抛出无关错误：${String(error)}`);

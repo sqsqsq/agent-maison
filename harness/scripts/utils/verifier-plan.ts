@@ -187,6 +187,7 @@ export interface VerifierEligibilityCheck {
   /** 机器归因（优先）；缺失才用 details 文本回退。 */
   failure_kind?: string;
   details?: string;
+  affected_files?: readonly string[];
   /** 结构化附加信息；`applicability=not_applicable` 表示已确认不适用（CHECK_NOT_APPLICABLE_MARKER）。 */
   structured?: unknown;
 }
@@ -243,7 +244,7 @@ function classificationOf(
 
 /**
  * D1 资格判定。**顺序即优先级**，调用方不得插队或另判：
- *   plan 非 enabled > 脚本 PASS（原路径） > capability blocked > 两类可诊断失败 > 不生产。
+ *   plan 非 enabled > 脚本 PASS（原路径） > 可读测试强度事实/实际问题诊断 > capability blocked > 其它可诊断失败 > 不生产。
  *
  * 表（plan 3a7f9c12 §D1）：
  * | verifier disabled                                            | 否 |
@@ -267,6 +268,13 @@ export function canProduceVerifierRequest(
   if (input.scriptVerdict === 'PASS' && !input.checks.some(check => isRequiredCheckGap(check))) {
     return { allowed: true, kind: 'normal', reason: '脚本 verdict=PASS：按原成功路径签发。', diagnosticCheckIds: [] };
   }
+  const testStrength = input.checks.filter(check => check.id === 'coding_existing_test_preserved'
+    && (check.status === 'FAIL' || check.status === 'PASS') && !!check.details?.trim()
+    && check.affected_files?.length && check.affected_files.every(file => typeof file === 'string' && file.trim()));
+  if (testStrength.length && input.reportValidity !== 'FAIL') return {
+    allowed: true, kind: 'repair_diagnosis', diagnosticCheckIds: testStrength.map(check => check.id),
+    reason: '已有实际测试对象与原文本对比事实：独立核验断言强度，不按作者phase禁写。其它FAIL、未执行及环境/设备/编译缺口保留，不能由此签完成。',
+  };
   if (input.scriptVerdict !== 'FAIL') {
     return NOT_ALLOWED(`脚本 verdict=${input.scriptVerdict}：只有 FAIL 才可能进入诊断窄例外。`);
   }

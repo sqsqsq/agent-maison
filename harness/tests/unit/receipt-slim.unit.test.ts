@@ -4,7 +4,7 @@
 // ----------------------------------------------------------------------------
 // 真实 CLI 路径（tryValidateReceipt spawn check-receipt.ts 子进程）：
 //   - slim PASS：base summary（PASS+0 blocker+指纹新鲜）+ 瘦身回执完整 → passed
-//   - 骨架未签（checkbox 未勾）→ failed（骨架不构成闭环）
+//   - checkbox 未勾仍按真实检查/独立核验决定，回执不构成推进条件
 //   - 本次 FAIL 的 base summary → failed（slim_summary_not_pass——"读旧 PASS 件"环已拆）
 //   - 伪造/过期 gate_fingerprint → failed（gate_fingerprint_stale）
 //   - 他 feature 的 summary → failed（identity mismatch，防串目录）
@@ -18,9 +18,15 @@ import { spawnSync } from 'child_process';
 import { tryValidateReceipt } from '../../scripts/utils/phase-state';
 import { writeReceiptScaffold } from '../../scripts/utils/receipt-scaffold';
 import { computeGateFingerprint } from '../../scripts/utils/gate-fingerprint';
-import { computeProductWorktreeDigest } from '../../scripts/utils/worktree-digest';
 import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
-import { SUMMARY_SCHEMA_VERSION_CURRENT } from '../../scripts/utils/quality-axes';
+import { assembleAIPrompt, generateScriptReport, loadVerifierPromptTemplate } from '../../scripts/utils/report-generator';
+import { writeRunSummaryBase } from '../../harness-runner';
+import { buildVerifierMaterialView } from '../../scripts/utils/verifier-material';
+import { resolveVerifierPlan, workflowVerifierPrompt } from '../../scripts/utils/verifier-plan';
+import { loadWorkflowSpec } from '../../workflow-loader';
+import { SpecLoader } from '../../scripts/utils/spec-loader';
+import { buildGoalManifestFromInput } from '../../scripts/utils/goal-manifest';
+import { createGoalRun } from '../../scripts/utils/goal-run-creation';
 
 export interface UnitCaseResult {
   name: string;
@@ -78,7 +84,7 @@ interface SlimOpts {
   blockingWarnings?: 'omit' | 'legacy';
 }
 
-function buildSlimProject(opts: SlimOpts): { root: string } {
+function buildSlimProject(opts: SlimOpts, currentRunId?: string): { root: string } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'receipt-slim-'));
   const featureDir = path.join(root, 'doc', 'features', 'demo', PHASE);
   const reportsDir = path.join(featureDir, 'reports');
@@ -156,59 +162,50 @@ function buildSlimProject(opts: SlimOpts): { root: string } {
   // t2 v5：中文+空格 untracked 路径（quotePath 默认转义——非 -z 实现会恒 unreadable 而绕过）
   fs.writeFileSync(path.join(root, 'app', '中文 组件.ets'), 'const CN = 1;\n', 'utf-8');
 
+  for (const runId of new Set([opts.summaryRunId, currentRunId].filter((id): id is string => !!id))) {
+    const manifest = buildGoalManifestFromInput({ feature: 'demo', adapter: 'claude', start_phase: PHASE, end_phase: PHASE,
+      requirement: '核验当前 app 源码读取结果', unattended: false }, { projectRoot: root, runId });
+    createGoalRun({ projectRoot: root, manifest, chain: [PHASE] });
+  }
   if (!opts.omitSummary) {
-    const fingerprint = opts.staleFingerprint
-      ? 'v9.9.9:deadbeef0000'
-      : computeGateFingerprint(FRAMEWORK_ROOT, PHASE);
-    const rel = (name: string): string => `doc/features/demo/${PHASE}/reports/${name}`;
-    // t2 v2：完整 schema 必填集（codex BLOCKER3a——测试不得把 schema-invalid 片段固化成绿灯）
-    const summary: Record<string, unknown> = {
-      // plan a9d4e7c2 T3：分派锚从"subject 在不在"重键为 schema_version——夹具必须
-      // 写**当代**版本，否则会被 check-receipt 正确地判成上一代产物走 grandfather 分支。
-      schema_version: SUMMARY_SCHEMA_VERSION_CURRENT,
-      phase: PHASE,
-      feature: opts.summaryFeature ?? 'demo',
-      verdict: opts.summaryVerdict ?? 'PASS',
-      blocker_count: opts.summaryVerdict === 'FAIL' ? 1 : 0,
-      fail_count: 0,
-      warn_count: 0,
-      ...(fingerprint ? { gate_fingerprint: fingerprint } : {}),
-      script_report: rel('script-report.json'),
-      merged_report: rel('merged-report.md'),
-      ai_prompt: rel('ai-prompt.md'),
-      summary_json: rel('summary.json'),
-      run_statuses: [],
-      readiness_signals: [],
-      blocking_warnings: [],
-      blocking_skips: [],
-      blockers: [],
-      next_action: 'fill_receipt_then_check',
-      // schema 的 allOf/if-then 规定：schema_version ∈ {1.2,1.3} 必带这四项。
-      // 上面那句"完整 schema 必填集"此前并未做到——`lite-json-schema` 对
-      // allOf/if-then **整条忽略**（fail-open），于是缺三项的夹具照样过 schema 门。
-      // 校验器补齐组合关键字后这里立刻暴露，按 schema 补全而不是放松校验。
-      assurance: 'not_applicable',
-      capability_resolutions: [],
-      capability_resolution_contract_fingerprint: null,
-      closure_status: 'open',
-      generated_at: new Date().toISOString(),
-      source_commit_sha: opts.mismatchedSourceSha ? '0'.repeat(40) : sha,
-      worktree_digest: opts.sentinelWorktreeDigest
-        ? opts.sentinelWorktreeDigest
-        : opts.staleWorktreeDigest
-          ? 'deadbeefdeadbeef'
-          : computeProductWorktreeDigest(root, ['app']),
-      ...(opts.summaryRunId ? { run_id: opts.summaryRunId } : {}),
-    };
+    const producerRunId = opts.summaryRunId ?? currentRunId, previousRunId = process.env.MAISON_GOAL_RUN_ID;
+    if (producerRunId) process.env.MAISON_GOAL_RUN_ID = producerRunId; else delete process.env.MAISON_GOAL_RUN_ID;
+    let summary: Record<string, unknown>;
+    try {
+      const source = 'app/untracked-src.ets', content = fs.readFileSync(path.join(root, source), 'utf8');
+      const report = generateScriptReport(HARNESS_ROOT, PHASE, 'demo', root, [{ id: 'fixture_current_source', category: 'structure',
+        description: 'current receipt fixture source read', severity: 'BLOCKER', status: opts.summaryVerdict === 'FAIL' || !content.trim() ? 'FAIL' : 'PASS',
+        details: `Read actual current source: ${source}`, affected_files: [source] }], FRAMEWORK_ROOT);
+      const plan = resolveVerifierPlan({ phase: PHASE, track: 'full', runtimeMode: 'interactive', policy: { verifier: 'required' },
+        workflowVerifierPrompt: workflowVerifierPrompt(loadWorkflowSpec(FRAMEWORK_ROOT, 'spec-driven'), PHASE), adapterHasVerifierSubagent: true, adapterName: 'claude' });
+      const phaseRuleText = JSON.stringify(new SpecLoader(root, undefined, undefined, FRAMEWORK_ROOT).loadPhaseRule(PHASE));
+      const contextFiles = [{ label: source, kind: 'path' as const, content }];
+      assembleAIPrompt(HARNESS_ROOT, root, PHASE, 'demo', contextFiles, JSON.stringify(report), phaseRuleText, undefined, undefined,
+        FRAMEWORK_ROOT, { verifierPromptRel: plan.verifier_prompt! });
+      const material = buildVerifierMaterialView({ projectRoot: root, feature: 'demo', phase: PHASE, frameworkRoot: FRAMEWORK_ROOT,
+        gateFingerprint: computeGateFingerprint(FRAMEWORK_ROOT, PHASE), phaseRuleText,
+        templateText: loadVerifierPromptTemplate(HARNESS_ROOT, PHASE, undefined, plan.verifier_prompt!), checks: report.checks, contextFiles });
+      const produced = writeRunSummaryBase(root, report, FRAMEWORK_ROOT, { verifierPlan: plan, verifierMaterial: material });
+      assert(opts.summaryVerdict === 'FAIL' || !!produced.verifier_subject_id, 'the successful producer must issue its current verification request');
+      if (produced.verifier_subject_id) publishFixtureVerifierEvidence({ projectRoot: root, reportsDir, feature: 'demo', phase: PHASE,
+        subjectId: produced.verifier_subject_id, skipSummaryPatch: true });
+      summary = { ...produced };
+    } finally {
+      if (previousRunId === undefined) delete process.env.MAISON_GOAL_RUN_ID; else process.env.MAISON_GOAL_RUN_ID = previousRunId;
+    }
+    // Faults are applied after the real writer, without replacing its raw checks or quality projection.
+    if (opts.summaryFeature) summary.feature = opts.summaryFeature;
+    if (opts.staleFingerprint) summary.gate_fingerprint = 'v9.9.9:deadbeef0000';
+    if (opts.mismatchedSourceSha) summary.source_commit_sha = '0'.repeat(40);
+    if (opts.sentinelWorktreeDigest) summary.worktree_digest = opts.sentinelWorktreeDigest;
+    else if (opts.staleWorktreeDigest) summary.worktree_digest = 'deadbeefdeadbeef';
+    if (currentRunId && !opts.summaryRunId) delete summary.run_id;
     if (opts.dropRequiredKey) delete summary[opts.dropRequiredKey];
     if (opts.blockingWarnings === 'omit') delete summary.blocking_warnings;
     if (opts.blockingWarnings === 'legacy') {
       summary.blocking_warnings = [{ id: 'scope_declaration', blocking_class: 'prd_scope', details_excerpt: 'rationale 为空', suggestion: '补齐 rationale' }];
     }
     fs.writeFileSync(path.join(reportsDir, 'summary.json'), JSON.stringify(summary, null, 2), 'utf-8');
-    // plan e5b8c3f7：summary 落盘后立刻发布与 hook 同形的 verifier 机器证据
-    // （subject 写进本次 summary），slim 回执的 verifier 面自此走真验真。
-    publishFixtureVerifierEvidence({ projectRoot: root, reportsDir, feature: 'demo', phase: PHASE });
   }
   const box = opts.uncheckedBoxes ? '[ ]' : '[x]';
   const receipt = [
@@ -239,7 +236,7 @@ function buildSlimProject(opts: SlimOpts): { root: string } {
 }
 
 function runCase(opts: SlimOpts, env?: Record<string, string | undefined>): ReturnType<typeof tryValidateReceipt> {
-  const { root } = buildSlimProject(opts);
+  const { root } = buildSlimProject(opts, env?.MAISON_GOAL_RUN_ID);
   // t2 v4：summary/receipt 已定稿后再改工作区——重算 digest 必须抓到（真实 dirty 场景，
   // 不再靠手写假摘要冒充）。
   if (opts.dirtyUntrackedAfter) {

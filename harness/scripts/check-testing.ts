@@ -147,7 +147,7 @@ import {
   isDeviceUtLayer,
 } from './utils/acceptance-layering';
 import { runAcceptanceYamlStructureChecks, ACCEPTANCE_ID_PATTERN } from './utils/check-acceptance';
-import { checkUpstreamVerdictGate, readUpstreamPhaseView } from './utils/upstream-verdict-gate';
+import { checkUpstreamVerdictGate } from './utils/upstream-verdict-gate';
 import { SpecLoader } from './utils/spec-loader';
 import { countBlockingDebt, loadVisualDebtEx } from './utils/visual-debt';
 import {
@@ -249,6 +249,7 @@ import {
   writeInstallDiagJson,
 } from '../../profiles/hmos-app/harness/device-install-diag';
 import { isBlockingCheck, isRequiredCheckGap, isFrameworkExecutionGap } from './utils/check-disposition';
+import { resolveVerdictFromChecks } from './utils/report-generator';
 
 // --------------------------------------------------------------------------
 // Helpers
@@ -878,7 +879,7 @@ function checkExecutionResultTable(ctx: CheckContext, report: string | null): Ch
  * 两条规则（复用既有 meta + 报告正文，零新协议、零新状态）：
  *   ① 命令含弱化旗标 → 报告必须披露（否则读者无从知道"通过"是打了折的）；
  *   ② 披露之余，不得把"执行完成"直接说成"验收通过"——须明确区分二者。
- * 命令里没有弱化旗标，或读不到 meta（老报告/非设备路径）→ 不干预，返回 null。
+ * 没有 meta 时只缺少命令/trace 事实；报告自身与同轮工具结果仍按当前事实核对。
  */
 /**
  * 从「通过率统计」章节取**总体**通过率百分比。只认与"总/总计/合计/overall"同处一行的
@@ -903,6 +904,7 @@ export function checkSkipFlagDisclosure(
   ctx: CheckContext,
   report: string,
   channelEvidenceBindings: readonly ChannelEvidenceBinding[] = [],
+  currentChecks: readonly CheckResult[] = [],
 ): string[] {
   let command = '';
   let traceSummary: {
@@ -916,8 +918,7 @@ export function checkSkipFlagDisclosure(
       featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot),
       'device-test-run.meta.json',
     );
-    if (!fs.existsSync(metaPath)) return [];
-    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8')) as {
+    const meta = fs.existsSync(metaPath) ? JSON.parse(fs.readFileSync(metaPath, 'utf-8')) as {
       command?: unknown;
       trace_summary?: {
         cases_count?: unknown;
@@ -925,18 +926,18 @@ export function checkSkipFlagDisclosure(
         blocked_count?: unknown;
         skipped_count?: unknown;
       };
-    };
-    command = typeof meta.command === 'string' ? meta.command : '';
-    traceSummary = meta.trace_summary ?? null;
+    } : null;
+    command = typeof meta?.command === 'string' ? meta.command : '';
+    traceSummary = meta?.trace_summary ?? null;
   } catch {
-    return []; // meta 不可读＝无从判定，不误报
+    // meta 不可读不推断命令/trace；不抹掉本轮报告与工具结果。
   }
   const WEAKENING_FLAGS = ['--skip-assert-expected'];
   const used = WEAKENING_FLAGS.filter(f => command.includes(f));
 
   const issues: string[] = [];
 
-  // ③ 分子对账（与是否带旗标无关），三条机器证据各查一次：用例表自身 / trace / summary。
+  // ③ 分子对账（与是否带旗标无关）：用例表自身 / trace / 同轮工具结果。
   let reportedPass = 0;
   // 用例表口径复用**既有唯一解析器** `parseReportExecutionResults`（report↔trace 对账消费
   // 的同一个），不另写一套表格解析——两套解析器迟早对同一张表给出两种读数。
@@ -976,22 +977,16 @@ export function checkSkipFlagDisclosure(
     }
   }
 
-  // summary 腿（事故正形态）：`testing/reports/summary.json` verdict=FAIL 与报告"16/16 通过、
-  // 通过率 100%"**并存**。读既有 `readUpstreamPhaseView`（summary.json 唯一读入口，自带
-  // verdict/blockers/quality_axes/新鲜度），不自己解析 summary。
-  // **只在 freshness==='fresh' 时对账**：证据链未漂移 ⇒ 那份负面机器裁决就是当下事实；
-  // agent 真去修了 → 证据变 → stale → 本条自动让路，不误伤"修完重跑"的正常流程。
-  const machine = readUpstreamPhaseView(ctx.projectRoot, ctx.feature, ctx.phase);
+  // 当前检查只能消费同轮已收齐的事实，不能把自己上一轮 summary 当作输入自锁。
+  // 与最终报告共用原结论函数；pass_rate 自身及随后生成的聚合项尚未进入此集合。
+  const machineVerdict = resolveVerdictFromChecks([...currentChecks]);
+  const blockerIds = currentChecks.filter(check => isBlockingCheck(check) || isRequiredCheckGap(check)).map(check => check.id);
   const claimsCleanSweep = (reportedTotal > 0 && reportedPass === reportedTotal) || declaredOverall === 100;
-  if (
-    machine.summaryExists && machine.verdictReadable && machine.freshness === 'fresh' &&
-    machine.verdict !== 'PASS' && claimsCleanSweep
-  ) {
+  if (machineVerdict !== 'PASS' && claimsCleanSweep) {
     issues.push(
       `报告声称全部通过（${reportedPass}/${reportedTotal}${declaredOverall === 100 ? '、通过率 100%' : ''}），` +
-      `但同阶段机器裁决 summary.json verdict=${machine.verdict} 且证据链未漂移（fresh）` +
-      `${machine.blockerIds.length > 0 ? `，blockers=[${machine.blockerIds.slice(0, 5).join(', ')}]` : ''}` +
-      `${machine.axisNotes?.length ? `，未过轴=[${machine.axisNotes.join(', ')}]` : ''}` +
+      `但同轮机器检查 verdict=${machineVerdict}` +
+      `${blockerIds.length > 0 ? `，blockers=[${blockerIds.slice(0, 5).join(', ')}]` : ''}` +
       '——报告结论不得与机器裁决相反（事故正形态：16/16"通过"与 verdict=FAIL 并存）。',
     );
   }
@@ -1032,6 +1027,7 @@ export function checkPassRateCalculated(
   ctx: CheckContext,
   report: string | null,
   channelEvidenceBindings: readonly ChannelEvidenceBinding[] = [],
+  currentChecks: readonly CheckResult[] = [],
 ): CheckResult[] {
   const id = 'pass_rate_calculated';
   if (!report) {
@@ -1069,7 +1065,7 @@ export function checkPassRateCalculated(
   // 判据取既有产物（device-test-run.meta.json 的真实命令 + trace_summary + 报告正文），零新协议。
   // **只做追加约束**：不早退、不短路原有 P0/P1/总体通过率检查（早退会让"加一句免责声明就过门"，
   // 正是本条要堵的假通过）。
-  const disclosureIssues = checkSkipFlagDisclosure(ctx, report, channelEvidenceBindings);
+  const disclosureIssues = checkSkipFlagDisclosure(ctx, report, channelEvidenceBindings, currentChecks);
 
   const issues: string[] = [];
   // 既有门禁条件保持原样（overall 仅进文案、不参与判定），本 todo 只追加约束、不改既有语义
@@ -6185,7 +6181,7 @@ const checker: PhaseChecker = {
 
     results.push(
       ...executeCheck(ctx,
-        () => checkUpstreamVerdictGate({ projectRoot: ctx.projectRoot, feature: ctx.feature, phase: 'testing', runId: ctx.resolvedInputs ? process.env.MAISON_GOAL_RUN_ID : undefined }),
+        () => checkUpstreamVerdictGate({ projectRoot: ctx.projectRoot, feature: ctx.feature, phase: 'testing', frameworkRoot: ctx.frameworkRoot, resolvedInputs: ctx.resolvedInputs, runId: ctx.resolvedInputs ? process.env.MAISON_GOAL_RUN_ID : undefined }),
         'upstream_verdict_gate',
       ),
     );
@@ -6302,7 +6298,6 @@ const checker: PhaseChecker = {
     );
     results.push(...executeCheck(ctx, () => checkReportRequiredChapters(ctx, report), 'report_required_chapters'));
     results.push(...executeCheck(ctx, () => checkExecutionResultTable(ctx, report), 'execution_result_table'));
-    results.push(...executeCheck(ctx, () => checkPassRateCalculated(ctx, report, channelEvidenceBindings), 'pass_rate_calculated'));
     results.push(...executeCheck(ctx, () => checkDefectTableFormat(ctx, report), 'defect_table_format'));
     results.push(...executeCheck(ctx, () => checkReportConclusionWithVerdict(ctx, report), 'report_conclusion_with_verdict'));
     results.push(...executeCheck(ctx, () => checkNegativeTestingVerdictClosure(report), 'negative_verdict_closure'));
@@ -6386,6 +6381,7 @@ const checker: PhaseChecker = {
     ));
     results.push(...checkP0RuntimeStepEvidenceGate(ctx, results, deviceTestHapHolder));
 
+    results.push(...executeCheck(ctx, () => checkPassRateCalculated(ctx, report, channelEvidenceBindings, results), 'pass_rate_calculated'));
     results.push(buildTestingRunStatusResult(plan, report, results));
 
     return results;

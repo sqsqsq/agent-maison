@@ -15,12 +15,20 @@ import * as crypto from 'crypto';
 import { spawnSync } from 'child_process';
 import type { UnitCaseResult } from '../run-unit';
 import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
-import { prepareGoalModeRun, runGoalModeHostBridge } from '../../scripts/goal-mode-entry';
+import { prepareGoalModeRun, runGoalModeHostBridge as runGoalModeHostBridgeUnchecked } from '../../scripts/goal-mode-entry';
 import type { InSessionPhaseRequestContext } from '../../scripts/utils/goal-in-session-driver';
 import { casAcquireRunOwner, readRunControl } from '../../scripts/utils/goal-run-control';
 import { appendGoalEventFenced } from '../../scripts/utils/goal-in-session-evidence';
 import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
 import { runSyncClosureDetailed } from '../../scripts/utils/phase-state';
+import { phaseCompletionProblems, type CurrentDisposition } from '../../scripts/utils/check-disposition';
+import { parseVerifierRequest } from '../../scripts/utils/verifier-request';
+import { readVerifierMaterialOrNull } from '../../scripts/utils/verifier-material';
+import { loadVerifierEvidenceForSubject } from '../../scripts/utils/verifier-evidence';
+import { withRuntimeTest, type RuntimeTestControl } from '../utils/runtime-test-control';
+const runGoalModeHostBridge = (options: Parameters<typeof runGoalModeHostBridgeUnchecked>[0], testControl: RuntimeTestControl = {}) =>
+  withRuntimeTest({ root: options.projectRoot, ...testControl }, () => runGoalModeHostBridgeUnchecked(options));
+
 
 const FRAMEWORK_ROOT = path.resolve(__dirname, '..', '..', '..');
 
@@ -331,11 +339,24 @@ const cases: Case[] = [
             const harness = runHarness(harnessDir, [
               '--phase', phase, '--feature', 'demo', '--summary', ...contextFlags(context),
             ], root);
-            assert(harness.status === 0, `attended harness 失败：${harness.stderr}\n${harness.stdout}`);
             const summary = readJson(root, 'doc/features/demo/spec/reports/summary.json');
             assert(summary.verdict === 'PASS', `attended verdict=${summary.verdict}`);
+            const currentLine = harness.stdout.split(/\r?\n/).find(line => line.startsWith('current_check_result='));
+            if (!currentLine) throw new Error(`attended harness 缺当前检查原件：${harness.stdout}\n${harness.stderr}`);
+            const current = JSON.parse(currentLine.slice('current_check_result='.length)) as { phase: string; evaluation: { disposition: CurrentDisposition } };
+            const pending = phaseCompletionProblems(current.evaluation.disposition, ['spec']);
+            assert(current.phase === 'spec' && pending.length > 0 && pending.every(problem => problem.id === 'attestation_present' && problem.action === 'verify'),
+              `只可承接真实未执行的独立核验，不吞静态失败或其它必修：${JSON.stringify(pending)}`);
+            const request = parseVerifierRequest(fs.readFileSync(path.resolve(root, String(summary.verifier_request)), 'utf8'));
+            if (!request) throw new Error('当前真实 verifier request 不可解析');
+            assert(request.feature === 'demo' && request.phase === phase && request.subject_id === summary.verifier_subject_id, '必须消费当前真实签发对象');
+            const material = readVerifierMaterialOrNull(path.join(root, 'doc/features/demo/spec/reports'), request.subject_id);
+            assert(material?.material_sha256 === request.material_sha256, '独立替身必须读取当前绑定材料');
+            fs.readFileSync(path.resolve(root, request.prompt_path), 'utf8');
             assert(summary.closure_status === 'open', 'receipt 未填前 closure 必须保持 open');
             writeValidSpecReceipt(root, summary, context.attemptId);
+            const independent = loadVerifierEvidenceForSubject(root, 'demo', phase, request.subject_id, { frameworkRoot: path.join(root, 'framework') });
+            assert(independent.ok, JSON.stringify(independent));
 
             const sync = runHarness(harnessDir, [
               '--sync-closure', '--phase', phase, '--feature', 'demo', ...contextFlags(context),
@@ -578,7 +599,7 @@ const cases: Case[] = [
     },
   },
   {
-    name: 'E2E revalidate（plan 07a41ec6 T8）：spec 闭环后改 spec.md → 一条 --revalidate 重新 closed，标 script_revalidated + semantic_not_reverified',
+    name: 'E2E revalidate（plan 07a41ec6 T8）：spec 业务材料变化保持待核，当前独立结论后才闭环',
     run: () => {
       const before = repoDocFeatures();
       const { root, harnessDir } = provisionFramework();
@@ -600,15 +621,17 @@ ${rc.stdout}`);
         fs.writeFileSync(specPath, fs.readFileSync(specPath, 'utf-8').replace('账户页含余额展示与转账入口。', '账户页含余额展示与转账入口；修正记录：补充余额刷新说明。'), 'utf-8');
 
         const rv = runHarness(harnessDir, ['--revalidate', '--feature', 'demo'], root);
-        assert(rv.status === 0, `--revalidate 应 exit 0，got ${rv.status}：${rv.stderr}
-${rv.stdout}`);
         const after = readJson(root, 'doc/features/demo/spec/reports/summary.json');
-        assert(after.closure_status === 'closed', `重验后应重新 closed，实得 ${after.closure_status}
-${rv.stdout}`);
+        const currentLine = rv.stdout.split(/\r?\n/).find(line => line.startsWith('current_check_result='));
+        assert(Boolean(currentLine), `重验须有实际当前检查结果：${rv.stdout}\n${rv.stderr}`);
+        const pending = phaseCompletionProblems(JSON.parse(currentLine!.slice('current_check_result='.length)).evaluation.disposition, ['spec']);
+        assert(rv.status !== 0 && pending.some(problem => problem.action === 'verify' && problem.id === 'attestation_present'),
+          `当前材料未核必须明确待核而非假完成：${rv.stdout}\n${rv.stderr}`);
+        assert(after.closure_status !== 'closed', '旧 PASS 不能认证发生业务变化的新材料');
         assert(after.verifier_subject_id !== summary.verifier_subject_id, '材料变了 subject 应换代');
         assert(
-          (after.verifier_closure as { mode?: string } | undefined)?.mode === 'completed_with_prior_review',
-          `材料变了但历史有 PASS → 沿用并登记：${JSON.stringify(after.verifier_closure)}`,
+          (after.verifier_closure as { mode?: string } | undefined)?.mode !== 'completed_with_prior_review',
+          `历史报告仅为公开复核基线：${JSON.stringify(after.verifier_closure)}`,
         );
         assert(
           (after.readiness_signals as Array<{ id: string }>).some((r) => r.id === 'script_revalidated'),
@@ -616,9 +639,12 @@ ${rv.stdout}`);
         );
         const record = readJson(root, 'doc/features/demo/revalidation.json');
         const results = record.results as Array<{ phase: string; flags: string[]; verifier: string; closure_status: string }>;
-        assert(results.length === 1 && results[0].phase === 'spec' && results[0].closure_status === 'closed', JSON.stringify(record));
-        assert(results[0].flags.includes('script_revalidated') && results[0].flags.includes('semantic_not_reverified'), JSON.stringify(results[0]));
-        assert(results[0].verifier === 'completed_with_prior_review', JSON.stringify(results[0]));
+        assert(results.length === 1 && results[0].phase === 'spec' && results[0].closure_status !== 'closed', JSON.stringify(record));
+        assert(results[0].flags.includes('script_revalidated'), JSON.stringify(results[0]));
+        writeValidSpecReceipt(root, after);
+        const sync = runHarness(harnessDir, ['--sync-closure', '--phase', 'spec', '--feature', 'demo'], root);
+        assert(sync.status === 0, `当前独立报告后同步应闭环：${sync.stdout}\n${sync.stderr}`);
+        assert(readJson(root, 'doc/features/demo/spec/reports/summary.json').closure_status === 'closed', '仅当前实际独立结论才关闭新材料');
         // 第二次 --revalidate：链已 fresh，无目标，exit 0。
         const again = runHarness(harnessDir, ['--revalidate', '--feature', 'demo'], root);
         assert(again.status === 0 && /没有需要重验的阶段/.test(again.stdout), `fresh 链应无目标：${again.stdout}`);
@@ -629,7 +655,7 @@ ${rv.stdout}`);
     },
   },
   {
-    name: 'E2E goal gate：真实 harness-runner 只写 open base，外层 goal-runner 独占 full-track closure',
+    name: 'E2E standalone：旧 goal 环境旗标不授予运行身份，真实当前结论可正常闭环',
     run: () => {
       const before = repoDocFeatures();
       const { root, harnessDir } = provisionFramework();
@@ -640,10 +666,18 @@ ${rv.stdout}`);
 
         // 先用真实 runner 生成可供 slim receipt 绑定的 PASS base，再铺一份可通过校验的回执。
         const first = runHarness(harnessDir, ['--phase', 'spec', '--feature', 'demo', '--summary'], root);
-        assert(first.status === 0, `初始 harness 失败：${first.stdout}`);
-        writeValidSpecReceipt(root, readJson(root, 'doc/features/demo/spec/reports/summary.json'));
+        const initial = readJson(root, 'doc/features/demo/spec/reports/summary.json');
+        assert(initial.verdict === 'PASS', `初始机器检查必须真实通过：${first.stdout}\n${first.stderr}`);
+        const firstLine = first.stdout.split(/\r?\n/).find(line => line.startsWith('current_check_result='));
+        assert(Boolean(firstLine), `初始检查缺少实际当前结果：${first.stdout}\n${first.stderr}`);
+        const pending = phaseCompletionProblems(JSON.parse(firstLine!.slice('current_check_result='.length)).evaluation.disposition, ['spec']);
+        assert(first.status === 0 || first.status === 1 && pending.length > 0 && pending.every(problem => problem.id === 'attestation_present' && problem.action === 'verify'),
+          `独立核验尚未发布时只接受准确待核：${first.stdout}\n${first.stderr}`);
+        writeValidSpecReceipt(root, initial);
+        const initialSync = runHarness(harnessDir, ['--sync-closure', '--phase', 'spec', '--feature', 'demo'], root);
+        assert(initialSync.status === 0, `当前独立核验后须可真实闭环：${initialSync.stdout}\n${initialSync.stderr}`);
 
-        // goal orchestration 信号下，CLI 即使看见有效回执也只能产 open base。
+        // 没有签发 run/attempt/owner 的旧环境旗标不构成 goal 身份；真实 goal 的 open 保护由上方 fenced attended 例覆盖。
         const gated = runHarness(
           harnessDir,
           ['--phase', 'spec', '--feature', 'demo', '--summary'],
@@ -660,9 +694,9 @@ ${rv.stdout}`);
         assert(gated.status === 0, `goal gate harness 失败：${gated.stdout}`);
         const gatedSummary = readJson(root, 'doc/features/demo/spec/reports/summary.json');
         assert(gatedSummary.verdict === 'PASS', `goal gate 仍须产 PASS base：${JSON.stringify(gatedSummary)}`);
-        assert(gatedSummary.closure_status === 'open', `goal gate 不得先关环：${JSON.stringify(gatedSummary)}`);
-        assert(!('closure_commit' in gatedSummary), 'goal gate 不得写 closure_commit');
-        assert(!('receipt_status' in gatedSummary), 'goal gate 不得运行 receipt validation');
+        assert(gatedSummary.closure_status === 'closed', `旧旗标不能冒充goal而阻止有据的standalone闭环：${JSON.stringify(gatedSummary)}`);
+        assert(typeof gatedSummary.closure_commit === 'object' && gatedSummary.closure_commit !== null, 'standalone必须由真实writer提交closure');
+        assert(gatedSummary.receipt_status === 'passed', '当前原件仍须通过真实receipt核对');
         const gatedNext = readJson(root, 'doc/features/demo/next.json');
         assert(gatedNext.run_status_candidate !== 'CHAIN_SLICE_COMPLETED',
           `open gate 不得投影完成态：${JSON.stringify(gatedNext)}`);

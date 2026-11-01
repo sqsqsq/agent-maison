@@ -5,7 +5,7 @@ import * as path from 'path';
 import * as YAML from 'yaml';
 import { clearFrameworkConfigCache, featurePhaseReportsDir, resolveFeatureArtifact } from '../../config';
 import { readVerifierSemanticIssues, phaseIssuesForVerifierSubject, verifiedPhaseRepairIssues, verifiedPhaseDesignFindings, projectDesignFindingsIntoSummary, findUnreadableDiagnosisChecks } from '../../scripts/utils/repair-candidates';
-import { buildVerifierMaterialView, writeVerifierMaterial, collectCurrentAcceptanceEvidence } from '../../scripts/utils/verifier-material';
+import { buildVerifierMaterialView, writeVerifierMaterial, collectCurrentAcceptanceEvidence, verifierMaterialFileMatchesCurrent } from '../../scripts/utils/verifier-material';
 import { verifierReportMdFilename } from '../../scripts/utils/verifier-subject';
 import { resolveCapabilityInputs } from '../../scripts/utils/capability-resolution';
 import { resolveCapabilityResolutionEntryInput } from '../../scripts/utils/capability-resolution-entry-input';
@@ -98,7 +98,7 @@ const cases: Array<{ name: string; run(root: string): void }> = [
       const loader = new SpecLoader(root, undefined, undefined, frameworkRoot);
       const contextFiles = collectContextFiles(loader, { projectRoot: root, frameworkRoot, frameworkRel: 'framework', kind: 'consumer' }, 'plan', feature,
         loader.loadFeatureSpec(feature, resolvedInputs), { resolvedInputs, factsContext: entry.factsContext });
-      assert(contextFiles.some(file => file.label === '(prior semantic findings)' && file.content.includes('reference_crosscheck')));
+      assert(contextFiles.some(file => file.label === '(upstream issues to verify)' && file.content.includes('reference_crosscheck')));
       const materialInput = { projectRoot: root, frameworkRoot, feature, phase: 'plan', resolvedInputs, factsContext: entry.factsContext,
         gateFingerprint: null, phaseRuleText: '', templateText: '', checks: [], contextFiles };
       const produced = buildVerifierMaterialView(materialInput);
@@ -144,13 +144,13 @@ const cases: Array<{ name: string; run(root: string): void }> = [
     projectDesignFindingsIntoSummary(summary, findings);
     assert.equal(summary.verdict, 'FAIL'); assert.equal(summary.completion_status, 'INCOMPLETE');
     assert.equal(summary.blockers[0].repair_owner, 'external');
-    const manifestEvidence = require('../../scripts/utils/phase-evidence-manifest') as typeof import('../../scripts/utils/phase-evidence-manifest');
-    const originalConsumer = manifestEvidence.evidenceEntryMatchesCurrentFile;
+    const materialEvidence = require('../../scripts/utils/verifier-material') as typeof import('../../scripts/utils/verifier-material');
+    const originalConsumer = materialEvidence.verifierMaterialFileMatchesCurrent;
     try {
-      manifestEvidence.evidenceEntryMatchesCurrentFile = () => false;
+      materialEvidence.verifierMaterialFileMatchesCurrent = () => false;
       assert.equal(phaseIssuesForVerifierSubject(root, feature, 'plan', subject, frameworkRoot), null,
-        '生产变异：关掉中立摘要消费后，相同真实material必须抓住回归');
-    } finally { manifestEvidence.evidenceEntryMatchesCurrentFile = originalConsumer; }
+        '生产变异：关掉同版本材料摘要消费后，相同真实material必须抓住回归');
+    } finally { materialEvidence.verifierMaterialFileMatchesCurrent = originalConsumer; }
     fs.appendFileSync(path.join(root, featureDir, 'acceptance.yaml'), '\n# formatting only\n');
     assert.equal(phaseIssuesForVerifierSubject(root, feature, 'plan', subject, frameworkRoot)?.rows.length, 1,
       '按既有摘要语义读取，纯注释不变成真实验收变化');
@@ -175,6 +175,10 @@ const cases: Array<{ name: string; run(root: string): void }> = [
       phaseRuleText: '', templateText: '', checks: [], contextFiles: [], resolvedInputs });
     const file = featureDir + '/change-unit.yaml', absolute = path.join(root, file), original = fs.readFileSync(absolute);
     const recorded = material.files.find(entry => entry.path === file)!;
+    const rawOriginal = require('crypto').createHash('sha256').update(original).digest('hex');
+    const legacyRaw = { ...material, schema: 'maison-verifier-material@1', files: material.files.map(entry => entry.path === file ? { ...entry, sha256: rawOriginal } : entry) };
+    assert(verifierMaterialFileMatchesCurrent({ projectRoot: root, feature, material: legacyRaw, file }), 'the @1 raw diagnosis recipe retains exact historical bytes');
+    assert(!verifierMaterialFileMatchesCurrent({ projectRoot: root, feature, material: { ...legacyRaw, schema: material.schema }, file }), '@2 cannot reinterpret a CU raw digest as its declared neutral projection');
     const rows: Array<{ change: string; raw: boolean; materialSemantic: boolean }> = [];
     const observe = (change: string): void => {
       const entry = { ...recorded, role: 'input' as const, exists: true };

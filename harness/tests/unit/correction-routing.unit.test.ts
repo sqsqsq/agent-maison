@@ -32,10 +32,11 @@ import {
   featurePhaseReportsDir,
   resolveReceiptFilePath,
   statefilePath,
+  resolveFeatureArtifact,
 } from '../../config';
+import { loadHostSnapshot, SNAPSHOT_FLAT_FEATURE } from '../fixtures/host-snapshot-3.1.0/generate';
 import { resolveEnforcementTier } from '../../scripts/utils/runtime-policy';
-import { seedCleanCompletionChain } from '../utils/completion-chain-seed';
-import { generateFeatureCompletion, inspectCompletionRecord } from '../../scripts/utils/verify-feature-completion';
+import { inspectCompletionRecord } from '../../scripts/utils/verify-feature-completion';
 import { resolvePhaseEvidenceManifest, writePhaseEvidenceManifest } from '../../scripts/utils/phase-evidence-manifest';
 import {
   classifyFailureKind,
@@ -109,20 +110,22 @@ const cases: Array<{ name: string; run: () => void }> = [
       for (const stateKind of ['receipt-only', 'completed-full']) {
         const completed = stateKind !== 'receipt-only';
         const track = 'full';
-        const root = mkGitFeatureProject();
-        const feature = 'demo-feat';
+        const snapshot = completed ? loadHostSnapshot() : undefined;
+        const root = snapshot?.root ?? mkGitFeatureProject();
+        const feature = completed ? SNAPSHOT_FLAT_FEATURE : 'demo-feat';
         const chain = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'];
         try {
           if (completed) {
-            seedCleanCompletionChain({ projectRoot: root, feature, chain });
-            const runDirAbs = path.join(root, 'doc/features', feature, 'goal-runs/RUN1');
-            fs.writeFileSync(path.join(runDirAbs, 'manifest.json'), JSON.stringify({ schema_version: '1.1', feature, run_id: 'RUN1',
-              report_dir: path.relative(root, runDirAbs).replace(/\\/g, '/'), phase_chain: chain }));
-            generateFeatureCompletion({ projectRoot: root, feature, chain, workflowTrack: track, runId: 'RUN1', runDirAbs, phaseRunIds: {} });
+            // Reuse an actual historical completed delivery, rather than inventing a current PASS/manifest.
+            fs.writeFileSync(path.join(root, '.gitignore'), 'framework/\n');
+            git(root, ['init', '-q', '-b', 'main']);
+            git(root, ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'add', '-A']);
+            git(root, ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'isolated historical delivery']);
             const result = inspectCompletionRecord({ projectRoot: root, feature, expectedTrack: track, expectedChain: chain, frameworkRoot: FRAMEWORK_ROOT });
             eq(result.verdict, 'VALID', JSON.stringify(result.reasons));
-            fs.appendFileSync(path.join(root, 'doc/features', feature, 'spec.md'), '\ncurrent drift\n');
-            writePhaseEvidenceManifest(root, resolvePhaseEvidenceManifest({ projectRoot: root, feature, phase: 'spec', extraInputs: [path.join(root, 'baseline.txt')] }));
+            fs.appendFileSync(resolveFeatureArtifact(root, feature, 'spec.md').actualPath, '\ncurrent drift\n');
+            writePhaseEvidenceManifest(root, resolvePhaseEvidenceManifest({ projectRoot: root, feature, phase: 'spec',
+              extraInputs: [resolveFeatureArtifact(root, feature, 'spec.md').actualPath] }));
             const drifted = inspectCompletionRecord({ projectRoot: root, feature, expectedTrack: track, expectedChain: chain, frameworkRoot: FRAMEWORK_ROOT });
             eq(drifted.verdict, 'VALID', '当前输入漂移不损坏历史记录');
             eq(drifted.drift.length > 0, true, '反例必须包含真实 drift');

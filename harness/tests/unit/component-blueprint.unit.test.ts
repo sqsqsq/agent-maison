@@ -9,6 +9,8 @@ import {
   ComponentBlueprintResolutionError,
   asRecord,
   asRecords,
+  blueprintAuthorContent,
+  renderBlueprintFieldResponsibilities,
 } from '../../scripts/utils/component-blueprint-model';
 import {
   componentBlueprintPath,
@@ -19,7 +21,10 @@ import { validateComponentBlueprint, diagnoseBlueprintContent } from '../../scri
 import { BLUEPRINT_REVIEW_FORMAT, renderBlueprintReviewMarkdown } from '../../scripts/utils/blueprint-review-projection';
 import { collectBlueprintReviewInputs } from '../../scripts/utils/blueprint-review-inputs';
 import { generateMermaidViewGraph, generateMermaidPhaseGraph, generateMermaidModuleDependencyGraph, parseMermaidSubset, validateGeneratedBlueprintGraphs } from '../../scripts/utils/blueprint-graph-generator';
-import { buildDiscoveryBundle } from '../../scripts/utils/blueprint-discovery';
+import { buildDiscoveryBundle, prepareBlueprintDesignDraft, prepareBlueprintSourceItems } from '../../scripts/utils/blueprint-discovery';
+import { validateCurrentScopeItemShape } from '../../scripts/utils/blueprint-requirement-traceability';
+import { writeBackAdmission, refreshBlueprintFingerprints } from '../../scripts/utils/design-repair-unattended';
+import { currentBlueprintSliceId } from '../../scripts/utils/blueprint-admission';
 import { reconcileP1DerivedResults } from '../../scripts/utils/blueprint-reconciliation';
 import { downstreamRefNeedsRecompute } from '../../scripts/utils/derived-conclusion-freshness';
 import { applyIndependentQuestioningOutput, independentQuestioningBlockers, requiredQuestioningScopes,
@@ -533,6 +538,69 @@ export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
 
   results.push(...runContentWarnCases());
+
+  results.push(test('P2 requirement source directory binds actual bytes and preserves independent missing source gaps', () => {
+    withTempProject((projectRoot) => {
+      const sourceRefs = ['requirements/ledger.md', 'requirements/missing.md'];
+      const items = prepareBlueprintSourceItems(projectRoot, sourceRefs, '2026-10-29T00:00:00Z');
+      assert(items.length === 2 && String(items[0]!.source_sha256).startsWith('sha256:') && !items[1]!.source_sha256, '缺来源被吞掉或hash被伪造');
+      assert(validateCurrentScopeItemShape(items[0]!, '$', 'blueprint_current_scope', projectRoot).length === 0, '合法来源未走原解析契约');
+      assert(validateCurrentScopeItemShape(items[1]!, '$', 'blueprint_current_scope', projectRoot).some(issue => issue.id === 'blueprint_current_scope_source_unresolvable'), '缺来源未交回原validator');
+      assert(prepareBlueprintSourceItems(projectRoot, [sourceRefs[0]!], '2030-01-01T00:00:00Z')[0]!.item_id === items[0]!.item_id, '机器观测时间改变了技术ID');
+      const draft = prepareBlueprintDesignDraft(undefined, { blueprintId: 'sources', currentScopeItems: items });
+      assert(asRecords(asRecord(asRecord(draft.discovery)?.inputs)?.current_scope_items).length === 2, '实际来源目录未投影');
+      assert(asRecords(asRecord(draft.discovery)?.requirement_traceability).length === 0, '机器代答了业务traceability');
+      const current = asRecords(asRecord(asRecord(draft.discovery)?.inputs)?.current_scope_items)[0]!;
+      current.item_id = 'existing-business-requirement'; current.source_sha256 = 'sha256:original-claim';
+      const prepared = prepareBlueprintDesignDraft(draft, { blueprintId: 'sources', currentScopeItems: items });
+      const preserved = asRecords(asRecord(asRecord(prepared.discovery)?.inputs)?.current_scope_items)[0]!;
+      assert(preserved.item_id === current.item_id && preserved.source_sha256 === current.source_sha256, '已声明来源冲突被机器后写覆盖');
+    });
+  }));
+
+  results.push(test('P2 machine preparation assigns stable technical structure without deciding applicability or acceptance', () => {
+    const context = { blueprintId: 'new-design', sourceRef: 'requirements/design.md', observedAt: '2026-10-29T00:00:00Z' };
+    const draft = prepareBlueprintDesignDraft(undefined, context);
+    assert(draft.component_id === context.blueprintId && draft.blueprint_id === context.blueprintId && draft.revision === 1, '技术ID未在作者动笔前分配');
+    assert(asRecords(draft.design_views).length === 5, '缺4+1视图容器');
+    assert(asRecords(draft.design_views).every(view => view.applicability === undefined && view.evolution_impact === undefined), '机器替作者裁决了未知适用性');
+    refreshBlueprintFingerprints(draft);
+    const admission = writeBackAdmission(draft, { projectRoot: VALID_PROJECT, canonicalPath: VALID_PATH });
+    assert(admission.status === 'blocker', '空容器被填为PASS');
+    assert(currentBlueprintSliceId(draft) === 'new-design:current', '未复用原切片技术ID');
+    assert(JSON.stringify(prepareBlueprintDesignDraft(draft, context)) === JSON.stringify(draft), '重复准备不幂等');
+  }));
+
+  results.push(test('P2 machine preparation preserves authored provenance, conflicts and existing identifiers', () => {
+    const source = validBlueprint();
+    const discovery = asRecord(source.discovery)!;
+    delete discovery.conflicts;
+    const facts = asRecords(discovery.facts);
+    facts.push({ ...clone(facts[0]!), fact_id: 'conflicting-observation', value: 'different authoritative value' });
+    discovery.facts = facts;
+    const before = JSON.stringify(source);
+    const draft = prepareBlueprintDesignDraft(source, { blueprintId: 'not-an-override', sourceRef: 'not-an-override' });
+    assert(JSON.stringify(source) === before, '准备改写了输入原件');
+    assert(draft.component_id === source.component_id && draft.blueprint_id === source.blueprint_id, '已有技术ID被改写');
+    assert(JSON.stringify(draft.provenance) === JSON.stringify(source.provenance), '业务provenance被机器覆盖');
+    assert(asRecords(asRecord(draft.discovery)?.conflicts).length > 0, '已知来源冲突未由原生成器显式保留');
+    const moved = clone(draft);
+    moved.revision = 99; moved.source_fingerprint = 'machine-only'; moved.derived_results = [];
+    asRecord(moved.provenance)!.observed_at = '2030-01-01T00:00:00Z';
+    assert(JSON.stringify(blueprintAuthorContent(draft, false, true)) === JSON.stringify(blueprintAuthorContent(moved, false, true)), '机器元数据被算成业务进展');
+    asRecord(moved.provenance)!.source_ref = 'requirements/other-business.md';
+    assert(JSON.stringify(blueprintAuthorContent(draft)) !== JSON.stringify(blueprintAuthorContent(moved)), '业务provenance变化被吞掉');
+    assert(renderBlueprintFieldResponsibilities().includes('业务provenance'), '字段职责指引丢失业务来源责任');
+  }));
+
+  results.push(test('P2 historical questioning frontier counters no longer deny a real complete result', () => {
+    const blueprint = validBlueprint();
+    mutate(blueprint, 'exceed-frontier-budget');
+    assert(!validateFixture(blueprint).some(item => item.id === 'blueprint_questioning_frontier_budget_exceeded'), '历史自报计数仍是执行资格');
+    const item = asRecords(asRecord(asRecord(blueprint.review_summary)?.questioning)?.items)[0]!;
+    item.disposition = 'blocker'; item.answer = 'invalid_otp has contradictory expected behavior';
+    assert(independentQuestioningBlockers(blueprint).length > 0, '取消配额时吞掉了真实Q否定');
+  }));
 
   // M5A §7.4：同一 component_id 的两个 blueprint_id 工作区共存，互不覆盖、无可见副作用（proof 1）
   results.push(test('two workspaces of the same component coexist without overwriting (proof 1)', () => {

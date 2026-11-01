@@ -9,10 +9,12 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { execFileSync } from 'child_process';
-import { clearFrameworkConfigCache, featureFilePath } from '../../../config';
+import { clearFrameworkConfigCache, featureFilePath, featurePhaseReportsDir } from '../../../config';
 import { assessFeature } from '../../../scripts/utils/feature-assessment';
 import { resolveChangeUnitExpectedExecution } from '../../../scripts/utils/change-unit-completion';
-import { publishVerifier, writeSpecMaterials, writeCuSpecMaterials } from '../../unit/real-chain.unit.test';
+import { publishRequestedVerifier, readDeliveredVerifierRequest, writeSpecMaterials, writeCuSpecMaterials } from '../../unit/real-chain.unit.test';
+import { computeMaterialSha256, readVerifierMaterialOrNull } from '../../../scripts/utils/verifier-material';
+import { loadVerifierEvidenceForSubject } from '../../../scripts/utils/verifier-evidence';
 import { runGoalRuntimeChain } from '../../unit/goal-runner-testing-integrity.unit.test';
 import { ensureFakeDeveco } from '../../unit/successor-exit.unit.test';
 import { git, provisionFrameworkUnder, synthesizeTestChainProfile } from '../../utils/real-chain-host';
@@ -97,6 +99,20 @@ export async function migrateHostSnapshot(s: Snapshot, feature: string) {
     frameworkRoot: s.frameworkRoot, featureId: feature, adapter: 'codex', realHarness: true,
     supersede: [sourceRun], freshRequirement: manifest.requirement, rebaselineTo,
     freshStartPhase: chain[0] as 'review', freshEndPhase: chain.at(-1), skipLegacySeal: true,
+    onOutOfChain: ctx => {
+      const current = { ...p, runId: ctx.runId }, request = readDeliveredVerifierRequest(current, ctx);
+      assert(request, `unexpected snapshot model request: ${ctx.phase}`);
+      const reports = featurePhaseReportsDir(s.root, feature, request.phase, s.frameworkRoot);
+      const material = readVerifierMaterialOrNull(reports, request.subject_id);
+      assert(material && material.material_sha256 === request.material_sha256 && computeMaterialSha256(material) === request.material_sha256,
+        'the delivered request must bind the actual current material original');
+      const diagnosis = loadVerifierEvidenceForSubject(s.root, feature, request.phase, request.subject_id, { frameworkRoot: s.frameworkRoot });
+      console.log('SNAPSHOT_VERIFIER_REQUEST ' + JSON.stringify({ phase: request.phase, subject: request.subject_id,
+        diagnostic: diagnosis.ok ? diagnosis.evidence.verdict : diagnosis.code }));
+      assert(publishRequestedVerifier(current, ctx), 'only the actually delivered independent request may publish its existing reply');
+      const accepted = loadVerifierEvidenceForSubject(s.root, feature, request.phase, request.subject_id, { frameworkRoot: s.frameworkRoot });
+      assert(accepted.ok, JSON.stringify(accepted));
+    },
     onSpec: ctx => {
       const current = { ...p, runId: ctx.runId };
       const facts = featureFilePath(s.root, feature, 'context/facts.md');
@@ -105,12 +121,11 @@ export async function migrateHostSnapshot(s: Snapshot, feature: string) {
       if (feature === SNAPSHOT_CU_FEATURE) writeCuSpecMaterials(current); else writeSpecMaterials(current, undefined, { preserveUnchanged: true });
       if (baseline) fs.writeFileSync(facts, baseline);
       researchIfRequested(ctx);
-      if (ctx.attempt > 1) publishVerifier(current, 'spec');
     },
-    onPlan: ctx => { researchIfRequested(ctx); if (ctx.attempt > 1) publishVerifier({ ...p, runId: ctx.runId }, 'plan'); },
-    onCoding: ctx => { researchIfRequested(ctx); if (ctx.attempt > 1) publishVerifier({ ...p, runId: ctx.runId }, 'coding'); },
-    onUt: ctx => { researchIfRequested(ctx); if (ctx.attempt > 1) publishVerifier({ ...p, runId: ctx.runId }, 'ut'); },
-    onReview: ctx => { researchIfRequested(ctx); if (ctx.attempt > 1) publishVerifier(p, 'review'); },
+    onPlan: researchIfRequested,
+    onCoding: researchIfRequested,
+    onUt: researchIfRequested,
+    onReview: researchIfRequested,
     onTesting: researchIfRequested,
   });
   clearFrameworkConfigCache();
@@ -140,6 +155,13 @@ process.once('exit', () => { for (const root of roots) fs.rmSync(root, { recursi
 
 export async function loadMigratedHostSnapshot(features: readonly string[] = [SNAPSHOT_FLAT_FEATURE, SNAPSHOT_CU_FEATURE]): Promise<Snapshot> {
   const key = [...features].sort().join(',');
+  const superset = [...prepared].find(([existing]) => features.every(feature => existing.split(',').includes(feature)));
+  if (!prepared.has(key) && superset) {
+    const source = await superset[1];
+    if (features.every(feature => assessFeature(source.root, feature, {
+      ...resolveChangeUnitExpectedExecution(source.root, feature), frameworkRoot: source.frameworkRoot,
+    }).complete)) prepared.set(key, superset[1]);
+  }
   if (!prepared.has(key)) prepared.set(key, (async () => {
     const s = loadHostSnapshot(); roots.push(s.root);
     for (const feature of features) await migrateHostSnapshot(s, feature);

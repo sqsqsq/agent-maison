@@ -1,6 +1,6 @@
 import { createHash } from 'crypto';
 import { stableStringify } from './phase-evidence-manifest';
-import { asRecord, asRecords, asStrings, BlueprintIssue, BlueprintRecord, issue, nonEmptyString } from './component-blueprint-model';
+import { asRecord, asRecords, asStrings, BlueprintIssue, BlueprintRecord, issue, nonEmptyString, blueprintAuthorContent } from './component-blueprint-model';
 import { inspectGeneratedBlueprintGraphs } from './blueprint-graph-generator';
 
 export const BLUEPRINT_READER_SECTIONS = ['summary', 'background', 'terms', 'journey', 'solution', 'flows', 'data', 'decisions', 'recovery', 'quality', 'delivery', 'acceptance', 'questions'] as const;
@@ -73,8 +73,8 @@ export function blueprintWithoutReaderGuide(blueprint: BlueprintRecord): Bluepri
 
 /** 说明的新鲜度与施工摘要独立；只读计算，绝不替作者盖章。 */
 export function computeBlueprintReaderGuideSourceDigest(blueprint: BlueprintRecord): string {
-  const { revision: _revision, derived_results: _derived, ...view } = blueprint;
-  const summary = asRecord(blueprint.review_summary);
+  const view = blueprintAuthorContent(blueprint);
+  const summary = asRecord(view.review_summary);
   if (summary) {
     const { reader_guide: _guide, authored_by: _author, questioning: _questioning, admission: _admission, reconciliation: _reconciliation, ...reviewSummary } = summary;
     view.review_summary = reviewSummary;

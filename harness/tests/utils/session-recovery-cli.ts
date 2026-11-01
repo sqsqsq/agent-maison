@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { spawn, spawnSync } from 'child_process';
+import { withRuntimeTest } from './runtime-test-control';
 import { prepareSessionCliProject } from './session-cli-project';
 import { defaultProcessProbe } from '../../scripts/utils/device-session';
 
@@ -21,7 +22,8 @@ function environment(root: string): NodeJS.ProcessEnv {
   return env;
 }
 function next(root: string, extra: string[] = []): { status: number | null; value: any; output: string } {
-  const result = spawnSync(process.execPath, [...args(root), ...extra], { cwd: path.join(root, 'framework/harness'), env: environment(root), encoding: 'utf8', timeout: 60_000, windowsHide: true });
+  const result = withRuntimeTest({ root }, () => spawnSync(process.execPath, [...args(root), ...extra],
+    { cwd: path.join(root, 'framework/harness'), env: environment(root), encoding: 'utf8', timeout: 60_000, windowsHide: true }));
   if (result.error) throw result.error;
   const line = result.stdout.trim().split(/\r?\n/).reverse().find(value => value.startsWith('{'));
   return { status: result.status, value: line ? JSON.parse(line) : null, output: result.stderr + result.stdout };
@@ -97,7 +99,12 @@ fs.appendFileSync=function(file, bytes, ...rest) {
       const child = spawn(process.execPath, ['-r', preload, ...args(root), '--next'], { cwd: path.join(root, 'framework/harness'), env: environment(root), windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
       let output = '';
       child.stdout?.on('data', bytes => { output += bytes.toString(); }); child.stderr?.on('data', bytes => { output += bytes.toString(); });
-      const exited = new Promise<void>((resolve, reject) => { child.once('error', reject); child.once('exit', () => resolve()); });
+      const exited = withRuntimeTest({ root,
+        expectedInterruption: cut === 'throw' ? 'fixture interrupted request commit'
+          : process.platform !== 'win32' ? 'test child terminated by signal: SIGKILL' : 'test child exited without runtime result' },
+      () => new Promise<{ status: number | null; signal: NodeJS.Signals | null; pid: number | undefined; stdout: string }>((resolve, reject) => {
+        child.once('error', reject); child.once('close', (status, signal) => resolve({ status, signal, pid: child.pid, stdout: output }));
+      }));
       try {
         const deadline = Date.now() + 30_000;
         while (!fs.existsSync(marker) && child.exitCode === null && Date.now() < deadline) await pause(25);

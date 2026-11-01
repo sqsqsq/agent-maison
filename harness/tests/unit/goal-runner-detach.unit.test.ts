@@ -15,6 +15,7 @@ import {
 import { newRunId, resolveRawRunInput } from '../../scripts/utils/goal-manifest';
 import { FEATURE_LOCK_NAME } from '../../scripts/utils/goal-run-lock';
 import type { UnitCaseResult } from '../run-unit';
+import { withRuntimeTest } from '../utils/runtime-test-control';
 
 function assert(cond: boolean, msg: string): void {
   if (!cond) throw new Error(msg);
@@ -210,7 +211,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
           try { resolveRawRunInput(bad, root); } catch { threw = true; }
           assert(threw, `identity conflict accepted: ${JSON.stringify(bad)}`);
         }
-        const wrongOwner = await runGoalRuntime({ args: ['--attach-created', 'existing', '--feature', 'demo', '--runtime-executor', 'detached', '--runtime-owner', 'session'] });
+        const wrongOwner = await withRuntimeTest({ root: root }, () => runGoalRuntime({ args: ['--attach-created', 'existing', '--feature', 'demo', '--runtime-executor', 'detached', '--runtime-owner', 'session'] }));
         assert(wrongOwner === 1, `wrong owner/transport accepted: ${wrongOwner}`);
       } finally { fs.rmSync(root, { recursive: true, force: true }); }
     },

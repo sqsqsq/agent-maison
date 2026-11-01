@@ -5,7 +5,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as YAML from 'yaml';
 import { clearFrameworkConfigCache, featureFilePath } from '../../config';
-import { prepareGoalModeRun, runGoalModeSessionStep } from '../../scripts/goal-mode-entry';
+import { prepareGoalModeRun, runGoalModeSessionStep as runGoalModeSessionStepUnchecked } from '../../scripts/goal-mode-entry';
 import { GoalPhaseRuntime } from '../../scripts/goal-phase-runtime';
 import { buildInitialDesignGoalManifest, isInitialDesignManifest } from '../../scripts/utils/goal-manifest';
 import { createGoalRun } from '../../scripts/utils/goal-run-creation';
@@ -20,6 +20,11 @@ import { BLUEPRINT_ID, withFreshCuHost, project, specFirstCuHooks } from './life
 import { runGoalRuntimeChain } from './goal-runner-testing-integrity.unit.test';
 import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
 import type { UnitCaseResult } from '../run-unit';
+import { reportFixtureQuestioning, seedLedgerQuestioningInput } from '../utils/initial-questioning-fixture';
+import { withRuntimeTest, type RuntimeTestControl } from '../utils/runtime-test-control';
+const runGoalModeSessionStep = (options: Parameters<typeof runGoalModeSessionStepUnchecked>[0], testControl: RuntimeTestControl = {}) =>
+  withRuntimeTest({ root: options.projectRoot, ...testControl }, () => runGoalModeSessionStepUnchecked(options));
+
 
 const authorization = { mode: 'goal_mode' as const, autonomyAuthorized: true };
 const detail = '独立模型提供方暂不可用；解除条件：提供方恢复后继续原请求。';
@@ -29,14 +34,14 @@ const events = (runDir: string): Json[] => fs.readFileSync(path.join(runDir, 'ev
 
 async function initialWaiting(): Promise<void> {
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'initial-waiting-'));
-  const fixture = (name: string) => {
+  const fixture = (name: string, maxTurns = 3) => {
     const projectRoot = path.join(parent, name);
     fs.mkdirSync(path.join(projectRoot, 'doc/features'), { recursive: true });
     fs.writeFileSync(path.join(projectRoot, 'framework.config.json'), JSON.stringify({ schema_version: '1.0', project_name: name,
       project_profile: { name: 'hmos-app' }, active_workflow: 'obligation-driven', features_dir: 'doc/features' }));
     clearFrameworkConfigCache();
     const prepared = prepareGoalModeRun({ projectRoot, frameworkRoot, feature: 'waiting-blueprint', runId: 'waiting-root', adapter: 'claude',
-      requirement: '正式新增本地未读消息聚合并完整交付。', budget: { max_total_turns: 3, wall_clock_minutes: 120 },
+      requirement: '正式新增本地未读消息聚合并完整交付。', budget: { max_total_turns: maxTurns, wall_clock_minutes: 120 },
       unattended: { write_mode: 'full-access', approval_mode: 'never', timeout_seconds: 900 } });
     assert(isInitialDesignManifest(prepared.manifest));
     return { projectRoot, ...prepared, options: { projectRoot, frameworkRoot, feature: prepared.manifest.feature, runId: prepared.manifest.run_id,
@@ -45,10 +50,10 @@ async function initialWaiting(): Promise<void> {
   try {
     const callback = fixture('callback');
     let calls = 0;
-    await new GoalPhaseRuntime({ args: ['--feature', callback.manifest.feature, '--resume', callback.manifest.run_id,
+    await withRuntimeTest({ root: callback.projectRoot }, () => new GoalPhaseRuntime({ args: ['--feature', callback.manifest.feature, '--resume', callback.manifest.run_id,
       '--project-root', callback.projectRoot, '--framework-root', frameworkRoot, '--foreground-ok'], authorization,
       executor: { async execute(context) { calls++; return { status: 'waiting', phase: context.phase, details: detail,
-        exitCode: 0, stdout: '', stderr: '', command: 'waiting-callback' }; } } }).run();
+        exitCode: 0, stdout: '', stderr: '', command: 'waiting-callback' }; } } }).run());
     const session = fixture('session');
     const first = await runGoalModeSessionStep(session.options) as Json;
     const stopped = await runGoalModeSessionStep({ ...session.options, requestPath: first.request.path,
@@ -71,25 +76,29 @@ async function initialWaiting(): Promise<void> {
       assert.equal(events(lane.runDir).filter(row => row.type === 'agent_invoke_start').length, 2);
       if (lane === session) assert.notEqual(next.attempt_id, first.attempt_id);
     }
-    const history = fixture('completed-then-waiting');
+    const history = fixture('completed-then-waiting', 4);
     const args = ['--feature', history.manifest.feature, '--resume', history.manifest.run_id,
       '--project-root', history.projectRoot, '--framework-root', frameworkRoot, '--foreground-ok'];
     let completedCalls = 0;
-    await new GoalPhaseRuntime({ args, authorization, executor: { async execute(context) {
-      completedCalls++; return { status: 'passed', phase: context.phase, exitCode: 1, completion_observed: true,
+    await withRuntimeTest({ root: history.projectRoot }, () => new GoalPhaseRuntime({ args, authorization, executor: { async execute(context) {
+      completedCalls++;
+      if (completedCalls > 1) return { status: 'waiting', phase: context.phase, details: detail, exitCode: 0, stdout: '', stderr: '', command: 'unknown-content-waiting' };
+      return { status: 'passed', phase: context.phase, exitCode: 1, completion_observed: true,
         kill_attempted: true, stdout: '', stderr: '', command: 'completed-with-cleanup-exit' };
-    } } }).run();
-    assert.equal(completedCalls, 1, 'completion=true with exit1 is completed content and must pause without a duplicate author');
-    assert.equal(events(history.runDir).at(-1)!.halt_reason, 'no_progress_guard');
+    } } }).run());
+    assert.equal(completedCalls, 2, 'native completion does not manufacture a complete design/Q baseline');
+    const completed = events(history.runDir).find(row => row.type === 'agent_invoke_end');
+    assert(completed?.completion_observed === true && completed.exit_code === 1 && completed.status === 'passed', 'cleanup exit1 must retain the actual native completion fact');
+    assert(!events(history.runDir).some(row => row.halt_reason === 'no_progress_guard' || row.type === 'run_end' && row.status === 'COMPLETED'));
     let waitingCalls = 0;
-    await new GoalPhaseRuntime({ args: [...args, '--force-resume'], authorization, executor: { async execute(context) {
+    await withRuntimeTest({ root: history.projectRoot }, () => new GoalPhaseRuntime({ args: [...args, '--force-resume'], authorization, executor: { async execute(context) {
       waitingCalls++; return { status: 'waiting', phase: context.phase, details: detail, exitCode: 0, stdout: '', stderr: '', command: 'later-waiting' };
-    } } }).run();
+    } } }).run());
     assert.equal(waitingCalls, 1);
     const resumed = await runGoalModeSessionStep(history.options) as Json;
     assert.equal(resumed.type, 'phase_execute_request', 'the latest waiting fact makes the content baseline unknown; do not skip it to reuse older completed content');
-    assert.equal(readOriginalDeliveryBudget(history.projectRoot, history.manifest)!.totalTurns, 3);
-    assert.equal(events(history.runDir).filter(row => row.type === 'agent_invoke_start').length, 3);
+    assert.equal(readOriginalDeliveryBudget(history.projectRoot, history.manifest)!.totalTurns, 4);
+    assert.equal(events(history.runDir).filter(row => row.type === 'agent_invoke_start').length, 4);
 
   } finally { fs.rmSync(parent, { recursive: true, force: true }); clearFrameworkConfigCache(); }
 }
@@ -105,7 +114,7 @@ async function unfinishedContentBaseline(kind: 'timeout' | 'terminal-failure' | 
       requirement: '正式完成本地未读消息设计与交付。', budget: { max_total_turns: 3, wall_clock_minutes: 120 },
       unattended: { write_mode: 'full-access', approval_mode: 'never', timeout_seconds: 900 } });
     let calls = 0;
-    await new GoalPhaseRuntime({ args: ['--feature', prepared.manifest.feature, '--resume', prepared.manifest.run_id,
+    await withRuntimeTest({ root: projectRoot }, () => new GoalPhaseRuntime({ args: ['--feature', prepared.manifest.feature, '--resume', prepared.manifest.run_id,
       '--project-root', projectRoot, '--framework-root', frameworkRoot, '--foreground-ok'], authorization,
       executor: { async execute(context) {
         calls++;
@@ -113,7 +122,7 @@ async function unfinishedContentBaseline(kind: 'timeout' | 'terminal-failure' | 
         return { status: 'passed', phase: context.phase, exitCode: 0, completion_observed: true, stdout: '', stderr: '', command: kind,
           ...(kind === 'timeout' ? { timed_out: true } : kind === 'terminal-failure' ? { terminal_failure_observed: true }
             : { spawn_error: { code: 'EPIPE', message: 'transport could not deliver the request' } }) };
-      } } }).run();
+      } } }).run());
     assert(!events(prepared.runDir).some(row => row.halt_reason === 'no_progress_guard'), `${kind} must not become completed content even with exit0/completion=true`);
     assert.equal(calls, kind === 'transport' ? 1 : 2, 'failed content does not prevent the next real responsibility from being attempted');
     const next = await runGoalModeSessionStep({ projectRoot, frameworkRoot, feature: prepared.manifest.feature, runId: prepared.manifest.run_id,
@@ -125,6 +134,7 @@ async function unfinishedContentBaseline(kind: 'timeout' | 'terminal-failure' | 
 
 async function repairWaiting(): Promise<void> {
   await withFreshCuHost(async host => {
+    seedLedgerQuestioningInput(host.root);
     for (const unit of enumerateCanonicalChangeUnits(host.root, BLUEPRINT_ID)) {
       if (unit.changeUnit.change_unit_id !== 'ledger-refresh') fs.rmSync(path.dirname(unit.canonicalPath), { recursive: true, force: true });
     }
@@ -158,17 +168,24 @@ async function repairWaiting(): Promise<void> {
       reportDir: manifest.report_dir, requirement: manifest.requirement, brief, signature: designRepairSignature(BLUEPRINT_ID, 'initial-design', brief.items),
       heldFeatureLock: null, runtimeWrites: [manifest.report_dir], emit, registerLockRelease: () => {},
       recordEventLines: () => { recording = []; return () => { const lines = recording!; recording = undefined; return lines; }; },
-      invoke: async purpose => { emit({ type: 'agent_invoke_start', phase: `design-repair-${purpose}`, invoke_id: 'seed-waiting' });
-        emit({ type: 'agent_invoke_end', phase: `design-repair-${purpose}`, invoke_id: 'seed-waiting', status: 'waiting', exit_code: 0 });
-        return { started: true, ok: false, status: 'waiting', detail }; } });
-    assert.equal(seed.outcome, 'waiting');
-    const first = await runGoalModeSessionStep(options) as Json;
+      // Prepare the original transaction without inventing an invocation; public next signs the actual waiting call below.
+      invoke: async () => ({ started: true, ok: false, detail: 'yield to the signed session transport', handoff: true }) });
+    assert.equal(seed.outcome, 'handoff');
+    let first = await runGoalModeSessionStep(options) as Json;
+    let questions = 0;
+    if (first.phase === 'design-repair-questioning') {
+      first = await reportFixtureQuestioning(options, first, runDir, path.join(runDir, 'design-repair/component-blueprint.yaml'), questioning => {
+        Object.assign((questioning.items as Json[])[0], { disposition: 'blocker', answer: '刷新责任的开发归属尚未明确，需原设计owner确认实际契约。' });
+      }) as Json;
+      questions++;
+    }
     assert.equal(first.phase, 'design-repair-author', JSON.stringify(first));
     const pause = await runGoalModeSessionStep({ ...options, requestPath: first.request.path,
       report: { status: 'waiting', phase: first.phase, details: detail } }) as Json;
-    assert.equal(pause.type, 'goal_session_result');
+    assert.equal(pause.type, 'goal_session_result', JSON.stringify({ type: pause.type, phase: pause.phase,
+      invoke: first.invoke_id, events: events(runDir).filter(row => ['agent_invoke_start', 'agent_invoke_end', 'run_end', 'design_authority_repair'].includes(row.type)) }));
     assert.equal(pause.result.status, 'waiting');
-    assert.equal(readOriginalDeliveryBudget(host.root, manifest)!.totalTurns, 2);
+    assert.equal(readOriginalDeliveryBudget(host.root, manifest)!.totalTurns, 1 + questions);
     assert(fs.existsSync(path.join(runDir, 'design-repair/component-blueprint.yaml')));
     assert(!events(runDir).some(row => row.type === 'design_authority_repair' && row.stage === 'failed'));
     const retry = await runGoalModeSessionStep(options) as Json;
@@ -184,11 +201,11 @@ async function repairWaiting(): Promise<void> {
     const qPause = await runGoalModeSessionStep({ ...options, requestPath: questioning.request.path,
       report: { status: 'waiting', phase: questioning.phase, details: detail } }) as Json;
     assert.equal(qPause.result.status, 'waiting');
-    assert.equal(readOriginalDeliveryBudget(host.root, manifest)!.totalTurns, 4);
+    assert.equal(readOriginalDeliveryBudget(host.root, manifest)!.totalTurns, 3 + questions);
     const qRetry = await runGoalModeSessionStep(options) as Json;
     assert.equal(qRetry.phase, 'design-repair-questioning');
     assert.notEqual(qRetry.attempt_id, questioning.attempt_id);
-    assert.equal(readOriginalDeliveryBudget(host.root, manifest)!.totalTurns, 5);
+    assert.equal(readOriginalDeliveryBudget(host.root, manifest)!.totalTurns, 4 + questions);
     assert.equal(events(runDir).filter(row => row.type === 'design_authority_repair' && row.stage === 'attempted').length, 1);
     assert(!events(runDir).some(row => row.type === 'design_authority_repair' && row.stage === 'failed'));
     assert.deepEqual(fs.readFileSync(canonical.canonicalPath), original, 'waiting never publishes a partial draft');
@@ -201,7 +218,7 @@ async function repairWaiting(): Promise<void> {
     assert.equal(after.filter(row => row.type === 'design_authority_repair' && row.stage === 'attempted').length, 1);
     assert(!after.some(row => row.type === 'design_authority_repair' && row.stage === 'failed'));
     assert(after.some(row => row.type === 'design_authority_repair' && row.stage === 'published' && row.outcome === 'recovered'));
-    assert.equal(after.filter(row => row.type === 'agent_invoke_start' && row.phase === 'design-repair-author').length, 3, 'completed author is reused after questioning resumes');
+    assert.equal(after.filter(row => row.type === 'agent_invoke_start' && row.phase === 'design-repair-author').length, 2, 'completed author is reused after questioning resumes');
     assert.equal(loadCanonicalBlueprint(host.root, BLUEPRINT_ID).blueprint.revision, Number(canonical.blueprint.revision) + 1);
     assert(deriveDesignPreparationReadiness(host.root, BLUEPRINT_ID).ready);
     assert.equal(readOriginalDeliveryBudget(host.root, manifest)!.totalTurns, after.filter(row => row.type === 'agent_invoke_start').length);
@@ -211,12 +228,20 @@ async function repairWaiting(): Promise<void> {
 async function normalQuestioningWaiting(): Promise<void> {
   await withFreshCuHost(async host => {
     let authors = 0, questioners = 0;
+    const invokeFacts = (source: Json[]) => source.filter(row => row.type === 'agent_invoke_start' || row.type === 'agent_invoke_end')
+      .map(row => ({ type: row.type, phase: row.phase, invoke_id: row.invoke_id, status: row.status, exit_code: row.exit_code,
+        completion_observed: row.completion_observed, timed_out: row.timed_out, interrupted: row.interrupted,
+        terminal_failure_observed: row.terminal_failure_observed }));
     const first = await s16Born(host, { adapter: {
       author: () => { authors++; },
       questioning: doc => { questioners++; delete doc.review_summary.questioning;
         return { status: 'waiting', exitCode: 0, details: detail }; },
     } });
-    assert.equal(authors, 1);
+    const beforeManifest = JSON.parse(fs.readFileSync(featureFilePath(host.root, first.feature, `goal-runs/${first.runId}/manifest.json`), 'utf8'));
+    console.log('[normal-questioning-waiting-before]', JSON.stringify({ authors, questioners, chain: first.chain,
+      scope_chain: beforeManifest.execution_scope?.phase_chain, phase_chain: beforeManifest.phase_chain,
+      invocations: invokeFacts(first.events), attempts: first.events.filter(row => row.type === 'design_authority_repair') }));
+    assert.equal(authors, 1, JSON.stringify({ authors, questioners, events: first.events.filter(row => ['phase_halt', 'run_end', 'design_authority_repair'].includes(row.type)) }));
     assert.equal(questioners, 1);
     assert(!first.events.some(event => event.type === 'design_authority_repair' && event.stage === 'failed'));
     assert(!first.events.some(event => event.type === 'design_authority_repair' && event.stage === 'published'));
@@ -231,6 +256,7 @@ async function normalQuestioningWaiting(): Promise<void> {
     try {
       await runGoalRuntimeChain(host.root, { frameworkRoot: host.frameworkRoot, featureId: first.feature, adapter: 'codex',
         resume: first.runId, forceResume: true, noAutoForce: true, ...hooks,
+        testControl: { expectedInterruption: 'test cut after the real design transaction, before downstream product work' },
         onPlan: () => { throw new Error('test cut after the real design transaction, before downstream product work'); },
         onOutOfChain: rawActor.onOutOfChain });
     } finally { helper.checkTerminalResumeGuard = originalGuard; }
@@ -238,6 +264,8 @@ async function normalQuestioningWaiting(): Promise<void> {
     const rows = fs.readdirSync(directory).filter(name => !name.startsWith('.')).flatMap(name => events(path.join(directory, name)));
     const repairs = rows.filter(row => row.type === 'design_authority_repair');
     console.log('[normal-questioning-waiting]', JSON.stringify({ authors, questioners, repairs,
+      before: { chain: first.chain, invocations: invokeFacts(first.events) }, resumed: { invocations: invokeFacts(rows),
+        resumes: rows.filter(row => row.type === 'resume') },
       ends: rows.filter(row => row.type === 'run_end').map(row => ({ status: row.status, halt_reason: row.halt_reason })) }));
     assert.equal(authors, 1, 'a successful design author must not be invoked again while recovering its waiting questioner');
     assert.equal(questioners, 2, 'only the waiting independent responsibility is called again');

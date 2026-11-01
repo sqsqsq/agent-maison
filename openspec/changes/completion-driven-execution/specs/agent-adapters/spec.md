@@ -20,6 +20,8 @@ Adapters SHALL transport one dedicated author context for an existing root/CU/re
 
 The common executor SHALL accept an optional absolute UTC user_deadline_at and cancellation. It MUST NOT derive a default author deadline or native max-turns/max-budget from phase or cumulative quotas. Operation-specific tool cleanup SHALL remain bounded. Enforcement: goal-manifest.ts, goal-phase-executor.ts and agent-invoke.ts.
 
+The shared native transport SHALL interrupt an unsettled invocation without real child stdout/stderr growth or an observed terminal after an output-idle window equal to the larger of 90 minutes and the largest existing public Hvigor build or device-UT tool timeout plus 45 minutes of check overhead. Default tool settings SHALL retain the 90-minute window; a two-hour configured tool timeout SHALL produce a 165-minute window and a six-hour timeout SHALL produce a 405-minute window. Framework heartbeats and lease renewal MUST NOT extend this window. This hang protection is separate from a user deadline and P2 acceptance-progress evaluation: it SHALL preserve partial work, original output and the verified provider identity and report interrupted/unknown, not product failure or completion. Continuous real output SHALL impose no total author duration limit through this protection. Opaque tools may still be interrupted when their silence exceeds the window; unlimited silent-tool execution is not guaranteed. Observed terminal results SHALL retain their existing bounded cleanup behavior.
+
 #### Scenario: Resume after the user deadline
 - **WHEN** an explicit deadline has elapsed before continuation
 - **THEN** no new author work starts and the existing deadline is not reset
@@ -27,3 +29,11 @@ The common executor SHALL accept an optional absolute UTC user_deadline_at and c
 #### Scenario: An active author exceeds an old phase duration
 - **WHEN** no user deadline or cancellation exists and the author remains active
 - **THEN** the common executor does not terminate it because of an old phase timeout
+
+#### Scenario: Native output stops while framework heartbeats continue
+- **WHEN** the native invocation has no terminal and no stdout/stderr growth throughout the output-idle window
+- **THEN** existing process-tree interruption and bounded cleanup preserve recoverable work and native identity with an unknown result, even if framework heartbeats continue
+
+#### Scenario: Real output continues beyond the idle window
+- **WHEN** native output keeps growing and the total invocation duration exceeds one output-idle window
+- **THEN** output-idle protection does not terminate it, while explicit user deadlines and cancellation remain effective

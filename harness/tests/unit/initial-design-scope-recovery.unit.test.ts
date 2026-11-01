@@ -3,6 +3,7 @@ import assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import * as YAML from 'yaml';
 import { createHash } from 'crypto';
 import { provisionFrameworkUnder, git } from '../utils/real-chain-host';
 import { clearFrameworkConfigCache, loadFrameworkConfig, featureFilePath } from '../../config';
@@ -10,11 +11,13 @@ import { loadResolvedProfile } from '../../profile-loader';
 import { resolveWorkflowSpec } from '../../workflow-loader';
 import { writeLocalConfig } from '../../scripts/utils/framework-local-config';
 import { loadGoalRunManifestFromRun, isInitialDesignManifest } from '../../scripts/utils/goal-manifest';
-import { runGoalModeSessionStep } from '../../scripts/goal-mode-entry';
+import { runGoalModeSessionStep as runGoalModeSessionStepUnchecked } from '../../scripts/goal-mode-entry';
 import { readOriginalDeliveryBudget } from '../../scripts/utils/delivery-origin';
 import { enumerateCanonicalChangeUnits, deriveChangeUnitFeatureId, asChangeUnitArtifact } from '../../scripts/utils/change-unit-path';
 import { readFeatureFrozenScope } from '../../scripts/utils/feature-execution-scope';
-import { prepareFeatureScopeCandidate, resolveFeatureExecutionScope } from '../../scripts/utils/feature-track';
+import { prepareChangeUnitScopeInput, prepareFeatureScopeCandidate, resolveFeatureExecutionScope } from '../../scripts/utils/feature-track';
+import { blueprintAuthorContent } from '../../scripts/utils/component-blueprint-model';
+import { initialDesignPhasePolicy } from '../../scripts/utils/initial-design-delivery';
 import { executionScopeFingerprint } from '../../scripts/utils/execution-scope';
 import { assertGoalRunAttachable } from '../../scripts/utils/goal-run-creation';
 import { goalRequiredPrerequisites } from '../../scripts/utils/goal-preflight';
@@ -24,6 +27,11 @@ import { buildChangeUnitGoalRequest } from '../../scripts/utils/change-unit-prog
 import type { SessionExecutionRequest } from '../../scripts/utils/session-execution-handoff';
 import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
 import type { UnitCaseResult } from '../run-unit';
+import { reportFixtureQuestioning } from '../utils/initial-questioning-fixture';
+import { withRuntimeTest, type RuntimeTestControl } from '../utils/runtime-test-control';
+const runGoalModeSessionStep = (options: Parameters<typeof runGoalModeSessionStepUnchecked>[0], testControl: RuntimeTestControl = {}) =>
+  withRuntimeTest({ root: options.projectRoot, ...testControl }, () => runGoalModeSessionStepUnchecked(options));
+
 
 const FIXTURE=path.resolve(__dirname,'../fixtures/host-recovery-history/20261028-initial-design-scope');
 const sha=(file:string)=>createHash('sha256').update(fs.readFileSync(file)).digest('hex');
@@ -48,24 +56,36 @@ const cases:Array<{name:string;run():Promise<void>}>= [{
       const originalError=beforeEvents.at(-1)?.error;assert.equal(typeof originalError,'string');const diagnostic=originalError.slice(0,originalError.indexOf(source.original_root));assert(diagnostic.length>30);
       const unit=enumerateCanonicalChangeUnits(root,original.feature)[0];assert(unit);const feature=deriveChangeUnitFeatureId(original.feature,String(unit.changeUnit.change_unit_id));
       assert.equal(readFeatureFrozenScope(root,feature),null);assert(!fs.existsSync(featureFilePath(root,feature,'goal-runs')));
-      const blueprint=path.join(root,'doc/features/inbox-batch-read/blueprint/component-blueprint.yaml'),protectedBefore=[sha(blueprint),sha(unit.canonicalPath)];
+      const blueprint=path.join(root,'doc/features/inbox-batch-read/blueprint/component-blueprint.yaml');
+      const originalBusiness=blueprintAuthorContent(YAML.parse(fs.readFileSync(blueprint,'utf8')));
+      let protectedBefore=[sha(blueprint),sha(unit.canonicalPath)],actualQuestions=0;
       const before=readOriginalDeliveryBudget(root,original)!;
       const options={projectRoot:root,frameworkRoot:framework.frameworkRoot,feature:original.feature,runId:original.run_id,adapter:'codex',runMode:'attended' as const,authorization:{mode:'goal_mode' as const,autonomyAuthorized:true}};
-      const first=await runGoalModeSessionStep(options);assert.equal(first.type,'phase_execute_request');const reference=first.request as {path:string};assert(typeof reference.path==='string');
-      const request=json(reference.path) as SessionExecutionRequest,instruction=request.context.instruction;assert(typeof instruction==='string');assert(request.context.phase.startsWith('initial-design-scope-'));
-      for(const expected of [original.requirement,diagnostic,'--prepare-scope','--overwrite','component-blueprint.yaml'])assert(instruction.includes(expected),expected);
+      let first=await runGoalModeSessionStep(options);
+      if(first.type==='phase_execute_request'&&first.phase==='initial-design-questioning'){
+        // This historical fixture has no Q invocation archive; establish current validity through the real transport.
+        first=await reportFixtureQuestioning(options,first,runDir,blueprint);actualQuestions++;
+        assert.deepEqual(blueprintAuthorContent(YAML.parse(fs.readFileSync(blueprint,'utf8'))),originalBusiness,'current independent verification must preserve the published business design');
+        protectedBefore=[sha(blueprint),sha(unit.canonicalPath)];
+      }
+      assert.equal(first.type,'phase_execute_request',JSON.stringify(first));const reference=first.request as {path:string};assert(typeof reference.path==='string');
+      const request=json(reference.path) as SessionExecutionRequest,instruction=request.context.instruction;assert(typeof instruction==='string');
+      assert(request.context.phase.startsWith('initial-design-scope-'),JSON.stringify({phase:request.context.phase,instruction,tail:readEvents().slice(-4)}));
+      for(const expected of [original.requirement,diagnostic,'component-blueprint.yaml',featureFilePath(root,feature,'feature.yaml')])assert(instruction.includes(expected),expected);
       assert.deepEqual((request.snapshot_options?.ownedPrefixes??[]).map(file=>path.resolve(root,file)),[featureFilePath(root,feature,'feature.yaml')]);
       const existingSource=fs.readFileSync(path.join(root,'02-Feature/Inbox/src/main/ets/InboxStore.ts'),'utf8');assert(existingSource.includes('markRead(')&&!existingSource.includes('markAllRead('));
       const handoff=buildChangeUnitGoalRequest(root,asChangeUnitArtifact(unit.changeUnit));
-      const prepared=prepareFeatureScopeCandidate({projectRoot:root,frameworkRoot:framework.frameworkRoot,feature,completionTarget:'feature',requestedResults:[handoff.requirement],requestedPhases:original.initial_design.requested_phases,
-        requirement:original.requirement,requirementSourceFiles:original.requirement_source_files,overwrite:true,impact:{userVisibleBehaviorChange:false,reason:'已消费本次scope任务、原需求及真实源码；本次仅内部API，无新增最终用户可操作入口。保留原请求阶段及完整验收义务。',basisPaths:['02-Feature/Inbox/index.ts','02-Feature/Inbox/src/main/ets/InboxStore.ts']}});
+      const currentUnit=enumerateCanonicalChangeUnits(root,original.feature).find(row=>row.changeUnit.change_unit_id===unit.changeUnit.change_unit_id);assert(currentUnit);
+      const prepared=prepareFeatureScopeCandidate(prepareChangeUnitScopeInput({projectRoot:root,frameworkRoot:framework.frameworkRoot,changeUnit:asChangeUnitArtifact(currentUnit.changeUnit),requestedResults:[handoff.requirement],requestedPhases:initialDesignPhasePolicy(root,framework.frameworkRoot,original).explicit,
+        requirement:original.requirement,requirementSourceFiles:original.requirement_source_files,overwrite:true,impact:{userVisibleBehaviorChange:false,reason:'已消费本次scope任务、原需求及真实源码；本次仅内部API，无新增最终用户可操作入口。保留原请求阶段及完整验收义务。',basisPaths:['02-Feature/Inbox/index.ts','02-Feature/Inbox/src/main/ets/InboxStore.ts']}}));
       assert.equal(prepared.scope.unresolved.length,0,'the real scope resolver must accept the entire regenerated input');
       const profile=loadResolvedProfile(root,loadFrameworkConfig(root),framework.frameworkRoot);
       const prerequisites=goalRequiredPrerequisites(prepared.scope.phase_chain as FeaturePhase[],profile);prerequisites.delete('agent_adapter');
       const gate=evaluatePersonalSetupGate(root,{requiredPrerequisites:prerequisites});assert(!gate.ok);assert.equal(gate.code,'deveco_toolchain_missing');
       let blocked=false;
       try{
-        await runGoalModeSessionStep({...options,requestPath:reference.path,report:{status:'passed',phase:request.context.phase,details:'仅在实际scope请求后用正式prepare-scope生产函数整份重算候选；不改P1或写任何施工PASS。'}});
+        await runGoalModeSessionStep({...options,requestPath:reference.path,report:{status:'passed',phase:request.context.phase,details:'仅在实际scope请求后用正式prepare-scope生产函数整份重算候选；不改P1或写任何施工PASS。'}},
+          {expectedInterruption:'[goal-runner] preflight BLOCKER: '+gate.message});
       }catch(error){
         assert(error instanceof Error);assert.equal(error.message,'[goal-runner] preflight BLOCKER: '+gate.message);
         assert(error.stack?.includes('at runGoalPreflight ('),'the original machine preflight must be the rejecting source');blocked=true;
@@ -81,13 +101,15 @@ const cases:Array<{name:string;run():Promise<void>}>= [{
       assert.equal(childEvents.filter(event=>event.type==='run_created').length,1);
       assert(!childEvents.some(event=>['agent_invoke_start','harness_start','harness_end','phase_verdict'].includes(event.type)),'no construction author or machine PASS may bypass the missing toolchain');
       assert.deepEqual([sha(blueprint),sha(unit.canonicalPath)],protectedBefore);
-      const newStarts=readEvents().slice(beforeEvents.length).filter(event=>event.type==='agent_invoke_start');assert.equal(newStarts.length,1);assert.equal(newStarts[0].phase,request.context.phase);
-      assert.equal(after.totalTurns,before.totalTurns+1);assert(after.priorActiveMs>=before.priorActiveMs);assert.equal(child.budget.max_total_turns,30);assert.equal(child.budget.wall_clock_minutes,120);assert.equal(child.unattended.timeout_seconds,900);
+      const newStarts=readEvents().slice(beforeEvents.length).filter(event=>event.type==='agent_invoke_start');assert.equal(newStarts.length,1+actualQuestions);assert.equal(newStarts.at(-1)!.phase,request.context.phase);
+      assert.equal(after.totalTurns,before.totalTurns+1+actualQuestions);assert(after.priorActiveMs>=before.priorActiveMs);assert.equal(child.budget.max_total_turns,30);assert.equal(child.budget.wall_clock_minutes,120);assert.equal(child.unattended.timeout_seconds,900);
       // This consumer stops at child birth; it claims no Node, device, phase, or P3 acceptance.
     }finally{
       for(const file of Object.keys(require.cache))if(file.startsWith(root+path.sep))delete require.cache[file];clearFrameworkConfigCache();
       if(priorTrust===undefined)delete process.env.MAISON_GOAL_CHECKPOINT_DIR;else process.env.MAISON_GOAL_CHECKPOINT_DIR=priorTrust;
-      assert(root.startsWith(fs.realpathSync(os.tmpdir())+path.sep));fs.rmSync(root,{recursive:true,force:true,maxRetries:5,retryDelay:100});
+      assert(root.startsWith(fs.realpathSync(os.tmpdir())+path.sep));
+      if(process.env.REAL_CHAIN_DEBUG==='1')console.log(`[initial-scope-replay] kept root ${root}`);
+      else fs.rmSync(root,{recursive:true,force:true,maxRetries:5,retryDelay:100});
     }
   },
 }];

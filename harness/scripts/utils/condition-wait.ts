@@ -128,6 +128,8 @@ export async function waitForConditionRecovery(opts: {
   let probeReadyCount = 0;
   let lastReason: string | undefined;
   for (;;) {
+    // 开始事件写入或睡眠也可能耗尽余额：每次发起探测前都核对同一截止。
+    if (Date.now() - startMs >= limitMs) break;
     let result: ConditionProbeResult;
     try {
       result = opts.runProbe();
@@ -137,8 +139,9 @@ export async function waitForConditionRecovery(opts: {
     lastReason = result.reason;
     if (result.ready) probeReadyCount += 1;
     // 同步探针本身可能把余额耗尽：余额已尽就不再重查（不把非正余额交给原检查），按超时收尾。
-    if (limitMs - (Date.now() - startMs) <= 0) break;
-    const rechecked = result.ready ? await opts.recheck(limitMs - (Date.now() - startMs)) : false;
+    const recheckRemainingMs = limitMs - (Date.now() - startMs);
+    if (recheckRemainingMs <= 0) break;
+    const rechecked = result.ready ? await opts.recheck(recheckRemainingMs) : false;
     if (rechecked === true) {
       opts.emit({ type: 'condition_wait_ready', ...base, waited_ms: Date.now() - startMs });
       return true;
@@ -147,8 +150,6 @@ export async function waitForConditionRecovery(opts: {
     const remainingMs = limitMs - (Date.now() - startMs);
     if (remainingMs <= 0) break;
     await new Promise((resolve) => setTimeout(resolve, Math.min(pollMs, remainingMs)));
-    // 批二 review R2：睡醒已到上限就不再探测、不再重查（原先会在上限时刻多探一次并重查）。
-    if (Date.now() - startMs >= limitMs) break;
   }
   opts.emit({
     type: 'condition_wait_timeout',

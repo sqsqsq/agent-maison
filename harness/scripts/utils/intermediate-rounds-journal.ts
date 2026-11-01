@@ -17,6 +17,7 @@ import * as path from 'path';
 import { featureDir } from '../../config';
 import {
   canonicalJson,
+  computeRowHash,
   evaluateVisualRoundOverRows,
   readVisualRoundsLedger,
   appendVisualRound,
@@ -215,7 +216,16 @@ export function replayJournalIntoLedger(args: {
   const { rows: ledgerRows } = readVisualRoundsLedger(args.ledgerPath);
   const committed: VisualRoundRow[] = [];
   for (const r of mine) {
-    const evalRows = [...ledgerRows, ...committed];
+    const originalAt = ledgerRows.findIndex(row => row.row_hash === r.claimed.row_hash);
+    if (originalAt >= 0) {
+      const { row_hash, ...original } = ledgerRows[originalAt];
+      if (computeRowHash(original) !== row_hash) {
+        mismatches.push(`sequence=${r.sequence} 已提交行 row_hash 重算不符`);
+        continue;
+      }
+    }
+    // Replay an already committed claim at its original prefix, not a later duplicate's state.
+    const evalRows = originalAt >= 0 ? ledgerRows.slice(0, originalAt) : [...ledgerRows, ...committed];
     const ev = evaluateVisualRoundOverRows(evalRows, { ...r.round_input, now: () => r.at });
     if (ev.disposition === 'duplicate') {
       // 与已收编/已有行同 round_key——journal 自带 claimed 应与重放一致
@@ -243,7 +253,7 @@ export function replayJournalIntoLedger(args: {
       mismatches.push(`sequence=${r.sequence} 重放结果与 claimed 不符（${fields}）——${attribution}`);
       continue;
     }
-    committed.push(ev.row);
+    if (originalAt < 0) committed.push(ev.row);
   }
   if (mismatches.length > 0) return { ok: false, committed: [], mismatches, replayed: 0 };
   if (!args.dryRun) {

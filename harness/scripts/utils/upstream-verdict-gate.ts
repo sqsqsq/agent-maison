@@ -1,5 +1,7 @@
 // ============================================================================
 // upstream-verdict-gate.ts — 跨阶段负面裁决传播（blind-visual-hardening d1 切片一）
+// P2：已解析调用只核真实输入/控制依赖，不要求上游phase closed。没有当前解析输入的
+// 旧消费者仍使用下面的兼容读取，P3逐一切换；负面事实始终留在共同完成处置中。
 // ----------------------------------------------------------------------------
 // 背景（bc-openCard 二轮事故）：review 终态「不通过+3 BLOCKER」，但 review summary
 // verdict:PASS/closed，ut/testing 照常启动直至「达标可发布」。本 util 让下游 phase
@@ -21,7 +23,10 @@ import { SUMMARY_ASSURANCE_SCHEMA_VERSIONS, validateSummaryV11 } from './quality
 import { scopeDependencyEdges, type ExecutionScope } from './execution-scope';
 import type { WorkflowSpec } from '../../workflow-loader';
 import { repairResponsibilityContext, resolveRepairResponsibility, readRepairDependencyContext, type RepairResponsibilityContext } from './repair-responsibility';
-import { dropRedundantAggregates, requiredSummaryCheckGaps } from './check-disposition';
+import { dropRedundantAggregates, requiredSummaryCheckGaps, phaseCompletionProblems } from './check-disposition';
+import type { ResolvedPhaseInputs } from './capability-resolution';
+import { inferLegacyProjectRoot, resolveDependencyPath } from './project-relative-path';
+import { sha256File } from './phase-evidence-manifest';
 
 /** 回退链序（workflow SSOT 不可解析时的保守缺省——与 spec-driven full 轨一致） */
 export const FEATURE_PHASE_ORDER = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'] as const;
@@ -328,8 +333,25 @@ export function checkUpstreamVerdictGate(opts: {
   feature: string;
   phase: string;
   runId?: string;
+  resolvedInputs?: ResolvedPhaseInputs;
 }): CheckResult[] {
   const id = 'upstream_verdict_gate';
+  if (opts.resolvedInputs) {
+    const inputs = opts.resolvedInputs;
+    const gaps: string[] = [];
+    if (inputs.phase !== opts.phase || !('feature' in inputs.context.subject) || inputs.context.subject.feature !== opts.feature) gaps.push('当前检查的输入身份不匹配');
+    for (const value of Object.values(inputs.values)) {
+      if (value.state !== 'resolved') continue; // Required/optional absence is owned by capabilityResolutionChecks.
+      const legacyRoot = inferLegacyProjectRoot(opts.projectRoot, value.binding);
+      for (const dependency of value.binding.dependencies) {
+        const file = resolveDependencyPath(opts.projectRoot, dependency.path, legacyRoot);
+        if (fs.existsSync(file) !== dependency.exists || sha256File(file) !== dependency.sha256) gaps.push(`实际输入已变化：${file}`);
+      }
+    }
+    return [{ id: 'upstream_verdict_gate', category: 'structure', description: '当前检查真实输入绑定可用（不要求上游阶段已闭环）', severity: 'BLOCKER',
+      status: gaps.length ? 'SKIP' : 'PASS', details: gaps.length ? gaps.join('\n') : '已核当前输入；其它职责的FAIL、未知和未完项由同一完成评估保留，不冒充上游PASS。',
+      ...(gaps.length ? { failure_kind: 'framework_bug', blocking_class: 'framework_internal', suggestion: '重读当前真实输入并只补受影响检查；不要改写上游裁决或伪造PASS。' } : {}) }];
+  }
   const description =
     '跨阶段负面裁决传播门禁（上游机器裁决非 PASS / blocker 未清 / 证据链不新鲜 → 下游不得启动）';
   const resolution = resolveUpstreamPhaseChain(opts.projectRoot, opts.feature, opts.runId, opts.phase, opts.frameworkRoot);
@@ -354,6 +376,16 @@ export function checkUpstreamVerdictGate(opts: {
   const upstream = upstreamPhaseDependencies(opts.projectRoot, opts.feature, opts.phase, resolution);
   if (!upstream.length && (!resolution.degraded || resolution.workflow)) return [];
   const views = upstream.map(p => readUpstreamPhaseView(opts.projectRoot, opts.feature, p, opts.phase, opts.runId, opts.frameworkRoot));
+  let resolvedNegatives: UpstreamPhaseView[] = [];
+  const negatives = views.filter(view => view.summaryExists && (view.verdict !== 'PASS' || view.blockerIds.length > 0));
+  if (negatives.length) {
+    try {
+      const { resolveCompletionDisposition } = require('./verify-feature-completion') as typeof import('./verify-feature-completion');
+      const current = resolveCompletionDisposition({ projectRoot: opts.projectRoot, frameworkRoot: opts.frameworkRoot ?? resolution.frameworkRoot,
+        feature: opts.feature, chain: [...resolution.chain], runId: opts.runId, workflow: resolution.workflow, executionScope: resolution.scope });
+      resolvedNegatives = negatives.filter(view => phaseCompletionProblems(current, [view.phase]).length === 0);
+    } catch { /* Without current proof, retain the original negative; never infer a refutation. */ }
+  }
   let responsibility: RepairResponsibilityContext | undefined;
   const pendingRepairs = views.filter(view => {
     if (!view.summaryExists || (view.verdict === 'PASS' && !view.blockerIds.length)) return false;
@@ -364,7 +396,7 @@ export function checkUpstreamVerdictGate(opts: {
       return upstreamRepairIsCurrentWork(opts, view, responsibility);
     } catch { return false; }
   });
-  const violations = evaluateUpstreamViews(views.filter(view => !pendingRepairs.includes(view)));
+  const violations = evaluateUpstreamViews(views.filter(view => !pendingRepairs.includes(view) && !resolvedNegatives.includes(view)));
   const consumed = views.filter(v => v.summaryExists).map(v => v.phase);
   const skipped = views.filter(v => !v.summaryExists).map(v => v.phase);
 
@@ -378,6 +410,7 @@ export function checkUpstreamVerdictGate(opts: {
       details: [
         `当前实际依赖可执行；未闭合的评审/验证结论仍由完成检查保留。`,
         pendingRepairs.length ? `本阶段承接待修对象：${pendingRepairs.map(view => view.phase).join(', ')}；原失败不撤销，修复后回原阶段复验。` : null,
+        resolvedNegatives.length ? `当前共同处置已核实关闭/披露：${resolvedNegatives.map(view => view.phase).join(', ')}；原始负面报告保留。` : null,
         consumed.length > 0 ? `已消费：${consumed.join(', ')}` : null,
         skipped.length > 0 ? `未跑（跳过，由 receipt/goal preflight 链负责该跑未跑治理）：${skipped.join(', ')}` : null,
       ].filter(Boolean).join('\n'),
@@ -400,7 +433,7 @@ export function checkUpstreamVerdictGate(opts: {
       ...(axisLines.length > 0 ? ['多轴定位（quality_axes 信息面）：', ...axisLines] : []),
     ].join('\n'),
     suggestion:
-      '回到对应上游阶段修复问题并重跑其 harness（summary verdict 回到 PASS 且 blocker 清空）后再启动本阶段；' +
+      '回到对应责任方修复或补核上述当前未完项后再检查；已被当前证据反证/披露的原 FAIL 无需改写；' +
       '不得手改上游 summary.json——证据链新鲜度重算会将篡改判为 tampered。',
     failure_kind: 'upstream_negative_verdict',
     blocking_class: 'product_verdict',

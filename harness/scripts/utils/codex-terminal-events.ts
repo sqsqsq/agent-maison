@@ -40,18 +40,18 @@ export function extractProviderSessionId(record: Record<string, unknown>, adapte
 }
 
 /** A completed tool envelope is an observation boundary, never a progress or quality verdict. */
-export function isProviderToolResult(record: Record<string, unknown>, adapterName?: string): boolean {
-  if (adapterName === 'codex') {
+export function isProviderToolResult(record: Record<string, unknown>, adapterName?: string, terminalParser: TerminalEventParser = resolveTerminalEventParser(adapterName)): boolean {
+  if (adapterName === 'codex' || terminalParser === 'codex_turn_jsonl') {
     const item = record.item as Record<string, unknown> | undefined;
     return record.type === 'item.completed' && typeof item?.type === 'string'
       && ['command_execution', 'mcp_tool_call', 'file_change', 'web_search'].includes(item.type);
   }
-  if (adapterName && isClaudeKernelAdapter(adapterName)) {
+  if (adapterName && isClaudeKernelAdapter(adapterName) || terminalParser === 'claude_result_jsonl') {
     const content = (record.message as { content?: unknown } | undefined)?.content;
     return record.type === 'user' && Array.isArray(content)
       && content.some(block => block && typeof block === 'object' && block.type === 'tool_result');
   }
-  return adapterName === 'deepseek-harness' && record.type === 'tool_result'
+  return (adapterName === 'deepseek-harness' || terminalParser === 'deepseek_run_jsonl') && record.type === 'tool_result'
     && typeof record.callId === 'string' && ['completed', 'error'].includes(String(record.status));
 }
 

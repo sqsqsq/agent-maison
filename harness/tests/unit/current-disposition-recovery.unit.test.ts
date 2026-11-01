@@ -22,7 +22,8 @@ import { clearFrameworkConfigCache } from '../../config';
 import { makeVerifierProject, FRAMEWORK_SOURCE_ROOT } from '../utils/verifier-project-fixture';
 import { fixture as requestFixture } from './request-entry.unit.test';
 import { prepareExplicitRequest } from '../../scripts/utils/capability-resolution-entry-input';
-import { runGoalRuntimeChain, setupGoalRuntimeHost } from './goal-runner-testing-integrity.unit.test';
+import { runGoalRuntimeChain, setupGoalRuntimeHost, seedSignalHost, writeCurrentSignals, currentSignalGateChecks, PRODUCT_FILE } from './goal-runner-testing-integrity.unit.test';
+import { computeDefectFingerprint } from '../../../profiles/hmos-app/harness/visual-diff-check';
 import { readRunControl } from '../../scripts/utils/goal-run-control';
 import type { WorkUnitExecutionContext } from '../../scripts/utils/goal-phase-executor';
 import { setupRunlessProject } from './execution-scope.unit.test';
@@ -123,7 +124,62 @@ export async function prepareSamePhaseRequiredWorkCase(executeAuthor?: (ctx: Par
   return { project, target, acceptance, requirement, options, observations };
 }
 
-const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
+const cases: Array<{ name: string; run(): void | Promise<void> }> = [
+  ...(['legacy', 'typed'] as const).map(kind => ({
+    name: `R4 current object coverage ${kind} naturally closes the no-op repair loop without budget or quiesce`,
+    async run() {
+      const { root } = setupGoalRuntimeHost('codex');
+      const original = fs.readFileSync(path.join(root, PRODUCT_FILE));
+      const signal = { class: 'shape_mismatch' as const, element: 'hc_page_title', bbox: [0.1, 0.2, 0.3, 0.4],
+        severity: 'major' as const, note: 'R4 original title mismatch', must_fix_refs: [0] };
+      const fingerprint = computeDefectFingerprint('add_card_home', signal);
+      const candidate = { id: 'legacy-visual-object', category: 'coding', files: [PRODUCT_FILE],
+        summary: 'Original legacy finding still requires current object verification', item_fingerprint: 'a'.repeat(64), source_phase: 'testing' };
+      let delivered = false, objectChecks = 0, completedNoProgress = false;
+      const classifier = require('../../scripts/utils/goal-failure-classifier') as typeof import('../../scripts/utils/goal-failure-classifier');
+      const evaluate = classifier.evaluateCompletionProgress;
+      classifier.evaluateCompletionProgress = input => {
+        const result = evaluate(input);
+        if (input.current.checkFamilies?.includes('testing') && input.current.completed && input.feedbackDelivered && input.authorReturned && result.halt) completedNoProgress = true;
+        return result;
+      };
+      try {
+        if (kind === 'typed') seedSignalHost(root);
+        const probe = await runGoalRuntimeChain(root, { adapter: 'codex',
+          ...(kind === 'typed' ? { freshRequirement: '真机测试银行卡开卡流程；页面必须像素级还原参考截图，不接受降级，达不到不得继续交付。' } : {}),
+          onCoding: ctx => {
+            if (ctx.attempt > 1) {
+              assert(ctx.prompt.includes(kind === 'typed' ? signal.note : candidate.id), 'the real owner must receive its original finding');
+              delivered = true;
+            }
+          },
+          ...(kind === 'typed' ? {
+            onTesting: () => writeCurrentSignals(root, [signal], [fingerprint]),
+            testingGateChecks: (ctx: Parameters<typeof currentSignalGateChecks>[0]) => {
+              const checks = currentSignalGateChecks(ctx);
+              const visual = checks.find(check => check.id === 'visual_diff')?.structured as { fingerprintable?: boolean; defect_fingerprints?: string[] };
+              assert(visual?.fingerprintable && visual.defect_fingerprints?.includes(fingerprint), 'the actual gate must bind the same typed visual object');
+              objectChecks++;
+              return checks;
+            },
+          } : { testingSummaryExtras: { repair_candidates: [candidate] } }),
+        });
+        assert(delivered && fs.readFileSync(path.join(root, PRODUCT_FILE)).equals(original), 'the owner must actually return without a product edit');
+        assert.notEqual(probe.exitCode, 0);
+        assert(!probe.events.some(event => event.type === 'run_end' && event.status === 'INTERRUPTED'
+          || event.type === 'phase_halt' && String(event.halt_reason).startsWith('budget_')), 'neither an external stop nor a hard budget proves convergence');
+        if (kind === 'typed') {
+          assert(objectChecks >= 2, 'the original object must really be rechecked after owner return');
+          assert(completedNoProgress, 'the completed typed-object predicate must observe delivered feedback and a real author return');
+          assert(probe.events.some(event => event.type === 'phase_halt' && String(event.halt_reason).startsWith('no_progress')), 'the common completed-object comparison must pause the same deficit');
+        } else {
+          assert(probe.events.some(event => event.type === 'phase_halt' && event.halt_reason === 'executor_waiting' && event.run_disposition === 'WAITING'), 'uncovered legacy evidence must naturally wait for actual verification');
+          const summary = JSON.parse(fs.readFileSync(path.join(root, 'doc/features/bc-openCard/testing/reports/summary.json'), 'utf8'));
+          assert(summary.repair_candidates.some((row: { id: string }) => row.id === candidate.id), 'unknown verification must not erase the original finding');
+        }
+      } finally { classifier.evaluateCompletionProgress = evaluate; fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+    },
+  })), {
   name: 'c6 verifier model consumes the complete current request with process or session transport and rejects an undelivered or wrong request',
   async run() {
     const { buildVerifierRequest, renderVerifierRequest, verifierRequestFilename } = await import('../../scripts/utils/verifier-request');
@@ -177,7 +233,8 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
       assert(fixture.observations.verifierRequests.length >= 2, 'original verifier must judge the changed owned artifact');
       assert.equal(summary.verdict, 'PASS'); assert.equal(summary.closure_status, 'closed');
       assert.equal(summary.repair_candidates?.length ?? 0, 0);
-      assert.equal(result.exitCode, 2, 'legacy Goal honestly reports PARTIAL for a spec-only slice; the authorized stage itself must be closed');
+      assert.equal(result.exitCode, 0, 'the current verified spec endpoint must complete its authorized slice');
+      assert(result.events.some(event => event.type === 'run_end' && event.status === 'CHAIN_SLICE_COMPLETED'));
       assert(result.events.some(event => event.type === 'phase_verdict' && event.phase === 'spec' && event.verdict === 'PASS' && event.action === 'advance'));
       assert(!result.invokedPhases.some(phase => ['coding', 'review', 'ut', 'testing'].includes(phase)), 'the authorized spec endpoint does not expand scope');
     } finally { fs.rmSync(fixture.project.root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
@@ -230,10 +287,13 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
 
       const verification = resolveCurrentDisposition({ endpoint: 'feature-completion', phases: [{ phase: 'review', verdict: 'FAIL', schemaCurrent: true,
         closureCommitted: false, openFindings: [{ id: coding.id, detail: coding.summary, owner: 'review', verificationRequired: true }] }] });
-      const pending = buildNextLine({ verdict: 'FAIL', next_action: 'fix_verifier_findings_then_rerun_harness', repair_candidates: [coding] },
+      const pendingSummary = { verdict: 'FAIL', next_action: 'fix_verifier_findings_then_rerun_harness', repair_candidates: [coding] };
+      const pending = buildNextLine(pendingSummary,
         'review', f.feature, { responsibility, currentDisposition: verification });
-      assert(pending.includes('当前待核任务') && pending.includes('责任=review') && pending.includes('原始 FAIL 结论保留'), pending);
-      assert(!pending.includes('当前本职责必修任务') && !pending.includes('harness-runner.ts --phase review'), pending);
+      assert(verification.completionBlocking.some(problem => problem.id === `open_finding:${coding.id}` && problem.action === 'verify' && problem.owner === 'review'));
+      assert(pending.includes(coding.id) && pending.includes(coding.summary) && pending.includes('动作=verify') && pending.includes('责任=review'), pending);
+      assert.equal(pendingSummary.verdict, 'FAIL', 'rendering the current verification task cannot rewrite the raw failure');
+      assert(!verification.completionEligible && !pending.includes('当前适用验收没有未完项') && !pending.includes('harness-runner.ts --phase review'), pending);
 
       const spec = { id: 'SPEC-NEXT', category: 'spec' as const, files: [`doc/features/${f.feature}/spec.md`],
         summary: 'acceptance.yaml:8 AC-1 requires its approved behavior', item_fingerprint: 's'.repeat(64), source_phase: 'spec' };
@@ -244,16 +304,22 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
         for (const repair_candidates of [[spec], [spec, coding]]) {
           const disposition = resolveCurrentDisposition({ endpoint: 'feature-completion', phases: [{ phase: 'spec', verdict: 'FAIL',
             schemaCurrent: true, closureCommitted: closure_status === 'closed',
-            failingChecks: blockers.map(blocker => ({ id: blocker.id, status: 'FAIL', severity: 'BLOCKER' })),
+            failingChecks: blockers.map(blocker => ({ id: blocker.id, status: 'FAIL', severity: 'BLOCKER', details: blocker.suggestion ?? blocker.details_excerpt })),
             openFindings: repair_candidates.map(candidate => ({ id: candidate.id, detail: candidate.summary,
-              owner: resolveRepairResponsibility({ ...responsibility, target: candidate }).owner ?? undefined, source_phase: candidate.source_phase })) }] });
-          const line = buildNextLine({ verdict: 'FAIL', closure_status, next_action: 'fix_verifier_findings_then_rerun_harness', blockers, repair_candidates },
+              files: candidate.files, owner: resolveRepairResponsibility({ ...responsibility, target: candidate }).owner ?? undefined, source_phase: candidate.source_phase })) }] });
+          const rawSummary = { verdict: 'FAIL', closure_status, next_action: 'fix_verifier_findings_then_rerun_harness', blockers, repair_candidates };
+          const line = buildNextLine(rawSummary,
             'spec', f.feature, { outerGoalRerun, responsibility, currentDisposition: disposition });
-          assert(line.includes('当前本职责必修任务') && line.includes('责任=spec') && line.includes(spec.id), line);
-          for (const blocker of blockers) assert(line.includes(blocker.id), line);
-          assert.equal(line.includes('他职责交接任务'), repair_candidates.length === 2, line);
-          assert(line.includes(outerGoalRerun ? 'goal runtime 正式 gate' : 'harness-runner.ts --phase spec'), line);
-          assert(!line.includes('停下等待用户指令'), line);
+          for (const candidate of repair_candidates) {
+            const problem = disposition.completionBlocking.find(problem => problem.id === `open_finding:${candidate.id}`);
+            assert(problem && problem.action === 'repair' && problem.owner === resolveRepairResponsibility({ ...responsibility, target: candidate }).owner);
+            assert(line.includes(candidate.id) && line.includes(candidate.summary) && line.includes(`责任=${problem.owner}`), line);
+            for (const file of candidate.files) assert(line.includes(file), line);
+          }
+          for (const blocker of blockers) assert(line.includes(blocker.id) && line.includes((blocker.suggestion ?? blocker.details_excerpt)!), line);
+          for (const problem of disposition.problems) assert(line.includes(problem.id) && line.includes(problem.detail) && line.includes(`动作=${problem.action}`), line);
+          assert.equal(rawSummary.verdict, 'FAIL');
+          assert(!disposition.completionEligible && !line.includes('当前适用验收没有未完项') && !line.includes('停下等待用户指令'), line);
         }
       }
       const gateReport = generateScriptReport(path.join(FRAMEWORK_SOURCE_ROOT, 'harness'), 'review', f.feature, f.root,
@@ -273,8 +339,12 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
     assert(currentDisposition.completionBlocking.some(problem => problem.action === 'repair' && !problem.owner && problem.phase === 'review'));
     const summary = { verdict: 'PASS', closure_status: 'open', next_action: 'fix_verifier_findings_then_rerun_harness', repair_candidates: [candidate] };
     const line = buildNextLine(summary, 'review', 'demo', { currentDisposition });
-    assert(line.includes('当前本职责必修任务') && line.includes('责任=review') && line.includes(candidate.id), line);
-    assert(line.includes('harness-runner.ts --phase review --feature demo') && !line.includes('他职责交接任务') && !line.includes('待既有责任链确定'), line);
+    const problem = currentDisposition.completionBlocking.find(problem => problem.id === `open_finding:${candidate.id}`)!;
+    assert(problem && problem.action === 'repair' && problem.owner === undefined && problem.phase === 'review');
+    assert(line.includes(candidate.id) && line.includes(candidate.summary) && line.includes('动作=repair') && line.includes('责任=当前工作单元'), line);
+    assert(!currentDisposition.completionEligible && !line.includes('当前适用验收没有未完项') && !line.includes('停下等待用户指令'), line);
+    assert(!line.includes('harness-runner.ts --phase review --feature demo') && !line.includes('check-receipt --phase review'), line);
+    assert.equal(summary.verdict, 'PASS', 'a raw machine PASS cannot erase the actual unresolved repair');
     assert.equal(summary.next_action, 'fix_verifier_findings_then_rerun_harness');
   },
 }, {
@@ -665,48 +735,102 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
   async run() {
     const reader = require('../../scripts/utils/verify-feature-completion') as typeof import('../../scripts/utils/verify-feature-completion');
     const original = reader.resolveCompletionDisposition;
+    const initial = 'export const value = 1;\n';
+    const updated = 'export const value = 2;\n';
+    const retainedDetail = 'retained verification needs the current responsibility input';
     for (const changedInput of [false, true]) {
       const { root } = setupGoalRuntimeHost('codex');
       const source = path.join(root, 'src/recovery-input.ts');
-      fs.mkdirSync(path.dirname(source), { recursive: true }); fs.writeFileSync(source, 'export const value = 1;\n');
-      let gates = 0;
+      fs.mkdirSync(path.dirname(source), { recursive: true }); fs.writeFileSync(source, initial);
+      const checkedInputs: string[] = [];
+      let cachedObservation: { input: string; start: number; gateEnd: number } | undefined;
       try {
         reader.resolveCompletionDisposition = opts => {
           const result = original(opts);
+          if (opts.projectRoot !== root || opts.currentResults) return result;
           const summaryPath = path.join(featurePhaseReportsDir(root, 'bc-openCard', 'spec'), 'summary.json');
-          const closed = fs.existsSync(summaryPath) && JSON.parse(fs.readFileSync(summaryPath, 'utf8')).closure_status === 'closed';
+          const summary = fs.existsSync(summaryPath) ? JSON.parse(fs.readFileSync(summaryPath, 'utf8')) : null;
           const runDir = opts.runId && path.join(root, 'doc/features/bc-openCard/goal-runs', opts.runId);
           const eventsFile = runDir && path.join(runDir, 'events.jsonl');
-          const history = eventsFile && fs.existsSync(eventsFile)
+          const history: Array<{ type?: string; phase?: string; verdict?: string }> = eventsFile && fs.existsSync(eventsFile)
             ? fs.readFileSync(eventsFile, 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line)) : [];
-          const lastPhase = history.reverse().find(event => event.phase === 'spec' && ['phase_start', 'phase_verdict'].includes(event.type));
-          if (opts.projectRoot !== root || opts.currentResults || !closed || lastPhase?.type !== 'phase_verdict'
-            || lastPhase?.verdict !== 'PASS' || changedInput && gates >= 3) return result;
-          // A retained verifier conclusion is the scheduler input; the real gate and closure writer
-          // below still generate reports/manifests, including the file the PASS check executed.
+          const lastPhase = [...history].reverse().find(event => event.phase === 'spec' && ['phase_start', 'phase_verdict'].includes(event.type ?? ''));
+          const currentInput = fs.readFileSync(source, 'utf8');
+          if (summary?.closure_status !== 'closed' || lastPhase?.type !== 'phase_verdict'
+            || lastPhase.verdict !== 'PASS' || currentInput !== initial) return result;
+          assert(!summary.verifier_request, 'this retained-claim variant deliberately has no executable current request');
+          const startAt = history.map(event => event.type === 'phase_start' && event.phase === 'spec').lastIndexOf(true);
+          const gateEndAt = history.map(event => event.type === 'harness_end' && event.phase === 'spec').lastIndexOf(true);
+          const callAt = history.map(event => event.type === 'run_start').lastIndexOf(true);
+          const firstPhaseAt = history.findIndex((event, index) => index > callAt && event.type === 'phase_start' && event.phase === 'spec');
+          const terminalRecovery = firstPhaseAt >= 0 && startAt > firstPhaseAt && startAt > gateEndAt;
+          // Observation-only regression trap: a later replay of the SAME already-observed bound
+          // result, with no new input/request/gate, is a loop. Throwing fails the test; it never
+          // supplies WAITING/completed or a production retry/count/time allowance.
+          if (terminalRecovery && cachedObservation && cachedObservation.input === currentInput && cachedObservation.gateEnd === gateEndAt
+            && startAt > cachedObservation.start) assert.fail('the same retained claim rescheduled an already-observed bound result without a new input, request or verification');
+          if (terminalRecovery && gateEndAt >= 0) cachedObservation = { input: currentInput, start: startAt, gateEnd: gateEndAt };
           const problem = { phase: 'spec', id: 'lineage_fresh', action: 'verify' as const, affects: 'completion' as const,
-            severity: 'BLOCKER' as const, owner: 'spec', detail: 'retained verification needs the current responsibility input' };
+            severity: 'BLOCKER' as const, owner: 'spec', detail: retainedDetail };
           return { ...result, problems: [...result.problems, problem], completionBlocking: [...result.completionBlocking, problem], completionEligible: false };
         };
-        const probe = await runGoalRuntimeChain(root, { frameworkRoot: FRAMEWORK_SOURCE_ROOT, freshEndPhase: 'spec', adapter: 'codex', viaRuntimeClass: true,
+        const options: NonNullable<Parameters<typeof runGoalRuntimeChain>[1]> = {
+          frameworkRoot: FRAMEWORK_SOURCE_ROOT, freshEndPhase: 'spec', adapter: 'codex', viaRuntimeClass: true,
           onHarnessSummary: ({ phase }) => {
             if (phase !== 'spec') return null;
-            gates++;
-            assert(gates <= 4, 'unchanged verification input must not create another gate-only recovery round');
-            if (changedInput && gates === 2) fs.writeFileSync(source, 'export const value = 2;\n');
+            const input = fs.readFileSync(source, 'utf8'); checkedInputs.push(input);
             return { checks: [{ id: 'spec_file_exists', category: 'structure', description: 'executed responsibility input',
-              status: 'PASS', severity: 'BLOCKER', details: 'current gate executed src/recovery-input.ts', affected_files: ['src/recovery-input.ts'] }] };
+              status: 'PASS', severity: 'BLOCKER', details: 'actual input read: ' + input, affected_files: ['src/recovery-input.ts'] }] };
           },
-        });
-        const repairs = probe.events.filter(event => event.type === 'phase_backtrack_requested');
-        assert.equal(probe.invokedPhases.filter(phase => phase === 'spec').length, 1, 'verification does not rewrite the phase product');
+          onOutOfChain: () => { assert.fail('a retained claim without a real signed request must not manufacture an independent invocation'); },
+        };
+        const first = await runGoalRuntimeChain(root, options);
+        const gap = first.events.find(event => event.type === 'phase_halt' && event.halt_reason === 'executor_waiting'
+          && event.run_disposition === 'WAITING' && String(event.halt_guidance).includes('产品未知'));
+        assert(gap, JSON.stringify(first.events.slice(-6)));
+        const guidance = String(gap.halt_guidance);
+        assert(guidance.includes(retainedDetail) && guidance.includes('解除条件') && /request|可执行请求/.test(guidance),
+          'the original publisher/framework gap must name the retained claim and a concrete resumable release condition');
+        assert(!first.events.some(event => event.type === 'run_end' && ['COMPLETED', 'CHAIN_SLICE_COMPLETED'].includes(String(event.status))),
+          'a missing executable verification request cannot become a completed product');
+        assert(!first.events.some(event => event.type === 'phase_halt' && /budget|no_progress/.test(String(event.halt_reason))),
+          'an unknown verification claim is neither budget exhaustion nor a completed product no-progress evaluation');
+        const initialAuthors = first.events.filter(event => event.type === 'agent_invoke_start' && event.phase === 'spec').length;
+        const initialGates = first.events.filter(event => event.type === 'harness_start' && event.phase === 'spec').length;
+        assert.equal(initialAuthors, 1, 'verification must retain the genuine completed main invocation');
+        assert.equal(initialGates, 1, 'the first recovery may observe the original bound result; it must not rerun an unchanged gate');
+        assert.deepStrictEqual(checkedInputs, [initial]);
+        // The real business input changes BETWEEN public calls. A cached checker callback and
+        // a pure reader never author the input or clear the claim because a counter advanced.
+        if (changedInput) fs.writeFileSync(source, updated);
+        cachedObservation = undefined;
+        const resumeGuard = require('../../scripts/utils/goal-runner-phase') as typeof import('../../scripts/utils/goal-runner-phase');
+        const originalGuard = resumeGuard.checkTerminalResumeGuard;
+        let next: Awaited<ReturnType<typeof runGoalRuntimeChain>>;
+        try {
+          // Keep the production resume decision and explicit continuation; isolate its old cooldown
+          // as in the existing waiting tests instead of sleeping or changing the original events.
+          resumeGuard.checkTerminalResumeGuard = input => originalGuard({ ...input, cooldownMinutes: 0 });
+          next = await runGoalRuntimeChain(root, { ...options, resume: path.basename(first.reportDir), noAutoForce: true, forceResume: true });
+        } finally { resumeGuard.checkTerminalResumeGuard = originalGuard; }
+        assert.equal(next.reportDir, first.reportDir, 'continue the same original work');
+        assert.equal(next.events.filter(event => event.type === 'agent_invoke_start' && event.phase === 'spec').length, initialAuthors,
+          'changed verification inputs permit a fresh gate, not a new author');
+        const newEvents = next.events.slice(first.events.length);
+        assert(!newEvents.some(event => event.type === 'run_end' && event.status === 'INTERRUPTED'), 'this public continuation must naturally return, not escape through the observation trap');
         if (changedInput) {
-          assert.equal(repairs.length, 2, 'a changed executed input permits a new recovery opportunity');
-          assert.equal(gates, 3); assert.equal(probe.exitCode, 0);
+          assert(newEvents.some(event => event.type === 'harness_start' && event.phase === 'spec'), 'the real input change must invalidate old gate reuse');
+          assert(checkedInputs.slice(initialGates).includes(updated), 'the actual gate must read v2 and produce its normal report/manifest');
+          assert.equal(next.exitCode, 0);
+          assert(newEvents.some(event => event.type === 'run_end' && ['COMPLETED', 'CHAIN_SLICE_COMPLETED'].includes(String(event.status))));
         } else {
-          assert.equal(repairs.length, 1, 'unchanged inputs must reach the existing repeat-recovery exit after one backtrack');
-          assert.equal(gates, 2, 'closure output resigning is not new recovery progress');
-          assert(probe.events.some(event => event.type === 'phase_halt' && event.halt_reason === 'backtrack_fingerprint_repeat'));
+          assert(!newEvents.some(event => event.type === 'harness_start' && event.phase === 'spec'), 'no new input or evidence must not pull the gate again');
+          assert.deepStrictEqual(checkedInputs, [initial]);
+          assert(!newEvents.some(event => event.type === 'run_end' && ['COMPLETED', 'CHAIN_SLICE_COMPLETED'].includes(String(event.status))));
+          assert(newEvents.some(event => event.type === 'phase_halt' && event.halt_reason === 'executor_waiting'
+            && String(event.halt_guidance).includes(retainedDetail)), 'unchanged input retains the concrete original publisher gap');
+          assert(newEvents.some(event => event.type === 'run_end' && event.status === 'HALTED' && event.run_disposition === 'WAITING'),
+            'unchanged continuation must naturally end in the current recoverable wait');
         }
       } finally {
         reader.resolveCompletionDisposition = original;
@@ -760,6 +884,56 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
     assert.equal(countAgentInvokeStarts(events), 1);
     const budget = resolveResumedBudget(events, { nextSessionStartMs: Date.parse('2026-10-25T10:10:00.000Z') });
     assert.equal(budget.totalTurns, 1); assert(budget.priorActiveMs >= 15000);
+  },
+}, {
+  name: 'R9 native case-step coverage recognizes only the matching valid current object',
+  run() {
+    const { root } = makeVerifierProject();
+    try {
+      const feature = 'demo', runId = 'native-object-coverage', source = 'src/owner-input.ts';
+      fs.mkdirSync(path.join(root, 'src'), { recursive: true }); fs.writeFileSync(path.join(root, source), 'export const value = 1;\n');
+      const ref = { trace_path: 'doc/features/demo/device-testing/trace.json', case_id: 'CASE-1', step_index: 1 };
+      const candidate = { id: 'testing_failure_routing_CASE_1_1', category: 'coding', files: [source],
+        summary: 'The original native assertion still fails', item_fingerprint: 'a'.repeat(64), source_phase: 'testing', evidence_refs: [ref] };
+      const ownerChecks: CheckResult[] = [{ id: 'spec_file_exists', category: 'structure', description: 'owner current result',
+        status: 'PASS', severity: 'BLOCKER', details: 'owner returned its work' }];
+      const native: CheckResult = { id: candidate.id, category: 'structure', description: 'current native assertion', status: 'FAIL',
+        severity: 'BLOCKER', failure_kind: 'assertion', failure_code: 'assertion_mismatch', coding_candidate: true,
+        repair_owner: 'coding', affected_files: [source], details: candidate.summary, structured: { repair_evidence: ref } };
+      const summaryOf = (phase: string, checks: CheckResult[]) => writeRunSummaryBase(root,
+        generateScriptReport(path.join(FRAMEWORK_SOURCE_ROOT, 'harness'), phase, feature, root, checks, FRAMEWORK_SOURCE_ROOT), FRAMEWORK_SOURCE_ROOT);
+      const ownerSummary = summaryOf('coding', ownerChecks), sourceSummary = { ...summaryOf('testing', [native]), repair_candidates: [candidate] };
+      writeRunEvents(root, feature, runId, [{ type: 'run_start', chain: ['coding', 'testing'] },
+        { type: 'phase_verdict', phase: 'testing', verdict: 'FAIL', action: 'backtrack_to_phase' },
+        { type: 'phase_backtrack_requested', phase: 'testing', from_phase: 'testing', to_phase: 'coding', candidates: [candidate] },
+        { type: 'agent_invoke_start', phase: 'coding', invoke_id: 'coding-current' },
+        { type: 'agent_invoke_end', phase: 'coding', invoke_id: 'coding-current', exit_code: 0 },
+        { type: 'phase_verdict', phase: 'coding', verdict: 'PASS', action: 'advance' },
+        { type: 'phase_verdict', phase: 'testing', verdict: 'PASS', action: 'advance', stale_summary: false }]);
+      const variants: Array<{ name: string; checks: CheckResult[]; findingRefs?: typeof candidate.evidence_refs; covered: boolean }> = [
+        { name: 'matching case and step', checks: [native], covered: true },
+        { name: 'another step', checks: [{ ...native, structured: { repair_evidence: { ...ref, step_index: 2 } } }], covered: false },
+        { name: 'another case', checks: [{ ...native, structured: { repair_evidence: { ...ref, case_id: 'CASE-2' } } }], covered: false },
+        { name: 'missing corresponding check', checks: ownerChecks, covered: false },
+        { name: 'another check id', checks: [{ ...native, id: 'other_native_assertion' }], covered: false },
+        { name: 'negative step', checks: [{ ...native, structured: { repair_evidence: { ...ref, step_index: -1 } } }], covered: false },
+        { name: 'unsafe trace reference', checks: [{ ...native, structured: { repair_evidence: { ...ref, trace_path: '../outside.json' } } }], covered: false },
+        { name: 'malformed reference', checks: [{ ...native, structured: { repair_evidence: [ref] } }], covered: false },
+        { name: 'no original finding reference', checks: [native], findingRefs: [], covered: false },
+      ];
+      for (const test of variants) {
+        const summary = { ...sourceSummary, repair_candidates: [{ ...candidate, evidence_refs: test.findingRefs ?? candidate.evidence_refs }] };
+        const disposition = resolveCurrentDisposition(readCurrentDispositionInput({ projectRoot: root, frameworkRoot: FRAMEWORK_SOURCE_ROOT,
+          feature, runId, chain: ['coding', 'testing'], currentResults: [{ phase: 'coding', summary: ownerSummary, checks: ownerChecks },
+            { phase: 'testing', summary, checks: test.checks }] }));
+        const problem = disposition.completionBlocking.find(row => row.id === `open_finding:${candidate.id}`);
+        assert(problem, test.name);
+        assert.equal(problem.action, test.covered ? 'repair' : 'verify', test.name);
+        assert.equal(problem.owner, test.covered ? 'coding' : 'testing', test.name);
+        if (test.covered) assert(problem.evidence?.includes('case:CASE-1#step:1'), 'I10 must consume the original case/step identity');
+        assert.equal(summary.verdict, 'FAIL', 'coverage must not rewrite the raw native failure');
+      }
+    } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
   },
 }, {
   name: 'current input keeps review findings assigned to coding instead of filtering by source phase',

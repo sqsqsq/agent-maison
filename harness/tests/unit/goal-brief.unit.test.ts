@@ -299,7 +299,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         const s2 = readSummary().verifier_subject_id;
         assert(typeof s2 === 'string' && s2 !== s1, `只有拒修记录变化也必须换 subject：${s1} → ${s2}\n${second.stdout}\n${second.stderr}`);
         const diff = diffVerifierMaterial(readVerifierMaterialOrNull(p.reportsDir, s1), readVerifierMaterialOrNull(p.reportsDir, s2));
-        assert(JSON.stringify(diff) === JSON.stringify(['goal_brief']), `材料差异只应是简报：${JSON.stringify(diff)}`);
+        assert(JSON.stringify(diff) === JSON.stringify(['goal_brief', `+doc/features/${p.feature}/coding/headless-assumptions.jsonl`]), `拒修简报与完整原论据共同绑定材料：${JSON.stringify(diff)}`);
 
         const text = renderGoalBrief(assembleGoalBrief(p.root, p.feature, { runId }), { sections: ['resolved_conflicts'] });
         const expected = text.slice(text.indexOf('### 已裁决的冲突'));

@@ -59,6 +59,7 @@ import { inferRepoLayout } from '../../repo-layout';
 import { clearFrameworkConfigCache } from '../../config';
 import { writeLocalConfig } from '../../scripts/utils/framework-local-config';
 import { VISION_CANARY_PROBE_VERSION } from '../../scripts/utils/vision-canary';
+import { withRuntimeTest } from '../utils/runtime-test-control';
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
 
@@ -373,7 +374,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         ];
         process.chdir(root);
         clearFrameworkConfigCache();
-        await goalMain();
+        await withRuntimeTest({ root: root }, () => goalMain());
         const writtenManifest = JSON.parse(
           fs.readFileSync(path.join(root, reportDir, 'manifest.json'), 'utf-8'),
         ) as { requirement?: string; requirement_source_files?: string[] };
@@ -829,7 +830,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         ];
         process.chdir(root);
         clearFrameworkConfigCache();
-        const exitCode = await goalMain();
+        const exitCode = await withRuntimeTest({ root: root }, () => goalMain());
         assert.strictEqual(exitCode, 1, `run 应以 1 退出（BLOCKER），实得 ${exitCode}`);
         const runsDir = path.join(root, 'doc/features', 'hard-400', 'goal-runs');
         const runs = fs.existsSync(runsDir) ? fs.readdirSync(runsDir).filter((n) => !n.startsWith('.')) : [];
@@ -921,7 +922,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         ];
         process.chdir(root);
         clearFrameworkConfigCache();
-        const exitCode = await goalMain();
+        const exitCode = await withRuntimeTest({ root: root }, () => goalMain());
         assert.strictEqual(exitCode, 1, `run 应以 1 退出，实得 ${exitCode}`);
         const runsDir = path.join(root, 'doc/features', feature, 'goal-runs');
         const runs = fs.existsSync(runsDir) ? fs.readdirSync(runsDir).filter((n) => !n.startsWith('.')) : [];
@@ -1018,7 +1019,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         ];
         process.chdir(root);
         clearFrameworkConfigCache();
-        const exitCode = await goalMain();
+        const exitCode = await withRuntimeTest({ root: root }, () => goalMain());
         assert.strictEqual(exitCode, 1, `run 应以 1 退出（BLOCKER），实得 ${exitCode}`);
         const runsDir = path.join(root, 'doc/features', 'hard-guardian', 'goal-runs');
         const runs = fs.existsSync(runsDir) ? fs.readdirSync(runsDir).filter((n) => !n.startsWith('.')) : [];
@@ -1138,7 +1139,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         ];
         process.chdir(root);
         clearFrameworkConfigCache();
-        await goalMain();
+        await withRuntimeTest({ root: root }, () => goalMain());
         const writtenManifest = JSON.parse(
           fs.readFileSync(path.join(root, reportDir, 'manifest.json'), 'utf-8'),
         ) as { requirement?: string; requirement_source_files?: string[] };
@@ -1207,7 +1208,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         ];
         process.chdir(root);
         clearFrameworkConfigCache();
-        await goalMain();
+        await withRuntimeTest({ root: root }, () => goalMain());
         const runsDir = path.join(root, 'doc/features', 'reqfile-fresh', 'goal-runs');
         const runs = fs.existsSync(runsDir) ? fs.readdirSync(runsDir).filter((n) => !n.startsWith('.')) : [];
         assert.ok(runs.length > 0, '应有 run 目录');
@@ -1304,7 +1305,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         ];
         process.chdir(root);
         clearFrameworkConfigCache();
-        await goalMain();
+        await withRuntimeTest({ root: root }, () => goalMain());
         const runsDir = path.join(root, 'doc/features', 'reqfile-succ', 'goal-runs');
         const runs = fs.existsSync(runsDir) ? fs.readdirSync(runsDir).filter((n) => !n.startsWith('.')) : [];
         const newRuns = runs.filter((n) => n !== srcRunId);

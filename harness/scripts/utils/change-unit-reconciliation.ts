@@ -1,5 +1,6 @@
 import { asRecord } from './component-blueprint-model';
-import { loadCanonicalBlueprint, resolveComponentBlueprintRef } from './component-blueprint-path';
+import { loadCanonicalBlueprint, resolveComponentBlueprintRefFromLoaded } from './component-blueprint-path';
+import { blockerIssues, validateComponentBlueprint } from './component-blueprint-validator';
 import { ChangeUnitArtifact } from './change-unit-model';
 
 export interface ChangeUnitCarryForwardVerdict {
@@ -31,8 +32,9 @@ export function evaluateChangeUnitCarryForward(
     return { allowed: false, reasons: [(error as Error).message] };
   }
   const blueprint = current.blueprint;
-  const admission = asRecord(asRecord(blueprint.review_summary)?.admission);
-  if (admission?.status !== 'pass') reasons.push('当前 blueprint admission 不是 pass。');
+  reasons.push(...blockerIssues(validateComponentBlueprint(blueprint, { projectRoot, canonicalPath: current.canonicalPath }))
+    .map(issue => `当前 blueprint 未完整准入：${issue.id}@${issue.path}：${issue.message}`));
+  if (reasons.length) return { allowed: false, reasons };
   for (const historicRef of historical.design_refs) {
     const currentRef = {
       ...historicRef,
@@ -42,7 +44,7 @@ export function evaluateChangeUnitCarryForward(
       target: { ...historicRef.target },
     };
     try {
-      const resolved = resolveComponentBlueprintRef(projectRoot, currentRef);
+      const resolved = resolveComponentBlueprintRefFromLoaded(current, currentRef);
       if (unresolved(resolved.target)) reasons.push(`${historicRef.target.kind}:${historicRef.target.id} 当前未决。`);
     } catch (error) {
       reasons.push(`${historicRef.target.kind}:${historicRef.target.id} 当前不可解析：${(error as Error).message}`);

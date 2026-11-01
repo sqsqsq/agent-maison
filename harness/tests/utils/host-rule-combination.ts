@@ -177,6 +177,7 @@ export async function rc10HostRuleCombination(record: '20261019' | '20261020' = 
     };
     const proof = (ctx: { runId: string; phase: string }): void => { project.runId = ctx.runId; publishVerifier(project, ctx.phase); };
     const result = await runGoalRuntimeChain(root, {
+      testControl: { expectedInterruption: handoff },
       frameworkRoot, featureId: feature, realHarness: true, adapter: 'codex', freshRequirement: original.requirement,
       ...(upstream ? { viaRuntimeClass: true, noAutoForce: true } : {}),
       freshStartPhase: prepared.scope.phase_chain[0] as 'spec', freshEndPhase: prepared.scope.phase_chain.at(-1),

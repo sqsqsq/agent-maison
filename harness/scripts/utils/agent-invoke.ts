@@ -6,6 +6,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execFile, spawn, type ChildProcess } from 'child_process';
 import crossSpawn from 'cross-spawn';
+import { loadFrameworkConfig } from '../../config';
 import type { UnattendedContract } from './goal-manifest';
 import type { GoalCapabilitySpec } from './goal-adapter-capability';
 import {
@@ -70,12 +71,24 @@ export const STRUCTURED_BINARY_CANDIDATES: Record<string, readonly string[]> = {
   'deepseek-harness': DEEPSEEK_HARNESS_BINARY_CANDIDATES,
 };
 
-// 【静默看门狗生产链已删除 · plan e6b3f8d2 t1】
-// 旧常量恒 0（禁用）且 goal-runner 从未 opt-in——一个从未生效的「第二判死权威」。
-// 静默本就不是判据（cursor-agent「streams little until phase end」），FAIL 收口改由
-// adapter terminal 契约承接（见 codex-terminal-events.ts）。
-// 读侧兼容保留：AgentInvokeResult 的 `silent_killed?` 字段与历史事件仍可读，
-// 但**写侧不再产生**该事实（源码锚定回归见 goal-runner-hardening.unit.test.ts）。
+/**
+ * No native stdout/stderr growth for this window interrupts an uncompleted invocation.
+ * The default remains twice the 45min coding build limit. Public tool overrides extend
+ * the window below; active output still refreshes it rather than spending an author budget.
+ */
+export const DEFAULT_AGENT_OUTPUT_IDLE_MS = 90 * 60 * 1000;
+
+export function resolveAgentOutputIdleMs(projectRoot: string): number {
+  try {
+    const toolchain = loadFrameworkConfig(projectRoot).toolchain;
+    const toolTimeoutMs = Math.max(toolchain?.hvigor?.timeoutMs ?? 0, toolchain?.hmosDevice?.aaTestTimeoutMs ?? 0);
+    // Retain 45min for the other checks/reporting: above the known 43.1min regression wall time,
+    // not a claim that it bounds every tool's silence. Defaults 45min/15min still fit the 90min floor.
+    return Math.max(DEFAULT_AGENT_OUTPUT_IDLE_MS, toolTimeoutMs + DEFAULT_AGENT_OUTPUT_IDLE_MS / 2);
+  } catch {
+    return DEFAULT_AGENT_OUTPUT_IDLE_MS;
+  }
+}
 
 /**
  * t4 完成观测：命中后等待自然退出的宽限。
@@ -1306,6 +1319,7 @@ async function spawnHeadlessAsync(
   opts: AgentInvokeOptions,
 ): Promise<AgentInvokeResult> {
   const started = Date.now();
+  const outputIdleMs = resolveAgentOutputIdleMs(cwd);
   const child = spawnHeadlessChild(plan, cwd, opts);
   const pid = child.pid ?? 0;
 
@@ -1329,6 +1343,7 @@ async function spawnHeadlessAsync(
   };
   let timedOut = false;
   let interrupted = false;
+  let lastOutputAt = started;
   let providerSessionId: string | undefined;
   let sessionConflict = false;
   let exitCode = 1;
@@ -1343,10 +1358,11 @@ async function spawnHeadlessAsync(
     ? fs.createWriteStream(opts.outputLogPath, { flags: 'w', encoding: 'utf-8' })
     : null;
 
-  // Native session identities share the existing stdout event log; this does not grant tool audit capability.
+  const terminalParser: TerminalEventParser = opts.terminalEventParser ?? resolveTerminalEventParser(plan.adapterName);
+  // Known structured protocols share the existing stdout event log; this does not grant tool audit capability.
   const splitStreams =
     (opts.toolEventCapture === 'structured_events'
-      || ['codex', 'claude', 'deepseek-harness'].includes(plan.adapterName ?? '')) && opts.outputLogPath
+      || terminalParser !== 'none' || ['codex', 'claude', 'deepseek-harness'].includes(plan.adapterName ?? '')) && opts.outputLogPath
       ? {
           eventsFd: fs.openSync(agentEventsLogPath(opts.outputLogPath), 'w'),
           stderr: fs.createWriteStream(agentStderrLogPath(opts.outputLogPath), { flags: 'w', encoding: 'utf-8' }),
@@ -1359,15 +1375,13 @@ async function spawnHeadlessAsync(
 
   // One structured scanner publishes native identity and terminal facts without interpreting model prose.
   const terminalHooks: { onCompleted?: () => void; onFailed?: () => void } = {};
-  const terminalParser: TerminalEventParser =
-    opts.terminalEventParser ?? resolveTerminalEventParser(plan.adapterName);
   const terminalScanner: CodexTerminalScanner | null =
     terminalParser !== 'none' || ['codex', 'claude', 'deepseek-harness'].includes(plan.adapterName ?? '')
       ? createCodexTerminalScanner({
           onCompleted: () => terminalHooks.onCompleted?.(),
           onFailed: () => terminalHooks.onFailed?.(),
           onRecord: (record) => {
-            if (isProviderToolResult(record, plan.adapterName)) opts.onObservation?.({ type: 'tool_result' });
+            if (isProviderToolResult(record, plan.adapterName, terminalParser)) opts.onObservation?.({ type: 'tool_result' });
             const id = extractProviderSessionId(record, plan.adapterName);
             if (!id) return;
             if (providerSessionId && providerSessionId !== id || opts.providerSessionId && opts.providerSessionId !== id) {
@@ -1384,6 +1398,7 @@ async function spawnHeadlessAsync(
       : null;
 
   child.stdout?.on('data', (buf: Buffer) => {
+    if (buf.length) lastOutputAt = Date.now();
     const s = buf.toString();
     appendCaptured('stdout', s);
     // Persist the initial identity envelope before publishing its projection to the coordinator.
@@ -1393,6 +1408,7 @@ async function spawnHeadlessAsync(
     writeHumanLog(s);
   });
   child.stderr?.on('data', (buf: Buffer) => {
+    if (buf.length) lastOutputAt = Date.now();
     const s = buf.toString();
     appendCaptured('stderr', s);
     if (splitStreams) splitStreams.stderr.write(s);
@@ -1408,6 +1424,7 @@ async function spawnHeadlessAsync(
   let killInFlight: Promise<void> | null = null;
   let killTriggered = false;
   let completionCleanupTriggered = false;
+  let outputIdleTimer: NodeJS.Timeout | null = null;
 
   const settleWaiter = createChildSettleWaiter(child, { outputStream });
   type InvokeClosureObservation = 'none' | 'completion' | 'terminal_failure';
@@ -1417,6 +1434,7 @@ async function spawnHeadlessAsync(
     if (reason === 'signal' && closureObservation === 'completion') return Promise.resolve();
     if (killTriggered && killInFlight) return killInFlight;
     killTriggered = true;
+    if (outputIdleTimer) { clearTimeout(outputIdleTimer); outputIdleTimer = null; }
     completionCleanupTriggered = reason === 'completion';
     if (reason === 'timeout') timedOut = true;
     if (reason === 'signal') interrupted = true;
@@ -1454,10 +1472,24 @@ async function spawnHeadlessAsync(
   opts.signal?.addEventListener('abort', abort, { once: true });
   if (opts.signal?.aborted) abort();
 
-  // t4：完成观测——与 settle / hard timeout 竞争。
-  // 判据是**确定性**的（证据在盘 / adapter terminal 事件），不是概率性的（静默/无输出）：
-  // cursor-agent 本就 "streams little until phase end"，拿静默做判据会误杀正常长任务
-  //（这正是 silent watchdog 从未启用、并已于 plan e6b3f8d2 t1 删除生产链的原因）。
+  // Only the child streams update lastOutputAt; framework leases/heartbeats never extend it.
+  // Opaque adapters have the same finite backstop and return unknown, never a product FAIL.
+  const armOutputIdle = (): void => {
+    if (settleWaiter.isSettled() || killTriggered || closureObservation !== 'none') return;
+    const remainingMs = Math.max(0, outputIdleMs - (Date.now() - lastOutputAt));
+    outputIdleTimer = setTimeout(() => {
+      outputIdleTimer = null;
+      if (settleWaiter.isSettled() || killTriggered || closureObservation !== 'none') return;
+      if (Date.now() - lastOutputAt < outputIdleMs) { armOutputIdle(); return; }
+      const diagnostic = '\n[maison] Native CLI produced no stdout/stderr growth for the hang-protection window; interrupted with results unknown and partial work preserved.\n';
+      appendCaptured('stderr', diagnostic);
+      writeHumanLog(diagnostic);
+      void killTree('signal');
+    }, Math.min(remainingMs, 2_147_483_647));
+  };
+  armOutputIdle();
+
+  // Terminal completion/failure still owns its existing short settlement grace.
   /** R8：completion 命中时取消了 hard timeout —— 用于断言二者互斥 */
   let timeoutCancelledByCompletion = false;
 
@@ -1506,6 +1538,7 @@ async function spawnHeadlessAsync(
     *   · 两路仍复用同一 settle/grace 原语，最终结果强制互斥。
    */
   const observeClosure = (observation: Exclude<InvokeClosureObservation, 'none'>): void => {
+    if (outputIdleTimer) { clearTimeout(outputIdleTimer); outputIdleTimer = null; }
     if (observation === 'completion') {
       if (closureObservation !== 'none' || timedOut || interrupted) return;
       closureObservation = 'completion';
@@ -1545,6 +1578,7 @@ async function spawnHeadlessAsync(
   }
 
   const settled = await settleWaiter.promise;
+  if (outputIdleTimer) { clearTimeout(outputIdleTimer); outputIdleTimer = null; }
   opts.signal?.removeEventListener('abort', abort);
   if (splitStreams) {
     fs.closeSync(splitStreams.eventsFd);

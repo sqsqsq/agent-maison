@@ -45,6 +45,7 @@ import { checkFactsArtifact } from './utils/context-facts';
 import { checkUpstreamVerdictGate } from './utils/upstream-verdict-gate';
 import { checkChangeUnitFeatureProjection } from './utils/change-unit-feature-projection';
 import { resolveRequestInputs } from './utils/capability-resolution';
+import { realProjectPath } from './utils/project-relative-path';
 
 // --------------------------------------------------------------------------
 // Helpers
@@ -660,10 +661,9 @@ function checkIssueToFile(ctx: CheckContext<'feature' | 'request'>, report: stri
   for (const row of table.rows) {
     const cell = (row[fileCol] || '').trim();
     cell.split(/[,，\n]/)
-      .map(f => f.replace(/`/g, '').trim())
-      .map(f => f.replace(/:\d+(?:-\d+)?$/, ''))
-      .filter(f => /\.(?:ets|tsx?|m?js|json5?|py|java|kt|swift)$/.test(f))
-      .forEach(f => allFiles.add(f));
+      .map(file => file.replace(/`/g, '').trim().replace(/:\d+(?:-\d+)?$/, ''))
+      .filter(file => file && file !== '-')
+      .forEach(file => allFiles.add(file));
   }
 
   if (allFiles.size === 0) {
@@ -677,10 +677,17 @@ function checkIssueToFile(ctx: CheckContext<'feature' | 'request'>, report: stri
   }
 
   const missing: string[] = [];
+  const invalid: string[] = [];
   for (const filePath of allFiles) {
-    const fullPath = path.join(ctx.projectRoot, filePath);
-    const bound = ctx.subject === 'request' && ctx.request.sourceContents.some(file => path.resolve(ctx.projectRoot, file.path) === fullPath);
-    if (!bound && !fs.existsSync(fullPath)) missing.push(filePath);
+    try {
+      const fullPath = realProjectPath(ctx.projectRoot, filePath, 'review issue file');
+      const bound = ctx.subject === 'request' && ctx.request.sourceContents.some(file =>
+        path.resolve(ctx.projectRoot, file.path) === path.resolve(ctx.projectRoot, filePath));
+      if (!bound && (!fs.existsSync(fullPath) || !fs.statSync(fullPath).isFile())) missing.push(filePath);
+    } catch (error) {
+      missing.push(filePath);
+      invalid.push(`${filePath}：${(error as Error).message}`);
+    }
   }
 
   if (missing.length === 0) {
@@ -696,7 +703,7 @@ function checkIssueToFile(ctx: CheckContext<'feature' | 'request'>, report: stri
     id: 'issue_to_file', category: 'traceability',
     description: ruleDesc(ctx, 'traceability_checks', 'issue_to_file'),
     severity: 'BLOCKER', status: 'FAIL',
-    details: `${missing.length}/${allFiles.size} 个引用文件不存在：\n${missing.slice(0, 10).map(f => `  - ${f}`).join('\n')}${missing.length > 10 ? `\n  ... 还有 ${missing.length - 10} 个` : ''}`,
+    details: `${missing.length}/${allFiles.size} 个引用文件不存在或路径无效：\n${missing.slice(0, 10).map(f => `  - ${f}`).join('\n')}${missing.length > 10 ? `\n  ... 还有 ${missing.length - 10} 个` : ''}${invalid.length ? '\n' + invalid.slice(0, 10).join('\n') : ''}`,
     affected_files: missing,
     suggestion: '请确认问题清单中的文件路径是否正确。',
   }];
@@ -1121,7 +1128,7 @@ const checker: PhaseChecker = {
     results.push(...executeCheck(ctx, () => checkNegativeVerdictClosure(report), 'negative_verdict_closure'));
     results.push(
       ...executeCheck(ctx,
-        () => checkUpstreamVerdictGate({ projectRoot: ctx.projectRoot, feature: ctx.feature, phase: 'review', runId: ctx.resolvedInputs ? process.env.MAISON_GOAL_RUN_ID : undefined }),
+        () => checkUpstreamVerdictGate({ projectRoot: ctx.projectRoot, feature: ctx.feature, phase: 'review', frameworkRoot: ctx.frameworkRoot, resolvedInputs: ctx.resolvedInputs, runId: ctx.resolvedInputs ? process.env.MAISON_GOAL_RUN_ID : undefined }),
         'upstream_verdict_gate',
       ),
     );

@@ -13,7 +13,7 @@ import {
   deriveInSessionFingerprint,
   prepareGoalModeRun,
   parseSessionReportResult,
-  runGoalModeHostBridge,
+  runGoalModeHostBridge as runGoalModeHostBridgeUnchecked,
 } from '../../scripts/goal-mode-entry';
 import {
   formatGoalRoundStatus,
@@ -42,6 +42,10 @@ import { deriveChangeUnitFeatureId } from '../../scripts/utils/change-unit-path'
 import { featureRelativePath } from '../../scripts/utils/feature-identity';
 import { goalFeatureSelfReferencePrefix } from '../../scripts/utils/goal-preflight';
 import { dereferenceRequirementDocs } from '../../scripts/utils/fidelity-shared';
+import { runRuntimeTestChild, withRuntimeTest, type RuntimeTestControl } from '../utils/runtime-test-control';
+const runGoalModeHostBridge = (options: Parameters<typeof runGoalModeHostBridgeUnchecked>[0], testControl: RuntimeTestControl = {}) =>
+  withRuntimeTest({ root: options.projectRoot, ...testControl }, () => runGoalModeHostBridgeUnchecked(options));
+
 
 const FRAMEWORK_ROOT = path.resolve(__dirname, '../../..');
 
@@ -94,7 +98,7 @@ const cases: TestCase[] = [
         const args = [path.join(harness, 'node_modules/ts-node/dist/bin.js'), '--project', path.join(harness, 'tsconfig.json'),
           path.join(harness, 'scripts/goal-mode-entry.ts'), '--project-root', root, '--framework-root', path.join(root, 'framework'),
           '--feature', 'clamp', '--run-id', 'session-cli', '--adapter', 'claude', '--run-mode', 'attended', '--authorize-autonomy', '--next'];
-        const next = spawnSync(process.execPath, args, { cwd: harness, env: historicalEnv, encoding: 'utf8', timeout: 60_000, windowsHide: true });
+        const next = runRuntimeTestChild({ root }, () => spawnSync(process.execPath, args, { cwd: harness, env: historicalEnv, encoding: 'utf8', timeout: 60_000, windowsHide: true }));
         assert(next.status === 0, next.stderr + next.stdout);
         const issued = JSON.parse(next.stdout.trim());
         const request = JSON.parse(fs.readFileSync(issued.request.path, 'utf8'));
@@ -102,8 +106,8 @@ const cases: TestCase[] = [
         fs.writeFileSync(resultFile, '\uFEFF' + JSON.stringify({ status: 'waiting', phase: 'coding', details: 'unfinished fixture work' }));
         const psScript = path.join(temporary, 'generated command.ps1');
         fs.writeFileSync(psScript, `$PSVersionTable.PSVersion.ToString()\n${issued.next_command}\nexit $LASTEXITCODE\n`);
-        const reported = spawnSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', psScript],
-          { cwd: harness, env: historicalEnv, encoding: 'utf8', timeout: 60_000, windowsHide: true });
+        const reported = runRuntimeTestChild({ root }, () => spawnSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', psScript],
+          { cwd: harness, env: historicalEnv, encoding: 'utf8', timeout: 60_000, windowsHide: true }));
         assert(reported.status === 0, reported.stderr + reported.stdout);
         assert(/^5\.1\./.test(reported.stdout), 'test must use Windows PowerShell 5.1');
         const waiting = JSON.parse(reported.stdout.trim().split(/\r?\n/).at(-1)!);
@@ -116,7 +120,7 @@ const cases: TestCase[] = [
         assert(times.every((time, index) => index === 0 || time >= times[index - 1]), 'production-written fixture history must stay chronological');
         const fault = path.join(temporary, 'startup-fault.cjs');
         fs.writeFileSync(fault, `const fs=require('fs'),append=fs.appendFileSync;let fired=false;fs.appendFileSync=function(file,data,...args){if(!fired&&String(file).endsWith('events.jsonl')&&String(data).includes('"type":"run_start"')){fired=true;throw new Error('current startup write failure');}return append.call(this,file,data,...args)};`);
-        const interrupted = spawnSync(process.execPath, args, { cwd: harness, env: { ...env, NODE_OPTIONS: `--require ${JSON.stringify(fault)}` }, encoding: 'utf8', timeout: 60_000, windowsHide: true });
+        const interrupted = runRuntimeTestChild({ root, expectedInterruption: 'current startup write failure' }, () => spawnSync(process.execPath, args, { cwd: harness, env: { ...env, NODE_OPTIONS: `--require ${JSON.stringify(fault)}` }, encoding: 'utf8', timeout: 60_000, windowsHide: true }));
         assert(interrupted.status === 1, interrupted.stderr + interrupted.stdout);
         const result = JSON.parse(interrupted.stdout.trim());
         assert(result.result.status === 'fused' && result.exit_code === 1, JSON.stringify(result));
@@ -318,7 +322,8 @@ const cases: TestCase[] = [
           freshEndPhase: 'spec', viaSessionStep: true, onSpec: ctx => { prompt = ctx.prompt; } });
         assert(probe.exitCode === 0, JSON.stringify(probe.events.filter(event => event.type === 'phase_halt')));
         assert(probe.invokedPhases.join(',') === 'spec' && probe.harnessPhases.join(',') === 'spec', 'main-context execution must still use the formal gate');
-        assert(prompt.includes('专用执行会话') && prompt.includes('主 Agent 负责观察与转交指示') && prompt.includes('独立核验'), 'the host presents the dedicated execution and never falls back to main-context construction');
+        assert(prompt.includes('专用执行会话') && prompt.includes('遵守当前授权写集') && prompt.includes('独立核验')
+          && prompt.includes('结束作者步骤不等于验收 PASS，真实检查由内核完成'), 'the dedicated author receives its own scope and verification handoff responsibilities');
         assert(probe.events.some(event => event.type === 'agent_invoke_end' && event.handoff_report), 'the public session result must be archived');
         assert(!probe.events.some(event => event.type === 'agent_process_settled'), 'main context cannot manufacture process settlement');
         assert(readRunControl(probe.reportDir, 'host-main-context')?.owner?.state === 'released', 'completed session releases its owner');
@@ -559,7 +564,7 @@ const cases: TestCase[] = [
           assert(featureRelativePath(row.feature) === row.physical, `feature SSOT 错误：${row.feature}`);
 
           let invoked = false;
-          await runGoalModeHostBridge({
+          const result = await runGoalModeHostBridge({
             projectRoot: root, frameworkRoot: FRAMEWORK_ROOT, feature: row.feature,
             runId: 'matrix-run', adapter: 'codex', runMode: 'attended', maxRounds: 1,
             executePhase: async (phase) => {
@@ -568,6 +573,13 @@ const cases: TestCase[] = [
             },
           });
           assert(invoked, `attach 未执行：${row.featuresDir}/${row.physical}`);
+          const events = fs.readFileSync(path.join(prepared.runDir, 'events.jsonl'), 'utf8')
+            .split(/\r?\n/).filter(Boolean).map(line => JSON.parse(line) as Record<string, unknown>);
+          assert(result.exit_code !== 0 && result.status === 'waiting' && result.recovery?.guidance, JSON.stringify(result));
+          assert(events.filter(event => event.type === 'agent_invoke_start').length === 1
+            && events.filter(event => event.type === 'harness_end').length === 1
+            && !events.some(event => event.type === 'run_end' && event.status === 'INTERRUPTED'),
+            'a session gate without a current conclusion must naturally yield without another author or repeated gate');
 
           const selfRel = `${row.featuresDir}/${row.physical}/self.md`;
           fs.writeFileSync(path.join(root, ...selfRel.split('/')), 'SHOULD_NOT_DEREFERENCE', 'utf8');

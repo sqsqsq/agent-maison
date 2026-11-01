@@ -1,4 +1,5 @@
 import { performance } from 'perf_hooks';
+import { beginTestCase } from './runtime-test-control';
 import type { UnitCaseResult } from '../run-unit';
 
 export interface UnitExecutionTiming { caseNames: string[]; durationMs: number }
@@ -21,9 +22,10 @@ export function isInfrastructureResult(result: UnitCaseResult): boolean {
 }
 
 // 在 fixture 前开始，在原 finally 后结束；一个共同执行块只写一条时间。
-export function startCaseTiming(caseNames: string[], timings: UnitExecutionTiming[]): () => void {
+export function startCaseTiming(caseNames: string[], timings: UnitExecutionTiming[], options: { timeoutMs?: number } = {}): () => void {
   const startedAt = performance.now();
-  return () => { timings.push({ caseNames, durationMs: performance.now() - startedAt }); };
+  const endCase = beginTestCase(caseNames, options.timeoutMs);
+  return () => { timings.push({ caseNames, durationMs: performance.now() - startedAt }); endCase(); };
 }
 
 export function selectedUnitCases(

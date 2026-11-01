@@ -50,7 +50,7 @@ import type { CheckResult } from '../../scripts/utils/types';
 import {
   FEATURE as RT_FEATURE,
   PRODUCT_FILE as RT_PRODUCT_FILE,
-  PRODUCT_ASSERTION_CHECK,
+  productAssertionCheck,
   GOAL_QUOTE,
   requestVia,
   declineFromPrompt,
@@ -109,6 +109,8 @@ import { A2_DONE, A2_EXCLUDED, A2_QUOTE, a2Collect, a2NfcDefect, withA2Runtime }
 import { runDriver, sealLegacyInvokes } from './goal-park-resume.unit.test';
 import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
 import { setupMinimalHost, type GoalRunOutcome } from '../helpers/goal-run-driver';
+import { prepareFixtureVerifierMaterial } from '../helpers/goal-run-driver';
+import { generateScriptReport } from '../../scripts/utils/report-generator';
 import { s14Run, s15AuthorityFlow, s15RejoinFlow, s15StaleFlow, s16MainFlow, s16NoPreauthFlow, s16StaleFlow, type RepairFlow, type S14Key } from './design-authority-repair.unit.test';
 
 const REPO_ROOT = path.resolve(__dirname, '../../..');
@@ -584,8 +586,11 @@ const runBe091cOrphan: ScenarioRunner = async (_entry, done) => {
   // 重演 be091c 第一现场（detach 入口）：进程中断、feature 锁的持有进程已死；宿主重新发起同一请求（带 --detach，不带任何技术旗标）。
   const { root } = setupGoalRuntimeHost('codex');
   try {
-    await requestVia('detach', root, { onCoding: () => { throw new Error('injected crash inside coding'); } }).catch(() => undefined);
+    await requestVia('detach', root, { testControl: { expectedInterruption: 'injected crash inside coding' },
+      onCoding: () => { throw new Error('injected crash inside coding'); } }).catch(() => undefined);
     const [run] = listRuns(root, RT_FEATURE);
+    assert(run, 'the intentional synchronous callback cut must have created the original run');
+    sealLegacyInvokes(root, RT_FEATURE, run);
     const crashEnd = run ? indexOf(eventsOf(root, RT_FEATURE, run), e => e.type === 'run_end') : -1;
     const dead = spawnSync(process.execPath, ['-e', '']).pid;
     const lock = run ? tryAcquireLock(path.join(runsDirOf(root, RT_FEATURE), FEATURE_LOCK_NAME), {
@@ -639,6 +644,7 @@ const runBe091cScope: ScenarioRunner = async (_entry, done) => {
     fs.rmSync(featureFilePath(s.root, feature, 'ut/reports/phase-evidence-manifest.json'));
     const requirement = (JSON.parse(fs.readFileSync(path.join(runsDirOf(s.root, feature), source, 'manifest.json'), 'utf-8')) as { requirement: string }).requirement;
     const { successor: holder } = await supersede(s, feature, source, ['ut'], {
+      testControl: { expectedInterruption: 'injected crash inside ut' },
       failExecutorFor: () => false, onUt: () => { throw new Error('injected crash inside ut'); },
     });
     assert(holder, 'be091c 第二现场：夹具须先有一个接管了范围、随后中断的后继');
@@ -1426,19 +1432,35 @@ const runS8: ScenarioRunner = async (_entry, done) => {
   const host = setupMinimalHost(feature, 'hmos-app');
   try {
     freezeExistingGoalDelivery(host, feature);
+    const contractFile = `doc/features/${feature}/contracts.yaml`;
+    const originalContract = YAML.parse(readText(host, contractFile));
+    const publicModules = originalContract.modules.map((module: { name: string; package_path: string }) => ({ name: module.name, package_path: module.package_path }));
+    const withinPublicModule = (file: string): boolean => publicModules.some((module: { package_path: string }) => {
+      const owner = path.resolve(host, module.package_path);
+      const actual = path.resolve(host, file);
+      return actual === owner || actual.startsWith(owner + path.sep);
+    });
     const crashed = runDriver('crash_scope_in_run', feature, host);
     assert(crashed.runId, `S8：崩溃段须产出 run：${JSON.stringify({ ...crashed, eventTypes: undefined })}`);
     const run = crashed.runId as string;
     const crashEvents = eventsOf(host, feature, run);
     const crashEnd = indexOf(crashEvents, e => e.type === 'run_end');
+    const faulty = YAML.parse(readText(host, contractFile));
+    assert(faulty.files.includes(DRIVER_OUT_OF_SCOPE) && faulty.files.some((file: string) => !withinPublicModule(file)),
+      'the fault must really contradict the existing public module construction contract');
+    assert(!crashEvents.some(event => event.type === 'run_end' && ['COMPLETED', 'CHAIN_SLICE_COMPLETED'].includes(String(event.status))),
+      'the still-inconsistent construction input cannot be signed complete');
     // plan 4e6fb3b6 §8 S8：重新发起同一请求（不带 --resume/--force，也不手工修 contracts）——接续决策重新接入同一 run；
     // plan 执行者（替身）在回退后的 plan 轮里把 contracts 收回范围内文件（plan 阶段自己的工作）。
     const resumed = runDriver('crash_rerequest', feature, host);
     const events = eventsOf(host, feature, run);
     const rejoinIdx = events.findIndex((e, i) => i > crashEnd && e.type === 'run_start');
-    const contracts = readText(host, `doc/features/${feature}/contracts.yaml`);
+    const contracts = YAML.parse(readText(host, contractFile));
     const product = readText(host, DRIVER_PRODUCT);
-    const ok = product.includes('struct SamplePage') && contracts.includes(DRIVER_PRODUCT) && !contracts.includes(DRIVER_OUT_OF_SCOPE);
+    const modulesUnchanged = JSON.stringify(contracts.modules.map((module: { name: string; package_path: string }) => ({ name: module.name, package_path: module.package_path }))) === JSON.stringify(publicModules);
+    const ok = product.includes('struct SamplePage') && modulesUnchanged && contracts.files.includes(DRIVER_PRODUCT)
+      && contracts.files.every((file: string) => withinPublicModule(file));
+    const ownerRejoined = rejoinIdx >= 0 && events.some((event, index) => index > rejoinIdx && event.type === 'agent_invoke_start' && event.phase === 'plan');
     const runs = listRuns(host, feature);
     done({
       key: 'crash-resume', root: host, feature, frameworkRoot: REPO_ROOT, runIds: [run],
@@ -1447,16 +1469,16 @@ const runS8: ScenarioRunner = async (_entry, done) => {
           rejoinIdx >= 0 ? [{ run_id: run, event_index: rejoinIdx }] : []),
       ],
       acceptance: ok
-        ? { result: 'pass', actor: 'reliability-scenarios', basis: '产品源码在、contracts 只含范围内文件' }
-        : { result: 'fail', actor: 'reliability-scenarios', basis: 'contracts 含范围外文件或产品源码缺失' },
+        ? { result: 'pass', actor: 'reliability-scenarios', basis: '实际产品存在；原公开模块身份不扩，当前施工契约与自身模块一致（不把预测files当写许可）' }
+        : { result: 'fail', actor: 'reliability-scenarios', basis: '当前公开模块/施工契约仍不一致或实际产品缺失' },
       after: crashEnd >= 0 ? { run_id: run, event_index: crashEnd } : undefined,
       hit: {
-        ok: crashed.runEndReason === 'uncaught_exception' && crashed.eventTypes.includes('phase_backtrack_requested'),
+        ok: crashed.runEndReason === 'uncaught_exception' && crashed.eventTypes.includes('phase_backtrack_requested') && ownerRejoined,
         evidence: `崩溃段 run_end.reason=${crashed.runEndReason}；重发段 exit=${resumed.exitCode} phase_start=${JSON.stringify(resumed.phaseStartsThisCall)}`,
       },
       expectation: (t) => ({
-        met: t.conclusion === 'correct_completion' && t.operator.rescue_count === 1 && runs.length === 1 && rejoinIdx >= 0,
-        detail: `结论=${t.conclusion}，操作者动作=${t.operator.rescue_count}（期望 1：重发同一请求），run 数=${runs.length}，同一 run 重新接入=${rejoinIdx >= 0}`,
+        met: t.conclusion === 'correct_completion' && t.operator.rescue_count === 1 && runs.length === 1 && rejoinIdx >= 0 && ownerRejoined,
+        detail: `结论=${t.conclusion}，操作者动作=${t.operator.rescue_count}（期望 1：重发同一请求），run 数=${runs.length}，同一 run 重新接入=${rejoinIdx >= 0}，原plan责任方实际交回=${ownerRejoined}`,
       }),
       extras: { crash_exit: crashed.exitCode, rerequest_exit: resumed.exitCode },
     });
@@ -1703,36 +1725,81 @@ function runS13Branch(declineTwice: boolean): ScenarioRunner {
   return async (_entry, done) => {
   const { root } = setupGoalRuntimeHost('codex');
   let refusedWithoutChange = false;
-  let backtracksSeenByCoding = 0;
+  let independentlyReadDecline = false;
+  let correctionActuallyDelivered = false;
   const declines: string[][] = [];
+  const requirement = `${GOAL_QUOTE}；按当前 TC-001 完成页断言，必须显示「已开卡」。`;
+  const verifierProject = { root, feature: RT_FEATURE, frameworkRoot: REPO_ROOT,
+    harnessDir: path.join(REPO_ROOT, 'harness') } as RealChainProject;
+  const refusalBasis = (runId: string): string[] => {
+    const file = featureFilePath(root, RT_FEATURE, 'coding/headless-assumptions.jsonl');
+    const rows = fs.existsSync(file) ? fs.readFileSync(file, 'utf8').split(/\r?\n/).filter(Boolean).map(line => JSON.parse(line)) : [];
+    return [...new Set(rows.filter(row => row.run_id === runId && String(row.gate_id ?? '').startsWith('repair_candidate:')
+      && String(row.decision ?? '').startsWith('declined:')).map(row => String(row.decision)))];
+  };
   try {
     const productFixed = (): boolean => rtProduct(root).includes(S13_FIX);
-    const backtracks = (runId: string): number => (runId
-      ? eventsOf(root, RT_FEATURE, runId).filter(e => e.type === 'phase_backtrack_requested' && e.to_phase === 'coding').length
-      : 0);
     const probe = await runGoalRuntimeChain(root, {
-      adapter: 'codex',
+      adapter: 'codex', freshRequirement: requirement,
       onTesting: ({ root: r }) => writeCleanTesting(r),
-      // 证据由产品现状求出：源码没有开卡完成文案 → 已执行断言失败（一档产品真值，真实 writer 落 FAIL + 候选）。
-      onHarnessSummary: ({ phase }) => (phase === 'testing' && !productFixed() ? {
-        checks: [{
-          ...PRODUCT_ASSERTION_CHECK,
-          id: 'testing_failure_routing_TC-001_s2',
-          affected_files: [RT_PRODUCT_FILE],
-          details: S13_DEFECT,
-        } as CheckResult],
-      } : null),
-      onCoding: (ctx) => {
-        const n = backtracks(ctx.runId);
-        backtracksSeenByCoding = Math.max(backtracksSeenByCoding, n);
-        if (n === 0) {
+      onHarnessSummary: ({ phase }) => {
+        if (phase !== 'testing') return null;
+        const [runId] = listRuns(root, RT_FEATURE);
+        const bases = refusalBasis(runId);
+        const fixed = productFixed();
+        // Public observations use the actual current product and original refusal, without round/timestamp churn.
+        rtWriteFile(root, `doc/features/${RT_FEATURE}/testing/test-report.md`, [
+          '# 当前独立测试输入', requirement, S13_DEFECT,
+          `当前产品断言：${fixed ? '已出现已开卡' : '未出现已开卡'}`,
+          ...bases.map(basis => `执行者原始拒修（待独核，不是裁决）：${basis}`),
+        ].join('\n'));
+        const checks: CheckResult[] = fixed ? [{ id: 'file_completeness', category: 'structure', severity: 'BLOCKER', status: 'PASS',
+          description: '当前完成页断言', details: `已读 ${RT_PRODUCT_FILE}，实际包含 ${S13_FIX}`, affected_files: [RT_PRODUCT_FILE] }]
+          : [productAssertionCheck(root, { feature: RT_FEATURE, caseId: 'TC-001', stepIndex: 2,
+            affectedFiles: [RT_PRODUCT_FILE], details: S13_DEFECT })];
+        const report = generateScriptReport(path.join(REPO_ROOT, 'harness'), 'testing', RT_FEATURE, root, checks, REPO_ROOT);
+        const writerOptions = prepareFixtureVerifierMaterial({ projectRoot: root, frameworkRoot: REPO_ROOT, report,
+          options: { verifierPlan: { mode: 'enabled', reason: 'policy_required', verifier_prompt: 'prompts/verify-testing.md',
+            message: '对当前产品断言及新拒修原文独立核实' } } });
+        return { checks, writerOptions };
+      },
+      onOutOfChain: ctx => {
+        const request = readDeliveredVerifierRequest(verifierProject, ctx);
+        assert(request && request.phase === 'testing', 'S13 独核必须收到实际当前 testing request');
+        const bases = refusalBasis(ctx.runId);
+        const input = fs.readFileSync(featureFilePath(root, RT_FEATURE, 'testing/test-report.md'), 'utf8');
+        const source = rtProduct(root);
+        assert(input.includes(requirement) && input.includes(S13_DEFECT), '独核须读完整当前请求及原断言');
+        assert(bases.every(basis => input.includes(basis)), '独核须逐条读取作者真正写出的拒修原文');
+        if (bases.length) independentlyReadDecline = true;
+        const fixed = source.includes(S13_FIX);
+        const issue = 'testing_failure_routing_TC-001_s2';
+        const details = fixed ? '实际当前产品已满足已开卡断言。' : `${S13_DEFECT}。完整请求明确包含该断言；引用部分目标不能排除它。`
+          + (bases.length ? ` 已逐条核实执行者原文：${bases.join('；')}` : '');
+        publishFixtureVerifierEvidence({ projectRoot: root, reportsDir: path.dirname(path.join(root, request.prompt_path)),
+          feature: RT_FEATURE, phase: 'testing', subjectId: request.subject_id, skipSummaryPatch: true,
+          verdict: fixed ? 'PASS' : 'FAIL', blockerCount: fixed ? 0 : 1,
+          reportText: '# 独立复核原文\n' + details + '\n```issue-verification\n' + YAML.stringify([{ issue,
+            verdict: fixed ? 'refuted' : 'confirmed', repair_owner: 'coding', evidence: details }]) + '```\n' });
+      },
+      onCoding: ctx => {
+        if (!ctx.prompt.includes('item_fingerprint:')) {
           rtWriteFile(ctx.root, RT_PRODUCT_FILE, 'struct AllBanksPage { build() { Text("x") } }');
-        } else if (n === 1 || declineTwice) {
-          // 执行者错误拒修：认定断言有误，不改产品；按候选段写法逐候选落账本（引文取自本 run 需求）。
-          refusedWithoutChange = true;
-          declines.push(declineFromPrompt(ctx, GOAL_QUOTE));
-        } else {
+          return;
+        }
+        const bases = refusalBasis(ctx.runId);
+        const receivedCorrection = independentlyReadDecline && bases.length > 0
+          && bases.every(basis => ctx.prompt.includes(basis.replace(/^declined:\s*/, ''))) && ctx.prompt.includes(S13_DEFECT);
+        if (!declineTwice && receivedCorrection) {
+          correctionActuallyDelivered = true;
           rtWriteFile(ctx.root, RT_PRODUCT_FILE, `struct AllBanksPage { build() { ${S13_FIX} } }`);
+        } else {
+          const before = rtProduct(root);
+          const delivered = declineFromPrompt(ctx, GOAL_QUOTE);
+          assert(delivered.length === 1, '拒修必须绑定实际收到的唯一当前候选');
+          declines.push(delivered);
+          refusedWithoutChange = true;
+          assert(rtProduct(root) === before, '拒修原文不能代替产品修复');
         }
       },
     });
@@ -1741,43 +1808,32 @@ function runS13Branch(declineTwice: boolean): ScenarioRunner {
     const bts = events.filter(e => e.type === 'phase_backtrack_requested' && e.to_phase === 'coding');
     const firstTestingFail = indexOf(events, e => e.type === 'phase_verdict' && e.phase === 'testing' && e.verdict === 'FAIL');
     const halts = events.filter(e => e.type === 'phase_halt');
-    const guidance = halts.map(e => String(e.halt_guidance ?? '')).join('\n');
-    // 反驳轮提示词（第二次回退的 coding）：逐条写明上一轮依据与"裁判看过依据后仍然提出"
-    const rebuttalPrompt = probe.codingPrompts[2] ?? '';
-    const rebuttalShown = rebuttalPrompt.includes('反驳轮') && rebuttalPrompt.includes(`「${GOAL_QUOTE}」`);
-    const firstDeclineHalted = halts.some(e => events.indexOf(e) < events.indexOf(bts[1] ?? events[events.length - 1]));
+    const guidance = halts.map(e => String(e.halt_guidance ?? e.reason ?? '')).join('\n');
     done({
       key: declineTwice ? 'refusal-twice' : 'refusal-corrected', root, feature: RT_FEATURE, frameworkRoot: REPO_ROOT, runIds: [run],
       interventions: [],
-      acceptance: productFixed()
-        ? { result: 'pass', actor: 'reliability-scenarios', basis: `产品源码含 ${S13_FIX}` }
+      acceptance: productFixed() ? { result: 'pass', actor: 'reliability-scenarios', basis: `产品源码含 ${S13_FIX}` }
         : { result: 'fail', actor: 'reliability-scenarios', basis: `产品源码不含 ${S13_FIX}` },
       after: firstTestingFail >= 0 ? { run_id: run, event_index: firstTestingFail } : undefined,
-      hit: {
-        ok: bts.length >= 1 && refusedWithoutChange && declines.length >= 1 && declines.every(d => d.length === 1),
-        evidence: `testing→coding 回退 ${bts.length} 次；拒修轮 ${declines.length} 次（每轮账本行数 ${declines.map(d => d.length).join('/')}）`,
+      // The candidate/refusal is the premise; genuine independent delivery is a required outcome below.
+      // A missing legal verifier request must stay a quality gap, not be mislabeled as an unhit fault.
+      hit: { ok: bts.length >= 1 && refusedWithoutChange && declines.length >= 1,
+        evidence: `真实候选已拒修；当前独核读拒修=${independentlyReadDecline}；回退观测=${bts.length}；实质纠正送达=${correctionActuallyDelivered}` },
+      expectation: declineTwice ? t => {
+        const reasons = [!t.facts.claimed_complete || '宣称了完成',
+          t.stop_state?.halt_reason === 'no_progress_guard' || `停机原因=${t.stop_state?.halt_reason}`,
+          independentlyReadDecline || '新拒修未由当前独核实际读取',
+          !productFixed() || '拒修却出现未由作者执行的产品修复',
+          guidance.includes(GOAL_QUOTE) || '停机说明缺原拒修依据',
+          guidance.includes(S13_DEFECT) || '停机说明缺当前实测缺陷'].filter((x): x is string => typeof x === 'string');
+        return { met: reasons.length === 0, detail: reasons.length ? reasons.join('；') : '当前独核已读新拒修，同一实际差额无改善后共同暂停；未签完成' };
+      } : t => {
+        const reasons = [t.conclusion === 'correct_completion' || `结论=${t.conclusion}`,
+          independentlyReadDecline || '新拒修没有实际独核', correctionActuallyDelivered || '独核纠正未实际送达原作者'].filter((x): x is string => typeof x === 'string');
+        return { met: reasons.length === 0, detail: reasons.length ? reasons.join('；') : '当前独核据原请求纠正拒修，作者收到实际纠正后修产品并真实完成' };
       },
-      expectation: declineTwice
-        ? (t) => {
-          const reasons = [
-            !t.facts.claimed_complete || '宣称了完成',
-            ['repair_not_converging', 'backtrack_fingerprint_repeat', 'backtrack_limit'].includes(String(t.stop_state?.halt_reason)) || `停机原因=${t.stop_state?.halt_reason}`,
-            bts.length === 2 || `反驳轮只放行一次，回退应恰 2 次，实得 ${bts.length}`,
-            (guidance.includes('执行者拒修依据') && guidance.includes(`「${GOAL_QUOTE}」`)) || '停机说明缺执行者拒修依据原文',
-            guidance.includes(S13_DEFECT) || '停机说明缺裁判缺陷描述原文（S13_DEFECT 全文）',
-          ].filter((x): x is string => typeof x === 'string');
-          return { met: reasons.length === 0, detail: reasons.length ? reasons.join('；') : `停在 ${t.stop_state?.halt_reason}；未宣称完成；停机说明并列双方原文` };
-        }
-        : (t) => {
-          const reasons = [
-            t.conclusion === 'correct_completion' || `结论=${t.conclusion}`,
-            !firstDeclineHalted || '第一轮拒修即终局',
-            bts.length === 2 || `拒修后裁判再提应进入反驳轮（回退 2 次），实得 ${bts.length}`,
-            rebuttalShown || '反驳轮提示词未写明上一轮拒修依据',
-          ].filter((x): x is string => typeof x === 'string');
-          return { met: reasons.length === 0, detail: reasons.length ? reasons.join('；') : `第一轮拒修不终局；裁判再提进入反驳轮；反驳轮修复；结论=${t.conclusion}（coding 所见最大回退数 ${backtracksSeenByCoding}）` };
-        },
-      extras: { halt_guidance_head: guidance.slice(0, 400) },
+      extras: { halt_guidance_head: guidance.slice(0, 400), independently_read_decline: independentlyReadDecline,
+        correction_actually_delivered: correctionActuallyDelivered },
     });
   } finally {
     clearFrameworkConfigCache();

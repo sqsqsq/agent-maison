@@ -254,7 +254,18 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
     const doc = YAML.parse(fs.readFileSync(file, 'utf8'));
     doc.criteria.push({ ...doc.criteria[1], id: 'AC-9', description: '完成后补一条设备断言', ut_layer: 'device', ut_focus: undefined, device_focus: '真机核对列表条目数' });
     fs.writeFileSync(file, YAML.stringify(doc));
-    const expected = uncoveredOwnerPhases(assess(s, feature));
+    const historical = assess(s, feature);
+    assert(historical.obligations.some(duty => duty.kind === 'acceptance-context' && duty.status === 'uncovered'
+      && duty.reason?.includes('input binding stale') === true), 'the original historical acceptance binding must remain stale');
+    const requirement = readJson<{ requirement: string }>(runFile(s.root, feature, source, 'manifest.json')).requirement;
+    const born = resolveSuccessorExecutionScope(s.root, feature, resolveWorkflowSpec(s.root, { frameworkRoot: s.frameworkRoot }), s.frameworkRoot, requirement, source)!;
+    const current = assessFeature(s.root, feature, { ...resolveChangeUnitExpectedExecution(s.root, feature), frameworkRoot: s.frameworkRoot, scope: born });
+    assert.strictEqual(current.record.state, 'ok', JSON.stringify(current.record));
+    const expected = uncoveredOwnerPhases(current);
+    assert.deepStrictEqual(born.phase_chain, expected, 'independent birth-scope assessment must agree before dispatch');
+    const requiredDevice = born.obligations.find(duty => duty.kind === 'device-evidence');
+    assert(requiredDevice?.applicability === 'required' && !requiredDevice.satisfied_by?.length && requiredDevice.reason.includes('AC-9'), JSON.stringify(requiredDevice));
+    assert(born.phase_chain.includes('testing'), 'the added AC-9 device obligation must remain executable');
 
     const { successor, error } = await supersede(s, feature, source, expected);
     assert(successor, `后继未出生：${error}`);
@@ -263,6 +274,8 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
     assert(device && device.applicability === 'required' && !device.satisfied_by?.length && device.reason.includes('AC-9'), JSON.stringify(device));
     assert(scope.phase_chain.includes('testing'), JSON.stringify(scope.phase_chain));
     assert.deepStrictEqual(scope.phase_chain, expected);
+    assert.deepStrictEqual(scope.unresolved, born.unresolved, 'child birth must retain all independently derived unknowns');
+    assert.strictEqual(executionScopeFingerprint({ ...scope, successor_of: undefined }), executionScopeFingerprint(born), 'the whole born scope must equal the pre-dispatch prediction');
     console.log(`[successor-exit] #8 actual phase_chain=${JSON.stringify(scope.phase_chain)}`);
   }) },
   { name: 'migration baseline: 需求增量（codex r1 P1-3）只改显式需求、不预改产物 → 后继出生链非空，且等于评估入口按最终需求判 uncovered 的责任阶段', run: () => withCurrentSnapshot(SNAPSHOT_FLAT_FEATURE, async s => {
@@ -415,6 +428,7 @@ for (const entry of ['foreground', 'detach', 'attended'] as const) {
     fs.rmSync(featureFilePath(s.root, feature, 'ut/reports/phase-evidence-manifest.json'));
     const requirement = readJson<{ requirement: string }>(runFile(s.root, feature, source, 'manifest.json')).requirement;
     const { successor: holder, error } = await supersede(s, feature, source, ['ut'], {
+      testControl: { expectedInterruption: 'injected crash inside ut' },
       failExecutorFor: () => false, onUt: () => { throw new Error('injected crash inside ut'); },
     });
     assert(holder, `夹具：显式后继须出生：${error}`);

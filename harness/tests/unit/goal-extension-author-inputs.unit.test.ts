@@ -24,6 +24,7 @@ import {
 import { setupMinimalHost } from '../helpers/goal-run-driver';
 import { inferRepoLayout } from '../../repo-layout';
 import { clearFrameworkConfigCache } from '../../config';
+import { withRuntimeTest } from '../utils/runtime-test-control';
 
 const REPO_ROOT = path.resolve(__dirname, '../../..');
 const READ_INSTRUCTION =
@@ -124,7 +125,7 @@ async function driveSpecRun(
     ];
     process.chdir(root);
     clearFrameworkConfigCache();
-    const exitCode = await goalMain();
+    const exitCode = await withRuntimeTest({ root: root }, () => goalMain());
     return { exitCode, prompts, warns: warn.warns, root };
   } finally {
     __testing_resetGoalRunnerSeams();

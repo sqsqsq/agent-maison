@@ -26,7 +26,9 @@ import { prepareFeatureScopeCandidate } from '../../scripts/utils/feature-track'
 import { buildGoalManifestFromInput } from '../../scripts/utils/goal-manifest';
 import { createGoalRun, loadEffectiveExecutionScope } from '../../scripts/utils/goal-run-creation';
 import { checkPlanAuthority } from '../../scripts/utils/scope-replan';
-import type { HarnessRunSummary } from '../../scripts/utils/types';
+import type { HarnessRunSummary, CheckResult, Phase } from '../../scripts/utils/types';
+import { generateScriptReport } from '../../scripts/utils/report-generator';
+import { writeRunSummaryBase } from '../../harness-runner';
 
 export interface UnitCaseResult {
   name: string;
@@ -49,6 +51,22 @@ function assert(condition: boolean, message: string): void {
 
 function sha256(text: string): string {
   return crypto.createHash('sha256').update(text).digest('hex');
+}
+
+/** Transaction fixtures publish current raw checks and the same derived summary as the real entry. */
+function seedCurrentSummary(root: string, feature: string, phase: string, source: string, runId?: string, checks?: CheckResult[]): string {
+  const previousRun = process.env.MAISON_GOAL_RUN_ID;
+  if (runId) process.env.MAISON_GOAL_RUN_ID = runId; else delete process.env.MAISON_GOAL_RUN_ID;
+  try {
+    const report = generateScriptReport(path.join(FRAMEWORK_ROOT, 'harness'), phase as Phase, feature, root, checks ?? [{
+      id: 'fixture_current_source', category: 'structure', severity: 'BLOCKER', description: 'controlled current input read for closure transaction',
+      status: fs.readFileSync(path.join(root, source), 'utf8').trim() ? 'PASS' : 'FAIL', details: `Read actual current source: ${source}`,
+    }], FRAMEWORK_ROOT);
+    writeRunSummaryBase(root, report, FRAMEWORK_ROOT);
+    return fs.readFileSync(path.join(featurePhaseReportsDir(root, feature, phase, FRAMEWORK_ROOT), 'summary.json'), 'utf8');
+  } finally {
+    if (previousRun === undefined) delete process.env.MAISON_GOAL_RUN_ID; else process.env.MAISON_GOAL_RUN_ID = previousRun;
+  }
 }
 
 function mkProject(): {
@@ -85,29 +103,7 @@ function mkProject(): {
     'summary.json',
   );
   fs.mkdirSync(path.dirname(summaryPath), { recursive: true });
-  const summary = {
-    schema_version: '1.2',
-    phase: PHASE,
-    feature: FEATURE,
-    verdict: 'PASS',
-    blocker_count: 0,
-    fail_count: 0,
-    warn_count: 0,
-    script_report: 'script-report.json',
-    merged_report: 'merged-report.md',
-    ai_prompt: 'ai-prompt.md',
-    summary_json: 'summary.json',
-    run_statuses: [],
-    readiness_signals: [],
-    blocking_warnings: [],
-    blocking_skips: [],
-    blockers: [],
-    next_action: 'run_receipt',
-    closure_status: 'open',
-    assurance: 'full',
-  } as HarnessRunSummary;
-  const originalSummary = JSON.stringify(summary, null, 2);
-  fs.writeFileSync(summaryPath, originalSummary, 'utf8');
+  const originalSummary = seedCurrentSummary(root, FEATURE, PHASE, `doc/features/${FEATURE}/spec/spec.md`);
 
   const receiptPath = resolveReceiptFilePath(root, FEATURE, PHASE).path;
   fs.mkdirSync(path.dirname(receiptPath), { recursive: true });
@@ -264,7 +260,7 @@ function mkOwnershipProject(requestedPhases: string[], approvedDesign = false): 
 }
 
 /**
- * 落一份可闭环的 PASS summary（形状与 mkProject 同源），随后走生产最终闭环。
+ * 真实读取本轮 facts，经报告/summary 生产链准备事务，再走生产最终闭环。
  *
  * `identity` 分两种，对应生产里真实存在的两类调用方：
  * - `'param'`：goal 主路径（`goal-phase-runtime.ts` 两处）——显式给 `goalRunId`；
@@ -275,19 +271,7 @@ function mkOwnershipProject(requestedPhases: string[], approvedDesign = false): 
 function closeOwnershipPhase(
   project: OwnershipProject, phase: string, identity: 'param' | 'summary' = 'param',
 ): void {
-  const summaryPath = path.join(
-    featurePhaseReportsDir(project.root, OWN_FEATURE, phase, FRAMEWORK_ROOT), 'summary.json',
-  );
-  fs.mkdirSync(path.dirname(summaryPath), { recursive: true });
-  fs.writeFileSync(summaryPath, JSON.stringify({
-    schema_version: '1.2', phase, feature: OWN_FEATURE, verdict: 'PASS',
-    run_id: project.runId,
-    blocker_count: 0, fail_count: 0, warn_count: 0,
-    script_report: 'script-report.json', merged_report: 'merged-report.md',
-    ai_prompt: 'ai-prompt.md', summary_json: 'summary.json',
-    run_statuses: [], readiness_signals: [], blocking_warnings: [], blocking_skips: [],
-    blockers: [], next_action: 'run_receipt', closure_status: 'open', assurance: 'full',
-  } as HarnessRunSummary, null, 2), 'utf8');
+  seedCurrentSummary(project.root, OWN_FEATURE, phase, `doc/features/${OWN_FEATURE}/context/facts.md`, project.runId);
   finalizePhaseClosure({
     projectRoot: project.root, frameworkRoot: FRAMEWORK_ROOT, feature: OWN_FEATURE,
     phase, persistPhaseState: () => undefined,
@@ -534,26 +518,18 @@ const cases: Case[] = [
         const executed = path.join(fixture.root, 'src', 'demo', 'Executed.ts');
         fs.mkdirSync(path.dirname(executed), { recursive: true });
         fs.writeFileSync(executed, 'export function proven(): boolean { return true; }\n', 'utf8');
-        // 两个负例必须单变量：文件都真实存在，被拒的原因只能是「check 非 PASS」和
+        // 两个负例必须单变量：文件都真实存在，被拒的原因只能是「当前明确不适用」和
         // 「路径越出项目根」，而不是被"文件不存在"顺带滤掉。
         const notExecuted = path.join(fixture.root, 'src', 'demo', 'NotExecuted.ts');
         fs.writeFileSync(notExecuted, 'export function unproven(): boolean { return true; }\n', 'utf8');
         fs.writeFileSync(outsideAbs, 'export function outside(): boolean { return true; }\n', 'utf8');
-        const reportPath = path.join(
-          featurePhaseReportsDir(fixture.root, FEATURE, PHASE, FRAMEWORK_ROOT),
-          'script-report.json',
-        );
-        fs.writeFileSync(reportPath, JSON.stringify({
-          feature: FEATURE,
-          phase: PHASE,
-          summary: { verdict: 'PASS' },
-          checks: [
-            { id: 'proven', status: 'PASS', affected_files: ['src/demo/Executed.ts'] },
-            { id: 'skipped', status: 'FAIL', affected_files: ['src/demo/NotExecuted.ts'] },
-            { id: 'ghost', status: 'PASS', affected_files: ['src/demo/DoesNotExist.ts'] },
-            { id: 'escape', status: 'PASS', affected_files: [outsideRel] },
-          ],
-        }, null, 2), 'utf8');
+        const check = (id: string, files: string[]): CheckResult => ({ id, category: 'structure', severity: 'BLOCKER', status: 'PASS',
+          description: 'controlled evidence reference', details: 'actual references supplied for production binding', affected_files: files });
+        seedCurrentSummary(fixture.root, FEATURE, PHASE, `doc/features/${FEATURE}/spec/spec.md`, undefined, [
+          { ...check('proven', ['src/demo/Executed.ts']), status: fs.readFileSync(executed, 'utf8').includes('return true') ? 'PASS' : 'FAIL' },
+          { ...check('skipped', ['src/demo/NotExecuted.ts']), status: 'SKIP', structured: { applicability: 'not_applicable' } },
+          check('ghost', ['src/demo/DoesNotExist.ts']), check('escape', [outsideRel]),
+        ]);
         finalizeWithProductionEvidence(fixture);
         const manifest = loadPhaseEvidenceManifest(fixture.root, FEATURE, PHASE)!;
         const inputs = manifest.manifest.inputs.map((entry) => entry.path);
@@ -561,7 +537,7 @@ const cases: Case[] = [
         // （下游 component-closure-evidence.manifestTracksAuthority 正是消费它）。
         assert(inputs.includes('src/demo/Executed.ts'), `执行过的源码未进 manifest：${inputs.join(', ')}`);
         assert(fs.existsSync(notExecuted), 'NotExecuted.ts 未建出——该负例退化成"文件不存在"');
-        assert(!inputs.some((p) => p.includes('NotExecuted')), '非 PASS check 的文件不得入证据链');
+        assert(!inputs.some((p) => p.includes('NotExecuted')), '明确不适用 check 的对象不得冒充已执行证据');
         assert(!inputs.some((p) => p.includes('DoesNotExist')), '不存在的文件不得入证据链');
         assert(fs.existsSync(outsideAbs), '越界文件未建出——该负例退化成"文件不存在"');
         assert(!inputs.some((p) => p.includes('outside')), '越出项目根的路径不得入证据链');
@@ -802,9 +778,15 @@ const cases: Case[] = [
     name: 'direct receipt and sync-closure callers converge on identical commit bytes',
     run: () => {
       const direct = mkProject();
-      const sync = mkProject();
+      // Compare the two callers against the same real source/report bytes, including their true project_root.
+      const sync = direct;
       try {
         const directResult = finalize(direct);
+        const directBytes = fs.readFileSync(direct.summaryPath, 'utf8');
+        const directManifest = loadPhaseEvidenceManifest(direct.root, FEATURE, PHASE);
+        fs.writeFileSync(sync.summaryPath, sync.originalSummary, 'utf8');
+        fs.rmSync(path.join(path.dirname(sync.summaryPath), 'phase-evidence-manifest.json'));
+        fs.writeFileSync(sync.receiptPath, '# receipt\n\nclaimed: true\n', 'utf8');
         const syncResult = finalize(sync, () => syncPhaseStateOnReceiptPassStrict(
           sync.root, FEATURE, PHASE, {
             status: 'passed',
@@ -812,14 +794,12 @@ const cases: Case[] = [
           },
           { frameworkRoot: FRAMEWORK_ROOT },
         ));
-        const directBytes = fs.readFileSync(direct.summaryPath, 'utf8');
         const syncBytes = fs.readFileSync(sync.summaryPath, 'utf8');
         assert(directBytes === syncBytes, 'entry routes published different summary bytes');
         assert(
           directResult.closure_fingerprint === syncResult.closure_fingerprint,
           'entry routes produced different closure fingerprints',
         );
-        const directManifest = loadPhaseEvidenceManifest(direct.root, FEATURE, PHASE);
         const syncManifest = loadPhaseEvidenceManifest(sync.root, FEATURE, PHASE);
         assert(
           directManifest?.manifest.aggregate_sha256 === syncManifest?.manifest.aggregate_sha256,
@@ -833,7 +813,6 @@ const cases: Case[] = [
         assert(syncCallback >= 0 && strictPersist > syncCallback, 'sync route lost strict finalizer wiring');
       } finally {
         fs.rmSync(direct.root, { recursive: true, force: true });
-        fs.rmSync(sync.root, { recursive: true, force: true });
       }
     },
   },

@@ -15,6 +15,7 @@ import { readDeliveredVerifierRequest } from './real-chain.unit.test';
 import { designRepairCompletionTransport } from './design-authority-repair.unit.test';
 import type { UnitCaseResult } from '../run-unit';
 import { matchesUnitCase, startCaseTiming, type SelectedUnitCases, type UnitExecutionTiming } from '../utils/unit-case-selection';
+import { withRuntimeTest } from '../utils/runtime-test-control';
 
 const SOURCE = 'src/math/src/main/clamp.ts';
 const TEST = 'src/math/src/test/clamp.test.ts';
@@ -164,13 +165,13 @@ export async function runGoal(root: string, mode: 'detached' | 'session', scenar
   try {
     if (mode === 'session') {
       const options = { projectRoot: root, frameworkRoot: path.join(root, 'framework'), feature: 'clamp', runId: 'session-cli', adapter: 'claude', runMode: 'attended', authorization: { mode: 'goal_mode', autonomyAuthorized: true } };
-      let step = await entry.runGoalModeSessionStep(options);
+      let step = await withRuntimeTest({ root: options.projectRoot }, () => entry.runGoalModeSessionStep(options));
       for (let round = 0; step.type === 'phase_execute_request' && round < 14; round++) {
         const requestPath = step.request.path;
         const original = JSON.parse(fs.readFileSync(requestPath, 'utf8'));
         const code = work(original.context.phase, original.context, original.context.childEnv, original.context.instruction);
-        step = await entry.runGoalModeSessionStep({ ...options, requestPath, report: { phase: original.context.phase, status: code === 0 ? 'passed' : 'failed',
-          details: `${original.context.phase}: author selfcheck exit ${code}; actual script/native outcomes remain in the original phase reports.` } });
+        step = await withRuntimeTest({ root: options.projectRoot }, () => entry.runGoalModeSessionStep({ ...options, requestPath, report: { phase: original.context.phase, status: code === 0 ? 'passed' : 'failed',
+          details: `${original.context.phase}: author selfcheck exit ${code}; actual script/native outcomes remain in the original phase reports.` } }));
       }
       assert.notEqual(step.type, 'phase_execute_request', 'bounded fixture cannot hide a non-convergent runtime');
     } else {
@@ -186,8 +187,8 @@ export async function runGoal(root: string, mode: 'detached' | 'session', scenar
         return { exitCode: code, stdout: output, stderr: '', duration_ms: Date.now() - started, command: 'test-model-substitute' };
       });
       try {
-        await new runtime.GoalPhaseRuntime({ args: ['--feature', 'clamp', resume ? '--resume' : '--attach-created', 'session-cli', '--adapter', 'claude', '--foreground-ok', '--project-root', root, '--framework-root', path.join(root, 'framework')],
-          layout: { kind: 'consumer', projectRoot: root, frameworkRoot: path.join(root, 'framework'), frameworkRel: 'framework' } }).run();
+        await withRuntimeTest({ root: root }, () => new runtime.GoalPhaseRuntime({ args: ['--feature', 'clamp', resume ? '--resume' : '--attach-created', 'session-cli', '--adapter', 'claude', '--foreground-ok', '--project-root', root, '--framework-root', path.join(root, 'framework')],
+          layout: { kind: 'consumer', projectRoot: root, frameworkRoot: path.join(root, 'framework'), frameworkRel: 'framework' } }).run());
       } finally { runtime.__testing_setInvokeAgent(null); }
     }
     return { root, failedInputs, invocations, rawGap };
@@ -284,8 +285,8 @@ const cases: Array<{ name: string; run(): Promise<void> }> = [{
       assert(last); const report = json(session, `doc/features/clamp/goal-runs/session-cli/${last.handoff_report.path}`);
       const current = moduleAt(session, 'scripts/utils/session-execution-handoff').readSessionExecution(path.join(session, 'doc/features/clamp/goal-runs/session-cli'));
       const before = read(session, 'doc/features/clamp/goal-runs/session-cli/events.jsonl');
-      const duplicate = await moduleAt(session, 'scripts/goal-mode-entry').runGoalModeSessionStep({ projectRoot: session, frameworkRoot: path.join(session, 'framework'), feature: 'clamp', runId: 'session-cli', adapter: 'claude', runMode: 'attended',
-        requestPath: path.resolve(session, 'doc/features/clamp/goal-runs/session-cli', current.reference.path), report: report.report });
+      const duplicate = await withRuntimeTest({ root: session }, () => moduleAt(session, 'scripts/goal-mode-entry').runGoalModeSessionStep({ projectRoot: session, frameworkRoot: path.join(session, 'framework'), feature: 'clamp', runId: 'session-cli', adapter: 'claude', runMode: 'attended',
+        requestPath: path.resolve(session, 'doc/features/clamp/goal-runs/session-cli', current.reference.path), report: report.report }));
       assert.equal(duplicate.duplicate, true); assert.equal(read(session, 'doc/features/clamp/goal-runs/session-cli/events.jsonl'), before);
     } finally {
       if (priorTrust === undefined) delete process.env.MAISON_GOAL_CHECKPOINT_DIR; else process.env.MAISON_GOAL_CHECKPOINT_DIR = priorTrust;

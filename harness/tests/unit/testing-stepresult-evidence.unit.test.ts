@@ -832,7 +832,7 @@ test('缺陷身份稳定：route/disposition 的 check id 与 repair 指纹不�
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-test('T1 native 证据从实际路由→summary→事件恢复→prompt，旧 fp/目标/拒修/无进展语义不变', () => {
+test('T1 native 证据从实际路由→summary→事件恢复→prompt保真；未知源码目标不能虚构完成评估', () => {
   const root = projectRoot();
   try {
     const ctx = { projectRoot: root, feature: FEATURE, phase: 'testing', frameworkRoot: root } as any;
@@ -871,7 +871,7 @@ test('T1 native 证据从实际路由→summary→事件恢复→prompt，旧 fp
     assert.deepStrictEqual(first.after.map(candidate => candidate.item_fingerprint), second.after.map(candidate => candidate.item_fingerprint), '换时间戳证据目录不换缺陷身份');
     assert.deepStrictEqual(extractContentRelatedFiles({ repair_candidates: first.after }), [], '只读证据不得充当源码进展目标');
     assert.strictEqual(shouldHaltNoProgress({ failureKind: 'code_regression', priorBlockerSignature: 'same',
-      currentBlockerSignature: 'same', priorArtifactSnapshot: {}, currentArtifactSnapshot: {}, relevantEvidenceKnown: false }), true);
+      currentBlockerSignature: 'same', priorArtifactSnapshot: {}, currentArtifactSnapshot: {}, relevantEvidenceKnown: false }), false, '只读证据不是可比作者输入，未知不判停');
     const candidate = first.after[0];
     assert.deepStrictEqual(candidate.files, [], '原 native 无源码定位，仍为空');
     const ref = candidate.evidence_refs![0];

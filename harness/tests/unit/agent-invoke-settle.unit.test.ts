@@ -15,6 +15,7 @@ import {
   probeAdapterVersion,
   defaultHeadlessInvokePlan,
   invokeAgentHeadless,
+  resolveAgentOutputIdleMs,
   readProviderSessionId,
   withProviderSession,
   withInvocationAuthorization,
@@ -26,7 +27,14 @@ import {
 import { createCodexTerminalScanner } from '../../scripts/utils/codex-terminal-events';
 import { extractCodexAgentMessageText } from '../../scripts/utils/codex-terminal-events';
 import { applyIndependentQuestioningOutput, validateBlueprintQuestioning } from '../../scripts/utils/blueprint-questioning';
+import * as agentInvoke from '../../scripts/utils/agent-invoke';
+import { createWorkUnitExecutionContext, DetachedGoalPhaseExecutor, type WorkUnitExecutionContext } from '../../scripts/utils/goal-phase-executor';
+import { invocationCompleted, invocationEndFacts } from '../../scripts/utils/invocation-completion';
+import { writePhaseExecutionRequestMaterial } from '../../scripts/utils/session-execution-handoff';
+import { buildInitialDesignGoalManifest, writeGoalManifest } from '../../scripts/utils/goal-manifest';
+import * as YAML from 'yaml';
 import type { UnitCaseResult } from '../run-unit';
+import { clearFrameworkConfigCache } from '../../config';
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(message);
@@ -37,6 +45,198 @@ function fakeChild(): ChildProcess {
 }
 
 const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
+  {
+    name: 'P1 native author recovery validates seeds against real design targets and keeps implementation and verifier streams separate',
+    run: async () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-author-unit-'));
+      const runDir = path.join(root, 'caller-run'); fs.mkdirSync(runDir);
+      const base: WorkUnitExecutionContext = { runId: 'caller', feature: 'cu-existing', workflowId: 'obligation-driven', track: 'full', chain: ['coding'], phase: 'coding', attemptId: 'current',
+        owner: { run_id: 'caller', owner_id: 'owner', epoch: 1, kind: 'process' }, projectRoot: root, frameworkRoot: path.resolve(__dirname, '../../..'), runDir, reportDir: 'caller-run', adapter: 'codex',
+        childEnv: {}, runtimeFacts: { receiptRequired: false, resume: false, successor: false } };
+      const append = (directory: string, event: Record<string, unknown>) => fs.appendFileSync(path.join(directory, 'events.jsonl'), JSON.stringify(event) + '\n');
+      const record = async (ctx: WorkUnitExecutionContext, id: string) => {
+        append(ctx.runDir, { type: 'agent_invoke_start', phase: ctx.phase, purpose: 'author', invoke_id: ctx.attemptId });
+        const issued = writePhaseExecutionRequestMaterial({ context: ctx, invokeId: ctx.attemptId, purpose: 'author', preSnapshot: null, writeBoundary: null,
+          gateTimeoutMs: 10_000, cleanupReserveMs: 100, issuedAt: new Date().toISOString() });
+        const outputLogPath = path.join(ctx.runDir, path.dirname(issued.reference.path), 'agent-output.log');
+        const stream = [{ type: 'thread.started', thread_id: id }, { type: 'turn.completed' }].map(row => JSON.stringify(row)).join('\n') + '\n';
+        const result = await invokeAgentHeadless({ argv: [process.execPath, '-e', `process.stdout.write(${JSON.stringify(stream)});`], label: 'controlled native author identity', adapterName: 'codex' }, root, { outputLogPath });
+        assert(invocationCompleted(result) && result.provider_session_id === id, 'the original invocation must supply the native identity');
+        append(ctx.runDir, { type: 'agent_invoke_end', phase: ctx.phase, invoke_id: ctx.attemptId, ...invocationEndFacts(result) });
+        return outputLogPath;
+      };
+      const target = (blueprintId: string) => {
+        const original = { baseline: Buffer.from(YAML.stringify({ artifact: 'component-blueprint@1', blueprint_id: blueprintId, component_id: 'different-component-id', revision: 1 })).toString('base64') };
+        const file = path.join(runDir, `original-${blueprintId}.json`); const bytes = JSON.stringify(original); fs.writeFileSync(file, bytes);
+        append(runDir, { type: 'design_authority_repair', stage: 'attempted', blueprint_id: blueprintId, signature: blueprintId,
+          handoff_context: { path: path.basename(file), sha256: require('crypto').createHash('sha256').update(bytes).digest('hex') } });
+      };
+      try {
+        await record({ ...base, attemptId: 'implementation-one' }, 'implementation-native');
+        assert(createWorkUnitExecutionContext({ ...base, phase: 'design-repair-author', provider_session_id: 'implementation-native' }).provider_session_id === undefined,
+          'a design label without an original target cannot inherit the CU implementation seed');
+        target('blueprint-one');
+        assert(createWorkUnitExecutionContext({ ...base, phase: 'design-repair-author', provider_session_id: 'implementation-native' }).provider_session_id === undefined,
+          'a real design target still starts new when only an implementation SID exists');
+        const designLog = await record({ ...base, phase: 'design-repair-author', attemptId: 'design-one' }, 'design-native');
+        assert(createWorkUnitExecutionContext({ ...base, phase: 'design-repair-author', provider_session_id: 'implementation-native' }).provider_session_id === 'design-native', 'same real design target recovers its own SID rather than trusting the supplied CU seed');
+        assert(createWorkUnitExecutionContext({ ...base, phase: 'ut', provider_session_id: 'design-native' }).provider_session_id === 'implementation-native', 'implementation methods share their own author while rejecting the design seed');
+        assert(createWorkUnitExecutionContext({ ...base, phase: 'questioning', provider_session_id: 'design-native' }).provider_session_id === undefined, 'independent Q never inherits either author');
+        target('blueprint-two');
+        assert(createWorkUnitExecutionContext({ ...base, phase: 'design-repair-author', provider_session_id: 'design-native' }).provider_session_id === undefined, 'another actual design object does not inherit the old object session');
+        target('blueprint-one'); fs.unlinkSync(path.join(path.dirname(designLog), 'agent-events.jsonl'));
+        assert(createWorkUnitExecutionContext({ ...base, phase: 'design-repair-author', provider_session_id: 'implementation-native' }).provider_session_id === undefined, 'legacy missing design native bytes cannot fall back to the CU author');
+        fs.writeFileSync(path.join(root, 'framework.config.json'), JSON.stringify({ schema_version: '1.0', project_name: 'native-unit-test', project_profile: { name: 'generic' }, paths: { features_dir: 'doc/features' } }));
+        const manifest = buildInitialDesignGoalManifest({ feature: 'root-blueprint', run_id: 'real-design-root', adapter: 'codex', requirement: 'existing independent design unit',
+          initial_design: { completion_target: 'feature', requested_results: ['approved design'], requested_phases: ['plan'] }, unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: root });
+        const rootRun = path.dirname(writeGoalManifest(manifest, root));
+        const rootContext = { ...base, feature: manifest.feature, runId: manifest.run_id, runDir: rootRun, reportDir: manifest.report_dir,
+          owner: { ...base.owner, run_id: manifest.run_id }, phase: 'initial-design-author', attemptId: 'root-author-one' };
+        await record(rootContext, 'root-design-native');
+        assert(createWorkUnitExecutionContext({ ...rootContext, attemptId: 'root-author-two', provider_session_id: 'implementation-native' }).provider_session_id === 'root-design-native', 'an actual initial-design manifest resumes only its original root author');
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    },
+  },
+  {
+    name: 'P1 output-idle protection kills a real silent tree, preserves unknown work and recovers the exact native session',
+    run: async () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-idle-native-'));
+      const runDir = path.join(root, 'run');
+      const directory = path.join(runDir, 'phases/coding/idle-one'); fs.mkdirSync(directory, { recursive: true });
+      const timers = agentInvoke as unknown as { DEFAULT_AGENT_OUTPUT_IDLE_MS: number };
+      const originalIdle = timers.DEFAULT_AGENT_OUTPUT_IDLE_MS;
+      const ctx: WorkUnitExecutionContext = { runId: 'idle-run', feature: 'demo', workflowId: 'obligation-driven', track: 'full', chain: ['coding'],
+        phase: 'coding', attemptId: 'idle-one', owner: { run_id: 'idle-run', owner_id: 'idle-owner', epoch: 1, kind: 'process' },
+        projectRoot: root, frameworkRoot: path.resolve(__dirname, '../../..'), runDir, reportDir: 'run', adapter: 'codex',
+        childEnv: {}, runtimeFacts: { receiptRequired: false, resume: false, successor: false } };
+      const events = path.join(runDir, 'events.jsonl');
+      const tick = path.join(root, 'grandchild-tick');
+      const pidFile = path.join(root, 'grandchild-pid');
+      fs.writeFileSync(path.join(directory, 'request-e1.json'), JSON.stringify({ context: ctx }));
+      fs.writeFileSync(events, JSON.stringify({ type: 'agent_invoke_start', phase: 'coding', invoke_id: 'idle-one' }) + '\n');
+      let grandchild = 0;
+      try {
+        timers.DEFAULT_AGENT_OUTPUT_IDLE_MS = 1_500;
+        const grand = `const fs=require('fs');setInterval(()=>fs.writeFileSync(${JSON.stringify(tick)},String(Date.now())),25);`;
+        const body = `const fs=require('fs');const c=require('child_process').spawn(process.execPath,['-e',${JSON.stringify(grand)}],{stdio:'ignore',windowsHide:true});fs.writeFileSync(${JSON.stringify(pidFile)},String(c.pid));fs.writeFileSync(${JSON.stringify(path.join(root, 'partial-work'))},'legitimate partial work');process.stdout.write(JSON.stringify({type:'thread.started',thread_id:'idle-native-42'})+'\\n');setInterval(()=>{},1000);`;
+        const result = await invokeAgentHeadless({ argv: [process.execPath, '-e', body], label: 'controlled silent native protocol', adapterName: 'codex' }, root,
+          { outputLogPath: path.join(directory, 'agent-output.log') });
+        grandchild = Number(fs.readFileSync(pidFile, 'utf8'));
+        assert(result.interrupted === true && result.kill_attempted === true && !invocationCompleted(result), JSON.stringify(result));
+        assert(!result.timed_out && !result.terminal_failure_observed && result.provider_session_id === 'idle-native-42', 'silence is unknown, not an author deadline or product failure');
+        assert(result.stderr.includes('results unknown') && fs.readFileSync(path.join(root, 'partial-work'), 'utf8') === 'legitimate partial work', 'diagnostic and legitimate bytes survive');
+        const lastTick = fs.readFileSync(tick, 'utf8');
+        await new Promise(resolve => setTimeout(resolve, 120));
+        assert(fs.readFileSync(tick, 'utf8') === lastTick, 'the real grandchild must stop, not just release a pipe');
+        fs.appendFileSync(events, JSON.stringify({ type: 'agent_invoke_end', phase: 'coding', invoke_id: 'idle-one', ...invocationEndFacts(result) }) + '\n');
+        const next = createWorkUnitExecutionContext({ ...ctx, phase: 'ut', attemptId: 'idle-two' });
+        assert(next.provider_session_id === 'idle-native-42', 'the next request resumes the original observed native identity');
+        const nativePlan = defaultHeadlessInvokePlan('codex', { write_mode: 'full-access', approval_mode: 'never' }, 'continue');
+        const expected = withProviderSession(nativePlan, next.provider_session_id);
+        const fakeCli = path.join(root, 'resume-cli.cjs'), received = path.join(root, 'resume-received.json');
+        fs.writeFileSync(fakeCli, `const fs=require('fs'),assert=require('assert').strict;
+const argv=process.argv.slice(2);let stdin='';process.stdin.setEncoding('utf8');process.stdin.on('data',chunk=>stdin+=chunk);
+process.stdin.on('end',()=>{
+ assert.deepEqual(argv,${JSON.stringify(expected.argv.slice(1))});
+ const at=argv.indexOf('exec');assert.equal(argv[at+1],'resume');assert.deepEqual(argv.slice(-2),['idle-native-42','-']);
+ assert.equal(stdin,'continue');const work=fs.readFileSync(${JSON.stringify(path.join(root, 'partial-work'))},'utf8');assert.equal(work,'legitimate partial work');
+ fs.writeFileSync(${JSON.stringify(received)},JSON.stringify({argv,stdin,work}));
+ process.stdout.write(JSON.stringify({type:'thread.started',thread_id:'idle-native-42'})+'\\n'+JSON.stringify({type:'turn.completed'})+'\\n');
+});
+`);
+        const resumedDirectory = path.join(runDir, 'phases/ut/idle-two'); fs.mkdirSync(resumedDirectory, { recursive: true });
+        const resumed = await invokeAgentHeadless({ ...nativePlan, argv: [process.execPath, fakeCli, ...nativePlan.argv.slice(1)],
+          resolvedBinary: undefined, label: 'controlled fake Codex CLI receives actual resume argv/stdin' }, root,
+          { providerSessionId: next.provider_session_id, outputLogPath: path.join(resumedDirectory, 'agent-output.log') });
+        const receipt = JSON.parse(fs.readFileSync(received, 'utf8'));
+        assert(invocationCompleted(resumed) && resumed.provider_session_id === next.provider_session_id && !resumed.interrupted && !resumed.kill_attempted,
+          'the second real fake-CLI process must consume the exact resume transport and naturally complete');
+        console.log('NATIVE_RESUME_PROTOCOL_EXECUTED ' + JSON.stringify({ executable: process.execPath, entry: fakeCli, ...receipt,
+          provider_session_id: resumed.provider_session_id, completion_observed: resumed.completion_observed, controlled_fake_cli: true }));
+      } finally { timers.DEFAULT_AGENT_OUTPUT_IDLE_MS = originalIdle; if (grandchild) await killProcessTree(grandchild); fs.rmSync(root, { recursive: true, force: true }); }
+    },
+  },
+  {
+    name: 'P1 output-idle window follows the public tool limit: configured two-hour tool survives scaled hundred-minute silence',
+    run: async () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-idle-configured-'));
+      const timers = agentInvoke as unknown as { DEFAULT_AGENT_OUTPUT_IDLE_MS: number };
+      const originalIdle = timers.DEFAULT_AGENT_OUTPUT_IDLE_MS;
+      const writeTimeout = (timeoutMs: number, aaTestTimeoutMs?: number) => {
+        fs.writeFileSync(path.join(root, 'framework.config.json'), JSON.stringify({ project_profile: 'generic',
+          toolchain: { hvigor: { timeoutMs }, ...(aaTestTimeoutMs ? { hmosDevice: { aaTestTimeoutMs } } : {}) } }));
+        clearFrameworkConfigCache();
+      };
+      try {
+        assert(resolveAgentOutputIdleMs(root) === 90 * 60_000, 'default coding45min/UT15min retain the90min floor');
+        writeTimeout(2 * 60 * 60_000);
+        assert(resolveAgentOutputIdleMs(root) === 165 * 60_000, 'real public2h configuration includes45min checking headroom');
+        writeTimeout(6 * 60 * 60_000);
+        assert(resolveAgentOutputIdleMs(root) === 405 * 60_000, 'the existing public6h limit is honored without an author total deadline');
+        writeTimeout(45 * 60_000, 2 * 60 * 60_000);
+        assert(resolveAgentOutputIdleMs(root) === 165 * 60_000, 'the public aa-test limit uses the same recipe');
+        // Same recipe, 1 logical minute = 10ms; no real model or100-minute wait.
+        timers.DEFAULT_AGENT_OUTPUT_IDLE_MS = 900;
+        writeTimeout(1_200);
+        const result = await invokeAgentHeadless({ argv: [process.execPath, '-e',
+          `process.stdout.write('{"type":"thread.started","thread_id":"configured-native"}\\n');setTimeout(()=>process.stdout.write('{"type":"turn.completed"}\\n'),1000);`],
+          label: 'configured silent tool replay, scaled time', adapterName: 'codex' }, root);
+        assert(invocationCompleted(result) && result.provider_session_id === 'configured-native' && !result.interrupted && !result.kill_attempted,
+          '100min scaled silence exceeds the old90min floor but remains inside the actual configured tool window');
+      } finally {
+        timers.DEFAULT_AGENT_OUTPUT_IDLE_MS = originalIdle;
+        clearFrameworkConfigCache();
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'P1 output-idle protection permits active authors beyond an obsolete phase timeout and preserves terminal cleanup',
+    run: async () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-idle-active-'));
+      const timers = agentInvoke as unknown as { DEFAULT_AGENT_OUTPUT_IDLE_MS: number };
+      const originalIdle = timers.DEFAULT_AGENT_OUTPUT_IDLE_MS;
+      let terminalPid = 0;
+      try {
+        timers.DEFAULT_AGENT_OUTPUT_IDLE_MS = 1_000;
+        const ctx: WorkUnitExecutionContext = { runId: 'active-run', feature: 'demo', workflowId: 'obligation-driven', track: 'full', chain: ['coding'], phase: 'coding', attemptId: 'active-one',
+          owner: { run_id: 'active-run', owner_id: 'active-owner', epoch: 1, kind: 'process' }, projectRoot: root, frameworkRoot: root, runDir: root, reportDir: '.', adapter: 'codex',
+          childEnv: {}, runtimeFacts: { receiptRequired: false, resume: false, successor: false } };
+        const body = `const t=setInterval(()=>process.stderr.write('actual native progress\\n'),100);setTimeout(()=>{clearInterval(t);process.stdout.write('{"type":"turn.completed"}\\n');},2200);`;
+        const executor = new DetachedGoalPhaseExecutor(() => ({ cwd: root, plan: { argv: [process.execPath, '-e', body], label: 'controlled active author', adapterName: 'terminal-replay-fixture' },
+          options: { timeoutMs: 20, terminalEventParser: 'codex_turn_jsonl' } }));
+        const result = await executor.execute(ctx);
+        assert(result.status === 'passed' && result.completion_observed === true && !result.interrupted && !result.kill_attempted && (result.duration_ms ?? 0) > 2_000, JSON.stringify(result));
+        // The accelerated idle window above tests active output, not native-process startup latency.
+        // Terminal cleanup uses the real idle policy; a separate fixture watchdog still makes a hung cleanup fail.
+        timers.DEFAULT_AGENT_OUTPUT_IDLE_MS = originalIdle;
+        const terminalStarted = Date.now();
+        const observations: Array<{ after_ms: number; type: string }> = [];
+        const pending = invokeAgentHeadless({ argv: [process.execPath, '-e', `process.stdout.write('{"type":"turn.completed"}\\n');setInterval(()=>{},1000);`], label: 'completed child still alive', adapterName: 'terminal-replay-fixture' }, root,
+          { terminalEventParser: 'codex_turn_jsonl', completionGraceMs: 100,
+            onActiveChild: child => { terminalPid = child.pid; },
+            onObservation: observation => observations.push({ after_ms: Date.now() - terminalStarted, type: observation.type }) });
+        const completed = await awaitPromiseWithTimeout<Awaited<typeof pending> | null>(pending, agentInvoke.resolveKillGraceMs() + 5_000, null);
+        if (!completed) {
+          if (terminalPid) await killProcessTree(terminalPid);
+          throw new Error('terminal cleanup did not settle within the independent fixture watchdog: ' + JSON.stringify({ terminalPid, observations }));
+        }
+        let childAlive = false;
+        try { process.kill(terminalPid, 0); childAlive = true; }
+        catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; }
+        console.log('NATIVE_TERMINAL_CLEANUP_EXECUTED ' + JSON.stringify({ observations, child_alive_after_return: childAlive, result: completed }));
+        assert(completed.completion_observed === true && completed.kill_attempted === true && !completed.interrupted && !completed.timed_out,
+          'terminal completion retains its existing grace/tree cleanup: ' + JSON.stringify({ observations, result: completed }));
+        assert(!childAlive, 'terminal cleanup must actually stop the original still-running process, not merely settle its pipe');
+      } finally {
+        timers.DEFAULT_AGENT_OUTPUT_IDLE_MS = originalIdle;
+        if (terminalPid) {
+          try { process.kill(terminalPid, 0); await killProcessTree(terminalPid); } catch { /* Already exited. */ }
+        }
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
   {
     name: 'P1 structured tool results publish persisted observations; commentary and text delta never trigger snapshots',
     run: async () => {
@@ -77,6 +277,22 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
                 'raw provider result must be persisted before observation');
             } });
           assert(result.exitCode === 0 && observations === (adapter === 'codex' ? 4 : 1), `${adapter}: only real structured tool results notify`);
+        }
+        for (const terminalEventParser of ['codex_turn_jsonl', 'none'] as const) {
+          const directory = path.join(root, `neutral-${terminalEventParser}`); fs.mkdirSync(directory);
+          const outputLogPath = path.join(directory, 'agent-output.log');
+          const raw = records.codex.map(record => JSON.stringify(record)).join('\n') + '\n';
+          let observations = 0;
+          const result = await invokeAgentHeadless({ argv: [process.execPath, '-e', `process.stdout.write(${JSON.stringify(raw)});`],
+            label: 'neutral-protocol-fixture', adapterName: 'terminal-replay-fixture' }, root, {
+            outputLogPath, terminalEventParser, ...(terminalEventParser === 'none' ? { toolEventCapture: 'structured_events' as const } : {}), onObservation: observation => {
+              if (observation.type !== 'tool_result') return;
+              observations++;
+              assert(fs.readFileSync(path.join(directory, 'agent-events.jsonl'), 'utf8').includes(JSON.stringify(records.codex[observations + 1])), 'neutral protocol raw result must precede notification');
+            },
+          });
+          assert(result.exitCode === 0 && observations === (terminalEventParser === 'codex_turn_jsonl' ? 4 : 0), 'only an explicit known structured protocol can notify for a neutral transport');
+          assert(result.provider_session_id === undefined && !result.command.includes('--sandbox'), 'a replay parser must not turn Node into a native Codex invocation');
         }
       } finally { fs.rmSync(root, { recursive: true, force: true }); }
     },

@@ -7,8 +7,9 @@ import { loadGoalRunManifestFromRun, effectiveHeadlessUnattended } from './goal-
 import { loadAuthoritativeEvents } from './goal-runner-phase';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as YAML from 'yaml';
 import { assertFencedOwner } from './goal-run-control';
-import { executionRequestForInvoke, observeSessionExecution } from './session-execution-handoff';
+import { executionRequestForInvoke, observeSessionExecution, readHandoffMaterial, type HandoffReference } from './session-execution-handoff';
 
 export interface WorkUnitExecutionContext {
   readonly runId: string;
@@ -140,13 +141,42 @@ function stoppedBeforeExecution(context: WorkUnitExecutionContext, controls?: Wo
     details: expired ? '用户明示时限已到；已保留成果，不启动新工作。' : '用户或协调器已取消本次执行；已保留成果。' };
 }
 
-/** Native identity is recovered only from this run's original invocation stream. */
+/** Derive the actual author unit from existing requests and design transaction originals. */
+function authorUnit(context: WorkUnitExecutionContext, events: ReturnType<typeof loadAuthoritativeEvents>, before: number): string | undefined {
+  if (!context.phase.startsWith('initial-design-') && context.phase !== 'design-repair-author') return 'implementation';
+  try {
+    const manifest = loadGoalRunManifestFromRun(context.projectRoot, context.runId, { feature: context.feature });
+    if ('initial_design' in manifest && manifest.feature === context.feature && manifest.run_id === context.runId) return `design-root:${context.feature}`;
+  } catch { /* A legacy design repair can still be identified by its original transaction. */ }
+  if (context.phase !== 'design-repair-author') return undefined;
+  type DesignEvent = (typeof events)[number] & {
+    stage?: unknown; handoff_context?: HandoffReference; blueprint_id?: unknown; signature?: unknown;
+  };
+  const history = events.slice(0, before) as DesignEvent[];
+  const attempted = [...history].reverse().find(event => event.type === 'design_authority_repair' && event.stage === 'attempted');
+  if (!attempted || !attempted.handoff_context || typeof attempted.blueprint_id !== 'string') return undefined;
+  if (history.slice(history.indexOf(attempted) + 1).some(event => event.type === 'design_authority_repair'
+    && event.signature === attempted.signature && ['failed', 'published'].includes(String(event.stage)))) return undefined;
+  try {
+    const original = readHandoffMaterial<{ baseline: string; cu?: string }>(context.runDir, attempted.handoff_context);
+    const blueprint = YAML.parse(Buffer.from(original.baseline, 'base64').toString('utf8'));
+    if (blueprint?.blueprint_id !== attempted.blueprint_id || typeof blueprint?.component_id !== 'string') return undefined;
+    const cu = original.cu ? YAML.parse(Buffer.from(original.cu, 'base64').toString('utf8')) : undefined;
+    if (cu && (typeof cu.change_unit_id !== 'string' || cu.component_blueprint_ref?.blueprint_id !== attempted.blueprint_id)) return undefined;
+    return JSON.stringify([attempted.blueprint_id, blueprint.component_id, cu?.change_unit_id ?? null]);
+  } catch { return undefined; }
+}
+
+/** Native identity is recovered only from the same real author's original invocation stream. */
 export function recoverWorkUnitProviderSession(context: WorkUnitExecutionContext): Partial<WorkUnitExecutionContext> {
   if (workUnitExecutionRole(context) === 'verifier') return { provider_session_id: undefined };
-  if (context.provider_session_id) return { provider_session_id: context.provider_session_id };
   const eventsPath = path.join(context.runDir, 'events.jsonl');
-  if (!fs.existsSync(eventsPath)) return {};
+  if (!fs.existsSync(eventsPath)) return { provider_session_id: undefined };
   const events = loadAuthoritativeEvents(eventsPath);
+  const currentStart = events.findIndex(event => event.type === 'agent_invoke_start' && event.phase === context.phase
+    && (event.invoke_id === context.attemptId || event.invoke_id === `${context.phase}-${context.attemptId}`));
+  const unit = authorUnit(context, events, currentStart < 0 ? events.length : currentStart);
+  if (!unit) return { provider_session_id: undefined };
   for (const event of [...events].reverse()) {
     if (event.type !== 'agent_invoke_start' || !event.invoke_id || !event.phase || event.invoke_id === context.attemptId
       || event.invoke_id === `${context.phase}-${context.attemptId}`
@@ -164,6 +194,7 @@ export function recoverWorkUnitProviderSession(context: WorkUnitExecutionContext
       || path.resolve(previous.projectRoot) !== path.resolve(context.projectRoot)
       || workUnitExecutionRole(previous, request.purpose) !== 'author') continue;
     const at = events.indexOf(event);
+    if (authorUnit(previous, events, at) !== unit) continue;
     const nextStart = events.findIndex((row, index) => index > at && row.type === 'agent_invoke_start' && row.invoke_id !== event.invoke_id);
     const reconciled = events.slice(at + 1).some(row =>
       ['agent_invoke_end', 'agent_process_settled', 'orphan_reclaimed', 'agent_invoke_recovered'].includes(row.type ?? '') && row.invoke_id === event.invoke_id)
@@ -186,7 +217,7 @@ export function recoverWorkUnitProviderSession(context: WorkUnitExecutionContext
       return rebuildWorkUnitExecutionContext(context, '原始流的会话ID冲突，不复用冲突ID');
     }
   }
-  return {};
+  return { provider_session_id: undefined };
 }
 
 export function validateWorkUnitExecutionContext(context: WorkUnitExecutionContext): void {

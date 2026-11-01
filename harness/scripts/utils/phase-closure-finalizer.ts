@@ -26,8 +26,10 @@ import {
 import { computeGateFingerprint } from './gate-fingerprint';
 import {
   loadPhaseEvidenceManifest,
+  createRuntimeArtifactPredicate,
   phaseEvidenceManifestPath,
   resolvePhaseEvidenceManifest,
+  recomputeManifestAggregate,
   verifyPhaseEvidenceManifestWithStagedOutputs,
   writePhaseEvidenceManifest,
 } from './phase-evidence-manifest';
@@ -52,9 +54,10 @@ import {
 } from './quality-axes';
 import type { EvidencePolicySnapshot } from './runtime-policy';
 import { writeReceiptProjection } from './receipt-scaffold';
-import type { HarnessRunSummary, Phase } from './types';
-import { resolveCurrentDisposition, type DispositionCheck } from './check-disposition';
-import { readCurrentDispositionInput, readPhaseChecks } from './verify-feature-completion';
+import { isCheckNotApplicable, type HarnessRunSummary, type Phase } from './types';
+import { resolveCurrentDisposition, phaseCompletionProblems, type DispositionCheck } from './check-disposition';
+import { readCurrentDispositionInput, readPhaseChecks, readReusableCheckResult } from './verify-feature-completion';
+import { createIdentityNeutralDigestReaders } from './identity-neutral-digest';
 
 export interface ClosureCommitV1 {
   schema_version: '1.0';
@@ -92,6 +95,12 @@ export interface FinalizePhaseClosureOptions {
   /** Fault-injection seam. A selected cut simulates process death and intentionally preserves partial publication. */
   faultAt?: ClosurePublicationCut;
 }
+
+type PhaseRepairFeedbackOptions = Pick<FinalizePhaseClosureOptions,
+  'projectRoot' | 'frameworkRoot' | 'feature' | 'phase' | 'goalRunId' | 'resolvedInputs'>
+  & Pick<import('./verify-feature-completion').CleanPassOptions, 'authorityReaders' | 'executionScope' | 'workflow'>;
+type PhaseRepairSummary = Partial<Pick<HarnessRunSummary,
+  'repair_candidates' | 'verifier_subject_id' | 'report_validity' | 'run_id' | 'verifier_request'>>;
 
 export type ClosurePublicationCut =
   | 'after_staged_summary'
@@ -226,13 +235,13 @@ function capabilityResolutionEvidenceInputs(
 }
 
 /**
- * 本阶段 PASS check 实际引用、且真实存在的项目文件（去重、项目根相对）。
+ * 本阶段检查/独立核实实际引用的项目输入（去重、项目根相对）；正负统计不决定输入归属。
  *
  * 这些文件就是该阶段证据的"被执行对象"。不把它们登记进 manifest，血缘对它们就是空门：
  * 改动它们不会让任何阶段 stale，旧 PASS 报告会继续为改动后的源码背书
  * （下游消费点 `component-closure-evidence.ts` 的 `manifestTracksAuthority`）。
  */
-function executedEvidenceInputs(
+export function executedEvidenceInputs(
   projectRoot: string,
   feature: string,
   phase: string,
@@ -240,7 +249,7 @@ function executedEvidenceInputs(
 ): string[] {
   const reportAbs = path.join(featurePhaseReportsDir(projectRoot, feature, phase, frameworkRoot), 'script-report.json');
   if (!fs.existsSync(reportAbs)) return [];
-  let checks: Array<{ status?: unknown; affected_files?: unknown }>;
+  let checks: Array<{ status?: unknown; affected_files?: unknown; structured?: Record<string, unknown> }>;
   try {
     const doc = JSON.parse(fs.readFileSync(reportAbs, 'utf-8')) as { checks?: unknown };
     checks = Array.isArray(doc.checks) ? (doc.checks as typeof checks) : [];
@@ -249,22 +258,27 @@ function executedEvidenceInputs(
     return [];
   }
   const out = new Set<string>();
-  for (const check of checks) {
-    if (check?.status !== 'PASS' || !Array.isArray(check.affected_files)) continue;
-    for (const raw of check.affected_files) {
-      if (typeof raw !== 'string' || raw.trim() === '') continue;
-      // 路径边界只认既有 SSOT，不另起一套判断（它显式禁止 `rel.startsWith('..')`，
-      // 也拒绝绝对路径——两者本模块都不得自行放宽）。
-      let rel: string;
-      try {
-        rel = validateProjectRelativePath(projectRoot, raw, `evidence affected_file:${raw}`);
-      } catch {
-        continue;
-      }
-      const abs = path.resolve(projectRoot, rel);
-      if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) continue;
-      out.add(rel);
+  const paths = checks.filter(check => !isCheckNotApplicable(check)).flatMap(check => Array.isArray(check.affected_files) ? check.affected_files : []);
+  try {
+    const summary = JSON.parse(fs.readFileSync(path.join(path.dirname(reportAbs), 'summary.json'), 'utf8')) as { verifier_subject_id?: string };
+    const { readVerifierMaterialOrNull } = require('./verifier-material') as typeof import('./verifier-material');
+    const material = summary.verifier_subject_id ? readVerifierMaterialOrNull(path.dirname(reportAbs), summary.verifier_subject_id) : null;
+    const generated = createRuntimeArtifactPredicate({ projectRoot, feature, phase, frameworkRoot });
+    if (material?.feature === feature && material.phase === phase) paths.push(...material.files.filter(file => !generated(file.path)).map(file => file.path));
+  } catch { /* Material availability is judged by the existing verifier reader. */ }
+  for (const raw of paths) {
+    if (typeof raw !== 'string' || raw.trim() === '') continue;
+    // 路径边界只认既有 SSOT，不另起一套判断（它显式禁止 `rel.startsWith('..')`，
+    // 也拒绝绝对路径——两者本模块都不得自行放宽）。
+    let rel: string;
+    try {
+      rel = validateProjectRelativePath(projectRoot, path.isAbsolute(raw) ? path.relative(projectRoot, raw).replace(/\\/g, '/') : raw, `evidence affected_file:${raw}`);
+    } catch {
+      continue;
     }
+    const abs = path.resolve(projectRoot, rel);
+    if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) continue;
+    out.add(rel);
   }
   return [...out];
 }
@@ -501,7 +515,7 @@ function recoverPartialPublication(
       if (
         !SUMMARY_ASSURANCE_SCHEMA_VERSIONS.has(String(parsed.schema_version)) ||
         parsed.feature !== opts.feature || parsed.phase !== opts.phase ||
-        parsed.verdict !== 'PASS' || parsed.blocker_count !== 0 || parsed.closure_status !== 'closed' ||
+        parsed.closure_status !== 'closed' ||
         parsed.closure_commit?.schema_version !== '1.0' ||
         parsed.closure_commit.evidence_manifest_path !== canonicalManifestRel ||
         !runMatches || !attemptMatches
@@ -522,6 +536,12 @@ function recoverPartialPublication(
     // Crash occurred immediately after the staged write. No evidence was published,
     // so a freshly receipt-validated caller may discard this temp file and start a
     // new transaction; the old bytes never became trusted.
+    fs.unlinkSync(candidate.stagedPath);
+    return null;
+  }
+  const recordedSummary = loaded.manifest.outputs.find(entry => path.resolve(opts.projectRoot, entry.path) === path.resolve(summaryPath));
+  if (fs.existsSync(summaryPath) && recordedSummary?.sha256 === sha256Bytes(fs.readFileSync(summaryPath)) && recordedSummary.sha256 !== candidate.sha256) {
+    // The raw tool result was bound, but this closure transaction never published its manifest.
     fs.unlinkSync(candidate.stagedPath);
     return null;
   }
@@ -546,6 +566,15 @@ function recoverPartialPublication(
       `closure partial publication 无法证明仍等价（${verification.verdict}: ` +
       `${verification.changed_paths.join(', ') || verification.integrity_errors?.join(', ') || 'unknown'}）`,
     );
+  }
+  const disposition = resolveCurrentDisposition(readCurrentDispositionInput({ projectRoot: opts.projectRoot, frameworkRoot: opts.frameworkRoot,
+    feature: opts.feature, chain: [opts.phase], runId: opts.goalRunId,
+    currentResults: [{ phase: opts.phase, summary: candidate.parsed,
+      checks: readPhaseChecks(opts.projectRoot, opts.feature, opts.phase, candidate.parsed), resolvedInputs: opts.resolvedInputs }] }));
+  const pending = phaseCompletionProblems(disposition, [opts.phase]);
+  if (pending.length) {
+    fs.unlinkSync(candidate.stagedPath);
+    throw new Error(`closure 恢复仍有当前未完项：${pending.map(problem => `${problem.id}: ${problem.detail}`).join('；')}`);
   }
   fs.renameSync(candidate.stagedPath, summaryPath);
   maybeCrash(opts, 'after_summary_rename');
@@ -597,11 +626,15 @@ export function hasStagedPhaseClosure(input: {
  *     loader 按 summary 现值锚定，读到的必然是刚验真通过的那一份；
  *   · 读不到 script-report / 组装抛错 → 保留 base 已有候选，绝不清空（best-effort 事实层）。
  */
-function recomputeClosureRepairCandidates(
-  opts: FinalizePhaseClosureOptions,
+export function readCurrentPhaseRepairCandidates(
+  opts: PhaseRepairFeedbackOptions,
   reportsDir: string,
-  base: HarnessRunSummary,
+  base: PhaseRepairSummary,
 ): HarnessRunSummary['repair_candidates'] | undefined {
+  // Testing candidates come from native checks and the bounded runtime collectors, not verifier prose.
+  // Rebuilding only the model-dependent subset here would erase those already checked objects.
+  if (String(opts.phase) === 'testing') return base.repair_candidates;
+  if (!base.verifier_subject_id) return base.repair_candidates;
   try {
     const scriptReportPath = path.join(reportsDir, 'script-report.json');
     if (!fs.existsSync(scriptReportPath)) return base.repair_candidates;
@@ -613,7 +646,7 @@ function recomputeClosureRepairCandidates(
       opts.projectRoot,
       opts.feature,
       String(opts.phase),
-      { frameworkRoot: opts.frameworkRoot },
+      { frameworkRoot: opts.frameworkRoot, subjectId: base.verifier_subject_id, resolvedInputs: opts.resolvedInputs },
     );
     // verifier 无证据（能力 disabled，或该阶段本就不产 verifier 候选）→ 维持 base。
     if (!verifierReportText) return base.repair_candidates;
@@ -636,6 +669,7 @@ function recomputeClosureRepairCandidates(
         severity: String(c.severity ?? ''),
         details: typeof c.details === 'string' ? c.details : '',
         ...(typeof c.failure_kind === 'string' ? { failure_kind: c.failure_kind } : {}),
+        ...(typeof c.failure_code === 'string' ? { failure_code: c.failure_code } : {}),
         ...(repairOwner ? { repair_owner: repairOwner } : {}),
         ...(typeof c.coding_candidate === 'boolean' ? { coding_candidate: c.coding_candidate } : {}),
         ...(Array.isArray(c.affected_files) ? { affected_files: c.affected_files as string[] } : {}),
@@ -644,7 +678,8 @@ function recomputeClosureRepairCandidates(
     });
     const candidates = buildSummaryRepairCandidates({
       responsibility: { projectRoot: opts.projectRoot, frameworkRoot: opts.frameworkRoot ?? path.resolve(__dirname, '../../..'), feature: opts.feature,
-        runId: opts.goalRunId?.trim() || base.run_id?.trim(), currentPhase: String(opts.phase) },
+        runId: opts.goalRunId?.trim() || base.run_id?.trim(), currentPhase: String(opts.phase),
+        authorityReaders: opts.authorityReaders, executionScope: opts.executionScope, workflow: opts.workflow },
       reviewFidelity: loadFidelityIntentSsot(opts.projectRoot, opts.feature),
       phase: String(opts.phase),
       checks: candidateChecks,
@@ -661,6 +696,62 @@ function recomputeClosureRepairCandidates(
     // best-effort：重算失败不阻断闭环提交，保留 base 已有候选。
     return base.repair_candidates;
   }
+}
+
+function preparePhaseRepairFeedbackUnlocked(opts: PhaseRepairFeedbackOptions, reportsDir: string, base: HarnessRunSummary) {
+  opts = { ...opts, authorityReaders: opts.authorityReaders ?? createIdentityNeutralDigestReaders() };
+  const scriptPath = path.join(reportsDir, 'script-report.json');
+  let currentChecks: DispositionCheck[] = [];
+  try {
+    if (fs.existsSync(scriptPath)) {
+      JSON.parse(fs.readFileSync(scriptPath, 'utf8'));
+      currentChecks = readPhaseChecks(opts.projectRoot, opts.feature, String(opts.phase), base);
+    }
+  } catch (error) { throw new Error(`script-report.json 不可读取：${(error as Error).message}`); }
+  const repairCandidates = readCurrentPhaseRepairCandidates(opts, reportsDir, base);
+  const disposition = resolveCurrentDisposition(readCurrentDispositionInput({ projectRoot: opts.projectRoot,
+    frameworkRoot: opts.frameworkRoot, feature: opts.feature, chain: [String(opts.phase)], runId: opts.goalRunId,
+    authorityReaders: opts.authorityReaders, executionScope: opts.executionScope, workflow: opts.workflow,
+    currentResults: [{ phase: String(opts.phase), summary: { ...base, repair_candidates: repairCandidates },
+      checks: currentChecks, resolvedInputs: opts.resolvedInputs }] }));
+  if (repairCandidates?.length) {
+    const revisionRunId = opts.goalRunId?.trim() || base.run_id?.trim();
+    const revision = scopeRevisionInputFromRepairCandidates(repairCandidates, {
+      projectRoot: opts.projectRoot, frameworkRoot: opts.frameworkRoot, feature: opts.feature,
+      currentDisposition: disposition,
+      ...(revisionRunId ? { runId: revisionRunId } : {}),
+    });
+    if (revision) {
+      const before = sha256Bytes(fs.readFileSync(scriptPath));
+      const bound = base.closure_status !== 'closed' && readReusableCheckResult({ projectRoot: opts.projectRoot,
+        frameworkRoot: opts.frameworkRoot, feature: opts.feature, phase: String(opts.phase), runId: opts.goalRunId,
+        resolvedInputs: opts.resolvedInputs });
+      const evidence = bound ? loadPhaseEvidenceManifest(opts.projectRoot, opts.feature, String(opts.phase)) : null;
+      writeScopeRevisionInputToScriptReport(scriptPath, revision.input, revision.candidateIds);
+      const after = sha256Bytes(fs.readFileSync(scriptPath));
+      const output = evidence?.manifest.outputs.find(entry => path.resolve(opts.projectRoot, entry.path) === scriptPath);
+      // Feedback is an output of this explicit action. Retain the checked inputs/environment;
+      // rebinding its metadata does not close the open negative result or change any raw check.
+      if (before !== after && evidence?.integrityOk && output?.sha256 === before) {
+        output.sha256 = after;
+        evidence.manifest.aggregate_sha256 = recomputeManifestAggregate(evidence.manifest);
+        writePhaseEvidenceManifest(opts.projectRoot, evidence.manifest);
+      }
+    }
+  }
+  return { repairCandidates, disposition };
+}
+
+/** Explicit write entries preserve qualified late feedback even when completion must be refused. */
+export function preparePhaseRepairFeedback(opts: PhaseRepairFeedbackOptions): ReturnType<typeof preparePhaseRepairFeedbackUnlocked> | undefined {
+  const reportsDir = featurePhaseReportsDir(opts.projectRoot, opts.feature, opts.phase, opts.frameworkRoot);
+  const summaryPath = path.join(reportsDir, 'summary.json');
+  if (!fs.existsSync(summaryPath)) return;
+  return withClosureMutex(summaryPath, () => {
+    const current = readSummary(summaryPath);
+    if (!SUMMARY_ASSURANCE_SCHEMA_VERSIONS.has(String(current.parsed.schema_version))) return;
+    return preparePhaseRepairFeedbackUnlocked(opts, reportsDir, current.parsed);
+  });
 }
 
 function finalizePhaseClosureUnlocked(
@@ -680,24 +771,12 @@ function finalizePhaseClosureUnlocked(
         `请重跑 harness 生成 ${SUMMARY_SCHEMA_VERSION_CURRENT} assurance 后再闭环`,
     );
   }
-  const scriptPath = path.join(reportsDir, 'script-report.json');
-  let currentChecks: DispositionCheck[] = [];
-  try {
-    if (fs.existsSync(scriptPath)) {
-      JSON.parse(fs.readFileSync(scriptPath, 'utf8'));
-      currentChecks = readPhaseChecks(opts.projectRoot, opts.feature, String(opts.phase), current.parsed);
-    }
-  } catch (error) { throw new Error(`script-report.json 不可读取：${(error as Error).message}`); }
-  const closureDisposition = resolveCurrentDisposition(readCurrentDispositionInput({ projectRoot: opts.projectRoot,
-    frameworkRoot: opts.frameworkRoot, feature: opts.feature, chain: [String(opts.phase)], runId: opts.goalRunId,
-    currentResults: [{ phase: String(opts.phase), summary: current.parsed, checks: currentChecks }] }));
+  const { repairCandidates: closureRepairCandidates, disposition: closureDisposition } =
+    preparePhaseRepairFeedbackUnlocked(opts, reportsDir, current.parsed);
   // 本事务正在发布的 closure/manifest/attestation 不能倒过来要求自己已发布；
   // 完整summary形状仍由原gate负责；只有合法他方repair可交接，当前必修/待核与真实负面结论仍阻断。
-  const publicationFacts = new Set(['closure_commit_present', 'lineage_fresh', 'attestation_present', 'quality_axes_valid']);
-  const unresolved = closureDisposition.completionBlocking.filter(problem => !publicationFacts.has(problem.id)
-    && ((problem.owner ?? problem.phase) === String(opts.phase)
-      || problem.phase === String(opts.phase) && problem.action !== 'repair'));
-  if (unresolved.length || current.parsed.blocker_count !== 0) {
+  const unresolved = phaseCompletionProblems(closureDisposition, [String(opts.phase)]);
+  if (unresolved.length) {
     throw new Error(
       `summary 不满足 closure：verdict=${current.parsed.verdict}, blocker_count=${current.parsed.blocker_count}`
         + (unresolved.length ? `；${unresolved.map(problem => `${problem.id}: ${problem.detail}`).join('；')}` : ''),
@@ -759,27 +838,6 @@ function finalizePhaseClosureUnlocked(
     receipt_path: receiptRel(opts),
     evidence_manifest_path: manifestRel,
   };
-  // plan a9d4e7c2 P1-5：verifier 依赖的候选只有到这一步才有可验真的证据可依。
-  const closureRepairCandidates = recomputeClosureRepairCandidates(opts, reportsDir, current.parsed);
-  // D0.3：晚到的 spec/plan 归属候选（首次 writer 时 verifier 还没有产物；`--sync-closure`
-  // 也只走这条路）同样要把修订输入落进 script-report.json——在证据 manifest 重算与
-  // staged rename 之前回写，manifest 纳入的就是回写后的字节。只覆盖 PASS 闭环这一支，
-  // FAIL 支由 writer 侧那一处兜住。
-  if (closureRepairCandidates?.length) {
-    // run 身份：调用方显式给的优先，否则取**本阶段 summary 自己记的 run_id**（phase harness
-    // 跑的时候写下的）。`--sync-closure` 是独立进程、没有 MAISON_GOAL_RUN_ID，靠的就是这一条；
-    // 刻意不借 `opts.goalRunId` 从 sync-closure 侧回填——那个字段同时是 requirement 血缘严格性
-    // 的开关，借它会顺带改掉与 D0.3 无关的闭环判据。
-    const summaryRunId = (current.parsed as { run_id?: string }).run_id?.trim();
-    const revisionRunId = opts.goalRunId?.trim() || summaryRunId;
-    const revision = scopeRevisionInputFromRepairCandidates(closureRepairCandidates, {
-      projectRoot: opts.projectRoot, frameworkRoot: opts.frameworkRoot, feature: opts.feature,
-      ...(revisionRunId ? { runId: revisionRunId } : {}),
-    });
-    // 回写失败即抛：闭环就停在 open（本函数尚未 staged rename），不产生「候选在 summary、
-    // 修订输入却没落盘」的 closed 阶段。
-    if (revision) writeScopeRevisionInputToScriptReport(path.join(reportsDir, 'script-report.json'), revision.input, revision.candidateIds);
-  }
   const finalSummary: HarnessRunSummary = {
     // plan a9d4e7c2 T3：**保真闭环**——`{...current.parsed}` 原样带走 base 的代际与
     // verifier 字段；这里绝不把 1.3 回写成 1.2（旧写法会让 open→closed 悄悄降代，
@@ -796,7 +854,7 @@ function finalizePhaseClosureUnlocked(
   // plan 07a41ec6 T7：verifier_closure 按磁盘事实派生（三条闭环路径同一口径）；调用方显式给了就以调用方为准。
   const summaryPatch: Record<string, unknown> = { ...(opts.summaryPatch ?? {}) };
   if (!Object.prototype.hasOwnProperty.call(summaryPatch, 'verifier_closure')) {
-    summaryPatch.verifier_closure = deriveVerifierClosureRecord(opts.projectRoot, opts.feature, opts.phase, opts.frameworkRoot);
+    summaryPatch.verifier_closure = deriveVerifierClosureRecord(opts.projectRoot, opts.feature, opts.phase, opts.frameworkRoot, { resolvedInputs: opts.resolvedInputs });
   }
   for (const [key, value] of Object.entries(summaryPatch)) {
     if (value === null || value === undefined) delete (finalSummary as unknown as Record<string, unknown>)[key];
@@ -806,7 +864,7 @@ function finalizePhaseClosureUnlocked(
   {
     const signals = (finalSummary.readiness_signals ?? []).filter(s => s.id !== 'semantic_not_reverified');
     const closure = (finalSummary as { verifier_closure?: { mode?: string; current_material_not_reverified?: string[] } }).verifier_closure;
-    if (closure?.mode === 'completed_with_prior_review') {
+    if (closure?.mode === 'completed_with_prior_review' && closure.current_material_not_reverified?.length) {
       signals.push({
         id: 'semantic_not_reverified',
         status: 'unknown',
@@ -870,4 +928,5 @@ export function finalizePhaseClosure(
   );
 }
 
-export const __testing_recomputeClosureRepairCandidates = recomputeClosureRepairCandidates;
+export const __testing_recomputeClosureRepairCandidates: (opts: FinalizePhaseClosureOptions,
+  reportsDir: string, base: HarnessRunSummary) => HarnessRunSummary['repair_candidates'] | undefined = readCurrentPhaseRepairCandidates;

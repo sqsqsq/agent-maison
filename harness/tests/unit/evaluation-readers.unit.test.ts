@@ -10,7 +10,7 @@ import { resolvePhaseEvidenceManifest, recomputeManifestAggregate, recomputePhas
 import { resolvePhaseWriteBoundary } from '../../scripts/utils/phase-write-boundary';
 import { resolveCapabilityResolutionEntryInput } from '../../scripts/utils/capability-resolution-entry-input';
 import { buildPhasePrompt } from '../../scripts/goal-phase-runtime';
-import { assessFeature } from '../../scripts/utils/assess';
+import { observeFeatureState, assessObservation } from '../../scripts/utils/assess';
 import type { UnitCaseResult } from '../run-unit';
 import { matchesUnitCase, selectedUnitCases } from '../utils/unit-case-selection';
 
@@ -148,13 +148,28 @@ const cases: Array<{ name: string; run(): Promise<void> }> = [
     assert.equal(coding.counts['blueprint.validate'], 1, JSON.stringify(coding.counts));
     assert.equal(coding.counts['blueprint.parse'], 1);
     assert.equal(coding.counts['cu.validate'], 1);
-    const assessed = counted(() => assessFeature({ projectRoot: root, frameworkRoot, feature, runId, writeProjection: false }));
+    const assessed = counted(() => {
+      const observation = observeFeatureState({ projectRoot: root, frameworkRoot, feature, runId, writeProjection: false });
+      return { observation, result: assessObservation(observation, { mode: 'manual' }) };
+    });
     assert.equal(assessed.counts['blueprint.validate'], 1, JSON.stringify(assessed.counts));
     assert.equal(assessed.counts['blueprint.parse'], 1);
-    const phases = assessed.value.observed.phases;
-    for (const phase of ['spec', 'plan']) assert.equal(phases.find(item => item.phase === phase)?.closure, 'closed');
-    assert.equal(assessed.value.recommendation.phase, 'coding');
-    assert.equal(assessed.value.recommendation.action, 'rerun_phase', 'historical coding defect must not disappear');
+    const phases = assessed.value.observation.phases;
+    for (const phase of ['spec', 'plan']) {
+      const observed = phases.find(item => item.phase === phase);
+      if (observed) assert.equal(observed.closure, 'closed');
+      else {
+        const scope = assessed.value.observation.execution_scope;
+        assert(scope && !scope.phase_chain.includes(phase), `${phase}: no unfinished duty may disappear from observation`);
+        const duties = scope.obligations.filter(item => item.owner_phase === phase && item.applicability === 'required');
+        assert(duties.every(item => item.satisfied_by?.length && item.satisfied_by.every(ref => 'input_id' in ref)),
+          `${phase}: required omitted checks need the actual canonical definition proof`);
+      }
+      assert(!assessed.value.observation.currentDisposition?.completionBlocking.some(problem => (problem.owner ?? problem.phase) === phase),
+        `${phase}: accepted canonical proof cannot leave a hidden completion blocker`);
+    }
+    assert.equal(assessed.value.result.recommendation.phase, 'coding');
+    assert.equal(assessed.value.result.recommendation.action, 'rerun_phase', 'historical coding defect must not disappear');
   }) },
 ];
 

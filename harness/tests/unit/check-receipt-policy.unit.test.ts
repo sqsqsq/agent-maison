@@ -17,15 +17,15 @@ import { runSyncClosureDetailed, tryValidateReceipt } from '../../scripts/utils/
 // B05（plan 7b3e9a15）V8：sob 的闭环负例必须经**真实 writer** 再验 check-receipt——
 // 手写 summary 只能证明 check-receipt 一侧，恰好绕过 writer 的候选/next_action/字段三处。
 import { writeRunSummaryBase } from '../../harness-runner';
+import { generateScriptReport } from '../../scripts/utils/report-generator';
 import { resolveEvidencePolicy, type RuntimeContext } from '../../scripts/utils/runtime-policy';
 import { resolveVerifierPlan, workflowVerifierPrompt } from '../../scripts/utils/verifier-plan';
 import { buildVerifierMaterialView } from '../../scripts/utils/verifier-material';
 import { checkDataModelTyped } from '../../scripts/check-plan';
 import { loadWorkflowSpec } from '../../workflow-loader';
-import type { CheckContext, CheckResult, ContextFileEntry, Phase, ScriptReport } from '../../scripts/utils/types';
+import type { CheckContext, CheckResult, ContextFileEntry, ScriptReport } from '../../scripts/utils/types';
 import { clearFrameworkConfigCache, featurePhaseReportsDir, resolveFeatureArtifact, statefilePath } from '../../config';
 import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
-import { SUMMARY_SCHEMA_VERSION_CURRENT } from '../../scripts/utils/quality-axes';
 import { computeGateFingerprint } from '../../scripts/utils/gate-fingerprint';
 import { computeProductWorktreeDigest } from '../../scripts/utils/worktree-digest';
 import { buildGoalManifestFromInput } from '../../scripts/utils/goal-manifest';
@@ -90,8 +90,7 @@ function buildProject(phase: string, opts: ReceiptOpts): { root: string; sha: st
   const reportsDir = path.resolve(root, reportsRelDir);
   fs.mkdirSync(reportsDir, { recursive: true });
 
-  // submodule layout：resolveWorkflowSpec（check-receipt.ts 子进程内、无显式 frameworkRoot）
-  // 依赖 <projectRoot>/framework/workflows/ 探测到 workflow tree。
+  // 发布件目录：resolveWorkflowSpec 在子进程中从 framework/workflows 探测 workflow tree。
   fs.mkdirSync(path.join(root, 'framework', 'harness', 'state'), { recursive: true });
   fs.mkdirSync(path.join(root, 'framework', 'workflows'), { recursive: true });
   fs.copyFileSync(
@@ -137,35 +136,6 @@ function buildProject(phase: string, opts: ReceiptOpts): { root: string; sha: st
   fs.writeFileSync(tracePath, JSON.stringify({ schema_version: '1.0.0', feature: 'demo', phase }), 'utf-8');
   const ceAbs = path.join(featureDir, 'context-exploration.md');
   fs.writeFileSync(ceAbs, '# context exploration\n', 'utf-8');
-  // plan e5b8c3f7：verifier 证据 = summary.verifier_subject_id + 身份验真过的
-  // verifier.report.<subject>.md（与生产同形，经共享 fixture 工具写入）。
-  // omitVerifier 时**两者都不写**——这正是"verifier 缺失"的新形态（旧形态是不写 MD）。
-  if (!opts.omitVerifier) {
-    fs.writeFileSync(
-      path.join(reportsDir, 'summary.json'),
-      JSON.stringify(
-        {
-          // plan a9d4e7c2 T3: dispatch is keyed on schema_version now, so the fixture
-          // must carry the current generation or it is (correctly) treated as legacy.
-          schema_version: SUMMARY_SCHEMA_VERSION_CURRENT,
-          phase,
-          feature: 'demo',
-          verdict: 'PASS',
-          blocker_count: 0,
-          fail_count: 0,
-          warn_count: 0,
-          // assurance 刻意缺席：本夹具用于身份/证据面断言，闭环提交阶段必然失败
-          // （见「环C：重签后放行」用例——它靠 finalizer 抛错区分"身份放行"与"身份拦截"）。
-          closure_status: 'open',
-        },
-        null,
-        2,
-      ),
-      'utf-8',
-    );
-    publishFixtureVerifierEvidence({ projectRoot: root, reportsDir, feature: 'demo', phase });
-  }
-
   if (opts.extensionManifest) {
     fs.mkdirSync(path.join(root, 'doc', 'extensions'), { recursive: true });
     fs.writeFileSync(path.join(root, 'doc', 'extensions', 'manifest.yaml'), opts.extensionManifest, 'utf-8');
@@ -173,20 +143,14 @@ function buildProject(phase: string, opts: ReceiptOpts): { root: string; sha: st
   fs.mkdirSync(path.join(root, 'app/demo/src/main/ets'), { recursive: true });
   fs.writeFileSync(path.join(root, 'app/demo/src/main/ets/Main.ets'), 'export const value = 1;\n', 'utf8');
   const sha = initGit(root);
-  const summaryPath = path.join(reportsDir, 'summary.json');
-  if (fs.existsSync(summaryPath)) {
-    const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf8'));
-    const rel = (name: string) => `${reportsRelDir}/${name}`;
-    Object.assign(summary, {
-      script_report: rel('script-report.json'), merged_report: rel('merged-report.md'), summary_json: rel('summary.json'),
-      run_statuses: [], readiness_signals: [], blocking_warnings: [], blocking_skips: [], blockers: [],
-      next_action: 'run_verifier_then_receipt',
-      assurance: 'not_applicable', capability_resolutions: [], capability_resolution_contract_fingerprint: null,
-      gate_fingerprint: computeGateFingerprint(path.dirname(HARNESS_ROOT), phase),
-      source_commit_sha: sha, worktree_digest: computeProductWorktreeDigest(root, ['app']),
-      ...(opts.goalLedgerRunId ? { run_id: opts.goalLedgerRunId } : {}),
-    });
-    fs.writeFileSync(summaryPath, JSON.stringify(summary, null, 2), 'utf8');
+  const frameworkRoot = path.dirname(HARNESS_ROOT), workflow = loadWorkflowSpec(frameworkRoot, 'spec-driven');
+  const mode = opts.goalLedgerRunId ? 'goal' as const : 'interactive' as const;
+  const plan = resolveVerifierPlan({ phase, track: 'full', runtimeMode: mode,
+    policy: resolveEvidencePolicy('full', { ...goalCtx(phase), mode, can_prompt_user: mode === 'interactive' }, { evidence_profile: opts.evidenceProfile }),
+    workflowVerifierPrompt: workflowVerifierPrompt(workflow, phase), phaseDisabledByProfile: false, adapterHasVerifierSubagent: true, adapterName: 'claude' });
+  const summary = writePolicyPacket(root, phase, passScriptReport(phase, root), plan, [], undefined, opts.goalLedgerRunId);
+  if (!opts.omitVerifier && summary.verifier_subject_id) {
+    publishFixtureVerifierEvidence({ projectRoot: root, reportsDir, feature: 'demo', phase, subjectId: summary.verifier_subject_id, skipSummaryPatch: true });
   }
   if (opts.omitTrace) fs.unlinkSync(tracePath);
   if (opts.corruptTrace) fs.writeFileSync(tracePath, '{ this is not json', 'utf-8');
@@ -353,25 +317,7 @@ function passScriptReport(phase: string, projectRoot: string, extraChecks: Check
     { id: 'demo_ok', category: 'structure', description: 'demo', severity: 'BLOCKER', status: 'PASS', details: 'ok' },
     ...extraChecks,
   ];
-  return {
-    phase: phase as Phase,
-    feature: 'demo',
-    timestamp: new Date().toISOString(),
-    project_root: projectRoot,
-    assurance: 'full',
-    capability_resolutions: [],
-    capability_resolution_contract_fingerprint: null,
-    checks,
-    summary: {
-      total: checks.length,
-      pass: checks.filter(c => c.status === 'PASS').length,
-      fail: 0,
-      warn: 0,
-      skip: checks.filter(c => c.status === 'SKIP').length,
-      blockers: 0,
-      verdict: 'PASS',
-    },
-  };
+  return generateScriptReport('', phase, 'demo', projectRoot, checks, path.dirname(HARNESS_ROOT));
 }
 
 /**
@@ -433,7 +379,15 @@ function issueStrictSubject(
     plan.mode === 'enabled' && plan.reason === 'policy_required',
     `构造性前提：未声明 evidence_profile 时 goal 仍 strict，实得 ${plan.mode}/${plan.reason}`,
   );
-  // reports 目录走生产 SSOT：`reports_dir_pattern` 指向 phase 目录本身时也算得对。
+  const summary = writePolicyPacket(root, phase, report, plan, contextFiles, goalBriefText, 'run-X');
+  assert(Boolean(summary.verifier_subject_id), 'strict 轮必须签发 subject，否则本用例前提不成立');
+  return summary.verifier_subject_id as string;
+}
+
+/** The matrix consumes the same raw-report/material/summary writers as its strict-subject cases. */
+function writePolicyPacket(root: string, phase: string, report: ScriptReport, plan: ReturnType<typeof resolveVerifierPlan>,
+  contextFiles: ContextFileEntry[] = [], goalBriefText?: string, runId?: string) {
+  const frameworkRoot = path.dirname(HARNESS_ROOT);
   const reportsDir = featurePhaseReportsDir(root, 'demo', phase, frameworkRoot);
   fs.writeFileSync(path.join(reportsDir, 'ai-prompt.md'), '# verifier prompt (fixture)\n', 'utf-8');
   const material = buildVerifierMaterialView({
@@ -448,11 +402,8 @@ function issueStrictSubject(
     contextFiles,
     ...(goalBriefText === undefined ? {} : { goalBriefText }),
   } as Parameters<typeof buildVerifierMaterialView>[0]);
-  const summary = withGoalRunEnv(root, 'run-X', () =>
-    writeRunSummaryBase(root, report, frameworkRoot, { verifierPlan: plan, verifierMaterial: material }),
-  );
-  assert(Boolean(summary.verifier_subject_id), 'strict 轮必须签发 subject，否则本用例前提不成立');
-  return summary.verifier_subject_id as string;
+  const write = () => writeRunSummaryBase(root, report, frameworkRoot, { verifierPlan: plan, verifierMaterial: material });
+  return runId ? withGoalRunEnv(root, runId, write) : write();
 }
 
 /** 材料视图的文件面（仓根相对路径）——钉住"某文件经哪条路进视图"的构造性前提。 */
@@ -553,6 +504,10 @@ const cases: Array<{ name: string; run: () => void }> = [
       try {
         const v = tryValidateReceipt(HARNESS_ROOT, root, 'review', 'demo');
         assert(v.status === 'passed', `expected passed under balanced+review(off), got ${v.status}: ${v.message ?? ''}`);
+        fs.unlinkSync(path.join(featurePhaseReportsDir(root, 'demo', 'review', path.dirname(HARNESS_ROOT)), 'script-report.json'));
+        const missing = tryValidateReceipt(HARNESS_ROOT, root, 'review', 'demo');
+        assert(missing.status === 'failed', 'optional verifier policy cannot replace a genuinely missing machine result');
+        assert((missing.message ?? '').includes('required_check_conclusion'), missing.message ?? 'missing current result diagnostic');
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }
@@ -677,6 +632,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         omitVerifier: true,
         omitTrace: true,
         claimedAttemptId: 'i8',
+        goalLedgerRunId: 'run-X',
       });
       try {
         const v = tryValidateReceipt(HARNESS_ROOT, root, 'review', 'demo', {
@@ -1094,8 +1050,8 @@ const cases: Array<{ name: string; run: () => void }> = [
   },
   {
     // plan 33784ed1 C2：目标简报进材料摘要后在途 feature 换一次 subject；历史有过 PASS 的阶段
-    // 只出 MAJOR 警告并沿用（差异如实点名 goal_brief），不阻断；从未 PASS 的仍须评审。
-    name: 'C2（plan 33784ed1）：只有简报进材料 → 换 subject；历史 PASS 沿用 + MAJOR 警告点名 goal_brief；从未 PASS 仍阻断',
+    // 当前材料变化须重新核验，历史 PASS 保留为原件，不替代当前 subject 的结论。
+    name: 'P2 C2 goal brief changes current material and requires current verification while preserving prior PASS originals',
     run: () => {
       const { root } = buildProject('review', { omitVerifier: true, claimedAttemptId: 'i8' });
       try {
@@ -1107,9 +1063,12 @@ const cases: Array<{ name: string; run: () => void }> = [
         assert(after !== before, '构造性前提：简报进入材料摘要后必须换 subject');
         const goal = { runId: 'run-X', attemptId: 'i8', attemptPhase: 'review' };
         const r = spawnCheckReceipt(root, 'review', goal);
-        assert(r.status === 0, `历史 PASS 沿用不得阻断，实得 exit ${r.status}\n${r.stdout}\n${r.stderr}`);
-        assert(r.stdout.includes('verifier_prior_pass_reused') && r.stdout.includes('goal_brief'),
-          `须出 MAJOR 沿用警告并点名 goal_brief；stdout:\n${r.stdout}`);
+        assert(r.status !== 0 && `${r.stdout}${r.stderr}`.includes('verifier_evidence_report_missing'),
+          `新材料缺当前核验仍须阻断，实得 exit ${r.status}\n${r.stdout}\n${r.stderr}`);
+        assert(!r.stdout.includes('verifier_prior_pass_reused'), 'changed material cannot be auto-approved by a historical PASS');
+        publishFixtureVerifierEvidence({ projectRoot: root, reportsDir, feature: 'demo', phase: 'review', subjectId: after, skipSummaryPatch: true });
+        const current = spawnCheckReceipt(root, 'review', goal);
+        assert(current.status === 0, `真实当前核验后应放行：${current.stdout}\n${current.stderr}`);
 
         // 反面：历史只有 FAIL（从未 PASS）→ 当前 subject 无报告即阻断，不走沿用。
         const { root: failRoot } = buildProject('review', { omitVerifier: true, claimedAttemptId: 'i8' });

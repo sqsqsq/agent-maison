@@ -82,13 +82,15 @@ export const APP_LENS_QUESTIONS = [
 
 export function createAppViewInstances(
   seeds: Partial<Record<(typeof VIEW_IDS)[number], BlueprintRecord>>,
-  deploymentApplicable: boolean,
+  deploymentApplicable?: boolean,
 ): BlueprintRecord[] {
   return VIEW_IDS.map(viewId => ({
     view_id: viewId,
     viewpoint_contract: `app-${viewId}@1`,
-    applicability: viewId === 'deployment' && !deploymentApplicable ? 'not_applicable' : 'applicable',
-    ...(viewId === 'deployment' && !deploymentApplicable ? {} : { evolution_impact: 'changed' }),
+    ...(deploymentApplicable === undefined ? {} : {
+      applicability: viewId === 'deployment' && !deploymentApplicable ? 'not_applicable' : 'applicable',
+      ...(viewId === 'deployment' && !deploymentApplicable ? {} : { evolution_impact: 'changed' }),
+    }),
     stakeholders: [],
     purpose: '',
     current_state: 'unknown',

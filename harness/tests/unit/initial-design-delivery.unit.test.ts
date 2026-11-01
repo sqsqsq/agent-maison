@@ -11,6 +11,8 @@ import { writeLocalConfig } from '../../scripts/utils/framework-local-config';
 import { clearFrameworkConfigCache } from '../../config';
 import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
 import type { UnitCaseResult } from '../run-unit';
+import { reportFixtureQuestioning, seedLedgerQuestioningInput } from '../utils/initial-questioning-fixture';
+import { runRuntimeTestChild, withRuntimeTest } from '../utils/runtime-test-control';
 
 const ORIGINAL_BUDGET={max_total_turns:30,wall_clock_minutes:120,max_retries_per_phase:3};
 const UNATTENDED={write_mode:'full-access' as const,approval_mode:'never' as const,timeout_seconds:900,max_turns:20};
@@ -42,7 +44,8 @@ async function withProject(run:(project:Project)=>void|Promise<void>):Promise<vo
   }
 }
 function publicCli(project:Project,script:string,args:string[]):Record<string,any>{
-  const result=spawnSync(process.execPath,['-r','ts-node/register/transpile-only',`scripts/${script}.ts`,'--project-root',project.root,'--feature',project.feature,...args],{cwd:project.harnessDir,encoding:'utf8',timeout:30_000});
+  const invoke=()=>spawnSync(process.execPath,['-r','ts-node/register/transpile-only',`scripts/${script}.ts`,'--project-root',project.root,'--feature',project.feature,...args],{cwd:project.harnessDir,encoding:'utf8',timeout:30_000});
+  const result=script==='goal-mode-entry'?runRuntimeTestChild({root:project.root},invoke):invoke();
   assert.equal(result.status,0,`${script}: ${result.stderr}\n${result.stdout}\n${result.error??''}`);return JSON.parse(result.stdout.trim());
 }
 const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
@@ -144,7 +147,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
       const manifestBefore = fs.readFileSync(prepared.manifestPath);
       const options = { projectRoot: project.root, frameworkRoot: project.frameworkRoot, feature: project.feature,
         adapter: 'claude', runId: prepared.manifest.run_id, runMode: 'attended', authorization: { mode: 'goal_mode' as const, autonomyAuthorized: true } };
-      const first = await entry.runGoalModeSessionStep(options);
+      const first = await withRuntimeTest({ root: options.projectRoot }, () => entry.runGoalModeSessionStep(options));
       assert.equal(first.type, 'phase_execute_request', 'the managed raw request must issue its real design execution instead of returning early');
       assert.equal(first.status, 'execution_required');
       const reference = first.request as { path: string; sha256: string };
@@ -157,36 +160,35 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
       assert(instruction.includes('doc/requirement.md'));
       for (const file of ['app-component-blueprint.schema.json', 'runtime-data-flow.schema.json', 'change-unit.schema.json']) assert(instruction.includes(file), `the actual signed instruction must deliver the current schema ${file}`);
       assert(instruction.includes('尚无蓝图'));
-      const repeated = await entry.runGoalModeSessionStep(options);
+      const repeated = await withRuntimeTest({ root: options.projectRoot }, () => entry.runGoalModeSessionStep(options));
       assert.deepEqual(repeated.request, reference);
       assert.equal(repeated.deadline, first.deadline);
       assert.deepEqual(fs.readFileSync(reference.path), bytes);
       const events = () => handoff.sessionEvents(prepared.runDir);
       assert.equal(events().filter(event => event.type === 'agent_invoke_start').length, 1);
       const wrongPhase = issued.request.context.phase === 'ut' ? 'coding' : 'ut';
-      await assert.rejects(() => entry.runGoalModeSessionStep({ ...options, requestPath: reference.path,
-        report: { status: 'passed', phase: wrongPhase, details: 'wrong request/phase must be rejected before acceptance' } }), /phase|execution result/);
+      await assert.rejects(() => withRuntimeTest({ root: options.projectRoot }, () => entry.runGoalModeSessionStep({ ...options, requestPath: reference.path,
+        report: { status: 'passed', phase: wrongPhase, details: 'wrong request/phase must be rejected before acceptance' } })), /phase|execution result/);
       assert.equal(handoff.acceptedSessionReport(prepared.runDir, issued), null);
       const report = { status: 'passed' as const, phase: issued.request.context.phase, details: 'Author exited normally but produced no design.' };
-      const paused = await entry.runGoalModeSessionStep({ ...options, requestPath: reference.path, report });
-      assert.equal(paused.type, 'goal_session_result', 'an unchanged missing design must pause before spending another author call');
-      assert(events().some(event => event.type === 'run_end' && event.halt_reason === 'no_progress_guard'));
-      const duplicate = await entry.runGoalModeSessionStep({ ...options, requestPath: reference.path, report });
+      const continued = await withRuntimeTest({ root: options.projectRoot }, () => entry.runGoalModeSessionStep({ ...options, requestPath: reference.path, report }));
+      assert.equal(continued.type, 'phase_execute_request', 'native completion without a real design/current Q remains unknown work');
+      assert(!events().some(event => event.type === 'run_end' && event.halt_reason === 'no_progress_guard'), 'an incomplete design/Q packet cannot manufacture no-progress acceptance');
+      const duplicate = await withRuntimeTest({ root: options.projectRoot }, () => entry.runGoalModeSessionStep({ ...options, requestPath: reference.path, report }));
       assert.equal(duplicate.type, 'goal_session_report_received'); assert.equal(duplicate.duplicate, true);
-      assert.equal((await entry.runGoalModeSessionStep(options)).type, 'goal_session_result');
-      assert.equal(events().filter(event => event.type === 'agent_invoke_start').length, 1);
-      assert.equal(origin.readOriginalDeliveryBudget(project.root, prepared.manifest)!.totalTurns, 1);
-      const next = await entry.runGoalModeSessionStep({ ...options, forceTakeover: true });
-      assert.equal(next.type, 'phase_execute_request', 'explicit continuation may use the remaining original budget');
+      const next = await withRuntimeTest({ root: options.projectRoot }, () => entry.runGoalModeSessionStep(options));
+      assert.deepEqual(next.request, continued.request, 'ordinary next must reuse the actual pending continuation');
+      assert.equal(events().filter(event => event.type === 'agent_invoke_start').length, 2);
+      assert.equal(origin.readOriginalDeliveryBudget(project.root, prepared.manifest)!.totalTurns, 2);
       assert(!events().some(event => event.type === 'run_end' && ['COMPLETED', 'CHAIN_SLICE_COMPLETED'].includes(String(event.status))));
       assert(!fs.existsSync(path.join(project.root, 'doc/features', project.feature, 'completion.json')));
       assert.equal(events().filter(event => event.type === 'agent_invoke_start').length, 2);
       const retryReference = next.request as { path: string; sha256: string };
       const retry = handoff.readSessionExecution(prepared.runDir, retryReference.path)!;
       assert.notEqual(retry.request.invoke_id, issued.request.invoke_id);
-      assert(retry.request.context.instruction?.includes('尚无蓝图'));
-      const terminal = await entry.runGoalModeSessionStep({ ...options, requestPath: retryReference.path,
-        report: { status: 'passed', phase: retry.request.context.phase, details: 'Second author also has no deliverable.' } });
+      assert(retry.request.context.instruction?.includes(project.requirement), 'the incomplete real task remains in the original author scope');
+      const terminal = await withRuntimeTest({ root: options.projectRoot }, () => entry.runGoalModeSessionStep({ ...options, requestPath: retryReference.path,
+        report: { status: 'passed', phase: retry.request.context.phase, details: 'Second author also has no deliverable.' } }));
       assert.notEqual(terminal.type, 'phase_execute_request', 'a third author call must not bypass the two-call budget');
       assert.equal(events().filter(event => event.type === 'agent_invoke_start').length, 2);
       assert(!events().some(event => event.type === 'run_end' && ['COMPLETED', 'CHAIN_SLICE_COMPLETED'].includes(String(event.status))));
@@ -219,6 +221,8 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
       assert.equal(recovered.deadline, first.deadline);
       assert.deepEqual(fs.readFileSync(first.request.path), bytes);
       const eventBytes = fs.readFileSync(path.join(prepared.runDir, 'events.jsonl'));
+      const blueprintFile = path.join(project.root, 'doc/features', project.feature, 'blueprint/component-blueprint.yaml');
+      const preparedBlueprint = fs.readFileSync(blueprintFile);
       const status = publicCli(project, 'goal-status', ['--run-id', prepared.manifest.run_id, '--json']);
       assert.equal(status.complete, false);
       assert.equal(status.budget.total_turns, 1);
@@ -233,7 +237,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
       assert.notEqual(assessment.next_action, 'delivery_completed');
       assert(/initial-design|初始设计/.test(JSON.stringify(assessment)), 'assess must report the actual initial-design owner instead of idle construction');
       assert.deepEqual(fs.readFileSync(path.join(prepared.runDir, 'events.jsonl')), eventBytes, 'public readers must not advance or rewrite the author history');
-      assert(!fs.existsSync(path.join(project.root, 'doc/features', project.feature, 'blueprint')), 'status and assess do not author the missing design');
+      assert.deepEqual(fs.readFileSync(blueprintFile), preparedBlueprint, 'readers must not rewrite the machine draft prepared by the original next');
     });
   },
 }, {
@@ -252,14 +256,14 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
           budget: ORIGINAL_BUDGET, unattended: UNATTENDED, autonomyAuthorized: true });
         const options = { projectRoot: project.root, frameworkRoot: project.frameworkRoot, feature: project.feature, runId: prepared.manifest.run_id,
           adapter: 'claude', runMode: 'attended', authorization: { mode: 'goal_mode' as const, autonomyAuthorized: true } };
-        const request = await entry.runGoalModeSessionStep(options);
+        const request = await withRuntimeTest({ root: options.projectRoot }, () => entry.runGoalModeSessionStep(options));
         assert.equal(request.type, 'phase_execute_request');
         const reference = request.request as { path: string };
         const issued = handoff.readSessionExecution(prepared.runDir, reference.path)!;
         fs.appendFileSync(absolute, '\n// Exact unauthorized write injected after the signed design request.\n');
         const changed = fs.readFileSync(absolute);
-        const rejected = await entry.runGoalModeSessionStep({ ...options, requestPath: reference.path,
-          report: { status: 'passed', phase: issued.request.context.phase, details: 'A normal author exit cannot authorize the injected write.' } });
+        const rejected = await withRuntimeTest({ root: options.projectRoot }, () => entry.runGoalModeSessionStep({ ...options, requestPath: reference.path,
+          report: { status: 'passed', phase: issued.request.context.phase, details: 'A normal author exit cannot authorize the injected write.' } }));
         assert.equal(rejected.type, 'phase_execute_request', 'the same unadmitted author must restore its own unauthorized delta');
         const recoveryReference = rejected.request as { path: string };
         const recovery = handoff.readSessionExecution(prepared.runDir, recoveryReference.path)!;
@@ -269,7 +273,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
           && recovery.request.context.instruction.includes(target) && recovery.request.context.instruction.includes(`pre_sha256=${originalSha}`),
           'recovery must carry the first real dirty preimage, not HEAD or later unauthorized bytes');
         assert(fs.readFileSync(absolute).equals(changed), 'runtime must preserve untrusted bytes for author recovery, not silently restore them');
-        assert.deepEqual((await entry.runGoalModeSessionStep(options)).request, rejected.request, 'an outstanding restoration request must be reused');
+        assert.deepEqual((await withRuntimeTest({ root: options.projectRoot }, () => entry.runGoalModeSessionStep(options))).request, rejected.request, 'an outstanding restoration request must be reused');
         const beforeRestore = handoff.sessionEvents(prepared.runDir);
         const violation = beforeRestore.find(event => event.type === 'phase_write_violation');
         assert((violation as Record<string, any>)?.violations.some((row: Record<string, unknown>) => row.path === target && row.pre_sha256 === originalSha));
@@ -278,8 +282,8 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
         const manifest = JSON.parse(fs.readFileSync(prepared.manifestPath, 'utf8'));
         assert(manifest.initial_design && !manifest.execution_scope && !manifest.phase_chain, 'recovery grants no construction scope');
         fs.writeFileSync(absolute, original);
-        const restored = await entry.runGoalModeSessionStep({ ...options, requestPath: recoveryReference.path,
-          report: { status: 'passed', phase: recovery.request.context.phase, details: 'Restored only the original invocation preimage; the requested design remains incomplete.' } });
+        const restored = await withRuntimeTest({ root: options.projectRoot }, () => entry.runGoalModeSessionStep({ ...options, requestPath: recoveryReference.path,
+          report: { status: 'passed', phase: recovery.request.context.phase, details: 'Restored only the original invocation preimage; the requested design remains incomplete.' } }));
         assert(fs.readFileSync(absolute).equals(original), 'legitimate pre-existing dirty bytes must survive recovery');
         const events = handoff.sessionEvents(prepared.runDir);
         assert(events.some(event => event.type === 'phase_write_observed' && event.invoke_id === recovery.request.invoke_id
@@ -301,7 +305,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
         budget: ORIGINAL_BUDGET, unattended: UNATTENDED, autonomyAuthorized: true });
       const options = { projectRoot: project.root, frameworkRoot: project.frameworkRoot, feature: project.feature, runId: prepared.manifest.run_id,
         adapter: 'claude', runMode: 'attended', authorization: { mode: 'goal_mode' as const, autonomyAuthorized: true } };
-      const request = await entry.runGoalModeSessionStep(options);
+      const request = await withRuntimeTest({ root: options.projectRoot }, () => entry.runGoalModeSessionStep(options));
       assert.equal(request.type, 'phase_execute_request');
       const reference = request.request as { path: string };
       const issued = handoff.readSessionExecution(prepared.runDir, reference.path)!;
@@ -312,8 +316,8 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
         review_summary: { questioning: { status: selfSigned ? 'complete' : 'incomplete', items: selfSigned
           ? [{ question_id: 'author-self-signed', question: '作者是否独立？', answer: '作者自行宣称通过', scope_ref: 'requirement', evidence_refs: ['doc/requirement.md'] }] : [] } } });
       fs.writeFileSync(blueprint, bytes);
-      const result = await entry.runGoalModeSessionStep({ ...options, requestPath: reference.path,
-        report: { status: 'passed', phase: issued.request.context.phase, details: 'Bounded author response supplied only the specified questioning fault or incomplete skeleton.' } });
+      const result = await withRuntimeTest({ root: options.projectRoot }, () => entry.runGoalModeSessionStep({ ...options, requestPath: reference.path,
+        report: { status: 'passed', phase: issued.request.context.phase, details: 'Bounded author response supplied only the specified questioning fault or incomplete skeleton.' } }));
       const events = handoff.sessionEvents(prepared.runDir);
       const authorityFailure = events.some(event => event.type === 'run_end' && event.halt_reason === 'unauthorized_source_mutation');
       assert.equal(authorityFailure, selfSigned, 'completed questioning written by the author must be rejected; an empty incomplete skeleton must remain repairable');
@@ -366,8 +370,8 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
         adapter: 'codex', runMode: 'attended', authorization: { mode: 'goal_mode' as const, autonomyAuthorized: true } };
       const controlProcess = (extra: Record<string, unknown> = {}): Record<string, any> => {
         const program = `const path=require('path');const h=${JSON.stringify(host.harnessDir)};const rt=require(path.join(h,'scripts/goal-phase-runtime'));rt.__testing_setInvokeAgent(async()=>{throw Error('unexpected headless actor in a next/report control probe')});rt.__testing_setCanaryProbeInvoke(async()=>{throw Error('unexpected canary actor in a nonvisual control probe')});require(path.join(h,'scripts/goal-mode-entry')).runGoalModeSessionStep(${JSON.stringify({ ...control, ...extra })}).then(value=>console.log(JSON.stringify(value))).catch(error=>console.log(JSON.stringify({error:String(error)})));`;
-        const result = spawnSync(process.execPath, ['-r', 'ts-node/register/transpile-only', '-e', program], { cwd: host.harnessDir,
-          env: { ...process.env, MAISON_GOAL_CHECKPOINT_DIR: path.join(host.root, 'trust-cp') }, encoding: 'utf8', timeout: 90_000, windowsHide: true });
+        const result = withRuntimeTest({ root: host.root }, () => spawnSync(process.execPath, ['-r', 'ts-node/register/transpile-only', '-e', program], { cwd: host.harnessDir,
+          env: { ...process.env, MAISON_GOAL_CHECKPOINT_DIR: path.join(host.root, 'trust-cp') }, encoding: 'utf8', timeout: 90_000, windowsHide: true }));
         assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}\n${result.error ?? ''}`);
         return JSON.parse(result.stdout.trim());
       };
@@ -407,13 +411,14 @@ for (const scenario of ['definition-gap', 'empty-chain'] as const) cases.push({
     const { prepareFeatureScopeCandidate } = require('../../scripts/utils/feature-track') as typeof import('../../scripts/utils/feature-track');
     const { resolveBirthExecutionScope } = require('../../scripts/utils/feature-execution-scope') as typeof import('../../scripts/utils/feature-execution-scope');
     const { resolveWorkflowSpec } = require('../../workflow-loader') as typeof import('../../workflow-loader');
-    const { deriveChangeUnitFeatureId } = require('../../scripts/utils/change-unit-path') as typeof import('../../scripts/utils/change-unit-path');
+    const { deriveChangeUnitFeatureId, loadCanonicalChangeUnit } = require('../../scripts/utils/change-unit-path') as typeof import('../../scripts/utils/change-unit-path');
     const { readOriginalDeliveryBudget } = require('../../scripts/utils/delivery-origin') as typeof import('../../scripts/utils/delivery-origin');
     const { readSessionExecution } = require('../../scripts/utils/session-execution-handoff') as typeof import('../../scripts/utils/session-execution-handoff');
     const runtime = require('../../scripts/goal-phase-runtime') as typeof import('../../scripts/goal-phase-runtime');
     runtime.__testing_setInvokeAgent(async () => { throw new Error('A public next request must not launch a headless model.'); });
     runtime.__testing_setCanaryProbeInvoke(async () => { throw new Error('This nonvisual birth regression must not launch a canary model.'); });
     try { await withFreshCuHost(async host => {
+      seedLedgerQuestioningInput(host.root);
       const blueprint = 'ledger-app-blueprint', requirement = '新增一笔账目后刷新账页并在重启后恢复余额';
       const original = manifests.buildInitialDesignGoalManifest({ feature: blueprint, run_id: `scope-birth-${scenario}`, adapter: 'codex', requirement,
         initial_design: { completion_target: 'feature', requested_results: [requirement], requested_phases: [] },
@@ -438,8 +443,13 @@ for (const scenario of ['definition-gap', 'empty-chain'] as const) cases.push({
       const scope = resolveBirthExecutionScope(host.root, feature, resolveWorkflowSpec(host.root, { frameworkRoot: host.frameworkRoot }), host.frameworkRoot, requirement).scope!;
       assert.deepEqual(scope.phase_chain, scenario === 'definition-gap' ? ['spec', 'plan'] : []);
       assert(scope.unresolved.length > 0);
-      const result = await entry.runGoalModeSessionStep({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: blueprint,
-        runId: original.run_id, adapter: 'codex', runMode: 'attended', authorization: { mode: 'goal_mode', autonomyAuthorized: true } });
+      const options = { projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: blueprint,
+        runId: original.run_id, adapter: 'codex', runMode: 'attended', authorization: { mode: 'goal_mode' as const, autonomyAuthorized: true } };
+      let result = await withRuntimeTest({ root: options.projectRoot }, () => entry.runGoalModeSessionStep(options)), questions = 0;
+      if (result.phase === 'initial-design-questioning') {
+        result = await reportFixtureQuestioning(options, result, rootRunDir, path.join(host.root, 'doc/features', blueprint, 'blueprint/component-blueprint.yaml'));
+        questions++;
+      }
       assert.equal(result.type, 'phase_execute_request', JSON.stringify(result));
       const family = readOriginalDeliveryBudget(host.root, original)!;
       const children = family.runs.filter(run => !manifests.isInitialDesignManifest(run.manifest));
@@ -448,19 +458,35 @@ for (const scenario of ['definition-gap', 'empty-chain'] as const) cases.push({
         const child = children[0].manifest;
         assert(!manifests.isInitialDesignManifest(child));
         assert.deepEqual(child.delivery_origin, { feature: blueprint, run_id: original.run_id });
-        assert.deepEqual(child.execution_scope, scope, 'shared preparation must freeze the same unresolved and needed_by obligations');
+        const reboundScope = JSON.parse(JSON.stringify(scope)) as typeof scope;
+        const reboundFiles = new Set([path.resolve(host.root, 'doc/features', blueprint, 'blueprint/component-blueprint.yaml'),
+          path.resolve(loadCanonicalChangeUnit(host.root, blueprint, 'ledger-refresh').canonicalPath)]);
+        let reboundHashes = 0;
+        for (const [index, obligation] of reboundScope.obligations.entries()) for (const [bindingIndex, binding] of obligation.basis.entries()) {
+          for (const [dependencyIndex, dependency] of binding.dependencies.entries()) {
+            if (!reboundFiles.has(path.resolve(dependency.path))) continue;
+            const actual = child.execution_scope!.obligations[index].basis[bindingIndex].dependencies[dependencyIndex];
+            assert.equal(actual.path, dependency.path);
+            const currentSha = createHash('sha256').update(fs.readFileSync(dependency.path)).digest('hex');
+            assert.equal(actual.sha256, currentSha, 'each rebound blueprint/CU dependency must name its actual current bytes');
+            dependency.sha256 = currentSha;
+            reboundHashes++;
+          }
+        }
+        assert.equal(reboundHashes, 8, 'only the eight observed blueprint/CU raw dependency hashes may be rebound');
+        assert.deepEqual(child.execution_scope, reboundScope, `shared preparation must freeze the same unresolved and needed_by obligations: ${JSON.stringify({ expected: reboundScope, actual: child.execution_scope })}`);
         assert.deepEqual(child.phase_chain, ['spec', 'plan']);
         const issued = readSessionExecution(path.resolve(host.root, child.report_dir), (result.request as { path: string }).path)!;
         assert.equal(issued.request.context.phase, 'spec');
         assert.equal(result.run_id, child.run_id);
         assert(!fs.readFileSync(path.join(rootRunDir, 'events.jsonl'), 'utf8').includes('initial-design-scope-'), 'the scope owner must not be called again');
       } else {
-        assert.equal(children.length, 0, 'an empty chain must not birth a child');
+        assert.equal(children.length, 0, `an empty chain must not birth a child: ${JSON.stringify(children.map(child => ({ feature: child.manifest.feature, execution_scope: child.manifest.execution_scope })))}`);
         const issued = readSessionExecution(rootRunDir, (result.request as { path: string }).path)!;
         assert(issued.request.context.phase.startsWith('initial-design-scope-'));
         assert(issued.request.context.instruction?.includes('当前实现义务尚不可执行'));
       }
-      assert.equal(family.totalTurns, 1, 'only the signed request consumes the original budget');
+      assert.equal(family.totalTurns, 1 + questions, 'the real questioning report and signed responsibility each consume the original budget once');
     }); } finally {
       runtime.__testing_setInvokeAgent(null); runtime.__testing_setCanaryProbeInvoke(null);
     }
@@ -533,7 +559,7 @@ cases.push({
       assert.deepEqual(fs.readFileSync(old.eventsPath), stoppedBytes, 'successor cannot rewrite its source history');
       assert(stoppedBytes.subarray(0, originalBytes.length).equals(originalBytes));
       const step = { ...options, runId: successor.manifest.run_id, runMode: 'attended', authorization: { mode: 'goal_mode' as const, autonomyAuthorized: true } };
-      const next = await entry.runGoalModeSessionStep(step);
+      const next = await withRuntimeTest({ root: step.projectRoot }, () => entry.runGoalModeSessionStep(step));
       assert.equal(next.type, 'phase_execute_request');
       const request = handoff.readSessionExecution(successor.runDir, (next.request as { path: string }).path)!;
       const instruction = request.request.context.instruction!;
@@ -541,7 +567,7 @@ cases.push({
       assert(instruction.includes(old.note) && instruction.includes('必须实际编写或补齐'));
       assert(!instruction.includes('TOOL-DATA') && instruction.length < 20000, 'tool stdout must not inflate continuation');
       assert.equal(origin.readOriginalDeliveryBudget(project.root, successor.manifest)!.totalTurns, 4);
-      assert.deepEqual((await entry.runGoalModeSessionStep(step)).request, next.request);
+      assert.deepEqual((await withRuntimeTest({ root: step.projectRoot }, () => entry.runGoalModeSessionStep(step))).request, next.request);
       assert.equal(origin.readOriginalDeliveryBudget(project.root, successor.manifest)!.totalTurns, 4);
       assert.throws(() => entry.prepareGoalModeRun({ ...options, supersede: [successor.manifest.run_id], runId: 'blocked-by-pending' }), /尚未报告/);
       const rejoined = entry.prepareGoalModeRun({ ...options, runId: 'must-not-fork' });
@@ -550,7 +576,7 @@ cases.push({
     });
   },
 }, {
-  name: 'd18f6c42 notes-only initial design pauses and explicit continuation retains the original total budget',
+  name: 'P2 notes-only initial design stays unknown across real waiting and continuation retains the original total budget',
   async run() {
     await withProject(async project => {
       const entry = require(path.join(project.harnessDir, 'scripts/goal-mode-entry')) as typeof import('../../scripts/goal-mode-entry');
@@ -560,41 +586,37 @@ cases.push({
       const input = { projectRoot: project.root, frameworkRoot: project.frameworkRoot, feature: project.feature, adapter: 'codex', requirement: project.requirement };
       const successor = entry.prepareGoalModeRun({ ...input, runId: 'quota-successor', supersede: [old.manifest.run_id] });
       const step = { ...input, runId: successor.manifest.run_id, runMode: 'attended', authorization: { mode: 'goal_mode' as const, autonomyAuthorized: false } };
-      let next = await entry.runGoalModeSessionStep(step);
+      let next = await withRuntimeTest({ root: step.projectRoot }, () => entry.runGoalModeSessionStep(step));
       assert.equal(next.type, 'phase_execute_request', 'original author duty must not require additional autonomy in a successor');
       for (let attempt = 1; attempt <= 3; attempt++) {
-        if (attempt > 1) next = await entry.runGoalModeSessionStep({ ...step, forceTakeover: true });
+        if (attempt > 1) next = await withRuntimeTest({ root: step.projectRoot }, () => entry.runGoalModeSessionStep({ ...step, forceTakeover: true }));
         assert.equal(next.type, 'phase_execute_request');
-        assert.deepEqual((await entry.runGoalModeSessionStep(step)).request, next.request);
+        assert.deepEqual((await withRuntimeTest({ root: step.projectRoot }, () => entry.runGoalModeSessionStep(step))).request, next.request);
         const requestPath = (next.request as { path: string }).path;
         const request = handoff.readSessionExecution(successor.runDir, requestPath)!;
         fs.appendFileSync(old.note, `只增笔记${attempt}\n`);
-        next = await entry.runGoalModeSessionStep({ ...step, requestPath, report: { status: 'passed', phase: request.request.context.phase, details: `本轮仍未交付蓝图${attempt}` } });
-        const pausedEnd = handoff.sessionEvents(successor.runDir).filter(event => event.type === 'run_end' && event.halt_reason === 'no_progress_guard').at(-1)!;
-        const [guidance, ...issues] = String('error' in pausedEnd ? pausedEnd.error : '').split('\n');
-        assert(guidance.includes('--force-resume') && guidance.includes('--force-takeover') && guidance.includes('原预算与历史保留'));
-        assert.deepEqual(issues, ['尚无蓝图，按原始需求与真实工程事实完成当前交付切片。'], 'continuation operations stay on the first line and never become author issues');
+        next = await withRuntimeTest({ root: step.projectRoot }, () => entry.runGoalModeSessionStep({ ...step, requestPath, report: { status: 'waiting', phase: request.request.context.phase, details: `本轮仍未交付蓝图${attempt}；提供方暂不可用，恢复后继续原请求。` } }));
+        assert.equal((next.result as { status: string }).status, 'waiting');
+        assert(!handoff.sessionEvents(successor.runDir).some(event => event.type === 'run_end' && (event.halt_reason === 'no_progress_guard' || event.status === 'COMPLETED')),
+          'notes and an unfinished provider cannot establish a completed design/Q baseline');
         const starts = handoff.sessionEvents(successor.runDir).filter(event => event.type === 'agent_invoke_start').length;
-        assert.equal((await entry.runGoalModeSessionStep(step)).type, 'goal_session_result', 'ordinary public next cannot wake unchanged no-progress work');
-        assert.equal(handoff.sessionEvents(successor.runDir).filter(event => event.type === 'agent_invoke_start').length, starts);
-        const supervisor = require(path.join(project.harnessDir, 'scripts/utils/goal-supervisor')) as typeof import('../../scripts/utils/goal-supervisor');
-        assert.equal(supervisor.decideSupervision({ events: handoff.sessionEvents(successor.runDir), restartsSoFar: 0, beaconStale: true }).action, 'no_op', 'elapsed time cannot restart the paused responsibility');
+        assert.equal(starts, attempt, 'each actual continuation consumes exactly one original call');
       }
       assert.equal(next.type, 'goal_session_result');
-      assert(handoff.sessionEvents(successor.runDir).some(event => event.halt_reason === 'no_progress_guard'));
+      assert(!handoff.sessionEvents(successor.runDir).some(event => event.halt_reason === 'no_progress_guard'));
       assert.equal(origin.readOriginalDeliveryBudget(project.root, successor.manifest)!.totalTurns, 6);
       const last = entry.prepareGoalModeRun({ ...input, runId: 'last-budget-successor', supersede: [successor.manifest.run_id] });
       const lastStep = { ...step, runId: last.manifest.run_id };
-      const lastNext = await entry.runGoalModeSessionStep(lastStep);
+      const lastNext = await withRuntimeTest({ root: lastStep.projectRoot }, () => entry.runGoalModeSessionStep(lastStep));
       assert.equal(lastNext.type, 'phase_execute_request');
       const requestPath = (lastNext.request as { path: string }).path;
       const request = handoff.readSessionExecution(last.runDir, requestPath)!;
-      const exhausted = await entry.runGoalModeSessionStep({ ...lastStep, requestPath, report: { status: 'passed', phase: request.request.context.phase, details: 'Still no blueprint.' } });
+      const exhausted = await withRuntimeTest({ root: lastStep.projectRoot }, () => entry.runGoalModeSessionStep({ ...lastStep, requestPath, report: { status: 'passed', phase: request.request.context.phase, details: 'Still no blueprint.' } }));
       assert.equal(exhausted.type, 'goal_session_result');
       assert(handoff.sessionEvents(last.runDir).some(event => event.halt_reason === 'budget_turns'));
       assert.equal(origin.readOriginalDeliveryBudget(project.root, last.manifest)!.totalTurns, 7);
       const empty = entry.prepareGoalModeRun({ ...input, runId: 'no-budget-successor', supersede: [last.manifest.run_id] });
-      assert.equal((await entry.runGoalModeSessionStep({ ...step, runId: empty.manifest.run_id })).type, 'goal_session_result');
+      assert.equal((await withRuntimeTest({ root: step.projectRoot }, () => entry.runGoalModeSessionStep({ ...step, runId: empty.manifest.run_id }))).type, 'goal_session_result');
       assert.equal(handoff.sessionEvents(empty.runDir).filter(event => event.type === 'agent_invoke_start').length, 0);
     });
   },
@@ -628,7 +650,7 @@ cases.push({
         const driver = new runtime.GoalPhaseRuntime({ args: recoveryArgs,
           executor: { async execute(context) { calls++; assert(context.instruction?.includes('事故原调用最终正文3'));
             return { status: 'waiting', phase: context.phase, details: 'Bounded transport observation.', exitCode: 0, stdout: '', stderr: '', command: 'bounded-executor' }; } } });
-        assert.equal(await driver.run(), 1);
+        assert.equal(await withRuntimeTest({ root: project.root }, () => driver.run()), 1);
         assert.equal(calls, 1);
         const current = origin.currentOriginalDelivery(project.root, old.manifest as never);
         assert.notEqual(current.run_id, old.manifest.run_id);
@@ -664,7 +686,7 @@ cases.push({
           '--feature', project.feature, '--adapter', 'codex', '--requirement', increment, '--supersede', old.manifest.run_id],
           executor: { async execute(context) { calls++; assert(context.instruction?.includes(project.requirement) && context.instruction.includes(increment));
             return { status: 'waiting', phase: context.phase, details: 'Only observe increment delivery.', exitCode: 0, stdout: '', stderr: '', command: 'bounded-executor' }; } } });
-        assert.equal(await driver.run(), 1);
+        assert.equal(await withRuntimeTest({ root: project.root }, () => driver.run()), 1);
         assert.equal(calls, 1);
         const next = origin.currentOriginalDelivery(project.root, old.manifest);
         assert.equal(next.successor_of, current.manifest.run_id);
@@ -799,8 +821,8 @@ cases.push({
       for (const authorized of [false, true]) {
         const live = manifests.buildInitialDesignGoalManifest({ ...manifest, feature: `authority-${authorized}`, run_id: `runtime-${authorized}`, report_dir: undefined }, { projectRoot: directory });
         const born = createGoalRun({ projectRoot: directory, manifest: live, chain: [] });
-        const result = await entry.runGoalModeSessionStep({ projectRoot: directory, frameworkRoot, feature: live.feature, runId: live.run_id,
-          adapter: 'codex', runMode: 'attended', authorization: { mode: 'goal_mode', autonomyAuthorized: authorized } });
+        const result = await withRuntimeTest({ root: directory }, () => entry.runGoalModeSessionStep({ projectRoot: directory, frameworkRoot, feature: live.feature, runId: live.run_id,
+          adapter: 'codex', runMode: 'attended', authorization: { mode: 'goal_mode', autonomyAuthorized: authorized } }));
         assert.equal(result.type, 'phase_execute_request', 'lack of autonomy must not block the original author duty');
         const issued = readSessionExecution(path.dirname(born.manifestPath), (result.request as { path: string }).path)!;
         assert.equal(issued.request.context.instruction!.includes('本次控制入口已核实可信原请求'), authorized, 'runtime passes current policy before transport dispatch');
@@ -814,7 +836,7 @@ cases.push({
 });
 
 cases.push({
-  name: 'd18f6c42 M1 injected executor notes-only work pauses without a third call and ordinary public next preserves budget',
+  name: 'P2 M1 notes-only executor work remains unverified until actual waiting and public continuation preserves the original budget',
   async run() {
     await withProject(async project => {
       const entry = require(path.join(project.harnessDir, 'scripts/goal-mode-entry')) as typeof import('../../scripts/goal-mode-entry');
@@ -835,26 +857,29 @@ cases.push({
         return { status: calls >= 3 ? 'waiting' : 'passed', phase: context.phase, details: '未修改真实设计；第三次仅作测试安全止损。',
           exitCode: 0, stdout: '', stderr: '', command: 'bounded-notes-executor', completion_observed: true };
       } } });
-      assert.equal(await driver.run(), 1);
+      assert.equal(await withRuntimeTest({ root: project.root }, () => driver.run()), 1);
       const rows = handoff.sessionEvents(prepared.runDir);
       console.log('[M1-process-notes]', JSON.stringify({ calls, halt_reason: rows.at(-1)?.halt_reason,
         runtime_sha256: createHash('sha256').update(fs.readFileSync(path.join(project.harnessDir, 'scripts/goal-phase-runtime.ts'))).digest('hex') }));
-      assert(rows.some(event => event.type === 'run_end' && event.halt_reason === 'no_progress_guard'));
-      assert(calls > 0 && calls < 3, 'unchanged real work cannot dispatch a third executor call');
+      assert(!rows.some(event => event.type === 'run_end' && (event.halt_reason === 'no_progress_guard' || event.status === 'COMPLETED')),
+        'missing design/Q facts cannot manufacture a completed acceptance evaluation');
+      assert.equal(calls, 3, 'the controlled waiting fact ends this invocation; notes are not verified design');
+      assert(rows.filter(event => event.type === 'agent_invoke_end').slice(0, 2).every(event => event.completion_observed === true),
+        'actual native completion must remain distinct from product acceptance');
       assert(!rows.some(event => event.type === 'phase_start' && event.handoff_request), 'this regression must use transport-independent request material');
       const spent = origin.readOriginalDeliveryBudget(project.root, prepared.manifest)!;
       assert.equal(spent.totalTurns, calls); assert.equal(spent.budget.max_total_turns, ORIGINAL_BUDGET.max_total_turns);
       const starts = rows.filter(event => event.type === 'agent_invoke_start').length;
-      const next = await entry.runGoalModeSessionStep({ projectRoot: project.root, frameworkRoot: project.frameworkRoot, feature: project.feature,
-        runId: prepared.manifest.run_id, adapter: 'codex', runMode: 'attended' });
-      assert.equal(next.type, 'goal_session_result');
-      assert.equal(handoff.sessionEvents(prepared.runDir).filter(event => event.type === 'agent_invoke_start').length, starts);
-      assert.equal(origin.readOriginalDeliveryBudget(project.root, prepared.manifest)!.totalTurns, calls);
+      const next = await withRuntimeTest({ root: project.root }, () => entry.runGoalModeSessionStep({ projectRoot: project.root, frameworkRoot: project.frameworkRoot, feature: project.feature,
+        runId: prepared.manifest.run_id, adapter: 'codex', runMode: 'attended' }));
+      assert.equal(next.type, 'phase_execute_request', 'a later entry may continue the real waiting responsibility');
+      assert.equal(handoff.sessionEvents(prepared.runDir).filter(event => event.type === 'agent_invoke_start').length, starts + 1);
+      assert.equal(origin.readOriginalDeliveryBudget(project.root, prepared.manifest)!.totalTurns, calls + 1);
       assert.deepEqual(fs.readFileSync(prepared.manifestPath), manifestBefore);
     });
   },
 }, {
-  name: 'd18f6c42 M1 blank-line questioning answers pause unchanged work and later paragraph changes resume exactly once',
+  name: 'P2 M1 unqualified blank-line Q answers remain full historical context and later changes reach the next real author',
   async run() {
     await withProject(async project => {
       const entry = require(path.join(project.harnessDir, 'scripts/goal-mode-entry')) as typeof import('../../scripts/goal-mode-entry');
@@ -874,35 +899,263 @@ cases.push({
       const manifestBefore = fs.readFileSync(prepared.manifestPath);
       const step = { projectRoot: project.root, frameworkRoot: project.frameworkRoot, feature: project.feature,
         runId: prepared.manifest.run_id, adapter: 'codex', runMode: 'attended' };
-      let next = await entry.runGoalModeSessionStep(step);
+      let next = await withRuntimeTest({ root: step.projectRoot }, () => entry.runGoalModeSessionStep(step));
       let calls = 0;
       for (const currentAnswer of [answer, answer + '\n\n新增后段：补偿责任仍未声明。', firstParagraph]) {
         if (calls > 0) {
           const doc = YAML.parse(fs.readFileSync(blueprint, 'utf8'));
           doc.review_summary.questioning.items[0].answer = currentAnswer;
           fs.writeFileSync(blueprint, YAML.stringify(doc));
-          next = await entry.runGoalModeSessionStep(step);
+          next = await withRuntimeTest({ root: step.projectRoot }, () => entry.runGoalModeSessionStep(step));
         }
         assert.equal(next.type, 'phase_execute_request', 'a real change after the same first paragraph must remain actionable');
         const requestPath = (next.request as { path: string }).path;
         const issued = handoff.readSessionExecution(prepared.runDir, requestPath)!;
         assert.equal(issued.request.context.phase, 'initial-design-author');
-        assert(issued.request.context.instruction!.includes(currentAnswer), 'the complete independent answer must reach its real author');
+        assert(issued.request.context.instruction!.includes(currentAnswer), JSON.stringify({ calls, currentAnswer,
+          publicQuestioning: YAML.parse(fs.readFileSync(blueprint, 'utf8')).review_summary.questioning,
+          priorContext: issued.request.context.instruction!.split('已有公开质询未闭合项')[1]?.slice(0, 2000) }));
         calls++;
         fs.appendFileSync(path.join(path.dirname(blueprint), 'author-findings.md'), `只写笔记${calls}\n`);
-        const paused = await entry.runGoalModeSessionStep({ ...step, requestPath,
-          report: { status: 'passed', phase: issued.request.context.phase, details: '作者没有改动真实蓝图。' } });
+        const paused = await withRuntimeTest({ root: step.projectRoot }, () => entry.runGoalModeSessionStep({ ...step, requestPath,
+          report: { status: 'waiting', phase: issued.request.context.phase, details: '蓝图与历史Q尚未独立核实；提供方暂不可用，保留完整旧回答等待继续。' } }));
         console.log('[M1-multiline-questioning]', JSON.stringify({ calls, type: paused.type, halt_reason: (paused.result as { halt_reason?: string } | undefined)?.halt_reason }));
-        assert.equal(paused.type, 'goal_session_result', 'unchanged multiline/blank-line feedback must pause instead of being regrouped as new issues');
-        assert(handoff.sessionEvents(prepared.runDir).some(event => event.type === 'run_end' && event.halt_reason === 'no_progress_guard'));
+        assert.equal(paused.type, 'goal_session_result');
+        assert.equal((paused.result as { status: string }).status, 'waiting');
+        assert(!handoff.sessionEvents(prepared.runDir).some(event => event.type === 'run_end' && (event.halt_reason === 'no_progress_guard' || event.status === 'COMPLETED')),
+          'unqualified historical Q cannot become a completed no-progress evaluation');
         const starts = handoff.sessionEvents(prepared.runDir).filter(event => event.type === 'agent_invoke_start').length;
         assert.equal(starts, calls, 'each real feedback change permits one author call');
-        assert.equal((await entry.runGoalModeSessionStep(step)).type, 'goal_session_result');
-        assert.equal(handoff.sessionEvents(prepared.runDir).filter(event => event.type === 'agent_invoke_start').length, starts);
         const budget = origin.readOriginalDeliveryBudget(project.root, prepared.manifest)!;
         assert.equal(budget.totalTurns, calls); assert.equal(budget.budget.max_total_turns, ORIGINAL_BUDGET.max_total_turns);
         assert.deepEqual(fs.readFileSync(prepared.manifestPath), manifestBefore);
       }
+    });
+  },
+});
+
+cases.push({
+  name: 'P2 M1 current initial Q denial and a completed no-op author return converge once without consuming repeated reports',
+  async run() {
+    const { withFreshCuHost, BLUEPRINT_ID } = require('./lifecycle-evolution.unit.test') as typeof import('./lifecycle-evolution.unit.test');
+    const entry = require('../../scripts/goal-mode-entry') as typeof import('../../scripts/goal-mode-entry');
+    const handoff = require('../../scripts/utils/session-execution-handoff') as typeof import('../../scripts/utils/session-execution-handoff');
+    const { buildInitialDesignGoalManifest } = require('../../scripts/utils/goal-manifest') as typeof import('../../scripts/utils/goal-manifest');
+    const { createGoalRun } = require('../../scripts/utils/goal-run-creation') as typeof import('../../scripts/utils/goal-run-creation');
+    const { enumerateCanonicalChangeUnits } = require('../../scripts/utils/change-unit-path') as typeof import('../../scripts/utils/change-unit-path');
+    const { loadCanonicalBlueprint } = require('../../scripts/utils/component-blueprint-path') as typeof import('../../scripts/utils/component-blueprint-path');
+    const { validateComponentBlueprint } = require('../../scripts/utils/component-blueprint-validator') as typeof import('../../scripts/utils/component-blueprint-validator');
+    const { diffPhaseInvocationSnapshots } = require('../../scripts/utils/phase-write-boundary') as typeof import('../../scripts/utils/phase-write-boundary');
+    const { readOriginalDeliveryBudget } = require('../../scripts/utils/delivery-origin') as typeof import('../../scripts/utils/delivery-origin');
+    await withFreshCuHost(async host => {
+      const workspace = path.join(host.root, 'doc/features', BLUEPRINT_ID);
+      for (const unit of enumerateCanonicalChangeUnits(host.root, BLUEPRINT_ID)) {
+        const directory = path.dirname(unit.canonicalPath);
+        assert(path.resolve(directory).startsWith(path.resolve(workspace) + path.sep));
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
+      const source = path.join(host.root, 'src/ledger/LedgerRepository.ts');
+      fs.mkdirSync(path.dirname(source), { recursive: true });
+      const dirtySource = 'export const currentLedgerInput = true;\n// pre-existing operator dirty bytes\n';
+      fs.writeFileSync(source, dirtySource);
+      const canonical = loadCanonicalBlueprint(host.root, BLUEPRINT_ID);
+      assert(!validateComponentBlueprint(canonical.blueprint, { projectRoot: host.root, canonicalPath: canonical.canonicalPath })
+        .some(issue => issue.severity === 'BLOCKER'), 'the fixture must begin with a known legal blueprint');
+      const requirement = '按当前账目蓝图的原范围完成失败恢复设计、独立质询和后续完整交付，不降低验收。';
+      const manifest = buildInitialDesignGoalManifest({ feature: BLUEPRINT_ID, run_id: 'I10-current-initial-root', adapter: 'claude', requirement,
+        initial_design: { completion_target: 'feature', requested_results: [requirement], requested_phases: [] },
+        budget: ORIGINAL_BUDGET, unattended: UNATTENDED }, { projectRoot: host.root });
+      const born = createGoalRun({ projectRoot: host.root, manifest, chain: [] }), runDir = path.dirname(born.manifestPath);
+      const manifestBytes = fs.readFileSync(born.manifestPath);
+      const options = { projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: BLUEPRINT_ID, runId: manifest.run_id,
+        adapter: 'claude', runMode: 'attended', authorization: { mode: 'goal_mode' as const, autonomyAuthorized: true } };
+      const q = await withRuntimeTest({ root: options.projectRoot }, () => entry.runGoalModeSessionStep(options));
+      assert.equal(q.phase, 'initial-design-questioning', JSON.stringify(q));
+      const qPath = (q.request as { path: string }).path, qRequest = handoff.readSessionExecution(runDir, qPath)!;
+      assert(qRequest.request.pre_snapshot && qRequest.request.write_boundary?.executionRole === 'verifier');
+      const beforeQ = fs.readFileSync(canonical.canonicalPath);
+      const items = YAML.parse(beforeQ.toString('utf8')).review_summary.questioning.items;
+      const answer = '真实当前否定：失败恢复责任没有闭合。\n\n第二段必须完整保留：不能丢失既有账目，仍须从原入口恢复。';
+      Object.assign(items[0], { disposition: 'blocker', question: '失败恢复是否满足当前原验收？', answer });
+      const output = JSON.stringify({ items });
+      const qReport = { status: 'passed' as const, phase: String(q.phase), details: output };
+      const author = await withRuntimeTest({ root: options.projectRoot }, () => entry.runGoalModeSessionStep({ ...options, requestPath: qPath, report: qReport }));
+      assert.equal(author.phase, 'initial-design-author', JSON.stringify(author));
+      const accepted = handoff.acceptedSessionReport(runDir, qRequest)!;
+      const original = handoff.readHandoffMaterial<{ post_snapshot: NonNullable<typeof qRequest.request.pre_snapshot> }>(runDir, accepted.event.handoff_report!);
+      assert.equal(diffPhaseInvocationSnapshots(qRequest.request.pre_snapshot!, original.post_snapshot).kind, 'clean');
+      const qDirectory = path.join(runDir, 'phases', String(q.phase), qRequest.request.invoke_id);
+      assert.deepEqual(fs.readFileSync(path.join(qDirectory, 'blueprint-before.yaml')), beforeQ);
+      assert.equal(fs.readFileSync(path.join(qDirectory, 'questioning-output.json'), 'utf8'), output);
+      const authorPath = (author.request as { path: string }).path, authorRequest = handoff.readSessionExecution(runDir, authorPath)!;
+      assert(authorRequest.request.context.instruction!.includes(answer), 'the actual author must receive the complete current denial');
+      const qualifiedBlueprint = fs.readFileSync(canonical.canonicalPath);
+      const authorReport = { status: 'passed' as const, phase: String(author.phase), details: '实际作者已经读取全部当前问题；本次原样交回，没有修改任何设计或源码。' };
+      const stopped = await withRuntimeTest({ root: options.projectRoot }, () => entry.runGoalModeSessionStep({ ...options, requestPath: authorPath, report: authorReport }));
+      assert.equal(stopped.type, 'goal_session_result', JSON.stringify(stopped));
+      assert.equal((stopped.result as { halt_reason?: string }).halt_reason, 'no_progress_guard', JSON.stringify(stopped));
+      const starts = () => handoff.sessionEvents(runDir).filter(event => event.type === 'agent_invoke_start');
+      assert.deepEqual(starts().map(event => event.phase), ['initial-design-questioning', 'initial-design-author']);
+      for (const [requestPath, report] of [[qPath, qReport], [authorPath, authorReport]] as const) {
+        const repeated = await withRuntimeTest({ root: options.projectRoot }, () => entry.runGoalModeSessionStep({ ...options, requestPath, report }));
+        assert(repeated.type === 'goal_session_report_received' && repeated.duplicate === true, JSON.stringify(repeated));
+      }
+      for (let read = 0; read < 2; read++) {
+        const observed = await withRuntimeTest({ root: options.projectRoot }, () => entry.runGoalModeSessionStep(options));
+        assert.equal(observed.type, 'goal_session_result', JSON.stringify(observed));
+        assert.equal((observed.result as { halt_reason?: string }).halt_reason, 'no_progress_guard');
+      }
+      assert.equal(starts().length, 2, 'repeated reports/observations cannot buy another author or comparison window');
+      assert.equal(readOriginalDeliveryBudget(host.root, manifest)!.totalTurns, 2);
+      assert.deepEqual(fs.readFileSync(canonical.canonicalPath), qualifiedBlueprint, 'the current independent answers and unpublished design bytes must remain intact');
+      assert.equal(fs.readFileSync(source, 'utf8'), dirtySource, 'the original dirty source bytes must be retained');
+      assert.deepEqual(fs.readFileSync(born.manifestPath), manifestBytes);
+      assert(!handoff.sessionEvents(runDir).some(event => event.type === 'run_end' && event.status === 'COMPLETED'));
+    });
+  },
+});
+
+cases.push({
+  name: 'P2 review R1 process initial Q reuses only actual unchanged invocation originals across a new runtime',
+  async run() {
+    const { withFreshCuHost, BLUEPRINT_ID } = require('./lifecycle-evolution.unit.test') as typeof import('./lifecycle-evolution.unit.test');
+    const { enumerateCanonicalChangeUnits } = require('../../scripts/utils/change-unit-path') as typeof import('../../scripts/utils/change-unit-path');
+    const { loadCanonicalBlueprint } = require('../../scripts/utils/component-blueprint-path') as typeof import('../../scripts/utils/component-blueprint-path');
+    const { buildInitialDesignGoalManifest } = require('../../scripts/utils/goal-manifest') as typeof import('../../scripts/utils/goal-manifest');
+    const { createGoalRun } = require('../../scripts/utils/goal-run-creation') as typeof import('../../scripts/utils/goal-run-creation');
+    const { sessionEvents, executionRequestForInvoke } = require('../../scripts/utils/session-execution-handoff') as typeof import('../../scripts/utils/session-execution-handoff');
+    const { readDesignQuestioningOriginal } = require('../../scripts/utils/design-repair-unattended') as typeof import('../../scripts/utils/design-repair-unattended');
+    const { GoalPhaseRuntime } = require('../../scripts/goal-phase-runtime') as typeof import('../../scripts/goal-phase-runtime');
+    for (const scenario of ['unchanged', 'business', 'dependency', 'missing-original'] as const) await withFreshCuHost(async host => {
+      const workspace = path.join(host.root, 'doc/features', BLUEPRINT_ID);
+      for (const unit of enumerateCanonicalChangeUnits(host.root, BLUEPRINT_ID)) {
+        const directory = path.dirname(unit.canonicalPath);
+        assert(path.resolve(directory).startsWith(path.resolve(workspace) + path.sep));
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
+      const source = path.join(host.root, 'src/ledger/LedgerRepository.ts');
+      fs.mkdirSync(path.dirname(source), { recursive: true });
+      fs.writeFileSync(source, 'export const currentLedgerInput = true;\n// original dirty operator bytes\n');
+      const canonical = loadCanonicalBlueprint(host.root, BLUEPRINT_ID);
+      const manifest = buildInitialDesignGoalManifest({ feature: BLUEPRINT_ID, run_id: `review-r1-process-${scenario}`, adapter: 'claude',
+        requirement: '按当前账目蓝图原范围完成失败恢复设计、独立质询及交付，不降低验收。',
+        initial_design: { completion_target: 'feature', requested_results: ['完整交付'], requested_phases: [] },
+        budget: ORIGINAL_BUDGET, unattended: UNATTENDED }, { projectRoot: host.root });
+      const born = createGoalRun({ projectRoot: host.root, manifest, chain: [] }), runDir = path.dirname(born.manifestPath);
+      const manifestBefore = fs.readFileSync(born.manifestPath), calls: string[] = [];
+      let resuming = false;
+      const executor = { async execute(context: import('../../scripts/utils/goal-phase-executor').WorkUnitExecutionContext) {
+        calls.push(context.phase);
+        // Stop the controlled replacement at the first genuinely required new Q; do not manufacture its completion.
+        if (resuming || calls.length > 2) return { status: 'waiting' as const, phase: context.phase, exitCode: 0, stdout: '', stderr: '',
+          command: 'controlled-Q-recovery', details: '当前真实输入需要新的独立阅读；受控提供方尚未提交结果。' };
+        let details = '真实作者已收到当前完整否定；本次原样完成交回，没有修改设计或源码。';
+        if (context.phase === 'initial-design-questioning') {
+          const items = YAML.parse(fs.readFileSync(canonical.canonicalPath, 'utf8')).review_summary.questioning.items;
+          Object.assign(items[0], { disposition: 'blocker', question: '失败恢复是否满足当前原验收？', answer: '当前失败恢复责任尚未闭合，原验收必须保留。' });
+          details = JSON.stringify({ items });
+        } else assert(context.instruction?.includes('当前失败恢复责任尚未闭合'), 'the actual no-op author must receive the real denial');
+        return { status: 'passed' as const, phase: context.phase, exitCode: 0, stdout: '', stderr: '', command: 'controlled-Q-recovery', completion_observed: true, details };
+      } };
+      const run = () => withRuntimeTest({ root: host.root }, () => new GoalPhaseRuntime({ args: ['--project-root', host.root, '--framework-root', host.frameworkRoot,
+        '--feature', BLUEPRINT_ID, '--resume', manifest.run_id], executor }).run());
+      const first = await run(), events = sessionEvents(runDir);
+      assert.deepEqual(calls, ['initial-design-questioning', 'initial-design-author'], JSON.stringify({ scenario, first }));
+      assert.equal([...events].reverse().find(event => event.type === 'run_end')?.halt_reason, 'no_progress_guard');
+      assert(!events.some(event => event.type === 'phase_start' && event.handoff_request), 'this must cover process originals, not session handoff archives');
+      const start = events.find(event => event.type === 'agent_invoke_start' && event.phase === 'initial-design-questioning')!;
+      assert(start?.invoke_id);
+      const original = readDesignQuestioningOriginal(runDir, start), request = executionRequestForInvoke(runDir, start.invoke_id!);
+      assert(original?.completed && original.output && original.preSnapshot && original.postSnapshot, `${scenario}: real completed/readonly invocation originals must survive`);
+      assert.deepEqual(original.preSnapshot, request?.request.pre_snapshot, 'the original preimage must come from the signed process request');
+      const directory = path.join(runDir, 'phases', start.phase!, start.invoke_id!), resultFile = path.join(directory, 'design-result.json');
+      const resultBytes = fs.readFileSync(resultFile), outputFile = path.join(directory, 'questioning-output.json'), outputBytes = fs.readFileSync(outputFile);
+      if (scenario === 'business') {
+        const changed = YAML.parse(fs.readFileSync(canonical.canonicalPath, 'utf8'));
+        changed.review_summary.summary += '\n作者新增真实业务陈述：失败恢复还需重新核对当前余额投影。';
+        fs.writeFileSync(canonical.canonicalPath, YAML.stringify(changed));
+      } else if (scenario === 'dependency') fs.appendFileSync(source, '\nexport const recoveryDependencyChanged = true;\n');
+      else if (scenario === 'missing-original') {
+        fs.unlinkSync(resultFile);
+        fs.unlinkSync(path.join(directory, 'draft-output.yaml'));
+        const missing = readDesignQuestioningOriginal(runDir, start);
+        assert(!missing?.postSnapshot && !missing?.afterBlueprint, 'without either actual historical postimage, an old completed end cannot prove unchanged inputs');
+      }
+      const blueprintBefore = fs.readFileSync(canonical.canonicalPath), sourceBefore = fs.readFileSync(source);
+      resuming = true;
+      const resumed = await run(), after = sessionEvents(runDir);
+      if (scenario === 'unchanged') {
+        assert.equal(calls.length, 2, JSON.stringify({ calls, resumed }));
+        assert.equal([...after].reverse().find(event => event.type === 'run_end')?.halt_reason, 'no_progress_guard');
+        assert.deepEqual(fs.readFileSync(canonical.canonicalPath), blueprintBefore, 'an unchanged observation preserves the independent answer bytes');
+      } else assert.deepEqual(calls, ['initial-design-questioning', 'initial-design-author', 'initial-design-questioning'], JSON.stringify({ scenario, resumed, calls }));
+      assert.deepEqual(fs.readFileSync(source), sourceBefore, 'recovery cannot discard actual source or prior dirty bytes');
+      assert.deepEqual(fs.readFileSync(outputFile), outputBytes, 'new work cannot rewrite the previous independent raw output');
+      if (scenario !== 'missing-original') assert.deepEqual(fs.readFileSync(resultFile), resultBytes, 'the completed original is immutable');
+      assert.deepEqual(fs.readFileSync(born.manifestPath), manifestBefore);
+      assert(!after.some(event => event.type === 'run_end' && event.status === 'COMPLETED'), 'a reused negative result cannot claim completion');
+    });
+  },
+});
+
+cases.push({
+  name: 'P2 Q a production archived dirty post cannot be replaced by an unchanged blueprint original',
+  async run() {
+    const { withFreshCuHost, BLUEPRINT_ID } = require('./lifecycle-evolution.unit.test') as typeof import('./lifecycle-evolution.unit.test');
+    const entry = require('../../scripts/goal-mode-entry') as typeof import('../../scripts/goal-mode-entry');
+    const handoff = require('../../scripts/utils/session-execution-handoff') as typeof import('../../scripts/utils/session-execution-handoff');
+    const { buildInitialDesignGoalManifest } = require('../../scripts/utils/goal-manifest') as typeof import('../../scripts/utils/goal-manifest');
+    const { createGoalRun } = require('../../scripts/utils/goal-run-creation') as typeof import('../../scripts/utils/goal-run-creation');
+    const { enumerateCanonicalChangeUnits } = require('../../scripts/utils/change-unit-path') as typeof import('../../scripts/utils/change-unit-path');
+    const { loadCanonicalBlueprint } = require('../../scripts/utils/component-blueprint-path') as typeof import('../../scripts/utils/component-blueprint-path');
+    const { diffPhaseInvocationSnapshots } = require('../../scripts/utils/phase-write-boundary') as typeof import('../../scripts/utils/phase-write-boundary');
+    const { invocationCompleted } = require('../../scripts/utils/invocation-completion') as typeof import('../../scripts/utils/invocation-completion');
+    const { readDesignQuestioningOriginal, reusableDesignQuestioning } = require('../../scripts/utils/design-repair-unattended') as typeof import('../../scripts/utils/design-repair-unattended');
+    await withFreshCuHost(async host => {
+      const workspace = path.join(host.root, 'doc/features', BLUEPRINT_ID);
+      for (const unit of enumerateCanonicalChangeUnits(host.root, BLUEPRINT_ID)) {
+        const directory = path.dirname(unit.canonicalPath);
+        assert(path.resolve(directory).startsWith(path.resolve(workspace) + path.sep));
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
+      const source = path.join(host.root, 'src/ledger/LedgerRepository.ts');
+      fs.mkdirSync(path.dirname(source), { recursive: true });
+      fs.writeFileSync(source, 'export const originalDirtyOperatorInput = true;\n');
+      const sourceBefore = fs.readFileSync(source), canonical = loadCanonicalBlueprint(host.root, BLUEPRINT_ID);
+      const manifest = buildInitialDesignGoalManifest({ feature: BLUEPRINT_ID, run_id: 'Q-known-dirty-post', adapter: 'claude',
+        requirement: '按当前账目蓝图原范围完成失败恢复设计与独立质询，不降低验收。',
+        initial_design: { completion_target: 'feature', requested_results: ['完整交付'], requested_phases: [] },
+        budget: ORIGINAL_BUDGET, unattended: UNATTENDED }, { projectRoot: host.root });
+      const born = createGoalRun({ projectRoot: host.root, manifest, chain: [] }), runDir = path.dirname(born.manifestPath);
+      const options = { projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: BLUEPRINT_ID, runId: manifest.run_id,
+        adapter: 'claude', runMode: 'attended', authorization: { mode: 'goal_mode' as const, autonomyAuthorized: true } };
+      const q = await withRuntimeTest({ root: options.projectRoot }, () => entry.runGoalModeSessionStep(options));
+      assert.equal(q.phase, 'initial-design-questioning');
+      const requestPath = (q.request as { path: string }).path, issued = handoff.readSessionExecution(runDir, requestPath)!;
+      const before = fs.readFileSync(canonical.canonicalPath, 'utf8');
+      const items = YAML.parse(before).review_summary.questioning.items;
+      Object.assign(items[0], { disposition: 'blocker', question: '失败恢复是否满足当前原验收？', answer: '原失败恢复责任尚未闭合。' });
+      const output = JSON.stringify({ items });
+      fs.appendFileSync(source, '\nexport const unauthorizedQuestionerWrite = true;\n');
+      await withRuntimeTest({ root: options.projectRoot }, () => entry.runGoalModeSessionStep({ ...options, requestPath, report: { status: 'passed', phase: String(q.phase), details: output } }));
+      const accepted = handoff.acceptedSessionReport(runDir, issued)!;
+      const archived = handoff.readHandoffMaterial<{ post_snapshot: NonNullable<typeof issued.request.pre_snapshot>; draft_outputs: Record<string, string> }>(runDir, accepted.event.handoff_report!);
+      assert.equal(diffPhaseInvocationSnapshots(issued.request.pre_snapshot!, archived.post_snapshot).kind, 'changed', 'the dirty post is captured by the real session acceptance path');
+      const afterBlueprint = Buffer.from(archived.draft_outputs['initial-design-blueprint.yaml'], 'base64').toString('utf8');
+      assert.equal(afterBlueprint, before, 'the actual archived Q blueprint is unchanged even though its scope post is dirty');
+      const archivedBytes = fs.readFileSync(path.resolve(runDir, accepted.event.handoff_report!.path));
+      fs.writeFileSync(source, sourceBefore);
+      assert.equal(reusableDesignQuestioning({ projectRoot: host.root, blueprintPath: canonical.canonicalPath,
+        blueprint: YAML.parse(before), beforeBlueprint: before, output, providerId: 'initial-design-questioning',
+        completed: invocationCompleted({ ...accepted.event, exitCode: accepted.event.exit_code }),
+        preSnapshot: issued.request.pre_snapshot ?? undefined, postSnapshot: archived.post_snapshot, afterBlueprint }), null,
+      'restored current inputs or another real blueprint postimage cannot wash a known failed original post');
+      const start = handoff.sessionEvents(runDir).find(event => event.type === 'agent_invoke_start' && event.invoke_id === issued.request.invoke_id)!;
+      const original = readDesignQuestioningOriginal(runDir, start);
+      assert(!original || !reusableDesignQuestioning({ ...original, projectRoot: host.root, blueprintPath: canonical.canonicalPath, blueprint: YAML.parse(before) }),
+        'the shared historical reader cannot repurchase validity for the rejected invocation');
+      assert.deepEqual(fs.readFileSync(path.resolve(runDir, accepted.event.handoff_report!.path)), archivedBytes, 'the known dirty archive is never rewritten');
+      assert(!handoff.sessionEvents(runDir).some(event => event.type === 'run_end' && event.status === 'COMPLETED'));
     });
   },
 });

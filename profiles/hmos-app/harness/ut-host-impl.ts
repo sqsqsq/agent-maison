@@ -675,6 +675,7 @@ export function checkUtHvigorBuild(
       status: 'FAIL',
       details: lines.join('\n'),
       affected_files: affected.files,
+      structured: { compiler_diagnostics: structuredClone(bad.flatMap(item => item.result.errors ?? [])) },
       failure_kind: failureClass.kind,
       blocking_class:
         failureClass.kind === 'external_project_build_blocker'

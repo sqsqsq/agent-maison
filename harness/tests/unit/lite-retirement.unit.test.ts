@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+import { withRuntimeTest } from '../utils/runtime-test-control';
 import * as os from 'os';
 import * as path from 'path';
 import assert from 'assert';
@@ -71,7 +72,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
       assert.strictEqual(loadGoalManifestFromRun(root, manifest.run_id, { feature }).run_id, manifest.run_id, '只读历史reader继续可用');
       const { main } = require('../../scripts/goal-phase-runtime') as typeof import('../../scripts/goal-phase-runtime');
       let executed = 0;
-      await assert.rejects(() => main({ args: ['--project-root', root, '--framework-root', FRAMEWORK_ROOT, '--feature', feature, '--resume', manifest.run_id, '--force-resume', '--foreground-ok'], executor: { execute: async () => { executed++; throw new Error('retired executor must never run'); } } }), /\[lite-retired\]/);
+      await assert.rejects(() => withRuntimeTest({ root }, () => main({ args: ['--project-root', root, '--framework-root', FRAMEWORK_ROOT, '--feature', feature, '--resume', manifest.run_id, '--force-resume', '--foreground-ok'], executor: { execute: async () => { executed++; throw new Error('retired executor must never run'); } } })), /\[lite-retired\]/);
       assert.strictEqual(executed, 0);
       assert.strictEqual(fs.readFileSync(events, 'utf8'), originalEvents);
       assert.strictEqual(fs.readFileSync(manifestFile, 'utf8'), originalManifest);

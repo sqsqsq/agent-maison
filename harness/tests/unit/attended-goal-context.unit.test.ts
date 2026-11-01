@@ -66,6 +66,12 @@ const cases: Array<{ name: string; run: () => void }> = [
       });
       assert(context.manifest.requirement === 'manifest requirement', 'manifest not returned');
       assert(context.control.owner?.kind === 'session', 'session owner not returned');
+      const originalIdentity = { projectRoot: root, feature: 'demo', runId, phase: 'spec', attemptId: 'session-e1-round-1',
+        ownerId: token.owner_id, ownerEpoch: token.epoch, checkFamily: true };
+      assert(validateAttendedGoalContext(originalIdentity).identity.phase === 'spec', 'the same-family legacy bridge retains its exact fenced issuance without a new carrier');
+      let crossed = false;
+      try { validateAttendedGoalContext({ ...originalIdentity, phase: 'coding' }); } catch { crossed = true; }
+      assert(crossed, 'a carrier-less legacy bridge cannot borrow another checking family');
     }),
   },
   {

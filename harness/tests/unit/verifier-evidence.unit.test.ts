@@ -25,7 +25,12 @@ import {
   loadVerifierEvidenceForSubject,
   deriveVerifierClosureRecord,
   findPriorPassVerifierEvidence,
+  findPriorVerifierEvidence,
+  findSameMaterialVerifierEvidence,
 } from '../../scripts/utils/verifier-evidence';
+import { buildVerifierMaterialView, writeVerifierMaterial } from '../../scripts/utils/verifier-material';
+import { generateScriptReport } from '../../scripts/utils/report-generator';
+import { writeRunSummaryBase } from '../../harness-runner';
 import {
   PHASE_REPORTS_OUTPUT_FILES,
   resolvePhaseEvidenceManifest,
@@ -76,6 +81,11 @@ function withHost(fn: (host: { root: string; reportsDir: string }) => void): voi
     fs.rmSync(host.root, { recursive: true, force: true });
     clearFrameworkConfigCache();
   }
+}
+
+function material(root: string, rule = 'unchanged') {
+  return buildVerifierMaterialView({ projectRoot: root, frameworkRoot: path.resolve(__dirname, '../../..'), feature: FEATURE, phase: PHASE,
+    gateFingerprint: null, phaseRuleText: rule, templateText: 'same template', checks: [], contextFiles: [] });
 }
 
 // --------------------------------------------------------------------------
@@ -205,9 +215,20 @@ function case4_priorPassReuse(): void {
     const found = findPriorPassVerifierEvidence(root, FEATURE, PHASE, { excludeSubject: current });
     assert(found?.subject_id === prior, `应找到既往 PASS，实得 ${found?.subject_id ?? 'null'}`);
 
+    assert(deriveVerifierClosureRecord(root, FEATURE, PHASE) === null, 'missing original material cannot be replaced by an old PASS');
+    const before = material(root);
+    writeVerifierMaterial(reportsDir, prior, before);
+    writeVerifierMaterial(reportsDir, current, material(root, 'actually changed rule'));
+    assert(deriveVerifierClosureRecord(root, FEATURE, PHASE) === null, 'changed material requires independent review');
+    writeVerifierMaterial(reportsDir, current, before);
     const closure = deriveVerifierClosureRecord(root, FEATURE, PHASE);
     assert(closure?.mode === 'completed_with_prior_review', `实得 ${closure?.mode ?? 'null'}`);
     assert(closure?.reviewed_subject_id === prior && closure.current_subject_id === current, '两个 subject 都要如实登记');
+    assert(closure?.current_material_not_reverified?.length === 0, 'exact material reuse carries no invented unreviewed change');
+    fs.writeFileSync(path.join(reportsDir, `verifier.report.${current}.md`), '# Current substantive denial with an unfinished result envelope\n');
+    assert(findSameMaterialVerifierEvidence(root, FEATURE, PHASE, current) === null,
+      'a malformed current original must be repaired independently, not hidden behind an older PASS');
+    assert(deriveVerifierClosureRecord(root, FEATURE, PHASE) === null, 'a malformed current report cannot produce a reused closure');
 
     // 从未 PASS 过 → 不得沿用（至少要完整审一次）
     const fail = fixtureSubjectId('failonly');
@@ -414,18 +435,10 @@ function makeClosureHost(): { root: string; reportsDir: string } {
   fs.writeFileSync(path.join(featureRoot, 'acceptance.yaml'), 'criteria: []\n', 'utf8');
   const reportsDir = featurePhaseReportsDir(root, FEATURE, PHASE, FRAMEWORK_ROOT);
   fs.mkdirSync(reportsDir, { recursive: true });
-  fs.writeFileSync(
-    path.join(reportsDir, 'summary.json'),
-    JSON.stringify({
-      schema_version: '1.2', phase: PHASE, feature: FEATURE, verdict: 'PASS',
-      blocker_count: 0, fail_count: 0, warn_count: 0,
-      script_report: 'script-report.json', merged_report: 'merged-report.md',
-      summary_json: 'summary.json',
-      run_statuses: [], readiness_signals: [], blocking_warnings: [], blocking_skips: [], blockers: [],
-      next_action: 'run_receipt', closure_status: 'open', assurance: 'full',
-    }, null, 2),
-    'utf8',
-  );
+  const controlledCheck = { id: 'fixture_spec_input', category: 'structure', severity: 'BLOCKER', description: 'controlled nonempty source for report binding',
+    status: fs.readFileSync(path.join(featureRoot, PHASE, 'spec.md'), 'utf8').trim() ? 'PASS' : 'FAIL', details: 'Read the actual nonempty current spec/spec.md source.' } as const;
+  const script = generateScriptReport(path.join(FRAMEWORK_ROOT, 'harness'), PHASE, FEATURE, root, [controlledCheck], FRAMEWORK_ROOT);
+  writeRunSummaryBase(root, script, FRAMEWORK_ROOT);
   const receiptPath = resolveReceiptFilePath(root, FEATURE, PHASE).path;
   fs.mkdirSync(path.dirname(receiptPath), { recursive: true });
   fs.writeFileSync(receiptPath, '# receipt\n\nclaimed: true\n', 'utf8');
@@ -462,7 +475,7 @@ function readSnapshotSummary(root: string): Record<string, unknown> {
   ) as Record<string, unknown>;
 }
 
-function caseB04V5_snapshotArchivesReusedReport(): void {
+export function caseB04V5_snapshotArchivesReusedReport(): void {
   withClosureHost(({ root, reportsDir }) => {
     const priorSubject = fixtureSubjectId('b04-prior');
     const currentSubject = fixtureSubjectId('b04-current');
@@ -476,6 +489,8 @@ function caseB04V5_snapshotArchivesReusedReport(): void {
     const doc = JSON.parse(fs.readFileSync(summaryPath, 'utf-8')) as Record<string, unknown>;
     doc.verifier_subject_id = currentSubject;
     fs.writeFileSync(summaryPath, JSON.stringify(doc, null, 2), 'utf-8');
+    const view = material(root);
+    writeVerifierMaterial(reportsDir, priorSubject, view); writeVerifierMaterial(reportsDir, currentSubject, view);
 
     closeWithRealFinalizer(root);
     const snap = snapshotPhaseHarness(root, FEATURE, PHASE as never, RUN_REPORT_DIR, FRAMEWORK_ROOT);
@@ -502,16 +517,21 @@ function caseB04V5_snapshotArchivesReusedReport(): void {
     assert(closure?.mode === 'completed_with_prior_review', `实得 ${closure?.mode ?? 'null'}`);
     assert(closure?.reviewed_subject_id === priorSubject, 'closure 记录的 subject 须与快照 subject 一致');
     assert(
-      ((copied.readiness_signals ?? []) as Array<{ id?: string }>).some(s => s.id === 'semantic_not_reverified'),
-      'summary 副本须保留 semantic_not_reverified（材料未重审）',
+      !((copied.readiness_signals ?? []) as Array<{ id?: string }>).some(s => s.id === 'semantic_not_reverified'),
+      'identical material does not invent an unreviewed semantic gap',
     );
   });
 }
 
-function caseB04V6_snapshotFallbackGuards(): void {
+export function caseB04V6_snapshotFallbackGuards(): void {
   // ① 当前 subject 自己有验真 PASS 报告 → 取当前证据，不得标沿用（回落不得抢在当前证据之前）
   withClosureHost(({ root, reportsDir }) => {
     const current = fixtureSubjectId('b04-self');
+    const script = JSON.parse(fs.readFileSync(path.join(reportsDir, 'script-report.json'), 'utf8'));
+    const currentMaterial = buildVerifierMaterialView({ projectRoot: root, frameworkRoot: FRAMEWORK_ROOT, feature: FEATURE, phase: PHASE,
+      gateFingerprint: null, phaseRuleText: 'current controlled spec input', templateText: 'same template', checks: script.checks,
+      contextFiles: [{ label: `doc/features/${FEATURE}/${PHASE}/spec.md`, content: fs.readFileSync(path.join(root, 'doc/features', FEATURE, PHASE, 'spec.md'), 'utf8') }] });
+    writeVerifierMaterial(reportsDir, current, currentMaterial);
     publishFixtureVerifierEvidence({
       projectRoot: root, reportsDir, feature: FEATURE, phase: PHASE, subjectId: current,
     });
@@ -538,7 +558,9 @@ function caseB04V6_snapshotFallbackGuards(): void {
       skipSummaryPatch: true,
     });
     assert(deriveVerifierClosureRecord(root, FEATURE, PHASE) === null, 'FAIL-only 不得派生沿用闭环');
-    closeWithRealFinalizer(root);
+    let rejected = false;
+    try { closeWithRealFinalizer(root); } catch { rejected = true; }
+    assert(rejected, 'missing current or same-material verification cannot close the phase');
     const snap = snapshotPhaseHarness(root, FEATURE, PHASE as never, RUN_REPORT_DIR, FRAMEWORK_ROOT);
     assert(snap.verifier_evidence === null, `从未 PASS 过不得回落出证据：${JSON.stringify(snap.verifier_evidence)}`);
     assert(snap.snapshot_files['verifier.report.md'] === null, '不得归档一份 FAIL 或不存在的报告');
@@ -546,10 +568,27 @@ function caseB04V6_snapshotFallbackGuards(): void {
 }
 
 const CASES: Array<{ name: string; fn: () => void }> = [
+  { name: 'P2 C current material reuses a real FAIL and public baselines never hide it behind an older PASS', fn: () => {
+    withHost(({ root, reportsDir }) => {
+      const prior = fixtureSubjectId('p2-prior-pass'), failed = fixtureSubjectId('p2-prior-fail'), current = fixtureSubjectId('p2-current');
+      const passed = publishFixtureVerifierEvidence({ projectRoot: root, reportsDir, feature: FEATURE, phase: PHASE, subjectId: prior, skipSummaryPatch: true });
+      const denied = publishFixtureVerifierEvidence({ projectRoot: root, reportsDir, feature: FEATURE, phase: PHASE, subjectId: failed, verdict: 'FAIL', blockerCount: 1, skipSummaryPatch: true });
+      fs.utimesSync(passed.mdPath, new Date(1000), new Date(1000)); fs.utimesSync(denied.mdPath, new Date(2000), new Date(2000));
+      const view = material(root);
+      for (const subject of [prior, failed, current]) writeVerifierMaterial(reportsDir, subject, view);
+      const summary = JSON.parse(fs.readFileSync(path.join(reportsDir, 'summary.json'), 'utf8'));
+      summary.verifier_subject_id = current; fs.writeFileSync(path.join(reportsDir, 'summary.json'), JSON.stringify(summary));
+      assert(findPriorVerifierEvidence(root, FEATURE, PHASE, { excludeSubject: current })?.subject_id === failed, 'latest public denial is the baseline');
+      assert(findSameMaterialVerifierEvidence(root, FEATURE, PHASE, current)?.verdict === 'FAIL', 'a repeated check returns the existing real FAIL');
+      assert(deriveVerifierClosureRecord(root, FEATURE, PHASE) === null, 'old PASS cannot overwrite current same-material denial');
+      writeVerifierMaterial(reportsDir, current, material(root, 'new acceptance semantics'));
+      assert(findSameMaterialVerifierEvidence(root, FEATURE, PHASE, current) === null, 'real rule changes require new verification');
+    });
+  } },
   { name: '① 命中：report_text 是报告全文（不是只剩终态块）', fn: case1_hit },
   { name: '② 四类失败各自独立错误码，恢复话术只指向重跑 verifier', fn: case2_failuresAllPointToRerun },
   { name: '③ summary 无 subject = 本轮没有调用凭证', fn: case3_subjectAbsent },
-  { name: '④ 既往 PASS 沿用 + 未重审材料如实登记；从未 PASS 不沿用', fn: case4_priorPassReuse },
+  { name: '④ 仅同材料原件可复用；缺原件、真实变更或从未 PASS 均不沿用', fn: case4_priorPassReuse },
   { name: '⑤ 闭环后改报告不使 evidence manifest stale', fn: case5_reportNotInManifest },
   { name: '⑥ 终态块格式与生产渲染同源', fn: case6_blockFormatIsShared },
   { name: '⑦ summary.verifier_report 是仓根相对路径，按它能找到报告', fn: case7_reportPointerIsRepoRelative },

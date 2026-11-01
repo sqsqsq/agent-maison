@@ -56,6 +56,7 @@ import * as goalRunnerMod from '../../scripts/goal-runner';
 import { setupMinimalHost } from '../helpers/goal-run-driver';
 import { inferRepoLayout } from '../../repo-layout';
 import { clearFrameworkConfigCache } from '../../config';
+import { withRuntimeTest } from '../utils/runtime-test-control';
 
 const REPO_ROOT = path.resolve(__dirname, '../../..');
 
@@ -472,7 +473,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         ];
         process.chdir(root);
         clearFrameworkConfigCache();
-        const exitCode = await goalMain();
+        const exitCode = await withRuntimeTest({ root: root }, () => goalMain());
         const runsDir = path.join(root, 'doc/features', feature, 'goal-runs');
         const runs = fs.existsSync(runsDir) ? fs.readdirSync(runsDir).filter(n => !n.startsWith('.')) : [];
         const reportDir =
@@ -557,7 +558,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         ];
         process.chdir(root);
         clearFrameworkConfigCache();
-        const exitCode = await goalMain();
+        const exitCode = await withRuntimeTest({ root: root }, () => goalMain());
         const runsDir = path.join(root, 'doc/features', 'canary-hard-cli', 'goal-runs');
         const runs = fs.existsSync(runsDir) ? fs.readdirSync(runsDir).filter(n => !n.startsWith('.')) : [];
         const reportDir =
@@ -698,7 +699,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         fs.mkdirSync(path.join(deniedRoot, 'app'), { recursive: true });
         installSeams(deniedRoot);
         process.argv = freshArgs(deniedFeature);
-        assert.strictEqual(await goalMain(), 1);
+        assert.strictEqual(await withRuntimeTest({ root: deniedRoot }, () => goalMain()), 1);
         const deniedDir = newestReportDir(deniedRoot, deniedFeature);
         const deniedEvents = readEvents(deniedDir);
         assert(
@@ -721,7 +722,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         process.argv = freshArgs(providerFeature, [
           '--visual-adapter', 'claude', '--visual-model', 'smoke-vision-model',
         ]);
-        assert.strictEqual(await goalMain(), 1);
+        assert.strictEqual(await withRuntimeTest({ root: providerRoot }, () => goalMain()), 1);
         const providerDir = newestReportDir(providerRoot, providerFeature);
         const providerEvents = readEvents(providerDir);
         assert(!providerEvents.some(e => e.halt_reason === 'blind_visual_authorization_required'), '不得存在已退役的 blind 授权门');
@@ -872,7 +873,7 @@ async function runModelChain(opts: {
     process.argv = ['node', 'goal-runner.ts', '--feature', feature, '--adapter', 'cursor', '--foreground-ok', ...opts.args];
     process.chdir(root);
     clearFrameworkConfigCache();
-    const exitCode = await goalMain();
+    const exitCode = await withRuntimeTest({ root: root }, () => goalMain());
     const runsDir = path.join(root, 'doc/features', feature, 'goal-runs');
     const runs = fs.existsSync(runsDir) ? fs.readdirSync(runsDir).filter(n => !n.startsWith('.')) : [];
     const reportDir = runs.length > 0

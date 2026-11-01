@@ -2,7 +2,7 @@ import assert from 'assert';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import { compareExistingTestPreservation, resolveRepairResponsibility, readRepairDependencyContext } from '../../scripts/utils/repair-responsibility';
+import { codingTestPreservation, compareExistingTestPreservation, resolveRepairResponsibility, repairResponsibilityContext, readRepairDependencyContext } from '../../scripts/utils/repair-responsibility';
 import { resolvePhaseEvidenceManifest, writePhaseEvidenceManifest } from '../../scripts/utils/phase-evidence-manifest';
 import { clearFrameworkConfigCache } from '../../config';
 import type { ExecutionScope } from '../../scripts/utils/execution-scope';
@@ -15,6 +15,10 @@ export function runAll(): UnitCaseResult[] {
   const root = path.resolve(__dirname, '../../..');
   const workflow = loadWorkflowSpec(root, 'obligation-driven');
   const tests = `describe('old', () => { it('kept', 0, () => { expect(1).assertEqual(1); }); });`;
+  check('P2 C an invalid test reference cannot expose an out-of-project original', () => {
+    const result = codingTestPreservation({ projectRoot: root, feature: 'f', file: '../outside/src/ohosTest/private.ets' });
+    assert(!result.preserved && result.beforeText === undefined && result.reason.includes('当前工程'));
+  });
   check('finite test compatibility preserves real cases and assertions byte-for-byte', () => {
     assert(compareExistingTestPreservation('const data = { a: 1 };\n' + tests, 'const data = { a: 1, b: [] };\n' + tests).preserved);
     for (const after of [tests.replace('assertEqual(1)', 'assertEqual(2)'), tests.replace('kept', 'renamed'), tests + `\nit('new', 0, () => {});`, tests.replace('it(', 'it.skip('), '']) {
@@ -64,7 +68,7 @@ export function runAll(): UnitCaseResult[] {
     const result = resolveRepairResponsibility({ frameworkRoot: root, workflow, contracts, target: { files: ['app/tests/a.ts'] } });
     assert.equal(result.owner, 'ut'); assert.equal(result.category, 'verification'); assert.equal(result.roles.verifier, 'ut');
     const finite = resolveRepairResponsibility({ frameworkRoot: root, workflow, contracts, target: { files: ['app/tests/a.ts'], compatibilityPreserved: true } });
-    assert.equal(finite.owner, 'coding'); assert.equal(finite.roles.verifier, 'ut'); assert.equal(finite.roles.introducedBy, null);
+    assert.equal(finite.owner, 'coding'); assert.equal(finite.category, 'coding'); assert.equal(finite.roles.verifier, 'ut'); assert.equal(finite.roles.introducedBy, null); assert.equal(finite.action, 'current');
   });
   check('work-unit authors repair code and tests in place while preserving independent verification responsibility', () => {
     const contracts = { projectRoot: root, feature: 'f', phaseOrder: ['review'], executionRole: 'author' as const,
@@ -86,7 +90,49 @@ export function runAll(): UnitCaseResult[] {
     assert.equal(shared.action, 'design');
     const verifier = resolveRepairResponsibility({ frameworkRoot: root, workflow, contracts,
       executionRole: 'verifier', currentPhase: 'review', target: { files: ['app/src/A.ts'] } });
-    assert.equal(verifier.action, 'unavailable');
+    assert.equal(verifier.action, 'current');
+    assert(verifier.reason.includes('当前工作单元作者'), 'diagnostic responsibility cannot give the observing verifier a product write grant');
+  });
+  check('the actual current repair view permits unit investigation without guessed paths; category, verify/wait, unrelated objects or missing authority do not', () => {
+    const { setupGoalRuntimeHost, productAssertionCheck, FEATURE } = require('./goal-runner-testing-integrity.unit.test') as typeof import('./goal-runner-testing-integrity.unit.test');
+    const { generateScriptReport } = require('../../scripts/utils/report-generator') as typeof import('../../scripts/utils/report-generator');
+    const { writeRunSummaryBase } = require('../../harness-runner') as typeof import('../../harness-runner');
+    const { readCurrentDispositionInput } = require('../../scripts/utils/verify-feature-completion') as typeof import('../../scripts/utils/verify-feature-completion');
+    const { resolveCurrentDisposition } = require('../../scripts/utils/check-disposition') as typeof import('../../scripts/utils/check-disposition');
+    const { featureFilePath } = require('../../config') as typeof import('../../config');
+    const { root: host } = setupGoalRuntimeHost('codex');
+    try {
+      const produced = productAssertionCheck(host);
+      const report = generateScriptReport(path.join(root, 'harness'), 'testing', FEATURE, host, [produced], root);
+      const summary = writeRunSummaryBase(host, report, root);
+      const authority = repairResponsibilityContext({ projectRoot: host, frameworkRoot: root, feature: FEATURE, workflow });
+      assert(authority.executionScope && authority.contracts);
+      const view = resolveCurrentDisposition(readCurrentDispositionInput({ projectRoot: host, frameworkRoot: root, feature: FEATURE,
+        chain: ['testing'], executionScope: authority.executionScope, workflow, currentResults: [{ phase: 'testing', summary, checks: report.checks }] }));
+      const target = summary.repair_candidates?.find(candidate => candidate.id === produced.id);
+      assert(target && target.evidence_refs?.length && !target.files.length);
+      const context = { ...authority, currentDisposition: view };
+      const problem = view.problems.find(problem => problem.id === `open_finding:${target.id}`);
+      assert(problem?.action === 'repair');
+      assert.equal(resolveRepairResponsibility({ ...context, target }).action, 'current');
+      assert.equal(resolveRepairResponsibility({ ...context, target: { category: 'coding' } }).action, 'unavailable');
+      assert.equal(resolveRepairResponsibility({ ...context, currentDisposition: undefined, target }).action, 'unavailable', 'even real native bytes are not a second authority when the dispatch view is missing');
+      for (const changed of [{ ...target, id: 'not-the-current-object' }, { ...target, source_phase: 'another-source' }]) {
+        assert.equal(resolveRepairResponsibility({ ...context, target: changed }).action, 'unavailable');
+      }
+      for (const action of ['verify', 'wait'] as const) {
+        const pending = resolveCurrentDisposition({ endpoint: 'feature-completion', phases: [], additionalProblems: [{ ...problem, action }] });
+        assert.equal(resolveRepairResponsibility({ ...context, currentDisposition: pending, target }).action, 'unavailable', 'current verify/wait cannot be overruled by the old native evidence');
+      }
+      assert.equal(resolveRepairResponsibility({ ...context, target: { ...target, files: ['framework/runtime.ts'] } }).action, 'unavailable', 'a valid business object cannot override explicit path protection');
+      assert.equal(resolveRepairResponsibility({ ...context, contracts: { ...authority.contracts, domains: [] }, target }).action, 'unavailable', 'a current object cannot create unit write authority');
+      const scopeFile = featureFilePath(host, FEATURE, 'execution-scope.json'), scopeBytes = fs.readFileSync(scopeFile);
+      fs.unlinkSync(scopeFile);
+      assert.equal(resolveRepairResponsibility({ ...context, executionScope: undefined, target }).action, 'current', 'an existing bound unit write domain does not require a newer scope carrier');
+      fs.writeFileSync(scopeFile, scopeBytes);
+      assert.equal(resolveRepairResponsibility({ ...context, projectRoot: undefined, feature: undefined, target }).action, 'unavailable', 'the view cannot invent actual unit identity or write authority');
+      assert.equal(resolveRepairResponsibility({ ...context, contracts: { ...authority.contracts, feature: 'another-unit' }, target }).action, 'unavailable', 'another unit write domain cannot authorize the current object');
+    } finally { clearFrameworkConfigCache(); fs.rmSync(host, { recursive: true, force: true }); }
   });
   return results;
 }

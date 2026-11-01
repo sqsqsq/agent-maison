@@ -10,6 +10,7 @@ import { readDeliveredVerifierRequest } from './real-chain.unit.test';
 import type { SessionExecutionRequest } from '../../scripts/utils/session-execution-handoff';
 import type { UnitCaseResult } from '../run-unit';
 import { startCaseTiming, type SelectedUnitCases, type UnitExecutionTiming } from '../utils/unit-case-selection';
+import { runRuntimeTestChild, withRuntimeTest } from '../utils/runtime-test-control';
 
 const { instrumentSlowCompile, observeAndInterrupt } = require('../utils/session-cli-interruption.cjs') as {
   instrumentSlowCompile(root: string): void; observeAndInterrupt(root: string, evidence: string, timeoutMs: number): Promise<Record<string, unknown>>;
@@ -50,9 +51,11 @@ function controlArgs(action: string[]): string[] {
   return ['--feature', FEATURE, '--run-id', RUN_ID, '--adapter', 'claude', '--run-mode', 'attended', '--authorize-autonomy', ...action];
 }
 function run(root: string, entry: 'goal-mode-entry' | 'harness-runner', args: string[], label: string) {
-  const result = spawnSync(process.execPath, cliArgs(root, entry, args), { cwd: path.join(root, 'framework/harness'), env: environment(root), encoding: 'utf8', timeout: 90_000, windowsHide: true });
-  write(root, `observations/${label}.stdout.log`, result.stdout ?? ''); write(root, `observations/${label}.stderr.log`, result.stderr ?? '');
-  if (result.error) throw result.error;
+  const result = runRuntimeTestChild({ root, evidenceFiles: [`observations/${label}.stdout.log`, `observations/${label}.stderr.log`] }, () => {
+    const child = spawnSync(process.execPath, cliArgs(root, entry, args), { cwd: path.join(root, 'framework/harness'), env: environment(root), encoding: 'utf8', timeout: 90_000, windowsHide: true });
+    write(root, `observations/${label}.stdout.log`, child.stdout ?? ''); write(root, `observations/${label}.stderr.log`, child.stderr ?? '');
+    return child;
+  });
   return { ...result, value: entry === 'goal-mode-entry' && result.status === 0 ? parseCli(result.stdout) : undefined };
 }
 function authorMaterials(root: string, request: SessionExecutionRequest): void {
@@ -132,7 +135,17 @@ async function interruptedReport(root: string, requestPath: string, runDir: stri
   const child = spawn(process.execPath, cliArgs(root, 'goal-mode-entry', controlArgs(['--request', requestPath, '--report-result', JSON.stringify({ phase: 'coding', status: 'passed' })])),
     { cwd: path.join(root, 'framework/harness'), env: environment(root), stdio: ['ignore', stdout, stderr], windowsHide: true });
   fs.closeSync(stdout); fs.closeSync(stderr);
-  const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => { child.once('error', reject); child.once('exit', (code, signal) => resolve({ code, signal })); });
+  const exited = withRuntimeTest({ root,
+    evidenceFiles: ['observations/killed-report.stdout.log', 'observations/killed-report.stderr.log', 'observations/external-kill.json'],
+    expectedInterruption: process.platform === 'win32' ? 'test child exited without runtime result' : 'test child terminated by signal: SIGKILL' },
+  () => new Promise<{ status: number | null; signal: NodeJS.Signals | null; pid: number | undefined; stdout: string; stderr: string }>((resolve, reject) => {
+    child.once('error', reject); child.once('close', (status, signal) => resolve({ status, signal, pid: child.pid,
+      stdout: fs.readFileSync(path.join(root, 'observations/killed-report.stdout.log'), 'utf8'),
+      stderr: fs.readFileSync(path.join(root, 'observations/killed-report.stderr.log'), 'utf8') }));
+  }));
+  void exited.catch(() => undefined);
+  let originalFailure = false;
+  try {
   const deadline = Date.now() + 30_000;
   let binding: Record<string, any> | undefined;
   while (Date.now() < deadline) {
@@ -154,7 +167,17 @@ async function interruptedReport(root: string, requestPath: string, runDir: stri
   assert.equal(evidence.kill_status, 0, JSON.stringify(evidence));
   const result = await exited;
   write(root, 'observations/external-kill.json', JSON.stringify({ ...evidence, reporter_pid: child.pid,
-    binding, reporter_exit: result, at_ms: Date.now(), old_guardian_alive_when_reconnecting: alive(Number(binding.pid)) }, null, 2));
+    binding, reporter_exit: { code: result.status, signal: result.signal }, at_ms: Date.now(), old_guardian_alive_when_reconnecting: alive(Number(binding.pid)) }, null, 2));
+  } catch (error) {
+    originalFailure = true;
+    throw error;
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) child.kill();
+    try { await exited; } catch (error) {
+      // The guard keeps its sticky failure while the original assertion remains visible.
+      if (!originalFailure) throw error;
+    }
+  }
 }
 
 async function execute(): Promise<void> {

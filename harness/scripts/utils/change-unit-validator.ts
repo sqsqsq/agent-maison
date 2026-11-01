@@ -8,6 +8,7 @@ import {
 } from './component-blueprint-model';
 import { loadCanonicalBlueprint, resolveComponentBlueprintRef, validateComponentBlueprintRefShape } from './component-blueprint-path';
 import { validateLiteSchema } from './lite-json-schema';
+import { blockerIssues, validateComponentBlueprint } from './component-blueprint-validator';
 import {
   CHANGE_UNIT_ARTIFACT,
   ChangeUnitIssue,
@@ -133,7 +134,7 @@ function validateProvenanceSource(
     }
     if (current && current.component_id === ownerRef.component_id
       && Number.isInteger(current.revision) && Number(current.revision) > ownerRef.revision
-      && asRecord(asRecord(current.review_summary)?.admission)?.status === 'pass') {
+      && blockerIssues(validateComponentBlueprint(current, { projectRoot: context.projectRoot })).length === 0) {
       out.push(changeUnitIssue(
         'change_unit_blueprint_ref_stale',
         '$.component_blueprint_ref',

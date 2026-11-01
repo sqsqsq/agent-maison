@@ -4,21 +4,22 @@ import { phaseInvocationStart } from './utils/goal-runner-phase';
 import { resolveValidationOnlyEligibility } from './utils/goal-runner-phase';
 import { sessionExecutionDeadlineMs, issueSessionExecution, writePhaseExecutionRequestMaterial, resignSessionExecution, readSessionExecution, inspectSessionExecutionBeforeRuntime, undeliveredSessionInvocation, executionRequestForInvoke, sessionExecutionForInvoke, sessionToolEventsLogPath, readHandoffMaterial, acceptedSessionReport, acceptSessionExecution, uncommittedSessionReport, sessionValidationOnlyEligibility, type IssuedSessionExecution, type SessionExecutionReport } from './utils/session-execution-handoff';
 import { AttendedGoalPhaseExecutor } from './utils/goal-phase-executor';
-import { applyIndependentQuestioningOutput } from './utils/blueprint-questioning';
+import { applyIndependentQuestioningOutput, independentQuestioningBlockers } from './utils/blueprint-questioning';
+import { validateComponentBlueprint } from './utils/component-blueprint-validator';
 import { invocationCompleted, invocationEndFacts, invocationWaitingDetail } from './utils/invocation-completion';
 import { resumeIssuedSessionOwner } from './utils/goal-run-control';
 import { buildGuardianInvocation, resolveAgentCommand } from './utils/agent-containment';
 import { resolveTaskAutomationPolicy } from './utils/runtime-policy';
 import { createIdentityNeutralDigestReaders, type IdentityNeutralDigestReaders } from './utils/identity-neutral-digest';
-import { parseVerifierRequest } from './utils/verifier-request';
+import { parseVerifierRequest, parseVerifierRequestFromInstruction, canonicalRequestInput } from './utils/verifier-request';
 import { findUnreadableDiagnosisChecks } from './utils/repair-candidates';
-import { validateProjectRelativePath } from './utils/project-relative-path';
+import { validateProjectRelativePath, isInsideProjectRoot } from './utils/project-relative-path';
 import { loadVerifierEvidence } from './utils/verifier-evidence';
 import { diffChangedFiles, resolveEffectiveDiffBaseline } from './utils/git-diff';
 import type { GoalRunEvent } from './utils/goal-runner-phase';
 import { executionCompletionPhases, resolveExecutionScope, executionScopeFingerprint, validateExecutionScope, assertRevisionKeepsRequiredObligations, hasNewSourcedFact, affectedScopePhases, authorizedScopePhases, isEffectivePhasePass, type ExecutionScope, type ExecutionScopeInput } from './utils/execution-scope';
-import { loadFeatureContracts, contractFingerprint } from './utils/skill-contract';
-import { loadPhaseEvidenceManifest } from './utils/phase-evidence-manifest';
+import { loadFeatureContracts, contractFingerprint, assuranceSatisfies } from './utils/skill-contract';
+import { loadPhaseEvidenceManifest, recomputeManifestAggregate, writePhaseEvidenceManifest } from './utils/phase-evidence-manifest';
 import { readScopeAcceptance, collectResolvedScopeFacts, recomputeDefinitionFacts, resolveScopeRevisionProposal, resolveCurrentScopeView } from './utils/feature-track';
 import { resolveBirthScopeForManifest, resolveSuccessorExecutionScope, registerFeatureScopeTransfer } from './utils/feature-execution-scope';
 import { featureFilePath } from '../config';
@@ -34,17 +35,19 @@ import { designDeliveryNextStep } from './utils/design-delivery-entry';
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { StringDecoder } from 'string_decoder';
 import * as YAML from 'yaml';
 import { randomUUID } from 'crypto';
-import { findInitialDesignRun, prepareInitialDesignRun, readInitialDesignDelivery, projectInitialDesignDelivery, initialDesignAuthorInstruction, initialDesignInvocationLabel, validateInitialDesignInvocation, initialDesignPhasePolicy, initialDesignScopeActionIssues, type InitialDesignObservation } from './utils/initial-design-delivery';
+import { findInitialDesignRun, prepareInitialDesignRun, readInitialDesignDelivery, projectInitialDesignDelivery, initialDesignAuthorInstruction, initialDesignInvocationLabel, validateInitialDesignInvocation, initialDesignPhasePolicy, initialDesignScopeActionIssues, prepareInitialDesignDraft, type InitialDesignObservation } from './utils/initial-design-delivery';
 import { readOriginalDeliveryBudget, originalDeliveryForManifest } from './utils/delivery-origin';
 import { runChangeUnitProgression, buildChangeUnitGoalHandoff, buildChangeUnitGoalRequest, type ChangeUnitGoalHandoff } from './utils/change-unit-progress-loop';
-import { featureTrackDeclPath, resolveFeatureExecutionScope } from './utils/feature-track';
+import { featureTrackDeclPath, resolveFeatureExecutionScope, prepareChangeUnitScopeInput, prepareFeatureScopeCandidate } from './utils/feature-track';
+import { deriveModifiableModules } from './utils/change-unit-feature-projection';
 import { resolveBirthExecutionScope, readFeatureFrozenScope } from './utils/feature-execution-scope';
 import { isInitialDesignManifest, loadGoalRunManifestFromRun, type InitialDesignGoalManifest, type GoalRunManifest } from './utils/goal-manifest';
 import { writeBackAdmission, refreshBlueprintFingerprints } from './utils/design-repair-unattended';
 import { loadCanonicalBlueprint, componentBlueprintPath } from './utils/component-blueprint-path';
-import { asRecord } from './utils/component-blueprint-model';
+import { asRecord, blueprintAuthorContent } from './utils/component-blueprint-model';
 import { materializeBlueprintReview } from './utils/blueprint-review-materialization';
 import { acceptChangeUnitDecomposition, deriveDesignPreparationReadiness } from './utils/change-unit-design-preparation';
 import type { ChangeUnitCandidate } from './utils/change-unit-provider-boundary';
@@ -100,7 +103,7 @@ import { loadResolvedProfile } from '../profile-loader';
 // plan a7c3e9d2：作者前置输入 formatter（文件路径 / 函数名 / 签名 / 标题与主干 extension-runtime.ts 对齐）
 import { assembleKnowledge, renderKnowledge } from './utils/knowledge-context';
 import { readRunBoundContracts } from './utils/capability-resolution';
-import { resolveCapabilityResolutionEntryInput } from './utils/capability-resolution-entry-input';
+import { resolveCapabilityResolutionEntryInput, loadCompletedFactsBaseline } from './utils/capability-resolution-entry-input';
 import { SpecLoader } from './utils/spec-loader';
 import { tryLoadUtSourceRootResolver } from '../profile-host-loader';
 import { runCapabilityPreflight, emitHarnessPreflightGap } from './utils/capability-preflight';
@@ -117,7 +120,8 @@ import {
   designRepairTarget,
   replayDesignRepairInvocation,
   designWorkSnapshot,
-  designWorkHasNoProgress,
+  reusableDesignQuestioning,
+  readDesignQuestioningOriginal,
   recordDesignRepairInvocation,
   DESIGN_REPAIR_CONTRACT_DOC,
   runUnattendedDesignRepair,
@@ -161,7 +165,7 @@ import {
   type GoalRunStatus,
   type HarnessVerdict,
 } from './utils/phase-transition-policy';
-import { createRuntimeArtifactPredicate, recomputePhaseEvidenceStaleness, stableStringify } from './utils/phase-evidence-manifest';
+import { createRuntimeArtifactPredicate, recomputePhaseEvidenceStaleness, phaseEvidenceBusinessInputs, stableStringify } from './utils/phase-evidence-manifest';
 import { loadReviewClosureAttestation } from './utils/closure-attestation';
 import {
   classifyCleanPassIssues,
@@ -173,10 +177,12 @@ import {
 import { assessFeature as assessFeatureCompletion } from './utils/feature-assessment';
 import { parseChangeUnitFeatureId, pointerStaleCandidate, deriveChangeUnitFeatureId, enumerateCanonicalChangeUnits } from './utils/change-unit-path';
 import { reconcileChangeUnitBlueprintRefs, type BlueprintRefReconciliation, type HeldFeatureLock } from './utils/change-unit-design-preparation';
-import { BlueprintProjectionPreparationError, materializeBlueprintSkillInputs, classifyDesignAuthorityCodes, diagnoseDesignAuthority, type DesignAuthorityFinding, type DesignRepairClass } from './utils/blueprint-skill-projection';
-import { requiredSummaryCheckGaps, phaseCompletionProblems } from './utils/check-disposition';
+import { BlueprintProjectionPreparationError, materializeBlueprintSkillInputs, classifyDesignAuthorityCodes, diagnoseDesignAuthority, blueprintSourceRefFiles, type DesignAuthorityFinding, type DesignRepairClass } from './utils/blueprint-skill-projection';
+import { requiredSummaryCheckGaps, phaseCompletionProblems, renderCurrentDisposition, resolveCurrentDisposition } from './utils/check-disposition';
 import { nextIndependentPhase, resolveUpstreamPhaseChain } from './utils/upstream-verdict-gate';
-import { collectPhaseCompletionIssues, resolveCompletionDisposition, readPhaseChecks } from './utils/verify-feature-completion';
+import { collectPhaseCompletionIssues, resolveCompletionDisposition, readPhaseChecks, currentCompletionEvaluation, readReusableCheckResult, hasChangedVerifierMaterialInputs,
+  completedCheckResultsFromToolEvents, completedCheckResultsFromOutput, completionProgressFromHistory } from './utils/verify-feature-completion';
+import { readCurrentDispositionInput } from './utils/verify-feature-completion';
 import { reduceRunState } from './utils/run-state-reducer';
 import { resolveFeatureTrack, LEGACY_FEATURE_PHASE_ORDER } from './utils/runtime-policy';
 import { loadAcceptanceFlowsDoc, resolveP0DeviceObligations } from './utils/p0-semantic-gates';
@@ -256,7 +262,7 @@ import {
 } from './utils/goal-timeout';
 // openspec device-readiness-and-completion t3：设备就绪门（独立异步门，排在 capability
 // gate 之后、agent_invoke_start 之前；未 READY 不调 agent）
-import { chainRequiresDevice, phaseRequiresDevice } from './utils/phase-device-requirement';
+import { chainRequiresDevice, phaseRequiresDevice, phaseHasNativeExecution } from './utils/phase-device-requirement';
 import {
   chainRequiresProduct,
   goalProductPurpose,
@@ -386,7 +392,6 @@ import {
   rebuildOutcomesFromEvents,
   loadEventsJsonlStrict,
   countCumulativeAdvanceBlocked,
-  countRepeatedSignatureInFamily,
   classifyClosureKind,
   resolveClosureSyncOutcome,
   shouldHaltClosureTimeout,
@@ -420,7 +425,6 @@ import {
 } from './utils/phase-state';
 import {
   actionableDefectsToCandidates,
-  declineAttemptExemption,
   declineDisputeLines,
   isRebuttalAppearance,
   loadRepairDeclineState,
@@ -540,11 +544,9 @@ import {
   extractIntegritySubtypes,
   stripRetiredFrameworkIntegrityForCurrentRun,
   isOperatorInterruptSignal,
-  shouldHaltNoProgress,
+  evaluateCompletionProgress, type CompletionEvaluation,
   snapshotArtifacts,
   ADVANCE_BLOCKED_HALT_THRESHOLD,
-  CUMULATIVE_HALT_FAMILY,
-  CUMULATIVE_HALT_THRESHOLD,
   EXTERNAL_RETRY_RESPONSIBILITY_KINDS,
   resolveAssessHaltIncident,
   type ArtifactSnapshot,
@@ -570,7 +572,7 @@ import {
   diffPhaseInvocationSnapshots,
   renderPhaseWriteBoundaryGuidance,
   resolvePhasePathOwnership,
-  resolvePhaseWriteBoundary,
+  resolvePhaseWriteBoundary, authorWritePreimages, unrestoredAuthorWrites,
   type PhaseWriteBoundaryResolution,
   type PhaseInvocationChange,
 } from './utils/phase-write-boundary';
@@ -651,7 +653,7 @@ export function resolveBacktrackRelatedInputs(input: {
     // 每个无源码映射的候选各自走原owner scope，不把组内其它候选的A当成它的B。
     try { responsibility ??= repairResponsibilityContext({ projectRoot: input.projectRoot, frameworkRoot: input.frameworkRoot, feature: input.feature, runId: input.runId, contracts: input.boundary ?? undefined }); }
     catch { return []; }
-    const ownerPhase = resolveRepairResponsibility({ ...responsibility, target: { files: candidate.files, category: candidate.category, summary: candidate.summary } }).owner;
+    const ownerPhase = resolveRepairResponsibility({ ...responsibility, target: candidate }).owner;
     if (!input.boundary || input.boundary.unresolvedSourcePhases.includes(String(ownerPhase))) return [];
     try {
       if (contractFiles === null) {
@@ -1442,7 +1444,7 @@ export function __testing_setCanaryProbeInvoke(fn: InvokeAgentFn | null): void {
 // phase-evidence-manifest（跨 run 稳定、schema/aggregate 与实际条目核对），不再消费快照锚 env。
 
 /** gate harness 注入（测试用；**spy 它有没有被调用**是"污染轮不 spawn"的核心断言） */
-type HarnessPhaseResult = { exitCode: number; timedOut: boolean; outputTail?: string; waitingDetail?: string };
+type HarnessPhaseResult = { exitCode: number; timedOut: boolean; outputTail?: string; waitingDetail?: string; currentCheckObserved?: boolean };
 type RunHarnessFn = (
   projectRoot: string, frameworkRoot: string, phase: FeaturePhase, feature: string,
   dryRun: boolean, manifest?: GoalManifest,
@@ -1686,11 +1688,29 @@ async function runHarnessPhase(
     }
   };
   let outputTail = '';
+  let currentCheckObserved = false;
+  let stdoutLine = '';
+  const stdoutDecoder = new StringDecoder('utf8');
   const rememberOutput = (chunk: Buffer | string): void => {
     outputTail = (outputTail + chunk.toString()).slice(-8_000);
   };
+  const observeStdout = (chunk: Buffer | string): void => {
+    if (currentCheckObserved) return;
+    stdoutLine += typeof chunk === 'string' ? chunk : stdoutDecoder.write(chunk);
+    let newline: number;
+    while ((newline = stdoutLine.indexOf('\n')) >= 0) {
+      const line = stdoutLine.slice(0, newline);
+      stdoutLine = stdoutLine.slice(newline + 1);
+      if (completedCheckResultsFromOutput(line).some(result => result.phase === phase)) {
+        currentCheckObserved = true;
+        stdoutLine = '';
+        return;
+      }
+    }
+  };
   child.stdout?.on('data', (chunk: Buffer | string) => {
     rememberOutput(chunk);
+    observeStdout(chunk);
     if (gateLog) fs.appendFileSync(gateLog, chunk); else process.stdout.write(chunk);
   });
   child.stderr?.on('data', (chunk: Buffer | string) => {
@@ -1719,10 +1739,13 @@ async function runHarnessPhase(
 
   try {
     const settled = await settleWaiter.promise;
+    if (!currentCheckObserved) currentCheckObserved = completedCheckResultsFromOutput(stdoutLine + stdoutDecoder.end())
+      .some(result => result.phase === phase);
     return {
       exitCode: timedOut && settled.exitCode === 0 ? 1 : settled.exitCode,
       timedOut,
       outputTail,
+      currentCheckObserved,
     };
   } catch {
     return { exitCode: 1, timedOut, outputTail };
@@ -3947,22 +3970,6 @@ function buildPhaseWriteRecoveryContextBlock(ctx: PhaseWriteRecoveryPromptContex
 }
 
 /** Existing violation facts retain the first real preimage; later dirty bytes never replace it. */
-function authorWritePreimages(events: readonly GoalRunEvent[]): Map<string, string | null> {
-  const out = new Map<string, string | null>();
-  const ownRecoveries = new Set((events as readonly Record<string, any>[]).filter(event => event.type === 'phase_backtrack_requested' && event.reason === 'phase_write_violation'
-    && typeof event.invoke_id === 'string' && typeof event.from_phase === 'string' && event.from_phase === event.to_phase).map(event => event.invoke_id));
-  for (const event of events as readonly Record<string, any>[]) {
-    if (event.type === 'phase_write_violation' && Array.isArray(event.violations)) for (const value of event.violations) {
-      const row = value as { path?: unknown; violation?: unknown; pre_sha256?: unknown };
-      if ((row.violation === 'outside_authority' || row.violation === 'wrong_phase' && ownRecoveries.has(event.invoke_id))
-        && typeof row.path === 'string' && !out.has(row.path) && (row.pre_sha256 === null || typeof row.pre_sha256 === 'string')) out.set(row.path, row.pre_sha256 as string | null);
-    }
-    if (event.type === 'phase_write_observed') for (const row of [...(event.observations ?? []), ...(event.owned ?? [])]) {
-      if (out.has(row.path) && out.get(row.path) === row.post_sha256) out.delete(row.path);
-    }
-  }
-  return out;
-}
 
 function beforeAuthorInvocation(events: readonly GoalRunEvent[], invokeId: string): readonly GoalRunEvent[] {
   const at = events.findIndex(event => event.type === 'agent_invoke_start' && event.invoke_id === invokeId);
@@ -3980,15 +3987,6 @@ function recordAuthorRestorations(events: readonly GoalRunEvent[], changes: read
       disposition: 'deferred_to_checker', owner: null, owner_candidates: [], roles: [] })), observed_count: restored.length });
 }
 
-function unrestoredAuthorWrites(projectRoot: string, events: readonly GoalRunEvent[]): Map<string, string | null> {
-  return new Map([...authorWritePreimages(events)].filter(([file, before]) => {
-    const absolute = path.resolve(projectRoot, file);
-    if (!absolute.startsWith(path.resolve(projectRoot) + path.sep)) return true;
-    if (!fs.existsSync(absolute)) return before !== null;
-    if (!fs.lstatSync(absolute).isFile() || fs.lstatSync(absolute).isSymbolicLink()) return true;
-    return createHash('sha256').update(fs.readFileSync(absolute)).digest('hex') !== before;
-  }));
-}
 
 /**
  * 作者前置知识：原生索引、任务候选与 extension 同源装配，保留旧导出名供调用者兼容。
@@ -4680,7 +4678,7 @@ export async function waitForDetachedStartup(input: {
   const logTail = (): string => {
     try { return fs.readFileSync(logPath, 'utf8').slice(-400).replace(/\s+/g, ' ').trim(); } catch { return ''; }
   };
-  while (Date.now() < deadline) {
+  while (true) {
     const spawnError = input.childError?.();
     if (spawnError) return { state: 'failed', detail: `child spawn failed: ${spawnError}` };
     let manifestMatches = false;
@@ -4696,6 +4694,8 @@ export async function waitForDetachedStartup(input: {
     if (exitCode !== null) {
       return { state: 'failed', detail: `child exited before authoritative run_start (exit=${exitCode})${logTail() ? `: ${logTail()}` : ''}` };
     }
+    // Read the authoritative facts once after a delayed poll before declaring the window elapsed.
+    if (Date.now() >= deadline) break;
     await new Promise<void>(resolve => setTimeout(resolve, pollMs));
   }
   const beacon = assessLivenessBeacon({
@@ -5160,6 +5160,29 @@ function rejectsResumeRequirementFile(argv: minimist.ParsedArgs): boolean {
   return false;
 }
 
+function verifierRecoveryStartsForRequest(runDir: string, phase: string, requestText: string, history: readonly GoalRunEvent[]) {
+  const request = parseVerifierRequest(requestText);
+  if (!request) return [];
+  return history.flatMap((event, index) => {
+    if (event.type !== 'agent_invoke_start' || event.phase !== `${phase}-verifier-format-repair` || !event.invoke_id) return [];
+    const instruction = executionRequestForInvoke(runDir, event.invoke_id)?.request.context.instruction;
+    if (!instruction) return [];
+    const delivered = parseVerifierRequestFromInstruction(instruction);
+    if (!delivered || canonicalRequestInput(delivered) !== canonicalRequestInput(request)) return [];
+    const returned = [...history.slice(index + 1)].reverse().find(row => row.type === 'agent_invoke_end' && row.invoke_id === event.invoke_id);
+    return [{ event, index, instruction, returned }];
+  });
+}
+
+function readGateCompletionHistory(projectRoot: string, runDir: string, events: readonly GoalRunEvent[], exceptInvoke?: string): CompletionEvaluation[] {
+  return events.flatMap(end => {
+    if (end.type !== 'harness_end' || !end.phase || !end.invoke_id || end.invoke_id === exceptInvoke || end.timed_out) return [];
+    const log = path.join(runDir, 'phases', end.phase, end.invoke_id, 'harness-output.log');
+    try { return completedCheckResultsFromOutput(fs.readFileSync(log, 'utf8')).map(result => result.evaluation); }
+    catch { return []; }
+  });
+}
+
 export class GoalPhaseRuntime {
   private readonly options: GoalPhaseRuntimeLaunchOptions;
   constructor(options: GoalPhaseRuntimeLaunchOptions = {}, private readonly deliveryParent?: InitialDesignGoalManifest) { this.options = withExecutionControls(options); }
@@ -5230,7 +5253,9 @@ export class GoalPhaseRuntime {
           if (terminal?.status === 'CHAIN_SLICE_COMPLETED' && !scope.unresolved.length) {
             const completed = scope.completion_target === 'feature'
               ? assessFeatureCompletion(root, prior.feature, { expectedChain: executionCompletionPhases(scope), expectedTrack: 'full', frameworkRoot }).complete
-              : collectCleanPassIssues({ projectRoot: root, feature: prior.feature, chain: executionCompletionPhases(scope), frameworkRoot }).length === 0;
+              : collectCleanPassIssues({ projectRoot: root, feature: prior.feature, chain: executionCompletionPhases(scope), frameworkRoot,
+                runId: prior.run_id, executionScope: scope, endpoint: 'request',
+                workflow: workflowForExistingRun((injectedWorkflowResolver ?? resolveWorkflowSpec)(root, { frameworkRoot }), prior, frameworkRoot, root) }).length === 0;
             if (completed) { this.lastRunId = priorRunId; return 0; }
           }
         }
@@ -5385,6 +5410,27 @@ export class GoalPhaseRuntime {
       catch { /* Same conservative liveness writer as normal runs; no synthetic process identity. */ }
       const previousEnd = resolveEffectiveRunEnd(history());
       let resumeDesignWork = previousEnd?.halt_reason === 'no_progress_guard' && Boolean(argv['force-resume']);
+      let previousDesignEvaluation: CompletionEvaluation | null = null;
+      const designEvaluations: CompletionEvaluation[] = [];
+      let currentQuestioningOriginal: Parameters<typeof reusableDesignQuestioning>[0] | undefined;
+      let currentQuestioningInvokeId: string | undefined;
+      const questioningCurrent = (): boolean => {
+        try {
+          const blueprintPath = componentBlueprintPath(projectRoot, manifest.feature);
+          const blueprint = asRecord(YAML.parse(fs.readFileSync(blueprintPath, 'utf8')));
+          if (!blueprint) return false;
+          const matchesCurrent = (result: import('./utils/component-blueprint-model').BlueprintRecord | null): boolean => !!result
+            && stableStringify(result) === stableStringify(asRecord(blueprint.review_summary)?.questioning);
+          if (currentQuestioningOriginal && matchesCurrent(reusableDesignQuestioning({ ...currentQuestioningOriginal, blueprint }))) return true;
+          for (const end of [...history()].reverse()) {
+            if (end.type !== 'agent_invoke_end' || !end.invoke_id || !invocationCompleted({ ...end, exitCode: end.exit_code })) continue;
+            const start = [...history()].reverse().find(event => event.type === 'agent_invoke_start' && event.invoke_id === end.invoke_id);
+            const original = start ? readDesignQuestioningOriginal(runDir, start) : null;
+            if (original && matchesCurrent(reusableDesignQuestioning({ ...original, projectRoot, blueprintPath, blueprint }))) return true;
+          }
+        } catch { /* Missing real originals require independent Q, never an author summary or a synthetic PASS. */ }
+        return false;
+      };
       emit({ type: 'run_start', session_started_at: new Date(sessionStart).toISOString(), manifest_identity_fields: computeManifestIdentityFields(manifest), phase_chain: [] });
       if (transport === 'process' && process.platform === 'win32' && recoverRuntimeGuardians(history(), manifest.run_id, Boolean(argv['force-resume']), emit, conclude)) return 1;
       for (;;) {
@@ -5394,7 +5440,7 @@ export class GoalPhaseRuntime {
           && 'stage' in event && event.stage === 'attempted' && 'handoff_context' in event
           && !designEvents.slice(designEvents.indexOf(event) + 1).some(later => later.type === 'design_authority_repair'
             && 'signature' in later && 'signature' in event && later.signature === event.signature && 'stage' in later
-            && (later.stage === 'failed' || later.stage === 'published'
+            && (later.stage === 'failed' && (later as Record<string, unknown>).failed_step !== 'no_progress_guard' || later.stage === 'published'
               && !('outcome' in later && later.outcome === 'unrecovered' && 'failed_step' in later && later.failed_step === 'reconcile'))));
         if (activeAttempt && 'handoff_context' in activeAttempt && 'signature' in activeAttempt) {
           if (!automaticDesignRepair) return conclude('execution_scope_unresolved', '原设计事务仍未完成；需要恢复本请求已有的自动修复授权后继续，不扩大授权。');
@@ -5421,7 +5467,8 @@ export class GoalPhaseRuntime {
           const original = saved?.draft_outputs?.['initial-design-blueprint.yaml'];
           const outputFile = path.join(invocationDir, 'draft-output.yaml');
           const output = original ? Buffer.from(original, 'base64').toString('utf8') : fs.existsSync(outputFile) ? fs.readFileSync(outputFile, 'utf8') : fs.existsSync(state.blueprintPath) ? fs.readFileSync(state.blueprintPath, 'utf8') : '';
-          if (fs.existsSync(beforeFile) && (latestPurpose === 'author' || latestPurpose === 'questioning')) {
+          if (String(latest.phase).startsWith('initial-design-') && fs.existsSync(beforeFile)
+            && (latestPurpose === 'author' || latestPurpose === 'questioning')) {
             const readonlyQuestioning = latestPurpose === 'questioning' && executionRequestForInvoke(runDir, latest.invoke_id)?.request.write_boundary?.executionRole === 'verifier';
             if (readonlyQuestioning && invocationCompleted({ ...latest, exitCode: latest.exit_code })) {
               const before = fs.readFileSync(beforeFile, 'utf8');
@@ -5437,31 +5484,11 @@ export class GoalPhaseRuntime {
             }
             const violation = validateInitialDesignInvocation(latestPurpose, fs.readFileSync(beforeFile, 'utf8'), output);
             if (violation) return conclude('unauthorized_source_mutation', violation);
-            if (latestPurpose === 'author' && output) {
-              try {
-                const before = asRecord(YAML.parse(fs.readFileSync(beforeFile, 'utf8')));
-                const after = asRecord(YAML.parse(output));
-                const currentBlueprint = asRecord(YAML.parse(fs.readFileSync(state.blueprintPath, 'utf8')));
-                if (currentBlueprint) {
-                  const review = asRecord(currentBlueprint.review_summary) ?? {};
-                  const oldAdmission = asRecord(before?.review_summary)?.admission;
-                  if (oldAdmission === undefined) delete review.admission; else review.admission = oldAdmission;
-                  currentBlueprint.review_summary = review;
-                  fs.writeFileSync(state.blueprintPath, YAML.stringify(currentBlueprint));
-                }
-                if (asRecord(before?.review_summary)) delete asRecord(before!.review_summary)!.questioning;
-                if (asRecord(after?.review_summary)) delete asRecord(after!.review_summary)!.questioning;
-                if (asRecord(before?.review_summary)) delete asRecord(before!.review_summary)!.admission;
-                if (asRecord(after?.review_summary)) delete asRecord(after!.review_summary)!.admission;
-                const inputHash = designWorkSnapshot([state.blueprintPath], { [state.blueprintPath]: YAML.stringify(before) })[state.blueprintPath]?.contentHash;
-                const outputHash = designWorkSnapshot([state.blueprintPath], { [state.blueprintPath]: YAML.stringify(after) })[state.blueprintPath]?.contentHash;
-                if (inputHash !== outputHash && fs.existsSync(state.blueprintPath)) {
-                  const currentBlueprint = asRecord(YAML.parse(fs.readFileSync(state.blueprintPath, 'utf8')));
-                  const review = asRecord(currentBlueprint?.review_summary);
-                  if (review?.questioning) { delete review.questioning; fs.writeFileSync(state.blueprintPath, YAML.stringify(currentBlueprint)); }
-                }
-              } catch { /* Original parser diagnostics own incomplete author output. */ }
-            }
+            if (latestPurpose === 'author' && output && invocationCompleted({ ...latest, exitCode: latest.exit_code })
+              && fs.readFileSync(state.blueprintPath, 'utf8') === output) prepareInitialDesignDraft({ projectRoot, blueprintId: manifest.feature,
+              sourceRefs: manifest.requirement_source_files?.length ? manifest.requirement_source_files
+                : [path.relative(projectRoot, path.join(runDir, 'manifest.json')).replace(/\\/g, '/') + '#requirement'],
+              observedAt: new Date(sessionStart).toISOString(), beforeBlueprint: fs.readFileSync(beforeFile, 'utf8') });
           }
         }
         if (latest?.handoff_report && latest.invoke_id) {
@@ -5484,21 +5511,22 @@ export class GoalPhaseRuntime {
         const received = current && current.request.invoke_id === this.acceptedSessionInvokeId ? acceptedSessionReport(runDir, current) : undefined;
         const acceptedWaitingDetail = received && invocationWaitingDetail(received.report);
         if (acceptedWaitingDetail) return conclude('execution_scope_unresolved', acceptedWaitingDetail);
-        let observed = readInitialDesignDelivery({ projectRoot, frameworkRoot, manifest });
+        let observed = readInitialDesignDelivery({ projectRoot, frameworkRoot, manifest, questioningCurrent: questioningCurrent() });
         const restoration = unrestoredAuthorWrites(projectRoot, history());
-        if (!enumerateCanonicalChangeUnits(projectRoot, manifest.feature).length
+        if ((observed.kind === 'author' || observed.kind === 'decompose') && !enumerateCanonicalChangeUnits(projectRoot, manifest.feature).length
           && !observed.progression?.activeRun && fs.existsSync(state.blueprintPath)) {
           try {
             const loaded = loadCanonicalBlueprint(projectRoot, manifest.feature);
-            refreshBlueprintFingerprints(loaded.blueprint);
+            const before = stableStringify(loaded.blueprint);
+            if (observed.kind === 'author') refreshBlueprintFingerprints(loaded.blueprint);
             writeBackAdmission(loaded.blueprint, { projectRoot, canonicalPath: state.blueprintPath });
-            fs.writeFileSync(state.blueprintPath, YAML.stringify(loaded.blueprint));
+            if (stableStringify(loaded.blueprint) !== before) fs.writeFileSync(state.blueprintPath, YAML.stringify(loaded.blueprint));
           } catch { /* The original validator gives the author the concrete parse/identity issue. */ }
-          observed = readInitialDesignDelivery({ projectRoot, frameworkRoot, manifest });
+          observed = readInitialDesignDelivery({ projectRoot, frameworkRoot, manifest, questioningCurrent: questioningCurrent() });
         }
         if (restoration.size) observed = { ...observed, kind: 'author', progression: undefined, designRepair: undefined,
           issues: [...observed.issues, buildPhaseWriteRecoveryContextBlock({ sourcePhase: 'initial-design-author', targetPhase: 'initial-design-author', files: [...restoration.keys()], preimages: Object.fromEntries(restoration) })] };
-        if (!observed.designRepair && (observed.kind === 'author' || observed.progression?.action === 'blocked')) {
+        if (!restoration.size && observed.progression?.action === 'blocked') {
           const units = enumerateCanonicalChangeUnits(projectRoot, manifest.feature);
           for (const unit of units) {
             const feature = deriveChangeUnitFeatureId(manifest.feature, String(unit.changeUnit.change_unit_id));
@@ -5541,7 +5569,7 @@ export class GoalPhaseRuntime {
             if (repaired.outcome === 'handoff') { preserveOwner = true; runConcluded = true; return 3; }
             if (repaired.outcome !== 'published') return repairStop(repaired);
             if (repaired.step === 'reconcile') return conclude('execution_scope_unresolved', repaired.reason);
-            observed = readInitialDesignDelivery({ projectRoot, frameworkRoot, manifest });
+            observed = readInitialDesignDelivery({ projectRoot, frameworkRoot, manifest, questioningCurrent: questioningCurrent() });
             break;
           }
         }
@@ -5587,41 +5615,84 @@ export class GoalPhaseRuntime {
         const budget = checkRunBudget(spent.totalTurns, manifest.budget.max_total_turns, spent.priorActiveMs, wall - FINALIZE_RESERVE_MS);
         if (budget !== 'ok') return conclude(budget === 'turns' ? 'budget_turns' : 'budget_wall_clock', `原始请求剩余预算不足：${budget}`);
         const purpose = observed.kind === 'questioning' ? 'questioning' : 'author';
+        if (observed.kind === 'author') prepareInitialDesignDraft({ projectRoot, blueprintId: manifest.feature,
+          sourceRefs: manifest.requirement_source_files?.length ? manifest.requirement_source_files
+            : [path.relative(projectRoot, path.join(runDir, 'manifest.json')).replace(/\\/g, '/') + '#requirement'],
+          observedAt: new Date(sessionStart).toISOString() });
         const label = initialDesignInvocationLabel(observed);
-        const workFiles = [observed.blueprintPath, observed.candidatesPath, ...(observed.scope ? [observed.scope.candidatePath] : [])];
-        const workNow = designWorkSnapshot(workFiles, {}, purpose === 'questioning');
-        const previous = [...history()].reverse().find(event => event.type === 'agent_invoke_end' && event.phase === label && event.invoke_id);
-        let priorIssues: string[] | undefined;
-        let workBefore: ReturnType<typeof designWorkSnapshot> | undefined;
-        if (previous?.invoke_id && invocationCompleted({ ...previous, exitCode: previous.exit_code })) {
-          try {
-            const previousDir = path.join(runDir, 'phases', label, previous.invoke_id);
-            const prompt = fs.readFileSync(path.join(previousDir, 'prompt.md'), 'utf8');
-            const files = fs.readdirSync(previousDir).filter(file => /^request-e\d+\.json$/.test(file)).sort((a, b) => Number(a.slice(9, -5)) - Number(b.slice(9, -5)));
-            const request = files.map(file => JSON.parse(fs.readFileSync(path.join(previousDir, file), 'utf8')) as import('./utils/session-execution-handoff').SessionExecutionRequest)
-              .find(request => request.invoke_id === previous.invoke_id && request.context.phase === label && request.context.runId === manifest.run_id);
-            if (!request?.pre_snapshot || request.pre_snapshot.failureReason) throw new Error('原调用缺少可比写快照');
-            if (prompt.endsWith(`当前职责=${observed.kind}。问题：\n${observed.issues.join('\n')}`)) priorIssues = observed.issues;
-            const beforeText = fs.readFileSync(path.join(previousDir, 'blueprint-before.yaml'), 'utf8');
-            workBefore = beforeText ? designWorkSnapshot([observed.blueprintPath], { [observed.blueprintPath]: beforeText }, purpose === 'questioning')
-              : { [observed.blueprintPath]: { exists: false, contentHash: '' } };
-            for (const file of workFiles.filter(file => file !== observed.blueprintPath)) {
-              const relative = path.relative(projectRoot, file).replace(/\\/g, '/');
-              const entry = request.pre_snapshot.entries.find(item => item.path === relative);
-              if (!entry) workBefore[file] = { exists: false, contentHash: '' };
-              else if (fs.existsSync(file) && createHash('sha256').update(fs.readFileSync(file)).digest('hex') === entry.sha256) workBefore[file] = workNow[file];
-              // Changed bytes without a saved content preimage are unknown, never proof of zero progress.
-            }
-          } catch { workBefore = undefined; }
-        }
-        if (!resumeDesignWork && designWorkHasNoProgress(priorIssues, observed.issues, workBefore, workNow)) {
-          return conclude('no_progress_guard', `当前全部问题与可比设计产物均无变化；后台对原请求使用 --force-resume、会话使用 --force-takeover 明确继续，或补充真实信息/产物后重发；原预算与历史保留。\n${observed.issues.join('\n')}`);
+        const workBaseFiles = [observed.blueprintPath, observed.candidatesPath, ...(observed.scope ? [observed.scope.candidatePath] : [])];
+        const workFiles = [...workBaseFiles];
+        try { workFiles.push(...blueprintSourceRefFiles(projectRoot, YAML.parse(fs.readFileSync(observed.blueprintPath, 'utf8')), true)); }
+        catch { /* The actual design reader retains unreadable inputs as unknown. */ }
+        const workNow = designWorkSnapshot([...new Set(workFiles)]);
+        if (observed.disposition) {
+          const acceptanceKey = createHash('sha256').update(stableStringify({ requirement: manifest.requirement,
+            authority: manifest.unattended && { write_mode: manifest.unattended.write_mode, approval_mode: manifest.unattended.approval_mode, allowed_tools: manifest.unattended.allowed_tools } })).digest('hex');
+          const records = history() as Array<GoalRunEvent & { purpose?: string }>;
+          const latestEnd = [...records].reverse().find(event => event.type === 'agent_invoke_end');
+          const freshQuestion = latestEnd?.invoke_id && [this.acceptedSessionInvokeId, currentQuestioningInvokeId].includes(latestEnd.invoke_id)
+            && latestEnd.purpose === 'questioning' ? latestEnd.invoke_id : undefined;
+          let priorQuestionAt = -1;
+          for (const [at, start] of records.entries()) {
+            if (start.type !== 'agent_invoke_start' || start.invoke_id === freshQuestion) continue;
+            const original = readDesignQuestioningOriginal(runDir, start);
+            if (!original?.completed) continue;
+            try {
+              const blueprint = asRecord(YAML.parse(original.beforeBlueprint));
+              if (!blueprint) continue;
+              const questioning = reusableDesignQuestioning({ ...original, additionalInputs: {}, projectRoot,
+                blueprintPath: observed.blueprintPath, blueprint });
+              if (!questioning) continue;
+              blueprint.review_summary = { ...asRecord(blueprint.review_summary), questioning };
+              writeBackAdmission(blueprint, { projectRoot, canonicalPath: observed.blueprintPath });
+              const disposition = resolveCurrentDisposition(readCurrentDispositionInput({ endpoint: 'design', projectRoot, blueprintPath: observed.blueprintPath, blueprint,
+                blueprintIssues: validateComponentBlueprint(blueprint, { projectRoot, canonicalPath: observed.blueprintPath }),
+                questioningFindings: independentQuestioningBlockers(blueprint), phase: 'component-design', providerState: 'available' }));
+              const files = [...new Set([...workBaseFiles, ...blueprintSourceRefFiles(projectRoot, blueprint, true)])];
+              const overrides = { ...original.additionalInputs, [observed.blueprintPath]: original.beforeBlueprint };
+              const inputs = designWorkSnapshot(files, overrides);
+              let known = !!original.preSnapshot && !original.preSnapshot.failureReason;
+              for (const file of files.filter(file => !(file in overrides))) {
+                const relative = path.relative(projectRoot, file).replace(/\\/g, '/');
+                const entry = original.preSnapshot?.entries.find(item => item.path === relative);
+                if (!entry) inputs[file] = { exists: false, contentHash: '' };
+                else if (!fs.existsSync(file) || createHash('sha256').update(fs.readFileSync(file)).digest('hex') !== entry.sha256) known = false;
+              }
+              if (!known || disposition.completionBlocking.some(problem => problem.action === 'verify' || problem.action === 'wait')) continue;
+              priorQuestionAt = at;
+              if (!previousDesignEvaluation && start.phase === 'initial-design-questioning') {
+                const priorEvaluation: CompletionEvaluation = { acceptanceKey, inputs, disposition, completed: true, checkFamilies: ['component-design'] };
+                designEvaluations.push(priorEvaluation);
+              }
+            } catch { /* Missing old bytes do not create a comparable design baseline. */ }
+          }
+          if (!previousDesignEvaluation) previousDesignEvaluation = designEvaluations.at(-1) ?? null;
+          const returned = [...records.slice(priorQuestionAt + 1)].reverse().find(event => event.type === 'agent_invoke_end'
+            && event.purpose === 'author' && String(event.phase).startsWith('initial-design-') && invocationCompleted({ ...event, exitCode: event.exit_code }));
+          const priorReturnConsumed = returned && records.slice(records.indexOf(returned) + 1).some(event =>
+            event.type === 'agent_invoke_start' && event.purpose === 'author' || event.type === 'run_end' && event.halt_reason === 'no_progress_guard');
+          const returnedInstruction = returned?.invoke_id ? executionRequestForInvoke(runDir, returned.invoke_id)?.request.context.instruction : undefined;
+          const deliveredProblems = previousDesignEvaluation?.disposition.completionBlocking ?? [];
+          const designFeedbackDelivered = !!returnedInstruction && !priorReturnConsumed && deliveredProblems.length > 0
+            && deliveredProblems.every(problem => returnedInstruction.includes(problem.id));
+          const evaluation: CompletionEvaluation = { acceptanceKey,
+            inputs: workNow, disposition: observed.disposition, checkFamilies: ['component-design'],
+            completed: questioningCurrent() && !observed.disposition.completionBlocking.some(problem => problem.action === 'verify' || problem.action === 'wait') };
+          if (previousEnd?.halt_reason === 'no_progress_guard' && !argv['force-resume'] && evaluation.completed
+            && observed.disposition.completionBlocking.some(problem => problem.action === 'repair')) {
+            return conclude('no_progress_guard', `当前有效Q原件仍覆盖同一业务输入，保留原暂停；重读旧交回不产生新机会。\n${renderCurrentDisposition(observed.disposition)}`);
+          }
+          const progress = evaluateCompletionProgress({ previous: previousDesignEvaluation, current: evaluation, history: designEvaluations,
+            feedbackDelivered: designFeedbackDelivered, authorReturned: !!returned && !priorReturnConsumed });
+          if (!resumeDesignWork && progress.halt) return conclude('no_progress_guard', `实际相关改动后，已完成的当前设计检查仍无验收改善；成果及全部未完项保留。\n${renderCurrentDisposition(observed.disposition)}`);
+          if (!progress.reused && progress.evaluation === evaluation) { if (previousDesignEvaluation) designEvaluations.push(previousDesignEvaluation); previousDesignEvaluation = evaluation; }
         }
         resumeDesignWork = false;
         const invokeId = `${label}-i${spent.totalTurns + 1}`;
         const invocationDir = path.join(runDir, 'phases', label, invokeId);
         fs.mkdirSync(invocationDir, { recursive: true });
-        const prompt = initialDesignAuthorInstruction({ projectRoot, frameworkRoot, manifest, observation: observed, autonomyAuthorized: automaticDesignRepair, deliveryRuns: 'runs' in spent ? spent.runs : undefined });
+        const prompt = initialDesignAuthorInstruction({ projectRoot, frameworkRoot, manifest, observation: observed, autonomyAuthorized: automaticDesignRepair, deliveryRuns: 'runs' in spent ? spent.runs : undefined })
+          + (observed.disposition ? `\n当前全部未完项（方法不是写权限；原授权及未恢复写入仍有效）：\n${renderCurrentDisposition(observed.disposition)}` : '');
         const promptFile = path.join(invocationDir, 'prompt.md');
         fs.writeFileSync(promptFile, prompt);
         const beforeBlueprint = fs.existsSync(observed.blueprintPath) ? fs.readFileSync(observed.blueprintPath, 'utf8') : '';
@@ -5629,8 +5700,11 @@ export class GoalPhaseRuntime {
         const resolution = { projectRoot, executionRole: workUnitExecutionRole({ phase: label }, purpose),
           ...(purpose === 'questioning' ? { verifierResultPath: path.join(invocationDir, 'questioning-output.json') } : {}),
           immutableInputPaths: workUnitProtectedRecordPaths(projectRoot, manifest.feature, runDir), protectedRoots: fs.readdirSync(projectRoot).filter(name => name !== '.git') };
+        const questioningSources = purpose === 'questioning'
+          ? blueprintSourceRefFiles(projectRoot, blueprintAuthorContent(asRecord(YAML.parse(beforeBlueprint)) ?? {}), true)
+            .filter(file => isInsideProjectRoot(projectRoot, file)) : [];
         const snapshotOptions = { ownedPrefixes: [path.relative(projectRoot,
-          observed.scope?.candidatePath ?? (observed.kind === 'decompose' ? observed.candidatesPath : observed.kind === 'questioning' ? observed.blueprintPath : path.dirname(observed.blueprintPath))).replace(/\\/g, '/')], runtimeExcluded: [manifest.report_dir] };
+          observed.scope?.candidatePath ?? (observed.kind === 'decompose' ? observed.candidatesPath : observed.kind === 'questioning' ? observed.blueprintPath : path.dirname(observed.blueprintPath))).replace(/\\/g, '/')], runtimeExcluded: [manifest.report_dir], includeFiles: questioningSources };
         const pre = capturePhaseInvocationSnapshot(resolution, snapshotOptions);
         if (pre.failureReason) return conclude('framework_bug', pre.failureReason);
         const timeoutMs = Math.min(resolvePhaseTimeoutMs('plan', manifest), wall - spent.priorActiveMs - FINALIZE_RESERVE_MS);
@@ -5707,10 +5781,24 @@ export class GoalPhaseRuntime {
         }
         if (purpose === 'questioning' && invocationCompleted(result)) {
           if (fs.readFileSync(observed.blueprintPath, 'utf8') !== beforeBlueprint) return conclude('unauthorized_source_mutation', '独立质询修改了只读蓝图输入。');
+          const output = result.details ?? extractProviderFinalText(result.stdout, manifest.adapter ?? 'generic') ?? '';
+          if (delta.kind === 'clean') recordDesignRepairInvocation(runDir, 'questioning', invokeId, {
+            started: true, ok: true, status: result.status, detail: result.details ?? result.status, output,
+            preSnapshot: pre, postSnapshot: post,
+          }, { phase: 'initial-design-questioning', blueprintPath: observed.blueprintPath });
           try { applyIndependentQuestioningOutput(observed.blueprintPath, path.join(invocationDir, 'questioning-output.json'),
-            result.details ?? extractProviderFinalText(result.stdout, manifest.adapter ?? 'generic') ?? '', 'initial-design-questioning'); }
+            output, 'initial-design-questioning'); }
           catch { /* Original validation owns incomplete or malformed questioning output. */ }
+          currentQuestioningOriginal = { projectRoot, blueprintPath: observed.blueprintPath, blueprint: YAML.parse(fs.readFileSync(observed.blueprintPath, 'utf8')),
+            beforeBlueprint, output,
+            providerId: 'initial-design-questioning', completed: true, preSnapshot: pre, postSnapshot: post,
+            previous: asRecord(asRecord(YAML.parse(fs.readFileSync(observed.blueprintPath, 'utf8')))?.review_summary)?.questioning as import('./utils/component-blueprint-model').BlueprintRecord | undefined };
+          currentQuestioningInvokeId = invokeId;
         }
+        if (purpose === 'author' && invocationCompleted(result)) prepareInitialDesignDraft({ projectRoot, blueprintId: manifest.feature,
+          sourceRefs: manifest.requirement_source_files?.length ? manifest.requirement_source_files
+            : [path.relative(projectRoot, path.join(runDir, 'manifest.json')).replace(/\\/g, '/') + '#requirement'],
+          observedAt: new Date(sessionStart).toISOString(), beforeBlueprint });
         const waitingDetail = invocationWaitingDetail(result);
         if (waitingDetail) return conclude('execution_scope_unresolved', waitingDetail);
       }
@@ -5840,14 +5928,45 @@ export class GoalPhaseRuntime {
       fs.writeFileSync(path.resolve(projectRoot, manifest.report_dir, 'goal-report.json'), JSON.stringify(projectInitialDesignDelivery({ projectRoot, frameworkRoot, manifest }), null, 2) + '\n');
       return 0;
     }
+    const originalBudget = readOriginalDeliveryBudget(projectRoot, manifest)!;
+    const remaining = checkRunBudget(originalBudget.totalTurns, originalBudget.budget.max_total_turns,
+      originalBudget.priorActiveMs, resolveWallClockMs(manifest, phasePolicy.domain) - FINALIZE_RESERVE_MS);
+    if (remaining !== 'ok') return stop(remaining === 'turns' ? 'budget_turns' : 'budget_wall_clock',
+      `原始请求剩余预算不足，不启动新CU调用：${remaining}；已完成检查、独立原件及发布结果保留。`);
     let nextScope: InitialDesignObservation | undefined;
     let childCode = 1;
     const scopeWork = (request: Pick<ChangeUnitGoalHandoff, 'featureId' | 'requirement'>, issues: string[]): InitialDesignObservation => {
-      const quote = (value: string): string => `'${value.replace(/'/g, process.platform === 'win32' ? "''" : "'\\''")}'`;
-      const requirement = manifest.requirement_source_files?.length === 1
-        ? `--requirement-file ${quote(manifest.requirement_source_files[0])}` : `--requirement ${quote(manifest.requirement ?? '')}`;
-      return { ...observation, kind: 'scope', issues, scope: { feature: request.featureId, candidatePath: featureTrackDeclPath(projectRoot, request.featureId),
-        command: `npx ts-node scripts/goal-mode-entry.ts --project-root ${quote(projectRoot)} --framework-root ${quote(frameworkRoot)} --prepare-scope --feature ${quote(request.featureId)} --completion-target feature --requested-results ${quote(request.requirement)} --requested-phases <按该CU实际动作选取的原授权阶段> ${requirement} --impact-behavior-change <按最终用户可见行为真实判断true或false> --impact-reason <具体依据> --impact-basis <实际源码或设计路径> --overwrite` } };
+      const candidatePath = featureTrackDeclPath(projectRoot, request.featureId);
+      if (fs.existsSync(candidatePath)) return { ...observation, kind: 'scope', issues,
+        scope: { feature: request.featureId, candidatePath, command: 'npm run check -- --feature ' + JSON.stringify(request.featureId) } };
+      try {
+        if (!decision.selected) throw new Error('没有当前已准入CU，不能猜范围');
+        const workflow = resolveWorkflowSpec(projectRoot, { frameworkRoot });
+        // Canonical CU construction has an implementation object; domain D is never copied as requested actions.
+        const implementation = deriveModifiableModules(projectRoot, decision.selected).length
+          ? workflow.artifacts.find(artifact => artifact.obligation_provider_id === 'obligations.coding')?.id : undefined;
+        const actions = phasePolicy.explicit.length ? phasePolicy.explicit : implementation ? [implementation] : [];
+        if (actions.some(action => !phasePolicy.domain.includes(action))) throw new Error('真实CU施工动作越出原请求域，需原设计/授权职责裁决');
+        const declaration = asRecord(loadFeatureTrackDecl(projectRoot, request.featureId));
+        const current = asRecord(asRecord(declaration?.execution_scope)?.request);
+        const originalImpact = asRecord(current?.impact) ?? asRecord(manifest.initial_design.impact);
+        const basis = Array.isArray(originalImpact?.basis) ? originalImpact!.basis : [];
+        const impactPaths = basis.flatMap(value => {
+          const binding = asRecord(value); return Array.isArray(binding?.dependencies)
+            ? binding!.dependencies.flatMap(dependency => typeof asRecord(dependency)?.path === 'string' ? [String(asRecord(dependency)!.path)] : []) : [];
+        });
+        const impact = typeof originalImpact?.user_visible_behavior_change === 'boolean' && typeof originalImpact.reason === 'string' && impactPaths.length
+          ? { userVisibleBehaviorChange: originalImpact.user_visible_behavior_change, reason: originalImpact.reason, basisPaths: impactPaths } : undefined;
+        const prepared = prepareFeatureScopeCandidate(prepareChangeUnitScopeInput({ projectRoot, frameworkRoot, changeUnit: decision.selected,
+          requirement: manifest.requirement ?? '', requirementSourceFiles: manifest.requirement_source_files,
+          requestedResults: [request.requirement], requestedPhases: actions, impact, overwrite: true }));
+        const unresolved = prepared.scope.unresolved.map(item => item.reason);
+        return { ...observation, kind: unresolved.length ? 'scope' : 'construction', issues: unresolved,
+          scope: { feature: request.featureId, candidatePath, command: 'npm run check -- --feature ' + JSON.stringify(request.featureId) } };
+      } catch (error) {
+        return { ...observation, kind: 'scope', issues: [...issues, String(error)],
+          scope: { feature: request.featureId, candidatePath, command: 'npm run check -- --feature ' + JSON.stringify(request.featureId) } };
+      }
     };
     if (decision.action === 'select_one' && decision.selected) {
       const request = buildChangeUnitGoalRequest(projectRoot, decision.selected);
@@ -5951,6 +6070,14 @@ export class GoalPhaseRuntime {
       const child = family.runs.filter(run => !isInitialDesignManifest(run.manifest))
         .sort((left, right) => String(left.events.at(-1)?.ts).localeCompare(String(right.events.at(-1)?.ts))).at(-1);
       const end = child && resolveEffectiveRunEnd(child.events);
+      const designFeedback = child && [...child.events].reverse().find(event => event.type === 'phase_halt'
+        && asRecord((event as Record<string, unknown>).design_authority)?.items);
+      if (designFeedback && readInitialDesignDelivery({ projectRoot, frameworkRoot, manifest }).designRepair) {
+        // The original design request re-acquires its own fence and native author session.
+        // A CU author never becomes a root designer by changing its invocation label.
+        return new GoalPhaseRuntime({ ...this.options, args: ['--feature', manifest.feature, '--resume', manifest.run_id,
+          '--project-root', projectRoot, '--framework-root', frameworkRoot, ...inheritRunProcessArgs(argv)] }).run();
+      }
       return stop(end?.halt_reason ?? 'execution_scope_unresolved', end && 'error' in end && typeof end.error === 'string'
         ? end.error : '当前CU未完成，沿同一原始请求和该CU正式记录恢复。', {
         ...(end && 'recovery' in end ? { recovery: end.recovery } : {}),
@@ -5972,14 +6099,61 @@ export class GoalPhaseRuntime {
     if (context.owner.owner_id !== 'dry-run') {
       assertFencedOwner(context.runDir, context.owner, 'runtime_pre_executor');
     }
-    activeExecutionControls = controls;
+    const previousChecks: ReturnType<typeof completedCheckResultsFromToolEvents> = [];
+    if (controls?.cancel && context.runDir && workUnitExecutionRole(context) === 'author') {
+      for (const start of loadAuthoritativeEvents(path.join(context.runDir, 'events.jsonl'))) {
+        if (start.type === 'harness_end' && start.phase && start.invoke_id && !start.timed_out) {
+          try { previousChecks.push(...completedCheckResultsFromOutput(fs.readFileSync(path.join(context.runDir, 'phases', start.phase,
+            start.invoke_id, 'harness-output.log'), 'utf8')).map(result => ({ ...result, current: false }))); }
+          catch { /* Missing originals do not create a comparison window. */ }
+          continue;
+        }
+        if (start.type !== 'agent_invoke_start' || !start.invoke_id || start.invoke_id === context.attemptId || start.invoke_id === `${context.phase}-${context.attemptId}`) continue;
+        const original = executionRequestForInvoke(context.runDir, start.invoke_id);
+        if (!original || original.request.context.feature !== context.feature || original.request.context.adapter !== context.adapter
+          || path.resolve(original.request.context.projectRoot) !== path.resolve(context.projectRoot)
+          || workUnitExecutionRole(original.request.context, original.request.purpose) !== 'author'
+          || stableStringify(original.request.context.authority) !== stableStringify(context.authority)) continue;
+        const stream = path.join(context.runDir, path.dirname(original.reference.path), 'agent-events.jsonl');
+        if (!fs.existsSync(stream)) continue;
+        const records = fs.readFileSync(stream, 'utf8').split(/\r?\n/).flatMap(line => { try { return line.trim() ? [JSON.parse(line)] : []; } catch { return []; } });
+        previousChecks.push(...completedCheckResultsFromToolEvents(context.adapter, records, true).map(result => ({ ...result, current: false })));
+      }
+    }
+    const observedControls: WorkUnitExecutionControls = { ...controls, onObservation: view => {
+      controls?.onObservation?.(view);
+      if (!controls?.cancel || controls.signal?.aborted || workUnitExecutionRole(context) !== 'author') return;
+      const originals = completedCheckResultsFromToolEvents(context.adapter, view.toolEvents);
+      if (!originals.length) return; // Read/Grep and ordinary native output never run checks or expensive material readers.
+      const history = [...previousChecks, ...originals.filter(result => !result.current)];
+      for (const completed of originals.filter(result => result.current)) {
+        const result = readReusableCheckResult({ projectRoot: context.projectRoot, frameworkRoot: context.frameworkRoot,
+          feature: context.feature, phase: completed.phase, runId: context.runId });
+        if (!result) continue; // A report superseded by another write is not a completed current assessment.
+        const input = { projectRoot: context.projectRoot, frameworkRoot: context.frameworkRoot, feature: context.feature,
+          endpoint: 'request' as const, chain: [completed.phase], runId: context.runId, authority: context.authority, currentResults: [result] };
+        const disposition = resolveCompletionDisposition(input);
+        const current = currentCompletionEvaluation(input, disposition);
+        const decision = completionProgressFromHistory(current, history.map(item => item.evaluation), history.length > 0);
+        if (!decision.halt) continue;
+        assertFencedOwner(context.runDir, context.owner, 'running_completion_evaluation');
+        const reason = `no_progress_guard: 已反馈且实际检查完成，相关改动后验收/已核实差额仍无改善；成果保留，明确继续或真实条件变化后接回。\n${renderCurrentDisposition(disposition)}`;
+        appendEvent(context.reportDir, context.projectRoot, withRunDisposition({ type: 'phase_halt', phase: context.phase,
+          run_id: context.runId, invoke_id: view.invoke_id, halt_reason: 'no_progress_guard', detail: reason,
+          owner_id: context.owner.owner_id, owner_epoch: context.owner.epoch }));
+        controls.cancel(reason);
+        break;
+      }
+    } };
+    activeExecutionControls = observedControls;
     let result: GoalPhaseExecutorResult;
-    try { result = await executor.execute(context, controls); }
-    finally { if (activeExecutionControls === controls) activeExecutionControls = undefined; }
+    try { result = await executor.execute(context, observedControls); }
+    finally { if (activeExecutionControls === observedControls) activeExecutionControls = undefined; }
     if (context.owner.owner_id !== 'dry-run') {
       assertFencedOwner(context.runDir, context.owner, 'runtime_post_executor');
     }
-    return result;
+    const reason = controls?.signal?.reason;
+    return typeof reason === 'string' && reason.startsWith('no_progress_guard:') ? { ...result, details: reason } : result;
   }
 }
 
@@ -7880,7 +8054,23 @@ Goal runner — tool-agnostic multi-phase orchestrator
       // 冷却只在没有变化时生效——决策已处理），恢复守卫消费该结果，不再要求 --force-resume；条件是否解除仍由其后的原检查判断。
       const sessionRecovery = options.sessionHandoff && sessionRequest && acceptedSessionReport(path.resolve(projectRoot, manifest.report_dir), sessionRequest)
         && sessionValidationOnlyEligibility(priorEvents);
-      const decidedRejoin = sessionRecovery || (plainContinuation?.kind === 'rejoin' && plainContinuation.runId === manifest.run_id) ||
+      const unfinishedVerifierRecovery = (() => {
+        if (reduceRunState(priorEvents).run_disposition !== 'WAITING') return false;
+        const halt = [...priorEvents].reverse().find(event => event.type === 'phase_halt');
+        const phase = halt?.phase;
+        if (halt?.halt_reason !== 'executor_waiting' || !phase || !chain.includes(phase as FeaturePhase)) return false;
+        const summary = readPhaseSummary(projectRoot, manifest.feature, phase as FeaturePhase).summary;
+        if (!summary?.verifier_subject_id || !summary.verifier_request || !summary.verifier_report) return false;
+        try {
+          const text = fs.readFileSync(path.resolve(projectRoot, validateProjectRelativePath(projectRoot, summary.verifier_request, 'verifier request')), 'utf8');
+          const request = parseVerifierRequest(text);
+          if (!request || request.subject_id !== summary.verifier_subject_id || request.phase !== phase || request.feature !== manifest.feature) return false;
+          const starts = verifierRecoveryStartsForRequest(path.resolve(projectRoot, manifest.report_dir), phase, text, priorEvents);
+          const latest = starts[starts.length - 1];
+          return !!latest && (!latest.returned || !invocationCompleted({ ...latest.returned, exitCode: latest.returned.exit_code }));
+        } catch { return false; }
+      })();
+      const decidedRejoin = sessionRecovery || unfinishedVerifierRecovery || (plainContinuation?.kind === 'rejoin' && plainContinuation.runId === manifest.run_id) ||
         canRecheckLegacyBacktrackLimit({ projectRoot, feature: manifest.feature, runId: manifest.run_id, events: priorEvents });
       // plan a2f7c9e4 §3.3：--resume 只定目标；决策对它给出起后继（存在变化但不可原地恢复）时冷却不适用，仍要 --force-resume 授权原地恢复。
       const changedButNotRejoinable = plainContinuation?.kind === 'successor' && plainContinuation.targets.includes(manifest.run_id);
@@ -8174,7 +8364,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
       for (const previous of historical) {
         if (previous.verdict !== 'PASS' || previous.deferred || previous.halted || outcomes.some(outcome => outcome.phase === previous.phase)) continue;
         if (nextIndependentPhase(projectRoot, manifest.feature, [String(previous.phase)], pending, dependencies)
-          && collectPhaseCompletionIssues({ projectRoot, feature: manifest.feature, chain: [previous.phase], frameworkRoot, runId: manifest.run_id }).length === 0) outcomes.push(previous);
+          && collectPhaseCompletionIssues({ projectRoot, feature: manifest.feature, chain: [previous.phase], frameworkRoot, workflow, runId: manifest.run_id }).length === 0) outcomes.push(previous);
       }
       // Requeued owners must get their verification turn; their old evidence remains incomplete until that succeeds.
       deferredUpstream = resume.deferredUpstream.filter(item => !chain.includes(item.phase));
@@ -8221,7 +8411,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
       // Phase-only revalidation writes a current summary without a goal verdict event.
       // Restore its failed phase before replay can spend an unrelated downstream call.
       const observation = observeFeatureState({
-        projectRoot, frameworkRoot, feature: manifest.feature, runId: manifest.run_id,
+        projectRoot, frameworkRoot, workflow, feature: manifest.feature, runId: manifest.run_id,
         goalEnd: manifest.end_phase, minimumAssurance: manifest.minimum_assurance,
       });
       const failedCompleted = observation.phases.filter(p => {
@@ -8240,6 +8430,27 @@ Goal runner — tool-agnostic multi-phase orchestrator
             delete resumePostAgentAttemptIds[invalidatedPhase];
           }
         }
+      }
+      for (const [index, event] of recoveryEvents.entries()) {
+        const attempt = event as GoalRunEvent & { stage?: string; signature?: string; handoff_context?: unknown };
+        if (attempt.type !== 'design_authority_repair' || attempt.stage !== 'attempted' || !attempt.handoff_context || !attempt.signature
+          || !attempt.phase) continue;
+        if (recoveryEvents.slice(index + 1).some(later => {
+          const terminal = later as GoalRunEvent & { signature?: string; stage?: string; failed_step?: string; outcome?: string };
+          return terminal.type === 'design_authority_repair' && terminal.signature === attempt.signature
+            && (terminal.stage === 'failed' && terminal.failed_step !== 'no_progress_guard'
+              || terminal.stage === 'published' && !(terminal.outcome === 'unrecovered' && terminal.failed_step === 'reconcile'));
+        })) continue;
+        const start = [...recoveryEvents.slice(0, index)].reverse().find(prior => prior.type === 'agent_invoke_start'
+          && prior.phase === attempt.phase && prior.invoke_id);
+        const end = start && recoveryEvents.slice(recoveryEvents.indexOf(start) + 1, index).find(prior => prior.type === 'agent_invoke_end'
+          && prior.invoke_id === start.invoke_id);
+        if (!start?.invoke_id || !end || !invocationCompleted({ ...end, exitCode: end.exit_code })) continue;
+        if (!chain.includes(attempt.phase as FeaturePhase)) chain.splice(chainStartIndex, 0, attempt.phase as FeaturePhase);
+        resumePostAgentPhases.add(attempt.phase);
+        resumePostAgentAttemptIds[attempt.phase] = start.invoke_id;
+        chainStartIndex = Math.min(chainStartIndex, chain.indexOf(attempt.phase as FeaturePhase));
+        outcomes = outcomes.filter(outcome => outcome.phase !== attempt.phase);
       }
       if (resumePostAgentPhases.size > 0) {
         console.warn(
@@ -8440,10 +8651,57 @@ Goal runner — tool-agnostic multi-phase orchestrator
       if (invokeIndex < 0 || passIndex <= invokeIndex || revokedIndex >= passIndex) return undefined;
       return freshInputs() ? history[invokeIndex].invoke_id : undefined;
     };
-    const verificationOnlyInvocation = (phaseName: string, problems: readonly import('./utils/check-disposition').CurrentDispositionProblem[]): string | undefined =>
-      problems.some(problem => problem.action === 'verify' && problem.id.startsWith('open_finding:'))
-        && problems.every(problem => problem.action === 'verify')
-        ? reusablePassedInvocation(phaseName, loadAuthoritativeEvents(eventsPath), problems.map(problem => problem.id)) : undefined;
+    const completedMainInvocation = (phaseName: string, history: readonly GoalRunEvent[]): string | undefined => {
+      const start = [...history].reverse().find(event => event.type === 'agent_invoke_start' && event.phase === phaseName && event.invoke_id);
+      const returned = start && history.slice(history.indexOf(start) + 1).find(event => event.type === 'agent_invoke_end' && event.invoke_id === start.invoke_id);
+      if (returned && history.slice(history.indexOf(returned) + 1).some(event => event.type === 'phase_backtrack_requested'
+        && 'reason' in event && event.reason === 'phase_write_violation' && event.to_phase === phaseName)) return undefined;
+      if (returned) {
+        const evidence = loadPhaseEvidenceManifest(projectRoot, manifest.feature, phaseName);
+        if (evidence?.integrityOk) {
+          const runtimeOutput = createRuntimeArtifactPredicate({ projectRoot, feature: manifest.feature, phase: phaseName, frameworkRoot });
+          if (evidence.manifest.outputs.some(entry => entry.exists && !runtimeOutput(entry.path)
+            && !fs.existsSync(path.resolve(projectRoot, entry.path)))) return undefined;
+          const context = start?.facts_context;
+          if (context?.baseline || evidence.manifest.outputs.some(entry => entry.facts_phase === phaseName)) {
+            const fresh = recomputePhaseEvidenceStaleness(projectRoot, manifest.feature, [phaseName], { frameworkRoot, runId: manifest.run_id })[0];
+            const changedResearch = phaseEvidenceBusinessInputs(projectRoot, manifest.feature, evidence.manifest, { frameworkRoot, runId: manifest.run_id })
+              .some(entry => fresh?.changed_paths.includes(entry.path));
+            if (changedResearch && (!context?.baseline || !loadCompletedFactsBaseline({ projectRoot, frameworkRoot, feature: manifest.feature,
+              phase: phaseName, featuresDir, goalRunId: manifest.run_id, goalAttemptId: `i${totalTurns + 1}` }, manifest.run_id, frameworkRoot))) return undefined;
+          }
+        }
+      }
+      return returned && returned.status !== 'waiting' && invocationCompleted({ ...returned, exitCode: returned.exit_code }) ? start!.invoke_id : undefined;
+    };
+    const verificationOnlyInvocation = (phaseName: string, problems: readonly import('./utils/check-disposition').CurrentDispositionProblem[]): string | undefined => {
+      if (!problems.length || !problems.every(problem => problem.action === 'verify')) return undefined;
+      const history = loadAuthoritativeEvents(eventsPath);
+      if (unrestoredAuthorWrites(projectRoot, history).size) return undefined;
+      const passed = reusablePassedInvocation(phaseName, history, problems.map(problem => problem.id));
+      if (passed) return passed;
+      // Changed verification inputs require a fresh gate, not another author invocation.
+      // Only a genuinely ended author may enter that gate; its old result is not treated as current.
+      return completedMainInvocation(phaseName, history);
+    };
+    const satisfiesRequestedAssurance = (phaseName: string): boolean => {
+      const minimum = manifest.minimum_assurance?.[phaseName];
+      if (!minimum) return true;
+      const actual = (readPhaseSummary(projectRoot, manifest.feature, phaseName as FeaturePhase).summary as { assurance?: unknown } | null)?.assurance;
+      return (actual === 'blocked' || actual === 'degraded' || actual === 'full') && assuranceSatisfies(actual, minimum);
+    };
+    const pendingDesignAttemptForPhase = (phaseName: string) => {
+      const history = loadAuthoritativeEvents(eventsPath) as Array<GoalRunEvent & {
+        stage?: string; signature?: string; failed_step?: string; outcome?: string; preauthorization?: string;
+        handoff_context?: import('./utils/session-execution-handoff').HandoffReference;
+      }>;
+      return [...history].reverse().find(event => event.type === 'design_authority_repair' && event.phase === phaseName
+        && event.stage === 'attempted' && event.handoff_context && !history.slice(history.indexOf(event) + 1).some(later =>
+          later.type === 'design_authority_repair' && later.signature === event.signature
+          && (later.stage === 'failed' && later.failed_step !== 'no_progress_guard'
+            || later.stage === 'published' && !(later.outcome === 'unrecovered' && later.failed_step === 'reconcile'))));
+    };
+    const completedEvaluations = readGateCompletionHistory(projectRoot, path.resolve(projectRoot, manifest.report_dir), loadAuthoritativeEvents(eventsPath));
     // D2: the `scope_revision_requested` handoff flag is gone — a revision keeps this very loop
     // running, so there is no early exit and no terminal special-casing for it.
     for (let phaseIdx = chainStartIndex; !halted; phaseIdx++) {
@@ -8454,7 +8712,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
         if (!next) {
           const pending = [...outcomes].reverse().find(outcome => outcome.deferred);
           if (pending) {
-            const guidance = `未完成阶段 ${deferredUpstream.map(item => `${item.phase}(${item.reason})`).join(', ')}；剩余职责依赖其有效结论，不能启动。恢复缺少的检查/外部条件后重新发起同一请求，保留有效产物，勿无变化重试。`;
+            const guidance = [pending.halt_guidance,
+              `未完成阶段 ${deferredUpstream.map(item => `${item.phase}(${item.reason})`).join(', ')}；剩余职责依赖其有效结论，不能启动。恢复缺少的检查/外部条件后重新发起同一请求，保留有效产物，勿无变化重试。`].filter(Boolean).join('\n');
             Object.assign(pending, { run_disposition: 'WAITING', run_wait_kind: 'external', halt_guidance: guidance });
             goalEvents.emit({ type: 'phase_halt', phase: pending.phase, verdict: pending.verdict,
               reason: pending.deferred_reason, run_disposition: 'WAITING', run_wait_kind: 'external', halt_guidance: guidance });
@@ -8482,10 +8741,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
           halted = true;
           break;
         }
-        const view = recorded ? resolveCurrentScopeView({ projectRoot, frameworkRoot, feature: manifest.feature, workflow,
-          previous: recorded, currentRunId: manifest.run_id }) : undefined;
-        if (!pending && !view?.phase_chain.length) break;
-        const target = pending?.owner && completionPhases.includes(pending.owner) ? pending.owner : pending?.phase ?? view?.phase_chain[0];
+        // The current goal obligations are satisfied; let the formal completion writer validate/sign them.
+        // A fresh birth-scope queue may still name phases until that publication exists, so it cannot
+        // manufacture a new defect after the shared disposition has no remaining work.
+        if (!pending) break;
+        const target = pending.owner && completionPhases.includes(pending.owner) ? pending.owner : pending.phase;
         const authorized = target && (birthScope ? authorizedScopePhases(birthScope, workflow) : completionPhases).includes(target);
         const source = pending?.source_phase ?? chain.at(-1) ?? target ?? String(manifest.start_phase);
         const targetDisposition = authorized ? resolveCompletionDisposition({ projectRoot, frameworkRoot, feature: manifest.feature,
@@ -8498,11 +8758,33 @@ Goal runner — tool-agnostic multi-phase orchestrator
           evidence: [...new Set([...completionPhases, ...(authorized ? [target!] : [])])]
             .map(phase => loadPhaseEvidenceManifest(projectRoot, manifest.feature, phase)?.manifest.inputs ?? null),
         })).digest('hex');
-        if (!authorized || seenRoundFingerprints.has(fingerprint)) {
-          const incident = !authorized ? 'backtrack_target_absent' : pending?.action === 'wait' ? 'executor_waiting' : 'backtrack_fingerprint_repeat';
-          const guidance = pending?.detail ?? `未满足职责 ${target ?? 'unknown'}；恢复当前条件后重新接续同一请求。`;
+        const checked = authorized ? readReusableCheckResult({ projectRoot, frameworkRoot, feature: manifest.feature, phase: target!, runId: manifest.run_id }) : null;
+        const evaluation = checked && targetDisposition ? currentCompletionEvaluation({ projectRoot, frameworkRoot, feature: manifest.feature,
+          chain: [target!], runId: manifest.run_id, executionScope: recorded, workflow, currentResults: [checked] }, targetDisposition) : null;
+        const verificationHistory = loadAuthoritativeEvents(eventsPath);
+        const recoveryAt = verificationHistory.map(event => event.type === 'phase_backtrack_requested'
+          && event.to_phase === target && event.round_fingerprint === fingerprint).lastIndexOf(true);
+        const verificationSummary = target ? readPhaseSummary(projectRoot, manifest.feature, target as FeaturePhase).summary : null;
+        let verificationRequest: ReturnType<typeof parseVerifierRequest> = null;
+        try {
+          if (verificationSummary?.verifier_request) verificationRequest = parseVerifierRequest(fs.readFileSync(path.resolve(projectRoot,
+            validateProjectRelativePath(projectRoot, verificationSummary.verifier_request, 'verifier request')), 'utf8'));
+        } catch { /* The existing writer must restore the exact current request before independent execution. */ }
+        const executableVerification = !!verificationRequest && verificationRequest.subject_id === verificationSummary?.verifier_subject_id
+          && verificationRequest.phase === target && verificationRequest.feature === manifest.feature && !!verificationSummary?.verifier_report;
+        const unchangedVerification = !!checked && targetProblems.length > 0 && targetProblems.every(problem => problem.action === 'verify')
+          && !executableVerification && (seenRoundFingerprints.has(fingerprint)
+            || recoveryAt >= 0 && verificationHistory.slice(recoveryAt + 1).some(event => event.type === 'harness_end'
+              && event.phase === target && event.timed_out !== true));
+        const noProgress = evaluation ? completionProgressFromHistory(evaluation,
+          readGateCompletionHistory(projectRoot, path.resolve(projectRoot, manifest.report_dir), loadAuthoritativeEvents(eventsPath)), true).halt : false;
+        if (!authorized || pending?.action === 'wait' || unchangedVerification || noProgress) {
+          const incident = !authorized ? 'backtrack_target_absent' : pending?.action === 'wait' || unchangedVerification ? 'executor_waiting' : 'no_progress_guard';
+          const guidance = unchangedVerification
+            ? `责任=原核验声明的发布/框架方；当前已绑定结果已经复读或补验，同一输入仍保留待核声明，且缺少对应的可执行请求。重读原报告不再重跑 gate。解除条件：恢复与当前subject匹配的request及原件，或纠正与当前fresh证据矛盾的遗留声明后接续；产品未知与全部未完项保留：${targetProblems.map(problem => problem.detail).join('；')}`
+            : pending?.detail ?? `未满足职责 ${target ?? 'unknown'}；恢复当前条件后重新接续同一请求。`;
           goalEvents.emit({ type: 'phase_halt', phase: source, halt_reason: incident, reason: guidance, target_phase: target,
-            ...(pending?.action === 'wait' ? { run_disposition: 'WAITING', run_wait_kind: 'external' } : {}),
+            ...(pending?.action === 'wait' || unchangedVerification ? { run_disposition: 'WAITING', run_wait_kind: 'external' } : {}),
             halt_guidance: guidance });
           outcomes.push({ phase: source as FeaturePhase, verdict: 'FAIL', halted: true, retries: 0,
             halt_reason: incident, halt_guidance: guidance });
@@ -8528,20 +8810,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
             const source = problem.source_phase ?? problem.phase;
             return (readPhaseSummary(projectRoot, manifest.feature, source).summary?.repair_candidates ?? []).filter(candidate =>
               problem.id === `open_finding:${candidate.id}` && resolveRepairResponsibility({ ...responsibility,
-                target: { files: candidate.files, category: candidate.category, summary: candidate.summary } }).owner === problem.owner);
+                target: candidate }).owner === problem.owner);
           });
-          const declines = loadRepairDeclineState(projectRoot, manifest.feature, manifest.run_id);
-          const attempted = replayAttemptedSignalIdentities(loadAuthoritativeEvents(eventsPath), declineAttemptExemption(declines, manifest.run_id));
-          backtrackRepairCandidates = [...new Map(candidates.filter(candidate => candidate.identity_schema !== 'signal@1'
-            || !attempted.has(candidate.item_fingerprint)).map(candidate => [candidate.item_fingerprint, candidate])).values()].slice(0, 20);
-          if (candidates.length && !backtrackRepairCandidates.length) {
-            const detail = '已核实候选已按原 one-shot 规则尝试，仍未消除；保留原发现，等待新的实际依据。';
-            goalEvents.emit({ type: 'phase_halt', phase: source, halt_reason: 'repair_not_converging', halt_guidance: detail });
-            outcomes.push({ phase: source as FeaturePhase, verdict: 'FAIL', halted: true, retries: 0,
-              halt_reason: 'repair_not_converging', halt_guidance: detail });
-            halted = true;
-            break;
-          }
+          backtrackRepairCandidates = [...new Map(candidates.map(candidate => [candidate.item_fingerprint, candidate])).values()].slice(0, 20);
           const reusableInvocation = targetProblems.length && targetProblems.every(problem => problem.action === 'verify')
             ? reusablePassedInvocation(targetPhase, loadAuthoritativeEvents(eventsPath), targetProblems.map(problem => problem.id)) : undefined;
           const invalidated = affectedScopePhases([targetPhase], completionPhases, recorded
@@ -8567,8 +8838,23 @@ Goal runner — tool-agnostic multi-phase orchestrator
         }
       }
       const phase = chain[phaseIdx];
-      if (argv.resume && outcomes.some(outcome => outcome.phase === phase && outcome.verdict === 'PASS' && !outcome.deferred && !outcome.halted)
-        && collectPhaseCompletionIssues({ projectRoot, feature: manifest.feature, chain: [phase], frameworkRoot, runId: manifest.run_id }).length === 0) continue;
+      // Current bound evidence, including canonical definition proof, owns recovery eligibility.
+      // An old outcome projection may have been pruned by a later repair; it cannot buy a new author.
+      if (argv.resume && !resumePostAgentPhases.has(String(phase)) && !pendingDesignAttemptForPhase(String(phase)) && satisfiesRequestedAssurance(String(phase)) && collectPhaseCompletionIssues({ projectRoot, feature: manifest.feature,
+        chain: [phase], frameworkRoot, workflow, runId: manifest.run_id }).length === 0) {
+        const history = loadAuthoritativeEvents(eventsPath);
+        const start = [...history].reverse().find(event => event.type === 'agent_invoke_start' && event.phase === phase && event.invoke_id);
+        const ended = completedMainInvocation(String(phase), history);
+        const lastVerdict = [...history].reverse().find(event => event.type === 'phase_verdict' && event.phase === phase);
+        if (birthScope || ended && !(lastVerdict && isEffectivePhasePass(lastVerdict) && lastVerdict.invoke_id === ended)) {
+          // A queued obligation or an unfinished phase result still needs formal consumption.
+          // Reuse its real ended author; a raw PASS cannot erase a later trusted failure/hold.
+          if (ended) {
+            resumePostAgentPhases.add(String(phase));
+            resumePostAgentAttemptIds[String(phase)] = ended;
+          }
+        } else if (ended || !start && lastVerdict && isEffectivePhasePass(lastVerdict)) continue;
+      }
       const boundaryRecommendation: AssessRecommendation = {
         action: 'run_phase',
         phase: String(phase),
@@ -8590,7 +8876,6 @@ Goal runner — tool-agnostic multi-phase orchestrator
       runtimeRoundsStarted += 1;
       let retries = 0;
       let phaseDone = false;
-      let priorBlockerSignature: string | null = null;
       let priorArtifactSnapshot: ArtifactSnapshot | null = null;
       // P1-B：上一次 attempt 是否因超时被中断（非内容失败）——用于重试时复用 partial 产物。
       let priorAttemptTimedOut = false;
@@ -9206,7 +9491,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
           } catch (error) { factsAdmissionError = (error as Error).message; }
         }
         let invocationResponsibility: import('./utils/repair-responsibility').RepairResponsibilityContext = { projectRoot, frameworkRoot,
-          feature: manifest.feature, runId: manifest.run_id, workflow, contracts: phaseWriteBoundary ?? undefined, authorityReaders: promptAuthorityReaders };
+          feature: manifest.feature, runId: manifest.run_id, workflow, contracts: phaseWriteBoundary ?? undefined, authorityReaders: promptAuthorityReaders,
+          currentDisposition: currentDisposition ?? undefined };
         try { invocationResponsibility = repairResponsibilityContext(invocationResponsibility); }
         catch { /* Existing capability/design recovery owns the gap; derived responsibility never adds an entry blocker. */ }
         // The read action ends before invocation events, writers, waits or model execution.
@@ -9280,7 +9566,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             });
             const mine = [...new Map([...currentCandidates, ...backtrackRepairCandidates].map(candidate =>
               [candidate.item_fingerprint, candidate])).values()].filter(
-              c => resolveRepairResponsibility({ ...invocationResponsibility, target: { files: c.files, category: c.category, summary: c.summary } }).owner === String(phase),
+              c => resolveRepairResponsibility({ ...invocationResponsibility, target: c }).owner === String(phase),
             );
             const taskBlock = currentTasks.length ? ['\n## Current required work within this phase',
               'Complete these current tasks before closure, even when the raw script/verifier verdict or an earlier receipt is PASS. Preserve the original evidence and let the original verifier recheck. Findings grant no extra write authority.',
@@ -9401,7 +9687,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             } catch {
               return ''; // best-effort：列不出路径时不阻断 prompt（gate 侧判定不变）
             }
-          })();
+          })() + (currentDisposition && !closureOnlyAttempt ? `\n## 当前工作单元的全部反馈\n${renderCurrentDisposition(currentDisposition)}\n方法标签只用于选择工具；依原授权处理全部可修项，无法在本单元修复的共享设计交原设计单元；缺少必要核验或未恢复写入时不能签完成。\n` : '');
         let prompt = renderPrompt(effectiveAgentTimeoutMs);
         fs.writeFileSync(promptPath, prompt, 'utf-8');
         progressSubstep = 'prompt';
@@ -9796,7 +10082,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           adapter: manifest.adapter ?? 'generic',
           adapterModel: manifest.adapter_model_pin?.value,
           factsContext: archivedSession?.request.context.factsContext ?? phaseFactsContext,
-          instruction: prompt + '\n使用本工作单元的专用执行会话。主 Agent 负责观察与转交指示，不承担业务编辑；独立核验使用另一个会话并遵守其有界写集。',
+          instruction: prompt + '\n在本工作单元的专用执行会话中完成当前任务，收到反馈后继续处理。遵守当前授权写集；将需要独立核验的材料和未完项交回协调器。耗时检查若提供可可靠续等的原生后台句柄，使用原句柄跟踪真实结果；没有该句柄时仍可按工具既有公开期限同步执行，不因时长或静默本身自行判成能力缺口。实际未执行、未完成或无法执行时如实说明，不要自动原样重拉结果未知的旧任务。结束作者步骤不等于验收 PASS，真实检查由内核完成。',
           runtimeFacts: {
             // A2: same resolver as the diff baseline — birth value, or the one frozen by the first
             // coding/ut-bearing revision (D2 §3 问题 9).
@@ -9942,14 +10228,18 @@ Goal runner — tool-agnostic multi-phase orchestrator
             stderr: accepted.report.status === 'failed' ? accepted.report.details ?? 'session executor reported failure' : '', command: 'phase_execute_request' };
         }
 
-        if ((!skipExecutor || archivedSession) && 'status' in invoke && invoke.status === 'waiting') {
-          const waitingDetail = invoke.details ?? 'attended executor is waiting for external input';
+        const convergencePause = [...loadAuthoritativeEvents(eventsPath)].reverse().find(event => event.type === 'phase_halt'
+          && event.invoke_id === invokeId && event.halt_reason === 'no_progress_guard');
+        if (convergencePause || ((!skipExecutor || archivedSession) && 'status' in invoke && invoke.status === 'waiting')) {
+          const details = 'details' in invoke ? invoke.details : undefined;
+          const waitingDetail = convergencePause ? String((convergencePause as Record<string, unknown>).detail ?? details ?? '')
+            : details ?? 'attended executor is waiting for external input';
           if (!options.sessionHandoff && !skipExecutor) goalEvents.emit({
             type: 'agent_invoke_end', phase, invoke_id: invokeId, command: invoke.command,
-            status: 'waiting', detail: waitingDetail.slice(0, 1000),
+            status: 'status' in invoke ? invoke.status : invocationCompleted(invoke) ? 'passed' : 'failed', detail: waitingDetail.slice(0, 1000),
             duration_ms: invoke.duration_ms, ...invocationEndFacts(invoke),
           });
-          goalEvents.emit({
+          if (!convergencePause) goalEvents.emit({
             type: 'phase_halt',
             phase,
             halt_reason: 'executor_waiting',
@@ -9961,7 +10251,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             verdict: 'INCOMPLETE',
             halted: true,
             retries,
-            halt_reason: 'executor_waiting',
+            halt_reason: convergencePause ? 'no_progress_guard' : 'executor_waiting',
           });
           halted = true;
           phaseDone = true;
@@ -10627,16 +10917,25 @@ Goal runner — tool-agnostic multi-phase orchestrator
         //     文件存在且身份匹配 = gate 所写；不引入 nonce/账本）；
         //   ② 强制安装 flag（复用既有 HARNESS_DEVICE_TEST_FORCE_INSTALL）**只注入 gate
         //     harness env**——agent 自检与普通模式保留既有 install reuse，零变化。
-        const gateHistory = loadAuthoritativeEvents(eventsPath);
-        const oldHarnessEnd = archivedSession ? [...gateHistory].reverse().find(event => event.type === 'harness_end' && event.invoke_id === invokeId && !event.timed_out) : undefined;
+        const gateHistory = eventsWithScopeRevocations(birthScope, loadAuthoritativeEvents(eventsPath), birthScope
+          ? readRepairDependencyContext(projectRoot, manifest.feature, workflow, birthScope, frameworkRoot) : {});
+        const boundPreviousCheck = !dryRun && resumePostAgent ? (() => {
+          const gateProfile = loadResolvedProfile(projectRoot, loadFrameworkConfig(projectRoot), frameworkRoot);
+          return readReusableCheckResult({ projectRoot, frameworkRoot, feature: manifest.feature, phase: String(phase), runId: manifest.run_id,
+            deviceRequired: phaseRequiresDevice(phase, gateProfile) || phaseHasNativeExecution(phase, gateProfile) });
+        })() : null;
+        const oldHarnessEnd = boundPreviousCheck ? [...gateHistory].reverse().find(event => event.type === 'harness_end' && event.invoke_id === invokeId && !event.timed_out) : undefined;
         const oldHarnessStart = oldHarnessEnd ? [...gateHistory.slice(0, gateHistory.indexOf(oldHarnessEnd))].reverse().find(event => event.type === 'harness_start' && event.invoke_id === invokeId) : undefined;
-        const currentSummaryTime = getSummaryMtime(readPhaseSummary(projectRoot, manifest.feature, phase).summaryAbsPath);
-        const gateInputsRevised = oldHarnessEnd && gateHistory.slice(gateHistory.indexOf(oldHarnessEnd) + 1).some(event => event.type === 'design_authority_repair'
-          && (event as Record<string, unknown>).stage === 'published');
-        // plan 6fd6c8c1 §4.2：只有**成功**的旧 gate 结果才可复用。上一次 gate 以非零退出码
-        // 收尾（框架缺口/外部阻塞）时，“只补验证”的恢复恰恰要重跑该 gate；复用失败结果会让
-        // 同一 attempt 永远停在 INCOMPLETE（fe4512 会话恢复实锤）。
-        const reusableHarnessEnd = oldHarnessEnd && oldHarnessStart && (oldHarnessEnd.exit_code ?? 1) === 0 && !gateInputsRevised && currentSummaryTime !== null && currentSummaryTime >= Date.parse(oldHarnessStart.ts ?? '') - 1000 && currentSummaryTime <= Date.parse(oldHarnessEnd.ts ?? '') + 1000 ? oldHarnessEnd : undefined;
+        const previousSummary = readPhaseSummary(projectRoot, manifest.feature, phase);
+        const gateInputsRevised = hasChangedVerifierMaterialInputs({ projectRoot, frameworkRoot, feature: manifest.feature,
+          phase: String(phase), summary: previousSummary.summary }) || oldHarnessEnd && gateHistory.slice(gateHistory.indexOf(oldHarnessEnd) + 1).some(event =>
+            event.type === 'phase_invalidated' && event.phase === phase
+            || event.type === 'phase_backtrack_requested' && (event.to_phase === phase
+              || (event as { invalidated_phases?: string[] }).invalidated_phases?.includes(String(phase)))
+            || event.type === 'design_authority_repair' && (event as Record<string, unknown>).stage === 'published');
+        // A current bound result, including FAIL, is an observation; native execution eligibility remains with its provider.
+        const reusableHarnessEnd = oldHarnessEnd && oldHarnessStart && boundPreviousCheck
+          && !gateInputsRevised ? oldHarnessEnd : undefined;
         let gateDeviceEnv = deviceEnv;
         if (!dryRun && !reusableHarnessEnd && phase === ('testing' as FeaturePhase)) {
           try {
@@ -10689,9 +10988,19 @@ Goal runner — tool-agnostic multi-phase orchestrator
 
         /** 链外 adapter 调用：沿用 agent_invoke_start / end 计次（phase = 不属于阶段链的用途标识），每次调用前查剩余次数与墙钟，接既有收容与中断杀进程。 */
         const materialVerification = phase === 'spec' || phase === 'plan';
-        const verifierRecoveryInvokeId = () => `${phase}-verifier-format-repair-${visualAttemptId}`
-          + (materialVerification ? `-${summary?.verifier_subject_id?.slice(0, 12) ?? 'legacy'}` : '');
-        const invokeOutOfChain = async (purpose: DesignRepairPurpose | 'verifier_format_repair', text: string, originalGuard?: import('./utils/design-repair-unattended').DesignRepairInvocationGuard, verifierReportPath?: string): Promise<DesignRepairInvokeOutcome> => {
+        const verifierRecoveryInvokeId = () => `${phase}-verifier-format-repair-${visualAttemptId}-${summary?.verifier_subject_id?.slice(0, 12) ?? 'legacy'}`;
+        const verifierRecoveryStarts = (requestText: string) => {
+          const history = loadAuthoritativeEvents(eventsPath);
+          const starts = verifierRecoveryStartsForRequest(path.resolve(projectRoot, manifest.report_dir), String(phase), requestText, history);
+          const resumedAt = argv.resume ? history.map(event => event.type === 'resume').lastIndexOf(true) : -1;
+          const pausedAt = resumedAt < 0 ? -1 : history.slice(0, resumedAt).map(event => event.type === 'phase_halt'
+            && event.phase === phase && event.halt_reason === 'no_progress_guard' && starts.some(start => start.returned
+              && invocationCompleted({ ...start.returned, exitCode: start.returned.exit_code })
+              && history.indexOf(event) > history.indexOf(start.returned)
+              && String((event as GoalRunEvent & { halt_guidance?: string }).halt_guidance ?? '').includes(start.event.invoke_id!))).lastIndexOf(true);
+          return pausedAt < 0 ? starts : starts.filter(start => start.index > pausedAt);
+        };
+        const invokeOutOfChain = async (purpose: DesignRepairPurpose | 'verifier_format_repair', text: string, originalGuard?: import('./utils/design-repair-unattended').DesignRepairInvocationGuard, verifierReportPath?: string, verifierRequestText?: string): Promise<DesignRepairInvokeOutcome> => {
           const label = purpose === 'verifier_format_repair' ? `${phase}-verifier-format-repair` : designRepairInvokeLabel(purpose);
           if (verifierReportPath && !originalGuard) {
             const resolution = { projectRoot, protectedRoots: phaseWriteBoundary?.protectedRoots ?? fs.readdirSync(projectRoot).filter(name => name !== '.git'),
@@ -10713,10 +11022,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
             if (replay) return replay;
           }
           if (options.sessionHandoff && purpose === 'verifier_format_repair') {
-            const history = loadAuthoritativeEvents(eventsPath);
-            const transactionAt = purpose === 'verifier_format_repair' ? -1 : history.map(event => event.type === 'design_authority_repair' && (event as Record<string, unknown>).stage === 'attempted').lastIndexOf(true);
-            const prior = [...history.slice(transactionAt + 1)].reverse().find(event => event.type === 'agent_invoke_start' && event.phase === label
-              && (purpose !== 'verifier_format_repair' || event.invoke_id === verifierRecoveryInvokeId()));
+            const prior = verifierRequestText ? [...verifierRecoveryStarts(verifierRequestText)].reverse().find(start => !start.returned
+              || !invocationCompleted({ ...start.returned, exitCode: start.returned.exit_code }) || start.instruction.includes(text.trimEnd()))?.event : undefined;
             const issued = prior?.invoke_id ? sessionExecutionForInvoke(path.resolve(projectRoot, manifest.report_dir), prior.invoke_id) : null;
             if (issued) {
               const received = acceptedSessionReport(issued.request.context.runDir, issued);
@@ -10729,7 +11036,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
                   if (['component-blueprint.yaml', 'change-unit.yaml', 'architecture.json'].includes(name)) fs.writeFileSync(path.join(issued.request.context.runDir, 'design-repair', name), Buffer.from(bytes, 'base64'));
                 }
               }
-              if (received.report.status !== 'waiting' || prior?.invoke_id === acceptedSessionInvokeId) {
+              if (invocationCompleted({ ...received.event, status: received.report.status, exitCode: received.event.exit_code }) || prior?.invoke_id === acceptedSessionInvokeId) {
                 return bounded({ started: true, ok: invocationCompleted({ ...received.event, status: received.report.status, exitCode: received.event.exit_code }), status: received.report.status,
                   detail: received.report.details ?? `session reported ${received.report.status}`, preSnapshot: issued.request.pre_snapshot ?? undefined, postSnapshot: originalPostSnapshot });
               }
@@ -10742,9 +11049,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
             return { started: false, ok: false, detail: `剩余${budgetNow === 'turns' ? '调用次数' : '墙钟'}不足，不启动（${budgetNow}，timeout=${timeoutMs}ms）` };
           }
           const undelivered = options.sessionHandoff ? undeliveredSessionInvocation(loadAuthoritativeEvents(eventsPath)) : undefined;
-          const recoverOutOfChain = undelivered?.phase === label ? undelivered : undefined;
+          const recoverOutOfChain = undelivered?.phase === label && (purpose !== 'verifier_format_repair'
+            || verifierRequestText && verifierRecoveryStarts(verifierRequestText).some(start => start.event.invoke_id === undelivered.invoke_id)) ? undelivered : undefined;
           if (!recoverOutOfChain) totalTurns++;
-          const outOfChainId = recoverOutOfChain?.invoke_id ?? (purpose === 'verifier_format_repair' ? verifierRecoveryInvokeId() : `${label}-i${totalTurns}`);
+          const outOfChainId = recoverOutOfChain?.invoke_id ?? (purpose === 'verifier_format_repair' ? `${verifierRecoveryInvokeId()}-i${totalTurns}` : `${label}-i${totalTurns}`);
           const dir = path.join(projectRoot, manifest.report_dir, 'phases', label, outOfChainId);
           fs.mkdirSync(dir, { recursive: true });
           const promptFile = path.join(dir, 'prompt.md');
@@ -10758,6 +11066,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           flushProgress();
           if (options.sessionHandoff && runControl) {
             const issued = issueSessionExecution({ context: createWorkUnitExecutionContext({ ...phaseExecutionContext, ...workUnitExecutionInputs(manifest, purpose, projectRoot),
+              provider_session_id: undefined, chain: [label],
               phase: label, attemptId: outOfChainId, instruction: text + (purpose === 'questioning' ? '\n独立质询必须在实际独立上下文/独立provider执行，不能在作者主上下文自报完成。' : ''),
               owner: { ...runControl.token, kind: 'session' }, childEnv: {} }),
               invokeId: outOfChainId, chainPhase: String(phase), purpose, timeoutMs,
@@ -10769,9 +11078,19 @@ Goal runner — tool-agnostic multi-phase orchestrator
             options.sessionHandoff.onRequest(issued);
             return { started: true, ok: false, detail: 'execution requested', handoff: true };
           }
+          const originalStart = [...loadAuthoritativeEvents(eventsPath)].reverse().find(event => event.type === 'agent_invoke_start' && event.invoke_id === outOfChainId);
+          if (!originalStart?.ts) throw new Error('[goal-phase-runtime] invocation has not been started');
+          const outOfChainContext = createWorkUnitExecutionContext({ ...phaseExecutionContext, ...workUnitExecutionInputs(manifest, purpose, projectRoot),
+            provider_session_id: undefined, chain: [label],
+            phase: label, attemptId: outOfChainId, instruction: text, childEnv: {} });
+          const detachedMaterial = !attendedExecutor || purpose === 'verifier_format_repair' ? writePhaseExecutionRequestMaterial({ context: outOfChainContext, invokeId: outOfChainId,
+            chainPhase: String(phase), purpose, issuedAt: originalStart.ts, timeoutMs,
+            gateTimeoutMs: Math.max(1, remainingWallMs()), cleanupReserveMs: FINALIZE_RESERVE_MS,
+            preSnapshot: originalGuard?.pre ?? null,
+            writeBoundary: originalGuard ? { ...originalGuard.resolution, feature: manifest.feature, phaseOrder: [], domains: [], diagnostics: [], unresolvedSourcePhases: [] } : null,
+            snapshotOptions: originalGuard?.options }) : null;
           if (attendedExecutor) {
-            const result = await new GoalPhaseRuntime(options).executeExecutor(createWorkUnitExecutionContext({ ...phaseExecutionContext, ...workUnitExecutionInputs(manifest, purpose, projectRoot),
-              phase: label, attemptId: outOfChainId, instruction: text, childEnv: {} }), attendedExecutor);
+            const result = await new GoalPhaseRuntime(options).executeExecutor(detachedMaterial?.request.context ?? outOfChainContext, attendedExecutor);
             goalEvents.emit({ type: 'agent_invoke_end', phase: label, chain_phase: String(phase), purpose, invoke_id: outOfChainId,
               status: result.status, exit_code: result.exitCode, duration_ms: result.duration_ms, command: result.command,
               timed_out: result.timed_out, silent_killed: result.silent_killed, skipped: result.skipped,
@@ -10783,21 +11102,12 @@ Goal runner — tool-agnostic multi-phase orchestrator
             if (purpose !== 'verifier_format_repair') recordDesignRepairInvocation(path.resolve(projectRoot, manifest.report_dir), purpose, outOfChainId, outcome);
             return bounded(outcome);
           }
-          const originalStart = [...loadAuthoritativeEvents(eventsPath)].reverse().find(event => event.type === 'agent_invoke_start' && event.invoke_id === outOfChainId);
-          if (!originalStart?.ts) throw new Error('[goal-phase-runtime] invocation has not been started');
-          const detachedMaterial = writePhaseExecutionRequestMaterial({ context: createWorkUnitExecutionContext({ ...phaseExecutionContext, ...workUnitExecutionInputs(manifest, purpose, projectRoot),
-            phase: label, attemptId: outOfChainId, instruction: text, childEnv: {} }), invokeId: outOfChainId,
-            chainPhase: String(phase), purpose, issuedAt: originalStart.ts, timeoutMs,
-            gateTimeoutMs: Math.max(1, remainingWallMs()), cleanupReserveMs: FINALIZE_RESERVE_MS,
-            preSnapshot: originalGuard?.pre ?? null,
-            writeBoundary: originalGuard ? { ...originalGuard.resolution, feature: manifest.feature, phaseOrder: [], domains: [], diagnostics: [], unresolvedSourcePhases: [] } : null,
-            snapshotOptions: originalGuard?.options });
           const token = `${manifest.run_id}/${outOfChainId}`;
           const contained = process.platform === 'win32' ? { runId: manifest.run_id, invokeId: outOfChainId } : null;
           let containmentError = null as string | null;
           let containmentStillAlive = false;
-          const result = await new GoalPhaseRuntime(options).executeExecutor(detachedMaterial.request.context, new DetachedGoalPhaseExecutor(() => ({ plan: outOfChainPlan, cwd: projectRoot, options: {
-            timeoutMs, deadlineMs: sessionExecutionDeadlineMs(detachedMaterial.request), outputLogPath: logFile, containment: contained,
+          const result = await new GoalPhaseRuntime(options).executeExecutor(detachedMaterial!.request.context, new DetachedGoalPhaseExecutor(() => ({ plan: outOfChainPlan, cwd: projectRoot, options: {
+            timeoutMs, deadlineMs: sessionExecutionDeadlineMs(detachedMaterial!.request), outputLogPath: logFile, containment: contained,
             extraEnv: purpose === 'verifier_format_repair' ? { ...phaseChildEnv,
               MAISON_GOAL_RUN_ID: manifest.run_id, MAISON_GOAL_ATTEMPT: visualAttemptId, MAISON_GOAL_ATTEMPT_PHASE: String(phase),
             } : {
@@ -10945,23 +11255,51 @@ Goal runner — tool-agnostic multi-phase orchestrator
           phase,
         );
         const summaryMtimeAfter = getSummaryMtime(summaryAbsPath);
-        const freshSummary = !!reusableHarnessEnd || isSummaryFresh(summaryMtimeBefore, summaryMtimeAfter);
+        const reportedCheck = harnessRun.currentCheckObserved
+          ?? completedCheckResultsFromOutput(harnessRun.outputTail ?? '').some(result => result.phase === phase);
+        const boundCheck = reportedCheck && readReusableCheckResult({ projectRoot, frameworkRoot, feature: manifest.feature,
+          phase: String(phase), runId: manifest.run_id });
+        const freshSummary = !!reusableHarnessEnd || !!boundCheck || isSummaryFresh(summaryMtimeBefore, summaryMtimeAfter);
 
-        // 原格式纠错每attempt一次；spec/plan当前材料核实按subject去重，沿同一调用/预算通路。
-        // 复验可能因核实报告新增的真实材料换subject；立即消费新request，不能先叫阶段作者重写。
-        while (!dryRun && freshSummary && summary && !invoke.timed_out && ['spec', 'plan', 'coding', 'review', 'ut'].includes(String(phase))) {
-          const needsCurrentFindingVerification = summary.verifier_subject_id
-            && resolveCompletionDisposition({ projectRoot, frameworkRoot, feature: manifest.feature, chain: [String(phase)], runId: manifest.run_id })
-              .completionBlocking.some(problem => problem.id.startsWith('open_finding:') && problem.action === 'verify');
+        const deferVerification = (detail: string, noProgress = false): void => {
+          const reason = 'deterministic_gate_or_artifact_missing';
+          deferredUpstream.push({ phase, reason });
+          const independent = nextIndependentPhase(projectRoot, manifest.feature, chain.slice(phaseIdx + 1).map(String),
+            deferredUpstream.map(item => String(item.phase)), resolveUpstreamPhaseChain(projectRoot, manifest.feature, manifest.run_id, String(phase), frameworkRoot));
+          const halt = noProgress ? 'no_progress_guard' : 'executor_waiting';
+          const parked = independent ? {} : { run_disposition: 'WAITING' as const, run_wait_kind: 'external' as const };
+          const verdict = summary?.verdict ?? 'INCOMPLETE';
+          goalEvents.emitPhaseVerdict({ phase, invoke_id: invokeId, verdict,
+            harness_exit: harnessExit, stale_summary: false,
+            action: independent ? 'defer_external_and_continue_if_allowed' : 'defer_external_and_halt',
+            blocking_class: 'framework_internal', failure_kind: 'framework_bug' });
+          goalEvents.emit({ type: 'phase_halt', phase, halt_reason: halt, detail, halt_guidance: detail, ...parked });
+          outcomes.push({ phase, verdict, deferred: true, deferred_reason: reason, halted: !independent,
+            retries, halt_reason: halt, halt_guidance: detail, ...parked });
+          if (!independent) halted = true;
+          phaseDone = true;
+        };
+
+        // 补核复用当前请求的真实完成事实；未完成沿原运输续接，暂停后显式继续可重获机会。
+        // 真实材料换subject时立即消费新request，不能先叫阶段作者重写。
+        while (!dryRun && freshSummary && summary && !invoke.timed_out) {
+          const needsCurrentFindingVerification = phaseCompletionProblems(resolveCompletionDisposition({ projectRoot, frameworkRoot, feature: manifest.feature,
+              chain: [String(phase)], workflow, runId: manifest.run_id }), [String(phase)])
+              .some(problem => problem.id.startsWith('open_finding:') && problem.action === 'verify'
+                && (problem.source_phase ?? problem.phase) === String(phase));
           const requestPath = summary.verifier_request;
           const reportPath = summary.verifier_report;
           const requestAbs = requestPath ? path.resolve(projectRoot, validateProjectRelativePath(projectRoot, requestPath, 'verifier request')) : null;
           const requestText = requestAbs && fs.existsSync(requestAbs) ? fs.readFileSync(requestAbs, 'utf-8') : null;
           const request = parseVerifierRequest(requestText);
+          const evidence = loadVerifierEvidence(projectRoot, manifest.feature, String(phase), { frameworkRoot });
           // writer 只在原资格通过时签发当前 request；carried 旧 subject 没有 request，不从展示动作反推调用。
           if (!request || request.subject_id !== summary.verifier_subject_id || request.phase !== phase
-            || request.feature !== manifest.feature || !reportPath) break;
-          const evidence = loadVerifierEvidence(projectRoot, manifest.feature, String(phase), { frameworkRoot });
+            || request.feature !== manifest.feature || !reportPath) {
+            if (needsCurrentFindingVerification || summary.verifier_subject_id && !evidence.ok) deferVerification(
+              `当前独立核验尚未闭合，原请求缺失或与当前 subject 不匹配；恢复当前 writer 签发的 request 后接续：${requestPath ?? 'missing'}。原报告及产品未知保留。`);
+            break;
+          }
           const diagnosisContext = buildCurrentVerifierDiagnosisContext({ projectRoot, feature: manifest.feature, phase: String(phase),
             frameworkRoot, runId: manifest.run_id, subjectId: summary.verifier_subject_id ?? null,
             verifierSubjectCurrent: Boolean(summary.verifier_request) });
@@ -10971,30 +11309,27 @@ Goal runner — tool-agnostic multi-phase orchestrator
           const diagnoses = !evidence.ok ? [evidence.message] : diagnosisRequired
             ? findUnreadableDiagnosisChecks(String(phase), evidence.evidence.report_text, diagnosisContext) : [];
           if (evidence.ok && !needsCurrentFindingVerification && !diagnoses.length) break;
-          const repairInvokeId = verifierRecoveryInvokeId();
-          const formatEvents = loadAuthoritativeEvents(eventsPath);
-          const lastVerdict = formatEvents.map(event => event.type === 'phase_verdict' && event.phase === phase).lastIndexOf(true);
-          const used = formatEvents.some((event, index) => {
-            const invocation = event as GoalRunEvent & { purpose?: string; chain_phase?: string };
-            return event.type === 'agent_invoke_start' && (event.invoke_id === repairInvokeId
-              || !materialVerification && index > lastVerdict && invocation.purpose === 'verifier_format_repair' && invocation.chain_phase === phase);
-          });
+          const requiredDiagnoses = [...diagnoses, ...(needsCurrentFindingVerification
+            ? ['Current findings require independent re-verification against the complete current request and acceptance evidence.'] : [])];
+          const used = [...verifierRecoveryStarts(requestText!)].reverse().find(start => start.returned
+            && invocationCompleted({ ...start.returned, exitCode: start.returned.exit_code }));
           if (used) {
-            // 本subject已核实但仍无有效结果：沿既有闭环重试/无进展出口，不能转成阶段作者重写。
-            resumePostAgentPhases.add(String(phase));
-            resumePostAgentAttemptIds[phase] = invokeId;
-            break;
+            const unchangedDiagnosis = requiredDiagnoses.length > 0 && requiredDiagnoses.every(diagnosis => used.instruction.includes(diagnosis));
+            if (unchangedDiagnosis) {
+              deferVerification(`原独立核验补核 ${used.event.invoke_id} 已真实交回，但当前报告仍缺相同必需内容：${requiredDiagnoses.join('; ')}。保留原报告、当前必修和产品未知；修复原核验材料或显式继续原请求后可接续。`, true);
+              break;
+            }
           }
           const prompt = [ phase === 'spec' || phase === 'plan'
             ? 'Complete the CURRENT independent verification: recheck each finding against current acceptance, evidence and the real repair object/owner. Do not edit the design/product to erase a finding or close it because an unrelated scope changed.'
             : 'Repair only the verifier reply format for the CURRENT attempt. Do not edit product source or the original review report.',
             `Existing goal context: run_id=${manifest.run_id}, phase=${phase}, attempt_id=${visualAttemptId}.`,
-            `Diagnostics: ${[...diagnoses, ...(needsCurrentFindingVerification ? ['Current findings require independent re-verification against the complete current request and acceptance evidence.'] : [])].join('; ')}`,
+            `Diagnostics: ${requiredDiagnoses.join('; ')}`,
             'Read the existing raw reply and preserve valid individual confirmed/refuted/unclear judgments. Do not re-request a legal refuted/unclear just to change its conclusion.',
             'If the raw reply contains the missing information, restore the exact transcript. Otherwise invoke the existing verifier ONCE using the complete current request JSON below as its Task prompt, then write its complete reply verbatim.',
             `Only write this verifier report: ${reportPath}. No new request, subject, registry or debt ledger. This invocation and its time count toward the existing run budget.`,
             requestText! ].join('\n');
-          const recovered = await invokeOutOfChain('verifier_format_repair', prompt, undefined, reportPath);
+          const recovered = await invokeOutOfChain('verifier_format_repair', prompt, undefined, reportPath, requestText!);
           if (recovered.handoff) return 3;
           if (recovered.containmentUnresolved) {
             halted = true; phaseDone = true;
@@ -11002,10 +11337,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
             outcomes.push({ phase, verdict: 'FAIL', halted: true, retries, halt_reason: 'agent_containment_unresolved' });
             break;
           }
-          if (recovered.status === 'waiting') {
-            halted = true; phaseDone = true;
-            goalEvents.emit({ type: 'phase_halt', phase, halt_reason: 'executor_waiting', detail: recovered.detail });
-            outcomes.push({ phase, verdict: 'INCOMPLETE', halted: true, retries, halt_reason: 'executor_waiting', halt_guidance: recovered.detail });
+          if (recovered.started && !recovered.ok) {
+            deferVerification(`原 verifier 尚未完成当前请求：${recovered.detail}。保留原核验请求和已取得的材料；执行条件恢复后继续该独立职责。`);
             break;
           }
           if (recovered.started) {
@@ -11036,6 +11369,14 @@ Goal runner — tool-agnostic multi-phase orchestrator
         }
         if (halted || phaseDone) break;
 
+        if (!dryRun && freshSummary && summary) {
+          const currentCandidates = (require('./utils/phase-closure-finalizer') as typeof import('./utils/phase-closure-finalizer'))
+            .readCurrentPhaseRepairCandidates({ projectRoot, frameworkRoot, feature: manifest.feature,
+              phase: String(phase), goalRunId: manifest.run_id },
+            featurePhaseReportsDir(projectRoot, manifest.feature, String(phase), frameworkRoot), summary);
+          if (currentCandidates !== undefined) summary = { ...summary, repair_candidates: currentCandidates };
+        }
+
         // M1 t1.5/t1.6（adjudicated-repair-loop，review 修复）：回退链完成收口——补发
         // phase_backtrack_completed（移到回退链真正完成之后，修 :7592 时序；repair/scope
         // 路径统一在此补发）。no-op 判定用 **harness 之前** 拍好的 pendingNoopResult
@@ -11051,7 +11392,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           const repairDeclinesNow = loadRepairDeclineState(projectRoot, manifest.feature, manifest.run_id);
           const repairRequest = currentRepairEvents[lastRequest] as { ts?: string; candidates?: unknown } | undefined;
           const delivered = (Array.isArray(repairRequest?.candidates) ? repairRequest.candidates as RepairCandidate[] : [])
-            .filter(c => resolveRepairResponsibility({ ...invocationResponsibility, target: { files: c.files, category: c.category, summary: c.summary } }).owner === phase);
+            .filter(c => resolveRepairResponsibility({ ...invocationResponsibility, target: c }).owner === phase);
           const declined = delivered.length > 0 && delivered.every(c => {
             const basis = repairDeclinesNow.get(c.item_fingerprint)?.basis;
             return basis?.run_id === manifest.run_id && basis.round.ts === repairRequest?.ts;
@@ -11071,35 +11412,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
                 pre_snapshot: preSnapshot.sha256,
                 post_snapshot: preSnapshot.sha256,
               });
-              const noopGuidance = [
-                '===== repair_not_converging（no-op）=====',
-                `feature=${manifest.feature} run_id=${manifest.run_id} phase=${phase}`,
-                `回退目标 ${toPhase} 执行后产品源码/需求 SSOT/根构建配置快照 pre/post 完全一致` +
-                  '（pre-existing dirty 合法，本 invocation 零改动）——本次修复为 no-op。',
-                '零改动只证明修复无效、不证明候选已解决：不再重跑下游、候选已计入 attempted',
-                '（累计 one-shot），本 run 诚实终止。只有新的机器证据形成新 candidate identity，',
-                '或合法 successor 按既有资格全量重验后才能继续（原总资源继续累计）；manual resume/人签不改写结论。',
-                ...declineDisputeLines(delivered, repairDeclinesNow),
-              ].join('\n');
-              goalEvents.emit({
-                type: 'phase_halt', phase, halt_reason: 'repair_not_converging',
-                detail: 'backtrack no-op（快照 pre/post 相等）',
-                halt_guidance: noopGuidance,
-                ...runDispositionFields(decide(
-                  { incident: 'repair_not_converging', phase: String(phase) },
-                  NO_AUTHORITY,
-                  { orchestration: 'goal', owner_kind: runtimeOwnerKind, can_prompt_now: runtimeOwnerKind === 'session', invocation: argv.resume ? 'resume' : 'fresh' },
-                )),
-              });
-              console.error(`\n===== repair_not_converging =====\n${noopGuidance}\n`);
-              outcomes.push({
-                phase, verdict: 'FAIL', halted: true, retries,
-                halt_reason: 'repair_not_converging', halt_guidance: noopGuidance,
-              });
-              halted = true;
-              phaseDone = true;
               pendingBacktrackCompletion = null;
-              break;
             } else if (!requiresCommittedClosure) {
               // 普通回退仍以 owner 执行完成为 completed；legacy fidelity 恢复必须等下面的
               // receipt validation + finalizePhaseClosure 真正提交 owner closure 后再发。
@@ -11136,6 +11449,45 @@ Goal runner — tool-agnostic multi-phase orchestrator
                 ),
               }, currentVisual?.downgradedScreens, currentVisual?.t8Findings)
             : { defects: [], unverified: [] };
+        let repairCandidatesUnwritable: string | null = null;
+        if (!dryRun && actionableResult.defects.length) {
+          if (!freshSummary || !summaryAbsPath) {
+            repairCandidatesUnwritable = '本轮 summary.json 路径不可用（缺失/解析失败），可信缺陷无处落盘';
+          } else {
+            const candidatePath = summaryAbsPath;
+            const before = sha256FileFull(candidatePath);
+            const bound = readReusableCheckResult({ projectRoot, frameworkRoot, feature: manifest.feature,
+              phase: String(phase), runId: manifest.run_id });
+            const originalEvidence = bound && summary?.closure_status !== 'closed'
+              ? loadPhaseEvidenceManifest(projectRoot, manifest.feature, String(phase)) : null;
+            const writeBackCandidates = (): boolean => {
+              try {
+                // The collector is part of this formal check. Preserve its original inputs and
+                // update only the open summary output that this writer actually changes.
+                const candidates = mergeRepairCandidatesIntoSummary({ summaryPath: candidatePath,
+                  candidates: actionableDefectsToCandidates(actionableResult.defects, String(phase), invocationResponsibility) });
+                const after = sha256FileFull(candidatePath);
+                if (before !== after && originalEvidence?.integrityOk) {
+                  const evidence = structuredClone(originalEvidence.manifest);
+                  const output = evidence.outputs.find(entry => path.resolve(projectRoot, entry.path) === path.resolve(candidatePath));
+                  if (output?.sha256 === before) {
+                    output.sha256 = after;
+                    evidence.aggregate_sha256 = recomputeManifestAggregate(evidence);
+                    writePhaseEvidenceManifest(projectRoot, evidence);
+                  }
+                }
+                summary = { ...summary!, repair_candidates: candidates };
+                repairCandidatesUnwritable = null;
+                return true;
+              } catch (error) {
+                repairCandidatesUnwritable = (error as Error).message;
+                return false;
+              }
+            };
+            if (!writeBackCandidates()) await awaitProbeRecovery(String(phase), 'storage_ready',
+              'repair_candidates_unwritable', async () => writeBackCandidates());
+          }
+        }
         // P0-5（plan 7c4f2e9b）：in-flow 探针结果 hoist——closure_kind 分类 fresh 路径
         // 复用本次控制流已取得的 receiptValidation，不重复 spawn（codex 五轮）。
         let inFlowReceiptValidation: ReturnType<typeof tryValidateReceipt> | null = null;
@@ -11148,19 +11500,15 @@ Goal runner — tool-agnostic multi-phase orchestrator
           && (problem.action === 'verify' || problem.action === 'wait'));
         // 治理/检查工具没有结论时不让产品作者猜修，也不把 raw PASS 改写成产品 FAIL。
         // 同时存在的产品缺陷仍交既有修复链；framework 缺口只暂缓 closure。
-        if (!repairIncomplete && !closureFinalizationError && summary?.verdict === 'PASS' && frameworkCompletionGaps.length
+        if (!repairIncomplete && !closureFinalizationError && frameworkCompletionGaps.length
           && !beforeClosureProblems.some(problem => problem.action === 'repair')) {
-          const detail = frameworkCompletionGaps.map(problem => `${problem.id}：${problem.detail}；责任方=framework`).join('\n');
-          goalEvents.emitPhaseVerdict({ phase, invoke_id: invokeId, verdict: summary.verdict, action: 'halt',
-            harness_exit: harnessExit, stale_summary: false });
-          goalEvents.emit({ type: 'phase_halt', phase, halt_reason: 'executor_waiting', run_disposition: 'WAITING',
-            run_wait_kind: 'external', halt_guidance: detail });
-          outcomes.push({ phase, verdict: summary.verdict, halted: true, retries, halt_reason: 'executor_waiting', halt_guidance: detail });
-          halted = true;
-          phaseDone = true;
+          const detail = [...frameworkCompletionGaps.map(problem => `${problem.id}：${problem.detail}；责任方=framework`),
+            '由 AgentMaison 维护者修复上述框架/检查工具缺口并取得有效输入或结论后接续；当前原始检查结果保持，无变化不重复运行同一 gate。'].join('\n');
+          deferVerification(detail);
           break;
         }
-        if (!dryRun && !repairIncomplete && !closureFinalizationError && !frameworkCompletionGaps.length && freshSummary && summary?.verdict === 'PASS') {
+        if (!dryRun && !repairIncomplete && !closureFinalizationError && !beforeClosureProblems.length && freshSummary && summary
+          && (skipExecutor || invocationCompleted(invoke))) {
           const harnessRoot = path.join(frameworkRoot, 'harness');
           const receiptValidation = (injectedValidateReceipt ?? tryValidateReceipt)(
             harnessRoot,
@@ -11276,14 +11624,19 @@ Goal runner — tool-agnostic multi-phase orchestrator
           }
         }
 
+        const currentDispositionInput = { projectRoot, frameworkRoot, workflow, feature: manifest.feature, chain: [String(phase)], runId: manifest.run_id,
+          executionScope: birthScope ? applyScopeRevisions(birthScope, loadAuthoritativeEvents(eventsPath)) : undefined,
+          currentResults: freshSummary && summary ? [{ phase: String(phase), summary, checks: readPhaseChecks(projectRoot, manifest.feature, String(phase), summary) }] : [] };
+        const currentCompletionDisposition = !dryRun && freshSummary ? resolveCompletionDisposition(currentDispositionInput) : null;
+        const phaseProblemsNow = currentCompletionDisposition ? phaseCompletionProblems(currentCompletionDisposition, [String(phase)]) : [];
         const resolved = resolvePhaseHarnessVerdict({
           dryRun,
           agentExitCode: invoke.exitCode,
           agentSkipped: invoke.skipped,
           harnessExitCode: harnessExit,
-          summaryBeforeMtime: reusableHarnessEnd ? null : summaryMtimeBefore,
+          summaryBeforeMtime: reusableHarnessEnd || boundCheck ? null : summaryMtimeBefore,
           summaryAfterMtime: summaryMtimeAfter,
-          summaryVerdict: summary?.verdict as HarnessVerdict | undefined,
+          summaryVerdict: currentCompletionDisposition && !phaseProblemsNow.length ? 'PASS' : summary?.verdict as HarnessVerdict | undefined,
           receiptRequired: true,
           closureStatus: summary?.closure_status,
           receiptStatus: summary?.receipt_status,
@@ -11297,13 +11650,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
           resolved.advance_blocked = false;
           resolved.advance_block_reason = undefined;
         }
-        const currentCompletionProblems = !dryRun && freshSummary
-          ? resolveCompletionDisposition({ projectRoot, frameworkRoot, feature: manifest.feature, chain: [String(phase)], runId: manifest.run_id })
-            .completionBlocking : [];
+        const currentCompletionProblems = currentCompletionDisposition?.completionBlocking ?? [];
         const currentCompletionRepairs = currentCompletionProblems.filter(problem => problem.phase === String(phase)
           && (problem.owner ?? problem.phase) === String(phase) && problem.action === 'repair');
         // 静态gate PASS不能替代当前真实输入；沿原FAIL重试阶梯，raw summary/checks保持原结论。
-        if (currentCompletionRepairs.length && resolved.verdict === 'PASS' && !resolved.stale_summary) {
+        if (phaseProblemsNow.some(problem => problem.action === 'repair') && resolved.verdict === 'PASS' && !resolved.stale_summary) {
           resolved.verdict = 'FAIL';
           resolved.advance_blocked = false;
           resolved.advance_block_reason = undefined;
@@ -11447,67 +11798,18 @@ Goal runner — tool-agnostic multi-phase orchestrator
         let summaryRepairCandidates: RepairCandidate[] = envBlocked
           ? []
           : (decisionSummary?.repair_candidates ?? []);
-        let repairCandidatesUnwritable: string | null = null;
-        if (!dryRun && !envBlocked && driverActionableDefects.length > 0) {
-          // fail-closed：候选写不回 summary（唯一真源）＝assess 看不见缺陷＝回退链断
-          // ——不得静默降级为 advance，也不得落回任何旧路由（旧路由已删除）。
-          // summary 路径缺失同样计入（codex 二轮：缺 summaryAbsPath 时不得绕过契约）。
-          if (!freshSummary || !summaryAbsPath) {
-            repairCandidatesUnwritable = '本轮 summary.json 路径不可用（缺失/解析失败），可信缺陷无处落盘';
-          } else {
-            const candidatePath = summaryAbsPath;
-            const writeBackCandidates = (): boolean => {
-              try {
-                summaryRepairCandidates = mergeRepairCandidatesIntoSummary({
-                  summaryPath: candidatePath,
-                  // 合法 deterministic/provider machine evidence 直接物化；primary 文本和
-                  // legacy confirmed_by 都没有否决或排除权。
-                  candidates: actionableDefectsToCandidates(driverActionableDefects, String(phase), invocationResponsibility),
-                });
-                repairCandidatesUnwritable = null;
-                return true;
-              } catch (e) {
-                repairCandidatesUnwritable = (e as Error).message;
-                return false;
-              }
-            };
-            // plan 4e6fb3b6 §5.1：只有写回本身失败才等存储探针（报告目录可写）——探针就绪只是提示，
-            // 恢复与否由同一个写回事务重做来确认。summary 路径缺失不是存储条件，等也不会出现，直接按现状停。
-            if (!writeBackCandidates()) {
-              await awaitProbeRecovery(String(phase), 'storage_ready', 'repair_candidates_unwritable', async () => writeBackCandidates());
-            }
-          }
-        }
         // review 第 11 轮 P1：可信缺陷优先回退；**只有 unverified** 时既不回退（不可信
         // 不能驱动改码）也不 advance（must_fix 在场不能装干净）——testing 内 retry 引导
         // 重采/补身份，耗尽 halt。
         const unverifiableOnly =
           !closureFinalizationError && phase === 'testing' && !envBlocked && !hasActionable && actionableResult.unverified.length > 0;
 
-        // adjudicated-repair-loop M1（review 修复）：累计收敛状态**在 assess/唯一 boundary
-        // 之前**一次性计算——halt 交由 guard 前置（boundary 发布一致的 halt verdict），不再
-        // 在 backtrack 分支内事后改判（消除两个裁决面）。
-        //   · signal@1 候选按其 item_fingerprint 是否 ∈ attempted（events 回放）过滤；
-        //   · legacy（非 signal@1）候选恒 eligible、不参与收敛；
-        //   · 仅当「存在 signal open 且无任何可回退候选（signal eligible 空 且 无 legacy）」
-        //     才停 repair_not_converging——有 legacy 时继续路由 legacy（不误伤 check-domain）。
-        const signalCandidatesAll = summaryRepairCandidates.filter((c) => c.identity_schema === 'signal@1');
-        const legacyCandidates = summaryRepairCandidates.filter((c) => c.identity_schema !== 'signal@1');
-        // attempted/fingerprint 均由 events 回放且 same-run 单调；manual resume 与 legacy
-        // confirmed_by 都不能清空、排除或重新赋予候选资格。
-        // plan 33784ed1 §4.4：拒修与反驳状态——已尝试记录、整轮重复与停机说明共用这一份（事件+账本回放）。
+        // Keep the original refusal evidence; current work and completed acceptance determine repair eligibility.
         const repairDeclines: ReturnType<typeof loadRepairDeclineState> = !dryRun && summaryRepairCandidates.length > 0
           ? loadRepairDeclineState(projectRoot, manifest.feature, manifest.run_id)
           : new Map();
-        const attemptedSignalNow = replayAttemptedSignalIdentities(
-          loadAuthoritativeEvents(eventsPath), declineAttemptExemption(repairDeclines, manifest.run_id));
-        const eligibleSignalNow = computeEligibleSignalIdentities(signalCandidatesAll, attemptedSignalNow);
-        const eligibleForBacktrack = [...eligibleSignalNow, ...legacyCandidates];
-        const signalOpen = signalCandidatesAll.length > 0;
-        const allRepairExhausted =
-          signalOpen &&
-          eligibleForBacktrack.filter((c) => c.identity_schema === 'signal@1').length === 0 &&
-          legacyCandidates.length === 0;
+        // Attempt history remains diagnostic; it does not revoke the current author's ability to repair.
+        const eligibleForBacktrack = summaryRepairCandidates;
 
         let driverGuardAction: DriverGuardAction = 'none';
 
@@ -11518,10 +11820,24 @@ Goal runner — tool-agnostic multi-phase orchestrator
         //（顺序见下方赋值处注释），这里只暂存事件体。plan 4e6fb3b6 返修起推进阻断停机
         //（closure_open / receipt_missing）也经此发出，故改名 postVerdictHaltEvent。
         let postVerdictHaltEvent: Record<string, unknown> | undefined;
-        const contentHasNoProgress = (): boolean => shouldHaltNoProgress({
-          failureKind, priorBlockerSignature, currentBlockerSignature, priorArtifactSnapshot, currentArtifactSnapshot,
-          relevantEvidenceKnown: failureKind === 'code_regression' && contentRelatedFiles.length > 0,
-        });
+        const currentEvaluation = currentCompletionDisposition ? currentCompletionEvaluation(currentDispositionInput, currentCompletionDisposition) : null;
+        const priorEvaluation = currentEvaluation ? [...completedEvaluations].reverse().find(item => item.acceptanceKey === currentEvaluation.acceptanceKey
+          && item.checkFamilies?.includes(String(phase))) : undefined;
+        // A native author return is a new opportunity only before this family's first formal consumption.
+        // A resumed gate/verification reuses the same return; no delivery ledger or call count is added.
+        const lastConsumption = gateHistory.map(event => event.type === 'harness_start' && event.phase === phase).lastIndexOf(true);
+        const returned = [...gateHistory.slice(lastConsumption + 1)].reverse().find(event => event.type === 'agent_invoke_end'
+          && event.phase && workUnitExecutionRole({ phase: event.phase }, (event as Record<string, unknown>).purpose as string | undefined) === 'author'
+          && invocationCompleted({ ...event, exitCode: event.exit_code }));
+        const returnedRequest = returned?.invoke_id ? executionRequestForInvoke(path.resolve(projectRoot, manifest.report_dir), returned.invoke_id) : null;
+        const deliveredInstruction = returnedRequest?.request.context.instruction
+          ?? (returned?.invoke_id === invokeId && !skipExecutor && !archivedSession ? phaseExecutionContext.instruction : undefined);
+        const deliveredProblems = priorEvaluation?.disposition.completionBlocking.filter(problem => (problem.source_phase ?? problem.phase) === String(phase)) ?? [];
+        const feedbackDelivered = !!deliveredInstruction && deliveredProblems.length > 0
+          && deliveredProblems.every(problem => deliveredInstruction.includes(problem.id));
+        const progressDecision = currentEvaluation ? completionProgressFromHistory(currentEvaluation, completedEvaluations, feedbackDelivered, !!returned && feedbackDelivered) : null;
+        if (currentEvaluation && progressDecision?.evaluation === currentEvaluation && !progressDecision.reused) completedEvaluations.push(currentEvaluation);
+        const contentHasNoProgress = (): boolean => progressDecision?.halt === true;
         const haltForNoProgress = (): void => {
           driverGuardAction = 'halt';
           // T6/P0-B：分流 halt 原因——基建(toolchain/capture/agent_timeout)求人修环境
@@ -11569,6 +11885,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
             ...currentCompletionRepairs.map(problem => `- ${problem.id}：${problem.detail}；责任方=${problem.owner ?? problem.phase}`),
             '下一步：按上述具体原因取得新事实或修复后，重新发起同一请求；已授权上游缺口须交责任阶段，不能无变化重跑或手改证据/需求。',
           ].join('\n');
+          const disputes = declineDisputeLines(summaryRepairCandidates, repairDeclines);
+          if (disputes.length) awaitConfirmGuidance = [...disputes, awaitConfirmGuidance].join('\n');
           // b3f7d9a2 三处可见契约：halt 文案与终态的承载处 = phase_halt 事件 / outcome /
           // console。本分支原先只写后两处——detach 停机后只读 events 的消费者（resume 资格
           // 派生、run_disposition 投影、`rebuildOutcomesFromEvents`）拿不到停止理由与指引。
@@ -11596,10 +11914,15 @@ Goal runner — tool-agnostic multi-phase orchestrator
         let pointerReconcile: ReturnType<typeof reconcilePointerInRun> | undefined;
         // plan 9c3d7e1a §5.5：设计 owner 阻断的分类与简报只算一次——无人值守派发与停机分支共用同一份。
         let designBrief: DesignRepairBrief | undefined;
-        const designBriefNow = (): DesignRepairBrief => (designBrief ??= designRepairBrief({
-          projectRoot, frameworkRoot, feature: manifest.feature, phase: String(phase),
-          blockers: designOwnerBlockers(decisionSummary?.blockers), runId: manifest.run_id,
-        }));
+        const pendingDesignAttempt = () => pendingDesignAttemptForPhase(String(phase));
+        const designBriefNow = (): DesignRepairBrief => {
+          if (designBrief) return designBrief;
+          const pending = pendingDesignAttempt();
+          return designBrief = pending?.handoff_context
+            ? readHandoffMaterial<{ brief: DesignRepairBrief }>(path.resolve(projectRoot, manifest.report_dir), pending.handoff_context).brief
+            : designRepairBrief({ projectRoot, frameworkRoot, feature: manifest.feature, phase: String(phase),
+              blockers: designOwnerBlockers(decisionSummary?.blockers), runId: manifest.run_id });
+        };
         let contentRepair: UnattendedDesignRepairResult | undefined;
         let contentRepairStale: string[] = [];
         const unattendedFullDelivery = resolveTaskAutomationPolicy({
@@ -11608,6 +11931,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
         }).automaticDesignRepair;
         /** 原需求的无人值守完整交付授权；同一有效输入的问题沿原预算只尝试一次。 */
         const contentRepairEligible = (): boolean => {
+          if (manifest.delivery_origin) return false;
+          if (pendingDesignAttempt()) return true;
           if (!unattendedFullDelivery) return false;
           const signature = currentDesignRepairSignature();
           const history = loadAuthoritativeEvents(eventsPath);
@@ -11617,9 +11942,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
           return ongoing || (paused as Record<string, unknown> | undefined)?.failed_step === 'no_progress_guard' || !designRepairAttempted([...ancestorBudgetEvents, ...history], signature);
         };
         const currentDesignRepairSignature = (): string => {
-          const history = loadAuthoritativeEvents(eventsPath);
-          const active = [...history].reverse().find(event => event.type === 'design_authority_repair' && event.phase === phase && (event as Record<string, unknown>).stage === 'attempted' && (event as Record<string, unknown>).handoff_context);
-          if (active && !history.slice(history.indexOf(active) + 1).some(event => event.type === 'design_authority_repair' && (event as Record<string, unknown>).signature === (active as Record<string, unknown>).signature && ['failed', 'published'].includes(String((event as Record<string, unknown>).stage)))) return String((active as Record<string, unknown>).signature);
+          const active = pendingDesignAttempt();
+          if (active) return String(active.signature);
           const fingerprint = designRepairInputFingerprint(projectRoot, manifest.feature);
           return designRepairSignature(manifest.feature, String(phase), designBriefNow().items, fingerprint);
         };
@@ -11641,34 +11965,6 @@ Goal runner — tool-agnostic multi-phase orchestrator
             `\n===== repair_candidates_unwritable =====\n${repairCandidatesUnwritable}\n`
             + '可信缺陷写不回 summary——assess 将看不到它、回退链断裂，停下求人。\n',
           );
-        }
-        // adjudicated-repair-loop M1（review 修复）：收敛判停前置（唯一裁决面）——
-        // signal@1 open 但全部已 attempted 且无 legacy 可回退 → guard halt；
-        // 有 legacy 时继续（backtrack 分支用 eligibleForBacktrack 注入，不误伤 check-domain）。
-        if (allRepairExhausted) {
-          driverGuardAction = 'halt';
-          haltReason = 'repair_not_converging';
-          const convergenceGuidance = [
-            '===== repair_not_converging（信号级候选已累计回退、仍未消除）=====',
-            `feature=${manifest.feature} run_id=${manifest.run_id} phase=${phase}`,
-            `以下 ${signalCandidatesAll.length} 个信号级候选身份已在本 run 中实际执行过自动修复（attempted），` +
-              '仍处于 open——累计 one-shot 收敛禁止再次自动回退（防 A/C 交替空转）：',
-            ...signalCandidatesAll.map((c) => `- ${c.item_fingerprint.slice(0, 12)}`),
-            '- 本 run 诚实终止：manual resume、confirmed_by 或其它人签不会清 attempted、不会重置 fingerprint、不会改变质量结论。',
-            '- 只有新的机器证据形成新 candidate identity，或已具备合法接续资格的 successor 按既有规则全量重验后才能继续；原总调用/活跃时长继续累计。',
-            ...declineDisputeLines(signalCandidatesAll, repairDeclines),
-          ].join('\n');
-          goalEvents.emit({
-            type: 'phase_halt', phase, halt_reason: 'repair_not_converging',
-            attempted_identities: signalCandidatesAll.map((c) => c.item_fingerprint.slice(0, 12)),
-            halt_guidance: convergenceGuidance,
-            ...runDispositionFields(decide(
-              { incident: 'repair_not_converging', phase: String(phase) },
-              NO_AUTHORITY,
-              { orchestration: 'goal', owner_kind: runtimeOwnerKind, can_prompt_now: runtimeOwnerKind === 'session', invocation: argv.resume ? 'resume' : 'fresh' },
-            )),
-          });
-          console.error(`\n===== repair_not_converging =====\n${convergenceGuidance}\n`);
         }
         if (!unverifiableOnly) previousUnverifiedRound = null;
         if (unverifiableOnly) {
@@ -11710,7 +12006,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
               + 'product_actionable/product_state 才驱动回修。',
             );
           }
-          if (repeatedWithoutProgress) {
+          if (repeatedWithoutProgress && contentHasNoProgress()) {
             driverGuardAction = 'halt';
             haltReason = 'unverifiable_must_fix';
             goalEvents.emit({
@@ -11847,12 +12143,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
             driverGuardAction = 'halt';
             haltReason = 'transient_api_error_exhausted';
           }
-        } else if (failureKind === 'no_progress_fuse' && verdict !== 'PASS') {
-          // t1（f7a3d9c2）：指纹级无进展熔断——check 层已比对轮次账本判"两有效轮指纹集
-          // 相等且仍有 loop-actionable 残差"（含 duplicate 重放，rev5）。重试只会复现同
-          // 指纹 → 首触即 halt 求人，不烧重试预算；残差清单在 blocker details。
-          driverGuardAction = 'halt';
-          haltReason = 'no_progress_fuse';
+        } else if (failureKind === 'no_progress_fuse' && verdict !== 'PASS' && contentHasNoProgress()) {
+          // Keep the native diagnostic; only the common completed evaluation decides no progress.
+          haltForNoProgress();
         } else if (
           // ==============================================================
           // P0-4(b)（plan 7c4f2e9b）：blocker actionability 聚合层（决策梯③层唯一插入位，
@@ -11894,15 +12187,14 @@ Goal runner — tool-agnostic multi-phase orchestrator
         } else if (
           // plan 9c3d7e1a §5.5：无人值守 B1 由框架派设计修复自动接手（计一轮内容重试，预算用尽不派发）。
           // 已发布、调和与探针都过，且冻结绑定仍有效 → 同一 run 原地重评；其余结果落到下面的分支，停机说明附结果。
-          verdict !== 'PASS' &&
-          !resolved.stale_summary &&
           !dryRun &&
-          designOwnerBlockers(decisionSummary?.blockers).length > 0 &&
-          retries < executionBudget.max_retries_per_phase &&
+          (pendingDesignAttempt() || verdict !== 'PASS' && !resolved.stale_summary
+            && designOwnerBlockers(decisionSummary?.blockers).length > 0 && retries < executionBudget.max_retries_per_phase) &&
           contentRepairEligible() &&
           (contentRepair = await runUnattendedDesignRepair({ forceResume: Boolean(argv['force-resume']),
             projectRoot, frameworkRoot, feature: manifest.feature, phase: String(phase), runId: manifest.run_id,
-            requirement: manifest.requirement,
+            requirement: pendingDesignAttempt() && pendingDesignAttempt()!.preauthorization !== `${manifest.report_dir}/manifest.json#requirement`
+              ? undefined : manifest.requirement,
             reportDir: manifest.report_dir, brief: designBriefNow(),
             signature: currentDesignRepairSignature(),
             heldFeatureLock: featureLock,
@@ -12038,33 +12330,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
               },
             )),
           };
-        } else if (!factsAdmissionError && failureKind !== 'code_regression' && contentHasNoProgress()) {
+        } else if (contentHasNoProgress()) {
           haltForNoProgress();
-        } else if (
-          // E4：CUMULATIVE（非仅连续）家族重复熔断——上面 shouldHaltNoProgress 只比"紧邻上一次"，
-          // 会被 FAIL(真 blocker 串)↔PASS(合成 agent_timeout@phase signature) 边界打断
-          // （chrys 案实证：signature 因 verdict 摆动而不同，guard 被绕过）。这里改从 events.jsonl
-          // 回放**累计**同一 signature 在 CUMULATIVE_HALT_FAMILY 家族内出现次数，与紧邻性无关。
-          CUMULATIVE_HALT_FAMILY.has(failureKind) &&
-          currentBlockerSignature &&
-          countRepeatedSignatureInFamily(
-            loadAuthoritativeEvents(eventsPath),
-            phase,
-            currentBlockerSignature,
-            CUMULATIVE_HALT_FAMILY,
-          ) +
-            1 >=
-            CUMULATIVE_HALT_THRESHOLD
-        ) {
-          driverGuardAction = 'halt';
-          // 同上（codex 七轮 P0）：原按 failureKind 模板生成 id，值域随 FailureKind
-          // 膨胀。改为**稳定 literal**——但不能压成一个：CUMULATIVE_HALT_FAMILY 同时含
-          // 当前家族只包含 toolchain；`no_progress_cumulative_human` 仅保留为历史事件词汇，
-          // 新轮次不会再由质量确认缺口写入。
-          haltReason =
-            failureKind === 'toolchain'
-              ? 'no_progress_cumulative_external'
-              : 'no_progress_cumulative_human';
         } else if (
           // P0-4（plan d9b4f7e2）：连续超时熔断——升档（第 2 次后 ×1.5）仍救不回的第
           // CONSECUTIVE_TIMEOUT_HALT_AT 次连续超时 → halt 求人。签名无关（07-13 案 FAIL
@@ -12335,29 +12602,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
           retriesUsed: retries,
           maxRetriesPerPhase: executionBudget.max_retries_per_phase,
           backtracksUsed,
-          repeatedCount: currentBlockerSignature
-            ? countRepeatedSignatureInFamily(
-                loadAuthoritativeEvents(eventsPath),
-                phase,
-                currentBlockerSignature,
-                CUMULATIVE_HALT_FAMILY,
-              ) + 1
-            : 0,
-          // M1（plan e2b7c4a9 t1.3）：整轮候选集合指纹 + 信号级收敛状态进 reconcile
-          // observation——assess 消费入 stop 理由（见 assess.ts stop.reason）。
-          repeatedRoundFingerprint: roundFingerprintOfCandidates(summaryRepairCandidates),
-          repairConvergence: (() => {
-            const signalCands = summaryRepairCandidates.filter((c) => c.identity_schema === 'signal@1');
-            if (signalCands.length === 0) return undefined;
-            const attemptedNow = replayAttemptedSignalIdentities(
-              loadAuthoritativeEvents(eventsPath), declineAttemptExemption(repairDeclines, manifest.run_id));
-            const eligibleNow = signalCands.filter((c) => !attemptedNow.has(c.item_fingerprint));
-            return {
-              eligibleEmpty: eligibleNow.length === 0,
-              openSignalCount: signalCands.length,
-              attemptedSignalCount: signalCands.length - eligibleNow.length,
-            };
-          })(),
+          // Old phase/signature/one-shot counters are not another quality decision.
+          // The common completed evaluation above alone supplies fused/fuseReason below.
           residualFingerprints: currentBlockerSignature ? [currentBlockerSignature] : [],
           // 任何已执行的 earlier phase 都可作为 gap owner 被原事务失效；候选 resolver
           // 仍决定缺陷的最小责任阶段，但不能把 missing/stale/legacy 等非候选 gap 排除在外。
@@ -12383,6 +12629,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         const runAssess = (): ReturnType<typeof assessFeature> => assessFeature({
           projectRoot,
           frameworkRoot,
+          workflow,
           feature: manifest.feature,
           goalEnd: manifest.end_phase,
           minimumAssurance: manifest.minimum_assurance,
@@ -12407,7 +12654,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
           const proposalChecks = (report.checks ?? []).filter(check => check.scope_revision_input);
           const proposals = proposalChecks.map(check => check.scope_revision_input!);
           if (!proposals.length && summaryRepairCandidates.length) {
-            const repairRevision = scopeRevisionInputFromRepairCandidates(summaryRepairCandidates, { projectRoot, frameworkRoot, feature: manifest.feature, runId: manifest.run_id });
+            const repairRevision = scopeRevisionInputFromRepairCandidates(summaryRepairCandidates, { projectRoot, frameworkRoot, feature: manifest.feature, runId: manifest.run_id,
+              currentDisposition: currentCompletionDisposition ?? undefined });
             if (repairRevision) proposals.push(repairRevision.input);
           }
           pendingScopeRevisionCheckId = summaryRepairCandidates.find(candidate => proposals.some(proposal => proposal.facts.some(fact => fact.id.endsWith(`:${candidate.id}`))))?.id ?? proposalChecks[0]?.id;
@@ -12434,7 +12682,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
             ...outcomes.filter(outcome => outcome.verdict === 'PASS' && !outcome.halted && !outcome.advance_blocked).map(outcome => String(outcome.phase)),
             ...(verdict === 'PASS' && !resolved.advance_blocked ? [String(phase)] : []),
           ]);
-          const revisionOutcome = resolveScopeRevisionProposal({
+          let revisionOutcome: ReturnType<typeof resolveScopeRevisionProposal> = null;
+          try { revisionOutcome = resolveScopeRevisionProposal({
             projectRoot,
             frameworkRoot,
             feature: manifest.feature,
@@ -12450,7 +12699,15 @@ Goal runner — tool-agnostic multi-phase orchestrator
               checks: readPhaseChecks(projectRoot, manifest.feature, String(phase), decisionSummary) }] : undefined,
             currentRunId: manifest.run_id,
             requirement: manifest.requirement,
-          });
+          }); } catch (error) {
+            if (!(error instanceof Error) || !error.message.startsWith('[execution-scope]')) throw error;
+            driverGuardAction = 'halt';
+            haltReason = 'backtrack_target_absent';
+            awaitConfirmGuidance = `当前范围修订未获准：${error.message}\n保留原始失败和候选；不写 scope_revised、不启动范围外职责。先在原已授权范围修正提案或取得对应的新请求授权，再接续。`;
+            postVerdictHaltEvent = { type: 'phase_halt', phase, halt_reason: haltReason, halt_guidance: awaitConfirmGuidance,
+              ...runDispositionFields(decide({ incident: haltReason, phase: String(phase), detail: error.message }, NO_AUTHORITY,
+                { orchestration: 'goal', owner_kind: runtimeOwnerKind, can_prompt_now: runtimeOwnerKind === 'session', invocation: argv.resume ? 'resume' : 'fresh' })) };
+          }
           if (revisionOutcome) {
             pendingScopeRevisionInput = revisionOutcome.input;
             pendingScopeRevision = revisionOutcome.scope;
@@ -12467,7 +12724,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // A current producer's unchanged inputs do not preclude a verified, executable owner handoff.
         const executableOwnerRecovery = eligibleForBacktrack.some(candidate => {
           const responsibility = resolveRepairResponsibility({ ...invocationResponsibility, currentPhase: String(phase),
-            target: { files: candidate.files, category: candidate.category, summary: candidate.summary } });
+            currentDisposition: currentCompletionDisposition ?? invocationResponsibility.currentDisposition,
+            target: candidate });
           const owner = responsibility.owner;
           if (!owner || owner === String(phase) || responsibility.action === 'unavailable') return false;
           return assessment.recommendation.action === 'revise_scope' && pendingScopeRevision?.phase_chain.includes(owner)
@@ -12490,7 +12748,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // 这里做**一次**确定性关环（不启 agent、不消耗内容重试预算），成功后**重新 assess**
         // ——旧 assessment 仍是 complete_closure，直接复用会再 halt。不循环：第二次仍是
         // 同一 gap 就交给下面的既有 halt 路径。
-        if (!dryRun && assessment.recommendation.action === 'complete_closure') {
+        if (!dryRun && driverGuardAction !== 'halt' && assessment.recommendation.action === 'complete_closure') {
           const closure = tryCloseUpstreamPhase({
             projectRoot,
             frameworkRoot,
@@ -12553,7 +12811,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
           assessment,
           observation: reconcileObservation,
           currentPhase: String(phase),
-          chain,
+          // A temporary verification queue is not the current authorized obligation order.
+          chain: birthScope ? executionCompletionPhases(applyScopeRevisions(birthScope, loadAuthoritativeEvents(eventsPath)))
+            : terminalEventCtx?.chain.map(String) ?? chain,
           driverGuardAction,
           verdictEvent: {
             phase,
@@ -12879,6 +13139,24 @@ Goal runner — tool-agnostic multi-phase orchestrator
           const targetPhaseBt = assessment?.recommendation?.phase ?? null;
           const authorizedTargets = birthScope ? authorizedScopePhases(birthScope, workflow) : chain;
           const targetAuthorized = !!targetPhaseBt && authorizedTargets.includes(targetPhaseBt);
+          const targetDisposition = targetAuthorized ? resolveCompletionDisposition({ projectRoot, frameworkRoot,
+            feature: manifest.feature, chain: [targetPhaseBt!], workflow, runId: manifest.run_id,
+            executionScope: birthScope ? applyScopeRevisions(birthScope, loadAuthoritativeEvents(eventsPath)) : undefined }) : null;
+          const targetProblems = targetDisposition ? phaseCompletionProblems(targetDisposition, [targetPhaseBt!])
+            .filter(problem => (problem.owner ?? problem.phase) === targetPhaseBt) : [];
+          const verificationInvocation = targetAuthorized ? verificationOnlyInvocation(targetPhaseBt!, targetProblems) : undefined;
+          if (verificationInvocation) {
+            // This is unfinished verification of an existing author result, not a product revision.
+            // Reuse the original invocation; the terminal view still checks every scope obligation.
+            resumePostAgentPhases.add(targetPhaseBt!);
+            resumePostAgentAttemptIds[targetPhaseBt!] = verificationInvocation;
+            backtrackRepairCandidates = [];
+            chain = [targetPhaseBt as FeaturePhase];
+            phaseIdx = -1;
+            phaseDone = true;
+            if (featureLock) touchLock(featureLock.path, featureLock.ownerId);
+            continue;
+          }
           let targetIdxBt = targetAuthorized ? chain.indexOf(targetPhaseBt!) : -1;
           const upstreamGap = assessment.gaps.find((gap) => gap.phase === targetPhaseBt) ?? null;
           const gapDriven = summaryRepairCandidates.length === 0 && upstreamGap !== null;
@@ -12924,7 +13202,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           // 由 guard 前置 halt（唯一裁决面，boundary 发布一致 verdict），本分支只负责：
           //   · 注入过滤：signal@1 只回退 eligible 身份，legacy 原样保留（不误伤）；
           //   · 仍保留既有熔断（target 缺席 / 预算 / 整轮指纹重复）。
-          if (!targetAuthorized || roundRepeated) {
+          if (!targetAuthorized || roundRepeated && contentHasNoProgress()) {
             action = 'halt';
             haltReason = !targetAuthorized ? 'backtrack_target_absent' : 'backtrack_fingerprint_repeat';
             const disputeLines = declineDisputeLines(summaryRepairCandidates, repairDeclines);
@@ -13022,11 +13300,15 @@ Goal runner — tool-agnostic multi-phase orchestrator
 
         if (appliedScopeRevision) options.onScopeRevision?.('applied');
         if (action === 'retry') {
+          if (!summary && !boundCheck && harnessExit !== 0 && !invoke.timed_out
+            && failureKind === 'deterministic_gate_or_artifact_missing' && (skipExecutor || invocationCompleted(invoke))) {
+            deferVerification(`当前检查未产出可用结论：${priorHarnessFailure ?? `harness exit=${harnessExit}`}。保留已完成作者工作及未完项；恢复检查工具或真实输入后接续，不原样重复同一 gate。`);
+            continue;
+          }
           if (currentCompletionRepairs.length) priorHarnessFailure = [
             '静态门禁结果保留；补齐当前未闭合的原始输入后由同一门禁复验，不据此修改产品结论。',
             ...currentCompletionRepairs.map(problem => `${problem.id}：${problem.detail}；责任方=${problem.owner ?? problem.phase}`),
           ].join('\n');
-          priorBlockerSignature = currentBlockerSignature || priorBlockerSignature;
           priorArtifactSnapshot =
             Object.keys(currentArtifactSnapshot).length > 0
               ? currentArtifactSnapshot
@@ -13153,12 +13435,17 @@ Goal runner — tool-agnostic multi-phase orchestrator
       return 0;
     }
 
-    // Modern completion and dispatch consume one view; legacy runs retain outcome replay.
+    // Current bound results decide completion; outcomes remain the historical execution report.
     const latestOutcome = (phase: string) => [...outcomes].reverse().find(outcome => String(outcome.phase) === phase);
-    const terminalScope = !dryRun && birthScope ? resolveCurrentScopeView({ projectRoot, frameworkRoot, feature: manifest.feature, workflow,
-      previous: applyScopeRevisions(birthScope, loadAuthoritativeEvents(eventsPath)), currentRunId: manifest.run_id }) : undefined;
+    const terminalScope = !dryRun && birthScope ? applyScopeRevisions(birthScope, loadAuthoritativeEvents(eventsPath)) : undefined;
     const terminalChain = terminalScope ? executionCompletionPhases(terminalScope) : terminalEventCtx?.chain.map(String) ?? chain.map(String);
-    const reachedEnd = !halted && (terminalScope ? terminalScope.phase_chain.length === 0 : (terminalChain.length > 0 && terminalChain.every(phase => {
+    const terminalDisposition = !dryRun ? resolveCompletionDisposition({ projectRoot, frameworkRoot, feature: manifest.feature,
+      chain: terminalChain, executionScope: terminalScope, workflow, runId: manifest.run_id }) : null;
+    const currentCompletionSatisfied = !!terminalDisposition
+      && (terminalChain.length > 0 ? !phaseCompletionProblems(terminalDisposition, terminalChain).length
+        : !!terminalScope && terminalDisposition.completionEligible)
+      && terminalChain.every(satisfiesRequestedAssurance);
+    const reachedEnd = !halted && (terminalDisposition ? currentCompletionSatisfied : (terminalChain.length > 0 && terminalChain.every(phase => {
       const latest = latestOutcome(String(phase));
       return latest?.verdict === 'PASS' && !latest.advance_blocked;
     })));
@@ -13173,27 +13460,21 @@ Goal runner — tool-agnostic multi-phase orchestrator
       // spec-only run 只按实际切片分类。feature completion
       // 生成（verify-feature-completion 调用侧）继续用完整链，语义不同：那是「feature
       // 是否整体完成」，这里是「本 run 跑过的部分是什么终态」。
-      const cls = classifyCleanPassIssues(
-        collectCleanPassIssues({
+      const terminalIssues = collectCleanPassIssues({
           projectRoot,
           feature: manifest.feature,
           chain: terminalChain,
+          executionScope: terminalScope,
+          workflow,
           runId: manifest.run_id,
           currentRequirementSha: computeRunRequirementSha(projectRoot, manifest.feature, manifest.run_id, featuresDir),
           frameworkRoot,
-        }),
-      );
+        });
+      const cls = classifyCleanPassIssues(terminalIssues);
       pendingHumanReview = cls.needsHuman;
       blockingFix = cls.needsFix;
       if (process.env.MAISON_TEST_PROBE === '1') {
-        console.error(`[probe-cls] ${JSON.stringify(collectCleanPassIssues({
-          projectRoot,
-          feature: manifest.feature,
-          chain: terminalChain,
-          runId: manifest.run_id,
-          currentRequirementSha: computeRunRequirementSha(projectRoot, manifest.feature, manifest.run_id, featuresDir),
-          frameworkRoot,
-        }))}`);
+        console.error(`[probe-cls] ${JSON.stringify(terminalIssues)}`);
       }
     }
     // 账本 must_review 不再控制 run 终态（codex 收口刀：账本仅留痕与报告展示——跨 run
@@ -13211,7 +13492,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
     // 密钥/仅弱 ack 时曾封顶人工等待态。按裁定"完成态不再因认证状态
     // 封顶"整体删除——防伪造主防线是终点验收不信 agent 自报（视觉裁判去自报化 +
     // pixel_1to1 机器证据），认证状态彻底退出执行控制面与完成态语义。
-    let status = rawStatus as ReturnType<typeof resolveGoalRunStatus>;
+    let status = (!dryRun && reachedEnd && currentCompletionSatisfied ? 'CHAIN_SLICE_COMPLETED' : rawStatus) as ReturnType<typeof resolveGoalRunStatus>;
     // P0-4（rev8 偏离① 定稿口径）：硬上界只覆盖 agent/harness/backoff 三路径；run_end 后
     // 收尾为 **pre-check 拦截的 best-effort**——同步 fs 工作无进程内可执行 bound（同步
     // 挂起时 timer/watchdog 均不运行），硬中断=进程自杀会写坏 receipt。本 pre-check 挡
@@ -13255,6 +13536,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         const { eligible, issues } = shouldGenerateFeatureCompletion(completionScope, {
           projectRoot,
           feature: manifest.feature,
+          workflow,
           // Recomputed here, not reused from startup: a revision may have changed the chain since.
           chain: completionChain,
           // D2: evidence this very run just closed is unsealed by design; historical runs unchanged.
@@ -13269,6 +13551,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           const { originalAbs } = generateFeatureCompletion({
             projectRoot,
             feature: manifest.feature,
+            workflow,
             // Same chain the clean-pass check above used; the startup value predates any revision.
             chain: completionChain,
             workflowTrack: goalTrack,

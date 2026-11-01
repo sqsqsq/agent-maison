@@ -26,7 +26,7 @@ import { extractTables, getSectionContent, extractDeclaredVerdict } from './mark
 import type { CorrectionCategory } from './correction-routing';
 import type { ExecutionScopeInput } from './execution-scope';
 import type { GoalRunEvent } from './goal-runner-phase';
-import { isBlockingCheck, resultBasisOwner } from './check-disposition';
+import { isBlockingCheck, resultBasisOwner, type CurrentDisposition } from './check-disposition';
 import type { FidelityIntentSsot } from './fidelity-shared';
 import { resolveRepairResponsibility, repairResponsibilityContext, repairOwnerArtifactTargets, repairOwnerSourceTargets, type RepairResponsibilityContext, type RepairResponsibility } from './repair-responsibility';
 
@@ -165,28 +165,17 @@ export function parseIssueVerificationBlock(text: string): {
   const m = ISSUE_FENCE_RE.exec(text);
   if (!m) return { ok: false, entries: [], reason: `缺 ${ISSUE_VERIFICATION_FENCE} fenced 块` };
   const entries: IssueVerificationEntry[] = [];
-  const lines = m[1].split(/\r?\n/);
-  let i = 0;
-  while (i < lines.length) {
-    const issueMatch = /^\s*-\s*issue:\s*(.+?)\s*$/.exec(lines[i]);
-    if (!issueMatch) { i++; continue; }
-    i++;
-    const verdictMatch = i < lines.length ? /^\s*verdict:\s*(\S+)\s*$/.exec(lines[i]) : null;
-    if (!verdictMatch) continue;
-    const raw = verdictMatch[1].toLowerCase();
-    i++;
-    // evidence 为可选后继行（证据新鲜度绑定）——不在则本条按旧格式处理（消费侧不采信）
-    let evidence: string | undefined;
-    let repairOwner: string | undefined;
-    while (i < lines.length && !/^\s*-\s*issue:/.test(lines[i])) {
-      const evMatch = /^\s*evidence:\s*(.+?)\s*$/.exec(lines[i]);
-      const ownerMatch = /^\s*repair_owner:\s*([a-z][a-z0-9_-]*)\s*$/.exec(lines[i]);
-      if (evMatch) evidence = evMatch[1].trim();
-      if (ownerMatch) repairOwner = ownerMatch[1];
-      i++;
-    }
+  let rows: unknown;
+  try { rows = YAML.parse(m[1]); }
+  catch (error) { return { ok: false, entries: [], reason: `${ISSUE_VERIFICATION_FENCE} YAML不可解析：${(error as Error).message}` }; }
+  if (!Array.isArray(rows)) return { ok: false, entries: [], reason: `${ISSUE_VERIFICATION_FENCE} 必须是原逐项数组` };
+  for (const row of rows) {
+    if (!row || typeof row !== 'object' || typeof row.issue !== 'string' || !row.issue.trim() || typeof row.verdict !== 'string') continue;
+    const raw = row.verdict.toLowerCase();
+    const evidence = typeof row.evidence === 'string' && row.evidence.trim() ? row.evidence.trim() : undefined;
+    const repairOwner = typeof row.repair_owner === 'string' && /^[a-z][a-z0-9_-]*$/.test(row.repair_owner) ? row.repair_owner : undefined;
     entries.push({
-      issue: issueMatch[1].trim(),
+      issue: row.issue.trim(),
       verdict: raw === 'confirmed' || raw === 'refuted' ? raw : 'unclear',
       ...(evidence ? { evidence } : {}),
       ...(repairOwner ? { repair_owner: repairOwner } : {}),
@@ -195,6 +184,21 @@ export function parseIssueVerificationBlock(text: string): {
   }
   if (entries.length === 0) return { ok: false, entries: [], reason: '逐条验证块无合法条目' };
   return { ok: true, entries, reason: `${entries.length} 条逐条验证` };
+}
+
+/** This comparison measures text preservation; only independent current evidence judges the resulting test strength. */
+export function testStrengthVerification(input: {
+  check: { id: string; details?: string; affected_files?: readonly string[] };
+  verifierReportText: string | null;
+  verifierSubjectCurrent: boolean;
+}): IssueVerificationEntry | null {
+  if (!input.verifierSubjectCurrent || input.check.id !== 'coding_existing_test_preserved' || !input.check.affected_files?.length || !input.check.details?.trim()) return null;
+  const parsed = parseIssueVerificationBlock(input.verifierReportText ?? '');
+  const entries = parsed.entries.filter(entry => entry.issue === input.check.id);
+  if (!parsed.ok || entries.length !== 1 || entries[0].invalid_reason || !entries[0].evidence) return null;
+  const normalized = (text: string): string => text.replace(/\\/g, '/').replace(/\s+/g, '').toLowerCase();
+  const evidence = normalized(entries[0].evidence);
+  return evidence.includes(normalized(input.check.details)) && input.check.affected_files.every(file => evidence.includes(normalized(file))) ? entries[0] : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -493,7 +497,7 @@ export function phaseIssuesForVerifierSubject(projectRoot: string, feature: stri
   if (!phaseIssues || phase === 'review') return phaseIssues;
   if (!subjectId) return null;
   const { featurePhaseReportsDir } = require('../../config') as typeof import('../../config');
-  const { readVerifierMaterialOrNull, collectCurrentAcceptanceEvidence } = require('./verifier-material') as typeof import('./verifier-material');
+  const { readVerifierMaterialOrNull, collectCurrentAcceptanceEvidence, verifierMaterialFileMatchesCurrent } = require('./verifier-material') as typeof import('./verifier-material');
   const material = readVerifierMaterialOrNull(featurePhaseReportsDir(projectRoot, feature, phase, frameworkRoot), subjectId);
   if (!material) return null;
   if (runId && designRepairDeclines(projectRoot, feature, runId).length) {
@@ -502,17 +506,12 @@ export function phaseIssuesForVerifierSubject(projectRoot: string, feature: stri
     if (![true, false].some(requirementInContext => sha256Hex(renderGoalBrief(brief, { requirementInContext }).replace(/\r\n/g, '\n')) === material.goal_brief_sha256)) return null;
   }
   // A verifier report is this subject's output; hashing it as its own input creates a cycle.
-  const manifestEvidence = semantic ? require('./phase-evidence-manifest') as typeof import('./phase-evidence-manifest') : undefined;
   const digestReaders = semantic ? currentEvidence?.authorityReaders ?? (require('./identity-neutral-digest') as typeof import('./identity-neutral-digest')).createIdentityNeutralDigestReaders() : undefined;
   const acceptanceEvidence = semantic ? (currentEvidence?.acceptanceEvidence ?? collectCurrentAcceptanceEvidence({ projectRoot, feature, phase, frameworkRoot, subjectId, phaseIssues, runId, authorityReaders: digestReaders }))
     .filter(entry => !entry.label.startsWith('(')) : [];
   for (const file of [...(semantic ? [] : [phaseIssues.reportPath]), ...phaseIssues.evidenceFiles.map(entry => entry.label), ...acceptanceEvidence.map(entry => entry.label)]) {
     try {
-      const recorded = material.files.find(entry => entry.path === file);
-      if (!recorded) return null;
-      if (recorded.sha256 === createHash('sha256').update(fs.readFileSync(path.resolve(projectRoot, file))).digest('hex')) continue;
-      if (!manifestEvidence?.evidenceEntryMatchesCurrentFile(projectRoot, { ...recorded, role: 'input', exists: true,
-        identity_neutral: manifestEvidence.IDENTITY_NEUTRAL_EVIDENCE }, feature, digestReaders)) return null;
+      if (!verifierMaterialFileMatchesCurrent({ projectRoot, feature, material, file, authorityReaders: digestReaders })) return null;
     } catch { return null; }
   }
   return phaseIssues;
@@ -1284,6 +1283,27 @@ export interface RepairDeclineState {
   first_declined_round: RepairDeclineRound | null;
 }
 
+/** A refusal is a public argument; only the current independent response may confirm, refute or leave it unknown. */
+export function verifiedRepairDeclineResponses(input: {
+  verifierReportText: string;
+  verifierSubjectCurrent: boolean;
+  declines: ReadonlyMap<string, RepairDeclineState>;
+}): IssueVerificationEntry[] {
+  if (!input.verifierSubjectCurrent) return [];
+  const parsed = parseIssueVerificationBlock(input.verifierReportText);
+  if (!parsed.ok) return [];
+  const out: IssueVerificationEntry[] = [];
+  for (const [fingerprint, state] of input.declines) {
+    if (!state.basis) continue;
+    const matches = parsed.entries.filter(entry => entry.issue === state.id || entry.issue === REPAIR_DECLINE_GATE_PREFIX + fingerprint);
+    if (matches.length !== 1) continue;
+    const entry = matches[0];
+    if (entry.issue === state.id && [...input.declines.values()].filter(other => other.id === state.id).length !== 1) continue;
+    if (!entry.invalid_reason && entry.evidence?.includes(state.basis.text)) out.push(entry);
+  }
+  return out;
+}
+
 export interface DeclineLedgerLine { run_id: string; gate_id: string; decision: string; ts: string }
 
 /** 来源核验：返回依据原文；不是拒修或引文不逐字 → null。 */
@@ -1297,28 +1317,28 @@ export function verifiedDeclineBasis(decision: string, requirementText: string, 
   return verifyFact?.(m[1]) ? m[1] : null;
 }
 
-/**
- * 候选在一个回修轮里的责任阶段由共享 resolver 决定；该轮阶段只限定实际派发。
- */
-function roundOwnerPhase(category: unknown, roundPhases: readonly string[], files: unknown, context: RepairResponsibilityContext = {}): string | null {
+/** 旧候选的 producer 类别投影；实际写权仍由当前单元的共享 resolver 决定。 */
+function roundOwnerPhase(category: unknown, files: unknown, context: RepairResponsibilityContext = {}): string | null {
   if (category !== 'spec' && category !== 'plan' && category !== 'coding' && category !== 'verification') return null;
-  const workflow = context.workflow ?? { schema_version: '1.0', name: 'repair-round', artifacts: [...new Set(roundPhases)].map(id => ({ id, scope: 'feature' as const, requires: [] })) };
+  const { loadWorkflowSpec } = require('../../workflow-loader') as typeof import('../../workflow-loader');
+  const workflow = context.workflow ?? loadWorkflowSpec(context.frameworkRoot ?? path.resolve(__dirname, '../../..'), 'obligation-driven');
   const result = resolveRepairResponsibility({ ...context, workflow, target: { category, files: Array.isArray(files) && files.every(file => typeof file === 'string') ? files : undefined } });
-  return result.owner && roundPhases.includes(result.owner) ? result.owner : null;
+  return result.owner;
 }
 
 export function resolveRepairDeclineState(input: {
   responsibility?: RepairResponsibilityContext;
   /** 交付周期内的 run（祖先在前与否不限，按回修事件 ts 排序） */
   runs: ReadonlyArray<{ run_id: string; events: ReadonlyArray<{ ts?: string; type?: string; to_phase?: unknown; invalidated_phases?: unknown; candidates?: unknown }> }>;
-  /** 阶段 → 该阶段账本行（loadHeadlessLedger 的 entries）；每个候选只读它责任阶段的那份 */
+  /** 方法工作区 → 原账本行；同一单元作者的论据不由工作区名称裁掉。 */
   ledgers: Readonly<Record<string, ReadonlyArray<DeclineLedgerLine>>>;
   requirementText: string;
-  verifyFactDecline?: (input: { owner: string; fingerprint: string; basis: string; runId: string }) => boolean;
+  verifyFactDecline?: (input: { owner: string; ledgerOwner?: string; fingerprint: string; basis: string; runId: string }) => boolean;
 }): Map<string, RepairDeclineState> {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { resolveEffectiveRunEnd } = require('./goal-runner-phase') as typeof import('./goal-runner-phase');
   const rounds: Array<RepairDeclineRound & { end: number; candidates: Array<{ fp: string; id: string; summary: string; owner: string; files?: string[]; source_phase?: string }> }> = [];
+  const ledgerLines = Object.entries(input.ledgers).flatMap(([ledgerOwner, entries]) => entries.map(line => ({ ledgerOwner, line })));
   const canonicalFingerprints = new Map<string, string>();
   for (const run of input.runs) {
     const bts = run.events.filter(e => e.type === 'phase_backtrack_requested' && typeof e.ts === 'string');
@@ -1328,9 +1348,7 @@ export function resolveRepairDeclineState(input: {
     const effectiveEnd = resolveEffectiveRunEnd(run.events as GoalRunEvent[]);
     const runEnded = typeof effectiveEnd?.ts === 'string' ? Date.parse(effectiveEnd.ts) : Infinity;
     bts.forEach((e, i) => {
-      const phases = [e.to_phase, ...(Array.isArray(e.invalidated_phases) ? e.invalidated_phases : [])]
-        .filter((p): p is string => typeof p === 'string');
-      // 本轮下发只认共享 resolver 的负责方及其原账本。
+      // 原候选保留 producer 身份；拒修材料仍按真实 run、窗口和指纹绑定。
       const candidates = (Array.isArray(e.candidates) ? e.candidates : [])
         .map(c => c as Record<string, unknown>)
         .filter(c => c && typeof c.item_fingerprint === 'string')
@@ -1342,7 +1360,7 @@ export function resolveRepairDeclineState(input: {
             && itemFingerprintOf(c.id, c.files, c.summary) === fp) {
             canonicalFingerprints.set(fp, itemFingerprintOf(c.id, normalizeReviewFiles(c.files), c.summary));
           }
-          return { fp, id: String(c.id ?? ''), summary: String(c.summary ?? ''), owner: roundOwnerPhase(c.category, phases, c.files, input.responsibility),
+          return { fp, id: String(c.id ?? ''), summary: String(c.summary ?? ''), owner: roundOwnerPhase(c.category, c.files, input.responsibility),
             ...(Array.isArray(c.files) && c.files.every(file => typeof file === 'string') ? { files: normalizeReviewFiles(c.files as string[]) } : {}),
             ...(typeof c.source_phase === 'string' ? { source_phase: c.source_phase } : {}) };
         })
@@ -1364,7 +1382,6 @@ export function resolveRepairDeclineState(input: {
       else candidates.set(key, { ...candidate, fp, originalFps: new Set([candidate.fp]) });
     }
     for (const c of candidates.values()) {
-      const lines = input.ledgers[c.owner] ?? [];
       let st = out.get(c.fp);
       if (!st) {
         st = { id: c.id, summary: c.summary, declined_rounds: 0, rebuttal_used: false, basis: null, first_declined_round: null };
@@ -1376,13 +1393,13 @@ export function resolveRepairDeclineState(input: {
       st.summary = c.summary;
       st.files = c.files; st.source_phase = c.source_phase;
       let latest: { text: string; at: number } | null = null;
-      for (const line of lines) {
+      for (const { ledgerOwner, line } of ledgerLines) {
         if (!c.originalFps.has(line.gate_id.slice(REPAIR_DECLINE_GATE_PREFIX.length))
           || !line.gate_id.startsWith(REPAIR_DECLINE_GATE_PREFIX) || line.run_id !== round.run_id) continue;
         const at = Date.parse(line.ts);
         if (!(at >= start && at < round.end)) continue;
         const text = verifiedDeclineBasis(line.decision, input.requirementText, basis => input.verifyFactDecline?.({
-          owner: c.owner, fingerprint: c.fp, basis, runId: round.run_id,
+          owner: c.owner, ledgerOwner, fingerprint: c.fp, basis, runId: round.run_id,
         }) ?? false);
         if (text !== null && (!latest || at >= latest.at)) latest = { text, at };
       }
@@ -1425,24 +1442,22 @@ export function declineDisputeLines(
 }
 
 /**
- * 从盘上读出交付周期内的事件（foldBudgetLineage，祖先 run 计入）、回修轮涉及阶段的账本与当前目标文本，
+ * 从盘上读出交付周期内的原事件、Skill 方法账本与当前目标文本，
  * 交给 resolveRepairDeclineState。run 不存在或不可读 → 空状态。
  */
-export function loadRepairDeclineState(projectRoot: string, feature: string, runId: string): Map<string, RepairDeclineState> {
+function repairDeclineHistory(projectRoot: string, feature: string, runId: string): Array<{ run_id: string; events: GoalRunEvent[] }> {
   /* eslint-disable @typescript-eslint/no-require-imports */
   const pathMod = require('path') as typeof import('path');
   const { loadFrameworkConfig } = require('../../config') as typeof import('../../config');
   const { featureRelativePath } = require('./feature-identity') as typeof import('./feature-identity');
   const { foldBudgetLineage, loadAuthoritativeEvents } = require('./goal-runner-phase') as typeof import('./goal-runner-phase');
-  const { loadHeadlessLedger } = require('./headless-assumptions') as typeof import('./headless-assumptions');
-  const { collectCurrentRequirementText } = require('./fidelity-shared') as typeof import('./fidelity-shared');
   /* eslint-enable @typescript-eslint/no-require-imports */
-  if (!runId.trim()) return new Map();
+  if (!runId.trim()) return [];
   let featuresDir = 'doc/features';
   try { featuresDir = (loadFrameworkConfig(projectRoot).paths?.features_dir ?? featuresDir).replace(/\\/g, '/'); } catch { /* 默认目录 */ }
   const runDir = pathMod.join(projectRoot, featuresDir, featureRelativePath(feature), 'goal-runs', runId);
   const eventsPath = pathMod.join(runDir, 'events.jsonl');
-  if (!fs.existsSync(eventsPath)) return new Map();
+  if (!fs.existsSync(eventsPath)) return [];
   let successorSeed: string[] = [];
   try {
     const m = JSON.parse(fs.readFileSync(pathMod.join(runDir, 'manifest.json'), 'utf8')) as { successor_of?: unknown; execution_scope?: unknown };
@@ -1451,24 +1466,25 @@ export function loadRepairDeclineState(projectRoot: string, feature: string, run
   const events = loadAuthoritativeEvents(eventsPath);
   // 取法与预算折叠同源（runtime 的 budgetLineage 同一种子：事件里的 supersede ∪ successor_of）
   const fold = foldBudgetLineage({ projectRoot, featuresDir, feature, seedTargets: successorSeed, currentEvents: events });
-  const runs = [...fold.ancestorRuns, { run_id: runId, events }];
-  const phases = new Set<string>();
-  for (const run of runs) for (const e of run.events) {
-    const ev = e as { type?: string; to_phase?: unknown; invalidated_phases?: unknown };
-    if (ev.type !== 'phase_backtrack_requested') continue;
-    for (const p of [ev.to_phase, ...(Array.isArray(ev.invalidated_phases) ? ev.invalidated_phases : [])]) {
-      if (typeof p === 'string' && p) phases.add(p);
-    }
-  }
-  if (!phases.size) return new Map();
+  return [...fold.ancestorRuns, { run_id: runId, events }];
+}
+
+export function loadRepairDeclineState(projectRoot: string, feature: string, runId: string, frameworkRoot = path.resolve(__dirname, '../../..')): Map<string, RepairDeclineState> {
+  const runs = repairDeclineHistory(projectRoot, feature, runId);
+  if (!runs.length) return new Map();
+  const { relFeaturesDir } = require('../../config') as typeof import('../../config');
+  const { loadHeadlessLedger } = require('./headless-assumptions') as typeof import('./headless-assumptions');
+  const { collectCurrentRequirementText } = require('./fidelity-shared') as typeof import('./fidelity-shared');
+  const { loadFeatureContracts, phaseContractIndex } = require('./skill-contract') as typeof import('./skill-contract');
+  const phases = phaseContractIndex(loadFeatureContracts(frameworkRoot)).keys();
   const ledgers: Record<string, DeclineLedgerLine[]> = {};
   for (const p of phases) ledgers[p] = loadHeadlessLedger(projectRoot, feature, p)?.entries ?? [];
   return resolveRepairDeclineState({
-    responsibility: { projectRoot, frameworkRoot: path.resolve(__dirname, '../../..'), feature, runId },
+    responsibility: { projectRoot, frameworkRoot, feature, runId },
     runs,
     ledgers,
-    requirementText: collectCurrentRequirementText(projectRoot, feature, featuresDir, runId),
-    verifyFactDecline: ({ owner, fingerprint, basis }) => {
+    requirementText: collectCurrentRequirementText(projectRoot, feature, relFeaturesDir(projectRoot), runId),
+    verifyFactDecline: ({ owner, ledgerOwner, fingerprint, basis }) => {
       const { loadVerifierReportTextOrNull } = require('./verifier-evidence') as typeof import('./verifier-evidence');
       const { readVerifierMaterialOrNull } = require('./verifier-material') as typeof import('./verifier-material');
       const { featurePhaseReportsDir } = require('../../config') as typeof import('../../config');
@@ -1480,7 +1496,7 @@ export function loadRepairDeclineState(projectRoot: string, feature: string, run
         const summary = JSON.parse(fs.readFileSync(path.join(dir, 'summary.json'), 'utf8'));
         if (!summary.verifier_request || !summary.verifier_subject_id) return false;
         const material = readVerifierMaterialOrNull(dir, summary.verifier_subject_id);
-        const ledger = path.relative(projectRoot, headlessLedgerPath(projectRoot, feature, owner)).replace(/\\/g, '/');
+        const ledger = path.relative(projectRoot, headlessLedgerPath(projectRoot, feature, ledgerOwner ?? owner)).replace(/\\/g, '/');
         for (const file of [ledger, ...evidence.map(entry => entry.label)]) {
           if (material?.files.find(entry => entry.path === file)?.sha256 !== createHash('sha256').update(fs.readFileSync(path.resolve(projectRoot, file))).digest('hex')) return false;
         }
@@ -1494,17 +1510,31 @@ export function loadRepairDeclineState(projectRoot: string, feature: string, run
 }
 
 /** Pending and accepted refusals share their original ledger, so both parties and the verifier see the same reasons. */
-export function repairDeclineContextFiles(projectRoot: string, feature: string, runId: string | undefined): Array<{ label: string; content: string }> {
+export function repairDeclineContextFiles(projectRoot: string, feature: string, runId: string | undefined, frameworkRoot = path.resolve(__dirname, '../../..')): Array<{ label: string; content: string }> {
   if (!runId) return [];
   const { loadHeadlessLedger, headlessLedgerPath } = require('./headless-assumptions') as typeof import('./headless-assumptions');
+  const { loadFeatureContracts, phaseContractIndex } = require('./skill-contract') as typeof import('./skill-contract');
+  const { resolveEffectiveRunEnd } = require('./goal-runner-phase') as typeof import('./goal-runner-phase');
   const out: Array<{ label: string; content: string }> = [];
-  for (const phase of ['spec', 'plan', 'coding', 'review', 'ut', 'testing']) {
-    const entries = loadHeadlessLedger(projectRoot, feature, phase)?.entries.filter(entry => entry.run_id === runId
-      && entry.gate_id.startsWith(REPAIR_DECLINE_GATE_PREFIX) && entry.decision.startsWith('declined:')
-      && readableIssueEvidence(projectRoot, entry.decision).length > 0) ?? [];
+  const runs = repairDeclineHistory(projectRoot, feature, runId);
+  const windows = runs.flatMap(run => {
+    const rounds = (run.events as Array<GoalRunEvent & { candidates?: Array<{ item_fingerprint?: string }> }>)
+      .filter(event => event.type === 'phase_backtrack_requested' && typeof event.ts === 'string');
+    const end = resolveEffectiveRunEnd(run.events)?.ts;
+    return rounds.map((round, index) => ({ runId: run.run_id, start: Date.parse(round.ts ?? ''),
+      end: rounds[index + 1]?.ts ? Date.parse(rounds[index + 1].ts!) : end ? Date.parse(end) : Infinity,
+      fingerprints: new Set((Array.isArray(round.candidates) ? round.candidates : []).map(candidate => candidate.item_fingerprint)) }));
+  });
+  for (const phase of phaseContractIndex(loadFeatureContracts(frameworkRoot)).keys()) {
+    const entries = loadHeadlessLedger(projectRoot, feature, phase)?.entries.filter(entry =>
+      entry.gate_id.startsWith(REPAIR_DECLINE_GATE_PREFIX) && entry.decision.startsWith('declined:')
+      && windows.some(window => entry.run_id === window.runId && window.fingerprints.has(entry.gate_id.slice(REPAIR_DECLINE_GATE_PREFIX.length))
+        && Date.parse(entry.ts) >= window.start && Date.parse(entry.ts) < window.end)) ?? [];
     if (!entries.length) continue;
     const file = headlessLedgerPath(projectRoot, feature, phase);
-    out.push({ label: path.relative(projectRoot, file).replace(/\\/g, '/'), content: fs.readFileSync(file, 'utf8') });
+    out.push({ label: path.relative(projectRoot, file).replace(/\\/g, '/'), content:
+      '以下为原账本中绑定当前交付周期、回修窗口和候选指纹的完整原行；其它 run 或候选不属于本次依据。\n'
+      + entries.map(entry => JSON.stringify(entry)).join('\n') });
     for (const entry of entries) out.push(...readableIssueEvidence(projectRoot, entry.decision));
   }
   if (out.length) out.push({ label: '(repair decline verification)', content:
@@ -1617,7 +1647,7 @@ export function resolveInvalidatablePhases(input: {
   const { loadWorkflowSpec } = require('../../workflow-loader') as typeof import('../../workflow-loader');
   const workflow = input.responsibility?.workflow ?? loadWorkflowSpec(path.resolve(__dirname, '../../..'), 'obligation-driven');
   const targets = input.candidates?.map(candidate => resolveRepairResponsibility({ ...input.responsibility, workflow,
-    target: { files: candidate.files, category: candidate.category, summary: candidate.summary } }).owner)
+    target: candidate }).owner)
     ?? input.candidateCategories.map(category => resolveRepairResponsibility({ ...input.responsibility, workflow, target: { category } }).owner);
   if (input.hasActionable) targets.push(resolveRepairResponsibility({ ...input.responsibility, workflow, target: { category: 'coding' } }).owner);
   return affectedScopePhases(targets.filter((owner): owner is string => !!owner && input.chain.includes(owner)), input.chain,
@@ -1635,7 +1665,7 @@ function evidencePathValid(value: unknown): boolean {
     && !value.split('/').includes('..');
 }
 
-function validateRepairEvidenceRef(value: unknown): string[] {
+export function validateRepairEvidenceRef(value: unknown): string[] {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return ['证据引用非对象'];
   const ref = value as Record<string, unknown>;
   const errors: string[] = [];
@@ -1733,6 +1763,7 @@ export const SCOPE_REVISION_FACT_KIND: Readonly<Partial<Record<RepairOwnerCatego
 });
 
 export interface ScopeRevisionInputContext {
+  currentDisposition?: CurrentDisposition;
   projectRoot: string;
   frameworkRoot: string;
   feature: string;
@@ -1771,9 +1802,12 @@ export function scopeRevisionInputFromRepairCandidates(
   const responsible: string[] = [];
   const candidateIds: string[] = [];
   for (const candidate of owned) {
-    const responsibility = resolveRepairResponsibility({ ...context, target: { files: candidate.files, category: candidate.category } });
+    const responsibility = resolveRepairResponsibility({ ...context, target: candidate });
     const phase = responsibility.owner;
     if (!phase || responsibility.action === 'unavailable' || responsibility.action === 'design') continue;
+    // Unit modification authority does not make a disabled formal check capability executable.
+    if (!context.workflow?.artifacts.some(artifact => artifact.id === phase)
+      || !context.skillContracts?.has(phase) || context.profile?.phasesDisabled.has(phase)) continue;
     const provider = context.workflow?.artifacts.find(artifact => artifact.id === phase)?.obligation_provider_id;
     const kinds = OBLIGATION_PROVIDERS[provider ?? ''] ?? [];
     const kind = SCOPE_REVISION_FACT_KIND[responsibility.category ?? candidate.category] ?? kinds[0];

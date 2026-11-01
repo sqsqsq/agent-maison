@@ -14,10 +14,12 @@ import {
   selectRunnerActionFromAssess,
 } from '../../scripts/utils/goal-assess-driver';
 import { checkGoalReconcileBoundarySource } from '../../scripts/utils/goal-reconcile-boundary';
-import { loadWorkflowSpec } from '../../workflow-loader';
 import type { PhaseVerdictAction } from '../../scripts/utils/phase-transition-policy';
 import { deriveSummaryVerdictLattice } from '../../scripts/utils/quality-axes';
 import { resolveCurrentDisposition } from '../../scripts/utils/check-disposition';
+import { repairResponsibilityContext } from '../../scripts/utils/repair-responsibility';
+import { fixture as unitFixture } from './standalone-coding-review.unit.test';
+import { clearFrameworkConfigCache } from '../../config';
 
 function assert(condition: unknown, message: string): void {
   if (!condition) throw new Error(message);
@@ -163,55 +165,69 @@ const cases: TestCase[] = [
     // **不再驱动路由**。本例保持"testing 缺陷→回 coding"的行为语义，只换事实来源。
     name: 'testing 可信缺陷（repair_candidates）→ assess 推荐 coding 并映射为回退',
     run: () => {
-      const phases: AssessObservation['phases'] = chain.map((phase) => ({
-        phase,
-        summary_state: 'current',
-        schema_version: '1.2',
-        verdict: phase === 'testing' ? 'FAIL' : 'PASS',
-        closure: phase === 'testing' ? 'open' : 'closed',
-        assurance: 'full',
-        required_assurance: null,
-        assurance_satisfied: null,
-        deferred: false,
-        summary_fingerprint: phase,
-        evidence_fingerprint: phase,
-        ...(phase === 'testing'
-          ? {
-              repair_candidates: [{
-                id: 'visual_diff:add_card_home', category: 'coding' as const,
-                item_fingerprint: 'd'.repeat(64), summary: 'must_fix 原文',
-              }],
-            }
-          : {}),
-      }));
-      const reconcile = observation({
-        phase_outcome: {
-          phase: 'testing', verdict: 'FAIL', legacy_action: 'retry',
-        },
-        invalidatable_phases: ['coding', 'review', 'ut', 'testing'],
-      });
-      const assessed = assessObservation({
-        schema_version: '1.0',
-        feature: 'demo',
-        workflow: 'spec-driven',
-        responsibility: { workflow: loadWorkflowSpec(path.resolve(__dirname, '../../..'), 'obligation-driven') },
-        track: 'full',
-        goal_end: 'testing',
-        phases,
-        fingerprints: {
-          workflow: 'w', track: 't', goal: 'g', run_attempt: 'r',
-          summaries: 's', evidence: 'e', reconcile: 'c', observed: 'o',
-        },
-        reconcile,
-      }, { mode: 'goal_mode' });
-      assert(assessed.recommendation.phase === 'coding', 'assess must recommend coding');
-      assert(selectRunnerActionFromAssess({
-        assessment: assessed,
-        observation: reconcile,
-        currentPhase: 'testing',
-        chain,
-        driverGuardAction: 'retry',
-      }) === 'backtrack_to_phase', 'runner mapping（统一路由后唯一回退动作）');
+      const unit = unitFixture();
+      try {
+        const phases: AssessObservation['phases'] = chain.map((phase) => ({
+          phase,
+          summary_state: 'current',
+          schema_version: '1.2',
+          verdict: phase === 'testing' ? 'FAIL' : 'PASS',
+          closure: phase === 'testing' ? 'open' : 'closed',
+          assurance: 'full',
+          required_assurance: null,
+          assurance_satisfied: null,
+          deferred: false,
+          summary_fingerprint: phase,
+          evidence_fingerprint: phase,
+          ...(phase === 'testing'
+            ? {
+                repair_candidates: [{
+                  id: 'visual_diff:add_card_home', category: 'coding' as const,
+                  item_fingerprint: 'd'.repeat(64), summary: 'must_fix 原文', files: [], source_phase: 'testing',
+                }],
+              }
+            : {}),
+        }));
+        const reconcile = observation({
+          phase_outcome: {
+            phase: 'testing', verdict: 'FAIL', legacy_action: 'retry',
+          },
+          invalidatable_phases: ['coding', 'review', 'ut', 'testing'],
+        });
+        const currentDisposition = resolveCurrentDisposition({ endpoint: 'feature-completion', phases: phases.map(phase => ({
+          phase: phase.phase, verdict: phase.verdict, schemaCurrent: true, closureCommitted: phase.closure === 'closed',
+          openFindings: phase.repair_candidates?.map(candidate => ({ id: candidate.id, detail: candidate.summary!, owner: 'coding', source_phase: candidate.source_phase })),
+        })) });
+        const input: AssessObservation = {
+          schema_version: '1.0',
+          feature: 'demo',
+          workflow: 'spec-driven',
+          responsibility: repairResponsibilityContext({ projectRoot: unit.root, frameworkRoot: path.resolve(__dirname, '../../..'), feature: unit.manifest.feature, runId: unit.manifest.run_id }),
+          currentDisposition,
+          track: 'full',
+          goal_end: 'testing',
+          phases,
+          fingerprints: {
+            workflow: 'w', track: 't', goal: 'g', run_attempt: 'r',
+            summaries: 's', evidence: 'e', reconcile: 'c', observed: 'o',
+          },
+          reconcile,
+        };
+        const assessed = assessObservation(input, { mode: 'goal_mode' });
+        assert(assessed.recommendation.phase === 'coding', 'assess must recommend coding');
+        assert(assessed.gaps.some(gap => gap.detail.includes('must_fix 原文')), 'the current verified product feedback cannot be reduced to a category');
+        for (const unsupported of [{ ...input, currentDisposition: undefined }, { ...input, responsibility: undefined }]) {
+          const denied = assessObservation(unsupported, { mode: 'goal_mode' });
+          assert(denied.recommendation.phase === null && denied.recommendation.reason.includes('backtrack_target_absent'), 'a category alone cannot authorize owner work without the current view and unit');
+        }
+        assert(selectRunnerActionFromAssess({
+          assessment: assessed,
+          observation: reconcile,
+          currentPhase: 'testing',
+          chain,
+          driverGuardAction: 'retry',
+        }) === 'backtrack_to_phase', 'runner mapping（统一路由后唯一回退动作）');
+      } finally { clearFrameworkConfigCache(); fs.rmSync(unit.root, { recursive: true, force: true }); }
     },
   },
   {

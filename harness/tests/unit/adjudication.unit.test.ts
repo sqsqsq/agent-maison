@@ -63,6 +63,7 @@ import {
   SUCCESSOR_REQUIREMENT_INCREMENT_MARKER,
   type GoalManifest,
 } from '../../scripts/utils/goal-manifest';
+import { withRuntimeTest } from '../utils/runtime-test-control';
 
 const SCRIPTS_DIR = path.resolve(__dirname, '..', '..', 'scripts');
 
@@ -1617,11 +1618,11 @@ const projectionCases: TestCase[] = [
       const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'requirement-resume-'));
       try {
         for (const requirementArgs of [['--requirement-file', 'intentionally-missing.md'], ['--requirement-file']]) {
-        const invocation = spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'), '-e',
+        const invocation = withRuntimeTest({ root: projectRoot }, () => spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'), '-e',
           'const {GoalPhaseRuntime}=require(process.argv[1]);new GoalPhaseRuntime({args:process.argv.slice(2)}).run().then(code=>{process.exitCode=code;});',
           path.join(SCRIPTS_DIR, 'goal-phase-runtime.ts'), '--resume', 'unopened-run', '--feature', 'demo',
           ...requirementArgs, '--project-root', projectRoot, '--framework-root', path.resolve(SCRIPTS_DIR, '../..')],
-        { encoding: 'utf8', timeout: 20000 });
+        { encoding: 'utf8', timeout: 20000 }));
         assert(invocation.status === 2, `实际runtime须拒绝显式resume需求：${invocation.status} ${invocation.stderr}`);
         assert(invocation.stderr.includes('--requirement-file 仅在 fresh run 生效'), '必须拒绝显式输入，不能先读取不存在的文件或找run');
         assert(fs.readdirSync(projectRoot).length === 0, '拒绝输入不能创建运行状态');

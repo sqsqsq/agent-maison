@@ -41,6 +41,9 @@ export interface DispositionEntry {
  * 38e5a7c2 再将必读登记与三条模式声明归入披露；`origin_tag_required`、`seed_no_technical_words` 仍暂缓。
  */
 export const DISPOSITION_TABLE: readonly DispositionEntry[] = [
+  { match: { id: 'upstream_verdict_gate' }, protects: 'product_truth',
+    basis: 'b61a90e4 §2：既有检查收编为真实输入/控制依赖；阶段closed不再构成工具入场条件',
+    consequence: '真实依赖缺失或原负面事实不能被虚构上游PASS覆盖；当前处置仍阻止无依据完成' },
   { match: { id: 'request_provider_unavailable' }, protects: 'capability_gap',
     basis: '1804ac3b §4.5：既有 request provider 缺口在能力生产点明确分类',
     consequence: '专项测试缺少实际执行能力，不能将未执行当作产品通过；补齐能力后重发同一请求' },
@@ -170,8 +173,13 @@ export interface DispositionCheck {
   blocking_class?: string;
   repair_owner?: string;
   affected_files?: readonly string[];
+  /** Read-action projection of actual native diagnostic objects; not a new report or registry. */
+  evidence?: readonly string[];
   /** 仅组装期：修改职责有效完成后，原检查仍须按当前对象复验。 */
   verificationRequired?: boolean;
+  details?: string;
+  /** Read-action projection of a verified independent response; never a checker-authored PASS. */
+  verification?: { verdict: 'confirmed' | 'refuted' | 'unclear'; evidence?: string };
 }
 
 export type CheckDisposition =
@@ -255,7 +263,7 @@ export function requiredSummaryCheckGaps<T extends { id?: string; blocking_class
 // 修/等/披露/补验是**处置含义**，不新增四种持久状态；消费者只能按自己的合法终点投影。
 
 export type CurrentProblemAction = 'repair' | 'wait' | 'verify' | 'disclose';
-export type CurrentProblemAffects = 'completion' | 'release';
+export type CurrentProblemAffects = 'completion' | 'release' | 'none';
 
 export interface CurrentDispositionAxisFact {
   applicable?: boolean;
@@ -283,6 +291,7 @@ export interface CurrentDispositionPhaseFact {
   requiredGaps?: ReadonlyArray<{ id?: string; failure_kind?: string; blocking_class?: string }>;
   /** 本轮 FAIL 的检查（状态/严重度/结构化字段；判定仍走 resolveCheckDisposition）。 */
   failingChecks?: ReadonlyArray<DispositionCheck & { details?: string }>;
+  checks?: readonly DispositionCheck[];
   /** summary 的质量轴。 */
   axes?: Readonly<Record<string, CurrentDispositionAxisFact>>;
   /** summary 的发布投影（用于防单独篡改：READY 与真实非 PASS 轴矛盾）。 */
@@ -299,7 +308,7 @@ export interface CurrentDispositionPhaseFact {
   /** 视觉/资源债务开放条数（只在 testing 投影 release 影响）。 */
   openDebt?: number;
   /** 已核实且仍未处置、归属于本阶段的发现（原候选/责任链输出，不是原始问题表行）。 */
-  openFindings?: ReadonlyArray<{ id: string; detail: string; owner?: string; source_phase?: string; verificationRequired?: boolean; affects?: CurrentProblemAffects }>;
+  openFindings?: ReadonlyArray<{ id: string; detail: string; owner?: string; source_phase?: string; verificationRequired?: boolean; affects?: CurrentProblemAffects; files?: readonly string[]; evidence?: readonly string[] }>;
 }
 
 export interface CurrentDispositionInput {
@@ -327,6 +336,9 @@ export interface CurrentDispositionProblem {
   source_phase?: string;
   /** 证据缺口只是沿链传染时的来源阶段。 */
   propagated_from?: string;
+  /** Existing check/candidate references, projected for actionable feedback and comparison. */
+  files?: readonly string[];
+  evidence?: readonly string[];
 }
 
 export interface CurrentDisposition {
@@ -344,7 +356,7 @@ export interface CurrentDisposition {
 
 /** 阶段资格/队列只消费具体职责；全局完成问题留给 Feature/终点消费者。 */
 export function phaseCompletionProblems(disposition: CurrentDisposition, phases: readonly string[]): CurrentDispositionProblem[] {
-  return disposition.completionBlocking.filter(problem => problem.phase !== '*'
+  return disposition.completionBlocking.filter(problem => problem.id === 'phase_write_violation' || problem.phase !== '*'
     && (phases.includes(problem.phase) || !!problem.owner && phases.includes(problem.owner)));
 }
 
@@ -368,20 +380,8 @@ export function resolveCurrentDisposition(input: CurrentDispositionInput): Curre
     const factStart = problems.length;
     const publicationProblems: CurrentDispositionProblem[] = [];
     const pushPublication = (problem: CurrentDispositionProblem): void => { publicationProblems.push(problem); };
-    if (input.endpoint !== 'request' && summaryPresent && !phase.schemaCurrent) {
-      pushPublication({
-        phase: phaseName, id: 'summary_schema_current', action: 'verify', affects: 'completion', severity: 'BLOCKER',
-        detail: 'summary schema 非当代（legacy 1.0 不作完成依据，须在当前 gate 指纹下重跑本阶段）',
-      });
-    }
     for (const error of input.endpoint !== 'request' && summaryPresent ? phase.summaryErrors ?? [] : []) {
       pushPublication({ phase: phaseName, id: 'quality_axes_valid', action: 'verify', affects: 'completion', severity: 'BLOCKER', detail: error });
-    }
-    if (input.endpoint !== 'request' && summaryPresent && !phase.closureCommitted) {
-      pushPublication({
-        phase: phaseName, id: 'closure_commit_present', action: 'verify', affects: 'completion', severity: 'BLOCKER',
-        detail: '未完成 receipt/manifest/state 的原子闭环提交',
-      });
     }
     for (const gap of phase.requiredGaps ?? []) {
       push({
@@ -390,10 +390,35 @@ export function resolveCurrentDisposition(input: CurrentDispositionInput): Curre
         ...(gap.failure_kind === 'framework_bug' || gap.blocking_class === 'framework_internal' ? { owner: 'framework' } : {}),
       });
     }
-    for (const check of phase.failingChecks ?? []) {
+    const rawChecks = phase.checks ?? phase.failingChecks ?? [];
+    const distinctFailures = new Set(dropRedundantAggregates(rawChecks.filter(check => check.status === 'FAIL')));
+    // Aggregate status repeats its actual negative sources; it is not another repair object.
+    const currentChecks = rawChecks.filter(check => check.status !== 'FAIL' || distinctFailures.has(check));
+    const hasRegisteredFinding = (id: string): boolean => !!phase.openFindings?.some(finding => finding.affects !== 'release'
+      && (finding.id === id || finding.id === `${phaseName}:${id}`));
+    for (const check of currentChecks) {
+      const testStrength = check.id === 'coding_existing_test_preserved' && !!check.affected_files?.length;
+      if (testStrength && check.verification?.verdict === 'refuted') {
+        push({ phase: phaseName, id: check.id, action: 'disclose', affects: 'none', severity: 'MINOR',
+          detail: `原比较事实保留；当前独立核验已反证其构成缺陷：${check.verification.evidence ?? ''}`, files: check.affected_files });
+        continue;
+      }
+      if (check.verificationRequired || testStrength && (check.verification?.verdict === 'unclear' || check.verification?.verdict === 'confirmed')) {
+        push({ phase: phaseName, id: check.id, action: testStrength && check.verification?.verdict === 'confirmed' ? 'repair' : 'verify',
+          affects: 'completion', severity: 'BLOCKER', owner: check.repair_owner ?? phaseName, files: check.affected_files,
+          detail: `测试/当前结果须由独立职责核实：${check.details ?? check.id}${check.verification?.evidence ? `；${check.verification.evidence}` : ''}` });
+        continue;
+      }
+      const drift = (check.structured as { authoritative_content_drift?: { artifact?: string; items?: Array<{ id: string; field: string; expected: unknown; actual: unknown }> } } | undefined)?.authoritative_content_drift;
+      if (drift?.items?.length && (drift.artifact === 'acceptance' || drift.artifact === 'contracts')) {
+        for (const item of drift.items) push({ phase: phaseName, id: `open_finding:${check.id}:${item.id}.${item.field}`,
+          action: 'repair', affects: 'completion', severity: 'BLOCKER', owner: check.repair_owner ?? phaseName,
+          detail: `${check.id} ${item.id}.${item.field}：期望=${JSON.stringify(item.expected)}，实际=${JSON.stringify(item.actual)}；${check.details ?? ''}`,
+          files: check.affected_files, evidence: [`${drift.artifact}:${item.id}.${item.field}`] });
+        continue;
+      }
       // 已登记候选保留了同一个原始检查的依据与负责方；不再追加无owner的聚合副本。
-      if (phase.openFindings?.some(finding => finding.affects !== 'release'
-        && (finding.id === check.id || finding.id === `${phaseName}:${check.id}`))) continue;
+      if (hasRegisteredFinding(check.id)) continue;
       const disposition = resolveCheckDisposition(check);
       if (disposition.action === 'none') {
         // 专项请求的原契约：任意非披露FAIL都未完成本职责，不能套Feature的严重度豁免。
@@ -417,13 +442,19 @@ export function resolveCurrentDisposition(input: CurrentDispositionInput): Curre
           : check.verificationRequired || check.failure_kind === 'framework_bug' || check.blocking_class === 'framework_internal' ? 'verify' : 'repair',
         affects: 'completion',
         severity: 'BLOCKER',
-        detail: `阻断检查失败：${check.id}${check.failure_kind ? `（failure_kind=${check.failure_kind}）` : ''}`,
-        ...(check.repair_owner ? { owner: check.repair_owner } : protects === 'capability_gap' ? { owner: 'external' } : {}),
+        detail: `阻断检查失败：${check.id}${check.failure_kind ? `（failure_kind=${check.failure_kind}）` : ''}${check.details ? `：${check.details}` : ''}`,
+        ...(check.repair_owner ? { owner: check.repair_owner } : protects === 'capability_gap' ? { owner: 'external' }
+          : check.failure_kind === 'framework_bug' || check.blocking_class === 'framework_internal' ? { owner: 'framework' } : {}),
+        ...(check.affected_files?.length ? { files: check.affected_files } : {}),
+        ...(check.evidence?.length ? { evidence: check.evidence } : {}),
       });
     }
     for (const [axisId, axis] of Object.entries(phase.axes ?? {})) {
       if (!axis.applicable || !axis.required_for_release) continue;
       if (axis.verdict === 'PASS' || axis.verdict === 'NOT_APPLICABLE') continue;
+      const knownNegative = currentChecks.filter(check => check.status === 'FAIL' && axis.source_checks?.includes(check.id));
+      if (axis.verdict === 'FAIL' && knownNegative.length && knownNegative.every(check =>
+        hasRegisteredFinding(check.id) || problems.slice(factStart).some(problem => problem.id === check.id || problem.id.startsWith(`open_finding:${check.id}:`)))) continue;
       const staleInheritance = axis.source_checks?.some(check => check.startsWith('stale_inheritance:'));
       const softVisual = VISUAL_AXES.has(axisId) && axis.verdict !== 'FAIL' && !staleInheritance;
       if (softVisual) {
@@ -471,12 +502,6 @@ export function resolveCurrentDisposition(input: CurrentDispositionInput): Curre
         ...(phase.lineagePropagatedFrom ? { propagated_from: phase.lineagePropagatedFrom } : {}),
       });
     }
-    if (phase.attestationPresent === false) {
-      pushPublication({
-        phase: phaseName, id: 'attestation_present', action: 'verify', affects: 'completion', severity: 'BLOCKER',
-        detail: '缺 review-closure-attestation.json',
-      });
-    }
     if ((phase.openDebt ?? 0) > 0) {
       push({
         phase: phaseName, id: 'visual_debt_open', action: 'disclose', affects: 'release', severity: 'MAJOR',
@@ -495,13 +520,18 @@ export function resolveCurrentDisposition(input: CurrentDispositionInput): Curre
         detail: `${finding.verificationRequired ? '发现尚待当前独立核实' : '已核实发现仍未处置'}：${finding.id}：${finding.detail}`,
         ...(finding.owner ? { owner: finding.owner } : {}),
         source_phase: finding.source_phase ?? phaseName,
+        ...(finding.files?.length ? { files: finding.files } : {}),
+        ...(finding.evidence?.length ? { evidence: finding.evidence } : {}),
       });
     }
     // verdict只是上述当前事实的聚合；已有具体负面依据时不再制造一个丢owner/等待条件的任务。
-    if (phase.verdict !== 'PASS' && (input.endpoint !== 'request' || summaryPresent)
+    const failed = currentChecks.filter(check => check.status === 'FAIL');
+    const failuresRefuted = failed.length > 0 && failed.every(check => check.id === 'coding_existing_test_preserved'
+      && !!check.affected_files?.length && check.verification?.verdict === 'refuted');
+    if (phase.verdict !== 'PASS' && !failuresRefuted && (input.endpoint !== 'request' || summaryPresent)
       && !problems.slice(factStart).some(problem => problem.affects === 'completion')) {
-      push({ phase: phaseName, id: phase.verdict === 'INCOMPLETE' ? 'required_check_conclusion' : 'verdict_pass',
-        action: phase.verdict === 'INCOMPLETE' ? 'wait' : 'repair', affects: 'completion', severity: 'BLOCKER',
+      push({ phase: phaseName, id: !phase.verdict || phase.verdict === 'INCOMPLETE' ? 'required_check_conclusion' : 'verdict_pass',
+        action: !phase.verdict ? 'verify' : phase.verdict === 'INCOMPLETE' ? 'wait' : 'repair', affects: 'completion', severity: 'BLOCKER',
         detail: `summary verdict=${phase.verdict ?? '缺失'}` });
     }
     problems.push(...publicationProblems);
@@ -515,7 +545,7 @@ export function resolveCurrentDisposition(input: CurrentDispositionInput): Curre
   }
   for (const corrupt of input.corruptRuns ?? []) {
     push({
-      phase: '*', id: 'goal_run_identity_intact', action: 'repair', affects: 'completion', severity: 'BLOCKER',
+      phase: '*', id: 'goal_run_identity_intact', action: 'verify', owner: 'framework', affects: 'completion', severity: 'BLOCKER',
       detail: `goal-run ${corrupt.runId} 损坏：${corrupt.reason}——人工核查该目录（恢复 manifest 或确认废弃）后重验`,
     });
   }
@@ -528,9 +558,17 @@ export function resolveCurrentDisposition(input: CurrentDispositionInput): Curre
     releaseBlocking,
     disclosed: problems.filter(problem => problem.action === 'disclose'),
     completionEligible: completionBlocking.length === 0,
-    releaseReady: problems.length === 0,
+    releaseReady: completionBlocking.length === 0 && releaseBlocking.length === 0,
     reasons: [...completionBlocking, ...releaseBlocking].map(problem => `[${problem.phase}] ${problem.id}: ${problem.detail}`),
   };
+}
+
+/** Tool output, author feedback and completion explanations render the same facts. */
+export function renderCurrentDisposition(disposition: CurrentDisposition): string {
+  if (!disposition.problems.length) return '当前适用验收没有未完项；完整请求及发布按同一终点评估签发。';
+  return disposition.problems.map(problem => `[${problem.phase}] ${problem.id}；动作=${problem.action}；责任=${problem.owner ?? '当前工作单元'}；${problem.detail}`
+    + (problem.files?.length ? `；对象=${problem.files.join(', ')}` : '')
+    + (problem.evidence?.length ? `；依据=${problem.evidence.join(', ')}` : '')).join('\n');
 }
 
 /** summary 的被披露失败清单一条（§4.3）。 */

@@ -1,6 +1,6 @@
 import type { IdentityNeutralDigestReaders } from './identity-neutral-digest';
 import { readRepairDependencyContext } from './repair-responsibility';
-import { phaseCompletionProblems } from './check-disposition';
+import { phaseCompletionProblems, type CurrentDisposition } from './check-disposition';
 import { resolveExecutionScope, executionScopeFingerprint, effectiveScopeView, scopeProofHistory, scopeRevisionInvalidations, authorizedScopePhases, acceptsDefinitionInputProof, EXECUTION_SOURCE_KINDS, OBLIGATION_PROVIDERS, type ScopeHistoryEvent, type ScopeEvidenceRef, type ExecutionScope, type ExecutionScopeInput, type ResolvedScopeFacts } from './execution-scope';
 import { createHash } from 'crypto';
 import * as path from 'path';
@@ -19,6 +19,8 @@ import { SpecLoader } from './spec-loader';
 import { featureRelativePath } from './feature-identity';
 import type { FidelityTarget } from './fidelity-shared';
 import { validateChangeUnitFeatureProjection } from './change-unit-feature-projection';
+import { deriveChangeUnitFeatureId } from './change-unit-path';
+import type { ChangeUnitArtifact } from './change-unit-model';
 // ============================================================================
 // feature-track.ts — feature.yaml 的 track 声明读取（C1 feature-track，plan d4a7c1e8）
 // ============================================================================
@@ -291,12 +293,12 @@ function verifyBasisBinding(projectRoot: string, frameworkRoot: string, feature:
 }
 
 /** `satisfied_by` bindings are proof that a duty is already met — always fully re-resolved. */
-function verifySatisfiedByBinding(projectRoot: string, frameworkRoot: string, feature: string, phase: string, binding: InputBinding, legacyRoot?: string): { ok: boolean; detail: string } {
+function verifySatisfiedByBinding(projectRoot: string, frameworkRoot: string, feature: string, phase: string, binding: InputBinding, legacyRoot?: string, authorityReaders?: IdentityNeutralDigestReaders): { ok: boolean; detail: string } {
   for (const dep of binding.dependencies) {
     if (!isInsideProjectRoot(projectRoot, resolveDependencyPath(projectRoot, dep.path, legacyRoot))) return { ok: false, detail: `${binding.input_id}: 依据不在项目内 ${dep.path}` };
   }
   try {
-    readBoundInput({ projectRoot, frameworkRoot, feature, phase, track: 'full' }, binding, legacyRoot);
+    readBoundInput({ projectRoot, frameworkRoot, feature, phase, track: 'full', authorityReaders }, binding, legacyRoot);
     return { ok: true, detail: `${binding.input_id}: re-resolved` };
   } catch (error) {
     return { ok: false, detail: `${binding.input_id}: ${(error as Error).message}` };
@@ -505,6 +507,29 @@ export interface PrepareScopeCandidateResult {
   scope: ExecutionScope;
   /** 模板化说明（用户可见输出；纯投影，不调模型）。 */
   explanation: string;
+}
+
+/** Mechanical arguments for the existing candidate writer; no domain or impact inference. */
+export function prepareChangeUnitScopeInput(input: {
+  projectRoot: string; frameworkRoot: string; changeUnit: ChangeUnitArtifact;
+  requirement: string; requirementSourceFiles?: string[];
+  requestedResults: string[]; requestedPhases: string[];
+  obligations?: ExecutionScope['obligations'];
+  impact?: PrepareScopeCandidateInput['impact']; overwrite?: boolean;
+}): PrepareScopeCandidateInput {
+  return {
+    projectRoot: input.projectRoot, frameworkRoot: input.frameworkRoot,
+    feature: deriveChangeUnitFeatureId(input.changeUnit.blueprint_id, input.changeUnit.change_unit_id),
+    completionTarget: 'feature',
+    requirement: input.requirement,
+    ...(input.requirementSourceFiles?.length ? { requirementSourceFiles: [...input.requirementSourceFiles] } : {}),
+    requestedResults: [...input.requestedResults],
+    requestedPhases: [...new Set([...input.requestedPhases, ...(input.obligations ?? [])
+      .filter(obligation => obligation.applicability === 'required' && !obligation.satisfied_by?.length)
+      .map(obligation => obligation.owner_phase)])],
+    ...(input.impact ? { impact: structuredClone(input.impact) } : {}),
+    ...(input.overwrite !== undefined ? { overwrite: input.overwrite } : {}),
+  };
 }
 
 /** 候选里的每一条绑定都来自生产解析器——没有任何手写指纹、手写 basis 的余地。 */
@@ -860,6 +885,8 @@ export function resolveCurrentScopeView(input: {
   currentRunId?: string; completedPhases?: ReadonlySet<string>; currentPhase?: string; reopen?: string; authorityReaders?: IdentityNeutralDigestReaders;
   currentResults?: import('./verify-feature-completion').CleanPassOptions['currentResults'];
 }): ExecutionScope {
+  input = { ...input, authorityReaders: input.authorityReaders
+    ?? (require('./identity-neutral-digest') as typeof import('./identity-neutral-digest')).createIdentityNeutralDigestReaders() };
   const { projectRoot, frameworkRoot, feature } = input;
   const { loadFrozenExecutionScope, loadAuthoritativeRunEvents } = require('./goal-run-creation') as typeof import('./goal-run-creation');
   const { readFeatureFrozenScope } = require('./feature-execution-scope') as typeof import('./feature-execution-scope');
@@ -876,12 +903,21 @@ export function resolveCurrentScopeView(input: {
   const pendingOwnerPhase = input.currentPhase ?? (lastInvocation && !history.passed.has(lastInvocation) ? lastInvocation : undefined);
   const proofs = new Map<string, ScopeEvidenceRef>();
   const stale = new Set<string>();
+  const dispositions = new Map<string, CurrentDisposition>();
+  const dispositionFor = (phase: string): CurrentDisposition => {
+    let disposition = dispositions.get(phase);
+    if (!disposition) {
+      const { resolveCompletionDisposition } = require('./verify-feature-completion') as typeof import('./verify-feature-completion');
+      disposition = resolveCompletionDisposition({ projectRoot, feature, chain: [phase], workflow: input.workflow, executionScope: input.previous,
+        frameworkRoot, runId: input.currentRunId, pendingOwnerPhase, authorityReaders: input.authorityReaders, currentResults: input.currentResults });
+      dispositions.set(phase, disposition);
+    }
+    return disposition;
+  };
   const candidates = new Set([...history.passed, ...input.completedPhases ?? [], ...input.previous.reused_phases.map(p => p.phase)]);
   for (const phase of candidates) {
     const evidence = loadPhaseEvidenceManifest(projectRoot, feature, phase);
-    const { resolveCompletionDisposition } = require('./verify-feature-completion') as typeof import('./verify-feature-completion');
-    const disposition = resolveCompletionDisposition({ projectRoot, feature, chain: [phase], workflow: input.workflow, executionScope: input.previous,
-      frameworkRoot, runId: input.currentRunId, pendingOwnerPhase, authorityReaders: input.authorityReaders, currentResults: input.currentResults });
+    const disposition = dispositionFor(phase);
     // 新发现交真实责任方处理；它不等于来源阶段的证明字节已经过期。
     const fresh = evidence?.integrityOk && !phaseCompletionProblems(disposition, [phase]).some(problem =>
       !problem.id.startsWith('open_finding:') || (problem.owner ?? problem.phase) === phase);
@@ -890,7 +926,16 @@ export function resolveCurrentScopeView(input: {
     const eligible = input.currentRunId ? history.passed.has(phase) : !after || Date.parse(evidence!.manifest.generated_at) > Date.parse(after);
     if (eligible) proofs.set(phase, { phase, ...(input.currentRunId ? { run_id: input.currentRunId } : {}), evidence_manifest_aggregate: evidence!.manifest.aggregate_sha256 });
   }
-  return effectiveScopeView({ birth, events, workflow: input.workflow, proofs, stalePhases: [...stale], reopen: input.reopen, inputOwners: dependencies.inputOwners, inputEdges: dependencies.inputEdges });
+  const definitionProofs = new Map<string, readonly InputBinding[]>();
+  const legacyRoot = inferLegacyProjectRoot(projectRoot, input.previous);
+  for (const [id, refs] of history.definitionProofs) {
+    const obligation = input.previous.obligations.find(item => item.id === id);
+    if (!obligation || !refs.every(ref => verifySatisfiedByBinding(projectRoot, frameworkRoot, feature, obligation.owner_phase, ref, legacyRoot, input.authorityReaders).ok)) continue;
+    if (phaseCompletionProblems(dispositionFor(obligation.owner_phase), [obligation.owner_phase]).some(problem =>
+      !problem.id.startsWith('open_finding:') || (problem.owner ?? problem.phase) === obligation.owner_phase)) continue;
+    definitionProofs.set(id, refs);
+  }
+  return effectiveScopeView({ birth, events, workflow: input.workflow, proofs, definitionProofs, stalePhases: [...stale], reopen: input.reopen, inputOwners: dependencies.inputOwners, inputEdges: dependencies.inputEdges });
 }
 
 export function resolveScopeRevisionProposal(input: {

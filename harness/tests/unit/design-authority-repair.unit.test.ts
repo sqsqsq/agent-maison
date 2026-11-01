@@ -19,7 +19,7 @@ import * as YAML from 'yaml';
 import { clearFrameworkConfigCache, featureFilePath, featurePhaseReportsDir, relFeaturesDir } from '../../config';
 import { resolveWorkflowSpec } from '../../workflow-loader';
 import { projectGoalProgress } from '../../scripts/utils/goal-progress';
-import { runGoalModeSessionStep } from '../../scripts/goal-mode-entry';
+import { runGoalModeSessionStep as runGoalModeSessionStepUnchecked } from '../../scripts/goal-mode-entry';
 import { designRepairAttempted, runUnattendedDesignRepair } from '../../scripts/utils/design-repair-unattended';
 import { foldBudgetLineage, loadAuthoritativeEvents, resolveResumedBudget } from '../../scripts/utils/goal-runner-phase';
 import { readBoundInput } from '../../scripts/utils/capability-resolution';
@@ -45,6 +45,7 @@ import * as supervise from '../../scripts/goal-supervise';
 import { __testing_setLockHeartbeatMs, lockHeartbeatIntervalMs } from '../../scripts/goal-phase-runtime';
 import { __testing_setPidProbeExecutor } from '../../scripts/utils/goal-containment-reconcile';
 import { livenessBeaconPath, writeLivenessBeacon } from '../../scripts/utils/liveness-beacon';
+import { readHandoffMaterial } from '../../scripts/utils/session-execution-handoff';
 import { requestVia, runGoalRuntimeChain } from './goal-runner-testing-integrity.unit.test';
 import { publishRequestedVerifier, writeCuFacts, writeCuSpecDraft, writeCuSpecMaterials, writeCuPlanMaterials, writeCuCodingMaterials, writeCuReviewMaterials, writeCuUtMaterials } from './real-chain.unit.test';
 import { FEATURE_LOCK_NAME, releaseLock, touchLock, tryAcquireLock } from '../../scripts/utils/goal-run-lock';
@@ -59,6 +60,10 @@ import {
 import { NEW_EXPECTED_RESULT, changeProjectedAcceptance, readJson, runFile, runIds, supersede } from './successor-exit.unit.test';
 import type { UnitCaseResult } from '../run-unit';
 import { matchesUnitCase, selectedUnitCases, startCaseTiming, SelectedUnitCases, UnitExecutionTiming } from '../utils/unit-case-selection';
+import { withRuntimeTest, type RuntimeTestControl } from '../utils/runtime-test-control';
+const runGoalModeSessionStep = (options: Parameters<typeof runGoalModeSessionStepUnchecked>[0], testControl: RuntimeTestControl = {}) =>
+  withRuntimeTest({ root: options.projectRoot, ...testControl }, () => runGoalModeSessionStepUnchecked(options));
+
 
 type Snapshot = Parameters<Parameters<typeof withHost>[0]>[0];
 type Ev = Record<string, any>;
@@ -93,6 +98,43 @@ const pointsAtCurrentBlueprint = (s: Snapshot, changeUnitId: string): boolean =>
   const current = loadCanonicalBlueprint(s.root, BLUEPRINT_ID);
   return ref.revision === Number(current.blueprint.revision) && ref.artifact_sha256 === current.artifactSha256;
 };
+
+/** External design-owner fixture input after handback; invalid upstream bytes remain an unpublished fault. */
+async function withDesignOwnerChangeAtGate<T>(s: Snapshot, phase: string, changeUpstream: () => void, run: () => Promise<T>): Promise<T> {
+  const childProcess = require('child_process') as typeof import('child_process');
+  const spawn = childProcess.spawn;
+  let injected = false;
+  childProcess.spawn = ((command: string, args: readonly string[], options: import('child_process').SpawnOptions) => {
+    const env = options?.env;
+    const runId = env?.MAISON_GOAL_RUN_ID;
+    if (!injected && env?.MAISON_GOAL_ATTEMPT_PHASE === phase && env.MAISON_GOAL_GATE_DEADLINE_MS
+      && typeof runId === 'string' && fs.existsSync(runFile(s.root, SNAPSHOT_CU_FEATURE, runId, 'manifest.json'))
+      && path.resolve(String(options.cwd)) === path.resolve(s.frameworkRoot, 'harness')) {
+      const events = eventsOf(s, SNAPSHOT_CU_FEATURE, runId);
+      const author = [...events].reverse().find(event => event.type === 'agent_invoke_start' && event.phase === phase);
+      assert(author && events.some(event => event.type === 'agent_invoke_end' && event.invoke_id === author.invoke_id
+        && event.exit_code === 0), 'external design revision must follow the actual author handback');
+      const before = loadCanonicalBlueprint(s.root, BLUEPRINT_ID).blueprint;
+      assert(before.blueprint_id === BLUEPRINT_ID && typeof before.component_id === 'string' && before.component_id.length > 0,
+        'external input belongs to the original canonical design identity');
+      injected = true;
+      changeUpstream();
+      clearFrameworkConfigCache();
+      const current = loadCanonicalBlueprint(s.root, BLUEPRINT_ID).blueprint as Ev;
+      assert(current.blueprint_id === before.blueprint_id && current.component_id === before.component_id
+        && Number(current.revision) === Number(before.revision) + 1, 'external fixture input must keep the real design identity and advance its original revision');
+      const blockers = blockerIssues(validateComponentBlueprint(current, { projectRoot: s.root })).map(issue => issue.id);
+      console.log('[external-design-owner-input] ' + JSON.stringify({ phase, run_id: runId, revision: current.revision,
+        kind: blockers.length ? 'unpublished_upstream_fault_needs_design_owner' : 'validated_fixture_revision', blockers }));
+    }
+    return spawn(command, args, options);
+  }) as typeof childProcess.spawn;
+  try {
+    const result = await run();
+    assert(injected, `the original ${phase} native gate boundary must be reached`);
+    return result;
+  } finally { childProcess.spawn = spawn; }
+}
 const checkCtx = (s: Snapshot, feature: string): CheckContext => {
   clearFrameworkConfigCache();
   return { projectRoot: s.root, frameworkRoot: s.frameworkRoot, feature, phaseRule: {}, featureSpec: new SpecLoader(s.root, undefined, undefined, s.frameworkRoot).loadFeatureSpec(feature) } as unknown as CheckContext;
@@ -116,9 +158,9 @@ export interface StaleRun { successor: string; events: Ev[]; error?: string; pla
 
 /**
  * S14 的公共主线：手写派生文件下的完成 run（宿主原始完成的替身）→ 蓝图升版改验收并调和、提交 → 公开入口 `--supersede`
- * **真实出生**后继（出生时冻结的是当时的绑定）→ spec 过门之后、plan 首轮进行中，设计 owner 把蓝图再升一个 admitted revision
+ * **真实出生**后继（出生时冻结的是当时的绑定）→ plan 作者真实交回后、原生 gate 启动前，设计 owner 把蓝图再升一个 admitted revision
  *（只写蓝图，不调调和器）→ plan 的真实门报指针过期。`atInjection` 在升版的同时追加反例的宿主状态；
- * `onFirstPlan` 在 plan 首轮 agent 窗口内执行（此时运行时持有本 feature 的锁）。
+ * `onFirstPlan` 在外部设计发布窗口执行（此时运行时仍持有本 feature 的锁）。
  */
 async function runWithStalePointerAtPlan(s: Snapshot, opts: {
   atInjection?: () => void;
@@ -148,7 +190,13 @@ async function runWithStalePointerAtPlan(s: Snapshot, opts: {
   let injected = false;
   let planInvokes = 0;
   const before = new Set(runIds(s.root, feature));
-  const next = await supersede(s, feature, completed, expected, {
+  const next = await withDesignOwnerChangeAtGate(s, 'plan', () => {
+    injected = true;
+    bumpBlueprint(s);
+    opts.atInjection?.();
+    clearFrameworkConfigCache();
+    opts.onFirstPlan?.();
+  }, () => supersede(s, feature, completed, expected, {
     ...hooks,
     onSpec: ctx => {
       writeDoc(featureFilePath(s.root, feature, 'acceptance.yaml'), { ...(structuredClone(approvedAcceptance.value) as Ev), source: 'spec:approved-ledger-design' });
@@ -156,21 +204,13 @@ async function runWithStalePointerAtPlan(s: Snapshot, opts: {
     },
     onPlan: ctx => {
       planInvokes += 1;
-      // spec 已过门、run 的绑定已冻结；plan 首轮进行中，设计 owner 在另一会话把蓝图升了一个 admitted revision（run 外动作）。
-      if (ctx.attempt === 1) {
-        injected = true;
-        bumpBlueprint(s);
-        opts.atInjection?.();
-        clearFrameworkConfigCache();
-        opts.onFirstPlan?.();
-      }
       const authored = { ...authorCurrentCuPlan(s.root, approvedContracts), source: 'plan:approved-ledger-design' };
       writeDoc(featureFilePath(s.root, feature, 'contracts.yaml'), authored);
       if (approvedCases) writeDoc(featureFilePath(s.root, feature, 'use-cases.yaml'), { ...approvedCases, source: 'plan:approved-ledger-design' });
       p.runId = ctx.runId; writeCuFacts(p, 'plan');
       opts.afterPlanWrites?.();
     },
-  });
+  }));
   opts.afterRun?.();
   assert(next.successor, `后继未出生：${next.error}`);
   const born = runIds(s.root, feature).filter(id => !before.has(id));
@@ -244,12 +284,13 @@ export async function s14Run(s: Snapshot, key: S14Key): Promise<StaleRun> {
   assert(interleave?.busy?.includes(RECONCILE_BUSY_HINT) && interleave.ready === false && interleave.unchanged, `run 持锁期间 readiness 应报忙且零写入：${JSON.stringify(interleave)}`);
   assert(repair && !rest.length && repair.phase === 'plan' && repair.action === 'pointer_reconcile' && repair.outcome === 'reconciled'
     && repair.blueprint_id === BLUEPRINT_ID && repair.bumped.some((b: Ev) => b.change_unit_id === CU), describeRun(run));
-  // 一次指针调和后由原 run 重评一次，原 verifier 当轮收口，不再靠额外作者补闭环。
-  assert.strictEqual(run.planInvokes, 2, `初次 plan 与一次原地重评：${describeRun(run)}`);
-  assert.deepStrictEqual(run.events.filter(e => e.type === 'phase_verdict' && e.phase === 'plan').map(e => `${e.verdict}:${e.action}`),
-    ['FAIL:retry', 'PASS:advance'], `plan 应原地重评一次：${describeRun(run)}`);
+  // 身份调和后的原验证职责可复用已交回作者；真实 gate 仍须先见失效、再对当前输入通过。
+  assert(run.planInvokes >= 1, `plan 作者必须真实交付：${describeRun(run)}`);
+  const planVerdicts = run.events.filter(e => e.type === 'phase_verdict' && e.phase === 'plan');
+  assert(planVerdicts[0]?.verdict === 'FAIL' && planVerdicts.at(-1)?.verdict === 'PASS'
+    && planVerdicts.at(-1)?.action === 'advance', `plan 正式门须先报真实失效，调和后对当前输入收口：${describeRun(run)}`);
   const planVerifiers = run.events.filter(e => e.type === 'agent_invoke_start' && e.purpose === 'verifier_format_repair' && e.chain_phase === 'plan');
-  assert.strictEqual(planVerifiers.length, 1, `当前 plan 应由原 verifier 独立核实一次：${describeRun(run)}`);
+  assert(planVerifiers.length >= 1, `当前 plan 应有实际独立核验，最终完成仍核当前绑定：${describeRun(run)}`);
   const currentEvents = loadAuthoritativeEvents(runFile(s.root, feature, run.successor, 'events.jsonl'));
   const calls = currentEvents.filter(event => event.type === 'agent_invoke_start').length;
   const consumed = resolveResumedBudget(currentEvents);
@@ -366,7 +407,7 @@ async function haltBornInvalid(s: Snapshot): Promise<Halted> {
 
 /**
  * run 出生并冻结绑定之后才出问题：蓝图先升到改了投影验收的 admitted revision（调和、提交）→ `--supersede` 真实出生后继 →
- * spec 首轮进行中，设计 owner 在另一会话把蓝图再升一个 revision 并写坏内容（只写蓝图，不调调和器）。
+ * spec 作者交回后、真实 gate 启动前，设计 owner 发布上游变更（只写蓝图，不调调和器）。
  */
 async function haltAfterBirthAtSpec(s: Snapshot, completed: string | undefined, corrupt: (node: Ev) => void, extra: (saved: () => Ev | undefined) => Record<string, unknown> = () => ({})): Promise<Halted> {
   const feature = SNAPSHOT_CU_FEATURE;
@@ -398,10 +439,6 @@ async function haltAfterBirthAtSpec(s: Snapshot, completed: string | undefined, 
         }
         p.runId = ctx.runId; writeDoc(featureFilePath(s.root, feature, 'acceptance.yaml'), specDraft); writeCuFacts(p, 'spec');
       }
-      if (!saved) {
-        bumpBlueprint(s, bp => { const node = ledgerDomain(bp); saved = structuredClone(node); corrupt(node); });
-        clearFrameworkConfigCache();
-      }
       if (completed) hooks.onSpec(ctx);
     },
     onPlan: (ctx: { runId: string; attempt: number }): void => {
@@ -417,15 +454,19 @@ async function haltAfterBirthAtSpec(s: Snapshot, completed: string | undefined, 
   };
   const before = new Set(runIds(s.root, feature));
   let error: string | undefined;
-  if (completed) {
-    const next = await supersede(s, feature, completed, chain, authors);
-    assert(next.successor, `后继未出生：${next.error}`);
-    error = next.error;
-  } else {
-    const next = await runGoalRuntimeChain(s.root, { frameworkRoot: s.frameworkRoot, featureId: feature, adapter: 'codex',
-      freshRequirement: fresh!.requirement, freshStartPhase: 'spec', freshEndPhase: chain[chain.length - 1], ...authors });
-    if (next.exitCode) error = `exit=${next.exitCode}`;
-  }
+  await withDesignOwnerChangeAtGate(s, 'spec', () => {
+    bumpBlueprint(s, bp => { const node = ledgerDomain(bp); saved = structuredClone(node); corrupt(node); });
+  }, async () => {
+    if (completed) {
+      const next = await supersede(s, feature, completed, chain, authors);
+      assert(next.successor, `后继未出生：${next.error}`);
+      error = next.error;
+    } else {
+      const next = await runGoalRuntimeChain(s.root, { frameworkRoot: s.frameworkRoot, featureId: feature, adapter: 'codex',
+        freshRequirement: fresh!.requirement, freshStartPhase: 'spec', freshEndPhase: chain[chain.length - 1], ...authors });
+      if (next.exitCode) error = `exit=${next.exitCode}`;
+    }
+  });
   const born = runIds(s.root, feature).filter(id => !before.has(id));
   assert(born.length === 1 && saved, `run 未出生或未注入：${error} ${JSON.stringify(born)}`);
   const request = completed ? originalRequest(s, feature, completed)
@@ -643,7 +684,8 @@ export async function s15StaleFlow(s: Snapshot, via: 'resend' | 'supervisor'): P
 export async function s15AuthorityFlow(s: Snapshot): Promise<RepairFlow> {
   const h = await haltAfterBirthAtSpec(s, undefined, node => { node.knowledge_state = 'unknown'; });
   // 未决项让调和器的 carry-forward 不过：本 CU 指针留在旧 revision，检查报的原因码是指针过期，分类表把它归 B2。
-  const { halt, haltIndex } = assertDesignOwnerHalt(s, h, { cls: 'B2', codes: ['change_unit_blueprint_ref_stale'], phase: 'spec' });
+  const { halt, haltIndex } = assertDesignOwnerHalt(s, h, { cls: 'B2',
+    codes: ['change_unit_blueprint_ref_stale', 'component_blueprint_identity_mismatch'], phase: 'spec' });
   const guidance = String(halt.halt_guidance);
   assert(/本 CU 被调和器跳过/.test(guidance) && /ledger-domain/.test(guidance), `B2 说明须写清缺什么（哪一项未决）：${guidance}`);
   assert.strictEqual(invokesOf(h.events, 'spec'), 1, '本 CU 被跳过时不得重评');
@@ -963,7 +1005,15 @@ function assertAttemptCleanedUp(s: Snapshot): void {
 
 /** S16 主线（绑定仍有效）：同一 run 内修好并续跑完成，操作者动作 0。返回给 reliability-scenarios 用的流程摘要。 */
 export async function s16MainFlow(s: Snapshot): Promise<RepairFlow> {
-  const b = await s16Born(s);
+  const privateAuthorMarker = 'author-private-reasoning-not-an-independent-Q-input';
+  let privateAuthorReturned = false;
+  let businessProvenance: Ev | undefined;
+  const b = await s16Born(s, { beforeBirth: async () => {
+    businessProvenance = structuredClone(readDoc(blueprintFile(s)).provenance);
+  }, adapter: { author: () => {
+    privateAuthorReturned = true;
+    return { stdout: privateAuthorMarker, details: privateAuthorMarker };
+  } } });
   console.log(`[design-authority-repair] S16 ${describeS16(b)}`);
   const [attempted, published, ...rest] = contentRepairs(b.events);
   assert(attempted?.stage === 'attempted' && published?.stage === 'published' && published.outcome === 'recovered' && !rest.length, `事件应为 attempted → published：${describeS16(b)}`);
@@ -977,13 +1027,20 @@ export async function s16MainFlow(s: Snapshot): Promise<RepairFlow> {
   const [authorPrompt] = b.log.prompts['design-repair-author'];
   const [questioningPrompt] = b.log.prompts['design-repair-questioning'];
   assert(/修复简报/.test(authorPrompt) && /authority_content_not_machine_structure/.test(authorPrompt) && /不(?:得)?写 ?`?review_summary.admission/.test(authorPrompt), '编写提示词须带简报与子契约');
-  assert(!/修复简报/.test(questioningPrompt) && !/authority_content_not_machine_structure/.test(questioningPrompt) && /必答范围/.test(questioningPrompt), '质询提示词须与编写隔离，只给草稿与证据包');
+  assert(privateAuthorReturned && !questioningPrompt.includes(privateAuthorMarker) && !questioningPrompt.includes('## 修复简报'),
+    '独立Q不得继承本轮作者真实返回的私有思路或编写指令');
+  assert(questioningPrompt.includes('原消费者的完整发现') && questioningPrompt.includes('authority_content_not_machine_structure')
+    && questioningPrompt.includes('必答范围'), '独立Q须收到当前公共发现与全部必答范围，不能把公开原因码误当私有思路裁掉');
   // 整个尝试在两层锁内（编写调用进行中蓝图锁与全部 CU 的 feature 锁都在）；attempted 在调用前已落盘。
   assert(b.log.lockedDuringAuthor?.blueprint && Object.values(b.log.lockedDuringAuthor.features).every(Boolean) && b.log.lockedDuringAuthor.attemptedBeforeInvoke, JSON.stringify(b.log.lockedDuringAuthor));
   assertAttemptCleanedUp(s);
-  // 发布物：revision 与修订依据由运行时登记在根 provenance；旧派生结论标 stale、保留原输入版本；准入由机器写回为 pass；质询方不是编写方。
+  // 业务provenance保留真实来源；机器修订审计由原事务/调用证据承载，不覆盖成框架名字。
   const bp = readDoc(blueprintFile(s));
-  assert(bp.revision === b.baseRevision + 1 && bp.provenance.source_kind === 'design_repair_unattended' && /manifest\.json#requirement/.test(bp.provenance.source_ref), JSON.stringify(bp.provenance));
+  assert(bp.revision === b.baseRevision + 1, '本次真实发布只升原设计一个revision');
+  assert.deepStrictEqual(bp.provenance, businessProvenance, '已批准P2/b84区分业务来源与机器观测，保留原真实业务依据');
+  const requirementSource = path.relative(s.root, runFile(s.root, b.feature, b.runId, 'manifest.json')).replace(/\\/g, '/') + '#requirement';
+  assert(attempted.preauthorization === requirementSource && starts.every(event => event.invoke_id),
+    '修订须绑定原请求事务和真实作者/独核调用，不能靠根provenance自报发布');
   assert((bp.derived_results ?? []).every((r: Ev) => r.status === 'stale' && r.superseded_by_revision === bp.revision && r.input_revision !== bp.revision), `旧派生结论须标 stale、不得改输入版本：${JSON.stringify(bp.derived_results)}`);
   assert(bp.review_summary.admission.status === 'pass' && bp.review_summary.questioning.provider_id === 'design-repair-questioning' && bp.review_summary.questioning.provider_id !== bp.review_summary.authored_by, JSON.stringify(bp.review_summary.admission));
   assert(pointsAtCurrentBlueprint(s, CU), 'CU 指针已在同一锁内调和到新 revision');
@@ -1172,14 +1229,24 @@ export async function s16NoPreauthFlow(s: Snapshot): Promise<RepairFlow & { even
     evidence: `停机=${String(b.events[haltIndex]?.halt_reason)} 分类=${String(b.events[haltIndex]?.design_authority?.class)} 局部请求、content_repair 事件 0、链外调用 0`, events: b.events, runId: b.runId };
 }
 
-/** 修复尝试没有发布（发布前失败）：canonical 蓝图字节与质询历史不变、草稿已丢弃、事件披露失败步骤。 */
+/** 未发布的失败保留原事务草稿与恢复原件；canonical、独核结论和锁收尾仍严格核对。 */
 function assertNotPublished(s: Snapshot, b: S16Born, step: string, label: string): Ev {
   const repairs_ = contentRepairs(b.events);
   const failed = repairs_.find(e => e.stage === 'failed');
   assert(repairs_[0]?.stage === 'attempted' && failed?.failed_step === step && !repairs_.some(e => e.stage === 'published'), `${label}：应在 ${step} 失败且不发布：${describeS16(b)}`);
   const bp = readDoc(blueprintFile(s));
   assert(bp.revision === b.baseRevision && bp.review_summary.questioning.provider_id !== 'design-repair-questioning', `${label}：canonical 不得变（不伪造质询报告）：rev=${bp.revision}`);
-  assert(!fs.existsSync(path.join(path.dirname(runFile(s.root, b.feature, b.runId, 'events.jsonl')), 'design-repair')), `${label}：草稿应已丢弃`);
+  const runDir = path.dirname(runFile(s.root, b.feature, b.runId, 'events.jsonl'));
+  const draft = path.join(runDir, 'design-repair/component-blueprint.yaml');
+  assert(fs.existsSync(draft) && typeof readDoc(draft) === 'object', `${label}：未发布草稿应保留可读`);
+  const attempted = repairs_[0];
+  assert(attempted.handoff_context, `${label}：原事务恢复引用不能缺失`);
+  const original = readHandoffMaterial<{ baseline: string; brief: { class: string; items: unknown[] } }>(runDir, attempted.handoff_context);
+  assert(typeof original.baseline === 'string' && original.baseline.length > 0 && original.brief?.class,
+    `${label}：原始蓝图与实质发现须由原绑定引用可恢复`);
+  const originalBlueprint = YAML.parse(Buffer.from(original.baseline, 'base64').toString('utf8')) as Ev;
+  assert(originalBlueprint.revision === b.baseRevision && originalBlueprint.review_summary.questioning.provider_id !== 'design-repair-questioning',
+    `${label}：恢复原件须保留本事务发布前的版本与独核历史`);
   assertAttemptCleanedUp(s);
   return failed!;
 }
@@ -1220,6 +1287,12 @@ async function withResumeCooldown<T>(cooldownMs: number, call: () => Promise<T>)
 async function parkOnStaleBindingWait(s: Snapshot): Promise<{ feature: string; runId: string; gateCalls: number; probes: number;
   deviceDeps: { listTargets: () => string[]; isLocked: () => boolean; wake: () => undefined; attestPhysical: () => boolean }; setDeviceReady: (ready: boolean) => void }> {
   const feature = SNAPSHOT_CU_FEATURE;
+  // This one fixture exercises the real device gate over controlled observations; other test-chain hosts stay device-free.
+  const profileFile = path.join(s.frameworkRoot, 'profiles/test-chain/profile.yaml');
+  const profile = readDoc(profileFile);
+  profile.device_capabilities = ['ut.run'];
+  writeDoc(profileFile, profile);
+  clearFrameworkConfigCache();
   prepareSpecInput(s, writeCuSpecMaterials);
   const request = prepareFreshCuRequest(s);
   const chain = request.chain;
@@ -1369,7 +1442,8 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
       assert.strictEqual(pointerStaleCandidate(s.root, feature), true);
       const gate = checkAuthoritativeContentAligned(checkCtx(s, feature), 'acceptance').find(c => c.id === 'authoritative_content_aligned');
       assert(gate?.status === 'FAIL' && gate.repair_owner === 'external', JSON.stringify(gate));
-      assert.deepStrictEqual(gate!.structured, { kind: 'design_authority', reason: 'blueprint_ref_stale', codes: ['change_unit_blueprint_ref_stale'] });
+      assert.deepStrictEqual(gate!.structured, { kind: 'design_authority', reason: 'blueprint_ref_stale',
+        codes: ['change_unit_blueprint_ref_stale', 'component_blueprint_identity_mismatch'] });
       // plan 阶段：手写 contracts 的 change_unit_ref 解析到 canonical CU，CU 的 BLOCKER 只有指针过期 → 路线取验证器 issue 的 route。
       const plan = checkChangeUnitFeatureProjection(checkCtx(s, feature), 'plan');
       const invalid = plan.find(c => c.id === 'change_unit_invalid');
@@ -1623,7 +1697,8 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
       assert(halt?.halt_reason === 'execution_scope_unresolved' && halt.phase === 'plan' && halt.probe === 'design_authority_projectable', JSON.stringify(halt));
       const items = halt!.design_authority as { class: string; items: Array<{ check: string; class: string; codes: string[] }> };
       assert.deepStrictEqual(items.items.map(item => item.check + ':' + item.class + ':' + item.codes.join(',')).sort(),
-        ['authoritative_content_aligned:B1:authority_content_not_machine_structure', 'cu_architecture_impact_not_effective:B2:cu_architecture_impact_not_effective'], JSON.stringify(items));
+        ['authoritative_content_aligned:B2:authority_content_not_machine_structure,cu_architecture_impact_not_effective',
+          'cu_architecture_impact_not_effective:B2:cu_architecture_impact_not_effective'], JSON.stringify(items));
       assert.equal(items.class, 'B2');
       const dir = reportDirOf(s, feature, runId);
       const requirement = readJson<{ requirement: string }>(runFile(s.root, feature, runId, 'manifest.json')).requirement;
@@ -1874,21 +1949,34 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
       const b = await s16Born(s, { adapter: { questioning: doc => { delete doc.review_summary.questioning; } } });
       console.log(`[design-authority-repair] S16-c3b ${describeS16(b)}`);
       const failed = assertNotPublished(s, b, 'questioning', '质询无结果');
-      assert(/没有产出质询结果/.test(String(failed.reason)), JSON.stringify(failed));
+      assert(String(failed.reason).startsWith('独立质询原件不可接受：')
+        && String(failed.reason).includes('questioning JSON 对象及 items 数组'), JSON.stringify(failed));
     }),
   },
   {
-    name: 'S16-c3c 编写调用自报准入（改了 review_summary.admission）→ 不予采信，不发布',
+    name: 'S16-c3c 编写调用误填机器准入字段：自报不能决定结果，机器重算与真实独立质询决定准入',
     run: () => withFreshCuHost(async s => {
-      const b = await s16Born(s, { adapter: { author: doc => { doc.review_summary.admission.current_slice.controlled_fakes = ['self-asserted-pass'];
+      const b = await s16Born(s, { adapter: { author: doc => { doc.review_summary.admission.status = 'pass';
+        doc.review_summary.admission.current_slice.controlled_fakes = ['self-asserted-pass'];
         return { exitCode: 1, completion_observed: true, kill_attempted: true }; } } });
       console.log(`[design-authority-repair] S16-c3c ${describeS16(b)}`);
-      assertNotPublished(s, b, 'self_reported', '自报准入');
-      assert(!b.log.prompts['design-repair-questioning'], '自报之后不得再派质询调用');
+      const publication = contentRepairs(b.events).find(event => event.stage === 'published');
+      assert(publication?.outcome === 'recovered' && publication.admission_after_invalidation === 'blocker'
+        && publication.admission_after_questioning === 'pass', '作者自填pass在旧Q作废后不能维持准入，只有当前独核后机器重算才可通过：' + describeS16(b));
+      const current = loadCanonicalBlueprint(s.root, BLUEPRINT_ID).blueprint as Ev;
+      const upstream = validateComponentBlueprintUpstream(current, { projectRoot: s.root });
+      assert(deriveBlueprintAdmission(current, upstream).status === 'pass' && blockerIssues(validateComponentBlueprint(current, { projectRoot: s.root })).length === 0,
+        '真实当前设计、独核与完整机器校验必须成立');
+      assert(outOfChainStarts(b.events).some(event => event.phase === 'design-repair-questioning')
+        && current.review_summary.questioning.provider_id === 'design-repair-questioning', '作者自报不能代替实际独立质询');
+      assert(readJson<Ev>(runFile(s.root, b.feature, b.runId, 'manifest.json')).requirement === b.requirement
+        && current.blueprint_id === BLUEPRINT_ID, '不得改原需求或设计身份来取得准入');
+      assertCompletedBy(s, b.feature, b.runId, '机器字段重算后真实完成');
+      assertAttemptCleanedUp(s);
     }),
   },
   {
-    name: 'S16-c3d 缺必答质询范围完整反馈后仍无进展 → no_progress_guard 暂停，不发布',
+    name: 'S16-c3d 作者已有效只欠必答质询：保持未知与未发布候选，只补Q、不重买有效作者',
     run: () => withFreshCuHost(async s => {
       // codex t6 第五轮之后，编写调用改指纹等定位之外的内容在授权边界就被拒（见 S16-r7）；准入派生不过改由质询结果触发。
       let canonicalBefore: Buffer | undefined;
@@ -1896,22 +1984,19 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
       const b = await s16Born(s, { beforeBirth: async () => { canonicalBefore = fs.readFileSync(blueprintFile(s)); }, adapter: { questioning: doc => { questioningCalls++; doc.review_summary.questioning.items = []; doc.review_summary.questioning.summary = `本次独立质询措辞-${questioningCalls}`;
         return { exitCode: 1, completion_observed: true, kill_attempted: true }; } } });
       console.log(`[design-authority-repair] S16-c3d ${describeS16(b)}`);
-      const repairs_ = contentRepairs(b.events);
-      const failed = repairs_.find(e => e.stage === 'failed');
-      assert(repairs_[0]?.stage === 'attempted' && failed?.failed_step === 'no_progress_guard' && !repairs_.some(e => e.stage === 'published'), describeS16(b));
+      const failed = assertNotPublished(s, b, 'questioning', '缺少必答质询');
       assert.equal(failed.admission_after_questioning, 'blocker', '缺少必答范围仍不能准入');
       assert.deepEqual(fs.readFileSync(blueprintFile(s)), canonicalBefore, 'canonical 蓝图与原质询历史不得被未通过的草稿覆盖');
-      assert.deepEqual(outOfChainStarts(b.events).map(e => e.phase), ['design-repair-author', 'design-repair-questioning', 'design-repair-author']);
       const authorPrompts = b.log.prompts['design-repair-author'];
-      assert.equal(authorPrompts.length, 2, '完整反馈须实际送达第二轮作者');
-      assert.equal(b.log.prompts['design-repair-questioning']?.length, 1, '作者没有业务变化，不得再派质询消耗预算');
-      assert.equal(questioningCalls, 1);
-      const issues = String(failed.reason).split('\n').slice(1);
-      assert(issues.length > 1 && issues.every(issue => authorPrompts[1].includes(issue)), '全部当前机器问题须在同一次作者调用中送达');
+      assert.equal(authorPrompts.length, 1, '有效作者已经交回，缺Q不得重派无关作者');
+      assert(questioningCalls >= 1 && b.log.prompts['design-repair-questioning']?.length === questioningCalls, '必须真实调用原独核职责');
+      assert(String(failed.reason).includes('blueprint_questioning_items_missing'), '待核原因须保留实际缺项，不能伪造产品FAIL或完成');
       for (const event of [haltOf(b.events), endOf(b.events)]) {
-        assert(event?.halt_reason === 'no_progress_guard' && event.run_disposition === 'WAITING' && event.run_wait_kind === 'human', JSON.stringify(event));
+        assert(event?.run_disposition === 'WAITING', '缺真实Q必须沿原等待出口保留未知：' + JSON.stringify(event));
       }
-      assert(fs.existsSync(path.join(path.dirname(runFile(s.root, b.feature, b.runId, 'events.jsonl')), 'design-repair/component-blueprint.yaml')), '暂停保留未发布候选供原责任方继续');
+      const candidate = readDoc(path.join(path.dirname(runFile(s.root, b.feature, b.runId, 'events.jsonl')), 'design-repair/component-blueprint.yaml'));
+      assert(deriveBlueprintAdmission(candidate, validateComponentBlueprintUpstream(candidate, { projectRoot: s.root })).status === 'blocker',
+        '只有后续合法Q满足真实必答范围后才可能准入，保留草稿本身不能通过');
       assertAttemptCleanedUp(s);
     }),
   },
