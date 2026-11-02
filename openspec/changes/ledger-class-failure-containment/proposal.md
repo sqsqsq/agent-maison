@@ -11,9 +11,11 @@
 
 ## What Changes
 
-- **第二档失败不得产生回退交接候选，因而不触发 `phase_backtrack_requested`、也不扩大回退目标。** 档位读数不新立表：直接读既有 `repair_owner`（由 `evidence_block_owner` 提上来），非 `coding` 即账本/形状档。落点在**候选生产点**（`collectPhaseRepairCandidates` 的 testing 分支），因为 assess 读的是盘上 summary 的 `repair_candidates`——只在 runner 内存里过滤挡不住它的责任阶段推荐。披露原样保留（`repair_owner` / `affected_files` / `spec_capture_gap` 归因）。**失效范围算法 `resolveInvalidatablePhases` 一字未动**。一档（已执行断言失配、视觉缺陷）候选、回退与重验原样保留，混合轮也只按一档候选定目标。
-- **相关集合未知或为空时走既有 `no_progress_guard` 停下交回**，理由写「相关目标未知」，不再烧满 `max_retries_per_phase` 再判 `content_retry_exhausted`。`relevantEvidenceKnown` 判据本身一字未改；空集只说明"没解析出目标"，不得被说成"证明了没修"。不新增 halt reason、不动 adjudication 注册表。
-- **模式误用不再被说成时效问题**：detached run 被传 attended 专用 `--goal-*` 参数时，`validateAttendedGoalContext` 报「模式不匹配」并点名不该传的参数；身份判据（越权接管保护）一个字不改，真正的 session 租约过期仍报租约。
+P3已将本change的入口诉求收编到completion-driven-execution；原事故与执行记录保留，以下为当前约束。
+
+- 账本/形状/绑定缺口保实际owner、文件与归因，不生成phase作者队列。与产品真值失败并存时，当前共同处置一次保留全部可判定问题，不让环境/材料错误遮住真实修复。
+- 未知对象/尚未完成的核验保持具体producer条件WAITING，不借未知集合、签名次数或phase retry budget判无进展。真实可比验收沿既有evaluation决定可续暂停。
+- attended上下文身份/租约保护及模式误用提示保留。两运输共用原请求/权限，独立核验真实独立，不新增人工门禁或平行状态。
 
 ## Capabilities
 
@@ -30,4 +32,4 @@
 - 影响 runtime：`harness/scripts/utils/repair-candidates.ts`（testing 分支删除 evidence-block 的产候选路径）、`harness/scripts/utils/goal-failure-classifier.ts`（`shouldHaltNoProgress` 的未知集合出路）、`harness/scripts/goal-phase-runtime.ts`（no-progress 指引 + verdict 之后补发 `phase_halt`）、`harness/scripts/utils/attended-goal-context.ts`（模式误用话术）。
 - 影响指引：`skills/project/goal-mode/SKILL.md`、`skills/reference/goal-mode-operations.md`、`agents/claude/templates/agents/phase-executor.md`（按模式给出可直接执行的 harness 命令）。
 - 不改宿主、不改第一档判据、不改 `resolveInvalidatablePhases`、不新增 check id / halt reason / 评分 / 豁免 / 次数闸。
-- 已知上限：一个小的产品修复仍会让 review 与 UT 全量重跑（收窄它需要"本次改动影响哪些验证面"的真实判据，本 change 不发明）。
+- 后续P4真实宿主验证仍pending；当前变更不把开发夹具当宿主验收。

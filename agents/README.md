@@ -50,7 +50,7 @@ framework/agents/
 |---|---|
 | `level` | 既有 native/external/hook 能力级别 |
 | `in_session_reconcile` | 既有原生会话调和能力；不是共同 next/report 的准入门槛 |
-| `phase_context_isolation` | 阶段可在隔离上下文执行；false 时主上下文执行并披露 |
+| `phase_context_isolation` | 历史字段名；普通作者始终使用专用单元上下文，缺原生续接则按当前事实重建并披露，不授权主会话代施工 |
 | `supports_resume` | 模型 CLI 原生运输恢复能力；不控制框架交接续作 |
 | `handoff` | `none` / `to_detached` / `bidirectional` |
 
@@ -59,12 +59,12 @@ framework/agents/
 - 可运行框架命令且配置有效的会话统一进入同一 runtime 的 `--next / --report-result`；
 - `handoff!=none` 必须声明 `supports_resume=true`；
 - 未声明的新字段按保守 `false` / `none` 处理，不从 CLI 存在性推断；
-- 缺阶段隔离时在主上下文按同一请求执行并披露，必需 verifier/设计质询仍须独立；
+- 作者始终使用该工作单元专用上下文；原生续接不可用时按当前事实重建并披露，不能回主会话代施工，独核仍独立；
 - 无人值守仍须通过 `external_runner.unattended` preflight。
 
 当前显式声明：Codex/Claude 支持阶段隔离，Codex 另声明原生 resume 与双向 handoff。其它 adapter 保持保守默认；claude/codex/cursor/codeagent/opencode/chrys/generic/deepseek-harness 的可命令会话均使用同一 next/report 请求与结果形状，不虚改 YAML 能力值。不能运行命令或配置无效时准确报告能力缺口。用户界面只显示“有人在场 / 无人值守”。
 
-八个 adapter 的共同入口也适用于原始正式需求的初始设计：同一 runtime 派作者、真实独立质询、检查与 CU 准入，再沿 P2 接正常 CU；不先要求主会话完成设计，不强依赖原生 Goal、`in_session_reconcile` 或模型 CLI 原生 resume。阶段隔离缺失只改变普通作者上下文，不能取消必需独立质询/verifier。后台仍以实际 headless/生存能力与原握手为准，缺能力不得声称已运行；本说明不扩大 adapter YAML 已声明能力。需求/授权/预算从原请求连续继承，模板不自选 CU/phase 或把调用退出当任务完成。原请求止于全部适用 CU 正式完成，部件闭环仅按原口径只读检查一次披露，不自动修复或改判。
+八个 adapter 的共同入口也适用于原始正式需求的初始设计：同一 runtime 派作者、真实独立质询、检查与 CU 准入，再沿 P2 接正常 CU；不先要求主会话完成设计，不强依赖原生 Goal、`in_session_reconcile` 或模型 CLI 原生 resume。原生隔离/续接不可用须重建专用作者上下文并披露，不授权主会话施工；独立质询/verifier仍必需真实独立。后台仍以实际 headless/生存能力与原握手为准，缺能力不得声称已运行；本说明不扩大 adapter YAML 已声明能力。需求/可信授权/显式用户截止从原请求继承，activity如实累计，模板不自选 CU/phase 或把调用退出当任务完成。全部适用CU完成不代签原部件终点；同一root持续必要工作，消费原writer正式closure及真实装配/独核证据。
 
 schema、组合约束与 fallback 以 [`adapter-schema.yaml`](./adapter-schema.yaml) 和 [`goal-adapter-capability.ts`](../harness/scripts/utils/goal-adapter-capability.ts) 为准。
 

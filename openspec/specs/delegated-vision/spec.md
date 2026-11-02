@@ -151,10 +151,12 @@ The project working tree SHALL be compared before and after the invocation. If i
 round's provider result SHALL be discarded and the fact recorded as an event; the framework SHALL NOT
 auto-revert and SHALL NOT halt.
 
-Provider budget SHALL NOT consume `max_total_turns` or `max_retries_per_phase`. It consumes wall
-clock and counts into the invoke result's usage.
+Actual provider duration and usage SHALL remain observable. A concrete provider call retains its
+real tool timeout and any explicit user deadline; default total-turn, content-retry and wall quotas
+SHALL NOT stop observation production.
 
-Observation production SHALL be bounded by the reference-image count and by a per-run cap. Review
+Observation production SHALL visit the actual reference-image set without a per-run image cap.
+Every uncached readable image SHALL receive its best-effort observation attempt. Review
 SHALL be bounded by shape rather than by a counter: **one checker execution issues at most one review
 invocation, and that invocation SHALL cover every pending target screen in one batch** — per-screen
 fan-out is forbidden. No invocation ledger, per-attempt counter, or budget state is introduced.
@@ -220,14 +222,14 @@ artifact, producing no check; a single image's failure SHALL NOT block the other
 production failure SHALL NOT block the spec phase — the affected image simply has no sidecar.
 
 A sidecar SHALL be reused only when `image_hash`, `provider.adapter`, `provider.model` and
-`protocol_version` all match; otherwise it SHALL be regenerated. Production happens in the spec phase
-only; plan and coding phases SHALL only list existing sidecars, mirroring the OCR pre-scan dispatch.
+`protocol_version` all match; otherwise it SHALL be regenerated. The spec method produces observations; other methods SHALL only list existing sidecars,
+mirroring the OCR pre-scan. This method selection SHALL NOT create phase author dispatch.
 
 Read-evidence for the sidecar SHALL be recorded truthfully when a structured read-event parser exists
 for the provider's adapter and reported as unverified otherwise, and SHALL NOT constitute any
 threshold.
 
-Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/visual-provider-invoke.ts`
+Enforcement: `harness/scripts/goal-phase-runtime.ts`, `harness/scripts/utils/visual-provider-invoke.ts`, `harness/scripts/utils/visual-observation-sidecar.ts`
 
 #### Scenario: a changed endpoint invalidates reuse
 
@@ -238,3 +240,11 @@ Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/visual-pro
 
 - **WHEN** every observation call fails for a spec phase
 - **THEN** the spec phase SHALL proceed exactly as it does today with no sidecars listed and no check emitted
+
+#### Scenario: More than twelve actual images need observations
+- **WHEN** fifteen readable reference images have no valid sidecars
+- **THEN** all fifteen receive best-effort attempts; a failed or missing image does not suppress the others and no default image-count cap truncates the set
+
+#### Scenario: Only affected image identity is regenerated
+- **WHEN** current image hash, provider adapter/model and protocol match for every sidecar except one changed image
+- **THEN** only that image is regenerated and unaffected current sidecars are reused without another provider call

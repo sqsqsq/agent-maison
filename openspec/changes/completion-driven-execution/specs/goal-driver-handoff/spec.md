@@ -29,3 +29,16 @@ The transport SHALL expose in-progress invocation/tool facts and current artifac
 #### Scenario: The same observation is reread
 - **WHEN** no artifact/check input or result changed between reads
 - **THEN** the transport returns the same underlying facts and does not create a new progress decision or quota
+
+### Requirement: One coordinator selects current work before dispatch
+
+Every public entry SHALL use the same completion coordinator with dedicated root, CU and request author contexts. Actual request, accepted report, bound completed/reusable checks and common disposition/evaluation SHALL decide work before creating an invocation. Phase names MUST NOT create another author queue or require same-named author birth for real checks. Completed unknown SHALL remain a precise producer/object wait. Missing native identity SHALL reconstruct a dedicated current-authority context without main-conversation business editing.
+
+#### Scenario: Unknown producer identity recovers
+- **WHEN** a completed required check lacks current producer/object identity
+- **THEN** the run naturally waits without a quota exit and unchanged re-entry performs no calls
+- **AND** real condition recovery enables affected verification and returns verified defects to the original unit author
+
+#### Scenario: One author performs several check families
+- **WHEN** several check families apply to an authorized unit
+- **THEN** they use its actual request and owner/fence without manufacturing absent phase-author invocations or PASS events

@@ -154,6 +154,8 @@ export interface GoalRunOutcome {
    * `start_index=6 直接收口`（fa0663 实测形态）误判为成功。
    */
   phaseStartsThisCall: string[];
+  checkFamiliesThisCall: string[];
+  authorCallsThisCall: number;
   /** 最后一条 run_end 的 reason / error（T1① 优雅收口后，死因在事件里而非 throw） */
   runEndReason: string | null;
   runEndError: string | null;
@@ -609,7 +611,7 @@ async function runScenario(args: {
         fs.writeFileSync(tracePath, JSON.stringify({ schema_version: '1.0.0', phase: String(ph), feature: feat,
           started_at: startedAt, ended_at: new Date().toISOString(), start_commit: startCommit,
           tool_calls: read.length ? [{ name: 'Read', count: read.length }] : [], checked_inputs: read }, null, 2) + '\n');
-        return { exitCode: summary.verdict === 'PASS' ? 0 : 1, timedOut: false };
+        return { exitCode: summary.verdict === 'PASS' ? 0 : 1, timedOut: false, currentCheckObserved: true };
       } finally { for (const [key, value] of previous) { if (value === undefined) delete process.env[key]; else process.env[key] = value; } }
     });
     // capability gate 桩（无缺口放行）——它排在设备门之前，而设备 capability 的
@@ -654,6 +656,7 @@ async function runScenario(args: {
           outcome: {
             phase: opts.phase, verdict: 'FAIL', halted: false, retries: opts.retries,
             halt_reason: 'device_not_ready', halt_guidance: '注入：设备锁屏（smoke 恢复场景）',
+            probe: 'device_readiness',
             blocking_class: 'externalBlocked', failure_kind: 'device_blocked',
           },
           notes: ['injected-device-gate'],
@@ -829,7 +832,8 @@ async function runScenario(args: {
             : {
                 maxWaitMs: 200,
                 pollMs: 50,
-                runProbe: () => ({ ready: false, reason: 'goal-run-driver 不接真机探针' }),
+                runProbe: () => ({ ready: scenario === 'resume_with_device_ready',
+                  reason: scenario === 'resume_with_device_ready' ? '与本次实际设备门一致的受控 READY 观察' : 'goal-run-driver 不接真机探针' }),
               },
         });
   } catch (e) {
@@ -865,6 +869,8 @@ async function runScenario(args: {
     phaseStartsThisCall: all.slice(preCount)
       .filter(e => e.type === 'phase_start' && typeof e.phase === 'string')
       .map(e => e.phase as string),
+    checkFamiliesThisCall: all.slice(preCount).filter(e => e.type === 'harness_start').map(e => String(e.phase)),
+    authorCallsThisCall: all.slice(preCount).filter(e => e.type === 'agent_invoke_start' && e.phase === 'work-unit-author').length,
     runEndReason: lastRunEnd?.reason ?? null,
     runEndError: lastRunEnd?.error ?? null,
     runEndStatus: (lastRunEnd as { status?: string } | undefined)?.status ?? null,

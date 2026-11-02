@@ -15,7 +15,7 @@ export function parseAssessCliArgs(args: string[]): ReturnType<typeof minimist> 
   return minimist(args, {
     string: ['feature', 'project-root', 'framework-root', 'goal-end', 'mode', 'through-phase', 'run-id', 'attempt-id'],
     boolean: ['write'],
-    default: { write: true },
+    default: { write: false },
   });
 }
 
@@ -55,13 +55,14 @@ function main(): void {
     },
     runId,
     attemptId: argv['attempt-id'] ? String(argv['attempt-id']) : undefined,
-    writeProjection: argv.write !== false,
+    writeProjection: argv.write === true,
   });
   // plan b2d7f4e9 §3.5：完成评估（记录可信性 / uncovered 义务 / blocking）与阶段观察并列展示。
   let featureAssessment: unknown;
   try {
     const a = assessFeatureCompletion(projectRoot, feature, { ...resolveChangeUnitExpectedExecution(projectRoot, feature, false, frameworkRoot), frameworkRoot });
-    featureAssessment = { complete: a.complete, record: a.record, uncovered: a.obligations.filter(o => o.status === 'uncovered'), blocking: a.blocking };
+    featureAssessment = { complete: a.complete, current_disposition: a.currentDisposition, record: a.record,
+      uncovered: a.obligations.filter(o => o.status === 'uncovered'), blocking: a.blocking };
   } catch (error) { featureAssessment = { error: (error as Error).message }; }
   console.log(JSON.stringify({ ...result, feature_assessment: featureAssessment }, null, 2));
 }

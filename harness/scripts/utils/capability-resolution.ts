@@ -237,7 +237,7 @@ function resolveArtifact(
       const raw = fs.readFileSync(selected.path, 'utf8');
       let artifacts: Record<string, unknown> | undefined;
       let projectedValue: unknown;
-      let value = /\.ya?ml$|\.json$/i.test(selected.path) ? YAML.parse(raw) : raw;
+      let value = /\.ya?ml$|\.json$/i.test(selected.path) ? authorityReaders?.readArtifact?.(selected.path) ?? YAML.parse(raw) : raw;
       const rawValue = value;
       if (typeof value?.source === 'string' && /^derive\.blueprint-(acceptance|contracts):/.test(value.source)) {
         const sourceFeature = feature ?? (typeof value.feature === 'string' ? value.feature : undefined);

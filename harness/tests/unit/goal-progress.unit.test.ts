@@ -262,7 +262,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         const manifest = mkManifest({
           run_id: 'run-current',
           report_dir: 'doc/features/feat-a/goal-runs/run-current',
-          budget: { ...mkManifest().budget, max_total_turns: 30 },
+          budget: { ...mkManifest().budget!, max_total_turns: 30 },
         });
         mkEvents('doc/features/feat-a/goal-runs/run-current/manifest.json', [
           JSON.stringify({ run_id: 'run-current' }),
@@ -275,11 +275,11 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
           nowMs: new Date('2026-08-03T01:06:00.000Z').getTime(),
           featuresDir: 'doc/features',
         });
-        assert(snap.budget.turns_used === 30,
-          `lineage turns 应折叠累计 30（25 祖先 + 5 当前），实得 ${snap.budget.turns_used}（旧实现=当前 run 5）`);
-        assert(snap.budget.turns_limit === 30, `turns_limit=${snap.budget.turns_limit}`);
-        assert(snap.budget.wall_elapsed_ms === 15 * 60 * 1000,
-          `wall 应折叠累计 15m（祖先 10m + 当前 5m），实得 ${snap.budget.wall_elapsed_ms}`);
+        assert(snap.budget!.turns_used === 30,
+          `lineage turns 应折叠累计 30（25 祖先 + 5 当前），实得 ${snap.budget!.turns_used}（旧实现=当前 run 5）`);
+        assert(snap.budget!.turns_limit === 30, `turns_limit=${snap.budget!.turns_limit}`);
+        assert(snap.budget!.wall_elapsed_ms === 15 * 60 * 1000,
+          `wall 应折叠累计 15m（祖先 10m + 当前 5m），实得 ${snap.budget!.wall_elapsed_ms}`);
         // 无 supersede 的普通视图：折叠空 → 恒等于当前 run（既有断言不回归）
         const noSup = projectGoalProgress({
           projectRoot: root,
@@ -289,7 +289,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
           nowMs: new Date('2026-08-03T01:06:00.000Z').getTime(),
           featuresDir: 'doc/features',
         });
-        assert(noSup.budget.turns_used === 5, `无 supersede 时只计当前 run：${noSup.budget.turns_used}`);
+        assert(noSup.budget!.turns_used === 5, `无 supersede 时只计当前 run：${noSup.budget!.turns_used}`);
       } finally {
         try { fs.rmSync(root, { recursive: true, force: true }); } catch { /* best-effort */ }
       }
@@ -886,8 +886,8 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         // featureLock omitted: released on graceful exit — the lock-cleaned signature.
       });
       assert(snap.status !== 'RUNNING', `must not be RUNNING, got ${snap.status}`);
-      assert(snap.status === 'STALLED', `expected STALLED, got ${snap.status}`);
-      assert(snap.liveness.state === 'STALLED', `liveness ${snap.liveness.state}`);
+      assert(snap.status === 'UNKNOWN', `missing actual execution grant must remain unknown, got ${snap.status}`);
+      assert(snap.liveness.state !== 'ACTIVE', `old activity is not a live execution proof: ${snap.liveness.state}`);
     },
   },
   {
@@ -910,7 +910,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         nowMs: now,
         liveProbe: true,
       });
-      assert(snap.status === 'STALLED', `expected STALLED, got ${snap.status}`);
+      assert(snap.status === 'UNKNOWN', `missing actual execution grant must remain unknown, got ${snap.status}`);
     },
   },
   {
@@ -937,7 +937,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         liveProbe: true,
       });
       assert(snap.status !== 'RUNNING', `must not be RUNNING, got ${snap.status}`);
-      assert(snap.status === 'STALLED', `expected STALLED, got ${snap.status}`);
+      assert(snap.status === 'UNKNOWN', `missing actual execution grant must remain unknown, got ${snap.status}`);
     },
   },
   {
@@ -990,7 +990,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     },
   },
   {
-    name: 'generateProgressMarkdown: includes phase table and budget',
+    name: 'generateProgressMarkdown: includes check milestones and activity',
     run: () => {
       const snap = projectGoalProgress({
         projectRoot: '/tmp',
@@ -1001,7 +1001,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       const md = generateProgressMarkdown(snap);
       assert(md.includes('## Phases'), 'phases section');
       assert(md.includes('| Duration |'), 'duration col');
-      assert(md.includes('Budget:'), 'budget');
+      assert(md.includes('Activity:'), 'activity');
       assert(md.includes('spec'), 'phase row');
     },
   },
@@ -1036,8 +1036,8 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
           updated_at: '2026-06-10T12:14:00.000Z',
         },
       });
-      assert(snap.liveness.state === 'STALLED', `liveness ${snap.liveness.state}`);
-      assert(snap.status === 'STALLED', `status ${snap.status}`);
+      assert(snap.liveness.state !== 'STALLED', 'old manifest timeout cannot create a current author deadline');
+      assert(snap.status === 'RUNNING', `fresh live control remains running without a declared deadline: ${snap.status}`);
     },
   },
   {
@@ -1244,7 +1244,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       const text = formatGoalStatusText(snap, 'feat-a', '20260610T120000Z');
       assert(text.includes('feat-a'), 'feature');
       assert(text.includes('COMPLETED'), 'status');
-      assert(text.includes('Budget:'), 'budget');
+      assert(text.includes('Activity:'), 'activity');
     },
   },
   {
@@ -1263,7 +1263,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         assert(snap.status === 'HALTED' && snap.status_reason === 'budget_wall_clock', JSON.stringify(snap));
         for (const rendered of [formatGoalStatusText(snap, manifest.feature, runId), generateProgressMarkdown(snap)]) {
           assert(rendered.includes('Reason: budget_wall_clock'), rendered);
-          assert(rendered.includes('Budget: turns 23/30, wall 479m/480m'), rendered);
+          assert(rendered.includes('Historical limits (read only): turns 23/30, wall 479m/480m'), rendered);
         }
       } finally { fs.rmSync(root, { recursive: true, force: true }); }
     },
@@ -1614,7 +1614,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       const events: GoalRunEvent[] = [
         { ts: stale, type: 'run_start', chain: ['coding'] },
         { ts: stale, type: 'phase_start', phase: 'coding', attempt: 1 },
-        { ts: stale, type: 'agent_invoke_start', phase: 'coding', invoke_id: 'p1' },
+        { ts: stale, type: 'agent_invoke_start', phase: 'coding', invoke_id: 'p1', effective_timeout_ms: 3_600_000 },
       ] as GoalRunEvent[];
       fs.mkdirSync(reportDir, { recursive: true });
       fs.writeFileSync(path.join(reportDir, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf-8');
@@ -2024,7 +2024,7 @@ cases.push({ name: 'session budget projection: 有效窗内睡眠、隔夜迟到
     { type: 'phase_start', phase: 'coding', invoke_id: 'coding-i1', driver: 'session', ts: at(0),
       handoff_request: { path: 'phases/coding/request.json', sha256: 'a' } },
   ];
-  const project = (now: number) => projectGoalProgress({ projectRoot: '/tmp', manifest, workflow, events, nowMs: origin + now * minute }).budget.wall_elapsed_ms / minute;
+  const project = (now: number) => projectGoalProgress({ projectRoot: '/tmp', manifest, workflow, events, nowMs: origin + now * minute }).budget!.wall_elapsed_ms / minute;
   assert(project(20) === 20, '有效窗内睡眠不得扣除');
   assert(project(840) === 44, `未报告隔夜必须封窗：${project(840)}`);
   events.push({ type: 'phase_write_observed', phase: 'coding', ts: at(839) },
@@ -2089,8 +2089,8 @@ cases.push({
     assert(snapshot.phase.substep === 'agent_invoke' && snapshot.next_action === 'wait_for_agent_invoke_end', snapshot.next_action);
     assert(snapshot.artifacts.agent_output_log === ownRel && snapshot.phases_summary.find(s => s.phase === 'plan')?.evidence === ownRel, '工作面和证据须同一次调用');
     assert(snapshot.liveness.state === 'ACTIVE' && snapshot.liveness.agent_output_stalled_ms === null, JSON.stringify(snapshot.liveness));
-    assert(snapshot.phase.attempt === 1 && snapshot.budget.turns_used === 1, '局部 fixture 修前修后均为 attempt=1/turns=1，不凑历史30轮');
-    assert(snapshot.phase.started_at === '2026-10-27T07:11:37.125Z' && snapshot.budget.phase_timeout_ms === 5_400_000, '阶段起点与本调用已授予超时不变');
+    assert(snapshot.phase.attempt === 1 && snapshot.budget!.turns_used === 1, '局部 fixture 修前修后均为 attempt=1/turns=1，不凑历史30轮');
+    assert(snapshot.phase.started_at === '2026-10-27T07:11:37.125Z' && snapshot.budget!.phase_timeout_ms === 5_400_000, '保原里程碑起点及当前实际调用记录的5400000ms工具授予，不借manifest默认值');
   }),
 });
 
@@ -2108,7 +2108,7 @@ cases.push({
         const active = project();
         assert(active.phase.status === 'AGENT_RUNNING' && active.next_action === 'wait_for_agent_invoke_end', label);
         assert(active.artifacts.agent_output_log === ownRel && active.phases_summary[0].evidence === ownRel, label + ' evidence');
-        assert(active.budget.phase_timeout_ms === 20 * 60_000 && active.liveness.state === 'ACTIVE', label + ' timeout/liveness');
+        assert(active.budget!.phase_timeout_ms === 20 * 60_000 && active.liveness.state === 'ACTIVE', label + ' timeout/liveness');
         assert(active.phase.started_at === before.phase.started_at, label + ' 不重置阶段起点');
         assert(active.phase.attempt === (auxiliary ? before.phase.attempt : before.phase.attempt + 1), label + ' 不把辅助调用计阶段尝试');
         events.push({ type: 'agent_invoke_end', phase: label, invoke_id: 'other', ts: new Date(now - 8000).toISOString() });
@@ -2156,7 +2156,7 @@ cases.push({
   run: () => a7Project(({ events, now, project, log }) => {
     events.push({ type: 'agent_invoke_start', phase: 'plan-verifier-format-repair', chain_phase: 'plan', invoke_id: 'legacy-aux',
       ts: new Date(now - 1000).toISOString() } as GoalRunEvent);
-    assert(project().budget.phase_timeout_ms === 3_600_000, '缺字段按manifest回落，不借上次99分钟');
+    assert(project().budget!.phase_timeout_ms === 0, '缺实际调用授予时保持未知，不借manifest默认或上次99分钟');
     assert(project().artifacts.agent_output_log === null && project().phases_summary[0].evidence === null, '无本调用日志，不借旧阶段证据');
     delete events[events.length - 1].invoke_id;
     log('plan-verifier-format-repair');
@@ -2216,7 +2216,7 @@ cases.push({
           { type: 'phase_start', phase: 'plan', attempt: 1, ts: new Date(now - 500).toISOString() });
         const snap = project();
         assert(snap.phase.status === 'PROMPT_READY' && snap.liveness.state === 'ACTIVE', JSON.stringify(snap.phase));
-        assert(snap.budget.phase_timeout_ms === 3_600_000 && snap.budget.turns_used === 2, '清调用窗口不清实际调用预算');
+        assert(snap.budget!.phase_timeout_ms === 0 && snap.activity?.calls === 2, '清调用窗口不清真实调用统计，也不重建默认作者期限');
       });
     }
   },

@@ -117,6 +117,7 @@ function main(): number {
         attemptId: String(argv['goal-attempt-id'] ?? '').trim(),
         ownerId: String(argv['goal-owner-id'] ?? '').trim(),
         ownerEpoch: Number(argv['goal-owner-epoch']),
+        checkFamily: true,
       }).manifest;
     } catch (error) {
       console.error(`[fidelity-intent-init] BLOCKER: ${(error as Error).message}`);

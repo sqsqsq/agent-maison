@@ -161,10 +161,10 @@ export function projectImplementationModules(projectRoot: string,
 
 /** Only a Scope in the original request is an explicit machine-readable restriction. */
 export function resolveImplementationScope(projectRoot: string, feature: string,
-  hints: Array<{ name?: string; package_path?: string }> = [], runId?: string) {
+  hints: Array<{ name?: string; package_path?: string }> = [], runId?: string, originalRequirement?: string) {
   const modules = projectImplementationModules(projectRoot, hints);
   const { collectCurrentRequirementText } = require('./fidelity-shared') as typeof import('./fidelity-shared');
-  const requirement = collectCurrentRequirementText(projectRoot, feature,
+  const requirement = originalRequirement ?? collectCurrentRequirementText(projectRoot, feature,
     loadFrameworkConfig(projectRoot).paths?.features_dir ?? 'doc/features', runId);
   const explicit = parseScope(requirement).scope;
   const selected = explicit ? modules.filter(module => explicit.in_scope_modules.includes(module.name)

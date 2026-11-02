@@ -53,8 +53,6 @@ import {
   extractJsonFinalResultText,
   extractOpenCodeFinalText,
   validateProviderIdentityEcho,
-  resolveSpecObservationBudget,
-  VISUAL_PROVIDER_SPEC_OBSERVATION_MAX_PER_RUN,
   type VisualProviderInvokeInput,
 } from '../../scripts/utils/visual-provider-invoke';
 import {
@@ -101,7 +99,7 @@ import {
   resolveEffectiveVerdict,
 } from '../../scripts/utils/quality-axes';
 import { resolveVerdictFromChecks } from '../../scripts/utils/report-generator';
-import { classifyPhaseAssessment } from '../../scripts/utils/phase-transition-policy';
+import { resolveCurrentDisposition } from '../../scripts/utils/check-disposition';
 import type { AgentInvokeResult } from '../../scripts/utils/agent-invoke';
 import type { CheckResult } from '../../scripts/utils/types';
 import type { UnitCaseResult } from '../run-unit';
@@ -727,15 +725,6 @@ test('t3 生命周期唯一性（源码锚定）：provider 不得自建 spawn/t
   }
 });
 
-test('t3 批次上限：spec 观察 = min(参考图数, 单 run 封顶)', () => {
-  assert.strictEqual(resolveSpecObservationBudget(0), 0);
-  assert.strictEqual(resolveSpecObservationBudget(3), 3);
-  assert.strictEqual(
-    resolveSpecObservationBudget(VISUAL_PROVIDER_SPEC_OBSERVATION_MAX_PER_RUN + 5),
-    VISUAL_PROVIDER_SPEC_OBSERVATION_MAX_PER_RUN,
-  );
-});
-
 // ---------------------------------------------------------------------------
 // t4 — spec 观察 sidecar
 // ---------------------------------------------------------------------------
@@ -1161,18 +1150,10 @@ test('delegated provider 贯通：非发布必需 SKIP；release-required unavai
       legacy: resolveVerdictFromChecks([...requiredChecks]),
     }).verdict;
     assert.strictEqual(effectiveVerdict, 'INCOMPLETE');
-    const deferred = classifyPhaseAssessment({
-      verdict: effectiveVerdict,
-      blocking_class: requiredUnavailable.blocking_class,
-      failure_kind: requiredUnavailable.failure_kind,
-      dependency_policy: {
-        deferrable_blocking_classes: ['externalBlocked'],
-        deferrable_failure_kinds: ['capability_missing'],
-        propagate_to_downstream: false,
-      },
-    });
-    assert.strictEqual(deferred.action, 'resolve_deferred');
-    assert.strictEqual(deferred.runner_action, 'defer_external_and_halt');
+    const deferred = resolveCurrentDisposition({ endpoint: 'request', phases: [{ phase: 'testing', verdict: effectiveVerdict,
+      schemaCurrent: true, closureCommitted: false, checks: requiredChecks }] });
+    assert.ok(deferred.completionBlocking.some(problem => problem.action === 'wait'));
+    assert.strictEqual(deferred.completionEligible, false);
 
     clearFrameworkConfigCache();
     const strictUnavailable = projectDelegatedVisualProviderFailure(
@@ -1215,7 +1196,9 @@ test('delegated provider 贯通：非发布必需 SKIP；release-required unavai
       legacy: resolveVerdictFromChecks(invalidChecks),
     }).verdict;
     assert.strictEqual(invalidVerdict, 'FAIL');
-    assert.strictEqual(classifyPhaseAssessment({ verdict: invalidVerdict }).runner_action, 'retry');
+    const invalidCurrent = resolveCurrentDisposition({ endpoint: 'request', phases: [{ phase: 'testing', verdict: invalidVerdict,
+      schemaCurrent: true, closureCommitted: false, checks: invalidChecks }] });
+    assert.strictEqual(invalidCurrent.completionEligible, false, '坏证据不能借旧重试动作签完成');
   } finally {
     clearFrameworkConfigCache();
     fs.rmSync(required.root, { recursive: true, force: true });
@@ -2543,37 +2526,59 @@ test('t3/t5 同一 attempt 的自检与正式检查各留调用证据，不因�
   }
 });
 
-test('t4 sidecar：整体失败也只是"没有 sidecar"——不抛错、不产 check、不阻断 spec', async () => {
+test('t4 spec观察处理全部15张未缓存参考图，失败不阻断，三元缓存和真改图只补受影响项', async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vp-sidecar-'));
+  const transport = require('../../scripts/utils/visual-provider-invoke') as typeof import('../../scripts/utils/visual-provider-invoke');
+  const originalInvoke = transport.invokeVisualProvider;
+  let available = false;
+  const calls: string[] = [];
   try {
     fs.writeFileSync(path.join(tmp, 'framework.config.json'), JSON.stringify({
       schema_version: '1.1', project_name: 'p', paths: { features_dir: 'doc/features' },
-    }, null, 2));
+    }));
     clearFrameworkConfigCache();
-    const imgA = path.join(tmp, 'a.png');
-    const imgB = path.join(tmp, 'b.png');
-    fs.writeFileSync(imgA, 'aaa');
-    fs.writeFileSync(imgB, 'bbb');
-    const seen: string[] = [];
-    // 本机通常没有可用的 provider CLI —— 两张图都会走 unavailable 分支。
-    // 断言的是**失败语义**：逐图独立、整体不抛错、返回值就是盘上可用 sidecar 列表。
-    const paths = await produceVisualObservationSidecars({
-      projectRoot: tmp,
-      frameworkRoot: FRAMEWORK_ROOT,
-      feature: 'feat',
-      provider: { adapter: 'claude', model: 'm' },
-      referenceImages: [imgA, imgB],
-      timeoutMs: 1_000,
-      onInvocation: (inv) => seen.push(inv.outcome),
-    });
-    assert.ok(Array.isArray(paths), '整体失败必须正常返回，不抛错');
-    assert.deepStrictEqual(paths, [], '失败即"该图没有 sidecar"，不是错误');
-    assert.strictEqual(seen.length, 2, '逐图独立尝试——第一张失败不阻断第二张');
-    assert.ok(seen.every(o => o !== 'success'));
-  } finally {
-    clearFrameworkConfigCache();
-    fs.rmSync(tmp, { recursive: true, force: true });
-  }
+    const images = Array.from({ length: 15 }, (_, index) => path.join(tmp, 'ref-' + index + '.png'));
+    const Jimp: typeof import('jimp') = require('jimp');
+    await Promise.all(images.map((file, index) => new Jimp(2, 2, (0x110000ff + index * 0x000a0000) >>> 0).writeAsync(file)));
+    transport.invokeVisualProvider = input => {
+      assert.strictEqual(input.purpose, 'spec_observation');
+      assert.strictEqual(input.timeoutMs, 1_000, '每次具体工具期限仍透传，不变成整单配额');
+      const image = input.imagePaths[0];
+      assert.ok(fs.existsSync(image), '不可读取的图不应伪造provider输入');
+      calls.push(image);
+      const payload = JSON.stringify({ image_hashes: [hashImageFile(image)], observations: [{ region: 'all', fact: 'current ' + hashImageFile(image) }] });
+      return originalInvoke({ ...input, invokeAgent: async () => available
+        ? { exitCode: 0, stdout: JSON.stringify({ type: 'result', subtype: 'success', result: payload }), stderr: '', command: 'controlled native transport', completion_observed: true }
+        : { exitCode: 1, stdout: '', stderr: 'controlled unavailable provider', command: 'controlled native transport', terminal_failure_observed: true } });
+    };
+    const input = { projectRoot: tmp, frameworkRoot: FRAMEWORK_ROOT, feature: 'feat', provider: { adapter: 'claude', model: 'm' },
+      referenceImages: [...images, path.join(tmp, 'missing.png')], timeoutMs: 1_000 };
+    assert.deepStrictEqual(await produceVisualObservationSidecars(input), [], '整体失败只保无sidecar，不产假观察');
+    assert.deepStrictEqual(calls, images, '超过旧12张的真实图也必须逐张处理；缺图不猜造');
+    available = true;
+    const produced = await produceVisualObservationSidecars(input);
+    assert.strictEqual(produced.length, images.length, '恢复后所有真实参考图均产生实际sidecar');
+    assert.strictEqual(calls.length, images.length * 2);
+    const before = new Map(produced.map(file => [file, fs.readFileSync(path.join(tmp, file), 'utf8')]));
+    assert.deepStrictEqual(await produceVisualObservationSidecars(input), produced);
+    assert.strictEqual(calls.length, images.length * 2, '三元相同必须复用，不重买provider');
+    await new Jimp(2, 2, 0xff00ffff).writeAsync(images[13]);
+    await produceVisualObservationSidecars(input);
+    assert.strictEqual(calls.length, images.length * 2 + 1);
+    assert.strictEqual(calls.at(-1), images[13], '真实改图只补该图');
+    for (const file of produced) if (JSON.parse(before.get(file)!).source_image !== path.basename(images[13]))
+      assert.strictEqual(fs.readFileSync(path.join(tmp, file), 'utf8'), before.get(file), '未变图原sidecar字节保留');
+    const nextProvider = { ...input, provider: { adapter: 'claude', model: 'm2' } };
+    await produceVisualObservationSidecars(nextProvider);
+    assert.strictEqual(calls.length, images.length * 3 + 1, 'provider变更使原观察材料不再复用');
+    const stale = path.join(tmp, produced[2]);
+    const doc = JSON.parse(fs.readFileSync(stale, 'utf8'));
+    doc.protocol_version = VISUAL_OBSERVATION_PROTOCOL_VERSION + 1;
+    fs.writeFileSync(stale, JSON.stringify(doc));
+    await produceVisualObservationSidecars(nextProvider);
+    assert.strictEqual(calls.length, images.length * 3 + 2, '只有协议不齐的实际sidecar需要重产');
+    assert.strictEqual(calls.at(-1), path.join(tmp, doc.source_image));
+  } finally { transport.invokeVisualProvider = originalInvoke; clearFrameworkConfigCache(); fs.rmSync(tmp, { recursive: true, force: true }); }
 });
 
 test('t5 接线纪律（源码锚定）：provider 评审显式 await、不塞进同步 safeRun；provider 缺陷不进 signal@1', () => {
@@ -2589,7 +2594,7 @@ test('t5 接线纪律（源码锚定）：provider 评审显式 await、不塞�
     '不得把异步评审包进同步 safeRun',
   );
   const goalRunner = fs.readFileSync(
-    path.join(FRAMEWORK_ROOT, 'harness', 'scripts', 'goal-phase-runtime.ts'), 'utf-8',
+    path.join(FRAMEWORK_ROOT, 'harness', 'scripts', 'utils', 'actionable-evidence.ts'), 'utf-8',
   );
   // provider 源的结构化视觉缺陷必须以 signal_identity:false 物化——进 signal@1 就会
   // 因"结构上恒未复核"把每个 delegated 轮次停成 repair_adjudication_pending。

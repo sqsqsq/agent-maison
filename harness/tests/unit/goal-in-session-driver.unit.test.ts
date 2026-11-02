@@ -18,7 +18,6 @@ import {
 import {
   formatGoalRoundStatus,
   handoffSessionToDetached,
-  recommendationAuthorized,
   resolveGoalRunModeIntent,
   type InSessionRoundResult,
 } from '../../scripts/utils/goal-in-session-driver';
@@ -30,7 +29,6 @@ import {
 } from '../../scripts/utils/goal-run-control';
 import { projectCanonicalLifecycle } from '../../scripts/utils/goal-canonical-lifecycle';
 import { readHandoffRequest } from '../../scripts/utils/goal-handoff';
-import { CONTINUATION_COOLDOWN_MINUTES } from '../../scripts/utils/goal-run-creation';
 import { resolveWorkflowSpec } from '../../workflow-loader';
 import {
   runGoalRuntimeChain,
@@ -86,36 +84,30 @@ const cases: TestCase[] = [
       const root = path.join(temporary, 'host with spaces');
       const oldTrust = process.env.MAISON_GOAL_CHECKPOINT_DIR;
       try {
-        const historicalClock = path.join(temporary, 'historical-clock.cjs');
-        const offset = (CONTINUATION_COOLDOWN_MINUTES + 5) * 60_000;
-        fs.writeFileSync(historicalClock, `const RealDate=Date,now=()=>RealDate.now()-${offset};global.Date=new Proxy(RealDate,{construct(target,args){return Reflect.construct(target,args.length?args:[now()]);},apply(){return new RealDate(now()).toString();},get(target,key){return key==='now'?now:Reflect.get(target,key);}});exports.restore=()=>{global.Date=RealDate;};`);
-        const restoreClock = (require(historicalClock) as { restore(): void }).restore;
-        try { prepareSessionCliProject(root, 'claude', false); } finally { restoreClock(); }
+        prepareSessionCliProject(root, 'claude', false);
         const harness = path.join(root, 'framework/harness');
         const runDir = path.join(root, 'doc/features/clamp/goal-runs/session-cli');
         const env = { ...process.env, MAISON_GOAL_CHECKPOINT_DIR: path.join(root, '.trust') };
-        const historicalEnv = { ...env, NODE_OPTIONS: `--require ${JSON.stringify(historicalClock)}` };
         const args = [path.join(harness, 'node_modules/ts-node/dist/bin.js'), '--project', path.join(harness, 'tsconfig.json'),
           path.join(harness, 'scripts/goal-mode-entry.ts'), '--project-root', root, '--framework-root', path.join(root, 'framework'),
           '--feature', 'clamp', '--run-id', 'session-cli', '--adapter', 'claude', '--run-mode', 'attended', '--authorize-autonomy', '--next'];
-        const next = runRuntimeTestChild({ root }, () => spawnSync(process.execPath, args, { cwd: harness, env: historicalEnv, encoding: 'utf8', timeout: 60_000, windowsHide: true }));
+        const next = runRuntimeTestChild({ root }, () => spawnSync(process.execPath, args, { cwd: harness, env, encoding: 'utf8', timeout: 60_000, windowsHide: true }));
         assert(next.status === 0, next.stderr + next.stdout);
         const issued = JSON.parse(next.stdout.trim());
         const request = JSON.parse(fs.readFileSync(issued.request.path, 'utf8'));
         const resultFile = path.join(path.dirname(issued.request.path), `result-e${request.context.owner.epoch}.json`);
-        fs.writeFileSync(resultFile, '\uFEFF' + JSON.stringify({ status: 'waiting', phase: 'coding', details: 'unfinished fixture work' }));
+        fs.writeFileSync(resultFile, '\uFEFF' + JSON.stringify({ status: 'waiting', phase: request.context.phase, details: 'unfinished fixture work' }));
         const psScript = path.join(temporary, 'generated command.ps1');
         fs.writeFileSync(psScript, `$PSVersionTable.PSVersion.ToString()\n${issued.next_command}\nexit $LASTEXITCODE\n`);
         const reported = runRuntimeTestChild({ root }, () => spawnSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', psScript],
-          { cwd: harness, env: historicalEnv, encoding: 'utf8', timeout: 60_000, windowsHide: true }));
+          { cwd: harness, env, encoding: 'utf8', timeout: 60_000, windowsHide: true }));
         assert(reported.status === 0, reported.stderr + reported.stdout);
         assert(/^5\.1\./.test(reported.stdout), 'test must use Windows PowerShell 5.1');
         const waiting = JSON.parse(reported.stdout.trim().split(/\r?\n/).at(-1)!);
         assert(waiting.result.status === 'waiting' && waiting.exit_code === 0, JSON.stringify(waiting));
         const historicalEvents = fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8').trim().split(/\r?\n/).map(line => JSON.parse(line));
         const historicalEnd = [...historicalEvents].reverse().find(event => event.type === 'run_end');
-        assert(!!historicalEnd && Date.now() - Date.parse(historicalEnd.ts) > CONTINUATION_COOLDOWN_MINUTES * 60_000,
-          'fixture history must already be outside the shared cooldown before the current fault');
+        assert(!!historicalEnd, 'the real prior waiting return must precede the current startup fault');
         const times = historicalEvents.map(event => Date.parse(event.ts));
         assert(times.every((time, index) => index === 0 || time >= times[index - 1]), 'production-written fixture history must stay chronological');
         const fault = path.join(temporary, 'startup-fault.cjs');
@@ -168,26 +160,6 @@ const cases: TestCase[] = [
       let rejected = false;
       try { assertAttendedRunMode('unattended'); } catch { rejected = true; }
       assert(rejected, 'unattended attach declaration was accepted');
-    },
-  },
-  {
-    name: 'batch authorization remains a pure compatibility policy helper',
-    run: () => {
-      const chain = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'];
-      const recommendation = {
-        action: 'run_phase', phase: 'coding', runner_action: 'backtrack_to_phase', reason: 'repair',
-      } as never;
-      assert(recommendationAuthorized(
-        recommendation, { mode: 'batch_authorized', through_phase: 'testing' }, chain,
-        { startPhase: 'coding' },
-      ), 'authorized coding backtrack rejected');
-      assert(!recommendationAuthorized(
-        {
-          action: 'run_phase', phase: 'plan', runner_action: 'backtrack_to_phase', reason: 'repair',
-        } as never,
-        { mode: 'batch_authorized', through_phase: 'testing' }, chain,
-        { startPhase: 'coding' },
-      ), 'batch escaped below explicit start');
     },
   },
   {
@@ -281,10 +253,9 @@ const cases: TestCase[] = [
           viaHostBridge: true, adapter: 'codex', runId: 'host-bridge-runtime',
         });
         assert(probe.exitCode === 0, `host bridge exit=${probe.exitCode}`);
-        assert(probe.invokedPhases.join(',') === 'spec,plan,coding,review,ut,testing',
-          `host bridge phase sequence=${probe.invokedPhases.join(',')}`);
-        assert(JSON.stringify(probe.invokedPhases) === JSON.stringify(probe.harnessPhases),
-          'host bridge bypassed or reordered canonical gates');
+        assert(probe.invokedPhases.join(',') === 'work-unit-author', `host bridge authors=${probe.invokedPhases.join(',')}`);
+        assert(probe.harnessPhases.join(',') === 'spec,plan,coding,review,ut,testing',
+          'one dedicated author must still receive every actual canonical check');
         const projection = projectCanonicalLifecycle(probe.events);
         assert(projection[0]?.type === 'run_created', 'host bridge lost birth');
         assert(projection.at(-1)?.type === 'run_end', 'host bridge lost close');
@@ -319,11 +290,11 @@ const cases: TestCase[] = [
       try {
         let prompt = '';
         const probe = await runGoalRuntimeChain(root, { adapter: 'generic', runId: 'host-main-context',
-          freshEndPhase: 'spec', viaSessionStep: true, onSpec: ctx => { prompt = ctx.prompt; } });
+          freshEndPhase: 'spec', viaSessionStep: true, onAuthor: ctx => { prompt = ctx.prompt; } });
         assert(probe.exitCode === 0, JSON.stringify(probe.events.filter(event => event.type === 'phase_halt')));
-        assert(probe.invokedPhases.join(',') === 'spec' && probe.harnessPhases.join(',') === 'spec', 'main-context execution must still use the formal gate');
-        assert(prompt.includes('专用执行会话') && prompt.includes('遵守当前授权写集') && prompt.includes('独立核验')
-          && prompt.includes('结束作者步骤不等于验收 PASS，真实检查由内核完成'), 'the dedicated author receives its own scope and verification handoff responsibilities');
+        assert(probe.invokedPhases.join(',') === 'work-unit-author' && probe.harnessPhases.join(',') === 'spec', 'dedicated execution must still use the formal gate');
+        assert(prompt.includes('本单元持续的专用作者') && prompt.includes('依真实授权') && prompt.includes('独立核验')
+          && prompt.includes('检查通过与任务完成不同'), 'the dedicated author receives its actual scope and verification responsibilities');
         assert(probe.events.some(event => event.type === 'agent_invoke_end' && event.handoff_report), 'the public session result must be archived');
         assert(!probe.events.some(event => event.type === 'agent_process_settled'), 'main context cannot manufacture process settlement');
         assert(readRunControl(probe.reportDir, 'host-main-context')?.owner?.state === 'released', 'completed session releases its owner');
@@ -373,7 +344,7 @@ const cases: TestCase[] = [
     },
   },
   {
-    name: 'production host bridge batch authorization never crosses through_phase',
+    name: 'production host bridge legacy batch phase metadata cannot grant a whole work-unit request',
     run: async () => {
       const root = setupGoalRuntimeHost('codex').root;
       try {
@@ -383,33 +354,30 @@ const cases: TestCase[] = [
           runId: 'host-batch-coding',
           hostAuthorization: { mode: 'batch_authorized', through_phase: 'coding' },
         });
-        assert(probe.exitCode === 0, `batch boundary exit=${probe.exitCode}`);
-        assert(probe.invokedPhases.join(',') === 'spec,plan,coding',
-          `batch escaped authorization=${probe.invokedPhases.join(',')}`);
-        assert(probe.harnessPhases.join(',') === 'spec,plan,coding',
-          `batch gate sequence=${probe.harnessPhases.join(',')}`);
+        assert(probe.exitCode === 2, `legacy batch boundary exit=${probe.exitCode}`);
+        assert(probe.invokedPhases.length === 0 && probe.harnessPhases.length === 0,
+          'a retired phase ceiling cannot silently expand into whole-unit execution authority');
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }
     },
   },
   {
-    name: 'production host bridge single-round boundary starts at most one phase',
+    name: 'production host bridge attended transport preserves an explicitly unauthorised request without dispatch',
     run: async () => {
       const root = setupGoalRuntimeHost('codex').root;
       try {
         const probe = await runGoalRuntimeChain(root, {
           viaHostBridge: true,
           adapter: 'codex',
-          runId: 'host-single-round',
-          hostAuthorization: { mode: 'goal_mode' },
-          hostMaxRounds: 1,
+          runId: 'host-mode-no-grant',
+          hostAuthorization: { mode: 'manual', autonomyAuthorized: false },
         });
-        assert(probe.exitCode === 0, `single-round exit=${probe.exitCode}`);
-        assert(probe.invokedPhases.join(',') === 'spec',
-          `single-round crossed phase boundary=${probe.invokedPhases.join(',')}`);
-        assert(probe.harnessPhases.join(',') === 'spec',
-          `single-round gate sequence=${probe.harnessPhases.join(',')}`);
+        assert(probe.invokedPhases.length === 0 && probe.harnessPhases.length === 0,
+          'transport/mode declarations do not grant execution authority');
+        assert(!probe.events.some(event => event.type === 'agent_invoke_start'
+          || event.type === 'run_end' && ['COMPLETED', 'CHAIN_SLICE_COMPLETED'].includes(String(event.status))),
+          'missing authority cannot produce an author or completion');
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }
@@ -566,7 +534,7 @@ const cases: TestCase[] = [
           let invoked = false;
           const result = await runGoalModeHostBridge({
             projectRoot: root, frameworkRoot: FRAMEWORK_ROOT, feature: row.feature,
-            runId: 'matrix-run', adapter: 'codex', runMode: 'attended', maxRounds: 1,
+            runId: 'matrix-run', adapter: 'codex', runMode: 'attended',
             executePhase: async (phase) => {
               invoked = true;
               return { status: 'passed', phase };

@@ -1,10 +1,9 @@
 /**
- * Phase transition policy — manual default + batch_authorized heuristics + goal_mode helpers.
- * SSOT for user-confirmation-ux.md §8.2; consumed by goal-runner and lint/tests.
+ * Check-family metadata and read-only legacy request/event parsing.
+ * Current execution and completion are owned by the shared work-unit kernel, never a phase action table.
  */
 
 import type { WorkflowSpec } from '../../workflow-loader';
-import type { AssessAuthorizationContext, AssessRecommendation } from './assess';
 import {
   LEGACY_FEATURE_PHASE_ORDER,
   effectiveRequires,
@@ -20,6 +19,7 @@ export type FeaturePhase = string;
 
 export type HarnessVerdict = 'PASS' | 'FAIL' | 'INCOMPLETE';
 
+/** @deprecated Read-only historical event vocabulary; never a current dispatch policy. */
 export type PhaseVerdictAction =
   | 'advance'
   | 'retry'
@@ -81,53 +81,6 @@ export const DEFAULT_DEPENDENCY_POLICY: DependencyPolicy = {
   deferrable_failure_kinds: ['device_blocked'],
   propagate_to_downstream: true,
 };
-
-export type AssessmentGapKind =
-  | 'missing'
-  | 'failed'
-  | 'deferred'
-  | 'stale'
-  | 'unclosed'
-  | 'legacy_unverified'
-  | 'insufficient_assurance'
-  | 'pruned'
-  | 'deterministic_defects';
-
-export type AssessmentRecommendationAction =
-  | 'run_phase'
-  | 'rerun_phase'
-  | 'complete_closure'
-  | 'resolve_deferred'
-  | 'restore_inputs_and_rerun'
-  | 'validate_feature_completion'
-  | 'stop';
-
-export interface ClassifyAssessmentGapInput {
-  assessment_gap: AssessmentGapKind | null;
-  fused?: boolean;
-  target_state?: 'missing' | 'current';
-}
-
-export interface ClassifyPhaseVerdictInput {
-  verdict: HarnessVerdict;
-  blocking_class?: string;
-  failure_kind?: string;
-  /** Effective required checker execution gap; no content retry can supply that evidence. */
-  verification_gap?: boolean;
-  dependency_policy?: DependencyPolicy;
-  retries_used?: number;
-  max_retries_per_phase?: number;
-  /** 当前阶段（backtrack 只对 review 闭环后的可变阶段 ut/testing 有意义） */
-  phase?: FeaturePhase;
-  /**
-   * plan d8c5f3a7 T4：本轮是否检出**确定性 P0 缺陷**且当前阶段无法零写入解决
-   * （crash 嫌疑 / needs_fix 素材债 / score_floor 崩塌 / 声明锚点缺失）。
-   * 由 runner 从 summary 的结构化缺陷指纹派生——**不看 strictness**。
-   */
-  deterministic_p0_defects?: boolean;
-  /** 回退次数只供观测；硬资源由总调用/活跃时长约束。 */
-  backtracks_used?: number;
-}
 
 export interface BatchAuthorizationResult {
   policy: TransitionPolicy;
@@ -250,16 +203,7 @@ export function resolveAutoChain(
       if (fp && !base.includes(fp)) base.push(fp);
     }
   } else {
-    const declaredChain = workflow.auto_chain;
-    if (declaredChain && declaredChain.length > 0) {
-      base = [];
-      for (const p of declaredChain) {
-        const fp = asFeaturePhase(p, workflow);
-        if (fp && !base.includes(fp)) base.push(fp);
-      }
-    } else {
-      base = featurePhasesFromWorkflow(workflow, track);
-    }
+    base = featurePhasesFromWorkflow(workflow, track);
   }
 
   const filtered = base.filter((p) => {
@@ -270,7 +214,6 @@ export function resolveAutoChain(
   if (filtered.length === 0) {
     throw new Error('[resolveAutoChain] 解析结果为空');
   }
-  validateFeatureChainDag(workflow, filtered, start, track);
   return filtered;
 }
 
@@ -284,116 +227,6 @@ export function isDeferrableExternalBlock(
   if (blocking_class && classes.includes(blocking_class)) return true;
   if (failure_kind && kinds.includes(failure_kind)) return true;
   return false;
-}
-
-/**
- * Classify harness verdict into runner action. SSOT for goal-runner.
- */
-export function classifyPhaseVerdict(input: ClassifyAssessmentGapInput): AssessmentRecommendationAction;
-export function classifyPhaseVerdict(input: ClassifyPhaseVerdictInput): PhaseVerdictAction;
-export function classifyPhaseVerdict(
-  input: ClassifyAssessmentGapInput | ClassifyPhaseVerdictInput,
-): AssessmentRecommendationAction | PhaseVerdictAction {
-  if ('assessment_gap' in input) {
-    if (input.fused) return 'stop';
-    switch (input.assessment_gap) {
-      case null:
-        return 'validate_feature_completion';
-      case 'missing':
-        return 'run_phase';
-      case 'unclosed':
-        return 'complete_closure';
-      case 'deferred':
-        return 'resolve_deferred';
-      case 'insufficient_assurance':
-      case 'pruned':
-        return 'restore_inputs_and_rerun';
-      case 'deterministic_defects':
-        return input.target_state === 'missing' ? 'run_phase' : 'rerun_phase';
-      case 'failed':
-      case 'stale':
-      case 'legacy_unverified':
-        return 'rerun_phase';
-      default: {
-        const exhaustive: never = input.assessment_gap;
-        throw new Error(`[phase-transition-policy] unsupported assessment gap: ${exhaustive}`);
-      }
-    }
-  }
-
-  const {
-    verdict,
-    blocking_class,
-    failure_kind,
-    dependency_policy = DEFAULT_DEPENDENCY_POLICY,
-    retries_used = 0,
-    max_retries_per_phase = 2,
-  } = input;
-
-  // v23 F1：actionable 缺陷判据在 **PASS 判定之前**——这是回修环可达性的关键。
-  // 旧顺序 `PASS 先行 return` 是第 6 轮 review 实锤的致命错误：best_effort（银行卡真实
-  // 档位）下视觉缺陷表现为 WARN、verdict=PASS → 回修环从未可达。actionable 缺陷非空
-  // 即回退，与 verdict 无关。只在 testing（UT 不读视觉产物；runner 侧同样只在 testing
-  // 【testing 缺陷专用裁决已删除 · 责任阶段统一路由（codex 二轮冻结项①）】
-  // v23 F1 的"PASS+actionable 也必须回退"语义**未削弱**，只是换了唯一入口：缺陷经
-  // summary.repair_candidates → assess candidates 分支 → backtrack_to_phase；该分支
-  // 在 recommendationForObservation 中**先于**本分类器执行，故 PASS+可信缺陷不会掉进
-  // 下面的 advance。deterministic_p0_defects 入参保留供诊断，不再决定路由。
-
-  if (verdict === 'PASS') return 'advance';
-
-  if (verdict === 'INCOMPLETE') {
-    if (input.verification_gap) return dependency_policy.propagate_to_downstream === false
-      ? 'defer_external_and_halt' : 'defer_external_and_continue_if_allowed';
-    if (isDeferrableExternalBlock(blocking_class, failure_kind, dependency_policy)) {
-      if (dependency_policy.propagate_to_downstream === false) {
-        return 'defer_external_and_halt';
-      }
-      return 'defer_external_and_continue_if_allowed';
-    }
-    return 'halt';
-  }
-
-  if (retries_used < max_retries_per_phase) return 'retry';
-  return 'halt';
-}
-
-export interface PhaseAssessmentDecision {
-  action: AssessmentRecommendationAction | null;
-  target: 'current' | 'coding' | null;
-  runner_action: PhaseVerdictAction;
-}
-
-/**
- * Translate the verdict SSOT into assess vocabulary. The mapping lives beside
- * classifyPhaseVerdict so assess and every driver consume one decision table.
- * `action=null` means normal workflow-gap reconciliation decides the next node.
- */
-export function classifyPhaseAssessment(
-  input: ClassifyPhaseVerdictInput,
-): PhaseAssessmentDecision {
-  const runnerAction = classifyPhaseVerdict(input);
-  switch (runnerAction) {
-    case 'advance':
-      return { action: null, target: null, runner_action: runnerAction };
-    case 'retry':
-      return { action: 'rerun_phase', target: 'current', runner_action: runnerAction };
-    case 'halt':
-      return { action: 'stop', target: null, runner_action: runnerAction };
-    case 'backtrack_to_coding':
-      return { action: 'rerun_phase', target: 'coding', runner_action: runnerAction };
-    case 'backtrack_to_phase':
-      // 责任阶段统一路由：目标由 assess 的 recommendation.phase 承载（本分类器不产
-      // 该 action——candidates 分支在 assess 层；此处仅保证枚举完备不抛）。
-      return { action: 'rerun_phase', target: null, runner_action: runnerAction };
-    case 'defer_external_and_continue_if_allowed':
-    case 'defer_external_and_halt':
-      return { action: 'resolve_deferred', target: 'current', runner_action: runnerAction };
-    default: {
-      const exhaustive: never = runnerAction;
-      throw new Error(`[phase-transition-policy] unsupported runner action: ${exhaustive}`);
-    }
-  }
 }
 /**
  * Compute final goal run status from per-phase outcomes. Current writers never produce
@@ -479,46 +312,6 @@ export function parseBatchAuthorization(message: string): BatchAuthorizationResu
   }
 
   return { policy: DEFAULT_TRANSITION_POLICY };
-}
-
-/**
- * Whether transitioning from `fromPhase` to `toPhase` is allowed under batch auth ending at `throughPhase`.
- */
-export function isPhaseWithinBatchRange(
-  fromPhase: FeaturePhase,
-  toPhase: FeaturePhase,
-  throughPhase: FeaturePhase,
-): boolean {
-  const fromIdx = FEATURE_PHASE_ORDER.indexOf(fromPhase);
-  const toIdx = FEATURE_PHASE_ORDER.indexOf(toPhase);
-  const throughIdx = FEATURE_PHASE_ORDER.indexOf(throughPhase);
-  if (fromIdx < 0 || toIdx < 0 || throughIdx < 0) return false;
-  return toIdx === fromIdx + 1 && toIdx <= throughIdx;
-}
-
-/** Existing attended authorization policy, shared by compatibility callers and GoalPhaseRuntime. */
-export function recommendationAuthorized(
-  recommendation: AssessRecommendation,
-  authorization: AssessAuthorizationContext,
-  chain: string[],
-  opts?: { startPhase?: string },
-): boolean {
-  // feature_completed：完成评估已 VALID，没有可授权的执行。
-  if (recommendation.action === 'stop' || recommendation.action === 'feature_completed') return false;
-  if (authorization.mode === 'goal_mode') return true;
-  if (authorization.mode === 'manual') return false;
-  if (!recommendation.phase || !authorization.through_phase) return false;
-  const targetIndex = chain.indexOf(recommendation.phase);
-  const throughIndex = chain.indexOf(authorization.through_phase);
-  if (targetIndex < 0 || throughIndex < 0 || targetIndex > throughIndex) return false;
-  if (recommendation.runner_action === 'backtrack_to_phase') {
-    if (!opts?.startPhase) return false;
-    const startIndex = chain.indexOf(opts.startPhase);
-    return startIndex >= 0 && targetIndex >= startIndex;
-  }
-  const fromPhase = targetIndex > 0 ? chain[targetIndex - 1] : chain[targetIndex];
-  return recommendation.phase === fromPhase ||
-    isPhaseWithinBatchRange(fromPhase, recommendation.phase, authorization.through_phase);
 }
 
 /**

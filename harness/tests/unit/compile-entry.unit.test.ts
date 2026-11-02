@@ -4,7 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { spawnSync, execFileSync } from 'child_process';
 import { runCompile } from '../../scripts/compile';
-import { clearFrameworkConfigCache, statefilePath } from '../../config';
+import { clearFrameworkConfigCache, enumerateFeatures, statefilePath } from '../../config';
 import { runAdhocCorrection } from '../../scripts/utils/correction-commands';
 import { buildCorrectionState, writeCorrectionState } from '../../scripts/utils/correction-state';
 
@@ -111,6 +111,51 @@ const cases: Array<{ name: string; run(root: string): void | Promise<void> }> = 
         [{ file: source, line: 3, code: 'TS2339', message: secondMessage }]);
       assert.deepStrictEqual(gc.nativeCompileDiagnosticRefs(utFailure, root), gc.nativeCompileDiagnosticRefs(relocated.result.checks[0], root));
       assert(utFailure.affected_files?.includes(source) && utFailure.affected_files.includes('entry/src/ohosTest'), 'the original affected-files contract must be retained');
+    },
+  },
+  {
+    name: 'P3 project compile enumerates a blueprint workspace with root records and a real CU while an empty design root stays a container',
+    run(root) {
+      const put = (relative: string, text: string): void => {
+        const file = path.join(root, relative); fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, text);
+      };
+      put('doc/features/orders/blueprint/component-blueprint.yaml', 'artifact: component-blueprint@1\nblueprint_id: orders\n');
+      put('doc/features/orders/open/change-unit.yaml', 'artifact: change-unit@1\nblueprint_id: orders\nchange_unit_id: open\n');
+      put('doc/features/orders/goal-runs/root/manifest.json', JSON.stringify({ initial_design: {}, run_id: 'root' }));
+      put('doc/features/draft/goal-runs/root/manifest.json', JSON.stringify({ initial_design: {}, run_id: 'root' }));
+      const entries = enumerateFeatures(root);
+      assert.strictEqual(entries.length, 1, JSON.stringify(entries));
+      assert.strictEqual(entries[0].relativePath, 'orders/open');
+      assert.strictEqual(entries[0].kind, 'cu');
+      const cli = spawnSync(process.execPath, [require.resolve('ts-node/dist/bin.js'), '--transpile-only', 'scripts/compile.ts',
+        '--project-root', root, '--json'], { cwd: HARNESS_ROOT, encoding: 'utf8', timeout: 30000 });
+      assert.strictEqual(cli.status, 0, cli.stderr + cli.stdout);
+      const result = JSON.parse(cli.stdout);
+      assert.strictEqual(result.status, 'PASS'); assert.strictEqual(result.executed, true);
+      assert.strictEqual(fs.readFileSync(path.join(root, 'calls.txt'), 'utf8'), '1');
+      assert(fs.existsSync(path.resolve(HARNESS_ROOT, result.logPath)));
+    },
+  },
+  {
+    name: 'P3 project compile retains real workspace mixed products and orphan construction failures before running a provider',
+    run(root) {
+      const workspace = path.join(root, 'doc/features/orders');
+      fs.mkdirSync(path.join(workspace, 'blueprint'), { recursive: true });
+      fs.writeFileSync(path.join(workspace, 'blueprint/component-blueprint.yaml'), 'blueprint_id: orders\n');
+      fs.mkdirSync(path.join(workspace, 'goal-runs/root'), { recursive: true });
+      const rejected = (message: RegExp): void => {
+        const cli = spawnSync(process.execPath, [require.resolve('ts-node/dist/bin.js'), '--transpile-only', 'scripts/compile.ts',
+          '--project-root', root, '--json'], { cwd: HARNESS_ROOT, encoding: 'utf8', timeout: 30000 });
+        assert.strictEqual(cli.status, 1, cli.stderr + cli.stdout);
+        const result = JSON.parse(cli.stdout); assert.strictEqual(result.executed, false); assert.match(result.message, message);
+        assert(!fs.existsSync(path.join(root, 'calls.txt')), 'enumeration failure must not be hidden behind a fake compile result');
+      };
+      fs.mkdirSync(path.join(workspace, 'spec')); fs.writeFileSync(path.join(workspace, 'spec/spec.md'), '# actual flat product\n');
+      rejected(/歧义/);
+      fs.rmSync(path.join(workspace, 'spec'), { recursive: true });
+      fs.mkdirSync(path.join(workspace, 'orphan/spec'), { recursive: true });
+      fs.writeFileSync(path.join(workspace, 'orphan/spec/spec.md'), '# actual orphan product\n');
+      rejected(/孤儿 Feature/);
     },
   },
   {

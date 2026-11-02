@@ -271,6 +271,7 @@ export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.
    * f9c2e6b4 t3：重试耗尽 · **内容失败**。反复做不对内容，重启同一个 run 只会在同一处再死，
    * 故结构上终局——supervisor 不得拉起（人工 --resume 仍是人的选择，不由框架自动做）。
    */
+  /** @deprecated Historical parser only; current runs never emit a retry quota exit. */
   content_retry_exhausted: { class: 'operator', structurally_terminal: true, fault_category: 'product_failure' },
 
   /**
@@ -332,8 +333,7 @@ export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.
   // 类别留空：框架程序异常
   product_selection_probe_failed: { class: 'framework_fault' },
 
-  // --- 预算熔断（本 run 内无从调整——总调用/活跃时长是硬边界、
-  //     budget 字段已入 manifest identity 冻结） ------------------------------
+  // Historical reason parsing only. New runs do not emit quota/signature-count exits.
   budget_wall_clock: { class: 'operator', structurally_terminal: true, fault_category: 'authority_boundary' },
   no_progress_fuse: { class: 'operator', structurally_terminal: true, fault_category: 'product_failure' },
   closure_wall_repeated: { class: 'operator', structurally_terminal: true, fault_category: 'artifact_drift' },

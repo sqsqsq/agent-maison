@@ -1,7 +1,7 @@
 import type { IdentityNeutralDigestReaders } from './identity-neutral-digest';
 import { readRepairDependencyContext } from './repair-responsibility';
-import { phaseCompletionProblems, type CurrentDisposition } from './check-disposition';
-import { resolveExecutionScope, executionScopeFingerprint, effectiveScopeView, scopeProofHistory, scopeRevisionInvalidations, authorizedScopePhases, acceptsDefinitionInputProof, EXECUTION_SOURCE_KINDS, OBLIGATION_PROVIDERS, type ScopeHistoryEvent, type ScopeEvidenceRef, type ExecutionScope, type ExecutionScopeInput, type ResolvedScopeFacts } from './execution-scope';
+import { phaseCompletionProblems } from './check-disposition';
+import { resolveExecutionScope, executionScopeFingerprint, effectiveScopeView, scopeProofHistory, phaseEvidenceIsCurrent, scopeRevisionInvalidations, authorizedScopePhases, acceptsDefinitionInputProof, EXECUTION_SOURCE_KINDS, OBLIGATION_PROVIDERS, type ScopeHistoryEvent, type ScopeEvidenceRef, type ExecutionScope, type ExecutionScopeInput, type ResolvedScopeFacts } from './execution-scope';
 import { createHash } from 'crypto';
 import * as path from 'path';
 import type { WorkflowSpec } from '../../workflow-loader';
@@ -880,6 +880,23 @@ export function featureScopePhaseHealth(
  * 载体差异只有一处：`currentRunId`（run 载体有、feature 载体没有）——它只影响
  * 「本轮新产生的阶段闭环证据算不算新事实」与补证明时写不写 run 身份，**不放宽任何判据**。
  */
+export function readScopeProofHistory(input: {
+  projectRoot: string; frameworkRoot: string; feature: string; workflow: WorkflowSpec; previous: ExecutionScope;
+  currentRunId?: string; currentPhasePass?: string;
+}) {
+  const { projectRoot, frameworkRoot, feature } = input;
+  const { loadFrozenExecutionScope, loadAuthoritativeRunEvents } = require('./goal-run-creation') as typeof import('./goal-run-creation');
+  const { readFeatureFrozenScope } = require('./feature-execution-scope') as typeof import('./feature-execution-scope');
+  const record = input.currentRunId ? undefined : readFeatureFrozenScope(projectRoot, feature);
+  const birth = input.currentRunId ? loadFrozenExecutionScope(projectRoot, feature, input.currentRunId) ?? input.previous : record?.execution_scope ?? input.previous;
+  const events: ScopeHistoryEvent[] = input.currentRunId ? loadAuthoritativeRunEvents(projectRoot, feature, input.currentRunId) : record?.revisions ?? [];
+  if (input.currentPhasePass) events.push({ type: 'phase_verdict', phase: input.currentPhasePass, verdict: 'PASS', action: 'advance' });
+  const order = [...new Set([...(input.workflow.auto_chain ?? []), ...input.workflow.artifacts.map(a => a.id)])];
+  const dependencies = readRepairDependencyContext(projectRoot, feature, input.workflow, input.previous, frameworkRoot);
+  const history = scopeProofHistory(birth, events, order, undefined, input.workflow, dependencies);
+  return { birth, events, dependencies, history };
+}
+
 export function resolveCurrentScopeView(input: {
   projectRoot: string; frameworkRoot: string; feature: string; workflow: WorkflowSpec; previous: ExecutionScope;
   currentRunId?: string; completedPhases?: ReadonlySet<string>; currentPhase?: string; reopen?: string; authorityReaders?: IdentityNeutralDigestReaders;
@@ -888,50 +905,33 @@ export function resolveCurrentScopeView(input: {
   input = { ...input, authorityReaders: input.authorityReaders
     ?? (require('./identity-neutral-digest') as typeof import('./identity-neutral-digest')).createIdentityNeutralDigestReaders() };
   const { projectRoot, frameworkRoot, feature } = input;
-  const { loadFrozenExecutionScope, loadAuthoritativeRunEvents } = require('./goal-run-creation') as typeof import('./goal-run-creation');
-  const { readFeatureFrozenScope } = require('./feature-execution-scope') as typeof import('./feature-execution-scope');
-  const record = input.currentRunId ? undefined : readFeatureFrozenScope(projectRoot, feature);
-  const birth = input.currentRunId ? loadFrozenExecutionScope(projectRoot, feature, input.currentRunId) ?? input.previous : record?.execution_scope ?? input.previous;
-  const events: ScopeHistoryEvent[] = input.currentRunId ? loadAuthoritativeRunEvents(projectRoot, feature, input.currentRunId) : record?.revisions ?? [];
   const currentPhasePass = input.currentPhase && input.completedPhases?.has(input.currentPhase) ? input.currentPhase : undefined;
-  if (currentPhasePass) events.push({ type: 'phase_verdict', phase: currentPhasePass, verdict: 'PASS', action: 'advance' });
-  const order = [...new Set([...(input.workflow.auto_chain ?? []), ...input.workflow.artifacts.map(a => a.id)])];
-  const dependencies = readRepairDependencyContext(projectRoot, feature, input.workflow, input.previous, frameworkRoot);
-  const history = scopeProofHistory(birth, events, order, undefined, input.workflow, dependencies);
-  const lastInvocation = [...events].reverse().find(event => event.type === 'agent_invoke_start')?.phase;
-  // Interrupted downstream writes retain their existing ownership while that phase resumes.
-  const pendingOwnerPhase = input.currentPhase ?? (lastInvocation && !history.passed.has(lastInvocation) ? lastInvocation : undefined);
+  const { birth, events, dependencies, history } = readScopeProofHistory({ ...input, currentPhasePass });
   const proofs = new Map<string, ScopeEvidenceRef>();
   const stale = new Set<string>();
-  const dispositions = new Map<string, CurrentDisposition>();
-  const dispositionFor = (phase: string): CurrentDisposition => {
-    let disposition = dispositions.get(phase);
-    if (!disposition) {
-      const { resolveCompletionDisposition } = require('./verify-feature-completion') as typeof import('./verify-feature-completion');
-      disposition = resolveCompletionDisposition({ projectRoot, feature, chain: [phase], workflow: input.workflow, executionScope: input.previous,
-        frameworkRoot, runId: input.currentRunId, pendingOwnerPhase, authorityReaders: input.authorityReaders, currentResults: input.currentResults });
-      dispositions.set(phase, disposition);
-    }
-    return disposition;
-  };
-  const candidates = new Set([...history.passed, ...input.completedPhases ?? [], ...input.previous.reused_phases.map(p => p.phase)]);
+  const { resolveCompletionDisposition, applicableCheckFamilies } = require('./verify-feature-completion') as typeof import('./verify-feature-completion');
+  const disposition = resolveCompletionDisposition({ projectRoot, feature, chain: applicableCheckFamilies(input.previous),
+    workflow: input.workflow, executionScope: input.previous, frameworkRoot, runId: input.currentRunId,
+    pendingOwnerPhase: input.currentPhase, authorityReaders: input.authorityReaders, currentResults: input.currentResults });
+  const actualResults = [...new Set(input.previous.obligations.filter(obligation => obligation.applicability !== 'not_applicable')
+    .map(obligation => obligation.owner_phase))].filter(phase => !!loadPhaseEvidenceManifest(projectRoot, feature, phase));
+  const candidates = new Set([...history.passed, ...input.completedPhases ?? [], ...input.previous.reused_phases.map(p => p.phase), ...actualResults]);
   for (const phase of candidates) {
     const evidence = loadPhaseEvidenceManifest(projectRoot, feature, phase);
-    const disposition = dispositionFor(phase);
     // 新发现交真实责任方处理；它不等于来源阶段的证明字节已经过期。
     const fresh = evidence?.integrityOk && !phaseCompletionProblems(disposition, [phase]).some(problem =>
       !problem.id.startsWith('open_finding:') || (problem.owner ?? problem.phase) === phase);
     if (!fresh) { stale.add(phase); continue; }
-    const after = history.invalidatedAt.get(phase);
-    const eligible = input.currentRunId ? history.passed.has(phase) : !after || Date.parse(evidence!.manifest.generated_at) > Date.parse(after);
-    if (eligible) proofs.set(phase, { phase, ...(input.currentRunId ? { run_id: input.currentRunId } : {}), evidence_manifest_aggregate: evidence!.manifest.aggregate_sha256 });
+    const eligible = phaseEvidenceIsCurrent({ fresh: !!fresh, generatedAt: evidence?.manifest.generated_at,
+      invalidatedAt: history.invalidatedAt.get(phase) });
+    if (eligible === true && evidence) proofs.set(phase, { phase, ...(input.currentRunId ? { run_id: input.currentRunId } : {}), evidence_manifest_aggregate: evidence.manifest.aggregate_sha256 });
   }
   const definitionProofs = new Map<string, readonly InputBinding[]>();
   const legacyRoot = inferLegacyProjectRoot(projectRoot, input.previous);
   for (const [id, refs] of history.definitionProofs) {
     const obligation = input.previous.obligations.find(item => item.id === id);
     if (!obligation || !refs.every(ref => verifySatisfiedByBinding(projectRoot, frameworkRoot, feature, obligation.owner_phase, ref, legacyRoot, input.authorityReaders).ok)) continue;
-    if (phaseCompletionProblems(dispositionFor(obligation.owner_phase), [obligation.owner_phase]).some(problem =>
+    if (phaseCompletionProblems(disposition, [obligation.owner_phase]).some(problem =>
       !problem.id.startsWith('open_finding:') || (problem.owner ?? problem.phase) === obligation.owner_phase)) continue;
     definitionProofs.set(id, refs);
   }
@@ -962,7 +962,7 @@ export function resolveScopeRevisionProposal(input: {
   if (!input.proposals.length) return null;
   const { projectRoot, frameworkRoot, feature, workflow, previous } = input;
   const proposal = structuredClone(input.proposals[0]) as ExecutionScopeInput;
-  const { loadFrozenExecutionScope, loadAuthoritativeRunEvents, loadScopeRevisions } = require('./goal-run-creation') as typeof import('./goal-run-creation');
+  const { loadFrozenExecutionScope } = require('./goal-run-creation') as typeof import('./goal-run-creation');
   const { readFeatureFrozenScope } = require('./feature-execution-scope') as typeof import('./feature-execution-scope');
   const featureRecord = input.currentRunId ? undefined : readFeatureFrozenScope(projectRoot, feature);
   const birth = input.currentRunId ? loadFrozenExecutionScope(projectRoot, feature, input.currentRunId) : featureRecord?.execution_scope;
@@ -978,8 +978,6 @@ export function resolveScopeRevisionProposal(input: {
   for (const binding of proposal.request.impact?.basis ?? []) rebaseBinding(binding);
   const priorImpact = previous.request_impact ? structuredClone(previous.request_impact) : undefined;
   for (const binding of priorImpact?.basis ?? []) rebaseBinding(binding);
-  const history = input.currentRunId ? loadAuthoritativeRunEvents(projectRoot, feature, input.currentRunId) : featureRecord?.revisions ?? [];
-  const lastRevision = birth ? loadScopeRevisions(history, birth).at(-1) : undefined;
   proposal.contract_fingerprints = loadFeatureContracts(frameworkRoot).map(contractFingerprint);
   proposal.control_edges ??= structuredClone(previous.control_edges);
   if (proposal.request.completion_target !== previous.completion_target
@@ -991,8 +989,6 @@ export function resolveScopeRevisionProposal(input: {
   if (proposal.request.requested_phases.some(phase => !authorizedScopePhases(birth ?? previous, workflow).includes(phase))) {
     throw new Error('[execution-scope] request-scope revision cannot add phases');
   }
-  if (!input.repairCandidates?.length && lastRevision?.revision_input
-    && executionScopeFingerprint(lastRevision.revision_input) === executionScopeFingerprint(proposal)) return null;
   const progress = resolveCurrentScopeView(input);
   const repairFactIds = new Set(proposal.facts.filter(fact => (input.repairCandidates ?? []).some(candidate => fact.id.endsWith(`:${candidate.id}`))).map(fact => fact.id));
   for (const obligation of previous.obligations) {
@@ -1006,7 +1002,9 @@ export function resolveScopeRevisionProposal(input: {
     else if (repairFactIds.has(existing.id) && !existing.satisfied_by?.length) {
       // A current trusted finding reopens its owner even if the last recorded scope predates its PASS.
     }
-    else if (!obligation.satisfied_by?.length || existing.satisfied_by?.length) {
+    else if (!obligation.satisfied_by?.length || existing.satisfied_by?.length
+      || existing.kind === obligation.kind && existing.applicability === obligation.applicability
+        && executionScopeFingerprint(existing.basis) === executionScopeFingerprint(obligation.basis)) {
       if (effective.satisfied_by?.length) existing.satisfied_by = structuredClone(effective.satisfied_by);
       else delete existing.satisfied_by;
     }
@@ -1040,9 +1038,9 @@ export function resolveScopeRevisionProposal(input: {
     facts = collectResolvedScopeFacts(proposal, ctx);
   }
   const resolved = resolveExecutionScope(proposal, workflow, readScopeAcceptance(projectRoot, proposal, { feature, frameworkRoot }), facts);
-  const withdrawsRecordedProof = previous.obligations.some(before => before.satisfied_by?.length
-    && !resolved.obligations.find(after => after.id === before.id)?.satisfied_by?.length);
-  if (!withdrawsRecordedProof && executionScopeFingerprint(resolved) === executionScopeFingerprint(progress)) return null;
+  // A fresh qualified owner proof must be recorded even when this proposal already
+  // describes the live progress view. Only the recorded scope is the no-op baseline.
+  if (executionScopeFingerprint(resolved) === executionScopeFingerprint(previous)) return null;
   const confirmedRepair = input.repairCandidates?.some(candidate => {
     const fact = proposal.facts.find(item => repairFactIds.has(item.id) && item.id.endsWith(':' + candidate.id) && item.applicability === 'required');
     return (candidate.files.length > 0 || candidate.category === 'coding') && !!fact?.basis.length && !previous.obligations.some(item => item.id === fact.id);

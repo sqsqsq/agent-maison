@@ -1,82 +1,18 @@
 #!/usr/bin/env node
-// ============================================================================
-// Stop hook：阶段闭环物理拦截 + 跨会话隔离（v2.4）
-// ============================================================================
-// 触发时机：Claude Code CLI 在主 agent 即将结束消息时调用 Stop 事件。本 hook
-// 注册在 Stop 事件上（matcher="*"）。
-//
-// 协议（Claude Code Hooks 官方约定）：
-//   - 输入：stdin 收到 JSON，含 session_id / transcript_path / cwd /
-//     hook_event_name / stop_hook_active 等字段。
-//   - 输出：
-//     * 写 JSON 到 stdout：{"decision":"block","reason":"..."} 表示阻断；
-//     * exit 2 + stderr 内容：阻止 stop 并把 stderr 内容注入下一轮 prompt；
-//     * exit 0：放行（即便 stderr 有内容也只是 advisory，不阻断）。
-//   - stop_hook_active=true 表示本次 stop 已经被某个 hook 拦过一次；为避免
-//     无限循环，本 hook 必须直接放行。
-//
-// v2.4 新增：会话边界判定
-//   v2.3 之前 hook 只看 .current-phase.json 是否"未闭环"，会出现一个严重问题：
-//     上一次会话写下未闭环 state → 重启 cli → 用户问无关问题 → hook 仍然拦截。
-//   v2.8 起：
-//     1) hook 入口拿 payload.session_id；
-//     2) 与 state.session_id 比对，区分"当前会话遗留"vs"跨会话陈旧"；
-//     3) 跨会话 / 老 state / 超 TTL 一律 advisory + exit 0；
-//     4) 当前会话未闭环才阻断 + exit 2，且文案中性化（继续 / 放弃二选一）。
-//
-//   时间常量来自 framework.config.json 的 state_machine 段：
-//     - grace_period_minutes：runner 写 state 到 hook 第一次盖章的容忍窗口
-//     - ttl_hours：payload 没 session_id 时的兜底过期阈值
-//   解析失败 / 字段缺失时回退到 HOOK_DEFAULT_*，详见 readStateMachineFromConfig。
-//
-// 闭环判据（CLAUDE.md §5.1 同步）：
-//   仅在"当前会话遗留" state 上评估，必须四项齐全：
-//     - status='harness_finished'
-//     - verdict='PASS'
-//     - blocker_count===0
-//     - receipt.status='passed'
-//
-// 跨平台：纯 Node.js + path/url，不依赖任何 shell。
-// ============================================================================
-
+// Stop observes the public completion reader; execution stays in the original GoalPhaseRuntime.
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 
-// 发布件内共享 SSOT 加载（M5A §4.3）：hook 不携带 decoder 副本；CJS 模块经
-// createRequire 同步 require（Node ESM → CJS 互操作）。
-const requireNodeModule = (() => {
-  try {
-    return createRequire(import.meta.url);
-  } catch {
-    return null;
-  }
-})();
-
-// --------------------------------------------------------------------------
-// HOOK 端默认时间常量
-// --------------------------------------------------------------------------
-//
-// **重要**：必须与 [framework/harness/config.ts] DEFAULT_STATE_MACHINE 同步。
-// 测试 [framework/harness/test/hook-stale-state.spec.ts] T11 用例校验一致性。
-
-export const HOOK_DEFAULT_GRACE_MS = 5 * 60 * 1000; // 5 分钟
-export const HOOK_DEFAULT_TTL_MS = 12 * 60 * 60 * 1000; // 12 小时
-export const HOOK_DEFAULT_MAX_CONSECUTIVE_BLOCKS = 3; // 逃生阀阈值（与 config DEFAULT_STATE_MACHINE 同步）
-
-// 范围限制（与 STATE_MACHINE_RANGES 同步；hook 端碰到非法值就 fallback 到默认）
-const HOOK_GRACE_MIN_MS = 1; // 严格 > 0
-const HOOK_GRACE_MAX_MS = 60 * 60 * 1000; // 60 分钟
-const HOOK_TTL_MIN_MS = 1 * 60 * 60 * 1000; // 1 小时
-const HOOK_TTL_MAX_MS = 168 * 60 * 60 * 1000; // 7 天
-const HOOK_MAX_BLOCKS_MIN = 1; // 逃生阀阈值下限
-const HOOK_MAX_BLOCKS_MAX = 20; // 逃生阀阈值上限
-
-// --------------------------------------------------------------------------
-// 1. 读 stdin
-// --------------------------------------------------------------------------
+export const HOOK_DEFAULT_GRACE_MS = 5 * 60 * 1000;
+export const HOOK_DEFAULT_TTL_MS = 12 * 60 * 60 * 1000;
+const HOOK_GRACE_MIN_MS = 1;
+const HOOK_GRACE_MAX_MS = 60 * 60 * 1000;
+const HOOK_TTL_MIN_MS = 60 * 60 * 1000;
+const HOOK_TTL_MAX_MS = 168 * 60 * 60 * 1000;
 
 async function readStdin() {
   return new Promise((resolve) => {
@@ -102,18 +38,6 @@ async function readStdin() {
     process.stdin.on('error', () => resolve(null));
   });
 }
-
-// --------------------------------------------------------------------------
-// 2. 项目根 / 状态文件路径解析
-// --------------------------------------------------------------------------
-
-// 项目根解析（plan c7a9e2f4 T2：厂商无关加固，三 hook 同款）——
-// 候选序：env(claude → codeagent3) → import.meta.url 自锚 → payload.cwd → process.cwd()，
-// 取首个含 hooks 真实依赖标记（guard-core / check-receipt 任一）的候选。
-// 自锚排在 payload.cwd 前：hook 物理位于 <root>/.claude|.cac/hooks/，比会话 cwd 权威——
-// 宿主实证（2026-07-29）payload.cwd 与 process.cwd() 都随会话 cd 漂移。
-// 全不中：回落原兜底序（env → payload.cwd → cwd）首个非空值，fail-open 语义不变；
-// 自锚不参与盲兜底（源仓/模板目录下自锚指向 agents/<name>，非实例根）。
 
 const PROJECT_ROOT_MARKERS = [
   ['framework', 'agents', 'shared', 'guard-framework-write-core.mjs'],
@@ -179,53 +103,10 @@ function readStateFileRelFromConfig(projectRoot) {
   }
 }
 
-/**
- * 解析 paths.features_dir：仅用于提示历史产物位置；receipt 不再是 Stop 判据。
- */
-function readFeaturesDirFromConfig(projectRoot) {
-  try {
-    const cfgPath = path.resolve(projectRoot, 'framework.config.json');
-    if (!fs.existsSync(cfgPath)) return 'doc/features';
-    const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
-    const rel = cfg?.paths?.features_dir;
-    if (typeof rel === 'string' && rel.trim()) return rel.trim().replace(/\\/g, '/').replace(/\/+$/, '');
-    return 'doc/features';
-  } catch {
-    return 'doc/features';
-  }
-}
-
-/**
- * M5A §4.3：解析 feature 的物理相对路径（经发布件内唯一 SSOT）。
- * - legacy id：原样返回（不依赖 SSOT，保持旧行为）；
- * - `cu-` 前缀：必须经 SSOT 展开——SSOT 缺失/损坏/抛错（含非法 payload 的
- *   fail-closed 异常）时返回 null，调用方 fail-closed（阻断或走州文件兜底），
- *   **绝不**把编码后的逻辑 id 当物理路径（spec：“Invalid cu- identity fails
- *   closed” / “hooks SHALL NOT read or write a path containing the encoded identity”）。
- */
-function resolveFeatureRel(projectRoot, feature) {
-  if (typeof feature !== 'string' || !feature.startsWith('cu-')) return feature;
-  try {
-    const ssotAbs = path.resolve(projectRoot, 'framework', 'harness', 'scripts', 'utils', 'feature-identity.js');
-    if (!fs.existsSync(ssotAbs) || !requireNodeModule) return null;
-    return requireNodeModule(ssotAbs).featureRelativePath(feature);
-  } catch {
-    return null;
-  }
-}
-
-/**
- * 解析 state_machine.grace_period_minutes / ttl_hours 为毫秒。
- * 任何非法值（缺字段、超范围、非数字）都安静回退到 HOOK_DEFAULT_*——
- * hook 不能因为配置错误而崩溃 / 拒绝放行（用户体验比"严格校验"更重要）。
- * 严格校验由 framework/harness/config.ts 的 validateStateMachine 在 runner
- * 端兜底，不重复在 hook 端 fail-loud。
- */
 export function readStateMachineFromConfig(projectRoot) {
   const fallback = {
     gracePeriodMs: HOOK_DEFAULT_GRACE_MS,
     ttlMs: HOOK_DEFAULT_TTL_MS,
-    maxConsecutiveBlocks: HOOK_DEFAULT_MAX_CONSECUTIVE_BLOCKS,
   };
   try {
     const cfgPath = path.resolve(projectRoot, 'framework.config.json');
@@ -246,47 +127,12 @@ export function readStateMachineFromConfig(projectRoot) {
       if (ms >= HOOK_TTL_MIN_MS && ms <= HOOK_TTL_MAX_MS) ttlMs = ms;
     }
 
-    let maxConsecutiveBlocks = fallback.maxConsecutiveBlocks;
-    if (typeof sm.max_consecutive_blocks === 'number' && Number.isInteger(sm.max_consecutive_blocks)) {
-      const n = sm.max_consecutive_blocks;
-      if (n >= HOOK_MAX_BLOCKS_MIN && n <= HOOK_MAX_BLOCKS_MAX) maxConsecutiveBlocks = n;
-    }
-
-    return { gracePeriodMs, ttlMs, maxConsecutiveBlocks };
+    return { gracePeriodMs, ttlMs };
   } catch {
     return fallback;
   }
 }
 
-// --------------------------------------------------------------------------
-// 4. 会话边界判定
-// --------------------------------------------------------------------------
-
-/**
- * 评估当前 state 与本次 cli 会话的关系。
- *
- * 返回 { kind, isStale, sameSession, shouldStamp, reasonHuman }：
- *   - kind:
- *       'fresh-current'        当前会话遗留，state.session_id 与 sid 一致或同会话内不需盖章
- *       'fresh-unstamped'      当前会话遗留，state 还没盖章但在 grace 窗口内 → 应盖章
- *       'stale-cross-session'  跨会话遗留：state.session_id 与 sid 不一致
- *       'stale-legacy-no-sid'  老 state（无 session_id）+ 超过 grace_period_minutes
- *       'stale-ttl-expired'    payload 没 session_id + 超过 ttl
- *   - isStale: true 表示陈旧，hook 应放行 + advisory
- *   - sameSession: 用于决定是否更新 last_seen_*
- *   - shouldStamp: 仅 fresh-unstamped 为 true，hook 应回写 state.session_id
- *   - reasonHuman: advisory 文案中"原因"行
- *
- * 判定矩阵（state.session_id × payload.session_id）：
- *
- *                  | sid 存在 sx        | sid 存在 sy(!=sx)        | sid 缺失
- *   --------------+--------------------+--------------------------+-------------------------
- *   state.sid=sx  | fresh-current      | stale-cross-session      | inside-ttl→fresh-current
- *                 |                    |                          | else→stale-ttl-expired
- *   state.sid=null| inside-grace→fresh | inside-grace→fresh-unstmp| inside-ttl→fresh-current
- *                 |  -unstamped(stamp) |  (stamp with sy)         | else→stale-ttl-expired
- *                 | else→stale-legacy  | else→stale-legacy        |
- */
 export function evaluateSessionStaleness(state, currentSid, gracePeriodMs, ttlMs, now) {
   const updatedAtMs = parseTimestampMs(state?.updated_at);
   const ageMs = updatedAtMs == null ? Number.POSITIVE_INFINITY : Math.max(0, now - updatedAtMs);
@@ -390,484 +236,76 @@ function formatDuration(ms) {
   return `${(ms / (60 * 60 * 1000)).toFixed(1)} 小时`;
 }
 
-// --------------------------------------------------------------------------
-// 5. 闭环判定（仅对 sameSession 生效）
-// --------------------------------------------------------------------------
 
-// 全局阶段（与 workflow scope=global 对齐：extensions / init / catalog / glossary / docs）
-// 不参与"feature 维度阶段闭环判定"。它们没有完成回执模板，全局入口 §5.1 判据也只覆盖
-// spec / plan / coding / review / UT / device-testing 六个 feature 维度阶段。
-// runner 端（v2.8.1 起）已经对全局阶段不写 state，本兜底保护针对历史残留：
-// 若 state file 已存在且 phase 是全局阶段，hook 一律放行，不要去找 receipt。
-const GLOBAL_PHASES = new Set(['extensions', 'init', 'catalog', 'glossary', 'docs']);
-
-// --------------------------------------------------------------------------
-// C0 policy 快照（runtime-policy-core）：hook 不 import harness，快照由 runner
-// 写入 .current-phase.json。读不到 / policy_schema_version 不符 → 一律 fail-safe
-// 按 full+strict（现状全凭证）判定，宁可多设防不可静默放行。
-// --------------------------------------------------------------------------
-const POLICY_SNAPSHOT_SCHEMA_VERSION = '1.0';
-
-export function readPolicySnapshot(state) {
-  const snap = state && typeof state === 'object' ? state.policy_snapshot : null;
-  if (!snap || typeof snap !== 'object') return null;
-  if (snap.policy_schema_version !== POLICY_SNAPSHOT_SCHEMA_VERSION) return null;
-  if (!snap.evidence || typeof snap.evidence !== 'object') return null;
-  return snap;
-}
-
-export function policyRequires(snapshot, item) {
-  if (!snapshot) return true; // fail-safe strict
-  const level = snapshot.evidence[item];
-  return level !== 'off' && level !== 'not_applicable';
-}
-
-export function evaluateState(state, summary = null) {
-  // 返回 { allow: boolean, reason: string, missing: string[] }
-  if (!state || typeof state !== 'object') {
-    return { allow: true, reason: 'no-state-file', missing: [] };
-  }
-
-  if (typeof state.phase === 'string' && GLOBAL_PHASES.has(state.phase)) {
-    return { allow: true, reason: 'global-phase-not-tracked', missing: [] };
-  }
-
-  // plan 07a41ec6 T4：磁盘 summary.closure_status 是新闭环唯一事实；receipt/state 仅兼容投影。
-  if (summary?.closure_status === 'closed') {
-    return { allow: true, reason: 'phase-closed', missing: [] };
-  }
-
-  const missing = [];
-
-  if (state.status !== 'harness_finished') {
-    missing.push(
-      `status="${state.status ?? 'unknown'}"，必须为 "harness_finished"（即主 agent 已自跑 harness-runner.ts）`,
-    );
-  }
-
-  const verdict = state.verdict;
-  if (verdict !== 'PASS') {
-    missing.push(
-      `harness verdict="${verdict ?? 'null'}"，必须为 "PASS"（脚本 harness 退出码 0、零 BLOCKER）`,
-    );
-  }
-
-  if (typeof state.blocker_count === 'number' && state.blocker_count > 0) {
-    missing.push(`harness blocker_count=${state.blocker_count}，必须为 0`);
-  }
-
-  missing.push(`summary.closure_status="${summary?.closure_status ?? 'missing'}"，必须为 "closed"（receipt/state 不构成闭环事实）`);
-
-  if (missing.length === 0) {
-    return { allow: true, reason: 'phase-closed', missing: [] };
-  }
-  return {
-    allow: false,
-    reason: 'phase-not-closed',
-    missing,
-  };
-}
-
-// --------------------------------------------------------------------------
-// 6. state 写回（盖章 + last_seen 更新；best-effort，写失败不影响判定）
-// --------------------------------------------------------------------------
-
-function maybeUpdateState(stateAbs, state, sid, stamp, extra) {
+/** Read-only CLI projection; the hook neither reconstructs evidence nor signs a conclusion. */
+export function readCurrentCompletion(projectRoot, state) {
+  const feature = typeof state?.feature === 'string' ? state.feature.trim() : '';
+  if (!feature || feature === '_global') return null;
+  const harnessRoot = path.join(projectRoot, 'framework', 'harness');
   try {
-    const nowIso = new Date().toISOString();
-    const next = { ...state };
-    if (sid) {
-      if (stamp) {
-        next.session_id = sid;
-        next.session_id_recorded_at = nowIso;
-      }
-      next.last_seen_session_id = sid;
-      next.last_seen_at = nowIso;
-    }
-    // 逃生阀计数（hook 自写字段；**不得**进 computeBlockSignature）
-    if (extra && typeof extra === 'object') {
-      if ('block_signature' in extra) next.block_signature = extra.block_signature;
-      if ('consecutive_block_count' in extra) next.consecutive_block_count = extra.consecutive_block_count;
-    }
-    // 无 sid 且无 extra 时不写盘（保持原 best-effort 语义）
-    if (!sid && !extra) return;
-    fs.writeFileSync(stateAbs, JSON.stringify(next, null, 2) + '\n', 'utf-8');
-  } catch {
-    // best-effort：写失败也不影响 hook 判定结果
+    const loader = createRequire(path.join(harnessRoot, 'package.json')).resolve('ts-node/register/transpile-only');
+    const args = ['-r', loader, path.join(harnessRoot, 'scripts', 'assess.ts'), '--project-root', projectRoot,
+      '--framework-root', path.dirname(harnessRoot), '--feature', feature,
+      ...(typeof state.run_id === 'string' && state.run_id ? ['--run-id', state.run_id] : [])];
+    const result = spawnSync(process.execPath, args, { cwd: harnessRoot, encoding: 'utf8', windowsHide: true,
+      timeout: 30_000, env: { ...process.env, NODE_OPTIONS: '', TS_NODE_PROJECT: path.join(harnessRoot, 'tsconfig.json') } });
+    if (result.error || result.status !== 0) return { error: result.error?.message ?? result.stderr ?? 'completion reader unavailable' };
+    return JSON.parse(result.stdout);
+  } catch (error) { return { error: error?.message ?? String(error) }; }
+}
+
+/** Only the existing public endpoint owns completion and current action labels. */
+export function evaluateCompletion(view) {
+  const current = view?.current_disposition ?? view?.feature_assessment?.current_disposition;
+  const complete = view?.complete === true || view?.feature_assessment?.complete === true;
+  if (current?.completionEligible === true && complete) return { allow: true, reason: 'completed', details: current.reasons ?? [] };
+  const problems = current?.completionBlocking;
+  if (Array.isArray(problems) && problems.length > 0 && problems.every(problem => problem.action === 'wait')) {
+    return { allow: true, reason: 'waiting', details: current.reasons ?? [] };
   }
+  return { allow: false, reason: 'unfinished', details: current?.reasons?.length ? current.reasons
+    : [view?.error ?? '缺原请求的当前完成事实；保留未完成状态，由原协调器核实。'] };
 }
 
-// --------------------------------------------------------------------------
-// 7. 文案构建
-// --------------------------------------------------------------------------
-
-/** 对齐 harness/featurePhaseReportsDir —— Hook 不落 TS，纯 Node 复刻占位符语义 */
-function resolveFeaturePhaseReportDir(projectRoot, feature, phase) {
-  if (!feature || !phase || feature === 'unknown' || phase === 'unknown') return null;
-  try {
-    if (feature === '_global') {
-      return path.resolve(projectRoot, 'framework/harness/reports/_global', phase);
-    }
-    // M5A：<feature> 占位符替换为物理相对路径（唯一 SSOT 展开，见 resolveFeatureRel）；
-    // `cu-` 前缀解析失败 → null（fail-closed，禁止把编码 id 当物理路径）。
-    const featureRel = resolveFeatureRel(projectRoot, feature);
-    if (featureRel === null) return null;
-    let pattern = null;
-    try {
-      const cfgPath = path.resolve(projectRoot, 'framework.config.json');
-      if (fs.existsSync(cfgPath)) {
-        const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
-        const p = cfg?.paths?.reports_dir_pattern;
-        if (typeof p === 'string' && p.trim()) pattern = p.trim();
-      }
-    } catch {
-      pattern = null;
-    }
-    if (pattern) {
-      const rel = pattern.replace(/<feature>/g, featureRel).replace(/<phase>/g, phase);
-      return path.resolve(projectRoot, rel);
-    }
-    // M5A t4：无 reports_dir_pattern 时默认形态跟随 features_dir（P2 spec
-    // “Custom features_dir … no path construction SHALL hardcode doc/features”），
-    // 而非硬编码 framework/harness/reports。
-    return path.resolve(projectRoot, readFeaturesDirFromConfig(projectRoot), featureRel, phase, "reports");
-  } catch {
-    return path.resolve(projectRoot, 'framework/harness/reports', feature, phase);
-  }
+function continuationCommand(projectRoot, state) {
+  if (typeof state.run_id !== 'string' || !state.run_id || typeof state.adapter !== 'string' || !state.adapter)
+    return '沿原请求实际返回的 next_command / execute_command / observe_command 交回同一 GoalPhaseRuntime；尚无绑定 run 时，用原用户请求接入 goal-mode-entry。';
+  return ['node', '-r', path.join(projectRoot, 'framework/harness/node_modules/ts-node/register/transpile-only'),
+    path.join(projectRoot, 'framework/harness/scripts/goal-mode-entry.ts'), '--project-root', projectRoot,
+    '--framework-root', path.join(projectRoot, 'framework'), '--feature', state.feature, '--run-id', state.run_id,
+    '--adapter', state.adapter, '--run-mode', 'attended', '--next']
+    .map(value => JSON.stringify(value.replace(/\\/g, '/'))).join(' ');
 }
-
-function readPhaseSummary(projectRoot, state) {
-  try {
-    const phase = typeof state?.phase === 'string' ? state.phase : '';
-    const feature = typeof state?.feature === 'string' ? state.feature : '';
-    if (!phase || !feature) return null;
-    const reportsRoot = resolveFeaturePhaseReportDir(projectRoot, feature, phase);
-    if (!reportsRoot) return null;
-    const summaryPath = path.join(reportsRoot, 'summary.json');
-    const summary = readJSONSafe(summaryPath);
-    if (!summary || typeof summary !== 'object') return null;
-    return { summary, summaryRel: path.relative(projectRoot, summaryPath).replace(/\\/g, '/') };
-  } catch {
-    return null;
-  }
-}
-
-function readSummaryHint(projectRoot, state) {
-  const read = readPhaseSummary(projectRoot, state);
-  if (!read) return null;
-  const nextAction = typeof read.summary.next_action === 'string' ? read.summary.next_action : '';
-  if (!nextAction) return null;
-  // plan a9d4e7c2 P1-4：动作分流要看机器事实，不能只有一句 next_action 文案。
-  return {
-    path: read.summaryRel,
-    nextAction,
-    verdict: typeof read.summary.verdict === 'string' ? read.summary.verdict : '',
-    closureStatus: typeof read.summary.closure_status === 'string' ? read.summary.closure_status : '',
-    verifierRequest:
-      typeof read.summary.verifier_request === 'string' ? read.summary.verifier_request : '',
-    verifierSubjectId:
-      typeof read.summary.verifier_subject_id === 'string' ? read.summary.verifier_subject_id : '',
-  };
-}
-
-/**
- * 零进展 signature（与 goal 模式 extractBlockerSignature 同语义：排序后的 blocker id 集合）
- * **叠加 last_run_at**——它由 runner 在真跑 harness 时写入；未变 = 根本没重跑 = 零进展。
- *
- * **只用 harness 结果字段**（blocker ids + last_run_at）；**严禁纳入 hook 自写字段**
- * （updated_at / last_seen_at / session_id_recorded_at / consecutive_block_count / block_signature），
- * 否则每次 Stop hook 写回都会让 signature 变化 → 逃生阀永久失效。
- */
-export function computeBlockSignature(state, summary) {
-  const blockers = Array.isArray(summary?.blockers) ? summary.blockers : [];
-  const ids = blockers
-    .map((b) => (b && typeof b.id === 'string' ? b.id : ''))
-    .filter(Boolean)
-    .sort();
-  const lastRun = typeof state?.last_run_at === 'string' ? state.last_run_at : '';
-  return `${ids.join('|')}@@${lastRun}`;
-}
-
-/**
- * 逃生阀决策（纯函数，便于单测）：
- *   - signature 与上次相同（零进展）→ 计数 +1；不同（有进展/重跑）→ 归 1。
- *   - 计数达阈值 → release=true（hook 放行 exit 0，停止 nag）。
- */
-export function decideEscapeValve(prevSig, prevCount, signature, maxConsecutiveBlocks) {
-  const prior = typeof prevCount === 'number' && prevCount > 0 ? prevCount : 0;
-  const count = prevSig && prevSig === signature ? prior + 1 : 1;
-  const release = count >= maxConsecutiveBlocks;
-  return { count, release };
-}
-
-function buildBlockReason(state, missingItems, summaryHint = null, progress = null, featuresDir = 'doc/features', reportsDirRel = null) {
-  const phase = state.phase ?? 'unknown';
-  const feature = state.feature ?? 'unknown';
-  const rerunCmd = `cd framework/harness && npx ts-node harness-runner.ts --phase ${phase} --feature ${feature}`;
-  const syncCmd = `cd framework/harness && npx ts-node harness-runner.ts --sync-closure --phase ${phase} --feature ${feature}`;
-
-  // plan a9d4e7c2 P1-4：**首要动作必须按机器事实分流**。
-  //
-  // 脚本已经 PASS、只差闭环时，第一动作是 `--sync-closure`：它不重跑脚本 harness，并会**准确报出**
-  // 到底缺 verifier 证据还是别的。（plan 07a41ec6 起 subject 按审前材料寻址，重跑 harness 不再因
-  // 时间戳换代；但重跑仍是多余动作。）只有脚本没过（FAIL/INCOMPLETE）时，重跑完整 harness 才是对的。
-  const scriptPassed =
-    (typeof state.verdict === 'string' && state.verdict === 'PASS') ||
-    (summaryHint && summaryHint.verdict === 'PASS');
-  const closureOpen = !summaryHint || summaryHint.closureStatus !== 'closed';
-  const closureOnly = Boolean(scriptPassed && closureOpen);
-  // D2（plan 3a7f9c12）：产品失败诊断轮——脚本仍 FAIL，写完 verifier 报告后 base summary
-  // 依旧 FAIL、候选尚未重算，sync-closure 的 finalizer 必然拒收。这条分支的正确出口是
-  // 「重跑本阶段 harness 让 writer 重算候选，再看新 summary 的 NEXT 找 owner」；
-  // 正式 goal 编排下则写完即交回 runner（外层自己会跑 gate harness，不要自跑）。
-  const repairDiagnosis = Boolean(summaryHint && summaryHint.nextAction === 'run_verifier_for_repair');
-  const headline = closureOnly
-    ? `[Stop Hook] 阶段未闭环：feature="${feature}" phase="${phase}"。脚本已 PASS，下一步只做这一件事——对齐闭环态（重跑完整 harness 不会因时间戳换 subject，但这里没有必要）：`
-    : repairDiagnosis
-      ? `[Stop Hook] 阶段未闭环：feature="${feature}" phase="${phase}"。产品 FAIL 但失败可诊断，下一步只做这一件事——把 verifier request 投给 verifier 并写回报告（先别改产品、也别急着重跑 harness）：`
-      : `[Stop Hook] 阶段未闭环：feature="${feature}" phase="${phase}"。下一步只做这一件事——真正修复后重跑 harness：`;
-  const lines = [
-    // 动作优先（弱模型友好）：先给"下一步只做这一件事"，把长说明收到后面。
-    headline,
-    `  → ${
-      closureOnly
-        ? syncCmd
-        : repairDiagnosis
-          ? `Task(subagent_type=verifier, prompt=${
-              summaryHint && summaryHint.verifierRequest
-                ? summaryHint.verifierRequest
-                : (reportsDirRel ? `${reportsDirRel}/verifier.request.<subject>.json` : '本阶段 reports 目录下的 verifier.request.<subject>.json')
-            } 的完整正文)，再按下面第 3 步收尾`
-          : rerunCmd
-    }`,
-    // M5A：CU Feature 物理路径解析失败（identity 非法 / SSOT 缺失）时点名诊断，不生成任何伪路径。
-    ...(reportsDirRel === null && feature.startsWith('cu-')
-      ? ['  （无法解析 CU Feature 物理路径：framework SSOT 缺失/损坏或 identity 非法——请先修复 framework 安装或 CU 身份后重跑）']
-      : []),
-    ...(progress && progress.max > 0
-      ? [`（第 ${progress.count}/${progress.max} 次拦截；连续零进展达 ${progress.max} 次将自动放行，交还你/用户决定。）`]
-      : []),
-    '',
-    '未满足的闭环条件（CLAUDE.md §5.1）：',
-    ...missingItems.map((m) => `  - ${m}`),
-    '',
-    ...(summaryHint ? [
-      '最近一次 harness summary 建议：',
-      `  summary = ${summaryHint.path}`,
-      `  next_action = ${summaryHint.nextAction}`,
-      '',
-    ] : []),
-    '如果你打算【继续这个阶段】，按下面顺序补齐：',
-    ...(closureOnly
-      ? [
-          `  1. 先跑 sync-closure（**不重跑脚本 harness**）：`,
-          `       ${syncCmd}`,
-          `     它会按 base summary、verifier evidence 与 policy 收口；exit 0 即闭环。receipt 只在 closed 后 best-effort 投影，不需要手填。`,
-          `  2. 若它报 verifier 证据缺失且 summary.verifier_request 在场：`,
-          `       ${summaryHint && summaryHint.verifierRequest ? summaryHint.verifierRequest : (reportsDirRel ? `${reportsDirRel}/verifier.request.<subject>.json` : '本阶段 reports 目录下的 verifier.request.<subject>.json')}`,
-          `     用 Task 工具调 verifier 子 agent（subagent_type=verifier），`,
-          `     prompt = 那份 request JSON 的**完整正文**（几十行，整段投递）。`,
-          `     verifier 会按其中的 prompt_path 自行 Read ai-prompt.md；不要投递 ai-prompt.md`,
-          `     全文、不要手抄或改写字段、不要附加说明——subject 由字段重算，抄错一处即失配。`,
-          `  3. verifier 返回并把回复写入 summary.verifier_report 后，重跑第 1 步的 sync-closure，再尝试 stop。`,
-          `     **不要手填 receipt**；重跑完整 harness 不会因时间戳换 subject，但 closure-only 场景没有必要。`,
-        ]
-      : [
-          `  1. 按 summary.next_action 修因（脚本尚未 PASS），然后自跑完整 harness：`,
-          `       cd framework/harness && npx ts-node harness-runner.ts \\`,
-          `         --phase ${phase} --feature ${feature}`,
-          `     例外：next_action=run_verifier_for_repair 表示本轮产品 FAIL 但失败可诊断，`,
-          `     harness 已在脚本 FAIL 下签发了 request——先做第 2 步，别急着改产品。`,
-          `  2. summary.verifier_request 在场时（脚本 PASS，或上面那条诊断例外），`,
-          `     用 Task 工具调 verifier 子 agent（subagent_type=verifier），`,
-          `     prompt = 那份 request JSON 的**完整正文**（几十行，整段投递）。`,
-          `     verifier 会按其中的 prompt_path 自行 Read ai-prompt.md；不要投递 ai-prompt.md`,
-          `     全文、不要手抄或改写字段、不要附加说明。`,
-          `     verifier 返回后，把它的回复**原样全文**写入 summary.verifier_report 指向的路径`,
-          `     （报告由你写，不是 verifier 写；不摘要、不只贴终态块）。`,
-          `     没有输出 request = 本阶段不适用 verifier，跳到第 3 步。`,
-          ...(repairDiagnosis
-            ? [
-                `  3. 诊断轮（next_action=run_verifier_for_repair）**不要跑 sync-closure**：`,
-                `     脚本仍 FAIL、回修候选尚未重算，finalizer 必然拒收。按你所处的模式二选一：`,
-                `     · 正式 goal 编排（外层 runner 拉起的轮次）：写完报告即结束本轮，`,
-                `       回传当前 FAIL 与 summary/报告路径，由外层 runner 重跑 gate harness 重算候选；不要自跑。`,
-                `     · 非 goal（你自己在跑本阶段）：重跑一次本阶段 harness 让 writer 重算回修候选：`,
-                `           ${rerunCmd}`,
-                `       然后按新 summary 的 NEXT 指引找到 owner 阶段回修（当前阶段不改产品）。`,
-                `     harness 的 NEXT 一行已按上述两种模式给出对应措辞，以它为准。`,
-              ]
-            : [
-                `  3. 运行 ${syncCmd}`,
-                `     （只读 base summary、verifier evidence 与 policy；receipt 在 closed 后机器投影）后再尝试 stop。`,
-              ]),
-        ]),
-    '',
-    '如果你想【放弃这个阶段，转去做别的事】，先执行：',
-    `       cd framework/harness && npx ts-node harness-runner.ts --clear-state`,
-    `  这会删除 state file。下一次结束消息时本 hook 不会再拦你；`,
-    `  历史 verdict / 报告 / 回执仍保留在 reports 与 ${featuresDir} 下。`,
-    '',
-    'CLAUDE.md §5.1 的闭环判据 = 脚本 verdict PASS ∧ 全部 required 证据齐（要哪几项由',
-    'harness 求解输出，verifier 是否 required 由其 verifier plan 决定）；本提示是物理拦截层',
-    '在提醒你做出选择，不是要求"必须立刻完成"。继续 / 放弃二选一即可。',
-  ];
-  return lines.join('\n');
-}
-
-/**
- * 逃生阀文案：连续 N 次零进展后放行时给的极短二选一提示（≤6 行）。
- * 弱模型在死局里空回复时，不再被 exit 2 反复拉回；控制权交还用户。
- */
-function buildEscapeValveReason(state, count) {
-  const phase = state.phase ?? 'unknown';
-  const feature = state.feature ?? 'unknown';
-  return [
-    `[Stop Hook] 本阶段已连续 ${count} 次零进展（harness 未重跑、blocker 未减）。已停止重复拦截，控制权交还你/用户。二选一：`,
-    `  ① 真正修复后重跑： cd framework/harness && npx ts-node harness-runner.ts --phase ${phase} --feature ${feature}`,
-    `  ② 放弃本阶段：     cd framework/harness && npx ts-node harness-runner.ts --clear-state`,
-    `（本次已放行；state 仍 verdict=FAIL / receipt=missing，下游阶段门禁照常拦截，未绕过闭环。）`,
-  ].join('\n');
-}
-
-function buildAdvisory(state, stale) {
-  const phase = state.phase ?? 'unknown';
-  const feature = state.feature ?? 'unknown';
-  const lines = [
-    `[Stop Hook 提示] 检测到一个旧的阶段状态文件，但与当前会话无关：`,
-    `  feature = "${feature}"`,
-    `  phase   = "${phase}"`,
-    `  原因    = ${stale.reasonHuman}`,
-    `  state file = framework/harness/state/.current-phase.json`,
-    '',
-    '本次 stop 已放行；上面这条状态不会拦截你。',
-    '如果不再需要这份遗留状态，可执行：',
-    `  cd framework/harness && npx ts-node harness-runner.ts --clear-state`,
-  ];
-  return lines.join('\n');
-}
-
-// --------------------------------------------------------------------------
-// 8. 主流程
-// --------------------------------------------------------------------------
 
 async function main() {
   const payload = await readStdin();
-
-  // stop_hook_active=true → 本次 stop 已经被拦过一次，避免无限循环
-  if (payload && payload.stop_hook_active === true) {
-    process.exit(0);
-    return;
-  }
-
-  // goal-runner 拉起的无头进程：闭环裁决由 goal-runner 外部管理，hook 不干预
-  // env 名 SSOT：framework/harness/scripts/utils/phase-state.ts → MAISON_GOAL_HEADLESS_ENV
-  if (process.env.MAISON_GOAL_HEADLESS === '1') {
-    process.exit(0);
-    return;
-  }
-
+  // A dedicated native invocation returns to the same outer coordinator on actual exit.
+  if (process.env.MAISON_GOAL_HEADLESS === '1') return;
   const projectRoot = resolveProjectRoot(payload);
-
-  // 默认状态文件路径；若 framework.config.json 自定义了 paths.state_file，hook 也读那个
-  const stateRel =
-    readStateFileRelFromConfig(projectRoot) ?? 'framework/harness/state/.current-phase.json';
-  const stateAbs = path.resolve(projectRoot, stateRel);
-
-  // 拿当前会话 id
-  const sid =
-    typeof payload?.session_id === 'string' && payload.session_id.trim()
-      ? payload.session_id.trim()
-      : null;
-
-  const state = readJSONSafe(stateAbs);
-
-  // 没有 state file → 不在阶段流程内，放行
-  if (!state) {
-    process.exit(0);
-    return;
-  }
-
-  // 拿 grace / ttl / 逃生阀阈值（从 framework.config.json）
-  const { gracePeriodMs, ttlMs, maxConsecutiveBlocks } = readStateMachineFromConfig(projectRoot);
-
-  // 算 staleness
+  const state = readJSONSafe(path.resolve(projectRoot, readStateFileRelFromConfig(projectRoot) ?? 'framework/harness/state/.current-phase.json'));
+  if (!state || typeof state.feature !== 'string' || state.feature === '_global') return;
+  const sid = typeof payload?.session_id === 'string' ? payload.session_id.trim() : null;
+  const { gracePeriodMs, ttlMs } = readStateMachineFromConfig(projectRoot);
   const stale = evaluateSessionStaleness(state, sid, gracePeriodMs, ttlMs, Date.now());
-
-  // 陈旧 → advisory + exit 0
   if (stale.isStale) {
-    process.stderr.write(buildAdvisory(state, stale) + '\n');
-    process.exit(0);
+    process.stderr.write(`[Stop Hook] 历史会话记录只读保留；本次没有承接该原请求：${stale.reasonHuman}\n`);
     return;
   }
-
-  // 逃生阀计数的上一次值（hook 自写字段；不参与 signature）
-  const prevSig = typeof state.block_signature === 'string' ? state.block_signature : '';
-  const prevCount =
-    typeof state.consecutive_block_count === 'number' ? state.consecutive_block_count : 0;
-
-  // 走闭环判定
-  const phaseSummary = readPhaseSummary(projectRoot, state);
-  const result = evaluateState(state, phaseSummary?.summary ?? null);
-  if (result.allow) {
-    // 闭环放行：盖章/last_seen + 清零逃生阀计数（仅在有残留计数时才写）
-    const resetExtra =
-      prevCount > 0 || prevSig ? { block_signature: '', consecutive_block_count: 0 } : undefined;
-    maybeUpdateState(stateAbs, state, sid, stale.shouldStamp, resetExtra);
-    process.exit(0);
-    return;
-  }
-
-  // 未闭环：算零进展 signature（blocker id 集合 + last_run_at），更新连续计数
-  const read = readPhaseSummary(projectRoot, state);
-  const signature = computeBlockSignature(state, read ? read.summary : null);
-  const { count, release } = decideEscapeValve(prevSig, prevCount, signature, maxConsecutiveBlocks);
-
-  // 盖章/last_seen + 持久化计数（**在 exit 之前**，单次写）
-  maybeUpdateState(stateAbs, state, sid, stale.shouldStamp, {
-    block_signature: signature,
-    consecutive_block_count: count,
-  });
-
-  // 逃生阀：连续零进展达阈值 → 停止 nag，放行(exit 0) + 极短二选一，交还用户
-  if (release) {
-    process.stderr.write(buildEscapeValveReason(state, count) + '\n');
-    process.exit(0);
-    return;
-  }
-
-  // 未达阈值 → 动作优先文案 + exit 2。reports 目录经 M5A SSOT 与 reports_dir_pattern 解析成物理路径；
-  // CU Feature 解析失败（SSOT 不可用 / identity 非法）→ null，文案点名诊断，绝不把编码后的逻辑 id 当物理路径。
-  const reportsDirAbs = resolveFeaturePhaseReportDir(projectRoot, state.feature ?? 'unknown', state.phase ?? 'unknown');
-  const reportsDirRel = reportsDirAbs ? path.relative(projectRoot, reportsDirAbs).replace(/\\/g, '/') : null;
-  const reason = buildBlockReason(state, result.missing, readSummaryHint(projectRoot, state), {
-    count,
-    max: maxConsecutiveBlocks,
-  }, readFeaturesDirFromConfig(projectRoot), reportsDirRel);
-  const decision = {
-    decision: 'block',
-    reason,
-  };
-  process.stdout.write(JSON.stringify(decision));
+  const view = readCurrentCompletion(projectRoot, state);
+  if (!view) return;
+  const result = evaluateCompletion(view);
+  if (result.reason === 'completed') return;
+  const reason = `[Stop Hook] 原请求${result.reason === 'waiting' ? '正在等待真实条件，仍未完成' : '仍有当前工作或核验未完成'}。\n`
+    + result.details.join('\n') + '\n原协调器续接：' + continuationCommand(projectRoot, state);
   process.stderr.write(reason + '\n');
-  process.exit(2);
-}
-
-// 仅当作为 CLI 入口时执行 main；通过 import 引入做单元测试时跳过。
-const invokedAsCli = (() => {
-  try {
-    const argv1 = process.argv[1];
-    if (!argv1) return false;
-    return path.resolve(argv1) === path.resolve(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
+  if (!result.allow) {
+    process.stdout.write(JSON.stringify({ decision: 'block', reason }));
+    process.exitCode = 2;
   }
-})();
-
-if (invokedAsCli) {
-  main().catch((err) => {
-    // 即使 hook 自己出错，也只 warn 给用户，不阻止 stop（避免把仓库变成"出门也要敲三下"）
-    process.stderr.write(`[check-phase-completion hook] internal error: ${err?.message ?? err}\n`);
-    process.exit(0);
-  });
 }
+
+const invokedAsCli = process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
+if (invokedAsCli) main().catch(error => {
+  process.stderr.write(`[Stop Hook] 当前完成事实读取失败，原请求保留未完成：${error?.message ?? error}\n`);
+  process.exitCode = 2;
+});

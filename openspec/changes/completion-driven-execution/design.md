@@ -6,7 +6,7 @@
 
 **Goals:** P1提供工作单元执行底座；P2原位统一公共工具/当前处置/完成评估，接确定准备、增量独立核验与运行中验收收敛。
 
-**Non-Goals:** 本阶段不做P3全部入口切换和旧预算消费者删除，不运行真实宿主或P4联合验收。四阶段共用此change，后续阶段按自己的范围补齐delta与任务。
+**Non-Goals:** 本阶段实施P3入口切换及旧控制退役，不运行真实宿主或P4联合验收。四阶段共用此change，后续阶段按自己的范围补齐delta与任务。
 
 ## Decisions
 
@@ -35,3 +35,13 @@
 - 同入口处理结果复用、比较资格与已有基线更新：无相关作者改动的原样工具重跑不算新评估，不推进窗口；相关改动后实际核验，或已反馈后真实作者交回的首次完整目标评估，才比较验收/已核实发现。后者由原invoke/结束事实判断，不把重复报告、旧结束事件或补验当作新机会；新的独立证据可证明进展。元数据/编号/投影重写不构成改善。
 - 运行观察只读取已经完成且有效的工具/独立结果，不按token/通知次数重复执行或解析；无验收改善经P1原owner绑定取消/停止，确认后保全并可续暂停。P1首次dirty前像与gate前未恢复保护不因复用而解除。
 - 确定准备复用既有schema/writer，业务未知不填PASS；独立核验复用P1唯一Q接收链，同材料FAIL/PASS均可复用但不改变真值，变化材料不得借历史PASS自动通过。P3其它消费切换只列交接。
+
+## P3 Decisions
+
+- 同一原请求只有一个完成协调器；root、各CU、独立request各有专用作者。同一unit作者原request/SID承载各真实检查族，phase仅为方法/工具选择及历史定位，去phaseIdx/retry/backtrack队列，不伪造缺席phase作者或PASS。
+- 派发前读同次当前request、accepted report、completed/reusable结果及disposition/evaluation。已完成unknown只剩verify/wait时给具体producer/对象解除条件WAITING，同条件零调用；恢复后只补受影响检查。新独核实质反馈交原作者，元数据/重复拒修不制造比较机会。
+- 新builder忽略旧budget；有效unattended无max_turns/timeout_seconds/phase_timeout_seconds，旧字段仅历史解析。显式--user-deadline-at归一到user_deadline_at；未完请求沿用，不从wall推导。取消、真实终态、公开工具期限、idle、owner/fence和写保护保留。
+- assess/NEXT/status/report/progress及Feature/CU/component/release只消费现reader/resolver/evaluation，不各自采collector/派工/写状态。已有currentResults/disposition透传；局部读故障保原错误verify及其它已判定repair。历史活性/elapsed可读，但events COMPLETED不签业务完成。
+- testing FAIL须真实可独立核验对象/原报告满足现资格才签诊断request；无关环境缺口不遮住可独立工作。晚到拒修原账本完整进当前material，旧request/material/prompt保留，新材料沿原writer换subject，无影响工具不重跑。不匹配行不采信也不裁掉原件。
+- 初建root持续全部适用CU至原部件终点；ready-set单步或allCUCompleted不签交付。component原writer正式记录后重读校验装配/独核证据；release仍为同一处置的发布条件。
+- P3实施与开发验收不等于宿主交付。P4联合宿主/设备pending，architecture现状段须开发验收成立后更新。

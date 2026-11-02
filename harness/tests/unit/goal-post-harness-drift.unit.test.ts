@@ -88,11 +88,11 @@ export function runAll(): UnitCaseResult[] {
       // 收官判据：run 走完全链、零 halt，coding 不被二次拉起。
       assert(out.phaseHalts.length === 0, `不得 halt：${detail}`);
       assert(
-        out.phaseStartsThisCall.filter(p => p === 'coding').length === 1,
+        out.authorCallsThisCall === 1,
         `coding 不得被重复拉起（无回退）：${detail}`,
       );
       assert(
-        out.phaseStartsThisCall.includes('testing'),
+        out.checkFamiliesThisCall.includes('testing'),
         `链须走到 testing，由它的 checker 裁决漂移：${detail}`,
       );
 

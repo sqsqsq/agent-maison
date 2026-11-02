@@ -117,17 +117,19 @@ export async function waitForConditionRecovery(opts: {
   emit: (event: Record<string, unknown>) => void;
   maxWaitMs?: number;
   pollMs?: number;
+  signal?: AbortSignal;
 }): Promise<boolean> {
   const maxWaitMs = opts.maxWaitMs ?? CONDITION_WAIT_MAX_MS;
   const pollMs = opts.pollMs ?? CONDITION_WAIT_POLL_MS;
   const limitMs = Math.min(maxWaitMs, opts.availableMs);
-  if (!(limitMs > 0)) return false;
+  if (!(limitMs > 0) || opts.signal?.aborted) return false;
   const base = { phase: opts.phase, probe: opts.probe, blocked_by: opts.blockedBy };
   const startMs = Date.now();
   opts.emit({ type: 'condition_wait_started', ...base, ...(opts.reason ? { reason: opts.reason } : {}), limit_ms: limitMs, poll_ms: pollMs });
   let probeReadyCount = 0;
   let lastReason: string | undefined;
   for (;;) {
+    if (opts.signal?.aborted) return false;
     // 开始事件写入或睡眠也可能耗尽余额：每次发起探测前都核对同一截止。
     if (Date.now() - startMs >= limitMs) break;
     let result: ConditionProbeResult;
@@ -136,12 +138,14 @@ export async function waitForConditionRecovery(opts: {
     } catch (error) {
       result = { ready: false, reason: 'probe failed: ' + String((error as Error).message) };
     }
+    if (opts.signal?.aborted) return false;
     lastReason = result.reason;
     if (result.ready) probeReadyCount += 1;
     // 同步探针本身可能把余额耗尽：余额已尽就不再重查（不把非正余额交给原检查），按超时收尾。
     const recheckRemainingMs = limitMs - (Date.now() - startMs);
     if (recheckRemainingMs <= 0) break;
     const rechecked = result.ready ? await opts.recheck(recheckRemainingMs) : false;
+    if (opts.signal?.aborted) return false;
     if (rechecked === true) {
       opts.emit({ type: 'condition_wait_ready', ...base, waited_ms: Date.now() - startMs });
       return true;
@@ -149,8 +153,15 @@ export async function waitForConditionRecovery(opts: {
     if (rechecked === 'park') break;
     const remainingMs = limitMs - (Date.now() - startMs);
     if (remainingMs <= 0) break;
-    await new Promise((resolve) => setTimeout(resolve, Math.min(pollMs, remainingMs)));
+    await new Promise<void>(resolve => {
+      const done = () => { opts.signal?.removeEventListener('abort', abort); resolve(); };
+      const timer = setTimeout(done, Math.min(pollMs, remainingMs));
+      const abort = () => { clearTimeout(timer); done(); };
+      opts.signal?.addEventListener('abort', abort, { once: true });
+      if (opts.signal?.aborted) abort();
+    });
   }
+  if (opts.signal?.aborted) return false;
   opts.emit({
     type: 'condition_wait_timeout',
     ...base,

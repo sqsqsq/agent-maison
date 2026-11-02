@@ -197,7 +197,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       assert(fs.readFileSync(original).equals(bytes), '失效识别不得改写历史完成');
     }
   }) },
-  { name: '★1 正式迁移后：两个 Feature 当前原件 record ok、义务全覆盖、complete', run: () => withSnapshot((root, fw) => {
+  { name: '★1/★3 正式迁移现场：两个 Feature 完成；CU 源码变化只废 coding，恢复后篡改原件只损坏记录', run: () => withSnapshot((root, fw) => {
     for (const feature of [SNAPSHOT_FLAT_FEATURE, SNAPSHOT_CU_FEATURE]) {
       const a = assessOnSnapshot(root, fw, feature);
       assert.strictEqual(a.record.state, 'ok', `${feature}：${brief(a)}`);
@@ -205,15 +205,30 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       assert.deepStrictEqual(a.blocking, []);
       assert.strictEqual(a.complete, true, `${feature}：${brief(a)}`);
     }
-  }, true) },
-  { name: '执行结果按 owner_phase 摊回：CU 施工源码后改 → coding 义务 uncovered，记录仍可信', run: () => withSnapshot((root, fw) => {
-    assert(assessOnSnapshot(root, fw, SNAPSHOT_CU_FEATURE).complete, '先取得当前有效完成，源码变化不能被旧gate指纹遮住');
-    fs.appendFileSync(path.join(root, 'src', 'ledger', 'LedgerFeature.ets'), '\n// changed after completion\n');
+    const sourceFile = path.join(root, 'src', 'ledger', 'LedgerFeature.ets');
+    const sourceBytes = fs.readFileSync(sourceFile);
+    fs.appendFileSync(sourceFile, '\n// changed after completion\n');
     const a = assessOnSnapshot(root, fw, SNAPSHOT_CU_FEATURE);
     assert.strictEqual(a.record.state, 'ok', brief(a));
     const coding = obligation(a, 'implementation:request');
     assert(coding.status === 'uncovered' && (coding.reason ?? '').includes('LedgerFeature.ets'), brief(a));
     assert.strictEqual(a.complete, false);
+    fs.writeFileSync(sourceFile, sourceBytes);
+    assert(assessOnSnapshot(root, fw, SNAPSHOT_CU_FEATURE).complete, '恢复源码后必须先回到有效完成，不能污染下一负例');
+
+    const projectionFile = featureFilePath(root, SNAPSHOT_CU_FEATURE, 'feature-completion.json');
+    const projection = JSON.parse(fs.readFileSync(projectionFile, 'utf8'));
+    const originalFile = path.join(root, projection.original_path);
+    const original = JSON.parse(fs.readFileSync(originalFile, 'utf8'));
+    original.phases[0].run_id = '20260101T000000Z-f0f0f0';
+    const text = JSON.stringify(original, null, 2) + '\n';
+    fs.writeFileSync(originalFile, text);
+    fs.writeFileSync(projectionFile, JSON.stringify({ ...projection, original_sha256: crypto.createHash('sha256').update(text, 'utf-8').digest('hex') }));
+    const broken = assessOnSnapshot(root, fw, SNAPSHOT_CU_FEATURE);
+    assert.strictEqual(broken.record.state, 'broken', brief(broken));
+    assert(broken.record.state === 'broken' && broken.record.reasons.some(r => r.includes('20260101T000000Z-f0f0f0')), brief(broken));
+    assert(broken.obligations.every(o => o.status === 'covered'), brief(broken));
+    assert.strictEqual(broken.complete, false);
   }, true) },
   { name: '★2 只改 change-unit.yaml（contracts.yaml 字节不变）→ plan 义务 uncovered/binding，原因为 CU 绑定失配', run: () => withSnapshot((root, fw) => {
     const dir = featureFilePath(root, SNAPSHOT_CU_FEATURE, '');
@@ -230,21 +245,6 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       && (design.reason ?? '').includes('CU 绑定失配'), brief(a));
     assert.strictEqual(a.complete, false);
   }) },
-  { name: '★3 手改完成原件 phases[].run_id（同步投影哈希）→ record broken，义务不因此 uncovered', run: () => withSnapshot((root, fw) => {
-    const projectionFile = featureFilePath(root, SNAPSHOT_CU_FEATURE, 'feature-completion.json');
-    const projection = JSON.parse(fs.readFileSync(projectionFile, 'utf8'));
-    const originalFile = path.join(root, projection.original_path);
-    const original = JSON.parse(fs.readFileSync(originalFile, 'utf8'));
-    original.phases[0].run_id = '20260101T000000Z-f0f0f0';
-    const text = JSON.stringify(original, null, 2) + '\n';
-    fs.writeFileSync(originalFile, text);
-    fs.writeFileSync(projectionFile, JSON.stringify({ ...projection, original_sha256: crypto.createHash('sha256').update(text, 'utf-8').digest('hex') }));
-    const a = assessOnSnapshot(root, fw, SNAPSHOT_CU_FEATURE);
-    assert.strictEqual(a.record.state, 'broken', brief(a));
-    assert(a.record.state === 'broken' && a.record.reasons.some(r => r.includes('20260101T000000Z-f0f0f0')), brief(a));
-    assert(a.obligations.every(o => o.status === 'covered'), brief(a));
-    assert.strictEqual(a.complete, false);
-  }, true) },
   { name: '#18 只改 acceptance.yaml（CU 链首为 coding）→ 验收义务 uncovered/binding；coding 义务不得被判 uncovered/result', run: () => withSnapshot((root, fw) => {
     const acceptance = featureFilePath(root, SNAPSHOT_CU_FEATURE, 'acceptance.yaml');
     fs.appendFileSync(acceptance, '# reviewer note: wording only\nextra_note: changed\n');
@@ -278,7 +278,8 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         const item = obligation(assessment, 'acceptance-context:probe');
         assert.strictEqual(item.class, expected, brief(assessment));
         assert.strictEqual(assessment.complete, false);
-        if (checks.length === 2 && checks[0].status === 'FAIL') assert((item.reason ?? '').includes('required_check_conclusion'), brief(assessment));
+        if (checks.length === 2 && checks[0].status === 'FAIL') assert(assessment.obligations.some(gap => (gap.reason ?? '').includes('required_check_conclusion')),
+          'the common view must preserve the separate checker gap alongside the real product failure: ' + brief(assessment));
       });
     }
   } },

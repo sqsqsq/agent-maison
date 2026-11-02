@@ -1,6 +1,6 @@
 # 项目请求与统一入口
 
-具备 design lens 的新正式完整交付（非 canonical CU、含 spec/plan 定义职责、无有效 run/冻结范围）从原始需求开始进入同一 Goal runtime。尚无 feature.yaml/蓝图/CU 时，prepare-run/fresh runner 出生受管初始设计段；它不伪造施工 Feature/scope、基线或阶段链。`--prepare-scope` 只投影当前入口，不为不存在的 CU 写平面候选。runtime 持续派发作者、真实独立质询、检查、原 CU consumer/readiness，再由 P2 选择/恢复正常 CU；不以打印步骤、作者正常退出或设计 ready 提前收尾。会话与后台在相同授权、能力、事实和预算下同处置，仅运输/呈现不同。仅设计、generic、单职责 request、普通维护和合法存量恢复保留原终点；已有蓝图/CU 下的 plan 映射补充仍归 plan。
+具备 design lens 的新正式完整交付（非 canonical CU、含 spec/plan 定义职责、无有效 run/冻结范围）从原始需求开始进入同一 Goal runtime。尚无 feature.yaml/蓝图/CU 时，prepare-run/fresh runner 出生受管初始设计段；它不伪造施工 Feature/scope、基线或阶段链。`--prepare-scope` 只投影当前入口，不为不存在的 CU 写平面候选。runtime 持续派发作者、真实独立质询、检查、原 CU consumer/readiness，再由 P2 选择/恢复正常 CU；不以打印步骤、作者正常退出或设计 ready 提前收尾。会话与后台在相同授权、能力、事实和控制边界下同处置，仅运输/呈现不同。仅设计、generic、单职责 request、普通维护和合法存量恢复保留原终点；已有蓝图/CU 下的 plan 映射补充仍归 plan。
 
 入口 ID 和路径只查 [skills.index](../../skills/skills.index.yaml)，phase/checker 查活动 workflow。下表是职责说明，不是第二份路由或执行配置。项目动作使用现有 CLI 参数，不创建 invocation 文件、Feature、CU 或 Goal 来承载无关操作。
 
@@ -16,7 +16,7 @@
 | component-catalog-bootstrap | 源码索引、部件卡与使用边界；`bootstrap:component-index` 及原有策展检查 | 本次索引/知识增量；不自动批准依赖关系 |
 | component-design | 请求、既有需求源/蓝图与缺口；现有 `check:component-blueprint`、view/draft/continue 路径 | 查看不写 canonical/revision/CU/run；直接设计到请求终点或 CU readiness，完整交付 runtime 调用后按原授权继续 |
 | change-unit-progression | canonical CU、现有 Feature/run 事实；现有 CU 推进与 Goal prepare-run | 只选择或恢复已授权 CU，不代签部件完成 |
-| component-closure | 蓝图、CU 完成证据与装配义务；`check:component-closure` | 校验部件终点；不是 CU 全绿即部件成功，只有明确写入请求才用 `--write` |
+| component-closure | 蓝图、CU 完成证据与装配义务；`check:component-closure` | 校验部件终点；不是 CU 全绿即部件成功，独立闭环请求写入需已有授权；完整交付由root经原机器writer正式record并重读校验 |
 | goal-mode | 原始正式需求、规范化 P2 输入或已有 run；原有 `goal-runner` / `goal-phase-runtime` | 无 CU 时受管设计，准入后按真实范围执行/恢复；不生成第二份阶段、豁免或完成真源 |
 
 上述 harness 参数在 `framework/harness` 调用，global 阶段沿用 `_global` 报告，不要求 `--feature`。不带局部选择参数表示明确请求项目级校验；带选择参数只检查对应集合，未找到目标必须报告缺口。Graph 生成与 `--phase module-graph` 必须传同一组 module/package-path。显式配置文件不可读、损坏与可选知识缺失不同：前者修复来源，后者由实际职责决定是否需要补充。
@@ -31,7 +31,7 @@
 
 无 Feature 的局部 review/UT/testing 先按请求终点使用对应 Skill 的共享方法：只审查、解释或设计用例直接交付结果，不要求 request/facts/报告；实际写/跑测试或要求 checker 校验报告时使用 [request CLI](request-harness.md)，结果隔离在显式报告目录，不能伪造 Feature 或借用活跃 Feature 证据；**落笔写测试之前先跑 `--prepare-request` 确认落点与载体**。完整实现根据实际义务安排验证，未知责任保留 unresolved，不因输入可解析就宣称验收通过。
 
-完整交付按依赖顺序发生：原始正式请求先受管，runtime 完成初始设计/质询/准入与 CU readiness；真实 CU 的 admitted 设计才是施工范围候选输入。主 Agent 只提供原完成终点、请求结果、明确动作 `--requested-phases`、影响判断与来源；机器经同一 `resolveCapabilityInputs` 派生义务/绑定，CU 影响按各自真实事实核定，不机械套用 root 的全局布尔值。具备真实 CU 施工输入时，`--prepare-scope` 只生成候选、不冻结范围，不为不存在的 CU 写候选；正常 CU 的施工范围在 run 出生时冻结。会话由 `goal-mode-entry --prepare-run --run-mode attended` 创建/接回，再以 `--next` 领取、读取原件、执行并按返回的 `--report-result` 命令上报；无人值守沿 `goal-runner --detach`。全部可命令适配器共用 GoalPhaseRuntime；无普通作者隔离时在主上下文执行并披露，必需独立 verifier/质询保持真实独立。旧无 run 有效范围正式转交，已有 active 优先恢复，不起并行 run；不为全复用空范围造施工 run，不新增无 run/manual_fallback 完整交付。默认 obligation-driven 1.2，旧定义只供恢复。
+完整交付按依赖顺序发生：原始正式请求先受管，runtime 完成初始设计/质询/准入与 CU readiness；真实 CU 的 admitted 设计才是施工范围候选输入。主 Agent 只提供原完成终点、请求结果、明确动作 `--requested-phases`、影响判断与来源；机器经同一 `resolveCapabilityInputs` 派生义务/绑定，CU 影响按各自真实事实核定，不机械套用 root 的全局布尔值。具备真实 CU 施工输入时，`--prepare-scope` 只生成候选、不冻结范围，不为不存在的 CU 写候选；正常 CU 的施工范围在 run 出生时冻结。会话由 `goal-mode-entry --prepare-run --run-mode attended` 创建/接回，再以 `--next` 领取、读取原件、执行并按返回的 `--report-result` 命令上报；无人值守沿 `goal-runner --detach`。全部可命令适配器共用 GoalPhaseRuntime；普通作者始终使用本工作单元专用上下文；原生会话失效时按当前事实重建并披露，必需独立 verifier/质询保持真实独立。旧无 run 有效范围正式转交，已有 active 优先恢复，不起并行 run；不为全复用空范围造施工 run，不新增无 run/manual_fallback 完整交付。默认 obligation-driven 1.2，旧定义只供恢复。
 
 单独 spec/plan 设计止于原职责，需求文件沿既有来源绑定读取；无 Goal 的 CU 单阶段动笔前用 `prepare-blueprint-design --phase spec|plan` 只导出本阶段，已有内容和冲突保护不变，Goal 已准备的不重复调用。无 run 的只读检查与旧范围/完成读取保持兼容，不能据此签发新的 Feature 完成。Goal 只认冻结 manifest，阶段命令不以 `--requirement` 或 `--requirement-file` 覆盖它；不另存平行需求快照。
 
@@ -41,12 +41,12 @@
 
 恢复时，capability 的缺失来源若已携带链内 `upstream_producer`，既有 assess/回退事务直接返回该 owner，不让无权修复的下游原样重试；没有可解析 owner 的 absent 只如实列来源和补齐动作，不自动升级为 framework bug。仅 UT 自身返修时保留仍 fresh 的 plan/coding/review；产品、契约或用户明确要求重跑造成的失效仍按实际范围执行。无新输入、修复或外部状态变化时恢复原 run 的既有无进展结论，不以同输入 fresh run 绕开。在途修正仍用 `--revalidate` 做机械重验（它不签发完成）；**明确要求已完成 Feature 正式重新交付时**在同一 feature 上以 `goal-runner --supersede <完成 run>` 起后继：出生范围由框架按当前输入重派生、既往阶段证据经同一核验复用，只跑未覆盖义务的责任阶段，新完成落在后继 run 目录、旧完成原件保留；feature 载体（无 run 完成）没有 run 可 supersede，先追加范围修订再起新 run。改动已提交进仓库的，起后继时把基线重设为当前提交；未提交的沿用源 run 基线。测试用例一律由后继的 UT 阶段以新增测试文件或新增用例产出（同字节重写不算覆盖），框架不把基线里已有的测试算作本轮覆盖证据。
 
-“继续”先读当前 active run、冻结 execution_scope 和 successor/revision，不重新选择流程。普通维护直接按请求范围完成，不跑 correction-init；恢复明确既有预期、未改变验收/契约且不需新设计决定的普通 bug 修复也属于维护；已完成 Feature 的此类维护不自动创建后继 run。新正式请求使用 obligation-driven；旧 run 通过内部兼容定义恢复，旧公共跳板由 UPDATE 备份清理。真实授权、策展语义、未获授权的预算调整和外部不可逆动作继续使用既有确认点；已有授权不重复询问。完整交付已授权就持续到原终点，真实授权/实质验收变化、秘密、不可逆动作、硬预算和明确禁止仍沿原边界。init-next-steps 不授予任何后继执行权。
+“继续”先读当前 active run、冻结 execution_scope 和 successor/revision，不重新选择流程。普通维护直接按请求范围完成，不跑 correction-init；恢复明确既有预期、未改变验收/契约且不需新设计决定的普通 bug 修复也属于维护；已完成 Feature 的此类维护不自动创建后继 run。新正式请求使用 obligation-driven；旧 run 通过内部兼容定义恢复，旧公共跳板由 UPDATE 备份清理。真实授权、策展语义、未获授权的限制调整和外部不可逆动作继续使用既有确认点；已有授权不重复询问。完整交付已授权就持续到原终点，真实授权/实质验收变化、秘密、不可逆动作、硬预算和明确禁止仍沿原边界。init-next-steps 不授予任何后继执行权。
 
 无人值守 detach 的 launcher 会在返回前做一次有界启动确认；调用方只消费同一 JSON 的 `startup`，不因 pid/目录存在宣称健康，也不另等下一次心跳。`alive_timeout` 保留活跃 child 并如实报告尚未就绪；早退保留 `detach.log` 原因。`--attach-created`、`--resume`、manifest 与 `--run-id` 必须解析为同一 run 身份，冲突在 parent fork 前拒绝。当前 terminal cooldown 仍为保守 5 分钟：现有 runtime 没有提供可证明恢复完成的 `blockingCleared` 生产事实，因此本批不缩短、不按 mtime 绕过；错误信息给出剩余秒数。
 
-默认预算扩容：用户明确授权完整交付并要求“别问/全权处理”时，主 Agent 可按原有效请求调整默认额度，透传现有 `--override-manifest` 继续同一 run；attended 在 prepare 和每次控制调用显式重传非持久 `--authorize-autonomy`。缺省 never/goal_mode、日志或 Agent 自写记录不授予全权；新会话先恢复可信原授权，不重复问已授权用户。预算单独批准不授设计全权，覆盖前须核对 manifest 全部差异。用户最终时间/轮次/费用上限不破、累计不清零、无进展守卫不解除，runner 不自动循环提额。最终披露前后额度、原因、来源及累计消耗；费用只在可靠时量化。
+新run无框架默认总调用、阶段重试/回退或总墙钟配额；旧budget/timeout仅历史读取，不提额续跑。用户明示截止使用 `--user-deadline-at` 的UTC绝对值，未完任务接回不重置；具体工具期限、取消、原生输出静默保护与owner/fence仍有效。
 
 已授权完整交付的初始设计与设计修订由同一 runtime 交原设计职责推进，含草稿、真实独立质询、检查、发布与必要重绑；attended 由本次 `--authorize-autonomy` 传递可信原请求全权判断，detached 保留用户选择无人值守完整交付的既有授权来源。主 Agent 负责最初判类与输入/授权，不在运行中手拼 CU/phase；plan/coding 不就地扩权。未授权事项、实质目标/验收变化、真实秘密、不可逆外部动作、用户总预算及明确禁止仍按实际授权处理。
 
-原请求的合法需求/来源、adapter、模型与视觉钉、fidelity、超时和其它限制传给正常 CU run，不能用 CU 合成短文或默认预算代替。`delivery_origin` 只定位原请求；当前有效总预算由原请求核定，合法调整对当前/后续 CU 生效，累计消耗不清零。child 报告后由原入口自动回原请求重读 P2；本批原请求止于全部适用 CU 正式完成；随后仅按原口径只读检查一次部件闭环并如实披露，不自动修复、写出或收口 P3，不把本请求完成冒称部件闭环通过，已完成原请求重入返回经重读的原结果。
+原请求的合法需求/来源、adapter、模型与视觉钉、fidelity、明确用户截止和真实授权传给正常CU run，不能用CU合成短文覆盖。delivery_origin只定位原请求；activity统计实际调用与活跃时间，不是额度。runChangeUnitProgression一次只提供当前ready-set事实步，完整原请求由同一root持续选择全部适用CU。root按原终点读取同一design/CU/component当前事实；全部CU完成不等于部件完成，正式component closure仍须原producer记录并重读校验，缺装配/独核原件保具体WAITING。P4真实联合宿主验收仍pending。

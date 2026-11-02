@@ -26,8 +26,6 @@ import {
 } from './visual-rounds-ledger';
 
 export const JOURNAL_SCHEMA_VERSION = '1.0';
-/** 每 invocation 中间轮上限（防 runaway journal；超限行拒收编 → halt） */
-export const MAX_INTERMEDIATE_ROUNDS_PER_INVOCATION = 12;
 
 export interface JournalProposalRow {
   schema_version: string;
@@ -191,10 +189,6 @@ export function replayJournalIntoLedger(args: {
       (!args.runId || r.round_input.goalRunId === args.runId),
   );
   if (mine.length === 0) return { ok: mismatches.length === 0, committed: [], mismatches, replayed: 0 };
-  if (mine.length > MAX_INTERMEDIATE_ROUNDS_PER_INVOCATION) {
-    mismatches.push(`中间轮数 ${mine.length} 超上限 ${MAX_INTERMEDIATE_ROUNDS_PER_INVOCATION}`);
-    return { ok: false, committed: [], mismatches, replayed: 0 };
-  }
   // hash 链与序校验（可检非尾部删行/插行/乱序/改行；尾部截断=已声明边界）
   let prevHash: string | null = null;
   mine.sort((a, b) => a.sequence - b.sequence);

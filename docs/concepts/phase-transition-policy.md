@@ -1,57 +1,25 @@
-# 阶段边界推进策略（Phase Transition Policy）
+# 工作单元执行与检查职责
 
-> **SSOT（对话 UX）**：[user-confirmation-ux.md §8](../../skills/reference/user-confirmation-ux.md)  
-> **SSOT（batch / goal 解析）**：[phase-transition-policy.ts](../../harness/scripts/utils/phase-transition-policy.ts)  
-> **调和 SSOT**：[skill-contracts.md](./skill-contracts.md) + [reconcile-loop.md](./reconcile-loop.md)
-> **运行手册**：[goal-mode-runbook.md](../operations/goal-mode-runbook.md)
+同一原请求由一个完成协调器持续推进；root、每个 CU 和独立 request 各有专用作者上下文。spec、plan、coding、review、UT、testing 是可用方法、工具检查族及历史定位名，不是六个作者的轮流派工队列。
 
-Harness **不是**开发流水线；阶段闭环（closed）只证明**当前 phase 完成**，不授权下一 Skill（`manual` 默认）。
+## 当前判断与授权
 
-## 策略枚举
+readCurrentDispositionInput 读取现有授权、适用义务、真实输入、检查原件和独立发现；resolveCurrentDisposition 产生唯一当前处置。assess、NEXT、status、progress 和完成/发布投影消费同一结果，不重复采集或选择作者。调用方本次已有的 currentResults 与 disposition 可直接传递。
 
-| `transition_policy` | 含义 | 典型来源 |
-|---------------------|------|----------|
-| `manual` | 独立请求到本次终点；推进需已有范围授权或相应确认，不重复询问已有授权 | 无 batch / goal 声明 |
-| `batch_authorized` | 用户一条指令声明多阶段范围 | 「coding 并 review」「全链路交付」 |
-| `goal_mode` | `goal-runner` 确定性编排 | `goal-runner.ts` + manifest |
+原请求的范围、验收和已有授权决定可执行工作。manual、batch_authorized、goal_mode 保留请求解释与历史解析含义，不另建立 phase 边界的授权队列。已有授权不重复询问；新增业务决定、秘密、外部不可逆动作或用户明确限制仍走既有确认。
 
-## workflow manifest 字段
+## 检查与完成
 
-[`obligation-driven.workflow.yaml`](../../workflows/obligation-driven.workflow.yaml) 已支持：
+工作单元作者可在原授权内修实现和测试输入。真实检查族使用原作者 request、owner/fence 和实际输入，不要求同名 phase 作者先出生，不伪造 agent_invoke_start 或 PASS。实际检查由原 check/compile/provider 执行，正式结果和独立核验由各自 writer 发布。
 
-```yaml
-transition_policy: manual
-auto_chain: [spec, plan, coding, review, ut, testing]
-```
+原 FAIL、未执行、坏证据和未知适用性都不能签完成。可判定产品修复与环境缺口并存时，首个修复反馈包括全部当时可判定问题；环境问题不遮住其它可做工作。unknown 说明具体 producer、对象和解除条件，同条件重入不重复调用；真实条件恢复后只补受影响验证。
 
-现代 workflow 的 auto_chain 仅是候选排序；实际执行由 P2 execution_scope 决定，chain_override/start/end 必须同值投影。已有有效信息不自动安排生产阶段，unknown 不当作不适用。旧 spec-driven run 仍按冻结旧链恢复。
+有效结果按原输入/材料/执行身份复用。相关改动后完成的真实验证才参与原验收比较；旧结束事件、相同报告、元数据或编号变化不制造改善或新机会。同一差额经真实作者交回和完整可比核验仍无改善时保全并暂停。
 
-## goal_mode：推荐与授权分离
+## 控制边界与历史
 
-goal driver 不再维护独立的 verdict→next-phase 表。每个 phase 边界统一执行：
+新 run 不使用框架默认 max_turns、总轮次、阶段重试/回退数或默认总墙钟作为任务出口。显式用户 UTC user_deadline_at、取消、真实调用结束、公开工具期限、原生输出静默保护、owner/fencing、设备和写保护继续有效。历史 budget/phase action 只供读取，不驱动新工作。
 
-1. `assess@1` 从 summary 1.2、closure、evidence freshness 与 `ReconcileObservation@1` 推荐工作；
-2. driver 校验授权、预算、fencing、device、trust、write guard 等硬门禁；
-3. 只执行一个推荐 phase；
-4. 重跑 assess。
+workflow 中的依赖是资料/义务关系；auto_chain、start/end 和旧 action 字符串只是兼容或显式检查族选择信息，不能重建冷阶段派工。Feature、CU、部件和 release 各有真实端点与适用证据，普通检查 PASS 不替代正式原件。
 
-通常 PASS+closed 会使 assess 推荐下一个 gap，FAIL 推荐同 phase，可信 testing 确定性缺陷推荐 coding。外部阻塞由 assess 标识为 deferred gap，是否向下游传播仍由 driver 的 `dependency_policy` 授权。`INCOMPLETE` / `DEFERRED` 禁止伪装为 completed。
-
-`phase-transition-policy.ts` 仍承载 manual/batch 授权和 runner 的安全 guard action vocabulary；跨阶段目标由 assess 唯一选择。下游 prompt 须携带 upstream DEFERRED 清单。详见 [goal-mode-runbook.md](../operations/goal-mode-runbook.md)。
-
-## 相关 registry id
-
-| id | 边界 |
-|----|------|
-| `phase.next_step` | 任一 feature phase 闭环后（通用） |
-| `plan.ok_to_code` | design → coding |
-| `coding.ok_to_review` | coding → review |
-| `review.ok_to_ut` | review → UT |
-| `ut.ok_to_testing` | UT → testing |
-
-## 反模式
-
-- 读完 `phase-completion-receipt.md` 后在同一执行流自动 Read 下一 Skill
-- 把「可进入 Skill N」当成「现在就进入 Skill N」
-- `spec.freeze` / 上游闭环 alone 当作下游授权（除非 `batch_authorized` 或 `goal_mode` manifest）
-- 将 INCOMPLETE / DEFERRED 软通过为 PASS 或 completed
+参见 [运行手册](../operations/goal-mode-runbook.md)、[操作命令](../../skills/reference/goal-mode-operations.md)、[统一入口](../operations/project-entry.md)。

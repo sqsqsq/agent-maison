@@ -693,7 +693,7 @@ process.stdin.on('end', () => process.stdout.write(JSON.stringify({
       const { root } = setupGoalRuntimeHost('codex', false);
       try {
         const result = await runGoalRuntimeChain(root, { adapter: 'codex', freshStartPhase: 'spec', freshEndPhase: 'spec', viaRuntimeClass: true,
-          freshRequirement: '定义本次内部职责，不触发UI、设备或外部动作。', freshBudget: { max_total_turns: 1 },
+          freshRequirement: '定义本次内部职责，不触发UI、设备或外部动作。',
           invokeResultFor: () => ({ exitCode: 127, spawn_error: 'ENOENT: test transport failed before a child process existed' }) });
         assert(result.events.some(event => event.type === 'agent_invoke_start'), '该反例必须实际到达调用，而非前置拒绝');
         assert(!result.events.some(event => event.type === 'agent_process_bound'), '测试运输未创建/绑定进程');
@@ -715,14 +715,12 @@ process.stdin.on('end', () => process.stdout.write(JSON.stringify({
       assert(src.includes("type: 'legacy_run_override'"), 'legacy force 确认事件缺失');
       // adjudicated-repair-loop：resumePostAgent（跳过已 settled 的 agent）不再重复 emit——
       // 真实绑定失败不能发settled；既有无进程测试运输仍保留调用收尾事实。
-      assert(src.includes('const skipExecutor = resumePostAgent || !!factsAdmissionError;'), '未调用executor不能新发settled');
+      assert(src.includes('onChildExit: () => { childExited = true;'), '实际child退出观察必须保留');
       const settledSites = [...src.matchAll(/type: 'agent_process_settled'/g)];
-      assert(settledSites.length === 4, '所有实际settled writer都须接受同一源级检查');
+      assert(settledSites.length === 3, 'unit/root/design三处真实settled writer都须接受同一源级检查');
       for (const site of settledSites) {
         const before = src.slice(Math.max(0, site.index! - 180), site.index);
-        assert(/if \((?:guardianBound|bound) && !containmentError\) (?:emit|goalEvents\.emit)\(\{\s*$/.test(before)
-          || /if \(contained && !containmentError && !result\.spawn_error\) goalEvents\.emit\(\{\s*$/.test(before)
-          || /if \(containmentCtx && !guardianBoundError && !invoke\.spawn_error && !skipExecutor\) \{\s*goalEvents\.emit\(\{\s*$/.test(before),
+        assert(/if \(childExited(?: && !containmentError)?\) (?:emit|goalEvents\.emit)\(\{\s*$/.test(before),
         `settled 未排除真实绑定失败/未执行调用：${site.index}`);
       }
       assert(src.includes("concludeStartupBlocker('legacy_run_requires_manual_cleanup'"), 'legacy BLOCKER 未收口');

@@ -41,7 +41,6 @@ interface UnitCaseResult {
 }
 
 const LAYOUT = detectRepoLayout(__dirname);
-const CHECK_PHASE_HOOK = frameworkAbs(LAYOUT, 'agents/claude/templates/hooks/check-phase-completion.mjs');
 const SCRIPTS_DIR = path.resolve(__dirname, '..', '..', 'scripts');
 const HOOKS_DIR = frameworkAbs(LAYOUT, 'agents/claude/templates/hooks');
 
@@ -336,163 +335,9 @@ function proof10_oldRootGrep(): void {
 // --------------------------------------------------------------------------
 // hooks 黑盒（发布件 Stop hook 对 CU Feature 的物理路径解析）
 // --------------------------------------------------------------------------
-interface HookOutcome { status: number; stdout: string; stderr: string; }
-
-function runHook(hookPath: string, payload: Record<string, unknown>, projectDir: string, extraEnv?: NodeJS.ProcessEnv): HookOutcome {
-  const env: NodeJS.ProcessEnv = { ...process.env, CLAUDE_PROJECT_DIR: projectDir };
-  if (extraEnv) Object.assign(env, extraEnv);
-  const r: SpawnSyncReturns<string> = spawnSync('node', [hookPath], {
-    input: JSON.stringify({ ...payload, cwd: projectDir }),
-    env,
-    encoding: 'utf-8',
-    timeout: 20_000,
-  });
-  return {
-    status: typeof r.status === 'number' ? r.status : -1,
-    stdout: r.stdout ?? '',
-    stderr: r.stderr ?? '',
-  };
-}
-
-function writeState(dir: string, feature: string, phase: string, sessionId: string): void {
-  const p = path.join(dir, 'framework', 'harness', 'state', '.current-phase.json');
-  fs.mkdirSync(path.dirname(p), { recursive: true });
-  fs.writeFileSync(p, JSON.stringify({
-    schema_version: '1.1',
-    feature,
-    phase,
-    status: 'running',
-    session_id: sessionId,
-    updated_at: new Date().toISOString(),
-  }, null, 2) + '\n', 'utf-8');
-}
-
 function writeConfig(dir: string, paths: Record<string, string>): void {
-  fs.writeFileSync(path.join(dir, 'framework.config.json'), JSON.stringify({
-    schema_version: '1.0',
-    project_name: 'gov-test',
-    project_type: 'app',
-    agent_adapter: 'claude',
-    paths: { ...paths },
-  }, null, 2), 'utf-8');
-}
-
-/** closure-only 分支夹具：脚本已 PASS、闭环未 closed、summary 无 verifier_request → hook 打印
- * `summary = <reports>/summary.json` 与第 2 步的 `<reports>/verifier.request.<subject>.json` 回退路径。
- * summary.json 落在 hook 自己解析的物理 reports 目录（resolveFeaturePhaseReportDir，含 reports_dir_pattern）。 */
-type SummaryVariant = 'closure_only' | 'repair_diagnosis';
-function writeClosureOnlySummary(dir: string, reportsRel: string, sessionId: string, variant: SummaryVariant = 'closure_only'): void {
-  const p = path.join(dir, ...reportsRel.split('/'), 'summary.json');
-  fs.mkdirSync(path.dirname(p), { recursive: true });
-  // repair_diagnosis（plan 3a7f9c12 D2）：脚本 FAIL 但可诊断 → hook 首要动作是投 verifier request，走同一路径模板行。
-  const body = variant === 'repair_diagnosis'
-    ? { verdict: 'FAIL', closure_status: 'open', next_action: 'run_verifier_for_repair', session_id: sessionId }
-    : { verdict: 'PASS', closure_status: 'open', next_action: 'sync_closure', session_id: sessionId };
-  fs.writeFileSync(p, JSON.stringify(body, null, 2) + '\n', 'utf-8');
-}
-
-/** 断言 hook 阻断理由里的路径行都是 CU 物理路径：summary 行 + request 回退行正断言，编码 id 不得作路径段。
- * 文案头部与命令行里的 feature 标识（`--feature <id>`、feature="<id>"）是身份实参而非路径，允许出现。 */
-function assertPhysicalPathLines(tag: string, reason: string, reportsRel: string, featureId: string): void {
-  assert(reason.includes(`summary = ${reportsRel}/summary.json`),
-    `${tag} summary 行应为物理 reports 目录：${reason.slice(0, 400)}`);
-  assert(reason.includes(`${reportsRel}/verifier.request.<subject>.json`),
-    `${tag} request 回退路径应为物理 reports 目录：${reason.slice(0, 400)}`);
-  assert(!reason.includes(`/${featureId}/`) && !reason.includes(`/${featureId}\\`),
-    `${tag} 编码 id 不得作路径段出现：${reason.slice(0, 400)}`);
-}
-
-/** H1：默认 pattern 下 Stop hook 把 CU Feature 展开为物理路径（<blueprint_id>/<change_unit_id>/<phase>/reports）
- * 口径：spec 禁止把编码 id 当物理路径、禁止 read/write 含编码 id 段；文案头部的
- * feature 标识（state.feature 原样回显）是状态标识而非路径，允许出现。 */
-function hookH1_defaultPatternCuPhysicalDir(): void {
-  const dir = makeTmp();
-  try {
-    buildCuProject(dir);
-    const featureId = `cu-${Buffer.from(`${BLUEPRINT_ID}\u0000ledger-consumer`).toString('base64url')}`;
-    writeConfig(dir, { features_dir: 'doc/features' });
-    const reportsRel = `doc/features/${BLUEPRINT_ID}/ledger-consumer/coding/reports`;
-    writeState(dir, featureId, 'coding', 'sid-h1');
-    for (const variant of ['closure_only', 'repair_diagnosis'] as const) {
-      writeClosureOnlySummary(dir, reportsRel, 'sid-h1', variant);
-      const out = runHook(CHECK_PHASE_HOOK, { session_id: 'sid-h1', stop_hook_active: false }, dir);
-      assert(out.status === 2, `H1/${variant} 未闭环应 exit 2：${out.status}`);
-      assertPhysicalPathLines(`H1/${variant}`, out.stderr, reportsRel, featureId);
-    }
-  } finally {
-    rmDir(dir);
-  }
-}
-
-/** H2：自定义 reports_dir_pattern 保留前缀层级、只展开 <feature> 为物理路径 */
-function hookH2_customPatternKeepsStructure(): void {
-  const dir = makeTmp();
-  try {
-    buildCuProject(dir);
-    const featureId = `cu-${Buffer.from(`${BLUEPRINT_ID}\u0000ledger-consumer`).toString('base64url')}`;
-    writeConfig(dir, {
-      features_dir: 'doc/features',
-      reports_dir_pattern: 'requirements/features/<feature>/phases/<phase>/reports',
-    });
-    const reportsRel = `requirements/features/${BLUEPRINT_ID}/ledger-consumer/phases/coding/reports`;
-    writeState(dir, featureId, 'coding', 'sid-h2');
-    for (const variant of ['closure_only', 'repair_diagnosis'] as const) {
-      writeClosureOnlySummary(dir, reportsRel, 'sid-h2', variant);
-      const out = runHook(CHECK_PHASE_HOOK, { session_id: 'sid-h2', stop_hook_active: false }, dir);
-      assert(out.status === 2, `H2/${variant} 未闭环应 exit 2：${out.status}`);
-      assertPhysicalPathLines(`H2/${variant}`, out.stderr, reportsRel, featureId);
-    }
-  } finally {
-    rmDir(dir);
-  }
-}
-
-/** H3：非法 cu- payload → Stop hook fail-closed（阻断理由点名，不落编码路径） */
-function hookH3_invalidCuFailsClosed(): void {
-  const dir = makeTmp();
-  try {
-    buildCuProject(dir);
-    writeConfig(dir, {
-      features_dir: 'doc/features',
-      receipt_dir_pattern: 'doc/features/<feature>/<phase>',
-    });
-    // SSOT 存在但身份非法：cu- + 非 base64url 载荷
-    writeState(dir, 'cu-invalid', 'coding', 'sid-h3');
-    const out = runHook(CHECK_PHASE_HOOK, { session_id: 'sid-h3', stop_hook_active: false }, dir);
-    assert(out.status === 2, `H3 应 exit 2（fail-closed）：${out.status}`);
-    const reason = out.stderr;
-    assert(reason.includes('无法解析') || reason.includes('identity 非法') || reason.includes('SSOT'),
-      `H3 阻断应点名 CU 解析失败：${reason.slice(0, 200)}`);
-    // 不得创建 doc/features/cu-invalid 影子目录
-    assert(!fs.existsSync(path.join(dir, 'doc', 'features', 'cu-invalid')), 'H3 不得创建编码影子目录');
-  } finally {
-    rmDir(dir);
-  }
-}
-
-/** H4：SSOT 缺失 → Stop hook fail-closed（阻断理由，不把编码 id 当路径） */
-function hookH4_ssotMissingFailsClosed(): void {
-  const dir = makeTmp();
-  try {
-    buildCuProject(dir);
-    writeConfig(dir, {
-      features_dir: 'doc/features',
-      receipt_dir_pattern: 'doc/features/<feature>/<phase>',
-    });
-    const featureId = `cu-${Buffer.from(`${BLUEPRINT_ID}\u0000ledger-consumer`).toString('base64url')}`;
-    writeState(dir, featureId, 'coding', 'sid-h4');
-    // 移除 framework/harness/scripts/utils/feature-identity.js（SSOT 缺失）
-    const ssot = path.join(dir, 'framework', 'harness', 'scripts', 'utils', 'feature-identity.js');
-    fs.rmSync(ssot, { force: true });
-    const out = runHook(CHECK_PHASE_HOOK, { session_id: 'sid-h4', stop_hook_active: false }, dir);
-    assert(out.status === 2, `H4 应 exit 2（SSOT 缺失 fail-closed）：${out.status}`);
-    const reason = out.stderr;
-    assert(reason.includes('无法解析') || reason.includes('SSOT'),
-      `H4 阻断应点名 SSOT 不可用：${reason.slice(0, 200)}`);
-    assert(!reason.includes(`doc/features/${featureId}`), 'H4 不得把编码 id 当物理路径');
-  } finally {
-    rmDir(dir);
-  }
+  fs.writeFileSync(path.join(dir, 'framework.config.json'), JSON.stringify({ schema_version: '1.0', project_name: 'gov-test',
+    project_type: 'app', agent_adapter: 'claude', paths: { ...paths } }, null, 2), 'utf8');
 }
 
 /** 报告即真源（plan d2f7a9c4）：SubagentStop 发布链退役，报告由调用方直接写到
@@ -552,10 +397,6 @@ const CASES: Array<{ name: string; fn: () => void }> = [
   { name: 'proof 8：legacy 平铺 Feature 全链路（枚举/路径/artifact/receipt）与改造前一致', fn: proof8_flatFullChain },
   { name: 'proof 9：判别 fail-closed 四种情形（混合/缺 yaml/孤儿/非法 payload）', fn: proof9_failClosedModes },
   { name: 'proof 10：旧根路径零残留（生产 grep 断言 + fixture 无旧布局）', fn: proof10_oldRootGrep },
-  { name: 'hook H1：默认 pattern 下 CU Feature 展开为物理目录', fn: hookH1_defaultPatternCuPhysicalDir },
-  { name: 'hook H2：自定义 pattern 保留前缀层级、只展开 <feature>', fn: hookH2_customPatternKeepsStructure },
-  { name: 'hook H3：非法 cu- payload → Stop hook fail-closed', fn: hookH3_invalidCuFailsClosed },
-  { name: 'hook H4：SSOT 缺失 → Stop hook fail-closed', fn: hookH4_ssotMissingFailsClosed },
   { name: 'H6：无 reports pattern 时 verifier 报告落 features_dir 派生的 CU 物理目录（无编码 id，生产 loader 可读回）', fn: hookH6_verifierDefaultReportsUnderFeaturesDir },
   { name: 'H7：verifier 报告显式 custom pattern 保留前缀层级、只展开 <feature>（生产 loader 可读回）', fn: hookH7_verifierCustomPatternKeepsStructure },
 ];

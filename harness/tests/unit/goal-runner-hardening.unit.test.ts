@@ -4,15 +4,17 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import {
-  checkTerminalResumeGuard,
   countAgentInvokeStarts,
   resolvePhaseHarnessVerdict,
   resolveResumedBudget,
   collectSupersededAncestorEvents,
   extractSupersedeTargets,
-  foldBudgetLineage,
+  readSupersededAncestorRuns,
+  type GoalRunEvent,
   resolveWallClockStartMs,
 } from '../../scripts/utils/goal-runner-phase';
+type AuditEvent = GoalRunEvent & { target_run_id?: string; delivery_cycle_boundary?: string };
+
 import { isGoalHeadlessEnv, MAISON_GOAL_HEADLESS_ENV } from '../../scripts/utils/phase-state';
 import {
   FEATURE_LOCK_NAME,
@@ -31,7 +33,6 @@ import type { GoalManifest } from '../../scripts/utils/goal-manifest';
 import { killProcessTree } from '../../scripts/utils/agent-invoke';
 import {
   resolveManifestDriftDecision,
-  buildBacktrackTargetAbsentGuidance,
 } from '../../scripts/goal-runner';
 import type { UnitCaseResult } from '../run-unit';
 
@@ -122,7 +123,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     name: 'T1④ 预算折叠：沿 supersede 链递归收祖先 events（turns/backtracks 求和、防环、缺失容忍、ts 升序）',
     run: () => {
       // 内存夹具注入 loadEvents——按 run 目录名路由（不真读盘）
-      const store: Record<string, Array<Record<string, unknown>>> = {
+      const store: Record<string, AuditEvent[]> = {
         'run-A': [
           { type: 'run_start', ts: '2026-08-01T00:00:00.000Z' },
           { type: 'agent_invoke', phase: 'spec', ts: '2026-08-01T00:01:00.000Z' },
@@ -161,83 +162,28 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     },
   },
   {
-    name: 'e9d4b7a3 t4: foldBudgetLineage 唯一共享入口——显式种子 ∪ events 派生种子；空种子=当前 run 事件恒等',
+    name: 'supersede祖先是纯审计：显式与原事件种子合并，去重、防环，不按旧额度周期截断',
     run: () => {
-      const store: Record<string, Array<Record<string, unknown>>> = {
-        'anc-1': [
-          { type: 'run_start', ts: '2026-08-01T00:00:00.000Z' },
-          { type: 'agent_invoke', phase: 'spec', ts: '2026-08-01T00:01:00.000Z' },
-          { type: 'agent_invoke', phase: 'plan', ts: '2026-08-01T00:02:00.000Z' },
-        ],
-        'anc-2': [
-          { type: 'run_start', ts: '2026-08-02T00:00:00.000Z' },
-          { type: 'agent_invoke', phase: 'coding', ts: '2026-08-02T00:01:00.000Z' },
-          { type: 'agent_invoke', phase: 'review', ts: '2026-08-02T00:02:00.000Z' },
-        ],
+      const store: Record<string, AuditEvent[]> = {
+        A: [{ type: 'supersede', target_run_id: 'B', delivery_cycle_boundary: 'B' }, { type: 'agent_invoke_start', invoke_id: 'original-A' }],
+        B: [{ type: 'supersede', target_run_id: 'A' }, { type: 'agent_invoke_start', invoke_id: 'original-B' }],
       };
-      const current = [
-        { type: 'run_start', ts: '2026-08-03T00:00:00.000Z' },
-        { type: 'agent_invoke', phase: 'spec', ts: '2026-08-03T00:01:00.000Z' },
-        { type: 'agent_invoke', phase: 'plan', ts: '2026-08-03T00:01:30.000Z' },
-        { type: 'agent_invoke', phase: 'review', ts: '2026-08-03T00:02:00.000Z' },
-      ];
-      const loadEvents = (abs: string) => {
-        const m = abs.replace(/\\/g, '/').match(/goal-runs\/([^/]+)\/events\.jsonl$/);
-        return (m && store[m[1]] ? store[m[1]] : []) as never;
-      };
-      // ① 显式 CLI 种子（fresh --supersede 路径）∪ 事件派生（resume 路径）
-      const explicit = foldBudgetLineage({
-        projectRoot: '/x', featuresDir: 'doc/features', feature: 'f',
-        seedTargets: ['anc-1'], currentEvents: current, loadEvents,
-      });
-      assert(explicit.foldSeeds.join(',') === 'anc-1', `foldSeeds=${explicit.foldSeeds.join(',')}`);
-      assert(
-        explicit.budgetFoldEvents.filter(e => (e as { type?: string }).type === 'agent_invoke').length === 5,
-        '显式种子折叠：anc-1(2) + current(3) 共 5 个 invoke',
-      );
-      const acgResume = [
-        ...current,
-        { type: 'supersede', target_run_id: 'anc-2', ts: '2026-08-03T00:03:00.000Z' },
-      ];
-      const fromEvents = foldBudgetLineage({
-        projectRoot: '/x', featuresDir: 'doc/features', feature: 'f',
-        currentEvents: acgResume, loadEvents,
-      });
-      assert(fromEvents.foldSeeds.join(',') === 'anc-2', `事件派生种子：${fromEvents.foldSeeds.join(',')}`);
-      assert(
-        fromEvents.budgetFoldEvents.filter(e => (e as { type?: string }).type === 'agent_invoke').length === 5,
-        '事件派生种子折叠：anc-2(2) + current(3) 共 5 个 invoke',
-      );
-      // ② 双源合并（CLI 种子 + 事件种子）
-      const dual = foldBudgetLineage({
-        projectRoot: '/x', featuresDir: 'doc/features', feature: 'f',
-        seedTargets: ['anc-1'], currentEvents: acgResume, loadEvents,
-      });
-      assert(dual.foldSeeds.join(',') === 'anc-1,anc-2', `双源种子：${dual.foldSeeds.join(',')}`);
-      assert(
-        dual.budgetFoldEvents.filter(e => (e as { type?: string }).type === 'agent_invoke').length === 7,
-        '双源折叠：anc-1(2)+anc-2(2)+current(3)=7',
-      );
-      // ③ 无种子（普通 progress/heartbeat 视图）→ 恒等于当前 run 事件
-      const empty = foldBudgetLineage({
-        projectRoot: '/x', featuresDir: 'doc/features', feature: 'f',
-        currentEvents: current, loadEvents,
-      });
-      assert(empty.foldSeeds.length === 0 && empty.ancestorEvents.length === 0, '空种子无祖先');
-      assert(empty.budgetFoldEvents.length === current.length, '空种子时 budgetFoldEvents 与当前 run 等长');
-      assert(JSON.stringify(empty.budgetFoldEvents) === JSON.stringify(current), '空种子时 budgetFoldEvents 即当前 run 内容');
-      const b = resolveResumedBudget(empty.budgetFoldEvents as never);
-      assert(b.totalTurns === 3, `无折叠 turns=${b.totalTurns}`);
+      const loadEvents = (file: string) => (store[file.replace(/\\/g, '/').match(/goal-runs\/([^/]+)\/events.jsonl$/)?.[1] ?? ''] ?? []);
+      const opts = { projectRoot: '/x', featuresDir: 'doc/features', feature: 'f', loadEvents };
+      const ancestors = readSupersededAncestorRuns({ ...opts, seedTargets: ['A'], currentEvents: store.A });
+      assert(ancestors.length === 2 && ancestors.map(run => run.run_id).sort().join(',') === 'A,B', '同一原请求祖先不重复也不按旧budget周期裁掉');
+      assert(ancestors.flatMap(run => run.events).filter(event => event.type === 'agent_invoke_start').length === 2, '真实原调用保留');
+      assert(readSupersededAncestorRuns({ ...opts, currentEvents: [] }).length === 0, '无审计种子不猜其它run');
     },
   },
   {
-    name: 'e9d4b7a3 t5: resolveManifestDriftDecision 全分支顶层 changedFields——budget-only 授权得 [budget]；无漂移恒空数组',
+    name: 'resolveManifestDriftDecision：只授权真实需求修订；旧quota数字不参与身份',
     run: () => {
       const birth = {
         requirement: 'req1', budget: 'budget-a', feature: 'f',
       };
       const withBudget = {
-        ...birth, budget: 'budget-b',
+        ...birth, requirement: 'req2',
       };
       const dr = {
         currentFields: withBudget,
@@ -248,7 +194,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       };
       const authorized = resolveManifestDriftDecision(dr);
       assert(authorized.rebaseApplied === true, 'override-manifest 授权须 rebase');
-      assert(authorized.changedFields.join(',') === 'budget', `budget-only changedFields=${authorized.changedFields.join(',')}`);
+      assert(authorized.changedFields.join(',') === 'requirement', `budget-only changedFields=${authorized.changedFields.join(',')}`);
 
       // 无漂移：稳定空数组（不得 undefined/null）
       const noneDrift = resolveManifestDriftDecision({
@@ -273,9 +219,9 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         unauthorized.changedFields.join(',') === unauthorized.halt!.changedFields.join(','),
         '顶层与 halt 内 changedFields 一致',
       );
-      assert(unauthorized.changedFields.join(',') === 'budget', `未授权分支顶层 changedFields=${unauthorized.changedFields.join(',')}`);
-      const mixed = resolveManifestDriftDecision({ ...dr, currentFields: { ...withBudget, requirement: 'req2' } });
-      assert(mixed.rebaseApplied && mixed.changedFields.includes('budget') && mixed.changedFields.includes('requirement'), '整体授权仍记录预算与真实需求的混合变化，不享有预算专用路径');
+      assert(unauthorized.changedFields.join(',') === 'requirement', `未授权分支顶层 changedFields=${unauthorized.changedFields.join(',')}`);
+      const mixed = resolveManifestDriftDecision({ ...dr, currentFields: { ...withBudget, budget: 'budget-c' } });
+      assert(mixed.rebaseApplied && mixed.changedFields.includes('requirement'), '整体授权仍记录预算与真实需求的混合变化，不享有预算专用路径');
 
 
     },
@@ -286,86 +232,6 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       const before = Date.now();
       const ms = resolveWallClockStartMs([]);
       assert(ms >= before && ms <= Date.now() + 5, String(ms));
-    },
-  },
-  {
-    name: 'checkTerminalResumeGuard: recent COMPLETED allows resume',
-    run: () => {
-      const recent = Date.now() - 60 * 1000;
-      const r = checkTerminalResumeGuard({
-        priorStatus: 'COMPLETED',
-        lastRunEndTs: new Date(recent).toISOString(),
-        cooldownMinutes: 5,
-      });
-      assert(r.allowed, 'non-terminal not debounced');
-    },
-  },
-  {
-    name: 'checkTerminalResumeGuard: DEFERRED refuses without force',
-    run: () => {
-      const old = Date.now() - 10 * 60 * 1000;
-      const r = checkTerminalResumeGuard({
-        priorStatus: 'DEFERRED',
-        lastRunEndTs: new Date(old).toISOString(),
-        forceResume: false,
-        cooldownMinutes: 5,
-      });
-      assert(!r.allowed, 'blocked');
-      assert(Boolean(r.reason?.includes('DEFERRED')), r.reason ?? 'no reason');
-    },
-  },
-  {
-    name: 'checkTerminalResumeGuard: --force-resume allows after cooldown',
-    run: () => {
-      const old = Date.now() - 10 * 60 * 1000;
-      const r = checkTerminalResumeGuard({
-        priorStatus: 'HALTED',
-        lastRunEndTs: new Date(old).toISOString(),
-        forceResume: true,
-        cooldownMinutes: 5,
-      });
-      assert(r.allowed, 'allowed');
-    },
-  },
-  {
-    name: 'checkTerminalResumeGuard: --force-resume still blocked during cooldown',
-    run: () => {
-      const recent = Date.now() - 60 * 1000;
-      const r = checkTerminalResumeGuard({
-        priorStatus: 'HALTED',
-        lastRunEndTs: new Date(recent).toISOString(),
-        forceResume: true,
-        cooldownMinutes: 5,
-      });
-      assert(!r.allowed, 'cooldown blocks force');
-      assert(Boolean(r.reason?.includes('cooldown')), r.reason ?? 'no reason');
-    },
-  },
-  {
-    name: 'e9d4b7a3 t1（review1）：backtrack_target_absent 指引三处可见——builder 文案要素 + 事件/outcome 接线（b3f7d9a2 硬学习）',
-    run: () => {
-      const guidance = buildBacktrackTargetAbsentGuidance('coding');
-      assert(!guidance.includes('--supersede') && !guidance.includes('--requirement-file'), '不得引导自写需求或拼后继');
-      assert(guidance.includes('--repair-notes') && guidance.includes('已有返修窗口'), '修法假设只进返修窗口');
-      assert(guidance.includes('包含 coding 阶段的请求'), '越界目标须由用户授权对应范围');
-      assert(buildBacktrackTargetAbsentGuidance(null).includes('重新发起同一请求'), '缺失输入补齐后重发原请求');
-      assert(guidance.includes('静默完成并重签') && guidance.includes('未获得本次可信全权输入的会话沿原确认流程'), '设计修订按本次可信授权，缺输入仍沿原确认流程');
-      assert(guidance.includes('coding'), `须带 recommendation.phase：${guidance}`);
-      // 三处可见接线（b3f7d9a2 硬学习：同一文案契约枚举全部承载处）——
-      // ① phase_halt 事件 halt_guidance；② outcome halt_guidance；
-      // ③ console banner。detach 停机后宿主只读 events/goal-report，console 早滚走。
-      const src = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'goal-phase-runtime.ts'), 'utf-8');
-      const snippet = '...(backtrackHaltGuidance ? { halt_guidance: backtrackHaltGuidance } : {})';
-      const branchIdx = src.indexOf('if (!targetAuthorized || roundRepeated)');
-      const emitIdx = src.indexOf('halt_guidance: backtrackHaltGuidance', branchIdx);
-      const outcomeIdx = src.indexOf(snippet, emitIdx + 1);
-      const consoleIdx = src.indexOf('===== ${haltReason} =====', emitIdx);
-      assert(emitIdx >= 0, 'phase_halt 事件须带 halt_guidance（backtrack 家族分支）');
-      assert(outcomeIdx >= 0 && outcomeIdx > emitIdx, '结局 outcome 须带 halt_guidance（与事件同源）');
-      assert(consoleIdx >= 0, 'console banner 路径保留');
-      assert(src.includes('buildBacktrackTargetAbsentGuidance'), '三处文案须出自同一 builder（单点生成）');
-      assert(src.indexOf('buildBacktrackTargetAbsentGuidance') < src.indexOf(snippet),
-        'builder 调用须早于事件 emit（同一文案单点生成后分发）');
     },
   },
   {

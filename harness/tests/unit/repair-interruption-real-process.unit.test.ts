@@ -19,6 +19,8 @@ import * as assert from 'assert';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import * as YAML from 'yaml';
+import { createHash } from 'crypto';
 import {
   invokeAgentHeadless,
   killProcessTree,
@@ -26,9 +28,11 @@ import {
   type AgentInvokeResult,
 } from '../../scripts/utils/agent-invoke';
 import { clearFrameworkConfigCache } from '../../config';
+import { prepareFeatureScopeCandidate } from '../../scripts/utils/feature-track';
 import {
-  runGoalRuntimeChain, setupGoalRuntimeHost, productAssertionCheck, writeCleanTesting,
+  runGoalRuntimeChain, setupGoalRuntimeHost, PRODUCT_FILE,
 } from './goal-runner-testing-integrity.unit.test';
+import type { CheckResult } from '../../scripts/utils/types';
 import type { UnitCaseResult } from '../run-unit';
 
 /** complete：回放全部样本行后 exit 0；complete-then-linger：回放含 turn.completed 后不退出（等收口 kill）；
@@ -128,103 +132,108 @@ async function withRealTransport<T>(modeFor: (phase: string, attempt: number) =>
 type Ev = Record<string, unknown>;
 const ofType = (events: Ev[], type: string, phase?: string): Ev[] => events.filter(e => e.type === type && (phase === undefined || e.phase === phase));
 const completedRun = (events: Ev[]): boolean => events.some(e => e.type === 'run_end' && ['COMPLETED', 'CHAIN_SLICE_COMPLETED'].includes(String(e.status)));
-const testingFailsOnce = (root: string) => ({ phase, attempt }: { phase: string; attempt: number }) =>
-  phase === 'testing' && attempt === 1 ? { checks: [productAssertionCheck(root)] } : null;
-
+const REPAIR_ID = 'real_product_repair';
+const FIXED = 'real-process-repaired';
+const optionsFor = (root: string) => {
+  const configPath = path.join(root, 'framework.config.json');
+  const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  config.active_workflow = 'obligation-driven';
+  fs.writeFileSync(configPath, JSON.stringify(config)); clearFrameworkConfigCache();
+  const requirement = `修复 ${PRODUCT_FILE} 当前实际模块断言，保留原实现与真实验证。`;
+  const scope = prepareFeatureScopeCandidate({ projectRoot: root, frameworkRoot: path.resolve(__dirname, '../../..'),
+    feature: 'bc-openCard', completionTarget: 'request', requestedResults: [`修复 ${PRODUCT_FILE} 的实际行为`],
+    requestedPhases: ['coding'], requirement }).scope;
+  assert.ok(scope.obligations.some(obligation => obligation.kind === 'implementation' && obligation.applicability === 'required'),
+    'this real repair fixture must declare its actual source duty through the production resolver');
+  return {
+  adapter: 'codex', freshStartPhase: 'coding' as const, freshEndPhase: 'coding' as const,
+  freshRequirement: requirement,
+  freshManifestContent: YAML.stringify({ feature: 'bc-openCard', adapter: 'codex', requirement,
+    execution_scope: scope, chain_override: scope.phase_chain, unattended: { write_mode: 'full-access', approval_mode: 'never' } }),
+  onHarnessSummary: ({ phase }: { phase: string }) => {
+    if (phase !== 'coding') return null;
+    const bytes = fs.readFileSync(path.join(root, PRODUCT_FILE));
+    const check: CheckResult = { id: REPAIR_ID, category: 'structure', description: 'actual product repair assertion',
+      severity: 'BLOCKER', status: bytes.toString().includes(FIXED) ? 'PASS' : 'FAIL', repair_owner: 'coding', affected_files: [PRODUCT_FILE],
+      details: 'The current product must contain the repaired behavior.',
+      structured: { source_attempt_dependencies: [{ path: PRODUCT_FILE, exists: true, sha256: createHash('sha256').update(bytes).digest('hex'), role: 'artifact' }] } };
+    return { checks: [check] };
+  },
+  };
+};
+const repair = (root: string) => fs.writeFileSync(path.join(root, PRODUCT_FILE), `struct AllBanksPage { build() { Text("${FIXED}") } }`);
 const cases: Array<{ name: string; run: () => Promise<void> }> = [];
 const test = (name: string, run: () => Promise<void>) => cases.push({ name, run });
 
 for (const mode of ['kill', 'exit-no-terminal'] as const) {
-  test(`[真实子进程：spawn/终止/事件解析，不等于真实 Codex CLI 已验] 返修调用完成前${mode === 'kill' ? '被外部 kill' : '无终态退出'}：原返修窗口与任务保留、普通 gate PASS 不结束返修、在原窗口续跑到完成`, async () => {
-    const root = setupGoalRuntimeHost('codex').root;
+  test(`[真实子进程：spawn/终止/事件解析，不等于真实 Codex CLI 已验] 原单元返修${mode === 'kill' ? '被外部 kill' : '无终态退出'}：保留原反馈与失败原件，恢复后真完成才复验`, async () => {
+    const root = setupGoalRuntimeHost('codex', false).root;
+    const runId = `real-interrupt-${mode}`;
     try {
-      const { value: probe, invokes } = await withRealTransport(
-        (phase, attempt) => (phase === 'coding' && attempt === 2 ? mode : 'complete'),
-        () => runGoalRuntimeChain(root, {
-          adapter: 'codex', runId: `real-interrupt-${mode}`, onCoding: () => {},
-          onTesting: ({ root: r }) => writeCleanTesting(r), onHarnessSummary: testingFailsOnce(root),
-        }),
+      const options = optionsFor(root);
+      const { value: first, invokes } = await withRealTransport(
+        (phase, attempt) => phase === 'work-unit-author' && attempt === 2 ? mode : 'complete',
+        () => runGoalRuntimeChain(root, { ...options, runId,
+          onAuthor: ctx => { if (ctx.prompt.includes(REPAIR_ID)) assert.ok(!fs.readFileSync(path.join(root, PRODUCT_FILE), 'utf8').includes(FIXED)); } }),
       );
-      const events = probe.events;
-      assert.strictEqual(invokes.length, ofType(events, 'agent_invoke_start').length, '每次阶段调用都必须经真实子进程');
-      const interruptedInvoke = invokes.find(i => i.mode === mode)!;
-      assert.ok(interruptedInvoke && (interruptedInvoke.result.pid ?? 0) > 0, JSON.stringify(interruptedInvoke?.result));
-
-      const requests = ofType(events, 'phase_backtrack_requested');
-      assert.strictEqual(requests.length, 1, JSON.stringify(requests));
-      const ends = ofType(events, 'agent_invoke_end', 'coding');
-      assert.ok(ends.length >= 3, JSON.stringify(ends));
-      const interrupted = ends[1];
-      assert.ok(interrupted.exit_code !== 0 && interrupted.completion_observed !== true && interrupted.timed_out !== true,
-        `真实中断结果须是"非零、未完成、非超时"：${JSON.stringify(interrupted)}`);
+      const interrupted = invokes.find(invoke => invoke.mode === mode);
+      assert.ok(interrupted && (interrupted.result.pid ?? 0) > 0, JSON.stringify(invokes));
+      assert.ok(interrupted.result.exitCode !== 0 && interrupted.result.completion_observed !== true && interrupted.result.timed_out !== true,
+        'the actual external stop/nonterminal exit must not become completion or timeout');
+      assert.ok(!completedRun(first.events) && !first.events.some(event => event.type === 'phase_backtrack_completed'), 'ordinary raw check cannot complete the interrupted author');
+      assert.equal(first.events.filter(event => event.type === 'harness_start' && event.phase === 'coding').length, 1,
+        'an unfinished repair cannot buy a PASS check or another phase author');
       if (process.platform === 'win32') {
-        assert.ok(events.some(e => e.type === 'agent_process_bound' && e.invoke_id === interrupted.invoke_id), '真实 guardian 绑定事件');
-        const settled = events.find(e => e.type === 'agent_process_settled' && e.invoke_id === interrupted.invoke_id);
-        assert.ok(settled && settled.exit_code !== 0 && settled.timed_out !== true, JSON.stringify(settled));
+        const bound = first.events.find(event => event.type === 'agent_process_bound' && event.phase === 'work-unit-author' && event.invoke_id === first.events.filter(row => row.type === 'agent_invoke_start').at(-1)?.invoke_id);
+        assert.ok(bound, 'the interrupted process must retain its exact real guardian binding');
+        assert.ok(first.events.some(event => event.type === 'agent_process_settled' && event.invoke_id === bound.invoke_id && event.exit_code !== 0), 'real child exit settles the original binding');
       }
-      const nextStart = events.findIndex(e => e.type === 'agent_invoke_start' && e.invoke_id === ends[2].invoke_id);
-      const window = events.slice(events.indexOf(interrupted), nextStart);
-      assert.ok(!window.some(e => e.type === 'phase_backtrack_completed'), `普通 gate PASS 不得提前结束返修：${JSON.stringify(window)}`);
-      assert.ok(window.some(e => e.type === 'phase_verdict' && e.phase === 'coding' && e.action === 'retry' && e.verdict !== 'PASS'), JSON.stringify(window));
-      assert.ok(!window.some(e => e.type === 'agent_invoke_start'), '中断后不得越过 coding 去调用其它阶段');
-      assert.strictEqual(ends[2].completion_observed, true,
-        `续跑由真实 turn.completed 解析判完成：${JSON.stringify({ ends, invokes: invokes.filter(i => i.phase === 'coding'), runEnd: ofType(events, 'run_end') })}`);
-      const candidateId = String((requests[0].candidates as Array<{ id?: string }>)[0]?.id ?? '');
-      assert.ok(candidateId && probe.codingPrompts[2].includes(candidateId), `续跑提示词仍须携带原返修任务 ${candidateId}`);
-      const completedAt = events.findIndex(e => e.type === 'phase_backtrack_completed');
-      assert.ok(completedAt > events.indexOf(ends[2]), '返修在续跑完成之后才结束');
-      assert.ok(completedRun(events), JSON.stringify(ofType(events, 'run_end')));
+      let delivered = false;
+      const { value: resumed, invokes: resumedInvokes } = await withRealTransport(() => 'complete', () => runGoalRuntimeChain(root, {
+        ...options, resume: runId,
+        onAuthor: ctx => { assert.ok(ctx.prompt.includes(REPAIR_ID), 'the original unresolved feedback must actually reach the resumed unit'); delivered = true; repair(root); },
+      }));
+      assert.ok(delivered && resumedInvokes.length === 1 && resumedInvokes[0].result.completion_observed === true, 'real terminal completion, not fake end, permits repair verification');
+      assert.equal(resumed.events.filter(event => event.type === 'agent_invoke_start' && event.phase === 'work-unit-author').length, 3);
+      assert.equal(resumed.events.filter(event => event.type === 'harness_start' && event.phase === 'coding').length, 2, 'only the affected producer is rechecked after real repair');
+      assert.ok(completedRun(resumed.events), JSON.stringify(ofType(resumed.events, 'run_end')));
     } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
   });
 }
 
-test('[真实子进程：spawn/终止/事件解析，不等于真实 Codex CLI 已验] 返修调用确实完成后非零清理退出：不重复执行 coding、照常收口；gate 崩溃后恢复也只做验证', async () => {
-  const lingerAt = (phase: string, attempt: number): Mode => (phase === 'coding' && attempt === 2 ? 'complete-then-linger' : 'complete');
-  // a) 同一进程内照常收口
-  const root = setupGoalRuntimeHost('codex').root;
-  try {
-    const { value: probe, invokes } = await withRealTransport(lingerAt, () => runGoalRuntimeChain(root, {
-      adapter: 'codex', runId: 'real-cleanup-exit', onCoding: () => {},
-      onTesting: ({ root: r }) => writeCleanTesting(r), onHarnessSummary: testingFailsOnce(root),
-    }));
-    const events = probe.events;
-    assert.strictEqual(invokes.length, ofType(events, 'agent_invoke_start').length, '每次阶段调用都必须经真实子进程');
-    const ends = ofType(events, 'agent_invoke_end', 'coding');
-    assert.strictEqual(ends.length, 2, `完成后的清理退出不得再调用 coding：${JSON.stringify(ends)}`);
-    assert.ok(ends[1].exit_code !== 0 && ends[1].completion_observed === true && ends[1].kill_attempted === true,
-      `真实收口：turn.completed 后宽限内不退 → 收口 kill → 非零但完成：${JSON.stringify(ends[1])}`);
-    assert.strictEqual(ofType(events, 'phase_backtrack_requested').length, 1);
-    assert.ok(events.findIndex(e => e.type === 'phase_backtrack_completed') > events.indexOf(ends[1]));
-    assert.ok(completedRun(events), JSON.stringify(ofType(events, 'run_end')));
-  } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
-
-  // b) 完成后清理退出 + coding gate 崩溃 → 显式恢复只重跑 gate、不再调用 coding
-  const root2 = setupGoalRuntimeHost('codex').root;
-  try {
+test('[真实子进程：spawn/终止/事件解析，不等于真实 Codex CLI 已验] 单元作者真完成后非零清理退出仍收口；检查崩溃恢复只补验证', async () => {
+  const lingerAt = (phase: string, attempt: number): Mode => phase === 'work-unit-author' && attempt === 2 ? 'complete-then-linger' : 'complete';
+  for (const crash of [false, true]) {
+    const root = setupGoalRuntimeHost('codex', false).root;
+    const runId = crash ? 'real-cleanup-crash' : 'real-cleanup-exit';
     let crashed = false;
-    const { value: first } = await withRealTransport(lingerAt, () => runGoalRuntimeChain(root2, {
-      adapter: 'codex', runId: 'real-cleanup-crash', onCoding: () => {},
-      testControl: { expectedInterruption: 'gate crash after completed cleanup' },
-      onTesting: ({ root: r }) => writeCleanTesting(r), onHarnessSummary: testingFailsOnce(root2),
-      afterHarnessPass: ({ phase, root: r, runId }) => {
-        if (phase !== 'coding') return;
-        const rows = fs.readFileSync(path.join(r, `doc/features/bc-openCard/goal-runs/${runId}/events.jsonl`), 'utf8')
-          .split('\n').filter(Boolean).map(l => JSON.parse(l) as Ev);
-        const end = [...rows].reverse().find(e => e.type === 'agent_invoke_end' && e.phase === phase);
-        if (end && end.exit_code !== 0 && end.completion_observed === true) { crashed = true; throw new Error('gate crash after completed cleanup'); }
-      },
-    }));
-    assert.ok(crashed, 'gate 须在真实完成结果落盘后崩溃');
-    assert.ok(ofType(first.events, 'agent_invoke_end', 'coding').some(e => e.completion_observed === true && e.exit_code !== 0));
-    const { value: resumed, invokes } = await withRealTransport(() => 'complete', () => runGoalRuntimeChain(root2, {
-      adapter: 'codex', resume: 'real-cleanup-crash', forceResume: true, onTesting: ({ root: r }) => writeCleanTesting(r),
-    }));
-    assert.ok(!resumed.invokedPhases.includes('coding') && !invokes.some(i => i.phase === 'coding'), JSON.stringify(resumed.invokedPhases));
-    assert.ok(resumed.harnessPhases.includes('coding'), 'coding gate 真实重验');
-    assert.strictEqual(ofType(resumed.events, 'agent_invoke_start', 'coding').length, 2);
-    assert.strictEqual(ofType(resumed.events, 'phase_backtrack_requested').length, 1);
-    assert.ok(completedRun(resumed.events), JSON.stringify(ofType(resumed.events, 'run_end')));
-  } finally { clearFrameworkConfigCache(); fs.rmSync(root2, { recursive: true, force: true }); }
+    try {
+      const options = optionsFor(root);
+      const { value: first, invokes } = await withRealTransport(lingerAt, () => runGoalRuntimeChain(root, {
+        ...options, runId,
+        onAuthor: ctx => { if (ctx.prompt.includes(REPAIR_ID)) repair(root); },
+        ...(crash ? { testControl: { expectedInterruption: 'gate crash after completed cleanup' },
+          onHarnessSummary: ({ phase }: { phase: string }) => {
+            if (phase === 'coding' && fs.readFileSync(path.join(root, PRODUCT_FILE), 'utf8').includes(FIXED)) {
+              crashed = true; throw new Error('gate crash after completed cleanup');
+            }
+            return options.onHarnessSummary({ phase });
+          } } : {}),
+      }));
+      const ended = ofType(first.events, 'agent_invoke_end', 'work-unit-author');
+      assert.equal(ended.length, 2, 'the completed unit author is not bought again');
+      assert.ok(ended[1].exit_code !== 0 && ended[1].completion_observed === true && invokes[1].result.kill_attempted === true,
+        'real turn.completed followed by cleanup kill stays a truthful completed nonzero exit');
+      if (!crash) { assert.ok(completedRun(first.events)); continue; }
+      assert.ok(crashed && !completedRun(first.events), 'a crashed actual checker never signs completion');
+      const { value: resumed, invokes: resumedInvokes } = await withRealTransport(() => 'complete', () => runGoalRuntimeChain(root, {
+        ...options, resume: runId, forceResume: true,
+      }));
+      assert.equal(resumedInvokes.length, 0, 'the real completed author is reused after checker recovery');
+      assert.ok(resumed.harnessPhases.includes('coding'), 'only the interrupted check is actually completed');
+      assert.ok(completedRun(resumed.events), JSON.stringify(ofType(resumed.events, 'run_end')));
+    } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
+  }
 });
 
 export async function runAll(): Promise<UnitCaseResult[]> {

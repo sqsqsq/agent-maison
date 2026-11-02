@@ -16,16 +16,16 @@ import * as YAML from 'yaml';
 import { featureFilePath } from '../../config';
 import type { ExecutionScope } from './execution-scope';
 import { loadEffectiveExecutionScope } from './goal-run-creation';
-import { classifyGoalRunsDir, computeRunRequirementSha } from './fidelity-shared';
+import { classifyGoalRunsDir } from './fidelity-shared';
 import { tryParseCuFeatureId } from './feature-identity';
 import { asChangeUnitArtifact, inspectDerivedFeatureBinding, loadCanonicalChangeUnit } from './change-unit-path';
 import { changeUnitMappingIssues } from './change-unit-feature-projection';
-import { recomputePhaseEvidenceStaleness } from './phase-evidence-manifest';
 import { definitionAuthorityGap } from './feature-track';
+import { resolveCurrentDisposition, type CurrentDisposition } from './check-disposition';
 import { resolveProbeFrameworkRoot } from '../../repo-layout';
 import {
   FEATURE_COMPLETION_FILENAME,
-  collectCleanPassIssues,
+  resolveCompletionDisposition,
   executionScopeEvidenceFindings,
   inspectCompletionRecord,
 } from './verify-feature-completion';
@@ -49,6 +49,7 @@ export interface FeatureAssessment {
   obligations: AssessedObligation[];
   blocking: string[];
   complete: boolean;
+  currentDisposition?: CurrentDisposition;
 }
 
 export interface AssessFeatureOptions {
@@ -126,9 +127,14 @@ export function assessFeature(projectRoot: string, feature: string, opts: Assess
     for (const row of targets) add(row.id, cls, detail);
   };
 
+  const scopeFindings = scope ? executionScopeEvidenceFindings(projectRoot, feature, scope, undefined, runId ?? undefined,
+    undefined, opts.frameworkRoot, undefined, opts.authorityReaders) : [];
+  const currentDisposition = resolveCompletionDisposition({ projectRoot, feature, chain: completion?.chain ?? opts.expectedChain,
+    executionScope: scope, frameworkRoot: opts.frameworkRoot, runId: runId ?? undefined, authorityReaders: opts.authorityReaders,
+    currentRequirementSha: opts.requirementSha, scopeFindings });
   const recordPhases = new Set(completion?.chain ?? []);
   if (scope) {
-    for (const f of executionScopeEvidenceFindings(projectRoot, feature, scope, undefined, runId ?? undefined, undefined, opts.frameworkRoot, undefined, opts.authorityReaders)) {
+    for (const f of scopeFindings) {
       const gap = scope.unresolved.find(item => item.obligation_id === f.obligation_id);
       add(f.obligation_id, f.class, f.detail, gap ? { kind: 'unresolved', owner_phase: gap.owner, applicability: 'unknown' } : undefined);
     }
@@ -140,21 +146,9 @@ export function assessFeature(projectRoot: string, feature: string, opts: Assess
   }
   if (completion && recordPhases.size) {
     try {
-      const currentRequirementSha = opts.requirementSha ?? computeRunRequirementSha(projectRoot, feature, runId ?? undefined);
-      for (const issue of collectCleanPassIssues({ authorityReaders: opts.authorityReaders,
-        projectRoot, feature, chain: completion.chain, executionScope: scope, frameworkRoot: opts.frameworkRoot,
-        currentRequirementSha, runId: runId ?? undefined,
-      })) {
-        // execution_scope 条目是绑定缺口在 chain[0] 上的重复（已逐义务计过，§6 #18）；corrupt run 进 blocking。
-        if (issue.condition === 'execution_scope' || issue.condition === 'goal_run_identity_intact') continue;
-        if (issue.propagated_from) {
-          // 沿链传染不是本阶段结果失效：失效只沿真实消费关系传播——直查本阶段自身证据（其输入含上游产物时照样判出）。
-          const own = recomputePhaseEvidenceStaleness(projectRoot, feature, [issue.phase], { currentRequirementSha, frameworkRoot: opts.frameworkRoot, runId: runId ?? undefined, authorityReaders: opts.authorityReaders })[0];
-          if (own?.verdict === 'fresh') continue;
-          addToPhase(issue.phase, 'evidence', `[lineage_fresh] ${own?.verdict}：${(own?.changed_paths ?? []).join(', ')}`);
-          continue;
-        }
-        addToPhase(issue.phase, CLEAN_PASS_CLASS[issue.condition] ?? 'result', `[${issue.condition}] ${issue.detail}`);
+      for (const issue of currentDisposition.completionBlocking) {
+        if (issue.id === 'execution_scope' || issue.id === 'goal_run_identity_intact') continue;
+        addToPhase(issue.owner ?? issue.phase, CLEAN_PASS_CLASS[issue.id] ?? (issue.action === 'repair' ? 'result' : 'evidence'), `[${issue.id}] ${issue.detail}`);
       }
     } catch (error) { addToPhase(completion.chain[0], 'result', `完成结果不可重算：${String(error)}`); }
   }
@@ -192,12 +186,16 @@ export function assessFeature(projectRoot: string, feature: string, opts: Assess
       .map(item => `goal-run ${item.runId} 损坏：${item.reason}——人工核查该目录（恢复 manifest 或确认废弃）后重验`),
     ...(inspected?.laterRuns ?? []),
   ];
-  return {
-    record,
-    obligations,
-    blocking,
-    complete: record.state === 'ok' && blocking.length === 0 && obligations.every(o => o.status === 'covered'),
-  };
+  const endpoint = resolveCurrentDisposition({ endpoint: 'feature-completion', phases: [], additionalProblems: [
+    ...currentDisposition.problems,
+    ...(record.state === 'ok' ? [] : [{ phase: '*', id: 'completion_record_intact', action: 'verify' as const, affects: 'completion' as const,
+      severity: 'BLOCKER' as const, detail: record.state === 'absent' ? '无正式完成原件' : record.reasons.join('；') }]),
+    ...obligations.filter(row => row.status === 'uncovered').map(row => ({ phase: row.owner_phase || 'scope', id: `obligation:${row.id}`,
+      action: row.class === 'binding' || row.class === 'result' ? 'repair' as const : 'verify' as const, affects: 'completion' as const,
+      severity: 'BLOCKER' as const, owner: row.owner_phase || undefined, detail: row.reason ?? row.id })),
+    ...blocking.map(detail => ({ phase: '*', id: 'goal_run_identity_intact', action: 'verify' as const, affects: 'completion' as const, severity: 'BLOCKER' as const, detail })),
+  ] });
+  return { record, obligations, blocking, currentDisposition: endpoint, complete: endpoint.completionEligible };
 }
 
 /** 人读理由：记录不可信原因 + uncovered 清单 + blocking（消费方展示与 CU INCOMPLETE 的 legal blocker 共用）。 */

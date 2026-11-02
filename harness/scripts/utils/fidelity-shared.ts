@@ -6,6 +6,7 @@ import { ArtifactSchemaError, resolveArtifactContent } from './artifact-content'
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
+import { isDeepStrictEqual } from 'util';
 import { createRequire } from 'module';
 import type { CheckContext, VisionMode } from './types';
 import { parseVisualHandoffYamlRoot, parseUiChangeFromSpecMarkdown, UI_CHANGE_REQUIRES_UI_SPEC } from './ui-spec-shared';
@@ -1083,11 +1084,16 @@ export function writeCapabilitySnapshot(
   snap: Omit<CapabilitySnapshot, 'schema_version' | 'created_at'>,
 ): string {
   const p = capabilitySnapshotPath(projectRoot, feature);
+  const payload = { schema_version: '1.0', ...snap };
+  const previous = loadCapabilitySnapshot(projectRoot, feature);
+  if (previous && isDeepStrictEqual({ ...previous, created_at: undefined }, {
+    ...JSON.parse(JSON.stringify(payload)), created_at: undefined,
+  })) return p;
   fs.mkdirSync(path.dirname(p), { recursive: true });
   const tmp = `${p}.${process.pid}.tmp`;
   fs.writeFileSync(
     tmp,
-    `${JSON.stringify({ schema_version: '1.0', ...snap, created_at: new Date().toISOString() }, null, 2)}\n`,
+    `${JSON.stringify({ ...payload, created_at: new Date().toISOString() }, null, 2)}\n`,
     'utf-8',
   );
   fs.renameSync(tmp, p);

@@ -25,6 +25,7 @@ import { validateComponentClosureAssembly } from './component-closure-assembly';
 import { validateComponentClosureEvolutionSeams } from './component-closure-evolution-seam';
 import { validateComponentClosureKnowledge } from './component-closure-knowledge';
 import { deriveComponentClosureVerdict } from './component-closure-verdict';
+import { resolveCurrentDisposition, type CurrentDisposition } from './check-disposition';
 import { stableJson } from './blueprint-discovery';
 import { resolveComponentBlueprintRef } from './component-blueprint-path';
 
@@ -36,6 +37,7 @@ export interface ComponentClosureEvaluationOptions extends ComponentClosureInput
 export interface ComponentClosureEvaluation {
   closure: ComponentClosureArtifact;
   issues: ComponentClosureIssue[];
+  currentDisposition?: CurrentDisposition;
 }
 
 function loadClosureSchema(): Record<string, unknown> {
@@ -101,6 +103,10 @@ export function evaluateComponentClosure(
   const knowledge = validateComponentClosureKnowledge(projectRoot, inputs);
   issues.push(...knowledge.issues);
   const verdict = deriveComponentClosureVerdict(rows, providers, issues);
+  const currentDisposition = resolveCurrentDisposition({ endpoint: 'request', phases: [], additionalProblems: [
+    ...verdict.currentDisposition.problems,
+    ...inputs.currentUnits.flatMap(unit => unit.completionObservation.currentDisposition?.releaseBlocking ?? []),
+  ] });
   const inputFingerprint = fingerprintComponentClosureInputs({
     component_blueprint_ref: inputs.blueprintRef,
     inputs: inputs.manifest,
@@ -123,6 +129,7 @@ export function evaluateComponentClosure(
       verdict: verdict.verdict,
     },
     issues,
+    currentDisposition,
   };
 }
 
@@ -182,5 +189,10 @@ export function validateComponentClosure(
   if (actual.input_fingerprint !== expected.input_fingerprint) {
     out.push(closureIssue('component_closure_input_fingerprint_stale', '$.input_fingerprint', `input_fingerprint stale：expected=${expected.input_fingerprint}, actual=${String(actual.input_fingerprint)}。`));
   }
-  return { closure: expected, issues: [...out, ...evaluated.issues] };
+  const currentDisposition = resolveCurrentDisposition({ endpoint: 'request', phases: [], additionalProblems: [
+    ...evaluated.currentDisposition?.problems ?? [],
+    ...out.filter(issue => issue.severity === 'BLOCKER').map(issue => ({ phase: 'component-closure', id: issue.id,
+      action: 'verify' as const, affects: 'completion' as const, severity: 'BLOCKER' as const, detail: `${issue.path}: ${issue.message}` })),
+  ] });
+  return { closure: expected, issues: [...out, ...evaluated.issues], currentDisposition };
 }

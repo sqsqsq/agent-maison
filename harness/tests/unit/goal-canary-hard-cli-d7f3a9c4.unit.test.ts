@@ -22,6 +22,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import type { UnitCaseResult } from '../run-unit';
+import { matchesUnitCase, selectedUnitCases, startCaseTiming, type SelectedUnitCases, type UnitExecutionTiming } from '../utils/unit-case-selection';
 import {
   resolveCanaryHardCliFailure,
   resolveInvokeHardCliFailure,
@@ -50,13 +51,12 @@ import {
   __testing_setValidateReceipt,
   main as goalMain,
 } from '../../scripts/goal-runner';
-import { FINALIZE_RESERVE_MS, resolveWallClockMs } from '../../scripts/utils/goal-timeout';
 import { loadAuthoritativeEvents, resolveResumedBudget } from '../../scripts/utils/goal-runner-phase';
 import * as goalRunnerMod from '../../scripts/goal-runner';
 import { setupMinimalHost } from '../helpers/goal-run-driver';
 import { inferRepoLayout } from '../../repo-layout';
 import { clearFrameworkConfigCache } from '../../config';
-import { withRuntimeTest } from '../utils/runtime-test-control';
+import { withRuntimeTest, preserveRuntimeTestEvidence } from '../utils/runtime-test-control';
 
 const REPO_ROOT = path.resolve(__dirname, '../../..');
 
@@ -1065,7 +1065,7 @@ cases.push(
         assert.deepStrictEqual(p.canaryCalls, [], '非 UI 需求不跑金丝雀');
         assert.deepStrictEqual(p.formalModels.slice(0, 2), [null, 'gpt-alt-1'], JSON.stringify(p.formalModels));
         const sub = p.events.find(e => e.type === 'adapter_model_substituted');
-        assert.ok(sub && sub.trigger === 'invoke' && sub.to === 'gpt-alt-1' && sub.phase === 'spec', JSON.stringify(sub));
+        assert.ok(sub && sub.trigger === 'invoke' && sub.to === 'gpt-alt-1' && sub.phase === 'work-unit-author', JSON.stringify(sub));
         assert.ok(!p.events.some(e => e.type === 'phase_halt' && e.halt_reason === 'adapter_cli_hard_failure'), '换上型号后不得以 CLI 硬失败停机');
         const firstStarts = p.events.filter(e => e.type === 'agent_invoke_start').slice(0, 2);
         assert.ok(firstStarts.length === 2, '须有第二次正式调用');
@@ -1077,7 +1077,7 @@ cases.push(
     },
   },
   {
-    name: 'P3 R3 启动期替代 → 正式会话 → 停机 → 真实 --resume：不报身份漂移并继续；恢复中"已授权预算改写 + 启动期再替代"后再恢复同样不漂移',
+    name: 'P3 R3 启动期替代 → 正式会话 → 停机 → 真实 --resume：不报身份漂移并继续；恢复中"已授权明确用户截止改写 + 启动期再替代"后再恢复同样不漂移',
     run: async () => {
       const feature = 'model-alt-resume';
       const root = modelHost(feature, ['gpt-alt-1', 'gpt-alt-2'], true);
@@ -1093,7 +1093,8 @@ cases.push(
           formal: () => spawnFail(),
         });
         const runId = path.basename(first.reportDir);
-        assert.deepStrictEqual(first.formalModels, ['gpt-alt-1'], JSON.stringify(first.formalModels));
+        if (!first.formalModels.length) preserveRuntimeTestEvidence([root], 'model substitution did not reach actual author');
+        assert.deepStrictEqual(first.formalModels, ['gpt-alt-1'], JSON.stringify({ formal: first.formalModels, events: first.events.slice(-6) }));
         backdateSession(first.reportDir, 60_000);
         // 恢复 A（不带任何 override）：替代钉值有启动期授权事件 → 不漂移，继续执行
         const resumedA = await runModelChain({
@@ -1101,12 +1102,13 @@ cases.push(
           canary: () => notCached(), formal: () => spawnFail(),
         });
         assert.deepStrictEqual(drift(resumedA), [], '启动期合法替代不得在恢复时被报成漂移');
-        assert.deepStrictEqual(resumedA.formalModels, ['gpt-alt-1'], `恢复后须以替代型号继续执行：${JSON.stringify(resumedA.formalModels)}`);
+        if (!resumedA.formalModels.length) preserveRuntimeTestEvidence([root], 'model resume did not reach actual author');
+        assert.deepStrictEqual(resumedA.formalModels, ['gpt-alt-1'], `恢复后须以替代型号继续执行：${JSON.stringify({ formal: resumedA.formalModels, events: resumedA.events.slice(-6) })}`);
         backdateSession(first.reportDir, 60_000);
-        // 恢复 B：有权者改预算 + --override-manifest，同一次启动里 alt-1 被判不受支持 → 换 alt-2
+        // 恢复 B：有权者改明确用户截止 + --override-manifest，同一次启动里 alt-1 被判不受支持 → 换 alt-2
         const manifestPath = path.join(first.reportDir, 'manifest.json');
         const m = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as GoalManifest;
-        m.budget.max_total_turns = 31;
+        m.user_deadline_at = new Date(Date.now() + 60_000).toISOString();
         fs.writeFileSync(manifestPath, JSON.stringify(m, null, 2) + '\n', 'utf-8');
         const resumedB = await runModelChain({
           root, feature, ui: true, args: ['--resume', runId, '--force-resume', '--override-manifest'],
@@ -1114,12 +1116,12 @@ cases.push(
         });
         assert.deepStrictEqual(resumedB.formalModels, ['gpt-alt-2'], JSON.stringify(resumedB.formalModels));
         backdateSession(first.reportDir, 60_000);
-        // 恢复 C（不带 override）：预算改写与恢复中替代都已授权 → 不漂移
+        // 恢复 C（不带 override）：用户截止改写与恢复中替代都已授权 → 不漂移
         const resumedC = await runModelChain({
           root, feature, ui: true, args: ['--resume', runId, '--force-resume'],
           canary: () => notCached(), formal: () => spawnFail(),
         });
-        assert.deepStrictEqual(drift(resumedC), [], '已授权的预算改写 + 恢复中替代之后再恢复不得漂移');
+        assert.deepStrictEqual(drift(resumedC), [], '已授权的用户截止改写 + 恢复中替代之后再恢复不得漂移');
         assert.deepStrictEqual(resumedC.formalModels, ['gpt-alt-2']);
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
@@ -1214,86 +1216,47 @@ cases.push(
     },
   },
   {
-    name: 'P3 A9 预算：剩余额度短于金丝雀固定时长 → 按剩余额度结束；耗尽后不试下一个型号；恢复与后继都不重置已消耗额度',
+    name: 'P3 明确用户截止：金丝雀只用原绝对截止残量，恢复不重置',
     run: async () => {
-      const feature = 'model-alt-budget';
+      const feature = 'model-alt-user-deadline';
       const root = modelHost(feature, ['gpt-alt-1'], true);
       try {
-        // 第一段：正式调用 spawn 失败（其它 CLI 硬失败）→ HALTED；金丝雀非硬失败（不写缓存，恢复时会重探）。
-        // 金丝雀先花 1.5 秒——批二 review R1：正常进入正式会话时，run_start 之前的启动探测耗时须进已用时长。
-        const first = await runModelChain({
-          root, feature, ui: true, args: REQ_ARGS(UI_REQ),
-          canary: async () => {
-            await new Promise(r => setTimeout(r, 1_500));
-            return { exitCode: 1, stdout: '', stderr: 'boom', command: 'fake' };
-          },
-          formal: () => ({ exitCode: 1, stdout: '', stderr: '', command: 'fake', spawn_error: { code: 'ENOENT', message: 'spawn ENOENT' } }),
-        });
-        const runId = path.basename(first.reportDir);
-        assert.ok(first.events.some(e => e.type === 'run_end' && e.status === 'HALTED'), '夹具：第一段须 HALTED');
-        {
-          const start = first.events.find(e => e.type === 'run_start')!;
-          const end = [...first.events].reverse().find(e => e.type === 'run_end')!;
-          const counted = resolveResumedBudget(loadAuthoritativeEvents(path.join(first.reportDir, 'events.jsonl'))).priorActiveMs;
-          const sinceRunStart = Date.parse(String(end.ts)) - Date.parse(String(start.ts));
-          assert.ok(typeof start.session_started_at === 'string', 'run_start 须记录会话起点');
-          assert.ok(counted >= sinceRunStart + 1_400,
-            `启动期探测耗时须计入已用时长：counted=${counted} run_start→run_end=${sinceRunStart}`);
-        }
-        const manifest = JSON.parse(fs.readFileSync(path.join(first.reportDir, 'manifest.json'), 'utf-8')) as GoalManifest;
-        const wallMs = resolveWallClockMs(manifest, ['spec']);
-        const leftMs = 12_000;
-        backdateSession(first.reportDir, wallMs - FINALIZE_RESERVE_MS - leftMs);
-
-        // 恢复：剩余约 12 秒 → 金丝雀允许时长按剩余额度；它把额度用完后返回"不受支持" → 预算已尽，不试 gpt-alt-1
-        const resumed = await runModelChain({
-          root, feature, ui: true, args: ['--resume', runId, '--force-resume'],
-          canary: async (_m, timeoutMs) => {
-            await new Promise(r => setTimeout(r, Math.max(0, timeoutMs) + 50));
-            return UNSUPPORTED();
-          },
-        });
-        assert.strictEqual(resumed.canaryCalls.length, 1, `预算耗尽后不得再试下一个型号：${JSON.stringify(resumed.canaryCalls)}`);
-        assert.ok(!resumed.events.some(e => e.type === 'adapter_model_substituted'),
-          `预算耗尽后不得换型号：${JSON.stringify(resumed.events.filter(e => e.type === 'adapter_model_substituted'))}`);
-        const t = resumed.canaryCalls[0].timeoutMs;
-        assert.ok(t > 0 && t <= leftMs && t < 120_000, `金丝雀允许时长须取剩余额度（≤${leftMs}ms），实得 ${t}`);
-        const guidance = String(resumed.events.find(e => e.type === 'phase_halt' && e.halt_reason === 'canary_cli_hard_failure')?.halt_guidance ?? '');
-        assert.ok(guidance.includes('预算已尽') && guidance.includes('(adapter 默认型号)'), `说明须写明预算已尽并列出试过的型号：${guidance}`);
-
-        // 批二 review R1：恢复里的探测提前退出（run_start 之前停机），它花掉的约 12 秒必须持久计入——
-        // 再次恢复、以及起后继，都不能重新拿到探测额度（金丝雀一次都不该再被调用）。
-        shiftLastRunEnd(first.reportDir, 10 * 60_000); // 只为过恢复冷却，保持该段时长不变
-        const resumedAgain = await runModelChain({
-          root, feature, ui: true, args: ['--resume', runId, '--force-resume'],
-          canary: () => ({ exitCode: 0, stdout: 'CANNOT_SEE_IMAGE', stderr: '', command: 'fake-canary' }),
-        });
-        assert.deepStrictEqual(resumedAgain.canaryCalls, [], `预算耗尽后再次恢复不得重新获得探测额度：${JSON.stringify(resumedAgain.canaryCalls)}`);
-        const beforeSuccessor = fs.readdirSync(path.dirname(first.reportDir)).sort();
-        await assert.rejects(runModelChain({
-          root, feature, ui: true, args: [...REQ_ARGS(UI_REQ), '--supersede', runId],
-          canary: () => ({ exitCode: 0, stdout: 'CANNOT_SEE_IMAGE', stderr: '', command: 'fake-canary' }),
-        }), /budget_wall_clock.*后继未创建/);
-        assert.deepStrictEqual(fs.readdirSync(path.dirname(first.reportDir)).sort(), beforeSuccessor, '预算耗尽后无后继目录，也不执行金丝雀');
-      } finally {
-        fs.rmSync(root, { recursive: true, force: true });
-      }
+        const first = await runModelChain({ root, feature, ui: true, args: REQ_ARGS(UI_REQ),
+          canary: () => ({ exitCode: 1, stdout: '', stderr: 'boom', command: 'fake' }),
+          formal: () => ({ exitCode: 1, stdout: '', stderr: '', command: 'fake', spawn_error: { code: 'ENOENT', message: 'spawn ENOENT' } }) });
+        const runId = path.basename(first.reportDir), file = path.join(first.reportDir, 'manifest.json');
+        const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as GoalManifest;
+        const deadline = new Date(Date.now() + 3000).toISOString();
+        raw.user_deadline_at = deadline;
+        fs.writeFileSync(file, JSON.stringify(raw));
+        const resumed = await runModelChain({ root, feature, ui: true, args: ['--resume', runId, '--force-resume', '--override-manifest'],
+          canary: async (_model, timeoutMs) => { await new Promise(resolve => setTimeout(resolve, timeoutMs + 25)); return UNSUPPORTED(); } });
+        assert.strictEqual(resumed.canaryCalls.length, 1, '截止后不试下一个型号');
+        assert.ok(resumed.canaryCalls[0].timeoutMs > 0 && resumed.canaryCalls[0].timeoutMs <= 3000);
+        const again = await runModelChain({ root, feature, ui: true, args: ['--resume', runId, '--force-resume'] });
+        assert.deepStrictEqual(again.canaryCalls, [], '同一用户截止不因恢复重置');
+        assert.strictEqual(JSON.parse(fs.readFileSync(file, 'utf8')).user_deadline_at, deadline);
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
     },
   },
 );
 
-export async function runAll(): Promise<UnitCaseResult[]> {
+export async function runSelectedCases(selector?: string): Promise<SelectedUnitCases> {
   const results: UnitCaseResult[] = [];
-  for (const c of cases) {
+  const timings: UnitExecutionTiming[] = [];
+  for (const c of cases.filter(c => matchesUnitCase(c.name, selector))) {
+    const endTiming = startCaseTiming([c.name], timings);
     try {
       await c.run();
       results.push({ name: c.name, ok: true });
     } catch (e) {
       results.push({ name: c.name, ok: false, error: (e as Error).message });
-    }
+    } finally { endTiming(); }
   }
-  return results;
+  return selectedUnitCases(results, selector, timings);
 }
+
+export async function runAll(): Promise<UnitCaseResult[]> { return (await runSelectedCases()).results; }
 
 if (require.main === module) {
   void runAll().then((results) => {

@@ -1,9 +1,10 @@
 import { isRequiredCheckGap, requiredSummaryCheckGaps, phaseCompletionProblems, resolveCurrentDisposition, renderCurrentDisposition, type CurrentDisposition } from './scripts/utils/check-disposition';
 import { readCurrentDispositionInput, readReusableCheckResult, applicableCheckFamilies, currentCompletionEvaluation, hasChangedVerifierMaterialInputs } from './scripts/utils/verify-feature-completion';
-import { resolvePhaseEvidenceManifest, writePhaseEvidenceManifest } from './scripts/utils/phase-evidence-manifest';
+import { resolvePhaseEvidenceManifest, writePhaseEvidenceManifest, loadPhaseEvidenceManifest, recomputeManifestAggregate } from './scripts/utils/phase-evidence-manifest';
 import { implementationChangeContext, readImplementationChangeContext } from './scripts/utils/diff-scope';
 import { resolveRepairResponsibility, type RepairResponsibilityContext } from './scripts/utils/repair-responsibility';
 import { createIdentityNeutralDigestReaders } from './scripts/utils/identity-neutral-digest';
+import { validateProjectRelativePath } from './scripts/utils/project-relative-path';
 // ============================================================================
 // Harness 统一运行入口
 // ============================================================================
@@ -46,6 +47,8 @@ import {
   collectCurrentAcceptanceEvidence,
   readVerifierMaterialOrNull,
   writeVerifierMaterial,
+  computeMaterialSha256,
+  verifierMaterialFileHash,
   type VerifierMaterialView,
 } from './scripts/utils/verifier-material';
 import { assembleGoalBrief, CONSOLE_BRIEF_SECTIONS, renderGoalBrief, resolvedInputsCarryRequirement } from './scripts/utils/goal-brief';
@@ -167,6 +170,7 @@ import {
   computePromptSha256,
   renderVerifierRequest,
   verifierRequestFilename,
+  parseVerifierRequest,
 } from './scripts/utils/verifier-request';
 import { SUBJECT_ID_PATTERN, verifierReportMdFilename } from './scripts/utils/verifier-subject';
 import {
@@ -222,7 +226,7 @@ import { inferLegacyProjectRoot, resolveDependencyPath } from './scripts/utils/p
 import { resolveCapabilityResolutionEntryInput } from './scripts/utils/capability-resolution-entry-input';
 import { ensureFeatureExecutionScopeFrozen, applyFeatureScopeRevisionsThenMaybeComplete } from './scripts/utils/feature-execution-scope';
 import { runExplicitRequest } from './scripts/utils/request-phase';
-import { finalizePhaseClosure, executedEvidenceInputs, preparePhaseRepairFeedback } from './scripts/utils/phase-closure-finalizer';
+import { finalizePhaseClosure, executedEvidenceInputs, preparePhaseRepairFeedback, currentRequirementEvidenceSha } from './scripts/utils/phase-closure-finalizer';
 import {
   assertCapabilityConsumption,
   capabilityResolutionChecks,
@@ -1203,12 +1207,14 @@ async function main(): Promise<void> {
         : { ...reused, summary: { ...(reused.summary as HarnessRunSummary), repair_candidates: feedback.repairCandidates } };
       const disposition = feedback?.disposition ?? resolveCurrentDisposition(readCurrentDispositionInput({ projectRoot, feature, frameworkRoot: resolvedFrameworkRoot,
         chain: [phase], runId: process.env.MAISON_GOAL_RUN_ID?.trim(), currentResults: [currentResult] }));
-      const summary = reused.summary as HarnessRunSummary;
-      console.log(`CHECK_RESULT reused=${path.join(featurePhaseReportsDir(projectRoot, feature, phase, resolvedFrameworkRoot), 'script-report.json')}`);
-      printStableSummary(summary, currentCompletionEvaluation({ projectRoot, feature, frameworkRoot: resolvedFrameworkRoot,
-        chain: [phase], runId: process.env.MAISON_GOAL_RUN_ID?.trim(), currentResults: [currentResult] }, disposition));
-      console.log(buildNextLine(summary, phase, feature, { currentDisposition: disposition }));
-      process.exit(phaseCompletionProblems(disposition, [phase]).length ? 1 : 0);
+      if (!phaseCompletionProblems(disposition, [phase]).some(problem => problem.phase === phase && problem.id === 'lineage_fresh' && problem.action === 'verify')) {
+        const summary = reused.summary as HarnessRunSummary;
+        console.log(`CHECK_RESULT reused=${path.join(featurePhaseReportsDir(projectRoot, feature, phase, resolvedFrameworkRoot), 'script-report.json')}`);
+        printStableSummary(summary, currentCompletionEvaluation({ projectRoot, feature, frameworkRoot: resolvedFrameworkRoot,
+          chain: [phase], runId: process.env.MAISON_GOAL_RUN_ID?.trim(), currentResults: [currentResult] }, disposition));
+        console.log(buildNextLine(summary, phase, feature, { currentDisposition: disposition }));
+        process.exit(phaseCompletionProblems(disposition, [phase]).length ? 1 : 0);
+      }
     }
   }
 
@@ -1635,9 +1641,13 @@ async function main(): Promise<void> {
   }
   // Bind real tool results, including FAIL, without requiring a phase receipt or closed state.
   if (!phaseIsGlobal && !closureFinalized) {
-    try { writePhaseEvidenceManifest(projectRoot, resolvePhaseEvidenceManifest({ projectRoot, feature, phase,
+    try {
+      const runId = process.env.MAISON_GOAL_RUN_ID?.trim() || runSummary.run_id?.trim();
+      const requirementSha = currentRequirementEvidenceSha({ projectRoot, feature, runId, resolvedInputs });
+      if (runId && requirementSha === null) throw new Error(`当前run无法绑定原始需求血缘（run=${runId}）`);
+      writePhaseEvidenceManifest(projectRoot, resolvePhaseEvidenceManifest({ projectRoot, feature, phase,
       frameworkRoot: resolvedFrameworkRoot, resolvedInputs, factsContext,
-      extraInputs: executedEvidenceInputs(projectRoot, feature, phase, resolvedFrameworkRoot) })); }
+      requirementSha, extraInputs: executedEvidenceInputs(projectRoot, feature, phase, resolvedFrameworkRoot) })); }
     catch (error) { console.warn(`检查原结果已保留；输入/证据绑定未完成，不能复用或据此签完成：${String(error)}`); }
   }
   if (!phaseIsGlobal) {
@@ -1812,6 +1822,8 @@ function resolveVerifierRequestEligibility(
     checks: report.checks,
     reportValidity: lattice.report_validity,
     hasBlockedCapability: lattice.has_blocked,
+    currentAxes: Object.fromEntries(Object.entries(lattice.quality_axes).map(([name, axis]) => [name, { ...axis,
+      resolution: axis.resolution ? { ...axis.resolution, owner: axis.resolution.owner ?? undefined, retry_phase: axis.resolution.retry_phase ?? undefined } : undefined }])),
     upstreamDiagnosis: phaseVerdict.phaseIssues,
     parseClassificationFromDetails: extractFailureClassification,
   });
@@ -2663,8 +2675,9 @@ function issueVerifierRequest(input: {
   sourceCommitSha: string | null;
   worktreeDigest: string | null;
   material: VerifierMaterialView | null;
+  promptAbs?: string;
 }): { subjectId: string; requestRel: string; reportRel: string } | null {
-  const promptAbs = path.join(input.dir, 'ai-prompt.md');
+  const promptAbs = input.promptAbs ?? path.join(input.dir, 'ai-prompt.md');
   const promptRaw = fs.existsSync(promptAbs) ? readTextOrNull(promptAbs) : null;
   if (promptRaw === null) {
     console.warn('   ⚠ [verifier-request] ai-prompt.md 不可读，本轮不生成 verifier 调用凭证。');
@@ -2695,6 +2708,59 @@ function issueVerifierRequest(input: {
   // 调用方（phase executor / 主 agent）把 verifier 回复原样写到这里，永远不用自己拼路径。
   const reportAbs = path.join(input.dir, verifierReportMdFilename(request.subject_id));
   return { subjectId: request.subject_id, requestRel: rel(requestAbs), reportRel: rel(reportAbs) };
+}
+
+/** Late author arguments extend the current independent material; no checker or author is rerun. */
+export function refreshVerifierRequestContext(input: {
+  projectRoot: string; frameworkRoot: string; feature: string; phase: string; runId: string;
+  additionalContextFiles?: readonly { label: string; content: string }[];
+}): HarnessRunSummary | null {
+  const dir = featurePhaseReportsDir(input.projectRoot, input.feature, input.phase, input.frameworkRoot);
+  const summaryPath = path.join(dir, 'summary.json');
+  const before = fs.readFileSync(summaryPath);
+  const summary = JSON.parse(before.toString('utf8')) as HarnessRunSummary;
+  if (!summary.verifier_request || !summary.verifier_subject_id) return null;
+  const request = parseVerifierRequest(fs.readFileSync(path.resolve(input.projectRoot,
+    validateProjectRelativePath(input.projectRoot, summary.verifier_request, 'verifier request')), 'utf8'));
+  const material = readVerifierMaterialOrNull(dir, summary.verifier_subject_id);
+  if (!request || !material || request.feature !== input.feature || request.phase !== input.phase
+    || request.subject_id !== summary.verifier_subject_id || request.material_sha256 !== material.material_sha256) return null;
+  const context = [...repairDeclineContextFiles(input.projectRoot, input.feature, input.runId, input.frameworkRoot),
+    ...(input.additionalContextFiles ?? [])];
+  const files = new Map(material.files.map(file => [file.path, file.sha256]));
+  let changed = false;
+  for (const entry of context) {
+    if (entry.label.startsWith('(')) continue;
+    const file = validateProjectRelativePath(input.projectRoot, entry.label, 'independent context original');
+    const sha = verifierMaterialFileHash({ ...input, file, schema: material.schema });
+    if (files.get(file) !== sha) { files.set(file, sha); changed = true; }
+  }
+  if (!changed) return summary;
+  const current = { ...material, files: [...files].map(([file, sha256]) => ({ path: file, sha256 }))
+    .sort((a, b) => a.path.localeCompare(b.path)) };
+  current.material_sha256 = computeMaterialSha256(current);
+  const originalPrompt = fs.readFileSync(path.resolve(input.projectRoot,
+    validateProjectRelativePath(input.projectRoot, request.prompt_path, 'verifier prompt')), 'utf8');
+  const promptAbs = path.join(dir, `ai-prompt.${current.material_sha256}.md`);
+  fs.writeFileSync(promptAbs, originalPrompt + '\n\n## 当前作者论据原件\n'
+    + context.map(entry => `### ${entry.label}\n${entry.content}`).join('\n\n') + '\n', 'utf8');
+  const report = JSON.parse(fs.readFileSync(path.join(dir, 'script-report.json'), 'utf8')) as ScriptReport;
+  const issued = issueVerifierRequest({ dir, report, projectRoot: input.projectRoot, material: current, promptAbs,
+    gateFingerprint: request.gate_fingerprint, sourceCommitSha: request.source_commit_sha, worktreeDigest: request.worktree_digest });
+  if (!issued) return null;
+  const updated = { ...summary, verifier_subject_id: issued.subjectId, verifier_request: issued.requestRel,
+    verifier_report: issued.reportRel, ai_prompt: path.relative(input.projectRoot, promptAbs).replace(/\\/g, '/'),
+    closure_status: 'open' as const, receipt_status: 'missing', next_action: 'run_verifier' };
+  atomicWriteJson(summaryPath, updated);
+  const evidence = loadPhaseEvidenceManifest(input.projectRoot, input.feature, input.phase);
+  const output = evidence?.manifest.outputs.find(entry => path.resolve(input.projectRoot, entry.path) === summaryPath);
+  // Preserve the executed check's original inputs; this action only publishes new independent material.
+  if (evidence?.integrityOk && output?.sha256 === crypto.createHash('sha256').update(before).digest('hex')) {
+    output.sha256 = crypto.createHash('sha256').update(fs.readFileSync(summaryPath)).digest('hex');
+    evidence.manifest.aggregate_sha256 = recomputeManifestAggregate(evidence.manifest);
+    writePhaseEvidenceManifest(input.projectRoot, evidence.manifest);
+  }
+  return updated;
 }
 
 /**

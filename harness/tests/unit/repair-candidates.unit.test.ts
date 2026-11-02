@@ -39,8 +39,6 @@ import {
   ensureFailedAtStageTag,
 } from '../../../profiles/hmos-app/harness/hvigor-runner';
 import { extractFailureClassification as parseFailureClassificationFromDetails } from '../../harness-runner';
-import { selectRunnerActionFromAssess } from '../../scripts/utils/goal-assess-driver';
-import { recommendationAuthorized } from '../../scripts/utils/goal-in-session-driver';
 import { formatRepairCandidatesMenu } from '../../scripts/utils/assess-renderer';
 import type { AssessRecommendation, AssessResult, ReconcileObservationV1 } from '../../scripts/utils/assess';
 import type { UnitCaseResult } from '../run-unit';
@@ -938,83 +936,6 @@ export function runAll(): UnitCaseResult[] {
     );
   });
 
-  run(results, 'driver 泛化：candidates+invalidatable→backtrack_to_phase；无 candidates→halt；目标缺席保留意图', () => {
-    const mkAssess = (phase: string | null): AssessResult => ({
-      recommendation: {
-        action: 'rerun_phase', phase, reason: 'x',
-        requires_driver_authorization: true, runner_action: 'backtrack_to_phase',
-      },
-      stop: { fused: false },
-    } as unknown as AssessResult);
-    const obs = (over: Partial<ReconcileObservationV1>): ReconcileObservationV1 => ({
-      schema_version: '1.0', state: 'active', residual_fingerprints: [],
-      phase_outcome: { phase: 'review', verdict: 'FAIL', legacy_action: 'retry' },
-      ...over,
-    } as ReconcileObservationV1);
-    const chain = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'];
-    assert(
-      selectRunnerActionFromAssess({
-        assessment: mkAssess('coding'),
-        observation: obs({ invalidatable_phases: ['coding', 'review', 'ut', 'testing'] }),
-        currentPhase: 'review', chain, driverGuardAction: 'none',
-      }) === 'backtrack_to_phase',
-      'earlier+assess 回退意图+失效面覆盖 → backtrack_to_phase',
-    );
-    assert(
-      selectRunnerActionFromAssess({
-        assessment: mkAssess(null),
-        observation: obs({}),
-        currentPhase: 'review', chain, driverGuardAction: 'none',
-      }) === 'backtrack_to_phase',
-      'phase:null（映射失败）保留回退意图——runner 落 backtrack_target_absent',
-    );
-    assert(
-      selectRunnerActionFromAssess({
-        assessment: mkAssess('spec'),
-        observation: obs({ invalidatable_phases: [] }),
-        currentPhase: 'review', chain, driverGuardAction: 'none',
-      }) === 'halt',
-      '失效面不覆盖目标 → halt（不无保护回退）',
-    );
-  });
-
-  // --- t3：batch 授权区间下界 / manual 菜单 -------------------------------
-
-  run(results, 'batch 授权区间：[start_phase, through_phase] 内自动、外转 manual、缺下界 fail-closed', () => {
-    const chain = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'];
-    const rec = (phase: string | null): AssessRecommendation => ({
-      action: 'rerun_phase', phase, reason: 'x',
-      requires_driver_authorization: true, runner_action: 'backtrack_to_phase',
-    } as AssessRecommendation);
-    const batch = { mode: 'batch_authorized' as const, through_phase: 'testing' };
-    assert(
-      recommendationAuthorized(rec('coding'), batch, chain, { startPhase: 'coding' }) === true,
-      '授权 coding→testing：review 回 coding 允许自动',
-    );
-    assert(
-      recommendationAuthorized(rec('plan'), batch, chain, { startPhase: 'coding' }) === false,
-      '同一授权：回 plan 超下界，转 manual',
-    );
-    assert(
-      recommendationAuthorized(rec('spec'), batch, chain, { startPhase: 'coding' }) === false,
-      '回 spec 同样超下界',
-    );
-    assert(
-      recommendationAuthorized(rec('coding'), batch, chain, {}) === false,
-      '缺 startPhase（无授权起点记录）fail-closed 不自动回退',
-    );
-    assert(
-      recommendationAuthorized(rec('coding'), { mode: 'manual' }, chain, { startPhase: 'coding' }) === false,
-      'manual 恒不自动执行',
-    );
-    // custom 链按实际顺序判断（不用固定全轨序）
-    const custom = ['coding', 'review', 'testing'];
-    assert(
-      recommendationAuthorized(rec('coding'), { mode: 'batch_authorized', through_phase: 'testing' }, custom, { startPhase: 'coding' }) === true,
-      'custom 链区间判定按实际 chain',
-    );
-  });
-
   run(results, 'manual 菜单：候选来自 assess 观测（同一真源）；goal 模式或零候选不渲染', () => {
     const mkResult = (candidates: unknown[]): Parameters<typeof formatRepairCandidatesMenu>[0] => ({
       recommendation: { phase: 'coding', runner_action: 'backtrack_to_phase' },
@@ -1027,8 +948,7 @@ export function runAll(): UnitCaseResult[] {
     } as unknown as Parameters<typeof formatRepairCandidatesMenu>[0]);
     const cand = { id: 'CR-001', category: 'coding', item_fingerprint: 'a'.repeat(64), summary: '半模态状态机未复位' };
     const menu = formatRepairCandidatesMenu(mkResult([cand]), { phase: 'review', mode: 'manual' });
-    assert(menu !== null && menu.includes('责任阶段为 coding') && menu.includes('1. 返回 coding 修复'), `菜单应渲染：${menu}`);
-    assert(menu!.includes('CR-001'), '菜单应列出候选');
+    assert(menu === null, 'dedicated unit feedback replaces the manual phase dispatch menu');
     assert(
       formatRepairCandidatesMenu(mkResult([cand]), { phase: 'review', mode: 'goal_mode' }) === null,
       'goal 模式不渲染菜单（自动路径承载）',
@@ -1037,115 +957,6 @@ export function runAll(): UnitCaseResult[] {
       formatRepairCandidatesMenu(mkResult([]), { phase: 'review', mode: 'manual' }) === null,
       '零候选不渲染',
     );
-  });
-
-  // --- t4：决策链组合级验收（观测→assess→driver） -------------------------
-
-  run(results, '验收①同构：review 三候选 → assess 推荐 rerun_phase:coding（backtrack_to_phase），不再 rerun_phase:review', () => {
-    const { assessObservation } = require('../../scripts/utils/assess') as typeof import('../../scripts/utils/assess');
-    const FULL = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'];
-    const mkPhase = (p: string) => ({
-      phase: p, summary_state: 'current' as const, schema_version: '1.2', verdict: p === 'review' ? 'FAIL' : 'PASS',
-      closure: 'closed' as const, assurance: 'full', required_assurance: null, assurance_satisfied: true,
-      deferred: false, summary_fingerprint: 'x', evidence_fingerprint: 'x',
-    });
-    const cands = ['CR-001', 'CR-002', 'CR-003'].map(id => ({
-      id, category: 'coding' as const, files: ['02-Feature/F/src/main/ets/A.ets'],
-      item_fingerprint: itemFingerprintOf(id, ['02-Feature/F/src/main/ets/A.ets'], 'fix'),
-    }));
-    // 候选挂在 **phase 观测**（唯一真源=summary），不再经 reconcile 复制
-    const observation = {
-      responsibility, schema_version: '1.0' as const, feature: 'f1', workflow: 'wf', track: 'full' as const,
-      goal_end: 'testing',
-      phases: FULL.map(p => (p === 'review' ? { ...mkPhase(p), repair_candidates: cands } : mkPhase(p))),
-      fingerprints: { workflow: 'w', track: 't', goal: 'g', run_attempt: 'r', summaries: 's', evidence: 'e', reconcile: 'rc', observed: 'o' },
-      reconcile: {
-        schema_version: '1.0' as const, state: 'active' as const, residual_fingerprints: [],
-        phase_outcome: { phase: 'review', verdict: 'FAIL', legacy_action: 'retry' },
-        invalidatable_phases: ['coding', 'review', 'ut', 'testing'],
-        budgets: { retries_used: 0, backtracks_used: 0 },
-      },
-    };
-    const result = assessObservation(observation as never, { mode: 'goal_mode' });
-    assert(
-      result.recommendation.action === 'rerun_phase' && result.recommendation.phase === 'coding',
-      `应推荐 rerun_phase:coding（不再原地 review），实得 ${result.recommendation.action}:${result.recommendation.phase}`,
-    );
-    assert(result.recommendation.runner_action === 'backtrack_to_phase', 'runner_action 应为 backtrack_to_phase');
-    assert(
-      selectRunnerActionFromAssess({
-        assessment: result, observation: observation.reconcile as never,
-        currentPhase: 'review', chain: FULL, driverGuardAction: 'none',
-      }) === 'backtrack_to_phase',
-      'driver 应放行回退',
-    );
-  });
-
-  run(results, 'v23 F1 保证不丢：**PASS + 可信候选**仍须回退（best_effort 档视觉缺陷=WARN、verdict=PASS 的回修环可达性）', () => {
-    const { assessObservation } = require('../../scripts/utils/assess') as typeof import('../../scripts/utils/assess');
-    const FULL = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'];
-    const observation = {
-      responsibility, schema_version: '1.0' as const, feature: 'f1', workflow: 'wf', track: 'full' as const,
-      goal_end: 'testing',
-      phases: FULL.map(p => ({
-        phase: p, summary_state: 'current' as const, schema_version: '1.2',
-        // 关键：testing **verdict=PASS**（best_effort 下视觉缺陷只 WARN）
-        verdict: 'PASS', closure: 'closed' as const,
-        assurance: 'full', required_assurance: null, assurance_satisfied: true, deferred: false,
-        summary_fingerprint: 'x', evidence_fingerprint: 'x',
-        ...(p === 'testing'
-          ? {
-              repair_candidates: [{
-                id: 'visual_diff:add_card_home', category: 'coding' as const,
-                item_fingerprint: 'e'.repeat(64), summary: 'must_fix 原文', files: ['02-Feature/F/src/main/ets/A.ets'],
-              }],
-            }
-          : {}),
-      })),
-      fingerprints: { workflow: 'w', track: 't', goal: 'g', run_attempt: 'r', summaries: 's', evidence: 'e', reconcile: 'rc', observed: 'o' },
-      reconcile: {
-        schema_version: '1.0' as const, state: 'active' as const, residual_fingerprints: [],
-        phase_outcome: { phase: 'testing', verdict: 'PASS', legacy_action: 'advance' },
-        invalidatable_phases: ['coding', 'review', 'ut', 'testing'],
-        budgets: { retries_used: 0, backtracks_used: 0 },
-      },
-    };
-    const result = assessObservation(observation as never, { mode: 'goal_mode' });
-    assert(
-      result.recommendation.phase === 'coding' && result.recommendation.runner_action === 'backtrack_to_phase',
-      `PASS+候选必须回退 coding（旧 v23 F1 教训的新归宿），实得 ${result.recommendation.action}:${result.recommendation.phase}/${result.recommendation.runner_action}`,
-    );
-    assert(
-      selectRunnerActionFromAssess({
-        assessment: result, observation: observation.reconcile as never,
-        currentPhase: 'testing', chain: FULL, driverGuardAction: 'advance',
-      }) === 'backtrack_to_phase',
-      'driver 不得把 PASS+候选放行为 advance',
-    );
-  });
-
-  run(results, '上游件目标：plan 的 spec 候选 → 推荐 spec；lite 轨映射 change（无幽灵 spec）', () => {
-    const { assessObservation } = require('../../scripts/utils/assess') as typeof import('../../scripts/utils/assess');
-    const mk = (phases: string[], track: 'full', current: string) => ({
-      responsibility, schema_version: '1.0' as const, feature: 'f1', workflow: 'wf', track,
-      goal_end: phases[phases.length - 1], phases: phases.map(p => ({
-        phase: p, summary_state: 'current' as const, schema_version: '1.2', verdict: 'PASS',
-        closure: 'closed' as const, assurance: 'full', required_assurance: null, assurance_satisfied: true,
-        deferred: false, summary_fingerprint: 'x', evidence_fingerprint: 'x',
-        ...(p === current
-          ? { repair_candidates: [{ id: 'scope_consistency_with_spec', category: 'spec' as const, item_fingerprint: 'a'.repeat(64), files: ['doc/features/f1/acceptance.yaml'] }] }
-          : {}),
-      })),
-      fingerprints: { workflow: 'w', track: 't', goal: 'g', run_attempt: 'r', summaries: 's', evidence: 'e', reconcile: 'rc', observed: 'o' },
-      reconcile: {
-        schema_version: '1.0' as const, state: 'active' as const, residual_fingerprints: [],
-        phase_outcome: { phase: current, verdict: 'FAIL', legacy_action: 'retry' },
-        invalidatable_phases: phases,
-        budgets: { retries_used: 0, backtracks_used: 0 },
-      },
-    });
-    const full = assessObservation(mk(['spec', 'plan', 'coding', 'review', 'ut', 'testing'], 'full', 'plan') as never, { mode: 'goal_mode' });
-    assert(full.recommendation.phase === 'spec', `full 轨 spec 候选应推荐 spec，实得 ${full.recommendation.phase}`);
   });
 
   // --- R8：生产接线级回归（codex review 冻结项⑧——纯函数测试盖不住路径/schema/链路） ---
@@ -1243,101 +1054,6 @@ export function runAll(): UnitCaseResult[] {
     assert(afterOtherBacktrack.length === 0, `非 repair 回退须清空旧候选：${JSON.stringify(afterOtherBacktrack)}`);
     // ③ 无回退事件 → 空
     assert(restoreBacktrackCandidatesFromEvents([{ type: 'phase_start' }]).length === 0, '无回退事件应为空');
-  });
-
-  run(results, 'R8.3 batch/in-session：**磁盘真实 summary** → assessFeature 读取 → driver 授权 → rerun_phase:coding', () => {
-    const fs = require('fs') as typeof import('fs');
-    const os = require('os') as typeof import('os');
-    const path = require('path') as typeof import('path');
-    const { assessFeature } = require('../../scripts/utils/assess') as typeof import('../../scripts/utils/assess');
-    const { clearFrameworkConfigCache, featurePhaseReportsDir } = require('../../config') as typeof import('../../config');
-    const { deriveReconcileObservation } = require('../../scripts/utils/goal-reconcile-observation') as typeof import('../../scripts/utils/goal-reconcile-observation');
-    const FRAMEWORK_ROOT = path.resolve(__dirname, '..', '..', '..');
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'repair-batch-'));
-    try {
-      const FULL = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'];
-      fs.writeFileSync(path.join(root, 'framework.config.json'), JSON.stringify({
-        schema_version: '1.1', project_name: 'T',
-        project_profile: { name: 'hmos-app', sub_variant: 'app' },
-        architecture: {
-          outer_layers: [{ id: '02-Feature', can_depend_on: [], intra_layer_deps: 'dag' }],
-          module_inner_layers: ['shared'], inner_dependency_direction: 'upward',
-          cross_module_exports_file: 'index.ets',
-        },
-        paths: { features_dir: 'doc/features', docs_committed: false },
-        materialized_adapters: ['cursor'],
-      }));
-      clearFrameworkConfigCache();
-      const moduleRoot = path.join(root, '02-Feature/F');
-      fs.mkdirSync(path.join(moduleRoot, 'src'), { recursive: true });
-      fs.writeFileSync(path.join(moduleRoot, 'oh-package.json5'), JSON.stringify({ name: 'F', version: '1.0.0' }));
-      fs.writeFileSync(path.join(moduleRoot, 'src/A.ets'), 'export class A {}\n');
-      // **磁盘上的真实 summary.json**（含候选）——assessFeature 自己去读，不手工构造观测
-      const cand = {
-        id: 'CR-001', category: 'coding', files: ['02-Feature/F/src/A.ets'],
-        summary: '半模态未复位', item_fingerprint: 'b'.repeat(64), source_phase: 'review',
-      };
-      const axis = (v: string) => ({
-        applicable: true, required_for_release: true, verdict: v,
-        blocking_class: null, source_checks: [], resolution: null,
-      });
-      for (const p of FULL) {
-        const dir = featurePhaseReportsDir(root, 'f1', p, FRAMEWORK_ROOT);
-        fs.mkdirSync(dir, { recursive: true });
-        fs.writeFileSync(path.join(dir, 'summary.json'), JSON.stringify({
-          schema_version: '1.2', phase: p, feature: 'f1',
-          verdict: p === 'review' ? 'FAIL' : 'PASS',
-          blocker_count: 0, fail_count: 0, warn_count: 0,
-          report_validity: 'PASS',
-          quality_axes: Object.fromEntries(['functional', 'visual', 'asset', 'evidence'].map(a => [a, axis('PASS')])),
-          release_readiness: 'READY', completion_status: 'complete',
-          script_report: 'a', merged_report: 'b', ai_prompt: 'c', summary_json: 'd',
-          run_statuses: [], readiness_signals: [], blocking_warnings: [], blocking_skips: [], blockers: [],
-          next_action: 'x', closure_status: 'closed', assurance: 'full',
-          capability_resolutions: [], capability_resolution_contract_fingerprint: null,
-          ...(p === 'review' ? { repair_candidates: [cand] } : {}),
-        }, null, 2), 'utf-8');
-      }
-      // in-session/batch driver 的真实观测（**不带候选**——唯一真源是磁盘 summary）
-      const reconcile = deriveReconcileObservation({
-        phase: 'review', verdict: 'FAIL', legacyAction: 'retry',
-        retriesUsed: 0, backtracksUsed: 0,
-        invalidatablePhases: ['coding', 'review', 'ut', 'testing'],
-      });
-      const assessment = assessFeature({
-        projectRoot: root, frameworkRoot: FRAMEWORK_ROOT, feature: 'f1',
-        goalEnd: 'testing', authorization: { mode: 'batch_authorized', through_phase: 'testing' },
-        reconcile, writeProjection: false,
-      });
-      assert(
-        assessment.recommendation.action === 'rerun_phase' && assessment.recommendation.phase === 'coding',
-        `batch 链路（磁盘 summary→assessFeature）应得 rerun_phase:coding，实得 ${assessment.recommendation.action}:${assessment.recommendation.phase}`,
-      );
-      assert(
-        assessment.recommendation.runner_action === 'backtrack_to_phase',
-        `runner_action 应为 backtrack_to_phase，实得 ${assessment.recommendation.runner_action}`,
-      );
-      assert(
-        recommendationAuthorized(
-          assessment.recommendation,
-          { mode: 'batch_authorized', through_phase: 'testing' },
-          FULL,
-          { startPhase: 'coding' },
-        ) === true,
-        'batch 授权区间内应自动放行',
-      );
-      assert(
-        recommendationAuthorized(
-          assessment.recommendation,
-          { mode: 'batch_authorized', through_phase: 'testing' },
-          FULL,
-          { startPhase: 'review' },
-        ) === false,
-        '授权起点晚于目标（review→testing）时不得自动回退 coding，须转 manual',
-      );
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
   });
 
   run(results, 'R8.4 ui_scope 生产接线：check 侧 failure_kind 经**生产 writer 共享实现**映射进候选', () => {
@@ -1582,7 +1298,7 @@ export function runAll(): UnitCaseResult[] {
       '候选自身论据不能被另一候选借用');
   });
 
-  run(results, 'P2 C 原目标引文与事实拒修都公开给独立核验，其它run、窗口和指纹不混入', () => {
+  run(results, 'P2 C 拒修原账本完整公开，归因只接受当前run、调用窗口和指纹', () => {
     const fs = require('fs') as typeof import('fs');
     const os = require('os') as typeof import('os');
     const { headlessLedgerPath } = require('../../scripts/utils/headless-assumptions') as typeof import('../../scripts/utils/headless-assumptions');
@@ -1604,7 +1320,9 @@ export function runAll(): UnitCaseResult[] {
       const body = context.map(item => item.content).join('\n');
       assert(body.includes(entry.decision) && body.includes(fact.decision), '目标引文不能因没有文件证据被丢掉；事实拒修也不是已成立结论');
       assert(context.some(item => item.label === path.relative(root, file).replace(/\\/g, '/')), '仍指向真实原账本，不造第二材料原件');
-      assert(!body.includes('FOREIGN_RUN') && !body.includes('FOREIGN_CANDIDATE') && !body.includes('OLD_WINDOW'), '无关原行不属于本次公开材料');
+      assert(body.includes(fs.readFileSync(file, 'utf8')), '不能裁掉或改写完整原拒修账本');
+      const matched = body.split('当前匹配原行：\n')[1]?.split('责任方拒修是待核实依据')[0] ?? '';
+      assert(!matched.includes('FOREIGN_RUN') && !matched.includes('FOREIGN_CANDIDATE') && !matched.includes('OLD_WINDOW'), '无关身份或窗口不能成为本次采信的拒修');
       assert(body.includes('issue-verification') && body.includes('confirmed/refuted/unclear'), '仍交现有独立核验，不能以拒修自动结案');
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   });

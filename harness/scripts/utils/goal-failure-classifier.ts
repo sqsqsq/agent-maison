@@ -188,66 +188,6 @@ export const CUMULATIVE_HALT_FAMILY: ReadonlySet<FailureKind> = new Set<FailureK
 ]);
 
 /**
- * f9c2e6b4 t3：重试耗尽时的**责任归属**——哪些 FailureKind 属"外部条件未满足"。
- *
- * 立项事故 run 20260803T103413Z-3f72a8：耗尽后产生端发
- * `assess_halt:phase_verdict:halt; failure_kind=project_build`，被 `normalizeIncidentId`
- * 截到首个 `:` 变成 `assess_halt`，registry 固定 `operator` → **WAITING/human**。
- * 真实责任类别在这一步被抹平，而 WAITING 会让 supervisor 永不拉起。
- *
- * 本集合**复用既有 FailureKind 分类**，不新建正则、不新建第二套责任表——
- * 它只回答一个问题：这个失败是"内容没做对"（重启无用，人来看）还是"外部条件不满足"
- * （环境恢复后可继续）。不在集合内的一律按内容失败处理（保守：内容失败 → TERMINAL，
- * 不会让 supervisor 反复拉起一个注定再死的 run）。
- */
-export const EXTERNAL_RETRY_RESPONSIBILITY_KINDS: ReadonlySet<FailureKind> = new Set<FailureKind>([
-  'toolchain',
-  'external_block',
-  'capture',
-  'agent_timeout',
-  'transient_api_error',
-  'agent_no_output',
-]);
-
-/**
- * plan b3e8d4c7 t3：**assess-halt 汇点的事故 id**。
- *
- * 该汇点（goal-runner 的 `action==='halt' && !haltReason`）承载多类 halt，f9c2e6b4 t3
- * 曾把它**整体**假设成"重试耗尽"，于是宿主 run 20260804T033834Z-99c0a1 里预算只用了 1/2、
- * 真因是"推荐无路由"，却被标 content_retry_exhausted + TERMINAL（halt_reason 说 exhausted、
- * reason 说 unclosed，自相矛盾，还让 supervisor 永不拉起）。
- *
- * `retries >= max` 只是**必要**条件——预算恰好用满时任何落进 catch-all 的 halt 都会被误标。
- * 充分证据须同时满足：来自 phase-outcome SSOT 的 halt（runner_action==='halt'）、
- * 本轮非 PASS、且未熔断。其余一律 fail-closed 到 framework_bug——**不给 catch-all 起精确名字**。
- */
-export function resolveAssessHaltIncident(input: {
-  retriesUsed: number;
-  maxRetriesPerPhase: number;
-  /** assess recommendation 的 SSOT 动作（仅当推荐派生自 phase outcome 时存在） */
-  runnerAction?: string;
-  verdict: string;
-  fused: boolean;
-  failureKind: FailureKind;
-}): 'content_retry_exhausted' | 'external_retry_exhausted' | 'framework_bug' {
-  const exhausted =
-    input.retriesUsed >= input.maxRetriesPerPhase &&
-    input.runnerAction === 'halt' &&
-    input.verdict !== 'PASS' &&
-    !input.fused;
-  if (!exhausted) return 'framework_bug';
-  return EXTERNAL_RETRY_RESPONSIBILITY_KINDS.has(input.failureKind)
-    ? 'external_retry_exhausted'
-    : 'content_retry_exhausted';
-}
-
-/** 同一 blocker_signature 在 CUMULATIVE_HALT_FAMILY 家族内累计出现达到此次数即 halt（非连续）。 */
-export const CUMULATIVE_HALT_THRESHOLD = 3;
-
-/** advance_blocked（script PASS 但 closure 打不开）累计出现达到此次数（含本次）即 halt 求人，不再退化到无限重试。 */
-export const ADVANCE_BLOCKED_HALT_THRESHOLD = 2;
-
-/**
  * Blocker ids where retry without user input is structurally pointless.
  * Grep-verified against harness/scripts/check-*.ts (no ghost ids).
  * Coverage: spec/plan/review artifact gates + receipt trace/context gates.
@@ -927,7 +867,7 @@ export function nativeCompileDiagnosticRefs(check: { id: string; structured?: un
   return [...refs].sort();
 }
 
-function hasFindingIdentities(disposition: CurrentDisposition, checkFamilies?: readonly string[]): boolean {
+export function hasFindingIdentities(disposition: CurrentDisposition, checkFamilies?: readonly string[]): boolean {
   // The common reader supplies bound acceptance/CU/case/step refs, never report names or invoke timestamps.
   return scopedProblems([...disposition.problems, ...disposition.completionBlocking, ...disposition.releaseBlocking, ...disposition.disclosed], checkFamilies)
     .every(problem => nativeCompileCheck(problem.id) ? !!problem.evidence?.some(ref => ref.startsWith('compiler:'))
@@ -977,12 +917,13 @@ export function evaluateCompletionProgress(input: {
   const change = compareRelatedInputSnapshots(previous.inputs, current.inputs);
   // A real new relevant set establishes its own baseline; it cannot prove anything about the old set.
   if (change === 'unknown') return { evaluation: current, reused: false, halt: false };
-  if (!hasFindingIdentities(previous.disposition, previous.checkFamilies) || !hasFindingIdentities(current.disposition, current.checkFamilies)) return { evaluation: current, reused: false, halt: false };
   const handedBack = input.feedbackDelivered && input.authorReturned === true;
-  if (!handedBack && change === 'unchanged' && dispositionFacts(current.disposition, current.checkFamilies) === dispositionFacts(previous.disposition, previous.checkFamilies)) {
+  const identified = hasFindingIdentities(previous.disposition, previous.checkFamilies) && hasFindingIdentities(current.disposition, current.checkFamilies);
+  if ((!handedBack || !identified) && change === 'unchanged' && dispositionFacts(current.disposition, current.checkFamilies) === dispositionFacts(previous.disposition, previous.checkFamilies)) {
     // Other families/global constraints still update the full view without advancing this comparison.
     return { evaluation: dispositionFacts(current.disposition) === dispositionFacts(previous.disposition) ? previous : current, reused: true, halt: false };
   }
+  if (!identified) return { evaluation: current, reused: false, halt: false };
   if (!input.feedbackDelivered || change !== 'changed' && !handedBack || !comparableRepairs(previous) || !comparableRepairs(current)) return { evaluation: current, reused: false, halt: false };
   const signature = completionProblemSignature(current.disposition, current.checkFamilies);
   if (signature === '[]') return { evaluation: current, reused: false, halt: false };

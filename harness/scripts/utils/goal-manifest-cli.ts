@@ -2,7 +2,7 @@
  * Manifest + CLI override pairing — strict per-field validation.
  */
 
-import { isUserPinnedModel, type GoalManifest, type AdapterModelPin } from './goal-manifest';
+import { isUserPinnedModel, parseUserDeadlineAt, type GoalManifest, type AdapterModelPin } from './goal-manifest';
 import type { FeaturePhase } from './phase-transition-policy';
 import type { ProviderRef } from './types';
 
@@ -16,6 +16,7 @@ export interface ManifestCliArgv {
   requirement_source_files?: string[];
   /** --fidelity 只升不降；降档须作为新需求进入 correction/successor run。 */
   fidelity?: string;
+  'user-deadline-at'?: string;
   'override-start'?: boolean;
   'override-end'?: boolean;
   'override-manifest'?: boolean;
@@ -47,6 +48,7 @@ export function validateManifestCliOverrides(
 }
 
 export function applyManifestCliOverrides(manifest: GoalManifest, argv: ManifestCliArgv): void {
+  if (argv['user-deadline-at'] !== undefined) manifest.user_deadline_at = parseUserDeadlineAt(argv['user-deadline-at']);
   if (argv['override-start'] && argv.start) {
     manifest.start_phase = String(argv.start) as FeaturePhase;
   }

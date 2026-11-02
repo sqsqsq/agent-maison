@@ -19,7 +19,6 @@ import {
   runInvokeCapabilityGate,
   runRuntimeTelemetryPreflightGate,
   resolveLastHaltReason,
-  resolveGoalRunStatusFromOutcomes,
 } from '../../scripts/goal-runner';
 import { harnessPreflightPath } from '../../scripts/utils/capability-preflight';
 import { loadFrameworkConfig, clearFrameworkConfigCache } from '../../config';
@@ -27,6 +26,7 @@ import { loadResolvedProfile } from '../../profile-loader';
 import type { GoalPhaseOutcome } from '../../scripts/utils/goal-report-generator';
 import { rebuildOutcomesFromEvents } from '../../scripts/utils/goal-runner-phase';
 import { resolveGoalRunStatus } from '../../scripts/utils/phase-transition-policy';
+import { resolveCurrentDisposition } from '../../scripts/utils/check-disposition';
 import {
   recordHvigorBuildOutcome,
   resetCapabilityFailedByHumanReprobe,
@@ -204,10 +204,11 @@ const cases: Array<{ name: string; run: () => void }> = [
         assert(unsupported!.outcome.deferred === true, 'outcome 须 deferred');
         assert(unsupported!.outcome.halted !== true, 'capability defer 不得伪装 HALT');
         assert(unsupported!.outcome.deferred_reason === 'capability_missing', '须保留精确 defer 原因');
-        assert(
-          resolveGoalRunStatusFromOutcomes([unsupported!.outcome], false) === 'DEFERRED_CAPABILITY_MISSING',
-          'live outcome → run_end 投影不得丢 deferred_reason',
-        );
+        const current = resolveCurrentDisposition({ endpoint: 'feature-completion', phases: [{ phase: 'testing',
+          verdict: unsupported!.outcome.verdict, schemaCurrent: true, closureCommitted: false, requiredGaps: [{ id: unsupported!.outcome.deferred_reason,
+            failure_kind: 'capability_missing' }] }] });
+        assert(!current.completionEligible && current.completionBlocking.some(problem => problem.action === 'wait'
+          && problem.detail.includes('capability_missing')), '当前能力真实缺口保持具体等待，不能历史outcomes聚合签完成');
         assert(events.length === 1 && events[0].type === 'phase_verdict', '只应落标准 phase_verdict');
         assert(events.every(event => event.type !== 'agent_invoke_start'), '不得启动 agent');
 

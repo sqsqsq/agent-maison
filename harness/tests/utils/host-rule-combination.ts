@@ -16,7 +16,7 @@ import { blueprintIdentityPointers, currentBlueprintIdentity } from '../../scrip
 import { deriveBlueprintSkillInput } from '../../scripts/utils/blueprint-skill-projection';
 import { partitionConstructionFiles } from '../../scripts/utils/phase-write-boundary';
 import { recomputePhaseEvidenceStaleness, loadPhaseEvidenceManifest, createObservedSourceHashReader, sha256File } from '../../scripts/utils/phase-evidence-manifest';
-import { loadAuthoritativeEvents, foldBudgetLineage, resolveResumedBudget, type GoalRunEvent } from '../../scripts/utils/goal-runner-phase';
+import { loadAuthoritativeEvents, readSupersededAncestorRuns, readExecutionActivity, type GoalRunEvent } from '../../scripts/utils/goal-runner-phase';
 import { loadLineageRunEvents } from '../../scripts/utils/goal-run-creation';
 import type { FactsInvocationContext } from '../../scripts/utils/context-facts';
 import { runGateHarness } from '../unit/real-chain-seams.unit.test';
@@ -412,19 +412,19 @@ export async function rc10HostRuleCombination(record: '20261019' | '20261020' = 
       if (upstream === 'design-repair') {
         const manifestFile = path.join(root, rel, 'goal-runs', project.runId!, 'manifest.json');
         const currentManifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8'));
-        const folded = foldBudgetLineage({ projectRoot: root, featuresDir: 'doc/features', feature, currentEvents: result.events as GoalRunEvent[] });
-        assert(folded.ancestorRuns.length, 'the CLI must let the normal continuation decision replace stale birth bindings');
-        if (folded.ancestorRuns.length) {
-          const originalManifest = JSON.parse(fs.readFileSync(path.join(root, rel, 'goal-runs', folded.ancestorRuns[0].run_id, 'manifest.json'), 'utf8'));
+        const ancestors = readSupersededAncestorRuns({ projectRoot: root, featuresDir: 'doc/features', feature, currentEvents: result.events as GoalRunEvent[] });
+        assert(ancestors.length, 'the CLI must let the normal continuation decision replace stale birth bindings');
+        if (ancestors.length) {
+          const originalManifest = JSON.parse(fs.readFileSync(path.join(root, rel, 'goal-runs', ancestors[0].run_id, 'manifest.json'), 'utf8'));
           assert.equal(currentManifest.requirement, originalManifest.requirement, 'automatic continuation must not create a requirement increment');
-          assert.deepStrictEqual(currentManifest.budget, originalManifest.budget, 'automatic continuation must retain the hard budget');
-          const own = resolveResumedBudget(result.events as GoalRunEvent[]).totalTurns;
-          const cumulative = resolveResumedBudget(folded.budgetFoldEvents).totalTurns;
+          assert.equal(currentManifest.budget, undefined, 'new continuation manifest cannot create a quota');
+          const own = readExecutionActivity(result.events as GoalRunEvent[]).calls;
+          const cumulative = readExecutionActivity([...ancestors.flatMap(run => run.events), ...result.events] as GoalRunEvent[]).calls;
           assert(cumulative > own, 'existing lineage reducer must include earlier design/phase calls');
           // The intentional review handoff throws before the next disk snapshot; read that same event boundary live.
           const progress = projectGoalProgress({ projectRoot: root, manifest: currentManifest, events: result.events as GoalRunEvent[],
-            workflow: resolveWorkflowSpec(root, { frameworkRoot }), featuresDir: 'doc/features' });
-          assert.equal(progress.budget.turns_used, cumulative);
+            frameworkRoot, workflow: resolveWorkflowSpec(root, { frameworkRoot }), featuresDir: 'doc/features' });
+          assert.equal(progress.activity!.calls, cumulative);
         }
         assert(!result.invokedPhases.slice(result.invokedPhases.indexOf('design-repair-questioning') + 1).some(phase => phase.startsWith('design-repair-')), 'automatic continuation must not redispatch the completed owner repair');
       }

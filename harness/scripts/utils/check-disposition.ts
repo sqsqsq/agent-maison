@@ -308,7 +308,7 @@ export interface CurrentDispositionPhaseFact {
   /** 视觉/资源债务开放条数（只在 testing 投影 release 影响）。 */
   openDebt?: number;
   /** 已核实且仍未处置、归属于本阶段的发现（原候选/责任链输出，不是原始问题表行）。 */
-  openFindings?: ReadonlyArray<{ id: string; detail: string; owner?: string; source_phase?: string; verificationRequired?: boolean; affects?: CurrentProblemAffects; files?: readonly string[]; evidence?: readonly string[] }>;
+  openFindings?: ReadonlyArray<{ id: string; detail: string; owner?: string; source_phase?: string; verificationRequired?: boolean; affects?: CurrentProblemAffects; files?: readonly string[]; evidence?: readonly string[]; item_fingerprint?: string }>;
 }
 
 export interface CurrentDispositionInput {
@@ -339,6 +339,8 @@ export interface CurrentDispositionProblem {
   /** Existing check/candidate references, projected for actionable feedback and comparison. */
   files?: readonly string[];
   evidence?: readonly string[];
+  /** The existing producer-bound finding identity, projected without creating another ID. */
+  item_fingerprint?: string;
 }
 
 export interface CurrentDisposition {
@@ -406,6 +408,7 @@ export function resolveCurrentDisposition(input: CurrentDispositionInput): Curre
       if (check.verificationRequired || testStrength && (check.verification?.verdict === 'unclear' || check.verification?.verdict === 'confirmed')) {
         push({ phase: phaseName, id: check.id, action: testStrength && check.verification?.verdict === 'confirmed' ? 'repair' : 'verify',
           affects: 'completion', severity: 'BLOCKER', owner: check.repair_owner ?? phaseName, files: check.affected_files,
+          ...(check.evidence?.length ? { evidence: check.evidence } : {}),
           detail: `测试/当前结果须由独立职责核实：${check.details ?? check.id}${check.verification?.evidence ? `；${check.verification.evidence}` : ''}` });
         continue;
       }
@@ -514,6 +517,7 @@ export function resolveCurrentDisposition(input: CurrentDispositionInput): Curre
       push({
         phase: finding.source_phase ?? phaseName,
         id: `open_finding:${finding.id}`,
+        ...(finding.item_fingerprint ? { item_fingerprint: finding.item_fingerprint } : {}),
         action: disclose ? 'disclose' : finding.verificationRequired ? 'verify' : 'repair',
         affects: disclose ? 'release' : 'completion',
         severity: disclose ? 'MAJOR' : 'BLOCKER',
@@ -568,7 +572,8 @@ export function renderCurrentDisposition(disposition: CurrentDisposition): strin
   if (!disposition.problems.length) return '当前适用验收没有未完项；完整请求及发布按同一终点评估签发。';
   return disposition.problems.map(problem => `[${problem.phase}] ${problem.id}；动作=${problem.action}；责任=${problem.owner ?? '当前工作单元'}；${problem.detail}`
     + (problem.files?.length ? `；对象=${problem.files.join(', ')}` : '')
-    + (problem.evidence?.length ? `；依据=${problem.evidence.join(', ')}` : '')).join('\n');
+    + (problem.evidence?.length ? `；依据=${problem.evidence.join(', ')}` : '')
+    + (problem.item_fingerprint ? `；item_fingerprint: ${problem.item_fingerprint}` : '')).join('\n');
 }
 
 /** summary 的被披露失败清单一条（§4.3）。 */

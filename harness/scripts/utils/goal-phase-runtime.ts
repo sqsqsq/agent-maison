@@ -13,10 +13,6 @@ import {
   type RunFenceToken,
 } from './goal-run-control';
 import { writeHandoffRequest } from './goal-handoff';
-import { recommendationAuthorized } from './phase-transition-policy';
-
-export { recommendationAuthorized } from './phase-transition-policy';
-
 export { GoalPhaseRuntime } from '../goal-phase-runtime';
 
 export interface InSessionPhaseOutcome {
@@ -26,7 +22,7 @@ export interface InSessionPhaseOutcome {
 }
 
 export interface InSessionRoundResult {
-  status: 'executed' | 'waiting' | 'reconciled' | 'fused' | 'manual_fallback';
+  status: 'executed' | 'waiting' | 'reconciled' | 'fused';
   run_id?: string;
   exit_code?: number;
   recovery?: { reason?: string; probe?: unknown; guidance?: string };
@@ -65,7 +61,6 @@ export interface InSessionRoundOptions {
 }
 
 export interface GoalModeInSessionOptions extends Omit<InSessionRoundOptions, 'round' | 'reconcile'> {
-  maxRounds?: number;
   onRound?: (result: InSessionRoundResult) => void;
 }
 
@@ -132,7 +127,7 @@ export async function runAttendedGoalPhaseRuntime(
 
 /** Compatibility bridge only: there is no independent attended round implementation. */
 export function runInSessionRound(options: InSessionRoundOptions): Promise<InSessionRoundResult> {
-  return runAttendedGoalPhaseRuntime({ ...options, maxRounds: 1 });
+  return runAttendedGoalPhaseRuntime(options);
 }
 
 export function handoffSessionToDetached(

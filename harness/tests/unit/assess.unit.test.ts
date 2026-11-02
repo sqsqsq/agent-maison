@@ -30,8 +30,6 @@ import {
   assessAndRenderNextStep,
   formatAssessNextStep,
 } from '../../scripts/utils/assess-renderer';
-import { selectRunnerActionFromAssess } from '../../scripts/utils/goal-assess-driver';
-import { recommendationAuthorized } from '../../scripts/utils/phase-transition-policy';
 import { resolveCurrentDisposition, type CurrentDispositionPhaseFact } from '../../scripts/utils/check-disposition';
 import { repairResponsibilityContext } from '../../scripts/utils/repair-responsibility';
 import { fixture as unitFixture } from './standalone-coding-review.unit.test';
@@ -178,9 +176,9 @@ const prunedPropagationCase: Case = {
       });
       assert(observed.pruned_propagations?.length === 1, JSON.stringify(observed.pruned_propagations));
       const result = assessObservation(observed);
-      assert(result.gaps[0]?.kind === 'pruned', JSON.stringify(result.gaps));
-      assert(result.recommendation.action === 'restore_inputs_and_rerun', JSON.stringify(result.recommendation));
-      assert(result.recommendation.phase === 'spec', JSON.stringify(result.recommendation));
+      assert(result.gaps.length > 0, JSON.stringify(result.gaps));
+      assert(result.recommendation.action === 'continue_work_unit' && result.recommendation.phase === null, JSON.stringify(result.recommendation));
+      assert(result.recommendation.runner_action === undefined, 'projection must not grant a phase dispatch');
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -206,37 +204,45 @@ const producerOwnedInputGapCase: Case = {
       assert(plan.blocked_capabilities?.[0]?.unresolved[0]?.upstream_producer === 'spec', JSON.stringify(plan));
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
 
-    const phases: AssessObservation['phases'] = [
-      phase({ phase: 'spec' }),
-      phase({
-        phase: 'plan', verdict: 'FAIL', closure: 'open', deferred: false,
-        blocked_capabilities: [{
-          capability: 'capability_plan_core', axis: 'functional', applicability_provider: null,
-          applicability_dependencies: [],
-          unresolved: [{ input: 'acceptance', source: 'acceptance@1',
-            upstream_producer: 'spec', detail: 'acceptance@1 missing', dependencies: [] }],
-        }],
-      }),
-    ];
-    const reconcile: AssessObservation['reconcile'] = {
-      schema_version: '1.0', state: 'active',
-      phase_outcome: { phase: 'plan', verdict: 'FAIL', legacy_action: 'retry' },
-      budgets: { retries_used: 0, max_retries_per_phase: 2, backtracks_used: 0 },
-      residual_fingerprints: [], invalidatable_phases: ['spec', 'plan'],
-    };
-    const assessed = assessObservation({
-      schema_version: '1.0', feature: 'demo', workflow: 'spec-driven', track: 'full', goal_end: 'plan', phases,
-      fingerprints: { workflow: H, track: H, goal: H, run_attempt: H, summaries: H, evidence: H, reconcile: H, observed: H },
-      reconcile,
-    }, { mode: 'goal_mode' });
-    assert(assessed.gaps[0]?.phase === 'spec' && assessed.gaps[0]?.detail.includes('acceptance@1'), JSON.stringify(assessed.gaps));
-    assert(assessed.recommendation.phase === 'spec' && assessed.recommendation.runner_action === 'backtrack_to_phase', JSON.stringify(assessed.recommendation));
+
   },
 };
 const cases: Case[] = [
   authorizedDegradationCase,
   prunedPropagationCase,
   producerOwnedInputGapCase,
+  {
+    name: 'current endpoint matrix preserves every actual gap and never selects a cold phase or historical quota exit',
+    run: () => {
+      const facts: CurrentDispositionPhaseFact[] = [
+        { phase: 'spec', summaryPresent: false, verdict: null, schemaCurrent: false, closureCommitted: false },
+        { phase: 'spec', summaryPresent: true, schemaCurrent: false, verdict: 'PASS', closureCommitted: true,
+          summaryErrors: ['historical summary has no current verified contract'] },
+        { phase: 'spec', summaryPresent: true, schemaCurrent: true, verdict: 'PASS', closureCommitted: true,
+          lineage: 'stale', lineageDetail: 'doc/features/demo/acceptance.yaml changed' },
+        { phase: 'spec', summaryPresent: true, schemaCurrent: true, verdict: 'FAIL', closureCommitted: false,
+          checks: [{ id: 'real_assertion', status: 'FAIL', severity: 'BLOCKER', details: 'exact original failure' }] },
+        { phase: 'spec', summaryPresent: true, schemaCurrent: true, verdict: 'INCOMPLETE', closureCommitted: false,
+          checks: [{ id: 'missing_device', status: 'FAIL', severity: 'BLOCKER', details: 'exact device recovery condition',
+            failure_kind: 'device_blocked', blocking_class: 'externalBlocked' }] },
+      ];
+      for (const fact of facts) {
+        const currentDisposition = resolveCurrentDisposition({ endpoint: 'feature-completion', phases: [fact] });
+        const assessed = assessObservation({ ...observation(), currentDisposition, reconcile: {
+          schema_version: '1.0', state: 'fused', reason: 'historical quota', residual_fingerprints: [],
+          budgets: { retries_used: 999, max_retries_per_phase: 0, backtracks_used: 999 } } });
+        assert(assessed.recommendation.phase === null && assessed.recommendation.runner_action === undefined, 'projection cannot dispatch old phases');
+        assert(!assessed.stop.fused && assessed.run_status_candidate === null,
+          'old controls cannot stop current work or sign completion: ' + JSON.stringify({ fact, currentDisposition, assessed }));
+        for (const problem of currentDisposition.completionBlocking) assert(assessed.recommendation.reason.includes(problem.detail), 'all original current facts must survive');
+      }
+      const currentDisposition = resolveCurrentDisposition({ endpoint: 'request', phases: [{ phase: 'spec', verdict: 'PASS', schemaCurrent: true,
+        closureCommitted: false, checks: [{ id: 'actual_checked_object', status: 'PASS', severity: 'BLOCKER' }] }] });
+      const completed = assessObservation({ ...observation(), currentDisposition });
+      assert(completed.recommendation.action === 'validate_feature_completion' && completed.feature_completion === 'REQUIRES_VALIDATION',
+        'completed request still requires its distinct formal endpoint');
+    },
+  },
   {
     name: 'current disposition wait outranks derived publication gaps while genuine repair, verification and changed inputs remain executable',
     run: () => {
@@ -257,104 +263,23 @@ const cases: Case[] = [
             budgets: { retries_used: 0, max_retries_per_phase: 2, backtracks_used: 0 }, invalidatable_phases: ['review', 'ut'] },
         }, { mode: 'goal_mode' });
         const waiting = assess(review);
-        assert(waiting.recommendation.runner_action === 'advance', JSON.stringify(waiting.recommendation));
+        assert(waiting.recommendation.phase === null && waiting.recommendation.runner_action === undefined, JSON.stringify(waiting.recommendation));
         for (const problem of currentView(review).completionBlocking) assert(waiting.gaps.some(gap => gap.detail === `${problem.id}: ${problem.detail}`),
           `the recommendation must retain every actual publication and waiting fact: ${problem.id}`);
         assert(waiting.observed.phases.find(phase => phase.phase === 'review')?.closure === 'open' && waiting.run_status_candidate === null,
           'an incomplete waiting stage stays open and cannot claim completion');
         const repaired = assess({ ...review, openFindings: [{ id: 'current_required_review_work', detail: 'current independently confirmed work', owner: 'review' }] });
-        assert(repaired.recommendation.runner_action === 'backtrack_to_phase' && repaired.recommendation.phase === 'review', JSON.stringify(repaired.recommendation));
+        assert(repaired.recommendation.action === 'continue_work_unit' && repaired.recommendation.phase === null, JSON.stringify(repaired.recommendation));
         assert(repaired.recommendation.reason.includes('current_required_review_work'), 'a real repair must not be hidden by the framework wait');
         const verify = assess({ ...review, requiredGaps: [], axes: { evidence: { applicable: true, required_for_release: true,
           verdict: 'UNVERIFIED', resolution: { class: 'needs_fix', owner: 'review', retry_phase: 'review' }, source_checks: ['current_material'] } } },
           { verification_gaps: undefined });
-        assert(verify.recommendation.runner_action === 'backtrack_to_phase' && verify.recommendation.phase === 'review', 'a deferred display flag cannot suppress a real current verification task');
+        assert(verify.recommendation.action === 'continue_work_unit' && verify.recommendation.phase === null, 'a deferred display flag cannot suppress a real current verification task');
         const changedInput = assess({ ...review, verdict: 'PASS', requiredGaps: [], closureCommitted: true, lineage: 'stale',
           lineageDetail: 'src/demo/value.ts changed', attestationPresent: true },
           { verdict: 'PASS', deferred: false, closure: 'stale', closure_stale_detail: 'src/demo/value.ts changed', verification_gaps: undefined });
-        assert(changedInput.recommendation.runner_action === 'backtrack_to_phase' && changedInput.recommendation.phase === 'review', 'real input drift must still return to its verification owner');
+        assert(changedInput.recommendation.action === 'continue_work_unit' && changedInput.recommendation.phase === null, 'real input drift must still return to its verification owner');
       } finally { clearFrameworkConfigCache(); fs.rmSync(unit.root, { recursive: true, force: true }); }
-    },
-  },
-  {
-    name: 'P2-T5 fresh coding regression wins over unrelated stale plan observation',
-    run: () => {
-      const phases = [
-        phase({ phase: 'plan', closure: 'stale', closure_stale_detail: 'src/demo/value.ts' }),
-        phase({ phase: 'coding', verdict: 'FAIL', closure: 'open' }),
-      ];
-      const result = assessObservation({
-        schema_version: '1.0', feature: 'demo', workflow: 'spec-driven', track: 'full', goal_end: 'coding', phases,
-        fingerprints: { workflow: H, track: H, goal: H, run_attempt: H, summaries: H, evidence: H, reconcile: H, observed: H },
-        reconcile: {
-          schema_version: '1.0', state: 'active',
-          phase_outcome: { phase: 'coding', verdict: 'FAIL', legacy_action: 'retry', failure_kind: 'code_regression' },
-          budgets: { retries_used: 0, max_retries_per_phase: 2, backtracks_used: 0 },
-          residual_fingerprints: [], invalidatable_phases: ['plan', 'coding'],
-        },
-      }, { mode: 'goal_mode' });
-      assert(result.recommendation.phase === 'coding' && result.recommendation.runner_action === 'retry', JSON.stringify(result.recommendation));
-    },
-  },
-  {
-    name: 'P2-T5 external defer wins over a simultaneous upstream producer input',
-    run: () => {
-      const phases = [phase({ phase: 'spec' }), phase({
-        phase: 'plan', verdict: 'INCOMPLETE', closure: 'open', deferred: true,
-        blocked_capabilities: [{
-          capability: 'capability_plan_core', axis: 'functional', applicability_provider: null,
-          applicability_dependencies: [], unresolved: [{ input: 'acceptance', source: 'acceptance@1', upstream_producer: 'spec', dependencies: [] }],
-        }],
-      })];
-      const result = assessObservation({
-        schema_version: '1.0', feature: 'demo', workflow: 'spec-driven', track: 'full', goal_end: 'plan', phases,
-        fingerprints: { workflow: H, track: H, goal: H, run_attempt: H, summaries: H, evidence: H, reconcile: H, observed: H },
-        reconcile: {
-          schema_version: '1.0', state: 'active',
-          phase_outcome: { phase: 'plan', verdict: 'INCOMPLETE', legacy_action: 'none', failure_kind: 'device_blocked', blocking_class: 'externalBlocked', dependency_policy: { deferrable_blocking_classes: ['externalBlocked'], deferrable_failure_kinds: ['device_blocked'], propagate_to_downstream: false } },
-          budgets: { retries_used: 0, max_retries_per_phase: 2, backtracks_used: 0 }, residual_fingerprints: [],
-        },
-      }, { mode: 'goal_mode' });
-      assert(result.recommendation.action === 'resolve_deferred' && result.recommendation.runner_action === 'defer_external_and_halt', JSON.stringify(result.recommendation));
-    },
-  },
-  {
-    name: 'P2-T5 stale owner input is display-only while the current harness failure decides',
-    run: () => {
-      const phases = [phase({ phase: 'spec' }), phase({
-        phase: 'plan', verdict: 'FAIL', closure: 'open', deferred: false,
-        blocked_capabilities: [{
-          capability: 'capability_plan_core', axis: 'functional', applicability_provider: null,
-          applicability_dependencies: [], unresolved: [{ input: 'acceptance', source: 'acceptance@1', upstream_producer: 'spec', dependencies: [] }],
-        }],
-      })];
-      const assess = (fresh: boolean) => assessObservation({
-        schema_version: '1.0', feature: 'demo', workflow: 'spec-driven', track: 'full', goal_end: 'plan', phases,
-        fingerprints: { workflow: H, track: H, goal: H, run_attempt: H, summaries: H, evidence: H, reconcile: H, observed: H },
-        reconcile: {
-          schema_version: '1.0', state: 'active', current_summary_fresh: fresh,
-          phase_outcome: { phase: 'plan', verdict: 'FAIL', legacy_action: 'halt', failure_kind: 'deterministic_gate_or_artifact_missing' },
-          budgets: { retries_used: 2, max_retries_per_phase: 2, backtracks_used: 0 }, residual_fingerprints: [],
-        },
-      }, { mode: 'goal_mode' });
-      const stale = assess(false);
-      assert(stale.recommendation.phase !== 'spec' && stale.recommendation.runner_action === 'halt', JSON.stringify(stale.recommendation));
-      const fresh = assess(true);
-      assert(fresh.recommendation.phase === 'spec' && fresh.recommendation.runner_action === 'backtrack_to_phase', JSON.stringify(fresh.recommendation));
-    },
-  },
-  {
-    name: 'no-reconcile multi-phase gaps choose the first workflow gap',
-    run: () => {
-      const multi = observation();
-      multi.goal_end = 'plan';
-      multi.phases = [
-        phase({ phase: 'spec', summary_state: 'missing', schema_version: null, verdict: null, closure: 'open', assurance: 'unknown' }),
-        phase({ phase: 'plan', summary_state: 'missing', schema_version: null, verdict: null, closure: 'open', assurance: 'unknown' }),
-      ];
-      const result = assessObservation(multi);
-      assert(result.recommendation.action === 'run_phase', JSON.stringify(result.recommendation));
-      assert(result.recommendation.phase === 'spec', JSON.stringify(result.recommendation));
     },
   },  {
     name: 'assess CLI --no-write maps to write=false',
@@ -374,7 +299,7 @@ const cases: Case[] = [
         assert(!fs.existsSync(featureFilePath(s.root, feature, 'spec/reports/summary.json')), '前提：spec summary 缺');
         fs.rmSync(featureFilePath(s.root, feature, 'coding/reports/phase-evidence-manifest.json'));
         const cli = spawnSync(process.execPath, [require.resolve('ts-node/dist/bin.js'), '--transpile-only', path.join(HARNESS_ROOT, 'scripts', 'assess.ts'),
-          '--feature', feature, '--project-root', s.root, '--framework-root', s.frameworkRoot], {
+          '--feature', feature, '--project-root', s.root, '--framework-root', s.frameworkRoot, '--write'], {
           cwd: HARNESS_ROOT, encoding: 'utf8', timeout: 180_000, env: { ...process.env, TS_NODE_PROJECT: path.join(HARNESS_ROOT, 'tsconfig.json') },
         });
         assert(cli.status === 0, `assess CLI exit=${cli.status}: ${cli.stderr}`);
@@ -384,8 +309,8 @@ const cases: Case[] = [
         };
         assert(out.feature_assessment.record.state === 'ok', JSON.stringify(out.feature_assessment.record));
         assert(JSON.stringify([...new Set(out.feature_assessment.uncovered.map(o => o.owner_phase))]) === '["coding"]', `前提：只有 coding uncovered：${JSON.stringify(out.feature_assessment.uncovered)}`);
-        assert(out.recommendation.action === 'run_phase' && out.recommendation.phase === 'coding', JSON.stringify(out.recommendation));
-        assert(out.recommendation.reason.includes(`--supersede ${out.feature_assessment.record.run_id}`), out.recommendation.reason);
+        assert(out.recommendation.action === 'continue_work_unit' && out.recommendation.phase === null, JSON.stringify(out.recommendation));
+        assert(out.recommendation.reason.includes('coding'), out.recommendation.reason);
         const next = JSON.parse(fs.readFileSync(nextProjectionPath(s.root, feature), 'utf8')) as typeof out;
         assert(JSON.stringify(next.recommendation) === JSON.stringify(out.recommendation), `next.json ≠ stdout：${JSON.stringify(next.recommendation)}`);
         assert(next.projection_fingerprint === out.projection_fingerprint, 'projection_fingerprint 不一致');
@@ -403,10 +328,9 @@ const cases: Case[] = [
       try {
         const { newDuty } = runlessCompletionThenRevision(root, frameworkRoot, feature);
         const result = assessFeature({ projectRoot: root, frameworkRoot, feature, writeProjection: false });
-        assert(result.recommendation.action === 'run_phase' && result.recommendation.phase === 'plan', JSON.stringify(result.recommendation));
+        assert(result.recommendation.action === 'continue_work_unit' && result.recommendation.phase === null, JSON.stringify(result.recommendation));
         assert(result.recommendation.reason.includes(newDuty), result.recommendation.reason);
         assert(!result.recommendation.reason.includes('--supersede'), result.recommendation.reason);
-        assert(result.recommendation.reason.includes('feature 载体：先按当前输入追加范围修订再起新 run'), result.recommendation.reason);
       } finally {
         clearFrameworkConfigCache();
         fs.rmSync(root, { recursive: true, force: true });
@@ -434,12 +358,6 @@ const cases: Case[] = [
         assert(JSON.stringify(chain) === '["coding","review","ut"]', `观察范围须按工作流顺序包含真实复用与本次执行：${JSON.stringify(chain)}`);
         const rendered = formatAssessNextStep(r, { phase: 'ut', mode: 'manual', status: 'PASS/closed' });
         assert(rendered.includes('recommendation=feature_completed') && rendered.includes('authorization=none'), rendered);
-        const action = selectRunnerActionFromAssess({
-          assessment: r, observation: { schema_version: '1.0', state: 'active', residual_fingerprints: [] } as never,
-          currentPhase: 'ut', chain, driverGuardAction: 'none',
-        });
-        assert(action === 'advance', `driver 映射须为 advance：${action}`);
-        assert(!recommendationAuthorized(r.recommendation, { mode: 'goal_mode' }, chain), 'feature_completed 没有可授权的执行');
         // 观察器另有缺口（快照 coding assurance=degraded，调用方要求 full）时，缺口仍以唯一完成评估为准；observed 原样保留。
         const strict = assessFeature({ projectRoot: s.root, frameworkRoot: s.frameworkRoot, feature, minimumAssurance: { coding: 'full' }, writeProjection: false });
         assert(strict.recommendation.action === 'feature_completed' && strict.gaps.length === 0, JSON.stringify({ rec: strict.recommendation, gaps: strict.gaps }));
@@ -466,9 +384,9 @@ const cases: Case[] = [
         fs.writeFileSync(originalFile, text);
         fs.writeFileSync(projectionFile, JSON.stringify({ ...projection, original_sha256: crypto.createHash('sha256').update(text, 'utf-8').digest('hex') }));
         const broken = assessFeature({ projectRoot: s.root, frameworkRoot: s.frameworkRoot, feature, writeProjection: false });
-        assert(broken.recommendation.action === 'validate_feature_completion', JSON.stringify(broken.recommendation));
+        assert(broken.recommendation.action === 'continue_work_unit', JSON.stringify(broken.recommendation));
         assert(broken.recommendation.requires_driver_authorization === true, JSON.stringify(broken.recommendation));
-        assert(broken.feature_completion === 'REQUIRES_VALIDATION', String(broken.feature_completion));
+        assert(broken.feature_completion === null, String(broken.feature_completion));
         assert(formatAssessNextStep(broken, { phase: 'ut', mode: 'manual', status: 'PASS' }).includes('authorization=driver_required'), 'broken 记录须要求驱动授权');
 
         fs.rmSync(projectionFile);
@@ -479,141 +397,6 @@ const cases: Case[] = [
         clearFrameworkConfigCache();
         fs.rmSync(s.root, { recursive: true, force: true });
       }
-    },
-  },
-  {
-    name: 'PASS-open recommends closure before downstream work',
-    run: () => {
-      const result = assessObservation(observation({ closure: 'open' }));
-      assert(result.gaps[0]?.kind === 'unclosed', JSON.stringify(result.gaps));
-      assert(result.recommendation.action === 'complete_closure', result.recommendation.action);
-      assert(result.run_status_candidate === null, 'open phase cannot complete');
-    },
-  },
-  {
-    name: 'PASS-open closure recommendation is identical with an active PASS reconcile outcome',
-    run: () => {
-      const baseline = assessObservation(observation({ closure: 'open' }));
-      const reconciled = assessObservation(observation({ closure: 'open' }, {
-        schema_version: '1.0',
-        state: 'active',
-        phase_outcome: { phase: 'spec', verdict: 'PASS', legacy_action: 'advance' },
-        budgets: { retries_used: 0, max_retries_per_phase: 2, backtracks_used: 0 },
-        residual_fingerprints: [],
-      }));
-      assert(reconciled.recommendation.action === baseline.recommendation.action, JSON.stringify(reconciled.recommendation));
-      assert(reconciled.recommendation.phase === baseline.recommendation.phase, JSON.stringify(reconciled.recommendation));
-      assert(reconciled.recommendation.reason === baseline.recommendation.reason, JSON.stringify(reconciled.recommendation));
-    },
-  },  {
-    name: 'legacy closed is legacy_unverified',
-    run: () => {
-      const result = assessObservation(observation({
-        summary_state: 'legacy',
-        schema_version: '1.1',
-        closure: 'closed',
-        assurance: 'unknown',
-      }));
-      assert(result.gaps[0]?.kind === 'legacy_unverified', JSON.stringify(result.gaps));
-      assert(result.recommendation.action === 'rerun_phase', result.recommendation.action);
-    },
-  },
-  {
-    name: 'FAIL and DEFERRED remain distinct',
-    run: () => {
-      const failed = assessObservation(observation({ verdict: 'FAIL', closure: 'open' }));
-      const deferred = assessObservation(observation({
-        verdict: 'INCOMPLETE',
-        closure: 'open',
-        deferred: true,
-      }));
-      assert(failed.gaps[0]?.kind === 'failed', JSON.stringify(failed.gaps));
-      assert(deferred.gaps[0]?.kind === 'deferred', JSON.stringify(deferred.gaps));
-      assert(deferred.recommendation.action === 'resolve_deferred', deferred.recommendation.action);
-    },
-  },
-  {
-    name: 'stale closure requires rerun（gap detail 携带 changed_paths 原文——读者不用猜根因）',
-    run: () => {
-      const result = assessObservation(observation({
-        closure: 'stale',
-        closure_stale_detail: 'doc/features/demo/spec/reports/fidelity-intent.json',
-      }));
-      assert(result.gaps[0]?.kind === 'stale', JSON.stringify(result.gaps));
-      assert(result.recommendation.action === 'rerun_phase', result.recommendation.action);
-      // codex 定点（宿主 run 6cb1da 两连误判归因的根治）：detail 必须含具体变更路径原文
-      assert(
-        (result.gaps[0]?.detail ?? '').includes('doc/features/demo/spec/reports/fidelity-intent.json'),
-        `stale gap detail 应携带 changed_paths 原文：${result.gaps[0]?.detail}`,
-      );
-      // 无明细时保持旧文案（不崩、不带空括号）
-      const bare = assessObservation(observation({ closure: 'stale' }));
-      assert(bare.gaps[0]?.detail === 'phase evidence manifest 非 fresh', bare.gaps[0]?.detail);
-    },
-  },
-  {
-    name: 'insufficient assurance restores inputs before rerun',
-    run: () => {
-      const result = assessObservation(observation({
-        assurance: 'degraded',
-        required_assurance: 'full',
-        assurance_satisfied: false,
-      }));
-      assert(result.gaps[0]?.kind === 'insufficient_assurance', JSON.stringify(result.gaps));
-      assert(result.recommendation.action === 'restore_inputs_and_rerun', result.recommendation.action);
-    },
-  },
-  {
-    name: 'reconciled state emits chain-slice candidate and still requires validation',
-    run: () => {
-      const result = assessObservation(observation());
-      assert(result.gaps.length === 0, JSON.stringify(result.gaps));
-      assert(result.run_status_candidate === 'CHAIN_SLICE_COMPLETED', String(result.run_status_candidate));
-      assert(result.feature_completion === 'REQUIRES_VALIDATION', String(result.feature_completion));
-      assert(!JSON.stringify(result).includes('"COMPLETED"'), 'must not emit naked COMPLETED');
-    },
-  },
-  {
-    name: 'stop/halt recommendation cannot emit a completed candidate',
-    run: () => {
-      const result = assessObservation(observation({}, {
-        schema_version: '1.0',
-        state: 'active',
-        phase_outcome: { phase: 'spec', verdict: 'FAIL', legacy_action: 'retry' },
-        budgets: { retries_used: 2, max_retries_per_phase: 2, backtracks_used: 0 },
-        residual_fingerprints: [],
-      }));
-      assert(result.gaps.length === 0, JSON.stringify(result.gaps));
-      assert(result.recommendation.action === 'stop', JSON.stringify(result.recommendation));
-      assert(result.recommendation.runner_action === 'halt', JSON.stringify(result.recommendation));
-      assert(result.run_status_candidate === null, String(result.run_status_candidate));
-      assert(result.feature_completion === null, String(result.feature_completion));
-      const retrying = assessObservation(observation({}, {
-        schema_version: '1.0',
-        state: 'active',
-        phase_outcome: { phase: 'spec', verdict: 'FAIL', legacy_action: 'retry' },
-        budgets: { retries_used: 0, max_retries_per_phase: 2, backtracks_used: 0 },
-        residual_fingerprints: [],
-      }));
-      assert(retrying.recommendation.action === 'rerun_phase', JSON.stringify(retrying.recommendation));
-      assert(retrying.run_status_candidate === null, 'retrying failure cannot complete');
-    },
-  },  {
-    name: 'fuse stops recommendation without reading orchestration events',
-    run: () => {
-      const reconcile = {
-        schema_version: '1.0' as const,
-        state: 'fused' as const,
-        reason: 'same fingerprint repeated',
-        residual_fingerprints: ['deadbeef'],
-      };
-      const fused = assessObservation(observation({}, reconcile));
-      const resumed = assessObservation(observation({}, { ...reconcile, state: 'active', reason: 'resumed' }));
-      assert(fused.stop.fused, 'fuse flag missing');
-      assert(fused.recommendation.action === 'stop', fused.recommendation.action);
-      assert(fused.stop.reason === 'same fingerprint repeated', String(fused.stop.reason));
-      assert(!resumed.stop.fused, 'active reconcile must not inherit fused stop');
-      assert(resumed.recommendation.action !== 'stop', resumed.recommendation.action);
     },
   },
   {
@@ -638,13 +421,15 @@ const cases: Case[] = [
           feature: 'demo',
           goalEnd: 'spec',
         };
-        const first = assessFeature(opts);
+        const first = assessFeature({ ...opts, writeProjection: true });
         const second = assessFeature(opts);
         assert(first.projection_fingerprint === second.projection_fingerprint, 'assessment not idempotent');
         assert(readFreshNextOrRecompute(opts).source === 'fresh_projection', 'projection should be fresh');
 
         fs.writeFileSync(nextProjectionPath(root, 'demo'), '{broken', 'utf8');
         assert(readFreshNextOrRecompute(opts).source === 'recomputed_corrupt', 'corrupt cache not recomputed');
+        assert(fs.readFileSync(nextProjectionPath(root, 'demo'), 'utf8') === '{broken', 'read must not rewrite corrupt cache');
+        assessFeature({ ...opts, writeProjection: true });
 
         const reports = path.join(root, 'doc', 'features', 'demo', 'spec', 'reports');
         fs.mkdirSync(reports, { recursive: true });
@@ -713,7 +498,7 @@ const cases: Case[] = [
       }
     },
   },  {
-    name: 'renderer is bounded, outside HARNESS_SUMMARY, and process-once',
+    name: 'renderer preserves current feedback outside HARNESS_SUMMARY and remains process-once',
     run: () => {
       const root = mkProject();
       const writes: string[] = [];
@@ -731,7 +516,8 @@ const cases: Case[] = [
           mode: 'manual',
           status: 'PASS/open',
         });
-        assert(formatted.split('\n').length === 7, formatted);
+        assert(formatted.startsWith('NEXT_STEP\n'), formatted);
+        assert(formatted.includes(result.recommendation.reason), 'current actionable feedback must remain complete');
         assert(!formatted.includes('HARNESS_SUMMARY'), 'renderer polluted machine block');
 
         __testing_resetAssessRenderer();

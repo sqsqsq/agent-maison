@@ -3,7 +3,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import {
-  classifyPhaseVerdict,
   resolveAutoChain,
   resolveGoalRunStatus,
   formatDeferredUpstreamNotice,
@@ -64,30 +63,6 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert(!chain.includes('spec'), 'excludes prd');
       assert(chain.includes('coding'), 'includes coding');
       assert(chain[chain.length - 1] === 'ut', 'ends ut');
-    },
-  },
-  {
-    name: 'classifyPhaseVerdict: PASS → advance',
-    run: () => {
-      assert(classifyPhaseVerdict({ verdict: 'PASS' }) === 'advance', 'advance');
-    },
-  },
-  {
-    name: 'classifyPhaseVerdict: INCOMPLETE device_blocked → defer',
-    run: () => {
-      const a = classifyPhaseVerdict({
-        verdict: 'INCOMPLETE',
-        failure_kind: 'device_blocked',
-        dependency_policy: DEFAULT_DEPENDENCY_POLICY,
-      });
-      assert(a === 'defer_external_and_continue_if_allowed', a);
-    },
-  },
-  {
-    name: 'classifyPhaseVerdict: FAIL retries → retry then halt',
-    run: () => {
-      assert(classifyPhaseVerdict({ verdict: 'FAIL', retries_used: 0 }) === 'retry', 'retry');
-      assert(classifyPhaseVerdict({ verdict: 'FAIL', retries_used: 2, max_retries_per_phase: 2 }) === 'halt', 'halt');
     },
   },
   {

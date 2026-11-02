@@ -12,7 +12,7 @@ import { resolveWorkflowSpec } from '../../workflow-loader';
 import { writeLocalConfig } from '../../scripts/utils/framework-local-config';
 import { loadGoalRunManifestFromRun, isInitialDesignManifest } from '../../scripts/utils/goal-manifest';
 import { runGoalModeSessionStep as runGoalModeSessionStepUnchecked } from '../../scripts/goal-mode-entry';
-import { readOriginalDeliveryBudget } from '../../scripts/utils/delivery-origin';
+import { readOriginalDeliveryActivity } from '../../scripts/utils/delivery-origin';
 import { enumerateCanonicalChangeUnits, deriveChangeUnitFeatureId, asChangeUnitArtifact } from '../../scripts/utils/change-unit-path';
 import { readFeatureFrozenScope } from '../../scripts/utils/feature-execution-scope';
 import { prepareChangeUnitScopeInput, prepareFeatureScopeCandidate, resolveFeatureExecutionScope } from '../../scripts/utils/feature-track';
@@ -59,7 +59,7 @@ const cases:Array<{name:string;run():Promise<void>}>= [{
       const blueprint=path.join(root,'doc/features/inbox-batch-read/blueprint/component-blueprint.yaml');
       const originalBusiness=blueprintAuthorContent(YAML.parse(fs.readFileSync(blueprint,'utf8')));
       let protectedBefore=[sha(blueprint),sha(unit.canonicalPath)],actualQuestions=0;
-      const before=readOriginalDeliveryBudget(root,original)!;
+      const before=readOriginalDeliveryActivity(root,original)!;
       const options={projectRoot:root,frameworkRoot:framework.frameworkRoot,feature:original.feature,runId:original.run_id,adapter:'codex',runMode:'attended' as const,authorization:{mode:'goal_mode' as const,autonomyAuthorized:true}};
       let first=await runGoalModeSessionStep(options);
       if(first.type==='phase_execute_request'&&first.phase==='initial-design-questioning'){
@@ -91,7 +91,7 @@ const cases:Array<{name:string;run():Promise<void>}>= [{
         assert(error.stack?.includes('at runGoalPreflight ('),'the original machine preflight must be the rejecting source');blocked=true;
       }
       assert(blocked,'the real HMOS prerequisite must still block construction');
-      const after=readOriginalDeliveryBudget(root,original)!;const children=after.runs.filter(run=>!isInitialDesignManifest(run.manifest));assert.equal(children.length,1);
+      const after=readOriginalDeliveryActivity(root,original)!;const children=after.runs.filter(run=>!isInitialDesignManifest(run.manifest));assert.equal(children.length,1);
       const child=children[0].manifest;assert(!isInitialDesignManifest(child));assert(child.execution_scope&&child.phase_chain?.length);assert.deepEqual(child.delivery_origin,{feature:original.feature,run_id:original.run_id});assert.equal(child.requirement,original.requirement);
       assertGoalRunAttachable(root,child);
       const currentScope=resolveFeatureExecutionScope(root,feature,resolveWorkflowSpec(root,{frameworkRoot:framework.frameworkRoot}),framework.frameworkRoot,original.requirement,original.fidelity);assert(currentScope);
@@ -102,7 +102,7 @@ const cases:Array<{name:string;run():Promise<void>}>= [{
       assert(!childEvents.some(event=>['agent_invoke_start','harness_start','harness_end','phase_verdict'].includes(event.type)),'no construction author or machine PASS may bypass the missing toolchain');
       assert.deepEqual([sha(blueprint),sha(unit.canonicalPath)],protectedBefore);
       const newStarts=readEvents().slice(beforeEvents.length).filter(event=>event.type==='agent_invoke_start');assert.equal(newStarts.length,1+actualQuestions);assert.equal(newStarts.at(-1)!.phase,request.context.phase);
-      assert.equal(after.totalTurns,before.totalTurns+1+actualQuestions);assert(after.priorActiveMs>=before.priorActiveMs);assert.equal(child.budget.max_total_turns,30);assert.equal(child.budget.wall_clock_minutes,120);assert.equal(child.unattended.timeout_seconds,900);
+      assert.equal(after.calls,before.calls+1+actualQuestions);assert(after.active_ms>=before.active_ms);assert.equal(child.budget,undefined);assert.equal(child.unattended.timeout_seconds,undefined);
       // This consumer stops at child birth; it claims no Node, device, phase, or P3 acceptance.
     }finally{
       for(const file of Object.keys(require.cache))if(file.startsWith(root+path.sep))delete require.cache[file];clearFrameworkConfigCache();

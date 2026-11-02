@@ -27,18 +27,6 @@ import { assessLivenessBeacon, isBeaconStale, readLivenessBeacon } from './liven
 import type { ProcessProbe } from './device-session';
 import { canRecheckLegacyBacktrackLimit } from './goal-runner-phase';
 
-/** 单 run 的重启上限——防重启风暴。超过即停手并留痕，绝不无限拉。 */
-export const MAX_SUPERVISED_RESTARTS = 3;
-
-/** 退避基数；第 n 次重启前等待 base × 2^(n-1)（指数退避，上界见 MAX_BACKOFF_MS）。 */
-export const RESTART_BACKOFF_BASE_MS = 30_000;
-export const MAX_RESTART_BACKOFF_MS = 10 * 60_000;
-
-export function restartBackoffMs(restartsSoFar: number): number {
-  if (restartsSoFar <= 0) return 0;
-  return Math.min(RESTART_BACKOFF_BASE_MS * 2 ** (restartsSoFar - 1), MAX_RESTART_BACKOFF_MS);
-}
-
 export type SupervisorDecision =
   | { action: 'no_op'; reason: string }
   | {
@@ -48,8 +36,7 @@ export type SupervisorDecision =
       restart_seq: number;
     }
   | { action: 'never_restart'; reason: string }
-  /** 重启次数已达上限——与 never_restart 分开，便于报告区分「结构上不该重启」与「已重启太多次」 */
-  | { action: 'restart_budget_exhausted'; reason: string; restarts: number };
+  ;
 
 export interface SupervisorInput {
   /** run 的 events（authoritative 顺序）——只用于折叠 disposition 投影 */
@@ -134,20 +121,23 @@ export function decideSupervision(input: SupervisorInput): SupervisorDecision {
   if (base === 'never_restart') {
     return { action: 'never_restart', reason: `run_disposition=${state.run_disposition}——结构上无法继续` };
   }
-  // base === 'resume'
-  if (input.restartsSoFar >= MAX_SUPERVISED_RESTARTS) {
-    return {
-      action: 'restart_budget_exhausted',
-      restarts: input.restartsSoFar,
-      reason:
-        `已由 supervisor 重启 ${input.restartsSoFar} 次（上限 ${MAX_SUPERVISED_RESTARTS}）——` +
-        '停手求人：反复拉起同一个 run 说明问题不在进程死亡本身',
-    };
+  const events = input.events.filter(event => !!event && typeof event === 'object') as Record<string, unknown>[];
+  const restartedAt = events.map(event => event.type === 'supervisor_restart').lastIndexOf(true);
+  if (restartedAt >= 0) {
+    const before = [...events.slice(0, restartedAt)].reverse().find(event => event.type === 'run_end');
+    const after = [...events.slice(restartedAt + 1)].reverse().find(event => event.type === 'run_end');
+    if (input.condition?.ready !== true && before?.reason === 'uncaught_exception' && after?.reason === 'uncaught_exception'
+      && typeof after.error === 'string' && after.error.length > 0 && before.error === after.error) {
+      return { action: 'no_op', reason: `原运行器已实际恢复执行但重复同一异常：${after.error}。成果保留；恢复该执行能力或用户明确继续后接原run，不按旧重启次数终态退出。` };
+    }
+    if (!events.slice(restartedAt + 1).some(event => event.type === 'run_start' || event.type === 'resume')) {
+      return { action: 'no_op', reason: '原启动请求尚未有真实run_start/交回；保留原调用，等待该启动结果或恢复原执行能力，不重发同一启动。' };
+    }
   }
   return {
     action: 'resume',
     restart_seq: input.restartsSoFar + 1,
-    backoff_ms: restartBackoffMs(input.restartsSoFar),
+    backoff_ms: 0,
     reason:
       `beacon 陈旧（进程已死）且 run_disposition=${state.run_disposition}——` +
       (state.run_disposition === 'RECOVERY_PENDING'

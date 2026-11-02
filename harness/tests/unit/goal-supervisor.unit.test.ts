@@ -11,10 +11,6 @@ import * as path from 'path';
 import {
   countSupervisorRestarts,
   decideSupervision,
-  MAX_RESTART_BACKOFF_MS,
-  MAX_SUPERVISED_RESTARTS,
-  RESTART_BACKOFF_BASE_MS,
-  restartBackoffMs,
   schedulerSupport,
   superviseRun,
 } from '../../scripts/utils/goal-supervisor';
@@ -22,7 +18,6 @@ import { reduceRunState } from '../../scripts/utils/run-state-reducer';
 import { waitForConditionRecovery } from '../../scripts/utils/condition-wait';
 import { livenessBeaconPath } from '../../scripts/utils/liveness-beacon';
 import { FEATURE_LOCK_NAME, releaseLock, tryAcquireLock } from '../../scripts/utils/goal-run-lock';
-import { FINALIZE_RESERVE_MS, resolveWallClockMs } from '../../scripts/utils/goal-timeout';
 import * as supervise from '../../scripts/goal-supervise';
 import { clearFrameworkConfigCache } from '../../config';
 import {
@@ -65,6 +60,21 @@ function eventsWith(disposition: string, waitKind?: string, haltReason = 'some_r
 }
 
 const cases: TestCase[] = [
+  { name: '当前恢复资格仅据真实条件：历史次数无上限、原启动未交回与重复实际异常等待', run: () => {
+    const ready = eventsWith('RESUME_READY');
+    for (const n of [0, 300]) {
+      const d = decideSupervision({ events: ready, restartsSoFar: n, beaconStale: true });
+      assert(d.action === 'resume' && d.restart_seq === n + 1 && d.backoff_ms === 0, JSON.stringify(d));
+    }
+    const pending = [...ready, { type: 'supervisor_restart' }];
+    assert(decideSupervision({ events: pending, restartsSoFar: 1, beaconStale: true }).action === 'no_op', '原启动未实际交回不重发');
+    const repeated = [...ready, { type: 'run_end', reason: 'uncaught_exception', error: 'actual broken launcher' },
+      { type: 'supervisor_restart' }, { type: 'run_start' },
+      { type: 'run_end', reason: 'uncaught_exception', error: 'actual broken launcher', run_disposition: 'RESUME_READY' }];
+    assert(decideSupervision({ events: repeated, restartsSoFar: 1, beaconStale: true }).action === 'no_op', '同一实际异常等待执行能力恢复');
+    assert(decideSupervision({ events: repeated, restartsSoFar: 1, beaconStale: true,
+      condition: { probe: 'original_execution', ready: true } }).action === 'resume', '真实恢复条件不因历史异常卡死');
+  } },
   {
     name: 'beacon × run_disposition 全矩阵（fresh 恒不介入；stale 下四态各行其是）',
     run: () => {
@@ -136,40 +146,6 @@ const cases: TestCase[] = [
     },
   },
   {
-    name: '重启预算：达到上限即停手求人（与 never_restart 分开，报告可区分两种停）',
-    run: () => {
-      for (let n = 0; n < MAX_SUPERVISED_RESTARTS; n += 1) {
-        const d = decideSupervision({ events: eventsWith('RESUME_READY'), restartsSoFar: n, beaconStale: true });
-        assert(d.action === 'resume', `第 ${n + 1} 次重启应放行，实际 ${d.action}`);
-        assert(d.action === 'resume' && d.restart_seq === n + 1, 'restart_seq 应递增');
-      }
-      const over = decideSupervision({
-        events: eventsWith('RESUME_READY'), restartsSoFar: MAX_SUPERVISED_RESTARTS, beaconStale: true,
-      });
-      assert(over.action === 'restart_budget_exhausted', `超限应停手，实际 ${over.action}`);
-      assert(
-        over.action === 'restart_budget_exhausted' && over.restarts === MAX_SUPERVISED_RESTARTS,
-        '须带上已重启次数',
-      );
-    },
-  },
-  {
-    name: '退避：首次不等，其后指数增长且有上界（防重启风暴）',
-    run: () => {
-      assert(restartBackoffMs(0) === 0, '首次重启不等待');
-      assert(restartBackoffMs(1) === RESTART_BACKOFF_BASE_MS, '第二次 = base');
-      assert(restartBackoffMs(2) === RESTART_BACKOFF_BASE_MS * 2, '指数增长');
-      assert(restartBackoffMs(99) === MAX_RESTART_BACKOFF_MS, '须有上界，不得无限增长');
-      // 单调不减
-      let prev = -1;
-      for (let n = 0; n <= 10; n += 1) {
-        const v = restartBackoffMs(n);
-        assert(v >= prev, `退避非单调：${n} → ${v} < ${prev}`);
-        prev = v;
-      }
-    },
-  },
-  {
     name: '重启计数从 events 重建（跨进程持久，--resume 不丢）',
     run: () => {
       assert(countSupervisorRestarts([]) === 0, '空流为 0');
@@ -219,7 +195,7 @@ const cases: TestCase[] = [
           return !(t.startsWith('//') || t.startsWith('*') || t.startsWith('/*'));
         })
         .join('\n');
-      const importBlock = src.slice(0, src.indexOf('export const MAX_SUPERVISED_RESTARTS'));
+      const importBlock = src.slice(0, src.indexOf('export type SupervisorDecision'));
       for (const forbidden of ['adjudication', 'lookupIncident', 'INCIDENT_REGISTRY']) {
         assert(
           !importBlock.includes(forbidden),
@@ -330,10 +306,10 @@ const cases: TestCase[] = [
       // 连续三次拉起后停手，不无限重试
       const exhausted = decideSupervision({
         events: [{ type: 'run_start' }, { type: 'phase_halt', run_disposition: 'RESUME_READY' }],
-        restartsSoFar: MAX_SUPERVISED_RESTARTS,
+        restartsSoFar: 300,
         beaconStale: true,
       });
-      assert(exhausted.action === 'restart_budget_exhausted', '必须有终点，不得无限拉');
+      assert(exhausted.action === 'resume', '历史重启统计不构成配额；当前实际条件决定恢复');
     },
   },
   {
@@ -461,9 +437,13 @@ cases.push(
         condition: { probe: 'capability_preflight_ready', ready: true },
       }).action === 'no_op', '等人（human）不因探针被拉起：等待类限制不变');
       assert(decideSupervision({
-        events: withProbe, restartsSoFar: MAX_SUPERVISED_RESTARTS, beaconStale: true,
+        events: withProbe, restartsSoFar: 300, beaconStale: true,
         condition: { probe: 'capability_preflight_ready', ready: true },
-      }).action === 'restart_budget_exhausted', '重启次数上限不变');
+      }).action === 'resume', '真实条件已就绪不受历史次数限制');
+      assert(decideSupervision({
+        events: [...withProbe, { type: 'supervisor_restart', action: 'resume' }], restartsSoFar: 1, beaconStale: true,
+        condition: { probe: 'capability_preflight_ready', ready: true },
+      }).action === 'no_op', '探针仍ready不构成第二次启动；原启动未交回必须保留原请求');
       assert(decideSupervision({
         events: withProbe, restartsSoFar: 0, beaconStale: false,
         condition: { probe: 'capability_preflight_ready', ready: true },
@@ -659,152 +639,23 @@ asyncCases.push(
     },
   },
   {
-    name: 'P3 R2 运行时链：等待用掉一部分预算后，正式调用只拿到余额（事件记录与实际调用同一最终值）',
+    name: 'condition wait: abort during polling stops before another probe or recheck without a false timeout',
     run: async () => {
-      const root = hostWithCapabilityGap();
+      const controller = new AbortController();
+      const events: Array<Record<string, unknown>> = [];
+      let probes = 0, rechecks = 0;
+      let abortTimer: ReturnType<typeof setTimeout> | undefined;
+      const started = Date.now();
       try {
-        const first = await runGoalRuntimeChain(root, { freshEndPhase: 'coding', conditionWait: { maxWaitMs: 100, pollMs: 50 } });
-        const runId = path.basename(first.reportDir);
-        assert(first.events.some((e) => e.type === 'phase_halt' && e.halt_reason === 'await_human_capability_gap'), '夹具：第一段须停在能力缺口');
-        const manifest = JSON.parse(fs.readFileSync(path.join(first.reportDir, 'manifest.json'), 'utf-8')) as { phase_chain?: string[] };
-        const wallMs = resolveWallClockMs(manifest as never, manifest.phase_chain);
-        backdateLastSession(first.reportDir, wallMs - FINALIZE_RESERVE_MS - 25_000);
-        let waitSeenAt = 0;
-        const fixer = setInterval(() => {
-          if (!waitSeenAt && anyRunHasEvent(root, 'condition_wait_started')) waitSeenAt = Date.now();
-          if (waitSeenAt && Date.now() - waitSeenAt > 4_000) {
-            clearInterval(fixer);
-            resetCapabilityFailedByHumanReprobe(root, true);
-          }
-        }, 20);
-        let resumed: Awaited<ReturnType<typeof runGoalRuntimeChain>>;
-        try {
-          resumed = await runGoalRuntimeChain(root, {
-            resume: runId, forceResume: true, freshEndPhase: 'coding',
-            conditionWait: { maxWaitMs: 60_000, pollMs: 100 },
-          });
-        } finally {
-          clearInterval(fixer);
-        }
-        const thisSession = resumed.events.slice(resumed.events.map((e) => e.type).lastIndexOf('run_start'));
-        const started = thisSession.find((e) => e.type === 'condition_wait_started');
-        const ready = thisSession.find((e) => e.type === 'condition_wait_ready');
-        assert(!!started && !!ready, `须先等待再恢复：${thisSession.map((e) => e.type).join(',')}`);
-        const invoke = thisSession.find((e) => e.type === 'agent_invoke_start' && e.phase === 'coding');
-        assert(!!invoke, '恢复后 coding 须真正调用');
-        const limit = Number(started!.limit_ms);
-        const waited = Number(ready!.waited_ms);
-        const effective = Number(invoke!.effective_timeout_ms);
-        assert(waited >= 3_000, `夹具：等待须用掉数秒，实得 ${waited}`);
-        assert(effective <= limit - waited + 1_500,
-          `调用时限须按等待后的余额重新钳制：limit=${limit} waited=${waited} effective=${effective}`);
-      } finally {
-        fs.rmSync(root, { recursive: true, force: true });
-      }
-    },
-  },
-  {
-    name: 'P1 运行时链：等待恢复后的真实请求不把旧余额变成作者默认截止或提示词配额',
-    run: async () => {
-      const { root } = setupGoalRuntimeHost();
-      try {
-        // 明确的操作中断已经settled；本例不模拟无法核实外部绑定的runner崩溃。
-        const first = await runGoalRuntimeChain(root, {
-          freshEndPhase: 'coding',
-          invokeResultFor: phase => phase === 'coding'
-            ? { exitCode: 130, signal: 'SIGINT', interrupted: true, stderr: 'injected operator interruption' } : null,
+        const recovered = await waitForConditionRecovery({ phase: 'ut', probe: 'device_readiness', blockedBy: 'device_not_ready',
+          availableMs: 60_000, maxWaitMs: 60_000, pollMs: 30_000, signal: controller.signal,
+          runProbe: () => { probes++; abortTimer = setTimeout(() => controller.abort(), 10); return { ready: false }; },
+          recheck: async () => { rechecks++; return true; }, emit: event => events.push(event),
         });
-        const runId = path.basename(first.reportDir);
-        assert(first.events.some(e => e.type === 'agent_invoke_end' && e.phase === 'coding' && e.exit_code === 130
-          && e.interrupted === true && e.completion_observed !== true), '夹具：第一段必须保留真实明确的未完成中断终态');
-        recordHvigorBuildOutcome(root, {
-          kind: 'capability_failed', fingerprint: 'p3-b3-fp', failure_code: 'sdk_component_missing',
-          evidence: ['sdk_manifest_format=sdk-pkg.json'],
-        });
-        const manifest = JSON.parse(fs.readFileSync(path.join(first.reportDir, 'manifest.json'), 'utf-8')) as { phase_chain?: string[] };
-        const wallMs = resolveWallClockMs(manifest as never, manifest.phase_chain);
-        // 余额约 95 秒：门禁前时限四舍五入为 2 分钟；等过约 9 秒后余额低于 90 秒，四舍五入为 1 分钟——两者可区分
-        backdateLastSession(first.reportDir, wallMs - FINALIZE_RESERVE_MS - 95_000);
-        let waitSeenAt = 0;
-        const fixer = setInterval(() => {
-          if (!waitSeenAt && anyRunHasEvent(root, 'condition_wait_started')) waitSeenAt = Date.now();
-          if (waitSeenAt && Date.now() - waitSeenAt > 9_000) {
-            clearInterval(fixer);
-            resetCapabilityFailedByHumanReprobe(root, true);
-          }
-        }, 20);
-        let resumed: Awaited<ReturnType<typeof runGoalRuntimeChain>>;
-        const runtime = require('../../scripts/goal-phase-runtime') as { __testing_setInvokeAgent: (fn: unknown) => void };
-        const installInvoke = runtime.__testing_setInvokeAgent;
-        let activeOptions: AgentInvokeOptions | undefined;
-        const actualInvokes: Array<{ prompt: string; options: AgentInvokeOptions }> = [];
-        runtime.__testing_setInvokeAgent = fn => installInvoke(typeof fn !== 'function' ? fn : async (plan: unknown, cwd: string, options: AgentInvokeOptions) => {
-          activeOptions = options;
-          return (fn as (...args: unknown[]) => Promise<unknown>)(plan, cwd, options);
-        });
-        try {
-          resumed = await runGoalRuntimeChain(root, {
-            resume: runId, forceResume: true, freshEndPhase: 'coding',
-            conditionWait: { maxWaitMs: 120_000, pollMs: 100 },
-            onCoding: ctx => {
-              assert(!!activeOptions, 'detached 调用必须实际收到原生运输选项');
-              actualInvokes.push({ prompt: ctx.prompt, options: activeOptions! });
-            },
-          });
-        } finally {
-          clearInterval(fixer);
-          runtime.__testing_setInvokeAgent = installInvoke;
-        }
-        const thisSession = resumed.events.slice(resumed.events.map((e) => e.type).lastIndexOf('run_start'));
-        const started = thisSession.find((e) => e.type === 'condition_wait_started');
-        const invoke = thisSession.find((e) => e.type === 'agent_invoke_start' && e.phase === 'coding');
-        assert(!!started && !!invoke, `须等待后真正调用 coding：${thisSession.map((e) => e.type).join(',')}`);
-        const minutes = (ms: number): number => Math.max(1, Math.round(ms / 60_000));
-        assert(minutes(Number(started!.limit_ms)) === 2, `夹具：门禁前时限须四舍五入为 2 分钟，limit=${String(started!.limit_ms)}`);
-        const effective = Number(invoke!.effective_timeout_ms);
-        assert(minutes(effective) === 1, `夹具：等待后时限须四舍五入为 1 分钟，effective=${effective}`);
-        assert(actualInvokes.length > 0, '等待恢复后必须真的调用执行者');
-        const observed = actualInvokes[0];
-        assert(observed.options.userDeadlineAt === undefined && observed.options.timeoutMs === undefined && observed.options.deadlineMs === undefined,
-          '没有用户明示时限时不得从旧余额推导作者截止或总时限');
-        const prompt = observed.prompt;
-        assert(prompt.length > 0, '实际调用必须消费非空指令');
-        assert(!/Time budget:/.test(prompt), '旧阶段/累计余额不能作为作者默认配额写入提示词');
-      } finally {
-        fs.rmSync(root, { recursive: true, force: true });
-      }
-    },
-  },
-  {
-    name: 'P3 R2 设备门重查：有耗时操作的重查拿到剩余额度（模拟器启动预算不超过等待余额）',
-    run: async () => {
-      const { root } = setupGoalRuntimeHost();
-      const budgets: Array<number | undefined> = [];
-      try {
-        const probe = await runGoalRuntimeChain(root, {
-          freshEndPhase: 'ut',
-          deviceGate: (o: { phase: string; retries: number; input: { emulatorBootBudgetMs?: number }; emitEvent: (e: Record<string, unknown>) => void }) => {
-            budgets.push(o.input.emulatorBootBudgetMs);
-            if (budgets.length === 1) {
-              o.emitEvent({ type: 'phase_halt', phase: o.phase, halt_reason: 'device_not_ready', verdict: 'FAIL', reason: '注入', probe: 'device_readiness', notes: [] });
-              return {
-                outcome: { phase: o.phase, verdict: 'FAIL', halted: false, retries: o.retries, halt_reason: 'device_not_ready',
-                  halt_guidance: '注入', blocking_class: 'externalBlocked', failure_kind: 'device_blocked', probe: 'device_readiness' },
-                notes: [],
-              };
-            }
-            return { env: {}, target: { serial: 'fake-device', targetKind: 'physical' as const }, notes: [] };
-          },
-          conditionWait: { maxWaitMs: 3_000, pollMs: 50, runProbe: () => ({ ready: true }) },
-        });
-        const started = probe.events.find((e) => e.type === 'condition_wait_started');
-        assert(!!started && probe.events.some((e) => e.type === 'condition_wait_ready'), '须等待后恢复');
-        assert(budgets[0] === undefined, '首次门禁不改既有预算');
-        assert(typeof budgets[1] === 'number' && budgets[1]! > 0 && budgets[1]! <= Number(started!.limit_ms),
-          `重查的模拟器启动预算须取等待余额：${JSON.stringify(budgets)} limit=${String(started!.limit_ms)}`);
-      } finally {
-        fs.rmSync(root, { recursive: true, force: true });
-      }
+        assert(!recovered && Date.now() - started < 5_000, 'abort must end the pending poll without waiting for its interval');
+        assert(probes === 1 && rechecks === 0, 'abort must not launch another probe or original check');
+        assert(events.map(event => event.type).join(',') === 'condition_wait_started', 'cancellation is neither readiness nor a timeout');
+      } finally { if (abortTimer !== undefined) clearTimeout(abortTimer); }
     },
   },
   {
@@ -850,33 +701,24 @@ asyncCases.push(
     },
   },
   {
-    name: 'P3 A6 运行时链：真实能力门停在 coding，等待中环境修好→同一 attempt 继续，无停机、不耗内容重试',
+    name: 'P3 A6 运行时链：真实能力门自然等待，实际环境恢复后同一run只补coding检查',
     run: async () => {
       const root = hostWithCapabilityGap();
-      const fixer = setInterval(() => {
-        if (anyRunHasEvent(root, 'condition_wait_started')) {
-          clearInterval(fixer);
-          resetCapabilityFailedByHumanReprobe(root, true);
-        }
-      }, 20);
       try {
         const probe = await runGoalRuntimeChain(root, {
           freshEndPhase: 'coding',
           conditionWait: { maxWaitMs: 20_000, pollMs: 50 },
         });
-        const types = probe.events.map((e) => String(e.type));
-        const started = probe.events.find((e) => e.type === 'condition_wait_started');
-        assert(!!started && started.phase === 'coding' && started.probe === 'capability_preflight_ready' &&
-          started.blocked_by === 'await_human_capability_gap', `须在 coding 开始等待：${JSON.stringify(started)}`);
-        assert(types.includes('condition_wait_ready') && !types.includes('condition_wait_timeout'), `须就绪恢复：${types.join(',')}`);
-        assert(!probe.events.some((e) => e.type === 'phase_halt'), `恢复后不得留下停机事件：${JSON.stringify(probe.events.filter(e => e.type === 'phase_halt'))}`);
-        assert(probe.invokedPhases.includes('coding'), `coding 须真正执行：${probe.invokedPhases.join('→')}`);
-        const codingVerdicts = probe.events.filter((e) => e.type === 'phase_verdict' && e.phase === 'coding');
-        assert(codingVerdicts.every((e) => e.action !== 'retry'), '等待不消耗内容重试');
-        const end = [...probe.events].reverse().find((e) => e.type === 'run_end');
+        const halted = probe.events.find(e => e.type === 'phase_halt' && e.halt_reason === 'await_human_capability_gap');
+        assert(halted?.probe === 'capability_preflight_ready', `保真实原probe：${JSON.stringify(halted)}`);
+        assert(resetCapabilityFailedByHumanReprobe(root, true), '实际恢复原能力状态');
+        const resumed = await runGoalRuntimeChain(root, { resume: path.basename(probe.reportDir) });
+        const current = resumed.events.filter(e => e.type === 'harness_start' && e.phase === 'coding');
+        assert(current.length === 1, `只补当前coding检查：${JSON.stringify(current)}`);
+        assert(!resumed.invokedPhases.length, '能力恢复不另买作者');
+        const end = [...resumed.events].reverse().find((e) => e.type === 'run_end');
         assert(end?.status === 'CHAIN_SLICE_COMPLETED', `run 须到终点：${JSON.stringify(end)}`);
       } finally {
-        clearInterval(fixer);
         fs.rmSync(root, { recursive: true, force: true });
       }
     },
@@ -892,9 +734,8 @@ asyncCases.push(
         });
         const runId = path.basename(probe.reportDir);
         const types = probe.events.map((e) => String(e.type));
-        assert(types.includes('condition_wait_started') && types.includes('condition_wait_timeout'), `须先等再停：${types.join(',')}`);
         const halt = probe.events.find((e) => e.type === 'phase_halt' && e.halt_reason === 'await_human_capability_gap');
-        assert(!!halt && types.indexOf('condition_wait_timeout') < types.indexOf('phase_halt'), '超时之后按现状停放');
+        assert(!!halt && halt.probe === 'capability_preflight_ready', '保原能力缺口和实际probe，不以默认等待墙钟创造恢复');
         const end = [...probe.events].reverse().find((e) => e.type === 'run_end');
         assert(end?.status === 'HALTED', `run_end=${JSON.stringify(end)}`);
         assert(end?.run_disposition === 'WAITING' && end?.run_wait_kind === 'external', `run_end 处置=${JSON.stringify(end)}`);
@@ -945,7 +786,7 @@ asyncCases.push(
         });
         const runId = path.basename(probe.reportDir);
         const types = probe.events.map((e) => String(e.type));
-        assert(types.includes('condition_wait_timeout'), `设备停机前须先等：${types.join(',')}`);
+        assert(probe.events.some(e => e.type === 'phase_halt' && e.halt_reason === 'device_not_ready'), `保具体真实设备等待：${types.join(',')}`);
         const end = [...probe.events].reverse().find((e) => e.type === 'run_end');
         assert(!!end && typeof end.status === 'string', `须有 run_end：${JSON.stringify(end)}`);
         const state = reduceRunState(probe.events);
@@ -1008,18 +849,9 @@ asyncCases.push(
           `放锁后再拉起且不留锁：${JSON.stringify(first)}`);
         assert(JSON.stringify(restartSeqs()) === '[1]', `重启记账：${JSON.stringify(restartSeqs())}`);
 
-        // 第 2 次要退避 30s（锁外睡）；睡的期间另一轮 supervisor 已记下第 2 次 → 锁内重判序号变了 → 本轮不拉起、不重复记账
-        const other = setTimeout(() => {
-          fs.appendFileSync(eventsPath, `${JSON.stringify({ ts: new Date().toISOString(), type: 'supervisor_restart', action: 'resume', run_id: runId, restart_seq: 2 })}\n`);
-        }, 1_000);
-        let second: Awaited<ReturnType<typeof superviseOnce>>;
-        try {
-          second = await superviseOnce(root, runId, ready);
-        } finally {
-          clearTimeout(other);
-        }
-        assert(second.code === 0 && second.spawned.length === 0, `退避期间序号已变不得再拉起：${JSON.stringify(second)}`);
-        assert(JSON.stringify(restartSeqs()) === '[1,2]', `不得重复记账：${JSON.stringify(restartSeqs())}`);
+        const second = await superviseOnce(root, runId, ready);
+        assert(second.code === 0 && second.spawned.length === 0, `原拉起尚未交回不得再拉：${JSON.stringify(second)}`);
+        assert(JSON.stringify(restartSeqs()) === '[1]', `未变条件不产生第二次启动：${JSON.stringify(restartSeqs())}`);
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }

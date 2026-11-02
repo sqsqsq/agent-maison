@@ -10,13 +10,11 @@ import { writeLocalConfig } from '../../scripts/utils/framework-local-config';
 import { loadGoalManifestDefinition, isInitialDesignManifest } from '../../scripts/utils/goal-manifest';
 import { prepareInitialDesignRun, projectInitialDesignDelivery } from '../../scripts/utils/initial-design-delivery';
 import { GoalPhaseRuntime } from '../../scripts/goal-phase-runtime';
-import { resolveWallClockMinutes } from '../../scripts/utils/goal-timeout';
 import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
 import type { UnitCaseResult } from '../run-unit';
 import { withRuntimeTest } from '../utils/runtime-test-control';
 
 const FRAMEWORK=path.resolve(__dirname,'../../..');
-const DOMAIN=['spec','plan','coding','review','ut','testing'];
 const requirement='完整交付新增收件箱批量已读能力，按原始需求完成设计、开发与验收。';
 const unattended={write_mode:'full-access' as const,approval_mode:'never' as const,timeout_seconds:900};
 const budget={max_total_turns:30,wall_clock_minutes:1};
@@ -75,23 +73,28 @@ const cases:Array<{name:string;run():Promise<void>}>= [{
     for(const manifest of [session,backend])for(const field of ['execution_scope','phase_chain','chain_override','run_base_sha'] as const)assert.equal(manifest[field],undefined,field);
   });},
 },{
-  name:'new roots preserve explicit requested actions and original domain boundaries without a construction scope',
+  name:'new roots preserve explicit requested work while historical phase bounds do not restrict the unit author',
   async run(){await withEmpty(root=>{
     const defaultRoot=prepare(root,'default-policy').manifest;assert.deepEqual(defaultRoot.initial_design.requested_phases,[]);
     const explicitRoot=prepare(root,'explicit-policy',{requestedPhases:['testing']}).manifest;assert.deepEqual(explicitRoot.initial_design.requested_phases,['testing']);
     const narrowed=prepare(root,'narrow-policy',{startPhase:'plan',endPhase:'ut'}).manifest;assert.equal(narrowed.start_phase,'plan');assert.equal(narrowed.end_phase,'ut');assert.deepEqual(narrowed.initial_design.requested_phases,[]);
-    assert.throws(()=>prepare(root,'outside-policy',{startPhase:'plan',endPhase:'ut',requestedPhases:['testing']}),/outside request domain/);
+    const requiredCheck=prepare(root,'outside-old-phase-window',{startPhase:'plan',endPhase:'ut',requestedPhases:['testing']}).manifest;
+    assert.deepEqual(requiredCheck.initial_design.requested_phases,['testing']);
+    assert.throws(()=>prepare(root,'unknown-capability',{requestedPhases:['unknown-check-family']}),/outside request domain/);
     for(const manifest of [defaultRoot,explicitRoot,narrowed])assert.equal(manifest.phase_chain,undefined);
   });},
 },{
-  name:'public root budget floor uses domain D equally with absent or explicit narrow E',
+  name:'public root exposes real activity and an explicit unchanged deadline without synthesizing a quota or default deadline',
   async run(){await withEmpty(root=>{
-    const roots=[prepare(root,'budget-default').manifest,prepare(root,'budget-explicit',{requestedPhases:['testing']}).manifest];
-    const expected=resolveWallClockMinutes(roots[0],DOMAIN);assert(expected>resolveWallClockMinutes(roots[0],['testing']));
+    const deadline='2030-01-01T00:00:00.000Z';
+    const roots=[prepare(root,'activity-default').manifest,prepare(root,'activity-explicit',{requestedPhases:['testing'],userDeadlineAt:deadline}).manifest];
+    assert.equal(roots[0].user_deadline_at,undefined);assert.equal(roots[1].user_deadline_at,deadline);
+    const again=prepare(root,'activity-explicit',{requestedPhases:['testing'],userDeadlineAt:'2031-01-01T00:00:00.000Z'}).manifest;
+    assert.equal(again.run_id,roots[1].run_id);assert.equal(again.user_deadline_at,deadline,'rejoin never silently extends the original explicit deadline');
     for(const manifest of roots){
       const projection=projectInitialDesignDelivery({projectRoot:root,frameworkRoot:FRAMEWORK,manifest});
-      assert.equal(projection.budget.wall_clock_minutes,expected);assert.equal(projection.budget.total_turns,0);assert(projection.budget.active_ms>=0);
-      assert.equal(manifest.budget.wall_clock_minutes,1,'the original budget declaration is not rewritten to a derived floor');
+      assert.equal(projection.activity.calls,0);assert(projection.activity.active_ms>=0);assert(!('budget' in projection));
+      assert(!projection.current_disposition.completionEligible && !projection.complete,'missing real design/CU/assembly evidence cannot look complete');
     }
   });},
 }];

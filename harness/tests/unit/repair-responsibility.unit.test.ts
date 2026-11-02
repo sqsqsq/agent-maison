@@ -68,27 +68,43 @@ export function runAll(): UnitCaseResult[] {
     const result = resolveRepairResponsibility({ frameworkRoot: root, workflow, contracts, target: { files: ['app/tests/a.ts'] } });
     assert.equal(result.owner, 'ut'); assert.equal(result.category, 'verification'); assert.equal(result.roles.verifier, 'ut');
     const finite = resolveRepairResponsibility({ frameworkRoot: root, workflow, contracts, target: { files: ['app/tests/a.ts'], compatibilityPreserved: true } });
-    assert.equal(finite.owner, 'coding'); assert.equal(finite.category, 'coding'); assert.equal(finite.roles.verifier, 'ut'); assert.equal(finite.roles.introducedBy, null); assert.equal(finite.action, 'current');
+    assert.equal(finite.owner, 'coding'); assert.equal(finite.category, 'coding'); assert.equal(finite.roles.verifier, 'ut'); assert.equal(finite.roles.introducedBy, null);
+    assert.equal(finite.action, 'unavailable', 'producer knowledge alone cannot grant implementation or test writes');
   });
   check('work-unit authors repair code and tests in place while preserving independent verification responsibility', () => {
+    const scope: ExecutionScope = { schema_version: '1.0', completion_target: 'feature', requested_results: ['implement and verify'],
+      phase_chain: ['review'], reused_phases: [], unresolved: [], policy_fingerprint: 'a'.repeat(64), obligations: [
+        { id: 'implementation', kind: 'implementation', owner_phase: 'coding', applicability: 'required', reason: 'approved implementation', basis: [] },
+        { id: 'unit', kind: 'unit-evidence', owner_phase: 'ut', applicability: 'required', reason: 'approved tests', basis: [] },
+      ] };
     const contracts = { projectRoot: root, feature: 'f', phaseOrder: ['review'], executionRole: 'author' as const,
       domains: [{ owner: 'coding', kind: 'source' as const, match: 'prefix' as const, path: 'app/src', source: 'bound module' },
         { owner: 'ut', kind: 'source' as const, match: 'prefix' as const, path: 'app/tests', source: 'profile' }],
       diagnostics: [], unresolvedSourcePhases: [], protectedRoots: [] };
     for (const currentPhase of ['coding', 'ut', 'review']) {
-      const result = resolveRepairResponsibility({ frameworkRoot: root, workflow, contracts, currentPhase,
+      const result = resolveRepairResponsibility({ frameworkRoot: root, workflow, contracts, executionScope: scope, currentPhase,
         target: { files: ['app/tests/a.ts'] } });
       assert.equal(result.action, 'current');
       assert.equal(result.roles.verifier, 'ut');
       assert(result.reason.includes('独立核验'));
     }
-    const denied = resolveRepairResponsibility({ frameworkRoot: root, workflow, contracts, currentPhase: 'ut',
+    const denied = resolveRepairResponsibility({ frameworkRoot: root, workflow, contracts, executionScope: scope, currentPhase: 'ut',
       target: { files: ['framework/runtime.ts'] } });
     assert.equal(denied.action, 'unavailable');
-    const shared = resolveRepairResponsibility({ frameworkRoot: root, workflow, contracts, currentPhase: 'ut',
+    const shared = resolveRepairResponsibility({ frameworkRoot: root, workflow, contracts, executionScope: scope, currentPhase: 'ut',
       target: { files: ['app/src/A.ts'], designAuthority: true } });
     assert.equal(shared.action, 'design');
-    const verifier = resolveRepairResponsibility({ frameworkRoot: root, workflow, contracts,
+    const candidate = 'doc/features/f/acceptance.yaml';
+    const withCandidate = { ...contracts, domains: [...contracts.domains,
+      { owner: 'spec', kind: 'artifact' as const, match: 'exact' as const, path: candidate, source: 'declared local candidate' }] };
+    const authority = resolveRepairResponsibility({ frameworkRoot: root, workflow, contracts: withCandidate, executionScope: scope,
+      target: { files: [candidate], owner: 'external', designAuthority: true } });
+    assert.equal(authority.action, 'design'); assert.equal(authority.owner, 'external');
+    assert.equal(authority.roles.legalModifier, 'external', 'a candidate file cannot replace the real canonical authority cause');
+    const local = resolveRepairResponsibility({ frameworkRoot: root, workflow, contracts: withCandidate, executionScope: scope,
+      target: { files: [candidate] } });
+    assert.equal(local.action, 'current'); assert.equal(local.owner, 'spec', 'ordinary local candidate repairs keep their existing producer');
+    const verifier = resolveRepairResponsibility({ frameworkRoot: root, workflow, contracts, executionScope: scope,
       executionRole: 'verifier', currentPhase: 'review', target: { files: ['app/src/A.ts'] } });
     assert.equal(verifier.action, 'current');
     assert(verifier.reason.includes('当前工作单元作者'), 'diagnostic responsibility cannot give the observing verifier a product write grant');

@@ -951,7 +951,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         assert.ok(String(end!.error ?? '').includes(HOST_MODEL_UNSUPPORTED_MESSAGE), `run_end 须带原文：${String(end!.error)}`);
         assert.ok(String(end!.error ?? '').includes('--adapter-model'), 'run_end 须带钉模型指引');
         const md = fs.readFileSync(path.join(reportDir, 'goal-report.md'), 'utf-8');
-        const row = md.split('\n').find((l) => l.startsWith('| spec |')) ?? '';
+        const row = md.split('\n').find((l) => l.startsWith(`| ${String(halt.phase)} |`)) ?? '';
         assert.ok(row.includes(HOST_MODEL_UNSUPPORTED_MESSAGE), `goal-report 阶段行 Reason 须带原文：${row}`);
       } finally {
         __testing_resetGoalRunnerSeams();

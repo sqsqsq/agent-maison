@@ -10,7 +10,6 @@ import { featureRelativePath } from './feature-identity';
 import { isDryReportDir, type GoalManifest } from './goal-manifest';
 import { inspectGoalRunCreationFiles, applyScopeRevisions, eventsWithScopeRevocations } from './goal-run-creation';
 import { validateExecutionScope, effectiveScopeView } from './execution-scope';
-import { readOriginalDeliveryBudget } from './delivery-origin';
 import {
   LEGACY_FEATURE_PHASE_ORDER,
   resolveFeatureTrack,
@@ -21,9 +20,8 @@ import {
   phaseInvocationStart,
   invocationOutputLogPath,
   countAgentInvokeStarts,
-  canRecheckLegacyBacktrackLimit,
   filterAuthoritativeEvents,
-  foldBudgetLineage,
+  readSupersededAncestorRuns,
   loadEventsJsonl,
   partitionExecutionSessions,
   resolveEffectiveRunEnd,
@@ -45,7 +43,8 @@ import {
   type GoalRunStatus,
 } from './phase-transition-policy';
 import { normalizePhaseId } from './phase-alias';
-import { resolvePhaseTimeoutMs, resolveWallClockMs } from './goal-timeout';
+import { resolveCompletionDisposition } from './verify-feature-completion';
+import { renderCurrentDisposition, type CurrentDisposition } from './check-disposition';
 import type { WorkflowSpec } from '../../workflow-loader';
 import { reduceRunState, type RecoveryDiagnostic } from './run-state-reducer';
 import { findUnclosedGuardianBounds } from './goal-containment-reconcile';
@@ -164,7 +163,11 @@ export interface GoalProgressSnapshot {
       lingering_pipe: boolean;
     };
   };
-  budget: {
+  invocation?: { label: string | null; invoke_id: string | null; started_at: string | null; ended_at: string | null };
+  current_disposition?: CurrentDisposition;
+  activity?: { calls: number; active_ms: number };
+  /** Historical limits are read-only; new runs do not produce this field. */
+  budget?: {
     turns_used: number;
     turns_limit: number;
     wall_elapsed_ms: number;
@@ -207,6 +210,8 @@ export interface GoalProgressSnapshot {
 }
 
 export interface ProjectProgressInput {
+  currentDisposition?: CurrentDisposition;
+  frameworkRoot?: string;
   projectRoot: string;
   manifest: GoalManifest;
   events: GoalRunEvent[];
@@ -497,40 +502,6 @@ function findCurrentSpan(spans: PhaseSpan[]): PhaseSpan | null {
     if (!s.ended) return s;
   }
   return spans.length > 0 ? spans[spans.length - 1] : null;
-}
-
-function computeEstimatedPercent(
-  spans: PhaseSpan[],
-  current: PhaseSpan | null,
-): { percent: number | null; kind: PercentKind } {
-  const total = spans.length;
-  if (total === 0) return { percent: null, kind: 'indeterminate' };
-
-  let completed = 0;
-  for (const s of spans) {
-    if (s.ended && (s.status === 'PASSED' || s.status === 'DEFERRED')) completed++;
-  }
-
-  if (!current || current.ended) {
-    const p = Math.round((completed / total) * 100);
-    return { percent: p, kind: 'estimated' };
-  }
-
-  // Retry regresses substep weights — downgrade to indeterminate per plan.
-  if (current.status === 'RETRYING' || current.attempt > 1) {
-    return { percent: null, kind: 'indeterminate' };
-  }
-
-  const base = completed / total;
-  const weights: Record<string, number> = {
-    PROMPT_READY: 0.05,
-    AGENT_RUNNING: 0.35,
-    AGENT_DONE: 0.45,
-    HARNESS_RUNNING: 0.75,
-  };
-  const w = weights[current.status] ?? 0.1;
-  const p = Math.round((base + w / total) * 100);
-  return { percent: Math.min(p, 99), kind: 'estimated' };
 }
 
 function getAgentOutputStat(
@@ -846,7 +817,6 @@ export function mapGoalStatusToProgress(status: GoalRunStatus): ProgressRunStatu
 export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSnapshot {
   const nowMs = input.nowMs ?? Date.now();
   const { projectRoot, manifest, workflow } = input;
-  let effectiveBudget = manifest.budget;
   const reportDir = manifest.report_dir;
   // 实施 round2 P1：普通 run 的投影单点走权威视图——legacy 混写文件里的 dry 段
   //（span/turn/run_start 基点/recent_events）不得进面板真值，修「面板显示旧 dry-run
@@ -899,11 +869,7 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
   const currentPhase = currentSpan?.phase ?? null;
   const currentIndex = currentPhase ? chain.indexOf(currentPhase) : 0;
 
-  // 实施 round2 P1：预算轴与 runner T2 同构——turns 只计权威段；wall_elapsed=活跃时间
-  //（Σ 历史段 activeMs + 直播段 now−段首），不再用「首个 run_start→now」日历跨度
-  //（隔夜 resume 面板秒报预算耗尽=4035d4 形态）。dry 视图保留 raw 口径。
-  // e9d4b7a3 t4：与 runner 熔断/heartbeat 同一折叠入口（foldBudgetLineage 沿 supersede
-  // 链收祖先 events）——supersede 链下 progress 显示 lineage 累计（30/30），不再 5/30。
+  // Activity reads actual authoritative sessions and supersede history, without quota-cycle resets.
   let turnsUsed: number;
   let wallElapsed: number;
   if (!partition) {
@@ -911,27 +877,23 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
     wallElapsed = nowMs - resolveWallClockStartMs(events);
   } else {
     const featuresDir = input.featuresDir;
-    const fold = foldBudgetLineage({
+    const ancestors = readSupersededAncestorRuns({
       projectRoot,
       featuresDir,
       feature: input.manifest.feature,
       currentEvents: events,
     });
-    const deliveryBudget = readOriginalDeliveryBudget(projectRoot, manifest, nowMs);
-    if (deliveryBudget) effectiveBudget = deliveryBudget.budget;
-    const foldPartition = deliveryBudget ?? partitionExecutionSessions(fold.budgetFoldEvents, { liveTailMs: nowMs });
+    const history = ancestors.flatMap(run => run.events).sort((a, b) => String(a.ts ?? '').localeCompare(String(b.ts ?? '')));
+    const foldPartition = partitionExecutionSessions([...history, ...events], { liveTailMs: nowMs });
     turnsUsed = foldPartition.totalTurns;
     wallElapsed = foldPartition.priorActiveMs;
   }
-  // 与 goal-runner 共用同一 resolver，杜绝"runner 等 90min 但 progress 按 60min 报 STALLED"脑裂。
-  // 同源包括**链**：runtime 在修订后按有效链重算 wall（goal-phase-runtime 的 revise_scope 分支），
-  // 这里不传 chain 就会按出生链报一个更小的上限（review M3）。
-  const wallLimitMs = resolveWallClockMs({ ...manifest, budget: effectiveBudget }, chain);
-  const stallPhase: FeaturePhase = currentPhase ?? chain[0] ?? 'review';
-  // 当前调用已授予的截止；旧调用缺字段时回落 manifest，不借另一 invocation 的授予。
-  const grantedTimeout = invocation?.start.effective_timeout_ms;
-  const phaseTimeoutMs = typeof grantedTimeout === 'number' && Number.isFinite(grantedTimeout) && grantedTimeout > 0
-    ? grantedTimeout : resolvePhaseTimeoutMs(stallPhase, manifest);
+  // Only a real invocation/tool grant may bound liveness; old manifest quotas never do.
+  const activeHarness = findUnclosedHarness(events)?.event as (GoalRunEvent & { timeout_ms?: number }) | undefined;
+  const grantedTimeout = activeHarness?.effective_timeout_ms ?? activeHarness?.timeout_ms ?? invocation?.start.effective_timeout_ms;
+  const phaseTimeoutMs = typeof grantedTimeout === 'number' && Number.isFinite(grantedTimeout) && grantedTimeout > 0 ? grantedTimeout : Infinity;
+  const currentDisposition = input.currentDisposition ?? resolveCompletionDisposition({ projectRoot, frameworkRoot: input.frameworkRoot,
+    feature: manifest.feature, chain, runId: manifest.run_id, workflow });
 
   const outputStat = getAgentOutputStat(projectRoot, reportDir, currentPhase, invocation);
 
@@ -954,9 +916,7 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
   // d6 t5⓪-b：裁决轴由单一 reducer 给出（total function——空序列/仅 run_start 亦有值）。
   // 与下面的 liveness 轴各算各的，报告侧同时如实展示两轴。
   const runState = reduceRunState(events as unknown[]);
-  if (canRecheckLegacyBacktrackLimit({ projectRoot, feature: manifest.feature, runId: manifest.run_id, events })) {
-    runState.run_disposition = 'RESUME_READY';
-  }
+
 
   let status: ProgressRunStatus = 'PENDING';
   let statusReason: string | null = null;
@@ -974,8 +934,12 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
     status = 'STALLED';
     statusReason = 'hard_stall_threshold';
   } else {
+    const activityUnknown = !input.featureLock && !input.runnerLock
+      && (liveness.seconds_since_activity ?? 0) * 1000 >= SOFT_STALL_MS;
     const hasDeferredUpstream = spans.some((s) => s.deferred);
-    if (hasDeferredUpstream) {
+    if (activityUnknown) {
+      status = 'UNKNOWN'; statusReason = 'soft_quiet_window';
+    } else if (hasDeferredUpstream) {
       status = 'WAITING_EXTERNAL';
       statusReason = 'upstream_deferred';
     } else {
@@ -995,7 +959,8 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
     if (typeof reason === 'string') statusReason = reason;
   }
 
-  const { percent, kind } = computeEstimatedPercent(spans, currentSpan);
+  const percent = currentDisposition.completionEligible ? 100 : null;
+  const kind: PercentKind = currentDisposition.completionEligible ? 'estimated' : 'indeterminate';
 
   const lastEvent = events.length > 0 ? events[events.length - 1] : null;
   const recentEvents = events.slice(-5).map((e) => ({
@@ -1025,10 +990,10 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
       ? 'await_external_condition'
       : 'await_human_action';
   } else if (lastRunEnd) nextAction = goalReportExists ? 'read_goal_report' : 'inspect_events_or_resume';
-  else if (currentSpan?.substep === 'agent_invoke') nextAction = 'wait_for_agent_invoke_end';
+  else if (invocation && !invocation.end) nextAction = 'wait_for_agent_invoke_end';
   else if (currentSpan?.substep === 'harness') nextAction = 'wait_for_harness_end';
   else if (currentSpan?.status === 'RETRYING') nextAction = 'wait_for_retry';
-  else nextAction = 'wait_for_phase_verdict';
+  else nextAction = currentDisposition.completionEligible ? 'await_completion_publication' : 'continue_work_unit';
   const progressRel = path.join(reportDir, 'progress.json').replace(/\\/g, '/');
 
   const phaseStartedAt = currentSpan?.started_at ?? null;
@@ -1046,7 +1011,7 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
     // 裁决轴（正交于上面的 liveness 轴）——supervisor 按 beacon × run_disposition 决策
     run_disposition: runState.run_disposition,
     ...(runState.run_wait_kind ? { run_wait_kind: runState.run_wait_kind } : {}),
-    ...(runState.recovery ? { recovery: runState.recovery } : {}),
+
     generated_at: new Date(nowMs).toISOString(),
     source: {
       events_path: eventsPath,
@@ -1072,13 +1037,18 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
       recovered: currentSpan?.recovered,
     },
     liveness,
-    budget: {
-      turns_used: turnsUsed,
-      turns_limit: effectiveBudget.max_total_turns,
-      wall_elapsed_ms: wallElapsed,
-      wall_limit_ms: wallLimitMs,
-      phase_timeout_ms: phaseTimeoutMs,
-    },
+    ...(invocation ? { invocation: { label: invocation.start.phase ?? null, invoke_id: invocation.start.invoke_id ?? null,
+      started_at: invocation.start.ts ?? null, ended_at: invocation.end?.ts ?? null } } : {}),
+    ...(runState.recovery && (currentDisposition.completionBlocking.some(problem => problem.id === runState.recovery!.reason)
+      || currentDisposition.completionBlocking.some(problem => problem.phase === '*' && problem.owner === 'framework' && problem.id === 'required_check_conclusion'))
+      ? { recovery: runState.recovery } : {}),
+    current_disposition: currentDisposition,
+    activity: { calls: turnsUsed, active_ms: wallElapsed },
+    ...(manifest.budget ? { budget: {
+      turns_used: turnsUsed, turns_limit: manifest.budget.max_total_turns,
+      wall_elapsed_ms: wallElapsed, wall_limit_ms: manifest.budget.wall_clock_minutes * 60_000,
+      phase_timeout_ms: typeof grantedTimeout === 'number' ? grantedTimeout : 0,
+    } } : {}),
     artifacts: {
       agent_output_log: outputStat.rel,
       summary_path: null,
@@ -1199,16 +1169,19 @@ export function formatGoalStatusText(
 ): string {
   const pct =
     snapshot.chain.percent_kind === 'indeterminate'
-      ? `${snapshot.chain.current_index + 1}/${snapshot.chain.total}`
+      ? '未定'
       : `${snapshot.chain.estimated_percent ?? 0}%`;
   const outputStall = formatAgentOutputStall(snapshot.liveness);
   return [
     `Goal ${feature} · run ${runId} · ${snapshot.status}`,
+    ...(snapshot.invocation ? [`Native call: ${snapshot.invocation.label ?? 'unknown'} (${snapshot.invocation.invoke_id ?? 'anonymous'}), ${snapshot.invocation.ended_at ? 'ended' : 'running'}`] : []),
     `Current: ${snapshot.phase.name ?? '—'} / ${snapshot.phase.status} (${snapshot.phase.substep ?? '—'})`,
     ...(snapshot.status_reason ? [`Reason: ${snapshot.status_reason}`] : []),
     `Liveness: ${snapshot.liveness.state} · progress ${pct}`,
     ...(outputStall ? [outputStall] : []),
-    `Budget: turns ${snapshot.budget.turns_used}/${snapshot.budget.turns_limit}, wall ${Math.round(snapshot.budget.wall_elapsed_ms / 60000)}m/${Math.round(snapshot.budget.wall_limit_ms / 60000)}m`,
+    `Activity: calls ${snapshot.activity?.calls ?? snapshot.budget?.turns_used ?? 0}, active ${Math.round((snapshot.activity?.active_ms ?? snapshot.budget?.wall_elapsed_ms ?? 0) / 60000)}m`,
+    ...(snapshot.budget ? [`Historical limits (read only): turns ${snapshot.budget.turns_used}/${snapshot.budget.turns_limit}, wall ${Math.round(snapshot.budget.wall_elapsed_ms / 60000)}m/${Math.round(snapshot.budget.wall_limit_ms / 60000)}m`] : []),
+    ...(snapshot.current_disposition ? [`Current completion: ${snapshot.current_disposition.completionEligible ? 'eligible' : 'incomplete'}`, renderCurrentDisposition(snapshot.current_disposition)] : []),
   ].join('\n');
 }
 
@@ -1320,7 +1293,9 @@ export function generateProgressMarkdown(snapshot: GoalProgressSnapshot): string
     // plan e6b3f8d2 t4：工作面口径单列。**不复用 seconds_since_activity**——那条含
     // runner 自写 heartbeat，会把"agent 早不吐字了"读成"刚刚还活着"。
     ...(outputStall ? [`- ${outputStall}`] : []),
-    `- Budget: turns ${snapshot.budget.turns_used}/${snapshot.budget.turns_limit}, wall ${Math.round(snapshot.budget.wall_elapsed_ms / 60000)}m/${Math.round(snapshot.budget.wall_limit_ms / 60000)}m`,
+    `- Activity: calls ${snapshot.activity?.calls ?? snapshot.budget?.turns_used ?? 0}, active ${Math.round((snapshot.activity?.active_ms ?? snapshot.budget?.wall_elapsed_ms ?? 0) / 60000)}m`,
+    ...(snapshot.budget ? [`- Historical limits (read only): turns ${snapshot.budget.turns_used}/${snapshot.budget.turns_limit}, wall ${Math.round(snapshot.budget.wall_elapsed_ms / 60000)}m/${Math.round(snapshot.budget.wall_limit_ms / 60000)}m`] : []),
+    ...(snapshot.current_disposition ? [`- Current completion: ${snapshot.current_disposition.completionEligible ? 'eligible' : 'incomplete'}`, renderCurrentDisposition(snapshot.current_disposition)] : []),
     '',
     '## Phases',
     '',
@@ -1347,7 +1322,7 @@ export function generateProgressMarkdown(snapshot: GoalProgressSnapshot): string
       `- Action: ${r.action}`,
       `- Current / owner target: ${r.current_phase ?? '—'} / ${r.target_phase ?? r.owner_phase ?? '—'}`,
       `- Gap: ${r.gap_kind ?? '—'}`,
-      `- Backtracks observed: ${r.backtracks_used ?? '—'} (hard limits: total turns and active time)`,
+      `- Backtracks observed: ${r.backtracks_used ?? '—'} (historical event observation only)`,
       `- Fingerprint: ${r.fingerprint ?? '—'}`,
     );
     for (const item of r.changed_paths.slice(0, 20)) {

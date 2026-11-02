@@ -21,7 +21,7 @@ import { resolveWorkflowSpec } from '../../workflow-loader';
 import { projectGoalProgress } from '../../scripts/utils/goal-progress';
 import { runGoalModeSessionStep as runGoalModeSessionStepUnchecked } from '../../scripts/goal-mode-entry';
 import { designRepairAttempted, runUnattendedDesignRepair } from '../../scripts/utils/design-repair-unattended';
-import { foldBudgetLineage, loadAuthoritativeEvents, resolveResumedBudget } from '../../scripts/utils/goal-runner-phase';
+import { readSupersededAncestorRuns, loadAuthoritativeEvents, readExecutionActivity } from '../../scripts/utils/goal-runner-phase';
 import { readBoundInput } from '../../scripts/utils/capability-resolution';
 import {
   BLUEPRINT_RECONCILE_LOCK_NAME, RECONCILE_BUSY_HINT, deriveDesignPreparationReadiness, reconcileChangeUnitBlueprintRefs,
@@ -53,6 +53,7 @@ import { evaluateDeviceReadinessProbe, runDeviceReadinessGate } from '../../scri
 import { SpecLoader } from '../../scripts/utils/spec-loader';
 import type { CheckContext } from '../../scripts/utils/types';
 import { SNAPSHOT_CU_FEATURE } from '../fixtures/host-snapshot-3.1.0/generate';
+import { researchSnapshotFacts } from '../fixtures/host-snapshot-3.1.0/migrate';
 import { authorCurrentCuPlan, handWriteProjections } from './component-design-handoff.unit.test';
 import {
   BLUEPRINT_ID, assess, authorHooks, brief, bumpBlueprint, cachedPrefix, commit, handWrittenCompletion, prepareFreshCuRequest, project, specFirstCuHooks, successorChain, withFreshCuHost, withHost, withSnapshot,
@@ -293,10 +294,10 @@ export async function s14Run(s: Snapshot, key: S14Key): Promise<StaleRun> {
   assert(planVerifiers.length >= 1, `当前 plan 应有实际独立核验，最终完成仍核当前绑定：${describeRun(run)}`);
   const currentEvents = loadAuthoritativeEvents(runFile(s.root, feature, run.successor, 'events.jsonl'));
   const calls = currentEvents.filter(event => event.type === 'agent_invoke_start').length;
-  const consumed = resolveResumedBudget(currentEvents);
+  const consumed = readExecutionActivity(currentEvents);
   const budgetManifest = readJson<Ev>(runFile(s.root, feature, run.successor, 'manifest.json'));
-  assert.strictEqual(consumed.totalTurns, calls, '原地重评与独立核实均须计入原 run 的总调用');
-  assert(consumed.totalTurns <= budgetManifest.budget.max_total_turns, '原地重评不得扩大原 run 预算');
+  assert.strictEqual(consumed.calls, calls, '原地重评与独立核实均须计入原 run 的总调用');
+  assert.equal(budgetManifest.budget, undefined, '新请求不写已退役的调用额度');
   assert(!run.events.some(e => e.type === 'phase_halt' && e.halt_reason === 'execution_scope_unresolved'), `不得停机等设计 owner：${describeRun(run)}`);
   assert(!run.error, `run 应正常结束：${describeRun(run)}`);
   // 写边界记账如实：调和是框架动作，发生在两次 agent 调用之间——canonical CU 不得被记成任何一次 agent 调用的写入。
@@ -672,7 +673,7 @@ export async function s15StaleFlow(s: Snapshot, via: 'resend' | 'supervisor'): P
   assert(fs.readFileSync(runFile(s.root, feature, runId, 'events.jsonl')).subarray(0, eventsBefore.length).equals(eventsBefore), '原事件历史必须保留');
   assertCompletedBy(s, feature, successor, `S15 自动后继（${via}）`);
   assert(boundSources(s, feature, successor).includes('contracts<-contracts@1'), '后继必须重新解析真实实体施工输入');
-  assertS15BudgetInherited(s, feature, runId, successor);
+  assertS15HistoryInherited(s, feature, runId, successor);
   if (via === 'supervisor') {
     assert.strictEqual(haltedEvents.filter(e => e.type === 'supervisor_restart').length, 1);
     assert.strictEqual(supervise.__testing_inheritedSupervisorRestarts(path.join(s.root, reportDirOf(s, feature, successor))), 1, 'supervisor 重启次数不得清零');
@@ -838,6 +839,15 @@ export async function s16Born(s: Snapshot, opts: {
   assert(chain[0] === 'spec' && chain.includes('plan'), `前提：出生链含 spec 与 plan：${JSON.stringify(chain)}`);
   const p = project(s, feature);
   const aligned = specFirstCuHooks(p, true);
+  const initialDraft = (ctx: Parameters<typeof aligned.onAuthor>[0], context: Parameters<typeof aligned.onAuthor>[1]): void => {
+    const admitted = context.factsContext;
+    assert(admitted && context.runId === ctx.runId, 'initial draft must consume the actual signed unit context');
+    const factsFile = featureFilePath(s.root, feature, 'context/facts.md');
+    const baseline = admitted.baseline && fs.existsSync(factsFile) ? fs.readFileSync(factsFile) : undefined;
+    p.runId = ctx.runId; writeCuSpecDraft(p);
+    if (baseline) fs.writeFileSync(factsFile, baseline);
+    researchSnapshotFacts(s.root, factsFile, admitted.first_phase, admitted);
+  };
   let ancestor: string | undefined;
   if (opts.ancestor) {
     preauthorize(s, false);
@@ -845,7 +855,7 @@ export async function s16Born(s: Snapshot, opts: {
     const parent = await runGoalRuntimeChain(s.root, {
       frameworkRoot: s.frameworkRoot, featureId: feature, adapter: 'codex', realHarness: true, noAutoForce: true, viaHostBridge: true,
       freshRequirement: freshRequest.requirement, freshStartPhase: chain[0], freshEndPhase: chain[chain.length - 1],
-      onSpec: (ctx: { runId: string }): void => { p.runId = ctx.runId; writeCuSpecDraft(p); },
+      onAuthor: initialDraft,
     });
     [ancestor] = runIds(s.root, feature);
     assert(ancestor, `真实祖先未出生：exit=${parent.exitCode}`);
@@ -863,9 +873,9 @@ export async function s16Born(s: Snapshot, opts: {
   const before = new Set(runIds(s.root, feature));
   const hooks = {
     ...aligned, noAutoForce: true,
-    onSpec: (ctx: { runId: string; attempt: number }): void => {
-      if (ctx.attempt === 1) { p.runId = ctx.runId; writeCuSpecDraft(p); }
-      else aligned.onSpec(ctx);
+    onAuthor: (ctx: Parameters<typeof aligned.onAuthor>[0], context: Parameters<typeof aligned.onAuthor>[1]): void => {
+      if (ctx.attempt === 1) initialDraft(ctx, context);
+      else aligned.onAuthor(ctx, context);
     },
     onOutOfChain: adapter.onOutOfChain,
     ...opts.extra,
@@ -938,7 +948,7 @@ export async function designRepairCompletionTransport(mode: 'detached' | 'sessio
         status: progress.status, disposition: progress.run_disposition, waitKind: progress.run_wait_kind,
         next: progress.next_action, haltReason: haltOf(b.events)?.halt_reason,
         phaseAuthors: b.events.filter(e => e.type === 'agent_invoke_start' && e.phase === 'spec').length,
-        turns: progress.budget.turns_used };
+        turns: b.events.filter(event => event.type === 'agent_invoke_start').length };
       console.log(`[a7b615ff-design-parity] ${JSON.stringify({ mode, waiting, business, transport })}`);
       return;
     }
@@ -956,7 +966,7 @@ export async function designRepairCompletionTransport(mode: 'detached' | 'sessio
       questioningProvider: bp.review_summary.questioning.provider_id, revisionDelta: bp.revision - b.baseRevision,
       rebound: pointsAtCurrentBlueprint(s, CU), finalStatus: endOf(b.events)?.status,
       verdicts: b.events.filter(e => e.type === 'phase_verdict').map(e => [e.phase, e.verdict, e.action]),
-      turns: resolveResumedBudget(loadAuthoritativeEvents(runFile(s.root, b.feature, b.runId, 'events.jsonl'))).totalTurns };
+      turns: readExecutionActivity(loadAuthoritativeEvents(runFile(s.root, b.feature, b.runId, 'events.jsonl'))).calls };
     console.log(`[a7b615ff-design-parity] ${JSON.stringify({ mode, waiting, business, transport })}`);
   });
   return business!;
@@ -1078,11 +1088,11 @@ export async function s16StaleFlow(s: Snapshot, via: 'supervisor' | 'resend'): P
   assert(h.birthManifest && fs.readFileSync(runFile(s.root, h.feature, h.halted, 'manifest.json')).equals(h.birthManifest), '出生 manifest 原字节不变');
   assert.deepStrictEqual(runIds(s.root, h.feature), [h.halted], '待做 plan 可重签时不得多生 run');
   assert(!h.events.some(e => e.type === 'phase_halt') && h.events.filter(e => e.type === 'run_start').length === 1, '同 run 自动完成，不制造停机/重发');
-  const replay = resolveResumedBudget(loadAuthoritativeEvents(runFile(s.root, h.feature, h.halted, 'events.jsonl')), { nextSessionStartMs: Date.now() });
+  const replay = readExecutionActivity(loadAuthoritativeEvents(runFile(s.root, h.feature, h.halted, 'events.jsonl')));
   const invocations = h.events.filter(e => e.type === 'agent_invoke_start').length;
-  assert.strictEqual(replay.totalTurns, invocations, '预算逐实际调用连续回放，不重置');
+  assert.strictEqual(replay.calls, invocations, '预算逐实际调用连续回放，不重置');
   assertCompletedBy(s, h.feature, h.halted, 'S16 待做 plan 重签');
-  let evidence = `旧 contracts derive 真实 stale；spec/plan 同 run 重签完成；turns=${replay.totalTurns}`;
+  let evidence = `旧 contracts derive 真实 stale；spec/plan 同 run 重签完成；turns=${replay.calls}`;
   if (via === 'supervisor') {
     const woke = await superviseOnce(s, h.feature, h.halted);
     assert(woke.code === 0 && !woke.spawned.length, '已完成 run 不得被 supervisor 重复拉起');
@@ -1198,22 +1208,16 @@ async function startSiblingRun(s: Snapshot, saved: Ev): Promise<{ release: () =>
   return { release, done, worker };
 }
 
-/**
- * 停机 run 的两条生产回放：resume（当前 run 的权威事件 + 祖先折叠）与后继出生（以停机 run 为种子折叠）——各自的 attempted 判重与
- * 预算 reducer 的调用计数。有完成祖先时取原交付周期边界；fresh 请求不传完成边界。
- */
-function replayedBudget(s: Snapshot, b: S16Born): Record<'resume' | 'successor', { attempted: boolean; turns: number }> {
-  clearFrameworkConfigCache();
-  const featuresDir = relFeaturesDir(s.root);
+/** Supersede audit remains readable after dispatch windows and quota folds retire. */
+function replayedHistory(s: Snapshot, b: S16Born): Record<'resume' | 'successor', { attempted: boolean }> {
   const signature = String(contentRepairs(b.events)[0]?.signature);
   const current = loadAuthoritativeEvents(runFile(s.root, b.feature, b.runId, 'events.jsonl'));
-  const boundary = b.completed ? { cycleBoundary: b.completed } : {};
-  const resume = foldBudgetLineage({ projectRoot: s.root, featuresDir, feature: b.feature, currentEvents: current, ...boundary });
-  const successor = foldBudgetLineage({ projectRoot: s.root, featuresDir, feature: b.feature, seedTargets: [b.runId], currentEvents: [], ...boundary });
-  const turns = (events: Parameters<typeof resolveResumedBudget>[0]): number => resolveResumedBudget(events, { nextSessionStartMs: Date.now() }).totalTurns;
+  const options = { projectRoot: s.root, featuresDir: relFeaturesDir(s.root), feature: b.feature };
+  const resume = readSupersededAncestorRuns({ ...options, currentEvents: current });
+  const successor = readSupersededAncestorRuns({ ...options, seedTargets: [b.runId] });
   return {
-    resume: { attempted: designRepairAttempted([...resume.ancestorEvents, ...current], signature), turns: turns(resume.budgetFoldEvents) },
-    successor: { attempted: designRepairAttempted(successor.ancestorEvents, signature), turns: turns(successor.budgetFoldEvents) },
+    resume: { attempted: designRepairAttempted([...resume.flatMap(run => run.events), ...current], signature) },
+    successor: { attempted: designRepairAttempted(successor.flatMap(run => run.events), signature) },
   };
 }
 
@@ -1251,8 +1255,7 @@ function assertNotPublished(s: Snapshot, b: S16Born, step: string, label: string
   return failed!;
 }
 
-// ---- 两处真实时间等待的测试缝（plan b0e0621c §3.2）---------------------------------------------------
-// 冷却：只在目标调用期间包装既有恢复守卫 checkTerminalResumeGuard、传短冷却，finally 还原；不加全局冷却配置。
+// ---- 真实心跳的测试缝（plan b0e0621c §3.2）---------------------------------------------------
 // 心跳：运行时 __testing_setLockHeartbeatMs 只缩短真实心跳定时器的间隔（回调不变），由目标调用之前安装，
 //       驱动层 finally 的 __testing_resetGoalRunnerSeams 复位（前缀真跑的复位清不到它：它装在前缀之后）。
 
@@ -1260,26 +1263,9 @@ function assertNotPublished(s: Snapshot, b: S16Born, step: string, label: string
 const childExited = (child: import('child_process').ChildProcess): Promise<void> =>
   child.exitCode !== null || child.signalCode !== null ? Promise.resolve() : new Promise(resolve => child.once('exit', () => resolve()));
 
-const SHORT_RESUME_COOLDOWN_MS = 3_000;
 const TEST_LOCK_HEARTBEAT_MS = 1_000;
 /** goal-phase-runtime.ts 的 LOCK_HEARTBEAT_MS（生产缺省，未导出）。 */
 const PRODUCTION_LOCK_HEARTBEAT_MS = 60_000;
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const runnerPhase = require('../../scripts/utils/goal-runner-phase') as Pick<typeof import('../../scripts/utils/goal-runner-phase'), 'checkTerminalResumeGuard'>;
-/** 模块加载时的原守卫（V5：未安装 = 这个函数、生产传的 5 分钟冷却）。 */
-const productionResumeGuard = runnerPhase.checkTerminalResumeGuard;
-
-async function withResumeCooldown<T>(cooldownMs: number, call: () => Promise<T>): Promise<{ value: T; guardCalls: number }> {
-  const real = runnerPhase.checkTerminalResumeGuard;
-  let guardCalls = 0;
-  runnerPhase.checkTerminalResumeGuard = input => { guardCalls += 1; return real({ ...input, cooldownMinutes: cooldownMs / 60_000 }); };
-  try {
-    return { value: await call(), guardCalls };
-  } finally {
-    runnerPhase.checkTerminalResumeGuard = real;
-  }
-}
-
 /**
  * S15 停放现场：真实 plan 先交付 contracts/use-cases，coding/review 通过后进入设备等待；
  * 等待期间作者补充不冲突的通知步骤，使实际 artifact 冻结绑定失效。plan 已兑现，不能由未来 owner 在原 run 重签。
@@ -1365,18 +1351,17 @@ function s15ContinuationAuthors(s: Snapshot, feature: string, deviceDeps: Awaite
   };
 }
 
-/** Reuse the original lineage reducer; the successor inherits the source budget and counts all calls. */
-function assertS15BudgetInherited(s: Snapshot, feature: string, source: string, successor: string): void {
-  const a = readJson<Ev>(runFile(s.root, feature, source, 'manifest.json'));
-  const b = readJson<Ev>(runFile(s.root, feature, successor, 'manifest.json'));
-  assert.deepStrictEqual(b.budget, a.budget, '后继不得重置出生预算');
-  const folded = foldBudgetLineage({ projectRoot: s.root, featuresDir: relFeaturesDir(s.root), feature, seedTargets: [source], currentEvents: [] });
-  const sourceTurns = resolveResumedBudget(folded.budgetFoldEvents, { nextSessionStartMs: Date.now() }).totalTurns;
-  const next = loadAuthoritativeEvents(runFile(s.root, feature, successor, 'events.jsonl'));
-  const combined = foldBudgetLineage({ projectRoot: s.root, featuresDir: relFeaturesDir(s.root), feature, currentEvents: next });
-  const cumulative = resolveResumedBudget(combined.budgetFoldEvents, { nextSessionStartMs: Date.now() }).totalTurns;
-  const own = resolveResumedBudget(next, { nextSessionStartMs: Date.now() }).totalTurns;
-  assert(sourceTurns > 0 && cumulative >= sourceTurns + own, `原消耗必须带入后继：${sourceTurns}+${own}, cumulative=${cumulative}`);
+/** Read original authoritative calls without turning history into a dispatch allowance. */
+function assertS15HistoryInherited(s: Snapshot, feature: string, source: string, successor: string): void {
+  const manifest = readJson<Ev>(runFile(s.root, feature, successor, 'manifest.json'));
+  assert.equal(manifest.budget, undefined, '新后继不写已退役的调用额度');
+  const current = loadAuthoritativeEvents(runFile(s.root, feature, successor, 'events.jsonl'));
+  const ancestors = readSupersededAncestorRuns({ projectRoot: s.root, featuresDir: relFeaturesDir(s.root), feature, currentEvents: current });
+  const original = ancestors.find(run => run.run_id === source);
+  assert(original, '后继审计必须仍能准确定位真实原 run');
+  assert.deepEqual(original.events, loadAuthoritativeEvents(runFile(s.root, feature, source, 'events.jsonl')),
+    '祖先审计保留原权威事件，不裁剪已完成历史或折算额度');
+  assert(readExecutionActivity(original.events).calls > 0, '原始真实调用仍可观测');
 }
 
 const cases: Array<{ name: string; run: () => Promise<void> }> = [
@@ -1921,15 +1906,8 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
       assertNotPublished(s, b, 'questioning', '质询不可用');
       const halt = haltOf(b.events);
       assert(halt?.halt_reason === 'execution_scope_unresolved' && /尝试失败（步骤 questioning）/.test(String(halt.halt_guidance)) && /唯一一次自动修复机会/.test(String(halt.halt_guidance)), `停等并披露：${JSON.stringify(halt?.halt_guidance)}`);
-      // c5 同一签名第二次停机（同一 run）：显式 --resume 对 HALTED run 有冷却（生产 5 分钟，--force 也不越过），等冷却过去再由操作者
-      // 显式 --resume --force-resume——同一 run 重评同一阶段、再次停在同一签名，按本 run 的事件回放读到 attempted → 不再派发。
-      // plan b0e0621c §3.2：只在这一次调用期间包装既有恢复守卫、传短冷却（生产缺省值不变），等的仍是真实冷却。
-      const endTs = Date.parse(String(endOf(b.events)?.ts));
-      const waitMs = endTs + SHORT_RESUME_COOLDOWN_MS + 2_000 - Date.now();
-      if (waitMs > 0) await new Promise(resolve => setTimeout(resolve, waitMs));
-      const { value: resumed, guardCalls } = await withResumeCooldown(SHORT_RESUME_COOLDOWN_MS, () =>
-        runGoalRuntimeChain(s.root, { frameworkRoot: s.frameworkRoot, featureId: b.feature, resume: b.runId, forceResume: true, noAutoForce: true, ...authorsForContinuation(s, b.feature) }));
-      assert.strictEqual(guardCalls, 1, '显式 resume 经过恢复守卫一次（短冷却已生效）');
+      const resumed = await runGoalRuntimeChain(s.root, { frameworkRoot: s.frameworkRoot, featureId: b.feature,
+        resume: b.runId, forceResume: true, noAutoForce: true, ...authorsForContinuation(s, b.feature) });
       const sameRun = eventsOf(s, b.feature, b.runId);
       console.log(`[design-authority-repair] S16-c5 resume exit=${resumed.exitCode} ${describeS16({ events: sameRun })}`);
       assert(sameRun.filter(e => e.type === 'run_start').length === 2, `前提：resume 确实重评了同一阶段：${describeS16({ events: sameRun })}`);
@@ -1998,18 +1976,6 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
       assert(deriveBlueprintAdmission(candidate, validateComponentBlueprintUpstream(candidate, { projectRoot: s.root })).status === 'blocker',
         '只有后续合法Q满足真实必答范围后才可能准入，保留草稿本身不能通过');
       assertAttemptCleanedUp(s);
-    }),
-  },
-  {
-    name: 'S16-c3e 预算：编写调用之后剩余调用次数不足 → 不启动质询调用（实际启动一次计一次，与事件回放同步），不发布',
-    // 后继的预算继承源 run（且按交付周期累计），所以用兄弟 CU 的 fresh run：出生时 max_total_turns=2（spec 一次 + 编写一次）。
-    run: () => withFreshCuHost(async s => {
-      const { b, adapter, exitCode } = await siblingFreshRun(s, { freshBudget: { max_total_turns: 2 } });
-      const probe = { exitCode };
-      console.log(`[design-authority-repair] S16-c3e exit=${probe.exitCode} ${describeS16(b)}`);
-      const failed = assertNotPublished(s, b, 'questioning', '预算不足');
-      assert(/未启动/.test(String(failed.reason)) && outOfChainStarts(b.events).length === 1 && !adapter.log.prompts['design-repair-questioning'], JSON.stringify(failed));
-      assert.strictEqual(b.events.filter(e => e.type === 'agent_invoke_start').length, 2, '调用次数 = 实际启动的调用（spec 一次 + 编写一次）');
     }),
   },
   {
@@ -2192,13 +2158,12 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
       const eventsFile = runFile(s.root, b.feature, b.runId, 'events.jsonl');
       assert.deepStrictEqual((failed.files as Ev[] | undefined)?.map(f => f.path), [path.relative(s.root, eventsFile).replace(/\\/g, '/')], `只应检出事件文件：${JSON.stringify(failed)}`);
       assert.strictEqual(haltOf(b.events)?.halt_reason, 'backtrack_target_absent', '走既有违规停机出口');
-      const budget = replayedBudget(s, b);
-      assert(budget.resume.attempted && budget.successor.attempted, `判重：${JSON.stringify(budget)}`);
-      assert(budget.resume.turns === 2 && budget.successor.turns === 2, `预算回放应计 spec 与编写调用各一次：${JSON.stringify(budget)}`);
+      const history = replayedHistory(s, b);
+      assert(history.resume.attempted && history.successor.attempted, `原修订历史：${JSON.stringify(history)}`);
     }),
   },
   {
-    name: 'S16-r1 本 run 与祖先 run 的事件被调用删改（codex t6 首轮 1 / 确认轮 B）：质询调用删掉 run_start、attempted、编写与本次调用的起始，并删掉祖先 run 的一条调用起始、且不给结果 → 检出越界走违规停机；各事件文件整文件写回期望值（会话分段不变）→ resume 与后继的判重和预算回放都不少，后继不再派发',
+    name: 'S16-r1 本 run 与祖先 run 的事件被调用删改（codex t6 首轮 1 / 确认轮 B）：质询调用删掉 run_start、attempted、编写与本次调用的起始，并删掉祖先 run 的一条调用起始、且不给结果 → 检出越界走违规停机；各事件文件整文件写回期望值（会话分段不变）→ resume 与后继审计仍保留原真实修订记录',
     run: () => withFreshCuHost(async s => {
       const captured: { own?: Buffer; ancestor?: Buffer; ancestorFile?: string } = {};
       const b = await s16Born(s, { ancestor: true, adapter: { questioning: (doc, draft) => {
@@ -2227,16 +2192,9 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
       // 整文件写回：祖先 run 与删改前逐字节相同；本 run 以删改前的字节为前缀（之后只有运行时自己写的行）。
       assert(fs.readFileSync(captured.ancestorFile!).equals(captured.ancestor!), '祖先 run 的事件应写回调用前的字节');
       assert(fs.readFileSync(eventsFile).subarray(0, captured.own!.length).equals(captured.own!), '本 run 的事件应写回期望值（顺序与会话分段不变）');
-      const budget = replayedBudget(s, b);
-      assert(budget.resume.attempted && budget.successor.attempted, `判重：${JSON.stringify(budget)}`);
-      assert(budget.resume.turns === 4 && budget.successor.turns === 4, `预算回放应计祖先 spec、本 run spec、编写、质询各一次：${JSON.stringify(budget)}`);
-      const next = await supersede(s, b.feature, b.runId, b.chain, { ...authorsForContinuation(s, b.feature), noAutoForce: true });
-      assert(next.successor, `后继未出生：${next.error}`);
-      const succ = eventsOf(s, b.feature, next.successor!);
-      console.log(`[design-authority-repair] S16-r1 successor ${describeS16({ events: succ })}`);
-      assert(!contentRepairs(succ).length && !outOfChainStarts(succ).length, `后继不得获得第二次机会：${describeS16({ events: succ })}`);
-      assert.strictEqual(haltOf(succ)?.halt_reason, 'execution_scope_unresolved', '后继必须实际走原设计 owner 门，不能靠作者异常绕过判重');
-      assert.strictEqual(haltOf(succ)?.design_authority?.class, 'B1', '后继真实门仍为同一 B1');
+      const history = replayedHistory(s, b);
+      assert(history.resume.attempted && history.successor.attempted, `原修订历史：${JSON.stringify(history)}`);
+
     }),
   },
   {
@@ -2556,7 +2514,7 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
       const requirement = readJson<{ requirement: string }>(runFile(s.root, feature, runId, 'manifest.json')).requirement;
       const decided = decideRunContinuation({ projectRoot: s.root, feature, call: { requirement }, runProbe: () => ({ ready: true }) });
       assert(decided.kind === 'successor' && decided.change === 'external_condition_ready' && decided.targets.includes(runId) && /contracts/.test(decided.reason), JSON.stringify(decided));
-      // 设备门现在真实停放为 HALTED/WAITING；未恢复时保留冷却，不再次启动未就绪设备。
+      // 设备门现在真实停放为 HALTED/WAITING；未恢复时保留等待，不再次启动未就绪设备。
       const waiting = decideRunContinuation({ projectRoot: s.root, feature, call: { requirement }, runProbe: () => ({ ready: false }) });
       assert(waiting.kind === 'hold' && !/external_condition_ready/.test(waiting.reason), JSON.stringify(waiting));
       // 操作者手工 `--resume`（前台、不带 --force）也经同一判断：设备探针就绪、绑定已失效 → 不在原 run 上继续，改为起后继并完成。
@@ -2573,7 +2531,7 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
       assertCompletedBy(s, feature, born[0], 'S15 显式 --resume 改起后继');
       assert(fs.readFileSync(runFile(s.root, feature, runId, 'manifest.json')).equals(manifestBefore), '原 manifest 字节保留');
       assert(fs.readFileSync(runFile(s.root, feature, runId, 'events.jsonl')).subarray(0, eventsBefore.length).equals(eventsBefore), '原事件历史保留');
-      assertS15BudgetInherited(s, feature, runId, born[0]);
+      assertS15HistoryInherited(s, feature, runId, born[0]);
     }),
   },
   // plan a2f7c9e4 §3.7（codex r1 B3-1）：材料按调用方原始参数判合法；显式 --resume 经同一恢复判断改起后继时，两入口都不得因内部去掉 --resume 而用法错误
@@ -2610,23 +2568,9 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
       assertCompletedBy(s, feature, born[0], `S15-notes ${entry}`);
       assert(fs.readFileSync(runFile(s.root, feature, runId, 'manifest.json')).equals(manifestBefore), '原 manifest 字节保留');
       assert(fs.readFileSync(runFile(s.root, feature, runId, 'events.jsonl')).subarray(0, eventsBefore.length).equals(eventsBefore), '原事件历史保留');
-      assertS15BudgetInherited(s, feature, runId, born[0]);
+      assertS15HistoryInherited(s, feature, runId, born[0]);
     }),
   })),
-  {
-    name: 'T2-cooldown 冷却测试缝（plan b0e0621c §3.2 / V5）：不安装时恢复守卫即原函数、按生产 5 分钟冷却拒绝；安装只在目标调用期间生效；调用异常退出后已还原',
-    run: async () => {
-      const recent = { priorStatus: 'HALTED', lastRunEndTs: new Date(Date.now() - 10_000).toISOString(), forceResume: true, cooldownMinutes: 5 };
-      assert.strictEqual(runnerPhase.checkTerminalResumeGuard, productionResumeGuard, '未安装：模块导出即原守卫');
-      assert(!runnerPhase.checkTerminalResumeGuard(recent).allowed, '未安装：生产冷却（5 分钟）内拒绝');
-      await assert.rejects(withResumeCooldown(SHORT_RESUME_COOLDOWN_MS, async () => {
-        assert(runnerPhase.checkTerminalResumeGuard(recent).allowed, '安装期间：短冷却已过即放行');
-        throw new Error('目标调用异常退出');
-      }), /目标调用异常退出/);
-      assert.strictEqual(runnerPhase.checkTerminalResumeGuard, productionResumeGuard, '异常退出后已还原为原守卫');
-      assert(!runnerPhase.checkTerminalResumeGuard(recent).allowed, '还原后仍按生产冷却拒绝');
-    },
-  },
   {
     name: 'T2-heartbeat 心跳测试缝（plan b0e0621c §3.2 / V5）：不安装时取生产缺省 60 秒；安装后目标调用异常退出，驱动层复位回缺省值',
     run: async () => {

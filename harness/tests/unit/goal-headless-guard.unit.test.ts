@@ -15,6 +15,7 @@ import {
   isAllFrameworkBugBlockers,
   shouldHaltNoProgress,
   evaluateCompletionProgress,
+  hasFindingIdentities,
   completionProblemSignature,
   type CompletionEvaluation,
   snapshotArtifacts,
@@ -23,8 +24,6 @@ import {
   isOperatorInterruptSignal,
   WINDOWS_CTRL_C_EXIT_CODE,
   CUMULATIVE_HALT_FAMILY,
-  CUMULATIVE_HALT_THRESHOLD,
-  ADVANCE_BLOCKED_HALT_THRESHOLD,
 } from '../../scripts/utils/goal-failure-classifier';
 import { buildSummaryBlockers } from '../../scripts/utils/summary-blockers';
 import { __testing_setSnapshotReadFile } from '../../scripts/utils/product-source-snapshot';
@@ -57,23 +56,16 @@ import {
   buildCapabilityBlock,
   formatHarnessFailureTail,
   resolvePhaseCapabilityAdvisory,
-  TRANSIENT_API_BACKOFF_MS,
   VISUAL_GAP_RETRY_GUIDANCE,
   VISUAL_GAP_RETRY_GUIDANCE_TESTING,
   type CapabilityAdvisory,
 } from '../../scripts/goal-runner';
-import {
-  buildAgentTimeoutRepeatedGuidance,
-  buildClosureWallGuidance,
-  buildFrameworkBugGuidance,
-  buildFrameworkIntegrityGuidance,
-  buildNoRelevantTargetGuidance,
-} from '../../scripts/utils/await-confirm-guidance';
 import { lookupIncident } from '../../scripts/utils/adjudication';
 import { clearFrameworkConfigCache } from '../../config';
 import { loadResolvedProfile } from '../../profile-loader';
 import type { GoalManifest } from '../../scripts/utils/goal-manifest';
 import type { UnitCaseResult } from '../run-unit';
+import { matchesUnitCase, selectedUnitCases } from '../utils/unit-case-selection';
 import { resolveCurrentDisposition, type CurrentDispositionProblem } from '../../scripts/utils/check-disposition';
 
 const FRAMEWORK_ROOT = path.resolve(__dirname, '../../..');
@@ -159,7 +151,7 @@ function loadTestResolvedProfile(root: string) {
   return loadResolvedProfile(root, fw);
 }
 
-export function runAll(): UnitCaseResult[] {
+function runCases(selector?: string): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
   const cases: Array<{ name: string; run: () => void }> = [
     {
@@ -286,7 +278,13 @@ export function runAll(): UnitCaseResult[] {
         const previous = completionEvaluation('a', [problem]);
         const current = completionEvaluation('b', [{ ...problem, id: 'open_finding:any-new-id', detail: 'different prose' }]);
         assert(!evaluateCompletionProgress({ previous, current, feedbackDelivered: true }).halt, '只有同文件/文字就假定了同一真实子项');
-        assert(!evaluateCompletionProgress({ previous, current: { ...current, inputs: previous.inputs }, feedbackDelivered: true }).reused, '缺对象身份仍复用了不同未知发现');
+        const repeated = evaluateCompletionProgress({ previous, current: { ...current, inputs: previous.inputs }, feedbackDelivered: true });
+        assert(repeated.reused && repeated.evaluation === previous && !repeated.halt, '相同输入和未知事实不购买新评估，也不能判无进展');
+        const reused = repeated.evaluation;
+        if (!reused) throw new Error('复用必须保留原未知评估');
+        assert(!hasFindingIdentities(reused.disposition) && !reused.disposition.completionEligible
+          && reused.disposition.completionBlocking.length === 1,
+          '复用必须保留缺对象证据的未完发现，文件与任意标签不能成为真实对象依据或完成结论');
       },
     },
     {
@@ -821,71 +819,6 @@ export function runAll(): UnitCaseResult[] {
           hasRuntimeFailureEvidence: false,
         });
         assert(noVerdict.failureKindForEvent === 'code_regression', '缺 verdict 不得被当成 PASS');
-      },
-    },
-    {
-      name: 'current attempt 接线：decisionSummary 是 meta/signature/repair/reconcile/event 的唯一 summary 输入',
-      run: () => {
-        const source = fs.readFileSync(path.resolve(__dirname, '../../scripts/goal-phase-runtime.ts'), 'utf-8');
-        const decisionDeclaration = 'const decisionSummary = resolved.stale_summary';
-        const decisionAt = source.indexOf(decisionDeclaration);
-        assert(decisionAt >= 0, 'current attempt 必须只生成一次 decisionSummary');
-        assert(
-          (source.match(/const decisionSummary = resolved\.stale_summary/g) ?? []).length === 1,
-          'current attempt 不得重复生成分叉 decisionSummary',
-        );
-        assert(source.slice(decisionAt, decisionAt + 180).includes('? null'), 'stale summary 必须在公共投影入口失去决策资格');
-        for (const required of [
-          'classifyFailureKind(decisionSummary',
-          'extractIntegritySubtypes(decisionSummary)',
-          'extractDeterministicAffectedFiles(decisionSummary)',
-          'buildCurrentAttemptFailureProjection({',
-          'const meta = currentFailureProjection.blockingMeta',
-          'decisionSummary?.repair_candidates ?? []',
-          'classifyTimedOutWithFreshBlockers(decisionSummary)',
-          'aggregateBlockerActionability(decisionSummary)',
-          'failureKind: meta.failure_kind ?? currentFailureProjection.failureKindForEvent',
-          'blockers: (decisionSummary?.blockers ?? []).map',
-          'failure_kind_classified: currentFailureProjection.failureKindForEvent',
-          'blocker_signature: currentBlockerSignature || undefined',
-          'currentSummaryFresh: !resolved.stale_summary',
-          'freshSummary && summaryAbsPath',
-          'harnessFailedWithoutFreshSummary: !dryRun && !freshSummary && harnessExit !== 0',
-        ]) {
-          assert(source.includes(required), `current attempt 缺少 decisionSummary 接线：${required}`);
-        }
-        for (const forbidden of [
-          'extractBlockingMeta(summary)',
-          'classifyTimedOutWithFreshBlockers(summary)',
-          'aggregateBlockerActionability(summary)',
-          'blockers: (summary?.blockers ?? []).map',
-        ]) {
-          assert(!source.slice(decisionAt).includes(forbidden), `current attempt 仍消费 raw summary：${forbidden}`);
-        }
-      },
-    },
-    {
-      name: 'resume 接线：continuation 在 priorFailure/classifier 前剥离历史 framework integrity',
-      run: () => {
-        const source = fs.readFileSync(path.resolve(__dirname, '../../scripts/goal-phase-runtime.ts'), 'utf-8');
-        const stripAt = source.indexOf('stripRetiredFrameworkIntegrityForCurrentRun(priorSummaryRead.summary)');
-        const extractAt = source.indexOf('extractPriorFailureContext(currentSummary)', stripAt);
-        const classifyAt = source.indexOf('classifyFailureKind(currentSummary', stripAt);
-        assert(stripAt >= 0 && extractAt > stripAt && classifyAt > stripAt, 'continuation 必须先剥离再生成 prompt/classify');
-      },
-    },
-    {
-      name: 'integrity guidance：process injection 按当前来源处置；历史 subtype 不要求 Git 提交/回滚',
-      run: () => {
-        const base = { feature: 'demo', runId: 'r1', phase: 'testing', harnessPrefixRel: 'framework/harness' };
-        const current = buildFrameworkIntegrityGuidance({ ...base, subtypes: ['process_injection'] }).join('\n');
-        assert(current.includes('NODE_OPTIONS'), current);
-        assert(!/提交|git status|framework_integrity blocker details/.test(current), current);
-        const legacy = buildFrameworkIntegrityGuidance({ ...base, subtypes: ['framework_drift'] }).join('\n');
-        assert(legacy.includes('历史 provenance'), legacy);
-        assert(legacy.includes('不要求提交、回滚'), legacy);
-        const bug = buildFrameworkBugGuidance({ ...base, checkerIds: ['check-testing'] }).join('\n');
-        assert(!/提交.*控制面|dirty 拦/.test(bug), bug);
       },
     },
     {
@@ -2522,16 +2455,11 @@ export function runAll(): UnitCaseResult[] {
       },
     },
     {
-      name: 'closure-only 生产接线消费 verdict 派生；receipt 不再是 invoke 前置物',
+      name: '当前runtime不借旧snapshot或receipt前置物决定作者资格',
       run: () => {
         const runner = fs.readFileSync(path.resolve(__dirname, '../../scripts/goal-phase-runtime.ts'), 'utf8');
-        assert(
-          /const closureOnlyAttempt = isClosureOnlyRetryPending\(attemptHistory, String\(phase\)\)/.test(runner),
-          'closure-only 不得再由 trustedSnapshot.kind 推断',
-        );
         assert(!/trustedSnapshot/.test(runner.replace(/\/\/[^\n]*/g, '')), 'pass snapshot 可信加载不得回归生产代码');
         assert(!/writeReceiptScaffold|receipt_scaffold_unwritable/.test(runner), 'receipt 不得阻止 agent invoke 或 closure');
-        assert(/receipt 不再是 invoke\/closure 前置物；closed summary 提交后才 best-effort 投影/.test(runner), 'goal runtime must document post-close projection');
       },
     },
     {
@@ -2550,72 +2478,10 @@ export function runAll(): UnitCaseResult[] {
       },
     },
     {
-      name: 'E4 阈值常量：ADVANCE_BLOCKED_HALT_THRESHOLD=2（首次给机会/第二次即halt）、CUMULATIVE_HALT_THRESHOLD=3',
+      name: '历史工具链诊断族可读，legacy human gate不成为当前累积停止依据',
       run: () => {
-        assert(ADVANCE_BLOCKED_HALT_THRESHOLD === 2, String(ADVANCE_BLOCKED_HALT_THRESHOLD));
-        assert(CUMULATIVE_HALT_THRESHOLD === 3, String(CUMULATIVE_HALT_THRESHOLD));
         assert(CUMULATIVE_HALT_FAMILY.has('toolchain'), 'toolchain in family');
         assert(!CUMULATIVE_HALT_FAMILY.has('await_human_confirm'), 'legacy human gate must not drive a current cumulative halt');
-      },
-    },
-    {
-      name: 'E4 buildClosureWallGuidance: 含 feature/run/receipt 路径/续跑命令，与 visual-confirm 引导独立',
-      run: () => {
-        const lines = buildClosureWallGuidance({
-          feature: 'bc-openCard',
-          runId: '20260708T023859Z',
-          phase: 'spec',
-          receiptPathRel: 'doc/features/bc-openCard/spec/phase-completion-receipt.md',
-          harnessPrefixRel: 'framework/harness',
-          receiptStatus: 'failed',
-          cumulativeBlockedCount: 2,
-        });
-        const text = lines.join('\n');
-        assert(text.includes('bc-openCard'), 'feature 名须出现');
-        assert(text.includes('第 2 次'), '须报告累计次数');
-        assert(text.includes('phase-completion-receipt.md'), '须指向 receipt 路径');
-        assert(text.includes('--resume 20260708T023859Z --force-resume'), '须给续跑命令');
-        assert(!text.includes('device-screenshots'), '不得混用 visual-confirm 的截图话术');
-        // plan 4e6fb3b6 首轮评审 R5 同类修正：原"提高 phase_timeout_ms 后续跑"点的不是 manifest 字段，且超时字段是身份字段
-        assert(!text.includes('phase_timeout_ms') && text.includes('unattended.phase_timeout_seconds.spec')
-          && /--override-manifest/.test(text), `调超时的办法须点名真实字段并写明续跑带 --override-manifest：${text}`);
-      },
-    },
-    {
-      // t1（plan f3a8c6d2）：事故里 receipt 的 verifier verdict 其实是 PASS，真因是
-      // claimed_attempt_id 失配 + evidence manifest stale，而话术开口就说"多为某项只能
-      // 真人签署的确认"，把人直接引向签字——用户据此以为"只剩视觉验真等我签"。
-      name: 't1 closure wall 话术：按 receipt 真实状态给原因，不得开口就猜"人签"',
-      run: () => {
-        const base = {
-          feature: 'bc-openCard',
-          runId: '20260808T071335Z-4b0136',
-          phase: 'plan',
-          receiptPathRel: 'doc/features/bc-openCard/plan/phase-completion-receipt.md',
-          harnessPrefixRel: 'framework/harness',
-          cumulativeBlockedCount: 2,
-        };
-        // failed（事故形态）：必须先引导去看校验输出定位真因，且显式点名 attempt 失配/stale
-        const failedText = buildClosureWallGuidance({ ...base, receiptStatus: 'failed' }).join('\n');
-        assert(/summary\/verifier\/policy/.test(failedText), `failed 须指向当前闭环输入：${failedText}`);
-        assert(/receipt 是 closed 后机器投影/.test(failedText), 'failed 不应要求补签 receipt');
-        assert(
-          failedText.indexOf('check:plan') < failedText.indexOf('补签'),
-          '定位命令须排在补签建议之前（先查真因再谈签字）',
-        );
-        // missing：回执压根没写，与人签无关
-        const missingText = buildClosureWallGuidance({ ...base, receiptStatus: 'missing' }).join('\n');
-        assert(/无需手填/.test(missingText), `missing 须说明 receipt 不需手填：${missingText}`);
-        // error：探针崩溃＝框架/工具链问题
-        const errorText = buildClosureWallGuidance({ ...base, receiptStatus: 'error' }).join('\n');
-        assert(/不要试图补签|不要修改产物/.test(errorText), `error 须否定补签：${errorText}`);
-        // 无状态：先取确定结论，不得预设
-        const unknownText = buildClosureWallGuidance({ ...base }).join('\n');
-        assert(/不要预设是"只差人签"/.test(unknownText), `未知状态须否定预设：${unknownText}`);
-        // 所有分支都不得保留旧的统一猜测句
-        for (const t of [failedText, missingText, errorText, unknownText]) {
-          assert(!/多为某项只能真人签署/.test(t), `旧猜测句不得回归：${t.slice(0, 200)}`);
-        }
       },
     },
     {
@@ -2674,18 +2540,6 @@ export function runAll(): UnitCaseResult[] {
           '产物内容有进展应放行续作',
         );
         fs.rmSync(tmp, { recursive: true, force: true });
-      },
-    },
-    // ======================================================================
-    // P0-D：runner 配套（backoff 表 / 跨 resume 计数 / prompt 指导）
-    // ======================================================================
-    {
-      name: 'P0-D TRANSIENT_API_BACKOFF_MS = 5s→15s→45s（§六-5 拍板）',
-      run: () => {
-        assert(
-          JSON.stringify([...TRANSIENT_API_BACKOFF_MS]) === JSON.stringify([5000, 15000, 45000]),
-          TRANSIENT_API_BACKOFF_MS.join(','),
-        );
       },
     },
     {
@@ -2960,99 +2814,6 @@ export function runAll(): UnitCaseResult[] {
         }
       },
     },
-    {
-      name: 'P2 unknown relevant targets preserve their diagnostic without a fabricated no-progress conclusion',
-      run: () => {
-        // 重放 a70eb7（i12/i13/i14）与 f829b8 的同签名序列形态：产品已修完，
-        // 剩下的 3 次 testing 失败 signature 逐字相同、产物零变化、相关集合为空。
-        const hostShapedSummary = {
-          verdict: 'FAIL',
-          blockers: [
-            { id: 'testing_channel_evidence_obligation', classification: 'testing_channel_unverified' },
-            { id: 'p0_coverage_integrity' },
-            { id: 'negative_verdict_closure' },
-          ],
-          repair_candidates: [],
-        };
-        const related = extractContentRelatedFiles(hostShapedSummary);
-        assert(related.length === 0, `本形态的相关集合必须为空：${JSON.stringify(related)}`);
-        const sig = 'testing::channel_evidence::TC-007';
-        for (const [label, prior, current] of [
-          ['无 watched 产物（宿主实形）', {}, {}],
-          ['prior 为 null（首次可比基线缺失）', null, {}],
-        ] as const) {
-          assert(
-            !shouldHaltNoProgress({
-              failureKind: 'code_regression',
-              priorBlockerSignature: sig,
-              currentBlockerSignature: sig,
-              priorArtifactSnapshot: prior as never,
-              currentArtifactSnapshot: current,
-              relevantEvidenceKnown: related.length > 0,
-            }),
-            `${label}：相关集合未知/为空，无法证明一次已完成的验收评估`,
-          );
-        }
-        // 首次失败（无 prior signature）不得被这条收紧提前判死
-        assert(
-          !shouldHaltNoProgress({
-            failureKind: 'code_regression',
-            priorBlockerSignature: null,
-            currentBlockerSignature: sig,
-            priorArtifactSnapshot: {},
-            currentArtifactSnapshot: {},
-            relevantEvidenceKnown: false,
-          }),
-          '第一次失败没有同签名重复事实，不得停',
-        );
-        // 不新增 halt reason：仍走既有 no_progress_guard，且 no_fix_attempt 未被扩成终态
-        assert(!!lookupIncident('no_progress_guard'), 'no_progress_guard 须是既有已注册 incident');
-        assert(!lookupIncident('no_fix_attempt'), 'no_fix_attempt 不得被扩成新的 halt reason');
-        // 话术守住「相关目标未知」这条线，不得说成「未做修复尝试」
-        const guidance = buildNoRelevantTargetGuidance({
-          feature: 'bc-openCard-2', runId: '20260920T074445Z-a70eb7', phase: 'testing',
-          blockerIds: hostShapedSummary.blockers.map((b) => b.id),
-          harnessPrefixRel: 'framework/harness',
-        }).join('\n');
-        assert(guidance.includes('相关目标未知'), `话术须点明「相关目标未知」：${guidance}`);
-        assert(/不是.{0,6}已证明没做修复尝试|没有解析出任何相关目标/.test(guidance),
-          `话术不得把空集说成"证明了没修"：${guidance}`);
-        assert(!/未做修复尝试(?!」)/.test(guidance.replace('「已证明没做修复尝试」', '')),
-          `话术不得断言 agent 未做修复尝试：${guidance}`);
-        assert(guidance.includes('testing_channel_evidence_obligation'), '话术须列出本轮 blocker');
-        // plan 4e6fb3b6 返修 2(b)：旗标只出现在"补齐来源之后"（e7a2c4f1 §3.6"不在无新事实时强推"的本意保留）。
-        // §7/§9：首选改为"补齐之后重新发起同一请求"（重新接入不要求 --force-resume），带旗标的完整命令降为
-        // "也可以显式执行"的备选——原"须写明旗标是恢复守卫的要求"随之改为断言首选与备选的先后。
-        const fillAt = guidance.indexOf('补齐之后');
-        const rerequestAt = guidance.indexOf('重新发起同一请求');
-        const explicitAt = guidance.indexOf('也可以显式执行');
-        const forceAt = guidance.indexOf('--force-resume');
-        assert(fillAt >= 0 && forceAt > fillAt, `--force-resume 只能出现在"补齐来源之后"：${guidance}`);
-        assert(rerequestAt > fillAt && explicitAt > rerequestAt && forceAt > explicitAt,
-          `首选须是补齐后重新发起同一请求，带旗标的命令只作备选：${guidance}`);
-        assert(/有人在场与无人值守同规则/.test(guidance), `运输不能改变重发判断：${guidance}`);
-        assert(/没有变化时.{0,30}5 分钟内重发会先保持停止/.test(guidance), `须写明实际无变化的冷却条件：${guidance}`);
-        assert(/显式合法恢复仍走原恢复守卫/.test(guidance), `不得取消合法明确恢复：${guidance}`);
-      },
-    },
-    {
-      // plan 4e6fb3b6 首轮评审 R5-2：unattended 是 manifest 身份字段（computeManifestIdentityFields），改超时后不带
-      // --override-manifest 的续跑会被身份漂移检查拒绝；--override-manifest 返回 'all'（整体授权），说明须如实写出范围。
-      name: 'P3 R5-2 连续超时说明：改 phase_timeout_seconds 后给出带 --override-manifest 的续跑命令，并写明整体授权只应改超时字段',
-      run: () => {
-        const g = buildAgentTimeoutRepeatedGuidance({
-          feature: 'bc-openCard', runId: '20260929T010203Z-abc123', phase: 'coding',
-          attemptDurationsMs: [3_600_000, 3_600_000, 5_400_000], effectiveTimeoutMs: 5_400_000,
-          harnessPrefixRel: 'framework/harness',
-        }).join('\n');
-        assert(g.includes('unattended.phase_timeout_seconds.coding'), `须点名真实的超时字段：${g}`);
-        const cmdLine = g.split('\n').find(l => l.includes('--resume 20260929T010203Z-abc123') && l.includes('--override-manifest'));
-        assert(Boolean(cmdLine), `改超时的出路须给出带 --override-manifest 的续跑命令：${g}`);
-        assert(/身份漂移检查拒绝/.test(g), `须写明不带授权会被身份漂移检查拒绝：${g}`);
-        assert(/整体授权/.test(g) && /只应改超时字段/.test(g), `须写明整体授权、这次只应改超时字段：${g}`);
-        assert(!/phase_timeout_ms/.test(g), `不得出现不存在的 manifest 字段 phase_timeout_ms：${g}`);
-      },
-    },
     // ------------------------------------------------------------------
     // plan 31063a73 §3.2：产物快照支持目录（UT blocker 给的模块 ohosTest 源码目录）
     // ------------------------------------------------------------------
@@ -3218,9 +2979,61 @@ export function runAll(): UnitCaseResult[] {
       },
     },
 
-  ];
+
+{
+      name: 'P2 unknown relevant targets preserve their diagnostic without a fabricated no-progress conclusion',
+      run: () => {
+        // 重放 a70eb7（i12/i13/i14）与 f829b8 的同签名序列形态：产品已修完，
+        // 剩下的 3 次 testing 失败 signature 逐字相同、产物零变化、相关集合为空。
+        const hostShapedSummary = {
+          verdict: 'FAIL',
+          blockers: [
+            { id: 'testing_channel_evidence_obligation', classification: 'testing_channel_unverified' },
+            { id: 'p0_coverage_integrity' },
+            { id: 'negative_verdict_closure' },
+          ],
+          repair_candidates: [],
+        };
+        const related = extractContentRelatedFiles(hostShapedSummary);
+        assert(related.length === 0, `本形态的相关集合必须为空：${JSON.stringify(related)}`);
+        const sig = 'testing::channel_evidence::TC-007';
+        for (const [label, prior, current] of [
+          ['无 watched 产物（宿主实形）', {}, {}],
+          ['prior 为 null（首次可比基线缺失）', null, {}],
+        ] as const) {
+          assert(
+            !shouldHaltNoProgress({
+              failureKind: 'code_regression',
+              priorBlockerSignature: sig,
+              currentBlockerSignature: sig,
+              priorArtifactSnapshot: prior as never,
+              currentArtifactSnapshot: current,
+              relevantEvidenceKnown: related.length > 0,
+            }),
+            `${label}：相关集合未知/为空，无法证明一次已完成的验收评估`,
+          );
+        }
+        // 首次失败（无 prior signature）不得被这条收紧提前判死
+        assert(
+          !shouldHaltNoProgress({
+            failureKind: 'code_regression',
+            priorBlockerSignature: null,
+            currentBlockerSignature: sig,
+            priorArtifactSnapshot: {},
+            currentArtifactSnapshot: {},
+            relevantEvidenceKnown: false,
+          }),
+          '第一次失败没有同签名重复事实，不得停',
+        );
+        // 不新增 halt reason：仍走既有 no_progress_guard，且 no_fix_attempt 未被扩成终态
+        assert(!!lookupIncident('no_progress_guard'), 'no_progress_guard 须是既有已注册 incident');
+        assert(!lookupIncident('no_fix_attempt'), 'no_fix_attempt 不得被扩成新的 halt reason');
+      },
+    },
+];
 
   for (const c of cases) {
+    if (!matchesUnitCase(c.name, selector)) continue;
     try {
       c.run();
       results.push({ name: c.name, ok: true });
@@ -3229,4 +3042,9 @@ export function runAll(): UnitCaseResult[] {
     }
   }
   return results;
+}
+
+export function runAll(): UnitCaseResult[] { return runCases(); }
+export function runSelectedCases(selector?: string) {
+  return selectedUnitCases(runCases(selector), selector, []);
 }

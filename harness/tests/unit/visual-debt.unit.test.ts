@@ -11,6 +11,7 @@ import * as fs from 'fs';
 import { writeReceiptManifestPointer } from '../utils/completion-chain-seed';
 import * as os from 'os';
 import * as path from 'path';
+import { isDeepStrictEqual } from 'util';
 
 import {
   countBlockingDebt,
@@ -34,6 +35,7 @@ import {
   loadFidelityIntentSsotState,
   resolveFidelityRoutingDecision,
   writeCapabilitySnapshot,
+  loadCapabilitySnapshot,
   writeFidelityIntentSsot,
 } from '../../scripts/utils/fidelity-shared';
 import { buildCapabilityBlock, resolvePhaseCapabilityAdvisory } from '../../scripts/goal-runner';
@@ -379,12 +381,49 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         executionIdentity: 'phase:demo:spec', requirementSha: 'a'.repeat(64),
         requirementProvenance: 'explicit_cli',
       });
-      writeCapabilitySnapshot(root, 'demo', {
+      const snapshot = {
         execution_identity: 'phase:demo:spec',
         decision_id: d.decision.decision_id, // post-impl4 P1-5：同批事务标记
         vision: { verdict: true, source: 'test' },
         ocr: { verdict: true, source: 'test' },
-      });
+      };
+      const snapshotFile = writeCapabilitySnapshot(root, 'demo', snapshot);
+      const historical = JSON.parse(fs.readFileSync(snapshotFile, 'utf8'));
+      historical.created_at = '2000-01-01T00:00:00.000Z';
+      fs.writeFileSync(snapshotFile, JSON.stringify(historical) + '\n');
+      const originalBytes = fs.readFileSync(snapshotFile);
+      writeCapabilitySnapshot(root, 'demo', { ocr: { source: 'test', verdict: true }, vision: { source: 'test', verdict: true },
+        decision_id: snapshot.decision_id, execution_identity: snapshot.execution_identity });
+      assertTrue(fs.readFileSync(snapshotFile).equals(originalBytes), '已验证同业务payload须保原字节，不因created_at或键序抖动制造新产品条件');
+      const updates = [
+        { ...snapshot, execution_identity: 'phase:demo:other' },
+        { ...snapshot, decision_id: 'b'.repeat(16) },
+        { ...snapshot, vision: { verdict: false, source: 'test' } },
+        { ...snapshot, vision: { verdict: true, source: 'new-probe' } },
+        { ...snapshot, ocr: { verdict: false, source: 'test' } },
+        { ...snapshot, ocr: { verdict: true, source: 'new-ocr' } },
+        { ...snapshot, vision_mode: 'delegated' as const, visual_provider: { adapter: 'codex', model: 'gpt-6.1-sol' } },
+        { ...snapshot, vision_mode: 'delegated' as const, visual_provider: { adapter: 'claude', model: 'claude-opus-5-5' } },
+      ];
+      for (const update of updates) {
+        const before = fs.readFileSync(snapshotFile);
+        writeCapabilitySnapshot(root, 'demo', update);
+        const current = loadCapabilitySnapshot(root, 'demo');
+        assertTrue(!fs.readFileSync(snapshotFile).equals(before), '真实身份/来源/能力/mode/provider变化必须写出');
+        assertTrue(current !== null && isDeepStrictEqual({ ...current, created_at: undefined }, { schema_version: '1.0', ...update, created_at: undefined }),
+          '实际写出并经原loader验真的完整payload必须匹配本次事实');
+      }
+      const invalid = JSON.parse(fs.readFileSync(snapshotFile, 'utf8'));
+      invalid.schema_version = 'invalid';
+      fs.writeFileSync(snapshotFile, JSON.stringify(invalid));
+      assertEq(loadCapabilitySnapshot(root, 'demo'), null, '坏旧schema不能复用');
+      writeCapabilitySnapshot(root, 'demo', snapshot);
+      assertEq(loadCapabilitySnapshot(root, 'demo')?.schema_version, '1.0', '原writer须正常替换坏旧snapshot，不能为幂等放宽资格');
+      const malformedTime = { ...loadCapabilitySnapshot(root, 'demo'), created_at: '' };
+      fs.writeFileSync(snapshotFile, JSON.stringify(malformedTime));
+      assertEq(loadCapabilitySnapshot(root, 'demo'), null, '被忽略的审计时间仍须先通过原schema资格');
+      writeCapabilitySnapshot(root, 'demo', snapshot);
+      assertTrue(Boolean(loadCapabilitySnapshot(root, 'demo')?.created_at), '业务相同但旧snapshot无效时仍须原子重写');
       const ctx = { phase: 'spec', feature: 'demo', projectRoot: root } as unknown as CheckContext;
       assertEq(checkFidelityCapabilityPregate(ctx)[0].status, 'PASS', 'SSOT 一致 → PASS');
       // spec.md 投影与 SSOT 失配 → BLOCKER + agent 自动修复投影（不升级为用户询问）
@@ -918,8 +957,10 @@ cases.push({
     fs.writeFileSync(p, JSON.stringify({ schema_version: '1.1', verdict: 'PASS', blockers: [] }), 'utf-8');
     const { checkUpstreamVerdictGate } = require('../../scripts/utils/upstream-verdict-gate') as typeof import('../../scripts/utils/upstream-verdict-gate');
     const [r] = checkUpstreamVerdictGate({ projectRoot: root, feature: 'demo', phase: 'testing' });
-    assertEq(r.status, 'FAIL', r.details);
-    assertTrue(r.details.includes('quality_axes'), '点名 lattice 缺失');
+    assertEq(r.status, 'SKIP', r.details);
+    const { readUpstreamPhaseView } = require('../../scripts/utils/upstream-verdict-gate') as typeof import('../../scripts/utils/upstream-verdict-gate');
+    const original = readUpstreamPhaseView(root, 'demo', 'review');
+    assertTrue(!original.verdictReadable && original.freshnessDetail?.includes('quality_axes') === true, '坏quality原件仍不可作完成依据');
   }),
 });
 
@@ -1069,10 +1110,10 @@ cases.push({
     assertTrue(res.degraded, 'tmp 树应降级');
     const custom = checkUpstreamVerdictGate({ projectRoot: root, feature: 'demo', phase: 'security_audit' });
     assertEq(custom.length, 1, '自定义 phase 应产结果');
-    assertEq(custom[0].status, 'FAIL', '降级+链外 → FAIL');
-    assertEq(custom[0].failure_kind, 'workflow_chain_unresolved', 'failure_kind');
+    assertEq(custom[0].status, 'SKIP', '缺当前实际输入保持必需未知');
+    assertEq(custom[0].failure_kind, 'framework_bug', '原入口未解析的执行缺口');
     // 回退链内 phase：spec 链首零结果（原语义保留）
-    assertEq(checkUpstreamVerdictGate({ projectRoot: root, feature: 'demo', phase: 'spec' }).length, 0, '链首零结果');
+    assertEq(checkUpstreamVerdictGate({ projectRoot: root, feature: 'demo', phase: 'spec' })[0].status, 'SKIP', '链首没有输入特权');
   }),
 });
 

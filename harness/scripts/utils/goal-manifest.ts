@@ -19,15 +19,11 @@ import { isValidFidelityTarget } from './fidelity-shared';
 import type { ProviderRef } from './types';
 import { relFeaturesDir } from '../../config';
 
+/** Read-only legacy declaration; current writers and execution do not consume it. */
 export interface GoalBudget {
   max_retries_per_phase?: number;
   max_total_turns?: number;
   wall_clock_minutes?: number;
-  /**
-   * P0-D（b8f36a12）：API 断流（transient_api_error）独立重试上限——与
-   * max_retries_per_phase **解耦**（一次断流不吃内容重试预算），仍受
-   * max_total_turns + wall_clock 兜底。计数从 events.jsonl 派生（跨 resume 不清零）。
-   */
   max_transient_api_retries?: number;
 }
 
@@ -70,7 +66,8 @@ export type RunAdapterProvenance = (typeof RUN_ADAPTER_PROVENANCES)[number];
  * runner-owned gate、receipt/人签、journal 收编、设备与凭据规则一概不受影响。
  */
 export function effectiveHeadlessUnattended(raw?: UnattendedContract): UnattendedContract {
-  const { allowed_tools: _legacyApprovalList, ...current } = raw ?? ({} as UnattendedContract);
+  const { allowed_tools: _legacyApprovalList, max_turns: _turns, timeout_seconds: _timeout,
+    phase_timeout_seconds: _phaseTimeout, ...current } = raw ?? ({} as UnattendedContract);
   return {
     ...current,
     write_mode: 'full-access',
@@ -82,9 +79,9 @@ export interface UnattendedContract {
   write_mode: 'workspace-write' | 'accept-edits' | 'full-access';
   approval_mode: 'never' | 'on-request' | 'always';
   max_turns?: number;
-  /** 扁平全局超时（秒）；per-phase 未命中时的兜底。优先级见 utils/goal-timeout.ts。 */
+  /** @deprecated Read-only legacy declaration; never an execution deadline. */
   timeout_seconds?: number;
-  /** 显式 per-phase 超时覆盖（秒），最高优先。缺省走 goal-timeout 内置默认表。 */
+  /** @deprecated Read-only legacy declaration; current work has no phase deadline. */
   phase_timeout_seconds?: Partial<Record<FeaturePhase, number>>;
   allowed_tools?: string[];
 }
@@ -150,7 +147,8 @@ export interface GoalManifest {
    * identity 均忽略；新 CLI/manifest writer 不再生成它。
    */
   allow_blind_visual?: true;
-  budget: Required<GoalBudget>;
+  /** @deprecated Historical read-only statistics/configuration; new manifests never emit quotas. */
+  budget?: Required<GoalBudget>;
   dependency_policy: Required<DependencyPolicy>;
   unattended: UnattendedContract;
   run_id: string;
@@ -243,12 +241,6 @@ export interface LoadGoalManifestFromRunOptions {
 
 const DEFAULT_FEATURES_DIR = 'doc/features';
 
-const DEFAULT_BUDGET: Required<GoalBudget> = {
-  max_retries_per_phase: 2,
-  max_total_turns: 30,
-  wall_clock_minutes: 480,
-  max_transient_api_retries: 3,
-};
 
 /**
  * 十轮 review P1：manifest **身份哈希**——覆盖 run 期不应变的安全相关字段
@@ -272,7 +264,7 @@ export function computeManifestIdentityFields(manifest: GoalRunManifest): Record
     chain_override: manifest.chain_override ?? null,
     fidelity: manifest.fidelity ?? null,
     fidelity_receipt: manifest.fidelity_receipt ?? null,
-    budget: manifest.budget,
+    ...(manifest.budget ? { budget: manifest.budget } : {}),
     dependency_policy: manifest.dependency_policy,
     unattended: manifest.unattended,
     pre_authorized_mutations: manifest.pre_authorized_mutations ?? null,
@@ -345,7 +337,8 @@ export function diffManifestIdentityFields(
   b: Record<string, string>,
 ): string[] {
   const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
-  return [...keys].filter(k => a[k] !== b[k]).sort();
+  // These legacy declarations do not grant current native authority; the signed context does.
+  return [...keys].filter(k => k !== 'budget' && k !== 'unattended' && a[k] !== b[k]).sort();
 }
 
 /** override 旗标 → 其授权可变更的身份字段集（--override-manifest=整体替换，授权全部字段）。
@@ -356,8 +349,7 @@ export function overrideAuthorizedIdentityFields(argv: {
   'override-start'?: boolean;
   'override-end'?: boolean;
 }): 'all' | Set<string> {
-  if (argv['override-manifest']) return 'all';
-  const set = new Set<string>();
+  const set = new Set<string>(argv['override-manifest'] ? ['requirement', 'requirement_source_files', 'user_deadline_at'] : []);
   if (argv['override-start']) set.add('start_phase');
   if (argv['override-end']) set.add('end_phase');
   return set;
@@ -427,14 +419,9 @@ function mergeDependencyPolicy(raw?: Partial<DependencyPolicy>): Required<Depend
   };
 }
 
-function mergeBudget(raw?: GoalBudget): Required<GoalBudget> {
-  return {
-    max_retries_per_phase: raw?.max_retries_per_phase ?? DEFAULT_BUDGET.max_retries_per_phase,
-    max_total_turns: raw?.max_total_turns ?? DEFAULT_BUDGET.max_total_turns,
-    wall_clock_minutes: raw?.wall_clock_minutes ?? DEFAULT_BUDGET.wall_clock_minutes,
-    max_transient_api_retries:
-      raw?.max_transient_api_retries ?? DEFAULT_BUDGET.max_transient_api_retries,
-  };
+function currentUnattended(raw?: UnattendedContract): UnattendedContract {
+  const { max_turns: _turns, timeout_seconds: _timeout, phase_timeout_seconds: _phases, ...current } = raw ?? ({} as UnattendedContract);
+  return current as UnattendedContract;
 }
 
 export function validateUnattendedContract(u: Partial<UnattendedContract> | undefined): string[] {
@@ -811,10 +798,9 @@ export function buildGoalManifestFromInput(
         ? input.adapter_provenance.trim()
         : undefined,
     chain_override: chainOverride,
-    budget: mergeBudget(input.budget as GoalBudget | undefined),
     dependency_policy: mergeDependencyPolicy(input.dependency_policy as DependencyPolicy | undefined),
     minimum_assurance: normalizeMinimumAssurance(input.minimum_assurance),
-    unattended: input.unattended as UnattendedContract,
+    unattended: currentUnattended(input.unattended as UnattendedContract),
     pre_authorized_mutations: parsePreAuthorizedMutations(input.pre_authorized_mutations),
     run_id: runId,
     report_dir: reportDir,
@@ -916,9 +902,8 @@ export function inheritSuccessorManifest(
     round: readonly string[];
     drift: readonly string[];
   },
+  options: { newDeliveryCycle?: boolean } = {},
 ): GoalManifest {
-  const unique = (values: readonly string[]): string[] =>
-    [...new Set(values.map(value => value.trim()).filter(Boolean))];
   if (manifest.feature !== source.feature) {
     throw new Error(
       `[goal-manifest] successor feature 不一致（当前=${manifest.feature}，源=${source.feature}）`,
@@ -936,10 +921,16 @@ export function inheritSuccessorManifest(
   // --visual-adapter/--visual-model 可覆盖，由 resolveFinalVisualProviderPin 裁决）。
   // legacy allow_blind_visual 没有运行语义；successor 不复制无效历史字段。
   delete inherited.allow_blind_visual;
+  delete inherited.budget;
+  delete inherited.inherited_round_fingerprints;
+  delete inherited.inherited_drift_fingerprints;
+  inherited.unattended = currentUnattended(inherited.unattended);
+  if (options.newDeliveryCycle) {
+    if (manifest.user_deadline_at) inherited.user_deadline_at = manifest.user_deadline_at;
+    else delete inherited.user_deadline_at;
+  }
   // successor 换 adapter 时禁止把旧 adapter 的模型字符串回放给新 adapter——继承 pin
   // 的 adapter 若与最终 effective adapter 不一致，resolveFinalModelPin 会 BLOCKER。
-  const sourceRound = source.inherited_round_fingerprints ?? [];
-  const sourceDrift = source.inherited_drift_fingerprints ?? [];
   // plan c4e8a1f7 T2：successor 继承源 requirement 来源列表，并在显式 file 增量时
   // 去重追加（manifest.requirement_source_files 由 CLI 显式 --requirement-file 解析产生）。
   const sourceFiles =
@@ -955,27 +946,7 @@ export function inheritSuccessorManifest(
     created_at: manifest.created_at,
     successor_of: source.run_id,
     ...(mergedSourceFiles.length > 0 ? { requirement_source_files: mergedSourceFiles } : {}),
-    inherited_round_fingerprints: unique([...sourceRound, ...fingerprints.round]),
-    inherited_drift_fingerprints: unique([...sourceDrift, ...fingerprints.drift]),
   };
-}
-
-/**
- * 治 2.3.0 历史 manifest：legacy 扁平 timeout_seconds=3600 且无 per-phase map →
- * 视为"未显式设置"，删除该字段，使 **resume 旧 run** 走 goal-timeout 的 per-phase 默认表
- * （否则历史续跑里 review/testing 仍只有 60min，等于没修这次现场问题）。
- * 只对恰等于 legacy 默认值的扁平超时生效；用户显式设的非 3600 值保持不动。
- *
- * **仅用于 resume 旧 run（loadGoalManifestFromRun）**——不要用于 loadGoalManifestFile：
- * 用户手写 --manifest 的 3600 是显式选择，须按"扁平覆盖所有 phase"契约尊重，不可误删。
- */
-const LEGACY_FLAT_TIMEOUT_SECONDS = 3600;
-export function applyLegacyTimeoutMigration(manifest: GoalManifest): GoalManifest {
-  const u = manifest.unattended;
-  if (u && u.timeout_seconds === LEGACY_FLAT_TIMEOUT_SECONDS && !u.phase_timeout_seconds) {
-    delete u.timeout_seconds;
-  }
-  return manifest;
 }
 
 export function loadGoalManifestFile(
@@ -1000,9 +971,6 @@ export function loadGoalManifestDefinition(filePath: string, projectRoot: string
     if (!Array.isArray(value) || value.some(item => typeof item !== 'string' || !item.trim())) throw new Error(`[goal-manifest] ${key} must be an array of explicit strings`);
     return [...value];
   };
-  // 注意：不在此做 legacy 超时迁移——用户手写 --manifest 里的 timeout_seconds:3600
-  // 是显式选择，须按"扁平覆盖所有 phase"契约尊重。迁移只针对 resume 旧 run
-  // （那里的 3600 是 2.3.0 旧硬编码默认、非用户选择），见 loadGoalManifestFromRun。
   return { manifest: buildGoalManifestFromInput(raw, {
     projectRoot,
     featuresDir: opts?.featuresDir,
@@ -1287,7 +1255,7 @@ export function loadGoalManifestFromRun(
   const manifest = JSON.parse(fs.readFileSync(abs, 'utf-8')) as GoalManifest;
   if ('initial_design' in manifest) throw new Error('[goal-manifest] initial design request has no construction manifest; use loadGoalRunManifestFromRun');
   validateLoadedGoalManifest(manifest, { featuresDir, feature, runId });
-  return applyLegacyTimeoutMigration(manifest);
+  return manifest;
 }
 
 export function loadGoalRunManifestFromRun(projectRoot: string, runId: string, opts: LoadGoalManifestFromRunOptions): GoalRunManifest {

@@ -32,7 +32,10 @@ export interface SessionExecutionRequest {
 }
 export interface IssuedSessionExecution { request: SessionExecutionRequest; reference: HandoffReference; event: GoalRunEvent }
 export function sessionExecutionDeadlineMs(request: SessionExecutionRequest): number {
-  return request.deadline ? Date.parse(request.deadline) : Infinity;
+  const userDeadline = request.context.user_deadline_at ? Date.parse(request.context.user_deadline_at) : Infinity;
+  const toolDeadline = request.purpose === 'vision_canary' && Number.isFinite(request.gate_timeout_ms) && request.gate_timeout_ms > 0
+    ? Date.parse(request.issued_at) + request.gate_timeout_ms : Infinity;
+  return Math.min(userDeadline, toolDeadline);
 }
 const digest = (bytes: Buffer | string): string => createHash('sha256').update(bytes).digest('hex');
 const json = (value: unknown): string => `${JSON.stringify(value, null, 2)}\n`;
@@ -323,6 +326,10 @@ export function writePhaseExecutionRequestMaterial(input: PhaseExecutionRequestM
   return { request, reference };
 }
 
+export function sessionExecutionTransportInstructionSuffix(context: Pick<WorkUnitExecutionContext, 'runDir' | 'phase'>, invokeId: string): string {
+  return `\n执行本次命令时同时传递 context.childEnv 中的冻结标识（run/attempt、设备目标、provider 与合法 opaque 凭据引用）；不要改读当前默认目标，不读取或打印凭据值。\n实际执行者若能导出原生结构化工具事件，将本次调用的原始事件流保存到 ${path.join(context.runDir, 'phases', context.phase, invokeId, 'agent-events.jsonl')}；只接受实际工具事件，不从自然语言说明构造记录。没有可导出的审计材料时如实保持未验证。`;
+}
+
 export function issueSessionExecution(input: Omit<PhaseExecutionRequestMaterialInput, 'issuedAt'> & {
   emit: (event: Record<string, unknown>) => void;
 }): IssuedSessionExecution {
@@ -334,7 +341,7 @@ export function issueSessionExecution(input: Omit<PhaseExecutionRequestMaterialI
   if (!start?.ts) throw new Error('[session-handoff] invocation has not been started');
   setSessionExecutionLease(context.runDir, context.owner, context.user_deadline_at ? Date.parse(context.user_deadline_at) : Date.now() + 60_000);
   const { request, reference } = writePhaseExecutionRequestMaterial({ ...input, issuedAt: start.ts, context: { ...context,
-    instruction: `${context.instruction ?? ''}\n执行本次命令时同时传递 context.childEnv 中的冻结标识（run/attempt、设备目标、provider 与合法 opaque 凭据引用）；不要改读当前默认目标，不读取或打印凭据值。\n实际执行者若能导出原生结构化工具事件，将本次调用的原始事件流保存到 ${path.join(context.runDir, 'phases', context.phase, input.invokeId, 'agent-events.jsonl')}；只接受实际工具事件，不从自然语言说明构造记录。没有可导出的审计材料时如实保持未验证。` } });
+    instruction: `${context.instruction ?? ''}${sessionExecutionTransportInstructionSuffix(context, input.invokeId)}` } });
   const event: GoalRunEvent = { type: 'phase_start', phase: context.phase, driver: 'session', attempt_id: context.attemptId,
     invoke_id: input.invokeId, owner_id: context.owner.owner_id, owner_epoch: context.owner.epoch, handoff_request: reference };
   input.emit({ ...event });
@@ -353,7 +360,8 @@ export function resignSessionExecution(runDir: string, issued: IssuedSessionExec
     .replace(new RegExp(`(--goal-owner-epoch\\s+)${old.epoch}(?=\\s|$)`, 'g'), `$1${token.epoch}`);
   const request: SessionExecutionRequest = { ...issued.request, context: { ...issued.request.context,
     owner: { ...token, kind: 'session' }, instruction } };
-  setSessionExecutionLease(runDir, token, request.deadline ? Date.parse(request.deadline) : Date.now() + 60_000);
+  const deadline = sessionExecutionDeadlineMs(request);
+  setSessionExecutionLease(runDir, token, Number.isFinite(deadline) ? deadline : Date.now() + 60_000);
   const file = path.join(runDir, 'phases', request.context.phase, request.invoke_id, `request-e${token.epoch}.json`);
   const reference = immutableJson(runDir, file, request);
   const event: GoalRunEvent = { type: 'phase_start', phase: request.context.phase, driver: 'session',
@@ -445,7 +453,7 @@ export function acceptSessionExecution(input: {
       const blueprint = featureFilePath(boundary.projectRoot, issued.request.context.feature, 'blueprint/component-blueprint.yaml');
       if (fs.existsSync(blueprint)) draftOutputs['initial-design-blueprint.yaml'] = fs.readFileSync(blueprint).toString('base64');
     }
-    for (const name of ['component-blueprint.yaml', 'change-unit.yaml', 'architecture.json']) {
+    for (const name of ['component-blueprint.yaml', 'change-unit.yaml', 'change-unit-candidates.json', 'architecture.json']) {
       const draft = path.join(runDir, 'design-repair', name);
       if (fs.existsSync(draft)) draftOutputs[name] = fs.readFileSync(draft).toString('base64');
     }
@@ -476,7 +484,8 @@ export function acceptSessionExecution(input: {
       interrupted: input.interrupted || nativeEnd?.interrupted === true ? true : undefined,
       provider_session_id: readProviderSessionId(toolEvents, issued.request.context.adapter), timed_out: timedOut }),
     duration_ms: Math.max(0, nowMs - Date.parse(issued.request.issued_at)),
-    ...(issued.request.deadline ? { effective_timeout_ms: Date.parse(issued.request.deadline) - Date.parse(issued.request.issued_at) } : {}),
+    ...(Number.isFinite(sessionExecutionDeadlineMs(issued.request))
+      ? { effective_timeout_ms: sessionExecutionDeadlineMs(issued.request) - Date.parse(issued.request.issued_at) } : {}),
     handoff_report: { ...archive, request_sha256: issued.reference.sha256 },
   });
   return { duplicate: false, timedOut };

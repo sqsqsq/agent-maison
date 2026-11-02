@@ -183,7 +183,8 @@ export function runAll(): UnitCaseResult[] {
     if (!gate.includes('实际尝试输入后')) throw new Error('device-policy-gate.md 缺「实际尝试输入后」限定');
     if (!gate.includes('不得绕开框架徒手处置锁屏')) throw new Error('device-policy-gate.md 缺「不得绕开框架徒手处置锁屏」');
     const ops = read('skills/reference/goal-mode-operations.md');
-    if (!ops.includes('允许（正道）')) throw new Error('goal-mode-operations.md 缺「允许（正道）」行');
+    if (!ops.includes('[device-policy-gate](device-policy-gate.md)') || !ops.includes('不得绕过设备锁或传递执行权限'))
+      throw new Error('goal-mode-operations.md 必须沿同一设备门并保锁屏/权限边界');
     if (!ops.includes('实际尝试输入后')) throw new Error('goal-mode-operations.md 缺「实际尝试输入后」限定');
   });
 

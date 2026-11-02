@@ -3,6 +3,8 @@
  */
 
 import { loadFidelityIntentSsot } from './fidelity-shared';
+import { resolveCompletionDisposition } from './verify-feature-completion';
+import { resolveCurrentDisposition, renderCurrentDisposition, type CurrentDisposition } from './check-disposition';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { FeaturePhase, GoalRunStatus } from './phase-transition-policy';
@@ -128,6 +130,7 @@ export interface GoalPhaseOutcome {
   verdict: string;
   deferred?: boolean;
   deferred_reason?: string;
+  probe?: string;
   halted?: boolean;
   summary_path?: string;
   report_dir?: string;
@@ -179,6 +182,7 @@ export interface GoalReportFidelityRouting {
 
 export interface GoalReport {
   schema_version: '1.0';
+  current_disposition?: CurrentDisposition;
   run_id: string;
   feature: string;
   /** `INTERRUPTED`＝未处理异常的优雅收口（e5d8a2c4 T1①）——events 层异常终态在
@@ -316,12 +320,12 @@ const HALT_DIAGNOSTIC_PROSE: Readonly<Record<string, string>> = {
   // plan 4e6fb3b6 §3.3：本原因只有这一处说明（停机时不另发 halt_guidance），四件事写在同一行。
   transient_api_error_exhausted:
     'API 连接反复中断（非框架/需求/代码问题）——影响：本阶段未完成、run 已停止；退避重试已达上限；'
-    + '谁能修：你（网络/代理）或等服务端恢复；怎么恢复：确认网络稳定后续跑，必要时增大 max_transient_api_retries；'
+    + '谁能修：你（网络/代理）或等服务端恢复；怎么恢复：确认网络稳定后续跑，保全当前成果后按原请求续接；'
     + '确认已恢复：续跑后本阶段 agent 正常产出，不再出现 transient_api_retry_scheduled',
   agent_no_output:
     'agent 空产出（疑似 spawn/权限/弱模型，非 API 断流）——请人工核查 agent-output.log 与 CLI 环境',
   no_progress_agent_timeout:
-    '连续超时且产物零进展——请人工核查（预算见 phase_timeout_seconds）',
+    '历史连续超时记录；当前仅按真实执行故障与用户时限处理',
   closure_timeout:
     'closure-only attempt（PASS 已冻结仅补关环）超时——不回内容重试；人工核查 receipt/closure 后重新发起同一请求（或 --resume 续跑）',
   pass_snapshot_unavailable:
@@ -555,7 +559,8 @@ export function generateGoalReportMarkdown(
       // codex 实施 review 第 1 轮 finding 3：取该 phase **末轮**事件，不取历史最大值——
       // 「i2 沿用 3 张、i3 全部重读（carried_over=0）」时报历史最大等于把旧轮事实说成本轮。
       const refsEvents = options.events.filter(
-        e => e.type === 'spec_refs_receipt_produced' && e.phase === String(p.phase),
+        e => e.type === 'spec_refs_receipt_produced'
+          && (e.phase === String(p.phase) || p.phase === 'spec' && e.phase === 'work-unit-author'),
       );
       const lastCarriedOver = Number(refsEvents[refsEvents.length - 1]?.carried_over ?? 0);
       if (Number.isFinite(lastCarriedOver) && lastCarriedOver > 0) {
@@ -637,6 +642,9 @@ export function generateGoalReportMarkdown(
 
   lines.push('', 'Progress snapshot: progress.md');
 
+  if (report.current_disposition) lines.splice(2, 0,
+    `当前完成：${report.current_disposition.completionEligible ? '验收差额已满足' : '仍有未完项'}；发布：${report.current_disposition.releaseReady ? 'READY' : 'BLOCKED'}`,
+    renderCurrentDisposition(report.current_disposition), '');
   return lines.join('\n') + '\n';
 }
 
@@ -678,7 +686,7 @@ export function writeGoalReport(
   projectRoot: string,
   reportDir: string,
   report: GoalReport,
-  opts?: { workflowChain?: string[] },
+  opts?: { workflowChain?: string[]; currentDisposition?: CurrentDisposition; frameworkRoot?: string },
 ): { jsonPath: string; mdPath: string } {
   const base = path.join(projectRoot, reportDir);
   fs.mkdirSync(base, { recursive: true });
@@ -714,9 +722,15 @@ export function writeGoalReport(
         .filter((x): x is Record<string, unknown> => x !== null);
     }
   } catch { /* ignore */ }
-  const runState = reduceRunState(axesEvents);
-  if (runState.recovery) report.recovery = runState.recovery;
-  else delete report.recovery;
+  try {
+    report.current_disposition = opts?.currentDisposition ?? report.current_disposition ?? resolveCompletionDisposition({ projectRoot, frameworkRoot: opts?.frameworkRoot,
+      feature: report.feature, runId: report.run_id, chain: opts?.workflowChain ?? report.phases.map(item => item.phase) });
+  } catch (error) {
+    report.current_disposition = resolveCurrentDisposition({ endpoint: 'request', phases: [], additionalProblems: [{ phase: '*',
+      id: 'required_check_conclusion', action: 'verify', affects: 'completion', severity: 'BLOCKER',
+      detail: `当前完成事实读取失败：${String(error)}` }] });
+  }
+  delete report.recovery;
   fs.writeFileSync(jsonPath, JSON.stringify(report, null, 2) + '\n', 'utf-8');
   const mustReviewItems = collectMustReviewFromAssumptions(
     projectRoot,

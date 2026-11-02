@@ -1,5 +1,7 @@
 # Coding 阶段语义验证 — {feature_name}
 
+**当前独核资格与结果边界**：只消费机器实际签发的当前request/material，phase仅选择检查方法。带“本轮为产品失败诊断”时，按已给具体对象/原报告逐条独立核实；无关编译/设备/报告缺口不遮住其它可核实工作，缺实际对象仍保持未知。独核终态只表示本次语义核实，不继承产品raw FAIL或替代缺失执行；产品FAIL/unknown仍由共同完成处置保留。变化材料补核受影响项，原目标与完整拒修论据逐条保真，不能仅凭摘要、标签或历史PASS结案。
+
 实施边界：以原始需求及有效更正中的真实限制、公共接口/数据契约和阶段职责为准。files、预计模块、私有名字/位置不是逐项许可；合法重组不要求创建空壳或回签预测。必须看实际 diff（含新增、删除、重命名）及必要源码，核对自然语言中的明确禁止；预测外模块的必要性、影响与回归依据在报告中显著披露。真实越权、公共契约违约或漏实现仍 FAIL，不能靠披露或登记齐全放行。
 
 核对本次承诺的测试层级与生产入口一致：UT 驱动可隔离的真实业务状态/异常；UI、焦点和导航栈交设备。both 的两层互补，不要求 UT 实例化 UI，也不能只测 helper 冒充流程通过。L3 候选回原责任方；option_a 不批准降低当前验收。仅核当前材料，不新增一轮设计或额外门禁。
@@ -23,14 +25,14 @@
 
 ---
 
-## 【HARD STOP — 不可绕过的产出约束】
+## 真实编译依据与普通核验边界
 
-> 以下约束是 coding 编码阶段的**红线**。违反任一条都应在最终报告的 `summary.verdict` 强制为 `FAIL`，并优先输出 `coding_compile_gate` 检查项。
+> 以下约束适用于常规完整编码验收；机器已签发的产品失败诊断按上方资格边界逐项核实，不把产品FAIL抄作独核整体结论。违反任一条都应在最终报告的 `summary.verdict` 强制为 `FAIL`，并优先输出 `coding_compile_gate` 检查项。
 
 1. **必须确认真实编译状态**：在评估任何其它语义检查项**之前**，先读取下方“四、脚本 Harness 检查结果”中的完整报告及同目录 `summary.json`（若存在）中的 `coding_run_status` / `run_statuses`。
 2. **脚本未通过则语义不得 PASS**：若 `coding_run_status` 的 details 含 `can_claim_done: NO`，或 `coding_compile` / `coding_hvigor_build`（二者为同一 capability 的 canonical / legacy id）为 **FAIL**，或为 **SKIP** 且 severity 为 BLOCKER → **`summary.verdict` 必须为 `FAIL`**。不得因「错误在其它模块 / 非本 feature scope」而判 PASS。
 3. **`coding_compile_gate`（BLOCKER）**：从脚本报告中摘录**第一条**编译错误（文件路径、行号、消息）；若 details 已列出「解析出 N 条 error」，取第一条。同时写明 `failure_kind`（如 `project_dependency_missing` / `project_dependency_undeclared` / `project_dependency_install_failed`）与 `summary.next_action`（若可读）。即使失败文件不在 `contracts.modules` 内，仍须 FAIL 并告知用户「全工程编译未通过，coding 阶段出口未满足」。
-4. **禁止用 verifier PASS 代替脚本 harness**：父 agent 在脚本 harness 退出码非 0 或 `can_claim_done=NO` 时**不得**调用本子 agent；若已被误调用，你只输出 `coding_compile_gate: FAIL` 与其余项 WARN，最终 verdict 仍为 FAIL。
+4. **禁止用 verifier PASS 代替脚本 harness**：父agent在无实际合法request时不得调用本子agent；机器已签发的具体产品失败诊断不受脚本整体退出码的 blanket 禁止；若已被误调用，你只输出 `coding_compile_gate: FAIL` 与其余项 WARN，最终 verdict 仍为 FAIL。
 
 > 典型误读（须避免）：
 > - 脚本 `coding_compile` FAIL 但 contracts/业务语义「看起来对」→ 仍 FAIL；

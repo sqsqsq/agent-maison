@@ -1,6 +1,6 @@
 # Framework 全景介绍
 
-> 目标架构草稿见 [architecture.md](architecture.md)。
+> 当前架构与验收边界见 [architecture.md](architecture.md)。
 > **文档角色**：面向**没接触过本 framework**的同事 / 跨部门协作者的**对外讲解**材料。
 >
 > **不是**：使用手册（使用手册见 [`../README.md`](../README.md) 与各 [`../skills/*/SKILL.md`](../skills/)）；
@@ -59,6 +59,8 @@
 
 四者共同约束 framework 演进：先问“怎样以最低成本达到足够准确”，再问“能否用已有机制更简单地完成”，然后判断“这是回到权责阶段重新签发，还是下游正在给自己授权”，最后判断“这是必须对抗的真实高风险，还是应靠恢复与真实反馈吸收的协作失误”。
 
+当前执行解释：以上四条原则原文和历史保留。“权责所属阶段”由设计单元、施工单元与独立验证职责承载，不等于六阶段派工；同一原请求持续选择当前工作。新run无默认总调用/回退/阶段时长配额，显式用户截止、取消及真实工具/设备/写保护仍生效。
+
 ### 1.3 核心理念：三层分离
 
 ```mermaid
@@ -68,12 +70,14 @@ flowchart LR
         FR["功能级规约<br/>doc/features/<feature>/*.yaml"]
     end
     subgraph skillLayer ["生成层 (Skill) · 产出文档/代码"]
-        S0["0. catalog+glossary"] --> S1["1. spec"]
-        S1 --> S2["2. plan"]
-        S2 --> S3["3. Coding"]
-        S3 --> S4["4. Review"]
-        S4 --> S5["5. 业务级 UT"]
-        S5 --> S6["6. 真机测试"]
+        A["各工作单元专用作者<br/>同一原请求完成协调器"]
+        S0["catalog+glossary 方法"] -.-> A
+        A --- S1["spec 方法"]
+        A --- S2["plan 方法"]
+        A --- S3["Coding 方法"]
+        A --- S4["Review 方法"]
+        A --- S5["业务级 UT 方法"]
+        A --- S6["真机测试方法"]
     end
     subgraph harnessLayer ["验证层 (Harness) · 自动化检验"]
         SH["脚本 Harness<br/>(确定性)"]
@@ -101,9 +105,9 @@ flowchart LR
 - **生成与验证分离**：生成者和验证者**可以是不同模型**（甚至不同厂商），消除"考生自己批改试卷"的偏差
 - **机制 > 文字**：文字里的"应该 / 禁止"靠不住，要落到 `check-*.ts` + `verify-*.md` 可执行的硬门禁
 
-### 1.3.1 默认 workflow：按义务选择阶段（obligation-driven）
+### 1.3.1 默认 workflow：按义务选择方法和检查族（obligation-driven）
 
-默认定义见 **[obligation-driven.workflow.yaml](../workflows/obligation-driven.workflow.yaml)**；下图仅表示资料关联，实际执行由 P2 冻结范围选择，不自动执行上游生产者。**圆圈**表示全局 phase（不要求 `--feature`）；**方框**为功能 phase（必须 `--feature`）。边标注 `requires` 依赖。
+默认定义见 **[obligation-driven.workflow.yaml](../workflows/obligation-driven.workflow.yaml)**；下图仅表示资料关联，实际工作由冻结范围及唯一当前处置选择；root、CU、request各有专用作者，不自动执行上游生产者或轮流冷启动phase作者。**圆圈**表示全局 phase（不要求 `--feature`）；**方框**为功能 phase（必须 `--feature`）。边标注 `requires` 依赖。
 
 ```mermaid
 flowchart LR
@@ -308,10 +312,10 @@ framework 经历了多波演进。本节只做「为什么这样走」的回溯�
 
 | 原则 | Framework 落地 |
 |------|----------------|
-| **Research First** | 主产物前 `context-exploration.md`；`source_code_paths` 须真实存在；代码与文档冲突以代码为准 |
+| **Research First** | 本单元主产物前按真实输入建立facts，后续只补本次方法delta；`source_code_paths` 须真实存在；代码与文档冲突以代码为准 |
 | **Minimum Viable** | 不超出 spec/plan/contracts 范围；禁止投机性抽象 |
 | **Surgical** | coding/review diff 落在 scope 与 contracts 内 |
-| **Verify Before Proceed** | harness verdict PASS ∧ 全部 policy=required 的证据齐（verifier / receipt / trace / exploration 逐项由 policy 求解，非固定套餐）；Coding 逐文件 lint |
+| **Verify Before Proceed** | 适用真实检查、独立报告和执行证据由同一当前处置核定；receipt仅机器原件的兼容投影，不是作者停止或后继派工资格；源码按实际变更做lint |
 
 **exploration_strategy**（phase-rules + `exploration-strategy.ts`）：plan/coding 默认 **subagent** 探索（L1 trivial 可豁免）；spec/review/ut 按 **复合评分**（模块 LOC、跨层、fan-out 等）决定是否必须 subagent；无 subagent 时走 **sequential** 等价路径（量化阈值 × multiplier）。
 
@@ -365,7 +369,7 @@ graph LR
     c["Coding 阶段<br/>git diff 文件路径 ⊆ scope 模块<br/>BLOCKER"]
 ```
 
-任何"顺手改一下"都必须回到 plan 阶段走**显式扩展提议**（`expansions_with_user_approval`），用户批准后才能写入。
+任何范围/契约扩展都回原设计责任方正式修订重签；原请求已有真实授权时按同一授权策略继续，新增业务决定或未授权范围才需用户确认，不能由施工者原地自授。
 
 #### D. 业务级 UT 分层分工
 
@@ -465,7 +469,7 @@ Maison 在源仓完成 pack/release verify，交付 `framework-<semver>.zip`。�
 
 **根因**：v2.1 之前 harness 只做静态结构扫描，缺少"真编译 / 真运行"出口。
 
-**解法（v2.2 + profile 解耦）**：
+**历史解法（v2.2，随后引入profile解耦）**：下表保留防假PASS的规则来源；当前严重度/处置以真实检查报告和共同处置为准，不从旧阶段身份推写权。
 
 | 规则                  | 落点                                                                 | 严重度  | 触发逻辑                                                                                                |
 | --------------------- | -------------------------------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------- |
@@ -473,16 +477,16 @@ Maison 在源仓完成 pack/release verify，交付 `framework-<semver>.zip`。�
 | `coding_hvigor_build` | `check-coding.ts` → **`capability-registry`** → `profiles/<name>/harness/hvigor-runner.ts` | BLOCKER | 对每个业务模块跑 `assembleHap`；解析 ArkTS:ERROR / TSxxxx 即 FAIL；工具链缺失也是 FAIL（不 SKIP）       |
 | `ut_hvigor_build`     | `check-ut.ts` → profile `hvigor-runner.ts`                           | BLOCKER | 对 `<module>@ohosTest` 跑 `assembleHap`；兜底 tsc 漏过的跨文件类型违约                                  |
 | `ut_hvigor_test`      | `check-ut.ts` → profile `hdc-runner.ts`                              | BLOCKER | `genOnDeviceTestHap` + `hdc install` + `hdc shell aa test`；解析 hypium `OHOS_REPORT_RESULT`            |
-| `ut_no_src_mutation`  | `check-ut.ts` + `scripts/utils/closure-attestation.ts`（fallback：`scripts/utils/git-diff.ts`） | BLOCKER | **attestation-first**：review 正式闭环后基线=review closure attestation 的逐文件内容哈希（与 git 提交状态无关，coding 合法产物不在裁决域）；闭环但基线缺失/不可核实即 fail-closed；review 未闭环才回退 git diff。任一漂移均 FAIL 并回 coding 重走 review 闭环，人工授权不改变结论 |
+| `ut_no_src_mutation`  | `check-ut.ts` + `scripts/utils/closure-attestation.ts`（fallback：`scripts/utils/git-diff.ts`） | BLOCKER | 保留真实写入归因及受检源码变化，按现授权和风险分级复核；同unit作者可合法修实现与测试输入，实际工具/独核不能越权改源码或正式结果。旧版按阶段漂移一律FAIL/回coding的规则已退役 |
 | `device_test_evidence_write`（非门禁） | `check-testing.ts` → profile `device-test-evidence.ts`（plan d9e4b7c1） | —       | goal CLI 按已知装机/run 事实纯组装 holder/proposal；runtime 在正式 gate 后核当前窗口/attempt/device/HAP/trace 再提交 `device-test-evidence.json`（正式 gate 的 `FORCE_INSTALL` 仍由 runtime 注入）（testing→coding 回修的唯一 device 输入；普通模式零变化）。另：testing 写保护对 hvigor 生成的模块根 `BuildProfile.ets` 走生成物分类降级（`testing_generated_file_change` 事件，不 halt） |
 
 **调度模型**：根 `check-coding` / `check-ut` / `check-testing` 只做编排；宿主 toolchain 由 **`project_profile`** 注册 capability（`coding.compile`、`ut.compile`、`ut.run`、`device_test.*`），经 **`capability-registry.ts`** 动态加载 `profiles/<name>/harness/providers/*`。generic profile 可声明 SKIP，脚本层返回 SKIP 而非假 PASS。
 
-**配套**：
+**历史配套与现职责**：
 
-- coding SKILL.md 新增"真实编译闭环"步骤：agent 必须自己跑 hvigor、读日志、定位修复，不允许把编译失败标为"环境问题"
-- business-ut SKILL.md 新增"UT 编译闭环 + 装机运行闭环"，并把"不修改业务源码"升级为 HARD STOP
-- `verify-ut.md` prompt 顶部加 HARD STOP 等价条款，verifier 检测疑似为"为 UT 便利新增的工具函数"时强制标 BLOCKER
+- 保留“真编译、真运行、读原日志”的方法；当前Agent通过框架compile/check执行，不裸调宿主工具或把未执行当PASS，环境失败和产品失败分别归因。
+- v2.2曾把business-ut“不修改业务源码”升级HARD STOP。当前同unit专用作者可在真实授权内修实现和测试输入；测试工具与独立核验不能修改正式结果、自签PASS或越权。
+- 原verifier防“为测试便利掩盖缺陷”的教训仍有效：核对真实契约、行为、断言与写入归因，不能只因helper名字/目录或phase标签判违规。
 
 ### 3.6 弱模型吞字反转语义
 
@@ -528,7 +532,7 @@ Maison 在源仓完成 pack/release verify，交付 `framework-<semver>.zip`。�
 
 **症状**：期望 `harness-runner` 能一键跑完 spec → plan → coding → review → UT → testing。
 
-**正解**：Harness 是**每步归档后的质量门禁**，不是开发流水线。各阶段文档与代码仍需按 Skill 由 AI + 人工完成；Harness 的职责是**卡住错误不让往下传**。`AI Harness` 脚本只生成 `ai-prompt.md`，**不会自动调模型** —— 这是模型无关性的前提。
+**历史背景与现解法**：旧版checker/AI prompt生成器只负责每步检查与材料装配，曾由各阶段AI与人工推进；这解释了当时“一次harness命令不等于端到端开发”的教训。当前checker仍是工具，Goal内核实际调用各工作单元专用会话及真实独立核验，按当前差额持续到原请求终点。模型无关来自adapter/统一输入输出，不是“不调用模型”；阶段回执、作者退出或全部检查族跑过都不替代同一完成评估及正式原件。
 
 ---
 

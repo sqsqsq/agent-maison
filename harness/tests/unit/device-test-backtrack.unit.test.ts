@@ -24,7 +24,6 @@ import { deriveVisualDebt } from '../../scripts/utils/visual-debt';
 import { actionableDefectsToCandidates } from '../../scripts/utils/repair-candidates';
 import {
   collectActionableDefects,
-  evaluateUnverifiedRound,
   refineFailureKindWithTrustedDeviceEvidence,
   resolveCurrentHapSha256Full,
   validateDeviceTestEvidenceBinding,
@@ -556,31 +555,6 @@ export function runAll(): UnitCaseResult[] {
       fs.rmSync(f.root, { recursive: true, force: true });
       clearFrameworkConfigCache();
     }
-  });
-
-
-  t('unverified 无进展熔断：只认相邻同集合；集合变化重置；resume 相邻与自由文案变化仍命中', () => {
-    const a = [{ fingerprint: 'stable-A', reason: '文案一' }];
-    const aWordingChanged = [{ fingerprint: 'stable-A', reason: '完全不同的自由文案' }];
-    const b = [{ fingerprint: 'stable-B' }];
-    const ab = [{ fingerprint: 'stable-A' }, { fingerprint: 'stable-B' }];
-    const first = evaluateUnverifiedRound(null, 'testing', a);
-    nodeAssert.strictEqual(first.repeatedWithoutProgress, false);
-    const previousA = { phase: 'testing', fingerprint: first.fingerprint };
-    nodeAssert.strictEqual(evaluateUnverifiedRound(previousA, 'testing', aWordingChanged).repeatedWithoutProgress, true,
-      'A→A 且自由 reason 变化仍熔断');
-    nodeAssert.strictEqual(evaluateUnverifiedRound(previousA, 'testing', ab).repeatedWithoutProgress, false,
-      '{A}→{A,B} 不熔断');
-    const previousB = {
-      phase: 'testing',
-      fingerprint: evaluateUnverifiedRound(previousA, 'testing', b).fingerprint,
-    };
-    nodeAssert.strictEqual(evaluateUnverifiedRound(previousB, 'testing', a).repeatedWithoutProgress, false,
-      'A→B→A 不相邻，不熔断');
-    nodeAssert.strictEqual(evaluateUnverifiedRound(previousA, 'testing', a).repeatedWithoutProgress, true,
-      'resume 从事件恢复上一轮 A 后，相邻 A 应熔断');
-    nodeAssert.strictEqual(evaluateUnverifiedRound(previousA, 'review', a).repeatedWithoutProgress, false,
-      '跨 phase 不熔断');
   });
 
   t('collector 宿主实况三集合精确：根缺陷注入 === [TC-001]；TC-007 → unverified(test_contract)；级联零产出', () => {

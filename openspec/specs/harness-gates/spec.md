@@ -203,19 +203,17 @@ testing 阶段结论 MUST 由 runner 依可信 device session 派生：当 `targ
 
 ### Requirement: Full-track closure is published by staged summary commit
 
-The closure finalizer SHALL validate evidence, construct final summary bytes, generate the phase evidence manifest from the staged summary hash while recording the canonical summary path, publish the receipt pointer and strict phase state, and atomically publish the canonical summary last. Before generic freshness rejection, it SHALL recognize a partial publication from the same finalization by verifying the staged summary, expected canonical path/hash, receipt, run/attempt identity, manifest, pointer, and phase state, then idempotently complete only the missing steps. An unprovable partial state SHALL remain open/untrusted and return to the owner phase; arbitrary current bytes MUST NOT be rebound as evidence. No new journal or sidecar is introduced.
+The existing formal finalizer SHALL validate actual evidence and construct the final summary bytes, generate the evidence manifest using the staged summary hash at the canonical path, publish the receipt pointer and strict state, then atomically publish the canonical summary last. It SHALL recognize only a provable same-finalization partial transaction and finish its missing steps idempotently. Missing request/requirement binding, changed executed inputs, stale owner/fence or a closed-summary hash mismatch SHALL remain untrusted; current bytes MUST NOT be rebound as if they were executed. This producer transaction SHALL NOT create a closure author loop, default quota or synthetic native completion. No new journal or sidecar is introduced.
 
-Enforcement: `harness/scripts/utils/phase-closure-finalizer.ts`, `harness/scripts/check-receipt.ts`, `harness/scripts/utils/phase-state.ts`, `harness/scripts/utils/phase-evidence-manifest.ts`, `harness/scripts/utils/upstream-closure.ts`
+Enforcement: `harness/scripts/utils/phase-closure-finalizer.ts`, `harness/scripts/check-receipt.ts`, `harness/scripts/utils/phase-state.ts`, `harness/scripts/utils/phase-evidence-manifest.ts`
 
-#### Scenario: crash after manifest publication
+#### Scenario: Crash after manifest publication
+- **WHEN** manifest publication succeeds but pointer, state or canonical summary publication is interrupted
+- **THEN** the formal producer completes only the proven transaction's missing steps once, or leaves the result untrusted with the real current gap
 
-- **WHEN** manifest publication succeeds but the process crashes before pointer, state, or canonical summary publication
-- **THEN** resume SHALL identify the same staged transaction before stale rejection and idempotently finish it, or backtrack the owner if identity proof fails
-
-#### Scenario: closed summary bytes drift
-
-- **WHEN** a closed canonical summary hash no longer matches its manifest and no runner-owned equivalence proof exists
-- **THEN** the finalizer SHALL invalidate the closure and return to owner revalidation instead of publishing a new binding for the current bytes
+#### Scenario: Closed summary bytes drift
+- **WHEN** closed canonical summary bytes no longer match their manifest and no runner-owned equivalence proof exists
+- **THEN** the producer refuses re-signing current bytes and returns the actual verification/repair gap
 
 ### Requirement: Summary 1.2 distinguishes verified closure, assurance, and capability provenance
 `harness/schemas/summary.schema.json` and mirrored TypeScript readers SHALL support

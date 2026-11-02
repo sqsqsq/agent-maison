@@ -12,7 +12,7 @@ import { checkReportTraceReconciliation } from '../../scripts/check-testing';
 import { executeCheck } from '../../scripts/utils/check-execution';
 import { writeRunSummaryBase } from '../../harness-runner';
 import { classifyFailureKind } from '../../scripts/utils/goal-failure-classifier';
-import { classifyPhaseVerdict } from '../../scripts/utils/phase-transition-policy';
+import { resolveCurrentDisposition } from '../../scripts/utils/check-disposition';
 import { setupGoalRuntimeHost } from './goal-runner-testing-integrity.unit.test';
 import { clearFrameworkConfigCache } from '../../config';
 import type { CheckContext, CheckResult } from '../../scripts/utils/types';
@@ -67,8 +67,11 @@ function testIncompleteSurvivesBlockerSkip(): void {
     assert(summary.verdict === 'INCOMPLETE' && summary.completion_status === 'INCOMPLETE', 'report and summary must retain external incompleteness');
     assert(summary.blocking_skips[0]?.blocking_class === 'externalBlocked', 'summary preserves dependency cause');
     assert(classifyFailureKind(summary) === 'external_block', 'runtime keeps device cause, not content/framework');
-    assert(classifyPhaseVerdict({ phase: 'testing', verdict: summary.verdict, blocking_class: checks[1].blocking_class,
-      failure_kind: checks[1].failure_kind }) === 'defer_external_and_continue_if_allowed', 'runtime policy retains original device defer');
+    const current = resolveCurrentDisposition({ endpoint: 'request', phases: [{ phase: 'testing', verdict: summary.verdict,
+      schemaCurrent: true, closureCommitted: false, checks }] });
+    assert(current.completionBlocking.some(problem => problem.action === 'wait' && problem.detail.includes('no device/emulator')),
+      '当前视图保留实际设备等待原因');
+    assert(!current.completionEligible, '设备未执行不能签完成');
   } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
 }
 

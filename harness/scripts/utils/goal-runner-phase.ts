@@ -14,7 +14,6 @@ import type {
 } from './phase-transition-policy';
 import { FEATURE_PHASE_ORDER } from './phase-transition-policy';
 import { isLegacyBacktrackLimitOnly } from './adjudication';
-import { resolveWallClockMs } from './goal-timeout';
 import { invocationCompleted } from './invocation-completion';
 
 const FEATURE_PHASE_SET = new Set<string>(FEATURE_PHASE_ORDER);
@@ -130,69 +129,6 @@ export interface PhaseVerdictResolveResult {
 }
 
 export type ClosureAdvanceBlockReason = 'closure_open' | 'receipt_missing' | 'agent_timeout_unclosed';
-
-// ============================================================================
-// P0-5（plan 7c4f2e9b，codex 四/五轮）：closure_kind 确定性分类——**不得从
-// advance_block_reason 映射**（本文件 resolveClosureAdvanceBlock 中 agentTimedOut 先于
-// receiptStatus 返回，会掩盖 receipt 真值；advance_block_reason 仅作 telemetry）。
-// 分类是只读 receipt 探针（tryValidateReceipt）真值上的 **total function**
-// （ReceiptValidation 五态全集，phase-state.ts:36）：
-//   passed          → deterministic_recheck（runner 不调 agent，执行正式 sync-closure）
-//   missing/failed  → receipt_repair_with_verifier（agent attempt，沿用完整 effective 预算）
-//   error           → 立即 HALT closure_probe_error（探针自身崩溃=framework/toolchain 坏，
-//                     调 agent「修 receipt」只会空转回潮）
-//   not_applicable（且仍 advance_blocked）→ 立即 HALT closure_state_invariant
-// ============================================================================
-
-export type ClosureRoute =
-  | { kind: 'deterministic_recheck' }
-  | { kind: 'receipt_repair_with_verifier' }
-  | { kind: 'halt'; reason: 'closure_probe_error' | 'closure_state_invariant' };
-
-/**
- * post-impl review P1#5：closure-only attempt 超时 → 直接 closure_timeout 求人，
- * **不回内容重试**（OpenSpec 明文）。verdict=PASS 的超时不在此拦（advance_blocked 分支
- * 走 closure 分类，deterministic 大概率直接关环推进——比 halt 更好）。
- */
-export function shouldHaltClosureTimeout(
-  isClosureOnlyAttempt: boolean,
-  failureKind: string,
-  verdict: string,
-): boolean {
-  return isClosureOnlyAttempt && failureKind === 'agent_timeout' && verdict !== 'PASS';
-}
-
-/**
- * round4 P1#3：deterministic sync-closure 结果的完整分流（纯函数，runner 消费 + 控制流
- * 矩阵测试）。核心契约：closure-only attempt 一旦超时，**任何非 advance 出路都不得回
- * 内容重试**——sync 成功→advance；sync 失败+已超时→closure_timeout；sync 失败+未超时
- * →回落 repair（下一 attempt 仍是 closure 语境）。
- */
-export function resolveClosureSyncOutcome(
-  syncExitCode: number,
-  isClosureOnlyAttempt: boolean,
-  timedOut: boolean,
-): 'advance' | 'closure_timeout' | 'repair_retry' {
-  if (syncExitCode === 0) return 'advance';
-  if (isClosureOnlyAttempt && timedOut) return 'closure_timeout';
-  return 'repair_retry';
-}
-
-export function classifyClosureKind(
-  probeStatus: 'passed' | 'failed' | 'missing' | 'error' | 'not_applicable',
-): ClosureRoute {
-  switch (probeStatus) {
-    case 'passed':
-      return { kind: 'deterministic_recheck' };
-    case 'missing':
-    case 'failed':
-      return { kind: 'receipt_repair_with_verifier' };
-    case 'error':
-      return { kind: 'halt', reason: 'closure_probe_error' };
-    case 'not_applicable':
-      return { kind: 'halt', reason: 'closure_state_invariant' };
-  }
-}
 
 /** Block goal advance when script PASS but receipt/closure incomplete or agent timed out unclosed. */
 export function resolveClosureAdvanceBlock(input: {
@@ -369,6 +305,11 @@ export interface ResumedBudget {
 /** Execution starts at invoke_start; session signatures may be reissued later. */
 export function phaseInvocationStart(events: readonly GoalRunEvent[], phase: string, beforeMs = Number.POSITIVE_INFINITY): GoalRunEvent | undefined {
   const before = events.filter(event => Date.parse(event.ts ?? '') <= beforeMs);
+  const gate = [...before].reverse().find(event => event.type === 'harness_start' && event.phase === phase && event.invoke_id);
+  const attempt = gate?.invoke_id?.slice(phase.length + 1);
+  const unit = attempt && [...before].reverse().find(event => event.type === 'agent_invoke_start' && event.phase === 'work-unit-author'
+    && event.invoke_id === `work-unit-author-${attempt}`);
+  if (unit) return unit;
   return [...before].reverse().find(event => event.type === 'agent_invoke_start' && event.phase === phase)
     ?? [...before].reverse().find(event => event.type === 'phase_start' && event.phase === phase && event.driver !== 'session');
 }
@@ -598,17 +539,24 @@ export function collectVisualRoundRowHashes(events: GoalRunEvent[]): string[] {
 export function collectUncommittedVisualAttemptIds(events: GoalRunEvent[]): string[] {
   const startedTesting: string[] = [];
   const committed = new Set<string>();
+  const units = new Set<string>();
   for (const e of events) {
+    if (e.type === 'agent_invoke_start' && e.phase === 'work-unit-author' && typeof e.invoke_id === 'string'
+      && e.invoke_id.startsWith('work-unit-author-')) units.add(e.invoke_id);
     if (e.type === 'agent_invoke_start' && e.phase === 'testing' && typeof e.invoke_id === 'string') {
       const m = e.invoke_id.match(/-(i\d+)$/);
       if (m) startedTesting.push(m[1]);
+    }
+    if (e.type === 'harness_start' && e.phase === 'testing' && typeof e.invoke_id === 'string' && e.invoke_id.startsWith('testing-')) {
+      const attempt = e.invoke_id.slice('testing-'.length);
+      if (units.has(`work-unit-author-${attempt}`)) startedTesting.push(attempt);
     }
     if (e.type === 'visual_round' && typeof e.visual_attempt === 'string' && e.visual_attempt) {
       committed.add(e.visual_attempt);
     }
   }
-  const uncommitted = startedTesting.filter(id => !committed.has(id));
-  return uncommitted.length > 0 ? [uncommitted[uncommitted.length - 1]] : [];
+  const last = startedTesting.at(-1);
+  return last && !committed.has(last) ? [last] : [];
 }
 
 /**
@@ -623,8 +571,12 @@ export function collectLastCommittedVisualAttemptWindow(
 ): { attemptId: string; startMs: number; endMs: number } | null {
   const starts: Array<{ attemptId: string; invokeId: string; ts?: string }> = [];
   const committed = new Set<string>();
+  const unitAttempts = new Set(events.flatMap(event => event.type === 'visual_round' && event.visual_attempt
+    && event.invoke_id === `testing-${event.visual_attempt}` ? [event.visual_attempt] : []));
   for (const e of events) {
-    if (e.type === 'agent_invoke_start' && e.phase === 'testing' && typeof e.invoke_id === 'string') {
+    if (e.type === 'agent_invoke_start' && typeof e.invoke_id === 'string'
+      && (e.phase === 'testing' || e.phase === 'work-unit-author' && e.invoke_id.startsWith('work-unit-author-')
+        && unitAttempts.has(e.invoke_id.slice('work-unit-author-'.length)))) {
       const m = e.invoke_id.match(/-(i\d+)$/);
       if (m) starts.push({ attemptId: m[1], invokeId: e.invoke_id, ts: e.ts });
     }
@@ -634,7 +586,8 @@ export function collectLastCommittedVisualAttemptWindow(
   }
   const last = [...starts].reverse().find(s => committed.has(s.attemptId));
   if (!last) return null;
-  const endTs = [...events].reverse().find(e => e.invoke_id === last.invokeId)?.ts;
+  const endTs = [...events].reverse().find(e => e.invoke_id === last.invokeId || e.invoke_id === `testing-${last.attemptId}`
+    || e.type === 'visual_round' && e.visual_attempt === last.attemptId)?.ts;
   const startMs = Date.parse(last.ts ?? '');
   const endMs = Date.parse(endTs ?? '');
   return Number.isFinite(startMs) && Number.isFinite(endMs)
@@ -818,80 +771,24 @@ function loadSupersedeLineage(opts: {
   return lineage;
 }
 
-/** plan c4e7a9b2 §3.3 B1：当前 run 自己 supersede 审计事件上的交付周期边界（祖先事件上的旧边界不参与）。 */
-function extractCycleBoundary(events: readonly GoalRunEvent[]): string | undefined {
-  let boundary: string | undefined;
-  for (const e of events) {
-    const t = e as { type?: string; delivery_cycle_boundary?: unknown };
-    if (t.type === 'supersede' && typeof t.delivery_cycle_boundary === 'string' && t.delivery_cycle_boundary) {
-      boundary = t.delivery_cycle_boundary;
-    }
-  }
-  return boundary;
-}
-
-/**
- * e9d4b7a3 t4：预算 lineage 折叠**唯一共享入口**——budgetFoldSeeds（CLI --supersede ∪
- * currentEvents 内 audited supersede）→ 收集祖先事件 → 拼 budgetFoldEvents。
- * runner 熔断 / progress.json / heartbeat 三处必须消费本入口，禁止各自复制公式
- * （曾经 progress/heartbeat 只计当前 run events → supersede 链显示 5/30 假象）。
- * seedTargets 为调用方 CLI 显式 --supersede（resume/progress 消费面传空——它们的事件
- * 流里已有 audited supersede 事件）；currentEvents 恒传当前 run 的权威事件。
- */
-export interface BudgetLineageFold {
-  /** 祖先 + 当前 run 事件（预算/回退计数/transient 的唯一计算源） */
-  budgetFoldEvents: GoalRunEvent[];
-  /** 仅祖先部分（runner 侧 transient 计数等已折叠消费仍需要） */
-  ancestorEvents: GoalRunEvent[];
-  /** 与 ancestorEvents 同一集合，按 run 分组（回修轮窗口按 run 界定，plan 33784ed1 §4.1） */
-  ancestorRuns: Array<{ run_id: string; events: GoalRunEvent[] }>;
-  /** 折叠种子（显式 ∪ 事件派生，去重保序） */
-  foldSeeds: string[];
-  /** 实际生效的交付周期边界（落在本次血缘内才生效）；undefined = 全血缘折叠 */
-  cycleBoundary?: string;
-}
-
-export function foldBudgetLineage(opts: {
-  projectRoot: string;
-  featuresDir: string;
-  feature: string;
-  seedTargets?: readonly string[];
-  currentEvents?: readonly GoalRunEvent[];
-  /**
-   * plan c4e7a9b2 §3.3 B1：交付周期边界 B（上一次 record ok 的完成 run）。fresh 出生显式传（同 seedTargets 先例——
-   * 出生时 supersede 事件尚未进 currentEvents）；缺省从当前 run supersede 事件的 `delivery_cycle_boundary` 读。
-   * 折叠 = 祖先(seeds) − ({B} ∪ 祖先(B))：上一周期不占本周期额度，本周期失败 run 照计。
-   */
-  cycleBoundary?: string;
-  /** 注入供测试；缺省读盘 */
+/** Existing supersede audit only; no quota fold or completed-cycle cutoff. */
+export function readSupersededAncestorRuns(opts: {
+  projectRoot: string; featuresDir: string; feature: string;
+  seedTargets?: readonly string[]; currentEvents?: readonly GoalRunEvent[];
   loadEvents?: (absPath: string) => GoalRunEvent[];
-}): BudgetLineageFold {
-  const current = [...(opts.currentEvents ?? [])];
-  const foldSeeds = [
-    ...new Set([...(opts.seedTargets ?? []), ...extractSupersedeTargets(current)]),
-  ];
-  const lineage = foldSeeds.length > 0 ? loadSupersedeLineage({ ...opts, seedTargets: foldSeeds }) : new Map<string, GoalRunEvent[]>();
-  const boundary = opts.cycleBoundary ?? extractCycleBoundary(current);
-  const cycleBoundary = boundary && lineage.has(boundary) ? boundary : undefined;
-  // B 在血缘内 ⇒ 祖先(B) 也都已在 lineage 里：就地从 B 沿 supersede 求闭包，不再读盘
-  const previousCycle = new Set<string>();
-  for (const queue = cycleBoundary ? [cycleBoundary] : []; queue.length > 0;) {
-    const id = queue.shift()!;
-    if (previousCycle.has(id) || !lineage.has(id)) continue;
-    previousCycle.add(id);
-    queue.push(...extractSupersedeTargets(lineage.get(id)!));
-  }
-  const ancestorRuns = [...lineage].filter(([id]) => !previousCycle.has(id)).map(([run_id, events]) => ({ run_id, events }));
-  const ancestorEvents = sortByTs(ancestorRuns.flatMap(r => r.events));
-  return {
-    budgetFoldEvents: ancestorEvents.length > 0 ? [...ancestorEvents, ...current] : current,
-    ancestorEvents,
-    ancestorRuns,
-    foldSeeds,
-    ...(cycleBoundary ? { cycleBoundary } : {}),
-  };
+}): Array<{ run_id: string; events: GoalRunEvent[] }> {
+  const seedTargets = [...new Set([...(opts.seedTargets ?? []), ...extractSupersedeTargets([...(opts.currentEvents ?? [])])])];
+  return [...loadSupersedeLineage({ ...opts, seedTargets })].map(([run_id, events]) => ({ run_id, events }));
 }
 
+export function readExecutionActivity(events: GoalRunEvent[], nowMs = Date.now()): {
+  calls: number; active_ms: number; firstAuthoritativeStartMs: number | null;
+} {
+  const partition = partitionExecutionSessions(events, { tailCapMs: nowMs });
+  return { calls: partition.totalTurns, active_ms: partition.priorActiveMs, firstAuthoritativeStartMs: partition.firstAuthoritativeStartMs };
+}
+
+/** @deprecated Historical statistics compatibility; never used to limit new execution. */
 export function resolveResumedBudget(
   events: GoalRunEvent[],
   opts?: {
@@ -908,56 +805,6 @@ export function resolveResumedBudget(
     wallClockStartMs: resolveWallClockStartMs(events),
     priorActiveMs: p.priorActiveMs,
     firstAuthoritativeStartMs: p.firstAuthoritativeStartMs,
-  };
-}
-
-export interface ResumeGuardInput {
-  priorStatus?: string;
-  lastRunEndTs?: string;
-  forceResume?: boolean;
-  cooldownMinutes?: number;
-  /** Optional: summary mtime advanced after last run_end with changed blocking classification. */
-  blockingCleared?: boolean;
-}
-
-export interface ResumeGuardResult {
-  allowed: boolean;
-  reason?: string;
-}
-
-const TERMINAL_STATUSES = new Set(['HALTED', 'DEFERRED']);
-
-/**
- * Conservative resume guard — default refuse HALTED/DEFERRED unless --force-resume
- * or blocking classification demonstrably changed after last run_end.
- */
-export function checkTerminalResumeGuard(input: ResumeGuardInput): ResumeGuardResult {
-  const status = input.priorStatus;
-
-  // Non-terminal prior runs (COMPLETED/PARTIAL/unknown) are not subject to terminal debounce.
-  if (!status || !TERMINAL_STATUSES.has(status)) return { allowed: true };
-
-  const cooldownMin = input.cooldownMinutes ?? 5;
-  if (input.lastRunEndTs) {
-    const endMs = new Date(input.lastRunEndTs).getTime();
-    if (!Number.isNaN(endMs)) {
-      const elapsed = Date.now() - endMs;
-      const cooldownMs = cooldownMin * 60 * 1000;
-      if (elapsed < cooldownMs) {
-        return {
-          allowed: false,
-          reason: `resume cooldown: wait ${Math.ceil((cooldownMs - elapsed) / 1000)}s after run_end (${status})`,
-        };
-      }
-    }
-  }
-
-  if (input.blockingCleared) return { allowed: true };
-  if (input.forceResume) return { allowed: true };
-
-  return {
-    allowed: false,
-    reason: `last run status ${status}; pass --force-resume to continue`,
   };
 }
 
@@ -980,37 +827,13 @@ export function resolveEffectiveRunEnd(events: GoalRunEvent[]): GoalRunEvent | u
   return undefined;
 }
 
-/** Check run budget before each phase attempt (turns + wall clock). */
-export function checkRunBudget(
-  totalTurns: number,
-  maxTotalTurns: number,
-  elapsedMs: number,
-  wallClockMs: number,
-): 'ok' | 'wall_clock' | 'turns' {
-  if (elapsedMs > wallClockMs) return 'wall_clock';
-  if (totalTurns >= maxTotalTurns) return 'turns';
-  return 'ok';
-}
-
 /** Shared public-entry compatibility: old policy is retired, original resources are not. */
 export function canRecheckLegacyBacktrackLimit(input: {
   projectRoot: string; feature: string; runId: string; events: readonly unknown[];
 }): boolean {
-  if (!isLegacyBacktrackLimitOnly(input.events)) return false;
-  try {
-    const { deliveryCycleView } = require('./goal-run-creation') as typeof import('./goal-run-creation');
-    if (!deliveryCycleView(input.projectRoot, input.feature).unfinished.some(run => run.runId === input.runId)) return false;
-    // Runtime loading avoids adding a second manifest/budget reader or a module-init cycle.
-    const { loadGoalManifestFromRun } = require('./goal-manifest') as typeof import('./goal-manifest');
-    const manifest = loadGoalManifestFromRun(input.projectRoot, input.runId, { feature: input.feature, featuresDir: relFeaturesDir(input.projectRoot) });
-    const fold = foldBudgetLineage({
-      projectRoot: input.projectRoot, featuresDir: relFeaturesDir(input.projectRoot),
-      feature: input.feature, currentEvents: input.events as GoalRunEvent[],
-    });
-    const budget = resolveResumedBudget(fold.budgetFoldEvents, { nextSessionStartMs: Date.now() });
-    return checkRunBudget(budget.totalTurns, manifest.budget.max_total_turns, budget.priorActiveMs,
-      resolveWallClockMs(manifest, manifest.phase_chain)) === 'ok';
-  } catch { return false; }
+  const end = [...input.events].reverse().find(event => !!event && typeof event === 'object' && (event as Record<string, unknown>).type === 'run_end') as GoalRunEvent | undefined;
+  return end?.status === 'HALTED' && ['backtrack_limit', 'budget_turns', 'budget_wall_clock', 'content_retry_exhausted',
+    'external_retry_exhausted', 'agent_timeout_repeated', 'closure_wall_repeated'].includes(String(end.halt_reason));
 }
 
 /**
@@ -1100,15 +923,6 @@ export function rebuildOutcomesFromEvents(
   return outcomes;
 }
 
-/** Resume state from events when goal-report.json is absent. */
-export function resolveResumeFromEvents(
-  chain: FeaturePhase[],
-  events: GoalRunEvent[],
-): ResumeState {
-  const priorOutcomes = rebuildOutcomesFromEvents(events, chain);
-  return resolveResumeState(chain, priorOutcomes);
-}
-
 /** Phases finished (PASS advance or DEFERRED) from events.jsonl. */
 export function parseCompletedPhasesFromEvents(events: GoalRunEvent[]): Set<FeaturePhase> {
   const done = new Set<FeaturePhase>();
@@ -1194,114 +1008,6 @@ export function loadAuthoritativeEvents(absPath: string): GoalRunEvent[] {
 export function invocationOutputLogPath(runDir: string, phase: string, invokeId?: string): string {
   const directory = invokeId ? path.join(runDir, 'phases', phase, invokeId) : null;
   return directory && fs.existsSync(directory) ? path.join(directory, 'agent-output.log') : path.join(runDir, 'phases', phase, 'agent-output.log');
-}
-
-export interface ResumeState {
-  priorOutcomes: GoalPhaseOutcome[];
-  startIndex: number;
-  deferredUpstream: Array<{ phase: FeaturePhase; reason: string }>;
-}
-
-/**
- * Determine resume index and rehydrate prior outcomes from goal-report or events.
- */
-export function resolveResumeState(
-  chain: FeaturePhase[],
-  priorOutcomes: GoalPhaseOutcome[],
-): ResumeState {
-  const deferredUpstream = priorOutcomes
-    .filter((o) => o.deferred)
-    .map((o) => ({
-      phase: o.phase,
-      reason: o.deferred_reason ?? 'external_blocked',
-    }));
-
-  if (priorOutcomes.length === 0) {
-    return { priorOutcomes: [], startIndex: 0, deferredUpstream: [] };
-  }
-
-  const last = priorOutcomes[priorOutcomes.length - 1];
-  if (last.halted) {
-    const idx = chain.indexOf(last.phase);
-    return {
-      priorOutcomes: priorOutcomes.slice(0, -1),
-      startIndex: idx >= 0 ? idx : 0,
-      deferredUpstream,
-    };
-  }
-
-  // e5d8a2c4 步骤 3（垂直恢复闭环）：**最早一个尚未完成的 `WAITING(external)` phase
-  // 必须重新入队**。fa0663 实锤：设备停放的 outcome 是 `{verdict:'FAIL', halted:false,
-  // run_disposition:'WAITING', run_wait_kind:'external'}`——旧逻辑把它计入 done，
-  // resume `start_index=链长` 直接收口，停放话术承诺的"设备就绪后 --resume 继续"
-  // 永不发生（同一 run 恒 PARTIAL 的吸收态）。判据**消费既有投影字段**（写盘层对每条
-  // phase_halt 都落了 run_disposition/run_wait_kind，报告 phases 原样携带）；`halted`
-  // 只表示"当前会话是否停止推进"（设备门仅 AMBIGUOUS 置 true），不是跨 run 完成判据。
-  const isUnfinishedExternalWait = (o: GoalPhaseOutcome): boolean =>
-    o.run_disposition === 'WAITING' && o.run_wait_kind === 'external';
-  const firstWaitingIdx = chain.findIndex((p) =>
-    priorOutcomes.some((o) => o.phase === p && isUnfinishedExternalWait(o)));
-  if (firstWaitingIdx >= 0) {
-    // codex 第九批 P0 订正（前缀规则）：从 phase k 重跑，**只保留严格位于 k 之前的
-    // outcome**——初版只删后缀中的 WAITING、保留下游旧 PASS，会让重跑后的链把
-    // 过期 PASS 当完成态；deferredUpstream 同理**从保留前缀重算**（初版沿用全量，
-    // 会把正在重试的 phase 的旧 deferred 记录带进新一轮）。
-    const prefix = priorOutcomes.filter((o) => {
-      const i = chain.indexOf(o.phase);
-      return i >= 0 && i < firstWaitingIdx;
-    });
-    return {
-      priorOutcomes: prefix,
-      startIndex: firstWaitingIdx,
-      deferredUpstream: prefix
-        .filter((o) => o.deferred)
-        .map((o) => ({ phase: o.phase, reason: o.deferred_reason ?? 'external_blocked' })),
-    };
-  }
-
-  const done = new Set(priorOutcomes.map((o) => o.phase));
-  let startIndex = chain.length;
-  for (let i = 0; i < chain.length; i++) {
-    if (!done.has(chain[i])) {
-      startIndex = i;
-      break;
-    }
-  }
-
-  return { priorOutcomes, startIndex, deferredUpstream };
-}
-
-export interface PhaseSummaryPassReceipt {
-  verdict: string;
-  receipt_status?: string;
-  closure_status?: string;
-  mtimeMs: number;
-}
-
-/** Read on-disk phase summary + receipt closure fields for half-phase recovery. */
-export function readPhaseSummaryPassReceipt(
-  projectRoot: string,
-  feature: string,
-  phase: FeaturePhase,
-): PhaseSummaryPassReceipt | null {
-  const dir = featurePhaseReportsDir(projectRoot, feature, phase);
-  const summaryPath = path.join(dir, 'summary.json');
-  if (!fs.existsSync(summaryPath)) return null;
-  try {
-    const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf-8')) as {
-      verdict?: string;
-      receipt_status?: string;
-      closure_status?: string;
-    };
-    return {
-      verdict: summary.verdict ?? '',
-      receipt_status: summary.receipt_status,
-      closure_status: summary.closure_status,
-      mtimeMs: fs.statSync(summaryPath).mtimeMs,
-    };
-  } catch {
-    return null;
-  }
 }
 
 /**
@@ -1534,75 +1240,6 @@ export function isReceiptFreshForInvokeStart(
   } catch {
     return false;
   }
-}
-
-function phaseHasTerminalVerdict(events: GoalRunEvent[], phase: FeaturePhase): boolean {
-  for (const e of events) {
-    if (e.type !== 'phase_verdict' || e.phase !== phase) continue;
-    if (e.action === 'retry') continue;
-    return true;
-  }
-  return false;
-}
-
-function phaseHasRecoveredVerdict(events: GoalRunEvent[], phase: FeaturePhase): boolean {
-  for (const e of events) {
-    if (e.type === 'phase_verdict' && e.phase === phase && e.recovered === true) return true;
-  }
-  return false;
-}
-
-/** Detect half-completed phase eligible for resume recovery (fresh PASS summary, unclosed invoke). */
-export function detectHalfCompletedPhaseRecovery(
-  events: GoalRunEvent[],
-  projectRoot: string,
-  feature: string,
-): { phase: FeaturePhase; invokeStartTs: string } | null {
-  const unclosed = findUnclosedAgentInvokeStart(events);
-  if (!unclosed?.phase || !unclosed.ts) return null;
-
-  const phase = unclosed.phase as FeaturePhase;
-  if (phaseHasTerminalVerdict(events, phase) || phaseHasRecoveredVerdict(events, phase)) {
-    return null;
-  }
-
-  const summary = readPhaseSummaryPassReceipt(projectRoot, feature, phase);
-  if (!summary || summary.verdict !== 'PASS') return null;
-  if (summary.closure_status !== 'closed') return null;
-
-  const startMs = new Date(unclosed.ts).getTime();
-  if (Number.isNaN(startMs) || summary.mtimeMs <= startMs) return null;
-
-  return { phase, invokeStartTs: unclosed.ts };
-}
-
-export interface HalfPhaseRecoveryEvent {
-  type: string;
-  phase: FeaturePhase;
-  [key: string]: unknown;
-}
-
-/** Build compensation events for half-completed phase (orchestrator writes before rebuild). */
-export function buildHalfPhaseRecoveryEvents(
-  detected: { phase: FeaturePhase; invokeStartTs: string },
-): HalfPhaseRecoveryEvent[] {
-  const ts = new Date().toISOString();
-  return [
-    {
-      type: 'agent_invoke_recovered',
-      ts,
-      phase: detected.phase,
-      invoke_start_ts: detected.invokeStartTs,
-    },
-    {
-      type: 'phase_verdict',
-      ts,
-      phase: detected.phase,
-      verdict: 'PASS',
-      action: 'advance',
-      recovered: true,
-    },
-  ];
 }
 
 // ============================================================================

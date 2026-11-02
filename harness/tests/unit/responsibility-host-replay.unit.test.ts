@@ -6,14 +6,15 @@ import * as crypto from 'crypto';
 import * as zlib from 'zlib';
 import * as YAML from 'yaml';
 import { clearFrameworkConfigCache, featureFilePath, featurePhaseReportsDir, loadFrameworkConfig } from '../../config';
-import { checkFactsArtifact, factsBaselineFingerprint, findPhaseDeltaSection, type FactsInvocationContext } from '../../scripts/utils/context-facts';
+import { checkFactsArtifact, factsBaselineFingerprint, factsPhaseFingerprint, findPhaseDeltaSection, type FactsInvocationContext } from '../../scripts/utils/context-facts';
+import { loadGoalManifestFromRun } from '../../scripts/utils/goal-manifest';
+import { resolveCapabilityInputs } from '../../scripts/utils/capability-resolution';
 import { parseContextExploration } from '../../scripts/utils/context-exploration';
 import { loadCompletedFactsBaseline, loadFactsInvocationContext, resolveCapabilityResolutionEntryInput } from '../../scripts/utils/capability-resolution-entry-input';
 import { createObservedSourceHashReader, loadPhaseEvidenceManifest, recomputePhaseEvidenceStaleness } from '../../scripts/utils/phase-evidence-manifest';
 import { compareExistingTestPreservation, codingTestPreservation, repairResponsibilityContext, workUnitMayWritePath } from '../../scripts/utils/repair-responsibility';
 import { checkCodingExistingTestPreserved } from '../../scripts/check-coding';
 import { collectReviewRepairCandidates, scopeRevisionInputFromRepairCandidates, testStrengthVerification } from '../../scripts/utils/repair-candidates';
-import { resolveCapabilityInputs } from '../../scripts/utils/capability-resolution';
 import { SpecLoader } from '../../scripts/utils/spec-loader';
 import { loadResolvedProfile } from '../../profile-loader';
 import type { CheckContext } from '../../scripts/utils/types';
@@ -23,13 +24,13 @@ import { provisionRealChainProject, provisionFrameworkUnder, scaffoldRealChainHo
 import { writeSpecMaterials, writePlanMaterials, writeCodingMaterials, writeReviewMaterials, writeUtMaterials, writeTestPlan, publishRequestedVerifier, readDeliveredVerifierRequest, readSummary, dumpPhase } from './real-chain.unit.test';
 import { readVerifierMaterialOrNull, computeMaterialSha256, verifierMaterialFileMatchesCurrent } from '../../scripts/utils/verifier-material';
 import { loadVerifierEvidenceForSubject, verifierReportMdPath } from '../../scripts/utils/verifier-evidence';
-import { runGateHarness } from './real-chain-seams.unit.test';
 import { runGoalRuntimeChain } from './goal-runner-testing-integrity.unit.test';
 import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
 import { loadAuthoritativeEvents } from '../../scripts/utils/goal-runner-phase';
 import { assessFeature } from '../../scripts/utils/feature-assessment';
 import { resolveChangeUnitExpectedExecution } from '../../scripts/utils/change-unit-completion';
-import { readUpstreamPhaseView } from '../../scripts/utils/upstream-verdict-gate';
+import { phaseCompletionProblems } from '../../scripts/utils/check-disposition';
+import { parseVerifierRequest } from '../../scripts/utils/verifier-request';
 import { computeGateFingerprint } from '../../scripts/utils/gate-fingerprint';
 import { matchesUnitCase, selectedUnitCases, startCaseTiming, type SelectedUnitCases, type UnitExecutionTiming } from '../utils/unit-case-selection';
 import type { UnitCaseResult } from '../run-unit';
@@ -75,15 +76,19 @@ function withRecordedProject(run: (root: string, events: any[], manifest: any) =
   } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
 }
 
-async function replayCR001Runtime(adoptNonCompatibility = false): Promise<void> {
+async function replayCR001Runtime(): Promise<void> {
   const project = provisionRealChainProject();
+  const reportsRoot = path.join(frameworkRoot, 'harness/reports/72b6f0d9/p3');
+  fs.mkdirSync(reportsRoot, { recursive: true });
+  const diagnostics = fs.mkdtempSync(path.join(reportsRoot, 'c-cr001-'));
   try {
     const birth = scaffoldRealChainHost(project);
     const adaptedSpy = spy.replace('02-Feature/WalletMain/', `${project.modulePath}/`);
     const before = fs.readFileSync(path.join(recorded, 'SpyBankRepository.before.ets'), 'utf8');
     const after = fs.readFileSync(path.join(recorded, 'project', spy), 'utf8');
-    const repaired = adoptNonCompatibility ? "import { expect } from '@ohos/hypium';\n" + after
-      + '\nexport function checkFixtureContract(): void { expect(true).assertTrue(); }\n' : after;
+    const repaired = "import { expect } from '@ohos/hypium';\n" + after
+      + '\nexport function checkFixtureContract(): void { expect(true).assertTrue(); }\n';
+    assert(repaired.includes(after), '原历史两行兼容修复字节完整保留，新增断言仍需当前独核');
     writeHostFile(project.root, adaptedSpy, before);
     for (const source of ['data/model/BankInfo.ets', 'data/model/BankCardType.ets', 'data/repository/BankRepository.ets']) {
       writeHostFile(project.root, `${project.modulePath}/src/main/ets/${source}`, fs.readFileSync(path.join(recorded, `project/02-Feature/WalletMain/src/main/ets/${source}`), 'utf8'));
@@ -94,17 +99,21 @@ async function replayCR001Runtime(adoptNonCompatibility = false): Promise<void> 
     const row = originalRow.replace(spy, adaptedSpy);
     const originalVerification = fs.readFileSync(path.join(recorded, 'phases/review/harness/verifier.report.md'), 'utf8');
     const confirmed = originalVerification.slice(originalVerification.indexOf('- issue: CR-001'), originalVerification.indexOf('- issue: CR-002')).trimEnd();
-    const baselines: string[] = [];
     let fixed = false;
+    let originalConfirmed = false;
+    const repairAttempts: string[] = [];
     let adoptionPreservedBytes = false;
     let verifiedStrengthFailure = false;
-    const adoptionViews: unknown[] = [];
     const admission = (ctx: { runId: string; goalAttemptId?: string; phase: string }): FactsInvocationContext | undefined =>
       resolveCapabilityResolutionEntryInput({ projectRoot: project.root, frameworkRoot: project.frameworkRoot, feature: project.feature,
         featuresDir: loadFrameworkConfig(project.root).paths.features_dir, phase: ctx.phase, goalRunId: ctx.runId, goalAttemptId: ctx.goalAttemptId }).factsContext;
     const authorMaterials = (ctx: { runId: string; goalAttemptId?: string; phase: string }, write: () => void, admitted = admission(ctx)): FactsInvocationContext | undefined => {
       const facts = featureFilePath(project.root, project.feature, 'context/facts.md');
-      const baseline = admitted?.baseline && fs.existsSync(facts) ? fs.readFileSync(facts) : undefined;
+      const prior = fs.existsSync(facts) ? fs.readFileSync(facts) : undefined;
+      const header = prior ? parseContextExploration(prior.toString('utf8')).fm : undefined;
+      const sameResearch = header && 'run_id' in header && header.run_id === ctx.runId
+        && 'established_by' in header && header.established_by === admitted?.first_phase;
+      const baseline = prior && (admitted?.baseline || sameResearch) ? prior : undefined;
       write();
       // 通用seed会写静态facts；真实模型保留已准入基线，只追加本阶段读到的当前事实。
       if (baseline) fs.writeFileSync(facts, baseline);
@@ -114,65 +123,48 @@ async function replayCR001Runtime(adoptNonCompatibility = false): Promise<void> 
     const probe = await runGoalRuntimeChain(project.root, {
       frameworkRoot: project.frameworkRoot, featureId: project.feature, realHarness: true, adapter: 'codex',
       freshStartPhase: birth[0] as 'spec', freshEndPhase: birth.at(-1), freshRequirement: REAL_CHAIN_REQUIREMENT,
-      onSpec: ctx => {
+      onAuthor: (ctx, actual) => {
         project.runId = ctx.runId;
-        authorMaterials(ctx, () => writeSpecMaterials(project));
-      },
-      onPlan: ctx => { project.runId = ctx.runId; authorMaterials(ctx, () => writePlanMaterials(project)); },
-      onCoding: ctx => {
-        project.runId = ctx.runId;
-        const entry = admission(ctx);
-        if (entry?.baseline) baselines.push(entry.baseline.fingerprint);
-        const events = loadAuthoritativeEvents(featureFilePath(project.root, project.feature, `goal-runs/${ctx.runId}/events.jsonl`));
-        const repair = events.some(event => event.type === 'phase_backtrack_requested' && (event as { candidates?: Array<{ id: string }> }).candidates?.some(candidate => candidate.id === 'CR-001'));
-        authorMaterials(ctx, () => {
+        assert(actual.runId === ctx.runId && actual.feature === project.feature && actual.owner.run_id === ctx.runId,
+          'all method work must belong to the actual original unit request and fence');
+        assert(actual.factsContext, 'the dedicated author consumes its actual facts admission, never a phase-label replacement');
+        assert(ctx.goalAttemptId === actual.attemptId, 'all method inputs retain the exact original invoke identity');
+        const method = (phase: string, write: () => void) => {
+          const methodContext = { ...ctx, phase };
+          const admitted = admission(methodContext);
+          assert(admitted, 'the actual unit request must resolve current facts for ' + phase);
+          return authorMaterials(methodContext, write, admitted);
+        };
+        if (!fs.existsSync(featureFilePath(project.root, project.feature, 'spec/spec.md'))) method('spec', () => writeSpecMaterials(project));
+        if (!fs.existsSync(featureFilePath(project.root, project.feature, 'plan/plan.md'))) method('plan', () => writePlanMaterials(project));
+        const repair = originalConfirmed && ctx.prompt.includes('CR-001');
+        method('coding', () => {
           writeCodingMaterials(project);
           writeHostFile(project.root, `${project.modulePath}/src/main/ets/data/model/BankInfo.ets`, fs.readFileSync(path.join(recorded, 'project', bankInfo), 'utf8'));
-          if (repair) { writeHostFile(project.root, adaptedSpy, repaired); fixed = true; }
-        }, entry);
+          if (repair) { writeHostFile(project.root, adaptedSpy, repaired); fixed = true; repairAttempts.push(actual.attemptId); }
+        });
         const currentFacts = featureFilePath(project.root, project.feature, 'context/facts.md');
         fs.appendFileSync(currentFacts, `\n## phase_delta: coding\n| 路径 | 事实 | 影响 |\n|---|---|---|\n| ${project.modulePath}/src/main/ets/data/model/BankInfo.ets | 原接口新增必填 supportedCardTypes | 旧 typed fixture 必须兼容 |\n`);
-        fs.appendFileSync(path.join(frameworkRoot, 'harness/reports/72b6f0d9/p2/c-host-cr001-author-observation.jsonl'), JSON.stringify({
-          run: ctx.runId, attempt: ctx.goalAttemptId, repair, fixed, actualFeedbackContainsIssue: ctx.prompt.includes('CR-001'),
-          spyHash: sha(fs.readFileSync(path.join(project.root, adaptedSpy))), expectedRepairedHash: sha(repaired),
-          repairRequests: events.filter(event => event.type === 'phase_backtrack_requested'),
-        }) + '\n');
-      },
-      onReview: ctx => {
-        project.runId = ctx.runId;
-        const admitted = authorMaterials(ctx, () => writeReviewMaterials(project));
-        const file = featureFilePath(project.root, project.feature, 'review/review-report.md');
-        if (admitted) fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('## 2. 审查维度', admitted.source_paths.map(source => `- ${source}`).join('\n') + '\n\n## 2. 审查维度'));
-        if (!fixed) {
-          const report = fs.readFileSync(file, 'utf8').replace('| 编号 | 分类 | 严重程度 |', '| 编号 | 严重程度 | 分类 |')
-            .replace(/^\| R-1 \|.*$/m, row).replace('| BLOCKER | 0 |', '| BLOCKER | 1 |').replace('| MINOR | 1 |', '| MINOR | 0 |').replace('**审查结论**: 通过', '**审查结论**: 不通过');
-          fs.writeFileSync(file, report);
-          runGateHarness(project, 'review', undefined, ctx.goalAttemptId ?? '', { HARNESS_HDC_TARGET: 'fake-device', MAISON_DEVICE_TARGET_KIND: 'physical' }, 'agent');
-          const subject = readSummary(project, 'review')?.verifier_subject_id;
-          assert(subject, dumpPhase(project, 'review'));
-        } else {
-          assert.equal(fs.readFileSync(path.join(project.root, adaptedSpy), 'utf8'), repaired);
-        }
-      },
-      onUt: ctx => {
-        project.runId = ctx.runId; assert(fixed, 'UT cannot close the original missing fixture field');
-        const upstream = () => readUpstreamPhaseView(project.root, project.feature, 'coding', 'ut', ctx.runId, project.frameworkRoot);
-        const viewBefore = adoptNonCompatibility ? upstream() : undefined;
+        const reviewAdmission = method('review', () => writeReviewMaterials(project));
+        const reviewFile = featureFilePath(project.root, project.feature, 'review/review-report.md');
+        if (reviewAdmission) fs.writeFileSync(reviewFile, fs.readFileSync(reviewFile, 'utf8').replace('## 2. 审查维度',
+          reviewAdmission.source_paths.map(source => '- ' + source).join('\n') + '\n\n## 2. 审查维度'));
+        if (!fixed) fs.writeFileSync(reviewFile, fs.readFileSync(reviewFile, 'utf8').replace('| 编号 | 分类 | 严重程度 |', '| 编号 | 严重程度 | 分类 |')
+          .replace(/^\| R-1 \|.*$/m, row).replace('| BLOCKER | 0 |', '| BLOCKER | 1 |').replace('| MINOR | 1 |', '| MINOR | 0 |')
+          .replace('**审查结论**: 通过', '**审查结论**: 不通过'));
         const beforeUt = fs.readFileSync(path.join(project.root, adaptedSpy));
-        authorMaterials(ctx, () => writeUtMaterials(project));
-        adoptionPreservedBytes = beforeUt.equals(fs.readFileSync(path.join(project.root, adaptedSpy)));
-        if (adoptNonCompatibility) {
-          const summary = JSON.parse(fs.readFileSync(featureFilePath(project.root, project.feature, 'coding/reports/summary.json'), 'utf8'));
-          const script = JSON.parse(fs.readFileSync(featureFilePath(project.root, project.feature, 'coding/reports/script-report.json'), 'utf8'));
-          const revision = scopeRevisionInputFromRepairCandidates(summary.repair_candidates ?? [], { projectRoot: project.root, frameworkRoot: project.frameworkRoot, feature: project.feature, runId: ctx.runId });
-          adoptionViews.push({ attempt: ctx.goalAttemptId, frameworkRoot: project.frameworkRoot, viewBefore, viewAfter: upstream(), blocker_count: summary.blocker_count, blockers: summary.blockers,
-            candidates: summary.repair_candidates, scope_revision_input: script.checks.flatMap((check: { scope_revision_input?: unknown }) => check.scope_revision_input ? [check.scope_revision_input] : []), revisionNow: revision });
-          fs.writeFileSync(path.join(frameworkRoot, 'harness/reports/c2f7a91e/ut-adoption-state.json'), JSON.stringify(adoptionViews, null, 2) + '\n');
+        method('ut', () => writeUtMaterials(project));
+        if (fixed) adoptionPreservedBytes = beforeUt.equals(fs.readFileSync(path.join(project.root, adaptedSpy)));
+        method('testing', () => writeTestPlan(project));
+        for (const family of actual.chain) {
+          const admitted = admission({ ...ctx, phase: family });
+          assert(admitted, family + ': current facts inputs must remain readable');
+          researchSnapshotFacts(project.root, currentFacts, family, admitted);
         }
-        // UT采纳必须真实执行当前字节并完成当前独立核实；第一次调用也不能等下次作者补报告。
-        runGateHarness(project, 'ut', undefined, ctx.goalAttemptId ?? '', { HARNESS_HDC_TARGET: 'fake-device', MAISON_DEVICE_TARGET_KIND: 'physical' }, 'agent');
+        fs.appendFileSync(path.join(diagnostics, 'author-observation.jsonl'), JSON.stringify({ run: ctx.runId, attempt: actual.attemptId,
+          repair, fixed, actualFeedbackContainsIssue: ctx.prompt.includes('CR-001'), originalConfirmed,
+          spyHash: sha(fs.readFileSync(path.join(project.root, adaptedSpy))), expectedRepairedHash: sha(repaired) }) + '\n');
       },
-      onTesting: ctx => { project.runId = ctx.runId; authorMaterials(ctx, () => writeTestPlan(project)); },
       onOutOfChain: ctx => {
         const request = readDeliveredVerifierRequest(project, ctx); assert(request, `unexpected model purpose: ${ctx.phase}`);
         project.runId = ctx.runId;
@@ -198,15 +190,37 @@ async function replayCR001Runtime(adoptNonCompatibility = false): Promise<void> 
           const strength = script.checks.find((check: { id: string; affected_files?: string[] }) => check.id === 'coding_existing_test_preserved' && check.affected_files?.length);
           if (strength) {
             assert(typeof strength.details === 'string' && strength.details.trim());
+            const promptBytes = fs.readFileSync(path.resolve(project.root, request.prompt_path));
+            assert.equal(sha(promptBytes), request.prompt_sha256, 'independent judgment reads the actual bound prompt original');
+            const attributionBlock = /### \(test invocation write attribution\)\s+```\s*([\s\S]*?)```/.exec(promptBytes.toString('utf8'));
+            const attribution: unknown = attributionBlock ? JSON.parse(attributionBlock[1]) : undefined;
+            const judgments: string[] = [];
             for (const file of strength.affected_files as string[]) {
               const absolute = path.resolve(project.root, file), relative = path.relative(project.root, absolute).replace(/\\/g, '/');
               assert(!relative.startsWith('../') && !path.isAbsolute(relative), 'the verifier reads only its actual isolated project');
               const bytes = fs.readFileSync(absolute, 'utf8');
-              assert(codingTestPreservation({ projectRoot: project.root, feature: project.feature, runId: ctx.runId, file: relative }).preserved
-                || relative === adaptedSpy && bytes === repaired, 'only the known original fixture repair can receive this positive independent judgment');
+              const preserved = codingTestPreservation({ projectRoot: project.root, feature: project.feature, runId: ctx.runId, file: relative }).preserved;
+              const spyRepair = relative === adaptedSpy && bytes === repaired;
+              const added = relative === `${project.modulePath}/src/ohosTest/ets/test/AllBanksPage.test.ets`
+                && material.files.some(entry => entry.path === relative && entry.sha256 === sha(bytes))
+                && Array.isArray(attribution) && attribution.some((entry: unknown) => entry && typeof entry === 'object'
+                  && 'owned' in entry && Array.isArray(entry.owned) && entry.owned.some((write: unknown) => write && typeof write === 'object'
+                    && 'path' in write && write.path === relative && 'how' in write && write.how === 'added'
+                    && 'pre_sha256' in write && write.pre_sha256 === null
+                    && 'post_sha256' in write && write.post_sha256 === sha(bytes)));
+              if (added) {
+                assert(['[AC-1]', '[AC-2]', "service.openCard('cmb')", "service.openCard('')", 'expect(opened).assertTrue()',
+                  'expect(rejected).assertFalse()', 'expect(banks.length).assertEqual(0)'].every(fragment => bytes.includes(fragment)),
+                'the actually new test retains its complete known business success/failure assertions');
+                assert(!/\b(?:it|test|describe)\.(?:skip|todo|only)|\b(?:xit|xtest|xdescribe)\b/.test(bytes), 'the new business cases must not be disabled or focused');
+              }
+              assert(preserved || spyRepair || added, 'positive judgment requires preserved assertions, the exact Spy repair, or this bound genuinely new business test');
+              judgments.push(added ? `${relative}：原绑定prompt确认added、pre=null，post/material/当前源码SHA=${sha(bytes)}；实际新文件无旧断言被删弱，已读完整业务正负用例。`
+                : spyRepair ? `${relative}：当前字节逐字匹配已核Spy两行兼容修复与已知新增辅助断言，原用例未替换。`
+                  : `${relative}：真实原前像对比确认既有用例与断言原样保留。`);
             }
             reportText += '\n```issue-verification\n' + YAML.stringify([{ issue: strength.id, verdict: 'refuted',
-              evidence: `${strength.details}\n${strength.affected_files.join('\n')}\n独立读取当前完整测试原件及原写入前像：本例旧断言未被删除或跳过，原Spy fixture只承接已核required字段；已知新增辅助断言没有替代原用例。此裁决只反证删弱，不将未执行的UT/设备结果签成通过，后续真实检查仍必需。` }]) + '```\n';
+              evidence: `${strength.details}\n${strength.affected_files.join('\n')}\n${judgments.join('\n')}\n此裁决只反证当前条目的删弱疑义，不替无关Spy产品问题作结论，不将未执行的UT/设备结果签成通过；后续原review独核与真实检查仍必需。` }]) + '```\n';
           }
         }
         publishFixtureVerifierEvidence({ projectRoot: project.root, reportsDir, feature: project.feature, phase: request.phase,
@@ -227,37 +241,53 @@ async function replayCR001Runtime(adoptNonCompatibility = false): Promise<void> 
           const candidates = collectReviewRepairCandidates({ responsibility: { projectRoot: project.root, frameworkRoot: project.frameworkRoot,
             feature: project.feature, runId: ctx.runId, currentPhase: 'review' }, reportText: currentReport,
             verifierReportText: accepted.evidence.report_text, reportValidityBlocked: false, verifierSubjectCurrent: true });
-          fs.writeFileSync(path.join(frameworkRoot, 'harness/reports/72b6f0d9/p2/c-host-cr001-live-publisher.json'), JSON.stringify({
+          fs.writeFileSync(path.join(diagnostics, 'live-publisher.json'), JSON.stringify({
             request, candidates, verifier: accepted.evidence, currentReport,
           }, null, 2) + '\n');
           assert(candidates.some(candidate => candidate.id === 'CR-001'), 'the actual independent original must yield the original repair object: ' + JSON.stringify(candidates));
+          originalConfirmed = true;
         }
       },
     });
     const failure = ['coding', 'review', 'ut', 'testing'].map(phase => dumpPhase(project, phase)).join('\n');
-    if (adoptNonCompatibility) {
-      const reports = path.resolve(frameworkRoot, 'harness/reports/c2f7a91e');
-      fs.writeFileSync(path.join(reports, 'ut-adoption-state.json'), JSON.stringify(adoptionViews, null, 2) + '\n');
-      const snapshot = fs.mkdtempSync(path.join(evidenceTemp, 'ut-adoption-project-'));
-      copyTree(project.root, snapshot, true);
-      fs.cpSync(path.join(project.root, '.git'), path.join(snapshot, '.git'), { recursive: true });
-      fs.writeFileSync(path.join(reports, 'ut-adoption-project-reference.json'), JSON.stringify({ path: snapshot, source: 'isolated runtime fixture; not a real host' }, null, 2) + '\n');
-    }
-    if (probe.exitCode !== 0) {
-      const snapshot = fs.mkdtempSync(path.join(evidenceTemp, 'cr001-failed-project-'));
-      copyTree(project.root, snapshot, true);
-      fs.cpSync(path.join(project.root, '.git'), path.join(snapshot, '.git'), { recursive: true });
-      fs.writeFileSync(path.join(frameworkRoot, 'harness/reports/72b6f0d9/p2/c-host-cr001-failed-project-reference.json'), JSON.stringify({
-        path: snapshot, source: 'isolated test project, actual failed runtime originals; no framework junction',
-      }, null, 2) + '\n');
-    }
     assert.equal(probe.exitCode, 0, `${failure}\n${JSON.stringify(probe.events.slice(-8))}`);
     const reviewFail = probe.events.findIndex(event => event.type === 'phase_verdict' && event.phase === 'review' && event.verdict === 'FAIL');
-    const reentry = probe.events.findIndex((event, index) => index > reviewFail && event.type === 'agent_invoke_start' && event.phase === 'coding');
-    assert(reviewFail >= 0 && reentry > reviewFail, 'verified original CR-001 must cause an actual coding reentry');
-    assert(baselines.length >= 2 && baselines.every(value => value === baselines[0]), 'repair retains original establishing facts baseline');
+    const { readExecutionRequestOriginal } = require('../../scripts/utils/session-execution-handoff') as typeof import('../../scripts/utils/session-execution-handoff');
+    const reentry = probe.events.findIndex((event, index) => {
+      if (index <= reviewFail || event.type !== 'agent_invoke_start' || event.phase !== 'work-unit-author'
+        || typeof event.invoke_id !== 'string' || !event.invoke_id) return false;
+      const request = readExecutionRequestOriginal(probe.reportDir, event.invoke_id);
+      return !!request && repairAttempts.includes(request.request.context.attemptId);
+    });
+    assert(reviewFail >= 0 && reentry > reviewFail, 'verified original CR-001 must reach the original dedicated unit author');
+    assert(typeof project.runId === 'string' && project.runId, 'the completed case retains its actual run identity');
+    const born = loadGoalManifestFromRun(project.root, project.runId, { feature: project.feature });
+    const establishing = born.phase_chain?.[0] ?? born.execution_scope?.phase_chain[0];
+    assert(typeof establishing === 'string' && establishing, 'facts establishing authority comes from the immutable birth');
+    const factsRaw = fs.readFileSync(featureFilePath(project.root, project.feature, 'context/facts.md'), 'utf8');
+    for (const event of probe.events) {
+      if (event.type !== 'agent_invoke_start' || event.phase !== 'work-unit-author') continue;
+      assert(typeof event.invoke_id === 'string', 'every actual author has an original request identity');
+      const original = readExecutionRequestOriginal(probe.reportDir, event.invoke_id);
+      assert(original?.request.context.factsContext, 'every actual author retains its original facts admission');
+      assert.equal(original.request.context.factsContext.first_phase, establishing, 'scope changes never move the original establishing anchor');
+      if (original.request.context.factsContext.baseline) assert.equal(original.request.context.factsContext.baseline.fingerprint,
+        factsBaselineFingerprint(factsRaw), 'an actually admitted inherited baseline is preserved byte-for-byte');
+    }
+    const qualified = loadPhaseEvidenceManifest(project.root, project.feature, establishing);
+    assert(qualified?.integrityOk, 'the original qualified baseline must have a real intact machine manifest');
+    const factsRelative = path.relative(project.root, featureFilePath(project.root, project.feature, 'context/facts.md')).replace(/\\/g, '/');
+    const originalFacts = [...qualified.manifest.inputs, ...qualified.manifest.outputs].find(entry => entry.path === factsRelative && entry.facts_phase === establishing);
+    assert(originalFacts?.exists && originalFacts.sha256, 'the machine manifest must bind the typed establishing facts original');
+    assert.equal(originalFacts.sha256, factsPhaseFingerprint(factsRaw, establishing), 'repair retains the actual qualified facts baseline, allowing other methods\' registered deltas');
+    const repairStartedAt = probe.events[reentry]?.ts;
+    assert(typeof repairStartedAt === 'string' && Date.parse(qualified.manifest.generated_at) < Date.parse(repairStartedAt),
+      'the qualified original predates product repair; a later re-sign cannot impersonate preservation');
     for (const phase of ['coding', 'review', 'ut', 'testing']) {
-      assert(probe.events.some((event, index) => index > reentry && event.type === 'phase_verdict' && event.phase === phase && event.verdict === 'PASS'), phase);
+      if (phase === 'coding') assert(probe.events.some((event, index) => index > reentry && event.type === 'harness_end'
+        && event.phase === phase && event.timed_out === false && typeof event.exit_code === 'number'),
+      'coding must actually finish after repair; its disclosed raw FAIL is never rewritten as a phase PASS');
+      else assert(probe.events.some((event, index) => index > reentry && event.type === 'phase_verdict' && event.phase === phase && event.verdict === 'PASS'), phase);
       assert.equal(readSummary(project, phase)?.closure_status, 'closed', phase);
     }
     for (const phase of ['spec', 'plan', 'coding', 'review', 'ut', 'testing']) {
@@ -267,10 +297,27 @@ async function replayCR001Runtime(adoptNonCompatibility = false): Promise<void> 
     assert(assessment.complete, JSON.stringify(assessment.obligations.filter(obligation => obligation.status === 'uncovered')));
     const codingReport = JSON.parse(fs.readFileSync(featureFilePath(project.root, project.feature, 'coding/reports/script-report.json'), 'utf8'));
     assert(codingReport.checks.some((check: { id: string; status: string }) => check.id === 'coding_existing_test_preserved'
-      && check.status === (adoptNonCompatibility ? 'FAIL' : 'PASS')), adoptNonCompatibility
-      ? 'the added assertion keeps its raw comparison FAIL; only the actual independent judgment may close that task'
-      : 'production preservation check must approve the real two-line repair');
-    if (adoptNonCompatibility) {
+      && check.status === 'FAIL'), 'the added assertion keeps its raw comparison FAIL; only the actual independent judgment may close that task');
+    const currentCoding = readSummary(project, 'coding');
+    assert(typeof currentCoding?.verifier_subject_id === 'string' && typeof currentCoding.verifier_request === 'string',
+      'the repaired coding result must retain its actual current independent request');
+    const codingRequest = parseVerifierRequest(fs.readFileSync(path.resolve(project.root, currentCoding.verifier_request), 'utf8'));
+    assert(codingRequest && codingRequest.subject_id === currentCoding.verifier_subject_id && codingRequest.phase === 'coding'
+      && codingRequest.feature === project.feature, 'the accepted independent conclusion belongs to this current result');
+    const codingMaterial = readVerifierMaterialOrNull(featurePhaseReportsDir(project.root, project.feature, 'coding', project.frameworkRoot), codingRequest.subject_id);
+    assert(codingMaterial && codingMaterial.material_sha256 === codingRequest.material_sha256 && computeMaterialSha256(codingMaterial) === codingRequest.material_sha256,
+      'the current request binds the actual full independent material');
+    assert(codingMaterial.files.some(file => file.path === adaptedSpy && file.sha256 === sha(repaired)), 'the current judgment covers the actual repaired Spy original');
+    const codingIndependent = loadVerifierEvidenceForSubject(project.root, project.feature, 'coding', codingRequest.subject_id, { frameworkRoot: project.frameworkRoot });
+    assert(codingIndependent.ok, JSON.stringify(codingIndependent));
+    const currentStrength = codingReport.checks.find((check: { id: string }) => check.id === 'coding_existing_test_preserved');
+    assert(currentStrength?.status === 'FAIL' && Array.isArray(currentStrength.affected_files) && currentStrength.affected_files.includes(adaptedSpy),
+      'the actual changed Spy keeps its raw comparison FAIL');
+    assert.equal(testStrengthVerification({ check: currentStrength, verifierReportText: codingIndependent.evidence.report_text,
+      verifierSubjectCurrent: true })?.verdict, 'refuted', 'only the current bound independent refutation closes coding');
+    assert(assessment.currentDisposition && phaseCompletionProblems(assessment.currentDisposition, ['coding']).length === 0,
+      'the same current disposition has no unresolved coding completion issue');
+    {
       assert(adoptionPreservedBytes, 'UT must actually validate and adopt these bytes without rewriting the original error');
       assert(verifiedStrengthFailure, 'retain the real raw comparison FAIL and current full-material independent refutation; an old phase order cannot replace either fact');
       const loader = new SpecLoader(project.root, undefined, undefined, project.frameworkRoot);
@@ -289,6 +336,14 @@ async function replayCR001Runtime(adoptNonCompatibility = false): Promise<void> 
         assert(checkCodingExistingTestPreserved(ctx).some(check => check.status === 'FAIL'), 'later coding mutation invalidates the adopted hash');
       } finally { if (savedRun === undefined) delete process.env.MAISON_GOAL_RUN_ID; else process.env.MAISON_GOAL_RUN_ID = savedRun; }
     }
+  } catch (error) {
+    const snapshot = fs.mkdtempSync(path.join(evidenceTemp, 'cr001-failed-project-'));
+    copyTree(project.root, snapshot, true);
+    fs.cpSync(path.join(project.root, '.git'), path.join(snapshot, '.git'), { recursive: true });
+    fs.writeFileSync(path.join(diagnostics, 'failed-project-reference.json'), JSON.stringify({
+      path: snapshot, source: 'isolated test project, actual failed runtime originals; no framework junction', error: String(error),
+    }, null, 2) + '\n');
+    throw error;
   } finally { clearFrameworkConfigCache(); fs.rmSync(project.root, { recursive: true, force: true }); }
 }
 
@@ -444,8 +499,9 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
       assert(pathOwnerCandidates.some(candidate => candidate.id === 'CR-001' && candidate.category === 'coding' && candidate.files.includes(spy)), '已核验原测试owner不应抹掉共享resolver确认的合法兼容修改者：' + JSON.stringify(pathOwnerCandidates));
       const reviewOnly = { ...manifest.execution_scope!, completion_target: 'request' as const, requested_results: ['review'], phase_chain: ['review'], reused_phases: [], obligations: [], unresolved: [] };
       const readonlyReview = repairResponsibilityContext({ ...responsibility, executionScope: reviewOnly, executionRole: 'verifier' });
-      assert(collectReviewRepairCandidates({ responsibility: readonlyReview, reportText: report, verifierReportText: pathOwnerVerifier, reportValidityBlocked: false })
-        .some(candidate => candidate.id === 'CR-001' && candidate.category === 'coding'), '独立诊断保留已核实的真实修改建议，不以phase队列裁掉问题');
+      const readonlyCandidates = collectReviewRepairCandidates({ responsibility: readonlyReview, reportText: report, verifierReportText: pathOwnerVerifier, reportValidityBlocked: false });
+      assert(readonlyCandidates.some(candidate => candidate.id === 'CR-001' && candidate.category === 'coding'),
+        '独立诊断保留已核实的真实修改建议，不以phase队列裁掉问题：' + JSON.stringify(readonlyCandidates));
       assert(readonlyReview.contracts && !workUnitMayWritePath(readonlyReview.contracts, spy) && !workUnitMayWritePath(readonlyReview.contracts, bankInfo),
         '产物owner与验证签发者一致也不能为当前独立review授予测试或产品源码修改权');
       fs.appendFileSync(path.join(root, spy), "\nexport function extraAssertion(): void { expect(true).assertTrue(); }\n");
@@ -461,15 +517,14 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
       assert(testCandidates.some(candidate => candidate.id === 'CR-UT' && candidate.category === 'verification'), JSON.stringify(testCandidates));
       assert(!testCandidates.some(candidate => candidate.category === 'coding'));
       const revision = scopeRevisionInputFromRepairCandidates(testCandidates, { projectRoot: root, frameworkRoot, feature, runId });
-      const inputDiagnostics = resolveCapabilityInputs({ projectRoot: root, frameworkRoot, feature, phase: 'ut', track: 'full', testTargets: [spy],
-        inputContext: { schema_version: '1.1', subject: { feature }, obligations: {}, required_outputs: [] } }).inputs?.values;
-      fs.writeFileSync(path.join(frameworkRoot, 'harness/reports/c2f7a91e/verification-scope-target.json'), JSON.stringify({ revision,
-        inputs: Object.fromEntries(Object.entries(inputDiagnostics ?? {}).map(([id, value]) => [id, value.state === 'resolved' ? { state: value.state, binding: value.binding } : value])),
-      }, null, 2) + '\n');
-      assert(revision, 'verified test work must produce the real scope-revision binding');
-      assert(revision.candidateIds.includes('CR-UT'));
-      const testFact = revision.input.facts.find(fact => fact.id === 'unit-evidence:CR-UT');
-      assert(testFact?.basis.some(binding => binding.source.kind === 'derive' && binding.source.provider_id === 'derive.test-targets'), 'UT repair targets must remain test-target inputs rather than becoming production code inputs');
+      assert.equal(revision, null, 'repairing tests in the already approved unit does not purchase another scope grant');
+      const testInput = (currentFrameworkRoot: string) => Object.values(resolveCapabilityInputs({ projectRoot: root, frameworkRoot: currentFrameworkRoot,
+        feature, phase: 'ut', track: 'full', testTargets: testCandidates.flatMap(candidate => candidate.files),
+        inputContext: { schema_version: '1.1', subject: { feature }, obligations: { 'unit-evidence': 'required' }, required_outputs: [] },
+      }).inputs!.values).find(value => value.state === 'resolved' && value.binding.source.kind === 'derive' && value.binding.source.provider_id === 'derive.test-targets');
+      const targets = testInput(frameworkRoot);
+      assert(targets?.state === 'resolved' && targets.binding.dependencies.some(dependency => path.resolve(dependency.path) === path.join(root, spy)),
+        'the actual verified Spy target remains a test-target input rather than becoming production code input');
       const variant = provisionFrameworkUnder(root);
       const skills = path.join(variant.frameworkRoot, 'skills');
       assert(!fs.lstatSync(skills).isSymbolicLink() && fs.realpathSync(skills) === skills, 'contract order is varied only in the isolated framework copy');
@@ -480,15 +535,17 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
       contract.phases.ut.inputs.reverse();
       fs.writeFileSync(contractFile, YAML.stringify(contract));
       const reordered = scopeRevisionInputFromRepairCandidates(testCandidates, { projectRoot: root, frameworkRoot: variant.frameworkRoot, feature, runId });
-      assert(reordered?.input.facts.find(fact => fact.id === 'unit-evidence:CR-UT')?.basis.some(binding => binding.source.kind === 'derive' && binding.source.provider_id === 'derive.test-targets'), 'declared input order must not turn a UT repair into a production code binding');
+      assert.equal(reordered, null, 'declared input order cannot require another scope grant for the same approved repair');
+      const reorderedTargets = testInput(variant.frameworkRoot);
+      assert(reorderedTargets?.state === 'resolved' && reorderedTargets.binding.dependencies.some(dependency => path.resolve(dependency.path) === path.join(root, spy)),
+        'declared input order must not turn the actual UT repair target into a production code binding');
       assert(fs.readFileSync(sourceContractFile).equals(sourceContractBefore), 'contract-order variation must not change source framework bytes');
     } finally {
       if (savedRun === undefined) delete process.env.MAISON_GOAL_RUN_ID; else process.env.MAISON_GOAL_RUN_ID = savedRun;
       if (savedDiff === undefined) delete process.env.HARNESS_DIFF_BASE_REF; else process.env.HARNESS_DIFF_BASE_REF = savedDiff;
     }
   }) },
-  { name: '179a73 CR-001 adapted real runner repairs original fixture bytes, carries facts through reentry, rechecks review/UT and completes its isolated scope', run: () => replayCR001Runtime() },
-  { name: 'real UT validates misassigned assertion bytes without rewriting them; absent adoption and later unauthorized changes remain blocked', run: () => replayCR001Runtime(true) },
+  { name: '179a73 CR-001 real runner repairs original fixture bytes, preserves facts and raw FAIL through independent refutation; real UT adopts unchanged assertions and rejects missing or stale adoption', run: () => replayCR001Runtime() },
 ];
 
 export async function runSelectedCases(selector?: string): Promise<SelectedUnitCases> {

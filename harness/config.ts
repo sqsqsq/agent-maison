@@ -213,13 +213,6 @@ export interface StateMachineConfig {
   grace_period_minutes: number;
   ttl_hours: number;
   /**
-   * 逃生阀阈值：Stop hook 连续 N 次拦到"同一组 blocker 且零进展"（harness 未重跑、
-   * blocker 未减）后，第 N 次停止拦截、放行并给二选一提示，把控制权交还用户。
-   * 防弱模型（空回复）在死局里被永久 nag。默认 3；范围 [1, 20]。
-   * hook 内嵌默认值/范围必须与本节一致（T11 一致性用例兜底）。
-   */
-  max_consecutive_blocks?: number;
-  /**
    * state schema 版本号；当前实现只识别 '1.1'。
    * 不在此处声明时，runner 写 state 时仍按 1.1 落盘。
    */
@@ -651,7 +644,6 @@ export const DEFAULT_REPORTS_DIR_PATTERN = DEFAULT_PATHS.reports_dir_pattern;
 export const DEFAULT_STATE_MACHINE: StateMachineConfig = {
   grace_period_minutes: 5,
   ttl_hours: 12,
-  max_consecutive_blocks: 3,
   schema_version: '1.1',
 };
 
@@ -659,7 +651,6 @@ export const DEFAULT_STATE_MACHINE: StateMachineConfig = {
 export const STATE_MACHINE_RANGES = {
   grace_period_minutes: { min: 0.0001, max: 60 }, // 严格 > 0；上限 60 分钟
   ttl_hours: { min: 1, max: 168 }, // 1 小时 ~ 7 天
-  max_consecutive_blocks: { min: 1, max: 20 }, // 逃生阀阈值：至少 1 次，上限 20
 } as const;
 
 /** 阶段 9 被合并废弃的老路径字段，检测到即拒绝加载。 */
@@ -1135,10 +1126,6 @@ function normalizeStateMachine(raw: StateMachineConfig | undefined): StateMachin
       typeof raw.ttl_hours === 'number'
         ? raw.ttl_hours
         : DEFAULT_STATE_MACHINE.ttl_hours,
-    max_consecutive_blocks:
-      typeof raw.max_consecutive_blocks === 'number'
-        ? raw.max_consecutive_blocks
-        : DEFAULT_STATE_MACHINE.max_consecutive_blocks,
     schema_version:
       typeof raw.schema_version === 'string' && raw.schema_version.trim()
         ? raw.schema_version.trim()
@@ -2168,7 +2155,6 @@ const FEATURE_MARKER_FILES: ReadonlySet<string> = new Set([
  * 外加既有 feature 级目录约定。 */
 const FEATURE_MARKER_DIRS: ReadonlySet<string> = new Set([
   ...Object.values(PHASE_SCOPED_ARTIFACTS),
-  'goal-runs',
   'context',
   'ux-reference',
   'device-testing',
@@ -2235,7 +2221,7 @@ export function enumerateFeatures(projectRoot: string, opts?: FeaturePathOptions
       }
       // workspace 容器下钻（不返回自身）
       for (const sub of fs.readdirSync(dAbs, { withFileTypes: true })) {
-        if (!sub.isDirectory() || sub.name === 'blueprint') continue;
+        if (!sub.isDirectory() || sub.name === 'blueprint' || sub.name === 'goal-runs') continue;
         const subAbs = path.join(dAbs, sub.name);
         if (fs.existsSync(path.join(subAbs, 'change-unit.yaml'))) {
           const featureId = encodeFeatureIdFromWorkspace(dirent.name, sub.name);
@@ -2258,6 +2244,10 @@ export function enumerateFeatures(projectRoot: string, opts?: FeaturePathOptions
           + `（对应 ${classified.blueprintId}/${classified.changeUnitId}），须先迁移或清除；fail-closed。`,
         );
       }
+      // 初建设计尚未落蓝图时，root run 记录也不构成施工 Feature。
+      if (fs.existsSync(path.join(dAbs, 'goal-runs'))
+        && fs.statSync(path.join(dAbs, 'goal-runs')).isDirectory()
+        && !hasFeatureConstructionMarkers(dAbs)) continue;
       out.push({ featureId: dirent.name, relativePath: featureRelativePath(dirent.name), kind: 'legacy' });
     }
   }
@@ -2307,19 +2297,7 @@ export function validateStateMachine(sm: StateMachineConfig): void {
       `[framework/config.ts] state_machine.ttl_hours 必须是 [${STATE_MACHINE_RANGES.ttl_hours.min}, ${STATE_MACHINE_RANGES.ttl_hours.max}] 之间的数，收到 ${String(tlh)}`,
     );
   }
-  const mcb = sm.max_consecutive_blocks;
-  if (mcb !== undefined) {
-    if (
-      typeof mcb !== 'number' ||
-      !Number.isInteger(mcb) ||
-      mcb < STATE_MACHINE_RANGES.max_consecutive_blocks.min ||
-      mcb > STATE_MACHINE_RANGES.max_consecutive_blocks.max
-    ) {
-      throw new Error(
-        `[framework/config.ts] state_machine.max_consecutive_blocks 必须是 [${STATE_MACHINE_RANGES.max_consecutive_blocks.min}, ${STATE_MACHINE_RANGES.max_consecutive_blocks.max}] 之间的整数，收到 ${String(mcb)}`,
-      );
-    }
-  }
+
 }
 
 /**

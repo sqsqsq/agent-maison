@@ -5,12 +5,12 @@ import * as os from 'os';
 import { createHash } from 'crypto';
 import { issueSessionExecution, readSessionExecution, acceptSessionExecution, acceptedSessionReport,
   readHandoffMaterial, sessionValidationOnlyEligibility, sessionEvents, resignSessionExecution,
-  sessionRunMaterialPath, sessionReportInputPath,
+  sessionRunMaterialPath, sessionReportInputPath, sessionExecutionDeadlineMs,
   observeSessionExecution, interruptSessionExecution,
   type SessionExecutionReport } from '../../scripts/utils/session-execution-handoff';
 import { ensureRunControl, casAcquireRunOwner, readRunControl, releaseRunOwner, markExpiredSessionOrphaned } from '../../scripts/utils/goal-run-control';
 import { capturePhaseInvocationSnapshot, type PhaseWriteBoundaryResolution } from '../../scripts/utils/phase-write-boundary';
-import type { WorkUnitExecutionContext } from '../../scripts/utils/goal-phase-executor';
+import { DetachedGoalPhaseExecutor, type WorkUnitExecutionContext } from '../../scripts/utils/goal-phase-executor';
 import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
 import type { UnitCaseResult } from '../run-unit';
 import { repairInvocationCompleted } from '../../scripts/utils/goal-runner-phase';
@@ -25,7 +25,8 @@ import { interruptedIssuanceCli, reusedGatePidCli, junctionSessionCli } from '..
 import { reconcileGuardianOwnership } from '../../scripts/utils/goal-containment-reconcile';
 import { invokeAgentHeadless } from '../../scripts/utils/agent-invoke';
 import { invocationCompleted } from '../../scripts/utils/invocation-completion';
-import { withRuntimeTest, type RuntimeTestControl } from '../utils/runtime-test-control';
+import { readReusableCheckResult } from '../../scripts/utils/verify-feature-completion';
+import { withRuntimeTest, preserveRuntimeTestEvidence, type RuntimeTestControl } from '../utils/runtime-test-control';
 const runGoalModeSessionStep = (options: Parameters<typeof runGoalModeSessionStepUnchecked>[0], testControl: RuntimeTestControl = {}) =>
   withRuntimeTest({ root: options.projectRoot, ...testControl }, () => runGoalModeSessionStepUnchecked(options));
 
@@ -307,7 +308,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
     try {
       await assert.rejects(() => runGoalRuntimeChain(root, { adapter: 'codex', runId, freshEndPhase: 'spec', viaSessionStep: true,
         testControl: { expectedInterruption: 'pause before executor report' },
-        onSpec: () => { throw new Error('pause before executor report'); } }), /pause before executor report/);
+        onAuthor: () => { throw new Error('pause before executor report'); } }), /pause before executor report/);
       const manifest = loadGoalManifestFromRun(root, runId, { feature: 'bc-openCard' });
       const runDir = path.resolve(root, manifest.report_dir), issued = readSessionExecution(runDir)!;
       fs.appendFileSync(path.join(runDir, 'events.jsonl'), JSON.stringify({ ts: new Date().toISOString(), type: 'harness_start', phase: 'spec',
@@ -329,34 +330,22 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
     } finally { probes.defaultProcessProbe = original; fs.rmSync(root, { recursive: true, force: true }); }
   },
 }, {
-  name: '1804 one-turn validation-only recovery runs the formal gate without spending a phantom author turn',
+  name: '1804 a bound gate survives interruption and resumes without another accepted author invocation',
   async run() {
-    const manifests = require('../../scripts/utils/goal-manifest') as typeof import('../../scripts/utils/goal-manifest');
-    const budgets = require('../../scripts/utils/goal-runner-phase') as typeof import('../../scripts/utils/goal-runner-phase');
-    const build = manifests.buildGoalManifestFromInput, check = budgets.checkRunBudget;
-    for (const gatePasses of [true, false]) {
-      const root = setupGoalRuntimeHost('codex').root, runId = `session-one-turn-gate-${gatePasses}`;
-      const consumed: number[] = [];
-      try {
-        manifests.buildGoalManifestFromInput = (input, options) => build({ ...input, budget: { max_total_turns: 1 } }, options);
+    const root = setupGoalRuntimeHost('codex').root, runId = 'session-bound-gate-recovery';
+    try {
         let interrupted = false;
         await runGoalRuntimeChain(root, { adapter: 'codex', runId, freshEndPhase: 'spec', viaSessionStep: true,
-          testControl: { expectedInterruption: 'one-turn gate interruption after accepted report' },
-          afterHarnessPass: () => { interrupted = true; throw new Error('one-turn gate interruption after accepted report'); } });
+          testControl: { expectedInterruption: 'bound gate interruption after accepted report' },
+          afterHarnessPass: () => { interrupted = true; throw new Error('bound gate interruption after accepted report'); } });
         assert(interrupted);
-        budgets.checkRunBudget = (...args: Parameters<typeof check>) => { consumed.push(args[0]); return check(...args); };
-        const resumed = await runGoalRuntimeChain(root, { adapter: 'codex', resume: runId, viaSessionStep: true, skipLegacySeal: true,
-          ...(!gatePasses ? { onHarnessSummary: () => ({ checks: [{ id: 'acceptance_content_complete', category: 'structure' as const, severity: 'BLOCKER' as const, status: 'FAIL' as const,
-            description: 'a real summary writer rejects the unfinished definition', details: 'acceptance remains incomplete', failure_kind: 'code_regression' as const }] }) } : {}),
-        });
+        const resumed = await runGoalRuntimeChain(root, { adapter: 'codex', resume: runId, viaSessionStep: true, skipLegacySeal: true });
         assert.deepEqual(resumed.invokedPhases, []);
-        assert.deepEqual(resumed.harnessPhases, ['spec'], 'the already accepted one permitted invocation must receive its formal gate');
+        assert.deepEqual(resumed.harnessPhases, [], 'the actually bound completed gate remains reusable after interruption');
         assert.equal(resumed.events.filter(event => event.type === 'agent_invoke_start').length, 1);
-        assert.equal(resumed.exitCode === 0, gatePasses);
-        assert(consumed.length > 0 && consumed.every(turns => turns === 1), `validation must leave the true consumed count at one: ${consumed}`);
-        if (!gatePasses) assert(resumed.events.some(event => event.halt_reason === 'budget_turns'), 'a new author is still forbidden by the exhausted hard budget');
-      } finally { manifests.buildGoalManifestFromInput = build; budgets.checkRunBudget = check; fs.rmSync(root, { recursive: true, force: true }); }
-    }
+        assert.equal(resumed.events.filter(event => event.type === 'agent_invoke_end' && event.handoff_report).length, 1);
+        assert.equal(resumed.exitCode, 0);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
   },
 }, {
   name: '1804 cooperative owner re-sign preserves the original attempt, deadline and pre-snapshot while rejecting the old unconsumed report',
@@ -498,6 +487,52 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
     } finally { f.cleanup(); }
   },
 }, {
+  name: 'P3 native executor preserves the actual canary tool deadline without reviving a default author phase deadline',
+  async run() {
+    for (const canary of [false, true]) {
+      const f = fixture();
+      try {
+        Object.assign(f.context, { phase: canary ? 'vision-canary' : 'coding' });
+        f.start();
+        const issued = issueSessionExecution({ context: f.context, invokeId: 'invoke-one', emit: f.emit,
+          ...(canary ? { purpose: 'vision_canary' } : {}), gateTimeoutMs: canary ? 500 : 1, cleanupReserveMs: 0,
+          preSnapshot: capturePhaseInvocationSnapshot(f.boundary), writeBoundary: f.boundary });
+        let spawned = false;
+        const executor = new DetachedGoalPhaseExecutor(() => ({ cwd: f.root,
+          plan: { argv: [process.execPath, '-e', canary ? 'setInterval(()=>{},1000)' : 'setTimeout(()=>process.exit(0),200)'], label: 'controlled deadline transport', adapterName: 'local-tool' },
+          options: { timeoutMs: 1, deadlineMs: Date.now() - 1, onActiveChild: () => { spawned = true; },
+            outputLogPath: path.join(f.runDir, path.dirname(issued.reference.path), 'agent-output.log') } }));
+        const result = await executor.execute(f.context);
+        assert(spawned, 'the deadline check must exercise an actual native child');
+        assert.equal(result.timed_out === true, canary, JSON.stringify(result));
+        assert.equal(invocationCompleted(result), !canary, 'a real timed-out tool cannot manufacture executor completion');
+        if (canary) {
+          assert(result.kill_attempted && !result.kill_error && !result.lingering_pipe, 'the controlled child must actually settle after the tool timeout');
+          spawned = false;
+          const repeated = await executor.execute(f.context);
+          assert(repeated.skipped && repeated.timed_out && !spawned, 'the original expired tool window cannot restart from the next execution call');
+        }
+      } finally { f.cleanup(); }
+    }
+  },
+}, {
+  name: 'P3 author deadline ignores old default phase fields and actual canary tool deadline preserves its original issue instant',
+  run() {
+    const f = fixture();
+    try {
+      f.start(); const issued = f.issue();
+      const old = { ...issued.request, deadline: new Date(Date.now() - 60_000).toISOString(), gate_timeout_ms: 1 };
+      assert.equal(sessionExecutionDeadlineMs(old), Infinity, 'legacy default phase deadline/gate values cannot become a user deadline');
+      const user = new Date(Date.parse(issued.request.issued_at) + 500).toISOString();
+      const limited = { ...old, context: { ...old.context, user_deadline_at: user } };
+      assert.equal(sessionExecutionDeadlineMs(limited), Date.parse(user));
+      const canary = { ...old, purpose: 'vision_canary', gate_timeout_ms: 300 };
+      assert.equal(sessionExecutionDeadlineMs(canary), Date.parse(issued.request.issued_at) + 300);
+      assert.equal(sessionExecutionDeadlineMs({ ...canary, context: { ...canary.context, user_deadline_at: new Date(Date.parse(issued.request.issued_at) + 200).toISOString() } }), Date.parse(issued.request.issued_at) + 200);
+      assert.equal(sessionExecutionDeadlineMs({ ...old, purpose: 'questioning' }), Infinity, 'a verifier role is not a canary tool purpose');
+    } finally { f.cleanup(); }
+  },
+}, {
   name: '1804 same-fence expired and orphaned reports time out once without physical kill or validation eligibility',
   run() {
     const f = fixture();
@@ -565,7 +600,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
     const options = { projectRoot: root, frameworkRoot: path.resolve(__dirname, '../../..'), feature: 'bc-openCard', runId: 'session-independent-entry', adapter: 'codex', runMode: 'attended' };
     try {
       const probe = await runGoalRuntimeChain(root, { adapter: 'codex', runId: options.runId, freshEndPhase: 'ut', viaSessionStep: true,
-        onSpec: () => {
+        onAuthor: () => {
           const manifest = loadGoalManifestFromRun(root, options.runId, { feature: options.feature }); const runDir = path.resolve(root, manifest.report_dir);
           const issued = readSessionExecution(runDir)!; const before = fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8');
           observations.push(runGoalModeSessionStep(options).then(result => { assert.equal(result.type, 'phase_execute_request'); assert.equal((result.request as { sha256: string }).sha256, issued.reference.sha256); }));
@@ -577,15 +612,15 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
           if (phase !== 'spec') return;
           const manifest = loadGoalManifestFromRun(root, options.runId, { feature: options.feature }); const runDir = path.resolve(root, manifest.report_dir);
           const issued = readSessionExecution(runDir)!; const before = fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8');
-          observations.push(runGoalModeSessionStep({ ...options, requestPath: path.join(runDir, issued.reference.path), report: { status: 'passed', phase } })
+          observations.push(runGoalModeSessionStep({ ...options, requestPath: path.join(runDir, issued.reference.path), report: { status: 'passed', phase: issued.request.context.phase } })
             .then(result => { assert.equal(result.type, 'goal_session_report_received'); assert.equal(result.duplicate, true); }));
           assert.equal(fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8'), before, 'duplicate report cannot rerun a live formal gate');
         },
       });
       await Promise.all(observations);
       assert.equal(probe.exitCode, 0);
-      assert.equal(probe.events.filter(event => event.type === 'agent_invoke_start' && event.phase === 'spec').length, 1);
-      assert.equal(probe.events.filter(event => event.type === 'agent_invoke_end' && event.phase === 'spec').length, 1);
+      assert.equal(probe.events.filter(event => event.type === 'agent_invoke_start' && event.phase === 'work-unit-author').length, 1);
+      assert.equal(probe.events.filter(event => event.type === 'agent_invoke_end' && event.phase === 'work-unit-author').length, 1);
       assert.equal(probe.harnessPhases.filter(phase => phase === 'spec').length, 1);
       assert(!probe.events.some(event => event.type === 'agent_process_settled'));
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
@@ -598,36 +633,30 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
       try {
         await runGoalRuntimeChain(root, { adapter: 'codex', runId, freshEndPhase: 'ut', viaSessionStep: true,
           testControl: { expectedInterruption: 'injected session formal gate interruption' },
-          afterHarnessPass: ({ phase }) => { if (phase === 'spec' && !interrupted) { interrupted = true; throw new Error('injected session formal gate interruption'); } },
+          onHarnessSummary: ({ phase }) => { if (phase === 'ut' && !interrupted) { interrupted = true; throw new Error('injected session formal gate interruption'); } return null; },
         });
       } catch (error) { assert.match(String(error), /injected session formal gate interruption/); }
       assert(interrupted, 'must reach the production gate after report acceptance');
       const manifest = loadGoalManifestFromRun(root, runId, { feature: 'bc-openCard' }); const runDir = path.resolve(root, manifest.report_dir);
       const before = sessionEvents(runDir);
-      assert.equal(before.filter(event => event.type === 'agent_invoke_end' && event.phase === 'spec' && event.handoff_report).length, 1);
-      assert(!before.some(event => event.type === 'phase_verdict' && event.phase === 'spec'));
+      assert.equal(before.filter(event => event.type === 'agent_invoke_end' && event.phase === 'work-unit-author' && event.handoff_report).length, 1);
+      assert(!before.some(event => event.type === 'phase_verdict' && event.phase === 'ut'));
       const resumed = await runGoalRuntimeChain(root, { adapter: 'codex', resume: runId, viaSessionStep: true, skipLegacySeal: true });
       assert.equal(resumed.exitCode, 0, JSON.stringify(resumed.events.filter(event => event.type === 'phase_halt' || event.type === 'run_end')));
-      assert(!resumed.invokedPhases.includes('spec'), 'accepted executor must not be called again after gate interruption');
-      assert.equal(resumed.events.filter(event => event.type === 'agent_invoke_start' && event.phase === 'spec').length, 1);
-      assert.equal(resumed.events.filter(event => event.type === 'phase_verdict' && event.phase === 'spec' && event.verdict === 'PASS').length, 1);
+      assert(!resumed.invokedPhases.includes('work-unit-author'), 'accepted executor must not be called again after gate interruption');
+      assert.equal(resumed.events.filter(event => event.type === 'agent_invoke_start' && event.phase === 'work-unit-author').length, 1);
+      assert(!resumed.harnessPhases.includes('spec'), 'the completed bound producer is reused after the callback interruption');
+      assert.deepEqual(resumed.harnessPhases, ['ut'], 'only the interrupted producer lacking its committed result runs again');
+      assert(readReusableCheckResult({ projectRoot: root, frameworkRoot: path.resolve(__dirname, '../../..'), feature: 'bc-openCard', runId, phase: 'ut' }),
+        'completion must reuse the current original producer proof rather than invent a missing phase verdict');
+      const summary = JSON.parse(fs.readFileSync(path.join(root, 'doc/features/bc-openCard/ut/reports/summary.json'), 'utf8'));
+      assert.equal(summary.receipt_status, 'passed'); assert.equal(summary.closure_status, 'closed');
+    } catch (error) {
+      const feature = path.join(root, 'doc/features/bc-openCard');
+      const files = fs.readdirSync(feature, { recursive: true }).map(file => path.join(feature, String(file))).filter(file => fs.statSync(file).isFile());
+      preserveRuntimeTestEvidence([root], String(error), ['1804 accepted report producer interruption'], files);
+      throw error;
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
-  },
-}, {
-  name: '1804 production session can report and formally verify its last permitted invocation without granting another author turn',
-  async run() {
-    const root = setupGoalRuntimeHost('codex').root; const original = goalManifest.buildGoalManifestFromInput;
-    const exports = goalManifest as unknown as Record<string, unknown>;
-    try {
-      // Supply a real one-turn birth input to the production manifest parser/writer.
-      exports.buildGoalManifestFromInput = (input: Record<string, unknown>, options: Parameters<typeof original>[1]) => original({ ...input, budget: { max_total_turns: 1 } }, options);
-      const probe = await runGoalRuntimeChain(root, { adapter: 'codex', runId: 'session-last-legal-turn', freshEndPhase: 'spec', viaSessionStep: true });
-      assert.equal(probe.events.filter(event => event.type === 'agent_invoke_start').length, 1);
-      assert.equal(probe.events.filter(event => event.type === 'agent_invoke_end' && event.handoff_report).length, 1);
-      assert.equal(probe.harnessPhases.filter(phase => phase === 'spec').length, 1, 'dispatch budget cannot block the already-dispatched work from formal verification');
-      assert(probe.events.some(event => event.type === 'phase_verdict' && event.phase === 'spec' && event.verdict === 'PASS'), JSON.stringify(probe.events.filter(event => event.type === 'run_end' || event.type === 'phase_halt')));
-      assert.equal(probe.exitCode, 0);
-    } finally { exports.buildGoalManifestFromInput = original; fs.rmSync(root, { recursive: true, force: true }); }
   },
 }, {
   name: 'P1 production sessions do not inherit a default deadline from the old phase timeout',
@@ -638,7 +667,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
       exports.buildGoalManifestFromInput = (input: Record<string, unknown>, options: Parameters<typeof original>[1]) => original({ ...input,
         budget: { max_total_turns: 2, max_retries_per_phase: 1 }, unattended: { write_mode: 'full-access', approval_mode: 'never', timeout_seconds: 0.01 } }, options);
       const probe = await runGoalRuntimeChain(root, { adapter: 'codex', runId: 'session-native-deadline', freshEndPhase: 'spec', viaSessionStep: true,
-        onSpec: () => { execFileSync(process.execPath, ['-e', 'setTimeout(() => {}, 25)']); },
+        onAuthor: () => { execFileSync(process.execPath, ['-e', 'setTimeout(() => {}, 25)']); },
       });
       const starts = probe.events.filter(event => event.type === 'agent_invoke_start');
       const reports = probe.events.filter(event => event.type === 'agent_invoke_end' && event.handoff_report);
@@ -653,18 +682,18 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
     } finally { exports.buildGoalManifestFromInput = original; fs.rmSync(root, { recursive: true, force: true }); }
   },
 }, {
-  name: '1804 production waiting report preserves the shared cooldown and retries its author only after that boundary',
+  name: '1804 production waiting report preserves the original condition and only explicit continuation retries its author',
   async run() {
     const root = setupGoalRuntimeHost('codex').root; const runId = 'session-real-waiting';
     try {
       await assert.rejects(() => runGoalRuntimeChain(root, { adapter: 'codex', runId, freshEndPhase: 'spec', viaSessionStep: true,
         testControl: { expectedInterruption: 'client paused with the original pending request' },
-        onSpec: () => { throw new Error('client paused with the original pending request'); },
+        onAuthor: () => { throw new Error('client paused with the original pending request'); },
       }), /client paused/);
       const manifest = loadGoalManifestFromRun(root, runId, { feature: 'bc-openCard' }); const runDir = path.resolve(root, manifest.report_dir);
       const issued = readSessionExecution(runDir)!; assert(issued);
       const parked = await runGoalModeSessionStep({ projectRoot: root, frameworkRoot: path.resolve(__dirname, '../../..'), feature: 'bc-openCard', runId, adapter: 'codex', runMode: 'attended',
-        requestPath: path.join(runDir, issued.reference.path), report: { phase: 'spec', status: 'waiting', details: 'client is waiting for a real external condition' } });
+        requestPath: path.join(runDir, issued.reference.path), report: { phase: issued.request.context.phase, status: 'waiting', details: 'client is waiting for a real external condition' } });
       assert.equal(parked.type, 'goal_session_result'); assert.equal((parked.result as { status: string }).status, 'waiting');
       const waiting = sessionEvents(runDir);
       assert.equal(sessionValidationOnlyEligibility(waiting), null);
@@ -681,10 +710,14 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
         if (event.type === 'run_end') event.ts = new Date(Date.now() - 10 * 60_000).toISOString();
         return JSON.stringify(event);
       }).join('\n'));
-      const resumed = await runGoalRuntimeChain(root, { adapter: 'codex', resume: runId, viaSessionStep: true, skipLegacySeal: true });
+      const unchanged = await runGoalModeSessionStep({ projectRoot: root, frameworkRoot: path.resolve(__dirname, '../../..'), feature: 'bc-openCard', runId,
+        adapter: 'codex', runMode: 'attended' });
+      assert.equal(unchanged.type, 'goal_session_result', 'elapsed time cannot invent a changed waiting condition');
+      assert.equal(sessionEvents(runDir).filter(event => event.type === 'agent_invoke_start').length, 1);
+      const resumed = await runGoalRuntimeChain(root, { adapter: 'codex', resume: runId, forceResume: true, viaSessionStep: true, skipLegacySeal: true });
       assert.equal(resumed.exitCode, 0, JSON.stringify(resumed.events.filter(event => event.type === 'phase_halt' || event.type === 'run_end')));
-      assert(resumed.invokedPhases.includes('spec'), 'a waiting author has not earned validation-only recovery');
-      assert.equal(resumed.events.filter(event => event.type === 'agent_invoke_start' && event.phase === 'spec').length, 2);
+      assert(resumed.invokedPhases.includes('work-unit-author'), 'a waiting author has not earned validation-only recovery');
+      assert.equal(resumed.events.filter(event => event.type === 'agent_invoke_start' && event.phase === 'work-unit-author').length, 2);
       assert.equal(resumed.harnessPhases.filter(phase => phase === 'spec').length, 1);
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   },
@@ -698,7 +731,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
         budget: { max_total_turns: 2, max_retries_per_phase: 1 }, unattended: { write_mode: 'full-access', approval_mode: 'never', timeout_seconds: 0.01 } }, options);
       await assert.rejects(() => runGoalRuntimeChain(root, { adapter: 'codex', runId, freshEndPhase: 'spec', viaSessionStep: true,
         testControl: { expectedInterruption: 'client exited without reporting' },
-        onSpec: () => { execFileSync(process.execPath, ['-e', 'setTimeout(() => {}, 25)']); throw new Error('client exited without reporting'); },
+        onAuthor: () => { execFileSync(process.execPath, ['-e', 'setTimeout(() => {}, 25)']); throw new Error('client exited without reporting'); },
       }), /client exited without reporting/);
       const manifest = loadGoalManifestFromRun(root, runId, { feature: 'bc-openCard' }); const runDir = path.resolve(root, manifest.report_dir);
       const originalRequest = readSessionExecution(runDir)!;

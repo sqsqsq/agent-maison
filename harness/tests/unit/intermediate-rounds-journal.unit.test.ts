@@ -82,14 +82,15 @@ test('546beb77 形态根治：agent 中间轮走 journal → runner 重放收编
   withTmp(dir => {
     const ledger = path.join(dir, 'ledger.jsonl');
     const journal = path.join(dir, 'journal.jsonl');
-    // agent 中间轮（第一次残差）
-    agentRound(ledger, journal, INPUT(), '2026-07-18T08:15:52.000Z');
+    // 同一真实调用的13次不同观察，超过已退休的12轮过程额度。
+    const count = 13;
+    for (let index = 0; index < count; index++) agentRound(ledger, journal, INPUT({ screensHash: `actual-screen-${index}`, defectFingerprints: [`actual-defect-${index}`] }), new Date(Date.parse('2026-07-18T08:15:52.000Z') + index).toISOString());
     assert(readVisualRoundsLedger(ledger).rows.length === 0, 'agent 侧不得直写正式账本');
     // runner 收编
     const replay = replayJournalIntoLedger({ ledgerPath: ledger, journalPath: journal, attemptId: 'i9' });
-    assert(replay.ok && replay.replayed === 1, JSON.stringify(replay.mismatches));
+    assert(replay.ok && replay.replayed === count, JSON.stringify(replay.mismatches));
     const rows = readVisualRoundsLedger(ledger).rows;
-    assert(rows.length === 1, '收编后正式账本 1 行');
+    assert(rows.length === count && rows.every((row, index) => row.screens_hash === `actual-screen-${index}`), '所有真实proposal按原chain/hash顺序收编，不以局部次数拒绝尾部');
     // events 期望集含收编行 → 对账零孤儿
     const recon = reconcileLedgerWithEvents({
       ledgerPath: ledger,

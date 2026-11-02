@@ -10,6 +10,7 @@ import {
   loadGoalManifestFromRun,
   mergeSuccessorRequirement,
   deriveSuccessorRequirement,
+  inheritSuccessorManifest,
   SUCCESSOR_REQUIREMENT_INCREMENT_MARKER,
 } from '../../scripts/utils/goal-manifest';
 import {
@@ -19,7 +20,6 @@ import {
   evaluateFreshRunContinuation,
   decideRunContinuation,
   inspectGoalRunCreation,
-  resolveCycleEffectiveBudget,
   validateRebaselineRequest,
   type RunContinuationDecision,
 } from '../../scripts/utils/goal-run-creation';
@@ -195,7 +195,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         assert.strictEqual(decision.halt?.classification, 'baseline_corruption_or_tampering');
       }
       const legal = resolveManifestDriftDecision({
-        currentFields: { ...birth, feature: 'g' }, currentHash: 'hash', birthFields: birth,
+        currentFields: { ...birth, requirement: 'explicit updated request' }, currentHash: 'hash', birthFields: birth,
         overrides: { 'override-manifest': true, 'override-start': false, 'override-end': false },
         fidelityTransitionFields: new Set(),
       });
@@ -505,7 +505,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'fresh continuation guard: only a hash-proven prior repair file change is a new fact',
+    name: 'fresh continuation guard: product repair rejoins the original request instead of authorizing a new run',
     run: () => {
       const old = fixture('testing');
       try {
@@ -544,9 +544,15 @@ const cases: Array<{ name: string; run: () => void }> = [
           owned: [{ path: sourceRel, pre_sha256: oldHash, post_sha256: crypto.createHash('sha256').update(fs.readFileSync(sourceAbs)).digest('hex'), roles: [{ kind: 'source', source: 'existing coding contract' }] }] }) + '\n');
         assert.deepStrictEqual(evaluateFreshRunContinuation({ projectRoot: old.root, manifest: repaired }), withoutSourceRow, 'new coding source-only rows must not overwrite the prior related-repair baseline');
         fs.writeFileSync(sourceAbs, 'external repair after coding stopped', 'utf8');
-        assert(evaluateFreshRunContinuation({ projectRoot: old.root, manifest: repaired }).allowed, 'real external repair remains a changed related input');
-        createGoalRun({ projectRoot: old.root, manifest: repaired, chain: ['testing'] });
-        assert(fs.existsSync(path.join(old.root, repaired.report_dir, 'manifest.json')));
+        assert(!evaluateFreshRunContinuation({ projectRoot: old.root, manifest: repaired }).allowed,
+          'product bytes alone cannot authorize a second run for the same request');
+        const priorBytes = fs.readFileSync(oldCreation.manifestPath);
+        const decision = decideRunContinuation({ projectRoot: old.root, feature: 'demo', call: { requirement: old.manifest.requirement } });
+        assert(decision.kind === 'rejoin' && decision.runId === old.manifest.run_id,
+          `the original kernel must judge the changed product and its real checks: ${JSON.stringify(decision)}`);
+        assert.throws(() => createGoalRun({ projectRoot: old.root, manifest: repaired, chain: ['testing'] }), /fresh run refused/);
+        assert(!fs.existsSync(path.join(old.root, repaired.report_dir, 'manifest.json')), 'reentry does not create another run');
+        assert(fs.readFileSync(oldCreation.manifestPath).equals(priorBytes), 'original request identity remains unchanged');
       } finally { fs.rmSync(old.root, { recursive: true, force: true }); }
     },
   },
@@ -556,7 +562,6 @@ const cases: Array<{ name: string; run: () => void }> = [
 // plan 4e6fb3b6 §7.2 / A11：接续决策四种结果与六种变化（纯函数；run 由生产 createGoalRun 出生，停机事件经生产写盘层投影）
 // ---------------------------------------------------------------------------
 
-const HOUR = 3_600_000;
 
 /** 与 goalEvents 写盘同一形状：ts + 事件；带 halt_reason 的事件经生产 withRunDisposition 补处置投影。 */
 function appendRunEvents(eventsPath: string, events: Array<Record<string, unknown>>): void {
@@ -588,8 +593,8 @@ function decisionCase(name: string, run: (root: string) => void): { name: string
   };
 }
 
-const decide = (root: string, call: Parameters<typeof decideRunContinuation>[0]['call'] = {}, nowMs = Date.now()): RunContinuationDecision =>
-  decideRunContinuation({ projectRoot: root, feature: 'demo', call, nowMs });
+const decide = (root: string, call: Parameters<typeof decideRunContinuation>[0]['call'] = {}): RunContinuationDecision =>
+  decideRunContinuation({ projectRoot: root, feature: 'demo', call });
 
 const T0 = Date.parse('2026-09-29T01:00:00.000Z');
 
@@ -604,89 +609,88 @@ cases.push(
   decisionCase('最新的未终局 run 不是结构终局 → 重新接入（有正式开始走恢复；启动即失败走附着）', (root) => {
     const a = bornRun(root, '完成开卡', '1');
     appendRunEvents(a.eventsPath, [started(T0), ...halted(T0 + 10, 'framework_bug')]);
-    let d = decide(root, { requirement: '完成开卡' }, T0 + HOUR);
+    let d = decide(root, { requirement: '完成开卡' });
     assert.deepStrictEqual([d.kind, d.kind === 'rejoin' && d.runId, d.kind === 'rejoin' && d.started], ['rejoin', a.manifest.run_id, true]);
     const b = bornRun(root, '完成开卡', '2');
     appendRunEvents(b.eventsPath, [
       { ts: at(T0 + 20), type: 'phase_halt', phase: 'plan', halt_reason: 'canary_cli_hard_failure', verdict: 'FAIL', halt_guidance: 'canary' },
       { ts: at(T0 + 20), type: 'run_end', status: 'HALTED', halt_reason: 'canary_cli_hard_failure', session_started_at: at(T0 + 15) },
     ]);
-    d = decide(root, { requirement: '完成开卡' }, T0 + HOUR);
+    d = decide(root, { requirement: '完成开卡' });
     assert.deepStrictEqual([d.kind, d.kind === 'rejoin' && d.runId, d.kind === 'rejoin' && d.started], ['rejoin', b.manifest.run_id, false], JSON.stringify(d));
   }),
-  decisionCase('没有任何变化：结构终局 → 保持停止；非结构终局但仍在冷却期 → 保持停止（交还原停止说明）', (root) => {
+  decisionCase('没有任何变化：结构终局保持停止；非结构终局交同一kernel重新观察，两种运输不改判据', (root) => {
     const a = bornRun(root, '完成开卡', '1');
     appendRunEvents(a.eventsPath, [started(T0), ...halted(T0 + 10, 'framework_bug')]);
-    let d = decide(root, { requirement: '完成开卡' }, T0 + 60_000);
-    assert.strictEqual(d.kind, 'hold', `冷却期内没有变化须保持停止：${JSON.stringify(d)}`);
-    assert(d.kind === 'hold' && /约 \d+ 秒后再发起/.test(d.guidance), `无人值守的冷却须给出剩余秒数：${JSON.stringify(d)}`);
-    const att = decide(root, { requirement: '完成开卡', attended: true }, T0 + 60_000);
-    assert.deepStrictEqual(att, d, '仅换运输不能把无变化冷却变成重新接入');
+    let d = decide(root, { requirement: '完成开卡' });
+    assert.strictEqual(d.kind, 'rejoin', `非结构停止由同一kernel按当前事实观察，不能用默认时间墙拒绝：${JSON.stringify(d)}`);
+    const att = decide(root, { requirement: '完成开卡', attended: true });
+    assert.deepStrictEqual(att, d, '仅换运输不改变当前事实与授权判断');
     for (const attended of [false, true]) {
-      const explicit = decide(root, { requirement: '完成开卡', resume: a.manifest.run_id, attended }, T0 + 60_000);
+      const explicit = decide(root, { requirement: '完成开卡', resume: a.manifest.run_id, attended });
       assert(explicit.kind === 'rejoin' && explicit.explicit && explicit.runId === a.manifest.run_id, '两运输的显式恢复交同一后续恢复守卫');
     }
     const b = bornRun(root, '完成开卡', '2');
-    appendRunEvents(b.eventsPath, [started(T0 + 100), ...halted(T0 + 200, 'budget_wall_clock')]);
-    d = decide(root, { requirement: '完成开卡' }, T0 + HOUR);
+    appendRunEvents(b.eventsPath, [started(T0 + 100), ...halted(T0 + 200, 'testing_write_violation')]);
+    d = decide(root, { requirement: '完成开卡' });
     assert.strictEqual(d.kind, 'hold', `结构终局且没有变化须保持停止：${JSON.stringify(d)}`);
-    assert.strictEqual(decide(root, { requirement: '完成开卡', attended: true }, T0 + HOUR).kind, 'hold', '有人在场不改变结构终局的判定');
-    assert(d.kind === 'hold' && d.runId === b.manifest.run_id && d.haltReason === 'budget_wall_clock' && d.guidance.includes('原停止说明：budget_wall_clock')
+    assert.strictEqual(decide(root, { requirement: '完成开卡', attended: true }).kind, 'hold', '有人在场不改变结构终局的判定');
+    assert(d.kind === 'hold' && d.runId === b.manifest.run_id && d.haltReason === 'testing_write_violation' && d.guidance.includes('原停止说明：testing_write_violation')
       && d.guidance.includes('重新发起同一请求'), JSON.stringify(d));
     assert(!/<run|run_id>|--supersede|--force-resume/.test(d.guidance), `说明不得要求枚举 run 或拼旗标：${d.kind === 'hold' ? d.guidance : ''}`);
   }),
-  decisionCase('c3f8a2d7 §3.4 冷却提示只看最近一次停止窗口：新停机无指引取 reason；同窗口 run_end 不覆盖 phase_halt；更晚的启动期失败取 run_end.error', (root) => {
-    const guidanceOf = (now: number): string => {
-      const d = decide(root, { requirement: '完成开卡' }, now);
-      assert(d.kind === 'hold', `冷却期内须保持停止：${JSON.stringify(d)}`);
+  decisionCase('c3f8a2d7 §3.4 结构停止提示只看最近窗口：无指引取 reason；同窗口 run_end 不覆盖 phase_halt；更晚的启动期失败取 run_end.error', (root) => {
+    const guidanceOf = (): string => {
+      const d = decide(root, { requirement: '完成开卡' });
+      assert(d.kind === 'hold', `真实结构停止须保留当前解除说明：${JSON.stringify(d)}`);
       return d.kind === 'hold' ? d.guidance : '';
     };
-    // be091c 形状：旧 canary 停机带指引，新 framework_bug 停机只有 reason。
+    // 旧停止带指引，新的真实写保护停止只有 reason。
     const a = bornRun(root, '完成开卡', '1');
     appendRunEvents(a.eventsPath, [
       started(T0),
       { ts: at(T0 + 10), type: 'phase_halt', phase: 'plan', halt_reason: 'canary_cli_hard_failure', verdict: 'FAIL', reason: 'canary', halt_guidance: '旧金丝雀指引：核对 adapter' },
       { ts: at(T0 + 10), type: 'run_end', status: 'HALTED', halt_reason: 'canary_cli_hard_failure', session_started_at: at(T0), error: 'canary' },
       started(T0 + 100),
-      { ts: at(T0 + 200), type: 'phase_halt', phase: 'plan', halt_reason: 'framework_bug', verdict: 'FAIL', reason: 'framework_bug: plan 收口抛错 X' },
-      { ts: at(T0 + 200), type: 'run_end', status: 'HALTED', halt_reason: 'framework_bug' },
+      { ts: at(T0 + 200), type: 'phase_halt', phase: 'plan', halt_reason: 'testing_write_violation', verdict: 'FAIL', reason: '当前写保护停止 X' },
+      { ts: at(T0 + 200), type: 'run_end', status: 'HALTED', halt_reason: 'testing_write_violation' },
     ]);
-    let g = guidanceOf(T0 + 60_000);
-    assert(g.includes('原停止说明：framework_bug: plan 收口抛错 X') && !g.includes('旧金丝雀指引'), g);
+    let g = guidanceOf();
+    assert(g.includes('原停止说明：当前写保护停止 X') && !g.includes('旧金丝雀指引'), g);
     // 同一窗口：phase_halt 的完整指引优先，收尾 run_end 只复制首行，不覆盖。
     const b = bornRun(root, '完成开卡', '2');
     appendRunEvents(b.eventsPath, [
       started(T0 + 300),
-      { ts: at(T0 + 400), type: 'phase_halt', phase: 'plan', halt_reason: 'framework_bug', verdict: 'FAIL', reason: 'r', halt_guidance: '首行原因\n第二行处置' },
-      { ts: at(T0 + 400), type: 'run_end', status: 'HALTED', halt_reason: 'framework_bug', error: '首行原因' },
+      { ts: at(T0 + 400), type: 'phase_halt', phase: 'plan', halt_reason: 'testing_write_violation', verdict: 'FAIL', reason: 'r', halt_guidance: '首行原因\n第二行处置' },
+      { ts: at(T0 + 400), type: 'run_end', status: 'HALTED', halt_reason: 'testing_write_violation', error: '首行原因' },
     ]);
-    g = guidanceOf(T0 + 60_000);
+    g = guidanceOf();
     assert(g.includes('原停止说明：首行原因\n第二行处置'), g);
     // 最新 phase_halt 之后另起的会话启动即失败（只有 run_end.error，session_started_at 更晚）→ 取该错误。
     const c = bornRun(root, '完成开卡', '3');
     appendRunEvents(c.eventsPath, [
       started(T0 + 500),
-      { ts: at(T0 + 600), type: 'phase_halt', phase: 'plan', halt_reason: 'framework_bug', verdict: 'FAIL', reason: 'r', halt_guidance: '旧指引' },
-      { ts: at(T0 + 600), type: 'run_end', status: 'HALTED', halt_reason: 'framework_bug', error: '旧指引' },
-      { ts: at(T0 + 800), type: 'run_end', status: 'HALTED', halt_reason: 'framework_bug', session_started_at: at(T0 + 700), error: '启动期失败 Y' },
+      { ts: at(T0 + 600), type: 'phase_halt', phase: 'plan', halt_reason: 'testing_write_violation', verdict: 'FAIL', reason: 'r', halt_guidance: '旧指引' },
+      { ts: at(T0 + 600), type: 'run_end', status: 'HALTED', halt_reason: 'testing_write_violation', error: '旧指引' },
+      { ts: at(T0 + 800), type: 'run_end', status: 'HALTED', halt_reason: 'testing_write_violation', session_started_at: at(T0 + 700), error: '启动期写保护失败 Y' },
     ]);
-    g = guidanceOf(T0 + 60_000);
-    assert(g.includes('原停止说明：启动期失败 Y') && !g.includes('旧指引'), g);
+    g = guidanceOf();
+    assert(g.includes('原停止说明：启动期写保护失败 Y') && !g.includes('旧指引'), g);
     // 没有任何 phase_halt 的启动期失败 → 取 run_end.error。
     const d = bornRun(root, '完成开卡', '4');
-    appendRunEvents(d.eventsPath, [started(T0 + 900), { ts: at(T0 + 1000), type: 'run_end', status: 'HALTED', halt_reason: 'framework_bug', session_started_at: at(T0 + 900), error: '启动期失败 Z' }]);
-    g = guidanceOf(T0 + 60_000);
-    assert(g.includes('原停止说明：启动期失败 Z'), g);
+    appendRunEvents(d.eventsPath, [started(T0 + 900), { ts: at(T0 + 1000), type: 'run_end', status: 'HALTED', halt_reason: 'testing_write_violation', session_started_at: at(T0 + 900), error: '启动期写保护失败 Z' }]);
+    g = guidanceOf();
+    assert(g.includes('原停止说明：启动期写保护失败 Z'), g);
   }),
   decisionCase('结构终局 + 需求增量 → 起后继；非结构终局 + 需求增量/新型号同样起后继（原 run 接不住）', (root) => {
     const a = bornRun(root, '完成开卡', '1');
-    appendRunEvents(a.eventsPath, [started(T0), ...halted(T0 + 10, 'budget_wall_clock')]);
-    let d = decide(root, { requirement: '完成开卡，并补充绑卡提示' }, T0 + HOUR);
+    appendRunEvents(a.eventsPath, [started(T0), ...halted(T0 + 10, 'testing_write_violation')]);
+    let d = decide(root, { requirement: '完成开卡，并补充绑卡提示' });
     assert(d.kind === 'successor' && d.change === 'requirement_increment' && d.source === a.manifest.run_id, JSON.stringify(d));
-    assert.strictEqual(decide(root, { requirement: '完成开卡' }, T0 + HOUR).kind, 'hold', '重发同一需求不是增量');
+    assert.strictEqual(decide(root, { requirement: '完成开卡' }).kind, 'hold', '重发同一需求不是增量');
     const b = bornRun(root, '完成开卡', '2');
     appendRunEvents(b.eventsPath, [started(T0 + 100), ...halted(T0 + 200, 'framework_bug')]);
-    d = decide(root, { requirement: '完成开卡', model: 'gpt-5.5' }, T0 + HOUR);
+    d = decide(root, { requirement: '完成开卡', model: 'gpt-5.5' });
     assert(d.kind === 'successor' && d.change === 'model_changed', `非结构终局 + 新型号 → 后继：${JSON.stringify(d)}`);
   }),
   decisionCase('全量回归（甲）：从未正式开始过的 run 不作后继的合同来源——需求不同 → 新开；同一需求 → 附着；只换型号 → 仍起后继', (root) => {
@@ -695,36 +699,36 @@ cases.push(
       { ts: at(T0), type: 'phase_halt', phase: 'plan', halt_reason: 'canary_cli_hard_failure', verdict: 'FAIL', halt_guidance: 'canary' },
       { ts: at(T0), type: 'run_end', status: 'HALTED', halt_reason: 'canary_cli_hard_failure' },
     ]);
-    const d = decide(root, { requirement: '改成只做绑卡', attended: true }, T0 + HOUR);
+    const d = decide(root, { requirement: '改成只做绑卡', attended: true });
     assert(d.kind === 'fresh' && !d.explicit, `从未开始过的 run 没有可继承的证据，需求不同须新开：${JSON.stringify(d)}`);
-    const same = decide(root, { requirement: '完成开卡' }, T0 + HOUR);
+    const same = decide(root, { requirement: '完成开卡' });
     assert(same.kind === 'rejoin' && !same.started && same.runId === a.manifest.run_id, JSON.stringify(same));
-    const model = decide(root, { requirement: '完成开卡', model: 'gpt-5.5' }, T0 + HOUR);
+    const model = decide(root, { requirement: '完成开卡', model: 'gpt-5.5' });
     assert(model.kind === 'successor' && model.change === 'model_changed' && model.source === a.manifest.run_id, JSON.stringify(model));
   }),
   decisionCase('R1 需求增量按全文判重：子串不算重复；合并过的需求里原请求与历史增量整段重发不算增量', (root) => {
     const a = bornRun(root, '不要启用通知', '1');
-    appendRunEvents(a.eventsPath, [started(T0), ...halted(T0 + 10, 'budget_wall_clock')]);
-    let d = decide(root, { requirement: '启用通知' }, T0 + HOUR);
+    appendRunEvents(a.eventsPath, [started(T0), ...halted(T0 + 10, 'testing_write_violation')]);
+    let d = decide(root, { requirement: '启用通知' });
     assert(d.kind === 'successor' && d.change === 'requirement_increment', `"启用通知"是"不要启用通知"的子串但不是重复：${JSON.stringify(d)}`);
     const b = bornRun(root, mergeSuccessorRequirement('完成开卡', '补绑卡提示'), '2');
-    appendRunEvents(b.eventsPath, [started(T0 + 100), ...halted(T0 + 200, 'budget_wall_clock')]);
+    appendRunEvents(b.eventsPath, [started(T0 + 100), ...halted(T0 + 200, 'testing_write_violation')]);
     for (const same of ['完成开卡', '补绑卡提示', '  完成开卡  ']) {
-      d = decide(root, { requirement: same }, T0 + HOUR);
+      d = decide(root, { requirement: same });
       assert.strictEqual(d.kind, 'hold', `整段重发不是增量（${same}）：${JSON.stringify(d)}`);
     }
-    d = decide(root, { requirement: '开卡' }, T0 + HOUR);
+    d = decide(root, { requirement: '开卡' });
     assert(d.kind === 'successor' && d.change === 'requirement_increment', `子串不是重复：${JSON.stringify(d)}`);
   }),
   decisionCase('R1 二轮：历史增量内部的片段不算重复；合并后的完整需求原样重发算重复', (root) => {
     const merged = mergeSuccessorRequirement('完成开卡', '禁止以下操作：\n启用通知');
     const a = bornRun(root, merged, '1');
-    appendRunEvents(a.eventsPath, [started(T0), ...halted(T0 + 10, 'budget_wall_clock')]);
-    let d = decide(root, { requirement: '启用通知' }, T0 + HOUR);
+    appendRunEvents(a.eventsPath, [started(T0), ...halted(T0 + 10, 'testing_write_violation')]);
+    let d = decide(root, { requirement: '启用通知' });
     assert(d.kind === 'successor' && d.change === 'requirement_increment', `历史增量内部的一行不是完整增量：${JSON.stringify(d)}`);
-    d = decide(root, { requirement: merged }, T0 + HOUR);
+    d = decide(root, { requirement: merged });
     assert.strictEqual(d.kind, 'hold', `合并后的完整需求原样重发是重复：${JSON.stringify(d)}`);
-    d = decide(root, { requirement: '禁止以下操作：\n启用通知' }, T0 + HOUR);
+    d = decide(root, { requirement: '禁止以下操作：\n启用通知' });
     assert.strictEqual(d.kind, 'hold', `整个历史增量块重发是重复：${JSON.stringify(d)}`);
   }),
   decisionCase('最终评审返修：本次需求已是合并格式——只在能确认时剥离已有内容，新增内容一字不丢、标记只一个', (root) => {
@@ -737,8 +741,8 @@ cases.push(
     assert.notStrictEqual(`完成开卡\n\n${M}\n\n增量一\n增量二`, source, '夹具：字面与源不同');
     assert.strictEqual(deriveSuccessorRequirement(source, `完成开卡\n\n${M}\n\n增量一\n增量二`), source);
     const a = bornRun(root, source, '1');
-    appendRunEvents(a.eventsPath, [started(T0), ...halted(T0 + 10, 'budget_wall_clock')]);
-    assert.strictEqual(decide(root, { requirement: `完成开卡\n\n${M}\n增量一\n增量二` }, T0 + HOUR).kind, 'hold', '带标记且没有新内容须按重复处理');
+    appendRunEvents(a.eventsPath, [started(T0), ...halted(T0 + 10, 'testing_write_violation')]);
+    assert.strictEqual(decide(root, { requirement: `完成开卡\n\n${M}\n增量一\n增量二` }).kind, 'hold', '带标记且没有新内容须按重复处理');
     // 只对上历史块的一部分 / 子串 → 不剥离，整段保留（宁可重复，不丢需求）
     const partial = deriveSuccessorRequirement(source, `完成开卡\n${M}\n增量一\n新增三`);
     assert(partial!.endsWith('增量一\n新增三') && count(partial) === 1, `部分相同须整段保留：${partial}`);
@@ -750,7 +754,7 @@ cases.push(
     // 源没有历史增量时同样只取新增
     assert.strictEqual(deriveSuccessorRequirement('完成开卡', mergeSuccessorRequirement('完成开卡', '新增三')), mergeSuccessorRequirement('完成开卡', '新增三'));
   }),
-  decisionCase('六种变化各一例（结构终局上）：需求来源、相关修复、需求增量、型号、预算、显式旗标', (root) => {
+  decisionCase('当前授权变化：需求来源、需求增量、型号与显式旗标；产品字节不解除越权终态', (root) => {
     const sourceRel = 'requirements/task.md';
     fs.mkdirSync(path.join(root, 'requirements'), { recursive: true });
     fs.writeFileSync(path.join(root, sourceRel), '旧需求', 'utf8');
@@ -766,175 +770,55 @@ cases.push(
       started(T0),
       { ts: at(T0 + 1), type: 'phase_write_observed', phase: 'plan', observations: [{ path: productRel, post_sha256: oldHash }] },
       { ts: at(T0 + 2), type: 'phase_verdict', phase: 'plan', verdict: 'FAIL', action: 'halt' },
-      ...halted(T0 + 10, 'budget_wall_clock'),
+      ...halted(T0 + 10, 'testing_write_violation'),
     ]);
-    const now = T0 + HOUR;
     const changeOf = (call: Parameters<typeof decide>[1]): string => {
-      const d = decide(root, call, now);
+      const d = decide(root, call);
       return d.kind === 'successor' ? d.change : d.kind;
     };
     assert.strictEqual(changeOf({ requirement: '旧需求' }), 'hold', '夹具：没有变化时保持停止');
     assert.strictEqual(changeOf({ requirement: '旧需求', model: 'gpt-5.5' }), 'model_changed');
     assert.strictEqual(changeOf({ requirement: '旧需求，另加一句' }), 'requirement_increment');
-    assert.strictEqual(changeOf({ requirement: '旧需求', budgetOverride: true }), 'hold', '只带授权旗标、预算没改不算变化');
-    const manifestPath = path.join(root, a.manifest.report_dir, 'manifest.json');
-    const onDisk = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as { budget: { wall_clock_minutes: number } };
-    onDisk.budget.wall_clock_minutes += 60;
-    fs.writeFileSync(manifestPath, JSON.stringify(onDisk, null, 2), 'utf8');
-    assert.strictEqual(changeOf({ requirement: '旧需求' }), 'hold', '预算改了但没有既有授权不算变化');
-    // plan a2f7c9e4 §3.2：预算耗尽 + 只改预算并授权 → 接回原 run（budget_changed 起后继见下方非预算终局用例）
-    assert.strictEqual(changeOf({ requirement: '旧需求', budgetOverride: true }), 'rejoin');
-    fs.writeFileSync(manifestPath, JSON.stringify({ ...onDisk, budget: { ...onDisk.budget, wall_clock_minutes: onDisk.budget.wall_clock_minutes - 60 } }, null, 2), 'utf8');
     fs.writeFileSync(path.join(root, sourceRel), '新需求', 'utf8');
     assert.strictEqual(changeOf({ requirement: '新需求', requirementSourceFiles: [sourceRel] }), 'requirement_source_changed');
     fs.writeFileSync(path.join(root, sourceRel), '旧需求', 'utf8');
     fs.writeFileSync(path.join(root, productRel), 'fixed implementation', 'utf8');
-    assert.strictEqual(changeOf({ requirement: '旧需求' }), 'related_repair_changed');
-    const sup = decide(root, { supersede: [a.manifest.run_id] }, now);
+    assert.strictEqual(changeOf({ requirement: '旧需求' }), 'hold', 'product changes and an old raw summary cannot clear testing_write_violation');
+    const sup = decide(root, { supersede: [a.manifest.run_id] });
     assert(sup.kind === 'successor' && sup.explicit && sup.change === 'explicit_flag', JSON.stringify(sup));
-    const force = decide(root, { force: true }, now);
+    const force = decide(root, { force: true });
     assert(force.kind === 'fresh' && force.explicit, JSON.stringify(force));
-    const resume = decide(root, { resume: a.manifest.run_id }, now);
+    const resume = decide(root, { resume: a.manifest.run_id });
     assert(resume.kind === 'rejoin' && resume.explicit, JSON.stringify(resume));
   }),
 );
 
-// ---------------------------------------------------------------------------
-// plan a2f7c9e4 §3.2：仅预算变化接回原 run；§3.1：后继出生时的本周期有效预算（真实 createGoalRun 出生记录 + 生产解析函数）
-// ---------------------------------------------------------------------------
-
-function editBudget(root: string, reportDir: string, turns: number, extra: Record<string, unknown> = {}): ReturnType<typeof buildGoalManifestFromInput> {
-  const file = path.join(root, reportDir, 'manifest.json');
-  const m = JSON.parse(fs.readFileSync(file, 'utf8')) as ReturnType<typeof buildGoalManifestFromInput>;
-  const next = { ...m, ...extra, budget: { ...m.budget, max_total_turns: turns } };
-  fs.writeFileSync(file, JSON.stringify(next, null, 2), 'utf8');
-  return next;
-}
-
-/** 与 runtime 写盘同形的授权改写事件（--override-manifest）。 */
-const rebaseTo = (ms: number, manifest: ReturnType<typeof buildGoalManifestFromInput>): Record<string, unknown> => ({
-  ts: at(ms), type: 'manifest_identity_rebase', to_fields: computeManifestIdentityFields(manifest), authorized_by: 'override-manifest', changed_fields: ['budget'],
-});
-
-/** 两次出生之间至少隔 2ms：run_created.ts 是毫秒精度，授权"最新"按 ts 判。 */
-function tick(): void { const until = Date.now() + 2; while (Date.now() < until) { /* spin */ } }
-
-const effectiveBudget = (root: string, targets: string[], sourceBudget: object, override = false): ReturnType<typeof buildGoalManifestFromInput>['budget'] =>
-  resolveCycleEffectiveBudget({
-    projectRoot: root, featuresDir: 'doc/features', feature: 'demo', frameworkRoot: path.resolve(__dirname, '..', '..', '..'),
-    targets, sourceBudget: sourceBudget as never, birthInputBudget: buildGoalManifestFromInput({ feature: 'demo', unattended }, { projectRoot: root }).budget, override,
-  }).budget;
-const effective = (root: string, targets: string[], sourceBudget: object, override = false): number =>
-  effectiveBudget(root, targets, sourceBudget, override).max_total_turns;
-
-/** legacy run：没有 run_created，出生身份只在首个 run_start 的 manifest_identity_fields（withIdentity=false 时连它也没有）。 */
-function legacyRun(root: string, suffix: string, budget: Record<string, number>, withIdentity = true): ReturnType<typeof buildGoalManifestFromInput> {
-  const manifest = buildGoalManifestFromInput({
-    feature: 'demo', run_id: `20260928T00000${suffix}Z-${suffix}${suffix}${suffix}`, start_phase: 'plan', end_phase: 'plan', requirement: '完成开卡', unattended, budget,
-  }, { projectRoot: root });
-  const dir = path.join(root, manifest.report_dir);
-  fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf8');
-  appendRunEvents(path.join(dir, 'events.jsonl'), [
-    { ...started(T0), ...(withIdentity ? { manifest_identity_fields: computeManifestIdentityFields(manifest) } : {}) },
-    ...halted(T0 + 10, 'budget_turns'),
-  ]);
-  return manifest;
-}
-
-cases.push(
-  decisionCase('a2f7c9e4 §3.2 预算耗尽 + 只改预算并授权 → 接回原 run；未授权 / 叠加需求增量 / 身份另有改动 / 非预算终局 → 不接回', (root) => {
-    const a = bornRun(root, '完成开卡', '1');
-    appendRunEvents(a.eventsPath, [started(T0), ...halted(T0 + 10, 'budget_turns')]);
-    editBudget(root, a.manifest.report_dir, 42);
-    const d = decide(root, { requirement: '完成开卡', budgetOverride: true }, T0 + 60_000);
-    assert(d.kind === 'rejoin' && d.runId === a.manifest.run_id && d.started && !d.explicit, `仅预算授权须接回原 run：${JSON.stringify(d)}`);
-    assert.strictEqual(decide(root, { requirement: '完成开卡' }, T0 + HOUR).kind, 'hold', '没有 --override-manifest 的手改不算变化');
-    const inc = decide(root, { requirement: '完成开卡，并补绑卡提示', budgetOverride: true }, T0 + HOUR);
-    assert(inc.kind === 'successor' && inc.change === 'requirement_increment', `叠加需求增量仍起后继：${JSON.stringify(inc)}`);
-    editBudget(root, a.manifest.report_dir, 42, { end_phase: 'testing' });
-    const wider = decide(root, { requirement: '完成开卡', budgetOverride: true }, T0 + HOUR);
-    assert(wider.kind === 'successor' && wider.change === 'budget_changed', `身份差集含 budget 以外字段不得接回：${JSON.stringify(wider)}`);
-    const b = bornRun(root, '完成开卡', '2');
-    appendRunEvents(b.eventsPath, [started(T0 + 100), ...halted(T0 + 200, 'no_progress_fuse')]);
-    editBudget(root, b.manifest.report_dir, 42);
-    const fuse = decide(root, { requirement: '完成开卡', budgetOverride: true }, T0 + HOUR);
-    assert(fuse.kind === 'successor' && fuse.change === 'budget_changed', `非预算结构终局不被预算变化接回：${JSON.stringify(fuse)}`);
-  }),
-  decisionCase('a2f7c9e4 §3.1 反例⑤：唯一 run 授权 10 已耗尽、手改 99、不带 override → 无匹配即抛出（不取默认 30）；带 override → 99', (root) => {
-    const a = bornRun(root, '完成开卡', '1', { budget: { max_total_turns: 10 } });
-    appendRunEvents(a.eventsPath, [started(T0), ...halted(T0 + 10, 'budget_turns')]);
-    const edited = editBudget(root, a.manifest.report_dir, 99);
-    assert.throws(() => effective(root, [a.manifest.run_id], edited.budget), /找不到同值[\s\S]*--override-manifest[\s\S]*还原/);
-    assert.strictEqual(effective(root, [a.manifest.run_id], edited.budget, true), 99, '本次 --override-manifest 授权承接目标上的改动');
-    editBudget(root, a.manifest.report_dir, 10);
-    assert.strictEqual(effective(root, [a.manifest.run_id], edited.budget), 10, '还原为已授权值后取 10');
-  }),
-  decisionCase('a2f7c9e4 §3.1 反例⑥：旧 run 授权 42、最新授权降到 20、最新 manifest 手改 50 → 不回选 42；最新 manifest 手改 10 而旧候选仍存 20 → 采用 20', (root) => {
-    const a = bornRun(root, '完成开卡', '1', { budget: { max_total_turns: 30 } });
-    const a42 = editBudget(root, a.manifest.report_dir, 42);
-    appendRunEvents(a.eventsPath, [started(T0), rebaseTo(Date.now(), a42), ...halted(T0 + 10, 'budget_turns')]);
-    tick();
-    const b = bornRun(root, '完成开卡', '2', { budget: { max_total_turns: 20 } });
-    appendRunEvents(b.eventsPath, [started(T0 + 100), buildSupersedeAuditEvent({ targetRunId: a.manifest.run_id, supersedingRunId: b.manifest.run_id }), ...halted(T0 + 200, 'budget_turns')]);
-    const b50 = editBudget(root, b.manifest.report_dir, 50);
-    assert.throws(() => effective(root, [b.manifest.run_id], b50.budget), /找不到同值/, '最新授权 20 无匹配数值时停下，不回选 42 / 50');
-    editBudget(root, b.manifest.report_dir, 20);
-    tick();
-    const c = bornRun(root, '完成开卡', '3', { budget: { max_total_turns: 20 } });
-    appendRunEvents(c.eventsPath, [started(T0 + 300), buildSupersedeAuditEvent({ targetRunId: b.manifest.run_id, supersedingRunId: c.manifest.run_id }), ...halted(T0 + 400, 'budget_turns')]);
-    const c10 = editBudget(root, c.manifest.report_dir, 10);
-    assert.strictEqual(effective(root, [c.manifest.run_id], c10.budget), 20, '当前 manifest 手改成 10、另一候选仍存授权 20 → 采用 20，不停');
-  }),
-  decisionCase('a2f7c9e4 r1 B1-1：本周期只有一个 legacy run（无 run_created，run_start 带身份）→ 按它的出生摘要取 10 / 60 分钟，不当新周期取默认 30 / 480；手改无 override → 抛出', (root) => {
-    const legacy = legacyRun(root, '1', { max_total_turns: 10, wall_clock_minutes: 60 });
-    const got = effectiveBudget(root, [legacy.run_id], legacy.budget);
-    assert.deepStrictEqual([got.max_total_turns, got.wall_clock_minutes], [10, 60], `legacy run 的授权值须按 run_start 摘要取回：${JSON.stringify(got)}`);
-    const legacyFile = path.join(root, legacy.report_dir, 'manifest.json');
-    const edited = { ...legacy, budget: { ...legacy.budget, wall_clock_minutes: 600 } };
-    fs.writeFileSync(legacyFile, JSON.stringify(edited, null, 2), 'utf8');
-    assert.throws(() => effectiveBudget(root, [legacy.run_id], edited.budget), /找不到同值/, '墙钟维度的未授权手改同样不得生效、不回退默认 480');
-  }),
-  decisionCase('a2f7c9e4 r4：整个周期没有任何 run 带预算摘要（前身份时代 legacy）→ 沿用合同来源预算，不取默认、不拒绝；周期里另有带摘要的 run 时仍严格（缺摘要的 run 拒绝）', (root) => {
-    const bare = legacyRun(root, '2', { max_total_turns: 10, wall_clock_minutes: 60 }, false);
-    const inherited = effectiveBudget(root, [bare.run_id], { ...bare.budget, max_total_turns: 12 });
-    assert.deepStrictEqual([inherited.max_total_turns, inherited.wall_clock_minutes], [12, 60], `前身份时代周期须沿用来源预算：${JSON.stringify(inherited)}`);
-    const modern = bornRun(root, '完成开卡', '3', { budget: { max_total_turns: 20 } });
-    appendRunEvents(modern.eventsPath, [started(T0 + 100), buildSupersedeAuditEvent({ targetRunId: bare.run_id, supersedingRunId: modern.manifest.run_id }), ...halted(T0 + 200, 'budget_turns')]);
-    assert.throws(() => effectiveBudget(root, [modern.manifest.run_id], modern.manifest.budget), /没有可核验的出生预算摘要/, '周期里有带摘要的 run 时，缺摘要的 run 仍按严格规则拒绝');
-  }),
-  decisionCase('a2f7c9e4 r1 B1-2：旧 run 授权 42、较新 run 授权 20，较新 run 的 manifest 因无关字段损坏读不出 → 不回选 42（其它候选有 20 时取 20）；较新 run 的 events 含损坏行 → 抛出', (root) => {
-    const a = bornRun(root, '完成开卡', '1', { budget: { max_total_turns: 30 } });
-    const a42 = editBudget(root, a.manifest.report_dir, 42);
-    appendRunEvents(a.eventsPath, [started(T0), rebaseTo(Date.now(), a42), ...halted(T0 + 10, 'budget_turns')]);
-    tick();
-    const b = bornRun(root, '完成开卡', '2', { budget: { max_total_turns: 20 } });
-    appendRunEvents(b.eventsPath, [started(T0 + 100), buildSupersedeAuditEvent({ targetRunId: a.manifest.run_id, supersedingRunId: b.manifest.run_id }), ...halted(T0 + 200, 'budget_turns')]);
-    editBudget(root, b.manifest.report_dir, 20, { report_dir: 'doc/features/demo/goal-runs/elsewhere' });
-    assert.throws(() => loadGoalManifestFromRun(root, b.manifest.run_id, { feature: 'demo' }), /report_dir/, '夹具：较新 run 的 manifest 读不出');
-    assert.throws(() => effective(root, [b.manifest.run_id], { ...a42.budget }), /找不到同值/, '最新授权 20 仍按事件算数，42 不得被重新选中');
-    assert.strictEqual(effective(root, [b.manifest.run_id], { ...a42.budget, max_total_turns: 20 }), 20, '其它候选（合同来源）有 20 时取 20');
-    fs.appendFileSync(b.eventsPath, '{broken\n', 'utf8');
-    assert.throws(() => effective(root, [b.manifest.run_id], { ...a42.budget, max_total_turns: 20 }), /损坏行/, '授权历史读不可靠时不出生');
-  }),
-  decisionCase('a2f7c9e4 r1 非阻断：跨 run 同一毫秒的授权并列 → 取 run id 较大者；同一 run 内并列取事件序靠后者', (root) => {
-    const a = bornRun(root, '完成开卡', '1', { budget: { max_total_turns: 42 } });
-    const b = bornRun(root, '完成开卡', '2', { budget: { max_total_turns: 20 } });
-    appendRunEvents(b.eventsPath, [started(T0 + 100), buildSupersedeAuditEvent({ targetRunId: a.manifest.run_id, supersedingRunId: b.manifest.run_id }), ...halted(T0 + 200, 'budget_turns')]);
-    const sameTs = (eventsPath: string, ts: string): void => {
-      const lines = fs.readFileSync(eventsPath, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l) as Record<string, unknown>);
-      fs.writeFileSync(eventsPath, lines.map(e => JSON.stringify(e.type === 'run_created' ? { ...e, ts } : e)).join('\n') + '\n', 'utf8');
-    };
-    const tie = new Date(T0).toISOString();
-    sameTs(a.eventsPath, tie);
-    sameTs(b.eventsPath, tie);
-    assert(b.manifest.run_id > a.manifest.run_id, '夹具：b 的 run id 较大');
-    assert.strictEqual(effective(root, [b.manifest.run_id], { max_total_turns: 1 }), 20, '跨 run 并列取 run id 较大者（b 的 20）');
-    const b30 = editBudget(root, b.manifest.report_dir, 30);
-    appendRunEvents(b.eventsPath, [{ ...rebaseTo(T0, b30), ts: tie }]);
-    assert.strictEqual(effective(root, [b.manifest.run_id], { max_total_turns: 1 }), 30, '同一 run 内并列取事件序靠后的改写');
-  }),
-);
+cases.push(decisionCase('新writer退役全部旧配额；历史只读；同请求截止继承、新周期只用本次明确截止', root => {
+  const deadline = '2030-01-01T00:00:00.000Z';
+  const fresh = buildGoalManifestFromInput({ feature: 'demo', unattended: { ...unattended, max_turns: 1, timeout_seconds: 1,
+    phase_timeout_seconds: { coding: 1 } }, budget: { max_total_turns: 1, wall_clock_minutes: 1 }, user_deadline_at: deadline }, { projectRoot: root });
+  assert.strictEqual(fresh.budget, undefined);
+  for (const key of ['max_turns', 'timeout_seconds', 'phase_timeout_seconds']) assert(!(key in fresh.unattended));
+  assert.strictEqual(fresh.user_deadline_at, deadline);
+  const source = { ...fresh, budget: { max_total_turns: 1, max_retries_per_phase: 1, max_transient_api_retries: 1, wall_clock_minutes: 1 },
+    unattended: { ...unattended, max_turns: 1, timeout_seconds: 1 }, inherited_round_fingerprints: ['old'], inherited_drift_fingerprints: ['old'] };
+  const next = buildGoalManifestFromInput({ feature: 'demo', unattended, user_deadline_at: '2031-01-01T00:00:00.000Z' }, { projectRoot: root });
+  const continued = inheritSuccessorManifest(next, source, { round: ['new'], drift: ['new'] });
+  assert.strictEqual(continued.user_deadline_at, deadline, '未完成原请求截止不重置');
+  assert.strictEqual(continued.budget, undefined);
+  assert.strictEqual(continued.inherited_round_fingerprints, undefined);
+  assert.strictEqual(continued.inherited_drift_fingerprints, undefined);
+  assert.strictEqual(continued.unattended.max_turns, undefined);
+  const newCycle = inheritSuccessorManifest(next, source, { round: [], drift: [] }, { newDeliveryCycle: true });
+  assert.strictEqual(newCycle.user_deadline_at, next.user_deadline_at);
+  delete next.user_deadline_at;
+  assert.strictEqual(inheritSuccessorManifest(next, source, { round: [], drift: [] }, { newDeliveryCycle: true }).user_deadline_at, undefined);
+  fs.mkdirSync(path.join(root, source.report_dir), { recursive: true });
+  fs.writeFileSync(path.join(root, source.report_dir, 'manifest.json'), JSON.stringify(source));
+  const history = loadGoalManifestFromRun(root, source.run_id, { feature: 'demo' });
+  assert.deepStrictEqual(history.budget, source.budget, '原历史数字可读，不生效为新输入/截止');
+  assert.strictEqual(history.user_deadline_at, deadline);
+}));
 
 export function runAll(): UnitCaseResult[] {
   return cases.map(test => {

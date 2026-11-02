@@ -419,139 +419,15 @@ hmos-app **专用排障表**见 [`../profiles/hmos-app-harness-toolchain.md`](..
 
 ---
 
-## 10. 中断 / 切换会话 / 放弃阶段（v2.8 起）
+## 10. 中断、切换会话与Stop hook
 
-### 10.1 背景
+当前Stop hook仅触发既有只读共同完成查询并呈现其结果，不从state、阶段PASS/closed、回执或连续阻挡次数另算完成。它读取当前feature及真实run_id，调用公开assess.ts（默认无--write）；普通Feature使用feature_assessment.current_disposition，受管初建设计使用原root current_disposition。源码故障/缺原件仍按原错误和未知呈现，不能用hook退出0签通过。
 
-Stop hook 会读 `framework/harness/state/.current-phase.json` 判断当前 cli 会话能不能结束消息。
-该状态文件是**全局单槽**：任何时刻最多一份，跨 cli 重启不自动清理。这种设计在以下场景容易"误伤"：
+能继续的已授权工作回原goal-mode-entry --next，执行原execute_command，再沿observe/interrupt和report-result交回。真正只剩等待可停下并说明具体producer/对象条件；未完成不冒充完成。阶段方法不是作者排队，主会话不代施工，独核保持独立。
 
-- Ctrl+C 中断 harness，状态停留在 `status='running'`；
-- cli 崩溃 / 重启，没机会跑 receipt 校验；
-- 切换 feature 而旧 feature 的阶段还没收尾；
-- 跨天 / 跨周回来接着干，但记不清上次到哪一步。
+旧state_machine.max_consecutive_blocks不再回填或参与次数放行；state的session/grace/TTL只识别是否属于当前会话，不能代替业务事实或阻断其它无关会话。--clear-state只清历史提示文件，不撤销原run/授权/失败或签发完成，也不是暂停恢复方案。接回原任务先读原run和当前事实，不因删state重做有效工作。
 
-v2.8 起 hook 引入"会话边界判定"避免上一会话遗留拦下一会话。详细矩阵见
-实例根**全局入口** §5.1.1（与 `AGENTS.md.template` 渲染结果一致）；下面只列日常操作动作。
-
-> **本节针对 feature 维度阶段**（spec / plan / coding / review / UT / testing）。
-> 所有在 **当前 [`active_workflow`](../../workflows/spec-driven.workflow.yaml)** 中声明为 **`scope: global`** 的阶段（默认含 `extensions` / `init` / `catalog` / `glossary` / `docs`）：**不写** `.current-phase.json`（runner v2.8.1+），也没有 feature 维度完成回执模板。
-> 实例 **Stop hook** 对残留的「全局 phase」state 兜底放行——与 `agents/claude/templates/hooks/check-phase-completion.mjs` 内 **`GLOBAL_PHASES`** 常量一致（若你本地 hook 落后于 framework 模板请重新下发）。因此跑 `--phase init` / `extensions` 等不会套用 §5.1 的 feature 阶段闭环判定。
-
-### 10.2 配置：`framework.config.json > state_machine`
-
-```jsonc
-{
-  "state_machine": {
-    "grace_period_minutes": 5,     // runner 写 state → hook 第一次盖 session_id 的容忍窗口
-    "ttl_hours": 12,               // payload 缺 session_id 时的兜底过期阈值
-    "max_consecutive_blocks": 3,   // Stop hook 逃生阀：连续 N 次零进展后放行(exit 0)交还用户
-    "schema_version": "1.1"
-  }
-}
-```
-
-| 字段 | 范围 | 默认值 | 说明 |
-|------|------|--------|------|
-| `grace_period_minutes` | (0, 60] | `5` | runner 写完 state 到 hook 第一次"盖章"之间允许的间隔。窗口内 state.session_id=null 视为"刚跑完 harness 还没来得及盖章"，hook 会用本会话 sid 给它盖章；超出窗口再来一个未盖章 state 视为前一会话遗留。 |
-| `ttl_hours`            | [1, 168] | `12` | 极端兜底：payload 没传 session_id 时，仅用 `state.updated_at` 与 ttl 比较。常规路径走 session_id 比对，ttl 是"防止历史 state 永久缠住"的保险栓。 |
-| `max_consecutive_blocks` | [1, 20] | `3` | **Stop hook 逃生阀阈值**。同一阶段连续 N 次拦到「同一组 blocker + `last_run_at` 未变（harness 未重跑）+ 零进展」后，第 N 次不再 `exit 2` 拦截，改为 `exit 0` 放行并给「重跑 / `--clear-state`」二选一，把控制权交还你/用户——防弱模型（空回复）在死局里被永久 nag。**放行不改 verdict/receipt，state 仍 `FAIL`/`missing`，下游阶段门禁照常拦截，不绕过闭环。** 只对"根本没重跑 harness 的重复 stop"生效；agent 真重跑（`last_run_at` 变）即归零。 |
-
-非法值（缺字段 / 超范围 / 非数字）：
-- runner 端（`framework/harness/config.ts > validateStateMachine`）→ 抛错；
-- hook 端（实例根 Stop hook 内 `readStateMachineFromConfig`）→ 安静回退默认值，不 fail。
-
-### 10.3 三类常见操作
-
-#### A. 我想继续上次的阶段
-
-不需要任何额外动作——只要本次仍是同一 cli 会话（同一 session_id），Stop hook 会照常按 §5.1
-判定。把 harness 求解出的 required 证据（trace / 脚本 verdict / verifier — 仅当其 plan 为
-enabled / receipt）补齐再 stop 即可。
-
-跨 cli 会话怎么办？参考 §10.4。
-
-#### B. 我想放弃这个阶段，换去做别的事
-
-```bash
-cd framework/harness && npx ts-node harness-runner.ts --clear-state
-```
-
-行为：
-- 删除 `framework/harness/state/.current-phase.json`（无确认）；
-- 历史 verdict / 报告 / 回执仍保留在 `doc/features/<feature>/<phase>/reports/`（或 legacy：`framework/harness/reports/<feature>/<phase>/`）与
-  `doc/features/<feature>/<phase>/` 下，用于审计；
-- 下次 stop hook 找不到 state 文件 → 直接放行；
-- 想接着这个 feature/phase 干，按对应 SKILL.md 重新进入即可（state 会被 `harness-runner.ts` 重新写起来）。
-
-`--clear-state` 是"放弃已有进度"，不是"暂停"：
-- 它**不会**回滚已写到磁盘的 spec / plan / 代码 / receipt 等内容；
-- 它**只**删 state file 这个判定开关。
-
-#### C. 我刚问个无关问题，hook 却跳出"未闭环"提示
-
-如果提示文案是：
-
-```
-[Stop Hook 提示] 检测到一个旧的阶段状态文件，但与当前会话无关：
-  ...
-  原因 = state 由另一个会话（session_id=...）记录，本次会话 session_id=...
-  ...
-本次 stop 已放行；上面这条状态不会拦截你。
-```
-
-→ 这是 **advisory + exit 0**：hook 已经放行，agent **不应**接管旧任务，继续做用户当前问的事。
-
-如果不想再看到这条提示，按 §10.3-B 跑一次 `--clear-state` 即可。
-
-如果提示文案是：
-
-```
-[Stop Hook 提示] 当前会话存在未闭环阶段：
-  ...
-未满足的闭环条件（全局入口 §5.1）：
-  - ...
-如果你打算【继续这个阶段】，按下面顺序补齐：
-  ...
-如果你想【放弃这个阶段，转去做别的事】，先执行：
-       cd framework/harness && npx ts-node harness-runner.ts --clear-state
-```
-
-→ 这是 **block + exit 2**：当前会话内确有未闭环阶段，按提示二选一即可。
-
-### 10.4 跨天 / 跨 cli 重启回来接着干
-
-例：周一跑了一半 coding，周二重启 cli 回来想接着干同一个 feature。
-
-- 直接进入对应 Skill / Slash，重新触发 harness-runner.ts；
-- runner 会重写 state（保留 prev started_at），同会话内继续；
-- 周一遗留的 `state.session_id="<old>"` 会在新 cli 的 Stop hook 中被识别为
-  `stale-cross-session` → advisory + exit 0；
-- 当 runner 重新跑过后，`writeCurrentPhaseState` 不会主动改 session_id，
-  保留前会话的 sid——直到本次 cli 的第一次 Stop hook 触发，hook 会用新 sid 覆盖；
-- 如不想看到 advisory，先 `--clear-state` 再重新进入对应 Skill。
-
-### 10.5 如何看 state 当前是什么状态
-
-```bash
-cat framework/harness/state/.current-phase.json
-```
-
-关键字段：
-
-| 字段 | 含义 |
-|------|------|
-| `phase` / `feature` | 当前阶段是哪个 feature 的哪一步 |
-| `status`            | `running`（harness 跑到一半）/ `harness_finished` |
-| `verdict`           | 最近一次 harness verdict |
-| `blocker_count`     | 最近一次 BLOCKER 数 |
-| `receipt`           | check-receipt.ts 输出 |
-| `session_id`        | 第一次 Stop hook 命中时由 hook 回填，标记本 state 归属哪个 cli 会话 |
-| `session_id_recorded_at` | session_id 被盖章的时刻 |
-| `last_seen_session_id` / `last_seen_at` | 最近一次 Stop / SubagentStop 触发时的 sid 与时刻（用于审计） |
-| `last_verifier_report.recorded_in_session` | verifier 子 agent 那次跑的 sid（验证 verifier 也属于同会话） |
-
----
+Ctrl+C、原生中断、工具超时或进程崩溃时保留events、owner/request、原流和合法成果；只对精确绑定停止/接管，不伪造native结束。显式用户UTC截止不因切换会话重置。具体操作见[Goal运行手册](goal-mode-runbook.md)及[操作命令](../../skills/reference/goal-mode-operations.md)。
 
 ## 11. 历史注记
 

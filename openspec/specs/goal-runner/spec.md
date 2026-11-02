@@ -5,19 +5,17 @@ TBD - created by archiving change tool-agnostic-goal-runner. Update Purpose afte
 ## Requirements
 ### Requirement: Goal runner orchestrates feature phases deterministically
 
-The system SHALL provide `harness/scripts/goal-runner.ts` that executes an ordered list of feature phases between `start_phase` and `end_phase`, invoking the configured agent headlessly per phase with fresh context, then running `harness-runner.ts` for each phase.
+The system SHALL coordinate the original request through work units and one current-disposition loop in `GoalPhaseRuntime`. Each unit SHALL retain its dedicated author context and exact native session identity. Spec, plan, coding, review, UT and testing select applicable methods or check families; they SHALL NOT create a cold author queue or establish dispatch eligibility by phase closure. The same current disposition SHALL select authorized repair, executable checks, independent verification, concrete waiting or the satisfied endpoint.
 
-Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/phase-transition-policy.ts`
+Enforcement: `harness/scripts/goal-phase-runtime.ts`, `harness/scripts/utils/verify-feature-completion.ts`
 
-#### Scenario: Happy path advances through chain
+#### Scenario: A unit repairs and verifies its current gap
+- **WHEN** current evidence identifies an authorized product repair
+- **THEN** the original unit author receives all currently decidable findings, affected verification follows, and only the satisfied requested endpoint permits completion
 
-- **WHEN** each phase harness returns verdict PASS
-- **THEN** runner advances to the next phase until `end_phase` completes and writes goal-report with status COMPLETED
-
-#### Scenario: External block defers and continues when allowed
-
-- **WHEN** a phase returns verdict INCOMPLETE with deferrable `blocking_class` or `failure_kind` per `dependency_policy`
-- **THEN** runner records phase as DEFERRED, continues if policy allows, and final goal status is DEFERRED or PARTIAL (never COMPLETED)
+#### Scenario: Required evidence is unavailable
+- **WHEN** current required evidence is unknown and no independent repair or executable producer is available
+- **THEN** the run waits with the concrete missing producer or object condition and does not manufacture PASS or no-progress
 
 ### Requirement: Goal run evidence layer
 
@@ -156,20 +154,24 @@ The runner SHALL derive `ReconcileObservation@1` from authoritative events and p
 - **THEN** emitted event, verdict, and action sequences SHALL remain unchanged
 
 ### Requirement: Headless cross-phase progression consumes assess
-After boundary extraction, `harness/scripts/goal-runner.ts` SHALL select cross-phase work only through `assess@1` and SHALL invoke the recommended phase only after driver authorization and fencing checks.
 
-#### Scenario: Assess recommends testing backtrack to coding
-- **WHEN** observation contains actionable deterministic defects and assess recommends coding
-- **THEN** the runner SHALL execute the existing authorized invalidation/backtrack transaction before invoking coding
+Attended and detached entry SHALL consume the same current-disposition reader and evaluation. Assess SHALL project that result without a second dispatcher, phase retry/backtrack selector or author queue. Actual dispatch SHALL retain the original request, owner/epoch, write boundary and current provider authorization.
+
+Enforcement: `harness/scripts/goal-phase-runtime.ts`, `harness/scripts/utils/assess.ts`, `harness/scripts/utils/verify-feature-completion.ts`
+
+#### Scenario: Current repair appears during waiting
+- **WHEN** a real producer or object condition changes and the public view now contains an authorized repair
+- **THEN** public continuation rejoins the original run and unit author through the shared decision without resetting completion history or inventing a phase author
 
 ### Requirement: Process-level safety guards remain enforced by the driver
 
-Timeout handling, budgets, backoff, child cleanup, trust ledgers, device gates, source-write protection, monitor, usage capture, and detached survival SHALL remain enforced by existing goal-runner utilities and MUST NOT be weakened by assess rewiring.
+Explicit user deadlines and cancellation, concrete tool timeouts, native output-silence protection, bounded child cleanup, owner/fence validation, device gates, source-write protection, usage capture and detached survival SHALL remain enforced. Default total turns, per-phase content retries, default process wall limits and timeout-count escalation SHALL NOT control new execution. A timeout or interrupted invocation SHALL retain unknown work and originals rather than sign product completion.
 
-#### Scenario: Phase process exceeds its timeout
+Enforcement: `harness/scripts/goal-phase-runtime.ts`, `harness/scripts/utils/agent-invoke.ts`
 
-- **WHEN** the active child exceeds the effective timeout
-- **THEN** the runner SHALL apply the existing process timeout/cleanup policy and supply the resulting fact to reconciliation
+#### Scenario: A concrete tool exceeds its actual grant
+- **WHEN** a tool exceeds its explicitly granted timeout
+- **THEN** existing bounded cleanup applies and the observed failure or unknown result reaches the shared current view without a synthetic successful tool end
 
 ### Requirement: Detached runner honors handoff mailbox at phase boundaries
 
@@ -188,11 +190,12 @@ Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-run-c
 - **THEN** `forceTakeoverRunOwner` SHALL acquire `epoch+1` for the process without requiring a mailbox request, and the supervisor SHALL remain uninvolved
 
 ### Requirement: Loop and process fuses remain distinct
-The runner SHALL treat assess fuse as a phase-boundary reconciliation result, process guards as execution safety, and monitor budgets as read-only polling limits.
 
-#### Scenario: Monitor polling budget ends
-- **WHEN** a monitor reaches its polling fuse
-- **THEN** it SHALL stop polling without terminating an otherwise active detached run
+Business convergence SHALL use the existing completed comparable acceptance evaluation. Unknown evidence, an unended invocation, identical cached results or repeated metadata SHALL NOT manufacture a comparison or no-progress. Actual process safety guards and read-only monitor polling limits SHALL remain separate from business completion.
+
+#### Scenario: Monitor polling limit ends
+- **WHEN** a monitor reaches its read-only polling limit
+- **THEN** it stops polling without terminating an otherwise active detached run
 
 ### Requirement: Headless goal runs pin an explicit adapter model
 
@@ -423,55 +426,19 @@ Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-runne
 - **THEN** the attempt SHALL be classified `spec_capture_gap` and SHALL NOT be classified `code_regression`
 - **AND** the retry prompt SHALL NOT instruct the agent to revert source changes made since the goal-run start commit
 
-### Requirement: Wall-clock budget is a hard deadline across all paths
-
-The runner SHALL enforce `wallDeadlineMs = wallClockStartMs + wallClockBudgetMs` across agent invokes, harness runs, and transient backoff sleeps. Both agent and harness SHALL NOT be started when `deadline - now - FINALIZE_RESERVE_MS <= 0` (a computed timeout of 0 must never reach a timer, since 0 disables it); a backoff sleep SHALL NOT be started when the remaining budget cannot fit the configured backoff (terminate with `budget_wall_clock` instead of sleeping a truncated remainder). Windows process-tree kill SHALL be asynchronous and bounded (execFile taskkill.exe without shell, bounded wait, helper killed and stdio destroyed on timeout, `kill_process_tree_timeout` reported), and any kill on the agent/harness paths SHALL be paired with `armForceSettleAfterKill` so a failed kill still settles within the force-settle window. The kill grace used in the acceptance bound SHALL be derived from the actual termination contract constants (all four: child settle grace, force settle after kill, kill tree wait, inflight drain) via a single `resolveKillGraceMs()`. On the agent/harness/backoff paths, total runtime SHALL NOT exceed the wall limit plus `resolveKillGraceMs()`.
-
-Post-run_end finalization (completion receipt etc.) is **pre-check-gated best-effort**, not part of the hard bound: it consists of synchronous filesystem work for which no in-process executable bound exists (a sync hang also blocks any in-process watchdog; hard-killing mid-write corrupts receipts; moving it to a killable worker process is the only true bound and is deliberately out of scope — recorded as plan d9b4f7e2 open item 5 / rev8 deviation ①). It SHALL be skipped entirely (`finalize_skipped`) when the deadline has already passed before it starts, and any overrun of an already-started finalization SHALL be recorded honestly via a `finalize_overrun` event carrying the finalization duration (feeding FINALIZE_RESERVE_MS calibration).
-
-Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-timeout.ts`, `harness/scripts/utils/agent-invoke.ts`
-
-#### Scenario: Zero effective budget prevents agent start
-
-- **WHEN** raw wall remaining is positive but `deadline - now - FINALIZE_RESERVE_MS <= 0`
-- **THEN** the runner SHALL NOT build a prompt, write agent_invoke_start, or invoke the adapter, and SHALL end the run with `budget_wall_clock`
-
-#### Scenario: Hung taskkill cannot unbound the wall
-
-- **WHEN** the taskkill helper never exits during a tree-kill
-- **THEN** the bounded kill SHALL terminate the helper, release its handles, report `kill_process_tree_timeout`, and the runner SHALL still exit within the derived grace
-
-### Requirement: Consecutive timeouts escalate once then halt
-
-The runner SHALL count consecutive `agent_timeout` outcomes per phase from the events log (signature-independent, including PASS+unclosed). After the second consecutive timeout the next attempt's base timeout SHALL be escalated ×1.5 (default-table-derived values only; explicit overrides untouched). A third consecutive timeout SHALL halt with `agent_timeout_repeated` and guidance including per-attempt durations. The effective timeout of every attempt SHALL be computed before prompt construction and recorded as `effective_timeout_ms` on `agent_invoke_start`; progress/status/dead-man consumers SHALL prefer the event value over manifest re-resolution (manifest as legacy fallback).
-
-Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-timeout.ts`, `harness/scripts/utils/goal-progress.ts`
-
-#### Scenario: Escalated attempt is not reported stalled
-
-- **WHEN** the runner escalates an attempt's timeout to 1.5× the default
-- **THEN** progress liveness SHALL judge staleness against the event-recorded effective timeout, not the manifest-derived base value
-
 ### Requirement: Dead runs never project as RUNNING
 
-The liveness projection SHALL detect a terminated-but-incomplete run from the event stream alone, independent of lock presence, so a run whose orchestrator died can never project as `RUNNING`. A `harness_start` with no following `harness_end`/`phase_verdict` past the phase timeout SHALL be a hard stall, and silence beyond `DEAD_MAN_FACTOR × phase_timeout` (a live runner heartbeats ~every 60s) SHALL be a hard stall.
+Liveness SHALL use actual invocation/tool events, their recorded grants and current owner/process observations. An unended harness exceeding its actual grant may be stalled; missing grants SHALL NOT be replaced by old default phase timeouts. Event-only history SHALL remain readable for liveness and elapsed time even if completion originals are missing. Liveness SHALL NOT establish business completion or seal a missing native/tool end.
 
 Enforcement: `harness/scripts/utils/goal-progress.ts`
 
-#### Scenario: Dangling harness_start with cleaned locks does not project RUNNING
+#### Scenario: An actually granted tool is dangling
+- **WHEN** an unended harness has exceeded its recorded timeout and activity is stale
+- **THEN** the projection reports the applicable liveness fault while business evidence remains unsatisfied
 
-- **WHEN** `events.jsonl` ends with `agent_invoke_end` then a `harness_start` with no later `harness_end`/`phase_verdict`, no lock is present, and the last event is hours old
-- **THEN** projection SHALL report a non-`RUNNING` status (`STALLED`) and liveness `STALLED`, not `RUNNING`/`soft_quiet_window`
-
-#### Scenario: Absolute dead-man catches lock-independent silence
-
-- **WHEN** the run has no terminal `run_end` and the last activity is older than `DEAD_MAN_FACTOR × phase_timeout`
-- **THEN** projection SHALL report a hard stall regardless of whether any lock file exists
-
-#### Scenario: Live harness window is not a false stall
-
-- **WHEN** a `harness_start` is within the phase timeout and heartbeat events are fresh
-- **THEN** projection SHALL keep the run `RUNNING` and MUST NOT report a stall
+#### Scenario: A partial history has no timeout grant
+- **WHEN** only historical activity events are available and no actual grant was recorded
+- **THEN** elapsed activity remains readable, the deadline remains unknown, and no default manifest timeout is borrowed
 
 ### Requirement: Abnormal exit writes a terminal event
 
@@ -493,38 +460,6 @@ Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-progr
 
 - **WHEN** running on Windows where `SIGTERM` is not catchable
 - **THEN** the runner SHALL register `SIGBREAK` (Ctrl-Break / console close) so a graceful host signal still writes the terminal event
-
-### Requirement: Closure-only attempts are classified by a receipt-probe total function and budgeted by closure kind
-
-The closure path taken after a blocked PASS SHALL be chosen by a deterministic function over the full `ReceiptValidation` status set obtained from the read-only receipt probe (never mapped from `advance_block_reason`, which stays telemetry-only): `passed` → `deterministic_recheck` (runner performs receipt state sync/closure without invoking an agent); `missing`/`failed` → `receipt_repair_with_verifier` (agent attempt using the phase's full current effective timeout — no invented shorter verifier budget); `error` → immediate HALT classified `closure_probe_error`/framework-bug semantics without invoking an agent; `not_applicable` while still advance-blocked → immediate HALT `closure_state_invariant`. Fresh attempts SHALL reuse the receipt validation already obtained in the control flow; resume re-probes with the subprocess timeout bounded by remaining wall clock and the finalize reserve. Closure-only timeout SHALL surface as closure timeout for human disposition, never re-entering content retries.
-
-Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-timeout.ts`
-
-#### Scenario: probe error is a framework fault, not an agent repair job
-
-- **WHEN** the receipt probe itself fails to execute (script missing, spawn failure)
-- **THEN** the run SHALL halt with `closure_probe_error` and no agent SHALL be invoked to "repair" the receipt
-
-### Requirement: Timeout budget ratchets on granted high-water and observed completions
-
-The per-attempt agent timeout SHALL be `max(base, granted_highwater, ceil(1.2 × max_completed_duration))`, where `granted_highwater` is the highest effective timeout ever granted to the phase and a completed duration is an invocation accepted by the shared completion predicate implementing the in-invocation terminal contract: waiting, failed, skipped and explicit failure facts take precedence; otherwise natural exit 0 or an observed completion terminal qualifies. A nonzero cleanup exit or cleanup attempt alone SHALL NOT negate observed completion. Both values SHALL be rebuilt from events on resume. Explicit host-configured phase timeouts remain a hard cap the ratchet cannot exceed, but when observed completions approach or exceed the explicit value the report SHALL state that the configured budget appears too small. `timeout_escalated` events SHALL record their source (`consecutive_timeouts` | `granted_highwater` | `observed_ratchet`). All budgets remain clamped by wall clock and the finalize reserve.
-
-Enforcement: `harness/scripts/utils/goal-timeout.ts`, `harness/scripts/goal-runner.ts`
-
-#### Scenario: the incident's i4 no longer falls back to the base budget
-
-- **WHEN** attempts time out twice, escalation grants 67.5 minutes, and the third attempt completes at 49.6 minutes with exit 0 but fails content gates
-- **THEN** the next attempt's budget SHALL be 67.5 minutes (granted high-water), not the 45-minute base
-
-#### Scenario: observed completion survives cleanup and resume
-
-- **WHEN** a phase invocation reports observed completion without a waiting, skipped or failure fact, then cleanup exits nonzero
-- **THEN** its duration SHALL qualify for the same observed ratchet as a passed session report, retaining its original exit code and producing the same value after resume
-
-#### Scenario: exit zero does not qualify an incomplete invocation
-
-- **WHEN** an invocation has waiting status, is skipped or has an explicit failure fact, even if its exit code is zero
-- **THEN** its duration SHALL NOT become a completed sample, and phase caps and remaining wall clock SHALL remain unchanged
 
 ### Requirement: Blocker actionability joins the decision ladder at a single position and splits timeouts in four steps
 
@@ -888,14 +823,13 @@ Enforcement: `harness/scripts/utils/device-unlock-helper.ts`, `harness/scripts/u
 
 ### Requirement: Repair candidates carry signal-level identity and converge by cumulative one-shot accounting
 
-Actionable defects SHALL retain signal-level `item_fingerprint` and existing event-sourced cumulative attempted accounting. A requested candidate becomes attempted only after the target phase actually executes. Eligible current identities backtrack once through the existing route. If all still-open identities were attempted, the runner SHALL retain `repair_not_converging` as a bounded convergence terminal/fuse and list machine evidence; same-run manual resume MUST NOT clear attempted identities, reset the fingerprint, change the quality conclusion, or create eligibility. Only new machine evidence producing a new identity, or a successor run with new identity/budget, can continue. A no-op owner repair SHALL not reuse downstream closures.
+Repair candidates SHALL retain actual signal-level `item_fingerprint`, source, object and input identity. Those identities SHALL NOT be a per-item attempted quota or a one-shot author entitlement. The shared current disposition and existing completed-comparable evaluation SHALL determine repair, verification, waiting and semantic no-progress. New invoke IDs, timestamps, subjects or unchanged refusal text SHALL NOT manufacture progress or reset the comparison. A real corrective change still requires affected verification before completion.
 
-Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/repair-candidates.ts`, `harness/scripts/utils/assess.ts`, `harness/scripts/utils/adjudication.ts`
+Enforcement: `harness/scripts/goal-phase-runtime.ts`, `harness/scripts/utils/repair-candidates.ts`, `harness/scripts/utils/verify-feature-completion.ts`, `harness/scripts/utils/goal-failure-classifier.ts`
 
-#### Scenario: manual resume cannot retry an attempted identity
-
-- **WHEN** identity A remains open after its owner executed and the same run is manually resumed
-- **THEN** A SHALL remain attempted and the convergence terminal SHALL remain unless new machine evidence changes the candidate set
+#### Scenario: An unchanged unknown identity cannot buy another invocation
+- **WHEN** the same required object remains unknown and its producer/input condition is unchanged
+- **THEN** the run remains waiting without another author/tool call and without an invented no-progress conclusion
 
 ### Requirement: Visual signals are adjudicated before candidate materialization
 
@@ -1280,28 +1214,19 @@ Enforcement: `harness/scripts/utils/assess.ts`, `harness/scripts/utils/correctio
 
 ### Requirement: Candidate round repetition requires unchanged comparable repair inputs
 
-The repair-candidate `backtrack_to_phase` branch SHALL retain the existing item/round fingerprints and budgets. A repeated candidate round SHALL halt as `backtrack_fingerprint_repeat` only when the relevant repair/verification inputs have a complete comparable content snapshot and remain unchanged. Each candidate SHALL contribute its explicit repair targets or its existing contracts/owner source scope; a mixed group SHALL NOT discard an empty-files native candidate's owner scope because another candidate has explicit files. Evidence references and actual process outputs (trace/screenshots, phase notes/logs/reports at their configured or resolved runtime locations), mtime, HEAD and summary prose SHALL NOT count as repair progress, including actual process outputs nested inside a relevant directory. The same location predicate SHALL govern explicit targets and directory digests; product files that merely share these directory/file names SHALL count by content. The general artifact/directory snapshot consumers SHALL retain their existing defaults.
+Comparable repair inputs SHALL come from the existing actual request, accepted reports, effective evidence, authorization, acceptance and related-input snapshots. A changed source or newly verified material is not completion by itself. Only completed relevant verification after real feedback and a real author opportunity may establish progress or semantic no-progress through the existing evaluation. Cached replay, missing input sets, unknown results and unended native/tool calls SHALL NOT create a new comparable evaluation. No round-set exit, attempted-item quota or separate comparison ledger is introduced.
 
-Before target construction and before emitting `phase_backtrack_requested`, the runtime SHALL collect the relevant inputs through the existing artifact/directory snapshot and retain them in the optional `related_input_snapshot` on that event. The original event SHALL be the shared baseline for same-process, resume and successor comparison; it SHALL NOT be recomputed from current content. The field SHALL NOT alter candidate identity, budgets or create another ledger. Current input keys SHALL match the original complete required set; additions/deletions, empty snapshots or entries without valid content hashes SHALL be unknown. Missing/bad entries or legacy records MAY use attestation/write observations only when the original input set and original window are established; current hashes or overwritten later attestations SHALL NOT replace the baseline.
+Original input sets and hashes SHALL remain original; current bytes, mtime, HEAD, report prose or repeated IDs/timestamps SHALL NOT replace missing baselines. Independently established repairs SHALL remain visible beside read faults or environmental gaps. Actual refusal originals remain fully bound for independent reading; repeated semantically identical refusal rows do not create new opportunity.
 
-Unknown inputs SHALL prove neither zero change nor a completed repair: they only retain the existing bounded recovery path. Changed inputs SHALL permit another attempt within remaining original budgets, while only fresh verification establishes success. Decline/rebuttal exemptions and all other fuse families SHALL retain their existing semantics.
+Enforcement: `harness/scripts/goal-phase-runtime.ts`, `harness/scripts/utils/verify-feature-completion.ts`, `harness/scripts/utils/goal-failure-classifier.ts`
 
-#### Scenario: Same defect after a real source edit gets fresh verification
+#### Scenario: An actual repair receives affected verification
+- **WHEN** the author received current feedback and changed a relevant product input
+- **THEN** the coordinator runs only affected applicable checks or independent verification, retaining current valid results and the original comparison facts
 
-- **WHEN** testing produces the same candidate fingerprint after the relevant source content changed
-- **THEN** the existing remaining backtrack budget SHALL allow the responsible phase and new verification
-- **AND** a still-failing verification SHALL remain failure without added budget
-
-#### Scenario: Notes and unrelated edits do not disguise a comparable repeated round
-
-- **WHEN** only notes/logs/process outputs or unrelated source change and all required repair inputs remain unchanged
-- **THEN** the candidate round SHALL halt as `backtrack_fingerprint_repeat`
-
-#### Scenario: Recovery reads the original snapshot and preserves limits
-
-- **WHEN** resume or a successor replays an earlier backtrack event
-- **THEN** it SHALL compare with that event's original related input snapshot and inherit the original used budgets
-- **AND** an exhausted turn/backtrack budget SHALL still stop despite a new fingerprint or source edit
+#### Scenario: Unknown evidence cannot prove no-progress
+- **WHEN** required related inputs or completed verification are unavailable
+- **THEN** the specific verification gap remains unknown rather than being converted to success or no-progress by a repeated fingerprint
 
 ### Requirement: Facts admission and within-attempt source changes use one entry
 
@@ -1607,25 +1532,23 @@ Enforcement: `harness/scripts/utils/{goal-adapter-capability,agent-invoke,critic
 
 ### Requirement: Earlier-phase gaps have a total executable disposition
 
-For every upstream phase in the resolved chain, the runner SHALL map `missing`, trusted `failed`, `legacy_unverified`, `unclosed`, `pruned`/assurance-insufficient, and `stale` gaps to exactly one executable disposition using existing facts. Missing/failed/legacy-unverified and stable stale bytes return to owner revalidation. A provable partial finalization is completed idempotently; otherwise fresh valid unclosed evidence may use `complete_closure`, while stale/invalid unclosed evidence returns to the owner. Pruned evidence is restored/re-signed only when current in-repository trusted artifacts prove it; otherwise it returns to owner or defers for a genuine capability gap. Runner-owned equivalent rewrites may refresh narrowly. Current downstream writes use the phase-write-violation recovery contract. Known gaps MUST NOT fall through to catch-all `framework_bug` or display-only actions.
+Missing, failed, legacy-unverified, unclosed, assurance-insufficient and stale applicable evidence SHALL enter the same current-disposition reader/resolver as repair, verify or concrete wait conditions. Actual available inputs SHALL permit checks without a preceding closed phase. Authorized repairs SHALL return to the original responsible work-unit context; a phase-order queue, summary closed word or historical PASS SHALL NOT establish author eligibility or completion. Proven partial formal publication SHALL use the existing finalizer; arbitrary current bytes SHALL NOT be rebound as executed evidence.
 
-Enforcement: `harness/scripts/utils/assess.ts`, `harness/scripts/utils/goal-assess-driver.ts`, `harness/scripts/goal-runner.ts`, `harness/scripts/utils/upstream-closure.ts`, `harness/scripts/utils/phase-closure-finalizer.ts`
+Enforcement: `harness/scripts/utils/verify-feature-completion.ts`, `harness/scripts/utils/check-disposition.ts`, `harness/scripts/goal-phase-runtime.ts`, `harness/scripts/utils/phase-closure-finalizer.ts`
 
-#### Scenario: every earlier owner/current pair is executable
-
-- **WHEN** any earlier phase in a full, lite, or valid custom chain is missing, failed, legacy-unverified, unclosed, pruned, or stale
-- **THEN** the disposition SHALL be backtrack, proven closure completion/refresh, capability defer, or a precise existing terminal/fuse result, never a dead recommendation
+#### Scenario: A missing current proof has an actual owner or producer
+- **WHEN** an applicable current result is missing or stale
+- **THEN** the shared view names its real repair/verification duty or concrete missing condition, preserves other actionable findings and never falls through to a fabricated upstream PASS
 
 ### Requirement: Closure recovery precedes generic freshness rejection
 
-When staged summary and already-published closure components prove the same run/attempt finalization, resume SHALL reconcile them before upstream freshness gates reject the state. Each manifest, pointer, phase-state, and canonical-summary cut SHALL be idempotent. A closed-summary mismatch without runner-owned equivalence proof SHALL invalidate and backtrack; it MUST NOT publish evidence against current bytes.
+The real formal producer SHALL recognize a staged summary and published closure components only when they prove the same finalization, expected canonical path/hash, actual run/request and manifest binding. It SHALL finish only missing transaction steps idempotently before normal consumption. A closed-summary mismatch without existing runner-owned equivalence proof SHALL remain untrusted and require current authorized repair or verification; it MUST NOT publish a new executed-input binding for arbitrary current bytes. Summary closed words and mtime SHALL NOT synthesize a native end, phase PASS or lifecycle advancement.
 
-Enforcement: `harness/scripts/utils/phase-closure-finalizer.ts`, `harness/scripts/utils/upstream-closure.ts`, `harness/scripts/goal-runner.ts`
+Enforcement: `harness/scripts/utils/phase-closure-finalizer.ts`, `harness/scripts/utils/phase-evidence-manifest.ts`, `harness/harness-runner.ts`
 
-#### Scenario: pointer published but summary rename missing
-
-- **WHEN** the pointer and phase state identify a staged summary whose expected hash and run/attempt identity verify but canonical rename did not occur
-- **THEN** resume SHALL publish the canonical summary exactly once before normal freshness consumption
+#### Scenario: Pointer published but canonical rename is missing
+- **WHEN** the staged transaction and all existing identity/hash proofs verify but canonical summary rename did not occur
+- **THEN** the formal producer completes that rename once while preserving executed inputs and returns the actual producer result
 
 ### Requirement: Recovery diagnostics report the actual disposition
 
@@ -1640,19 +1563,17 @@ Enforcement: `harness/scripts/utils/goal-progress.ts`, `harness/scripts/utils/go
 
 ### Requirement: Goal phases advance through one shared runtime
 
-All attended and detached goal phase execution SHALL advance through one `GoalPhaseRuntime`. The runtime SHALL own owner/epoch validation, assessment, attempt and `phase_start`, runtime-owned fact preparation, receipt scaffold, agent invocation boundary, harness gates, verdict, retry/backtrack, resume replay, close/closure, handoff and `run_end`. No runner, driver, supervisor or executor MAY maintain an independent phase loop, call a phase gate directly or publish a competing lifecycle state.
+Attended and detached execution SHALL share `GoalPhaseRuntime` as one work-unit completion coordinator. It SHALL retain owner/epoch validation, actual author/independent invocation boundaries, runtime preparation, real tool requests and fences, formal producer writes, current disposition/evaluation, native recovery, handoff and terminal projection. Phase names SHALL describe check families and historical event labels, not a second author queue or lifecycle authority. No runner, driver, supervisor or executor MAY maintain a competing dispatcher or completion state.
 
-Enforcement: `harness/scripts/goal-phase-runtime.ts`, `harness/scripts/utils/goal-phase-runtime.ts`, `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-in-session-driver.ts`, `harness/scripts/goal-supervise.ts`, `harness/scripts/utils/goal-supervisor.ts`
+Enforcement: `harness/scripts/goal-phase-runtime.ts`, `harness/scripts/utils/goal-phase-runtime.ts`, `harness/scripts/utils/goal-in-session-driver.ts`, `harness/scripts/utils/goal-supervisor.ts`
 
-#### Scenario: Coding uses the same lifecycle in both modes
+#### Scenario: Both presentations reuse the same work unit
+- **WHEN** attended and detached presentation continue the same original request
+- **THEN** each unit retains its own dedicated author context and the same completion coordinator while each actual check uses the original request/owner/fence
 
-- **WHEN** equivalent attended and detached runs execute one coding attempt
-- **THEN** both SHALL pass through the same runtime preparation, gate, verdict and close code; only their executor implementation MAY differ
-
-#### Scenario: Stale executor result cannot mutate lifecycle
-
-- **WHEN** owner epoch changes while an executor is running
-- **THEN** the runtime MUST reject the returned result before gate, verdict, closure or backtrack mutation
+#### Scenario: A stale executor result cannot mutate evidence
+- **WHEN** the owner epoch changes while an executor is running
+- **THEN** the stale result cannot publish accepted reports, formal closure or lifecycle mutations
 
 ### Requirement: Canonical lifecycle has one production projection
 
@@ -1694,19 +1615,13 @@ Enforcement: `harness/tests/unit/goal-runtime-structural-acceptance.unit.test.ts
 
 ### Requirement: Goal birth freezes the normalized actual phase chain
 
-Every modern fresh goal run SHALL persist its normalized actual phase chain in the existing manifest and bind the same ordered chain in its single `run_created` event. Modern resume and attach MUST validate those two birth facts and execute only that frozen chain; they MUST NOT re-resolve workflow configuration, track defaults or phase order. An explicitly era-isolated legacy run MAY use the existing guarded compatibility resolver.
+Fresh runs SHALL persist the normalized birth chain and immutable scope identity in the original manifest and `run_created` event. These are original scope/check metadata, not an author queue or permanent upper bound on current required work. Current active obligations and valid `scope_revised` facts SHALL determine applicable check families. Reused results remain valid only through their actual bindings; an invalidated or newly active authorized obligation SHALL be reconsidered through the same reader. Workflow edits alone SHALL NOT expand the original authorization or rewrite birth identity.
 
-Enforcement: `harness/scripts/utils/goal-run-creation.ts`, `harness/scripts/utils/goal-manifest.ts`, `harness/scripts/goal-phase-runtime.ts`, `harness/scripts/goal-runner.ts`, `harness/scripts/goal-mode-entry.ts`
+Enforcement: `harness/scripts/utils/goal-run-creation.ts`, `harness/scripts/utils/verify-feature-completion.ts`, `harness/scripts/goal-phase-runtime.ts`
 
-#### Scenario: Workflow changes while a run is halted
-
-- **WHEN** a modern run halts and workflow configuration is changed before resume
-- **THEN** resume executes the exact ordered chain recorded at birth and does not add, remove or reorder phases
-
-#### Scenario: Resume cannot introduce a baseline-requiring phase
-
-- **WHEN** a modern run was born with a spec/plan-only chain and workflow configuration later adds coding
-- **THEN** resume retains the birth chain and MUST NOT introduce coding or synthesize a baseline
+#### Scenario: Definition work exposes an already required construction duty
+- **WHEN** a birth chain omitted a check temporarily while the original authorized obligation remained active
+- **THEN** the current shared view includes that duty when its real inputs become available without rewriting the birth chain or creating a same-named phase author
 
 ### Requirement: Shared baseline resolution enforces birth presence and value
 
@@ -1793,38 +1708,6 @@ Enforcement: `harness/scripts/utils/goal-run-lock.ts`, `harness/scripts/goal-run
 - **WHEN** a dry-run child hard-crashes leaving a stale feature lock with `run_mode: dry`
 - **THEN** a new real run SHALL start by taking over the stale lock without any `--resume` suggestion
 
-### Requirement: Budget-only authorization preserves completed upstream evidence
-
-A budget-only manifest edit SHALL continue through existing manifest authorization, identity rebase and cumulative budget resolution. It SHALL NOT proactively rerun upstream harness/agents or rewrite valid completed summaries, evidence manifests or receipts. New facts/evidence automatic sources SHALL not acquire historical run manifests as business dependencies; explicit business references retain their existing checks. Requirement, scope, source, environment and gate changes SHALL continue through their existing checks and owner recovery.
-
-Resume SHALL use the existing feature observation/assessment to consume an applicable current failed phase summary even when historical goal events still contain its PASS. Ordinary phase-only revalidation does not append a goal phase verdict; it must not make the next resume spend unrelated downstream calls before owner recovery. This does not grant a special old-attempt validation-only entitlement or introduce a second state machine.
-
-#### Scenario: authorized budget increase continues the unfinished goal
-
-- **WHEN** a current run exhausts its budget after closing upstream phases and an authorized budget-only resume increases its limit
-- **THEN** those upstream artifacts remain unchanged, unfinished work continues and cumulative turns/active runtime do not reset
-
-#### Scenario: phase-only revalidation replaces the current conclusion
-
-- **WHEN** a legal run-bound phase-only revalidation writes FAIL after the goal recorded PASS
-- **THEN** resume observes that failure and enters existing owner recovery before invoking an unrelated downstream phase
-
-### Requirement: Wall-clock budget accumulates active runtime across resume sessions
-
-The run budget SHALL measure active execution time, not calendar span: prior activity is the sum of per-session durations partitioned by `run_start` events, where a session without `run_end` (crash/hard-kill) is conservatively credited up to one heartbeat cadence beyond its last event (capped by the next session start or the current process start — cumulative undercount SHALL be zero and per-session overcount SHALL not exceed one cadence), and dry sessions are excluded. The hard-deadline semantics (agent/harness/backoff pre-checks minus the finalize reserve) are unchanged; only the baseline becomes `sessionStart + max(0, wall − priorActive)`. Artifact-since consumers (partial-resume feed) SHALL keep the true first authoritative session start, never a synthetic time. Budget halts SHALL carry `halt_reason` and `halt_guidance` on the outcome, the `phase_halt` event and the console banner (and thus `run_end`), and the guidance SHALL name only real routes: a new run with an updated-budget manifest, or `--override-manifest`-authorized resume — never a bare restart.
-
-Enforcement: `harness/scripts/utils/goal-runner-phase.ts`, `harness/scripts/goal-runner.ts`, `harness/scripts/utils/await-confirm-guidance.ts`
-
-#### Scenario: an overnight resume of a 74-minute run does not instantly halt
-
-- **WHEN** a run consumed ~74 minutes of active time, halted, and is resumed 13 hours later with a 480-minute wall budget
-- **THEN** the budget check SHALL pass and the run SHALL continue with the remaining active budget
-
-#### Scenario: genuine exhaustion halts with visible reason and real routes
-
-- **WHEN** accumulated active time reaches the wall budget at resume
-- **THEN** the run SHALL halt with `budget_wall_clock` present on outcome/phase_halt/run_end and guidance naming the existing manifest and authorized `--override-manifest` continuation, without creating an exhausted successor
-
 ### Requirement: Rule changes have an executable migration without rewriting historical completion
 
 A changed review gate fingerprint SHALL invalidate current review coverage while a trustworthy historical completion MAY remain record-ok. A consumer requiring a current completion SHALL use the existing authorized successor entry with the original requirement, execute uncovered owners and necessary downstream revalidation, and obtain a new completion through the existing completion validator. Old completion bytes SHALL remain unchanged; no fingerprint whitelist, historical re-signing, migration CLI or automatic budget reset SHALL be introduced. In-flight mechanical --revalidate SHALL not issue a completion and SHALL retain semantic-not-reverified disclosures when prior semantic review is reused. Migration guidance SHALL state these executable steps and their cost.
@@ -1906,24 +1789,17 @@ Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-failu
 
 ### Requirement: Fresh goal runs have one immutable birth contract
 
-Every attended or detached fresh goal run SHALL be created by the same fresh-only `createGoalRun` operation after workflow, track and actual phase chain resolution. A chain containing coding or UT MUST resolve a 40-hex Git HEAD before publishing the run and store it as `manifest.run_base_sha`; a chain containing only spec/plan MAY omit it. Creation SHALL write `manifest.json` before appending exactly one `run_created` event binding `manifest_identity_fields`, `manifest_identity_hash`, the run-base digest and any rebaseline source. Resume and attach SHALL only load these facts and MUST NOT re-resolve workflow, chain or HEAD or synthesize a missing event.
+Attended and detached fresh runs SHALL use `createGoalRun` after actual scope resolution. A real active construction duty with a source grant in the shared write boundary SHALL freeze the exact 40-hex Git HEAD before publication, even when definition gaps temporarily shorten the birth check chain. Future owner names without actual source authorization SHALL NOT require a construction baseline. Creation SHALL publish manifest then exactly one `run_created` binding original identity and the baseline digest. Resume and attach SHALL validate those original facts and MUST NOT invent a missing birth event or silently replace the original baseline.
 
-Enforcement: `harness/scripts/utils/goal-run-creation.ts`, `harness/scripts/utils/goal-manifest.ts`, `harness/scripts/goal-runner.ts`, `harness/scripts/goal-mode-entry.ts`
+Enforcement: `harness/scripts/utils/goal-run-creation.ts`, `harness/scripts/utils/goal-manifest.ts`, `harness/scripts/goal-phase-runtime.ts`
 
-#### Scenario: Both fresh entries freeze the same HEAD
+#### Scenario: A construction grant exists behind an unfinished definition
+- **WHEN** the original authorized scope includes an active implementation duty and actual source write domain while the birth chain currently contains only definition checks
+- **THEN** creation freezes the actual HEAD before the unit author is invoked
 
-- **WHEN** attended and detached coding runs are created at the same repository HEAD from the same resolved input
-- **THEN** both SHALL use `createGoalRun`, persist that exact `run_base_sha`, and emit one equivalent `run_created` birth record before any agent invocation
-
-#### Scenario: A non-Git execution chain fails before dispatch
-
-- **WHEN** a resolved fresh chain contains coding or UT and Git HEAD cannot be resolved
-- **THEN** creation MUST fail closed without publishing an attachable run or dispatching an agent
-
-#### Scenario: A documentation-only chain needs no Git baseline
-
-- **WHEN** the resolved chain contains only spec and/or plan
-- **THEN** creation MAY omit `run_base_sha` while still writing its one `run_created` identity record
+#### Scenario: A genuinely documentation-only request has no source grant
+- **WHEN** the actual original scope has no active construction source grant
+- **THEN** creation may omit the Git baseline while still publishing its one immutable birth identity
 
 ### Requirement: Incomplete creation is isolated from runnable lifecycle state
 
@@ -2372,3 +2248,22 @@ The stage loop SHALL consume the same current disposition at its terminal bounda
 - **WHEN** an actual session executor can answer the vision canary and export native structured tool events
 - **THEN** the runtime SHALL issue the existing request with purpose `vision_canary`, grade the report's original answer with the common grader and cache, and freeze current invocation tool materials with its accepted report
 - **AND** reference signing SHALL consume these actual current materials; missing audit evidence SHALL remain unverified, and old process logs SHALL NOT be signed as session evidence
+### Requirement: Explicit user deadlines and actual grants govern execution controls
+
+Only an explicit `--user-deadline-at` / `user_deadline_at` UTC input SHALL establish a request deadline. Unfinished continuation SHALL inherit that deadline; old default wall/turn/retry fields SHALL NOT become a human deadline. The runtime SHALL refuse new native calls after that deadline or cancellation and preserve existing work, native identity and unsatisfied evidence. Concrete tools retain their actual timeouts and native calls retain output-silence protection; active authors have no default total runtime limit.
+
+Progress and status SHALL prefer the actual invocation/tool grant recorded in events. Missing grants SHALL remain unknown, without falling back to a historical manifest's default phase timeout. Kill helpers and forced settlement SHALL keep their existing bounded cleanup contract. Call count and active runtime SHALL remain statistics, not new dispatch budgets.
+
+Enforcement: `harness/scripts/goal-phase-runtime.ts`, `harness/scripts/utils/goal-manifest.ts`, `harness/scripts/utils/agent-invoke.ts`, `harness/scripts/utils/goal-progress.ts`
+
+#### Scenario: An expired explicit deadline prevents dispatch
+- **WHEN** the original UTC user deadline has passed
+- **THEN** no new author or independent native invocation is recorded or dispatched, the original deadline is retained, and unfinished evidence does not become completion
+
+#### Scenario: A live author exceeds a retired default wall limit
+- **WHEN** an author is active, the explicit user deadline has not passed and no cancellation or native safety condition applies
+- **THEN** old wall, turn, retry and phase-timeout defaults do not stop that author
+
+#### Scenario: Cleanup remains bounded
+- **WHEN** a process-tree termination helper fails to settle
+- **THEN** the existing bounded kill and force-settlement path records the failure and preserves unknown work without inventing successful native completion

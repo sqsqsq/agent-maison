@@ -1,10 +1,10 @@
-# AgentMaison 目标架构
+# AgentMaison 架构
 
-> **状态：目标架构定稿，尚未实施。** §1、§2、§4、§6 已由用户审定，本轮补清 I10 的运行中收敛约束；不代表当前发布件已实现。修订日期：2026-10-29。
+> **状态：开发仓现状架构。** 本文按本窗口已实施的 P1–P3 职责与实际消费者核对；P3 官方 R3 开发门禁已于2026-11-02自然通过，结果见§6.1。P4 联合真实宿主验收与发布仍 pending。
 >
-> 本文件集中定义 Maison 的部件职责、事实归属和执行内核，供后续 goal、plan、OpenSpec 与代码检视对齐。后续 goal 与 plan 按本文件校准并接受窄复核，评审通过前不实施；现有计划不是本文件的上位依据。
+> 本文件集中说明 Maison 的现行部件职责、事实归属和执行内核，供 goal、plan、OpenSpec 与代码检视共同对齐。以后改变职责划分须同步架构、实现与规格；计划不反向取代架构事实。
 >
-> 四条总原则仍以 [overview §1.2.1](overview.md#121-四条总设计原则) 原文为准。本文件解释其目标落地，不新增一套原则。此处是 **Maison 自身架构**，不同于宿主 `doc/architecture.md` 所承载的产品架构契约。
+> 四条总原则仍以 [overview §1.2.1](overview.md#121-四条总设计原则) 原文为准。本文件解释其现行落点，不新增一套原则。此处是 **Maison 自身架构**，不同于宿主 `doc/architecture.md` 所承载的产品架构契约。
 
 按本次用户裁决，原则中的“权责所属阶段”由设计单元、施工单元和独立验证职责承载，不再等于阶段派工；旧“硬预算”的调用数与默认墙钟实现退役，仅保留用户明示时限/取消等实际约束。四条原则原文保留，不能借其旧实现恢复已裁决删除的控制。
 
@@ -83,7 +83,7 @@ flowchart TB
 
 验收清单是原请求、已准入蓝图/CU和既有 acceptance 等的**适用视图**，不再建立一份可手填 done 的台账。当前事实的组装、处置和完成结论各只有一处；工具报告、NEXT、assess、进度、Feature/CU/部件完成和发布就绪只是不同终点或不同粒度的投影，不能各拿一部分事实重新推断。
 
-现有 `GoalPhaseRuntime` 收编为上述协调器；`readCurrentDispositionInput`、`resolveCurrentDisposition` 和完成签发链按该职责收敛。旧函数名和文件名不是架构约束，最终不得同时运行一套阶段编排与一套完成循环。
+`GoalPhaseRuntime` 承担上述协调职责；`readCurrentDispositionInput` 组装当前事实，`resolveCurrentDisposition` 形成处置，完成签发链核实相应终点。检查族及历史 phase 字段仍可被读取，但不再另成一套阶段作者队列或完成裁决。
 
 ### 3.2 其它模块只保留这一层地图
 
@@ -149,15 +149,31 @@ flowchart TB
 
 历史记录可保留读取，但历史阶段队列、预算和结果标签不能支配新执行。移除旧控制不删除其保护过的真实质量、授权、数据完整性和证据要求。允许主作者改实现和测试，不等于放开testing正式证据写保护。
 
+### 6.1 本窗口的实际承接点
+
+| 职责 | 已接入的现行实现 | 保留的边界 |
+|---|---|---|
+| 公开入口与两运输 | `goal-mode-entry`、`GoalPhaseRuntime`、`goal-phase-executor`、`session-execution-handoff` 共用工作单元上下文、原生会话定位及签发/交回原件 | 会话与进程只改变运输；作者完成声明不直接签业务通过 |
+| 设计与确定准备 | `initial-design-delivery`、`design-repair-unattended`、`capability-resolution-entry-input`、`blueprint-skill-projection` 接原设计单元、真实输入和机器投影 | 设计差额仍回原责任方重签，不从阶段名推写权 |
+| 写入与范围 | `repair-responsibility`、`phase-write-boundary`、`feature-track` 按当前义务和真实来源派生写域、收编合格证明与撤证 | 范围提案不直接授予源码写权；真实新来源、冻结输入和 required 义务保护保留 |
+| 检查与独立核验 | `harness-runner` 调真实 checker/provider；原 verifier request/material/subject 约束独立核验；`phase-evidence-manifest` 保留实际绑定 | 正文、原生 Case/Step、输入及证据资格缺失保持未知；字节可复用不替代当前证明资格 |
+| 当前处置与完成 | `readCurrentDispositionInput` → `resolveCurrentDisposition` → 原 Feature/CU/部件及发布终点消费者；NEXT、assess 和进度读取同一处置 | 完成、发布就绪与原请求交付端点分别核实，不由展示端重判 |
+| 收敛与恢复 | `prepareExecutionContext`、`currentCompletionEvaluation` 和共同工具派发事实读取承接正常交回、可比改善、当前输入/源码变化及因果失效；有效原件复用 | 同条件不重复买工作；真实变化只补相关 producer，未知不假判无进展或完成；pending 为空不抹去真实 reused 方法 |
+| 用户控制与进程安全 | 原 run owner/fence、guardian、显式用户截止/取消及有界条件探针维持真实调用安全 | 默认次数、总墙钟和通用恢复冷却不控制业务；真实工具时限、故障退避及设备系统约束保留 |
+
+P3 开发门禁：2026-11-02，官方 R3 执行 `cd harness && npm test` 自然结束，退出码0；普通单测5751通过、0失败，fixtures 41通过、0失败。受测源码及检视切点无漂移，无人工终止。实现、定向回归和独立代码检视分别记录实际覆盖，不互相替代。
+
+P4 的干净宿主 `bc-openCard-2` 联合真实宿主与设备交付验收以及发布仍 pending；本窗口未据开发仓结果声明宿主、设备或发布件已完成。
+
 ## 7. 与 OpenSpec 的对应及删改边界
 
-本文件说明“部件管什么、事实归谁”；OpenSpec说明可检验的行为；schema/Skill contract定义字段与能力接口；goal/plan说明实施顺序及验收。批准后的职责变更须同步到这些消费者，不能只追加一个新Requirement而保留相反旧条款。历史归档不改写。本轮仅列范围，不修改规范或创建change。
+本文件说明“部件管什么、事实归谁”；OpenSpec说明可检验的行为；schema/Skill contract定义字段与能力接口；goal/plan说明实施顺序及验收。批准后的职责变更须同步到这些消费者，不能只追加一个新Requirement而保留相反旧条款。历史归档不改写。本窗口已在既有 `completion-driven-execution` change 及相应现行规格中收编本批职责；下表保留退役条款与现行边界的对照。
 
-| 架构部件/约束 | 对应现有能力规格（`openspec/specs/`） | 后续保留与删改范围 |
+| 架构部件/约束 | 对应现有能力规格（`openspec/specs/`） | 现行职责与迁移边界 |
 |---|---|---|
 | 入口、专用会话、执行运输 | `goal-mode-skill`、`goal-driver-handoff`、`agent-adapters` | 保留单内核、真实调用和owner围栏；将phase-boundary交接改为调用/安全边界；移除主Agent执行fallback与hook业务完成权威，加入准确原生续接/事实重建 |
 | 完成协调器与统一反馈 | `goal-runner`、`reconcile-assessment`、`runtime-policy`、`correction-routing` | 保留当前处置同源、非干跑事实和完成/发布分层；删除“deterministic phase orchestration”、strict workflow repair routing、固定phase chain及内容次数终止 |
-| 用户控制与故障恢复 | `goal-runner`的Wall-clock budget、Budget-only authorization、budgeted closure-only、次数timeout条款 | 删除额度和预算血缘；工具卡死保护、用户时限/取消、真实条件及无进展恢复重新表述，不能删除全部进程安全处理 |
+| 用户控制与故障恢复 | `goal-runner`的显式用户截止、真实进程控制及已退役的预算条款 | 删除额度和预算血缘；工具卡死保护、用户时限/取消、真实条件及无进展恢复重新表述，不能删除全部进程安全处理 |
 | 检查工具及证据签发 | `harness-gates`、`verdict-lattice`、`runtime-step-evidence`、`capability-degradation` | 保留真实检查、缺口诚实化、执行键与有效复用；删receipt hard blocks dispatch、phase-state/closure作为推进条件和旧lite门；自检/终判同源 |
 | 设计、机器准备、工作单元 | `complex-capability-meta-model`、`app-component-blueprint`、`change-unit-continuous-progression`、`component-assembly-coverage-closure` | 保留设计权威、适用CU依赖和真实组装终点；作者/机器字段同源，独立Q增量复核；删除其中固定施工阶段/额度前提，不降低设计质量 |
 | 写入权与独立核验 | `phase-write-boundary`、`skill-contracts`、`harness-gates`中的source-mutation/review closure条款 | 写权改按产物性质、单元授权和验证责任；保留正式证据保护、独立上下文、验收/断言充分性，删“因为属于UT阶段所以不能修实现”等身份控制 |
@@ -165,14 +181,14 @@ flowchart TB
 | 真机、视觉及环境 | `visual-diff`、`visual-capability-routing`、`delegated-vision`、`ut-flow-dag-evidence`、`harness-gates` | 保留真实运行/截图、独立视觉、能力缺口和发布债务边界；删除绑定固定阶段作者或普通模式特殊降级的控制，不为重构减掉适用验收 |
 | 周边能力与集成 | `instance-extension-management`、`skill-authoring`、`init-orchestration`、`release-boundary` | 保留专业接口和发布件集成；扩展接共同工具/事实接口，不拥有第二完成循环；接入程序不自动授权业务变更 |
 
-代码落点用于迁移定位，不限定最终命名：现有runtime、处置/完成读取链、`agent-invoke`/executor、schema投影、checkers、独立verifier、profile能力和事件/写入观察应按§3重新归位。不能只改最终完成函数而漏掉作者提示、自检NEXT、回执兼容、恢复、状态、CU/部件及发布消费者。
+§6.1 记录当前实现落点；旧文件名和 phase 字段的兼容读取不恢复旧派工含义。作者提示、自检 NEXT、回执兼容、恢复、状态、CU/部件和发布消费者按同一职责及事实链承接，不能只同步最终完成函数。
 
 ## 8. 审定、实施对齐与维护
 
-用户已审定§1、§2、§4、§6，本轮补清运行中收敛约束并将目标架构定稿。总goal和P1–P4已据此校准，整体窄复核通过前不实施。b84已保全的工作区与补丁保持原样，后续迁移必须保留有价值的事实/保护，删除依附旧结构的接线；具体逐块处理留在实施计划，不写进本架构。
+本文于2026-10-29完成目标架构审定。本窗口 P1–P3 按批准边界实施，当前承接点及已通过的 P3 官方开发验收见§6.1。b84 保全原件与历史计划按原边界保存，不把已退役接线恢复为第二执行真源；P4 的真实宿主联合验收另行记录。
 
 审定后，每个plan注明所实现的本文件章节及I编号，检视核对职责和事实归属。复用现有元检查/定向测试守住可机器化的不变量，例如新运行不产生配额停机、生产提示无全停红线、作者不能写正式结果、同输入两运输同结论；不为此新造治理系统或全仓规则注册表。
 
-P3完成入口切换、旧路径删除及相应开发验收后，必须将本文改为现状架构，作为P3完成条件；同时明确发布及P4真实宿主验收的实际状态，不能据此提前关闭联合验收。以后改变职责划分须同步本文和相关规格。若实现与已审架构冲突，应说明真实原因并修订，不把偶然实现反写成既定原则。
+本文转为开发仓现状说明，P3 收口以§6.1的真实官方开发门禁记录为准；发布及P4联合验收仍 pending，不能由本次文档状态替代。以后改变职责划分须同步本文和相关规格。若实现与已审架构冲突，应说明真实原因并修订，不把偶然实现反写成既定原则。
 
-本轮overview恢复原文，仅在开头加本文件链接。P3实施时再定向清理六阶段派工、阶段回执和Stop hook收口等旧执行流程，保留三层分离、关键能力拆解、常见问题教训及历史沿革，并链接本文；不能为了单一架构入口删除仍有效的方法解释。
+overview 保留三层分离、关键能力拆解、常见问题教训、四原则和历史沿革，旧阶段派工、阶段回执及 Stop hook 完成权威的现行说明已定向同步，并链接本文。仍有效的方法解释继续保留，不能为了单一架构入口删去。

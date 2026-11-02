@@ -298,7 +298,7 @@ optional_fields:
       phase_context_isolation:
         type: boolean
         default: false
-        description: 声明阶段可在新鲜隔离上下文执行；false 仅表示主上下文执行并披露，不阻止共同 next/report，也不取消必需独立核验。
+        description: 历史字段名；声明专用工作单元上下文能力。false 不授权主会话代施工；无法续接时按当前事实重建专用上下文并披露，独立核验仍真实独立。
       supports_resume:
         type: boolean
         default: false

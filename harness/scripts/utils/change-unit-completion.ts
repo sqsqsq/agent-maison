@@ -14,6 +14,7 @@ import { executionCompletionPhases } from './execution-scope';
 import { isInsideProjectRoot } from './project-relative-path';
 import { resolvePhaseRunIds } from './verify-feature-completion';
 import { assessFeature, assessmentReasons, type FeatureAssessment } from './feature-assessment';
+import type { CurrentDisposition } from './check-disposition';
 import { SpecLoader } from './spec-loader';
 import { resolveCapabilityResolutionEntryInput } from './capability-resolution-entry-input';
 import { resolveCapabilityInputs, type ResolvedPhaseInputs } from './capability-resolution';
@@ -32,6 +33,7 @@ export interface ChangeUnitCompletionObservation {
   expectedTrack?: string;
   expectedChain?: string[];
   reasons: string[];
+  currentDisposition?: CurrentDisposition;
 }
 
 export interface ChangeUnitCompletionAdapterOptions {
@@ -196,5 +198,6 @@ export function observeChangeUnitCompletion(
     expectedTrack: expected.expectedTrack,
     expectedChain: expected.expectedChain,
     reasons: assessment.complete ? [] : assessmentReasons(assessment),
+    currentDisposition: assessment.currentDisposition,
   };
 }

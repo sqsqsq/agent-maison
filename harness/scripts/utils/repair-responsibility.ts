@@ -81,11 +81,15 @@ export interface PhaseWriteBoundaryResolution {
 }
 
 export interface ResolvePhaseWriteBoundaryOptions {
+  /** Before run birth, use the same original request without a temporary on-disk manifest. */
+  originalRequirement?: string;
   authorityReaders?: IdentityNeutralDigestReaders;
   projectRoot: string;
   frameworkRoot: string;
   feature: string;
   runId?: string;
+  /** Already-loaded approved scope; invocation-local input, not another authority record. */
+  executionScope?: ExecutionScope;
   pendingOwnerPhase?: string;
   phaseOrder: readonly string[];
   track: FeatureTrack;
@@ -100,6 +104,13 @@ export interface ResolvePhaseWriteBoundaryOptions {
     projectRoot: string,
     modules: ReadonlyArray<{ name: string; package_path: string }>,
   ) => string[];
+}
+
+/** Ownership describes every producer; only approved construction duties grant source writes. */
+export function workUnitWriteDomains(domains: readonly PhaseWriteDomain[], scope?: ExecutionScope): PhaseWriteDomain[] {
+  const sourceOwners = new Set(scope?.obligations.filter(obligation => obligation.applicability === 'required'
+    && (obligation.kind === 'implementation' || obligation.kind === 'unit-evidence')).map(obligation => obligation.owner_phase) ?? []);
+  return domains.filter(domain => domain.kind !== 'source' || sourceOwners.has(domain.owner));
 }
 
 /** Existing completion writer locations; only the current run original is inspected. */
@@ -286,7 +297,7 @@ export function readRepairResponsibilityContracts(
   const predictedScope = loadCodingScope(options);
   // Existing project sources have a producer before a construction input is ready.
   // That attribution does not replace the coding entry's strict bound-input check.
-  const implementation = resolveImplementationScope(options.projectRoot, options.feature, predictedScope.modules, options.runId);
+  const implementation = resolveImplementationScope(options.projectRoot, options.feature, predictedScope.modules, options.runId, options.originalRequirement);
   const codingScope = { modules: implementation.modules, prefixes: implementation.allowedPrefixes, diagnostics: predictedScope.diagnostics };
   diagnostics.push(...codingScope.diagnostics);
   const codingContract = contracts.get('coding')?.phase;
@@ -362,7 +373,7 @@ export function readRepairResponsibilityContracts(
     for (const file of workUnitProtectedRecordPaths(options.projectRoot, options.feature,
       options.runId ? featureFilePath(options.projectRoot, options.feature, `goal-runs/${options.runId}`) : undefined)) immutableInputPaths.add(file);
     const { resolveEffectiveScopeSource } = require('./goal-run-creation') as typeof import('./goal-run-creation');
-    const scope = resolveEffectiveScopeSource(options.projectRoot, options.feature, options.runId)?.scope;
+    const scope = options.executionScope ?? resolveEffectiveScopeSource(options.projectRoot, options.feature, options.runId)?.scope;
     const { resolveDependencyPath, inferLegacyProjectRoot } = require('./project-relative-path') as typeof import('./project-relative-path');
     const { collectRequirementSsotPaths } = require('./fidelity-shared') as typeof import('./fidelity-shared');
     for (const file of collectRequirementSsotPaths(options.projectRoot, options.feature, relFeaturesDir(options.projectRoot), { runId: options.runId })) {
@@ -544,7 +555,7 @@ export function repairResponsibilityContext(input: RepairResponsibilityContext):
   }
   const scope = input.executionScope ?? resolveEffectiveScopeSource(input.projectRoot, input.feature, input.runId)?.scope;
   const contracts = input.contracts ?? readRepairResponsibilityContracts({ projectRoot: input.projectRoot, frameworkRoot: input.frameworkRoot,
-    feature: input.feature, runId: input.runId, pendingOwnerPhase: input.currentPhase, authorityReaders: input.authorityReaders, executionRole: input.executionRole ?? 'author',
+    feature: input.feature, runId: input.runId, executionScope: scope, pendingOwnerPhase: input.currentPhase, authorityReaders: input.authorityReaders, executionRole: input.executionRole ?? 'author',
     phaseOrder: workflow.artifacts.map(artifact => artifact.id), track: 'full', profileDir: profile.profileDir,
     productLayerDirs: (config.architecture?.outer_layers ?? []).map(layer => layer.id),
     resolveUtSourceRoots: tryLoadUtSourceRootResolver(profile.profileDir) ?? undefined });
@@ -564,7 +575,7 @@ function ownerCategory(owner: string, context: RepairResponsibilityContext): Cor
 }
 
 /** Object identity comes from the current common view, not a category or another evidence parser. */
-function currentRepairObject(context: RepairResponsibilityContext, target: RepairResponsibilityTarget): CurrentDispositionProblem | undefined {
+export function currentRepairObject(context: RepairResponsibilityContext, target: RepairResponsibilityTarget): CurrentDispositionProblem | undefined {
   if (!context.currentDisposition || !target.id || !target.source_phase) return undefined;
   let matches = context.currentDisposition.problems.filter(problem =>
     (problem.id === target.id || problem.id === `open_finding:${target.id}`)
@@ -607,8 +618,8 @@ export function resolveRepairResponsibility(input: RepairResponsibilityContext &
   const pathOwner = knownMatches.length === (target.files?.length ?? 0) && knownMatches.length && new Set(knownMatches).size === 1 ? knownMatches[0] : null;
   const targetConflict = !!target.owner && !!pathOwner && target.owner !== pathOwner
     && !(target.owner === 'coding' && ownerCategory(pathOwner, context) === 'verification');
-  if (targetConflict || target.owner === 'coding' && pathOwner && ownerCategory(pathOwner, context) === 'verification') owner = pathOwner;
-  if (!owner && knownMatches.length === (target.files?.length ?? 0) && knownMatches.length && new Set(knownMatches).size === 1) owner = knownMatches[0];
+  if (!target.designAuthority && (targetConflict || target.owner === 'coding' && pathOwner && ownerCategory(pathOwner, context) === 'verification')) owner = pathOwner;
+  if (!owner && !target.designAuthority && knownMatches.length === (target.files?.length ?? 0) && knownMatches.length && new Set(knownMatches).size === 1) owner = knownMatches[0];
   if (!owner && target.category && context.workflow) {
     const owners = [...new Map(context.workflow.artifacts.filter(artifact => ownerCategory(artifact.id, context) === target.category).map(artifact => [artifact.id, artifact])).values()];
     const obligated = owners.filter(artifact => context.executionScope?.obligations.some(obligation => obligation.owner_phase === artifact.id && obligation.applicability === 'required'));
@@ -632,7 +643,8 @@ export function resolveRepairResponsibility(input: RepairResponsibilityContext &
   if (workUnitRole) {
     if (target.designAuthority) return result('design', '共享设计沿原设计权威链裁决、发布并重绑');
     // This answers who may repair, not what the currently reading verifier may write.
-    const boundary = context.contracts && { ...context.contracts, executionRole: 'author' as const };
+    const boundary = context.contracts && { ...context.contracts, executionRole: 'author' as const,
+      domains: workUnitWriteDomains(context.contracts.domains, context.executionScope) };
     const unitWritable = !!boundary && !!context.projectRoot && !!context.feature
       && path.resolve(boundary.projectRoot) === path.resolve(context.projectRoot) && boundary.feature === context.feature
       && boundary.domains.some(domain => workUnitMayWritePath(boundary, domain.path));

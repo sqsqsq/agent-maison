@@ -14,8 +14,6 @@ import { prepareFeatureScopeCandidate } from '../../scripts/utils/feature-track'
 import { prepareGoalModeRun, runGoalModeSessionStep } from '../../scripts/goal-mode-entry';
 import { deriveChangeUnitFeatureId, enumerateCanonicalChangeUnits } from '../../scripts/utils/change-unit-path';
 import { clearFrameworkConfigCache, featureFilePath } from '../../config';
-import { readOriginalDeliveryBudget } from '../../scripts/utils/delivery-origin';
-import { projectInitialDesignDelivery } from '../../scripts/utils/initial-design-delivery';
 import { readSessionExecution, acceptedSessionReport, type SessionExecutionRequest } from '../../scripts/utils/session-execution-handoff';
 import { readLockRecord, isLockStale, FEATURE_LOCK_NAME } from '../../scripts/utils/goal-run-lock';
 import { readRunControl, renewSessionLease } from '../../scripts/utils/goal-run-control';
@@ -37,7 +35,7 @@ const write = (root: string, rel: string, body: string) => { const file = path.j
 type Host = { root: string; frameworkRoot: string; harnessDir: string };
 type Family = Host & { original: InitialDesignGoalManifest; child: GoalManifest; rootDir: string; childDir: string; feature: string; copiedSourceHashes: Record<string, string> };
 
-async function withFamily(run: (family: Family) => Promise<void>, turns = 20): Promise<void> {
+async function withFamily(run: (family: Family) => Promise<void>): Promise<void> {
   await withFreshCuHost(async host => {
     const priorTrust = process.env.MAISON_GOAL_CHECKPOINT_DIR;
     process.env.MAISON_GOAL_CHECKPOINT_DIR = path.join(host.root, '.trust');
@@ -49,8 +47,7 @@ async function withFamily(run: (family: Family) => Promise<void>, turns = 20): P
       fs.rmSync(featureFilePath(host.root, feature, 'context/facts.md'), { force: true });
       const original = buildInitialDesignGoalManifest({ feature: BLUEPRINT, run_id: ROOT_ID, adapter: 'codex', requirement: CU_REQUIREMENT,
         requirement_source_files: ['requirements/ledger.md'], initial_design: { completion_target: 'feature', requested_results: [CU_REQUIREMENT], requested_phases: ['coding'] },
-        budget: { max_total_turns: turns, wall_clock_minutes: 120, max_retries_per_phase: 2 },
-        unattended: { write_mode: 'full-access', approval_mode: 'never', timeout_seconds: 900 } }, { projectRoot: host.root });
+        unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: host.root });
       createGoalRun({ projectRoot: host.root, manifest: original, chain: [] });
       prepareFeatureScopeCandidate({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature, completionTarget: 'request',
         requestedResults: ['coding'], requestedPhases: ['coding'], requirement: CU_REQUIREMENT, requirementSourceFiles: ['requirements/ledger.md'], overwrite: true,
@@ -104,7 +101,8 @@ function ownedReporter(f: Family, child: ChildProcess, tree: boolean): void {
   else child.kill('SIGKILL');
 }
 function prepareCoding(f: Family, request: SessionExecutionRequest): void {
-  assert.equal(request.context.phase, 'coding');
+  assert.equal(request.context.phase, 'work-unit-author');
+  assert.equal(request.context.factsContext?.first_phase, 'coding');
   writeCuCodingMaterials({ ...f, module: 'ledger', modulePath: 'src/ledger', runId: request.context.runId });
   const file = featureFilePath(f.root, f.feature, 'context/facts.md');
   const content = fs.readFileSync(file, 'utf8'), match = /^---\s*\n([\s\S]*?)\n---/.exec(content)!;
@@ -131,6 +129,12 @@ function preserve(f: Family, label: string, extra: Record<string, unknown>): str
   }
   fs.copyFileSync(path.join(f.rootDir, 'events.jsonl'), path.join(directory, 'root.events.jsonl'));
   fs.copyFileSync(path.join(f.childDir, 'events.jsonl'), path.join(directory, 'child.events.jsonl'));
+  for (const name of ['summary.json', 'script-report.json', 'phase-evidence-manifest.json']) {
+    const source = featureFilePath(f.root, f.feature, `coding/reports/${name}`);
+    if (fs.existsSync(source)) fs.copyFileSync(source, path.join(directory, `coding-${name}`));
+  }
+  const pending = readSessionExecution(f.childDir);
+  if (pending) fs.copyFileSync(path.resolve(f.childDir, pending.reference.path), path.join(directory, 'pending-request.json'));
   write(directory, 'evidence.json', JSON.stringify({ project_root: f.root, copied_source_hashes: f.copiedSourceHashes, ...extra }, null, 2) + '\n');
   return directory;
 }
@@ -144,7 +148,7 @@ const cases: Array<{ name: string; run(): Promise<void> }> = [{
     prepareCoding(f, request);
     const out = fs.openSync(path.join(f.root, 'observations/report.stdout.log'), 'w'), err = fs.openSync(path.join(f.root, 'observations/report.stderr.log'), 'w');
     const reporterStartedAt = Date.now();
-    const reporter = spawn(process.execPath, cliArgs(f, ['--request', first.request.path, '--report-result', JSON.stringify({ phase: 'coding', status: 'passed' })]),
+    const reporter = spawn(process.execPath, cliArgs(f, ['--request', first.request.path, '--report-result', JSON.stringify({ phase: request.context.phase, status: 'passed' })]),
       { cwd: f.harnessDir, env: env(f), stdio: ['ignore', out, err], windowsHide: true, detached: process.platform !== 'win32' });
     fs.closeSync(out); fs.closeSync(err);
     const closed = withRuntimeTest({ root: f.root, timeoutMs: 3 * CLI_TIMEOUT_MS,
@@ -195,7 +199,7 @@ const cases: Array<{ name: string; run(): Promise<void> }> = [{
       const recovered = after.find(row => row.type === 'resume' && Date.parse(row.ts) >= resumedAt);
       assert(recovered && Date.parse(recovered.ts) < leaseDeadline, 'the actual recovery must begin while the retained lease is still valid');
       assert(native.filter(row => row.kind === 'enter')[1].at_ms < leaseDeadline, 'the replacement machine gate must actually enter before the still-valid lease expires');
-      assert.equal(after.filter(row => row.type === 'agent_invoke_start' && row.phase === 'coding').length, 1, 'the accepted coding author is not replayed');
+      assert.equal(after.filter(row => row.type === 'agent_invoke_start' && row.phase === request.context.phase).length, 1, 'the accepted unit author is not replayed');
       assert(native.every(row => !row.live_prior_pids?.length), 'the original guardian must settle before its replacement gate runs');
       assert(!rows(rootEvents).some(row => row.type === 'run_end' && row.status === 'INTERRUPTED'));
       for (const [file, hash] of Object.entries(f.copiedSourceHashes)) assert.equal(sha(fs.readFileSync(path.join(f.harnessDir, file))), hash, 'all control processes must use one unchanged copied kernel');
@@ -231,28 +235,6 @@ const cases: Array<{ name: string; run(): Promise<void> }> = [{
       assert.equal(forced.length, 0, `N1 leaked bound gates required forced teardown: ${forced.join(', ')}`);
     }
   }); },
-}, {
-  name: 'N2 N3 public child budget halt exposes the real root manifest recovery guidance and shared projection fields',
-  async run() { await withFamily(async f => {
-    const first = cli(f, ['--next'], 'budget-next'); assert.equal(first.type, 'phase_execute_request', JSON.stringify(first));
-    assert.equal(first.run_id, CHILD_ID); assert.equal(readOriginalDeliveryBudget(f.root, f.original)!.totalTurns, 1);
-    const stopped = cli(f, ['--request', first.request.path, '--report-result', JSON.stringify({ phase: first.phase, status: 'failed', details: 'Control fixture author failed within the original one-call allowance.' })], 'budget-report');
-    assert.equal(stopped.type, 'goal_session_result'); assert.equal(stopped.result.halt_reason, 'budget_turns');
-    const view = projectInitialDesignDelivery({ projectRoot: f.root, frameworkRoot: f.frameworkRoot, manifest: f.original });
-    assert.equal(view.status, 'HALTED'); assert.equal(view.complete, false);
-    assert.deepEqual(stopped.result.recovery, view.recovery); assert.deepEqual(stopped.result.issues, view.issues);
-    const projectedCurrent = view.current && { ...view.current };
-    if (projectedCurrent?.deadline === undefined) delete projectedCurrent?.deadline;
-    assert.deepEqual(stopped.result.current, projectedCurrent, 'the public JSON omits only the absent optional deadline; any real deadline and identity remain exact');
-    assert.equal(stopped.result.halt_reason, view.halt_reason); assert.equal(stopped.result.next_action, view.next_action);
-    const guidance = JSON.stringify(stopped.result.recovery);
-    assert(guidance.includes(path.join(f.rootDir, 'manifest.json').replace(/\\/g, '\\\\')) || guidance.includes(path.join(f.rootDir, 'manifest.json').replace(/\\/g, '/')), guidance);
-    assert(guidance.includes(ROOT_ID) && guidance.includes(BLUEPRINT), guidance);
-    assert(!guidance.includes(path.join(f.childDir, 'manifest.json').replace(/\\/g, '\\\\')), 'child-only budget edits cannot be presented as the release condition');
-    assert.equal(readOriginalDeliveryBudget(f.root, f.original)!.totalTurns, 1);
-    preserve(f, 'control-budget', { first, stopped, shared_projection: view });
-  }, 1); },
-
 }];
 
 export function getCases() { return cases; }

@@ -52,12 +52,11 @@ import { checkGoalRunIdentityIntact } from '../../scripts/check-spec';
 import { loadWorkflowSpec } from '../../workflow-loader';
 import {
   partitionExecutionSessions,
-  resolveResumedBudget,
+  readExecutionActivity,
   rebuildOutcomesFromEvents,
   filterAuthoritativeEvents,
   loadEventsJsonlStrict,
-  resolveResumeFromEvents,
-  checkTerminalResumeGuard,
+  resolveEffectiveRunEnd,
   SESSION_HEARTBEAT_MS,
   type GoalRunEvent,
 } from '../../scripts/utils/goal-runner-phase';
@@ -69,8 +68,6 @@ import {
 } from '../../scripts/utils/mutation-authorization';
 import { resolveBlockerActionability } from '../../scripts/utils/goal-failure-classifier';
 import {
-  buildBudgetExhaustedGuidance,
-  buildUnauthorizedMutationGuidance,
 } from '../../scripts/utils/await-confirm-guidance';
 
 export interface UnitCaseResult {
@@ -405,8 +402,8 @@ const cases: Array<{ name: string; run: () => void }> = [
     name: 'T2: 隔夜 resume——活跃 69m 而非日历 12h（4035d4 回归）',
     run: () => {
       const nextSession = T0 + 13 * 60 * 60_000; // 隔夜 resume
-      const b = resolveResumedBudget(overnightEvents(), { nextSessionStartMs: nextSession });
-      const activeMin = Math.round(b.priorActiveMs / 60_000);
+      const b = readExecutionActivity(overnightEvents(), nextSession);
+      const activeMin = Math.round(b.active_ms / 60_000);
       if (activeMin !== 69) throw new Error(`priorActiveMs=${activeMin}m ≠ 69m`);
       if (b.firstAuthoritativeStartMs !== T0) throw new Error('firstAuthoritativeStartMs 漂移');
     },
@@ -436,9 +433,9 @@ const cases: Array<{ name: string; run: () => void }> = [
         ev({ ts: iso(T0), type: 'run_start' }),
         ev({ ts: iso(T0 + 10 * 60_000), type: 'heartbeat' }),
       ];
-      const b = resolveResumedBudget(events, { nextSessionStartMs: T0 + 10 * 60_000 + 5_000 });
-      if (b.priorActiveMs > 10 * 60_000 + 5_000) {
-        throw new Error(`补收越过 resume 边界：${b.priorActiveMs}`);
+      const b = readExecutionActivity(events, T0 + 10 * 60_000 + 5_000);
+      if (b.active_ms > 10 * 60_000 + 5_000) {
+        throw new Error(`补收越过 resume 边界：${b.active_ms}`);
       }
     },
   },
@@ -475,29 +472,6 @@ const cases: Array<{ name: string; run: () => void }> = [
         ev({ ts: iso(T0), type: 'run_end', status: 'HALTED' }), // 回拨
       ]);
       if (rollback.priorActiveMs !== 0) throw new Error('负时长未钳 0');
-    },
-  },
-  {
-    // plan 4e6fb3b6 §3.3：原断言要求保留"复制 manifest、以新 run_id 启动、旧 run 用 --supersede 废弃"一路；
-    // 该路要求用户自拼 run 与旗标（且新 run 会被接续守卫拒绝），已删，改为断言不再出现。
-    name: 'T2: budget guidance——不出现裸「重启」，走 --override-manifest 授权续跑，不要求用户自拼新 run',
-    run: () => {
-      const g = buildBudgetExhaustedGuidance({
-        feature: 'f1', runId: 'r1', phase: 'ut', kind: 'budget_wall_clock',
-        activeElapsedMs: 480 * 60_000, limit: 480 * 60_000, harnessPrefixRel: 'harness',
-      }).join('\n');
-      if (!/--override-manifest/.test(g)) throw new Error('缺 override 路');
-      if (/--supersede|新 run_id/.test(g)) throw new Error('不得要求用户自拼新 run 或 --supersede');
-      // plan 4e6fb3b6 返修 3：overrideAuthorizedIdentityFields 对 --override-manifest 返回 'all'——是整体授权
-      if (/字段级授权|只放行这次预算/.test(g)) throw new Error('不得把整体 manifest 授权说成只授权预算');
-      if (!/整体授权/.test(g) || !/只应.{0,8}预算/.test(g)) throw new Error('须写明整体授权、本次修改只应涉及预算');
-      if (!g.includes('已累计 480m / 预算 480m') || g.includes('活跃')) throw new Error('须如实显示累计预算时间，不把待机说成模型活跃');
-      if (!g.includes('无人值守长跑请接电源并关闭睡眠')) throw new Error('预算停机须提示长跑供电与睡眠设置');
-      // plan a2f7c9e4 §3.2/§3.3：只改预算时重新发起同一请求与显式续跑都接回本 run——不再要求 --force-resume、不再提冷却，
-      // 也不再写"起后继、沿用来源旧预算"的限定。
-      if (!g.includes('--resume r1 --override-manifest') || !/重新发起同一请求/.test(g)) throw new Error('须给出重新发起与已填好的显式续跑两条路');
-      if (/--override-manifest --force-resume|冷却过去|合同来源|旧预算/.test(g)) throw new Error('不得再要求 --force-resume / 等冷却，或写起后继沿用旧预算');
-      if (!/接回本 run/.test(g)) throw new Error('须写明两种做法都接回本 run');
     },
   },
   // ------------------------------------------------------------ T3b
@@ -557,24 +531,6 @@ const cases: Array<{ name: string; run: () => void }> = [
       // 空 drift → no_drift 快速路径
       const d = classifySourceDrift({ added: [], modified: [], deleted: [] }, [], { runId: 'r1', frozenManifestHash: null });
       if (d.kind !== 'no_drift') throw new Error('空 drift 未判 no_drift');
-    },
-  },
-  {
-    name: 'T3c: guidance——source mutation 人签已退役；截断链转新起 owner run',
-    run: () => {
-      const g1 = buildUnauthorizedMutationGuidance({
-        feature: 'f1', runId: 'r1', phase: 'ut', violations: ['x'],
-        chainHasCodingReview: true,
-        harnessPrefixRel: 'harness',
-      }).join('\n');
-      if (!/人签字段|旧 receipt|签名/.test(g1)) throw new Error('未明示人签无权');
-      if (!/coding/.test(g1)) throw new Error('缺 coding owner 出路');
-      const g2 = buildUnauthorizedMutationGuidance({
-        feature: 'f1', runId: 'r1', phase: 'ut', violations: ['x'],
-        chainHasCodingReview: false,
-        harnessPrefixRel: 'harness',
-      }).join('\n');
-      if (!/截断链|新起 coding 起点/.test(g2)) throw new Error('截断链裁决未转新起链');
     },
   },
   // ------------------------------------------------------------ T4
@@ -690,10 +646,10 @@ const cases: Array<{ name: string; run: () => void }> = [
       if (snap.chain.current_phase !== 'ut') throw new Error(`current=${snap.chain.current_phase}（dry testing 泄漏）`);
       if (snap.phase.status === 'PASSED') throw new Error('dry PASS 泄漏进当前 phase 状态');
       if (snap.status === 'COMPLETED') throw new Error('dry run_end 终态泄漏');
-      if (snap.budget.turns_used !== 1) throw new Error(`turns=${snap.budget.turns_used}（dry 幻影 turn）`);
+      if (snap.activity!.calls !== 1) throw new Error(`turns=${snap.activity!.calls}（dry 幻影 turn）`);
       // 活跃口径：wall_elapsed = 真实段 now−段首（120s），非「dry run_start→now」日历 61h 跨度
-      if (snap.budget.wall_elapsed_ms !== 120_000) {
-        throw new Error(`wall_elapsed=${snap.budget.wall_elapsed_ms} ≠ 120000（活跃口径未生效）`);
+      if (snap.activity!.active_ms !== 120_000) {
+        throw new Error(`wall_elapsed=${snap.activity!.active_ms} ≠ 120000（活跃口径未生效）`);
       }
       // .dry 视图保留 raw：dry 自己的 progress 仍可见
       if (!isDryReportDir(`doc/features/f1/goal-runs/${DRY_RUNS_SUBDIR}/r1`)) throw new Error('isDryReportDir 误判');
@@ -705,7 +661,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         projectRoot: root, manifest: dryManifest, events: events.slice(0, 7), workflow,
         featureLock: null, runnerLock: null, nowMs: T0 + 10_000,
       });
-      if (drySnap.budget.turns_used !== 1) throw new Error('dry 视图 raw 口径丢失');
+      if (drySnap.activity!.calls !== 1) throw new Error('dry 视图 raw 口径丢失');
       if (drySnap.status !== 'COMPLETED') throw new Error(`dry 视图终态=${drySnap.status}`);
     },
   },
@@ -906,13 +862,8 @@ const cases: Array<{ name: string; run: () => void }> = [
       ];
       // 旧代码的 report 分支（priorReport?.phases 优先）会以 review halt 起步——
       // 本用例直接验证 events-only 口径的起点不依赖任何 report。
-      const resume = resolveResumeFromEvents(chain, events);
-      if (resume.startIndex !== 3) {
-        throw new Error(`起点应为 testing(idx=3)，实得 ${resume.startIndex}（outcomes=${JSON.stringify(resume.priorOutcomes)}）`);
-      }
-      if (resume.priorOutcomes.length !== 3) {
-        throw new Error(`priorOutcomes 应为 3（coding/review/ut PASS），实得 ${resume.priorOutcomes.length}`);
-      }
+      const outcomes = rebuildOutcomesFromEvents(events, chain);
+      if (outcomes.length !== 3 || outcomes.some(outcome => outcome.verdict !== 'PASS')) throw new Error('原events真实PASS事实须可读，不从旧report派工');
       // 接线断言：goal-runner resume 分支不得再读取 report 的 phases 做起点。
       const runnerSrc = fs.readFileSync(
         path.join(__dirname, '../../scripts/goal-phase-runtime.ts'), 'utf-8',
@@ -966,54 +917,24 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 't1: terminal guard priorStatus 从 events run_end 投影（HALTED 拒绝非 force resume）',
+    name: 't1: 历史run_end从权威events读取，不回退陈旧report.status或决定当前派工',
     run: () => {
-      const T = Date.now() - 10 * 60_000; // 明确过去（cooldown=0 时也不触发负 elapsed）
-      // report 显示 COMPLETED（陈旧）、events run_end=HALTED——guard 以 events 为准拒绝。
+      const T = Date.now() - 10 * 60_000;
+      // 陈旧report不得改写实际历史控制事件；当前是否可继续另读真实差额。
       const events: GoalRunEvent[] = [
         ev({ ts: new Date(T).toISOString(), type: 'run_start' }),
         ev({ ts: new Date(T + 60_000).toISOString(), type: 'phase_verdict', phase: 'spec', verdict: 'PASS', action: 'advance' }),
         ev({ ts: new Date(T + 120_000).toISOString(), type: 'run_end', status: 'HALTED' }),
       ];
-      const last = [...events].reverse().find((e) => e.type === 'run_end');
-      const guard = checkTerminalResumeGuard({
-        priorStatus: last?.status,
-        lastRunEndTs: last?.ts,
-        forceResume: false,
-        cooldownMinutes: 0,
-      });
-      if (guard.allowed) throw new Error('events run_end=HALTED 必须拒绝裸 resume');
-      const forced = checkTerminalResumeGuard({
-        priorStatus: last?.status,
-        lastRunEndTs: last?.ts,
-        forceResume: true,
-        cooldownMinutes: 0,
-      });
-      if (!forced.allowed) throw new Error('--force-resume 应放行（cooldown=0）');
-      // 接线断言：resume guard 的 priorStatus 不再回退 report.status。
+      const last = resolveEffectiveRunEnd(events);
+      if (last?.status !== 'HALTED') throw new Error('历史run_end仍应如实读取为HALTED，不把控制历史签为业务完成');
+      // 当前运行时不得回退陈旧report.status作为原控制事实。
       const runnerSrc = fs.readFileSync(
         path.join(__dirname, '../../scripts/goal-phase-runtime.ts'), 'utf-8',
       );
       if (/priorReport\?\.status/.test(runnerSrc)) {
         throw new Error('goal-runner.ts terminal guard 仍回退 report.status（plan t1 同病未除）');
       }
-    },
-  },
-  {
-    name: 'P2-T10 blockingCleared does not bypass cooldown and only applies after the wait',
-    run: () => {
-      const recent = checkTerminalResumeGuard({
-        priorStatus: 'HALTED', lastRunEndTs: new Date().toISOString(),
-        cooldownMinutes: 5, blockingCleared: true,
-      });
-      if (recent.allowed || !recent.reason?.includes('resume cooldown: wait')) {
-        throw new Error(`blockingCleared 绕过冷却：${JSON.stringify(recent)}`);
-      }
-      const elapsed = checkTerminalResumeGuard({
-        priorStatus: 'HALTED', lastRunEndTs: new Date(Date.now() - 6 * 60_000).toISOString(),
-        cooldownMinutes: 5, blockingCleared: true,
-      });
-      if (!elapsed.allowed) throw new Error(`冷却后可信恢复仍被拒：${JSON.stringify(elapsed)}`);
     },
   },
   {
@@ -1041,16 +962,7 @@ const cases: Array<{ name: string; run: () => void }> = [
           `halt 重建丢失 run_disposition/run_wait_kind 投影：${JSON.stringify(haltedUt)}`,
         );
       }
-      // fa0663：WAITING(external) 停放不得被计入 done——resume 起点必须回到 ut。
-      const resume = resolveResumeFromEvents(chain, events);
-      if (resume.startIndex !== 2) {
-        throw new Error(`设备停放场景起点应为 ut(idx=2)，实得 ${resume.startIndex}`);
-      }
-      // 弹出 halted phase 后的 prefix 不得残留 WAITING outcome 自身（resolveResumeState
-      // 的 halted 弹出语义）——但数据库（未 halt 的）先序 outcome 必须保留。
-      if (resume.priorOutcomes.length !== 2) {
-        throw new Error(`halted 弹出后 prefix 应为 2，实得 ${resume.priorOutcomes.length}`);
-      }
+      if (haltedUt.verdict === 'PASS') throw new Error('真实WAITING不得投影成业务通过');
     },
   },
 ];

@@ -15,7 +15,7 @@
 | 正式 Feature/CU testing | 先完整读 [正式阶段](../../reference/device-testing-workflow-detail.md#正式-featurecu-阶段) 再执行 | 消费绑定验收/范围及原 required 证据，按正式完成判定收口 |
 
 步骤设计由 Agent 完成；用户只需提供目标行为和可查证的预期，不必先写点击脚本。已有正式交付责任不改走独立路径。
-正式阶段的**闭环停等**按 [用户确认 UX](../../reference/user-confirmation-ux.md) 的 `phase.next_step` 与已有授权裁决；独立请求到本次设计或执行终点结束。
+完整交付由原协调器按共同当前处置和已有授权继续，不在phase边界重复确认或轮流派作者。独立请求到本次原终点结束；真正独立核验保持另一个上下文。
 解锁、即席和正式执行共用 [设备策略](../../reference/device-policy-gate.md)：实际操作时保留授权和 PIN 红线；即席 CLI 已含设备门，不必预先重复 `--ready`。
 
 ## 方法与执行

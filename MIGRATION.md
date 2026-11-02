@@ -1,3 +1,14 @@
+## 当前开发迁移：持续工作单元与单一完成闭环（72b6f0d9 / P3）
+
+当前开发说明不代表已发布或P4宿主验收通过。
+
+- 完整交付使用同一goal-mode-entry / goal-runner；root、各CU、request各有专用作者。spec/plan/coding/review/UT/testing为方法和检查族，不再六phase冷启动，不回主会话代施工。
+- 新builder忽略旧budget；有效unattended不消费max_turns、timeout_seconds、phase_timeout_seconds。用户明示截止使用--user-deadline-at <UTC ISO-8601>，归一到user_deadline_at；未完请求重入/后继/换运输不重置。具体工具期限、取消、native终态/idle、设备、owner/fence和写保护保留。
+- InSessionRoundResult无manual_fallback；runInSessionRound不注入maxRounds=1。runChangeUnitProgression移除maxUnits，一次只返回ready-set事实步；完整原请求由root持续全部适用CU，子run出生/select_one不算交付。
+- assess/NEXT/status/report/progress及Feature/CU/component/release共读当前处置；assess默认只读，--write才写投影。activity.calls/active_ms为统计。unknown/缺原件保持verify/wait，events标签不替代业务完成。
+- 准确SID失效或权限改变则按当前事实重建专用上下文并披露。独核始终独立，变化材料补核受影响内容，完整原拒修进入当前request/material。
+- component须原正式writer产出并重读校验，allCUCompleted/evaluate条件绿不代签。普通完成与release分别投影；P4联合宿主/设备pending。
+
 # Framework 升级与迁移说明
 
 ## 3.1.0 初建设计准入与有进展续作（plan d18f6c42）

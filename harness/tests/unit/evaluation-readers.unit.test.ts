@@ -165,11 +165,14 @@ const cases: Array<{ name: string; run(): Promise<void> }> = [
         assert(duties.every(item => item.satisfied_by?.length && item.satisfied_by.every(ref => 'input_id' in ref)),
           `${phase}: required omitted checks need the actual canonical definition proof`);
       }
-      assert(!assessed.value.observation.currentDisposition?.completionBlocking.some(problem => (problem.owner ?? problem.phase) === phase),
-        `${phase}: accepted canonical proof cannot leave a hidden completion blocker`);
+      const currentProblems = assessed.value.observation.currentDisposition?.completionBlocking.filter(problem => (problem.owner ?? problem.phase) === phase) ?? [];
+      assert(currentProblems.every(problem => problem.id === 'attestation_present' && problem.action === 'verify'),
+        `${phase}: canonical inputs do not close an existing check's unavailable independent proof: ${JSON.stringify(currentProblems)}`);
     }
-    assert.equal(assessed.value.result.recommendation.phase, 'coding');
-    assert.equal(assessed.value.result.recommendation.action, 'rerun_phase', 'historical coding defect must not disappear');
+    assert.equal(assessed.value.result.recommendation.phase, null);
+    assert.equal(assessed.value.result.recommendation.action, 'continue_work_unit');
+    assert(assessed.value.observation.currentDisposition?.completionBlocking.some(problem => (problem.owner ?? problem.phase) === 'coding'),
+      'the actual coding defect must remain beside independent verification gaps');
   }) },
 ];
 

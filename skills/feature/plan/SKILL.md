@@ -12,7 +12,7 @@
 
 **Harness 运行时前置**：满足 [Host harness readiness · Tier_1](../../reference/host-harness-readiness.md) 与 [Shell cwd 契约](../../reference/harness-cli-cwd.md)。**Personal setup（BLOCKER）**：[personal-setup-gate](../../reference/personal-setup-gate.md)：`check-personal-setup.ts --json --ensure`；仅解析 JSON。
 
-**Feature 归档定位协议**（本阶段是消费者）：先基于 `paths.features_dir` 精确定位 `<features_dir>/<feature>/`。 `<feature>` 语义见 [路径术语表](../../reference/agents-entry-detail.md)（物理 Feature 路径）；定位一律经框架解析（CLI/SSOT/harness 产物路径），不得手工拼接逻辑 identity（含编码 `cu-…`）。**跨会话 Resume Gate（BLOCKER，AGENTS §5.2）**：receipt 可能已存在时须先自跑 `check-receipt.ts`；exit 0 → 已闭环，**停等 `phase.next_step`**。只有精确目录是正式 feature，同级归档/同名前缀条目仅旁证；目录不存在须快速失败提示先创建；实际必要验收输入缺失须报告并回 spec 补齐，旧 1.0 调用仍要求 `spec.md`。
+**Feature 归档定位协议**（本阶段是消费者）：先基于 `paths.features_dir` 精确定位 `<features_dir>/<feature>/`。 `<feature>` 语义见 [路径术语表](../../reference/agents-entry-detail.md)（物理 Feature 路径）；定位一律经框架解析（CLI/SSOT/harness 产物路径），不得手工拼接逻辑 identity（含编码 `cu-…`）。**跨会话 Resume Gate（BLOCKER，AGENTS §5.2）**：receipt 可能已存在时须先自跑 `check-receipt.ts`；exit 0只说明原检查闭环；完整交付继续读取共同当前事实，专项请求到原终点停止。只有精确目录是正式 feature，同级归档/同名前缀条目仅旁证；目录不存在须快速失败提示先创建；实际必要验收输入缺失须报告并回 spec 补齐，旧 1.0 调用仍要求 `spec.md`。
 
 ## 条件加载索引
 
@@ -57,7 +57,7 @@ Step 2/5/6 的模块与依赖设计先读 [plan-workflow-detail.md「核心架�
 
 ## 层边界（BLOCKER）
 
-用户仅表达"修订 plan/改 contracts"未同时要求编码（"开始编码/按 plan 实现/写代码"），**只激活本 Skill**，本轮定性为 plan 迭代，不自动滑入 coding。plan 迭代回合内**禁止**新增/修改实现层产物（业务模块源代码树内、`contracts.yaml`/`plan.md` 约定的可编译交付路径），仅可改 plan 侧 SSOT 与文档。中途修正按 AGENTS §4.0 修正三问分层。落盘 → harness → 停等人审：每次 plan.md 写盘后须立即跑 Step 13.1，通过后须 **`plan.ok_to_code` 编号确认**（`1=OK 可编码` `2=继续改 plan`）才能进 coding；即使历史阶段已跑通，本轮改了 plan 侧 SSOT 也重新适用。
+用户仅表达"修订 plan/改 contracts"未同时要求编码（"开始编码/按 plan 实现/写代码"），**只激活本 Skill**，本轮定性为 plan 迭代，不自动滑入 coding。plan 迭代回合内**禁止**新增/修改实现层产物（业务模块源代码树内、`contracts.yaml`/`plan.md` 约定的可编译交付路径），仅可改 plan 侧 SSOT 与文档。中途修正按 AGENTS §4.0 修正三问分层。落盘后执行适用真实检查；仅plan请求到此结束。已授权完整交付由共同协调器按当前事实继续，不重复要求plan.ok_to_code；实质验收/范围变更仍由原责任方重签。
 
 ## 流程骨架
 
@@ -106,7 +106,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase plan --feature {mo
 
 1. `<features_dir>/<feature>/plan/reports/trace.json` 真实存在；2. 脚本 harness 退出码 0、零 BLOCKER；3. verifier verdict=PASS（**仅当 harness 为本阶段输出了 verifier request**；只跑一次——材料未变复用既有报告，历史 PASS 的适用性与补核按共同处置）；4. `check-receipt.ts` 通过（回执由 harness 只读投影生成，agent 不手填；备注写 `<phase>/notes.md`）。required 证据齐备后设计阶段完成，**具备**进 coding 的资格；**不授权**自动开 coding。
 
-**收尾 / 闭环停等（BLOCKER）**：只呈现 harness 的 `NEXT_STEP` 段落；recommendation 由 `assess@1` 生成，执行授权仍由 driver 按 `phase.next_step` / `transition_policy` 裁决。
+**收尾与继续**：呈现共同当前处置的NEXT；完整交付依已有授权由原协调器持续推进，不按phase重复确认或派新作者。直接专项请求止于原终点，检查PASS不扩大授权。
 
 ## 输出规范
 

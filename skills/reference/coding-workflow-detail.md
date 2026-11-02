@@ -87,7 +87,7 @@ coding 确认疑似上游缺口时，才写本阶段可选 `coding/upstream-issu
 
 原 verifier 启用且证据当前可读时，失败阶段可沿 `repair_diagnosis` 核实。按 summary 的当前 request 出逐条 `issue-verification`：`issue` 为原 ID，`verdict` 为 confirmed/refuted/unclear，`evidence` 原样包含涉及文件名及装配材料给出的完整问题/依据＋修复建议，再说明实际证据。自检只有提案；confirmed 才交接。脚本 FAIL、blocked、未执行检查继续如实保留；不自动启用关闭的 verifier。
 
-spec/plan/coding 交现有候选/范围修订；蓝图、CU、架构 DSL 交既有设计 owner，不能就地改权威或增加 design 阶段。owner 修订重签后回原阶段复验。目标冲突拒修沿既有账本 `repair_candidate:<指纹>` 并用「」引目标原文；事实误判拒修写当前 `路径:行号` 和合法做法，由原独立核实逐条确认 `issue=<gate_id>`（evidence 含完整拒修依据）。原阶段读取理由后修自身产物或补真实新事实；未看理由的旧 subject、换 ID/措辞/路径格式均不能取得新的回修机会，预算继续累计。单职责 request 仍按原授权终点处理，不自动扩大调度。
+spec/plan/coding 交现有候选/范围修订；蓝图、CU、架构 DSL 交既有设计 owner，不能就地改权威或增加 design 阶段。owner 修订重签后回原阶段复验。目标冲突拒修沿既有账本 `repair_candidate:<指纹>` 并用「」引目标原文；事实误判拒修写当前 `路径:行号` 和合法做法，由原独立核实逐条确认 `issue=<gate_id>`（evidence 含完整拒修依据）。原阶段读取理由后修自身产物或补真实新事实；未看理由的旧 subject、换 ID/措辞/路径格式均不能取得新的回修机会，真实activity继续统计，未完请求显式用户截止不重置。单职责 request 仍按原授权终点处理，不自动扩大调度。
 
 `summary.next_action` 分流：`rerun_with_HARNESS_DIFF_BASE_REF_working`/`diff_within_scope` 报 `stale_diff_base` → 自动重跑 `HARNESS_DIFF_BASE_REF=working` 版本，仍越界才进 scope 扩展或撤销流程；`resolve_project_dependencies_then_rerun`/`project_dependency_missing` → harness 应已自动安装，仍 FAIL 读日志按上节处理；`declare_dependencies_then_rerun`/`project_dependency_undeclared` → agent 自补声明重跑；`resolve_dependency_install_blocker_then_rerun`/`project_dependency_install_failed` → 按日志 registry/鉴权/网络原因处理。
 

@@ -250,7 +250,7 @@ const cases: Case[] = [
         '    ut_layer: device',
         '    linked_flow: main',
       ].join('\n'));
-      const issues = collectCleanPassIssues({ projectRoot: root, feature: FEATURE, chain: CHAIN });
+      const issues = collectCleanPassIssues({ projectRoot: root, feature: FEATURE, chain: CHAIN_T });
       assert.strictEqual(
         issues.some((i) => i.condition === 'flow_contract_receipt'),
         false,
@@ -290,6 +290,39 @@ const cases: Case[] = [
       assert.ok(originalAbs.includes('goal-runs'));
       const v = verify(root);
       assert.strictEqual(v.verdict, 'VALID', v.reasons.join('；'));
+    },
+  },
+  {
+    name: 'unit producer lineage: real family tools share the unit attempt; absent execution and unsuccessful run remain invalid',
+    run: () => {
+      const root = mkProject();
+      seedCleanChain(root);
+      const events = [
+        { ts: '2026-07-12T23:00:00.000Z', type: 'run_start', chain: CHAIN },
+        { ts: '2026-07-12T23:00:10.000Z', type: 'agent_invoke_start', phase: 'work-unit-author', invoke_id: 'work-unit-author-i7' },
+        { ts: '2026-07-12T23:00:20.000Z', type: 'agent_invoke_end', phase: 'work-unit-author', invoke_id: 'work-unit-author-i7', exit_code: 0 },
+        ...CHAIN.flatMap((phase, index) => [
+          { ts: `2026-07-12T23:0${index + 1}:00.000Z`, type: 'harness_start', phase, invoke_id: `${phase}-i7` },
+          { ts: `2026-07-12T23:0${index + 1}:30.000Z`, type: 'harness_end', phase, invoke_id: `${phase}-i7`, exit_code: 0, timed_out: false },
+        ]),
+        { ts: '2026-07-12T23:30:00.000Z', type: 'run_end', status: 'CHAIN_SLICE_COMPLETED' },
+      ];
+      writeRunEvents(root, 'RUN1', events);
+      const actual = resolvePhaseRunIds(root, FEATURE, CHAIN);
+      assert.deepStrictEqual(actual.attempts, { spec: 'i7', plan: 'i7' }, 'actual tools retain the original unit invocation ordinal');
+      generate(root, { phaseRunIds: actual.runIds, phaseAttempts: actual.attempts });
+      const valid = verify(root);
+      assert.strictEqual(valid.verdict, 'VALID', valid.reasons.join('；'));
+      writeRunEvents(root, 'RUN1', events.filter(event => !event.type.startsWith('harness_')));
+      const noFamily = verify(root);
+      assert.strictEqual(noFamily.verdict, 'INVALID', 'a unit author alone does not prove execution of any particular check family');
+      assert(noFamily.reasons.some(reason => reason.includes('从未执行')), 'the execution guard itself must reject the absent family');
+      writeRunEvents(root, 'RUN1', events.map(event => event.type === 'run_end' ? { ...event, status: 'HALTED' } : event));
+      const failedRun = verify(root);
+      assert.strictEqual(failedRun.verdict, 'INVALID', 'actual tools cannot turn an unsuccessful run into clean completion lineage');
+      assert(failedRun.reasons.some(reason => reason.includes('HALTED')), 'the unsuccessful terminal must remain the actual rejection');
+      writeRunEvents(root, 'RUN1', events.filter(event => event.type !== 'run_end'));
+      assert.strictEqual(verify(root).verdict, 'INVALID', 'a run without a terminal original remains incomplete');
     },
   },
   {
@@ -338,7 +371,7 @@ const cases: Case[] = [
         '    ut_layer: device',
         '    linked_flow: f',
       ].join('\n'));
-      const issues = collectCleanPassIssues({ projectRoot: root, feature: FEATURE, chain: CHAIN });
+      const issues = collectCleanPassIssues({ projectRoot: root, feature: FEATURE, chain: CHAIN_T });
       const rt = issues.find((i) => i.condition === 'runtime_step_evidence');
       assert.ok(rt, '有 P0 device flow 必产 runtime_step_evidence 违例');
       assert.strictEqual(rt!.kind, 'needs_fix');
@@ -349,7 +382,7 @@ const cases: Case[] = [
       fs.mkdirSync(path.dirname(evPath), { recursive: true });
       fs.writeFileSync(evPath, '{}', 'utf-8');
       assert.ok(
-        collectCleanPassIssues({ projectRoot: root, feature: FEATURE, chain: CHAIN }).some((i) => i.condition === 'runtime_step_evidence'),
+        collectCleanPassIssues({ projectRoot: root, feature: FEATURE, chain: CHAIN_T }).some((i) => i.condition === 'runtime_step_evidence'),
         '空文件不得解除质量义务',
       );
       // 即便放入历史 runtime_fidelity_attestation receipt，它也只是 legacy 文件，不再改写机器结论。
@@ -357,7 +390,7 @@ const cases: Case[] = [
       fs.mkdirSync(path.dirname(legacyRuntimeReceipt), { recursive: true });
       fs.writeFileSync(legacyRuntimeReceipt, '{"legacy":true}\n', 'utf-8');
       assert.ok(
-        collectCleanPassIssues({ projectRoot: root, feature: FEATURE, chain: CHAIN }).some((i) => i.condition === 'runtime_step_evidence'),
+        collectCleanPassIssues({ projectRoot: root, feature: FEATURE, chain: CHAIN_T }).some((i) => i.condition === 'runtime_step_evidence'),
         'legacy receipt 不得解除机器证据缺失',
       );
     },
@@ -409,11 +442,15 @@ const cases: Case[] = [
       assert(bindingGap, '完成时仍须发布本轮运行产物绑定');
       assert.equal(bindingGap.action, 'verify', '真实运行输入已有，只须重建框架索引');
       fs.rmSync(evidenceFile);
-      const missingInput = resolveCurrentDisposition(readCurrentDispositionInput({ projectRoot: root, feature: FEATURE, chain: CHAIN_T,
-        currentResults: [{ phase: 'testing', summary, checks }] })).completionBlocking.find(problem => problem.id === 'runtime_step_evidence');
-      assert(missingInput, '当前gate缺原始运行证据不能伪装成尚待发布manifest');
-      assert.equal(missingInput.action, 'repair');
+      assert(fs.existsSync(nextTrace), '前提：native trace仍在，仅当前运行证据索引缺失');
+      const missingFacts = resolveCurrentDisposition(readCurrentDispositionInput({ projectRoot: root, feature: FEATURE, chain: CHAIN_T,
+        currentResults: [{ phase: 'testing', summary, checks }] }));
+      const missingInput = missingFacts.completionBlocking.find(problem => problem.id === 'runtime_step_evidence');
+      assert(missingInput, '当前gate缺运行证据索引不能伪装成仅待发布manifest');
+      assert.equal(missingInput.action, 'verify', '缺当前机器运行证据索引须由原producer补取，不交作者编造产品修复或观测');
       assert.equal(missingInput.owner, 'testing');
+      assert.match(missingInput.detail, /device-test-evidence\.json 缺失或不可解析/);
+      assert.equal(missingFacts.completionEligible, false, '缺索引仍阻断完成，不能借PASS头或旧closed summary解除');
     },
   },
   {

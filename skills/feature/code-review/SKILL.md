@@ -13,7 +13,7 @@
 | 正式 Feature/CU review | 先完整读 [正式前置](../../reference/code-review-workflow-detail.md#正式-featurecu-前置) 与 [正式阶段](../../reference/code-review-workflow-detail.md#正式-featurecu-阶段) 再执行，消费绑定契约与写范围 | 按原 required 证据闭环，不自动追加 UT/testing |
 
 已有正式交付责任继续用对应 Feature 路径。纯审查不要求 DevEco、设备、全局 setup、需求号或六章报告。
-正式阶段的**闭环停等**按 [用户确认 UX](../../reference/user-confirmation-ux.md) 的 `review.ok_to_ut` / `phase.next_step` 与已有授权裁决；独立请求到本次审查终点结束。
+完整交付由原协调器按共同当前处置和已有授权继续，不在phase边界重复确认或轮流派作者。独立请求到本次原终点结束；真正独立核验保持另一个上下文。
 request/正式调用的输入身份与 facts 按 [输入契约](../../../docs/concepts/skill-contracts.md#facts-11) 解析；不自行补造身份。
 
 ## 共享审查方法

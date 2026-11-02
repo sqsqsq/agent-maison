@@ -19,7 +19,6 @@ import {
   extractJsonObjectFromText,
   hashImageFile,
   invokeVisualProvider,
-  resolveSpecObservationBudget,
   type VisualProviderInvocation,
 } from './visual-provider-invoke';
 import type { ProviderRef } from './types';
@@ -169,7 +168,7 @@ export interface ProduceVisualObservationsInput {
  * spec 期逐图生产 sidecar（**幂等**：三元复用键齐等即跳过）。
  *
  * 失败语义与 OCR 预扫描逐字对齐：单图失败 `continue`，整体异常也只是少几份 sidecar，
- * **绝不抛出、绝不阻断 spec**。批次上限 = min(参考图数, 单 run 封顶)。
+ * **绝不抛出、绝不阻断 spec**。仅处理真实参考图，已有三元有效结果直接复用。
  *
  * 返回：盘上可用的 sidecar 的 project-relative 路径（含本轮新产与既有复用）。
  */
@@ -183,9 +182,7 @@ export async function produceVisualObservationSidecars(
     return listVisualObservationOutputs(input.projectRoot, input.frameworkRoot, input.feature);
   }
 
-  const budget = resolveSpecObservationBudget(input.referenceImages.length);
   const used = new Set<string>();
-  let spent = 0;
 
   for (const imgAbs of input.referenceImages) {
     const base = sanitizeVisualObservationSlug(path.basename(imgAbs, path.extname(imgAbs)));
@@ -207,9 +204,6 @@ export async function produceVisualObservationSidecars(
         /* 坏文件按未命中处理，下面重产覆盖 */
       }
     }
-    if (spent >= budget) continue; // 批次上限：超出部分本轮不产（下轮再补）
-    spent += 1;
-
     const invokeId = `obs-${slug}-${imageHash}`;
     const inv = await invokeVisualProvider({
       projectRoot: input.projectRoot,

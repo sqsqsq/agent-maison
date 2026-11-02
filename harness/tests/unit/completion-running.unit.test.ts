@@ -7,21 +7,20 @@ import { clearFrameworkConfigCache, featureFilePath, featurePhaseReportsDir } fr
 import { loadHostSnapshot, SNAPSHOT_CU_FEATURE } from '../fixtures/host-snapshot-3.1.0/generate';
 import { handWriteProjections } from './component-design-handoff.unit.test';
 import { SpecLoader } from '../../scripts/utils/spec-loader';
-import { checkAuthoritativeContentAligned } from '../../scripts/utils/blueprint-skill-projection';
-import { componentBlueprintPath } from '../../scripts/utils/component-blueprint-path';
-import { changeUnitPath } from '../../scripts/utils/change-unit-path';
+import { checkAuthoritativeContentAligned, deriveBlueprintSkillInput } from '../../scripts/utils/blueprint-skill-projection';
 import { generateScriptReport } from '../../scripts/utils/report-generator';
 import { writeRunSummaryBase } from '../../harness-runner';
-import { resolvePhaseEvidenceManifest, writePhaseEvidenceManifest, loadPhaseEvidenceManifest } from '../../scripts/utils/phase-evidence-manifest';
+import { resolvePhaseEvidenceManifest, writePhaseEvidenceManifest, loadPhaseEvidenceManifest, verifyPhaseEvidenceManifestWithStagedOutputs } from '../../scripts/utils/phase-evidence-manifest';
 import { readReusableCheckResult, readCurrentDispositionInput, currentCompletionEvaluation, completedCheckResultsFromToolEvents } from '../../scripts/utils/verify-feature-completion';
 import { resolveCurrentDisposition } from '../../scripts/utils/check-disposition';
 import { buildGoalManifestFromInput } from '../../scripts/utils/goal-manifest';
+import { computeRunRequirementSha } from '../../scripts/utils/fidelity-shared';
 import { createGoalRun } from '../../scripts/utils/goal-run-creation';
 import { ensureRunControl, casAcquireRunOwner } from '../../scripts/utils/goal-run-control';
 import { issueSessionExecution, writePhaseExecutionRequestMaterial, observeSessionExecution, sessionEvents, acceptedSessionReport } from '../../scripts/utils/session-execution-handoff';
 import { resolvePhaseWriteBoundary, capturePhaseInvocationSnapshot, diffPhaseInvocationSnapshots, classifyPhaseInvocationChanges } from '../../scripts/utils/phase-write-boundary';
 import { GoalPhaseRuntime, bindGuardianOrKill } from '../../scripts/goal-phase-runtime';
-import { DetachedGoalPhaseExecutor, createWorkUnitExecutionContext, type WorkUnitExecutionContext } from '../../scripts/utils/goal-phase-executor';
+import { DetachedGoalPhaseExecutor, createWorkUnitExecutionContext, observeWorkUnitProviderSession, type WorkUnitExecutionContext } from '../../scripts/utils/goal-phase-executor';
 import * as agentInvoke from '../../scripts/utils/agent-invoke';
 import { invocationEndFacts } from '../../scripts/utils/invocation-completion';
 import type { CheckContext } from '../../scripts/utils/types';
@@ -45,10 +44,14 @@ export function produceCheck(input: ReplayInput) {
   writeRunSummaryBase(input.root, report, input.frameworkRoot);
   const dir = featurePhaseReportsDir(input.root, feature, phase, input.frameworkRoot);
   writePhaseEvidenceManifest(input.root, resolvePhaseEvidenceManifest({ projectRoot: input.root, frameworkRoot: input.frameworkRoot,
-    feature, phase, extraInputs: [componentBlueprintPath(input.root, 'ledger-app-blueprint'), changeUnitPath(input.root, 'ledger-app-blueprint', 'ledger-refresh')],
+    feature, phase, requirementSha: computeRunRequirementSha(input.root, feature, input.runId),
+    extraInputs: deriveBlueprintSkillInput(input.root, feature, input.frameworkRoot, 'acceptance').dependencies.map(dependency => dependency.path),
     extraOutputs: ['script-report.json', 'summary.json'].map(name => path.join(dir, name)) }));
   const result = readReusableCheckResult({ projectRoot: input.root, frameworkRoot: input.frameworkRoot, feature, phase, runId: input.runId });
-  assert(result, 'the actual newly published report must be readable under its existing evidence manifest');
+  assert(result, JSON.stringify({ reason: 'the actual newly published report must be readable under its existing evidence manifest',
+    freshness: verifyPhaseEvidenceManifestWithStagedOutputs({ projectRoot: input.root, frameworkRoot: input.frameworkRoot, feature, phase, runId: input.runId, stagedOutputs: [] }),
+    current_dependencies: deriveBlueprintSkillInput(input.root, feature, input.frameworkRoot, 'acceptance').dependencies.map(dependency => dependency.path),
+    bound_inputs: loadPhaseEvidenceManifest(input.root, feature, phase)?.manifest.inputs.map(entry => entry.path) }));
   const options = { projectRoot: input.root, frameworkRoot: input.frameworkRoot, feature, chain: [phase], runId: input.runId,
     endpoint: 'request' as const, currentResults: [result] };
   const disposition = resolveCurrentDisposition(readCurrentDispositionInput(options));
@@ -146,7 +149,10 @@ async function runDetached(mode: ReplayInput['mode']) {
       assert(view.settled && (mode === 'improved' || view.changes?.kind === 'changed') && !view.writes?.violations.length,
         JSON.stringify({ settled: view.settled, changes: view.changes, writes: view.writes }));
       assert.equal(completedCheckResultsFromToolEvents('codex', view.toolEvents, true).length, 3, 'the original native stream preserves all actual check outputs');
-      const resumed = createWorkUnitExecutionContext({ ...f.context, attemptId: 'author-two' });
+      const input = { ...f.context, attemptId: 'author-two' };
+      const recovered = observeWorkUnitProviderSession(input);
+      assert(!('status' in recovered), 'the actual stopped invocation must be recoverable');
+      const resumed = createWorkUnitExecutionContext(input, recovered);
       assert.equal(resumed.attemptId, 'author-two'); assert.equal(resumed.provider_session_id, undefined);
       assert(resumed.instruction?.includes('不等于无损恢复'), 'without a native ID the original facts rebuild context, never guess a private session');
       if (mode === 'improved') {

@@ -38,16 +38,10 @@ import {
 } from '../../scripts/utils/adjudication';
 import { partitionDriftByGitStatus } from '../../scripts/utils/source-drift-facts';
 import {
-  EXTERNAL_RETRY_RESPONSIBILITY_KINDS,
-  resolveAssessHaltIncident,
 } from '../../scripts/utils/goal-failure-classifier';
 import { resolveRequirementInput } from '../../scripts/utils/goal-manifest';
 import { reduceRunState, supervisorAction } from '../../scripts/utils/run-state-reducer';
 import {
-  buildAdapterCliHardFailureGuidance,
-  buildBudgetExhaustedGuidance,
-  buildClosureWallGuidance,
-  buildNoRelevantTargetGuidance,
   buildProductSelectionUnresolvedGuidance,
 } from '../../scripts/utils/await-confirm-guidance';
 import {
@@ -432,69 +426,6 @@ const metaGateCases: TestCase[] = [
     }),
   },
   {
-    // plan 4e6fb3b6 §3.3 / A2：内容要求，不规定固定格式；这里只核"读得出"四件事，
-    // 并核说明不要求用户枚举 run 或自拼 run 相关旗标（已填好的命令里出现 run id 属诊断信息）。
-    name: 'A2 需要人介入的停机说明读得出四件事（六类各抽一个原因，文本取生产产出处）',
-    run: () => {
-      const f = 'bc-openCard';
-      const r = '20260929T000000Z-abc123';
-      const samples: Array<{ reason: string; text: string; affects: string[] }> = [
-        {
-          reason: 'transient_api_error_exhausted',
-          text: renderPhaseDiagnosticProse({ halt_reason: 'transient_api_error_exhausted', halted: true }),
-          affects: ['本阶段'],
-        },
-        {
-          reason: 'adapter_cli_hard_failure',
-          text: buildAdapterCliHardFailureGuidance({ feature: f, phase: 'coding', detail: 'Codex 模型不可用硬错误' }).join('\n'),
-          affects: [f, 'coding'],
-        },
-        {
-          reason: 'closure_wall_repeated',
-          text: buildClosureWallGuidance({
-            feature: f, runId: r, phase: 'plan', receiptPathRel: 'doc/features/x/plan/phase-completion-receipt.md',
-            harnessPrefixRel: 'framework/harness', receiptStatus: 'failed', cumulativeBlockedCount: 2,
-          }).join('\n'),
-          affects: [f, 'plan'],
-        },
-        {
-          reason: 'product_selection_unresolved',
-          text: buildProductSelectionUnresolvedGuidance({
-            feature: f, phase: 'spec', candidates: ['default', 'rom'], projectRoot: '/host',
-          }).join('\n'),
-          affects: [f, 'spec'],
-        },
-        {
-          reason: 'no_progress_guard',
-          text: buildNoRelevantTargetGuidance({
-            feature: f, runId: r, phase: 'testing', blockerIds: ['device_test_run'], harnessPrefixRel: 'framework/harness',
-          }).join('\n'),
-          affects: [f, 'testing'],
-        },
-        {
-          reason: 'budget_turns',
-          text: buildBudgetExhaustedGuidance({
-            feature: f, runId: r, phase: 'ut', kind: 'budget_turns', activeElapsedMs: 0, limit: 40,
-            harnessPrefixRel: 'framework/harness',
-          }).join('\n'),
-          affects: [f, 'ut'],
-        },
-      ];
-      const categories = new Set<string>();
-      for (const s of samples) {
-        const cat = lookupIncident(s.reason)?.fault_category;
-        assert(Boolean(cat), `${s.reason} 须有类别`);
-        categories.add(cat!);
-        assert(/影响[：:]/.test(s.text) && s.affects.every((a) => s.text.includes(a)), `${s.reason} 读不出影响哪个结果：${s.text}`);
-        assert(/谁能修[：:]\s*\S/.test(s.text), `${s.reason} 读不出谁能修：${s.text}`);
-        assert(/(怎么恢复|处置|处理完后续跑)[：:]\s*\S/.test(s.text), `${s.reason} 读不出做什么能恢复：${s.text}`);
-        assert(/确认已恢复[：:]\s*\S/.test(s.text), `${s.reason} 读不出怎样确认已恢复：${s.text}`);
-        assert(!/<run|run_id>|--supersede|新 run_id/i.test(s.text), `${s.reason} 要求用户枚举 run 或自拼旗标：${s.text}`);
-      }
-      assertEq(categories.size, 6, `六类须各有一例（实得 ${[...categories].join(',')}）`);
-    },
-  },
-  {
     name: '元门禁：goal-runner 出现的每个 halt_reason 都必须在 INCIDENT_REGISTRY 注册（未注册即红）',
     run: () => {
       const missing = scanHaltReasonLiterals().filter((r) => !lookupIncident(r));
@@ -723,6 +654,42 @@ const metaGateCases: TestCase[] = [
       }
     },
   },
+
+{
+    // plan 4e6fb3b6 §3.3 / A2：内容要求，不规定固定格式；这里只核"读得出"四件事，
+    // 并核说明不要求用户枚举 run 或自拼 run 相关旗标（已填好的命令里出现 run id 属诊断信息）。
+    name: 'A2 需要人介入的停机说明读得出四件事（现行原因取真实生产产出处，旧预算文案已退役）',
+    run: () => {
+      const f = 'bc-openCard';
+      const r = '20260929T000000Z-abc123';
+      const samples: Array<{ reason: string; text: string; affects: string[] }> = [
+        {
+          reason: 'transient_api_error_exhausted',
+          text: renderPhaseDiagnosticProse({ halt_reason: 'transient_api_error_exhausted', halted: true }),
+          affects: ['本阶段'],
+        },
+        {
+          reason: 'product_selection_unresolved',
+          text: buildProductSelectionUnresolvedGuidance({
+            feature: f, phase: 'spec', candidates: ['default', 'rom'], projectRoot: '/host',
+          }).join('\n'),
+          affects: [f, 'spec'],
+        },
+      ];
+      const categories = new Set<string>();
+      for (const s of samples) {
+        const cat = lookupIncident(s.reason)?.fault_category;
+        assert(Boolean(cat), `${s.reason} 须有类别`);
+        categories.add(cat!);
+        assert(/影响[：:]/.test(s.text) && s.affects.every((a) => s.text.includes(a)), `${s.reason} 读不出影响哪个结果：${s.text}`);
+        assert(/谁能修[：:]\s*\S/.test(s.text), `${s.reason} 读不出谁能修：${s.text}`);
+        assert(/(怎么恢复|处置|处理完后续跑)[：:]\s*\S/.test(s.text), `${s.reason} 读不出做什么能恢复：${s.text}`);
+        assert(/确认已恢复[：:]\s*\S/.test(s.text), `${s.reason} 读不出怎样确认已恢复：${s.text}`);
+        assert(!/<run|run_id>|--supersede|新 run_id/i.test(s.text), `${s.reason} 要求用户枚举 run 或自拼旗标：${s.text}`);
+      }
+      assertEq(categories.size, 2, `现行产品选择与历史事件呈现保留真实指引（实得 ${[...categories].join(',')}）`);
+    },
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -797,11 +764,6 @@ const incidentClosureCases: TestCase[] = [
           `${retired} 已退役，不得再作为 halt 产地`,
         );
       }
-      // 退役不等于静默：三类归因缺口改发诊断事件，事实仍然留痕。
-      assert(
-        (src.match(/phase_write_boundary_degraded/g) ?? []).length >= 3,
-        '边界解析失败/源码域不可解/前后快照失败三处都须发 phase_write_boundary_degraded 诊断',
-      );
       assert(
         /type:\s*'phase_write_observed'/.test(src),
         '无 owner / 交 checker 的变化须落 phase_write_observed，留痕不得省',
@@ -946,7 +908,7 @@ const manifestCompatCases: TestCase[] = [
         round: ['round-a', 'round-a', ''],
         drift: ['drift-a', 'drift-a', 'drift-b'],
       });
-      assertEq(JSON.stringify(successor.budget), JSON.stringify(source.budget), '后继不得刷新预算上限');
+      assert(successor.budget === undefined, '新后继不写框架quota；旧数字不能成为默认值');
       assertEq(JSON.stringify(successor.unattended), JSON.stringify(source.unattended), '后继不得刷新无人值守上限');
       assertEq(successor.start_phase, fresh.start_phase, '后继只接受新 run 明确要求的起点');
       for (const key of [
@@ -958,11 +920,10 @@ const manifestCompatCases: TestCase[] = [
       }
       assert(!isSuccessorRepairRequirement(successor.requirement), '合同继承不得带合并标记');
       assertEq(successor.successor_of, source.run_id, '后继须绑定源 run');
-      assertEq(JSON.stringify(successor.inherited_round_fingerprints), JSON.stringify(['round-a']), 'round 指纹须去重');
-      assertEq(JSON.stringify(successor.inherited_drift_fingerprints), JSON.stringify(['drift-a', 'drift-b']), 'drift 指纹须去重');
+      assert(successor.inherited_round_fingerprints === undefined, '新后继不继承旧oneshot round指纹控制');
+      assert(successor.inherited_drift_fingerprints === undefined, '新后继不继承旧drift次数控制');
       const identity = computeManifestIdentityFields(successor);
-      assert('successor_of' in identity && 'inherited_round_fingerprints' in identity
-        && 'inherited_drift_fingerprints' in identity, '后继身份字段须绑定继承元数据');
+      assert('successor_of' in identity, '原后继关系仍绑定真实身份');
       assert(!('phase_outcomes' in successor), '后继不得复制源 run 阶段完成态');
     }),
   },
@@ -1461,65 +1422,6 @@ const projectionCases: TestCase[] = [
       // 反向：绝不能再被洗成 content_retry_exhausted（那是 TERMINAL，supervisor 永不拉起）
       const wrong = decide({ incident: 'content_retry_exhausted' }, NO_AUTHORITY, ctx());
       assert(wrong.kind === 'terminal', '对照组：content_retry_exhausted 仍是 TERMINAL');
-    },
-  },
-  {
-    // codex 复核 P1：只扫源码里有没有 budgetExhausted = 假绿。改成**行为矩阵**。
-    name: 'b3 t3 halt 标签来源穷尽（行为矩阵）：只有充分证据才叫 exhausted',
-    run: () => {
-      const base = {
-        retriesUsed: 2, maxRetriesPerPhase: 2, runnerAction: 'halt',
-        verdict: 'FAIL', fused: false, failureKind: 'code_regression' as never,
-      };
-      // 充分证据齐备 → 按 FailureKind 二分
-      assert(
-        resolveAssessHaltIncident(base) === 'content_retry_exhausted',
-        '内容失败且证据齐备 → content_retry_exhausted',
-      );
-      assert(
-        resolveAssessHaltIncident({ ...base, failureKind: 'toolchain' as never })
-          === 'external_retry_exhausted',
-        '外部条件且证据齐备 → external_retry_exhausted',
-      );
-      // 宿主实锤形态：预算未耗尽（1/2）却落进 catch-all —— 绝不能标 exhausted
-      assert(
-        resolveAssessHaltIncident({ ...base, retriesUsed: 1 }) === 'framework_bug',
-        '预算未耗尽 → 不得标 exhausted（run 20260804T033834Z-99c0a1 的错误标签）',
-      );
-      // 其余未识别来源：非 phase-outcome halt / 本轮 PASS / 已熔断
-      assert(
-        resolveAssessHaltIncident({ ...base, runnerAction: undefined }) === 'framework_bug',
-        '推荐非 phase-outcome halt（无路由类）→ fail-closed',
-      );
-      assert(
-        resolveAssessHaltIncident({ ...base, verdict: 'PASS' }) === 'framework_bug',
-        '本轮 PASS 不可能是内容重试耗尽 → fail-closed',
-      );
-      assert(
-        resolveAssessHaltIncident({ ...base, fused: true }) === 'framework_bug',
-        '已熔断另有原因 → fail-closed',
-      );
-    },
-  },
-  {
-    name: 't3 责任集合复用既有 FailureKind 分类，未另建第二套分类表',
-    run: () => {
-      // codex 开工原则①：直接消费现有规范化失败分类。集合成员必须都是合法 FailureKind，
-      // 且集合定义与既有 SIGNATURE_HALT_KINDS / CUMULATIVE_HALT_FAMILY 同文件同风格。
-      const src = stripComments(
-        fs.readFileSync(path.join(SCRIPTS_DIR, 'utils', 'goal-failure-classifier.ts'), 'utf8'),
-      );
-      assert(
-        /EXTERNAL_RETRY_RESPONSIBILITY_KINDS: ReadonlySet<FailureKind>/.test(src),
-        '责任集合须建立在既有 FailureKind 之上（而非新造枚举）',
-      );
-      for (const kind of EXTERNAL_RETRY_RESPONSIBILITY_KINDS) {
-        assert(typeof kind === 'string' && kind.length > 0, '集合成员须为 FailureKind 字面');
-      }
-      assert(
-        !EXTERNAL_RETRY_RESPONSIBILITY_KINDS.has('code_regression' as never),
-        'code_regression 是内容失败，不得归外部',
-      );
     },
   },
   // ==========================================================================

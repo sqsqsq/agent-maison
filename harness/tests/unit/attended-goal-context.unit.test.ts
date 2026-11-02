@@ -10,6 +10,8 @@ import { bindAttendedGoalContext } from '../../harness-runner';
 import { isAgentSideGoalHarness, isGoalOrchestrationEnv } from '../../scripts/utils/phase-state';
 import { writeDeviceTestEvidenceIfEligible } from '../../scripts/check-testing';
 import type { UnitCaseResult } from '../run-unit';
+import { writePhaseExecutionRequestMaterial } from '../../scripts/utils/session-execution-handoff';
+import type { WorkUnitExecutionContext } from '../../scripts/utils/goal-phase-executor';
 
 function assert(condition: unknown, message: string): void {
   if (!condition) throw new Error(message);
@@ -59,7 +61,7 @@ function withRun(run: (env: {
 const cases: Array<{ name: string; run: () => void }> = [
   {
     name: 'exact run + feature + active session lease validates',
-    run: () => withRun(({ root, runId, token }) => {
+    run: () => withRun(({ root, runId, runDir, token }) => {
       const context = validateAttendedGoalContext({
         projectRoot: root, feature: 'demo', runId, phase: 'spec', attemptId: 'session-e1-round-1',
         ownerId: token.owner_id, ownerEpoch: token.epoch,
@@ -72,6 +74,35 @@ const cases: Array<{ name: string; run: () => void }> = [
       let crossed = false;
       try { validateAttendedGoalContext({ ...originalIdentity, phase: 'coding' }); } catch { crossed = true; }
       assert(crossed, 'a carrier-less legacy bridge cannot borrow another checking family');
+      const attemptId = 'current-unit-attempt', invokeId = 'work-unit-author-i1', issuedAt = new Date().toISOString();
+      const execution: WorkUnitExecutionContext = {
+        runId, feature: 'demo', workflowId: 'obligation-driven', track: 'full', chain: ['spec', 'coding'],
+        phase: 'work-unit-author', attemptId, owner: { ...token, kind: 'session' }, projectRoot: root,
+        frameworkRoot: path.join(root, 'framework'), runDir, reportDir: context.manifest.report_dir,
+        adapter: 'codex', runtimeFacts: { receiptRequired: false, resume: false, successor: false }, childEnv: {},
+      };
+      const material = writePhaseExecutionRequestMaterial({ context: execution, invokeId, issuedAt,
+        gateTimeoutMs: 0, cleanupReserveMs: 0, preSnapshot: null, writeBoundary: null });
+      const actor = { type: 'agent_invoke_start', ts: issuedAt, phase: execution.phase, invoke_id: invokeId, attempt_id: attemptId,
+        owner_id: token.owner_id, owner_epoch: token.epoch };
+      const bound = { ...originalIdentity, attemptId, checkFamily: true };
+      appendGoalEventFenced(root, context.manifest, runDir, token, actor);
+      let unbound = false;
+      try { validateAttendedGoalContext(bound); } catch { unbound = true; }
+      assert(unbound, 'a bare actor start and unreferenced material cannot grant an attended execution window');
+      appendGoalEventFenced(root, context.manifest, runDir, token, { ...actor, handoff_request: material.reference });
+      assert(validateAttendedGoalContext(bound).identity.phase === execution.phase, 'the hash-bound machine issuance retains the actual unit actor');
+      for (const invalid of [{ ...bound, attemptId: 'other-attempt' }, { ...bound, ownerEpoch: token.epoch + 1 }]) {
+        let denied = false; try { validateAttendedGoalContext(invalid); } catch { denied = true; }
+        assert(denied, 'a valid request cannot authorize another attempt or owner fence');
+      }
+      const materialFile = path.join(runDir, material.reference.path), bytes = fs.readFileSync(materialFile);
+      fs.appendFileSync(materialFile, '\n');
+      let changed = false; try { validateAttendedGoalContext(bound); } catch { changed = true; }
+      assert(changed, 'a modified request cannot use the original issuance hash'); fs.writeFileSync(materialFile, bytes);
+      appendGoalEventFenced(root, context.manifest, runDir, token, { type: 'agent_invoke_end', phase: execution.phase, invoke_id: invokeId });
+      let returned = false; try { validateAttendedGoalContext(bound); } catch { returned = true; }
+      assert(returned, 'a genuinely returned actor cannot reuse its execution window');
     }),
   },
   {

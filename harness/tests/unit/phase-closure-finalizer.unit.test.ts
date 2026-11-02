@@ -247,7 +247,7 @@ function mkOwnershipProject(requestedPhases: string[], approvedDesign = false): 
     execution_scope: prepared.scope, chain_override: prepared.scope.phase_chain,
     unattended: { write_mode: 'full-access', approval_mode: 'never' },
   }, { projectRoot: root });
-  createGoalRun({ projectRoot: root, manifest, chain: prepared.scope.phase_chain });
+  createGoalRun({ frameworkRoot: FRAMEWORK_ROOT, projectRoot: root, manifest, chain: prepared.scope.phase_chain });
   // 建立事实：schema 1.1 + run 载体身份位 run_id（capability-resolution-entry-input.ts:290/:331）。
   write(`doc/features/${OWN_FEATURE}/context/facts.md`, [
     '---', 'schema_version: "1.1"', `feature: ${OWN_FEATURE}`, `run_id: ${runId}`,

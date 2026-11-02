@@ -3,7 +3,7 @@
 import {
   classifySourceDrift,
 } from '../../scripts/utils/mutation-authorization';
-import { applyInvalidationsToResume, resolveFrozenManifestHash } from '../../scripts/goal-runner';
+import { resolveFrozenManifestHash } from '../../scripts/goal-runner';
 import { evaluateUpstreamViews } from '../../scripts/utils/upstream-verdict-gate';
 import type { UnitCaseResult } from '../run-unit';
 
@@ -63,58 +63,6 @@ test('resolveFrozenManifestHash：首个 run_start 锚定；resume 不换锚', (
   ];
   assert(resolveFrozenManifestHash(events, 'H-NOW') === 'H-FIRST', '首锚优先');
   assert(resolveFrozenManifestHash([], 'H-NOW') === 'H-NOW', '无先例用当前');
-});
-
-test('applyInvalidationsToResume：失效未重跑 → 剔除 + 起点回退；已重新 PASS → 保留', () => {
-  const chain = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'] as never[];
-  const outcomes = [
-    { phase: 'coding', verdict: 'PASS' }, { phase: 'review', verdict: 'PASS' },
-    { phase: 'ut', verdict: 'PASS' },
-  ] as never[];
-  const events = [
-    { type: 'phase_verdict', phase: 'review', verdict: 'PASS' },
-    { type: 'phase_invalidated', phase: 'review' },
-    { type: 'phase_invalidated', phase: 'ut' },
-    { type: 'phase_verdict', phase: 'ut', verdict: 'PASS' },
-  ];
-  const r = applyInvalidationsToResume(chain, outcomes, events);
-  assert(!r.outcomes.some((o) => (o as { phase: string }).phase === 'review'), 'review 须剔除');
-  assert(r.outcomes.some((o) => (o as { phase: string }).phase === 'ut'), 'ut 新 PASS 须保留');
-  assert(r.startIndex === 3, `起点应回 review，got ${r.startIndex}`);
-});
-
-test('applyInvalidationsToResume：PASS+retry / advance_blocked 不算重新验证（与事件重建同一终局判据）', () => {
-  const chain = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'] as never[];
-  const outcomes = [{ phase: 'coding', verdict: 'PASS' }, { phase: 'review', verdict: 'PASS' }] as never[];
-  // rebuildOutcomesFromEvents 跳过 action=retry：若这里把 PASS+retry 当重新验证，失效就被清掉，
-  // 而 outcomes 里留下的仍是**失效前**那条 PASS —— 恢复会直接跳过被撤销的阶段。
-  const retried = applyInvalidationsToResume(chain, outcomes, [
-    { type: 'phase_invalidated', phase: 'review' },
-    { type: 'phase_verdict', phase: 'review', verdict: 'PASS', action: 'retry' },
-  ]);
-  assert(!retried.outcomes.some((o) => (o as { phase: string }).phase === 'review'), 'PASS+retry 不得清除失效');
-  const blocked = applyInvalidationsToResume(chain, outcomes, [
-    { type: 'phase_invalidated', phase: 'review' },
-    { type: 'phase_verdict', phase: 'review', verdict: 'PASS', action: 'advance', advance_blocked: true },
-  ]);
-  assert(!blocked.outcomes.some((o) => (o as { phase: string }).phase === 'review'), 'advance_blocked 的 PASS 不得清除失效');
-  const settled = applyInvalidationsToResume(chain, outcomes, [
-    { type: 'phase_invalidated', phase: 'review' },
-    { type: 'phase_verdict', phase: 'review', verdict: 'PASS', action: 'advance' },
-  ]);
-  assert(settled.outcomes.some((o) => (o as { phase: string }).phase === 'review'), '真正的终局 PASS 仍须清除失效');
-});
-
-test('applyInvalidationsToResume：backtrack 后 settled identity 只复用目标 phase', () => {
-  const chain = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'] as never[];
-  const outcomes = [{ phase: 'coding', verdict: 'PASS' }, { phase: 'review', verdict: 'PASS' }] as never[];
-  const events = [
-    { type: 'phase_backtrack_requested' as const, invalidated_phases: ['coding', 'review'] },
-    { type: 'agent_process_settled' as const, phase: 'coding', invoke_id: 'coding-i7', exit_code: 0 },
-  ];
-  const r = applyInvalidationsToResume(chain, outcomes, events);
-  assert(r.postAgentPhases.length === 1 && r.postAgentPhases[0] === 'coding', JSON.stringify(r));
-  assert(r.postAgentAttemptIds.coding === 'coding-i7', JSON.stringify(r.postAgentAttemptIds));
 });
 
 test('环境层：ut FAIL + device_locked 指引修环境而非改码', () => {

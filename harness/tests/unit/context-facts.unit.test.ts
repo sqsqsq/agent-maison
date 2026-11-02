@@ -146,8 +146,9 @@ const cases: Array<{ name: string; run: () => void }> = [
       if (/`ut_no_src_mutation`\s*BLOCKER/.test(verifyUt)) {
         throw new Error('verify-ut.md 仍把 ut_no_src_mutation 写成 BLOCKER（代码已是 MAJOR WARN）');
       }
-      if (!verifyUt.includes('禁止修改业务源码')) {
-        throw new Error('UT 阶段禁改业务源码的纪律必须保留');
+      if (!verifyUt.includes('实际UT工具和独立审查员不写产品源码或正式结果')
+        || !verifyUt.includes('同unit专用作者可在原授权内修实现与测试输入')) {
+        throw new Error('UT工具/独核只读与授权单元作者可修实现的职责必须保留');
       }
 
       // ====================================================================

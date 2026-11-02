@@ -105,7 +105,7 @@ function testEffectiveHeadlessUnattended(): void {
   });
   assert(eff.write_mode === 'full-access', eff.write_mode);
   assert(eff.approval_mode === 'never', eff.approval_mode);
-  assert(eff.max_turns === 30 && eff.timeout_seconds === 120, '非权限字段须原样透传');
+  assert(!('max_turns' in eff) && !('timeout_seconds' in eff), '历史调用/默认墙钟字段不得成为现行授权');
   const effEmpty = effectiveHeadlessUnattended(undefined);
   assert(effEmpty.write_mode === 'full-access' && effEmpty.approval_mode === 'never', 'undefined 输入同样归一化');
 }
@@ -134,12 +134,12 @@ function testPreflightWiresFullPermissionGate(): void {
 function testManifestDefaultsSourcePins(): void {
   const entry = fs.readFileSync(path.join(REPO_ROOT, 'harness', 'scripts', 'goal-mode-entry.ts'), 'utf-8');
   assert(
-    (entry.match(/unattended: options\.unattended \?\? \{ write_mode: 'full-access', approval_mode: 'never', max_turns: 20 \}/g) ?? []).length === 2,
+    (entry.match(/unattended: options\.unattended \?\? \{ write_mode: 'full-access', approval_mode: 'never' \}/g) ?? []).length === 2,
     'goal-mode-entry 新 manifest 默认须为 full-access + never',
   );
   const runner = fs.readFileSync(path.join(REPO_ROOT, 'harness', 'scripts', 'goal-phase-runtime.ts'), 'utf-8');
   assert(
-    /write_mode: 'full-access',\s*\n\s*approval_mode: 'never',\s*\n\s*max_turns: 20,/.test(runner),
+    /write_mode: 'full-access',\s*\n\s*approval_mode: 'never',/.test(runner),
     'goal-runner fresh CLI 入口新 manifest 默认须为 full-access + never',
   );
   assert(

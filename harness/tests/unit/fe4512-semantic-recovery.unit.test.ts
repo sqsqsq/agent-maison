@@ -109,7 +109,7 @@ export async function runFe4512UtFragment(root: string, options: NonNullable<Par
       exitCode: 1, stdout: '', stderr: 'Explicit unavailable visual model substitute for the UT execution fragment.', command: 'test-model-substitute',
     }));
     const probe = await runGoalRuntimeChain(root, { ...options, ...(resume ? { resume } : {}),
-      noAutoForce: true, viaRuntimeClass: true, hostMaxRounds: 1,
+      noAutoForce: true, viaRuntimeClass: true,
       hostAuthorization: { mode: 'goal_mode', autonomyAuthorized: true } });
     assert.equal(probe.exitCode, 0, '局部执行片段必须沿真实恢复入口继续，不能忽略正式失败：' + JSON.stringify(
       probe.events.filter(event => ['phase_halt', 'phase_verdict', 'run_end', 'phase_write_violation'].includes(String(event.type))).slice(-5)));
@@ -424,12 +424,12 @@ const S1_ROOT = path.join(__dirname, '../fixtures/host-recovery-history/20261024
 const FE4512_CHAIN = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'];
 
 function assertS0ValidationOnlyEligibility(): void {
-  const runtime = require('../../scripts/goal-phase-runtime') as typeof import('../../scripts/goal-phase-runtime');
+  const facts = require('../../scripts/utils/goal-runner-phase') as typeof import('../../scripts/utils/goal-runner-phase');
   const eventsPath = path.join(S0_ROOT, featureDir, 'goal-runs', '20261023T044016Z-fe4512', 'events.jsonl');
   const events = fs.readFileSync(eventsPath, 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line));
   const halt = events.find((event: { type?: string }) => event.type === 'phase_halt');
   assert.equal(halt, undefined, 'S0 原件的形状前提：没有 phase_halt');
-  const eligible = runtime.deriveHaltValidationOnlyEligibility(events);
+  const eligible = facts.resolveValidationOnlyEligibility(events, { requireInterrupt: true });
   assert.deepEqual(eligible, { phase: 'coding', invoke_id: 'coding-i3' },
     '缺少 phase_halt 不得妨碍识别已完成作者，只补正式 gate 核验');
   // 旧 plan 发现的实质修订由独立的 S0 组合用例验收；新输入可依法使旧作者失效。

@@ -1,3 +1,5 @@
+P3现行解释：本change入口诉求与保真契约保留；旧phase冷派工、总预算与只到allCU的终点方案由completion-driven-execution收编替换。现root持续到原真实部件终点，作者专用会话、独核和正式writer分责，显式用户截止/取消及真实工具保护有效；原实施记录不代表P4宿主验收。
+
 ## Context
 
 当前初始设计在 Goal 出生前交回主会话；已有设计修订、独立质询、CU consumer/P2 循环与正式完成读取可以复用。本批按 f3b8e6a1 最新批准范围接线，遵守 `docs/overview.md §1.2.1` 四原则，不重写已完成历史计划。

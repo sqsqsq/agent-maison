@@ -39,7 +39,6 @@ import { clearFrameworkConfigCache, featureFilePath } from '../../config';
 import { __testing_setCanaryProbeInvoke } from '../../scripts/goal-runner';
 import { spawnSync } from 'child_process';
 import { FEATURE_LOCK_NAME, tryAcquireLock } from '../../scripts/utils/goal-run-lock';
-import { FINALIZE_RESERVE_MS, resolveWallClockMs } from '../../scripts/utils/goal-timeout';
 import { createCodexTerminalScanner } from '../../scripts/utils/codex-terminal-events';
 import { AttendedGoalPhaseExecutor } from '../../scripts/utils/goal-phase-executor';
 import { readScopeAcceptance } from '../../scripts/utils/feature-track';
@@ -526,60 +525,47 @@ function backdateSession(root: string, runId: string, consumedMs: number): void 
   fs.writeFileSync(p, events.map(e => JSON.stringify(e)).join('\n') + '\n', 'utf-8');
 }
 
-const runS1Budget: ScenarioRunner = async (_entry, done) => {
-  // 预算：剩余墙钟预算短于金丝雀固定时长 → 金丝雀按剩余额度结束；额度用尽后不再试下一个获准替代型号。
+const runS1Deadline: ScenarioRunner = async (_entry, done) => {
   const { root } = setupGoalRuntimeHost('codex');
   try {
     uiHostWithoutCanaryCache(root, { adapters: { codex: { approved_models: ['gpt-alt-1'] } } });
-    __testing_setCanaryProbeInvoke((async () => ({ exitCode: 1, stdout: '', stderr: 'boom', command: 'fake-codex' })) as never);
-    await requestVia('foreground', root, {
-      freshRequirement: S1_REQUIREMENT, freshEndPhase: 'spec',
-      invokeResultFor: () => ({ exitCode: 1, stdout: '', stderr: '', command: 'fake', spawn_error: { code: 'ENOENT', message: 'spawn ENOENT' } }),
-    });
-    const [run] = listRuns(root, RT_FEATURE);
-    const first = eventsOf(root, RT_FEATURE, run);
-    const firstHalt = first.find(e => e.type === 'phase_halt' && e.halt_reason === 'adapter_cli_hard_failure');
-    const manifest = JSON.parse(fs.readFileSync(path.join(runsDirOf(root, RT_FEATURE), run, 'manifest.json'), 'utf-8')) as { phase_chain?: string[] };
-    const leftMs = 12_000;
-    backdateSession(root, run, resolveWallClockMs(manifest as never, manifest.phase_chain) - FINALIZE_RESERVE_MS - leftMs);
+    const userDeadline = new Date(Date.now() + 12_000).toISOString();
     const canaryTimeouts: number[] = [];
     __testing_setCanaryProbeInvoke((async (_plan: unknown, _root: unknown, opts: { timeoutMs?: number }) => {
-      const t = Number(opts?.timeoutMs ?? 0);
-      canaryTimeouts.push(t);
-      await new Promise(r => setTimeout(r, Math.max(0, t) + 50));
+      const timeout = Number(opts?.timeoutMs ?? 0);
+      assert(timeout > 0 && timeout <= 12_000, '实际canary grant必须来自本次显式用户截止');
+      canaryTimeouts.push(timeout);
+      await new Promise(resolve => setTimeout(resolve, timeout + 50));
       return codex400Invoke();
     }) as never);
+    await requestVia('foreground', root, { freshRequirement: S1_REQUIREMENT, freshEndPhase: 'spec',
+      launchArgs: ['--user-deadline-at', userDeadline] });
+    const [run] = listRuns(root, RT_FEATURE);
+    // Deadline expiry is a real control change; first observe it before testing unchanged re-entry.
     await requestVia('foreground', root, { freshRequirement: S1_REQUIREMENT, freshEndPhase: 'spec' });
     const events = eventsOf(root, RT_FEATURE, run);
-    const halt = [...events].reverse().find(e => e.type === 'phase_halt' && e.halt_reason === 'canary_cli_hard_failure');
-    const guidance = String(halt?.halt_guidance ?? '');
-    // 重复请求（无人值守）：刚停下、什么都没变，无人脚本连续两次重发 → 保持停止，run 数与事件都不增加。
+    const manifest = JSON.parse(fs.readFileSync(path.join(runsDirOf(root, RT_FEATURE), run, 'manifest.json'), 'utf8')) as { user_deadline_at?: string };
     const repeatExits: number[] = [];
-    for (let i = 0; i < 2; i++) repeatExits.push((await requestVia('foreground', root, { freshRequirement: S1_REQUIREMENT, freshEndPhase: 'spec' })).exitCode);
-    const eventsAfterRepeat = eventsOf(root, RT_FEATURE, run).length;
-    done({
-      key: 'budget', root, feature: RT_FEATURE, frameworkRoot: REPO_ROOT, runIds: [run],
-      interventions: [RE_REQUEST('重新发起同一请求（不带任何旗标）'), ...repeatExits.map(() => ({ ...RE_REQUEST('无人脚本重复同一请求（什么都没变）'), necessary: false }))],
-      acceptance: { result: 'fail', actor: 'reliability-scenarios', basis: '未交付：预算已尽（交还是否正确由期望判定）' },
-      hit: { ok: !!firstHalt && !!halt, evidence: `首段 adapter_cli_hard_failure=${!!firstHalt}；重新接入后金丝雀停机=${!!halt}` },
-      expectation: (t) => {
-        const reasons = [
-          !t.facts.claimed_complete || '宣称了完成',
-          canaryTimeouts.length === 1 || `预算尽后不得再试下一个型号：金丝雀调用 ${canaryTimeouts.length} 次`,
-          (canaryTimeouts[0] > 0 && canaryTimeouts[0] <= leftMs) || `金丝雀允许时长须取剩余额度（≤${leftMs}ms）：${canaryTimeouts[0]}`,
-          !events.some(e => e.type === 'adapter_model_substituted') || '预算尽后换了型号',
-          guidance.includes('预算已尽') || `说明须写明预算已尽：${guidance.slice(-200)}`,
-          listRuns(root, RT_FEATURE).length === 1 || '不得新建 run',
-          (repeatExits.every(c => c === 1) && eventsAfterRepeat === events.length) || `无人脚本重复请求须保持停止且不写事件：exits=${repeatExits.join(',')} events ${events.length}→${eventsAfterRepeat}`,
-        ].filter((x): x is string => typeof x === 'string');
-        return { met: reasons.length === 0, detail: reasons.length ? reasons.join('；') : `无人脚本两次重复请求保持停止；金丝雀按剩余额度 ${canaryTimeouts[0]}ms 结束、不再换型号、说明写明预算已尽` };
-      },
-      extras: { canary_timeouts: canaryTimeouts },
+    for (let index = 0; index < 2; index++) repeatExits.push((await requestVia('foreground', root,
+      { freshRequirement: S1_REQUIREMENT, freshEndPhase: 'spec' })).exitCode);
+    const after = eventsOf(root, RT_FEATURE, run);
+    done({ key: 'budget', root, feature: RT_FEATURE, frameworkRoot: REPO_ROOT, runIds: [run],
+      interventions: repeatExits.map(() => ({ ...RE_REQUEST('用户截止后重复原请求，无新授权或条件'), necessary: false })),
+      acceptance: { result: 'fail', actor: 'reliability-scenarios', basis: '用户明示截止已到，未交付；旧budget分支key仅保历史关联' },
+      hit: { ok: canaryTimeouts.length === 1 && manifest.user_deadline_at === userDeadline,
+        evidence: '公开入口实际签发UTC截止，真实canary收到其剩余时间grant；未从历史wall推导' },
+      expectation: task => {
+        const reasons = [!task.facts.claimed_complete || '未交付却宣称完成',
+          manifest.user_deadline_at === userDeadline || '用户截止被重置',
+          canaryTimeouts.length === 1 || '截止后又发起canary',
+          !after.some(event => event.type === 'adapter_model_substituted') || '截止后换了model',
+          listRuns(root, RT_FEATURE).length === 1 || '同请求创建了新run',
+          after.length === events.length || '同条件重发新增运行事件',
+          repeatExits.every(exit => exit !== 0) || '未交付重发误报成功'].filter((item): item is string => typeof item === 'string');
+        return { met: reasons.length === 0, detail: reasons.length ? reasons.join('；') : '真实用户截止限制canary；不换model、不重置截止，同条件重发零调用且不签完成' };
+      }, extras: { user_deadline_at: userDeadline, canary_timeouts: canaryTimeouts },
     });
-  } finally {
-    clearFrameworkConfigCache();
-    fs.rmSync(root, { recursive: true, force: true });
-  }
+  } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
 };
 
 const runBe091cOrphan: ScenarioRunner = async (_entry, done) => {
@@ -1728,6 +1714,7 @@ function runS13Branch(declineTwice: boolean): ScenarioRunner {
   let independentlyReadDecline = false;
   let correctionActuallyDelivered = false;
   const declines: string[][] = [];
+  const ownerDeliveries: string[] = [];
   const requirement = `${GOAL_QUOTE}；按当前 TC-001 完成页断言，必须显示「已开卡」。`;
   const verifierProject = { root, feature: RT_FEATURE, frameworkRoot: REPO_ROOT,
     harnessDir: path.join(REPO_ROOT, 'harness') } as RealChainProject;
@@ -1741,7 +1728,6 @@ function runS13Branch(declineTwice: boolean): ScenarioRunner {
     const productFixed = (): boolean => rtProduct(root).includes(S13_FIX);
     const probe = await runGoalRuntimeChain(root, {
       adapter: 'codex', freshRequirement: requirement,
-      onTesting: ({ root: r }) => writeCleanTesting(r),
       onHarnessSummary: ({ phase }) => {
         if (phase !== 'testing') return null;
         const [runId] = listRuns(root, RT_FEATURE);
@@ -1770,7 +1756,21 @@ function runS13Branch(declineTwice: boolean): ScenarioRunner {
         const input = fs.readFileSync(featureFilePath(root, RT_FEATURE, 'testing/test-report.md'), 'utf8');
         const source = rtProduct(root);
         assert(input.includes(requirement) && input.includes(S13_DEFECT), '独核须读完整当前请求及原断言');
-        assert(bases.every(basis => input.includes(basis)), '独核须逐条读取作者真正写出的拒修原文');
+        const repairs = require('../../scripts/utils/repair-candidates') as typeof import('../../scripts/utils/repair-candidates');
+        const materialReader = require('../../scripts/utils/verifier-material') as typeof import('../../scripts/utils/verifier-material');
+        const reportsDir = path.dirname(path.join(root, request.prompt_path));
+        const material = materialReader.readVerifierMaterialOrNull(reportsDir, request.subject_id);
+        const ledgerFile = featureFilePath(root, RT_FEATURE, 'coding/headless-assumptions.jsonl');
+        const rawLedger = fs.existsSync(ledgerFile) ? fs.readFileSync(ledgerFile, 'utf8') : null;
+        const collected = repairs.repairDeclineContextFiles(root, RT_FEATURE, ctx.runId, REPO_ROOT);
+        const auditFile = path.join(REPO_ROOT, `harness/reports/72b6f0d9/p3/c-s13-material-${ctx.runId}-${ctx.goalAttemptId}.json`);
+        fs.writeFileSync(auditFile, JSON.stringify({ request, bases, rawLedger, collected, material, input,
+          prompt: fs.readFileSync(path.join(root, request.prompt_path), 'utf8'), source }, null, 2) + '\n');
+        const actualPrompt = fs.readFileSync(path.join(root, request.prompt_path), 'utf8');
+        assert(bases.every(basis => actualPrompt.includes(basis)), '独核须逐条读取作者真正写出的拒修原文');
+        if (bases.length) assert(material?.files.some(file => path.resolve(root, file.path) === ledgerFile
+          && file.sha256 === materialReader.verifierMaterialFileHash({ projectRoot: root, feature: RT_FEATURE,
+            phase: 'testing', file: file.path, schema: material.schema })), '独核材料须绑定实际拒修原账本');
         if (bases.length) independentlyReadDecline = true;
         const fixed = source.includes(S13_FIX);
         const issue = 'testing_failure_routing_TC-001_s2';
@@ -1782,11 +1782,10 @@ function runS13Branch(declineTwice: boolean): ScenarioRunner {
           reportText: '# 独立复核原文\n' + details + '\n```issue-verification\n' + YAML.stringify([{ issue,
             verdict: fixed ? 'refuted' : 'confirmed', repair_owner: 'coding', evidence: details }]) + '```\n' });
       },
-      onCoding: ctx => {
-        if (!ctx.prompt.includes('item_fingerprint:')) {
-          rtWriteFile(ctx.root, RT_PRODUCT_FILE, 'struct AllBanksPage { build() { Text("x") } }');
-          return;
-        }
+      onAuthor: (ctx, context) => {
+        if (!ctx.prompt.includes('item_fingerprint:')) return;
+        assert(context.runId === ctx.runId && context.feature === RT_FEATURE && context.owner.run_id === ctx.runId, 'S13 repair must use the actual original unit request and fence');
+        ownerDeliveries.push(ctx.prompt);
         const bases = refusalBasis(ctx.runId);
         const receivedCorrection = independentlyReadDecline && bases.length > 0
           && bases.every(basis => ctx.prompt.includes(basis.replace(/^declined:\s*/, ''))) && ctx.prompt.includes(S13_DEFECT);
@@ -1805,10 +1804,19 @@ function runS13Branch(declineTwice: boolean): ScenarioRunner {
     });
     const [run] = listRuns(root, RT_FEATURE);
     const events = eventsOf(root, RT_FEATURE, run);
-    const bts = events.filter(e => e.type === 'phase_backtrack_requested' && e.to_phase === 'coding');
     const firstTestingFail = indexOf(events, e => e.type === 'phase_verdict' && e.phase === 'testing' && e.verdict === 'FAIL');
     const halts = events.filter(e => e.type === 'phase_halt');
     const guidance = halts.map(e => String(e.halt_guidance ?? e.reason ?? '')).join('\n');
+    if (!productFixed() && !declineTwice || declineTwice && !halts.some(event => event.halt_reason === 'no_progress_guard')) {
+      const { preserveRuntimeTestEvidence } = require('../utils/runtime-test-control') as typeof import('../utils/runtime-test-control');
+      const originals = preserveRuntimeTestEvidence([root], 'S13 current correction not completed', [], [
+        featureFilePath(root, RT_FEATURE, 'coding/headless-assumptions.jsonl'), featureFilePath(root, RT_FEATURE, 'testing/test-report.md'),
+        featureFilePath(root, RT_FEATURE, 'testing/reports/summary.json'), featureFilePath(root, RT_FEATURE, 'testing/reports/script-report.json') ]);
+      fs.writeFileSync(path.join(originals, 's13-current-feedback.json'), JSON.stringify({ ownerDeliveries, events,
+        current: (require('../../scripts/utils/verify-feature-completion') as typeof import('../../scripts/utils/verify-feature-completion'))
+          .resolveCompletionDisposition({ projectRoot: root, frameworkRoot: REPO_ROOT, feature: RT_FEATURE,
+            runId: run, chain: ['spec', 'plan', 'coding', 'review', 'ut', 'testing'] }), guidance }, null, 2) + '\n');
+    }
     done({
       key: declineTwice ? 'refusal-twice' : 'refusal-corrected', root, feature: RT_FEATURE, frameworkRoot: REPO_ROOT, runIds: [run],
       interventions: [],
@@ -1817,8 +1825,8 @@ function runS13Branch(declineTwice: boolean): ScenarioRunner {
       after: firstTestingFail >= 0 ? { run_id: run, event_index: firstTestingFail } : undefined,
       // The candidate/refusal is the premise; genuine independent delivery is a required outcome below.
       // A missing legal verifier request must stay a quality gap, not be mislabeled as an unhit fault.
-      hit: { ok: bts.length >= 1 && refusedWithoutChange && declines.length >= 1,
-        evidence: `真实候选已拒修；当前独核读拒修=${independentlyReadDecline}；回退观测=${bts.length}；实质纠正送达=${correctionActuallyDelivered}` },
+      hit: { ok: ownerDeliveries.some(prompt => prompt.includes(S13_DEFECT)) && refusedWithoutChange && declines.length >= 1,
+        evidence: `真实候选已拒修；当前独核读拒修=${independentlyReadDecline}；真实原单元修复反馈=${ownerDeliveries.length}；实质纠正送达=${correctionActuallyDelivered}` },
       expectation: declineTwice ? t => {
         const reasons = [!t.facts.claimed_complete || '宣称了完成',
           t.stop_state?.halt_reason === 'no_progress_guard' || `停机原因=${t.stop_state?.halt_reason}`,
@@ -1995,7 +2003,7 @@ interface ScenarioFlow { execute: ScenarioRunner; produces: string[] }
 const flow = (execute: ScenarioRunner, ...produces: string[]): ScenarioFlow => ({ execute, produces });
 
 export const SCENARIOS: Array<{ id: string; run: ScenarioFlow[] }> = [
-  { id: 'S1', run: [flow(runS1, 'S1/canary-no-alternative', 'S1/explicit-model-successor'), flow(runS1Formal, 'S1/formal-with-alternative'), flow(runS1Budget, 'S1/budget'), flow(runBe091cOrphan, 'S1/be091c-orphan-lock'), flow(runBe091cScope, 'S1/be091c-scope-transfer')] },
+  { id: 'S1', run: [flow(runS1, 'S1/canary-no-alternative', 'S1/explicit-model-successor'), flow(runS1Formal, 'S1/formal-with-alternative'), flow(runS1Deadline, 'S1/budget'), flow(runBe091cOrphan, 'S1/be091c-orphan-lock'), flow(runBe091cScope, 'S1/be091c-scope-transfer')] },
   { id: 'S2', run: [flow(runS2, 'S2/transient'), flow(runS2Codex, 'S2/codex-synthetic-429')] },
   { id: 'S10', run: [flow(runS10, 'S10/old-snapshot')] },
   { id: 'S3', run: [flow(runS3, 'S3/blueprint-bump', 'S10/new-format')] },

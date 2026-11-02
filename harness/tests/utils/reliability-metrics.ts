@@ -34,7 +34,7 @@ import {
   countAgentInvokeStarts,
   extractSupersedeTargets,
   filterAuthoritativeEvents,
-  foldBudgetLineage,
+  readSupersededAncestorRuns,
   loadEventsJsonl,
   partitionExecutionSessions,
   resolveEffectiveRunEnd,
@@ -721,12 +721,11 @@ function assessRecord(projectRoot: string, feature: string, frameworkRoot?: stri
 // 分组与汇总
 // ---------------------------------------------------------------------------
 
-/** 以生产预算折叠入口 foldBudgetLineage 求 head 的审计 supersede 血缘（交付周期边界之前的不计）。 */
-function lineageOf(runsDir: string, head: LoadedRun, boundary: string | null): { ids: string[]; missing: string[] } {
+/** Read original supersede audit history without applying the retired quota-cycle cutoff. */
+function lineageOf(runsDir: string, head: LoadedRun): { ids: string[]; missing: string[] } {
   const loaded = new Map<string, Ev[]>();
-  const fold = foldBudgetLineage({
+  const ancestors = readSupersededAncestorRuns({
     projectRoot: runsDir, featuresDir: '.', feature: 'x', currentEvents: head.auth,
-    ...(boundary ? { cycleBoundary: boundary } : {}),
     loadEvents: (abs) => {
       const id = path.basename(path.dirname(abs));
       const evs = filterAuthoritativeEvents(loadEventsJsonl(path.join(runsDir, id, 'events.jsonl'))) as Ev[];
@@ -734,7 +733,7 @@ function lineageOf(runsDir: string, head: LoadedRun, boundary: string | null): {
       return evs;
     },
   });
-  const kept = new Set(fold.ancestorEvents);
+  const kept = new Set(ancestors.flatMap(run => run.events));
   return {
     ids: [...loaded].filter(([, evs]) => evs.length > 0 && kept.has(evs[0])).map(([id]) => id),
     missing: [...loaded].filter(([, evs]) => evs.length === 0).map(([id]) => id),
@@ -875,7 +874,7 @@ export function collectReliability(opts: CollectOptions): ReliabilityReport {
       const inCycle = all.filter((id) => !boundary || (id !== boundary && (boundaryMs === null || !Number.isFinite(boundaryMs) ? id > boundary : created.get(id)! >= boundaryMs)));
       const superseded = new Set(inCycle.flatMap((id) => extractSupersedeTargets(loadRun(runsDir, id, 'lineage').auth)));
       for (const head of inCycle.filter((id) => !superseded.has(id))) {
-        const lineage = lineageOf(runsDir, loadRun(runsDir, head, 'lineage'), boundary);
+        const lineage = lineageOf(runsDir, loadRun(runsDir, head, 'lineage'));
         drafts.push({
           runs: new Map([head, ...lineage.ids].map((id) => [id, 'lineage' as RunSource])),
           missing: new Set(lineage.missing),

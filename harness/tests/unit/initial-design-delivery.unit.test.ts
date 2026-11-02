@@ -12,7 +12,7 @@ import { clearFrameworkConfigCache } from '../../config';
 import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
 import type { UnitCaseResult } from '../run-unit';
 import { reportFixtureQuestioning, seedLedgerQuestioningInput } from '../utils/initial-questioning-fixture';
-import { runRuntimeTestChild, withRuntimeTest } from '../utils/runtime-test-control';
+import { runRuntimeTestChild, withRuntimeTest, preserveRuntimeTestEvidence } from '../utils/runtime-test-control';
 
 const ORIGINAL_BUDGET={max_total_turns:30,wall_clock_minutes:120,max_retries_per_phase:3};
 const UNATTENDED={write_mode:'full-access' as const,approval_mode:'never' as const,timeout_seconds:900,max_turns:20};
@@ -49,11 +49,14 @@ function publicCli(project:Project,script:string,args:string[]):Record<string,an
   assert.equal(result.status,0,`${script}: ${result.stderr}\n${result.stdout}\n${result.error??''}`);return JSON.parse(result.stdout.trim());
 }
 const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
-  name: 'f3b8e6a1 real public prepare CLI consumes a raw-only input definition and preserves the explicit original budget timeout and model pin',
+  name: 'f3b8e6a1 real public prepare CLI preserves the explicit user deadline and model pin while ignoring legacy quota fields',
   async run() {
     await withProject(project => {
       assert.deepEqual(fs.readdirSync(path.join(project.root, 'doc/features')), []);
       const inputPath = path.join(project.root, 'doc/request-input.yaml');
+      const definition = YAML.parse(fs.readFileSync(inputPath, 'utf8'));
+      definition.user_deadline_at = '2030-01-01T00:00:00.000Z';
+      fs.writeFileSync(inputPath, YAML.stringify(definition));
       const inputBytes = fs.readFileSync(inputPath);
       const result = publicCli(project, 'goal-mode-entry', ['--prepare-run', '--manifest', 'doc/request-input.yaml', '--run-mode', 'attended']);
       assert.equal(result.type, 'goal_run_prepared');
@@ -61,9 +64,10 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
       assert(manifest.initial_design);
       assert.equal(manifest.requirement, project.requirement);
       assert.deepEqual(manifest.requirement_source_files, ['doc/requirement.md']);
-      assert.equal(manifest.budget.max_total_turns, 30);
-      assert.equal(manifest.budget.wall_clock_minutes, 120);
-      assert.equal(manifest.unattended.timeout_seconds, 900);
+      assert.equal(manifest.user_deadline_at, definition.user_deadline_at);
+      assert.equal(manifest.budget, undefined);
+      assert.equal(manifest.unattended.timeout_seconds, undefined);
+      assert.equal(manifest.unattended.max_turns, undefined);
       assert.equal(manifest.unattended.phase_timeout_seconds, undefined);
       assert.deepEqual(manifest.adapter_model_pin, { adapter: 'claude', value: 'claude-opus-5-5' });
       assert.equal(manifest.execution_scope, undefined);
@@ -88,8 +92,8 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
       const manifest = prepared.manifest;
       assert.equal(manifest.requirement, project.requirement);
       assert.deepEqual(manifest.requirement_source_files, project.requirementSourceFiles);
-      assert.deepEqual(manifest.budget, { ...ORIGINAL_BUDGET, max_total_turns: turns, max_transient_api_retries: 3 });
-      assert.deepEqual(manifest.unattended, UNATTENDED);
+      assert.equal(manifest.budget, undefined);
+      assert.deepEqual(manifest.unattended, { write_mode: 'full-access', approval_mode: 'never' });
       assert.deepEqual(manifest.adapter_model_pin, input.adapterModelPin);
       assert.deepEqual(manifest.visual_provider_pin, input.visualProviderPin);
       for (const key of ['execution_scope', 'phase_chain', 'chain_override', 'run_base_sha']) assert.equal((manifest as unknown as Record<string, unknown>)[key], undefined, key);
@@ -179,7 +183,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
       const next = await withRuntimeTest({ root: options.projectRoot }, () => entry.runGoalModeSessionStep(options));
       assert.deepEqual(next.request, continued.request, 'ordinary next must reuse the actual pending continuation');
       assert.equal(events().filter(event => event.type === 'agent_invoke_start').length, 2);
-      assert.equal(origin.readOriginalDeliveryBudget(project.root, prepared.manifest)!.totalTurns, 2);
+      assert.equal(origin.readOriginalDeliveryActivity(project.root, prepared.manifest)!.calls, 2);
       assert(!events().some(event => event.type === 'run_end' && ['COMPLETED', 'CHAIN_SLICE_COMPLETED'].includes(String(event.status))));
       assert(!fs.existsSync(path.join(project.root, 'doc/features', project.feature, 'completion.json')));
       assert.equal(events().filter(event => event.type === 'agent_invoke_start').length, 2);
@@ -188,13 +192,13 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
       assert.notEqual(retry.request.invoke_id, issued.request.invoke_id);
       assert(retry.request.context.instruction?.includes(project.requirement), 'the incomplete real task remains in the original author scope');
       const terminal = await withRuntimeTest({ root: options.projectRoot }, () => entry.runGoalModeSessionStep({ ...options, requestPath: retryReference.path,
-        report: { status: 'passed', phase: retry.request.context.phase, details: 'Second author also has no deliverable.' } }));
-      assert.notEqual(terminal.type, 'phase_execute_request', 'a third author call must not bypass the two-call budget');
+        report: { status: 'waiting', phase: retry.request.context.phase, details: '受控入口夹具尚未执行后续设计；保留该原请求，真实执行者就绪后继续。' } }));
+      assert.notEqual(terminal.type, 'phase_execute_request', 'a real waiting result must not silently purchase another author');
       assert.equal(events().filter(event => event.type === 'agent_invoke_start').length, 2);
       assert(!events().some(event => event.type === 'run_end' && ['COMPLETED', 'CHAIN_SLICE_COMPLETED'].includes(String(event.status))));
-      assert(events().some(event => event.halt_reason === 'budget_turns'), 'the original hard budget must explain the incomplete result');
-      const budget = origin.readOriginalDeliveryBudget(project.root, prepared.manifest)!;
-      assert.equal(budget.totalTurns, 2); assert.equal(budget.budget.max_total_turns, 2);
+      assert(!events().some(event => event.halt_reason === 'budget_turns'), 'retired quota metadata cannot terminate the current request');
+      const budget = origin.readOriginalDeliveryActivity(project.root, prepared.manifest)!;
+      assert.equal(budget.calls, 2);
       assert.deepEqual(fs.readFileSync(prepared.manifestPath), manifestBefore);
     });
   },
@@ -209,9 +213,8 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
       const statusBefore = publicCli(project, 'goal-status', ['--run-id', prepared.manifest.run_id, '--json']);
       assert.equal(statusBefore.kind, 'initial_design_delivery');
       assert.equal(statusBefore.complete, false);
-      assert.equal(statusBefore.budget.total_turns, 0);
-      assert.equal(statusBefore.budget.max_total_turns, 30);
-      assert.equal(statusBefore.budget.wall_clock_minutes, 120);
+      assert.equal(statusBefore.activity.calls, 0);
+      assert(!('budget' in statusBefore));
       const args = ['--run-id', prepared.manifest.run_id, '--adapter', 'claude', '--run-mode', 'attended', '--authorize-autonomy', '--next'];
       const first = publicCli(project, 'goal-mode-entry', args);
       assert.equal(first.type, 'phase_execute_request');
@@ -225,7 +228,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
       const preparedBlueprint = fs.readFileSync(blueprintFile);
       const status = publicCli(project, 'goal-status', ['--run-id', prepared.manifest.run_id, '--json']);
       assert.equal(status.complete, false);
-      assert.equal(status.budget.total_turns, 1);
+      assert.equal(status.activity.calls, 1);
       assert.equal(status.current.phase, first.phase);
       const monitor = publicCli(project, 'goal-monitor', ['--run-id', prepared.manifest.run_id, '--json', '--max-seconds', '0']);
       assert(!['COMPLETED', 'CHAIN_SLICE_COMPLETED'].includes(monitor.status));
@@ -383,17 +386,17 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
       assert.equal(first.run_id, prepared.manifest.run_id);
       const reference = first.request as { path: string; sha256: string };
       const bytes = fs.readFileSync(reference.path);
-      assert.equal(origin.readOriginalDeliveryBudget(host.root, original)!.totalTurns, 1);
+      assert.equal(origin.readOriginalDeliveryActivity(host.root, original)!.calls, 1);
       const wrong = controlProcess({ requestPath: reference.path, report: { status: 'passed', phase: first.phase === 'ut' ? 'coding' : 'ut', details: 'Injected wrong phase; no actor has run.' } });
       assert.match(String(wrong.error), /invalid execution (?:phase|result)/, 'a wrong child report must be rejected before changing pending work');
       assert.deepEqual(fs.readFileSync(reference.path), bytes);
-      assert.equal(origin.readOriginalDeliveryBudget(host.root, original)!.totalTurns, 1);
+      assert.equal(origin.readOriginalDeliveryActivity(host.root, original)!.calls, 1);
       const second = controlProcess();
       assert.equal(second.type, 'phase_execute_request', 'root recovery must re-deliver its pending child instead of allocating an outstanding conflicting request');
       assert.deepEqual(second.request, reference);
       assert.equal(second.deadline, first.deadline);
       assert.deepEqual(fs.readFileSync(reference.path), bytes);
-      assert.equal(origin.readOriginalDeliveryBudget(host.root, original)!.totalTurns, 1, 'repeated root next cannot charge a phantom second child invocation');
+      assert.equal(origin.readOriginalDeliveryActivity(host.root, original)!.calls, 1, 'repeated root next cannot charge a phantom second child invocation');
       for (const [file, hash] of Object.entries(sourceHashes)) assert.equal(createHash('sha256').update(fs.readFileSync(path.join(host.harnessDir, file))).digest('hex'), hash, 'all control processes must execute the same copied source version');
     }); } finally {
       runtime.__testing_setInvokeAgent(null); runtime.__testing_setCanaryProbeInvoke(null);
@@ -411,8 +414,8 @@ for (const scenario of ['definition-gap', 'empty-chain'] as const) cases.push({
     const { prepareFeatureScopeCandidate } = require('../../scripts/utils/feature-track') as typeof import('../../scripts/utils/feature-track');
     const { resolveBirthExecutionScope } = require('../../scripts/utils/feature-execution-scope') as typeof import('../../scripts/utils/feature-execution-scope');
     const { resolveWorkflowSpec } = require('../../workflow-loader') as typeof import('../../workflow-loader');
-    const { deriveChangeUnitFeatureId, loadCanonicalChangeUnit } = require('../../scripts/utils/change-unit-path') as typeof import('../../scripts/utils/change-unit-path');
-    const { readOriginalDeliveryBudget } = require('../../scripts/utils/delivery-origin') as typeof import('../../scripts/utils/delivery-origin');
+    const { deriveChangeUnitFeatureId, loadCanonicalChangeUnit, enumerateCanonicalChangeUnits, asChangeUnitArtifact } = require('../../scripts/utils/change-unit-path') as typeof import('../../scripts/utils/change-unit-path');
+    const { readOriginalDeliveryActivity } = require('../../scripts/utils/delivery-origin') as typeof import('../../scripts/utils/delivery-origin');
     const { readSessionExecution } = require('../../scripts/utils/session-execution-handoff') as typeof import('../../scripts/utils/session-execution-handoff');
     const runtime = require('../../scripts/goal-phase-runtime') as typeof import('../../scripts/goal-phase-runtime');
     runtime.__testing_setInvokeAgent(async () => { throw new Error('A public next request must not launch a headless model.'); });
@@ -430,6 +433,7 @@ for (const scenario of ['definition-gap', 'empty-chain'] as const) cases.push({
         const { handWriteProjections } = require('./component-design-handoff.unit.test') as typeof import('./component-design-handoff.unit.test');
         handWriteProjections(host.root);
       }
+      const originalContracts = scenario === 'empty-chain' ? fs.readFileSync(path.join(host.root, 'doc/features', blueprint, 'ledger-refresh/contracts.yaml'), 'utf8') : undefined;
       const prepared = prepareFeatureScopeCandidate({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature,
         completionTarget: 'feature', requestedResults: [requirement], requirement, overwrite: true,
         requestedPhases: scenario === 'definition-gap' ? ['spec', 'plan', 'coding', 'review', 'ut', 'testing'] : ['coding', 'review', 'ut'],
@@ -445,14 +449,105 @@ for (const scenario of ['definition-gap', 'empty-chain'] as const) cases.push({
       assert(scope.unresolved.length > 0);
       const options = { projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: blueprint,
         runId: original.run_id, adapter: 'codex', runMode: 'attended', authorization: { mode: 'goal_mode' as const, autonomyAuthorized: true } };
+      const { repairAdapter } = require('./design-authority-repair.unit.test') as typeof import('./design-authority-repair.unit.test');
+      const { asRecord, asRecords } = require('../../scripts/utils/component-blueprint-model') as typeof import('../../scripts/utils/component-blueprint-model');
+      const { resolveBlueprintTarget } = require('../../scripts/utils/blueprint-addressing') as typeof import('../../scripts/utils/blueprint-addressing');
+      const repairedUnits = new Set<string>();
+      const approvedCriterion = (doc: Parameters<typeof resolveBlueprintTarget>[0], candidate: ReturnType<typeof asChangeUnitArtifact>): string => {
+        const originalUnit = asChangeUnitArtifact(loadCanonicalChangeUnit(host.root, blueprint, candidate.change_unit_id).changeUnit);
+        const ref = originalUnit.design_refs.find(item => item.target.kind === 'node' && item.target.view_id === 'logical');
+        assert(ref, 'the existing CU must name its approved logical design');
+        const node = asRecord(resolveBlueprintTarget(doc, ref.target));
+        const acceptance = asRecord(node?.acceptance), contracts = asRecord(node?.contracts);
+        const canonical = YAML.parse(fs.readFileSync(path.join(host.root, 'doc/features', blueprint, 'blueprint/component-blueprint.yaml'), 'utf8'));
+        const originalNode = asRecord(resolveBlueprintTarget(canonical, ref.target));
+        assert.deepEqual(acceptance?.criteria, asRecord(originalNode?.acceptance)?.criteria, 'a mapping repair may not invent another approved criterion');
+        const approved = asRecords(acceptance?.criteria).filter(item => item.description === 'refresh and recover');
+        assert.equal(approved.length, 1, 'only the original approved refresh/recovery criterion may supply this mapping');
+        assert(typeof approved[0].id === 'string');
+        assert(asRecords(contracts?.modules).some(item => item.name === 'ledger'), 'the approved owner must still be the ledger module');
+        assert(fs.readFileSync(path.join(host.root, 'contracts/ledger-api.yaml'), 'utf8').includes('createEntry'), 'the approved source contract must be real');
+        assert.deepEqual(candidate.provides, originalUnit.provides); assert.deepEqual(candidate.requires, originalUnit.requires);
+        return approved[0].id;
+      };
+      const repair = repairAdapter(host, () => undefined, { fix: () => undefined, author: (doc, draft) => {
+        const candidatePath = path.join(path.dirname(draft), 'change-unit.yaml');
+        assert(fs.existsSync(candidatePath), 'a CU mapping finding must reach its actual CU draft, not a blueprint-only author');
+        const candidate = asChangeUnitArtifact(YAML.parse(fs.readFileSync(candidatePath, 'utf8')));
+        const mapApprovedCriterion = (unit: ReturnType<typeof asChangeUnitArtifact>): Set<string> => {
+          const originalUnit = asChangeUnitArtifact(loadCanonicalChangeUnit(host.root, blueprint, unit.change_unit_id).changeUnit);
+          const criterion = 'acceptance:' + approvedCriterion(doc, unit), changed = new Set<string>();
+          assert.deepEqual(unit.target_predicates.map(item => item.predicate_id), originalUnit.target_predicates.map(item => item.predicate_id));
+          for (const predicate of unit.target_predicates) {
+            const prior = originalUnit.target_predicates.find(item => item.predicate_id === predicate.predicate_id)!;
+            assert.deepEqual({ ...predicate, verification_refs: undefined }, { ...prior, verification_refs: undefined }, 'only the actual missing mapping is authored');
+            assert(prior.verification_refs.every(ref => predicate.verification_refs.includes(ref)), 'retain every original predicate verification source');
+            if (!predicate.verification_refs.includes(criterion)) {
+              predicate.verification_refs.push(criterion);
+              predicate.provide_ids.forEach(id => changed.add(id));
+            }
+          }
+          if (changed.size) repairedUnits.add(unit.change_unit_id);
+          return changed;
+        };
+        const changedProvides = mapApprovedCriterion(candidate);
+        fs.writeFileSync(candidatePath, YAML.stringify(candidate));
+        const consumers = enumerateCanonicalChangeUnits(host.root, blueprint).map(row => asChangeUnitArtifact(row.changeUnit))
+          .filter(unit => unit.requires.some(ref => ref.from_change_unit_id === candidate.change_unit_id && changedProvides.has(ref.provide_id)))
+          .map(unit => { mapApprovedCriterion(unit); return { providerId: 'design-repair', artifact: unit }; });
+        fs.writeFileSync(path.join(path.dirname(draft), 'change-unit-candidates.json'), JSON.stringify(consumers, null, 2) + '\n');
+      }, questioning: (doc, draft) => {
+        const candidate = asChangeUnitArtifact(YAML.parse(fs.readFileSync(path.join(path.dirname(draft), 'change-unit.yaml'), 'utf8')));
+        const consumers = JSON.parse(fs.readFileSync(path.join(path.dirname(draft), 'change-unit-candidates.json'), 'utf8')) as Array<{ providerId: string; artifact: ReturnType<typeof asChangeUnitArtifact> }>;
+        for (const unit of [candidate, ...consumers.map(row => row.artifact)]) {
+          const criterion = 'acceptance:' + approvedCriterion(doc, unit);
+          assert(unit.target_predicates.every(item => item.verification_refs.includes(criterion)), 'independent Q must read the complete actual primary/consumer mappings');
+        }
+        fs.readFileSync(path.join(host.root, 'requirements/ledger.md'), 'utf8');
+        fs.readFileSync(path.join(host.root, 'contracts/ledger-api.yaml'), 'utf8');
+      } });
       let result = await withRuntimeTest({ root: options.projectRoot }, () => entry.runGoalModeSessionStep(options)), questions = 0;
       if (result.phase === 'initial-design-questioning') {
         result = await reportFixtureQuestioning(options, result, rootRunDir, path.join(host.root, 'doc/features', blueprint, 'blueprint/component-blueprint.yaml'));
         questions++;
       }
-      assert.equal(result.type, 'phase_execute_request', JSON.stringify(result));
-      const family = readOriginalDeliveryBudget(host.root, original)!;
+      while (result.type === 'phase_execute_request' && String(result.phase).startsWith('design-repair-')) {
+        const requestPath = (result.request as { path: string }).path;
+        const issued = readSessionExecution(rootRunDir, requestPath)!;
+        const returned = await repair.onOutOfChain({ phase: issued.request.context.phase, prompt: issued.request.context.instruction!, attempt: 1, runId: original.run_id });
+        result = await withRuntimeTest({ root: host.root }, () => entry.runGoalModeSessionStep({ ...options, requestPath,
+          report: { status: 'passed', phase: issued.request.context.phase, details: typeof returned?.details === 'string' ? returned.details : 'read the original approved criterion, owner and contract and repaired the current CU draft' } }));
+      }
+      const family = readOriginalDeliveryActivity(host.root, original)!;
+      const starts = family.events.filter(event => event.type === 'agent_invoke_start');
+      const { workUnitExecutionRole } = require('../../scripts/utils/goal-phase-executor') as typeof import('../../scripts/utils/goal-phase-executor');
+      const authors = starts.filter(event => {
+        const purpose = asRecord(event)?.purpose;
+        return typeof event.phase === 'string' && workUnitExecutionRole({ phase: event.phase }, typeof purpose === 'string' ? purpose : undefined) === 'author';
+      });
+      console.log('INITIAL_BIRTH_DIAGNOSTIC ' + JSON.stringify({ scenario, type: result.type, phase: result.phase,
+        calls: family.calls, authorCalls: authors.length, authors: authors.map(event => ({ phase: event.phase, invoke_id: event.invoke_id })),
+        lastEvents: family.events.slice(-5), result }));
       const children = family.runs.filter(run => !manifests.isInitialDesignManifest(run.manifest));
+      if (result.type !== 'phase_execute_request' || scenario === 'empty-chain' && children.length) {
+        const originals = [path.join(host.root, 'doc/features', blueprint, 'blueprint/component-blueprint.yaml'), path.join(rootRunDir, 'session-control.log'),
+          ...['feature.yaml', 'contracts.yaml', 'acceptance.yaml', 'use-cases.yaml'].map(name => path.join(host.root, 'doc/features', blueprint, 'ledger-refresh', name)),
+          ...['component-blueprint.yaml', 'change-unit.yaml', 'change-unit-candidates.json', 'architecture.json'].map(name => path.join(rootRunDir, 'design-repair', name)),
+          ...enumerateCanonicalChangeUnits(host.root, blueprint).map(unit => unit.canonicalPath)];
+        const attempted = [...family.events].reverse().map(event => asRecord(event))
+          .find(event => event?.type === 'design_authority_repair' && event.stage === 'attempted' && asRecord(event.handoff_context));
+        const originalContext = asRecord(attempted?.handoff_context);
+        if (typeof originalContext?.path === 'string') originals.push(path.resolve(rootRunDir, originalContext.path));
+        const { executionRequestForInvoke } = require('../../scripts/utils/session-execution-handoff') as typeof import('../../scripts/utils/session-execution-handoff');
+        for (const event of starts.slice(-2)) if (typeof event.invoke_id === 'string') {
+          const issued = executionRequestForInvoke(rootRunDir, event.invoke_id);
+          if (issued) originals.push(path.resolve(rootRunDir, issued.reference.path));
+        }
+        console.log('INITIAL_BIRTH_ORIGINALS ' + preserveRuntimeTestEvidence([host.root], 'current root design did not reach its original responsibility', [], originals,
+          { stdout: JSON.stringify({ scopeBeforePublication: scope, contractsBeforePublication: originalContracts }) }));
+      }
+      assert.equal(result.type, 'phase_execute_request', JSON.stringify(result));
+      assert(authors.length < 10, 'this finite original design fixture must not repurchase an unbounded author loop');
       if (scenario === 'definition-gap') {
         assert.equal(children.length, 1);
         const child = children[0].manifest;
@@ -477,7 +572,8 @@ for (const scenario of ['definition-gap', 'empty-chain'] as const) cases.push({
         assert.deepEqual(child.execution_scope, reboundScope, `shared preparation must freeze the same unresolved and needed_by obligations: ${JSON.stringify({ expected: reboundScope, actual: child.execution_scope })}`);
         assert.deepEqual(child.phase_chain, ['spec', 'plan']);
         const issued = readSessionExecution(path.resolve(host.root, child.report_dir), (result.request as { path: string }).path)!;
-        assert.equal(issued.request.context.phase, 'spec');
+        assert.equal(issued.request.context.phase, 'work-unit-author');
+        assert.equal(issued.request.context.factsContext?.first_phase, 'spec', 'the immutable child birth anchor is still its real spec duty');
         assert.equal(result.run_id, child.run_id);
         assert(!fs.readFileSync(path.join(rootRunDir, 'events.jsonl'), 'utf8').includes('initial-design-scope-'), 'the scope owner must not be called again');
       } else {
@@ -486,7 +582,9 @@ for (const scenario of ['definition-gap', 'empty-chain'] as const) cases.push({
         assert(issued.request.context.phase.startsWith('initial-design-scope-'));
         assert(issued.request.context.instruction?.includes('当前实现义务尚不可执行'));
       }
-      assert.equal(family.totalTurns, 1 + questions, 'the real questioning report and signed responsibility each consume the original budget once');
+      assert.equal(family.calls, family.events.filter(event => event.type === 'agent_invoke_start').length, 'activity counts every actual original-family invocation once');
+      assert(family.calls >= 1 + questions);
+      assert.equal(repairedUnits.size, 3, 'all three existing published-probe mapping gaps must pass the real author/Q/publication path');
     }); } finally {
       runtime.__testing_setInvokeAgent(null); runtime.__testing_setCanaryProbeInvoke(null);
     }
@@ -541,7 +639,7 @@ cases.push({
       const legacyEnd = handoff.sessionEvents(old.runDir).at(-1)!;
       assert.equal(legacyEnd.halt_reason, 'content_retry_exhausted');
       assert('run_disposition' in legacyEnd && legacyEnd.run_disposition === 'TERMINAL');
-      assert.equal(origin.readOriginalDeliveryBudget(project.root, old.manifest)!.budget.max_total_turns, 30);
+      assert.equal(origin.readOriginalDeliveryActivity(project.root, old.manifest)!.calls, 3);
       assert.equal(handoff.sessionEvents(old.runDir).filter(event => event.type === 'agent_invoke_start').length, 3);
       assert(!fs.existsSync(path.join(old.runDir, 'phases/initial-design-author/initial-design-author-i4/prompt.md')));
       assert.equal(entry.prepareGoalModeRun({ ...options, supersede: undefined }).manifest.run_id, old.manifest.run_id);
@@ -554,8 +652,8 @@ cases.push({
       assert.deepEqual(successor.manifest.initial_design, old.manifest.initial_design);
       assert.deepEqual(successor.manifest.requirement_source_files, old.manifest.requirement_source_files);
       assert.equal(successor.manifest.requirement, old.manifest.requirement);
-      assert.equal(origin.readOriginalDeliveryBudget(project.root, successor.manifest)!.totalTurns, 3);
-      assert(origin.readOriginalDeliveryBudget(project.root, successor.manifest)!.priorActiveMs >= 1500);
+      assert.equal(origin.readOriginalDeliveryActivity(project.root, successor.manifest)!.calls, 3);
+      assert(origin.readOriginalDeliveryActivity(project.root, successor.manifest)!.active_ms >= 1500);
       assert.deepEqual(fs.readFileSync(old.eventsPath), stoppedBytes, 'successor cannot rewrite its source history');
       assert(stoppedBytes.subarray(0, originalBytes.length).equals(originalBytes));
       const step = { ...options, runId: successor.manifest.run_id, runMode: 'attended', authorization: { mode: 'goal_mode' as const, autonomyAuthorized: true } };
@@ -566,9 +664,9 @@ cases.push({
       assert(instruction.includes('事故原调用最终正文3'), 'session successor must read the old process output');
       assert(instruction.includes(old.note) && instruction.includes('必须实际编写或补齐'));
       assert(!instruction.includes('TOOL-DATA') && instruction.length < 20000, 'tool stdout must not inflate continuation');
-      assert.equal(origin.readOriginalDeliveryBudget(project.root, successor.manifest)!.totalTurns, 4);
+      assert.equal(origin.readOriginalDeliveryActivity(project.root, successor.manifest)!.calls, 4);
       assert.deepEqual((await withRuntimeTest({ root: step.projectRoot }, () => entry.runGoalModeSessionStep(step))).request, next.request);
-      assert.equal(origin.readOriginalDeliveryBudget(project.root, successor.manifest)!.totalTurns, 4);
+      assert.equal(origin.readOriginalDeliveryActivity(project.root, successor.manifest)!.calls, 4);
       assert.throws(() => entry.prepareGoalModeRun({ ...options, supersede: [successor.manifest.run_id], runId: 'blocked-by-pending' }), /尚未报告/);
       const rejoined = entry.prepareGoalModeRun({ ...options, runId: 'must-not-fork' });
       assert.equal(rejoined.manifest.run_id, successor.manifest.run_id, 'stale target must rejoin the current audited successor');
@@ -576,7 +674,7 @@ cases.push({
     });
   },
 }, {
-  name: 'P2 notes-only initial design stays unknown across real waiting and continuation retains the original total budget',
+  name: 'P2 notes-only initial design stays unknown across real waiting and explicit continuation retains the original request and activity',
   async run() {
     await withProject(async project => {
       const entry = require(path.join(project.harnessDir, 'scripts/goal-mode-entry')) as typeof import('../../scripts/goal-mode-entry');
@@ -585,9 +683,9 @@ cases.push({
       const old = seedLegacyContentLimitHistory(project, 7);
       const input = { projectRoot: project.root, frameworkRoot: project.frameworkRoot, feature: project.feature, adapter: 'codex', requirement: project.requirement };
       const successor = entry.prepareGoalModeRun({ ...input, runId: 'quota-successor', supersede: [old.manifest.run_id] });
-      const step = { ...input, runId: successor.manifest.run_id, runMode: 'attended', authorization: { mode: 'goal_mode' as const, autonomyAuthorized: false } };
+      const step = { ...input, runId: successor.manifest.run_id, runMode: 'attended', authorization: { mode: 'goal_mode' as const, autonomyAuthorized: true } };
       let next = await withRuntimeTest({ root: step.projectRoot }, () => entry.runGoalModeSessionStep(step));
-      assert.equal(next.type, 'phase_execute_request', 'original author duty must not require additional autonomy in a successor');
+      assert.equal(next.type, 'phase_execute_request', 'the still-valid original authorization is relayed explicitly; a mode string never grants execution');
       for (let attempt = 1; attempt <= 3; attempt++) {
         if (attempt > 1) next = await withRuntimeTest({ root: step.projectRoot }, () => entry.runGoalModeSessionStep({ ...step, forceTakeover: true }));
         assert.equal(next.type, 'phase_execute_request');
@@ -604,20 +702,8 @@ cases.push({
       }
       assert.equal(next.type, 'goal_session_result');
       assert(!handoff.sessionEvents(successor.runDir).some(event => event.halt_reason === 'no_progress_guard'));
-      assert.equal(origin.readOriginalDeliveryBudget(project.root, successor.manifest)!.totalTurns, 6);
-      const last = entry.prepareGoalModeRun({ ...input, runId: 'last-budget-successor', supersede: [successor.manifest.run_id] });
-      const lastStep = { ...step, runId: last.manifest.run_id };
-      const lastNext = await withRuntimeTest({ root: lastStep.projectRoot }, () => entry.runGoalModeSessionStep(lastStep));
-      assert.equal(lastNext.type, 'phase_execute_request');
-      const requestPath = (lastNext.request as { path: string }).path;
-      const request = handoff.readSessionExecution(last.runDir, requestPath)!;
-      const exhausted = await withRuntimeTest({ root: lastStep.projectRoot }, () => entry.runGoalModeSessionStep({ ...lastStep, requestPath, report: { status: 'passed', phase: request.request.context.phase, details: 'Still no blueprint.' } }));
-      assert.equal(exhausted.type, 'goal_session_result');
-      assert(handoff.sessionEvents(last.runDir).some(event => event.halt_reason === 'budget_turns'));
-      assert.equal(origin.readOriginalDeliveryBudget(project.root, last.manifest)!.totalTurns, 7);
-      const empty = entry.prepareGoalModeRun({ ...input, runId: 'no-budget-successor', supersede: [last.manifest.run_id] });
-      assert.equal((await withRuntimeTest({ root: step.projectRoot }, () => entry.runGoalModeSessionStep({ ...step, runId: empty.manifest.run_id }))).type, 'goal_session_result');
-      assert.equal(handoff.sessionEvents(empty.runDir).filter(event => event.type === 'agent_invoke_start').length, 0);
+      assert.equal(origin.readOriginalDeliveryActivity(project.root, successor.manifest)!.calls, 6);
+      assert(!handoff.sessionEvents(successor.runDir).some(event => event.halt_reason === 'budget_turns'), 'legacy numeric metadata cannot end a current continuation');
     });
   },
 }, {
@@ -635,8 +721,8 @@ cases.push({
         assert.equal(manifest.successor_of, old.manifest.run_id);
         assert.deepEqual(manifest.initial_design.requested_results, old.manifest.initial_design.requested_results);
         assert.equal(manifest.adapter_model_pin.value, 'gpt-6.1-terra');
-        assert.equal(origin.readOriginalDeliveryBudget(project.root, manifest)!.totalTurns, 3);
-        assert.equal(origin.readOriginalDeliveryBudget(project.root, manifest)!.budget.max_total_turns, 30);
+        assert.equal(origin.readOriginalDeliveryActivity(project.root, manifest)!.calls, 3);
+        assert.equal(manifest.budget, undefined);
       } else {
         const runtime = require(path.join(project.harnessDir, 'scripts/goal-phase-runtime')) as typeof import('../../scripts/goal-phase-runtime');
         const end = JSON.parse(fs.readFileSync(old.eventsPath, 'utf8').trim().split('\n').at(-1)!);
@@ -655,8 +741,8 @@ cases.push({
         const current = origin.currentOriginalDelivery(project.root, old.manifest as never);
         assert.notEqual(current.run_id, old.manifest.run_id);
         assert.equal(current.successor_of, old.manifest.run_id);
-        assert.equal(origin.readOriginalDeliveryBudget(project.root, current)!.totalTurns, 4);
-        assert.equal(origin.readOriginalDeliveryBudget(project.root, current)!.budget.max_total_turns, 30);
+        assert.equal(origin.readOriginalDeliveryActivity(project.root, current)!.calls, 4);
+        assert.equal(current.budget, undefined);
         assert.deepEqual(fs.readFileSync(old.eventsPath), historyBefore, 'runtime supersede preserves the legacy source events');
       }
     });
@@ -691,7 +777,7 @@ cases.push({
         const next = origin.currentOriginalDelivery(project.root, old.manifest);
         assert.equal(next.successor_of, current.manifest.run_id);
         assert(next.requirement!.includes(increment));
-        assert.equal(origin.readOriginalDeliveryBudget(project.root, next)!.totalTurns, 4);
+        assert.equal(origin.readOriginalDeliveryActivity(project.root, next)!.calls, 4);
       }
     });
   },
@@ -798,6 +884,27 @@ cases.push({
         assert(!prompt.includes('可补节点、选型、关系') && !prompt.includes('原文有不同表述时'));
       }
       const runDir = path.join(directory, manifest.report_dir);
+      const publicReply = 'FIRST_REAL_ERROR\n' + '完整公开反馈与拒修依据\n'.repeat(1000) + 'LAST_PUBLIC_DENIAL doc/requirement.md#evidence';
+      const renderPreviousAuthor = (invokeId: string, body: string, status = 'passed', timedOut = false) => {
+        const folder = path.join(runDir, 'phases/initial-design-author', invokeId);
+        fs.mkdirSync(folder, { recursive: true });
+        fs.writeFileSync(path.join(folder, 'agent-output.log'), [
+          JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: body } }),
+          JSON.stringify({ type: 'turn.completed' }),
+        ].join('\n'));
+        return delivery.initialDesignAuthorInstruction({ projectRoot: directory, frameworkRoot, manifest, autonomyAuthorized: false,
+          observation: { kind: 'author', blueprintPath, candidatesPath, issues: ['同一真实缺口'] },
+          deliveryRuns: [{ manifest, events: [{ type: 'agent_invoke_end', phase: 'initial-design-author', invoke_id: invokeId,
+            status, exit_code: status === 'passed' ? 0 : 1, timed_out: timedOut }] }] });
+      };
+      const priorAuthor = renderPreviousAuthor('initial-design-author-i1', publicReply);
+      assert.equal(renderPreviousAuthor('initial-design-author-i2', publicReply), priorAuthor,
+        'only a new invocation ID or audit log location must not create new author work');
+      assert(priorAuthor.includes(publicReply) && priorAuthor.includes(path.join(runDir, 'events.jsonl')),
+        'the complete real public reply, evidence reference and existing audit entry stay reachable');
+      assert.notEqual(renderPreviousAuthor('initial-design-author-i3', publicReply + '\n新的真实错误'), priorAuthor, 'real feedback changes must remain visible');
+      assert.notEqual(renderPreviousAuthor('initial-design-author-i4', publicReply, 'failed'), priorAuthor, 'actual failed status is not audit jitter');
+      assert.notEqual(renderPreviousAuthor('initial-design-author-i5', publicReply, 'passed', true), priorAuthor, 'actual timeout remains a real condition');
       const priorDir = path.join(runDir, 'phases/initial-design-questioning/previous-questioning');
       fs.mkdirSync(priorDir, { recursive: true });
       fs.writeFileSync(path.join(priorDir, 'draft-output.yaml'), YAML.stringify({ ...blueprint, review_summary: { questioning: {
@@ -836,7 +943,7 @@ cases.push({
 });
 
 cases.push({
-  name: 'P2 M1 notes-only executor work remains unverified until actual waiting and public continuation preserves the original budget',
+  name: 'P2 M1 notes-only executor work remains unverified until actual waiting and public continuation preserves the original request and activity',
   async run() {
     await withProject(async project => {
       const entry = require(path.join(project.harnessDir, 'scripts/goal-mode-entry')) as typeof import('../../scripts/goal-mode-entry');
@@ -848,14 +955,24 @@ cases.push({
         budget: ORIGINAL_BUDGET, unattended: UNATTENDED });
       const manifestBefore = fs.readFileSync(prepared.manifestPath);
       const note = path.join(project.root, 'doc/features', project.feature, 'blueprint/author-findings.md');
+      const noteBody = '已有真实调查中间材料；仍未交付schema蓝图。\n';
+      fs.mkdirSync(path.dirname(note), { recursive: true }); fs.writeFileSync(note, noteBody);
+      const publicReply = '原样正常交回：蓝图仍未完成，本次未改变设计、源码或调查材料。';
       let calls = 0;
+      const instructions: string[] = [];
       const driver = new runtime.GoalPhaseRuntime({ args: ['--project-root', project.root, '--framework-root', project.frameworkRoot,
         '--feature', project.feature, '--resume', prepared.manifest.run_id], executor: { async execute(context) {
         calls++;
         assert.equal(context.phase, 'initial-design-author');
-        fs.mkdirSync(path.dirname(note), { recursive: true }); fs.appendFileSync(note, `只写调查笔记${calls}\n`);
-        return { status: calls >= 3 ? 'waiting' : 'passed', phase: context.phase, details: '未修改真实设计；第三次仅作测试安全止损。',
-          exitCode: 0, stdout: '', stderr: '', command: 'bounded-notes-executor', completion_observed: true };
+        instructions.push(context.instruction ?? '');
+        console.log('[M1-normal-return]', JSON.stringify({ call: calls,
+          instruction_sha256: createHash('sha256').update(context.instruction ?? '').digest('hex') }));
+        assert.equal(fs.readFileSync(note, 'utf8'), noteBody);
+        const stdout = [JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: publicReply } }),
+          JSON.stringify({ type: 'turn.completed' })].join('\n');
+        fs.writeFileSync(path.join(context.runDir, 'phases', context.phase, context.attemptId, 'agent-output.log'), stdout);
+        return { status: 'passed' as const, phase: context.phase, details: publicReply,
+          exitCode: 0, stdout, stderr: '', command: 'bounded-notes-executor', completion_observed: true };
       } } });
       assert.equal(await withRuntimeTest({ root: project.root }, () => driver.run()), 1);
       const rows = handoff.sessionEvents(prepared.runDir);
@@ -863,18 +980,37 @@ cases.push({
         runtime_sha256: createHash('sha256').update(fs.readFileSync(path.join(project.harnessDir, 'scripts/goal-phase-runtime.ts'))).digest('hex') }));
       assert(!rows.some(event => event.type === 'run_end' && (event.halt_reason === 'no_progress_guard' || event.status === 'COMPLETED')),
         'missing design/Q facts cannot manufacture a completed acceptance evaluation');
-      assert.equal(calls, 3, 'the controlled waiting fact ends this invocation; notes are not verified design');
-      assert(rows.filter(event => event.type === 'agent_invoke_end').slice(0, 2).every(event => event.completion_observed === true),
+      assert.equal(calls, 2, 'the first real public feedback is delivered once; unchanged normal returns must then wait without a fixture stop');
+      assert(instructions[1].includes(publicReply), 'the original complete public feedback must reach the next real author');
+      assert.equal(rows.at(-1)?.halt_reason, 'executor_waiting');
+      assert(rows.filter(event => event.type === 'agent_invoke_end').every(event => event.completion_observed === true),
         'actual native completion must remain distinct from product acceptance');
       assert(!rows.some(event => event.type === 'phase_start' && event.handoff_request), 'this regression must use transport-independent request material');
-      const spent = origin.readOriginalDeliveryBudget(project.root, prepared.manifest)!;
-      assert.equal(spent.totalTurns, calls); assert.equal(spent.budget.max_total_turns, ORIGINAL_BUDGET.max_total_turns);
+      const spent = origin.readOriginalDeliveryActivity(project.root, prepared.manifest)!;
+      assert.equal(spent.calls, calls);
       const starts = rows.filter(event => event.type === 'agent_invoke_start').length;
+      const unstarted = path.join(prepared.runDir, 'phases/initial-design-author', `initial-design-author-i${starts + 1}`);
+      assert(!fs.existsSync(unstarted), 'a rejected common dispatch must not pre-create the next guard or prompt');
+      fs.mkdirSync(unstarted, { recursive: true });
+      fs.writeFileSync(path.join(unstarted, 'prompt.md'), 'old unstarted machine preparation');
+      fs.writeFileSync(path.join(unstarted, 'blueprint-before.yaml'), 'old unstarted preimage, not reusable');
       const next = await withRuntimeTest({ root: project.root }, () => entry.runGoalModeSessionStep({ projectRoot: project.root, frameworkRoot: project.frameworkRoot, feature: project.feature,
         runId: prepared.manifest.run_id, adapter: 'codex', runMode: 'attended' }));
-      assert.equal(next.type, 'phase_execute_request', 'a later entry may continue the real waiting responsibility');
+      assert.equal(next.type, 'goal_session_result', 'ordinary unchanged next must preserve the actual unknown wait');
+      assert.equal(handoff.sessionEvents(prepared.runDir).filter(event => event.type === 'agent_invoke_start').length, starts);
+      assert.equal(fs.readFileSync(path.join(unstarted, 'blueprint-before.yaml'), 'utf8'), 'old unstarted preimage, not reusable',
+        'an unchanged observation must not consume or rewrite an unadmitted preparation');
+      const continued = await withRuntimeTest({ root: project.root }, () => entry.runGoalModeSessionStep({ projectRoot: project.root, frameworkRoot: project.frameworkRoot, feature: project.feature,
+        runId: prepared.manifest.run_id, adapter: 'codex', runMode: 'attended', forceTakeover: true }));
+      assert.equal(continued.type, 'phase_execute_request', 'a real explicit continuation may request the next original author once');
+      const continuedRequest = handoff.readSessionExecution(prepared.runDir, (continued.request as { path: string }).path)!;
+      assert.equal(continuedRequest.request.invoke_id, `initial-design-author-i${starts + 1}`);
+      const currentBlueprint = path.join(project.root, 'doc/features', project.feature, 'blueprint/component-blueprint.yaml');
+      assert.deepEqual(fs.readFileSync(path.join(unstarted, 'blueprint-before.yaml')),
+        fs.existsSync(currentBlueprint) ? fs.readFileSync(currentBlueprint) : Buffer.alloc(0),
+        'admitted continuation must capture the actual current preimage instead of reusing stale preparation');
       assert.equal(handoff.sessionEvents(prepared.runDir).filter(event => event.type === 'agent_invoke_start').length, starts + 1);
-      assert.equal(origin.readOriginalDeliveryBudget(project.root, prepared.manifest)!.totalTurns, calls + 1);
+      assert.equal(origin.readOriginalDeliveryActivity(project.root, prepared.manifest)!.calls, calls + 1);
       assert.deepEqual(fs.readFileSync(prepared.manifestPath), manifestBefore);
     });
   },
@@ -926,8 +1062,8 @@ cases.push({
           'unqualified historical Q cannot become a completed no-progress evaluation');
         const starts = handoff.sessionEvents(prepared.runDir).filter(event => event.type === 'agent_invoke_start').length;
         assert.equal(starts, calls, 'each real feedback change permits one author call');
-        const budget = origin.readOriginalDeliveryBudget(project.root, prepared.manifest)!;
-        assert.equal(budget.totalTurns, calls); assert.equal(budget.budget.max_total_turns, ORIGINAL_BUDGET.max_total_turns);
+        const budget = origin.readOriginalDeliveryActivity(project.root, prepared.manifest)!;
+        assert.equal(budget.calls, calls);
         assert.deepEqual(fs.readFileSync(prepared.manifestPath), manifestBefore);
       }
     });
@@ -946,7 +1082,7 @@ cases.push({
     const { loadCanonicalBlueprint } = require('../../scripts/utils/component-blueprint-path') as typeof import('../../scripts/utils/component-blueprint-path');
     const { validateComponentBlueprint } = require('../../scripts/utils/component-blueprint-validator') as typeof import('../../scripts/utils/component-blueprint-validator');
     const { diffPhaseInvocationSnapshots } = require('../../scripts/utils/phase-write-boundary') as typeof import('../../scripts/utils/phase-write-boundary');
-    const { readOriginalDeliveryBudget } = require('../../scripts/utils/delivery-origin') as typeof import('../../scripts/utils/delivery-origin');
+    const { readOriginalDeliveryActivity } = require('../../scripts/utils/delivery-origin') as typeof import('../../scripts/utils/delivery-origin');
     await withFreshCuHost(async host => {
       const workspace = path.join(host.root, 'doc/features', BLUEPRINT_ID);
       for (const unit of enumerateCanonicalChangeUnits(host.root, BLUEPRINT_ID)) {
@@ -1006,7 +1142,7 @@ cases.push({
         assert.equal((observed.result as { halt_reason?: string }).halt_reason, 'no_progress_guard');
       }
       assert.equal(starts().length, 2, 'repeated reports/observations cannot buy another author or comparison window');
-      assert.equal(readOriginalDeliveryBudget(host.root, manifest)!.totalTurns, 2);
+      assert.equal(readOriginalDeliveryActivity(host.root, manifest)!.calls, 2);
       assert.deepEqual(fs.readFileSync(canonical.canonicalPath), qualifiedBlueprint, 'the current independent answers and unpublished design bytes must remain intact');
       assert.equal(fs.readFileSync(source, 'utf8'), dirtySource, 'the original dirty source bytes must be retained');
       assert.deepEqual(fs.readFileSync(born.manifestPath), manifestBytes);

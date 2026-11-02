@@ -4,7 +4,6 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import {
-  classifyPhaseVerdict,
   resolveAutoChain,
   validateFeatureChainDag,
   DEFAULT_DEPENDENCY_POLICY,
@@ -19,22 +18,18 @@ import {
   PROMPT_ARGV_SENTINEL,
 } from '../../scripts/utils/agent-invoke';
 import {
-  checkRunBudget,
   isSummaryFresh,
   resolvePhaseHarnessVerdict,
-  resolveResumeState,
-  resolveResumeFromEvents,
   rebuildOutcomesFromEvents,
   parseCompletedPhasesFromEvents,
-  detectHalfCompletedPhaseRecovery,
-  buildHalfPhaseRecoveryEvents,
   findUnclosedAgentInvokeStart,
   isReceiptFreshForInvokeStart,
-  foldBudgetLineage,
   partitionExecutionSessions,
   resolveResumedBudget,
   resolveValidationOnlyEligibility,
   repairInvocationCompleted,
+  collectUncommittedVisualAttemptIds,
+  collectLastCommittedVisualAttemptWindow,
   type GoalRunEvent,
 } from '../../scripts/utils/goal-runner-phase';
 import { buildSupersedeAuditEvent } from '../../scripts/utils/goal-run-creation';
@@ -110,6 +105,39 @@ function writeFreshReceipt(
 }
 
 const cases: Array<{ name: string; run: () => void }> = [
+  {
+    name: 'visual ledger windows follow the actual unit/testing producer and never reopen an older pending attempt',
+    run: () => {
+      const origin = Date.parse('2026-11-01T00:00:00Z');
+      const at = (seconds: number) => new Date(origin + seconds * 1000).toISOString();
+      const records: GoalRunEvent[] = [
+        { type: 'agent_invoke_start', phase: 'work-unit-author', invoke_id: 'work-unit-author-i1', ts: at(0) },
+        { type: 'agent_invoke_end', phase: 'work-unit-author', invoke_id: 'work-unit-author-i1', ts: at(1) },
+        { type: 'harness_start', phase: 'testing', invoke_id: 'testing-i1', ts: at(2) },
+        { type: 'visual_round', phase: 'testing', invoke_id: 'testing-i1', visual_attempt: 'i1', row_hash: 'row1', ts: at(3) },
+        { type: 'harness_end', phase: 'testing', invoke_id: 'testing-i1', ts: at(4) },
+        { type: 'agent_invoke_start', phase: 'testing-verifier-format-repair', invoke_id: 'testing-verifier-format-repair-i2', ts: at(5) },
+        { type: 'agent_invoke_end', phase: 'testing-verifier-format-repair', invoke_id: 'testing-verifier-format-repair-i2', ts: at(9) },
+        { type: 'agent_invoke_start', phase: 'work-unit-author', invoke_id: 'work-unit-author-i3', ts: at(10) },
+      ];
+      assert(JSON.stringify(collectLastCommittedVisualAttemptWindow(records)) === JSON.stringify({ attemptId: 'i1', startMs: origin, endMs: origin + 4000 }),
+        'window keeps the original unit start and its actual testing end, excluding another Q and unrelated later author');
+      assert(collectUncommittedVisualAttemptIds(records).length === 0, 'an arbitrary unit without a testing producer is not pending');
+      const pending = [...records, { type: 'harness_start', phase: 'testing', invoke_id: 'testing-i3', ts: at(11) }];
+      assert(JSON.stringify(collectUncommittedVisualAttemptIds(pending)) === '["i3"]', 'the actual new testing producer is pending until a row commit');
+      const later: GoalRunEvent[] = [...pending,
+        { type: 'agent_invoke_start', phase: 'work-unit-author', invoke_id: 'work-unit-author-i4', ts: at(12) },
+        { type: 'harness_start', phase: 'testing', invoke_id: 'testing-i4', ts: at(13) },
+        { type: 'visual_round', phase: 'testing', invoke_id: 'testing-i4', visual_attempt: 'i4', row_hash: 'row4', ts: at(14) },
+      ];
+      assert(collectUncommittedVisualAttemptIds(later).length === 0, 'a later committed producer cannot reopen the older i3 pending name');
+      const legacy: GoalRunEvent[] = [{ type: 'agent_invoke_start', phase: 'testing', invoke_id: 'testing-i1', ts: at(0) },
+        { type: 'visual_round', visual_attempt: 'i1', row_hash: 'row1', ts: at(3) },
+        { type: 'harness_end', phase: 'testing', invoke_id: 'testing-i1', ts: at(4) }];
+      assert(JSON.stringify(collectLastCommittedVisualAttemptWindow(legacy)) === JSON.stringify({ attemptId: 'i1', startMs: origin, endMs: origin + 4000 }),
+        'the original testing-author format remains readable without fabricating current phase events');
+    },
+  },
   {
     name: 'A2 validation-only retains the completed phase author while its actual design transaction waits, and revocation still wins',
     run() {
@@ -319,17 +347,6 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'classifyPhaseVerdict: propagate_to_downstream false → defer halt',
-    run: () => {
-      const action = classifyPhaseVerdict({
-        verdict: 'INCOMPLETE',
-        failure_kind: 'device_blocked',
-        dependency_policy: { ...DEFAULT_DEPENDENCY_POLICY, propagate_to_downstream: false },
-      });
-      assert(action === 'defer_external_and_halt', action);
-    },
-  },
-  {
     name: 'validateFeatureChainDag: prd→testing skip coding throws',
     run: () => {
       let threw = false;
@@ -343,39 +360,24 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'resolveAutoChain: invalid override prd→testing throws',
+    name: 'resolveAutoChain: explicit applicable check families do not require a phase author queue',
     run: () => {
-      let threw = false;
+      assert(JSON.stringify(resolveAutoChain(workflow, 'spec', 'testing', ['spec', 'testing'])) === JSON.stringify(['spec', 'testing']), 'explicit check families');
+    },
+  },
+  {
+    name: 'a current closed PASS summary cannot finish an outstanding native invocation',
+    run: () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'native-open-summary-'));
       try {
-        resolveAutoChain(workflow, 'spec', 'testing', ['spec', 'testing']);
-      } catch {
-        threw = true;
-      }
-      assert(threw, 'override skip coding');
-    },
-  },
-  {
-    name: 'resolveResumeState: skip completed phases',
-    run: () => {
-      const chain = ['spec', 'plan', 'coding'] as const;
-      const r = resolveResumeState([...chain], [
-        { phase: 'spec', verdict: 'PASS' },
-        { phase: 'plan', verdict: 'PASS' },
-      ]);
-      assert(r.startIndex === 2, `index ${r.startIndex}`);
-      assert(r.priorOutcomes.length === 2, 'prior');
-    },
-  },
-  {
-    name: 'resolveResumeState: halted retries same phase',
-    run: () => {
-      const chain = ['spec', 'plan', 'coding'] as const;
-      const r = resolveResumeState([...chain], [
-        { phase: 'spec', verdict: 'PASS' },
-        { phase: 'plan', verdict: 'FAIL', halted: true },
-      ]);
-      assert(r.startIndex === 1, `index ${r.startIndex}`);
-      assert(r.priorOutcomes.length === 1, 'drop halted from prior');
+        mkProjectWithReportsPattern(root);
+        const reports = path.join(root, 'doc/features/demo/coding/reports');
+        fs.mkdirSync(reports, { recursive: true });
+        fs.writeFileSync(path.join(reports, 'summary.json'), JSON.stringify({ verdict: 'PASS', closure_status: 'closed' }));
+        const start = { type: 'agent_invoke_start', phase: 'coding', invoke_id: 'coding-original', ts: '2026-01-01T00:00:00Z' };
+        assert(findUnclosedAgentInvokeStart([start])?.invoke_id === start.invoke_id, 'a summary does not prove native exit or completed handback');
+        assert(invocationCompleted({ exitCode: 0, status: 'waiting' }) === false, 'unknown native completion remains unfinished');
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
     },
   },
   {
@@ -399,91 +401,6 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'detectHalfCompletedPhaseRecovery: fresh PASS summary after unclosed start',
-    run: () => {
-      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'half-phase-'));
-      mkProjectWithReportsPattern(root);
-      const feature = 'demo';
-      const phaseDir = path.join(root, 'doc', 'features', feature, 'coding', 'reports');
-      fs.mkdirSync(phaseDir, { recursive: true });
-      const summaryPath = path.join(phaseDir, 'summary.json');
-      fs.writeFileSync(
-        summaryPath,
-        JSON.stringify({
-          verdict: 'PASS',
-          receipt_status: 'passed',
-          closure_status: 'closed',
-        }),
-        'utf-8',
-      );
-      const startTs = '2026-01-01T00:00:00.000Z';
-      const startMs = new Date(startTs).getTime();
-      fs.utimesSync(summaryPath, new Date(startMs + 60_000), new Date(startMs + 60_000));
-      writeFreshReceipt(root, feature, 'coding', startMs, '2026-01-01T01:00:00.000Z');
-
-      const detected = detectHalfCompletedPhaseRecovery(
-        [{ type: 'agent_invoke_start', phase: 'coding', ts: startTs }],
-        root,
-        feature,
-      );
-      assert(detected?.phase === 'coding', detected?.phase ?? 'none');
-
-      const events = buildHalfPhaseRecoveryEvents(detected!);
-      assert(events.length === 2, String(events.length));
-      assert(events[1].recovered === true, 'recovered verdict');
-
-      const resume = resolveResumeFromEvents(
-        ['spec', 'plan', 'coding', 'review', 'ut', 'testing'],
-        [
-          { type: 'phase_verdict', phase: 'spec', action: 'advance', verdict: 'PASS' },
-          { type: 'phase_verdict', phase: 'plan', action: 'advance', verdict: 'PASS' },
-          { type: 'agent_invoke_start', phase: 'coding', ts: startTs },
-          ...(events as Parameters<typeof resolveResumeFromEvents>[1]),
-        ],
-      );
-      assert(resume.startIndex === 3, `startIndex ${resume.startIndex} (review)`);
-      fs.rmSync(root, { recursive: true, force: true });
-    },
-  },
-  {
-    name: 'detectHalfCompletedPhaseRecovery: fresh closed summary ignores stale/missing receipt',
-    run: () => {
-      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'half-phase-stale-rcpt-'));
-      mkProjectWithReportsPattern(root);
-      const feature = 'demo';
-      const phaseDir = path.join(root, 'doc', 'features', feature, 'coding', 'reports');
-      fs.mkdirSync(phaseDir, { recursive: true });
-      const summaryPath = path.join(phaseDir, 'summary.json');
-      const startTs = '2026-06-01T00:00:00.000Z';
-      const startMs = new Date(startTs).getTime();
-      fs.writeFileSync(
-        summaryPath,
-        JSON.stringify({
-          verdict: 'PASS',
-          receipt_status: 'passed',
-          closure_status: 'closed',
-        }),
-        'utf-8',
-      );
-      fs.utimesSync(summaryPath, new Date(startMs + 60_000), new Date(startMs + 60_000));
-      const receiptPath = writeFreshReceipt(root, feature, 'coding', startMs, '2026-01-01T01:00:00.000Z');
-      const oldMs = new Date('2020-01-01').getTime();
-      fs.utimesSync(receiptPath, new Date(oldMs), new Date(oldMs));
-
-      const detected = detectHalfCompletedPhaseRecovery(
-        [{ type: 'agent_invoke_start', phase: 'coding', ts: startTs }],
-        root,
-        feature,
-      );
-      assert(detected?.phase === 'coding', 'stale receipt must not block fresh closed summary');
-      fs.unlinkSync(receiptPath);
-      assert(detectHalfCompletedPhaseRecovery(
-        [{ type: 'agent_invoke_start', phase: 'coding', ts: startTs }], root, feature,
-      )?.phase === 'coding', 'missing receipt must not block recovery');
-      fs.rmSync(root, { recursive: true, force: true });
-    },
-  },
-  {
     name: 'isReceiptFreshForInvokeStart: claimed_completion_at before invoke start → false',
     run: () => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), 'half-phase-old-claim-'));
@@ -495,36 +412,6 @@ const cases: Array<{ name: string; run: () => void }> = [
         !isReceiptFreshForInvokeStart(root, feature, 'coding', startMs),
         'old claimed_completion_at rejected',
       );
-      fs.rmSync(root, { recursive: true, force: true });
-    },
-  },
-  {
-    name: 'detectHalfCompletedPhaseRecovery: stale summary before invoke start → null',
-    run: () => {
-      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'half-phase-stale-'));
-      mkProjectWithReportsPattern(root);
-      const feature = 'demo';
-      const phaseDir = path.join(root, 'doc', 'features', feature, 'coding', 'reports');
-      fs.mkdirSync(phaseDir, { recursive: true });
-      const summaryPath = path.join(phaseDir, 'summary.json');
-      fs.writeFileSync(
-        summaryPath,
-        JSON.stringify({
-          verdict: 'PASS',
-          receipt_status: 'passed',
-          closure_status: 'closed',
-        }),
-        'utf-8',
-      );
-      const oldMs = new Date('2020-01-01').getTime();
-      fs.utimesSync(summaryPath, new Date(oldMs), new Date(oldMs));
-
-      const detected = detectHalfCompletedPhaseRecovery(
-        [{ type: 'agent_invoke_start', phase: 'coding', ts: '2026-06-01T00:00:00.000Z' }],
-        root,
-        feature,
-      );
-      assert(detected === null, 'stale summary rejected');
       fs.rmSync(root, { recursive: true, force: true });
     },
   },
@@ -635,79 +522,6 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert(args[0] === 'cmd' && args[1] === '--flag', args.join('|'));
     },
   },
-  {
-    name: 'rebuildOutcomesFromEvents: prd+design advance restores prior outcomes',
-    run: () => {
-      const chain = resolveAutoChain(workflow, 'spec', 'testing');
-      const events = [
-        { type: 'phase_verdict', phase: 'spec', action: 'advance' as const, verdict: 'PASS' },
-        { type: 'phase_verdict', phase: 'plan', action: 'advance' as const, verdict: 'PASS' },
-      ];
-      const prior = rebuildOutcomesFromEvents(events, chain);
-      assert(prior.length === 2, String(prior.length));
-      assert(prior[0].phase === 'spec' && prior[1].phase === 'plan', 'order');
-      const resume = resolveResumeFromEvents(chain, events);
-      assert(resume.startIndex === 2, `start ${resume.startIndex}`);
-      assert(resume.priorOutcomes.length === 2, 'prior count');
-    },
-  },
-  {
-    name: 'resolveResumeFromEvents: merged outcomes allow COMPLETED after resume',
-    run: () => {
-      const chain = resolveAutoChain(workflow, 'spec', 'testing');
-      const events = [
-        { type: 'phase_verdict', phase: 'spec', action: 'advance' as const, verdict: 'PASS' },
-        { type: 'phase_verdict', phase: 'plan', action: 'advance' as const, verdict: 'PASS' },
-      ];
-      const resume = resolveResumeFromEvents(chain, events);
-      const newOutcomes: GoalPhaseOutcome[] = chain.slice(resume.startIndex).map((phase) => ({
-        phase,
-        verdict: 'PASS',
-      }));
-      const merged: GoalPhaseOutcome[] = [...resume.priorOutcomes, ...newOutcomes];
-      const reachedEnd =
-        merged.length === chain.length && merged[merged.length - 1]?.phase === chain[chain.length - 1];
-      const status = resolveGoalRunStatus(
-        merged.map((o) => ({ phase: o.phase, deferred: o.deferred, halted: o.halted })),
-        reachedEnd,
-      );
-      assert(status === 'CHAIN_SLICE_COMPLETED', status);
-    },
-  },
-  {
-    name: 'checkRunBudget: blocks second attempt when max_total_turns=1',
-    run: () => {
-      assert(checkRunBudget(0, 1, 0, 60000) === 'ok', 'first ok');
-      assert(checkRunBudget(1, 1, 0, 60000) === 'turns', 'second blocked');
-    },
-  },
-  {
-    name: 'checkRunBudget: ignores retry when turns already at cap',
-    run: () => {
-      assert(checkRunBudget(1, 1, 100, 60000) === 'turns', 'at cap before retry');
-    },
-  },
-  {
-    name: 'resolveGoalRunStatus: budget halt outcome → HALTED not PARTIAL',
-    run: () => {
-      const chain = resolveAutoChain(workflow, 'spec', 'testing');
-      const prior: GoalPhaseOutcome[] = [{ phase: 'spec', verdict: 'PASS' }];
-      const budgetHalt: GoalPhaseOutcome = {
-        phase: 'plan',
-        verdict: 'FAIL',
-        halted: true,
-        retries: 1,
-      };
-      const outcomes = [...prior, budgetHalt];
-      const reachedEnd = false;
-      const status = resolveGoalRunStatus(
-        outcomes.map((o) => ({ phase: o.phase, deferred: o.deferred, halted: o.halted })),
-        reachedEnd,
-      );
-      assert(status === 'HALTED', status);
-      assert(outcomes.length < chain.length, 'stopped before end');
-    },
-  },
   // 【环 B 已删除 · pass snapshot 退役】responsibilityRerunPending（缓存失效重跑待办态）
   // 的四个用例随机制删除——置位源 phase_halt(pass_snapshot_unavailable) 不再产生。
   {
@@ -718,7 +532,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         'utf8',
       );
       assert(
-        /runSyncClosureDetailed\([\s\S]{0,600}goalIdentity:/.test(runner),
+        /finalizePhaseClosure\(\{[\s\S]{0,250}goalRunId: manifest.run_id,[\s\S]{0,100}goalAttemptId: attemptId/.test(runner),
         'closure 提交侧必须透传 goalIdentity，否则 attempt 等值校验在提交环节静默跳过',
       );
     },
@@ -822,82 +636,6 @@ cases.push(
   },
 );
 
-// plan c4e7a9b2 §3.3 B1：预算以可信完成为交付周期边界——折叠 = 祖先(seeds) − ({B} ∪ 祖先(B))。
-// 夹具形状 = 宿主 ae92d8：F 成功完成（1 次回退、3 轮）→ N 失败（无 supersede，2 轮）→ O 失败（supersede F+N，1 轮）→ 后继 S。
-{
-  const turn = (ts: string): GoalRunEvent => ({ type: 'agent_invoke_start', ts });
-  const bt = (ts: string): GoalRunEvent => ({ type: 'phase_backtrack_requested', ts });
-  const sup = (target: string, by: string, ts: string, boundary?: string): GoalRunEvent =>
-    ({ ts, ...buildSupersedeAuditEvent({ targetRunId: target, supersedingRunId: by, ...(boundary ? { deliveryCycleBoundary: boundary } : {}) }) }) as GoalRunEvent;
-  const store: Record<string, GoalRunEvent[]> = {
-    F: [turn('2026-09-20T00:01Z'), bt('2026-09-20T00:02Z'), turn('2026-09-20T00:03Z'), turn('2026-09-20T00:04Z')],
-    N: [turn('2026-09-21T00:01Z'), turn('2026-09-21T00:02Z')],
-    O: [sup('F', 'O', '2026-09-22T00:00Z'), sup('N', 'O', '2026-09-22T00:00Z'), turn('2026-09-22T00:01Z')],
-  };
-  const loaderOf = (m: Record<string, GoalRunEvent[]>) => (abs: string): GoalRunEvent[] =>
-    m[/goal-runs[\\/]([^\\/]+)[\\/]events\.jsonl$/.exec(abs)?.[1] ?? ''] ?? [];
-  const loadEvents = loaderOf(store);
-  const fold = (o: Partial<Parameters<typeof foldBudgetLineage>[0]>) =>
-    foldBudgetLineage({ projectRoot: '/x', featuresDir: 'doc/features', feature: 'f', loadEvents, ...o });
-  const count = (events: readonly GoalRunEvent[], type: string): number => events.filter(e => e.type === type).length;
-  const born: GoalRunEvent[] = [{ type: 'run_start', ts: '2026-09-26T00:00Z' }];
-  const bornWithAudit = (boundary?: string): GoalRunEvent[] => [
-    ...['F', 'N', 'O'].map(t => sup(t, 'S', '2026-09-26T00:00Z', boundary)), ...born,
-  ];
-  cases.push(
-    {
-      name: 'B1-1 foldBudgetLineage：fresh 出生显式 cycleBoundary=F → 上一周期（F 及其祖先）不计，N/O 照计',
-      run: () => {
-        const r = fold({ seedTargets: ['F', 'N', 'O'], currentEvents: born, cycleBoundary: 'F' });
-        assert(r.cycleBoundary === 'F', `边界应生效：${r.cycleBoundary}`);
-        assert(count(r.budgetFoldEvents, 'phase_backtrack_requested') === 0, `出生回退应为 0：${count(r.budgetFoldEvents, 'phase_backtrack_requested')}`);
-        assert(count(r.budgetFoldEvents, 'agent_invoke_start') === 3, `轮次应只含 N(2)+O(1)：${count(r.budgetFoldEvents, 'agent_invoke_start')}`);
-        // 对照：无边界 = 现状全血缘折叠（F 的 1 次回退与 3 轮被继承）
-        const all = fold({ seedTargets: ['F', 'N', 'O'], currentEvents: born });
-        assert(all.cycleBoundary === undefined && count(all.budgetFoldEvents, 'phase_backtrack_requested') === 1 && count(all.budgetFoldEvents, 'agent_invoke_start') === 6, '无边界应全链折叠');
-      },
-    },
-    {
-      name: 'B1-4 foldBudgetLineage：resume / progress / heartbeat 从本 run supersede 事件的 delivery_cycle_boundary 得到同一结果',
-      run: () => {
-        const explicit = fold({ seedTargets: ['F', 'N', 'O'], currentEvents: born, cycleBoundary: 'F' });
-        const fromEvents = fold({ currentEvents: bornWithAudit('F') });
-        assert(fromEvents.cycleBoundary === 'F', `应从本 run 事件读到边界：${fromEvents.cycleBoundary}`);
-        assert(count(fromEvents.ancestorEvents, 'agent_invoke_start') === count(explicit.ancestorEvents, 'agent_invoke_start')
-          && count(fromEvents.ancestorEvents, 'phase_backtrack_requested') === 0, '事件读边界与显式边界结果不同');
-        // 本 run 事件没有边界字段（旧事件 / 记录不可信）→ 现状全链折叠
-        assert(count(fold({ currentEvents: bornWithAudit() }).budgetFoldEvents, 'phase_backtrack_requested') === 1, '无边界字段应全链折叠');
-      },
-    },
-    {
-      name: 'B1 只看当前 run 自己事件里的边界：祖先 supersede 事件上的旧边界字段不切本周期；边界不在本次血缘内不生效',
-      run: () => {
-        const staleStore = { ...store, O: [sup('F', 'O', '2026-09-22T00:00Z', 'N'), sup('N', 'O', '2026-09-22T00:00Z', 'N'), turn('2026-09-22T00:01Z')] };
-        const r = foldBudgetLineage({
-          projectRoot: '/x', featuresDir: 'doc/features', feature: 'f', currentEvents: bornWithAudit(),
-          loadEvents: loaderOf(staleStore),
-        });
-        assert(r.cycleBoundary === undefined && count(r.budgetFoldEvents, 'agent_invoke_start') === 6, '祖先事件上的边界字段不得参与');
-        const outside = fold({ seedTargets: ['N'], currentEvents: born, cycleBoundary: 'F' });
-        assert(outside.cycleBoundary === undefined && count(outside.budgetFoldEvents, 'agent_invoke_start') === 2, '边界不在血缘内不得生效');
-      },
-    },
-    {
-      name: 'B1-3 本周期内失败 run 再 supersede（无新完成）：边界仍是 F，S 与 N/O 的消耗累计不清零',
-      run: () => {
-        const s1 = [...bornWithAudit('F'), turn('2026-09-26T00:01Z'), bt('2026-09-26T00:02Z'), turn('2026-09-26T00:03Z')];
-        const chained = foldBudgetLineage({
-          projectRoot: '/x', featuresDir: 'doc/features', feature: 'f',
-          seedTargets: ['S'], currentEvents: [{ type: 'run_start', ts: '2026-09-27T00:00Z' }], cycleBoundary: 'F',
-          loadEvents: loaderOf({ ...store, S: s1 }),
-        });
-        assert(chained.cycleBoundary === 'F', `边界应仍为 F：${chained.cycleBoundary}`);
-        assert(count(chained.budgetFoldEvents, 'phase_backtrack_requested') === 1, `S 的 1 次回退应累计：${count(chained.budgetFoldEvents, 'phase_backtrack_requested')}`);
-        assert(count(chained.budgetFoldEvents, 'agent_invoke_start') === 5, `轮次应为 S(2)+N(2)+O(1)：${count(chained.budgetFoldEvents, 'agent_invoke_start')}`);
-      },
-    },
-  );
-}
 
 {
   const minute = 60_000;

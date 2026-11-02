@@ -259,6 +259,11 @@ export function executedEvidenceInputs(
   }
   const out = new Set<string>();
   const paths = checks.filter(check => !isCheckNotApplicable(check)).flatMap(check => Array.isArray(check.affected_files) ? check.affected_files : []);
+  const declaredInputs = new Set(checks.filter(check => !isCheckNotApplicable(check)).flatMap(check => {
+    const dependencies = check.structured?.source_attempt_dependencies;
+    return Array.isArray(dependencies) ? dependencies.flatMap(dep => dep && typeof dep.path === 'string' ? [dep.path as string] : []) : [];
+  }));
+  paths.push(...declaredInputs);
   try {
     const summary = JSON.parse(fs.readFileSync(path.join(path.dirname(reportAbs), 'summary.json'), 'utf8')) as { verifier_subject_id?: string };
     const { readVerifierMaterialOrNull } = require('./verifier-material') as typeof import('./verifier-material');
@@ -277,10 +282,24 @@ export function executedEvidenceInputs(
       continue;
     }
     const abs = path.resolve(projectRoot, rel);
-    if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) continue;
+    if (fs.existsSync(abs) ? !fs.statSync(abs).isFile() : !declaredInputs.has(raw)) continue;
     out.add(rel);
   }
   return [...out];
+}
+
+/** Raw check results and formal closure bind the same original requirement lineage. */
+export function currentRequirementEvidenceSha(opts: {
+  projectRoot: string; feature: string; runId?: string;
+  resolvedInputs?: import('./capability-resolution').ResolvedPhaseInputs;
+}): string | null {
+  const featuresDir = (loadFrameworkConfig(opts.projectRoot).paths?.features_dir ?? 'doc/features').replace(/\\/g, '/');
+  const source = opts.runId ? null : resolveCurrentRequirementSource(opts.projectRoot, opts.feature, featuresDir);
+  const requirement = opts.resolvedInputs?.values.requirement?.state === 'resolved'
+    ? opts.resolvedInputs.values.requirement.value : source?.kind === 'runless' ? source.text : undefined;
+  const runSha = computeRunRequirementSha(opts.projectRoot, opts.feature, opts.runId, featuresDir);
+  if (opts.runId) return runSha;
+  return runSha ?? (typeof requirement === 'string' ? computeRequirementShaFromText(opts.projectRoot, opts.feature, requirement, featuresDir) : null);
 }
 
 function productionEvidence(
@@ -319,16 +338,8 @@ function productionEvidence(
   }
   const runId = opts.goalRunId?.trim() || process.env.MAISON_GOAL_RUN_ID?.trim();
   const evidenceRunId = runId || readSummary(summaryPath).parsed.run_id?.trim();
-  const independentSource = evidenceRunId ? null : resolveCurrentRequirementSource(opts.projectRoot, opts.feature, featuresDirRel);
-  const independentRequirement = opts.resolvedInputs?.values.requirement?.state === 'resolved'
-    ? opts.resolvedInputs.values.requirement.value : independentSource?.kind === 'runless' ? independentSource.text : undefined;
-  const requirementSha = computeRunRequirementSha(
-    opts.projectRoot,
-    opts.feature,
-    evidenceRunId,
-    featuresDirRel,
-  ) ?? (typeof independentRequirement === 'string'
-    ? computeRequirementShaFromText(opts.projectRoot, opts.feature, independentRequirement, featuresDirRel) : null);
+  const requirementSha = currentRequirementEvidenceSha({ projectRoot: opts.projectRoot, feature: opts.feature,
+    runId: evidenceRunId, resolvedInputs: opts.resolvedInputs });
   if ((Boolean(opts.goalRunId?.trim()) || isGoalEnvironment()) && requirementSha === null) {
     throw new Error(
       `goal 环境闭环无法计算 requirement 血缘哈希（run=${runId ?? '<missing>'}）`,

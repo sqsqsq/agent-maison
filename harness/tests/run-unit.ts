@@ -132,7 +132,6 @@ const CORE_SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean
   { id: 'attended-goal-context', modulePath: './unit/attended-goal-context.unit.test' },
   // plan a4f7e2b1 t2 原验收：真 /F 强杀 → supervisor 生产链自动恢复（真子进程 + 真 CLI）
   { id: 'supervisor-kill-recovery', modulePath: './unit/supervisor-kill-recovery.unit.test' },
-  { id: 'upstream-closure', modulePath: './unit/upstream-closure.unit.test' },
   { id: 'scope-replan', modulePath: './unit/scope-replan.unit.test' },
   { id: 'release-shipped-in-ignored-dirs', modulePath: './unit/release-shipped-in-ignored-dirs.unit.test' },
   { id: 'unit-failure-report', modulePath: './unit/unit-failure-report.unit.test' },
@@ -273,7 +272,6 @@ const CORE_SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean
   { id: 'hylyre-selector-gates-v1', modulePath: './unit/hylyre-selector-gates-v1.unit.test' },
   { id: 'skills-device-policy-gate', modulePath: './unit/skills-device-policy-gate.unit.test' },
   // runner 级集成（进程内跑真实 phase 循环 + 注入缝；断言时序与副作用）
-  { id: 'goal-runner-testing-integrity-budget', modulePath: './unit/goal-runner-testing-integrity-budget.unit.test' },
   { id: 'goal-runner-testing-integrity-revalidate', modulePath: './unit/goal-runner-testing-integrity-revalidate.unit.test' },
   { id: 'goal-runner-testing-integrity-early', modulePath: './unit/goal-runner-testing-integrity-early.unit.test' },
   { id: 'goal-runner-testing-integrity-late', modulePath: './unit/goal-runner-testing-integrity-late.unit.test' },
@@ -408,7 +406,6 @@ const CORE_SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean
   { id: 'capability-alias', modulePath: './unit/capability-alias.unit.test' },
   { id: 'migrate-feature-phase-paths', modulePath: './unit/migrate-feature-phase-paths.unit.test' },
   { id: 'exploration-strategy', modulePath: './unit/exploration-strategy.unit.test' },
-  { id: 'goal-timeout', modulePath: './unit/goal-timeout.unit.test' },
   { id: 'goal-checkpoint', modulePath: './unit/goal-checkpoint.unit.test' },
   { id: 'run-unit-filter', modulePath: './unit/run-unit-filter.unit.test' },
   { id: 'run-unit-processes', modulePath: './unit/run-unit-processes.unit.test' },
@@ -482,7 +479,6 @@ const CORE_SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean
   { id: 'ui-spec-schema-strict', modulePath: './unit/ui-spec-schema-strict.unit.test' },
   { id: 'pass-snapshot', modulePath: './unit/pass-snapshot.unit.test' },
   { id: 'blocker-actionability', modulePath: './unit/blocker-actionability.unit.test' },
-  { id: 'timeout-ratchet-closure', modulePath: './unit/timeout-ratchet-closure.unit.test' },
   { id: 'attempt-axes-timeline', modulePath: './unit/attempt-axes-timeline.unit.test' },
   // plan d4a1f7c3：确定性输入下的生产验证链集成回归（spec→testing 六阶段真 harness 全链）
   // 与 §5 的接缝负例（real-chain-seams）。两者都跑真 harness 子进程，**release-only**：

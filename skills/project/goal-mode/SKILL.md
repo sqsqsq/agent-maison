@@ -1,89 +1,48 @@
-# Goal 模式（薄驱动）
+# Goal 模式（同一完成协调器）
 
-具备 design lens 的新正式完整交付，从原始需求开始即进入同一 `GoalPhaseRuntime`。尚无蓝图/CU 时先受管推进初始设计、真实独立质询、检查与 CU 接受/readiness，准入后再进入正常 CU 施工；作者退出、设计 ready 或仍有适用 CU 未正式完成都不能收尾。原请求止于全部适用 CU 正式完成；部件闭环仅按原口径只读检查一次并披露，不自动修复、写出或改判。会话与后台沿同一业务处置，差别只在运输与呈现。generic/request/维护/仅设计的原终点与能力边界见 [统一入口](../../../docs/operations/project-entry.md)。
+正式完整交付从原始需求进入唯一 `GoalPhaseRuntime`：设计单元形成蓝图及适用 CU，各施工单元完成授权工作，必要组装和部件义务也按原请求核验。作者退出、蓝图准入、CU ready、子 run 出生或单项工具 PASS 都不是原请求完成。维护、单独设计、review/UT/testing 与纯编译保留各自终点，见 [统一入口](../../../docs/operations/project-entry.md)。
 
-> **BLOCKER**：本 Skill 只选择运行方式并启动/接入唯一 `GoalPhaseRuntime`。阶段事实来自既有 summary / closure / evidence，跨阶段建议只来自 `assess@1`；本 Skill 与宿主都不维护 next-phase 表，不执行私有 assess/gate/advance 循环，也不复制 runtime 裁决。
+本 Skill 只选择呈现与运输、转交原请求和可信授权。当前输入、全部未完项、责任、解除条件与完成/发布结论由同一个 `readCurrentDispositionInput → resolveCurrentDisposition` 链产生；`assess`、NEXT、状态和报告只是投影，不再推荐阶段作者队列。
 
-项目请求的输入、原生入口与停止点见 [project-entry](../../../docs/operations/project-entry.md)；仅执行本次授权职责，不由本 Skill 自行启动后继。
+## 两种呈现，一个执行循环
 
-## 何时使用
+- **有人在场**：主会话展示进度、转交插话和真实授权，启动返回的执行命令；业务工作始终由本单元专用作者上下文完成。
+- **无人值守**：同一单元、授权、作者上下文与完成规则，使用后台运输和通知。需要人处理的真实条件保全为可恢复等待。
 
-用户要求以目标模式持续推进一个 feature 时使用。对用户只暴露两种模式：
+明确的“我会看着”或“后台继续 / --detach”直接映射，不重复确认；歧义才按 [goal.run_mode](../../reference/confirmation-registry.yaml) 澄清。主会话不接管施工，不因 adapter 缺原生 resume 就假称不能执行：能按准确 SID 续接就续接，不能时依当前原件重建专用上下文并披露边界，禁止 `--last`。必需质询/核验始终用真实独立上下文。
 
-- **有人在场**：自动执行已授权工作；出现必须由人决定或补充的信息时，立即列出等待项并询问。
-- **无人值守**：自动执行已授权工作；把必须由人处理的事项停放为等待项，并确保 run 可脱离当前会话继续或稍后恢复。
+## 请求与授权
 
-明确说“我会看着、需要时问我”按有人在场处理；明确说“我先离开、后台继续、`--detach`”按无人值守处理，不重复确认。当前有对话不等于选择有人在场；歧义使用 [confirmation-registry.yaml](../../reference/confirmation-registry.yaml) 的 `goal.run_mode`。会话由 `--prepare-run --run-mode attended` 创建/接回，再以 `--next / --report-result` 一步一交接；无人值守沿 `goal-runner --detach`，无需先留在主会话完成设计。有真实 CU 后才可派生施工范围；`--prepare-scope` 不为尚不存在的 CU 写平面施工候选。旧无 run 有效范围由出生入口正式转交，旧完成原件只读；不新增无 run 或 manual_fallback 完整交付。维护、纯编译、单独设计与 review/UT/testing 请求保留原终点。
+提供原需求/来源、Feature 或原请求身份、请求终点与结果、adapter 和可信授权。`--requested-phases` 仅表达明确请求的方法/检查族，不是阶段派工顺序或写权。输入/绑定/技术 ID 由入口派生，不手填机器字段。
 
-## 输入
+可通过 `--user-deadline-at <UTC时间>` 明示截止；只归一一次到 `user_deadline_at`，resume 不重置或自动延长。新运行没有 token、调用次数、每阶段重试或默认总墙钟配额；旧 budget/phase-timeout 数字仅历史读取，不能转成用户截止，也不能靠提额或新 run 刷新机会。调用数和耗时只作事后统计。
 
-| 字段 | 必填 | 说明 |
-|---|---|---|
-| `feature` | 是 | feature slug |
-| `requirement` | 否 | 需求描述 |
-| `start_phase` / `end_phase` | 否 | 默认由 workflow 决定 |
-| `adapter` | 否 | 按 personal setup 的已物化 adapter 解析 |
-| `adapter_model` | 否 | **仅 headless/unattended（含 `--detach`）**：并发多窗口跑不同模型或要钉住本 run 模型时，启动 goal run 传 `--adapter-model <id>`——权威模型输入，随 headless argv 回放（`chrys`/`generic`/`deepseek-harness` 不支持，传即 BLOCKER）。**有人在场（in-session attended）不适用**——由宿主会话自跑，本 Skill 不消费该字段，不得静默未钉 |
-| `run_mode` | 条件 | 明确意图直接映射；歧义时走 `goal.run_mode` |
+用户已授权的原范围内工作持续推进，不反复确认。目标/验收实质变化、扩范围、共享契约/设计、真实秘密、不可逆动作和明确禁止仍沿真实权责边界处理；主 Agent 的日志、never 或模式名不自授权限。设计修订回原设计单元，经独立核验、正式发布与必要重绑后接回施工，不由 CU 原地洗白。
 
-## 唯一 runtime 循环
+## 唯一协调循环
 
-以下循环只由 `GoalPhaseRuntime` 执行，Skill/宿主不得逐项重实现：
+1. 读取原目标、合法成果、真实调用和当前有效证据，一次汇总全部可判定未完项。
+2. 专用作者在授权内解决设计细化、实现与测试源；Skill 和 phase 是方法/里程碑，单元内不轮流购买不同阶段作者。
+3. 作者可自检；协调器只补缺失或受影响的真实检查、构建、UT、设备/视觉及独立核验。工具族复用原 unit request 与 owner/fence，不伪造同名 phase 作者出生或 PASS。
+4. 真实缺陷和全部反馈送回同一作者；原样结果复读不制造新机会。已完成调用及无关有效证据复用；实质输入、验收或依赖变化才补受影响部分。
+5. 需补证/条件的部分点明原 producer、对象与解除条件，继续所有独立可做工作。未知不当产品失败，也不签通过。反馈已送达且真实交回/完整核验仍无改善时，共同 I10 中断保全并可续暂停；不新增次数上限。
+6. 当前终点全部适用义务和正式原件成立才签完成；发布就绪另投影。视觉/资源债务可披露而发布仍 BLOCKED，不能因此让作者反复空转。
 
-1. **Assess**：读取 `assess@1` 结构化结果；不得凭聊天上下文猜当前阶段。
-2. **Authorize**：runtime 校验预算、权限、preflight、device policy、write guard、trust、lease/fencing 与 adapter capability。`assess` 推荐不等于越权许可。
-3. **Execute one phase**：runtime 冻结 phase-scoped context，再调用薄 executor。attended 请求中的 `run_id/phase/attempt_id/owner_id/owner_epoch` 必须原样传给 initializer、harness 与 `--sync-closure`，不得靠兄弟 shell 继承 env；**无人值守（`--detach`）相反**——上下文由 runner 注入的 env 继承，harness 与闭环命令不带这组 `--goal-*` 参数，传了会被判「模式不匹配」当场拒绝（入口拒绝 ≠ 执行了测试，也不是租约过期）。attended 自检与 `--sync-closure` 检查 exit 0、summary 为 `PASS/open` 即可回传 `passed`；正式 `closed` 由 runtime 在随后 gate/finalizer 中提交。
-4. **Gate / verdict / reassess**：runtime 独占 gate、verdict、重试/回退、closure 与下一轮；不得根据上一轮宿主内存直接决定下一 phase。初始设计沿既有链外用途派作者/独立质询，返回后读取真实产物并运行原检查；可修缺口回原责任方，准入后由 P2 选择/恢复正常 CU，child 报告自动接回原始请求。不由主 Agent 手拼 CU 或 phase。
+检查工具内部的具体 timeout、真实 native 输出卡死清理、用户取消/截止、独立上下文、写保护、owner/fence 和原件绑定继续生效。作者可写实现/测试输入，不写正式结果、截图、PASS 或完成记录。
 
-Goal 已在合法作者窗口按阶段机器准备蓝图投影，执行者直接消费；只有无 Goal 的 CU 单独 spec/plan 才先按对应 Skill 用 `prepare-blueprint-design --phase spec|plan` 导出本阶段，不重复整包写三份。
+## 启动、观察与恢复
 
-全部可运行框架命令且配置有效的 adapter 共用 next/report；`in_session_reconcile` 不再是准入门槛，`phase_context_isolation` 仅决定派隔离子代理还是主上下文执行，并披露实际安排。必需 verifier/设计质询仍须真实独立；能力缺失沿原缺口策略。无人值守仍须 external runner preflight，原生运输 handoff 仍须对应 resume/handoff 能力，框架交接续作不依赖模型 CLI 原生 resume。
+1. 先读 [host-harness-readiness](../../reference/host-harness-readiness.md)、[harness-cli-cwd](../../reference/harness-cli-cwd.md) 与 [personal-setup-gate](../../reference/personal-setup-gate.md)，采用实际 activeAdapter。
+2. 需要设备时走 [device-policy-gate](../../reference/device-policy-gate.md)；绝不要让用户把 PIN 发到对话里。PIN 只能由用户在真实 TTY 登记，不代输或猜解锁。`code=device_policy_unset` 才询问配置；非 JSON/命令失败保留真实错误，不冒充未配置。
+3. UI 任务按 [interactive-vision-canary](../../reference/interactive-vision-canary.md) 读取实际图像能力；缓存 SKIP、盲能力或 provider 缺失都不能伪造视觉通过。
+4. 有人在场由 `goal-mode-entry --prepare-run --run-mode attended` 创建/接回，随后 `--next / --report-result`。只执行返回的 `execute_command`，用同一 `observe_command` 观察、`interrupt_command` 停止准确 owner 绑定；不手拼 token、SID 或权限。后台由 `goal-runner --detach` 运输同一请求/结果。
 
-**单一推进者**：同一任务只由其 active run 的 GoalPhaseRuntime 推进；原生目标持久能力可唤起/保存宿主会话，不另建 phase 选择与收口循环。阶段执行者按已签发请求读取完整 instruction，完成本阶段工作及原身份自检后报告；主 Agent 消费 runtime 返回的下一请求/等待/完成，不连续自选 phase。
+重复 execute/report 幂等，报告 `passed` 只是本次真实调用结果，正常退出/hook 放行也不裁决交付。未知外部任务先等待真实交回/退出或受控回收事实，不伪造 end；租约过期不证明已停止。条件恢复或用户明确继续后由公共入口接原请求，只补受影响部分；同条件自动重入不重复执行。已完成请求默认只读状态，不能因升级重新开工。
 
-## 启动与续跑
+发现 framework 问题：不改消费者 `framework/` 发布件；登记具体问题与影响，继续所有不依赖它的授权工作，必需缺口交协调器保全等待，不命令整单 HALT。依赖只在 `framework/harness` 安装，不能在宿主根安装 runtime。
 
-开始前按顺序执行：
+## 汇报
 
-1. [host-harness-readiness.md](../../reference/host-harness-readiness.md) 与 [harness-cli-cwd.md](../../reference/harness-cli-cwd.md)。
-2. [personal-setup-gate.md](../../reference/personal-setup-gate.md)，以返回的 `activeAdapter` 为准；保留其 `visualProvider` advisory，但有人在场时须等第 4 步 canary 得出 primary effective image-input 后，才决定是否执行 S2.1 询问。
-3. 链路含设备阶段时执行 [device-policy-gate.md](../../reference/device-policy-gate.md)。`device_policy_unset` 必须先确认（**只看 `code`，不看 `configured`**——坏凭据/只有 `disabled` 时 `configured=true` 而 `code=unset`；退出码非零或 stdout 非 JSON = 执行失败须停止，含凭据库不可读，不得当成"未配置"引导重新登记）；PIN 只能由用户在真实 TTY 登记，**绝不要让用户把 PIN 发到对话里**，也不得代输。
-4. 有人在场且需求 UI 相关的新 run，先按 [interactive-vision-canary.md](../../reference/interactive-vision-canary.md) 完成 interactive canary（新鲜缓存会自动 `SKIP`），再消费同一条 effective image-input 结论：primary blind 时可按 personal setup S2.1 配置合法 provider，也可保持未配置；这不产生盲跑 waiver。随后沿运维文档原 prepare-run/next/report 或 detached 入口创建/接回。无 CU 的正式完整交付先出生受管设计段，不伪造施工范围；真实 ready CU 才经 `--prepare-scope` 派生施工候选，绑定/指纹由机器计算，正常 CU run 出生冻结范围与适用 `run_base_sha`。严格视觉需求由原 requirement/capability 门裁决。已有 run 按原身份恢复，attach/resume 不补造 `run_created`；同请求重入由原接续入口定位原请求及实际 child，已完成且原件仍有效就返回原结果。未解除条件、真实变化与明确合法恢复沿共同冷却规则判断，不要求用户找 run id 或手拼 resume/supersede。attach 显式传 `--run-mode attended`，adapter 与 manifest 保持一致。
+报告原请求/工作单元、实际作者/工具/独核调用、当前未完项和解除条件、下一原生执行请求、run 与原件路径。作者已结束、检查未完、等待条件和业务完成分别说明。`activity` 的调用/耗时不是额度或完成率；只读状态不偷偷写 next/cache。
 
-有人在场统一使用可执行 `goal-mode-entry --next / --report-result`。CLI 原子保存完整请求、原快照并签发后退出，返回原件路径/sha、身份、`execute_command`、`observe_command`、`interrupt_command` 和下一命令。主会话仅启动 `execute_command`，由共同 executor 在真实专用原生会话内执行；不自行编辑业务产物或以主会话施工代替。运行中用 `observe_command` 读取同一原始工具流和写入快照，需要暂停时用 `interrupt_command` 停止当前 owner 绑定的执行。没有可核实绑定的旧外部任务须先明确停止，租约到期不证明已停止。重复 execute/report 复用当前请求与已有结果；执行结束后按 `next_command` 进入原 runtime 的正式 gate/finalizer，不把模型退出当交付完成。精确身份与自检命令以原件为准，不手拼 token。真实 waiting 输出原因和探针后交回，再次同请求由原门复验；交出执行请求本身不是 waiting。detached 使用同一薄 executor 和事实读取；正常运输转换沿 mailbox。只有用户明示的绝对 deadline 到期才沿原超时出口收口，不冒充 kill/settled 或通用 force takeover。
-
-具体 CLI、adapter 解析、detach 启动握手、进度汇报与有界终态跟踪见 [goal-mode-operations.md](../../reference/goal-mode-operations.md)。
-
-## 每轮汇报
-
-稳定输出以下用户可见字段：
-
-- 原请求 feature、当前职责；有实际执行请求时展示其 feature/run/phase 与 round
-- 模式：有人在场 / 无人值守
-- 本轮结果与下一动作
-- 等待项（没有则省略）
-- `run_id` 与进度文件
-
-无人值守（`--detach`）启动后：launcher 已用 manifest / 本次新增 events / liveness / progress 做一次**有界启动握手**（≤30s），stdout 的 `startup.state` 区分 `ready`、快速 `terminal`、`alive_timeout` 与 `failed`；不得把 pid/目录单独当健康，也不得重复握手或手搓轮询。`failed` 准确通知；`alive_timeout` 不表示失败、不能杀进程。仅启动请求汇报后结束轮次；完整交付/终态回报请求已授权按 operations 的 bounded monitor 跟踪，已知责任由 runner 自动接续，无合法恢复路径时准确停放，不代写产品或盲目重启。
-
-遇到 human-only recommendation 时不得启动 phase：有人在场立即询问；无人值守写入等待项并安全停放。`DEFERRED` / `PARTIAL` 不得宣称完成。
-
-汇报完成/发布时必须分开两个结论（plan 6fd6c8c1）：Feature 完成只按完成原件 /
-`assessFeature.complete`；可用视觉/资源残差披露而 release 仍 `BLOCKED`，不得把
-`PARTIAL` 当完成，也不得把 `BLOCKED` 说成 Feature 未完成。同一任务不因有人在场或后台
-而改变质量判断、责任分派和恢复；后台 `--detach`（含 `--resume … --detach` 与 supervisor
-重启）在入口已把无人值守选择转成共同授权，不需要用户再补后台全权参数。
-
-## 不可绕过的边界
-
-- driver 只做授权、失效事务、预算与运行控制；不得重写 `assess` 的跨阶段建议。
-- preflight、device、timeout、cleanup、pass-snapshot、evidence freshness、write guard 与 fencing 仍是硬门禁。
-- 非 owner 或旧 epoch 不得写 events / progress / manifest，也不得启动 phase。
-- 主 agent 必须自己运行 harness/runner；不得把命令作为唯一出路推给用户。
-- goal agent、attended/detached executor 与 supervisor 永不得构造 `--rebaseline-to`；该参数只属于 goal runtime 外的操作者管理命令，详见运行手册。
-- 不得把 INCOMPLETE 软化为 PASS，不得在 Skill 内新增阶段顺序或 verdict→next-phase 表。
-- 子代理结果使用宿主原生等待，或先做无关工作；正式 gate 按返回的 gate 时限和清理预留设置工具 timeout，可等待同一原生后台任务句柄直到终态。禁止自造 sleep/事件轮询/后台等待器，不重复提交 report 催进度；verifier 未返回前不改其材料。
-
-## 默认额度与用户总上限
-
-明确完整交付并要求“别问/全权处理”时，主 Agent 先核可信原请求，在 attended prepare 及每次 `--next / --report-result` 重传非持久 `--authorize-autonomy`；新会话恢复已有授权，不把打印命令、never/goal_mode 或 Agent 记录当凭证，不重复问已授权用户。缺本次输入时按需确认，先找原授权，只有不可恢复/冲突才澄清。detached 保留选择无人值守完整交付的既有设计修订权限；默认额度提高仍须明确不要询问。原目标内设计/CU/必要架构修订由设计 owner 经独立质询、检查、发布和重绑，不能由 coding/plan 自授。现有 `--override-manifest` 在 prepare/控制调用透传；覆盖前核全部差异，单独批预算不授设计全权。用户总上限不破、累计不清零、不解除无进展守卫；披露额度前后、原因、来源和累计消耗。
+后台 launcher 的有界启动握手区分 ready/terminal/alive_timeout/failed，pid/目录不是健康证明；alive_timeout 不表示失败或允许杀进程。完整交付已授权时持续跟踪原请求，Stop hook/原生 Goal/进程退出只触发共同协调器。不要把已授权命令推给用户，也不另建轮询或私有 phase 循环。具体命令见 [goal-mode-operations](../../reference/goal-mode-operations.md)。

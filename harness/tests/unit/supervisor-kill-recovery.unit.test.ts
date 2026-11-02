@@ -324,7 +324,7 @@ const cases: TestCase[] = [
   {
     // 「先记账再 spawn」存在的**理由**是：拉起失败也要计数，否则周期任务永远重试同一个 run。
     // 顺序本身外部观测不到，但这条理由可以直接验：让拉起必然失败，看预算有没有真的被消耗。
-    name: '拉起失败也已计数：子进程起不来，重启预算照样推进（不会无限重试）',
+    name: '拉起失败保留真实审计；同异常未变时不再盲拉原run',
     run: async () => {
       if (process.platform !== 'win32') return;
       const { root, reportDir, cleanup } = tmpRun();
@@ -365,9 +365,8 @@ const cases: TestCase[] = [
 
         // beacon 仍是被强杀那个进程的（新进程根本没起来）→ 下一轮必须是**第 2 次**，不是重置回第 1 次
         const next = superviseRun({ projectRoot: root, reportDir, runId: RUN_ID, events: lines });
-        assert(next.action === 'resume', `下一轮判 ${next.action}，预期继续 resume`);
-        const seq = next.action === 'resume' ? next.restart_seq : -1;
-        assert(seq === 2, `重启序号未推进（${seq}）——预算被重置等于没有上限`);
+        assert(next.action === 'no_op', `同一失败条件未变不应再拉起：${JSON.stringify(next)}`);
+        assert(lines.filter(e => e.type === 'supervisor_restart').length === 1, '原真实启动审计保留，无新次数配额');
       } finally {
         victim.kill();
         cleanup();

@@ -60,7 +60,7 @@ import { tryAcquireLock, releaseLock } from '../../scripts/utils/goal-run-lock';
 import { prepareGoalModeRun } from '../../scripts/goal-mode-entry';
 import { GoalPhaseRuntime } from '../../scripts/goal-phase-runtime';
 import { loadGoalRunManifestFromRun, isInitialDesignManifest } from '../../scripts/utils/goal-manifest';
-import { readOriginalDeliveryBudget } from '../../scripts/utils/delivery-origin';
+import { readOriginalDeliveryActivity } from '../../scripts/utils/delivery-origin';
 import { writeLocalConfig } from '../../scripts/utils/framework-local-config';
 import { initializeFidelityRouting } from '../../scripts/utils/goal-preflight';
 import { acceptChangeUnitDecomposition, deriveDesignPreparationReadiness } from '../../scripts/utils/change-unit-design-preparation';
@@ -1380,7 +1380,8 @@ export function writeCuCodingMaterials(p: RealChainProject): void {
 export function writeCuReviewMaterials(p: RealChainProject, executionRunId = p.runId): void {
   writeCuFacts(p, 'review');
   const contracts = YAML.parse(fs.readFileSync(path.join(p.root, `${cuRel(p)}/contracts.yaml`), 'utf8')) as ContractsSpec;
-  const entry = resolveCapabilityResolutionEntryInput({ projectRoot: p.root, frameworkRoot: p.frameworkRoot, feature: p.feature, phase: 'review', goalRunId: executionRunId, featuresDir: 'doc/features' });
+  const entry = resolveCapabilityResolutionEntryInput({ projectRoot: p.root, frameworkRoot: p.frameworkRoot, feature: p.feature, phase: 'review', goalRunId: executionRunId,
+    goalAttemptId: process.env.MAISON_GOAL_ATTEMPT, featuresDir: 'doc/features' });
   const code = resolveCapabilityInputs({ projectRoot: p.root, frameworkRoot: p.frameworkRoot, feature: p.feature, phase: 'review', track: 'full', ...entry }).inputs?.values.code;
   const targets = code?.state === 'resolved' && Array.isArray(code.value) ? code.value.map((file: { path: string }) => file.path) : contracts.files;
   writeHostFile(p.root, `${cuRel(p)}/review/review-report.md`, [
@@ -1843,8 +1844,8 @@ test('5f8c2d70 managed raw entry births its original root before design and pres
     const lastEnd = [...after].reverse().find(event => event.type === 'run_end');
     assert(lastEnd?.status === 'HALTED' && String(lastEnd.error).includes(waiting), 'the real wait must remain incomplete with its actual reason');
     assert(!after.some(event => event.type === 'phase_verdict' || event.type === 'run_end' && event.status === 'COMPLETED'), 'a design wait cannot claim phase or request completion');
-    const family = readOriginalDeliveryBudget(p.root, original)!;
-    assert(family.runs.length === 1 && family.totalTurns === 1, 'unadmitted raw work cannot birth a normal CU or reset its original counter');
+    const family = readOriginalDeliveryActivity(p.root, original)!;
+    assert(family.runs.length === 1 && family.calls === 1, 'unadmitted raw work cannot birth a normal CU or reset its original counter');
     assert(!fs.existsSync(path.join(p.root, 'doc/features', feature, 'feature.yaml')) && !fs.existsSync(path.join(p.root, 'doc/features', feature, 'blueprint/component-blueprint.yaml')), 'transport must not prefill a scope or design');
     assert(fs.readFileSync(path.join(p.root, input)).equals(inputBytes), 'the original pure input stays unchanged');
     const localFeature = 'standalone-spec-entry', localRequirement = '仅写 spec';

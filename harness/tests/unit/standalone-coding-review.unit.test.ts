@@ -16,7 +16,7 @@ import { buildSummaryRepairCandidates, checkOwnedCandidate, scopeRevisionInputFr
 import { collectResolvedScopeFacts, readScopeAcceptance, prepareFeatureScopeCandidate, featureScopePhaseHealth, resolveFeatureExecutionScope, featureTrackDeclPath, recomputeDefinitionFacts, resolveScopeRevisionProposal } from '../../scripts/utils/feature-track';
 import { ensureFeatureExecutionScopeFrozen } from '../../scripts/utils/feature-execution-scope';
 import { buildGoalManifestFromInput, loadGoalManifestFromRun, SCOPE_REVISION_FIELDS } from '../../scripts/utils/goal-manifest';
-import { ensureRunControl, readRunControl, casAcquireRunOwner } from '../../scripts/utils/goal-run-control';
+import { ensureRunControl, readRunControl, casAcquireRunOwner, releaseRunOwner } from '../../scripts/utils/goal-run-control';
 import { issueSessionExecution, writePhaseExecutionRequestMaterial, executionRequestForInvoke } from '../../scripts/utils/session-execution-handoff';
 import { AttendedGoalPhaseExecutor, type WorkUnitExecutionContext } from '../../scripts/utils/goal-phase-executor';
 import { GoalPhaseRuntime } from '../../scripts/goal-phase-runtime';
@@ -152,11 +152,11 @@ export function fixture(newFile = false, baselineTest = false, extraContractFile
   const scope = resolveExecutionScope(scopeInput, workflow, { value: initial.inputs!.artifacts['acceptance@1'] as any, binding: bound('acceptance') },
     collectResolvedScopeFacts(scopeInput, { projectRoot: root, feature: 'demo', frameworkRoot, requirement: options.requirement }));
   const manifest = buildGoalManifestFromInput({ feature: 'demo', run_id: 'p4-coding', ...(materializedAdapter ? { adapter: materializedAdapter } : {}), requirement: options.requirement, execution_scope: scope, chain_override: scope.phase_chain, unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: root });
-  createGoalRun({ projectRoot: root, manifest, chain: scope.phase_chain });
+  createGoalRun({ frameworkRoot: frameworkRoot, projectRoot: root, manifest, chain: scope.phase_chain });
   const profileDir = path.join(root, 'test-profile');
   write('test-profile/harness/profile-path-conventions.js', "exports.resolveUtSourceRoots=(root,modules)=>modules.map(m=>require('path').join(root,m.package_path,'src','ohosTest'));\n");
   write('test-profile/harness/coding-host-rules.js', `const cp=require('child_process'); exports.profileCodingHost={sourceFileSuffixes:['.ts'],runStructureChecks:()=>[],runTraceabilityChecks:()=>[],checkCodingCompile:ctx=>{let details='TypeScript compilation completed',status='PASS';try{cp.execFileSync(process.execPath,[${JSON.stringify(require.resolve('typescript/bin/tsc'))},'--noEmit','--skipLibCheck','--target','ES2022',...ctx.featureSpec.contracts.files],{cwd:ctx.projectRoot,stdio:'pipe'});}catch(e){status='FAIL';details=String(e.stdout||e);}return [{id:'coding_compile',category:'structure',severity:'BLOCKER',status,description:'native TypeScript compile',details}];}};`);
-  const context = (phase: 'coding' | 'review', goalRunId = manifest.run_id): CheckContext => {
+  const context = (phase: 'plan' | 'coding' | 'review', goalRunId = manifest.run_id): CheckContext => {
     const bridge = resolveCapabilityResolutionEntryInput({ projectRoot: root, frameworkRoot, feature: 'demo', phase, featuresDir: 'doc/features', goalRunId,
       ...(goalRunId ? {} : { requirement: options.requirement }) });
     const resolved = resolveCapabilityInputs({ ...options, ...bridge, phase });
@@ -231,7 +231,7 @@ function beginFactsInvocation(f: ReturnType<typeof fixture>, fw: string, phase: 
 function priorResearchBaseline(f: ReturnType<typeof fixture>, fw: string): void {
   const origin = buildGoalManifestFromInput({ ...f.manifest, run_id: 'prior-research', report_dir: undefined }, { projectRoot: f.root });
   assert(origin.phase_chain, 'the research producer has its actual resolved construction scope');
-  createGoalRun({ projectRoot: f.root, manifest: origin, chain: origin.phase_chain });
+  createGoalRun({ frameworkRoot: frameworkRoot, projectRoot: f.root, manifest: origin, chain: origin.phase_chain });
   const file = path.join(f.root, 'doc/features/demo/context/facts.md');
   fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(`run_id: ${f.manifest.run_id}`, `run_id: ${origin.run_id}`));
   const entry = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'coding',
@@ -426,8 +426,8 @@ fs.writeFileSync(${JSON.stringify(resultFile)},JSON.stringify(result?{context:re
     const origin = buildGoalManifestFromInput({ ...input, run_id: 'business-facts-origin' }, { projectRoot: f.root });
     const current = buildGoalManifestFromInput({ ...input, run_id: 'business-facts-live' }, { projectRoot: f.root });
     assert(origin.phase_chain && current.phase_chain, 'both actual runs retain their resolved construction chain');
-    createGoalRun({ projectRoot: f.root, manifest: origin, chain: origin.phase_chain });
-    createGoalRun({ projectRoot: f.root, manifest: current, chain: current.phase_chain });
+    createGoalRun({ frameworkRoot: frameworkRoot, projectRoot: f.root, manifest: origin, chain: origin.phase_chain });
+    createGoalRun({ frameworkRoot: frameworkRoot, projectRoot: f.root, manifest: current, chain: current.phase_chain });
     f.facts(); fs.writeFileSync(factsFile, fs.readFileSync(factsFile, 'utf8').replace(f.manifest.run_id, origin.run_id));
     const originalContext = f.context('coding', origin.run_id);
     const actualChecks = checkFactsArtifact(f.root, 'demo', 'coding', { frameworkRoot: liveFramework, phaseRule: originalContext.phaseRule,
@@ -489,6 +489,17 @@ fs.writeFileSync(${JSON.stringify(resultFile)},JSON.stringify(result?{context:re
       fs.writeFileSync(requestFile, requestBytes);
       assert(!gate().checks.some(check => /^context_exploration_facts_(?:source|baseline)_stale$/.test(check.id) && check.status === 'FAIL'), 'restored original request permits the same live observation again');
       assert(fs.readFileSync(factsFile).equals(originalFacts), 'research baseline bytes remain the original throughout all observations');
+      const lookup = { projectRoot: f.root, frameworkRoot: liveFramework, feature: 'demo', phase: 'review', runId: current.run_id, attemptId: 'i1' };
+      releaseRunOwner(runDir, issued.request.context.owner);
+      const nextOwner = casAcquireRunOwner(runDir, current.run_id, issued.request.context.owner.epoch,
+        { kind: 'session', owner_id: 'next-facts-observer', lease_ms: 60_000 });
+      assert(nextOwner.ok, 'the existing owner transition must create the actual recovery fence');
+      assert.throws(() => loadFactsInvocationContext(lookup), /stale owner/, 'an unreturned original request cannot borrow the new active fence');
+      appendRunEvent(f, { type: 'agent_invoke_end', phase: issued.request.context.phase, invoke_id: issued.request.invoke_id,
+        status: result.status, exit_code: result.exitCode, completion_observed: result.completion_observed }, path.join(runDir, 'events.jsonl'));
+      assert.equal(loadFactsInvocationContext(lookup), undefined,
+        'a genuinely returned old actor is no longer live admission; current machine facts proof must be resolved separately');
+      assert(fs.readFileSync(factsFile).equals(originalFacts), 'returning the original never constructs or rewrites a facts baseline');
     } finally {
       for (const [key, value] of priorEnv) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
     }
@@ -856,7 +867,7 @@ fs.writeFileSync(${JSON.stringify(resultFile)},JSON.stringify(result?{context:re
     const initial = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'coding', featuresDir: 'doc/features', goalRunId: f.manifest.run_id });
     writePhaseEvidenceManifest(f.root, resolvePhaseEvidenceManifest({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'coding', factsContext: initial.factsContext }));
     const successor = buildGoalManifestFromInput({ ...f.manifest, run_id: 't5-same-coding', report_dir: 'doc/features/demo/goal-runs/t5-same-coding' }, { projectRoot: f.root });
-    createGoalRun({ projectRoot: f.root, manifest: successor, chain: successor.phase_chain!, forceFresh: true });
+    createGoalRun({ frameworkRoot: frameworkRoot, projectRoot: f.root, manifest: successor, chain: successor.phase_chain!, forceFresh: true });
     const input = () => resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'coding', featuresDir: 'doc/features', goalRunId: successor.run_id });
     const inherited = input();
     assert(inherited.factsContext?.baseline, JSON.stringify(inherited));
@@ -1025,7 +1036,7 @@ fs.writeFileSync(${JSON.stringify(resultFile)},JSON.stringify(result?{context:re
         requestedResults: ['deliver planned page'], requestedPhases: ['plan', 'coding', 'review', 'ut'], requirement: 'deliver planned page', overwrite: true });
       const manifest = buildGoalManifestFromInput({ feature: 'demo', run_id: 'c3-plan-unbound', requirement: 'deliver planned page', run_base_sha: f.git('rev-parse', 'HEAD'), execution_scope: prepared.scope,
         chain_override: prepared.scope.phase_chain, unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: f.root });
-      createGoalRun({ projectRoot: f.root, manifest, chain: prepared.scope.phase_chain });
+      createGoalRun({ frameworkRoot: frameworkRoot, projectRoot: f.root, manifest, chain: prepared.scope.phase_chain });
       assert.throws(() => readRunBoundContracts(f.root, fw, 'demo', manifest.run_id), /frozen construction contract missing/, '前提：plan 前没有施工绑定');
       f.write(resource, '{"string":[]}\n');
       const factsPath = path.join(f.root, 'doc/features/demo/context/facts.md'); fs.mkdirSync(path.dirname(factsPath), { recursive: true });
@@ -1270,7 +1281,7 @@ fs.writeFileSync(${JSON.stringify(resultFile)},JSON.stringify(result?{context:re
       const scope = f.manifest.execution_scope!;
       const manifest = { ...buildGoalManifestFromInput({ feature: 'demo', run_id: `p4-successor-${Date.now()}`, requirement: f.manifest.requirement, execution_scope: scope, chain_override: scope.phase_chain, unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: f.root }),
         successor_of: f.manifest.run_id, run_base_sha: f.manifest.run_base_sha };
-      createGoalRun({ projectRoot: f.root, manifest, chain: scope.phase_chain });
+      createGoalRun({ frameworkRoot: frameworkRoot, projectRoot: f.root, manifest, chain: scope.phase_chain });
       process.env.MAISON_GOAL_RUN_ID = manifest.run_id;
       return manifest.run_id;
     };
@@ -1287,7 +1298,8 @@ fs.writeFileSync(${JSON.stringify(resultFile)},JSON.stringify(result?{context:re
   } },
   { name: 'bound contracts cannot expand after birth and independent scope ignores unrelated old design verdicts', run(f) {
     f.write('doc/features/demo/plan/reports/summary.json', JSON.stringify({ verdict: 'FAIL', blockers: [{ id: 'old-plan' }] }));
-    assert.deepStrictEqual(checkUpstreamVerdictGate({ projectRoot: f.root, feature: 'demo', phase: 'coding', runId: f.manifest.run_id }), []);
+    assert(checkUpstreamVerdictGate({ projectRoot: f.root, feature: 'demo', phase: 'coding', runId: f.manifest.run_id,
+      resolvedInputs: f.context('coding').resolvedInputs }).every(check => check.status === 'PASS'), '当前真实输入可用，不借无关旧plan裁决决定施工资格');
     assert.deepStrictEqual(readRunBoundContracts(f.root, frameworkRoot, 'demo', f.manifest.run_id).files, ['src/demo/value.ts']);
     f.write('doc/features/demo/contracts.yaml', YAML.stringify({ ...f.contracts, files: [...f.contracts.files, 'src/demo/new.ts'] }));
     assert.throws(() => readRunBoundContracts(f.root, frameworkRoot, 'demo', f.manifest.run_id), /stale/);
@@ -1323,7 +1335,7 @@ fs.writeFileSync(${JSON.stringify(resultFile)},JSON.stringify(result?{context:re
     const scope = resolveExecutionScope(scopeInput, workflow, undefined,
       collectResolvedScopeFacts(scopeInput, { projectRoot: f.root, feature: 'demo', frameworkRoot, requirement: 'make value 42' }));
     const manifest = buildGoalManifestFromInput({ feature: 'demo', run_id: 'p4-review-only', requirement: 'make value 42', execution_scope: scope, chain_override: scope.phase_chain, unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: f.root });
-    createGoalRun({ projectRoot: f.root, manifest, chain: scope.phase_chain });
+    createGoalRun({ frameworkRoot: frameworkRoot, projectRoot: f.root, manifest, chain: scope.phase_chain });
     for (const phase of ['review', 'ut'] as const) {
       const bridge = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase, featuresDir: 'doc/features', goalRunId: manifest.run_id });
       assert(bridge.codeTargets!.includes('src/demo/value.ts'), phase + ' lost its real code target');
@@ -1460,7 +1472,7 @@ fs.writeFileSync(${JSON.stringify(resultFile)},JSON.stringify(result?{context:re
       const manifest = buildGoalManifestFromInput({ feature: 'demo', run_id: runId, requirement: 'trigger kind probe',
         execution_scope: scopeOf(kind) as unknown as ExecutionScope, chain_override: ['plan'],
         unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: f.root });
-      createGoalRun({ projectRoot: f.root, manifest, chain: ['plan'] });
+      createGoalRun({ frameworkRoot: frameworkRoot, projectRoot: f.root, manifest, chain: ['plan'] });
       return resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'plan', featuresDir: 'doc/features', goalRunId: runId }).codeTargets ?? [];
     };
     // 对照：非触发 kind 的同一条 basis **是**当前读取目标——证明下面那条不是"恒为空"。
@@ -1648,7 +1660,7 @@ fs.writeFileSync(${JSON.stringify(resultFile)},JSON.stringify(result?{context:re
 
     const manifest = buildGoalManifestFromInput({ feature: 'demo', run_id: 'p1-verification-only', requirement: 'verify existing implementation', execution_scope: prepared.scope,
       chain_override: prepared.scope.phase_chain, unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: f.root });
-    createGoalRun({ projectRoot: f.root, manifest, chain: prepared.scope.phase_chain });
+    createGoalRun({ frameworkRoot: frameworkRoot, projectRoot: f.root, manifest, chain: prepared.scope.phase_chain });
     const factsPath = path.join(f.root, 'doc/features/demo/context/facts.md');
     fs.mkdirSync(path.dirname(factsPath), { recursive: true });
     const writeFacts = (runId: string, sources: string[]) => fs.writeFileSync(factsPath, [
@@ -1690,7 +1702,7 @@ fs.writeFileSync(${JSON.stringify(resultFile)},JSON.stringify(result?{context:re
     assert(!ut.candidate.request.impact && !ut.candidate.facts.some(fact => fact.kind === 'implementation'));
     const manifest = buildGoalManifestFromInput({ feature: 'demo', run_id: 'p1-ut-only', requirement: 'verify existing unit behavior', execution_scope: ut.scope,
       chain_override: ut.scope.phase_chain, unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: f.root });
-    createGoalRun({ projectRoot: f.root, manifest, chain: ut.scope.phase_chain });
+    createGoalRun({ frameworkRoot: frameworkRoot, projectRoot: f.root, manifest, chain: ut.scope.phase_chain });
     const utBridge = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'ut', featuresDir: 'doc/features', goalRunId: manifest.run_id });
     assert.deepStrictEqual(utBridge.codeTargets, ['src/demo/value.ts']);
     assert.notEqual(resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'ut', track: 'full', ...utBridge }).report.assurance, 'blocked');
@@ -1716,7 +1728,7 @@ fs.writeFileSync(${JSON.stringify(resultFile)},JSON.stringify(result?{context:re
       assert.deepStrictEqual(scope.phase_chain, [phase], JSON.stringify(scope));
       const manifest = buildGoalManifestFromInput({ feature: 'demo', run_id: `p1-${phase}-research-only`, requirement: `${phase} only`, execution_scope: scope,
         chain_override: scope.phase_chain, unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: f.root });
-      createGoalRun({ projectRoot: f.root, manifest, chain: scope.phase_chain });
+      createGoalRun({ frameworkRoot: frameworkRoot, projectRoot: f.root, manifest, chain: scope.phase_chain });
       const factsPath = path.join(f.root, 'doc/features/demo/context/facts.md'); fs.mkdirSync(path.dirname(factsPath), { recursive: true });
       fs.writeFileSync(factsPath, ['---', YAML.stringify({ schema_version: '1.1', feature: 'demo', run_id: manifest.run_id, established_by: phase,
         ready_to_produce: true, has_blocker_coverage_risk: false, source_code_paths: ['framework.config.json'], key_inputs_read: ['framework.config.json'],
@@ -1749,7 +1761,7 @@ fs.writeFileSync(${JSON.stringify(resultFile)},JSON.stringify(result?{context:re
       assert(!prepared.candidate.facts.some(fact => fact.kind === 'implementation'), 'plan 前伪造了 implementation 来源');
       const manifest = buildGoalManifestFromInput({ feature: 'demo', run_id: 'p1-plan-first', requirement: 'deliver planned page and UT', run_base_sha: f.git('rev-parse', 'HEAD'), execution_scope: prepared.scope,
         chain_override: prepared.scope.phase_chain, unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: f.root });
-      const born = createGoalRun({ projectRoot: f.root, manifest, chain: prepared.scope.phase_chain });
+      const born = createGoalRun({ frameworkRoot: frameworkRoot, projectRoot: f.root, manifest, chain: prepared.scope.phase_chain });
       // This case creates a different run from the outer fixture; default readers use its actual identity.
       process.env.MAISON_GOAL_RUN_ID = manifest.run_id;
       const testRel = 'src/demo/src/ohosTest/ets/test/Value.test.ets';
@@ -1801,7 +1813,7 @@ fs.writeFileSync(${JSON.stringify(resultFile)},JSON.stringify(result?{context:re
       const codingInputs = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'coding', track: 'full', ...codingBridge }).inputs!;
       const codingFactsChecks = checkFactsArtifact(f.root, 'demo', 'coding', { factsContext: codingBridge.factsContext, resolvedInputs: codingInputs, frameworkRoot, goalAttemptId: 'i1' });
       assert(!codingFactsChecks.some(check => check.status === 'FAIL'), 'coding 改动后的 facts gate 不得要求旧源码 hash: ' + JSON.stringify(codingFactsChecks.filter(check => check.status === 'FAIL')));
-      const upstreamChecks = checkUpstreamVerdictGate({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'coding', runId: manifest.run_id });
+      const upstreamChecks = checkUpstreamVerdictGate({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'coding', runId: manifest.run_id, resolvedInputs: codingInputs });
       assert(!upstreamChecks.some(check => check.status === 'FAIL'), 'coding 改动后的 upstream gate 不得要求预先存在 coding manifest: ' + JSON.stringify(upstreamChecks));
       assert.doesNotThrow(() => writePhaseEvidenceManifest(f.root, resolvePhaseEvidenceManifest({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'coding', resolvedInputs: codingInputs, factsContext: codingBridge.factsContext })), '责任阶段须能按真实 gate 顺序收口自己刚写的新字节');
       const codingFreshness = recomputePhaseEvidenceStaleness(f.root, 'demo', ['plan', 'coding'], { frameworkRoot });
@@ -1834,7 +1846,7 @@ fs.writeFileSync(${JSON.stringify(resultFile)},JSON.stringify(result?{context:re
       const repairInputs = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'coding', track: 'full', ...repairBridge }).inputs!;
       const repairFactsChecks = checkFactsArtifact(f.root, 'demo', 'coding', { factsContext: repairBridge.factsContext, resolvedInputs: repairInputs, frameworkRoot, goalAttemptId: 'i3' });
       assert(!repairFactsChecks.some(check => check.status === 'FAIL'), JSON.stringify(repairFactsChecks.filter(check => check.status === 'FAIL')));
-      assert(!checkUpstreamVerdictGate({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'coding', runId: manifest.run_id }).some(check => check.status === 'FAIL'));
+      assert(checkUpstreamVerdictGate({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'coding', runId: manifest.run_id, resolvedInputs: repairInputs }).every(check => check.status === 'PASS'));
       writePhaseEvidenceManifest(f.root, resolvePhaseEvidenceManifest({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'coding', resolvedInputs: repairInputs, factsContext: repairBridge.factsContext }));
       const staleReview = recomputePhaseEvidenceStaleness(f.root, 'demo', ['review'], { frameworkRoot });
       assert.equal(staleReview[0].verdict, 'stale', 'coding 返修后已闭环 review 必须 stale: ' + JSON.stringify({ staleReview, current: fs.readFileSync(path.join(f.root, 'src/demo/value.ts'), 'utf8'), manifest: loadPhaseEvidenceManifest(f.root, 'demo', 'review')?.manifest }));
@@ -2047,7 +2059,7 @@ fs.writeFileSync(${JSON.stringify(resultFile)},JSON.stringify(result?{context:re
       requestedResults: ['review existing implementation'], requestedPhases: ['review'], requirement: 'review existing implementation', overwrite: true });
     const manifest = buildGoalManifestFromInput({ feature: 'demo', run_id: 'p3-review-evidence', requirement: 'review existing implementation',
       execution_scope: prepared.scope, chain_override: prepared.scope.phase_chain, unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: f.root });
-    createGoalRun({ projectRoot: f.root, manifest, chain: prepared.scope.phase_chain });
+    createGoalRun({ frameworkRoot: frameworkRoot, projectRoot: f.root, manifest, chain: prepared.scope.phase_chain });
     // This case creates a different run from the outer fixture; default readers use its actual identity.
     process.env.MAISON_GOAL_RUN_ID = manifest.run_id;
     fs.mkdirSync(path.join(f.root, 'doc/features/demo/context'), { recursive: true });
@@ -2199,7 +2211,7 @@ fs.writeFileSync(${JSON.stringify(resultFile)},JSON.stringify(result?{context:re
     assert(frozen.unresolved.some(gap => gap.obligation_id === 'acceptance'), JSON.stringify(frozen.unresolved));
     const manifest = buildGoalManifestFromInput({ feature: 'demo', run_id: 'p4-r3', requirement: options.requirement, execution_scope: frozen,
       chain_override: frozen.phase_chain, unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: f.root });
-    createGoalRun({ projectRoot: f.root, manifest, chain: frozen.phase_chain });
+    createGoalRun({ frameworkRoot: frameworkRoot, projectRoot: f.root, manifest, chain: frozen.phase_chain });
     // 出生范围里**没有**设计绑定（plan 本轮才产出设计内容）——这正是 R3 会发起提案的形态。
     // R3 的承载阶段是**产出设计**的阶段（plan）：coding 的 contracts 是 run-bound 快照，
     // 改动后直接判 stale，根本走不到提案这一步。

@@ -288,10 +288,9 @@ const cases: Array<{ name: string; run: () => void }> = [
   {
     name: 'D0.2 AGENTS template and entry docs hand the candidate to the machine, not to hand-written bindings',
     run: () => {
-      // 主 Agent 的职责收到四项；候选由 --prepare-scope 生成。四份入口文本里不得再出现
-      // 任何「手写」来源 / 指纹的表述——那正是 D0.2 要消除的东西。
+      // The machine derives bindings; the entry forwards the actual request and authority.
       const template = read('templates/AGENTS.md.template');
-      for (const token of ['--prepare-scope', '完成终点', '请求结果', '--requested-phases', '影响判断']) {
+      for (const token of ['请求终点', '请求结果', '原请求/来源/影响与可信授权', 'manifest.execution_scope']) {
         assert(template.includes(token), `AGENTS 模板缺 D0.2 四项职责要素: ${token}`);
       }
       const entryTexts = [
@@ -301,10 +300,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         read('skills/project/change-unit-progression/SKILL.md'),
       ];
       for (const text of entryTexts) {
-        assert(!text.includes('手写'), '入口文本仍在提「手写」来源/指纹');
-      }
-      for (const text of entryTexts.slice(1)) {
-        assert(text.includes('--prepare-scope'), '入口文档未指向候选生成入口');
+        assert(!/(?:必须|需要|请)手写.*(?:来源|指纹)/.test(text), '入口不得要求手写机器来源/指纹');
       }
     },
   },
@@ -632,13 +628,11 @@ const cases: Array<{ name: string; run: () => void }> = [
       const section = template.slice(template.indexOf('### 4.0 需求路由'), template.indexOf('### 4.0.1'));
       assert(section.length > 0, '模板缺 §4.0 需求路由节');
       const DESIGN_HANDOFF_SENTENCE =
-        '原 consumer 接受/readiness 后才由 P2 选择正常 CU';
+        '无CU先受管设计、真实独立质询和发布，再持续全部适用CU和原部件终点';
       const CANDIDATE_NOT_FREEZE_SENTENCE = '正常 CU/Feature 的 `feature.yaml.execution_scope` 是出生前候选，run 的 `manifest.execution_scope` 是冻结范围权威';
-      const FIRST_PHASE_FREEZE_SENTENCE = '机器派生并在 CU run 出生冻结施工范围';
       for (const [why, sentence] of [
         ['设计交接是候选的输入（需求 R2 第二条）', DESIGN_HANDOFF_SENTENCE],
         ['候选与冻结分清，不得写成 prepare-scope 冻结范围（需求 R2 第一条）', CANDIDATE_NOT_FREEZE_SENTENCE],
-        ['新完整交付冻结发生在 run 出生时（1804ac3b）', FIRST_PHASE_FREEZE_SENTENCE],
       ] as const) {
         assert(section.includes(sentence), `AGENTS 模板 §4.0 缺原句：${why}。期望逐字包含：\n${sentence}`);
       }
@@ -681,12 +675,13 @@ const cases: Array<{ name: string; run: () => void }> = [
     run: () => {
       // f3b8e6a1: the controlled runtime carries the original authorization to the endpoint.
       const AUTHORITY_CONTINUATION_SENTENCE =
-        '完整交付已授权就持续到原终点，真实授权/实质验收变化、秘密、不可逆动作、硬预算和明确禁止仍沿原边界';
+        '完整交付授权后持续执行，不重复phase确认；真实范围变化、秘密、不可逆操作和用户限制仍按原授权';
       const template = read('templates/AGENTS.md.template');
       const section = template.slice(template.indexOf('### 4.0 需求路由'), template.indexOf('### 4.0.1'));
       assert(section.includes(AUTHORITY_CONTINUATION_SENTENCE), `AGENTS 模板 §4.0 缺交付授权延续原句（需求 R4）。期望逐字包含：\n${AUTHORITY_CONTINUATION_SENTENCE}`);
-      const projectAuthority = AUTHORITY_CONTINUATION_SENTENCE;
-      assert(read('docs/operations/project-entry.md').includes(projectAuthority), `project-entry 缺交付授权延续及未获授权预算确认边界：\n${projectAuthority}`);
+      const entry = read('docs/operations/project-entry.md');
+      assert(entry.includes('相同授权、能力、事实和控制边界下同处置') && entry.includes('仅运输/呈现不同'),
+        'project-entry must preserve actual authority and facts across transports');
     },
   },
   {
@@ -726,29 +721,15 @@ const cases: Array<{ name: string; run: () => void }> = [
     // （Skill / operations / phase-executor 模板）——少一处，agent 就会在另一条路径上照旧误传。
     name: 'P3-T16 published guidance gives the mode-correct harness call and the two boundary sentences',
     run: () => {
-      const carriers = [
-        'skills/project/goal-mode/SKILL.md',
-        'skills/reference/goal-mode-operations.md',
-        'agents/claude/templates/agents/phase-executor.md',
-      ] as const;
-      for (const rel of carriers) {
-        const text = read(rel);
-        assert(text.includes('模式不匹配'), `${rel} 缺「模式不匹配」这条模式误用判词`);
-        assert(/detach/i.test(text), `${rel} 未点名 detached 模式`);
-        assert(text.includes('入口拒绝 ≠ 执行了测试'), `${rel} 缺「入口拒绝 ≠ 执行了测试」边界句`);
-      }
-      // 两句边界至少在 operations 与模板两处完整在场（Skill 主干受行数预算约束，只承载模式判词）
-      for (const rel of ['skills/reference/goal-mode-operations.md',
-        'agents/claude/templates/agents/phase-executor.md'] as const) {
-        assert(read(rel).includes('部分检查通过 ≠ 完整上游验证'),
-          `${rel} 缺「部分检查通过 ≠ 完整上游验证」边界句`);
-      }
-      // detached 的可执行命令形式必须写出来，且写明不带 --goal-* 参数
       const ops = read('skills/reference/goal-mode-operations.md');
-      assert(ops.includes('npx ts-node harness-runner.ts --phase <phase> --feature <feature>'),
-        'operations 缺 detached 模式可直接执行的 harness 命令');
-      assert(ops.includes('这组参数是 attended 专用'),
-        'operations 未写明 --goal-* 是 attended 专用（detached 不带）');
+      for (const token of ['--prepare-run --run-mode attended', '--detach', 'execute_command', 'observe_command', 'interrupt_command']) {
+        assert(ops.includes(token), `operations missing actual transport contract: ${token}`);
+      }
+      assert(ops.includes('选择工具检查族') && ops.includes('不能以全部 CU 绿、作者退出0或六检查族 PASS 代签原终点'),
+        'tool dispatch and business completion remain separate');
+      const author = read('agents/claude/templates/agents/phase-executor.md');
+      assert(author.includes('context.instruction') && author.includes('工具族共享原请求和 fence')
+        && author.includes('退出或自检 PASS 不代表业务完成'), 'dedicated author consumes signed context without phase authority');
       // codex review 建议 6：`docs-authoring-lint` 只给 SKILL.md 通用 150 行预算，
       // reference/ 与 agent 模板没有机器预算。§3.7 要求"原位改句、不加长"，用既有
       // lineCount 把两处钉在当前基线上（要加长须连同这里一起裁决）。

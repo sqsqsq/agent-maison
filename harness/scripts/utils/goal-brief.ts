@@ -10,7 +10,7 @@ import { loadRefElementsFile, refElementsAbsPath, resolveCurrentRequirementSourc
 import { resolveEffectiveScopeSource } from './goal-run-creation';
 import { effectiveHeadlessUnattended, loadGoalRunManifestFromRun, isInitialDesignManifest, type InitialDesignGoalManifest } from './goal-manifest';
 import { parseScope } from './scope-parser';
-import { loadRepairDeclineState, designRepairDeclines } from './repair-candidates';
+import { readRepairDeclineOriginals, verifiedDeclineBasis, designRepairDeclines } from './repair-candidates';
 import type { ResolvedPhaseInputs } from './capability-resolution';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -81,15 +81,17 @@ export function assembleGoalBrief(projectRoot: string, feature: string, opts: { 
   if (source?.kind === 'run' || initial) {
     const u = effectiveHeadlessUnattended();
     brief.permissions = { write_mode: u.write_mode, approval_mode: u.approval_mode };
-    // §4.6：本交付周期内来源核验通过的拒修——与四处运行时判定同一个状态函数，不另读账本
+    // 复用原请求/窗口读取；简报只投逐字核实的目标引文，事实拒修仍由原材料完整承载。
     try {
       const sourceRunId = initial?.run_id ?? (source?.kind === 'run' ? source.runId : '');
-      brief.resolved_conflicts = [...new Set(loadRepairDeclineState(projectRoot, feature, sourceRunId).values())]
-        // Factual refusals travel as their original ledger evidence; keep the goal brief free of self-verification feedback.
-        .filter(s => s.basis?.text.includes('「'))
-        .flatMap(s => (s.basis ? [{ s, b: s.basis }] : []))
-        .sort((x, y) => Date.parse(x.b.round.ts) - Date.parse(y.b.round.ts) || x.s.id.localeCompare(y.s.id))
-        .map(({ s, b }) => ({ candidate: `${s.id}（${s.summary}）`, basis: b.text, run_id: b.run_id }));
+      const conflicts = new Map<string, GoalBrief['resolved_conflicts'][number]>();
+      const entries = readRepairDeclineOriginals(projectRoot, feature, sourceRunId).flatMap(original => original.entries)
+        .sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts) || a.gate_id.localeCompare(b.gate_id));
+      for (const entry of entries) {
+        const basis = verifiedDeclineBasis(entry.decision, requirementText);
+        if (basis) conflicts.set(entry.gate_id, { candidate: entry.gate_id, basis, run_id: entry.run_id });
+      }
+      brief.resolved_conflicts = [...conflicts.values()];
       brief.resolved_conflicts.push(...designRepairDeclines(projectRoot, feature, sourceRunId));
     } catch { /* 事件或账本不可读 → 省略该栏 */ }
   }

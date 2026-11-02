@@ -9,6 +9,7 @@ import { resolveFeatureArtifact, clearFrameworkConfigCache } from '../../config'
 import {
   AttendedGoalPhaseExecutor,
   createWorkUnitExecutionContext,
+  observeWorkUnitProviderSession,
   rebuildWorkUnitExecutionContext,
   DetachedGoalPhaseExecutor,
   validateWorkUnitExecutionContext,
@@ -16,10 +17,12 @@ import {
   type WorkUnitExecutionContext,
 } from '../../scripts/utils/goal-phase-executor';
 import { GoalPhaseRuntime } from '../../scripts/utils/goal-phase-runtime';
+import { enrichOutcomesWithProjection } from '../../scripts/goal-phase-runtime';
 import { extractPriorFailureContext } from '../../scripts/goal-runner';
 import { projectCanonicalLifecycle } from '../../scripts/utils/goal-canonical-lifecycle';
 import type { HeadlessInvokePlan } from '../../scripts/utils/agent-invoke';
-import { recordDesignRepairInvocation, replayDesignRepairInvocation } from '../../scripts/utils/design-repair-unattended';
+import { recordDesignRepairInvocation } from '../../scripts/utils/design-repair-unattended';
+import { invocationCompleted } from '../../scripts/utils/invocation-completion';
 import {
   casAcquireRunOwner,
   ensureRunControl,
@@ -32,9 +35,11 @@ import {
   backdateLastRunEnd,
   type RunProbe,
   PRODUCT_FILE,
+  fixtureReadDependencies,
 } from './goal-runner-testing-integrity.unit.test';
 import {
   buildGoalManifestFromInput,
+  computeManifestIdentityHash,
   loadGoalManifestFromRun,
   writeGoalManifest,
 } from '../../scripts/utils/goal-manifest';
@@ -43,7 +48,8 @@ import { resolveGoalRunHeadSha } from '../../scripts/utils/goal-run-creation';
 import { writeHandoffRequest } from '../../scripts/utils/goal-handoff';
 import { runGoalModeSessionStep as runGoalModeSessionStepUnchecked } from '../../scripts/goal-mode-entry';
 import { readSessionExecution, acceptedSessionReport } from '../../scripts/utils/session-execution-handoff';
-import { withRuntimeTest, type RuntimeTestControl } from '../utils/runtime-test-control';
+import { withRuntimeTest, preserveRuntimeTestEvidence, type RuntimeTestControl } from '../utils/runtime-test-control';
+import { resolveCompletionDisposition } from '../../scripts/utils/verify-feature-completion';
 const runGoalModeSessionStep = (options: Parameters<typeof runGoalModeSessionStepUnchecked>[0], testControl: RuntimeTestControl = {}) =>
   withRuntimeTest({ root: options.projectRoot, ...testControl }, () => runGoalModeSessionStepUnchecked(options));
 
@@ -105,6 +111,42 @@ function seedUtFailureSummary(root: string, blockers: Array<Record<string, unkno
   }, null, 2));
 }
 
+function productEvidenceCheck(root: string, marker: string, file = PRODUCT_FILE): import('../../scripts/utils/types').CheckResult {
+  const bytes = fs.readFileSync(path.join(root, file));
+  return { id: 'file_completeness', category: 'structure', severity: 'BLOCKER', status: bytes.includes(marker) ? 'PASS' : 'FAIL',
+    description: 'the controlled producer reads its actual product requirement', details: `Required product content: ${marker}`,
+    affected_files: [file], failure_kind: 'code_regression',
+    structured: { source_attempt_dependencies: [{ path: file, exists: true,
+      sha256: require('crypto').createHash('sha256').update(bytes).digest('hex'), role: 'artifact' }] } };
+}
+
+function declareSourceRepairRequest(root: string) {
+  const configPath = path.join(root, 'framework.config.json');
+  const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  config.active_workflow = 'obligation-driven'; fs.writeFileSync(configPath, JSON.stringify(config)); clearFrameworkConfigCache();
+  const requestedPhases = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'] as const;
+  const requirement = `核实并修复 ${PRODUCT_FILE} 的受控源码标记断言，执行当前全部适用验证，不改变界面或设备交互。`;
+  const prepared = prepareFeatureScopeCandidate({ projectRoot: root, frameworkRoot: path.resolve(__dirname, '../../..'), feature: 'bc-openCard',
+    completionTarget: 'request', requestedResults: ['完成当前源码修复与原验证终点'], requestedPhases: [...requestedPhases], requirement,
+    impact: { userVisibleBehaviorChange: false, reason: '受控修复仅添加指定注释标记，不改变实际界面或设备行为。', basisPaths: [PRODUCT_FILE] } });
+  assert(prepared.scope.obligations.some(obligation => obligation.kind === 'implementation' && obligation.applicability === 'required'),
+    'the original repair fixture must bind its actual source duty at run birth');
+  const first = requestedPhases.find(phase => phase === prepared.scope.phase_chain[0]);
+  const last = requestedPhases.find(phase => phase === prepared.scope.phase_chain.at(-1));
+  assert(first && last, 'the prepared request must have actual runnable check families');
+  return { scope: prepared.scope, requestedPhases, launch: { freshRequirement: requirement, freshStartPhase: first, freshEndPhase: last,
+    freshManifestContent: YAML.stringify({ feature: 'bc-openCard', adapter: 'codex', requirement, execution_scope: prepared.scope,
+      chain_override: prepared.scope.phase_chain, unattended: { write_mode: 'full-access', approval_mode: 'never' } }) } };
+}
+
+function assertOnlyChangedChecksResume(before: RunProbe, resumed: RunProbe): void {
+  const previous = new Map(before.events.filter(event => event.type === 'harness_start').map(event => [event.phase, event.related_input_snapshot]));
+  for (const start of resumed.events.slice(before.events.length).filter(event => event.type === 'harness_start')) {
+    assert(previous.has(start.phase) && JSON.stringify(previous.get(start.phase)) !== JSON.stringify(start.related_input_snapshot),
+      `an unchanged completed check was rerun during recovery: ${start.phase}`);
+  }
+}
+
 const cases: Case[] = [{
   name: 'P1 R2 an unbound historical execution cannot be force re-signed and its partial report remains immutable',
   run: async () => {
@@ -114,7 +156,7 @@ const cases: Case[] = [{
     try {
       try { await runGoalRuntimeChain(root, { adapter: 'codex', runId, freshEndPhase: 'spec', viaSessionStep: true,
         testControl: { expectedInterruption: 'injected unbound report commit interruption' },
-        onSpec: () => { nodeFs.appendFileSync = ((...args: Parameters<typeof fs.appendFileSync>) => {
+        onAuthor: () => { nodeFs.appendFileSync = ((...args: Parameters<typeof fs.appendFileSync>) => {
           if (!injected && path.basename(String(args[0])) === 'events.jsonl' && String(args[1]).includes('"type":"agent_invoke_end"')) { injected = true; throw new Error('injected unbound report commit interruption'); }
           return append(...args);
         }) as typeof fs.appendFileSync; },
@@ -138,7 +180,7 @@ const cases: Case[] = [{
     } finally { nodeFs.appendFileSync = append; fs.rmSync(root, { recursive: true, force: true }); }
   },
 }, {
-  name: '1804 receipt replay preserves its original post-snapshot but still detects a later write across the original phase boundary',
+  name: '1804 receipt replay preserves its original post-snapshot while current checks detect later collaborative input changes',
   run: async () => {
     const root = setupGoalRuntimeHost('codex').root, runId = 'receipt-upstream-change';
     const nodeFs = require('fs') as typeof fs, append = nodeFs.appendFileSync;
@@ -149,11 +191,11 @@ const cases: Case[] = [{
       try {
         await runGoalRuntimeChain(root, { adapter: 'codex', runId, freshEndPhase: 'plan', viaSessionStep: true,
           testControl: { expectedInterruption: 'injected plan receipt interruption' },
-          onPlan: () => {
+          onAuthor: () => {
             fs.appendFileSync(resolveFeatureArtifact(root, 'bc-openCard', 'contracts.yaml').actualPath, '\n# original plan output\n');
             nodeFs.appendFileSync = ((...args: Parameters<typeof fs.appendFileSync>) => {
               if (!injected && path.basename(String(args[0])) === 'events.jsonl' && String(args[1]).includes('"type":"phase_write_observed"')
-                && String(args[1]).includes('"phase":"plan"')) { append(...args); injected = true; throw new Error('injected plan receipt interruption'); }
+                && String(args[1]).includes('"phase":"work-unit-author"')) { append(...args); injected = true; throw new Error('injected plan receipt interruption'); }
               return append(...args);
             }) as typeof fs.appendFileSync;
           },
@@ -172,13 +214,19 @@ const cases: Case[] = [{
       fs.writeFileSync(acceptanceFile, changedAcceptance);
       let ownerSawChange = false;
       const resumed = await runGoalRuntimeChain(root, { adapter: 'codex', resume: runId, viaSessionStep: true, skipLegacySeal: true,
-        onSpec: () => { ownerSawChange = fs.readFileSync(acceptanceFile).equals(changedAcceptance); fs.writeFileSync(acceptanceFile, originalAcceptance); },
+        onAuthor: () => { ownerSawChange = fs.readFileSync(acceptanceFile).equals(changedAcceptance); fs.writeFileSync(acceptanceFile, originalAcceptance); },
+        onHarnessSummary: ({ phase }) => phase === 'spec' && !fs.readFileSync(acceptanceFile).equals(originalAcceptance)
+          ? { checks: [{ id: 'acceptance_content_complete', category: 'structure', severity: 'BLOCKER', status: 'FAIL',
+              description: 'current acceptance input remains incomplete', details: 'Later collaborative acceptance input must be reconciled by its current author.',
+              affected_files: [path.relative(root, acceptanceFile).replace(/\\/g, '/')], failure_kind: 'code_regression',
+              structured: { source_attempt_dependencies: [{ path: path.relative(root, acceptanceFile).replace(/\\/g, '/'), exists: true,
+                sha256: require('crypto').createHash('sha256').update(fs.readFileSync(acceptanceFile)).digest('hex'), role: 'artifact' }] } }] }
+          : null,
       });
       assert(fs.readFileSync(archiveFile).equals(archiveBytes), 'post-receipt collaboration cannot replace the original archived post');
       const violations = resumed.events.filter(event => event.type === 'phase_write_violation' && event.invoke_id === issued.request.invoke_id);
-      assert(violations.some(event => JSON.stringify(event.violations).includes('acceptance.yaml')), JSON.stringify(resumed.events.filter(event => event.type === 'phase_halt' || event.type === 'phase_write_violation' || event.type === 'run_end')));
-      assert(resumed.events.some(event => event.type === 'phase_backtrack_requested' && event.reason === 'phase_write_violation' && event.to_phase === 'spec'), 'the later write must return to the original spec owner');
-      assert(resumed.invokedPhases.includes('spec'), 'an old report cannot bless the later upstream change');
+      assert(!violations.some(event => JSON.stringify(event.violations).includes('acceptance.yaml')), 'a later collaborator write was falsely attributed to the archived execution');
+      assert(resumed.invokedPhases.includes('work-unit-author') && resumed.harnessPhases.includes('spec'), 'an old report cannot bless the later changed input without a current check and repair');
       assert(ownerSawChange, 'the runtime must preserve the later change for its real owner, without silently rolling it back');
       assert(resumed.exitCode === 0, 'the responsible owner and normal gates must be able to recover');
       assert(resumed.events.filter(event => event.type === 'agent_invoke_end' && event.invoke_id === issued.request.invoke_id).length === 1, 'partial report replay commits once');
@@ -198,7 +246,7 @@ const cases: Case[] = [{
         try {
           await runGoalRuntimeChain(root, { adapter: 'codex', runId, freshEndPhase: 'spec', viaSessionStep: true,
             testControl: { expectedInterruption: 'injected receipt' },
-            onSpec: () => {
+            onAuthor: () => {
               nodeFs.appendFileSync(path.join(root, 'doc/features/bc-openCard/spec/spec.md'), '\nOriginal executor output before report.\n');
               nodeFs.appendFileSync = ((...args: Parameters<typeof fs.appendFileSync>) => {
                 if (cut === 'agent_invoke_end' && !injected && path.basename(String(args[0])) === 'events.jsonl'
@@ -243,7 +291,7 @@ const cases: Case[] = [{
     }
   },
 }, {
-  name: '1804 detached empty process output still uses the CLI no-output failure policy',
+  name: '1804 detached empty failed process remains an execution failure without a fabricated quality verdict',
   run: async () => {
     const root = setupGoalRuntimeHost('codex').root;
     try {
@@ -252,37 +300,47 @@ const cases: Case[] = [{
         onHarnessSummary: () => ({ checks: [{ id: 'acceptance_content_complete', category: 'structure', severity: 'BLOCKER', status: 'FAIL',
           description: 'the formal checker rejects incomplete output', details: 'The acceptance definition remains incomplete.', failure_kind: 'code_regression' }] }),
       });
-      const verdict = probe.events.find(event => event.type === 'phase_verdict' && event.phase === 'spec');
-      assert(verdict?.failure_kind_classified === 'agent_no_output', JSON.stringify(verdict));
+      const end = probe.events.find(event => event.type === 'agent_invoke_end' && event.phase === 'work-unit-author');
+      assert(end?.status === 'failed' && end.exit_code === 1 && !invocationCompleted({ ...end, exitCode: end.exit_code }), JSON.stringify(end));
       assert(probe.exitCode !== 0 && probe.invokedPhases.length === 1, 'a genuinely empty failed CLI process must retain its stop policy');
+      assert(probe.harnessPhases.length === 0 && !probe.events.some(event => event.type === 'phase_verdict'), 'an uncompleted invocation cannot fabricate a formal quality observation');
       assert(!probe.events.some(event => event.handoff_report), 'this control uses the detached process transport');
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   },
 }, {
-  name: '1804 an elapsed session failed report without details follows the formal regression and retries without CLI no-output classification',
+  name: '1804 an elapsed session failed report without details retains its execution fact and later verifies real repaired output',
   run: async () => {
     const root = setupGoalRuntimeHost('codex').root;
     try {
+      const marker = '// actual session repair completed';
+      const candidate = 'doc/features/bc-openCard/spec/spec.md';
+      let failedExecution = false;
       const probe = await runGoalRuntimeChain(root, { adapter: 'codex', runId: 'stepwise-elapsed-failure', freshEndPhase: 'spec', viaSessionStep: true,
-        failExecutorFor: (phase, attempt) => phase === 'spec' && attempt === 1,
-        onSpec: ctx => { if (ctx.attempt === 1) execFileSync(process.execPath, ['-e', 'setTimeout(() => {}, 10000)']); },
-        onHarnessSummary: ({ phase, attempt }) => phase === 'spec' && attempt === 1 ? { checks: [{
-          id: 'acceptance_content_complete', category: 'structure', severity: 'BLOCKER', status: 'FAIL',
-          description: 'the first model output has an incomplete acceptance definition', failure_kind: 'code_regression',
-          details: 'The formal checker rejects the incomplete acceptance definition.',
-        }] } : null,
+        failExecutorFor: phase => phase === 'work-unit-author' && failedExecution,
+        onAuthor: () => {
+          failedExecution = !fs.readFileSync(path.join(root, candidate), 'utf8').includes(marker);
+          if (failedExecution) {
+            execFileSync(process.execPath, ['-e', 'setTimeout(() => {}, 10000)']);
+            fs.appendFileSync(path.join(root, candidate), `\n${marker}\n`);
+          }
+        },
+        onHarnessSummary: ({ phase }) => phase === 'spec' ? { checks: [productEvidenceCheck(root, marker, candidate)] } : null,
       });
-      const end = probe.events.find(event => event.type === 'agent_invoke_end' && event.phase === 'spec');
+      const end = probe.events.find(event => event.type === 'agent_invoke_end' && event.phase === 'work-unit-author');
       assert(end?.status === 'failed' && end.exit_code === 1 && Number(end.duration_ms) >= 10000 && Number(end.duration_ms) < 30000, JSON.stringify(end));
-      const archived = JSON.parse(fs.readFileSync(path.join(probe.reportDir, (end!.handoff_report as { path: string }).path), 'utf8'));
+      const archivePath = path.join(probe.reportDir, (end!.handoff_report as { path: string }).path);
+      const archiveBytes = fs.readFileSync(archivePath);
+      const archived = JSON.parse(archiveBytes.toString('utf8'));
       assert(archived.report.details === undefined, 'a failed report does not require prose details to prove execution');
-      const processLog = path.join(probe.reportDir, 'phases/spec/agent-output.log');
+      const processLog = path.join(probe.reportDir, 'phases/work-unit-author', String(end.invoke_id), 'agent-output.log');
       assert(!fs.existsSync(processLog) || fs.statSync(processLog).size === 0, 'the session has no native CLI output');
-      const verdict = probe.events.find(event => event.type === 'phase_verdict' && event.phase === 'spec');
-      assert(verdict?.verdict === 'FAIL' && verdict.failure_kind_classified === 'code_regression', JSON.stringify({ verdict, terminal: probe.events.slice(-12), log: fs.readFileSync(path.join(probe.reportDir, 'session-control.log'), 'utf8').slice(-3000) }));
       assert(!probe.events.some(event => event.failure_kind_classified === 'agent_no_output' || event.halt_reason === 'agent_no_output'), 'session reports must not inherit a native CLI empty-output heuristic');
-      assert(probe.invokedPhases.filter(phase => phase === 'spec').length === 2, 'the formal failure must return to the actual executor');
-      assert(probe.harnessPhases.filter(phase => phase === 'spec').length === 2 && probe.exitCode === 0, 'the retry must pass the real runtime gate/finalizer');
+      assert(probe.invokedPhases.join(',') === 'work-unit-author,work-unit-author' && probe.harnessPhases.join(',') === 'spec' && probe.exitCode === 0,
+        'the current original unit and actual repaired product must reach the real gate/finalizer once');
+      const normalEnd = probe.events.find(event => event.type === 'agent_invoke_end' && event.status === 'passed');
+      assert(normalEnd && probe.events.indexOf(normalEnd) < probe.events.findIndex(event => event.type === 'harness_start'),
+        'the failed execution was substituted for a normally completed executor before formal quality verification');
+      assert(fs.readFileSync(archivePath).equals(archiveBytes), 'successful recovery rewrote the failed execution original');
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   },
 }, {
@@ -290,13 +348,27 @@ const cases: Case[] = [{
   run: async () => {
     const root = setupGoalRuntimeHost('codex').root;
     try {
+      const marker = 'actual partial output survives the failed execution';
+      const candidate = 'doc/features/bc-openCard/spec/spec.md';
+      let failedExecution = false;
       const probe = await runGoalRuntimeChain(root, { adapter: 'codex', runId: 'stepwise-failed-report', freshEndPhase: 'ut', viaSessionStep: true,
-        failExecutorFor: (phase, attempt) => phase === 'spec' && attempt === 1 });
-      const first = probe.events.find(event => event.type === 'phase_verdict' && event.phase === 'spec');
-      assert(first?.agent_failed === true, JSON.stringify(first ?? probe.events.filter(event => event.type === 'run_end' || event.type === 'phase_halt')));
-      assert(probe.events.some(event => event.type === 'agent_invoke_end' && event.phase === 'spec' && event.status === 'failed'), 'the original failed report must remain archived');
-      assert(probe.harnessPhases.includes('spec'), 'a report cannot substitute for the formal quality gate');
-      assert(probe.exitCode === 0, JSON.stringify(probe.events.filter(event => event.type === 'run_end')));
+        failExecutorFor: phase => phase === 'work-unit-author' && failedExecution,
+        onAuthor: () => {
+          failedExecution = !fs.readFileSync(path.join(root, candidate), 'utf8').includes(marker);
+          if (failedExecution) fs.appendFileSync(path.join(root, candidate), `\n${marker}\n`);
+        },
+        onHarnessSummary: ({ phase }) => phase === 'spec' ? { checks: [productEvidenceCheck(root, marker, candidate)] } : null,
+      });
+      const failed = probe.events.find(event => event.type === 'agent_invoke_end' && event.phase === 'work-unit-author');
+      assert(failed?.status === 'failed' && failed.handoff_report, 'the original failed executor report was not preserved');
+      const archive = path.join(probe.reportDir, (failed.handoff_report as { path: string }).path);
+      const failedBytes = fs.readFileSync(archive);
+      assert(probe.harnessPhases.includes('spec') && probe.exitCode === 0 && probe.invokedPhases.length === 2,
+        'normal executor recovery still requires an independent formal quality gate and reuses real partial output');
+      const quality = probe.events.find(event => event.type === 'phase_verdict' && event.phase === 'spec');
+      assert(quality?.verdict === 'PASS' && !quality.agent_failed, 'quality was replaced with the executor failure status');
+      assert(JSON.parse(failedBytes.toString('utf8')).report.status === 'failed'
+        && fs.readFileSync(archive).equals(failedBytes), 'a later quality PASS erased the original execution failure');
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   },
 }, {
@@ -349,9 +421,11 @@ const cases: Case[] = [{
     name: 'P2-T1 fresh facts-baseline early summary uses deterministic guidance, never code-regression revert',
     run: async () => {
       const root = setupGoalRuntimeHost('codex').root;
+      const delivered: string[] = [];
       try {
         const probe = await runGoalRuntimeChain(root, {
           adapter: 'codex', runId: 'fresh-facts-baseline-ut', freshEndPhase: 'ut',
+          onAuthor: ctx => { delivered.push(ctx.prompt); },
           onHarnessSummary: ({ phase }) => phase === 'ut'
             ? { checks: [{
                 id: 'capability_resolution_contract', category: 'structure' as const,
@@ -366,9 +440,8 @@ const cases: Case[] = [{
         assert(verdict?.stale_summary === false, JSON.stringify(verdict));
         assert(verdict?.failure_kind_classified === 'deterministic_gate_or_artifact_missing', JSON.stringify(verdict));
         assert(verdict?.blocker_signature === 'capability_resolution_contract', JSON.stringify(verdict));
-        assert(probe.utPrompts.length >= 2, `expected retry prompt: ${probe.utPrompts.length}`);
-        assert(probe.utPrompts[1].includes('facts baseline stale'), probe.utPrompts[1]);
-        assert(!probe.utPrompts[1].includes('revert that change first'), probe.utPrompts[1]);
+        assert(delivered.some(prompt => prompt.includes('facts baseline stale')), '真实单元作者必须收到当前研究缺口');
+        assert(delivered.every(prompt => !prompt.includes('revert that change first')), '研究资料缺口不冒充代码回退');
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }
@@ -393,7 +466,7 @@ const cases: Case[] = [{
         assert(!String(verdict?.harness_error_excerpt).includes('\n'), 'event diagnostic must remain one line');
         assert(probe.exitCode !== 0 && probe.harnessPhases.filter(phase => phase === 'ut').length === 1,
           'a failed gate without a conclusion must naturally leave the runtime instead of repeating unchanged checks');
-        assert(probe.invokedPhases.filter(phase => phase === 'ut').length === 1
+        assert(probe.invokedPhases.filter(phase => phase === 'work-unit-author').length === 1
           && probe.events.some(event => event.type === 'phase_halt' && event.run_disposition === 'WAITING')
           && !probe.events.some(event => event.type === 'run_end' && event.status === 'INTERRUPTED'),
           'the original completed author and an actionable recovery exit must survive without external quiesce');
@@ -402,21 +475,100 @@ const cases: Case[] = [{
       }
     },
   },
-  ...(['tool', 'input'] as const).map(recovery => ({
+  {
+    name: 'D2 telemetry deferral waits once after a changed current input; ready rechecks only its producer and unchanged returns reuse it',
+    run: async () => {
+      const root = setupGoalRuntimeHost('codex').root;
+      const registry = require('../../capability-registry') as typeof import('../../capability-registry');
+      const originalPreflight = registry.preflightDeviceTestEvidenceCapability;
+      const artifact = 'doc/features/bc-openCard/testing/test-report.md';
+      let nativeAvailable = true;
+      const probes: boolean[] = [];
+      try {
+        fs.writeFileSync(path.join(root, 'doc/features/bc-openCard/acceptance.yaml'), YAML.stringify({
+          flows: { checkout: { screens: ['home', 'success'] } },
+          criteria: [{ id: 'AC-1', priority: 'P0', ut_layer: 'device', linked_flow: 'checkout',
+            checkpoint: { pre_screen: 'home', action: { type: 'touch', target_element_id: 'pay_button' },
+              post_screen: 'success', required_element_ids: ['success_title'], forbidden_element_ids: ['error_banner'] } }],
+        }));
+        fs.mkdirSync(path.dirname(path.join(root, artifact)), { recursive: true });
+        fs.writeFileSync(path.join(root, artifact), '# actual testing prerequisite is not ready\n');
+        registry.preflightDeviceTestEvidenceCapability = () => {
+          probes.push(nativeAvailable);
+          return nativeAvailable ? { mode: 'native', native: true } : { mode: 'unsupported', native: false, reason: 'D2 actual native capability unavailable' };
+        };
+        const options: NonNullable<Parameters<typeof runGoalRuntimeChain>[1]> = {
+          adapter: 'codex', runId: 'd2-telemetry-current-input',
+          testingGateChecks: () => {
+            const text = fs.readFileSync(path.join(root, artifact), 'utf8');
+            const ready = text.includes('D2 actual restored report');
+            const check: import('../../scripts/utils/types').CheckResult = { id: 'file_completeness', category: 'structure',
+              severity: 'BLOCKER', status: ready ? 'PASS' : 'SKIP', description: 'read the actual testing prerequisite',
+              details: ready ? 'The actual report prerequisite is restored.' : 'The actual report prerequisite remains unavailable.' };
+            if (!ready) { check.failure_kind = 'capability_missing'; check.actionability = 'framework_blocked'; }
+            return fixtureReadDependencies(root, [check], [artifact]);
+          },
+        };
+        const held = await runGoalRuntimeChain(root, options);
+        const oldEnd = held.events.find(event => event.type === 'harness_end' && event.phase === 'testing');
+        assert(oldEnd && oldEnd.timed_out === false && typeof oldEnd.exit_code === 'number' && oldEnd.related_input_snapshot,
+          'the starting evidence must be an actual normal testing return with its observed inputs');
+        assert(held.exitCode !== 0 && held.harnessPhases.filter(phase => phase === 'testing').length === 1,
+          'the original controlled producer must really observe and retain its unavailable prerequisite');
+        nativeAvailable = false;
+        fs.writeFileSync(path.join(root, artifact), '# D2 actual restored report\n');
+        const probesBefore = probes.length;
+        const blocked = await runGoalRuntimeChain(root, { ...options, resume: path.basename(held.reportDir), noAutoForce: true, skipLegacySeal: true });
+        const blockedEvents = blocked.events.slice(held.events.length);
+        assert(blocked.exitCode !== 0 && blocked.invokedPhases.length === 0 && blocked.harnessPhases.length === 0,
+          'the unavailable telemetry gate must wait before a new native invocation or tool starts');
+        assert(probes.length === probesBefore + 1 && probes.at(-1) === false,
+          'the changed input must reach the real telemetry preflight once, not spin on its deferred outcome');
+        assert(blockedEvents.filter(event => event.type === 'phase_verdict' && event.probe === 'native_step_evidence_preflight').length === 1
+          && blockedEvents.filter(event => event.type === 'phase_halt' && event.halt_reason === 'executor_waiting').length === 1,
+          'one deferred observation must produce one existing WAIT exit without unbounded event growth');
+        assert(!blockedEvents.some(event => event.type === 'harness_start' || event.type === 'harness_end')
+          && blockedEvents.some(event => event.type === 'phase_halt' && event.run_disposition === 'WAITING'
+            && String(event.halt_guidance).includes('D2 actual native capability unavailable')),
+          'the gate must preserve its concrete original readiness guidance and not fabricate a tool end');
+        nativeAvailable = true;
+        const restored = await runGoalRuntimeChain(root, { ...options, resume: path.basename(held.reportDir), noAutoForce: true, skipLegacySeal: true });
+        assert(restored.invokedPhases.length === 0 && restored.harnessPhases.join(',') === 'testing',
+          'readiness must let the original changed-input producer recheck once without another author');
+        const freshEnd = restored.events.slice(blocked.events.length).find(event => event.type === 'harness_end' && event.phase === 'testing');
+        assert(freshEnd && freshEnd.timed_out === false && freshEnd.related_input_snapshot,
+          'the real producer must replace the old observation only with its new normal return');
+        const unchanged = await runGoalRuntimeChain(root, { ...options, resume: path.basename(held.reportDir), noAutoForce: true, skipLegacySeal: true });
+        assert(unchanged.invokedPhases.length === 0 && unchanged.harnessPhases.length === 0,
+          'the normal updated result with unchanged inputs must not buy another native invocation or tool');
+        assert(!unchanged.events.some(event => event.type === 'run_end' && event.status === 'INTERRUPTED'),
+          'natural convergence must not rely on external stopping');
+      } catch (error) {
+        const reports = path.join(root, 'doc/features/bc-openCard/testing/reports');
+        const evidence = preserveRuntimeTestEvidence([root], String(error), ['D2 telemetry main-loop deferred result'],
+          [path.join(root, artifact), ...['script-report.json', 'summary.json', 'phase-evidence-manifest.json'].map(name => path.join(reports, name))]);
+        fs.writeFileSync(path.join(evidence, 'preflight-observations.json'), JSON.stringify({ nativeAvailable, probes }, null, 2));
+        throw error;
+      } finally {
+        registry.preflightDeviceTestEvidenceCapability = originalPreflight;
+        fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache();
+      }
+    },
+  },
+  ...(['explicit_continue', 'input'] as const).map(recovery => ({
     name: `P2 missing gate conclusion naturally resumes after real ${recovery} recovery without another author`,
     run: async () => {
       const root = setupGoalRuntimeHost('codex').root;
-      let unavailable = true;
+      const condition = path.join(root, recovery === 'input' ? 'doc/features/bc-openCard/spec/spec.md' : 'writer-ready.txt');
       const options = { adapter: 'codex', runId: `absent-summary-recovery-${recovery}`, freshEndPhase: 'spec',
-        onHarnessFailureWithoutSummary: ({ phase }: { phase: string }) => phase === 'spec' && unavailable ? 'CURRENT_WRITER_UNAVAILABLE' : null };
+        onHarnessFailureWithoutSummary: ({ phase }: { phase: string }) => phase === 'spec'
+          && (!fs.existsSync(condition) || !fs.readFileSync(condition, 'utf8').includes('writer-ready')) ? `CURRENT_WRITER_UNAVAILABLE: ${path.relative(root, condition)}` : null };
       try {
         const held = await runGoalRuntimeChain(root, options);
-        assert(held.exitCode !== 0 && held.invokedPhases.join(',') === 'spec' && held.harnessPhases.join(',') === 'spec',
+        assert(held.exitCode !== 0 && held.invokedPhases.join(',') === 'work-unit-author' && held.harnessPhases.join(',') === 'spec',
           'the first gate must run and then return its real unresolved conclusion');
-        unavailable = false;
-        if (recovery === 'input') fs.appendFileSync(path.join(root, PRODUCT_FILE), '\n// restored gate input\n');
-        backdateLastRunEnd(root, path.basename(held.reportDir));
-        const resumed = await runGoalRuntimeChain(root, { ...options, resume: path.basename(held.reportDir), forceResume: true, skipLegacySeal: true });
+        if (fs.existsSync(condition)) fs.appendFileSync(condition, '\nwriter-ready\n'); else fs.writeFileSync(condition, 'writer-ready\n');
+        const resumed = await runGoalRuntimeChain(root, { ...options, resume: path.basename(held.reportDir), forceResume: recovery === 'explicit_continue', skipLegacySeal: true });
         assert(resumed.exitCode === 0 && resumed.invokedPhases.length === 0 && resumed.harnessPhases.join(',') === 'spec',
           JSON.stringify({ exit: resumed.exitCode, authors: resumed.invokedPhases, gates: resumed.harnessPhases,
             halt: resumed.events.filter(event => event.type === 'phase_halt' || event.type === 'run_end') }));
@@ -425,7 +577,7 @@ const cases: Case[] = [{
     },
   })),
   {
-    name: 'P2-T1/T4 stale content report never drives three current UT preflight failures',
+    name: 'P2-T1/T4 stale content report never drives a current failed UT producer or repeated author',
     run: async () => {
       const root = setupGoalRuntimeHost('codex').root;
       try {
@@ -439,7 +591,7 @@ const cases: Case[] = [{
             phase === 'ut' ? `CURRENT_PREFLIGHT_${attempt}: facts baseline stale` : null,
         });
         const verdicts = probe.events.filter(event => event.type === 'phase_verdict' && event.phase === 'ut');
-        assert(verdicts.length === 3, `expected three stale UT attempts: ${JSON.stringify(verdicts)}`);
+        assert(verdicts.length === 1, `未变的未知producer只实际执行一次：${JSON.stringify(verdicts)}`);
         for (const [index, event] of verdicts.entries()) {
           assert(event.stale_summary === true, `attempt ${index + 1} not stale`);
           assert(event.failure_kind_classified === 'deterministic_gate_or_artifact_missing', JSON.stringify(event));
@@ -447,23 +599,35 @@ const cases: Case[] = [{
           assert(String(event.harness_error_excerpt).includes(`CURRENT_PREFLIGHT_${index + 1}`), JSON.stringify(event));
           assert(!JSON.stringify(event).includes('ut_hvigor_build'), `old blocker leaked: ${JSON.stringify(event)}`);
         }
-        for (const prompt of probe.utPrompts.slice(1)) {
-          assert(prompt.includes('CURRENT_PREFLIGHT_'), `current failure missing from retry prompt: ${prompt}`);
-          assert(!prompt.includes('OLD_COMPILE_ERROR') && !prompt.includes('ut_hvigor_build'), `old summary drove retry: ${prompt}`);
-        }
+        assert(probe.invokedPhases.length === 1 && probe.exitCode !== 0, '当前producer未知须自然等待，不新买阶段作者');
+        assert(!probe.events.some(event => event.type === 'run_end' && event.status === 'INTERRUPTED'), '不得借外停证明收敛');
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }
     },
   },
   {
-    name: 'P2-T2/T4 fresh UT failure stays actionable while two later stale failures use current diagnostics',
+    name: 'P2-T2/T4 fresh UT failure is delivered once; real source change rechecks its producer and retains raw FAIL through current unknown',
     run: async () => {
-      const root = setupGoalRuntimeHost('codex').root;
+      const root = setupGoalRuntimeHost('codex', false).root;
+      let changed = false;
+      let originalReport: Buffer | undefined;
+      let missingObjectProof = false;
       try {
         const oldIds = ['boundaries_all_stubbed', 'ut_hvigor_build', 'ut_hvigor_test'];
         const probe = await runGoalRuntimeChain(root, {
-          adapter: 'codex', runId: 'fresh-then-stale-ut', freshEndPhase: 'ut',
+          ...declareSourceRepairRequest(root).launch,
+          adapter: 'codex', runId: 'fresh-then-stale-ut',
+          onAuthor: ctx => {
+            if (ctx.prompt.includes('FRESH_COMPILE_') && !changed) {
+              const current = resolveCompletionDisposition({ projectRoot: root, frameworkRoot: path.resolve(__dirname, '../../..'),
+                feature: 'bc-openCard', runId: ctx.runId, chain: ['ut'] });
+              missingObjectProof = current.completionBlocking.some(problem => oldIds.includes(problem.id) && !problem.evidence?.length);
+              assert(missingObjectProof, '本例必须命中当前必修发现缺少可比对象原件，而非假定unknown');
+              originalReport = fs.readFileSync(path.join(root, 'doc/features/bc-openCard/ut/reports/script-report.json'));
+              fs.appendFileSync(path.join(root, PRODUCT_FILE), '\n// actual repair changes the checked product\n'); changed = true;
+            }
+          },
           onHarnessSummary: ({ phase, attempt }) => phase === 'ut' && attempt === 1
             ? { blockers: oldIds.map(id => ({
                 id, severity: 'BLOCKER', status: 'FAIL', classification: 'code_regression',
@@ -474,7 +638,23 @@ const cases: Case[] = [{
             phase === 'ut' && attempt > 1 ? `CURRENT_BINDING_${attempt}: input binding stale` : null,
         });
         const verdicts = probe.events.filter(event => event.type === 'phase_verdict' && event.phase === 'ut');
-        assert(verdicts.length === 3, `expected fresh + two stale attempts: ${JSON.stringify(verdicts)}`);
+        assert(changed, 'the actual author callback must reach its source edit');
+        assert(missingObjectProof, 'the actual current finding must lack verified object refs');
+        assert(verdicts.length === 2, `真实来源变化后只补一次原producer：${JSON.stringify(verdicts)}`);
+        const authors = probe.events.filter(event => event.type === 'agent_invoke_start' && event.phase === 'work-unit-author');
+        const returned = probe.events.find(event => event.type === 'agent_invoke_end' && event.invoke_id === authors[1]?.invoke_id);
+        assert(returned && invocationCompleted({ ...returned, exitCode: returned.exit_code }), '产品变化来自已真实正常交回的原作者');
+        assert(probe.events.some(event => event.type === 'phase_write_observed' && event.invoke_id === returned.invoke_id
+          && [...(Array.isArray(event.owned) ? event.owned : []), ...(Array.isArray(event.observations) ? event.observations : [])]
+            .some(write => write.path === PRODUCT_FILE && write.pre_sha256 !== write.post_sha256)),
+        '实际写入观察必须证明产品字节改变，不能只用fixture变量宣称');
+        const afterReturn = probe.events.slice(probe.events.indexOf(returned) + 1);
+        const nextWork = afterReturn.find(event => event.type === 'harness_start' || event.type === 'agent_invoke_start');
+        assert(nextWork?.type === 'harness_start' || nextWork?.type === 'agent_invoke_start' && String(nextWork.phase).includes('verifier'),
+          `正常交回后的下一工作必须是真实工具/独核，不可再派作者：${JSON.stringify(nextWork)}`);
+        assert(afterReturn.some(event => event.type === 'harness_start' && event.phase === 'ut')
+          && !afterReturn.some(event => event.type === 'agent_invoke_start' && event.phase === 'work-unit-author'),
+        '缺refs时先补原UT producer；本次仍无新可用观察，不能再买第二个返修作者');
         assert(verdicts[0].stale_summary === false, JSON.stringify(verdicts[0]));
         assert(verdicts[0].failure_kind_classified === 'code_regression', JSON.stringify(verdicts[0]));
         assert(oldIds.every(id => String(verdicts[0].blocker_signature).includes(id)), JSON.stringify(verdicts[0]));
@@ -484,15 +664,24 @@ const cases: Case[] = [{
           assert(!event.blocker_signature, `fresh signature leaked into stale attempt: ${JSON.stringify(event)}`);
           assert(String(event.harness_error_excerpt).includes(`CURRENT_BINDING_${offset + 2}`), JSON.stringify(event));
         }
-        assert(probe.utPrompts[1].includes('FRESH_COMPILE_'), 'first retry must consume the fresh failure');
-        assert(probe.utPrompts[2].includes('CURRENT_BINDING_2'), 'second retry must consume the current stale-attempt diagnostic');
-        const currentFailure = probe.utPrompts[2].match(/Last attempt of this phase failed\. The harness verdict and BLOCKER evidence:\n\n```\n([\s\S]*?)\n```/)?.[1];
-        assert(currentFailure?.includes('CURRENT_BINDING_2') && !oldIds.some(id => currentFailure.includes(id)),
-          `old signature drove the current retry evidence: ${currentFailure}`);
-        const retainedFeedback = probe.utPrompts[2].split('## 当前工作单元的全部反馈\n')[1] ?? '';
-        assert(oldIds.every(id => retainedFeedback.includes(id)), 'a later checker failure silently discharged the original verified failures');
-        assert(probe.exitCode !== 0 && probe.invokedPhases.filter(phase => phase === 'ut').length === 3
+        const raw = JSON.parse(fs.readFileSync(path.join(root, 'doc/features/bc-openCard/ut/reports/script-report.json'), 'utf8'));
+        assert(originalReport && fs.readFileSync(path.join(root, 'doc/features/bc-openCard/ut/reports/script-report.json')).equals(originalReport),
+          '未知producer没有产生新可用原件；原始rawFAIL字节保持');
+        assert(oldIds.every(id => raw.checks.some((check: { id: string; status: string }) => check.id === id && check.status === 'FAIL')),
+          '原始真实FAIL不能被后来的producer未知改写或签PASS');
+        assert(probe.exitCode !== 0 && probe.invokedPhases.filter(phase => phase === 'work-unit-author').length === 2
           && !probe.events.some(event => event.type === 'run_end' && event.status === 'INTERRUPTED'), 'stale-check recovery must naturally report its real failure');
+        assert(probe.events.some(event => event.type === 'phase_halt' && event.halt_reason === 'executor_waiting' && event.run_disposition === 'WAITING')
+          && !probe.events.some(event => event.type === 'phase_halt' && event.halt_reason === 'no_progress_guard')
+          && !probe.events.some(event => event.type === 'run_end' && ['COMPLETED', 'CHAIN_SLICE_COMPLETED'].includes(String(event.status))),
+        '没有合格观察必须保unknown自然WAITING，不能伪no_progress或完成');
+      } catch (error) {
+        const reports = path.join(root, 'doc/features/bc-openCard/ut/reports');
+        const evidence = preserveRuntimeTestEvidence([root], String(error), ['P2 current source change before its producer observation'],
+          [path.join(root, PRODUCT_FILE), ...['script-report.json', 'summary.json', 'phase-evidence-manifest.json'].map(name => path.join(reports, name))]);
+        fs.writeFileSync(path.join(evidence, 'actual-source-callback.json'), JSON.stringify({ changed, missingObjectProof,
+          originalReportSha256: originalReport ? require('crypto').createHash('sha256').update(originalReport).digest('hex') : null }, null, 2));
+        throw error;
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }
@@ -516,8 +705,9 @@ const cases: Case[] = [{
         'attended host entry retained independent progression');
       assert(!/runHarnessPhase|assessFeature|phase_verdict|writeReceiptScaffold/.test(executor),
         'executor owns a gate or lifecycle transition');
-      assert((processRuntime.match(/while\s*\(!phaseDone\)/g) ?? []).length === 1,
-        'detached runtime must contain exactly one canonical phase-attempt loop');
+      assert(!/while\s*\(!phaseDone\)/.test(processRuntime)
+        && processRuntime.includes('const readWork = () =>') && processRuntime.includes('while (!halted && !dryRun)'),
+        'runtime must use current unit facts without retaining the retired phase-attempt queue');
       assert(processRuntime.includes('GoalPhaseRuntime') && processRuntime.includes('DetachedGoalPhaseExecutor'),
         'detached runtime is not wired through the shared runtime/executor boundary');
       assert(!executor.includes('--rebaseline-to') && !supervisor.includes('--rebaseline-to'),
@@ -527,33 +717,26 @@ const cases: Case[] = [{
   {
     name: 'M2 production parity: attended/detached fresh and retry run the same birth/runtime/gate/projection chain',
     run: async () => {
-      const base = setupGoalRuntimeHost('codex').root;
+      const base = setupGoalRuntimeHost('codex', false).root;
       const roots: string[] = [base];
       try {
+        const request = declareSourceRepairRequest(base);
         for (const lifecycle of ['fresh', 'retry'] as const) {
           const detachedRoot = cloneHost(base, `${lifecycle}-detached`);
           const attendedRoot = cloneHost(base, `${lifecycle}-attended`);
           roots.push(detachedRoot, attendedRoot);
-          const retrySummary = lifecycle === 'retry'
-            ? ({ phase, attempt }: { phase: string; attempt: number }) =>
-                phase === 'coding' && attempt === 1
-                  ? { blockers: [{
-                      id: 'file_completeness',
-                      severity: 'BLOCKER',
-                      status: 'FAIL',
-                      classification: 'code_regression',
-                      details_excerpt: '契约声明文件缺失',
-                      actionability: 'agent_fixable',
-                    }] }
-                  : null
-            : undefined;
+          const marker = '// parity requirement repaired';
+          const repairOptions = (root: string) => lifecycle === 'retry' ? {
+            onAuthor: ({ prompt }: { prompt: string }) => { if (prompt.includes(marker)) fs.appendFileSync(path.join(root, PRODUCT_FILE), `\n${marker}\n`); },
+            onHarnessSummary: ({ phase }: { phase: string }) => phase === 'coding' ? { checks: [productEvidenceCheck(root, marker)] } : null,
+          } : {};
           const detached = await runGoalRuntimeChain(detachedRoot, {
-            adapter: 'codex', runId: `matrix-${lifecycle}`,
-            executorMode: 'detached', onHarnessSummary: retrySummary,
+            adapter: 'codex', runId: `matrix-${lifecycle}`, ...request.launch,
+            executorMode: 'detached', ...repairOptions(detachedRoot),
           });
           const attended = await runGoalRuntimeChain(attendedRoot, {
-            adapter: 'codex', runId: `matrix-${lifecycle}`,
-            executorMode: 'attended', onHarnessSummary: retrySummary,
+            adapter: 'codex', runId: `matrix-${lifecycle}`, ...request.launch,
+            executorMode: 'attended', ...repairOptions(attendedRoot),
           });
           assert(detached.exitCode === 0 && attended.exitCode === 0,
             `${lifecycle} did not close: detached=${detached.exitCode} attended=${attended.exitCode}`);
@@ -562,11 +745,18 @@ const cases: Case[] = [{
           assert(JSON.stringify(detached.harnessPhases) === JSON.stringify(attended.harnessPhases),
             `${lifecycle} gate sequence drift`);
           if (lifecycle === 'retry') {
-            assert(detached.invokedPhases.filter(phase => phase === 'coding').length === 2,
-              `retry did not reinvoke coding: ${detached.invokedPhases.join('→')}`);
+            assert(detached.invokedPhases.filter(phase => phase === 'work-unit-author').length === 2
+              && attended.invokedPhases.filter(phase => phase === 'work-unit-author').length === 2,
+              `the actual original unit did not receive its product repair: ${detached.invokedPhases.join('→')}`);
+            assert(fs.readFileSync(path.join(detachedRoot, PRODUCT_FILE), 'utf8').includes(marker)
+              && fs.readFileSync(path.join(attendedRoot, PRODUCT_FILE), 'utf8').includes(marker), 'parity passed without a real product repair');
           }
           assert(canonicalOf(attended)[0]?.type === 'run_created', `${lifecycle} lost birth`);
         }
+      } catch (error) {
+        preserveRuntimeTestEvidence(roots, String(error), ['actual scoped fresh/retry transport parity'],
+          roots.flatMap(root => [path.join(root, PRODUCT_FILE), path.join(root, 'doc/features/bc-openCard/feature.yaml')]));
+        throw error;
       } finally {
         for (const root of roots) fs.rmSync(root, { recursive: true, force: true });
       }
@@ -593,49 +783,46 @@ const cases: Case[] = [{
   {
     name: 'M1 production resume keeps the birth phase chain after workflow auto_chain changes',
     run: async () => {
-      const root = setupGoalRuntimeHost('codex').root;
+      const root = setupGoalRuntimeHost('codex', false).root;
       try {
-        const blocker = {
-          id: 'file_completeness',
-          severity: 'BLOCKER',
-          status: 'FAIL',
-          classification: 'code_regression',
-          details_excerpt: 'freeze chain fixture',
-          actionability: 'agent_fixable',
-        };
+        const request = declareSourceRepairRequest(root);
+        let originalMethodSet: readonly string[] | undefined;
+        const marker = '// frozen chain quality repaired';
         const halted = await runGoalRuntimeChain(root, {
-          adapter: 'codex',
+          adapter: 'codex', ...request.launch,
           runId: 'frozen-chain-resume',
-          onHarnessSummary: ({ phase }) => phase === 'plan' ? { blockers: [blocker] } : null,
+          onAuthor: (_ctx, actual) => { originalMethodSet ??= [...actual.chain]; },
+          onHarnessSummary: ({ phase }) => phase === 'coding' ? { checks: [productEvidenceCheck(root, marker)] } : null,
         });
         assert(halted.exitCode === 1, `fixture did not halt: ${halted.exitCode}`);
         const manifestBefore = loadGoalManifestFromRun(root, 'frozen-chain-resume', { feature: 'bc-openCard' });
-        assert(manifestBefore.phase_chain?.join(',') === 'spec,plan,coding,review,ut,testing',
+        assert(manifestBefore.phase_chain?.join(',') === request.scope.phase_chain.join(','),
           `birth chain=${manifestBefore.phase_chain?.join(',')}`);
 
-        const eventsPath = path.join(halted.reportDir, 'events.jsonl');
-        fs.writeFileSync(eventsPath, fs.readFileSync(eventsPath, 'utf8').split('\n').map((line) => {
-          if (!line.trim()) return line;
-          const event = JSON.parse(line) as { type?: string; ts?: string };
-          if (event.type === 'run_end' && event.ts) {
-            event.ts = new Date(Date.parse(event.ts) - 10 * 60_000).toISOString();
-          }
-          return JSON.stringify(event);
-        }).join('\n'), 'utf8');
         const resumed = await runGoalRuntimeChain(root, {
           resume: 'frozen-chain-resume', forceResume: true, adapter: 'codex',
+          onAuthor: (_ctx, actual) => {
+            assert(JSON.stringify(actual.chain) === JSON.stringify(originalMethodSet), 'the current unit lost its original signed request family set');
+            fs.appendFileSync(path.join(root, PRODUCT_FILE), `\n${marker}\n`);
+          },
+          onHarnessSummary: ({ phase }) => phase === 'coding' ? { checks: [productEvidenceCheck(root, marker)] } : null,
           workflowTransform: workflow => ({
             ...workflow,
             auto_chain: ['spec', 'plan', 'coding', 'ut', 'review', 'testing'],
           }),
         });
         assert(resumed.exitCode === 0, `resume exit=${resumed.exitCode}`);
-        assert(resumed.invokedPhases.indexOf('review') >= 0 &&
-          resumed.invokedPhases.indexOf('review') < resumed.invokedPhases.indexOf('ut'),
-        `workflow drift replaced/reordered birth chain: ${resumed.invokedPhases.join('→')}`);
+        assert(resumed.invokedPhases.join(',') === 'work-unit-author' && resumed.harnessPhases.includes('coding'),
+          `resume must retain the signed family set and reuse unaffected completed checks: ${resumed.harnessPhases.join('→')}`);
+        assertOnlyChangedChecksResume(halted, resumed);
+        assert(halted.harnessPhases.indexOf('review') >= 0 && halted.harnessPhases.indexOf('review') < halted.harnessPhases.indexOf('ut'),
+          'the original current producers did not follow their frozen request family order');
         const manifestAfter = loadGoalManifestFromRun(root, 'frozen-chain-resume', { feature: 'bc-openCard' });
         assert(JSON.stringify(manifestAfter.phase_chain) === JSON.stringify(manifestBefore.phase_chain),
           'resume rewrote frozen phase chain');
+      } catch (error) {
+        preserveRuntimeTestEvidence([root], String(error), ['actual scoped request family freeze'], [path.join(root, PRODUCT_FILE)]);
+        throw error;
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }
@@ -644,32 +831,20 @@ const cases: Case[] = [{
   {
     name: 'M2 production parity: attended/detached resume and automatic successor preserve lifecycle and lineage baseline',
     run: async () => {
-      const base = setupGoalRuntimeHost('codex').root;
+      const base = setupGoalRuntimeHost('codex', false).root;
       const roots: string[] = [base];
-      const blocker = {
-        id: 'file_completeness',
-        severity: 'BLOCKER',
-        status: 'FAIL',
-        classification: 'code_regression',
-        details_excerpt: '契约声明文件缺失',
-        actionability: 'agent_fixable',
-      };
+      const marker = '// resume and successor quality repaired';
+      const repairOptions = (root: string) => ({
+        onAuthor: ({ prompt }: { prompt: string }) => { if (prompt.includes(marker)) fs.appendFileSync(path.join(root, PRODUCT_FILE), `\n${marker}\n`); },
+        onHarnessSummary: ({ phase }: { phase: string }) => phase === 'coding' ? { checks: [productEvidenceCheck(root, marker)] } : null,
+      });
       try {
+        const request = declareSourceRepairRequest(base);
         const halted = await runGoalRuntimeChain(base, {
-          adapter: 'codex', runId: 'matrix-resume', executorMode: 'detached',
-          onHarnessSummary: ({ phase }) => phase === 'coding' ? { blockers: [blocker] } : null,
+          adapter: 'codex', runId: 'matrix-resume', executorMode: 'detached', ...request.launch,
+          onHarnessSummary: ({ phase }) => phase === 'coding' ? { checks: [productEvidenceCheck(base, marker)] } : null,
         });
         assert(halted.exitCode === 1, `resume fixture did not halt: ${halted.exitCode}`);
-        const eventsPath = path.join(halted.reportDir, 'events.jsonl');
-        const aged = fs.readFileSync(eventsPath, 'utf8').split('\n').map((line) => {
-          if (!line.trim()) return line;
-          const event = JSON.parse(line) as { type?: string; ts?: string };
-          if (event.type === 'run_end' && event.ts) {
-            event.ts = new Date(Date.parse(event.ts) - 10 * 60_000).toISOString();
-          }
-          return JSON.stringify(event);
-        }).join('\n');
-        fs.writeFileSync(eventsPath, aged, 'utf8');
         const sourceManifest = loadGoalManifestFromRun(base, 'matrix-resume', { feature: 'bc-openCard' });
 
         const detachedResumeRoot = cloneHost(base, 'resume-detached');
@@ -677,9 +852,11 @@ const cases: Case[] = [{
         roots.push(detachedResumeRoot, attendedResumeRoot);
         const detachedResume = await runGoalRuntimeChain(detachedResumeRoot, {
           resume: 'matrix-resume', forceResume: true, adapter: 'codex', executorMode: 'detached',
+          ...repairOptions(detachedResumeRoot),
         });
         const attendedResume = await runGoalRuntimeChain(attendedResumeRoot, {
           resume: 'matrix-resume', forceResume: true, adapter: 'codex', executorMode: 'attended',
+          ...repairOptions(attendedResumeRoot),
         });
         assert(detachedResume.exitCode === 0 && attendedResume.exitCode === 0,
           `resume did not close: detached=${detachedResume.exitCode} attended=${attendedResume.exitCode}`);
@@ -699,30 +876,61 @@ const cases: Case[] = [{
         const attendedSuccessorRoot = cloneHost(base, 'successor-attended');
         roots.push(detachedSuccessorRoot, attendedSuccessorRoot);
         const detachedSuccessor = await runGoalRuntimeChain(detachedSuccessorRoot, {
-          adapter: 'codex', runId: 'matrix-successor', executorMode: 'detached',
+          adapter: 'codex', runId: 'matrix-successor', executorMode: 'detached', ...request.launch,
           supersede: ['matrix-resume'],
+          ...repairOptions(detachedSuccessorRoot),
         });
         const attendedSuccessor = await runGoalRuntimeChain(attendedSuccessorRoot, {
-          adapter: 'codex', runId: 'matrix-successor', executorMode: 'attended',
+          adapter: 'codex', runId: 'matrix-successor', executorMode: 'attended', ...request.launch,
           supersede: ['matrix-resume'],
+          ...repairOptions(attendedSuccessorRoot),
         });
         assert(detachedSuccessor.exitCode === 0 && attendedSuccessor.exitCode === 0,
           `successor did not close: detached=${detachedSuccessor.exitCode} attended=${attendedSuccessor.exitCode}`);
-        assert(JSON.stringify(canonicalOf(detachedSuccessor)) === JSON.stringify(canonicalOf(attendedSuccessor)),
-          'successor canonical projection drift');
-        assert(JSON.stringify(detachedSuccessor.harnessPhases) === JSON.stringify(attendedSuccessor.harnessPhases),
-          'successor gate sequence drift');
         const detachedSuccessorManifest = loadGoalManifestFromRun(
           detachedSuccessorRoot, 'matrix-successor', { feature: 'bc-openCard' },
         );
         const attendedSuccessorManifest = loadGoalManifestFromRun(
           attendedSuccessorRoot, 'matrix-successor', { feature: 'bc-openCard' },
         );
+        const relativeManifest = (manifest: ReturnType<typeof loadGoalManifestFromRun>, root: string) => {
+          const normalized = structuredClone(manifest), scope = normalized.execution_scope;
+          assert(scope, 'the successor must retain its actual frozen source scope');
+          const relativeBinding = (binding: { dependencies: Array<{ path: string }> }) => {
+            for (const dependency of binding.dependencies) {
+              const relative = path.relative(root, dependency.path);
+              if (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)) dependency.path = relative.replace(/\\/g, '/') || '.';
+            }
+          };
+          for (const obligation of scope.obligations) {
+            obligation.basis.forEach(relativeBinding);
+            for (const proof of obligation.satisfied_by ?? []) if ('input_id' in proof) relativeBinding(proof);
+          }
+          scope.request_impact?.basis.forEach(relativeBinding);
+          return normalized;
+        };
+        const detachedBusiness = relativeManifest(detachedSuccessorManifest, detachedSuccessorRoot);
+        const attendedBusiness = relativeManifest(attendedSuccessorManifest, attendedSuccessorRoot);
+        assert(JSON.stringify(detachedBusiness.execution_scope) === JSON.stringify(attendedBusiness.execution_scope),
+          'successor source bindings differ beyond their actual clone roots');
+        const checkedCanonical = (probe: RunProbe, manifest: ReturnType<typeof loadGoalManifestFromRun>, business: ReturnType<typeof relativeManifest>) => {
+          const created = probe.events.find(event => event.type === 'run_created' && event.run_id === manifest.run_id);
+          assert(created?.manifest_identity_hash === computeManifestIdentityHash(manifest), 'the actual created identity is not bound to its real manifest');
+          return canonicalOf(probe).map(event => event.type === 'run_created'
+            ? { ...event, manifest_identity_hash: computeManifestIdentityHash(business) } : event);
+        };
+        assert(JSON.stringify(checkedCanonical(detachedSuccessor, detachedSuccessorManifest, detachedBusiness))
+          === JSON.stringify(checkedCanonical(attendedSuccessor, attendedSuccessorManifest, attendedBusiness)), 'successor canonical projection drift');
+        assert(JSON.stringify(detachedSuccessor.harnessPhases) === JSON.stringify(attendedSuccessor.harnessPhases), 'successor gate sequence drift');
         assert(detachedSuccessorManifest.successor_of === 'matrix-resume' &&
           attendedSuccessorManifest.successor_of === 'matrix-resume', 'successor lineage missing');
         assert(detachedSuccessorManifest.run_base_sha === sourceManifest.run_base_sha &&
           attendedSuccessorManifest.run_base_sha === sourceManifest.run_base_sha,
         'successor washed out ancestor baseline');
+      } catch (error) {
+        preserveRuntimeTestEvidence(roots, String(error), ['actual scoped resume/successor parity'],
+          roots.flatMap(root => [path.join(root, PRODUCT_FILE), path.join(root, 'doc/features/bc-openCard/feature.yaml')]));
+        throw error;
       } finally {
         for (const root of roots) fs.rmSync(root, { recursive: true, force: true });
       }
@@ -1013,30 +1221,38 @@ const cases: Case[] = [{
         fs.writeFileSync(path.join(dir, 'agent-events.jsonl'), JSON.stringify({ type: 'thread.started', thread_id: 'precise-alpha' }) + '\n');
         const starts = [{ type: 'agent_invoke_start', phase: 'coding', invoke_id: 'old-invoke' }];
         fs.writeFileSync(path.join(runDir, 'events.jsonl'), [...starts, { type: 'agent_invoke_end', invoke_id: 'old-invoke' }].map(row => JSON.stringify(row)).join('\n') + '\n');
-        const continued = context({ projectRoot: root, runDir, authority, phase: 'ut', attemptId: 'new-invoke' });
+        const observedContext = (overrides: Partial<WorkUnitExecutionContext> = {}) => {
+          const requested = context({ projectRoot: root, runDir, authority, attemptId: 'new-invoke', ...overrides });
+          const observed = observeWorkUnitProviderSession(requested);
+          assert(!('status' in observed), `the original invocation is not yet reconciled: ${JSON.stringify(observed)}`);
+          return createWorkUnitExecutionContext(requested, observed);
+        };
+        const continued = observedContext({ phase: 'ut' });
         validateWorkUnitExecutionContext(continued);
         assert(continued.provider_session_id === 'precise-alpha', 'UT milestone lost its author session');
         const rebuilt = rebuildWorkUnitExecutionContext(continued, '上下文压缩后缺少关键背景，按当前产物与上一反馈重建');
         assert(!rebuilt.provider_session_id && rebuilt.instruction?.includes('不等于无损'), 'context reconstruction claimed to preserve private native state');
-        assert(context({ projectRoot: root, runDir, authority, phase: 'questioning' }).provider_session_id === undefined, 'verifier reused the author');
-        assert(context({ projectRoot: root, runDir, authority: { ...authority, write_mode: 'workspace-write' } }).provider_session_id === undefined, 'changed permissions reused native state');
+        assert(observedContext({ phase: 'questioning' }).provider_session_id === undefined, 'verifier reused the author');
+        assert(observedContext({ authority: { ...authority, write_mode: 'workspace-write' } }).provider_session_id === undefined, 'changed permissions reused native state');
         fs.writeFileSync(path.join(dir, 'agent-events.jsonl'), '');
-        assert(context({ projectRoot: root, runDir, authority, attemptId: 'new-invoke' }).provider_session_id === undefined, 'missing native identity was invented');
+        assert(observedContext().provider_session_id === undefined, 'missing native identity was invented');
         fs.writeFileSync(path.join(runDir, 'events.jsonl'), starts.map(row => JSON.stringify(row)).join('\n') + '\n');
-        let blocked = false;
-        try { context({ projectRoot: root, runDir, authority, attemptId: 'new-invoke' }); } catch (error) { blocked = /outstanding/.test((error as Error).message); }
-        assert(blocked, 'another author started before the outstanding call was reconciled');
+        const outstandingBytes = fs.readFileSync(path.join(runDir, 'events.jsonl'));
+        const outstanding = observeWorkUnitProviderSession(context({ projectRoot: root, runDir, authority, attemptId: 'new-invoke' }));
+        assert('status' in outstanding && outstanding.status === 'waiting' && outstanding.details?.includes('old-invoke'),
+          'another author started before the outstanding call was reconciled');
+        assert(fs.readFileSync(path.join(runDir, 'events.jsonl')).equals(outstandingBytes), 'waiting observation fabricated an end or changed the original');
         fs.writeFileSync(path.join(dir, 'agent-events.jsonl'), JSON.stringify({ type: 'thread.started', thread_id: 'precise-alpha' }) + '\n');
         fs.appendFileSync(path.join(runDir, 'events.jsonl'), '{damaged line\n' + JSON.stringify({ type: 'orphan_reclaimed', invoke_id: 'old-invoke' }) + '\n');
-        assert(context({ projectRoot: root, runDir, authority, attemptId: 'new-invoke' }).provider_session_id === 'precise-alpha', 'the existing orphan reconciliation did not unlock exact continuation');
+        assert(observedContext().provider_session_id === 'precise-alpha', 'the existing orphan reconciliation did not unlock exact continuation');
         fs.writeFileSync(path.join(runDir, 'events.jsonl'), [...starts, { type: 'legacy_run_override', run_id: 'run-1' }].map(row => JSON.stringify(row)).join('\n') + '\n');
-        assert(context({ projectRoot: root, runDir, authority, attemptId: 'new-invoke' }).provider_session_id === 'precise-alpha', 'the explicit legacy cleanup acknowledgement was ignored');
+        assert(observedContext().provider_session_id === 'precise-alpha', 'the explicit legacy cleanup acknowledgement was ignored');
         const later = path.join(runDir, 'phases', 'coding', 'unclosed-new'); fs.mkdirSync(later);
         fs.writeFileSync(path.join(later, 'request-e1.json'), JSON.stringify({ context: old }));
         fs.appendFileSync(path.join(runDir, 'events.jsonl'), JSON.stringify({ type: 'agent_invoke_start', phase: 'coding', invoke_id: 'unclosed-new' }) + '\n');
-        blocked = false;
-        try { context({ projectRoot: root, runDir, authority, attemptId: 'new-invoke' }); } catch (error) { blocked = /outstanding/.test((error as Error).message); }
-        assert(blocked, 'a historical cleanup acknowledgement cleared a later outstanding author');
+        const laterOutstanding = observeWorkUnitProviderSession(context({ projectRoot: root, runDir, authority, attemptId: 'new-invoke' }));
+        assert('status' in laterOutstanding && laterOutstanding.status === 'waiting' && laterOutstanding.details?.includes('unclosed-new'),
+          'a historical cleanup acknowledgement cleared a later outstanding author');
       } finally { fs.rmSync(root, { recursive: true, force: true }); }
     },
   },
@@ -1068,7 +1284,7 @@ const cases: Case[] = [{
     },
   },
   {
-    name: 'P1 R2 session review preserves its complete report after a generic completion detail',
+    name: 'P1 R2 session author preserves its complete candidate review report after a generic completion detail',
     run: async () => {
       const root = setupGoalRuntimeHost('codex').root;
       const report = resolveFeatureArtifact(root, 'bc-openCard', 'review-report.md').actualPath;
@@ -1076,8 +1292,8 @@ const cases: Case[] = [{
       let consumed = false;
       try {
         const probe = await runGoalRuntimeChain(root, { adapter: 'codex', runId: 'p1-review-result', freshEndPhase: 'review', viaSessionStep: true,
-          onReview: () => { fs.mkdirSync(path.dirname(report), { recursive: true }); fs.writeFileSync(report, expected); },
-          invokeResultFor: phase => phase === 'review' ? { details: '完成' } : null,
+          onAuthor: () => { fs.mkdirSync(path.dirname(report), { recursive: true }); fs.writeFileSync(report, expected); },
+          invokeResultFor: phase => phase === 'work-unit-author' ? { details: '完成' } : null,
           onHarnessSummary: ({ phase }) => { if (phase === 'review') consumed = fs.readFileSync(report, 'utf8') === expected; return null; },
         });
         assert(consumed && probe.harnessPhases.includes('review'), 'formal checker did not receive the returned independent report');
@@ -1106,7 +1322,7 @@ const cases: Case[] = [{
       fs.writeFileSync(file, original); let calls = 0;
       try {
         const probe = await runGoalRuntimeChain(root, { adapter: 'codex', runId: 'p1-restore-own-delta', freshEndPhase: 'spec', viaSessionStep: true,
-          onSpec: ({ prompt }) => { calls++; if (calls === 1) fs.appendFileSync(file, 'unauthorized author delta\n'); else {
+          onAuthor: ({ prompt }) => { calls++; if (calls === 1) fs.appendFileSync(file, 'unauthorized author delta\n'); else {
             assert(prompt.includes('blind git restore') && prompt.includes('pre_sha256='), 'the author did not receive the exact original-byte restoration boundary');
             fs.writeFileSync(file, original);
           } },
@@ -1127,8 +1343,7 @@ const cases: Case[] = [{
       const expected = require('crypto').createHash('sha256').update(originals[0]).digest('hex');
       let calls = 0;
       try {
-        const probe = await runGoalRuntimeChain(root, { adapter: 'codex', runId: `p1-r3-${mode}`, freshEndPhase: 'spec', viaSessionStep: true,
-          onSpec: ({ prompt }) => {
+        const onAuthor = ({ prompt }: { prompt: string }) => {
             calls++;
             if (calls === 1) { fs.appendFileSync(files[0], 'unauthorized B\n'); if (mode === 'partial') fs.appendFileSync(files[1], 'unauthorized second\n'); }
             else if (mode === 'partial' && calls === 2) fs.writeFileSync(files[0], originals[0]);
@@ -1136,72 +1351,86 @@ const cases: Case[] = [{
               assert(prompt.includes(`pre_sha256=${expected}`), 'A was replaced with the later unauthorized B/C as the restoration target');
               fs.writeFileSync(files[0], calls === 2 ? 'unauthorized C\n' : originals[0]);
             }
-          },
-        });
-        if (mode === 'drift') assert(calls === 3 && probe.exitCode === 0 && probe.harnessPhases.length === 1 && fs.readFileSync(files[0], 'utf8') === originals[0], 'real restoration did not close the original constraint');
+          };
+        const probe = await runGoalRuntimeChain(root, { adapter: 'codex', runId: `p1-r3-${mode}`, freshEndPhase: 'spec', viaSessionStep: mode !== 'drift', onAuthor });
+        if (mode === 'drift') {
+          assert(calls === 2 && probe.exitCode !== 0 && probe.harnessPhases.length === 0 && fs.readFileSync(files[0], 'utf8') === 'unauthorized C\n',
+            'a wrong restoration must preserve its actual bytes and wait without running a formal gate');
+          const resumed = await runGoalRuntimeChain(root, { adapter: 'codex', resume: 'p1-r3-drift', forceResume: true, skipLegacySeal: true, onAuthor });
+          assert(Number(calls) === 3 && resumed.exitCode === 0 && resumed.harnessPhases.length === 1 && fs.readFileSync(files[0], 'utf8') === originals[0],
+            'explicit continuation must restore the first dirty preimage before its formal gate');
+        }
         else {
           assert(probe.exitCode !== 0 && probe.harnessPhases.length === 0, 'unrestored bytes reached a formal gate');
           assert(calls === (mode === 'noop' ? 2 : 3), 'the existing repeat/recovery boundary changed');
           assert(fs.readFileSync(files[mode === 'partial' ? 1 : 0], 'utf8').includes('unauthorized'), 'runtime silently restored user bytes');
           if (mode === 'partial') assert(fs.readFileSync(files[0], 'utf8') === originals[0], 'a completed partial restoration was lost');
         }
+      } catch (error) {
+        preserveRuntimeTestEvidence([root], String(error), [`P1 R3 unresolved ${mode} actual unit restoration`], files);
+        throw error;
       } finally { fs.rmSync(root, { recursive: true, force: true }); }
     },
   })),
   {
-    name: 'P1 R3 review restores a wrong-phase registered artifact without another violation',
+    name: 'P1 R3 a unit author edits its registered candidate across methods and formal checks consume the actual artifact',
     run: async () => {
       const root = setupGoalRuntimeHost('codex').root;
       const acceptance = resolveFeatureArtifact(root, 'bc-openCard', 'acceptance.yaml').actualPath;
       const original = fs.readFileSync(acceptance, 'utf8'); let calls = 0;
       try {
         const probe = await runGoalRuntimeChain(root, { adapter: 'codex', runId: 'p1-r3-review-artifact', freshEndPhase: 'review',
-          onReview: () => { calls++; if (calls === 1) fs.appendFileSync(acceptance, '\n# unauthorized review artifact write\n'); else fs.writeFileSync(acceptance, original); },
+          onAuthor: () => { calls++; fs.appendFileSync(acceptance, '\n# current unit candidate update\n'); },
+          onHarnessSummary: ({ phase }) => {
+            if (phase === 'spec') assert(fs.readFileSync(acceptance, 'utf8') === original + '\n# current unit candidate update\n', 'formal verification missed the actual current candidate');
+            return null;
+          },
         });
-        assert(calls === 2 && probe.exitCode === 0 && fs.readFileSync(acceptance, 'utf8') === original, JSON.stringify(probe.events.filter(event => event.type === 'phase_halt' || event.type === 'run_end')));
-        assert(!probe.events.some(event => event.halt_reason === 'phase_write_violation_repeat'), 'exact wrong_phase restoration was rejected');
+        assert(calls === 1 && probe.exitCode === 0 && probe.harnessPhases.includes('spec'), JSON.stringify(probe.events.filter(event => event.type === 'phase_halt' || event.type === 'run_end')));
+        assert(!probe.events.some(event => event.type === 'phase_write_violation'), 'the retired method-label boundary rejected an authorized unit candidate');
       } finally { fs.rmSync(root, { recursive: true, force: true }); }
     },
   },
   {
-    name: 'P1 R3 settled completion cleanup exit1 reaches its formal gate once without another author',
+    name: 'P1 R3 completed adapter cleanup exit1 reaches its formal gate once without another author or fake settlement',
     run: async () => {
       const root = setupGoalRuntimeHost('codex').root;
       try {
-        const probe = await runGoalRuntimeChain(root, { adapter: 'codex', runId: 'p1-r3-cleanup', freshEndPhase: 'spec', viaSessionStep: true,
-          onSpec: ({ runId, issued }) => { fs.appendFileSync(path.join(root, 'doc/features/bc-openCard/goal-runs', runId, 'events.jsonl'), JSON.stringify({
-            ts: new Date().toISOString(), type: 'agent_process_settled', phase: 'spec', invoke_id: `spec-${issued!.attemptId}`,
-            status: 'passed', exit_code: 1, completion_observed: true, kill_attempted: true,
-          }) + '\n'); },
+        const probe = await runGoalRuntimeChain(root, { adapter: 'codex', runId: 'p1-r3-cleanup', freshEndPhase: 'spec',
+          invokeResultFor: phase => phase === 'work-unit-author' ? { exitCode: 1, completion_observed: true, kill_attempted: true } : null,
         });
         assert(probe.exitCode === 0 && probe.invokedPhases.length === 1 && probe.harnessPhases.join(',') === 'spec', JSON.stringify(probe.events.filter(event => event.type === 'phase_halt' || event.type === 'run_end')));
         const end = probe.events.find(event => event.type === 'agent_invoke_end')!;
         assert(end.exit_code === 1 && end.completion_observed === true && end.status === 'passed', 'transport rewrote the actual cleanup exit instead of retaining its completed fact');
+        assert(!probe.events.some(event => event.type === 'agent_process_settled'), 'the adapter result contract cannot fabricate OS settlement');
       } finally { fs.rmSync(root, { recursive: true, force: true }); }
     },
   },
   {
-    name: 'P1 R3 an ended execution with no result takes the existing verification exit instead of waiting forever',
+    name: 'P1 R3 bare terminal text without a reconciled process cannot complete or restart the original session request',
     run: async () => {
       const root = setupGoalRuntimeHost('codex').root, runId = 'p1-r3-missing-result';
       try {
         let interrupted = false;
         try { await runGoalRuntimeChain(root, { adapter: 'codex', runId, freshEndPhase: 'spec', viaSessionStep: true,
           testControl: { expectedInterruption: 'test cut before any execution report' },
-          onSpec: () => { throw new Error('test cut before any execution report'); },
+          onAuthor: () => { throw new Error('test cut before any execution report'); },
         }); } catch (error) { interrupted = String(error).includes('test cut'); }
         assert(interrupted, 'the test did not leave its real signed request pending');
         const manifest = loadGoalManifestFromRun(root, runId, { feature: 'bc-openCard' }), runDir = path.resolve(root, manifest.report_dir);
         const issued = readSessionExecution(runDir)!;
+        const requestPath = path.resolve(runDir, issued.reference.path), originalRequest = fs.readFileSync(requestPath);
         fs.writeFileSync(path.join(runDir, path.dirname(issued.reference.path), 'agent-events.jsonl'), JSON.stringify({ type: 'turn.completed' }) + '\n');
-        fs.appendFileSync(path.join(runDir, 'events.jsonl'), JSON.stringify({ ts: new Date().toISOString(), type: 'agent_process_bound',
-          phase: 'spec', invoke_id: issued.request.invoke_id, run_id: runId, pid: 2147483647, started_at_ms: 1, executable: process.execPath, token: `${runId}/${issued.request.invoke_id}` }) + '\n');
+        const originalEvents = fs.readFileSync(path.join(runDir, 'events.jsonl'));
         const recovered = await runGoalModeSessionStep({ projectRoot: root, frameworkRoot: path.resolve(__dirname, '../../..'), feature: 'bc-openCard', runId,
-          adapter: 'codex', runMode: 'attended', requestPath: path.resolve(runDir, issued.reference.path), action: 'execute' });
-        assert(recovered.status === 'failed' && acceptedSessionReport(runDir, issued)!.report.status === 'failed', 'bare terminal text became passed or an unchanged external waiting condition');
-        const resumed = await runGoalRuntimeChain(root, { adapter: 'codex', resume: runId, viaSessionStep: true, skipLegacySeal: true });
-        assert(resumed.exitCode === 0 && resumed.harnessPhases.includes('spec'), JSON.stringify(resumed.events.filter(event => event.type === 'phase_halt' || event.type === 'run_end')));
-        assert(resumed.events.filter(event => event.type === 'agent_invoke_start' && event.invoke_id === issued.request.invoke_id).length === 1, 'recovery re-executed the settled old request');
+          adapter: 'codex', runMode: 'attended', requestPath, action: 'execute' });
+        assert(recovered.status === 'waiting' && String(recovered.detail).includes('没有可核实绑定') && !acceptedSessionReport(runDir, issued),
+          'a bare terminal envelope became a completed result or started a second native execution');
+        assert(fs.readFileSync(requestPath).equals(originalRequest) && fs.readFileSync(path.join(runDir, 'events.jsonl')).equals(originalEvents),
+          'unknown execution recovery changed the original request or fabricated process/agent end facts');
+      } catch (error) {
+        preserveRuntimeTestEvidence([root], String(error), ['P1 actual pending session without a process binding']);
+        throw error;
       } finally { fs.rmSync(root, { recursive: true, force: true }); }
     },
   },
@@ -1223,15 +1452,19 @@ const cases: Case[] = [{
         const definition = YAML.stringify({ feature: 'bc-openCard', adapter: 'codex', requirement, execution_scope: scope.scope, chain_override: scope.scope.phase_chain,
           unattended: { write_mode: 'full-access', approval_mode: 'never' } });
         const probe = await runGoalRuntimeChain(root, { adapter: 'codex', runId: 'p1-review-only-write', freshManifestContent: definition, freshStartPhase: 'review', freshEndPhase: 'review',
-          onReview: ({ prompt }) => { calls++; fs.mkdirSync(path.dirname(report), { recursive: true }); fs.writeFileSync(report, '# Independent review\n');
+          freshRequirement: requirement,
+          onAuthor: ({ prompt }) => { calls++; fs.mkdirSync(path.dirname(report), { recursive: true }); fs.writeFileSync(report, '# Candidate review\n');
             if (calls === 1) fs.appendFileSync(source, '\n// unauthorized review implementation\n');
             else { assert(prompt.includes('pre_sha256='), 'the review was allowed to repair arbitrary implementation'); fs.writeFileSync(source, original); }
           },
         });
         assert(calls === 2 && fs.readFileSync(source, 'utf8') === original, JSON.stringify({ calls, phases: probe.invokedPhases,
           events: probe.events.filter(event => event.type === 'phase_halt' || event.type === 'run_end' || event.type === 'phase_write_violation') }));
-        assert(probe.events.some(event => event.type === 'phase_write_violation' && event.phase === 'review'), 'the independent write boundary did not observe the mutation');
-        assert(probe.invokedPhases.every(phase => phase === 'review') && probe.harnessPhases.length === 1 && probe.exitCode === 0, 'review-only work gained a coding grant or gated before restoring its own change');
+        assert(probe.events.some(event => event.type === 'phase_write_violation' && event.phase === 'work-unit-author'), 'the actual review-only unit write boundary did not observe the mutation');
+        assert(probe.invokedPhases.every(phase => phase === 'work-unit-author') && probe.harnessPhases.join(',') === 'review' && probe.exitCode === 0, 'review-only work gained a coding grant or gated before restoring its own change');
+      } catch (error) {
+        preserveRuntimeTestEvidence([root], String(error), ['P1 actual review-only unit source authority'], [source, report]);
+        throw error;
       } finally { fs.rmSync(root, { recursive: true, force: true }); }
     },
   },
@@ -1256,7 +1489,7 @@ const cases: Case[] = [{
     },
   },
   {
-    name: 'M2 design invocation replay follows the original completed or waiting fact and restores only its real draft output',
+    name: 'M2 design invocation originals stay readonly; real end facts preserve completed waiting and failed outcomes without restoring drafts',
     run: () => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), 'design-result-replay-'));
       const invokeId = 'design-repair-author-i1';
@@ -1271,13 +1504,17 @@ const cases: Case[] = [{
         fs.writeFileSync(eventFile, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
         fs.writeFileSync(draft, 'original author bytes\n');
         recordDesignRepairInvocation(root, 'author', invokeId, { started: true, ok: true, status: 'passed', detail: 'actual invocation output' });
+        const originalFile = path.join(root, 'phases/design-repair-author', invokeId, 'design-result.json');
+        const original = fs.readFileSync(originalFile);
         fs.writeFileSync(draft, 'later machine invalidation\n');
-        assert(replayDesignRepairInvocation(root, 'author')?.ok === true, 'completed role material should be reusable');
-        assert(fs.readFileSync(draft, 'utf8') === 'original author bytes\n', 'replay must restore the pre-invalidation role output');
+        const saved = JSON.parse(original.toString('utf8'));
+        assert(saved.outcome.ok && Buffer.from(saved.draft_outputs['component-blueprint.yaml'], 'base64').toString('utf8') === 'original author bytes\n', 'the producer preserves real output for current-fact recovery');
+        assert(invocationCompleted({ ...rows[2], exitCode: rows[2].exit_code }), 'actual completed facts remain reusable');
         for (const status of ['waiting', 'failed']) {
           fs.writeFileSync(eventFile, rows.map(row => JSON.stringify(row.type === 'agent_invoke_end' ? { ...row, status, exit_code: status === 'failed' ? 1 : 0 } : row)).join('\n') + '\n');
-          const result = replayDesignRepairInvocation(root, 'author');
-          assert(status === 'waiting' ? result === undefined : result?.ok === false, 'a cached passed claim cannot overwrite the original negative fact');
+          const ended = JSON.parse(fs.readFileSync(eventFile, 'utf8').trim().split('\n').at(-1)!);
+          assert(!invocationCompleted({ ...ended, exitCode: ended.exit_code }), 'an archived passed claim cannot overwrite current waiting or failed end facts');
+          assert(fs.readFileSync(originalFile).equals(original) && fs.readFileSync(draft, 'utf8') === 'later machine invalidation\n', 'reading an original never restores old drafts over current work');
         }
       } finally { fs.rmSync(root, { recursive: true, force: true }); }
     },
@@ -1333,7 +1570,7 @@ const cases: Case[] = [{
         const probe = await runGoalRuntimeChain(root, {
           adapter: 'codex',
           runId: 'production-handoff-rejected',
-          onSpec: ({ runId }) => {
+          onAuthor: ({ runId }) => {
             const manifest = loadGoalManifestFromRun(root, runId, { feature: 'bc-openCard' });
             const runDir = path.resolve(root, manifest.report_dir);
             const control = readRunControl(runDir, runId);
@@ -1371,6 +1608,16 @@ const cases: Case[] = [{
         { type: 'phase_halt', phase: 'review', halt_reason: 'source_drift' },
         { type: 'phase_backtrack_requested', phase: 'review', from_phase: 'review', to_phase: 'coding', invalidated_phases: ['review', 'ut'] },
       ]), JSON.stringify(projected));
+      const outcome: { phase: string; verdict: string; halted: boolean; run_disposition?: string; probe?: string } = {
+        phase: 'testing', verdict: 'PASS', halted: false,
+      };
+      const history = [{ type: 'phase_halt', phase: 'testing', run_disposition: 'WAITING', run_wait_kind: 'external', probe: 'device_readiness' },
+        { type: 'phase_verdict', phase: 'testing', verdict: 'PASS', harness_exit: 0, stale_summary: false }];
+      const current = enrichOutcomesWithProjection([outcome], history)[0];
+      assert(!current.run_disposition && !current.probe, 'current real PASS retained the old device wait projection');
+      const unknown = enrichOutcomesWithProjection([outcome], [...history,
+        { type: 'phase_halt', phase: 'testing', run_disposition: 'WAITING', run_wait_kind: 'external', probe: 'current_evidence_missing' }])[0];
+      assert(unknown.run_disposition === 'WAITING' && unknown.probe === 'current_evidence_missing', 'a later real unknown was cleared by historical PASS');
     },
   },
 ];

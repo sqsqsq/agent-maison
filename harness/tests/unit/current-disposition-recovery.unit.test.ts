@@ -2,9 +2,10 @@ import assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import * as YAML from 'yaml';
 import { execFileSync } from 'child_process';
 import { resolveCurrentDisposition, phaseCompletionProblems } from '../../scripts/utils/check-disposition';
-import { readCurrentDispositionInput, collectCleanPassIssues, collectPhaseCompletionIssues } from '../../scripts/utils/verify-feature-completion';
+import { readCurrentDispositionInput, resolveCompletionDisposition, collectCleanPassIssues, collectPhaseCompletionIssues } from '../../scripts/utils/verify-feature-completion';
 import { reduceRunState } from '../../scripts/utils/run-state-reducer';
 import { runDeviceReadinessGate } from '../../scripts/utils/device-readiness-gate';
 import { ensureRunControl, casAcquireRunOwner } from '../../scripts/utils/goal-run-control';
@@ -14,6 +15,7 @@ import { generateRandomCanaryAnswerKey } from '../../scripts/utils/vision-canary
 import { loadLocalConfig } from '../../scripts/utils/framework-local-config';
 import { countAgentInvokeStarts, resolveResumedBudget } from '../../scripts/utils/goal-runner-phase';
 import { resolvePhaseHarnessVerdict } from '../../scripts/utils/goal-runner-phase';
+import { invocationCompleted } from '../../scripts/utils/invocation-completion';
 import { resolveFrameworkOwnerRevisionGuard, buildVerificationNoProgressGuidance } from '../../scripts/goal-phase-runtime';
 import type { GoalManifest } from '../../scripts/utils/goal-manifest';
 import type { AgentInvokeResult } from '../../scripts/utils/agent-invoke';
@@ -34,7 +36,7 @@ import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixtu
 import { featurePhaseReportsDir } from '../../config';
 import { generateScriptReport } from '../../scripts/utils/report-generator';
 import { writeRunEvents, seedCleanCompletionChain } from '../utils/completion-chain-seed';
-import { resolveCurrentScopeView } from '../../scripts/utils/feature-track';
+import { resolveCurrentScopeView, prepareFeatureScopeCandidate } from '../../scripts/utils/feature-track';
 import { resolveWorkflowSpec } from '../../workflow-loader';
 import { visualDebtJsonPath } from '../../scripts/utils/visual-debt';
 import { writeRunSummaryBase } from '../../harness-runner';
@@ -43,7 +45,6 @@ import { repairResponsibilityContext, resolveRepairResponsibility } from '../../
 import { finalizePhaseClosure } from '../../scripts/utils/phase-closure-finalizer';
 import type { CheckResult } from '../../scripts/utils/types';
 import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
-import { selectRunnerActionFromAssess, type SelectRunnerActionInput } from '../../scripts/utils/goal-assess-driver';
 import type { UnitCaseResult } from '../run-unit';
 
 /** 可把 executeAuthor 换成真实 CLI；输入仍是正常 runtime 实际物化的 prompt。 */
@@ -76,7 +77,7 @@ export async function prepareSamePhaseRequiredWorkCase(executeAuthor?: (ctx: Par
   const observations = { authorPrompts: [] as string[], verifierRequests: [] as string[], rawRequiredPass: false, closureBlocked: false };
   const options: Parameters<typeof runGoalRuntimeChain>[1] = { frameworkRoot: project.frameworkRoot, featureId: project.feature,
     realHarness: true, viaRuntimeClass: true, adapter: 'codex', freshEndPhase: 'spec', freshRequirement: requirement,
-    onSpec: ctx => {
+    onAuthor: ctx => {
       project.runId = ctx.runId;
       if (ctx.attempt === 1) {
         writeSpecMaterials(project);
@@ -125,6 +126,98 @@ export async function prepareSamePhaseRequiredWorkCase(executeAuthor?: (ctx: Par
 }
 
 const cases: Array<{ name: string; run(): void | Promise<void> }> = [
+
+  ...(['partial', 'unchanged'] as const).map(mode => ({
+    name: 'M3 real unit assessment ' + mode + ': remaining obligations continue the exact native SID; unchanged returns pause',
+    async run() {
+      const { root } = setupGoalRuntimeHost('codex', false);
+      const product = path.join(root, PRODUCT_FILE);
+      const sid = 'm3-exact-original-native-thread';
+      const nativeOutput = JSON.stringify({ type: 'thread.started', thread_id: sid }) + '\n'
+        + JSON.stringify({ type: 'turn.completed' }) + '\n';
+      const requiredA = 'M3_required_object_A', requiredB = 'M3_required_object_B';
+      fs.writeFileSync(product, 'export const M3_A = false;\nexport const M3_B = false;\n');
+      const deliveries: Array<{ sid?: string; instruction: string; attempt: string }> = [];
+      const observations: Array<{ a: boolean; b: boolean }> = [];
+      try {
+        const configFile = path.join(root, 'framework.config.json');
+        const config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+        config.active_workflow = 'obligation-driven'; fs.writeFileSync(configFile, JSON.stringify(config)); clearFrameworkConfigCache();
+        const requirement = `修复 ${PRODUCT_FILE} 中所有已核实的必修项，保留真实验证。`;
+        const scope = prepareFeatureScopeCandidate({ projectRoot: root, frameworkRoot: path.resolve(__dirname, '../../..'), feature: 'bc-openCard',
+          completionTarget: 'request', requestedResults: [`修复 ${PRODUCT_FILE} 的两个必修对象`], requestedPhases: ['coding'], requirement }).scope;
+        assert(scope.obligations.some(obligation => obligation.kind === 'implementation' && obligation.applicability === 'required'),
+          'the original partial-repair contract must declare its actual implementation duty before birth');
+        const probe = await runGoalRuntimeChain(root, { adapter: 'codex', viaRuntimeClass: true,
+          freshStartPhase: 'coding', freshEndPhase: 'coding', freshRequirement: requirement,
+          freshManifestContent: YAML.stringify({ feature: 'bc-openCard', adapter: 'codex', requirement, execution_scope: scope,
+            chain_override: scope.phase_chain, unattended: { write_mode: 'full-access', approval_mode: 'never' } }),
+          onAuthor: (ctx, context) => {
+            assert.equal(context.runId, ctx.runId); assert.equal(context.owner.run_id, ctx.runId);
+            const directory = path.dirname(ctx.outputLogPath);
+            const request = fs.readdirSync(directory).find(name => /^request-e\d+\.json$/.test(name));
+            assert(request, 'the actual unit request must exist before its native transport consumes it');
+            const original = JSON.parse(fs.readFileSync(path.join(directory, request), 'utf8'));
+            assert.equal(original.context.instruction, context.instruction);
+            deliveries.push({ sid: context.provider_session_id, instruction: context.instruction ?? '', attempt: context.attemptId });
+            // The provider substitute emits its real protocol stream; recovery never receives an invented context SID.
+            fs.writeFileSync(path.join(directory, 'agent-events.jsonl'), nativeOutput);
+            if (deliveries.length === 1) return;
+            assert.equal(context.provider_session_id, sid, 'remaining work must return to the exact original native session');
+            const instruction = context.instruction ?? '';
+            if (deliveries.length === 2) {
+              assert(instruction.includes(requiredA) && instruction.includes(requiredB), 'both current mandatory objects must actually reach the author');
+              if (mode === 'partial') fs.writeFileSync(product, 'export const M3_A = true;\nexport const M3_B = false;\n');
+            } else {
+              assert.equal(mode, 'partial', 'unchanged completed work must pause before a third author');
+              assert(instruction.includes(requiredB) && !instruction.includes(requiredA), 'only the remaining unchanged B fact should be delivered');
+              assert.equal(deliveries.length, 3, 'one remaining obligation requires one continuation, not another queue');
+              fs.writeFileSync(product, 'export const M3_A = true;\nexport const M3_B = true;\n');
+            }
+          },
+          onHarnessSummary: ({ phase }) => {
+            if (phase !== 'coding') return null;
+            const bytes = fs.readFileSync(product, 'utf8');
+            const state = { a: bytes.includes('M3_A = true'), b: bytes.includes('M3_B = true') };
+            observations.push(state);
+            const dependency = { path: PRODUCT_FILE, exists: true, sha256: require('crypto').createHash('sha256').update(bytes).digest('hex'), role: 'artifact' };
+            return { checks: ([['A', requiredA, state.a], ['B', requiredB, state.b]] as const).map(([object, id, fixed]): CheckResult => ({
+              id, category: 'structure', description: 'mandatory product object ' + object, severity: 'BLOCKER',
+              status: fixed ? 'PASS' : 'FAIL', repair_owner: 'coding', affected_files: [PRODUCT_FILE],
+              details: 'Current required object ' + object + ' must be true in the actual product.',
+              structured: { source_attempt_dependencies: [dependency] },
+            })) };
+          },
+          invokeResultFor: phase => phase === 'work-unit-author' ? { stdout: nativeOutput } : null,
+        });
+        assert.equal(deliveries[0].sid, undefined, 'the first native context is not recovered from another unit');
+        assert(!probe.events.some(event => event.type === 'run_end' && event.status === 'INTERRUPTED'), 'the runtime must naturally finish or pause');
+        assert(!probe.events.some(event => event.type === 'phase_halt' && String(event.halt_reason).startsWith('budget_')));
+        if (mode === 'partial') {
+          assert.deepEqual(observations, [{ a: false, b: false }, { a: true, b: false }, { a: true, b: true }],
+            'each actual source change must be checked before selecting the next remaining work');
+          assert.equal(deliveries.length, 3);
+          assert.equal(probe.exitCode, 0);
+          assert(probe.events.some(event => event.type === 'run_end' && event.status === 'CHAIN_SLICE_COMPLETED'));
+          assert(!probe.events.some(event => event.type === 'phase_halt' && ['executor_waiting', 'no_progress_guard'].includes(String(event.halt_reason))),
+            'verified partial progress must continue instead of waiting or claiming no progress');
+        } else {
+          assert.deepEqual(observations, [{ a: false, b: false }], 'unchanged bound inputs must reuse the actual completed check');
+          assert.equal(deliveries.length, 2);
+          assert.notEqual(probe.exitCode, 0);
+          assert(probe.events.some(event => event.type === 'phase_halt' && event.halt_reason === 'no_progress_guard'));
+          assert(!probe.events.some(event => event.type === 'phase_halt' && event.halt_reason === 'executor_waiting'), 'completed unchanged work has an I10 pause, not an external dependency');
+        }
+      } catch (error) {
+        const { preserveRuntimeTestEvidence } = require('../utils/runtime-test-control') as typeof import('../utils/runtime-test-control');
+        const reports = featurePhaseReportsDir(root, 'bc-openCard', 'coding');
+        const evidence = preserveRuntimeTestEvidence([root], String(error), ['M3 ' + mode],
+          [product, ...['summary.json', 'script-report.json', 'phase-evidence-manifest.json'].map(name => path.join(reports, name))]);
+        fs.writeFileSync(path.join(evidence, 'actual-unit-assessments.json'), JSON.stringify({ deliveries, observations }, null, 2));
+        throw error;
+      } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+    },
+  })),
   ...(['legacy', 'typed'] as const).map(kind => ({
     name: `R4 current object coverage ${kind} naturally closes the no-op repair loop without budget or quiesce`,
     async run() {
@@ -134,9 +227,17 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
         severity: 'major' as const, note: 'R4 original title mismatch', must_fix_refs: [0] };
       const fingerprint = computeDefectFingerprint('add_card_home', signal);
       const candidate = { id: 'legacy-visual-object', category: 'coding', files: [PRODUCT_FILE],
-        summary: 'Original legacy finding still requires current object verification', item_fingerprint: 'a'.repeat(64), source_phase: 'testing' };
+        summary: 'The actual product source must declare legacy_current_object = true; the legacy observation has no verified object refs.' };
       let delivered = false, objectChecks = 0, completedNoProgress = false;
       const classifier = require('../../scripts/utils/goal-failure-classifier') as typeof import('../../scripts/utils/goal-failure-classifier');
+      const reader = require('../../scripts/utils/verify-feature-completion') as typeof import('../../scripts/utils/verify-feature-completion');
+      const observeCheck = reader.readCurrentCheckObservation;
+      const checkObservations: Array<ReturnType<typeof observeCheck>> = [];
+      reader.readCurrentCheckObservation = opts => {
+        const observed = observeCheck(opts);
+        if (opts.projectRoot === root && opts.phase === 'testing') checkObservations.push(observed);
+        return observed;
+      };
       const evaluate = classifier.evaluateCompletionProgress;
       classifier.evaluateCompletionProgress = input => {
         const result = evaluate(input);
@@ -146,15 +247,17 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
       try {
         if (kind === 'typed') seedSignalHost(root);
         const probe = await runGoalRuntimeChain(root, { adapter: 'codex',
-          ...(kind === 'typed' ? { freshRequirement: '真机测试银行卡开卡流程；页面必须像素级还原参考截图，不接受降级，达不到不得继续交付。' } : {}),
-          onCoding: ctx => {
+          freshRequirement: kind === 'typed'
+            ? '真机测试银行卡开卡流程；页面必须像素级还原参考截图，不接受降级，达不到不得继续交付。'
+            : `修复 ${PRODUCT_FILE} 中的 legacy_current_object = true 必修项，并执行原有真机检查。`,
+          onAuthor: ctx => {
             if (ctx.attempt > 1) {
               assert(ctx.prompt.includes(kind === 'typed' ? signal.note : candidate.id), 'the real owner must receive its original finding');
               delivered = true;
             }
           },
           ...(kind === 'typed' ? {
-            onTesting: () => writeCurrentSignals(root, [signal], [fingerprint]),
+            onTestingHarness: () => writeCurrentSignals(root, [signal], [fingerprint]),
             testingGateChecks: (ctx: Parameters<typeof currentSignalGateChecks>[0]) => {
               const checks = currentSignalGateChecks(ctx);
               const visual = checks.find(check => check.id === 'visual_diff')?.structured as { fingerprintable?: boolean; defect_fingerprints?: string[] };
@@ -162,22 +265,65 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
               objectChecks++;
               return checks;
             },
-          } : { testingSummaryExtras: { repair_candidates: [candidate] } }),
+          } : {
+            testingGateChecks: () => {
+              const bytes = fs.readFileSync(path.join(root, PRODUCT_FILE));
+              objectChecks++;
+              return [{ id: candidate.id, category: 'structure', severity: 'BLOCKER',
+                description: 'read the actual legacy product object',
+                status: bytes.toString('utf8').includes('legacy_current_object = true') ? 'PASS' : 'FAIL',
+                repair_owner: 'coding', coding_candidate: true, affected_files: candidate.files, details: candidate.summary,
+                structured: { source_attempt_dependencies: [{ path: PRODUCT_FILE, exists: true,
+                  sha256: require('crypto').createHash('sha256').update(bytes).digest('hex'), role: 'artifact' }] } }];
+            },
+          }),
         });
         assert(delivered && fs.readFileSync(path.join(root, PRODUCT_FILE)).equals(original), 'the owner must actually return without a product edit');
+        const owner = probe.events.filter(event => event.type === 'agent_invoke_start' && event.phase === 'work-unit-author').pop();
+        const returned = probe.events.find(event => event.type === 'agent_invoke_end' && event.invoke_id === owner?.invoke_id);
+        assert(returned && invocationCompleted({ ...returned, exitCode: returned.exit_code }), 'the signed owner must genuinely return normally');
         assert.notEqual(probe.exitCode, 0);
         assert(!probe.events.some(event => event.type === 'run_end' && event.status === 'INTERRUPTED'
           || event.type === 'phase_halt' && String(event.halt_reason).startsWith('budget_')), 'neither an external stop nor a hard budget proves convergence');
         if (kind === 'typed') {
-          assert(objectChecks >= 2, 'the original object must really be rechecked after owner return');
+          if (objectChecks !== 1) {
+            const { preserveRuntimeTestEvidence } = require('../utils/runtime-test-control') as typeof import('../utils/runtime-test-control');
+            const reports = featurePhaseReportsDir(root, 'bc-openCard', 'testing');
+            const evidence = preserveRuntimeTestEvidence([root], 'R4 actual repeated checker input observation', [],
+              ['summary.json', 'script-report.json', 'phase-evidence-manifest.json'].map(name => path.join(reports, name))
+                .concat([path.join(root, PRODUCT_FILE), path.join(root, 'doc/features/bc-openCard/device-testing/device-screenshots/visual-diff.json')]));
+            fs.writeFileSync(path.join(evidence, 'actual-check-inputs.json'), JSON.stringify({ objectChecks, checkObservations, events: probe.events }, null, 2));
+          }
+          const reports = featurePhaseReportsDir(root, 'bc-openCard', 'testing');
+          const manifest = JSON.parse(fs.readFileSync(path.join(reports, 'phase-evidence-manifest.json'), 'utf8'));
+          const summary = fs.readFileSync(path.join(reports, 'summary.json'));
+          assert.equal(manifest.outputs.find((entry: { path: string }) => path.resolve(root, entry.path) === path.join(reports, 'summary.json'))?.sha256,
+            require('crypto').createHash('sha256').update(summary).digest('hex'), 'rendering collector findings must not mutate the already-bound raw summary');
+          assert(objectChecks === 1, 'the unchanged current object was actually checked once; a no-op author must not buy the same tool again');
           assert(completedNoProgress, 'the completed typed-object predicate must observe delivered feedback and a real author return');
           assert(probe.events.some(event => event.type === 'phase_halt' && String(event.halt_reason).startsWith('no_progress')), 'the common completed-object comparison must pause the same deficit');
         } else {
           assert(probe.events.some(event => event.type === 'phase_halt' && event.halt_reason === 'executor_waiting' && event.run_disposition === 'WAITING'), 'uncovered legacy evidence must naturally wait for actual verification');
           const summary = JSON.parse(fs.readFileSync(path.join(root, 'doc/features/bc-openCard/testing/reports/summary.json'), 'utf8'));
           assert(summary.repair_candidates.some((row: { id: string }) => row.id === candidate.id), 'unknown verification must not erase the original finding');
+          const raw = JSON.parse(fs.readFileSync(path.join(root, 'doc/features/bc-openCard/testing/reports/script-report.json'), 'utf8'));
+          assert(raw.checks.some((check: CheckResult) => check.id === candidate.id && check.status === 'FAIL'), 'the current producer must retain its real failed observation');
+          const runId = JSON.parse(fs.readFileSync(path.join(probe.reportDir, 'manifest.json'), 'utf8')).run_id;
+          assert(typeof runId === 'string');
+          const current = resolveCompletionDisposition({ projectRoot: root, frameworkRoot: FRAMEWORK_SOURCE_ROOT,
+            feature: 'bc-openCard', runId, chain: ['testing'] });
+          assert(current.completionBlocking.some(problem => problem.id === `open_finding:${candidate.id}` && !problem.evidence?.length),
+            'a legacy finding without verified object refs remains unknown');
+          assert(objectChecks === 1 && !completedNoProgress && !probe.events.some(event => event.type === 'phase_halt' && event.halt_reason === 'no_progress_guard'),
+            'unknown object identity cannot buy an unchanged tool or a completed no-progress conclusion');
         }
-      } finally { classifier.evaluateCompletionProgress = evaluate; fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+      } catch (error) {
+        const { preserveRuntimeTestEvidence } = require('../utils/runtime-test-control') as typeof import('../utils/runtime-test-control');
+        const reports = featurePhaseReportsDir(root, 'bc-openCard', 'testing');
+        preserveRuntimeTestEvidence([root], String(error), ['R4 object coverage ' + kind],
+          [path.join(root, PRODUCT_FILE), ...['summary.json', 'script-report.json', 'phase-evidence-manifest.json'].map(name => path.join(reports, name))]);
+        throw error;
+      } finally { reader.readCurrentCheckObservation = observeCheck; classifier.evaluateCompletionProgress = evaluate; fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
     },
   })), {
   name: 'c6 verifier model consumes the complete current request with process or session transport and rejects an undelivered or wrong request',
@@ -235,7 +381,8 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
       assert.equal(summary.repair_candidates?.length ?? 0, 0);
       assert.equal(result.exitCode, 0, 'the current verified spec endpoint must complete its authorized slice');
       assert(result.events.some(event => event.type === 'run_end' && event.status === 'CHAIN_SLICE_COMPLETED'));
-      assert(result.events.some(event => event.type === 'phase_verdict' && event.phase === 'spec' && event.verdict === 'PASS' && event.action === 'advance'));
+      assert(result.events.some(event => event.type === 'harness_end' && event.phase === 'spec'
+        && typeof event.exit_code === 'number' && event.timed_out !== true), 'the actual script check ends; pending independent verification is not a tool timeout or a raw script FAIL');
       assert(!result.invokedPhases.some(phase => ['coding', 'review', 'ut', 'testing'].includes(phase)), 'the authorized spec endpoint does not expand scope');
     } finally { fs.rmSync(fixture.project.root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
   },
@@ -403,13 +550,13 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
       const summary = JSON.parse(fs.readFileSync(path.join(featurePhaseReportsDir(root, 'bc-openCard', 'spec'), 'summary.json'), 'utf8'));
       assert.equal(summary.verdict, 'PASS'); assert.equal(summary.completion_status, 'DEBT_PIPELINE_ERROR');
       assert.equal(fs.readFileSync(debtPath, 'utf8'), '{broken debt', 'the failing ledger stays available for diagnosis');
-      assert.deepEqual(probe.invokedPhases, ['spec']);
+      assert.deepEqual(probe.invokedPhases, ['work-unit-author']);
       assert(!probe.events.some(event => event.type === 'phase_halt' && event.halt_reason === 'closure_finalization_failed'));
       assert(!probe.events.some(event => event.type === 'phase_backtrack_requested'));
       const raw = probe.events.find(event => event.type === 'phase_verdict' && event.phase === 'spec');
       assert.equal(raw?.verdict, 'PASS');
       assert(probe.events.some(event => event.type === 'phase_halt' && event.halt_reason === 'executor_waiting'
-        && event.run_wait_kind === 'external' && String(event.halt_guidance).includes('责任方=framework')));
+        && event.run_wait_kind === 'external' && String(event.halt_guidance).includes('framework')));
       assert.notEqual(probe.exitCode, 0, 'framework verification cannot produce clean completion');
       const mixed = resolveCurrentDisposition({ endpoint: 'feature-completion', phases: [{ phase: 'testing', verdict: 'FAIL',
         schemaCurrent: true, closureCommitted: true, completionStatus: 'DEBT_PIPELINE_ERROR', failingChecks: [
@@ -496,46 +643,6 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
       assert(!current.completionBlocking.some(problem => problem.id === 'current_actual_blocker'
         || problem.id === 'required_check_conclusion' && problem.detail.includes('current_required_execution')));
     } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
-  },
-}, {
-  name: 'a current closure retry preserves an authorized earlier repair owner while process and authority stops still win',
-  run() {
-    const input = { assessment: { recommendation: { action: 'rerun_phase', phase: 'coding', runner_action: 'backtrack_to_phase' }, stop: { fused: false } },
-      observation: { phase_outcome: { phase: 'testing', verdict: 'PASS' }, invalidatable_phases: ['coding', 'testing'], signals: {} },
-      currentPhase: 'testing', chain: ['coding', 'testing'], driverGuardAction: 'retry' } as SelectRunnerActionInput;
-    assert.equal(selectRunnerActionFromAssess(input), 'backtrack_to_phase', 'closure retry must not erase the actual repair owner');
-    assert.equal(selectRunnerActionFromAssess({ ...input, driverGuardAction: 'halt' }), 'halt');
-    assert.equal(selectRunnerActionFromAssess({ ...input, observation: { ...input.observation,
-      signals: { timed_out: true, operator_interrupted: false, api_disconnected: false } } }), 'retry');
-    assert.equal(selectRunnerActionFromAssess({ ...input, observation: { ...input.observation, invalidatable_phases: [] } }), 'retry');
-  },
-}, {
-  name: 'framework closure gaps yield only to a verified owner pending revision while missing authority and process guards retain retry',
-  run() {
-    const f = setupRunlessProject();
-    try {
-      assert.equal(ensureFeatureExecutionScopeFrozen({ ...f, projectRoot: f.root }).status, 'frozen');
-      const pendingScopeRevision = readFeatureFrozenScope(f.root, f.feature)!.execution_scope;
-      const raw = resolvePhaseHarnessVerdict({ dryRun: false, agentExitCode: 0, agentSkipped: false, harnessExitCode: 0,
-        summaryBeforeMtime: 1, summaryAfterMtime: 2, summaryVerdict: 'PASS', receiptRequired: true,
-        closureStatus: 'open', receiptStatus: 'missing' });
-      assert.equal(raw.verdict, 'PASS'); assert(raw.advance_blocked);
-      const boundary = { assessment: { recommendation: { action: 'revise_scope', phase: null }, stop: { fused: false } },
-        observation: { phase_outcome: { phase: 'review', verdict: raw.verdict }, invalidatable_phases: ['coding', 'review'], signals: {} },
-        currentPhase: 'review', chain: ['coding', 'review'], driverGuardAction: 'retry' } as SelectRunnerActionInput;
-      assert.equal(selectRunnerActionFromAssess(boundary), 'retry', 'counterexample: an ordinary closure retry hides the pending owner revision');
-      const input = { guard: 'retry' as const, rawVerdict: raw.verdict, advanceBlocked: raw.advance_blocked,
-        frameworkVerificationGap: true, executableOwnerRecovery: true, pendingScopeRevision, recommendationAction: 'revise_scope' as const };
-      const selected = (patch: Partial<Parameters<typeof resolveFrameworkOwnerRevisionGuard>[0]>) => selectRunnerActionFromAssess({
-        ...boundary, driverGuardAction: resolveFrameworkOwnerRevisionGuard({ ...input, ...patch }) });
-      assert.equal(selected({}), 'advance', 'apply the approved revision before dispatching its actual owner; this does not sign completion');
-      for (const patch of [{ executableOwnerRecovery: false }, { pendingScopeRevision: undefined }, { frameworkVerificationGap: false },
-        { recommendationAction: 'rerun_phase' as const }, { rawVerdict: 'FAIL' }, { advanceBlocked: false },
-        { closureFinalizationError: 'transaction failed' }, { timedOut: true }, { apiDisconnected: true }]) {
-        assert.equal(selected(patch), 'retry', JSON.stringify(patch));
-      }
-      assert.equal(selected({ guard: 'halt' }), 'halt');
-    } finally { fs.rmSync(f.root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
   },
 }, {
   name: 'specific current owner and wait cause subsume the generic failed verdict without closing the problem',
@@ -656,23 +763,31 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
     const { root } = setupGoalRuntimeHost('codex');
     let observed = false;
     try {
-      const probe = await runGoalRuntimeChain(root, { freshEndPhase: 'spec', adapter: 'codex', viaRuntimeClass: true, onSpec: ctx => {
+      const probe = await runGoalRuntimeChain(root, { freshEndPhase: 'spec', adapter: 'codex', viaRuntimeClass: true, onAuthor: ctx => {
         const directory = path.dirname(ctx.outputLogPath);
         const file = fs.readdirSync(directory).find(name => /^request-e\d+\.json$/.test(name));
         assert(file, 'detached runtime must persist its common request before executing');
         const material = JSON.parse(fs.readFileSync(path.join(directory, file!), 'utf8'));
         assert.equal(material.type, 'phase_execute_request'); assert.equal(material.context.owner.kind, 'process');
-        assert.equal(material.context.instruction, fs.readFileSync(path.join(material.context.runDir, 'phases', material.context.phase, 'prompt.md'), 'utf8'));
+        assert.equal(material.context.instruction, fs.readFileSync(path.join(directory, 'prompt.md'), 'utf8'));
         assert(ctx.prompt.includes(material.context.instruction), 'CLI运输必须消费同一完整instruction');
         assert.equal(material.context.attemptId, ctx.goalAttemptId);
-        assert.equal(material.invoke_id, `spec-${ctx.goalAttemptId}`);
+        assert.equal(material.invoke_id, `${material.context.phase}-${ctx.goalAttemptId}`);
         const eventsFile = path.join(directory, '../../../events.jsonl');
         const events = fs.readFileSync(eventsFile, 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line));
         const start = events.find(event => event.type === 'agent_invoke_start' && event.invoke_id === material.invoke_id);
         assert.equal(material.issued_at, start.ts);
         assert.equal(material.deadline, material.context.user_deadline_at, 'only an explicit user deadline limits the author');
-        assert(Number.isFinite(material.gate_timeout_ms) && material.gate_timeout_ms > 0, 'the concrete formal tool timeout must remain bounded');
-        assert(!events.some(event => event.driver === 'session' || event.handoff_request));
+        assert.equal(material.gate_timeout_ms, 0, 'the author request must not inherit a phase tool deadline');
+        assert(!events.some(event => event.driver === 'session'), 'the native runtime must retain process transport');
+        assert(start.handoff_request, 'the native start must bind the same persisted common request');
+        assert.equal(path.resolve(material.context.runDir, start.handoff_request.path), path.resolve(directory, file!), 'the start must reference the actual consumed request file');
+        assert.equal(start.handoff_request.sha256, require('crypto').createHash('sha256').update(fs.readFileSync(path.join(directory, file!))).digest('hex'),
+          'the start reference must match the actual immutable request bytes');
+        const control = readRunControl(material.context.runDir, material.context.runId);
+        assert.equal(control?.owner?.kind, 'process'); assert.equal(control?.owner?.pid, process.pid);
+        assert.equal(control?.owner?.owner_id, material.context.owner.owner_id);
+        assert.equal(control?.current_epoch, material.context.owner.epoch);
         observed = true;
       } });
       assert(observed, JSON.stringify(probe.events.filter(event => event.type === 'run_end'))); assert.equal(probe.exitCode, 0);
@@ -683,160 +798,139 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
   async run() {
     const { root } = setupGoalRuntimeHost('codex');
     const reader = require('../../scripts/utils/verify-feature-completion') as typeof import('../../scripts/utils/verify-feature-completion');
-    const original = reader.resolveCompletionDisposition;
+    const original = reader.readCurrentDispositionInput;
+    const originalResolver = reader.resolveCompletionDisposition;
     const target = 'doc/features/bc-openCard/spec/spec.md';
     const evidence = 'doc/features/bc-openCard/plan/reports/confirmed-target.json';
-    const sourceSummary = path.join(featurePhaseReportsDir(root, 'bc-openCard', 'plan'), 'summary.json');
-    const summary = `confirmed spec obligation is missing its observed requirement; evidence=${evidence}`;
+    const required = 'verified terminal requirement';
+    const summary = 'confirmed spec obligation is missing its observed requirement; evidence=' + evidence;
     const candidate = { id: 'SPEC-TERMINAL', category: 'spec' as const, files: [target], summary,
       item_fingerprint: itemFingerprintOf('SPEC-TERMINAL', [target], summary), source_phase: 'plan' };
     let supplied = false, repaired = false, authorCalls = 0, prompt = '';
     try {
-      // Only the retained independent conclusion is substituted. Runtime collection, event
-      // serialization, owner resolution and prompt construction remain production.
-      reader.resolveCompletionDisposition = opts => {
-        const result = original(opts);
-        if (opts.projectRoot !== root || supplied || opts.currentResults || opts.authorityReaders || !opts.workflow || !opts.runId) return result;
-        const events = path.join(root, 'doc/features/bc-openCard/goal-runs', opts.runId, 'events.jsonl');
-        const history = fs.existsSync(events) ? fs.readFileSync(events, 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line)) : [];
-        const latest = [...history].reverse().find(event => event.phase === 'spec' && ['phase_start', 'phase_verdict'].includes(event.type));
-        if (latest?.type !== 'phase_verdict' || latest.verdict !== 'PASS' || latest.action !== 'advance') return result;
-        supplied = true;
-        fs.mkdirSync(path.dirname(sourceSummary), { recursive: true });
-        fs.writeFileSync(sourceSummary, JSON.stringify({ verdict: 'PASS', repair_candidates: [candidate] }));
-        fs.writeFileSync(path.join(root, evidence), JSON.stringify({ target, observed: fs.readFileSync(path.join(root, target), 'utf8'), required: 'verified terminal requirement' }));
-        const problem = { phase: 'plan', source_phase: 'plan', owner: 'spec', id: `open_finding:${candidate.id}`,
-          action: 'repair' as const, affects: 'completion' as const, severity: 'BLOCKER' as const, detail: candidate.summary };
-        return { ...result, problems: [...result.problems, problem], completionBlocking: [...result.completionBlocking, problem], completionEligible: false };
+      // Only the retained independent source fact is injected; dispatch, input binding and rendering are production.
+      reader.readCurrentDispositionInput = opts => {
+        const input = original(opts);
+        if (!('chain' in opts) || opts.projectRoot !== root || !opts.runId) return input;
+        const file = path.join(root, 'doc/features/bc-openCard/goal-runs', opts.runId, 'events.jsonl');
+        const history = fs.existsSync(file) ? fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line)) : [];
+        if (!history.some(event => event.type === 'harness_end' && event.phase === 'spec' && event.exit_code === 0)) return input;
+        if (!supplied) {
+          supplied = true;
+          fs.mkdirSync(path.dirname(path.join(root, evidence)), { recursive: true });
+          fs.writeFileSync(path.join(root, evidence), JSON.stringify({ target, observed: fs.readFileSync(path.join(root, target), 'utf8'), required }));
+        }
+        if (fs.readFileSync(path.join(root, target), 'utf8').includes(required)) return input;
+        return { ...input, additionalProblems: [...input.additionalProblems ?? [], { phase: 'plan', source_phase: 'plan', owner: 'spec',
+          id: 'open_finding:' + candidate.id, action: 'repair', affects: 'completion', severity: 'BLOCKER', detail: candidate.summary,
+          files: [target], evidence: [evidence], item_fingerprint: candidate.item_fingerprint }] };
       };
+      reader.resolveCompletionDisposition = opts => resolveCurrentDisposition(reader.readCurrentDispositionInput(opts));
       const probe = await runGoalRuntimeChain(root, { frameworkRoot: FRAMEWORK_SOURCE_ROOT, freshEndPhase: 'spec', adapter: 'codex', viaRuntimeClass: true,
-        onSpec: ctx => {
+        onAuthor: ctx => {
           authorCalls++;
           if (!supplied) return;
           prompt = ctx.prompt;
-          assert(prompt.includes('Verified repair candidates for this phase') && prompt.includes(candidate.id), 'production terminal collector must inject its candidate into the actual owner prompt');
-          assert(prompt.includes(target) && prompt.includes(evidence) && prompt.includes(candidate.item_fingerprint));
+          assert(prompt.includes(candidate.id) && prompt.includes(target) && prompt.includes(evidence) && prompt.includes(candidate.item_fingerprint),
+            'the actual unit author must receive the retained object and its complete original evidence');
           const finding = JSON.parse(fs.readFileSync(path.join(root, evidence), 'utf8'));
           assert.equal(finding.target, target); assert.equal(fs.readFileSync(path.join(root, target), 'utf8'), finding.observed);
-          fs.appendFileSync(path.join(root, target), `\n${finding.required}\n`);
+          fs.appendFileSync(path.join(root, target), '\n' + finding.required + '\n');
           repaired = fs.readFileSync(path.join(root, target), 'utf8').includes(finding.required);
-          fs.writeFileSync(sourceSummary, JSON.stringify({ verdict: 'PASS', repair_candidates: [] }));
         },
       });
       assert(supplied && repaired && authorCalls === 2, JSON.stringify({ supplied, repaired, authorCalls }));
-      const request = probe.events.find(event => event.type === 'phase_backtrack_requested' && event.from_phase === 'plan' && event.to_phase === 'spec');
-      assert.deepEqual(request?.candidates, [candidate], 'the production backtrack event must retain the original candidate identity, target and basis');
       assert(prompt.includes(candidate.summary));
-      assert(!probe.events.some(event => event.type === 'phase_halt' && event.halt_reason === 'backtrack_target_absent'));
-    } finally { reader.resolveCompletionDisposition = original; fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+      assert.equal(probe.exitCode, 0, 'only the actually revised artifact and current checks may close the endpoint');
+      const delivered = probe.events.filter(event => event.type === 'agent_invoke_start' && event.phase === 'work-unit-author');
+      assert.equal(delivered.length, 2, 'one real initial author and one current repair, without a phase queue');
+    } finally { reader.readCurrentDispositionInput = original; reader.resolveCompletionDisposition = originalResolver; fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
   },
 }, {
   name: 'terminal verification recovery stops unchanged inputs despite fresh closure outputs and accepts a real input change',
   async run() {
     const reader = require('../../scripts/utils/verify-feature-completion') as typeof import('../../scripts/utils/verify-feature-completion');
-    const original = reader.resolveCompletionDisposition;
-    const initial = 'export const value = 1;\n';
-    const updated = 'export const value = 2;\n';
-    const retainedDetail = 'retained verification needs the current responsibility input';
+    const original = reader.readCurrentDispositionInput;
+    const originalResolver = reader.resolveCompletionDisposition;
+    const initial = 'export const value = 1;\n', updated = 'export const value = 2;\n';
+    const retainedDetail = 'retained verification needs the current responsibility input; 原producer缺可执行request/材料；解除条件：发布真实请求或恢复相关输入后重验';
     for (const changedInput of [false, true]) {
       const { root } = setupGoalRuntimeHost('codex');
       const source = path.join(root, 'src/recovery-input.ts');
       fs.mkdirSync(path.dirname(source), { recursive: true }); fs.writeFileSync(source, initial);
       const checkedInputs: string[] = [];
-      let cachedObservation: { input: string; start: number; gateEnd: number } | undefined;
       try {
-        reader.resolveCompletionDisposition = opts => {
-          const result = original(opts);
-          if (opts.projectRoot !== root || opts.currentResults) return result;
-          const summaryPath = path.join(featurePhaseReportsDir(root, 'bc-openCard', 'spec'), 'summary.json');
-          const summary = fs.existsSync(summaryPath) ? JSON.parse(fs.readFileSync(summaryPath, 'utf8')) : null;
-          const runDir = opts.runId && path.join(root, 'doc/features/bc-openCard/goal-runs', opts.runId);
-          const eventsFile = runDir && path.join(runDir, 'events.jsonl');
-          const history: Array<{ type?: string; phase?: string; verdict?: string }> = eventsFile && fs.existsSync(eventsFile)
-            ? fs.readFileSync(eventsFile, 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line)) : [];
-          const lastPhase = [...history].reverse().find(event => event.phase === 'spec' && ['phase_start', 'phase_verdict'].includes(event.type ?? ''));
-          const currentInput = fs.readFileSync(source, 'utf8');
-          if (summary?.closure_status !== 'closed' || lastPhase?.type !== 'phase_verdict'
-            || lastPhase.verdict !== 'PASS' || currentInput !== initial) return result;
-          assert(!summary.verifier_request, 'this retained-claim variant deliberately has no executable current request');
-          const startAt = history.map(event => event.type === 'phase_start' && event.phase === 'spec').lastIndexOf(true);
-          const gateEndAt = history.map(event => event.type === 'harness_end' && event.phase === 'spec').lastIndexOf(true);
-          const callAt = history.map(event => event.type === 'run_start').lastIndexOf(true);
-          const firstPhaseAt = history.findIndex((event, index) => index > callAt && event.type === 'phase_start' && event.phase === 'spec');
-          const terminalRecovery = firstPhaseAt >= 0 && startAt > firstPhaseAt && startAt > gateEndAt;
-          // Observation-only regression trap: a later replay of the SAME already-observed bound
-          // result, with no new input/request/gate, is a loop. Throwing fails the test; it never
-          // supplies WAITING/completed or a production retry/count/time allowance.
-          if (terminalRecovery && cachedObservation && cachedObservation.input === currentInput && cachedObservation.gateEnd === gateEndAt
-            && startAt > cachedObservation.start) assert.fail('the same retained claim rescheduled an already-observed bound result without a new input, request or verification');
-          if (terminalRecovery && gateEndAt >= 0) cachedObservation = { input: currentInput, start: startAt, gateEnd: gateEndAt };
-          const problem = { phase: 'spec', id: 'lineage_fresh', action: 'verify' as const, affects: 'completion' as const,
-            severity: 'BLOCKER' as const, owner: 'spec', detail: retainedDetail };
-          return { ...result, problems: [...result.problems, problem], completionBlocking: [...result.completionBlocking, problem], completionEligible: false };
+        reader.readCurrentDispositionInput = opts => {
+          const input = original(opts);
+          if (!('chain' in opts) || opts.projectRoot !== root || !opts.runId) return input;
+          const eventsFile = path.join(root, 'doc/features/bc-openCard/goal-runs', opts.runId, 'events.jsonl');
+          const history = fs.existsSync(eventsFile) ? fs.readFileSync(eventsFile, 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line)) : [];
+          if (!history.some(event => event.type === 'harness_end' && event.phase === 'spec') || fs.readFileSync(source, 'utf8') !== initial) return input;
+          const summary = JSON.parse(fs.readFileSync(path.join(featurePhaseReportsDir(root, 'bc-openCard', 'spec'), 'summary.json'), 'utf8'));
+          assert(!summary.verifier_request, 'retained claim has no executable current independent request');
+          return { ...input, additionalProblems: [...input.additionalProblems ?? [], { phase: 'spec', id: 'lineage_fresh', action: 'verify',
+            affects: 'completion', severity: 'BLOCKER', owner: 'spec', detail: retainedDetail }] };
         };
+        reader.resolveCompletionDisposition = opts => resolveCurrentDisposition(reader.readCurrentDispositionInput(opts));
         const options: NonNullable<Parameters<typeof runGoalRuntimeChain>[1]> = {
           frameworkRoot: FRAMEWORK_SOURCE_ROOT, freshEndPhase: 'spec', adapter: 'codex', viaRuntimeClass: true,
           onHarnessSummary: ({ phase }) => {
             if (phase !== 'spec') return null;
             const input = fs.readFileSync(source, 'utf8'); checkedInputs.push(input);
             return { checks: [{ id: 'spec_file_exists', category: 'structure', description: 'executed responsibility input',
-              status: 'PASS', severity: 'BLOCKER', details: 'actual input read: ' + input, affected_files: ['src/recovery-input.ts'] }] };
+              status: 'PASS', severity: 'BLOCKER', details: 'actual input read: ' + input,
+              structured: { source_attempt_dependencies: [{ path: 'src/recovery-input.ts', exists: true,
+                sha256: require('crypto').createHash('sha256').update(input).digest('hex'), role: 'artifact' }] } }] };
           },
-          onOutOfChain: () => { assert.fail('a retained claim without a real signed request must not manufacture an independent invocation'); },
+          onOutOfChain: () => { assert.fail('a retained claim without a signed request cannot manufacture an independent invocation'); },
         };
         const first = await runGoalRuntimeChain(root, options);
         const gap = first.events.find(event => event.type === 'phase_halt' && event.halt_reason === 'executor_waiting'
-          && event.run_disposition === 'WAITING' && String(event.halt_guidance).includes('产品未知'));
+          && event.run_disposition === 'WAITING' && String(event.halt_guidance).includes(retainedDetail));
         assert(gap, JSON.stringify(first.events.slice(-6)));
-        const guidance = String(gap.halt_guidance);
-        assert(guidance.includes(retainedDetail) && guidance.includes('解除条件') && /request|可执行请求/.test(guidance),
-          'the original publisher/framework gap must name the retained claim and a concrete resumable release condition');
-        assert(!first.events.some(event => event.type === 'run_end' && ['COMPLETED', 'CHAIN_SLICE_COMPLETED'].includes(String(event.status))),
-          'a missing executable verification request cannot become a completed product');
-        assert(!first.events.some(event => event.type === 'phase_halt' && /budget|no_progress/.test(String(event.halt_reason))),
-          'an unknown verification claim is neither budget exhaustion nor a completed product no-progress evaluation');
-        const initialAuthors = first.events.filter(event => event.type === 'agent_invoke_start' && event.phase === 'spec').length;
+        assert(String(gap.halt_guidance).includes('解除条件') && String(gap.halt_guidance).includes('request'));
+        assert(!first.events.some(event => event.type === 'run_end' && ['COMPLETED', 'CHAIN_SLICE_COMPLETED'].includes(String(event.status))));
+        assert(!first.events.some(event => event.type === 'phase_halt' && /budget|no_progress/.test(String(event.halt_reason))), 'unknown is not completed no-progress');
+        const initialAuthors = first.events.filter(event => event.type === 'agent_invoke_start' && event.phase === 'work-unit-author').length;
         const initialGates = first.events.filter(event => event.type === 'harness_start' && event.phase === 'spec').length;
-        assert.equal(initialAuthors, 1, 'verification must retain the genuine completed main invocation');
-        assert.equal(initialGates, 1, 'the first recovery may observe the original bound result; it must not rerun an unchanged gate');
-        assert.deepStrictEqual(checkedInputs, [initial]);
-        // The real business input changes BETWEEN public calls. A cached checker callback and
-        // a pure reader never author the input or clear the claim because a counter advanced.
+        assert.equal(initialAuthors, 1); assert.equal(initialGates, 1); assert.deepEqual(checkedInputs, [initial]);
         if (changedInput) fs.writeFileSync(source, updated);
-        cachedObservation = undefined;
-        const resumeGuard = require('../../scripts/utils/goal-runner-phase') as typeof import('../../scripts/utils/goal-runner-phase');
-        const originalGuard = resumeGuard.checkTerminalResumeGuard;
-        let next: Awaited<ReturnType<typeof runGoalRuntimeChain>>;
-        try {
-          // Keep the production resume decision and explicit continuation; isolate its old cooldown
-          // as in the existing waiting tests instead of sleeping or changing the original events.
-          resumeGuard.checkTerminalResumeGuard = input => originalGuard({ ...input, cooldownMinutes: 0 });
-          next = await runGoalRuntimeChain(root, { ...options, resume: path.basename(first.reportDir), noAutoForce: true, forceResume: true });
-        } finally { resumeGuard.checkTerminalResumeGuard = originalGuard; }
-        assert.equal(next.reportDir, first.reportDir, 'continue the same original work');
-        assert.equal(next.events.filter(event => event.type === 'agent_invoke_start' && event.phase === 'spec').length, initialAuthors,
-          'changed verification inputs permit a fresh gate, not a new author');
+        const next = await runGoalRuntimeChain(root, { ...options, resume: path.basename(first.reportDir), noAutoForce: true });
+        assert.equal(next.reportDir, first.reportDir, 'restore the same real original unit');
+        assert.equal(next.events.filter(event => event.type === 'agent_invoke_start' && event.phase === 'work-unit-author').length, initialAuthors,
+          'changed checker input buys only that checker, never another author');
         const newEvents = next.events.slice(first.events.length);
-        assert(!newEvents.some(event => event.type === 'run_end' && event.status === 'INTERRUPTED'), 'this public continuation must naturally return, not escape through the observation trap');
+        assert(!newEvents.some(event => event.type === 'run_end' && event.status === 'INTERRUPTED'));
         if (changedInput) {
-          assert(newEvents.some(event => event.type === 'harness_start' && event.phase === 'spec'), 'the real input change must invalidate old gate reuse');
-          assert(checkedInputs.slice(initialGates).includes(updated), 'the actual gate must read v2 and produce its normal report/manifest');
+          assert(newEvents.some(event => event.type === 'harness_start' && event.phase === 'spec'));
+          assert(checkedInputs.slice(initialGates).includes(updated), 'the actual producer must read and bind the changed input');
           assert.equal(next.exitCode, 0);
-          assert(newEvents.some(event => event.type === 'run_end' && ['COMPLETED', 'CHAIN_SLICE_COMPLETED'].includes(String(event.status))));
         } else {
-          assert(!newEvents.some(event => event.type === 'harness_start' && event.phase === 'spec'), 'no new input or evidence must not pull the gate again');
-          assert.deepStrictEqual(checkedInputs, [initial]);
-          assert(!newEvents.some(event => event.type === 'run_end' && ['COMPLETED', 'CHAIN_SLICE_COMPLETED'].includes(String(event.status))));
-          assert(newEvents.some(event => event.type === 'phase_halt' && event.halt_reason === 'executor_waiting'
-            && String(event.halt_guidance).includes(retainedDetail)), 'unchanged input retains the concrete original publisher gap');
-          assert(newEvents.some(event => event.type === 'run_end' && event.status === 'HALTED' && event.run_disposition === 'WAITING'),
-            'unchanged continuation must naturally end in the current recoverable wait');
+          assert(!newEvents.some(event => event.type === 'harness_start' && event.phase === 'spec'));
+          assert.deepEqual(checkedInputs, [initial]);
+          const disposition = reader.resolveCompletionDisposition({ projectRoot: root, frameworkRoot: FRAMEWORK_SOURCE_ROOT,
+            feature: 'bc-openCard', runId: path.basename(first.reportDir), chain: ['spec'] });
+          assert(!disposition.completionEligible && disposition.completionBlocking.some(problem => problem.detail.includes(retainedDetail)),
+            'unchanged public recovery keeps the concrete original unknown without new events or calls');
         }
-      } finally {
-        reader.resolveCompletionDisposition = original;
-        fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache();
-      }
+      } finally { reader.readCurrentDispositionInput = original; reader.resolveCompletionDisposition = originalResolver; fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
     }
+  },
+}, {
+  name: 'P3 unreadable shared input preserves an actual current product defect and keeps completion unknown',
+  run() {
+    const input = { projectRoot: os.tmpdir(), feature: 'partial-facts', chain: ['coding'], endpoint: 'request' as const,
+      currentResults: [{ phase: 'coding', summary: { verdict: 'FAIL' }, checks: [{ id: 'actual_native_defect', severity: 'BLOCKER', status: 'FAIL',
+        details: '真实已执行编译仍报TS2322', affected_files: ['src/value.ts'], failure_kind: 'code_regression' }] }] };
+    Object.defineProperty(input, 'executionScope', { enumerable: true, get() { throw new Error('fixture current scope original unreadable'); } });
+    const mixed = resolveCompletionDisposition(input);
+    assert(!mixed.completionEligible);
+    assert(mixed.completionBlocking.some(problem => problem.id === 'actual_native_defect' && problem.action === 'repair'));
+    assert(mixed.completionBlocking.some(problem => problem.action === 'verify' && problem.detail.includes('fixture current scope original unreadable')));
+    const missingInput = { projectRoot: input.projectRoot, feature: input.feature, chain: input.chain, endpoint: input.endpoint };
+    Object.defineProperty(missingInput, 'executionScope', { enumerable: true, get() { throw new Error('fixture current scope original unreadable'); } });
+    const missing = resolveCompletionDisposition(missingInput);
+    assert(!missing.completionEligible && !missing.completionBlocking.some(problem => problem.action === 'repair'), 'missing originals cannot invent a product defect');
   },
 }, {
   name: 'PreparedRequest uses common current disposition without Feature materials and keeps original strict failure policy',

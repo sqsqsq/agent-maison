@@ -38,7 +38,7 @@
 import type { WorkflowSpec } from '../../workflow-loader';
 import type { EvidenceLevel, EvidencePolicy, FeatureTrack, RuntimeMode } from './runtime-policy';
 import { isCheckNotApplicable } from './types';
-import { isBlockingCheck, isRequiredCheckGap } from './check-disposition';
+import { isBlockingCheck, isRequiredCheckGap, resolveCurrentDisposition, renderCurrentDisposition, type CurrentDispositionPhaseFact } from './check-disposition';
 
 export type VerifierPlanMode = 'disabled' | 'enabled';
 
@@ -203,6 +203,7 @@ export interface CanProduceVerifierRequestInput {
   reportValidity: 'PASS' | 'FAIL' | 'UNVERIFIED';
   /** deriveSummaryVerdictLattice 的 has_blocked 投影（capability 输入未解析）。 */
   hasBlockedCapability: boolean;
+  currentAxes?: CurrentDispositionPhaseFact['axes'];
   /** Stage-authored proposals with concrete current readable evidence, resolved by the shared issue reader. */
   upstreamDiagnosis?: { rows: readonly unknown[] } | null;
   /**
@@ -234,31 +235,7 @@ const NOT_ALLOWED = (reason: string): VerifierRequestEligibility => ({
   diagnosticCheckIds: [],
 });
 
-/** 归因口径：结构化 failure_kind 优先，缺失才用调用方注入的 details 回退解析器。 */
-function classificationOf(
-  check: VerifierEligibilityCheck,
-  parse?: (details: string) => string | undefined,
-): string | undefined {
-  return check.failure_kind ?? (check.details ? parse?.(check.details) : undefined);
-}
-
-/**
- * D1 资格判定。**顺序即优先级**，调用方不得插队或另判：
- *   plan 非 enabled > 脚本 PASS（原路径） > 可读测试强度事实/实际问题诊断 > capability blocked > 其它可诊断失败 > 不生产。
- *
- * 表（plan 3a7f9c12 §D1）：
- * | verifier disabled                                            | 否 |
- * | enabled ∧ 脚本 PASS                                          | 是（原成功路径，资格不变） |
- * | review 脚本 FAIL ∧ report_validity=PASS ∧ BLOCKER FAIL 全为   | 是（诊断负面产品） |
- * |   negative_verdict_closure/conditional_pass_closure ∧ 无      |    |
- * |   未标注不适用的 BLOCKER SKIP ∧ 无 blocked capability        |    |
- * | ut 脚本 FAIL ∧ ut 编译 PASS ∧ ut 运行 FAIL 且归因            | 是（核对测试语义） |
- * |   code_regression ∧ 无其它 BLOCKER FAIL ∧ 无未标注不适用的   |    |
- * |   BLOCKER SKIP ∧ 无 blocked ∧ report_validity ≠ FAIL         |    |
- * 已确认不适用（structured.applicability=not_applicable）的 SKIP 不是"门禁没跑完"，不挡诊断；
- * 标注只豁免 SKIP，不改变 BLOCKER FAIL 的判定。
- * | 其它 FAIL/INCOMPLETE、缺源码、坏格式、编译/设备/工具失败      | 否（保留先修输入/环境的出路） |
- */
+/** Independent diagnosis consumes actual current objects and the common repair disposition, never a phase whitelist. */
 export function canProduceVerifierRequest(
   input: CanProduceVerifierRequestInput,
 ): VerifierRequestEligibility {
@@ -275,93 +252,17 @@ export function canProduceVerifierRequest(
     allowed: true, kind: 'repair_diagnosis', diagnosticCheckIds: testStrength.map(check => check.id),
     reason: '已有实际测试对象与原文本对比事实：独立核验断言强度，不按作者phase禁写。其它FAIL、未执行及环境/设备/编译缺口保留，不能由此签完成。',
   };
-  if (input.scriptVerdict !== 'FAIL') {
-    return NOT_ALLOWED(`脚本 verdict=${input.scriptVerdict}：只有 FAIL 才可能进入诊断窄例外。`);
-  }
-  // Diagnosis consumes current evidence, not completion: original FAIL, blocked inputs and unexecuted checks remain intact.
-  if ((input.phase === 'coding' || input.phase === 'ut') && input.reportValidity !== 'FAIL'
-    && input.upstreamDiagnosis?.rows.length) {
+  const current = resolveCurrentDisposition({ endpoint: 'request', phases: [{ phase: input.phase, summaryPresent: false,
+    verdict: input.scriptVerdict, schemaCurrent: true, closureCommitted: true, checks: input.checks,
+    failingChecks: input.checks.filter(check => check.status === 'FAIL'), axes: input.currentAxes }] });
+  const readableObjects = input.checks.some(check => check.status !== 'SKIP' && !!check.details?.trim()
+    && !!check.affected_files?.length && check.affected_files.every(file => typeof file === 'string' && file.trim()));
+  if (current.completionBlocking.some(problem => problem.action === 'repair') && readableObjects || input.upstreamDiagnosis?.rows.length) {
     return { allowed: true, kind: 'repair_diagnosis',
-      reason: `${input.phase} 已提交有当前可读证据的上游问题：逐条核实事实与责任；原 FAIL、blocked 与未执行检查不变。`,
-      diagnosticCheckIds: input.checks.filter(check => isBlockingCheck(check) || check.status === 'SKIP').map(check => check.id) };
+      reason: '当前有可独立核验的真实修复事实或有据问题；原FAIL、未执行与环境缺口全部保留，独核不签授权或工具通过。\n' + renderCurrentDisposition(current),
+      diagnosticCheckIds: [...new Set(current.completionBlocking.filter(problem => problem.action === 'repair').map(problem => problem.id))] };
   }
-  // capability 输入未解析 = 材料/环境未就绪，先补输入，不叫 verifier 看半份材料。
-  if (input.hasBlockedCapability) {
-    return NOT_ALLOWED('存在 blocked capability（输入未解析）：先补齐输入，不进入失败诊断。');
-  }
-
-  const blockerFails = input.checks.filter(c => isBlockingCheck(c));
-  const blockerSkips = input.checks.filter(
-    c => c.status === 'SKIP' && c.severity === 'BLOCKER' && !isCheckNotApplicable(c),
-  );
-  if (blockerSkips.length > 0) {
-    return NOT_ALLOWED(
-      `存在 BLOCKER SKIP（${blockerSkips.map(c => c.id).join('、')}）：门禁未跑完，不进入失败诊断。`,
-    );
-  }
-  if (blockerFails.length === 0) {
-    return NOT_ALLOWED('脚本 FAIL 但无 BLOCKER FAIL：非本 plan 已复现的两类失败，保持原分流。');
-  }
-
-  if (input.phase === 'review') {
-    // 报告工件本身坏了（结构/引用/结论一致性 FAIL）→ 先修报告，不请 verifier 审一份坏报告。
-    if (input.reportValidity !== 'PASS') {
-      return NOT_ALLOWED(`review report_validity=${input.reportValidity}：先修报告工件，不进入失败诊断。`);
-    }
-    const off = blockerFails.filter(c => !REVIEW_NEGATIVE_CLOSURE_CHECK_IDS.has(c.id));
-    if (off.length > 0) {
-      return NOT_ALLOWED(
-        `除负面裁决外还有 BLOCKER FAIL（${off.map(c => c.id).join('、')}）：混合失败不放行，先修其余项。`,
-      );
-    }
-    return {
-      allowed: true,
-      kind: 'repair_diagnosis',
-      reason:
-        'review 产品负面裁决（结论=不通过 / 有条件通过且 MAJOR 未闭环）且报告工件合法：' +
-        '放行 verifier 逐条核对，产品 verdict/closure 不变。',
-      diagnosticCheckIds: blockerFails.map(c => c.id),
-    };
-  }
-
-  if (input.phase === 'ut') {
-    // 纯 UT 可能未执行报告格式检查而合法为 UNVERIFIED——只挡 FAIL，不机械要求 PASS。
-    if (input.reportValidity === 'FAIL') {
-      return NOT_ALLOWED('ut report_validity=FAIL：先修报告工件，不进入失败诊断。');
-    }
-    const compile = input.checks.filter(c => UT_COMPILE_CHECK_IDS.has(c.id));
-    if (compile.length === 0 || !compile.every(c => c.status === 'PASS')) {
-      return NOT_ALLOWED('UT 编译门禁未 PASS（或缺席）：编译失败先修编译，不当成测试语义问题。');
-    }
-    const runFails = blockerFails.filter(c => UT_RUN_CHECK_IDS.has(c.id));
-    const off = blockerFails.filter(c => !UT_RUN_CHECK_IDS.has(c.id));
-    if (off.length > 0) {
-      return NOT_ALLOWED(
-        `除 UT 执行外还有 BLOCKER FAIL（${off.map(c => c.id).join('、')}）：UT 结构/材料坏时先修 UT 自身。`,
-      );
-    }
-    if (runFails.length === 0) {
-      return NOT_ALLOWED('无 UT 执行门禁 FAIL：不是已复现的真实断言失败形态。');
-    }
-    // 归因必须**每一条**都是 code_regression：混合环境/工具链失败不得冒充产品缺陷。
-    const kinds = runFails.map(c => classificationOf(c, input.parseClassificationFromDetails));
-    if (!kinds.every(k => k === 'code_regression')) {
-      return NOT_ALLOWED(
-        `UT 执行失败归因为 ${kinds.map(k => k ?? 'unknown').join('、')}：` +
-          '只有真实断言失败（code_regression）才进入测试语义诊断，环境/工具链失败先修环境。',
-      );
-    }
-    return {
-      allowed: true,
-      kind: 'repair_diagnosis',
-      reason:
-        'UT 编译通过、真实用例断言失败（code_regression）且无其它结构阻塞：' +
-        '放行 verifier 核对测试语义，产品执行 FAIL 保持不变。',
-      diagnosticCheckIds: runFails.map(c => c.id),
-    };
-  }
-
-  return NOT_ALLOWED(`phase=${input.phase} 无已复现的可诊断失败形态：保持原分流（先修 BLOCKER）。`);
+  return NOT_ALLOWED('当前只有输入/执行条件或未完成证据缺口；先恢复原producer，不购买无对象的独立核验。\n' + renderCurrentDisposition(current));
 }
 
 // ---------------------------------------------------------------------------

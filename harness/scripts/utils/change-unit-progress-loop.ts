@@ -78,7 +78,6 @@ export interface ChangeUnitProgressLoopOptions {
   inspectActiveRuns?: (projectRoot: string, units: ChangeUnitArtifact[]) => ChangeUnitRunsInspection;
   caller: ChangeUnitGoalCaller;
   buildHandoff?: (projectRoot: string, unit: ChangeUnitArtifact) => ChangeUnitGoalHandoff;
-  maxUnits?: number;
 }
 
 export function inspectActiveChangeUnitRuns(
@@ -166,6 +165,7 @@ export function buildChangeUnitGoalRequest(projectRoot: string, unit: ChangeUnit
   };
 }
 
+/** One mechanical step; the original-request kernel keeps monitoring and selects the next unit. */
 export async function runChangeUnitProgression(
   projectRoot: string,
   blueprintId: string,
@@ -176,36 +176,33 @@ export async function runChangeUnitProgression(
     const readySet = deriveChangeUnitReadySet(projectRoot, blueprintId, options.ready);
     return { action: 'blocked', reasons: providerBoundary.blockers, readySet };
   }
-  const maxUnits = options.maxUnits ?? Number.MAX_SAFE_INTEGER;
-  let invoked = 0;
-  while (true) {
-    const readySet = deriveChangeUnitReadySet(projectRoot, blueprintId, options.ready);
-    const units = readySet.units.map(item => item.changeUnit);
-    const inspection = (options.inspectActiveRuns ?? inspectActiveChangeUnitRuns)(projectRoot, units);
-    const decision = deriveChangeUnitProgressionDecision(readySet, inspection);
-    if (decision.action !== 'select_one' || !decision.selected || invoked >= maxUnits) return decision;
-    const result = await options.caller((options.buildHandoff ?? buildChangeUnitGoalHandoff)(projectRoot, decision.selected));
-    invoked++;
-    if (result.status !== 'completed') {
-      return {
-        action: result.status === 'paused' || result.status === 'awaiting_human' ? 'resume_active' : 'blocked',
-        activeRun: result.runId ? { featureId: deriveChangeUnitFeatureId(decision.selected.blueprint_id, decision.selected.change_unit_id), runId: result.runId } : undefined,
-        reasons: [result.reason ?? `Goal Mode returned ${result.status}; no second CU was started.`],
-        readySet: deriveChangeUnitReadySet(projectRoot, blueprintId, options.ready),
-      };
-    }
-    const refreshed = deriveChangeUnitReadySet(projectRoot, blueprintId, options.ready);
-    const selectedAfterCall = refreshed.units.find(item => (
-      item.changeUnit.change_unit_id === decision.selected!.change_unit_id
-    ));
-    if (selectedAfterCall?.completion.state !== 'VALID') {
-      return {
-        action: 'blocked',
-        reasons: [
-          `change_unit_no_progress_after_completed:${decision.selected.change_unit_id}:completion=${selectedAfterCall?.completion.state ?? 'MISSING'}`,
-        ],
-        readySet: refreshed,
-      };
-    }
+  const readySet = deriveChangeUnitReadySet(projectRoot, blueprintId, options.ready);
+  const units = readySet.units.map(item => item.changeUnit);
+  const inspection = (options.inspectActiveRuns ?? inspectActiveChangeUnitRuns)(projectRoot, units);
+  const decision = deriveChangeUnitProgressionDecision(readySet, inspection);
+  if (decision.action !== 'select_one' || !decision.selected) return decision;
+  const result = await options.caller((options.buildHandoff ?? buildChangeUnitGoalHandoff)(projectRoot, decision.selected));
+  if (result.status !== 'completed') {
+    return {
+      action: result.status === 'paused' || result.status === 'awaiting_human' ? 'resume_active' : 'blocked',
+      activeRun: result.runId ? { featureId: deriveChangeUnitFeatureId(decision.selected.blueprint_id, decision.selected.change_unit_id), runId: result.runId } : undefined,
+      reasons: [result.reason ?? `Goal Mode returned ${result.status}; no second CU was started.`],
+      readySet: deriveChangeUnitReadySet(projectRoot, blueprintId, options.ready),
+    };
   }
+  const refreshed = deriveChangeUnitReadySet(projectRoot, blueprintId, options.ready);
+  const selectedAfterCall = refreshed.units.find(item => (
+    item.changeUnit.change_unit_id === decision.selected!.change_unit_id
+  ));
+  if (selectedAfterCall?.completion.state !== 'VALID') {
+    return {
+      action: 'blocked',
+      reasons: [
+        `change_unit_no_progress_after_completed:${decision.selected.change_unit_id}:completion=${selectedAfterCall?.completion.state ?? 'MISSING'}`,
+      ],
+      readySet: refreshed,
+    };
+  }
+  return deriveChangeUnitProgressionDecision(refreshed,
+    (options.inspectActiveRuns ?? inspectActiveChangeUnitRuns)(projectRoot, refreshed.units.map(item => item.changeUnit)));
 }

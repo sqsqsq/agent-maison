@@ -97,15 +97,14 @@ export function runAll(): UnitCaseResult[] {
       const out = runDriver('device_park', 'recovery-park', host);
       const detail = JSON.stringify({ ...out, eventTypes: undefined });
       assert(out.error === null, `park 不应抛异常：${detail}`);
-      assert(out.exitCode === 2, `PARTIAL 停放应 exit 2：${detail}`);
+      assert(out.exitCode === 1 && out.runEndStatus === 'HALTED', `实际设备条件未就绪应自然等待：${detail}`);
       assert(
-        ['spec', 'plan', 'coding', 'review', 'ut', 'testing']
-          .every(p => out.phaseStartsThisCall.includes(p)),
-        `六个 phase 都应 start（前四真跑、后二被设备门拦在 agent 前）：${detail}`,
+        ['spec', 'plan', 'coding', 'review'].every(p => out.checkFamiliesThisCall.includes(p))
+          && !out.checkFamiliesThisCall.some(p => p === 'ut' || p === 'testing'),
+        `前四实际检查通过，设备检查在真实设备门之前停放：${detail}`,
       );
-      assert(out.agentCalls === 4, `设备阶段零 agent 调用（共 4 次=前四阶段）：${detail}`);
-      assert(out.eventTypes.filter(t => t === 'phase_halt').length === 2,
-        `ut/testing 各一次设备 halt：${detail}`);
+      assert(out.authorCallsThisCall === 1, `同单元作者只执行一次；设备检查不另开作者：${detail}`);
+      assert(out.phaseHalts.some(event => event.halt_reason === 'device_not_ready'), `具体设备条件必须保留：${detail}`);
       runId = out.runId;
       assert(runId !== null, `须拿到 runId 供 resume：${detail}`);
     });
@@ -119,13 +118,9 @@ export function runAll(): UnitCaseResult[] {
       // ---- 目标断言（2026-08-06 垂直闭环落地后由棘轮翻转而来；fa0663 的解）----
       // 无 HMAC resume 零拦截（不求 ack、不 throw）；最早未完成的 WAITING(external)
       // phase（ut）真正重新执行；设备仍锁 → 如实再停放 PARTIAL。
-      assert(out.error === null && out.exitCode === 2,
-        `resume 应零拦截并如实再停放（PARTIAL exit 2）：${detail}`);
-      assert(out.runEndReason === null && out.runEndError === null,
-        `run_end 应是正常 PARTIAL（非 uncaught_exception）：${detail}`);
-      assert(out.phaseStartsThisCall.includes('ut'),
-        `**T4#3 判据核心**：最早未完成的 WAITING(external) phase 必须真正重新执行`
-        + `（start_index 收口形态在此必挂）：${detail}`);
+      assert(out.error === null && out.exitCode !== 0 && out.runEndStatus === 'HALTED',
+        `未变设备条件接续应自然等待：${detail}`);
+      assert(!out.checkFamiliesThisCall.length, `未变接续不得重跑已完成检查或未就绪真机：${detail}`);
       assert(out.agentCalls === 0, `设备阶段不烧 agent 轮次：${detail}`);
       // T2 5a 完成刀后：签名维度已删，checkpoint 内容一致即 ok——"未认证基线"概念
       // 消失，resume 不再产生任何信任类观察事件（旧断言要求 checkpoint_absent 事件
@@ -141,9 +136,9 @@ export function runAll(): UnitCaseResult[] {
       const detail = JSON.stringify({ ...out, eventTypes: undefined });
       assert(out.error === null && out.exitCode === 0,
         `设备 READY 后 run 应完整收官（exit 0）：${detail}`);
-      assert(out.phaseStartsThisCall.includes('ut') && out.phaseStartsThisCall.includes('testing'),
+      assert(out.checkFamiliesThisCall.includes('ut') && out.checkFamiliesThisCall.includes('testing'),
         `ut/testing 应真正执行：${detail}`);
-      assert(out.agentCalls === 2, `ut/testing 各一次 agent（桩）：${detail}`);
+      assert(out.authorCallsThisCall === 0, `设备条件恢复只补原UT/testing检查，不重买作者：${detail}`);
       // 修 1 的行为面：恢复成功后旧 WAITING 不得残留在报告投影里（PASS 清 halt——
       // enrichOutcomesWithProjection 的有序覆盖语义）
       const reportPath = path.join(host, 'doc', 'features', 'recovery-park', 'goal-runs',

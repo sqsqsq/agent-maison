@@ -644,9 +644,9 @@ export function resolveSuccessorExecutionScope(
         : `[execution-scope] feature 范围仍由 feature 载体持有（未转交任何 run），没有 run 可 supersede——完成后修正请先按当前输入追加 feature 范围修订，再起新 run（不带 --supersede）`);
     }
   }
-  const previous = loadEffectiveExecutionScope(projectRoot, feature, sourceRunId);
-  if (!previous) throw new Error(`[execution-scope] 源 run ${sourceRunId} 没有可读的有效执行范围，无法继承请求输入——请用 --prepare-scope 生成候选后起新 run`);
   const root = frameworkRoot ?? inferRepoLayout(projectRoot).frameworkRoot;
+  const previous = loadEffectiveExecutionScope(projectRoot, feature, sourceRunId, root);
+  if (!previous) throw new Error(`[execution-scope] 源 run ${sourceRunId} 没有可读的有效执行范围，无法继承请求输入——请用 --prepare-scope 生成候选后起新 run`);
   const impact = previous.request_impact;
   const basisPaths = [...new Set((impact?.basis ?? []).flatMap(binding => binding.source_refs ?? []))];
   // A temporary chain omits blocked owners, not the delivery obligations they still owe.

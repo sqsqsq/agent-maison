@@ -657,7 +657,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         'resolveFinalModelPin 须以 manifestAdapterBeforeCliOverrides 作 originalAdapter',
       );
       // dry-run 在 plan 输出回显 pin
-      assert(/\[dry-run\] \$\{phase\} plan/.test(src), 'dry-run 应回显 phase plan');
+      assert(src.includes('[dry-run] work unit ${manifest.feature} checks=${familiesNow().join'), 'dry-run 应回显当前单元与检查族');
       assert(/adapter_model_pin=\$\{manifest\.adapter_model_pin\.adapter\}/.test(src), 'dry-run 应回显 adapter_model_pin');
     },
   },

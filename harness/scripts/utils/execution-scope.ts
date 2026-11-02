@@ -349,8 +349,11 @@ export function resolveExecutionScope(input: ExecutionScopeInput, workflow: Work
   for (const { kind, provider } of DERIVED_EVIDENCE_KINDS) {
     if (!inPlay(provider)) continue;
     const derivation = derivations.get(kind)!;
-    const existing = input.facts.filter(fact => fact.kind === kind);
+    const existing = input.facts.filter(fact => fact.kind === kind && !workflow.artifacts.some(artifact =>
+      artifact.obligation_provider_id === provider && request.requested_phases.includes(artifact.id)
+      && fact.id === `${kind}:request:${artifact.id}`));
     if (existing.length) {
+      // Request markers express user duties; they cannot replace the derived source fact.
       // Override every candidate fact of this kind — not just the same-id one. Original basis is
       // kept (it may carry real sources), except the acceptance binding that this derivation owns:
       // a spec revision must replace that generation rather than retain old+new acceptance truth.
@@ -367,7 +370,9 @@ export function resolveExecutionScope(input: ExecutionScopeInput, workflow: Work
     const hasRealSource = kind === 'visual-evidence' ? resolved !== undefined : acceptance !== undefined;
     const phaseRequested = workflow.artifacts.some(a => a.obligation_provider_id === provider && request.requested_phases.includes(a.id));
     if (hasRealSource) {
-      input.facts.push({ id: `${kind}:${derivation.source}`, kind, applicability: derivation.applicability, reason: derivation.reason, basis: [...derivation.basis] });
+      const fact = { id: `${kind}:${derivation.source}`, kind, applicability: derivation.applicability, reason: derivation.reason, basis: [...derivation.basis] };
+      const markerAt = input.facts.findIndex(item => item.kind === kind);
+      if (markerAt < 0) input.facts.push(fact); else input.facts.splice(markerAt, 0, fact);
     } else if (request.completion_target === 'feature' && kind !== 'visual-evidence' && !phaseRequested) {
       input.facts.push({ id: `${kind}:pending`, kind, applicability: 'unknown', reason: '验证责任尚缺验收或影响依据', basis: [] });
     }
@@ -408,15 +413,15 @@ export function resolveExecutionScope(input: ExecutionScopeInput, workflow: Work
     if (!kinds) fail(`phase ${artifact.id} 缺少已注册义务 provider`);
     const applicableFacts = input.facts.filter(fact => kinds.includes(fact.kind));
     for (const fact of applicableFacts) obligations.push({ ...structuredClone(fact), owner_phase: artifact.id });
-    if (request.requested_phases.includes(artifact.id) && !applicableFacts.some(f => f.applicability === 'required')) {
+    if (request.requested_phases.includes(artifact.id)) {
       const id = `${kinds[0]}:request:${artifact.id}`;
       // A request marker states what the USER asked for; it is not a candidate observation. When a
       // revision carries one forward it arrives as a fact of an evidence kind and the derivation
-      // above rewrites it — re-assert it here instead of pushing a second obligation with the same
-      // id (which `validateExecutionScope` rejects outright). At birth this branch simply creates it.
+      // above must not rewrite it. Re-assert a carried marker independently of derived facts;
+      // create one only when the request has no other required duty of this provider.
       const carried = obligations.find(o => o.id === id && o.owner_phase === artifact.id);
       if (carried) Object.assign(carried, { applicability: 'required', reason: `用户明确请求 ${artifact.id}` });
-      else obligations.push({ id, kind: kinds[0], owner_phase: artifact.id, applicability: 'required', reason: `用户明确请求 ${artifact.id}`, basis: [] });
+      else if (!applicableFacts.some(f => f.applicability === 'required')) obligations.push({ id, kind: kinds[0], owner_phase: artifact.id, applicability: 'required', reason: `用户明确请求 ${artifact.id}`, basis: [] });
     }
   }
   for (const fact of input.facts) if (!obligations.some(o => o.id === fact.id)) fail(`未知义务：${fact.kind}`);
@@ -548,7 +553,8 @@ export function scopeRevisionInvalidations(previous: ExecutionScope, next: Pick<
     if (after.applicability !== 'required') return false;
     const before = previous.obligations.find(item => item.id === after.id && item.kind === after.kind);
     if (!before || before.applicability !== 'required') return !after.satisfied_by?.length;
-    return (!!before.satisfied_by?.length || completed.has(before.owner_phase)) && !after.satisfied_by?.length;
+    return !after.satisfied_by?.length && (!!before.satisfied_by?.length
+      || completed.has(before.owner_phase) && executionScopeFingerprint(before.basis) !== executionScopeFingerprint(after.basis));
   }).map(item => item.owner_phase);
   const owners = new Set([...previous.obligations, ...next.obligations].map(item => item.owner_phase));
   return affectedScopePhases(roots, order, { ...dependencyContext, scope: { ...previous, ...next }, workflow }).filter(phase => owners.has(phase));
@@ -645,7 +651,11 @@ export function scopeProofHistory(birth: ExecutionScope, events: readonly ScopeH
     }
     for (const phase of revoked) {
       invalidated.add(phase); passed.delete(phase);
-      invalidatedAt.set(phase, event.ts ?? event.applied_at ?? '');
+      // Observations and ordinary waits may withdraw PASS, but only an actual
+      // revision or invalidation requires a result produced after that boundary.
+      if (event.type === 'scope_revised' || event.type === 'phase_invalidated' || event.type === 'phase_backtrack_requested') {
+        invalidatedAt.set(phase, event.ts ?? event.applied_at ?? '');
+      }
       if (event.type === 'phase_invalidated' || event.type === 'phase_backtrack_requested') {
         for (const [id] of definitionProofs) if (scope.obligations.find(obligation => obligation.id === id)?.owner_phase === phase) definitionProofs.delete(id);
       }
@@ -656,6 +666,15 @@ export function scopeProofHistory(birth: ExecutionScope, events: readonly ScopeH
     }
   });
   return { scope, invalidated, passed, invalidatedAt, revisions, definitionProofs };
+}
+
+/** One qualification for current proof and reuse; undefined keeps an unknown repair-time boundary unknown. */
+export function phaseEvidenceIsCurrent(input: { fresh: boolean; generatedAt?: string; invalidatedAt?: string }): boolean | undefined {
+  if (!input.fresh) return false;
+  if (input.invalidatedAt === undefined) return true;
+  const generated = Date.parse(input.generatedAt ?? ''), invalidated = Date.parse(input.invalidatedAt);
+  if (!Number.isFinite(generated) || !Number.isFinite(invalidated)) return undefined;
+  return generated > invalidated;
 }
 
 /** The queue is a view of effective duties; historical outcomes cannot independently skip it. */

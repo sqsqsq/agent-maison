@@ -91,13 +91,13 @@ const cases: Array<{ name: string; run: () => void }> = [
         contextFiles: [{ label: relative, kind: 'path', content: 'Read the actual original control file.' }] });
       try {
         const before = hash(), material = build();
-        manifest.budget.max_total_turns += 17;
+        manifest.budget = { max_total_turns: 17 };
         manifest.created_at = '2026-10-30T00:00:00.000Z';
         fs.writeFileSync(file, JSON.stringify(manifest));
         assert.equal(hash(), before, 'one public control budget must not purchase another verifier');
         assert.equal(build().material_sha256, material.material_sha256, 'producer and consumer share the single projection');
         assert(verifierMaterialFileMatchesCurrent({ projectRoot: f.root, feature: 'demo', material, file: relative }));
-        assert(diffManifestIdentityFields(identity, computeManifestIdentityFields(manifest)).includes('budget'), 'budget authorization still sees the actual edit');
+        assert(!diffManifestIdentityFields(identity, computeManifestIdentityFields(manifest)).includes('budget'), 'retired control declarations do not grant current authority');
         manifest.requirement += ' plus a real new business result'; fs.writeFileSync(file, JSON.stringify(manifest));
         assert.notEqual(hash(), before);
         assert(!verifierMaterialFileMatchesCurrent({ projectRoot: f.root, feature: 'demo', material, file: relative }));
@@ -106,7 +106,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         fs.writeFileSync(file, JSON.stringify(manifest)); assert.notEqual(hash(), before, 'real write/approval/tool authority remains visible');
         fs.writeFileSync(file, original);
         const copy = put(f.root, 'business/manifest.json', original), copiedHash = hash(copy);
-        const copied = JSON.parse(original); copied.budget.max_total_turns += 1; fs.writeFileSync(copy, JSON.stringify(copied));
+        const copied = JSON.parse(original); copied.budget = { max_total_turns: 1 }; fs.writeFileSync(copy, JSON.stringify(copied));
         assert.notEqual(hash(copy), copiedHash, 'a matching filename or copied shape is not the original run control');
         const born = path.join(path.dirname(file), 'events.jsonl'), events = fs.readFileSync(born);
         fs.writeFileSync(born, ''); const unproven = hash();

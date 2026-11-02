@@ -26,13 +26,10 @@ import {
   type FeatureTrack,
 } from './runtime-policy';
 import {
-  classifyPhaseAssessment,
-  classifyPhaseVerdict,
-  type HarnessVerdict,
   type DependencyPolicy,
   type PhaseVerdictAction,
 } from './phase-transition-policy';
-import { resolveRepairResponsibility, repairResponsibilityContext, type RepairResponsibilityContext } from './repair-responsibility';
+import { repairResponsibilityContext, type RepairResponsibilityContext } from './repair-responsibility';
 import { validateRepairEvidenceRef, type RepairEvidenceRef } from './repair-candidates';
 import {
   SUMMARY_ASSURANCE_SCHEMA_VERSIONS,
@@ -47,9 +44,8 @@ import { collectBlockedCapabilityFacts, type BlockedCapabilityFact } from './cap
 import { assessFeature as assessFeatureCompletion } from './feature-assessment';
 import { resolveChangeUnitExpectedExecution } from './change-unit-completion';
 import type { CapabilityResolution } from './capability-resolution';
-import { requiredSummaryCheckGaps, phaseCompletionProblems, type CurrentDisposition } from './check-disposition';
+import { requiredSummaryCheckGaps, renderCurrentDisposition, type CurrentDisposition } from './check-disposition';
 import { resolveCompletionDisposition } from './verify-feature-completion';
-import { nextIndependentPhase } from './upstream-verdict-gate';
 
 export type AssessGapKind =
   | 'missing'
@@ -199,6 +195,7 @@ export interface AssessGap {
 
 export interface AssessRecommendation {
   action:
+    | 'continue_work_unit'
     | 'run_phase'
     | 'rerun_phase'
     | 'complete_closure'
@@ -667,7 +664,7 @@ export function observeFeatureState(options: AssessFeatureOptions): AssessObserv
     schema_version: '1.0',
     feature: options.feature,
     currentDisposition: resolveCompletionDisposition({ projectRoot: options.projectRoot, feature: options.feature, chain: phases,
-      frameworkRoot, runId: options.runId, executionScope: scope ?? undefined, workflow, authorityReaders: options.authorityReaders, currentResults }),
+      frameworkRoot, runId: options.runId, executionScope: scope ?? undefined, workflow, authorityReaders: options.authorityReaders, currentResults, minimumAssurance: options.minimumAssurance }),
     responsibility: repairResponsibilityContext({ projectRoot: options.projectRoot, frameworkRoot, feature: options.feature, runId: options.runId,
       workflow, executionScope: scope ?? undefined, currentPhase: options.reconcile?.phase_outcome?.phase, authorityReaders: options.authorityReaders }),
     ...(scope ? { execution_scope: scope } : {}),
@@ -691,340 +688,31 @@ export function observeFeatureState(options: AssessFeatureOptions): AssessObserv
   };
 }
 
-function producerOwnedInputGap(
-  phase: AssessPhaseObservation,
-  phaseOrder: ReadonlyMap<string, number>,
-): AssessGap | null {
-  const currentIndex = phaseOrder.get(phase.phase);
-  if (phase.verdict === 'PASS' || phase.deferred || currentIndex === undefined) return null;
-  const owned = (phase.blocked_capabilities ?? []).flatMap(capability =>
-    capability.unresolved.flatMap(unresolved => {
-      const owner = unresolved.upstream_producer;
-      const ownerIndex = owner ? phaseOrder.get(owner) : undefined;
-      if (!owner || ownerIndex === undefined || ownerIndex >= currentIndex) return [];
-      const paths = unresolved.dependencies.filter(dep => dep.path).map(dep => `${dep.path}${dep.exists ? '' : '(missing)'}`).join(', ');
-      return [{ owner, ownerIndex, detail: `downstream=${phase.phase} capability=${capability.capability} input=${unresolved.input} source=${unresolved.source}${unresolved.detail ? `: ${unresolved.detail}` : ''}${paths ? ` path=[${paths}]` : ''}` }];
-    }),
-  ).sort((a, b) => a.ownerIndex - b.ownerIndex)[0];
-  return owned ? { phase: owned.owner, kind: 'failed', detail: `上游输入缺口：${owned.detail}` } : null;
-}
-
+/** Assessment is a read projection of the common current endpoint, never another dispatch policy. */
 function gapsFromObservation(observation: AssessObservation): AssessGap[] {
-  const phaseOrder = new Map(observation.phases.map((phase, index) => [phase.phase, index]));
-  const gaps: AssessGap[] = (observation.pruned_propagations ?? []).map((item) => ({
-    phase: item.producer_phase,
-    kind: 'pruned',
-    detail: `restore producer=${item.producer_phase} capability=${item.producer_capability}; downstream=${item.downstream_phase}/${item.downstream_capability}; input=${item.input_id}; source=${item.source}`,
-  }));
-  for (const phase of observation.phases) {
-    if (phase.summary_state === 'missing') {
-      gaps.push({ phase: phase.phase, kind: 'missing', detail: 'summary.json 缺失' });
-      continue;
-    }
-    if (phase.summary_state === 'corrupt') {
-      gaps.push({ phase: phase.phase, kind: 'failed', detail: 'summary.json 损坏或非对象' });
-      continue;
-    }
-    if (phase.summary_state === 'legacy') {
-      gaps.push({
-        phase: phase.phase,
-        kind: 'legacy_unverified',
-        detail: `summary schema=${phase.schema_version ?? 'unknown'}；须重跑 harness 生成 ${SUMMARY_SCHEMA_VERSION_CURRENT}`,
-      });
-      continue;
-    }
-    const ownedInputGap = producerOwnedInputGap(phase, phaseOrder);
-    if (ownedInputGap) {
-      if (!gaps.some(gap => gap.phase === ownedInputGap.phase)) gaps.push(ownedInputGap);
-      continue;
-    }
-    if (phase.deferred) {
-      gaps.push({ phase: phase.phase, kind: 'deferred', detail: `verdict=${phase.verdict ?? 'unknown'}` });
-      continue;
-    }
-    if (phase.verdict !== 'PASS' && (!observation.currentDisposition
-      || phaseCompletionProblems(observation.currentDisposition, [phase.phase]).length > 0)) {
-      // plan c8e5b3f1 t2 D：本地 blocked capability 时把泛化 detail 丰富为 capability/input/attempt
-      // + 修复动作（gap.kind 仍为 failed → recommendation 仍 rerun_phase）。无本地 blocked 时保持原样。
-      const blocked = phase.blocked_capabilities ?? [];
-      if (blocked.length > 0) {
-        const capDetail = blocked.map((fact) => {
-          const unresolved = fact.unresolved.length > 0
-            ? fact.unresolved
-              .map((u) => {
-                const deps = u.dependencies.filter((d) => !!d.path).map((d) => `${d.path}${d.exists ? '' : '(missing)'}`).join(', ');
-                return `input=${u.input} source=${u.source}${u.detail ? `: ${u.detail}` : ''}${u.upstream_producer ? ` (producer=${u.upstream_producer})` : ''}${deps ? ` path=[${deps}]` : ''}`;
-              })
-              .join('; ')
-            : `applicability invalid（provider=${fact.applicability_provider ?? 'n/a'}` +
-              (fact.applicability_dependencies.length > 0
-                ? `，path=[${fact.applicability_dependencies.map((d) => `${d.path}${d.exists ? '' : '(missing)'}`).join(', ')}]` : '') +
-              `）`;
-          return `capability=${fact.capability} ${unresolved}`;
-        }).join('；');
-        gaps.push({
-          phase: phase.phase,
-          kind: 'failed',
-          detail: `verdict=${phase.verdict ?? 'missing'}；${capDetail}；补齐该输入后重跑当前 phase`,
-        });
-      } else {
-        gaps.push({ phase: phase.phase, kind: 'failed', detail: `verdict=${phase.verdict ?? 'missing'}` });
-      }
-      continue;
-    }
-    if (phase.closure === 'stale') {
-      gaps.push({
-        phase: phase.phase,
-        kind: 'stale',
-        detail:
-          'phase evidence manifest 非 fresh' +
-          (phase.closure_stale_detail ? `（changed: ${phase.closure_stale_detail}）` : ''),
-      });
-      continue;
-    }
-    if (phase.closure !== 'closed') {
-      gaps.push({ phase: phase.phase, kind: 'unclosed', detail: 'PASS 但 verified closure 尚未提交' });
-      continue;
-    }
-    if (phase.required_assurance && phase.assurance_satisfied !== true) {
-      gaps.push({
-        phase: phase.phase,
-        kind: 'insufficient_assurance',
-        detail: `actual=${phase.assurance}, required=${phase.required_assurance}`,
-      });
-    }
-  }
-  // 所有完成消费者消费同一处置；来源阶段只是证据出处，队列恢复真实修改/验证责任。
-  for (const problem of observation.currentDisposition?.completionBlocking ?? []) {
-    const phase = problem.owner && phaseOrder.has(problem.owner) ? problem.owner : problem.phase;
-    if (!phaseOrder.has(phase)) continue;
-    const kind: AssessGapKind = problem.action === 'wait' ? 'deferred'
-      : problem.id === 'closure_commit_present' ? 'unclosed'
-      : problem.id === 'lineage_fresh' ? 'stale'
-      : problem.id === 'summary_schema_current' ? 'legacy_unverified' : 'failed';
-    const detail = `${problem.id}: ${problem.detail}`;
-    if (!gaps.some(gap => gap.phase === phase && gap.detail === detail)) gaps.push({ phase, kind, detail });
-  }
-  gaps.sort((a, b) => (phaseOrder.get(a.phase) ?? Infinity) - (phaseOrder.get(b.phase) ?? Infinity)
-    || Number(a.kind === 'unclosed') - Number(b.kind === 'unclosed'));
-  return gaps;
+  const current = observation.currentDisposition;
+  if (!current) return [{ phase: '*', kind: 'missing', detail: '缺当前完成事实；由共同协调器读取当前输入与证据后继续。' }];
+  return current.completionBlocking.map(problem => ({ phase: problem.owner ?? problem.phase,
+    kind: problem.action === 'wait' ? 'deferred' : problem.id === 'lineage_fresh' ? 'stale' : 'failed',
+    detail: `${problem.id}: ${problem.detail}` }));
 }
 
-function recommendationFor(gap: AssessGap | undefined, fused: boolean): AssessRecommendation {
-  const action = classifyPhaseVerdict({
-    assessment_gap: gap?.kind ?? null,
-    fused,
-  });
-  return {
-    action,
-    phase: gap?.phase ?? null,
-    reason: fused
-      ? 'reconcile observation 已熔断；等待输入或外部状态变化'
-      : gap
-        ? `${gap.kind}: ${gap.detail}`
-        : '链切片无剩余 gap；仍须执行 feature completion validation',
-    requires_driver_authorization: true,
-  };
+function recommendationForObservation(observation: AssessObservation): AssessRecommendation {
+  const current = observation.currentDisposition;
+  if (!current) return { action: 'stop', phase: null, reason: '缺当前完成事实，不能从旧阶段回执推断下一步。', requires_driver_authorization: true };
+  const reason = renderCurrentDisposition(current);
+  return { action: current.completionEligible ? 'validate_feature_completion'
+    : current.completionBlocking.every(problem => problem.action === 'wait') ? 'resolve_deferred' : 'continue_work_unit',
+    phase: null, reason, requires_driver_authorization: true };
 }
 
-function recommendationForGap(
-  observation: AssessObservation,
-  gap: AssessGap | undefined,
-  fused: boolean,
-): AssessRecommendation {
-  if (!fused && gap?.kind === 'insufficient_assurance') {
-    const phaseOutcome = observation.reconcile?.phase_outcome;
-    if (phaseOutcome?.verdict === 'PASS' && phaseOutcome.phase === gap.phase) {
-      const retriesUsed = observation.reconcile?.budgets?.retries_used ?? 0;
-      const maxRetries = observation.reconcile?.budgets?.max_retries_per_phase ?? 2;
-      if (retriesUsed >= maxRetries) {
-        return {
-          action: 'stop',
-          phase: gap.phase,
-          reason: `insufficient_assurance_retry_exhausted: ${gap.detail}`,
-          requires_driver_authorization: true,
-          runner_action: 'halt',
-        };
-      }
-      return {
-        action: 'restore_inputs_and_rerun',
-        phase: gap.phase,
-        reason: `insufficient_assurance: ${gap.detail}`,
-        requires_driver_authorization: true,
-        runner_action: 'retry',
-      };
-    }
-  }
-  const fallback = recommendationFor(gap, fused);
-  if (fused || !gap) return fallback;
-
-  const currentPhase = observation.reconcile?.phase_outcome?.phase;
-  if (!currentPhase) return fallback;
-  const chain = observation.phases.map((phase) => phase.phase);
-  const currentIdx = chain.indexOf(currentPhase);
-  const targetIdx = chain.indexOf(gap.phase);
-  if (currentIdx < 0 || targetIdx < 0 || targetIdx >= currentIdx) return fallback;
-
-  // 上游 gap 的 executable 语义只有三种：
-  //   · unclosed 先尝试同一 closure transaction 的幂等补完；
-  //   · genuine deferred 保持 capability/external defer；
-  //   · 其余可信 gap 全部回 owner 重验重签。
-  // action 字段保留旧显示词汇，兼容 next.json 读者；runner_action 才是唯一执行语义。
-  if (gap.kind === 'unclosed') return fallback;
-  if (gap.kind === 'deferred') {
-    return { ...fallback, runner_action: 'defer_external_and_halt' };
-  }
-  return { ...fallback, runner_action: 'backtrack_to_phase' };
-}
-
-function recommendationForObservation(
-  observation: AssessObservation,
-  gaps: AssessGap[],
-  fused: boolean,
-): AssessRecommendation {
-  // 责任阶段统一路由（plan b6e4c9f2 t2）：可信可修缺陷按责任类别经**当前 workflow/track**
-  // 严格映射回退目标——多类别并存选**最上游**（级联失效天然覆盖下游；分组事实由 runner
-  // 的 backtrack 事件承载，链重走到各责任阶段只注入属于它的候选）。映射不到当前 chain
-  // 的真实节点=null=不参与选择；全部映射失败 → phase:null 的回退意图，由 driver/runner
-  // 落既有 backtrack_target_absent（禁静默回链首/幽灵 phase）。
-  if (!fused) {
-    const reconcile = observation.reconcile;
-    const currentPhase = reconcile?.phase_outcome?.phase;
-    // 候选唯一真源=phase summary（assess 直读，不经 reconcile 复制）——goal 的 detached
-    // runner、in-session/batch driver、manual 渲染因此共用同一事实与同一裁决。
-    const candidates = observation.phases.flatMap(phase =>
-      phase.phase === currentPhase && reconcile?.current_summary_fresh === false ? [] : (phase.repair_candidates ?? []).filter(candidate =>
-        !observation.currentDisposition || observation.currentDisposition.completionBlocking.some(problem =>
-          problem.phase === phase.phase && problem.id === `open_finding:${candidate.id}` && problem.action === 'repair')));
-    if (reconcile?.state === 'active' && currentPhase && candidates.length > 0) {
-      const chainPhases = observation.phases.map((p) => p.phase);
-      const responsibilities = candidates.map(candidate => resolveRepairResponsibility({ ...observation.responsibility, currentPhase,
-        currentDisposition: observation.currentDisposition,
-        target: candidate }));
-      const targets = responsibilities
-        .filter(result => result.action !== 'unavailable' && result.action !== 'design').map(result => result.owner)
-        .filter((p): p is string => p !== null && p !== currentPhase);
-      const upstream = targets.sort(
-        (a, b) => chainPhases.indexOf(a) - chainPhases.indexOf(b),
-      )[0] ?? null;
-      const reason =
-        `repair_candidates: ${candidates.map((c) => `${c.id}(${c.category})`).join(', ')}`;
-      const currentOwnerOnly = responsibilities.every(result => result.owner === currentPhase && result.action === 'current');
-      if (upstream === null && !currentOwnerOnly) {
-        return {
-          action: 'stop',
-          phase: null,
-          reason: `${reason}——${[...new Set(responsibilities.map(result => result.reason))].join('；')}（backtrack_target_absent）`,
-          requires_driver_authorization: true,
-          runner_action: 'backtrack_to_phase',
-        };
-      }
-      if (upstream !== null) return {
-        action: 'rerun_phase',
-        phase: upstream,
-        reason,
-        requires_driver_authorization: true,
-        runner_action: 'backtrack_to_phase',
-      };
-      // 原回修职责已经在执行：候选仍开放，沿当前调用的完成/失败与原重试预算继续，
-      // 不把“无需跨阶段回退”误译成“责任目标不存在”。
-    }
-    // 【deterministic_defects → backtrack_to_coding 旧裁决链已删除 · 责任阶段统一路由】
-    // 缺陷路由唯一入口=上面的 repair_candidates 分支（唯一真源=phase summary）。
-    // deterministic_defects 保留为诊断/指纹投影，**不再决定路由**——两条路并存正是
-    // 「summary 写不进去就悄悄走旧路」的绕过口（codex 二轮冻结项①）。
-  }
-  const phaseOutcome = observation.reconcile?.phase_outcome;
-  // 当前阶段 PASS 不能吞掉已复用阶段的新发现；沿同一 gap/backtrack 通路处理。
-  if (!fused && phaseOutcome?.verdict === 'PASS' && gaps.length) {
-    const phaseOrder = new Map(observation.phases.map((phase, index) => [phase.phase, index]));
-    const currentIndex = phaseOrder.get(phaseOutcome.phase) ?? -1;
-    const pending = gaps.find(gap => {
-      // 共同处置已把具体工作排在 publication 之前；本职真实修复仍先于等待。
-      const currentProblems = observation.currentDisposition?.completionBlocking.filter(problem =>
-        (problem.owner && phaseOrder.has(problem.owner) ? problem.owner : problem.phase) === gap.phase) ?? [];
-      const currentTask = currentProblems.find(problem => problem.action === 'repair') ?? currentProblems[0];
-      // 具体等待已解释该阶段为何没有闭环证明；保留占位事实，但不由它另派一轮作者。
-      return (gap.kind !== 'deferred' || gap.phase === phaseOutcome.phase)
-        && !(gap.phase !== phaseOutcome.phase && currentTask?.action === 'wait')
-        && (phaseOrder.get(gap.phase) ?? -1) <= currentIndex;
-    });
-    if (pending) return recommendationForGap(observation, pending, false);
-  }
-  if (!fused && phaseOutcome && observation.reconcile?.current_summary_fresh !== false) {
-    const phaseOrder = new Map(observation.phases.map((phase, index) => [phase.phase, index]));
-    const currentObservation = observation.phases.find(phase => phase.phase === phaseOutcome.phase);
-    const currentOwnerGap = currentObservation ? producerOwnedInputGap(currentObservation, phaseOrder) : null;
-    if (currentOwnerGap) return recommendationForGap(observation, currentOwnerGap, false);
-    const factsAdmissionBlocked = observation.reconcile?.blockers?.some(blocker => blocker.id === 'context_exploration_facts_source_stale');
-    const currentIndex = phaseOrder.get(phaseOutcome.phase);
-    const upstreamGap = factsAdmissionBlocked && currentIndex !== undefined
-      ? gaps.find(gap => (phaseOrder.get(gap.phase) ?? currentIndex) < currentIndex) : undefined;
-    if (upstreamGap) return recommendationForGap(observation, upstreamGap, false);
-  }
-  if (!fused && phaseOutcome && ['PASS', 'FAIL', 'INCOMPLETE'].includes(phaseOutcome.verdict)) {
-    const decision = classifyPhaseAssessment({
-      verdict: phaseOutcome.verdict as HarnessVerdict,
-      phase: phaseOutcome.phase,
-      failure_kind: phaseOutcome.failure_kind,
-      blocking_class: phaseOutcome.blocking_class,
-      verification_gap: observation.phases.find(phase => phase.phase === phaseOutcome.phase)?.verification_gaps
-        ?.some(check => check.blocking_class === 'framework_internal'),
-      dependency_policy: phaseOutcome.dependency_policy ?? {
-        propagate_to_downstream: phaseOutcome.propagate_to_downstream,
-      },
-      retries_used: observation.reconcile?.budgets?.retries_used ?? 0,
-      max_retries_per_phase: observation.reconcile?.budgets?.max_retries_per_phase ?? 2,
-      deterministic_p0_defects:
-        (observation.reconcile?.deterministic_defects?.length ?? 0) > 0,
-    });
-    if (decision.action !== null) {
-      if (decision.runner_action === 'defer_external_and_continue_if_allowed'
-        && observation.phases.find(phase => phase.phase === phaseOutcome.phase)?.verification_gaps
-          ?.some(check => check.blocking_class === 'framework_internal')) {
-        const context = observation.responsibility;
-        const pending = observation.phases.filter(phase => phase.deferred || phase.phase === phaseOutcome.phase).map(phase => phase.phase);
-        const next = context?.projectRoot && context.feature && context.workflow
-          ? nextIndependentPhase(context.projectRoot, context.feature,
-            gaps.filter(gap => !pending.includes(gap.phase)
-              && observation.phases.findIndex(phase => phase.phase === gap.phase) > observation.phases.findIndex(phase => phase.phase === phaseOutcome.phase)).map(gap => gap.phase), pending,
-            { chain: observation.phases.map(phase => phase.phase), degraded: false, workflow: context.workflow,
-              scope: observation.execution_scope, frameworkRoot: context.frameworkRoot }) : null;
-        if (next) return { action: 'run_phase', phase: next,
-          reason: `前置未完成义务保留；${next} 不依赖 ${pending.join(', ')}，继续独立职责`,
-          requires_driver_authorization: true, runner_action: decision.runner_action };
-        return { action: 'resolve_deferred', phase: phaseOutcome.phase,
-          reason: `缺少必需验证且没有可独立推进的职责；维护者恢复检查后重新发起同一请求，勿无变化重试`,
-          requires_driver_authorization: true, runner_action: 'defer_external_and_halt' };
-      }
-      const targetPhase = decision.target === 'coding'
-        ? observation.reconcile?.invalidatable_phases?.find((phase) => phase === 'coding') ?? null
-        : decision.target === 'current'
-          ? phaseOutcome.phase
-          : null;
-      return {
-        action: decision.action,
-        phase: targetPhase,
-        reason: `phase_verdict:${decision.runner_action}; failure_kind=${phaseOutcome.failure_kind ?? 'none'}`,
-        requires_driver_authorization: true,
-        runner_action: decision.runner_action,
-      };
-    }
-  }
-  if (!fused && phaseOutcome?.verdict === 'PASS' && gaps[0]?.kind === 'deferred') {
-    return { action: 'resolve_deferred', phase: gaps[0].phase,
-      reason: `当前职责完成；${gaps[0].phase} 的未完成义务保留，下一职责仍须通过真实依赖判断`,
-      requires_driver_authorization: true, runner_action: 'advance' };
-  }
-  return recommendationForGap(observation, gaps[0], fused);
-}
 export function assessObservation(
   observation: AssessObservation,
   authorization: AssessAuthorizationContext = { mode: 'manual' },
 ): AssessResult {
   const gaps = gapsFromObservation(observation);
-  const fused = observation.reconcile?.state === 'fused';
-  const recommendation = recommendationForObservation(observation, gaps, fused);
+  const fused = false;
+  const recommendation = recommendationForObservation(observation);
   if (!fused && observation.reconcile?.scope_revision) {
     recommendation.action = 'revise_scope'; recommendation.phase = null;
     recommendation.reason = 'new sourced facts require a scope revision in this run';
@@ -1058,30 +746,7 @@ export function assessObservation(
     gaps,
     recommendation,
     alternatives: [] as AssessRecommendation[],
-    stop: {
-      fused,
-      // adjudicated-repair-loop M1（plan e2b7c4a9 t1.4）：assess 消费 runner 填入的
-      // 信号级收敛事实（repair_convergence / repeated_round）进 stop 理由——
-      // eligible 空 → 明确 repair_not_converging 语义；整轮候选集合重复在案 → 附指纹。
-      reason: fused
-        ? (() => {
-            const base = observation.reconcile?.reason ?? 'reconcile_fused';
-            const conv = observation.reconcile?.repair_convergence;
-            if (conv?.eligible_empty) {
-              return (
-                `repair_not_converging: 信号级候选 ${conv.open_signal_count} 条 open、` +
-                `${conv.attempted_signal_count} 条均已 attempted（累计 one-shot），eligible 空——` +
-                `停止自动回退求人裁决。${base}`
-              );
-            }
-            const rr = observation.reconcile?.repeated_round;
-            if (rr && rr.count > 0) {
-              return `整轮候选集合重复 ${rr.count} 次（roundFingerprint=${rr.fingerprint.slice(0, 12)}…）——${base}`;
-            }
-            return base;
-          })()
-        : null,
-    },
+    stop: { fused, reason: recommendation.action === 'stop' ? recommendation.reason : null },
     run_status_candidate: reconciled ? 'CHAIN_SLICE_COMPLETED' as const : null,
     feature_completion: reconciled ? 'REQUIRES_VALIDATION' as const : null,
   };
@@ -1125,41 +790,19 @@ function featureCompletionAssessment(options: AssessFeatureOptions): ReturnType<
   }
 }
 
-function completionAssessmentRecommendation(
-  a: ReturnType<typeof assessFeatureCompletion>,
-  chain: string[],
-): AssessRecommendation | null {
-  if (a.record.state === 'absent') return null;
-  if (a.complete) {
-    return { action: 'feature_completed', phase: null, reason: '完成评估：记录 VALID、义务全覆盖、无后续未终局 run', requires_driver_authorization: false };
-  }
-  const uncovered = a.obligations.filter(o => o.status === 'uncovered' && o.owner_phase);
-  if (uncovered.length) {
-    const rank = (p: string): number => (chain.includes(p) ? chain.indexOf(p) : Infinity);
-    const phase = uncovered.map(o => o.owner_phase).sort((x, y) => rank(x) - rank(y))[0];
-    // feature 载体完成记录 run_id=null：没有可 supersede 的 run（execution-scope 测试 b2d7 t3 #15）。
-    const hint = a.record.state !== 'ok' ? ''
-      : a.record.run_id ? `；完成后修正经 \`--supersede ${a.record.run_id}\``
-        : '；feature 载体：先按当前输入追加范围修订再起新 run';
-    return { action: 'run_phase', phase, reason: `完成评估 uncovered：${uncovered.map(o => o.id).join(', ')}${hint}`, requires_driver_authorization: true };
-  }
-  if (a.blocking.length) {
-    return { action: 'stop', phase: null, reason: `完成评估 blocking：${a.blocking.join('；')}`, requires_driver_authorization: true };
-  }
-  return null;
-}
-
 export function assessFeature(options: AssessFeatureOptions): AssessResult {
   options = { ...options, authorityReaders: options.authorityReaders ?? createIdentityNeutralDigestReaders() };
   // 无 run 身份：完成记录带 run_id 时按该 run 的执行范围观察，不落到全工作流链（plan a2f7c9e4 §3.4）。
   const completion = options.runId ? null : featureCompletionAssessment(options);
   const recordRunId = completion && completion.record.state !== 'absent' ? completion.record.run_id : null;
   const observation = observeFeatureState(recordRunId ? { ...options, runId: recordRunId } : options);
+  if (completion?.currentDisposition) observation.currentDisposition = completion.currentDisposition;
   let result = assessObservation(
     observation,
     options.authorization ?? { mode: 'manual' },
   );
-  const override = completion ? completionAssessmentRecommendation(completion, observation.phases.map(p => p.phase)) : null;
+  const override: AssessRecommendation | null = completion?.complete ? { action: 'feature_completed', phase: null,
+    reason: '当前完成事实已验证正式原件与全部适用义务；发布就绪另按同一事实投影。', requires_driver_authorization: false } : null;
   if (override) {
     const { projection_fingerprint: _stale, ...rest } = result;
     const completed = override.action === 'feature_completed';
@@ -1174,7 +817,7 @@ export function assessFeature(options: AssessFeatureOptions): AssessResult {
     };
     result = { ...withoutProjection, projection_fingerprint: hash(withoutProjection) };
   }
-  if (options.writeProjection !== false) {
+  if (options.writeProjection === true) {
     writeNextProjection(options.projectRoot, options.feature, result);
   }
   return result;
@@ -1190,14 +833,12 @@ export function readFreshNextOrRecompute(
   const nextPath = nextProjectionPath(options.projectRoot, options.feature);
   const current = assessFeature({ ...options, writeProjection: false });
   if (!fs.existsSync(nextPath)) {
-    writeNextProjection(options.projectRoot, options.feature, current);
     return { result: current, source: 'recomputed_missing' };
   }
   let stored: AssessResult;
   try {
     stored = JSON.parse(fs.readFileSync(nextPath, 'utf8')) as AssessResult;
   } catch {
-    writeNextProjection(options.projectRoot, options.feature, current);
     return { result: current, source: 'recomputed_corrupt' };
   }
   if (
@@ -1206,8 +847,7 @@ export function readFreshNextOrRecompute(
     stored.projection_fingerprint !== current.projection_fingerprint ||
     stored.observed_fingerprint !== current.observed_fingerprint
   ) {
-    writeNextProjection(options.projectRoot, options.feature, current);
     return { result: current, source: 'recomputed_stale' };
   }
-  return { result: stored, source: 'fresh_projection' };
+  return { result: current, source: 'fresh_projection' };
 }

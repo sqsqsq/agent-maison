@@ -28,6 +28,7 @@ import {
 } from '../../harness-runner';
 import type { CheckResult, ScriptReport, HarnessRunSummary } from '../../scripts/utils/types';
 import type { UnitCaseResult } from '../run-unit';
+import { resolveCurrentDisposition } from '../../scripts/utils/check-disposition';
 
 const FRAMEWORK_ROOT = path.resolve(__dirname, '..', '..', '..');
 
@@ -285,9 +286,9 @@ const cases: Case[] = [
   },
   // ---- assess ----
   {
-    name: 't2 assess：本地 blocked → gap.kind=failed、recommendation=rerun_phase、detail 含 capability/input/attempt/修复动作',
+    name: 't2 assess：共同 verify 缺口保 capability/input/attempt/解除条件，不派旧阶段',
     run: () => {
-      const result: AssessResult = assessObservation(observe({
+      const observation = observe({
         verdict: 'INCOMPLETE',
         deferred: false,
         blocked_capabilities: [{
@@ -297,10 +298,16 @@ const cases: Case[] = [
           applicability_dependencies: [],
           unresolved: [{ input: 'requirement', source: 'derive.requirement', detail: 'requirement 来源缺失：fidelity-intent-init --requirement', dependencies: [] }],
         }],
-      }));
+      });
+      observation.currentDisposition = resolveCurrentDisposition({ endpoint: 'request', phases: [], additionalProblems: [{
+        phase: 'spec', id: 'capability_spec_requirement', action: 'verify', affects: 'completion', severity: 'BLOCKER',
+        detail: 'input=requirement; attempt=derive.requirement; requirement 来源缺失，补齐原来源后重跑受影响工具',
+      }] });
+      const result: AssessResult = assessObservation(observation);
       const gap = result.gaps[0];
       assert(gap?.kind === 'failed', `gap.kind=${gap?.kind}`);
-      assert(result.recommendation.action === 'rerun_phase', `recommendation=${result.recommendation.action}`);
+      assert(result.recommendation.action === 'continue_work_unit' && result.recommendation.phase === null,
+        `projection cannot dispatch an old phase: ${result.recommendation.action}`);
       assert((gap?.detail ?? '').includes('capability_spec_requirement'), 'detail 含 capability');
       assert((gap?.detail ?? '').includes('input=requirement'), 'detail 含 input');
       assert((gap?.detail ?? '').includes('derive.requirement'), 'detail 含 attempt');
@@ -315,9 +322,14 @@ const cases: Case[] = [
     },
   },
   {
-    name: 't2 assess：真 deferred 场景保持 resolve_deferred（INCOMPLETE + deferred=true 不被重分类为 failed）',
+    name: 't2 assess：共同 wait 条件保持 resolve_deferred，不以旧 INCOMPLETE 字段另判',
     run: () => {
-      const result = assessObservation(observe({ verdict: 'INCOMPLETE', deferred: true }));
+      const observation = observe({ verdict: 'INCOMPLETE', deferred: true });
+      observation.currentDisposition = resolveCurrentDisposition({ endpoint: 'request', phases: [], additionalProblems: [{
+        phase: 'spec', id: 'request_provider_unavailable', action: 'wait', affects: 'completion', severity: 'BLOCKER',
+        detail: 'original provider unavailable; resume when the actual provider is restored',
+      }] });
+      const result = assessObservation(observation);
       const gap = result.gaps[0];
       assert(gap?.kind === 'deferred', `gap.kind=${gap?.kind}`);
       assert(result.recommendation.action === 'resolve_deferred', `recommendation=${result.recommendation.action}`);

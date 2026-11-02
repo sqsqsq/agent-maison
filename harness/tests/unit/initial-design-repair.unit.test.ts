@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import * as YAML from 'yaml';
-import { featureFilePath, clearFrameworkConfigCache, loadFrameworkConfig } from '../../config';
+import { featureFilePath, featurePhaseReportsDir, clearFrameworkConfigCache, loadFrameworkConfig } from '../../config';
 import { buildGoalManifestFromInput, buildInitialDesignGoalManifest, type GoalRunManifest } from '../../scripts/utils/goal-manifest';
 import { assertGoalRunAttachable, createGoalRun } from '../../scripts/utils/goal-run-creation';
 import { ensureRunControl } from '../../scripts/utils/goal-run-control';
@@ -13,11 +13,18 @@ import { loadCanonicalBlueprint } from '../../scripts/utils/component-blueprint-
 import { validateComponentBlueprint } from '../../scripts/utils/component-blueprint-validator';
 import { deriveChangeUnitFeatureId, enumerateCanonicalChangeUnits, loadCanonicalChangeUnit } from '../../scripts/utils/change-unit-path';
 import { deriveDesignPreparationReadiness, BLUEPRINT_RECONCILE_LOCK_NAME } from '../../scripts/utils/change-unit-design-preparation';
-import { designRepairTarget, designRepairInvokeLabel, designRepairSignature, runUnattendedDesignRepair, replayDesignRepairInvocation, recordDesignRepairInvocation, type DesignRepairBriefLike, type DesignRepairInvokeOutcome } from '../../scripts/utils/design-repair-unattended';
+import { designRepairTarget, designRepairInvokeLabel, designRepairSignature, runUnattendedDesignRepair, recordDesignRepairInvocation, type DesignRepairBriefLike, type DesignRepairInvokeOutcome } from '../../scripts/utils/design-repair-unattended';
 import { capturePhaseInvocationSnapshot } from '../../scripts/utils/phase-write-boundary';
 import { headlessLedgerPath } from '../../scripts/utils/headless-assumptions';
 import { resolveBlueprintTarget } from '../../scripts/utils/blueprint-addressing';
-import { materializeBlueprintSkillInputs, compareAuthoritativeContent } from '../../scripts/utils/blueprint-skill-projection';
+import { materializeBlueprintSkillInputs, compareAuthoritativeContent, checkAuthoritativeContentAligned, deriveBlueprintSkillInput } from '../../scripts/utils/blueprint-skill-projection';
+import { SpecLoader } from '../../scripts/utils/spec-loader';
+import type { CheckContext } from '../../scripts/utils/types';
+import { generateScriptReport } from '../../scripts/utils/report-generator';
+import { writeRunSummaryBase } from '../../harness-runner';
+import { executedEvidenceInputs } from '../../scripts/utils/phase-closure-finalizer';
+import { resolvePhaseEvidenceManifest, writePhaseEvidenceManifest } from '../../scripts/utils/phase-evidence-manifest';
+import { readReusableCheckResult } from '../../scripts/utils/verify-feature-completion';
 import { blueprintSourceRefFiles } from '../../scripts/utils/blueprint-skill-projection';
 import { prepareInitialDesignDraft, readInitialDesignDelivery } from '../../scripts/utils/initial-design-delivery';
 import { reusableDesignQuestioning } from '../../scripts/utils/design-repair-unattended';
@@ -34,19 +41,19 @@ import { blueprintIdentityPointers } from '../../scripts/utils/change-unit-bluep
 import { inspectGeneratedBlueprintGraphs } from '../../scripts/utils/blueprint-graph-generator';
 import { runGoalModeSessionStep as runGoalModeSessionStepUnchecked } from '../../scripts/goal-mode-entry';
 import { readSessionExecution } from '../../scripts/utils/session-execution-handoff';
-import { readOriginalDeliveryBudget } from '../../scripts/utils/delivery-origin';
+import { readOriginalDeliveryActivity } from '../../scripts/utils/delivery-origin';
 import { workUnitExecutionRole } from '../../scripts/utils/goal-phase-executor';
 import { deriveChangeUnitReadySet } from '../../scripts/utils/change-unit-ready-set';
 import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
 import type { UnitCaseResult } from '../run-unit';
-import { withRuntimeTest, type RuntimeTestControl } from '../utils/runtime-test-control';
+import { withRuntimeTest, preserveRuntimeTestEvidence, type RuntimeTestControl } from '../utils/runtime-test-control';
 const runGoalModeSessionStep = (options: Parameters<typeof runGoalModeSessionStepUnchecked>[0], testControl: RuntimeTestControl = {}) =>
   withRuntimeTest({ root: options.projectRoot, ...testControl }, () => runGoalModeSessionStepUnchecked(options));
 
 
 type Host = Parameters<Parameters<typeof withFreshCuHost>[0]>[0];
 type Document = Record<string, any>;
-type Scenario = 'root' | 'outside-write' | 'readiness-blocked' | 'normal' | 'retry' | 'exhausted' | 'self-signed-retry' | 'session-retry' | 'session-budget' | 'machine-session' | 'design-owner' | 'design-owner-external' | 'design-owner-budget' | 'design-owner-retain' | 'session-progress-recovery' | 'session-architecture-recovery';
+type Scenario = 'root' | 'outside-write' | 'readiness-blocked' | 'normal' | 'retry' | 'session-retry' | 'machine-session' | 'design-owner' | 'design-owner-external' | 'design-owner-retain' | 'session-progress-recovery' | 'session-architecture-recovery';
 const CU = deriveChangeUnitFeatureId(BLUEPRINT_ID, 'ledger-refresh');
 const requirement = '在已准入账目蓝图的原目标内补齐CU设计引用，再继续账目刷新与恢复的完整交付；不得降低验收或修改框架。';
 const read = (file: string): Document => YAML.parse(fs.readFileSync(file, 'utf8'));
@@ -76,12 +83,12 @@ async function scenario(host: Host, mode: Scenario): Promise<void> {
   const canonical = loadCanonicalBlueprint(host.root, BLUEPRINT_ID);
   assert(!validateComponentBlueprint(canonical.blueprint, { projectRoot: host.root, canonicalPath: canonical.canonicalPath }).some(issue => issue.severity === 'BLOCKER'));
   assert(deriveDesignPreparationReadiness(host.root, BLUEPRINT_ID).ready, 'the unchanged design fixture must initially be ready');
-  if (mode === 'normal') materializeBlueprintSkillInputs(host.root, CU, host.frameworkRoot);
+  if (mode === 'normal' || mode === 'root') materializeBlueprintSkillInputs(host.root, CU, host.frameworkRoot);
   const unit = loadCanonicalChangeUnit(host.root, BLUEPRINT_ID, 'ledger-refresh');
   const approvedCu = read(unit.canonicalPath);
   const defective = structuredClone(approvedCu);
   const ownerCase = mode.startsWith('design-owner');
-  const businessRepair = recovery || mode === 'session-retry' || mode === 'session-budget';
+  const businessRepair = recovery || mode === 'session-retry';
   if (ownerCase) {
     const declared: Document = { blocker_id: 'retained-design-declaration', gate: 'design', owner: 'component-design', observation: 'machine',
       reason: '候选保留了已经满足的设计归属声明', unlock_condition: '由设计owner对当前已发布设计有据核实并经原consumer发布',
@@ -111,8 +118,7 @@ async function scenario(host: Host, mode: Scenario): Promise<void> {
   const feature = normal ? CU : BLUEPRINT_ID;
   const runId = normal ? 'normal-repair-run' : 'initial-repair-run';
   const common = { feature, run_id: runId, adapter: 'claude', requirement,
-    budget: { max_total_turns: mode === 'session-retry' ? 5 : mode === 'session-budget' ? 2 : mode === 'design-owner' ? 3 : mode === 'design-owner-budget' ? 1 : 30, wall_clock_minutes: 120 },
-    unattended: { write_mode: 'full-access', approval_mode: 'never', timeout_seconds: 900 } };
+    unattended: { write_mode: 'full-access', approval_mode: 'never' } };
   const manifest: GoalRunManifest = normal
     ? buildGoalManifestFromInput({ ...common, start_phase: 'plan', end_phase: 'plan' }, { projectRoot: host.root })
     : buildInitialDesignGoalManifest({ ...common, start_phase: 'plan', end_phase: 'ut', initial_design: { completion_target: 'feature', requested_results: ['账目刷新与恢复完整交付'], requested_phases: ['plan', 'coding', 'review', 'ut'] } }, { projectRoot: host.root });
@@ -136,6 +142,22 @@ async function scenario(host: Host, mode: Scenario): Promise<void> {
     for (const key of ['execution_scope', 'run_base_sha', 'phase_chain', 'chain_override']) assert.equal((manifest as unknown as Document)[key], undefined);
   }
   const phase = normal ? 'plan' : 'initial-design-author';
+  const cacheOptions = { projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: CU, phase: 'plan' as const,
+    resolvedInputs: { context: { schema_version: '1.1' as const, subject: { feature: CU }, obligations: {}, required_outputs: [] }, phase: 'plan', values: {}, artifacts: {} },
+    extraOutputs: ['summary.json', 'script-report.json'].map(file => path.join(featurePhaseReportsDir(host.root, CU, 'plan', host.frameworkRoot), file)) };
+  let originalCheck: Buffer | undefined;
+  if (mode === 'root') {
+    fs.appendFileSync(canonical.canonicalPath, '\n# Current design source awaits the original formal publication.\n');
+    const checks = checkAuthoritativeContentAligned({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: CU, phase: 'plan',
+      phaseRule: {}, featureSpec: new SpecLoader(host.root, undefined, undefined, host.frameworkRoot).loadFeatureSpec(CU) } as CheckContext, 'contracts');
+    assert(checks.some(check => check.status === 'FAIL' && check.repair_owner === 'external'), 'the real canonical gap must produce the old raw FAIL');
+    const report = generateScriptReport(path.join(host.frameworkRoot, 'harness'), 'plan', CU, host.root, checks, host.frameworkRoot);
+    writeRunSummaryBase(host.root, report, host.frameworkRoot);
+    writePhaseEvidenceManifest(host.root, resolvePhaseEvidenceManifest({ ...cacheOptions,
+      extraInputs: executedEvidenceInputs(host.root, CU, 'plan', host.frameworkRoot) }));
+    assert(readReusableCheckResult(cacheOptions), 'the true unchanged FAIL may be reused before publication');
+    originalCheck = fs.readFileSync(cacheOptions.extraOutputs[1]);
+  }
   const lockPath = featureFilePath(host.root, feature, path.join('goal-runs', FEATURE_LOCK_NAME));
   const lock = tryAcquireLock(lockPath, {});
   assert(lock);
@@ -183,24 +205,24 @@ async function scenario(host: Host, mode: Scenario): Promise<void> {
   };
   const updateQuestioning = (doc: Document): void => {
     questioningCalls++;
-    const evidenceRound = mode === 'session-progress-recovery' ? 1 : questioningCalls;
-    if (recovery || mode === 'exhausted' || (['retry', 'self-signed-retry', 'session-retry', 'session-budget'].includes(mode) && questioningCalls === 1)) {
+    const evidenceRound = recovery ? 1 : questioningCalls;
+    if (recovery || (['retry', 'session-retry'].includes(mode) && questioningCalls === 1)) {
       Object.assign(doc.review_summary.questioning.items[0], { disposition: 'blocker', question: '当前范围失败恢复验收是否完整？', answer: `真实内容差额-${evidenceRound}\n\n当前独立核实的第二段证据-${evidenceRound}` });
     } else {
       doc.review_summary.questioning.items = structuredClone((canonical.blueprint.review_summary as Document).questioning.items);
       if (mode === 'retry') assert(String(doc.review_summary.summary).includes('第二轮已补'));
     }
   };
-  const adapter = repairAdapter(host, () => savedNode, { author: (doc, draft) => {
+  const adapter: ReturnType<typeof repairAdapter> = repairAdapter(host, () => savedNode, { author: (doc, draft) => {
     authorCalls++;
-    const priorDenial = doc.review_summary.questioning?.items?.some((item: Document) => item.disposition === 'blocker');
+    const receivedPrompt = adapter.log.prompts['design-repair-author']?.at(-1) ?? '';
+    const priorDenial = receivedPrompt.includes('真实内容差额-');
     if (priorDenial) {
-      assert(doc.review_summary.questioning?.items?.length, 'next author input retains the actual prior public Q, including its denial');
-      if (mode === 'session-progress-recovery' && authorCalls > 2) return { status: 'waiting', details: '缺少已批准失败恢复依据，保留当前候选和完整前次Q；本次没有新的设计或核验结论。' };
-      if (!recovery && (mode !== 'exhausted' || authorCalls <= 4)) doc.review_summary.summary = String(doc.review_summary.summary ?? '') + ' 第二轮已补原范围失败恢复说明';
+      assert(receivedPrompt.includes('当前独立核实的第二段证据-'), 'the actual author request retains both complete paragraphs of the prior public denial');
       const runtimeView = doc.design_views.find((view: Document) => view.view_id === 'runtime');
+      if (mode === 'session-progress-recovery' && String(runtimeView.purpose).includes('实际补齐失败恢复的业务说明')) return { status: 'waiting', details: '缺少已批准失败恢复依据，保留当前候选和完整前次Q；本次没有新的设计或核验结论。' };
+      if (!recovery) doc.review_summary.summary = String(doc.review_summary.summary ?? '') + ' 第二轮已补原范围失败恢复说明';
       runtimeView.purpose += ` 实际补齐失败恢复的业务说明-${authorCalls}`;
-      if (mode === 'self-signed-retry') doc.review_summary.questioning = { status: 'complete', provider_id: 'author', items: [] };
     }
     if (mode === 'session-architecture-recovery' && authorCalls === 1) {
       const file = path.join(path.dirname(draft), 'architecture.json');
@@ -215,7 +237,11 @@ async function scenario(host: Host, mode: Scenario): Promise<void> {
       // Metadata jitter still cannot change the verified obligation identity.
       doc.source_fingerprint = doc.discovery.source_fingerprint = 'regenerated-by-runtime';
     }
-    write(path.join(path.dirname(draft), 'change-unit.yaml'), mode === 'design-owner-retain' ? defective : approvedCu);
+    const cuDraft = path.join(path.dirname(draft), 'change-unit.yaml');
+    const candidate = read(cuDraft);
+    if (businessRepair) candidate.target_predicates = structuredClone(approvedCu.target_predicates);
+    if (ownerCase) candidate.blockers = structuredClone((mode === 'design-owner-retain' ? defective : approvedCu).blockers ?? []);
+    write(cuDraft, candidate);
     if (mode === 'outside-write') fs.appendFileSync(path.join(host.root, 'src/ledger/LedgerFeature.ets'), '\n// unauthorized product edit\n');
   }, questioning: updateQuestioning });
   try {
@@ -240,22 +266,16 @@ async function scenario(host: Host, mode: Scenario): Promise<void> {
         emit({ type: 'design_authority_repair', stage: 'published', new_revision: canonical.blueprint.revision,
           checks: [{ check: 'plan:cu:design-basis', codes: [`${deriveChangeUnitFeatureId(BLUEPRINT_ID, 'other-cu')}:retained-design-declaration`] }] });
       }
-      if (mode === 'design-owner-budget') {
-        emit({ type: 'agent_invoke_start', phase: 'prior-budget-use', invoke_id: 'prior-use' });
-        emit({ type: 'agent_invoke_end', phase: 'prior-budget-use', invoke_id: 'prior-use', status: 'passed', exit_code: 0 });
-      }
       let next = await settleInitialQuestioning(await runGoalModeSessionStep(options), options);
       if (mode !== 'design-owner' && mode !== 'design-owner-retain') {
-        assert.notEqual(next.type, 'phase_execute_request', 'cleared/human/execution/foreign owner conditions and exhausted budget must not dispatch design');
-        if (mode === 'design-owner-budget') assert.deepEqual(fs.readFileSync(unit.canonicalPath), originalCuBytes);
-        else {
+        assert.notEqual(next.type, 'phase_execute_request', 'cleared/human/execution/foreign owner conditions must not dispatch design');
+        {
           assert.deepEqual(read(unit.canonicalPath).blockers, YAML.parse(originalCuBytes.toString('utf8')).blockers);
           assert.deepEqual(designWorkSnapshot([unit.canonicalPath]), designWorkSnapshot([unit.canonicalPath], { [unit.canonicalPath]: originalCuBytes.toString('utf8') }),
             JSON.stringify(compareAuthoritativeContent(YAML.parse(originalCuBytes.toString('utf8')), read(unit.canonicalPath))));
         }
         const rows = fs.readFileSync(eventFile, 'utf8').trim().split('\n').map(line => JSON.parse(line) as Document);
         assert.equal(rows.filter(row => row.type === 'agent_invoke_start' && String(row.phase).startsWith('design-repair-')).length, 0);
-        if (mode === 'design-owner-budget') assert(rows.some(row => row.halt_reason === 'budget_turns'));
         return;
       }
       for (const phase of ['design-repair-author', 'design-repair-questioning']) {
@@ -285,7 +305,7 @@ async function scenario(host: Host, mode: Scenario): Promise<void> {
         const repeated = await runGoalModeSessionStep(options);
         assert.equal(repeated.type, 'goal_session_result');
         assert(JSON.stringify(repeated).includes(`设计方已在rev${String(revision)}核实并保留此声明`));
-        assert.equal(readOriginalDeliveryBudget(host.root, manifest)!.totalTurns, 2 + initialQuestioningCalls, 'retained declaration may not consume another author/questioner on reentry');
+        assert.equal(readOriginalDeliveryActivity(host.root, manifest)!.calls, 2 + initialQuestioningCalls, 'retained declaration may not consume another author/questioner on reentry');
         const rows = fs.readFileSync(eventFile, 'utf8').trim().split('\n').map(line => JSON.parse(line) as Document);
         assert.equal(rows.filter(row => row.type === 'agent_invoke_start').length, 2 + initialQuestioningCalls);
         assert.equal(read(unit.canonicalPath).blockers.length, 1);
@@ -293,18 +313,23 @@ async function scenario(host: Host, mode: Scenario): Promise<void> {
       }
       assert.equal(read(unit.canonicalPath).blockers.length, 0, 'the actual consumer publishes the owner correction');
       assert(deriveChangeUnitReadySet(host.root, BLUEPRINT_ID).units[0].ready, 'only real publication and readiness allow progression');
-      assert.equal(readOriginalDeliveryBudget(host.root, manifest)!.totalTurns, 2 + initialQuestioningCalls);
       const rows = fs.readFileSync(eventFile, 'utf8').trim().split('\n').map(line => JSON.parse(line) as Document);
+      assert.equal(rows.filter(row => row.type === 'agent_invoke_start' && String(row.phase).startsWith('design-repair-')).length, 2,
+        'the original root records exactly its real design author and independent Q');
+      assert.equal(rows.filter(row => row.type === 'agent_invoke_start' && row.phase === 'initial-design-questioning').length, initialQuestioningCalls);
+      const activity = readOriginalDeliveryActivity(host.root, manifest)!;
+      assert.equal(activity.calls, activity.events.filter(event => event.type === 'agent_invoke_start').length,
+        'a newly signed construction child belongs to the same delivery activity without becoming another root design call');
       assert.equal(rows.filter(row => row.type === 'design_authority_repair' && row.stage === 'published'
         && row.checks?.some((check: Document) => check.codes?.includes(`${CU}:retained-design-declaration`))).length, 1);
       return;
     }
-    if (mode === 'session-retry' || mode === 'session-budget') {
+    if (mode === 'session-retry') {
       const options = { projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature, runId, adapter: 'claude', runMode: 'attended',
         authorization: { mode: 'goal_mode' as const, autonomyAuthorized: true } };
       let next = await settleInitialQuestioning(await runGoalModeSessionStep(options), options);
       let previousQuestioning = initialQuestioningReceipt;
-      const order = mode === 'session-retry' ? ['author', 'questioning', 'author', 'questioning'] : ['author'];
+      const order = ['author', 'questioning', 'author', 'questioning'];
       const count = order.length;
       for (let index = 0; index < count; index++) {
         assert.equal(next.type, 'phase_execute_request', JSON.stringify(next));
@@ -314,7 +339,8 @@ async function scenario(host: Host, mode: Scenario): Promise<void> {
         if (order[index] === 'author') {
           if (index > 0) assert(request.request.context.instruction!.includes('真实内容差额-1'));
           const candidate = path.join(runDir, 'design-repair/component-blueprint.yaml');
-          assert(read(candidate).review_summary.questioning?.items?.length, 'pending author must retain the public prior Q');
+          if (index > 0) assert(request.request.context.instruction!.includes('当前独立核实的第二段证据-1'), 'the pending signed request must retain the public prior Q');
+          else assert(read(candidate).review_summary.questioning?.items?.length, 'the initial author candidate retains its existing public Q');
           fs.appendFileSync(candidate, '\n# executor is preserving real in-progress partial work\n');
           const partial = fs.readFileSync(candidate);
           const repeated = await runGoalModeSessionStep(options);
@@ -336,13 +362,14 @@ async function scenario(host: Host, mode: Scenario): Promise<void> {
       }
       const rows = fs.readFileSync(eventFile, 'utf8').trim().split('\n').map(line => JSON.parse(line) as Document);
       assert.equal(rows.filter(row => row.type === 'agent_invoke_start' && String(row.phase).startsWith('design-repair-')).length, count);
-      assert.equal(readOriginalDeliveryBudget(host.root, manifest)!.totalTurns, count + 1);
+      assert.equal(rows.filter(row => row.type === 'agent_invoke_start' && row.phase === 'initial-design-questioning').length, initialQuestioningCalls);
+      assert.equal(readOriginalDeliveryActivity(host.root, manifest)!.calls, rows.filter(row => row.type === 'agent_invoke_start').length,
+        'the same original delivery also records a legitimately born construction child');
       assert.equal(rows.filter(row => row.type === 'design_authority_repair' && row.stage === 'attempted').length, 1);
-      assert.equal(rows.filter(row => row.type === 'design_authority_repair' && row.stage === 'published').length, mode === 'session-retry' ? 1 : 0,
+      assert.equal(rows.filter(row => row.type === 'design_authority_repair' && row.stage === 'published').length, 1,
         JSON.stringify({ next, repair: rows.filter(row => row.type === 'design_authority_repair') }));
-      assert(rows.some(row => row.halt_reason === 'budget_turns'), JSON.stringify({ next, ends: rows.filter(row => row.type === 'run_end') }));
-      if (mode === 'session-retry') assert(deriveDesignPreparationReadiness(host.root, BLUEPRINT_ID).ready);
-      else assert.deepEqual(fs.readFileSync(canonical.canonicalPath), originalBytes);
+      assert(!rows.some(row => row.halt_reason === 'budget_turns'), 'retired quota metadata cannot terminate the repaired original request');
+      assert(deriveDesignPreparationReadiness(host.root, BLUEPRINT_ID).ready);
       return;
     }
     if (recovery) {
@@ -365,11 +392,14 @@ async function scenario(host: Host, mode: Scenario): Promise<void> {
       assert.equal(next.type, 'goal_session_result', JSON.stringify(next));
       assert.equal(authorCalls, 2); assert.equal(questioningCalls, 2, 'a pause requires a real changed candidate and completed affected Q');
       const events = () => fs.readFileSync(eventFile, 'utf8').trim().split('\n').map(line => JSON.parse(line) as Document);
-      const paused = events().filter(event => event.type === 'design_authority_repair' && event.failed_step === 'no_progress_guard').at(-1)!;
-      assert(paused && paused.reason.includes(`第二段证据-${mode === 'session-progress-recovery' ? 1 : 2}`), JSON.stringify({
+      const paused = events().filter(event => event.type === 'design_authority_repair' && event.stage === 'failed' && event.failed_step === 'questioning').at(-1)!;
+      const stop = events().filter(event => event.type === 'run_end' && event.halt_reason === 'no_progress_guard').at(-1);
+      assert(stop, 'the shared run completion coordinator must actually pause unchanged failed acceptance');
+      assert(paused && paused.reason.includes('第二段证据-1'), JSON.stringify({
         repairs: events().filter(event => event.type === 'design_authority_repair' || event.type === 'phase_halt') }));
-      const [guidance, ...issueLines] = String(paused.reason).split('\n');
-      assert(guidance.includes('--force-resume') && guidance.includes('--force-takeover') && guidance.includes('原预算与历史保留'));
+      const guidance = String(stop.error).split('\n')[0];
+      const issueLines = String(paused.reason).split('\n').slice(1);
+      assert(guidance.includes('条件变化') && guidance.includes('明确继续'), 'the shared halt retains the real continuation conditions');
       assert(issueLines.some(line => line.includes('第二段证据-')) && issueLines.every(line => !line.includes('--force-resume') && !line.includes('--force-takeover')), 'full Q answers remain intact and continuation operations never enter the issue list');
       const draftFile = path.join(runDir, 'design-repair/component-blueprint.yaml');
       const retained = fs.readFileSync(draftFile);
@@ -378,14 +408,16 @@ async function scenario(host: Host, mode: Scenario): Promise<void> {
       if (mode === 'session-progress-recovery') {
         const legacyHeader = '当前全部机器问题与独立质询否定仍相同，实际未发布设计候选无变化；暂停等待明确继续或真实条件变化，原预算保留。';
         assert.notEqual(guidance, legacyHeader);
-        fs.writeFileSync(eventFile, fs.readFileSync(eventFile, 'utf8').split(guidance).join(legacyHeader));
-        assert.equal(String(events().filter(event => event.type === 'design_authority_repair' && event.failed_step === 'no_progress_guard').at(-1)!.reason).split('\n')[0], legacyHeader);
+        const rows = events(), lastStop = rows.map(row => row.type === 'run_end' && row.halt_reason === 'no_progress_guard').lastIndexOf(true);
+        rows[lastStop].halt_guidance = [legacyHeader, ...String(rows[lastStop].halt_guidance ?? '').split('\n').slice(1)].join('\n');
+        fs.writeFileSync(eventFile, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
+        assert.equal(String(events()[lastStop].halt_guidance).split('\n')[0], legacyHeader);
       }
       const starts = events().filter(event => event.type === 'agent_invoke_start').length;
       assert.equal((await runGoalModeSessionStep(options)).type, 'goal_session_result');
       assert.equal(events().filter(event => event.type === 'agent_invoke_start').length, starts, 'ordinary public next cannot resume unchanged work');
       assert.deepEqual(fs.readFileSync(draftFile), retained);
-      const repeatedPause = events().filter(event => event.type === 'design_authority_repair' && event.failed_step === 'no_progress_guard').at(-1)!;
+      const repeatedPause = events().filter(event => event.type === 'design_authority_repair' && event.stage === 'failed' && event.failed_step === 'questioning').at(-1)!;
       assert.deepEqual(String(repeatedPause.reason).split('\n').slice(1), issueLines, 'a historical guidance change cannot become a new author issue or wake unchanged work');
       paused.reason = repeatedPause.reason;
       if (mode === 'session-architecture-recovery') {
@@ -397,7 +429,10 @@ async function scenario(host: Host, mode: Scenario): Promise<void> {
       } else next = await runGoalModeSessionStep({ ...options, forceTakeover: true });
       assert.equal(next.type, 'phase_execute_request', JSON.stringify(next)); assert.equal(next.phase, 'design-repair-author');
       const resumed = readSessionExecution(runDir, (next.request as { path: string }).path)!;
-      assert(String(resumed.request.context.instruction).includes(paused.reason), 'first resumed author receives every original machine issue and Q answer, including blank lines');
+      const delivered = String(resumed.request.context.instruction);
+      assert(delivered.includes('当前范围失败恢复验收是否完整？') && delivered.includes('真实内容差额-1\n\n当前独立核实的第二段证据-1')
+        && delivered.includes('view:logical') && delivered.includes('design-repair-questioning-i5'),
+        'first resumed author receives the complete real question, two-paragraph denial, scope and original Q source');
       const repeated = await runGoalModeSessionStep(options);
       assert.deepEqual(repeated.request, next.request, 'pending continuation reuses the same real author request');
       next = await reportRole(next);
@@ -408,11 +443,11 @@ async function scenario(host: Host, mode: Scenario): Promise<void> {
       } else { assert.equal(authorCalls, 3); assert.equal(questioningCalls, 2, 'an explicit continuation waiting for missing input must not buy another Q or progress evaluation'); }
       assert.equal(next.type, 'goal_session_result');
       if (mode === 'session-progress-recovery') {
-        const lastPause = events().filter(event => event.type === 'design_authority_repair' && event.failed_step === 'no_progress_guard').at(-1)!;
+        const lastPause = events().filter(event => event.type === 'design_authority_repair' && event.stage === 'failed' && event.failed_step === 'questioning').at(-1)!;
         assert.deepEqual(String(lastPause.reason).split('\n').slice(1), issueLines, 'continuation instructions stay outside the original complete problem body after recovery');
       }
       assert.deepEqual(fs.readFileSync(canonical.canonicalPath), originalBytes, 'no defective design may publish');
-      assert.equal(readOriginalDeliveryBudget(host.root, manifest)!.totalTurns, initialQuestioningCalls + authorCalls + questioningCalls, 'all actual calls remain charged to the original request');
+      assert.equal(readOriginalDeliveryActivity(host.root, manifest)!.calls, initialQuestioningCalls + authorCalls + questioningCalls, 'all actual calls remain charged to the original request');
       return;
     }
     const result = await runUnattendedDesignRepair({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature,
@@ -428,8 +463,6 @@ async function scenario(host: Host, mode: Scenario): Promise<void> {
         return { ready: current.ready, reason: current.ready ? '原P1/P2 readiness已通过' : JSON.stringify(current.perUnit.map(row => ({ id: row.changeUnitId, verdict: row.verdict, issues: row.issueIds }))) };
       } } : {}),
       invoke: async (purpose, prompt, guard) => {
-        const replay = replayDesignRepairInvocation(runDir, purpose, undefined, undefined, guard?.afterInvokeId);
-        if (replay) return replay;
         purposes.push(purpose);
         nativeLockEvidence.push(fs.existsSync(path.join(workspace, BLUEPRINT_RECONCILE_LOCK_NAME))
           && enumerateCanonicalChangeUnits(host.root, BLUEPRINT_ID).every(current => fs.existsSync(featureFilePath(host.root,
@@ -477,22 +510,21 @@ async function scenario(host: Host, mode: Scenario): Promise<void> {
       assert.deepEqual(purposes, ['author']);
       assert.equal(readinessCalls, 0);
       assert(result.outcome === 'violation' && result.changes.some(change => change.path === 'src/ledger/LedgerFeature.ets'));
-    } else if (mode === 'exhausted' || mode === 'self-signed-retry') {
+    } else if (mode === 'retry') {
       assert.equal(result.outcome, 'failed', JSON.stringify(result));
+      assert(result.outcome === 'failed' && result.step === 'questioning');
+      assert(result.evaluation?.completed && result.evaluation.disposition.completionBlocking.some(problem => problem.action === 'repair'),
+        'the completed independent denial returns current repair facts to the sole root coordinator');
+      assert(result.reason.includes('真实内容差额-1\n\n当前独立核实的第二段证据-1'), 'every original Q paragraph remains in the returned feedback');
+      assert.deepEqual(purposes, ['questioning'], 'the helper cannot launch a local author/Q retry loop');
+      assert.equal(authorCalls, 0); assert.equal(questioningCalls, 1);
       assert.deepEqual(fs.readFileSync(canonical.canonicalPath), originalBytes);
-      assert.equal(rows.filter(row => row.type === 'design_authority_repair' && row.stage === 'attempted').length, 1);
       assert(!rows.some(row => row.type === 'design_authority_repair' && row.stage === 'published'));
-      if (mode === 'exhausted') {
-        assert.equal(authorCalls, 1);
-        assert(result.outcome === 'failed' && result.step === 'no_progress_guard');
-        assert.equal(questioningCalls, authorCalls + 1);
-        assert(result.reason.includes(`真实内容差额-${questioningCalls}\n\n当前独立核实的第二段证据-${questioningCalls}`));
-      } else { assert.equal(authorCalls, 1); assert.equal(questioningCalls, 1); assert(result.reason.includes('自报')); }
     } else {
       assert.equal(result.outcome, 'published', JSON.stringify(result));
       assert(result.outcome === 'published');
       assert.equal(result.recovered, mode !== 'readiness-blocked', JSON.stringify(result));
-      assert.deepEqual(purposes, mode === 'retry' ? ['questioning', 'author', 'questioning'] : ['questioning']);
+      assert.deepEqual(purposes, ['questioning']);
       assert.equal(rows.filter(row => row.type === 'design_authority_repair' && row.stage === 'attempted').length, 1);
       assert.equal(rows.filter(row => row.type === 'design_authority_repair' && row.stage === 'published').length, 1);
       assert.equal(readinessCalls, normal ? 0 : 1);
@@ -503,6 +535,11 @@ async function scenario(host: Host, mode: Scenario): Promise<void> {
       assert(rows.some(row => row.type === 'design_authority_repair' && row.stage === 'published' && row.outcome === (mode === 'readiness-blocked' ? 'unrecovered' : 'recovered')));
       if (mode === 'readiness-blocked') assert.equal(result.step, 'probe');
       else assert(deriveDesignPreparationReadiness(host.root, BLUEPRINT_ID).ready);
+      if (originalCheck) {
+        assert.equal(deriveBlueprintSkillInput(host.root, CU, host.frameworkRoot, 'contracts').state, 'resolved');
+        assert.equal(readReusableCheckResult(cacheOptions), null, 'the actual formal design publication must invalidate its previously bound canonical FAIL');
+        assert.deepEqual(fs.readFileSync(cacheOptions.extraOutputs[1]), originalCheck, 'publication cannot rewrite an old tool original into PASS');
+      }
       assert(fs.existsSync(headlessLedgerPath(host.root, feature, phase)), 'audit must stay on the real run carrier');
     }
     assert(nativeLockEvidence.length > 0 && nativeLockEvidence.every(Boolean), 'the real native responsibility must hold the original blueprint/CU locks after the attempted record');
@@ -512,6 +549,16 @@ async function scenario(host: Host, mode: Scenario): Promise<void> {
       const actual = JSON.parse(fs.readFileSync(path.join(runDir, 'manifest.json'), 'utf8'));
       assert(actual.initial_design && !actual.execution_scope && !actual.run_base_sha);
     }
+  } catch (error) {
+    try {
+      const originals = [canonical.canonicalPath, unit.canonicalPath,
+        ...['component-blueprint.yaml', 'change-unit.yaml', 'change-unit-candidates.json', 'architecture.json'].map(name => path.join(runDir, 'design-repair', name))];
+      const pending = readSessionExecution(runDir);
+      if (pending) originals.push(path.resolve(runDir, pending.reference.path));
+      console.log('INITIAL_REPAIR_ORIGINALS ' + preserveRuntimeTestEvidence([host.root], `initial repair ${mode} assertion failed`, [], originals,
+        { stdout: JSON.stringify({ initialBlueprint: canonical.blueprint, approvedCu, originalBlueprintBeforeRepair: originalBytes.toString('base64') }) }));
+    } catch (captureError) { console.warn('INITIAL_REPAIR_PRESERVATION_FAILED ' + String(captureError)); }
+    throw error;
   } finally {
     preparation.reconcileHeldBlueprintRefs = realReconcile;
     releaseLock(lockPath, lock.ownerId);
@@ -524,16 +571,12 @@ const cases = [
   { name: 'f3b8e6a1 initial repair: root author writes outside its draft and the existing publication guard rejects it', mode: 'outside-write' },
   { name: 'f3b8e6a1 initial repair: actual readiness failure after publication remains unrecovered for an initial-design phase', mode: 'readiness-blocked' },
   { name: 'f3b8e6a1 initial repair: normal canonical run retains its default design subject and original recovery probe', mode: 'normal' },
-  { name: 'P2 machine CU projection skips an unrelated author and complete Q denial reaches the actual author before publication', mode: 'retry' },
-  { name: 'P2 actual business edits followed by the same verified denial pause without treating answer wording as progress', mode: 'exhausted' },
+  { name: 'P3 design helper returns complete denied Q evaluation to the original root kernel without a local retry', mode: 'retry' },
   { name: 'd18f6c42 M2 M4 public post-Q pause blocks next and forced continuation delivers complete feedback to a fresh author', mode: 'session-progress-recovery' },
   { name: 'd18f6c42 M3 M4 unpublished new architecture layer stays paused until real candidate progress and retains full feedback', mode: 'session-architecture-recovery' },
-  { name: '9f6c2e41 bounded second author cannot self-sign questioning against its real input', mode: 'self-signed-retry' },
   { name: '9f6c2e41 bounded session replay preserves pending partial work and never reuses A1 or Q1', mode: 'session-retry' },
-  { name: '9f6c2e41 bounded session total budget stops before a new questioning call', mode: 'session-budget' },
   { name: '9f6c2e41 design owner receives active declaration even when authority findings are empty', mode: 'design-owner' },
   { name: '9f6c2e41 design owner does not receive cleared human device or other-owner conditions', mode: 'design-owner-external' },
-  { name: '9f6c2e41 design owner cannot dispatch after the original total budget is exhausted', mode: 'design-owner-budget' },
   { name: '9f6c2e41 retained design declaration waits at its published revision without another call', mode: 'design-owner-retain' },
 ] as const;
 
@@ -567,7 +610,7 @@ async function candidateWriteContract(): Promise<void> {
       const targetFeature = hasCu ? deriveChangeUnitFeatureId('ledger-app-blueprint', 'ledger-refresh') : 'ledger-app-blueprint';
       const manifest = buildInitialDesignGoalManifest({ feature: 'ledger-app-blueprint', run_id: `candidate-${mode}`, adapter: 'claude', requirement,
         initial_design: { completion_target: 'feature', requested_results: [requirement], requested_phases: [] },
-        budget: { max_total_turns: 30, wall_clock_minutes: 120 }, unattended: { write_mode: 'full-access', approval_mode: 'never', timeout_seconds: 900 } }, { projectRoot: host.root });
+        budget: { max_total_turns: 30, wall_clock_minutes: 120 }, unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: host.root });
       const born = createGoalRun({ projectRoot: host.root, manifest, chain: [] });
       const runDir = path.dirname(born.manifestPath);
       const blueprintBytes = fs.readFileSync(blueprint.canonicalPath);
@@ -582,7 +625,7 @@ async function candidateWriteContract(): Promise<void> {
         const badContent: Document = YAML.parse(cuBytes.toString('utf8'));
         badContent.target_predicates[0].verification_refs = ['acceptance:AC-999999'];
         fs.writeFileSync(current.canonicalPath, YAML.stringify(badContent));
-        assert(diagnoseBlueprintSkillAuthority(host.root, path.resolve(__dirname, '../../..'), targetFeature).findings.some(item => item.codes.includes('authority_predicate_acceptance_unmapped')));
+        assert(diagnoseBlueprintSkillAuthority(host.root, path.resolve(__dirname, '../../..'), targetFeature).findings.some(item => item.codes.includes('authority_acceptance_content_invalid')));
         fs.writeFileSync(current.canonicalPath, cuBytes);
         const badGraph: Document = structuredClone(blueprint.blueprint);
         badGraph.generated_graphs = [{ graph_id: 'bad-relation-graph', format: 'mermaid', source_view_id: 'logical', content: 'flowchart LR\n missing --> absent',
@@ -603,6 +646,7 @@ async function candidateWriteContract(): Promise<void> {
         invoke: async (_purpose, prompt) => {
           const draftDir = path.join(runDir, 'design-repair');
           const expected = [path.join(draftDir, 'component-blueprint.yaml'), ...(hasCu ? [path.join(draftDir, 'change-unit.yaml')] : []),
+            ...(mode === 'legacy' ? [] : [path.join(draftDir, 'change-unit-candidates.json')]),
             ...(mode === 'legacy' ? [] : [path.join(draftDir, 'architecture.json')])];
           const list = prompt.split('本次唯一可写候选集合')[1].split('canonical 蓝图')[0];
           assert.deepEqual(list.split('\n').filter(line => line.startsWith('- ')).map(line => line.slice(2)), expected);
@@ -646,37 +690,6 @@ async function candidateWriteContract(): Promise<void> {
       assert(directory.startsWith(fs.realpathSync(os.tmpdir()) + path.sep));
       fs.rmSync(directory, { recursive: true, force: true });
     }
-  }
-}
-
-function roleCacheWindows(): void {
-  const directory = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'repair-role-window-')));
-  const draftDir = path.join(directory, 'design-repair');
-  const eventsFile = path.join(directory, 'events.jsonl');
-  fs.mkdirSync(draftDir);
-  fs.writeFileSync(eventsFile, JSON.stringify({ type: 'design_authority_repair', stage: 'attempted' }) + '\n');
-  const add = (purpose: 'author' | 'questioning', id: string, waiting = false) => {
-    const phase = designRepairInvokeLabel(purpose);
-    const append = (value: Document) => fs.appendFileSync(eventsFile, JSON.stringify(value) + '\n');
-    append({ type: 'agent_invoke_start', phase, invoke_id: id });
-    fs.mkdirSync(path.join(directory, 'phases', phase, id), { recursive: true });
-    const doc = read(path.resolve(__dirname, '../fixtures/component-blueprint/valid/doc/features/ledger-app-blueprint/blueprint/component-blueprint.yaml'));
-    doc.transport_marker = id;
-    write(path.join(draftDir, 'component-blueprint.yaml'), doc);
-    append({ type: 'agent_invoke_end', phase, invoke_id: id, exit_code: 0, status: waiting ? 'waiting' : 'passed' });
-    recordDesignRepairInvocation(directory, purpose, id, { started: true, ok: !waiting, status: waiting ? 'waiting' : 'passed', detail: id,
-      ...(purpose === 'questioning' ? { output: JSON.stringify(doc.review_summary.questioning) } : {}) });
-  };
-  try {
-    add('author', 'A1'); add('questioning', 'Q1'); add('author', 'A2-waiting', true); add('author', 'A2-prime'); add('questioning', 'Q2');
-    for (const [purpose, after, expected] of [['author', null, 'A1'], ['questioning', 'A1', 'Q1'], ['author', 'Q1', 'A2-prime'], ['questioning', 'A2-prime', 'Q2']] as const) {
-      assert.equal(replayDesignRepairInvocation(directory, purpose, undefined, undefined, after)?.detail, expected);
-      assert.equal(read(path.join(draftDir, 'component-blueprint.yaml')).transport_marker, expected);
-    }
-    assert.equal(fs.readFileSync(eventsFile, 'utf8').trim().split('\n').map(line => JSON.parse(line)).filter(row => row.type === 'agent_invoke_start').length, 5);
-  } finally {
-    assert(directory.startsWith(fs.realpathSync(os.tmpdir()) + path.sep));
-    fs.rmSync(directory, { recursive: true, force: true });
   }
 }
 
@@ -803,8 +816,7 @@ export function getCases() { return [...cases.map(test => ({ name: test.name, ru
   { name: 'P2 real Q original reuse requires completed clean snapshots unchanged business and raw dependencies', run: questioningReuseProof },
   { name: '9f6c2e41 repair candidate sets use actual transaction authority and reject canonical foreign CU and product writes', run: candidateWriteContract },
   { name: 'd18f6c42 machine admission preserves old IDs real gaps and public Q without false admission', run: machineAdmissionCompatibility },
-  { name: 'd18f6c42 actual candidate comparison ignores machine metadata and preserves known missing files', run: actualWorkComparison },
-  { name: '9f6c2e41 role cache has both bounds and selects the latest start after waiting', run: roleCacheWindows }]; }
+  { name: 'd18f6c42 actual candidate comparison ignores machine metadata and preserves known missing files', run: actualWorkComparison }]; }
 export async function runSelectedCases(filter?: string) {
   const results: UnitCaseResult[] = [], timings: UnitExecutionTiming[] = [];
   for (const test of getCases()) {

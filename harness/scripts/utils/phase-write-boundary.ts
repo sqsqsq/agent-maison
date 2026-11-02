@@ -2,7 +2,7 @@ import type { GoalRunEvent } from './goal-runner-phase';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
-import { readRepairResponsibilityContracts, normalizeResponsibilityPath, workUnitMayWritePath } from './repair-responsibility';
+import { readRepairResponsibilityContracts, normalizeResponsibilityPath, workUnitMayWritePath, workUnitWriteDomains } from './repair-responsibility';
 import type { PhaseWriteDomainKind, PhaseWriteBoundaryResolution, ResolvePhaseWriteBoundaryOptions } from './repair-responsibility';
 export { partitionConstructionFiles } from './repair-responsibility';
 export { workUnitProtectedRecordPaths } from './repair-responsibility';
@@ -11,11 +11,16 @@ export type { PhaseWriteDomainKind, PhaseWriteMatchKind, PhaseWriteDomain, Phase
 function toPosix(value: string): string { return value.replace(/\\/g, '/'); }
 const normalizeRelative = normalizeResponsibilityPath;
 
-/** Ownership remains complete; the invocation order is only the current authorization view. */
+/** Complete ownership is read separately; this snapshot freezes the actual unit's write domains. */
 export function resolvePhaseWriteBoundary(options: ResolvePhaseWriteBoundaryOptions): PhaseWriteBoundaryResolution {
-  const raw = readRepairResponsibilityContracts(options);
+  const { resolveEffectiveScopeSource } = require('./goal-run-creation') as typeof import('./goal-run-creation');
+  const scope = options.executionScope ?? resolveEffectiveScopeSource(options.projectRoot, options.feature, options.runId)?.scope;
+  const raw = readRepairResponsibilityContracts({ ...options, executionScope: scope });
   const known = new Set(raw.phaseOrder);
-  return { ...raw, phaseOrder: [...options.phaseOrder], diagnostics: [...raw.diagnostics,
+  return { ...raw, phaseOrder: [...options.phaseOrder],
+    ...(options.executionRole === 'author' ? { domains: workUnitWriteDomains(raw.domains, scope),
+      protectedRoots: [...new Set([...raw.protectedRoots, ...raw.domains.filter(domain => domain.kind === 'source').map(domain => domain.path)])] } : {}),
+    diagnostics: [...raw.diagnostics,
     ...(options.executionRole ? [] : options.phaseOrder.filter(phase => !known.has(phase)).map(phase => `phase ${phase} has no registered skill contract; read-only`))] };
 }
 
@@ -168,7 +173,7 @@ export function capturePhaseInvocationSnapshot(
   };
 
   for (const root of resolution.protectedRoots) {
-    const failure = visit(path.join(resolution.projectRoot, root), true);
+    const failure = visit(path.join(resolution.projectRoot, root), false);
     if (failure) return snapshotFailure(failure);
   }
   // 实际引用的输入：所在目录按通用规则不遍历时单独核（不存在 = 不记，前后都不存在即无变化）。

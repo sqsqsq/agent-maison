@@ -15,12 +15,12 @@ import { buildVerifierMaterialView, collectTestStrengthContext, verifierMaterial
 import { loadVerifierEvidence } from '../../scripts/utils/verifier-evidence';
 import { canProduceVerifierRequest, resolveVerifierPlan, workflowVerifierPrompt } from '../../scripts/utils/verifier-plan';
 import { writeRunSummaryBase } from '../../harness-runner';
-import { loadPhaseEvidenceManifest, resolvePhaseEvidenceManifest, writePhaseEvidenceManifest } from '../../scripts/utils/phase-evidence-manifest';
+import { loadPhaseEvidenceManifest, resolvePhaseEvidenceManifest, writePhaseEvidenceManifest, sha256File } from '../../scripts/utils/phase-evidence-manifest';
 import { computeRunRequirementSha } from '../../scripts/utils/fidelity-shared';
-import { applicableCheckFamilies, currentCompletionEvaluation, completionProgressFromHistory, readCurrentDispositionInput, readReusableCheckResult } from '../../scripts/utils/verify-feature-completion';
+import { applicableCheckFamilies, currentCompletionEvaluation, completionProgressFromHistory, readCurrentDispositionInput, readReusableCheckResult, shouldGenerateFeatureCompletion } from '../../scripts/utils/verify-feature-completion';
 import { resolveCurrentDisposition, phaseCompletionProblems } from '../../scripts/utils/check-disposition';
 import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
-import { finalizePhaseClosure } from '../../scripts/utils/phase-closure-finalizer';
+import { finalizePhaseClosure, executedEvidenceInputs } from '../../scripts/utils/phase-closure-finalizer';
 import { ensureRunControl, casAcquireRunOwner } from '../../scripts/utils/goal-run-control';
 import { createWorkUnitExecutionContext } from '../../scripts/utils/goal-phase-executor';
 import { issueSessionExecution, sessionEvents } from '../../scripts/utils/session-execution-handoff';
@@ -34,6 +34,9 @@ import { setupGoalRuntimeHost, writeVisualDiff, runRealVisualGate, FEATURE as VI
 import { collectActionableDefects } from '../../scripts/goal-phase-runtime';
 import { actionableDefectsToCandidates, mergeRepairCandidatesIntoSummary } from '../../scripts/utils/repair-candidates';
 import { resolveRepairResponsibility } from '../../scripts/utils/repair-responsibility';
+import { executionScopeFingerprint, type ExecutionScope } from '../../scripts/utils/execution-scope';
+import { resolveCurrentScopeView } from '../../scripts/utils/feature-track';
+import { SCOPE_REVISION_FIELDS } from '../../scripts/utils/goal-manifest';
 import { computeDefectFingerprint } from '../../../profiles/hmos-app/harness/visual-diff-check';
 import { resolveEffectiveScopeSource } from '../../scripts/utils/goal-run-creation';
 import type { IssueVerificationVerdict } from '../../scripts/utils/repair-candidates';
@@ -454,6 +457,151 @@ process.stderr.write('diagnostic tail\\n'+'x'.repeat(9000));};emit();
         });
       }
     } },
+  { name: 'N1 current proof: unresolved raw FAIL rejects; disclosed FAIL reuses until scope repair requires fresh evidence', async run() {
+    await withCurrentStrength('strengthened', current => {
+      const f = current.f, birth = f.manifest.execution_scope;
+      assert(birth, 'the actual run must carry its immutable birth scope');
+      const workflow = loadWorkflowSpec(FRAMEWORK_ROOT, 'obligation-driven');
+      let scope = birth;
+      const scopeView = () => {
+        const predicates = require('../../scripts/utils/verify-feature-completion') as typeof import('../../scripts/utils/verify-feature-completion');
+        const resolve = predicates.resolveCompletionDisposition;
+        const expected = predicates.applicableCheckFamilies(scope);
+        const inputs: Array<{ chain: string[]; pendingOwnerPhase?: string }> = [];
+        predicates.resolveCompletionDisposition = options => {
+          if (options.executionScope === scope) inputs.push({ chain: [...options.chain], pendingOwnerPhase: options.pendingOwnerPhase });
+          return resolve(options);
+        };
+        try {
+          const view = resolveCurrentScopeView({ projectRoot: f.root, frameworkRoot: FRAMEWORK_ROOT, feature: 'demo',
+            workflow, previous: scope, currentRunId: f.manifest.run_id });
+          assert.equal(inputs.length, 1, 'one original scope must use one common completion observation for every local proof');
+          assert.deepEqual(inputs[0].chain, expected, 'proof projection must keep the complete original endpoint, not issue a different per-family query');
+          assert.equal(inputs[0].pendingOwnerPhase, undefined, 'an ended actor is not an implicit active write owner');
+          return view;
+        } finally { predicates.resolveCompletionDisposition = resolve; }
+      };
+      assert(scopeView().phase_chain.includes('coding'), 'an unrefuted actual FAIL cannot establish proof');
+      current.publish('refuted');
+      finalizePhaseClosure({ projectRoot: f.root, frameworkRoot: FRAMEWORK_ROOT, feature: 'demo', phase: 'coding',
+        goalRunId: f.manifest.run_id, resolvedInputs: current.ctx.resolvedInputs, factsContext: current.ctx.factsContext, persistPhaseState: () => undefined });
+      assert(!scopeView().phase_chain.includes('coding'), 'a legitimately disclosed raw FAIL can establish current proof without a fake PASS');
+      assert(readReusableCheckResult({ ...current.options, phase: 'coding' }), 'unchanged actual inputs keep the same reusable result');
+      const completion = () => shouldGenerateFeatureCompletion(scope, { ...current.options, endpoint: 'feature-completion',
+        workflow, chain: applicableCheckFamilies(scope) });
+      assert(!completion().eligible, 'a real required execution family without its report still prevents publication');
+      const old = loadPhaseEvidenceManifest(f.root, 'demo', 'coding');
+      assert(old?.integrityOk);
+      const eventsPath = path.join(f.root, f.manifest.report_dir, 'events.jsonl');
+      fs.appendFileSync(eventsPath, JSON.stringify({ type: 'phase_halt', ts: new Date().toISOString(), phase: 'coding',
+        halt_reason: 'executor_waiting', run_disposition: 'WAITING', run_wait_kind: 'external' }) + '\n');
+      assert(!scopeView().phase_chain.includes('coding'), 'an ordinary unchanged wait does not require another actual coding result');
+      assert.notEqual(readCurrentDispositionInput(current.options).phases.find(phase => phase.phase === 'coding')?.lineage, 'stale',
+        'the public view must not turn its own waiting event into a fresh-check requirement');
+      const implementation = birth.obligations.find(item => item.kind === 'implementation');
+      assert(implementation);
+      scope = structuredClone(birth);
+      scope.obligations.push({ ...structuredClone(implementation), id: 'implementation:late-confirmed-repair', satisfied_by: undefined });
+      const invalidatedAt = new Date().toISOString();
+      fs.appendFileSync(eventsPath, JSON.stringify({ type: 'scope_revised', ts: invalidatedAt, revision_index: 1,
+        previous_scope_fingerprint: executionScopeFingerprint(birth), execution_scope: scope,
+        trigger: { phase: 'coding', check_id: current.check.id }, allowed_fields: [...SCOPE_REVISION_FIELDS] }) + '\n');
+      for (const phase of ['review', 'ut']) {
+        const entry = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot: FRAMEWORK_ROOT, feature: 'demo', phase,
+          featuresDir: 'doc/features', goalRunId: f.manifest.run_id });
+        assert(entry.factsContext);
+        researchSnapshotFacts(f.root, featureFilePath(f.root, 'demo', 'context/facts.md'), phase, entry.factsContext);
+        const resolved = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot: FRAMEWORK_ROOT, feature: 'demo', phase, track: 'full',
+          goalRunId: f.manifest.run_id, ...entry });
+        assert(resolved.inputs, JSON.stringify(resolved.report));
+        const sources = ['src/demo/value.ts', UT_BASELINE_TEST];
+        const report = generateScriptReport(path.join(FRAMEWORK_ROOT, 'harness'), phase, 'demo', f.root, [{ id: 'file_completeness',
+          category: 'structure', description: 'controlled current checker reads actual implementation and test source', severity: 'BLOCKER',
+          status: sources.every(file => fs.readFileSync(path.join(f.root, file)).length > 0) ? 'PASS' : 'FAIL', details: sources.join('\n'),
+          structured: { source_attempt_dependencies: sources.map(file => ({ path: file, exists: true, sha256: sha256File(path.join(f.root, file)), role: 'artifact' })) } }], FRAMEWORK_ROOT);
+        const dir = featurePhaseReportsDir(f.root, 'demo', phase, FRAMEWORK_ROOT);
+        fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, 'script-report.json'), JSON.stringify(report, null, 2));
+        writeRunSummaryBase(f.root, report, FRAMEWORK_ROOT);
+        writePhaseEvidenceManifest(f.root, resolvePhaseEvidenceManifest({ projectRoot: f.root, frameworkRoot: FRAMEWORK_ROOT, feature: 'demo', phase,
+          resolvedInputs: resolved.inputs, factsContext: entry.factsContext, requirementSha: computeRunRequirementSha(f.root, 'demo', f.manifest.run_id),
+          extraInputs: executedEvidenceInputs(f.root, 'demo', phase, FRAMEWORK_ROOT),
+          extraOutputs: ['script-report.json', 'summary.json'].map(file => path.join(dir, file)) }));
+      }
+      const pending = resolveCurrentDisposition(readCurrentDispositionInput({ ...current.options, executionScope: scope }));
+      assert(pending.completionBlocking.some(problem => problem.phase === 'coding' && problem.id === 'lineage_fresh' && problem.action === 'verify'),
+        'the public view must expose this input-fresh result as older than the actual required repair');
+      assert(pending.completionBlocking.every(problem => problem.phase === 'coding'),
+        'the actually refreshed review/UT remain current; only coding requires verification: ' + JSON.stringify(pending.completionBlocking));
+      assert(scopeView().phase_chain.includes('coding'), 'the formal proof consumer must reject the same old result');
+      assert(!completion().eligible, 'actual post-repair review/UT results cannot make the older coding proof publishable');
+      assert.equal(loadPhaseEvidenceManifest(f.root, 'demo', 'coding')?.manifest.aggregate_sha256, old.manifest.aggregate_sha256,
+        'reading the gap never re-signs the old executed result');
+      const checked = prepare(f);
+      fs.appendFileSync(eventsPath, JSON.stringify({ type: 'phase_verdict', ts: new Date().toISOString(), phase: 'coding', verdict: 'FAIL' }) + '\n');
+      const checkedFacts = readCurrentDispositionInput({ ...checked.options, executionScope: scope });
+      assert.notEqual(checkedFacts.phases.find(phase => phase.phase === 'coding')?.lineage, 'stale',
+        'a raw FAIL does not move the required-repair time past its own actual checker output');
+      checked.publish('refuted');
+      finalizePhaseClosure({ projectRoot: f.root, frameworkRoot: FRAMEWORK_ROOT, feature: 'demo', phase: 'coding',
+        goalRunId: f.manifest.run_id, resolvedInputs: checked.ctx.resolvedInputs, factsContext: checked.ctx.factsContext, persistPhaseState: () => undefined });
+      fs.appendFileSync(eventsPath, JSON.stringify({ type: 'agent_invoke_start', ts: new Date().toISOString(), phase: 'ut-verifier-format-repair', invoke_id: 'ut-verifier-format-repair-i9' }) + '\n'
+        + JSON.stringify({ type: 'agent_invoke_end', ts: new Date().toISOString(), phase: 'ut-verifier-format-repair', invoke_id: 'ut-verifier-format-repair-i9', status: 'passed', exit_code: 0 }) + '\n');
+      assert(!scopeView().phase_chain.includes('coding'), 'fresh evidence after the repair and real independent disclosure establish the same current proof');
+      const definitions = scope.obligations.filter(item => item.kind === 'acceptance-context' || item.kind === 'design-context');
+      assert.equal(definitions.length, 2, 'the same real run supplies both canonical definition bindings');
+      for (const definition of definitions) {
+        assert(definition.satisfied_by?.length && definition.satisfied_by.every(ref => 'input_id' in ref));
+        assert(!loadPhaseEvidenceManifest(f.root, 'demo', definition.owner_phase), 'canonical input satisfaction has no fabricated phase report');
+      }
+      const publishable = completion();
+      assert(publishable.eligible, 'accepted input definitions without phase reports must not stale the actually verified output proofs: '
+        + JSON.stringify(publishable.issues));
+      const basisOnly = structuredClone(scope);
+      for (const definition of basisOnly.obligations.filter(item => definitions.some(original => original.id === item.id))) delete definition.satisfied_by;
+      assert(!shouldGenerateFeatureCompletion(basisOnly, { ...current.options, endpoint: 'feature-completion', workflow,
+        chain: applicableCheckFamilies(basisOnly) }).eligible, 'definition provenance without accepted satisfaction is still a real unmet duty');
+      assert.equal(fs.readFileSync(path.join(checked.dir, 'script-report.json'), 'utf8'), checked.raw, 'the actual raw FAIL remains byte-for-byte unchanged');
+      assert(checked.report.checks.some(check => check.id === checked.check.id && check.status === 'FAIL'), 'the positive proof never fabricates raw PASS');
+    });
+  } },
+  { name: 'P3 definition input: basis alone keeps plan executable; accepted input proof avoids an empty check', async run() {
+    await withCurrentStrength('preserved', current => {
+      const contracts = current.ctx.resolvedInputs?.values.contracts;
+      assert(contracts?.state === 'resolved', 'the fixture must supply its actual parsed contracts binding');
+      const originalScope = current.f.manifest.execution_scope;
+      assert(originalScope, 'the real fixture must carry its frozen scope policy');
+      const scope: ExecutionScope = {
+        schema_version: '1.0', completion_target: 'request', requested_results: ['design'], phase_chain: ['plan'],
+        reused_phases: [], unresolved: [], policy_fingerprint: originalScope.policy_fingerprint,
+        obligations: [{ id: 'design-context:candidate', kind: 'design-context', owner_phase: 'plan', applicability: 'required',
+          reason: 'current sourced design input', basis: [contracts.binding] }],
+      };
+      const read = () => readCurrentDispositionInput({ ...current.options, chain: ['plan'], executionScope: scope, scopeFindings: [] });
+      assert(read().phases.some(fact => fact.phase === 'plan'), 'basis is provenance, not an accepted satisfaction proof');
+      scope.obligations[0].satisfied_by = [contracts.binding];
+      assert(!read().phases.some(fact => fact.phase === 'plan'), 'a real accepted definition input does not require an empty plan run');
+      const plan = current.f.context('plan');
+      const source = 'src/demo/value.ts', sourceAbs = path.join(current.f.root, source);
+      const bytes = fs.readFileSync(sourceAbs);
+      const report = generateScriptReport(path.join(FRAMEWORK_ROOT, 'harness'), 'plan', 'demo', current.f.root, [{
+        id: 'file_completeness', category: 'structure', description: 'read the actual current definition source', severity: 'BLOCKER',
+        status: bytes.length ? 'PASS' : 'FAIL', details: `read ${bytes.length} actual bytes`,
+        structured: { source_attempt_dependencies: [{ path: source, exists: true, sha256: sha256File(sourceAbs), role: 'artifact' }] },
+      }], FRAMEWORK_ROOT);
+      const dir = featurePhaseReportsDir(current.f.root, 'demo', 'plan', FRAMEWORK_ROOT);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'script-report.json'), JSON.stringify(report, null, 2));
+      writeRunSummaryBase(current.f.root, report, FRAMEWORK_ROOT);
+      writePhaseEvidenceManifest(current.f.root, resolvePhaseEvidenceManifest({ projectRoot: current.f.root, frameworkRoot: FRAMEWORK_ROOT,
+        feature: 'demo', phase: 'plan', resolvedInputs: plan.resolvedInputs, factsContext: plan.factsContext,
+        requirementSha: computeRunRequirementSha(current.f.root, 'demo', current.f.manifest.run_id),
+        extraInputs: executedEvidenceInputs(current.f.root, 'demo', 'plan', FRAMEWORK_ROOT),
+        extraOutputs: ['script-report.json', 'summary.json'].map(file => path.join(dir, file)) }));
+      assert(!read().phases.some(fact => fact.phase === 'plan'), 'the existing current result is still fresh and does not require an empty repeat');
+      current.f.write(source, bytes.toString('utf8') + '\n// actual source input changed after this run checked it\n');
+      assert(read().phases.some(fact => fact.phase === 'plan'), 'accepted definition inputs do not hide this run\'s actually stale producer result');
+    });
+  } },
 ];
 
 export async function runSelectedCases(selector?: string) {

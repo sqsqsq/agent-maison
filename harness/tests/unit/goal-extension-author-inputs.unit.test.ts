@@ -29,6 +29,8 @@ import { withRuntimeTest } from '../utils/runtime-test-control';
 const REPO_ROOT = path.resolve(__dirname, '../../..');
 const READ_INSTRUCTION =
   "Before writing this phase's artifacts, read the knowledge inputs below that apply to this phase.";
+const UNIT_READ_INSTRUCTION =
+  "Before writing this work unit's artifacts, read the knowledge inputs below that apply to this work unit.";
 
 const MINIMAL_MANIFEST: GoalManifest = {
   schema_version: '1.0',
@@ -95,7 +97,7 @@ async function driveSpecRun(
   try {
     __testing_setInvokeAgent((async (_plan: unknown, _root: unknown, o: unknown) => {
       const phase = (o as { extraEnv?: Record<string, string> })?.extraEnv?.MAISON_GOAL_ATTEMPT_PHASE;
-      if (phase === 'spec') {
+      if (phase === 'work-unit-author') {
         const plan = _plan as { stdin?: string; argv?: string[] };
         prompts.push(plan.stdin ?? (plan.argv ?? []).join('\n'));
       }
@@ -170,9 +172,9 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
         'doc/glossary.yaml': 'schema_version: "1.0"\nterms:\n  - term: 作者前置输入\n    canonical_module: Demo\n    aliases: [送达测试]\n    easily_confused_with: [{ term: 后置核对, module: Review, disambiguation: 动笔之前发现，不等价于完成审查 }]\n',
       });
       try {
-        assert(r.prompts.length > 0, `spec 阶段的正式 invoke 必须发生（作者被调用），exit=${r.exitCode}`);
+        assert(r.prompts.length > 0, `专用作者的正式 invoke 必须发生，exit=${r.exitCode}`);
         const p = r.prompts[0];
-        assert(p.includes(READ_INSTRUCTION), '读取指令句须在作者实收 prompt 中');
+        assert(p.includes(UNIT_READ_INSTRUCTION), '读取指令句须在单元作者实收 prompt 中');
         assert(p.includes('## Instance extension inputs') && p.includes('### Knowledge index'), '主干同款标题');
         assert(p.includes('- `doc/extensions/knowledge/spec-author.md`'), '相对路径须在作者实收 prompt 中');
         assert(p.includes('canonical_module') && p.includes('动笔之前发现，不等价于完成审查'), '原生术语候选与消歧也必须送达实际作者');
@@ -181,7 +183,13 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
         const runsDir = path.join(r.root, 'doc', 'features', feature, 'goal-runs');
         const onDisk = fs.readdirSync(runsDir)
           .filter(n => !n.startsWith('.'))
-          .map(n => path.join(runsDir, n, 'phases', 'spec', 'prompt.md'))
+          .flatMap(n => {
+            const runDir = path.join(runsDir, n);
+            return fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8').split('\n').filter(Boolean)
+              .map(line => JSON.parse(line) as { type?: string; phase?: string; invoke_id?: string })
+              .filter(event => event.type === 'agent_invoke_start' && event.phase === 'work-unit-author' && event.invoke_id)
+              .map(event => path.join(runDir, 'phases', event.phase!, event.invoke_id!, 'prompt.md'));
+          })
           .filter(f => fs.existsSync(f));
         assert(onDisk.length > 0, '落盘 prompt.md 须存在');
         assert(fs.readFileSync(onDisk[0], 'utf-8').includes('- `doc/extensions/knowledge/spec-author.md`'));

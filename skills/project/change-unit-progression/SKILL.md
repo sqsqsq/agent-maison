@@ -23,7 +23,7 @@ Use this Skill when a blueprint has an admitted canonical artifact. Canonical `c
 
 ## Authority and entry
 
-- 首次分解只写临时 JSON 数组 `[{providerId, artifact}]` 到 `<features_dir>/<blueprint_id>/blueprint/change-unit-candidates.json`（[材料归属与清理](../../reference/consumer-framework-boundary.md#材料归属与临时文件清理)）。调用 `npm run check:change-unit -- --project-root <host> --blueprint <id> --accept-candidates <file> --json` 接受并派生 readiness；路径相对 `--project-root`，`<features_dir>` 沿配置解析。已有 canonical CU 或接受后未就绪调用同命令的 `--readiness`（替换 `--accept-candidates <file>`）；其含指针调和与文档物化，不是纯只读。原 `--unit <id>` 仅检查已有 canonical CU，不能检查临时候选。消费返回的 accepted 事实与 canonical Feature id；未就绪按具体问题修复并重派生，不重复接受，不手填 Feature identity。schema、identity、设计闭包、provenance 与来源权威由唯一 consumer 原子校验/写入。重复接受仍 fail-closed；未完成活动 CU 的内容修订沿既有 consumer 接点，保留 ID/Feature/目录与累计预算，running 返回 busy，见[蓝图设计输入](../../../docs/concepts/blueprint-design-inputs.md#未完成-cu-内容修订)。
+- 首次分解只写临时 JSON 数组 `[{providerId, artifact}]` 到 `<features_dir>/<blueprint_id>/blueprint/change-unit-candidates.json`（[材料归属与清理](../../reference/consumer-framework-boundary.md#材料归属与临时文件清理)）。调用 `npm run check:change-unit -- --project-root <host> --blueprint <id> --accept-candidates <file> --json` 接受并派生 readiness；路径相对 `--project-root`，`<features_dir>` 沿配置解析。已有 canonical CU 或接受后未就绪调用同命令的 `--readiness`（替换 `--accept-candidates <file>`）；其含指针调和与文档物化，不是纯只读。原 `--unit <id>` 仅检查已有 canonical CU，不能检查临时候选。消费返回的 accepted 事实与 canonical Feature id；未就绪按具体问题修复并重派生，不重复接受，不手填 Feature identity。schema、identity、设计闭包、provenance 与来源权威由唯一 consumer 原子校验/写入。重复接受仍 fail-closed；未完成活动 CU 的内容修订沿既有 consumer 接点，保留ID/Feature/目录和真实累计activity，running 返回 busy，见[蓝图设计输入](../../../docs/concepts/blueprint-design-inputs.md#未完成-cu-内容修订)。
 - Read CU intent, predicates, provides and design targets from the canonical artifact. Read component design from `component_blueprint_ref`; never copy either definition into a Feature.
 - Derive the Feature identity from `(blueprint_id, change_unit_id)`：逻辑 id = `cu-` + base64url 编码，物理路径 = `<features_dir>/<blueprint_id>/<change_unit_id>`（经框架 SSOT 解析，不手工拼接）。`contracts.change_unit` contains only ID mappings; `contracts.state_management` remains the sole runtime-construction authority.
 - `blueprint_id` 是路径键；`component_id` 只做所有权/一致性核验。requires/provides、carry-forward 与 ready set 全部限定同一 `blueprint_id` 工作区，跨工作区 CU（含同部件早期演进）不满足依赖。
@@ -36,14 +36,14 @@ Use this Skill when a blueprint has an admitted canonical artifact. Canonical `c
 1. Re-derive completion (`ABSENT|VALID|INCOMPLETE|INVALID` from `assessFeature`; `INCOMPLETE` lists the uncovered obligations), current blueprint target admission, exact requires/provides, blocker probes and ready candidates from formal artifacts.
 2. If an existing Goal Mode run is active, resume it and do not start another CU.
 3. Otherwise select at most one ready CU by ascending numeric priority, then stable `change_unit_id`.
-4. Hand Goal Mode the canonical CU path/ref/hash, blueprint ref and derived Feature id. After it returns, reread all facts before selecting again.
-5. On failure, pause or awaiting-human, preserve that run and its existing recovery decision. Do not create a P2 checkpoint or start a second CU. 完整交付由共同 runtime 接续：child 报告后自动回到原请求重读 P2，原请求止于全部适用 CU 正式完成；随后只按原口径只读检查一次部件闭环并披露，不自动修复或写出，`ready_for_component_closure` 不是部件完成。
+4. Hand Goal Mode the canonical CU path/ref/hash, blueprint ref and derived Feature id. The public progression call performs one current ready-set step; the original root coordinator rereads facts and continuously selects all applicable units.
+5. On failure, pause or awaiting-human, preserve that run and its existing recovery decision. Do not create a P2 checkpoint or start a second CU. 完整交付由共同 runtime 接续：child 报告后自动回到原请求重读 P2，全部适用CU完成不代签原部件终点；root按原授权继续必要部件工作，原正式writer记录并重读校验；ready_for_component_closure不是部件完成。
 
-Blueprint/CU identity drift makes mappings and readiness stale. Pure pointer reconciliation preserves the same CU when historical stable targets still resolve and remain admitted; it does not revise content. 未完成内容修订保留历史与累计预算，旧业务产物不自动刷新；停住 run 沿既有 cu:feature-binding/合同 binding 缺口回 plan 更新映射与范围再继续。曾完成现为 INCOMPLETE 仍保留完成事实，原义务补证据走同 Feature successor；完成后新增工作及拆分/合并/迁移使用新 `change_unit_id`，适用时声明精确 `supersedes`，退役前身不改字节。`revises` is read-only legacy.
+Blueprint/CU identity drift makes mappings and readiness stale. Pure pointer reconciliation preserves the same CU when historical stable targets still resolve and remain admitted; it does not revise content. 未完成内容修订保留历史与真实累计activity，旧业务产物不自动刷新；停住 run 沿既有 cu:feature-binding/合同 binding 缺口回 plan 更新映射与范围再继续。曾完成现为 INCOMPLETE 仍保留完成事实，原义务补证据走同 Feature successor；完成后新增工作及拆分/合并/迁移使用新 `change_unit_id`，适用时声明精确 `supersedes`，退役前身不改字节。`revises` is read-only legacy.
 
 ## Boundaries
 
 - Generic profile、单职责 request 与有效存量 standalone Feature 保留原流程。具备 design lens 的新正式完整交付可在尚无 CU 时出生受管初始设计段；未冻结候选和工作区目录都不代表设计已准入或施工获准。
-- `ready_for_component_closure` is only a handoff to later P3 evaluation. Never create or claim component closure here.
+- `ready_for_component_closure` is a current fact, never formal component completion; the same original root continues the existing component producer/writer and validates actual evidence.
 - Do not add a registry, ledger, lock, daemon, semantic-diff/invalidates engine, dynamic Provider loader or second recovery authority.
 - The first release assumes one main Agent/process. If multiple writers become a real requirement, stop and propose a separate change.

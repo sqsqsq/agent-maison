@@ -23,13 +23,13 @@ function assertNoLinks(dir: string): void {
   }
 }
 
-export function prepareSessionCliProject(root: string, adapter: 'claude' | 'codex', isolated: boolean): void {
+export function prepareSessionCliProject(root: string, adapter: 'claude' | 'codex', isolated: boolean, reviewOnly = adapter === 'codex'): void {
   if (fs.existsSync(root)) throw new Error(`Refusing to overwrite fixture: ${root}`);
   fs.mkdirSync(root, { recursive: true });
   process.env.MAISON_GOAL_CHECKPOINT_DIR = path.join(root, '.trust');
   const { frameworkRoot } = provisionFrameworkUnder(root);
   const write = (file: string, content: string) => writeHostFile(root, file, content);
-  const requirement = adapter === 'codex' ? SMOKE_REQUIREMENT : REQUIREMENT;
+  const requirement = reviewOnly ? SMOKE_REQUIREMENT : REQUIREMENT;
   // Fixture-only environmental adaptation: genuine Node/tsc host, no product checker replacement.
   const profileRoot = path.join(frameworkRoot, 'profiles/generic');
   const profile = YAML.parse(fs.readFileSync(path.join(profileRoot, 'profile.yaml'), 'utf8'));
@@ -75,7 +75,7 @@ export function prepareSessionCliProject(root: string, adapter: 'claude' | 'code
     fs.mkdirSync(path.join(root, '.claude/agents'), { recursive: true });
     for (const name of ['verifier.md', 'phase-executor.md']) fs.copyFileSync(path.join(frameworkRoot, 'agents/claude/templates/agents', name), path.join(root, '.claude/agents', name));
   } else write('.codex/skills/goal-mode/SKILL.md', '---\nname: goal-mode\ndescription: Maison goal entry\n---\nRead framework/skills/project/goal-mode/SKILL.md.\n');
-  const isSmoke = adapter === 'codex';
+  const isSmoke = reviewOnly;
   write('CLI-PROMPT.md', `读取 AGENTS.md、doc/requirement.md 和 framework/skills/project/goal-mode/SKILL.md。${isSmoke ? '仅完成 review 单阶段交接冒烟：当前正确实现是既有输入，禁止改产品或新增后续阶段；request 终点不签 Feature completion。' : '按已有且未变化的批准规格恢复 clamp，完成 coding→review→ut 与实际测试直至正式 Feature 完成；当前 throw 是实现回归，不是新增行为/验收变化。'}\n\n准备工具已通过生产 prepareFeatureScopeCandidate/buildGoalManifestFromInput/createGoalRun 布置合法出生输入与明确预算；run-id=session-cli，尚未调用执行者/门禁或写任何结果。命令从 framework/harness 运行，使用本工程绝对 project-root/framework-root。由你自己的命令工具执行 goal-mode-entry --next --run-mode attended --feature clamp --run-id session-cli --adapter ${adapter}${isSmoke ? '' : ' --authorize-autonomy'}，读返回 request.path 的完整原件（context.instruction），按原身份与精确命令执行、自检、投真正独立 verifier、sync-closure，仅在 next_command 指定的当前 result-e<epoch>.json 写本次真实结果（可用 UTF-8 BOM），原样执行返回的 --report-result @文件 --request 原件路径；消费返回至${isSmoke ? '本阶段正式 gate/finalizer 通过' : '正式 Feature 完成'}。完整交付各次控制调用重传可信原全权授权；冒烟没有全权位。\n\n不能把请求 passed 当质量通过，不手填任何机器结果。${isSmoke ? 'review 阶段可在主上下文执行；必需 verifier 使用真实独立 CLI/子代理，按生产 request 执行。' : isolated ? '作者阶段必须用真实隔离子代理，必需 verifier 另用真实独立子代理。' : '作者阶段在当前主上下文执行，披露无阶段隔离；必需 verifier 仍用实际独立子代理。'} 最多${isSmoke ? '4作者调用及35' : '12作者调用及45'}分钟总上限，计次/时间不重置；不手改框架或降低验收。最终列出真实产物、阶段summary、独立报告与${isSmoke ? '单阶段正式收口事实，明确未执行其它阶段/未签Feature完成' : 'Node断言及正式完成原件'}路径，未完成如实说明。\n`);
   assertNoLinks(root);
   const copied = (relative: string): any => require(path.join(frameworkRoot, 'harness', relative));

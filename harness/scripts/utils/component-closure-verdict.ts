@@ -8,6 +8,7 @@ import {
   compareCodePoint,
   stableSortStrings,
 } from './component-closure-model';
+import { resolveCurrentDisposition, type CurrentDisposition } from './check-disposition';
 
 function gapClassification(issue: ComponentClosureIssue): ComponentClosureGap['classification'] {
   if (/conflict|duplicate/.test(issue.id)) return 'conflict';
@@ -27,7 +28,7 @@ export function deriveComponentClosureVerdict(
   rows: ComponentClosureCoverageRow[],
   providers: ClosureProviderObservation[],
   issues: ComponentClosureIssue[],
-): { gaps: ComponentClosureGap[]; degradations: ClosureDegradation[]; verdict: ClosureVerdict } {
+): { gaps: ComponentClosureGap[]; degradations: ClosureDegradation[]; verdict: ClosureVerdict; currentDisposition: CurrentDisposition } {
   const gaps: ComponentClosureGap[] = [];
   for (const row of rows.filter(item => item.required && item.observation !== 'covered')) {
     gaps.push({
@@ -75,10 +76,19 @@ export function deriveComponentClosureVerdict(
     }
   }
   degradations.sort((a, b) => compareCodePoint(a.degradation_id, b.degradation_id));
+  const currentDisposition = resolveCurrentDisposition({ endpoint: 'request', phases: [], additionalProblems: [
+    ...sortedGaps.map(gap => ({ phase: 'component-closure', id: gap.gap_id,
+      action: gap.classification === 'blocked' ? 'wait' as const : gap.classification === 'incomplete' || gap.classification === 'stale' ? 'verify' as const : 'repair' as const,
+      affects: 'completion' as const, severity: 'BLOCKER' as const, owner: gap.owner,
+      detail: `${gap.reason}；解除条件：${gap.unlock_condition}`, evidence: [...gap.obligation_refs, ...gap.source_refs] })),
+    ...degradations.map(item => ({ phase: 'component-closure', id: item.degradation_id, action: 'disclose' as const,
+      affects: 'none' as const, severity: 'MINOR' as const, owner: item.owner, detail: `${item.impact}；${item.retrigger_condition}` })),
+  ] });
   return {
     gaps: sortedGaps,
     degradations,
-    verdict: sortedGaps.length > 0 ? 'FAIL' : degradations.length > 0 ? 'PASS_WITH_DEGRADATION' : 'PASS',
+    verdict: !currentDisposition.completionEligible ? 'FAIL' : degradations.length > 0 ? 'PASS_WITH_DEGRADATION' : 'PASS',
+    currentDisposition,
   };
 }
 

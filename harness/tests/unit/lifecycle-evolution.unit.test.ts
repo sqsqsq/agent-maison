@@ -44,6 +44,9 @@ import {
   withCurrentSnapshot,
 } from './successor-exit.unit.test';
 import { readScopeAcceptance } from '../../scripts/utils/feature-track';
+import { resolveCompletionDisposition } from '../../scripts/utils/verify-feature-completion';
+import type { WorkUnitExecutionContext } from '../../scripts/utils/goal-phase-executor';
+import { researchSnapshotFacts } from '../fixtures/host-snapshot-3.1.0/migrate';
 import { recomputePhaseEvidenceStaleness } from '../../scripts/utils/phase-evidence-manifest';
 import { changeConsumedTargetContent, changeUnconsumedBlueprintContent } from './phase-evidence-manifest.unit.test';
 import type { UnitCaseResult } from '../run-unit';
@@ -325,7 +328,7 @@ export async function evolve(s: Snapshot, ev: Evolution): Promise<Outcome> {
   return out;
 }
 
-/** 真 harness 跑后继链的逐阶段作者材料（`supersede()` 的 extra）。 */
+/** One actual unit author prepares its currently needed method materials; these writers never dispatch actors. */
 export function authorHooks(p: RealChainProject, writers: Partial<Record<Phase, Writer>>, after?: Partial<Record<Phase, Writer>>) {
   const hook = (phase: Phase) => (ctx: { runId: string; attempt: number }): void => {
     const first = loadFrozenExecutionScope(p.root, p.feature, ctx.runId)?.phase_chain[0];
@@ -336,11 +339,34 @@ export function authorHooks(p: RealChainProject, writers: Partial<Record<Phase, 
     writers[phase]?.(p, ctx.runId);
     after?.[phase]?.(p);
   };
-  return {
+  const hooks = {
     realHarness: true, failExecutorFor: undefined,
     onOutOfChain: (ctx: Parameters<typeof publishRequestedVerifier>[1]) => { assert(publishRequestedVerifier(p, ctx)); },
     onSpec: hook('spec'), onPlan: hook('plan'), onCoding: hook('coding'), onReview: hook('review'), onUt: hook('ut'), onTesting: hook('testing'),
   };
+  return { ...hooks, onAuthor: (ctx: { runId: string; attempt: number }, context: WorkUnitExecutionContext): void => {
+    const admitted = context.factsContext;
+    assert(admitted && context.runId === ctx.runId && context.feature === p.feature, 'the writer must consume its actual signed unit context');
+    const scope = loadEffectiveExecutionScope(p.root, p.feature, ctx.runId);
+    const pending = new Set(scope?.phase_chain ?? context.chain);
+    const disposition = resolveCompletionDisposition({ projectRoot: p.root, frameworkRoot: p.frameworkRoot, feature: p.feature,
+      runId: ctx.runId, chain: [...context.chain], ...(scope ? { executionScope: scope } : {}) });
+    for (const problem of disposition.completionBlocking) if (problem.action === 'repair') pending.add(problem.owner ?? problem.phase);
+    if (!fs.existsSync(featureFilePath(p.root, p.feature, 'acceptance.yaml'))) pending.add('spec');
+    if (!fs.existsSync(featureFilePath(p.root, p.feature, 'contracts.yaml'))) pending.add('plan');
+    const factsFile = featureFilePath(p.root, p.feature, 'context/facts.md');
+    const baseline = admitted.baseline && fs.existsSync(factsFile) ? fs.readFileSync(factsFile) : undefined;
+    for (const family of context.chain) {
+      if (!pending.has(family) || !Object.prototype.hasOwnProperty.call(writers, family)) continue;
+      if ((family === 'coding' || family === 'ut') && !context.runtimeFacts.runBaseSha) continue;
+      p.runId = admitted.baseline ? factsIdentity(p, ctx.runId) : ctx.runId;
+      writers[family as Phase]?.(p, ctx.runId);
+      after?.[family as Phase]?.(p);
+    }
+    if (baseline) fs.writeFileSync(factsFile, baseline);
+    if (!admitted.baseline || pending.has(admitted.first_phase)) researchSnapshotFacts(p.root, factsFile, admitted.first_phase, admitted);
+    for (const family of context.chain) if (family !== admitted.first_phase && pending.has(family)) researchSnapshotFacts(p.root, factsFile, family, admitted);
+  } };
 }
 
 /**
@@ -528,11 +554,10 @@ const keepSpecEstablished: Writer = p => {
 };
 /** 后继链首为 spec 的 CU 作者材料；`align` = spec 责任方是否按设计权威对齐 acceptance。 */
 export function specFirstCuHooks(p: RealChainProject, align: boolean) {
-  const hooks = authorHooks(p, CU_WRITERS, { coding: keepSpecEstablished, review: keepSpecEstablished, ut: keepSpecEstablished });
-  return { ...hooks, onSpec: (ctx: { runId: string; attempt: number }): void => {
-    establishFactsAtSpec(p, ctx.runId);
-    if (align) alignAcceptance(p);
-  } };
+  return authorHooks(p, { ...CU_WRITERS, spec: (project, executionRunId) => {
+    establishFactsAtSpec(project, executionRunId ?? project.runId!);
+    if (align) alignAcceptance(project);
+  } }, { coding: keepSpecEstablished, review: keepSpecEstablished, ut: keepSpecEstablished });
 }
 /** spec 责任方从当前 provider 重产 typed 验收，并走原事实建立门。 */
 function alignAcceptance(p: RealChainProject): void {

@@ -7,7 +7,7 @@
       "id": "S1",
       "title": "模型永久不兼容",
       "source_incident": "be091c（金丝雀 400）、0457a6（正式调用 400）",
-      "premise": "adapter 默认模型不被账号支持（400 invalid_request_error model is not supported）：金丝雀与正式调用分别命中；另含预算、以及重演 be091c 的三个现场（真实孤儿锁、已有范围转交、模型不兼容后显式换型号）各经一个公开入口",
+      "premise": "adapter 默认模型不被账号支持（400 invalid_request_error model is not supported）：金丝雀与正式调用分别命中；另含显式用户UTC截止、以及重演 be091c 的三个现场（真实孤儿锁、已有范围转交、模型不兼容后显式换型号）各经一个公开入口",
       "driver_layer": "运行时链",
       "coverage_note": "400 信封按宿主真实形状（codex exec --json 行 + 生产 scanner 求出的 terminal_error_excerpt）；金丝雀经既有缝 __testing_setCanaryProbeInvoke，正式调用经 invokeResultFor，型号一律从调用计划 argv 的 --model 读（判断依据是实际调用的型号）。全部请求经 plan 4e6fb3b6 §7 的公开入口（驱动不带自动 --force，不做手工预修）；重新发起请求计为操作者动作。harness 为测试桩。be091c 三个现场：显式换型号走前台（explicit-model-successor），真实孤儿锁走 detach（子进程那一半经 spawn 测试缝在进程内跑同一 goalMain），已有范围转交走有人在场（prepare-run + host bridge，上一版宿主快照 + 生产冻结/转交 writer）。",
       "unaffected_phases": [],
@@ -491,11 +491,11 @@
         },
         {
           "key": "budget",
-          "label": "预算短于金丝雀时长",
+          "label": "用户明示截止短于金丝雀时长",
           "premise": "首段正式调用 spawn 失败停机；回拨会话使剩余墙钟额度约 12 秒；获准替代清单有 gpt-alt-1；重发同一请求",
           "recoverable_fault": false,
           "unaffected_phases": [],
-          "expected": "金丝雀按剩余额度结束；额度用尽后不再试下一个型号；说明写明预算已尽；不新建 run；随后无人脚本连续两次重发（什么都没变）保持停止、不写事件、不新建 run（\"重复请求\"一行的无人值守部分）",
+          "expected": "只有公开请求明确签发的UTC user_deadline_at限制本轮；金丝雀按真实剩余时间结束，用户截止后不再试下一个型号，不重置截止、不新建run，未完成如实披露；同条件重发零调用。旧baseline原样保留为历史。",
           "assertion": "correct_stop",
           "coverage_note": "回拨会话只动事件时间，不动内容（为过冷却与制造余额）；这是测试的时间操作，不计操作者动作。",
           "baseline": {

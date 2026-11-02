@@ -15,7 +15,6 @@ import {
 } from '../../../profiles/hmos-app/harness/coding-host-rules';
 import { resolveVerdictFromChecks } from '../../scripts/utils/report-generator';
 import {
-  classifyPhaseVerdict,
   isDeferrableExternalBlock,
 } from '../../scripts/utils/phase-transition-policy';
 
@@ -254,15 +253,11 @@ cases.push(
         ),
         'dependency policy 须认出它是可延期的外部阻塞',
       );
-      const action = classifyPhaseVerdict({
-        verdict,
-        blocking_class: (check as { blocking_class: string }).blocking_class,
-        failure_kind: 'project_build_environment_inconsistent',
-      } as never);
-      assert.ok(
-        String(action).startsWith('defer_external'),
-        `最终动作须是 defer_external*，实得 ${String(action)}——否则又回到 agent 内容重试`,
-      );
+      const current = require('../../scripts/utils/check-disposition') as typeof import('../../scripts/utils/check-disposition');
+      const disposition = current.resolveCurrentDisposition({ endpoint: 'request', phases: [{ phase: 'coding',
+        verdict, schemaCurrent: true, closureCommitted: false, checks: [check] }] });
+      assert.ok(disposition.completionBlocking.some(problem => problem.action === 'wait'
+        && problem.detail.includes('project_build_environment_inconsistent')), '实际环境问题保持等待，不能变成内容重试或完成');
     },
   },
   {

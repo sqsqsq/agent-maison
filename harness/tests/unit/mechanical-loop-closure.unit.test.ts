@@ -190,9 +190,19 @@ function probeAllLayers(projectRoot: string): LayerProbe {
   return { p1, p2, p2Messages: p2Messages.join(' | '), p3, p3Messages: p3Messages.join(' | '), p3Verdict };
 }
 
+/** Fixture coordinator calls the same current-fact step once per actual canonical CU. */
+async function runCanonicalFixtureSteps(projectRoot: string, options: Parameters<typeof runChangeUnitProgression>[2]) {
+  let decision = await runChangeUnitProgression(projectRoot, COMPONENT, options);
+  for (const _unit of enumerateCanonicalChangeUnits(projectRoot, COMPONENT).slice(1)) {
+    if (decision.action !== 'select_one') return decision;
+    decision = await runChangeUnitProgression(projectRoot, COMPONENT, options);
+  }
+  return decision;
+}
+
 /** 把四个 canonical CU 推到全部 VALID（真实完成事实），供上游全绿、下游才炸的断点使用。 */
 async function advanceWholeChain(projectRoot: string): Promise<void> {
-  const decision = await runChangeUnitProgression(projectRoot, COMPONENT, {
+  const decision = await runCanonicalFixtureSteps(projectRoot, {
     caller: async handoff => {
       completeChangeUnitRun(projectRoot, handoff);
       return { status: 'completed' };
@@ -233,7 +243,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
         );
 
         const invoked: string[] = [];
-        const decision = await runChangeUnitProgression(projectRoot, COMPONENT, {
+        const decision = await runCanonicalFixtureSteps(projectRoot, {
           caller: async handoff => {
             invoked.push(parseChangeUnitFeatureId(handoff.featureId).changeUnitId);
             completeChangeUnitRun(projectRoot, handoff);
@@ -304,7 +314,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
       // 未装配的 canonical 夹具：ledger-summary 自带合法 human blocker（release-approval）。
       await withChainProject(async projectRoot => {
         const gatedLeg: string[] = [];
-        const gated = await runChangeUnitProgression(projectRoot, COMPONENT, {
+        const gated = await runCanonicalFixtureSteps(projectRoot, {
           caller: async handoff => {
             gatedLeg.push(parseChangeUnitFeatureId(handoff.featureId).changeUnitId);
             completeChangeUnitRun(projectRoot, handoff);
@@ -324,7 +334,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
         // 人工观察经既有 blockerProbe 缝进入（这是生产里 human blocker 的唯一解除通道，
         // 不是把 completion/ready 判定桩掉）。
         const resumedLeg: string[] = [];
-        const resumed = await runChangeUnitProgression(projectRoot, COMPONENT, {
+        const resumed = await runCanonicalFixtureSteps(projectRoot, {
           ready: {
             blockerProbe: {
               evaluate: blocker => ({
@@ -513,7 +523,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
         p1.includes('blueprint_required_provider_missing'),
         `P1 未点名缺席的 required provider：${p1.join(',')}`,
       );
-      const decision = await runChangeUnitProgression(projectRoot, COMPONENT, {
+      const decision = await runCanonicalFixtureSteps(projectRoot, {
         caller: async () => { throw new Error('required provider 缺席时不得启动任何 CU'); },
       });
       assert(decision.action === 'blocked', `provider 接缝损坏后仍推进：${decision.action}`);
@@ -615,7 +625,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
         p1.includes('blueprint_provider_duplicate_authority'),
         `P1 未对重复权威 provider fail-closed：${p1.join(',')}`,
       );
-      const decision = await runChangeUnitProgression(projectRoot, COMPONENT, {
+      const decision = await runCanonicalFixtureSteps(projectRoot, {
         caller: async () => { throw new Error('权威冲突时不得启动任何 CU'); },
       });
       assert(decision.action === 'blocked', `权威冲突后仍推进：${decision.action}`);
@@ -804,7 +814,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
         p1.includes('blueprint_questioning_provider_missing'),
         `P1 未识破"未经质询"的蓝图：${p1.join(',')}`,
       );
-      const decision = await runChangeUnitProgression(projectRoot, COMPONENT, {
+      const decision = await runCanonicalFixtureSteps(projectRoot, {
         caller: async () => { throw new Error('蓝图未过质询时不得启动任何 CU'); },
       });
       assert(decision.action === 'blocked', `未经质询的蓝图仍被推进：${decision.action}`);

@@ -1,864 +1,122 @@
-// ============================================================================
-// hook-stale-state.unit.test.ts — Stop hook 跨会话隔离 + 闭环判定 端到端回归
-// ============================================================================
-//
-// 为什么写这层（而不是纯函数 import 测）：
-//   实例根 Stop hook（ESM）与 framework/harness 单测通过 child_process 对接。
-//   tsconfig.module=commonjs；在 commonjs 入口同步 import ESM 不友好。
-//   改用 child_process.spawnSync 直接驱动 hook 进程：
-//     - 测的是真实端到端行为（exit code + stdout/stderr + state 文件回写）；
-//     - 与 hook 内部实现解耦：未来重构成 lib 抽包也不影响这层；
-//     - 同时挂上"配置一致性"检查（T11）防 HOOK_DEFAULT_* 与 DEFAULT_STATE_MACHINE 漂移。
-//
-// 覆盖矩阵（13+ case，对齐 Stop hook 跨会话隔离设计说明）：
-//   T1  同会话 + 闭环达成        → exit 0
-//   T2  同会话 + 未闭环          → exit 2 + 中性文案（包含"继续 / 放弃二选一"）
-//   T3  跨会话遗留               → exit 0 + advisory（"与当前会话无关"）
-//   T4  老 state 无 sid + 在 grace 内 + 闭环 → exit 0 + state 被盖章
-//   T5  老 state 无 sid + 超 grace             → exit 0 + advisory（legacy）
-//   T6  payload 无 sid + 已盖章 + 在 ttl 内 + 闭环 → exit 0
-//   T7  payload 无 sid + 已盖章 + 超 ttl       → exit 0 + advisory（ttl-expired）
-//   T8  stop_hook_active=true                  → exit 0（无条件放行）
-//   T9  自定义 grace_period_minutes=1（缩短）  → 2 分钟未盖章 state 即视为遗留
-//   T10 自定义 ttl_hours=1（缩短）             → 2 小时无 sid + 已盖章 state 即视为陈旧
-//   T11 配置一致性：HOOK_DEFAULT_* 与 DEFAULT_STATE_MACHINE 数值匹配
-//   T12 非法配置（grace 超范围 / ttl 字符串）  → hook 端回退默认值，不崩
-//
-// 退出码：runAll() 返回每用例 ok/fail；run-unit.ts 汇总后 exit。
-// ============================================================================
-
+import assert from 'assert';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { spawnSync, type SpawnSyncReturns } from 'child_process';
+import { spawnSync } from 'child_process';
+import { pathToFileURL } from 'url';
+import { DEFAULT_STATE_MACHINE, loadStateMachineConfig } from '../../config';
+import { resolveCurrentDisposition, type CurrentDispositionInput } from '../../scripts/utils/check-disposition';
+import type { UnitCaseResult } from '../run-unit';
 
-import { DEFAULT_STATE_MACHINE } from '../../config';
-import { detectRepoLayout, frameworkAbs } from '../../repo-layout';
-import { extractBlockerSignature } from '../../scripts/utils/goal-failure-classifier';
+const REPO = path.resolve(__dirname, '../../..');
+const HOOK = path.join(REPO, 'agents/claude/templates/hooks/check-phase-completion.mjs');
+const HARNESS = path.join(REPO, 'harness');
+const dynamicImport = new Function('file', 'return import(file)') as (file: string) => Promise<any>;
 
-export interface UnitCaseResult {
-  name: string;
-  ok: boolean;
-  error?: string;
+function current(action?: 'repair' | 'verify' | 'wait') {
+  return resolveCurrentDisposition({ endpoint: 'feature-completion', phases: [], additionalProblems: action ? [{
+    phase: 'testing', id: 'required_check_conclusion', action, affects: 'completion', severity: 'BLOCKER',
+    detail: action === 'wait' ? '实际设备仍不可用，保留未完成。' : '原作者交回后仍须真实工具和独立核验。',
+  }] : [] } as CurrentDispositionInput);
 }
 
-// --------------------------------------------------------------------------
-// 路径定位
-// --------------------------------------------------------------------------
-
-const LAYOUT = detectRepoLayout(__dirname);
-const HOOK_PATH = frameworkAbs(LAYOUT, 'agents/claude/templates/hooks/check-phase-completion.mjs');
-
-// --------------------------------------------------------------------------
-// fixture 工具
-// --------------------------------------------------------------------------
-
-interface FixtureOptions {
-  /**
-   * 已闭环 summary（closure_status=closed）vs 未闭环。state receipt 只作兼容投影。
-   */
-  closed?: boolean;
-  /** state.session_id；undefined 表示该字段不写入；null 表示显式写 null（"未盖章"语义） */
-  stateSessionId?: string | null | undefined;
-  /** state.updated_at 相对当前时间偏移（毫秒，负值=过去） */
-  updatedAtOffsetMs?: number;
-  /** state file 是否写出（默认 true） */
-  writeStateFile?: boolean;
-  /** framework.config.json 的 state_machine 段；不传则不写本字段（走 hook 默认值） */
-  stateMachine?: {
-    grace_period_minutes?: unknown;
-    ttl_hours?: unknown;
-    max_consecutive_blocks?: unknown;
-  } | null;
-  /** state.phase；默认 'coding'。全局阶段（extensions / init / catalog / glossary / docs）触发 hook 兜底放行路径。 */
-  phaseOverride?: string;
-  /** 可选写入 reports/<feature>/<phase>/summary.json，供 hook 阻断文案读取 next_action。 */
-  summaryNextAction?: string;
-  /** 写入 summary.json 的 blocker id 列表（逃生阀 signature 用）。提供即写 summary（无需 summaryNextAction）。 */
-  blockerIds?: string[];
-  /** state.last_run_at（runner 写入的"真跑 harness"时间戳；逃生阀 signature 的一部分）。 */
-  lastRunAt?: string;
-  /** 追加写入 state 的额外字段（如预置 consecutive_block_count / block_signature）。 */
-  stateExtra?: Record<string, unknown>;
-  /** 覆盖 framework.config.json 的 paths 字段（round7 路径治理：custom features_dir / receipt_dir_pattern 用例）。 */
-  pathsOverride?: Record<string, string>;
-}
-
-function makeFixture(opts: FixtureOptions): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hook-stale-'));
-  // 永远写一份最小可用的 framework.config.json，保证 hook 走 paths.state_file 默认路径解析
-  const cfg: Record<string, unknown> = {
-    schema_version: '1.0',
-    project_name: 'unit-test',
-    project_type: 'app',
-    agent_adapter: 'claude',
-    architecture: {
-      outer_layers: [],
-      module_inner_layers: ['shared', 'data', 'domain', 'presentation'],
-      inner_dependency_direction: 'upward',
-      cross_module_exports_file: 'index.ets',
-    },
-    paths: {
-      features_dir: 'doc/features',
-      module_catalog: 'doc/module-catalog.yaml',
-      glossary: 'doc/glossary.yaml',
-      glossary_seed: 'doc/glossary-seed.txt',
-      architecture_md: 'doc/architecture.md',
-      state_file: 'framework/harness/state/.current-phase.json',
-      receipt_dir_pattern: 'doc/features/<feature>/<phase>',
-      reports_dir_pattern: 'doc/features/<feature>/<phase>/reports',
-      ...(opts.pathsOverride ?? {}),
-    },
-  };
-  if (opts.stateMachine !== undefined && opts.stateMachine !== null) {
-    cfg.state_machine = opts.stateMachine;
+function fixture(view?: unknown, realReader = false) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-hook-current-'));
+  const framework = path.join(root, 'framework'), harness = path.join(framework, 'harness');
+  fs.mkdirSync(framework, { recursive: true });
+  if (realReader) {
+    fs.symlinkSync(HARNESS, harness, process.platform === 'win32' ? 'junction' : 'dir');
+    for (const directory of ['workflows', 'profiles', 'skills', 'specs', 'agents', 'docs'])
+      fs.symlinkSync(path.join(REPO, directory), path.join(framework, directory), process.platform === 'win32' ? 'junction' : 'dir');
+    fs.copyFileSync(path.join(REPO, 'package.json'), path.join(framework, 'package.json'));
+  } else {
+    fs.mkdirSync(path.join(harness, 'scripts'), { recursive: true });
+    fs.writeFileSync(path.join(harness, 'package.json'), '{}');
+    fs.copyFileSync(path.join(HARNESS, 'tsconfig.json'), path.join(harness, 'tsconfig.json'));
+    fs.symlinkSync(path.join(HARNESS, 'node_modules'), path.join(harness, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
+    fs.writeFileSync(path.join(harness, 'scripts/assess.ts'), 'console.log(' + JSON.stringify(JSON.stringify(view)) + ');');
   }
-  fs.writeFileSync(path.join(dir, 'framework.config.json'), JSON.stringify(cfg, null, 2), 'utf-8');
-
-  const writeState = opts.writeStateFile !== false;
-  if (writeState) {
-    const stateAbs = path.join(dir, 'framework', 'harness', 'state', '.current-phase.json');
-    fs.mkdirSync(path.dirname(stateAbs), { recursive: true });
-
-    const updatedAt = new Date(Date.now() + (opts.updatedAtOffsetMs ?? 0)).toISOString();
-    const state: Record<string, unknown> = {
-      schema_version: '1.1',
-      phase: opts.phaseOverride ?? 'coding',
-      feature: 'demo-feature',
-      status: opts.closed ? 'harness_finished' : 'running',
-      updated_at: updatedAt,
-    };
-    if (opts.closed) {
-      state.verdict = 'PASS';
-      state.blocker_count = 0;
-      state.receipt = {
-        status: 'passed',
-        receipt_path: 'doc/features/demo-feature/coding/phase-completion-receipt.md',
-      };
+  // Real state is outside the source-runtime junction: the hook must obey its configured path.
+  fs.writeFileSync(path.join(root, 'framework.config.json'), JSON.stringify({ schema_version: '1.1', project_name: 'HookCurrent',
+    project_profile: { name: 'generic' }, active_workflow: 'obligation-driven', paths: { state_file: '.maison-current.json', features_dir: 'doc/features' },
+    state_machine: { grace_period_minutes: 5, ttl_hours: 12, max_consecutive_blocks: 1 } }));
+  const state = { feature: 'demo', phase: 'coding', session_id: 'same', updated_at: new Date().toISOString(), run_id: 'original', adapter: 'claude',
+    status: 'harness_finished', verdict: 'PASS', closure_status: 'closed', consecutive_block_count: 999, block_signature: 'old-history' };
+  fs.writeFileSync(path.join(root, '.maison-current.json'), JSON.stringify(state));
+  return { root, state, stateFile: path.join(root, '.maison-current.json') };
+}
+function invoke(root: string, payload: Record<string, unknown> = {}, extraEnv: NodeJS.ProcessEnv = {}) {
+  const result = spawnSync(process.execPath, [HOOK], { cwd: root, encoding: 'utf8', windowsHide: true, timeout: 40_000,
+    env: { ...process.env, NODE_OPTIONS: '', MAISON_GOAL_HEADLESS: '', CLAUDE_PROJECT_DIR: root, ...extraEnv },
+    input: JSON.stringify({ session_id: 'same', cwd: root, ...payload }) });
+  assert(!result.error, result.error?.message);
+  return result;
+}
+async function withFixture(view: unknown, run: (f: ReturnType<typeof fixture>) => void, realReader = false) {
+  const f = fixture(view, realReader);
+  try { run(f); } finally { fs.rmSync(f.root, { recursive: true, force: true }); }
+}
+const cases: Array<{ name: string; run(): void | Promise<void> }> = [
+  { name: 'D8 hook uses shared real completion rather than historical PASS or closed state', run: () => withFixture({ feature_assessment: { complete: true, current_disposition: current() } }, f => {
+    const before = fs.readFileSync(f.stateFile); assert.equal(invoke(f.root).status, 0); assert.deepEqual(fs.readFileSync(f.stateFile), before);
+  }) },
+  { name: 'D8 pending tools and independent verification remain blocked after repeated stops and stop_hook_active', run: () => withFixture({ feature_assessment: { complete: false, current_disposition: current('verify') } }, f => {
+    const before = fs.readFileSync(f.stateFile);
+    for (let repeat = 0; repeat < 4; repeat++) {
+      const result = invoke(f.root, { stop_hook_active: repeat > 0 }); assert.equal(result.status, 2);
+      const response = JSON.parse(result.stdout); assert.equal(response.decision, 'block');
+      assert(response.reason.includes('goal-mode-entry.ts') && response.reason.includes('--next'));
+      assert(!response.reason.includes('--clear-state')); assert.deepEqual(fs.readFileSync(f.stateFile), before);
     }
-    if (opts.stateSessionId !== undefined) {
-      state.session_id = opts.stateSessionId;
-    }
-    if (opts.lastRunAt !== undefined) {
-      state.last_run_at = opts.lastRunAt;
-    }
-    if (opts.stateExtra) {
-      Object.assign(state, opts.stateExtra);
-    }
-    fs.writeFileSync(stateAbs, JSON.stringify(state, null, 2) + '\n', 'utf-8');
-  }
-  if (opts.closed || opts.summaryNextAction || opts.blockerIds) {
-    const phase = opts.phaseOverride ?? 'coding';
-    const blockers = (opts.blockerIds ?? []).map((id) => ({ id }));
-    const featuresDir = opts.pathsOverride?.features_dir ?? 'doc/features';
-    const summaryAbs = path.join(dir, featuresDir, 'demo-feature', phase, 'reports', 'summary.json');
-    fs.mkdirSync(path.dirname(summaryAbs), { recursive: true });
-    fs.writeFileSync(summaryAbs, JSON.stringify({
-      schema_version: '1.0',
-      phase,
-      feature: 'demo-feature',
-      verdict: opts.closed ? 'PASS' : 'FAIL',
-      blocker_count: opts.closed ? 0 : blockers.length || 1,
-      fail_count: opts.closed ? 0 : 1,
-      warn_count: 0,
-      script_report: `doc/features/demo-feature/${phase}/reports/script-report.json`,
-      merged_report: `doc/features/demo-feature/${phase}/reports/merged-report.md`,
-      ai_prompt: `doc/features/demo-feature/${phase}/reports/ai-prompt.md`,
-      summary_json: `doc/features/demo-feature/${phase}/reports/summary.json`,
-      run_statuses: [],
-      readiness_signals: [],
-      blocking_warnings: [],
-      blocking_skips: [],
-      blockers,
-      next_action: opts.closed ? 'phase_closed_wait_user' : opts.summaryNextAction ?? 'declare_dependencies_then_rerun',
-      closure_status: opts.closed ? 'closed' : 'open',
-    }, null, 2), 'utf-8');
-  }
-  return dir;
-}
-
-function readState(dir: string): Record<string, unknown> | null {
-  const p = path.join(dir, 'framework', 'harness', 'state', '.current-phase.json');
-  if (!fs.existsSync(p)) return null;
-  try {
-    return JSON.parse(fs.readFileSync(p, 'utf-8')) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
-
-function rmDir(dir: string): void {
-  try {
-    fs.rmSync(dir, { recursive: true, force: true });
-  } catch {
-    // ignore
-  }
-}
-
-interface HookOutcome {
-  status: number;
-  stdout: string;
-  stderr: string;
-}
-
-function runHook(
-  payload: Record<string, unknown>,
-  projectDir: string,
-  extraEnv?: NodeJS.ProcessEnv,
-): HookOutcome {
-  const env: NodeJS.ProcessEnv = { ...process.env, CLAUDE_PROJECT_DIR: projectDir };
-  delete env.MAISON_GOAL_HEADLESS;
-  delete env.MAISON_GOAL_RUNNER;
-  if (extraEnv) Object.assign(env, extraEnv);
-  const inputJson = JSON.stringify({ ...payload, cwd: projectDir });
-  const r: SpawnSyncReturns<string> = spawnSync('node', [HOOK_PATH], {
-    input: inputJson,
-    env,
-    encoding: 'utf-8',
-    timeout: 15_000,
-  });
-  return {
-    status: typeof r.status === 'number' ? r.status : -1,
-    stdout: r.stdout ?? '',
-    stderr: r.stderr ?? '',
-  };
-}
-
-// --------------------------------------------------------------------------
-// 断言工具
-// --------------------------------------------------------------------------
-
-function assertEq<T>(actual: T, expected: T, label: string): void {
-  if (actual !== expected) {
-    throw new Error(`${label}\n    expected: ${JSON.stringify(expected)}\n    actual:   ${JSON.stringify(actual)}`);
-  }
-}
-
-function assertStderrContains(out: HookOutcome, snippet: string, label: string): void {
-  if (!out.stderr.includes(snippet)) {
-    throw new Error(`${label}\n    stderr does not contain: ${snippet}\n    full stderr: ${out.stderr}`);
-  }
-}
-
-function assertStderrNotContains(out: HookOutcome, snippet: string, label: string): void {
-  if (out.stderr.includes(snippet)) {
-    throw new Error(`${label}\n    stderr unexpectedly contains: ${snippet}`);
-  }
-}
-
-// --------------------------------------------------------------------------
-// 用例
-// --------------------------------------------------------------------------
-
-function testT1_sameSessionClosed(): void {
-  const dir = makeFixture({
-    closed: true,
-    stateSessionId: 'sid-A',
-    updatedAtOffsetMs: -1000,
-  });
-  try {
-    const out = runHook({ session_id: 'sid-A' }, dir);
-    assertEq(out.status, 0, 'T1 同会话 + 闭环 → exit 0');
-    assertStderrNotContains(out, '未闭环阶段', 'T1 不应给出阻断文案');
-  } finally {
-    rmDir(dir);
-  }
-}
-
-function testT2_sameSessionUnclosed(): void {
-  const dir = makeFixture({
-    closed: false,
-    stateSessionId: 'sid-A',
-    updatedAtOffsetMs: -1000,
-  });
-  try {
-    const out = runHook({ session_id: 'sid-A' }, dir);
-    assertEq(out.status, 2, 'T2 同会话 + 未闭环 → exit 2');
-    assertStderrContains(out, '未闭环', 'T2 stderr 应包含"未闭环"提示（动作优先文案）');
-    assertStderrContains(out, '下一步只做这一件事', 'T2 stderr 应动作优先给出单条命令');
-    assertStderrContains(out, '继续这个阶段', 'T2 stderr 应给出继续路径');
-    assertStderrContains(out, '--clear-state', 'T2 stderr 应给出放弃路径');
-    assertStderrNotContains(out, '假完成', 'T2 不应再用旧版"假完成"措辞');
-  } finally {
-    rmDir(dir);
-  }
-}
-
-function testT21_liteNotApplicableReceiptStillClosed(): void {
-  // C2：lite track 的 policy_snapshot.evidence.receipt=not_applicable 时，Stop hook
-  // 不得再要求 receipt.status='passed'——闭环仍受 status/verdict/blocker_count 三项约束
-  // （由 exit 阶段自身的脚本 verdict 承载），receipt 字段本身可以是 null。
-  const dir = makeFixture({
-    closed: true,
-    stateSessionId: 'sid-A',
-    updatedAtOffsetMs: -1000,
-    stateExtra: {
-      receipt: null,
-      policy_snapshot: {
-        policy_schema_version: '1.0',
-        track: 'lite',
-        evidence: { verifier: 'off', receipt: 'not_applicable', trace: 'optional', exploration: 'not_applicable' },
-      },
-    },
-  });
-  try {
-    const out = runHook({ session_id: 'sid-A' }, dir);
-    assertEq(out.status, 0, 'T21 lite track + receipt=null + policy not_applicable → exit 0（不误拦）');
-    assertStderrNotContains(out, '未闭环阶段', 'T21 不应给出阻断文案');
-  } finally {
-    rmDir(dir);
-  }
-}
-
-function testT22_closedSummaryWithoutReceiptPasses(): void {
-  const dir = makeFixture({
-    closed: true,
-    stateSessionId: 'sid-A',
-    updatedAtOffsetMs: -1000,
-    stateExtra: { receipt: null },
-  });
-  try {
-    const out = runHook({ session_id: 'sid-A' }, dir);
-    assertEq(out.status, 0, 'T22 summary closed + receipt=null → exit 0');
-    assertStderrNotContains(out, '未闭环', 'T22 receipt 缺失不得影响 closed summary');
-  } finally {
-    rmDir(dir);
-  }
-}
-
-// --------------------------------------------------------------------------
-// correction 状态不再拦截 stop（plan 07a41ec6 T1）：以下用例钉住"存在 .current-correction.json 也放行"
-// --------------------------------------------------------------------------
-
-function writeCorrectionState(dir: string, overrides: Record<string, unknown>): void {
-  const abs = path.join(dir, 'framework', 'harness', 'state', '.current-correction.json');
-  fs.mkdirSync(path.dirname(abs), { recursive: true });
-  const base = {
-    schema_version: '1.0',
-    feature: 'demo-feature',
-    root_layer: 'coding',
-    touched_layers: ['coding'],
-    revalidate: [{ phase: 'coding', status: 'pending' }],
-    status: 'pending',
-    created_at: new Date().toISOString(),
-    session_id: 'sid-A',
-    base_commit: 'deadbeef',
-    request_fingerprint: 'abc123',
-    enforcement_tier: 'hard_hook',
-    expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-  };
-  fs.writeFileSync(abs, JSON.stringify({ ...base, ...overrides }, null, 2) + '\n', 'utf-8');
-}
-
-function testT23_pendingCorrectionSameSessionDoesNotBlock(): void {
-  // 没有 .current-phase.json + 当前会话 pending correction → 不再拦截（correction 硬路径已删）
-  const dir = makeFixture({ writeStateFile: false });
-  try {
-    writeCorrectionState(dir, { session_id: 'sid-A' });
-    const out = runHook({ session_id: 'sid-A' }, dir);
-    assertEq(out.status, 0, 'T23 pending correction 同会话 → exit 0');
-    if (/correction-check/.test(out.stderr)) throw new Error('T23 不应再指引 --correction-check');
-  } finally {
-    rmDir(dir);
-  }
-}
-
-function testT24_pendingCorrectionCrossSessionDoesNotBlock(): void {
-  const dir = makeFixture({ writeStateFile: false });
-  try {
-    writeCorrectionState(dir, { session_id: 'sid-old' });
-    const out = runHook({ session_id: 'sid-new' }, dir);
-    assertEq(out.status, 0, 'T24 跨会话 pending correction → 不拦截，exit 0');
-  } finally {
-    rmDir(dir);
-  }
-}
-
-function testT25_closedCorrectionDoesNotBlock(): void {
-  const dir = makeFixture({ writeStateFile: false });
-  try {
-    writeCorrectionState(dir, { session_id: 'sid-A', status: 'closed' });
-    const out = runHook({ session_id: 'sid-A' }, dir);
-    assertEq(out.status, 0, 'T25 已闭环 correction → 不拦截，exit 0');
-  } finally {
-    rmDir(dir);
-  }
-}
-
-function testT26_expiredCorrectionDoesNotBlock(): void {
-  const dir = makeFixture({ writeStateFile: false });
-  try {
-    writeCorrectionState(dir, {
-      session_id: 'sid-A',
-      expires_at: new Date(Date.now() - 1000).toISOString(),
-    });
-    const out = runHook({ session_id: 'sid-A' }, dir);
-    assertEq(out.status, 0, 'T26 已过期 correction → 不拦截，exit 0');
-  } finally {
-    rmDir(dir);
-  }
-}
-
-function testT27_correctionNeverBlocksWhenPhaseClosed(): void {
-  // 阶段已闭环 + pending correction → exit 0（correction 状态对 Stop hook 无任何作用）
-  const dir = makeFixture({ closed: true, stateSessionId: 'sid-A', updatedAtOffsetMs: -1000 });
-  try {
-    writeCorrectionState(dir, { session_id: 'sid-A' });
-    const out = runHook({ session_id: 'sid-A' }, dir);
-    assertEq(out.status, 0, 'T27 阶段已闭环 + pending correction → exit 0');
-  } finally {
-    rmDir(dir);
-  }
-}
-
-function testT3_crossSession(): void {
-  // 跨会话遗留：state 写有 sid-old，本会话 sid-new；即便 state 未闭环也应放行
-  const dir = makeFixture({
-    closed: false,
-    stateSessionId: 'sid-old',
-    updatedAtOffsetMs: -60 * 1000,
-  });
-  try {
-    const out = runHook({ session_id: 'sid-new' }, dir);
-    assertEq(out.status, 0, 'T3 跨会话 → exit 0');
-    assertStderrContains(out, '与当前会话无关', 'T3 stderr 应是 advisory 文案');
-    assertStderrContains(out, 'session_id=', 'T3 stderr 应附带 session_id 比较信息');
-  } finally {
-    rmDir(dir);
-  }
-}
-
-function testT4_unstampedInGraceStamps(): void {
-  // state.session_id=null + updated_at=now-1min（默认 grace=5min）→ 视为同会话刚跑完，盖章
-  const dir = makeFixture({
-    closed: true,
-    stateSessionId: null,
-    updatedAtOffsetMs: -60 * 1000,
-  });
-  try {
-    const out = runHook({ session_id: 'sid-A' }, dir);
-    assertEq(out.status, 0, 'T4 未盖章 + 在 grace 内 + 闭环 → exit 0');
-    const stateAfter = readState(dir);
-    assertEq(stateAfter?.session_id, 'sid-A', 'T4 hook 应回写 session_id');
-    if (typeof stateAfter?.session_id_recorded_at !== 'string') {
-      throw new Error('T4 应同时写入 session_id_recorded_at');
-    }
-    assertEq(stateAfter?.last_seen_session_id, 'sid-A', 'T4 应同步刷新 last_seen_session_id');
-  } finally {
-    rmDir(dir);
-  }
-}
-
-function testT5_unstampedExceedsGrace(): void {
-  // updated_at=now-10min，超过默认 5min grace → stale-legacy-no-sid
-  const dir = makeFixture({
-    closed: false,
-    stateSessionId: null,
-    updatedAtOffsetMs: -10 * 60 * 1000,
-  });
-  try {
-    const out = runHook({ session_id: 'sid-A' }, dir);
-    assertEq(out.status, 0, 'T5 超 grace 视为 legacy → exit 0');
-    assertStderrContains(out, '前一次会话遗留', 'T5 stderr 应说明 legacy 原因');
-    const stateAfter = readState(dir);
-    assertEq(stateAfter?.session_id ?? null, null, 'T5 不应给老 state 盖章');
-  } finally {
-    rmDir(dir);
-  }
-}
-
-function testT6_payloadNoSidStateStampedInTtl(): void {
-  // payload 没 sid + state 已盖章 + 1 小时前更新（默认 ttl=12h）+ 闭环 → exit 0
-  const dir = makeFixture({
-    closed: true,
-    stateSessionId: 'sid-X',
-    updatedAtOffsetMs: -60 * 60 * 1000,
-  });
-  try {
-    const out = runHook({}, dir);
-    assertEq(out.status, 0, 'T6 payload 无 sid + 已盖章 + 在 ttl 内 + 闭环 → exit 0');
-    assertStderrNotContains(out, '与当前会话无关', 'T6 不应给 advisory（被视作同会话）');
-  } finally {
-    rmDir(dir);
-  }
-}
-
-function testT7_payloadNoSidStateStampedExceedsTtl(): void {
-  // updated_at=now-13h，超过默认 12h ttl
-  const dir = makeFixture({
-    closed: false,
-    stateSessionId: 'sid-X',
-    updatedAtOffsetMs: -13 * 60 * 60 * 1000,
-  });
-  try {
-    const out = runHook({}, dir);
-    assertEq(out.status, 0, 'T7 超 ttl → exit 0');
-    assertStderrContains(out, 'ttl', 'T7 stderr 应提到 ttl');
-  } finally {
-    rmDir(dir);
-  }
-}
-
-function testT8_stopHookActive(): void {
-  // stop_hook_active=true 即便 state 未闭环也应直接放行（避免无限循环）
-  const dir = makeFixture({
-    closed: false,
-    stateSessionId: 'sid-A',
-    updatedAtOffsetMs: -1000,
-  });
-  try {
-    const out = runHook({ session_id: 'sid-A', stop_hook_active: true }, dir);
-    assertEq(out.status, 0, 'T8 stop_hook_active=true → exit 0');
-    assertStderrNotContains(out, '未闭环阶段', 'T8 不应给阻断文案');
-  } finally {
-    rmDir(dir);
-  }
-}
-
-function testT9_customGracePeriodShortened(): void {
-  // grace=1min；state.session_id=null updated_at=now-2min → 超 grace → legacy
-  const dir = makeFixture({
-    closed: true,
-    stateSessionId: null,
-    updatedAtOffsetMs: -2 * 60 * 1000,
-    stateMachine: { grace_period_minutes: 1, ttl_hours: 12 },
-  });
-  try {
-    const out = runHook({ session_id: 'sid-A' }, dir);
-    assertEq(out.status, 0, 'T9 自定义 grace 1min + 2min 未盖章 → 视为 legacy → exit 0');
-    assertStderrContains(out, '前一次会话遗留', 'T9 应被识别为 legacy');
-  } finally {
-    rmDir(dir);
-  }
-}
-
-function testT10_customTtlShortened(): void {
-  // ttl=1h；payload 无 sid + state 已盖章 updated_at=now-2h → 超 ttl
-  const dir = makeFixture({
-    closed: false,
-    stateSessionId: 'sid-X',
-    updatedAtOffsetMs: -2 * 60 * 60 * 1000,
-    stateMachine: { grace_period_minutes: 5, ttl_hours: 1 },
-  });
-  try {
-    const out = runHook({}, dir);
-    assertEq(out.status, 0, 'T10 自定义 ttl 1h + 2h 已盖章 → 视为陈旧 → exit 0');
-    assertStderrContains(out, 'ttl', 'T10 应提到 ttl 兜底');
-  } finally {
-    rmDir(dir);
-  }
-}
-
-function testT11_configConsistency(): void {
-  // 直接读 hook 文件，正则提取 HOOK_DEFAULT_GRACE_MS / HOOK_DEFAULT_TTL_MS；
-  // 与 config.ts 的 DEFAULT_STATE_MACHINE 比对——防止两边漂移。
-  const hookSrc = fs.readFileSync(HOOK_PATH, 'utf-8');
-
-  const graceMatch = /HOOK_DEFAULT_GRACE_MS\s*=\s*(\d+)\s*\*\s*60\s*\*\s*1000/.exec(hookSrc);
-  const ttlMatch = /HOOK_DEFAULT_TTL_MS\s*=\s*(\d+)\s*\*\s*60\s*\*\s*60\s*\*\s*1000/.exec(hookSrc);
-
-  if (!graceMatch || !ttlMatch) {
-    throw new Error(
-      'T11 无法在 hook 文件提取 HOOK_DEFAULT_GRACE_MS / HOOK_DEFAULT_TTL_MS 字面量；' +
-        '若实现已重构，请同步调整本测试或抽出共享常量。',
-    );
-  }
-  const hookGraceMin = Number(graceMatch[1]);
-  const hookTtlHour = Number(ttlMatch[1]);
-
-  assertEq(
-    hookGraceMin,
-    DEFAULT_STATE_MACHINE.grace_period_minutes,
-    'T11 hook HOOK_DEFAULT_GRACE_MS 与 DEFAULT_STATE_MACHINE.grace_period_minutes 不一致',
-  );
-  assertEq(
-    hookTtlHour,
-    DEFAULT_STATE_MACHINE.ttl_hours,
-    'T11 hook HOOK_DEFAULT_TTL_MS 与 DEFAULT_STATE_MACHINE.ttl_hours 不一致',
-  );
-
-  const maxBlocksMatch = /HOOK_DEFAULT_MAX_CONSECUTIVE_BLOCKS\s*=\s*(\d+)/.exec(hookSrc);
-  if (!maxBlocksMatch) {
-    throw new Error('T11 无法在 hook 文件提取 HOOK_DEFAULT_MAX_CONSECUTIVE_BLOCKS 字面量。');
-  }
-  assertEq(
-    Number(maxBlocksMatch[1]),
-    DEFAULT_STATE_MACHINE.max_consecutive_blocks,
-    'T11 hook HOOK_DEFAULT_MAX_CONSECUTIVE_BLOCKS 与 DEFAULT_STATE_MACHINE.max_consecutive_blocks 不一致',
-  );
-}
-
-function testT12_invalidConfigFallsBack(): void {
-  // grace_period_minutes=999（超 60 上限） + ttl_hours='abc'（非数字）
-  // hook 端应安静回退默认值（grace=5min、ttl=12h），按原逻辑判定。
-  // 用 updated_at=now-2min（2 分钟）→ 默认 grace=5 内 → 同会话刚跑完 → 盖章 + 闭环 → exit 0
-  const dir = makeFixture({
-    closed: true,
-    stateSessionId: null,
-    updatedAtOffsetMs: -2 * 60 * 1000,
-    stateMachine: { grace_period_minutes: 999, ttl_hours: 'abc' },
-  });
-  try {
-    const out = runHook({ session_id: 'sid-A' }, dir);
-    assertEq(out.status, 0, 'T12 非法 config + 默认 grace 内 + 闭环 → exit 0（hook 未崩）');
-    const stateAfter = readState(dir);
-    assertEq(stateAfter?.session_id, 'sid-A', 'T12 应按默认 grace 盖章');
-  } finally {
-    rmDir(dir);
-  }
-}
-
-// --------------------------------------------------------------------------
-// 全局阶段豁免（v2.8.1+）：extensions / init / catalog / glossary / docs 不参与
-// 全局入口 §5.1 闭环判据：hook 看到 state.phase ∈ GLOBAL_PHASES 一律 allow。
-// --------------------------------------------------------------------------
-
-function testT13_globalPhaseInitBypassesClosure(): void {
-  // 模拟 v2.8.0 时存在的污染 state（runner 当时给 init 也写了 state file），
-  // 即使 receipt=null / verdict=null / status=running，hook 也必须放行。
-  // 否则就会复现 /framework-init 跑到 Step 3 时 hook 拦截 + 自问自答事故。
-  const dir = makeFixture({
-    closed: false,
-    phaseOverride: 'init',
-    stateSessionId: 'sid-A',
-    updatedAtOffsetMs: -1 * 60 * 1000,
-  });
-  try {
-    const out = runHook({ session_id: 'sid-A' }, dir);
-    assertEq(out.status, 0, 'T13 phase=init + 同会话 + receipt=null → 仍 exit 0（全局阶段豁免）');
-    if (/receipt|未闭环|阶段完成回执/.test(out.stderr)) {
-      throw new Error(
-        `T13 hook 不应针对全局阶段输出闭环未达成提示，但 stderr 含拦截文案：${out.stderr.slice(0, 200)}`,
-      );
-    }
-  } finally {
-    rmDir(dir);
-  }
-}
-
-function testT14_globalPhaseCatalogBypassesClosure(): void {
-  // 同 T13，覆盖 catalog 全局阶段。glossary / docs 等同源，不再逐个枚举。
-  const dir = makeFixture({
-    closed: false,
-    phaseOverride: 'catalog',
-    stateSessionId: 'sid-A',
-    updatedAtOffsetMs: -1 * 60 * 1000,
-  });
-  try {
-    const out = runHook({ session_id: 'sid-A' }, dir);
-    assertEq(out.status, 0, 'T14 phase=catalog + 同会话 + receipt=null → 仍 exit 0（全局阶段豁免）');
-  } finally {
-    rmDir(dir);
-  }
-}
-
-function testT14b_globalPhaseExtensionsBypassesClosure(): void {
-  // spec-driven workflow 将 extensions 列为 scope=global；须与 runner 不写 state + hook 兜底一致。
-  const dir = makeFixture({
-    closed: false,
-    phaseOverride: 'extensions',
-    stateSessionId: 'sid-A',
-    updatedAtOffsetMs: -1 * 60 * 1000,
-  });
-  try {
-    const out = runHook({ session_id: 'sid-A' }, dir);
-    assertEq(
-      out.status,
-      0,
-      'T14b phase=extensions + 同会话 + receipt=null → 仍 exit 0（全局阶段豁免）',
-    );
-  } finally {
-    rmDir(dir);
-  }
-}
-
-function testT16_goalHeadlessEnvBypassesStopHook(): void {
-  // goal-runner 无头子进程树携带 MAISON_GOAL_HEADLESS=1 → 即使同会话未闭环也 exit 0
-  const dir = makeFixture({
-    closed: false,
-    stateSessionId: 'sid-A',
-    updatedAtOffsetMs: -1000,
-  });
-  try {
-    const out = runHook({ session_id: 'sid-A' }, dir, { MAISON_GOAL_HEADLESS: '1' });
-    assertEq(out.status, 0, 'T16 MAISON_GOAL_HEADLESS=1 + 未闭环 → exit 0（旁路）');
-    if (/未闭环|阶段完成回执|Stop Hook 提示/.test(out.stderr)) {
-      throw new Error(`T16 旁路时不应输出阻断文案：${out.stderr.slice(0, 200)}`);
-    }
-  } finally {
-    rmDir(dir);
-  }
-}
-
-function testT15_blockReasonIncludesSummaryNextAction(): void {
-  const dir = makeFixture({
-    closed: false,
-    stateSessionId: 'sid-A',
-    updatedAtOffsetMs: -1000,
-    summaryNextAction: 'fix_run_status_blockers_then_rerun',
-  });
-  try {
-    const out = runHook({ session_id: 'sid-A' }, dir);
-    assertEq(out.status, 2, 'T15 同会话未闭环 + summary.json → exit 2');
-    assertStderrContains(out, '最近一次 harness summary 建议', 'T15 应展示 summary 建议标题');
-    assertStderrContains(out, 'next_action = fix_run_status_blockers_then_rerun', 'T15 应展示 next_action');
-  } finally {
-    rmDir(dir);
-  }
-}
-
-// --------------------------------------------------------------------------
-// T17–T19：逃生阀（P1-C）——零进展连续计数 + 达阈值 exit 0 + 真重跑归零 + goal parity
-// --------------------------------------------------------------------------
-
-function testT17_escapeValveReleasesAtThreshold(): void {
-  // 同一 fixture 连续 runHook：signature 不变（未重跑）→ 计数递增；第 3 次达阈值 → exit 0 放行。
-  const dir = makeFixture({
-    closed: false,
-    stateSessionId: 'sid-A',
-    updatedAtOffsetMs: -1000,
-    blockerIds: ['coding_compile', 'file_completeness'],
-    lastRunAt: '2026-06-30T00:00:00.000Z',
-    stateMachine: { max_consecutive_blocks: 3 },
-  });
-  try {
-    const c1 = runHook({ session_id: 'sid-A' }, dir);
-    assertEq(c1.status, 2, 'T17 第1次未闭环 → exit 2');
-    assertEq(readState(dir)?.consecutive_block_count, 1, 'T17 count=1');
-
-    const c2 = runHook({ session_id: 'sid-A' }, dir);
-    assertEq(c2.status, 2, 'T17 第2次零进展 → exit 2');
-    assertEq(readState(dir)?.consecutive_block_count, 2, 'T17 count=2');
-
-    const c3 = runHook({ session_id: 'sid-A' }, dir);
-    assertEq(c3.status, 0, 'T17 第3次达阈值 → 逃生阀 exit 0');
-    assertEq(readState(dir)?.consecutive_block_count, 3, 'T17 count=3');
-    assertStderrContains(c3, '已停止重复拦截', 'T17 逃生阀文案');
-    assertStderrContains(c3, '未绕过闭环', 'T17 应声明未绕过闭环（给用户定心丸）');
-  } finally {
-    rmDir(dir);
-  }
-}
-
-function testT18_realRerunResetsCounter(): void {
-  // 预置 count=2（已两次零进展）。若 last_run_at 变了（真重跑 harness）→ signature 变 → 计数归 1。
-  const dir = makeFixture({
-    closed: false,
-    stateSessionId: 'sid-A',
-    updatedAtOffsetMs: -1000,
-    blockerIds: ['coding_compile'],
-    lastRunAt: '2026-07-01T12:00:00.000Z', // 与预置 signature 里的时间戳不同
-    stateExtra: { consecutive_block_count: 2, block_signature: 'coding_compile@@2026-06-30T00:00:00.000Z' },
-    stateMachine: { max_consecutive_blocks: 3 },
-  });
-  try {
-    const out = runHook({ session_id: 'sid-A' }, dir);
-    assertEq(out.status, 2, 'T18 真重跑后 signature 变 → 未达阈值 → exit 2');
-    assertEq(readState(dir)?.consecutive_block_count, 1, 'T18 计数归 1（识别到有进展）');
-  } finally {
-    rmDir(dir);
-  }
-}
-
-function testT19_signatureParityWithGoal(): void {
-  // hook 写入 state.block_signature 的 id 部分（@@ 前）必须与 goal 的 extractBlockerSignature 同语义。
-  const ids = ['file_completeness', 'coding_compile']; // 故意乱序，验证 hook 也排序
-  const dir = makeFixture({
-    closed: false,
-    stateSessionId: 'sid-A',
-    updatedAtOffsetMs: -1000,
-    blockerIds: ids,
-    lastRunAt: '2026-06-30T00:00:00.000Z',
-  });
-  try {
-    runHook({ session_id: 'sid-A' }, dir);
-    const sig = String(readState(dir)?.block_signature ?? '');
-    const idPart = sig.split('@@')[0];
-    const goalSig = extractBlockerSignature({ blockers: ids.map((id) => ({ id })) } as any);
-    assertEq(idPart, goalSig, 'T19 hook signature id 部分应与 goal extractBlockerSignature 一致');
-  } finally {
-    rmDir(dir);
-  }
-}
-
-function testT20_receiptPassedButSummaryOpenBlocks(): void {
-  const dir = makeFixture({
-    closed: false,
-    stateSessionId: 'sid-A',
-    summaryNextAction: 'fill_receipt_then_sync_closure',
-    stateExtra: {
-      status: 'harness_finished', verdict: 'PASS', blocker_count: 0,
-      receipt: { status: 'passed', receipt_path: 'doc/features/demo-feature/coding/phase-completion-receipt.md' },
-    },
-  });
-  try {
-    const out = runHook({ session_id: 'sid-A' }, dir);
-    assertEq(out.status, 2, 'T20 state receipt passed + summary open → exit 2');
-    assertStderrContains(out, 'summary.closure_status="open"', 'T20 Stop 只认 summary closed');
-  } finally {
-    rmDir(dir);
-  }
-}
-
-// --------------------------------------------------------------------------
-// 注册
-// --------------------------------------------------------------------------
-
-const CASES: Array<{ name: string; fn: () => void }> = [
-  { name: 'T1 同会话 + 闭环 → exit 0', fn: testT1_sameSessionClosed },
-  { name: 'T2 同会话 + 未闭环 → exit 2 + 中性文案', fn: testT2_sameSessionUnclosed },
-  { name: 'T3 跨会话遗留 → exit 0 + advisory', fn: testT3_crossSession },
-  { name: 'T4 未盖章 + 在 grace 内 + 闭环 → 自动盖章 → exit 0', fn: testT4_unstampedInGraceStamps },
-  { name: 'T5 未盖章 + 超 grace → legacy advisory → exit 0', fn: testT5_unstampedExceedsGrace },
-  { name: 'T6 payload 无 sid + 已盖章 + 在 ttl 内 + 闭环 → exit 0', fn: testT6_payloadNoSidStateStampedInTtl },
-  { name: 'T7 payload 无 sid + 已盖章 + 超 ttl → ttl-expired advisory → exit 0', fn: testT7_payloadNoSidStateStampedExceedsTtl },
-  { name: 'T8 stop_hook_active=true → exit 0', fn: testT8_stopHookActive },
-  { name: 'T9 自定义 grace 缩短到 1min', fn: testT9_customGracePeriodShortened },
-  { name: 'T10 自定义 ttl 缩短到 1h', fn: testT10_customTtlShortened },
-  { name: 'T11 hook 默认值与 config DEFAULT_STATE_MACHINE 一致', fn: testT11_configConsistency },
-  { name: 'T12 非法 config → hook 端回退默认值不崩', fn: testT12_invalidConfigFallsBack },
-  { name: 'T13 phase=init 全局阶段 → 即使 receipt=null 也 exit 0', fn: testT13_globalPhaseInitBypassesClosure },
-  { name: 'T14 phase=catalog 全局阶段 → 即使 receipt=null 也 exit 0', fn: testT14_globalPhaseCatalogBypassesClosure },
-  {
-    name: 'T14b phase=extensions 全局阶段 → 即使 receipt=null 也 exit 0',
-    fn: testT14b_globalPhaseExtensionsBypassesClosure,
-  },
-  { name: 'T15 未闭环阻断文案包含 summary.next_action', fn: testT15_blockReasonIncludesSummaryNextAction },
-  {
-    name: 'T16 MAISON_GOAL_HEADLESS=1 旁路 Stop hook（未闭环仍 exit 0）',
-    fn: testT16_goalHeadlessEnvBypassesStopHook,
-  },
-  { name: 'T17 逃生阀：连续零进展达阈值 → exit 0 放行', fn: testT17_escapeValveReleasesAtThreshold },
-  {
-    name: 'T21 lite track policy_snapshot.evidence.receipt=not_applicable → receipt=null 仍 exit 0（C2）',
-    fn: testT21_liteNotApplicableReceiptStillClosed,
-  },
-  {
-    name: 'T22 summary closed + receipt=null → exit 0（receipt 非 Stop 判据）',
-    fn: testT22_closedSummaryWithoutReceiptPasses,
-  },
-  {
-    name: 'T20 state receipt passed 但 summary open → 仍阻止',
-    fn: testT20_receiptPassedButSummaryOpenBlocks,
-  },
-  { name: 'T18 真重跑 harness（last_run_at 变）→ 逃生阀计数归零', fn: testT18_realRerunResetsCounter },
-  { name: 'T19 hook signature 与 goal extractBlockerSignature 同语义', fn: testT19_signatureParityWithGoal },
-  { name: 'T23 pending correction 同会话（无 phase state）→ 不拦截 exit 0（T1 删硬路径）', fn: testT23_pendingCorrectionSameSessionDoesNotBlock },
-  { name: 'T24 pending correction 跨会话 → 不拦截 exit 0', fn: testT24_pendingCorrectionCrossSessionDoesNotBlock },
-  { name: 'T25 已闭环 correction → 不拦截 exit 0', fn: testT25_closedCorrectionDoesNotBlock },
-  { name: 'T26 已过期 correction → 不拦截 exit 0', fn: testT26_expiredCorrectionDoesNotBlock },
-  { name: 'T27 阶段已闭环 + pending correction → exit 0（correction 对 hook 无作用）', fn: testT27_correctionNeverBlocksWhenPhaseClosed },
+  }) },
+  { name: 'D8 shared repair facts continue through the original coordinator', run: () => withFixture({ current_disposition: current('repair'), complete: false }, f => {
+    const result = invoke(f.root); assert.equal(result.status, 2); assert(result.stderr.includes('原作者交回'));
+  }) },
+  { name: 'D8 real condition wait ends the author turn truthfully without claiming delivery completion', run: () => withFixture({ current_disposition: current('wait'), complete: false }, f => {
+    const result = invoke(f.root); assert.equal(result.status, 0); assert(result.stderr.includes('仍未完成'));
+  }) },
+  { name: 'D8 eligible check facts without the actual original completion remain unfinished', run: () => withFixture({ current_disposition: current(), complete: false }, f => {
+    assert.equal(invoke(f.root).status, 2);
+  }) },
+  { name: 'D8 unreadable public completion facts never become completed', run: () => withFixture({ error: 'actual original unavailable' }, f => {
+    const result = invoke(f.root); assert.equal(result.status, 2); assert(result.stderr.includes('actual original unavailable'));
+  }) },
+  { name: 'D8 historical cross-session state stays byte-identical without invoking a new workflow', run: () => withFixture({ error: 'not consumed' }, f => {
+    const before = fs.readFileSync(f.stateFile); const result = invoke(f.root, { session_id: 'unrelated' }); assert.equal(result.status, 0);
+    assert(result.stderr.includes('历史会话记录只读')); assert.deepEqual(fs.readFileSync(f.stateFile), before);
+  }) },
+  { name: 'D8 dedicated native Stop returns to its original outer coordinator without another phase judgment', run: () => withFixture({ error: 'not consumed' }, f => {
+    const result = invoke(f.root, {}, { MAISON_GOAL_HEADLESS: '1' }); assert.equal(result.status, 0); assert.equal(result.stdout, '');
+  }) },
+  { name: 'D8 actual public assess consumer keeps missing business evidence unfinished despite old state PASS', run: () => withFixture(null, f => {
+    const before = fs.readFileSync(f.stateFile); const result = invoke(f.root); assert.equal(result.status, 2, result.stdout + result.stderr);
+    assert(result.stderr.includes('未完成')); assert.deepEqual(fs.readFileSync(f.stateFile), before);
+    assert(!fs.existsSync(path.join(f.root, 'doc/features/demo/next.json')), 'read-only assess cannot write a competing next projection');
+  }, true) },
+  { name: 'D8 actual public reader rejects an invalid CU identity without creating an encoded shadow directory', run: () => withFixture(null, f => {
+    fs.writeFileSync(f.stateFile, JSON.stringify({ ...f.state, feature: 'cu-invalid' }));
+    const result = invoke(f.root); assert.equal(result.status, 2); assert(result.stderr.includes('cu-'));
+    assert(!fs.existsSync(path.join(f.root, 'doc/features/cu-invalid')));
+  }, true) },
+  { name: 'D8 session routing still uses existing grace and TTL while retired counter defaults disappear', async run() {
+    const hook = await dynamicImport(pathToFileURL(HOOK).href);
+    assert.equal(hook.HOOK_DEFAULT_GRACE_MS, DEFAULT_STATE_MACHINE.grace_period_minutes * 60_000);
+    assert.equal(hook.HOOK_DEFAULT_TTL_MS, DEFAULT_STATE_MACHINE.ttl_hours * 3_600_000);
+    const now = Date.now(), state = { session_id: 'same', updated_at: new Date(now - 60_000).toISOString() };
+    assert.equal(hook.evaluateSessionStaleness(state, 'same', 300_000, 43_200_000, now).isStale, false);
+    assert.equal(hook.evaluateSessionStaleness(state, 'other', 300_000, 43_200_000, now).isStale, true);
+    assert.equal(hook.evaluateSessionStaleness({ updated_at: new Date(now - 600_000).toISOString() }, 'same', 300_000, 43_200_000, now).isStale, true);
+    assert.equal(hook.evaluateSessionStaleness(state, null, 300_000, 30_000, now).isStale, true);
+    const f = fixture(null);
+    try { assert(!('max_consecutive_blocks' in loadStateMachineConfig(f.root))); }
+    finally { fs.rmSync(f.root, { recursive: true, force: true }); }
+  } },
 ];
-
-export function runAll(): UnitCaseResult[] {
+export async function runAll(): Promise<UnitCaseResult[]> {
   const results: UnitCaseResult[] = [];
-  for (const c of CASES) {
-    try {
-      c.fn();
-      results.push({ name: c.name, ok: true });
-    } catch (err) {
-      results.push({ name: c.name, ok: false, error: (err as Error).message });
-    }
+  for (const test of cases) {
+    try { await test.run(); results.push({ name: test.name, ok: true }); }
+    catch (error) { results.push({ name: test.name, ok: false, error: (error as Error).stack }); }
   }
   return results;
 }

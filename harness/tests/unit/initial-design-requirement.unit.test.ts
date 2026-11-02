@@ -7,7 +7,7 @@ import { clearFrameworkConfigCache } from '../../config';
 import { prepareGoalModeRun, runGoalModeSessionStep as runGoalModeSessionStepUnchecked } from '../../scripts/goal-mode-entry';
 import { buildInitialDesignGoalManifest, isInitialDesignManifest } from '../../scripts/utils/goal-manifest';
 import { createGoalRun } from '../../scripts/utils/goal-run-creation';
-import { currentOriginalDelivery, readOriginalDeliveryBudget } from '../../scripts/utils/delivery-origin';
+import { currentOriginalDelivery, readOriginalDeliveryActivity } from '../../scripts/utils/delivery-origin';
 import { enumerateCanonicalChangeUnits } from '../../scripts/utils/change-unit-path';
 import { BLUEPRINT_ID, withFreshCuHost } from './lifecycle-evolution.unit.test';
 import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
@@ -65,7 +65,7 @@ async function scenario(mode: Scenario): Promise<void> {
     const audit = rows.find(row => row.type === 'supersede');
     assert(audit && audit.target_run_id === old.run_id);
     assert.equal(audit.delivery_cycle_boundary, mode === 'completed' ? old.run_id : undefined);
-    assert.equal(readOriginalDeliveryBudget(host.root, prepared.manifest)!.totalTurns, mode === 'completed' ? 0 : 1);
+    assert.equal(readOriginalDeliveryActivity(host.root, prepared.manifest)!.calls, mode === 'completed' ? 0 : 1);
     const options = { projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: BLUEPRINT_ID,
       runId: prepared.manifest.run_id, adapter: 'claude', runMode: 'attended', authorization };
     let next = await runGoalModeSessionStep(options) as Json, questions = 0;
@@ -94,7 +94,7 @@ async function scenario(mode: Scenario): Promise<void> {
       repairs: fs.readFileSync(path.join(prepared.runDir, 'events.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line)).filter(row => row.type === 'design_authority_repair') })}`);
     assert(!('execution_scope' in prepared.manifest));
     const expectedTurns = (mode === 'completed' ? 1 : 2) + questions;
-    assert.equal(readOriginalDeliveryBudget(host.root, prepared.manifest)!.totalTurns, expectedTurns);
+    assert.equal(readOriginalDeliveryActivity(host.root, prepared.manifest)!.calls, expectedTurns);
     assert.equal(currentOriginalDelivery(host.root, old).run_id, mode === 'completed' ? old.run_id : prepared.manifest.run_id);
     const repeated = prepareGoalModeRun({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: BLUEPRINT_ID,
       adapter: 'claude', requirement, ...(mode === 'source' ? { requirementSourceFiles: ['doc/requirement.md'] } : {}) });
@@ -106,7 +106,7 @@ async function scenario(mode: Scenario): Promise<void> {
         adapter: 'claude', requirement: '用户再次替换目标：先处理金额格式并保留原有恢复义务。' }), /尚未报告的签发窗口[\s\S]*--report-result/);
       assert.deepEqual(fs.readFileSync(next.request.path), pendingBytes);
       assert.deepEqual(fs.readFileSync(path.join(prepared.runDir, 'events.jsonl')), runEvents);
-      assert.equal(readOriginalDeliveryBudget(host.root, prepared.manifest)!.totalTurns, expectedTurns);
+      assert.equal(readOriginalDeliveryActivity(host.root, prepared.manifest)!.calls, expectedTurns);
     }
     assert.deepEqual(fs.readFileSync(created.manifestPath), oldManifest);
     assert.deepEqual(fs.readFileSync(created.eventsPath), oldEvents);

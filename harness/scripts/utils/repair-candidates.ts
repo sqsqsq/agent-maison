@@ -28,7 +28,7 @@ import type { ExecutionScopeInput } from './execution-scope';
 import type { GoalRunEvent } from './goal-runner-phase';
 import { isBlockingCheck, resultBasisOwner, type CurrentDisposition } from './check-disposition';
 import type { FidelityIntentSsot } from './fidelity-shared';
-import { resolveRepairResponsibility, repairResponsibilityContext, repairOwnerArtifactTargets, repairOwnerSourceTargets, type RepairResponsibilityContext, type RepairResponsibility } from './repair-responsibility';
+import { currentRepairObject, resolveRepairResponsibility, repairResponsibilityContext, repairOwnerArtifactTargets, repairOwnerSourceTargets, workUnitMayWritePath, workUnitWriteDomains, type RepairResponsibilityContext, type RepairResponsibility } from './repair-responsibility';
 
 /** 与现有 correction 类别一致，具体负责方由真实对象解析。 */
 export type RepairOwnerCategory = CorrectionCategory;
@@ -377,8 +377,8 @@ function currentPhaseOwnsRepairTarget(phase: string, files: string[], context: R
 
 /** A producer may retain verification while its contract permits another legal modifier. */
 function verifiedRepairOwnerMatches(result: RepairResponsibility, verifiedOwner?: string): boolean {
-  return !verifiedOwner || result.owner === verifiedOwner || result.action !== 'unavailable'
-    && result.roles.verifier === verifiedOwner && result.roles.legalModifier === result.owner;
+  return !verifiedOwner || result.owner === verifiedOwner
+    || result.roles.verifier === verifiedOwner && result.roles.legalModifier === result.owner;
 }
 
 /** Current project-local evidence; no new evidence protocol or caller-provided freshness flag. */
@@ -1150,7 +1150,14 @@ export function collectPhaseRepairCandidates(input: PhaseCandidateInput): Repair
       ?? effectiveRepairOwner(candidate.id);
     if ((cause === 'spec' || cause === 'plan') && candidate.category === cause) {
       const targets = repairOwnerArtifactTargets(cause, input.responsibility);
-      if (targets.length) candidate.files = targets;
+      const projectRoot = input.responsibility.projectRoot;
+      const declared = !!projectRoot && candidate.files.length > 0 && candidate.files.every(file => targets.some(target =>
+        path.resolve(projectRoot, target) === path.resolve(projectRoot, file)));
+      const diagnosis = !declared && candidate.files.length > 0 && candidate.files.every(file => {
+        const actual = resolveRepairResponsibility({ ...input.responsibility, target: { files: [file] } });
+        return actual.action === 'current' && actual.owner === input.phase && actual.owner !== cause;
+      });
+      if (targets.length && (!candidate.files.length || diagnosis)) candidate.files = targets;
     }
   }
   return out;
@@ -1450,7 +1457,7 @@ function repairDeclineHistory(projectRoot: string, feature: string, runId: strin
   const pathMod = require('path') as typeof import('path');
   const { loadFrameworkConfig } = require('../../config') as typeof import('../../config');
   const { featureRelativePath } = require('./feature-identity') as typeof import('./feature-identity');
-  const { foldBudgetLineage, loadAuthoritativeEvents } = require('./goal-runner-phase') as typeof import('./goal-runner-phase');
+  const { readSupersededAncestorRuns, loadAuthoritativeEvents } = require('./goal-runner-phase') as typeof import('./goal-runner-phase');
   /* eslint-enable @typescript-eslint/no-require-imports */
   if (!runId.trim()) return [];
   let featuresDir = 'doc/features';
@@ -1464,9 +1471,8 @@ function repairDeclineHistory(projectRoot: string, feature: string, runId: strin
     if (m.execution_scope && typeof m.successor_of === 'string' && m.successor_of) successorSeed = [m.successor_of];
   } catch { /* 无 manifest → 只看事件里的 supersede */ }
   const events = loadAuthoritativeEvents(eventsPath);
-  // 取法与预算折叠同源（runtime 的 budgetLineage 同一种子：事件里的 supersede ∪ successor_of）
-  const fold = foldBudgetLineage({ projectRoot, featuresDir, feature, seedTargets: successorSeed, currentEvents: events });
-  return [...fold.ancestorRuns, { run_id: runId, events }];
+  const ancestors = readSupersededAncestorRuns({ projectRoot, featuresDir, feature, seedTargets: successorSeed, currentEvents: events });
+  return [...ancestors, { run_id: runId, events }];
 }
 
 export function loadRepairDeclineState(projectRoot: string, feature: string, runId: string, frameworkRoot = path.resolve(__dirname, '../../..')): Map<string, RepairDeclineState> {
@@ -1509,13 +1515,14 @@ export function loadRepairDeclineState(projectRoot: string, feature: string, run
   });
 }
 
-/** Pending and accepted refusals share their original ledger, so both parties and the verifier see the same reasons. */
-export function repairDeclineContextFiles(projectRoot: string, feature: string, runId: string | undefined, frameworkRoot = path.resolve(__dirname, '../../..')): Array<{ label: string; content: string }> {
+/** One read of original ledgers and their actual request/window/fingerprint attribution. */
+export function readRepairDeclineOriginals(projectRoot: string, feature: string, runId: string | undefined, frameworkRoot = path.resolve(__dirname, '../../..')):
+  Array<{ path: string; raw: string; entries: import('./headless-assumptions').HeadlessDecisionEntry[] }> {
   if (!runId) return [];
   const { loadHeadlessLedger, headlessLedgerPath } = require('./headless-assumptions') as typeof import('./headless-assumptions');
   const { loadFeatureContracts, phaseContractIndex } = require('./skill-contract') as typeof import('./skill-contract');
   const { resolveEffectiveRunEnd } = require('./goal-runner-phase') as typeof import('./goal-runner-phase');
-  const out: Array<{ label: string; content: string }> = [];
+  const out: Array<{ path: string; raw: string; entries: import('./headless-assumptions').HeadlessDecisionEntry[] }> = [];
   const runs = repairDeclineHistory(projectRoot, feature, runId);
   const windows = runs.flatMap(run => {
     const rounds = (run.events as Array<GoalRunEvent & { candidates?: Array<{ item_fingerprint?: string }> }>)
@@ -1525,6 +1532,28 @@ export function repairDeclineContextFiles(projectRoot: string, feature: string, 
       end: rounds[index + 1]?.ts ? Date.parse(rounds[index + 1].ts!) : end ? Date.parse(end) : Infinity,
       fingerprints: new Set((Array.isArray(round.candidates) ? round.candidates : []).map(candidate => candidate.item_fingerprint)) }));
   });
+  const { readExecutionRequestOriginal } = require('./session-execution-handoff') as typeof import('./session-execution-handoff');
+  const { workUnitExecutionRole } = require('./goal-phase-executor') as typeof import('./goal-phase-executor');
+  const { featureFilePath } = require('../../config') as typeof import('../../config');
+  for (const run of runs) {
+    const runEnd = resolveEffectiveRunEnd(run.events)?.ts;
+    for (const [index, event] of run.events.entries()) {
+      if (event.type !== 'agent_invoke_start' || !event.invoke_id || !event.ts) continue;
+      try {
+        const original = readExecutionRequestOriginal(featureFilePath(projectRoot, feature, `goal-runs/${run.run_id}`), event.invoke_id);
+        const context = original?.request.context;
+        if (!context || context.runId !== run.run_id || context.feature !== feature
+          || workUnitExecutionRole(context, original?.request.purpose) !== 'author'
+          || event.owner_id && context.owner.owner_id !== event.owner_id
+          || event.owner_epoch !== undefined && context.owner.epoch !== event.owner_epoch) continue;
+        const fingerprints = new Set([...(context.instruction ?? '').matchAll(/item_fingerprint:\s*([0-9a-f]{64})/g)].map(match => match[1]));
+        if (!fingerprints.size) continue;
+        const ended = run.events.slice(index + 1).find(item => item.type === 'agent_invoke_end' && item.invoke_id === event.invoke_id)?.ts;
+        windows.push({ runId: run.run_id, start: Date.parse(event.ts),
+          end: Math.min(ended ? Date.parse(ended) : Infinity, runEnd ? Date.parse(runEnd) : Infinity), fingerprints });
+      } catch { /* Missing original requests cannot establish another refusal window. */ }
+    }
+  }
   for (const phase of phaseContractIndex(loadFeatureContracts(frameworkRoot)).keys()) {
     const entries = loadHeadlessLedger(projectRoot, feature, phase)?.entries.filter(entry =>
       entry.gate_id.startsWith(REPAIR_DECLINE_GATE_PREFIX) && entry.decision.startsWith('declined:')
@@ -1532,10 +1561,18 @@ export function repairDeclineContextFiles(projectRoot: string, feature: string, 
         && Date.parse(entry.ts) >= window.start && Date.parse(entry.ts) < window.end)) ?? [];
     if (!entries.length) continue;
     const file = headlessLedgerPath(projectRoot, feature, phase);
-    out.push({ label: path.relative(projectRoot, file).replace(/\\/g, '/'), content:
-      '以下为原账本中绑定当前交付周期、回修窗口和候选指纹的完整原行；其它 run 或候选不属于本次依据。\n'
-      + entries.map(entry => JSON.stringify(entry)).join('\n') });
-    for (const entry of entries) out.push(...readableIssueEvidence(projectRoot, entry.decision));
+    out.push({ path: path.relative(projectRoot, file).replace(/\\/g, '/'), raw: fs.readFileSync(file, 'utf8'), entries });
+  }
+  return out;
+}
+
+/** Pending and accepted refusals retain full original bytes and separately explain attribution. */
+export function repairDeclineContextFiles(projectRoot: string, feature: string, runId: string | undefined, frameworkRoot = path.resolve(__dirname, '../../..')): Array<{ label: string; content: string }> {
+  const out: Array<{ label: string; content: string }> = [];
+  for (const original of readRepairDeclineOriginals(projectRoot, feature, runId, frameworkRoot)) {
+    out.push({ label: original.path, content: '以下保留原账本完整字节；当前匹配实际请求/调用窗口及候选指纹的原行另列，其它身份/窗口的条目不采信为本次拒修。\n'
+      + original.raw + '\n当前匹配原行：\n' + original.entries.map(entry => JSON.stringify(entry)).join('\n') });
+    for (const entry of original.entries) out.push(...readableIssueEvidence(projectRoot, entry.decision));
   }
   if (out.length) out.push({ label: '(repair decline verification)', content:
     '责任方拒修是待核实依据，不是修改需求或 PASS。读取原账本与当前证据；对没有目标引文的事实拒修，在原 issue-verification 块按 issue=<gate_id> 逐条给 confirmed/refuted/unclear，evidence 原样包含 declined: 后的完整依据并说明事实核对。目标冲突仍核「」内的目标原文。原提案阶段收到理由后修自身产物或补真实新事实；换ID、措辞和路径格式不算新事实。' });
@@ -1797,6 +1834,9 @@ export function scopeRevisionInputFromRepairCandidates(
   const scope = resolveEffectiveScopeSource(ctx.projectRoot, ctx.feature, runId)?.scope;
   if (!scope) return null;
   const context = repairResponsibilityContext({ ...ctx, runId, executionScope: scope });
+  const legacyRoot = inferLegacyProjectRoot(ctx.projectRoot, scope);
+  const sourceOwners = [...new Set(workUnitWriteDomains(context.contracts?.domains ?? [], scope)
+    .filter(domain => domain.kind === 'source').map(domain => domain.owner))];
 
   const facts = scope.obligations.map(obligation => structuredClone(obligation) as ExecutionScopeInput['facts'][number]);
   const responsible: string[] = [];
@@ -1804,7 +1844,36 @@ export function scopeRevisionInputFromRepairCandidates(
   for (const candidate of owned) {
     const responsibility = resolveRepairResponsibility({ ...context, target: candidate });
     const phase = responsibility.owner;
-    if (!phase || responsibility.action === 'unavailable' || responsibility.action === 'design') continue;
+    if (!phase || responsibility.action === 'design') continue;
+    if (responsibility.action === 'unavailable') {
+      const object = currentRepairObject(context, candidate);
+      const boundary = context.contracts && { ...context.contracts, executionRole: 'author' as const };
+      // This only proposes a necessary duty under the original full-Feature goal.
+      // The live source grant remains denied until the existing revision boundary accepts it.
+      const mayPropose = scope.completion_target === 'feature' && candidate.category === 'coding'
+        && object?.action === 'repair' && object.owner === phase && candidate.files.length > 0 && !!boundary
+        && candidate.files.every(file => object.files?.some(current => path.resolve(ctx.projectRoot, current) === path.resolve(ctx.projectRoot, file))
+          && repairOwnerSourceTargets(phase, [file], context).length === 1 && workUnitMayWritePath(boundary, file));
+      if (!mayPropose) continue;
+    }
+    // Existing source repairs keep their grant; definition decisions still require the original proposal.
+    if (responsibility.action === 'current' && responsibility.category !== 'plan' && responsibility.category !== 'spec' && (candidate.files.length
+      ? candidate.files.every(file => sourceOwners.some(owner => repairOwnerSourceTargets(owner, [file], context).length > 0))
+      : sourceOwners.includes(phase))) continue;
+    if (responsibility.action === 'current' && (responsibility.category === 'plan' || responsibility.category === 'spec')) {
+      // An approved absent local output stays unfinished work until its first valid definition proof.
+      const kinds = OBLIGATION_PROVIDERS[responsibility.category === 'plan' ? 'obligations.plan' : 'obligations.spec'];
+      const unfinished = scope.obligations.filter(obligation => obligation.owner_phase === phase
+        && obligation.applicability === 'required' && kinds.includes(obligation.kind));
+      const artifacts = new Set(repairOwnerArtifactTargets(phase, context).map(file => path.resolve(ctx.projectRoot, file)));
+      if (unfinished.length && unfinished.every(obligation => !obligation.satisfied_by?.length) && candidate.files.length
+        && candidate.files.every(file => {
+          const target = path.resolve(ctx.projectRoot, file);
+          const original = unfinished.flatMap(obligation => obligation.basis.flatMap(binding => binding.dependencies))
+            .filter(dependency => resolveDependencyPath(ctx.projectRoot, dependency.path, legacyRoot) === target);
+          return artifacts.has(target) && original.length > 0 && original.every(dependency => dependency.exists === false);
+        })) continue;
+    }
     // Unit modification authority does not make a disabled formal check capability executable.
     if (!context.workflow?.artifacts.some(artifact => artifact.id === phase)
       || !context.skillContracts?.has(phase) || context.profile?.phasesDisabled.has(phase)) continue;
@@ -1819,7 +1888,6 @@ export function scopeRevisionInputFromRepairCandidates(
     if (responsibility.category === 'coding') {
       // UT 的 affected_files 是诊断落点（可含 ohosTest 目录/占位），不代表实现源码或写集。
       // 候选只触发修订；实现事实复用本 run 已有实现依据，重新解析当前源码指纹。
-      const legacyRoot = inferLegacyProjectRoot(ctx.projectRoot, scope);
       const sourceFiles = (files: string[]): string[] => [...new Set(files.map(file => resolveDependencyPath(ctx.projectRoot, file, legacyRoot))
         .filter(file => {
           if (!isInsideProjectRoot(ctx.projectRoot, file)) return false;

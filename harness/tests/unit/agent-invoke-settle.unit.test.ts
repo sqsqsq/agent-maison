@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { EventEmitter } from 'events';
-import { spawn, type ChildProcess } from 'child_process';
+import { spawn, execFileSync, type ChildProcess } from 'child_process';
 import {
   createChildSettleWaiter,
   DEFAULT_CHILD_SETTLE_GRACE_MS,
@@ -28,13 +28,15 @@ import { createCodexTerminalScanner } from '../../scripts/utils/codex-terminal-e
 import { extractCodexAgentMessageText } from '../../scripts/utils/codex-terminal-events';
 import { applyIndependentQuestioningOutput, validateBlueprintQuestioning } from '../../scripts/utils/blueprint-questioning';
 import * as agentInvoke from '../../scripts/utils/agent-invoke';
-import { createWorkUnitExecutionContext, DetachedGoalPhaseExecutor, type WorkUnitExecutionContext } from '../../scripts/utils/goal-phase-executor';
+import { createWorkUnitExecutionContext as freezeWorkUnitExecutionContext, observeWorkUnitProviderSession, workUnitExecutionInputs, DetachedGoalPhaseExecutor, type WorkUnitExecutionContext } from '../../scripts/utils/goal-phase-executor';
 import { invocationCompleted, invocationEndFacts } from '../../scripts/utils/invocation-completion';
 import { writePhaseExecutionRequestMaterial } from '../../scripts/utils/session-execution-handoff';
+import { capturePhaseInvocationSnapshot, resolvePhaseWriteBoundary, classifyPhaseInvocationChanges } from '../../scripts/utils/phase-write-boundary';
 import { buildInitialDesignGoalManifest, writeGoalManifest } from '../../scripts/utils/goal-manifest';
 import * as YAML from 'yaml';
 import type { UnitCaseResult } from '../run-unit';
 import { clearFrameworkConfigCache } from '../../config';
+import { ensureRunControl, casAcquireRunOwner } from '../../scripts/utils/goal-run-control';
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(message);
@@ -44,7 +46,208 @@ function fakeChild(): ChildProcess {
   return new EventEmitter() as ChildProcess;
 }
 
+function createWorkUnitExecutionContext(input: WorkUnitExecutionContext): WorkUnitExecutionContext {
+  const observed = observeWorkUnitProviderSession(input);
+  if ('status' in observed) throw new Error(observed.details);
+  return freezeWorkUnitExecutionContext(input, observed);
+}
+
 const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
+  {
+    name: 'P3 canonical child preserves its root deadline and effective contract without promoting legacy fields into authority',
+    run: () => {
+      const { fixture } = require('./blueprint-skill-projection.unit.test') as typeof import('./blueprint-skill-projection.unit.test');
+      const { prepareInitialDesignRun } = require('../../scripts/utils/initial-design-delivery') as typeof import('../../scripts/utils/initial-design-delivery');
+      const { buildGoalManifestFromInput } = require('../../scripts/utils/goal-manifest') as typeof import('../../scripts/utils/goal-manifest');
+      const f = fixture();
+      try {
+        fs.writeFileSync(path.join(f.root, 'framework.config.json'), JSON.stringify({ schema_version: '1.1', project_name: 'RootAuthority', project_profile: { name: 'hmos-app' }, active_workflow: 'obligation-driven', paths: { features_dir: 'doc/features' } }));
+        clearFrameworkConfigCache();
+        const root = prepareInitialDesignRun({ projectRoot: f.root, frameworkRoot: path.resolve(__dirname, '../../..'), feature: 'ledger-app-blueprint', adapter: 'claude',
+          requirement: '只在当前明确权限内承接原设计与CU成果', userDeadlineAt: '2030-01-01T00:00:00.000Z',
+          unattended: { write_mode: 'workspace-write', approval_mode: 'never', allowed_tools: ['Read', 'Glob', 'Grep'] } }).manifest;
+        const stale = { write_mode: 'full-access' as const, approval_mode: 'never' as const };
+        const child = buildGoalManifestFromInput({ feature: f.feature, run_id: 'stale-child-settings', adapter: 'claude', requirement: root.requirement,
+          delivery_origin: { feature: root.feature, run_id: root.run_id }, user_deadline_at: '2031-01-01T00:00:00.000Z', unattended: stale }, { projectRoot: f.root });
+        const current = workUnitExecutionInputs(child, 'author', f.root);
+        assert(current.user_deadline_at === root.user_deadline_at, 'a child cannot extend its root deadline');
+        const effective = agentInvoke.withInvocationAuthorization(defaultHeadlessInvokePlan('claude', stale, ''), { authorization: current.authority });
+        assert(current.authority?.write_mode === 'full-access' && current.authority.approval_mode === 'never' && !current.authority.allowed_tools,
+          'historical write-mode/tool-list fields remain interpreted by the existing effective-contract SSOT');
+        assert(effective.argv.includes('--dangerously-skip-permissions'), 'native translation consumes the same effective contract');
+      } finally { clearFrameworkConfigCache(); fs.rmSync(f.root, { recursive: true, force: true }); }
+    },
+  },
+  ...(['empty-zero', 'empty-failure', 'prose-auth', 'prior-progress', 'written-failure', 'tool-started', 'authentication', 'quota'] as const).map(variant => ({
+    name: `P3 N3 resume structure reconciles actual work before rebuilding: ${variant}`,
+    run: async () => {
+      const { setupRunlessProject } = require('./execution-scope.unit.test') as typeof import('./execution-scope.unit.test');
+      const { ensureFeatureExecutionScopeFrozen } = require('../../scripts/utils/feature-execution-scope') as typeof import('../../scripts/utils/feature-execution-scope');
+      const f = setupRunlessProject();
+      try {
+        ensureFeatureExecutionScopeFrozen({ projectRoot: f.root, frameworkRoot: f.frameworkRoot, feature: f.feature });
+        const runDir = path.join(f.root, 'doc/features', f.feature, 'goal-runs/n3-run'); fs.mkdirSync(runDir, { recursive: true });
+        ensureRunControl(runDir, 'n3-run');
+        const acquired = casAcquireRunOwner(runDir, 'n3-run', 0, { kind: 'process', owner_id: 'n3-owner', lease_ms: 60_000 });
+        if (!acquired.ok) throw new Error('the N3 fixture must acquire its real request owner');
+        const context: WorkUnitExecutionContext = { runId: 'n3-run', feature: f.feature, workflowId: 'obligation-driven', track: 'full', chain: ['coding'], phase: 'coding', attemptId: 'resume-one',
+          owner: { ...acquired.token, kind: 'process' }, projectRoot: f.root, frameworkRoot: f.frameworkRoot, runDir, reportDir: path.relative(f.root, runDir), adapter: 'codex',
+          authority: { write_mode: 'full-access', approval_mode: 'never' }, provider_session_id: 'original-native',
+          childEnv: {}, runtimeFacts: { receiptRequired: false, resume: true, successor: false } };
+        const boundary = resolvePhaseWriteBoundary({ projectRoot: f.root, frameworkRoot: f.frameworkRoot, feature: f.feature,
+          phaseOrder: ['coding', 'review', 'ut'], track: 'full', productLayerDirs: ['src'], profileDir: path.join(f.frameworkRoot, 'profiles/generic'), executionRole: 'author' });
+        const pre = capturePhaseInvocationSnapshot(boundary);
+        const issued = writePhaseExecutionRequestMaterial({ context, invokeId: context.attemptId, preSnapshot: pre, writeBoundary: boundary,
+          gateTimeoutMs: 10_000, cleanupReserveMs: 100, issuedAt: new Date().toISOString() });
+        if (variant === 'prior-progress') fs.writeFileSync(path.join(f.root, 'src/demo/value.ts'), 'export const value: number = 43;\n');
+        fs.writeFileSync(path.join(runDir, 'events.jsonl'), JSON.stringify({ type: 'agent_invoke_start', phase: context.phase, invoke_id: context.attemptId }) + '\n');
+        const cli = path.join(runDir, 'resume-cli.cjs');
+        fs.writeFileSync(cli, `const fs=require('fs'),assert=require('assert');assert(process.argv.includes('original-native'));const v=${JSON.stringify(variant)};
+if(v==='written-failure') {fs.writeFileSync('src/demo/value.ts','export const value: number = 43;\\n');process.stderr.write('Error: thread/resume: thread/resume failed: no rollout found for thread id original-native (code -32600)');}
+if(v==='tool-started') process.stdout.write(JSON.stringify({type:'item.started',item:{type:'command_execution',command:'actual started tool'}})+'\\n');
+if(v==='prose-auth') process.stdout.write('I will implement authentication for credit cards.');
+if(v==='authentication') process.stderr.write('401 authentication failed');if(v==='quota') process.stderr.write('429 quota unavailable');
+process.exit(v==='empty-zero'||v==='authentication'||v==='quota'?0:1);`);
+        const base = defaultHeadlessInvokePlan('codex', { write_mode: 'full-access', approval_mode: 'never' }, 'continue original work');
+        const executor = new DetachedGoalPhaseExecutor(() => ({ cwd: f.root, plan: { ...base, argv: [process.execPath, cli, ...base.argv.slice(1)], resolvedBinary: undefined, label: `controlled N3 ${variant}` },
+          options: { outputLogPath: path.join(runDir, path.dirname(issued.reference.path), 'agent-output.log') } }));
+        const result = await executor.execute(context);
+        if (variant === 'empty-zero' || variant === 'empty-failure' || variant === 'prose-auth' || variant === 'prior-progress') {
+          assert(result.status === 'failed' && result.nativeSessionRebuildReason === 'provider_session_resume_not_accepted', JSON.stringify(result));
+          assert(!invocationCompleted(result), 'exit0 with no accepted resume envelope is not a completed attempt');
+          fs.appendFileSync(path.join(runDir, 'events.jsonl'), JSON.stringify({ type: 'agent_invoke_end', phase: context.phase, invoke_id: context.attemptId, ...invocationEndFacts(result) }) + '\n');
+          const recovered = observeWorkUnitProviderSession({ ...context, attemptId: 'resume-two' });
+          assert(!('status' in recovered) && recovered.provider_session_id === undefined && recovered.instruction!.includes('重建'), 'the original failed attempt rebuilds only the dedicated context from current facts');
+          if (variant === 'prior-progress') assert(fs.readFileSync(path.join(f.root, 'src/demo/value.ts'), 'utf8').includes('43'), 'existing legal work is preserved and cannot be mistaken for this unaccepted attempt starting work');
+        } else {
+          assert(!result.nativeSessionRebuildReason && !invocationCompleted(result), JSON.stringify(result));
+          assert(result.status === (variant === 'authentication' || variant === 'quota' ? 'waiting' : 'failed'), 'actual environment/working failures keep their own outcome');
+          if (variant === 'written-failure') {
+            const view = require('../../scripts/utils/phase-write-boundary') as typeof import('../../scripts/utils/phase-write-boundary');
+            const changes = view.diffPhaseInvocationSnapshots(pre, capturePhaseInvocationSnapshot(boundary));
+            assert(changes.kind === 'changed' && !classifyPhaseInvocationChanges(boundary, context.phase, changes.changes).violations.length, 'actual authorized writes remain accounted for');
+            assert(fs.readFileSync(path.join(f.root, 'src/demo/value.ts'), 'utf8').includes('43'), 'a failed working attempt never discards its legal write');
+          }
+        }
+      } finally { clearFrameworkConfigCache(); fs.rmSync(f.root, { recursive: true, force: true }); }
+    },
+  })),
+  {
+    name: 'P3 one unit author admission includes current UT sources without changing its original facts anchor or source owner',
+    run: () => {
+      const { setupRunlessProject } = require('./execution-scope.unit.test') as typeof import('./execution-scope.unit.test');
+      const { prepareGoalModeRun } = require('../../scripts/goal-mode-entry') as typeof import('../../scripts/goal-mode-entry');
+      const { prepareFeatureScopeCandidate } = require('../../scripts/utils/feature-track') as typeof import('../../scripts/utils/feature-track');
+      const { resolveCapabilityResolutionEntryInput } = require('../../scripts/utils/capability-resolution-entry-input') as typeof import('../../scripts/utils/capability-resolution-entry-input');
+      const { executionScopeFingerprint } = require('../../scripts/utils/execution-scope') as typeof import('../../scripts/utils/execution-scope');
+      const { SCOPE_REVISION_FIELDS, buildGoalManifestFromInput, inheritSuccessorManifest } = require('../../scripts/utils/goal-manifest') as typeof import('../../scripts/utils/goal-manifest');
+      const { resolveEffectiveScopeSource, createGoalRun, buildSupersedeAuditEvent } = require('../../scripts/utils/goal-run-creation') as typeof import('../../scripts/utils/goal-run-creation');
+      const f = setupRunlessProject();
+      const testFile = 'src/demo/src/ohosTest/ets/test/Value.test.ets';
+      try {
+        const configFile = path.join(f.root, 'framework.config.json');
+        const config = JSON.parse(fs.readFileSync(configFile, 'utf8')); config.project_profile.name = 'hmos-app';
+        fs.writeFileSync(configFile, JSON.stringify(config)); clearFrameworkConfigCache();
+        fs.mkdirSync(path.dirname(path.join(f.root, testFile)), { recursive: true });
+        execFileSync('git', ['init', '-q'], { cwd: f.root }); execFileSync('git', ['config', '--local', 'core.autocrlf', 'false'], { cwd: f.root });
+        execFileSync('git', ['add', 'src/demo/value.ts'], { cwd: f.root });
+        execFileSync('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'actual unit facts baseline'], { cwd: f.root });
+        prepareFeatureScopeCandidate({ ...f, projectRoot: f.root, completionTarget: 'feature', requestedResults: ['value is 42'],
+          requestedPhases: ['coding', 'review', 'ut'], requirement: '把 value 改成 42', overwrite: true,
+          impact: { userVisibleBehaviorChange: false, reason: 'internal value', basisPaths: ['src/demo/value.ts'] } });
+        const born = prepareGoalModeRun({ ...f, projectRoot: f.root, adapter: 'generic', runId: 'unit-facts', requirement: '把 value 改成 42' });
+        const boundary = resolvePhaseWriteBoundary({ projectRoot: f.root, frameworkRoot: f.frameworkRoot, feature: f.feature, runId: born.manifest.run_id,
+          phaseOrder: ['coding', 'review', 'ut'], executionRole: 'author', track: 'full', productLayerDirs: ['src'], profileDir: path.join(f.frameworkRoot, 'profiles/hmos-app') });
+        const beforeWrite = capturePhaseInvocationSnapshot(boundary);
+        fs.writeFileSync(path.join(f.root, testFile), "it('value', 0, () => expect(1).assertEqual(1));\n");
+        const changes = require('../../scripts/utils/phase-write-boundary') as typeof import('../../scripts/utils/phase-write-boundary');
+        const diff = changes.diffPhaseInvocationSnapshots(beforeWrite, capturePhaseInvocationSnapshot(boundary));
+        if (diff.kind !== 'changed') throw new Error('the fixture must observe a real source edit');
+        const classified = classifyPhaseInvocationChanges(boundary, 'ut', diff.changes);
+        const owned = classified.allowed.filter(write => write.path === testFile);
+        assert(owned.length === 1 && !classified.violations.length, 'the existing unit write boundary must own the actual UT edit');
+        assert(owned[0].how === 'added' && owned[0].preSha256 === null, 'the historical UT observation must come from an actually added file');
+        fs.appendFileSync(path.join(f.root, born.manifest.report_dir, 'events.jsonl'), JSON.stringify({ type: 'phase_write_observed', phase: 'ut', invoke_id: 'ut-i1',
+          owned: owned.map(write => ({ path: write.path, owner: write.owner, roles: write.roles, pre_sha256: write.preSha256, post_sha256: write.postSha256 })) }) + '\n');
+        const birth = born.manifest.execution_scope;
+        if (!birth) throw new Error('the original run must have its real birth scope');
+        const revised = structuredClone(birth);
+        revised.phase_chain = ['spec', ...birth.phase_chain.filter(family => family !== 'spec')];
+        fs.appendFileSync(path.join(f.root, born.manifest.report_dir, 'events.jsonl'), JSON.stringify({ type: 'scope_revised', revision_index: 1,
+          previous_scope_fingerprint: executionScopeFingerprint(birth), execution_scope: revised, revision_input: null,
+          trigger: { phase: 'spec', check_id: 'current-definition-repair' }, allowed_fields: [...SCOPE_REVISION_FIELDS] }) + '\n');
+        assert(resolveEffectiveScopeSource(f.root, f.feature, born.manifest.run_id)?.scope.phase_chain[0] === 'spec',
+          'the existing revision reader must actually move the effective chain before checking the immutable facts anchor');
+        const before = fs.readFileSync(born.manifestPath);
+        const entry = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot: f.frameworkRoot, feature: f.feature,
+          featuresDir: 'doc/features', phase: 'coding', goalRunId: born.manifest.run_id, goalAttemptId: 'i1', purpose: 'work-unit-author' });
+        const facts = entry.factsContext;
+        if (!facts) throw new Error('the actual unit request must have facts admission');
+        assert(!!entry.testTargets?.includes(testFile) && facts.source_paths.includes(testFile), 'the one original unit request must carry its actually applicable test targets');
+        assert(facts.first_phase === 'coding' && 'run_id' in facts.subject && facts.subject.run_id === born.manifest.run_id, 'current tools cannot move the immutable first research anchor or original run');
+        assert(facts.source_owners?.[testFile] === 'ut', 'test research keeps its actual source producer; an author label does not relabel it as coding');
+        assert(!facts.source_owners?.['doc/features/runless/contracts.yaml'], 'reading construction authority never grants it a source write exemption');
+        assert(fs.readFileSync(born.manifestPath).equals(before), 'admission cannot rewrite the original manifest');
+        const events = fs.readFileSync(path.join(f.root, born.manifest.report_dir, 'events.jsonl'), 'utf8');
+        assert(!events.includes('agent_invoke_start'), 'input collection cannot invent phase author invocations');
+        const originalHistory = fs.readFileSync(path.join(born.runDir, 'events.jsonl'));
+        for (const first of ['spec', 'plan'] as const) {
+          const scope = structuredClone(birth);
+          scope.phase_chain = [first, ...birth.phase_chain.filter(family => family !== first)];
+          const requested = buildGoalManifestFromInput({ feature: f.feature, run_id: `unit-facts-${first}`, adapter: 'generic',
+            requirement: born.manifest.requirement, run_base_sha: born.manifest.run_base_sha,
+            execution_scope: scope, start_phase: first, end_phase: scope.phase_chain.at(-1), chain_override: scope.phase_chain }, { projectRoot: f.root });
+          const manifest = inheritSuccessorManifest(requested, born.manifest, { round: [], drift: [] });
+          Object.assign(manifest, { execution_scope: scope, start_phase: first, end_phase: scope.phase_chain.at(-1), chain_override: scope.phase_chain });
+          assert(manifest.successor_of === born.manifest.run_id, 'the existing machine inheritance must establish the actual ancestor relation');
+          const created = createGoalRun({ projectRoot: f.root, frameworkRoot: f.frameworkRoot, manifest, chain: scope.phase_chain, forceFresh: true });
+          fs.appendFileSync(created.eventsPath, JSON.stringify({ ts: new Date().toISOString(), ...buildSupersedeAuditEvent({
+            targetRunId: born.manifest.run_id, supersedingRunId: manifest.run_id }) }) + '\n');
+          const manifestBytes = fs.readFileSync(created.manifestPath);
+          const next = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot: f.frameworkRoot, feature: f.feature,
+            featuresDir: 'doc/features', phase: first, goalRunId: manifest.run_id, goalAttemptId: 'i1', purpose: 'work-unit-author' });
+          assert(next.factsContext?.first_phase === first, `${first} keeps its own immutable birth anchor`);
+          assert(!!next.testTargets?.includes(testFile) && !!next.factsContext?.source_paths.includes(testFile), `${first} must research the actual ancestor-added UT source`);
+          assert(next.factsContext?.source_owners?.[testFile] === 'ut', `${first} cannot relabel or grant ownership by phase order`);
+          assert(!next.factsContext?.baseline, 'known source collection cannot invent a reusable baseline');
+          assert(fs.readFileSync(created.manifestPath).equals(manifestBytes), 'source collection cannot rewrite successor birth');
+          assert(!fs.readFileSync(created.eventsPath, 'utf8').includes('agent_invoke_start'), 'no spec/plan author or PASS is synthesized');
+        }
+        assert(fs.readFileSync(path.join(born.runDir, 'events.jsonl')).equals(originalHistory), 'ancestor source evidence remains byte-identical');
+      } finally { clearFrameworkConfigCache(); fs.rmSync(f.root, { recursive: true, force: true }); }
+    },
+  },
+  ...(['author', 'verifier'] as const).map(role => ({
+    name: `P3 outstanding real ${role} is observed as waiting without another invocation or a fabricated native end`,
+    run: async () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-author-wait-'));
+      const runDir = path.join(root, 'run'); fs.mkdirSync(runDir);
+      const current: WorkUnitExecutionContext = { runId: 'waiting-run', feature: 'demo', workflowId: 'obligation-driven', track: 'full', chain: ['coding'], phase: role === 'author' ? 'coding' : 'review', attemptId: `${role}-one`, executionRole: role,
+        owner: { run_id: 'waiting-run', owner_id: 'owner', epoch: 1, kind: 'process' }, projectRoot: root, frameworkRoot: path.resolve(__dirname, '../../..'), runDir, reportDir: 'run', adapter: 'codex',
+        childEnv: {}, runtimeFacts: { receiptRequired: false, resume: false, successor: false } };
+      const issued = writePhaseExecutionRequestMaterial({ context: current, invokeId: current.attemptId, preSnapshot: null, writeBoundary: null,
+        gateTimeoutMs: 10_000, cleanupReserveMs: 100, issuedAt: new Date().toISOString() });
+      const eventsFile = path.join(runDir, 'events.jsonl');
+      fs.writeFileSync(eventsFile, JSON.stringify({ type: 'agent_invoke_start', phase: current.phase, invoke_id: current.attemptId }) + '\n');
+      const streamFile = path.join(runDir, path.dirname(issued.reference.path), 'agent-events.jsonl');
+      const child = spawn(process.execPath, ['-e', 'process.stdout.write(JSON.stringify({type:"thread.started",thread_id:"waiting-native"})+"\\n");setInterval(()=>{},1000);'], { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
+      const closed = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(resolve => child.once('close', (code, signal) => resolve({ code, signal })));
+      try {
+        await new Promise<void>((resolve, reject) => { child.once('error', reject); child.stdout!.once('data', chunk => { fs.writeFileSync(streamFile, chunk); resolve(); }); });
+        const before = fs.readFileSync(eventsFile);
+        const next = { ...current, phase: role === 'author' ? 'ut' : 'review', attemptId: `${role}-two` };
+        const observed = observeWorkUnitProviderSession(next);
+        assert('status' in observed && observed.status === 'waiting' && observed.provider_session_id === 'waiting-native', 'a running original author must retain its exact native identity and wait');
+        assert('details' in observed && observed.details!.includes(current.attemptId) && observed.details!.replace(/\\/g, '/').includes(issued.reference.path) && observed.details!.includes('真实交回'), 'waiting identifies the actual original request and release facts');
+        assert(fs.readFileSync(eventsFile).equals(before), 'observation must not start another author or manufacture settlement');
+        child.kill(); const ended = await closed;
+        fs.appendFileSync(eventsFile, JSON.stringify({ type: 'agent_process_settled', phase: current.phase, invoke_id: current.attemptId, exit_code: ended.code, signal: ended.signal, interrupted: true }) + '\n');
+        const recovered = observeWorkUnitProviderSession(next);
+        assert(!('status' in recovered) && recovered.provider_session_id === (role === 'author' ? 'waiting-native' : undefined), 'actual settlement permits author continuation while the independent verifier receives a fresh native identity');
+        assert(!fs.readFileSync(eventsFile, 'utf8').includes('agent_invoke_end'), 'the test never fabricates a native completion');
+      } finally { if (child.exitCode === null && child.signalCode === null) child.kill(); await closed; fs.rmSync(root, { recursive: true, force: true }); }
+    },
+  })),
   {
     name: 'P1 native author recovery validates seeds against real design targets and keeps implementation and verifier streams separate',
     run: async () => {
@@ -129,6 +332,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         await new Promise(resolve => setTimeout(resolve, 120));
         assert(fs.readFileSync(tick, 'utf8') === lastTick, 'the real grandchild must stop, not just release a pipe');
         fs.appendFileSync(events, JSON.stringify({ type: 'agent_invoke_end', phase: 'coding', invoke_id: 'idle-one', ...invocationEndFacts(result) }) + '\n');
+        timers.DEFAULT_AGENT_OUTPUT_IDLE_MS = originalIdle;
         const next = createWorkUnitExecutionContext({ ...ctx, phase: 'ut', attemptId: 'idle-two' });
         assert(next.provider_session_id === 'idle-native-42', 'the next request resumes the original observed native identity');
         const nativePlan = defaultHeadlessInvokePlan('codex', { write_mode: 'full-access', approval_mode: 'never' }, 'continue');
@@ -198,7 +402,6 @@ process.stdin.on('end',()=>{
       const originalIdle = timers.DEFAULT_AGENT_OUTPUT_IDLE_MS;
       let terminalPid = 0;
       try {
-        timers.DEFAULT_AGENT_OUTPUT_IDLE_MS = 1_000;
         const ctx: WorkUnitExecutionContext = { runId: 'active-run', feature: 'demo', workflowId: 'obligation-driven', track: 'full', chain: ['coding'], phase: 'coding', attemptId: 'active-one',
           owner: { run_id: 'active-run', owner_id: 'active-owner', epoch: 1, kind: 'process' }, projectRoot: root, frameworkRoot: root, runDir: root, reportDir: '.', adapter: 'codex',
           childEnv: {}, runtimeFacts: { receiptRequired: false, resume: false, successor: false } };
@@ -207,9 +410,7 @@ process.stdin.on('end',()=>{
           options: { timeoutMs: 20, terminalEventParser: 'codex_turn_jsonl' } }));
         const result = await executor.execute(ctx);
         assert(result.status === 'passed' && result.completion_observed === true && !result.interrupted && !result.kill_attempted && (result.duration_ms ?? 0) > 2_000, JSON.stringify(result));
-        // The accelerated idle window above tests active output, not native-process startup latency.
-        // Terminal cleanup uses the real idle policy; a separate fixture watchdog still makes a hung cleanup fail.
-        timers.DEFAULT_AGENT_OUTPUT_IDLE_MS = originalIdle;
+        // Both active execution and terminal cleanup use the real idle policy; silent-tree interruption is tested separately.
         const terminalStarted = Date.now();
         const observations: Array<{ after_ms: number; type: string }> = [];
         const pending = invokeAgentHeadless({ argv: [process.execPath, '-e', `process.stdout.write('{"type":"turn.completed"}\\n');setInterval(()=>{},1000);`], label: 'completed child still alive', adapterName: 'terminal-replay-fixture' }, root,

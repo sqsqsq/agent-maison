@@ -14,7 +14,8 @@ import { collectCurrentRequirementText } from '../../scripts/utils/fidelity-shar
 import { buildGoalManifestFromInput, mergeSuccessorRequirement, type GoalManifest } from '../../scripts/utils/goal-manifest';
 import { createGoalRun } from '../../scripts/utils/goal-run-creation';
 import { featureEffectiveScope, readFeatureFrozenScope } from '../../scripts/utils/feature-execution-scope';
-import { buildPhasePrompt } from '../../scripts/goal-phase-runtime';
+import { buildPhasePrompt, renderWorkUnitAuthorFeedback } from '../../scripts/goal-phase-runtime';
+import type { CurrentDisposition } from '../../scripts/utils/check-disposition';
 import { diffVerifierMaterial, readVerifierMaterialOrNull } from '../../scripts/utils/verifier-material';
 import { runVisualProviderReview } from '../../../profiles/hmos-app/harness/visual-provider-review';
 import { clearFrameworkConfigCache } from '../../config';
@@ -106,7 +107,69 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       const marker = 'coding-report-unique-e9d49418';
       const prompt = assembleAIPrompt(path.join(FRAMEWORK_ROOT, 'harness'), root, 'coding', 'demo', [], JSON.stringify({ evidence: marker }), '', undefined, undefined, FRAMEWORK_ROOT);
       assert(prompt.split(marker).length === 2, '报告只展开一次');
-      assert(prompt.includes('coding_compile_gate') && prompt.includes('HARD STOP'), '编译约束不变');
+      assert(prompt.includes('coding_compile_gate') && prompt.includes('真实编译'), '当前真实编译义务须进入完整材料');
+      const reportPath = 'doc/features/demo/coding/reports/script-report.json';
+      const check = { id: 'coding_compile', category: 'compilation', severity: 'BLOCKER', status: 'FAIL',
+        details: 'exit_code=1, durationMs=5\nraw tool metadata and original log', failure_kind: 'code_regression',
+        affected_files: ['src/a.ts'], structured: { compiler_diagnostics: [{ file: 'src/a.ts', line: 1, code: 'TS2322', message: 'actual type mismatch' }],
+          performance: { p95_ms: 10 } } };
+      const feedback = (): string => {
+        put(root, reportPath, JSON.stringify({ checks: [check] }));
+        put(root, 'doc/features/demo/coding/reports/summary.json', JSON.stringify({ verdict: 'FAIL', script_report: reportPath }));
+        const original = fs.readFileSync(path.join(root, reportPath), 'utf8');
+        const problem: CurrentDisposition['problems'][number] = { phase: 'coding', id: check.id, action: 'repair',
+          owner: 'coding', affects: 'completion', severity: 'BLOCKER', detail: check.details, files: check.affected_files };
+        const disposition: CurrentDisposition = { problems: [problem], completionBlocking: [problem], releaseBlocking: [], disclosed: [],
+          completionEligible: false, releaseReady: false, reasons: [problem.detail] };
+        const rendered = renderWorkUnitAuthorFeedback({ projectRoot: root, frameworkRoot: FRAMEWORK_ROOT, feature: 'demo', disposition });
+        assert(fs.readFileSync(path.join(root, reportPath), 'utf8') === original, '语义工作材料不得改写完整原报告');
+        return rendered;
+      };
+      const before = feedback();
+      check.details = 'exit_code=1, durationMs=2\nupdated tool metadata; complete original log remains readable';
+      assert(feedback() === before, '原生编译展示遥测变化不是新的作者工作');
+      assert(before.includes('TS2322') && before.includes(reportPath), '完整真实诊断与原始报告路径必须交付');
+      check.structured.compiler_diagnostics[0].message = 'a different actual type mismatch';
+      const changedDiagnostic = feedback();
+      assert(changedDiagnostic !== before, '真实编译诊断变化必须改变工作材料');
+      check.structured.performance.p95_ms = 20;
+      assert(feedback() !== changedDiagnostic, '真实结构化业务性能指标不能被展示归一化吞掉');
+      check.id = 'frame_p95_latency';
+      check.details = '真实业务p95=120ms；用户新指令：durationMs=2必须保留';
+      const measured = feedback();
+      assert(measured.includes(check.details), '非编译业务指标与用户原文不能按duration字符串删除');
+      check.details = '真实业务p95=150ms；用户新指令：durationMs=3必须保留';
+      assert(feedback() !== measured, '真实业务数值及用户指令变化必须改变材料');
+      const visualReport = 'doc/features/demo/testing/reports/script-report.json';
+      const visual = { id: 'visual_diff', category: 'structure', severity: 'BLOCKER', status: 'FAIL', details: '当前真实残差原文',
+        suggestion: '完整修复建议原文', failure_kind: undefined as string | undefined,
+        structured: { kind: 'visual_diff', loop_id: 'old-loop', attempt_id: 'i1', goal_run_id: 'old-run',
+          round: { disposition: 'appended', decision: { fused: false } }, defect_fingerprints: ['real-defect'],
+          screens_hash: 'real-screens', build_fingerprint: 'real-build', channel_evidence_usable: false,
+          user_facts: { round: '用户业务原文', suggestion: '真实建议事实', p95_ms: 10 } } };
+      const visualFeedback = (): string => {
+        put(root, visualReport, JSON.stringify({ checks: [visual] }));
+        put(root, 'doc/features/demo/testing/reports/summary.json', JSON.stringify({ verdict: 'FAIL', script_report: visualReport }));
+        const original = fs.readFileSync(path.join(root, visualReport), 'utf8');
+        const problem: CurrentDisposition['problems'][number] = { phase: 'testing', id: 'visual_diff', action: 'repair',
+          owner: 'coding', affects: 'completion', severity: 'BLOCKER', detail: visual.details };
+        const rendered = renderWorkUnitAuthorFeedback({ projectRoot: root, frameworkRoot: FRAMEWORK_ROOT, feature: 'demo',
+          disposition: { problems: [problem], completionBlocking: [problem], releaseBlocking: [], disclosed: [],
+            completionEligible: false, releaseReady: false, reasons: [problem.detail] } });
+        assert(fs.readFileSync(path.join(root, visualReport), 'utf8') === original && original.includes(visual.suggestion), '视觉原报告及完整建议不得被改写或丢弃');
+        return rendered;
+      };
+      const visualBefore = visualFeedback();
+      visual.failure_kind = 'no_progress_fuse'; visual.details += '\n机器停机控制说明：no_fix_attempt';
+      visual.structured.round.disposition = 'duplicate'; visual.structured.round.decision.fused = true;
+      visual.structured.loop_id = 'new-loop'; visual.structured.attempt_id = 'i2'; visual.structured.goal_run_id = 'new-run';
+      assert(visualFeedback() === visualBefore, '相同视觉业务事实不能因已消费执行控制说明成为新的作者工作');
+      assert(visualBefore.includes(visualReport) && visualBefore.includes('suggestion') && visualBefore.includes('用户业务原文'), '完整原文必须可达，未知业务字段不能递归按名删掉');
+      visual.structured.defect_fingerprints = ['genuine-new-defect'];
+      const visualChanged = visualFeedback();
+      assert(visualChanged !== visualBefore, '真实缺陷对象变化必须改变反馈');
+      visual.structured.user_facts.p95_ms = 20;
+      assert(visualFeedback() !== visualChanged, '未知业务指标变化必须保留');
     }),
   },
   {

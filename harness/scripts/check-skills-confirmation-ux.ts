@@ -717,43 +717,6 @@ function lintOneFile(rel: string, content: string): CheckResult[] {
     }
   }
 
-  results.push(...lintPhaseClosureGates(rel, content));
-
-  return results;
-}
-
-/** Feature phase SKILL.md must declare closure stop gates (user-confirmation-ux §8). */
-const PHASE_CLOSURE_LINT: Array<{ suffix: string; requiredIds: string[] }> = [
-  { suffix: 'feature/spec/SKILL.md', requiredIds: ['phase.next_step', '闭环停等'] },
-  { suffix: 'feature/plan/SKILL.md', requiredIds: ['plan.ok_to_code', 'phase.next_step', '闭环停等'] },
-  { suffix: 'feature/coding/SKILL.md', requiredIds: ['coding.ok_to_review', 'phase.next_step', '闭环停等'] },
-  { suffix: 'feature/code-review/SKILL.md', requiredIds: ['review.ok_to_ut', 'phase.next_step', '闭环停等'] },
-  { suffix: 'feature/business-ut/SKILL.md', requiredIds: ['ut.ok_to_testing', 'phase.next_step', '闭环停等'] },
-  { suffix: 'feature/device-testing/SKILL.md', requiredIds: ['phase.next_step', '闭环停等'] },
-];
-
-function lintPhaseClosureGates(rel: string, content: string): CheckResult[] {
-  const results: CheckResult[] = [];
-  for (const { suffix, requiredIds } of PHASE_CLOSURE_LINT) {
-    if (!rel.endsWith(suffix)) continue;
-    for (const token of requiredIds) {
-      if (!content.includes(token)) {
-        results.push(blocker(
-          'phase_closure_gate_missing',
-          `${rel} 缺少阶段闭环停等标记 \`${token}\`（user-confirmation-ux §8）`,
-          [rel],
-          '在阶段闭环判定段补充 phase.next_step / *.ok_to_* BLOCKER 停等',
-        ));
-      }
-    }
-    if (/阶段完成，可进入 Skill/.test(content)) {
-      results.push(blocker(
-        'phase_closure_autopilot_wording',
-        `${rel} 闭环段仍用「可进入 Skill」易误导 autopilot；须改为「具备…资格」+ 停等`,
-        [rel],
-      ));
-    }
-  }
   return results;
 }
 

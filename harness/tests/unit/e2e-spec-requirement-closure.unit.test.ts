@@ -25,7 +25,7 @@ import { phaseCompletionProblems, type CurrentDisposition } from '../../scripts/
 import { parseVerifierRequest } from '../../scripts/utils/verifier-request';
 import { readVerifierMaterialOrNull } from '../../scripts/utils/verifier-material';
 import { loadVerifierEvidenceForSubject } from '../../scripts/utils/verifier-evidence';
-import { withRuntimeTest, type RuntimeTestControl } from '../utils/runtime-test-control';
+import { withRuntimeTest, preserveRuntimeTestEvidence, type RuntimeTestControl } from '../utils/runtime-test-control';
 const runGoalModeHostBridge = (options: Parameters<typeof runGoalModeHostBridgeUnchecked>[0], testControl: RuntimeTestControl = {}) =>
   withRuntimeTest({ root: options.projectRoot, ...testControl }, () => runGoalModeHostBridgeUnchecked(options));
 
@@ -323,21 +323,21 @@ const cases: Case[] = [
           adapter: 'codex',
           runMode: 'attended',
           leaseMs: 5 * 60_000,
-          maxRounds: 1,
           executePhase: async (phase, _recommendation, context) => {
             captured.value = context;
-            assert(phase === 'spec' && context.phase === phase, 'bridge phase context mismatch');
+            assert(phase === 'work-unit-author' && context.phase === phase, 'bridge unit context mismatch');
+            const method = 'spec';
             const phaseStatePath = path.join(harnessDir, 'state', '.current-phase.json');
             const phaseStateBefore = fs.existsSync(phaseStatePath) ? fs.readFileSync(phaseStatePath, 'utf8') : null;
             const init = run(harnessDir, 'fidelity-intent-init.ts', [
-              '--feature', 'demo', '--goal-phase', phase, ...contextFlags(context),
+              '--feature', 'demo', '--goal-phase', method, ...contextFlags(context),
             ], root);
             assert(init.status === 0, `attended initializer 失败：${init.stderr}`);
             const ssotPath = path.join(root, 'doc/features/demo/spec/reports/fidelity-intent.json');
             fidelityHash = crypto.createHash('sha256').update(fs.readFileSync(ssotPath)).digest('hex');
 
             const harness = runHarness(harnessDir, [
-              '--phase', phase, '--feature', 'demo', '--summary', ...contextFlags(context),
+              '--phase', method, '--feature', 'demo', '--summary', ...contextFlags(context),
             ], root);
             const summary = readJson(root, 'doc/features/demo/spec/reports/summary.json');
             assert(summary.verdict === 'PASS', `attended verdict=${summary.verdict}`);
@@ -349,17 +349,17 @@ const cases: Case[] = [
               `只可承接真实未执行的独立核验，不吞静态失败或其它必修：${JSON.stringify(pending)}`);
             const request = parseVerifierRequest(fs.readFileSync(path.resolve(root, String(summary.verifier_request)), 'utf8'));
             if (!request) throw new Error('当前真实 verifier request 不可解析');
-            assert(request.feature === 'demo' && request.phase === phase && request.subject_id === summary.verifier_subject_id, '必须消费当前真实签发对象');
+            assert(request.feature === 'demo' && request.phase === method && request.subject_id === summary.verifier_subject_id, '必须消费当前真实签发对象');
             const material = readVerifierMaterialOrNull(path.join(root, 'doc/features/demo/spec/reports'), request.subject_id);
             assert(material?.material_sha256 === request.material_sha256, '独立替身必须读取当前绑定材料');
             fs.readFileSync(path.resolve(root, request.prompt_path), 'utf8');
             assert(summary.closure_status === 'open', 'receipt 未填前 closure 必须保持 open');
             writeValidSpecReceipt(root, summary, context.attemptId);
-            const independent = loadVerifierEvidenceForSubject(root, 'demo', phase, request.subject_id, { frameworkRoot: path.join(root, 'framework') });
+            const independent = loadVerifierEvidenceForSubject(root, 'demo', method, request.subject_id, { frameworkRoot: path.join(root, 'framework') });
             assert(independent.ok, JSON.stringify(independent));
 
             const sync = runHarness(harnessDir, [
-              '--sync-closure', '--phase', phase, '--feature', 'demo', ...contextFlags(context),
+              '--sync-closure', '--phase', method, '--feature', 'demo', ...contextFlags(context),
             ], root);
             assert(sync.status === 0, `attended sync-closure 失败：${sync.stderr}\n${sync.stdout}`);
             const checked = readJson(root, 'doc/features/demo/spec/reports/summary.json');
@@ -697,6 +697,8 @@ ${rc.stdout}`);
         assert(gatedSummary.closure_status === 'closed', `旧旗标不能冒充goal而阻止有据的standalone闭环：${JSON.stringify(gatedSummary)}`);
         assert(typeof gatedSummary.closure_commit === 'object' && gatedSummary.closure_commit !== null, 'standalone必须由真实writer提交closure');
         assert(gatedSummary.receipt_status === 'passed', '当前原件仍须通过真实receipt核对');
+        const written = run(harnessDir, 'assess.ts', ['--feature', 'demo', '--project-root', root, '--write', '--json'], root);
+        assert(written.status === 0, `explicit current-view projection writer failed: ${written.stdout}\n${written.stderr}`);
         const gatedNext = readJson(root, 'doc/features/demo/next.json');
         assert(gatedNext.run_status_candidate !== 'CHAIN_SLICE_COMPLETED',
           `open gate 不得投影完成态：${JSON.stringify(gatedNext)}`);
@@ -762,10 +764,14 @@ ${rc.stdout}`);
         const md = fs.readFileSync(path.join(root, 'doc/features/demo/spec/reports/merged-report.md'), 'utf-8');
         assert(md.includes('blocked capability 明细'), 'merged-report 有 blocked 明细');
         assert(md.includes('capability_spec_requirement'), 'merged-report 含 capability');
-        // assess（NEXT_STEP 渲染）：failed gap detail 含 capability/input/attempt + rerun_phase（review F3/E2E）
-        assert(hr.stdout.includes('recommendation=rerun_phase'), `assess 应 rerun_phase，stdout=${hr.stdout}`);
-        assert(hr.stdout.includes('capability=capability_spec_requirement'), 'assess detail 含 capability');
-        assert(hr.stdout.includes('input=requirement'), 'assess detail 含 input');
+        // The same current work unit receives the actual capability/input gap; no cold phase author is selected.
+        const assessed = run(harnessDir, 'assess.ts', ['--feature', 'demo', '--goal-end', 'spec', '--project-root', root, '--framework-root', path.join(root, 'framework')], root);
+        assert(assessed.status === 0, `当前处置读取失败：${assessed.stdout}\n${assessed.stderr}`);
+        const disposition = JSON.parse(assessed.stdout) as { recommendation: { action: string; phase: string | null; reason: string } };
+        assert(disposition.recommendation.action === 'continue_work_unit' && disposition.recommendation.phase === null,
+          `当前工作单元须承接真实输入缺口：${assessed.stdout}`);
+        assert(disposition.recommendation.reason.includes('capability_spec_requirement'), `assess detail 含 capability：${assessed.stdout}`);
+        assert(disposition.recommendation.reason.includes('requirement'), `assess detail 含 input：${assessed.stdout}`);
         // 写一份最小 slim 回执（回执存在 → check-receipt 才走到 summary verdict 校验 → slim_summary_not_pass）
         const sha = String(summary.source_commit_sha ?? '');
         fs.writeFileSync(path.join(root, 'doc/features/demo/spec/phase-completion-receipt.md'), ([
@@ -778,6 +784,11 @@ ${rc.stdout}`);
         assert(rc.status !== 0, `反例 check-receipt 应被拒，got ${rc.status}`);
         const rcText = `${rc.stdout}\n${rc.stderr}`;
         assert(rcText.includes('slim_summary_not_pass'), `应按 slim_summary_not_pass 拒，out=${rcText}`);
+      } catch (error) {
+        const feature = path.join(root, 'doc/features/demo');
+        const files = fs.readdirSync(feature, { recursive: true }).map(file => path.join(feature, String(file))).filter(file => fs.statSync(file).isFile());
+        preserveRuntimeTestEvidence([root], String(error), ['E2E requirement input gap remains actionable'], files);
+        throw error;
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
         assert(JSON.stringify(repoDocFeatures()) === JSON.stringify(before), 'E2E 不得新增 repo doc/features');

@@ -27,44 +27,26 @@ alwaysApply: true
 
 - 用户一旦用自然语言表示「已连接 / 继续 / 重试 / 再跑真机测试」，**agent 必须在本轮对话内自行 Shell 重跑**对应 Skill + harness，**不得**再次粘贴 harness 命令让用户自己跑。
 
-## 2. 自然语言 = 调起 Framework 的入口
+## 2. 自然语言接入同一执行路径
 
-主 Agent 先遵守 AGENTS.md 的请求终点与正式性路由，入口身份查 skills.index；细则见 framework/docs/operations/project-entry.md。显式 Skill 只履行本次职责；无 Feature 的 review/UT/testing 走 request CLI 并在结果处结束。直接设计 Skill 到请求终点/readiness 交还；正式完整交付从原始需求进入同一 Goal runtime，初始设计/独立质询/准入后由 runtime 接正常 CU，主 Agent 不手拼 CU/phase。用户说继续时先接回原请求及实际 active run，不重新选择流程。以下 Feature 四件套只适用于真实施工 Feature 上下文，不应用于初始设计或 project/request。
+按 `framework/docs/operations/project-entry.md` 先判原请求终点与真实授权。完整正式需求进入原 root 设计单元，再按 CU 真实依赖施工并核必要部件/组装义务；维护、纯编译或单项请求只取所需工作，不虚构完整 Feature。
 
-用户说「对 `<feature>` 做真机测试」「重跑 testing」「补齐 testing 闭环」「设备已连上继续」等，等价于进入 **device-testing（device-testing）** 或继续该阶段未竟步骤：
+主 Agent 负责解释请求、转交插话和授权、展示进度。需要业务写入时由本单元专用作者上下文执行；主会话只启动 runtime 返回的准确执行命令，不按 Skill 轮流派冷作者或自行施工。单独机器工具可直接调用原公开 CLI，结果止于该工具请求，不等于 Feature/CU/原请求完成。
 
-1. 读 `framework/skills/feature/device-testing/SKILL.md`（及 profile addendum）
-2. **主 agent 自己**跑结构级 harness、修 BLOCKER、更新产物
-3. **Task 触发 verifier**（`subagent_type: verifier`）——**仅当 harness 为本阶段输出了 verifier request**；prompt = `summary.verifier_request` 指向的那份 `verifier.request.<subject>.json` **整段 JSON**，verifier 自读其中的 `prompt_path`；不得手抄、改写或附加说明（plan a9d4e7c2）。verifier 返回后，把它的回复**原样全文**写入 `summary.verifier_report` 指向的路径（不摘要、不只贴终态块——正文里的发现是 repair candidates 与多模态审查的输入）——**写报告的是你，不是 verifier**（plan d2f7a9c4）。harness 未输出 request = 本阶段无此环，不是缺件
-4. 填写并通过 `check-receipt.ts`
+收到 `--next` 请求就原样执行/观察/报告；独立 verifier/质询由共同协调器运输到另一真实上下文，原结果全文保留。工具 PASS、作者退出、原生 Goal/Stop hook 放行、receipt 齐全都不是另一套完成入口。状态/assess/NEXT 只显示同一当前处置。
 
-用户说「解锁手机」「手机准备好了吗」「唤醒设备」等**设备就绪类**请求：agent 自跑 `npx ts-node scripts/device-policy.ts --ready --json`，按 `framework/skills/reference/device-policy-gate.md` 的正道节处置（`code=ready` 才按 `target_kind` 说结论，`device_policy_unset` 才问四选一）；**不需要** feature / bundle / acceptance，也不要先要求用户提供这些。
+用户说“解锁手机”时由 agent 自跑 `device-policy.ts --ready --json`；`device_policy_unset` 才询问配置，秘密只由用户在真实 TTY 登记，不在对话获取/代输。已有 run 先接回原请求与合法成果，条件未变不重跑，恢复后只补受影响部分。不要把继续请求变成新 phase 或 fresh run 来绕过原停止条件。
 
-**不要**要求用户学会 harness CLI；**不要**用「你本地执行以下命令」代替 agent 执行。
+## 3. 反馈、等待与完成
 
-用户说「继续 `<feature>`」「接着做 `<feature>`」或新会话恢复某 feature 阶段时，**须先**自跑 `check-receipt.ts` 或 `harness-runner --sync-closure`（见 `AGENTS.md` §5.2）；`check-receipt` exit 0 则认定已闭环并停等 `phase.next_step`，勿重跑该阶段。
+- 原始 FAIL、未执行与未知如实保留；一次列出全部可判定修复、待核与他方条件。局部框架/设备故障不吞掉 ArkTS、页面、路由等独立可修工作。
+- 已送达反馈后，真实作者交回与完整检查仍无改善时由统一 I10 保全可续暂停；改编号、metadata 或重复报告不制造新机会，不加重试次数/默认额度。
+- 需要人处理的真实授权、物理/账号条件准确说明；条件变化或用户明确继续后由原入口接回。已有授权不反复确认，不把应自跑的命令作为让用户手动执行的唯一出路。
+- 只有同一当前完成事实及正式原件覆盖适用验收才说完成。作者已结束、工具未完、环境等待、Feature/CU/部件/原请求各终点分别说明；债务可披露而发布仍 BLOCKED。
 
-## 3. 阻塞时的正确话术
+## 4. 权限与执行保护
 
-| 情况 | 错误 | 正确 |
-|------|------|------|
-| harness FAIL | 「请运行 `npx ts-node harness-runner.ts …`」 | agent 修因后**自己重跑**；仅当缺物理前置时说明「请连接设备」，并在用户确认后继续**由 agent 重跑** |
-| 缺 verifier | 「请启动 verifier」 | 先看 harness 有没有输出 verifier request：有则 agent 用 Task 工具触发 `subagent_type: verifier`（prompt = 那份 request JSON 整段），并把回复原样写入 `summary.verifier_report`；没有则该阶段本就不要求 verifier，不得补造 |
-| vendor/venv 未对齐 | 「请 pip install / 删 venv」 | agent 自跑 testing harness（ensure 对齐）或按 device-testing 协议自处理；不向用户抛 install 命令 |
-| 设备锁屏 | 「我不能解锁设备」/「请你先解锁」 | agent 自跑 `--ready --json`；`code=device_policy_unset` 才问四选一；`code=ready` 且 `target_kind=physical` 才说「手机已解锁」 |
-| 即席 / 外部 bundle | 「Hylyre 未安装，选手动或你去 pip」 | agent 自跑 `npm run adhoc-device-test`；失败则 Read `hylyre-doctor.log` / `hylyre-ready.meta.json` 后在本对话修宿主因素并重跑 |
-| 阶段未完成 | 「跑一下 harness 再告诉我结果」 | agent 跑完并把 verdict / 报告路径写入对话 |
-| 脚本 harness FAIL 仍问下一阶段 | 「是否继续 code-review？」「verifier PASS 了」 | **禁止**提议进入下一 Skill；首段汇报 FAIL + 首条编译错误 + `next_action` |
-| 为躲 Stop hook 清 state | 擅自 `--clear-state` 后进入 code-review | **仅**当用户明示「放弃本阶段」才可 clear-state；否则继续修 BLOCKER 并重跑 harness |
-| harness PASS 后 autopilot | 闭环后直接 Read code-review 并写 review | 汇报闭环摘要 + **`phase.next_step` 停等**（manual 默认）；见 user-confirmation-ux §8 |
-| 误读 receipt / trace | 「回执齐全 → 下一步 review」 | 回执只证**当前 phase 完成**，不证下一阶段授权 |
-
-## 4. 阶段推进与 clear-state（BLOCKER）
-
-- **脚本 harness 退出码非 0** 或 `can_claim_done=NO` 时：不得提议 code-review / 5 / 6 等下一阶段；不得用 verifier PASS 覆盖脚本 FAIL。
-- **脚本 harness PASS 且 required 证据齐全时**：**不得**在同一 agent 执行流自动启动下一 Skill；须 `phase.next_step` 或用户/batch 明示（user-confirmation-ux §8）。
-- **coding**：须先同步跑 harness、Read `summary.json` 与编译日志，**再**触发 verifier（禁止并行）。
-- **`--clear-state`**：表示放弃当前 phase 的闭环判定，不是「解锁下一阶段」；仅用户明示放弃后可用。
+同一 unit request/owner/fence 承载真实检查族；phase 名称不授修改权。作者可写授权内实现/测试源，不写正式结果、截图或 PASS。共享设计/范围修订回原设计单元独立核验、发布并重绑，不能自授权。取消、用户明示绝对截止、具体工具 timeout/native 卡死清理与未恢复写入保护不解除；旧 budget 与 phase timeout 只读历史，不控制新运行。
 
 ## 4.5 门禁诚信红线（BLOCKER — P1-5，2026-07-05 伪签事故后新增）
 
@@ -82,14 +64,14 @@ alwaysApply: true
 - **不得指引操作者执行绕过门禁的操作**（如"启动 goal 前设置 NODE_OPTIONS"写进 assumptions/文档）。
 - **不得自改 framework**：没有配置层放行通道——`integrity.drift_allowlist` 与 `allow_local_drift`
   已退役、读取即忽略（同一可写主体既能改 framework 也能改审批文件，那不构成边界）。发现框架 bug
-  应 **halt 上报**回灌源仓；热修是真人/updater 的操作，不是 agent 的。
+  须记录具体问题与影响，继续所有不依赖它的授权工作；必需缺口交协调器等待，发布件热修由有权维护方/updater 完成。
 
 框架已有确定性检出（`node_options_injection` / `visual_diff_tamper_artifact` /
 `script_harness_command_injection`）；发布件写保护另由执行环境只读边界或合作式编辑守卫承担。
 后者不覆盖 shell、脚本或场外进程，也没有 Git/hash 查时 detector；不得声称这些盲区已被补齐。
 headless 正确姿势＝确定性信号修到绿，pass 候选由当前 hash-bound 的 native/delegated
 机器证据闭合。能力真实缺失走 capability defer；已声明支持但证据缺失/无效则
-FAIL 并重跑或熔断，不存在对话签名、`visual-confirm` 或普通 resume 放行路径。
+保留 FAIL/未知并按当前处置补原验证；无进展保全暂停，不存在对话签名、`visual-confirm` 或普通 resume 洗白路径。
 
 ## 5. 与「反假设条款」的关系
 

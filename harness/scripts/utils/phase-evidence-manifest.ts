@@ -220,19 +220,31 @@ export function sha256File(absPath: string): string | null {
   }
 }
 
+/** Read the current value with the recorded entry's hash semantics; this does not qualify a binding. */
+export function currentEvidenceEntryHash(
+  projectRoot: string,
+  entry: EvidenceEntry,
+  feature: string,
+  authorityReaders?: IdentityNeutralDigestReaders,
+): string | null {
+  const absPath = path.join(projectRoot, entry.path);
+  if (entry.facts_phase !== undefined) return factsEvidenceHash(absPath, entry.facts_phase);
+  if (entry.identity_neutral !== undefined) {
+    return entry.identity_neutral === IDENTITY_NEUTRAL_EVIDENCE
+      ? identityNeutralEvidenceDigest(projectRoot, feature, absPath, authorityReaders) ?? null : null;
+  }
+  return sha256File(absPath);
+}
+
 export function evidenceEntryMatchesCurrentFile(
   projectRoot: string,
   entry: EvidenceEntry,
   feature: string,
   authorityReaders?: IdentityNeutralDigestReaders,
 ): boolean {
-  const absPath = path.join(projectRoot, entry.path);
-  if (entry.facts_phase !== undefined) return factsEvidenceHash(absPath, entry.facts_phase) === entry.sha256;
-  if (entry.identity_neutral !== undefined) {
-    return entry.identity_neutral === IDENTITY_NEUTRAL_EVIDENCE && entry.sha256 !== null
-      && identityNeutralEvidenceDigest(projectRoot, feature, absPath, authorityReaders) === entry.sha256;
-  }
-  return sha256File(absPath) === entry.sha256;
+  if (entry.facts_phase === undefined && entry.identity_neutral !== undefined
+    && (entry.identity_neutral !== IDENTITY_NEUTRAL_EVIDENCE || entry.sha256 === null)) return false;
+  return currentEvidenceEntryHash(projectRoot, entry, feature, authorityReaders) === entry.sha256;
 }
 
 export interface EvidenceSemanticOptions {
@@ -808,7 +820,9 @@ export function verifyPhaseEvidenceManifestWithStagedOutputs(input: {
   frameworkRoot?: string;
   currentRequirementSha?: string | null;
   runId?: string;
+  authorityReaders?: IdentityNeutralDigestReaders;
 }): PhaseStalenessResult {
+  input = { ...input, authorityReaders: input.authorityReaders ?? createIdentityNeutralDigestReaders() };
   const loaded = loadPhaseEvidenceManifest(input.projectRoot, input.feature, input.phase);
   if (!loaded) {
     return { phase: input.phase, verdict: 'missing', changed_paths: [], receipt_changed: false };
@@ -855,7 +869,7 @@ export function verifyPhaseEvidenceManifestWithStagedOutputs(input: {
     if (stagedSha !== undefined) {
       seenStaged.add(entry.path);
       if (!entry.exists || entry.sha256 !== stagedSha) changed.add(entry.path);
-    } else if (!evidenceEntryMatchesCurrentFile(input.projectRoot, entry, input.feature)) {
+    } else if (!evidenceEntryMatchesCurrentFile(input.projectRoot, entry, input.feature, input.authorityReaders)) {
       changed.add(entry.path);
     }
   }

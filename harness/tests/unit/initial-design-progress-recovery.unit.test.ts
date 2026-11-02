@@ -127,11 +127,11 @@ const runtime=require(${JSON.stringify(path.join(harnessDir, 'scripts/goal-phase
     assert(!added.some(row => row.type === 'agent_process_bound'));
     assert(!added.some(row => row.type === 'run_created' || row.type === 'run_end' && row.status === 'COMPLETED'));
     const inspection = withRuntimeTest({ root: root }, () => spawnSync(process.execPath, ['-r', path.join(harnessDir, 'node_modules/ts-node/register/transpile-only'), '-e',
-      `const fs=require('fs');const dir=${JSON.stringify(path.join(root, RUN))};const session=require(${JSON.stringify(path.join(harnessDir, 'scripts/utils/session-execution-handoff'))});const budget=require(${JSON.stringify(path.join(harnessDir, 'scripts/utils/delivery-origin'))}).readOriginalDeliveryBudget(${JSON.stringify(root)},JSON.parse(fs.readFileSync(dir+'/manifest.json','utf8')));const issued=session.readSessionExecution(dir);if(!issued)throw Error('No signed request');console.log(JSON.stringify({signed_request:issued.reference,total_turns:budget.totalTurns,max_total_turns:budget.budget.max_total_turns,active_ms:budget.priorActiveMs}));`],
+      `const fs=require('fs');const dir=${JSON.stringify(path.join(root, RUN))};const session=require(${JSON.stringify(path.join(harnessDir, 'scripts/utils/session-execution-handoff'))});const activity=require(${JSON.stringify(path.join(harnessDir, 'scripts/utils/delivery-origin'))}).readOriginalDeliveryActivity(${JSON.stringify(root)},JSON.parse(fs.readFileSync(dir+'/manifest.json','utf8')));const issued=session.readSessionExecution(dir);if(!issued)throw Error('No signed request');console.log(JSON.stringify({signed_request:issued.reference,calls:activity.calls,active_ms:activity.active_ms}));`],
     { cwd: harnessDir, env: environment, encoding: 'utf8', windowsHide: true, timeout: 30_000 }));
     assert.equal(inspection.status, 0, inspection.stderr + inspection.stdout);
     const actual = JSON.parse(inspection.stdout.trim());
-    assert.equal(actual.total_turns, 7); assert.equal(actual.max_total_turns, 30);
+    assert.equal(actual.calls, 7);
     assert.equal(actual.signed_request.sha256, next.value.request.sha256);
     assert(actual.active_ms >= 983058, 'The original approximately 16 minutes must remain charged');
     write(REPORT, 'a21473-issued-request.json.gz', gzipSync(requestBytes));
@@ -153,7 +153,7 @@ const runtime=require(${JSON.stringify(path.join(harnessDir, 'scripts/goal-phase
   }
 }
 
-const cases = [{ name: 'a21473 original public next normalizes machine admission and issues decomposition with the old six turns and budget intact', run: recoverActualA21473 }];
+const cases = [{ name: 'a21473 original public next normalizes machine admission and issues decomposition with the original six calls and immutable history intact', run: recoverActualA21473 }];
 export function getCases() { return cases; }
 export async function runSelectedCases(filter?: string) {
   const results: UnitCaseResult[] = [], timings: UnitExecutionTiming[] = [];

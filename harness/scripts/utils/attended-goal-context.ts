@@ -90,15 +90,16 @@ export function validateAttendedGoalContext(input: {
   }
   const loaded = loadEventsJsonlStrict(path.join(runDir, 'events.jsonl'));
   if (loaded.missing || loaded.corruptLines.length > 0) {
-    throw new Error('[attended-goal-context] 当前 session phase_start 签发记录缺失或损坏');
+    throw new Error('[attended-goal-context] 当前 session 执行签发记录缺失或损坏');
   }
   const issued = [...loaded.events].reverse().find((event) => {
     const row = event as Record<string, unknown>;
-    return row.type === 'phase_start' && row.driver === 'session' &&
+    return (row.type === 'phase_start' && row.driver === 'session'
+      || row.type === 'agent_invoke_start' && !!row.handoff_request) &&
       row.owner_id === ownerId && row.owner_epoch === ownerEpoch;
   }) as (Record<string, unknown> | undefined);
   if (!issued) {
-    throw new Error('[attended-goal-context] 当前 owner fence 未签发 phase_start');
+    throw new Error('[attended-goal-context] 当前 owner fence 未签发执行请求');
   }
   const actorPhase = input.checkFamily && typeof issued.phase === 'string' ? issued.phase : phase;
   if (!actorPhase || issued.phase !== actorPhase || issued.attempt_id !== attemptId) {
@@ -114,12 +115,13 @@ export function validateAttendedGoalContext(input: {
     const request = readHandoffMaterial<SessionExecutionRequest>(runDir, reference);
     if (request.context.owner.owner_id !== ownerId || request.context.owner.epoch !== ownerEpoch
       || request.context.phase !== actorPhase || request.context.attemptId !== attemptId
-      || input.checkFamily && (request.context.runId !== runId || request.context.feature !== feature
+      || (request.context.runId !== runId || request.context.feature !== feature
         || request.context.owner.run_id !== runId || path.resolve(request.context.projectRoot) !== path.resolve(input.projectRoot)
         || path.resolve(request.context.runDir) !== runDir)
+      || issued.type === 'agent_invoke_start' && (request.invoke_id !== issued.invoke_id || request.issued_at !== issued.ts)
       || sessionExecutionDeadlineMs(request) <= (input.nowMs ?? Date.now())) throw new Error('[attended-goal-context] signed execution window is stale or expired');
     if (loaded.events.some(event => event.type === 'agent_invoke_end' && (event.handoff_report?.request_sha256 === reference.sha256
-      || input.checkFamily && event.invoke_id === request.invoke_id))) {
+      || event.invoke_id === request.invoke_id))) {
       throw new Error('[attended-goal-context] execution window has already been returned');
     }
   }

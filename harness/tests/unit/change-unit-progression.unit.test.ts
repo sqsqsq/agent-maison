@@ -925,11 +925,11 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     assert(selectNextChangeUnit([second, first])?.change_unit_id === 'Z-unit', 'tie-break 未按 code-point 升序');
   }));
 
-  asynchronous.push(asyncTest('fake Goal Mode advances A to B to C one at a time and rereads completion', async () => {
+  asynchronous.push(asyncTest('original-request coordinator steps A to B to C from current completion without a nested CU runner', async () => {
     const units = progressionUnits().slice(0, 3);
     const state = new Map(units.map(unit => [deriveChangeUnitFeatureId(unit.blueprint_id, unit.change_unit_id), 'ABSENT' as ChangeUnitCompletionState]));
     const calls: string[] = [];
-    const result = await runChangeUnitProgression(VALID_PROJECT, 'ledger-app-blueprint', {
+    const step = () => runChangeUnitProgression(VALID_PROJECT, 'ledger-app-blueprint', {
       ready: { units, completion: completionAdapter(state) },
       inspectActiveRuns: () => ({ active: [], corrupt: [] }),
       buildHandoff: (_root, unit): ChangeUnitGoalHandoff => ({
@@ -945,6 +945,11 @@ export async function runAll(): Promise<UnitCaseResult[]> {
         return { status: 'completed' };
       },
     });
+    const first = await step();
+    assert(Number(calls.length) === 1 && first.action === 'select_one', 'one step may not take over the original-request continuation loop');
+    const second = await step();
+    assert(calls.length === 2 && second.action === 'select_one', 'the same coordinator rereads current completion before selecting B');
+    const result = await step();
     assert(calls.map(feature => parseChangeUnitFeatureId(feature).changeUnitId).join(',') === 'a-foundation,b-consumer,c-recovery', `推进顺序错误：${calls.join(',')}`);
     assert(result.action === 'ready_for_component_closure', `末态不应宣称 closure，仅应 handoff：${result.action}`);
   }));

@@ -128,7 +128,8 @@ export function runAll(): UnitCaseResult[] {
         assert.strictEqual(canProduceVerifierRequest(base).kind, 'repair_diagnosis');
         assert(!canProduceVerifierRequest({ ...base, upstreamDiagnosis: null }).allowed);
         assert(!canProduceVerifierRequest({ ...base, planMode: 'disabled' }).allowed);
-        assert(!canProduceVerifierRequest({ ...base, reportValidity: 'FAIL' }).allowed);
+        assert.strictEqual(canProduceVerifierRequest({ ...base, reportValidity: 'FAIL' }).kind, 'repair_diagnosis',
+          'an unrelated report failure does not erase this real reviewable diagnosis');
         const summary = writer(root, phase as Phase, [compileFail, { ...passed, id: 'not_executed', status: 'SKIP' }]);
         assert.strictEqual(summary.verdict, 'FAIL'); assert.strictEqual(summary.closure_status, 'open');
         assert(summary.blocking_skips.some(check => check.id === 'not_executed'));

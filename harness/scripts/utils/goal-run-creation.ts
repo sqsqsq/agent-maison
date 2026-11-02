@@ -30,7 +30,7 @@ import {
   type GoalRunManifest,
   isInitialDesignManifest,
 } from './goal-manifest';
-import { collectSupersededAncestorEvents, foldBudgetLineage, loadEventsJsonlStrict, canRecheckLegacyBacktrackLimit, resolveEffectiveRunEnd, type GoalRunEvent } from './goal-runner-phase';
+import { collectSupersededAncestorEvents, readSupersededAncestorRuns, loadEventsJsonlStrict, canRecheckLegacyBacktrackLimit, resolveEffectiveRunEnd, type GoalRunEvent } from './goal-runner-phase';
 import { featureFilePath, featurePhaseReportsDir, relFeaturesDir } from '../../config';
 import { featureRelativePath } from './feature-identity';
 import type { ExecutionScope } from './execution-scope';
@@ -495,50 +495,6 @@ export function readRecordedRelatedHashes(
   return baseline;
 }
 
-/** Prove a repair with existing terminal summary + an already-recorded source hash. */
-function findChangedRelatedRepair(projectRoot: string, prior: SiblingRun): string | null {
-  const lastVerdict = [...prior.events].reverse().find(event =>
-    event.type === 'phase_verdict' && typeof event.phase === 'string',
-  );
-  const phase = typeof lastVerdict?.phase === 'string' ? lastVerdict.phase : null;
-  if (!phase) return null;
-  let summary: {
-    repair_candidates?: Array<{ files?: unknown }>;
-    blockers?: Array<{ affected_files?: unknown }>;
-  } | undefined;
-  // 最终评审返修 R1：runtime 只在推进 / 外部阻塞停机时把阶段 summary 归档进 run 目录，其它停机（如 no_progress_guard）不归档——
-  // 这时退回阶段报告目录里的现行 summary（该阶段最近一次 harness 的结论）。
-  const summaryFiles = [() => path.join(prior.runDir, 'phases', phase, 'harness', 'summary.json'),
-    () => path.join(featurePhaseReportsDir(projectRoot, prior.manifest.feature, phase), 'summary.json')];
-  for (const file of summaryFiles) {
-    try { summary = JSON.parse(fs.readFileSync(file(), 'utf8')); break; } catch { /* 下一个来源 */ }
-  }
-  if (!summary) return null;
-  const related = new Set<string>();
-  for (const candidate of summary.repair_candidates ?? []) {
-    if (!Array.isArray(candidate.files)) continue;
-    for (const file of candidate.files) {
-      const rel = normalizeRelatedPath(projectRoot, file);
-      if (rel) related.add(rel);
-    }
-  }
-  for (const blocker of summary.blockers ?? []) {
-    if (!Array.isArray(blocker.affected_files)) continue;
-    for (const file of blocker.affected_files) {
-      const rel = normalizeRelatedPath(projectRoot, file);
-      if (rel) related.add(rel);
-    }
-  }
-  if (!related.size) return null;
-  // plan 31063a73 §3.1：目录条目（如 UT blocker 的模块 ohosTest 源码目录）筛选基线里位于其下的后代文件，再逐文件比哈希；
-  // 不新增目录基线——没有可信基线的文件照旧不能证明修复。
-  const baseline = readRecordedRelatedHashes(projectRoot, prior.manifest.feature, related, prior.events);
-  for (const rel of [...baseline.keys()].sort()) {
-    if (currentFileHash(projectRoot, rel) !== baseline.get(rel)) return rel;
-  }
-  return null;
-}
-
 function normalizeSourcePath(projectRoot: string, source: string): string | null {
   const root = path.resolve(projectRoot);
   const abs = path.resolve(root, source);
@@ -590,10 +546,6 @@ export function evaluateFreshRunContinuation(input: FreshRunContinuationInput): 
   if (requirementChanged && requirementIsBoundToChangedSource(input.projectRoot, input.manifest, prior.manifest)) {
     return { allowed: true, overrideUsed: false, priorRunId: prior.runId, reason: 'bound requirement source changed' };
   }
-  const changedRepair = findChangedRelatedRepair(input.projectRoot, prior);
-  if (changedRepair) {
-    return { allowed: true, overrideUsed: false, priorRunId: prior.runId, reason: `related repair changed: ${changedRepair}` };
-  }
   if (input.forceFresh) {
     return { allowed: true, overrideUsed: true, priorRunId: prior.runId, reason: 'operator --force override' };
   }
@@ -602,7 +554,7 @@ export function evaluateFreshRunContinuation(input: FreshRunContinuationInput): 
     overrideUsed: false,
     priorRunId: prior.runId,
     reason:
-      `feature 已有失败终态 run ${prior.runId}（${prior.status}/${prior.haltReason}），且没有机器可证的新 requirement source 或相关修复。` +
+      `feature 已有失败终态 run ${prior.runId}（${prior.status}/${prior.haltReason}），且没有绑定的新 requirement source；同一请求应接回原 run。` +
       '补上缺的输入后重新发起同一请求（不带旗标，由接续决策重新接入或起后继）；' +
       `也可按原 run 允许的恢复路径显式处理：可恢复时 --resume ${prior.runId}；` +
       '结构终态使用既有 --supersede 创建 successor；确认放弃旧结论才使用 --force。request_impact、HEAD、notes 或改写 CLI 散文均不构成新事实。',
@@ -621,13 +573,12 @@ export interface ContinuationCallFacts {
   /** 本次显式给的 --adapter-model。 */
   model?: string;
   /** 本次带了既有的预算授权（--override-manifest）；有权者改了 run manifest 的预算后以它授权。 */
-  budgetOverride?: boolean;
   /** 显式的恢复（--resume / --attach-created）、接续（--supersede）、强制新开（--force）：行为与现状相同。 */
   resume?: string;
   attachCreated?: string;
   supersede?: readonly string[];
   force?: boolean;
-  /** Transport information only; it does not grant recovery or bypass cooldown. */
+  /** Transport information only; it does not grant recovery or business authority. */
   attended?: boolean;
 }
 
@@ -641,13 +592,12 @@ export type ContinuationChange =
   | 'related_repair_changed'
   | 'requirement_increment'
   | 'model_changed'
-  | 'budget_changed'
   | 'explicit_flag';
 
 export type RunContinuationDecision =
   | { kind: 'fresh'; explicit: boolean; reason: string }
   /** budgetOnly：plan a2f7c9e4 §3.2 的预算耗尽 + 仅授权预算改动接回——入口按原 run 的 manifest 续跑，不让本次 --manifest 文件盖掉刚调整的预算。 */
-  | { kind: 'rejoin'; explicit: boolean; runId: string; started: boolean; reason: string; budgetOnly?: true }
+  | { kind: 'rejoin'; explicit: boolean; runId: string; started: boolean; reason: string }
   | { kind: 'successor'; explicit: boolean; source: string; targets: string[]; change: ContinuationChange; reason: string }
   | { kind: 'hold'; explicit: false; runId: string; haltReason: string; reason: string; guidance: string };
 
@@ -741,11 +691,9 @@ export function staleFrozenBindings(projectRoot: string, feature: string, runId:
   return [...stale].sort();
 }
 
-/** 与恢复守卫（checkTerminalResumeGuard）同一个冷却长度；冷却只在"没有任何变化"时生效（plan §7.3）。 */
-export const CONTINUATION_COOLDOWN_MINUTES = 5;
 
 /** 身份字段的出生基线：run_created.manifest_identity_fields，其后每条授权改写（manifest_identity_rebase.to_fields）前进。 */
-function identityBaseline(events: readonly GoalRunEvent[]): Record<string, string> | undefined {
+export function identityBaseline(events: readonly GoalRunEvent[]): Record<string, string> | undefined {
   let baseline: Record<string, string> | undefined;
   for (const event of events) {
     const e = event as GoalRunEvent & { manifest_identity_fields?: Record<string, string>; to_fields?: Record<string, string> };
@@ -755,51 +703,10 @@ function identityBaseline(events: readonly GoalRunEvent[]): Record<string, strin
   return baseline;
 }
 
-/** 预算身份字段相对出生基线是否已被改动——有权者改了 manifest 预算的可核验事实。 */
-function budgetEditedSinceBaseline(run: SiblingRun): boolean {
-  const baseline = identityBaseline(run.events)?.budget;
-  if (baseline === undefined) return false;
-  try {
-    return computeManifestIdentityFields(run.manifest).budget !== baseline;
-  } catch {
-    return false;
-  }
-}
-
-/** plan a2f7c9e4 §3.2：身份字段相对基线的改动恰好只有 budget（预算不是 run 身份语义的一部分）。 */
-function onlyBudgetEditedSinceBaseline(run: SiblingRun): boolean {
-  const baseline = identityBaseline(run.events);
-  if (!baseline) return false;
-  try {
-    const changed = diffManifestIdentityFields(baseline, computeManifestIdentityFields(run.manifest));
-    return changed.length === 1 && changed[0] === 'budget';
-  } catch {
-    return false;
-  }
-}
-
-/** Origin policy can advance without mutating the child's immutable birth budget. */
-function authorizedOriginalBudgetChanged(projectRoot: string, run: SiblingRun): boolean {
-  if (!run.manifest.delivery_origin) return false;
-  const baseline = identityBaseline(run.events);
-  if (!baseline?.budget) return false;
-  const current = computeManifestIdentityFields(run.manifest);
-  if (diffManifestIdentityFields(baseline, current).some(field => field !== 'budget')) return false;
-  const { readOriginalDeliveryBudget } = require('./delivery-origin') as typeof import('./delivery-origin');
-  const original = readOriginalDeliveryBudget(projectRoot, run.manifest);
-  if (!original || manifestIdentityFieldDigest(original.budget) === baseline.budget) return false;
-  const root = original.runs.find(item => isInitialDesignManifest(item.manifest));
-  const authorization = root ? budgetAuthorizations(root.events).at(-1) : undefined;
-  // Reusing the same authorized increase after its new limit is exhausted would
-  // turn every later reentry into a fictitious change. Compare the existing cuts.
-  const stoppedAt = Date.parse(run.events.filter(event => event.type === 'run_end').at(-1)?.ts ?? '');
-  return !!authorization?.ts && Number.isFinite(stoppedAt) && Date.parse(authorization.ts) > stoppedAt;
-}
-
 function publishedOriginalRepairNeedsSuccessor(projectRoot: string, run: SiblingRun): boolean {
   if (!run.manifest.delivery_origin || !['HALTED', 'DEFERRED'].includes(run.status) && !COMPLETED_STATUSES.has(run.status)) return false;
-  const { readOriginalDeliveryBudget } = require('./delivery-origin') as typeof import('./delivery-origin');
-  const original = readOriginalDeliveryBudget(projectRoot, run.manifest);
+  const { readOriginalDeliveryActivity } = require('./delivery-origin') as typeof import('./delivery-origin');
+  const original = readOriginalDeliveryActivity(projectRoot, run.manifest);
   const root = original?.runs.find(item => isInitialDesignManifest(item.manifest));
   if (!root || resolveEffectiveRunEnd(root.events)?.status === 'COMPLETED') return false;
   if (!root.events.some(event => event.type === 'design_authority_repair' && 'stage' in event && event.stage === 'published'
@@ -832,7 +739,6 @@ export function manifestFileRepeatsRun(projectRoot: string, filePath: string, ru
 }
 
 /** 预算耗尽类终局：只有这两种停机能被"授权追加预算"原地解除。 */
-const BUDGET_EXHAUSTED_HALTS = new Set(['budget_turns', 'budget_wall_clock']);
 
 /**
  * plan a2f7c9e4 §3.1：交付周期边界——上一次可信完成（assessFeature record ok）的 run，只在落入本次 supersede 血缘时生效。
@@ -851,130 +757,15 @@ export function resolveDeliveryCycleBoundary(input: {
       ...resolveChangeUnitExpectedExecution(input.projectRoot, input.feature, false, input.frameworkRoot), frameworkRoot: input.frameworkRoot,
     }).record;
     if (record.state !== 'ok' || !record.run_id) return undefined;
-    return foldBudgetLineage({
+    const ancestors = readSupersededAncestorRuns({
       projectRoot: input.projectRoot, featuresDir: input.featuresDir, feature: input.feature,
-      seedTargets: input.seedTargets, currentEvents: input.currentEvents ?? [], cycleBoundary: record.run_id,
-    }).cycleBoundary;
+      seedTargets: input.seedTargets, currentEvents: input.currentEvents ?? [],
+    });
+    return ancestors.some(run => run.run_id === record.run_id) ? record.run_id : undefined;
   } catch (error) {
-    console.warn(`[goal-runner] 交付周期边界不可算，预算按 supersede 全血缘折叠：${(error as Error).message}`);
+    console.warn(`[goal-runner] 既有完成周期边界尚不可确认：${(error as Error).message}`);
     return undefined;
   }
-}
-
-/**
- * 一个 run 的预算授权序列：出生摘要（run_created；legacy run 无出生记录时取首个带身份字段的 run_start——与
- * resolveManifestIdentityBaseline 同一口径），其后每条使预算摘要变化的 manifest_identity_rebase。
- * 替代型号写的 rebase 不改预算摘要：不算授权、不移动授权时刻。最后一项即该 run 当前的基线摘要。
- */
-function budgetAuthorizations(events: readonly GoalRunEvent[]): Array<{ digest: string; ts: string }> {
-  const out: Array<{ digest: string; ts: string }> = [];
-  const modernBirth = events.some(event => event.type === 'run_created');
-  for (const event of events) {
-    const e = event as GoalRunEvent & { manifest_identity_fields?: Record<string, string>; to_fields?: Record<string, string>; dry_run?: unknown };
-    if (e.dry_run === true) continue;
-    const next = e.type === 'run_created' ? e.manifest_identity_fields?.budget
-      : !modernBirth && !out.length && e.type === 'run_start' ? e.manifest_identity_fields?.budget
-      : e.type === 'manifest_identity_rebase' ? e.to_fields?.budget
-      : undefined;
-    if (typeof next !== 'string' || next === out.at(-1)?.digest) continue;
-    out.push({ digest: next, ts: String(e.ts ?? '') });
-  }
-  return out;
-}
-
-/**
- * plan a2f7c9e4 §3.1：后继出生时本交付周期的有效预算（只供两处后继出生点覆盖 manifest.budget；运行期上限仍读本 run 快照）。
- *
- * 数值只取现有 manifest 里的 budget；事件只证明授权（budgetAuthorizations）。周期 = 预算折叠的 ancestorRuns（cycleBoundary 截断）。
- * - 本次 --override-manifest：承接目标里预算摘要偏离基线的 run，其当前 budget 即本次授权（多个取最后事件最晚者）；
- * - 本周期没有任何 run：取本次出生输入的预算（--manifest 或 DEFAULT_BUDGET）；
- * - 否则先定最新的授权摘要 D，再在本周期各 run、合同来源、出生输入的现有 budget 里找摘要等于 D 的那份；
- *   找不到、或本周期某个 run 的授权历史读不可靠（events 损坏 / 缺失 / 没有任何出生摘要）即抛出——
- *   不回退默认值或较旧的授权值，调用方在建 run 之前失败。manifest 读不出只淘汰该 run 的数值候选，不淘汰它的授权。
- * - 例外：周期里没有任何 run 带预算摘要（前身份时代的 legacy 周期）→ 沿用合同来源的预算（改动前的继承行为）。
- */
-export function resolveCycleEffectiveBudget(input: {
-  projectRoot: string; featuresDir: string; feature: string; frameworkRoot: string;
-  /** 承接目标（argv.supersede / continuation.targets），也是预算折叠的种子。 */
-  targets: readonly string[];
-  sourceBudget: GoalManifest['budget'];
-  birthInputBudget: GoalManifest['budget'];
-  /** 本次调用带了 --override-manifest。 */
-  override: boolean;
-}): { budget: GoalManifest['budget']; basis: string } {
-  const { projectRoot, featuresDir, feature } = input;
-  for (const runId of new Set(input.targets)) {
-    const file = path.join(projectRoot, featuresDir, featureRelativePath(feature), 'goal-runs', runId, 'manifest.json');
-    if (!fs.existsSync(file)) continue;
-    let source: GoalRunManifest;
-    try { source = loadGoalRunManifestFromRun(projectRoot, runId, { feature, featuresDir }); }
-    catch { continue; } // Existing cycle authorization replay below still accounts for this run's events.
-    if (isInitialDesignManifest(source) || source.delivery_origin) {
-      const { readOriginalDeliveryBudget } = require('./delivery-origin') as typeof import('./delivery-origin');
-      const original = readOriginalDeliveryBudget(projectRoot, source);
-      if (original) return { budget: structuredClone(original.budget), basis: '同一原始请求既有授权事件确定的有效预算；后继不重置或独立提额' };
-    }
-  }
-  const refuse = (why: string): never => {
-    throw new Error(`${why}。要采用改过的预算：带 --override-manifest 重新发起同一请求；否则把 manifest.budget 还原为已授权值（或修复该 run 的记录）后再发起。本次不新建 run、不写事件。`);
-  };
-  // 出生 / 授权事件在执行会话之外（run_created 在首个 run_start 之前，resume 的 rebase 在 run_start 之前），
-  // 折叠用的权威事件不含它们——这里独立读各 run 的完整 events.jsonl，不依赖 manifest 能否加载。
-  const readRun = (runId: string): { authorizations: Array<{ digest: string; ts: string }>; lastTs: string; missing: boolean } => {
-    const loaded = loadEventsJsonlStrict(path.join(projectRoot, featuresDir, featureRelativePath(feature), 'goal-runs', runId, 'events.jsonl'));
-    if (loaded.corruptLines.length) refuse(`run ${runId} 的 events.jsonl 含损坏行，本交付周期的预算授权历史无法核验`);
-    const lastTs = loaded.events.reduce((max, event) => (String(event.ts ?? '') > max ? String(event.ts ?? '') : max), '');
-    return { authorizations: budgetAuthorizations(loaded.events), lastTs, missing: loaded.missing };
-  };
-  const manifestBudget = (runId: string): GoalManifest['budget'] | undefined => {
-    try { return loadGoalManifestFromRun(projectRoot, runId, { feature, featuresDir }).budget; } catch { return undefined; }
-  };
-  if (input.override) {
-    let pick: { runId: string; budget: GoalManifest['budget']; lastTs: string } | undefined;
-    for (const runId of new Set(input.targets)) {
-      const budget = manifestBudget(runId);
-      if (!budget) continue;
-      const { authorizations, lastTs } = readRun(runId);
-      const baseline = authorizations.at(-1)?.digest;
-      if (baseline === undefined || manifestIdentityFieldDigest(budget) === baseline) continue;
-      if (!pick || lastTs > pick.lastTs) pick = { runId, budget, lastTs };
-    }
-    if (pick) {
-      return { budget: structuredClone(pick.budget), basis: `本次 --override-manifest 授权 run ${pick.runId} 上未登记的预算改动（摘要 ${manifestIdentityFieldDigest(pick.budget)}）` };
-    }
-  }
-  const boundary = resolveDeliveryCycleBoundary({ projectRoot, featuresDir, feature, frameworkRoot: input.frameworkRoot, seedTargets: input.targets });
-  const cycleRunIds = foldBudgetLineage({ projectRoot, featuresDir, feature, seedTargets: input.targets, cycleBoundary: boundary }).ancestorRuns.map(run => run.run_id);
-  if (!cycleRunIds.length) {
-    return { budget: structuredClone(input.birthInputBudget), basis: '本交付周期内没有 run（新周期），取本次出生输入的预算' };
-  }
-  // 同一毫秒并列：同一 run 内取事件序靠后者；跨 run 取 run id 较大者（run id 以出生时刻开头，同秒内按随机后缀，确定但不代表先后）。
-  const cycleReads = cycleRunIds.map(runId => ({ runId, ...readRun(runId) }));
-  // 调度裁决（r4）：整个周期没有任何 run 带预算摘要（前身份时代的 legacy：无 run_created、run_start 也不带预算摘要）——
-  // 不存在可核验的授权值，沿用既有的合同来源继承（改动前的行为，不高于它）；一律拒绝会让旧宿主永远起不了后继。
-  if (cycleReads.every(run => !run.authorizations.length)) {
-    return { budget: structuredClone(input.sourceBudget), basis: 'legacy 周期无身份事件（没有任何 run 带预算摘要），沿用来源预算' };
-  }
-  let latest: { digest: string; ts: string; runId: string } | undefined;
-  for (const { runId, authorizations, missing } of cycleReads) {
-    if (!authorizations.length) {
-      refuse(`本交付周期的 run ${runId} ${missing ? '没有 events.jsonl' : '没有可核验的出生预算摘要（run_created / 带身份字段的 run_start）'}，无法证明它的已授权预算`);
-    }
-    for (const auth of authorizations) {
-      if (!latest || auth.ts > latest.ts || (auth.ts === latest.ts && runId >= latest.runId)) latest = { ...auth, runId };
-    }
-  }
-  const D = latest!;
-  const candidates: Array<[string, GoalManifest['budget'] | undefined]> = [
-    ...cycleRunIds.map(runId => [`run ${runId} 的 manifest`, manifestBudget(runId)] as [string, GoalManifest['budget'] | undefined]),
-    ['合同来源 manifest', input.sourceBudget],
-    ['本次出生输入', input.birthInputBudget],
-  ];
-  const hit = candidates.find(([, budget]) => budget !== undefined && manifestIdentityFieldDigest(budget) === D.digest);
-  if (hit) {
-    return { budget: structuredClone(hit[1]!), basis: `本交付周期最新的已授权预算（摘要 ${D.digest}，run ${D.runId}），数值取自${hit[0]}` };
-  }
-  return refuse(`本交付周期最新的已授权预算（摘要 ${D.digest}，由 run ${D.runId} 于 ${D.ts} 授权）在现有 manifest 里找不到同值——manifest.budget 被改动但未经 --override-manifest 授权，无法核验`);
 }
 
 /** 结构终局：统一投影判 TERMINAL（成功封卷不算——那是完成），或曾检出 testing 越权写（该 run 永不允许恢复）。 */
@@ -1010,7 +801,7 @@ function lastStopGuidance(run: SiblingRun): string {
  * - 上一次完成之后没有未终局的 run → 新开。
  * - 最新的未终局 run 不是结构终局 → 重新接入（有正式开始的恢复，启动即失败的附着）；随后由原来的责任检查判断条件，
  *   本函数不替任何检查放行。例外：本次显式给了与钉值不同的型号或需求增量——这两样原 run 在身份上接不住，走后继出生（§7.3）。
- *   没有任何变化且仍在冷却期内 → 保持停止。
+ *   实际是否有新工作由同一派发判断决定，耗时不作为恢复条件。
  * - 最新的未终局 run 是结构终局：存在变化 → 起后继；没有变化 → 保持停止（含预算耗尽而没有显式预算改动）。
  *   例外（plan a2f7c9e4 §3.2）：预算耗尽且本次只带来授权的预算改动 → 重新接入原 run。
  *
@@ -1020,10 +811,9 @@ function lastStopGuidance(run: SiblingRun): string {
  */
 export function decideRunContinuation(input: {
   projectRoot: string;
+  frameworkRoot?: string;
   feature: string;
   call: ContinuationCallFacts;
-  nowMs?: number;
-  cooldownMinutes?: number;
   /** 停机所挂探针的执行者（缺省 = 共享的真实探针 `runConditionProbe`）；嵌入调用方与进程内等待用同一个。 */
   runProbe?: (reportDir: string, probe: string, phase?: string) => { ready: boolean; reason?: string };
 }): RunContinuationDecision {
@@ -1057,7 +847,6 @@ export function decideRunContinuation(input: {
       && requirementIsBoundToChangedSource(input.projectRoot, { requirement, requirement_source_files: call.requirementSourceFiles }, run.manifest)) {
       out.push('requirement_source_changed');
     }
-    if (findChangedRelatedRepair(input.projectRoot, run)) out.push('related_repair_changed');
     // A root-carried P1 publication is the same upstream repair fact as a
     // publication in this CU's own events. Reuse the existing binding decision.
     if (publishedOriginalRepairNeedsSuccessor(input.projectRoot, run)) {
@@ -1089,7 +878,7 @@ export function decideRunContinuation(input: {
     // 需求增量：本次文本与合并后的全文、原请求、整个历史增量块都不全文相同（批三返修 R1：与后继合并同一判据，不用子串）
     if (requirement && !isRepeatedRequirement(priorRequirement, requirement)) out.push('requirement_increment');
     if (call.model && call.model !== run.manifest.adapter_model_pin?.value) out.push('model_changed');
-    if (call.budgetOverride && budgetEditedSinceBaseline(run) || authorizedOriginalBudgetChanged(input.projectRoot, run)) out.push('budget_changed');
+
     return out;
   };
 
@@ -1104,12 +893,7 @@ export function decideRunContinuation(input: {
     if (holderRun) {
       const changed = changesAgainst(holderRun);
       // plan a2f7c9e4 §3.2：功能已完成，仅预算变化不构成新工作——保持停止。
-      if (changed.length === 1 && changed[0] === 'budget_changed') {
-        return {
-          kind: 'hold', explicit: false, runId: holderRun.runId, haltReason: '', reason: '功能已完成且本次只改了预算',
-          guidance: `这个功能已经完成（run ${holderRun.runId}）；只改预算不构成新的工作。要修改或追加内容，请在请求里写明新增或变更的需求后重新发起。本次不新建 run、不写事件。`,
-        };
-      }
+
       if (changed.length) {
         return {
           kind: 'successor', explicit: false, source: holderRun.runId, targets: [holderRun.runId], change: changed[0],
@@ -1135,7 +919,7 @@ export function decideRunContinuation(input: {
       /* eslint-disable-next-line @typescript-eslint/no-require-imports */
       const probe = input.runProbe ?? ((dir: string, name: string, phase?: string) => (require('./condition-wait') as typeof import('./condition-wait')).runConditionProbe(input.projectRoot, dir, name, phase));
       ready = probe(reportDir, waiting.probe, waiting.phase).ready === true;
-    } catch { ready = false; /* 探针自身失败 = 未就绪，冷却照常 */ }
+    } catch { ready = false; /* 探针自身失败仍是未就绪，不伪造条件解除。 */ }
     if (ready) changes.push('external_condition_ready');
   }
 
@@ -1163,19 +947,12 @@ export function decideRunContinuation(input: {
     ].join('\n'),
   });
 
-  if (isStructurallyTerminal(latest, input.projectRoot)) {
-    // plan a2f7c9e4 §3.2：预算耗尽、本次只带来授权的预算改动、身份字段只改了 budget → 接回原 run（不起后继）；
-    // 其它终局原因或叠加其它变化仍按下方既有分流。
-    if (changes.length === 1 && changes[0] === 'budget_changed' && BUDGET_EXHAUSTED_HALTS.has(latest.haltReason)
-      && (onlyBudgetEditedSinceBaseline(latest) || authorizedOriginalBudgetChanged(input.projectRoot, latest))) {
-      return {
-        kind: 'rejoin', explicit: false, runId: latest.runId, started: latest.started, budgetOnly: true,
-        reason: `最新的未终局 run ${latest.runId} 停在 ${latest.haltReason}，本次只带来授权的预算改动：接回原 run 续跑`,
-      };
-    }
+
+  if (!legacyLimitRecheck && isStructurallyTerminal(latest, input.projectRoot)) {
+
     if (changes.length) return successor(changes[0]);
     return hold('最新的未终局 run 是结构终局且没有任何变化',
-      '补上缺的输入后重新发起同一请求即可继续：新的需求内容、相关修复、显式改换的型号，或有权者改过 run 预算后带 --override-manifest 授权。');
+      '补上缺的输入后重新发起同一请求即可继续：新的需求内容、相关修复或显式改换的型号；原真实授权与明示截止继续有效。');
   }
   const identityChange = changes.find(change => change === 'model_changed' || change === 'requirement_increment');
   if (identityChange) return successor(identityChange);
@@ -1189,23 +966,31 @@ export function decideRunContinuation(input: {
       return { ...decided, reason: `${decided.reason}；停机所挂探针已就绪，但 run 冻结的输入绑定已失效、同一 run 无法重签（${stale.join('；')}）` };
     }
   }
-  const cooldownMs = (input.cooldownMinutes ?? CONTINUATION_COOLDOWN_MINUTES) * 60_000;
-  const elapsed = (input.nowMs ?? Date.now()) - latest.ts;
-  // 冷却与原恢复守卫同一范围：只对有正式开始的 run（原先 --resume 的路径）；启动即失败的 run 原先走附着/新开，从无冷却。
-  // Presence selects a transport. Verified changes and explicit recovery inputs,
-  // rather than presence, determine whether the same stopped task can continue.
-  if (!legacyLimitRecheck && !changes.length && latest.started && (latest.status === 'HALTED' || latest.status === 'DEFERRED') && latest.ts > 0 && elapsed < cooldownMs) {
-    return hold('仍在冷却期内且没有任何变化',
-      `距上次停止不足 ${input.cooldownMinutes ?? CONTINUATION_COOLDOWN_MINUTES} 分钟且没有新变化：补上缺的输入后重新发起同一请求，或约 ${Math.ceil((cooldownMs - elapsed) / 1000)} 秒后再发起。`);
-  }
   return {
     kind: 'rejoin', explicit: false, runId: latest.runId, started: latest.started,
     reason: `最新的未终局 run ${latest.runId} 不是结构终局${changes.length ? `（变化=${changes.join(',')}）` : ''}：${latest.started ? '恢复' : '启动即失败，附着'}，条件由原来的检查判断`,
   };
 }
 
-function chainRequiresRunBase(chain: readonly string[]): boolean {
-  return chain.some(phase => phase === 'coding' || phase === 'ut');
+function requiresRunBase(projectRoot: string, manifest: GoalRunManifest, chain: readonly string[], frameworkRoot?: string): boolean {
+  if (chain.some(phase => phase === 'coding' || phase === 'ut')) return true;
+  if (isInitialDesignManifest(manifest) || !manifest.execution_scope) return false;
+  const construction = manifest.execution_scope.obligations.filter(obligation => obligation.applicability !== 'not_applicable'
+    && (obligation.kind === 'implementation' || obligation.kind === 'unit-evidence'));
+  if (!construction.length) return false;
+  const { inferRepoLayout } = require('../../repo-layout') as typeof import('../../repo-layout');
+  const root = frameworkRoot ?? inferRepoLayout(projectRoot).frameworkRoot;
+  const { loadFrameworkConfig } = require('../../config') as typeof import('../../config');
+  const config = loadFrameworkConfig(projectRoot);
+  const { loadResolvedProfile } = require('../../profile-loader') as typeof import('../../profile-loader');
+  const profile = loadResolvedProfile(projectRoot, config, root);
+  const { readRepairResponsibilityContracts, workUnitMayWritePath } = require('./repair-responsibility') as typeof import('./repair-responsibility');
+  const boundary = readRepairResponsibilityContracts({ projectRoot, frameworkRoot: root, feature: manifest.feature,
+    originalRequirement: manifest.requirement,
+    phaseOrder: manifest.execution_scope.obligations.filter(obligation => obligation.applicability !== 'not_applicable').map(obligation => obligation.owner_phase),
+    track: 'full', profileDir: profile.profileDir, productLayerDirs: config.architecture.outer_layers.map(layer => layer.id), executionRole: 'author' });
+  return boundary.domains.some(domain => domain.kind === 'source' && construction.some(obligation => obligation.owner_phase === domain.owner)
+    && !boundary.unresolvedSourcePhases.includes(domain.owner) && workUnitMayWritePath(boundary, domain.path));
 }
 
 export function validateExactSha(value: string | undefined, label: string): string {
@@ -1246,6 +1031,7 @@ export function validateRebaselineRequest(input: {
 
 export function createGoalRun(options: {
   projectRoot: string;
+  frameworkRoot?: string;
   manifest: GoalRunManifest;
   chain: readonly string[];
   rebaselineFromRunId?: string;
@@ -1285,7 +1071,7 @@ export function createGoalRun(options: {
   if (options.manifest.execution_scope && (options.manifest.start_phase !== phaseChain[0] || options.manifest.end_phase !== phaseChain.at(-1) || JSON.stringify(options.manifest.chain_override) !== JSON.stringify(phaseChain))) throw new Error('[goal-run-creation] scope start/end/chain_override mismatch');
   if (!initialDesign) options.manifest.phase_chain = phaseChain;
 
-  if (chainRequiresRunBase(phaseChain)) {
+  if (requiresRunBase(options.projectRoot, options.manifest, phaseChain, options.frameworkRoot)) {
     if (options.manifest.successor_of) {
       if (!options.manifest.run_base_sha) {
         throw new Error(

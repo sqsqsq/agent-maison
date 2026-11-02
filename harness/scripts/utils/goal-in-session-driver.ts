@@ -6,7 +6,6 @@ export {
   formatGoalRoundStatus,
   GoalPhaseRuntime,
   handoffSessionToDetached,
-  recommendationAuthorized,
   resolveGoalRunModeIntent,
   runInSessionRound,
   userFacingRunMode,

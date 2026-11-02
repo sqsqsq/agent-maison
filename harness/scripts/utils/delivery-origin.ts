@@ -116,9 +116,9 @@ export function originalDeliveryForManifest(projectRoot: string, manifest: GoalR
   return currentOriginalDelivery(projectRoot, original);
 }
 
-export function readOriginalDeliveryBudget(projectRoot: string, manifest: GoalRunManifest, nowMs = Date.now()): {
-  totalTurns: number; priorActiveMs: number; firstAuthoritativeStartMs: number | null;
-  budget: GoalManifest['budget']; events: GoalRunEvent[]; runs: DeliveryRunFacts[];
+export function readOriginalDeliveryActivity(projectRoot: string, manifest: GoalRunManifest, nowMs = Date.now()): {
+  calls: number; active_ms: number; firstAuthoritativeStartMs: number | null;
+  events: GoalRunEvent[]; runs: DeliveryRunFacts[];
 } | null {
   const original = originalDeliveryForManifest(projectRoot, manifest);
   if (!original) return null;
@@ -156,7 +156,7 @@ export function readOriginalDeliveryBudget(projectRoot: string, manifest: GoalRu
     if (prior && interval.startMs <= prior.endMs) prior.endMs = Math.max(prior.endMs, interval.endMs);
     else merged.push({ ...interval });
   }
-  return { totalTurns, priorActiveMs: merged.reduce((sum, interval) => sum + interval.endMs - interval.startMs, 0),
-    firstAuthoritativeStartMs: merged[0]?.startMs ?? null, budget: original.budget,
+  return { calls: totalTurns, active_ms: merged.reduce((sum, interval) => sum + interval.endMs - interval.startMs, 0),
+    firstAuthoritativeStartMs: merged[0]?.startMs ?? null,
     events: runs.flatMap(run => run.events.map(event => ({ ...event, run_id: run.manifest.run_id }))).sort((a, b) => String(a.ts).localeCompare(String(b.ts))), runs };
 }

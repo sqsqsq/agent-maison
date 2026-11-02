@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import { readSessionExecution, acceptedSessionReport, acceptSessionExecution, normalizeSessionReport, inspectSessionExecutionBeforeRuntime, sessionRunMaterialPath, sessionReportInputPath, executionRequestForInvoke, observeSessionExecution, stopBoundExecution, type IssuedSessionExecution, type SessionExecutionReport } from './utils/session-execution-handoff';
+import { readSessionExecution, acceptedSessionReport, acceptSessionExecution, normalizeSessionReport, inspectSessionExecutionBeforeRuntime, sessionRunMaterialPath, sessionReportInputPath, executionRequestForInvoke, observeSessionExecution, stopBoundExecution, sessionExecutionDeadlineMs, type IssuedSessionExecution, type SessionExecutionReport } from './utils/session-execution-handoff';
 import * as YAML from 'yaml';
 import minimist from 'minimist';
 import type {
@@ -11,8 +11,8 @@ import type {
 } from './utils/goal-phase-runtime';
 import { deriveInSessionFingerprint } from './utils/goal-phase-runtime';
 import { GoalPhaseRuntime, bindGuardianOrKill, resolveManifestIdentityBaseline } from './goal-phase-runtime';
-import { AttendedGoalPhaseExecutor, DetachedGoalPhaseExecutor, createWorkUnitExecutionContext, workUnitExecutionInputs } from './utils/goal-phase-executor';
-import { collectSupersededAncestorEvents, loadEventsJsonl, loadAuthoritativeEvents } from './utils/goal-runner-phase';
+import { AttendedGoalPhaseExecutor, DetachedGoalPhaseExecutor, createWorkUnitExecutionContext, observeWorkUnitProviderSession, workUnitExecutionInputs } from './utils/goal-phase-executor';
+import { loadEventsJsonl, loadAuthoritativeEvents } from './utils/goal-runner-phase';
 import { resolveHeadlessInvokePlan, extractProviderFinalText } from './utils/agent-invoke';
 import { invocationCompleted, invocationEndFacts } from './utils/invocation-completion';
 import { reconcileGuardianOwnership } from './utils/goal-containment-reconcile';
@@ -53,7 +53,7 @@ import {
   createGoalRun,
   decideRunContinuation,
   inspectGoalRunCreation,
-  resolveCycleEffectiveBudget,
+  resolveDeliveryCycleBoundary,
   successorBoundsConflicts,
   successorBoundsRefusal,
   resolveActualGoalPhaseChainAtBirth,
@@ -80,7 +80,7 @@ import { designDeliveryNextStep, DesignDeliveryPreparationRequired } from './uti
 import { findInitialDesignRun, prepareInitialDesignRun, projectInitialDesignDelivery, initialDesignPhasePolicy, initialDesignScopeActionIssues } from './utils/initial-design-delivery';
 import type { ProviderRef } from './utils/types';
 import { applyManifestCliOverrides, validateManifestCliOverrides } from './utils/goal-manifest-cli';
-import { readOriginalDeliveryBudget, assertCanonicalDeliveryChild, originalDeliveryForManifest } from './utils/delivery-origin';
+import { assertCanonicalDeliveryChild, originalDeliveryForManifest } from './utils/delivery-origin';
 export type { GoalModeInSessionOptions } from './utils/goal-phase-runtime';
 export { deriveInSessionFingerprint } from './utils/goal-phase-runtime';
 
@@ -101,7 +101,6 @@ export async function runGoalModeInSession(
     executePhase: options.executePhase,
     authorization: options.authorization,
     leaseMs: options.leaseMs,
-    maxRounds: options.maxRounds,
     onRound: options.onRound,
   });
 }
@@ -116,6 +115,7 @@ export interface PrepareGoalModeRunOptions {
   requirement: string;
   /** plan c4e8a1f7 T2：--requirement-file 来源列表（goal-mode-entry 与 goal-runner 同源解析） */
   requirementSourceFiles?: string[];
+  userDeadlineAt?: string;
   startPhase?: string;
   endPhase?: string;
   forceFresh?: boolean;
@@ -152,9 +152,8 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
     const origin = loadGoalRunManifestFromRun(options.projectRoot, options.deliveryOrigin.run_id, { feature: options.deliveryOrigin.feature });
     if (!isInitialDesignManifest(origin)) throw new Error('[goal-mode-entry] delivery origin is not an original design request');
     assertGoalRunAttachable(options.projectRoot, origin);
-    const effective = readOriginalDeliveryBudget(options.projectRoot, origin);
     if (origin.requirement !== options.requirement || origin.adapter !== options.adapter) throw new Error('[goal-mode-entry] child cannot replace original requirement or adapter');
-    options = { ...options, requirementSourceFiles: origin.requirement_source_files, budget: effective?.budget ?? origin.budget, unattended: origin.unattended,
+    options = { ...options, requirementSourceFiles: origin.requirement_source_files, userDeadlineAt: origin.user_deadline_at, unattended: origin.unattended,
       adapterSource: typeof origin.adapter_provenance === 'string' && (RUN_ADAPTER_PROVENANCES as readonly string[]).includes(origin.adapter_provenance) ? origin.adapter_provenance as RunAdapterProvenance : undefined,
       adapterModelPin: origin.adapter_model_pin, visualProviderPin: origin.visual_provider_pin, fidelity: origin.fidelity,
       dependencyPolicy: origin.dependency_policy, minimumAssurance: origin.minimum_assurance, preAuthorizedMutations: origin.pre_authorized_mutations };
@@ -173,12 +172,11 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
     : options.forceFresh
     ? { kind: 'fresh', explicit: true, reason: '显式 --force' }
     : decideRunContinuation({
-        projectRoot: options.projectRoot, feature,
+        projectRoot: options.projectRoot, frameworkRoot: options.frameworkRoot, feature,
         call: {
           requirement,
           ...(options.requirementSourceFiles?.length ? { requirementSourceFiles: options.requirementSourceFiles } : {}),
           attended: true,
-          budgetOverride: options.budgetOverride === true,
           supersede: options.supersede,
         },
       });
@@ -218,15 +216,12 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
     }
     const baseline = resolveGoalRunBaseline(options.projectRoot, feature, source.run_id);
     if (baseline.available) source.run_base_sha = baseline.baseSha; else delete source.run_base_sha;
-    const ancestors = collectSupersededAncestorEvents({ projectRoot: options.projectRoot, featuresDir, feature, seedTargets: continuation.targets });
-    const pick = (key: 'round_fingerprint' | 'drift_fingerprint'): string[] => ancestors
-      .map(e => (e as Record<string, unknown>)[key]).filter((v): v is string => typeof v === 'string');
     const birthInput = buildGoalManifestFromInput({
       feature, run_id: options.runId, requirement, adapter: source.adapter,
+      ...(options.userDeadlineAt ? { user_deadline_at: options.userDeadlineAt } : {}),
       ...(options.requirementSourceFiles?.length ? { requirement_source_files: options.requirementSourceFiles } : {}),
       start_phase: source.start_phase, end_phase: source.end_phase,
-      unattended: options.unattended ?? { write_mode: 'full-access', approval_mode: 'never', max_turns: 20 },
-      ...(options.budget ? { budget: options.budget } : {}),
+      unattended: options.unattended ?? { write_mode: 'full-access', approval_mode: 'never' },
       ...(options.adapterModelPin ? { adapter_model_pin: options.adapterModelPin } : {}),
       ...(options.visualProviderPin ? { visual_provider_pin: options.visualProviderPin } : {}),
       ...(options.fidelity ? { fidelity: options.fidelity } : {}),
@@ -235,14 +230,9 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
       ...(options.minimumAssurance ? { minimum_assurance: options.minimumAssurance } : {}),
       ...(options.preAuthorizedMutations ? { pre_authorized_mutations: options.preAuthorizedMutations } : {}),
     }, { projectRoot: options.projectRoot, featuresDir });
-    const manifest = inheritSuccessorManifest(birthInput, source, { round: pick('round_fingerprint'), drift: pick('drift_fingerprint') });
-    // Same budget inheritance and explicit override as the runtime birth path.
-    const effectiveBudget = resolveCycleEffectiveBudget({
-      projectRoot: options.projectRoot, featuresDir, feature, frameworkRoot: options.frameworkRoot, targets: continuation.targets,
-      sourceBudget: source.budget, birthInputBudget: birthInput.budget, override: options.budgetOverride === true,
-    });
-    manifest.budget = effectiveBudget.budget;
-    console.log(`[goal-mode-entry] 后继预算：${effectiveBudget.basis}`);
+    const cycleBoundary = resolveDeliveryCycleBoundary({ projectRoot: options.projectRoot, featuresDir, feature, frameworkRoot: options.frameworkRoot,
+      seedTargets: continuation.targets });
+    const manifest = inheritSuccessorManifest(birthInput, source, { round: [], drift: [] }, { newDeliveryCycle: cycleBoundary === source.run_id });
     // 与 runtime 合并块同一个函数：没有新内容时保留源合同全文，否则源全文 + 新增段（本次文本已是合并格式也不丢新增内容）
     manifest.requirement = deriveSuccessorRequirement(source.requirement, requirement);
     const scope = resolveSuccessorExecutionScope(options.projectRoot, feature, workflow, options.frameworkRoot, manifest.requirement, source.run_id, manifest.fidelity);
@@ -252,7 +242,7 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
     }
     const track = resolveFeatureTrack(loadFeatureTrackDecl(options.projectRoot, feature));
     const chain = scope?.phase_chain ?? resolveAutoChain(workflow, manifest.start_phase, manifest.end_phase, manifest.chain_override, track);
-    createGoalRun({ projectRoot: options.projectRoot, manifest, chain, continuation });
+    createGoalRun({ projectRoot: options.projectRoot, frameworkRoot: options.frameworkRoot, manifest, chain, continuation });
     const successorDir = path.resolve(options.projectRoot, ...manifest.report_dir.split('/'));
     ensureRunControl(successorDir, manifest.run_id);
     return { manifest, manifestPath: path.join(successorDir, 'manifest.json'), runDir: successorDir, continuation };
@@ -270,6 +260,7 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
   const manifest = buildGoalManifestFromInput(
     {
       feature,
+      ...(options.userDeadlineAt ? { user_deadline_at: options.userDeadlineAt } : {}),
       run_id: options.runId,
       requirement,
       ...(options.requirementSourceFiles && options.requirementSourceFiles.length > 0
@@ -282,8 +273,7 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
       end_phase: options.endPhase ?? executionScope?.phase_chain.at(-1) ?? 'testing',
       // plan a8e5c3f9 t6：headless 即全权限——新 manifest 直接写 effective 值
       //（此前 workspace-write + on-request 让 claude 连 dontAsk 都拿不到，与无人值守自相矛盾）。
-      unattended: options.unattended ?? { write_mode: 'full-access', approval_mode: 'never', max_turns: 20 },
-      ...(options.budget ? { budget: options.budget } : {}),
+      unattended: options.unattended ?? { write_mode: 'full-access', approval_mode: 'never' },
       ...(options.adapterModelPin ? { adapter_model_pin: options.adapterModelPin } : {}),
       ...(options.visualProviderPin ? { visual_provider_pin: options.visualProviderPin } : {}),
       ...(options.fidelity ? { fidelity: options.fidelity } : {}),
@@ -337,7 +327,7 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
     requiresLegacyFidelityRecovery:
       !executionScope && loadInertLegacyFidelityIntentSsot(options.projectRoot, feature) !== null,
   });
-  createGoalRun({ projectRoot: options.projectRoot, manifest, chain: actualChain, forceFresh: options.forceFresh, continuation });
+  createGoalRun({ projectRoot: options.projectRoot, frameworkRoot: options.frameworkRoot, manifest, chain: actualChain, forceFresh: options.forceFresh, continuation });
   // D1.3 转交登记：**createGoalRun 成功之后、ensureRunControl 之前**。出生未完成时 feature 侧
   // 绝不能留下指向不存在 run 的指针；反向残留（记录指向不存在的 run）才是 D1.3 第三行的报错。
   if (executionScope) {
@@ -364,7 +354,6 @@ export interface GoalModeHostBridgeOptions {
   executePhase: InSessionRoundOptions['executePhase'];
   authorization?: InSessionRoundOptions['authorization'];
   leaseMs?: number;
-  maxRounds?: number;
   forceTakeover?: boolean;
   onRound?: (result: InSessionRoundResult) => void;
 }
@@ -485,7 +474,6 @@ export async function runGoalModeHostBridge(
     executor,
     authorization: options.authorization ?? { mode: 'goal_mode' },
     ...(options.leaseMs !== undefined ? { leaseMs: options.leaseMs } : {}),
-    ...(options.maxRounds !== undefined ? { maxRounds: options.maxRounds } : {}),
   });
   const priorEventCount = loadEventsJsonl(path.join(runDir, 'events.jsonl')).length;
   const invocationStartedAt = new Date().toISOString();
@@ -532,9 +520,7 @@ export async function runGoalModeHostBridge(
   const result: InSessionRoundResult = {
     run_id: manifest.run_id,
     exit_code: exitCode,
-    status: exitCode === 0 && options.authorization?.mode === 'manual'
-      ? 'waiting'
-      : completed
+    status: completed
       ? 'reconciled'
       : waiting
         ? 'waiting'
@@ -637,7 +623,8 @@ export async function runGoalModeSessionStep(options: Omit<GoalModeHostBridgeOpt
       feature: issued.request.context.feature, phase: issued.request.context.phase, attempt_id: issued.request.context.attemptId,
       log: controlLog,
       request: { path: path.resolve(issued.request.context.runDir, issued.reference.path), sha256: issued.reference.sha256 },
-      deadline: issued.request.deadline, gate_timeout_ms: issued.request.gate_timeout_ms, cleanup_reserve_ms: issued.request.cleanup_reserve_ms,
+      deadline: Number.isFinite(sessionExecutionDeadlineMs(issued.request)) ? new Date(sessionExecutionDeadlineMs(issued.request)).toISOString() : undefined,
+      gate_timeout_ms: issued.request.gate_timeout_ms, cleanup_reserve_ms: issued.request.cleanup_reserve_ms,
       status: 'execution_required', status_line: '按原件完成本职并报告；作者调用结束不表示原始交付完成。',
       next_command: command(`--request ${quote(path.resolve(issued.request.context.runDir, issued.reference.path))} --report-result ${quote('@' + sessionReportInputPath(issued.request.context.runDir, issued))}`) };
     const view = projectInitialDesignDelivery({ projectRoot: options.projectRoot, frameworkRoot: options.frameworkRoot, manifest: original });
@@ -663,7 +650,8 @@ export async function runGoalModeSessionStep(options: Omit<GoalModeHostBridgeOpt
     request: { path: path.resolve(issued.request.context.runDir, issued.reference.path), sha256: issued.reference.sha256 },
     log: path.join(runDir, 'session-control.log'),
     status: 'execution_required', status_line: '读取请求原件，按原身份执行并自检，再报告；本次领取不表示等待或通过。',
-    deadline: issued.request.deadline, gate_timeout_ms: issued.request.gate_timeout_ms, cleanup_reserve_ms: issued.request.cleanup_reserve_ms,
+    deadline: Number.isFinite(sessionExecutionDeadlineMs(issued.request)) ? new Date(sessionExecutionDeadlineMs(issued.request)).toISOString() : undefined,
+    gate_timeout_ms: issued.request.gate_timeout_ms, cleanup_reserve_ms: issued.request.cleanup_reserve_ms,
     next_command: command(`--request ${quote(path.resolve(issued.request.context.runDir, issued.reference.path))} --report-result ${quote('@' + path.relative(issued.request.context.runDir, sessionReportInputPath(issued.request.context.runDir, issued)).replace(/\\/g, '/'))}`, issued.request.context.runId),
   });
   if (current) {
@@ -765,7 +753,11 @@ async function runGoalExecutionAction(options: Parameters<typeof runGoalModeSess
         const baseline = resolveManifestIdentityBaseline(events);
         if (baseline && diffManifestIdentityFields(baseline, computeManifestIdentityFields(manifest)).length) throw new Error('[goal-mode-entry] manifest_identity_drift; reconcile through --next before execution');
         const current = workUnitExecutionInputs(manifest, issued.request.purpose, options.projectRoot);
-        const context = createWorkUnitExecutionContext({ ...original, ...current, authority: original.authority ?? current.authority });
+        const input = { ...original, ...current, authority: original.authority ?? current.authority };
+        const observed = observeWorkUnitProviderSession(input);
+        if ('status' in observed) return { ...view(), status: 'waiting', detail: observed.details,
+          ...(observed.provider_session_id ? { provider_session_id: observed.provider_session_id } : {}) };
+        const context = createWorkUnitExecutionContext(input, observed);
         const capability = loadGoalCapability(context.frameworkRoot, context.adapter);
         if (!capability.valid || !capability.capability) throw new Error(capability.issues.join('; '));
         const promptFile = path.join(directory, 'execution-prompt.md');
@@ -822,6 +814,7 @@ async function main(): Promise<void> {
       'impact-behavior-change', 'impact-reason', 'impact-basis',
       // f9c2e6b4 t4：与 goal-runner 同名同义，共用同一读取函数（相对路径按 projectRoot 解析）
       'requirement-file', 'manifest', 'supersede',
+      'user-deadline-at',
     ],
     boolean: ['force', 'force-takeover', 'prepare-run', 'prepare-scope', 'overwrite', 'help', 'next', 'authorize-autonomy', 'override-manifest', 'override-start', 'override-end', 'execute-request', 'observe', 'interrupt'],
   });
@@ -830,7 +823,7 @@ async function main(): Promise<void> {
       'Usage: goal-mode-entry.ts --feature <f> --run-id <id> --adapter <name> ' +
       '--run-mode attended [--project-root <root>] [--framework-root <framework>] [--force-takeover]\n' +
       'Fresh attended run: add --prepare-run --requirement "<text>" (optionally --run-id/--start/--end; --force records an operator override).\n' +
-      'Exhausted initial design: --prepare-run --supersede <current-run-id> with the original requirement creates an audited successor and keeps cumulative budget.\n' +
+      'Original request continuation: --prepare-run --supersede <current-run-id> preserves the audited request, real results and explicit user deadline.\n' +
       'Scope candidate (run this BEFORE --prepare-run; the two flags are mutually exclusive):\n' +
       '  --prepare-scope --feature <f> --completion-target <request|feature>\n' +
       '    --requested-results "<text>" (repeatable) --requested-phases spec,plan,coding,review,ut\n' +
@@ -843,6 +836,7 @@ async function main(): Promise<void> {
       '       --requested-results "refreshed balance is correct" --requested-phases coding,review,ut\n' +
       '       --impact-behavior-change false --impact-reason "internal value only" --impact-basis src/ledger/Balance.ets\n' +
       'Long / multi-line requirement: use --requirement-file <path> (mutually exclusive with --requirement).\n' +
+      'Explicit user deadline: --user-deadline-at <UTC timestamp>; no default deadline is inferred, and continuation never resets it.\n' +
       'Protocol: --next returns a saved request and execute_command/observe_command/interrupt_command. Use --execute-request --request <saved path> for the dedicated native executor; --observe/--interrupt use that exact request and owner binding. The main conversation does not perform business edits. Legacy --report-result @<run-relative JSON file> --request <saved path> consumes a result (inline JSON remains supported). Only the current request result input file may be written by the executor. Optional --authorize-autonomy and --override-manifest are trusted launch inputs.',
     );
     return;
@@ -857,6 +851,7 @@ async function main(): Promise<void> {
     const overrides = { manifest: String(argv.manifest), adapter: typeof argv.adapter === 'string' ? argv.adapter : undefined,
       start: typeof argv.start === 'string' ? argv.start : undefined, end: typeof argv.end === 'string' ? argv.end : undefined,
       requirement: suppliedRequirement.text, requirement_source_files: suppliedRequirement.sources,
+      'user-deadline-at': typeof argv['user-deadline-at'] === 'string' ? argv['user-deadline-at'] : undefined,
       'override-manifest': Boolean(argv['override-manifest']), 'override-start': Boolean(argv['override-start']), 'override-end': Boolean(argv['override-end']) };
     const validation = validateManifestCliOverrides(overrides);
     if (!validation.ok) throw new Error(validation.message);
@@ -887,7 +882,7 @@ async function main(): Promise<void> {
       feature,
       runId: runId || undefined,
       adapter,
-      ...(inputManifest ? { budget: inputManifest.budget, unattended: inputManifest.unattended,
+      ...(inputManifest ? { unattended: inputManifest.unattended,
         adapterModelPin: inputManifest.adapter_model_pin, visualProviderPin: inputManifest.visual_provider_pin, fidelity: inputManifest.fidelity,
         dependencyPolicy: inputManifest.dependency_policy, minimumAssurance: inputManifest.minimum_assurance, preAuthorizedMutations: inputManifest.pre_authorized_mutations,
         ...(inputManifest.adapter_provenance && (RUN_ADAPTER_PROVENANCES as readonly string[]).includes(inputManifest.adapter_provenance) ? { adapterSource: inputManifest.adapter_provenance as RunAdapterProvenance } : {}) } : {}),
@@ -913,9 +908,9 @@ async function main(): Promise<void> {
       endPhase: inputManifest?.end_phase ?? (typeof argv.end === 'string' ? argv.end : undefined),
       requestedPhases: inputDefinition?.requestedPhases,
       requestedResults: inputDefinition?.requestedResults,
+      userDeadlineAt: inputManifest?.user_deadline_at ?? (typeof argv['user-deadline-at'] === 'string' ? argv['user-deadline-at'] : undefined),
       forceFresh: Boolean(argv.force),
       supersede: (Array.isArray(argv.supersede) ? argv.supersede : argv.supersede ? [argv.supersede] : []).map(String),
-      budgetOverride: Boolean(argv['override-manifest']),
       autonomyAuthorized: Boolean(argv['authorize-autonomy']),
     });
     console.log(JSON.stringify({

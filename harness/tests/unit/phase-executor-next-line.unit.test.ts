@@ -17,18 +17,18 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert.ok(fs.existsSync(tpl), 'phase-executor.md 模板须存在');
       const text = fs.readFileSync(tpl, 'utf-8');
       assert.ok(/^---\nname: phase-executor\n/.test(text), 'frontmatter name 须为 phase-executor');
-      assert.ok(/同步等待/.test(text) && /禁止 sleep/.test(text), '等待纪律须写进模板');
-      assert.ok(/一次派发只做一个阶段/.test(text), '单阶段纪律须写进模板');
+      assert.ok(/按原请求交回真实调用结果/.test(text) && /退出或自检 PASS 不代表业务完成/.test(text), '真实交回与业务完成须区分');
+      assert.ok(/不是一阶段一个冷作者/.test(text), '方法标签不得恢复旧冷作者队列');
       const claude = fs.readFileSync(path.join(FRAMEWORK_ROOT, 'agents', 'claude', 'adapter.yaml'), 'utf-8');
       assert.ok(/subagents:\s*\n\s*target_dir: \.claude\/agents\s*\n\s*template_dir: templates\/agents/.test(claude), 'claude adapter 子 agent 目录须登记 templates/agents');
       const codeagent = fs.readFileSync(path.join(FRAMEWORK_ROOT, 'agents', 'codeagent', 'adapter.yaml'), 'utf-8');
       assert.ok(/template_dir: \.\.\/claude\/templates\/agents/.test(codeagent), 'codeagent 共享同一模板目录');
       const goalCondition = fs.readFileSync(path.join(FRAMEWORK_ROOT, 'agents', 'claude', 'templates', 'goal-condition.md'), 'utf-8');
-      assert.ok(/Start only the issued execute_command/.test(goalCondition), '入口只执行已签发命令，不按每阶段另派 subagent');
-      assert.ok(/common executor owns the dedicated native session/.test(goalCondition), '专用原生会话由共同执行器持有');
-      assert.ok(/do not edit business artifacts in the main context/.test(goalCondition)
-        && /Required verification remains independent/.test(goalCondition), '主上下文只呈现，必需核验保持独立');
-      assert.ok(/one GoalPhaseRuntime/.test(goalCondition) && /must not select CUs\/phases independently/.test(goalCondition),
+      assert.ok(/Start only execute_command/.test(goalCondition), '入口只执行已签发命令，不按每阶段另派 subagent');
+      assert.ok(/dedicated author context/.test(goalCondition) && /exact native identity/.test(goalCondition), '专用原生会话须准确续接');
+      assert.ok(/do not edit business artifacts in the main conversation/.test(goalCondition)
+        && /real independent questioning/.test(goalCondition), '主上下文只呈现，必需核验保持独立');
+      assert.ok(/one GoalPhaseRuntime/.test(goalCondition) && /or select phase\/CU authors yourself/.test(goalCondition),
         '阶段和CU推进仍只有一个runtime，原生持久化不得重复调度');
     },
   },

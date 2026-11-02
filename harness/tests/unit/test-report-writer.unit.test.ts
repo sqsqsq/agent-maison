@@ -17,7 +17,7 @@ import { loadFrameworkConfig } from '../../config';
 import { loadResolvedProfile } from '../../profile-loader';
 import { deriveVisualDebt, writeVisualDebt } from '../../scripts/utils/visual-debt';
 import { evaluateExecutionChannelDeclaration } from '../../scripts/utils/execution-channel';
-import { classifyPhaseAssessment } from '../../scripts/utils/phase-transition-policy';
+import { resolveCurrentDisposition } from '../../scripts/utils/check-disposition';
 import {
   parseReportConclusionVerdict,
   parseReportExecutionRows,
@@ -404,7 +404,6 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         assert.strictEqual(parseReportExecutionRows(covered.content).filter(r => r.status === '通过').length, 7);
         assert.ok(/\| P0 \| 7 \| 7 \| 0 \| 0 \| 0 \| 100%/.test(covered.content), covered.content);
         assert.strictEqual(covered.conclusion.functional, 'PASS');
-        assert.strictEqual(classifyPhaseAssessment({ verdict: 'PASS', phase: 'testing', retries_used: 0, max_retries_per_phase: 2 }).runner_action, 'advance');
 
         const failed = generateTestReport(input(root, seeded, {
           planMd: visualPlan,
@@ -415,7 +414,6 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         assert.strictEqual(failed.conclusion.functional, 'FAIL');
         assert.strictEqual(failed.conclusion.overall, 'FAILED');
         assert.ok(/\| DEF-\d+ \| TC-007 \| BLOCKER \| 失败：visual 通道：overlay 截图 build 已过期/.test(failed.content));
-        assert.strictEqual(classifyPhaseAssessment({ verdict: 'FAIL', phase: 'testing', failure_kind: 'code_regression', retries_used: 0, max_retries_per_phase: 2 }).runner_action, 'retry');
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }
@@ -813,13 +811,11 @@ async function replayTestingRound(opts: ReplayOpts = {}) {
     const lattice = deriveSummaryVerdictLattice(results, { phase: 'testing', visualApplicable: true, assetApplicable: false });
     const verdict = resolveEffectiveVerdict({ pre: lattice.pre_projection_verdict, post: lattice.projected_verdict, legacy }).verdict;
     const visual = results.find(c => c.id === 'visual_diff')!;
-    const assessment = classifyPhaseAssessment({
-      verdict, blocking_class: visual.blocking_class, failure_kind: visual.failure_kind,
-      dependency_policy: { deferrable_blocking_classes: ['externalBlocked'], deferrable_failure_kinds: ['capability_missing'], propagate_to_downstream: false },
-    });
+    const disposition = resolveCurrentDisposition({ endpoint: 'request', phases: [{ phase: 'testing', verdict,
+      schemaCurrent: true, closureCommitted: false, checks: results }] });
     const candidates = buildSummaryRepairCandidates({ phase: 'testing', checks: results, reportValidity: 'PASS', reviewReportText: null, verifierReportText: null });
     const conclusion = (results.find(c => c.id === 'test_report_generated')?.structured as { conclusion?: Record<string, unknown> } | undefined)?.conclusion;
-    return { results, report, bindings, legacy, lattice, verdict, assessment, candidates, conclusion, byId: (id: string) => results.find(c => c.id === id) };
+    return { results, report, bindings, legacy, lattice, verdict, disposition, candidates, conclusion, byId: (id: string) => results.find(c => c.id === id) };
   } finally {
     clearFrameworkConfigCache();
     fs.rmSync(root, { recursive: true, force: true });
@@ -843,7 +839,8 @@ cases.push(
       assert.strictEqual(r.byId('testing_run_status')?.severity, 'BLOCKER');
       assert.strictEqual(r.verdict, 'FAIL');
       assert.ok(r.candidates.length > 0 && r.candidates.every(c => c.category === 'coding'), JSON.stringify(r.candidates.map(c => c.category)));
-      assert.notStrictEqual(r.assessment.runner_action, 'defer_external_and_halt');
+      assert.ok(r.disposition.completionBlocking.some(problem => problem.action === 'repair'));
+      assert.ok(r.disposition.completionBlocking.some(problem => problem.action === 'wait'), '环境缺口不能吞掉同时可判定的产品修复');
     },
   },
   {
@@ -873,7 +870,8 @@ cases.push(
       assert.strictEqual(r.lattice.quality_axes.visual.verdict, 'UNVERIFIED');
       assert.strictEqual(r.lattice.release_readiness, 'BLOCKED');
       assert.strictEqual(r.candidates.length, 0, '外部缺席不产回退候选');
-      assert.strictEqual(r.assessment.runner_action, 'defer_external_and_halt');
+      assert.ok(r.disposition.completionBlocking.some(problem => problem.action === 'wait'));
+      assert.ok(!r.disposition.completionEligible);
     },
   },
   {
@@ -888,7 +886,7 @@ cases.push(
       }
       assert.notStrictEqual(parseReportConclusionVerdict(r.report), '不达标');
       assert.strictEqual(r.verdict, 'PASS');
-      assert.strictEqual(r.assessment.runner_action, 'advance');
+      assert.ok(r.disposition.completionEligible, '实际工具请求已满足，不代签Feature完成');
     },
   },
   {

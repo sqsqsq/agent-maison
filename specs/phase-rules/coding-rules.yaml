@@ -26,9 +26,8 @@ structure_checks:
 
   upstream_verdict_gate:
     description: >
-      跨阶段负面裁决传播门禁（blind-visual-hardening d1）：coding 启动时消费上游
-      spec/plan summary.json 机器裁决——上游 verdict 非 PASS / blocker 未清 /
-      证据 stale|tampered → BLOCKER FAIL。
+      当前检查真实输入的身份和依赖内容必须可用；phase只选择检查族，不要求上游阶段先闭环。
+      其它职责的FAIL/unknown由同一当前完成处置保留，不用旧summary/PASS/closed决定作者资格。
 
   resource_string_interpolation:
     description: >

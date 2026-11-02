@@ -9,12 +9,13 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
 
-import { clearFrameworkConfigCache, featureFilePath, featurePhaseReportsDir } from '../../config';
+import { clearFrameworkConfigCache, featureFilePath, featurePhaseReportsDir, loadFrameworkConfig } from '../../config';
+import { loadResolvedProfile } from '../../profile-loader';
 import { assessFeature, type FeatureAssessment } from '../../scripts/utils/feature-assessment';
 import { resolveChangeUnitExpectedExecution } from '../../scripts/utils/change-unit-completion';
 import { executionScopeEvidenceIssues } from '../../scripts/utils/verify-feature-completion';
 import { executionScopeFingerprint, validateExecutionScope, type ExecutionScope } from '../../scripts/utils/execution-scope';
-import { createGoalRun, decideRunContinuation, loadFrozenExecutionScope } from '../../scripts/utils/goal-run-creation';
+import { createGoalRun, decideRunContinuation, loadFrozenExecutionScope, currentFileHash, resolveRunBaseline } from '../../scripts/utils/goal-run-creation';
 import { withRunDisposition } from '../../scripts/utils/adjudication';
 import {
   featureFrozenScopePath, freezeFeatureExecutionScope, readFeatureFrozenScope, registerFeatureScopeTransfer, resolveSuccessorExecutionScope,
@@ -23,29 +24,43 @@ import { featureScopeCandidateFingerprint } from '../../scripts/utils/feature-tr
 import { loadPhaseEvidenceManifest } from '../../scripts/utils/phase-evidence-manifest';
 import { reconcileChangeUnitBlueprintRefs } from '../../scripts/utils/change-unit-design-preparation';
 import { resolveWorkflowSpec } from '../../workflow-loader';
-import { buildGoalManifestFromInput, computeManifestIdentityFields, mergeSuccessorRequirement, SUCCESSOR_REQUIREMENT_INCREMENT_MARKER } from '../../scripts/utils/goal-manifest';
+import { buildGoalManifestFromInput, mergeSuccessorRequirement, SUCCESSOR_REQUIREMENT_INCREMENT_MARKER, type GoalManifest } from '../../scripts/utils/goal-manifest';
 import { computeRequirementShaFromText, computeRunRequirementSha } from '../../scripts/utils/fidelity-shared';
 import { componentBlueprintPath } from '../../scripts/utils/component-blueprint-path';
 import { loadHostSnapshot, SNAPSHOT_CU_FEATURE, SNAPSHOT_FLAT_FEATURE } from '../fixtures/host-snapshot-3.1.0/generate';
 import { loadMigratedHostSnapshot } from '../fixtures/host-snapshot-3.1.0/migrate';
 import { goalRunEvents, requestVia, runGoalRuntimeChain } from './goal-runner-testing-integrity.unit.test';
-import { sealLegacyInvokes } from './goal-park-resume.unit.test';
 import { handWriteProjections } from './component-design-handoff.unit.test';
 import type { UnitCaseResult } from '../run-unit';
 import { matchesUnitCase, selectedUnitCases, startCaseTiming, SelectedUnitCases, UnitExecutionTiming } from '../utils/unit-case-selection';
 import { SpecLoader } from '../../scripts/utils/spec-loader';
-import { checkAuthoritativeContentAligned } from '../../scripts/utils/blueprint-skill-projection';
+import { checkAuthoritativeContentAligned, designScopeRevisionChecks } from '../../scripts/utils/blueprint-skill-projection';
+import { resolveCapabilityResolutionEntryInput } from '../../scripts/utils/capability-resolution-entry-input';
+import { resolveCapabilityInputs } from '../../scripts/utils/capability-resolution';
 import type { CheckContext, CheckResult } from '../../scripts/utils/types';
+import type { CurrentDisposition } from '../../scripts/utils/check-disposition';
+import { preserveRuntimeTestEvidence } from '../utils/runtime-test-control';
+import { executionRequestForInvoke, sessionEvents } from '../../scripts/utils/session-execution-handoff';
 
 type Snapshot = ReturnType<typeof loadHostSnapshot>;
 const WORKFLOW_ORDER = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'];
 const BLUEPRINT_ID = 'ledger-app-blueprint';
+
+function preserveSnapshotFailure(snapshot: Snapshot, error: unknown): void {
+  const featureRoot = path.join(snapshot.root, 'doc/features');
+  const files = fs.existsSync(featureRoot) ? fs.readdirSync(featureRoot, { recursive: true })
+    .map(file => path.join(featureRoot, String(file))).filter(file => fs.statSync(file).isFile()) : [];
+  preserveRuntimeTestEvidence([snapshot.root], String(error), undefined, files);
+}
 
 async function withSnapshot(run: (s: Snapshot) => Promise<void>): Promise<void> {
   const snapshot = loadHostSnapshot();
   try {
     clearFrameworkConfigCache();
     await run(snapshot);
+  } catch (error) {
+    preserveSnapshotFailure(snapshot, error);
+    throw error;
   } finally {
     clearFrameworkConfigCache();
     fs.rmSync(snapshot.root, { recursive: true, force: true });
@@ -56,6 +71,7 @@ async function withSnapshot(run: (s: Snapshot) => Promise<void>): Promise<void> 
 export async function withCurrentSnapshot(feature: string | readonly string[], run: (s: Snapshot) => Promise<void> | void): Promise<void> {
   const s = await loadMigratedHostSnapshot(typeof feature === 'string' ? [feature] : feature);
   try { clearFrameworkConfigCache(); await run(s); }
+  catch (error) { preserveSnapshotFailure(s, error); throw error; }
   finally { clearFrameworkConfigCache(); fs.rmSync(s.root, { recursive: true, force: true }); }
 }
 
@@ -427,22 +443,40 @@ for (const entry of ['foreground', 'detach', 'attended'] as const) {
     freezeAndTransfer(s, feature, source);
     fs.rmSync(featureFilePath(s.root, feature, 'ut/reports/phase-evidence-manifest.json'));
     const requirement = readJson<{ requirement: string }>(runFile(s.root, feature, source, 'manifest.json')).requirement;
-    const { successor: holder, error } = await supersede(s, feature, source, ['ut'], {
-      testControl: { expectedInterruption: 'injected crash inside ut' },
-      failExecutorFor: () => false, onUt: () => { throw new Error('injected crash inside ut'); },
-    });
+    const fileSystem = require('fs') as { appendFileSync: typeof fs.appendFileSync };
+    const append = fileSystem.appendFileSync;
+    let interrupted = false;
+    let born: Awaited<ReturnType<typeof supersede>> | undefined;
+    fileSystem.appendFileSync = ((file: fs.PathOrFileDescriptor, bytes: string | Uint8Array, ...rest: unknown[]) => {
+      const text = String(bytes);
+      if (!interrupted && String(file).startsWith(featureFilePath(s.root, feature, 'goal-runs')) && String(file).endsWith('events.jsonl')
+        && text.includes('"type":"run_end"') && text.includes('"status":"CHAIN_SLICE_COMPLETED"')) {
+        interrupted = true;
+        throw new Error('injected crash before terminal commit');
+      }
+      return Reflect.apply(append, fs, [file, bytes, ...rest]);
+    }) as typeof fs.appendFileSync;
+    try {
+      born = await supersede(s, feature, source, ['ut'], {
+        testControl: { expectedInterruption: 'injected crash before terminal commit' }, failExecutorFor: () => false,
+      });
+    } finally { fileSystem.appendFileSync = append; }
+    assert(born);
+    const { successor: holder, error } = born;
     assert(holder, `夹具：显式后继须出生：${error}`);
+    assert(interrupted, 'the real completed work must reach its terminal event commit');
     assert.strictEqual(readFeatureFrozenScope(s.root, feature)?.transfers?.at(-1)?.run_id, holder, '夹具：范围已转交给中断的后继');
-    // 测试桩代际补丁（与 runGoalRuntimeChain 的 resume 路径、goal-park-resume 同一个）：假 agent 不落 Job 绑定事件，
-    // 中断留下的未闭合调用会被 Windows 接管对账当成旧版 run 拒绝续跑——补一对闭合的绑定事件，模拟当前版本的干净收尾。
-    sealLegacyInvokes(s.root, feature, holder!);
+    const finishedUt = goalRunEvents(s.root, holder!, feature).filter(event => event.type === 'harness_end' && event.phase === 'ut' && event.exit_code === 0);
+    assert.equal(finishedUt.length, 1, 'the interrupted holder already received one actual completed UT check');
     const before = runIds(s.root, feature).length;
     const done = await requestVia(entry, s.root, {
       frameworkRoot: s.frameworkRoot, featureId: feature, freshRequirement: requirement, freshStartPhase: 'ut', freshEndPhase: 'ut',
     });
     clearFrameworkConfigCache();
     assert.strictEqual(runIds(s.root, feature).length, before, '重新接入持有者，不新建 run');
-    assert(done.invokedPhases.includes('ut'), `重新接入后须执行 ut：${done.invokedPhases.join(',')}`);
+    assert.deepStrictEqual(done.invokedPhases, [], 'reentry must reuse the completed original author instead of a cold UT author');
+    assert.equal(goalRunEvents(s.root, holder!, feature).filter(event => event.type === 'harness_end' && event.phase === 'ut' && event.exit_code === 0).length, 1,
+      'reentry must retain the original naturally completed UT rather than buying the same check again');
     const status = String([...goalRunEvents(s.root, holder!, feature)].reverse().find(e => e.type === 'run_end')?.status ?? '');
     assert(/COMPLETED/.test(status), `持有者须完成：${status}`);
   }) });
@@ -465,66 +499,15 @@ for (const entry of ['foreground', 'detach'] as const) {
     clearFrameworkConfigCache();
     const successor = runIds(s.root, feature).find(id => !before.has(id) && fs.existsSync(runFile(s.root, feature, id, 'manifest.json')));
     assert(successor, `须起后继：${runIds(s.root, feature).join(',')}`);
-    const manifest = readJson<{ successor_of?: string; requirement: string }>(runFile(s.root, feature, successor!, 'manifest.json'));
+    const manifest = readJson<{ successor_of?: string; requirement: string; budget?: unknown }>(runFile(s.root, feature, successor!, 'manifest.json'));
     assert.strictEqual(manifest.successor_of, completed, '合同来源须是已完成的持有者');
     assert(manifest.requirement.includes(INCREMENT_AFTER_COMPLETION), '后继需求须合并本次增量');
     assert(auditedBy(s, feature, successor!, completed), '承接须写审计事件');
     assert.strictEqual(readFeatureFrozenScope(s.root, feature)?.transfers?.at(-1)?.run_id, successor, '范围转交须登记到后继');
     assert(done.invokedPhases.length > 0, `后继须开始执行：${done.invokedPhases.join(',')}`);
+    assert.strictEqual(manifest.budget, undefined, 'new successors never inherit or synthesize a retired quota');
   }) });
 }
-
-/** 已完成 run 的预算改到 turns；authorized 时按 runtime 同形补一条 --override-manifest 授权改写（上一周期的追加）。 */
-function editCompletedBudget(s: Snapshot, feature: string, runId: string, turns: number, authorized: boolean): void {
-  const file = runFile(s.root, feature, runId, 'manifest.json');
-  const m = readJson<ReturnType<typeof buildGoalManifestFromInput>>(file);
-  m.budget = { ...m.budget, max_total_turns: turns };
-  fs.writeFileSync(file, JSON.stringify(m, null, 2));
-  if (!authorized) return;
-  fs.appendFileSync(runFile(s.root, feature, runId, 'events.jsonl'), JSON.stringify({
-    ts: new Date().toISOString(), type: 'manifest_identity_rebase', to_fields: computeManifestIdentityFields(m), authorized_by: 'override-manifest', changed_fields: ['budget'],
-  }) + '\n');
-}
-
-for (const entry of ['foreground', 'attended'] as const) {
-  cases.push({ name: `a2f7c9e4 §3.1 反例③ 新周期 ${entry}：上一周期完成 run 曾授权追加到 42，完成后带需求增量起后继 → 后继取本次出生输入的预算（默认 30），不带上一周期的追加`, run: () => withSnapshot(async s => {
-    const feature = SNAPSHOT_FLAT_FEATURE;
-    const [completed] = runIds(s.root, feature);
-    freezeAndTransfer(s, feature, completed);
-    ensureFakeDeveco(s);
-    editCompletedBudget(s, feature, completed, 42, true);
-    assert.strictEqual(assess(s, feature).record.state, 'ok', '前提：完成记录可信（交付周期边界生效）');
-    const before = new Set(runIds(s.root, feature));
-    await requestVia(entry, s.root, {
-      frameworkRoot: s.frameworkRoot, featureId: feature, freshRequirement: INCREMENT_AFTER_COMPLETION, failExecutorFor: () => true,
-      ...(entry === 'foreground' ? { freshStartPhase: 'spec' as const, freshEndPhase: 'plan' } : {}),
-    });
-    clearFrameworkConfigCache();
-    const successor = runIds(s.root, feature).find(id => !before.has(id) && hasManifest(s.root, feature, id));
-    assert(successor, `须起后继：${runIds(s.root, feature).join(',')}`);
-    const manifest = readJson<{ successor_of?: string; budget: { max_total_turns: number } }>(runFile(s.root, feature, successor!, 'manifest.json'));
-    assert.strictEqual(manifest.successor_of, completed);
-    assert.strictEqual(manifest.budget.max_total_turns, 30, `新周期首个后继取出生输入预算，不继承上一周期的 42：${JSON.stringify(manifest.budget)}`);
-  }) });
-}
-
-cases.push({ name: 'a2f7c9e4 §3.2 已完成功能只改预算并带 --override-manifest 重发原请求 → 保持停止、不新建 run（仅预算不构成新工作）', run: () => withSnapshot(async s => {
-  const feature = SNAPSHOT_FLAT_FEATURE;
-  const [completed] = runIds(s.root, feature);
-  freezeAndTransfer(s, feature, completed);
-  ensureFakeDeveco(s);
-  editCompletedBudget(s, feature, completed, 42, false);
-  const requirement = readJson<{ requirement: string }>(runFile(s.root, feature, completed, 'manifest.json')).requirement;
-  const d = decideRunContinuation({ projectRoot: s.root, feature, call: { requirement, budgetOverride: true } });
-  assert(d.kind === 'hold' && d.runId === completed && /只改预算/.test(d.guidance), `仅预算变化须保持停止：${JSON.stringify(d)}`);
-  const done = await requestVia('foreground', s.root, {
-    frameworkRoot: s.frameworkRoot, featureId: feature, freshRequirement: requirement, failExecutorFor: () => true,
-    freshStartPhase: 'spec', freshEndPhase: 'plan', launchArgs: ['--override-manifest'],
-  });
-  clearFrameworkConfigCache();
-  assert.strictEqual(done.exitCode, 1, '保持停止');
-  assert.deepStrictEqual(runIds(s.root, feature), [completed], '不得新建 run');
-}) });
 
 cases.push({ name: 'P3 R4 有人在场：已完成功能 + 需求增量重发 → prepare-run 出生后继，附着补完承接审计与范围转交，在有人在场执行者之下真正执行', run: () => withSnapshot(async s => {
   const feature = SNAPSHOT_FLAT_FEATURE;
@@ -537,12 +520,13 @@ cases.push({ name: 'P3 R4 有人在场：已完成功能 + 需求增量重发 �
   clearFrameworkConfigCache();
   const successor = runIds(s.root, feature).find(id => id !== completed);
   assert(successor, `须起后继：${runIds(s.root, feature).join(',')}`);
-  const manifest = readJson<{ successor_of?: string; requirement: string }>(runFile(s.root, feature, successor!, 'manifest.json'));
+  const manifest = readJson<{ successor_of?: string; requirement: string; budget?: unknown }>(runFile(s.root, feature, successor!, 'manifest.json'));
   assert.strictEqual(manifest.successor_of, completed);
   assert(manifest.requirement.includes(INCREMENT_AFTER_COMPLETION), '后继需求须合并本次增量');
   assert(auditedBy(s, feature, successor!, completed), '附着须补写承接审计');
   assert.strictEqual(readFeatureFrozenScope(s.root, feature)?.transfers?.at(-1)?.run_id, successor, '范围转交须登记到后继');
   assert(done.invokedPhases.length > 0, `后继须在有人在场执行者之下执行：${done.invokedPhases.join(',')}`);
+  assert.strictEqual(manifest.budget, undefined, 'new successors never inherit or synthesize a retired quota');
 }) });
 
 cases.push({ name: 'P3 R3/R4 二轮 有人在场起后继：起止与来源相同 → 后继出生；带 --end spec（与来源不同）→ 拒绝、不新建 run', run: () => withSnapshot(async s => {
@@ -644,7 +628,7 @@ for (const entry of ['attended', 'foreground'] as const) {
 // plan 4e6fb3b6 最终评审返修 R1：相关修复的依据必须来自生产链。spec 由（假 agent 驱动的）真实 runtime 执行：agent 写 acceptance.yaml，
 // 真实 checkAuthoritativeContentAligned 判 FAIL（affected_files 为绝对路径）、经真实 summary 写入器落盘到阶段报告目录（no_progress_guard 停机时 runtime 不归档进 run 目录），runtime 发出写入事件。
 // 然后只修该文件、重发 → related_repair_changed。反例：未改不算；根外绝对路径被拒；本轮没写过该文件（没有生产基线）时修了也不冒充已修复。
-async function runSpecFailingOnAuthority(s: Snapshot, agentWritesDrift: boolean): Promise<{ feature: string; runId: string; increment: string; acceptanceFile: string; authorityBytes: string }> {
+async function runSpecFailingOnAuthority(s: Snapshot, agentWritesDrift: boolean): Promise<{ feature: string; runId: string; increment: string; acceptanceFile: string; authorityBytes: string; gate: () => CheckResult[] }> {
   const feature = SNAPSHOT_CU_FEATURE;
   const [source] = runIds(s.root, feature);
   handWriteProjections(s.root);
@@ -666,12 +650,29 @@ async function runSpecFailingOnAuthority(s: Snapshot, agentWritesDrift: boolean)
   assert.strictEqual(born.phase_chain[0], 'spec', `夹具：需求增量须让 spec 入链：${JSON.stringify(born.phase_chain)}`);
   const gate = (): CheckResult[] => {
     clearFrameworkConfigCache();
-    const ctx = { projectRoot: s.root, frameworkRoot: s.frameworkRoot, feature, phaseRule: {}, featureSpec: new SpecLoader(s.root, undefined, undefined, s.frameworkRoot).loadFeatureSpec(feature) } as unknown as CheckContext;
-    return checkAuthoritativeContentAligned(ctx, 'acceptance');
+    const goalRunId = process.env.MAISON_GOAL_RUN_ID;
+    const goalAttemptId = process.env.MAISON_GOAL_ATTEMPT;
+    assert(goalRunId && goalAttemptId, '检查必须在实际已签发工具调用的身份窗口内执行');
+    const entry = resolveCapabilityResolutionEntryInput({ projectRoot: s.root, frameworkRoot: s.frameworkRoot, feature,
+      phase: 'spec', featuresDir: 'doc/features', goalRunId, goalAttemptId });
+    const { inputs } = resolveCapabilityInputs({ projectRoot: s.root, frameworkRoot: s.frameworkRoot, feature,
+      phase: 'spec', track: 'full', ...entry });
+    assert(inputs && entry.factsContext, '当前真实输入与研究身份必须由统一入口解析');
+    const loader = new SpecLoader(s.root, undefined, undefined, s.frameworkRoot);
+    const ctx: CheckContext = { projectRoot: s.root, frameworkRoot: s.frameworkRoot, feature, phase: 'spec',
+      phaseRule: loader.loadPhaseRule('spec'), featureSpec: loader.loadFeatureSpec(feature, inputs),
+      resolvedInputs: inputs, factsContext: entry.factsContext,
+      resolvedProfile: loadResolvedProfile(s.root, loadFrameworkConfig(s.root), s.frameworkRoot),
+      frameworkRel: path.relative(s.root, s.frameworkRoot).replace(/\\/g, '/'), harnessRoot: path.join(s.frameworkRoot, 'harness') };
+    const checks = checkAuthoritativeContentAligned(ctx, 'acceptance');
+    const revisions = designScopeRevisionChecks(ctx, checks);
+    assert(!checks.some(check => check.status === 'FAIL') || !revisions.some(check => check.scope_revision_input),
+      '真实对齐检查失败时不得发布新范围绑定');
+    return [...checks, ...revisions];
   };
   const { successor, error } = await supersede(s, feature, source, born.phase_chain, {
     freshRequirement: increment, failExecutorFor: () => false,
-    ...(agentWritesDrift ? { onSpec: () => drift('agent drift two') } : {}),
+    ...(agentWritesDrift ? { onAuthor: () => drift('agent drift two') } : {}),
     onHarnessSummary: ({ phase }) => (phase === 'spec' ? { checks: gate() } : null),
   });
   assert(successor, `夹具：后继须出生：${error}`);
@@ -679,7 +680,7 @@ async function runSpecFailingOnAuthority(s: Snapshot, agentWritesDrift: boolean)
   const summary = readJson<{ verdict?: string; blockers?: Array<{ id?: string; affected_files?: string[] }> }>(path.join(featurePhaseReportsDir(s.root, feature, 'spec', s.frameworkRoot), 'summary.json'));
   const affected = (summary.blockers ?? []).filter(b => b.id === 'authoritative_content_aligned').flatMap(b => b.affected_files ?? []);
   assert(summary.verdict === 'FAIL' && affected.length === 1 && path.isAbsolute(affected[0]), `夹具：spec 失败且生产者给的是绝对路径：${JSON.stringify(summary.blockers)}`);
-  return { feature, runId: successor!, increment, acceptanceFile, authorityBytes };
+  return { feature, runId: successor!, increment, acceptanceFile, authorityBytes, gate };
 }
 
 const runEnd = (s: Snapshot, feature: string, runId: string): string => {
@@ -690,35 +691,83 @@ const runEnd = (s: Snapshot, feature: string, runId: string): string => {
 cases.push({ name: 'P3 最终评审返修 R1：spec 由真实 runtime 写 acceptance.yaml、真实检查判 FAIL 后以无进展守卫停下；只修该文件重发 → related_repair_changed（基线来自生产事件）越过冷却重新接入；未改保持停止、根外绝对路径被拒', run: () => withSnapshot(async s => {
   const r = await runSpecFailingOnAuthority(s, true);
   const owned = goalRunEvents(s.root, r.runId, r.feature)
-    .filter(e => e.type === 'phase_write_observed' && e.phase === 'spec')
-    .flatMap(e => ((e as { owned?: Array<{ path?: string }> }).owned ?? []).map(row => row.path));
+    .filter(e => e.type === 'phase_write_observed' && e.phase === 'work-unit-author')
+    .flatMap(e => ((e as { owned?: Array<{ path?: string; owner?: string }> }).owned ?? []).filter(row => row.owner === 'spec').map(row => row.path));
   assert(owned.includes(path.relative(s.root, r.acceptanceFile).replace(/\\/g, '/')), `runtime 须把 spec 写自己正式产物的写后哈希记进 owned：${JSON.stringify(owned)}`);
-  // no_progress_guard 不是结构终局：有变化 → 重新接入（恢复）；无人值守、刚停下（冷却期内）且没有变化 → 保持停止。相关修复成立正是让它越过冷却。
+  // Reentry selects the same run; only the common kernel may decide whether there is executable new work.
   assert.strictEqual(runEnd(s, r.feature, r.runId), 'HALTED/no_progress_guard', '夹具：真实 runtime 以无进展守卫停下');
   const halt = goalRunEvents(s.root, r.runId, r.feature).find(event => event.type === 'phase_halt' && event.halt_reason === 'no_progress_guard');
   const guidance = String(halt?.halt_guidance ?? '');
-  assert(guidance.includes('authoritative_content_aligned') && guidance.includes('责任方=spec') && guidance.includes('下一步'),
+  const report = readJson<{ current_disposition?: CurrentDisposition }>(runFile(s.root, r.feature, r.runId, 'goal-report.json'));
+  const repair = report.current_disposition?.completionBlocking.find(problem => problem.id.includes('authoritative_content_aligned'));
+  assert(repair?.owner === 'spec' && repair.action === 'repair' && repair.files?.some(file => path.resolve(s.root, file) === r.acceptanceFile)
+    && repair.evidence?.includes('acceptance:AC-1.expected_result'), `暂停必须保留同次真实修复对象与依据：${JSON.stringify(repair)}`);
+  assert(guidance.includes('authoritative_content_aligned') && guidance.includes(r.acceptanceFile) && guidance.includes('暂停'),
     `无进展停机必须携带真实检查、责任方和下一步，不能只剩停机类型：${guidance}`);
   const decide = () => decideRunContinuation({ projectRoot: s.root, feature: r.feature, call: { requirement: r.increment } });
   const before = decide();
-  assert(before.kind === 'hold' && !/related_repair_changed/.test(before.reason), `文件未改不得算修复（冷却期内保持停止）：${JSON.stringify(before)}`);
-  // 只修该文件（恢复为设计权威的内容）
+  assert(before.kind === 'rejoin' && before.runId === r.runId && !/related_repair_changed/.test(before.reason), `文件未改不得冒充相关修复：${JSON.stringify(before)}`);
+  const runsBefore = runIds(s.root, r.feature).length;
+  const unchanged = await requestVia('foreground', s.root, { frameworkRoot: s.frameworkRoot, featureId: r.feature, adapter: 'codex', freshRequirement: r.increment });
+  assert.deepStrictEqual(unchanged.invokedPhases, [], '普通未变重入不能购买第二份原反馈');
+  assert.deepStrictEqual(unchanged.harnessPhases, [], '已完成的同输入原检查不重复执行');
+  assert.strictEqual(runIds(s.root, r.feature).length, runsBefore, '普通重入不生成后继或新run');
+  assert.strictEqual(runEnd(s, r.feature, r.runId), 'HALTED/no_progress_guard', '统一内核保持原真实暂停');
+  const runDir = path.dirname(runFile(s.root, r.feature, r.runId, 'manifest.json'));
+  const manifestBefore = readJson<GoalManifest>(path.join(runDir, 'manifest.json'));
+  const baseBefore = resolveRunBaseline(manifestBefore, sessionEvents(runDir)).baseSha;
+  assert.match(baseBefore ?? '', /^[0-9a-f]{40}$/, '真实施工基线须在恢复前冻结');
+  const historyBefore = fs.readFileSync(path.join(runDir, 'events.jsonl'));
+  const originals = new Map(sessionEvents(runDir).flatMap(event => {
+    const original = event.type === 'agent_invoke_start' && event.invoke_id ? executionRequestForInvoke(runDir, event.invoke_id) : null;
+    if (!original) return [];
+    const file = path.resolve(runDir, original.reference.path);
+    return [[file, fs.readFileSync(file)] as const];
+  }));
+  // 只修该文件（恢复为设计权威的内容），不是创建新任务或清除原FAIL。
   fs.writeFileSync(r.acceptanceFile, r.authorityBytes);
   clearFrameworkConfigCache();
   const after = decide();
-  assert(after.kind === 'rejoin' && after.runId === r.runId && /related_repair_changed/.test(after.reason), `修了该文件须拿到修复依据、重新接入该 run：${JSON.stringify(after)}`);
+  assert(after.kind === 'rejoin' && after.runId === r.runId, `修复后仍接原工作单元，由统一内核复验：${JSON.stringify(after)}`);
   // 根外绝对路径：同一份 summary 的受影响文件换成工程根外的路径（该文件存在）→ 拿不到依据
   const summaryFile = path.join(featurePhaseReportsDir(s.root, r.feature, 'spec', s.frameworkRoot), 'summary.json');
   const original = fs.readFileSync(summaryFile, 'utf8');
   const outside = path.join(path.dirname(s.root), `outside-${path.basename(s.root)}.yaml`);
   fs.writeFileSync(outside, 'changed');
   try {
+    assert.strictEqual(currentFileHash(s.root, outside), null, '相关输入读取必须拒绝真实存在的根外绝对路径');
     const doc = JSON.parse(original) as { blockers?: Array<{ affected_files?: string[] }> };
     for (const b of doc.blockers ?? []) if (b.affected_files) b.affected_files = [outside];
     fs.writeFileSync(summaryFile, JSON.stringify(doc));
-    const outsideDecision = decide();
-    assert(outsideDecision.kind === 'hold' && !/related_repair_changed/.test(outsideDecision.reason), `工程根外的绝对路径须被拒绝：${JSON.stringify(outsideDecision)}`);
+    const fileSystem = require('fs') as { readFileSync: typeof fs.readFileSync };
+    const originalRead = fileSystem.readFileSync;
+    let outsideReads = 0;
+    try {
+      fileSystem.readFileSync = ((file: fs.PathOrFileDescriptor, ...args: unknown[]) => {
+        if (typeof file === 'string' && path.resolve(file) === outside) outsideReads++;
+        return Reflect.apply(originalRead, fs, [file, ...args]);
+      }) as typeof fs.readFileSync;
+      const outsideDecision = decide();
+      assert(outsideDecision.kind === 'rejoin' && outsideDecision.runId === r.runId, `根外假提示不授权新任务/新范围：${JSON.stringify(outsideDecision)}`);
+    } finally { fileSystem.readFileSync = originalRead; }
+    assert.strictEqual(outsideReads, 0, '入口不得读取根外假修复对象');
+    assert.strictEqual(runIds(s.root, r.feature).length, runsBefore, '根外提示不创建run');
   } finally { fs.writeFileSync(summaryFile, original); fs.rmSync(outside, { force: true }); }
+  const repaired = await requestVia('foreground', s.root, { frameworkRoot: s.frameworkRoot, featureId: r.feature, adapter: 'codex', freshRequirement: r.increment,
+    onHarnessSummary: ({ phase }) => phase === 'spec' ? { checks: r.gate() } : null });
+  assert.strictEqual(repaired.exitCode, 0, JSON.stringify(repaired.events.filter(event => event.type === 'phase_halt' || event.type === 'run_end')));
+  assert(!repaired.invokedPhases.includes('work-unit-author'), '外部真实修好后只验证，不重买作者');
+  assert(repaired.harnessPhases.includes('spec'), '实际authoritative-content checker必须观察修后的文件');
+  assert.strictEqual(runIds(s.root, r.feature).length, runsBefore, '复验与终点发布都在原run');
+  const currentEvents = goalRunEvents(s.root, r.runId, r.feature);
+  assert(currentEvents.some(event => event.type === 'phase_verdict' && event.phase === 'spec' && event.verdict === 'FAIL')
+    && currentEvents.some(event => event.type === 'phase_verdict' && event.phase === 'spec' && event.verdict === 'PASS'), '旧FAIL保留，新PASS只能来自实际复验');
+  assert(fs.readFileSync(path.join(runDir, 'events.jsonl')).subarray(0, historyBefore.length).equals(historyBefore), '旧故障历史只追加');
+  for (const [file, bytes] of originals) assert(fs.readFileSync(file).equals(bytes), '旧签名请求不能改写为恢复后的原件');
+  const manifestAfter = readJson<GoalManifest>(path.join(runDir, 'manifest.json'));
+  assert.strictEqual(manifestAfter.successor_of, manifestBefore.successor_of, '原来源lineage不变');
+  assert.strictEqual(resolveRunBaseline(manifestAfter, sessionEvents(runDir)).baseSha, baseBefore, '本run冻结基线不重置');
+  assert(assess(s, r.feature).complete && /COMPLETED/.test(runEnd(s, r.feature, r.runId)), '真正复验并完成，不把rejoin当完成');
 }) });
 
 cases.push({ name: 'P3 最终评审返修 R1 反例：本轮 spec 没写过 acceptance.yaml（差异是运行前就有的）→ 没有生产基线，之后修了也不冒充已修复', run: () => withSnapshot(async s => {
@@ -730,7 +779,7 @@ cases.push({ name: 'P3 最终评审返修 R1 反例：本轮 spec 没写过 acce
   fs.writeFileSync(r.acceptanceFile, r.authorityBytes);
   clearFrameworkConfigCache();
   const d = decideRunContinuation({ projectRoot: s.root, feature: r.feature, call: { requirement: r.increment } });
-  assert(d.kind === 'hold' && !/related_repair_changed/.test(d.reason), `没有基线不得冒充已修复（冷却期内保持停止）：${JSON.stringify(d)}`);
+  assert(!/related_repair_changed/.test(d.reason), `没有生产基线不能冒充已修复：${JSON.stringify(d)}`);
 }) });
 
 cases.push({ name: 'P3 t5 补充：已完成功能 + 原样重发同一需求 → 保持停止，run 数与事件数不变，说明写明在请求里写新增或变更的需求', run: () => withSnapshot(async s => {
@@ -774,7 +823,7 @@ type SuccessorGroup = 'blueprint-base' | 'blueprint-projection' | 'early' | 'lat
 // 两条百秒 ★2 独立，其余按原登记顺序互补；每 case 仍自备 snapshot 宿主。
 function caseGroup(name: string, index: number): SuccessorGroup {
   return name.startsWith('★2 变体 ') ? 'blueprint-projection'
-    : name.startsWith('★2 蓝图升版 ') ? 'blueprint-base' : index < 20 ? 'early' : 'late';
+    : name.startsWith('★2 蓝图升版 ') ? 'blueprint-base' : index < 17 ? 'early' : 'late';
 }
 
 export async function runSelectedCases(selector?: string, group?: SuccessorGroup): Promise<SelectedUnitCases> {

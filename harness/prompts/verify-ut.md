@@ -1,5 +1,7 @@
 # 业务级 UT 阶段语义验证 — {feature_name}（v2.1 · UseCase 去代码化）
 
+**当前独核资格与结果边界**：只消费机器实际签发的当前request/material，phase仅选择检查方法。带“本轮为产品失败诊断”时，按已给具体对象/原报告逐条独立核实；无关编译/设备/报告缺口不遮住其它可核实工作，缺实际对象仍保持未知。独核终态只表示本次语义核实，不继承产品raw FAIL或替代缺失执行；产品FAIL/unknown仍由共同完成处置保留。变化材料补核受影响项，原目标与完整拒修论据逐条保真，不能仅凭摘要、标签或历史PASS结案。
+
 核对本次承诺的测试层级与生产入口一致：UT 驱动可隔离的真实业务状态/异常；UI、焦点和导航栈交设备。both 的两层互补，不要求 UT 实例化 UI，也不能只测 helper 冒充流程通过。L3 候选回原责任方；option_a 不批准降低当前验收。仅核当前材料，不新增一轮设计或额外门禁。
 
 > 自动生成于 {timestamp}
@@ -30,17 +32,17 @@
 
 ---
 
-## 【HARD STOP — 不可绕过的产出约束】
+## 真实测试与写入责任边界
 
-> 以下约束是 business-ut 阶段的**红线**。违反任一条都应在最终报告的 `summary.verdict` 强制为 `FAIL`，并在对应检查项补 BLOCKER 级 `src_mutation_discipline` 条目。
+> 按实际原请求、写入授权及真实执行证据核验。phase标签不是独立作者身份；不以合法同unit源码变化自动判BLOCKER，不新造源码变更通行证。
 
-1. **禁止修改业务源码**：business-ut 阶段**禁止**对**业务实现源码树**（如设计/contracts 列出的 `src/main` 或等价非测试根目录；路径前缀以本实例为准）下任何文件做**任何修改**（包括"顺手抽个函数方便 UT 调用"、"把 private 改成 public"、"新增一个工具函数"、"修改 barrel 导出路径"等）。
-2. **可测性缺口交回 coding**：如确实无法通过 UT/Spy/Stub/原型替换绕过，记录文件、变更签名、技术理由和影响面，产出 coding repair candidate；由 coding owner 修改后重走 review→ut。
-3. **人工授权不放行**：用户回复、署名、receipt 或 legacy `gap-notes.md > approved_src_mutations[]` 只可作为历史/普通输入，不得把源码漂移改判为 PASS。
-4. **任一源码改动均违规**：脚本 Harness 的 `ut_no_src_mutation` 在 review 正式闭环后按 review closure attestation 的逐文件内容哈希对账产品源码树（review 未闭环时才回退 `src/main` 的 git diff）。**它已不是永久 BLOCKER**：漂移按风险分级记 MAJOR WARN（`check-ut.ts` `utDriftTieredWarn`），归类为 coding change 并列出所需复核，不阻塞 UT 闭环；纪律不变——UT 阶段仍禁止改业务源码，漂移仍要回 coding 纳入并按分级复核，**提交与否不影响结论**。你不得据此把已退役的硬门重新施加回来（把 WARN 说成 BLOCKER 就是），也不得反过来把它当作"改码没关系"。
-5. **作为审查员的你**：在语义检查时，若发现 UT 目录外（即 `src/main` 侧）的业务代码与 plan.md / contracts.yaml 声明不一致，或出现"为了 UT 便利而新增的辅助函数"嫌疑（无对应 spec/plan 依据的工具函数、Getter/Setter 等），请在 `end_to_end_driving` 或新增的 `src_mutation_discipline` 项中标 BLOCKER。
-6. **必须确认真实执行状态**：若脚本报告中的 `ut_run_status` 显示 `当前是否可以宣称 UT 完成：否`，或 **`ut.run`** 为 FAIL（报告可能仍显示 legacy 名 `ut_hvigor_test`）/ 被 **`ut.compile`**（legacy `ut_hvigor_build`）短路，则最终 `summary.verdict` 必须为 `FAIL`。不要把 `ut_tsc_compiles PASS` 误判为 UT 已真实运行通过。
-   > **例外（产品失败诊断请求）**：本 prompt 若带「本轮为产品失败诊断」一节，则 harness 已确认这是它主动签发的诊断请求——`ut.compile` 通过、`ut.run` 是**真实用例断言失败**（归因 `code_regression`）、且没有其它 BLOCKER FAIL，也没有未标注为已确认不适用的 BLOCKER SKIP。此时**照常**逐项完成语义检查，尤其是 `end_to_end_driving` 与 `business_assertion_value` 这两项（它们的 PASS/FAIL 决定这次失败该回 coding 改产品还是回 UT 改测试）。`ut.run` 的产品执行 FAIL 由 harness 原样保留，**不由你的报告继承**：`summary.verdict` / `blocker_count` 只表示**本轮语义检查**的结论——你自己判出的 BLOCKER 级 FAIL 有几条就写几条，一条都没有就写 `PASS / 0`。把产品 FAIL 抄进终态并跳过这两项检查，只会让本该产生的回修候选整批消失。原生编译/执行约束在常规验证请求下不降低。
+1. **工具与作者分责**：实际UT工具和独立审查员不写产品源码或正式结果。同unit专用作者可在原授权内修实现与测试输入；仅UT专项请求未获产品写权时不得自行扩大范围。
+2. **可测性缺口**：记录真实文件、所需接口/签名、技术理由与影响。原unit作者在现有写权内修复；需变更范围、公共契约或设计决定时交原设计责任方正式修订，不重建coding→review→ut作者队列。
+3. **授权与质量分开**：用户的真实授权决定可写范围；署名、receipt或legacy approved_src_mutations不能把真实失败/未知改为PASS，也不能代替必要验收与核验。
+4. **源码变化按事实复核**：消费真实写入归因、前后像、契约/行为与风险；ut_no_src_mutation的既有风险分级不能被解释成“任何源码变化均违规”。合法实现/测试修复不因phase标签被否决；越权、削弱断言或掩盖失败仍保留具体必修。
+5. **独立判断**：核对完整原件和实际影响。helper名称、目录位置、private/public或barrel变化本身不证明违规；公共契约违约、无授权改动或弱化验收必须有具体依据，沿已声明检查项报告。
+6. **真实执行状态**：逐项读取编译/UT原件，不把tsc PASS当真实UT执行。必需执行失败或未发生仍未满足；独核不继承raw总体状态，也不以自己的PASS替代尚缺的执行证据。
+   > **例外（产品失败诊断请求）**：本 prompt 若带「本轮为产品失败诊断」一节，则 harness 已确认这是它主动签发的诊断请求——实际报告包含可独立核实的真实测试/产品对象与原证据；其它环境或执行缺口仍保留未知，不因同报存在便禁止本次可独立核对工作。此时**照常**逐项完成语义检查，尤其是 `end_to_end_driving` 与 `business_assertion_value` 这两项（它们的 PASS/FAIL 决定这次失败该回 coding 改产品还是回 UT 改测试）。`ut.run` 的产品执行 FAIL 由 harness 原样保留，**不由你的报告继承**：`summary.verdict` / `blocker_count` 只表示**本轮语义检查**的结论——你自己判出的 BLOCKER 级 FAIL 有几条就写几条，一条都没有就写 `PASS / 0`。把产品 FAIL 抄进终态并跳过这两项检查，只会让本该产生的回修候选整批消失。原生编译/执行约束在常规验证请求下不降低。
 
 > 典型违规迹象（请特别留意）：
 > - 业务源码树（非测试目录）里新增了看似仅为 UT 服务的函数，但该函数**没有对应的 spec/plan 条目**；

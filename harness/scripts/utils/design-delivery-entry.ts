@@ -26,7 +26,7 @@ export function designDeliveryNextStep(input: {
   if (readFeatureFrozenScope(projectRoot, feature)) return null;
   const { findInitialDesignRun } = require('./initial-design-delivery') as typeof import('./initial-design-delivery');
   const managed = findInitialDesignRun({ projectRoot, feature, requirement: input.requirement });
-  const continuation = managed ? null : decideRunContinuation({ projectRoot, feature, call: {
+  const continuation = managed ? null : decideRunContinuation({ projectRoot, frameworkRoot, feature, call: {
     requirement: input.requirement, requirementSourceFiles: input.requirementSourceFiles,
   } });
   if (continuation?.kind === 'rejoin' || continuation?.kind === 'successor') {

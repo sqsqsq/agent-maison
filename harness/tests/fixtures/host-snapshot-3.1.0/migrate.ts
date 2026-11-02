@@ -1,5 +1,4 @@
 import * as YAML from 'yaml';
-import { loadFactsInvocationContext } from '../../../scripts/utils/capability-resolution-entry-input';
 import { findPhaseDeltaSection, type FactsInvocationContext } from '../../../scripts/utils/context-facts';
 import { parseContextExploration } from '../../../scripts/utils/context-exploration';
 import { extractTables } from '../../../scripts/utils/markdown-parser';
@@ -10,12 +9,17 @@ import * as path from 'path';
 import * as os from 'os';
 import { execFileSync } from 'child_process';
 import { clearFrameworkConfigCache, featureFilePath, featurePhaseReportsDir } from '../../../config';
+import { resolveWorkflowSpec } from '../../../workflow-loader';
+import { resolveSuccessorExecutionScope } from '../../../scripts/utils/feature-execution-scope';
 import { assessFeature } from '../../../scripts/utils/feature-assessment';
 import { resolveChangeUnitExpectedExecution } from '../../../scripts/utils/change-unit-completion';
 import { publishRequestedVerifier, readDeliveredVerifierRequest, writeSpecMaterials, writeCuSpecMaterials } from '../../unit/real-chain.unit.test';
 import { computeMaterialSha256, readVerifierMaterialOrNull } from '../../../scripts/utils/verifier-material';
 import { loadVerifierEvidenceForSubject } from '../../../scripts/utils/verifier-evidence';
 import { runGoalRuntimeChain } from '../../unit/goal-runner-testing-integrity.unit.test';
+import { preserveRuntimeTestEvidence } from '../../utils/runtime-test-control';
+import { executionRequestForInvoke } from '../../../scripts/utils/session-execution-handoff';
+import { resolveCompletionDisposition } from '../../../scripts/utils/verify-feature-completion';
 import { ensureFakeDeveco } from '../../unit/successor-exit.unit.test';
 import { git, provisionFrameworkUnder, synthesizeTestChainProfile } from '../../utils/real-chain-host';
 import { copyTree, loadHostSnapshot, SNAPSHOT_CU_FEATURE, SNAPSHOT_FLAT_FEATURE } from './generate';
@@ -61,7 +65,7 @@ export function researchSnapshotFacts(root: string, file: string, phase: string,
     + sources.map(source => row(source, '核对当前实现输入')).join('\n') + '\n');
 }
 
-/** 显式升级旧快照副本：只替代 agent/verifier 传输，harness、范围、预算和完成核验都走生产。 */
+/** 显式升级旧快照副本：只替代 agent/verifier 传输，harness、范围和完成核验都走生产。 */
 export async function migrateHostSnapshot(s: Snapshot, feature: string) {
   clearFrameworkConfigCache();
   const before = assessFeature(s.root, feature, { ...resolveChangeUnitExpectedExecution(s.root, feature), frameworkRoot: s.frameworkRoot });
@@ -87,16 +91,16 @@ export async function migrateHostSnapshot(s: Snapshot, feature: string) {
   try { execFileSync('git', ['cat-file', '-e', `${manifest.run_base_sha}^{commit}`], { cwd: s.root, stdio: 'ignore' }); }
   catch { rebaselineTo = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: s.root, encoding: 'utf8' }).trim(); }
   const owners = new Set(before.obligations.filter(o => o.applicability === 'required' && o.status === 'uncovered' && o.kind !== 'phase-result').map(o => o.owner_phase));
-  const chain = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'].filter(phase => owners.has(phase));
   ensureFakeDeveco(s);
+  const successorScope = resolveSuccessorExecutionScope(s.root, feature, resolveWorkflowSpec(s.root, { frameworkRoot: s.frameworkRoot }),
+    s.frameworkRoot, manifest.requirement, sourceRun, manifest.fidelity);
+  assert(successorScope?.phase_chain.length, 'the actual original request must have a nonempty current successor scope');
+  const chain = successorScope.phase_chain;
   const p = { ...s, feature, module: feature === SNAPSHOT_CU_FEATURE ? 'ledger' : 'FinancialCard', modulePath: feature === SNAPSHOT_CU_FEATURE ? 'src/ledger' : '02-Feature/FinancialCard' };
-  const researchIfRequested = (ctx: { runId: string; phase: string; goalAttemptId?: string }): void => {
-    const admitted = loadFactsInvocationContext({ projectRoot: s.root, frameworkRoot: s.frameworkRoot, feature, phase: ctx.phase, runId: ctx.runId, attemptId: ctx.goalAttemptId });
-    if (!admitted) return;
-    researchSnapshotFacts(s.root, featureFilePath(s.root, feature, 'context/facts.md'), ctx.phase, admitted);
-  };
+  const evidenceFiles = ['context/facts.md', 'acceptance.yaml', 'contracts.yaml', 'spec/spec.md'].map(file => featureFilePath(s.root, feature, file));
   const probe = await runGoalRuntimeChain(s.root, {
     frameworkRoot: s.frameworkRoot, featureId: feature, adapter: 'codex', realHarness: true,
+    testControl: { timeoutMs: 20 * 60_000, evidenceFiles },
     supersede: [sourceRun], freshRequirement: manifest.requirement, rebaselineTo,
     freshStartPhase: chain[0] as 'review', freshEndPhase: chain.at(-1), skipLegacySeal: true,
     onOutOfChain: ctx => {
@@ -113,20 +117,32 @@ export async function migrateHostSnapshot(s: Snapshot, feature: string) {
       const accepted = loadVerifierEvidenceForSubject(s.root, feature, request.phase, request.subject_id, { frameworkRoot: s.frameworkRoot });
       assert(accepted.ok, JSON.stringify(accepted));
     },
-    onSpec: ctx => {
+    onAuthor: (ctx, context) => {
       const current = { ...p, runId: ctx.runId };
       const facts = featureFilePath(s.root, feature, 'context/facts.md');
-      const admitted = loadFactsInvocationContext({ projectRoot: s.root, frameworkRoot: s.frameworkRoot, feature, phase: ctx.phase, runId: ctx.runId, attemptId: ctx.goalAttemptId });
+      const admitted = context.factsContext;
+      assert(admitted, 'the dedicated author must consume the facts admission from its actual signed request');
+      const originalRequest = executionRequestForInvoke(context.runDir);
+      assert(originalRequest, 'research must locate its actual saved request');
+      evidenceFiles.push(path.resolve(context.runDir, originalRequest.reference.path));
+      for (const family of context.chain) for (const file of ['script-report.json', 'summary.json', 'phase-evidence-manifest.json'])
+        evidenceFiles.push(path.join(featurePhaseReportsDir(s.root, feature, family, s.frameworkRoot), file));
+      console.log('SNAPSHOT_AUTHOR_INPUT ' + JSON.stringify({ run: ctx.runId, invoke: originalRequest.request.invoke_id,
+        original: originalRequest.reference, facts: admitted,
+        entry_source_sha256: hash(path.resolve(__dirname, '../../../scripts/utils/capability-resolution-entry-input.ts')),
+        copied_entry_sha256: hash(path.join(s.frameworkRoot, 'harness/scripts/utils/capability-resolution-entry-input.ts')) }));
       const baseline = admitted?.baseline && fs.existsSync(facts) ? fs.readFileSync(facts) : undefined;
-      if (feature === SNAPSHOT_CU_FEATURE) writeCuSpecMaterials(current); else writeSpecMaterials(current, undefined, { preserveUnchanged: true });
+      const disposition = resolveCompletionDisposition({ projectRoot: s.root, frameworkRoot: s.frameworkRoot, feature, runId: ctx.runId, chain: [...context.chain] });
+      if (owners.has('spec') || disposition.completionBlocking.some(problem => problem.action === 'repair' && (problem.owner === 'spec' || problem.phase === 'spec'))) {
+        if (feature === SNAPSHOT_CU_FEATURE) writeCuSpecMaterials(current); else writeSpecMaterials(current, undefined, { preserveUnchanged: true });
+      }
       if (baseline) fs.writeFileSync(facts, baseline);
-      researchIfRequested(ctx);
+      researchSnapshotFacts(s.root, facts, admitted.first_phase, admitted);
+      for (const family of context.chain) if (family !== admitted.first_phase) researchSnapshotFacts(s.root, facts, family, admitted);
+      const researched = parseContextExploration(fs.readFileSync(facts, 'utf8'));
+      console.log('SNAPSHOT_AUTHOR_RESEARCH ' + JSON.stringify({ run: ctx.runId, sha256: hash(facts),
+        declared: researched.fm.source_code_paths, ut_delta: findPhaseDeltaSection(researched.body, 'ut', true).content }));
     },
-    onPlan: researchIfRequested,
-    onCoding: researchIfRequested,
-    onUt: researchIfRequested,
-    onReview: researchIfRequested,
-    onTesting: researchIfRequested,
   });
   clearFrameworkConfigCache();
   const after = assessFeature(s.root, feature, { ...resolveChangeUnitExpectedExecution(s.root, feature), frameworkRoot: s.frameworkRoot });
@@ -135,14 +151,16 @@ export async function migrateHostSnapshot(s: Snapshot, feature: string) {
   const failedReport = failedPhase ? featureFilePath(s.root, feature, `${failedPhase}/reports/script-report.json`) : '';
   const failureChecks = failedReport && fs.existsSync(failedReport)
     ? JSON.parse(fs.readFileSync(failedReport, 'utf8')).checks.filter((check: { status: string; severity: string }) => check.status === 'FAIL' || check.status === 'SKIP' && check.severity === 'BLOCKER') : [];
+  if (probe.exitCode !== 0 || !after.complete) console.log('SNAPSHOT_MIGRATION_ORIGINALS ' + preserveRuntimeTestEvidence([s.root],
+    'current formal migration remains incomplete', [], evidenceFiles));
   assert.equal(probe.exitCode, 0, JSON.stringify({ events: probe.events.slice(-5), checks: failureChecks }));
   assert(after.complete, JSON.stringify({ record: after.record, obligations: after.obligations.filter(o => o.status === 'uncovered') }));
   assert(after.record.state === 'ok' && after.record.run_id, '新完成必须仍可信并有 run 身份');
-  if (owners.has('spec')) assert(probe.invokedPhases.includes('spec'), 'invalid spec proof must be replaced by a real spec execution, without requiring an extra scope write');
+  if (owners.has('spec')) assert(probe.invokedPhases.includes('work-unit-author'), 'the actual dedicated author must repair invalid definitions before the real checks can qualify them');
   const successorRun = after.record.run_id;
   assert.notEqual(successorRun, sourceRun, '已完成后必须用新 run 生成新 completion');
   assert(probe.events.some(event => event.type === 'supersede' && event.target_run_id === sourceRun), '须有正式承接审计');
-  assert.equal(probe.events.filter(event => event.type === 'agent_invoke_start').length, probe.invokedPhases.length, '迁移调用必须照计预算');
+  assert.equal(probe.events.filter(event => event.type === 'agent_invoke_start').length, probe.invokedPhases.length, '所有真实迁移调用必须保留原事件');
   const summary = JSON.parse(fs.readFileSync(featureFilePath(s.root, feature, 'review/reports/summary.json'), 'utf8'));
   console.log(`SNAPSHOT_MIGRATED feature=${feature} source=${sourceRun} successor=${successorRun} chain=${chain.join(',')} invokes=${probe.invokedPhases.length}`);
   return { feature, source_run: sourceRun, successor_run: successorRun, originalHash, chain, invoked_phases: probe.invokedPhases, gate_fingerprint: summary.gate_fingerprint, verifier_closure: summary.verifier_closure, events: probe.events };

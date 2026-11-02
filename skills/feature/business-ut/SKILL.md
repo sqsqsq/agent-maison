@@ -17,7 +17,7 @@ review 等待本职责修测试时，依真实 coding 输入和 requires/control
 | 正式 Feature/CU UT | 先完整读 [正式阶段](../../reference/business-ut-workflow-detail.md#正式-featurecu-阶段) 再执行，消费绑定的 unit/both AC、契约、范围和 required 产物 | 原阶段闭环；不自行删验收、改产品或追加 testing |
 
 已有正式任务不拆成独立 request。request 和正式调用按 [输入契约](../../../docs/concepts/skill-contracts.md#facts-11) 读取真实身份；方法调用不生成身份/facts。
-正式阶段的**闭环停等**按 [用户确认 UX](../../reference/user-confirmation-ux.md) 的 `ut.ok_to_testing` / `phase.next_step` 与已有授权裁决；独立请求到本次测试终点结束。
+完整交付由原协调器按共同当前处置和已有授权继续，不在phase边界重复确认或轮流派作者。独立请求到本次原终点结束；真正独立核验保持另一个上下文。
 
 ## 共享测试方法
 

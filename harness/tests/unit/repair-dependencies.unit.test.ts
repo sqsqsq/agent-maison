@@ -108,11 +108,13 @@ const cases: Array<{ name: string; run(): void }> = [
       assert.deepEqual(collectPhaseCompletionIssues({ projectRoot: f.root, frameworkRoot: f.frameworkRoot, feature: f.feature, chain,
         workflow: currentWorkflow, executionScope: resolved, runId: 'RUN1' }), []);
       for (const event of [{ type: 'phase_invalidated', phase: 'coding' },
-        { type: 'phase_backtrack_requested', phase: 'review', from_phase: 'review', to_phase: 'coding' },
-        { type: 'phase_verdict', phase: 'coding', verdict: 'FAIL', action: 'retry' }]) {
+        { type: 'phase_backtrack_requested', phase: 'review', from_phase: 'review', to_phase: 'coding' }]) {
         writeRunEvents(f.root, f.feature, 'RUN1', [...resolvedEvents, event]);
         assert(resolveCurrentScopeView(options).phase_chain.includes('coding'), JSON.stringify(event));
       }
+      writeRunEvents(f.root, f.feature, 'RUN1', [...resolvedEvents, { type: 'phase_verdict', phase: 'coding', verdict: 'FAIL', action: 'retry' }]);
+      assert(!resolveCurrentScopeView(options).phase_chain.includes('coding'),
+        'a historical event cannot override the actual current qualified proof; real FAIL and revocations remain checked below');
       const newDuty = structuredClone(previous);
       newDuty.obligations.push({ id: 'implementation:new', kind: 'implementation', owner_phase: 'coding', applicability: 'required', reason: 'new explicit work', basis: [] });
       const newWork = scopeProofHistory(previous, [...initial, { type: 'scope_revised', execution_scope: newDuty }] as ScopeHistoryEvent[], chain, undefined, currentWorkflow);
@@ -157,7 +159,8 @@ const cases: Array<{ name: string; run(): void }> = [
     try {
       summary(root, 'review', { schema_version: '1.0', verdict: 'FAIL', blocker_count: 1, blockers: [{ id: 'negative_verdict_closure' }] });
       assert(!gate(root, 'ut').some(check => check.status === 'FAIL'));
-      assert(gate(root, 'testing').some(check => check.status === 'FAIL' && check.details?.includes('[review]')));
+      assert(gate(root, 'testing').some(check => check.status === 'SKIP'), '缺实际输入保持未知，不用phase顺序替代绑定');
+      assert.equal(readUpstreamPhaseView(root, 'bc-openCard', 'review').verdict, 'FAIL', '原review否决保留');
     } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
   } },
   { name: 'coding只因待采纳测试失败时UT可承接；真实生产失败或混合blocker仍挡UT', run() {
@@ -171,9 +174,9 @@ const cases: Array<{ name: string; run(): void }> = [
         { id: 'coding_run_status', details_excerpt: 'can_claim_done: NO\ncoding_compile: PASS\nblocker_fail_count: 1\ncritical_skip_count: 0\nblocking_warn_count: 0\nblocker_fail_ids: coding_existing_test_preserved' }] });
       assert(!gate(root, 'ut').some(check => check.status === 'FAIL'), '已由源失败表达的run_status聚合不能反挡真实UT修复');
       summary(root, 'coding', { schema_version: '1.0', verdict: 'FAIL', blocker_count: 2, blockers: [adoption, { id: 'production_compile', affected_files: ['02-Feature/FinancialCard/src/main/ets/Index.ets'] }] });
-      assert(gate(root, 'ut').some(check => check.status === 'FAIL'));
+      assert.equal(readUpstreamPhaseView(root, 'bc-openCard', 'coding').verdict, 'FAIL', '真实coding负面不能成为PASS');
       summary(root, 'coding', { schema_version: '1.0', verdict: 'FAIL', blocker_count: 1, blockers: [{ ...adoption, affected_files: ['02-Feature/FinancialCard/src/main/ets/Index.ets'] }] });
-      assert(gate(root, 'ut').some(check => check.status === 'FAIL'));
+      assert.equal(readUpstreamPhaseView(root, 'bc-openCard', 'coding').verdict, 'FAIL', '错归生产源的负面原件仍不通过');
     } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
   } },
   { name: '真实旧PASS报告被当前测试FAIL覆盖时UT可工作，源码契约真stale或manifest篡改仍不可绕过', run() {
@@ -198,18 +201,18 @@ const cases: Array<{ name: string; run(): void }> = [
       assert.strictEqual(view().freshness, 'stale', '允许UT执行不能恢复旧coding PASS');
       fs.writeFileSync(path.join(root, production), 'export const value = 2;');
       assert(view().freshnessChangedPaths?.includes(production), '反例必须是真实业务源变化');
-      assert(gate(root, 'ut').some(check => check.status === 'FAIL'), '业务源真stale不能借UT交接绕过');
+      assert.equal(view().freshness, 'stale', '业务源真stale不能借UT交接洗白');
       fs.writeFileSync(path.join(root, production), 'export const value = 1;');
       const contractsFile = path.join(root, 'doc/features/bc-openCard/contracts.yaml');
       const originalContracts = fs.readFileSync(contractsFile, 'utf8');
       fs.appendFileSync(contractsFile, '  - 02-Feature/FinancialCard/src/main/ets/NewInput.ets\n');
       assert(view().freshnessChangedPaths?.some(file => file.endsWith('contracts.yaml')), '契约反例必须真实变化');
-      assert(gate(root, 'ut').some(check => check.status === 'FAIL'), '契约stale不能借UT交接绕过');
+      assert.equal(view().freshness, 'stale', '契约stale仍不能复用');
       fs.writeFileSync(contractsFile, originalContracts);
       const manifestFile = phaseEvidenceManifestPath(root, 'bc-openCard', 'coding');
       const manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8')); manifest.inputs[0].sha256 = 'f'.repeat(64); fs.writeFileSync(manifestFile, JSON.stringify(manifest));
       assert.strictEqual(view().freshness, 'tampered');
-      assert(gate(root, 'ut').some(check => check.status === 'FAIL'), '破损manifest不能因仅测试FAIL而放行');
+      assert.equal(view().freshness, 'tampered', '破损manifest不能因仅测试FAIL而复用');
     } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
   } },
 ];

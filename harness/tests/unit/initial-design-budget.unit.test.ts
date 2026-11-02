@@ -6,25 +6,19 @@ import * as path from 'path';
 import { createHash } from 'crypto';
 import * as YAML from 'yaml';
 import { clearFrameworkConfigCache, featureFilePath } from '../../config';
-import { prepareGoalModeRun, runGoalModeSessionStep as runGoalModeSessionStepUnchecked } from '../../scripts/goal-mode-entry';
-import { originalDeliveryForManifest, readOriginalDeliveryBudget, readOriginalDeliveryRuns } from '../../scripts/utils/delivery-origin';
-import { buildGoalManifestFromInput, buildInitialDesignGoalManifest, computeManifestIdentityFields,
+import { prepareGoalModeRun } from '../../scripts/goal-mode-entry';
+import { readOriginalDeliveryActivity, readOriginalDeliveryRuns } from '../../scripts/utils/delivery-origin';
+import { buildGoalManifestFromInput, buildInitialDesignGoalManifest,
   loadGoalRunManifestFromRun, type GoalManifest, type GoalRunManifest, type InitialDesignGoalManifest } from '../../scripts/utils/goal-manifest';
-import { assertGoalRunAttachable, buildSupersedeAuditEvent, createGoalRun, decideRunContinuation } from '../../scripts/utils/goal-run-creation';
+import { assertGoalRunAttachable, buildSupersedeAuditEvent, createGoalRun } from '../../scripts/utils/goal-run-creation';
 import { casAcquireRunOwner, ensureRunControl } from '../../scripts/utils/goal-run-control';
-import { foldBudgetLineage, loadEventsJsonlStrict, partitionExecutionSessions, resolveResumedBudget, type GoalRunEvent } from '../../scripts/utils/goal-runner-phase';
+import { readSupersededAncestorRuns, loadEventsJsonlStrict, partitionExecutionSessions, type GoalRunEvent } from '../../scripts/utils/goal-runner-phase';
 import { deriveChangeUnitFeatureId, loadCanonicalChangeUnit, enumerateCanonicalChangeUnits } from '../../scripts/utils/change-unit-path';
 import { validateChangeUnit } from '../../scripts/utils/change-unit-validator';
 import { prepareFeatureScopeCandidate } from '../../scripts/utils/feature-track';
 import { fixture } from './blueprint-skill-projection.unit.test';
-import { withFreshCuHost } from './lifecycle-evolution.unit.test';
-import { withRunDisposition } from '../../scripts/utils/adjudication';
 import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
 import type { UnitCaseResult } from '../run-unit';
-import { reportFixtureQuestioning, seedLedgerQuestioningInput } from '../utils/initial-questioning-fixture';
-import { withRuntimeTest, type RuntimeTestControl } from '../utils/runtime-test-control';
-const runGoalModeSessionStep = (options: Parameters<typeof runGoalModeSessionStepUnchecked>[0], testControl: RuntimeTestControl = {}) =>
-  withRuntimeTest({ root: options.projectRoot, ...testControl }, () => runGoalModeSessionStepUnchecked(options));
 
 
 const FRAMEWORK = path.resolve(__dirname, '../../..');
@@ -33,11 +27,11 @@ const MINUTE = 60_000;
 const EPOCH = Date.now() + 24 * 60 * MINUTE;
 const at = (minutes: number): string => new Date(EPOCH + minutes * MINUTE).toISOString();
 const unattended = { write_mode: 'full-access' as const, approval_mode: 'never' as const, timeout_seconds: 900 };
-const requirement = '按已批准账目设计完成本次交付，并保留原请求总预算。';
+const requirement = '按已批准账目设计完成本次交付，并保留原请求、授权、成果与真实截止。';
 type Family = ReturnType<typeof fixture> & { original: InitialDesignGoalManifest };
 
 function withFamily(run: (family: Family) => void, turns = 20,
-  originalInputs: Partial<Pick<InitialDesignGoalManifest, 'adapter_model_pin' | 'visual_provider_pin' | 'fidelity' | 'requirement_source_files'>> = {}): void {
+  originalInputs: Partial<Pick<InitialDesignGoalManifest, 'adapter_model_pin' | 'visual_provider_pin' | 'fidelity' | 'requirement_source_files' | 'user_deadline_at'>> = {}): void {
   const project = fixture();
   try {
     const original = buildInitialDesignGoalManifest({ feature: BLUEPRINT, run_id: 'original-request', adapter: 'claude', requirement,
@@ -65,10 +59,10 @@ const end = (minute: number): GoalRunEvent => ({ type: 'run_end', ts: at(minute)
 const invoke = (minute: number, invokeId = 'shared-invoke'): GoalRunEvent => ({ type: 'agent_invoke_start', ts: at(minute), phase: 'review', invoke_id: invokeId, command: 'phase_execute_request', effective_timeout_ms: 15 * MINUTE });
 const settled = (minute: number, invokeId = 'shared-invoke'): GoalRunEvent => ({ type: 'agent_invoke_end', ts: at(minute), phase: 'review', invoke_id: invokeId });
 
-function child(family: Family, unit = 'ledger-refresh', runId = 'child-run', budget?: GoalManifest['budget']): GoalManifest {
+function child(family: Family, unit = 'ledger-refresh', runId = 'child-run'): GoalManifest {
   const manifest = buildGoalManifestFromInput({ feature: deriveChangeUnitFeatureId(BLUEPRINT, unit), run_id: runId,
     adapter: 'claude', requirement, start_phase: 'review', end_phase: 'review', unattended,
-    delivery_origin: { feature: family.original.feature, run_id: family.original.run_id }, ...(budget ? { budget } : {}),
+    delivery_origin: { feature: family.original.feature, run_id: family.original.run_id },
   }, { projectRoot: family.root });
   createGoalRun({ projectRoot: family.root, manifest, chain: ['review'] });
   assertGoalRunAttachable(family.root, manifest);
@@ -92,16 +86,15 @@ function pendingChild(family: Family): GoalManifest {
 
 const cases: Array<{ name: string; run(): void | Promise<void> }> = [
   ...[20, 60].map(turns => ({
-    name: `f3b8e6a1 family budget ${turns}: public child birth and effective policy retain the original allowance instead of fresh defaults`,
+    name: `f3b8e6a1 legacy quota input ${turns}: public child birth preserves real request pins and deadline without writing an allowance`,
     run() { withFamily(family => {
       prepareFeatureScopeCandidate({ projectRoot: family.root, frameworkRoot: FRAMEWORK, feature: family.feature,
         completionTarget: 'request', requestedResults: ['review'], requestedPhases: ['review'], requirement });
       const prepared = prepareGoalModeRun({ projectRoot: family.root, frameworkRoot: FRAMEWORK, feature: family.feature,
         runId: 'public-child', adapter: 'claude', requirement,
         deliveryOrigin: { feature: family.original.feature, run_id: family.original.run_id } });
-      assert.equal(prepared.manifest.budget.max_total_turns, turns);
-      assert.equal(prepared.manifest.budget.wall_clock_minutes, 120);
-      assert.equal(prepared.manifest.unattended?.timeout_seconds, 900);
+      assert.equal(prepared.manifest.budget, undefined);
+      assert.equal(prepared.manifest.unattended?.timeout_seconds, undefined);
       const raw = JSON.parse(fs.readFileSync(prepared.manifestPath, 'utf8')) as GoalManifest;
       for (const manifest of [prepared.manifest, raw]) {
         assert.equal(manifest.requirement, family.original.requirement);
@@ -110,7 +103,9 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
         assert.deepEqual(manifest.adapter_model_pin, family.original.adapter_model_pin);
         assert.deepEqual(manifest.visual_provider_pin, family.original.visual_provider_pin);
         assert.equal(manifest.fidelity, family.original.fidelity);
-        assert.equal(manifest.unattended?.timeout_seconds, 900);
+        assert.equal(manifest.user_deadline_at, family.original.user_deadline_at);
+        assert.equal(manifest.budget, undefined);
+        assert.equal(manifest.unattended?.timeout_seconds, undefined);
       }
       const childBytes = fs.readFileSync(prepared.manifestPath);
       const repeated = prepareGoalModeRun({ projectRoot: family.root, frameworkRoot: FRAMEWORK, feature: family.feature,
@@ -119,32 +114,12 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
       assert.equal(repeated.manifest.run_id, prepared.manifest.run_id);
       assert.deepEqual(fs.readFileSync(repeated.manifestPath), childBytes);
       const current = child(family, 'ledger-consumer', 'default-child');
-      assert.equal(current.budget.max_total_turns, 30, 'fixture must expose the actual fresh default');
-      assert.equal(readOriginalDeliveryBudget(family.root, current, EPOCH + MINUTE)!.budget.max_total_turns, turns);
+      assert.equal(current.budget, undefined, 'a fresh child has no default quota');
+      assert.equal(readOriginalDeliveryActivity(family.root, current, EPOCH + MINUTE)!.calls, 0);
     }, turns, { adapter_model_pin: { adapter: 'claude', value: 'claude-opus-5-5' },
       visual_provider_pin: { adapter: 'claude', model: 'claude-opus-5-5' }, fidelity: 'reference_only',
-      requirement_source_files: ['requirements/ledger.md'] }); },
+      requirement_source_files: ['requirements/ledger.md'], user_deadline_at: at(120) }); },
   })),
-  {
-    name: 'f3b8e6a1 family budget: an authorized original override reaches the current child without changing its birth snapshot or resetting usage',
-    run() { withFamily(family => {
-      const current = child(family);
-      append(family, family.original, [start(0), invoke(0), settled(1), end(1)]);
-      append(family, current, [start(2), invoke(2), settled(3), end(3)]);
-      const childBytes = fs.readFileSync(path.join(runDir(family, current), 'manifest.json'));
-      const updated = { ...family.original, budget: { ...family.original.budget, max_total_turns: 42 } };
-      fs.writeFileSync(path.join(runDir(family, family.original), 'manifest.json'), JSON.stringify(updated, null, 2) + '\n');
-      append(family, family.original, [{ type: 'manifest_identity_rebase', ts: at(4), to_fields: computeManifestIdentityFields(updated),
-        changed_fields: ['budget'], authorized_by: '--override-manifest' }]);
-      const budget = readOriginalDeliveryBudget(family.root, current, EPOCH + 5 * MINUTE)!;
-      assert.equal(budget.budget.max_total_turns, 42);
-      assert.equal(budget.totalTurns, 2);
-      assert.deepEqual(fs.readFileSync(path.join(runDir(family, current), 'manifest.json')), childBytes);
-      const unauthorized = { ...updated, budget: { ...updated.budget, max_total_turns: 43 } };
-      fs.writeFileSync(path.join(runDir(family, family.original), 'manifest.json'), JSON.stringify(unauthorized, null, 2) + '\n');
-      assert.throws(() => readOriginalDeliveryBudget(family.root, current, EPOCH + 5 * MINUTE), /budget changed without/);
-    }); },
-  },
   {
     name: 'f3b8e6a1 family budget: equal cross-Feature run and invoke strings remain distinct and repeated reads never double-charge one invocation',
     run() { withFamily(family => {
@@ -156,9 +131,9 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
       assert.equal(readOriginalDeliveryRuns(family.root, family.original).length, 3);
       const bytes = [family.original, first, second].map(manifest => fs.readFileSync(eventsFile(family, manifest)));
       for (const manifest of [family.original, first, second, family.original]) {
-        const budget = readOriginalDeliveryBudget(family.root, manifest, EPOCH + 9 * MINUTE)!;
-        assert.equal(budget.totalTurns, 3);
-        assert.equal(budget.priorActiveMs, 6 * MINUTE);
+        const budget = readOriginalDeliveryActivity(family.root, manifest, EPOCH + 9 * MINUTE)!;
+        assert.equal(budget.calls, 3);
+        assert.equal(budget.active_ms, 6 * MINUTE);
       }
       [family.original, first, second].forEach((manifest, index) => assert.deepEqual(fs.readFileSync(eventsFile(family, manifest)), bytes[index]));
     }); },
@@ -169,9 +144,9 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
       const current = pendingChild(family);
       const now = EPOCH + 840 * MINUTE;
       assert.equal(partitionExecutionSessions(events(family, current), { tailCapMs: now }).priorActiveMs, 15 * MINUTE);
-      const budget = readOriginalDeliveryBudget(family.root, current, now)!;
-      assert.equal(budget.totalTurns, 2);
-      assert.equal(budget.priorActiveMs, 25 * MINUTE, '10m original work plus the granted 15m author window; overnight absence is not work');
+      const budget = readOriginalDeliveryActivity(family.root, current, now)!;
+      assert.equal(budget.calls, 2);
+      assert.equal(budget.active_ms, 25 * MINUTE, '10m original work plus the granted 15m author window; overnight absence is not work');
       assert.equal(budget.firstAuthoritativeStartMs, EPOCH);
     }); },
   },
@@ -185,9 +160,9 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
       { type: 'harness_end', ts: at(842), invoke_id: 'returning-gate' }, end(842)]);
       const now = EPOCH + 842 * MINUTE;
       assert.equal(partitionExecutionSessions(events(family, current), { tailCapMs: now }).priorActiveMs, 17 * MINUTE);
-      const budget = readOriginalDeliveryBudget(family.root, current, now)!;
-      assert.equal(budget.totalTurns, 2);
-      assert.equal(budget.priorActiveMs, 27 * MINUTE, '10m original, 15m granted author, 2m actual returning gate');
+      const budget = readOriginalDeliveryActivity(family.root, current, now)!;
+      assert.equal(budget.calls, 2);
+      assert.equal(budget.active_ms, 27 * MINUTE, '10m original, 15m granted author, 2m actual returning gate');
     }); },
   },
   {
@@ -198,9 +173,9 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
         start(12), { type: 'harness_start', ts: at(12), invoke_id: 'original-finalizer' },
         { type: 'harness_end', ts: at(17), invoke_id: 'original-finalizer' }, end(17)]);
       append(family, current, [start(10), invoke(10), settled(11), end(14)]);
-      const budget = readOriginalDeliveryBudget(family.root, current, EPOCH + 17 * MINUTE)!;
-      assert.equal(budget.totalTurns, 2, 'machine-only finalization is not another model call');
-      assert.equal(budget.priorActiveMs, 17 * MINUTE, 'continuous [0m,17m] is charged once, including original work after the child report');
+      const budget = readOriginalDeliveryActivity(family.root, current, EPOCH + 17 * MINUTE)!;
+      assert.equal(budget.calls, 2, 'machine-only finalization is not another model call');
+      assert.equal(budget.active_ms, 17 * MINUTE, 'continuous [0m,17m] is charged once, including original work after the child report');
     }); },
   },
   {
@@ -216,13 +191,13 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
       append(family, first, [start(0), invoke(0), settled(1), end(1)]);
       append(family, second, [start(2), buildSupersedeAuditEvent({ targetRunId: first.run_id, supersedingRunId: second.run_id }), invoke(2), settled(4), end(4)]);
       const loaded = loadGoalRunManifestFromRun(family.root, second.run_id, { feature: second.feature });
-      assert.equal(readOriginalDeliveryBudget(family.root, loaded, EPOCH + 5 * MINUTE), null);
-      const folded = foldBudgetLineage({ projectRoot: family.root, featuresDir: 'doc/features', feature: second.feature,
+      assert.equal(readOriginalDeliveryActivity(family.root, loaded, EPOCH + 5 * MINUTE), null);
+      const ancestors = readSupersededAncestorRuns({ projectRoot: family.root, featuresDir: 'doc/features', feature: second.feature,
         seedTargets: [first.run_id, first.run_id], currentEvents: events(family, second) });
-      const budget = resolveResumedBudget(folded.budgetFoldEvents, { nextSessionStartMs: EPOCH + 5 * MINUTE });
-      assert.equal(folded.ancestorRuns.length, 1);
-      assert.equal(budget.totalTurns, 2);
-      assert.equal(budget.priorActiveMs, 3 * MINUTE);
+      const activity = partitionExecutionSessions([...ancestors.flatMap(run => run.events), ...events(family, second)], { tailCapMs: EPOCH + 5 * MINUTE });
+      assert.equal(ancestors.length, 1);
+      assert.equal(activity.totalTurns, 2);
+      assert.equal(activity.priorActiveMs, 3 * MINUTE);
     }); },
   },
   ...['other-blueprint', 'standalone'].map(target => ({
@@ -264,129 +239,16 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
       append(family, impostor, [start(4), invoke(4), settled(5), end(5)]);
       const before = [family.original, current, impostor].map(manifest => fs.readFileSync(eventsFile(family, manifest)));
       const expected = target === 'other-blueprint' ? /outside the original blueprint workspace/ : /Feature id 非 CU/;
-      assert.throws(() => readOriginalDeliveryBudget(family.root, impostor, EPOCH + 6 * MINUTE), expected,
+      assert.throws(() => readOriginalDeliveryActivity(family.root, impostor, EPOCH + 6 * MINUTE), expected,
         'an origin-bound call must be rejected instead of receiving an allowance that silently omits its actual invocation');
       assert.throws(() => prepareGoalModeRun({ projectRoot: family.root, frameworkRoot: FRAMEWORK, feature,
         runId: 'rejected-public-child', adapter: 'claude', requirement,
         deliveryOrigin: { feature: family.original.feature, run_id: family.original.run_id } }), expected);
       assert(!fs.existsSync(featureFilePath(family.root, feature, 'goal-runs/rejected-public-child')));
       [family.original, current, impostor].forEach((manifest, index) => assert.deepEqual(fs.readFileSync(eventsFile(family, manifest)), before[index]));
-      assert.equal(readOriginalDeliveryBudget(family.root, current, EPOCH + 6 * MINUTE)!.totalTurns, 2);
+      assert.equal(readOriginalDeliveryActivity(family.root, current, EPOCH + 6 * MINUTE)!.calls, 2);
     }); },
   })),
-  {
-    name: 'f3b8e6a1 public budget control: a real root override resumes its exhausted original child once and the exhausted new limit cannot revive it again',
-    async run() { await withFreshCuHost(async host => {
-      seedLedgerQuestioningInput(host.root);
-      const workspace = path.resolve(featureFilePath(host.root, BLUEPRINT, ''));
-      for (const unit of enumerateCanonicalChangeUnits(host.root, BLUEPRINT)) {
-        if (unit.changeUnit.change_unit_id === 'ledger-refresh') continue;
-        const directory = path.resolve(path.dirname(unit.canonicalPath));
-        assert(directory.startsWith(workspace + path.sep));
-        fs.rmSync(directory, { recursive: true, force: true });
-      }
-      const original = buildInitialDesignGoalManifest({ feature: BLUEPRINT, run_id: 'public-policy-root', adapter: 'codex', requirement,
-        initial_design: { completion_target: 'feature', requested_results: [requirement], requested_phases: ['plan', 'coding', 'review', 'ut'] },
-        budget: { max_total_turns: 20, wall_clock_minutes: 120 }, unattended }, { projectRoot: host.root });
-      createGoalRun({ projectRoot: host.root, manifest: original, chain: [] });
-      const feature = deriveChangeUnitFeatureId(BLUEPRINT, 'ledger-refresh');
-      prepareFeatureScopeCandidate({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature,
-        completionTarget: 'feature', requestedResults: [requirement], requestedPhases: ['plan', 'coding', 'review', 'ut'], requirement, overwrite: true,
-        impact: { userVisibleBehaviorChange: false, reason: '既有账目领域职责，不含UI或设备行为', basisPaths: ['src/ledger/LedgerFeature.ets'] } });
-      const prepared = prepareGoalModeRun({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature,
-        runId: 'public-policy-child', adapter: 'codex', requirement, deliveryOrigin: { feature: original.feature, run_id: original.run_id } });
-      assert(!('initial_design' in prepared.manifest));
-      const current = prepared.manifest as GoalManifest;
-      const childBytes = fs.readFileSync(prepared.manifestPath);
-      assert.equal(current.budget.max_total_turns, 20);
-      const phase = current.start_phase;
-      const seedCalls = (count: number, prefix: string): void => {
-        const ts = new Date().toISOString();
-        append(host, current, Array.from({ length: count }, (_, index) => [
-          { type: 'agent_invoke_start', ts, phase, invoke_id: `${prefix}-${index}`, command: 'fixture-budget-history' },
-          { type: 'agent_invoke_end', ts, phase, invoke_id: `${prefix}-${index}`, exit_code: 1 },
-        ]).flat());
-      };
-      const stop = (): void => {
-        const ts = new Date().toISOString();
-        append(host, current, [withRunDisposition({ type: 'phase_halt', ts, phase, halt_reason: 'budget_turns', verdict: 'FAIL', reason: 'fixture history reached the effective total model-call limit' }),
-          withRunDisposition({ type: 'run_end', ts, status: 'HALTED', halt_reason: 'budget_turns' })]);
-      };
-      append(host, current, [{ type: 'run_start', ts: new Date().toISOString(), dry_run: false, chain: current.phase_chain }]);
-      seedCalls(20, 'first-allowance'); stop();
-      const controls = { projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: original.feature, runId: original.run_id,
-        adapter: 'codex', runMode: 'attended' as const, authorization: { mode: 'goal_mode' as const, autonomyAuthorized: true } };
-      const oldRebases = events(host, original).filter(row => row.type === 'manifest_identity_rebase').length;
-      const rootFile = path.join(runDir(host, original), 'manifest.json');
-      const updated = { ...original, budget: { ...original.budget, max_total_turns: 60 } };
-      fs.writeFileSync(rootFile, JSON.stringify(updated, null, 2) + '\n');
-      const priorCalls = events(host, current).filter(row => row.type === 'agent_invoke_start').length;
-      await assert.rejects(() => runGoalModeSessionStep(controls), /original budget changed without its existing override authorization/,
-        'a public reader cannot project an unauthorized budget as a trusted run result');
-      assert.equal(events(host, original).filter(row => row.type === 'manifest_identity_rebase').length, oldRebases, 'unapproved bytes must not become an authorized budget event');
-      assert.equal(events(host, current).filter(row => row.type === 'agent_invoke_start').length, priorCalls, 'rejected unapproved budget cannot dispatch a child invocation');
-      assert.deepEqual(fs.readFileSync(prepared.manifestPath), childBytes);
-      assert.throws(() => readOriginalDeliveryBudget(host.root, current), /changed without/);
-      let resumed = await runGoalModeSessionStep({ ...controls, overrideManifest: true });
-      let actualQuestions = 0;
-      if (resumed.type === 'phase_execute_request' && resumed.phase === 'initial-design-questioning') {
-        resumed = await reportFixtureQuestioning(controls, resumed, runDir(host, original),
-          path.join(host.root, 'doc/features', BLUEPRINT, 'blueprint/component-blueprint.yaml'));
-        actualQuestions++;
-      }
-      assert.equal(events(host, original).filter(row => row.type === 'manifest_identity_rebase').length, oldRebases + 1, 'the public runtime, not this test, must accept the override');
-      assert.equal(resumed.type, 'phase_execute_request', JSON.stringify(resumed));
-      assert.equal(resumed.run_id, current.run_id, `the signed request must continue the same canonical child: ${JSON.stringify({ actual: resumed,
-        rootTail: events(host, original).slice(-5), childTail: events(host, current).slice(-5) })}`);
-      assert.equal(resumed.feature, current.feature);
-      const afterChild = fs.readFileSync(prepared.manifestPath);
-      if (!afterChild.equals(childBytes)) {
-        const before = JSON.parse(childBytes.toString('utf8')), after = JSON.parse(afterChild.toString('utf8'));
-        const changed = [...new Set([...Object.keys(before), ...Object.keys(after)])].filter(key => JSON.stringify(before[key]) !== JSON.stringify(after[key]));
-        const directory = path.join(FRAMEWORK, 'harness/reports/f3b8e6a1');
-        fs.writeFileSync(path.join(directory, 'public-control-child-before.json'), childBytes);
-        fs.writeFileSync(path.join(directory, 'public-control-child-after.json'), afterChild);
-        fs.writeFileSync(path.join(directory, 'public-control-child-diff.json'), JSON.stringify({ project_root: host.root, child_manifest: prepared.manifestPath,
-          changed: changed.map(key => ({ key, before: before[key], after: after[key] })) }, null, 2) + '\n');
-        assert.deepEqual(afterChild, childBytes, `child manifest changed: ${changed.join(', ')}`);
-      }
-      const beforeFinal = readOriginalDeliveryBudget(host.root, current)!;
-      assert.equal(beforeFinal.budget.max_total_turns, 60);
-      assert.equal(beforeFinal.totalTurns, 21 + actualQuestions, '20 consumed calls, any real current Q and the newly signed child each count once');
-      seedCalls(60 - beforeFinal.totalTurns, 'second-allowance');
-      const reference = resumed.request as { path: string };
-      await runGoalModeSessionStep({ ...controls, requestPath: reference.path,
-        report: { status: 'failed', phase: String(resumed.phase), details: 'The seeded family history reached 60 calls; no product completion is claimed.' } });
-      const spent = readOriginalDeliveryBudget(host.root, current)!;
-      assert.equal(spent.totalTurns, 60);
-      const stopped = events(host, current).filter(row => row.type === 'run_end').at(-1);
-      assert.equal(stopped?.halt_reason, 'budget_turns');
-      const childDirectory = path.dirname(prepared.runDir);
-      const runIds = fs.readdirSync(childDirectory).filter(name => !name.startsWith('.')).sort();
-      const decision = decideRunContinuation({ projectRoot: host.root, feature: current.feature, call: { requirement } });
-      const currentOriginal = originalDeliveryForManifest(host.root, current);
-      assert(currentOriginal, 'the canonical child must resolve its actual current original delivery');
-      const beforeStarts = readOriginalDeliveryRuns(host.root, currentOriginal).flatMap(run => run.events).filter(row => row.type === 'agent_invoke_start').length;
-      let repeated: Awaited<ReturnType<typeof runGoalModeSessionStep>> | undefined;
-      let refusal: unknown;
-      try { repeated = await runGoalModeSessionStep(controls); } catch (error) { refusal = error; }
-      const diagnostic = JSON.stringify({ decision, repeated, actualError: refusal instanceof Error ? { message: refusal.message, stack: refusal.stack } : refusal,
-        totalTurns: readOriginalDeliveryBudget(host.root, current)!.totalTurns,
-        rootCuts: events(host, original).filter(row => row.type !== undefined && ['run_created', 'manifest_identity_rebase', 'run_end'].includes(row.type)),
-        childEnds: events(host, current).filter(row => row.type === 'run_end') });
-      assert(typeof diagnostic === 'string', 'the actual refusal diagnostic must serialize to text');
-      if (refusal) assert.match(String(refusal), /本次请求没有带来任何变化[\s\S]*budget_turns/, diagnostic);
-      else {
-        assert.equal(repeated?.type, 'goal_session_result', diagnostic);
-        assert.equal((repeated as { result?: { halt_reason?: string } })?.result?.halt_reason, 'budget_turns', diagnostic);
-        assert.equal(repeated?.run_id, original.run_id, diagnostic);
-      }
-      assert.equal(readOriginalDeliveryRuns(host.root, currentOriginal).flatMap(run => run.events).filter(row => row.type === 'agent_invoke_start').length, beforeStarts, diagnostic);
-      assert.equal(readOriginalDeliveryBudget(host.root, current)!.totalTurns, 60);
-      assert.deepEqual(fs.readdirSync(childDirectory).filter(name => !name.startsWith('.')).sort(), runIds);
-      assert.deepEqual(fs.readFileSync(prepared.manifestPath), childBytes);
-    }); },
-  },
 ];
 
 export function getCases() { return cases; }

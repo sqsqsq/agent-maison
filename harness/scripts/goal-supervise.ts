@@ -23,7 +23,7 @@ import * as path from 'path';
 import minimist from 'minimist';
 import { detectRepoLayout } from '../repo-layout';
 import { loadAuthoritativeEvents } from './utils/goal-runner-phase';
-import { countSupervisorRestarts, superviseRun, schedulerSupport, restartBackoffMs, type SupervisorDecision } from './utils/goal-supervisor';
+import { countSupervisorRestarts, superviseRun, schedulerSupport, type SupervisorDecision } from './utils/goal-supervisor';
 import { loadGoalRunManifestFromRun, type GoalRunManifest, type InitialDesignGoalManifest } from './utils/goal-manifest';
 import { originalDeliveryForManifest, resolveOriginalDeliveryExecution } from './utils/delivery-origin';
 import { defaultProcessProbe } from './utils/device-session';
@@ -499,4 +499,3 @@ export {
 };
 // 进程内入口（测试用）：非 dry-run 分支必须真跑一次才算验收，见 supervisor-kill-recovery
 export { main as __testing_main };
-export { restartBackoffMs };

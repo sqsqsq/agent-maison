@@ -1,5 +1,7 @@
 # 真机测试阶段语义验证 — {feature_name}
 
+**当前独核资格与结果边界**：只消费机器实际签发的当前request/material，phase仅选择检查方法。带“本轮为产品失败诊断”时，按已给具体对象/原报告逐条独立核实；无关编译/设备/报告缺口不遮住其它可核实工作，缺实际对象仍保持未知。独核终态只表示本次语义核实，不继承产品raw FAIL或替代缺失执行；产品FAIL/unknown仍由共同完成处置保留。变化材料补核受影响项，原目标与完整拒修论据逐条保真，不能仅凭摘要、标签或历史PASS结案。
+
 > 自动生成于 {timestamp}
 > 本文件为 AI Harness 的 prompt，可发送给任意 AI 模型执行语义级验证。
 > 现代调用按冻结 scope 与有效解析验收（含 P3 投影）核验 device/both AC、BD、NFR 和视觉义务，不因缺 spec/plan 跳过 P0 runtime 机器证据。manual、离线、缺 provider/图片、trace failed 都是未完成，不得改 N/A；纯 unit TC 仍遵守设备前 R8。request 只对本次明确目标及原生断言负责；零设备范围的 reconcile-only 是只读诊断，不是测试 PASS。
@@ -62,7 +64,7 @@
   5. 检查「测试执行结果」表格的「执行状态」列只出现 **4 状态**：通过 / 失败 / 阻塞 / 跳过
   6. 检查「结论」**verdict** 在 **3 枚举**内：达标 / 有条件达标 / 不达标
   7. **必读 Hylyre trace 并全量对账**：定位 `testing/reports/<ts>/hylyre/trace.json`（与脚本 `report_trace_reconciliation` 同源，**禁止**使用顶层 `testing/reports/trace.json` 回填件）。**逐条**核对 `trace.cases[].id/status` 与顶层 `test-report.md`「测试执行结果」表一致；报告写「通过」但 trace 为「失败/阻塞」→ FAIL
-  8. **trace.outcome 硬规则**：若 `trace.outcome !== success`（含 partial/failed/aborted），verifier **不得**给出 summary.verdict=PASS；报告结论=「达标」但 trace 非 success → FAIL
+  8. **trace.outcome 硬规则**：常规完整执行验收若 `trace.outcome !== success`（含 partial/failed/aborted），不得把产品执行判为PASS；已签发诊断的独核终态依上方语义边界单独判断，不能借独核PASS清除原trace失败；报告结论=「达标」但 trace 非 success → FAIL
   9. **TC 编号一致性（execution_channel SSOT）**：顶层 `test-plan.md` 每条 TC 声明唯一 **`execution_channel`**（`hylyre|visual|manual:<gap_class>|provider:<capability-id>`）；派生计划的 TC 集合须与顶层 `channel=hylyre` 的集合**完全相等**——多出即 extra、缺失即 missing，都是脚本级 BLOCKER，`derive-hint-from-plan.json` 会带 `missing_tc_ids`。**不要用 `explicit_skip_tc_ids` 与派生表做并集**：正式派生计划登记 `explicit_skip_tc_ids` 本身就是 BLOCKER。known manual gap / inactive provider 才是 `unsupported_gap`；裸/未知 manual、未登记或 active 无 producer 的 provider 在跑机前判 `invalid_test`。非 `hylyre` 通道不进派生表
   11. **导航步骤静态门禁（NAV-001/002/003）**：脚本 `check-testing` 在真机 run 前校验派生表 JSON——禁止无 `area`/`at` 的横向 `swipe` 充当 Nav 返回；前序 TC 进入子页后、后续 TC 要求首页 Tab 时首步须 `back` 等。失败则 `coverage_reason=invalid_derived_steps`，须按 `derive-hint-from-plan.json` 的 `lint_violations` 与 `navigation_hint` **重新派生**（勿手改旧 timestamp 目录）
   12. **多 UI 入口覆盖（语义）**：若 `use-cases.yaml` 中同一 `user_actions.calls` 有多个 `ui_bindings.ui` 入口，派生 Hylyre 计划须各入口至少一条带 `entry_ui` 的用例；P0 缺覆盖 → 与脚本 `ui_entry_coverage` 一致判 FAIL

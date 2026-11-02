@@ -368,7 +368,7 @@ async function main(): Promise<number> {
           `Goal ${delivery.feature} · run ${delivery.run_id}`,
           `状态：${delivery.status}；当前职责：${delivery.stage}；完成：${delivery.complete}`,
           delivery.current ? `当前执行：${JSON.stringify(delivery.current)}` : null,
-          `累计调用：${delivery.budget.total_turns}/${delivery.budget.max_total_turns}；活跃时间：${delivery.budget.active_ms}ms/${delivery.budget.wall_clock_minutes}min`,
+          `累计调用：${delivery.activity.calls}；活跃时间：${delivery.activity.active_ms}ms`,
           `下一步：${delivery.next_action}`,
           delivery.halt_reason ? `停止原因：${delivery.halt_reason}` : null,
           delivery.recovery ? `恢复信息：${JSON.stringify(delivery.recovery)}` : null,

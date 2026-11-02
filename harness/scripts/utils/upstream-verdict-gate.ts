@@ -23,7 +23,7 @@ import { SUMMARY_ASSURANCE_SCHEMA_VERSIONS, validateSummaryV11 } from './quality
 import { scopeDependencyEdges, type ExecutionScope } from './execution-scope';
 import type { WorkflowSpec } from '../../workflow-loader';
 import { repairResponsibilityContext, resolveRepairResponsibility, readRepairDependencyContext, type RepairResponsibilityContext } from './repair-responsibility';
-import { dropRedundantAggregates, requiredSummaryCheckGaps, phaseCompletionProblems } from './check-disposition';
+import { requiredSummaryCheckGaps, phaseCompletionProblems } from './check-disposition';
 import type { ResolvedPhaseInputs } from './capability-resolution';
 import { inferLegacyProjectRoot, resolveDependencyPath } from './project-relative-path';
 import { sha256File } from './phase-evidence-manifest';
@@ -292,37 +292,6 @@ export function upstreamPhaseDependencies(projectRoot: string, feature: string, 
   return [...new Set([...resolution.chain, ...ancestors])].filter(item => ancestors.has(item));
 }
 
-/** Use the same dependency closure as the gate before spending an Agent invocation. */
-export function nextIndependentPhase(
-  projectRoot: string, feature: string, candidates: readonly string[], pending: readonly string[], resolution: UpstreamChainResolution,
-): string | null {
-  if (resolution.degraded) return null;
-  return candidates.find(phase => !pending.includes(phase)
-    && !upstreamPhaseDependencies(projectRoot, feature, phase, resolution).some(before => pending.includes(before))) ?? null;
-}
-
-/** A failed producer may hand its test repair to the real test owner; product failures stay blocking. */
-function upstreamRepairIsCurrentWork(opts: { projectRoot: string; feature: string; phase: string }, upstream: UpstreamPhaseView, context: RepairResponsibilityContext): boolean {
-  if (!upstream.verdictReadable || upstream.freshness === 'tampered') return false;
-  if (upstream.freshness === 'stale') {
-    const isProcessArtifact = createRuntimeArtifactPredicate({ projectRoot: opts.projectRoot, feature: opts.feature,
-      phase: upstream.phase, frameworkRoot: context.frameworkRoot });
-    if (!upstream.freshnessChangedPaths?.length || !upstream.freshnessChangedPaths.every(isProcessArtifact)) return false;
-  }
-  try {
-    const summary = JSON.parse(fs.readFileSync(summaryJsonPath(opts.projectRoot, opts.feature, upstream.phase), 'utf8')) as { blocker_count?: number; blockers?: Array<{ id: string; details?: string; details_excerpt?: string; repair_owner?: string; affected_files?: string[]; files?: string[] }> };
-    const raw = summary.blockers ?? [];
-    const blockers = dropRedundantAggregates(raw.map(blocker => ({ ...blocker, details: blocker.details ?? blocker.details_excerpt })));
-    if (!blockers.length || (summary.blocker_count !== undefined && summary.blocker_count !== raw.length && summary.blocker_count !== blockers.length)) return false;
-    return blockers.every(blocker => {
-      const files = blocker.affected_files ?? blocker.files ?? [];
-      if (blocker.repair_owner !== opts.phase || !files.length) return false;
-      const owner = resolveRepairResponsibility({ ...context, currentPhase: opts.phase, target: { files } });
-      return owner.owner === opts.phase && owner.category === 'verification' && owner.action !== 'unavailable';
-    });
-  } catch { return false; }
-}
-
 /**
  * 下游 phase 启动门禁：上游存在负面/缺失机器裁决或不新鲜绑定 → BLOCKER FAIL。
  * 消费面=summary.json（Markdown 报告只是上游 harness 的解析输入，本门禁不重读散文）。
@@ -352,90 +321,8 @@ export function checkUpstreamVerdictGate(opts: {
       status: gaps.length ? 'SKIP' : 'PASS', details: gaps.length ? gaps.join('\n') : '已核当前输入；其它职责的FAIL、未知和未完项由同一完成评估保留，不冒充上游PASS。',
       ...(gaps.length ? { failure_kind: 'framework_bug', blocking_class: 'framework_internal', suggestion: '重读当前真实输入并只补受影响检查；不要改写上游裁决或伪造PASS。' } : {}) }];
   }
-  const description =
-    '跨阶段负面裁决传播门禁（上游机器裁决非 PASS / blocker 未清 / 证据链不新鲜 → 下游不得启动）';
-  const resolution = resolveUpstreamPhaseChain(opts.projectRoot, opts.feature, opts.runId, opts.phase, opts.frameworkRoot);
-  const order = resolution.chain;
-  const idx = order.indexOf(opts.phase);
-  if (resolution.degraded && (idx < 0 || (!resolution.workflow && idx > 0))) {
-      return [{
-        id,
-        category: 'structure',
-        description,
-        severity: 'BLOCKER',
-        status: 'FAIL',
-        details:
-          `【链解析降级】workflow SSOT 解析失败（${resolution.degradedReason ?? '未知'}），无法保证当前 phase ` +
-          `"${opts.phase}" 的真实上游裁决传播（回退链 [${order.join(', ')}]），不得静默放行。`,
-        suggestion: '修复 workflow 配置（framework.config workflow / workflows/*.workflow.yaml）后重跑。',
-        failure_kind: 'workflow_chain_unresolved',
-        blocking_class: 'product_verdict',
-      }];
-  }
-  if (idx < 0) return []; // workflow 正常解析且 phase 非 feature 链成员（global 等）——合法零结果
-  const upstream = upstreamPhaseDependencies(opts.projectRoot, opts.feature, opts.phase, resolution);
-  if (!upstream.length && (!resolution.degraded || resolution.workflow)) return [];
-  const views = upstream.map(p => readUpstreamPhaseView(opts.projectRoot, opts.feature, p, opts.phase, opts.runId, opts.frameworkRoot));
-  let resolvedNegatives: UpstreamPhaseView[] = [];
-  const negatives = views.filter(view => view.summaryExists && (view.verdict !== 'PASS' || view.blockerIds.length > 0));
-  if (negatives.length) {
-    try {
-      const { resolveCompletionDisposition } = require('./verify-feature-completion') as typeof import('./verify-feature-completion');
-      const current = resolveCompletionDisposition({ projectRoot: opts.projectRoot, frameworkRoot: opts.frameworkRoot ?? resolution.frameworkRoot,
-        feature: opts.feature, chain: [...resolution.chain], runId: opts.runId, workflow: resolution.workflow, executionScope: resolution.scope });
-      resolvedNegatives = negatives.filter(view => phaseCompletionProblems(current, [view.phase]).length === 0);
-    } catch { /* Without current proof, retain the original negative; never infer a refutation. */ }
-  }
-  let responsibility: RepairResponsibilityContext | undefined;
-  const pendingRepairs = views.filter(view => {
-    if (!view.summaryExists || (view.verdict === 'PASS' && !view.blockerIds.length)) return false;
-    try {
-      responsibility ??= repairResponsibilityContext({ projectRoot: opts.projectRoot, feature: opts.feature,
-        frameworkRoot: opts.frameworkRoot ?? resolution.frameworkRoot ?? path.resolve(__dirname, '../../..'), runId: opts.runId,
-        currentPhase: opts.phase, workflow: resolution.workflow, executionScope: resolution.scope });
-      return upstreamRepairIsCurrentWork(opts, view, responsibility);
-    } catch { return false; }
-  });
-  const violations = evaluateUpstreamViews(views.filter(view => !pendingRepairs.includes(view) && !resolvedNegatives.includes(view)));
-  const consumed = views.filter(v => v.summaryExists).map(v => v.phase);
-  const skipped = views.filter(v => !v.summaryExists).map(v => v.phase);
-
-  if (violations.length === 0) {
-    return [{
-      id,
-      category: 'structure',
-      description,
-      severity: 'BLOCKER',
-      status: 'PASS',
-      details: [
-        `当前实际依赖可执行；未闭合的评审/验证结论仍由完成检查保留。`,
-        pendingRepairs.length ? `本阶段承接待修对象：${pendingRepairs.map(view => view.phase).join(', ')}；原失败不撤销，修复后回原阶段复验。` : null,
-        resolvedNegatives.length ? `当前共同处置已核实关闭/披露：${resolvedNegatives.map(view => view.phase).join(', ')}；原始负面报告保留。` : null,
-        consumed.length > 0 ? `已消费：${consumed.join(', ')}` : null,
-        skipped.length > 0 ? `未跑（跳过，由 receipt/goal preflight 链负责该跑未跑治理）：${skipped.join(', ')}` : null,
-      ].filter(Boolean).join('\n'),
-    }];
-  }
-
-  const axisLines = views
-    .filter(v => v.axisNotes && v.axisNotes.length > 0)
-    .map(v => `  - [${v.phase}] 轴摘要：${v.axisNotes!.join(', ')}`);
-  return [{
-    id,
-    category: 'structure',
-    description,
-    severity: 'BLOCKER',
-    status: 'FAIL',
-    details: [
-      '【负面裁决传播】上游阶段存在未解决的负面机器裁决，下游不得推进（bc-openCard 二轮：',
-      'review「不通过+3 BLOCKER」曾照常进 ut/testing 直至「达标可发布」）：',
-      ...violations.map(v => `  - [${v.phase}] ${v.reason}`),
-      ...(axisLines.length > 0 ? ['多轴定位（quality_axes 信息面）：', ...axisLines] : []),
-    ].join('\n'),
-    suggestion:
-      '回到对应责任方修复或补核上述当前未完项后再检查；已被当前证据反证/披露的原 FAIL 无需改写；' +
-      '不得手改上游 summary.json——证据链新鲜度重算会将篡改判为 tampered。',
-    failure_kind: 'upstream_negative_verdict',
-    blocking_class: 'product_verdict',
-  }];
+  return [{ id, category: 'structure', description: '当前检查真实输入绑定可用', severity: 'BLOCKER', status: 'SKIP',
+    details: '当前工具尚无入口解析的真实输入绑定；保留未知，不从旧阶段排列或summary/closed推断可执行性。',
+    failure_kind: 'framework_bug', blocking_class: 'framework_internal',
+    suggestion: '由原公开检查入口解析当前适用输入后只补本检查；不要补造上游PASS或阶段作者。' }];
 }

@@ -54,7 +54,7 @@ import type { AgentInvokeUsage } from './usage-capture';
 import type { ProviderRef } from './types';
 
 // ---------------------------------------------------------------------------
-// 预算（t3⑥）：**不占** max_total_turns / max_retries_per_phase；占 wall clock。
+// Concrete provider tool timeout; work-unit execution has no aggregate quota.
 // ---------------------------------------------------------------------------
 
 /** 单次 provider 调用的分钟级独立 timeout（经既有 AgentInvokeOptions.timeoutMs 注入）。 */
@@ -66,15 +66,6 @@ export const VISUAL_PROVIDER_DEFAULT_TIMEOUT_MS = 5 * 60_000;
 // 这里**刻意不放**「每 attempt 至多 N 次调用」的计数常量：gate 在同一 attempt 内的合法重跑
 // 是既有契约的一部分（缺陷清零 → 重采/重评 → 当前 hash-bound 机器证据 →
 // **重跑 gate 方 PASS**），硬计数会把必要重验判成超预算并落入错误降级。
-
-/** spec 观察：单 run 封顶（另受参考图数量约束，见 resolveSpecObservationBudget）。 */
-export const VISUAL_PROVIDER_SPEC_OBSERVATION_MAX_PER_RUN = 12;
-
-/** spec 观察的本轮批次上限 = min(参考图数, 单 run 封顶)。 */
-export function resolveSpecObservationBudget(referenceImageCount: number): number {
-  const n = Number.isFinite(referenceImageCount) ? Math.max(0, Math.floor(referenceImageCount)) : 0;
-  return Math.min(n, VISUAL_PROVIDER_SPEC_OBSERVATION_MAX_PER_RUN);
-}
 
 export type VisualProviderPurpose = 'spec_observation' | 'review';
 

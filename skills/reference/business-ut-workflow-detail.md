@@ -1,10 +1,12 @@
 # business-ut 阶段详细流程（条件加载：执行对应 Step 时读）
 
+不得要求用户提交 coding 产物来过门禁；沿已签发请求读取真实基线与当前源码，不以新提交掩盖未核验改动。工具和独核只读，工作单元作者的实现/测试写权由实际授权决定。
+
 新增/调整用例和断言由 UT 负责；coding 只获本次实现直接引发、且保留原用例与断言的既有兼容修补许可。旧误派或保留检查未通过的测试字节，UT 可真实核验后原样保留并在既有有效 manifest 登记当前哈希，不强求重复改写。采纳必须晚于原误写；新的越权改写仍会使它失效。review 等待 UT 修复时按真实 coding 输入与依赖先完成本职责，再回 review 裁定，不降低 testing/完成要求。
 
 > **输入协议边界（仅正式阶段与机器 request）**：只审查、解释或设计用例仍先阅读真实代码和依据，但不建立身份/facts、不创建正式产物、不进入阶段确认/闭环。以下落盘与量化要求只用于正式或机器请求；以下 旧出生协议为 spec 的 facts 建立与固定上游阅读口径仅适用于 1.0。收到 runtime/专项入口明确提供的 1.1 调用上下文时，按[输入契约与 Facts 1.1](../../docs/concepts/skill-contracts.md#facts-11)读取真实内容与来源：首个实际 Skill 在主产出前建立 facts，后续或成功前驱基线只补本次 phase_delta；不补跑 spec、不伪造建立身份。无 Feature 时只用入口指定的 request report-dir/context/facts.md。调用上下文由实际入口解析，不自行补造。
 
-> SSOT 索引见 [`skills/feature/business-ut/SKILL.md`](../feature/business-ut/SKILL.md)。本文承载 Lite Mode 判定、Step 1.0 摘取协议、Step 1.5/1.6 可测性预检与 Test Double Plan、Step 2/3 DAG 与 UT 代码生成细节、Step 7.5/7.6 编译与装机运行闭环、Step 8.0 Core 节点闸门、约束#12 HARD STOP 完整流程；主 Skill 决定请求分流，本页各节按需要加载；正式门禁与闭环保留在末尾的正式阶段。
+> SSOT 索引见 [`skills/feature/business-ut/SKILL.md`](../feature/business-ut/SKILL.md)。本文承载 Lite Mode 判定、Step 1.0 摘取协议、Step 1.5/1.6 可测性预检与 Test Double Plan、Step 2/3 DAG 与 UT 代码生成细节、Step 7.5/7.6 编译与装机运行闭环、Step 8.0 Core 节点闸门、约束#12实际写权与修复职责；主 Skill 决定请求分流，本页各节按需要加载；正式门禁与闭环保留在末尾的正式阶段。
 
 ## 共享 UT 方法
 
@@ -29,13 +31,13 @@
 
 ## Lite Mode 判定（Step 1 之前）
 
-满足**全部**条件时可启用 UT Lite（减确认点，**不**跳 DAG、**不**降级 harness 规则）：`acceptance.yaml` 中 `ut_layer∈{unit,both}` 的 AC/BD ≤7 条；`testability-audit.md` 结论全部为 L0/L1；**无** `use-cases.yaml`。Lite 时：可选产出 `ut/quick-plan.yaml`；harness 仍强制 testability-audit + mock-plan；允许单个 flat DAG 跳过 Mermaid 展示确认；确认点减为 2 个（`ut.plan_confirm` + `ok_to_testing`）。
+满足**全部**条件时可启用 UT Lite（减确认点，**不**跳 DAG、**不**降级 harness 规则）：`acceptance.yaml` 中 `ut_layer∈{unit,both}` 的 AC/BD ≤7 条；`testability-audit.md` 结论全部为 L0/L1；**无** `use-cases.yaml`。Lite按当前输入契约/适用性选方法和产物，不降低真实required验证；不为简单专项请求强造DAG或接口。已有授权不按步骤重复确认。
 
 ## Step 1.0 Research Sub-Phase 摘取协议
 
 **上下文摘取（BLOCKER）**：禁止通读大模块源文件。按 `` `profile-skill-asset:business-ut/context_extraction_protocol` `` 执行 rg 签名摘取；总上下文 **≤300 行**。`source_code_paths` 只列被测入口与 UT 目标，不列整模块目录。必读：spec/plan/contracts/acceptance/use-cases（若有）/被测命名入口源码（≥3，签名级摘取）。评分≥60 或 L4 MUST subagent。增量落盘：探索开始先落 `ready_to_produce: false`，每摘取完一批被测入口 flush 一次（仅追加路径元数据，不违反 ≤300 行），全部摘取完才置 true。
 
-**HARD STOP 规划确认门**（`ut.plan_confirm`）：Step 1 结束须先展示"UT 规划清单"，`1=确认` `2=调整`。清单须含：本轮覆盖 AC/BD/branch 与不覆盖项原因；每个 `it()` 名称/被测入口/Spy 边界/核心断言；将新增或修改的 DAG/测试源文件/套件注册入口路径；明确声明"本轮不改业务源码"。未确认前不得写文件。
+**规划透明与真实决策**：列清覆盖AC/BD/branch、入口/替身边界/核心断言和拟改文件。已有明确目标与授权就继续，不在方法步骤重复ut.plan_confirm；仅真实验收/范围或业务决定缺口沿原确认契约处理，不默认声明整个unit不能改实现。
 
 ## Step 1.5 可测性预检（testability-audit.md）
 
@@ -43,9 +45,9 @@
 
 写入前自检：已读 `` `profile-skill-asset:business-ut/format_contract` ``；内容是 fenced yaml 块（非 Markdown 表格）；`acceptance_id` 严格来自 acceptance.yaml 已有 ID；写完跑 `npm run validate:ut-artifact -- --type testability-audit --file <path>`。
 
-对每条 `ut_layer∈{unit,both}` 的 AC/BD 给出：`testability_level`（L0-L3）、关键 `dependencies`（含 `global_singleton`/`inline_lambda` 等）、`verdict`（testable/downgrade_device/needs_seam）。**若 L3**：当前 requirement 仍要求 unit/both 时，物化 `recommendation.option_b` 为 coding repair candidate，由 coding owner 修改后重走 review→ut；UT invocation 不改业务源码。`option_a` 只提交验收分层/定义问题给 spec 裁定，机器检查按当前审计生成 spec 候选；spec 未在链时由已有范围修订接入。候选不批准降级，device_focus 也不取消 unit 义务；改变用户要求或冻结 required 义务仍走有效需求修订。`selected` 仅记录既有需求/修正路由，不是质量授权。**L3 接缝白名单**：coding repair 仅允许构造注入、包装 wrapper、提取命名方法、setter 注入等显式接缝；禁止"换一种全局单例"式敷衍。L3 candidate 未闭环前禁止进 Step 1.6/2/3。
+对每条 `ut_layer∈{unit,both}` 的 AC/BD 给出：`testability_level`（L0-L3）、关键 `dependencies`（含 `global_singleton`/`inline_lambda` 等）、`verdict`（testable/downgrade_device/needs_seam）。**若 L3**：当前 requirement 仍要求 unit/both 时，物化 `recommendation.option_b` 为 coding repair candidate，由原unit作者按真实写权修复，仅补受影响验证；实际UT工具/独核不写业务源码。`option_a` 只提交验收分层/定义问题给 spec 裁定，机器检查按当前审计生成 spec 候选；spec 未在链时由已有范围修订接入。候选不批准降级，device_focus 也不取消 unit 义务；改变用户要求或冻结 required 义务仍走有效需求修订。`selected` 仅记录既有需求/修正路由，不是质量授权。**L3 接缝白名单**：coding repair 仅允许构造注入、包装 wrapper、提取命名方法、setter 注入等显式接缝；禁止"换一种全局单例"式敷衍。L3 candidate 未闭环前禁止进 Step 1.6/2/3。
 
-## Step 1.6 Test Double Plan（mock-plan.yaml）【HARD STOP】
+## Step 1.6 适用时的Test Double Plan（mock-plan.yaml）
 
 写入前自检：已读 format_contract；纯 YAML 无 Markdown 标题/围栏；`ts_expr` 含 `as TypeName` 或 `new ClassName(`；写完跑 `validate:ut-artifact --type mock-plan`。
 
@@ -55,7 +57,7 @@
 
 默认写入 ephemeral 位置 `ut/reports/flow-dag/{flow_id}.dag.yaml`（不归档，除非用户要求或触及 Code Graph core 节点）；显式归档才写 `{module}/test/dag/`。存在 ut_layer∈{unit,both} 且 P0/P1 的 AC/BD 时须产出 `ut/reports/coverage-evidence.json`（`mappings[]` 覆盖每条 P0/P1 scope）。
 
-**必填顶层字段**（`dag_schema_compliance` BLOCKER）：`flow_id/flow_name/module/version`、`entry_point/nodes`、（有 use-cases.yaml 时）`use_case`+`branches[]`、`linked_acceptance`。**节点构建**：`user_trigger`对应业务入口命名函数；`port_call_cloud/local` 对应 data_boundary（字段 `boundary`=`data_boundaries[].name`，推荐声明 `spy_preset` 引用 mock-plan presets）；`state_transition` 对应 state_model 迁移；`assertion` 须声明 `linked_branch` 或 `linked_acceptance`；`ui_subscription`（仅文档化 UI 订阅，UT 忽略，真机要点写 device_focus）。**UI 副作用不进 UT 断言**：Nav/Toast 只能作 `ui_subscription` 节点或写 `device_focus`。验证：无环、source 存在、boundary 名回指 data_boundaries。展示 Mermaid 确认（`ut.dag_confirm`）。
+**必填顶层字段**（`dag_schema_compliance` BLOCKER）：`flow_id/flow_name/module/version`、`entry_point/nodes`、（有 use-cases.yaml 时）`use_case`+`branches[]`、`linked_acceptance`。**节点构建**：`user_trigger`对应业务入口命名函数；`port_call_cloud/local` 对应 data_boundary（字段 `boundary`=`data_boundaries[].name`，推荐声明 `spy_preset` 引用 mock-plan presets）；`state_transition` 对应 state_model 迁移；`assertion` 须声明 `linked_branch` 或 `linked_acceptance`；`ui_subscription`（仅文档化 UI 订阅，UT 忽略，真机要点写 device_focus）。**UI 副作用不进 UT 断言**：Nav/Toast 只能作 `ui_subscription` 节点或写 `device_focus`。验证：无环、source 存在、boundary 名回指 data_boundaries。必要业务图用Mermaid解释；已有明确授权不重复ut.dag_confirm，真实设计决定仍按原确认契约处理。
 
 ## Step 3 生成 UT 代码
 
@@ -113,15 +115,15 @@ export default function dashboardRepoTest() {
 
 ## Step 7.5 UT 编译闭环
 
-首选通过 harness 触发：`harness-runner.ts --phase ut --feature <feature-name>`。**自闭环修复策略**：`ut.compile` FAIL → 完整读日志 → 按错误类型分类（UT 调用签名不符/import 路径错/类型不匹配→修 UT；依赖缺失→先按 Tier_1 装 harness 自身依赖，禁止改 `framework/package.json`；MockKit 无导出→mock-plan 补 `strategy: mockkit`；**若错因在业务源码→进入约束#12 HARD STOP，禁止自行动手**）→ 修完再跑直到 exit 0。
+首选通过 harness 触发：`harness-runner.ts --phase ut --feature <feature-name>`。**自闭环修复策略**：`ut.compile` FAIL → 完整读日志 → 按错误类型分类（UT 调用签名不符/import 路径错/类型不匹配→修 UT；依赖缺失→先按 Tier_1 装 harness 自身依赖，禁止改 `framework/package.json`；MockKit 无导出→mock-plan 补 `strategy: mockkit`；**若错因在业务源码→按约束#12核实际写权与原责任，不按phase拒绝合法unit修复**）→ 修完再跑直到 exit 0。
 
 ## Step 7.6 UT 装机运行闭环
 
-探测设备：输出为空**不允许**继续跑或用"本地无设备"为由标绿；须先准备设备重新探测。装机执行：`harness-runner.ts --phase ut --feature <feature-name>` 同时触发 compile+run。**自闭环策略**：failed>0→读完整 `hdc-test.<module>.log` 找堆栈定位是 UT 逻辑错/Spy 预设错/还是业务真 bug（真 bug 仍走约束#12 HARD STOP）；total=0→测试入口未启动，核对 profile 测试配置；失败阶段 metadata/artifact_not_found/install→回 7.5 或查 toolchain 配置。
+探测设备：输出为空**不允许**继续跑或用"本地无设备"为由标绿；须先准备设备重新探测。装机执行：`harness-runner.ts --phase ut --feature <feature-name>` 同时触发 compile+run。**自闭环策略**：failed>0→读完整 `hdc-test.<module>.log` 找堆栈定位是 UT 逻辑错/Spy 预设错/还是业务真 bug（真bug按约束#12交实际有权作者修复）；total=0→测试入口未启动，核对 profile 测试配置；失败阶段 metadata/artifact_not_found/install→回 7.5 或查 toolchain 配置。
 
 **执行链无结果时停止盲跑**：先读本次 faultlog/hilog 诊断；同键、同因失败再次出现且输入/环境或诊断依据未变时，按 harness 指引停止并上报，不在本次调用内反复真跑。调用结束后交 runner 沿既有执行链诊断出口处理；没有执行结果不等于业务代码回归。原因未知时不自行断言资源路径或 TestRunner 配置有误。系统引导阻断按设备门提示交用户完成初始化，不代点引导；正式收口可采纳同次调用的冻结失败，不能要求为刷新回执再真跑。恢复或输入变化后重新执行。
 
-**`hap_not_found` / 签名缺口硬约束**：失败阶段为 `hap_not_found` 时，必须先全文引用 `hdc-test.<module>.log`（或 `ut_hvigor_test` details 头部）中的 harness 分层签名诊断与修复建议，再下结论。诊断已有明确原因层（例如“hvigor 明确报告 signingConfigs 未配置”）时，禁止另创 `.p12` 调试证书、默认密码、DevEco 会话兜底等环境故事。签名配置属于宿主资产：交互模式立即 HARD STOP，把诊断原文与“补 `signingConfigs` / 自定义签名任务覆盖 `ohosTest`”二选一动作交给用户，不代改宿主工程、不循环重跑；goal 模式的熔断由 runner 接管，agent 本轮只做诊断呈报，runner 仅允许一次有界确认性重跑，同 signature 重复即 halt。
+**`hap_not_found` / 签名缺口硬约束**：失败阶段为 `hap_not_found` 时，必须先全文引用 `hdc-test.<module>.log`（或 `ut_hvigor_test` details 头部）中的 harness 分层签名诊断与修复建议，再下结论。诊断已有明确原因层（例如“hvigor 明确报告 signingConfigs 未配置”）时，禁止另创 `.p12` 调试证书、默认密码、DevEco 会话兜底等环境故事。签名配置属于宿主资产：交互模式立即 HARD STOP，把诊断原文与“补 `signingConfigs` / 自定义签名任务覆盖 `ohosTest`”二选一动作交给用户，不代改宿主工程、不循环重跑；goal 模式的熔断由 runner 接管，agent 本轮只做诊断呈报，按真实条件补受影响检查，未知保留；不以固定次数或同signature直接停，完成可比验收由同一evaluation判断。
 
 sign-skip 分支只在 `failedAt=hap_not_found` 且 `unsignedPresent` / `signSkipped` / `signingConfigMissing` 任一结构化证据存在时成立。三项证据全无时仍 HARD STOP，但只能表述为“核对构建产物路径与 genOnDeviceTestHap 日志”，不得复用签名缺口话术。
 
@@ -141,17 +143,13 @@ sign-skip 分支只在 `failedAt=hap_not_found` 且 `unsignedPresent` / `signSki
 
 harness 全绿后评估改动是否触及模块 Code Graph 的 `core: true` 节点：读相关模块 CodeGraph，对比 contracts.yaml/diff 触及文件与 core anchor。**触及 core**→启动可行性探测，同步 characterization 或 spec-driven UT；图谱更新由原 writer 按授权完成，默认相关 run 收口后、P3 前，run 内确需写图须先明确纳入 `contracts.files`。不能为刷绿擅自更新 core hash，原 drift 与 UT 义务不豁免；缺设计授权回既有 owner。flow DAG 只在获准路径归档至 `test/dag/`。**未触及**→flow DAG 保持 ephemeral，用完即弃。
 
-## 约束#12：HARD STOP 禁止修改业务源码（不可绕过）
+## 约束#12：实际原请求与写入责任
 
-UT 只拥有 profile 测试/夹具源目录，不拥有受保护业务源码。发现只能通过源码可测性改造解决的缺口时：
+同unit专用作者可以在真实授权内同时修实现与测试输入；UT工具和独立核验不写产品源码或正式结果。phase名称不决定许可，也不创造“先回coding再review/UT”的作者队列。
 
-1. 不在 UT invocation 内修改 `src/main` 或等价业务实现根；用户回复、署名或 legacy `approved_src_mutations[]` 不构成例外。
-2. 记录具体文件、所需签名、UT 层无法规避的技术理由和影响面，形成 coding repair candidate。
-3. runner 回退 coding owner 完成改造，回到 UT 后重新生成 testability audit；review 侧按分级补对应复核（**不必重走整套 review 闭环**）。
-4. `ut_no_src_mutation` 对 review 闭环后的产品源码漂移，在 attestation 基线下**按风险分级记 MAJOR WARN**（纪律不变，不读取人工授权名单）。review 正式闭环后基线=review closure attestation 的逐文件内容哈希——coding 阶段的合法产物即使从未提交也不在裁决域，把改动 `git commit` 掉同样洗不白；处置按 `check-ut.ts` 该 WARN 的 suggestion 给出的分级复核清单执行（典型两条：回 coding 纳入实现并补对应复核，或从编辑器本地历史/备份取回 review 时的文件内容后用 attestation 的 sha256 核对——attestation 只存 `{path, sha256}` 不存内容，能验证不能还原；coding 产物也可能从未提交，git 里未必有旧版本）。删除 review 闭环产物不是出路——闭环证据残缺会 fail-closed。**不得要求用户提交 coding 产物来过门禁。**
-5. 对“报错顺手抽函数/改 public/新增工具函数/改 barrel”等便利性修改同样适用。
+发现可测性或真实产品缺口时，保留具体文件、所需接口/签名、原证据和影响：现有写权内交原作者修复；仅UT专项请求未获产品写权时保留该缺口，不自行扩权，继续其它可完成的测试工作。涉及原范围、公共契约或设计决定的变化交原设计责任方正式修订。Spy/类型安全替身是可选方法，不为维持旧阶段隔离掩盖真实实现缺陷。
 
-在不改业务源码的前提下，优先使用 UT/Spy、类型安全的替身或原型恢复；若方案本身需要新架构或需求变化，分别回 plan/spec owner，而不是在 UT 内越权补洞。
+消费真实写入前后像、实际断言/执行和独立核验。合法源码变化按现风险与适用验证复核，不因目录、方法标签或提交与否自动违规；越权、削弱断言、伪造结果仍不能通过。旧人签/receipt不降低质量要求，删除原件或提交代码都不把FAIL/unknown洗成PASS。
 
 ## 正式 Feature/CU 阶段
 
@@ -276,19 +274,19 @@ cover_existing_code / repair 模式下须同时给显式基线锚 `HARNESS_DIFF_
 先执行本页共享方法，再履行下列正式输入、产物和闭环责任；不复制另一份方法。
 
 1. **Step 1 规划 DAG 与 UT**：先判 Lite Mode（≤7 条 unit/both AC/BD 且全 L0/L1 且无 use-cases.yaml，详见 reference）→ Step 1.0 Research Sub-Phase（Context Facts Gate·C4，rg 签名摘取 ≤300 行，追加 facts.md 的 `## phase_delta: ut` 节，详见 reference）→ 按路径 A（branches×ui_bindings）或路径 B（AC/BD 逐条）列「UT 规划清单」→ **HARD STOP `ut.plan_confirm`**：`1=确认` `2=调整`，未确认禁止写文件。
-2. **Step 1.5 可测性预检**（`ut/testability-audit.md`，详见 reference）：对每条 unit/both AC/BD 给 L0-L3 结论；L3 在当前 unit/both 要求不变时产出 coding repair candidate，交由 coding owner 做最小可测性接缝并重走 review→ut。若用户明确改变为 device-only，那是普通 requirement correction，交回 spec owner；两者都不授权 UT 修改源码或降低质量门禁。
+2. **Step 1.5 可测性预检**（`ut/testability-audit.md`，详见 reference）：对每条 unit/both AC/BD 给 L0-L3 结论；L3 在当前 unit/both 要求不变时产出 coding repair candidate，交原unit作者按实际写权处理最小可测性缺口，仅补受影响验证。若用户明确改变为 device-only，那是普通 requirement correction，交回 spec owner；两者都不自行扩大实际写权或降低质量门禁。
 3. **Step 1.6 Test Double Plan**（`ut/mock-plan.yaml`，详见 reference）：`target_class`/`methods` 须对齐 contracts.yaml；策略 spy/mockkit/fake 选型；**HARD STOP `ut.mock_plan`**：`1=确认` `2=调整`。
-4. **Step 2 生成 DAG**：默认 ephemeral 写入 `ut/reports/flow-dag/`（触及 Code Graph core 节点或用户要求才归档 `{module}/test/dag/`）；必填字段与节点类型详见 reference；展示 Mermaid **HARD STOP `ut.dag_confirm`**：`1=确认` `2=修改`。
+4. **Step 2 生成 DAG**：默认 ephemeral 写入 `ut/reports/flow-dag/`（触及 Code Graph core 节点或用户要求才归档 `{module}/test/dag/`）；必填字段与节点类型详见 reference；展示 Mermaid 已有授权继续；真实图语义/验收决定缺口才沿原确认点处理。
 5. **Step 3.0 写入路径 Gate**：`<repo-root>` 非 `framework/harness`；上一条 shell 为 `cd framework/harness` 时 Write 前须先 `cd <repo-root>` 或用绝对路径；禁止 Write 到 `framework/harness/` 下宿主源码。
 6. **Step 3 生成 UT 代码**：路径 A/B 骨架、打桩三形式、断言要求、命名规则、import 白名单，完整示例详见 reference。
 7. **Step 4 测试注册**：套件注册入口登记新增用例；测试框架依赖已声明；无测试目录时按 profile 标准目录创建。
 8. **Step 5 质量门禁自检**（14 项，见门禁清单表 + reference 详述）。
-9. **Step 6 机器回执**：harness PASS 后写 `ut/reports/ac-coverage.json`（unit 层覆盖摘要，非 SSOT）；device/both 缺 `device_focus` 回 spec 补全，不新建平行 todo。
+9. **Step 6 覆盖映射与原件**：提供真实用例/AC/文件映射，由原schema/writer维护coverage输入和机器执行结论，不手写PASS；device/both 缺 `device_focus` 回 spec 补全，不新建平行 todo。
 10. **Step 7 输出交付摘要**：UseCase/DAG/UT 文件清单 + 覆盖率统计，供 Step 8 Harness 验证消费。
-11. **Step 7.5/7.6 编译与装机运行闭环**（必要出口，详见 reference）：`ut.compile`/`ut.run` 是必要出口非可选；自闭环修复策略按错误类型分类；**触及业务源码进约束#12 HARD STOP**；设备失败按 selfHealable/needsConfirmation/externalBlocked/clear 四类分流；绝不允许把"无设备"标 SKIP/PASS。
+11. **Step 7.5/7.6 编译与装机运行闭环**（必要出口，详见 reference）：`ut.compile`/`ut.run` 是必要出口非可选；自闭环修复策略按错误类型分类；**源码修复按约束#12的实际scope/作者职责处理**；设备失败按 selfHealable/needsConfirmation/externalBlocked/clear 四类分流；绝不允许把"无设备"标 SKIP/PASS。
 12. **Step 8 Harness 验证门禁**：见下方门禁清单表；`stale_diff_base` 自动 `HARNESS_DIFF_BASE_REF=working` 重跑（**仅 review 未闭环的 git fallback 域**会出现该 failure_kind）；`summary.verdict=INCOMPLETE`（device 阻塞）不满足闭环；状态面板须完整贴给用户。
 13. **Step 8.0 Core 节点闭环闸门**：改动触及 Code Graph `core: true` 节点时启动可行性探测+更新图谱+同步 characterization/spec-driven UT（详见 reference）。
-14. **Step 8.2 AI Harness**：主动通过 Task 工具触发 `subagent_type: verifier`，prompt 模板 `framework/harness/prompts/verify-ut.md`（state_model_completeness / ui_bindings_completeness / end_to_end_driving(BLOCKER) / branch_coverage_semantic / device_ac_delegation / stub_reasonableness / test_isolation）。 原始 verifier 总判与当前工作分别读取：按[当前工作与验收证据](agents-entry-detail.md#当前工作与验收证据)消费统一处置。原总 PASS 不免除本阶段真正必修项，建议不因 MAJOR 标签升级；待核交原 verifier，已核必修交合法责任方。材料未变复用报告；历史 PASS 未覆盖当前相关材料时先补核，不能只凭 `completed_with_prior_review` 结束。
+14. **Step 8.2 AI Harness**：共同协调器按实际签发request派真实独立核验，读取该request.prompt_path及原材料；不能从模板路径自造request、重复派审或由作者自写正式结果。方法模板为 `framework/harness/prompts/verify-ut.md`（state_model_completeness / ui_bindings_completeness / end_to_end_driving(BLOCKER) / branch_coverage_semantic / device_ac_delegation / stub_reasonableness / test_isolation）。 原始 verifier 总判与当前工作分别读取：按[当前工作与验收证据](agents-entry-detail.md#当前工作与验收证据)消费统一处置。原总 PASS 不免除本阶段真正必修项，建议不因 MAJOR 标签升级；待核交原 verifier，已核必修交合法责任方。材料未变复用报告；历史 PASS 未覆盖当前相关材料时先补核，不能只凭 `completed_with_prior_review` 结束。
 
 **Task prompt = harness 写出的短 request JSON 整段**（plan a9d4e7c2）：verifier 能力启用时，`harness-runner` 会在结尾打印 `verifier.request.<subject>.json` 的路径，并把它记进 `summary.verifier_request`。把**那份 JSON 的完整正文**作为 Task prompt 投给 verifier——verifier 自己按其中的 `prompt_path` 读磁盘原件（`ai-prompt.md` 可达上百 KB，不过传输面）。不要投递 `ai-prompt.md` 全文、不要手抄或改写任何字段、不要在 JSON 前后附加说明：subject 由字段重算，抄错一处即失配 → 阶段不闭环。
 
@@ -334,7 +332,7 @@ verifier 格式缺口须保留原回复和精确诊断；Goal 内返回 runtime�
 
 1. `<features_dir>/<feature>/ut/reports/trace.json` 真实存在；2. 脚本 harness 退出码 0、零 BLOCKER；3. verifier verdict=PASS（**仅当 harness 为本阶段输出了 verifier request**；只跑一次——材料未变复用既有报告，历史 PASS 的适用性与补核按共同处置）；4. `check-receipt.ts` 通过（回执由 harness 只读投影生成，agent 不手填；备注写 `<phase>/notes.md`）。required 证据齐备后业务级 UT 阶段完成，**具备**进 device-testing 的资格；**不授权**自动开 device-testing。
 
-**收尾 / 闭环停等（BLOCKER）**：只呈现 harness 的 `NEXT_STEP` 段落；recommendation 由 `assess@1` 生成，执行授权仍由 driver 按 `phase.next_step` / `transition_policy` 裁决。
+**收尾与继续**：只呈现同一当前处置的NEXT；完整交付按原授权由共同协调器持续到原终点，不按phase重复确认或派冷作者。专项请求止于本次职责，未知与发布限制如实保留。
 
 ## 约束与注意事项
 
@@ -349,7 +347,7 @@ verifier 格式缺口须保留原回复和精确诊断；Goal 内返回 runtime�
 9. P0 优先，再扩展 P1/P2。
 10. DAG/UT description 用中文。
 11. Harness 验证闭环：agent 必须自跑 Step 8 + 主动触发 verifier；`ut_no_src_mutation` 在 review 已正式闭环时基线=review closure attestation（逐文件内容哈希，**与 git 提交状态无关**）——报告大量非 UT 文件漂移时先核对 review 闭环是否最新（漂移属合法改动就回 coding 纳入并重走 review 闭环刷新基线；误改则从编辑器本地历史/备份取回 review 时的内容，再用 attestation 里该文件的 sha256 **核对**——attestation 只存 `{path, sha256}` 不存内容，能验证不能还原，取不回就回 coding 重建），**禁止要求用户提交 coding 产物来过门禁**，也禁止要求用户"批量授权历史变更"。`stale_diff_base` / `HARNESS_DIFF_BASE_REF=working` 这剂药只对 **盘上观察不到 review 闭环痕迹的 git fallback 域**有效，attestation 基线下不存在"历史变更多"这种形态；**更不得靠删除 review 闭环产物来"换个基线重跑"**——闭环证据残缺（attestation 还在、summary 没了/未闭环）一律 fail-closed；即便把闭环产物删光能落回 fallback 域，那也是把裁决降级、不是出路。
-12. **【HARD STOP 不可绕过】禁止修改业务源码**：UT 发现可测性缺口时只产出 coding repair candidate，由 runner 回 coding 修改并重走 review→ut；用户回复、署名、receipt 或 legacy `approved_src_mutations[]` 均不能把 UT 期间源码变更改判为 PASS。详见 [business-ut-workflow-detail.md](business-ut-workflow-detail.md)。
+12. **写入责任**：同unit作者可在真实scope内修实现及测试；仅UT专项请求不自扩产品写权，工具/独核不改产品或自签结果。需要契约/范围变化交原设计责任方；原署名/receipt不洗白失败，详见约束#12。
 
 ## 关联文件
 

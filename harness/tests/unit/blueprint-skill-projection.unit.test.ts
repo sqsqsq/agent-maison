@@ -24,7 +24,10 @@ import { createGoalRun } from '../../scripts/utils/goal-run-creation';
 import { buildGoalManifestFromInput } from '../../scripts/utils/goal-manifest';
 import { resolveCapabilityResolutionEntryInput } from '../../scripts/utils/capability-resolution-entry-input';
 import type { WorkflowSpec } from '../../workflow-loader';
-import { collectContextFiles } from '../../harness-runner';
+import { collectContextFiles, writeRunSummaryBase } from '../../harness-runner';
+import { generateScriptReport } from '../../scripts/utils/report-generator';
+import { executedEvidenceInputs } from '../../scripts/utils/phase-closure-finalizer';
+import { resolvePhaseEvidenceManifest, writePhaseEvidenceManifest } from '../../scripts/utils/phase-evidence-manifest';
 import { initializeFidelityRouting } from '../../scripts/utils/goal-preflight';
 import { spawnSync } from 'child_process';
 import { readScopeAcceptance, prepareChangeUnitScopeInput, prepareFeatureScopeCandidate } from '../../scripts/utils/feature-track';
@@ -33,7 +36,7 @@ import { checkUseCaseSpecSchema } from '../../scripts/check-ut';
 import { diagnoseBlueprintContent } from '../../scripts/utils/component-blueprint-validator';
 import { deriveDesignPreparationReadiness } from '../../scripts/utils/change-unit-design-preparation';
 import { inspectAcceptanceItem, inspectTypedConstructionContent, inspectUseCaseItem } from '../../scripts/utils/design-content-checks';
-import { collectCleanPassIssues } from '../../scripts/utils/verify-feature-completion';
+import { collectCleanPassIssues, readReusableCheckResult } from '../../scripts/utils/verify-feature-completion';
 import type { UnitCaseResult } from '../run-unit';
 import { asChangeUnitArtifact, createChangeUnitRef, loadCanonicalChangeUnit } from '../../scripts/utils/change-unit-path';
 
@@ -91,6 +94,45 @@ export function planContracts(f: ReturnType<typeof fixture>): ContractsSpec & { 
 }
 
 const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Promise<void> }> = [
+  { name: 'P3 S16 raw authority FAIL binds canonical dependencies; old caches missing them recheck and restored authority invalidates the old FAIL', run(f) {
+    materializeBlueprintSkillInputs(f.root, f.feature, frameworkRoot, undefined, 'spec');
+    const original = fs.readFileSync(f.blueprintFile);
+    const doc = YAML.parse(original.toString('utf8')); doc.revision += 1;
+    fs.writeFileSync(f.blueprintFile, YAML.stringify(doc));
+    const context = { projectRoot: f.root, frameworkRoot, feature: f.feature, phase: 'spec',
+      featureSpec: new SpecLoader(f.root, undefined, undefined, frameworkRoot).loadFeatureSpec(f.feature), phaseRule: {} } as CheckContext;
+    const checks = checkAuthoritativeContentAligned(context, 'acceptance');
+    assert.equal(checks[0].status, 'FAIL');
+    assert(!checks[0].affected_files!.includes(f.blueprintFile) && !checks[0].affected_files!.includes(f.cuFile), 'read dependencies must never expand repair/write targets');
+    const dependencies = (checks[0].structured as { source_attempt_dependencies: Array<{ path: string }> }).source_attempt_dependencies;
+    assert(dependencies.some(dep => dep.path === f.blueprintFile) && dependencies.some(dep => dep.path === f.cuFile), 'a stale reference must retain both known canonical sources');
+    const report = generateScriptReport(path.join(frameworkRoot, 'harness'), 'spec', f.feature, f.root, checks, frameworkRoot);
+    writeRunSummaryBase(f.root, report, frameworkRoot);
+    const outputs = ['summary.json', 'script-report.json'].map(name => path.join(f.root, 'doc/features/ledger-app-blueprint/ledger-refresh/spec/reports', name));
+    const resolvedInputs = { context: { schema_version: '1.1' as const, subject: { feature: f.feature }, obligations: {}, required_outputs: [] }, phase: 'spec', values: {}, artifacts: {} };
+    const options = { projectRoot: f.root, frameworkRoot, feature: f.feature, phase: 'spec' as const, resolvedInputs, extraOutputs: outputs };
+    const inputs = executedEvidenceInputs(f.root, f.feature, 'spec', frameworkRoot);
+    assert(inputs.includes(path.relative(f.root, f.blueprintFile).replace(/\\/g, '/')) && inputs.includes(path.relative(f.root, f.cuFile).replace(/\\/g, '/')));
+    const bound = resolvePhaseEvidenceManifest({ ...options, extraInputs: inputs });
+    writePhaseEvidenceManifest(f.root, bound);
+    assert(readReusableCheckResult(options), 'unchanged real raw FAIL is reusable; reuse never means business PASS');
+    // Reproduce the old producer's actual input set through the same manifest writer.
+    writePhaseEvidenceManifest(f.root, resolvePhaseEvidenceManifest({ ...options, extraInputs: checks.flatMap(check => check.affected_files ?? []) }));
+    assert.equal(readReusableCheckResult(options), null, 'a trusted old cache missing actual canonical dependencies must recheck without a cache-version flag');
+    writePhaseEvidenceManifest(f.root, bound);
+    fs.writeFileSync(f.blueprintFile, original);
+    assert.equal(deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, 'acceptance').state, 'resolved');
+    assert.equal(readReusableCheckResult(options), null, 'restoring actual authority must invalidate its old bound FAIL');
+    assert.equal(JSON.parse(fs.readFileSync(outputs[1], 'utf8')).summary.verdict, 'FAIL', 'the old tool original must not be rewritten as PASS');
+    fs.rmSync(f.blueprintFile);
+    const missing = deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, 'acceptance');
+    assert.equal(missing.state, 'invalid');
+    assert(missing.dependencies.some(dep => dep.path === f.blueprintFile && !dep.exists), 'a missing source is an actual dependency too');
+    const missingChecks = checkAuthoritativeContentAligned(context, 'acceptance', missing);
+    generateScriptReport(path.join(frameworkRoot, 'harness'), 'spec', f.feature, f.root, missingChecks, frameworkRoot);
+    const missingBound = resolvePhaseEvidenceManifest({ ...options, extraInputs: executedEvidenceInputs(f.root, f.feature, 'spec', frameworkRoot) });
+    assert(missingBound.inputs.some(entry => entry.path === path.relative(f.root, f.blueprintFile).replace(/\\/g, '/') && !entry.exists));
+  } },
   { name: 'P2 invalid parent retains its blocker while independently checking exact-bound runtime content', run(f) {
     const doc = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
     const cu = YAML.parse(fs.readFileSync(f.cuFile, 'utf8'));
@@ -124,6 +166,23 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     assert(!projection.value && !projection.artifacts, '冲突来源被任选一方投影为权威');
     assert.throws(() => materializeBlueprintSkillInputs(f.root, f.feature, frameworkRoot), BlueprintProjectionPreparationError);
     assert(fs.readFileSync(f.blueprintFile).equals(before));
+  } },
+  { name: 'authority diagnosis distinguishes CU mapping gaps from missing blueprint acceptance', run(f) {
+    const cu = YAML.parse(fs.readFileSync(f.cuFile, 'utf8'));
+    for (const predicate of cu.target_predicates) predicate.verification_refs = [`verify:${predicate.predicate_id}`];
+    fs.writeFileSync(f.cuFile, YAML.stringify(cu)); f.bind();
+    const unmapped = diagnoseBlueprintSkillAuthority(f.root, frameworkRoot, f.feature, ['acceptance']);
+    assert(unmapped.findings.some(row => row.codes.includes('authority_predicate_acceptance_unmapped')
+      && row.artifacts.includes(path.relative(f.root, f.cuFile).replace(/\\/g, '/'))), JSON.stringify(unmapped));
+    assert(!unmapped.findings.some(row => row.artifacts.includes(path.relative(f.root, f.blueprintFile).replace(/\\/g, '/'))), JSON.stringify(unmapped));
+    for (const predicate of cu.target_predicates) predicate.verification_refs.push('acceptance:AC-404');
+    fs.writeFileSync(f.cuFile, YAML.stringify(cu)); f.bind();
+    const before = fs.readFileSync(f.blueprintFile);
+    const missing = diagnoseBlueprintSkillAuthority(f.root, frameworkRoot, f.feature, ['acceptance']);
+    assert(missing.findings.some(row => row.codes.includes('authority_acceptance_content_invalid')
+      && row.artifacts.includes(path.relative(f.root, f.blueprintFile).replace(/\\/g, '/'))), JSON.stringify(missing));
+    assert(!missing.findings.some(row => row.codes.includes('authority_predicate_acceptance_unmapped')), JSON.stringify(missing));
+    assert(fs.readFileSync(f.blueprintFile).equals(before), 'diagnosis must not invent acceptance content');
   } },
   { name: 'P2 readiness collects the blocked CU, missing Phone use-case and independent runtime mapping in one production evaluation', run(f) {
     const doc = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
@@ -548,7 +607,7 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
       { id: 'implementation:request', kind: 'implementation', applicability: 'required', reason: 'requested implementation', basis: [implementationSource] },
     ], contract_fingerprints: [] }, workflow, undefined, resolvedStub);
     const manifest = buildGoalManifestFromInput({ feature: f.feature, run_id: 'p3-design', unattended: { write_mode: 'full-access', approval_mode: 'never' }, requirement: 'deliver ledger refresh', execution_scope: scope, chain_override: scope.phase_chain }, { projectRoot: f.root });
-    const born = createGoalRun({ projectRoot: f.root, manifest, chain: scope.phase_chain });
+    const born = createGoalRun({ frameworkRoot: frameworkRoot, projectRoot: f.root, manifest, chain: scope.phase_chain });
     const before = fs.readFileSync(born.manifestPath, 'utf8');
     const bridge = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: f.feature, phase: 'spec', featuresDir: 'doc/features', goalRunId: manifest.run_id });
     const inputs = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot, feature: f.feature, phase: 'spec', track: 'full', ...bridge }).inputs!;
@@ -590,7 +649,7 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
       { id: 'implementation:request', kind: 'implementation', applicability: 'required', reason: 'requested implementation', basis: [implementationSource] },
     ], contract_fingerprints: [] }, workflow, { value: physicalCtx.featureSpec.acceptance!, binding: acceptanceInput.binding }, resolvedStub);
     const planRun = buildGoalManifestFromInput({ feature: f.feature, run_id: 'p3-plan-design', unattended: { write_mode: 'full-access', approval_mode: 'never' }, execution_scope: planScope, chain_override: planScope.phase_chain }, { projectRoot: f.root });
-    createGoalRun({ projectRoot: f.root, manifest: planRun, chain: planScope.phase_chain });
+    createGoalRun({ frameworkRoot: frameworkRoot, projectRoot: f.root, manifest: planRun, chain: planScope.phase_chain });
     const planBridge = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: f.feature, phase: 'plan', featuresDir: 'doc/features', goalRunId: planRun.run_id });
     const planInputs = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot, feature: f.feature, phase: 'plan', track: 'full', ...planBridge }).inputs!;
     for (const required_outputs of [[], ['plan/plan.md']]) {
@@ -609,7 +668,7 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     assert.deepStrictEqual(designScopeRevisionChecks(ctx, [{ id: 'actual_failure', category: 'structure', severity: 'BLOCKER', status: 'FAIL', description: 'failure', details: 'failure' }]), []);
     const requestScope = resolveExecutionScope({ request: { completion_target: 'request', requested_results: ['design'], requested_phases: ['spec'] }, facts: [], contract_fingerprints: [] }, workflow);
     const requestRun = buildGoalManifestFromInput({ feature: f.feature, run_id: 'p3-design-only', unattended: { write_mode: 'full-access', approval_mode: 'never' }, execution_scope: requestScope, chain_override: requestScope.phase_chain }, { projectRoot: f.root });
-    createGoalRun({ projectRoot: f.root, manifest: requestRun, chain: requestScope.phase_chain });
+    createGoalRun({ frameworkRoot: frameworkRoot, projectRoot: f.root, manifest: requestRun, chain: requestScope.phase_chain });
     // plan a9f3c7d2 第二笔（R5）**行为变更**：request 终点原先在这里被整个排除（断言恒 `[]`），
     // 于是单职责 spec/plan 出生时的定义缺口永远关不掉、生产上到不了成功终局。现在它也发提案，
     // 但请求动作**只能是本阶段自己**——单职责请求结构上不得借修订新增阶段。
@@ -629,7 +688,7 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     ], contract_fingerprints: [] }, workflow, { value: deviceAcceptance, binding: acceptanceInput.binding }, resolvedStub);
     assert.equal(protectedScope.obligations.find(o => o.kind === 'device-evidence')?.applicability, 'required', 'device duty must be genuinely required');
     const protectedRun = buildGoalManifestFromInput({ feature: f.feature, run_id: 'p3-keep-verification', unattended: { write_mode: 'full-access', approval_mode: 'never' }, execution_scope: protectedScope, chain_override: protectedScope.phase_chain }, { projectRoot: f.root });
-    createGoalRun({ projectRoot: f.root, manifest: protectedRun, chain: protectedScope.phase_chain });
+    createGoalRun({ frameworkRoot: frameworkRoot, projectRoot: f.root, manifest: protectedRun, chain: protectedScope.phase_chain });
     const rejected = designScopeRevisionChecks({ ...ctx, factsContext: { ...bridge.factsContext!, subject: { feature: f.feature, run_id: protectedRun.run_id } } }, []);
     assert(rejected.some(check => check.status === 'FAIL') && rejected.every(check => !check.scope_revision_input), 'new facts silently removed a required duty');
   } },

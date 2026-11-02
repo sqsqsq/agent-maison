@@ -17,7 +17,7 @@ import { isInsideProjectRoot } from './project-relative-path';
 import { extractTables } from './markdown-parser';
 import { diffChangedFilesWithStatus, resolveEffectiveDiffBaseline } from './git-diff';
 
-import { featuresDirPath } from '../../config';
+import { featuresDirPath, relFeaturesDir } from '../../config';
 // M5A §4.3：逻辑 featureId → 物理相对路径唯一 SSOT
 import { featureRelativePath } from './feature-identity';
 import { CheckResult } from './types';
@@ -243,13 +243,16 @@ function checkFactsFile(
     // the existing write boundary below remain necessary before treating one as writable.
     if (phase === 'ut') for (const source of invocation.source_paths) if (invocation.source_owners?.[source] === phase) currentTargets.add(path.resolve(projectRoot, source));
     let admission: FactsInvocationContext | undefined;
-    const { loadFactsInvocationContext, loadFormalFactsObservation, resolveFactsPhaseOwnedSources } = require('./capability-resolution-entry-input') as typeof import('./capability-resolution-entry-input');
+    const { loadFactsInvocationContext, loadFormalFactsObservation, loadCompletedFactsObservation, resolveFactsPhaseOwnedSources } = require('./capability-resolution-entry-input') as typeof import('./capability-resolution-entry-input');
     let formal: ReturnType<typeof loadFormalFactsObservation>;
+    let completed: ReturnType<typeof loadCompletedFactsObservation>;
     if ('run_id' in invocation.subject) {
       try {
         const lookup = { projectRoot, frameworkRoot: options?.frameworkRoot, feature: invocation.subject.feature, phase, runId: invocation.subject.run_id,
           attemptId: options?.goalAttemptId ?? process.env.MAISON_GOAL_ATTEMPT };
         formal = loadFormalFactsObservation(lookup);
+        completed = loadCompletedFactsObservation({ ...lookup, featuresDir: relFeaturesDir(projectRoot), goalAttemptId: lookup.attemptId }, invocation.subject.run_id,
+          options?.frameworkRoot ?? path.resolve(__dirname, '../../..'));
         admission = formal?.context ?? loadFactsInvocationContext(lookup);
       } catch { /* No verifiable admission: strict dependency comparison below. */ }
     }
@@ -271,7 +274,8 @@ function checkFactsFile(
       ...('run_id' in invocation.subject ? { runId: invocation.subject.run_id } : {}) }, invocation) : new Set<string>();
     for (const source of ownedSources) if (admission?.source_owners?.[source] === actorPhase) currentTargets.add(path.resolve(projectRoot, source));
     const mayAdvanceSource = (source: string, hash: string | null): boolean => (!!formal?.sources.get(source)?.written
-      && formal.sources.get(source)?.sha256 === hash) || ownedSources.has(source)
+      && formal.sources.get(source)?.sha256 === hash) || (!!completed?.sources.get(source)?.written
+      && completed.sources.get(source)?.sha256 === hash) || ownedSources.has(source)
       && currentTargets.has(path.resolve(projectRoot, source)) && invocation.source_owners?.[source] === actorPhase
       && ('run_id' in invocation.subject
         ? !!admission && (invocation.baseline ? admission.baseline?.fingerprint === invocation.baseline.fingerprint

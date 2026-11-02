@@ -20,6 +20,7 @@ import { freezeFeatureExecutionScope } from '../../scripts/utils/feature-executi
 import type { ExecutionScope } from '../../scripts/utils/execution-scope';
 import { fixture as blueprintFixture } from './blueprint-skill-projection.unit.test';
 import { emitHarnessPreflightGap, harnessPreflightPath } from '../../scripts/utils/capability-preflight';
+import { readRepairResponsibilityContracts, workUnitMayWritePath } from '../../scripts/utils/repair-responsibility';
 
 const FRAMEWORK_ROOT = path.resolve(__dirname, '..', '..', '..');
 const FEATURE = 'owner-fixture';
@@ -80,7 +81,15 @@ function makeHost(): string {
   return root;
 }
 
-function resolve(root: string, phaseOrder: readonly string[] = CHAIN, executionRole?: 'author' | 'verifier'): PhaseWriteBoundaryResolution {
+function constructionScope(): ExecutionScope {
+  return { schema_version: '1.0', completion_target: 'feature', requested_results: ['implement and verify'],
+    phase_chain: ['coding', 'ut'], reused_phases: [], unresolved: [], policy_fingerprint: 'a'.repeat(64), obligations: [
+      { id: 'implementation', kind: 'implementation', owner_phase: 'coding', applicability: 'required', reason: 'approved implementation', basis: [] },
+      { id: 'unit', kind: 'unit-evidence', owner_phase: 'ut', applicability: 'required', reason: 'approved test construction', basis: [] },
+    ] };
+}
+
+function resolve(root: string, phaseOrder: readonly string[] = CHAIN, executionRole?: 'author' | 'verifier', executionScope?: ExecutionScope): PhaseWriteBoundaryResolution {
   return resolvePhaseWriteBoundary({
     projectRoot: root,
     frameworkRoot: FRAMEWORK_ROOT,
@@ -90,6 +99,7 @@ function resolve(root: string, phaseOrder: readonly string[] = CHAIN, executionR
     profileDir: path.join(FRAMEWORK_ROOT, 'profiles', 'hmos-app'),
     productLayerDirs: ['02-Feature'],
     executionRole,
+    executionScope,
     resolveUtSourceRoots: (projectRoot, modules) =>
       modules.map((module) => path.join(projectRoot, module.package_path, 'src', 'ohosTest')),
   });
@@ -97,6 +107,29 @@ function resolve(root: string, phaseOrder: readonly string[] = CHAIN, executionR
 
 export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
+
+  run(results, 'absent watch root is an empty preimage; creation is observed and read failures remain unverifiable', () => {
+    const root = makeHost();
+    const boundary = { ...resolve(root, CHAIN, 'verifier'), protectedRoots: ['not-created'] };
+    const nativeFs = require('fs') as typeof import('fs');
+    const descriptor = Object.getOwnPropertyDescriptor(nativeFs, 'lstatSync')!;
+    try {
+      const before = capturePhaseInvocationSnapshot(boundary);
+      assert(!before.failureReason && before.entries.length === 0, 'a source directory not yet created is not an unreadable input');
+      write(root, 'not-created/source.txt', 'actual unauthorized write');
+      const after = capturePhaseInvocationSnapshot(boundary);
+      const diff = diffPhaseInvocationSnapshots(before, after);
+      assert(diff.kind === 'changed' && diff.changes.some(change => change.path === 'not-created/source.txt'), 'later creation must be observed');
+      if (diff.kind === 'changed') assert(classifyPhaseInvocationChanges(boundary, 'coding', diff.changes).violations.length === 1,
+        'absence never grants a verifier write authority');
+      Object.defineProperty(nativeFs, 'lstatSync', { ...descriptor, value: (file: fs.PathLike, ...args: unknown[]) => {
+        if (path.resolve(String(file)) === path.join(root, 'not-created')) throw Object.assign(new Error('actual read denied'), { code: 'EACCES' });
+        return Reflect.apply(descriptor.value, nativeFs, [file, ...args]);
+      } });
+      const denied = capturePhaseInvocationSnapshot(boundary);
+      assert(!!denied.failureReason && diffPhaseInvocationSnapshots(before, denied).kind === 'unverifiable', 'permission failure must not become a clean empty snapshot');
+    } finally { Object.defineProperty(nativeFs, 'lstatSync', descriptor); fs.rmSync(root, { recursive: true, force: true }); }
+  });
 
   run(results, 'contract/artifact/scope/profile resolvers yield the canonical owners', () => {
     const root = makeHost();
@@ -111,6 +144,47 @@ export function runAll(): UnitCaseResult[] {
       'profile UT roots must override the broader coding module prefix');
     assert(resolvePhasePathOwnership(boundary, `doc/features/${FEATURE}/testing/screens/home.png`).owner === 'testing',
       'testing workspace must be testing-owned');
+  });
+
+  run(results, 'ownership never grants source writes without approved duties and completed duties retain their original domains', () => {
+    const root = makeHost();
+    const source = '02-Feature/Card/src/main/ets/Card.ets', test = '02-Feature/Card/src/ohosTest/ets/test/Card.test.ets';
+    const options = { projectRoot: root, frameworkRoot: FRAMEWORK_ROOT, feature: FEATURE, phaseOrder: ['review'], track: 'full' as const,
+      profileDir: path.join(FRAMEWORK_ROOT, 'profiles', 'hmos-app'), productLayerDirs: [], executionRole: 'author' as const,
+      resolveUtSourceRoots: (projectRoot: string) => [path.join(projectRoot, '02-Feature/Card/src/ohosTest')] };
+    try {
+      const graph = readRepairResponsibilityContracts(options);
+      assert(resolvePhasePathOwnership(graph, source).owner === 'coding' && resolvePhasePathOwnership(graph, test).owner === 'ut',
+        'read-only work must retain complete producer knowledge without acquiring their write grants');
+      const review: ExecutionScope = { ...constructionScope(), phase_chain: ['review'], obligations: [
+        { id: 'review', kind: 'code-review', owner_phase: 'review', applicability: 'required', reason: 'review existing source', basis: [] },
+      ] };
+      const readonly = resolvePhaseWriteBoundary({ ...options, executionScope: review });
+      const pre = capturePhaseInvocationSnapshot(readonly);
+      write(root, source, 'export class Card { unauthorized = true; }\n');
+      write(root, test, 'export const unauthorizedTest = true;\n');
+      write(root, `doc/features/${FEATURE}/review/review-report.md`, '# Actual review\n');
+      const diff = diffPhaseInvocationSnapshots(pre, capturePhaseInvocationSnapshot(readonly));
+      assert(diff.kind === 'changed' && diff.changes.length === 3, 'ungranted sources stay watched even without product-layer roots');
+      if (diff.kind !== 'changed') return;
+      const changes = classifyPhaseInvocationChanges(readonly, 'work-unit-author', diff.changes);
+      assert(changes.allowed.length === 1 && changes.violations.length === 2
+        && [source, test].every(file => changes.violations.some(row => row.path === file && row.violation === 'outside_authority')),
+      'review evidence remains writable but neither implementation nor tests may be changed');
+      const unitOnly = constructionScope(); unitOnly.obligations = unitOnly.obligations.filter(item => item.kind === 'unit-evidence');
+      const testsOnly = resolvePhaseWriteBoundary({ ...options, executionScope: unitOnly });
+      assert(workUnitMayWritePath(testsOnly, test) && !workUnitMayWritePath(testsOnly, source), 'unit evidence grants its original test domain, not product source');
+      const completed = constructionScope(); completed.phase_chain = [];
+      completed.reused_phases = completed.obligations.map(item => {
+        const proof = { phase: item.owner_phase, run_id: 'prior', evidence_manifest_aggregate: 'b'.repeat(64) };
+        item.satisfied_by = [proof]; return { phase: item.owner_phase, obligation_ids: [item.id], evidence_refs: [proof] };
+      });
+      const reusable = resolvePhaseWriteBoundary({ ...options, executionScope: completed });
+      assert(workUnitMayWritePath(reusable, source) && workUnitMayWritePath(reusable, test), 'done/reused code and test duties retain their original source grants');
+      const unknown = constructionScope(); unknown.obligations.forEach(item => { item.applicability = 'unknown'; });
+      assert(!workUnitMayWritePath(resolvePhaseWriteBoundary({ ...options, executionScope: unknown }), source)
+        && !workUnitMayWritePath(resolvePhaseWriteBoundary(options), test), 'unknown or missing scope cannot gain source writes from a method or ownership graph');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
   });
 
   run(results, 'unknown custom phase and unregistered new paths resolve to no owner without an owner manifest', () => {
@@ -278,7 +352,7 @@ export function runAll(): UnitCaseResult[] {
 
   run(results, 'unit author writes implementation and test sources across methods without signing test results', () => {
     const root = makeHost();
-    const boundary = resolve(root, CHAIN, 'author');
+    const boundary = resolve(root, CHAIN, 'author', constructionScope());
     const pre = capturePhaseInvocationSnapshot(boundary);
     write(root, '02-Feature/Card/src/main/ets/NewCard.ets', 'export const card = 1;\n');
     write(root, '02-Feature/Card/src/ohosTest/ets/test/New.test.ets', 'expect(card).assertEqual(1);\n');
@@ -432,7 +506,7 @@ export function runAll(): UnitCaseResult[] {
       fs.writeFileSync(f.blueprintFile, YAML.stringify(blueprint)); f.bind();
       const boundary = resolvePhaseWriteBoundary({ projectRoot: f.root, frameworkRoot: FRAMEWORK_ROOT, feature: f.feature,
         phaseOrder: CHAIN, track: 'full', profileDir: path.join(FRAMEWORK_ROOT, 'profiles/generic'), productLayerDirs: ['src'],
-        executionRole: 'author', constructionModules: [{ name: 'ledger', package_path: 'src/ledger' }] });
+        executionRole: 'author', executionScope: constructionScope(), constructionModules: [{ name: 'ledger', package_path: 'src/ledger' }] });
       const contracts = path.relative(f.root, path.join(path.dirname(f.cuFile), 'contracts.yaml')).replace(/\\/g, '/');
       assert(boundary.immutableInputPaths?.includes(path.relative(f.root, f.blueprintFile).replace(/\\/g, '/')) === true
         && boundary.immutableInputPaths?.includes(path.relative(f.root, f.cuFile).replace(/\\/g, '/')) === true,

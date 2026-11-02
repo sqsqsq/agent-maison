@@ -4,7 +4,7 @@ import * as YAML from 'yaml';
 import { createHash } from 'crypto';
 import { stableStringify } from './phase-evidence-manifest';
 import { asRecord, asRecords, ComponentBlueprintResolutionError, blueprintAuthorContent, renderBlueprintFieldResponsibilities, type BlueprintRecord, type BlueprintIssue } from './component-blueprint-model';
-import { loadFrameworkConfig, relFeaturesDir, featureFilePath } from '../../config';
+import { loadFrameworkConfig, relFeaturesDir, featureFilePath, featurePhaseReportsDir } from '../../config';
 import { resolveWorkflowSpec } from '../../workflow-loader';
 import { featurePhasesFromWorkflow } from './phase-transition-policy';
 import { buildInitialDesignGoalManifest, isInitialDesignManifest, isRepeatedRequirement, deriveSuccessorRequirement,
@@ -16,15 +16,14 @@ import { readLockRecord, isLockStale } from './goal-run-lock';
 import { componentBlueprintPath, loadCanonicalBlueprint } from './component-blueprint-path';
 import { validateComponentBlueprint } from './component-blueprint-validator';
 import { enumerateCanonicalChangeUnits, asChangeUnitArtifact, deriveChangeUnitFeatureId, changeUnitPath } from './change-unit-path';
-import { diagnoseBlueprintSkillAuthority, compareAuthoritativeContent } from './blueprint-skill-projection';
+import { diagnoseBlueprintSkillAuthority, diagnoseDesignAuthority, compareAuthoritativeContent } from './blueprint-skill-projection';
 import { resolveProbeFrameworkRoot } from '../../repo-layout';
 import { deriveChangeUnitReadySet } from './change-unit-ready-set';
 import { deriveChangeUnitProgressionDecision, inspectActiveChangeUnitRuns } from './change-unit-progress-loop';
 import { profileHasDesignLens } from './blueprint-provider-boundary';
-import { loadEventsJsonlStrict, resolveEffectiveRunEnd, resolveResumedBudget } from './goal-runner-phase';
+import { loadEventsJsonlStrict, resolveEffectiveRunEnd } from './goal-runner-phase';
 import { acceptedSessionReport, readHandoffMaterial, sessionReportInputPath, sessionExecutionForInvoke, type SessionExecutionReport } from './session-execution-handoff';
-import { resolveWallClockMinutes, resolveChainPhasesForBudget } from './goal-timeout';
-import { readOriginalDeliveryBudget, resolveOriginalDeliveryExecution, currentOriginalDelivery, type DeliveryRunFacts } from './delivery-origin';
+import { readOriginalDeliveryActivity, readOriginalDeliveryRuns, resolveOriginalDeliveryExecution, currentOriginalDelivery, type DeliveryRunFacts } from './delivery-origin';
 import { independentQuestioningBlockers } from './blueprint-questioning';
 import { renderQuestioningResultInstructions } from './blueprint-questioning';
 import { extractProviderFinalText } from './codex-terminal-events';
@@ -34,7 +33,9 @@ import { currentBlueprintSliceId } from './blueprint-admission';
 import type { ProviderRef } from './types';
 import { prepareBlueprintDesignDraft, prepareBlueprintSourceItems } from './blueprint-discovery';
 import { readCurrentDispositionInput } from './verify-feature-completion';
-import { resolveCurrentDisposition, type CurrentDisposition } from './check-disposition';
+import { resolveCurrentDisposition, type CurrentDisposition, type CurrentDispositionProblem } from './check-disposition';
+import { loadCanonicalComponentClosure } from './component-closure-path';
+import { validateComponentClosure } from './component-closure-validator';
 import { independentVerificationContext } from './verifier-material';
 
 /** The caller places this existing writer outside the native invocation's attribution window. */
@@ -85,6 +86,7 @@ export function prepareInitialDesignDraft(input: {
 export interface InitialDesignRunInput {
   projectRoot: string; frameworkRoot: string; feature: string; adapter: string; requirement: string;
   requirementSourceFiles?: string[]; runId?: string; adapterSource?: RunAdapterProvenance;
+  userDeadlineAt?: string;
   supersede?: string[];
   requestedResults?: string[]; requestedPhases?: string[]; startPhase?: string; endPhase?: string;
   budget?: GoalBudget; unattended?: UnattendedContract; adapterModelPin?: AdapterModelPin;
@@ -93,14 +95,10 @@ export interface InitialDesignRunInput {
   preAuthorizedMutations?: GoalManifest['pre_authorized_mutations'];
 }
 
-/** D is a domain boundary; E is the explicitly requested work. Historical roots cannot be guessed. */
+/** Definitions name available checks; work authorization comes from the original request and canonical unit. */
 export function initialDesignPhasePolicy(projectRoot: string, frameworkRoot: string, manifest: InitialDesignGoalManifest): { domain: string[]; explicit: string[] } {
   const explicit = [...manifest.initial_design.requested_phases];
-  if (!Object.prototype.hasOwnProperty.call(manifest, 'start_phase')) return { domain: [...explicit], explicit };
-  const workflow = featurePhasesFromWorkflow(resolveWorkflowSpec(projectRoot, { frameworkRoot }));
-  const start = workflow.indexOf(manifest.start_phase!), end = workflow.indexOf(manifest.end_phase!);
-  if (start < 0 || end < start) throw new Error('[initial-design] invalid initial request domain boundaries');
-  const domain = resolveChainPhasesForBudget(manifest, workflow.slice(start, end + 1));
+  const domain = featurePhasesFromWorkflow(resolveWorkflowSpec(projectRoot, { frameworkRoot }));
   const outside = explicit.filter(phase => !domain.includes(phase as typeof domain[number]));
   if (outside.length) throw new Error(`[initial-design] explicit actions outside request domain: ${outside.join(', ')}`);
   return { domain, explicit };
@@ -159,7 +157,7 @@ export function prepareInitialDesignRun(input: InitialDesignRunInput): { manifes
     return { manifest: rejoin, manifestPath: path.join(runDir, 'manifest.json'), runDir, created: false };
   }
   if (!prior && targets.length && targets[0] !== previous?.run_id) targets = [];
-  const continuation = previous ? decideRunContinuation({ projectRoot: input.projectRoot, feature: input.feature,
+  const continuation = previous ? decideRunContinuation({ projectRoot: input.projectRoot, frameworkRoot: input.frameworkRoot, feature: input.feature,
     call: { requirement: input.requirement, requirementSourceFiles: input.requirementSourceFiles, supersede: targets } }) : undefined;
   if (continuation?.kind === 'hold') throw new Error(`[initial-design] ${continuation.guidance}`);
   const source = continuation?.kind === 'successor'
@@ -168,12 +166,12 @@ export function prepareInitialDesignRun(input: InitialDesignRunInput): { manifes
   const sourceEnd = source ? resolveEffectiveRunEnd(loadEventsJsonlStrict(path.resolve(input.projectRoot, source.report_dir, 'events.jsonl')).events) : undefined;
   const newCycle = sourceEnd?.status === 'COMPLETED';
   if (source && !newCycle && source.adapter !== input.adapter) throw new Error('[initial-design] 未完成原请求更正须保留原adapter合同；先通过既有入口处理明确的adapter变更。');
-  const inherited = source && !newCycle ? readOriginalDeliveryBudget(input.projectRoot, source) : undefined;
-  if (source && !newCycle && inherited) {
-    const live = inherited.runs.find(run => { const lock = readLockRecord(path.resolve(input.projectRoot, run.manifest.report_dir, '.runner.lock'));
+  const inheritedRuns = source && !newCycle ? readOriginalDeliveryRuns(input.projectRoot, source) : undefined;
+  if (source && !newCycle && inheritedRuns) {
+    const live = inheritedRuns.find(run => { const lock = readLockRecord(path.resolve(input.projectRoot, run.manifest.report_dir, '.runner.lock'));
       return lock && !isLockStale(lock); });
     if (live) throw new Error(`[initial-design] 原请求仍有实际执行进程：${live.manifest.feature}/${live.manifest.run_id}；本次更正不并行出生第二作者，原进程停止或完成后重发本次输入。`);
-    const execution = resolveOriginalDeliveryExecution(input.projectRoot, source, inherited.runs);
+    const execution = resolveOriginalDeliveryExecution(input.projectRoot, source, inheritedRuns);
     if (execution.request && !acceptedSessionReport(execution.runDir, execution.request)) {
       const quote = (value: string) => `'${value.replace(/'/g, "''")}'`;
       throw new Error(`[initial-design] 原请求仍有尚未报告的签发窗口；本次更正尚未出生，不继续已被替换的旧工作。请只报告旧调用实际已发生的结果或真实等待原因，再重发本次更正；原SHA/deadline/预算保持不变。\n`
@@ -183,7 +181,7 @@ export function prepareInitialDesignRun(input: InitialDesignRunInput): { manifes
   const effectiveInput = source ? { ...source, ...input,
     requirement: deriveSuccessorRequirement(source.requirement, input.requirement) ?? input.requirement,
     requirementSourceFiles: [...new Set([...(source.requirement_source_files ?? []), ...(input.requirementSourceFiles ?? [])])],
-    budget: newCycle ? input.budget ?? source.budget : inherited?.budget ?? source.budget,
+    userDeadlineAt: newCycle ? input.userDeadlineAt : source.user_deadline_at ?? input.userDeadlineAt,
     requestedPhases: input.requestedPhases ?? source.initial_design.requested_phases,
     startPhase: input.startPhase ?? source.start_phase, endPhase: input.endPhase ?? source.end_phase,
     requestedResults: input.requestedResults ?? (isRepeatedRequirement(source.requirement, input.requirement)
@@ -195,12 +193,13 @@ export function prepareInitialDesignRun(input: InitialDesignRunInput): { manifes
   const workflow = featurePhasesFromWorkflow(resolveWorkflowSpec(input.projectRoot, { frameworkRoot: input.frameworkRoot }));
   input = effectiveInput;
   const manifest = buildInitialDesignGoalManifest({ feature: input.feature, run_id: input.runId, requirement: input.requirement,
+    ...(input.userDeadlineAt ? { user_deadline_at: input.userDeadlineAt } : {}),
     ...(source ? { successor_of: source.run_id } : {}),
     ...(input.requirementSourceFiles?.length ? { requirement_source_files: input.requirementSourceFiles } : {}),
     adapter: input.adapter, ...(input.adapterSource ? { adapter_provenance: input.adapterSource } : {}),
     start_phase: input.startPhase ?? workflow[0], end_phase: input.endPhase ?? workflow.at(-1),
     initial_design: { completion_target: 'feature', requested_results: input.requestedResults ?? [input.requirement], requested_phases: input.requestedPhases ?? [] },
-    budget: input.budget, unattended: input.unattended ?? { write_mode: 'full-access', approval_mode: 'never', max_turns: 20 },
+    unattended: input.unattended ?? { write_mode: 'full-access', approval_mode: 'never' },
     ...(input.adapterModelPin ? { adapter_model_pin: input.adapterModelPin } : {}),
     ...(input.visualProviderPin ? { visual_provider_pin: input.visualProviderPin } : {}),
     ...(input.fidelity ? { fidelity: input.fidelity } : {}),
@@ -325,12 +324,23 @@ export function readInitialDesignDelivery(input: { projectRoot: string; framewor
     if (!units.length) return { ...state, kind: 'decompose', issues: ['已准入蓝图尚无canonical CU，提出ChangeUnitCandidate[]供原consumer原子接受。'] };
     const readySet = deriveChangeUnitReadySet(input.projectRoot, input.manifest.feature);
     const progression = deriveChangeUnitProgressionDecision(readySet, inspection);
-    const designCandidates = progression.action === 'select_one' && progression.selected ? [progression.selected]
-      : progression.action === 'blocked' ? readySet.units.filter(item => item.completion.state !== 'VALID' && item.blockers.length > 0).map(item => item.changeUnit) : [];
-    for (const selected of designCandidates) {
+    const designCandidates = readySet.units.filter(item => item.completion.state !== 'VALID'
+      && (item.changeUnit === progression.selected || item.blockers.length > 0
+        || item.completion.currentDisposition?.completionBlocking.some(problem => problem.owner === 'external' && problem.action === 'repair')));
+    for (const candidate of designCandidates) {
+      const selected = candidate.changeUnit;
       const feature = deriveChangeUnitFeatureId(selected.blueprint_id, selected.change_unit_id);
-      const diagnosis = diagnoseBlueprintSkillAuthority(input.projectRoot,
-        input.frameworkRoot ?? resolveProbeFrameworkRoot(input.projectRoot, __dirname), feature);
+      const frameworkRoot = input.frameworkRoot ?? resolveProbeFrameworkRoot(input.projectRoot, __dirname);
+      const phases = new Set(candidate.completion.currentDisposition?.completionBlocking
+        .filter(problem => problem.owner === 'external' && problem.action === 'repair').map(problem => problem.source_phase ?? problem.phase));
+      const findings = diagnoseBlueprintSkillAuthority(input.projectRoot, frameworkRoot, feature).findings;
+      for (const phase of phases) {
+        let runId: string | undefined;
+        try { runId = JSON.parse(fs.readFileSync(path.join(featurePhaseReportsDir(input.projectRoot, feature, phase, frameworkRoot), 'summary.json'), 'utf8')).run_id; }
+        catch { /* The shared diagnosis retains unavailable source facts as unresolved. */ }
+        findings.push(...diagnoseDesignAuthority(input.projectRoot, frameworkRoot, feature, phase, runId).findings);
+      }
+      const diagnosis = { findings: [...new Map(findings.map(finding => [stableStringify(finding), finding])).values()] };
       if (diagnosis.findings.length) {
         const cuPath = path.relative(input.projectRoot, changeUnitPath(input.projectRoot, selected.blueprint_id, selected.change_unit_id)).replace(/\\/g, '/');
         const designRepair = { feature: diagnosis.findings.some(item => item.artifacts.includes(cuPath)) ? feature : input.manifest.feature,
@@ -365,7 +375,7 @@ function previousDesignWork(input: { projectRoot: string; manifest: InitialDesig
     } catch { /* Original parse diagnostics remain in the current machine feedback. */ }
   }
   const label = initialDesignInvocationLabel(input.observation);
-  const runs = input.deliveryRuns ?? readOriginalDeliveryBudget(input.projectRoot, input.manifest)?.runs ?? [];
+  const runs = input.deliveryRuns ?? readOriginalDeliveryRuns(input.projectRoot, input.manifest);
   const previous = runs.filter(run => run.manifest.feature === input.manifest.feature).flatMap(run => run.events
     .filter(event => event.type === 'agent_invoke_end' && event.phase === label && event.invoke_id).map(event => ({ run, event })))
     .sort((a, b) => String(a.event.ts).localeCompare(String(b.event.ts))).at(-1);
@@ -428,7 +438,7 @@ function previousDesignWork(input: { projectRoot: string; manifest: InitialDesig
       }
     } catch { /* No completed questioning artifact means the first reading remains unfinished. */ }
   }
-  parts.push(`前次本职责调用：${run.manifest.run_id}/${event.invoke_id}；实际status=${event.status ?? 'unknown'}，exit=${event.exit_code ?? 'unknown'}，正常完成=${completed}，timed_out=${event.timed_out === true}。调用结束不等于本职产物完成。\n原件：${source}\n${input.observation.kind === 'questioning' && !questioned ? '首次正文阅读完成后再读前次原件，不提前继承其内容。' : `前次最终正文（只作线索，不是质量结论或本次授权）：\n${body ? body.slice(-6000) : '无可提取的最终正文；按磁盘材料和当前机器缺口继续，不猜上轮结果。'}`}`);
+  parts.push(`前次本职责实际执行结果：status=${event.status ?? 'unknown'}，exit=${event.exit_code ?? 'unknown'}，正常完成=${completed}，timed_out=${event.timed_out === true}。调用结束不等于本职产物完成。\n原调用与日志按 ${path.resolve(input.projectRoot, input.manifest.report_dir, 'events.jsonl')} 及manifest既有lineage中的本职责最近记录定位；调用编号和日志路径只作审计，不构成新业务工作。\n${input.observation.kind === 'questioning' && !questioned ? '首次正文阅读完成后再读前次原件，不提前继承其内容。' : `前次最终正文（只作线索，不是质量结论或本次授权）：\n${body || '无可提取的最终正文；按磁盘材料和当前机器缺口继续，不猜上轮结果。'}`}`);
   return { lines: parts, questioned };
 }
 
@@ -508,10 +518,43 @@ export interface InitialDesignDeliveryProjection {
   recovery?: Record<string, unknown>;
   current?: { feature: string; run_id?: string; phase?: string; deadline?: string };
   issues: string[];
-  budget: { total_turns: number; active_ms: number; max_total_turns: number; wall_clock_minutes: number };
+  activity: { calls: number; active_ms: number };
+  current_disposition: CurrentDisposition;
   next_action: string;
   /** Read-only cursor across this request's original and origin-bound run events. */
   event_count: number;
+}
+
+/** Root completion consumes the same design, CU and formal assembly facts as their own endpoints. */
+export function readInitialDesignCompletionDisposition(input: { projectRoot: string; frameworkRoot: string; manifest: InitialDesignGoalManifest;
+  observation?: InitialDesignObservation }): CurrentDisposition {
+  const observed = input.observation ?? readInitialDesignDelivery(input);
+  const problems: CurrentDispositionProblem[] = [...(observed.disposition?.problems ?? [])];
+  if (!observed.disposition) problems.push(...resolveCurrentDisposition(readCurrentDispositionInput({ endpoint: 'design', projectRoot: input.projectRoot,
+    blueprintPath: observed.blueprintPath, blueprint: undefined, blueprintIssues: observed.blueprintIssues ?? [], phase: 'component-design' })).problems);
+  if (['author', 'decompose', 'scope'].includes(observed.kind) && !observed.disposition?.completionBlocking.length) problems.push({
+    phase: 'component-design', id: 'execution_scope', action: 'repair', affects: 'completion', severity: 'BLOCKER', owner: 'component-design',
+    detail: observed.issues.join('；') || '原请求的设计/CU工作尚未交回。', files: [path.relative(input.projectRoot, observed.blueprintPath).replace(/\\/g, '/')] });
+  const ready = observed.progression?.readySet;
+  for (const unit of ready?.units ?? []) {
+    const feature = deriveChangeUnitFeatureId(unit.changeUnit.blueprint_id, unit.changeUnit.change_unit_id);
+    const current = unit.completion.currentDisposition;
+    if (current) problems.push(...current.problems.map(problem => ({ ...problem, detail: `${feature}：${problem.detail}` })));
+    if (unit.completion.state !== 'VALID' && !current?.completionBlocking.length) problems.push({ phase: 'construction', id: 'required_check_conclusion',
+      action: 'verify', affects: 'completion', severity: 'BLOCKER', owner: feature, detail: `${feature} completion=${unit.completion.state}：${unit.completion.reasons.join('；')}` });
+  }
+  if (ready?.allCompleted) {
+    try {
+      const original = loadCanonicalComponentClosure(input.projectRoot, input.manifest.feature);
+      const closure = validateComponentClosure(original.closure, input.projectRoot, input.manifest.feature);
+      if (!closure.currentDisposition) throw new Error(closure.issues.map(issue => issue.message).join('；') || '缺当前组装核验结论');
+      problems.push(...closure.currentDisposition.problems);
+    } catch (error) {
+      problems.push({ phase: 'component-closure', id: 'required_check_conclusion', action: 'verify', affects: 'completion', severity: 'BLOCKER', owner: 'component-closure',
+        detail: `原请求的正式组装原件尚不可核验：${String(error)}` });
+    }
+  }
+  return resolveCurrentDisposition({ endpoint: 'request', phases: [], additionalProblems: problems });
 }
 
 /** One original-request projection for status/monitor/assess; none of those consumers schedule work. */
@@ -522,22 +565,19 @@ export function projectInitialDesignDelivery(input: { projectRoot: string; frame
   const events = loadEventsJsonlStrict(path.join(runDir, 'events.jsonl'));
   if (events.corruptLines.length) throw new Error('[initial-design] corrupt original request events');
   const observed = readInitialDesignDelivery({ projectRoot, frameworkRoot: input.frameworkRoot, manifest });
+  const currentDisposition = readInitialDesignCompletionDisposition({ ...input, manifest, observation: observed });
   const end = resolveEffectiveRunEnd(events.events);
   const disposition = end && 'run_disposition' in end && typeof end.run_disposition === 'string' ? end.run_disposition : undefined;
   const waitKind = end && 'run_wait_kind' in end && typeof end.run_wait_kind === 'string' ? end.run_wait_kind : undefined;
-  const family = readOriginalDeliveryBudget(projectRoot, manifest);
-  const spent = family ?? { ...resolveResumedBudget(events.events, { nextSessionStartMs: Date.now() }), budget: manifest.budget, events: events.events };
-  const execution = resolveOriginalDeliveryExecution(projectRoot, manifest, family?.runs);
+  const activity = readOriginalDeliveryActivity(projectRoot, manifest)!;
+  const execution = resolveOriginalDeliveryExecution(projectRoot, manifest, activity.runs);
   const pending = execution.request && !acceptedSessionReport(execution.runDir, execution.request) ? execution.request : undefined;
   const active = observed.progression?.activeRun;
   const currentInvoke = [...execution.events].reverse().find(event => event.type === 'agent_invoke_start'
     && !execution.events.some(end => end.type === 'agent_invoke_end' && end.invoke_id === event.invoke_id));
   const currentPhase = pending?.request.context.phase ?? currentInvoke?.phase;
   const executing = !!pending || !!currentInvoke || execution.control?.owner?.state === 'active';
-  const lastChild = family?.runs.filter(run => !isInitialDesignManifest(run.manifest))
-    .sort((a, b) => String(a.events.at(-1)?.ts).localeCompare(String(b.events.at(-1)?.ts))).at(-1);
-  const childEnd = lastChild ? resolveEffectiveRunEnd(lastChild.events) : undefined;
-  const complete = end?.status === 'COMPLETED' && observed.progression?.action === 'ready_for_component_closure';
+  const complete = end?.status === 'COMPLETED' && currentDisposition.completionEligible;
   const stage = observed.kind === 'scope' || complete ? 'construction' : observed.kind;
   return { kind: 'initial_design_delivery', feature: manifest.feature, run_id: manifest.run_id,
     status: complete ? 'COMPLETED' : end?.status === 'HALTED' || end?.status === 'INTERRUPTED' ? 'HALTED' : 'RUNNING', stage, complete,
@@ -547,12 +587,11 @@ export function projectInitialDesignDelivery(input: { projectRoot: string; frame
         ...(waitKind ? { run_wait_kind: waitKind } : {}),
         ...('halt_guidance' in end ? { halt_guidance: end.halt_guidance } : 'error' in end ? { halt_guidance: end.error } : {}) } } : {}),
     ...(executing ? { current: { feature: execution.manifest.feature, run_id: execution.manifest.run_id,
-      ...(currentPhase ? { phase: String(currentPhase) } : {}), ...(pending ? { deadline: pending.request.deadline } : {}) } } : {}),
-    issues: complete ? end && 'detail' in end && typeof end.detail === 'string' ? [end.detail] : []
-      : [end && 'error' in end ? end.error : undefined, childEnd?.halt_reason, ...observed.issues].filter((issue): issue is string => typeof issue === 'string' && !!issue),
-    budget: { total_turns: spent.totalTurns, active_ms: spent.priorActiveMs, max_total_turns: spent.budget.max_total_turns,
-      wall_clock_minutes: resolveWallClockMinutes({ ...manifest, budget: spent.budget }, initialDesignPhasePolicy(projectRoot, input.frameworkRoot, manifest).domain) },
+      ...(currentPhase ? { phase: String(currentPhase) } : {}), ...(pending?.request.context.user_deadline_at ? { deadline: pending.request.context.user_deadline_at } : {}) } } : {}),
+    issues: currentDisposition.reasons,
+    current_disposition: currentDisposition,
+    activity: { calls: activity.calls, active_ms: activity.active_ms },
     next_action: complete ? 'delivery_completed' : pending ? 'execute_signed_request' : active ? 'resume_active' : stage,
-    event_count: spent.events.length,
+    event_count: activity.events.length,
   };
 }

@@ -339,8 +339,9 @@ function codingTestChanges(ctx: CheckContext, files: readonly string[], events: 
     const lastWrite = codingWrites.get(file);
     const laterUt = !runId || events.some(event => event.phase === 'ut' && event.type === 'phase_verdict' && event.verdict === 'PASS'
       && !event.advance_blocked && event.action !== 'retry' && (!lastWrite || Date.parse(event.ts ?? '') > Date.parse(lastWrite)));
+    // A read-only UT tool adopts its verified input bytes without rewriting the source as an output.
     if (laterUt && priorUt?.integrityOk && (!lastWrite || Date.parse(priorUt.manifest.generated_at) > Date.parse(lastWrite))
-      && priorUt.manifest.outputs.some(entry => entry.path === file && evidenceEntryMatchesCurrentFile(ctx.projectRoot, entry, ctx.feature))) return [];
+      && [...priorUt.manifest.inputs, ...priorUt.manifest.outputs].some(entry => entry.path === file && evidenceEntryMatchesCurrentFile(ctx.projectRoot, entry, ctx.feature))) return [];
     return [{ file, ...codingTestPreservation({ projectRoot: ctx.projectRoot, feature: ctx.feature, file, runId }) }];
   });
 }

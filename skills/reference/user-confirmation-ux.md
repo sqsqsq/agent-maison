@@ -156,7 +156,7 @@ S1 **`InitTaskPlan.adapter_catalog[]`** 为唯一程序化候选源；registry `
 - ❌ 聊天 OK 但未写回 artifact（spec `[x]`、gap-notes）
 - ❌ freeform 提议未展示正文只要用户回 `1`
 - ❌ 多题并存时接受裸 `y` / `好`（init/setup 编排须 registry 编号；见 §3 gate/enum）
-- ❌ 阶段闭环（closed）后在**同一 agent 执行流**自动 Read 下一 Skill 并开干（见 §8）
+- ❌ 用检查PASS扩大原请求范围，或对已授权完整交付按phase重复确认/轮流派作者（见§8）
 - ❌ 把 `phase-completion-receipt.md` / trace / 「可进入 Skill N」当作下一阶段授权
 - ❌ **已获原目标内自动决议授权** 时仍为同项 stop 问用户（触发 `headless_interaction_required` 或等价行为）——见 §9
 
@@ -206,69 +206,15 @@ S1 **`InitTaskPlan.adapter_catalog[]`** 为唯一程序化候选源；registry `
 
 ---
 
-## 8. 阶段边界推进（BLOCKER）
+## 8. 原请求授权与持续执行（BLOCKER）
 
-**阶段闭环（harness + verifier + evidence + trace PASS）只证明当前 phase 完成，不授权下一 Skill。**
+先核本次范围、验收终点及已有可信授权。明确授权的完整交付由同一完成协调器持续推进，不在每个检查族结束后重复调 phase.next_step / *.ok_to_*；这些旧登记只供兼容说明，不再创建 phase 派工队列。直接专项请求仍止于原终点，不借检查PASS扩大授权。
 
-「可进入 Skill N」= **资格**，≠ **授权**。Stop hook 只管「假完成」，不管「擅自开下一阶段」。
+用户选择有人在场或无人值守；歧义才用 goal.run_mode，--detach 恒为无人值守。可命令适配器共用原 goal-mode-entry / GoalPhaseRuntime。各工作单元有专用作者上下文，独立核验保持真实独立；缺SID时重建专用上下文并披露，不回主会话施工。
 
-### 8.1 默认策略 `transition_policy=manual`
+assess/NEXT 是共同当前事实的展示，不授予写权或重新派工。只读 assess 默认不写 next.json，显式 --write 才更新投影；缺失、损坏、stale缓存从当前原件重读，不手改投影。所有适用必修、补核与等待原因完整呈现；普通完成、正式Feature/CU/部件终点及release就绪保持区别。
 
-启动下一 Skill 前，须满足以下**任一**：
-
-1. 用户消息含下一 Skill **触发意图**（各 SKILL「触发条件」关键词）；
-2. 用户消息含 **batch 多阶段意图**（§8.2）→ `transition_policy=batch_authorized`；
-3. 用户通过 **`phase.next_step`** 或对应 **`*.ok_to_*`** 闭环闸门确认（见 registry）；
-4. **`goal_mode`**：`goal-runner` manifest 显式启动（见 [goal-mode/SKILL.md](../project/goal-mode/SKILL.md)）；自然语言触发词为「目标模式 / 全自动」等；裁决 SSOT 在 runner，非对话内自驱动。
-
-**禁止**：读完 `phase-completion-receipt.md` 或 trace 后，在同一 agent 执行流内自动 Read 下一 Skill 并开干。
-
-**闭环后默认动作（manual）**：汇报本 phase 摘要 → 调 **`phase.next_step`**（确认菜单 + portable 编号）→ **停等**。
-
-| 当前 phase 闭环后 | 专用闸门（可选，与 `phase.next_step` 等价语义） |
-|-------------------|--------------------------------------------------|
-| spec | `phase.next_step`（`spec.freeze` 只冻结 spec 内容，不替代闭环停等，除非 batch 授权） |
-| plan | `plan.ok_to_code`（Step 13.1 PASS 后 **每次** MUST，含首遍 plan） |
-| coding | `coding.ok_to_review` 或 `phase.next_step` |
-| review | `review.ok_to_ut` 或 `phase.next_step` |
-| ut | `ut.ok_to_testing` 或 `phase.next_step` |
-| testing | `phase.next_step`（通常仅「暂停 / 结束」） |
-
-### 8.2 Batch 多阶段授权（`batch_authorized`）
-
-用户**同一条或可追溯承接**的消息声明多阶段范围时，允许在**已声明范围内**连续执行；**超出范围仍须停等**。
-
-启发式示例（非穷举）：
-
-- 「做到 review / 做到 CR / coding 并 review」
-- 「spec 到 UT / 全链路交付 / 从 plan 到真机测试」
-- 「对 `<feature>` 做到 `<phase>` 为止」
-
-解析 SSOT：`framework/harness/scripts/utils/phase-transition-policy.ts`（lint + unit test）。
-
-### 8.2b Goal 模式（`goal_mode` / goal-runner）
-
-用户通过 `/goal-mode`、自然语言（**目标模式 / 全自动 / 无人值守全自动**）或 [goal-mode](../project/goal-mode/SKILL.md) 显式启动时，`transition_policy=goal_mode`。解析 SSOT：`resolveTransitionPolicy` — **goal_mode 优先于** §8.2 的 `batch_authorized`（同句同时命中时以 goal 为准）。
-
-运行方式只暴露 **有人在场 / 无人值守**：明确意图直接映射；歧义时使用 [confirmation-registry.yaml](./confirmation-registry.yaml) 的 `goal.run_mode`；`--detach` 恒为无人值守。不得在菜单中暴露 in-session/headless/tier。
-
-主 agent **自跑** driver/goal-runner（勿让用户手跑 harness）。跨 phase 推荐只来自 `assess@1`，driver 再执行授权、预算、fencing、设备与 trust 门禁；每次只执行一个 phase 后重新 assess。运行证据：`<features_dir>/<feature>/goal-runs/<run-id>/`。
-
-- DEFERRED（外部阻塞）≠ completed；新 run 的成功态是 `CHAIN_SLICE_COMPLETED`，feature 完成仍须 `verify-feature-completion=VALID`。
-- 运行手册：`framework/docs/operations/goal-mode-runbook.md`
-
-### 8.3 `phase.next_step` portable 模板
-
-```text
-{current_phase} 阶段已闭环（harness / verifier / evidence / trace 齐全）。
-
-请选择下一步（回复编号；支持 widget 时可直接选，同轮仍附下列编号）：
-1. 执行 assess 推荐动作 — {assess_recommendation}
-2. 暂停 — 本阶段到此，暂不进入下游
-3. 其它 — 我在对话中说明意图
-```
-
-`{assess_recommendation}` 来自刚生成且指纹已验证的 `assess@1`；投影位于 `<paths.features_dir>/<feature>/next.json`。缺失、损坏或 stale 时，从实例工程 `framework/harness/` 运行 `npx ts-node scripts/assess.ts --project-root <repo-root> --framework-root <repo-root>/framework --feature <feature>` 原子重算（只读巡检加 `--no-write`）；不得手改投影。推荐不构成授权，仍由当前 driver 按 `transition_policy` 裁决。推荐为 `feature_completed`（`feature_completion=VALIDATED`、`requires_driver_authorization=false`，渲染 `authorization=none`）表示功能已按完成记录验证完成、没有待执行动作：直接告知已完成，不要把它当成待授权的下一步。
+真实授权缺口、实质目标/验收变化、秘密或不可逆外部操作仍按既有确认点处理；框架故障本身不制造新人工门禁。能继续的授权工作持续执行，确无可做工作才说明具体producer/对象解除条件。新run无默认轮次/回退/总墙钟配额；显式用户截止、取消和真实工具/设备/owner写保护继续有效。
 
 ---
 

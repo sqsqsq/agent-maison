@@ -9,19 +9,19 @@ import { prepareGoalModeRun, runGoalModeSessionStep as runGoalModeSessionStepUnc
 import { GoalPhaseRuntime } from '../../scripts/goal-phase-runtime';
 import { buildInitialDesignGoalManifest, isInitialDesignManifest } from '../../scripts/utils/goal-manifest';
 import { createGoalRun } from '../../scripts/utils/goal-run-creation';
-import { readOriginalDeliveryBudget } from '../../scripts/utils/delivery-origin';
+import { readOriginalDeliveryActivity } from '../../scripts/utils/delivery-origin';
 import { asChangeUnitArtifact, deriveChangeUnitFeatureId, enumerateCanonicalChangeUnits, loadCanonicalChangeUnit } from '../../scripts/utils/change-unit-path';
 import { loadCanonicalBlueprint } from '../../scripts/utils/component-blueprint-path';
 import { resolveBlueprintTarget } from '../../scripts/utils/blueprint-addressing';
+import { blueprintAuthorContent } from '../../scripts/utils/component-blueprint-model';
 import { deriveDesignPreparationReadiness } from '../../scripts/utils/change-unit-design-preparation';
-import { runUnattendedDesignRepair, designRepairSignature, designRepairTarget, type DesignRepairBriefLike } from '../../scripts/utils/design-repair-unattended';
 import { repairAdapter, s16Born } from './design-authority-repair.unit.test';
 import { BLUEPRINT_ID, withFreshCuHost, project, specFirstCuHooks } from './lifecycle-evolution.unit.test';
 import { runGoalRuntimeChain } from './goal-runner-testing-integrity.unit.test';
 import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
 import type { UnitCaseResult } from '../run-unit';
 import { reportFixtureQuestioning, seedLedgerQuestioningInput } from '../utils/initial-questioning-fixture';
-import { withRuntimeTest, type RuntimeTestControl } from '../utils/runtime-test-control';
+import { withRuntimeTest, preserveRuntimeTestEvidence, type RuntimeTestControl } from '../utils/runtime-test-control';
 const runGoalModeSessionStep = (options: Parameters<typeof runGoalModeSessionStepUnchecked>[0], testControl: RuntimeTestControl = {}) =>
   withRuntimeTest({ root: options.projectRoot, ...testControl }, () => runGoalModeSessionStepUnchecked(options));
 
@@ -34,8 +34,10 @@ const events = (runDir: string): Json[] => fs.readFileSync(path.join(runDir, 'ev
 
 async function initialWaiting(): Promise<void> {
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'initial-waiting-'));
+  const projectRoots: string[] = [];
   const fixture = (name: string, maxTurns = 3) => {
     const projectRoot = path.join(parent, name);
+    projectRoots.push(projectRoot);
     fs.mkdirSync(path.join(projectRoot, 'doc/features'), { recursive: true });
     fs.writeFileSync(path.join(projectRoot, 'framework.config.json'), JSON.stringify({ schema_version: '1.0', project_name: name,
       project_profile: { name: 'hmos-app' }, active_workflow: 'obligation-driven', features_dir: 'doc/features' }));
@@ -62,7 +64,7 @@ async function initialWaiting(): Promise<void> {
     assert.equal(stopped.result.status, 'waiting');
     assert.equal(calls, 1);
     for (const lane of [callback, session]) {
-      assert.equal(readOriginalDeliveryBudget(lane.projectRoot, lane.manifest)!.totalTurns, 1);
+      assert.equal(readOriginalDeliveryActivity(lane.projectRoot, lane.manifest)!.calls, 1);
       const rows = events(lane.runDir);
       assert.equal(rows.filter(row => row.type === 'agent_invoke_start').length, 1);
       assert.equal(rows.at(-1)!.status, 'HALTED');
@@ -72,7 +74,7 @@ async function initialWaiting(): Promise<void> {
     for (const lane of [callback, session]) {
       const next = await runGoalModeSessionStep(lane.options) as Json;
       assert.equal(next.type, 'phase_execute_request', 'a future explicit continuation must not replay the historical waiting report');
-      assert.equal(readOriginalDeliveryBudget(lane.projectRoot, lane.manifest)!.totalTurns, 2);
+      assert.equal(readOriginalDeliveryActivity(lane.projectRoot, lane.manifest)!.calls, 2);
       assert.equal(events(lane.runDir).filter(row => row.type === 'agent_invoke_start').length, 2);
       if (lane === session) assert.notEqual(next.attempt_id, first.attempt_id);
     }
@@ -95,11 +97,20 @@ async function initialWaiting(): Promise<void> {
       waitingCalls++; return { status: 'waiting', phase: context.phase, details: detail, exitCode: 0, stdout: '', stderr: '', command: 'later-waiting' };
     } } }).run());
     assert.equal(waitingCalls, 1);
-    const resumed = await runGoalModeSessionStep(history.options) as Json;
+    const beforeOrdinary = readOriginalDeliveryActivity(history.projectRoot, history.manifest)!.calls;
+    const ordinary = await runGoalModeSessionStep(history.options) as Json;
+    assert.equal(ordinary.type, 'goal_session_result', JSON.stringify(ordinary));
+    assert.equal(ordinary.result.status, 'waiting', 'an unchanged unknown-content waiting result is not completed content or new work');
+    assert.equal(readOriginalDeliveryActivity(history.projectRoot, history.manifest)!.calls, beforeOrdinary,
+      'ordinary re-entry cannot buy another actor for the same waiting condition');
+    const resumed = await runGoalModeSessionStep({ ...history.options, forceTakeover: true }) as Json;
     assert.equal(resumed.type, 'phase_execute_request', 'the latest waiting fact makes the content baseline unknown; do not skip it to reuse older completed content');
-    assert.equal(readOriginalDeliveryBudget(history.projectRoot, history.manifest)!.totalTurns, 4);
+    assert.equal(readOriginalDeliveryActivity(history.projectRoot, history.manifest)!.calls, 4);
     assert.equal(events(history.runDir).filter(row => row.type === 'agent_invoke_start').length, 4);
 
+  } catch (error) {
+    const saved = preserveRuntimeTestEvidence(projectRoots, String(error));
+    throw new Error(`${(error as Error).stack ?? String(error)}\noriginals: ${saved}`);
   } finally { fs.rmSync(parent, { recursive: true, force: true }); clearFrameworkConfigCache(); }
 }
 
@@ -128,7 +139,7 @@ async function unfinishedContentBaseline(kind: 'timeout' | 'terminal-failure' | 
     const next = await runGoalModeSessionStep({ projectRoot, frameworkRoot, feature: prepared.manifest.feature, runId: prepared.manifest.run_id,
       adapter: 'claude', runMode: 'attended', authorization }) as Json;
     assert.equal(next.type, 'phase_execute_request');
-    assert.equal(readOriginalDeliveryBudget(projectRoot, prepared.manifest)!.totalTurns, calls + 1);
+    assert.equal(readOriginalDeliveryActivity(projectRoot, prepared.manifest)!.calls, calls + 1);
   } finally { fs.rmSync(projectRoot, { recursive: true, force: true }); clearFrameworkConfigCache(); }
 }
 
@@ -139,7 +150,7 @@ async function repairWaiting(): Promise<void> {
       if (unit.changeUnit.change_unit_id !== 'ledger-refresh') fs.rmSync(path.dirname(unit.canonicalPath), { recursive: true, force: true });
     }
     const canonical = loadCanonicalBlueprint(host.root, BLUEPRINT_ID);
-    const original = fs.readFileSync(canonical.canonicalPath);
+    let original = fs.readFileSync(canonical.canonicalPath);
     const unit = loadCanonicalChangeUnit(host.root, BLUEPRINT_ID, 'ledger-refresh');
     // This protocol fixture begins before construction input preparation; discard the
     // scaffold's older scope candidate instead of presenting it as current design evidence.
@@ -147,6 +158,7 @@ async function repairWaiting(): Promise<void> {
     const approved: Json = YAML.parse(fs.readFileSync(unit.canonicalPath, 'utf8'));
     const defective = structuredClone(approved);
     defective.design_refs = defective.design_refs.filter((ref: Json) => ref.target.view_id !== 'development');
+    defective.target_predicates[0].desc = '';
     fs.writeFileSync(unit.canonicalPath, YAML.stringify(defective));
     const manifest = buildInitialDesignGoalManifest({ feature: BLUEPRINT_ID, run_id: 'waiting-repair-root', adapter: 'claude',
       requirement: '补齐账目刷新缺少的已有设计引用并完整交付，不改变产品范围。', budget: { max_total_turns: 8, wall_clock_minutes: 120 },
@@ -156,28 +168,18 @@ async function repairWaiting(): Promise<void> {
     const runDir = path.join(host.root, manifest.report_dir);
     const options = { projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: BLUEPRINT_ID, runId: manifest.run_id,
       adapter: 'claude', runMode: 'attended' as const, authorization };
-    const readiness = deriveDesignPreparationReadiness(host.root, BLUEPRINT_ID).perUnit.find(row => row.changeUnitId === 'ledger-refresh')!;
-    const brief: DesignRepairBriefLike = { class: 'B2', items: [{ check: 'plan:cu:design-basis', class: 'B2', codes: readiness.issueIds,
-      artifacts: [path.relative(host.root, unit.canonicalPath)], basis: readiness.issues.map(issue => issue.message).join('；'), needs: ['补回真实development设计引用'] }] };
-    let recording: Array<{ file: string; line: string }> | undefined;
-    const emit = (value: Json) => { const line = JSON.stringify({ ts: new Date().toISOString(), ...value }) + '\n';
-      const file = path.join(runDir, 'events.jsonl'); fs.appendFileSync(file, line); recording?.push({ file, line }); };
-    emit({ type: 'run_start', session_started_at: new Date().toISOString() });
-    const seed = await runUnattendedDesignRepair({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: BLUEPRINT_ID,
-      designTarget: designRepairTarget(host.root, deriveChangeUnitFeatureId(BLUEPRINT_ID, 'ledger-refresh')), phase: 'initial-design', runId: manifest.run_id,
-      reportDir: manifest.report_dir, requirement: manifest.requirement, brief, signature: designRepairSignature(BLUEPRINT_ID, 'initial-design', brief.items),
-      heldFeatureLock: null, runtimeWrites: [manifest.report_dir], emit, registerLockRelease: () => {},
-      recordEventLines: () => { recording = []; return () => { const lines = recording!; recording = undefined; return lines; }; },
-      // Prepare the original transaction without inventing an invocation; public next signs the actual waiting call below.
-      invoke: async () => ({ started: true, ok: false, detail: 'yield to the signed session transport', handoff: true }) });
-    assert.equal(seed.outcome, 'handoff');
+    try {
+    assert(!deriveDesignPreparationReadiness(host.root, BLUEPRINT_ID).ready, 'the actual current CU still needs its approved business description and reference closure');
     let first = await runGoalModeSessionStep(options) as Json;
     let questions = 0;
-    if (first.phase === 'design-repair-questioning') {
-      first = await reportFixtureQuestioning(options, first, runDir, path.join(runDir, 'design-repair/component-blueprint.yaml'), questioning => {
-        Object.assign((questioning.items as Json[])[0], { disposition: 'blocker', answer: '刷新责任的开发归属尚未明确，需原设计owner确认实际契约。' });
-      }) as Json;
+    if (first.phase === 'initial-design-questioning') {
+      first = await reportFixtureQuestioning(options, first, runDir, canonical.canonicalPath) as Json;
       questions++;
+      const admitted = fs.readFileSync(canonical.canonicalPath);
+      assert.deepEqual(blueprintAuthorContent(YAML.parse(admitted.toString('utf8'))), blueprintAuthorContent(YAML.parse(original.toString('utf8'))),
+        'the legitimate initial Q may update machine admission, never the approved design business content');
+      assert.equal(YAML.parse(admitted.toString('utf8')).revision, canonical.blueprint.revision, 'initial Q cannot publish a design revision');
+      original = admitted;
     }
     assert.equal(first.phase, 'design-repair-author', JSON.stringify(first));
     const pause = await runGoalModeSessionStep({ ...options, requestPath: first.request.path,
@@ -185,14 +187,22 @@ async function repairWaiting(): Promise<void> {
     assert.equal(pause.type, 'goal_session_result', JSON.stringify({ type: pause.type, phase: pause.phase,
       invoke: first.invoke_id, events: events(runDir).filter(row => ['agent_invoke_start', 'agent_invoke_end', 'run_end', 'design_authority_repair'].includes(row.type)) }));
     assert.equal(pause.result.status, 'waiting');
-    assert.equal(readOriginalDeliveryBudget(host.root, manifest)!.totalTurns, 1 + questions);
+    assert.equal(readOriginalDeliveryActivity(host.root, manifest)!.calls, 1 + questions);
     assert(fs.existsSync(path.join(runDir, 'design-repair/component-blueprint.yaml')));
     assert(!events(runDir).some(row => row.type === 'design_authority_repair' && row.stage === 'failed'));
-    const retry = await runGoalModeSessionStep(options) as Json;
+    const unchanged = await runGoalModeSessionStep(options) as Json;
+    assert.equal(unchanged.type, 'goal_session_result', 'ordinary next preserves the original waiting condition');
+    assert.equal(readOriginalDeliveryActivity(host.root, manifest)!.calls, 1 + questions);
+    const retry = await runGoalModeSessionStep({ ...options, forceTakeover: true }) as Json;
     assert.equal(retry.phase, 'design-repair-author');
     assert.notEqual(retry.attempt_id, first.attempt_id);
     const savedNode = structuredClone(resolveBlueprintTarget(canonical.blueprint, { kind: 'node', view_id: 'logical', id: 'ledger-domain' }));
-    const adapter = repairAdapter(host, () => savedNode as Json, { author: (_doc, draft) => fs.writeFileSync(path.join(path.dirname(draft), 'change-unit.yaml'), YAML.stringify(approved)) });
+    const adapter = repairAdapter(host, () => savedNode as Json, { author: (_doc, draft) => {
+      const file = path.join(path.dirname(draft), 'change-unit.yaml');
+      const candidate: Json = YAML.parse(fs.readFileSync(file, 'utf8'));
+      candidate.target_predicates = structuredClone(approved.target_predicates);
+      fs.writeFileSync(file, YAML.stringify(candidate));
+    } });
     const request = JSON.parse(fs.readFileSync(retry.request.path, 'utf8'));
     await adapter.onOutOfChain({ phase: retry.phase, prompt: request.context.instruction, attempt: 1, runId: manifest.run_id });
     const questioning = await runGoalModeSessionStep({ ...options, requestPath: retry.request.path,
@@ -201,11 +211,14 @@ async function repairWaiting(): Promise<void> {
     const qPause = await runGoalModeSessionStep({ ...options, requestPath: questioning.request.path,
       report: { status: 'waiting', phase: questioning.phase, details: detail } }) as Json;
     assert.equal(qPause.result.status, 'waiting');
-    assert.equal(readOriginalDeliveryBudget(host.root, manifest)!.totalTurns, 3 + questions);
-    const qRetry = await runGoalModeSessionStep(options) as Json;
+    assert.equal(readOriginalDeliveryActivity(host.root, manifest)!.calls, 3 + questions);
+    const unchangedQuestion = await runGoalModeSessionStep(options) as Json;
+    assert.equal(unchangedQuestion.type, 'goal_session_result', 'ordinary next cannot buy another unchanged waiting Q');
+    assert.equal(readOriginalDeliveryActivity(host.root, manifest)!.calls, 3 + questions);
+    const qRetry = await runGoalModeSessionStep({ ...options, forceTakeover: true }) as Json;
     assert.equal(qRetry.phase, 'design-repair-questioning');
     assert.notEqual(qRetry.attempt_id, questioning.attempt_id);
-    assert.equal(readOriginalDeliveryBudget(host.root, manifest)!.totalTurns, 4 + questions);
+    assert.equal(readOriginalDeliveryActivity(host.root, manifest)!.calls, 4 + questions);
     assert.equal(events(runDir).filter(row => row.type === 'design_authority_repair' && row.stage === 'attempted').length, 1);
     assert(!events(runDir).some(row => row.type === 'design_authority_repair' && row.stage === 'failed'));
     assert.deepEqual(fs.readFileSync(canonical.canonicalPath), original, 'waiting never publishes a partial draft');
@@ -221,12 +234,22 @@ async function repairWaiting(): Promise<void> {
     assert.equal(after.filter(row => row.type === 'agent_invoke_start' && row.phase === 'design-repair-author').length, 2, 'completed author is reused after questioning resumes');
     assert.equal(loadCanonicalBlueprint(host.root, BLUEPRINT_ID).blueprint.revision, Number(canonical.blueprint.revision) + 1);
     assert(deriveDesignPreparationReadiness(host.root, BLUEPRINT_ID).ready);
-    assert.equal(readOriginalDeliveryBudget(host.root, manifest)!.totalTurns, after.filter(row => row.type === 'agent_invoke_start').length);
+    assert.equal(readOriginalDeliveryActivity(host.root, manifest)!.calls, after.filter(row => row.type === 'agent_invoke_start').length);
+    } catch (error) {
+      const originals = [canonical.canonicalPath, unit.canonicalPath, ...['component-blueprint.yaml', 'change-unit.yaml', 'architecture.json']
+        .map(file => path.join(runDir, 'design-repair', file))];
+      for (const row of events(runDir).filter(event => typeof event.handoff_request?.path === 'string').slice(-2)) {
+        originals.push(path.resolve(runDir, row.handoff_request.path));
+      }
+      const saved = preserveRuntimeTestEvidence([host.root], String(error), [], originals);
+      throw new Error(`${(error as Error).stack ?? String(error)}\noriginals: ${saved}`);
+    }
   });
 }
 
 async function normalQuestioningWaiting(): Promise<void> {
   await withFreshCuHost(async host => {
+    try {
     let authors = 0, questioners = 0;
     const invokeFacts = (source: Json[]) => source.filter(row => row.type === 'agent_invoke_start' || row.type === 'agent_invoke_end')
       .map(row => ({ type: row.type, phase: row.phase, invoke_id: row.invoke_id, status: row.status, exit_code: row.exit_code,
@@ -248,18 +271,12 @@ async function normalQuestioningWaiting(): Promise<void> {
     const rawActor = repairAdapter(host, () => first.saved, { author: () => { authors++; }, questioning: () => { questioners++; } });
     const p = project(host, first.feature);
     const hooks = specFirstCuHooks(p, true);
-    const helper = require('../../scripts/utils/goal-runner-phase') as typeof import('../../scripts/utils/goal-runner-phase');
-    const originalGuard = helper.checkTerminalResumeGuard;
-    // Existing test seam: keep the real resume decision and all its conditions,
-    // shortening only its cooldown instead of sleeping five minutes.
-    helper.checkTerminalResumeGuard = input => originalGuard({ ...input, cooldownMinutes: 0 });
-    try {
-      await runGoalRuntimeChain(host.root, { frameworkRoot: host.frameworkRoot, featureId: first.feature, adapter: 'codex',
-        resume: first.runId, forceResume: true, noAutoForce: true, ...hooks,
-        testControl: { expectedInterruption: 'test cut after the real design transaction, before downstream product work' },
-        onPlan: () => { throw new Error('test cut after the real design transaction, before downstream product work'); },
-        onOutOfChain: rawActor.onOutOfChain });
-    } finally { helper.checkTerminalResumeGuard = originalGuard; }
+    const resumed = await runGoalRuntimeChain(host.root, { frameworkRoot: host.frameworkRoot, featureId: first.feature, adapter: 'codex',
+      resume: first.runId, forceResume: true, noAutoForce: true, ...hooks,
+      realHarness: false, onAuthor: () => {},
+      onHarnessFailureWithoutSummary: () => '本例当前施工工具不可用；保留已真实完成的设计事务，工具恢复后继续原施工请求。',
+      onOutOfChain: rawActor.onOutOfChain });
+    assert(!resumed.events.some(event => event.type === 'run_end' && event.status === 'CHAIN_SLICE_COMPLETED'), 'a downstream author wait cannot complete the business delivery');
     const directory = featureFilePath(host.root, first.feature, 'goal-runs');
     const rows = fs.readdirSync(directory).filter(name => !name.startsWith('.')).flatMap(name => events(path.join(directory, name)));
     const repairs = rows.filter(row => row.type === 'design_authority_repair');
@@ -268,7 +285,8 @@ async function normalQuestioningWaiting(): Promise<void> {
         resumes: rows.filter(row => row.type === 'resume') },
       ends: rows.filter(row => row.type === 'run_end').map(row => ({ status: row.status, halt_reason: row.halt_reason })) }));
     assert.equal(authors, 1, 'a successful design author must not be invoked again while recovering its waiting questioner');
-    assert.equal(questioners, 2, 'only the waiting independent responsibility is called again');
+    assert.equal(questioners, 2, 'only the waiting independent responsibility is called again: '
+      + JSON.stringify(rows.filter(row => ['phase_halt', 'run_end'].includes(row.type)).slice(-5)));
     assert.equal(repairs.filter(row => row.stage === 'attempted').length, 1);
     assert(!repairs.some(row => row.stage === 'failed'));
     assert(repairs.some(row => row.stage === 'published' && row.outcome === 'recovered'), 'the original machine validation/publication/reconcile must really finish');
@@ -276,8 +294,12 @@ async function normalQuestioningWaiting(): Promise<void> {
     assert.equal(published.blueprint.revision, first.baseRevision + 1);
     const current = asChangeUnitArtifact(loadCanonicalChangeUnit(host.root, BLUEPRINT_ID, 'ledger-refresh').changeUnit);
     assert.equal(current.component_blueprint_ref.artifact_sha256, published.artifactSha256, 'the real CU must be rebound to this publication');
-    // The normal construction run intentionally remains interrupted at plan, so
+    // The normal construction unit intentionally remains waiting for its executor, so
     // global P2 readiness is not the terminal predicate of this transaction test.
+    } catch (error) {
+      const saved = preserveRuntimeTestEvidence([host.root], String(error));
+      throw new Error(`${(error as Error).stack ?? String(error)}\noriginals: ${saved}`);
+    }
   });
 }
 

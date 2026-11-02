@@ -12,13 +12,11 @@ import {
   resolveBlockerActionability,
   isSpecCaptureGapBlockerId,
   CUMULATIVE_HALT_FAMILY,
-  EXTERNAL_RETRY_RESPONSIBILITY_KINDS,
   SIGNATURE_HALT_KINDS,
   type GoalSummaryLike,
 } from '../../scripts/utils/goal-failure-classifier';
 import { extractPriorFailureContext } from '../../scripts/goal-runner';
 import { buildSummaryBlockers } from '../../scripts/utils/summary-blockers';
-import { resolveClosureSyncOutcome, shouldHaltClosureTimeout } from '../../scripts/utils/goal-runner-phase';
 
 export interface UnitCaseResult {
   name: string;
@@ -162,7 +160,6 @@ const cases: Array<{ name: string; run: () => void }> = [
       for (const [name, set] of [
         ['SIGNATURE_HALT_KINDS', SIGNATURE_HALT_KINDS],
         ['CUMULATIVE_HALT_FAMILY', CUMULATIVE_HALT_FAMILY],
-        ['EXTERNAL_RETRY_RESPONSIBILITY_KINDS', EXTERNAL_RETRY_RESPONSIBILITY_KINDS],
       ] as const) {
         if (set.has('spec_capture_gap' as never)) throw new Error(`spec_capture_gap 不得入 ${name}`);
       }
@@ -202,35 +199,6 @@ const cases: Array<{ name: string; run: () => void }> = [
       }
       if (!/parked, framework/.test(text)) throw new Error('framework 未标注 parked');
       if (text.includes('TypeError secret') || text.includes('改产品绕过')) throw new Error('framework 详情不得回喂 agent');
-    },
-  },
-  {
-    // post-impl round2 P1#3：helper 对 PASS 返回 false **不是**「PASS+超时可以 retry」——
-    // PASS+超时走 advance_blocked → closure 分类：probe=passed → deterministic（runner 自己
-    // 关环，零 agent attempt）；probe=missing/failed → runner 侧 repair+timedOut 拦截同样
-    // halt closure_timeout（goal-runner 分类块），任何 closure 超时都不回内容重试。
-    name: 'closure_timeout: closure-only 超时 FAIL→halt；PASS 由分类块处置（deterministic 或 closure_timeout），均不回内容重试',
-    run: () => {
-      if (!shouldHaltClosureTimeout(true, 'agent_timeout', 'FAIL')) throw new Error('closure 超时应 halt');
-      if (shouldHaltClosureTimeout(false, 'agent_timeout', 'FAIL')) throw new Error('内容 attempt 不受影响');
-      if (shouldHaltClosureTimeout(true, 'code_regression', 'FAIL')) throw new Error('非超时不拦');
-      if (shouldHaltClosureTimeout(true, 'agent_timeout', 'PASS')) {
-        throw new Error('PASS 超时由 closure 分类块处置（passed→deterministic / 其余→closure_timeout），helper 不重复拦');
-      }
-    },
-  },
-  {
-    // round4 P1#3：deterministic sync 分流矩阵（runner 消费同一纯函数——控制流契约锁定；
-    // 目标组合=sync 失败 + closureOnly + timed_out → closure_timeout，不回内容重试）
-    name: 'resolveClosureSyncOutcome: sync 成功→advance；失败+closureOnly+超时→closure_timeout；失败未超时→repair',
-    run: () => {
-      if (resolveClosureSyncOutcome(0, true, true) !== 'advance') throw new Error('sync 成功应 advance');
-      if (resolveClosureSyncOutcome(0, false, false) !== 'advance') throw new Error('sync 成功恒 advance');
-      if (resolveClosureSyncOutcome(1, true, true) !== 'closure_timeout') {
-        throw new Error('目标组合（sync 失败+closureOnly+超时）必须 closure_timeout');
-      }
-      if (resolveClosureSyncOutcome(1, true, false) !== 'repair_retry') throw new Error('未超时回落 repair');
-      if (resolveClosureSyncOutcome(1, false, true) !== 'repair_retry') throw new Error('非 closure attempt 不受影响');
     },
   },
   {

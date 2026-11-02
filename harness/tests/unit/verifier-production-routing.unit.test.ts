@@ -17,7 +17,6 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { spawnSync } from 'child_process';
 
 import {
   buildNextLine,
@@ -59,7 +58,6 @@ export interface UnitCaseResult {
 
 const FRAMEWORK_ROOT = path.resolve(__dirname, '..', '..', '..');
 const HARNESS_ROOT = path.resolve(__dirname, '..', '..');
-const STOP_HOOK = path.join(FRAMEWORK_ROOT, 'agents', 'claude', 'templates', 'hooks', 'check-phase-completion.mjs');
 
 function assert(cond: boolean, msg: string): void {
   if (!cond) throw new Error(msg);
@@ -427,156 +425,7 @@ function caseC_productionAndNextActionRouting(): void {
 // --------------------------------------------------------------------------
 // D. Stop hook 首要动作分流
 // --------------------------------------------------------------------------
-function makeStopHookProject(opts: { verdict: 'PASS' | 'FAIL'; nextAction: string }): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'verifier-stophook-'));
-  fs.mkdirSync(path.join(dir, 'framework', 'harness', 'state'), { recursive: true });
-  fs.writeFileSync(
-    path.join(dir, 'framework.config.json'),
-    JSON.stringify({
-      schema_version: '1.1',
-      project_name: 'stophook',
-      project_profile: { name: 'generic' },
-      agent_adapter: 'claude',
-      paths: {
-        features_dir: 'doc/features',
-        state_file: 'framework/harness/state/.current-phase.json',
-        receipt_dir_pattern: 'doc/features/<feature>/<phase>',
-        reports_dir_pattern: 'doc/features/<feature>/<phase>/reports',
-      },
-    }),
-    'utf-8',
-  );
-  fs.writeFileSync(
-    path.join(dir, 'framework', 'harness', 'state', '.current-phase.json'),
-    JSON.stringify({
-      schema_version: '1.1',
-      phase: 'review',
-      feature: 'demo',
-      status: 'harness_finished',
-      updated_at: new Date().toISOString(),
-      verdict: opts.verdict,
-      blocker_count: opts.verdict === 'PASS' ? 0 : 1,
-      last_run_at: new Date().toISOString(),
-    }) + '\n',
-    'utf-8',
-  );
-  const reports = path.join(dir, 'doc', 'features', 'demo', 'review', 'reports');
-  fs.mkdirSync(reports, { recursive: true });
-  fs.writeFileSync(
-    path.join(reports, 'summary.json'),
-    JSON.stringify({
-      schema_version: '1.3',
-      phase: 'review',
-      feature: 'demo',
-      verdict: opts.verdict,
-      blocker_count: opts.verdict === 'PASS' ? 0 : 1,
-      fail_count: 0,
-      warn_count: 0,
-      script_report: 'doc/features/demo/review/reports/script-report.json',
-      merged_report: 'doc/features/demo/review/reports/merged-report.md',
-      summary_json: 'doc/features/demo/review/reports/summary.json',
-      run_statuses: [],
-      readiness_signals: [],
-      blocking_warnings: [],
-      blocking_skips: [],
-      blockers: [],
-      next_action: opts.nextAction,
-      closure_status: 'open',
-    }, null, 2),
-    'utf-8',
-  );
-  return dir;
-}
-
-function caseD_stopHookFirstActionRouting(): void {
-  // ① 脚本已 PASS、只差回执/闭环 → 首要动作必须是 --sync-closure。
-  //    重跑完整 harness 会重新装配含时间戳的 prompt、换代 subject，正好废掉刚发布的证据。
-  const passRoot = makeStopHookProject({ verdict: 'PASS', nextAction: 'fill_receipt_then_sync_closure' });
-  try {
-    const r = spawnSync('node', [STOP_HOOK], {
-      input: JSON.stringify({ session_id: 's1', cwd: passRoot, hook_event_name: 'Stop', stop_hook_active: false }),
-      env: { ...process.env, CLAUDE_PROJECT_DIR: passRoot },
-      encoding: 'utf-8',
-      timeout: 15_000,
-    });
-    const out = `${r.stdout ?? ''}\n${r.stderr ?? ''}`;
-    assert(out.includes('--sync-closure'), `PASS+未闭环时应给出 --sync-closure：\n${out}`);
-    // 首要动作行 = headline 之后第一条 `→` 指令
-    const firstAction = out.split('\n').find((l) => l.trim().startsWith('→'));
-    assert(Boolean(firstAction), `应有首要动作行：\n${out}`);
-    assert(
-      (firstAction as string).includes('--sync-closure'),
-      `首要动作必须是 sync-closure，实得：${firstAction}`,
-    );
-    assert(
-      !/→\s*cd framework\/harness && npx ts-node harness-runner\.ts --phase/.test(firstAction as string),
-      `首要动作不得是完整 harness 重跑（会换代 subject 废掉已发布证据）：${firstAction}`,
-    );
-  } finally {
-    rmDir(passRoot);
-  }
-
-  // ② 脚本 FAIL → 允许（且应该）提示重跑完整 harness
-  const failRoot = makeStopHookProject({ verdict: 'FAIL', nextAction: 'fix_blockers_then_rerun' });
-  try {
-    const r = spawnSync('node', [STOP_HOOK], {
-      input: JSON.stringify({ session_id: 's1', cwd: failRoot, hook_event_name: 'Stop', stop_hook_active: false }),
-      env: { ...process.env, CLAUDE_PROJECT_DIR: failRoot },
-      encoding: 'utf-8',
-      timeout: 15_000,
-    });
-    const out = `${r.stdout ?? ''}\n${r.stderr ?? ''}`;
-    const firstAction = out.split('\n').find((l) => l.trim().startsWith('→'));
-    assert(Boolean(firstAction), `应有首要动作行：\n${out}`);
-    assert(
-      (firstAction as string).includes('--phase') && !(firstAction as string).includes('--sync-closure'),
-      `脚本 FAIL 时首要动作应为完整重跑，实得：${firstAction}`,
-    );
-  } finally {
-    rmDir(failRoot);
-  }
-
-  // ③ D2（codex 一轮 medium）：诊断轮（脚本 FAIL + next_action=run_verifier_for_repair）
-  //    首要动作是投 verifier；收尾**不得**是 sync-closure（base summary 仍 FAIL、
-  //    候选未重算，finalizer 必拒），必须给出非 goal 重跑本阶段 harness 的出口。
-  const diagRoot = makeStopHookProject({ verdict: 'FAIL', nextAction: 'run_verifier_for_repair' });
-  try {
-    const r = spawnSync('node', [STOP_HOOK], {
-      input: JSON.stringify({ session_id: 's1', cwd: diagRoot, hook_event_name: 'Stop', stop_hook_active: false }),
-      env: { ...process.env, CLAUDE_PROJECT_DIR: diagRoot },
-      encoding: 'utf-8',
-      timeout: 15_000,
-    });
-    const out = `${r.stdout ?? ''}\n${r.stderr ?? ''}`;
-    const firstAction = out.split('\n').find((l) => l.trim().startsWith('→'));
-    assert(Boolean(firstAction), `应有首要动作行：\n${out}`);
-    assert(
-      (firstAction as string).includes('subagent_type=verifier'),
-      `诊断轮首要动作应为投 verifier，实得：${firstAction}`,
-    );
-    assert(
-      !(firstAction as string).includes('--sync-closure'),
-      `诊断轮首要动作不得是 sync-closure：${firstAction}`,
-    );
-    assert(
-      /不要跑\s*sync-closure/.test(out),
-      `诊断轮必须显式排除 sync-closure（finalizer 拒 FAIL）：\n${out}`,
-    );
-    assert(
-      out.includes('非 goal') && /harness-runner\.ts\s*\\?\s*\n?\s*--phase review/.test(out.replace(/\s+/g, ' ')),
-      `诊断轮须给非 goal 的"重跑本阶段 harness 重算候选"出口：\n${out}`,
-    );
-    assert(out.includes('交回') || out.includes('由外层 runner'), `诊断轮须区分正式 goal 编排的交回路径：\n${out}`);
-    assert(out.includes('owner'), `诊断轮须指向"按 NEXT 找 owner 回修"：\n${out}`);
-  } finally {
-    rmDir(diagRoot);
-  }
-}
-
-// --------------------------------------------------------------------------
-// E. repair_candidates：subject 锚定 + 闭环重算
-// --------------------------------------------------------------------------
-/** UT verifier 报告：`device_ac_delegation FAIL` 会产出一条 spec 候选（既有共享实现）。 */
+/** UT verifier report retains its original negative finding across the subject tests. */
 const UT_VERIFIER_FINDING = ['# Verifier Report', '', '- id: device_ac_delegation', '  status: FAIL', ''].join('\n');
 
 function caseE_repairCandidatesSubjectAnchoring(): void {
@@ -923,6 +772,7 @@ function caseG_reviewNegativeVerdictProducesDiagnosisRequest(): void {
     const dir = reportsDirOf(root, 'demo', 'review');
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, 'ai-prompt.md'), '# review prompt v1\n', 'utf-8');
+    writeFile(path.join(root, 'doc/features/demo/review/review-report.md'), REVIEW_REPORT_NEGATIVE);
     const report = scriptReportOf('demo', 'review', root, [REPORT_VALIDITY_OK, NEGATIVE_VERDICT_CLOSURE_FAIL]);
     assert(report.summary.verdict === 'FAIL', '构造性前提：负面裁决 BLOCKER FAIL 必须把脚本 verdict 打成 FAIL');
 
@@ -1056,12 +906,14 @@ function caseH_diagnosisEligibilityAndPromptNotice(): void {
         id: 'ut_hvigor_build', category: 'structure', description: 'ut 编译',
         severity: 'BLOCKER', status: 'PASS', details: '编译通过',
       };
+      const testSource = 'test/Flow.test.ts';
+      writeFile(path.join(root, testSource), 'it("real behavior", () => { expect(actual).toBe(expected); });\n');
       const utRunFail: CheckResult = {
         id: 'ut_hvigor_test', category: 'structure', description: 'ut 装机执行',
         severity: 'BLOCKER', status: 'FAIL',
         details: 'hypium 结果：total=1, passed=0, failed=1, skipped=0\nsuite_health: UNKNOWN',
         failure_kind: 'code_regression',
-        affected_files: ['feature_opencard@ohosTest'],
+        affected_files: [testSource],
       };
       // ut_run_status 是 MINOR WARN 派生面板，can_claim_done=NO——它**不得**吞掉诊断动作。
       const utRunStatus: CheckResult = {
@@ -1083,7 +935,7 @@ function caseH_diagnosisEligibilityAndPromptNotice(): void {
       assert(s.verdict === 'FAIL', '产品 verdict 保持 FAIL');
 
       // 环境类归因（device_toolchain）则一律不放行——同一 writer、同一形状，只换归因。
-      const toolchain: CheckResult = { ...utRunFail, failure_kind: 'device_toolchain', blocking_class: 'device_toolchain' };
+      const toolchain: CheckResult = { ...utRunFail, failure_kind: 'device_blocked', blocking_class: 'externalBlocked' };
       const { root: root2 } = makeVerifierProject();
       try {
         const dir2 = reportsDirOf(root2, 'demo', 'ut');
@@ -1095,7 +947,7 @@ function caseH_diagnosisEligibilityAndPromptNotice(): void {
           FRAMEWORK_ROOT,
           { verifierPlan: plan('prompts/verify-ut.md') },
         );
-        assert(!s2.verifier_request, '设备/工具链归因不得签发诊断 request');
+        assert(!s2.verifier_request, '只有真实设备缺口、无可独立核实对象时不得签发诊断 request');
         assert(s2.next_action !== 'run_verifier_for_repair', `环境失败应走原分流，实得 ${s2.next_action}`);
       } finally {
         rmDir(root2);
@@ -1126,13 +978,14 @@ function caseH_diagnosisEligibilityAndPromptNotice(): void {
       assert(/blocker_count/.test(withNotice), '必须明确终态计数口径（D3）');
       // plan d7e3b9a4 §2.6/§5 ⑤：资格已放行"已标注不适用"的 BLOCKER SKIP，诊断说明与 verify-ut.md
       // 例外句（同一事实的两处承载）不得再断言"无 BLOCKER SKIP"，须用同一新短语。
-      const NA_SKIP_PHRASE = '也没有未标注为已确认不适用的 BLOCKER SKIP';
       assert(!withNotice.includes('没有**其它 BLOCKER 级 FAIL/SKIP'), '诊断说明不得残留旧句"无 BLOCKER SKIP"');
       assert(withNotice.includes('其它 FAIL、SKIP、未解析输入以及设备/编译/工具缺口以原报告为准，仍须分别处理。'), '诊断不得将其它缺口当作已满足');
       assert(withNotice.includes('不能覆盖其它未解决的问题或缺失执行'), '对应待办的有效反证不能关闭其它未完项');
       const verifyUtTpl = fs.readFileSync(path.join(HARNESS_ROOT, 'prompts', 'verify-ut.md'), 'utf-8');
       assert(!verifyUtTpl.includes('且没有其它 BLOCKER FAIL/SKIP'), 'verify-ut.md 例外句不得残留旧句');
-      assert(verifyUtTpl.includes(NA_SKIP_PHRASE), `verify-ut.md 例外句须含新短语：${NA_SKIP_PHRASE}`);
+      assert(verifyUtTpl.includes('无关编译/设备/报告缺口不遮住其它可核实工作，缺实际对象仍保持未知')
+        && verifyUtTpl.includes('产品FAIL/unknown仍由共同完成处置保留'),
+        '独核只处理当前实际对象，不能遮住其它可做工作或洗绿原FAIL/unknown');
       const onDisk = fs.readFileSync(path.join(reportsDirOf(root, 'demo', 'review'), 'ai-prompt.md'), 'utf-8');
       assert(onDisk.includes('本轮为独立问题诊断'), '落盘的 ai-prompt.md 同样带说明（verifier 读的是磁盘原件）');
 
@@ -1569,8 +1422,8 @@ function caseT1_reviewRowDiagnosisHasReachableExit(): void {
       assert((summary.repair_candidates ?? []).length === 0 && summary.next_action !== 'run_verifier_for_repair', `${verdict}: 合法判定不伪装成格式坏`);
     }
     const mixed = writeRunSummaryBase(root, scriptReportOf('demo', 'review', root, [...report.checks, FAIL_CHECK]), FRAMEWORK_ROOT, { verifierPlan: enabled });
-    assert(!mixed.verifier_request && !buildNextLine(mixed, 'review', 'demo').includes('投给 subagent_type=verifier'), '混合失败不虚构当前 request');
-    assert(buildNextLine(mixed, 'review', 'demo').includes('混合失败'), '混合失败指出实际资格原因');
+    assert(Boolean(mixed.verifier_request) && mixed.verdict === 'FAIL' && mixed.closure_status === 'open',
+      '真实已存在的行级材料仍可独立核实；混合FAIL不能遮住它，也不能由此洗绿产品');
   } finally { rmDir(root); }
 }
 
@@ -1580,7 +1433,6 @@ const CASES: Array<{ name: string; fn: () => void }> = [
   { name: 'A workflow 声明的 verifier_prompt 决定实际装配的模板；缺文件明确失败、无 fallback', fn: caseA_declaredTemplateIsTheOneAssembled },
   { name: 'B request 解析严格：JSON 内夹带字段 / 可空字段错误类型 / subject 不可外部传入', fn: caseB_requestParsingIsStrict },
   { name: 'C 二态 × 脚本 verdict 的生产分流与 next_action 分流表（无审查员不阻断）', fn: caseC_productionAndNextActionRouting },
-  { name: 'D Stop hook 首要动作：PASS 只差闭环 → sync-closure；脚本 FAIL → 完整重跑', fn: caseD_stopHookFirstActionRouting },
   { name: 'E repair_candidates 锚到本轮 subject；闭环时按已验真证据重算', fn: caseE_repairCandidatesSubjectAnchoring },
   { name: 'E2 闭环重算保留 failure_kind：code_regression 合取候选不得静默消失', fn: caseE2_closureRecomputeKeepsFailureKind },
   { name: 'F 控制台指引跟随 next_action：证据可复用时不得再要求重跑 verifier', fn: caseF_consoleGuidanceFollowsNextAction },

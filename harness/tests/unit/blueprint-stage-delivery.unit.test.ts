@@ -388,19 +388,31 @@ const cases: Array<{ name: string; run(f: Fixture): void }> = [
     assert(fs.readFileSync(file).equals(before));
   } },
   { name: 'author contracts with absent optional fields use the same normalized binding proof in real identity reconciliation', run(f) {
-    materializeBlueprintSkillInputs(f.root, f.feature, frameworkRoot);
-    const contracts = planContracts(f); delete contracts.conventions_applied;
+    stagePlan(f, true);
+    const contracts = YAML.parse(fs.readFileSync(featureFilePath(f.root, f.feature, 'contracts.yaml'), 'utf8'));
+    delete contracts.conventions_applied;
+    contracts.source = 'plan:author-contracts';
     write(f, 'contracts.yaml', contracts); freeze(f);
-    const before = YAML.parse(fs.readFileSync(featureFilePath(f.root, f.feature, 'contracts.yaml'), 'utf8'));
-    const bp = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8')); bp.revision++;
-    for (const row of bp.derived_results ?? []) row.input_revision = bp.revision;
-    fs.writeFileSync(f.blueprintFile, YAML.stringify(bp));
-    const result = reconcileChangeUnitBlueprintRefs(f.root, 'ledger-app-blueprint');
-    assert.equal(result.bumped.length, 1, JSON.stringify(result));
-    const after = YAML.parse(fs.readFileSync(featureFilePath(f.root, f.feature, 'contracts.yaml'), 'utf8'));
-    assert.equal(after.conventions_applied, undefined, 'normalization must not rewrite business bytes');
-    assert.deepStrictEqual(after.files, before.files);
-    assert.equal(after.change_unit.change_unit_ref.revision, before.change_unit.change_unit_ref.revision + 1);
+    const file = featureFilePath(f.root, f.feature, 'contracts.yaml');
+    const before = fs.readFileSync(file, 'utf8');
+    const original = resolve(f, 'plan').inputs?.values.contracts;
+    assert(original?.state === 'resolved' && original.binding.source.kind === 'artifact', 'the actual hand-authored artifact must have its original production binding');
+    if (original?.state !== 'resolved') throw new Error('missing original contracts binding');
+    for (const round of [1, 2]) {
+      identityBump(f);
+      const result = reconcileChangeUnitBlueprintRefs(f.root, 'ledger-app-blueprint');
+      assert.equal(result.bumped.length, 1, JSON.stringify(result));
+      const text = fs.readFileSync(file, 'utf8'); const after = YAML.parse(text);
+      assert.equal(stageBytesWithoutSourceIdentity(text), stageBytesWithoutSourceIdentity(before), 'mechanical refresh must preserve every business and formatting byte');
+      assert.equal(after.conventions_applied, undefined, 'normalization must not materialize absent business fields');
+      assert.equal(after.source, 'plan:author-contracts', 'a hand-authored artifact must never acquire a machine stamp');
+      assert.equal(after.change_unit.change_unit_ref.revision, YAML.parse(before).change_unit.change_unit_ref.revision + round);
+      const current = resolve(f, 'plan').inputs?.values.contracts;
+      assert(current?.state === 'resolved', JSON.stringify(current));
+      if (current?.state !== 'resolved') throw new Error('updated contracts are unreadable');
+      assert.deepStrictEqual(readBoundInput({ projectRoot: f.root, frameworkRoot, feature: f.feature, phase: 'plan', track: 'full' }, original.binding), current.value,
+        'both actual identity refreshes must still consume the same original typed binding');
+    }
   } },
   { name: 'refresh cannot use acceptance alone to hide a CU contract change or missing equivalence proof', run(f) {
     materializeBlueprintSkillInputs(f.root, f.feature, frameworkRoot);

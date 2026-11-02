@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { spawn, spawnSync } from 'child_process';
-import { withRuntimeTest } from './runtime-test-control';
+import { withRuntimeTest, preserveRuntimeTestEvidence } from './runtime-test-control';
 import { prepareSessionCliProject } from './session-cli-project';
 import { defaultProcessProbe } from '../../scripts/utils/device-session';
 
@@ -122,6 +122,10 @@ fs.appendFileSync=function(file, bytes, ...rest) {
       const before = rows(runDir), started = before.find(event => event.type === 'agent_invoke_start');
       assert(started && started.command === 'phase_execute_request');
       assert(!before.some(event => event.handoff_request || event.type === 'agent_process_bound'));
+      const pending = JSON.parse(fs.readFileSync(path.join(runDir, barrier.handoff_request.path), 'utf8'));
+      console.log('[issuance-before-recovery]', JSON.stringify({ cut, control: JSON.parse(fs.readFileSync(path.join(runDir, 'run-control.json'), 'utf8')),
+        invoke: started.invoke_id, owner: pending.context.owner, issued_at: pending.issued_at, start_ts: started.ts,
+        accepted: before.some(event => event.handoff_report), native_bound: before.some(event => event.type === 'agent_process_bound') }));
       const recovered = next(root, ['--next']);
       assert.equal(recovered.status, 0, recovered.output);
       assert.equal(recovered.value?.type, 'phase_execute_request', recovered.output);
@@ -132,6 +136,15 @@ fs.appendFileSync=function(file, bytes, ...rest) {
       assert.equal(rows(runDir).filter(event => event.type === 'agent_invoke_start').length, 1);
       assert(!rows(runDir).some(event => event.type === 'legacy_run_override' || event.type === 'force_takeover'));
     }
+  } catch (error) {
+    const roots = ['throw', 'kill'].map(cut => path.join(container, cut)).filter(root => fs.existsSync(root));
+    const files = roots.flatMap(root => {
+      const runDir = path.join(root, 'doc/features/clamp/goal-runs/session-cli');
+      return fs.existsSync(runDir) ? fs.readdirSync(runDir, { recursive: true }).map(file => path.join(runDir, String(file)))
+        .filter(file => fs.statSync(file).isFile() && /(?:request-e\d+\.json|prompt\.md|run-control\.json|session-control\.log)$/.test(file)) : [];
+    });
+    preserveRuntimeTestEvidence(roots, String(error), ['1804 interrupted issuance real CLI'], files);
+    throw error;
   } finally {
     if (previousTrust === undefined) delete process.env.MAISON_GOAL_CHECKPOINT_DIR; else process.env.MAISON_GOAL_CHECKPOINT_DIR = previousTrust;
     fs.rmSync(container, { recursive: true, force: true });
@@ -145,6 +158,7 @@ export async function reusedGatePidCli(systemProcess = false): Promise<void> {
   const previousTrust = process.env.MAISON_GOAL_CHECKPOINT_DIR;
   const unrelated = systemProcess ? null : spawn(process.execPath, ['-e', 'setTimeout(()=>{},60000)'], { windowsHide: true, stdio: 'ignore', detached: process.platform !== 'win32' });
   const exited = unrelated ? new Promise<void>((resolve, reject) => { unrelated.once('error', reject); unrelated.once('exit', () => resolve()); }) : Promise.resolve();
+  const originalFiles: string[] = [];
   const readSystemProcess = (): { pid: number; startedAtMs: number; executable: string } => {
     const query = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
       'Get-CimInstance Win32_Process -Filter "Name=\'services.exe\'" | Select-Object ProcessId, @{Name="startedAtMs";Expression={([DateTimeOffset]$_.CreationDate).ToUnixTimeMilliseconds()}} | ConvertTo-Json -Compress'],
@@ -155,11 +169,18 @@ export async function reusedGatePidCli(systemProcess = false): Promise<void> {
     return { pid: observed.ProcessId, startedAtMs: observed.startedAtMs, executable: process.execPath };
   };
   try {
-    prepareSessionCliProject(root, 'claude', false);
+    prepareSessionCliProject(root, 'claude', false, true);
     const runDir = path.join(root, 'doc/features/clamp/goal-runs/session-cli');
     const first = next(root, ['--next']); assert.equal(first.status, 0, first.output);
     assert.equal(first.value?.type, 'phase_execute_request', first.output);
+    originalFiles.push(first.value.request.path);
     const request = JSON.parse(fs.readFileSync(first.value.request.path, 'utf8'));
+    const manifest = JSON.parse(fs.readFileSync(path.join(runDir, 'manifest.json'), 'utf8'));
+    assert.equal(manifest.adapter, 'claude'); assert.equal(request.context.adapter, 'claude');
+    assert.equal(manifest.execution_scope.completion_target, 'request');
+    assert.deepEqual(manifest.phase_chain, ['review'], 'the PID probe requests one real gate, without unrelated full-Feature work');
+    const method = manifest.phase_chain[0] as string;
+    assert(request.context.chain.includes(method), 'the injected stale gate belongs to an actual signed check family');
     const actual = systemProcess ? readSystemProcess() : process.platform === 'win32' ? defaultProcessProbe().identify(unrelated!.pid!) : {
       pid: unrelated!.pid!,
       startedAtMs: Date.parse(spawnSync('ps', ['-p', String(unrelated!.pid), '-o', 'lstart='], { encoding: 'utf8', timeout: 5000 }).stdout.trim()),
@@ -171,17 +192,36 @@ export async function reusedGatePidCli(systemProcess = false): Promise<void> {
       // 普通权限实测 identify=null 覆盖 fallback；管理员可读完整身份时仍跑同一真实 CLI。
       assert.equal(defaultProcessProbe().readStartedAtMs?.(actual.pid), actual.startedAtMs, 'the shared probe must agree with the actual SYSTEM CreationDate');
     }
-    fs.appendFileSync(path.join(runDir, 'events.jsonl'), JSON.stringify({ ts: new Date().toISOString(), type: 'harness_start', phase: request.context.phase,
-      invoke_id: `${request.context.phase}-${request.context.attemptId}`, process_role: 'harness', run_id: request.context.runId,
+    fs.appendFileSync(path.join(runDir, 'events.jsonl'), JSON.stringify({ ts: new Date().toISOString(), type: 'harness_start', phase: method,
+      invoke_id: `${method}-${request.context.attemptId}`, process_role: 'harness', run_id: request.context.runId,
       pid: actual.pid, started_at_ms: actual.startedAtMs - 1000, executable: actual.executable, token: 'expired-native-gate-token' }) + '\n');
-    const resumed = next(root, ['--request', first.value.request.path, '--report-result', JSON.stringify({ phase: request.context.phase, status: 'failed', details: 'fixture author did not implement the product; real gate must decide' })]);
+    const resumed = next(root, ['--request', first.value.request.path, '--report-result', JSON.stringify({ phase: request.context.phase, status: 'passed', details: 'The author claims completion; the real gate must inspect the still-unimplemented product.' })]);
     const events = rows(runDir);
     assert(!events.some(event => event.type === 'run_end' && event.status === 'INTERRUPTED'), resumed.output);
     assert(events.some(event => event.type === 'harness_start' && event.process_role === 'harness' && event.pid !== actual.pid), 'the production gate must actually spawn after the stale PID is classified');
     assert(events.some(event => event.type === 'harness_end'), 'the new production gate must settle normally');
-    if (unrelated) assert.equal(unrelated.exitCode, null, 'the unrelated live process must never be killed');
+    const newGate = events.find(event => event.type === 'harness_start' && event.process_role === 'harness' && event.pid !== actual.pid);
+    assert(newGate && newGate.phase === method);
+    assert(events.some(event => event.type === 'harness_end' && event.invoke_id === newGate.invoke_id && event.timed_out === false),
+      'the newly bound real gate must actually return normally');
+    if (unrelated) {
+      assert.equal(unrelated.exitCode, null, 'the unrelated live process must never be killed');
+      if (process.platform === 'win32') {
+        const living = defaultProcessProbe().identify(actual.pid);
+        assert(living && living.pid === actual.pid && living.startedAtMs === actual.startedAtMs && living.executable === actual.executable,
+          'the unrelated child must survive with the same real OS identity, not just an undelivered exit event');
+      } else assert.doesNotThrow(() => process.kill(actual.pid, 0), 'the unrelated process must still exist');
+    }
     if (systemProcess) assert.deepEqual(readSystemProcess(), actual, 'SYSTEM survives with the same PID/CreationDate, verified read-only');
     assert.equal(events.filter(event => event.type === 'agent_invoke_start' && event.invoke_id === request.invoke_id).length, 1);
+    assert(fs.readFileSync(path.join(root, 'src/math/src/main/clamp.ts'), 'utf8').includes('Not implemented'),
+      'the author claim cannot repair the product or become quality evidence');
+  } catch (error) {
+    const reportDir = path.join(root, 'doc/features/clamp/review/reports');
+    preserveRuntimeTestEvidence([root], String(error), ['real reused gate PID; SYSTEM=' + systemProcess],
+      [...originalFiles, path.join(root, 'src/math/src/main/clamp.ts'),
+        ...['summary.json', 'script-report.json', 'phase-evidence-manifest.json'].map(name => path.join(reportDir, name))]);
+    throw error;
   } finally {
     if (unrelated && unrelated.exitCode === null && unrelated.signalCode === null) unrelated.kill();
     await exited;

@@ -9,21 +9,24 @@ import { generateScriptReport, resolveVerdictFromChecks } from '../../scripts/ut
 import { buildNextLine, writeRunSummaryBase } from '../../harness-runner';
 import { canProduceVerifierRequest } from '../../scripts/utils/verifier-plan';
 import { finalizePhaseClosure } from '../../scripts/utils/phase-closure-finalizer';
-import { collectPhaseCompletionIssues } from '../../scripts/utils/verify-feature-completion';
+import { collectPhaseCompletionIssues, resolveCompletionDisposition } from '../../scripts/utils/verify-feature-completion';
 import { readUpstreamPhaseView, resolveUpstreamPhaseChain, upstreamPhaseDependencies } from '../../scripts/utils/upstream-verdict-gate';
 import { phaseInvocationCommands } from '../../scripts/goal-phase-runtime';
 import { checkPlanToReportConsistency, __testing_buildTestingRunStatusResult } from '../../scripts/check-testing';
 import { classifyFailureKind } from '../../scripts/utils/goal-failure-classifier';
 import { loadDagFiles, checkDagFilesParseable } from '../../scripts/check-ut';
-import { classifyPhaseVerdict } from '../../scripts/utils/phase-transition-policy';
+import { resolveCurrentDisposition } from '../../scripts/utils/check-disposition';
 import codingChecker from '../../scripts/check-coding';
 import { SpecLoader } from '../../scripts/utils/spec-loader';
+import { resolveCapabilityInputs } from '../../scripts/utils/capability-resolution';
+import { prepareFeatureScopeCandidate } from '../../scripts/utils/feature-track';
+import { ensureFeatureExecutionScopeFrozen } from '../../scripts/utils/feature-execution-scope';
 import { provisionFrameworkUnder } from '../utils/real-chain-host';
 import { profileCodingHost } from '../../../profiles/hmos-app/harness/coding-host-rules';
 import { scanNamedBusinessHandler } from '../../scripts/utils/named-handler';
 import { observeFeatureState } from '../../scripts/utils/assess';
 import { featurePhaseReportsDir, clearFrameworkConfigCache } from '../../config';
-import { runGoalRuntimeChain, setupGoalRuntimeHost, writeFile } from './goal-runner-testing-integrity.unit.test';
+import { runGoalRuntimeChain, setupGoalRuntimeHost, writeFile, fixtureReadDependencies } from './goal-runner-testing-integrity.unit.test';
 import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
 import type { CheckContext, CheckResult, Phase, PhaseRuleSpec } from '../../scripts/utils/types';
 import type { UnitCaseResult } from '../run-unit';
@@ -177,23 +180,28 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [{
     } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
   },
 }, {
-  name: '7d9 runtime executes independent UT, never dependent testing, and resumes verification without rewriting valid work',
+  name: '7d9 runtime keeps independent tool work and resumes a genuinely restored checker without rewriting valid work',
   run: async () => {
     const { root } = setupGoalRuntimeHost('codex');
     try {
-      let broken = true;
+      const ready = 'review-checker-ready.txt';
       const options = { adapter: 'codex', frameworkRoot: ROOT,
-        onHarnessSummary: ({ phase }: { phase: string }) => phase === 'review' ? { checks: broken ? [pass, ...gap(phase, new TypeError('required review checker unavailable'))] : [pass] } : null };
+        onHarnessSummary: ({ phase }: { phase: string }) => {
+          if (phase !== 'review') return null;
+          const available = fs.existsSync(path.join(root, ready));
+          const source = { ...pass, structured: { source_attempt_dependencies: [{ path: ready, exists: available, role: 'artifact' }] } };
+          return { checks: available ? [source] : [source, ...gap(phase, new TypeError('required review checker unavailable'))] };
+        } };
       const first = await runGoalRuntimeChain(root, options);
-      assert(first.invokedPhases.includes('review') && first.invokedPhases.includes('ut'), JSON.stringify(first.invokedPhases));
-      assert(!first.invokedPhases.includes('testing'), JSON.stringify(first.invokedPhases));
-      assert.equal(first.invokedPhases.filter(phase => phase === 'review').length, 1, 'missing checker must not cause a content retry');
-      assert.equal(first.invokedPhases.filter(phase => phase === 'ut').length, 1, 'a deferred source publication gap must not re-dispatch already completed independent UT');
+      assert.deepEqual(first.invokedPhases, ['work-unit-author'], '缺checker不能重派作者或虚构同名phase作者');
+      assert(first.harnessPhases.includes('review') && first.harnessPhases.includes('ut'), '真实可用独立UT仍须执行');
+      assert.equal(first.harnessPhases.filter(phase => phase === 'review').length, 1, 'missing checker must not cause a content retry');
+      assert.equal(first.harnessPhases.filter(phase => phase === 'ut').length, 1, 'independent UT must not be repurchased');
       assert(!first.events.some(event => event.type === 'budget_turns'), 'known checker wait must use its waiting exit rather than consume the whole call budget');
       assert(!first.events.some(event => event.type === 'phase_backtrack_requested' && event.reason === 'upstream_gap'
         && !(event as { candidates?: unknown[] }).candidates?.length), 'derived publication placeholders cannot create an empty owner backtrack');
       const verdict = first.events.find(event => event.type === 'phase_verdict' && event.phase === 'review');
-      assert.equal(verdict?.verdict, 'INCOMPLETE'); assert.equal(verdict?.action, 'defer_external_and_continue_if_allowed');
+      assert.equal(verdict?.verdict, 'INCOMPLETE');
       assert(first.events.some(event => event.type === 'phase_halt' && event.run_disposition === 'WAITING' && event.run_wait_kind === 'external'));
       const summary = JSON.parse(fs.readFileSync(path.join(featurePhaseReportsDir(root, FEATURE, 'review'), 'summary.json'), 'utf8'));
       assert.equal(summary.verdict, 'INCOMPLETE'); assert(summary.blocking_skips.some((check: { id: string }) => check.id === 'checker_execution'));
@@ -201,10 +209,15 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [{
       const utProofBeforeResume = collectPhaseCompletionIssues({ projectRoot: root, feature: FEATURE, chain: ['ut'], frameworkRoot: ROOT });
       const dependencyView = resolveUpstreamPhaseChain(root, FEATURE, path.basename(first.reportDir), undefined, ROOT);
       const utDependencies = upstreamPhaseDependencies(root, FEATURE, 'ut', dependencyView);
-      broken = false;
+      writeFile(root, ready, 'the original checker condition is now available');
       const resumed = await runGoalRuntimeChain(root, { ...options, resume: path.basename(first.reportDir) });
+      if (!resumed.harnessPhases.includes('review')) {
+        const { preserveRuntimeTestEvidence } = require('../utils/runtime-test-control') as typeof import('../utils/runtime-test-control');
+        preserveRuntimeTestEvidence([root], 'restored actual checker input did not receive verification', [], [path.join(root, ready),
+          ...['summary.json', 'script-report.json', 'phase-evidence-manifest.json'].map(file => path.join(featurePhaseReportsDir(root, FEATURE, 'review'), file))]);
+      }
       assert(resumed.harnessPhases.includes('review'), JSON.stringify(resumed.harnessPhases));
-      assert(resumed.invokedPhases.includes('testing'), JSON.stringify(resumed.invokedPhases));
+      assert(resumed.harnessPhases.includes('review'), '只补实际恢复的checker');
       assert(!resumed.invokedPhases.some(phase => ['spec', 'plan', 'coding', 'ut'].includes(phase)), JSON.stringify({ phases: resumed.invokedPhases, utProofBeforeResume, utDependencies, dependencyView: {degraded: dependencyView.degraded, reason: dependencyView.degradedReason},
         reviewEvents: first.events.filter(event => event.phase === 'review').map(event => ({ type: event.type, invoke_id: event.invoke_id, verdict: event.verdict, failure_kind: event.failure_kind, action: event.action, run_disposition: event.run_disposition })) }));
       const repaired = JSON.parse(fs.readFileSync(path.join(featurePhaseReportsDir(root, FEATURE, 'review'), 'summary.json'), 'utf8'));
@@ -218,10 +231,13 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [{
     try {
       const probe = await runGoalRuntimeChain(root, { adapter: 'codex', frameworkRoot: ROOT,
         onHarnessSummary: ({ phase }) => phase === 'coding' ? { checks: [pass, ...gap(phase)] } : null });
-      assert.deepEqual(probe.invokedPhases, ['spec', 'plan', 'coding']);
+      assert.deepEqual(probe.invokedPhases, ['work-unit-author']);
       const verdict = probe.events.find(event => event.type === 'phase_verdict' && event.phase === 'coding');
-      assert.equal(verdict?.verdict, 'INCOMPLETE'); assert.equal(verdict?.action, 'defer_external_and_halt');
-      assert(probe.events.some(event => event.type === 'phase_halt' && event.run_disposition === 'WAITING' && String(event.halt_guidance).includes('维护者')));
+      assert.equal(verdict?.verdict, 'INCOMPLETE');
+      const current = resolveCompletionDisposition({ projectRoot: root, frameworkRoot: ROOT, feature: FEATURE, chain: ['coding'], runId: path.basename(probe.reportDir) });
+      assert(current.completionBlocking.some(problem => problem.action === 'wait' && problem.owner === 'framework'
+        && problem.detail.includes('checker_execution')), '具体框架checker等待必须留在共同视图');
+      assert(probe.events.some(event => event.type === 'phase_halt' && event.run_disposition === 'WAITING'));
     } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
   },
 }, {
@@ -231,7 +247,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [{
     try {
       const artifact = `doc/features/${FEATURE}/review/review-report.md`;
       const probe = await runGoalRuntimeChain(root, { adapter: 'codex', frameworkRoot: ROOT,
-        onReview: ({ attempt }) => writeFile(root, artifact, attempt === 1 ? '# review\nproduct defect is open\n' : '# review\nproduct defect repaired\n'),
+        onAuthor: ({ attempt }) => writeFile(root, artifact, attempt === 1 ? '# review\nproduct defect is open\n' : '# review\nproduct defect repaired\n'),
         onHarnessSummary: ({ phase }) => phase === 'review' ? {
           checks: executeCheck(context(phase), () => [{ ...pass, id: 'actual_product_finding',
             status: fs.readFileSync(path.join(root, artifact), 'utf8').includes('is open') ? 'FAIL' : 'PASS',
@@ -239,11 +255,10 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [{
         } : null,
       });
       const verdicts = probe.events.filter(event => event.type === 'phase_verdict' && event.phase === 'review');
-      assert.equal(verdicts[0]?.verdict, 'FAIL'); assert.equal(verdicts[0]?.action, 'retry');
-      assert.equal(verdicts[1]?.verdict, 'INCOMPLETE'); assert.equal(verdicts[1]?.action, 'defer_external_and_continue_if_allowed');
-      assert.equal(probe.invokedPhases.filter(phase => phase === 'review').length, 2);
-      assert(probe.invokedPhases.includes('ut') && !probe.invokedPhases.includes('testing'));
-      assert.equal(probe.invokedPhases.filter(phase => phase === 'ut').length, 1);
+      assert.equal(verdicts[0]?.verdict, 'FAIL');
+      assert.equal(verdicts[1]?.verdict, 'INCOMPLETE');
+      assert.equal(probe.invokedPhases.filter(phase => phase === 'work-unit-author').length, 2);
+      assert.equal(probe.harnessPhases.filter(phase => phase === 'ut').length, 1, '无影响UT不重买');
       assert(!probe.events.some(event => event.type === 'budget_turns'));
       assert(probe.events.some(event => event.type === 'phase_halt' && event.run_disposition === 'WAITING' && event.run_wait_kind === 'external'));
       assert(fs.readFileSync(path.join(root, artifact), 'utf8').includes('repaired'));
@@ -277,22 +292,27 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [{
         const artifact = `doc/features/${FEATURE}/testing/test-report.md`;
         const plan = '## 测试用例\n\n| 用例编号 | 用例名称 |\n|---|---|\n| TC-01 | real case |';
         const probe = await runGoalRuntimeChain(root, { adapter: 'codex', frameworkRoot: ROOT,
-          onTesting: ({ attempt }) => writeFile(root, artifact, attempt === 1 ? '# 报告存在但没有编号\n' : '## 测试执行结果\n\n| 用例编号 | 执行结果 |\n|---|---|\n| TC-01 | PASS |'),
+          onAuthor: ({ attempt }) => writeFile(root, artifact, attempt === 1 ? '# 报告存在但没有编号\n' : '## 测试执行结果\n\n| 用例编号 | 执行结果 |\n|---|---|\n| TC-01 | PASS |'),
           onHarnessSummary: ({ phase }) => {
             if (phase !== 'testing') return null;
             const text = fs.readFileSync(path.join(root, artifact), 'utf8');
             const checks = executeCheck({ phaseRule: {} } as CheckContext, () => checkPlanToReportConsistency(context(phase), plan, text), 'plan_to_report_consistency')
               .concat(mixed ? gap(phase) : []);
-            return { checks: checks.concat(__testing_buildTestingRunStatusResult(plan, text, checks)) };
+            return { checks: fixtureReadDependencies(root, checks.concat(__testing_buildTestingRunStatusResult(plan, text, checks)), [artifact]) };
           },
         });
         const verdicts = probe.events.filter(event => event.type === 'phase_verdict' && event.phase === 'testing');
-        assert.equal(verdicts[0]?.verdict, 'FAIL', JSON.stringify(verdicts)); assert.equal(verdicts[0]?.action, 'retry');
-        assert.equal(verdicts[0]?.failure_kind_classified, 'deterministic_gate_or_artifact_missing');
+        assert.equal(verdicts[0]?.verdict, 'FAIL', JSON.stringify(verdicts));
         assert.equal(verdicts[1]?.verdict, mixed ? 'INCOMPLETE' : 'PASS', JSON.stringify(verdicts));
-        assert.equal(verdicts[1]?.action, mixed ? 'defer_external_and_halt' : 'advance');
-        assert.equal(probe.invokedPhases.filter(phase => phase === 'testing').length, 2);
+        assert.equal(probe.invokedPhases.filter(phase => phase === 'work-unit-author').length, 2);
         assert(!verdicts.some(event => event.failure_kind_classified === 'code_regression'));
+      } catch (error) {
+        const { preserveRuntimeTestEvidence } = require('../utils/runtime-test-control') as typeof import('../utils/runtime-test-control');
+        const reports = featurePhaseReportsDir(root, FEATURE, 'testing');
+        preserveRuntimeTestEvidence([root], String(error), ['testing case IDs content repair; mixed=' + mixed],
+          [path.join(root, `doc/features/${FEATURE}/testing/test-report.md`),
+            ...['script-report.json', 'summary.json', 'phase-evidence-manifest.json'].map(name => path.join(reports, name))]);
+        throw error;
       } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
     }
   },
@@ -312,7 +332,10 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [{
       const summary = writeRunSummaryBase(root, report(root, 'ut', missing), ROOT);
       assert.equal(summary.verdict, 'FAIL'); assert.equal(summary.blocker_count, 1);
       assert(missing[0].affected_files?.some(file => file.endsWith('transfer.dag.yaml')));
-      assert.equal(classifyPhaseVerdict({ phase: 'ut', verdict: summary.verdict, retries_used: 0 }), 'retry');
+      const current = resolveCurrentDisposition({ endpoint: 'request', phases: [{ phase: 'ut', verdict: summary.verdict,
+        schemaCurrent: true, closureCommitted: false, checks: missing }] });
+      assert(current.completionBlocking.some(problem => problem.action === 'repair'), '真实坏DAG仍是可判定修复');
+      assert(!current.completionEligible);
       writeFile(root, '02-Feature/FinancialCard/test/dag/transfer.dag.yaml',
         'schema_version: "1.0"\ndag_id: transfer\nlinked_acceptance: [AC-1]\nnodes:\n  - id: transfer\n    type: function\n    source: src/transfer.ts\nedges: []\n');
       const restored = inspect();
@@ -323,21 +346,36 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [{
 }, {
   name: '7d9 full coding report preserves no-modules PASS and existing concrete registration FAIL',
   run: async () => {
-    const { root } = setupGoalRuntimeHost('codex');
+    const { root } = setupGoalRuntimeHost('codex', false);
+    const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'coding-probe-profile-'));
     try {
       provisionFrameworkUnder(root);
+      const configFile = path.join(root, 'framework.config.json');
+      const config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+      config.active_workflow = 'obligation-driven';
+      fs.writeFileSync(configFile, JSON.stringify(config)); clearFrameworkConfigCache();
       fs.unlinkSync(path.join(root, 'build-profile.json5'));
       writeFile(root, `doc/features/${FEATURE}/context/facts.md`,
         `---\nschema_version: "1.0"\nfeature: ${FEATURE}\nestablished_by: spec\nready_to_produce: true\nhas_blocker_coverage_risk: false\n---\n\n## phase_delta: coding\n\n当前 AllBanksPage 的 build 渲染 Text(x)；本目标只核模块登记适用性，不变更业务。\n`);
-      const profile = path.join(root, 'coding-probe-profile');
-      writeFile(root, 'coding-probe-profile/harness/coding-host-rules.js',
+      fs.mkdirSync(path.join(profile, 'harness'), { recursive: true });
+      fs.writeFileSync(path.join(profile, 'harness/coding-host-rules.js'),
         `const {profileCodingHost:host}=require(${JSON.stringify(path.join(ROOT, 'profiles/hmos-app/harness/coding-host-rules'))});\n` +
         'exports.profileCodingHost={...host,checkCodingCompile:()=>[{id:"coding_compile",category:"structure",description:"controlled external compiler",severity:"BLOCKER",status:"PASS",details:"native compiler transport substitute"}]};\n');
+      prepareFeatureScopeCandidate({ projectRoot: root, frameworkRoot: ROOT, feature: FEATURE,
+        completionTarget: 'feature', requestedResults: ['verify existing module registration'], requestedPhases: ['coding'],
+        impact: { userVisibleBehaviorChange: false, reason: 'existing module configuration probe',
+          basisPaths: ['02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets'] } });
+      const frozen = ensureFeatureExecutionScopeFrozen({ projectRoot: root, frameworkRoot: ROOT, feature: FEATURE });
+      assert(!frozen.checks.some(check => check.status === 'FAIL'), JSON.stringify(frozen.checks));
       const spec = new SpecLoader(root, undefined, undefined, ROOT).loadFeatureSpec(FEATURE);
       spec.contracts!.modules[0].change_type = 'modify';
       spec.contracts!.module_dependencies = {};
       spec.contracts!.files!.push('02-Feature/FinancialCard/src/main/ets/RetiredPrediction.ets');
+      const resolved = resolveCapabilityInputs({ projectRoot: root, frameworkRoot: ROOT, feature: FEATURE, phase: 'coding', track: 'full',
+        inputContext: { schema_version: '1.1', subject: { feature: FEATURE }, obligations: {}, required_outputs: [] } });
+      assert(resolved.inputs, JSON.stringify(resolved.report));
       const ctx = { projectRoot: root, frameworkRoot: ROOT, feature: FEATURE, phase: 'coding', featureSpec: spec,
+        resolvedInputs: resolved.inputs,
         phaseRule: YAML.parse(fs.readFileSync(path.join(ROOT, 'specs/phase-rules/coding-rules.yaml'), 'utf8')),
         resolvedProfile: { name: 'hmos-app', profileDir: profile, capabilities: { 'coding.visual_parity': { severity: 'SKIP' } } },
       } as unknown as CheckContext;
@@ -346,7 +384,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [{
       assert.equal((checks.find(check => check.id === 'module_config_registered')?.structured as { applicability?: string })?.applicability, 'not_applicable');
       assert.equal(checks.find(check => check.id === 'plan_file_to_code')?.status, 'WARN');
       const status = checks.find(check => check.id === 'coding_run_status')!;
-      assert.equal(status.status, 'PASS', status.details);
+      assert.equal(status.status, 'PASS', status.details + '\n' + checks.filter(check => check.status === 'FAIL').map(check => `${check.id}: ${check.details}`).join('\n'));
       assert(status.details.includes('critical_skip_count: 0') && status.details.includes('can_claim_done: YES'), status.details);
       const script = report(root, 'coding', checks);
       const summary = writeRunSummaryBase(root, script, ROOT);
@@ -368,7 +406,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [{
       assert.equal(noModules.find(check => check.id === 'coding_run_status')?.status, 'PASS');
       const noModuleSummary = writeRunSummaryBase(root, report(root, 'coding', noModules), ROOT);
       assert.equal(noModuleSummary.verdict, 'PASS');
-    } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+    } finally { fs.rmSync(root, { recursive: true, force: true }); fs.rmSync(profile, { recursive: true, force: true }); clearFrameworkConfigCache(); }
   },
 }, {
   name: '7d9 only classified execution gaps become incomplete; unclassified SKIP preserves PASS and real FAIL',

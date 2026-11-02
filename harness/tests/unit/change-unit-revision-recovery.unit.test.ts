@@ -11,13 +11,13 @@ import { reviseChangeUnitContent } from '../../scripts/utils/change-unit-design-
 import { decideRunContinuation, loadEffectiveExecutionScope } from '../../scripts/utils/goal-run-creation';
 import { assessFeature } from '../../scripts/utils/feature-assessment';
 import { observeChangeUnitCompletion, resolveChangeUnitExpectedExecution } from '../../scripts/utils/change-unit-completion';
-import { countAgentInvokeStarts, loadAuthoritativeEvents, foldBudgetLineage } from '../../scripts/utils/goal-runner-phase';
+import { countAgentInvokeStarts, loadAuthoritativeEvents, readSupersededAncestorRuns } from '../../scripts/utils/goal-runner-phase';
 import type { UnitCaseResult } from '../run-unit';
 import { freezeAndTransfer } from './successor-exit.unit.test';
 
 export async function runAll(): Promise<UnitCaseResult[]> {
   const project = provisionRealChainProject();
-  const name = 'real stopped CU revision reaches the existing plan recovery and completes with history and cumulative budget retained';
+  const name = 'real stopped CU revision reaches the existing recovery and completes with original history retained';
   try {
     scaffoldRealChainHost(project);
     const { cu, birthChain } = seedCuBoundHost(project);
@@ -34,7 +34,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
         verifierDeliveries.push({ phase, next: current.next_action, skips: current.blocking_skips?.length ?? 0 });
         assert(publishRequestedVerifier(cu, ctx), 'only the actually delivered verifier request may publish its reply');
       } };
-    const first = await runGoalRuntimeChain(cu.root, { ...common, freshBudget: { max_total_turns: 30 },
+    const first = await runGoalRuntimeChain(cu.root, { ...common,
       onCoding: ctx => { cu.runId = ctx.runId; writeCuFacts(cu, 'coding'); }, failExecutorFor: phase => phase === 'coding' });
     const runsDir = featureFilePath(cu.root, cu.feature, 'goal-runs');
     const firstId = fs.readdirSync(runsDir).filter(id => !id.startsWith('.') && fs.existsSync(path.join(runsDir, id, 'manifest.json')))[0];
@@ -67,7 +67,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     const successor = runIds.find(id => id !== firstId)!; assert(successor, `successor absent: ${continued.exitCode}`);
     const nextManifest = JSON.parse(fs.readFileSync(path.join(runsDir, successor, 'manifest.json'), 'utf8'));
     assert.equal(nextManifest.successor_of, firstId);
-    assert.deepStrictEqual(nextManifest.budget, JSON.parse(manifestBytes.toString('utf8')).budget);
+    assert.equal(nextManifest.budget, undefined, 'a new successor does not write retired quotas');
     assert(continued.invokedPhases.includes('plan'), JSON.stringify(continued.invokedPhases));
     assert(fs.readFileSync(manifestFile).equals(manifestBytes));
     assert(fs.readFileSync(eventsFile).subarray(0, eventBytes.length).equals(eventBytes));
@@ -78,9 +78,9 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     assert(final.complete, `exit=${continued.exitCode}; ${JSON.stringify(final)}`);
     assert.equal(loadCanonicalChangeUnit(cu.root, 'ledger-app-blueprint', 'ledger-refresh').changeUnit.revision, 2);
     assert.equal(fs.readdirSync(path.dirname(loaded.canonicalPath)).filter(name => name.startsWith('change-unit')).length, 1);
-    const folded = foldBudgetLineage({ projectRoot: cu.root, featuresDir: 'doc/features', feature: cu.feature, currentEvents: nextEvents });
-    assert(countAgentInvokeStarts(folded.ancestorEvents) >= usedTurns, 'the existing budget lineage must retain prior consumed turns');
-    assert(countAgentInvokeStarts(folded.budgetFoldEvents) >= usedTurns + countAgentInvokeStarts(nextEvents));
+    const ancestors = readSupersededAncestorRuns({ projectRoot: cu.root, featuresDir: 'doc/features', feature: cu.feature, currentEvents: nextEvents });
+    assert.deepEqual(ancestors.find(run => run.run_id === firstId)?.events, priorEvents, 'the exact original authoritative history remains readable');
+    const ancestorCalls = ancestors.reduce((calls, run) => calls + countAgentInvokeStarts(run.events), 0);
     freezeAndTransfer(cu, cu.feature, successor);
     const currentContracts = fs.readFileSync(businessFiles[0]);
     const badMapping = YAML.parse(currentContracts.toString('utf8'));
@@ -90,8 +90,8 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     fs.writeFileSync(businessFiles[0], currentContracts);
     console.log('RECOVERY_EVIDENCE ' + JSON.stringify({ original: firstId, successor, phases: continued.invokedPhases,
       record: final.record.state, complete: final.complete, revision: 2, originalTurns: usedTurns,
-      ancestorTurns: countAgentInvokeStarts(folded.ancestorEvents), successorTurns: countAgentInvokeStarts(nextEvents),
-      cumulativeTurns: countAgentInvokeStarts(folded.budgetFoldEvents), maxTotalTurns: nextManifest.budget.max_total_turns,
+      ancestorCalls, successorCalls: countAgentInvokeStarts(nextEvents),
+      cumulativeCalls: ancestorCalls + countAgentInvokeStarts(nextEvents),
       completedHolderDecision: completeHolder.kind }));
     return [{ name, ok: true }];
   } catch (error) { return [{ name, ok: false, error: (error as Error).stack }]; }

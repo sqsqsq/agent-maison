@@ -190,7 +190,7 @@ const cases: Array<{ name: string; run(): Promise<void> }> = [
       assert(status.current, 'public status must expose the current bound child despite an old original terminal');
       assert.equal(status.current.feature, current.feature); assert.equal(status.current.run_id, current.run_id);
       assert.equal(status.current.phase, 'plan'); assert.equal(status.complete, false);
-      assert.notEqual(status.status, 'COMPLETED'); assert.equal(status.budget.total_turns, 1);
+      assert.notEqual(status.status, 'COMPLETED'); assert.equal(status.activity.calls, 1);
       assert.equal(monitor.phase, 'plan', 'monitor must read the current child instead of the old original terminal phase');
       assert(monitor.markdown.includes(current.feature) && monitor.markdown.includes(current.run_id));
       assert.deepEqual(fs.readFileSync(eventFile(family, family.original)), rootBefore);

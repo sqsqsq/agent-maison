@@ -1,3 +1,5 @@
+本文件保留原实施历史；现行持续会话、终点与配额退役约束已由 completion-driven-execution/P3 收编，历史打勾不代表P4联合验收。
+
 # ledger-class-failure-containment tasks
 
 - [x] t1 档位读数与回退资格：`repair-candidates.ts` 的 testing 分支删除 `repair_owner === 'spec'|'plan'` 的产候选路径（只读既有 `repair_owner`，不新立表）——账本/形状档因此既不触发 `phase_backtrack_requested`，也不参与回退目标选择；披露（`repair_owner`/`affected_files`/`spec_capture_gap` 归因）原样保留。`resolveInvalidatablePhases` 不动。

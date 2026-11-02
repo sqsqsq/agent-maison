@@ -19,6 +19,7 @@ import { checkNegativeTestingVerdictClosure } from '../../scripts/check-testing'
 import {
   checkUpstreamVerdictGate,
   evaluateUpstreamViews,
+  readUpstreamPhaseView,
   type UpstreamPhaseView,
 } from '../../scripts/utils/upstream-verdict-gate';
 import { ensureConsumerFrameworkTree } from '../utils/layout-test-helper';
@@ -208,8 +209,8 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       const [r] = checkUpstreamVerdictGate({ projectRoot: root, feature: 'demo', phase: 'ut' });
       assertTrue(!r || r.status !== 'FAIL', 'review排序靠前不构成UT硬前置');
       const [completionGate] = checkUpstreamVerdictGate({ projectRoot: root, feature: 'demo', phase: 'testing' });
-      assertEq(completionGate.status, 'FAIL', 'testing仍须审查通过');
-      assertTrue(completionGate.details.includes('[review]'), '点名review');
+      assertEq(completionGate.status, 'SKIP', '缺实际输入保持未知，不能恢复旧phase门');
+      assertEq(readUpstreamPhaseView(root, 'demo', 'review').verdict, 'FAIL', '原真实review否决仍可读，不能被未知gate洗白');
     }),
   },
   {
@@ -220,8 +221,8 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         verdict: 'PASS', blocker_count: 0, blockers: [],
       });
       const [r] = checkUpstreamVerdictGate({ projectRoot: root, feature: 'demo', phase: 'ut' });
-      assertEq(r.status, 'PASS', 'status');
-      assertTrue(r.details.includes('coding'), '已消费列出真实coding依赖');
+      assertEq(r.status, 'SKIP', '历史PASS不替代当前真实输入绑定');
+      assertEq(readUpstreamPhaseView(root, 'demo', 'coding').verdict, 'PASS', '旧PASS原件仍可读');
     }),
   },
   {
@@ -231,14 +232,37 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(path.join(dir, 'summary.json'), '{ not json', 'utf-8');
       const [r] = checkUpstreamVerdictGate({ projectRoot: root, feature: 'demo', phase: 'testing' });
-      assertEq(r.status, 'FAIL', 'status');
+      assertEq(r.status, 'SKIP', '缺当前输入保持未知');
+      assertTrue(!readUpstreamPhaseView(root, 'demo', 'review').verdictReadable, '坏原件不能成为通过');
     }),
   },
   {
     name: '集成：链首 phase（spec）无上游 → 不产结果（零噪声）',
     run: async () => withTmpProject(async root => {
-      assertEq(checkUpstreamVerdictGate({ projectRoot: root, feature: 'demo', phase: 'spec' }).length, 0, 'spec 无上游');
+      assertEq(checkUpstreamVerdictGate({ projectRoot: root, feature: 'demo', phase: 'spec' })[0].status, 'SKIP', '链首标签不能豁免真实输入');
     }),
+  },
+  {
+    name: '当前真实输入binding可用即检查，实际依赖字节变化与身份失配均保持必需未知',
+    run: () => {
+      const { fixture } = require('./standalone-coding-review.unit.test') as typeof import('./standalone-coding-review.unit.test');
+      const f = fixture();
+      try {
+        const resolvedInputs = f.context('coding').resolvedInputs!;
+        const opts = { projectRoot: f.root, feature: 'demo', phase: 'coding', resolvedInputs };
+        const { currentRequirementEvidenceSha } = require('../../scripts/utils/phase-closure-finalizer') as typeof import('../../scripts/utils/phase-closure-finalizer');
+        assertTrue(typeof currentRequirementEvidenceSha({ ...opts, runId: f.manifest.run_id }) === 'string', '真实run需求血缘可以绑定');
+        assertTrue(currentRequirementEvidenceSha({ ...opts, runId: 'missing-actual-run' }) === null,
+          '缺真实run原件不能借当前resolved requirement补签');
+        assertTrue(checkUpstreamVerdictGate(opts).every(check => check.status === 'PASS'), '真实已解析输入可以检查，不要求上游closed');
+        f.write('src/demo/value.ts', 'export const value: number = 99;\n');
+        const changed = checkUpstreamVerdictGate(opts);
+        assertTrue(changed.some(check => check.status === 'SKIP' && check.failure_kind === 'framework_bug'
+          && check.details.includes('value.ts')), '真实依赖字节变化不能借旧绑定签PASS');
+        assertTrue(checkUpstreamVerdictGate({ ...opts, phase: 'ut' }).some(check => check.status === 'SKIP'
+          && check.details.includes('身份不匹配')), '另一检查族不能借当前输入身份');
+      } finally { fs.rmSync(f.root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+    },
   },
 ];
 

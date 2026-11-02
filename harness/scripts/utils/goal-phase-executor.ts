@@ -9,7 +9,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
 import { assertFencedOwner } from './goal-run-control';
-import { executionRequestForInvoke, observeSessionExecution, readHandoffMaterial, type HandoffReference } from './session-execution-handoff';
+import { executionRequestForInvoke, observeSessionExecution, readHandoffMaterial, sessionExecutionDeadlineMs, type HandoffReference } from './session-execution-handoff';
+import { createCodexTerminalScanner, extractProviderSessionId, isProviderToolResult, resolveTerminalEventParser } from './codex-terminal-events';
+import { capturePhaseInvocationSnapshot, diffPhaseInvocationSnapshots } from './phase-write-boundary';
 
 export interface WorkUnitExecutionContext {
   readonly runId: string;
@@ -97,9 +99,9 @@ export function workUnitNativeReadonly(context: Pick<WorkUnitExecutionContext, '
 }
 
 export function workUnitExecutionInputs(manifest: GoalRunManifest, purpose?: string, projectRoot?: string): Partial<WorkUnitExecutionContext> {
-  const { write_mode, approval_mode, allowed_tools } = effectiveHeadlessUnattended(manifest.unattended);
   const origin = projectRoot && manifest.delivery_origin && (manifest.delivery_origin.feature !== manifest.feature || manifest.delivery_origin.run_id !== manifest.run_id)
-    ? loadGoalRunManifestFromRun(projectRoot, manifest.delivery_origin.run_id, { feature: manifest.delivery_origin.feature }) : undefined;
+    ? (require('./delivery-origin') as typeof import('./delivery-origin')).originalDeliveryForManifest(projectRoot, manifest) : undefined;
+  const { write_mode, approval_mode, allowed_tools } = effectiveHeadlessUnattended(origin?.unattended ?? manifest.unattended);
   const deadline = origin?.user_deadline_at ?? manifest.user_deadline_at;
   return { authority: { write_mode, approval_mode, ...(allowed_tools ? { allowed_tools } : {}) },
     ...(deadline ? { user_deadline_at: deadline } : {}),
@@ -124,8 +126,8 @@ function deepFreezeContext(input: WorkUnitExecutionContext): WorkUnitExecutionCo
   return Object.freeze(context);
 }
 
-export function createWorkUnitExecutionContext(input: WorkUnitExecutionContext): WorkUnitExecutionContext {
-  return deepFreezeContext({ ...input, ...recoverWorkUnitProviderSession(input) });
+export function createWorkUnitExecutionContext(input: WorkUnitExecutionContext, observed: Partial<WorkUnitExecutionContext> = {}): WorkUnitExecutionContext {
+  return deepFreezeContext({ ...input, ...observed });
 }
 
 export function rebuildWorkUnitExecutionContext(context: WorkUnitExecutionContext, reason: string): WorkUnitExecutionContext {
@@ -142,7 +144,7 @@ function stoppedBeforeExecution(context: WorkUnitExecutionContext, controls?: Wo
 }
 
 /** Derive the actual author unit from existing requests and design transaction originals. */
-function authorUnit(context: WorkUnitExecutionContext, events: ReturnType<typeof loadAuthoritativeEvents>, before: number): string | undefined {
+export function authorUnit(context: WorkUnitExecutionContext, events: ReturnType<typeof loadAuthoritativeEvents>, before: number): string | undefined {
   if (!context.phase.startsWith('initial-design-') && context.phase !== 'design-repair-author') return 'implementation';
   try {
     const manifest = loadGoalRunManifestFromRun(context.projectRoot, context.runId, { feature: context.feature });
@@ -167,20 +169,22 @@ function authorUnit(context: WorkUnitExecutionContext, events: ReturnType<typeof
   } catch { return undefined; }
 }
 
-/** Native identity is recovered only from the same real author's original invocation stream. */
-export function recoverWorkUnitProviderSession(context: WorkUnitExecutionContext): Partial<WorkUnitExecutionContext> {
-  if (workUnitExecutionRole(context) === 'verifier') return { provider_session_id: undefined };
+/** Observe unfinished originals first; only the same author's native identity is reusable. */
+export function observeWorkUnitProviderSession(context: WorkUnitExecutionContext): Partial<WorkUnitExecutionContext> | GoalPhaseExecutorResult {
+  const role = workUnitExecutionRole(context);
   const eventsPath = path.join(context.runDir, 'events.jsonl');
   if (!fs.existsSync(eventsPath)) return { provider_session_id: undefined };
   const events = loadAuthoritativeEvents(eventsPath);
   const currentStart = events.findIndex(event => event.type === 'agent_invoke_start' && event.phase === context.phase
     && (event.invoke_id === context.attemptId || event.invoke_id === `${context.phase}-${context.attemptId}`));
-  const unit = authorUnit(context, events, currentStart < 0 ? events.length : currentStart);
-  if (!unit) return { provider_session_id: undefined };
+  const unit = role === 'author' ? authorUnit(context, events, currentStart < 0 ? events.length : currentStart) : undefined;
+  if (role === 'author' && !unit) return { provider_session_id: undefined };
+  let recovered: Partial<WorkUnitExecutionContext> | undefined;
   for (const event of [...events].reverse()) {
     if (event.type !== 'agent_invoke_start' || !event.invoke_id || !event.phase || event.invoke_id === context.attemptId
       || event.invoke_id === `${context.phase}-${context.attemptId}`
-      || workUnitExecutionRole({ phase: event.phase }, (event as Record<string, any>).purpose) !== 'author') continue;
+      || workUnitExecutionRole({ phase: event.phase }, (event as Record<string, any>).purpose) !== role
+      || role === 'verifier' && event.phase !== context.phase) continue;
     const dir = path.resolve(context.runDir, 'phases', event.phase, event.invoke_id);
     if (!dir.startsWith(path.resolve(context.runDir) + path.sep) || !fs.existsSync(dir)) continue;
     const names = fs.readdirSync(dir).filter(name => /^request-e\d+\.json$/.test(name)).sort((a, b) => Number(b.match(/\d+/)![0]) - Number(a.match(/\d+/)![0]));
@@ -192,32 +196,38 @@ export function recoverWorkUnitProviderSession(context: WorkUnitExecutionContext
     if (previous.runId !== context.runId || previous.feature !== context.feature
       || previous.adapter !== context.adapter || previous.adapterModel !== context.adapterModel
       || path.resolve(previous.projectRoot) !== path.resolve(context.projectRoot)
-      || workUnitExecutionRole(previous, request.purpose) !== 'author') continue;
+      || workUnitExecutionRole(previous, request.purpose) !== role) continue;
     const at = events.indexOf(event);
-    if (authorUnit(previous, events, at) !== unit) continue;
+    if (role === 'author' && authorUnit(previous, events, at) !== unit) continue;
     const nextStart = events.findIndex((row, index) => index > at && row.type === 'agent_invoke_start' && row.invoke_id !== event.invoke_id);
     const reconciled = events.slice(at + 1).some(row =>
       ['agent_invoke_end', 'agent_process_settled', 'orphan_reclaimed', 'agent_invoke_recovered'].includes(row.type ?? '') && row.invoke_id === event.invoke_id)
       || events.slice(at + 1, nextStart < 0 ? undefined : nextStart).some(row => row.type === 'legacy_run_override'
         && (!(row as Record<string, any>).run_id || (row as Record<string, any>).run_id === context.runId));
     if (!reconciled) {
-      throw new Error('[work-unit-execution] the previous author invocation is still outstanding; reconcile it before another execution');
+      let nativeId = previous.provider_session_id;
+      try { nativeId = readProviderSessionId(path.join(dir, 'agent-events.jsonl'), context.adapter) ?? nativeId; }
+      catch { /* Conflicting raw identities remain unknown; they cannot authorize another author. */ }
+      return { status: 'waiting', phase: context.phase, exitCode: 1, stdout: '', stderr: '', skipped: true,
+        command: 'phase_execute_request', ...(nativeId ? { provider_session_id: nativeId } : {}),
+        details: `原${role === 'author' ? '作者' : '独立核验'}调用 ${event.invoke_id}（${event.phase}）尚无真实结束或回收/调和事实；保留原请求 ${path.join(dir, names[0])}，原生SID=${nativeId ?? '尚未记录可核实ID'}。等待该原调用真实交回、进程退出及owner对账；事实补齐后沿原run的next/resume继续，不启动第二个执行者，也不补写原生结束。` };
     }
+    if (role === 'verifier' || recovered) continue;
     const ended = [...events].reverse().find(row => row.type === 'agent_invoke_end' && row.invoke_id === event.invoke_id);
     const unavailable = (ended as Record<string, any> | undefined)?.nativeSessionRebuildReason;
-    if (unavailable === 'provider_session_not_found' || unavailable === 'provider_session_id_conflict') return rebuildWorkUnitExecutionContext(context, unavailable);
+    if (unavailable === 'provider_session_not_found' || unavailable === 'provider_session_id_conflict' || unavailable === 'provider_session_resume_not_accepted') { recovered = rebuildWorkUnitExecutionContext(context, unavailable); continue; }
     // A native session must not retain a previous permission contract after authority changes.
     const reason = providerSessionRebuildReason(context.adapter, { previousAuthorization: previous.authority, authorization: context.authority });
-    if (reason) return rebuildWorkUnitExecutionContext(context, reason);
+    if (reason) { recovered = rebuildWorkUnitExecutionContext(context, reason); continue; }
     try {
       const id = readProviderSessionId(path.join(dir, 'agent-events.jsonl'), context.adapter);
-      return id ? { provider_session_id: id } : rebuildWorkUnitExecutionContext(context, '上一调用未留下可恢复的原生ID，不猜最近会话');
+      recovered = id ? { provider_session_id: id } : rebuildWorkUnitExecutionContext(context, '上一调用未留下可恢复的原生ID，不猜最近会话');
     } catch (error) {
       if (!(error as Error).message.startsWith('provider_session_id_conflict:')) throw error;
-      return rebuildWorkUnitExecutionContext(context, '原始流的会话ID冲突，不复用冲突ID');
+      recovered = rebuildWorkUnitExecutionContext(context, '原始流的会话ID冲突，不复用冲突ID');
     }
   }
-  return { provider_session_id: undefined };
+  return recovered ?? { provider_session_id: undefined };
 }
 
 export function validateWorkUnitExecutionContext(context: WorkUnitExecutionContext): void {
@@ -295,19 +305,68 @@ export class DetachedGoalPhaseExecutor implements GoalPhaseExecutor {
     const candidate = context.runDir ? executionRequestForInvoke(context.runDir) : null;
     const originalRequest = candidate?.request.context.attemptId === context.attemptId && candidate.request.context.owner.owner_id === context.owner.owner_id
       && candidate.request.context.owner.epoch === context.owner.epoch ? candidate : null;
-    let result = await this.invoke(invocation.plan, invocation.cwd, { ...options,
+    const toolDeadline = originalRequest?.request.purpose === 'vision_canary' ? sessionExecutionDeadlineMs(originalRequest.request) : Infinity;
+    if (Number.isFinite(toolDeadline) && toolDeadline <= Date.now()) return {
+      status: 'waiting', phase: context.phase, exitCode: 1, stdout: '', stderr: '', command: 'phase_execute_request', skipped: true, timed_out: true,
+      details: '原视觉金丝雀工具窗口已到；保留原请求与结果，不重置截止或启动新的工具进程。',
+    };
+    const eventsBefore = context.provider_session_id ? loadAuthoritativeEvents(path.join(context.runDir, 'events.jsonl')) : [];
+    const snapshotBefore = context.provider_session_id && originalRequest?.request.write_boundary
+      ? capturePhaseInvocationSnapshot(originalRequest.request.write_boundary, originalRequest.request.snapshot_options) : null;
+    let envelopeObserved = false, workObserved = false, environmentDiagnostic = '';
+    const resumeScanner = context.provider_session_id ? createCodexTerminalScanner({ onRecord: record => {
+      const type = String(record.type ?? '');
+      envelopeObserved ||= context.adapter === 'codex' ? /^(thread\.|turn\.|item\.|error$)/.test(type)
+        : ['claude', 'codeagent'].includes(context.adapter) ? ['system', 'assistant', 'user', 'result', 'error'].includes(type)
+          : context.adapter === 'deepseek-harness' && ['session', 'status', 'assistant', 'tool_call', 'tool_result', 'error'].includes(type);
+      workObserved ||= !!extractProviderSessionId(record, context.adapter) || isProviderToolResult(record, context.adapter)
+        || ['turn.started', 'item.started', 'assistant', 'tool_call'].includes(type);
+      if (type === 'error' || type === 'turn.failed' || type === 'result' && record.is_error === true
+        || type === 'system' && record.subtype === 'api_retry') environmentDiagnostic = JSON.stringify(record);
+    } }, resolveTerminalEventParser(context.adapter)) : null;
+    let result: AgentInvokeResult & Partial<Pick<GoalPhaseExecutorResult, 'status' | 'details'>> = await this.invoke(invocation.plan, invocation.cwd, { ...options,
       providerSessionId: context.provider_session_id,
       userDeadlineAt: context.user_deadline_at,
+      ...(Number.isFinite(toolDeadline) ? { deadlineMs: toolDeadline, timeoutMs: Math.max(1, toolDeadline - Date.now()) } : {}),
       authorization: context.authority,
       executionRole: workUnitExecutionRole(context),
       readonlyInvocation: workUnitNativeReadonly(context),
       ...(controls?.signal ? { signal: controls.signal } : {}),
       onObservation: observation => {
         options.onObservation?.(observation);
+        if (observation.type === 'stdout' && observation.chunk) resumeScanner?.push(observation.chunk);
+        if (observation.type === 'provider_session' || observation.type === 'tool_result') workObserved = true;
         if (!controls?.onObservation || !context.runDir || !['provider_session', 'tool_result', 'terminal'].includes(observation.type)) return;
         if (originalRequest) controls.onObservation(observeSessionExecution(context.runDir, originalRequest));
       },
     });
+    if (resumeScanner) {
+      if (!envelopeObserved) resumeScanner.push(result.stdout);
+      resumeScanner.flush();
+      const events = loadAuthoritativeEvents(path.join(context.runDir, 'events.jsonl'));
+      const ownIds = new Set([context.attemptId, `${context.phase}-${context.attemptId}`, ...(originalRequest ? [originalRequest.request.invoke_id] : [])]);
+      workObserved ||= events.slice(eventsBefore.length).some(event => !!event.invoke_id && ownIds.has(event.invoke_id) && ['harness_start', 'harness_end', 'phase_write_observed'].includes(event.type ?? ''));
+      const changes = snapshotBefore && originalRequest?.request.write_boundary
+        ? diffPhaseInvocationSnapshots(snapshotBefore, capturePhaseInvocationSnapshot(originalRequest.request.write_boundary, originalRequest.request.snapshot_options)) : null;
+      const environmentFailure = /\b(?:401|403|429|5\d\d)\b|(?:authentication|authorization)\s+(?:failed|error|required|expired)|unauthori[sz]ed|permission denied|not logged in|please (?:log|sign) in|quota|rate[ _-]?limit|usage[ _-]?limit|insufficient credits?|billing (?:error|required|limit)|ECONN|ETIMEDOUT|fetch failed|socket hang up/i.test(result.stderr + '\n' + environmentDiagnostic);
+      if (workObserved || changes?.kind === 'changed' || environmentFailure) {
+        // A real attempt must keep its failure/writes; a session diagnostic cannot buy a clean replay.
+        if (result.nativeSessionRebuildReason === 'provider_session_not_found') result = { ...result, nativeSessionRebuildReason: undefined };
+      } else {
+        if (!envelopeObserved && !result.skipped
+          && !result.spawn_error && !result.timed_out && !result.interrupted && !result.terminal_failure_observed && !result.signal && !controls?.signal?.aborted) {
+          result = changes?.kind === 'clean'
+            ? { ...result, exitCode: result.exitCode || 1, nativeSessionRebuildReason: result.nativeSessionRebuildReason ?? 'provider_session_resume_not_accepted',
+              details: '准确原生续接已退出，缺有效结构信封，原签发快照及已保存工具事实均未见本次开始工作的证据；保留原调用，按当前目标、授权、成果与未完项重建专用上下文。' }
+            : { ...result, status: 'waiting', exitCode: result.exitCode || 1, nativeSessionRebuildReason: undefined,
+              details: '准确原生续接已退出且缺有效结构信封；当前缺可信写入对账，无法确认是否已执行。保留原调用及成果，补齐该原请求的真实执行/写入事实后继续，不自动重放。' };
+        }
+      }
+      if (!workObserved && changes?.kind !== 'changed' && environmentFailure && !invocationCompleted({ ...result, exitCode: result.exitCode || 1 })) {
+        result = { ...result, status: 'waiting', exitCode: result.exitCode || 1, nativeSessionRebuildReason: undefined,
+          details: '原生续接返回认证、额度或服务故障；保留原SID、失败与成果，实际环境恢复后沿原请求继续，不把环境故障当作会话丢失。' };
+      }
+    }
     const interrupted = context.runDir && loadAuthoritativeEvents(path.join(context.runDir, 'events.jsonl')).some(event =>
       (event.type === 'agent_process_settled' && event.interrupted === true || event.type === 'phase_halt' && event.halt_reason === 'executor_waiting')
       && (event.invoke_id === originalRequest?.request.invoke_id || event.invoke_id === context.attemptId || event.invoke_id === `${context.phase}-${context.attemptId}`));

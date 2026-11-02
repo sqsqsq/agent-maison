@@ -121,7 +121,7 @@ npm run check:change-unit -- --project-root <host> --blueprint <blueprint-id> --
 - 施工：[`/change-unit-progression`](../change-unit-progression/SKILL.md)
 - 闭环：[`/component-closure`](../component-closure/SKILL.md)
 
-**边界（BLOCKER）**：本 Skill 自身**停在设计交接**：不进入 P2 selector、施工循环或 P3 closure，不选择 CU，也不因直接设计请求启动施工 run。用户已授权完整实现时，原始请求已由同一 Goal runtime 受管；runtime 调用本设计职责，接收真实检查、独立质询与 readiness 后继续原 P2/CU 执行；全部适用 CU 正式完成后仅按原口径只读检查一次部件闭环并披露，不自动修复或改判，不要求主会话先做完设计才启动后台。仅设计请求仍到自身终点结束（[入口边界](../../../docs/operations/project-entry.md)）。受管初建与修订共用作者/质询接缝，具体写界和恢复见 [design-repair-unattended.md](../../reference/design-repair-unattended.md)。
+**边界（BLOCKER）**：本 Skill 自身**停在设计交接**：不进入 P2 selector、施工循环或 P3 closure，不选择 CU，也不因直接设计请求启动施工 run。用户已授权完整实现时，原始请求已由同一 Goal runtime 受管；runtime 调用本设计职责，接收真实检查、独立质询与 readiness 后继续原 P2/CU 执行；全部适用CU完成后，原root仍须达到请求实际部件终点，消费原writer正式closure与适用装配/独核证据，不用只读evaluate代签，不要求主会话先做完设计才启动后台。仅设计请求仍到自身终点结束（[入口边界](../../../docs/operations/project-entry.md)）。受管初建与修订共用作者/质询接缝，具体写界和恢复见 [design-repair-unattended.md](../../reference/design-repair-unattended.md)。
 
 ### 5. 默认本地人读文档与可选宿主接入
 

@@ -14,7 +14,7 @@ function instrumentSlowCompile(root) {
 const fs = require('fs'), path = require('path');
 const compileOriginal = exports.profileCodingHost.checkCodingCompile;
 exports.profileCodingHost.checkCodingCompile = ctx => {
-  if (process.env.MAISON_GOAL_RUNNER !== '1' || !process.env.MAISON_GOAL_GATE_DEADLINE_MS) return compileOriginal(ctx);
+  if (process.env.MAISON_GOAL_RUNNER !== '1' || !process.env.MAISON_GOAL_RUN_ID || !process.env.MAISON_GOAL_ATTEMPT) return compileOriginal(ctx);
   const log = path.join(ctx.projectRoot, 'observations/native-gates.jsonl');
   const prior = fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\\n').filter(Boolean).map(JSON.parse) : [];
   const livePrior = prior.filter(row => row.kind === 'enter' && row.pid !== process.pid && (() => { try { process.kill(row.pid, 0); return true; } catch { return false; } })());

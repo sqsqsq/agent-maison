@@ -1,3 +1,4 @@
+import { resolveValidationOnlyEligibility } from '../../scripts/utils/goal-runner-phase';
 // ============================================================================
 // goal-runner-repair-convergence.unit.test.ts — adjudicated-repair-loop M1
 // ----------------------------------------------------------------------------
@@ -19,15 +20,10 @@ import * as path from 'path';
 import { createHash } from 'crypto';
 import {
   collectActionableDefects,
-  computeEligibleSignalIdentities,
-  deriveHaltValidationOnlyEligibility,
-  replayAttemptedSignalIdentities,
-  type BacktrackWindowEvent,
 } from '../../scripts/goal-runner';
 import {
   actionableDefectsToCandidates,
   buildSummaryRepairCandidates,
-  resolveInvalidatablePhases,
   validateRepairCandidatesShape,
 } from '../../scripts/utils/repair-candidates';
 import { buildSummaryBlockers } from '../../scripts/utils/summary-blockers';
@@ -77,7 +73,6 @@ const legacyCandidate = (fp: string) => ({
   source_phase: 'review',
 });
 
-const events = (...evs: BacktrackWindowEvent[]): BacktrackWindowEvent[] => evs;
 
 // plan c4e7a9b2 t2（A2）夹具：候选生成读授权过滤后的有效视图（宿主 ae92d8 add_card_result 形态）。
 // plan 1dbe4fa4 t2：自 runAll 内移到顶层并导出，供 reliability-scenarios S5 复用；行为不变。
@@ -154,92 +149,6 @@ export const A2_DONE = { element_id: 'result_done', disposition: 'implement' };
 
 export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
-  run('60bcd1 i16 反演：expanded 伪缺陷已 attempted → eligible 空（停）', () => {
-    // 事件序列：第一次回退（collapsed 真缺陷）→ coding 执行（settled）→ 第二次回退
-    // （i12 屏级聚合 → i16 信号级展开后同一 expanded 伪缺陷再次 open）→ 目标 phase 已执行。
-    const evs = events(
-      { type: 'phase_backtrack_requested', to_phase: 'coding', candidates: [signalCandidate(FP_A)] },
-      { type: 'phase_backtrack_started', to_phase: 'coding' },
-      { type: 'agent_process_settled', phase: 'coding', exit_code: 0, invoke_id: 'fixture-coding' },
-      { type: 'phase_backtrack_requested', to_phase: 'coding', candidates: [signalCandidate(FP_B)] },
-      { type: 'phase_backtrack_started', to_phase: 'coding' },
-      { type: 'agent_process_settled', phase: 'coding', exit_code: 0, invoke_id: 'fixture-coding' },
-    );
-    const attempted = replayAttemptedSignalIdentities(evs);
-    assert(attempted.has(FP_A), 'FP_A 已 attempted（第一次回退目标 phase 已执行）');
-    assert(attempted.has(FP_B), 'FP_B 已 attempted（第二次回退目标 phase 已执行）');
-    // i16 轮 expanded 伪缺陷 open 身份（此前某轮已 attempted）→ eligible 空
-    const open = [signalCandidate(FP_A), signalCandidate(FP_B)];
-    const eligible = computeEligibleSignalIdentities(open, attempted);
-    assert(eligible.length === 0, 'eligible 必须为空 → runner 停 repair_not_converging');
-  });
-
-  run('A/C 交替：A 已 attempted 后不因 C 触发的新回退重获资格', () => {
-    // A 驱动回退并执行（失败未消除）；C 驱动另一轮回退并执行；下一轮 A 又 open。
-    const evs = events(
-      { type: 'phase_backtrack_requested', to_phase: 'coding', candidates: [signalCandidate(FP_A)] },
-      { type: 'agent_process_settled', phase: 'coding', exit_code: 0, invoke_id: 'fixture-coding' },
-      { type: 'phase_backtrack_requested', to_phase: 'coding', candidates: [signalCandidate(FP_C)] },
-      { type: 'agent_process_settled', phase: 'coding', exit_code: 0, invoke_id: 'fixture-coding' },
-    );
-    const attempted = replayAttemptedSignalIdentities(evs);
-    assert(attempted.has(FP_A) && attempted.has(FP_C), 'A 与 C 均已 attempted');
-    const open = [signalCandidate(FP_A), signalCandidate(FP_C)];
-    const eligible = computeEligibleSignalIdentities(open, attempted);
-    assert(eligible.length === 0, 'A/C 均不重获资格（累计 one-shot）');
-    // 新身份 D open 时：D eligible，A 仍不
-    const open2 = [signalCandidate(FP_A), signalCandidate('d'.repeat(64))];
-    const eligible2 = computeEligibleSignalIdentities(open2, attempted);
-    assert(eligible2.length === 1 && eligible2[0].item_fingerprint === 'd'.repeat(64),
-      '只有从未 attempted 的 D 可回退');
-  });
-
-  run('P2-T6 相同检查 ID 的真实新指纹可继续，原指纹无新事实仍停止', () => {
-    const attempted = replayAttemptedSignalIdentities(events(
-      { type: 'phase_backtrack_requested', to_phase: 'coding', candidates: [signalCandidate(FP_A)] },
-      { type: 'agent_process_settled', phase: 'coding', exit_code: 0, invoke_id: 'fixture-coding' },
-    ));
-    assert(computeEligibleSignalIdentities([signalCandidate(FP_A)], attempted).length === 0,
-      '相同 ID + 相同事实不得借新一轮重试');
-    const repaired = computeEligibleSignalIdentities([signalCandidate(FP_B)], attempted);
-    assert(repaired.length === 1 && repaired[0].id === 'visual_diff:screen',
-      '相同 ID 但真实信号指纹变化必须保留修复资格');
-  });
-
-  run('crash 场景 1：request 后目标 phase 未执行 → 候选仍 eligible（resume 收到）', () => {
-    // request → crash（无 settled/verdict）→ resume
-    const evs = events(
-      { type: 'phase_backtrack_requested', to_phase: 'coding', candidates: [signalCandidate(FP_A)] },
-      { type: 'phase_backtrack_started', to_phase: 'coding' },
-    );
-    const attempted = replayAttemptedSignalIdentities(evs);
-    assert(!attempted.has(FP_A), '未执行的 request-only 候选不得计入 attempted');
-    const eligible = computeEligibleSignalIdentities([signalCandidate(FP_A)], attempted);
-    assert(eligible.length === 1, 'resume 后 candidate 仍 eligible（既有 crash/resume 契约不破）');
-  });
-
-  run('crash 场景 2：目标 phase settled 后崩溃 → 已 attempted，不再自动修', () => {
-    // request → coding 执行（settled）→ completed 前崩溃 → resume
-    const evs = events(
-      { type: 'phase_backtrack_requested', to_phase: 'coding', candidates: [signalCandidate(FP_A)] },
-      { type: 'agent_process_settled', phase: 'coding', exit_code: 0, invoke_id: 'fixture-coding' },
-    );
-    const attempted = replayAttemptedSignalIdentities(evs);
-    assert(attempted.has(FP_A), 'settled 后即计入 attempted（不依赖 completed）');
-    const eligible = computeEligibleSignalIdentities([signalCandidate(FP_A)], attempted);
-    assert(eligible.length === 0, '不得再次自动修');
-  });
-
-  run('legacy check-domain 候选不参与收敛判定（eligible 恒真）', () => {
-    const evs = events(
-      { type: 'phase_backtrack_requested', to_phase: 'coding', candidates: [legacyCandidate(FP_A)] },
-      { type: 'agent_process_settled', phase: 'coding', exit_code: 0, invoke_id: 'fixture-coding' },
-    );
-    const attempted = replayAttemptedSignalIdentities(evs);
-    assert(attempted.size === 0, 'legacy（无 identity_schema）不入 attempted 回放');
-    const eligible = computeEligibleSignalIdentities([legacyCandidate(FP_A)], attempted);
-    assert(eligible.length === 1, 'legacy 候选保持既有可回退语义');
-  });
 
   run('signal@1 标记随断言：actionableDefectsToCandidates 产出 identity_schema + sha256 指纹', () => {
     const defects = [{
@@ -320,27 +229,6 @@ export function runAll(): UnitCaseResult[] {
       `仅结构化视觉信号标 signal@1：${JSON.stringify(cands.map((c) => c.identity_schema))}`);
   });
 
-  run('t3 契约不回归：no-op 判定后的 eligible 空由守卫 halt（纯函数层：attempted 集不回放进 eligible）', () => {
-    // i17 反演：零改动修复 = 快照 pre/post 相等（runner 集成层判定）→ 候选并入 attempted
-    // （settled 触发回放）→ 下一轮 eligible 空。纯函数层验证回放侧：settled 在案即 attempted。
-    const evs = events(
-      { type: 'phase_backtrack_requested', to_phase: 'coding', candidates: [signalCandidate(FP_A)] },
-      { type: 'agent_process_settled', phase: 'coding', exit_code: 0, invoke_id: 'fixture-coding' },
-    );
-    const attempted = replayAttemptedSignalIdentities(evs);
-    assert(attempted.has(FP_A), 'target phase 已执行（settled）即计入 attempted（no-op 并入逻辑的输入）');
-    assert(computeEligibleSignalIdentities([signalCandidate(FP_A)], attempted).length === 0,
-      'no-op 后 eligible 空 → 守卫 halt repair_not_converging（runner 集成层断言见 R-8）');
-  });
-
-  run('t3 契约不回归：legacy 与 signal 混合时 legacy 仍可回退（不误伤 check-domain）', () => {
-    const attempted = new Set([FP_A]);
-    const open = [signalCandidate(FP_A), legacyCandidate('d'.repeat(64))];
-    const eligible = computeEligibleSignalIdentities(open, attempted);
-    assert(eligible.length === 1 && eligible[0].identity_schema === undefined,
-      'signal 全 attempted 时 legacy 仍保留可回退（守卫只在全空时 halt）');
-  });
-
   // ==========================================================================
   // plan b5f1d9c3 t1：resume 验证优先——deriveHaltValidationOnlyEligibility 反例矩阵
   // （7 条反例一律只断言“不进入 resumePostAgentPhases”（返回 null），不规定其后是否重新
@@ -363,147 +251,147 @@ export function runAll(): UnitCaseResult[] {
   ];
 
   run('b5f1d9c3 t1 正例：settled → harness_end → phase_halt(WAITING) → 派生 validation-only 资格', () => {
-    const r = deriveHaltValidationOnlyEligibility(baselineEvents());
+    const r = resolveValidationOnlyEligibility(baselineEvents(), { requireInterrupt: true });
     assert(!!r, '正例应派生资格');
     assert(r!.phase === 'testing' && r!.invoke_id === 'testing-i4', '应返回 halt phase + 原 invoke_id');
   });
 
   run('b5f1d9c3 t1 反例①：settled 之后出现 FAIL phase_verdict → 不派生', () => {
-    const r = deriveHaltValidationOnlyEligibility([
+    const r = resolveValidationOnlyEligibility([
       settledEv({}),
       harnessEndEv({}),
       { type: 'phase_verdict', phase: 'testing', verdict: 'FAIL', action: 'halt' },
       haltEv({}),
-    ]);
+    ], { requireInterrupt: true });
     assert(r === null, 'FAIL verdict 后不派生（不进入 resumePostAgentPhases）');
   });
 
   run('b5f1d9c3 t1 反例②：settled 之后出现更新的 agent_invoke_start → 不派生', () => {
-    const r = deriveHaltValidationOnlyEligibility([
+    const r = resolveValidationOnlyEligibility([
       settledEv({}),
       harnessEndEv({}),
       haltEv({}),
       { type: 'agent_invoke_start', phase: 'testing', invoke_id: 'testing-i5' },
-    ]);
+    ], { requireInterrupt: true });
     assert(r === null, '更新的 invoke_start 后不派生');
   });
 
   run('b5f1d9c3 t1 反例③：settled 带 timeout/kill → 不派生', () => {
-    const r1 = deriveHaltValidationOnlyEligibility([
+    const r1 = resolveValidationOnlyEligibility([
       settledEv({ timed_out: true, kill_reason: 'agent_timeout' }),
       harnessEndEv({}),
       haltEv({}),
-    ]);
+    ], { requireInterrupt: true });
     assert(r1 === null, 'timed_out settled 不派生');
-    const r2 = deriveHaltValidationOnlyEligibility([
+    const r2 = resolveValidationOnlyEligibility([
       settledEv({ kill_reason: 'agent_timeout' }),
       harnessEndEv({}),
       haltEv({}),
-    ]);
+    ], { requireInterrupt: true });
     assert(r2 === null, 'kill_reason=agent_timeout 不派生');
   });
 
   run('b5f1d9c3 t1 反例④：settled 缺 invoke_id → 不派生', () => {
-    const r = deriveHaltValidationOnlyEligibility([
+    const r = resolveValidationOnlyEligibility([
       { type: 'agent_process_settled', phase: 'testing' },
       harnessEndEv({}),
       haltEv({}),
-    ]);
+    ], { requireInterrupt: true });
     assert(r === null, '缺 invoke_id 的 settled 不派生');
   });
 
   run('b5f1d9c3 t1 反例⑤：halt 缺 run_disposition 投影 → 不派生', () => {
-    const r = deriveHaltValidationOnlyEligibility([
+    const r = resolveValidationOnlyEligibility([
       settledEv({}),
       harnessEndEv({}),
       { type: 'phase_halt', phase: 'testing' }, // 无 run_disposition
-    ]);
+    ], { requireInterrupt: true });
     assert(r === null, 'halt 缺投影不派生');
   });
 
   run('b5f1d9c3 t1 反例⑥：halt 投影为 TERMINAL / RECOVERY_PENDING → 不派生（终态语义不动）', () => {
-    const r1 = deriveHaltValidationOnlyEligibility([
+    const r1 = resolveValidationOnlyEligibility([
       settledEv({}),
       harnessEndEv({}),
       haltEv({ run_disposition: 'TERMINAL' }),
-    ]);
+    ], { requireInterrupt: true });
     assert(r1 === null, 'TERMINAL 投影不派生');
-    const r2 = deriveHaltValidationOnlyEligibility([
+    const r2 = resolveValidationOnlyEligibility([
       settledEv({}),
       harnessEndEv({}),
       haltEv({ run_disposition: 'RECOVERY_PENDING' }),
-    ]);
+    ], { requireInterrupt: true });
     assert(r2 === null, 'RECOVERY_PENDING 投影不派生');
   });
 
   run('b5f1d9c3 t1 反例⑦（review P1）：halt 之后出现更新的 backtrack/invalidated 窗口 → 不派生（新窗口优先）', () => {
     // request-only crash 组合：settled → harness → halt(WAITING) → resume → backtrack → 崩溃
-    const r1 = deriveHaltValidationOnlyEligibility([
+    const r1 = resolveValidationOnlyEligibility([
       settledEv({}),
       harnessEndEv({}),
       haltEv({}),
       { type: 'phase_backtrack_requested', to_phase: 'coding' },
       { type: 'agent_invoke_start', phase: 'coding', invoke_id: 'coding-i5' },
-    ]);
+    ], { requireInterrupt: true });
     assert(r1 === null, 'halt 后出现 backtrack 不派生（资格交给 applyInvalidationsToResume）');
-    const r2 = deriveHaltValidationOnlyEligibility([
+    const r2 = resolveValidationOnlyEligibility([
       settledEv({}),
       harnessEndEv({}),
       haltEv({}),
       { type: 'phase_invalidated', phase: 'testing' },
-    ]);
+    ], { requireInterrupt: true });
     assert(r2 === null, 'halt 后出现 invalidation 不派生');
     // 同一 halt 之前已有 backtrack 的历史窗口不受影响（本函数只看 halt 之后）
-    const r3 = deriveHaltValidationOnlyEligibility([
+    const r3 = resolveValidationOnlyEligibility([
       settledEv({}),
       harnessEndEv({}),
       { type: 'phase_backtrack_requested', to_phase: 'coding' },
       settledEv({ invoke_id: 'testing-i4' }),
       harnessEndEv({ invoke_id: 'testing-i4' }),
       haltEv({}),
-    ]);
+    ], { requireInterrupt: true });
     assert(!!r3 && r3.invoke_id === 'testing-i4', 'halt 前的旧 backtrack 不影响（用最新 settled 身份）');
   });
 
   run('b5f1d9c3 t1 边界：同一 invoke 后无 harness_end → 不派生（窗口不完整）', () => {
-    const r = deriveHaltValidationOnlyEligibility([
+    const r = resolveValidationOnlyEligibility([
       settledEv({}),
       haltEv({}), // 无 harness_end
-    ]);
+    ], { requireInterrupt: true });
     assert(r === null, '缺 harness_end 不派生');
   });
 
   run('b5f1d9c3 t1 边界：harness_end 在不同 invoke（旧 invoke）→ 不派生', () => {
-    const r = deriveHaltValidationOnlyEligibility([
+    const r = resolveValidationOnlyEligibility([
       settledEv({}),
       harnessEndEv({ invoke_id: 'testing-i3' }), // 不同 invoke
       haltEv({}),
-    ]);
+    ], { requireInterrupt: true });
     assert(r === null, 'harness_end 必须属同一 invoke 才有效');
   });
 
   run('b5f1d9c3 t1 边界：最新执行事件是 invoke_start 而非 settled（request-only 崩溃）→ 不派生', () => {
-    const r = deriveHaltValidationOnlyEligibility([
+    const r = resolveValidationOnlyEligibility([
       settledEv({ invoke_id: 'testing-i3' }),
       harnessEndEv({ invoke_id: 'testing-i3' }),
       { type: 'agent_invoke_start', phase: 'testing', invoke_id: 'testing-i4' },
       haltEv({}),
-    ]);
+    ], { requireInterrupt: true });
     assert(r === null, '最新执行事件为 invoke_start 不派生（resume 重新 invoke agent，保留候选上下文）');
   });
 
   run('b5f1d9c3 t1 边界：无 phase_halt 事件 → 不派生', () => {
-    const r = deriveHaltValidationOnlyEligibility([
+    const r = resolveValidationOnlyEligibility([
       settledEv({}),
       harnessEndEv({}),
-    ]);
+    ], { requireInterrupt: true });
     assert(r === null, '无 halt 不派生');
   });
 
   run('b5f1d9c3 t1 边界：halt phase 无执行事件（0 事件后直接 halt）→ 不派生（缺 settled）', () => {
-    const r = deriveHaltValidationOnlyEligibility([
+    const r = resolveValidationOnlyEligibility([
       haltEv({}), // 无任何执行事件
-    ]);
+    ], { requireInterrupt: true });
     assert(r === null, '无 settled 不派生');
   });
 
@@ -514,7 +402,7 @@ export function runAll(): UnitCaseResult[] {
       { type: 'phase_verdict', phase: 'testing', invoke_id: 'testing-i4', verdict: 'FAIL', action: 'halt', run_disposition: 'WAITING', failure_kind: 'framework_bug' },
       { type: 'run_end', status: 'HALTED', run_disposition: 'WAITING' },
     ];
-    const r = deriveHaltValidationOnlyEligibility(events);
+    const r = resolveValidationOnlyEligibility(events, { requireInterrupt: true });
     assert(!!r && r.phase === 'testing' && r.invoke_id === 'testing-i4', '非 phase_halt 形状也应派生');
     const session = require('../../scripts/utils/session-execution-handoff').sessionValidationOnlyEligibility;
     const reportEvents = [
@@ -563,12 +451,12 @@ export function runAll(): UnitCaseResult[] {
         files: [], source_phase: 'testing', summary: `当前已核实产品问题 ${i}`,
       }));
       const missingContext = assessObservation({ ...observe(candidates), responsibility: undefined });
-      assert(missingContext.recommendation.phase === null && missingContext.recommendation.reason.includes('backtrack_target_absent'), '缺真实职责契约仍须报告缺口，不能用coding或队首兜底');
+      assert(missingContext.recommendation.phase === null && missingContext.recommendation.action === 'continue_work_unit' && missingContext.recommendation.requires_driver_authorization, '缺真实职责契约仍须报告缺口，不能用coding或队首兜底');
       const missingView = assessObservation({ ...observe(candidates), currentDisposition: undefined });
-      assert(missingView.recommendation.phase === null && missingView.recommendation.reason.includes('backtrack_target_absent'), 'unit写域不等于纯候选已核验，缺当前view仍不可派活');
+      assert(missingView.recommendation.phase === null && missingView.recommendation.action === 'stop' && missingView.recommendation.reason.includes('缺当前完成事实'), 'unit写域不等于纯候选已核验，缺当前view仍不可派活');
       const before = assessObservation(observe(candidates));
-      assert(before.recommendation.action === 'rerun_phase' && before.recommendation.phase === 'coding'
-        && before.recommendation.runner_action === 'backtrack_to_phase',
+      assert(before.recommendation.action === 'continue_work_unit' && before.recommendation.phase === null
+        && before.recommendation.requires_driver_authorization,
         `对照（候选非空）应请求回 coding：${JSON.stringify(before.recommendation)}`);
       // D1 之后：候选为空，deterministic_defects 仍 12 条（只是诊断投影，不决定路由）
       const after = assessObservation(observe([]));
@@ -631,7 +519,7 @@ export function runAll(): UnitCaseResult[] {
       `产品真值责任方的回退资格不得被裁掉：${JSON.stringify(productCands)}`);
   });
 
-  run('P3-T15 a product-truth failure (TC-005 assertion / overlay geometry defect) still backtracks to coding and invalidates the existing chain suffix', () => {
+  run('P3-T15 a product-truth failure (TC-005 assertion / overlay geometry defect) retains the real product finding without a phase queue', () => {
     const chain = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'];
     // 重放 a70eb7 events:101 —— TC-005 step 24 已执行 assertion 失败（真机断言）
     const assertionSummary = summaryFromChecks([{
@@ -660,16 +548,7 @@ export function runAll(): UnitCaseResult[] {
     assert(!(geometrySummary.blockers ?? []).some(b => (b as { repair_owner?: string }).repair_owner),
       '半模态几何缺陷是一档产品真值：没有 evidence-block 责任方，回退资格不得被裁掉');
 
-    // 失效范围算法一字未动：两个真实候选都映射 coding，失效面仍是既有链后缀
-    const invalidated = resolveInvalidatablePhases({
-      chain, hasActionable: true, candidateCategories: ['coding'], track: 'full',
-    });
-    assert(JSON.stringify(invalidated) === JSON.stringify(['coding', 'review', 'ut', 'testing']),
-      `一档回退须仍作废既有链后缀：${JSON.stringify(invalidated)}`);
-    // 二档对照：即便 category 落到 spec，失效范围算法本身也不改（裁的是"是否触发"这一条）
-    assert(JSON.stringify(resolveInvalidatablePhases({
-      chain, hasActionable: false, candidateCategories: ['spec'], track: 'full',
-    })) === JSON.stringify(chain), 'resolveInvalidatablePhases 不得被本笔改动');
+
   });
 
   // ==========================================================================

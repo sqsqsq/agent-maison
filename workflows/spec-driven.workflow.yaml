@@ -2,8 +2,8 @@ schema_version: "1.1"
 name: spec-driven
 description: >
   Legacy built-in restoration workflow — mirrors legacy VALID_PHASES / phase DAG before optional
-  instance extensions phase. Global phases have independent request endpoints; feature phases follow
-  catalog+glossary → spec → plan → coding → (review | UT parallel) → testing.
+  instance extensions phase. These are retained check/artifact and dependency definitions,
+  not an author queue. Current work is selected from the original authorized request and shared disposition.
 
 # Phase transition (agent UX; goal-runner may override to goal_mode at runtime):
 #   SSOT: framework/docs/concepts/phase-transition-policy.md
