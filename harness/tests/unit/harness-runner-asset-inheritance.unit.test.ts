@@ -24,7 +24,8 @@ import { collectHookSlots, dispatchLifecycleHooks } from '../../hooks-dispatcher
 import { clearFrameworkConfigCache, receiptDirPath } from '../../config';
 import { writeReviewClosureAttestation } from '../../scripts/utils/closure-attestation';
 import { computeGateFingerprint } from '../../scripts/utils/gate-fingerprint';
-import { applyAssetAxisInheritance, deriveSummaryVerdictLattice } from '../../scripts/utils/quality-axes';
+import { applyAssetAxisInheritance, deriveSummaryVerdictLattice, projectReleaseReadiness } from '../../scripts/utils/quality-axes';
+import { resolveCurrentDisposition } from '../../scripts/utils/check-disposition';
 import { resolveVerdictFromChecks } from '../../scripts/utils/report-generator';
 import { buildSummaryBlockers } from '../../scripts/utils/summary-blockers';
 import { countBlockingDebt, deriveVisualDebt, loadVisualDebt, writeVisualDebt } from '../../scripts/utils/visual-debt';
@@ -140,6 +141,26 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       const inh = resolveAssetAxisInheritance(root, FEATURE);
       assertTrue(inh !== null && inh.provenanceIntact === false, '缺 attestation 不继承');
       assertTrue(/attestation/.test(inh!.provenanceDetail), inh!.provenanceDetail);
+      assertEq(inh!.reviewUnattestedOnly, true, '唯一缺口是 review 闭环证明');
+      // 与 testing 的 review_closure_attestation WARN 同口径：不伪造 PASS、release BLOCKED，但不派 coding 返修。
+      const lattice = deriveSummaryVerdictLattice([chk('visual_diff')], { phase: 'testing', visualApplicable: true, assetApplicable: true });
+      applyAssetAxisInheritance(lattice.quality_axes, inh!);
+      const asset = lattice.quality_axes.asset;
+      assertEq(asset.verdict, 'UNVERIFIED', '只缺证明 → 如实 UNVERIFIED');
+      assertTrue(asset.resolution?.retry_phase === null && asset.source_checks.every(s => s.startsWith('unattested_inheritance:coding:')), JSON.stringify(asset));
+      assertEq(projectReleaseReadiness(lattice.quality_axes), 'BLOCKED', 'release 仍 BLOCKED');
+      const disposition = resolveCurrentDisposition({ endpoint: 'request', phases: [{ phase: 'testing', verdict: 'PASS', schemaCurrent: true,
+        closureCommitted: true, axes: { asset: { ...asset, resolution: { ...asset.resolution!, retry_phase: asset.resolution!.retry_phase ?? undefined } } } }] });
+      assertTrue(!disposition.completionBlocking.some(problem => problem.id === 'quality_axis_verified'), JSON.stringify(disposition.completionBlocking));
+      assertTrue(disposition.releaseBlocking.some(problem => problem.id === 'quality_axis_verified'), '披露项保留');
+      // 反例：缺证明且规则面漂移 → 真实过期，仍 STALE 交 coding。
+      writeCodingSummary(root, 'stale-fingerprint');
+      const drift = resolveAssetAxisInheritance(root, FEATURE)!;
+      assertEq(drift.reviewUnattestedOnly, false, '还有指纹漂移');
+      const stale = deriveSummaryVerdictLattice([chk('visual_diff')], { phase: 'testing', visualApplicable: true, assetApplicable: true });
+      applyAssetAxisInheritance(stale.quality_axes, drift);
+      assertEq(stale.quality_axes.asset.verdict, 'STALE', '真实过期仍 STALE');
+      assertEq(stale.quality_axes.asset.resolution?.retry_phase, 'coding', '真实过期仍交 coding');
     }),
   },
   {

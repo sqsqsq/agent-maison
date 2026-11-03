@@ -312,6 +312,8 @@ export interface AssetAxisInheritance {
   upstreamVerdict: AxisVerdict;
   /** 调用方判定的五指纹一致性（任一漂移=false） */
   provenanceIntact: boolean;
+  /** 唯一缺口是尚无 review 闭环证明（其余指纹完好）；不是 coding 能修的过期。 */
+  reviewUnattestedOnly?: boolean;
   provenanceDetail: string;
   /** 证据引用（coding summary hash / inventory hash / debt revision 等） */
   evidenceRefs: string[];
@@ -328,6 +330,17 @@ export function applyAssetAxisInheritance(axes: QualityAxes, inh: AssetAxisInher
       blocking_class: null,
       resolution: null,
       source_checks: inh.evidenceRefs.map(r => `inherited:${inh.upstreamPhase}:${r}`).sort(),
+    };
+    return;
+  }
+  if (inh.reviewUnattestedOnly && inh.upstreamVerdict === 'PASS') {
+    // 与 testing 的 review_closure_attestation 同口径：未复核如实标注、不挡完成；
+    // 保持 UNVERIFIED（release 仍 BLOCKED），不派 coding 返修（它修不了），也不派 review。
+    axes.asset = {
+      ...a,
+      blocking_class: 'needs_fix',
+      resolution: { class: 'needs_fix', owner: 'agent', retry_phase: null },
+      source_checks: [`unattested_inheritance:${inh.upstreamPhase}:${inh.provenanceDetail}`],
     };
     return;
   }

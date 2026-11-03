@@ -1899,6 +1899,7 @@ function resolveAxisApplicability(
  * （源码/资产未漂移——build/source/inventory 三链的现实可得代理）；visual-debt 无 open 的
  * asset 域条目（debt revision 面）。证据引用=coding summary sha256 + attestation inventory。
  */
+const REVIEW_ATTESTATION_MISSING = '无 review closure attestation（源码基线不可证）';
 export function resolveAssetAxisInheritance(
   projectRoot: string,
   feature: string,
@@ -1956,7 +1957,7 @@ export function resolveAssetAxisInheritance(
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const ca = require('./scripts/utils/closure-attestation') as typeof import('./scripts/utils/closure-attestation');
       const att = ca.loadReviewClosureAttestation(projectRoot, feature);
-      if (!att) issues.push('无 review closure attestation（源码基线不可证）');
+      if (!att) issues.push(REVIEW_ATTESTATION_MISSING);
       else {
         const rec = ca.reconcileSourceTreeAgainstAttestation(projectRoot, att);
         if (!rec.ok) issues.push(`源码漂移（+${rec.added.length}/~${rec.modified.length}/-${rec.deleted.length}）`);
@@ -1999,6 +2000,7 @@ export function resolveAssetAxisInheritance(
       upstreamPhase: 'coding',
       upstreamVerdict: upstreamVerdict as import('./scripts/utils/quality-axes').AxisVerdict,
       provenanceIntact: issues.length === 0,
+      reviewUnattestedOnly: issues.length === 1 && issues[0] === REVIEW_ATTESTATION_MISSING,
       provenanceDetail: issues.join('；') || 'ok',
       evidenceRefs: [
         `summary:${summaryHash}`,
