@@ -257,7 +257,8 @@ function proof10_oldRootGrep(): void {
     for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
       const p = path.join(dir, ent.name);
       if (ent.isDirectory()) {
-        if (ent.name === 'node_modules' || ent.name === '.git' || ent.name === 'reports') continue;
+        // dist holds disposable build output (e.g. the precompiled test runtime), not production source.
+        if (ent.name === 'node_modules' || ent.name === '.git' || ent.name === 'reports' || ent.name === 'dist') continue;
         walk(p, acc);
       } else if (ent.isFile() && /\.(ts|mjs|js)$/.test(ent.name)) {
         acc.push(p);

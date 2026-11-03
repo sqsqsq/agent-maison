@@ -788,9 +788,19 @@ function finalizePhaseClosureUnlocked(
   // 完整summary形状仍由原gate负责；只有合法他方repair可交接，当前必修/待核与真实负面结论仍阻断。
   const unresolved = phaseCompletionProblems(closureDisposition, [String(opts.phase)]);
   if (unresolved.length) {
+    // 带本阶段 FAIL 的核验也要把已核实的设计问题交给责任方；已关闭的 summary 证据已绑定，不改写。
+    const designFindings = current.parsed.closure_status === 'closed' ? []
+      : readVerifiedPhaseDesignFindings(opts.projectRoot, opts.frameworkRoot, opts.feature, String(opts.phase), opts.goalRunId);
+    if (designFindings.length) {
+      projectDesignFindingsIntoSummary(current.parsed, designFindings);
+      const pending = `${summaryPath}.tmp-${process.pid}`;
+      fs.writeFileSync(pending, JSON.stringify(current.parsed, null, 2), 'utf8');
+      fs.renameSync(pending, summaryPath);
+    }
     throw new Error(
       `summary 不满足 closure：verdict=${current.parsed.verdict}, blocker_count=${current.parsed.blocker_count}`
-        + (unresolved.length ? `；${unresolved.map(problem => `${problem.id}: ${problem.detail}`).join('；')}` : ''),
+        + (unresolved.length ? `；${unresolved.map(problem => `${problem.id}: ${problem.detail}`).join('；')}` : '')
+        + (designFindings.length ? `；已核实设计问题尚需责任方处理：${designFindings.map(finding => finding.check).join('、')}` : ''),
     );
   }
   if (!current.parsed.assurance) {

@@ -181,6 +181,39 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [{
     } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
   },
 }, {
+  name: 'rejected closure with its own FAIL still projects verified design findings to the external owner, never rewriting a closed summary',
+  run: () => {
+    const { root } = setupGoalRuntimeHost('codex');
+    const repair = require('../../scripts/utils/repair-candidates') as typeof import('../../scripts/utils/repair-candidates');
+    const reader = repair.readVerifiedPhaseDesignFindings;
+    const finding = { check: 'coding:UP-1', codes: ['change_unit_blueprint_reconciliation_required'], class: 'B2' as const,
+      artifacts: ['doc/features/blueprint/component-blueprint.yaml'], basis: 'verified upstream type conflict', needs: ['设计 owner 修订'] };
+    try {
+      const failing: CheckResult = { ...pass, id: 'coding_compile', status: 'FAIL', details: 'TS2322' };
+      writeRunSummaryBase(root, report(root, 'coding', [failing]), ROOT);
+      const file = path.join(featurePhaseReportsDir(root, FEATURE, 'coding'), 'summary.json');
+      const close = () => finalizePhaseClosure({ projectRoot: root, frameworkRoot: ROOT, feature: FEATURE, phase: 'coding', persistPhaseState: () => {} });
+      repair.readVerifiedPhaseDesignFindings = () => [];
+      const plain = fs.readFileSync(file);
+      assert.throws(close, error => /summary 不满足 closure/.test(String(error)) && !/已核实设计问题/.test(String(error)));
+      assert(fs.readFileSync(file).equals(plain), 'no verified design finding: rejection keeps summary bytes');
+      repair.readVerifiedPhaseDesignFindings = () => [finding];
+      const closed = JSON.stringify({ ...JSON.parse(plain.toString('utf8')), closure_status: 'closed' });
+      fs.writeFileSync(file, closed);
+      assert.throws(close);
+      assert.equal(fs.readFileSync(file, 'utf8'), closed, 'a closed summary keeps its bound evidence bytes');
+      fs.writeFileSync(file, plain);
+      assert.throws(close, /已核实设计问题尚需责任方处理：coding:UP-1/);
+      const projected = JSON.parse(fs.readFileSync(file, 'utf8'));
+      assert(projected.blockers.some((blocker: { id: string; repair_owner?: string }) => blocker.id === 'coding:UP-1' && blocker.repair_owner === 'external'),
+        'the verified design finding must reach the external owner despite the phase FAIL');
+      assert(projected.blockers.some((blocker: { id: string }) => blocker.id === 'coding_compile'), 'the original FAIL is retained');
+    } finally {
+      repair.readVerifiedPhaseDesignFindings = reader;
+      fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache();
+    }
+  },
+}, {
   name: '7d9 runtime keeps independent tool work and resumes a genuinely restored checker without rewriting valid work',
   run: async () => {
     const { root } = setupGoalRuntimeHost('codex');
