@@ -31,6 +31,10 @@ export function testTimeout(value: number | undefined, fallback: number): number
   if (!Number.isFinite(value) || value <= 0) throw new Error('test timeout must be a positive finite number');
   return value;
 }
+export function testPollInterval(fallback = 25): number {
+  const configured = process.env.MAISON_TEST_POLL_MS;
+  return testTimeout(configured === undefined ? undefined : Number(configured), fallback);
+}
 function read(file: string): Buffer { try { return fs.readFileSync(file); } catch { return Buffer.alloc(0); } }
 function records(bytes: Buffer): Array<Record<string, unknown>> {
   return bytes.toString('utf8').split(/\r?\n/).filter(Boolean).map(line => {

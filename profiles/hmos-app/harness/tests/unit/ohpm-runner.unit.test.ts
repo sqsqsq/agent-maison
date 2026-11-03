@@ -1,3 +1,4 @@
+export const layer = 'capability' as const; // Actual native helper calls are part of this suite.
 // ============================================================================
 // ohpm-runner.unit.test.ts — ohpm 安装 provider 纯函数回归
 // ============================================================================

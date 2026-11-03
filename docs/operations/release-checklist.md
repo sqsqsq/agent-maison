@@ -7,10 +7,12 @@ AgentMaison 自身发 zip 发布件（`framework-<semver>.zip`）前的 BLOCKER 
 1. **Harness 回归**
 
    ```bash
-   cd harness && npm test
+   npm run release:all
    ```
 
-   **release-only 套件**：日常 `npm test` 只校验 release-only 套件文件存在、不执行；`release:all` / `candidate:build` 以 `--release` 执行 `real-chain`、`real-chain-seams`、`lifecycle-evolution`、`reliability-scenarios`。单跑：
+   发布链内调用一次 `npm test`，执行 typecheck、全部 unit/profile（含 release-only）及全部 fixture；无需发布前再单独跑全量。日常每轮开发使用 `npm run test:changed`，plan 收口单独执行一次 `npm test`。下面的 pack/verify 命令用于分步诊断，完整发布链已经包含它们。
+
+   **release-only 套件**也包含在 `npm test` 完整全量中；底层 `test:unit` 默认仍保留原诊断筛选行为。单跑：
 
    ```bash
    cd harness && npm run test:unit -- --filter lifecycle-evolution

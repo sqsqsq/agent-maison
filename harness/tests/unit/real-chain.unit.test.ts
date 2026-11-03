@@ -1,3 +1,4 @@
+import { unitCaseGroups } from '../utils/unit-case-selection';
 // ============================================================================
 // real-chain.unit.test.ts — plan d4a1f7c3 §4 正例：确定性输入下的生产验证链集成回归
 // ----------------------------------------------------------------------------
@@ -33,7 +34,7 @@ import {
   type RealChainProject,
 } from '../utils/real-chain-host';
 import { runGoalRuntimeChain, requestVia, claudeReadEventLine, writeAgentEvents } from './goal-runner-testing-integrity.unit.test';
-import { clearFrameworkConfigCache } from '../../config';
+import { clearFrameworkConfigCache, featureFilePath } from '../../config';
 import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
 import { parseVerifierRequest, renderVerifierRequest, type VerifierRequest } from '../../scripts/utils/verifier-request';
 import { parseResultBlock, RESULT_BLOCK_OPEN, RESULT_BLOCK_CLOSE, verifierReportMdFilename, normalizeEol } from '../../scripts/utils/verifier-subject';
@@ -41,7 +42,7 @@ import * as YAML from 'yaml';
 import { fixture as seedChangeUnitBlueprint } from './blueprint-skill-projection.unit.test';
 import { rewriteBlueprint } from './change-unit-progression.unit.test';
 import { validateComponentBlueprint } from '../../scripts/utils/component-blueprint-validator';
-import { deriveBlueprintSkillInput } from '../../scripts/utils/blueprint-skill-projection';
+import { deriveBlueprintSkillInput, classifyDesignAuthorityCodes } from '../../scripts/utils/blueprint-skill-projection';
 import { validateChangeUnitFeatureProjection } from '../../scripts/utils/change-unit-feature-projection';
 import { resolveBlueprintTarget } from '../../scripts/utils/blueprint-addressing';
 import { asRecord, asRecords, type BlueprintRecord } from '../../scripts/utils/component-blueprint-model';
@@ -50,7 +51,13 @@ import { featureRelativePath } from '../../scripts/utils/feature-identity';
 import { materializeBlueprintSkillInputs } from '../../scripts/utils/blueprint-skill-projection';
 import { prepareFeatureScopeCandidate } from '../../scripts/utils/feature-track';
 import { loadCanonicalChangeUnit, asChangeUnitArtifact, createChangeUnitRef, parseChangeUnitFeatureId } from '../../scripts/utils/change-unit-path';
-import { loadEffectiveExecutionScope, loadFrozenExecutionScope, assertGoalRunAttachable } from '../../scripts/utils/goal-run-creation';
+import { loadEffectiveExecutionScope, loadFrozenExecutionScope, assertGoalRunAttachable, loadLineageRunEvents } from '../../scripts/utils/goal-run-creation';
+import { codingTestPreservation, workUnitMayWritePath } from '../../scripts/utils/repair-responsibility';
+import { resolvePhasePathOwnership } from '../../scripts/utils/phase-write-boundary';
+import { extractUtItBlocks } from '../../scripts/utils/ut-it-blocks';
+import { preserveRuntimeTestEvidence } from '../utils/runtime-test-control';
+import { collectPhaseCompletionIssues, executionScopeEvidenceIssues, readReusableCheckResult } from '../../scripts/utils/verify-feature-completion';
+import { executionCompletionPhases } from '../../scripts/utils/execution-scope';
 import { resolveCapabilityInputs } from '../../scripts/utils/capability-resolution';
 import { resolveCapabilityResolutionEntryInput } from '../../scripts/utils/capability-resolution-entry-input';
 import { authorCurrentCuPlan } from './component-design-handoff.unit.test';
@@ -65,6 +72,8 @@ import { writeLocalConfig } from '../../scripts/utils/framework-local-config';
 import { initializeFidelityRouting } from '../../scripts/utils/goal-preflight';
 import { acceptChangeUnitDecomposition, deriveDesignPreparationReadiness } from '../../scripts/utils/change-unit-design-preparation';
 import { probeDesignAuthorityRecovered } from '../../scripts/utils/condition-wait';
+import { executionRequestForInvoke } from '../../scripts/utils/session-execution-handoff';
+import { loadAuthoritativeEvents } from '../../scripts/utils/goal-runner-phase';
 import { runRuntimeTestChild, withRuntimeTest } from '../utils/runtime-test-control';
 
 const cases: Array<{ name: string; run: () => Promise<void> }> = [];
@@ -72,6 +81,71 @@ function test(name: string, run: () => Promise<void>): void { cases.push({ name,
 function assert(cond: unknown, msg: string): void { if (!cond) throw new Error(msg); }
 
 const DEBUG = process.env.REAL_CHAIN_DEBUG === '1';
+
+/** Raw comparison FAIL is retained; current independent decisions and real closure own completion. */
+export function assertCurrentPhaseDutiesSatisfied(project: RealChainProject, phase: string, runId = project.runId) {
+  assert(!!runId, `current ${phase} check needs its real run identity`);
+  const current = readReusableCheckResult({ projectRoot: project.root, frameworkRoot: project.frameworkRoot, feature: project.feature, runId, phase });
+  assert(!!current, `${phase} lacks a fresh bound tool result: ${dumpPhase(project, phase)}`);
+  const issues = collectPhaseCompletionIssues({ projectRoot: project.root, frameworkRoot: project.frameworkRoot, feature: project.feature, runId,
+    chain: [phase], endpoint: 'request', currentResults: current ? [current] : [] });
+  assert(issues.length === 0, `${phase} has current unfinished duties: ${JSON.stringify(issues)}`);
+}
+
+/** Actual closure cases retain their physical closed/receipt assertions. */
+export function assertCurrentPhaseClosed(project: RealChainProject, phase: string, runId = project.runId) {
+  assertCurrentPhaseDutiesSatisfied(project, phase, runId);
+  const summary = readSummary(project, phase);
+  assert(summary?.closure_status === 'closed' && summary.receipt_status === 'passed', `${phase} lacks its real closure receipt: ${dumpPhase(project, phase)}`);
+  return summary!;
+}
+
+export function assertCurrentOwnerEvidence(project: RealChainProject, phase: string, runId = project.runId): 'method' | 'accepted-input' {
+  const scope = runId ? loadEffectiveExecutionScope(project.root, project.feature, runId) : undefined;
+  const owned = scope?.obligations.filter(obligation => obligation.owner_phase === phase && obligation.applicability !== 'not_applicable') ?? [];
+  if (scope && !executionCompletionPhases(scope).includes(phase) && owned.length > 0
+    && owned.every(obligation => obligation.applicability === 'required' && ['acceptance-context', 'design-context'].includes(obligation.kind)
+      && !!obligation.satisfied_by?.length && obligation.satisfied_by.every(ref => 'input_id' in ref))) {
+    const ids = new Set(owned.map(obligation => obligation.id));
+    const evidenceIssues = executionScopeEvidenceIssues(project.root, project.feature, scope, ids, runId, undefined, project.frameworkRoot);
+    const currentIssues = collectPhaseCompletionIssues({ projectRoot: project.root, frameworkRoot: project.frameworkRoot, feature: project.feature,
+      runId, chain: [phase], executionScope: scope, endpoint: 'request' });
+    assert(evidenceIssues.length === 0 && currentIssues.length === 0, `accepted ${phase} definition is not current: ${JSON.stringify({ evidenceIssues, currentIssues })}`);
+    console.log('ACCEPTED_INPUT_PROOF=' + JSON.stringify({ phase, obligations: owned.map(obligation => ({ id: obligation.id, owner: obligation.owner_phase, refs: obligation.satisfied_by })) }));
+    return 'accepted-input';
+  }
+  assertCurrentPhaseClosed(project, phase, runId);
+  return 'method';
+}
+
+export function preserveChainFailure(project: RealChainProject, error: unknown, extraFiles: string[] = []): void {
+  try {
+  const files = extraFiles.map(file => path.isAbsolute(file) ? file : path.join(project.root, file))
+    .filter(file => fs.existsSync(file) && fs.statSync(file).isFile());
+  const scan = (directory: string): void => {
+    if (!fs.existsSync(directory)) return;
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const file = path.join(directory, entry.name);
+      if (entry.isSymbolicLink()) continue;
+      if (entry.isDirectory()) scan(file);
+      else if (/\.(?:json|ya?ml|md)$/.test(entry.name)) files.push(file);
+    }
+  };
+  scan(path.join(project.root, 'doc/features'));
+  for (const file of [REAL_CHAIN_TEST, CU_TEST, REAL_CHAIN_SERVICE, CU_SOURCE]) {
+    if (fs.existsSync(path.join(project.root, file))) files.push(path.join(project.root, file));
+  }
+  const destination = preserveRuntimeTestEvidence([project.root], String(error), undefined, files);
+  const saved = JSON.parse(fs.readFileSync(path.join(destination, 'failure.json'), 'utf8')) as { saved: Array<{ run: string }> };
+  const originals = saved.saved.flatMap(({ run }) => {
+    const manifest = JSON.parse(fs.readFileSync(path.join(run, 'manifest.json'), 'utf8')) as { feature: string; run_id: string };
+    return [REAL_CHAIN_TEST, CU_TEST].filter(file => fs.existsSync(path.join(project.root, file))).map(file => ({ file, feature: manifest.feature,
+      ...codingTestPreservation({ projectRoot: project.root, feature: manifest.feature, runId: manifest.run_id, file }) }));
+  });
+  fs.writeFileSync(path.join(destination, 'test-originals.json'), JSON.stringify(originals, null, 2) + '\n');
+  console.error('REAL_CHAIN_ORIGINALS=' + destination);
+  } catch (preserveError) { console.error(`[real-chain originals] ${String(preserveError)}; original failure: ${String(error)}`); }
+}
 
 /** §8：判据面不设任何可缩小的开关——六阶段是常量，不接受 env 收窄。 */
 const PHASES = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'] as const;
@@ -128,9 +202,37 @@ export function publishVerifier(p: RealChainProject, phase: string): void {
   const s = readSummary(p, phase);
   const subjectId = s?.verifier_subject_id;
   if (!subjectId) return;
+  const scriptFile = path.join(reportsDir, 'script-report.json');
+  const script = (phase === 'coding' && fs.existsSync(scriptFile) ? JSON.parse(fs.readFileSync(scriptFile, 'utf8')) : {}) as { checks?: Array<{ id: string; status: string; details?: string; affected_files?: string[] }> };
+  const strength = script.checks?.find(check => check.id === 'coding_existing_test_preserved' && check.status === 'FAIL');
+  let strengthReply = '';
+  if (strength?.affected_files?.length) {
+    for (const file of strength.affected_files) {
+      assert(file === REAL_CHAIN_TEST || file === CU_TEST, `fixture verifier needs a specific test-strength decision for ${file}`);
+      const current = fs.readFileSync(path.join(p.root, file), 'utf8');
+      const original = codingTestPreservation({ projectRoot: p.root, feature: p.feature, file, runId: p.runId });
+      assert(!/真实前置测试版本不在|测试引用不在|删除或不可读取/.test(original.reason), `original test evidence unavailable: ${original.reason}`);
+      const oldCases = extractUtItBlocks(original.beforeText ?? '');
+      const newCases = extractUtItBlocks(current);
+      assert(oldCases.every(old => newCases.some(now => now.name === old.name && now.body === old.body)), 'the model substitute cannot refute deleted or changed original assertions');
+      if (original.beforeText === undefined) {
+        const writes = p.runId ? loadLineageRunEvents(p.root, p.feature, p.runId).filter(event => event.type === 'phase_write_observed') : [];
+        assert(writes.some(event => [...((event as { owned?: Array<{ path: string; pre_sha256?: string | null }> }).owned ?? []),
+          ...((event as { observations?: Array<{ path: string; pre_sha256?: string | null }> }).observations ?? [])].some(write => write.path === file && write.pre_sha256 === null)), 'a new test needs its actual absent pre-image');
+      }
+      assert(newCases.length > 0 && !/\b(?:it|describe)\.(?:skip|only|todo)\b/.test(current), 'current test assertions must be present and enabled');
+      if (file === CU_TEST) assert(current.includes('ledger.add(120)') && current.includes('ledger.restore([45, 55])')
+        && current.includes('assertEqual(120)') && current.includes('assertEqual(100)'), 'current ledger tests must check both actual business entry points and expected values');
+      else assert(current.includes("service.openCard('cmb')") && current.includes("service.openCard('')")
+        && current.includes('expect(opened).assertTrue()') && current.includes('expect(rejected).assertFalse()')
+        && current.includes('expect(banks.length).assertEqual(0)'), 'current card tests must preserve both real success/failure paths and list result');
+    }
+    strengthReply = '\n```issue-verification\n' + YAML.stringify([{ issue: strength.id, verdict: 'refuted',
+      evidence: [...strength.affected_files, strength.details ?? '', '已读取真实前像与当前正文：原有用例/断言未删弱；新增用例实际调用当前业务入口并核对上述正反结果。'].join('\n') }]) + '```\n';
+  }
   publishFixtureVerifierEvidence({
     projectRoot: p.root, reportsDir, feature: p.feature, phase, subjectId,
-    reportText: `# verifier — ${p.feature} / ${phase}\n\n语义一致性复核通过。\n`,
+    reportText: `# verifier — ${p.feature} / ${phase}\n\n语义一致性复核通过。\n${strengthReply}`,
     skipSummaryPatch: true,
   });
 }
@@ -402,10 +504,11 @@ function writeFacts(p: RealChainProject, phase: string): void {
           [REAL_CHAIN_SOURCE, 'coding 已接入银行列表和开卡 sheet 的实现', '按当前验收与返修候选验证页面实现'],
           [REAL_CHAIN_INDEX, 'coding 已导出新建 BankListItem 组件', '按当前模块导出检查调用面'],
         ] as Array<[string, string, string]> : []),
-        [REAL_CHAIN_PNG_EXISTING, '既有银行标识图（二进制，按路径引用）', '不改'],
-        [REAL_CHAIN_PNG_NEW, 'coding 新建的开卡结果图（二进制，按路径引用）', '本阶段按它继续'],
       ]
     : [];
+  for (const resource of [REAL_CHAIN_PNG_EXISTING, REAL_CHAIN_PNG_NEW]) {
+    if (fs.existsSync(path.join(p.root, resource))) deltaRows.push([resource, '已核对当前二进制资源路径', '按实际存在的输入继续']);
+  }
   if (phase === 'ut') {
     const testDir = path.join(p.root, p.modulePath, 'src/ohosTest/ets/test');
     if (fs.existsSync(testDir)) for (const name of fs.readdirSync(testDir)) {
@@ -1042,16 +1145,37 @@ function escapeRegExp(s: string): string { return s.replace(/[.*+?^${}()|[\]\\]/
 
 /**
  * c3f8a2d7：模块写边界内的 PNG 资源归 coding，不再由文件后缀排除。
- * coding 起既有与新建资源都须进 manifest；施工归属只给 coding，后续阶段按只读输入绑定当前字节哈希。
+ * 方法读集与签发作者写域分开；新资源须有真实 coding owned 创建，既有资源保持原字节。
  */
 function assertPngProvenance(p: RealChainProject): void {
+  const runDir = featureFilePath(p.root, p.feature, `goal-runs/${p.runId}`);
+  const events = loadAuthoritativeEvents(path.join(runDir, 'events.jsonl'));
+  const author = events.filter(event => event.type === 'agent_invoke_start' && event.phase === 'work-unit-author')
+    .map(event => executionRequestForInvoke(runDir, String(event.invoke_id)))
+    .find(original => original?.request.write_boundary && original.request.pre_snapshot
+      && REAL_CHAIN_PNGS.every(file => workUnitMayWritePath(original.request.write_boundary!, file)
+        && resolvePhasePathOwnership(original.request.write_boundary!, file).owner === 'coding'));
+  assert(author?.request.context.runId === p.runId && author!.request.context.feature === p.feature,
+    'PNG ownership must come from this run\'s actual signed author boundary');
+  const pre = author!.request.pre_snapshot!;
+  assert(pre.entries.find(entry => entry.path === REAL_CHAIN_PNG_EXISTING)?.sha256 === diskSha(p, REAL_CHAIN_PNG_EXISTING),
+    'the existing PNG must preserve its actual signed pre-image');
+  assert(!pre.entries.some(entry => entry.path === REAL_CHAIN_PNG_NEW), 'the new PNG must be absent from that author\'s pre-image');
+  const endedAt = events.findIndex(event => event.type === 'agent_invoke_end' && event.invoke_id === author!.request.invoke_id
+    && event.status === 'passed' && event.exit_code === 0);
+  assert(endedAt >= 0 && events.slice(endedAt + 1).some(event => event.type === 'phase_write_observed'
+    && event.invoke_id === author!.request.invoke_id && ((event as {owned?: Array<{path?: string; owner?: string; pre_sha256?: string | null; post_sha256?: string}>}).owned ?? []).some(write =>
+      write.path === REAL_CHAIN_PNG_NEW && write.owner === 'coding' && write.pre_sha256 === null && write.post_sha256 === diskSha(p, REAL_CHAIN_PNG_NEW))),
+  'the new PNG needs the same normally ended author\'s real coding-owned creation and current bytes');
   for (const phase of PHASES) {
     const abs = path.join(p.root, 'doc/features', featureRelativePath(p.feature), phase, 'reports', 'phase-evidence-manifest.json');
     const m = JSON.parse(fs.readFileSync(abs, 'utf-8')) as { inputs?: Array<Record<string, unknown>>; outputs?: Array<Record<string, unknown>> };
     const entries = [...(m.inputs ?? []), ...(m.outputs ?? [])].filter(e => /\.png$/.test(String(e.path)));
     for (const e of entries) {
-      const expectedOwner = phase === 'coding' ? 'coding' : undefined;
-      assert(e.owner_phase === expectedOwner, `${phase}：PNG 施工归属应为 ${expectedOwner ?? '无（只读输入）'}：${JSON.stringify(e)}`);
+      assert(e.owner_phase === 'coding' || e.owner_phase === undefined, `${phase}：PNG 不得改归其它职责：${JSON.stringify(e)}`);
+      if (phase === 'coding') assert(e.role === 'input' || e.owner_phase === 'coding' && ['output', 'both'].includes(String(e.role)),
+        `${phase}：PNG 方法读取不得伪造其它职责的产出权限：${JSON.stringify(e)}`);
+      else assert(e.role === 'input', `${phase}：PNG 只能作为只读输入，owner 标注不授予写权：${JSON.stringify(e)}`);
       assert(e.sha256 === diskSha(p, String(e.path)), `${phase}：PNG 条目 sha 与盘上字节不符：${JSON.stringify(e)}`);
     }
     if (phase === 'spec' || phase === 'plan') continue;
@@ -1383,7 +1507,18 @@ export function writeCuReviewMaterials(p: RealChainProject, executionRunId = p.r
   const entry = resolveCapabilityResolutionEntryInput({ projectRoot: p.root, frameworkRoot: p.frameworkRoot, feature: p.feature, phase: 'review', goalRunId: executionRunId,
     goalAttemptId: process.env.MAISON_GOAL_ATTEMPT, featuresDir: 'doc/features' });
   const code = resolveCapabilityInputs({ projectRoot: p.root, frameworkRoot: p.frameworkRoot, feature: p.feature, phase: 'review', track: 'full', ...entry }).inputs?.values.code;
-  const targets = code?.state === 'resolved' && Array.isArray(code.value) ? code.value.map((file: { path: string }) => file.path) : contracts.files;
+  const targets = code?.state === 'resolved' && Array.isArray(code.value) ? code.value.map((file: { path: string }) => file.path) : [...contracts.files];
+  const reportFile = path.join(p.root, `${cuRel(p)}/review/review-report.md`);
+  const prior = fs.existsSync(reportFile) ? fs.readFileSync(reportFile, 'utf8').split(/\r?\n/).flatMap(line => /^- (.+\.(?:ets|tsx?|[cm]?js))$/.exec(line)?.[1] ?? []) : [];
+  const checksFile = path.join(p.root, `${cuRel(p)}/review/reports/script-report.json`);
+  const checks = fs.existsSync(checksFile) ? JSON.parse(fs.readFileSync(checksFile, 'utf8')).checks as Array<{ id: string; status: string; details?: string }> : [];
+  const missing = checks.find(check => check.id === 'review_scope_to_design' && check.status === 'FAIL')?.details?.split(/\r?\n/).filter(Boolean) ?? [];
+  for (const file of [...prior, ...missing]) {
+    const relative = path.relative(p.root, path.resolve(p.root, file));
+    assert(!path.isAbsolute(relative) && !relative.split(path.sep).includes('..') && fs.existsSync(path.join(p.root, file)), `actual review target unavailable: ${file}`);
+    fs.readFileSync(path.join(p.root, file));
+    if (!targets.includes(file)) targets.push(file);
+  }
   writeHostFile(p.root, `${cuRel(p)}/review/review-report.md`, [
     '# 审查报告', '', '> **模块标识**: ledger', '> **审查日期**: 2026-01-01', '> **审查版本**: 1.0', '> **保证等级**: standard', '',
     '## 1. 审查范围', '', '模块：ledger。文件范围来自实际绑定的施工输入；外围源码仅作只读对照。', '', ...targets.map(r => `- ${r}`), '',
@@ -1432,8 +1567,10 @@ export function writeCuUtMaterials(p: RealChainProject): void {
 }
 
 /** 平铺 `demo-card` 六阶段链（正例用例与快照生成器共用）。 */
-export function runDemoCardChain(project: RealChainProject, birthChain: string[]): ReturnType<typeof runGoalRuntimeChain> {
+export async function runDemoCardChain(project: RealChainProject, birthChain: string[]): ReturnType<typeof runGoalRuntimeChain> {
+  const { authorHooks } = await import('./lifecycle-evolution.unit.test');
   return runGoalRuntimeChain(project.root, {
+    ...authorHooks(project, { spec: writeSpecMaterials, plan: writePlanMaterials, coding: p => writeCodingMaterials(p), review: writeReviewMaterials, ut: writeUtMaterials, testing: writeTestPlan }),
     onOutOfChain: ctx => { assert(publishRequestedVerifier(project, ctx), `unexpected model purpose: ${ctx.phase}`); },
     frameworkRoot: project.frameworkRoot,
     featureId: project.feature,
@@ -1444,17 +1581,13 @@ export function runDemoCardChain(project: RealChainProject, birthChain: string[]
     freshStartPhase: birthChain[0] as 'spec',
     freshEndPhase: birthChain[birthChain.length - 1],
     freshRequirement: REAL_CHAIN_REQUIREMENT,
-    onSpec: ctx => { project.runId = ctx.runId; writeSpecMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'spec'); },
-    onPlan: ctx => { project.runId = ctx.runId; writePlanMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'plan'); },
-    onCoding: ctx => { project.runId = ctx.runId; writeCodingMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'coding'); },
-    onReview: ctx => { project.runId = ctx.runId; writeReviewMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'review'); },
-    onUt: ctx => { project.runId = ctx.runId; writeUtMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'ut'); },
-    onTesting: ctx => { project.runId = ctx.runId; writeTestPlan(project); if (ctx.attempt > 1) publishVerifier(project, 'testing'); },
   });
 }
 
-export function runCuBoundChain(cu: RealChainProject, birthChain: string[]): ReturnType<typeof runGoalRuntimeChain> {
+export async function runCuBoundChain(cu: RealChainProject, birthChain: string[]): ReturnType<typeof runGoalRuntimeChain> {
+  const { authorHooks } = await import('./lifecycle-evolution.unit.test');
   return runGoalRuntimeChain(cu.root, {
+    ...authorHooks(cu, { plan: writeCuPlanMaterials, coding: writeCuCodingMaterials, review: writeCuReviewMaterials, ut: writeCuUtMaterials }),
     onOutOfChain: ctx => { assert(publishRequestedVerifier(cu, ctx), `unexpected model purpose: ${ctx.phase}`); },
     frameworkRoot: cu.frameworkRoot,
     featureId: cu.feature,
@@ -1463,10 +1596,6 @@ export function runCuBoundChain(cu: RealChainProject, birthChain: string[]): Ret
     freshStartPhase: birthChain[0] as 'plan' | 'coding',
     freshEndPhase: birthChain[birthChain.length - 1],
     freshRequirement: CU_REQUIREMENT,
-    onPlan: ctx => { cu.runId = ctx.runId; writeCuPlanMaterials(cu); if (ctx.attempt > 1) publishVerifier(cu, 'plan'); },
-    onCoding: ctx => { cu.runId = ctx.runId; writeCuCodingMaterials(cu); if (ctx.attempt > 1) publishVerifier(cu, 'coding'); },
-    onReview: ctx => { cu.runId = ctx.runId; writeCuReviewMaterials(cu); if (ctx.attempt > 1) publishVerifier(cu, 'review'); },
-    onUt: ctx => { cu.runId = ctx.runId; writeCuUtMaterials(cu); if (ctx.attempt > 1) publishVerifier(cu, 'ut'); },
   });
 }
 
@@ -1479,6 +1608,8 @@ test('4f combined 新 CU UI unknown→spec 调研物化→coding/review→L3 返
     const ref = `${cuRel(cu)}/ux-reference/ledger.png`;
     writeHostBytes(cu.root, ref, fs.readFileSync(path.join(cu.root, REAL_CHAIN_PNG_EXISTING)));
     const requirement = `新增账目页面按钮与余额显示，按参考图 ${ref} 逐像素复现，业务入口保持单测，并在真机验收页面`;
+    // Supply the approved business definition before freezing; the author's missing output is UI only.
+    materializeBlueprintSkillInputs(cu.root, cu.feature, cu.frameworkRoot, undefined, 'spec');
     initializeFidelityRouting({ projectRoot: cu.root, frameworkRoot: cu.frameworkRoot, feature: cu.feature, requirement,
       featuresDirRel: 'doc/features', executionIdentity: `phase:${cu.feature}:spec`, requirementProvenance: 'explicit_cli',
       manifestFidelity: 'pixel_1to1', fidelityFromCli: true, adapter: 'claude' });
@@ -1491,51 +1622,66 @@ test('4f combined 新 CU UI unknown→spec 调研物化→coding/review→L3 返
     const before = fs.readFileSync(path.join(cu.root, REAL_CHAIN_SOURCE));
     git(cu.root, ['add', '-A']); git(cu.root, ['commit', '-qm', 'combined UI definition baseline']);
     let needsSeam = false; let repaired = false; let enteredTesting = false;
-    const probe = await runGoalRuntimeChain(cu.root, {
-      onOutOfChain: ctx => { assert(publishRequestedVerifier(cu, ctx), `unexpected model purpose: ${ctx.phase}`); },
-      frameworkRoot: cu.frameworkRoot, featureId: cu.feature,
-      realHarness: true, adapter: 'claude', freshRequirement: requirement,
-      freshStartPhase: prepared.scope.phase_chain[0] as 'spec', freshEndPhase: prepared.scope.phase_chain.at(-1),
-      onSpec: ctx => {
-        cu.runId = ctx.runId; writeCuSpecMaterials(cu);
+    const { authorHooks } = await import('./lifecycle-evolution.unit.test');
+    const handoff = 'combined UI reached the actual testing material handoff after UT closure';
+    let authorLogPath = '', authorInstruction = '';
+    const hooks = authorHooks(cu, {
+      spec: () => {
+        writeCuFacts(cu, 'spec');
         writeHostFile(cu.root, `${cuRel(cu)}/spec/spec.md`, '# 页面定义\n\n```yaml\nui_change: new_or_changed\nfidelity_target: pixel_1to1\nvisual_handoff:\n  kind: repo_assets\n  authoritative_refs:\n    - id: ledger\n      path: ' + ref + '\n```\n');
         writeHostFile(cu.root, `${cuRel(cu)}/spec/ui-spec.yaml`, YAML.stringify({ schema_version: '1.0', verified: 'verified', verified_method: 'vl_multimodal',
           screens: [{ id: 'ledger', ref_id: 'ledger', priority: 'P1', root: { type: 'navigation_frame', order: 0,
             children: [{ id: 'balance', type: 'content_display', order: 0, text: '余额' }] } }],
           tokens: { gap: { kind: 'spacing', value: '16vp' } }, assets: [] }));
-        writeAgentEvents(ctx.outputLogPath, [claudeReadEventLine(ref)]);
-        if (ctx.attempt > 1) publishVerifier(cu, 'spec');
+        writeAgentEvents(authorLogPath, [claudeReadEventLine(ref)]);
       },
-      onPlan: ctx => {
-        cu.runId = ctx.runId; writeCuPlanMaterials(cu);
+      plan: () => {
+        writeCuPlanMaterials(cu);
         writeHostFile(cu.root, `${cuRel(cu)}/plan/visual-parity.yaml`, YAML.stringify({ mappings: {
           assets: [], tokens: [{ ui_spec_key: 'gap', contract_resource_key: 'gap' }], components: [] } }));
-        if (ctx.attempt > 1) publishVerifier(cu, 'plan');
       },
-      onCoding: ctx => {
-        cu.runId = ctx.runId; writeCuCodingMaterials(cu);
-        if (needsSeam) { fs.appendFileSync(path.join(cu.root, CU_SOURCE), '\nexport const testabilitySeamAvailable = true;\n'); repaired = true; }
-        if (ctx.attempt > 1) publishVerifier(cu, 'coding');
+      coding: () => {
+        writeCuCodingMaterials(cu);
+        const candidateId = 'ut_unsupported_targets_handled:AC-1:option_b';
+        const ut = readSummary(cu, 'ut') as Summary & { repair_candidates?: Array<{ id?: string; category?: string; source_phase?: string }> };
+        if (needsSeam && authorInstruction.includes(candidateId)
+          && ut?.repair_candidates?.some(candidate => candidate.id === candidateId && candidate.category === 'coding' && candidate.source_phase === 'ut')) {
+          fs.appendFileSync(path.join(cu.root, CU_SOURCE), '\nexport const testabilitySeamAvailable = true;\n'); repaired = true;
+        }
       },
-      onReview: ctx => { cu.runId = ctx.runId; writeCuReviewMaterials(cu); if (ctx.attempt > 1) publishVerifier(cu, 'review'); },
-      onUt: ctx => {
-        cu.runId = ctx.runId; writeCuUtMaterials(cu);
+      review: () => { writeCuReviewMaterials(cu); },
+      ut: () => {
+        writeCuUtMaterials(cu);
         if (!repaired) {
           needsSeam = true;
           writeHostFile(cu.root, `${cuRel(cu)}/ut/testability-audit.md`, '```yaml\n' + YAML.stringify({ records: [{ acceptance_id: 'AC-1',
             entry_point: { file: CU_SOURCE, symbol: 'add' }, testability_level: 'L3', selected: 'option_b',
             verdict: 'needs_seam', recommendation: { option_b: '为现有业务入口补最小可测接缝' } }] }) + '```\n');
-        } else if (ctx.attempt > 1) publishVerifier(cu, 'ut');
+        }
       },
-      onTesting: () => { enteredTesting = true; },
-      // 此用例证明自动接续到 testing；设备/视觉完整验收由既有六阶段 real-chain 和真实专项证明。
-      failExecutorFor: phase => phase === 'testing',
+
+    });
+    const probe = await runGoalRuntimeChain(cu.root, {
+      onOutOfChain: ctx => { assert(publishRequestedVerifier(cu, ctx), `unexpected model purpose: ${ctx.phase}`); },
+      frameworkRoot: cu.frameworkRoot, featureId: cu.feature,
+      realHarness: true, adapter: 'claude', freshRequirement: requirement,
+      freshStartPhase: prepared.scope.phase_chain[0] as 'spec', freshEndPhase: prepared.scope.phase_chain.at(-1),
+      testControl: { expectedInterruption: handoff },
+      onAuthor: (ctx, context) => {
+        authorLogPath = ctx.outputLogPath; authorInstruction = context.instruction ?? '';
+        if (repaired && context.chain.includes('testing') && /\[testing\] testing_docs_missing/.test(authorInstruction)) {
+          let utClosed = false;
+          try { assertCurrentPhaseClosed(cu, 'ut', ctx.runId); utClosed = true; } catch { /* Wait for the real current UT closure first. */ }
+          if (utClosed) { enteredTesting = true; throw new Error(handoff); }
+        }
+        hooks.onAuthor(ctx, context);
+      },
     });
     assert(enteredTesting && repaired, `未完成组合恢复（exit=${probe.exitCode}）：${probe.invokedPhases.join('→')}\n${['spec','plan','coding','review','ut'].map(ph => dumpPhase(cu, ph)).join('\n')}`);
     assert(probe.events.some(e => e.type === 'scope_revised'), '必须通过现有 scope revision 保留后续义务');
     assert(fs.readFileSync(path.join(cu.root, REAL_CHAIN_SOURCE)).equals(before), 'spec 只读调研不能修改源码');
-    assert(readSummary(cu, 'spec')?.verdict === 'PASS' && readSummary(cu, 'ut')?.verdict === 'PASS', '真实 spec/UT 检查应通过');
-  } finally {
+    assertCurrentOwnerEvidence(cu, 'spec'); assertCurrentPhaseClosed(cu, 'ut');
+  } catch (error) { preserveChainFailure(project, error); throw error; } finally {
     if (!DEBUG) fs.rmSync(project.root, { recursive: true, force: true });
     else console.log('--- kept root', project.root);
     clearFrameworkConfigCache();
@@ -1574,6 +1720,7 @@ for (const oldCu of [false, true]) test(`66457a08 real entry: ${oldCu ? 'derived
     assert(asChangeUnitArtifact(loadCanonicalChangeUnit(cu.root, 'ledger-app-blueprint', 'ledger-refresh').changeUnit).design_refs.some(ref => ref.target.id === 'ledger-ui-selection'), 'normal accept must publish the derived selection closure');
     const readiness = deriveDesignPreparationReadiness(cu.root, 'ledger-app-blueprint');
     assert(readiness.ready, JSON.stringify(readiness));
+    if (!oldCu) materializeBlueprintSkillInputs(cu.root, cu.feature, cu.frameworkRoot, undefined, 'spec');
     let restoreOwnerDefinition: (() => ReturnType<typeof deriveDesignPreparationReadiness>) | undefined;
     if (oldCu) {
       const blueprintFile = path.join(workspace, 'blueprint/component-blueprint.yaml');
@@ -1615,40 +1762,77 @@ for (const oldCu of [false, true]) test(`66457a08 real entry: ${oldCu ? 'derived
     assert(oldCu ? ['spec', 'plan'].includes(birth[0]) : birth[0] === 'spec', prepare.stdout);
     assert(!fs.existsSync(path.join(cu.root, `${cuRel(cu)}/spec/reports/fidelity-intent.json`)), 'prepare must not write fidelity');
     git(cu.root, ['add', '-A']); git(cu.root, ['commit', '-qm', 'selection handoff baseline']);
-    const probe = await runGoalRuntimeChain(cu.root, {
-      onOutOfChain: ctx => { assert(publishRequestedVerifier(cu, ctx), `unexpected model purpose: ${ctx.phase}`); },
-      frameworkRoot: cu.frameworkRoot, featureId: cu.feature, adapter: 'claude', realHarness: true,
-      freshStartPhase: birth[0] as 'spec' | 'plan', freshEndPhase: birth.at(-1), omitRequirement: true, launchArgs: ['--requirement-file', 'doc/selection-request.md'],
-      freshManifestContent: YAML.stringify({ feature: cu.feature, requirement, requirement_source_files: ['doc/selection-request.md'],
-        budget: { max_total_turns: 4 }, unattended: { write_mode: 'full-access', approval_mode: 'never', max_turns: 20 } }),
-      onSpec: ctx => {
-        cu.runId = ctx.runId;
+    const { authorHooks } = await import('./lifecycle-evolution.unit.test');
+    let authorLogPath = '';
+    const hooks = authorHooks(cu, {
+      spec: () => {
+
         if (oldCu) { writeCuSpecDraft(cu); return; }
-        writeCuSpecMaterials(cu);
+        writeCuFacts(cu, 'spec');
         writeHostFile(cu.root, `${cuRel(cu)}/spec/spec.md`, '# 页面定义\n```yaml\nui_change: new_or_changed\nfidelity_target: pixel_1to1\nvisual_handoff:\n  kind: repo_assets\n  authoritative_refs:\n    - id: ledger\n      path: ' + ref + '\n```\n');
         writeHostFile(cu.root, `${cuRel(cu)}/spec/ui-spec.yaml`, YAML.stringify({ schema_version: '1.0', verified: 'verified', verified_method: 'vl_multimodal',
           screens: [{ id: 'ledger', ref_id: 'ledger', priority: 'P1', root: { type: 'navigation_frame', order: 0, children: [{ id: 'value', type: 'content_display', order: 0, text: '余额' }] } }],
           tokens: { gap: { kind: 'spacing', value: '16vp' } }, assets: [] }));
-        writeAgentEvents(ctx.outputLogPath, [claudeReadEventLine(ref)]); if (ctx.attempt > 1) publishVerifier(cu, 'spec');
+        writeAgentEvents(authorLogPath, [claudeReadEventLine(ref)]);
       },
-      onPlan: ctx => {
-        cu.runId = ctx.runId;
+      plan: () => {
+
         if (oldCu) { writeCuFacts(cu, 'plan'); return; }
         writeCuPlanMaterials(cu);
         const file = path.join(cu.root, `${cuRel(cu)}/contracts.yaml`); const contracts = YAML.parse(fs.readFileSync(file, 'utf8'));
         contracts.change_unit.design_ref_mappings.find((m: any) => m.design_ref.target.id === 'ledger-ui-selection').implementation_refs = names.map(name => `planned:${CU_SOURCE}#${name}`);
         fs.writeFileSync(file, YAML.stringify(contracts));
         writeHostFile(cu.root, `${cuRel(cu)}/plan/visual-parity.yaml`, YAML.stringify({ mappings: { assets: [], tokens: [{ ui_spec_key: 'gap', contract_resource_key: 'gap' }], components: [] } }));
-        if (ctx.attempt > 1) publishVerifier(cu, 'plan');
       },
     });
-    assert(!probe.invokedPhases.includes('coding'), 'construction must not pass an unresolved design: ' + JSON.stringify(probe.invokedPhases));
+    const handoff = oldCu ? 'TEST_CURRENT_DESIGN_OWNER_REQUEST' : 'TEST_CURRENT_DEFINITIONS_READY';
+    let observedOwner: {runId: string; invokeId: string} | undefined;
+    let definitionsReady = false;
+    const sourceBeforeRequest = fs.readFileSync(path.join(cu.root, CU_SOURCE));
+    const launch: NonNullable<Parameters<typeof runGoalRuntimeChain>[1]> = {
+      frameworkRoot: cu.frameworkRoot, featureId: cu.feature, adapter: 'claude', realHarness: true,
+      freshStartPhase: birth[0] as 'spec' | 'plan', freshEndPhase: birth.at(-1), omitRequirement: true, launchArgs: ['--requirement-file', 'doc/selection-request.md'],
+      freshManifestContent: YAML.stringify({ feature: cu.feature, requirement, requirement_source_files: ['doc/selection-request.md'],
+        budget: { max_total_turns: 4 }, unattended: { write_mode: 'full-access', approval_mode: 'never', max_turns: 20 } }),
+    };
+    const probe = await runGoalRuntimeChain(cu.root, {
+      ...launch, testControl: {expectedInterruption: handoff},
+      onOutOfChain: ctx => {
+        if (oldCu && ctx.phase === 'design-repair-author') {
+          const runDir = featureFilePath(cu.root, cu.feature, 'goal-runs/' + ctx.runId);
+          const started = [...loadAuthoritativeEvents(path.join(runDir, 'events.jsonl'))].reverse()
+            .find(event => event.type === 'agent_invoke_start' && event.phase === ctx.phase);
+          const actual = started?.invoke_id ? executionRequestForInvoke(runDir, String(started.invoke_id)) : null;
+          assert(actual?.request.context.runId === ctx.runId && actual.request.context.feature === cu.feature
+            && actual.request.context.phase === ctx.phase, 'design handoff must consume the actual owner request');
+          observedOwner = {runId: ctx.runId, invokeId: actual!.request.invoke_id};
+          // Settle the actual unavailable-owner call before the later source/readiness recovery.
+          return {exitCode: 1, stdout: '', stderr: handoff};
+        }
+        assert(publishRequestedVerifier(cu, ctx), 'unexpected model purpose: ' + ctx.phase);
+      },
+      onAuthor: (ctx, context) => {
+        authorLogPath = ctx.outputLogPath;
+        if (!oldCu && context.runtimeFacts.runBaseSha) {
+          try { assertCurrentOwnerEvidence(cu, 'spec', ctx.runId); assertCurrentOwnerEvidence(cu, 'plan', ctx.runId); definitionsReady = true; }
+          catch { /* Wait for the actual current definition evidence. */ }
+          if (definitionsReady) throw new Error(handoff);
+        }
+        hooks.onAuthor(ctx, context);
+      },
+    });
+    const sourceWrites = probe.events.filter(event => event.type === 'phase_write_observed')
+      .flatMap(event => (event.owned ?? []) as Array<{path?: string; owner?: string}>);
+    assert(!sourceWrites.some(write => write.owner === 'coding')
+      && fs.readFileSync(path.join(cu.root, CU_SOURCE)).equals(sourceBeforeRequest), 'a definition/owner observation cannot silently perform construction');
     if (oldCu) {
-      const halt = [...probe.events].reverse().find(event => event.type === 'phase_halt' && asRecord(event.design_authority)?.class === 'B2');
-      assert(halt, 'the real unresolved design must stop at its owner: ' + JSON.stringify(probe.events.slice(-8)));
+      const repair = probe.events.find(event => event.type === 'design_authority_repair' && asRecord(event)?.stage === 'attempted');
+      const codes = ((asRecord(repair)?.checks ?? []) as Array<{codes?: string[]}>).flatMap(check => check.codes ?? []);
+      assert(observedOwner && codes.includes('change_unit_blueprint_ref_stale') && classifyDesignAuthorityCodes(codes).class === 'B2',
+        'the actual unavailable authority must reach its design owner with the real B2 source codes');
       assert(!probe.events.some(event => event.type === 'feature_completion_generated'), 'an unresolved design cannot be completion');
-      cu.runId ??= path.basename(probe.reportDir);
-      const check = () => probeDesignAuthorityRecovered(cu.root, cu.feature, String(halt!.phase), ['change_unit_blueprint_ref_stale'], cu.runId);
+      cu.runId = observedOwner!.runId;
+      const check = () => probeDesignAuthorityRecovered(cu.root, cu.feature, String(repair!.phase), codes, observedOwner!.runId);
       assert(!check().ready, 'unresolved design must not wake');
       writeHostFile(cu.root, `${cuRel(cu)}/repair-notes.md`, '已修复（仅说明，无定义变化）');
       assert(!check().ready, 'notes alone must not wake');
@@ -1656,11 +1840,45 @@ for (const oldCu of [false, true]) test(`66457a08 real entry: ${oldCu ? 'derived
       assert(repaired.blueprintRefs.bumped.some(row => row.change_unit_id === 'ledger-refresh')
         && !repaired.blueprintRefs.skipped.some(row => row.change_unit_id === 'ledger-refresh') && check().ready,
         'only the formal owner revision and normal readiness reconciliation can recover: ' + JSON.stringify({ repaired, probe: check() }));
+      const reentry = authorHooks(cu, {spec: writeCuSpecMaterials, plan: writeCuPlanMaterials,
+        coding: writeCuCodingMaterials, review: writeCuReviewMaterials, ut: writeCuUtMaterials});
+      const constructionHandoff = 'TEST_CURRENT_AUTHORITY_READY_CODING_CHECKED';
+      let wroteImplementation = false;
+      const resumed = await runGoalRuntimeChain(cu.root, {
+        ...launch, noAutoForce: true, testControl: {expectedInterruption: constructionHandoff},
+        onAuthor: (ctx, context) => {
+          assert(check().ready, 'same-request construction must wait for the formal authority/readiness result');
+          const before = fs.readFileSync(path.join(cu.root, CU_SOURCE));
+          reentry.onAuthor(ctx, context);
+          if (!fs.readFileSync(path.join(cu.root, CU_SOURCE)).equals(before)) wroteImplementation = true;
+        },
+        onOutOfChain: ctx => {
+          const history = loadAuthoritativeEvents(featureFilePath(cu.root, cu.feature, `goal-runs/${ctx.runId}/events.jsonl`));
+          const writtenAt = history.findIndex(event => event.type === 'phase_write_observed'
+            && ((event as {owned?: Array<{path?: string; owner?: string; pre_sha256?: string; post_sha256?: string}>}).owned ?? []).some(write =>
+              write.path === CU_SOURCE && write.owner === 'coding' && write.pre_sha256 !== write.post_sha256));
+          if (wroteImplementation && writtenAt >= 0 && history.slice(writtenAt + 1).some(event => event.type === 'harness_end' && event.phase === 'coding'
+            && typeof event.exit_code === 'number' && event.timed_out !== true)) throw new Error(constructionHandoff);
+          assert(publishRequestedVerifier(cu, ctx), 'unexpected model purpose after formal authority recovery: ' + ctx.phase);
+        },
+      });
+      const owned = resumed.events.filter(event => event.type === 'phase_write_observed')
+        .flatMap(event => (event.owned ?? []) as Array<{path?: string; owner?: string; pre_sha256?: string; post_sha256?: string}>);
+      const wroteAt = resumed.events.findIndex(event => event.type === 'phase_write_observed'
+        && ((event.owned ?? []) as Array<{path?: string; owner?: string; pre_sha256?: string; post_sha256?: string}>).some(write =>
+          write.path === CU_SOURCE && write.owner === 'coding' && write.pre_sha256 !== write.post_sha256));
+      const checkedAt = resumed.events.findIndex((event, index) => index > wroteAt && event.type === 'harness_end' && event.phase === 'coding' && event.timed_out !== true);
+      assert(wroteImplementation && owned.some(write => write.path === CU_SOURCE && write.owner === 'coding'
+        && write.pre_sha256 !== write.post_sha256) && wroteAt >= 0 && checkedAt > wroteAt,
+      'formal owner recovery must really re-enter an owned coding write and its actual tool check; this boundary is not whole-feature completion');
+      const continued = loadGoalRunManifestFromRun(cu.root, path.basename(resumed.reportDir), {feature: cu.feature});
+      assert(continued.requirement === requirement && continued.requirement_source_files?.includes('doc/selection-request.md'),
+        'authority recovery cannot invent a new user requirement or lose its original source');
     } else {
-      assert(probe.invokedPhases[0] === 'spec', JSON.stringify(probe.invokedPhases));
-      for (const phase of ['spec', 'plan']) assert(readSummary(cu, phase)?.verdict === 'PASS' && readSummary(cu, phase)?.closure_status === 'closed', dumpPhase(cu, phase));
+      assert(definitionsReady && probe.invokedPhases[0] === 'work-unit-author' && probe.authorPrompts[0].includes(requirement), JSON.stringify(probe.invokedPhases));
+      for (const phase of ['spec', 'plan']) assertCurrentOwnerEvidence(cu, phase);
     }
-  } finally { if (!DEBUG) fs.rmSync(project.root, { recursive: true, force: true }); else console.log('--- kept root', project.root); clearFrameworkConfigCache(); }
+  } catch (error) { preserveChainFailure(project, error); throw error; } finally { if (!DEBUG) fs.rmSync(project.root, { recursive: true, force: true }); else console.log('--- kept root', project.root); clearFrameworkConfigCache(); }
 });
 
 /** 公开入口 `goal-status` 在工程自己的框架根下子进程运行，返回 `feature_status=…` 行（生产 `assessFeature`）。 */
@@ -1683,11 +1901,13 @@ test('real-chain CU 绑定链：plan 生成当前映射与用例后经 coding→
     clearFrameworkConfigCache();
     const probe = await runCuBoundChain(cu, birthChain);
     for (const phase of birthChain) {
-      const s = readSummary(cu, phase);
-      assert(s?.verdict === 'PASS' && s.closure_status === 'closed', `${phase}：verdict=${s?.verdict} closure=${s?.closure_status}（exit=${probe.exitCode}）\n${dumpPhase(cu, phase)}`);
+      assertCurrentOwnerEvidence(cu, phase);
     }
     const line = goalStatusFeatureLine(project, cu.feature);
     assert(line.startsWith('feature_status=FEATURE_COMPLETED (verify=VALID'), `CU 完成凭证未判 VALID：${line}`);
+  } catch (error) {
+    preserveChainFailure(project, error);
+    throw error;
   } finally {
     if (!DEBUG) fs.rmSync(project.root, { recursive: true, force: true });
     else console.log('--- kept root', project.root);
@@ -1701,8 +1921,6 @@ test('real-chain 正例：spec→testing 六阶段真实 harness 全链 PASS + c
     const birthChain = scaffoldRealChainHost(project);
     clearFrameworkConfigCache();
     const captured = captureStdout();
-    const pendingPhases = (): string[] =>
-      PHASES.filter(ph => readSummary(project, ph)?.closure_status !== 'closed');
     // 1.2 的六阶段**在同一个 run 内**跑完：出生链只含当下算得出的阶段（[spec, plan]），
     // spec/plan 各自 PASS 后 `assessment.recommendation.action === 'revise_scope'` 把修订
     // 追加进本 run（`goal-phase-runtime.ts:9619-9670`）——`chain` 被整体换成修订后的
@@ -1719,15 +1937,12 @@ test('real-chain 正例：spec→testing 六阶段真实 harness 全链 PASS + c
       for (const ph of PHASES) console.log(dumpPhase(project, ph));
     }
     // 退出码不是判据：范围修订延长链后，终局态由逐阶段 verdict/closure 说了算。
-    assert(pendingPhases().length === 0,
-      `仍有未闭环阶段 ${JSON.stringify(pendingPhases())}（exit=${probe.exitCode}）\n${PHASES.map(ph => dumpPhase(project, ph)).join('\n')}`);
-
     for (const phase of PHASES) {
-      const s = readSummary(project, phase);
-      assert(s !== null, `${phase}：summary.json 未落盘`);
+      if (assertCurrentOwnerEvidence(project, phase) === 'accepted-input') continue;
+      const s = readSummary(project, phase)!;
       // §4.5 判据①：verdict === 'PASS'（只有 fresh + PASS 才进 receipt 校验与 closure finalizer，
       // goal-phase-runtime.ts:8391）。
-      assert(s!.verdict === 'PASS', `${phase}：verdict=${s!.verdict}（要求 PASS）\n${dumpPhase(project, phase)}`);
+      // A current refuted text comparison stays raw FAIL; the common completion reader above must accept it.
       // §4.5 判据②：闭环成功。
       assert(s!.closure_status === 'closed', `${phase}：closure_status=${s!.closure_status}`);
       assert(s!.receipt_status === 'passed', `${phase}：receipt_status=${s!.receipt_status}`);
@@ -1772,6 +1987,9 @@ test('real-chain 正例：spec→testing 六阶段真实 harness 全链 PASS + c
 
     assertPngProvenance(project);
     for (const phase of PROMPT_PHASES) assertPromptInvariants(project, phase);
+  } catch (error) {
+    preserveChainFailure(project, error);
+    throw error;
   } finally {
     // 工程里有指向**源仓**的 junction（`harness/node_modules`、`skills` 等）。已实测
     // `fs.rmSync(recursive)` 只删链接本身、不跟进目标：清理后源仓 node_modules/profiles/skills 完好。
@@ -1846,7 +2064,20 @@ test('5f8c2d70 managed raw entry births its original root before design and pres
     assert(!after.some(event => event.type === 'phase_verdict' || event.type === 'run_end' && event.status === 'COMPLETED'), 'a design wait cannot claim phase or request completion');
     const family = readOriginalDeliveryActivity(p.root, original)!;
     assert(family.runs.length === 1 && family.calls === 1, 'unadmitted raw work cannot birth a normal CU or reset its original counter');
-    assert(!fs.existsSync(path.join(p.root, 'doc/features', feature, 'feature.yaml')) && !fs.existsSync(path.join(p.root, 'doc/features', feature, 'blueprint/component-blueprint.yaml')), 'transport must not prefill a scope or design');
+    assert(!fs.existsSync(path.join(p.root, 'doc/features', feature, 'feature.yaml'))
+      && !fs.existsSync(path.join(p.root, 'doc/features', feature, 'execution-scope.json')), 'waiting design cannot fabricate a construction scope');
+    const skeleton = YAML.parse(fs.readFileSync(path.join(p.root, 'doc/features', feature, 'blueprint/component-blueprint.yaml'), 'utf8'));
+    assert(skeleton.artifact === 'component-blueprint@1' && skeleton.blueprint_id === feature, 'runtime must prepare the actual owner draft, not another feature');
+    assert(asRecords(skeleton.design_views).length > 0 && asRecords(skeleton.design_views).every(view => asRecords(view.nodes).length === 0
+      && view.current_state === 'unknown' && view.target_state === 'unknown'), 'a waiting author cannot receive prefilled business design');
+    assert(['contracts', 'providers', 'derived_results', 'relations'].every(key => Array.isArray(skeleton[key]) && skeleton[key].length === 0),
+      'the runtime skeleton cannot fabricate contracts, providers or accepted CUs');
+    assert(asRecord(asRecord(skeleton.review_summary)?.admission)?.status === 'blocker'
+      && !asRecord(skeleton.review_summary)?.questioning, 'an empty unreviewed draft must remain outside admission');
+    const sourceItems = asRecords(asRecord(asRecord(skeleton.discovery)?.inputs)?.current_scope_items);
+    assert(sourceItems.length === 1 && sourceItems[0].source_ref === 'request.md'
+      && sourceItems[0].source_sha256 === 'sha256:' + crypto.createHash('sha256').update(fs.readFileSync(path.join(p.root, 'request.md'))).digest('hex'),
+    'the draft may seed only the actual authoritative request bytes, not a guessed business result');
     assert(fs.readFileSync(path.join(p.root, input)).equals(inputBytes), 'the original pure input stays unchanged');
     const localFeature = 'standalone-spec-entry', localRequirement = '仅写 spec';
     prepareFeatureScopeCandidate({ projectRoot: p.root, frameworkRoot: p.frameworkRoot, feature: localFeature, completionTarget: 'request',
@@ -1855,7 +2086,7 @@ test('5f8c2d70 managed raw entry births its original root before design and pres
     const local = prepareGoalModeRun(localOptions), rejoined = prepareGoalModeRun(localOptions);
     assert(!isInitialDesignManifest(local.manifest) && !isInitialDesignManifest(rejoined.manifest) && local.manifest.run_id === rejoined.manifest.run_id, 'single-duty input and its existing valid task must retain their original normal birth/rejoin path');
     assert(calls === 1, 'standalone preparation must not call the raw design executor');
-  } finally {
+  } catch (error) { preserveChainFailure(p, error); throw error; } finally {
     if (previousTrust === undefined) delete process.env.MAISON_GOAL_CHECKPOINT_DIR; else process.env.MAISON_GOAL_CHECKPOINT_DIR = previousTrust;
     fs.rmSync(p.root, { recursive: true, force: true }); clearFrameworkConfigCache();
   }
@@ -1876,10 +2107,16 @@ test('5f8c2d70 generic and single-duty request keep production prepare/birth pat
     const generic = deliveryCli(p, 'goal-mode-entry.ts', args.map(value => value === 'local-spec' ? 'generic-delivery' : value === 'request' ? 'feature' : value === 'spec' ? 'spec,plan,coding,review' : value));
     assert(generic.status === 0 && generic.json.type === 'scope_candidate_prepared', generic.diagnostic);
     git(p.root, ['add', '-A']); git(p.root, ['commit', '-qm', 'test generic entry']);
+    let enteredSpec = false;
     const probe = await requestVia('detach', p.root, { frameworkRoot: p.frameworkRoot, featureId: 'generic-delivery', freshRequirement: '仅写 spec',
-      freshStartPhase: generic.json.phase_chain[0], freshEndPhase: generic.json.phase_chain.at(-1), failExecutorFor: phase => phase !== 'spec' });
-    assert(!!probe.childArgs && probe.invokedPhases.includes('spec'), 'generic must really birth through fresh detach and enter spec');
-  } finally { fs.rmSync(p.root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+      freshStartPhase: generic.json.phase_chain[0], freshEndPhase: generic.json.phase_chain.at(-1),
+      onAuthor: (ctx, context) => {
+        assert(context.runId === ctx.runId && context.phase === 'work-unit-author' && context.chain.includes('spec'),
+          'the original generic request must reach its actual signed author with the spec check family');
+        enteredSpec = true;
+      }, failExecutorFor: phase => phase === 'work-unit-author' });
+    assert(!!probe.childArgs && enteredSpec && probe.invokedPhases.includes('work-unit-author'), 'generic must really birth through fresh detach and deliver its actual spec duty');
+  } catch (error) { preserveChainFailure(p, error); throw error; } finally { fs.rmSync(p.root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
 });
 
 export async function runSelectedCases(selector?: string): Promise<SelectedUnitCases> {
@@ -1895,3 +2132,5 @@ export async function runSelectedCases(selector?: string): Promise<SelectedUnitC
 }
 
 export async function runAll(): Promise<UnitCaseResult[]> { return (await runSelectedCases()).results; }
+
+export const listCaseGroups = () => unitCaseGroups(cases.map(c => c.name));

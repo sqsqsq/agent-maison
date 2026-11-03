@@ -1,3 +1,4 @@
+export const layer = 'capability' as const; // Actual native helper calls are part of this suite.
 // ============================================================================
 // asset-placeholder.unit.test.ts — 素材占位能力（角色占位生成 / 占位 CLI / $r 引用扫描）
 // ----------------------------------------------------------------------------

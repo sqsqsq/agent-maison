@@ -1,3 +1,4 @@
+import { unitCaseGroups } from '../utils/unit-case-selection';
 // lifecycle-evolution.unit.test.ts — plan b2d7f4e9 §6 / t4b：完成后演进的端到端回归（release-only）
 //
 // 与 feature-assessment / successor-exit / component-design-handoff 的局部单测不同，这里每条用例都从
@@ -44,7 +45,7 @@ import {
   withCurrentSnapshot,
 } from './successor-exit.unit.test';
 import { readScopeAcceptance } from '../../scripts/utils/feature-track';
-import { resolveCompletionDisposition } from '../../scripts/utils/verify-feature-completion';
+import { resolveCompletionDisposition, readReusableCheckResult } from '../../scripts/utils/verify-feature-completion';
 import type { WorkUnitExecutionContext } from '../../scripts/utils/goal-phase-executor';
 import { researchSnapshotFacts } from '../fixtures/host-snapshot-3.1.0/migrate';
 import { recomputePhaseEvidenceStaleness } from '../../scripts/utils/phase-evidence-manifest';
@@ -348,14 +349,16 @@ export function authorHooks(p: RealChainProject, writers: Partial<Record<Phase, 
     const admitted = context.factsContext;
     assert(admitted && context.runId === ctx.runId && context.feature === p.feature, 'the writer must consume its actual signed unit context');
     const scope = loadEffectiveExecutionScope(p.root, p.feature, ctx.runId);
-    const pending = new Set(scope?.phase_chain ?? context.chain);
+    // The signed unit owns its whole authorized method domain; phase_chain is only the tool-demand projection.
+    const pending = new Set(context.chain.filter(phase => !readReusableCheckResult({
+      projectRoot: p.root, frameworkRoot: p.frameworkRoot, feature: p.feature, runId: ctx.runId, phase })));
     const disposition = resolveCompletionDisposition({ projectRoot: p.root, frameworkRoot: p.frameworkRoot, feature: p.feature,
       runId: ctx.runId, chain: [...context.chain], ...(scope ? { executionScope: scope } : {}) });
     for (const problem of disposition.completionBlocking) if (problem.action === 'repair') pending.add(problem.owner ?? problem.phase);
     if (!fs.existsSync(featureFilePath(p.root, p.feature, 'acceptance.yaml'))) pending.add('spec');
     if (!fs.existsSync(featureFilePath(p.root, p.feature, 'contracts.yaml'))) pending.add('plan');
     const factsFile = featureFilePath(p.root, p.feature, 'context/facts.md');
-    const baseline = admitted.baseline && fs.existsSync(factsFile) ? fs.readFileSync(factsFile) : undefined;
+    const baseline = (admitted.baseline || !pending.has(admitted.first_phase)) && fs.existsSync(factsFile) ? fs.readFileSync(factsFile) : undefined;
     for (const family of context.chain) {
       if (!pending.has(family) || !Object.prototype.hasOwnProperty.call(writers, family)) continue;
       if ((family === 'coding' || family === 'ut') && !context.runtimeFacts.runBaseSha) continue;
@@ -363,8 +366,14 @@ export function authorHooks(p: RealChainProject, writers: Partial<Record<Phase, 
       writers[family as Phase]?.(p, ctx.runId);
       after?.[family as Phase]?.(p);
     }
-    if (baseline) fs.writeFileSync(factsFile, baseline);
-    if (!admitted.baseline || pending.has(admitted.first_phase)) researchSnapshotFacts(p.root, factsFile, admitted.first_phase, admitted);
+    const authored = fs.existsSync(factsFile) ? fs.readFileSync(factsFile, 'utf8') : '';
+    const deltas = authored.match(/^##\s*phase_delta:[\s\S]*/m)?.[0] ?? '';
+    // Keep the admitted baseline bytes while retaining the current unit's method investigations.
+    if (baseline) fs.writeFileSync(factsFile, baseline.toString('utf8').split(/^##\s*phase_delta:/m)[0] + deltas);
+    if (pending.has(admitted.first_phase)) {
+      researchSnapshotFacts(p.root, factsFile, admitted.first_phase, admitted);
+      if (!admitted.baseline && deltas) fs.appendFileSync(factsFile, '\n' + deltas);
+    }
     for (const family of context.chain) if (family !== admitted.first_phase && pending.has(family)) researchSnapshotFacts(p.root, factsFile, family, admitted);
   } };
 }
@@ -886,3 +895,5 @@ export async function runSelectedCases(selector?: string): Promise<SelectedUnitC
 }
 
 export async function runAll(): Promise<UnitCaseResult[]> { return (await runSelectedCases()).results; }
+
+export const listCaseGroups = () => unitCaseGroups(cases.map(c => `lifecycle-evolution: ${c.name}`));

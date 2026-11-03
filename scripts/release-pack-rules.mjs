@@ -138,7 +138,7 @@ export function sanitizePackageJson(pkg) {
   if (out.scripts && typeof out.scripts === 'object') {
     const scripts = { ...out.scripts };
     for (const key of Object.keys(scripts)) {
-      if (key.startsWith('release:')) {
+      if (key.startsWith('release:') || key === 'test:changed') {
         delete scripts[key];
       }
       if (key === 'openspec' || key === 'openspec:validate') {
@@ -157,6 +157,7 @@ export function sanitizeHarnessPackageJson(pkg) {
   if (out.scripts && typeof out.scripts === 'object') {
     delete out.scripts['test:unit'];
     delete out.scripts['test:fixtures'];
+    delete out.scripts['test:changed'];
     out.scripts.test = 'npm run check:global';
   }
   return out;
@@ -320,11 +321,13 @@ export function runSyntheticRuleTests(repoRoot, rules) {
       test: 'npm test',
       'release:pack': 'node scripts/pack-release.mjs',
       'release:verify': 'node scripts/verify-release-pack.mjs',
+      'test:changed': 'npm --prefix harness run test:changed',
     },
     devDependencies: { archiver: '^7.0.0', 'extract-zip': '^2.0.1' },
   };
   const sanitized = sanitizePackageJson(pkg);
   if (sanitized.scripts['release:pack']) errors.push('sanitize: release:pack still present');
+  if (sanitized.scripts['test:changed']) errors.push('sanitize: test:changed still present');
   if (sanitized.devDependencies) errors.push('sanitize: devDependencies still present');
   if (!sanitized.scripts.test) errors.push('sanitize: test script removed');
   if (sanitized.scripts.openspec) errors.push('sanitize: openspec script still present');
@@ -335,6 +338,7 @@ export function runSyntheticRuleTests(repoRoot, rules) {
       test: 'npm run test:unit && npm run test:fixtures',
       'test:unit': 'ts-node tests/run-unit.ts',
       'test:fixtures': 'ts-node tests/run-tests.ts',
+      'test:changed': 'ts-node tests/run-test-plan.ts',
       'check:catalog': 'ts-node harness-runner.ts --phase catalog',
       'check:glossary': 'ts-node harness-runner.ts --phase glossary',
       'check:docs': 'ts-node harness-runner.ts --phase docs',
@@ -344,6 +348,7 @@ export function runSyntheticRuleTests(repoRoot, rules) {
   const sanitizedHarness = sanitizeHarnessPackageJson(harnessPkg);
   if (sanitizedHarness.scripts['test:unit']) errors.push('sanitizeHarness: test:unit still present');
   if (sanitizedHarness.scripts['test:fixtures']) errors.push('sanitizeHarness: test:fixtures still present');
+  if (sanitizedHarness.scripts['test:changed']) errors.push('sanitizeHarness: test:changed still present');
   if (sanitizedHarness.scripts.test !== 'npm run check:global') {
     errors.push('sanitizeHarness: test must be npm run check:global');
   }

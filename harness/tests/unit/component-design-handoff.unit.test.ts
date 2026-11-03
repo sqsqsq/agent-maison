@@ -1,3 +1,4 @@
+import { selectExecutionBlock, timeExecutionBlock, selectedExecutionBlocks } from '../utils/unit-case-selection';
 import { acceptChangeUnitCandidates } from '../../scripts/utils/change-unit-provider-boundary';
 // ============================================================================
 // component-design-handoff.unit.test.ts — M7 t5：/component-design 设计交接的仓内验收
@@ -75,8 +76,12 @@ function assert(condition: unknown, message: string): asserts condition {
 }
 
 function test(name: string, run: () => void): UnitCaseResult {
+  const displayName = name;
+  if (!selectExecutionBlock(displayName)) return { name: displayName, ok: true };
+  const finish = timeExecutionBlock(displayName);
   try { run(); return { name, ok: true }; }
   catch (error) { return { name, ok: false, error: (error as Error).stack ?? (error as Error).message }; }
+  finally { finish(); }
 }
 
 function withProject(run: (projectRoot: string) => void): void {
@@ -1628,3 +1633,6 @@ if (require.main === module) {
   for (const result of results) console.log(`${result.ok ? 'PASS' : 'FAIL'}  ${result.name}${result.ok ? '' : `\n  ${result.error}`}`);
   process.exit(results.every(result => result.ok) ? 0 : 1);
 }
+
+export const listCaseGroups = async () => (await selectedExecutionBlocks(runAll, undefined, true)).groups;
+export const runSelectedCases = (selector?: string) => selectedExecutionBlocks(runAll, selector);

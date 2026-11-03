@@ -1,3 +1,4 @@
+export const layer = 'capability' as const; // Actual native helper calls are part of this suite.
 /**
  * 资产物化真图门禁单测（B + F 核心）：
  *   - readImageDimensions：纯 TS 解析 PNG/JPEG 头（不依赖 jimp），1×1/过小占位可判。

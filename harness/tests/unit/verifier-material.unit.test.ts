@@ -1,3 +1,4 @@
+import { unitCaseGroups } from '../utils/unit-case-selection';
 // verifier-material.unit.test.ts — plan 07a41ec6 T7：审前材料视图（subject 寻址材料）与差异登记
 
 import assert from 'assert';
@@ -659,3 +660,5 @@ export function runSelectedCases(filter?: string) {
 }
 
 export function runAll(): UnitCaseResult[] { return runSelectedCases().results; }
+
+export const listCaseGroups = () => unitCaseGroups(cases.map(c => c.name));

@@ -1,3 +1,4 @@
+import { unitCaseGroups } from '../utils/unit-case-selection';
 import { sealLegacyInvokes } from './goal-park-resume.unit.test';
 // ============================================================================
 // goal-runner-testing-integrity.unit.test.ts — v23 最小闭环验收
@@ -7544,3 +7545,5 @@ export async function runSelectedCases(selector?: string, group?: IntegrityGroup
 }
 
 export async function runAll(): Promise<UnitCaseResult[]> { return (await runSelectedCases()).results; }
+
+export const listCaseGroups = (group?: IntegrityGroup) => unitCaseGroups(cases.filter(c => !group || group === c.group).map(c => c.name));

@@ -1,3 +1,4 @@
+export const layer = 'capability' as const; // Actual native helper calls are part of this suite.
 /**
  * visual-diff-ocr-gates 单测（T5 越界）：collectOutOfBoundsGlobalElements。
  * OCR 注入（不跑真 OCR）：构造 canned words 验证——非属主屏底部 band 出现全局元素文本=越界；

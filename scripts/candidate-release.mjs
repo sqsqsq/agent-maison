@@ -76,10 +76,8 @@ function buildCandidate() {
 
   console.log(`[candidate] build version=${version}（唯一跳过项=发布 plan 完成门禁；promote 时补跑）`);
 
-  // 1. typecheck + 单测 + fixtures（candidate 不跳任何测试，含 release-only 的真链回归）
-  run(process.execPath, [TSC, '--noEmit', '-p', 'tsconfig.typecheck.json'], HARNESS);
-  run(process.execPath, [TSNODE, '--transpile-only', 'tests/run-unit.ts', '--release'], HARNESS);
-  run(process.execPath, [TSNODE, '--transpile-only', 'tests/run-tests.ts'], HARNESS);
+  // npm test performs typecheck and the complete unit/profile/fixture set exactly once.
+  run(process.execPath, [process.env.npm_execpath ?? path.join(path.dirname(process.execPath), 'node_modules/npm/bin/npm-cli.js'), 'test'], HARNESS);
 
   // 2–4. pack → verify（跳过发布 plan 门禁）→ 持久化 candidate（staging 生命周期 try/finally 兜住）
   fs.rmSync(stagingDir, { recursive: true, force: true });

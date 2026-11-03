@@ -1,3 +1,4 @@
+import { unitCaseGroups } from '../utils/unit-case-selection';
 // ============================================================================
 // real-chain-seams.unit.test.ts — plan d4a1f7c3 §5：接缝的窄负例
 // ----------------------------------------------------------------------------
@@ -26,8 +27,8 @@
 // ============================================================================
 
 import * as fs from 'fs';
+import * as crypto from 'crypto';
 import * as path from 'path';
-import { createHash } from 'crypto';
 import { spawnSync } from 'child_process';
 import * as YAML from 'yaml';
 import type { UnitCaseResult } from '../run-unit';
@@ -43,11 +44,14 @@ import {
   REAL_CHAIN_SOURCE_2,
   REAL_CHAIN_SERVICE,
   REAL_CHAIN_TEST,
+  REAL_CHAIN_PNG_EXISTING,
   type RealChainProject,
 } from '../utils/real-chain-host';
 import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
 import {
   readSummary,
+  assertCurrentPhaseClosed,
+  assertCurrentOwnerEvidence,
   dumpPhase,
   publishVerifier,
   publishRequestedVerifier,
@@ -58,8 +62,11 @@ import {
   writeReviewMaterials,
   writeUtMaterials,
   writeTestPlan,
+  preserveChainFailure,
 } from './real-chain.unit.test';
 import { loadAuthoritativeEvents } from '../../scripts/utils/goal-runner-phase';
+import { executionRequestForInvoke } from '../../scripts/utils/session-execution-handoff';
+import { resolvePhasePathOwnership } from '../../scripts/utils/phase-write-boundary';
 import { runGoalRuntimeChain } from './goal-runner-testing-integrity.unit.test';
 import { clearFrameworkConfigCache, featureFilePath, featurePhaseReportsDir, relFeaturesDir } from '../../config';
 import { recomputePhaseEvidenceStaleness, loadPhaseEvidenceManifest, stableStringify } from '../../scripts/utils/phase-evidence-manifest';
@@ -86,9 +93,13 @@ import {
 import { sanitizeSpawnEnv, deleteEnvKeyCaseInsensitive } from '../../scripts/utils/process-integrity';
 import { computeRequestSubjectId, type VerifierRequest } from '../../scripts/utils/verifier-request';
 import { loadVerifierEvidence } from '../../scripts/utils/verifier-evidence';
-import { resolveCompletionDisposition } from '../../scripts/utils/verify-feature-completion';
-import type { VerifierMaterialView } from '../../scripts/utils/verifier-material';
+import { resolveCompletionDisposition, readCurrentCheckObservation, readReusableCheckResult } from '../../scripts/utils/verify-feature-completion';
+import { buildVerifierMaterialView, computeMaterialSha256, type VerifierMaterialView } from '../../scripts/utils/verifier-material';
+import { readCurrentPhaseRepairCandidates } from '../../scripts/utils/phase-closure-finalizer';
+import { loadEffectiveExecutionScope } from '../../scripts/utils/goal-run-creation';
+import { resolveWorkflowSpec } from '../../workflow-loader';
 import { isCheckNotApplicable, type CheckResult, type Phase } from '../../scripts/utils/types';
+import type { WorkUnitExecutionContext } from '../../scripts/utils/goal-phase-executor';
 
 const cases: Array<{ name: string; run: () => Promise<void> }> = [];
 function test(name: string, run: () => Promise<void>): void { cases.push({ name, run }); }
@@ -106,6 +117,9 @@ export function withProject(body: (p: RealChainProject, birthChain: string[]) =>
       const birthChain = scaffoldRealChainHost(project);
       clearFrameworkConfigCache();
       await body(project, birthChain);
+    } catch (error) {
+      preserveChainFailure(project, error);
+      throw error;
     } finally {
       if (!DEBUG) fs.rmSync(project.root, { recursive: true, force: true });
       else console.log('--- kept root', project.root);
@@ -198,6 +212,16 @@ export function runGateHarness(
   p: RealChainProject, phase: string, clock: string | undefined, attemptId: string,
   deviceEnv: Record<string, string>, role: 'gate' | 'agent' = 'gate',
 ): { status: number | null; output: string } {
+  // The CLI phase names the method; the environment must retain the real issued actor's phase.
+  // P3 normally signs work-unit-author, so copying the method into this identity would change the invocation.
+  const runId = process.env.MAISON_GOAL_RUN_ID ?? p.runId;
+  const runDir = featureFilePath(p.root, p.feature, `goal-runs/${runId}`);
+  const issued = [...loadAuthoritativeEvents(path.join(runDir, 'events.jsonl'))].reverse()
+    .filter(event => event.type === 'agent_invoke_start' && typeof event.invoke_id === 'string')
+    .map(event => executionRequestForInvoke(runDir, String(event.invoke_id)))
+    .find(original => original?.request.context.attemptId === attemptId && original.request.context.runId === runId
+      && original.request.context.feature === p.feature && original.request.context.chain.includes(phase));
+  assert(issued, 'gate replay must use the actual issued actor/attempt identity for this method');
   const sanitized = sanitizeSpawnEnv(clock === undefined ? { ...process.env } : { ...process.env, MAISON_TEST_AC_COVERAGE_NOW: clock });
   const childEnv: NodeJS.ProcessEnv = { ...sanitized.env, [MAISON_GOAL_RUNNER_ENV]: '1' };
   // 夹具无 model pin / 无 visual provider pin——生产此时同样是"只清不写"。
@@ -207,9 +231,9 @@ export function runGateHarness(
   // 与生产同一个 `gateInjectedEnv`（`goal-phase-runtime.ts:1234-1249`）：轮次身份三键 + 设备目标，
   // 统一走"先清大小写变体再写唯一键"。
   for (const [k, v] of Object.entries({
-    MAISON_GOAL_RUN_ID: p.runId ?? '',
+    MAISON_GOAL_RUN_ID: runId ?? '',
     MAISON_GOAL_ATTEMPT: attemptId,
-    MAISON_GOAL_ATTEMPT_PHASE: phase,
+    MAISON_GOAL_ATTEMPT_PHASE: issued!.request.context.phase,
     ...deviceEnv,
   })) {
     deleteEnvKeyCaseInsensitive(childEnv, k);
@@ -261,40 +285,58 @@ function addNeverCreatedContractFile(p: RealChainProject): void {
 }
 
 test('RC-1 plan 起步：待创建预测不拖垮绑定，未实现的预测位置只披露', withProject(async (project, birthChain) => {
-  /** plan 跑的那一刻盘上既有源码的字节——coding 随后会改写它，事后再读取就对不上了。 */
-  let planTimeSourceSha: string | null = null;
-  const probe = await runGoalRuntimeChain(project.root, {
-    onOutOfChain: ctx => { assert(publishRequestedVerifier(project, ctx), `unexpected model purpose: ${ctx.phase}`); },
-    frameworkRoot: project.frameworkRoot,
-    featureId: project.feature,
-    realHarness: true,
-    adapter: 'codex',
-    freshStartPhase: birthChain[0] as 'spec',
-    freshEndPhase: birthChain[birthChain.length - 1],
-    freshRequirement: REAL_CHAIN_REQUIREMENT,
-    onSpec: ctx => { project.runId = ctx.runId; writeSpecMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'spec'); },
-    onPlan: ctx => {
-      project.runId = ctx.runId;
-      writePlanMaterials(project);
-      addNeverCreatedContractFile(project);
-      planTimeSourceSha = sha256File(path.join(project.root, REAL_CHAIN_SOURCE));
-      if (ctx.attempt > 1) publishVerifier(project, 'plan');
+  const planTimeSourceSha = sha256File(path.join(project.root, REAL_CHAIN_SOURCE));
+  const { authorHooks } = await import('./lifecycle-evolution.unit.test');
+  let activeAuthor: WorkUnitExecutionContext | undefined;
+  let planRead: { material: VerifierMaterialView; contractsSha: string; invokeId: string } | undefined;
+  const hooks = authorHooks(project, { spec: writeSpecMaterials,
+    plan: p => { writePlanMaterials(p); addNeverCreatedContractFile(p); },
+    coding: p => writeCodingMaterials(p), review: writeReviewMaterials, ut: writeUtMaterials, testing: writeTestPlan }, {
+    plan: p => {
+      if (planRead) return;
+      assert(activeAuthor, 'the pre-construction reader must belong to the actual signed author');
+      const context = activeAuthor!;
+      const start = [...loadAuthoritativeEvents(path.join(context.runDir, 'events.jsonl'))].reverse()
+        .find(event => event.type === 'agent_invoke_start' && event.phase === context.phase);
+      const issued = start?.invoke_id ? executionRequestForInvoke(context.runDir, String(start.invoke_id)) : null;
+      assert(issued?.request.context.runId === context.runId && issued.request.context.attemptId === context.attemptId
+        && issued.request.context.owner.owner_id === context.owner.owner_id && issued.request.context.owner.epoch === context.owner.epoch,
+      'the plan/code consumer must retain its actual request and owner binding');
+      assert(sha256File(path.join(p.root, REAL_CHAIN_SOURCE)) === planTimeSourceSha
+        && [REAL_CHAIN_NEW_SOURCE, RC1_NEVER_CREATED].every(file => !fs.existsSync(path.join(p.root, file))),
+      'capture actual plan inputs after its writer and before any predicted implementation exists');
+      const entry = resolveCapabilityResolutionEntryInput({projectRoot:p.root, frameworkRoot:p.frameworkRoot, feature:p.feature,
+        phase:'plan', goalRunId:context.runId, goalAttemptId:context.attemptId, featuresDir:relFeaturesDir(p.root)});
+      const inputs = resolveCapabilityInputs({projectRoot:p.root, frameworkRoot:p.frameworkRoot, feature:p.feature, phase:'plan', track:'full', ...entry}).inputs;
+      assert(inputs && !Object.values(inputs.values).some(value => value.state === 'invalid' && /stale/.test(value.detail ?? '')),
+        'pending predictions must not make the actual pre-construction reader stale');
+      planRead = {material:buildVerifierMaterialView({projectRoot:p.root, frameworkRoot:p.frameworkRoot, feature:p.feature, phase:'plan',
+        runId:context.runId, factsContext:entry.factsContext, resolvedInputs:inputs!, gateFingerprint:null, phaseRuleText:'', templateText:'', checks:[], contextFiles:[]}),
+        contractsSha:sha256File(featureFilePath(p.root,p.feature,'contracts.yaml'))!, invokeId:issued!.request.invoke_id};
     },
-    // coding 只创建两个待创建文件里的一个——另一个是"真缺失"。
-    onCoding: ctx => { project.runId = ctx.runId; writeCodingMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'coding'); },
   });
+  const probe = await runGoalRuntimeChain(project.root, {
+    ...hooks,
+    onAuthor: (ctx, context) => { activeAuthor = context; try { hooks.onAuthor(ctx, context); } finally { activeAuthor = undefined; } },
+    frameworkRoot: project.frameworkRoot, featureId: project.feature, realHarness: true, adapter: 'codex',
+    freshStartPhase: birthChain[0] as 'spec', freshEndPhase: birthChain[birthChain.length - 1], freshRequirement: REAL_CHAIN_REQUIREMENT,
+  });
+  const implementationWrite = probe.events.find(event => event.type === 'phase_write_observed'
+    && ((event.owned ?? []) as Array<{path?: string; owner?: string; pre_sha256?: string; post_sha256?: string}>).some(write =>
+      write.path === REAL_CHAIN_SOURCE && write.owner === 'coding' && write.pre_sha256 === planTimeSourceSha && write.post_sha256 !== planTimeSourceSha));
+  const implementationAt = probe.events.findIndex(event => event.type === 'agent_invoke_start' && event.invoke_id === implementationWrite?.invoke_id);
+  assert(implementationWrite && implementationAt >= 0 && planRead,
+    'the actual author must consume its plan inputs before the observed implementation write');
 
   // ① plan 走通：facts baseline 没抛、待创建文件没把同组绑定拖垮。
-  const plan = readSummary(project, 'plan');
-  assert(plan?.verdict === 'PASS', `plan 未 PASS：${dumpChain(project, ['spec', 'plan'])}`);
-  assert(plan?.closure_status === 'closed', `plan closure_status=${plan?.closure_status}`);
+  assertCurrentOwnerEvidence(project, 'plan');
 
   // ② 读集的**正反两面**都要成立，缺任何一面这条都会在源码集合全空时照样绿
   //    （codex 2026-09-22 阻断 1）：
   //    正面——1.2 的源码读集链真被行使：既有源码在 plan 材料里**存在且 sha 与盘上字节相等**；
   //    反面——待创建文件**一个都不进**读集，也不以 `sha256: null` 的 absent 形态混进来
   //          （W1 的根因正是把它们判 absent 后拖垮同组绑定；正确形态是「不存在就不进读集」）。
-  const planMaterial = materialFiles(project, 'plan');
+  const planMaterial = planRead!.material.files;
   const dump = JSON.stringify(planMaterial.map(f => `${f.path}:${f.sha256 ? 'sha' : 'null'}`));
   const existing = planMaterial.find(f => f.path === REAL_CHAIN_SOURCE);
   // 对的是 **plan 跑那一刻**的字节，不是现在盘上的——coding 已经按写集改写过这份源码，
@@ -311,8 +353,10 @@ test('RC-1 plan 起步：待创建预测不拖垮绑定，未实现的预测位�
   assert(planMaterial.every(f => !!f.sha256), `plan 读集里出现 absent 条目：${dump}`);
 
   // ③ 只有预测表提过、没有真实调用的文件不构成产品缺陷；仍在报告披露定位缺口。
-  const coding = readSummary(project, 'coding');
-  assert(coding?.verdict === 'PASS', dumpPhase(project, 'coding'));
+  assertCurrentPhaseClosed(project, 'coding');
+  assert(materialFiles(project, 'coding').some(file => file.path === path.relative(project.root,
+    featureFilePath(project.root,project.feature,'contracts.yaml')).replace(/\\/g,'/') && file.sha256 === planRead!.contractsSha),
+  'the real coding check must consume the actual plan writer\'s contracts bytes');
   const report = JSON.parse(fs.readFileSync(path.join(featurePhaseReportsDir(project.root, project.feature, 'coding', project.frameworkRoot), 'script-report.json'), 'utf8'));
   const completeness = report.checks.find((check: { id: string }) => check.id === 'file_completeness');
   assert(completeness?.status === 'WARN', JSON.stringify(completeness));
@@ -489,11 +533,18 @@ test('RC-2 runless：修订后 implementation basis 随新契约刷新、重解�
 // ===========================================================================
 // RC-3（墙 W3）：UT 改自己负责的测试不作废 coding
 // ---------------------------------------------------------------------------
-// 构造：ut 阶段经 `onUt` 回调在链上**真写一次**测试文件（不是夹具事前塞好）。
+// 构造：真实单元作者经签名请求调用 UT 材料 writer 真写测试；方法检查仍走真实 harness。
 // 判据：coding 不被判 stale；产品源码在上游读集里带施工归属，且施工豁免只给归属阶段。
 // ===========================================================================
 
 test('RC-3 UT 在链上真写测试：coding 不 stale；上游源码带施工归属且豁免只给 coding', withProject(async (project, birthChain) => {
+  const { authorHooks } = await import('./lifecycle-evolution.unit.test');
+  let utMaterialWrites = 0;
+  const utWrites: Array<{ invokeId: string; preSnapshot: string; preHash: string | null; postHash: string }> = [];
+  const hooks = authorHooks(project, {
+    spec: writeSpecMaterials, plan: writePlanMaterials, coding: p => writeCodingMaterials(p), review: writeReviewMaterials,
+    ut: p => { utMaterialWrites++; writeUtMaterials(p); },
+  });
   const probe = await runGoalRuntimeChain(project.root, {
     onOutOfChain: ctx => { assert(publishRequestedVerifier(project, ctx), `unexpected model purpose: ${ctx.phase}`); },
     frameworkRoot: project.frameworkRoot,
@@ -503,47 +554,61 @@ test('RC-3 UT 在链上真写测试：coding 不 stale；上游源码带施工�
     freshStartPhase: birthChain[0] as 'spec',
     freshEndPhase: birthChain[birthChain.length - 1],
     freshRequirement: REAL_CHAIN_REQUIREMENT,
-    onSpec: ctx => { project.runId = ctx.runId; writeSpecMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'spec'); },
-    onPlan: ctx => { project.runId = ctx.runId; writePlanMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'plan'); },
-    onCoding: ctx => { project.runId = ctx.runId; writeCodingMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'coding'); },
-    onReview: ctx => { project.runId = ctx.runId; writeReviewMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'review'); },
-    onUt: ctx => { project.runId = ctx.runId; writeUtMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'ut'); },
+    onAuthor: (ctx, context) => {
+      const start = [...loadAuthoritativeEvents(path.join(context.runDir, 'events.jsonl'))].reverse()
+        .find(event => event.type === 'agent_invoke_start' && event.phase === context.phase);
+      assert(typeof start?.invoke_id === 'string', 'UT writer must run inside an actual author invocation');
+      const issued = executionRequestForInvoke(context.runDir, String(start!.invoke_id));
+      assert(issued?.request.context.phase === 'work-unit-author'
+        && issued.request.context.runId === context.runId && issued.request.context.attemptId === context.attemptId
+        && issued.request.context.owner.owner_id === context.owner.owner_id
+        && issued.request.context.owner.epoch === context.owner.epoch, 'writer must consume the actual signed author request');
+      const testAbs = path.join(project.root, REAL_CHAIN_TEST);
+      const preHash = fs.existsSync(testAbs) ? sha256File(testAbs) : null;
+      const writesBefore = utMaterialWrites;
+      hooks.onAuthor(ctx, context);
+      const postHash = fs.existsSync(testAbs) ? sha256File(testAbs) : null;
+      if (postHash !== preHash) {
+        assert(utMaterialWrites > writesBefore && postHash !== null, 'the existing UT writer must really create the test');
+        assert(!!issued!.request.write_boundary && !!issued!.request.pre_snapshot, 'actual author request must bind its write boundary and pre-image');
+        assert(resolvePhasePathOwnership(issued!.request.write_boundary!, REAL_CHAIN_TEST).owner === 'ut', 'the signed boundary must retain the UT source producer');
+        utWrites.push({ invokeId: issued!.request.invoke_id, preSnapshot: issued!.request.pre_snapshot!.sha256, preHash, postHash: postHash! });
+      }
+    },
   });
-  // 截断链（`--end ut`）以 `phase_closed_wait_user` 收尾，exitCode=2 是它的合法终态；
-  // 判据落在逐阶段 verdict/closure 上，不拿退出码冒充。
+  // 当前单元作者可准备多种方法；质量仍由真实方法检查与闭环原件判定。
   const chain = ['spec', 'plan', 'coding', 'review', 'ut'];
-  for (const ph of chain) {
-    assert(readSummary(project, ph)?.verdict === 'PASS',
-      `${ph} 未 PASS（exit=${probe.exitCode}）：\n${dumpChain(project, chain)}`);
-  }
+  for (const ph of chain) assertCurrentOwnerEvidence(project, ph);
 
   // 前提：UT 的测试文件确实是在链上写出来的，且 coding 已闭环。
   assert(fs.existsSync(path.join(project.root, REAL_CHAIN_TEST)), 'UT 测试文件未在链上写出');
   assert(readSummary(project, 'coding')?.closure_status === 'closed', 'coding 未闭环，本条证明不了新鲜度');
 
-  // ① W3 的根因条目不得存在：coding 的读集里**没有** UT 测试文件（它归 ut 所有），
-  //    而 ut 的读集里有——两个材料视图都是生产产物，不是夹具手写。
+  // ① 当前 coding 独核实际消费测试强度材料；UT 归属不等于排除真实测试依赖。
+  //    两个材料视图都是生产产物，均须精确绑定本轮测试正文。
   const codingMaterial = materialFiles(project, 'coding');
   const utMaterial = materialFiles(project, 'ut');
-  assert(
-    !codingMaterial.some(f => f.path === REAL_CHAIN_TEST),
-    `UT 测试文件被记成 coding 的输入（W3 复发）：${JSON.stringify(codingMaterial.map(f => f.path))}`,
-  );
+  const codingTest = codingMaterial.find(file => file.path === REAL_CHAIN_TEST);
+  assert(codingTest?.sha256 === sha256File(path.join(project.root, REAL_CHAIN_TEST)),
+    'coding independent test-strength material must bind the actual current UT source: ' + JSON.stringify(codingTest));
   assert(
     utMaterial.some(f => f.path === REAL_CHAIN_TEST),
     `UT 测试文件不在 ut 读集里，本条的前提不成立：${JSON.stringify(utMaterial.map(f => f.path))}`,
   );
-  // ② UT 在链上写完自己的测试之后，coding 仍 fresh，链一路推进到 ut 而没有回退重跑 coding。
+  // ② 真实作者材料已检查且未再被外部改写时 coding 应 fresh；不把 UT 归属误作依赖豁免。
   const codingBefore = recomputePhaseEvidenceStaleness(project.root, project.feature, ['coding', 'review', 'ut'], { frameworkRoot: project.frameworkRoot })
     .find(r => r.phase === 'coding');
   assert(codingBefore?.verdict === 'fresh', `UT 改测试后 coding 被判 ${codingBefore?.verdict}：${JSON.stringify(codingBefore)}`);
-  // **索引口径**：两边都用数组下标（早先左边误用 `join(',').indexOf` 的**字符位置**，
-  // `['spec','plan','coding','review','ut','coding']` 会得到 24 > 5 照样过，UT 之后又跑
-  // coding 根本抓不到）。
-  assert(
-    probe.invokedPhases.lastIndexOf('ut') > probe.invokedPhases.lastIndexOf('coding'),
-    `UT 之后又回退重跑了 coding：${probe.invokedPhases.join(',')}`,
-  );
+  const creation = utWrites.find(write => write.preHash === null);
+  assert(!!creation, 'the test must be created by a real signed author invocation, not pre-seeded by the fixture');
+  const observedIndex = probe.events.findIndex(event => event.type === 'phase_write_observed'
+    && event.phase === 'work-unit-author' && event.invoke_id === creation!.invokeId && event.pre_snapshot === creation!.preSnapshot
+    && ((event.owned ?? []) as Array<{ path?: string; owner?: string; pre_sha256?: string | null; post_sha256?: string }>).some(write =>
+      write.path === REAL_CHAIN_TEST && write.owner === 'ut' && write.pre_sha256 === null && write.post_sha256 === creation!.postHash));
+  assert(observedIndex >= 0, 'the runtime must persist the actual UT-owned creation and its pre/post hashes');
+  for (const phase of ['coding', 'ut']) assert(probe.events.some((event, index) => index > observedIndex
+    && event.type === 'harness_end' && event.phase === phase && typeof event.exit_code === 'number' && event.timed_out !== true),
+    phase + ' must really return its method check after the observed write; current closure is checked independently');
 
   // ③ W3 的正向验收（codex 2026-09-22 裁定后重写；原先那条「改源码仍 fresh」的 known-bug
   //    反向哨兵锁的是**已被推翻**的命题，已删）。三步，都在 1.2 链上：
@@ -575,12 +640,12 @@ test('RC-3 UT 在链上真写测试：coding 不 stale；上游源码带施工�
 // RC-4（墙 W4）：同一产物连跑两次，verifier subject 稳定
 // ---------------------------------------------------------------------------
 // 构造两段，各自单变量：
-//   (甲) 链内：ut 第 2 轮改一次**真实业务内容**（UT 测试正文）→ 反洗白，必须换代；
+//   (甲) 真实作者材料闭环后，只改正式消费的 mock-plan 业务 preset，再跑真实 gate → 反洗白，必须换代；
 //   (乙) 链后：**材料字节一个都不动**，只换 `MAISON_TEST_AC_COVERAGE_NOW`，把**真实 gate
 //        harness** 再跑两轮（与 `goal-phase-runtime.ts:1272` 同一条命令与同一组注入键）
 //        → W4 的墙：两轮落盘的 `verifier.request.*.json` 的 subject_id 必须逐字相同，
 //        整份逐字段对账里**唯一**允许不等的是审计字段 `prompt_sha256`（按设计不进 subject）。
-// 甲段里时钟与正文一起变，**证不了**时钟不变量；乙段才是那一条（codex 2026-09-22 阻断）。
+// 原 Goal 与重放入口的材料差异另记；时钟和业务断言只比较同一重放入口的受控轮次。
 // ===========================================================================
 
 const RC4_CLOCKS = ['2026-01-01T00:00:00.000Z', '2026-02-02T00:00:00.000Z', '2026-03-03T00:00:00.000Z'];
@@ -603,9 +668,12 @@ test('RC-4 verifier subject：时钟漂移不换代，业务内容变化必须�
   const prevClock = process.env.MAISON_TEST_AC_COVERAGE_NOW;
   const prevNodeEnv = process.env.NODE_ENV;
   process.env.NODE_ENV = 'test';
-  /** 每轮 ut 开始时盘上 summary 的 subject = **上一轮** harness 算出来的那个。 */
+  /** Record actual UT material writer actions, independently of native actor labels. */
   const subjectBefore: Array<string | undefined> = [];
-  const bindingsByDigest = new Map<string, Record<string, ResolvedInput>>();
+  let utMaterialWrites = 0;
+  const businessAbs = featureFilePath(project.root, project.feature, 'ut/mock-plan.yaml');
+  const businessRel = path.relative(project.root, businessAbs).replace(/\\/g, '/');
+  const bindingsByMaterialHash = new Map<string, { digest: string; values: Record<string, ResolvedInput> }>();
   const bindingProjection = (values: Record<string, ResolvedInput>): unknown => Object.entries(values)
     .map(([id, value]) => [id, value.state === 'resolved' ? value.binding : value]);
   const captureBindings = (runId: string, goalAttemptId: string): void => {
@@ -614,20 +682,36 @@ test('RC-4 verifier subject：时钟漂移不换代，业务内容变化必须�
     const inputs = resolveCapabilityInputs({ projectRoot: project.root, frameworkRoot: project.frameworkRoot,
       feature: project.feature, phase: 'ut', track: 'full', ...entry }).inputs;
     assert(!!inputs, 'RC-4 必须核对实际阶段输入绑定');
-    const digest = createHash('sha256').update(stableStringify(bindingProjection(inputs!.values))).digest('hex');
-    bindingsByDigest.set(digest, structuredClone(inputs!.values));
+    const projected = buildVerifierMaterialView({ projectRoot: project.root, frameworkRoot: project.frameworkRoot, feature: project.feature,
+      phase: 'ut', runId, factsContext: entry.factsContext, resolvedInputs: inputs!, gateFingerprint: null,
+      phaseRuleText: '', templateText: '', checks: [], contextFiles: [] });
+    assert(!!projected.input_bindings_sha256, 'actual resolved inputs must have the production material binding digest');
+    bindingsByMaterialHash.set(sha256File(businessAbs)!,
+      { digest: projected.input_bindings_sha256!, values: structuredClone(inputs!.values) });
   };
   /** 就绪门实际被调用的阶段（本条自备——显式 deviceGate 覆盖后 probe 的那份不再记录）。 */
   const gatedPhases: string[] = [];
   const usedClocks = new Set<string>();
   try {
+    const { authorHooks } = await import('./lifecycle-evolution.unit.test');
+    const hooks = authorHooks(project, {
+      spec: writeSpecMaterials, plan: writePlanMaterials, coding: p => writeCodingMaterials(p), review: writeReviewMaterials,
+      ut: p => {
+        subjectBefore.push(readSummary(p, 'ut')?.verifier_subject_id);
+        utMaterialWrites++;
+        process.env.MAISON_TEST_AC_COVERAGE_NOW = RC4_CLOCKS[0];
+        usedClocks.add(RC4_CLOCKS[0]);
+        writeUtMaterials(p);
+      },
+    });
     const probe = await runGoalRuntimeChain(project.root, {
+      ...hooks,
       onOutOfChain: ctx => { assert(publishRequestedVerifier(project, ctx), `unexpected model purpose: ${ctx.phase}`); },
       frameworkRoot: project.frameworkRoot,
       featureId: project.feature,
       realHarness: true,
       adapter: 'codex',
-      // 甲段的设备环境从这里出，乙段直接复用**同一个对象**（见 RC4_DEVICE_ENV 注释）。
+      // Replay only a target actually selected for UT; a unit-only method gains no synthetic device env.
       deviceGate: (gateOpts: { phase: string }) => {
         gatedPhases.push(String(gateOpts.phase));
         return {
@@ -639,59 +723,118 @@ test('RC-4 verifier subject：时钟漂移不换代，业务内容变化必须�
       freshStartPhase: birthChain[0] as 'spec',
       freshEndPhase: birthChain[birthChain.length - 1],
       freshRequirement: REAL_CHAIN_REQUIREMENT,
-      onSpec: ctx => { project.runId = ctx.runId; writeSpecMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'spec'); },
-      onPlan: ctx => { project.runId = ctx.runId; writePlanMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'plan'); },
-      onCoding: ctx => { project.runId = ctx.runId; writeCodingMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'coding'); },
-      onReview: ctx => { project.runId = ctx.runId; writeReviewMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'review'); },
-      onUt: ctx => {
-        project.runId = ctx.runId;
-        subjectBefore[ctx.attempt] = readSummary(project, 'ut')?.verifier_subject_id;
-        process.env.MAISON_TEST_AC_COVERAGE_NOW = RC4_CLOCKS[0];
-        usedClocks.add(RC4_CLOCKS[0]);
-        writeUtMaterials(project);
-      },
     });
-    // 截断链（--end ut）以 `phase_closed_wait_user` 收尾，exitCode=2 是它的合法终态；
-    // 判据落在阶段 verdict/closure 与 subject 上，不拿退出码冒充。
-    const utPhases = probe.invokedPhases.filter(x => x === 'ut').length;
-    const original = readSummary(project, 'ut');
-    assert(original?.verdict === 'PASS' && original?.closure_status === 'closed',
-      `ut 未闭环：${dumpChain(project, ['spec', 'plan', 'coding', 'review', 'ut'])}`);
+    // Freeze the actual writer count after the real chain; later gates must not buy author rewrites.
+    const utWritesAfterChain = utMaterialWrites;
+    const utReplayDeviceEnv = gatedPhases.includes('ut') ? RC4_DEVICE_ENV : {};
+    assert(utWritesAfterChain > 0, 'the real author must have produced UT materials');
+    const original = assertCurrentPhaseClosed(project, 'ut');
     const utReportsDir = featurePhaseReportsDir(project.root, project.feature, 'ut', project.frameworkRoot);
     const utAttemptId = phaseAttemptIdFromReceipt(project, 'ut');
     const originalEvidence = loadVerifierEvidence(project.root, project.feature, 'ut', { frameworkRoot: project.frameworkRoot });
     if (!originalEvidence.ok) throw new Error('初始真实闭环必须有原 subject 的有效核实');
     const originalVerifierBytes = fs.readFileSync(originalEvidence.evidence.md_path_abs);
-    captureBindings(project.runId!, utAttemptId);
-    // 显式外部业务扰动：不用一次无意义的作者重写来制造第二代输入。
     const testAbs = path.join(project.root, REAL_CHAIN_TEST);
     const originalTest = fs.readFileSync(testAbs, 'utf8');
-    assert(originalTest.includes('expect(banks.length).assertEqual(0);'), 'RC-4 业务扰动必须命中实际测试正文');
-    fs.writeFileSync(testAbs, originalTest.replace('expect(banks.length).assertEqual(0);',
-      "expect(banks.length).assertEqual(0);\n    expect(typeof banks).assertEqual('object');"), 'utf8');
+    const originalBusiness = fs.readFileSync(businessAbs, 'utf8');
+    // Same-entry clock-only reference precedes the one business change.
+    // ④ **W4 的墙本身**：先保业务正文不变，只改变两次真实重放的时钟。
+    //    材料字节一个都不动，只换时钟，把真实 gate harness 再跑两轮——整条 subject 派生链
+    //    （输入解析 → 材料视图 → material_sha256 → request）都由生产代码重走一遍。
+    //    判据：两轮落盘的 request 整份逐字段对账、**唯一允许差异 `prompt_sha256`**，
+    //    不是只比挑出来的几个字段，也不是拿确定性函数自我印证。
+    // Reuse UT's actual target if selected; otherwise preserve the absence of added device variables.
+    const clockRound = (clock: string): { subject: string; request: VerifierRequest; material: MaterialView } => {
+      // 每轮先清掉旧凭证：轮末只要"该 subject 的 request 在盘上"即证明是本轮写的，
+      // 不依赖时钟/文件系统 mtime 精度（codex 2026-09-22 三轮建议）。
+      for (const fn of fs.readdirSync(utReportsDir).filter(x => /^verifier\.request\..*\.json$/.test(x))) {
+        fs.rmSync(path.join(utReportsDir, fn), { force: true });
+      }
+      const r = runGateHarness(project, 'ut', clock, utAttemptId, utReplayDeviceEnv);
+      usedClocks.add(clock);
+      // 且必须真的**走了 goal 分支**：注入键名写错时子进程会静默落 interactive/manual
+      //（`harness-runner.ts:1589` 据 `isGoalOrchestrationEnv()` 渲染 `mode=goal_mode|manual`），
+      // 门禁照跑、断言照过，测的却不是生产路径。这一条就是那个错的哨兵。
+      assert(/\bmode=goal_mode\b/.test(r.output),
+        `重跑的 gate harness 没走 goal 分支（注入键名/常量对不上）：${r.output.slice(-2000)}`);
+      const subject = readSummary(project, 'ut')?.verifier_subject_id;
+      const expectedExit = subject === original.verifier_subject_id ? 0 : 1;
+      assert(r.status === expectedExit, `same-entry replay must retain its actual current independent-proof state (exit=${r.status}, expected=${expectedExit}): ${r.output.slice(-2000)}`);
+      assert(subject && /^[0-9a-f]{64}$/.test(subject),
+        `只换时钟重跑 gate harness 后 summary 无合法 subject：${r.output.slice(-1500)}`);
+      // 且必须是**本轮**落的盘：进轮前整片删过，凭证写入是无条件 `writeFileSync`
+      //（harness-runner.ts:2524），文件重新出现即证明本轮真写了，没写就无从冒充。
+      const abs = path.join(utReportsDir, `verifier.request.${subject}.json`);
+      assert(fs.existsSync(abs), `本轮没有重新落盘 request（进轮前已清空该目录的凭证）：${abs}`);
+      const currentMaterial = JSON.parse(fs.readFileSync(path.join(utReportsDir, `verifier.material.${subject}.json`), 'utf8')) as MaterialView;
+      return { subject: subject!, request: verifierRequestOf(project, 'ut', subject!), material: currentMaterial };
+    };
+    const testBeforeClockRounds = fs.readFileSync(testAbs);
+    const clockX = clockRound(RC4_CLOCKS[1]);
+    const clockY = clockRound(RC4_CLOCKS[2]);
+    assert(utMaterialWrites === utWritesAfterChain, 'clock-only gates must not call the UT material writer');
+    assert(fs.readFileSync(testAbs).equals(testBeforeClockRounds), 'clock-only gates must not rewrite the actual UT test');
+    assert(fs.readFileSync(testAbs, 'utf8') === originalTest && fs.readFileSync(businessAbs, 'utf8') === originalBusiness,
+      'clock-only gates must preserve the original source and original business material');
+    assert(clockX.subject === clockY.subject,
+      `材料不变、只换时钟，subject 却换代了：${clockX.subject.slice(0, 12)} vs ${clockY.subject.slice(0, 12)}；same replay entry`);
+    assert(stableStringify(clockX.material) === stableStringify(clockY.material), 'pure clock-only rounds must preserve the entire actual material, including every script check');
+    //    整份逐字段对账，**唯一允许差异 `prompt_sha256`**：ai-prompt.md 每轮带运行时间戳，
+    //    它按设计只作审计记录、不进 subject 派生——依据三处：文件头裁决
+    //    （verifier-request.ts:22-23）、字段注释（:41）、派生串本身不含该字段
+    //    （`canonicalRequestInput`，:65-79）。实测两轮正是它漂移（其余含 material_sha256 /
+    //    gate_fingerprint / source_commit_sha / worktree_digest 全部逐字相同）——
+    //    这条同时证明了「时间确实在动」，本轮对照不是空转；漂移的那一格没有到达 subject。
+    const xr = clockX.request as unknown as Record<string, unknown>;
+    const yr = clockY.request as unknown as Record<string, unknown>;
+    const diffKeys = [...new Set([...Object.keys(xr), ...Object.keys(yr)])]
+      .filter(k => JSON.stringify(xr[k]) !== JSON.stringify(yr[k]))
+      .sort();
+    assert(
+      JSON.stringify(diffKeys) === JSON.stringify(['prompt_sha256']),
+      `材料不变、只换时钟，request 的差异不止审计字段：${JSON.stringify(diffKeys)}\n`
+      + `${JSON.stringify(clockX.request)}\n${JSON.stringify(clockY.request)}`,
+    );
+    //    两份凭证各自用**生产派生函数**重算，都落回同一个 subject（漂移的审计字段不参与）。
+    assert(
+      computeRequestSubjectId(clockX.request) === clockX.subject
+      && computeRequestSubjectId(clockY.request) === clockX.subject,
+      `两份凭证的 subject 与生产派生不一致：${JSON.stringify([computeRequestSubjectId(clockX.request), computeRequestSubjectId(clockY.request), clockX.subject])}`,
+    );
+    const goalMaterial = materialGenerations(project, 'ut').find(generation => generation.subject === original.verifier_subject_id);
+    assert(goalMaterial, 'the actual initial closed material must remain available');
+    const oldFiles = new Map(goalMaterial!.view.files.map(file => [file.path, file.sha256]));
+    console.log('RC4_ENTRY_BASELINE ' + JSON.stringify({goalSubject: original.verifier_subject_id, replaySubject: clockY.subject,
+      added: clockY.material.files.filter(file => !oldFiles.has(file.path)),
+      changed: clockY.material.files.filter(file => oldFiles.has(file.path) && oldFiles.get(file.path) !== file.sha256),
+      removed: goalMaterial!.view.files.filter(file => !clockY.material.files.some(current => current.path === file.path))}));
     captureBindings(project.runId!, utAttemptId);
-    const businessRound = runGateHarness(project, 'ut', RC4_CLOCKS[1], utAttemptId, RC4_DEVICE_ENV);
-    assert(businessRound.status === 0, `真实业务变化后的 gate 不得被旁路：${businessRound.output.slice(-2400)}`);
+    // Only this method's consumed business preset now changes, under the same replay entry and clock as clockY.
+    assert(originalBusiness.includes('[] as string[]'), 'RC-4 business change must target the actual typed mock preset');
+    fs.writeFileSync(businessAbs, originalBusiness.replace('[] as string[]', "['cmb'] as string[]"), 'utf8');
+    captureBindings(project.runId!, utAttemptId);
+    const businessRound = runGateHarness(project, 'ut', RC4_CLOCKS[2], utAttemptId, utReplayDeviceEnv);
+    assert(businessRound.status === 1, `新业务 subject 必须等待当前独核，真实 gate 不得借旧 PASS 返回成功：${businessRound.output.slice(-2400)}`);
     assert(/\bmode=goal_mode\b/.test(businessRound.output), '业务扰动重评必须仍走原 Goal 身份路径');
-    usedClocks.add(RC4_CLOCKS[1]);
+    usedClocks.add(RC4_CLOCKS[2]);
     const final = readSummary(project, 'ut');
     const s3 = final!.verifier_subject_id ?? '';
     assert(/^[0-9a-f]{64}$/.test(s3), `ut summary 的 verifier_subject_id 形态非法：${s3}`);
-    assert(s3 !== original!.verifier_subject_id, '真实业务变化必须签发新 subject');
+    assert(s3 !== clockY.subject && s3 !== original!.verifier_subject_id, '真实业务变化必须签发新 subject，不能复用任一旧核实');
     const changedEvidence = loadVerifierEvidence(project.root, project.feature, 'ut', { frameworkRoot: project.frameworkRoot });
     const pending = resolveCompletionDisposition({ projectRoot: project.root, frameworkRoot: project.frameworkRoot,
       feature: project.feature, chain: ['ut'], runId: project.runId });
     assert(!changedEvidence.ok && pending.completionBlocking.length > 0, '旧核实不得闭合新业务材料；本例不宣称新断言已真机通过');
     assert(fs.readFileSync(originalEvidence.evidence.md_path_abs).equals(originalVerifierBytes), '初始核实原件必须保留');
 
-    // 前提①：被改动的业务正文（UT 测试文件）在 subject 材料里——否则"内容变化必须换代"
+    // 前提①：被改动的业务正文在 subject 材料里——否则"内容变化必须换代"
     // 是空转。材料视图由生产 writer 落盘。
     const materialAbs = path.join(utReportsDir, `verifier.material.${s3}.json`);
     assert(fs.existsSync(materialAbs), `verifier 材料视图未落盘：${materialAbs}`);
     const material = JSON.parse(fs.readFileSync(materialAbs, 'utf-8')) as { files: Array<{ path: string }> };
     assert(
-      material.files.some(f => f.path === REAL_CHAIN_TEST),
-      `UT 测试正文不在 subject 材料里，反洗白那一半失去对象：${JSON.stringify(material.files.map(f => f.path))}`,
+      material.files.some(f => f.path === businessRel) && material.files.some(f => f.path === REAL_CHAIN_TEST),
+      `actual UT business/test material is missing: ${JSON.stringify(material.files.map(f => f.path))}`,
     );
 
     // 前提②：`ac-coverage.json` **在** subject 材料里，这是**契约不是缺陷**
@@ -717,30 +860,33 @@ test('RC-4 verifier subject：时钟漂移不换代，业务内容变化必须�
     const harnessRounds = probe.events.filter(e => e.type === 'harness_start' && e.phase === 'ut').length;
     const generations = materialGenerations(project, 'ut');
     const shaOf = (g: { view: MaterialView }): string | null =>
-      g.view.files.find(f => f.path === REAL_CHAIN_TEST)?.sha256 ?? null;
+      g.view.files.find(f => f.path === businessRel)?.sha256 ?? null;
     const dump = JSON.stringify({
-      harnessRounds: harnessRounds + 1, agentAttempts: utPhases, clocksUsed: usedClocks.size,
-      generations: generations.map(g => ({ subject: g.subject.slice(0, 12), utTestSha: (shaOf(g) ?? '(none)').slice(0, 12) })),
+      harnessRounds: harnessRounds + 3, utMaterialWrites, clocksUsed: usedClocks.size,
+      generations: generations.map(g => ({ subject: g.subject.slice(0, 12), businessSha: (shaOf(g) ?? '(none)').slice(0, 12) })),
       subjectBefore, finalSubject: s3.slice(0, 12),
     });
 
     // 原链与外部业务扰动都经过真实 gate；时钟注入不依赖重复作者。
-    assert(harnessRounds >= 2, `ut 的 harness 只跑了 ${harnessRounds} 轮，取不到多时钟对照：${dump}`);
-    assert(utPhases === 1, `不应为时钟对照重新调用已产出有效材料的作者：${dump}`);
+    assert(harnessRounds >= 1, `原链必须真实检查 UT；新业务 gate 另已实际返回并等待独核：${dump}`);
+    assert(utMaterialWrites === utWritesAfterChain, `业务 gate 对照不得重新运行作者材料 writer：${dump}`);
     assert(usedClocks.size >= 2, `实际 gate 必须收到两个不同时钟：${dump}`);
 
-    // ① 反洗白：业务内容换过一代，且换代确实由那份被改的 UT 正文驱动
+    // ① 反洗白：从稳定重放基线再只改 mock preset，真实业务材料必须换代。
     //（两代材料记录的该文件 sha 不同，末代与盘上字节一致）。
     assert(generations.length >= 2, `业务内容变化后 subject 未换代：${dump}`);
-    const shas = generations.map(shaOf);
-    assert(new Set(shas).size === shas.length, `各代材料记录的 UT 正文 sha 相同，换代与内容无关：${dump}`);
-    assert(shaOf(generations.find(g => g.subject === s3)!) === sha256File(path.join(project.root, REAL_CHAIN_TEST)),
-      `最终 subject 的材料没对上盘上的 UT 正文：${dump}`);
+    assert(shaOf(generations.find(g => g.subject === s3)!) === sha256File(businessAbs),
+      `最终 subject 的材料没对上盘上的业务正文：${dump}`);
 
-    // ② W4 的墙：两轮时钟不同，**除了那份真变了的业务正文，材料逐文件 sha 必须完全相同**
-    //    ——任何随时钟漂移的东西进了材料，这里立刻不等。
-    assert(generations.length === 2, `本条按两代材料对账，实际 ${generations.length} 代：${dump}`);
-    const [genA, genB] = generations;
+    // ② 同一入口、同一时钟的业务对照：除了 preset 正文，实际材料逐文件必须相同。
+    const genA = generations.find(g => g.subject === clockY.subject);
+    const genB = generations.find(g => g.subject === s3);
+    if (!genA || !genB || genA === genB) throw new Error(`必须按稳定重放基线与业务改动的新 subject 逐份对账：${dump}`);
+    assert(shaOf(genA) !== shaOf(genB), `the two controlled real generations must differ in the actual preset body: ${dump}`);
+    const preliminary = generations.filter(g => g !== genA && g !== genB);
+    assert(preliminary.every(g => (g.subject === original.verifier_subject_id && shaOf(g) === shaOf(genA))
+      || (!shaOf(g) && subjectBefore.includes(g.subject))),
+      `其它代只能是原 Goal 的真实闭合代或实际作者产物前代，不能忽略任意业务换代：${dump}`);
     assert(
       JSON.stringify(genA.view.files.map(f => f.path)) === JSON.stringify(genB.view.files.map(f => f.path)),
       `两代材料的文件集合不同，无法单变量对账：${dump}`,
@@ -749,40 +895,28 @@ test('RC-4 verifier subject：时钟漂移不换代，业务内容变化必须�
       .filter((f, i) => f.sha256 !== genB.view.files[i].sha256)
       .map(f => f.path);
     assert(
-      JSON.stringify(drifted) === JSON.stringify([REAL_CHAIN_TEST]),
-      `时钟漂移带进了材料（除 UT 正文外还有文件换 sha）：${JSON.stringify(drifted)}；${dump}`,
+      JSON.stringify(drifted) === JSON.stringify([businessRel]),
+      `除真实业务正文外还有文件换 sha：${JSON.stringify(drifted)}；${dump}`,
     );
-    // 实际 UT 变化也必须进入 test_targets；逐字段核对，不能把真正业务输入变化误判成时钟污染。
-    const inputsA = bindingsByDigest.get(genA.view.input_bindings_sha256 ?? '');
-    const inputsB = bindingsByDigest.get(genB.view.input_bindings_sha256 ?? '');
-    assert(!!inputsA && !!inputsB, `材料 digest 必须对应本轮实际解析的完整输入绑定：${JSON.stringify({
-      material: [genA.view.input_bindings_sha256, genB.view.input_bindings_sha256],
-      captured: [...bindingsByDigest].map(([digest, values]) => ({ digest, projection: bindingProjection(values) })),
-    })}`);
-    assert(genA.view.input_bindings_sha256 !== genB.view.input_bindings_sha256, '真实 UT 正文变化必须改变输入绑定 digest');
-    assert(JSON.stringify(Object.keys(inputsA!)) === JSON.stringify(Object.keys(inputsB!)), '输入集合不得随本轮变化');
-    for (const [id, valueA] of Object.entries(inputsA!)) {
-      const valueB = inputsB![id];
-      if (id !== 'test_targets') {
-        assert(stableStringify(bindingProjection({ [id]: valueA })) === stableStringify(bindingProjection({ [id]: valueB })), `${id} 绑定不应变化`);
-        continue;
-      }
-      if (valueA.state !== 'resolved' || valueB.state !== 'resolved') throw new Error('真实测试输入必须解析成功');
-      const { dependencies: depsA, content_fingerprint: contentA, ...authorityA } = valueA.binding;
-      const { dependencies: depsB, content_fingerprint: contentB, ...authorityB } = valueB.binding;
-      assert(authorityA.source.kind === 'derive' && authorityA.source.provider_id === 'derive.test-targets', '核对对象必须是实际测试输入');
-      assert(stableStringify(authorityA) === stableStringify(authorityB), '测试绑定的来源/路径/输入身份必须稳定');
-      assert(contentA !== contentB && depsA.length === depsB.length, '只改变测试内容 fingerprint，不能改变依赖集合');
-      for (let index = 0; index < depsA.length; index++) {
-        const before = depsA[index], after = depsB[index];
-        if (path.resolve(before.path) === path.resolve(project.root, REAL_CHAIN_TEST)) {
-          assert(before.sha256 === shaOf(genA) && after.sha256 === shaOf(genB), '绑定依赖 hash 必须对应这一代真实 UT 文件');
-          assert(stableStringify({ ...before, sha256: after.sha256 }) === stableStringify(after), 'UT 依赖仅允许内容 hash 变化');
-        } else assert(stableStringify(before) === stableStringify(after), '其它测试依赖不得变化');
-      }
-    }
+    // The current UT contract binds semantic code/acceptance/design inputs. Actual test body bytes
+    // are separately addressed by material files, so an undeclared test_targets binding cannot be invented.
+    const capturedA = bindingsByMaterialHash.get(shaOf(genA)!);
+    const capturedB = bindingsByMaterialHash.get(shaOf(genB)!);
+    assert(capturedA && capturedB && capturedA.digest === genA.view.input_bindings_sha256
+      && capturedB.digest === genB.view.input_bindings_sha256,
+    'both material originals must match their actual inputs via the current production projection');
+    const inputsA = capturedA!.values, inputsB = capturedB!.values;
+    assert(JSON.stringify(Object.keys(inputsA)) === JSON.stringify(Object.keys(inputsB)), 'input identities must not change with this body-only edit');
+    for (const id of Object.keys(inputsA)) assert(stableStringify(bindingProjection({ [id]: inputsA[id] }))
+      === stableStringify(bindingProjection({ [id]: inputsB[id] })), id + ' actual semantic input binding must remain unchanged');
+    assert(genA.view.input_bindings_sha256 === genB.view.input_bindings_sha256,
+      'actual stable semantic bindings must remain stable while the separately addressed test body changes');
+    const beforeChecks = genA.view.script_checks.filter(check => !genB.view.script_checks.includes(check));
+    const afterChecks = genB.view.script_checks.filter(check => !genA.view.script_checks.includes(check));
+    assert(beforeChecks.length === 0 && afterChecks.length === 0,
+      'same-entry preset-only change must preserve every actual script check: ' + JSON.stringify({beforeChecks, afterChecks}));
     for (const key of ['schema', 'gate_fingerprint', 'phase_rule_sha256',
-      'template_sha256', 'lifecycle_sha256', 'extension_sha256', 'script_checks'] as const) {
+      'template_sha256', 'lifecycle_sha256', 'extension_sha256'] as const) {
       assert(
         JSON.stringify(genA.view[key]) === JSON.stringify(genB.view[key]),
         `两代材料的 ${key} 随时钟变了：${JSON.stringify([genA.view[key], genB.view[key]])}`,
@@ -797,66 +931,27 @@ test('RC-4 verifier subject：时钟漂移不换代，业务内容变化必须�
     assert(computeRequestSubjectId(reqB) === reqB.subject_id,
       `request 的 subject 与生产派生不符（凭证被改过）：${reqB.subject_id}`);
     assert(reqA.material_sha256 !== reqB.material_sha256, `两代 request 的 material_sha256 相同，换代与材料无关：${dump}`);
+    assert(computeMaterialSha256(genA.view) === reqA.material_sha256 && computeMaterialSha256(genB.view) === reqB.material_sha256,
+      'both real requests must bind their real material originals');
+    // This in-memory causal control is never written or signed and is not a third gate observation.
+    const sameInputsOldBody = { ...genB.view, files: genB.view.files.map(file => file.path === businessRel ? { ...file, sha256: shaOf(genA)! } : file) };
+    const withoutSelfDigest = (view: MaterialView): unknown => Object.fromEntries(Object.entries(view).filter(([key]) => key !== 'material_sha256'));
+    assert(stableStringify(withoutSelfDigest(genA.view)) === stableStringify(withoutSelfDigest(sameInputsOldBody)),
+      'the two real same-entry materials must differ only in the actual business body and its derived digest');
+    const oldBodyDigest = computeMaterialSha256(sameInputsOldBody);
+    assert(oldBodyDigest === reqA.material_sha256, 'restoring only the real old body hash must restore the actual baseline material digest');
+    assert(oldBodyDigest !== reqB.material_sha256 && computeRequestSubjectId({ ...reqB, material_sha256: oldBodyDigest }) !== reqB.subject_id,
+      'holding the other actual new-material fields constant, the real business body alone must change the derived subject');
+    const actualTestSha = genA.view.files.find(file => file.path === REAL_CHAIN_TEST)?.sha256;
+    assert(actualTestSha && actualTestSha === sha256File(testAbs), 'the unchanged real test body must remain bound to the actual material');
+    assert(originalTest.includes('expect(banks.length).assertEqual(0);'), 'the in-memory test-body control must target a real business assertion');
+    const changedTestSha = crypto.createHash('sha256').update(originalTest.replace('expect(banks.length).assertEqual(0);',
+      "expect(banks.length).assertEqual(0);\n    expect(typeof banks).assertEqual('object');")).digest('hex');
+    const testBodyOnly = { ...genA.view, files: genA.view.files.map(file => file.path === REAL_CHAIN_TEST
+      ? { ...file, sha256: changedTestSha } : file) };
+    assert(computeRequestSubjectId({ ...reqA, material_sha256: computeMaterialSha256(testBodyOnly) }) !== reqA.subject_id,
+      'an in-memory test-source-only change must also affect the subject; it is never written, signed or claimed as a real gate');
 
-    // ④ **W4 的墙本身**（codex 2026-09-22 阻断：甲段里时钟与正文一起变，证不了时钟不变量）。
-    //    材料字节一个都不动，只换时钟，把真实 gate harness 再跑两轮——整条 subject 派生链
-    //    （输入解析 → 材料视图 → material_sha256 → request）都由生产代码重走一遍。
-    //    判据：两轮落盘的 request 整份逐字段对账、**唯一允许差异 `prompt_sha256`**，
-    //    不是只比挑出来的几个字段，也不是拿确定性函数自我印证。
-    //    设备目标用甲段就绪门交出去的**同一个对象** `RC4_DEVICE_ENV`，不另造——否则乙段跑的
-    //    是与甲段不同的环境（父进程回落 hmos-app 后 `ut.run` 属设备能力，就绪门会冻结 HDC 目标，
-    //    生产在 `goal-phase-runtime.ts:8244` 把它传给 gate harness）。
-    assert(gatedPhases.includes('ut'),
-      `ut 没过就绪门，乙段带设备环境就失去依据：${JSON.stringify(gatedPhases)}`);
-    const clockRound = (clock: string): { subject: string; request: VerifierRequest } => {
-      // 每轮先清掉旧凭证：轮末只要"该 subject 的 request 在盘上"即证明是本轮写的，
-      // 不依赖时钟/文件系统 mtime 精度（codex 2026-09-22 三轮建议）。
-      for (const fn of fs.readdirSync(utReportsDir).filter(x => /^verifier\.request\..*\.json$/.test(x))) {
-        fs.rmSync(path.join(utReportsDir, fn), { force: true });
-      }
-      const r = runGateHarness(project, 'ut', clock, utAttemptId, RC4_DEVICE_ENV);
-      // 子进程必须真的跑成功——非 0 退出下面读到的全是上一轮的旧产物。
-      assert(r.status === 0, `只换时钟重跑 gate harness 未 exit 0（exit=${r.status}）：${r.output.slice(-2000)}`);
-      // 且必须真的**走了 goal 分支**：注入键名写错时子进程会静默落 interactive/manual
-      //（`harness-runner.ts:1589` 据 `isGoalOrchestrationEnv()` 渲染 `mode=goal_mode|manual`），
-      // 门禁照跑、断言照过，测的却不是生产路径。这一条就是那个错的哨兵。
-      assert(/\bmode=goal_mode\b/.test(r.output),
-        `重跑的 gate harness 没走 goal 分支（注入键名/常量对不上）：${r.output.slice(-2000)}`);
-      const subject = readSummary(project, 'ut')?.verifier_subject_id;
-      assert(subject && /^[0-9a-f]{64}$/.test(subject),
-        `只换时钟重跑 gate harness 后 summary 无合法 subject：${r.output.slice(-1500)}`);
-      // 且必须是**本轮**落的盘：进轮前整片删过，凭证写入是无条件 `writeFileSync`
-      //（harness-runner.ts:2524），文件重新出现即证明本轮真写了，没写就无从冒充。
-      const abs = path.join(utReportsDir, `verifier.request.${subject}.json`);
-      assert(fs.existsSync(abs), `本轮没有重新落盘 request（进轮前已清空该目录的凭证）：${abs}`);
-      return { subject: subject!, request: verifierRequestOf(project, 'ut', subject!) };
-    };
-    const clockX = clockRound(RC4_CLOCKS[1]);
-    const clockY = clockRound(RC4_CLOCKS[2]);
-    assert(clockX.subject === clockY.subject,
-      `材料不变、只换时钟，subject 却换代了：${clockX.subject.slice(0, 12)} vs ${clockY.subject.slice(0, 12)}；${dump}`);
-    //    整份逐字段对账，**唯一允许差异 `prompt_sha256`**：ai-prompt.md 每轮带运行时间戳，
-    //    它按设计只作审计记录、不进 subject 派生——依据三处：文件头裁决
-    //    （verifier-request.ts:22-23）、字段注释（:41）、派生串本身不含该字段
-    //    （`canonicalRequestInput`，:65-79）。实测两轮正是它漂移（其余含 material_sha256 /
-    //    gate_fingerprint / source_commit_sha / worktree_digest 全部逐字相同）——
-    //    这条同时证明了「时间确实在动」，本轮对照不是空转；漂移的那一格没有到达 subject。
-    const xr = clockX.request as unknown as Record<string, unknown>;
-    const yr = clockY.request as unknown as Record<string, unknown>;
-    const diffKeys = [...new Set([...Object.keys(xr), ...Object.keys(yr)])]
-      .filter(k => JSON.stringify(xr[k]) !== JSON.stringify(yr[k]))
-      .sort();
-    assert(
-      JSON.stringify(diffKeys) === JSON.stringify(['prompt_sha256']),
-      `材料不变、只换时钟，request 的差异不止审计字段：${JSON.stringify(diffKeys)}\n`
-      + `${JSON.stringify(clockX.request)}\n${JSON.stringify(clockY.request)}`,
-    );
-    //    两份凭证各自用**生产派生函数**重算，都落回同一个 subject（漂移的审计字段不参与）。
-    assert(
-      computeRequestSubjectId(clockX.request) === clockX.subject
-      && computeRequestSubjectId(clockY.request) === clockX.subject,
-      `两份凭证的 subject 与生产派生不一致：${JSON.stringify([computeRequestSubjectId(clockX.request), computeRequestSubjectId(clockY.request), clockX.subject])}`,
-    );
   } finally {
     if (prevClock === undefined) delete process.env.MAISON_TEST_AC_COVERAGE_NOW;
     else process.env.MAISON_TEST_AC_COVERAGE_NOW = prevClock;
@@ -869,9 +964,8 @@ test('RC-4 verifier subject：时钟漂移不换代，业务内容变化必须�
 // RC-8（墙 W7b）：同签名无进展停机
 // ---------------------------------------------------------------------------
 // 在真 harness 链上制造同签名重复失败，两个分支各跑一条独立的链：
-//   (a) 相关文件**真修改** → 允许继续（第 3 轮仍在跑）；
-//   (b) 只改无关文件 → 走既有 no-progress 停机。
-// 判据是"停或不停 + 理由正确"，不是"结论正确"。
+//   (a) 相关文件真换字节但安全约束未映射；(b) 相关字节不变、只换无关工作笔记。
+// 两者均须在真实反馈/交回及当前有效检查后有界 no-progress 暂停，不把改字节当验收改善。
 //
 // **失败点为什么在 plan 而不是 spec**（codex 2026-09-22 裁定，撤回本条早先的 spec.md 构造）：
 // 1.2 的范围里 spec 的 required_outputs **不含 `spec.md`**，于是 `check-spec.ts:1484` 走
@@ -881,123 +975,164 @@ test('RC-4 verifier subject：时钟漂移不换代，业务内容变化必须�
 // 改法：把失败点显式落在 1.2 下**真会执行**的那格，并先证明它确实到达了失败结果（见
 // `assertPlanFailedOnRc8Target`），再做单变量对照。**不动生产熔断。**
 //
-// 8a：引用不在预测文件表已不阻断。改用真实越根路径错误，同一检查、同一相关文件，
-// 不修改熔断规则，也不恢复已取消的逐文件许可。
+// 越根引用属于不可解析输入，正确进入 executor_waiting。此处用可解析但未追溯的安全约束；
+// traversal 的拒绝反例由 contract-reference-closure 套件保留，不修改熔断与输入准入规则。
 // ===========================================================================
 
-/** plan 期确定性失败点的 check id（BLOCKER，带 affected_files=contracts.yaml）。 */
-const RC8_CHECK_ID = 'contract_file_reference_closure';
-/** 真实越出工程根的非法引用（不读取工程外文件）。 */
-const RC8_INVALID_REFERENCE = '../outside-nav.json5';
+/** plan 期确定性业务失败点；相关 contracts 由真实当前输入绑定核对。 */
+const RC8_CHECK_ID = 'spec_constraint_traceability';
+/** 可解析验收中的安全约束。 */
+const RC8_CONSTRAINT_ID = 'AC-8';
 
 function rc8ContractsRel(p: RealChainProject): string {
   return `doc/features/${p.feature}/contracts.yaml`;
 }
 
-/** 写齐 plan 材料，再往 contracts.yaml 追加一条非法越根引用；`marker` 非空时再追加一行注释（真换字节、不修问题）。 */
-function writePlanWithInvalidReference(p: RealChainProject, marker?: string): void {
+/** 写齐原 plan 材料但不补安全约束映射；marker 只换相关字节，不修实际问题。 */
+function writePlanWithUnmappedConstraint(p: RealChainProject, marker?: string): void {
   writePlanMaterials(p);
   const abs = path.join(p.root, rc8ContractsRel(p));
   const body = fs.readFileSync(abs, 'utf-8').replace(/\s*$/, '\n');
-  fs.writeFileSync(abs, `${body}navigation:\n  config_files:\n    - ${RC8_INVALID_REFERENCE}\n${marker ? `# ${marker}\n` : ''}`, 'utf-8');
+  fs.writeFileSync(abs, body + (marker ? `# ${marker}\n` : ''), 'utf-8');
 }
 
 /** 两条共用：无关文件每轮都变（把"无关变化"这一项在 (a)/(b) 之间拉平）。 */
 function writeUnrelatedNote(p: RealChainProject, attempt: number): void {
-  writeHostFile(p.root, 'doc/notes.md', `# notes\n\nattempt ${attempt}\n`);
+  writeHostFile(p.root, path.relative(p.root, featureFilePath(p.root, p.feature, 'plan/notes.md')), `# notes\n\nattempt ${attempt}\n`);
 }
 
 /**
  * 先证明失败触发到了预期契约：plan 因 `RC8_CHECK_ID` 失败，且**相关文件集合**里确实有
- * contracts.yaml——熔断的 watched 集合正来自 `blockers[].affected_files`
- * （`extractContentRelatedFiles`，goal-failure-classifier.ts:406）。这一格不成立时，
+ * contracts.yaml；当前可复用的真实工具结果也必须保留这一 FAIL，不能只读旧盘上标签。
+ * 这一格不成立时，
  * (a)/(b) 的结论各自都无从谈起。
  */
 function assertPlanFailedOnRc8Target(p: RealChainProject): void {
-  const contractsRel = rc8ContractsRel(p);
   const plan = readSummary(p, 'plan');
-  assert(plan?.verdict === 'FAIL', `plan 没按预期失败：${dumpPhase(p, 'plan')}`);
-  const hit = (plan?.blockers ?? []).find(b => (b.id ?? b.check_id) === RC8_CHECK_ID);
-  assert(hit, `plan 的失败不在目标检查 ${RC8_CHECK_ID} 上：${dumpPhase(p, 'plan')}`);
-  assert(
-    (hit!.affected_files ?? []).includes(contractsRel),
-    `目标检查没把相关文件带进失败结果，熔断的 watched 集合失去对象：${JSON.stringify(hit)}`,
-  );
+  assert(plan?.verdict === 'FAIL', 'plan must retain its real current failure: ' + dumpPhase(p, 'plan'));
+  const current = readReusableCheckResult({ projectRoot: p.root, frameworkRoot: p.frameworkRoot, feature: p.feature, runId: p.runId, phase: 'plan' });
+  assert(current?.checks.some(check => check.id === RC8_CHECK_ID && check.status === 'FAIL' && check.details?.includes(RC8_CONSTRAINT_ID)), 'the current bound plan result must retain its actual unmapped constraint');
+  const observation = readCurrentCheckObservation({ projectRoot: p.root, frameworkRoot: p.frameworkRoot, feature: p.feature, runId: p.runId!, phase: 'plan' });
+  assert(observation.inputs[rc8ContractsRel(p)]?.exists, 'the actual plan comparison must bind the related contracts input');
 }
 
-test('RC-8a 同签名重复失败但相关文件真修改：不停机，继续下一轮', withProject(async (project, birthChain) => {
-  const probe = await runGoalRuntimeChain(project.root, {
-    onOutOfChain: ctx => { assert(publishRequestedVerifier(project, ctx), `unexpected model purpose: ${ctx.phase}`); },
-    frameworkRoot: project.frameworkRoot,
-    featureId: project.feature,
-    realHarness: true,
-    adapter: 'codex',
-    freshStartPhase: birthChain[0] as 'spec',
-    freshEndPhase: birthChain[birthChain.length - 1],
-    freshRequirement: REAL_CHAIN_REQUIREMENT,
-    onSpec: ctx => { project.runId = ctx.runId; writeSpecMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'spec'); },
-    onPlan: ctx => {
-      project.runId = ctx.runId;
-      // 与 RC-8b 的**唯一**差别：相关文件（contracts.yaml）每轮真换一次字节，但那一格仍没修好
-      //——末尾多一行本轮注释，非法越根引用原样保留 → 同一组 blocker。
-      // 这正是"agent 动了被点名的文件、但没解决问题"那种真修复尝试的形态。
-      writePlanWithInvalidReference(project, `plan attempt ${ctx.attempt}`);
-      writeUnrelatedNote(project, ctx.attempt);
-    },
-  });
-  assertPlanFailedOnRc8Target(project);
-  const planAttempts = probe.invokedPhases.filter(x => x === 'plan').length;
-  // 判据只对 plan 说话：spec 已 PASS 推进，plan 之后没有别的阶段跑起来。
-  const noProgress = haltEvents(probe.events)
-    .filter(e => e.phase === 'plan' && /^no_progress/.test(String(e.halt_reason ?? '')));
-  assert(noProgress.length === 0, `真修改仍被判无进展停机：${JSON.stringify(noProgress)}`);
-  assert(planAttempts >= 3, `相关文件真修改却只跑了 ${planAttempts} 轮：${JSON.stringify(haltEvents(probe.events))}`);
-}));
+interface Rc8WriterObservation {
+  invokeId: string;
+  instruction: string;
+  preContractHash: string | null;
+  contractHash: string;
+  noteHash: string;
+}
 
-test('RC-8b 同签名重复失败且只改无关文件：走既有 no-progress 停机并说清理由', withProject(async (project, birthChain) => {
+/** Same comparable business failure; only related-file byte changes differ between the two cases. */
+async function runRc8NoProgress(project: RealChainProject, birthChain: string[], relatedChange: boolean): Promise<void> {
+  const { authorHooks } = await import('./lifecycle-evolution.unit.test');
+  const { executionRequestForInvoke } = await import('../../scripts/utils/session-execution-handoff');
+  const { workUnitMayWritePath } = await import('../../scripts/utils/repair-responsibility');
+  // A valid existing acceptance input leaves the plan method independently comparable.
+  writeSpecMaterials(project);
+  const uiFile = featureFilePath(project.root, project.feature, 'spec/ui-spec.yaml');
+  const ui = YAML.parse(fs.readFileSync(uiFile, 'utf8'));
+  delete ui.feature;
+  ui.tokens = { gap: { kind: 'spacing', value: '16vp' } };
+  ui.screens[0].root.children[0].type = 'list_row';
+  ui.screens[1].root.children[0].type = 'content_display';
+  fs.writeFileSync(uiFile, YAML.stringify(ui));
+  const acceptanceFile = featureFilePath(project.root, project.feature, 'acceptance.yaml');
+  const acceptance = YAML.parse(fs.readFileSync(acceptanceFile, 'utf8'));
+  acceptance.criteria.push({ ...acceptance.criteria[1], id: RC8_CONSTRAINT_ID, category: 'security', description: '列表不得泄漏未授权数据，设计必须追溯此安全约束' });
+  fs.writeFileSync(acceptanceFile, YAML.stringify(acceptance));
+  // The negative concerns the plan's mapping, not a missing definition input.
+  writePlanMaterials(project);
+  fs.rmSync(featureFilePath(project.root, project.feature, 'context/facts.md'), { force: true });
+  const prepared = prepareFeatureScopeCandidate({ projectRoot: project.root, frameworkRoot: project.frameworkRoot, feature: project.feature, completionTarget: 'request',
+    requestedResults: ['给定验收下的设计契约'], requestedPhases: ['plan'], requirement: REAL_CHAIN_REQUIREMENT, overwrite: true });
+  // Request a real plan recheck: existing design bytes are its input, not a claim this new duty is already done.
+  const declaration = YAML.parse(fs.readFileSync(prepared.path, 'utf8'));
+  for (const fact of prepared.candidate.facts) if (fact.kind === 'design-context') delete fact.satisfied_by;
+  declaration.execution_scope = prepared.candidate;
+  fs.writeFileSync(prepared.path, YAML.stringify(declaration));
+  const writes: Rc8WriterObservation[] = [];
+  let planMaterialWrites = 0;
+  const contractsRel = rc8ContractsRel(project), contractsAbs = path.join(project.root, contractsRel);
+  const noteAbs = featureFilePath(project.root, project.feature, 'plan/notes.md');
+  const hooks = authorHooks(project, {
+    plan: p => {
+      planMaterialWrites++;
+      writePlanWithUnmappedConstraint(p, relatedChange ? 'plan material write ' + planMaterialWrites : undefined);
+      writeUnrelatedNote(p, planMaterialWrites);
+      const factsFile = featureFilePath(p.root, p.feature, 'context/facts.md');
+      const { parseContextExploration } = require('../../scripts/utils/context-exploration') as typeof import('../../scripts/utils/context-exploration');
+      const facts = parseContextExploration(fs.readFileSync(factsFile, 'utf8'));
+      assert(!facts.error, 'the plan researcher must keep parseable actual facts');
+      const sources = [...new Set([...(facts.fm.source_code_paths as string[]), ...['spec/spec.md', 'spec/ui-spec.yaml',
+        'acceptance.yaml', 'contracts.yaml', 'plan/plan.md'].map(relative => path.relative(p.root, featureFilePath(p.root, p.feature, relative)).replace(/\\/g, '/'))])];
+      // Inspect the actual implementation and the five definition inputs; no dummy files pad research.
+      for (const source of sources) fs.readFileSync(path.join(p.root, source), 'utf8').indexOf('\n');
+      for (const source of facts.fm.key_inputs_read as string[]) fs.readFileSync(path.join(p.root, source), 'utf8');
+      fs.writeFileSync(factsFile, '---\n' + YAML.stringify({ ...facts.fm, source_code_paths: sources,
+        files_inspected_count: sources.length + (facts.fm.key_inputs_read as string[]).length,
+        searches_performed_estimate: sources.length }) + '---\n' + facts.body);
+    },
+  });
   const probe = await runGoalRuntimeChain(project.root, {
-    onOutOfChain: ctx => { assert(publishRequestedVerifier(project, ctx), `unexpected model purpose: ${ctx.phase}`); },
-    frameworkRoot: project.frameworkRoot,
-    featureId: project.feature,
-    realHarness: true,
-    adapter: 'codex',
-    freshStartPhase: birthChain[0] as 'spec',
-    freshEndPhase: birthChain[birthChain.length - 1],
-    freshRequirement: REAL_CHAIN_REQUIREMENT,
-    onSpec: ctx => { project.runId = ctx.runId; writeSpecMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'spec'); },
-    onPlan: ctx => {
-      project.runId = ctx.runId;
-      // 与 RC-8a 的唯一差别：相关文件（contracts.yaml）字节恒定（每轮写出同样字节）；无关的 notes 变化两边一模一样。
-      writePlanWithInvalidReference(project);
-      writeUnrelatedNote(project, ctx.attempt);
+    onOutOfChain: ctx => { assert(publishRequestedVerifier(project, ctx), 'unexpected model purpose: ' + ctx.phase); },
+    frameworkRoot: project.frameworkRoot, featureId: project.feature, realHarness: true, adapter: 'codex',
+    freshStartPhase: 'plan', freshEndPhase: 'plan', freshRequirement: REAL_CHAIN_REQUIREMENT,
+    onAuthor: (ctx, context) => {
+      const preContractHash = fs.existsSync(contractsAbs) ? sha256File(contractsAbs) : null;
+      const countBefore = planMaterialWrites;
+      hooks.onAuthor(ctx, context);
+      if (planMaterialWrites === countBefore) return;
+      const start = [...loadAuthoritativeEvents(path.join(context.runDir, 'events.jsonl'))].reverse()
+        .find(event => event.type === 'agent_invoke_start' && event.phase === context.phase);
+      assert(typeof start?.invoke_id === 'string', 'the plan writer needs its actual author start');
+      const issued = executionRequestForInvoke(context.runDir, String(start!.invoke_id));
+      assert(issued?.request.context.phase === 'work-unit-author'
+        && issued.request.context.runId === context.runId && issued.request.context.attemptId === context.attemptId
+        && issued.request.context.owner.owner_id === context.owner.owner_id
+        && issued.request.context.owner.epoch === context.owner.epoch, 'the writer must consume the actual signed request');
+      assert(!!issued!.request.write_boundary && workUnitMayWritePath(issued!.request.write_boundary!, path.relative(project.root, noteAbs)),
+        'the unrelated note must remain inside an actually authorized workspace');
+      const contractHash = sha256File(contractsAbs), noteHash = sha256File(noteAbs);
+      assert(contractHash !== null && noteHash !== null, 'the actual plan writer must leave both real files');
+      writes.push({ invokeId: issued!.request.invoke_id, instruction: issued!.request.context.instruction ?? '', preContractHash,
+        contractHash: contractHash!, noteHash: noteHash! });
     },
   });
   assertPlanFailedOnRc8Target(project);
-  const halts = haltEvents(probe.events);
-  const planAttempts = probe.invokedPhases.filter(x => x === 'plan').length;
-  const noProgress = halts.filter(e => e.phase === 'plan' && /^no_progress/.test(String(e.halt_reason ?? '')));
-  assert(
-    noProgress.length > 0,
-    `无进展却没走 no-progress 停机（plan 跑了 ${planAttempts} 轮）：${JSON.stringify(halts)}
-${dumpPhase(project, 'plan')}`,
-  );
-  // halt_reason 要落**这一支**：`no_progress_toolchain/capture/agent_timeout` 与它共用同一句
-  //「零变化」模板（goal-phase-runtime.ts:9004），只匹配 `/^no_progress/` + `/零变化/` 认不出走错支。
-  const halt = noProgress[0];
-  assert(halt.halt_reason === 'no_progress_guard', `停机走的不是内容失败那一支：${JSON.stringify(halt.halt_reason)}`);
-  assert(
-    /零变化/.test(String(halt.reason ?? '')) && /failure_kind=code_regression/.test(String(halt.reason ?? '')),
-    `停机理由没说清无进展事实或失败分类不是内容失败：${JSON.stringify(halt.reason)}`,
-  );
-  // 相关集合在本条里是**已知**的（contracts.yaml，由 assertPlanFailedOnRc8Target 坐实），
-  // 故不得走 d84cd6de 的「相关目标未知」话术——那条是相关集合为空时的另一支，混用即归因错位。
-  assert(
-    !/没能解析出任何相关目标|相关目标未知/.test(String(halt.halt_guidance ?? '')),
-    `相关集合已知却报「相关目标未知」：${JSON.stringify(halt.halt_guidance)}`,
-  );
-  assert(planAttempts <= 3, `无进展停机太晚：plan 跑了 ${planAttempts} 轮`);
-  assert(probe.exitCode !== 0, '停机后整条 run 仍报成功');
-}));
+  assert(planMaterialWrites >= 2, 'the fixture must include actual preparation and a real feedback handback');
+  const feedbackWrites = writes.filter(write => write.instruction.includes(RC8_CHECK_ID) && write.instruction.includes(RC8_CONSTRAINT_ID));
+  assert(feedbackWrites.length === 1, 'one actual handback of the same known unresolved problem must pause, not buy another plan rewrite: ' + feedbackWrites.length);
+  const feedbackStartAt = probe.events.findIndex(event => event.type === 'agent_invoke_start' && event.invoke_id === feedbackWrites[0].invokeId);
+  assert(feedbackStartAt >= 0 && probe.events.slice(0, feedbackStartAt).some(event => event.type === 'harness_end' && event.phase === 'plan' && event.timed_out !== true),
+    'the actual plan checker must produce the failure before the signed repair request');
+  assert(new Set(writes.map(write => write.noteHash)).size === writes.length, 'both cases must really change the same unrelated note');
+  const contractGenerations = new Set(writes.map(write => write.contractHash)).size;
+  assert(relatedChange ? contractGenerations >= 2 : contractGenerations === 1, 'related contract bytes must differ only in RC-8a');
+  const currentContracts = YAML.parse(fs.readFileSync(contractsAbs, 'utf8'));
+  assert(!JSON.stringify(currentContracts).includes(RC8_CONSTRAINT_ID), 'the actual security constraint must remain unmapped');
+  for (const write of writes.filter(item => item.preContractHash !== item.contractHash)) {
+    assert(probe.events.some(event => event.type === 'phase_write_observed' && event.phase === 'work-unit-author' && event.invoke_id === write.invokeId
+      && ((event.owned ?? []) as Array<{ path?: string; owner?: string; pre_sha256?: string | null; post_sha256?: string }>).some(row =>
+        row.path === contractsRel && row.owner === 'plan' && row.pre_sha256 === write.preContractHash && row.post_sha256 === write.contractHash)),
+      'the runtime must record the actual authorized plan write, not a fabricated phase actor');
+  }
+  const planChecks = probe.events.filter(event => event.type === 'harness_end' && event.phase === 'plan' && event.timed_out !== true);
+  assert(planChecks.length > 0, 'the real plan checker must execute; unchanged semantic inputs may reuse its current bound FAIL');
+  const halt = haltEvents(probe.events).find(event => event.halt_reason === 'no_progress_guard');
+  assert(!!halt, 'unresolved current facts must naturally reach the existing no-progress pause: ' + JSON.stringify(haltEvents(probe.events)));
+  const detail = String(halt!.reason ?? '') + '\n' + String(halt!.halt_guidance ?? '');
+  assert(detail.includes(RC8_CHECK_ID) && detail.includes(RC8_CONSTRAINT_ID), 'pause must preserve the actual target and constraint: ' + detail);
+  assert(/无.*改善|同一反馈|当前有效完成检查/.test(detail), 'pause must explain the current unfinished work rather than an obsolete failure_kind: ' + detail);
+  assert(!/没能解析出任何相关目标|相关目标未知/.test(detail), 'known contract evidence must not be relabeled as an unknown target');
+  assert(probe.exitCode !== 0 && !probe.events.some(event => event.type === 'run_end' && ['COMPLETED', 'CHAIN_SLICE_COMPLETED'].includes(String(event.status))),
+    'an unresolved required constraint must never claim completion');
+}
+
+test('RC-8a 同签名重复失败但相关字节真修改：实际问题未改善时有界暂停', withProject((project, birthChain) => runRc8NoProgress(project, birthChain, true)));
+
+test('RC-8b 同签名重复失败且只改无关文件：走既有 no-progress 停机并说清理由', withProject((project, birthChain) => runRc8NoProgress(project, birthChain, false)));
 
 // ===========================================================================
 // RC-8c（plan 3abca824 t4 · A7 公开入口）：plan 是非建立阶段（facts 由 spec 建立）；plan 材料齐全，
@@ -1019,6 +1154,15 @@ function stripPlanDelta(p: RealChainProject, mode: 'missing' | 'empty'): void {
 async function rc8cPlanDeltaDisclosed(mode: 'missing' | 'empty', id: string): Promise<void> {
   {
     await withProject(async (project, birthChain) => {
+      const { authorHooks } = await import('./lifecycle-evolution.unit.test');
+      const { parseContextExploration } = await import('../../scripts/utils/context-exploration');
+      const { researchSnapshotFacts } = await import('../fixtures/host-snapshot-3.1.0/migrate');
+      assert(birthChain[0] === 'spec', 'this delta-shape negative needs a real earlier establishing method');
+      let planMaterialWrites = 0;
+      const hooks = authorHooks(project, {
+        spec: writeSpecMaterials, plan: p => { planMaterialWrites++; writePlanMaterials(p); },
+        coding: p => writeCodingMaterials(p), review: writeReviewMaterials, ut: writeUtMaterials, testing: writeTestPlan,
+      });
       const probe = await runGoalRuntimeChain(project.root, {
         onOutOfChain: ctx => { assert(publishRequestedVerifier(project, ctx), `unexpected model purpose: ${ctx.phase}`); },
         frameworkRoot: project.frameworkRoot,
@@ -1028,14 +1172,32 @@ async function rc8cPlanDeltaDisclosed(mode: 'missing' | 'empty', id: string): Pr
         freshStartPhase: birthChain[0] as 'spec',
         freshEndPhase: birthChain[birthChain.length - 1],
         freshRequirement: REAL_CHAIN_REQUIREMENT,
-        onSpec: ctx => { project.runId = ctx.runId; writeSpecMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'spec'); },
-        onPlan: ctx => {
-          project.runId = ctx.runId;
-          writePlanMaterials(project);
-          stripPlanDelta(project, mode);
-          if (ctx.attempt > 1) publishVerifier(project, 'plan');
+        onAuthor: (ctx, context) => {
+          const writesBefore = planMaterialWrites;
+          hooks.onAuthor(ctx, context);
+          if (!context.factsContext?.baseline && context.factsContext?.first_phase === 'spec') {
+            // This is still the first author handback, before any baseline is admitted. Preserve every real method delta.
+            fs.readFileSync(path.join(project.root, REAL_CHAIN_PNG_EXISTING));
+            const factsFile = featureFilePath(project.root, project.feature, 'context/facts.md');
+            const raw = fs.readFileSync(factsFile, 'utf8'), facts = parseContextExploration(raw);
+            assert(!facts.error, 'the original writers must produce a readable research record');
+            const declared = Array.isArray(facts.fm.source_code_paths) ? facts.fm.source_code_paths.filter((source): source is string => typeof source === 'string') : [];
+            const methodDeltas = raw.match(/^##\s*phase_delta:[\s\S]*/m)?.[0] ?? '';
+            fs.writeFileSync(factsFile, '---\n' + YAML.stringify({ ...facts.fm,
+              source_code_paths: [...new Set([...declared, REAL_CHAIN_PNG_EXISTING])] }) + '---\n' + facts.body, 'utf8');
+            researchSnapshotFacts(project.root, factsFile, 'spec', context.factsContext);
+            if (methodDeltas) fs.appendFileSync(factsFile, '\n' + methodDeltas);
+          }
+          // Apply the original negative only after the real writer and shared facts preparation have finished.
+          if (planMaterialWrites > writesBefore) {
+            const researched = parseContextExploration(fs.readFileSync(featureFilePath(project.root, project.feature, 'context/facts.md'), 'utf8'));
+            assert(Array.isArray(researched.fm.source_code_paths) && researched.fm.source_code_paths.includes(REAL_CHAIN_PNG_EXISTING),
+              'existing resource coverage must survive independently of the intentionally missing/empty plan delta');
+            stripPlanDelta(project, mode);
+          }
         },
       });
+      assert(planMaterialWrites > 0, 'the actual author must prepare plan materials before the delta negative');
       const script = JSON.parse(fs.readFileSync(path.join(featurePhaseReportsDir(project.root, project.feature, 'plan'), 'script-report.json'), 'utf-8')) as { checks: CheckResult[] };
       const raw = script.checks.filter(c => c.status === 'FAIL').map(c => `${c.id}/${c.severity}`).sort();
       assert(JSON.stringify(raw) === JSON.stringify([`${id}/BLOCKER`]), `${mode}：plan 完整检查结果里应只有这一条原始 FAIL：${JSON.stringify(raw)}\n${dumpPhase(project, 'plan')}`);
@@ -1043,7 +1205,13 @@ async function rc8cPlanDeltaDisclosed(mode: 'missing' | 'empty', id: string): Pr
       assert(plan?.verdict === 'PASS', `${mode}：披露后 plan 应通过：${dumpPhase(project, 'plan')}`);
       assert((plan?.disclosed_failures ?? []).some(d => d.id === id), `${mode}：${id} 应进 disclosed_failures：${JSON.stringify(plan?.disclosed_failures)}`);
       assert(!(plan?.blockers ?? []).some(b => (b.id ?? b.check_id) === id), `${mode}：${id} 不应再进 blockers`);
-      assert(probe.invokedPhases.includes('coding'), `${mode}：plan 通过后链应推进到 coding：${JSON.stringify(probe.invokedPhases)}`);
+      const planPassedAt = probe.events.findIndex(event => event.type === 'phase_verdict' && event.phase === 'plan' && event.verdict === 'PASS');
+      const codingStartAt = probe.events.findIndex((event, index) => index > planPassedAt && event.type === 'harness_start' && event.phase === 'coding');
+      assert(planPassedAt >= 0 && codingStartAt > planPassedAt, mode + ': plan disclosure must really advance to the coding method');
+      const codingStart = probe.events[codingStartAt];
+      assert(typeof codingStart.invoke_id === 'string' && probe.events.slice(codingStartAt + 1).some(event => event.type === 'harness_end' && event.phase === 'coding'
+        && event.invoke_id === codingStart.invoke_id && typeof event.exit_code === 'number' && event.timed_out !== true),
+        mode + ': the actual coding method must return; a native actor label is not execution evidence');
     })();
   }
 }
@@ -1084,103 +1252,70 @@ export function codingBacktrackRequested(p: RealChainProject): boolean {
 
 export async function rc9TestingBacktrackThroughCoding(): Promise<void> {
   await withProject(async (project, birthChain) => {
-    /** testing 首次调用时 ut summary 的 mtime——回退前那份 ut 报告（「承接不免 UT 重验」的对照）。 */
-    let utSummaryMtimeBeforeTesting: number | undefined;
-    const utSummaryAbs = path.join(featurePhaseReportsDir(project.root, project.feature, 'ut', project.frameworkRoot), 'summary.json');
+    const { authorHooks } = await import('./lifecycle-evolution.unit.test');
+    let repair: { invokeId: string; candidates: Array<Record<string, unknown>>; testHash: string;
+      acceptanceHash: string; contractsHash: string } | undefined;
+    const hooks = authorHooks(project, {
+      spec: writeSpecMaterials, plan: writePlanMaterials,
+      coding: p => writeCodingMaterials(p, { entryTitleId: !!repair }),
+      review: writeReviewMaterials, ut: writeUtMaterials, testing: writeTestPlan,
+    });
     const probe = await runGoalRuntimeChain(project.root, {
+      frameworkRoot: project.frameworkRoot, featureId: project.feature, realHarness: true, viaHostBridge: true, adapter: 'codex',
+      freshStartPhase: birthChain[0] as 'spec', freshEndPhase: birthChain[birthChain.length - 1], freshRequirement: REAL_CHAIN_REQUIREMENT,
       onOutOfChain: ctx => { assert(publishRequestedVerifier(project, ctx), `unexpected model purpose: ${ctx.phase}`); },
-      frameworkRoot: project.frameworkRoot,
-      featureId: project.feature,
-      realHarness: true,
-      viaHostBridge: true,
-      adapter: 'codex',
-      freshStartPhase: birthChain[0] as 'spec',
-      freshEndPhase: birthChain[birthChain.length - 1],
-      freshRequirement: REAL_CHAIN_REQUIREMENT,
-      onSpec: ctx => { project.runId = ctx.runId; writeSpecMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'spec'); },
-      onPlan: ctx => { project.runId = ctx.runId; writePlanMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'plan'); },
-      onCoding: ctx => {
-        project.runId = ctx.runId;
-        writeCodingMaterials(project, { entryTitleId: codingBacktrackRequested(project) });
-        if (ctx.attempt > 1) publishVerifier(project, 'coding');
-      },
-      onReview: ctx => { project.runId = ctx.runId; writeReviewMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'review'); },
-      onUt: ctx => { project.runId = ctx.runId; writeUtMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'ut'); },
-      onTesting: ctx => {
-        project.runId = ctx.runId;
-        if (utSummaryMtimeBeforeTesting === undefined && fs.existsSync(utSummaryAbs)) utSummaryMtimeBeforeTesting = fs.statSync(utSummaryAbs).mtimeMs;
-        writeTestPlan(project);
-        if (ctx.attempt > 1) publishVerifier(project, 'testing');
+      onAuthor: (ctx, context) => {
+        const summary = readSummary(project, 'testing') as ReturnType<typeof readSummary> & { repair_candidates?: Array<Record<string, unknown>> };
+        const candidates = summary?.repair_candidates?.filter(candidate => /^testing_failure_routing_/.test(String(candidate.id))
+          && candidate.category === 'coding' && candidate.source_phase === 'testing') ?? [];
+        if (!repair && candidates.length && candidates.every(candidate => context.instruction?.includes(String(candidate.id)))) {
+          const start = [...loadAuthoritativeEvents(path.join(context.runDir, 'events.jsonl'))].reverse()
+            .find(event => event.type === 'agent_invoke_start' && event.phase === context.phase);
+          const original = start?.invoke_id ? executionRequestForInvoke(context.runDir, String(start.invoke_id)) : null;
+          assert(original?.request.context.attemptId === context.attemptId && original.request.context.runId === context.runId
+            && original.request.context.owner.owner_id === context.owner.owner_id && original.request.context.owner.epoch === context.owner.epoch,
+          'the coding repair must consume its actual signed unit request');
+          assert(original!.request.write_boundary && resolvePhasePathOwnership(original!.request.write_boundary!, REAL_CHAIN_SOURCE).owner === 'coding',
+            'the actual request must grant the source implementation owner');
+          assert(summary?.verdict === 'FAIL', 'the delivered repair must originate in the actual testing failure');
+          repair = { invokeId: original!.request.invoke_id, candidates, testHash: sha256File(path.join(project.root, REAL_CHAIN_TEST))!,
+            acceptanceHash: sha256File(featureFilePath(project.root, project.feature, 'acceptance.yaml'))!,
+            contractsHash: sha256File(featureFilePath(project.root, project.feature, 'contracts.yaml'))! };
+        }
+        hooks.onAuthor(ctx, context);
       },
     });
+    assert(repair, `actual testing defect was never delivered to its implementation owner: ${probe.invokedPhases.join(',')}`);
     const events = probe.events;
-    const chain = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'];
-    const dump = (): string => `${dumpChain(project, chain)}\nevents=${events.map(e => `${String(e.type)}${e.phase ? '@' + String(e.phase) : ''}`).join(',')}`;
-
-    const btIdx = events.findIndex(e => e.type === 'phase_backtrack_requested');
-    assert(btIdx >= 0, `没有发生回退：\n${dump()}`);
-    // ④（先于事件形状断）：coding / review / ut 在回退后各有新的 phase_start——重验是**真跑了**，
-    // 不只是事件里声称作废（变异「invalidated 去掉中段阶段」须在这里红，而不是只在 ② 的字段上红）。
-    for (const ph of ['coding', 'review', 'ut'] as const) {
-      assert(events.slice(btIdx).some(e => e.type === 'phase_start' && e.phase === ph), `${ph} 回退后没有重新开始：\n${dump()}`);
-    }
-    // ② 回退事件：宿主同形（from/to/reason，invalidated ⊇ {coding,review,ut}）。
-    const bt = events[btIdx] as Record<string, unknown>;
-    assert(bt.from_phase === 'testing' && bt.to_phase === 'coding' && bt.reason === 'repair_candidates',
-      `回退事件形态不对：${JSON.stringify(bt).slice(0, 800)}`);
-    const invalidated = (bt.invalidated_phases as string[] | undefined) ?? [];
-    assert(['coding', 'review', 'ut'].every(ph => invalidated.includes(ph)), `invalidated_phases 缺中段阶段：${JSON.stringify(invalidated)}`);
-    // 是否含 testing 如实记录、不断言（plan §2.1 ②）。
-    if (DEBUG) console.log('RC-9 invalidated_phases', JSON.stringify(invalidated));
-
-    // ① testing 首轮 FAIL，候选由 hylyre 断言路由产出（事件携带的是 summary 同一份候选）。
-    const candidates = (bt.candidates as Array<Record<string, unknown>> | undefined) ?? [];
-    const routed = candidates.filter(c => /^testing_failure_routing_/.test(String(c.id)));
-    assert(routed.length > 0 && routed.every(c => c.category === 'coding' && c.source_phase === 'testing'),
-      `回退候选不是 testing 责任路由产出的 coding 候选：${JSON.stringify(candidates)}`);
-    const firstTestingVerdict = events.find(e => e.type === 'phase_verdict' && e.phase === 'testing');
-    assert(firstTestingVerdict && events.indexOf(firstTestingVerdict) < btIdx && firstTestingVerdict.verdict === 'FAIL',
-      `testing 首轮不是 FAIL：${JSON.stringify(firstTestingVerdict)}`);
-
-    // ③ 回退注入真的到达：回退后首次 coding 调用的指令含该候选 id。
-    const codingCallsBeforeTesting = probe.invokedPhases
-      .slice(0, probe.invokedPhases.indexOf('testing')).filter(x => x === 'coding').length;
-    const codingAfterFirst = probe.codingPrompts[codingCallsBeforeTesting];
-    assert(codingAfterFirst !== undefined, `回退后 coding 未被调用：${probe.invokedPhases.join(',')}`);
-    assert(routed.every(c => codingAfterFirst.includes(String(c.id))),
-      `回退后首次 coding 指令不含候选 id：${routed.map(c => c.id).join(',')}`);
-
-    // ⑤ spec/plan 不重跑、仍 closed，链尾二者 fresh，全程无 live_drift / upstream_closure_gap。
-    for (const ph of ['spec', 'plan'] as const) {
-      assert(!events.slice(btIdx).some(e => e.type === 'phase_start' && e.phase === ph), `${ph} 在回退后被重跑：\n${dump()}`);
-    }
-    const upstream = recomputePhaseEvidenceStaleness(project.root, project.feature, ['spec', 'plan'], { frameworkRoot: project.frameworkRoot });
-    assert(upstream.every(r => r.verdict === 'fresh'), `链尾 spec/plan 证据不新鲜：${JSON.stringify(upstream)}`);
-    const flat = JSON.stringify(events);
-    assert(!/live_drift|upstream_closure_gap/.test(flat), `出现 live_drift / upstream_closure_gap：\n${dump()}`);
-    // ④⑤⑥ 终局：六阶段 PASS + closed（testing 次轮）。
-    for (const ph of chain) {
-      const s = readSummary(project, ph);
-      assert(s?.verdict === 'PASS' && s.closure_status === 'closed', `${ph} 终局未 PASS+closed：\n${dump()}`);
-    }
-    assert(events.filter(e => e.type === 'phase_verdict' && e.phase === 'testing').length >= 2, `testing 没有第二轮：\n${dump()}`);
-    // 承接不免 UT 重验（plan f3b8d261 §4.2）：coding 次轮之所以不被 UT 测试文件判越界，是扣除了
-    // 「本 run UT 产出、字节未变」的那份文件——这只是归属，不等于 UT 结论仍然成立。回退后 ut 的
-    // PASS 须晚于 coding 次轮的 PASS，且 ut 报告在回退后重写过（不要求旧 UT 证据 fresh）。
-    const lastVerdictIdx = (ph: string): number => {
-      for (let i = events.length - 1; i > btIdx; i--) {
-        if (events[i].type === 'phase_verdict' && events[i].phase === ph && events[i].verdict === 'PASS') return i;
-      }
-      return -1;
-    };
-    const codingPassIdx = lastVerdictIdx('coding');
-    const utPassIdx = lastVerdictIdx('ut');
-    assert(codingPassIdx > btIdx && utPassIdx > codingPassIdx,
-      `回退后 ut 的 PASS 不晚于 coding 次轮 PASS（coding=${codingPassIdx} ut=${utPassIdx} bt=${btIdx}）：\n${dump()}`);
-    assert(utSummaryMtimeBeforeTesting !== undefined && fs.statSync(utSummaryAbs).mtimeMs > utSummaryMtimeBeforeTesting,
-      `回退后 ut 报告没有重写（summary mtime ${utSummaryMtimeBeforeTesting} → ${fs.statSync(utSummaryAbs).mtimeMs}）`);
-    // ⑦ 哨兵：本路径无视觉行，不得出现账本完整性停机（C3 才有意义）。
-    assert(!/visual_ledger_integrity/.test(flat), `出现 visual_ledger_integrity：\n${dump()}`);
+    const startAt = events.findIndex(event => event.type === 'agent_invoke_start' && event.invoke_id === repair!.invokeId);
+    const returnedAt = events.findIndex((event, index) => index > startAt && event.type === 'agent_invoke_end' && event.invoke_id === repair!.invokeId);
+    assert(startAt >= 0 && returnedAt > startAt, 'the actual owner must really return before checks can accept its repair');
+    const failureAt = events.findIndex(event => event.type === 'phase_verdict' && event.phase === 'testing' && event.verdict === 'FAIL');
+    assert(failureAt >= 0 && failureAt < startAt, 'the actual testing FAIL must precede the repair request');
+    const sourceWrites = events.filter(event => event.type === 'phase_write_observed' && event.invoke_id === repair!.invokeId)
+      .flatMap(event => (event.owned ?? []) as Array<{ path?: string; owner?: string; pre_sha256?: string; post_sha256?: string }>);
+    assert(sourceWrites.some(write => write.path === REAL_CHAIN_SOURCE && write.owner === 'coding' && write.pre_sha256 !== write.post_sha256),
+      'the actual implementation owner must change the defective source, not only report a repair');
+    assert(sha256File(path.join(project.root, REAL_CHAIN_TEST)) === repair!.testHash, 'source repair must preserve the already produced test bytes');
+    assert(sha256File(featureFilePath(project.root, project.feature, 'acceptance.yaml')) === repair!.acceptanceHash
+      && sha256File(featureFilePath(project.root, project.feature, 'contracts.yaml')) === repair!.contractsHash,
+    'the implementation repair cannot rewrite accepted upstream definitions');
+    const codingCheck = events.findIndex((event, index) => index > returnedAt && event.type === 'harness_end'
+      && event.phase === 'coding' && typeof event.exit_code === 'number' && event.timed_out !== true);
+    const reviewCheck = events.findIndex((event, index) => index > codingCheck && event.type === 'harness_end'
+      && event.phase === 'review' && typeof event.exit_code === 'number' && event.timed_out !== true);
+    const utCheck = events.findIndex((event, index) => index > reviewCheck && event.type === 'harness_end'
+      && event.phase === 'ut' && typeof event.exit_code === 'number' && event.timed_out !== true);
+    const testingCheck = events.findIndex((event, index) => index > utCheck && event.type === 'harness_end'
+      && event.phase === 'testing' && typeof event.exit_code === 'number' && event.timed_out !== true);
+    assert(codingCheck > returnedAt && reviewCheck > codingCheck && utCheck > reviewCheck && testingCheck > utCheck,
+      'new implementation must really receive coding, review, UT and testing checks after the owner returns');
+    assert(events.filter(event => event.type === 'harness_end' && event.phase === 'testing').length >= 2,
+      'the original failed testing check must really be repeated after repair');
+    for (const phase of ['spec', 'plan', 'coding', 'review', 'ut', 'testing']) assertCurrentOwnerEvidence(project, phase);
+    const current = resolveCompletionDisposition({ projectRoot: project.root, frameworkRoot: project.frameworkRoot, feature: project.feature,
+      runId: project.runId, chain: ['spec', 'plan', 'coding', 'review', 'ut', 'testing'] });
+    assert(current.completionEligible, `the actual final common completion remains unfinished: ${JSON.stringify(current.completionBlocking)}`);
   })();
 }
 
@@ -1329,11 +1464,13 @@ function unmarkedUtBlockerSkips(p: RealChainProject): string[] {
 
 export async function rc9bUtBacktrackThroughCoding(upstreamAudit = false): Promise<void> {
   await withProject(async (project, birthChain) => {
+    const { authorHooks } = await import('./lifecycle-evolution.unit.test');
     const repairId = upstreamAudit ? 'UP-UT-8A' : 'ut_product_assertion_failure';
     const repairFix = '修复 BankService.openCard 对空 id 的实现缺口';
-    /** 回退发生后 coding 首次被调用时盘上的 ut summary / 未标注 SKIP——驱动回退的那一轮。 */
-    let utAtBacktrack: (ReturnType<typeof readSummary> & { repair_candidates?: Array<Record<string, unknown>> }) | null = null;
-    let skipsAtBacktrack: string[] = [];
+    const repairs: Array<{ invokeId: string; fingerprint: string; index: number; summary: NonNullable<ReturnType<typeof readSummary>>;
+      candidates: NonNullable<ReturnType<typeof readCurrentPhaseRepairCandidates>>;
+      preSourceHash: string; testHash: string; skips: string[] }> = [];
+    let currentRepair = 0;
     const hasUpstreamGap = () => upstreamAudit && !fs.readFileSync(path.join(project.root, REAL_CHAIN_SERVICE), 'utf8').includes('!!id');
     const publishAuditVerifier = (runId: string): void => {
       const summary = readSummary(project, 'ut');
@@ -1343,147 +1480,105 @@ export async function rc9bUtBacktrackThroughCoding(upstreamAudit = false): Promi
         feature: project.feature, phase: 'ut', subjectId: summary?.verifier_subject_id, skipSummaryPatch: true,
         reportText: ['```issue-verification', `- issue: ${repairId}`, '  verdict: confirmed', `  evidence: BankService.ets | ${issues!.rows[0].summary}`, '```'].join('\n') });
     };
-    const probe = await runGoalRuntimeChain(project.root, {
-      onOutOfChain: ctx => {
-        if (ctx.phase === 'ut-verifier-format-repair') {
-          assert(readDeliveredVerifierRequest(project, ctx)?.phase === 'ut', 'UT diagnosis must consume the actually delivered current request');
-          if (hasUpstreamGap()) publishAuditVerifier(ctx.runId);
-          else publishRc9bUtVerifier(project);
-        } else assert(publishRequestedVerifier(project, ctx), `unexpected model purpose: ${ctx.phase}`);
-      },
-      frameworkRoot: project.frameworkRoot,
-      featureId: project.feature,
-      realHarness: true,
-      adapter: 'codex',
-      freshStartPhase: birthChain[0] as 'spec',
-      freshEndPhase: birthChain[birthChain.length - 1],
-      freshRequirement: REAL_CHAIN_REQUIREMENT,
-      onSpec: ctx => { project.runId = ctx.runId; writeSpecMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'spec'); },
-      onPlan: ctx => {
-        project.runId = ctx.runId;
-        writePlanMaterials(project);
-        addRc9bRepositoryInterface(project);
-        if (ctx.attempt > 1) publishVerifier(project, 'plan');
-      },
-      onCoding: ctx => {
-        project.runId = ctx.runId;
-        const utSummary = readSummary(project, 'ut') as ReturnType<typeof readSummary> & { repair_candidates?: Array<{ id?: string }> };
-        const backtracked = ctx.prompt.includes(repairId)
-          && !!utSummary?.repair_candidates?.some(candidate => candidate.id === repairId);
-        if (backtracked && !utAtBacktrack) {
-          utAtBacktrack = readSummary(project, 'ut');
-          skipsAtBacktrack = unmarkedUtBlockerSkips(project);
-        }
-        writeCodingMaterials(project);
-        const observed = loadAuthoritativeEvents(path.join(featureFilePath(project.root, project.feature, 'goal-runs'), project.runId!, 'events.jsonl'));
-        const repairs = observed.filter(event => event.type === 'phase_backtrack_requested'
-          && (event as { candidates?: Array<{ id?: string }> }).candidates?.some(candidate => candidate.id === repairId)).length;
-        // Keep the first repair ineffective to exercise reopening the same trusted defect twice.
-        writeRc9bService(project, backtracked && (upstreamAudit || repairs >= 2));
-        if (!upstreamAudit && backtracked && repairs === 1) {
-          const file = path.join(project.root, REAL_CHAIN_SERVICE);
-          // A real but incorrect first repair; unchanged-input retries remain subject to the existing fuse.
+    const hooks = authorHooks(project, {
+      spec: writeSpecMaterials,
+      plan: p => { writePlanMaterials(p); addRc9bRepositoryInterface(p); },
+      coding: p => {
+        writeCodingMaterials(p);
+        writeRc9bService(p, currentRepair > 0 && (upstreamAudit || currentRepair >= 2));
+        if (!upstreamAudit && currentRepair === 1) {
+          const file = path.join(p.root, REAL_CHAIN_SERVICE);
           fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(RC9B_SERVICE_DEFECT, 'Promise.resolve(id.length >= 0)'));
         }
-        if (ctx.attempt > 1) publishVerifier(project, 'coding');
       },
-      onReview: ctx => { project.runId = ctx.runId; writeReviewMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'review'); },
-      onUt: ctx => {
-        project.runId = ctx.runId;
-        writeUtMaterials(project);
-        writeRc9bDag(project);
+      review: writeReviewMaterials,
+      ut: p => {
+        writeUtMaterials(p); writeRc9bDag(p);
         const upstreamGap = hasUpstreamGap();
-        if (upstreamGap) fs.appendFileSync(featureFilePath(project.root, project.feature, 'ut/testability-audit.md'), [
+        if (upstreamGap) fs.appendFileSync(featureFilePath(p.root, p.feature, 'ut/testability-audit.md'), [
           '', '## 问题清单', '', '| ID | 严重程度 | 分类 | 涉及文件 | 问题描述 | 修复建议 | 状态 |', '|---|---|---|---|---|---|---|',
           `| ${repairId} | MAJOR | 实现缺口 | ${REAL_CHAIN_SERVICE} | 当前 \`${REAL_CHAIN_SERVICE}:1\` 的业务入口缺空 id 防护，UT实际驱动该入口失败 | ${repairFix} | 未关闭 |`, '',
         ].join('\n'));
-        // 本轮内按 harness NEXT 指引完成诊断：自跑 harness 拿到本轮 subject → 发布 verifier 报告，
-        // 外层 gate 以同一 subject 读到它（见段首「放弃的准确性」：报告留到下一轮才发布的两轮形态不覆盖）。
-        runGateHarness(project, 'ut', undefined, ctx.goalAttemptId ?? '', RC4_DEVICE_ENV, 'agent');
-        if (upstreamGap) publishAuditVerifier(ctx.runId);
-        else publishRc9bUtVerifier(project);
+      },
+      testing: writeTestPlan,
+    });
+    const probe = await runGoalRuntimeChain(project.root, {
+      frameworkRoot: project.frameworkRoot, featureId: project.feature, realHarness: true, adapter: 'codex',
+      freshStartPhase: birthChain[0] as 'spec', freshEndPhase: birthChain[birthChain.length - 1], freshRequirement: REAL_CHAIN_REQUIREMENT,
+      onOutOfChain: ctx => {
+        if (ctx.phase === 'ut-verifier-format-repair') {
+          assert(readDeliveredVerifierRequest(project, ctx)?.phase === 'ut', 'UT diagnosis must consume the actually delivered current request');
+          if (hasUpstreamGap()) publishAuditVerifier(ctx.runId); else publishRc9bUtVerifier(project);
+        } else assert(publishRequestedVerifier(project, ctx), `unexpected model purpose: ${ctx.phase}`);
+      },
+      onAuthor: (ctx, context) => {
+        const summary = readSummary(project, 'ut');
+        const candidates = summary ? readCurrentPhaseRepairCandidates({ projectRoot: project.root, frameworkRoot: project.frameworkRoot,
+          feature: project.feature, phase: 'ut', goalRunId: context.runId,
+          executionScope: loadEffectiveExecutionScope(project.root, project.feature, context.runId) ?? undefined,
+          workflow: resolveWorkflowSpec(project.root, {frameworkRoot: project.frameworkRoot}) },
+        featurePhaseReportsDir(project.root, project.feature, 'ut', project.frameworkRoot),
+        summary as Parameters<typeof readCurrentPhaseRepairCandidates>[2]) ?? [] : [];
+        const candidate = candidates.find(item => item.id === repairId && item.source_phase === 'ut' && item.category === 'coding');
+        if (candidate && context.instruction?.includes(repairId) && context.instruction.includes(String(candidate.item_fingerprint))) {
+          const events = loadAuthoritativeEvents(path.join(context.runDir, 'events.jsonl'));
+          const index = events.map((event,index) => ({event,index})).filter(({event}) => event.type === 'agent_invoke_start' && event.phase === context.phase).at(-1)?.index ?? -1;
+          const issued = index >= 0 ? executionRequestForInvoke(context.runDir, String(events[index].invoke_id)) : null;
+          assert(issued?.request.context.runId === context.runId && issued.request.context.attemptId === context.attemptId
+            && issued.request.context.owner.owner_id === context.owner.owner_id && issued.request.context.owner.epoch === context.owner.epoch,
+          'repair must consume its actual signed unit request');
+          assert(issued?.request.write_boundary && resolvePhasePathOwnership(issued.request.write_boundary, REAL_CHAIN_SERVICE).owner === 'coding',
+            'the actual owner request must grant the defective implementation path');
+          assert(summary?.verdict === 'FAIL' && /^[a-f0-9]{64}$/.test(summary.verifier_subject_id ?? ''), 'the original UT FAIL and diagnostic subject must remain');
+          if (!repairs.some(repair => repair.invokeId === issued!.request.invoke_id)) repairs.push({
+            invokeId: issued!.request.invoke_id, fingerprint: String(candidate.item_fingerprint), index, summary: structuredClone(summary!), candidates: structuredClone(candidates),
+            preSourceHash: sha256File(path.join(project.root, REAL_CHAIN_SERVICE))!, testHash: sha256File(path.join(project.root, REAL_CHAIN_TEST))!,
+            skips: unmarkedUtBlockerSkips(project),
+          });
+          currentRepair = repairs.length;
+        }
+        hooks.onAuthor(ctx, context);
       },
     });
     const events = probe.events;
-    const chain = ['spec', 'plan', 'coding', 'review', 'ut'];
-    const dump = (): string => `${dumpChain(project, chain)}\nunmarked BLOCKER SKIP=${JSON.stringify(skipsAtBacktrack.length ? skipsAtBacktrack : unmarkedUtBlockerSkips(project), null, 1)}`
-      + `\nevents=${events.map(e => `${String(e.type)}${e.phase ? '@' + String(e.phase) : ''}`).join(',')}`;
+    const expectedRepairs = upstreamAudit ? 1 : 2;
+    assert(repairs.length >= expectedRepairs, `trusted UT defect did not receive ${expectedRepairs} actual owner handbacks: ${JSON.stringify({ repairs, end: events.at(-1) })}`);
+    const first = repairs[0];
+    assert(first.skips.length === 0, `the diagnosed UT FAIL cannot retain unmarked blocker skips: ${JSON.stringify(first.skips)}`);
+    assert(first.candidates.some(candidate => candidate.id === repairId && candidate.source_phase === 'ut'), 'the real current product/audit candidate must reach its owner');
     if (upstreamAudit) {
-      const auditBacktrack = utAtBacktrack as { repair_candidates?: Array<Record<string, unknown>> } | null;
-      const backtrack = events.find(event => event.type === 'phase_backtrack_requested' && (event as { candidates?: Array<{ id?: string }> }).candidates?.some(candidate => candidate.id === repairId));
-      assert(backtrack, `audit提案未进入真实返修事务：${dump()}`);
-      assert(auditBacktrack?.repair_candidates?.some(candidate => candidate.id === repairId && candidate.source_phase === 'ut'), 'UT audit产物候选未到达coding');
-      assert(!auditBacktrack?.repair_candidates?.some(candidate => candidate.id === 'ut_product_assertion_failure'), '不得用旧机器候选冒充audit交接');
-      assert(probe.codingPrompts.some(prompt => prompt.includes(repairId) && prompt.includes(repairFix)), 'coding未收到具体audit问题');
-      const failed = events.findIndex(event => event.type === 'phase_verdict' && event.phase === 'ut' && event.verdict === 'FAIL');
-      assert(failed >= 0 && events.slice(failed + 1).some(event => event.type === 'phase_verdict' && event.phase === 'ut' && event.verdict === 'PASS'), '原UT未在责任方修复后真实复验');
-      for (const phase of ['coding', 'review', 'ut']) assert(readSummary(project, phase)?.closure_status === 'closed', `${phase}未正式收口`);
-      return;
+      assert(!first.candidates.some(candidate => candidate.id === 'ut_product_assertion_failure'), 'audit must not impersonate the old machine candidate');
+      assert(probe.authorPrompts.some(prompt => prompt.includes(repairId) && prompt.includes(repairFix)), 'the actual unit author must receive the audit correction');
+    } else {
+      assert(repairs[1].fingerprint === first.fingerprint && /^[a-f0-9]{64}$/.test(first.fingerprint), 'the same trusted defect identity must reopen after a real but ineffective fix');
+      const firstStart = events.findIndex(event => event.type === 'agent_invoke_start' && event.invoke_id === first.invokeId);
+      const secondStart = events.findIndex(event => event.type === 'agent_invoke_start' && event.invoke_id === repairs[1].invokeId);
+      assert(firstStart >= 0 && secondStart > firstStart, 'two repairs must be separate real signed invocations');
+      assert(events.slice(firstStart + 1, secondStart).some(event => event.type === 'harness_end' && event.phase === 'ut' && event.timed_out !== true),
+        'the ineffective source repair must actually receive another UT check before the same defect is handed back');
+      assert(events.slice(firstStart + 1, secondStart).some(event => event.type === 'phase_verdict' && event.phase === 'ut' && event.verdict === 'FAIL'),
+        'the first implementation attempt must remain a real UT failure');
+      assert(!events.slice(0, firstStart).some(event => event.type === 'phase_halt' && String(event.halt_reason).startsWith('no_progress')),
+        'the first verified owner handback cannot be preceded by an ignored no-progress halt');
     }
-
-    const btIdx = events.findIndex(e => e.type === 'scope_revised' && (e as { trigger?: { check_id?: string } }).trigger?.check_id === 'ut_product_assertion_failure');
-    assert(btIdx >= 0, `没有重开 coding 义务：\n${dump()}`);
-    const bt = events[btIdx] as Record<string, unknown>;
-    if (DEBUG) console.log('RC-9b backtrack', JSON.stringify(bt).slice(0, 1500), '\nskips', JSON.stringify(skipsAtBacktrack));
-    const revisions = events.map((event, index) => ({ event, index })).filter(({ event }) => event.type === 'scope_revised'
-      && (event as { trigger?: { check_id?: string } }).trigger?.check_id === 'ut_product_assertion_failure');
-    const utFailures = events.map((event, index) => ({ event, index })).filter(({ event }) => event.type === 'phase_verdict' && event.phase === 'ut' && event.verdict === 'FAIL');
-    assert(utFailures.length >= 2, '必须实际重复暴露同一产品缺陷，不能只测首次重开');
-    const repairRequests = events.map((event, index) => ({ event, index })).filter(({ event }) => event.type === 'phase_backtrack_requested'
-      && (event as { candidates?: Array<{ id?: string }> }).candidates?.some(candidate => candidate.id === repairId));
-    assert(repairRequests.length >= 2, '同一可信缺陷必须在实际 owner 首次修复后再次交接，不能将未核实的 UT 重试算作修复');
-    assert(!events.slice(0, repairRequests[0].index).some(event => event.type === 'phase_halt' && String(event.halt_reason).startsWith('no_progress')),
-      '首次合法交接前不能先写 no_progress halt 再继续');
-    const repairIdentity = (event: typeof events[number]): string | undefined =>
-      (event as { candidates?: Array<{ id?: string; item_fingerprint?: string }> }).candidates?.find(candidate => candidate.id === repairId)?.item_fingerprint;
-    assert(!!repairIdentity(repairRequests[0].event) && repairIdentity(repairRequests[0].event) === repairIdentity(repairRequests[1].event), '两次必须是原身份的同一候选');
-    for (const { index } of repairRequests) {
-      const next = events.slice(index + 1).find(event => event.type === 'agent_invoke_start');
-      assert(next?.phase === 'coding', `每次可信缺陷重复出现后都应先交 coding，不能空跑 UT：${JSON.stringify(next)}`);
+    for (const repair of repairs.slice(0, expectedRepairs)) {
+      const written = events.filter(event => event.type === 'phase_write_observed' && event.invoke_id === repair.invokeId)
+        .flatMap(event => (event.owned ?? []) as Array<{ path?: string; owner?: string; pre_sha256?: string; post_sha256?: string }>);
+      assert(written.some(write => write.path === REAL_CHAIN_SERVICE && write.owner === 'coding'
+        && write.pre_sha256 === repair.preSourceHash && write.post_sha256 !== repair.preSourceHash), 'each actual repair must change its authorized business source');
     }
-    const firstOwnerStart = events.findIndex((event, index) => index > repairRequests[0].index && event.type === 'agent_invoke_start' && event.phase === 'coding');
-    assert(utFailures.some(({ index }) => index > firstOwnerStart && index < repairRequests[1].index), '首次真实 coding 修复后 UT 仍应真实 FAIL，再交接同一缺陷');
-    const firstRepairWrites = events.slice(repairRequests[0].index, repairRequests[1].index)
-      .filter(event => event.type === 'phase_write_observed' && event.phase === 'coding')
-      .flatMap(event => (event as { owned?: Array<{ path: string; pre_sha256?: string; post_sha256?: string }> }).owned ?? []);
-    assert(firstRepairWrites.some(write => write.path === REAL_CHAIN_SERVICE && write.pre_sha256 !== write.post_sha256), '首次无效修复必须实际改过业务源码，不能空跑 owner');
-    for (const { event } of revisions) {
-      const input = (event as { revision_input?: { facts?: Array<{ id: string; satisfied_by?: unknown[] }> } }).revision_input;
-      assert(input?.facts?.some(fact => fact.id === 'implementation:ut_product_assertion_failure' && !fact.satisfied_by?.length), '修复提案不得用问题出现前的 PASS 冒领');
-    }
-    for (const ph of ['coding', 'review', 'ut'] as const) {
-      assert(events.slice(btIdx).some(e => e.type === 'phase_start' && e.phase === ph), `${ph} 回退后没有重新开始：\n${dump()}`);
-    }
-
-    // ② 驱动回退的那份 ut summary：诊断 verifier 已签发（subject 在场），候选由 UT 产品断言合取产出；
-    //    落盘报告里已无未标注不适用的 BLOCKER SKIP（诊断资格的前提）。
-    const isUtProductCandidate = (c: Record<string, unknown>): boolean =>
-      c.id === 'ut_product_assertion_failure' && c.category === 'coding' && c.source_phase === 'ut'
-      && Array.isArray(c.files) && (c.files as string[]).includes(REAL_CHAIN_SERVICE);
-    const utBt = utAtBacktrack as (ReturnType<typeof readSummary> & { repair_candidates?: Array<Record<string, unknown>> }) | null;
-    assert(utBt?.verdict === 'FAIL' && /^[0-9a-f]{64}$/.test(utBt.verifier_subject_id ?? ''),
-      `回退时 ut summary 无诊断 verifier subject：${JSON.stringify({ verdict: utBt?.verdict, subject: utBt?.verifier_subject_id })}`);
-    assert((utBt?.repair_candidates ?? []).some(isUtProductCandidate),
-      `回退时 ut summary 无 ut_product_assertion_failure 候选：${JSON.stringify(utBt?.repair_candidates)}`);
-    const revision = bt as { revision_input?: { facts?: Array<{ id: string; satisfied_by?: unknown[] }> } };
-    assert(revision.revision_input?.facts?.some(fact => fact.id === 'implementation:ut_product_assertion_failure' && !fact.satisfied_by?.length),
-      '实际范围修订必须保留当前候选的未满足义务');
-    assert(skipsAtBacktrack.length === 0, `回退时 ut 报告仍有未标注的 BLOCKER SKIP：${JSON.stringify(skipsAtBacktrack)}`);
-
-    // ③ 回退注入到达 coding，coding 次轮 PASS；UT 在其后重验 PASS，终局 coding/review/ut PASS+closed。
-    const codingAfterBt = probe.codingPrompts[probe.invokedPhases.slice(0, probe.invokedPhases.indexOf('ut')).filter(x => x === 'coding').length];
-    assert(codingAfterBt?.includes('ut_product_assertion_failure'), `回退后 coding 指令不含候选 id：${probe.invokedPhases.join(',')}`);
-    assert(codingAfterBt?.includes('item_fingerprint:'), '返修候选的原身份必须到达责任阶段，不能只留下范围事实的摘要');
-    const firstVerdictAfter = (ph: string, from: number): number =>
-      events.findIndex((e, i) => i > from && e.type === 'phase_verdict' && e.phase === ph);
-    const codingIdx = firstVerdictAfter('coding', btIdx);
-    assert(codingIdx > btIdx && events[codingIdx].verdict === 'PASS', `coding 次轮不是 PASS：${JSON.stringify(events[codingIdx])}\n${dump()}`);
-    const utIdx = events.findIndex((e, i) => i > codingIdx && e.type === 'phase_verdict' && e.phase === 'ut' && e.verdict === 'PASS');
-    assert(utIdx > codingIdx, `coding 次轮后 ut 没有重验 PASS：\n${dump()}`);
-    for (const ph of ['coding', 'review', 'ut'] as const) {
-      const s = readSummary(project, ph);
-      assert(s?.verdict === 'PASS' && s.closure_status === 'closed', `${ph} 终局未 PASS+closed：\n${dump()}`);
-    }
+    const finalRepair = repairs[Math.min(expectedRepairs, repairs.length) - 1];
+    const returned = events.findIndex(event => event.type === 'agent_invoke_end' && event.invoke_id === finalRepair.invokeId);
+    const coding = events.findIndex((event, index) => index > returned && event.type === 'harness_end' && event.phase === 'coding' && event.timed_out !== true);
+    const review = events.findIndex((event, index) => index > coding && event.type === 'harness_end' && event.phase === 'review' && event.timed_out !== true);
+    const ut = events.findIndex((event, index) => index > review && event.type === 'harness_end' && event.phase === 'ut' && event.timed_out !== true);
+    assert(returned >= 0 && coding > returned && review > coding && ut > review, 'the responsible owner must return, then receive actual implementation, review and UT rechecks');
+    assert(fs.readFileSync(path.join(project.root, REAL_CHAIN_SERVICE), 'utf8').includes(RC9B_SERVICE_OK), 'the final implementation must really reject an empty bank id');
+    assert(sha256File(path.join(project.root, REAL_CHAIN_TEST)) === first.testHash, 'the business tests cannot be weakened to repair the source');
+    for (const phase of ['spec', 'plan', 'coding', 'review', 'ut']) assertCurrentOwnerEvidence(project, phase);
+    const completion = resolveCompletionDisposition({ projectRoot: project.root, frameworkRoot: project.frameworkRoot,
+      feature: project.feature, runId: project.runId, chain: ['spec', 'plan', 'coding', 'review', 'ut'], endpoint: 'request' });
+    assert(completion.completionEligible, `current required evidence must actually close: ${JSON.stringify(completion.completionBlocking)}`);
   })();
 }
 
@@ -1509,3 +1604,5 @@ export async function runSelectedCases(selector?: string): Promise<SelectedUnitC
   return selectedUnitCases(out, selector, []);
 }
 export async function runAll(): Promise<UnitCaseResult[]> { return (await runSelectedCases()).results; }
+
+export const listCaseGroups = () => unitCaseGroups(cases.map(c => c.name));

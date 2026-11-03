@@ -1,3 +1,4 @@
+import { unitCaseGroups } from '../utils/unit-case-selection';
 import '../utils/transpile-only-env';
 import assert from 'assert';
 import * as fs from 'fs';
@@ -264,3 +265,5 @@ export async function runSelectedCases(filter?: string) {
   return selectedUnitCases(results, filter, timings);
 }
 export async function runAll() { return (await runSelectedCases()).results; }
+
+export const listCaseGroups = () => unitCaseGroups(cases.map(c => c.name));

@@ -1,3 +1,4 @@
+import { selectExecutionBlock, timeExecutionBlock, selectedExecutionBlocks } from '../utils/unit-case-selection';
 // mechanical-loop-closure.unit.test.ts —— MG 机械闭环终验（plan 2d6b4f83）
 //
 // 只证明"层与层之间"：P1 蓝图 → P2 单并发连续推进 → 真实 Goal Mode 完成事实 → P3 部件闭环。
@@ -86,12 +87,15 @@ function assert(condition: unknown, message: string): asserts condition {
 }
 
 async function asyncTest(name: string, body: () => Promise<void>): Promise<UnitCaseResult> {
+  const displayName = `mechanical-loop: ${name}`;
+  if (!selectExecutionBlock(displayName)) return { name: displayName, ok: true };
+  const finish = timeExecutionBlock(displayName);
   try {
     await body();
     return { name: `mechanical-loop: ${name}`, ok: true };
   } catch (error) {
     return { name: `mechanical-loop: ${name}`, ok: false, error: (error as Error).message };
-  }
+  } finally { finish(); }
 }
 
 /**
@@ -938,3 +942,6 @@ export async function runAll(): Promise<UnitCaseResult[]> {
 
   return results;
 }
+
+export const listCaseGroups = async () => (await selectedExecutionBlocks(runAll, undefined, true)).groups;
+export const runSelectedCases = (selector?: string) => selectedExecutionBlocks(runAll, selector);

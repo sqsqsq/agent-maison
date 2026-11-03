@@ -1,3 +1,4 @@
+export const layer = 'capability' as const; // Actual native helper calls are part of this suite.
 /**
  * round6 回归夹具单测（plan f2d8c4a6 · P0-A/B/C/E + P2）：
  *   夹具=宿主 homepage goal-run 20260702T061511Z 真实坏态（fixtures/round6，见其 README）。

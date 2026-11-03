@@ -2222,6 +2222,7 @@ export async function runScenarios(only?: string[], selfChecks = true, selector?
   const s10Pending: BranchOutcome[] = [];
   s10Outcomes = s10Pending;
   for (const check of selfChecks ? SELF_CHECKS : []) {
+    if (selector?.startsWith('\u001eexact:') && !matchesUnitCase(check.name, selector)) continue;
     const endTiming = startCaseTiming([check.name], timings);
     try { check.run(registry); results.push({ name: check.name, ok: true }); } catch (e) { results.push({ name: check.name, ok: false, error: (e as Error).message }); }
     finally { endTiming(); }
@@ -2299,3 +2300,13 @@ export async function runAll(): Promise<UnitCaseResult[]> {
 
 export const runSelectedCases = (selector?: string) => runScenarios(undefined, true, selector);
 export const runSelectedScenarioGroup = (selector: string | undefined, ids: string[], selfChecks = false) => runScenarios(ids, selfChecks, selector);
+
+export function listCaseGroups(ids?: string[], selfChecks = true) {
+  const registry = loadRegistry();
+  return [
+    ...(selfChecks ? [{ caseNames: SELF_CHECKS.map(check => check.name) }] : []),
+    ...SCENARIOS.filter(scenario => !ids || ids.includes(scenario.id)).flatMap(scenario => scenario.run.map(runner => ({
+      caseNames: runner.produces.map(reference => branchName(registry, reference)),
+    }))),
+  ];
+}

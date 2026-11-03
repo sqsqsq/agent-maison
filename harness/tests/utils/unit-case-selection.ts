@@ -3,6 +3,17 @@ import { beginTestCase } from './runtime-test-control';
 import type { UnitCaseResult } from '../run-unit';
 
 export interface UnitExecutionTiming { caseNames: string[]; durationMs: number }
+export interface UnitCaseGroup { caseNames: string[]; serialResources?: string[]; serialReason?: string }
+const EXACT_PREFIX = '\u001eexact:';
+export function exactCaseSelector(names: string[]): string { return EXACT_PREFIX + JSON.stringify(names); }
+export function unitCaseGroups(names: string[]): UnitCaseGroup[] {
+  const groups = new Map<string, UnitCaseGroup>();
+  for (const name of names) {
+    if (!groups.has(name)) groups.set(name, { caseNames: [] });
+    groups.get(name)!.caseNames.push(name);
+  }
+  return [...groups.values()];
+}
 export interface SelectedUnitCases {
   results: UnitCaseResult[];
   matchedCaseCount: number;
@@ -11,9 +22,30 @@ export interface SelectedUnitCases {
 export interface SelectableUnitModule {
   runAll: () => UnitCaseResult[] | Promise<UnitCaseResult[]>;
   runSelectedCases?: (selector?: string) => SelectedUnitCases | Promise<SelectedUnitCases>;
+  listCaseGroups?: () => UnitCaseGroup[] | Promise<UnitCaseGroup[]>;
+}
+
+let blockSelection: { selector?: string; enumerate: boolean; names: string[]; timings: UnitExecutionTiming[] } | undefined;
+export function selectExecutionBlock(name: string): boolean {
+  if (!blockSelection) return true;
+  blockSelection.names.push(name);
+  return !blockSelection.enumerate && matchesUnitCase(name, blockSelection.selector);
+}
+export function timeExecutionBlock(name: string): () => void {
+  return blockSelection ? startCaseTiming([name], blockSelection.timings) : () => undefined;
+}
+export async function selectedExecutionBlocks(run: () => UnitCaseResult[] | Promise<UnitCaseResult[]>, selector?: string, enumerate = false): Promise<SelectedUnitCases & { groups: UnitCaseGroup[] }> {
+  if (blockSelection) throw new Error('nested execution-block selection is unsupported');
+  const selection = { selector, enumerate, names: [] as string[], timings: [] as UnitExecutionTiming[] };
+  blockSelection = selection;
+  try {
+    const results = await run();
+    return { ...selectedUnitCases(enumerate ? [] : filterLegacyCases(results, selector), selector, selection.timings), groups: unitCaseGroups(selection.names) };
+  } finally { blockSelection = undefined; }
 }
 
 export function matchesUnitCase(name: string, selector?: string): boolean {
+  if (selector?.startsWith(EXACT_PREFIX)) return (JSON.parse(selector.slice(EXACT_PREFIX.length)) as string[]).includes(name);
   return selector === undefined || name.includes(selector);
 }
 

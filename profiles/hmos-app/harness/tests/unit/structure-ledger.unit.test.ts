@@ -1,3 +1,4 @@
+export const layer = 'capability' as const; // Actual native helper calls are part of this suite.
 /**
  * structure-ledger 单测（P1-4①，plan c9e2a7f4 子批B）：
  *   病灶＝round6 实锤：card_pack subtitle_position=trailing / add_card layout_group /

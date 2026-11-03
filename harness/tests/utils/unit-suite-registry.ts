@@ -1,0 +1,495 @@
+import * as path from 'path';
+import * as fs from 'fs';
+import { buildTestDependencyGraph, inferTestLayer, repoPath } from './test-dependency-graph';
+export function discoverProfileUnitSuites(profilesRoot = path.resolve(__dirname, '../../../profiles')): Array<{ id: string; modulePath: string }> {
+  const out: Array<{ id: string; modulePath: string }> = [];
+  if (!fs.existsSync(profilesRoot)) return out;
+  for (const ent of fs.readdirSync(profilesRoot, { withFileTypes: true })) {
+    if (!ent.isDirectory()) continue;
+    const unitDir = path.join(profilesRoot, ent.name, 'harness', 'tests', 'unit');
+    if (!fs.existsSync(unitDir)) continue;
+    for (const fn of fs.readdirSync(unitDir)) {
+      if (!fn.endsWith('.unit.test.ts')) continue;
+      const absNoExt = path.join(unitDir, fn.replace(/\.ts$/, ''));
+      const rel = path.relative(path.resolve(__dirname, '..'), absNoExt).replace(/\\/g, '/');
+      out.push({
+        id: `profile:${ent.name}:${fn.replace(/\.unit\.test\.ts$/, '')}`,
+        modulePath: rel.startsWith('.') ? rel : `./${rel}`,
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * `releaseOnly`（plan d4a1f7c3，用户 2026-09-22 裁决）：默认运行**只校验文件存在、不执行**，
+ * 只有 `--release`（发布门与 candidate 打包传它）或 `--filter <id>` 单跑时才执行。
+ * 理由：真链回归一条 ~63 s，负例套件落地后合计可能到 2–3 分钟，与日常 4700 用例不成比例；
+ * 而它是唯一能抓"夹具手喂生产本不会给的东西"那类 bug 的测试，所以发布前必跑。
+ */
+interface UnitSuiteRegistration { id: string; modulePath: string; releaseOnly?: boolean; layer?: 'function' | 'capability' }
+const CORE_SUITES: UnitSuiteRegistration[] = [
+  { id: 'test-infrastructure', modulePath: './unit/test-infrastructure.unit.test' },
+  { id: 'artifact-content', modulePath: './unit/artifact-content.unit.test' },
+  { id: 'verification-gap', modulePath: './unit/verification-gap.unit.test' },
+  { id: 'verifier-semantic-handoff', modulePath: './unit/verifier-semantic-handoff.unit.test', layer: 'capability' },
+  { id: 'fe4512-semantic-recovery', modulePath: './unit/fe4512-semantic-recovery.unit.test', releaseOnly: true },
+  { id: 'c6-s2-recovery', modulePath: './unit/c6-s2-recovery.unit.test', releaseOnly: true },
+  { id: 'fe4512-owner-repair-runtime', modulePath: './unit/fe4512-owner-repair-runtime.unit.test', releaseOnly: true },
+  { id: 'current-disposition-recovery', modulePath: './unit/current-disposition-recovery.unit.test' },
+  { id: 'completion-running', modulePath: './unit/completion-running.unit.test' },
+  { id: 'completion-tools', modulePath: './unit/completion-tools.unit.test' },
+  { id: 'disposition-runtime-repair', modulePath: './unit/disposition-runtime-repair.unit.test', releaseOnly: true },
+  { id: 'testing-same-invocation-failure', modulePath: './unit/testing-same-invocation-failure.unit.test' },
+  { id: 'responsibility-host-replay', modulePath: './unit/responsibility-host-replay.unit.test' },
+  { id: 'repair-responsibility', modulePath: './unit/repair-responsibility.unit.test' },
+  { id: 'implementation-authority', modulePath: './unit/implementation-authority.unit.test' },
+  { id: 'request-entry', modulePath: './unit/request-entry.unit.test' },
+  { id: 'compile-entry', modulePath: './unit/compile-entry.unit.test' },
+  { id: 'standalone-coding-review', modulePath: './unit/standalone-coding-review.unit.test' },
+  { id: 'obligation-scoped-verification', modulePath: './unit/obligation-scoped-verification.unit.test' },
+  { id: 'blueprint-skill-projection', modulePath: './unit/blueprint-skill-projection.unit.test' },
+  { id: 'blueprint-stage-delivery', modulePath: './unit/blueprint-stage-delivery.unit.test' },
+  { id: 'reader-guide', modulePath: './unit/reader-guide.unit.test' },
+  { id: 'blueprint-host-history', modulePath: './unit/blueprint-host-history.unit.test' },
+  { id: 'change-unit-content-revision', modulePath: './unit/change-unit-content-revision.unit.test' },
+  { id: 'change-unit-revision-recovery', modulePath: './unit/change-unit-revision-recovery.unit.test', releaseOnly: true },
+  { id: 'blueprint-review-design', modulePath: './unit/blueprint-review-design.unit.test' },
+  { id: 'evaluation-readers', modulePath: './unit/evaluation-readers.unit.test' },
+  { id: 'execution-scope-prepare-early', modulePath: './unit/execution-scope-prepare-early.unit.test' },
+  { id: 'execution-scope-prepare-late', modulePath: './unit/execution-scope-prepare-late.unit.test' },
+  { id: 'execution-scope-runtime', modulePath: './unit/execution-scope-runtime.unit.test' },
+  { id: 'component-assets', modulePath: './unit/component-assets.unit.test' },
+  { id: 'knowledge-context', modulePath: './unit/knowledge-context.unit.test' },
+  { id: 'conventions', modulePath: './unit/conventions.unit.test', layer: 'capability' },
+  { id: 'component-blueprint', modulePath: './unit/component-blueprint.unit.test' },
+  { id: 'change-unit-progression', modulePath: './unit/change-unit-progression.unit.test' },
+  { id: 'component-closure', modulePath: './unit/component-closure.unit.test' },
+  { id: 'component-design-host-seams', modulePath: './unit/component-design-host-seams.unit.test' },
+  { id: 'component-design-handoff', modulePath: './unit/component-design-handoff.unit.test' },
+  { id: 'initial-design-delivery', modulePath: './unit/initial-design-delivery.unit.test' },
+  { id: 'initial-design-progress-recovery', modulePath: './unit/initial-design-progress-recovery.unit.test' },
+  { id: 'initial-design-budget', modulePath: './unit/initial-design-budget.unit.test' },
+  { id: 'initial-design-repair', modulePath: './unit/initial-design-repair.unit.test' },
+  { id: 'initial-design-supervisor', modulePath: './unit/initial-design-supervisor.unit.test' },
+  { id: 'initial-design-control', modulePath: './unit/initial-design-control.unit.test' },
+  { id: 'initial-design-waiting', modulePath: './unit/initial-design-waiting.unit.test' },
+  { id: 'initial-design-requirement', modulePath: './unit/initial-design-requirement.unit.test' },
+  { id: 'initial-design-scope-recovery', modulePath: './unit/initial-design-scope-recovery.unit.test' },
+  { id: 'initial-design-phase-input', modulePath: './unit/initial-design-phase-input.unit.test' },
+  { id: 'mechanical-loop-closure', modulePath: './unit/mechanical-loop-closure.unit.test' },
+  // M5A（plan e2a7c4b9）t2 返修验收：新布局生产入口最小合成用例（resolveChangeUnitRef
+  // → enumerateFeatures → closure inputs 零 BLOCKER），t4 证明 11/12 的底座
+  { id: 'evolution-workspace-path', modulePath: './unit/evolution-workspace-path.unit.test' },
+  // M5A t4 补套件：proofs 8/9/10 + 发布件 Stop/verifier hook CU 物理路径黑盒
+  { id: 'evolution-path-governance', modulePath: './unit/evolution-path-governance.unit.test' },
+  // plan a5f9c3e2 t4：统一裁决内核契约 + 元门禁（未注册 incident / 新增 gate 读 goal env 即红）
+  { id: 'adjudication',     modulePath: './unit/adjudication.unit.test' },
+  // plan d6b1a8e3 t2：monitor stale 误报的 replay fixture（先复现后改）
+  { id: 'goal-monitor-stale', modulePath: './unit/goal-monitor-stale.unit.test' },
+  // plan d6b1a8e3 t3/t4：硬预算跨进程不等式 + kill 后证据卫生（真子进程测试床）
+  { id: 'goal-budget-integration', modulePath: './unit/goal-budget-integration.unit.test', layer: 'capability' },
+  // plan a4f7e2b1 t1：run 级存活信标（PID 重用负例 / 反 /F 强杀 / 无证据即 stale）
+  { id: 'liveness-beacon', modulePath: './unit/liveness-beacon.unit.test' },
+  // plan a4f7e2b1 t2：supervisor 决策核（beacon × run_disposition 矩阵 + 反重建等价性）
+  { id: 'goal-supervisor', modulePath: './unit/goal-supervisor.unit.test' },
+  { id: 'attended-goal-context', modulePath: './unit/attended-goal-context.unit.test' },
+  // plan a4f7e2b1 t2 原验收：真 /F 强杀 → supervisor 生产链自动恢复（真子进程 + 真 CLI）
+  { id: 'supervisor-kill-recovery', modulePath: './unit/supervisor-kill-recovery.unit.test' },
+  { id: 'scope-replan', modulePath: './unit/scope-replan.unit.test' },
+  { id: 'release-shipped-in-ignored-dirs', modulePath: './unit/release-shipped-in-ignored-dirs.unit.test' },
+  { id: 'unit-failure-report', modulePath: './unit/unit-failure-report.unit.test' },
+  // e5d8a2c4 T4：整机 smoke 的注册表/接线约束下放到秒级单测（整机链本身分钟级，
+  // 不适合每次改动都跑；而"注册表缩水"是最廉价的假绿形态）
+  { id: 'smoke-lifecycle-registry', modulePath: './unit/smoke-lifecycle-registry.unit.test' },
+  // e5d8a2c4 T4 用例 #8：在案"第一死"的行为钉（棘轮——T2 落地改行为后本套必红）
+  { id: 'goal-park-resume', modulePath: './unit/goal-park-resume.unit.test' },
+  // post-harness 源码漂移路由（`untrusted_source_drift_revalidation`）的运行时回归——
+  // smoke goal/#5 只覆盖 invoke 窗口内的 `phase_write_violation` 那条。
+  { id: 'goal-post-harness-drift', modulePath: './unit/goal-post-harness-drift.unit.test' },
+  { id: 'goal-product-preflight', modulePath: './unit/goal-product-preflight.unit.test' },
+  { id: 'host-replay-fixes', modulePath: './unit/host-replay-fixes.unit.test' },
+  { id: 'host-recovery-history', modulePath: './unit/host-recovery-history.unit.test' },
+  { id: 'rule-convergence', modulePath: './unit/rule-convergence.unit.test' },
+  // plan c6a9e4d2 t2/t3：Windows containment 装帧 + guardian 接管对账矩阵（只读投影/匹配才终止）
+  { id: 'agent-containment', modulePath: './unit/agent-containment.unit.test' },
+  { id: 'doc-freshness',    modulePath: './unit/doc-freshness.unit.test' },
+  { id: 'diff-staleness',   modulePath: './unit/diff-staleness.unit.test' },
+  { id: 'feature-artifacts', modulePath: './unit/feature-artifacts.unit.test' },
+  { id: 'contract-reference-closure', modulePath: './unit/contract-reference-closure.unit.test' },
+  // plan c7e2a9d4 T3：contracts 统一解析边界的裸读禁令（边界外禁读 navigation 原始字段 + 自测）
+  { id: 'contracts-parse-boundary-guard', modulePath: './unit/contracts-parse-boundary-guard.unit.test' },
+  // plan c7e2a9d4 T4：跨消费者集成（同一 FeatureSpec 同时驱动 plan 闭环与 profile page_registration）
+  { id: 'contracts-cross-consumer-closure', modulePath: './unit/contracts-cross-consumer-closure.unit.test', layer: 'capability' },
+  { id: 'init-eol',         modulePath: './unit/init-eol.unit.test' },
+  { id: 'init-update-policy', modulePath: './unit/init-update-policy.unit.test' },
+  { id: 'hook-stale-state', modulePath: './unit/hook-stale-state.unit.test' },
+  { id: 'guard-framework-write', modulePath: './unit/guard-framework-write.unit.test' },
+  { id: 'hooks-config-upsert', modulePath: './unit/hooks-config-upsert.unit.test' },
+  // plan a9d4e7c2 T1 / d2f7a9c4：verifier 适用性解析矩阵（disabled/enabled 二态穷举）
+  { id: 'verifier-plan', modulePath: './unit/verifier-plan.unit.test' },
+  { id: 'upstream-issues', modulePath: './unit/upstream-issues.unit.test' },
+  // plan d2f7a9c4：报告即真源——subject 回显 / verdict 自洽 / 既往 PASS 沿用 / 改报告不 stale
+  { id: 'verifier-evidence', modulePath: './unit/verifier-evidence.unit.test', layer: 'capability' },
+  // plan a9d4e7c2 复评：verifier 生产端接线（模板解析/严格 request/二态分流/Stop hook 动作/候选锚定）
+  { id: 'verifier-production-routing', modulePath: './unit/verifier-production-routing.unit.test' },
+  // plan a9d4e7c2 T2/T6：短 request 协议 + 证据身份绑定全套回归
+  { id: 'profile-routing',  modulePath: './unit/profile-routing.unit.test' },
+  { id: 'profile-personal-prerequisites', modulePath: './unit/profile-personal-prerequisites.unit.test' },
+  { id: 'framework-config-schema', modulePath: './unit/framework-config-schema.unit.test' },
+  { id: 'review-context',   modulePath: './unit/review-context.unit.test' },
+  { id: 'verdict-extraction', modulePath: './unit/verdict-extraction.unit.test' },
+  { id: 'summary-schema',   modulePath: './unit/summary-schema.unit.test' },
+  { id: 'ut-artifact-parse', modulePath: './unit/ut-artifact-parse.unit.test' },
+  { id: 'ut-artifact-validate', modulePath: './unit/ut-artifact-validate.unit.test' },
+  // plan f4c8d2b7：UT 契约冲突收口（boundary 双形态/模板类名口径回归钉/invalid suggestion 分产物/路径 SSOT/ut prompt 注入）
+  { id: 'ut-contract-caliber', modulePath: './unit/ut-contract-caliber.unit.test' },
+  // plan a8e5c3f9：统一 headless 全权限执行契约（bypass argv/effective 归一化/chrys 拒绝/adapter.yaml 一致性）
+  { id: 'headless-full-permission', modulePath: './unit/headless-full-permission.unit.test', layer: 'capability' },
+  { id: 'ut-it-blocks', modulePath: './unit/ut-it-blocks.unit.test' },
+  { id: 'ut-dag-loader', modulePath: './unit/ut-dag-loader.unit.test' },
+  { id: 'ut-coverage-gate-diagnostics', modulePath: './unit/ut-coverage-gate-diagnostics.unit.test' },
+  { id: 'coverage-evidence', modulePath: './unit/coverage-evidence.unit.test' },
+  { id: 'path-governance', modulePath: './unit/path-governance.unit.test' },
+  { id: 'code-graph-drift', modulePath: './unit/code-graph-drift.unit.test' },
+  { id: 'code-graph-anchor-hash', modulePath: './unit/code-graph-anchor-hash.unit.test' },
+  { id: 'project-entry', modulePath: './unit/project-entry.unit.test' },
+  { id: 'bootstrap-code-graph', modulePath: './unit/bootstrap-code-graph.unit.test' },
+  { id: 'check-module-graph', modulePath: './unit/check-module-graph.unit.test' },
+  { id: 'module-graph-probe', modulePath: './unit/module-graph-probe.unit.test' },
+  { id: 'ut-verdict-incomplete', modulePath: './unit/ut-verdict-incomplete.unit.test' },
+  { id: 'testing-verdict-incomplete', modulePath: './unit/testing-verdict-incomplete.unit.test' },
+  { id: 'ut-file-scope', modulePath: './unit/ut-file-scope.unit.test' },
+  { id: 'ut-module-selection', modulePath: './unit/ut-module-selection.unit.test' },
+  { id: 'ut-build-config-files', modulePath: './unit/ut-build-config-files.unit.test' },
+  // plan f3a9d2c7 T3：direct 模式 ut_no_src_mutation 的 attestation-first 分派全路
+  { id: 'ut-direct-attestation-baseline', modulePath: './unit/ut-direct-attestation-baseline.unit.test' },
+  { id: 'visual-handoff',   modulePath: './unit/visual-handoff.unit.test' },
+  { id: 'ui-spec',          modulePath: './unit/ui-spec.unit.test', layer: 'capability' },
+  { id: 'visual-fidelity',  modulePath: './unit/visual-fidelity.unit.test' },
+  { id: 'visual-rounds-ledger', modulePath: './unit/visual-rounds-ledger.unit.test' },
+  { id: 'critic-receipt-producer', modulePath: './unit/critic-receipt-producer.unit.test' },
+  { id: 'visual-structure-disorder', modulePath: './unit/visual-structure-disorder.unit.test' },
+  { id: 'visual-defect-enum', modulePath: './unit/visual-defect-enum.unit.test', layer: 'capability' },
+  { id: 'visual-minor-deterministic', modulePath: './unit/visual-minor-deterministic.unit.test' },
+  // plan ab072691：只读视觉 provider（支持列表唯一真源 / 三态路由与窄钳制 / 只读 plan golden）
+  { id: 'visual-provider', modulePath: './unit/visual-provider.unit.test' },
+  { id: 'visual-diff-p0-coverage', modulePath: './unit/visual-diff-p0-coverage.unit.test' },
+  { id: 'visual-render-faithfulness', modulePath: './unit/visual-render-faithfulness.unit.test' },
+  { id: 'arkui-clip-overlap', modulePath: './unit/arkui-clip-overlap.unit.test' },
+  { id: 'fidelity-snapshot', modulePath: './unit/fidelity-snapshot.unit.test' },
+  { id: 'multimodal-probe', modulePath: './unit/multimodal-probe.unit.test' },
+  { id: 'product-source-snapshot', modulePath: './unit/product-source-snapshot.unit.test' },
+  { id: 'phase-write-boundary', modulePath: './unit/phase-write-boundary.unit.test' },
+  // plan c4e8b1d3 G1：UI 文件级 scope 门（冻结 contracts.files + coding_base_sha 基线）
+  { id: 'ui-scope-gate', modulePath: './unit/ui-scope-gate.unit.test' },
+  // plan c4e8b1d3 G3：bc-openCard consumer golden evaluator（结果聚合 + 绑定校验）
+  { id: 'consumer-golden', modulePath: './unit/consumer-golden.unit.test' },
+  // plan c4e8b1d3 Todo 3：golden/nav/capture target 集合统一——check-testing 入口级接线
+  // （nav 校验/identity/capture 共用 P0 ∪ golden positive ∪ golden forbidden 集合）
+  { id: 'golden-nav-capture-wiring', modulePath: './unit/golden-nav-capture-wiring.unit.test', layer: 'capability' },
+  // plan b7e4d2a9 Todo3：vision 账本单写者谓词（2026-07-27 宿主误杀根治）
+  { id: 'single-writer-predicate', modulePath: './unit/single-writer-predicate.unit.test' },
+  // plan b7e4d2a9 Todo1：测试 trust 隔离（probe 与 blackbox 两 suite id 不得子串包含）
+  { id: 'trust-isolation-probe', modulePath: './unit/trust-isolation-probe.unit.test' },
+  { id: 'trust-bootstrap-blackbox', modulePath: './unit/trust-bootstrap-blackbox.unit.test' },
+  // plan b7e4d2a9 Todo2：per-run 场外状态回收契约（封卷/supersede 集成面在 testing-integrity）
+  { id: 'trust-lifecycle', modulePath: './unit/trust-lifecycle.unit.test' },
+  // openspec device-readiness-and-completion t2：托管设备会话所有权/回收/target_kind 分类
+  { id: 'device-session', modulePath: './unit/device-session.unit.test', layer: 'capability' }, // Real process identity/kill probes via production helpers.
+  // openspec device-readiness-and-completion t3：设备就绪门三态/降级/启动即锁屏死锁回归
+  { id: 'device-readiness-gate', modulePath: './unit/device-readiness-gate.unit.test' },
+  // openspec device-readiness-and-completion t4：完成观测判据（新鲜度/半写入/收口不算失败）
+  // plan e6b3f8d2 t1：Codex `exec --json` terminal 收口（真实样本 fixture 钉死两终态）
+  { id: 'codex-terminal-closure', modulePath: './unit/codex-terminal-closure.unit.test', layer: 'capability' },
+  // plan e6b3f8d2 t3/t7：撤销强制 Maison UI kit 的精确删除门槛（被删文件 + token 零残留）
+  { id: 'ui-kit-revocation', modulePath: './unit/ui-kit-revocation.unit.test' },
+  // openspec device-readiness-and-completion t6：凭据身份不可变 + 机器级锁存 + 跨进程互斥
+  { id: 'device-credential-store', modulePath: './unit/device-credential-store.unit.test' },
+  // openspec device-readiness-and-completion t6：解锁执行器（禁枚举/键位不全零输入/口令不泄露）
+  { id: 'device-unlock-helper', modulePath: './unit/device-unlock-helper.unit.test' },
+  { id: 'device-lockscreen-parser', modulePath: './unit/device-lockscreen-parser.unit.test' },
+  // openspec device-readiness-and-completion t6：策略检查/登记 CLI（非 TTY 拒绝登记）
+  { id: 'device-policy-cli', modulePath: './unit/device-policy-cli.unit.test' },
+  // openspec device-readiness-and-completion t6：运行期再次锁屏的恢复（同 serial、一次、禁热切）
+  { id: 'device-runtime-recovery', modulePath: './unit/device-runtime-recovery.unit.test' },
+  // openspec device-readiness-and-completion R17：跨进程并发/损坏场景（真子进程，非同进程假并发）
+  { id: 'device-concurrency', modulePath: './unit/device-concurrency.unit.test' },
+  // d9e4b7c1 T2：真机缺陷回修接入（evidence 合成/绑定校验/根级联三分/physical-only）
+  { id: 'device-test-backtrack', modulePath: './unit/device-test-backtrack.unit.test' },
+  { id: 'runtime-step-evidence', modulePath: './unit/runtime-step-evidence.unit.test' },
+  { id: 'testing-stepresult-evidence', modulePath: './unit/testing-stepresult-evidence.unit.test' },
+  // plan a6c4e9f2 T3：顶层 execution_channel 编译期分派 + 派生器 skip 权退场 + STEP-SETUP
+  { id: 'execution-channel', modulePath: './unit/execution-channel.unit.test' },
+  // plan a6c4e9f2 T7a：Hylyre Phase 0 契约冻结包的落位自证（换包/改包即红）
+  { id: 'hylyre-contracts-freeze', modulePath: './unit/hylyre-contracts-freeze.unit.test' },
+  // plan a6c4e9f2 T7a：统一 v1 dispatch/typed boundary 与 D1 selector 身份判据
+  { id: 'hylyre-result-protocol', modulePath: './unit/hylyre-result-protocol.unit.test' },
+  { id: 'hylyre-frozen-conformance', modulePath: './unit/hylyre-frozen-conformance.unit.test' },
+  { id: 'execution-channel-evidence', modulePath: './unit/execution-channel-evidence.unit.test' },
+  { id: 'hylyre-entry-conformance', modulePath: './unit/hylyre-entry-conformance.unit.test' },
+  // plan a6c4e9f2 T4：v1 责任路由基数不变式与 Q8 多根语义
+  { id: 'hylyre-failure-routing-v1', modulePath: './unit/hylyre-failure-routing-v1.unit.test' },
+  // plan a6c4e9f2 T7a（Q5 冻结）：artifact 按 trace 目录解析 + 逃逸检查 + sha256
+  { id: 'hylyre-artifact-resolution', modulePath: './unit/hylyre-artifact-resolution.unit.test' },
+  // plan a6c4e9f2 D1/T2：v1 selector runtime gate（不裁决成败、不做封闭世界）
+  { id: 'hylyre-selector-gates-v1', modulePath: './unit/hylyre-selector-gates-v1.unit.test' },
+  { id: 'skills-device-policy-gate', modulePath: './unit/skills-device-policy-gate.unit.test' },
+  // runner 级集成（进程内跑真实 phase 循环 + 注入缝；断言时序与副作用）
+  { id: 'goal-runner-testing-integrity-revalidate', modulePath: './unit/goal-runner-testing-integrity-revalidate.unit.test' },
+  { id: 'goal-runner-testing-integrity-early', modulePath: './unit/goal-runner-testing-integrity-early.unit.test' },
+  { id: 'goal-runner-testing-integrity-late', modulePath: './unit/goal-runner-testing-integrity-late.unit.test' },
+  // plan d8c5f3a7 T7a：结果级 golden 快检（决策链回放；显式注册防假绿）
+  { id: 'golden-bc-opencard', modulePath: './unit/golden-bc-opencard.unit.test' },
+  { id: 'vision-canary', modulePath: './unit/vision-canary.unit.test' },
+  { id: 'vision-canary-interactive', modulePath: './unit/vision-canary-interactive.unit.test' },
+  { id: 'goal-assess-driver', modulePath: './unit/goal-assess-driver.unit.test' },
+  { id: 'read-image-evidence', modulePath: './unit/read-image-evidence.unit.test' },
+  { id: 'profile-decoupling', modulePath: './unit/profile-decoupling.unit.test' },
+  { id: 'profile-skill-assets', modulePath: './unit/profile-skill-assets.unit.test' },
+  { id: 'resolve-skill-path', modulePath: './unit/resolve-skill-path.unit.test' },
+  { id: 'no-numbered-skill-scan', modulePath: './unit/no-numbered-skill-scan.unit.test' },
+  { id: 'docs-authoring-lint', modulePath: './unit/docs-authoring-lint.unit.test' },
+  { id: 'correction-c5-full', modulePath: './unit/correction-c5-full.unit.test' },
+  { id: 'context-facts', modulePath: './unit/context-facts.unit.test' },
+  { id: 'check-spec-small-scale', modulePath: './unit/check-spec-small-scale.unit.test' },
+  { id: 'ut-business-src-scope', modulePath: './unit/ut-business-src-scope.unit.test' },
+  { id: 'coding-failure-kinds', modulePath: './unit/coding-failure-kinds.unit.test' },
+  { id: 'root-zero-host-name', modulePath: './unit/root-zero-host-name.unit.test' },
+  { id: 'repo-layout', modulePath: './unit/repo-layout.unit.test' },
+  { id: 'framework-integrity', modulePath: './unit/framework-integrity.unit.test' },
+  { id: 'path-guard', modulePath: './unit/path-guard.unit.test' },
+  { id: 'harness-path-guard', modulePath: './unit/harness-path-guard.unit.test' },
+  { id: 'runner-layout-smoke', modulePath: './unit/runner-layout-smoke.unit.test' },
+  { id: 'generic-coding-host', modulePath: './unit/generic-coding-host.unit.test' },
+  { id: 'workflow-loader', modulePath: './unit/workflow-loader.unit.test' },
+  { id: 'repair-dependencies', modulePath: './unit/repair-dependencies.unit.test' },
+  { id: 'lite-retirement', modulePath: './unit/lite-retirement.unit.test' },
+  { id: 'skill-contract', modulePath: './unit/skill-contract.unit.test' },
+  // plan 33714d0c：framework-init 纯正向入口的已发布文本契约（原 routing-contract 重写收窄）
+  { id: 'framework-init-entry-contract', modulePath: './unit/framework-init-entry-contract.unit.test' },
+  // plan 33714d0c T6：S4 的 turn/run 作用域 + 同一 task 两轮 test-only fixture
+  { id: 'framework-init-current-turn', modulePath: './unit/framework-init-current-turn.unit.test' },
+  { id: 'assess', modulePath: './unit/assess.unit.test' },
+  { id: 'device-test-case-kernel', modulePath: './unit/device-test-case-kernel.unit.test' },
+  { id: 'quality-tiers', modulePath: './unit/quality-tiers.unit.test' },
+  { id: 'capability-degradation', modulePath: './unit/capability-degradation.unit.test' },
+  // plan c8e5b3f1 t1：阶段驱动 /spec 需求 provenance（SSOT explicit_cli 解锁 + 反例锁 + 血缘）
+  { id: 'spec-requirement-provenance', modulePath: './unit/spec-requirement-provenance.unit.test' },
+  // plan c8e5b3f1 t2：blocked capability 可诊断投影 + mismatch 因果归因 + next_action + assess
+  { id: 'blocked-capability-projection', modulePath: './unit/blocked-capability-projection.unit.test', layer: 'capability' },
+  // plan c8e5b3f1 t2 P2-3：可重跑 E2E（真实 consumer 工程跑 init/harness-runner/check-receipt）
+  { id: 'e2e-spec-requirement-closure', modulePath: './unit/e2e-spec-requirement-closure.unit.test' },
+  { id: 'goal-adapter-routing', modulePath: './unit/goal-adapter-routing.unit.test' },
+  { id: 'goal-reconcile-observation', modulePath: './unit/goal-reconcile-observation.unit.test' },
+  { id: 'goal-reconcile-boundary-fixtures', modulePath: './unit/goal-reconcile-boundary-fixtures.unit.test' },
+  { id: 'goal-run-control', modulePath: './unit/goal-run-control.unit.test' },
+  { id: 'goal-handoff', modulePath: './unit/goal-handoff.unit.test' },
+  { id: 'goal-handoff-runner-wiring', modulePath: './unit/goal-handoff-runner-wiring.unit.test' },
+  { id: 'goal-in-session-driver', modulePath: './unit/goal-in-session-driver.unit.test' },
+  { id: 'session-execution-handoff', modulePath: './unit/session-execution-handoff.unit.test' },
+  { id: 'session-slow-gate', modulePath: './unit/session-slow-gate.integration.test', releaseOnly: true },
+  { id: 'session-transport-parity', modulePath: './unit/session-transport-parity.unit.test', releaseOnly: true },
+  { id: 'goal-phase-runtime', modulePath: './unit/goal-phase-runtime.unit.test' },
+  { id: 'repair-continuity', modulePath: './unit/repair-continuity.unit.test' },
+  // plan a2f7c9e4 t6：脚本化执行者作为真实子进程的返修中断回归（只证 spawn / 终止 / 事件解析）
+  { id: 'repair-interruption-real-process', modulePath: './unit/repair-interruption-real-process.unit.test' },
+  { id: 'goal-run-birth-contract', modulePath: './unit/goal-run-birth-contract.unit.test' },
+  { id: 'goal-runtime-structural-acceptance', modulePath: './unit/goal-runtime-structural-acceptance.unit.test' },
+  { id: 'runtime-policy', modulePath: './unit/runtime-policy.unit.test' },
+  { id: 'diff-scope', modulePath: './unit/diff-scope.unit.test' },
+  { id: 'correction-routing', modulePath: './unit/correction-routing.unit.test' },
+  { id: 'repair-candidates', modulePath: './unit/repair-candidates.unit.test' },
+  { id: 'backtrack-related-inputs', modulePath: './unit/backtrack-related-inputs.unit.test' },
+  { id: 'usage-capture', modulePath: './unit/usage-capture.unit.test' },
+  { id: 'check-receipt-policy', modulePath: './unit/check-receipt-policy.unit.test' },
+  { id: 'compat-loader', modulePath: './unit/compat-loader.unit.test' },
+  { id: 'extension-loader', modulePath: './unit/extension-loader.unit.test' },
+  { id: 'extension-management', modulePath: './unit/extension-management.unit.test' },
+  { id: 'extension-runtime', modulePath: './unit/extension-runtime.unit.test' },
+  { id: 'hooks-dispatcher', modulePath: './unit/hooks-dispatcher.unit.test', layer: 'capability' },
+  { id: 'adapter-bridge', modulePath: './unit/adapter-bridge.unit.test' },
+  { id: 'generic-bundle', modulePath: './unit/generic-bundle.unit.test' },
+  { id: 'config-field-merger', modulePath: './unit/config-field-merger.unit.test' },
+  { id: 'config-placement-gate', modulePath: './unit/config-placement-gate.unit.test' },
+  { id: 'config-builder', modulePath: './unit/config-builder.unit.test' },
+  { id: 'product-selection', modulePath: './unit/product-selection.unit.test' },
+  { id: 'framework-local-config', modulePath: './unit/framework-local-config.unit.test' },
+  { id: 'personal-setup-gate', modulePath: './unit/personal-setup-gate.unit.test', layer: 'capability' },
+  { id: 'init-readiness', modulePath: './unit/init-readiness.unit.test' },
+  { id: 'template-renderer', modulePath: './unit/template-renderer.unit.test' },
+  { id: 'init-orchestrate', modulePath: './unit/init-orchestrate.unit.test' },
+  { id: 'init-next-steps', modulePath: './unit/init-next-steps.unit.test' },
+  { id: 'skills-index-init-steps', modulePath: './unit/skills-index-init-steps.unit.test' },
+  { id: 'init-task-executor', modulePath: './unit/init-task-executor.unit.test', layer: 'capability' },
+  { id: 'materialized-adapters-resolve', modulePath: './unit/materialized-adapters-resolve.unit.test' },
+  { id: 'legacy-skill-bridge-cleanup', modulePath: './unit/legacy-skill-bridge-cleanup.unit.test' },
+  { id: 'init-orchestrate-smoke', modulePath: './unit/init-orchestrate-smoke.unit.test' },
+  { id: 'derived-hylyre-plan', modulePath: './unit/derived-hylyre-plan.unit.test' },
+  { id: 'adhoc-nl-split', modulePath: './unit/adhoc-nl-split.unit.test' },
+  { id: 'adhoc-derive-helpers', modulePath: './unit/adhoc-derive-helpers.unit.test' },
+  { id: 'hylyre-steps-normalize', modulePath: './unit/hylyre-steps-normalize.unit.test' },
+  { id: 'adhoc-summarize-dump', modulePath: './unit/adhoc-summarize-dump.unit.test' },
+  { id: 'adhoc-ui-reset-meta', modulePath: './unit/adhoc-ui-reset-meta.unit.test' },
+  { id: 'app-snapshot-cache-hint', modulePath: './unit/app-snapshot-cache-hint.unit.test' },
+  { id: 'adhoc-input-path', modulePath: './unit/adhoc-input-path.unit.test' },
+  { id: 'adhoc-canonical-paths', modulePath: './unit/adhoc-canonical-paths.unit.test' },
+  { id: 'hylyre-planned-step-lint', modulePath: './unit/hylyre-planned-step-lint.unit.test' },
+  { id: 'adhoc-trace-placeholder', modulePath: './unit/adhoc-trace-placeholder.unit.test' },
+  // plan a2f7c9e4 §3.6：返修局部诊断（装当前构建 / 量测 / dump 落点 / 提示入口 / CLI 设备门）
+  { id: 'adhoc-repair-diagnosis', modulePath: './unit/adhoc-repair-diagnosis.unit.test' },
+  { id: 'confirmation-ux', modulePath: './unit/confirmation-ux.unit.test' },
+  { id: 'adapter-catalog-consistency', modulePath: './unit/adapter-catalog-consistency.unit.test' },
+  // plan 7b2e9d4c：codex verifier 角色 toml 由 claude verifier.md 渲染（等值 / 转义 / 物化）
+  { id: 'codex-adapter-verifier-template', modulePath: './unit/codex-adapter-verifier-template.unit.test' },
+  { id: 'phase-transition-policy', modulePath: './unit/phase-transition-policy.unit.test' },
+  { id: 'goal-runner-policy', modulePath: './unit/goal-runner-policy.unit.test', layer: 'capability' },
+  { id: 'goal-runner-phase', modulePath: './unit/goal-runner-phase.unit.test' },
+  { id: 'goal-runner-detach', modulePath: './unit/goal-runner-detach.unit.test' },
+  { id: 'chrys-opencode-adapter', modulePath: './unit/chrys-opencode-adapter.unit.test', layer: 'capability' },
+  { id: 'codeagent-adapter', modulePath: './unit/codeagent-adapter.unit.test', layer: 'capability' },
+  { id: 'deepseek-harness-adapter', modulePath: './unit/deepseek-harness-adapter.unit.test', layer: 'capability' },
+  { id: 'agent-invoke-settle', modulePath: './unit/agent-invoke-settle.unit.test' },
+  { id: 'goal-runner-hardening', modulePath: './unit/goal-runner-hardening.unit.test' },
+  // adjudicated-repair-loop M1：信号级身份 + 累计 one-shot 收敛 + no-op（plan e2b7c4a9 t1.8）
+  { id: 'goal-runner-repair-convergence', modulePath: './unit/goal-runner-repair-convergence.unit.test' },
+  // adjudicated-repair-loop M2：producer uncertain 归类（plan e2b7c4a9 t2.6；defect-review 解析已随 plan 3abca824 t3 删除）
+  { id: 'adjudicated-repair-loop', modulePath: './unit/adjudicated-repair-loop.unit.test' },
+  { id: 'goal-headless-guard', modulePath: './unit/goal-headless-guard.unit.test' },
+  { id: 'patch-openspec-artifacts', modulePath: './unit/patch-openspec-artifacts.unit.test' },
+  { id: 'goal-closure-gate', modulePath: './unit/goal-closure-gate.unit.test' },
+  { id: 'testing-trace-gates', modulePath: './unit/testing-trace-gates.unit.test', layer: 'capability' },
+  { id: 'goal-progress', modulePath: './unit/goal-progress.unit.test' },
+  { id: 'goal-preflight', modulePath: './unit/goal-preflight.unit.test', layer: 'capability' },
+  { id: 'headless-binary-resolve', modulePath: './unit/headless-binary-resolve.unit.test', layer: 'capability' },
+  { id: 'phase-state', modulePath: './unit/phase-state.unit.test', layer: 'capability' },
+  { id: 'phase-closure-finalizer', modulePath: './unit/phase-closure-finalizer.unit.test' },
+  { id: 'receipt-path-reconcile', modulePath: './unit/receipt-path-reconcile.unit.test' },
+  { id: 'feature-artifact-resolver', modulePath: './unit/feature-artifact-resolver.unit.test' },
+  { id: 'phase-alias', modulePath: './unit/phase-alias.unit.test' },
+  { id: 'capability-alias', modulePath: './unit/capability-alias.unit.test' },
+  { id: 'migrate-feature-phase-paths', modulePath: './unit/migrate-feature-phase-paths.unit.test' },
+  { id: 'exploration-strategy', modulePath: './unit/exploration-strategy.unit.test' },
+  { id: 'goal-checkpoint', modulePath: './unit/goal-checkpoint.unit.test' },
+  { id: 'run-unit-filter', modulePath: './unit/run-unit-filter.unit.test' },
+  { id: 'run-unit-processes', modulePath: './unit/run-unit-processes.unit.test' },
+  { id: 'runtime-test-control', modulePath: './unit/runtime-test-control.unit.test' },
+  { id: 'gate-fingerprint', modulePath: './unit/gate-fingerprint.unit.test' },
+  { id: 'process-integrity', modulePath: './unit/process-integrity.unit.test' },
+  { id: 'unlock-wording-c9f4e7a2', modulePath: './unit/unlock-wording-c9f4e7a2.unit.test' },
+  // plan d7f3a9c4 t1/t2：显式 --adapter-model 模型钉（五家回放 argv / 单点裁决授权矩阵）
+  { id: 'goal-model-pin-d7f3a9c4', modulePath: './unit/goal-model-pin-d7f3a9c4.unit.test' },
+  // plan d7f3a9c4 t3：pin 与金丝雀身份绑定 + receipt/消费面/三 env 链/telemetry/两条生产链回归
+  { id: 'goal-canary-pin-binding-d7f3a9c4', modulePath: './unit/goal-canary-pin-binding-d7f3a9c4.unit.test', layer: 'capability' },
+  // plan d7f3a9c4 t4：金丝雀 CLI 硬失败前置 BLOCKER（spawn race / CLI·config 参数不兼容）
+  { id: 'goal-canary-hard-cli-d7f3a9c4', modulePath: './unit/goal-canary-hard-cli-d7f3a9c4.unit.test' },
+  // plan c4e8a1f7：宿主运行边界真值——CLI 选择/guardian 投影/硬失败共享分类/
+  // canary 判卷 SSOT/requirement source provenance/共享参考图集合/refs receipt 分母
+  { id: 'host-runtime-truth', modulePath: './unit/host-runtime-truth.unit.test' },
+  // plan a7c3e9d2 t3：goal 作者 prompt 注入 extension knowledge 索引（formatter / 注入 / manifest→invoke 送达接线）。
+  // 顺序约束：本套件在进程内跑 goalMain，会安装 goal runtime 的 SIGINT/SIGTERM handler（收到即 exit 130）；
+  // device-session 套件用 process.emit('SIGINT') 测自身清理，故必须排在它之后——与其它 goalMain 类套件同位。
+  { id: 'goal-extension-author-inputs', modulePath: './unit/goal-extension-author-inputs.unit.test' },
+  { id: 'phase-evidence-manifest', modulePath: './unit/phase-evidence-manifest.unit.test' },
+  { id: 'closure-attestation', modulePath: './unit/closure-attestation.unit.test' },
+  { id: 'headless-assumptions', modulePath: './unit/headless-assumptions.unit.test' },
+  { id: 'verify-feature-completion', modulePath: './unit/verify-feature-completion.unit.test' },
+  // plan b2d7f4e9 t1：唯一评估入口 assessFeature（上一版宿主快照 + 生产 writer 夹具，不注入 verdict）
+  { id: 'feature-assessment', modulePath: './unit/feature-assessment.unit.test' },
+  // plan b2d7f4e9 t3：完成后修正经 successor（快照 + 生产 writer，goal-runner 公开入口，假 agent 出生即停）
+  { id: 'successor-exit-blueprint-base', modulePath: './unit/successor-exit-blueprint-base.unit.test' },
+  { id: 'successor-exit-blueprint-projection', modulePath: './unit/successor-exit-blueprint-projection.unit.test' },
+  { id: 'successor-exit-early', modulePath: './unit/successor-exit-early.unit.test' },
+  { id: 'successor-exit-late', modulePath: './unit/successor-exit-late.unit.test' },
+  { id: 'behavior-switch-scan', modulePath: './unit/behavior-switch-scan.unit.test' },
+  { id: 'p0-semantic-gates', modulePath: './unit/p0-semantic-gates.unit.test' },
+  { id: 'efficiency-first-t2', modulePath: './unit/efficiency-first-t2.unit.test' },
+  { id: 'test-report-writer', modulePath: './unit/test-report-writer.unit.test' },
+  { id: 'review-report-lint', modulePath: './unit/review-report-lint.unit.test' },
+  { id: 'execution-key', modulePath: './unit/execution-key.unit.test' },
+  { id: 'verifier-material', modulePath: './unit/verifier-material.unit.test' },
+  // plan 33784ed1 t1：目标简报同源注入（A1/A2/A3/A5，含真 harness-runner 子进程）
+  { id: 'goal-brief', modulePath: './unit/goal-brief.unit.test' },
+  { id: 'revalidate-plan', modulePath: './unit/revalidate-plan.unit.test' },
+  { id: 'phase-executor-next-line', modulePath: './unit/phase-executor-next-line.unit.test' },
+  { id: 'visual-measure', modulePath: './unit/visual-measure.unit.test' },
+  // plan c7e4a2d9 t1：acceptance_to_test_case P0 优先级对齐锚（device/both P0 AC 须 P0 TC 覆盖）
+  { id: 'check-testing-traceability', modulePath: './unit/check-testing-traceability.unit.test' },
+  { id: 'fidelity-intent', modulePath: './unit/fidelity-intent.unit.test' },
+  { id: 'blocker-suggestion-ratchet', modulePath: './unit/blocker-suggestion-ratchet.unit.test' },
+  // plan f7045213 §3：处置函数、判定谓词与开发期静态守卫（A1–A3）
+  { id: 'check-disposition', modulePath: './unit/check-disposition.unit.test', layer: 'capability' },
+  // plan f7045213 §4、§5：消费矩阵、披露、聚合去重、共享结论（A4–A8，含真实 CLI）
+  { id: 'check-disposition-consumers', modulePath: './unit/check-disposition-consumers.unit.test' },
+  { id: 'report-suggestion-normalize', modulePath: './unit/report-suggestion-normalize.unit.test' },
+  { id: 'hylyre-keyset-consistency', modulePath: './unit/hylyre-keyset-consistency.unit.test' },
+  { id: 'receipt-slim', modulePath: './unit/receipt-slim.unit.test' },
+  { id: 'capability-preflight', modulePath: './unit/capability-preflight.unit.test' },
+  { id: 'lite-json-schema', modulePath: './unit/lite-json-schema.unit.test' },
+  { id: 'worktree-digest', modulePath: './unit/worktree-digest.unit.test' },
+  { id: 'goal-capability-gate', modulePath: './unit/goal-capability-gate.unit.test' },
+  { id: 'negative-verdict-gate', modulePath: './unit/negative-verdict-gate.unit.test' },
+  { id: 'quality-axes', modulePath: './unit/quality-axes.unit.test' },
+  { id: 'effective-vision-context', modulePath: './unit/effective-vision-context.unit.test' },
+  { id: 'mutation-backtrack', modulePath: './unit/mutation-backtrack.unit.test' },
+  { id: 'intermediate-rounds-journal', modulePath: './unit/intermediate-rounds-journal.unit.test' },
+  { id: 'integration-tc-flow', modulePath: './unit/integration-tc-flow.unit.test' },
+  { id: 'blind-crop-prohibition', modulePath: './unit/blind-crop-prohibition.unit.test' },
+  { id: 'visual-debt', modulePath: './unit/visual-debt.unit.test' },
+  // plan a3f7c1d9 V1/V11：asset 轴继承五指纹 I/O 面 + 债务压轴只在 testing
+  { id: 'harness-runner-asset-inheritance', modulePath: './unit/harness-runner-asset-inheritance.unit.test' },
+  // plan 7c4f2e9b（cc-spec 卡死根治）六套件
+  { id: 'claude-envelope', modulePath: './unit/claude-envelope.unit.test' },
+  { id: 'ui-spec-schema-strict', modulePath: './unit/ui-spec-schema-strict.unit.test' },
+  { id: 'pass-snapshot', modulePath: './unit/pass-snapshot.unit.test' },
+  { id: 'blocker-actionability', modulePath: './unit/blocker-actionability.unit.test' },
+  { id: 'attempt-axes-timeline', modulePath: './unit/attempt-axes-timeline.unit.test' },
+  // plan d4a1f7c3：确定性输入下的生产验证链集成回归（spec→testing 六阶段真 harness 全链）
+  // 与 §5 的接缝负例（real-chain-seams）。两者都跑真 harness 子进程，**release-only**：
+  // 日常 `npm test` 跳过，`release:all` / `candidate:build`（`--release`）与按 id 单跑时执行。
+  //
+  // 2026-09-22：正例在 workflow 1.2（`obligation-driven`，与真实宿主同模式）下六阶段
+  // PASS + closed 后重新登记；挡住它的那处生产缺口（goal 闭环不传 factsContext → 源码条目
+  // 无 `owner_phase` → coding 按写集改源码即被 `post_agent` 门判 plan 漂移）已由
+  // plan b5c1e9d7 修复。**不得靠改回 1.1 让它变绿。**
+  { id: 'real-chain', modulePath: './unit/real-chain.unit.test', releaseOnly: true },
+  // `real-chain-seams` 含接缝负例、RC-9/9b 回退及 RC-10 真实记录组合。2026-09-22 重新登记时两条红都**不是生产缺陷**，
+  // 是夹具把失败点造错了地方（定位与改法见 d4a1f7c3 §10.14）——
+  //   · RC-8a/8b 原先删 spec.md 的术语章节，而 1.2 的范围里 spec 的 required_outputs 不含
+  //     spec.md（`check-spec.ts:1484` 早退），那组检查根本不执行；真正停机的是随后缺契约的 plan。
+  //     已改为把失败点显式落在 plan 真会执行的检查上（plan 3abca824 t4 起为 `contract_file_reference_closure`；
+  //     原载体 `context_exploration_facts_phase_delta_missing` 已登记为披露，其正向证据见 RC-8c / RC-8d）。
+  //   · RC-4 前提②把「`ac-coverage.json` 进审核材料」当成回归，而 `verifier-material.ts:145-148`
+  //     明确允许经 contextFiles 送入的运行期证据进材料。已改为断真实 subject 等值。
+  { id: 'real-chain-seams', modulePath: './unit/real-chain-seams.unit.test', releaseOnly: true },
+  // plan b2d7f4e9 §6 / t4b：完成后演进端到端（上一版宿主快照 → 调和 / 改动 → --supersede → 真 harness 跑完后继链
+  // → assessFeature 新完成结论）。同 real-chain 跑真 harness 子进程，release-only；其中 L0 是发布门基线。
+  { id: 'lifecycle-evolution', modulePath: './unit/lifecycle-evolution.unit.test', releaseOnly: true },
+  // plan 1dbe4fa4 t2：十三个事故场景的确定性重放（真实链路 / 运行时链 / 子进程 / 函数级），事实由 t1 采集器求出；
+  // 进程内跑 goalMain，排在 device-session 之后。release-only；RELIABILITY_RESULTS_OUT 设置时写出实测。
+  ...(process.env.RELIABILITY_RESULTS_OUT
+    ? [{ id: 'reliability-scenarios', modulePath: './unit/reliability-scenarios.unit.test', releaseOnly: true }]
+    : [
+      { id: 'reliability-scenarios-foundation', modulePath: './unit/reliability-scenarios-foundation.unit.test', releaseOnly: true },
+      { id: 'reliability-scenarios-runtime', modulePath: './unit/reliability-scenarios-runtime.unit.test', releaseOnly: true },
+      { id: 'reliability-scenarios-repair', modulePath: './unit/reliability-scenarios-repair.unit.test', releaseOnly: true },
+      { id: 'reliability-scenarios-successor', modulePath: './unit/reliability-scenarios-successor.unit.test', releaseOnly: true },
+    ]),
+  // plan 9c3d7e1a：设计权威修复的自动接手与同任务续跑（快照宿主 + 真 harness；run 内调和、锁边界、修后续跑）。release-only。
+  { id: 'design-authority-repair-content', modulePath: './unit/design-authority-repair-content.unit.test', releaseOnly: true },
+  { id: 'design-authority-repair-continuation', modulePath: './unit/design-authority-repair-continuation.unit.test', releaseOnly: true },
+  { id: 'design-authority-repair-runtime', modulePath: './unit/design-authority-repair-runtime.unit.test', releaseOnly: true },
+  { id: 'design-authority-repair-other', modulePath: './unit/design-authority-repair-other.unit.test', releaseOnly: true },
+];
+
+export interface RegisteredUnitSuite { id: string; modulePath: string; releaseOnly?: boolean; layer: 'function' | 'capability'; serialResources?: string[]; serialReason?: string }
+const registered: UnitSuiteRegistration[] = [...CORE_SUITES, ...discoverProfileUnitSuites()];
+const dependencyGraph = buildTestDependencyGraph(registered.map(suite => repoPath(path.resolve(__dirname, '..', suite.modulePath + '.ts'))));
+export const SUITES: RegisteredUnitSuite[] = registered.map(suite => {
+  const entry = repoPath(path.resolve(__dirname, '..', suite.modulePath + '.ts'));
+  return { ...suite, layer: suite.layer ?? inferTestLayer(dependencyGraph, entry),
+    ...(process.env.RELIABILITY_RESULTS_OUT && suite.id === 'reliability-scenarios'
+      ? { serialResources: ['reliability-results-output'], serialReason: 'explicit shared RELIABILITY_RESULTS_OUT report' } : {}) };
+});
+
+export const EXPLICIT_SUITE_IDS = new Set(CORE_SUITES.map(s => s.id));

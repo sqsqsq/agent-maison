@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { spawn, spawnSync } from 'child_process';
-import { withRuntimeTest, preserveRuntimeTestEvidence } from './runtime-test-control';
+import { withRuntimeTest, preserveRuntimeTestEvidence, testPollInterval } from './runtime-test-control';
 import { prepareSessionCliProject } from './session-cli-project';
 import { defaultProcessProbe } from '../../scripts/utils/device-session';
 
@@ -107,7 +107,7 @@ fs.appendFileSync=function(file, bytes, ...rest) {
       }));
       try {
         const deadline = Date.now() + 30_000;
-        while (!fs.existsSync(marker) && child.exitCode === null && Date.now() < deadline) await pause(25);
+        while (!fs.existsSync(marker) && child.exitCode === null && Date.now() < deadline) await pause(testPollInterval());
         assert(fs.existsSync(marker), `the real next process did not reach the request commit: ${output}`);
         if (cut === 'kill') {
           assert(child.pid && child.exitCode === null);

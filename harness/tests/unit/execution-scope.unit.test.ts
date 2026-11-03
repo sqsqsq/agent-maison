@@ -1,3 +1,4 @@
+import { unitCaseGroups } from '../utils/unit-case-selection';
 import { resolveValidationOnlyEligibility } from '../../scripts/utils/goal-runner-phase';
 import { writeRunSummaryBase } from '../../harness-runner';
 import { generateScriptReport } from '../../scripts/utils/report-generator';
@@ -4205,3 +4206,5 @@ export async function runSelectedCases(selector?: string, group?: ScopeGroup): P
 }
 
 export async function runAll(): Promise<UnitCaseResult[]> { return (await runSelectedCases()).results; }
+
+export const listCaseGroups = (group?: ScopeGroup) => unitCaseGroups(cases.filter((c, i) => !group || group === caseGroup(c.name, i)).map(c => c.name));

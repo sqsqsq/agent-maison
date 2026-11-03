@@ -20,28 +20,9 @@ import './utils/transpile-only-env'; // 须为首个 import：本进程+子进�
 // b7e4d2a9 Todo1：第二个 import 必须是 trust 隔离 bootstrap——先于 fixture-runner 等
 // 一切可能读 MAISON_GOAL_CHECKPOINT_DIR 的静态加载，无条件覆写到独立临时根。
 import { cleanupStrict } from './utils/test-trust-bootstrap';
-import * as fs from 'fs';
-import * as path from 'path';
 import { runFixture, FixtureRunResult, fixtureDisplayName } from './utils/fixture-runner';
 
-/** 当前文件在 `framework/harness/tests/` */
-const FRAMEWORK_ROOT = path.resolve(__dirname, '..', '..');
-
-/**
- * 相对 `framework/` 的 Harness fixture 树根；每项须以 …/tests/fixtures 收口。
- * 新增带契约用例的 project_profile 时：在对应 profile 下落目录后 **在此追加一行**。
- */
-const FIXTURE_TREE_ROOTS_REL_TO_FRAMEWORK = [
-  ['harness', 'tests', 'fixtures'],
-  ['profiles', 'hmos-app', 'harness', 'tests', 'fixtures'],
-  ['profiles', 'generic', 'harness', 'tests', 'fixtures'],
-] as const;
-
-function resolveExistingFixtureRoots(): string[] {
-  return FIXTURE_TREE_ROOTS_REL_TO_FRAMEWORK.map(segments =>
-    path.join(FRAMEWORK_ROOT, ...segments),
-  ).filter(abs => fs.existsSync(abs));
-}
+import { collectAllFixtureDirs } from './utils/fixture-registry';
 
 async function main(): Promise<void> {
   const filterIdx = process.argv.indexOf('--filter');
@@ -95,44 +76,6 @@ async function main(): Promise<void> {
     return;
   }
   process.exitCode = 0;
-}
-
-function scanFixtures(root: string): string[] {
-  if (!fs.existsSync(root)) return [];
-  const out: string[] = [];
-  const walk = (dir: string): void => {
-    const entries = fs.readdirSync(dir, { withFileTypes: true });
-    if (entries.some(e => e.name === 'INPUT' && e.isDirectory()) &&
-        entries.some(e => e.name === 'CMD.json' && e.isFile())) {
-      out.push(dir);
-      return; // 不再向下递归（INPUT/ 内部不可能有 fixture）
-    }
-    for (const e of entries) {
-      if (e.isDirectory()) walk(path.join(dir, e.name));
-    }
-  };
-  walk(root);
-  return out.sort();
-}
-
-/** 合并多根扫描；fixtureDisplayName 相同的目录视为重复，阻断（防止双份漂移）。 */
-function collectAllFixtureDirs(): string[] {
-  const roots = resolveExistingFixtureRoots();
-  const dirs = roots.flatMap(r => scanFixtures(r));
-  const logicalToDir = new Map<string, string>();
-  for (const dir of dirs) {
-    const key = fixtureDisplayName(dir);
-    const prev = logicalToDir.get(key);
-    if (prev !== undefined && prev !== dir) {
-      throw new Error(
-        `fixture 逻辑路径重复 "${key}"：\n  A: ${prev}\n  B: ${dir}\n仅保留其一。`,
-      );
-    }
-    logicalToDir.set(key, dir);
-  }
-  return [...logicalToDir.entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([, dir]) => dir);
 }
 
 function printOne(r: FixtureRunResult): void {

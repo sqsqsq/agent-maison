@@ -821,7 +821,8 @@ export function resolveCapabilityResolutionEntryInput(
               const ownerEvidence = entry.owner_phase && entry.owner_phase !== establishing
                 ? loadPhaseEvidenceManifest(options.projectRoot, options.feature, entry.owner_phase) : null;
               const owner = ownerEvidence?.integrityOk && recomputePhaseEvidenceStaleness(options.projectRoot, options.feature, [entry.owner_phase!], semanticOptions)[0]?.verdict === 'fresh'
-                ? ownerEvidence.manifest.outputs.find(output => output.path === entry.path && output.owner_phase === entry.owner_phase) : undefined;
+                ? ownerEvidence.manifest.outputs.find(output => output.path === entry.path && output.owner_phase === entry.owner_phase
+                  && evidenceEntryMatchesCurrentFile(options.projectRoot, output, options.feature, options.authorityReaders)) : undefined;
               const abs = path.join(options.projectRoot, entry.path);
               // Current-owner writes require the invocation admission above. A rejected
               // start/revoked window cannot regain that authority through fallback freshness.

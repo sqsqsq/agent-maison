@@ -1,3 +1,4 @@
+export const layer = 'capability' as const; // Actual native helper calls are part of this suite.
 // ============================================================================
 // hsp-library-format.unit.test.ts — HSP 库模块 format 回归
 // ============================================================================

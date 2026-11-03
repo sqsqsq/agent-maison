@@ -1,3 +1,4 @@
+import { unitCaseGroups } from '../utils/unit-case-selection';
 // successor-exit.unit.test.ts — plan b2d7f4e9 §3.2 / t3：完成后修正 = `--supersede <完成 run>` 起 successor
 //
 // 夹具只用上一版宿主快照（host-snapshot-3.1.0，换目录加载）+ 生产 writer（蓝图升版调和、投影物化、
@@ -844,3 +845,5 @@ export async function runSelectedCases(selector?: string, group?: SuccessorGroup
 }
 
 export async function runAll(): Promise<UnitCaseResult[]> { return (await runSelectedCases()).results; }
+
+export const listCaseGroups = (group?: SuccessorGroup) => unitCaseGroups(cases.filter((c, i) => !group || group === caseGroup(c.name, i)).map(c => `successor-exit: ${c.name}`));

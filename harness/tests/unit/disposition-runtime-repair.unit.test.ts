@@ -1,3 +1,4 @@
+import { unitCaseGroups } from '../utils/unit-case-selection';
 import assert from 'assert';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
@@ -342,3 +343,5 @@ export async function runSelectedCases(selector?: string) {
   return selectedUnitCases(results, selector, timings);
 }
 export const runAll = async () => (await runSelectedCases()).results;
+
+export const listCaseGroups = () => unitCaseGroups(cases.map(c => c.name));

@@ -227,6 +227,9 @@ function assertZipContents(frameworkRoot) {
   if (harnessPkg.scripts?.['test:fixtures']) {
     fail('sanitized harness/package.json still has test:fixtures');
   }
+  if (harnessPkg.scripts?.['test:changed'] || pkg.scripts?.['test:changed']) {
+    fail('sanitized package.json still has development test:changed');
+  }
   if (!harnessPkg.scripts?.['check:global']) {
     fail('sanitized harness/package.json missing check:global');
   }

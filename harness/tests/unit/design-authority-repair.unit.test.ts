@@ -1,3 +1,4 @@
+import { unitCaseGroups } from '../utils/unit-case-selection';
 // design-authority-repair.unit.test.ts — plan 9c3d7e1a：设计权威修复的自动接手与同任务续跑（release-only，真 harness）
 //
 // 历史绑定宿主用上一版快照 + git 基线；普通 S16 用无旧产物的 fresh CU。run 经公开入口出生，阶段门由真 harness 产出，
@@ -2658,3 +2659,5 @@ export async function runSelectedCases(selector?: string, group?: DesignRepairGr
 export async function runAll(group?: 'content' | 'continuation' | 'runtime' | 'other'): Promise<UnitCaseResult[]> {
   return (await runSelectedCases(undefined, group)).results;
 }
+
+export const listCaseGroups = (group?: DesignRepairGroup) => unitCaseGroups(getCases(group).map(c => c.name));

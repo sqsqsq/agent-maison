@@ -1,3 +1,4 @@
+export const layer = 'capability' as const; // Actual native helper calls are part of this suite.
 // ============================================================================
 // asset-integrity.unit.test.ts — blind-visual-hardening d2 / P0-B
 // ============================================================================

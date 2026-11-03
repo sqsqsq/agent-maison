@@ -1,3 +1,4 @@
+import { unitCaseGroups } from '../utils/unit-case-selection';
 import assert from 'assert';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -476,3 +477,5 @@ export async function runSelectedCases(filter?: string) {
   return selectedUnitCases(results, filter, timings);
 }
 export async function runAll(): Promise<UnitCaseResult[]> { return (await runSelectedCases()).results; }
+
+export const listCaseGroups = () => unitCaseGroups(cases.map(c => c.name));

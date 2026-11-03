@@ -129,14 +129,8 @@ function main() {
   // 1. plan 版本发布门禁（在研 plan 若含未完成 todo 会在此拦截）
   run(process.execPath, ['scripts/check-plan-version.mjs', '--release'], REPO_ROOT);
 
-  // 2. typecheck 一次（含 tests；SSOT 类型把关，后续测试走 transpile-only）
-  run(process.execPath, [TSC, '--noEmit', '-p', 'tsconfig.typecheck.json'], HARNESS);
-
-  // 3. 单测 + fixtures（transpile-only；不再各自重复 typecheck）
-  //    --release：连 release-only 套件（真链回归 real-chain）一起跑——日常 npm test 不跑它们，
-  //    发布件出厂前必须跑（plan d4a1f7c3 §6.2，用户 2026-09-22 裁决）。
-  run(process.execPath, [TSNODE, '--transpile-only', 'tests/run-unit.ts', '--release'], HARNESS);
-  run(process.execPath, [TSNODE, '--transpile-only', 'tests/run-tests.ts'], HARNESS);
+  // npm test is the single complete test entry (typecheck + all unit/profile + fixtures).
+  run(process.execPath, [process.env.npm_execpath ?? path.join(path.dirname(process.execPath), 'node_modules/npm/bin/npm-cli.js'), 'test'], HARNESS);
 
   // 4–6. pack→verify→promote：staging 生命周期用 try/finally 兜住，任一步失败都清 staging（不留残留产物）
   fs.rmSync(stagingDir, { recursive: true, force: true });

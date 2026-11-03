@@ -1,3 +1,4 @@
+export const layer = 'capability' as const; // Actual native helper calls are part of this suite.
 /**
  * quiescence-sampling 单测（t4a，plan f7a3d9c2）：静稳采样三态 + 布局签名 + approot 漂移
  * + observe-only（正式链不调用——守恒由 t6b/现有 capture 测试保证，本文件锁采样器语义）。

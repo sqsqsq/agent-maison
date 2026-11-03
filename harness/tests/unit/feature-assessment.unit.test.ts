@@ -1,3 +1,4 @@
+import { unitCaseGroups, startCaseTiming, UnitExecutionTiming } from '../utils/unit-case-selection';
 // feature-assessment.unit.test.ts — plan b2d7f4e9 §3.1 / t1：唯一评估入口 assessFeature
 //
 // 夹具只用两类真实产物，不注入 verdict：
@@ -441,15 +442,19 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
 export async function runSelectedCases(selector?: string) {
   const { matchesUnitCase, selectedUnitCases } = await import('../utils/unit-case-selection');
   const results: UnitCaseResult[] = [];
+  const timings: UnitExecutionTiming[] = [];
   for (const c of cases) {
     if (!matchesUnitCase(`feature-assessment: ${c.name}`, selector)) continue;
+    const finish = startCaseTiming([`feature-assessment: ${c.name}`], timings);
     try {
       await c.run();
       results.push({ name: `feature-assessment: ${c.name}`, ok: true });
     } catch (err) {
       results.push({ name: `feature-assessment: ${c.name}`, ok: false, error: (err as Error).stack ?? (err as Error).message });
-    }
+    } finally { finish(); }
   }
-  return selectedUnitCases(results, selector, []);
+  return selectedUnitCases(results, selector, timings);
 }
 export async function runAll(): Promise<UnitCaseResult[]> { return (await runSelectedCases()).results; }
+
+export const listCaseGroups = () => unitCaseGroups(cases.map(c => `feature-assessment: ${c.name}`));

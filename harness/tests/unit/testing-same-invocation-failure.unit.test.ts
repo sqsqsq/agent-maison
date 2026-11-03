@@ -1,3 +1,4 @@
+import { unitCaseGroups } from '../utils/unit-case-selection';
 import * as assert from 'assert';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -258,3 +259,5 @@ export function runSelectedCases(selector?: string) {
   return selectedUnitCases(results, selector, timings);
 }
 export function runAll(): UnitCaseResult[] { return runSelectedCases().results; }
+
+export const listCaseGroups = () => unitCaseGroups(cases.map(c => c.name));

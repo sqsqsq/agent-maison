@@ -1,3 +1,4 @@
+export const layer = 'capability' as const; // Actual native helper calls are part of this suite.
 /**
  * ocr-toolkit 单测（T0）：
  *   - 纯模糊匹配函数（恒跑、快）：fuzzyTextPresent 容忍 OCR 掉字、fuzzyTextInBand 定位 band。

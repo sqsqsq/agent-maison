@@ -14,7 +14,8 @@ cd framework/harness && npm install
 
 | 命令 | 说明 |
 |------|------|
-| `npm test` | typecheck + unit + fixture 全量 |
+| `npm test` | typecheck 一次 + 全部 unit/profile（含 release-only）+ 全部 fixture；收口与发布完整全量 |
+| `npm run test:changed` | 按当前输入与逐组通过事实生成并执行必选计划；必选项只能加不能减 |
 | `npm run check:spec` | spec 阶段（canonical） |
 | `npm run check:plan` | plan 阶段（canonical） |
 | `npm run check:global` | catalog + glossary + docs |

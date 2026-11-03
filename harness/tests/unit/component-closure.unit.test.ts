@@ -1,3 +1,4 @@
+import { selectExecutionBlock, timeExecutionBlock, selectedExecutionBlocks } from '../utils/unit-case-selection';
 import * as fs from 'fs';
 import { writeReceiptManifestPointer } from '../utils/completion-chain-seed';
 import * as os from 'os';
@@ -55,8 +56,12 @@ function clone<T>(value: T): T {
 }
 
 function test(name: string, run: () => void): UnitCaseResult {
+  const displayName = name;
+  if (!selectExecutionBlock(displayName)) return { name: displayName, ok: true };
+  const finish = timeExecutionBlock(displayName);
   try { run(); return { name, ok: true }; }
   catch (error) { return { name, ok: false, error: (error as Error).stack ?? (error as Error).message }; }
+  finally { finish(); }
 }
 
 function withProject(run: (projectRoot: string) => void, mutateBlueprint?: (blueprint: BlueprintRecord) => void): void {
@@ -1053,3 +1058,6 @@ export function runAll(): UnitCaseResult[] {
 
   return results;
 }
+
+export const listCaseGroups = async () => (await selectedExecutionBlocks(runAll, undefined, true)).groups;
+export const runSelectedCases = (selector?: string) => selectedExecutionBlocks(runAll, selector);

@@ -8,8 +8,12 @@ import type { Readable, Writable } from 'stream';
 import type { UnitCaseResult } from '../run-unit';
 import type { UnitExecutionTiming } from './unit-case-selection';
 import { mergeRuntimeTestFailures, preserveRuntimeTestEvidence, runtimeTestFailures, testTimeout, TEST_CASE_TIMEOUT_MS, TEST_RUN_TIMEOUT_MS, TEST_SUITE_TIMEOUT_MS, TEST_WORKER_CLOSE_TIMEOUT_MS } from './runtime-test-control';
+import { mergeGroupCoverage } from './test-coverage';
+import type { GroupFootprint } from './test-impact';
+import type { TestInputReads } from './test-input-observer';
+import type { UnitCaseGroup } from './unit-case-selection';
 
-export interface UnitSuiteTask { id: string; modulePath: string; selector?: string; requirePreselection?: boolean; timeoutMs?: number; closeTimeoutMs?: number }
+export interface UnitSuiteTask { id: string; modulePath: string; selector?: string; requirePreselection?: boolean; timeoutMs?: number; closeTimeoutMs?: number; layer?: 'function' | 'capability'; enumerate?: boolean; collect?: boolean; serialResources?: string[]; kind?: 'fixture' }
 export interface UnitWorkerResult {
   id: string;
   status: 'completed' | 'load-error' | 'run-error' | 'worker-error' | 'not-run';
@@ -22,6 +26,10 @@ export interface UnitWorkerResult {
   totalMs: number | null;
   matchedCaseCount?: number;
   executionTimings?: UnitExecutionTiming[];
+  caseGroups?: UnitCaseGroup[];
+  inputReads?: TestInputReads;
+  footprint?: GroupFootprint;
+  coverageRunPeakBytes?: number;
 }
 
 export function readSuiteTimings(): Record<string, number> {
@@ -102,7 +110,11 @@ export async function runSuiteProcesses(
   const queue = orderSuiteTasks(tasks, timings);
   const active = new Set<ChildProcess>();
   const results = new Map<string, UnitWorkerResult>();
-  let next = 0;
+  const coverageDirectories = new Set<string>();
+  let coveragePeakBytes = 0;
+  const dispatched = new Set<number>();
+  const resources = new Set<string>();
+  const waiting = new Set<() => void>();
   let interrupted: string | undefined;
   let stopping: Promise<void> | undefined;
   const stop = (signal: string): void => {
@@ -126,6 +138,9 @@ export async function runSuiteProcesses(
   const runOne = (task: UnitSuiteTask, index: number): Promise<void> => new Promise(resolve => {
     const tmp = path.join(root, index.toString(36));
     fs.mkdirSync(tmp);
+    const coverageDir = path.join(tmp, 'coverage');
+    if (task.collect) fs.mkdirSync(coverageDir);
+    if (task.collect) coverageDirectories.add(coverageDir);
     const started = performance.now();
     let result: UnitWorkerResult | undefined;
     let startupMs: number | null = null;
@@ -170,6 +185,18 @@ export async function runSuiteProcesses(
       for (const timer of deadlines.values()) clearTimeout(timer);
       const totalMs = performance.now() - started;
       const lateFailures = runtimeTestFailures(path.join(tmp, 'runtime-test-failures'));
+      if (task.collect) result = result ?? workerFailure(task.id, timeoutError ?? spawnError ?? interrupted ?? 'worker coverage result missing');
+      if (task.collect && result) {
+        let currentBytes = 0;
+        for (const directory of coverageDirectories) {
+          try { for (const name of fs.readdirSync(directory)) currentBytes += fs.statSync(path.join(directory, name)).size; } catch { /* A failed collector is recorded by its group. */ }
+        }
+        coveragePeakBytes = Math.max(coveragePeakBytes, currentBytes);
+        result.footprint = mergeGroupCoverage(coverageDir, child.pid, result.inputReads);
+        result.coverageRunPeakBytes = coveragePeakBytes;
+        delete result.inputReads;
+        coverageDirectories.delete(coverageDir);
+      }
       const cleanupError = cleanupWorkerTemp(tmp);
       if (!result) result = workerFailure(task.id, timeoutError ?? spawnError ?? interrupted ?? `worker 未返回结果（exit=${code}, signal=${signal}）`);
       if (mergeRuntimeTestFailures(result.results, [...lateFailures, ...runtimeErrors,
@@ -190,11 +217,13 @@ export async function runSuiteProcesses(
       resolve();
     };
     try {
-      child = fork(path.join(__dirname, '..', 'unit-worker.ts'), [task.id, task.modulePath,
-        JSON.stringify({ selector: task.selector, requirePreselection: task.requirePreselection })], {
+      const compiled = (require.extensions['.ts'] as unknown as { precompiledTestRuntime?: boolean })?.precompiledTestRuntime === true;
+      const workerPath = path.join(__dirname, '..', 'unit-worker.ts');
+      child = fork(compiled ? path.join(__dirname, '..', 'compiled-entry.cjs') : workerPath, [...(compiled ? [workerPath] : []), task.id, task.modulePath,
+        JSON.stringify({ selector: task.selector, requirePreselection: task.requirePreselection, layer: task.layer, enumerate: task.enumerate, collect: task.collect, kind: task.kind })], {
         cwd: path.resolve(__dirname, '..', '..'),
-        execArgv: ['-r', 'ts-node/register'],
-        env: { ...process.env, TMP: tmp, TEMP: tmp, TMPDIR: tmp, MAISON_TEST_CONTROL_DIR: path.join(tmp, 'runtime-test-failures') },
+        execArgv: compiled ? [] : ['-r', 'ts-node/register'],
+        env: { ...process.env, TMP: tmp, TEMP: tmp, TMPDIR: tmp, MAISON_TEST_CONTROL_DIR: path.join(tmp, 'runtime-test-failures'), ...(task.collect ? { NODE_V8_COVERAGE: coverageDir } : {}) },
         stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
         detached: process.platform !== 'win32',
       });
@@ -237,12 +266,19 @@ export async function runSuiteProcesses(
 
   try {
     await Promise.all(Array.from({ length: Math.min(workers, queue.length) }, async () => {
-      while (!interrupted && next < queue.length) {
-        const index = next++;
-        try { await runOne(queue[index], index); }
+      while (!interrupted && dispatched.size < queue.length) {
+        const index = queue.findIndex((task, i) => !dispatched.has(i) && !(task.serialResources ?? []).some(resource => resources.has(resource)));
+        if (index < 0) { await new Promise<void>(resolve => waiting.add(resolve)); continue; }
+        dispatched.add(index);
+        const task = queue[index];
+        for (const resource of task.serialResources ?? []) resources.add(resource);
+        try { await runOne(task, index); }
         catch (error) {
           results.set(queue[index].id, workerFailure(queue[index].id, String(error)));
           stop('调度异常');
+        } finally {
+          for (const resource of task.serialResources ?? []) resources.delete(resource);
+          for (const notify of waiting) notify(); waiting.clear();
         }
       }
     }));

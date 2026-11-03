@@ -80,10 +80,10 @@ git status   # 确认 diff 仅为 CRLF→LF 时可提交
 
 ```bash
 npm install              # 根目录，拉取 archiver / extract-zip
-npm run release:all      # check-plans → typecheck → test:unit/fixtures → pack(staging) → verify(--zip) → promote 到 dist/
+npm run release:all      # check-plans → npm test（完整全量）→ pack(staging) → verify(--zip) → promote 到 dist/
 ```
 
-> ⚠️ 请**前台**跑 `release:all`（约 2–3 分钟）；勿丢后台再粗粒度轮询——轮询会把体感放大到十几分钟。任一步失败即中止、不产出 dist 产物。
+> ⚠️ 请**前台**跑 `release:all`。耗时以当前机器与完整测试范围实测为准；测试与打包、校验、consumer smoke 分项报告。发布链已执行一次完整全量，无需人为预跑 `npm test`。任一步失败即中止、不产出 dist 产物。
 
 分步命令（调试/单跑时用）：
 
@@ -96,7 +96,7 @@ staging 时会对 zip 内 `package.json` **sanitize**：移除 `release:*` scrip
 
 ## 开发验收（BLOCKER）
 
-改动发布内容后：`cd harness && npm test` 必须全 PASS。
+每轮开发执行 `npm run test:changed` 生成并执行按需测试计划，全部必选项通过；plan 收口与发版门禁各执行一次 `npm test` 完整全量（typecheck、全部 unit/profile 含 release-only、全部 fixtures）。已知未通过项不可豁免；同一轮窄返修复用有效通过结果，不重复全测；本次基建全量可同时作为本 plan 收口全量。
 
 maison 自身不走 feature phase skill 管线；`harness-runner` 在消费者实例工程内跑 phase 集成测试。
 
