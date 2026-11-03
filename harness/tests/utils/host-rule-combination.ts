@@ -16,7 +16,7 @@ import { parseContextExploration } from '../../scripts/utils/context-exploration
 import { findPhaseDeltaSection } from '../../scripts/utils/context-facts';
 import { readVerifierMaterialOrNull, verifierMaterialFileMatchesCurrent } from '../../scripts/utils/verifier-material';
 import { workUnitMayWritePath } from '../../scripts/utils/repair-responsibility';
-import { sendTestControl } from './runtime-test-control';
+import { sendTestControl, TEST_CASE_TIMEOUT_MS } from './runtime-test-control';
 import type { WorkUnitExecutionContext } from '../../scripts/utils/goal-phase-executor';
 import { prepareFeatureScopeCandidate, featureScopeCandidateFingerprint } from '../../scripts/utils/feature-track';
 import { freezeFeatureExecutionScope } from '../../scripts/utils/feature-execution-scope';
@@ -215,11 +215,16 @@ export async function rc10HostRuleCombination(record: '20261019' | '20261020' = 
       sendTestControl({root, evidenceFiles: files}); // Existing evidence fields only; does not arm/end a control scope.
     };
     let handedOff = false;
+    let handoffBlocked: { phase: string; detail: string } | undefined;
     let resourceWrites = 0;
     const authorRequests: Array<{ invokeId: string; context: WorkUnitExecutionContext }> = [];
     const assertHandoffReady = later && !upstream ? assertCurrentPhaseDutiesSatisfied : assertCurrentPhaseClosed;
     const isClosed = (phase: string, runId: string): boolean => {
-      try { assertHandoffReady(project, phase, runId); return true; } catch { return false; }
+      try { assertHandoffReady(project, phase, runId); return true; } catch (error) {
+        handoffBlocked = { phase, detail: error instanceof Error ? error.message : String(error) };
+        console.log('HOST_HANDOFF_BLOCKED=' + JSON.stringify({ runId, ...handoffBlocked }));
+        return false;
+      }
     };
     const actualVerifier = (ctx: Parameters<typeof readDeliveredVerifierRequest>[1]): boolean => {
       const request = readDeliveredVerifierRequest(project, ctx);
@@ -364,7 +369,11 @@ export async function rc10HostRuleCombination(record: '20261019' | '20261020' = 
       return { stdout: output, details: output };
     };
     const result = await runGoalRuntimeChain(root, {
-      testControl: { expectedInterruption: handoff }, frameworkRoot, featureId: feature, realHarness: true, adapter: 'codex', freshRequirement: original.requirement,
+      testControl: { expectedInterruption: handoff,
+        // r5 reached a new bound material/Q publication before 45 minutes; keep cleanup inside the existing case budget.
+        ...((!later && !upstream) || upstream === 'fact-decline' || upstream === 'design-repair'
+          ? { timeoutMs: TEST_CASE_TIMEOUT_MS - 5 * 60_000 } : {}) },
+      frameworkRoot, featureId: feature, realHarness: true, adapter: 'codex', freshRequirement: original.requirement,
       ...(upstream ? { viaRuntimeClass: true, noAutoForce: true } : {}),
       freshStartPhase: prepared.scope.phase_chain[0] as 'spec', freshEndPhase: prepared.scope.phase_chain.at(-1),
       onOutOfChain: ctx => actualVerifier(ctx) ? undefined : designReply(ctx),
@@ -412,6 +421,7 @@ export async function rc10HostRuleCombination(record: '20261019' | '20261020' = 
           }
         };
         const attemptHandoff = (family: 'review' | 'ut'): void => {
+          console.log('HOST_HANDOFF_CHECK=' + JSON.stringify({ runId: ctx.runId, invokeId: issued!.request.invoke_id, family }));
           if (!isClosed('coding', ctx.runId) || !later && !isClosed('review', ctx.runId)) return;
           if (upstream && (!ownerReceived || upstream.includes('decline') && !originalReceived)) return;
           assertHandoffReady(project, 'coding', ctx.runId);
@@ -530,7 +540,7 @@ export async function rc10HostRuleCombination(record: '20261019' | '20261020' = 
         }
       },
     });
-    assert(handedOff, JSON.stringify({ phases: result.invokedPhases, end: result.events.filter(event => event.type === 'run_end').at(-1) }));
+    assert(handedOff, JSON.stringify({ phases: result.invokedPhases, end: result.events.filter(event => event.type === 'run_end').at(-1), handoffBlocked }));
     const lineage = loadLineageRunEvents(root, feature, project.runId!) as Array<GoalRunEvent & { stage?: string }>;
     const actualWrites = lineage.filter(event => event.type === 'phase_write_observed' && event.phase === 'work-unit-author')
       .flatMap(event => (event as { owned?: Array<{ path: string; owner?: string; pre_sha256?: string | null; post_sha256?: string | null }> }).owned ?? []);
