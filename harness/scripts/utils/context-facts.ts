@@ -286,7 +286,9 @@ function checkFactsFile(
     const inheritedSourceHash = invocation.baseline && 'run_id' in invocation.subject
       ? createObservedSourceHashReader(projectRoot, invocation.subject.feature, { frameworkRoot: options?.frameworkRoot,
         runId: invocation.subject.run_id }) : undefined;
-    if (record.established_by !== expectedPhase || !expectedPhase || (!invocation.baseline && phase !== invocation.first_phase)) issue('context_exploration_facts_established_by_invalid', '建立资格必须来自首个实际调用或经验证的已有基线');
+    const unitFacts = !invocation.baseline && (actorPhase === 'work-unit-author' && !!invocationPre && !!admission
+      || !!formal?.context && !formal.context.baseline || !!completed?.context && !completed.context.baseline);
+    if (record.established_by !== expectedPhase || !expectedPhase || (!invocation.baseline && phase !== invocation.first_phase && !unitFacts)) issue('context_exploration_facts_established_by_invalid', '建立资格必须来自首个实际调用或经验证的已有基线');
     if (invocation.baseline) {
       if (factsBaselineFingerprint(raw) !== invocation.baseline.fingerprint) issue('context_exploration_facts_baseline_stale', `facts 基线正文或原身份已变化；保留已核基线，在 ## phase_delta: ${phase} 精确追加当前变化来源与事实，不通过改正文或run_id洗新`);
       const { factsBaselineBusinessDependencies } = require('./phase-evidence-manifest') as typeof import('./phase-evidence-manifest');

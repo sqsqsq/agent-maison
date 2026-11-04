@@ -202,9 +202,20 @@ export function publishVerifier(p: RealChainProject, phase: string): void {
   const s = readSummary(p, phase);
   const subjectId = s?.verifier_subject_id;
   if (!subjectId) return;
+  publishFixtureVerifierEvidence({
+    projectRoot: p.root, reportsDir, feature: p.feature, phase, subjectId,
+    reportText: `# verifier — ${p.feature} / ${phase}\n\n语义一致性复核通过。\n${codingTestStrengthReply(p, phase)}`,
+    skipSummaryPatch: true,
+  });
+}
+
+/** The independent test-strength decision a coding verifier owes for every listed test write (empty otherwise). */
+export function codingTestStrengthReply(p: RealChainProject, phase: string): string {
+  const reportsDir = path.join(p.root, 'doc/features', featureRelativePath(p.feature), phase, 'reports');
   const scriptFile = path.join(reportsDir, 'script-report.json');
   const script = (phase === 'coding' && fs.existsSync(scriptFile) ? JSON.parse(fs.readFileSync(scriptFile, 'utf8')) : {}) as { checks?: Array<{ id: string; status: string; details?: string; affected_files?: string[] }> };
-  const strength = script.checks?.find(check => check.id === 'coding_existing_test_preserved' && check.status === 'FAIL');
+  // Any listed test write needs the independent strength decision, including a textual-preservation PASS.
+  const strength = script.checks?.find(check => check.id === 'coding_existing_test_preserved' && !!check.affected_files?.length);
   let strengthReply = '';
   if (strength?.affected_files?.length) {
     for (const file of strength.affected_files) {
@@ -230,11 +241,7 @@ export function publishVerifier(p: RealChainProject, phase: string): void {
     strengthReply = '\n```issue-verification\n' + YAML.stringify([{ issue: strength.id, verdict: 'refuted',
       evidence: [...strength.affected_files, strength.details ?? '', '已读取真实前像与当前正文：原有用例/断言未删弱；新增用例实际调用当前业务入口并核对上述正反结果。'].join('\n') }]) + '```\n';
   }
-  publishFixtureVerifierEvidence({
-    projectRoot: p.root, reportsDir, feature: p.feature, phase, subjectId,
-    reportText: `# verifier — ${p.feature} / ${phase}\n\n语义一致性复核通过。\n${strengthReply}`,
-    skipSummaryPatch: true,
-  });
+  return strengthReply;
 }
 
 /** Read-only model boundary: require the complete actually delivered current request and material. */

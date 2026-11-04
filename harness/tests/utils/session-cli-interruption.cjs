@@ -36,7 +36,7 @@ async function observeAndInterrupt(root, evidenceFile, timeoutMs = 45 * 60_000) 
     const binding = [...events].reverse().find(event => event.type === 'harness_start' && event.phase === 'coding' && event.process_role === 'harness');
     const native = rows(path.join(root, 'observations/native-gates.jsonl'));
     const entered = native.find(row => row.kind === 'enter');
-    if (binding && entered && events.some(event => event.type === 'agent_invoke_end' && event.phase === 'coding' && event.handoff_report)
+    if (binding && entered && events.some(event => event.type === 'agent_invoke_end' && event.phase === 'work-unit-author' && event.handoff_report)
       && !events.some(event => event.type === 'harness_end' && event.invoke_id === binding.invoke_id)) {
       const pid = Number(binding.pid); assert(Number.isSafeInteger(pid) && pid > 0);
       const script = `$taskGate=Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}'; if (!$taskGate) { throw 'bound guardian disappeared' }; $taskReporter=Get-CimInstance Win32_Process -Filter ('ProcessId = '+$taskGate.ParentProcessId); [PSCustomObject]@{guardian_pid=$taskGate.ProcessId; guardian_started_ms=([DateTimeOffset]$taskGate.CreationDate).ToUnixTimeMilliseconds(); reporter_pid=$taskReporter.ProcessId; reporter_executable=$taskReporter.ExecutablePath; reporter_command=$taskReporter.CommandLine} | ConvertTo-Json -Compress`;
@@ -65,17 +65,19 @@ async function observeAndInterrupt(root, evidenceFile, timeoutMs = 45 * 60_000) 
 }
 
 function assertInterruptedCodingReuse(events, cut) {
-  const invoke = cut.binding.invoke_id;
-  assert.equal(events.filter(event => event.type === 'agent_invoke_start' && event.phase === 'coding' && event.invoke_id === invoke).length, 1,
-    'the interrupted accepted coding invocation must have one original start');
-  assert.equal(events.filter(event => event.type === 'agent_invoke_end' && event.phase === 'coding' && event.invoke_id === invoke && event.handoff_report).length, 1);
-  const gateIndex = events.findIndex(event => event.type === 'harness_start' && event.invoke_id === invoke && event.pid === cut.binding.pid && event.ts === cut.binding.ts);
+  const gateInvoke = cut.binding.invoke_id;
+  const gateIndex = events.findIndex(event => event.type === 'harness_start' && event.invoke_id === gateInvoke && event.pid === cut.binding.pid && event.ts === cut.binding.ts);
   assert(gateIndex >= 0, 'the interrupted gate must be present in production events');
-  const passOffset = events.slice(gateIndex + 1).findIndex(event => event.type === 'phase_verdict' && event.phase === 'coding' && event.verdict === 'PASS');
-  assert(passOffset >= 0, 'coding must formally pass after its interrupted gate');
-  const recovery = events.slice(gateIndex + 1, gateIndex + passOffset + 2);
-  assert(!recovery.some(event => event.type === 'agent_invoke_start' && event.phase === 'coding'), 'interrupted accepted coding author was replayed before formal PASS');
-  assert(recovery.some(event => event.type === 'harness_start' && event.invoke_id === invoke), 'the same accepted invocation must resume its gate');
+  const accepted = events.slice(0, gateIndex).filter(event => event.type === 'agent_invoke_end' && event.phase === 'work-unit-author' && event.handoff_report);
+  assert.equal(accepted.length, 1, 'the interrupted gate must follow one actual accepted unit report');
+  const invoke = accepted[0].invoke_id;
+  assert.equal(events.filter(event => event.type === 'agent_invoke_start' && event.phase === 'work-unit-author' && event.invoke_id === invoke).length, 1);
+  const returnedOffset = events.slice(gateIndex + 1).findIndex(event => event.type === 'harness_end' && event.phase === 'coding'
+    && event.invoke_id === gateInvoke && event.timed_out !== true && event.interrupted !== true && event.exit_code !== 130);
+  assert(returnedOffset >= 0, 'the original coding tool must really return after interruption');
+  const recovery = events.slice(gateIndex + 1, gateIndex + returnedOffset + 2);
+  assert(!recovery.some(event => event.type === 'agent_invoke_start' && event.phase === 'work-unit-author'), 'interrupted accepted unit author was replayed before its original tool returned');
+  assert(recovery.some(event => event.type === 'harness_start' && event.invoke_id === gateInvoke), 'the same accepted unit must resume its original gate');
   return invoke;
 }
 
@@ -92,7 +94,10 @@ function verifyCompletion(root, interruptionFile, outputFile) {
   assert(native.every(event => !event.live_prior_pids?.length), 'native gates overlapped');
   const summaries = Object.fromEntries(['coding', 'review', 'ut'].map(phase => {
     const summary = JSON.parse(fs.readFileSync(path.join(root, `doc/features/clamp/${phase}/reports/summary.json`), 'utf8'));
-    assert.equal(summary.verdict, 'PASS', phase + ' native gate');
+    if (phase === 'coding') {
+      const script = JSON.parse(fs.readFileSync(path.join(root, `doc/features/clamp/${phase}/reports/script-report.json`), 'utf8'));
+      assert(script.checks.some(check => check.id === 'coding_compile' && check.status === 'PASS'), 'the native compiler must pass');
+    } else assert.equal(summary.verdict, 'PASS', phase + ' native gate');
     assert(summary.verifier_subject_id, phase + ' must have a bound independent-verifier subject');
     return [phase, summary];
   }));

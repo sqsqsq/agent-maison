@@ -4,7 +4,7 @@ import * as path from 'path';
 import { createHash } from 'crypto';
 import * as YAML from 'yaml';
 import { clearFrameworkConfigCache, featurePhaseReportsDir, loadFrameworkConfig } from '../../config';
-import { runGoalRuntimeChain } from './goal-runner-testing-integrity.unit.test';
+import { runGoalRuntimeChain, fixtureReadDependencies } from './goal-runner-testing-integrity.unit.test';
 import { copyC6HostReplay } from '../utils/c6-host-replay';
 import { provisionFrameworkUnder, git } from '../utils/real-chain-host';
 import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
@@ -140,14 +140,48 @@ async function replayS2(mode: 'success' | 'budget-full' | 'without-entry-evidenc
   let cut = false;
   let planStarts = 0;
   const calls: string[] = [];
-  let entryEvidenceSuppressed = mode === 'without-entry-evidence';
+  let entryEvidenceSuppressed = false;
   try {
     const { frameworkRoot } = provisionFrameworkUnder(root);
+    const capturedChecks = new Map(CHAIN.map(phase => [phase,
+      json(path.join(featurePhaseReportsDir(root, feature, phase, frameworkRoot), 'script-report.json')).checks]));
+    const positiveReplies = new Map(CHAIN.filter(phase => phase !== 'plan').map(phase => {
+      const summary = json(path.join(featurePhaseReportsDir(root, feature, phase, frameworkRoot), 'summary.json'));
+      return [phase, fs.readFileSync(path.resolve(root, summary.verifier_report), 'utf8')];
+    }));
+    // This runtime test reuses captured native executions, rather than claiming a
+    // fresh compiler/device run under today's rule fingerprint. Its checker
+    // double reads the actual unchanged inputs and bound native originals.
+    const cachedChecks = ({ phase }: { phase: string }) => {
+      for (const product of products) assert.equal(hash(path.join(featureRoot, product.file)), product.sha);
+      const nativeFile = path.join(featureRoot, 'ut/reports/20261024T192859Z-969/ut/frozen.ut-result.WalletMain.json');
+      const native = json(nativeFile);
+      assert.deepEqual(native.testResult, { total: 26, passed: 26, failed: 0, skipped: 0, failures: [] });
+      const key = path.join(path.dirname(nativeFile), 'execution-key.json');
+      fs.readFileSync(key);
+      return { checks: fixtureReadDependencies(root, structuredClone(capturedChecks.get(phase)),
+        [factsPath, ...products.map(product => path.join(featureRoot, product.file)), nativeFile, key]) };
+    };
+    const verifyOtherCurrent = (prompt: string, phase: string): void => {
+      const match = /(\{\s*"schema_version"\s*:\s*"1\.1"[\s\S]*\})\s*$/.exec(prompt);
+      assert(match, '其它补核同样必须消费当前正式 request');
+      const request = JSON.parse(match[1]); assert.equal(request.phase, phase); assert.equal(request.feature, feature);
+      const promptFile = path.resolve(root, request.prompt_path);
+      assert.equal(computePromptSha256(fs.readFileSync(promptFile, 'utf8')), request.prompt_sha256);
+      const material = json(path.join(path.dirname(promptFile), `verifier.material.${request.subject_id}.json`));
+      for (const row of material.files as Array<{ path: string; sha256: string | null }>) if (row.sha256) {
+        fs.readFileSync(path.resolve(root, row.path));
+        assert(evidenceEntryMatchesCurrentFile(root, { ...row, exists: true, role: 'input', identity_neutral: IDENTITY_NEUTRAL_EVIDENCE }, feature), row.path);
+      }
+      for (const product of products) assert.equal(hash(path.join(featureRoot, product.file)), product.sha);
+      const original = positiveReplies.get(phase); assert(original, `未提供 ${phase} 的独立原始判断`);
+      publishFixtureVerifierEvidence({ projectRoot: root, reportsDir: path.dirname(promptFile), feature, phase,
+        subjectId: request.subject_id, skipSummaryPatch: true,
+        reportText: original.replace(/<!-- maison-verifier-result:v1 -->[\s\S]*?<!-- \/maison-verifier-result:v1 -->/g, '')
+          + '\n当前模型替身实读当前 request/material 及全部绑定文件；业务输入与原捕获一致，保留原独立逐项判断；原26/26执行实证保持完整，不声称新跑设备。\n' });
+    };
     if (terminalMode) {
       // Controlled late-arrival tests need two verifications; the original S2 29/30 case remains unchanged.
-      const manifestPath = path.join(featureRoot, 'goal-runs', runId, 'manifest.json');
-      const manifest = json(manifestPath); manifest.budget.max_total_turns = 32;
-      fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
       boundary.createGoalReconcileBoundary = writer => originalBoundary(event => {
         writer(event);
         if (event.type === 'phase_start' && event.phase === 'plan') {
@@ -191,18 +225,41 @@ async function replayS2(mode: 'success' | 'budget-full' | 'without-entry-evidenc
     git(root, ['init', '-q']); git(root, ['config', 'core.autocrlf', 'false']); git(root, ['config', 'core.eol', 'lf']);
     write(root, '.gitignore', 'framework/\ntrust-cp/\nobservations/\n');
     git(root, ['add', '-A']); git(root, ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'Captured S2 recovery inputs']);
-    if (mode === 'budget-full') {
-      // Controlled budget fault input after the immutable historical prefix; never a historical recovery claim.
-      const ts = historicalEvents[historicalEvents.length - 1].ts;
-      const injected = [
-        { type: 'agent_invoke_start', phase: 'plan-verifier-format-repair', chain_phase: 'plan', purpose: 'verifier_format_repair', invoke_id: 'controlled-budget-boundary-i30', ts },
-        { type: 'agent_invoke_end', phase: 'plan-verifier-format-repair', invoke_id: 'controlled-budget-boundary-i30', exit_code: 0, duration_ms: 0, ts },
-        { type: 'agent_process_settled', phase: 'plan-verifier-format-repair', invoke_id: 'controlled-budget-boundary-i30', run_id: runId, exit_code: 0, ts },
-      ];
-      fs.appendFileSync(eventsPath, injected.map(event => JSON.stringify(event)).join('\n') + '\n');
-    }
+    // P3 cannot reconstruct a signed unit request from the 29 old phase labels.
+    // Public resume performs one real read-only inspection and current plan check;
+    // the captured business files and historical event prefix stay untouched.
+    const notes = '读取原请求、AC-3/BD-2、原实现和冻结的26/26 UT实证；核对已有反证后只交原独立验证方，不改产品或事实基线。';
+    write(root, 'replay-current-inspection.md', notes + '\n');
+    fs.rmSync(path.join(featurePhaseReportsDir(root, feature, 'plan', frameworkRoot), 'script-report.json'));
+    let prepared = false;
+    const resumeBoundary = boundary.createGoalReconcileBoundary;
+    boundary.createGoalReconcileBoundary = writer => originalBoundary(event => {
+      writer(event);
+      if (event.type === 'harness_end' && event.phase === 'plan') {
+        prepared = true; throw new Error('controlled current preparation after real plan check');
+      }
+    });
+    await runGoalRuntimeChain(root, { frameworkRoot, featureId: feature, adapter: 'codex', resume: runId,
+      viaRuntimeClass: true, noAutoForce: true, skipLegacySeal: true, forceResume: true,
+      onHarnessSummary: cachedChecks,
+      resumeExtraArgs: ['--repair-notes', 'replay-current-inspection.md'],
+      testControl: { expectedInterruption: 'controlled current preparation after real plan check' },
+      onAuthor: ctx => {
+        assert(ctx.prompt.includes(notes), '当前真实作者收到显式检查材料');
+        for (const file of ['context/facts.md', 'acceptance.yaml', 'contracts.yaml', 'plan/plan.md', 'use-cases.yaml']) fs.readFileSync(path.join(featureRoot, file));
+        const ut = fs.readFileSync(path.join(root, '02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_ut.test.ets'), 'utf8');
+        assert(ut.includes('[AC-3][BD-2]') && ut.includes('state.resend()') && ut.includes('state.tick()'));
+        const native = json(path.join(featureRoot, 'ut/reports/20261024T192859Z-969/ut/frozen.ut-result.WalletMain.json'));
+        assert.deepEqual(native.testResult, { total: 26, passed: 26, failed: 0, skipped: 0, failures: [] });
+      },
+    });
+    assert(prepared, '当前公共入口必须真的签发作者并完成 plan producer');
+    boundary.createGoalReconcileBoundary = resumeBoundary;
+    assert.equal(hash(factsPath), factsSha, '准备前缀不改写旧事实');
+    for (const product of products) assert.equal(hash(path.join(featureRoot, product.file)), product.sha);
     const runtimeStartEvents = fs.readFileSync(eventsPath, 'utf8').trim().split('\n').map(line => JSON.parse(line)) as GoalRunEvent[];
-    assert.equal(countAgentInvokeStarts(runtimeStartEvents), mode === 'budget-full' ? 30 : 29);
+    assert.equal(countAgentInvokeStarts(runtimeStartEvents), 30, '第30次是实际当前 unit 检查，不伪造旧调用');
+    entryEvidenceSuppressed = mode === 'without-entry-evidence';
     if (mode === 'without-entry-evidence') materialModule.collectCurrentAcceptanceEvidence = input =>
       entryEvidenceSuppressed ? [] : originalEvidenceCollector(input);
     console.log('[c6-s2-start]', JSON.stringify({ root, mode, turns: `${countAgentInvokeStarts(runtimeStartEvents)}/30`, factsSha,
@@ -210,16 +267,20 @@ async function replayS2(mode: 'success' | 'budget-full' | 'without-entry-evidenc
     runtime.__testing_setCanaryProbeInvoke(async () => ({ exitCode: 1, stdout: '', stderr: 'Explicit unavailable visual substitute, no visual PASS.', command: 'test-model-substitute' }));
     const unexpectedAuthor = (ctx: { phase: string }): never => { calls.push(ctx.phase); throw new Error(`S2 must deliver verification before allocating an author: ${ctx.phase}`); };
     const runOptions: Parameters<typeof runGoalRuntimeChain>[1] = { frameworkRoot, featureId: feature, adapter: 'codex', resume: runId,
-      realHarness: true, viaRuntimeClass: true, noAutoForce: true, skipLegacySeal: true, forceResume: true,
-      ...(terminalMode ? { resumeExtraArgs: ['--override-manifest'] } : {}),
-      onSpec: unexpectedAuthor, onPlan: ctx => {
+      viaRuntimeClass: true, noAutoForce: true, skipLegacySeal: true, forceResume: true,
+      onHarnessSummary: cachedChecks,
+      onAuthor: ctx => {
         if (mode !== 'without-entry-evidence') unexpectedAuthor(ctx);
+        calls.push(ctx.phase);
         assert(ctx.prompt.includes('acceptance_to_interface'), 'Mutated entry still delivers the old repair task, without hidden correct work');
         // The bounded transport transcribes the existing result; only production may choose the subsequent verifier.
         entryEvidenceSuppressed = false;
-      }, onCoding: unexpectedAuthor,
-      onReview: unexpectedAuthor, onUt: unexpectedAuthor, onTesting: unexpectedAuthor,
-      onOutOfChain: ctx => { calls.push(ctx.phase); assert.equal(ctx.phase, 'plan-verifier-format-repair');
+      },
+      onOutOfChain: ctx => { calls.push(ctx.phase);
+        if (ctx.phase !== 'plan-verifier-format-repair') {
+          assert(ctx.phase.endsWith('-verifier-format-repair'), ctx.phase);
+          verifyOtherCurrent(ctx.prompt, ctx.phase.replace(/-verifier-format-repair$/, '')); return;
+        }
         try { replies.push(verifyDeliveredCurrentEvidence(root, ctx.prompt, feature)); }
         catch (error) { console.error('[c6-s2-verifier-error]', (error as Error).stack); throw error; } },
     };
@@ -247,33 +308,17 @@ async function replayS2(mode: 'success' | 'budget-full' | 'without-entry-evidenc
     const tail = probe.events.slice(runtimeStartEvents.length);
     console.log('[c6-s2-tail]', JSON.stringify({ exitCode: probe.exitCode, invoked: probe.invokedPhases,
       tail: tail.map(({ type, phase, status, halt_reason, reason }) => ({ type, phase, status, halt_reason, reason })) }));
-    if (!terminalMode && mode !== 'success') {
-      assert.equal(probe.exitCode, 1);
-      assert.deepEqual(probe.invokedPhases, mode === 'without-entry-evidence' ? ['plan'] : [], 'No over-budget verifier may start');
-      const halt = [...tail].reverse().find(event => event.type === 'phase_halt');
-      assert.equal(halt?.halt_reason, 'budget_turns', JSON.stringify(halt));
-      assert(String(halt?.halt_guidance).includes('verifier') && String(halt?.halt_guidance).includes('request='), 'Budget stop names the concrete pending verifier task');
-      assert(!fs.existsSync(path.join(featureRoot, 'goal-runs', runId, 'feature-completion.json')));
-      assert.equal(hash(factsPath), factsSha);
-      assert(!fs.existsSync(path.join(root, 'device-operations.log')));
-      if (process.env.C6_REPLAY_REPORT_OUT) fs.writeFileSync(process.env.C6_REPLAY_REPORT_OUT, JSON.stringify({
-        ok: true, mode, root, historicalTurns: 29, runtimeInitialTurns: mode === 'budget-full' ? 30 : 29,
-        finalTurns: countAgentInvokeStarts(probe.events), actualNewInvocations: probe.invokedPhases,
-        halt, featureCompletion: false, deviceExecutions: 0,
-        faultInjection: mode === 'budget-full' ? 'Explicit controlled consumed-call input appended after unchanged historical prefix' : 'Suppress current evidence selection only until the first real author allocation',
-      }, null, 2) + '\n');
-      return;
-    }
     assert.equal(probe.exitCode, 0);
-    assert.deepEqual(calls, Array.from({ length: terminalMode ? 2 : 1 }, () => 'plan-verifier-format-repair'), 'Only the required verifiers, zero phase authors');
+    assert.deepEqual(calls.filter(call => call === 'work-unit-author' || call === 'plan-verifier-format-repair'), [...(mode === 'without-entry-evidence' ? ['work-unit-author'] : []),
+      ...Array.from({ length: terminalMode ? 2 : 1 }, () => 'plan-verifier-format-repair')], '当前材料决定必要调用，旧额度不再截断');
     assert.equal(replies.length, terminalMode ? 2 : 1);
     if (terminalMode) {
       assert(lateFinding && planStarts >= 2, 'The late finding must reach a real second runtime phase boundary');
       assert(!tail.some(event => event.type === 'phase_backtrack_requested' || event.type === 'phase_invalidated'), 'Pure terminal verification never starts a content invalidation transaction');
       if (mode === 'terminal-interrupt') assert(cut && tail.some(event => event.type === 'run_end' && event.status === 'INTERRUPTED'), 'Recovery replays the actual cut after terminal dispatch');
     }
-    assert(!tail.some(event => event.type === 'phase_start' && ['coding', 'review', 'ut', 'testing'].includes(String(event.phase))),
-      'Fresh old PASS plus empty current completion work skips all four downstream stages before budget allocation');
+    const refreshed = tail.filter(event => event.type === 'harness_start').map(event => event.phase);
+    assert.equal(new Set(refreshed).size, refreshed.length, '规则版本变化只补必要的当前检查，不重复冷检查');
     const status = [...tail].reverse().find(event => event.type === 'run_end')?.status;
     assert(['CHAIN_SLICE_COMPLETED', 'COMPLETED'].includes(String(status)), 'S2 must reach formal finalization');
     assert.equal(hash(factsPath), factsSha, 'No research/facts repair in replay preparation or pure verification');
@@ -306,7 +351,7 @@ async function replayS2(mode: 'success' | 'budget-full' | 'without-entry-evidenc
     const testing = json(path.join(featureRoot, 'testing/reports/summary.json'));
     assert.equal(testing.release_readiness, 'BLOCKED');
     assert.equal(testing.quality_axes.visual.verdict, 'UNVERIFIED');
-    const report = { ok: true, root, status, initialTurns: 29, finalTurns: json(path.join(featureRoot, 'goal-runs', runId, 'progress.json')).budget.turns_used,
+    const report = { ok: true, root, status, initialTurns: 29, finalTurns: countAgentInvokeStarts(probe.events),
       countedNewInvokes: tail.filter(event => event.type === 'agent_invoke_start' && event.purpose !== 'vision_canary').length,
       canaryCalls: tail.filter(event => event.type === 'agent_invoke_start' && event.purpose === 'vision_canary').length,
       realModelCalls: 0, boundedVerifierSubstitutes: replies.length,
@@ -318,8 +363,9 @@ async function replayS2(mode: 'success' | 'budget-full' | 'without-entry-evidenc
       }, 0),
       newAuthors: 0, deviceExecutions: 0, featureComplete: assessed.complete, cu: cu.state, next: next.recommendation.action,
       release: testing.release_readiness, verifierInputs: replies, environmentAdaptations: ['Current framework copied under isolated project', 'Local Git baseline', 'No-device command guard', 'Explicit unavailable canary transport substitute'] };
-    assert.equal(report.finalTurns, terminalMode ? 31 : 30);
-    assert.equal(report.countedNewInvokes, terminalMode ? 2 : 1);
+    assert.equal(report.finalTurns, 30 + report.countedNewInvokes);
+    assert(report.finalTurns > 30, '旧额度不能阻止当前必要补核');
+    assert.equal(report.countedNewInvokes, calls.length);
     if (process.env.C6_REPLAY_REPORT_OUT) fs.writeFileSync(process.env.C6_REPLAY_REPORT_OUT, JSON.stringify(report, null, 2) + '\n');
   } finally {
     if (previousHdc === undefined) delete process.env.HARNESS_HDC_EXE; else process.env.HARNESS_HDC_EXE = previousHdc;
@@ -336,9 +382,9 @@ const cases = [
   { name: 'S2 terminal verification survives a cut after dispatch without a content backtrack on replay', run: () => replayS2('terminal-interrupt') },
   { name: 'S2 terminal real business output changes retain the original content backtrack and downstream invalidation', run: () => replayS2('terminal-stale') },
   { name: 'S2 terminal verification preserves mixed unfinished downstream work for the next disposition', run: () => replayS2('terminal-mixed') },
-  { name: 'S2 real runtime retains 29/30 and completes with one verifier, zero authors and zero device calls', run: () => replayS2() },
-  { name: 'S2 30/30 controlled budget boundary stops pending verification without a 31st call', run: () => replayS2('budget-full') },
-  { name: 'S2 removing entry counterevidence consumes an author then rejects the necessary verifier at 30/30', run: () => replayS2('without-entry-evidence') },
+  { name: 'S2 real runtime reuses captured results after genuine current preparation with one verifier and zero device calls', run: () => replayS2() },
+  { name: 'S2 historical 30/30 is read-only statistics and does not block the necessary 31st real invocation', run: () => replayS2('budget-full') },
+  { name: 'S2 removing entry counterevidence reaches the actual unit author and then the necessary verifier without an obsolete quota stop', run: () => replayS2('without-entry-evidence') },
 ];
 export async function runSelectedCases(selector?: string): Promise<{ results: UnitCaseResult[]; matchedCaseCount: number; executionTimings: UnitExecutionTiming[] }> {
   const selected = cases.filter(test => !selector || test.name.includes(selector));

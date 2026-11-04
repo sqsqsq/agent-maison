@@ -35,6 +35,9 @@ import { resolveBlueprintTarget } from '../../scripts/utils/blueprint-addressing
 import { projectGoalProgress } from '../../scripts/utils/goal-progress';
 import { resolveCompletionDisposition } from '../../scripts/utils/verify-feature-completion';
 import { resolveWorkflowSpec } from '../../workflow-loader';
+import { checkArkuiSingletonFlowMultiSubscriber } from '../../../profiles/hmos-app/harness/arkui-static-rules';
+import type { CheckContext } from '../../scripts/utils/types';
+import type { FileAnalysis } from '../../scripts/utils/ast-analyzer';
 
 const feature = 'cu-YmMtb3BlbkNhcmQtMgBvcGVuLWNhcmQtZmxvdw';
 const rel = 'doc/features/bc-openCard-2/open-card-flow';
@@ -58,6 +61,39 @@ function recordedBlueprintDraft(source: Record<string, unknown>): Record<string,
   };
   restore(source, draft);
   return draft;
+}
+
+/**
+ * Author response to the production lint's name-only match: each named page must really own its sheet flag
+ * as local state (no shared singleton). Only then use the rule's own allow marker; a real shared flow stays a finding.
+ */
+export function exemptLocalSheetStateMatches(root: string): string[] {
+  const id = 'arkui_singleton_flow_multi_subscriber';
+  const files: string[] = [];
+  const walk = (dir: string): void => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (['framework', 'doc', 'node_modules', '.git'].includes(entry.name) || entry.name === 'ohosTest') continue;
+      const file = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(file);
+      else if (entry.name.endsWith('.ets')) files.push(path.relative(root, file).split(path.sep).join('/'));
+    }
+  };
+  walk(root);
+  const [check] = checkArkuiSingletonFlowMultiSubscriber({ projectRoot: root, phaseRule: { structure_checks: {} } } as unknown as CheckContext,
+    files.map(filePath => ({ filePath }) as FileAnalysis));
+  if (check?.status !== 'FAIL') return [];
+  const exempted: string[] = [];
+  for (const [, name, list] of String(check.details).matchAll(/^(\w+): \d+ 个文件监听同一 Sheet 状态 \((.+)\)$/gm)) {
+    for (const file of list.split(', ')) {
+      const target = path.join(root, file), text = fs.readFileSync(target, 'utf8');
+      assert(new RegExp(`@(?:State|Local)\\s+${name}\\s*:`).test(text) && !new RegExp(`import[^;]*\\b${name}\\b`).test(text),
+        `${file}: ${name} is not page-local state; a shared sheet flow is a real finding`);
+      fs.writeFileSync(target, `// arkui-lint:allow ${id} — ${name} 是本页 @State 局部状态，各页只展示自己的 Sheet，非共享 singleton Flow\n` + text);
+      exempted.push(file);
+    }
+  }
+  assert(exempted.length, 'unparsed lint finding cannot be exempted: ' + check.details);
+  return exempted;
 }
 
 /** Fixture material only; the actual onAuthor boundary still owns authorization and write observation. */
@@ -191,8 +227,10 @@ export async function rc10HostRuleCombination(record: '20261019' | '20261020' = 
     for (const ref of blueprintIdentityPointers(loaded.changeUnit)) if (ref) Object.assign(ref, currentBlueprintIdentity(blueprint));
     if (!later) loaded.changeUnit.design_refs = (loaded.changeUnit.design_refs as any[]).filter(ref => !String(ref.target.id).startsWith('ui_'));
     fs.writeFileSync(loaded.canonicalPath, YAML.stringify(loaded.changeUnit));
+    // Support environment, before the baseline commit/freeze: the shared support pages trip a name-only lint whose basis is checked here.
+    exemptLocalSheetStateMatches(root);
     fs.writeFileSync(path.join(root, '.gitignore'), 'framework/\n');
-    const git = (...args: string[]): void => { execFileSync('git', args, { cwd: root, stdio: 'pipe' }); };
+    const git =(...args: string[]): void => { execFileSync('git', args, { cwd: root, stdio: 'pipe' }); };
     git('init'); git('add', '-A'); git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-m', 'Preserved host inputs for controlled replay');
     const prepared = prepareFeatureScopeCandidate({ projectRoot: root, frameworkRoot, feature, completionTarget: 'feature',
       requestedResults: [original.requirement], requestedPhases: ['plan', 'coding', 'review', 'ut', 'testing'], requirement: original.requirement, overwrite: true });
@@ -217,7 +255,7 @@ export async function rc10HostRuleCombination(record: '20261019' | '20261020' = 
     let handedOff = false;
     let handoffBlocked: { phase: string; detail: string } | undefined;
     let resourceWrites = 0;
-    const authorRequests: Array<{ invokeId: string; context: WorkUnitExecutionContext }> = [];
+    const authorRequests: Array<{ invokeId: string; context: WorkUnitExecutionContext; request: NonNullable<ReturnType<typeof executionRequestForInvoke>>['request'] }> = [];
     const assertHandoffReady = later && !upstream ? assertCurrentPhaseDutiesSatisfied : assertCurrentPhaseClosed;
     const isClosed = (phase: string, runId: string): boolean => {
       try { assertHandoffReady(project, phase, runId); return true; } catch (error) {
@@ -226,9 +264,32 @@ export async function rc10HostRuleCombination(record: '20261019' | '20261020' = 
         return false;
       }
     };
+    const tryHandoff = (family: 'review' | 'ut', author: typeof authorRequests[number], runId: string): void => {
+      console.log('HOST_HANDOFF_CHECK=' + JSON.stringify({ runId, invokeId: author.invokeId, family }));
+      if (!isClosed('coding', runId) || !later && !isClosed('review', runId)) return;
+      if (upstream && (!ownerReceived || upstream.includes('decline') && !originalReceived)) return;
+      assertHandoffReady(project, 'coding', runId);
+      // Verifier order varies; upstream evidence is a handoff precondition, so a later verifier call retries it.
+      for (const owner of ['spec', 'plan']) try { assertCurrentOwnerEvidence(project, owner, runId); } catch (error) {
+        handoffBlocked = { phase: owner, detail: error instanceof Error ? error.message : String(error) };
+        console.log('HOST_HANDOFF_BLOCKED=' + JSON.stringify({ runId, ...handoffBlocked }));
+        return;
+      }
+      assert(author.context.chain.includes(family), 'handoff needs a real current method duty in the actual signed request');
+      if (family === 'ut') {
+        const current = YAML.parse(fs.readFileSync(path.join(root, rel, 'contracts.yaml'), 'utf8'));
+        const missing = partitionConstructionFiles(root, path.join(frameworkRoot, 'profiles/hmos-app'), current).tests.filter(file => !fs.existsSync(path.join(root, file)));
+        assert(missing.length && author.request.write_boundary && missing.every(file => resolvePhasePathOwnership(author.request.write_boundary!, file).owner === 'ut'
+          && workUnitMayWritePath(author.request.write_boundary!, file)), 'the actual unit must own every missing UT source; method names alone grant nothing');
+      }
+      handedOff = true; throw new Error(handoff);
+    };
     const actualVerifier = (ctx: Parameters<typeof readDeliveredVerifierRequest>[1]): boolean => {
       const request = readDeliveredVerifierRequest(project, ctx);
       if (!request) return false;
+      const compilePassed = request.phase === 'coding' && JSON.parse(fs.readFileSync(path.join(
+        featurePhaseReportsDir(root, feature, 'coding', frameworkRoot), 'script-report.json'), 'utf8')).checks
+        .some((check: { id: string; status: string }) => check.id === 'coding_compile' && check.status === 'PASS');
       project.runId = ctx.runId;
       const currentRunDir = path.join(root, rel, 'goal-runs', ctx.runId);
       const currentStart = [...loadAuthoritativeEvents(path.join(currentRunDir, 'events.jsonl'))].reverse()
@@ -255,7 +316,7 @@ export async function rc10HostRuleCombination(record: '20261019' | '20261020' = 
             const source = fs.readFileSync(path.join(root, counterexample), 'utf8');
             const logFile = path.join(root, rel, 'coding/reports/upstream-compile.log');
             const log = fs.readFileSync(logFile, 'utf8');
-            for (const file of [counterexample, authority, path.relative(root, logFile).split(path.sep).join('/')]) assert(material?.files.some(entry => entry.path === file)
+            for (const file of [counterexample, authority, ...(originalIssue ? [path.relative(root, logFile).split(path.sep).join('/')] : [])]) assert(material?.files.some(entry => entry.path === file)
               && verifierMaterialFileMatchesCurrent({projectRoot: root, feature, material: material!, file}), 'the current response must bind the actual source/authority/typecheck: ' + file);
             if (originalIssue) {
               assert(originalIssue.files.includes(authority) && /diagnosticValue:\s*never/.test(source) && /TS2322/.test(log),
@@ -266,6 +327,8 @@ export async function rc10HostRuleCombination(record: '20261019' | '20261020' = 
             } else {
               assert(/diagnosticValue:\s*string/.test(source) && /current counterexample source typechecks/.test(log) && ownerReceived && originalReceived,
                 'a cleared upstream proposal still requires actual owner feedback and the real successful typecheck');
+              assert(compilePassed,
+                'the current formal compile must also pass after clearing the proposal');
             }
           }
           publishFixtureVerifierEvidence({ projectRoot: root, reportsDir: featurePhaseReportsDir(root, feature, request.phase, frameworkRoot),
@@ -297,12 +360,14 @@ export async function rc10HostRuleCombination(record: '20261019' | '20261020' = 
         } else {
           assert(typechecks && ownerReceived && (upstream.endsWith('repair') ? repaired : originalReceived),
             'a cleared proposal requires actual owner handling and real current compile/source evidence');
+          assert(compilePassed,
+            'the current formal compile must also pass after clearing the proposal');
           verdict = 'refuted';
-          evidence = [authority, counterexample, path.relative(root, logFile), log,
+          evidence = [authority, counterexample, '当前正式 coding_compile 已通过；原生类型检查日志已实测通过',
             upstream.includes('decline') ? refusal : '已读取实际修复后的责任产物；当前实现按真实 string 约束复验。'].join(' | ');
         }
         const material = readVerifierMaterialOrNull(featurePhaseReportsDir(root, feature, 'coding', frameworkRoot), request.subject_id);
-        for (const file of [counterexample, authority, path.relative(root, logFile).replace(/\\/g, '/')]) {
+        for (const file of [counterexample, authority, ...(issue ? [path.relative(root, logFile).replace(/\\/g, '/')] : [])]) {
           assert(material?.files.some(entry => entry.path === file) && verifierMaterialFileMatchesCurrent({ projectRoot: root, feature, material: material!, file }),
             'the independent result must bind the actual source/authority/diagnostic it judges: ' + file);
         }
@@ -376,7 +441,16 @@ export async function rc10HostRuleCombination(record: '20261019' | '20261020' = 
       frameworkRoot, featureId: feature, realHarness: true, adapter: 'codex', freshRequirement: original.requirement,
       ...(upstream ? { viaRuntimeClass: true, noAutoForce: true } : {}),
       freshStartPhase: prepared.scope.phase_chain[0] as 'spec', freshEndPhase: prepared.scope.phase_chain.at(-1),
-      onOutOfChain: ctx => actualVerifier(ctx) ? undefined : designReply(ctx),
+      onOutOfChain: ctx => {
+        // P3 verifies after the author's handback, so the next verifier call is the first point where earlier closures are settled.
+        const latest = authorRequests.at(-1);
+        const verifierCall = !!latest && ctx.phase.endsWith('-verifier-format-repair');
+        if (verifierCall) tryHandoff(later ? 'review' : 'ut', latest!, ctx.runId);
+        if (!actualVerifier(ctx)) return designReply(ctx);
+        // The last verifier settles its own owner evidence only after publishing; retry the handoff then.
+        if (verifierCall) tryHandoff(later ? 'review' : 'ut', latest!, ctx.runId);
+        return undefined;
+      },
       onAuthor: (ctx, context) => {
         project.runId = ctx.runId;
         const start = [...loadAuthoritativeEvents(path.join(context.runDir, 'events.jsonl'))].reverse()
@@ -387,7 +461,7 @@ export async function rc10HostRuleCombination(record: '20261019' | '20261020' = 
           && issued.request.context.owner.owner_id === context.owner.owner_id && issued.request.context.owner.epoch === context.owner.epoch,
           'the host fixture must use the actual unit request, never a synthetic legacy actor');
         assert(!observeSessionExecution(context.runDir, issued!).settled, 'an outstanding actual request must not be mistaken for a completed owner');
-        authorRequests.push({ invokeId: issued!.request.invoke_id, context });
+        authorRequests.push({ invokeId: issued!.request.invoke_id, context, request: issued!.request });
         registerEvidence(context.runDir, issued!.reference);
         // Read this actual assignment before any writer can legitimately change its bound material.
         const assignedUpstreamRepair = upstream && !design ? resolveCompletionDisposition({ projectRoot: root, frameworkRoot, feature,
@@ -420,21 +494,7 @@ export async function rc10HostRuleCombination(record: '20261019' | '20261020' = 
               + '\n| 路径 | 事实 | 对本阶段影响 |\n|---|---|---|\n' + additional.join('\n') + '\n');
           }
         };
-        const attemptHandoff = (family: 'review' | 'ut'): void => {
-          console.log('HOST_HANDOFF_CHECK=' + JSON.stringify({ runId: ctx.runId, invokeId: issued!.request.invoke_id, family }));
-          if (!isClosed('coding', ctx.runId) || !later && !isClosed('review', ctx.runId)) return;
-          if (upstream && (!ownerReceived || upstream.includes('decline') && !originalReceived)) return;
-          assertHandoffReady(project, 'coding', ctx.runId);
-          for (const owner of ['spec', 'plan']) assertCurrentOwnerEvidence(project, owner, ctx.runId);
-          assert(context.chain.includes(family), 'handoff needs a real current method duty in the actual signed request');
-          if (family === 'ut') {
-            const current = YAML.parse(fs.readFileSync(path.join(root, rel, 'contracts.yaml'), 'utf8'));
-            const missing = partitionConstructionFiles(root, path.join(frameworkRoot, 'profiles/hmos-app'), current).tests.filter(file => !fs.existsSync(path.join(root, file)));
-            assert(missing.length && issued!.request.write_boundary && missing.every(file => resolvePhasePathOwnership(issued!.request.write_boundary!, file).owner === 'ut'
-              && workUnitMayWritePath(issued!.request.write_boundary!, file)), 'the actual unit must own every missing UT source; method names alone grant nothing');
-          }
-          handedOff = true; throw new Error(handoff);
-        };
+        const attemptHandoff = (family: 'review' | 'ut'): void => tryHandoff(family, authorRequests.at(-1)!, ctx.runId);
         const canonicalBefore = fs.readFileSync(blueprintPath);
         const hooks = authorHooks(project, {
           spec: () => {
@@ -638,12 +698,16 @@ export async function rc10HostRuleCombination(record: '20261019' | '20261020' = 
     assert(authorRequests.some(row => /integration_scope_consistency|entry_symbol/.test(row.context.instruction ?? '')),
       'the actual signed author must receive the real definition failure before supplementing it');
     assertCurrentPhaseClosed(project, 'coding');
-    assert(!result.events.some(event => event.type === 'phase_verdict' && event.phase === 'coding' && event.verdict === 'FAIL'
+    // P3 runs every check each round; before the published design reaches the author, contracts are still empty by construction.
+    const publishedAt = result.events.map(event => event.type === 'design_authority_repair' && event.stage === 'published').lastIndexOf(true);
+    const followUp = result.events.findIndex((event, index) => index > publishedAt && event.type === 'agent_invoke_start' && event.phase === 'work-unit-author');
+    assert(publishedAt >= 0 && followUp > publishedAt, 'the actual author must follow the published design before resource ownership is judged');
+    assert(!result.events.slice(followUp).some(event => event.type === 'phase_verdict' && event.phase === 'coding' && event.verdict === 'FAIL'
       && /diff_within_scope|phase_write_violation|context_exploration_facts_(?:source|baseline)_stale/.test(String(event.blocker_signature))),
       'normal resource ownership must not create a source/authority regression; raw independently refuted comparison FAIL is retained');
-    const coding = result.events.findIndex(event => event.type === 'harness_start' && event.phase === 'coding');
-    assert(coding >= 0 && !result.events.slice(coding + 1).some(event => event.type === 'harness_start' && event.phase === 'spec'),
-      'the actual coding method must not cause an unrelated spec method rerun');
+    // P3 re-runs every check each round; the coding method must not regress the already-settled spec result.
+    assert(!result.events.slice(followUp).some(event => event.type === 'phase_verdict' && event.phase === 'spec' && event.verdict === 'FAIL'),
+      'the actual coding method must not regress an unrelated spec result');
     const written = actualWrites.filter(row => row.owner === 'coding');
     assert(resourceFiles.every(file => written.some((row: any) => row.path === file && row.pre_sha256 !== row.post_sha256)), '三项资源写入必须经过真实归属记录');
     assert(String(result.events.at(-1)?.error).includes(handoff), '只在 UT 交接边界结束，不伪称业务验收完成');

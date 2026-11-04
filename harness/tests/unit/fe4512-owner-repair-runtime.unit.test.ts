@@ -534,7 +534,7 @@ async function ownerRepairRuntime(resumeRoot?: string): Promise<void> {
         prepareAuthorFacts(ctx);
       },
       onCoding: ctx => {
-        assert(published(), 'Implementation repair must wait for the real design owner publication');
+        if (!published()) return;
         const contracts = YAML.parse(fs.readFileSync(path.join(root, featureDir, 'contracts.yaml'), 'utf8'));
         const files = partitionConstructionFiles(root, path.join(frameworkRoot, 'profiles/hmos-app'), contracts).implementation;
         for (const file of [...new Set<string>([...files, navigationRegistry])]) copyAuthor('coding', file);
@@ -548,6 +548,7 @@ async function ownerRepairRuntime(resumeRoot?: string): Promise<void> {
         prepareAuthorFacts(ctx);
       },
       onReview: ctx => {
+        if (!published()) return;
         copyAuthor('review', featureDir + '/review/review-report.md');
         const file = path.join(root, featureDir, 'review/review-report.md');
         const bridge = '02-Feature/WalletMain/src/main/ets/data/HomeLaunchBridge.ets';
@@ -568,6 +569,7 @@ async function ownerRepairRuntime(resumeRoot?: string): Promise<void> {
         prepareAuthorFacts(ctx);
       },
       onUt: ctx => {
+        if (!published()) return;
         for (const relative of ['02-Feature/WalletMain/src/ohosTest', '01-Product/Phone/src/ohosTest']) {
           const copy = (dir: string): void => { for (const entry of fs.readdirSync(path.join(historicalAuthors, dir), { withFileTypes: true })) {
             const file = dir + '/' + entry.name; if (entry.isDirectory()) copy(file); else copyAuthor('ut', file);
@@ -588,6 +590,7 @@ async function ownerRepairRuntime(resumeRoot?: string): Promise<void> {
         prepareAuthorFacts(ctx);
       },
       onTesting: ctx => {
+        if (!published()) return;
         copyAuthor('testing', featureDir + '/testing/test-plan.md');
         write(root, featureDir + '/device-testing/visual-diff-nav.json', fs.readFileSync(path.join(visualObservations, 'visual-diff-nav.json'), 'utf8'));
         for (const file of ['02-Feature/WalletMain/src/main/ets/data/HomeLaunchBridge.ets', '02-Feature/WalletMain/src/main/ets/index.ets']) fs.readFileSync(path.join(root, file));

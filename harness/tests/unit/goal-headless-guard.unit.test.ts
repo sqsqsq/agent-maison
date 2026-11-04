@@ -155,6 +155,24 @@ function runCases(selector?: string): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
   const cases: Array<{ name: string; run: () => void }> = [
     {
+      name: '重复拒修换独核 subject 报告仍须收敛；新验收与真实缺陷改善可继续',
+      run: () => {
+        const finding = verifiedProblem('case:TC-001#step:2');
+        const refusal = (subject: string): CurrentDispositionProblem => ({ phase: 'review', id: 'attestation_present', action: 'repair',
+          affects: 'completion', severity: 'BLOCKER', detail: `独核仍否定；已读取完整拒修理由：${subject}`,
+          files: [`doc/features/demo/review/reports/verifier.report.${subject}.md`] });
+        const previous = completionEvaluation('a', [finding, refusal('first')]);
+        const current = completionEvaluation('a', [finding, refusal('second')]);
+        assert(evaluateCompletionProgress({ previous, current, feedbackDelivered: true, authorReturned: true }).halt,
+          '重复拒修只使独核原件路径变化，不能制造新的产品缺陷或进展');
+        assert(!evaluateCompletionProgress({ previous, current: { ...current, acceptanceKey: 'new-authorized-acceptance' },
+          feedbackDelivered: true, authorReturned: true }).halt, '真实新验收仍有自己的比较窗口');
+        assert(!evaluateCompletionProgress({ previous, current: completionEvaluation('b', []),
+          feedbackDelivered: true, authorReturned: true }).halt, '真实缺陷闭合必须继续');
+        assert(current.disposition.completionBlocking[1].files?.[0].includes('second') === true, '比较不能删除当前独核原件定位');
+      },
+    },
+    {
       name: 'P2 check-family progress compares completed local facts while preserving other milestones and P1 constraints in the full view',
       run: () => {
         const repair = verifiedProblem('acceptance:AC-1');

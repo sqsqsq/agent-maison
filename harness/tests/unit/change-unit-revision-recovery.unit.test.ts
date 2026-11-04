@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
 import { provisionRealChainProject, scaffoldRealChainHost, git } from '../utils/real-chain-host';
-import { seedCuBoundHost, CU_REQUIREMENT, writeCuPlanMaterials, writeCuSpecMaterials, writeCuCodingMaterials, writeCuReviewMaterials, writeCuUtMaterials, writeCuFacts, publishRequestedVerifier } from './real-chain.unit.test';
+import { seedCuBoundHost, CU_REQUIREMENT, writeCuPlanMaterials, writeCuSpecMaterials, writeCuCodingMaterials, writeCuReviewMaterials, writeCuUtMaterials, publishRequestedVerifier } from './real-chain.unit.test';
 import { runGoalRuntimeChain, requestVia } from './goal-runner-testing-integrity.unit.test';
 import { featureFilePath } from '../../config';
 import { loadCanonicalChangeUnit, createChangeUnitRef, asChangeUnitArtifact } from '../../scripts/utils/change-unit-path';
@@ -14,6 +14,7 @@ import { observeChangeUnitCompletion, resolveChangeUnitExpectedExecution } from 
 import { countAgentInvokeStarts, loadAuthoritativeEvents, readSupersededAncestorRuns } from '../../scripts/utils/goal-runner-phase';
 import type { UnitCaseResult } from '../run-unit';
 import { freezeAndTransfer } from './successor-exit.unit.test';
+import { authorHooks } from './lifecycle-evolution.unit.test';
 
 export async function runAll(): Promise<UnitCaseResult[]> {
   const project = provisionRealChainProject();
@@ -24,10 +25,9 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     git(project.root, ['add', '-A']); git(project.root, ['commit', '-qm', 'seed revision recovery fixture']);
     const writers = { spec: writeCuSpecMaterials, plan: writeCuPlanMaterials, coding: writeCuCodingMaterials, review: writeCuReviewMaterials, ut: writeCuUtMaterials };
     const verifierDeliveries: Array<{ phase: string; next: string; skips: number }> = [];
-    const hook = (phase: keyof typeof writers) => (ctx: { runId: string; attempt: number }) => { cu.runId = ctx.runId; writers[phase](cu); };
-    const common = { frameworkRoot: cu.frameworkRoot, featureId: cu.feature, realHarness: true, adapter: 'codex', noAutoForce: true,
+    const common = { frameworkRoot: cu.frameworkRoot, featureId: cu.feature, adapter: 'codex', noAutoForce: true,
       freshStartPhase: birthChain[0] as 'plan', freshEndPhase: birthChain.at(-1), freshRequirement: CU_REQUIREMENT,
-      onSpec: hook('spec'), onPlan: hook('plan'), onCoding: hook('coding'), onReview: hook('review'), onUt: hook('ut'),
+      ...authorHooks(cu, writers),
       onOutOfChain: (ctx: { phase: string; prompt: string; runId: string }) => {
         const phase = ctx.phase.replace(/-verifier-format-repair$/, '');
         const current = JSON.parse(fs.readFileSync(featureFilePath(cu.root, cu.feature, `${phase}/reports/summary.json`), 'utf8'));
@@ -35,7 +35,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
         assert(publishRequestedVerifier(cu, ctx), 'only the actually delivered verifier request may publish its reply');
       } };
     const first = await runGoalRuntimeChain(cu.root, { ...common,
-      onCoding: ctx => { cu.runId = ctx.runId; writeCuFacts(cu, 'coding'); }, failExecutorFor: phase => phase === 'coding' });
+      failExecutorFor: phase => phase === 'work-unit-author' });
     const runsDir = featureFilePath(cu.root, cu.feature, 'goal-runs');
     const firstId = fs.readdirSync(runsDir).filter(id => !id.startsWith('.') && fs.existsSync(path.join(runsDir, id, 'manifest.json')))[0];
     assert(firstId, `first run missing: ${first.exitCode}`);
@@ -44,7 +44,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     const priorEvents = loadAuthoritativeEvents(eventsFile); const usedTurns = countAgentInvokeStarts(priorEvents);
     assert(priorEvents.some(event => event.type === 'run_end' && event.status === 'HALTED'), JSON.stringify(priorEvents.slice(-4)));
     assert(!priorEvents.some(event => event.type === 'phase_verdict' && event.phase === 'plan' && event.action === 'halt'), 'normal plan output must close before the deliberately failed coding executor');
-    assert(priorEvents.some(event => event.type === 'agent_invoke_end' && event.phase === 'coding' && event.exit_code === 1), 'the original stop must contain the deliberate coding executor failure');
+    assert(priorEvents.some(event => event.type === 'agent_invoke_end' && event.phase === 'work-unit-author' && event.exit_code === 1), 'the original stop must contain the deliberate unit-author executor failure');
     assert(usedTurns > 0);
     const loaded = loadCanonicalChangeUnit(cu.root, 'ledger-app-blueprint', 'ledger-refresh');
     assert.equal(observeChangeUnitCompletion(cu.root, asChangeUnitArtifact(loaded.changeUnit)).state, 'ABSENT');
@@ -61,14 +61,15 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     const decision = decideRunContinuation({ projectRoot: cu.root, feature: cu.feature, call: { requirement: CU_REQUIREMENT, attended: true } });
     assert.equal(decision.kind, 'successor', JSON.stringify(decision));
     const continued = await requestVia('foreground', cu.root, common);
-    assert(verifierDeliveries.some(delivery => delivery.phase === 'coding' && delivery.next === 'review_blocking_skips_then_verifier' && delivery.skips > 0),
-      `a currently issued request must reach its verifier while the original compatibility SKIP remains visible: ${JSON.stringify(verifierDeliveries)}`);
+    assert(verifierDeliveries.some(delivery => delivery.phase === 'coding'
+      && ['review_blocking_skips_then_verifier', 'run_verifier_for_repair', 'run_verifier_then_receipt'].includes(delivery.next)),
+      `the current coding result must reach its actually issued verifier request: ${JSON.stringify(verifierDeliveries)}`);
     const runIds = fs.readdirSync(runsDir).filter(id => !id.startsWith('.') && fs.existsSync(path.join(runsDir, id, 'manifest.json')));
     const successor = runIds.find(id => id !== firstId)!; assert(successor, `successor absent: ${continued.exitCode}`);
     const nextManifest = JSON.parse(fs.readFileSync(path.join(runsDir, successor, 'manifest.json'), 'utf8'));
     assert.equal(nextManifest.successor_of, firstId);
     assert.equal(nextManifest.budget, undefined, 'a new successor does not write retired quotas');
-    assert(continued.invokedPhases.includes('plan'), JSON.stringify(continued.invokedPhases));
+    assert(continued.invokedPhases.includes('work-unit-author'), JSON.stringify(continued.invokedPhases));
     assert(fs.readFileSync(manifestFile).equals(manifestBytes));
     assert(fs.readFileSync(eventsFile).subarray(0, eventBytes.length).equals(eventBytes));
     const nextEvents = loadAuthoritativeEvents(path.join(runsDir, successor, 'events.jsonl'));

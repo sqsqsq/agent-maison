@@ -124,7 +124,8 @@ export async function supersede(
       failExecutorFor: () => true,
       ...extra,
     });
-    if (probe.exitCode !== 0) error = `exit=${probe.exitCode}`;
+    const halt = [...probe.events].reverse().find(event => event.type === 'phase_halt');
+    if (probe.exitCode !== 0) error = `exit=${probe.exitCode}${halt ? ` halt=${String(halt.phase)}/${String(halt.halt_reason)}: ${String(halt.reason ?? '').slice(0, 1200)}` : ''}`;
   } catch (e) { error = (e as Error).message; }
   clearFrameworkConfigCache();
   const successor = runIds(s.root, feature).find(id => !before.has(id) && hasManifest(s.root, feature, id));

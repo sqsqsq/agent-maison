@@ -12,10 +12,11 @@ import { readRunBoundContracts } from '../../scripts/utils/capability-resolution
 import { parseReviewIssueRows } from '../../scripts/utils/repair-candidates';
 import { parseVerifierRequest } from '../../scripts/utils/verifier-request';
 import { countAgentInvokeStarts, resolveResumedBudget } from '../../scripts/utils/goal-runner-phase';
-import { BLUEPRINT_ID, assess, prepareFreshCuRequest, project, specFirstCuHooks, withFreshCuHost } from './lifecycle-evolution.unit.test';
+import { BLUEPRINT_ID, assess, authorHooks, prepareFreshCuRequest, project, specFirstCuHooks, withFreshCuHost } from './lifecycle-evolution.unit.test';
 import { boundInputs, repairAdapter, s16Born, superviseOnce } from './design-authority-repair.unit.test';
 import { goalRunEvents, requestVia, runGoalRuntimeChain } from './goal-runner-testing-integrity.unit.test';
-import { CU_SOURCE, goalStatusFeatureLine, publishRequestedVerifier, publishVerifier, writeCuSpecDraft } from './real-chain.unit.test';
+import { CU_SOURCE, goalStatusFeatureLine, publishRequestedVerifier, publishVerifier, writeCuSpecDraft, writeCuSpecMaterials, writeCuPlanMaterials, writeCuUtMaterials } from './real-chain.unit.test';
+import { resolveCompletionDisposition } from '../../scripts/utils/verify-feature-completion';
 import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
 import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
 import type { UnitCaseResult } from '../run-unit';
@@ -106,7 +107,7 @@ function reviewGate(s: Host, feature: string, runId: string, attemptId: string):
     '--project', path.join(s.frameworkRoot, 'harness/tsconfig.json'), path.join(s.frameworkRoot, 'harness/harness-runner.ts'),
     '--project-root', s.root, '--feature', feature, '--phase', 'review', '--summary'], {
     cwd: s.harnessDir, encoding: 'utf8', windowsHide: true, timeout: 60000,
-    env: { ...process.env, MAISON_GOAL_RUN_ID: runId, MAISON_GOAL_ATTEMPT: attemptId, MAISON_GOAL_ATTEMPT_PHASE: 'review', MAISON_GOAL_RUNNER: '1' },
+    env: { ...process.env, MAISON_GOAL_RUN_ID: runId, MAISON_GOAL_ATTEMPT: attemptId, MAISON_GOAL_ATTEMPT_PHASE: 'work-unit-author', MAISON_GOAL_RUNNER: '1' },
   });
   assert(!result.error && (result.status === 0 || result.status === 1), `the source gate must actually execute: ${result.error ?? result.stderr}`);
 }
@@ -127,7 +128,7 @@ cases.push({
   run: () => withRepairHost(async s => {
     let cut = false;
     const restore = observeEvents((file, event) => {
-      if (file.startsWith(s.root) && event.type === 'agent_invoke_end' && event.phase === 'spec' && !cut) {
+      if (file.startsWith(s.root) && event.type === 'agent_invoke_end' && event.phase === 'work-unit-author' && !cut) {
         cut = true;
         throw new Error('bounded transport interruption after the original author returned and before its gate');
       }
@@ -149,7 +150,6 @@ cases.push({
       const adapter = repairAdapter(s, () => b.saved);
       resumed = await requestVia('detach', s.root, { frameworkRoot: s.frameworkRoot, featureId: b.feature, adapter: 'codex',
         resume: b.runId, forceResume: true, authorizeAutonomy: false, ...hooks,
-        onSpec: ctx => { if (ctx.attempt === 1) { p.runId = ctx.runId; writeCuSpecDraft(p); } else hooks.onSpec(ctx); },
         onOutOfChain: adapter.onOutOfChain });
       converted(resumed.parentArgs, resumed.childArgs);
       assert(resumed.parentArgs!.includes('--resume') && !supervisor.spawned[0].includes('--authorize-autonomy'));
@@ -196,11 +196,11 @@ export async function terminalOwnerRuntime(): Promise<void> {
     let lateCandidates: Ev[] = [], repairPrompt = '', runId = '', sourceAttempt = '', lateObservation: Ev | undefined;
     const outputDir = path.join(REPORTS, 'terminal-owner'); fs.mkdirSync(outputDir, { recursive: true });
     const restore = observeEvents((file, event) => {
-      if (!file.startsWith(s.root) || delivered || event.type !== 'phase_verdict' || event.phase !== 'ut' || event.action !== 'advance') return;
+      if (!file.startsWith(s.root) || delivered || event.type !== 'phase_verdict' || event.phase !== 'ut' || event.verdict !== 'PASS') return;
       delivered = true; runId = path.basename(path.dirname(file));
       const history = goalRunEvents(s.root, runId, p.feature);
       assert(!history.some(row => row.type === 'run_end'), 'the independently confirmed finding must arrive at the real chain end before completion');
-      assert.equal(history.filter(row => row.type === 'phase_verdict' && row.verdict === 'PASS' && row.action === 'advance').length, request.chain.length);
+      assert(request.chain.every(phase => history.some(row => row.type === 'phase_verdict' && row.phase === phase && row.verdict === 'PASS')));
       const behavior = ledgerBehavior(path.join(s.root, CU_SOURCE));
       assert.notDeepEqual(behavior, { added: 120, restored: 100 }, 'the late verifier must observe a real executable product defect');
       const report = featureFilePath(s.root, p.feature, 'review/review-report.md');
@@ -212,8 +212,9 @@ export async function terminalOwnerRuntime(): Promise<void> {
       const diagnosis = `add(120)=${behavior.added}; restore([45,55])=${behavior.restored}; expected 120/100; evidence=${observationRel}; balance应累计金额并保持恢复余额`;
       fs.writeFileSync(report, old.replace(/\| R-1 \|[^\n]+/, `| CR-LATE | 逻辑错误 | MAJOR | ${diagnosis} | ${CU_SOURCE} | ${diagnosis} |`)
         .replace('| MAJOR | 0 |', '| MAJOR | 1 |').replace('| MINOR | 1 |', '| MINOR | 0 |').replace('**审查结论**: 通过', '**审查结论**: 不通过'));
-      const start = [...history].reverse().find(row => row.type === 'agent_invoke_start' && row.phase === 'review');
-      sourceAttempt = String(start?.invoke_id).replace(/^review-/, '');
+      const start = [...history].reverse().find(row => row.type === 'agent_invoke_start' && row.phase === 'work-unit-author');
+      assert(start?.invoke_id, 'source recheck must retain the actual unit author identity');
+      sourceAttempt = String(start.invoke_id).replace(/^work-unit-author-/, '');
       reviewGate(s, p.feature, runId, sourceAttempt);
       const reports = featureFilePath(s.root, p.feature, 'review/reports');
       const pending = json(path.join(reports, 'summary.json'));
@@ -233,8 +234,7 @@ export async function terminalOwnerRuntime(): Promise<void> {
     });
     let probe: Awaited<ReturnType<typeof runGoalRuntimeChain>> | undefined;
     try {
-      probe = await runGoalRuntimeChain(s.root, { frameworkRoot: s.frameworkRoot, featureId: p.feature, adapter: 'codex', ...hooks,
-        freshRequirement: request.requirement, freshStartPhase: request.chain[0] as 'spec', freshEndPhase: request.chain.at(-1),
+      const model: NonNullable<Parameters<typeof runGoalRuntimeChain>[1]> = {
         onCoding: ctx => {
           codingCalls++;
           if (!delivered) {
@@ -248,8 +248,10 @@ export async function terminalOwnerRuntime(): Promise<void> {
           lateCandidates = json(featureFilePath(s.root, p.feature, 'review/reports/summary.json')).repair_candidates ?? [];
           repairCalls++;
           repairPrompt = ctx.prompt;
-          assert(ctx.prompt.includes('Verified repair candidates for this phase') && ctx.prompt.includes('CR-LATE'), 'the actual coding author must receive the production verified candidate');
-          const target = /CR-LATE:[^\n]+（涉及：([^）]+)）/.exec(ctx.prompt)?.[1];
+          const finding = resolveCompletionDisposition({ projectRoot: s.root, frameworkRoot: s.frameworkRoot, feature: p.feature,
+            runId: ctx.runId, chain: request.chain }).completionBlocking.find(problem => problem.id === 'open_finding:CR-LATE' && problem.action === 'repair');
+          assert(finding?.item_fingerprint && ctx.prompt.includes(finding.item_fingerprint) && ctx.prompt.includes('CR-LATE'), 'the actual unit author must receive the production verified candidate');
+          const target = finding.files?.find(file => file === CU_SOURCE);
           const evidenceRel = /evidence=([^\s|）]+\.json)/.exec(ctx.prompt)?.[1];
           assert(target && evidenceRel, 'the production prompt must carry the actual source target and observed evidence path');
           const observed = json(path.join(s.root, evidenceRel));
@@ -298,13 +300,19 @@ export async function terminalOwnerRuntime(): Promise<void> {
               reportText: '```issue-verification\n- issue: CR-LATE\n  verdict: confirmed\n  repair_owner: coding\n  evidence: ' + issue.files.join(', ') + ' | ' + issue.summary + '\n```\n' });
           } else assert(publishRequestedVerifier(p, ctx), `unexpected model request ${ctx.phase}`);
         },
-      });
+      };
+      let currentAuthor: Parameters<NonNullable<typeof model.onCoding>>[0];
+      const unit = authorHooks(p, { spec: writeCuSpecMaterials, plan: writeCuPlanMaterials,
+        coding: () => model.onCoding!(currentAuthor), review: () => model.onReview!(currentAuthor), ut: writeCuUtMaterials });
+      probe = await runGoalRuntimeChain(s.root, { frameworkRoot: s.frameworkRoot, featureId: p.feature, adapter: 'codex', ...unit,
+        freshRequirement: request.requirement, freshStartPhase: request.chain[0] as 'spec', freshEndPhase: request.chain.at(-1),
+        onAuthor: (ctx, context) => { currentAuthor = ctx; unit.onAuthor(ctx, context); }, onOutOfChain: model.onOutOfChain });
       runId = path.basename(probe.reportDir);
       assert(delivered && repaired && repairCalls === 1 && reviewCalls >= 2,
         JSON.stringify({ delivered, repaired, codingCalls, repairCalls, reviewCalls, terminal: end(probe.events) }));
-      const firstTerminal = probe.events.findIndex(row => row.type === 'phase_verdict' && row.phase === 'ut' && row.action === 'advance');
-      const firstRecovery = probe.events.slice(firstTerminal + 1).find(row => row.type === 'phase_backtrack_requested');
-      assert(firstRecovery?.reason === 'upstream_gap' && firstRecovery.to_phase === 'review', 'the actual chain end must first return to its original review source');
+      const firstTerminal = probe.events.findIndex(row => row.type === 'phase_verdict' && row.phase === 'ut' && row.verdict === 'PASS');
+      const firstRecovery = probe.events.slice(firstTerminal + 1).find(row => row.type === 'agent_invoke_start' && row.phase === 'work-unit-author');
+      assert(firstRecovery && repairPrompt.includes('CR-LATE'), '末尾真实发现必须进入当前工作单元的实际返修请求');
       assert(sourceRevalidatedBeforeRepair && sourceRevalidations.length, 'a real review self-check and current independent verifier reply must precede the coding repair');
       const reviewed = json(featureFilePath(s.root, p.feature, 'review/reports/summary.json'));
       assert.equal(reviewed.verdict, 'PASS'); assert.equal(reviewed.closure_status, 'closed');

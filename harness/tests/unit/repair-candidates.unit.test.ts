@@ -26,6 +26,7 @@ import {
   testStrengthVerification,
   repairDeclineContextFiles,
 } from '../../scripts/utils/repair-candidates';
+import { deriveDesignDeclineFeedback } from '../../scripts/utils/design-repair-unattended';
 import { mapCategoryToChainPhase } from '../../scripts/utils/correction-routing';
 // D1/D3（plan 3a7f9c12）：真实生产件——UT 失败格式器、ut-host 归因判据、runner 的归因回退解析器。
 // 测试与生产共用同一实现，禁止在测试里手搓 classification 或复刻正则（codex 冻结项③/⑤）。
@@ -1213,6 +1214,24 @@ export function runAll(): UnitCaseResult[] {
   });
 
   // --- plan 33784ed1 §4：拒修与反驳状态（唯一状态函数） ----------------------
+
+  run(results, '设计拒修反馈按候选隔离：批次签名变化不重置已给过的一轮反驳', () => {
+    const a = 'repair_candidate:' + 'a'.repeat(64), b = 'repair_candidate:' + 'b'.repeat(64);
+    const declined = (id: string, signature: string) => ({ type: 'design_authority_repair', stage: 'failed',
+      failed_step: 'declined', declined_candidates: [id], reason: 'declined: 原依据', signature });
+    const first = deriveDesignDeclineFeedback([declined(a, 'first-bundle')], [a]);
+    assert(first.feedback.includes(a) && !first.delivered.length, '第一次确认拒修须交作者');
+    const author = { type: 'agent_invoke_start', phase: 'work-unit-author', invoke_id: 'unit-i2' };
+    const history = [declined(a, 'first-bundle'), author, declined(b, 'changed-bundle')];
+    const mixed = deriveDesignDeclineFeedback(history, [a, b], { invokeId: author.invoke_id, instruction: first.feedback });
+    assert(mixed.delivered.includes(a) && mixed.feedback.includes(b) && !mixed.feedback.includes(a), '新候选只能获得自己的反馈，旧候选不重置');
+    const repeated = deriveDesignDeclineFeedback([...history, declined(a, 'third-bundle')], [a],
+      { invokeId: author.invoke_id, instruction: first.feedback });
+    assert(repeated.delivered.includes(a) && !repeated.feedback, '同条再拒不得再给反驳');
+    const before = deriveDesignDeclineFeedback([author, declined(a, 'first-bundle')], [a],
+      { invokeId: author.invoke_id, instruction: first.feedback });
+    assert(!before.delivered.length && before.feedback.includes(a), '拒修之前的作者内容不能冒充已交反馈');
+  });
 
   run(results, 'A6 拒修在案的 review 候选：沿用的历史 subject 不能确认，当前 subject 能；未拒修的沿用照旧', () => {
     const report = reviewReport({ verdict: '不通过', rows: [CR1] });

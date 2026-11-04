@@ -354,7 +354,7 @@ export function writeVisualDiff(
 }
 
 /** These fixtures explicitly request construction; a legacy phase label never supplies source permission. */
-function authorizeFixtureConstruction(root: string, completionTarget: 'request' | 'feature', requirement = '真机测试银行卡开卡流程', phases = ['spec', 'plan', 'coding', 'review', 'ut', 'testing']): void {
+export function authorizeFixtureConstruction(root: string, completionTarget: 'request' | 'feature', requirement = '真机测试银行卡开卡流程', phases = ['spec', 'plan', 'coding', 'review', 'ut', 'testing']): void {
   const config = JSON.parse(fs.readFileSync(path.join(root, 'framework.config.json'), 'utf8'));
   config.active_workflow = 'obligation-driven';
   writeFile(root, 'framework.config.json', JSON.stringify(config));
@@ -364,7 +364,8 @@ function authorizeFixtureConstruction(root: string, completionTarget: 'request' 
   prepareFeatureScopeCandidate({ projectRoot: root, frameworkRoot: REPO_ROOT, feature: FEATURE,
     completionTarget, requestedResults: ['修复原工作单元实现并验证原有验收，不扩大业务范围'],
     requestedPhases: phases, requirement, overwrite: true });
-  ensureFeatureExecutionScopeFrozen({ projectRoot: root, frameworkRoot: REPO_ROOT, feature: FEATURE });
+  const frozen = ensureFeatureExecutionScopeFrozen({ projectRoot: root, frameworkRoot: REPO_ROOT, feature: FEATURE });
+  assert(!frozen.checks.some(check => check.status === 'FAIL'), JSON.stringify(frozen.checks));
 }
 
 interface AgentCtx {
@@ -636,7 +637,25 @@ export async function runGoalRuntimeChain(
   // c4e8b1d3：plan PASS advance 会建 pass snapshot——trust 目录隔离到宿主内，绝不写用户主目录
   const prevTrustDir = process.env.MAISON_GOAL_CHECKPOINT_DIR;
   process.env.MAISON_GOAL_CHECKPOINT_DIR = path.join(root, 'trust-cp');
-  const authorHook = (ctx: AgentCtx): void => {
+  // Legacy per-method hooks/injections (onCoding, invokeResultFor('coding') …) predate the single unit author. A test that
+  // does not provide onAuthor gets them for every method of the actual issued unit request, in chain order.
+  const legacyFamilies = (ctx: AgentCtx): AgentCtx[] => {
+    if (ctx.phase !== 'work-unit-author' || opts.onAuthor) return [ctx];
+    const runDir = featureFilePath(root, featureId, 'goal-runs/' + ctx.runId);
+    const start = [...readEvents(runDir)].reverse().find(event => event.type === 'agent_invoke_start' && event.phase === ctx.phase);
+    const chain = start?.invoke_id ? executionRequestForInvoke(runDir, String(start.invoke_id))?.request.context.chain ?? [] : [];
+    // The actual invocation stays first, so injections keyed on 'work-unit-author' still apply.
+    return [ctx, ...chain.map(family => { const n = (attempts.get(family) ?? 0) + 1; attempts.set(family, n); return { ...ctx, phase: family, attempt: n }; })];
+  };
+  const legacyHooks = (ctx: AgentCtx): void => {
+    if (ctx.phase === 'testing') opts.onTesting?.(ctx);
+    if (ctx.phase === 'coding') opts.onCoding?.(ctx);
+    if (ctx.phase === 'spec') opts.onSpec?.(ctx);
+    if (ctx.phase === 'plan') opts.onPlan?.(ctx);
+    if (ctx.phase === 'ut') opts.onUt?.(ctx);
+    if (ctx.phase === 'review') opts.onReview?.(ctx);
+  };
+  const authorHook = (ctx: AgentCtx, methods: AgentCtx[]): void => {
     const runDir = featureFilePath(root, featureId, `goal-runs/${ctx.runId}`);
     const start = [...readEvents(runDir)].reverse().find(event => event.type === 'agent_invoke_start' && event.phase === ctx.phase);
     const issued = start?.invoke_id ? executionRequestForInvoke(runDir, String(start.invoke_id)) : null;
@@ -657,6 +676,7 @@ export async function runGoalRuntimeChain(
         opts.onAuthor?.({ ...ctx, runId: context.runId, goalAttemptId: context.attemptId,
           issued: { runId: context.runId, phase: context.phase, attemptId: context.attemptId,
             ownerId: context.owner.owner_id, ownerEpoch: context.owner.epoch } }, context);
+        if (ctx.phase === 'work-unit-author' && !opts.onAuthor) for (const method of methods) legacyHooks(method);
       }
       finally {
         for (const [key, value] of before) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
@@ -688,13 +708,9 @@ export async function runGoalRuntimeChain(
         goalAttemptId: extraEnv.MAISON_GOAL_ATTEMPT ?? '',
         outputLogPath: String((o as { outputLogPath?: string })?.outputLogPath ?? ''),
       };
-      authorHook(ctx);
-      if (phase === 'testing') opts.onTesting?.(ctx);
-      if (phase === 'coding') opts.onCoding?.(ctx);
-      if (phase === 'spec') opts.onSpec?.(ctx);
-      if (phase === 'plan') opts.onPlan?.(ctx);
-      if (phase === 'ut') opts.onUt?.(ctx);
-      if (phase === 'review') opts.onReview?.(ctx);
+      const methods = legacyFamilies(ctx);
+      authorHook(ctx, methods);
+      if (ctx.phase !== 'work-unit-author') for (const method of methods) legacyHooks(method);
       if (opts.onOutOfChain && (phase.startsWith('initial-design-') || phase.startsWith('design-repair-') || phase.endsWith('-verifier-format-repair'))) {
         const { activeChildPid, ...override } = (await opts.onOutOfChain(ctx)) ?? {};
         // 替身 adapter 报告它起的子进程（真实 adapter 在 spawn 后调用 onActiveChild；运行时据此做收容绑定核验）。
@@ -703,13 +719,14 @@ export async function runGoalRuntimeChain(
         }
         return { exitCode: 0, stdout: 'done', stderr: '', command: 'fake-agent', ...override };
       }
-      const failed = opts.failExecutorFor?.(phase, n) ?? false;
+      const failed = methods.some(method => opts.failExecutorFor?.(method.phase, method.attempt) ?? false);
+      const injected = methods.map(method => opts.invokeResultFor?.(method.phase, method.attempt)).find(Boolean);
       return {
         exitCode: failed ? 1 : 0,
         stdout: failed ? '' : 'done',
         stderr: failed ? 'injected executor failure' : '',
         command: 'fake-agent',
-        ...(opts.invokeResultFor?.(phase, n) ?? {}),
+        ...(injected ?? {}),
       };
     }) as never);
     __testing_setRepoLayout({ ...layoutFieldsForTmpHost(root), frameworkRoot });
@@ -1078,22 +1095,18 @@ export async function runGoalRuntimeChain(
         outputLogPath: '',
         ...(issued ? { issued } : {}),
       };
-      authorHook(ctx);
-      if (phase === 'testing') opts.onTesting?.(ctx);
-      if (phase === 'coding') opts.onCoding?.(ctx);
-      if (phase === 'spec') opts.onSpec?.(ctx);
-      if (phase === 'plan') opts.onPlan?.(ctx);
-      if (phase === 'ut') opts.onUt?.(ctx);
-      if (phase === 'review') opts.onReview?.(ctx);
+      const methods = legacyFamilies(ctx);
+      authorHook(ctx, methods);
+      if (ctx.phase !== 'work-unit-author') for (const method of methods) legacyHooks(method);
       if (opts.onOutOfChain && (phase === 'vision-canary' || phase.startsWith('initial-design-') || phase.startsWith('design-repair-') || phase.endsWith('-verifier-format-repair'))) {
         const outcome = await opts.onOutOfChain({ ...ctx, goalAttemptId: issued?.attemptId });
         const status = outcome?.status === 'waiting' || outcome?.status === 'failed' || outcome?.status === 'passed'
           ? outcome.status : outcome?.exitCode && outcome.exitCode !== 0 ? 'failed' : 'passed';
         return { status, phase, ...(typeof outcome?.details === 'string' ? { details: outcome.details } : {}) };
       }
-      const transportDetails = opts.invokeResultFor?.(phase, n)?.details;
+      const transportDetails = methods.map(method => opts.invokeResultFor?.(method.phase, method.attempt)).find(Boolean)?.details;
       return {
-        status: opts.failExecutorFor?.(phase, n) ? 'failed' : 'passed',
+        status: methods.some(method => opts.failExecutorFor?.(method.phase, method.attempt)) ? 'failed' : 'passed',
         phase,
         ...(typeof transportDetails === 'string' ? { details: transportDetails } : {}),
       };
@@ -4024,21 +4037,28 @@ test('A4 框架阻断与内容阻断并存：不落 code_regression、不耗内�
   assertRunReachedEnd({ ...resumed, events: resumed.events.slice(first.events.length) }, 'A4-resumed');
 });
 
-test('A5 当前原生429：真实未完成不派工具、不凭固定次数重试；显式继续后正常验证', async () => {
-  const { root } = setupHost('codex');
+test('A5 当前原生429：固定退避重派同一工作自动恢复；退避用尽才停等，显式继续后正常验证', async () => {
   const excerpt429 = 'turn.failed: {"type":"error","status":429,"error":{"type":"rate_limit_error","message":"finite transport rate limit"}}';
+  const fail429 = { exitCode: 1, stdout: '', stderr: excerpt429, terminal_failure_observed: true, terminal_error_excerpt: excerpt429 };
+  {
+    const { root } = setupHost('codex');
+    let failures = 0;
+    const once = await runChain(root, { adapter: 'codex', freshEndPhase: 'spec',
+      invokeResultFor: (phase: string) => phase === 'work-unit-author' && failures++ === 0 ? fail429 : null });
+    const ended = once.events.find(event => event.type === 'agent_invoke_end' && event.phase === 'work-unit-author');
+    assert(ended !== undefined && !invocationCompleted({ ...ended, exitCode: ended.exit_code }), '实际429必须仍是原生未完成，不能伪造正常交回');
+    assert(once.events.filter(event => event.type === 'transient_api_retry_scheduled').length === 1, '一次断流只退避重派一次');
+    assert(once.invokedPhases.filter(phase => phase === 'work-unit-author').length === 2 && once.harnessPhases.includes('spec'), '退避后重派同一工作并正常验证');
+    assertRunReachedEnd(once, 'A5 single 429 recovered');
+  }
+  const { root } = setupHost('codex');
   let failed = false;
   const options = { adapter: 'codex', freshEndPhase: 'spec',
-    invokeResultFor: (phase: string) => {
-      if (phase !== 'work-unit-author' || failed) return null;
-      failed = true;
-      return { exitCode: 1, stdout: '', stderr: excerpt429, terminal_failure_observed: true, terminal_error_excerpt: excerpt429 };
-    } };
+    invokeResultFor: (phase: string) => phase === 'work-unit-author' && !failed ? fail429 : null };
   const first = await runChain(root, options);
-  const ended = first.events.find(event => event.type === 'agent_invoke_end' && event.phase === 'work-unit-author');
-  assert(ended !== undefined && !invocationCompleted({ ...ended, exitCode: ended.exit_code }) && first.exitCode !== 0, '实际429必须仍是原生未完成，不能伪造正常交回');
-  assert(first.invokedPhases.length === 1 && first.harnessPhases.length === 0 && haltsOf(first.events).some(event => event.run_disposition === 'WAITING'), '未完成原生调用不能进正式工具或固定自动重试');
-  assert(!first.events.some(event => event.type === 'transient_api_retry_scheduled'), '退役的固定瞬时重试事件不能决定当前派发');
+  failed = true;
+  assert(first.exitCode !== 0 && first.harnessPhases.length === 0 && haltsOf(first.events).some(event => event.run_disposition === 'WAITING'), '退避用尽的未完成调用不能进正式工具');
+  assert(first.events.filter(event => event.type === 'transient_api_retry_scheduled').length === 3, '固定退避表用尽后才停等');
   assert(first.events.some(event => event.type === 'phase_halt' && JSON.stringify(event).includes('429')), '真实运输故障原文必须进入当前未完成诊断，不伪造原生输出文件');
   backdateLastRunEnd(root, path.basename(first.reportDir));
   const restored = await runChain(root, { ...options, resume: path.basename(first.reportDir), forceResume: true });

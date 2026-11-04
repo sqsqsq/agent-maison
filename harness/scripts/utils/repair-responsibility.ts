@@ -187,11 +187,12 @@ function loadCodingScope(options: ResolvePhaseWriteBoundaryOptions): {
     return { available: true, prefixes: resolved.allowedPrefixes, modules, diagnostics: resolved.unmapped.map(name => `construction module has no path: ${name}`) };
   }
   const { resolveEffectiveScopeSource } = require('./goal-run-creation') as typeof import('./goal-run-creation');
-  const recordedScope = resolveEffectiveScopeSource(options.projectRoot, options.feature, options.runId)?.scope;
+  // Before birth the caller passes the run's own approved scope; a feature already transferred to an older run has no run-less authority.
+  const recordedScope = options.executionScope ?? resolveEffectiveScopeSource(options.projectRoot, options.feature, options.runId)?.scope;
   if (recordedScope) {
     const { readRunBoundContracts } = require('./capability-resolution') as typeof import('./capability-resolution');
     let contracts: ReturnType<typeof readRunBoundContracts>;
-    try { contracts = readRunBoundContracts(options.projectRoot, options.frameworkRoot, options.feature, options.runId, options.authorityReaders); }
+    try { contracts = readRunBoundContracts(options.projectRoot, options.frameworkRoot, options.feature, options.runId, options.authorityReaders, options.executionScope); }
     catch (error) {
       // Ownership discovery also runs before the design producer. A missing or stale
       // construction input leaves source attribution unresolved; the real coding

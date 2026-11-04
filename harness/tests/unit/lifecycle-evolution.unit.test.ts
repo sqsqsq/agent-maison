@@ -358,7 +358,9 @@ export function authorHooks(p: RealChainProject, writers: Partial<Record<Phase, 
     if (!fs.existsSync(featureFilePath(p.root, p.feature, 'acceptance.yaml'))) pending.add('spec');
     if (!fs.existsSync(featureFilePath(p.root, p.feature, 'contracts.yaml'))) pending.add('plan');
     const factsFile = featureFilePath(p.root, p.feature, 'context/facts.md');
-    const baseline = (admitted.baseline || !pending.has(admitted.first_phase)) && fs.existsSync(factsFile) ? fs.readFileSync(factsFile) : undefined;
+    // No reusable baseline in the actual admission means the unit must establish current facts, whatever method needs work.
+    const establish = !admitted.baseline;
+    const baseline = !establish && fs.existsSync(factsFile) ? fs.readFileSync(factsFile) : undefined;
     for (const family of context.chain) {
       if (!pending.has(family) || !Object.prototype.hasOwnProperty.call(writers, family)) continue;
       if ((family === 'coding' || family === 'ut') && !context.runtimeFacts.runBaseSha) continue;
@@ -370,7 +372,7 @@ export function authorHooks(p: RealChainProject, writers: Partial<Record<Phase, 
     const deltas = authored.match(/^##\s*phase_delta:[\s\S]*/m)?.[0] ?? '';
     // Keep the admitted baseline bytes while retaining the current unit's method investigations.
     if (baseline) fs.writeFileSync(factsFile, baseline.toString('utf8').split(/^##\s*phase_delta:/m)[0] + deltas);
-    if (pending.has(admitted.first_phase)) {
+    if (establish || pending.has(admitted.first_phase)) {
       researchSnapshotFacts(p.root, factsFile, admitted.first_phase, admitted);
       if (!admitted.baseline && deltas) fs.appendFileSync(factsFile, '\n' + deltas);
     }

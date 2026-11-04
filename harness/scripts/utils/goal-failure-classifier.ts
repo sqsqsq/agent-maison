@@ -817,7 +817,9 @@ function problemIdentity(problem: CurrentDisposition['completionBlocking'][numbe
     ...(!finding || includeRouting ? { phase: problem.source_phase ?? problem.phase } : {}),
     ...(includeRouting ? { owner: problem.owner, propagated_from: problem.propagated_from } : {}),
     action: problem.action, affects: problem.affects,
-    files: sortedRefs(problem.files), evidence: sortedRefs(problem.evidence),
+    // The subject-bound verifier report remains mandatory evidence, but its
+    // regenerated filename is not a new product defect or acceptance condition.
+    files: sortedRefs(problem.id === 'attestation_present' && problem.action === 'repair' ? [] : problem.files), evidence: sortedRefs(problem.evidence),
   });
 }
 

@@ -1102,8 +1102,9 @@ async function main(): Promise<void> {
 
   if (capabilityInputChecks.length) {
     const quickReport = generateScriptReport(harnessRoot, phase, feature, projectRoot, capabilityInputChecks, resolvedFrameworkRoot);
-    writeRunSummaryBase(projectRoot, quickReport, resolvedFrameworkRoot);
+    const quickSummary = writeRunSummaryBase(projectRoot, quickReport, resolvedFrameworkRoot);
     printReportToConsole(quickReport, { failuresOnly: true });
+    if (!phaseIsGlobal) printQuickCheckResult(projectRoot, resolvedFrameworkRoot, quickReport, quickSummary);
     process.exit(1);
   }
   const artifactInspection = phaseIsGlobal ? null : specLoader.inspectFeatureArtifacts(feature, phase, resolvedInputs);
@@ -1112,10 +1113,11 @@ async function main(): Promise<void> {
     if (artifactInspection.verdict === 'missing_directory' || artifactInspection.verdict === 'path_not_directory') {
       const blocker = featureArtifactBlocker(projectRoot, artifactInspection, paths.frameworkRoot);
       const quickReport = generateScriptReport(harnessRoot, phase, feature, projectRoot, [blocker], resolvedFrameworkRoot);
-      writeRunSummaryBase(projectRoot, quickReport, resolvedFrameworkRoot);
+      const quickSummary = writeRunSummaryBase(projectRoot, quickReport, resolvedFrameworkRoot);
       printReportToConsole(quickReport, {
         failuresOnly: Boolean(args['failures-only']) || !Boolean(args.verbose),
       });
+      printQuickCheckResult(projectRoot, resolvedFrameworkRoot, quickReport, quickSummary);
       process.exit(1);
     }
   }
@@ -2830,6 +2832,14 @@ function patchRunSummaryClosure(
   const dir = featurePhaseReportsDir(projectRoot, report.feature, report.phase, frameworkRoot);
   atomicWriteJson(path.join(dir, 'summary.json'), patched);
   return patched;
+}
+
+/** An early exit is still this check's current result: emit it so the runtime hands its repairs to the work owner. */
+function printQuickCheckResult(projectRoot: string, frameworkRoot: string, report: ScriptReport, summary: HarnessRunSummary): void {
+  const runId = process.env.MAISON_GOAL_RUN_ID?.trim();
+  const currentResults = [{ phase: report.phase, summary, checks: report.checks }];
+  const disposition = resolveCurrentDisposition(readCurrentDispositionInput({ projectRoot, frameworkRoot, feature: report.feature, chain: [report.phase], runId, currentResults }));
+  printStableSummary(summary, currentCompletionEvaluation({ projectRoot, frameworkRoot, feature: report.feature, chain: [report.phase], runId, currentResults }, disposition));
 }
 
 function printStableSummary(summary: HarnessRunSummary, evaluation?: import('./scripts/utils/goal-failure-classifier').CompletionEvaluation): void {

@@ -48,7 +48,7 @@ import { __testing_setPidProbeExecutor } from '../../scripts/utils/goal-containm
 import { livenessBeaconPath, writeLivenessBeacon } from '../../scripts/utils/liveness-beacon';
 import { readHandoffMaterial } from '../../scripts/utils/session-execution-handoff';
 import { requestVia, runGoalRuntimeChain } from './goal-runner-testing-integrity.unit.test';
-import { publishRequestedVerifier, writeCuFacts, writeCuSpecDraft, writeCuSpecMaterials, writeCuPlanMaterials, writeCuCodingMaterials, writeCuReviewMaterials, writeCuUtMaterials } from './real-chain.unit.test';
+import { publishRequestedVerifier, codingTestStrengthReply, writeCuFacts, writeCuSpecDraft, writeCuSpecMaterials, writeCuPlanMaterials, writeCuCodingMaterials, writeCuReviewMaterials, writeCuUtMaterials } from './real-chain.unit.test';
 import { FEATURE_LOCK_NAME, releaseLock, touchLock, tryAcquireLock } from '../../scripts/utils/goal-run-lock';
 import { evaluateDeviceReadinessProbe, runDeviceReadinessGate } from '../../scripts/utils/device-readiness-gate';
 import { SpecLoader } from '../../scripts/utils/spec-loader';
@@ -778,7 +778,8 @@ export function repairAdapter(s: Snapshot, saved: () => Ev | undefined, opts: {
           checks: [{ id: 'authoritative_content_aligned', status: aligned ? 'PASS' : 'FAIL', severity: 'BLOCKER', details: detail,
             ...(!aligned ? { acceptance_ids: Array.isArray(acceptance.criteria) ? acceptance.criteria.map((row: Ev) => row.id) : [], affected_files: [path.relative(s.root, blueprintFile(s)).replace(/\\/g, '/')] } : {}) }],
           summary: { pass: aligned ? 1 : 0, fail: aligned ? 0 : 1, blockers: aligned ? 0 : 1, verdict: aligned ? 'PASS' : 'FAIL' } } }) + '```\n'
-          + (aligned ? '' : '```issue-verification\n' + YAML.stringify([{ issue: 'authoritative_content_aligned', verdict: 'confirmed', repair_owner: 'external', evidence: detail }]) + '```\n');
+          + (aligned ? '' : '```issue-verification\n' + YAML.stringify([{ issue: 'authoritative_content_aligned', verdict: 'confirmed', repair_owner: 'external', evidence: detail }]) + '```\n')
+          + (aligned && request.phase === 'coding' ? codingTestStrengthReply({ ...project(s, request.feature), runId: ctx.runId }, 'coding') : '');
         publishFixtureVerifierEvidence({ projectRoot: s.root, reportsDir, feature: request.feature, phase: request.phase,
           subjectId: request.subject_id, skipSummaryPatch: true, verdict: aligned ? 'PASS' : 'FAIL', blockerCount: aligned ? 0 : 1, reportText: body });
         return;
@@ -940,7 +941,7 @@ export async function designRepairCompletionTransport(mode: 'detached' | 'sessio
       assert(ends.every(e => e.exit_code === 1 && e.completion_observed === true && e.kill_attempted === true), 'raw completed exit1 facts must survive runtime emission');
     }
     if (waiting) {
-      assert.deepStrictEqual(starts.map(e => e.phase), ['design-repair-author'], 'waiting/exit0 must not enter independent questioning');
+      assert.deepStrictEqual(starts.map(e => e.phase), ['design-repair-author'], `${mode}: waiting/exit0 must not enter independent questioning; ends=${JSON.stringify(transport)}`);
       assert(!published && bp.revision === b.baseRevision, `${mode}: waiting must not publish: ${describeS16(b)}`);
       const manifest = readJson<import('../../scripts/utils/goal-manifest').GoalManifest>(runFile(s.root, b.feature, b.runId, 'manifest.json'));
       const progress = projectGoalProgress({ projectRoot: s.root, manifest, events: b.events as Parameters<typeof projectGoalProgress>[0]['events'],
@@ -1034,7 +1035,8 @@ export async function s16MainFlow(s: Snapshot): Promise<RepairFlow> {
   // D3：两次真实的、相互独立的调用——不同 invoke、不同用途标识；质询提示词不含编写方的修复简报；各自只改允许的字段（运行时已核，否则不会发布）。
   const starts = outOfChainStarts(b.events);
   assert.deepStrictEqual(starts.map(e => e.phase), ['design-repair-author', 'design-repair-questioning'], describeS16(b));
-  assert(new Set(starts.map(e => e.invoke_id)).size === 2 && starts.every(e => e.chain_phase === 'spec'), describeS16(b));
+  assert(new Set(starts.map(e => e.invoke_id)).size === 2 && starts[0].purpose === 'author'
+    && starts[1].purpose === 'questioning' && attempted.phase === 'spec', describeS16(b));
   const [authorPrompt] = b.log.prompts['design-repair-author'];
   const [questioningPrompt] = b.log.prompts['design-repair-questioning'];
   assert(/修复简报/.test(authorPrompt) && /authority_content_not_machine_structure/.test(authorPrompt) && /不(?:得)?写 ?`?review_summary.admission/.test(authorPrompt), '编写提示词须带简报与子契约');
@@ -1866,10 +1868,8 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
       const failed = assertNotPublished(s, b, 'author', '越界写入');
       assert.deepStrictEqual((failed.files as Ev[]).map(f => f.path).sort(), [...touched].sort(), `事件须披露被改路径：${JSON.stringify(failed.files)}`);
       assert((failed.files as Ev[]).every(f => /^[0-9a-f]{64}$/.test(f.pre_sha256) && /^[0-9a-f]{64}$/.test(f.post_sha256) && f.pre_sha256 !== f.post_sha256), '事件须带前后哈希');
-      const violation = b.events.find(e => e.type === 'phase_write_violation');
-      assert(violation && violation.phase === 'design-repair-author' && (violation.violations as Ev[]).map(v => v.path).sort().join() === [...touched].sort().join(), `应落既有违规事件：${JSON.stringify(violation)}`);
       const halt = haltOf(b.events);
-      assert(halt?.halt_reason === 'backtrack_target_absent' && !halt.probe && /请用户核对并恢复工程文件/.test(String(halt.halt_guidance)), `应走既有违规停机出口、不挂探针：${JSON.stringify(halt)}`);
+      assert(halt?.halt_reason === 'unauthorized_source_mutation' && !halt.probe && /草稿之外/.test(String(halt.halt_guidance)), `应走现行违规停机出口、不挂探针：${JSON.stringify(halt)}`);
       assert(endOf(b.events)?.status !== 'CHAIN_SLICE_COMPLETED', '不得完成');
       // "不发布"与"未发生越界改写"是两个断言：canonical 没变，但被改的文件仍是改后的样子（只检测、不还原）。
       assert(/修复调用顺手改的/.test(fs.readFileSync(path.join(s.root, touched[0]), 'utf8')) && readJson<Ev>(LOCAL_FILE(s)).vision.canary.probed_at === '2026-10-01T00:00:00.000Z', '框架不替操作者还原');
@@ -1896,7 +1896,7 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
       const failed = assertNotPublished(s, b, 'author', '快照不可验证');
       assert(/不可核实/.test(String(failed.reason)) && !failed.files, JSON.stringify(failed));
       const halt = haltOf(b.events);
-      assert(halt?.halt_reason === 'backtrack_target_absent' && /无法核对/.test(String(halt.halt_guidance)), `不可验证也不得降为设计等待：${JSON.stringify(halt)}`);
+      assert(halt?.halt_reason === 'unauthorized_source_mutation' && /不可核实/.test(String(halt.halt_guidance)), `不可验证也不得降为设计等待：${JSON.stringify(halt)}`);
     }),
   },
   {

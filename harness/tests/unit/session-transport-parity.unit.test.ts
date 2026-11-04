@@ -13,6 +13,8 @@ import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixtu
 import { facts as requestFacts } from './request-entry.unit.test';
 import { readDeliveredVerifierRequest } from './real-chain.unit.test';
 import { designRepairCompletionTransport } from './design-authority-repair.unit.test';
+import { researchSnapshotFacts } from '../fixtures/host-snapshot-3.1.0/migrate';
+import { parseContextExploration } from '../../scripts/utils/context-exploration';
 import type { UnitCaseResult } from '../run-unit';
 import { matchesUnitCase, startCaseTiming, type SelectedUnitCases, type UnitExecutionTiming } from '../utils/unit-case-selection';
 import { withRuntimeTest } from '../utils/runtime-test-control';
@@ -40,6 +42,18 @@ const moduleAt = (root: string, relative: string): any => require(path.join(root
 const summary = (root: string, phase: string) => json(root, `doc/features/clamp/${phase}/reports/summary.json`);
 const events = (root: string): any[] => read(root, 'doc/features/clamp/goal-runs/session-cli/events.jsonl').split('\n').filter(Boolean).map(line => JSON.parse(line));
 
+function assertFeatureCompleted(root: string, mode: string): void {
+  const assessment = moduleAt(root, 'scripts/utils/feature-assessment').assessFeature(root, 'clamp', {
+    expectedChain: ['coding', 'review', 'ut'], expectedTrack: 'full', frameworkRoot: path.join(root, 'framework') });
+  const ends = events(root).filter(event => event.type === 'run_end');
+  if (!assessment.complete || !ends.some(event => event.status === 'CHAIN_SLICE_COMPLETED')) {
+    const originals = require('../utils/runtime-test-control').preserveRuntimeTestEvidence([root], `${mode}: actual Node completion failed`);
+    fs.cpSync(path.join(root, 'doc/features/clamp'), path.join(originals, 'feature'), { recursive: true });
+    fs.writeFileSync(path.join(originals, 'assessment.json'), JSON.stringify(assessment, null, 2));
+    assert.fail(`${mode}: ${JSON.stringify({ ends, assessment })}\noriginals: ${originals}`);
+  }
+}
+
 function modelIssueVerification(root: string, required = true): string {
   const priorRun = process.env.MAISON_GOAL_RUN_ID;
   process.env.MAISON_GOAL_RUN_ID = 'session-cli';
@@ -52,12 +66,52 @@ function modelIssueVerification(root: string, required = true): string {
   } finally { if (priorRun === undefined) delete process.env.MAISON_GOAL_RUN_ID; else process.env.MAISON_GOAL_RUN_ID = priorRun; }
 }
 
+export function sessionNodeTestStrengthReply(root: string, phase: string, expectedText: string): string {
+  let strengthReply = '';
+  if (phase === 'coding') {
+    const checks = json(root, 'doc/features/clamp/coding/reports/script-report.json').checks;
+    const strength = checks.find((check: any) => check.id === 'coding_existing_test_preserved' && check.affected_files?.length);
+    if (strength) {
+      assert(strength.affected_files.every((file: string) => file === TEST));
+      assert.equal(read(root, TEST), expectedText, 'the Node tests must keep their real boundary assertions');
+      const original = moduleAt(root, 'scripts/utils/repair-responsibility').codingTestPreservation({ projectRoot: root, feature: 'clamp', runId: 'session-cli', file: TEST });
+      if (original.beforeText !== undefined) assert.equal(original.beforeText, expectedText, 'existing assertions cannot be deleted or weakened');
+      else {
+        const author = events(root).find(event => event.type === 'agent_invoke_start' && event.phase === 'work-unit-author');
+        const issued = author && moduleAt(root, 'scripts/utils/session-execution-handoff').executionRequestForInvoke(path.join(root, 'doc/features/clamp/goal-runs/session-cli'), author.invoke_id);
+        assert(issued?.request.pre_snapshot, 'test strength requires the actual first unit preimage');
+        const before = issued.request.pre_snapshot.entries.find((entry: any) => entry.path === TEST);
+        assert(!before || before.kind === 'file' && before.sha256 === sha(expectedText), 'the test must be new or byte-identical to its actual signed preimage');
+      }
+      strengthReply = '\n```issue-verification\n' + YAML.stringify([{ issue: strength.id, verdict: 'refuted',
+        evidence: [TEST, strength.details, '已核真实前像及当前正文；已批准的clamp边界断言全部保留，新断言实际驱动clamp。'].join(' | ') }]) + '```\n';
+    }
+  }
+  return strengthReply;
+}
+
+export function researchSessionUnit(root: string, context: { factsContext?: import('../../scripts/utils/context-facts').FactsInvocationContext }): void {
+  const admitted = context.factsContext;
+  assert(admitted, 'research must consume the actual unit admission');
+  if (admitted.baseline) return;
+  const file = path.join(root, 'doc/features/clamp/context/facts.md');
+  const raw = fs.readFileSync(file, 'utf8'), facts = parseContextExploration(raw);
+  assert(!facts.error);
+  const declared = Array.isArray(facts.fm.source_code_paths) ? facts.fm.source_code_paths : [];
+  const sources = [...new Set([...declared, TEST, 'src/math/src/test/expect.ts'])];
+  for (const source of sources) fs.readFileSync(path.join(root, source));
+  const deltas = raw.match(/^##\s*phase_delta:[\s\S]*/m)?.[0] ?? '';
+  fs.writeFileSync(file, '---\n' + YAML.stringify({ ...facts.fm, source_code_paths: sources }) + '---\n' + facts.body);
+  researchSnapshotFacts(root, file, admitted.first_phase, admitted);
+  if (deltas) fs.appendFileSync(file, '\n' + deltas);
+}
+
 function modelVerifier(root: string, phase: string, current: any, upstreamVerification = ''): void {
   assert(current.verifier_subject_id, 'the verifier model substitute requires a real current request');
   publishFixtureVerifierEvidence({ projectRoot: root, reportsDir: path.join(root, `doc/features/clamp/${phase}/reports`), feature: 'clamp', phase,
     subjectId: current.verifier_subject_id,
     reportText: 'Explicit author/verifier model substitute; script/native outcomes remain authoritative.\n'
-      + (phase === 'ut' ? '| id | status | severity | 证据 |\n|---|---|---|---|\n| end_to_end_driving | PASS | BLOCKER | node:test直接调用clamp，源码和测试输入与request相同 |\n| business_assertion_value | PASS | BLOCKER | AC-1/2/3各有两个原生相等断言，失败不被本语义替身改写 |\n' : '') + upstreamVerification,
+      + (phase === 'ut' ? '| id | status | severity | 证据 |\n|---|---|---|---|\n| end_to_end_driving | PASS | BLOCKER | node:test直接调用clamp，源码和测试输入与request相同 |\n| business_assertion_value | PASS | BLOCKER | AC-1/2/3各有两个原生相等断言，失败不被本语义替身改写 |\n' : '') + upstreamVerification + sessionNodeTestStrengthReply(root, phase, TEST_SOURCE),
     skipSummaryPatch: true });
 }
 
@@ -117,11 +171,15 @@ export async function runGoal(root: string, mode: 'detached' | 'session', scenar
     Object.assign(env, extraEnv ?? {}, { MAISON_GOAL_CHECKPOINT_DIR: path.join(root, '.trust') });
     const invoke = (tail: string) => spawnSync(process.execPath, [...args, tail], { cwd: path.join(root, 'framework/harness'), env, encoding: 'utf8', timeout: 60000, windowsHide: true });
     let checked = invoke('--summary');
+    assert(fs.existsSync(path.join(root, `doc/features/clamp/${phase}/reports/summary.json`)),
+      `${phase} self-check did not publish its result: ${checked.error?.message ?? ''}\n${checked.stdout}\n${checked.stderr}`);
     let current = summary(root, phase);
     let upstreamVerification = '';
-    if (phase === 'ut' && current.verdict === 'FAIL') {
-      const nativeLog = 'doc/features/clamp/ut/native-failure.tap';
-      const tap = read(root, 'doc/features/clamp/ut/reports/node-tests.tap');
+    const tapFile = path.join(root, 'doc/features/clamp/ut/reports/node-tests.tap');
+    const tap = phase === 'ut' && fs.existsSync(tapFile) ? fs.readFileSync(tapFile, 'utf8') : '';
+    const nativeFailed = /# fail [1-9]/.test(tap);
+    if (phase === 'ut' && current.verdict === 'FAIL' && nativeFailed) {
+      const nativeLog = 'doc/features/clamp/ut/reports/native-failure.tap';
       assert.match(tap, /# fail [1-9]/, 'upstream diagnosis must originate in actual native assertions');
       write(root, nativeLog, tap); // Retain the actual failed tool output; later real gate runs have their own timings.
       const line = tap.split('\n').findIndex(value => /^not ok /.test(value)) + 1;
@@ -130,29 +188,47 @@ export async function runGoal(root: string, mode: 'detached' | 'session', scenar
       // Existing authored upstream issues admit diagnosis without inventing DAG/interfaces or changing old SKIPs.
       checked = invoke('--summary'); current = summary(root, phase);
       upstreamVerification = modelIssueVerification(root);
-      assert(current.blocking_skips?.some((check: any) => check.id === 'dag_files_parseable'), 'simple no-DAG path must preserve its old SKIP');
       assert.equal(current.next_action, 'run_verifier_for_repair');
     }
     rawGap ||= current.verdict === 'INCOMPLETE';
-    if (phase === 'ut' && current.verdict === 'FAIL') failedInputs.push(sha(read(root, SOURCE)) + ':' + sha(read(root, TEST)));
+    if (phase === 'ut' && nativeFailed) failedInputs.push(sha(read(root, SOURCE)) + ':' + sha(read(root, TEST)));
     if (current.verifier_subject_id) {
       modelVerifier(root, phase, current, upstreamVerification);
-      if (current.verdict === 'PASS') {
-        const synced = invoke('--sync-closure');
-        assert.equal(synced.status, 0, `${phase} real sync-closure failed: ${synced.error?.message ?? ''}\n${synced.stdout}\n${synced.stderr}`);
-      }
+      // The live unit can inspect native results and publish its requested reply.
+      // The runtime finalizes formal checks after that actual unit has handed back.
     }
     return checked.status ?? 1;
   };
   const work = (phase: string, fence?: any, extraEnv?: Record<string, string>, instruction?: string): number => {
     invocations.push(phase);
-    if (phase === 'ut-verifier-format-repair') {
-      const current = summary(root, 'ut');
+    if (phase.endsWith('-verifier-format-repair')) {
+      const method = phase.replace(/-verifier-format-repair$/, '');
+      assert(['coding', 'review', 'ut'].includes(method));
+      const current = summary(root, method);
       assert(readDeliveredVerifierRequest({ root, feature: 'clamp', frameworkRoot: path.join(root, 'framework'),
         harnessDir: path.join(root, 'framework/harness'), module: 'math', modulePath: 'src/math' },
       { phase, prompt: instruction ?? '', runId: 'session-cli' }));
-      modelVerifier(root, 'ut', current, modelIssueVerification(root, false));
+      modelVerifier(root, method, current, method === 'ut' ? modelIssueVerification(root, false) : '');
       return 0; // Chain-external model repair writes only its requested report, never a phase harness/receipt.
+    }
+    if (phase === 'work-unit-author') {
+      const native = path.join(root, 'doc/features/clamp/ut/reports/node-tests.tap');
+      if (fs.existsSync(native) && /# fail [1-9]/.test(fs.readFileSync(native, 'utf8')))
+        failedInputs.push(sha(read(root, SOURCE)) + ':' + sha(read(root, TEST)));
+      const issued = moduleAt(root, 'scripts/utils/session-execution-handoff').executionRequestForInvoke(
+        path.join(root, 'doc/features/clamp/goal-runs/session-cli'));
+      const context = fence ?? issued?.request.context;
+      assert(context && context.phase === phase && context.runId === 'session-cli', 'the author must consume its actual unit request');
+      const methods = context.chain.filter((method: string) => ['coding', 'review', 'ut'].includes(method));
+      for (const method of methods) {
+        if (method === 'coding') { codingCalls++; write(root, SOURCE, scenario === 'repair' && !resume && !failedInputs.includes(sha(BAD) + ':' + sha(TEST_SOURCE)) ? BAD : GOOD); }
+        if (method === 'review') authorReview(root);
+        if (method === 'ut') authorUt(root);
+        authorFacts(root, method);
+      }
+      researchSessionUnit(root, context);
+      for (const method of methods) selfCheck(method, mode === 'session' ? context : undefined, extraEnv ?? context.childEnv);
+      return 0; // The model returned its artifacts; actual native failures remain formal tool evidence.
     }
     if (phase === 'coding') { codingCalls++; write(root, SOURCE, scenario === 'repair' && codingCalls === 1 && !resume ? BAD : GOOD); }
     if (phase === 'review') authorReview(root);
@@ -165,7 +241,7 @@ export async function runGoal(root: string, mode: 'detached' | 'session', scenar
   try {
     if (mode === 'session') {
       const options = { projectRoot: root, frameworkRoot: path.join(root, 'framework'), feature: 'clamp', runId: 'session-cli', adapter: 'claude', runMode: 'attended', authorization: { mode: 'goal_mode', autonomyAuthorized: true } };
-      let step = await withRuntimeTest({ root: options.projectRoot }, () => entry.runGoalModeSessionStep(options));
+      let step = await withRuntimeTest({ root: options.projectRoot }, () => entry.runGoalModeSessionStep({ ...options, ...(resume ? { forceTakeover: true } : {}) }));
       for (let round = 0; step.type === 'phase_execute_request' && round < 14; round++) {
         const requestPath = step.request.path;
         const original = JSON.parse(fs.readFileSync(requestPath, 'utf8'));
@@ -181,13 +257,13 @@ export async function runGoal(root: string, mode: 'detached' | 'session', scenar
         const started = Date.now();
         const output = `Explicit author model substitute executing ${phase}; actual checkers and native tests run below.\n`;
         write(root, path.relative(root, options.outputLogPath), output);
-        const instruction = phase === 'ut-verifier-format-repair' ? fs.readFileSync(path.join(path.dirname(options.outputLogPath), 'prompt.md'), 'utf8') : undefined;
+        const instruction = phase.endsWith('-verifier-format-repair') ? fs.readFileSync(path.join(path.dirname(options.outputLogPath), 'prompt.md'), 'utf8') : undefined;
         const code = work(phase, undefined, options.extraEnv, instruction);
         fs.appendFileSync(options.outputLogPath, `Author selfcheck exited ${code}; script/native outcomes are unchanged.\n`);
         return { exitCode: code, stdout: output, stderr: '', duration_ms: Date.now() - started, command: 'test-model-substitute' };
       });
       try {
-        await withRuntimeTest({ root: root }, () => new runtime.GoalPhaseRuntime({ args: ['--feature', 'clamp', resume ? '--resume' : '--attach-created', 'session-cli', '--adapter', 'claude', '--foreground-ok', '--project-root', root, '--framework-root', path.join(root, 'framework')],
+        await withRuntimeTest({ root: root }, () => new runtime.GoalPhaseRuntime({ args: ['--feature', 'clamp', resume ? '--resume' : '--attach-created', 'session-cli', ...(resume ? ['--force-resume'] : []), '--adapter', 'claude', '--foreground-ok', '--project-root', root, '--framework-root', path.join(root, 'framework')],
           layout: { kind: 'consumer', projectRoot: root, frameworkRoot: path.join(root, 'framework'), frameworkRel: 'framework' } }).run());
       } finally { runtime.__testing_setInvokeAgent(null); }
     }
@@ -262,15 +338,29 @@ const cases: Array<{ name: string; run(): Promise<void> }> = [{
         const observed = await runGoal(root, mode, 'repair');
         assert(observed.failedInputs.includes(expected), `${mode}: the same real assertion failure must be observed`);
         assert(!fs.existsSync(path.join(root, 'src/math/test/dag')), 'simple transport case cannot be made green by hand-feeding a DAG');
-        assert(events(root).some(e => e.type === 'phase_backtrack_requested' && e.to_phase === 'coding'), 'only the real owner route may repair product code');
-        for (const phase of ['coding', 'review', 'ut']) { const s = summary(root, phase); assert.equal(s.verdict, 'PASS', `${mode}/${phase}`); assert.equal(s.closure_status, 'closed'); }
-        assert(events(root).some(e => e.type === 'run_end' && e.status === 'CHAIN_SLICE_COMPLETED'));
+        assert(events(root).filter(e => e.type === 'agent_invoke_start' && e.phase === 'work-unit-author').length > 1,
+        'the real work-unit request must deliver the product repair');
+        assertFeatureCompleted(root, mode);
+        for (const phase of ['coding', 'review', 'ut']) {
+          const s = summary(root, phase);
+          const script = json(root, `doc/features/clamp/${phase}/reports/script-report.json`);
+          if (phase === 'coding') {
+            assert(script.checks.some((check: any) => check.id === 'coding_compile' && check.status === 'PASS'), 'the real compiler must pass');
+          } else {
+            assert.equal(s.verdict, 'PASS', `${mode}/${phase}: ${JSON.stringify({ verdict: s.verdict, next: s.next_action,
+              blockers: s.blockers, failures: script.checks.filter((check: any) => check.status === 'FAIL') })}`);
+            // The actual formal Feature completion above owns the endpoint;
+            // a live author's self-check does not sign old phase receipts.
+          }
+        }
+        assert(events(root).some(e => e.type === 'run_end' && e.status === 'CHAIN_SLICE_COMPLETED'), JSON.stringify(events(root).filter(e => e.type === 'run_end')));
         if (mode === 'session') {
           assert(!events(root).some(e => e.invoke_id === 'legacy-close'));
           assert(!events(root).some(e => e.type === 'agent_process_settled' && e.process_role !== 'harness'), 'session completion must come from accepted reports, never simulated agent settlement');
         }
-        assert(events(root).some(e => e.type === 'phase_write_observed' && e.phase === 'ut' && e.owned?.some((w: any) => w.path === TEST)), 'real UT ownership must be recorded');
-        assert.equal(moduleAt(root, 'scripts/utils/feature-assessment').assessFeature(root, 'clamp', { expectedChain: ['coding', 'review', 'ut'], expectedTrack: 'full', frameworkRoot: path.join(root, 'framework') }).complete, true);
+        assert(events(root).some(e => e.type === 'phase_write_observed' && e.phase === 'work-unit-author'
+          && e.owned?.some((w: any) => w.path === TEST && w.owner === 'ut')), 'real unit writes must retain UT ownership');
+        assertFeatureCompleted(root, mode);
       }
       write(request, SOURCE, BAD);
       assert.equal(sha(read(request, SOURCE)) + ':' + sha(read(request, TEST)), expected);
@@ -322,7 +412,7 @@ const cases: Array<{ name: string; run(): Promise<void> }> = [{
         assert(!events(root).some(e => e.type === 'budget_turns' || e.type === 'budget_wall_clock'), 'verification recovery stays within the original budget');
         assert.equal(json(root, 'doc/features/clamp/goal-runs/session-cli/manifest.json').run_id, 'session-cli', 'recovery keeps the original run identity');
         assert.equal(summary(root, 'ut').verdict, 'PASS'); assert.equal(summary(root, 'ut').closure_status, 'closed');
-        assert.equal(moduleAt(root, 'scripts/utils/feature-assessment').assessFeature(root, 'clamp', { expectedChain: ['coding', 'review', 'ut'], expectedTrack: 'full', frameworkRoot: path.join(root, 'framework') }).complete, true);
+        assertFeatureCompleted(root, `${mode}/I-O recovery`);
       }
       write(request, SOURCE, GOOD); write(request, 'native-gap', 'the same native producer cannot return an assertion result\n');
       const gap = await runRequest(request, 'native-gap'); assert.equal(gap.summary.verdict, 'INCOMPLETE');

@@ -17,7 +17,7 @@ import { loadFeatureContracts, phaseContractIndex, loadArtifactInventory, phaseO
 import { resolveFactsAbsPath, factsBaselineFingerprint } from './context-facts';
 import { assertFactsSourceReadable, parseContextExploration } from './context-exploration';
 import { evidenceEntryMatchesCurrentFile, factsBaselineBusinessDependencies, phaseEvidenceBusinessInputs, loadPhaseEvidenceManifest, recomputePhaseEvidenceStaleness, sha256File, createObservedSourceHashReader } from './phase-evidence-manifest';
-import { loadFrameworkConfig, resolveFeatureArtifact } from '../../config';
+import { loadFrameworkConfig, resolveFeatureArtifact, relFeaturesDir } from '../../config';
 import { featuresDirPath, enumerateFeatures, featureFilePath, receiptDirPath, featurePhaseReportsDir } from '../../config';
 import { validateProjectRelativePath, isInsideProjectRoot, inferLegacyProjectRoot, resolveDependencyPath } from './project-relative-path';
 import { execFileSync } from 'child_process';
@@ -259,7 +259,8 @@ export function loadFormalFactsObservation(options: FactsInvocationLookup): {
       .find(context => context?.baseline && 'feature' in context.subject && context.subject.feature === options.feature
         && 'run_id' in context.subject && context.subject.run_id === options.runId
         && context.baseline.fingerprint === factsBaselineFingerprint(facts));
-    if (!current?.baseline) return undefined;
+    if (!current?.baseline) return completedFactsBaselineFromHistory({ ...options, featuresDir: options.featuresDir ?? relFeaturesDir(options.projectRoot), goalAttemptId: options.attemptId },
+      options.runId, options.frameworkRoot ?? path.resolve(__dirname, '../../..'), manifest, history, false);
     const context = structuredClone(current), initial = new Map(anchor.original.pre_snapshot!.entries.map(entry => [entry.path, entry.sha256]));
     const dependencies = new Map(context.baseline!.dependencies.map(dep => [path.relative(options.projectRoot, dep.path).replace(/\\/g, '/'), dep]));
     const ended = new Set(records.filter(record => record.completed).map(record => record.start.invoke_id));
@@ -456,7 +457,7 @@ function completedFactsBaselineFromHistory(options: CapabilityResolutionEntryInp
       const original = executionRequestForInvoke(runDir, start.invoke_id), request = original?.request;
       const context = request?.context.factsContext;
       const end = events.slice(index + 1).find(event => event.type === 'agent_invoke_end' && event.invoke_id === start.invoke_id);
-      if (!original || !request || request.type !== 'phase_execute_request' || !context?.baseline
+      if (!original || !request || request.type !== 'phase_execute_request' || !context
         || workUnitExecutionRole(request.context, request.purpose) !== 'author'
         || request.invoke_id !== start.invoke_id || request.context.phase !== start.phase
         || request.context.runId !== runId || request.context.feature !== options.feature || request.context.owner.run_id !== runId
@@ -525,12 +526,29 @@ function completedFactsBaselineFromHistory(options: CapabilityResolutionEntryInp
   }
   const first = starts[0];
   const context = unitContexts.get(first) ?? events[first].facts_context;
-  if (!context?.baseline || !Array.isArray(context.baseline.dependencies) || !('run_id' in context.subject) || context.subject.run_id !== runId || context.subject.feature !== options.feature
+  if (!context || (context.baseline && !Array.isArray(context.baseline.dependencies)) || !('run_id' in context.subject) || context.subject.run_id !== runId || context.subject.feature !== options.feature
     || typeof context.first_phase !== 'string' || !Array.isArray(context.source_paths)) return undefined;
   const factsPath = resolveFactsAbsPath(options.projectRoot, options.feature);
-  if (!fs.existsSync(factsPath) || factsBaselineFingerprint(fs.readFileSync(factsPath, 'utf8')) !== context.baseline.fingerprint) return undefined;
+  if (!fs.existsSync(factsPath)) return undefined;
+  const facts = fs.readFileSync(factsPath, 'utf8');
+  const parsed = parseContextExploration(facts);
+  const establishingRequest = unitRequests.get(first);
+  if (context.baseline ? factsBaselineFingerprint(facts) !== context.baseline.fingerprint
+    : !establishingRequest || parsed.error || parsed.fm.schema_version !== '1.1' || parsed.fm.feature !== options.feature
+      || (parsed.fm as Record<string, unknown>).run_id !== runId || (parsed.fm as Record<string, unknown>).established_by !== context.first_phase
+      || context.first_phase !== (manifest.phase_chain?.[0] ?? manifest.execution_scope?.phase_chain[0])) return undefined;
   const initial = new Map<string, string | null>();
-  const businessDependencies = factsBaselineBusinessDependencies(options.projectRoot, options.feature, context, { runId, frameworkRoot });
+  // A unit establishing fresh facts has no old phase PASS to borrow. Its signed
+  // preimage and completed, lawful writes are the original source chain instead.
+  const preimage = new Map(establishingRequest?.pre_snapshot?.entries.map(entry => [entry.path, entry.sha256]));
+  // Shared facts/research declarations are not signed input snapshots. Only the
+  // original admitted sources and lawful observed writes grant source reuse.
+  const research = context.source_paths;
+  const businessDependencies = context.baseline
+    ? factsBaselineBusinessDependencies(options.projectRoot, options.feature, context, { runId, frameworkRoot })
+    : research.map(source => { const safe = validateProjectRelativePath(options.projectRoot, source, 'unit facts source');
+      const sha256 = preimage.get(safe) ?? null;
+      return { path: path.resolve(options.projectRoot, safe), exists: sha256 !== null, sha256 }; });
   for (const dep of businessDependencies) {
     if (!dep || typeof dep.path !== 'string' || typeof dep.exists !== 'boolean'
       || !(dep.sha256 === null || typeof dep.sha256 === 'string' && /^[0-9a-f]{64}$/i.test(dep.sha256))
@@ -557,7 +575,7 @@ function completedFactsBaselineFromHistory(options: CapabilityResolutionEntryInp
     const segment = events.slice(starts[n] + 1, endIndex);
     const prior = unitContexts.get(starts[n]) ?? start.facts_context;
     const ended = segment.findIndex(e => e.type === 'agent_invoke_end' && e.invoke_id === start.invoke_id);
-    if (!prior?.baseline || stableStringify(prior.baseline) !== stableStringify(context.baseline)
+    if (!prior || stableStringify(prior.baseline ?? null) !== stableStringify(context.baseline ?? null)
       || !('run_id' in prior.subject) || prior.subject.run_id !== runId || prior.subject.feature !== options.feature
       || prior.first_phase !== context.first_phase || openBounds.has(start.invoke_id!)
       || segment.some(e => e.type === 'phase_write_violation' && e.invoke_id === start.invoke_id)) return undefined;
@@ -612,15 +630,17 @@ function completedFactsBaselineFromHistory(options: CapabilityResolutionEntryInp
   for (const source of written) if (sha256File(path.join(options.projectRoot, source)) !== chain.get(source)) return undefined;
   if (carryUnchangedBaseline && changed.size) return undefined;
   // Reopening a duty revokes its PASS, not the unchanged original admission.
-  const evidence = loadPhaseEvidenceManifest(options.projectRoot, options.feature, context.baseline.established_by);
-  const requirement = options.requirement ?? manifest.requirement;
-  const freshness = recomputePhaseEvidenceStaleness(options.projectRoot, options.feature, [context.baseline.established_by], { frameworkRoot, runId, authorityReaders: options.authorityReaders,
-    pendingOwnerPaths: [...changed],
-    ...(typeof requirement === 'string' ? { currentRequirementSha: computeRequirementShaFromText(options.projectRoot, options.feature, requirement, options.featuresDir) } : {}) })[0];
-  if (!evidence?.integrityOk || !freshness || !['fresh', 'stale'].includes(freshness.verdict)
-    || carryUnchangedBaseline && freshness.verdict !== 'fresh'
-    || freshness.propagated_from || freshness.integrity_errors?.length
-    || freshness.changed_paths.some(source => !changed.has(source))) return undefined;
+  if (context.baseline) {
+    const evidence = loadPhaseEvidenceManifest(options.projectRoot, options.feature, context.baseline.established_by);
+    const requirement = options.requirement ?? manifest.requirement;
+    const freshness = recomputePhaseEvidenceStaleness(options.projectRoot, options.feature, [context.baseline.established_by], { frameworkRoot, runId, authorityReaders: options.authorityReaders,
+      pendingOwnerPaths: [...changed],
+      ...(typeof requirement === 'string' ? { currentRequirementSha: computeRequirementShaFromText(options.projectRoot, options.feature, requirement, options.featuresDir) } : {}) })[0];
+    if (!evidence?.integrityOk || !freshness || !['fresh', 'stale'].includes(freshness.verdict)
+      || carryUnchangedBaseline && freshness.verdict !== 'fresh'
+      || freshness.propagated_from || freshness.integrity_errors?.length
+      || freshness.changed_paths.some(source => !changed.has(source))) return undefined;
+  }
   const accepted = structuredClone(context);
   for (const source of written) {
     if (unitContexts.has(first)) (accepted.source_owners ??= {})[source] ??= partialOwners.get(source) ?? options.phase;
@@ -628,6 +648,10 @@ function completedFactsBaselineFromHistory(options: CapabilityResolutionEntryInp
   }
   for (const source of partialOwners.keys()) if (!accepted.source_paths.includes(source)) accepted.source_paths.push(source);
   const sources = new Map<string, { sha256: string; written: boolean }>();
+  if (!context.baseline) for (const dep of businessDependencies) {
+    const source = path.relative(options.projectRoot, dep.path).replace(/\\/g, '/');
+    if (dep.sha256 && !written.has(source)) sources.set(source, { sha256: dep.sha256, written: false });
+  }
   for (const source of observedWritten) {
     const sha256 = chain.get(source);
     if (written.has(source) && sha256) sources.set(source, { sha256, written: true });
@@ -719,7 +743,6 @@ export function resolveCapabilityResolutionEntryInput(
         : [indexed];
       const consumes = (providerId: string): boolean => inputContracts.some(contract => contract.phase.inputs
         .some(input => input.sources.some(source => source.kind === 'derive' && source.provider_id === providerId)));
-      const ownsDesignOutput = (binding: import('./capability-resolution').InputBinding): boolean => phaseOwnsDesignOutput(indexed.phase.produces, scope, options.phase, binding);
       const expectedBindings = scope.obligations.flatMap(obligation => [
         ...obligation.basis.filter(binding => !binding.dependencies.length || !binding.dependencies.every(dep => isExecutionSourceBasis(options.projectRoot, scope, obligation, dep))),
         ...(obligation.satisfied_by ?? []).filter(ref => 'input_id' in ref),
@@ -980,6 +1003,24 @@ export function resolveCapabilityResolutionEntryInput(
           && !obligation.satisfied_by?.length))
       ));
       const inventory = loadArtifactInventory(frameworkRoot);
+      const outputObservation = goalRunId && admitted && ['spec', 'plan'].includes(options.phase)
+        ? loadFormalFactsObservation({ projectRoot: options.projectRoot, frameworkRoot, feature: options.feature, phase: options.phase,
+          runId: goalRunId, attemptId: options.goalAttemptId, featuresDir: options.featuresDir, authorityReaders: options.authorityReaders })
+          ?? loadCompletedFactsObservation(options, goalRunId, frameworkRoot) : undefined;
+      const writtenOutputs = indexed.phase.produces.filter(output => (inventory.artifacts.find(artifact => artifact.id === output.artifact)?.paths ?? [])
+        .some(name => {
+          const file = resolveFeatureArtifact(options.projectRoot, options.feature, name).actualPath;
+          const relative = path.relative(options.projectRoot, file).replace(/\\/g, '/');
+          const observed = outputObservation?.sources.get(relative);
+          return observed?.written && observed.sha256 === sha256File(file)
+            || admitted?.source_owners?.[relative] === 'work-unit-author';
+        }));
+      const ownsDesignOutput = (binding: import('./capability-resolution').InputBinding): boolean =>
+        phaseOwnsDesignOutput(indexed.phase.produces, scope, options.phase, binding)
+        // A real current writer replaced this owned draft. Check it against the
+        // unchanged authority before publishing its new scope binding; the old
+        // fulfilled input must not prevent its own producer from checking it.
+        || phaseOwnsDesignOutput(writtenOutputs, { obligations: scope.obligations.map(obligation => ({ ...obligation, satisfied_by: [] })) }, options.phase, binding);
       const projectedUseCases = options.phase === 'plan'
         ? deriveBlueprintSkillInput(options.projectRoot, options.feature, frameworkRoot, 'contracts', options.authorityReaders).artifacts?.['use-cases@1']
         : undefined;

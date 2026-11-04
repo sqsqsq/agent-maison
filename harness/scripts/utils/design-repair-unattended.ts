@@ -249,6 +249,29 @@ export function designRepairAttempted(events: ReadonlyArray<object>, signature: 
     && event.stage === 'attempted' && event.signature === signature);
 }
 
+/** Confirmed candidate IDs and actual author requests own the single rebuttal, independent of the transaction bundle. */
+export function deriveDesignDeclineFeedback(events: ReadonlyArray<object>, candidates: readonly string[],
+  author?: { invokeId?: string; instruction?: string }): { feedback: string; delivered: string[] } {
+  const current = new Set(candidates), declines = new Map<string, { first: number; reason: string }>();
+  events.forEach((value, index) => {
+    const event = value as Record<string, unknown>;
+    if (event.type !== 'design_authority_repair' || event.stage !== 'failed' || event.failed_step !== 'declined'
+      || !Array.isArray(event.declined_candidates) || typeof event.reason !== 'string') return;
+    for (const id of event.declined_candidates) if (typeof id === 'string' && current.has(id))
+      declines.set(id, { first: declines.get(id)?.first ?? index, reason: event.reason });
+  });
+  const actor = author?.invokeId ? events.findIndex(value => {
+    const event = value as Record<string, unknown>;
+    return event.type === 'agent_invoke_start' && event.invoke_id === author.invokeId;
+  }) : -1;
+  const marker = (id: string) => `设计拒修反馈：${id}`;
+  const delivered = [...declines].filter(([id, record]) => actor > record.first && author?.instruction?.includes(marker(id))).map(([id]) => id);
+  const pending = [...declines].filter(([id]) => !delivered.includes(id));
+  const feedback = pending.length ? pending.map(([id]) => marker(id)).join('\n') + '\n'
+    + `设计 owner 经独立质询拒修，权威产物未发布：${[...new Set(pending.map(([, record]) => record.reason))].join('；')}。原工作单元作者须据理由修自身产物或补真实新事实；同一条只给一轮反驳，旧核实不得重派。` : '';
+  return { feedback, delivered };
+}
+
 /** `containmentUnresolved`：子进程收容绑定失败且没能证明它已消失——不是普通失败，由运行时走既有 agent_containment_unresolved 处置。 */
 export interface DesignRepairInvokeOutcome { started: boolean; ok: boolean; detail: string; invokeId?: string; output?: string; status?: import('./goal-phase-executor').GoalPhaseExecutorStatus; containmentUnresolved?: boolean; handoff?: boolean; preSnapshot?: ReturnType<typeof capturePhaseInvocationSnapshot>; postSnapshot?: ReturnType<typeof capturePhaseInvocationSnapshot> }
 
@@ -701,9 +724,20 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
     const latestRole = [...currentEvents].reverse().find(event => event.type === 'agent_invoke_start'
       && (event.phase === designRepairInvokeLabel('author') || event.phase === designRepairInvokeLabel('questioning')) && event.invoke_id);
     const issuedRole = latestRole?.invoke_id ? sessionExecutionForInvoke(runDir, latestRole.invoke_id) : null;
+    const acceptedRole = issuedRole && acceptedSessionReport(runDir, issuedRole);
     const roleEnded = latestRole?.invoke_id && currentEvents.some(event => event.invoke_id === latestRole.invoke_id
       && ['agent_invoke_end', 'agent_process_settled', 'orphan_reclaimed', 'agent_invoke_recovered'].includes(event.type ?? ''));
-    if (issuedRole && !acceptedSessionReport(runDir, issuedRole) && !roleEnded) {
+    const roleIncomplete = acceptedRole && !invocationCompleted({ ...acceptedRole.event,
+      status: acceptedRole.report.status, exitCode: acceptedRole.event.exit_code });
+    const roleEndAt = currentEvents.findIndex(event => event.type === 'agent_invoke_end' && event.invoke_id === latestRole?.invoke_id);
+    const continuedRole = roleIncomplete && input.forceResume && roleEndAt >= 0
+      && roleEndAt < currentEvents.map(event => event.type === 'run_start').lastIndexOf(true);
+    if (roleIncomplete && !continuedRole) {
+      const purpose = latestRole!.phase === designRepairInvokeLabel('questioning') ? 'questioning' : 'author';
+      if (acceptedRole.report.status === 'waiting') throw new AttemptWaiting(purpose, acceptedRole.report.details ?? '原设计调用尚在等待。');
+      throw new AttemptFailure(purpose, acceptedRole.report.details ?? acceptedRole.report.status);
+    }
+    if (issuedRole && (!roleEnded || continuedRole)) {
       const purpose = latestRole!.phase === designRepairInvokeLabel('questioning') ? 'questioning' : 'author';
       const request = issuedRole.request;
       const result = await input.invoke(purpose, request.context.instruction ?? '', request.pre_snapshot && request.write_boundary
@@ -827,6 +861,7 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
     // 本任务实际引用的输入（蓝图 source_ref 指向的项目内文件）即使在通常排除的目录里也逐个核；只排除调用期间运行时自己会写的路径。
     // 工作区里的事件文件按整文件期望值单独核（restoreEventFiles）。
     const runRel = input.reportDir.replace(/\\/g, '/').replace(/\/+$/, '');
+    const immutableInputPaths = [...workUnitProtectedRecordPaths(projectRoot, input.feature, runDir), `${runRel}/manifest.json`];
     const workspace = changeUnitDirectory(projectRoot, blueprintId);
     const owned = [path.relative(projectRoot, workspace)];
     const eventFiles = workspaceEventFiles(workspace);
@@ -864,7 +899,7 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
       // 根在调用前后各列一次：调用里新建的顶层条目也要进差集。
       const resolution = { projectRoot, protectedRoots: snapshotRoots(projectRoot),
         executionRole: purpose === 'questioning' ? 'verifier' as const : 'author' as const,
-        immutableInputPaths: workUnitProtectedRecordPaths(projectRoot, input.feature, runDir) };
+        immutableInputPaths };
       const snapshotOptions = { ownedPrefixes: owned, runtimeExcluded: excluded, includeFiles: referenced };
       const capture = (): ReturnType<typeof capturePhaseInvocationSnapshot> => capturePhaseInvocationSnapshot(resolution, snapshotOptions);
       let pre = capture();
@@ -1089,9 +1124,13 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
       const cuNeedsAuthor = currentCuInput && (validateChangeUnit(currentCuInput, { projectRoot, canonicalPath: originalCu!.canonicalPath }).some(issue => issue.severity === 'BLOCKER')
         || validateChangeUnitDesign(projectRoot, currentCuInput).verdict !== 'constructable'
         || activeDesignDeclaration && !verifiedQuestion);
+      // A verified finding that triggered this transaction is invisible to the draft's own machine checks:
+      // the design owner must receive it once before independent questioning.
+      const verifiedTriggerUndelivered = input.brief.items.some(item => /repair_candidate:[a-f0-9]{64}/.test(item.basis))
+        && !repairRoleStart(sessionEvents(runDir), 'author');
       let preAuthor: ReturnType<typeof capturePhaseInvocationSnapshot>;
       let authorStart: GoalRunEvent | undefined;
-      if (preparedDisposition.completionBlocking.some(problem => problem.action === 'repair') || cuNeedsAuthor) {
+      if (preparedDisposition.completionBlocking.some(problem => problem.action === 'repair') || cuNeedsAuthor || verifiedTriggerUndelivered) {
         const invoked = await guarded('author', [authorPrompt(input, draftFile, canonicalRel, authorDrafts, transactionTiming, currentCuInput ?? undefined),
           ...preparedDisposition.completionBlocking.map(problem => `${problem.id}: ${problem.detail}\n对象与证据：${(problem.evidence ?? []).join('、')}`), ...authorFeedback].join('\n\n'), currentRefs, afterQuestioning);
         if ('handoff' in invoked) { release(); return { outcome: 'handoff', reason: 'session execution request committed' }; }
@@ -1103,7 +1142,7 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
         if (fs.existsSync(authorBefore)) authorPreimage = asRecord(YAML.parse(fs.readFileSync(authorBefore, 'utf8'))) ?? authorPreimage;
       } else {
         preAuthor = capturePhaseInvocationSnapshot({ projectRoot, protectedRoots: snapshotRoots(projectRoot), executionRole: 'author',
-          immutableInputPaths: workUnitProtectedRecordPaths(projectRoot, input.feature, runDir) }, { ownedPrefixes: owned, runtimeExcluded: excluded, includeFiles: currentRefs });
+          immutableInputPaths }, { ownedPrefixes: owned, runtimeExcluded: excluded, includeFiles: currentRefs });
         if (preAuthor.failureReason) throw new AttemptFailure('author', `机器准备的输入快照不可核实：${preAuthor.failureReason}`);
       }
       const roleEvents = sessionEvents(runDir);
@@ -1169,7 +1208,8 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
         if (!confirmed) throw new AttemptFailure('questioning', '拒修理由未被独立质询依据当前产物确认');
         release();
         const reason = reasons.join('；');
-        input.emit({ ...base, stage: 'failed', failed_step: 'declined', reason });
+        input.emit({ ...base, stage: 'failed', failed_step: 'declined', reason,
+          declined_candidates: declined.map(decision => String(decision.decision_id)) });
         return { outcome: 'failed', step: 'declined', reason };
       }
       // 编写调用新引用的输入文件：调用前没有进核对（位于通常排除的目录），它在调用期间是否被改无从核实——不当作干净继续。

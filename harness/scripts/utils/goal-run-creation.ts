@@ -986,7 +986,7 @@ function requiresRunBase(projectRoot: string, manifest: GoalRunManifest, chain: 
   const profile = loadResolvedProfile(projectRoot, config, root);
   const { readRepairResponsibilityContracts, workUnitMayWritePath } = require('./repair-responsibility') as typeof import('./repair-responsibility');
   const boundary = readRepairResponsibilityContracts({ projectRoot, frameworkRoot: root, feature: manifest.feature,
-    originalRequirement: manifest.requirement,
+    originalRequirement: manifest.requirement, executionScope: manifest.execution_scope,
     phaseOrder: manifest.execution_scope.obligations.filter(obligation => obligation.applicability !== 'not_applicable').map(obligation => obligation.owner_phase),
     track: 'full', profileDir: profile.profileDir, productLayerDirs: config.architecture.outer_layers.map(layer => layer.id), executionRole: 'author' });
   return boundary.domains.some(domain => domain.kind === 'source' && construction.some(obligation => obligation.owner_phase === domain.owner)

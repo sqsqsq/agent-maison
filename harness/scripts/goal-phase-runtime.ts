@@ -14,6 +14,8 @@ function recoverableProviderSessionFailure(context: WorkUnitExecutionContext, re
   return !!context.provider_session_id && ['provider_session_not_found', 'provider_session_id_conflict',
     'provider_session_resume_not_accepted'].includes(result.nativeSessionRebuildReason ?? '');
 }
+/** Fixed transport backoff for model-API drops/429 (P0-D schedule); a tool-level retry, not a configurable work quota. */
+const TRANSIENT_API_BACKOFF_MS = [5_000, 15_000, 45_000] as const;
 
 function latestProviderSessionCanRebuild(runDir: string, events: readonly GoalRunEvent[]): boolean {
   const end = [...events].reverse().find(event => event.type === 'agent_invoke_end');
@@ -129,6 +131,7 @@ import { loadLocalConfig as loadFrameworkLocalConfig, resolveApprovedModels, res
 import {
   designRepairInvokeLabel,
   designRepairSignature,
+  deriveDesignDeclineFeedback,
   designRepairInputFingerprint,
   designRepairTarget,
   designWorkSnapshot,
@@ -5024,7 +5027,9 @@ export class GoalPhaseRuntime {
     text = context.instruction ?? text;
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(promptFile, text);
-    const boundary = guard ? { ...guard.resolution, executionRole: workUnitExecutionRole(context, purpose), immutableInputPaths: workUnitProtectedRecordPaths(projectRoot, manifest.feature, runDir), feature: manifest.feature, phaseOrder: [], domains: [], diagnostics: [], unresolvedSourcePhases: [] } : null;
+    const boundary = guard ? { ...guard.resolution, executionRole: workUnitExecutionRole(context, purpose),
+      immutableInputPaths: [...new Set([...(guard.resolution.immutableInputPaths ?? []), ...workUnitProtectedRecordPaths(projectRoot, manifest.feature, runDir)])],
+      feature: manifest.feature, phaseOrder: [], domains: [], diagnostics: [], unresolvedSourcePhases: [] } : null;
     const issuedAt = new Date().toISOString();
     const original = !this.options.sessionHandoff ? writePhaseExecutionRequestMaterial({ context, invokeId, purpose, issuedAt, timeoutMs,
       gateTimeoutMs: 0, cleanupReserveMs: 0, preSnapshot: guard?.pre ?? null, writeBoundary: boundary, snapshotOptions: guard?.options }) : undefined;
@@ -5061,6 +5066,7 @@ export class GoalPhaseRuntime {
     const post = guard ? capturePhaseInvocationSnapshot(guard.resolution, guard.options) : undefined;
     emit({ type: 'agent_invoke_end', phase: label, purpose, invoke_id: invokeId, status: result.status, exit_code: result.exitCode, command: result.command,
       duration_ms: result.duration_ms, usage: result.usage, timed_out: result.timed_out, provider_session_id: result.provider_session_id, interrupted: result.interrupted, nativeSessionRebuildReason: result.nativeSessionRebuildReason, readonly_enforced: result.readonly_enforced, readonly_diagnostic: result.readonly_diagnostic, completion_observed: result.completion_observed, terminal_failure_observed: result.terminal_failure_observed,
+      silent_killed: result.silent_killed, skipped: result.skipped, kill_attempted: result.kill_attempted,
       terminal_error_excerpt: result.terminal_error_excerpt, ...(result.spawn_error ? { spawn_error: result.spawn_error } : {}) });
     if (childExited && !containmentError) emit({ type: 'agent_process_settled', phase: label, invoke_id: invokeId, exit_code: result.exitCode });
     const outcome: DesignRepairInvokeOutcome = { started: true, invokeId, ok: invocationCompleted(result) && !containmentError, status: result.status,
@@ -7549,6 +7555,24 @@ Goal runner — tool-agnostic multi-phase orchestrator
         owned: (writes?.allowed ?? []).map(write => ({ path: write.path, how: write.how, owner: write.owner, pre_sha256: write.preSha256, post_sha256: write.postSha256, roles: write.roles })),
         observations: writes?.observed ?? [], observed_count: writes?.observed.length ?? 0 });
       let rebuild = recoverableProviderSessionFailure(context, result);
+      if (!invocationCompleted(result) && !rebuild && result.timed_out !== true
+        && parseHeadlessApiError(path.join(dir, 'agent-output.log'), manifest.adapter ?? '', result.terminal_error_excerpt)) {
+        // A model-API drop/429 is a transport fault, not work feedback: re-send the same work after a short fixed backoff,
+        // counted only since this label's last completed handback. Exhausted or past the user deadline → the wait below.
+        const records = loadAuthoritativeEvents(eventsPath);
+        const lastHandback = records.map(event => event.type === 'agent_invoke_end' && event.phase === label
+          && invocationCompleted({ ...event, exitCode: event.exit_code })).lastIndexOf(true);
+        const used = records.slice(lastHandback + 1).filter(event => event.type === 'transient_api_retry_scheduled' && event.phase === label).length;
+        const backoffMs = TRANSIENT_API_BACKOFF_MS[used];
+        const deadline = workUnitExecutionInputs(manifest, undefined, projectRoot).user_deadline_at;
+        if (backoffMs !== undefined && !(deadline && Date.parse(deadline) - Date.now() <= backoffMs)) {
+          goalEvents.emit({ type: 'transient_api_retry_scheduled', phase: label, invoke_id: invokeId, attempt: used + 1,
+            max_attempts: TRANSIENT_API_BACKOFF_MS.length, backoff_ms: backoffMs,
+            api_error_excerpt: parseHeadlessApiError(path.join(dir, 'agent-output.log'), manifest.adapter ?? '', result.terminal_error_excerpt)?.matchedLine });
+          await new Promise(resolve => setTimeout(resolve, backoffMs));
+          return { context, result, invokeId, rebuild: true };
+        }
+      }
       if (!invocationCompleted(result) && !rebuild) {
         const hardFailure = resolveInvokeHardCliFailure(result, { formalInvoke: true });
         if (hardFailure) {
@@ -7624,26 +7648,21 @@ Goal runner — tool-agnostic multi-phase orchestrator
       }
       return decision;
     };
-    const awaitDeviceCondition = async (family: string, summary: SummaryJson | null): Promise<boolean> => {
-      if (summary?.run_id !== manifest.run_id || summary.verdict !== 'INCOMPLETE'
-        || !summary.blockers?.some(blocker => blocker.classification === 'device_blocked')) return false;
-      const observation = readCurrentCheckObservation({ projectRoot, frameworkRoot, feature: manifest.feature, runId: manifest.run_id, phase: family });
-      if (!observation.end || observation.end.timed_out || !observation.start?.invoke_id || observation.conditionReady) return false;
-      const sourceInvokeId = observation.start.invoke_id;
+    const awaitDeviceReadiness = async (family: string, sourceInvokeId: string, previouslyBlocked = false) => {
       const deadline = workUnitExecutionInputs(manifest, undefined, projectRoot).user_deadline_at;
       const availableMs = () => deadline ? Math.max(0, Date.parse(deadline) - Date.now()) : Number.POSITIVE_INFINITY;
       const cancelled = () => options.executionControls?.signal?.aborted || availableMs() <= 0;
       if (cancelled()) {
         wait(family, options.executionControls?.signal?.aborted ? '当前请求已取消；不再探测或启动下一检查。' : '用户明示时限已到；不再探测或启动下一检查。');
-        return false;
+        return null;
       }
       const deferredHalts: Array<Record<string, unknown>> = [];
       let decision = await currentDeviceGate(family, sourceInvokeId, deferredHalts, availableMs());
-      if (!decision || halted) return false;
+      if (!decision || halted) return null;
       const probe = decision.outcome?.probe ?? 'device_readiness';
       const blockedBy = decision.outcome?.halt_reason ?? 'device_not_ready';
       let recovered = !decision.outcome;
-      if (recovered && !cancelled()) goalEvents.emit({ type: 'condition_wait_ready', phase: family, probe, blocked_by: blockedBy, waited_ms: 0 });
+      if (recovered && previouslyBlocked && !cancelled()) goalEvents.emit({ type: 'condition_wait_ready', phase: family, probe, blocked_by: blockedBy, waited_ms: 0 });
       if (!recovered && decision.outcome?.probe) recovered = await waitForConditionRecovery({ phase: family, probe, blockedBy,
         reason: decision.outcome.halt_guidance, availableMs: availableMs(), signal: options.executionControls?.signal,
         maxWaitMs: options.conditionWait?.maxWaitMs ?? (runtimeOwnerKind === 'session' ? 0 : undefined),
@@ -7658,13 +7677,20 @@ Goal runner — tool-agnostic multi-phase orchestrator
         },
         emit: event => { goalEvents.emit(event); flushProgress(true, true); },
       });
-      if (recovered && !cancelled()) return true;
+      if (recovered && !cancelled()) return decision;
       if (!halted) {
         if (cancelled()) wait(family, options.executionControls?.signal?.aborted ? '当前请求已取消；不启动下一检查，成果与未完项保留。' : '用户明示时限已到；不启动下一检查，时限不重置。');
         else wait(family, decision?.outcome?.halt_guidance ?? '原设备条件尚未恢复，保留当前工具结果后接回。',
           decision?.outcome?.halt_reason ?? 'device_not_ready', { probe });
       }
-      return false;
+      return null;
+    };
+    const awaitDeviceCondition = async (family: string, summary: SummaryJson | null): Promise<boolean> => {
+      if (summary?.run_id !== manifest.run_id || summary.verdict !== 'INCOMPLETE'
+        || !summary.blockers?.some(blocker => blocker.classification === 'device_blocked')) return false;
+      const observation = readCurrentCheckObservation({ projectRoot, frameworkRoot, feature: manifest.feature, runId: manifest.run_id, phase: family });
+      if (!observation.end || observation.end.timed_out || !observation.start?.invoke_id || observation.conditionReady) return false;
+      return !!await awaitDeviceReadiness(family, observation.start.invoke_id, true);
     };
     currentWork: while (!halted && !dryRun) {
       assertGoalBoundary('current_work');
@@ -7686,6 +7712,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
       }
       if (before.disposition.completionEligible) break;
       const author = lastAuthor();
+      let designDeclineFeedback = '';
       const repairs = before.disposition.completionBlocking.filter(problem => problem.action === 'repair');
       const designRoot = originalDeliveryForManifest(projectRoot, manifest);
       const designFamilies = [...new Set(repairs.filter(problem => problem.owner === 'external').map(problem => problem.source_phase ?? problem.phase))];
@@ -7708,36 +7735,53 @@ Goal runner — tool-agnostic multi-phase orchestrator
         }
         const phase = designFamilies[0];
         const signature = designRepairSignature(manifest.feature, phase, brief.items, designRepairInputFingerprint(projectRoot, manifest.feature));
-        const repaired = await runUnattendedDesignRepair({ projectRoot, frameworkRoot, feature: manifest.feature,
-          designTarget: designRepairTarget(projectRoot, manifest.feature), phase, runId: manifest.run_id, reportDir: manifest.report_dir,
-          requirement: manifest.requirement, brief, signature, heldFeatureLock: featureLock,
-          runtimeWrites: [manifest.report_dir, ...(featureLock ? [path.relative(projectRoot, featureLock.path)] : [])], emit: goalEvents.emit,
-          invoke: async (purpose, prompt, guard) => {
-            const explicitlyContinued = continuationAvailable();
-            const result = await kernel.invokeDesignOwner(manifest, projectRoot, frameworkRoot, runControl!.token, purpose, prompt, guard, goalEvents.emit,
-              explicitlyContinued, acceptedSessionInvokeId);
-            if (result.invokeId === acceptedSessionInvokeId) acceptedSessionInvokeId = undefined;
-            return result;
-          },
-          registerLockRelease: release => { designRepairLockRelease = release; },
-          recordEventLines: () => { const lines: Array<{ file: string; line: string }> = []; const previous = eventLineRecorder;
-            eventLineRecorder = (file, line) => { previous?.(file, line); lines.push({ file, line }); };
-            return () => { eventLineRecorder = previous; return lines; }; },
-        });
-        if (repaired.outcome === 'handoff') { preserveSessionOwner = true; return 3; }
-        if (repaired.outcome === 'published' && repaired.step !== 'reconcile' || repaired.outcome === 'failed' && repaired.evaluation?.completed
-          && repaired.evaluation.disposition.completionBlocking.some(problem => problem.action === 'repair')) continue;
-        if (repaired.outcome === 'failed' && latestProviderSessionCanRebuild(runDir, loadAuthoritativeEvents(eventsPath))) continue;
-        wait('work-unit-author', repaired.reason, repaired.reason.startsWith('no_progress_guard:') ? 'no_progress_guard'
-          : repaired.outcome === 'violation' ? 'unauthorized_source_mutation'
-          : repaired.outcome === 'containment_unresolved' ? 'agent_containment_unresolved' : 'executor_waiting');
-        break;
+        const candidates = [...new Set(brief.items.flatMap(item => item.basis.match(/repair_candidate:[a-f0-9]{64}/g) ?? []))];
+        const actor = { invokeId: author?.start.invoke_id, instruction: author?.original?.request.context.instruction };
+        const refusal = deriveDesignDeclineFeedback(loadAuthoritativeEvents(eventsPath), candidates, actor);
+        if (refusal.feedback) designDeclineFeedback = refusal.feedback;
+        else if (!refusal.delivered.length || !before.facts.phases.some(result => affectedCheck(result.phase, before, author))) {
+          const repaired = await runUnattendedDesignRepair({ projectRoot, frameworkRoot, feature: manifest.feature,
+            designTarget: designRepairTarget(projectRoot, manifest.feature), phase, runId: manifest.run_id, reportDir: manifest.report_dir,
+            requirement: manifest.requirement, brief, signature, heldFeatureLock: featureLock,
+            runtimeWrites: [manifest.report_dir, ...(featureLock ? [path.relative(projectRoot, featureLock.path)] : [])], emit: goalEvents.emit,
+            invoke: async (purpose, prompt, guard) => {
+              const explicitlyContinued = continuationAvailable();
+              const result = await kernel.invokeDesignOwner(manifest, projectRoot, frameworkRoot, runControl!.token, purpose, prompt, guard, goalEvents.emit,
+                explicitlyContinued, acceptedSessionInvokeId);
+              if (result.invokeId === acceptedSessionInvokeId) acceptedSessionInvokeId = undefined;
+              return result;
+            },
+            registerLockRelease: release => { designRepairLockRelease = release; },
+            recordEventLines: () => { const lines: Array<{ file: string; line: string }> = []; const previous = eventLineRecorder;
+              eventLineRecorder = (file, line) => { previous?.(file, line); lines.push({ file, line }); };
+              return () => { eventLineRecorder = previous; return lines; }; },
+          });
+          if (repaired.outcome === 'handoff') { preserveSessionOwner = true; return 3; }
+          let returnedFeedback = '';
+          if (repaired.outcome === 'failed' && repaired.step === 'declined') {
+            const history = loadAuthoritativeEvents(eventsPath);
+            const latest = [...history].reverse().find(event => event.type === 'design_authority_repair'
+              && (event as Record<string, unknown>).failed_step === 'declined') as Record<string, unknown> | undefined;
+            if (!Array.isArray(latest?.declined_candidates) || !latest.declined_candidates.some(id => refusal.delivered.includes(String(id))))
+              returnedFeedback = deriveDesignDeclineFeedback(history, candidates, actor).feedback;
+          }
+          if (returnedFeedback) designDeclineFeedback = returnedFeedback;
+          else {
+            if (repaired.outcome === 'published' && repaired.step !== 'reconcile' || repaired.outcome === 'failed' && repaired.evaluation?.completed
+              && repaired.evaluation.disposition.completionBlocking.some(problem => problem.action === 'repair')) continue;
+            if (repaired.outcome === 'failed' && repaired.step !== 'declined' && latestProviderSessionCanRebuild(runDir, loadAuthoritativeEvents(eventsPath))) continue;
+            wait('work-unit-author', repaired.reason, repaired.reason.startsWith('no_progress_guard:') ? 'no_progress_guard'
+              : repaired.outcome === 'violation' ? 'unauthorized_source_mutation'
+              : repaired.outcome === 'containment_unresolved' ? 'agent_containment_unresolved' : 'executor_waiting');
+            break;
+          }
+        }
       }
       const currentEvents = loadAuthoritativeEvents(eventsPath);
       const explicitlyContinued = continuationAvailable();
       const newDriverHypothesis = !!repairNotes && !author?.original?.request.context.instruction?.includes(
         `Source: ${repairNotes.file}\n这些是用户提供的返修诊断假设，不改变原需求、验收或授权；依据当前产品与真实检查核实后采用。\n${repairNotes.text}`);
-      const authorFeedbackDelivered = !!author?.original && repairs.length > 0
+      const authorFeedbackDelivered = !designDeclineFeedback && !!author?.original && repairs.length > 0
         && !explicitlyContinued && !newDriverHypothesis && repairs.every(problem => author.original!.request.context.instruction?.includes(
           renderWorkUnitAuthorFeedback({ projectRoot, frameworkRoot, feature: manifest.feature,
             disposition: { ...before.disposition, problems: [problem] } })));
@@ -7745,7 +7789,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
       const authorAssessmentCompleted = before.evaluation.completed
         && repairs.every(problem => before.evaluation.checkFamilies?.includes(problem.source_phase ?? problem.phase))
         && !verificationPending;
-      const checkedFeedbackDelivered = !explicitlyContinued && !newDriverHypothesis && !!author?.original && completedEvaluations.some(evaluation =>
+      const checkedFeedbackDelivered = !designDeclineFeedback && !explicitlyContinued && !newDriverHypothesis && !!author?.original && completedEvaluations.some(evaluation =>
         evaluation.acceptanceKey === before.evaluation.acceptanceKey && evaluation.completed
         && evaluation.disposition.completionBlocking.some(problem => problem.action === 'repair')
         && evaluation.disposition.completionBlocking.filter(problem => problem.action === 'repair').every(problem =>
@@ -7761,8 +7805,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
       const feedbackAwaitingEvaluation = authorFeedbackDelivered && (!authorAssessmentCompleted || progress.reused);
       if (progress.halt) { wait('work-unit-author', `已交付当前反馈且真实检查仍无验收改善，保全后可续暂停。\n${renderCurrentDisposition(before.disposition)}`, 'no_progress_guard'); break; }
       if (before.evaluation.completed && !progress.reused && progress.evaluation === before.evaluation) completedEvaluations.push(before.evaluation);
-      if (!author || newDriverHypothesis || repairs.length && !feedbackAwaitingEvaluation && !verificationPending) {
-        const invoked = await invokeWork('work-unit-author', await authorInstruction(before), undefined, undefined, explicitlyContinued);
+      if (!author || newDriverHypothesis || designDeclineFeedback || repairs.length && !feedbackAwaitingEvaluation && !verificationPending) {
+        const invoked = await invokeWork('work-unit-author', [await authorInstruction(before), designDeclineFeedback].filter(Boolean).join('\n\n'), undefined, undefined, explicitlyContinued);
         if (invoked === 3) return 3;
         if (!invoked || halted) break;
         if (invoked.rebuild) continue;
@@ -7859,7 +7903,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         if (capability) { outcomes.push(capability.outcome); continue; }
         let deviceEnv: Record<string, string> = {};
         if (phaseRequiresDevice(family as FeaturePhase, resolvedProfile)) {
-          const decision = await currentDeviceGate(family, invokeId);
+          const decision = await awaitDeviceReadiness(family, invokeId);
           if (!decision) break;
           if (decision.outcome) { outcomes.push(decision.outcome); continue; }
           deviceEnv = decision.env ?? {};

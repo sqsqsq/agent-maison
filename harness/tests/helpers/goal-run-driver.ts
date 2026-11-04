@@ -28,6 +28,7 @@ import { withRuntimeTest, type RuntimeTestControl } from '../utils/runtime-test-
 export const RESULT_MARK = '<<goal-run-result>>';
 
 export function expectedDriverInterruption(scenario: string): string | undefined {
+  if (scenario === 'crash_scope_in_run') return 'injected crash after actual scope check result';
   return ['crash_after_scope_event', 'crash_scope_in_run', 'successor_source_crash'].includes(scenario)
     ? 'injected crash after phase_backtrack_requested' : undefined;
 }
@@ -466,16 +467,30 @@ async function runScenario(args: {
   ) => {
     agentCalls += 1;
     const phase = /[\\/]phases[\\/]([a-z-]+)[\\/]/.exec(invokeOpts.outputLogPath ?? '')?.[1] ?? '';
-    if (scenario === 'crash_rerequest' && phase === 'plan') {
+    const activeRun = /[\\/]goal-runs[\\/]([^\\/]+)/.exec(invokeOpts.outputLogPath ?? '')?.[1];
+    if (phase.endsWith('-verifier-format-repair')) {
+      const method = phase.replace(/-verifier-format-repair$/, '');
+      const dir = path.join(root, 'doc/features', feature, method, 'reports');
+      const summary = JSON.parse(fs.readFileSync(path.join(dir, 'summary.json'), 'utf8'));
+      const handoff = require(path.join(frameworkRoot, 'harness/scripts/utils/session-execution-handoff')) as typeof import('../../scripts/utils/session-execution-handoff');
+      const issued = activeRun && handoff.executionRequestForInvoke(path.join(root, 'doc/features', feature, 'goal-runs', activeRun), path.basename(path.dirname(invokeOpts.outputLogPath!)));
+      if (!issued || issued.request.context.phase !== phase || !issued.request.context.instruction?.includes(summary.verifier_subject_id)) throw new Error('fixture verifier must consume its actual current request');
+      const script = JSON.parse(fs.readFileSync(path.join(dir, 'script-report.json'), 'utf8'));
+      publishFixtureVerifierEvidence({ projectRoot: root, reportsDir: dir, feature, phase: method,
+        subjectId: summary.verifier_subject_id, skipSummaryPatch: true,
+        reportText: 'Independent fixture verifier read the current raw machine observations; unresolved machine failures remain unresolved.\n' + JSON.stringify(script.checks) });
+      return { exitCode: 0, timedOut: false, stdout: '', stderr: '', command: 'fixture-verifier' };
+    }
+    if (['crash_scope_in_run', 'crash_rerequest'].includes(scenario) && phase === 'work-unit-author') {
       const summaryFile = path.join(root, `doc/features/${feature}/coding/reports/summary.json`);
       const current = fs.existsSync(summaryFile) ? JSON.parse(fs.readFileSync(summaryFile, 'utf8')) : null;
-      const feedback = current?.blockers?.find((check: { id?: string; repair_owner?: string }) => check.id === 'scope_declaration' && check.repair_owner === 'plan');
       const delivered = JSON.stringify(_plan);
-      const activeRun = /[\\/]goal-runs[\\/]([^\\/]+)/.exec(invokeOpts.outputLogPath ?? '')?.[1];
       // Hard machine findings need their current report and delivered feedback, not a forbidden AI request.
-      if (feedback && current.run_id === activeRun
+      if (current?.run_id === activeRun
         && delivered.includes('scope_declaration') && delivered.includes(FIXTURE_OUT_OF_SCOPE_FILE)
-        && constructionScopeCheck().status === 'FAIL') writeFixtureContracts(root, feature, [FIXTURE_PRODUCT_FILE]);
+        && constructionScopeCheck().status === 'FAIL') {
+        if (scenario === 'crash_rerequest') writeFixtureContracts(root, feature, [FIXTURE_PRODUCT_FILE]);
+      }
     }
     if (scenario === 'ut_source_mutation' && phase === 'ut' && !utSourceMutationInjected) {
       utSourceMutationInjected = true;
@@ -593,6 +608,8 @@ async function runScenario(args: {
           workflowVerifierPrompt: verifier.workflowVerifierPrompt(workflows.loadWorkflowSpec(frameworkRoot, 'spec-driven'), ph), adapterHasVerifierSubagent: true });
         const writerOptions = prepareFixtureVerifierMaterial({ projectRoot: pr, frameworkRoot, report, options: { verifierPlan: plan } });
         let summary = summaryWriter.writeRunSummaryBase(pr, report, frameworkRoot, writerOptions);
+        if (scenario === 'crash_scope_in_run' && String(ph) === 'coding' && scopeCheck?.status === 'FAIL')
+          throw new Error(expectedDriverInterruption(scenario));
         if (!failureBlockers && scopeCheck?.status !== 'FAIL' && summary.verifier_subject_id) {
           publishFixtureVerifierEvidence({ projectRoot: pr, reportsDir: dir, feature: feat, phase: ph, subjectId: summary.verifier_subject_id, skipSummaryPatch: true,
             ...(scopeCheck ? { reportText: `Current contracts and module packages agree. ${scopeCheck.details}` } : {}) });
@@ -673,7 +690,7 @@ async function runScenario(args: {
     });
   }
 
-  if (scenario === 'crash_scope_in_run' || scenario === 'successor_source_crash') {
+  if (scenario === 'successor_source_crash') {
     scope.__testing_setAfterInvalidationRequested?.(() => {
       throw new Error('injected crash after phase_backtrack_requested');
     });
@@ -808,19 +825,6 @@ async function runScenario(args: {
 
   let exitCode: number | null = null;
   let error: string | null = null;
-  const reconcileBoundary = require(path.join(frameworkRoot, 'harness/scripts/utils/goal-reconcile-boundary')) as typeof import('../../scripts/utils/goal-reconcile-boundary');
-  const createBoundary = reconcileBoundary.createGoalReconcileBoundary;
-  if (scenario === 'crash_scope_in_run') {
-    let cut = false;
-    reconcileBoundary.createGoalReconcileBoundary = writer => createBoundary(event => {
-      writer(event);
-      if (!cut && event.type === 'phase_backtrack_requested' && event.to_phase === 'plan'
-        && (event.from_phase ?? event.phase) === 'coding' && constructionScopeCheck().status === 'FAIL') {
-        cut = true;
-        throw new Error(expectedDriverInterruption(scenario));
-      }
-    });
-  }
   try {
     // plan 4e6fb3b6 §5.1：设备停放场景的停机带探针，停放前 runtime 会先进程内等待（生产默认 15 分钟）。
     // driver 经 runtime 启动入参把上限调小，并不去碰本机真实设备（探针恒未就绪）——停放语义不变。
@@ -838,8 +842,6 @@ async function runScenario(args: {
         });
   } catch (e) {
     error = (e as Error).message;
-  } finally {
-    reconcileBoundary.createGoalReconcileBoundary = createBoundary;
   }
   if (isSupervisorScenario && supervisorSpawnRecord) {
     const deadline = Date.now() + 2_000;

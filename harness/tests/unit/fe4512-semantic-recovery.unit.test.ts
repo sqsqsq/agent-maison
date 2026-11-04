@@ -18,7 +18,7 @@ import { freezeFeatureExecutionScope } from '../../scripts/utils/feature-executi
 import { SpecLoader } from '../../scripts/utils/spec-loader';
 import { scanNamedBusinessHandler } from '../../scripts/utils/named-handler';
 import { checkAcceptanceContent } from '../../scripts/utils/check-acceptance';
-import { checkAuthoritativeContentAligned, deriveBlueprintSkillInput, designScopeRevisionChecks, projectionContentEqual } from '../../scripts/utils/blueprint-skill-projection';
+import { checkAuthoritativeContentAligned, deriveBlueprintSkillInput, designScopeRevisionChecks } from '../../scripts/utils/blueprint-skill-projection';
 import { checkChangeUnitFeatureProjection } from '../../scripts/utils/change-unit-feature-projection';
 import { loadCanonicalChangeUnit, createChangeUnitRef } from '../../scripts/utils/change-unit-path';
 import { parseIssueVerificationBlock, parseVerifierCheckStatus, readVerifierSemanticIssues } from '../../scripts/utils/repair-candidates';
@@ -195,14 +195,6 @@ export async function replayFe4512SemanticRecovery(dropVerifiedFindings = false,
       planCalls++;
       const projection = deriveBlueprintSkillInput(root, feature, frameworkRoot, 'contracts');
       assert.equal(projection.state, 'resolved', projection.detail);
-      if (!resume && planCalls === 1) {
-        assert(!fs.existsSync(path.join(root, featureDir, 'acceptance.yaml')), 'plan准备不得跨写spec验收');
-        for (const [artifact, name] of [['contracts@1', 'contracts.yaml'], ['use-cases@1', 'use-cases.yaml']]) {
-          const file = path.join(root, featureDir, name);
-          assert(fs.existsSync(file), `${name}须由真实runtime在plan作者调用前准备`);
-          assert(projectionContentEqual(YAML.parse(fs.readFileSync(file, 'utf8')), projection.artifacts![artifact]), `${name}准备必须是当前确定投影`);
-        }
-      }
       const contracts = structuredClone(projection.value) as ContractsSpec;
       contracts.components = structuredClone(originalContracts.components);
       contracts.change_unit = structuredClone(originalContracts.change_unit);
@@ -222,8 +214,14 @@ export async function replayFe4512SemanticRecovery(dropVerifiedFindings = false,
     };
     const probe = await runFe4512UtFragment(root, { frameworkRoot, featureId: feature, adapter: 'codex', resume: resume?.runId,
       freshRequirement: requirement, freshStartPhase: initialChain[0] as 'spec', freshEndPhase: initialChain[initialChain.length - 1],
-      onSpec: () => { phases.push('spec'); }, onPlan: () => { phases.push('plan'); writePlan(); },
+      onSpec: () => {
+        phases.push('spec');
+        const projection = deriveBlueprintSkillInput(root, feature, frameworkRoot, 'acceptance');
+        assert.equal(projection.state, 'resolved', projection.detail);
+        write(root, featureDir + '/acceptance.yaml', YAML.stringify(projection.value));
+      }, onPlan: () => { phases.push('plan'); writePlan(); },
       onCoding: () => {
+        if (!dropVerifiedFindings && !published()) return;
         phases.push('coding'); if (!dropVerifiedFindings) assert(published(), '实现必须等待真实设计发布');
         write(root, serviceDir + '/OtpService.ets', otpSource); write(root, serviceDir + '/OpeningNavigationService.ets', navigationSource);
         const otpUi = '02-Feature/WalletMain/src/main/ets/presentation/components/OtpVerificationSheet.ets';

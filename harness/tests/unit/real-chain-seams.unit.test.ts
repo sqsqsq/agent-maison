@@ -1177,19 +1177,21 @@ async function rc8cPlanDeltaDisclosed(mode: 'missing' | 'empty', id: string): Pr
           hooks.onAuthor(ctx, context);
           if (!context.factsContext?.baseline && context.factsContext?.first_phase === 'spec') {
             // This is still the first author handback, before any baseline is admitted. Preserve every real method delta.
-            fs.readFileSync(path.join(project.root, REAL_CHAIN_PNG_EXISTING));
             const factsFile = featureFilePath(project.root, project.feature, 'context/facts.md');
             const raw = fs.readFileSync(factsFile, 'utf8'), facts = parseContextExploration(raw);
             assert(!facts.error, 'the original writers must produce a readable research record');
             const declared = Array.isArray(facts.fm.source_code_paths) ? facts.fm.source_code_paths.filter((source): source is string => typeof source === 'string') : [];
+            const targets = (YAML.parse(fs.readFileSync(featureFilePath(project.root, project.feature, 'contracts.yaml'), 'utf8')) as { files: string[] }).files;
+            const researched = [...new Set([...declared, ...targets])].filter(source => fs.existsSync(path.join(project.root, source)) && fs.statSync(path.join(project.root, source)).isFile());
+            for (const source of researched) fs.readFileSync(path.join(project.root, source));
             const methodDeltas = raw.match(/^##\s*phase_delta:[\s\S]*/m)?.[0] ?? '';
             fs.writeFileSync(factsFile, '---\n' + YAML.stringify({ ...facts.fm,
-              source_code_paths: [...new Set([...declared, REAL_CHAIN_PNG_EXISTING])] }) + '---\n' + facts.body, 'utf8');
+              source_code_paths: researched }) + '---\n' + facts.body, 'utf8');
             researchSnapshotFacts(project.root, factsFile, 'spec', context.factsContext);
             if (methodDeltas) fs.appendFileSync(factsFile, '\n' + methodDeltas);
           }
           // Apply the original negative only after the real writer and shared facts preparation have finished.
-          if (planMaterialWrites > writesBefore) {
+          if (planMaterialWrites > writesBefore || /^##\s*phase_delta:\s*plan\b/m.test(fs.readFileSync(featureFilePath(project.root, project.feature, 'context/facts.md'), 'utf8'))) {
             const researched = parseContextExploration(fs.readFileSync(featureFilePath(project.root, project.feature, 'context/facts.md'), 'utf8'));
             assert(Array.isArray(researched.fm.source_code_paths) && researched.fm.source_code_paths.includes(REAL_CHAIN_PNG_EXISTING),
               'existing resource coverage must survive independently of the intentionally missing/empty plan delta');
@@ -1481,7 +1483,7 @@ export async function rc9bUtBacktrackThroughCoding(upstreamAudit = false): Promi
         reportText: ['```issue-verification', `- issue: ${repairId}`, '  verdict: confirmed', `  evidence: BankService.ets | ${issues!.rows[0].summary}`, '```'].join('\n') });
     };
     const hooks = authorHooks(project, {
-      spec: writeSpecMaterials,
+      spec: (p, runId) => writeSpecMaterials(p, runId, { preserveUnchanged: true }),
       plan: p => { writePlanMaterials(p); addRc9bRepositoryInterface(p); },
       coding: p => {
         writeCodingMaterials(p);

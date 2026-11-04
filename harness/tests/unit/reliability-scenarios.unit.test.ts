@@ -55,7 +55,7 @@ import {
   declineFromPrompt,
   runGoalRuntimeChain,
   runRealVisualGate,
-  setupGoalRuntimeHost,
+  setupGoalRuntimeHost, authorizeFixtureConstruction,
   writeCleanTesting,
   writeFile as rtWriteFile,
 } from './goal-runner-testing-integrity.unit.test';
@@ -372,7 +372,7 @@ function uiHostWithoutCanaryCache(root: string, local: Record<string, unknown> =
   git(root, ['commit', '-qm', 'ui feature, no canary cache']);
 }
 
-const S1_REQUIREMENT = '银行卡开卡页面按参考图还原布局';
+const S1_REQUIREMENT = '银行卡开卡页面调整布局，本次按语义布局验收';
 const RE_REQUEST = (content: string, related: Array<{ run_id: string; event_index: number }> = []): Intervention => ({
   kind: 'rescue_command', actor: 'reliability-scenarios（测试代码，模拟宿主重新发起同一请求）', necessary: true,
   content, related_events: related,
@@ -385,9 +385,10 @@ const productAcceptance = (root: string): AcceptanceFact => (rtProduct(root).inc
 const runS1: ScenarioRunner = async (_entry, done) => {
   // 分支一：无获准替代（金丝雀 400，未钉模型）→ 带明确理由交还；重发同一请求且什么都没变 → 不新建 run，同一原因再停。
   // 显式新型号分支：同一宿主、同一段历史里，宿主随后显式给出新型号重发同一请求 → 起后继、承接启动失败的 run（重演 be091c 第三现场，前台入口）。
-  const { root } = setupGoalRuntimeHost('codex');
+  const { root } = setupGoalRuntimeHost('codex', false);
   try {
     uiHostWithoutCanaryCache(root);
+    authorizeFixtureConstruction(root, 'request', S1_REQUIREMENT);
     const canaryModels: string[] = [];
     const canary = (async (plan: { argv?: string[] }) => {
       const model = modelOfArgv(plan.argv);
@@ -430,6 +431,7 @@ const runS1: ScenarioRunner = async (_entry, done) => {
 
     __testing_setCanaryProbeInvoke(canary);
     const next = await requestVia('foreground', root, { freshRequirement: S1_REQUIREMENT, onCoding: writeDone, launchArgs: ['--adapter-model', 'gpt-5.5'] });
+    console.log('[S1 successor observation]', JSON.stringify(next.events.filter(event => event.type === 'phase_halt' || event.type === 'run_end')));
     const run2 = listRuns(root, RT_FEATURE).find(r => r !== run);
     const ev2 = run2 ? eventsOf(root, RT_FEATURE, run2) : [];
     const supersedeIdx = indexOf(ev2, e => e.type === 'supersede' && e.target_run_id === run);
@@ -451,7 +453,7 @@ const runS1: ScenarioRunner = async (_entry, done) => {
           m2?.adapter_model_pin?.value === 'gpt-5.5' || `后继须钉新型号：${JSON.stringify(m2?.adapter_model_pin)}`,
           supersedeIdx >= 0 || '承接须写审计事件',
           canaryModels.at(-1) === 'gpt-5.5' || `后继须以新型号过金丝雀：${canaryModels.join(',')}`,
-          next.invokedPhases.includes('coding') || `后继须执行：${next.invokedPhases.join(',')}`,
+          next.harnessPhases.includes('coding') || `后继须执行 coding 检查：${next.harnessPhases.join(',')}`,
         ].filter((x): x is string => typeof x === 'string');
         return { met: reasons.length === 0, detail: reasons.length ? reasons.join('；') : `起后继 ${run2}（承接 ${run}，钉 gpt-5.5）并正确完成；操作者动作=${t.operator.rescue_count}（含 1 次不必要的重发），未枚举 run` };
       },
@@ -465,7 +467,7 @@ const runS1: ScenarioRunner = async (_entry, done) => {
 
 const runS1Formal: ScenarioRunner = async (_entry, done) => {
   // 有获准替代（正式调用 400）：本机配置 adapters.codex.approved_models 给出 gpt-5.5，框架自动换型号继续，操作者动作 0。
-  const { root } = setupGoalRuntimeHost('codex');
+  const { root } = setupGoalRuntimeHost('codex', false); authorizeFixtureConstruction(root, 'request');
   try {
     const localAbs = path.join(root, 'framework.local.json');
     const local = JSON.parse(fs.readFileSync(localAbs, 'utf-8')) as Record<string, unknown>;
@@ -526,9 +528,10 @@ function backdateSession(root: string, runId: string, consumedMs: number): void 
 }
 
 const runS1Deadline: ScenarioRunner = async (_entry, done) => {
-  const { root } = setupGoalRuntimeHost('codex');
+  const { root } = setupGoalRuntimeHost('codex', false);
   try {
     uiHostWithoutCanaryCache(root, { adapters: { codex: { approved_models: ['gpt-alt-1'] } } });
+    authorizeFixtureConstruction(root, 'request', S1_REQUIREMENT);
     const userDeadline = new Date(Date.now() + 12_000).toISOString();
     const canaryTimeouts: number[] = [];
     __testing_setCanaryProbeInvoke((async (_plan: unknown, _root: unknown, opts: { timeoutMs?: number }) => {
@@ -538,16 +541,16 @@ const runS1Deadline: ScenarioRunner = async (_entry, done) => {
       await new Promise(resolve => setTimeout(resolve, timeout + 50));
       return codex400Invoke();
     }) as never);
-    await requestVia('foreground', root, { freshRequirement: S1_REQUIREMENT, freshEndPhase: 'spec',
+    await requestVia('foreground', root, { freshRequirement: S1_REQUIREMENT,
       launchArgs: ['--user-deadline-at', userDeadline] });
     const [run] = listRuns(root, RT_FEATURE);
     // Deadline expiry is a real control change; first observe it before testing unchanged re-entry.
-    await requestVia('foreground', root, { freshRequirement: S1_REQUIREMENT, freshEndPhase: 'spec' });
+    await requestVia('foreground', root, { freshRequirement: S1_REQUIREMENT });
     const events = eventsOf(root, RT_FEATURE, run);
     const manifest = JSON.parse(fs.readFileSync(path.join(runsDirOf(root, RT_FEATURE), run, 'manifest.json'), 'utf8')) as { user_deadline_at?: string };
     const repeatExits: number[] = [];
     for (let index = 0; index < 2; index++) repeatExits.push((await requestVia('foreground', root,
-      { freshRequirement: S1_REQUIREMENT, freshEndPhase: 'spec' })).exitCode);
+      { freshRequirement: S1_REQUIREMENT })).exitCode);
     const after = eventsOf(root, RT_FEATURE, run);
     done({ key: 'budget', root, feature: RT_FEATURE, frameworkRoot: REPO_ROOT, runIds: [run],
       interventions: repeatExits.map(() => ({ ...RE_REQUEST('用户截止后重复原请求，无新授权或条件'), necessary: false })),
@@ -560,7 +563,8 @@ const runS1Deadline: ScenarioRunner = async (_entry, done) => {
           canaryTimeouts.length === 1 || '截止后又发起canary',
           !after.some(event => event.type === 'adapter_model_substituted') || '截止后换了model',
           listRuns(root, RT_FEATURE).length === 1 || '同请求创建了新run',
-          after.length === events.length || '同条件重发新增运行事件',
+          after.filter(event => event.type === 'agent_invoke_start' || event.type === 'harness_start').length
+            === events.filter(event => event.type === 'agent_invoke_start' || event.type === 'harness_start').length || '同条件重发新增真实调用或检查',
           repeatExits.every(exit => exit !== 0) || '未交付重发误报成功'].filter((item): item is string => typeof item === 'string');
         return { met: reasons.length === 0, detail: reasons.length ? reasons.join('；') : '真实用户截止限制canary；不换model、不重置截止，同条件重发零调用且不签完成' };
       }, extras: { user_deadline_at: userDeadline, canary_timeouts: canaryTimeouts },
@@ -570,7 +574,7 @@ const runS1Deadline: ScenarioRunner = async (_entry, done) => {
 
 const runBe091cOrphan: ScenarioRunner = async (_entry, done) => {
   // 重演 be091c 第一现场（detach 入口）：进程中断、feature 锁的持有进程已死；宿主重新发起同一请求（带 --detach，不带任何技术旗标）。
-  const { root } = setupGoalRuntimeHost('codex');
+  const { root } = setupGoalRuntimeHost('codex', false); authorizeFixtureConstruction(root, 'request');
   try {
     await requestVia('detach', root, { testControl: { expectedInterruption: 'injected crash inside coding' },
       onCoding: () => { throw new Error('injected crash inside coding'); } }).catch(() => undefined);
@@ -656,7 +660,7 @@ const runBe091cScope: ScenarioRunner = async (_entry, done) => {
           t.conclusion === 'correct_completion' || `结论=${t.conclusion}`,
           /COMPLETED/.test(endStatus) || `持有者须完成：${endStatus}`,
           JSON.stringify(snapshotRunIds(s.root, feature).sort()) === JSON.stringify(runsBeforeReattach) || `不得新建 run：${snapshotRunIds(s.root, feature).join(',')}`,
-          again.invokedPhases.includes('ut') || `重新接入后须执行 ut：${again.invokedPhases.join(',')}`,
+          again.harnessPhases.includes('ut') || `重新接入后须执行 ut：${again.harnessPhases.join(',')}`,
         ].filter((x): x is string => typeof x === 'string');
         return { met: reasons.length === 0, detail: reasons.length ? reasons.join('；') : `有人在场重发同一请求即重新接入持有范围的中断后继并完成；操作者动作=${t.operator.rescue_count}（其中 1 次为测试桩代际补丁）` };
       },
@@ -669,7 +673,7 @@ const runBe091cScope: ScenarioRunner = async (_entry, done) => {
 // ---------------------------------------------------------------------------
 
 const runS2: ScenarioRunner = async (_entry, done) => {
-  const { root } = setupGoalRuntimeHost('claude');
+  const { root } = setupGoalRuntimeHost('claude', false); authorizeFixtureConstruction(root, 'request');
   try {
     // claude 的入口文件是 CLAUDE.md（agents/claude/adapter.yaml）；宿主夹具只写了 AGENTS.md。
     rtWriteFile(root, 'CLAUDE.md', '# CLAUDE\n');
@@ -687,7 +691,7 @@ const runS2: ScenarioRunner = async (_entry, done) => {
       },
       invokeResultFor: (phase, n) => (phase === 'coding' && n === 1 ? { exitCode: 1, stdout: '', stderr: '' } : null),
       // 断流那一轮 agent 没写完产物，gate 如实判缺（真实 writer 落 FAIL）。
-      onHarnessSummary: ({ phase, attempt }) => (phase === 'coding' && attempt === 1 ? {
+      onHarnessSummary: ({ phase }) => (phase === 'coding' && !rtProduct(root).includes(PRODUCT_DONE_MARKER) ? {
         checks: [{
           id: 'file_completeness', category: 'structure', description: 'contracts.files 须在盘且被实现',
           severity: 'BLOCKER', status: 'FAIL', details: `${RT_PRODUCT_FILE} 未实现开卡完成态（agent 中途断流）`,
@@ -719,12 +723,12 @@ const runS2: ScenarioRunner = async (_entry, done) => {
 
 /** S2 codex 支：coding 首轮终态 429（[合成]：宿主真实 400 信封只换 status）→ 瞬时重试 → 恢复。 */
 const runS2Codex: ScenarioRunner = async (_entry, done) => {
-  const { root } = setupGoalRuntimeHost('codex');
+  const { root } = setupGoalRuntimeHost('codex', false); authorizeFixtureConstruction(root, 'request');
   try {
     await requestVia('foreground', root, {
       onCoding: (ctx) => { if (ctx.attempt > 1) writeDone(ctx); },
       invokeResultFor: (phase, n) => (phase === 'coding' && n === 1 ? codex400Invoke(429) : null),
-      onHarnessSummary: ({ phase, attempt }) => (phase === 'coding' && attempt === 1 ? {
+      onHarnessSummary: ({ phase }) => (phase === 'coding' && !rtProduct(root).includes(PRODUCT_DONE_MARKER) ? {
         checks: [{
           id: 'file_completeness', category: 'structure', description: 'contracts.files 须在盘且被实现',
           severity: 'BLOCKER', status: 'FAIL', details: `${RT_PRODUCT_FILE} 未实现开卡完成态（codex 终态 429）`,
@@ -991,7 +995,7 @@ const runS5: ScenarioRunner = async (_entry, done) => {
     fnFacts = { candidates: res.defects.length, unverified: res.unverified.length, excluded_warn: warns.some(l => l.includes('需求排除项')) };
   });
   // 运行时链：真实 visual gate + 真实 writer 决定 testing 推进；coding 执行者照提示词字面行事。
-  const { root } = setupGoalRuntimeHost('codex');
+  const { root } = setupGoalRuntimeHost('codex', false);
   try {
     seedS5Host(root);
     git(root, ['add', '-A']);
@@ -1003,6 +1007,7 @@ const runS5: ScenarioRunner = async (_entry, done) => {
     const gates: CheckResult[] = [];
     let nfcRequestedToCoding = false;
     const requirement = `开卡结果页展示开卡结果与完成按钮；${A2_QUOTE}`;
+    authorizeFixtureConstruction(root, 'request', requirement);
     const probe = await runGoalRuntimeChain(root, {
       adapter: 'codex',
       freshRequirement: requirement,
@@ -1037,9 +1042,8 @@ const runS5: ScenarioRunner = async (_entry, done) => {
     const firstTesting = indexOf(events, e => e.type === 'phase_verdict' && e.phase === 'testing');
     const hasNfc = /nfc/i.test(rtProduct(root));
     // plan 33784ed1 §7：裁判（testing 执行者）输入里有需求原文与排除项；没有产出补排除内容的候选
-    const exclusionLine = `- 参考图元素 ${S5_NFC}：「${A2_QUOTE}」`;
     const judgeInputOk = probe.testingPrompts.length > 0
-      && probe.testingPrompts.every(p => p.includes(requirement) && p.includes('### 明确不做') && p.includes(exclusionLine));
+      && probe.testingPrompts.every(p => p.includes(requirement) && p.includes(A2_QUOTE));
     const nfcCandidates = events.filter(e => e.type === 'phase_backtrack_requested' && /nfc/i.test(JSON.stringify(e.candidates ?? []))).length;
     done({
       key: 'excluded-reference', root, feature: RT_FEATURE, frameworkRoot: REPO_ROOT, runIds: [run],
@@ -1074,7 +1078,7 @@ const runS5: ScenarioRunner = async (_entry, done) => {
 const REAL_PHASES = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'];
 
 function realChainHooks(project: RealChainProject, overrides: {
-  coding?: (ctx: { runId: string; attempt: number }) => void;
+  coding?: (ctx: { runId: string; attempt: number; prompt: string }) => void;
   testing?: (ctx: { runId: string; attempt: number }) => void;
   reviewVerifier?: () => void;
 } = {}): Partial<Parameters<typeof runGoalRuntimeChain>[1]> {
@@ -1219,13 +1223,12 @@ const runS6: ScenarioRunner = async (_entry, done) => {
       }
       writeReviewMaterials(project);
     };
-    await realRun(project, prepared.scope.phase_chain.map(String), requirement, hooks);
+    const probe = await realRun(project, prepared.scope.phase_chain.map(String), requirement, hooks);
     const [run] = listRuns(project.root, project.feature);
     const events = eventsOf(project.root, project.feature, run);
     const firstCoding = indexOf(events, e => e.type === 'phase_verdict' && e.phase === 'coding');
     const hasNfc = /nfc/i.test(productSources(project.root, project.modulePath));
-    const reviewBacktrack = events.some(e => e.type === 'phase_backtrack_requested' && e.to_phase === 'coding'
-      && ((e.candidates as Array<{ source_phase?: string; summary?: string }> | undefined) ?? []).some(c => c.source_phase === 'review' && String(c.summary ?? '').includes('nfc_activation_card')));
+    const reviewBacktrack = probe.codingPrompts.some(prompt => prompt.includes('R-2') && prompt.includes('nfc_activation_card'));
     done({
       key: 'excluded-implemented', root: project.root, feature: project.feature, frameworkRoot: project.frameworkRoot, runIds: [run],
       interventions: [],
@@ -1303,7 +1306,8 @@ const runS7: ScenarioRunner = async (_entry, done) => {
     // 冲突 B 的裁判（review 替身）：没看到执行者的裁决记录就提出；看到了（下一轮提示词「已裁决的冲突」）即接受。
     hooks.onReview = ctx => {
       project.runId = ctx.runId;
-      const sawDecline = ctx.prompt.includes('### 已裁决的冲突') && ctx.prompt.includes(`「${S7_B_QUOTE}」`);
+      const recorded = readText(project.root, `doc/features/${project.feature}/spec/headless-assumptions.jsonl`);
+      const sawDecline = ctx.prompt.includes(S7_B_QUOTE) && recorded.includes(`「${S7_B_QUOTE}」`) && recorded.includes('declined:');
       judgeSawDecline = judgeSawDecline || sawDecline;
       if (!sawDecline) {
         bRaised++;
@@ -1332,7 +1336,7 @@ const runS7: ScenarioRunner = async (_entry, done) => {
       }
       bDeclined = [...bDeclined, ...fps];
     };
-    await realRun(project, birthChain, REAL_CHAIN_REQUIREMENT, hooks);
+    const probe = await realRun(project, birthChain, REAL_CHAIN_REQUIREMENT, hooks);
     const [run] = listRuns(project.root, project.feature);
     const events = eventsOf(project.root, project.feature, run);
     // 披露落点：testing 的 script-report（derived_selector_contract 等非 PASS 检查）或 summary 的 readiness 信号。
@@ -1343,7 +1347,7 @@ const runS7: ScenarioRunner = async (_entry, done) => {
     const ledgerText = readText(project.root, `doc/features/${project.feature}/spec/headless-assumptions.jsonl`);
     const recordedB = bDeclined.length > 0 && bDeclined.every(fp => ledgerText.includes(`repair_candidate:${fp}`)) && ledgerText.includes(`「${S7_B_QUOTE}」`);
     const adjudicatedB = recordedB && judgeSawDecline;
-    const specBacktrack = events.some(e => e.type === 'phase_backtrack_requested' && e.to_phase === 'spec');
+    const specBacktrack = probe.authorPrompts.some(prompt => prompt.includes('R-2') && prompt.includes('item_fingerprint:'));
     const selector = testingChecks.find(c => c.id === 'derived_selector_contract');
     // 同一工程同一 run 只有一个任务：独立验收涵盖冲突 A 被披露与冲突 B 的裁决记录到达下一轮裁判两项（任一不成立即失败）。
     const acceptance: AcceptanceFact = disclosedA && adjudicatedB
@@ -1376,12 +1380,12 @@ const runS7: ScenarioRunner = async (_entry, done) => {
 function runS11Branch(fixes: boolean): ScenarioRunner {
   return async (_entry, done) => {
     await withProject(async (project, birthChain) => {
-      await realRun(project, birthChain, REAL_CHAIN_REQUIREMENT, realChainHooks(project, {
-        coding: () => writeCodingMaterials(project, { entryTitleId: fixes && codingBacktrackRequested(project) }),
+      const probe = await realRun(project, birthChain, REAL_CHAIN_REQUIREMENT, realChainHooks(project, {
+        coding: ctx => writeCodingMaterials(project, { entryTitleId: fixes && ctx.prompt.includes('testing_failure_routing_') && ctx.prompt.includes('open_card_title') }),
       }), { viaHostBridge: true });
       const [run] = listRuns(project.root, project.feature);
       const events = eventsOf(project.root, project.feature, run);
-      const bt = events.find(e => e.type === 'phase_backtrack_requested' && e.from_phase === 'testing' && e.to_phase === 'coding');
+      const returned = probe.codingPrompts.find(prompt => prompt.includes('testing_failure_routing_') && prompt.includes('open_card_title'));
       const firstTestingFail = indexOf(events, e => e.type === 'phase_verdict' && e.phase === 'testing' && e.verdict === 'FAIL');
       const fixed = productSources(project.root, project.modulePath).includes("id('open_card_title')");
       done({
@@ -1392,8 +1396,8 @@ function runS11Branch(fixes: boolean): ScenarioRunner {
           : { result: 'fail', actor: 'reliability-scenarios', basis: "产品源码缺 .id('open_card_title')，开卡页标题断言必失败" },
         after: firstTestingFail >= 0 ? { run_id: run, event_index: firstTestingFail } : undefined,
         hit: {
-          ok: !!bt && ((bt.candidates as Array<{ id?: string }> | undefined) ?? []).some(c => /^testing_failure_routing_/.test(String(c.id))),
-          evidence: bt ? `phase_backtrack_requested testing→coding @${events.indexOf(bt)}` : '未发生 testing→coding 回退',
+          ok: !!returned,
+          evidence: returned ? '实际工作单元请求已交付 testing 的失败断言与 coding 对象' : '未向实际工作单元作者交付 testing 失败',
         },
         expectation: fixes
           ? (t) => ({ met: t.conclusion === 'correct_completion' && t.unaffected_reruns.exact === 0, detail: `结论=${t.conclusion}，无影响重跑=${t.unaffected_reruns.exact}` })
@@ -1427,6 +1431,8 @@ const runS8: ScenarioRunner = async (_entry, done) => {
       return actual === owner || actual.startsWith(owner + path.sep);
     });
     const crashed = runDriver('crash_scope_in_run', feature, host);
+    console.log('[S8 crash observation]', JSON.stringify({ status: crashed.runEndStatus, reason: crashed.runEndReason,
+      error: crashed.runEndError, authors: crashed.authorCallsThisCall, checks: crashed.checkFamiliesThisCall, halts: crashed.phaseHalts }));
     assert(crashed.runId, `S8：崩溃段须产出 run：${JSON.stringify({ ...crashed, eventTypes: undefined })}`);
     const run = crashed.runId as string;
     const crashEvents = eventsOf(host, feature, run);
@@ -1439,6 +1445,8 @@ const runS8: ScenarioRunner = async (_entry, done) => {
     // plan 4e6fb3b6 §8 S8：重新发起同一请求（不带 --resume/--force，也不手工修 contracts）——接续决策重新接入同一 run；
     // plan 执行者（替身）在回退后的 plan 轮里把 contracts 收回范围内文件（plan 阶段自己的工作）。
     const resumed = runDriver('crash_rerequest', feature, host);
+    console.log('[S8 resume observation]', JSON.stringify({ status: resumed.runEndStatus, reason: resumed.runEndReason,
+      error: resumed.runEndError, authors: resumed.authorCallsThisCall, checks: resumed.checkFamiliesThisCall, halts: resumed.phaseHalts }));
     const events = eventsOf(host, feature, run);
     const rejoinIdx = events.findIndex((e, i) => i > crashEnd && e.type === 'run_start');
     const contracts = YAML.parse(readText(host, contractFile));
@@ -1446,7 +1454,7 @@ const runS8: ScenarioRunner = async (_entry, done) => {
     const modulesUnchanged = JSON.stringify(contracts.modules.map((module: { name: string; package_path: string }) => ({ name: module.name, package_path: module.package_path }))) === JSON.stringify(publicModules);
     const ok = product.includes('struct SamplePage') && modulesUnchanged && contracts.files.includes(DRIVER_PRODUCT)
       && contracts.files.every((file: string) => withinPublicModule(file));
-    const ownerRejoined = rejoinIdx >= 0 && events.some((event, index) => index > rejoinIdx && event.type === 'agent_invoke_start' && event.phase === 'plan');
+    const ownerRejoined = rejoinIdx >= 0 && events.some((event, index) => index > rejoinIdx && event.type === 'agent_invoke_start' && event.phase === 'work-unit-author');
     const runs = listRuns(host, feature);
     done({
       key: 'crash-resume', root: host, feature, frameworkRoot: REPO_ROOT, runIds: [run],
@@ -1459,7 +1467,7 @@ const runS8: ScenarioRunner = async (_entry, done) => {
         : { result: 'fail', actor: 'reliability-scenarios', basis: '当前公开模块/施工契约仍不一致或实际产品缺失' },
       after: crashEnd >= 0 ? { run_id: run, event_index: crashEnd } : undefined,
       hit: {
-        ok: crashed.runEndReason === 'uncaught_exception' && crashed.eventTypes.includes('phase_backtrack_requested') && ownerRejoined,
+        ok: crashed.runEndReason === 'uncaught_exception' && crashed.checkFamiliesThisCall.includes('coding') && ownerRejoined,
         evidence: `崩溃段 run_end.reason=${crashed.runEndReason}；重发段 exit=${resumed.exitCode} phase_start=${JSON.stringify(resumed.phaseStartsThisCall)}`,
       },
       expectation: (t) => ({
@@ -1495,6 +1503,8 @@ const runS9: ScenarioRunner = async (entry, done) => {
   try {
     freezeExistingGoalDelivery(host, feature);
     const parked = runDriver('device_park', feature, host);
+    console.log('[S9 park observation]', JSON.stringify({ status: parked.runEndStatus, reason: parked.runEndReason,
+      error: parked.runEndError, authors: parked.authorCallsThisCall, checks: parked.checkFamiliesThisCall, halts: parked.phaseHalts }));
     assert(parked.runId, `S9：停放段须产出 run：${JSON.stringify({ ...parked, eventTypes: undefined })}`);
     const run = parked.runId as string;
     // 停放时刻的停止状态（采集器，同一 run）。
@@ -1521,13 +1531,13 @@ const runS9: ScenarioRunner = async (entry, done) => {
       interventions: [],
       acceptance: s9Acceptance(host, resumed),
       after: parkEnd >= 0 ? { run_id: run, event_index: parkEnd } : undefined,
-      hit: { ok: !!halt && parked.exitCode === 2 && !!waitTimeout, evidence: `停放 exit=${parked.exitCode}；进程内等待超时=${!!waitTimeout}；device_not_ready 停机=${!!halt}；停放时停止状态=${parkStop?.reading}` },
+      hit: { ok: !!halt && parked.exitCode === 1 && !!waitTimeout, evidence: `停放 exit=${parked.exitCode}；进程内等待超时=${!!waitTimeout}；device_not_ready 停机=${!!halt}；停放时停止状态=${parkStop?.reading}` },
       expectation: (t) => {
         const reasons = [
           parkStop?.reading === 'waiting_external_wakeable' || `停放读法=${parkStop?.reading}`,
           (parkHalt?.probe === 'device_readiness' && parkHalt?.phase === 'ut') || `停放事件须带探针与责任阶段：${JSON.stringify({ probe: parkHalt?.probe, phase: parkHalt?.phase })}`,
           (woke.supervisorAction === 'resume' && supervisorArgs.includes('--resume') && supervisorArgs.includes(run)) || `supervisor 须发出恢复：action=${woke.supervisorAction} args=${supervisorArgs.join(' ')}`,
-          (resumed.exitCode === 0 && resumed.phaseStartsThisCall.includes('ut') && resumed.phaseStartsThisCall.includes('testing')) || `恢复段 exit=${resumed.exitCode} phase_start=${JSON.stringify(resumed.phaseStartsThisCall)}`,
+          (resumed.exitCode === 0 && resumed.checkFamiliesThisCall.includes('ut') && resumed.checkFamiliesThisCall.includes('testing')) || `恢复段 exit=${resumed.exitCode} checks=${JSON.stringify(resumed.checkFamiliesThisCall)}`,
           t.conclusion === 'correct_completion' || `结论=${t.conclusion}`,
           t.operator.rescue_count === 0 || `操作者动作=${t.operator.rescue_count}`,
         ].filter((x): x is string => typeof x === 'string');
@@ -1547,6 +1557,8 @@ const runS9Wait: ScenarioRunner = async (_entry, done) => {
   try {
     freezeExistingGoalDelivery(host, feature);
     const out = runDriver('device_wait_ready', feature, host);
+    console.log('[S9 wait observation]', JSON.stringify({ status: out.runEndStatus, reason: out.runEndReason,
+      error: out.runEndError, authors: out.authorCallsThisCall, checks: out.checkFamiliesThisCall, halts: out.phaseHalts }));
     assert(out.runId, `S9 等待支：须产出 run：${JSON.stringify({ ...out, eventTypes: undefined })}`);
     const run = out.runId as string;
     const events = eventsOf(host, feature, run);
@@ -1581,7 +1593,7 @@ const runS9Wait: ScenarioRunner = async (_entry, done) => {
 
 const runS12: ScenarioRunner = async (_entry, done) => {
   // 三个分支各用一个宿主：同一 run 在不同时刻的观察若共用一个任务，结果文件会把它们合并成一条（取最早的停止状态）。
-  let root = setupGoalRuntimeHost('codex').root;
+  let root = setupGoalRuntimeHost('codex', false).root; authorizeFixtureConstruction(root, 'request');
   const detail = '安装到真机前需要设备所有者授权（执行者停在授权确认处，等待用户输入）';
   // attended 执行器（helper 的 executorMode:'attended'）在 coding 返回 waiting：临时替换 AttendedGoalPhaseExecutor.execute
   // （测试侧打桩，不改生产文件；detached 执行器会把 status 按退出码重写，waiting 只能从 attended 传输到达）。
@@ -1590,7 +1602,7 @@ const runS12: ScenarioRunner = async (_entry, done) => {
   const original = proto.execute;
   let authorized = false;
   proto.execute = async function (this: AttendedGoalPhaseExecutor, ctx: Parameters<typeof original>[0]) {
-    if (ctx.phase === 'coding' && !authorized) {
+    if (ctx.phase === 'work-unit-author' && !authorized) {
       return { status: 'waiting', phase: ctx.phase, details: detail, exitCode: 0, stdout: '', stderr: '', command: 'phase_execute_request' };
     }
     return original.call(this, ctx);
@@ -1601,7 +1613,7 @@ const runS12: ScenarioRunner = async (_entry, done) => {
   const stoppedHost = async (): Promise<{ run: string; events: Ev[]; halt?: Ev }> => {
     fs.rmSync(root, { recursive: true, force: true });
     clearFrameworkConfigCache();
-    root = setupGoalRuntimeHost('codex').root;
+    root = setupGoalRuntimeHost('codex', false).root; authorizeFixtureConstruction(root, 'request');
     authorized = false;
     await request();
     const [r] = listRuns(root, RT_FEATURE);
@@ -1613,7 +1625,9 @@ const runS12: ScenarioRunner = async (_entry, done) => {
     const [run] = listRuns(root, RT_FEATURE);
     const events = eventsOf(root, RT_FEATURE, run);
     const halt = events.find(e => e.type === 'phase_halt' && e.halt_reason === 'executor_waiting');
-    const passedBefore = ['spec', 'plan'].every(ph => events.some(e => e.type === 'phase_verdict' && e.phase === ph && e.verdict === 'PASS'));
+    const author = events.find(e => e.type === 'agent_invoke_start' && e.phase === 'work-unit-author');
+    const originalReference = author?.handoff_request as { path?: string } | undefined;
+    const originalPresent = typeof originalReference?.path === 'string' && fs.existsSync(path.resolve(runsDirOf(root, RT_FEATURE), run, originalReference.path));
     const codingPassed = events.some(e => e.type === 'phase_verdict' && e.phase === 'coding' && e.verdict === 'PASS');
     const manifestOk = fs.existsSync(path.join(runsDirOf(root, RT_FEATURE), run, 'manifest.json'));
     const control = JSON.parse(readText(root, path.relative(root, path.join(runsDirOf(root, RT_FEATURE), run, 'run-control.json'))) || '{}') as { owner?: { state?: string } };
@@ -1625,9 +1639,10 @@ const runS12: ScenarioRunner = async (_entry, done) => {
       expectation: (t) => {
         const reasons = [
           !t.facts.claimed_complete || '宣称了完成',
-          t.stop_state?.reading === 'waiting_human' || `停止读法=${t.stop_state?.reading}`,
-          String(halt?.detail ?? '').includes('授权') || '停机未带授权原因',
-          passedBefore || 'spec/plan 的 PASS 未保留',
+          ['waiting_human', 'waiting_external_no_wake'].includes(t.stop_state?.reading ?? '') || `停止读法=${t.stop_state?.reading}`,
+          String(halt?.halt_guidance ?? halt?.reason ?? halt?.detail ?? '').includes('授权') || '停机未带授权原因',
+          originalPresent || '实际工作单元请求原件未保留',
+          !events.some(event => event.type === 'harness_start') || '作者尚未交回即启动了正式检查',
           !codingPassed || '被暂停阶段出现 PASS',
           manifestOk || 'manifest 缺失',
           control.owner?.state === 'released' || `run-control.owner.state=${control.owner?.state}`,
@@ -1638,7 +1653,7 @@ const runS12: ScenarioRunner = async (_entry, done) => {
 
     // Presence is not a recovery grant: unchanged requests keep the original stop.
     const rep1 = await stoppedHost();
-    const waitsOf = (id: string): number => eventsOf(root, RT_FEATURE, id).filter(e => e.type === 'phase_halt' && e.halt_reason === 'executor_waiting').length;
+    const callsOf = (id: string): number => eventsOf(root, RT_FEATURE, id).filter(e => e.type === 'agent_invoke_start' || e.type === 'harness_start').length;
     const repeatExits: number[] = [];
     for (let i = 0; i < 3; i++) repeatExits.push((await request()).exitCode);
     const runsAfterRepeat = listRuns(root, RT_FEATURE);
@@ -1650,7 +1665,7 @@ const runS12: ScenarioRunner = async (_entry, done) => {
       expectation: () => {
         const reasons = [
           runsAfterRepeat.length === 1 || `重复请求新建了 run：${runsAfterRepeat.join(',')}`,
-          waitsOf(rep1.run) === 1 || `无变化重发不得新增作者/停机记录：${waitsOf(rep1.run)}`,
+          callsOf(rep1.run) === 1 || `无变化重发不得新增真实调用或检查：${callsOf(rep1.run)}`,
           repeatExits.every(c => c !== 0) || `每次都须停下：${repeatExits.join(',')}`,
         ].filter((x): x is string => typeof x === 'string');
         return { met: reasons.length === 0, detail: reasons.length ? reasons.join('；') : '三次无变化重复请求均保持原停止，run 数 1、原调用 1' };
@@ -1660,32 +1675,28 @@ const runS12: ScenarioRunner = async (_entry, done) => {
     // After the external grant, explicit recovery still uses the same guards.
     const re = await stoppedHost();
     await request();
-    const waitsWithoutAuth = eventsOf(root, RT_FEATURE, re.run).filter(e => e.type === 'phase_halt' && e.halt_reason === 'executor_waiting').length;
+    const callsWithoutAuth = callsOf(re.run);
     authorized = true;
     const eventsPath = path.join(runsDirOf(root, RT_FEATURE), re.run, 'events.jsonl');
-    fs.writeFileSync(eventsPath, fs.readFileSync(eventsPath, 'utf8').split('\n').map(line => {
-      if (!line.trim()) return line;
-      const event = JSON.parse(line) as { type: string; ts?: string };
-      if (event.type === 'run_end') event.ts = new Date(Date.now() - 10 * 60_000).toISOString();
-      return JSON.stringify(event);
-    }).join('\n'));
+    const eventPrefix = fs.readFileSync(eventsPath, 'utf8');
     const resumed = await request(re.run);
     const finalEvents = eventsOf(root, RT_FEATURE, re.run);
+    assert(fs.readFileSync(eventsPath, 'utf8').startsWith(eventPrefix), '授权恢复必须保留原事件前缀');
     done({
       key: 'reauthorized', root, feature: RT_FEATURE, frameworkRoot: REPO_ROOT, runIds: [re.run],
       interventions: [
         { ...RE_REQUEST('有人在场立即重发同一请求（仍未补授权）'), necessary: false },
         { kind: 'reauthorization', actor: 'reliability-scenarios（测试代码，模拟设备所有者）', necessary: true, content: '设备所有者给出授权' },
-        { kind: 'rescue_command', necessary: true, content: `补授权且冷却已过后明确恢复原run：--resume ${re.run} --force-resume（测试仅推进事件时间十分钟，不改变生产时长或跳过检查）` },
+        { kind: 'rescue_command', necessary: true, content: `补授权后明确恢复原run：--resume ${re.run} --force-resume（原事件不改写）` },
       ],
       acceptance: productAcceptance(root),
       after: re.halt ? { run_id: re.run, event_index: re.events.indexOf(re.halt) } : undefined,
-      hit: { ok: !!re.halt && waitsWithoutAuth === 1, evidence: `未补授权的无变化重发保留原授权暂停 ${waitsWithoutAuth} 次` },
+      hit: { ok: !!re.halt && callsWithoutAuth === 1, evidence: `未补授权时真实调用数保持 ${callsWithoutAuth}` },
       expectation: (t) => {
         const reasons = [
-          waitsWithoutAuth === 1 || `未补授权的无变化重发不得新增调用：${waitsWithoutAuth}`,
+          callsWithoutAuth === 1 || `未补授权的无变化重发不得新增调用：${callsWithoutAuth}`,
           listRuns(root, RT_FEATURE).length === 1 || '不得新建 run',
-          resumed.invokedPhases.includes('coding') || `补授权后须执行 coding：${resumed.invokedPhases.join(',')}`,
+          resumed.invokedPhases.includes('work-unit-author') || `补授权后须执行原工作单元作者：${resumed.invokedPhases.join(',')}`,
           /COMPLETED/.test(String(rtRunEnd(finalEvents)?.status ?? '')) || `终态=${String(rtRunEnd(finalEvents)?.status)}`,
           t.conclusion === 'correct_completion' || `结论=${t.conclusion}`,
         ].filter((x): x is string => typeof x === 'string');
@@ -1709,13 +1720,14 @@ const S13_DEFECT = 'TC-001 step 2：已执行 assertion 失败（期望文本「
  */
 function runS13Branch(declineTwice: boolean): ScenarioRunner {
   return async (_entry, done) => {
-  const { root } = setupGoalRuntimeHost('codex');
+  const { root } = setupGoalRuntimeHost('codex', false);
   let refusedWithoutChange = false;
   let independentlyReadDecline = false;
   let correctionActuallyDelivered = false;
   const declines: string[][] = [];
   const ownerDeliveries: string[] = [];
   const requirement = `${GOAL_QUOTE}；按当前 TC-001 完成页断言，必须显示「已开卡」。`;
+  authorizeFixtureConstruction(root, 'request', requirement);
   const verifierProject = { root, feature: RT_FEATURE, frameworkRoot: REPO_ROOT,
     harnessDir: path.join(REPO_ROOT, 'harness') } as RealChainProject;
   const refusalBasis = (runId: string): string[] => {

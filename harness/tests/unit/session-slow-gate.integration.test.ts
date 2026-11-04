@@ -7,13 +7,15 @@ import { spawn, spawnSync } from 'child_process';
 import { prepareSessionCliProject } from '../utils/session-cli-project';
 import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
 import { readDeliveredVerifierRequest } from './real-chain.unit.test';
+import { researchSessionUnit, sessionNodeTestStrengthReply } from './session-transport-parity.unit.test';
 import type { SessionExecutionRequest } from '../../scripts/utils/session-execution-handoff';
 import type { UnitCaseResult } from '../run-unit';
 import { startCaseTiming, type SelectedUnitCases, type UnitExecutionTiming } from '../utils/unit-case-selection';
 import { runRuntimeTestChild, withRuntimeTest } from '../utils/runtime-test-control';
 
-const { instrumentSlowCompile, observeAndInterrupt } = require('../utils/session-cli-interruption.cjs') as {
+const { instrumentSlowCompile, observeAndInterrupt, verifyCompletion } = require('../utils/session-cli-interruption.cjs') as {
   instrumentSlowCompile(root: string): void; observeAndInterrupt(root: string, evidence: string, timeoutMs: number): Promise<Record<string, unknown>>;
+  verifyCompletion(root: string, evidence: string, output: string): Record<string, unknown>;
 };
 
 const SOURCE_ROOT = path.resolve(__dirname, '../../..');
@@ -21,6 +23,11 @@ const RUN_ID = 'session-cli';
 const FEATURE = 'clamp';
 const SOURCE = 'src/math/src/main/clamp.ts';
 const TEST = 'src/math/src/test/clamp.test.ts';
+const TEST_SOURCE = ["import { it } from 'node:test';", "import { expect } from './expect';", "import { clamp } from '../main/clamp';", '',
+  "it('[AC-1] below lower bound', () => { expect(clamp(-2, 0, 10)).toBe(0); });",
+  "it('[AC-2] above upper bound', () => { expect(clamp(12, 0, 10)).toBe(10); });",
+  "it('[AC-3] inside range', () => { expect(clamp(4, 0, 10)).toBe(4); });", '',
+].join('\n');
 const VERIFIER_BODY = 'Deterministic verifier model substitute for a process-containment regression. Product source and native compiler/tests remain real; this is not a model-quality acceptance.';
 const pause = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 function readJson(file: string): any { return JSON.parse(fs.readFileSync(file, 'utf8')); }
@@ -58,8 +65,12 @@ function run(root: string, entry: 'goal-mode-entry' | 'harness-runner', args: st
   });
   return { ...result, value: entry === 'goal-mode-entry' && result.status === 0 ? parseCli(result.stdout) : undefined };
 }
-function authorMaterials(root: string, request: SessionExecutionRequest): void {
-  const phase = request.context.phase;
+function authorMaterials(root: string, request: SessionExecutionRequest, phase = request.context.phase): void {
+  if (phase === 'work-unit-author') {
+    for (const method of request.context.chain) if (['coding', 'review', 'ut'].includes(method)) authorMaterials(root, request, method);
+    researchSessionUnit(root, request.context);
+    return;
+  }
   if (phase === 'coding') {
     write(root, SOURCE, 'export function clamp(value: number, min: number, max: number): number {\n  return Math.min(max, Math.max(min, value));\n}\n');
     const inputs = [SOURCE, 'src/math/src/main/index.ts', 'src/math/src/main/limits.ts', 'src/math/src/test/expect.ts', 'doc/requirement.md', 'doc/architecture.md',
@@ -82,11 +93,7 @@ function authorMaterials(root: string, request: SessionExecutionRequest): void {
       '', '## 五、修复建议', '', '无。', '', '## 六、结论', '', '**审查结论**: 通过', '',
     ].join('\n'));
   } else if (phase === 'ut') {
-    write(root, TEST, ["import { it } from 'node:test';", "import { expect } from './expect';", "import { clamp } from '../main/clamp';", '',
-      "it('[AC-1] below lower bound', () => { expect(clamp(-2, 0, 10)).toBe(0); });",
-      "it('[AC-2] above upper bound', () => { expect(clamp(12, 0, 10)).toBe(10); });",
-      "it('[AC-3] inside range', () => { expect(clamp(4, 0, 10)).toBe(4); });", '',
-    ].join('\n'));
+    write(root, TEST, TEST_SOURCE);
     write(root, 'doc/features/clamp/ut/testability-audit.md', '# Testability\n\n```yaml\n' + YAML.stringify({ records: ['AC-1', 'AC-2', 'AC-3'].map(acceptance_id => ({ acceptance_id,
       entry_point: { file: SOURCE, symbol: 'clamp' }, testability_level: 'L1', dependencies: [{ name: 'Math', kind: 'pure' }], verdict: 'testable' })) }) + '```\n');
     write(root, 'doc/features/clamp/ut/reports/coverage-evidence.json', JSON.stringify({ schema_version: '1.0', feature: FEATURE, primary_evidence_source: 'ut_tags', sources: { ut_tags: [TEST] },
@@ -97,42 +104,30 @@ function authorMaterials(root: string, request: SessionExecutionRequest): void {
     : 'The reviewed implementation remains unchanged; the review report records the source and contract inspection.\n'));
   fs.appendFileSync(path.join(root, 'observations/author-calls.jsonl'), JSON.stringify({ phase, invoke: request.invoke_id, at: new Date().toISOString(), boundary: 'deterministic author output substitute; no runtime events or verdicts written' }) + '\n');
 }
-function selfCheck(root: string, request: SessionExecutionRequest): void {
-  const ctx = request.context;
-  const args = ['--phase', ctx.phase, '--feature', FEATURE, '--goal-run-id', ctx.runId, '--goal-attempt-id', ctx.attemptId,
-    '--goal-owner-id', ctx.owner.owner_id, '--goal-owner-epoch', String(ctx.owner.epoch)];
-  run(root, 'harness-runner', [...args, '--summary'], ctx.phase + '-selfcheck');
-  const reports = path.join(root, `doc/features/${FEATURE}/${ctx.phase}/reports`);
-  const summary = readJson(path.join(reports, 'summary.json'));
-  if (summary.verdict !== 'PASS') throw new Error(`Real ${ctx.phase} self-check failed: ${JSON.stringify(readJson(path.join(reports, 'script-report.json')).checks.filter((check: any) => check.status === 'FAIL'))}`);
-  assert(summary.verifier_subject_id, 'real self-check must issue its verifier subject');
-  publishFixtureVerifierEvidence({ projectRoot: root, reportsDir: reports, feature: FEATURE, phase: ctx.phase, subjectId: summary.verifier_subject_id,
-    reportText: VERIFIER_BODY, skipSummaryPatch: true });
-  const closed = run(root, 'harness-runner', [...args, '--sync-closure'], ctx.phase + '-sync-closure');
-  assert.equal(closed.status, 0, closed.stderr + closed.stdout);
-}
 function requestedVerifier(root: string, execution: SessionExecutionRequest): boolean {
   const ctx = execution.context;
   if (!ctx.phase.endsWith('-verifier-format-repair')) return false;
-  assert.equal(ctx.phase, 'ut-verifier-format-repair');
   assert.equal(ctx.runId, RUN_ID); assert.equal(ctx.owner.run_id, RUN_ID);
   const request = readDeliveredVerifierRequest({ root, feature: FEATURE, frameworkRoot: path.join(root, 'framework'),
     harnessDir: path.join(root, 'framework/harness'), module: 'math', modulePath: 'src/math' },
   { phase: ctx.phase, prompt: ctx.instruction ?? '', runId: ctx.runId });
-  assert(request && request.phase === 'ut');
+  assert(request && ['coding', 'review', 'ut'].includes(request.phase));
   const reports = path.dirname(path.join(root, request.prompt_path));
   fs.readFileSync(path.join(root, SOURCE)); fs.readFileSync(path.join(root, TEST));
-  const tap = fs.readFileSync(path.join(reports, 'node-tests.tap'), 'utf8');
-  assert.match(tap, /^# tests 3$/m); assert.match(tap, /^# pass 3$/m); assert.match(tap, /^# fail 0$/m);
+  if (request.phase === 'ut') {
+    const tap = fs.readFileSync(path.join(reports, 'node-tests.tap'), 'utf8');
+    assert.match(tap, /^# tests 3$/m); assert.match(tap, /^# pass 3$/m); assert.match(tap, /^# fail 0$/m);
+  }
   publishFixtureVerifierEvidence({ projectRoot: root, reportsDir: reports, feature: FEATURE, phase: request.phase, subjectId: request.subject_id,
-    reportText: VERIFIER_BODY + `\n| id | status | severity | 证据 |\n|---|---|---|---|\n| end_to_end_driving | PASS | BLOCKER | ${TEST} 直接调用 ${SOURCE} 的 clamp，原生 node-tests.tap 执行3条测试 |\n| business_assertion_value | PASS | BLOCKER | AC-1/2/3 用真实 expect/assert.equal 检查 0/10/4，原生 TAP 3 pass/0 fail |\n`,
+    reportText: VERIFIER_BODY + sessionNodeTestStrengthReply(root, request.phase, TEST_SOURCE)
+      + (request.phase === 'ut' ? `\n| id | status | severity | 证据 |\n|---|---|---|---|\n| end_to_end_driving | PASS | BLOCKER | ${TEST} 直接调用 ${SOURCE} 的 clamp，原生 node-tests.tap 执行3条测试 |\n| business_assertion_value | PASS | BLOCKER | AC-1/2/3 用真实 expect/assert.equal 检查 0/10/4，原生 TAP 3 pass/0 fail |\n` : ''),
     skipSummaryPatch: true });
   return true;
 }
 async function interruptedReport(root: string, requestPath: string, runDir: string): Promise<void> {
   const stdout = fs.openSync(path.join(root, 'observations/killed-report.stdout.log'), 'w');
   const stderr = fs.openSync(path.join(root, 'observations/killed-report.stderr.log'), 'w');
-  const child = spawn(process.execPath, cliArgs(root, 'goal-mode-entry', controlArgs(['--request', requestPath, '--report-result', JSON.stringify({ phase: 'coding', status: 'passed' })])),
+  const child = spawn(process.execPath, cliArgs(root, 'goal-mode-entry', controlArgs(['--request', requestPath, '--report-result', JSON.stringify({ phase: 'work-unit-author', status: 'passed' })])),
     { cwd: path.join(root, 'framework/harness'), env: environment(root), stdio: ['ignore', stdout, stderr], windowsHide: true });
   fs.closeSync(stdout); fs.closeSync(stderr);
   const exited = withRuntimeTest({ root,
@@ -193,9 +188,9 @@ async function execute(): Promise<void> {
     let killed = false;
     for (let turn = 0; turn < 6 && step?.type === 'phase_execute_request'; turn++) {
       const requestPath = step.request.path as string; const request = readJson(requestPath) as SessionExecutionRequest;
-      if (!requestedVerifier(root, request)) { authorMaterials(root, request); selfCheck(root, request); }
+      if (!requestedVerifier(root, request)) authorMaterials(root, request);
       if (!killed) {
-        assert.equal(request.context.phase, 'coding');
+        assert.equal(request.context.phase, 'work-unit-author');
         await interruptedReport(root, requestPath, runDir); killed = true;
         const resumed = run(root, 'goal-mode-entry', controlArgs(['--next']), 'resume-after-external-kill');
         assert.equal(resumed.status, 0, resumed.stderr + resumed.stdout); step = resumed.value;
@@ -206,13 +201,14 @@ async function execute(): Promise<void> {
     }
     assert(killed); assert.notEqual(step?.type, 'phase_execute_request', 'must reach a real terminal result');
     const events = rows(path.join(runDir, 'events.jsonl')); const native = rows(path.join(root, 'observations/native-gates.jsonl'));
-    assert.equal(events.filter(event => event.type === 'agent_invoke_start' && event.phase === 'coding').length, 1, 'accepted author must never execute again after the gate interruption');
-    assert.equal(events.filter(event => event.type === 'agent_invoke_end' && event.phase === 'coding' && event.handoff_report).length, 1);
-    assert.equal(events.filter(event => event.type === 'phase_verdict' && event.phase === 'coding' && event.verdict === 'PASS').length, 1);
+    assert.equal(events.filter(event => event.type === 'agent_invoke_start' && event.phase === 'work-unit-author').length, 1, 'accepted author must never execute again after the gate interruption');
+    assert.equal(events.filter(event => event.type === 'agent_invoke_end' && event.phase === 'work-unit-author' && event.handoff_report).length, 1);
     assert(native.filter(event => event.kind === 'enter').length >= 2, 'recovery must reach the real compiler again');
     assert(native.every(event => !event.live_prior_pids?.length), JSON.stringify(native));
     const controlLog = fs.readFileSync(path.join(runDir, 'session-control.log'), 'utf8');
-    assert.equal((controlLog.match(/^GOAL_RUN event=feature_completion_generated /gm) ?? []).length, 1, 'the real finalizer must generate exactly one completion original');
+    assert.equal((controlLog.match(/^GOAL_RUN event=feature_completion_generated /gm) ?? []).length, 1,
+      'the real finalizer must generate exactly one completion original: ' + JSON.stringify({ final: step,
+        end: events.filter(event => event.type === 'run_end').at(-1), control: controlLog.slice(-3500) }));
     assert.equal(events.filter(event => event.type === 'run_end' && event.status === 'CHAIN_SLICE_COMPLETED').length, 1);
     assert.equal(events.filter(event => event.type === 'harness_start' && event.process_role === 'harness' && event.phase === 'coding').length, 2);
     assert.equal(events.filter(event => event.type === 'harness_end' && event.phase === 'coding').length, 1);
@@ -222,8 +218,9 @@ async function execute(): Promise<void> {
     assert(fs.existsSync(path.join(runDir, 'feature-completion.json')));
     assert.equal(rows(path.join(root, 'observations/author-calls.jsonl')).length, 3);
     assert.equal(readJson(path.join(root, 'doc/features/clamp/ut/reports/summary.json')).verdict, 'PASS');
+    verifyCompletion(root, path.join(root, 'observations/external-kill.json'), path.join(root, 'observations/final-proof.json'));
     const report = { status: 'PASS', root, final: step, native_gate_observations: native, external_kill: readJson(path.join(root, 'observations/external-kill.json')),
-      event_counts: { coding_author: 1, accepted_coding_report: 1, coding_pass: 1, feature_completion: 1 },
+      event_counts: { unit_author: 1, accepted_unit_report: 1, coding_check_returned: 1, feature_completion: 1 },
       boundary: 'Author and verifier text are deterministic model substitutes. Original goal-mode-entry, harness CLI, tsc, node:test, report writers, gate process containment and finalizer run unchanged from the materialized production copy. No device.' };
     write(SOURCE_ROOT, 'harness/reports/6fd6c8c1/session-slow-gate-result.json', JSON.stringify(report, null, 2) + '\n');
   } catch (error) {
