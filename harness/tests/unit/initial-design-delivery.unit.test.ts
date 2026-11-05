@@ -915,10 +915,10 @@ cases.push({
       // The published draft no longer contains questioning after the author repair; the archived role result still does.
       const recheck = delivery.initialDesignAuthorInstruction({ projectRoot: directory, frameworkRoot, manifest, autonomyAuthorized: false,
         observation: { kind: 'questioning', blueprintPath, candidatesPath, issues: [] }, deliveryRuns: [{ manifest: previous, events }] });
-      assert(recheck.includes('这是修订后的独立复核') && recheck.includes('不重做完整八问'));
+      assert(recheck.includes('这是首次独立阅读'), 'a loose postimage without a completed clean invocation is not a trusted previous review');
       assert(recheck.includes('第1–4行') && !recheck.includes('本次控制入口已核实可信原请求'));
-      assert(recheck.includes('前次真实否定仍待复核') && recheck.includes('view:runtime') && recheck.includes('旧交接问题是否已修复？'));
-      assert(recheck.includes(path.join(priorDir, 'draft-output.yaml')) && recheck.includes('不是当前结论'));
+      assert(!recheck.includes('前次真实否定仍待复核') && !recheck.includes('旧交接问题是否已修复？'));
+      assert(!recheck.includes(path.join(priorDir, 'draft-output.yaml')));
       for (const scope of requiredQuestioningScopes(blueprint).keys()) assert(recheck.includes(`- ${scope}（`));
       fs.unlinkSync(path.join(priorDir, 'draft-output.yaml'));
       const unfinished = delivery.initialDesignAuthorInstruction({ projectRoot: directory, frameworkRoot, manifest, autonomyAuthorized: false,

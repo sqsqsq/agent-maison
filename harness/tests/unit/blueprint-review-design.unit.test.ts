@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
 import { createBlueprintReviewDesignFixture, hostBlueprintReviewFields, libraryBlueprintReviewSchema } from '../fixtures/blueprint-review-design';
+import { writeReviewQuestioningRound } from '../fixtures/blueprint-review-questioning';
 import { asRecord, asRecords, asStrings, BlueprintRecord } from '../../scripts/utils/component-blueprint-model';
 import { loadCanonicalBlueprint, sha256Bytes } from '../../scripts/utils/component-blueprint-path';
 import { loadCanonicalChangeUnit, asChangeUnitArtifact, createChangeUnitRef } from '../../scripts/utils/change-unit-path';
@@ -35,6 +36,68 @@ function target(bp: BlueprintRecord, id: string): BlueprintRecord { return asRec
 function update(f: Fixture, mutate: (bp: BlueprintRecord) => void, bind = true): void { const bp = blueprint(f); mutate(bp); fs.writeFileSync(f.blueprintFile, YAML.stringify(bp)); if (bind) f.bind(); }
 function render(f: Fixture): string { return loadBlueprintReviewSource(f.root, 'ledger-app-blueprint').markdown; }
 const cases: Array<{ name: string; run(f: Fixture): void }> = [
+  { name: 'questioning outcomes replay actual initial process and repair session originals, preserve invalid-round bytes and open relative links', run(f) {
+    const base = blueprint(f), first = structuredClone(asRecord(asRecord(base.review_summary)!.questioning)!);
+    const items = asRecords(first.items); assert(items.length >= 5);
+    const [pending, withdrawn, changed, decision] = items;
+    Object.assign(pending, { disposition: 'blocker', question: '仍未处理的独有问题', answer: '未闭合的独有依据' });
+    Object.assign(withdrawn, { disposition: 'blocker', question: '应折叠的撤回独有问题' });
+    Object.assign(changed, { disposition: 'blocker', question: '改稿关闭前的独有原问题', answer: '原始否定依据' });
+    Object.assign(decision, { disposition: 'open_decision', question: '须人决定的独有事项' });
+    items[4].question = '例行覆盖独有问题不进入表格';
+    writeReviewQuestioningRound({ ...f, feature: 'ledger-app-blueprint', before: base, result: first, index: 1 });
+    const second = structuredClone(first); asRecords(second.items)[1].disposition = 'answered_with_evidence';
+    asRecords(second.items)[2].question = '同scope再次否定的另一种措辞';
+    const machineOnly = structuredClone(base); machineOnly.revision = Number(base.revision) + 1; asRecord(machineOnly.review_summary)!.questioning = first;
+    writeReviewQuestioningRound({ ...f, before: machineOnly, result: second, index: 2, repair: true, session: true });
+    const revised = structuredClone(machineOnly); asRecord(revised.review_summary)!.summary += ' 作者已修订设计。';
+    writeReviewQuestioningRound({ ...f, feature: 'ledger-app-blueprint', before: revised, result: second, index: 3 });
+    const third = structuredClone(second); Object.assign(asRecords(third.items)[2], { disposition: 'answered_with_evidence', answer: '后续独立复核已关闭' });
+    writeReviewQuestioningRound({ ...f, feature: 'ledger-app-blueprint', before: revised, result: third, index: 4 });
+    asRecord(revised.review_summary)!.questioning = third; fs.writeFileSync(f.blueprintFile, YAML.stringify(revised)); f.bind();
+    const source = loadBlueprintReviewSource(f.root, 'ledger-app-blueprint');
+    assert.deepStrictEqual(source.inputs.questioning?.items.map(row => row.outcome).sort(), ['blocker', 'changed', 'open_decision', 'withdrawn']);
+    assert.equal(source.inputs.questioning?.items.find(row => row.item.scope_ref === changed.scope_ref)?.outcome, 'changed',
+      'A denied, B denied, then B closed retains the author change during this continuous unresolved episode');
+    const section = source.markdown.slice(source.markdown.indexOf('#### 独立质询处理结果'), source.markdown.indexOf('#### 编号速查'));
+    for (const value of ['仍未处理的独有问题', '未闭合的独有依据', '须人决定的独有事项', '改稿关闭前的独有原问题', '原始否定依据', '后续独立复核已关闭', '质询撤回：1 个 scope', '不逐题归因']) assert(section.includes(value), value);
+    for (const value of ['应折叠的撤回独有问题', '例行覆盖独有问题不进入表格']) assert(!section.includes(value), value);
+    const links = [...section.matchAll(/\]\(([^)]+)\)/g)]; assert(links.length >= 6);
+    for (const link of links) { assert(!path.isAbsolute(link[1])); assert(fs.existsSync(path.resolve(path.dirname(f.blueprintFile), decodeURI(link[1]))), link[1]); }
+    assert(links.some(link => link[1].includes('handoff-report.json')), 'session output links to its real accepted report');
+    const written = materializeBlueprintReview(f.root, 'ledger-app-blueprint'); assert.equal(written.status, 'refreshed', written.reason);
+    const bytes = fs.readFileSync(written.path);
+    for (const index of [5, 6]) {
+      const invalid = writeReviewQuestioningRound({ ...f, feature: 'ledger-app-blueprint', before: revised, result: '我已完成检查', index });
+      assert(fs.existsSync(path.join(invalid.directory, 'questioning-output.json')));
+      assert.equal(materializeBlueprintReview(f.root, 'ledger-app-blueprint').status, 'current');
+      assert(fs.readFileSync(written.path).equals(bytes), 'an unusable round never changes links, counts or any document byte');
+    }
+  } },
+  { name: 'questioning outcomes require explicit valid closure, ignore dirty returns, and support legacy process originals', run(f) {
+    const bp = blueprint(f), first = structuredClone(asRecord(asRecord(bp.review_summary)!.questioning)!);
+    const denied = asRecords(first.items)[0]; Object.assign(denied, { disposition: 'blocker', question: '缺项不得关闭的独有问题' });
+    writeReviewQuestioningRound({ ...f, feature: 'ledger-app-blueprint', before: bp, result: first, index: 1, legacy: true });
+    const omitted = structuredClone(first); omitted.items = asRecords(omitted.items).slice(1);
+    writeReviewQuestioningRound({ ...f, feature: 'ledger-app-blueprint', before: bp, result: omitted, index: 2 });
+    const closed = structuredClone(first); asRecords(closed.items)[0].disposition = 'answered_with_evidence';
+    writeReviewQuestioningRound({ ...f, feature: 'ledger-app-blueprint', before: bp, result: closed, index: 3, dirty: true });
+    const source = loadBlueprintReviewSource(f.root, 'ledger-app-blueprint');
+    assert.deepStrictEqual(source.inputs.questioning?.items.map(row => row.outcome), ['blocker']);
+    assert(source.markdown.includes('缺项不得关闭的独有问题')); assert(!source.markdown.includes('质询撤回：'));
+    writeReviewQuestioningRound({ ...f, feature: 'ledger-app-blueprint', before: bp, result: closed, index: 4 });
+    assert.deepStrictEqual(loadBlueprintReviewSource(f.root, 'ledger-app-blueprint').inputs.questioning?.items.map(row => row.outcome), ['withdrawn']);
+  } },
+  { name: 'questioning outcomes without an associated run disclose only blueprint unresolved facts', run(f) {
+    const bp = blueprint(f), q = asRecord(asRecord(bp.review_summary)!.questioning)!;
+    Object.assign(asRecords(q.items)[0], { disposition: 'blocker', question: '无run仍须展示的否定' });
+    Object.assign(asRecords(q.items)[1], { disposition: 'open_decision', question: '无run仍须展示的待决定' });
+    asRecords(q.items)[2].question = '无run例行覆盖隐藏';
+    const document = renderBlueprintReviewMarkdown(bp, 'sha256:no-run');
+    assert(document.includes('无run仍须展示的否定')); assert(document.includes('无run仍须展示的待决定'));
+    assert(document.includes('缺少可核验的关联调用原件')); assert(!document.includes('无run例行覆盖隐藏'));
+    assert(!document.includes('改稿后关闭')); assert(!document.includes('质询撤回：'));
+  } },
   { name: 'graph omission WARN follows rendered effective guide sections rather than raw graph ids', run(f) {
     for (const state of ['current', 'partial-source', 'missing-source', 'invalid-section', 'stale']) {
       const bp = blueprint(f);

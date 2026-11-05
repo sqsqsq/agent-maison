@@ -28,7 +28,7 @@ import { independentQuestioningBlockers } from './blueprint-questioning';
 import { renderQuestioningResultInstructions } from './blueprint-questioning';
 import { extractProviderFinalText } from './codex-terminal-events';
 import { invocationCompleted } from './invocation-completion';
-import { renderDesignAuthorityBoundary, writeBackAdmission, refreshBlueprintFingerprints, questioningDependencyChanges } from './design-repair-unattended';
+import { renderDesignAuthorityBoundary, writeBackAdmission, refreshBlueprintFingerprints, questioningDependencyChanges, latestUsableDesignQuestioning } from './design-repair-unattended';
 import { currentBlueprintSliceId } from './blueprint-admission';
 import type { ProviderRef } from './types';
 import { prepareBlueprintDesignDraft, prepareBlueprintSourceItems } from './blueprint-discovery';
@@ -289,7 +289,7 @@ export function validateInitialDesignInvocation(purpose: 'author' | 'questioning
 
 /** Observation only; admission, candidate acceptance and P3 writes remain runtime-owned. */
 export function readInitialDesignDelivery(input: { projectRoot: string; frameworkRoot?: string; manifest: InitialDesignGoalManifest;
-  providerState?: 'available' | 'unavailable' | 'unknown'; questioningCurrent?: boolean }): InitialDesignObservation {
+  providerState?: 'available' | 'unavailable' | 'unknown'; questioningCurrent?: boolean; questioningResult?: BlueprintRecord | null }): InitialDesignObservation {
   const blueprintPath = componentBlueprintPath(input.projectRoot, input.manifest.feature);
   const candidatesPath = path.join(path.dirname(blueprintPath), 'change-unit-candidates.json');
   const base = { blueprintPath, candidatesPath };
@@ -298,8 +298,9 @@ export function readInitialDesignDelivery(input: { projectRoot: string; framewor
     const designRepair = fs.existsSync(blueprintPath) ? requestDesignRepair(input.projectRoot, input.manifest) : undefined;
     if (designRepair) return { ...base, kind: 'author', designRepair, issues: designRepair.brief.items.map(item => item.basis) };
     const loaded = loadCanonicalBlueprint(input.projectRoot, input.manifest.feature);
-    // The old answers remain public context on disk. Only a credible current receipt qualifies them for this evaluation.
-    if (input.questioningCurrent === false) {
+    if (input.questioningResult) loaded.blueprint.review_summary = { ...asRecord(loaded.blueprint.review_summary), questioning: input.questioningResult };
+    // Denials are author feedback; a pass alone needs the current author-content receipt.
+    if (input.questioningResult === null || input.questioningCurrent === false && !independentQuestioningBlockers(loaded.blueprint).length) {
       const questioning = asRecord(asRecord(loaded.blueprint.review_summary)?.questioning);
       if (questioning) questioning.status = 'incomplete';
     }
@@ -376,6 +377,28 @@ function previousDesignWork(input: { projectRoot: string; manifest: InitialDesig
   }
   const label = initialDesignInvocationLabel(input.observation);
   const runs = input.deliveryRuns ?? readOriginalDeliveryRuns(input.projectRoot, input.manifest);
+  if (input.observation.kind === 'questioning') {
+    const available = runs.filter(run => run.manifest.feature === input.manifest.feature)
+      .map(run => ({ run, ...latestUsableDesignQuestioning(path.resolve(input.projectRoot, run.manifest.report_dir), [label], run.events) }));
+    const usable = available.filter(item => item.original).sort((a, b) => String(a.run.manifest.created_at).localeCompare(String(b.run.manifest.created_at))).at(-1);
+    const previous = usable?.original;
+    let actualDiff: import('./types').ContextFileEntry[] | null = null;
+    let affectedDependencies: import('./capability-resolution').ResolutionDependency[] = [];
+    try {
+      const current = loadCanonicalBlueprint(input.projectRoot, input.manifest.feature).blueprint;
+      affectedDependencies = questioningDependencyChanges(input.projectRoot, current, previous?.preSnapshot, input.observation.blueprintPath);
+      if (previous) actualDiff = [{ label: '(actual blueprint changes)', content: JSON.stringify(compareAuthoritativeContent(
+        blueprintAuthorContent(YAML.parse(previous.beforeBlueprint)), blueprintAuthorContent(current)), null, 2) }];
+    } catch { /* Missing originals retain full first-reading context. */ }
+    parts.push(...independentVerificationContext({ previousOriginal: previous
+      ? { label: previous.source, kind: 'path', content: '上轮公开独立质询完整原件；读取全部结论及未闭合项。' } : null,
+      actualDiff, affectedDependencies, currentEvidence: [{ label: input.observation.blueprintPath, kind: 'path', content: '当前设计与全部机器缺口；旧run基线不是上次Q前像。' }] })
+      .map(entry => `${entry.label}\n${entry.content}`));
+    if (usable?.result) parts.push(`前次未通过的完整质询项（历史线索，必须逐项复核，不是当前结论）：\n${JSON.stringify(asRecords(usable.result.items)
+      .filter(item => item.disposition === 'blocker').map(item => ({ scope_ref: item.scope_ref, question: item.question, answer: item.answer })), null, 2)}`);
+    if (available.some(item => item.unavailable)) parts.push('上次质询未交回可用对象，请按既有格式返回。');
+    return { lines: parts, questioned: !!previous };
+  }
   const previous = runs.filter(run => run.manifest.feature === input.manifest.feature).flatMap(run => run.events
     .filter(event => event.type === 'agent_invoke_end' && event.phase === label && event.invoke_id).map(event => ({ run, event })))
     .sort((a, b) => String(a.event.ts).localeCompare(String(b.event.ts))).at(-1);
@@ -383,16 +406,12 @@ function previousDesignWork(input: { projectRoot: string; manifest: InitialDesig
   const { run, event } = previous;
   const runDir = path.resolve(input.projectRoot, run.manifest.report_dir);
   let body: string | null = null;
-  let draft: string | undefined;
-  let draftSource: string | undefined;
   let source: string;
   // Read the previous call's transport, including process -> session successors.
   if (event.handoff_report) {
     source = path.resolve(runDir, event.handoff_report.path);
     const saved = readHandoffMaterial<{ report: SessionExecutionReport; draft_outputs?: Record<string, string> }>(runDir, event.handoff_report);
     body = saved.report.details ?? null;
-    const output = saved.draft_outputs?.['initial-design-blueprint.yaml'];
-    if (output) { draft = Buffer.from(output, 'base64').toString('utf8'); draftSource = `${source}#draft_outputs["initial-design-blueprint.yaml"]`; }
   } else {
     const directory = path.join(runDir, 'phases', label, event.invoke_id!);
     const events = path.join(directory, 'agent-events.jsonl');
@@ -401,45 +420,10 @@ function previousDesignWork(input: { projectRoot: string; manifest: InitialDesig
       const raw = fs.readFileSync(source, 'utf8');
       body = extractProviderFinalText(raw, run.manifest.adapter);
     }
-    const output = path.join(directory, 'draft-output.yaml');
-    if (fs.existsSync(output)) { draft = fs.readFileSync(output, 'utf8'); draftSource = output; }
   }
   const completed = invocationCompleted({ ...event, exitCode: event.exit_code });
-  if (input.observation.kind === 'questioning') {
-    const directory = path.join(runDir, 'phases', label, event.invoke_id!);
-    const raw = path.join(directory, 'questioning-output.json');
-    if (fs.existsSync(raw)) { source = raw; body = fs.readFileSync(raw, 'utf8'); }
-    let actualDiff: import('./types').ContextFileEntry[] | null = null;
-    let affectedDependencies: import('./capability-resolution').ResolutionDependency[] = [];
-    try {
-      const beforeFile = path.join(directory, 'blueprint-before.yaml');
-      const issued = sessionExecutionForInvoke(runDir, event.invoke_id!);
-      const current = loadCanonicalBlueprint(input.projectRoot, input.manifest.feature).blueprint;
-      affectedDependencies = questioningDependencyChanges(input.projectRoot, current, issued?.request.pre_snapshot ?? undefined, input.observation.blueprintPath);
-      if (completed && issued?.request.pre_snapshot && !issued.request.pre_snapshot.failureReason && fs.existsSync(beforeFile)) {
-        const before = asRecord(YAML.parse(fs.readFileSync(beforeFile, 'utf8')));
-        if (before) actualDiff = [{ label: '(actual blueprint changes)', content: JSON.stringify(compareAuthoritativeContent(
-          blueprintAuthorContent(before), blueprintAuthorContent(current)), null, 2) }];
-      }
-    } catch { /* Missing actual Q input originals require complete verification, not an invented diff. */ }
-    parts.push(...independentVerificationContext({ previousOriginal: completed && body ? { label: source, kind: 'path', content: '上轮公开独立质询完整原件；读取全部结论及未闭合项。' } : null,
-      actualDiff, affectedDependencies, currentEvidence: [{ label: input.observation.blueprintPath, kind: 'path', content: '当前设计与全部机器缺口；旧run基线不是上次Q前像。' }] })
-      .map(entry => `${entry.label}\n${entry.content}`));
-  }
-  let questioned = false;
-  if (input.observation.kind === 'questioning' && completed && draft) {
-    try {
-      const previousBlueprint = asRecord(YAML.parse(draft));
-      const result = asRecord(asRecord(previousBlueprint?.review_summary)?.questioning);
-      questioned = result?.status === 'complete' && asRecords(result.items).length > 0;
-      if (questioned) {
-        const unresolved = independentQuestioningBlockers(previousBlueprint!).map(item => ({ scope_ref: item.scope_ref, question: item.question, answer: item.answer }));
-        parts.push(`前次未通过的完整质询项（历史线索，必须逐项复核，不是当前结论）：\n原质询草稿：${draftSource}\n${JSON.stringify(unresolved, null, 2)}`);
-      }
-    } catch { /* No completed questioning artifact means the first reading remains unfinished. */ }
-  }
-  parts.push(`前次本职责实际执行结果：status=${event.status ?? 'unknown'}，exit=${event.exit_code ?? 'unknown'}，正常完成=${completed}，timed_out=${event.timed_out === true}。调用结束不等于本职产物完成。\n原调用与日志按 ${path.resolve(input.projectRoot, input.manifest.report_dir, 'events.jsonl')} 及manifest既有lineage中的本职责最近记录定位；调用编号和日志路径只作审计，不构成新业务工作。\n${input.observation.kind === 'questioning' && !questioned ? '首次正文阅读完成后再读前次原件，不提前继承其内容。' : `前次最终正文（只作线索，不是质量结论或本次授权）：\n${body || '无可提取的最终正文；按磁盘材料和当前机器缺口继续，不猜上轮结果。'}`}`);
-  return { lines: parts, questioned };
+  parts.push(`前次本职责实际执行结果：status=${event.status ?? 'unknown'}，exit=${event.exit_code ?? 'unknown'}，正常完成=${completed}，timed_out=${event.timed_out === true}。调用结束不等于本职产物完成。\n原调用与日志按 ${path.resolve(input.projectRoot, input.manifest.report_dir, 'events.jsonl')} 及manifest既有lineage中的本职责最近记录定位；调用编号和日志路径只作审计，不构成新业务工作。\n前次最终正文（只作线索，不是质量结论或本次授权）：\n${body || '无可提取的最终正文；按磁盘材料和当前机器缺口继续，不猜上轮结果。'}`);
+  return { lines: parts, questioned: false };
 }
 
 function questioningReadingInstruction(blueprintPath: string, recheck: boolean): string {

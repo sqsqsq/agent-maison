@@ -11,6 +11,7 @@ import { inspectRetirement } from './component-closure-inputs';
 import { ComponentClosureIssue } from './component-closure-model';
 import { identityNeutralDigest, IdentityNeutralDigestReaders } from './identity-neutral-digest';
 import { asRecord, asRecords } from './component-blueprint-model';
+import { collectReviewQuestioning, ReviewQuestioning } from './blueprint-review-questioning';
 
 export interface ReviewChangeUnit {
   id: string;
@@ -32,6 +33,7 @@ export interface BlueprintReviewInputs {
   sourceGaps: string[];
   closureExists: boolean;
   sourceRootRelative?: string;
+  questioning?: ReviewQuestioning;
 }
 
 /** 展示逐项容错；严格枚举消费者继续使用 enumerateCanonicalChangeUnits。 */
@@ -112,6 +114,7 @@ export function collectBlueprintReviewInputs(projectRoot: string, loaded: Return
     sourceGaps.push(...item.errors.map(error => `${item.id} (${path.relative(projectRoot, item.canonicalPath).replace(/\\/g, '/')})：${relativeMessage(error)}`));
   }
   return { units, sourceGaps, closureExists: fs.existsSync(loaded.canonicalPath.replace('component-blueprint.yaml', 'component-closure.md')),
+    questioning: collectReviewQuestioning(projectRoot, loaded.blueprint, loaded.canonicalPath, units.map(item => item.canonicalPath)),
     sourceRootRelative: path.relative(path.dirname(loaded.canonicalPath), projectRoot).replace(/\\/g, '/') };
 }
 

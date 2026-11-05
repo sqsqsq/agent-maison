@@ -13,7 +13,7 @@ import { deriveInSessionFingerprint } from './utils/goal-phase-runtime';
 import { GoalPhaseRuntime, bindGuardianOrKill, resolveManifestIdentityBaseline } from './goal-phase-runtime';
 import { AttendedGoalPhaseExecutor, DetachedGoalPhaseExecutor, createWorkUnitExecutionContext, observeWorkUnitProviderSession, workUnitExecutionInputs } from './utils/goal-phase-executor';
 import { loadEventsJsonl, loadAuthoritativeEvents } from './utils/goal-runner-phase';
-import { resolveHeadlessInvokePlan, extractProviderFinalText } from './utils/agent-invoke';
+import { resolveHeadlessInvokePlan, extractProviderFinalText, readInvokeFinalText } from './utils/agent-invoke';
 import { invocationCompleted, invocationEndFacts } from './utils/invocation-completion';
 import { reconcileGuardianOwnership } from './utils/goal-containment-reconcile';
 import { defaultProcessProbe } from './utils/device-session';
@@ -786,7 +786,7 @@ async function runGoalExecutionAction(options: Parameters<typeof runGoalModeSess
           emit({ type: 'agent_process_settled', run_id: context.runId, phase: context.phase, invoke_id: issued.request.invoke_id,
             status: result.status, ...invocationEndFacts(result), kill_attempted: result.kill_attempted });
           report = { status: bindingError ? 'failed' : result.status, phase: context.phase,
-            details: bindingError ?? result.details ?? extractProviderFinalText(result.stdout, context.adapter) ?? `native exit=${result.exitCode}` };
+            details: bindingError ?? result.details ?? readInvokeFinalText(result.stdout, path.join(directory, 'agent-output.log'), context.adapter) ?? `native exit=${result.exitCode}` };
         } finally { clearInterval(heartbeat); }
       }
       fs.writeFileSync(resultPath, JSON.stringify(report) + '\n');

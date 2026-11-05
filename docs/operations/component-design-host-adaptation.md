@@ -228,11 +228,13 @@ derived_from:
     - change_unit_id: <unit-id>
       binding: bound
       identity_neutral_digest: <digest> # 仅 canonical 能确定原架构相关集合时提供
-projection: component-blueprint-review@12
+projection: component-blueprint-review@13
 ---
 ```
 
 正文按方案摘要、背景/目标/边界、术语、用户旅程与界面、整体方案、关键流程、数据与存储、关键取舍、失败与恢复、质量与安全、施工与上线、验收、待补问题组织。精确字段/类型、接口/存储、完整验收、用例分支、施工映射、需求追溯、质询/稳定地址及 4+1 章节对照留在同文档参考。canonical 蓝图与 CU 仍是唯一设计来源；宿主不必自拼附件或另维护人读真源。外部材料须先由设计 owner 消费形成事实，renderer 不读取需求原文、Feature 的 use-cases.yaml、产品源码或外部 catalog 自行补设计。
+
+参考 G 节的独立质询按本蓝图及已有 CU 的有效调用原件逐 scope 重建：仍为 blocker 的问题与依据、待人决定项直接列出；曾被否定而后续明确关闭的 scope，在两次质询所读作者内容有变化时保留原问题与复核结果，称“改稿后关闭”，只说明先后顺序，不逐题归因到具体改动。作者内容未变即关闭的 scope 仅呈现去重后的撤回数量及相关有效原件相对链接；例行覆盖项留在最近有效原件。漏项、未完成、写界不干净或不可解析的交回不能证明关闭，也不改变正文、计数或链接。完整提示、输出、被审稿和格式错误原文继续保存在原 goal-runs 调用目录，不新增问题台账，不参与准入；无关联 run 时仍展示蓝图已有未决项，并说明缺原件、无法确认历史关闭或撤回。原件发生有效变化后沿同一 `--write-review` 入口刷新，原件差异由既有全文比较提示重建，不升蓝图 revision。
 
 Maison 直接从当前 canonical CU 收集目的、交付、模块/touches、显式依赖、约束和安全中间态，施工拆分保留在正文，精确 supersedes 与文件/谓词映射在参考可查。逐 CU 与生产投影共用纯选取/合并逻辑，保留实际继承范围及冲突；完整 AC/BD/NFR 与 files 在参考只完整展示一次，正文验收主题与 CU 使用来源限定编号/链接，不按裸 AC-1 跨目标去重。目录树合并公共前缀且能还原精确路径，用途只取原组件说明或链接接口明细，目录不扩大授权。身份/准入/来源/机制说明集中参考入口，可读标签与稳定锚点保留；说明缺失/过期提示在文首。readiness/run/完成状态独立，完成情况链接原 closure 投影。
 
@@ -268,7 +270,7 @@ designOnly 不调用依赖未来 plan.design_ref_mappings 的 componentProjectio
 ### 4.5 随包样例
 
 - 有效：[`samples/blueprint-review-projection.valid.md`](samples/blueprint-review-projection.valid.md)
-- 历史无效样例（投影新增设计事实，保留旧 @5 格式，单独校验同时报格式过期）：[`samples/blueprint-review-projection.invalid-added-fact.md`](samples/blueprint-review-projection.invalid-added-fact.md)；当前正文新增事实反例由测试在当前有效投影上追加事实后验证。
+- 历史无效样例（投影新增设计事实，保留旧格式，单独校验同时报格式过期）：[`samples/blueprint-review-projection.invalid-added-fact.md`](samples/blueprint-review-projection.invalid-added-fact.md)；当前正文新增事实反例由测试在当前有效投影上追加事实后验证。
 
 完整样例由一个充实的框架表达夹具生成，展示两个 CU 共享/专属目标与 4+1 细节；它不是真实需求，不能替代宿主下一项正式需求从设计写作、只读校验到下游实际投影消费的验收。
 

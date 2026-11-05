@@ -23,6 +23,7 @@ import { parseEnvelopeLine } from './claude-envelope';
 import {
   createCodexTerminalScanner,
   extractProviderSessionId,
+  extractProviderFinalText,
   isProviderToolResult,
   resolveTerminalEventParser,
   type CodexTerminalScanner,
@@ -283,6 +284,14 @@ export function agentEventsLogPath(outputLogPath: string): string {
 
 export function agentStderrLogPath(outputLogPath: string): string {
   return path.join(path.dirname(outputLogPath), 'agent-stderr.log');
+}
+
+/** Prefer pure stdout originals; the mixed log is needed only when the memory tail may be truncated. */
+export function readInvokeFinalText(stdout: string, outputLogPath: string, adapterName?: string): string | null {
+  const events = agentEventsLogPath(outputLogPath);
+  const raw = fs.existsSync(events) ? fs.readFileSync(events, 'utf8')
+    : stdout.length >= INVOKE_OUTPUT_MEMORY_CAP && fs.existsSync(outputLogPath) ? fs.readFileSync(outputLogPath, 'utf8') : stdout;
+  return extractProviderFinalText(raw, adapterName);
 }
 
 export interface HeadlessInvokePlan {
@@ -1397,9 +1406,9 @@ async function spawnHeadlessAsync(
         }, terminalParser)
       : null;
 
-  child.stdout?.on('data', (buf: Buffer) => {
-    if (buf.length) lastOutputAt = Date.now();
-    const s = buf.toString();
+  child.stdout?.setEncoding('utf8');
+  child.stdout?.on('data', (s: string) => {
+    if (s.length) lastOutputAt = Date.now();
     appendCaptured('stdout', s);
     // Persist the initial identity envelope before publishing its projection to the coordinator.
     if (splitStreams) fs.writeSync(splitStreams.eventsFd, s);
@@ -1407,9 +1416,9 @@ async function spawnHeadlessAsync(
     opts.onObservation?.({ type: 'stdout', chunk: s });
     writeHumanLog(s);
   });
-  child.stderr?.on('data', (buf: Buffer) => {
-    if (buf.length) lastOutputAt = Date.now();
-    const s = buf.toString();
+  child.stderr?.setEncoding('utf8');
+  child.stderr?.on('data', (s: string) => {
+    if (s.length) lastOutputAt = Date.now();
     appendCaptured('stderr', s);
     if (splitStreams) splitStreams.stderr.write(s);
     opts.onObservation?.({ type: 'stderr', chunk: s });

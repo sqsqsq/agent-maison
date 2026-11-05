@@ -913,6 +913,8 @@ export function readCurrentDispositionInput(opts: CleanPassOptions | CurrentRequ
       const items = asRecord(asRecord(opts.blueprint?.review_summary)?.questioning)?.items;
       const item = itemIndex !== undefined && Array.isArray(items) ? asRecord(items[Number(itemIndex)]) : undefined;
       const realNegative = item?.disposition === 'blocker';
+      // The explicit Q finding below already names this scope; array positions are not another defect.
+      if (realNegative && opts.questioningFindings?.some(finding => finding.scope_ref === item.scope_ref)) continue;
       const independentFormat = issue.path.startsWith('$.review_summary.questioning') && !realNegative;
       const action = providers.has(issue.id) ? opts.providerState === 'unavailable' ? 'wait' : 'verify' : independentFormat ? 'verify' : 'repair';
       problems.push({ phase, id: `open_finding:${issue.id}@${issue.path}`, action, affects: 'completion', severity: 'BLOCKER', owner: phase,

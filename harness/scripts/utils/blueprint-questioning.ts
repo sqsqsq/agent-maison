@@ -14,6 +14,7 @@ import {
   BLUEPRINT_SCHEMA,
   renderBlueprintFieldResponsibilities,
 } from './component-blueprint-model';
+import { extractJsonObjectFromText } from './json-object-from-text';
 import { validateProvenanceRecord } from './blueprint-provenance';
 import { APP_LENS_QUESTIONS, isApplicableView, isChangedView } from './blueprint-views';
 
@@ -97,7 +98,10 @@ export function createIndependentQuestioningResult(input: {
 
 /** Read only the existing structured result, never infer a verdict from prose. */
 export function parseIndependentQuestioningOutput(output: string): BlueprintRecord {
-  const parsed = asRecord(JSON.parse(output));
+  let parsed: BlueprintRecord | null = null;
+  try { const value: unknown = JSON.parse(output); parsed = Array.isArray(value) ? { items: value } : asRecord(value) ?? null; }
+  catch { /* Wrapped objects retain the existing tolerant extraction path. */ }
+  parsed ??= extractJsonObjectFromText(output) ?? null;
   const result = asRecord(asRecord(parsed?.review_summary)?.questioning) ?? asRecord(parsed?.questioning) ?? parsed;
   if (!result || !Array.isArray(result.items) || result.items.some(item => !asRecord(item))) {
     throw new Error('独立质询必须返回现有 questioning JSON 对象及 items 数组；自然语言总结不能签发结果。');

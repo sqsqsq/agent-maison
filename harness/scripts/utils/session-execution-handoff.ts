@@ -166,8 +166,8 @@ export function readSessionExecution(runDir: string, requestPath?: string): Issu
   return { request, reference: ref, event: issued };
 }
 
-export function acceptedSessionReport(runDir: string, issued: IssuedSessionExecution): { report: SessionExecutionReport; event: GoalRunEvent } | null {
-  const event = sessionEvents(runDir).find(event => event.type === 'agent_invoke_end' && event.invoke_id === issued.request.invoke_id
+export function acceptedSessionReport(runDir: string, issued: IssuedSessionExecution, originalEvents?: readonly GoalRunEvent[]): { report: SessionExecutionReport; event: GoalRunEvent } | null {
+  const event = (originalEvents ?? sessionEvents(runDir)).find(event => event.type === 'agent_invoke_end' && event.invoke_id === issued.request.invoke_id
     && event.handoff_report?.request_sha256 === issued.reference.sha256);
   if (!event?.handoff_report) return null;
   const archived = readHandoffMaterial<{ report: SessionExecutionReport }>(runDir, event.handoff_report);
@@ -203,11 +203,11 @@ export function observeSessionExecution(runDir: string, issued: IssuedSessionExe
 }
 
 /** Read original request material for evidence; copied paths do not authorize current execution. */
-export function readExecutionRequestOriginal(runDir: string, invokeId?: string): IssuedSessionExecution | null {
-  const events = loadAuthoritativeEvents(path.join(runDir, 'events.jsonl'));
+export function readExecutionRequestOriginal(runDir: string, invokeId?: string, originalEvents?: readonly GoalRunEvent[]): IssuedSessionExecution | null {
+  const events = originalEvents ?? loadAuthoritativeEvents(path.join(runDir, 'events.jsonl'));
   const start = [...events].reverse().find(event => event.type === 'agent_invoke_start' && (!invokeId || event.invoke_id === invokeId));
   if (!start?.invoke_id || !start.phase) return null;
-  const signed = sessionExecutionForInvoke(runDir, start.invoke_id);
+  const signed = sessionExecutionForInvoke(runDir, start.invoke_id, events);
   if (signed) return signed;
   const directory = inside(runDir, path.join(runDir, 'phases', start.phase, start.invoke_id, 'request'));
   if (!fs.existsSync(path.dirname(directory))) return null;
@@ -283,8 +283,8 @@ export async function interruptSessionExecution(input: {
   } });
 }
 
-export function sessionExecutionForInvoke(runDir: string, invokeId: string): IssuedSessionExecution | null {
-  const event = [...sessionEvents(runDir)].reverse().find(row => row.type === 'phase_start' && row.invoke_id === invokeId && row.handoff_request);
+export function sessionExecutionForInvoke(runDir: string, invokeId: string, originalEvents?: readonly GoalRunEvent[]): IssuedSessionExecution | null {
+  const event = [...originalEvents ?? sessionEvents(runDir)].reverse().find(row => row.type === 'phase_start' && row.invoke_id === invokeId && row.handoff_request);
   return event?.handoff_request ? { event, reference: event.handoff_request, request: readHandoffMaterial(runDir, event.handoff_request) } : null;
 }
 

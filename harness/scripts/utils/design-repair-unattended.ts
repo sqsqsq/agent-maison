@@ -182,9 +182,9 @@ export function designWorkHasNoProgress(input: Parameters<typeof evaluateComplet
   return evaluateCompletionProgress(input).halt;
 }
 
-/** Reuse only a real completed, clean Q over the same business input and unchanged raw dependencies. */
+/** A real clean denial reaches the author; only admission by a pass requires unchanged author candidates. */
 export function reusableDesignQuestioning(input: {
-  projectRoot: string; blueprintPath: string; blueprint: BlueprintRecord; beforeBlueprint: string; output: string;
+  projectRoot: string; blueprintPath: string; blueprint: BlueprintRecord; beforeBlueprint: string; beforeDocument?: BlueprintRecord; output: string;
   providerId: string; completed: boolean; preSnapshot?: ReturnType<typeof capturePhaseInvocationSnapshot>;
   postSnapshot?: ReturnType<typeof capturePhaseInvocationSnapshot>; previous?: BlueprintRecord;
   /** Archived legacy write-in-place output, never a postimage sampled from current files. */
@@ -193,8 +193,8 @@ export function reusableDesignQuestioning(input: {
 }): BlueprintRecord | null {
   if (!input.completed || !input.preSnapshot || input.preSnapshot.failureReason) return null;
   try {
-    const before = asRecord(YAML.parse(input.beforeBlueprint));
-    if (!before || stableStringify(blueprintAuthorContent(before)) !== stableStringify(blueprintAuthorContent(input.blueprint))) return null;
+    const before = input.beforeDocument ?? asRecord(YAML.parse(input.beforeBlueprint));
+    if (!before) return null;
     if (input.postSnapshot) {
       if (diffPhaseInvocationSnapshots(input.preSnapshot, input.postSnapshot).kind !== 'clean') return null;
     } else {
@@ -207,22 +207,17 @@ export function reusableDesignQuestioning(input: {
         && (stableStringify(withoutQuestioning(before)) !== stableStringify(withoutQuestioning(after))
           || stableStringify(parseIndependentQuestioningOutput(input.output)) !== stableStringify(asRecord(after.review_summary)?.questioning))) return null;
     }
-    const files = [...new Set([...blueprintSourceRefFiles(input.projectRoot, blueprintAuthorContent(before), true),
-      ...blueprintSourceRefFiles(input.projectRoot, blueprintAuthorContent(input.blueprint), true)])];
-    for (const file of files) {
-      if (path.resolve(file) === path.resolve(input.blueprintPath)) continue;
-      const relative = path.relative(input.projectRoot, file).replace(/\\/g, '/');
-      const entry = input.preSnapshot.entries.find(item => item.path === relative && item.kind === 'file');
-      if (!entry || sha256Hex(fs.readFileSync(file)) !== entry.sha256) return null;
-    }
+    const parsed = parseIndependentQuestioningOutput(input.output);
+    const review = asRecord(before.review_summary) ?? {};
+    const result = independentQuestioningEnvelope(parsed, input.providerId, review.authored_by, input.previous);
+    const errors = validateBlueprintQuestioning({ ...before, review_summary: { ...review, questioning: result } });
+    if (errors.some(issue => issue.id !== 'blueprint_admission_false_pass')) return null;
+    if (independentQuestioningBlockers({ review_summary: { questioning: result } }).length) return result;
+    if (stableStringify(blueprintAuthorContent(before)) !== stableStringify(blueprintAuthorContent(input.blueprint))) return null;
     for (const [file, beforeText] of Object.entries(input.additionalInputs ?? {})) {
       if (compareRelatedInputSnapshots(designWorkSnapshot([file], { [file]: beforeText }), designWorkSnapshot([file])) !== 'unchanged') return null;
     }
-    const parsed = parseIndependentQuestioningOutput(input.output);
-    const review = asRecord(input.blueprint.review_summary) ?? {};
-    const result = independentQuestioningEnvelope(parsed, input.providerId, review.authored_by, input.previous);
-    const errors = validateBlueprintQuestioning({ ...input.blueprint, review_summary: { ...review, questioning: result } });
-    return errors.some(issue => issue.id !== 'blueprint_admission_false_pass') ? null : result;
+    return result;
   } catch { return null; }
 }
 
@@ -302,8 +297,8 @@ export function recordDesignRepairInvocation(runDir: string, purpose: DesignRepa
 }
 
 /** Project the existing invocation originals; no Q validity record is written. */
-function questioningOriginal(runDir: string, start: GoalRunEvent): {
-  beforeBlueprint: string; output: string; source: string; completed: boolean; providerId: string;
+function questioningOriginal(runDir: string, start: GoalRunEvent, originalEvents?: readonly GoalRunEvent[]): {
+  beforeBlueprint: string; beforeDocument?: BlueprintRecord; output: string; source: string; completed: boolean; providerId: string;
   preSnapshot?: ReturnType<typeof capturePhaseInvocationSnapshot>; postSnapshot?: ReturnType<typeof capturePhaseInvocationSnapshot>;
   afterBlueprint?: string;
   previous?: BlueprintRecord; additionalInputs: Record<string, string>;
@@ -313,9 +308,10 @@ function questioningOriginal(runDir: string, start: GoalRunEvent): {
     if (start.phase !== designRepairInvokeLabel('questioning') && start.phase !== 'initial-design-questioning') return null;
     const initial = start.phase === 'initial-design-questioning';
     const directory = path.join(runDir, 'phases', start.phase, start.invoke_id);
-    const session = sessionExecutionForInvoke(runDir, start.invoke_id);
-    const issued = session ?? readExecutionRequestOriginal(runDir, start.invoke_id);
-    const accepted = session && acceptedSessionReport(runDir, session);
+    const events = originalEvents ?? sessionEvents(runDir);
+    const session = sessionExecutionForInvoke(runDir, start.invoke_id, events);
+    const issued = session ?? readExecutionRequestOriginal(runDir, start.invoke_id, events);
+    const accepted = session && acceptedSessionReport(runDir, session, events);
     if (session && !accepted) return null;
     const resultFile = path.join(directory, 'design-result.json');
     let saved: { draft_outputs?: Record<string, string>; outcome?: DesignRepairInvokeOutcome; post_snapshot?: ReturnType<typeof capturePhaseInvocationSnapshot> } = {};
@@ -331,7 +327,6 @@ function questioningOriginal(runDir: string, start: GoalRunEvent): {
       : outputs[payloadName] ? Buffer.from(outputs[payloadName], 'base64').toString('utf8') : '';
     const doc = asRecord(YAML.parse(beforeBlueprint));
     const outcome = saved.outcome;
-    const events = sessionEvents(runDir);
     const ended = accepted?.event ?? [...events].reverse().find(event => event.type === 'agent_invoke_end' && event.invoke_id === start.invoke_id);
     let output = accepted?.report.details ?? outcome?.output
       ?? (fs.existsSync(path.join(directory, 'questioning-output.json')) ? fs.readFileSync(path.join(directory, 'questioning-output.json'), 'utf8') : '');
@@ -374,7 +369,8 @@ function questioningOriginal(runDir: string, start: GoalRunEvent): {
         }
       }
     }
-    return { beforeBlueprint, output, source: fs.existsSync(path.join(directory, 'questioning-output.json')) ? path.join(directory, 'questioning-output.json')
+    return { beforeBlueprint, ...(doc ? { beforeDocument: doc } : {}), output, source: fs.existsSync(path.join(directory, 'questioning-output.json')) ? path.join(directory, 'questioning-output.json')
+      : accepted?.event.handoff_report ? path.resolve(runDir, accepted.event.handoff_report.path)
       : outcome?.output ? resultFile : afterBlueprint ? legacyDraft : resultFile,
       completed: !!ended && invocationCompleted({ ...ended, exitCode: ended.exit_code }),
       providerId: initial ? 'initial-design-questioning' : DESIGN_REPAIR_QUESTIONING_PROVIDER,
@@ -387,6 +383,26 @@ function questioningOriginal(runDir: string, start: GoalRunEvent): {
 }
 
 export { questioningOriginal as readDesignQuestioningOriginal };
+
+/** Latest completed usable original, with unavailable returns kept out of public business context. */
+export function latestUsableDesignQuestioning(runDir: string, phases: readonly string[], originalEvents?: readonly GoalRunEvent[]): {
+  original: NonNullable<ReturnType<typeof questioningOriginal>> | null; result: BlueprintRecord | null; unavailable: boolean;
+} {
+  let unavailable = false;
+  const events = originalEvents ?? sessionEvents(runDir);
+  for (const start of [...events].reverse()) {
+    if (start.type !== 'agent_invoke_start' || !phases.includes(String(start.phase))) continue;
+    const original = questioningOriginal(runDir, start, events);
+    if (!original?.completed) continue;
+    try {
+      const blueprint = asRecord(YAML.parse(original.beforeBlueprint));
+      const result = blueprint && reusableDesignQuestioning({ ...original, additionalInputs: {}, projectRoot: path.resolve(runDir), blueprintPath: '', blueprint });
+      if (result) return { original, result, unavailable };
+    } catch { /* An unusable return is not a new public Q baseline. */ }
+    unavailable = true;
+  }
+  return { original: null, result: null, unavailable };
+}
 
 export interface DesignRepairInvocationGuard {
   pre: ReturnType<typeof capturePhaseInvocationSnapshot>;
@@ -477,6 +493,8 @@ class AttemptFailure extends Error {
 class AttemptWaiting extends Error {
   constructor(readonly step: DesignRepairPurpose, message: string) { super(message); }
 }
+
+class QuestioningFormatFailure extends AttemptFailure {}
 
 const canon = (value: unknown): string => stableStringify(value ?? null);
 
@@ -658,8 +676,8 @@ function authorPrompt(input: UnattendedDesignRepairInput, draftFile: string, can
 
 function questioningPrompt(input: UnattendedDesignRepairInput, draftFile: string, draft: BlueprintRecord, auxiliaryDrafts: readonly string[], transactionTiming: readonly string[]): string {
   const runDir = path.resolve(input.projectRoot, input.reportDir);
-  const start = [...sessionEvents(runDir)].reverse().find(event => event.type === 'agent_invoke_start' && event.phase === designRepairInvokeLabel('questioning'));
-  const previous = start ? questioningOriginal(runDir, start) : null;
+  const usable = latestUsableDesignQuestioning(runDir, [designRepairInvokeLabel('questioning'), 'initial-design-questioning']);
+  const previous = usable.original;
   let actualDiff: import('./types').ContextFileEntry[] | null = null;
   if (previous?.completed && previous.preSnapshot && previous.postSnapshot && diffPhaseInvocationSnapshots(previous.preSnapshot, previous.postSnapshot).kind === 'clean') {
     try {
@@ -684,6 +702,7 @@ function questioningPrompt(input: UnattendedDesignRepairInput, draftFile: string
     '本次实际只读，不写草稿或工程文件。最终只返回既有questioning形状的JSON对象；框架保留本次原件并在调用完成与只读核对后回填review_summary.questioning。',
     ...renderQuestioningResultInstructions(draft, DESIGN_REPAIR_QUESTIONING_PROVIDER),
     ...publicContext.map(entry => `${entry.label}\n${entry.content}`),
+    ...(usable.unavailable ? ['上次质询未交回可用对象，请按既有格式返回。'] : []),
     ...(input.requirement ? ['', '## 原始请求与候选一致性', input.requirement,
       renderGoalBrief(assembleGoalBrief(input.projectRoot, input.feature, { runId: input.runId }), { requirementInContext: true }),
       ...(auxiliaryDrafts.length ? [`同时只读本事务实际候选：${auxiliaryDrafts.join('；')}。`] : []),
@@ -886,7 +905,10 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
         const saved = prior ? questioningOriginal(runDir, prior) : null;
         const blueprint = asRecord(YAML.parse(fs.readFileSync(draftFile, 'utf8')));
         const reused = saved && blueprint && batchWasReviewed(saved, prior) ? reusableDesignQuestioning({ ...saved, projectRoot, blueprintPath: draftFile, blueprint }) : null;
-        if (saved && blueprint && reused && (!saved.afterBlueprint || stableStringify(asRecord(reviewOf(blueprint).questioning)) === stableStringify(reused))) {
+        const denialHandedBack = reused && independentQuestioningBlockers({ review_summary: { questioning: reused } }).length
+          && events.slice(events.indexOf(prior!) + 1).some(event => event.type === 'agent_invoke_end' && event.phase === designRepairInvokeLabel('author')
+            && invocationCompleted({ ...event, exitCode: event.exit_code }));
+        if (saved && blueprint && reused && !denialHandedBack && (!saved.afterBlueprint || stableStringify(asRecord(reviewOf(blueprint).questioning)) === stableStringify(reused))) {
           if (!saved.afterBlueprint) applyIndependentQuestioningOutput(draftFile, path.join(runDir, 'phases', String(prior!.phase), prior!.invoke_id!, 'questioning-output.json'), saved.output, saved.providerId);
           usedQuestioningInvokeId = prior!.invoke_id;
           usedInvocation = prior;
@@ -911,13 +933,20 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
       let result: DesignRepairInvokeOutcome;
       try {
         const current = readDraft(purpose);
-        const latestQuestion = repairRoleStart(sessionEvents(runDir), 'questioning');
-        const saved = latestQuestion ? questioningOriginal(runDir, latestQuestion) : null;
+        const roleEvents = sessionEvents(runDir);
+        const latestQuestion = repairRoleStart(roleEvents, 'questioning');
+        const saved = latestQuestion ? questioningOriginal(runDir, latestQuestion, roleEvents) : null;
         const verified = saved && batchWasReviewed(saved, latestQuestion) && reusableDesignQuestioning({ ...saved, projectRoot, blueprintPath: draftFile, blueprint: current });
+        const authorAfterQuestion = latestQuestion && roleEvents.slice(roleEvents.indexOf(latestQuestion) + 1)
+          .some(event => event.type === 'agent_invoke_end' && event.phase === designRepairInvokeLabel('author') && invocationCompleted({ ...event, exitCode: event.exit_code }));
+        const currentWork = designWorkSnapshot(authorDrafts);
+        const reviewedCurrentWork = saved && compareRelatedInputSnapshots(designWorkSnapshot(authorDrafts,
+          { ...saved.additionalInputs, [draftFile]: saved.beforeBlueprint }), currentWork) === 'unchanged';
         const cu = originalCu && fs.existsSync(cuDraftFile) ? asChangeUnitArtifact(YAML.parse(fs.readFileSync(cuDraftFile, 'utf8'))) : undefined;
         result = await input.invoke(purpose, prompt, { pre, resolution, options: snapshotOptions,
-          evaluation: evaluationOf(current, designWorkSnapshot(authorDrafts), !!verified, pre, cu),
-          history: [...comparableHistory, ...(previousEvaluation ? [previousEvaluation] : [])], feedbackDelivered: feedbackDelivered || authorFeedback.length > 0 });
+          evaluation: evaluationOf(current, currentWork, !!verified && !authorAfterQuestion, pre, cu),
+          history: [...comparableHistory, ...(previousEvaluation ? [previousEvaluation] : [])],
+          feedbackDelivered: !!reviewedCurrentWork && (feedbackDelivered || authorFeedback.length > 0) });
       } finally {
         written = stopRecording();
       }
@@ -967,7 +996,11 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
         try { applyIndependentQuestioningOutput(draftFile,
           path.join(runDir, 'phases', String(start.phase), start.invoke_id, 'questioning-output.json'),
           result.output ?? '', DESIGN_REPAIR_QUESTIONING_PROVIDER); }
-        catch (error) { throw new AttemptFailure(purpose, `独立质询原件不可接受：${(error as Error).message}`); }
+        catch (error) {
+          try { parseIndependentQuestioningOutput(result.output ?? ''); }
+          catch { throw new QuestioningFormatFailure(purpose, `独立质询原件不可接受：${(error as Error).message}`); }
+          throw new AttemptFailure(purpose, `独立质询原件不可接受：${(error as Error).message}`);
+        }
       }
       return pre;
     };
@@ -1010,8 +1043,7 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
         if (path.resolve(file) === path.resolve(draftFile) || path.resolve(file) === path.resolve(canonicalPath)) continue;
         const relative = relOf(file);
         const entry = pre?.entries.find(item => item.path === relative && item.kind === 'file');
-        if (!entry) { known = false; continue; }
-        inputs[`dependency:${relative}`] = { exists: true, contentHash: entry.sha256 };
+        inputs[`dependency:${relative}`] = entry ? { exists: true, contentHash: entry.sha256 } : { exists: false, contentHash: '' };
       }
       return { acceptanceKey, inputs, disposition, completed: completed && known, checkFamilies: ['component-design'] };
     };
@@ -1022,8 +1054,10 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
     const initialQuestion = [...starts.slice(0, transactionAt)].reverse().find(event => event.type === 'agent_invoke_start' && event.phase === 'initial-design-questioning');
     const priorQuestions = [...(initialQuestion ? [initialQuestion] : []), ...starts.slice(transactionAt + 1)
       .filter(event => event.type === 'agent_invoke_start' && event.phase === designRepairInvokeLabel('questioning'))];
+    const lastAuthor = repairRoleStart(starts, 'author');
+    const authorAt = lastAuthor ? starts.indexOf(lastAuthor) : starts.length;
     for (const start of priorQuestions) {
-      const saved = questioningOriginal(runDir, start);
+      const saved = questioningOriginal(runDir, start, starts);
       if (!saved || !batchWasReviewed(saved, start)) continue;
       const priorArchitecture = context.architecture;
       try {
@@ -1038,7 +1072,8 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
         const contents = { ...saved.additionalInputs, [draftFile]: YAML.stringify(doc) };
         const historicalCu = contents[cuDraftFile] ? asChangeUnitArtifact(YAML.parse(contents[cuDraftFile])) : undefined;
         const evaluation = evaluationOf(doc, designWorkSnapshot(authorDrafts, contents), true, saved.preSnapshot, historicalCu);
-        if (evaluation.completed) { if (previousEvaluation) comparableHistory.push(previousEvaluation); previousEvaluation = evaluation; }
+        // The current post-author Q is the evaluation under comparison, not its own feedback baseline.
+        if (evaluation.completed && starts.indexOf(start) < authorAt) { if (previousEvaluation) comparableHistory.push(previousEvaluation); previousEvaluation = evaluation; }
       } catch { /* Missing old originals never become a fabricated comparable result. */ }
       finally { context.architecture = priorArchitecture; }
     }
@@ -1115,6 +1150,11 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
       const savedQuestion = latestQuestion ? questioningOriginal(runDir, latestQuestion) : null;
       const verifiedQuestion = savedQuestion && batchWasReviewed(savedQuestion, latestQuestion)
         && reusableDesignQuestioning({ ...savedQuestion, projectRoot, blueprintPath: draftFile, blueprint: authorPreimage });
+      let supplementQuestioningFormat = false;
+      if (savedQuestion?.completed) {
+        try { parseIndependentQuestioningOutput(savedQuestion.output); }
+        catch { supplementQuestioningFormat = true; }
+      }
       const preparedDisposition = evaluationOf(authorPreimage, designWorkSnapshot(authorDrafts), !!verifiedQuestion, undefined,
         currentCuInput ? asChangeUnitArtifact(currentCuInput) : undefined).disposition;
       const designDeclarations = currentCuInput ? asChangeUnitArtifact(currentCuInput).blockers.filter(blocker => blocker.gate === 'design'
@@ -1130,7 +1170,7 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
         && !repairRoleStart(sessionEvents(runDir), 'author');
       let preAuthor: ReturnType<typeof capturePhaseInvocationSnapshot>;
       let authorStart: GoalRunEvent | undefined;
-      if (preparedDisposition.completionBlocking.some(problem => problem.action === 'repair') || cuNeedsAuthor || verifiedTriggerUndelivered) {
+      if (!supplementQuestioningFormat && (preparedDisposition.completionBlocking.some(problem => problem.action === 'repair') || cuNeedsAuthor || verifiedTriggerUndelivered)) {
         const invoked = await guarded('author', [authorPrompt(input, draftFile, canonicalRel, authorDrafts, transactionTiming, currentCuInput ?? undefined),
           ...preparedDisposition.completionBlocking.map(problem => `${problem.id}: ${problem.detail}\n对象与证据：${(problem.evidence ?? []).join('、')}`), ...authorFeedback].join('\n\n'), currentRefs, afterQuestioning);
         if ('handoff' in invoked) { release(); return { outcome: 'handoff', reason: 'session execution request committed' }; }
@@ -1277,7 +1317,16 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
       ];
 
       // ④ 独立质询：隔离的第二次调用，只许改质询结果。
-      const questioningStep = await guarded('questioning', questioningPrompt(input, draftFile, beforeQuestioning, auxiliaryDrafts, [...transactionTiming, ...questioningPreparation]), [...new Set([...baselineRefs, ...draftRefs])], questioningAfter);
+      let questioningStep: Awaited<ReturnType<typeof guarded>>;
+      for (;;) {
+        try {
+          questioningStep = await guarded('questioning', questioningPrompt(input, draftFile, beforeQuestioning, auxiliaryDrafts, [...transactionTiming, ...questioningPreparation]), [...new Set([...baselineRefs, ...draftRefs])], questioningAfter);
+          break;
+        } catch (error) {
+          if (!(error instanceof QuestioningFormatFailure)) throw error;
+          // The fixed format feedback changes conditions once; the existing dispatcher pauses identical retries.
+        }
+      }
       if ('handoff' in questioningStep) { release(); return { outcome: 'handoff', reason: 'session execution request committed' }; }
       questioningPreimage = questioningStep;
       questioned = readDraft('questioning');

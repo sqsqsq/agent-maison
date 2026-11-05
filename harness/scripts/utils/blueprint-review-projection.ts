@@ -14,8 +14,9 @@ import { diagnoseBlueprintPresentationShape } from './component-blueprint-valida
 import { extractAcceptanceIdRefs } from './check-acceptance';
 import { normalizeUseCasePortCalls } from './spec-loader';
 import { BlueprintGraphDisplayInspection, inspectBlueprintGraphDisplay } from './blueprint-reader-guide';
+import { blueprintQuestioningFallback, ReviewQuestioning } from './blueprint-review-questioning';
 
-export const BLUEPRINT_REVIEW_FORMAT = 'component-blueprint-review@12';
+export const BLUEPRINT_REVIEW_FORMAT = 'component-blueprint-review@13';
 
 const PRESENTATION_METADATA = new Set(['provenance', 'source_ref', 'source_refs', 'verification_refs', 'evidence_refs', 'artifact_sha256', 'source_fingerprint']);
 const SUMMARY_KEYS = new Set(['semantics', 'description', 'rule', 'answer', 'summary']);
@@ -89,6 +90,27 @@ function table(headers: string[], rows: unknown[][]): string[] {
   if (!columns.length) return [];
   const missing = headers.flatMap((header, i) => rows.some(row => absent(row[i])) ? headers.length === 2 && i === 1 ? rows.filter(row => absent(row[i])).map(row => `${prose(row[0])}（${header}）`) : [header] : []);
   return [`| ${columns.map(i => headers[i]).join(' | ')} |`, `| ${columns.map(() => '---').join(' | ')} |`, ...rows.map(row => `| ${columns.map(i => absent(row[i]) ? '—' : cell(row[i])).join(' | ')} |`), '', ...(missing.length ? [`<!-- review-missing:${missing.join('、')} -->`] : [])];
+}
+function renderQuestioningOutcomes(questioning: ReviewQuestioning): string[] {
+  const lines = ['#### 独立质询处理结果', ''];
+  const originals = (files: string[]): string => [...new Set(files)].map(file => `[${text(file)}](${encodeURI(file).replace(/\(/g, '%28').replace(/\)/g, '%29')})`).join('；');
+  const evidence = (item: BlueprintRecord): string => [item.answer, ...asStrings(item.evidence_refs)].filter(value => value !== undefined).map(value => prose(value)).join('；') || '未记录';
+  if (!questioning.hasOriginals) lines.push('缺少可核验的关联调用原件；仅展示蓝图已有未决项，不能判定历史关闭或撤回。', '');
+  const pending = questioning.items.filter(item => item.outcome === 'blocker' || item.outcome === 'open_decision');
+  if (pending.length) lines.push(...table(['范围', '处理结果', '问题', '回答与依据'], pending.map(row => [row.item.scope_ref,
+    row.outcome === 'blocker' ? '仍未关闭' : '待人决定', row.item.question, evidence(row.item)])));
+  else lines.push('未记录仍未关闭或待人决定的质询事项。', '');
+  const changed = questioning.items.filter(item => item.outcome === 'changed');
+  if (changed.length) lines.push('##### 改稿后关闭', '', '两次质询所读的作者内容有变化；现有原件只证明先后顺序，不逐题归因到具体改动。', '',
+    ...table(['范围', '原问题', '原否定与依据', '复核结果'], changed.map(row => [row.item.scope_ref, row.original?.question,
+      evidence(row.original!), `${enumText(row.item.disposition, DISPOSITIONS)}：${evidence(row.item)}`])));
+  const withdrawn = questioning.items.filter(item => item.outcome === 'withdrawn');
+  if (withdrawn.length) lines.push(`质询撤回：${withdrawn.length} 个 scope（作者内容未变即被后续有效质询关闭）。`, '',
+    `撤回相关原件：${originals(withdrawn.flatMap(row => row.originals))}`, '');
+  const sources = [...new Set([...pending, ...changed].flatMap(row => row.originals))];
+  if (sources.length) lines.push(`问题与复核原件：${originals(sources)}`, '');
+  if (questioning.originals.length) lines.push(`最近有效调用原件（含例行覆盖）：${originals(questioning.originals)}`, '');
+  return lines;
 }
 /** 仅指定说明列可提为整表共同说明，行身份与来源关联仍留在原表。 */
 function explainedTable(headers: string[], rows: unknown[][], explanationColumns: string[]): string[] {
@@ -871,7 +893,7 @@ export function renderBlueprintReviewMarkdown(blueprint: BlueprintRecord, artifa
   const presentationIssues = diagnoseBlueprintPresentationShape(blueprint, graphDisplay); if (presentationIssues.length) lines.push('#### 设计内容与表达诊断（非阻断）', '', ...presentationIssues.map(i => `- ${text(i.path)}：${text(i.message)}`), '');
   if (inputs.sourceGaps.length) lines.push('#### CU 来源缺口', '', ...inputs.sourceGaps.map(g => `- ${text(g)}`), '', '以上直接引用与合并声明不能作为完整覆盖证明。', '');
   const lens = asRecord(blueprint.app_lens); if (lens) lines.push('#### App 根问题', '', ...table(['问题', '回答', '裁决', '依据'], Object.entries(APP_QUESTIONS).filter(([key]) => asRecord(lens[key])).map(([key, question]) => [question, meaning(asRecord(lens[key])?.answer), enumText(asRecord(lens[key])?.disposition, DISPOSITIONS), refs(asRecord(lens[key])?.evidence_refs)])));
-  const questioning = asRecord(review.questioning); if (questioning) lines.push('#### 独立质询', '', ...table(['范围', '问题', '裁决', '回答'], asRecords(questioning.items).map(q => [q.scope_ref, q.question, enumText(q.disposition, DISPOSITIONS), q.answer ?? '未记录'])));
+  lines.push(...renderQuestioningOutcomes(inputs.questioning ?? blueprintQuestioningFallback(blueprint)));
   lines.push('#### 编号速查', '', ...table(['编号', '类别', '主责来源'], content.flatMap(i => i.field === 'acceptance' ? ['criteria', 'boundaries', 'performance'].flatMap(key => asRecords(i.value[key]).map(row => [row.id, key === 'criteria' ? '功能验收' : key === 'boundaries' ? '边界验收' : '质量阈值', designLink(`acceptance:${i.address}/${key}:${row.id}`, row.id as string)])) : i.field === 'contracts' ? asRecords(i.value.data_models).map(row => [row.name, '领域模型', designLink(`model:${i.address}/${row.name}`, row.name as string)]) : asRecords(i.value.use_cases).map(row => [row.id, '用例', designLink(i.address)]))),
     '#### 稳定设计地址', '', ...[...stableAddressIndex(blueprint).keys()].map(address => `- ${text(address)}：${designLink(address)}`), '', '通过 /component-design 提出意见。', ...(inputs.closureExists ? ['施工完成情况见 [component closure](component-closure.md)。'] : []), '');
   const bodyLink = (id: string, label: string) => lines.includes(`<a id="${id}"></a>`) ? `[${label}](#${id})` : `${label}（正文无此部分）`;

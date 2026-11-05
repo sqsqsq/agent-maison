@@ -13,7 +13,7 @@ derived_from:
     - change_unit_id: ledger-report
       binding: bound
       identity_neutral_digest: 28ae8de49a05459d5c44bb22113d32110099d464701ff2adc59a383494e65654
-projection: component-blueprint-review@12
+projection: component-blueprint-review@13
 ---
 
 # Ledger 完整设计表达样本（非真实需求）
@@ -1147,33 +1147,11 @@ flowchart TD
 | 界面如何刷新？ | 账页只展示已提交快照；报表刷新独立进行，失败保留上次缓存；此样本没有视觉布局设计。 | 已据证回答 | src/ledger |
 | 进程如何恢复？ | 重建 Repository/Store 并重新加载；不凭旧内存快照证明提交完成。 | 已据证回答 | src/ledger |
 
-#### 独立质询
+#### 独立质询处理结果
 
-| 范围 | 问题 | 裁决 | 回答 |
-| --- | --- | --- | --- |
-| view:logical | 核实 view:logical 的设计依据与责任是否闭合？ | 已据证回答 | 账目与只读报表各有契约，共享金额和账号隔离约束。 |
-| view:runtime | 核实 view:runtime 的设计依据与责任是否闭合？ | 已据证回答 | 提交后发布不可变账目快照；报表本地聚合后发布独立快照。 |
-| view:development | 核实 view:development 的设计依据与责任是否闭合？ | 已据证回答 | Repository、Store、报表读取各有明确职责和接口。 |
-| view:scenarios | 核实 view:scenarios 的设计依据与责任是否闭合？ | 已据证回答 | 记账更新与纯本地报表分别可追溯和验收。 |
-| flow:ledger-refresh-flow | 核实 flow:ledger-refresh-flow 的设计依据与责任是否闭合？ | 已据证回答 | 先持久化提交，再发布快照并通知消费者；重启重新加载。 |
-| relation:repository-publishes-store | 核实 relation:repository-publishes-store 的设计依据与责任是否闭合？ | 已据证回答 | view:runtime/node:ledger-repository 通过 publishes\_snapshot 关联 view:runtime/node:ledger-store，对应消费 CU 承担本侧证据。 |
-| relation:domain-owned-by-module | 核实 relation:domain-owned-by-module 的设计依据与责任是否闭合？ | 已据证回答 | view:logical/node:ledger-domain 通过 implemented\_by 关联 view:development/node:ledger-module，对应消费 CU 承担本侧证据。 |
-| app\_lens:module\_boundaries | 核实 app\_lens:module\_boundaries 的设计依据与责任是否闭合？ | 已据证回答 | ledger 模块承担本地持久化、快照和只读报表；云侧内部存储与运营配置不属于本批。 |
-| app\_lens:capability\_seams | 核实 app\_lens:capability\_seams 的设计依据与责任是否闭合？ | 已据证回答 | 当前直接消费宿主 Repository，尚无跨宿主变体证据；保留原 keep\_direct 决定。 |
-| app\_lens:feature\_flags | 核实 app\_lens:feature\_flags 的设计依据与责任是否闭合？ | 已据证回答 | 本批不改变入口开关；运营配置台按已有配套协同开放入口。 |
-| app\_lens:data\_producers\_consumers | 核实 app\_lens:data\_producers\_consumers 的设计依据与责任是否闭合？ | 已据证回答 | Repository 生产已提交账目，LedgerStore 消费账页快照，ReportStore 消费本地聚合快照。 |
-| app\_lens:lifecycle\_triggers | 核实 app\_lens:lifecycle\_triggers 的设计依据与责任是否闭合？ | 已据证回答 | 冷启动、恢复、页面建立/解除、账号切换和进程重建有明确读取与清理路径；本批无后台写入。 |
-| app\_lens:state\_owners | 核实 app\_lens:state\_owners 的设计依据与责任是否闭合？ | 已据证回答 | Repository 拥有持久账目；各 Store 只拥有可丢弃的消费者投影，不反向写成真源。 |
-| app\_lens:initialization | 核实 app\_lens:initialization 的设计依据与责任是否闭合？ | 已据证回答 | 先读取账号内持久集合，再建立可重放订阅；没有历史数据时返回空集合。 |
-| app\_lens:publication\_subscription | 核实 app\_lens:publication\_subscription 的设计依据与责任是否闭合？ | 已据证回答 | 持久化成功或本地聚合完成后发布；订阅建立重放最新快照，解除时清理 observer。 |
-| app\_lens:ui\_refresh | 核实 app\_lens:ui\_refresh 的设计依据与责任是否闭合？ | 已据证回答 | 账页只展示已提交快照；报表刷新独立进行，失败保留上次缓存；此样本没有视觉布局设计。 |
-| app\_lens:process\_recovery | 核实 app\_lens:process\_recovery 的设计依据与责任是否闭合？ | 已据证回答 | 重建 Repository/Store 并重新加载；不凭旧内存快照证明提交完成。 |
-| terminology:current\_scope\_items | 核实 terminology:current\_scope\_items 的设计依据与责任是否闭合？ | 已据证回答 | 账目是当前账号已提交金额记录，映射 ledger；报表缓存是可丢弃的投影，不能当持久真源。 |
-| flow:ledger-report-flow | 核实 flow:ledger-report-flow 的设计依据与责任是否闭合？ | 已据证回答 | 先读取本地账目，再按月聚合并发布；失败保留报表，绝不提交账目。 |
-| view:deployment | 核实 view:deployment 的设计依据与责任是否闭合？ | 已据证回答 | 保持固有拓扑，刷新与报表在各自本地消费点落盘。 |
-| relation:report-repository-publishes-store | 核实 relation:report-repository-publishes-store 的设计依据与责任是否闭合？ | 已据证回答 | view:runtime/node:ledger-repository-report 通过 publishes\_snapshot 关联 view:runtime/node:ledger-store-report，对应消费 CU 承担本侧证据。 |
-| relation:report-domain-owned-by-module | 核实 relation:report-domain-owned-by-module 的设计依据与责任是否闭合？ | 已据证回答 | view:logical/node:report-domain 通过 implemented\_by 关联 view:development/node:ledger-report-module，对应消费 CU 承担本侧证据。 |
-| relation:local-ledger-consumes-service | 核实 relation:local-ledger-consumes-service 的设计依据与责任是否闭合？ | 已据证回答 | view:deployment/node:local-ledger 通过 consumes\_api 关联 view:deployment/node:ledger-service，对应消费 CU 承担本侧证据。 |
+缺少可核验的关联调用原件；仅展示蓝图已有未决项，不能判定历史关闭或撤回。
+
+未记录仍未关闭或待人决定的质询事项。
 
 #### 编号速查
 

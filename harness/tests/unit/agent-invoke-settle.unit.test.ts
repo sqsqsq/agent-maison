@@ -23,10 +23,13 @@ import {
   providerSessionUnavailableReason,
   extractProviderSessionId,
   extractProviderFinalText,
+  readInvokeFinalText,
+  INVOKE_OUTPUT_MEMORY_CAP,
+  agentEventsLogPath,
 } from '../../scripts/utils/agent-invoke';
 import { createCodexTerminalScanner } from '../../scripts/utils/codex-terminal-events';
 import { extractCodexAgentMessageText } from '../../scripts/utils/codex-terminal-events';
-import { applyIndependentQuestioningOutput, validateBlueprintQuestioning } from '../../scripts/utils/blueprint-questioning';
+import { applyIndependentQuestioningOutput, parseIndependentQuestioningOutput, validateBlueprintQuestioning } from '../../scripts/utils/blueprint-questioning';
 import * as agentInvoke from '../../scripts/utils/agent-invoke';
 import { createWorkUnitExecutionContext as freezeWorkUnitExecutionContext, observeWorkUnitProviderSession, workUnitExecutionInputs, DetachedGoalPhaseExecutor, type WorkUnitExecutionContext } from '../../scripts/utils/goal-phase-executor';
 import { invocationCompleted, invocationEndFacts } from '../../scripts/utils/invocation-completion';
@@ -53,6 +56,108 @@ function createWorkUnitExecutionContext(input: WorkUnitExecutionContext): WorkUn
 }
 
 const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
+  {
+    name: 'e2a4145e R6 raw adapters retain short JSON stdout despite brace diagnostics with and without split logs',
+    run: async () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-raw-final-'));
+      try {
+        const answer = JSON.stringify({ items: [{ scope_ref: 'view:runtime', question: '真实 stdout 是否保持独立？', answer: '保持原回答。' }] });
+        const diagnostic = 'native diagnostic { details: stderr-only }';
+        const script = path.join(root, 'raw-output.cjs');
+        fs.writeFileSync(script, `process.stdout.write(${JSON.stringify(answer + '\n')});setTimeout(()=>process.stderr.write(${JSON.stringify(diagnostic + '\n')}),20);`);
+        for (const adapter of ['generic', 'opencode', 'chrys']) for (const split of [false, true]) {
+          const directory = path.join(root, `${adapter}-${split}`); fs.mkdirSync(directory);
+          const log = path.join(directory, 'agent-output.log');
+          const result = await invokeAgentHeadless({ argv: [process.execPath, script], label: 'raw stdout with stderr', adapterName: adapter }, root,
+            { outputLogPath: log, ...(split ? { toolEventCapture: 'structured_events' as const } : {}) });
+          assert(result.exitCode === 0 && result.stdout.length < INVOKE_OUTPUT_MEMORY_CAP, `${adapter}/${split}: a real short result must complete`);
+          assert(fs.existsSync(agentEventsLogPath(log)) === split, `${adapter}/${split}: the actual split availability must match the fixture`);
+          const mixed = fs.readFileSync(log, 'utf8');
+          assert(mixed.includes(diagnostic), 'the physical human log really contains the brace diagnostic');
+          let mixedRejected = false;
+          try { parseIndependentQuestioningOutput(extractProviderFinalText(mixed, adapter) ?? ''); } catch { mixedRejected = true; }
+          assert(mixedRejected, 'reading the whole mixed log reproduces the reported parsing regression');
+          const final = readInvokeFinalText(result.stdout, log, adapter);
+          assert(final === answer && (parseIndependentQuestioningOutput(final).items as Array<{ answer: string }>)[0].answer === '保持原回答。', `${adapter}/${split}: only stdout reaches the consumer`);
+        }
+      } finally {
+        assert(path.resolve(root).startsWith(path.resolve(os.tmpdir()) + path.sep), 'cleanup stays under the isolated temp root');
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'e2a4145e R6 structured large final with stderr consumes complete pure events beyond the stdout cap',
+    run: async () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-structured-final-'));
+      try {
+        const answer = '完整中文🌙依据'.repeat(16000), final = JSON.stringify({ items: [{ scope_ref: 'view:runtime', question: '完整答案？', answer }] });
+        const payload = path.join(root, 'answer.json'), script = path.join(root, 'structured-output.cjs'), log = path.join(root, 'agent-output.log');
+        fs.writeFileSync(payload, final);
+        fs.writeFileSync(script, `const fs=require('fs'),text=fs.readFileSync(process.argv[2],'utf8');process.stdout.write(JSON.stringify({type:'item.completed',item:{type:'agent_message',text}})+'\\n');process.stdout.write('{"type":"turn.completed"}\\n');process.stderr.write('diagnostic { stderr: only }\\n');`);
+        const result = await invokeAgentHeadless({ argv: [process.execPath, script, payload], label: 'structured large stdout with stderr', adapterName: 'terminal-replay-fixture' }, root,
+          { outputLogPath: log, terminalEventParser: 'codex_turn_jsonl', toolEventCapture: 'structured_events' });
+        assert(result.completion_observed === true && result.stdout.length === INVOKE_OUTPUT_MEMORY_CAP, 'the real native result must reach the existing cap');
+        assert(extractProviderFinalText(result.stdout, 'codex') === null, 'the capped single-line final event is insufficient');
+        assert(fs.readFileSync(log, 'utf8').includes('diagnostic { stderr: only }') && !fs.readFileSync(agentEventsLogPath(log), 'utf8').includes('stderr: only'), 'only the human projection mixes diagnostics');
+        const consumed = readInvokeFinalText(result.stdout, log, 'codex');
+        assert(consumed === final && (parseIndependentQuestioningOutput(consumed).items as Array<{ answer: string }>)[0].answer === answer, 'complete native stdout remains intact and parseable');
+      } finally {
+        assert(path.resolve(root).startsWith(path.resolve(os.tmpdir()) + path.sep), 'cleanup stays under the isolated temp root');
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'e2a4145e R6 final-output source honors the exact cap events priority and no-log executor fallback',
+    run: () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-final-boundary-'));
+      try {
+        const log = path.join(root, 'agent-output.log'), original = JSON.stringify({ source: 'complete-human-log' });
+        fs.writeFileSync(log, original);
+        const atLength = (length: number) => JSON.stringify({ value: 'x'.repeat(length - JSON.stringify({ value: '' }).length) });
+        assert(readInvokeFinalText(atLength(INVOKE_OUTPUT_MEMORY_CAP - 1), log, 'generic') === atLength(INVOKE_OUTPUT_MEMORY_CAP - 1), 'an untruncated stdout must win over a mixed log');
+        for (const length of [INVOKE_OUTPUT_MEMORY_CAP, INVOKE_OUTPUT_MEMORY_CAP + 1]) {
+          assert(readInvokeFinalText(atLength(length), log, 'generic') === original, 'a result at or above the cap may require the complete log');
+        }
+        const pure = JSON.stringify({ source: 'pure-events' }); fs.writeFileSync(agentEventsLogPath(log), pure);
+        assert(readInvokeFinalText('{"source":"short-stdout"}', log, 'generic') === pure, 'the existing pure stdout original has first priority');
+        fs.unlinkSync(agentEventsLogPath(log)); fs.unlinkSync(log);
+        for (const length of [30, INVOKE_OUTPUT_MEMORY_CAP, INVOKE_OUTPUT_MEMORY_CAP + 1]) {
+          assert(readInvokeFinalText(atLength(length), log, 'generic') === atLength(length), 'a legacy executor without logs retains its actual stdout');
+        }
+      } finally {
+        assert(path.resolve(root).startsWith(path.resolve(os.tmpdir()) + path.sep), 'cleanup stays under the isolated temp root');
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'e2a4145e UTF8 byte-split real stdout and stderr retain Chinese emoji and final event originals',
+    run: async () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-utf8-process-'));
+      try {
+        const answer = '分块质询：中文与🌙😀必须完整。';
+        const stdout = JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: answer } }) + '\n'
+          + JSON.stringify({ type: 'turn.completed' }) + '\n';
+        const stderr = '分块诊断：中文与🌙😀也须完整。';
+        const script = path.join(root, 'byte-split.cjs'), output = path.join(root, 'agent-output.log');
+        fs.writeFileSync(script, `async function split(stream,text){const bytes=Buffer.from(text);for(let at=0;at<bytes.length;at++)await new Promise(resolve=>stream.write(bytes.subarray(at,at+1),()=>setTimeout(resolve,2)));}
+(async()=>{await split(process.stdout,${JSON.stringify(stdout)});await split(process.stderr,${JSON.stringify(stderr)});})().catch(error=>{console.error(error);process.exitCode=1;});`);
+        const result = await invokeAgentHeadless({ argv: [process.execPath, script], label: 'real UTF8 split-byte process', adapterName: 'terminal-replay-fixture' }, root,
+          { outputLogPath: output, toolEventCapture: 'structured_events', terminalEventParser: 'codex_turn_jsonl' });
+        assert(result.completion_observed === true && result.stdout === stdout && result.stderr === stderr, 'native byte boundaries must not alter decoded output');
+        assert(fs.readFileSync(path.join(root, 'agent-events.jsonl'), 'utf8') === stdout, 'the independent stdout original must match every final-answer byte');
+        assert(fs.readFileSync(path.join(root, 'agent-stderr.log'), 'utf8') === stderr, 'the independent stderr original must preserve its EOF text');
+        const raw = fs.readFileSync(output, 'utf8');
+        assert(!raw.includes('\uFFFD') && raw.includes(answer) && raw.includes(stderr), 'the human output log must preserve both Unicode streams without replacements');
+        assert(extractProviderFinalText(raw, 'codex') === answer, 'the complete native final event remains consumable');
+      } finally {
+        assert(path.resolve(root).startsWith(path.resolve(os.tmpdir()) + path.sep), 'cleanup stays under the isolated temp root');
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
   {
     name: 'P3 canonical child preserves its root deadline and effective contract without promoting legacy fields into authority',
     run: () => {
