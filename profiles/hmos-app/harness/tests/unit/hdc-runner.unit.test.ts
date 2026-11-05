@@ -101,6 +101,9 @@ function withTmpDir<T>(fn: (dir: string) => T): T {
 
 function writeFile(p: string, content: string): void {
   fs.mkdirSync(path.dirname(p), { recursive: true });
+  if (p.endsWith('-signed.hap')) {
+    fs.writeFileSync(p.replace('-signed.hap', '-unsigned.hap'), 'unsigned');
+  }
   fs.writeFileSync(p, content, 'utf-8');
 }
 
@@ -240,7 +243,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       const hapDir = path.join(root, srcPath, 'build', 'default', 'outputs', 'ohosTest');
       const expected = path.join(hapDir, 'FeatureAlpha-ohosTest-signed.hap');
       writeFile(expected, 'fake hap');
-      const found = findOhosTestSignedHap(root, srcPath, 'FeatureAlpha');
+      const found = findOhosTestSignedHap(root, srcPath, 'FeatureAlpha', 'default');
       assertEq(found, expected, '应命中约定命名');
     }),
   },
@@ -251,14 +254,14 @@ const cases: Array<{ name: string; run: () => void }> = [
       const hapDir = path.join(root, srcPath, 'build', 'default', 'outputs', 'ohosTest');
       const fallback = path.join(hapDir, 'OtherName-ohosTest-signed.hap');
       writeFile(fallback, 'fake');
-      const found = findOhosTestSignedHap(root, srcPath, 'Demo');
+      const found = findOhosTestSignedHap(root, srcPath, 'Demo', 'default');
       assertEq(found, fallback, '应兜底返回目录内首个 *-signed.hap');
     }),
   },
   {
     name: 'findOhosTestSignedHap: outputs/ohosTest 目录不存在 → null',
     run: () => withTmpDir(root => {
-      const found = findOhosTestSignedHap(root, '02-Feature/Empty', 'Empty');
+      const found = findOhosTestSignedHap(root, '02-Feature/Empty', 'Empty', 'default');
       assertNull(found, '目录不存在应返回 null');
     }),
   },
@@ -274,14 +277,14 @@ const cases: Array<{ name: string; run: () => void }> = [
     }),
   },
   {
-    name: 'findOhosTestSignedHap: 未传 product 时扫描 build/* 命中 product 目录',
+    name: 'findOhosTestSignedHap: 所选 default 缺包时不得采用 product 目录',
     run: () => withTmpDir(root => {
       const srcPath = 'mod/A';
       const hapDir = path.join(root, srcPath, 'build', 'product', 'outputs', 'ohosTest');
       const expected = path.join(hapDir, 'A-ohosTest-signed.hap');
       writeFile(expected, 'x');
-      const found = findOhosTestSignedHap(root, srcPath, 'A');
-      assertEq(found, expected, '应扫描到 build/product/...');
+      const found = findOhosTestSignedHap(root, srcPath, 'A', 'default');
+      assertNull(found, '不得跨 product 采用');
     }),
   },
 
@@ -294,8 +297,8 @@ const cases: Array<{ name: string; run: () => void }> = [
       const srcPath = '02-Feature/FeatureAlpha';
       const expected = path.join(root, srcPath, 'build', 'default', 'outputs', 'ohosTest', 'FeatureAlpha-ohosTest-signed.hap');
       writeFile(expected, 'fake hap');
-      const viaDiscover = discoverOhosTestArtifacts(root, srcPath, 'FeatureAlpha').signedPath;
-      const viaFind = findOhosTestSignedHap(root, srcPath, 'FeatureAlpha');
+      const viaDiscover = discoverOhosTestArtifacts(root, srcPath, 'FeatureAlpha', 'default').signedPath;
+      const viaFind = findOhosTestSignedHap(root, srcPath, 'FeatureAlpha', 'default');
       assertEq(viaFind, viaDiscover, 'find* 薄包装应与 discover*.signedPath 一致');
       assertEq(viaFind, expected, '且应命中预期路径');
     }),
@@ -306,7 +309,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       const srcPath = '02-Feature/FeatureAlpha';
       const dir = path.join(root, srcPath, 'build', 'default', 'outputs', 'ohosTest');
       writeFile(path.join(dir, 'FeatureAlpha-ohosTest-unsigned.hap'), 'unsigned');
-      const result = discoverOhosTestArtifacts(root, srcPath, 'FeatureAlpha');
+      const result = discoverOhosTestArtifacts(root, srcPath, 'FeatureAlpha', 'default');
       assertNull(result.signedPath, '只有 unsigned 时 signedPath 应为 null');
       assertEq(result.unsignedPath, path.join(dir, 'FeatureAlpha-ohosTest-unsigned.hap'), '应记录 unsignedPath');
     }),

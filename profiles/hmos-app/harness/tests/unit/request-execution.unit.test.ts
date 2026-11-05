@@ -10,7 +10,7 @@ import * as readiness from '../../../../../harness/scripts/utils/device-readines
 import * as native from '../../providers/device-test-run';
 import * as spawn from '../../hylyre-spawn';
 import { listExecutionKeyRuns } from '../../execution-key';
-import { probeInstalledHapSha256 } from '../../build-fingerprint';
+import { computeHapSha256Full, probeInstalledHapSha256 } from '../../build-fingerprint';
 import { checkRequestTests } from '../../../../../harness/scripts/utils/request-phase';
 import { generateRequestScriptReport } from '../../../../../harness/scripts/utils/report-generator';
 import type { RequestCheckContext, CheckResult } from '../../../../../harness/scripts/utils/types';
@@ -52,11 +52,12 @@ const cases: Array<{ name: string; run(): Promise<void> | void }> = [{
       patch(products, 'resolveProductSelection', () => ({ product: 'phone', source: 'sole_candidate' }), restores);
       patch(readiness, 'applyPhaseEntryDeviceGate', async () => ({ ok: !blocked, reason: blocked ? 'device locked' : undefined, notes: [] }), restores);
       patch(hdc, 'resolveExecutionDeviceIdentity', () => ({ device: 'test-serial', display_env: '1080x1920' }), restores);
-      patch(hdc, 'discoverOhosTestArtifacts', () => ({ signedPath: hap }), restores);
+      patch(hdc, 'discoverOhosTestArtifacts', () => ({ signedPath: hap, artifactValidation: { status: 'valid' } }), restores);
       patch(toolchain, 'computeHvigorConfigDigest', () => 'actual-tools', restores);
       patch(hvigor, 'runHvigorBuild', (opts: { reportDir: string }) => {
         builds++; if (crashBuild) throw new TypeError('build transport crashed'); const logPath = path.join(opts.reportDir, 'build.log'); fs.writeFileSync(logPath, 'BUILD SUCCESSFUL current-build=' + builds);
-        return { executed: true, exitCode: 0, successMarkerFound: true, durationMs: 1, logExcerpt: 'BUILD SUCCESSFUL', logPath, errors: [] };
+        return { executed: true, exitCode: 0, successMarkerFound: true, durationMs: 1, logExcerpt: 'BUILD SUCCESSFUL', logPath, errors: [], builtHap: { path: hap, sha256: computeHapSha256Full(hap) },
+          buildInvocation: { module: 'entry', target: 'ohosTest', task: 'assembleHap', product: 'phone', buildMode: 'test' } };
       }, restores);
       patch(hvigor, 'runHvigorTest', (opts: { reportDir: string; testClasses: string[]; prebuild: unknown }) => {
         executions++; assert.deepEqual(opts.testClasses, ['Selected']); assert(opts.prebuild);

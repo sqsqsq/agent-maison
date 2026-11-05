@@ -206,6 +206,7 @@ function writeSignedHap(fx: Pick<UtFixture, 'root' | 'modules'>, moduleName: str
     .createHash('sha256')
     .update(readDirTexts(path.join(fx.root, mod.package_path, 'src', 'ohosTest')).join(''))
     .digest('hex');
+  fs.writeFileSync(path.join(dir, `${moduleName}-ohosTest-unsigned.hap`), `unsigned:${moduleName}:${digest}`);
   fs.writeFileSync(path.join(dir, `${moduleName}-ohosTest-signed.hap`), `hap:${moduleName}:${digest}`);
 }
 

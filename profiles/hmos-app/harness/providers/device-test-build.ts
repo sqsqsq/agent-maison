@@ -9,19 +9,17 @@ import {
   runHvigorAssembleApp,
   discoverAppHapArtifacts,
   detectStaleSignedSuspect,
-  stopHvigorDaemon,
   isHvigorBuildSuccessful,
   type HvigorRunResult,
   type HapDiscoveryCandidate,
 } from '../hvigor-runner';
 import {
   resolveProductSelection,
-  describeProductSelection,
   buildProductSelectionUnresolvedGuidance,
   summarizeUnresolvedCause,
   type ProductSelection,
 } from '../product-selection';
-import { resolveDeviceTestBuildMode } from '../testing-build-conventions';
+import { computeHapSha256Full } from '../build-fingerprint';
 import { evaluateDeviceTestBuildReuse } from '../device-test-build-reuse';
 // plan d8c5f3a7 T4 接线：构建**当刻**把源码快照绑定到 HAP——抓 self-revert 的关键一环
 
@@ -54,14 +52,16 @@ export interface DeviceTestBuildResult {
   reuseReason?: string;
   /** 实际扫描过的 outputs 目录（plan d7e4b2a9 t1；命中/未命中都记录，供 FAIL 文案列出） */
   scannedDirs?: string[];
-  /** 全部候选 signed HAP，按稳定优先级排序（[0] 即 hapPath 所在候选）；>1 说明存在歧义 */
+  /** 所选 product 的诊断候选，按稳定优先级排序；未通过验证时 hapPath 仍为 null。 */
   candidates?: HapDiscoveryCandidate[];
-  /** signed 是否可能基于上一轮 unsigned（plan d7e4b2a9 t2；纯观测，不阻断） */
+  /** 配对 unsigned 比 signed 新时，不采用 signed。 */
   staleSuspect?: boolean;
   staleSuspectUnsignedPath?: string | null;
   staleSuspectNote?: string;
   /** t5（plan a7c3f9e2）：本次构建前单次解析的 ProductSelection（分类/报告用），unresolved 时另有 product=null */
   productSelection?: ProductSelection;
+  artifactValidation?: ReturnType<typeof detectStaleSignedSuspect>;
+  hapSha256Full?: string | null;
 }
 
 function writeBuildResultSummary(
@@ -73,7 +73,7 @@ function writeBuildResultSummary(
   fs.writeFileSync(summaryPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf-8');
 }
 
-function reusedHvigorStub(reason: string): HvigorRunResult {
+function reusedHvigorStub(reason: string, prior: Record<string, unknown> = {}): HvigorRunResult {
   return {
     executed: false,
     exitCode: 0,
@@ -81,6 +81,10 @@ function reusedHvigorStub(reason: string): HvigorRunResult {
     logExcerpt: reason,
     errors: [],
     successMarkerFound: true,
+    command: typeof prior.hvigorCommand === 'string' ? prior.hvigorCommand : undefined,
+    logPath: typeof prior.hvigorLogPath === 'string' ? prior.hvigorLogPath : undefined,
+    metaPath: typeof prior.hvigorMetaPath === 'string' ? prior.hvigorMetaPath : undefined,
+    environment: prior.environment as HvigorRunResult['environment'],
   };
 }
 
@@ -168,173 +172,62 @@ export function runDeviceTestAppBuild(opts: DeviceTestBuildOptions): DeviceTestB
       productSelection: selection,
     };
   }
+  const reportDir = featurePhaseReportsDir(opts.projectRoot, opts.feature, opts.phase, opts.frameworkRoot);
   const reuseDecision = evaluateDeviceTestBuildReuse({
     projectRoot: opts.projectRoot,
-    // review P2：只传本次解析冻结的 product，reuse evaluator 不再二次解析。
     product: selection.product!,
     buildMode: opts.buildMode,
+    reportDir,
   });
   const resolvedProduct = selection.product!;
   const resolvedBuildMode = reuseDecision.resolvedBuildMode;
-  const reportDir = featurePhaseReportsDir(opts.projectRoot, opts.feature, opts.phase, opts.frameworkRoot);
-
-  if (reuseDecision.reuse && reuseDecision.hapPath) {
-    const hvigor = reusedHvigorStub(`复用 HAP（跳过 hvigor）：${reuseDecision.reason}`);
-    writeBuildResultSummary(reportDir, {
-      reused: true,
-      resolvedProduct,
-      resolvedBuildMode,
-      hapPath: reuseDecision.hapPath,
-      hapMtimeMs: reuseDecision.hapMtimeMs,
-      hapBuiltAt: reuseDecision.hapBuiltAt,
-      inputsMaxMtimeMs: reuseDecision.inputsMaxMtimeMs,
-      reuseReason: reuseDecision.reason,
-      hvigorExecuted: false,
-      hvigorExitCode: 0,
-      hvigorDurationMs: 0,
-      staleSuspect: reuseDecision.staleSuspect ?? false,
-      staleSuspectUnsignedPath: reuseDecision.staleSuspectUnsignedPath ?? null,
-      staleSuspectNote: reuseDecision.staleSuspectNote ?? null,
-      scannedDirs: reuseDecision.scannedDirs ?? [],
-      candidateCount: reuseDecision.candidates?.length ?? 0,
-      productSelection: {
-        product: selection.product,
-        source: selection.source,
-        candidates: selection.candidates,
-        purpose: selection.purpose,
-      },
-      timestamp: new Date().toISOString(),
-    });
-    return {
-      hvigor,
-      hapPath: reuseDecision.hapPath,
-      resolvedProduct,
-      resolvedBuildMode,
-      reused: true,
-      hapMtimeMs: reuseDecision.hapMtimeMs,
-      hapBuiltAt: reuseDecision.hapBuiltAt,
-      inputsMaxMtimeMs: reuseDecision.inputsMaxMtimeMs,
-      reuseReason: reuseDecision.reason,
-      staleSuspect: reuseDecision.staleSuspect,
-      staleSuspectUnsignedPath: reuseDecision.staleSuspectUnsignedPath,
-      staleSuspectNote: reuseDecision.staleSuspectNote,
-      scannedDirs: reuseDecision.scannedDirs,
-      candidates: reuseDecision.candidates,
-      productSelection: selection,
-    };
+  const hvigor = reuseDecision.reuse
+    ? reusedHvigorStub(`复用 HAP（跳过 hvigor）：${reuseDecision.reason}`, reuseDecision.priorResult)
+    : runHvigorAssembleApp({
+        projectRoot: opts.projectRoot, harnessRoot: opts.harnessRoot, frameworkRoot: opts.frameworkRoot,
+        feature: opts.feature, phase: opts.phase, skipEnvVar,
+        product: resolvedProduct, buildMode: resolvedBuildMode,
+        daemon: false,
+        freezeDimensions: true,
+        logBasename: 'hvigor-app-build.log',
+        metaExtras: { productSelection: selection },
+      });
+  // 构建后重新发现；不能回退到构建前路径。增量 UP-TO-DATE 无需晚于启动时间。
+  const discovery = discoverAppHapArtifacts(opts.projectRoot, resolvedProduct);
+  const artifactValidation = discovery.signedPath ? detectStaleSignedSuspect(discovery.signedPath) : undefined;
+  const processOk = reuseDecision.reuse || isDeviceTestBuildOk(hvigor);
+  let hapPath = processOk && artifactValidation?.status === 'valid' ? discovery.signedPath : null;
+  const hapSha256Full = hapPath ? computeHapSha256Full(hapPath) : null;
+  if (!hapSha256Full) hapPath = null;
+  const hapMtimeMs = artifactValidation?.signedMtimeMs ?? null;
+  const hapBuiltAt = hapMtimeMs === null ? null : new Date(hapMtimeMs).toISOString();
+  if (!hapPath) {
+    const note = !processOk ? 'Hvigor 进程未通过，磁盘候选不能覆盖退出/超时/成功标记失败' : artifactValidation?.note ?? (discovery.signedPath
+      ? 'signed HAP 内容摘要读取失败'
+      : `所选 product=${resolvedProduct} 未发现 signed 主 HAP`);
+    hvigor.diagnostics = [...(hvigor.diagnostics ?? []), note];
   }
-
-  // 源码比 HAP 新：先停旧 daemon，再以 buildChildEnv（含 DevEco JBR）拉起新 worker，避免 PackageHap spawn java ENOENT
-  stopHvigorDaemon({
-    projectRoot: opts.projectRoot,
-    harnessRoot: opts.harnessRoot,
-    frameworkRoot: opts.frameworkRoot,
-    feature: opts.feature,
-    phase: opts.phase,
-  });
-
-  const hvigor = runHvigorAssembleApp({
-    projectRoot: opts.projectRoot,
-    harnessRoot: opts.harnessRoot,
-    frameworkRoot: opts.frameworkRoot,
-    feature: opts.feature,
-    phase: opts.phase,
-    skipEnvVar: opts.skipEnvVar ?? 'HARNESS_SKIP_DEVICE_TEST_BUILD',
-    product: resolvedProduct,
-    buildMode: resolvedBuildMode,
-    logBasename: 'hvigor-app-build.log',
-    metaExtras: {
-      daemonStoppedBeforeBuild: true,
-      // t5：selection 仅作审计落盘（hvigor-*.meta.json），不做运行时传播
-      productSelection: {
-        product: selection.product,
-        source: selection.source,
-        candidates: selection.candidates,
-        purpose: selection.purpose,
-      },
-    },
-  });
-
-  let hapPath: string | null = null;
-  let hapMtimeMs: number | null = reuseDecision.hapMtimeMs;
-  let hapBuiltAt: string | null = reuseDecision.hapBuiltAt;
-  let scannedDirs: string[] | undefined;
-  let candidates: HapDiscoveryCandidate[] | undefined;
-  let staleSuspect: boolean | undefined;
-  let staleSuspectUnsignedPath: string | null | undefined;
-  let staleSuspectNote: string | undefined;
-
-  // plan a7c3f9e2 t1：终态判据与 coding 出口共用 isHvigorBuildSuccessful——
-  // errors[] 不参与判定（宿主非致命 `> hvigor ERROR:` 不再误杀真成功构建）。
-  const ok = isDeviceTestBuildOk(hvigor);
-
-  if (ok) {
-    const discovery = discoverAppHapArtifacts(opts.projectRoot, resolvedProduct);
-    scannedDirs = discovery.scannedDirs;
-    candidates = discovery.candidates;
-    hapPath = discovery.signedPath ?? reuseDecision.hapPath;
-    if (hapPath && fs.existsSync(hapPath)) {
-      try {
-        hapMtimeMs = fs.statSync(hapPath).mtimeMs;
-        hapBuiltAt = new Date(hapMtimeMs).toISOString();
-      } catch {
-        /* keep prior */
-      }
-      const stale = detectStaleSignedSuspect(hapPath);
-      staleSuspect = stale.staleSuspect;
-      staleSuspectUnsignedPath = stale.unsignedPath;
-      staleSuspectNote = stale.note;
-    }
-  }
-
+  const result: DeviceTestBuildResult = {
+    hvigor, hapPath, resolvedProduct, resolvedBuildMode, reused: reuseDecision.reuse,
+    hapMtimeMs, hapBuiltAt, hapSha256Full: hapPath ? hapSha256Full : null,
+    inputsMaxMtimeMs: reuseDecision.inputsMaxMtimeMs, reuseReason: reuseDecision.reason,
+    scannedDirs: discovery.scannedDirs, candidates: discovery.candidates, productSelection: selection,
+    artifactValidation,
+    staleSuspect: artifactValidation?.staleSuspect,
+    staleSuspectUnsignedPath: artifactValidation?.unsignedPath,
+    staleSuspectNote: artifactValidation?.note,
+  };
   try {
     writeBuildResultSummary(reportDir, {
-      reused: false,
-      resolvedProduct,
-      resolvedBuildMode,
-      hapPath,
-      hapMtimeMs,
-      hapBuiltAt,
-      inputsMaxMtimeMs: reuseDecision.inputsMaxMtimeMs,
-      reuseReason: reuseDecision.reason,
-      daemonStoppedBeforeBuild: true,
-      hvigorExecuted: hvigor.executed,
-      hvigorExitCode: hvigor.exitCode ?? null,
-      hvigorDurationMs: hvigor.durationMs,
-      hvigorLogPath: hvigor.logPath ?? null,
-      hvigorMetaPath: hvigor.metaPath ?? null,
-      scannedDirs: scannedDirs ?? [],
-      candidateCount: candidates?.length ?? 0,
-      staleSuspect: staleSuspect ?? false,
-      staleSuspectUnsignedPath: staleSuspectUnsignedPath ?? null,
-      staleSuspectNote: staleSuspectNote ?? null,
-      productSelection: {
-        product: selection.product,
-        source: selection.source,
-        candidates: selection.candidates,
-        purpose: selection.purpose,
-      },
+      ...result, hvigor: undefined,
+      buildSucceeded: Boolean(hapPath),
+      hvigorExecuted: hvigor.executed, hvigorExitCode: hvigor.exitCode ?? null,
+      hvigorDurationMs: hvigor.durationMs, hvigorLogPath: hvigor.logPath ?? null,
+      hvigorMetaPath: hvigor.metaPath ?? null, environment: hvigor.environment,
+      hvigorCommand: hvigor.command ?? null,
+      candidateCount: discovery.candidates.length,
       timestamp: new Date().toISOString(),
     });
-  } catch {
-    /* best-effort */
-  }
-
-  return {
-    hvigor,
-    hapPath,
-    scannedDirs,
-    candidates,
-    staleSuspect,
-    staleSuspectUnsignedPath,
-    staleSuspectNote,
-    resolvedProduct,
-    resolvedBuildMode,
-    reused: false,
-    hapMtimeMs,
-    hapBuiltAt,
-    inputsMaxMtimeMs: reuseDecision.inputsMaxMtimeMs,
-    reuseReason: reuseDecision.reason,
-    productSelection: selection,
-  };
+  } catch { /* best-effort：报告不可写只会使后续调用重新构建 */ }
+  return result;
 }

@@ -60,7 +60,12 @@ export function installCurrentBuildForAdhoc(
   if (!(build.reused === true || isDeviceTestBuildOk(build.hvigor)) || !build.hapPath) {
     const detail = build.productSelection?.source === 'unresolved'
       ? build.hvigor.logExcerpt
-      : [...(build.hvigor.errors ?? []).map(e => e.message), build.hvigor.logPath ? `日志：${build.hvigor.logPath}` : '']
+      : [`product=${build.resolvedProduct} buildMode=${build.resolvedBuildMode}`,
+          ...(build.hvigor.errors ?? []).map(e => e.message), ...(build.hvigor.diagnostics ?? []),
+          build.artifactValidation ? JSON.stringify(build.artifactValidation) : '',
+          `命令：${build.hvigor.command ?? '(未知)'}；元数据：${build.hvigor.metaPath ?? '(无)'}`,
+          build.hvigor.environment ? `有效环境：${JSON.stringify(build.hvigor.environment)}` : '',
+          build.hvigor.logExcerpt, build.hvigor.logPath ? `日志：${build.hvigor.logPath}` : '']
         .filter(Boolean).join('\n') || `exit=${build.hvigor.exitCode ?? 'null'}`;
     return { ok: false, hapPath: null, hapSha256Full: null, reason: `[adhoc] 当前构建出包失败，未装机：\n${detail}` };
   }

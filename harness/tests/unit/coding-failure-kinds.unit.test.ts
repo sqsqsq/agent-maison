@@ -222,13 +222,13 @@ cases.push(
         mkCtx(root),
       );
       assert.strictEqual(r.kind, 'project_build_environment_inconsistent');
-      assert.ok(/不应.*让 agent 改代码|不再启动 agent|不应/.test(r.suggestion), '须明示不该让 agent 改代码');
+      assert.ok(r.suggestion.includes('当前作者') && r.suggestion.includes('授权写域'), '原因未明须交合法作者调查');
     },
   },
   {
     // codex 复核 P1：局部分类对了不代表状态穿透到最终裁决。这条走**生产链**：
     // check 结果 → resolveVerdictFromChecks → isDeferrableExternalBlock → goal action。
-    name: 't2 生产链：环境不一致须一路走到 external defer（不得回去让 agent 改代码）',
+    name: 't2 生产链：环境矛盾不自动 external，合法作者继续调查',
     run: () => {
       const check = {
         id: 'coding_compile',
@@ -241,23 +241,23 @@ cases.push(
       } as never;
       assert.strictEqual(
         (check as { blocking_class: string }).blocking_class,
-        'externalBlocked',
-        '必须落既有 externalBlocked 契约，否则策略层认不出来',
+        'coding_compile',
+        '未知构建矛盾不得自动归外部',
       );
       const verdict = resolveVerdictFromChecks([check]);
-      assert.strictEqual(verdict, 'INCOMPLETE', 'external 阻塞须投影 INCOMPLETE 而非 FAIL');
+      assert.strictEqual(verdict, 'FAIL', '原因未明仍是待修/调查的真实失败');
       assert.ok(
-        isDeferrableExternalBlock(
+        !isDeferrableExternalBlock(
           (check as { blocking_class: string }).blocking_class,
           'project_build_environment_inconsistent',
         ),
-        'dependency policy 须认出它是可延期的外部阻塞',
+        '未确认外部条件不可自动延期',
       );
       const current = require('../../scripts/utils/check-disposition') as typeof import('../../scripts/utils/check-disposition');
       const disposition = current.resolveCurrentDisposition({ endpoint: 'request', phases: [{ phase: 'coding',
         verdict, schemaCurrent: true, closureCommitted: false, checks: [check] }] });
-      assert.ok(disposition.completionBlocking.some(problem => problem.action === 'wait'
-        && problem.detail.includes('project_build_environment_inconsistent')), '实际环境问题保持等待，不能变成内容重试或完成');
+      assert.ok(disposition.completionBlocking.some(problem => problem.action === 'repair'
+        && problem.detail.includes('project_build_environment_inconsistent')), '原因未明交当前合法作者，不能假绿或自动等待');
     },
   },
   {

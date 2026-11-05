@@ -77,7 +77,9 @@ export interface FrameworkLocalConfigVision {
 /** t6 toolchain-probe-truth（plan e6a3c9f4）：机器探测快照（写入权限固定，见 schema 注释） */
 export interface FrameworkLocalToolchainProbe {
   binary?: { hvigor_bin?: string; observed_at?: string };
-  cli_starts?: { ok?: boolean; hvigor_version?: string; observed_at?: string };
+  cli_starts?: { ok?: boolean; hvigor_version?: string; observed_at?: string;
+    error?: string; command?: string; cwd?: string; args?: string[]; invocationDriver?: string;
+    environment?: Record<string, unknown>; exitCode?: number | null; timedOut?: boolean };
   project_compile?: {
     status: 'unknown' | 'verified' | 'capability_failed';
     failure_code?: string | null;

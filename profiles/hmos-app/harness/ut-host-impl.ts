@@ -943,28 +943,35 @@ export interface UtReuseEligibility {
  * 两条都满足才查 decideReuse——否则测试源码已改但没重编译时，旧 HAP 仍在盘会让编译与执行
  * 一起被跳过。无 collector 的直接调用路径天然不满足第一条，行为逐字不变。
  */
-function evaluateUtReuseEligibility(
+export function evaluateUtReuseEligibility(
   ctx: CheckContext,
   mods: Array<{ name: string; package_path: string }>,
   product: string | undefined,
   builds?: Map<string, unknown>,
 ): UtReuseEligibility {
   const hapDigests = new Map<string, string | null>();
+  const hapPaths = new Map<string, string | null>();
   for (const mod of mods) {
     const discovery = discoverOhosTestArtifacts(ctx.projectRoot, mod.package_path, mod.name, product);
-    hapDigests.set(mod.name, computeHapSha256Full(discovery.signedPath));
+    hapDigests.set(mod.name, discovery.artifactValidation?.status === 'valid' ? computeHapSha256Full(discovery.signedPath) : null);
+    hapPaths.set(mod.name, discovery.signedPath);
   }
   if (!builds) {
     return { eligible: false, reason: '本次调用无成功 prebuild，不做同键复用', hapDigests };
   }
   for (const mod of mods) {
     const key = utBuildCollectorKey(ctx.projectRoot, mod.name, product);
-    const built = key ? builds.get(key) : undefined;
+    const built = (key ? builds.get(key) : undefined) as HvigorRunResult | undefined;
     if (!built || !isHvigorBuildSuccessful(built)) {
       return { eligible: false, reason: `本次调用无成功 prebuild（${mod.name}），不做同键复用`, hapDigests };
     }
     if (!hapDigests.get(mod.name)) {
       return { eligible: false, reason: `本次调用出的包在盘上取不到摘要（${mod.name}），不做同键复用`, hapDigests };
+    }
+    if (!built.builtHap || built.builtHap.sha256 !== hapDigests.get(mod.name) || built.builtHap.path !== hapPaths.get(mod.name) ||
+        built.buildInvocation?.module !== mod.name || built.buildInvocation.product !== product ||
+        built.buildInvocation.target !== 'ohosTest' || built.buildInvocation.buildMode !== 'test') {
+      return { eligible: false, reason: `当前包与本次 prebuild 绑定不一致（${mod.name}），不做同键复用`, hapDigests };
     }
   }
   return { eligible: true, reason: '本次调用内全部模块均有成功 prebuild 且摘要可取', hapDigests };

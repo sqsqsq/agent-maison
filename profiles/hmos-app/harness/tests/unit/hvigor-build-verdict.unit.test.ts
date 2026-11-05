@@ -206,8 +206,8 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
   {
     // V2（plan 5e1c7a93 D1）：临时工程无 hvigor 工具链，直调真实 runHvigorTest。
     // ①不传 prebuild → 内建 runHvigorBuild 走到 resolveUtHvigorSpawnPlan → toolMissing:true；
-    // ②传成功 prebuild → 内建被真的跳过，推进到 install 前置段（command 带 install_preflight
-    //   前缀），不再报 toolMissing。不靠源码正则，靠真实返回值。
+    // ②传同调用绑定的成功 prebuild → 跳过出包，再由缺包验证阻止装机；不报 toolMissing。
+    // 不靠源码正则，靠真实返回值。
     name: 'V2 prebuild 在场时 runHvigorTest 跳过内建出包（spawn 边界计数为证）',
     run: async () => {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'b03-v2-'));
@@ -279,14 +279,16 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
             logExcerpt: 'BUILD SUCCESSFUL',
             errors: [],
             command: 'assembleHap',
+            buildInvocation: { module: 'entry', target: 'ohosTest', task: 'assembleHap', product: 'default', buildMode: 'test' },
+            builtHap: null,
           },
         });
         assert.strictEqual(spawned.length, 0, `②prebuild 在场时 hvigor spawn 必须为 0，实际=${spawned.join(' | ')}`);
         assert(withoutCount > spawned.length, `①无 prebuild 时应真的 spawn 过 hvigor，实际=${withoutCount}`);
         assert(!withPrebuild.toolMissing, '②prebuild 在场时不得再走内建构建（不应报 toolMissing）');
         assert(
-          /^assembleHap \+/.test(withPrebuild.command ?? ''),
-          `②prebuild 在场时应推进到装机段，实际 command=${withPrebuild.command}`,
+          withPrebuild.onDeviceFailureEvidence?.failedAt === 'hap_not_found',
+          `②同调用 prebuild 的缺包验证应阻止装机，实际 command=${withPrebuild.command}`,
         );
       } finally {
         cp.spawnSync = original;

@@ -173,6 +173,7 @@ function classifyFailure(entry: UtHvigorTestFailureModule): ClassifiedFailure {
 
 function buildHapHeader(result: HvigorRunResult): string {
   const evidence = result.onDeviceFailureEvidence;
+  if (evidence?.artifactValidation?.status !== undefined && evidence.artifactValidation.status !== 'valid') return evidence.artifactValidation.note ?? 'ohosTest 产物配对验证依据不足';
   if (
     !evidence ||
     (evidence.unsignedPresent !== true &&
@@ -316,7 +317,7 @@ function actionFor(item: ClassifiedFailure): string {
     return '配置 framework.local.json 中的 DevEco/hvigor 路径，并确认 SDK toolchains 中的 hdc 可用。';
   }
   if (item.failureKind === 'ohos_test_sign_gap') {
-    return `${singleToolchainHeader(item)}；签名配置属宿主资产，请宿主按该诊断处理后重跑。`;
+    return `${singleToolchainHeader(item)}；核对原日志、所选 product 和配对产物，由当前作者在实际授权写域内调查/修复；确认缺凭据、权限、外部服务或越出写域时才沿既有等待/范围修订处理。`;
   }
   if (item.failureKind === 'ohos_test_hap_missing') {
     return '核对 ohosTest 构建产物路径与 genOnDeviceTestHap 完整日志，不推断签名原因。';
@@ -345,7 +346,7 @@ function actionFor(item: ClassifiedFailure): string {
     : stageHint
       ? '按上方“失败阶段/修复建议”处理后重跑；完整输出见 hdc-test.<module>.log。'
       : '按失败用例堆栈定位问题：可能是 UT 逻辑错误、被测业务实现与 UT 预期不一致、或 Spy/Stub 预设值不对。' +
-        '修改 UT 后重跑；若需要动业务源码，先按 SKILL.md > 约束 #12 的 HARD STOP 流程征得用户同意。';
+        '按现有责任和实际写域修复后重跑；越出授权时走既有范围修订，不按交互/无人值守模式自动扩大或收缩权限。';
 }
 
 export function buildUtHvigorTestFailDetails(
@@ -370,9 +371,10 @@ export function buildUtHvigorTestFailDetails(
   const items = bad.map(classifyFailure);
   const allToolchain = items.every(item => item.toolchain);
   const firstKind = items[0].failureKind;
-  // 纯 externalBlocked 仍保留其可 defer 元数据；一旦与 sign-gap 等非代码工具链阻塞共存，
-  // 组合结果必须归 device_toolchain，不能继承 externalBlocked 而把真实签名缺口一并 defer。
-  let blockingClass: string | undefined = allToolchain ? 'device_toolchain' : undefined;
+  // 混合失败不能继承某一模块的 externalBlocked，把其余可调查缺口一并等待。
+  // 缺包/签名验证缺口本身不证明外部条件，交共同处置继续调查。
+  const hasArtifactGap = items.some(item => item.phase === 'hap_not_found');
+  let blockingClass: string | undefined = allToolchain && !hasArtifactGap ? 'device_toolchain' : undefined;
   let failureKind: string | undefined =
     allToolchain && firstKind && items.every(item => item.failureKind === firstKind)
       ? firstKind

@@ -445,7 +445,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'hvigor diagnostics: spawn java ENOENT 给出签名链 / JBR / stop-daemon 提示',
+    name: 'hvigor diagnostics: spawn java ENOENT 给出签名链 / JBR / no-daemon 事实',
     run: () => {
       const diagnostics = buildHvigorDiagnostics([
         '> hvigor ERROR: Failed :Phone:default@PackageHap...',
@@ -455,8 +455,8 @@ const cases: Array<{ name: string; run: () => void }> = [
       if (!diagnostics.some(d => d.includes('spawn java ENOENT'))) {
         throw new Error(`应包含 java ENOENT 诊断：${JSON.stringify(diagnostics)}`);
       }
-      if (!diagnostics.some(d => d.includes('stop-daemon'))) {
-        throw new Error(`应提及 stop-daemon：${JSON.stringify(diagnostics)}`);
+      if (!diagnostics.some(d => d.includes('--no-daemon'))) {
+        throw new Error(`应提及 no-daemon：${JSON.stringify(diagnostics)}`);
       }
     },
   },

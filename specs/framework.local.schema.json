@@ -76,6 +76,63 @@
                 },
                 "observed_at": {
                   "type": "string"
+                },
+                "error": {
+                  "type": "string"
+                },
+                "command": {
+                  "type": "string"
+                },
+                "cwd": {
+                  "type": "string"
+                },
+                "invocationDriver": {
+                  "type": "string"
+                },
+                "args": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "exitCode": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "timedOut": {
+                  "type": "boolean"
+                },
+                "environment": {
+                  "type": "object",
+                  "properties": {
+                    "DEVECO_SDK_HOME": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "JAVA_HOME": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "pathJava": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "pathJavaSource": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
                 }
               },
               "additionalProperties": false

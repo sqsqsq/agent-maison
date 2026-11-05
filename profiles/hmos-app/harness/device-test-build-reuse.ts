@@ -6,6 +6,7 @@ import * as path from 'path';
 import { loadFrameworkConfig } from '../../../harness/config';
 import { discoverAppHapArtifacts, detectStaleSignedSuspect, type HapDiscoveryCandidate } from './hvigor-runner';
 import { resolveDeviceTestBuildMode } from './testing-build-conventions';
+import { computeHapSha256Full } from './build-fingerprint';
 
 const SOURCE_FILE_RE = /\.(ets|ts|json5)$/i;
 const SKIP_DIR_NAMES = new Set([
@@ -26,6 +27,8 @@ export interface DeviceTestBuildReuseInput {
    */
   product: string;
   buildMode?: 'debug' | 'release';
+  /** 当前调用的报告目录；不跨 Feature 查找成功记录。 */
+  reportDir?: string;
 }
 
 export interface DeviceTestBuildReuseDecision {
@@ -37,7 +40,7 @@ export interface DeviceTestBuildReuseDecision {
   inputsMaxMtimeMs: number;
   resolvedProduct: string;
   resolvedBuildMode: 'debug' | 'release';
-  /** signed 是否可能基于上一轮 unsigned（plan d7e4b2a9 t2；纯观测，不影响 reuse 判定） */
+  /** 陈旧配对不可复用；字段保留以兼容原诊断消费者。 */
   staleSuspect?: boolean;
   staleSuspectUnsignedPath?: string | null;
   staleSuspectNote?: string;
@@ -49,6 +52,9 @@ export interface DeviceTestBuildReuseDecision {
    */
   scannedDirs?: string[];
   candidates?: HapDiscoveryCandidate[];
+  artifactValidation?: ReturnType<typeof detectStaleSignedSuspect>;
+  hapSha256Full?: string;
+  priorResult?: Record<string, unknown>;
 }
 
 function envForceBuild(): boolean {
@@ -126,95 +132,43 @@ export function computeDeviceTestInputsMaxMtimeMs(projectRoot: string): number {
 }
 
 export function evaluateDeviceTestBuildReuse(opts: DeviceTestBuildReuseInput): DeviceTestBuildReuseDecision {
-  // review P2：product 为 provider 冻结值，直接消费、不再调用解析器（防隐式二次解析）。
   const resolvedProduct = opts.product;
   const resolvedBuildMode = resolveDeviceTestBuildMode(opts.buildMode);
   const inputsMaxMtimeMs = computeDeviceTestInputsMaxMtimeMs(opts.projectRoot);
   const discovery = discoverAppHapArtifacts(opts.projectRoot, resolvedProduct);
-  const hapPath = discovery.signedPath;
-
-  let hapMtimeMs: number | null = null;
-  let hapBuiltAt: string | null = null;
-  let staleSuspect: boolean | undefined;
-  let staleSuspectUnsignedPath: string | null | undefined;
-  let staleSuspectNote: string | undefined;
-  if (hapPath && fs.existsSync(hapPath)) {
-    try {
-      hapMtimeMs = fs.statSync(hapPath).mtimeMs;
-      hapBuiltAt = new Date(hapMtimeMs).toISOString();
-    } catch {
-      hapMtimeMs = null;
-    }
-    const stale = detectStaleSignedSuspect(hapPath);
-    staleSuspect = stale.staleSuspect;
-    staleSuspectUnsignedPath = stale.unsignedPath;
-    staleSuspectNote = stale.note;
-  }
-
-  if (envForceBuild()) {
-    return {
-      reuse: false,
-      reason: 'HARNESS_DEVICE_TEST_FORCE_BUILD 已设置，强制执行 hvigor',
-      hapPath,
-      hapMtimeMs,
-      hapBuiltAt,
-      inputsMaxMtimeMs,
-      resolvedProduct,
-      resolvedBuildMode,
-      staleSuspect,
-      staleSuspectUnsignedPath,
-      staleSuspectNote,
-      scannedDirs: discovery.scannedDirs,
-      candidates: discovery.candidates,
-    };
-  }
-
-  if (!hapPath || hapMtimeMs === null) {
-    return {
-      reuse: false,
-      reason: '未找到 signed 主 HAP',
-      hapPath,
-      hapMtimeMs,
-      hapBuiltAt,
-      inputsMaxMtimeMs,
-      resolvedProduct,
-      resolvedBuildMode,
-      scannedDirs: discovery.scannedDirs,
-      candidates: discovery.candidates,
-    };
-  }
-
-  if (inputsMaxMtimeMs > hapMtimeMs) {
-    return {
-      reuse: false,
-      reason: `业务源码更新（inputsMaxMtime > hapMtime）`,
-      hapPath,
-      hapMtimeMs,
-      hapBuiltAt,
-      inputsMaxMtimeMs,
-      resolvedProduct,
-      resolvedBuildMode,
-      staleSuspect,
-      staleSuspectUnsignedPath,
-      staleSuspectNote,
-      scannedDirs: discovery.scannedDirs,
-      candidates: discovery.candidates,
-    };
-  }
-
-  return {
-    reuse: true,
-    reason: 'HAP 不早于业务源码且 product/buildMode 一致，复用已有包',
-    hapPath,
-    hapMtimeMs,
-    hapBuiltAt,
-    inputsMaxMtimeMs,
-    resolvedProduct,
-    staleSuspect,
-    staleSuspectUnsignedPath,
-    staleSuspectNote,
-    resolvedBuildMode,
-    scannedDirs: discovery.scannedDirs,
-    candidates: discovery.candidates,
+  const candidate = discovery.signedPath;
+  const validation = candidate ? detectStaleSignedSuspect(candidate) : undefined;
+  const hapMtimeMs = validation?.signedMtimeMs ?? null;
+  const base: DeviceTestBuildReuseDecision = {
+    reuse: false, reason: '', hapPath: validation?.status === 'valid' ? candidate : null,
+    hapMtimeMs, hapBuiltAt: hapMtimeMs === null ? null : new Date(hapMtimeMs).toISOString(),
+    inputsMaxMtimeMs, resolvedProduct, resolvedBuildMode,
+    scannedDirs: discovery.scannedDirs, candidates: discovery.candidates,
+    artifactValidation: validation,
+    staleSuspect: validation?.staleSuspect,
+    staleSuspectUnsignedPath: validation?.unsignedPath,
+    staleSuspectNote: validation?.note,
   };
+  const reject = (reason: string): DeviceTestBuildReuseDecision => ({ ...base, reason });
+  if (envForceBuild()) return reject('HARNESS_DEVICE_TEST_FORCE_BUILD 已设置，强制执行 hvigor');
+  if (!candidate) return reject('所选 product 未找到 signed 主 HAP');
+  if (validation?.status !== 'valid') return reject(validation?.note ?? '配对产物未通过验证');
+  if (hapMtimeMs === null || inputsMaxMtimeMs > hapMtimeMs) return reject('业务源码更新（inputsMaxMtime > hapMtime），需执行构建');
+
+  let prior: Record<string, unknown>;
+  try {
+    if (!opts.reportDir) return reject('当前报告目录无成功构建记录，需执行构建');
+    prior = JSON.parse(fs.readFileSync(path.join(opts.reportDir, 'device-test-build.result.json'), 'utf-8'));
+  } catch {
+    return reject('当前成功构建记录缺失或不可读，需执行构建');
+  }
+  if (!prior || prior.buildSucceeded !== true || prior.resolvedProduct !== resolvedProduct ||
+      prior.resolvedBuildMode !== resolvedBuildMode || typeof prior.hapPath !== 'string' ||
+      path.resolve(prior.hapPath) !== path.resolve(candidate)) {
+    return reject('原成功构建记录与当前包路径/product/buildMode 不匹配，需执行构建');
+  }
+  const sha = computeHapSha256Full(candidate);
+  if (!sha || prior.hapSha256Full !== sha) return reject('当前包内容摘要与原成功构建记录不匹配，需执行构建');
+  return { ...base, reuse: true, hapSha256Full: sha, priorResult: prior,
+    reason: '已核对当前报告的成功记录、包路径/内容摘要、product/buildMode、源码新鲜度及配对产物，复用已有包' };
 }

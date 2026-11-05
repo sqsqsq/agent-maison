@@ -335,7 +335,7 @@ type LocalWithProbe = FrameworkLocalConfig & {
   toolchain?: FrameworkLocalConfig['toolchain'] & {
     probe?: {
       binary?: { hvigor_bin?: string; observed_at?: string };
-      cli_starts?: { ok?: boolean; hvigor_version?: string; observed_at?: string };
+      cli_starts?: import('../../../harness/scripts/utils/framework-local-config').FrameworkLocalToolchainProbe['cli_starts'];
       project_compile?: ProjectCompileProbe;
       last_attempt?: { summary?: string; observed_at?: string };
       known_quirks?: string[];
@@ -541,15 +541,16 @@ export function resetCapabilityFailedByHumanReprobe(
 export function recordBinaryAndCliStartsProbe(
   projectRoot: string,
   hvigorBin: string,
-  runVersion: (bin: string) => { ok: boolean; version?: string },
+  runVersion: (bin: string) => { ok: boolean; version?: string; hvigorBin?: string; error?: string; command?: string; cwd?: string; args?: string[]; invocationDriver?: string; environment?: Record<string, unknown>; exitCode?: number | null; timedOut?: boolean },
   nowMs: number = Date.now(),
 ): void {
   try {
     const { local, probe } = loadProbe(projectRoot);
     const nowIso = new Date(nowMs).toISOString();
-    probe.binary = { hvigor_bin: hvigorBin, observed_at: nowIso };
+    probe.binary = { ...(hvigorBin ? { hvigor_bin: hvigorBin } : {}), observed_at: nowIso };
     const v = runVersion(hvigorBin);
-    probe.cli_starts = { ok: v.ok, ...(v.version ? { hvigor_version: v.version } : {}), observed_at: nowIso };
+    const { version, hvigorBin: _entry, ...facts } = v;
+    probe.cli_starts = { ...facts, ...(version ? { hvigor_version: version } : {}), observed_at: nowIso };
     writeLocalConfig(projectRoot, local);
   } catch {
     /* best-effort */

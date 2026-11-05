@@ -123,9 +123,9 @@ export default function dashboardRepoTest() {
 
 **执行链无结果时停止盲跑**：先读本次 faultlog/hilog 诊断；同键、同因失败再次出现且输入/环境或诊断依据未变时，按 harness 指引停止并上报，不在本次调用内反复真跑。调用结束后交 runner 沿既有执行链诊断出口处理；没有执行结果不等于业务代码回归。原因未知时不自行断言资源路径或 TestRunner 配置有误。系统引导阻断按设备门提示交用户完成初始化，不代点引导；正式收口可采纳同次调用的冻结失败，不能要求为刷新回执再真跑。恢复或输入变化后重新执行。
 
-**`hap_not_found` / 签名缺口硬约束**：失败阶段为 `hap_not_found` 时，必须先全文引用 `hdc-test.<module>.log`（或 `ut_hvigor_test` details 头部）中的 harness 分层签名诊断与修复建议，再下结论。诊断已有明确原因层（例如“hvigor 明确报告 signingConfigs 未配置”）时，禁止另创 `.p12` 调试证书、默认密码、DevEco 会话兜底等环境故事。签名配置属于宿主资产：交互模式立即 HARD STOP，把诊断原文与“补 `signingConfigs` / 自定义签名任务覆盖 `ohosTest`”二选一动作交给用户，不代改宿主工程、不循环重跑；goal 模式的熔断由 runner 接管，agent 本轮只做诊断呈报，按真实条件补受影响检查，未知保留；不以固定次数或同signature直接停，完成可比验收由同一evaluation判断。
+**`hap_not_found` / 签名产物验证缺口**：先引用 `ut_hvigor_test` details 或 `hdc-test.<module>.log` 中的分层诊断、原构建日志路径、所选 product、候选与配对路径，再作结论。signed 早于同 basename unsigned 属“签名产物陈旧/未更新”；配对缺失/读取失败属验证依据不足，均不能 PASS 或装机。其他 basename unsigned 仅供缺包诊断，不冒充选中 signed 的输入。正常 UP-TO-DATE 可采用旧但配对有效的包，UT 的 daemon 策略沿现行配置/goal/恢复，不额外强制 no-daemon。
 
-sign-skip 分支只在 `failedAt=hap_not_found` 且 `unsignedPresent` / `signSkipped` / `signingConfigMissing` 任一结构化证据存在时成立。三项证据全无时仍 HARD STOP，但只能表述为“核对构建产物路径与 genOnDeviceTestHap 日志”，不得复用签名缺口话术。
+签名缺失原因未知、构建环境与磁盘观测矛盾，均先交既有统一处置和当前合法作者调查。实际授权内可修复宿主配置/脚本；越出写域走责任/范围修订，确认缺凭据、账号权限、外部服务才等待，不按交互/goal 模式一刀切 HARD STOP。禁止猜密码、创建签名身份、编造 DevEco 会话或 Java/daemon 根因。`unsignedPresent` / `signSkipped` / `signingConfigMissing` 只表达已观察事实；全无时只核对构建路径和原日志。宿主未转发签名子进程输出时说明不可见，不伪造。
 
 **设备失败分类决策树**（读 `ut-install-diag.json` + `ut_hvigor_test` 报告）：
 
@@ -134,7 +134,7 @@ sign-skip 分支只在 `failedAt=hap_not_found` 且 `unsignedPresent` / `signSki
 | selfHealable | 版本降级且未设 env | 设置 env 后重跑 |
 | needsConfirmation | 降级+需确认卸载/升 versionCode | HARD STOP 列诊断等用户选择 |
 | externalBlocked | 无设备/hdc 缺失 | 不循环改 UT，告知用户准备设备，`verdict=INCOMPLETE` |
-| hap_not_found / sign-skip | unsigned 在、signed 不在，或存在 `signSkipped` / `signingConfigMissing` | 全文引用分层诊断；交互模式 HARD STOP 求宿主动作，goal 模式交 runner 熔断；不循环改 UT/重跑 |
+| hap_not_found / 配对缺口 | signed 缺失、陈旧或缺配对依据 | 引用实际诊断与原日志，交当前合法作者调查/修复；只有确认外部条件/越权才沿现有等待或范围修订 |
 | clear | 预检通过 | 继续装机执行 |
 
 **绝不允许**：把"无设备"标 SKIP/PASS；用环境变量跳过 `ut.run` BLOCKER；未跑就交；因找不到工具链就写 SKIP。

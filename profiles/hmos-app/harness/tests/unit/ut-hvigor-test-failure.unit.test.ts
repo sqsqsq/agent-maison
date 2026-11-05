@@ -108,7 +108,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert(details.indexOf('分层签名诊断全文') < details.indexOf('[log-marker]'), '诊断必须在日志前');
       assert(!details.includes('原因：hvigor / hdc 未执行'), '旧误导措辞必须移除');
       assertEq(count(details, '失败阶段：hap_not_found'), 1, 'stageHint 不应重复');
-      assertEq(output.blockingClass, 'device_toolchain', 'blockingClass');
+      assertEq(output.blockingClass, undefined, '签名未知不自动 external');
       assertEq(output.failureKind, 'ohos_test_sign_gap', 'failureKind');
     },
   },
@@ -232,7 +232,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       ];
       for (const [value, expected] of entries) {
         const output = buildUtHvigorTestFailDetails([{ module: 'A', result: value }]);
-        assertEq(output.blockingClass, 'device_toolchain', `${expected} blocking`);
+        assertEq(output.blockingClass, expected.startsWith('ohos_test_') ? undefined : 'device_toolchain', `${expected} blocking`);
         assertEq(output.failureKind, expected, `${expected} kind`);
       }
       const toolMissing = buildUtHvigorTestFailDetails([
@@ -294,7 +294,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         { module: 'A', result: gap },
         { module: 'B', result: result({ failedAt: 'hap_not_found', signSkipped: true }) },
       ]);
-      assertEq(same.blockingClass, 'device_toolchain', '同构 toolchain 打标');
+      assertEq(same.blockingClass, undefined, '同构签名缺口交作者调查');
       assertEq(same.failureKind, 'ohos_test_sign_gap', '同 kind 聚合');
       assert(firstLine(same).includes('均为 ohosTest 签名缺口'), firstLine(same));
       assert(!firstLine(same).includes('signingConfigs 未配置'), '不得推广首模块具体原因');
@@ -303,7 +303,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         { module: 'A', result: gap },
         { module: 'B', result: result({ failedAt: 'hap_not_found' }) },
       ]);
-      assertEq(differentKinds.blockingClass, 'device_toolchain', '同 failedAt 异 kind 仍打标');
+      assertEq(differentKinds.blockingClass, undefined, '缺包/签名未知不得归外部');
       assertEq(differentKinds.failureKind, undefined, '同 failedAt 异 kind 无顶层 kind');
       assert(firstLine(differentKinds).startsWith('多模块工具链失败'), firstLine(differentKinds));
       assert(firstLine(differentKinds).includes('ohos_test_sign_gap'), firstLine(differentKinds));
@@ -314,7 +314,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         { module: 'A', result: gap },
         { module: 'B', result: result({ failedAt: 'install' }, { executed: true, exitCode: 1 }) },
       ]);
-      assertEq(heterogeneous.blockingClass, 'device_toolchain', '异构 toolchain 仍打标');
+      assertEq(heterogeneous.blockingClass, undefined, '签名未知和安装问题混合不能整体停放');
       assertEq(heterogeneous.failureKind, undefined, '异构无顶层 kind');
       assert(firstLine(heterogeneous).startsWith('多模块工具链失败'), firstLine(heterogeneous));
     },
@@ -352,7 +352,7 @@ const cases: Array<{ name: string; run: () => void }> = [
           result: externalResult(),
         },
       ]);
-      assertEq(withSignGap.blockingClass, 'device_toolchain', '纯环境/工具链混合不得落 code_regression');
+      assertEq(withSignGap.blockingClass, undefined, '混合含可调查签名缺口不得整体 external');
       assertEq(withSignGap.failureKind, undefined, '异构环境阻塞不推广单一 kind');
       assertEq(withSignGap.affectedFiles.length, 2, 'affected_files 覆盖全部失败模块');
       const details = withSignGap.lines.join('\n');
@@ -512,8 +512,8 @@ const cases: Array<{ name: string; run: () => void }> = [
       const signedCtx = priorContext(signed);
       assert(signedCtx.excerpt.includes('signingConfigs 未配置'), signedCtx.excerpt);
       assert(signedCtx.excerpt.includes('自定义签名任务覆盖 ohosTest'), signedCtx.excerpt);
-      assert(/parked, environment\/toolchain/.test(signedCtx.prior), signedCtx.prior);
-      assert(!signedCtx.prior.includes('signingConfigs 未配置'), signedCtx.prior);
+      assert(!/parked, environment\/toolchain/.test(signedCtx.prior), signedCtx.prior);
+      assert(signedCtx.prior.includes('signingConfigs 未配置'), signedCtx.prior);
 
       const unknown = priorContext(
         buildUtHvigorTestFailDetails([

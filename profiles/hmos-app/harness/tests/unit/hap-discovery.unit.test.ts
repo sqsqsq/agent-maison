@@ -4,9 +4,9 @@
 //
 // 覆盖：
 //   - discoverAppHapArtifacts：outputs/<product> 布局命中（宿主 bc-openCard 误报根因）、
-//     多候选歧义的四级排序键确定性、ohosTest outputs 目录排除、fallback build/* 不硬编码
+//     所选 product 内多候选的确定性排序、ohosTest outputs 排除与诊断枚举
 //   - findAppSignedHap：薄包装与 discoverAppHapArtifacts(...).signedPath 行为等价
-//   - detectStaleSignedSuspect：同 basename 配对观测，不跨文件名误伤
+//   - detectStaleSignedSuspect：同 basename 配对验证，不跨文件名误配
 //
 // 用法：
 //   npx ts-node framework/harness/tests/run-unit.ts --filter hap-discovery
@@ -103,7 +103,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     }),
   },
   {
-    name: 'discoverAppHapArtifacts: 四级排序键确定性——segment rank > module 声明序 > outputs rank，歧义候选全量入 result',
+    name: 'discoverAppHapArtifacts: 所选 product 内按 module 声明序与 outputs rank 排序，候选完整保留',
     run: () => withTmpDir(root => {
       writeBuildProfile(root, [
         { name: 'ModA', srcPath: './mod/A' },
@@ -118,7 +118,7 @@ const cases: Array<{ name: string; run: () => void }> = [
 
       const result = discoverAppHapArtifacts(root, 'product');
       assertEq(result.signedPath, winner, 'segment=product(rank0) 且 module 声明序更靠前的 ModA 应胜出');
-      assertEq(result.candidates.length, 3, '三个候选应全量入 result（歧义不静默）');
+      assertEq(result.candidates.length, 2, '只枚举所选 product 的两个候选');
       assertEq(result.candidates[0]!.path, winner, 'candidates[0] 应与 signedPath 一致');
     }),
   },
@@ -134,7 +134,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     }),
   },
   {
-    name: 'discoverAppHapArtifacts: fallback 不硬编码——buildProduct 未传时仍能扫描到非 default 段',
+    name: 'discoverAppHapArtifacts: 未指定 product 的诊断枚举可发现非 default 段，不供生产安装选包',
     run: () => withTmpDir(root => {
       writeBuildProfile(root, [{ name: 'Phone', srcPath: './01-Product/Phone' }]);
       const expected = path.join(root, '01-Product', 'Phone', 'build', 'product', 'outputs', 'product', 'Phone-product-signed.hap');
@@ -199,7 +199,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     }),
   },
   {
-    name: 'detectStaleSignedSuspect: 无同 basename unsigned 配对 → staleSuspect=false, unsignedPath=null（不跨文件名比较）',
+    name: 'detectStaleSignedSuspect: 无同 basename unsigned 配对 → status=unknown 并给出应核对的配对路径',
     run: () => withTmpDir(root => {
       const signed = path.join(root, 'Phone-product-signed.hap');
       writeFile(signed, 'signed');
@@ -207,7 +207,8 @@ const cases: Array<{ name: string; run: () => void }> = [
       writeFile(path.join(root, 'OtherModule-unsigned.hap'), 'unsigned');
       const result = detectStaleSignedSuspect(signed);
       assertEq(result.staleSuspect, false, '无同 basename 配对不应判 stale');
-      assertNull(result.unsignedPath, '不应跨文件名误配对');
+      assertEq(result.status, 'unknown', '缺少同 basename 配对不可验证');
+      assertEq(result.unsignedPath, signed.replace('-signed.hap', '-unsigned.hap'), '指出实际需要的配对路径');
     }),
   },
 ];

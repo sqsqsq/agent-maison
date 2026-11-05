@@ -21,6 +21,7 @@ import { DEVICE_SETUP_GUIDANCE } from '../../../harness/scripts/utils/device-unl
 // ============================================================================
 
 import * as fs from 'fs';
+import { detectStaleSignedSuspect, detectProduct } from './hvigor-runner';
 import * as os from 'os';
 import * as path from 'path';
 import { spawnSync, type SpawnSyncOptions, type SpawnSyncReturns } from 'child_process';
@@ -522,6 +523,7 @@ export interface OnDeviceUtRunResult {
   failedAt?: 'metadata' | 'hap_not_found' | 'install' | 'run' | 'no_pass';
   /** ohosTest 产物发现阶段是否命中 unsigned HAP；不据此单独推断签名原因。 */
   unsignedPresent?: boolean;
+  artifactValidation?: ReturnType<typeof detectStaleSignedSuspect>;
   durationMs: number;
   /** 总日志（命令拼接 + 各阶段输出），落盘 + 报告展示 */
   logExcerpt: string;
@@ -650,6 +652,8 @@ export function loadOhosTestMetadata(projectRoot: string, srcPath: string): Ohos
 
 export interface OhosTestDiscoveryResult {
   signedPath: string | null;
+  artifactValidation?: ReturnType<typeof detectStaleSignedSuspect>;
+  diagnostic?: string;
   /** 与 signedPath 同目录（或扫描到的首个）未签名产物，用于 sign-skip 分层诊断 */
   unsignedPath: string | null;
   /** 实际扫描过的 outputs/ohosTest 目录（相对 projectRoot，正斜杠） */
@@ -660,8 +664,8 @@ export interface OhosTestDiscoveryResult {
  * 在模块的 build/<product>/outputs/ohosTest/ 下发现已签名 / 未签名 hap。
  * 命名约定（hvigor 5.x）：`<srcModuleName>-ohosTest-signed.hap`，
  *   srcModuleName 取 build-profile.json5 modules[].name（即 contracts.modules[].name）。
- * 扫描优先级与旧 findOhosTestSignedHap 一致（buildProduct → default → build/* 兜底），
- * 仅额外记录 unsignedPath/scannedDirs 供 sign-skip 分层诊断消费（plan d7e4b2a9 t3）。
+ * 只扫描所选 product；省略参数时按现有工程配置解析，不能跨 product 猜包。
+ * unsignedPath/scannedDirs 仅供缺包诊断；配对结论来自实际选中的 signed。
  */
 export function discoverOhosTestArtifacts(
   projectRoot: string,
@@ -669,13 +673,12 @@ export function discoverOhosTestArtifacts(
   srcModuleName: string,
   buildProduct?: string,
 ): OhosTestDiscoveryResult {
-  const segments: string[] = [];
-  if (buildProduct && buildProduct.trim()) {
-    segments.push(buildProduct.trim());
+  let selectedProduct = buildProduct?.trim();
+  if (!selectedProduct) {
+    try { selectedProduct = detectProduct(projectRoot); }
+    catch (error) { return { signedPath: null, unsignedPath: null, scannedDirs: [], diagnostic: (error as Error).message }; }
   }
-  if (!segments.includes('default')) {
-    segments.push('default');
-  }
+  const segments = [selectedProduct];
 
   const scannedDirs: string[] = [];
   let signedPath: string | null = null;
@@ -714,22 +717,8 @@ export function discoverOhosTestArtifacts(
     scanDir(path.join(projectRoot, srcPath, 'build', seg, 'outputs', 'ohosTest'));
   }
 
-  const buildRoot = path.join(projectRoot, srcPath, 'build');
-  if (fs.existsSync(buildRoot)) {
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(buildRoot, { withFileTypes: true });
-    } catch {
-      entries = [];
-    }
-    for (const ent of entries) {
-      if (!ent.isDirectory()) continue;
-      if (segments.includes(ent.name)) continue; // 已在上面扫描过
-      scanDir(path.join(buildRoot, ent.name, 'outputs', 'ohosTest'));
-    }
-  }
-
-  return { signedPath, unsignedPath, scannedDirs };
+  const artifactValidation = signedPath ? detectStaleSignedSuspect(signedPath) : undefined;
+  return { signedPath, unsignedPath, scannedDirs, artifactValidation };
 }
 
 /**
@@ -743,7 +732,8 @@ export function findOhosTestSignedHap(
   srcModuleName: string,
   buildProduct?: string,
 ): string | null {
-  return discoverOhosTestArtifacts(projectRoot, srcPath, srcModuleName, buildProduct).signedPath;
+  const result = discoverOhosTestArtifacts(projectRoot, srcPath, srcModuleName, buildProduct);
+  return result.artifactValidation?.status === 'valid' ? result.signedPath : null;
 }
 
 /** runHvigorTest 内模块级直传的签名诊断（plan d7e4b2a9 t3③；不承担跨阶段传输，仅同函数内传递）。 */
@@ -1282,7 +1272,7 @@ export interface OnDeviceUtOptions {
   srcPath: string;
   /**
    * 与 hvigor `-p product=` / `build/<product>/outputs/ohosTest` 对齐的产物目录段。
-   * 不传时 `findOhosTestSignedHap` 会尝试 default 并扫描 `build/*`。
+   * 不传时按现有工程配置解析，不跨 product 扫描采用。
    */
   buildProduct?: string;
   /** 跳过环境变量（v2.2 风格） */
@@ -1355,16 +1345,17 @@ export function runOnDeviceUt(opts: OnDeviceUtOptions): OnDeviceUtRunResult {
   const discovery = discoverOhosTestArtifacts(opts.projectRoot, opts.srcPath, opts.srcModuleName, opts.buildProduct);
   const unsignedPresent = Boolean(discovery.unsignedPath);
   const hap = discovery.signedPath;
-  if (!hap) {
-    const prodHint = opts.buildProduct?.trim() ? `product=${opts.buildProduct.trim()}` : 'default + build/* 扫描';
+  if (!hap || discovery.artifactValidation?.status !== 'valid') {
+    const prodHint = opts.buildProduct?.trim() ? `product=${opts.buildProduct.trim()}` : '工程选定 product';
     const signSkipMsg = describeOhosTestSignSkipDiagnosis(discovery, opts.signDiagnosis);
     const msg =
-      signSkipMsg ??
-      `未在 ${opts.srcPath}/build/<product>/outputs/ohosTest/ 找到 *-signed.hap（已尝试 ${prodHint}），请先按模块类型构建 ohosTest：HAP=assembleHap，HAR/HSP=genOnDeviceTestHap`;
+      discovery.artifactValidation?.note ?? discovery.diagnostic ?? signSkipMsg ??
+      `未在 ${opts.srcPath}/build/<product>/outputs/ohosTest/ 找到 *-signed.hap（已尝试 ${prodHint}），请核对本模块构建日志和产物路径：HAP=assembleHap，HAR/HSP=genOnDeviceTestHap`;
     return finalize({
       executed: false,
       failedAt: 'hap_not_found',
       unsignedPresent,
+      artifactValidation: discovery.artifactValidation,
       metadata,
       logExcerpt: `${logChunks.join('\n')}\n[hap] FAIL: ${msg}`,
       errors: [{ message: msg }],

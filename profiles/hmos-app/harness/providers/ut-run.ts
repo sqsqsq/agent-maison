@@ -135,12 +135,13 @@ export async function runRequestTests(ctx: RequestCheckContext) {
     const build = runHvigorBuild({ projectRoot: ctx.projectRoot, frameworkRoot: ctx.frameworkRoot, harnessRoot: ctx.harnessRoot,
       phase: 'ut', reportDir: runDir, moduleName: group.name, target: 'ohosTest', product: selection.product });
     builds.set(group.name, build);
-    haps.push([group.name, computeHapSha256Full(discoverOhosTestArtifacts(ctx.projectRoot, group.srcPath, group.name, selection.product).signedPath)]);
+    const artifact = discoverOhosTestArtifacts(ctx.projectRoot, group.srcPath, group.name, selection.product);
+    haps.push([group.name, artifact.artifactValidation?.status === 'valid' ? computeHapSha256Full(artifact.signedPath) : null]);
   }
   Object.assign(inputs, { hap_sha256_full: sha256Text(JSON.stringify(haps)), device: identity.device, display_env: identity.display_env });
   record = { ...record, inputs, execution_key: computeExecutionKey(inputs) }; writeExecutionKeyRecord(runDir, record);
   const artifacts = [...utFrozenRunArtifacts([...groups.keys()]), ...[...groups.keys()].map(name => ({ top: 'hvigor-build.' + name + '.log', frozen: 'frozen.hvigor-build.' + name + '.log', group: 'execution' as const }))];
-  const eligible = haps.every(([, digest]) => digest) && [...builds.values()].every(isHvigorBuildSuccessful);
+  const eligible = haps.every(([name, digest]) => digest && builds.get(name)?.builtHap?.sha256 === digest) && [...builds.values()].every(isHvigorBuildSuccessful);
   const reused = !ctx.forceDevice && eligible && identity.device
     ? decideReuse(ctx.reportDir, record.execution_key, { leg: 'ut', artifacts, excludeRunDir: runDir }).reusable : null;
   if (reused) restoreFrozenRunArtifacts(reused.runDir, runDir, artifacts);

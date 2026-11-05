@@ -6,6 +6,7 @@ import {
   evaluateDeviceTestBuildReuse,
 } from '../../device-test-build-reuse';
 import { runDeviceTestAppBuild } from '../../providers/device-test-build';
+import { computeHapSha256Full } from '../../build-fingerprint';
 import { clearFrameworkConfigCache } from '../../../../../harness/config';
 
 export interface UnitCaseResult {
@@ -39,9 +40,12 @@ function mkReuseFixture(): string {
   fs.mkdirSync(hapDir, { recursive: true });
   const hapPath = path.join(hapDir, 'Phone-default-signed.hap');
   fs.writeFileSync(hapPath, 'fake-hap', 'utf-8');
+  fs.writeFileSync(hapPath.replace('-signed.hap', '-unsigned.hap'), 'unsigned');
   const srcMtime = fs.statSync(srcFile).mtimeMs;
   const hapMtime = srcMtime + 60_000;
   fs.utimesSync(hapPath, hapMtime / 1000, hapMtime / 1000);
+  fs.writeFileSync(path.join(root, 'device-test-build.result.json'), JSON.stringify({ buildSucceeded: true,
+    resolvedProduct: 'default', resolvedBuildMode: 'debug', hapPath, hapSha256Full: computeHapSha256Full(hapPath) }));
   return root;
 }
 
@@ -67,7 +71,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       const prev = process.env.HARNESS_DEVICE_TEST_FORCE_BUILD;
       process.env.HARNESS_DEVICE_TEST_FORCE_BUILD = '';
       try {
-        const decision = evaluateDeviceTestBuildReuse({ projectRoot: root, product: 'default' });
+        const decision = evaluateDeviceTestBuildReuse({ projectRoot: root, product: 'default', reportDir: root });
         if (!decision.reuse) throw new Error('should reuse when hap newer than sources');
         if (!decision.hapPath) throw new Error('hap path resolved');
       } finally {
@@ -86,7 +90,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         const srcFile = path.join(root, '02-Feature', 'Demo', 'src', 'Index.ets');
         const srcMtime = fs.statSync(srcFile).mtimeMs;
         fs.utimesSync(srcFile, (srcMtime + 120_000) / 1000, (srcMtime + 120_000) / 1000);
-        const decision = evaluateDeviceTestBuildReuse({ projectRoot: root, product: 'default' });
+        const decision = evaluateDeviceTestBuildReuse({ projectRoot: root, product: 'default', reportDir: root });
         if (decision.reuse) throw new Error('should rebuild when source newer than hap');
       } finally {
         process.env.HARNESS_DEVICE_TEST_FORCE_BUILD = prev ?? '';
@@ -101,7 +105,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       const prev = process.env.HARNESS_DEVICE_TEST_FORCE_BUILD;
       process.env.HARNESS_DEVICE_TEST_FORCE_BUILD = '1';
       try {
-        const decision = evaluateDeviceTestBuildReuse({ projectRoot: root, product: 'default' });
+        const decision = evaluateDeviceTestBuildReuse({ projectRoot: root, product: 'default', reportDir: root });
         if (decision.reuse) throw new Error('force build disables reuse');
       } finally {
         process.env.HARNESS_DEVICE_TEST_FORCE_BUILD = prev ?? '';
@@ -110,7 +114,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'evaluateDeviceTestBuildReuse: staleSuspect 纯观测——unsigned 新于 signed 时标记但不影响 reuse 判定（plan d7e4b2a9 t2）',
+    name: 'evaluateDeviceTestBuildReuse: unsigned 新于 signed 时不得复用',
     run: () => {
       const root = mkReuseFixture();
       const prev = process.env.HARNESS_DEVICE_TEST_FORCE_BUILD;
@@ -123,8 +127,8 @@ const cases: Array<{ name: string; run: () => void }> = [
         const signedMtime = fs.statSync(signed).mtimeMs;
         fs.utimesSync(unsigned, (signedMtime + 60_000) / 1000, (signedMtime + 60_000) / 1000);
 
-        const decision = evaluateDeviceTestBuildReuse({ projectRoot: root, product: 'default' });
-        if (!decision.reuse) throw new Error('staleSuspect 是纯观测，不应改变 reuse 判定（HAP 仍新于源码）');
+        const decision = evaluateDeviceTestBuildReuse({ projectRoot: root, product: 'default', reportDir: root });
+        if (decision.reuse || decision.hapPath) throw new Error('陈旧 signed 不得复用或作为安装路径');
         if (decision.staleSuspect !== true) throw new Error('unsigned 更新时应标记 staleSuspect=true');
         if (decision.staleSuspectUnsignedPath !== unsigned) throw new Error('staleSuspectUnsignedPath 应指向配对 unsigned 文件');
       } finally {
@@ -140,7 +144,9 @@ const cases: Array<{ name: string; run: () => void }> = [
       const prev = process.env.HARNESS_DEVICE_TEST_FORCE_BUILD;
       process.env.HARNESS_DEVICE_TEST_FORCE_BUILD = '';
       try {
-        const decision = evaluateDeviceTestBuildReuse({ projectRoot: root, product: 'default' });
+        fs.unlinkSync(path.join(root, '01-Product/Phone/build/default/outputs/default/Phone-default-unsigned.hap'));
+        const decision = evaluateDeviceTestBuildReuse({ projectRoot: root, product: 'default', reportDir: root });
+        if (decision.reuse || decision.artifactValidation?.status !== 'unknown') throw new Error('无配对依据不得复用');
         if (decision.staleSuspect) throw new Error('无 unsigned 配对不应误报 staleSuspect');
       } finally {
         process.env.HARNESS_DEVICE_TEST_FORCE_BUILD = prev ?? '';
@@ -149,24 +155,24 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'evaluateDeviceTestBuildReuse: reuse=true 分支也回填 scannedDirs/candidates（plan d7e4b2a9 review P2：复用路径不应让歧义 WARN 静默）',
+    name: 'evaluateDeviceTestBuildReuse: reuse=true 分支保留所选 product 的 scannedDirs/candidates',
     run: () => {
       const root = mkReuseFixture();
       const prev = process.env.HARNESS_DEVICE_TEST_FORCE_BUILD;
       process.env.HARNESS_DEVICE_TEST_FORCE_BUILD = '';
       try {
-        // 额外放一个候选（另一 outputs 子目录），制造歧义，验证复用分支不再丢弃 candidates。
+        // 放入其它 product 的包，验证复用诊断只保留当前 product 的候选。
         const extraDir = path.join(root, '01-Product', 'Phone', 'build', 'product', 'outputs', 'product');
         fs.mkdirSync(extraDir, { recursive: true });
         fs.writeFileSync(path.join(extraDir, 'Phone-product-signed.hap'), 'fake-hap-2', 'utf-8');
 
-        const decision = evaluateDeviceTestBuildReuse({ projectRoot: root, product: 'default' });
+        const decision = evaluateDeviceTestBuildReuse({ projectRoot: root, product: 'default', reportDir: root });
         if (!decision.reuse) throw new Error('HAP 仍新于源码，应复用');
         if (!decision.scannedDirs || decision.scannedDirs.length === 0) {
           throw new Error('reuse=true 分支应回填 scannedDirs（此前调 findAppSignedHap 薄包装会丢弃）');
         }
-        if (!decision.candidates || decision.candidates.length < 2) {
-          throw new Error(`reuse=true 分支应回填全部候选（此前会静默丢弃歧义）：${JSON.stringify(decision.candidates)}`);
+        if (!decision.candidates || decision.candidates.length !== 1) {
+          throw new Error(`reuse=true 只保留所选 product 候选：${JSON.stringify(decision.candidates)}`);
         }
       } finally {
         process.env.HARNESS_DEVICE_TEST_FORCE_BUILD = prev ?? '';
@@ -228,7 +234,7 @@ const cases: Array<{ name: string; run: () => void }> = [
           if (prev === undefined) delete process.env.HARNESS_SKIP_DEVICE_TEST_BUILD;
           else process.env.HARNESS_SKIP_DEVICE_TEST_BUILD = prev;
         }
-        // 生产源码顺序断言：skip 分支必须先于 resolveProductSelection / reuse / daemon
+        // 生产源码顺序断言：skip 分支必须先于 resolveProductSelection / reuse
         const src = fs.readFileSync(
           path.join(__dirname, '..', '..', 'providers', 'device-test-build.ts'),
           'utf-8',
@@ -236,9 +242,8 @@ const cases: Array<{ name: string; run: () => void }> = [
         const skipIdx = src.indexOf("process.env[skipEnvVar]");
         const resolveIdx = src.indexOf('resolveProductSelection({');
         const reuseIdx = src.indexOf('evaluateDeviceTestBuildReuse({');
-        const daemonIdx = src.indexOf('stopHvigorDaemon({');
-        if (!(skipIdx >= 0 && skipIdx < resolveIdx && skipIdx < reuseIdx && skipIdx < daemonIdx)) {
-          throw new Error(`skip 短路必须先于解析/复用/daemon（skip=${skipIdx}, resolve=${resolveIdx}, reuse=${reuseIdx}, daemon=${daemonIdx}）`);
+        if (!(skipIdx >= 0 && skipIdx < resolveIdx && skipIdx < reuseIdx)) {
+          throw new Error(`skip 短路必须先于解析/复用（skip=${skipIdx}, resolve=${resolveIdx}, reuse=${reuseIdx}）`);
         }
       } finally {
         clearFrameworkConfigCache();

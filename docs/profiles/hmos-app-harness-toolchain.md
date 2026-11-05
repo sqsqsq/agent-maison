@@ -45,6 +45,38 @@ v2.2 起，**任何形式的 SKIP/MAJOR 兜底都不应作为常态**；环境�
 
 ---
 
+## 3.1 打包装机、产物采用与恢复
+
+正式 testing 与 `adhoc-device-test --install-current-build` 共用主应用 build/install provider。
+进程成功（exit 0、未超时及所需成功标记）与可安装产物分别检查；非致命 ERROR 文本不单独否决成功，
+磁盘有包也不能覆盖进程失败。纯 coding/compile、HAR 编译不要求 signed HAP；request testing
+仍运行手机已装版本，不自动打包装机。
+
+主应用只采用 `build/<所选 product>/outputs/default` 或同 product 的 `outputs/<target>` 下的包，
+UT 只采用同 product 的 `outputs/ohosTest`。不能在目标缺包时回退其它 product。
+对实际选中 signed，在同模块同目录按同 basename 查 unsigned：signed 早于它则报告“签名产物陈旧/未更新”；
+配对缺失、读取失败则保留验证缺口，两者均不向安装方下传路径。mtime 只检查陈旧，不证明源码内容与签名因果；
+正常增量 UP-TO-DATE 不要求产物晚于构建启动时间。
+
+主应用直接复用只读取本 Feature/phase 当前 `device-test-build.result.json`：原成功记录的
+product/buildMode、路径、完整 SHA256、源码新鲜度和当前配对均须匹配。缺记录、旧字段或 IDE 覆盖同路径包
+只会执行正常构建，不直接停任务、不跨 Feature 搜索。UT 沿同调用 build collector 绑定 `buildMode=test`
+维度、路径与摘要，安装前再核配对，不使用主应用 debug/release 记录。
+
+主应用打包装机实际传 `--no-daemon`，保留配置中的 parallel/incremental，不再预先 stop-daemon；
+UT 和纯 compile 仍沿现行配置、goal 上下文及已有事务恢复策略。探针只跑 `--version`，与真实构建共用
+spawn plan、环境和 Windows 引用，尊重显式 wrapper/Node driver；CLI 可启动不等于工程可构建。
+
+Java 选择优先级保持：有效 JAVA_HOME 保留，失效/缺失时按现行规则回退 DevEco JBR；有效 JBR/bin
+仍前插子进程 PATH。元数据分别记录 JAVA_HOME 和本次子进程 PATH 首个 Java 路径/来源，解析不到为 unknown，
+不能合称为“实际 Java”或据路径存在断言兼容。`hvigor-*.meta.json` 保留命令、cwd、参数、有效 SDK、daemon 参数、
+退出/超时/启动错误和日志落点，不输出完整环境或秘密。日志只含宿主实际转发的 stdout/stderr；未转发的签名输出不可见。
+
+失败先读原日志、候选/配对路径及本次环境。可保留一次有依据的无 daemon 事务恢复；仍失败或签名依据未知时，
+由既有 `readCurrentDispositionInput` / `resolveCurrentDisposition` 交当前合法作者调查，在实际写域内可修复宿主配置/脚本。
+确认缺凭据、账号权限、外部服务或须扩大写域才走既有等待/范围修订；checker/runtime 缺口交维护方。
+交互与无人值守模式不改变权限，不猜密码、不造证书、不绕设备门，也不把签名 400 自动归因 Java/daemon。
+
 ## 4. v2.7+ hvigor 加速 flag 与 v2.9 coding 命令默认值
 
 **coding 阶段（默认）**：`buildCodingHvigorArgs` → `node …/hvigorw.js --mode module -p product=… -p buildMode=debug … assembleHap`，或由 `toolchain.hvigor.coding.driver=assemble_app_project` 切换为项目级 `assembleApp`（参数仍由 `buildAssembleAppArgs` 装配）。完整日志写入 `hvigor-build.log`（不截断）；`hvigor-build.meta.json` 记录 `timedOut` / `successMarkerFound` / `logBytes` 等。默认 **coding 超时 45min**，`ut` 相关默认 15min，均可由 `toolchain.hvigor.timeoutMs` 覆盖。
@@ -99,7 +131,7 @@ node <DevEco>/tools/node/node.exe <DevEco>/tools/hvigor/bin/hvigorw.js \
 
 | 字段 | 默认值 | 效果 |
 | ---- | ------ | ---- |
-| `daemon` | `true` | `false` 传 `--no-daemon`；`true` 传 `--daemon` |
+| `daemon` | `true` | coding/UT 按配置；主应用打包装机固定 `--no-daemon`；goal 上下文既有策略仍生效 |
 | `parallel` | `true` | 是否传 `--parallel` |
 | `incremental` | `true` | 是否传 `--incremental` |
 | `analyze` | `"normal"` | `"off"` 不传；`"normal"` / `"advanced"` 分别传 `--analyze=normal` / `--analyze=advanced` |

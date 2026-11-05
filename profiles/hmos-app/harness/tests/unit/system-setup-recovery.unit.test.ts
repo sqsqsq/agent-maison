@@ -127,6 +127,7 @@ test('395 self-check and formal gate use real UT provider once; cleared guide wi
     write('WalletMain/src/main/module.json5', { module: { name: 'WalletMain', type: 'har' } });
     write('WalletMain/src/ohosTest/module.json5', { module: { name: 'walletmain_test' } });
     write('WalletMain/src/ohosTest/ets/test/Example.test.ets', 'export function test() {}');
+    write('WalletMain/build/default/outputs/ohosTest/WalletMain-ohosTest-unsigned.hap', 'test-input');
     write('WalletMain/build/default/outputs/ohosTest/WalletMain-ohosTest-signed.hap', 'immutable-test-package');
     Object.assign(process.env, { HARNESS_HDC_EXE: process.execPath, HARNESS_HDC_TARGET: 'fixture', MAISON_DEVICE_ATTEMPT_FROZEN: '1', MAISON_GOAL_RUN_ID: 'run-395', MAISON_GOAL_ATTEMPT_PHASE: 'ut', MAISON_GOAL_ATTEMPT: 'i1' });
     delete process.env.MAISON_DEVICE_CREDENTIAL_REF;
@@ -147,7 +148,10 @@ test('395 self-check and formal gate use real UT provider once; cleared guide wi
       resolvedProfile: { name: 'hmos-app', profileDir: path.join(repo, 'profiles/hmos-app'), yaml: {}, phasesDisabled: new Set(),
         capabilities: { 'ut.run': { provider: 'hvigor_hypium', severity: 'BLOCKER' } }, personalPrerequisites: {} },
     } as unknown as CheckContext);
-    const builds = new Map([[utBuildCollectorKey(root, 'WalletMain', 'default')!, { executed: true, exitCode: 0, errors: [], logExcerpt: 'BUILD SUCCESSFUL', durationMs: 0 }]]);
+    const hap = path.join(root, 'WalletMain/build/default/outputs/ohosTest/WalletMain-ohosTest-signed.hap');
+    const builds = new Map([[utBuildCollectorKey(root, 'WalletMain', 'default')!, { executed: true, exitCode: 0, errors: [], logExcerpt: 'BUILD SUCCESSFUL', durationMs: 0,
+      buildInvocation: { module: 'WalletMain', target: 'ohosTest', task: 'genOnDeviceTestHap', product: 'default', buildMode: 'test' },
+      builtHap: { path: hap, sha256: require('../../build-fingerprint').computeHapSha256Full(hap) } }]]);
     const run = () => checkUtHvigorTest(ctx, [{ path: 'WalletMain/src/ohosTest/ets/test/Example.test.ets' }], [], builds);
     const first = run(); assert.equal(aaCalls, 1, JSON.stringify(first)); assert(first[0].device_setup);
     const liveGateInput = require('../../../../../harness/scripts/utils/device-readiness-deps').buildDeviceReadinessInput(root);
@@ -191,6 +195,8 @@ test('395 self-check and formal gate use real UT provider once; cleared guide wi
       ctx.forceDevice = change === 'force';
       if (change === 'input') write('WalletMain/build/default/outputs/ohosTest/WalletMain-ohosTest-signed.hap', 'changed-package');
       if (change === 'ordinary') delete process.env.MAISON_GOAL_ATTEMPT;
+      // 本轮可控 prebuild 必须绑定本轮实际包，不能沿用输入变更前的摘要。
+      for (const built of builds.values()) built.builtHap.sha256 = require('../../build-fingerprint').computeHapSha256Full(hap);
       const result = run();
       assert(!result[0].details.includes('采纳同次调用失败'), change);
       assert(result[0].device_setup, '装机前引导观察须穿过 hvigor 冻结结果：' + change);

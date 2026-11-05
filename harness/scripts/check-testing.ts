@@ -2977,7 +2977,7 @@ function buildDeviceInstallFailResults(
   ];
 }
 
-function checkDeviceTestBuildGate(
+export function checkDeviceTestBuildGate(
   ctx: CheckContext,
   out: DeviceTestPipelineHolder,
 ): CheckResult[] {
@@ -3101,8 +3101,14 @@ function checkDeviceTestBuildGate(
           severity: 'BLOCKER',
           status: 'FAIL',
           details: [
+            `product=${res.resolvedProduct} buildMode=${res.resolvedBuildMode}`,
+            ...(res.artifactValidation ? [JSON.stringify(res.artifactValidation)] : []),
+            `命令：${hv.command ?? '(未知)'}；元数据：${hv.metaPath ?? '(无)'}；原日志：${hv.logPath ?? '(无)'}`,
+            ...(hv.environment ? [`有效环境：${JSON.stringify(hv.environment)}`] : []),
+            ...(res.candidates ?? []).map(candidate => `候选（未采用）：${candidate.path}`),
+            hv.logExcerpt ?? '',
             scannedDirs.length
-              ? `hvigor 已通过但未在以下已扫描的 outputs 目录中找到合适的 *-signed.hap：\n${scannedDirs.map((d) => `  - ${d}`).join('\n')}`
+              ? `hvigor 进程已通过，但以下扫描目录内没有通过目标/配对验证的 signed 主 HAP：\n${scannedDirs.map((d) => `  - ${d}`).join('\n')}`
               : 'hvigor 已通过但未扫描到任何 build/<segment>/outputs/<dir> 目录（请确认 build-profile.json5 modules[] 声明正确，或入口模块尚未产出任何构建产物）。',
             '请确认入口模块已产出主应用 HAP；可参考 reports/<feature>/testing/device-test-build.result.json。',
             ...(hv.diagnostics?.length
@@ -3122,10 +3128,6 @@ function checkDeviceTestBuildGate(
           ]
         : [];
 
-    const staleLines = res.staleSuspect
-      ? ['', `⚠ ${res.staleSuspectNote ?? 'signed 可能基于上一轮 unsigned'}（unsigned：${res.staleSuspectUnsignedPath ?? '(未知)'}）`]
-      : [];
-
     const reuseLine = res.reused
       ? `复用 HAP（跳过 hvigor）：${res.reuseReason ?? ''}；hapBuiltAt=${res.hapBuiltAt ?? '(未知)'}`
       : `hvigor 已执行；日志: ${hv.logPath ?? '(无)'}`;
@@ -3144,7 +3146,6 @@ function checkDeviceTestBuildGate(
           `HAP: ${res.hapPath}`,
           reuseLine,
           ...ambiguityLines,
-          ...staleLines,
         ].join('\n'),
       },
     ];

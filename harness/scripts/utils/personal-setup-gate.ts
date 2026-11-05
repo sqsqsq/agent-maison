@@ -4,7 +4,6 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { spawnSync } from 'child_process';
 
 import {
   deriveHvigorBinFromInstallPath,
@@ -23,9 +22,7 @@ import {
 } from './config-placement-gate';
 import {
   LOCAL_SCHEMA_VERSION,
-  loadLocalConfig,
   updateLocalConfig,
-  type FrameworkLocalConfig,
 } from './framework-local-config';
 import type { PersonalPrerequisiteId } from './phase-personal-prerequisites';
 import { resolvePhasePersonalPrerequisites } from './phase-personal-prerequisites';
@@ -107,31 +104,15 @@ function isDevecoToolchainReady(projectRoot: string): boolean {
  * （真跑 hvigorw --version 验证"存在≠能启动"）；project_compile 态归 hvigor wrapper，
  * 本函数绝不触碰。profile 模块动态加载，缺失/失败即静默跳过（best-effort）。
  */
-function recordEnsureProbeBestEffort(projectRoot: string): void {
+function recordEnsureProbeBestEffort(projectRoot: string): { ok: boolean } {
   try {
-    const cfg = loadDevEcoConfig(projectRoot);
-    const hvigorBin = cfg?.hvigorBin ?? (cfg?.installPath ? deriveHvigorBinFromInstallPath(cfg.installPath) : null);
-    if (!hvigorBin || !fs.existsSync(hvigorBin)) return;
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const probeMod = require('../../../profiles/hmos-app/harness/toolchain-probe') as {
-      recordBinaryAndCliStartsProbe: (
-        root: string,
-        bin: string,
-        runVersion: (b: string) => { ok: boolean; version?: string },
-      ) => void;
-    };
-    probeMod.recordBinaryAndCliStartsProbe(projectRoot, hvigorBin, (bin: string) => {
-      const r = spawnSync(bin, ['--version'], {
-        encoding: 'utf-8',
-        timeout: 60_000,
-        shell: process.platform === 'win32',
-      });
-      const out = `${r.stdout ?? ''}\n${r.stderr ?? ''}`;
-      const m = out.match(/(\d+\.\d+\.\d+)/);
-      return { ok: r.status === 0, ...(m ? { version: m[1] } : {}) };
-    });
+    const probeMod = require('../../../profiles/hmos-app/harness/toolchain-probe') as typeof import('../../../profiles/hmos-app/harness/toolchain-probe');
+    const runner = require('../../../profiles/hmos-app/harness/hvigor-runner') as typeof import('../../../profiles/hmos-app/harness/hvigor-runner');
+    const { hvigorBin, ...result } = runner.runHvigorVersionProbe(projectRoot);
+    probeMod.recordBinaryAndCliStartsProbe(projectRoot, hvigorBin ?? '', () => result);
+    return result;
   } catch {
-    /* best-effort：探针失败不影响 --ensure 主流程 */
+    return { ok: false }; // best-effort：本次未观测到成功，不能借旧探针重置能力状态
   }
 }
 
@@ -143,17 +124,13 @@ function recordEnsureProbeBestEffort(projectRoot: string): void {
  * 机器路径无权解除能力缺口，人为动作才是"我修好了，再试一次"的权威。
  */
 export function runEnsureHumanReprobe(projectRoot: string): { reset: boolean } {
-  recordEnsureProbeBestEffort(projectRoot);
+  const currentProbe = recordEnsureProbeBestEffort(projectRoot);
   try {
-    const local = loadLocalConfig(projectRoot) as
-      | (FrameworkLocalConfig & { toolchain?: { probe?: { cli_starts?: { ok?: boolean } } } })
-      | null;
-    const cliOk = local?.toolchain?.probe?.cli_starts?.ok === true;
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const probeMod = require('../../../profiles/hmos-app/harness/toolchain-probe') as {
       resetCapabilityFailedByHumanReprobe: (root: string, ok: boolean) => boolean;
     };
-    return { reset: probeMod.resetCapabilityFailedByHumanReprobe(projectRoot, cliOk) };
+    return { reset: probeMod.resetCapabilityFailedByHumanReprobe(projectRoot, currentProbe.ok) };
   } catch {
     return { reset: false };
   }

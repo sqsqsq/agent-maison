@@ -1005,10 +1005,10 @@ function classifyCodingCompileFailureCore(
       kind: 'project_build_environment_inconsistent',
       explanation:
         `hvigor 配置阶段失败（${configError.code}），但引用路径**实际存在**` +
-        `${resolved ? `——${resolved}` : ''}。构建环境与磁盘状态不一致（非本轮编码所致）。`,
+        `${resolved ? `——${resolved}` : ''}。构建观测与磁盘状态矛盾，原因尚未确认。`,
       suggestion:
-        '同一构建事务原样重跑一次即可自证；仍失败则属外部条件（工具链/文件锁/缓存），' +
-        '**不应**再让 agent 改代码。',
+        '先以无 daemon 的构建事务重跑一次；仍失败则保留日志与实际环境，交当前作者在授权写域内调查构建配置、路径解析与脚本。' +
+        '只有确认缺凭据/权限、外部服务或须扩大写域时才沿现有条件/授权等待，不按分类名直接归外部。',
     };
   }
 
@@ -1117,17 +1117,10 @@ export function resolveCompileBlockingClass(kind: CodingCompileFailureKind): str
   if (
     kind === 'compile_timeout' ||
     kind === 'compile_incomplete_output' ||
-    kind === 'project_build'
+    kind === 'project_build' ||
+    kind === 'project_build_environment_inconsistent'
   ) {
     return CANONICAL_CODING_COMPILE_ID;
-  }
-  // f9c2e6b4 t2（codex 复核补接）：事务重跑后仍矛盾 = **外部条件**，必须落既有
-  // `externalBlocked` 契约才会被 dependency policy 认出来（isDeferrableExternalBlock
-  // 只查 deferrable_blocking_classes，默认集合就是 ['externalBlocked']）。
-  // 原实现把 kind 原样当 blocking_class，策略层认不出来 → 又回去让 agent 改代码，
-  // 等于 plan 要求的 WAITING/external 根本没接通。**复用既有契约，不造新状态。**
-  if (kind === 'project_build_environment_inconsistent') {
-    return 'externalBlocked';
   }
   return kind;
 }
@@ -1266,7 +1259,7 @@ export function compileProject(ctx: ProjectCompileContext): ProjectCompileResult
       status: 'FAIL',
       details: ['coding_compile（真实编译）失败：' + summarizeUnresolvedCause(compileSelection), guidance].join('\n'),
       failure_kind: 'project_build_environment_inconsistent',
-      blocking_class: resolveCompileBlockingClass('project_build_environment_inconsistent'),
+      blocking_class: 'externalBlocked',
       suggestion:
         '编译形态未确认属外部/工程配置问题，不得通过改代码绕过。' +
         '请按 details 中的指引确认 product（init.product_selection / record-product-selection / env）后重跑。',
@@ -1296,7 +1289,7 @@ export function compileProject(ctx: ProjectCompileContext): ProjectCompileResult
 
     // f9c2e6b4 t2：配置错误但路径实际存在 → **原样重跑一次构建事务**再下结论。
     // 这一步不启动 agent、不消耗内容重试预算：矛盾（"说找不到、但它就在那儿"）本身
-    // 就不该由改代码来解决。重跑仍矛盾 → 保留 environment_inconsistent，由裁决层归 external。
+    // 先由工具做一次事务恢复。仍失败保留原事实，交统一处置决定合法作者/等待。
     if (firstFailure.kind === 'project_build_environment_inconsistent') {
       buildTxnRetryLines = [
         '--- 构建事务重跑（f9c2e6b4 t2）---',
@@ -1306,8 +1299,8 @@ export function compileProject(ctx: ProjectCompileContext): ProjectCompileResult
       const afterRetry = classifyCodingCompileFailure({ ...res, errors: res.errors ?? [] }, ctx, compileSelection);
       buildTxnRetryLines.push(
         isCompilePass(res)
-          ? '重跑结果：PASS（首次失败为一次性环境不一致，已自证）'
-          : `重跑结果：仍失败（kind=${afterRetry.kind}）——不再启动 agent，交裁决层归外部条件`,
+          ? '重跑结果：PASS（本次事务恢复成功，不推断首次失败根因）'
+          : `重跑结果：仍失败（kind=${afterRetry.kind}）——保留调查缺口，交统一处置与当前合法作者`,
       );
       firstFailure = afterRetry;
     }
