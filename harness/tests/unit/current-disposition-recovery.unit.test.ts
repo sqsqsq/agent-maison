@@ -49,6 +49,10 @@ import { finalizePhaseClosure } from '../../scripts/utils/phase-closure-finalize
 import type { CheckResult } from '../../scripts/utils/types';
 import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
 import type { UnitCaseResult } from '../run-unit';
+import { GoalPhaseRuntime } from '../../scripts/goal-phase-runtime';
+import { capturePhaseInvocationSnapshot } from '../../scripts/utils/phase-write-boundary';
+import { workUnitFeedbackDelivered } from '../../scripts/utils/goal-phase-executor';
+import { dispositionFacts, type CompletionEvaluation } from '../../scripts/utils/goal-failure-classifier';
 
 /** 可把 executeAuthor 换成真实 CLI；输入仍是正常 runtime 实际物化的 prompt。 */
 export async function prepareSamePhaseRequiredWorkCase(executeAuthor?: (ctx: Parameters<NonNullable<NonNullable<Parameters<typeof runGoalRuntimeChain>[1]>['onSpec']>>[0]) => void) {
@@ -129,6 +133,140 @@ export async function prepareSamePhaseRequiredWorkCase(executeAuthor?: (ctx: Par
 }
 
 const cases: Array<{ name: string; run(): void | Promise<void> }> = [
+  ...(['bad-twice', 'valid-supplement', 'external-notes'] as const).map(mode => ({
+    name: `86c4d5be real verifier ${mode} preserves the first same-purpose format supplement`,
+    async run() {
+      const fixture = await prepareSamePhaseRequiredWorkCase();
+      const { project, options } = fixture;
+      const originalVerifier = options.onOutOfChain!;
+      const deliveries: Array<{ subject: string; prompt: string }> = [];
+      let externalNotesDir: string | undefined;
+      try {
+        const probe = await runGoalRuntimeChain(project.root, { ...options, onOutOfChain: async ctx => {
+          const { parseVerifierRequestFromInstruction } = require('../../scripts/utils/verifier-request') as typeof import('../../scripts/utils/verifier-request');
+          const request = parseVerifierRequestFromInstruction(ctx.prompt); assert(request);
+          deliveries.push({ subject: request.subject_id, prompt: ctx.prompt });
+          if (mode !== 'valid-supplement' || deliveries.length === 1) {
+            const summary = JSON.parse(fs.readFileSync(path.join(project.root, 'doc/features', project.feature, 'spec/reports/summary.json'), 'utf8'));
+            const report = path.resolve(project.root, summary.verifier_report);
+            fs.writeFileSync(report, deliveries.length === 1 ? 'I checked it.' : '{ malformed at check-i2/report.json');
+            return;
+          }
+          return originalVerifier(ctx);
+        } });
+        assert(deliveries.length >= 2, 'the first genuinely unusable return receives explicit format feedback');
+        assert.equal(deliveries[0].subject, deliveries[1].subject, 'format repair preserves the actual subject');
+        assert(!deliveries[0].prompt.includes('上次核验未交回可用对象，请按既有格式返回。'));
+        assert(deliveries[1].prompt.includes('上次核验未交回可用对象，请按既有格式返回。'));
+        if (mode !== 'valid-supplement') {
+          assert.equal(deliveries.length, 2, 'different malformed text and parse positions cannot buy another supplement');
+          assert(probe.events.some(event => event.type === 'phase_halt' && event.halt_reason === 'executor_waiting'));
+          if (mode === 'external-notes') {
+            const notes = '工程外真实返修诊断：按原验收补齐银行排序说明；诊断不是新需求。';
+            externalNotesDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-external-notes-'));
+            const externalNotes = path.join(externalNotesDir, 'notes.md'); fs.writeFileSync(externalNotes, notes);
+            assert(path.relative(project.root, externalNotes).startsWith('..') || path.isAbsolute(path.relative(project.root, externalNotes)));
+            let authorReceived = false, verifierReceived = false;
+            const recovered = await runGoalRuntimeChain(project.root, { ...options, resume: path.basename(probe.reportDir),
+              resumeExtraArgs: ['--repair-notes', externalNotes],
+              onAuthor: (ctx, context) => { assert(ctx.prompt.includes(notes)); authorReceived = true; options.onAuthor!(ctx, context); },
+              onOutOfChain: async ctx => {
+                const { parseVerifierRequestFromInstruction } = require('../../scripts/utils/verifier-request') as typeof import('../../scripts/utils/verifier-request');
+                const request = parseVerifierRequestFromInstruction(ctx.prompt); assert(request);
+                const prompt = fs.readFileSync(path.resolve(project.root, request.prompt_path), 'utf8');
+                assert(prompt.includes(notes), 'the actual verifier material includes the external notes already delivered to the author');
+                verifierReceived = true;
+                return originalVerifier(ctx);
+              } });
+            assert(authorReceived && verifierReceived, 'legal external notes pass through the real author and verifier entries');
+            assert.equal(recovered.exitCode, 0, 'external notes retain their existing support without an uncaught path-validation exception');
+            assert(!recovered.events.some(event => event.reason === 'uncaught_exception'));
+          } else {
+            const recovered = await runGoalRuntimeChain(project.root, { ...options, resume: path.basename(probe.reportDir),
+              onOutOfChain: () => assert.fail('cold resume without new input cannot issue a third verifier') });
+            assert(recovered.events.some(event => event.type === 'run_end'));
+          }
+        } else {
+          assert.equal(probe.exitCode, 0, 'the valid supplement is consumed, and real negative feedback can then be repaired');
+          assert(probe.events.some(event => event.type === 'run_end' && event.status === 'CHAIN_SLICE_COMPLETED'));
+        }
+      } finally {
+        if (externalNotesDir) { assert(path.resolve(externalNotesDir).startsWith(path.resolve(os.tmpdir()) + path.sep)); fs.rmSync(externalNotesDir, { recursive: true, force: true }); }
+        fs.rmSync(project.root, { recursive: true, force: true }); clearFrameworkConfigCache();
+      }
+    },
+  })),
+  ...(['process', 'session'] as const).flatMap(transport => (['author', 'verifier', 'legacy'] as const).map(kind => ({
+    name: `86c4d5be frozen ${kind} material survives ${transport} issuance return and cold preparation`,
+    run() {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'frozen-business-input-'));
+      const runDir = path.join(root, 'run'); fs.mkdirSync(runDir); fs.mkdirSync(path.join(root, 'product'));
+      fs.writeFileSync(path.join(root, 'product/input.txt'), 'actual approved product');
+      try {
+        ensureRunControl(runDir, 'run');
+        const acquired = casAcquireRunOwner(runDir, 'run', 0, { kind: transport, owner_id: 'owner', lease_ms: 60000 });
+        assert(acquired.ok); if (!acquired.ok) return;
+        const disposition = resolveCurrentDisposition({ endpoint: 'feature-completion', phases: [{ phase: 'spec', verdict: 'FAIL', schemaCurrent: true, closureCommitted: false,
+          checks: [{ id: 'real_required_object', status: 'FAIL', severity: 'MAJOR', repair_owner: 'spec', affected_files: ['product/input.txt'], details: 'report-i1: actual required object missing' }] }] });
+        const evaluation: CompletionEvaluation = { acceptanceKey: 'original-acceptance', inputs: { 'product/input.txt': { exists: true, contentHash: 'same-product' } },
+          disposition, completed: false, checkFamilies: ['spec'] };
+        const verifier = kind === 'verifier';
+        const { buildVerifierRequest, renderVerifierRequest, canonicalRequestInput } = require('../../scripts/utils/verifier-request') as typeof import('../../scripts/utils/verifier-request');
+        const request = buildVerifierRequest({ feature: 'demo', phase: 'spec', prompt_path: 'product/input.txt', prompt_sha256: 'a'.repeat(64),
+          material_sha256: 'b'.repeat(64), gate_fingerprint: null, source_commit_sha: null, worktree_digest: null });
+        const purpose = verifier ? 'verifier_format_repair' : 'work-unit-author';
+        const instruction = verifier ? `independent review\n${renderVerifierRequest(request)}` : 'original requirement\nreport-i1: actual required object missing';
+        const raw: WorkUnitExecutionContext = { runId: 'run', feature: 'demo', workflowId: 'spec-driven', track: 'full', chain: ['spec'],
+          phase: verifier ? 'spec-verifier-format-repair' : 'work-unit-author', attemptId: 'i1', owner: { ...acquired.token, kind: transport },
+          projectRoot: root, frameworkRoot: FRAMEWORK_SOURCE_ROOT, runDir, reportDir: 'run', adapter: 'claude', executionRole: verifier ? 'verifier' : 'author', instruction,
+          ...(kind === 'legacy' ? {} : { workInput: { material: { purpose, segments: verifier ? [canonicalRequestInput(request)] : ['original requirement', dispositionFacts(disposition)] }, evaluation } }),
+          runtimeFacts: { receiptRequired: false, resume: false, successor: false }, childEnv: {} };
+        const runtime = new GoalPhaseRuntime();
+        const prepared = runtime.prepareExecutionContext(raw); assert(!('status' in prepared)); if ('status' in prepared) return;
+        assert(!prepared.workInput || Object.isFrozen(prepared.workInput.material.segments));
+        const invokeId = `${raw.phase}-i1`;
+        const boundary = { projectRoot: root, feature: 'demo', executionRole: raw.executionRole!, phaseOrder: [], domains: [], diagnostics: [], unresolvedSourcePhases: [], protectedRoots: ['product'] };
+        const snapshotOptions = { runtimeExcluded: ['run'] };
+        const pre = capturePhaseInvocationSnapshot(boundary, snapshotOptions); assert(!pre.failureReason, pre.failureReason ?? 'snapshot must be observable');
+        const emit = (event: Record<string, unknown>) => fs.appendFileSync(path.join(runDir, 'events.jsonl'), JSON.stringify({ ts: new Date().toISOString(), ...event }) + '\n');
+        const input = { context: prepared, invokeId, purpose, issuedAt: new Date().toISOString(), gateTimeoutMs: 0, cleanupReserveMs: 0,
+          preSnapshot: pre, writeBoundary: boundary, snapshotOptions };
+        if (transport === 'session') {
+          emit({ type: 'agent_invoke_start', phase: raw.phase, invoke_id: invokeId, purpose });
+          const issued = issueSessionExecution({ ...input, emit });
+          acceptSessionExecution({ runDir, issued, report: { phase: raw.phase, status: 'passed', details: 'actual completed return' }, emit });
+          assert.deepEqual(issued.request.context.workInput, prepared.workInput);
+        } else {
+          const issued = writePhaseExecutionRequestMaterial(input);
+          emit({ type: 'agent_invoke_start', phase: raw.phase, invoke_id: invokeId, purpose, handoff_request: issued.reference });
+          emit({ type: 'agent_invoke_end', phase: raw.phase, invoke_id: invokeId, purpose, exit_code: 0, status: 'passed' });
+        }
+        const { executionRequestForInvoke } = require('../../scripts/utils/session-execution-handoff') as typeof import('../../scripts/utils/session-execution-handoff');
+        const saved = executionRequestForInvoke(runDir, invokeId)!; assert(saved);
+        const next = { ...raw, attemptId: 'i2' };
+        const waiting = (value: WorkUnitExecutionContext) => {
+          for (const kernel of [runtime, new GoalPhaseRuntime()]) assert.equal((kernel.prepareExecutionContext(value) as { status?: string }).status, 'waiting');
+        };
+        waiting(next);
+        const displayed = verifier ? `new audit hint check-i2/report.json\n${renderVerifierRequest({ ...request, prompt_sha256: 'c'.repeat(64), source_commit_sha: 'd'.repeat(40) })}`
+          : 'original requirement\nreport-i2: the same required object is missing\nprevious final answer and rebuilt native session display';
+        if (kind === 'legacy') assert(!('status' in new GoalPhaseRuntime().prepareExecutionContext({ ...next, instruction: displayed })), 'old originals keep their strict instruction comparison');
+        else {
+          waiting({ ...next, instruction: displayed });
+          assert(workUnitFeedbackDelivered(saved.request.context, disposition), 'the signed frozen evaluation proves actual feedback delivery');
+          const newFeedback = structuredClone(disposition); newFeedback.problems[0].detail = 'overwritten report-i2: same object';
+          assert(workUnitFeedbackDelivered(saved.request.context, newFeedback), 'current report wording cannot invalidate already-delivered feedback');
+          assert(!('status' in new GoalPhaseRuntime().prepareExecutionContext({ ...next, workInput: { ...raw.workInput!,
+            material: { ...raw.workInput!.material, segments: [...raw.workInput!.material.segments, 'real new repair notes or approved capability'] } } })), 'real non-disposition input still reaches the role');
+          assert(!('status' in new GoalPhaseRuntime().prepareExecutionContext({ ...next, workInput: { ...raw.workInput!,
+            material: { ...raw.workInput!.material, purpose: 'new-approved-responsibility' } } })), 'a new actual responsibility is not merged');
+          assert.deepEqual(executionRequestForInvoke(runDir, invokeId)!.request.context.workInput, saved.request.context.workInput, 'current input preparation never backfills an old original');
+        }
+        fs.writeFileSync(path.join(root, 'product/input.txt'), 'actual changed product');
+        assert(!('status' in new GoalPhaseRuntime().prepareExecutionContext(next)), 'a real product change remains dispatchable');
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    },
+  }))),
 
   ...(['partial', 'unchanged'] as const).map(mode => ({
     name: 'M3 real unit assessment ' + mode + ': remaining obligations continue the exact native SID; unchanged returns pause',
@@ -305,6 +443,52 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
           assert(objectChecks === 1, 'the unchanged current object was actually checked once; a no-op author must not buy the same tool again');
           assert(completedNoProgress, 'the completed typed-object predicate must observe delivered feedback and a real author return');
           assert(probe.events.some(event => event.type === 'phase_halt' && String(event.halt_reason).startsWith('no_progress')), 'the common completed-object comparison must pause the same deficit');
+          const { executionRequestForInvoke } = require('../../scripts/utils/session-execution-handoff') as typeof import('../../scripts/utils/session-execution-handoff');
+          const { renderWorkUnitAuthorFeedback, buildWorkUnitAuthorInput } = require('../../scripts/goal-phase-runtime') as typeof import('../../scripts/goal-phase-runtime');
+          const ownerInvokeId = owner?.invoke_id;
+          assert(typeof ownerInvokeId === 'string', 'the completed real author has its original invocation identity');
+          const issued = executionRequestForInvoke(probe.reportDir, ownerInvokeId)!;
+          const context = issued.request.context;
+          assert(context.workInput?.evaluation, 'the real author prompt producer freezes its pre-call evaluation');
+          const feedbackInput = { projectRoot: root, frameworkRoot: FRAMEWORK_SOURCE_ROOT, feature: 'bc-openCard', disposition: context.workInput.evaluation.disposition };
+          const beforeFeedback = renderWorkUnitAuthorFeedback(feedbackInput);
+          assert(context.instruction?.includes(beforeFeedback), 'the actual issued author received this report rendering');
+          assert(context.workInput.material.segments.includes(dispositionFacts(feedbackInput.disposition)), 'the production author composer replaces only the actual feedback segment');
+          const frozenMaterial = JSON.stringify(context.workInput);
+          const requestBefore = fs.readFileSync(path.resolve(probe.reportDir, issued.reference.path));
+          const reportFile = path.join(reports, 'script-report.json'), originalReport = fs.readFileSync(reportFile);
+          const kernel = new GoalPhaseRuntime();
+          const instructions = context.workInput.material.segments.slice(0, -3);
+          assert(instructions.every((section): section is string => typeof section === 'string'));
+          const prepareInput = () => buildWorkUnitAuthorInput({ ...feedbackInput, instructions: instructions as string[], evaluation: context.workInput!.evaluation! });
+          const decide = (input: ReturnType<typeof buildWorkUnitAuthorInput>) => [kernel, new GoalPhaseRuntime()].map(runtime =>
+            (runtime.prepareExecutionContext({ ...context, ...input, attemptId: 'report-overwrite-recovery' }) as { status?: string }).status);
+          const retainedInput = prepareInput();
+          assert(context.instruction!.startsWith(retainedInput.instruction), 'the same production assembler reproduces the issued business prompt before the native-session transport suffix');
+          assert.deepEqual(retainedInput.workInput, context.workInput, 'the retained-report control is freshly assembled through production code');
+          const retainedReport = decide(retainedInput);
+          try {
+            const rawReport = JSON.parse(originalReport.toString('utf8'));
+            const visual = rawReport.checks.find((check: { id: string }) => check.id === 'visual_diff'); assert(visual);
+            visual.duration_ms = Number(visual.duration_ms ?? 0) + 1234;
+            fs.writeFileSync(reportFile, JSON.stringify(rawReport, null, 2) + '\n');
+            const afterFeedback = renderWorkUnitAuthorFeedback(feedbackInput);
+            assert.notEqual(afterFeedback, beforeFeedback, 'the same script-report path really supplies different display metadata to the author renderer');
+            assert.equal(JSON.stringify(context.workInput), frozenMaterial, 'overwriting the current report cannot rewrite the frozen comparison input');
+            assert(workUnitFeedbackDelivered(context, feedbackInput.disposition), 'delivery remains proved by the actual signed author request and completed return');
+            const overwrittenInput = prepareInput();
+            assert.notEqual(overwrittenInput.instruction, retainedInput.instruction, 'production author assembly consumes the overwritten report display');
+            assert.notEqual(overwrittenInput.workInput, retainedInput.workInput, 'the current producer builds a new material object instead of copying the old context');
+            assert.deepEqual(decide(overwrittenInput), retainedReport,
+              'in-process and cold preparation agree with the retained-report control');
+            assert.deepEqual(retainedReport, ['waiting', 'waiting'], 'different report display does not buy the same author another call');
+            assert.deepEqual(fs.readFileSync(path.resolve(probe.reportDir, issued.reference.path)), requestBefore, 'recovery does not backfill the old report or request');
+            const authorsBefore = probe.events.filter(event => event.type === 'agent_invoke_start' && event.phase === 'work-unit-author').length;
+            const resumed = await runGoalRuntimeChain(root, { adapter: 'codex', resume: path.basename(probe.reportDir),
+              onAuthor: () => assert.fail('normal cold resume after display-only report overwrite cannot dispatch another author') });
+            assert.equal(resumed.events.filter(event => event.type === 'agent_invoke_start' && event.phase === 'work-unit-author').length, authorsBefore,
+              'the public recovery entry keeps the same real author invocation count');
+          } finally { fs.writeFileSync(reportFile, originalReport); }
         } else {
           assert(probe.events.some(event => event.type === 'phase_halt' && event.halt_reason === 'executor_waiting' && event.run_disposition === 'WAITING'), 'uncovered legacy evidence must naturally wait for actual verification');
           const summary = JSON.parse(fs.readFileSync(path.join(root, 'doc/features/bc-openCard/testing/reports/summary.json'), 'utf8'));
@@ -773,6 +957,9 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
         const material = JSON.parse(fs.readFileSync(path.join(directory, file!), 'utf8'));
         assert.equal(material.type, 'phase_execute_request'); assert.equal(material.context.owner.kind, 'process');
         assert.equal(material.context.instruction, fs.readFileSync(path.join(directory, 'prompt.md'), 'utf8'));
+        assert.equal(material.context.workInput.material.purpose, 'work-unit-author');
+        assert(Array.isArray(material.context.workInput.material.segments) && material.context.workInput.material.segments.length > 0);
+        assert.equal(typeof material.context.workInput.evaluation.acceptanceKey, 'string', 'the actual producer persists the same pre-call completion evaluation');
         assert(ctx.prompt.includes(material.context.instruction), 'CLI运输必须消费同一完整instruction');
         assert.equal(material.context.attemptId, ctx.goalAttemptId);
         assert.equal(material.invoke_id, `${material.context.phase}-${ctx.goalAttemptId}`);

@@ -75,6 +75,25 @@ const cases: TestCase[] = [
     assert(decideSupervision({ events: repeated, restartsSoFar: 1, beaconStale: true,
       condition: { probe: 'original_execution', ready: true } }).action === 'resume', '真实恢复条件不因历史异常卡死');
   } },
+  { name: '86c4d5be supervisor uses completed returns after restart instead of exception wording or duplicate receipts', run: () => {
+    const oldCall = [{ type: 'agent_invoke_start', invoke_id: 'old' }, { type: 'agent_invoke_end', invoke_id: 'old', exit_code: 0 }];
+    const base = [...eventsWith('RESUME_READY'), ...oldCall, { type: 'supervisor_restart' }, { type: 'run_start' }];
+    const crash = { type: 'run_end', reason: 'uncaught_exception', error: 'check-i2/report.json: actual failure', run_disposition: 'RESUME_READY' };
+    const decide = (middle: object[]) => decideSupervision({ events: [...base, ...middle, crash], restartsSoFar: 1, beaconStale: true }).action;
+    for (const middle of [[], [{ type: 'agent_invoke_end', invoke_id: 'old', exit_code: 0 }],
+      [{ type: 'agent_invoke_start', invoke_id: 'new' }],
+      ...[{ timed_out: true }, { status: 'waiting' }, { skipped: true }, { interrupted: true }].map(facts => [
+        { type: 'agent_invoke_start', invoke_id: 'new' }, { type: 'agent_invoke_end', invoke_id: 'new', exit_code: 0, ...facts }]),
+      [{ type: 'harness_start', invoke_id: 'check' }, { type: 'harness_end', invoke_id: 'check', exit_code: 1, timed_out: true }],
+      [{ type: 'agent_invoke_end', invoke_id: 'unknown-end', exit_code: 0 }]]) {
+      assert(decide(middle) === 'no_op', JSON.stringify(middle));
+    }
+    assert(decide([{ type: 'agent_invoke_start', invoke_id: 'new' }, { type: 'agent_invoke_end', invoke_id: 'new', exit_code: 0 }]) === 'resume', 'a real author return advances execution without claiming improvement');
+    assert(decide([{ type: 'harness_start', invoke_id: 'check' }, { type: 'harness_end', invoke_id: 'check', exit_code: 1 }]) === 'resume', 'a completed negative check is still a real return');
+    for (const error of ['check-i1/report.json: actual failure', 'check-i2/report.json: actual failure']) {
+      assert(decideSupervision({ events: [...base, { ...crash, error }], restartsSoFar: 1, beaconStale: true }).action === 'no_op', error);
+    }
+  } },
   {
     name: 'beacon × run_disposition 全矩阵（fresh 恒不介入；stale 下四态各行其是）',
     run: () => {

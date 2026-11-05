@@ -246,7 +246,7 @@ export function designRepairAttempted(events: ReadonlyArray<object>, signature: 
 
 /** Confirmed candidate IDs and actual author requests own the single rebuttal, independent of the transaction bundle. */
 export function deriveDesignDeclineFeedback(events: ReadonlyArray<object>, candidates: readonly string[],
-  author?: { invokeId?: string; instruction?: string }): { feedback: string; delivered: string[] } {
+  author?: { invokeId?: string; instruction?: string; workInput?: import('./goal-phase-executor').WorkUnitInput }): { feedback: string; delivered: string[] } {
   const current = new Set(candidates), declines = new Map<string, { first: number; reason: string }>();
   events.forEach((value, index) => {
     const event = value as Record<string, unknown>;
@@ -260,7 +260,8 @@ export function deriveDesignDeclineFeedback(events: ReadonlyArray<object>, candi
     return event.type === 'agent_invoke_start' && event.invoke_id === author.invokeId;
   }) : -1;
   const marker = (id: string) => `设计拒修反馈：${id}`;
-  const delivered = [...declines].filter(([id, record]) => actor > record.first && author?.instruction?.includes(marker(id))).map(([id]) => id);
+  const delivered = [...declines].filter(([id, record]) => actor > record.first
+    && (author?.workInput?.material ? author.workInput.material.designDeclines?.includes(id) : author?.instruction?.includes(marker(id)))).map(([id]) => id);
   const pending = [...declines].filter(([id]) => !delivered.includes(id));
   const feedback = pending.length ? pending.map(([id]) => marker(id)).join('\n') + '\n'
     + `设计 owner 经独立质询拒修，权威产物未发布：${[...new Set(pending.map(([, record]) => record.reason))].join('；')}。原工作单元作者须据理由修自身产物或补真实新事实；同一条只给一轮反驳，旧核实不得重派。` : '';
@@ -412,6 +413,7 @@ export interface DesignRepairInvocationGuard {
   evaluation?: CompletionEvaluation;
   history?: readonly CompletionEvaluation[];
   feedbackDelivered?: boolean;
+  material?: readonly unknown[];
 }
 
 function priorRepairFeedback(projectRoot: string, runs: readonly { manifest: { report_dir: string }; events: GoalRunEvent[] }[], blueprintId: string): string[] {
@@ -674,7 +676,7 @@ function authorPrompt(input: UnattendedDesignRepairInput, draftFile: string, can
   ].join('\n');
 }
 
-function questioningPrompt(input: UnattendedDesignRepairInput, draftFile: string, draft: BlueprintRecord, auxiliaryDrafts: readonly string[], transactionTiming: readonly string[]): string {
+function questioningPrompt(input: UnattendedDesignRepairInput, draftFile: string, draft: BlueprintRecord, auxiliaryDrafts: readonly string[], transactionTiming: readonly string[], material?: unknown[]): string {
   const runDir = path.resolve(input.projectRoot, input.reportDir);
   const usable = latestUsableDesignQuestioning(runDir, [designRepairInvokeLabel('questioning'), 'initial-design-questioning']);
   const previous = usable.original;
@@ -690,7 +692,7 @@ function questioningPrompt(input: UnattendedDesignRepairInput, draftFile: string
     ? { label: previous.source, kind: 'path', content: '上轮公开Q完整返回及全部未闭合项；不继承作者私有上下文。' } : null,
     actualDiff, affectedDependencies: questioningDependencyChanges(input.projectRoot, draft, previous?.completed ? previous.preSnapshot : undefined, draftFile),
     currentEvidence: auxiliaryDrafts.map(file => ({ label: file, kind: 'path', content: '当前真实候选；独立核对受影响的契约与依赖。' })) });
-  return [
+  const parts = [
     '# 蓝图独立质询',
     '你是独立质询方，与蓝图编写方隔离。输入只有：草稿蓝图、下面的结构化证据包，以及蓝图里已登记的外部输入（discovery 事实、需求与契约引用）。',
     '',
@@ -707,7 +709,10 @@ function questioningPrompt(input: UnattendedDesignRepairInput, draftFile: string
       renderGoalBrief(assembleGoalBrief(input.projectRoot, input.feature, { runId: input.runId }), { requirementInContext: true }),
       ...(auxiliaryDrafts.length ? [`同时只读本事务实际候选：${auxiliaryDrafts.join('；')}。`] : []),
       ...renderDesignAuthorityBoundary('questioning')] : []),
-  ].join('\n');
+  ];
+  const historical = publicContext.map(entry => `${entry.label}\n${entry.content}`);
+  material?.push(...parts.filter(part => !historical.includes(part)));
+  return parts.join('\n');
 }
 
 /**
@@ -895,7 +900,7 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
     const baselineRefs = blueprintSourceRefFiles(projectRoot, baseDoc).map(relOf);
     let usedQuestioningInvokeId: string | undefined;
     let usedInvocation: GoalRunEvent | undefined;
-    const guarded = async (purpose: DesignRepairPurpose, prompt: string, referenced: readonly string[], afterInvokeId: string | null): Promise<ReturnType<typeof capturePhaseInvocationSnapshot> | { handoff: true }> => {
+    const guarded = async (purpose: DesignRepairPurpose, prompt: string, referenced: readonly string[], afterInvokeId: string | null, material: readonly unknown[] = [prompt]): Promise<ReturnType<typeof capturePhaseInvocationSnapshot> | { handoff: true }> => {
       if (purpose === 'questioning') {
         const events = sessionEvents(runDir);
         const attempted = events.map(event => event.type === 'design_authority_repair' && 'stage' in event && event.stage === 'attempted').lastIndexOf(true);
@@ -944,6 +949,7 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
           { ...saved.additionalInputs, [draftFile]: saved.beforeBlueprint }), currentWork) === 'unchanged';
         const cu = originalCu && fs.existsSync(cuDraftFile) ? asChangeUnitArtifact(YAML.parse(fs.readFileSync(cuDraftFile, 'utf8'))) : undefined;
         result = await input.invoke(purpose, prompt, { pre, resolution, options: snapshotOptions,
+          material,
           evaluation: evaluationOf(current, currentWork, !!verified && !authorAfterQuestion, pre, cu),
           history: [...comparableHistory, ...(previousEvaluation ? [previousEvaluation] : [])],
           feedbackDelivered: !!reviewedCurrentWork && (feedbackDelivered || authorFeedback.length > 0) });
@@ -1171,8 +1177,9 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
       let preAuthor: ReturnType<typeof capturePhaseInvocationSnapshot>;
       let authorStart: GoalRunEvent | undefined;
       if (!supplementQuestioningFormat && (preparedDisposition.completionBlocking.some(problem => problem.action === 'repair') || cuNeedsAuthor || verifiedTriggerUndelivered)) {
-        const invoked = await guarded('author', [authorPrompt(input, draftFile, canonicalRel, authorDrafts, transactionTiming, currentCuInput ?? undefined),
-          ...preparedDisposition.completionBlocking.map(problem => `${problem.id}: ${problem.detail}\n对象与证据：${(problem.evidence ?? []).join('、')}`), ...authorFeedback].join('\n\n'), currentRefs, afterQuestioning);
+        const authorBase = authorPrompt(input, draftFile, canonicalRel, authorDrafts, transactionTiming, currentCuInput ?? undefined);
+        const invoked = await guarded('author', [authorBase,
+          ...preparedDisposition.completionBlocking.map(problem => `${problem.id}: ${problem.detail}\n对象与证据：${(problem.evidence ?? []).join('、')}`), ...authorFeedback].join('\n\n'), currentRefs, afterQuestioning, [authorBase]);
         if ('handoff' in invoked) { release(); return { outcome: 'handoff', reason: 'session execution request committed' }; }
         preAuthor = invoked;
         authorStart = usedInvocation;
@@ -1226,9 +1233,12 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
         declineGates.has(String(decision.decision_id)) && typeof decision.rationale === 'string' && decision.rationale.startsWith('declined:'));
       if (declined.length) {
         const before = structuredClone(authored); delete asRecord(before.review_summary)?.questioning;
-        const declinedQuestioning = await guarded('questioning', questioningPrompt(input, draftFile, authored, auxiliaryDrafts, transactionTiming) + '\n本次作者拒修理由：\n'
+        const declineMaterial: unknown[] = [];
+        const declinePrompt = questioningPrompt(input, draftFile, authored, auxiliaryDrafts, transactionTiming, declineMaterial);
+        const declineReason = '\n本次作者拒修理由：\n'
           + declined.map(decision => `${decision.decision_id}：${decision.rationale}`).join('\n')
-          + '\n逐条读取所引当前产物；依据成立才在既有 questioning.items 中用 answered_with_evidence、answer 原样包含完整 declined: 依据。不要为了发布而改设计。', blueprintSourceRefFiles(projectRoot, authored).map(relOf), questioningAfter);
+          + '\n逐条读取所引当前产物；依据成立才在既有 questioning.items 中用 answered_with_evidence、answer 原样包含完整 declined: 依据。不要为了发布而改设计。';
+        const declinedQuestioning = await guarded('questioning', declinePrompt + declineReason, blueprintSourceRefFiles(projectRoot, authored).map(relOf), questioningAfter, [...declineMaterial, declineReason]);
         if ('handoff' in declinedQuestioning) { release(); return { outcome: 'handoff', reason: 'session execution request committed' }; }
         const questioned = readDraft('questioning');
         const after = structuredClone(questioned); delete asRecord(after.review_summary)?.questioning;
@@ -1320,7 +1330,9 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
       let questioningStep: Awaited<ReturnType<typeof guarded>>;
       for (;;) {
         try {
-          questioningStep = await guarded('questioning', questioningPrompt(input, draftFile, beforeQuestioning, auxiliaryDrafts, [...transactionTiming, ...questioningPreparation]), [...new Set([...baselineRefs, ...draftRefs])], questioningAfter);
+          const material: unknown[] = [];
+          const prompt = questioningPrompt(input, draftFile, beforeQuestioning, auxiliaryDrafts, [...transactionTiming, ...questioningPreparation], material);
+          questioningStep = await guarded('questioning', prompt, [...new Set([...baselineRefs, ...draftRefs])], questioningAfter, material);
           break;
         } catch (error) {
           if (!(error instanceof QuestioningFormatFailure)) throw error;

@@ -55,7 +55,7 @@ const runGoalModeSessionStep = (options: Parameters<typeof runGoalModeSessionSte
 
 type Host = Parameters<Parameters<typeof withFreshCuHost>[0]>[0];
 type Document = Record<string, any>;
-type Scenario = 'large-process-repair' | 'session-pass-missing-reference' | 'format-retry' | 'missing-reference' | 'root' | 'lock-contention' | 'outside-write' | 'readiness-blocked' | 'normal' | 'retry' | 'session-retry' | 'machine-session' | 'design-owner' | 'design-owner-external' | 'design-owner-retain' | 'session-progress-recovery' | 'session-architecture-recovery';
+type Scenario = 'session-format-bad-twice' | 'large-process-repair' | 'session-pass-missing-reference' | 'format-retry' | 'missing-reference' | 'root' | 'lock-contention' | 'outside-write' | 'readiness-blocked' | 'normal' | 'retry' | 'session-retry' | 'machine-session' | 'design-owner' | 'design-owner-external' | 'design-owner-retain' | 'session-progress-recovery' | 'session-architecture-recovery';
 const CU = deriveChangeUnitFeatureId(BLUEPRINT_ID, 'ledger-refresh');
 const requirement = '在已准入账目蓝图的原目标内补齐CU设计引用，再继续账目刷新与恢复的完整交付；不得降低验收或修改框架。';
 const read = (file: string): Document => YAML.parse(fs.readFileSync(file, 'utf8'));
@@ -127,7 +127,7 @@ async function scenario(host: Host, mode: Scenario, beforeRepair?: () => void): 
   const approvedCu = read(unit.canonicalPath);
   const defective = structuredClone(approvedCu);
   const ownerCase = mode.startsWith('design-owner');
-  const businessRepair = recovery || mode === 'session-retry' || mode === 'session-pass-missing-reference';
+  const businessRepair = recovery || mode === 'session-retry' || mode === 'session-pass-missing-reference' || mode === 'session-format-bad-twice';
   if (ownerCase) {
     const declared: Document = { blocker_id: 'retained-design-declaration', gate: 'design', owner: 'component-design', observation: 'machine',
       reason: '候选保留了已经满足的设计归属声明', unlock_condition: '由设计owner对当前已发布设计有据核实并经原consumer发布',
@@ -362,6 +362,39 @@ async function scenario(host: Host, mode: Scenario, beforeRepair?: () => void): 
         'a newly signed construction child belongs to the same delivery activity without becoming another root design call');
       assert.equal(rows.filter(row => row.type === 'design_authority_repair' && row.stage === 'published'
         && row.checks?.some((check: Document) => check.codes?.includes(`${CU}:retained-design-declaration`))).length, 1);
+      return;
+    }
+    if (mode === 'session-format-bad-twice') {
+      const options = { projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature, runId, adapter: 'claude', runMode: 'attended',
+        authorization: { mode: 'goal_mode' as const, autonomyAuthorized: true } };
+      let next = await settleInitialQuestioning(await runGoalModeSessionStep(options), options);
+      assert.equal(next.phase, 'design-repair-author');
+      const author = readSessionExecution(runDir, (next.request as { path: string }).path)!;
+      const actual = await adapter.onOutOfChain({ phase: author.request.context.phase, prompt: author.request.context.instruction!, attempt: 1, runId });
+      next = await runGoalModeSessionStep({ ...options, requestPath: path.resolve(runDir, author.reference.path),
+        report: { status: 'passed', phase: author.request.context.phase, details: typeof actual?.details === 'string' ? actual.details : 'real candidate author returned' } });
+      const badOutputs = ['已经检查完成。', '{ "items": [ bad-check-i2/report.json'];
+      const receipts: Array<{ requestPath: string; report: { status: 'passed'; phase: string; details: string } }> = [];
+      for (const [index, details] of badOutputs.entries()) {
+        assert.equal(next.phase, 'design-repair-questioning', JSON.stringify(next));
+        const issued = readSessionExecution(runDir, (next.request as { path: string }).path)!;
+        assert.equal(issued.request.purpose, 'questioning', 'first verification and format supplement keep their real responsibility');
+        if (index) assert(issued.request.context.instruction!.includes('上次质询未交回可用对象，请按既有格式返回。'));
+        const receipt = { requestPath: path.resolve(runDir, issued.reference.path), report: { status: 'passed' as const, phase: issued.request.context.phase, details } };
+        receipts.push(receipt);
+        next = await runGoalModeSessionStep({ ...options, ...receipt });
+        assert.equal(fs.readFileSync(path.join(runDir, path.dirname(issued.reference.path), 'questioning-output.json'), 'utf8'), details);
+      }
+      assert.equal(next.type, 'goal_session_result', JSON.stringify(next));
+      for (const receipt of receipts) {
+        const duplicate = await runGoalModeSessionStep({ ...options, ...receipt });
+        assert.equal(duplicate.type, 'goal_session_report_received'); assert.equal(duplicate.duplicate, true);
+        assert.equal((await runGoalModeSessionStep(options)).type, 'goal_session_result');
+      }
+      const rows = fs.readFileSync(eventFile, 'utf8').trim().split('\n').map(line => JSON.parse(line) as Document);
+      assert.equal(rows.filter(event => event.type === 'agent_invoke_start' && event.phase === 'design-repair-questioning').length, 2,
+        'different invalid outputs and repeated next/report cannot issue a third repair Q');
+      assert.deepEqual(fs.readFileSync(canonical.canonicalPath), originalBytes, 'invalid questioning cannot publish the candidate');
       return;
     }
     if (mode === 'session-retry' || mode === 'session-pass-missing-reference') {
@@ -711,6 +744,7 @@ export async function resumePhysicalDesignPublication(host: Host, runId: string)
 }
 
 const cases = [
+  { name: '86c4d5be design repair Q two bad returns waits across repeated report and next without a third call', mode: 'session-format-bad-twice' },
   { name: 'e2a4145e r4 repair questioning real process retains a final answer over 64KiB', mode: 'large-process-repair' },
   { name: 'e2a4145e missing-reference pass publishes the repair candidate through the original session coordinator', mode: 'session-pass-missing-reference' },
   { name: 'e2a4145e repair transaction supplements malformed output once and consumes the valid denial', mode: 'format-retry' },
@@ -1115,7 +1149,8 @@ const timer=setInterval(()=>{const bound=process.platform!=='win32'||fs.readFile
     if (mode === 'bad-twice') {
       const review = path.join(path.dirname(canonical.canonicalPath), 'component-blueprint.review.md');
       const before = fs.readFileSync(review);
-      await report('我已完成检查');
+      const secondBadOutput = '{ "items": [ malformed-at-another-position-check-i2/report.json';
+      await report(secondBadOutput);
       assert.equal(next.type, 'goal_session_result');
       assert.deepEqual(fs.readFileSync(review), before, 'unusable rounds must not change the review document');
       const current = capturePhaseInvocationSnapshot(second.request.write_boundary!, second.request.snapshot_options);
@@ -1125,7 +1160,7 @@ const timer=setInterval(()=>{const bound=process.platform!=='win32'||fs.readFile
       for (let i = 0; i < 2; i++) await runGoalModeSessionStep(options);
       const calls = events().filter(event => event.type === 'agent_invoke_start');
       assert.equal(calls.length, 2, 'repeated observation cannot issue a third questioning call');
-      for (const call of calls) assert.equal(fs.readFileSync(path.join(runDir, 'phases', call.phase, call.invoke_id, 'questioning-output.json'), 'utf8'), '我已完成检查');
+      for (const [index, call] of calls.entries()) assert.equal(fs.readFileSync(path.join(runDir, 'phases', call.phase, call.invoke_id, 'questioning-output.json'), 'utf8'), index ? secondBadOutput : '我已完成检查');
       return;
     }
   }

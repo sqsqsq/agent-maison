@@ -26,6 +26,7 @@ import { reduceRunState, supervisorAction, type SupervisorAction } from './run-s
 import { assessLivenessBeacon, isBeaconStale, readLivenessBeacon } from './liveness-beacon';
 import type { ProcessProbe } from './device-session';
 import { canRecheckLegacyBacktrackLimit } from './goal-runner-phase';
+import { invocationCompleted } from './invocation-completion';
 
 export type SupervisorDecision =
   | { action: 'no_op'; reason: string }
@@ -124,11 +125,18 @@ export function decideSupervision(input: SupervisorInput): SupervisorDecision {
   const events = input.events.filter(event => !!event && typeof event === 'object') as Record<string, unknown>[];
   const restartedAt = events.map(event => event.type === 'supervisor_restart').lastIndexOf(true);
   if (restartedAt >= 0) {
-    const before = [...events.slice(0, restartedAt)].reverse().find(event => event.type === 'run_end');
     const after = [...events.slice(restartedAt + 1)].reverse().find(event => event.type === 'run_end');
-    if (input.condition?.ready !== true && before?.reason === 'uncaught_exception' && after?.reason === 'uncaught_exception'
-      && typeof after.error === 'string' && after.error.length > 0 && before.error === after.error) {
-      return { action: 'no_op', reason: `原运行器已实际恢复执行但重复同一异常：${after.error}。成果保留；恢复该执行能力或用户明确继续后接原run，不按旧重启次数终态退出。` };
+    const returned = events.slice(restartedAt + 1, after ? events.indexOf(after) : undefined).some(event => {
+      if (typeof event.invoke_id !== 'string') return false;
+      const preceding = events.slice(0, events.indexOf(event));
+      const startType = event.type === 'agent_invoke_end' ? 'agent_invoke_start' : event.type === 'harness_end' ? 'harness_start' : undefined;
+      if (!startType || !preceding.some(row => row.type === startType && row.invoke_id === event.invoke_id)
+        || preceding.some(row => row.type === event.type && row.invoke_id === event.invoke_id)) return false;
+      return event.type === 'agent_invoke_end' ? invocationCompleted({ ...event, exitCode: event.exit_code })
+        : typeof event.exit_code === 'number' && !event.timed_out && !event.skipped && event.status !== 'waiting';
+    });
+    if (input.condition?.ready !== true && after?.reason === 'uncaught_exception' && !returned) {
+      return { action: 'no_op', reason: `原运行器重启后尚无真实完成交回便再次异常：${String(after.error ?? '异常原文未知')}。成果保留；恢复该执行能力或用户明确继续后接原run，不按旧重启次数终态退出。` };
     }
     if (!events.slice(restartedAt + 1).some(event => event.type === 'run_start' || event.type === 'resume')) {
       return { action: 'no_op', reason: '原启动请求尚未有真实run_start/交回；保留原调用，等待该启动结果或恢复原执行能力，不重发同一启动。' };

@@ -809,7 +809,7 @@ function comparisonScope(evaluation: CompletionEvaluation): string {
   return evaluation.checkFamilies === undefined ? 'full' : JSON.stringify(sortedRefs(evaluation.checkFamilies));
 }
 
-function problemIdentity(problem: CurrentDisposition['completionBlocking'][number], includeRouting = false): string {
+export function problemIdentity(problem: CurrentDisposition['completionBlocking'][number], includeRouting = false): string {
   const finding = problem.id.startsWith('open_finding:');
   return JSON.stringify({
     id: finding ? 'open_finding' : problem.id,
@@ -828,7 +828,7 @@ export function completionProblemSignature(disposition: CurrentDisposition, chec
     .map(problem => problemIdentity(problem)))].sort());
 }
 
-function dispositionFacts(disposition: CurrentDisposition, checkFamilies?: readonly string[]): string {
+export function dispositionFacts(disposition: CurrentDisposition, checkFamilies?: readonly string[]): string {
   const facts = (problems: CurrentDisposition['problems']): string[] => [...new Set(scopedProblems(problems, checkFamilies).map(problem => problemIdentity(problem, true)))].sort();
   return JSON.stringify({ ...(checkFamilies === undefined ? { completionEligible: disposition.completionEligible, releaseReady: disposition.releaseReady } : {}),
     problems: facts(disposition.problems), completion: facts(disposition.completionBlocking),

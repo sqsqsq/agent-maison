@@ -12,6 +12,24 @@ import { assertFencedOwner } from './goal-run-control';
 import { executionRequestForInvoke, observeSessionExecution, readHandoffMaterial, sessionExecutionDeadlineMs, type HandoffReference } from './session-execution-handoff';
 import { createCodexTerminalScanner, extractProviderSessionId, isProviderToolResult, resolveTerminalEventParser } from './codex-terminal-events';
 import { capturePhaseInvocationSnapshot, diffPhaseInvocationSnapshots } from './phase-write-boundary';
+import { problemIdentity, type CompletionEvaluation } from './goal-failure-classifier';
+
+export interface WorkUnitInput {
+  readonly material: {
+    readonly purpose: string;
+    readonly segments: readonly unknown[];
+    readonly repairNotes?: import('./goal-failure-classifier').ArtifactSnapshot;
+    readonly designDeclines?: readonly string[];
+  };
+  readonly evaluation?: CompletionEvaluation;
+}
+
+/** Only the original's frozen feedback proves delivery; current reports cannot reconstruct it. */
+export function workUnitFeedbackDelivered(context: WorkUnitExecutionContext, disposition: CompletionEvaluation['disposition']): boolean | undefined {
+  if (!context.workInput?.material) return undefined;
+  const delivered = new Set(context.workInput.evaluation?.disposition.problems.map(problem => problemIdentity(problem, true)) ?? []);
+  return disposition.problems.length > 0 && disposition.problems.every(problem => delivered.has(problemIdentity(problem, true)));
+}
 
 export interface WorkUnitExecutionContext {
   readonly runId: string;
@@ -36,6 +54,7 @@ export interface WorkUnitExecutionContext {
   readonly factsContext?: import('./context-facts').FactsInvocationContext;
   /** Runtime-built phase instruction. Executors transport it; they do not interpret policy. */
   readonly instruction?: string;
+  readonly workInput?: WorkUnitInput;
   readonly runtimeFacts: Readonly<{
     runBaseSha?: string;
     receiptRequired: boolean;
@@ -109,6 +128,10 @@ export function workUnitExecutionInputs(manifest: GoalRunManifest, purpose?: str
 }
 
 function deepFreezeContext(input: WorkUnitExecutionContext): WorkUnitExecutionContext {
+  const freeze = <T>(value: T): T => {
+    if (value && typeof value === 'object') { Object.values(value).forEach(freeze); Object.freeze(value); }
+    return value;
+  };
   const childEnv = { ...input.childEnv };
   for (const key of Object.keys(childEnv)) {
     if (key.toUpperCase() === 'HARNESS_DIFF_BASE_REF') delete childEnv[key];
@@ -122,6 +145,7 @@ function deepFreezeContext(input: WorkUnitExecutionContext): WorkUnitExecutionCo
     ...(input.authority ? { authority: Object.freeze({ ...input.authority,
       ...(input.authority.allowed_tools ? { allowed_tools: Object.freeze([...input.authority.allowed_tools]) as unknown as string[] } : {}) }) } : {}),
     ...(input.factsContext ? { factsContext: Object.freeze(structuredClone(input.factsContext)) } : {}),
+    ...(input.workInput ? { workInput: freeze(structuredClone(input.workInput)) } : {}),
   };
   return Object.freeze(context);
 }
