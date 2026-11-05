@@ -1587,8 +1587,8 @@ export async function rc9bUtBacktrackThroughCoding(upstreamAudit = false): Promi
 test('RC-9b ut 产品断言失败回退 coding：诊断 verifier 签发、coding 次轮 PASS、ut 重验', rc9bUtBacktrackThroughCoding);
 test('RC-13 UT audit上游缺口：实际产物读取、逐条核实、责任coding修复与原UT正式复验', () => rc9bUtBacktrackThroughCoding(true));
 test('RC-10 20261019真实输入：设计修订、入口声明补齐、coding资源归属及UT交接', () => rc10HostRuleCombination());
-test('RC-11 1a0796真实输入：未预测资源直接实现、真实归属及review交接', () => rc10HostRuleCombination('20261020'));
-for (const mode of ['plan-repair', 'goal-decline', 'fact-decline', 'design-repair', 'design-decline'] as const) {
+// Current resource ownership and upstream evidence boundaries live in phase-write-boundary/upstream-issues; RC10 keeps the real host integration.
+for (const mode of ['design-decline'] as const) {
   test(`RC-12 upstream ${mode}: current artifact → verifier → owner → original coding recheck`, () => rc10HostRuleCombination('20261020', mode));
 }
 

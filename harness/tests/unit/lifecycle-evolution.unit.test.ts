@@ -405,10 +405,10 @@ function assertCompleted(s: Snapshot, feature: string, o: Outcome): void {
 // ---- 各场景的宿主改动 ----------------------------------------------------------------------------
 
 const AC3 = {
-  id: 'AC-3', feature: 'F1', description: '银行条目组件渲染银行名', target: '银行条目组件', priority: 'P1', testable: true,
-  verification_steps: ['渲染 BankListItem'], expected_result: '条目文本为银行名', ut_layer: 'unit', ut_focus: 'BankListItem 渲染银行名',
+  id: 'AC-3', feature: 'F1', description: '银行仓库初始列表为空', target: 'BankRepository.list', priority: 'P1', testable: true,
+  verification_steps: ['调用新建 BankRepository 的 list()'], expected_result: '返回非空引用且长度为零的列表', ut_layer: 'unit', ut_focus: 'BankRepository 初始空列表边界',
 };
-const AC3_TEST = '02-Feature/FinancialCard/src/ohosTest/ets/test/BankListItem.test.ets';
+const AC3_TEST = '02-Feature/FinancialCard/src/ohosTest/ets/test/BankRepository.initial.test.ets';
 function addAcceptance(p: RealChainProject, criterion: Record<string, unknown>): void {
   const file = featureFilePath(p.root, p.feature, 'acceptance.yaml');
   const doc = YAML.parse(fs.readFileSync(file, 'utf8'));
@@ -421,8 +421,8 @@ function utCoversAc3(p: RealChainProject): void {
     "import { describe, it, expect } from '@ohos/hypium';",
     "import { BankRepository } from '../../../main/ets/BankRepository';",
     '',
-    "describe('BankListItem', () => {",
-    "  it('[AC-3] 条目渲染银行名', 0, () => {",
+    "describe('BankRepository initial state', () => {",
+    "  it('[AC-3] 初始列表为空', 0, () => {",
     '    const banks: string[] = new BankRepository().list();',
     '    expect(banks).not().assertNull();',
     '    expect(banks.length).assertEqual(0);',
@@ -495,7 +495,7 @@ function assertIdentityOnlyReuse(s: Snapshot, feature: string, source: string, e
   const identity = assess(s, feature);
   console.log(`[lifecycle-evolution] B2-1 ${feature} freshness=${JSON.stringify(freshness(s, feature, executed))} ${brief(identity)}`);
   assert.deepStrictEqual(freshness(s, feature, executed), executed.map(ph => `${ph}:fresh`), '纯身份变化：各阶段证据应判 fresh');
-  assert.strictEqual(identity.complete, true, `纯身份变化不应使完成结论失效：${brief(identity)}`);
+  assert.strictEqual(identity.complete, true, `纯身份变化不应使完成结论失效：${brief(identity)}\n${JSON.stringify(identity)}`);
   const idle = successorChain(s, feature, source);
   assert(!idle.some(ph => executed.includes(ph)), `纯身份变化：后继出生链不得含无影响阶段：${JSON.stringify(idle)}`);
   const stage = ['acceptance.yaml', 'contracts.yaml', 'use-cases.yaml'].map(name => featureFilePath(s.root, feature, name));
@@ -541,7 +541,10 @@ export async function handWrittenCompletion(s: Snapshot): Promise<{ completed: s
     const [snapshotRun] = runIds(s.root, feature);
     handWriteProjections(s.root);
     commit(s, 'plan-phase agent wrote the derived files by hand');
-    const original = await supersede(s, feature, snapshotRun, predict(snapshotRun), authorHooks(p, CU_WRITERS));
+    const original = await supersede(s, feature, snapshotRun, predict(snapshotRun), authorHooks(p, { ...CU_WRITERS,
+      spec: (project, id) => { CU_WRITERS.spec!(project, id); handWriteProjections(project.root); },
+      plan: (project, id) => { CU_WRITERS.plan!(project, id); handWriteProjections(project.root); },
+    }));
     assert(original.successor && assess(s, feature).complete, `前提：手写文件下的完成记录（宿主原始完成替身）：${original.error} ${brief(assess(s, feature))}`);
     return original.successor!;
   });

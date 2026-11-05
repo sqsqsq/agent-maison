@@ -2678,6 +2678,63 @@ test('E2E-3 PASS+新鲜 must_fix → 回 coding（prompt 含原始 must_fix）�
   assertRunReachedEnd(probe, 'E2E-3');
 });
 
+for (const entry of ['foreground', 'detach'] as const) test(`migrated successor repair-notes preserve original requirement and actual signed author input [${entry}]`, async () => {
+  const { root } = setupGoalRuntimeHost('cursor', false);
+  const phases = ['coding', 'ut'];
+  const requirement = '真机测试银行卡开卡流程';
+  const note = '仅在原模块内补齐当前施工契约已有实现，保留原需求和验收。';
+  const extra = '02-Feature/FinancialCard/src/main/ets/CurrentContractSupport.ets';
+  const frameworkRoot = REPO_ROOT;
+  const layout = require('../../repo-layout') as typeof import('../../repo-layout');
+  const originalProbeLayout = layout.resolveProbeFrameworkRoot;
+  // The driver uses an external framework; all read-only recovery readers must use the same fixture layout.
+  layout.resolveProbeFrameworkRoot = (project, start) => project === root ? frameworkRoot : originalProbeLayout(project, start);
+  try {
+    authorizeFixtureConstruction(root, 'request', requirement, phases);
+    const first = await runChain(root, {
+      frameworkRoot, freshStartPhase: 'coding', freshEndPhase: 'ut', noAutoForce: true,
+      deviceGate: (options: Parameters<typeof runDeviceReadinessGate>[0]) => {
+        options.emitEvent({ type: 'phase_halt', phase: options.phase, verdict: 'FAIL', halt_reason: 'device_not_ready', probe: 'device_readiness', reason: 'controlled device is offline' });
+        return { outcome: { phase: options.phase, verdict: 'FAIL', halted: false, retries: options.retries,
+          halt_reason: 'device_not_ready', halt_guidance: 'controlled device is offline', blocking_class: 'externalBlocked', failure_kind: 'device_blocked', probe: 'device_readiness' }, notes: [] };
+      },
+      conditionWait: { maxWaitMs: 5, pollMs: 1, runProbe: () => ({ ready: false }) },
+    });
+    const sourceId = path.basename(first.reportDir), sourceManifest = path.join(first.reportDir, 'manifest.json');
+    const original = fs.readFileSync(sourceManifest);
+    assert(first.events.some(event => event.type === 'phase_halt' && event.halt_reason === 'device_not_ready'), 'the original run must actually park at the controlled device condition');
+    const contractsPath = featureFilePath(root, FEATURE, 'contracts.yaml');
+    const contracts = YAML.parse(fs.readFileSync(contractsPath, 'utf8'));
+    contracts.files.push(extra); fs.writeFileSync(contractsPath, YAML.stringify(contracts));
+    clearFrameworkConfigCache();
+    const { staleFrozenBindings, decideRunContinuation } = require('../../scripts/utils/goal-run-creation') as typeof import('../../scripts/utils/goal-run-creation');
+    assert(staleFrozenBindings(root, FEATURE, sourceId, 'ut').some(item => item.startsWith('contracts:')), 'the original actual contracts input must be stale');
+    const decision = decideRunContinuation({ projectRoot: root, frameworkRoot, feature: FEATURE, call: { requirement }, runProbe: () => ({ ready: true }) });
+    assert(decision.kind === 'successor' && decision.change === 'external_condition_ready', JSON.stringify(decision));
+    writeFile(root, 'successor-repair-notes.md', note);
+    const delivered: string[] = [];
+    const options = { frameworkRoot, resume: sourceId, forceResume: true, noAutoForce: true,
+      resumeExtraArgs: ['--repair-notes', 'successor-repair-notes.md'],
+      conditionWait: { maxWaitMs: 5, pollMs: 1, runProbe: () => ({ ready: true }) },
+      onAuthor: ({ prompt }: AgentCtx, context: WorkUnitExecutionContext) => {
+        assert(context.runId !== sourceId && prompt.includes(note) && prompt.includes('NOT requirement'), 'the real successor author receives the original diagnostic hypothesis');
+        delivered.push(prompt); writeFile(root, extra, 'export const currentContractSupport = true;\n');
+      },
+      onHarnessSummary: ({ phase }: { phase: string }) => phase === 'coding' ? { checks: fixtureReadDependencies(root, [{
+        id: 'file_completeness', category: 'structure' as const, severity: 'BLOCKER' as const, description: 'Current contracted support implementation',
+        status: fs.existsSync(path.join(root, extra)) ? 'PASS' as const : 'FAIL' as const, details: '当前施工契约要求同模块实现', affected_files: [extra],
+      }], [contractsPath, PRODUCT_FILE, extra].filter(file => fs.existsSync(path.resolve(root, file)))) } : null,
+    };
+    const resumed: RunProbe & { childArgs?: string[] } = entry === 'detach' ? await requestVia('detach', root, options) : await runChain(root, options);
+    assert(resumed.reportDir !== first.reportDir && goalRunIds(root).length === 2, 'resume must use the actual successor decision without another request');
+    assert(delivered.length > 0 && runEndStatus(resumed.events) === 'CHAIN_SLICE_COMPLETED', JSON.stringify({ delivered: delivered.length, end: resumed.events.at(-1) }));
+    const childManifest = JSON.parse(fs.readFileSync(path.join(resumed.reportDir, 'manifest.json'), 'utf8'));
+    assert(childManifest.successor_of === sourceId && childManifest.requirement === JSON.parse(original.toString()).requirement, 'the successor retains its original request lineage');
+    assert(fs.readFileSync(sourceManifest).equals(original), 'forwarded notes must never rewrite the original manifest');
+    if (entry === 'detach') assert(!!resumed.childArgs?.includes('--repair-notes') && resumed.childArgs.includes('successor-repair-notes.md'), 'detach forwards the actual note argument after resume is rewritten');
+  } finally { layout.resolveProbeFrameworkRoot = originalProbeLayout; clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 for (const entry of ['foreground', 'detach'] as const) test(`a2f7c9e4 §3.6/§3.7 返修窗口 coding 提示含局部诊断入口；带 --repair-notes 的 resume 注入材料（非需求）且不改需求、不起后继 [${entry}]`, async () => {
   const { root } = setupGoalRuntimeHost('cursor', false);
   authorizeFixtureConstruction(root, 'request');

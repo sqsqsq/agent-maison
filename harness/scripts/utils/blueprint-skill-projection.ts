@@ -111,27 +111,38 @@ export function designScopeRevisionChecks(ctx: CheckContext, checks: CheckResult
     // on every revision, so a legal zero-device scope would regress one step each time.
     ...(scope.request_impact ? { impact: scope.request_impact } : {}) },
     facts, contract_fingerprints: [], control_edges: scope.control_edges };
-  // This round's freshly produced acceptance wins; otherwise re-read the proposal's own binding.
-  // NOT `readScopeAcceptance(...) ?? fallback`: it calls readBoundInput directly, which *throws*
-  // on a stale binding, so `??` would never reach the right-hand side. A stale-binding error is
-  // deliberately propagated — "source went stale" must not be laundered into "no acceptance".
+  const workflow = loadWorkflowSpec(ctx.frameworkRoot, loadFrameworkConfig(ctx.projectRoot).active_workflow ?? 'spec-driven');
+  // Preserve this producer's validated binding; re-read other definitions rather
+  // than carrying an obsolete input proof across the unit's concurrent edits.
+  // Existing requested implementation facts are shared objects; this filtered view does not create new obligations.
+  recomputeDefinitionFacts({ ...proposal, facts: proposal.facts.filter(fact => fact.kind !== kind) },
+    { projectRoot: ctx.projectRoot, feature: ctx.feature, frameworkRoot: ctx.frameworkRoot }, workflow, true);
+  const factsContext = {
+    projectRoot: ctx.projectRoot, feature: ctx.feature, frameworkRoot: ctx.frameworkRoot, ...(runId ? { currentRunId: runId } : {}),
+    // requirement source (checker-side revision budget): the run's frozen manifest.requirement —
+    // this checker only runs inside a real run, so the manifest is always the authority here.
+      // requirement source：run 载体取冻结 manifest；feature 载体没有 run manifest，
+      // 需求文本留空（provenance 比对由出生冻结时做过，这里不编一份，见批次 2 教训 #15）。
+    requirement: runId ? loadGoalManifestFromRun(ctx.projectRoot, runId, { feature: ctx.feature }).requirement : undefined,
+    impactInherited: true,
+  };
+  let verifiedFacts = collectResolvedScopeFacts(proposal, factsContext);
+  let reopened = false;
+  for (const fact of proposal.facts) {
+    if (fact.kind === kind || !['acceptance-context', 'design-context'].includes(fact.kind) || !fact.satisfied_by) continue;
+    const stale = new Set(verifiedFacts.satisfied_by.filter(entry => entry.obligation_id === fact.id && !entry.ok).map(entry => entry.ref_index));
+    const kept = fact.satisfied_by.filter((ref, index) => !('input_id' in ref) || !stale.has(index));
+    if (kept.length === fact.satisfied_by.length) continue;
+    if (kept.length) fact.satisfied_by = kept; else delete fact.satisfied_by;
+    reopened = true;
+  }
+  if (reopened) verifiedFacts = collectResolvedScopeFacts(proposal, factsContext);
+  // Reading the new proposal still uses the strict binding reader. Dropping a
+  // stale proof reopens its owner; it never declares the other definition done.
   const acceptance = ctx.phase === 'spec' && ctx.featureSpec.acceptance
     ? { value: ctx.featureSpec.acceptance, binding: resolved.binding }
     : readScopeAcceptance(ctx.projectRoot, proposal, { feature: ctx.feature, frameworkRoot: ctx.frameworkRoot });
-  const workflow = loadWorkflowSpec(ctx.frameworkRoot, loadFrameworkConfig(ctx.projectRoot).active_workflow ?? 'spec-driven');
-  // D0.1「不采信自报」同样适用于修订输入：在**提案副本**上按来源重算两条定义类事实，
-  // 否则一条手写的 unknown 能在修订里把 §4.1.3 子情形 (a) 的 definitionGapPending 伪造出来。
-  // 只动 proposal，不读也不写已冻结的 manifest / 出生范围。
-  recomputeDefinitionFacts(proposal, { projectRoot: ctx.projectRoot, feature: ctx.feature, frameworkRoot: ctx.frameworkRoot }, workflow, true);
-  const next = resolveExecutionScope(proposal, workflow, acceptance,
-    // requirement source (checker-side revision budget): the run's frozen manifest.requirement —
-    // this checker only runs inside a real run, so the manifest is always the authority here.
-    collectResolvedScopeFacts(proposal, { projectRoot: ctx.projectRoot, feature: ctx.feature, frameworkRoot: ctx.frameworkRoot, ...(runId ? { currentRunId: runId } : {}),
-      // requirement source：run 载体取冻结 manifest；feature 载体没有 run manifest，
-      // 需求文本留空（provenance 比对由出生冻结时做过，这里不编一份，见批次 2 教训 #15）。
-      requirement: runId ? loadGoalManifestFromRun(ctx.projectRoot, runId, { feature: ctx.feature }).requirement : undefined,
-      // This budget always inherits the frozen scope impact; it never authors a new one.
-      impactInherited: true }));
+  const next = resolveExecutionScope(proposal, workflow, acceptance, verifiedFacts);
   if (findSubtractedRequiredObligations(scope, next).length) {
     return [{ id: 'design_scope_facts', category: 'structure', severity: 'BLOCKER', status: 'FAIL', description: '设计修订不得静默删除冻结义务', details: '新验收与既有 required 义务冲突；返回 scope owner 澄清，不缩减本 run 责任', suggestion: '回到 scope owner 澄清验收变化，保留已冻结义务；正式需求变化沿既有 correction/successor 处理。' }];
   }

@@ -1,6 +1,8 @@
 import assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as ts from 'typescript';
+import * as YAML from 'yaml';
 import { clearFrameworkConfigCache, featurePhaseReportsDir, resolveFeatureArtifact } from '../../config';
 import { resolvePhaseVerdict, writeRunSummaryBase } from '../../harness-runner';
 import { generateScriptReport } from '../../scripts/utils/report-generator';
@@ -11,7 +13,7 @@ import { computeGateFingerprint } from '../../scripts/utils/gate-fingerprint';
 import { loadWorkflowSpec } from '../../workflow-loader';
 import { __testing_recomputeClosureRepairCandidates, finalizePhaseClosure, preparePhaseRepairFeedback } from '../../scripts/utils/phase-closure-finalizer';
 import { readPhaseRepairIssues, phaseIssuesForVerifierSubject, buildSummaryRepairCandidates,
-  verifiedPhaseDesignFindings, verifiedPhaseRepairIssues, buildCurrentVerifierDiagnosisContext, findUnreadableDiagnosisChecks, itemFingerprintOf, resolveRepairDeclineState, readableIssueEvidence } from '../../scripts/utils/repair-candidates';
+  verifiedPhaseDesignFindings, verifiedPhaseRepairIssues, buildCurrentVerifierDiagnosisContext, findUnreadableDiagnosisChecks, itemFingerprintOf, resolveRepairDeclineState, readableIssueEvidence, verifiedRepairDeclineResponses } from '../../scripts/utils/repair-candidates';
 import { publishFixtureVerifierEvidence, fixtureSubjectId } from '../utils/verifier-evidence-fixture';
 import { resolveCapabilityInputs } from '../../scripts/utils/capability-resolution';
 import { sha256File } from '../../scripts/utils/phase-evidence-manifest';
@@ -68,6 +70,56 @@ const passed: CheckResult = { id: 'actual_stage_check', category: 'structure', d
 
 export function runAll(): UnitCaseResult[] {
   const cases: Array<[string, () => void]> = [
+    ...(['plan-repair', 'fact-decline'] as const).map(mode => [
+      `RC12 ${mode}: actual TS2322 and current authority reach original verification without a phase receipt`,
+      () => withProject(root => {
+        const source = 'src/upstream-counterexample.ts';
+        const compile = (): string => {
+          const program = ts.createProgram([path.join(root, source)], { noEmit: true, strict: true, types: [], skipLibCheck: true, target: ts.ScriptTarget.ES2022 });
+          const diagnostics = ts.getPreEmitDiagnostics(program);
+          return diagnostics.length ? diagnostics.map(row => `TS${row.code}: ${ts.flattenDiagnosticMessageText(row.messageText, '\n')}`).join('\n') : 'current counterexample source typechecks';
+        };
+        writeFile(path.join(root, target), `# Current contract\nDERIVED_COUNTEREXAMPLE_TYPE=${mode === 'plan-repair' ? 'never' : 'string'}\n`);
+        writeFile(path.join(root, source), 'const diagnosticValue: never = "current value";\n');
+        const failed = compile(); assert.match(failed, /TS2322/);
+        writeFile(path.join(root, 'build.log'), failed + '\n');
+        writeIssues(root, 'coding', issue(target, '`build.log:1` 与 `src/upstream-counterexample.ts:1`'));
+        const proposal = readPhaseRepairIssues(root, FEATURE, 'coding')!;
+        const first = writer(root, 'coding', [{ ...compileFail, details: failed }]); assert(first.verifier_subject_id);
+        const dir = featurePhaseReportsDir(root, FEATURE, 'coding', FW);
+        const response = (verdict: string, evidence: string) => '```issue-verification\n' + YAML.stringify([{ issue: 'UP-001', verdict, evidence }]) + '```\n';
+        publishFixtureVerifierEvidence({ projectRoot: root, reportsDir: dir, feature: FEATURE, phase: 'coding', subjectId: first.verifier_subject_id,
+          reportText: response('confirmed', [proposal.rows[0].summary, target, source, 'build.log', failed].join(' | ')), skipSummaryPatch: true });
+        const confirmed = writer(root, 'coding', [{ ...compileFail, details: failed }]);
+        const candidate = confirmed.repair_candidates?.find(row => row.id === 'UP-001');
+        assert(candidate?.category === 'plan' && candidate.files.includes(target), JSON.stringify(confirmed.repair_candidates));
+        const originalReport = path.join(dir, `verifier.report.${first.verifier_subject_id}.md`), originalBytes = fs.readFileSync(originalReport);
+        if (mode === 'plan-repair') writeFile(path.join(root, target), '# Current contract\nDERIVED_COUNTEREXAMPLE_TYPE=string\n');
+        else {
+          const basis = `当前 ${target} 已明定 string；错误来自 ${source} 的 never 标注。\n\n原编译证据必须保留：${failed}`;
+          const ledger = path.join(root, 'doc/features/demo/plan/headless-assumptions.jsonl');
+          writeFile(ledger, JSON.stringify({ decision: basis }) + '\n');
+          const delivered = JSON.parse(fs.readFileSync(ledger, 'utf8')).decision as string;
+          const declines = new Map([[candidate.item_fingerprint, { id: candidate.id, summary: candidate.summary, declined_rounds: 1, rebuttal_used: false,
+            basis: { text: delivered, run_id: 'current', round: { run_id: 'current', ts: new Date().toISOString() } }, first_declined_round: null }]]);
+          const full = response('refuted', delivered);
+          assert.equal(verifiedRepairDeclineResponses({ verifierReportText: full, verifierSubjectCurrent: false, declines }).length, 0);
+          assert.equal(verifiedRepairDeclineResponses({ verifierReportText: full, verifierSubjectCurrent: true, declines })[0]?.evidence, delivered);
+          assert.match(fs.readFileSync(path.join(root, source), 'utf8'), /never/, 'the owner refusal cannot wash away the actual implementation failure');
+        }
+        const authority = /DERIVED_COUNTEREXAMPLE_TYPE=(string|never)/.exec(fs.readFileSync(path.join(root, target), 'utf8'))![1];
+        writeFile(path.join(root, source), `const diagnosticValue: ${authority} = "current value";\n`);
+        const repaired = compile(); assert.equal(repaired, 'current counterexample source typechecks');
+        writeFile(path.join(root, 'build.log'), repaired + '\n');
+        const current = writer(root, 'coding', [passed]); assert(current.verifier_subject_id && current.verifier_subject_id !== first.verifier_subject_id);
+        assert.equal(phaseIssuesForVerifierSubject(root, FEATURE, 'coding', first.verifier_subject_id, FW), null, 'the old diagnosis cannot decide the corrected current source');
+        publishFixtureVerifierEvidence({ projectRoot: root, reportsDir: dir, feature: FEATURE, phase: 'coding', subjectId: current.verifier_subject_id,
+          reportText: response('refuted', [proposal.rows[0].summary, target, source, 'build.log', repaired].join(' | ')), skipSummaryPatch: true });
+        const settled = writer(root, 'coding', [passed]);
+        assert(!settled.repair_candidates?.some(row => row.id === 'UP-001'), JSON.stringify(settled.repair_candidates));
+        assert.deepEqual(fs.readFileSync(originalReport), originalBytes, 'the current decision preserves the original independent failure evidence');
+      }),
+    ] as [string, () => void]),
     ['Feature-relative references reach the real subject with project POSIX labels and complete diagnosis context', () => withProject(root => {
       writeIssues(root, 'coding', issue(target, '`plan/plan.md:2`'));
       const proposed = readPhaseRepairIssues(root, FEATURE, 'coding')!;

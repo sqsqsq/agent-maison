@@ -593,6 +593,8 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     const codebaseValue = contractsProbe.inputs?.values?.codebase;
     assert(codebaseValue && codebaseValue.state === 'resolved', 'plan codebase unresolved: ' + JSON.stringify(codebaseValue));
     const implementationSource = codebaseValue.binding;
+    const originalContracts = contractsProbe.inputs?.values?.contracts;
+    assert(originalContracts?.state === 'resolved');
     // The impact judgement is sourced on the very file the implementation duty names (an empty
     // basis is rejected: a claim with no source must never prune a duty). The reading layer's
     // verdict for it is supplied directly — resolved facts are the pure function's own input type.
@@ -602,6 +604,7 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     const impact = { user_visible_behavior_change: false, reason: 'fixture: unit verification only', basis: [implementationSource] };
     const scope = resolveExecutionScope({ request: { completion_target: 'feature', requested_results: ['delivery'], requested_phases: ['spec'], impact }, facts: [
       { id: 'acceptance:pending', kind: 'acceptance-context', applicability: 'unknown', reason: 'spec must establish acceptance', basis: [] },
+      { id: 'design:known', kind: 'design-context', applicability: 'required', reason: 'approved derived contracts', basis: [originalContracts.binding], satisfied_by: [originalContracts.binding] },
       // D0.1 rule (a): the implementation duty names its write set through `implementationSource`
       // below; the blueprint fixture declares no contracts.files, so that binding IS the target set.
       { id: 'implementation:request', kind: 'implementation', applicability: 'required', reason: 'requested implementation', basis: [implementationSource] },
@@ -630,7 +633,13 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     const physicalCtx = { ...ctx, resolvedInputs: physicalInputs, featureSpec: new SpecLoader(f.root, undefined, undefined, frameworkRoot).loadFeatureSpec(f.feature, physicalInputs) };
     const physicalChecks = designScopeRevisionChecks(physicalCtx, []);
     const physicalNext = resolveExecutionScope(physicalChecks[0].scope_revision_input!, workflow, readScopeAcceptance(f.root, physicalChecks[0].scope_revision_input!, { feature: f.feature, frameworkRoot }), resolvedStub);
-    assert.deepStrictEqual(physicalNext.phase_chain, next.phase_chain);
+    assert.deepStrictEqual(physicalNext.phase_chain.filter(phase => phase !== 'plan'), next.phase_chain.filter(phase => phase !== 'plan'));
+    assert(physicalNext.phase_chain.includes('plan'), '等价物化后的旧来源证明失效，原plan责任须重核');
+    const otherDefinition = physicalChecks[0].scope_revision_input!.facts.find(fact => fact.kind === 'design-context')!;
+    assert(!otherDefinition.satisfied_by?.length && otherDefinition.applicability === 'required');
+    readBoundInput({ projectRoot: f.root, frameworkRoot, feature: f.feature, phase: 'plan', track: 'full' }, otherDefinition.basis[0]);
+    assert.throws(() => readBoundInput({ projectRoot: f.root, frameworkRoot, feature: f.feature, phase: 'plan', track: 'full' }, originalContracts.binding), /stale/, '冻结绑定不能因新提案而放宽');
+    assert.deepStrictEqual(scope.obligations.find(obligation => obligation.kind === 'design-context')!.satisfied_by, [originalContracts.binding], '旧冻结证明保持原件');
     assert.deepStrictEqual(physicalNext.unresolved, next.unresolved);
     assert.deepStrictEqual(physicalNext.obligations.map(o => [o.id, o.applicability]), next.obligations.map(o => [o.id, o.applicability]));
     for (const required_outputs of [[], ['spec/spec.md']]) {

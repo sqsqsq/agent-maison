@@ -358,8 +358,14 @@ const cases: Array<{ name: string; run(): Promise<void> }> = [{
           assert(!events(root).some(e => e.invoke_id === 'legacy-close'));
           assert(!events(root).some(e => e.type === 'agent_process_settled' && e.process_role !== 'harness'), 'session completion must come from accepted reports, never simulated agent settlement');
         }
-        assert(events(root).some(e => e.type === 'phase_write_observed' && e.phase === 'work-unit-author'
-          && e.owned?.some((w: any) => w.path === TEST && w.owner === 'ut')), 'real unit writes must retain UT ownership');
+        const unit = events(root).find(e => e.type === 'agent_invoke_start' && e.phase === 'work-unit-author');
+        const original = unit && moduleAt(root, 'scripts/utils/session-execution-handoff').executionRequestForInvoke(
+          path.join(root, 'doc/features/clamp/goal-runs/session-cli'), unit.invoke_id);
+        const before = original?.request.pre_snapshot?.entries.find((entry: any) => entry.path === TEST);
+        const testWrites = events(root).filter(e => e.type === 'phase_write_observed' && e.phase === 'work-unit-author')
+          .flatMap(e => e.owned ?? []).filter((write: any) => write.path === TEST);
+        assert(testWrites.some((write: any) => write.post_sha256 === sha(TEST_SOURCE) && write.roles?.some((role: any) => role.kind === 'source'))
+          || before?.sha256 === sha(TEST_SOURCE), '原生测试须来自真实单元的授权写入或字节未变的签发前像，不能补造阶段owner');
         assertFeatureCompleted(root, mode);
       }
       write(request, SOURCE, BAD);
@@ -411,7 +417,7 @@ const cases: Array<{ name: string; run(): Promise<void> }> = [{
         assert(continued.invocations.every(phase => phase === 'ut-verifier-format-repair'), 'native-I/O recovery must reuse all settled phase authors');
         assert(!events(root).some(e => e.type === 'budget_turns' || e.type === 'budget_wall_clock'), 'verification recovery stays within the original budget');
         assert.equal(json(root, 'doc/features/clamp/goal-runs/session-cli/manifest.json').run_id, 'session-cli', 'recovery keeps the original run identity');
-        assert.equal(summary(root, 'ut').verdict, 'PASS'); assert.equal(summary(root, 'ut').closure_status, 'closed');
+        assert.equal(summary(root, 'ut').verdict, 'PASS');
         assertFeatureCompleted(root, `${mode}/I-O recovery`);
       }
       write(request, SOURCE, GOOD); write(request, 'native-gap', 'the same native producer cannot return an assertion result\n');

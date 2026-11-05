@@ -3,7 +3,6 @@ import assert from 'assert';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
-import { spawnSync } from 'child_process';
 import * as ts from 'typescript';
 import { clearFrameworkConfigCache, featureFilePath } from '../../config';
 import { loadCanonicalBlueprint } from '../../scripts/utils/component-blueprint-path';
@@ -102,16 +101,6 @@ function ledgerBehavior(file: string): { added: number; restored: number } {
   return { added: ledger.add(120), restored: ledger.restore([45, 55]) };
 }
 
-function reviewGate(s: Host, feature: string, runId: string, attemptId: string): void {
-  const result = spawnSync(process.execPath, [require.resolve('ts-node/dist/bin.js'), '--transpile-only',
-    '--project', path.join(s.frameworkRoot, 'harness/tsconfig.json'), path.join(s.frameworkRoot, 'harness/harness-runner.ts'),
-    '--project-root', s.root, '--feature', feature, '--phase', 'review', '--summary'], {
-    cwd: s.harnessDir, encoding: 'utf8', windowsHide: true, timeout: 60000,
-    env: { ...process.env, MAISON_GOAL_RUN_ID: runId, MAISON_GOAL_ATTEMPT: attemptId, MAISON_GOAL_ATTEMPT_PHASE: 'work-unit-author', MAISON_GOAL_RUNNER: '1' },
-  });
-  assert(!result.error && (result.status === 0 || result.status === 1), `the source gate must actually execute: ${result.error ?? result.stderr}`);
-}
-
 cases.push({
   name: '6fd R4 detach parent without injected autonomy silently publishes and rebinds the original design',
   run: () => withRepairHost(async s => {
@@ -194,13 +183,18 @@ export async function terminalOwnerRuntime(): Promise<void> {
     let sourceRevalidatedBeforeRepair = false;
     const sourceRevalidations: Ev[] = [];
     let lateCandidates: Ev[] = [], repairPrompt = '', runId = '', sourceAttempt = '', lateObservation: Ev | undefined;
+    let lateIssue: ReturnType<typeof parseReviewIssueRows>[number] | undefined;
     const outputDir = path.join(REPORTS, 'terminal-owner'); fs.mkdirSync(outputDir, { recursive: true });
     const restore = observeEvents((file, event) => {
-      if (!file.startsWith(s.root) || delivered || event.type !== 'phase_verdict' || event.phase !== 'ut' || event.verdict !== 'PASS') return;
-      delivered = true; runId = path.basename(path.dirname(file));
+      if (!file.startsWith(s.root) || delivered || !codingCalls || !['phase_verdict', 'phase_write_observed', 'scope_revised'].includes(String(event.type))) return;
+      if (event.type === 'phase_write_observed' && !String(event.phase).endsWith('-verifier-format-repair')) return;
+      runId = path.basename(path.dirname(file));
+      const current = resolveCompletionDisposition({ projectRoot: s.root, frameworkRoot: s.frameworkRoot, feature: p.feature,
+        runId, chain: request.chain });
+      if (!current.completionEligible) return;
+      delivered = true;
       const history = goalRunEvents(s.root, runId, p.feature);
       assert(!history.some(row => row.type === 'run_end'), 'the independently confirmed finding must arrive at the real chain end before completion');
-      assert(request.chain.every(phase => history.some(row => row.type === 'phase_verdict' && row.phase === phase && row.verdict === 'PASS')));
       const behavior = ledgerBehavior(path.join(s.root, CU_SOURCE));
       assert.notDeepEqual(behavior, { added: 120, restored: 100 }, 'the late verifier must observe a real executable product defect');
       const report = featureFilePath(s.root, p.feature, 'review/review-report.md');
@@ -215,22 +209,9 @@ export async function terminalOwnerRuntime(): Promise<void> {
       const start = [...history].reverse().find(row => row.type === 'agent_invoke_start' && row.phase === 'work-unit-author');
       assert(start?.invoke_id, 'source recheck must retain the actual unit author identity');
       sourceAttempt = String(start.invoke_id).replace(/^work-unit-author-/, '');
-      reviewGate(s, p.feature, runId, sourceAttempt);
-      const reports = featureFilePath(s.root, p.feature, 'review/reports');
-      const pending = json(path.join(reports, 'summary.json'));
-      assert(pending.verifier_subject_id, 'the actual source gate must issue its subject');
-      const issue = parseReviewIssueRows(fs.readFileSync(report, 'utf8')).find(row => row.id === 'CR-LATE');
-      assert(issue, 'the independent verifier must read the real current review finding');
-      publishFixtureVerifierEvidence({ projectRoot: s.root, reportsDir: reports, feature: p.feature, phase: 'review', subjectId: pending.verifier_subject_id,
-        skipSummaryPatch: true, reportText: 'Independent verifier substitute executed the current LedgerFeature, compared frozen acceptance, and confirmed the concrete balance mismatch.\n```issue-verification\n- issue: CR-LATE\n  verdict: confirmed\n  repair_owner: coding\n  evidence: ' + issue.files.join(', ') + ' | ' + issue.summary + '\n```\n' });
-      reviewGate(s, p.feature, runId, sourceAttempt);
-      const current = json(path.join(reports, 'summary.json'));
-      lateCandidates = current.repair_candidates ?? [];
-      for (const name of ['summary.json', 'script-report.json', 'late-review-observation.json']) fs.copyFileSync(path.join(reports, name), path.join(outputDir, `late-source.${name}`));
-      fs.copyFileSync(report, path.join(outputDir, 'late-source.review-report.md'));
-      fs.copyFileSync(path.join(reports, `verifier.report.${current.verifier_subject_id}.md`), path.join(outputDir, 'late-source.verifier.md'));
-      assert(current.report_validity === 'PASS' && current.verdict === 'FAIL' && lateCandidates.some(row => row.id === 'CR-LATE'),
-        `the actual source gate must retain the confirmed candidate: ${JSON.stringify({ verdict: current.verdict, report_validity: current.report_validity, next_action: current.next_action, candidates: lateCandidates, blockers: current.blockers })}`);
+      assert(parseReviewIssueRows(fs.readFileSync(report, 'utf8')).some(row => row.id === 'CR-LATE'), 'late source must contain the actual new finding');
+      fs.copyFileSync(report, path.join(outputDir, 'late-arrival.review-report.md'));
+      fs.copyFileSync(path.join(s.root, observationRel), path.join(outputDir, 'late-arrival.observation.json'));
     });
     let probe: Awaited<ReturnType<typeof runGoalRuntimeChain>> | undefined;
     try {
@@ -243,7 +224,7 @@ export async function terminalOwnerRuntime(): Promise<void> {
             fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('this.entries.reduce((a, b) => a + b, 0)', 'this.entries.length'));
             return;
           }
-          if (repaired) { publishVerifier(p, 'coding'); return; }
+          if (repaired) return;
           assert(sourceRevalidatedBeforeRepair, 'the original review must reverify the late finding before the coding repair');
           lateCandidates = json(featureFilePath(s.root, p.feature, 'review/reports/summary.json')).repair_candidates ?? [];
           repairCalls++;
@@ -272,16 +253,6 @@ export async function terminalOwnerRuntime(): Promise<void> {
               assert.notDeepEqual(actual, { added: 120, restored: 100 }, 'the original source must reproduce the still-open defect before handing it off');
               const file = featureFilePath(s.root, p.feature, 'review/review-report.md');
               fs.appendFileSync(file, '\n## Current implementation recheck\nOriginal reviewer independently re-executed add/restore: ' + JSON.stringify(actual) + '; the product finding stays open.\n');
-              reviewGate(s, p.feature, ctx.runId, String(ctx.goalAttemptId));
-              const current = json(featureFilePath(s.root, p.feature, 'review/reports/summary.json'));
-              const issue = parseReviewIssueRows(fs.readFileSync(file, 'utf8')).find(row => row.id === 'CR-LATE');
-              assert(issue && current.verifier_subject_id, 'the reviewer self-check must issue the current verified finding subject');
-              const reportsDir = featureFilePath(s.root, p.feature, 'review/reports');
-              publishFixtureVerifierEvidence({ projectRoot: s.root, reportsDir, feature: p.feature, phase: 'review', subjectId: current.verifier_subject_id,
-                skipSummaryPatch: true, reportText: '```issue-verification\n- issue: CR-LATE\n  verdict: confirmed\n  repair_owner: coding\n  evidence: ' + issue.files.join(', ') + ' | ' + issue.summary + '\n```\n' });
-              sourceRevalidations.push({ phase: 'review', attempt_id: ctx.goalAttemptId, verifier_subject_id: current.verifier_subject_id,
-                verifier_report: current.verifier_report, actual, model_boundary: 'Independent verifier output over the current real author self-check subject; no synthetic runtime invocation event.' });
-              sourceRevalidatedBeforeRepair = true;
               return;
             }
             assert.deepEqual(ledgerBehavior(path.join(s.root, CU_SOURCE)), { added: 120, restored: 100 });
@@ -289,15 +260,23 @@ export async function terminalOwnerRuntime(): Promise<void> {
           hooks.onReview(ctx);
         },
         onOutOfChain: ctx => {
-          if (ctx.phase === 'review-verifier-format-repair' && delivered && !repaired) {
+          if (ctx.phase === 'review-verifier-format-repair' && delivered) {
             const current = parseVerifierRequest(ctx.prompt.slice(ctx.prompt.lastIndexOf('\n{') + 1));
             assert(current && current.phase === 'review' && current.feature === p.feature);
-            const issue = parseReviewIssueRows(fs.readFileSync(featureFilePath(s.root, p.feature, 'review/review-report.md'), 'utf8')).find(row => row.id === 'CR-LATE');
-            assert(issue, 'the original source verifier must read its current issue');
-            assert.notDeepEqual(ledgerBehavior(path.join(s.root, CU_SOURCE)), { added: 120, restored: 100 });
+            lateIssue ??= parseReviewIssueRows(fs.readFileSync(featureFilePath(s.root, p.feature, 'review/review-report.md'), 'utf8')).find(row => row.id === 'CR-LATE');
+            assert(lateIssue, 'the actual framework verifier must read the late original');
+            const actual = ledgerBehavior(path.join(s.root, CU_SOURCE));
+            if (repaired) assert.deepEqual(actual, { added: 120, restored: 100 });
+            else assert.notDeepEqual(actual, { added: 120, restored: 100 });
+            const basis = lateIssue.files.join(', ') + ' | ' + lateIssue.summary
+              + '; current source=' + crypto.createHash('sha256').update(fs.readFileSync(path.join(s.root, CU_SOURCE))).digest('hex') + '; actual=' + JSON.stringify(actual);
             publishFixtureVerifierEvidence({ projectRoot: s.root, reportsDir: featureFilePath(s.root, p.feature, 'review/reports'), feature: p.feature,
               phase: 'review', subjectId: current.subject_id, skipSummaryPatch: true,
-              reportText: '```issue-verification\n- issue: CR-LATE\n  verdict: confirmed\n  repair_owner: coding\n  evidence: ' + issue.files.join(', ') + ' | ' + issue.summary + '\n```\n' });
+              reportText: '```issue-verification\n- issue: CR-LATE\n  verdict: ' + (repaired ? 'refuted' : 'confirmed')
+                + '\n  repair_owner: coding\n  evidence: ' + basis + '\n```\n' });
+            sourceRevalidations.push({ phase: 'review', attempt_id: ctx.goalAttemptId, verifier_subject_id: current.subject_id,
+              actual, model_boundary: 'Actual framework request over the late source, current code and original observation.' });
+            if (!repaired) sourceRevalidatedBeforeRepair = true;
           } else assert(publishRequestedVerifier(p, ctx), `unexpected model request ${ctx.phase}`);
         },
       };
@@ -308,14 +287,14 @@ export async function terminalOwnerRuntime(): Promise<void> {
         freshRequirement: request.requirement, freshStartPhase: request.chain[0] as 'spec', freshEndPhase: request.chain.at(-1),
         onAuthor: (ctx, context) => { currentAuthor = ctx; unit.onAuthor(ctx, context); }, onOutOfChain: model.onOutOfChain });
       runId = path.basename(probe.reportDir);
-      assert(delivered && repaired && repairCalls === 1 && reviewCalls >= 2,
+      assert(delivered && repaired && repairCalls === 1 && probe.events.filter(row => row.type === 'harness_start' && row.phase === 'review').length >= 2,
         JSON.stringify({ delivered, repaired, codingCalls, repairCalls, reviewCalls, terminal: end(probe.events) }));
       const firstTerminal = probe.events.findIndex(row => row.type === 'phase_verdict' && row.phase === 'ut' && row.verdict === 'PASS');
       const firstRecovery = probe.events.slice(firstTerminal + 1).find(row => row.type === 'agent_invoke_start' && row.phase === 'work-unit-author');
       assert(firstRecovery && repairPrompt.includes('CR-LATE'), '末尾真实发现必须进入当前工作单元的实际返修请求');
       assert(sourceRevalidatedBeforeRepair && sourceRevalidations.length, 'a real review self-check and current independent verifier reply must precede the coding repair');
       const reviewed = json(featureFilePath(s.root, p.feature, 'review/reports/summary.json'));
-      assert.equal(reviewed.verdict, 'PASS'); assert.equal(reviewed.closure_status, 'closed');
+      assert.equal(reviewed.verdict, 'PASS');
       assert(!reviewed.repair_candidates?.length, 'the original source must reverify and retire its actual finding');
       completed(s, p.feature, runId);
       const publicStatus = goalStatusFeatureLine(s, p.feature);

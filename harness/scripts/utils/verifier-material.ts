@@ -324,7 +324,10 @@ export function verifierMaterialFileHash(input: { projectRoot: string; feature: 
   }
   if ((input.schema ?? VERIFIER_MATERIAL_SCHEMA) === VERIFIER_MATERIAL_SCHEMA && /\.(?:ya?ml|json)$/i.test(abs)) try {
     const value = asRecord(YAML.parse(fs.readFileSync(abs, 'utf8')));
-    if (value?.artifact === 'component-blueprint@1') return sha256Text(stableStringify(blueprintAuthorContent(value, true)));
+    if (value?.artifact === 'component-blueprint@1') {
+      const scoped = identityNeutralEvidenceDigest(input.projectRoot, input.feature, abs, input.authorityReaders);
+      return scoped === undefined ? sha256Text(stableStringify(blueprintAuthorContent(value, true))) : scoped;
+    }
     if (value?.feature === input.feature && typeof value.run_id === 'string' && typeof value.report_dir === 'string') {
       const { loadGoalRunManifestFromRun, computeManifestIdentityFields } = require('./goal-manifest') as typeof import('./goal-manifest');
       const manifest = loadGoalRunManifestFromRun(input.projectRoot, value.run_id, { feature: input.feature });
@@ -343,13 +346,24 @@ export function verifierMaterialFileHash(input: { projectRoot: string; feature: 
   return identityNeutralEvidenceDigest(input.projectRoot, input.feature, abs, input.authorityReaders) ?? sha256FileOrNull(abs);
 }
 
+/** Old @2 blueprint entries used the whole author view; unchanged content is still a proof. */
+function unchangedLegacyBlueprintMaterial(projectRoot: string, file: string, recorded: string | null): boolean {
+  if (!recorded) return false;
+  try {
+    const value = asRecord(YAML.parse(fs.readFileSync(path.resolve(projectRoot, file), 'utf8')));
+    return value?.artifact === 'component-blueprint@1'
+      && sha256Text(stableStringify(blueprintAuthorContent(value, true))) === recorded;
+  } catch { return false; }
+}
+
 export function verifierMaterialFileMatchesCurrent(input: { projectRoot: string; feature: string; material: VerifierMaterialView; file: string; authorityReaders?: IdentityNeutralDigestReaders }): boolean {
   const recorded = input.material.files.find(file => file.path === input.file);
   // @1 explicitly stored raw context/diagnosis originals beside manifest projections.
   // Exact original bytes are a historical compatibility proof; @2 never chooses this recipe.
   if (recorded && input.material.schema === 'maison-verifier-material@1'
     && sha256FileOrNull(path.resolve(input.projectRoot, input.file)) === recorded.sha256) return true;
-  return !!recorded && verifierMaterialFileHash({ ...input, phase: input.material.phase, schema: input.material.schema }) === recorded.sha256;
+  return !!recorded && (verifierMaterialFileHash({ ...input, phase: input.material.phase, schema: input.material.schema }) === recorded.sha256
+    || input.material.schema === VERIFIER_MATERIAL_SCHEMA && unchangedLegacyBlueprintMaterial(input.projectRoot, input.file, recorded.sha256));
 }
 
 function toPosixRel(root: string, abs: string): string {
@@ -600,9 +614,11 @@ export function verifierMaterialsEquivalent(previous: VerifierMaterialView | nul
     if (!oldFiles.has(file.path)) return false;
     const before = oldFiles.get(file.path);
     if (before === file.sha256) return true;
-    if (!projectRoot || previous.schema !== 'maison-verifier-material@1' || current.schema !== VERIFIER_MATERIAL_SCHEMA || !before) return false;
+    if (!projectRoot || current.schema !== VERIFIER_MATERIAL_SCHEMA || !before) return false;
     const abs = path.resolve(projectRoot, file.path);
-    return isInsideProjectRoot(projectRoot, abs) && sha256FileOrNull(abs) === before
+    const unchanged = previous.schema === 'maison-verifier-material@1' ? sha256FileOrNull(abs) === before
+      : previous.schema === VERIFIER_MATERIAL_SCHEMA && unchangedLegacyBlueprintMaterial(projectRoot, file.path, before);
+    return isInsideProjectRoot(projectRoot, abs) && unchanged
       && verifierMaterialFileHash({ projectRoot, feature: current.feature, phase: current.phase, file: file.path, schema: current.schema }) === file.sha256;
   });
 }

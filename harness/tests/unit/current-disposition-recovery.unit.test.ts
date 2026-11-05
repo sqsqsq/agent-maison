@@ -25,7 +25,7 @@ import { clearFrameworkConfigCache } from '../../config';
 import { makeVerifierProject, FRAMEWORK_SOURCE_ROOT } from '../utils/verifier-project-fixture';
 import { fixture as requestFixture } from './request-entry.unit.test';
 import { prepareExplicitRequest } from '../../scripts/utils/capability-resolution-entry-input';
-import { runGoalRuntimeChain, setupGoalRuntimeHost, seedSignalHost, writeCurrentSignals, currentSignalGateChecks, PRODUCT_FILE } from './goal-runner-testing-integrity.unit.test';
+import { runGoalRuntimeChain, setupGoalRuntimeHost, authorizeFixtureConstruction, seedSignalHost, writeCurrentSignals, currentSignalGateChecks, PRODUCT_FILE } from './goal-runner-testing-integrity.unit.test';
 import { computeDefectFingerprint } from '../../../profiles/hmos-app/harness/visual-diff-check';
 import { readRunControl } from '../../scripts/utils/goal-run-control';
 import type { WorkUnitExecutionContext } from '../../scripts/utils/goal-phase-executor';
@@ -34,9 +34,11 @@ import { ensureFeatureExecutionScopeFrozen, readFeatureFrozenScope } from '../..
 import { prepareGoalModeRun } from '../../scripts/goal-mode-entry';
 import { readPhaseRepairIssues, phaseIssuesForVerifierSubject, itemFingerprintOf } from '../../scripts/utils/repair-candidates';
 import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
-import { featurePhaseReportsDir } from '../../config';
+import { featureFilePath, featurePhaseReportsDir } from '../../config';
 import { generateScriptReport } from '../../scripts/utils/report-generator';
-import { writeRunEvents, seedCleanCompletionChain } from '../utils/completion-chain-seed';
+import { writeRunEvents, seedCleanCompletionChain, writePhaseReceipt } from '../utils/completion-chain-seed';
+import { resolvePhaseEvidenceManifest, writePhaseEvidenceManifest } from '../../scripts/utils/phase-evidence-manifest';
+import { computeRunRequirementSha } from '../../scripts/utils/fidelity-shared';
 import { resolveCurrentScopeView, prepareFeatureScopeCandidate } from '../../scripts/utils/feature-track';
 import { resolveWorkflowSpec } from '../../workflow-loader';
 import { visualDebtJsonPath } from '../../scripts/utils/visual-debt';
@@ -1057,6 +1059,99 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
     assert(problem, 'unverified finding must remain completion-blocking');
     assert.equal(problem.action, 'verify'); assert.equal(problem.owner, 'plan'); assert.equal(problem.source_phase, 'plan');
     assert.equal(result.releaseBlocking.length, 0);
+  },
+}, {
+  name: 'C6 late verification keeps independent unfinished review until both original judgments resolve',
+  run() {
+    const closed = { verdict: 'PASS' as const, schemaCurrent: true, closureCommitted: true };
+    const input = (planPending: boolean, reviewPending: boolean) => ({ endpoint: 'feature-completion' as const, phases: [
+      { ...closed, phase: 'plan', openFindings: planPending ? [{ id: 'late_plan_verification', detail: 'Original plan observation still needs verification', owner: 'plan', verificationRequired: true }] : [] },
+      { ...closed, phase: 'review', openFindings: reviewPending ? [{ id: 'unfinished_review', detail: 'Independent current review is still unavailable', owner: 'review', verificationRequired: true }] : [] },
+    ] });
+    const both = resolveCurrentDisposition(input(true, true));
+    for (const owner of ['plan', 'review']) assert(both.completionBlocking.some(problem => problem.owner === owner && problem.action === 'verify'));
+    assert(!both.completionEligible && !both.completionBlocking.some(problem => problem.action === 'repair'), 'pure verification cannot create implementation work');
+    const remaining = resolveCurrentDisposition(input(false, true));
+    assert(!remaining.completionEligible && remaining.completionBlocking.some(problem => problem.owner === 'review'));
+    assert(!remaining.completionBlocking.some(problem => problem.owner === 'plan'), 'resolving plan preserves the unrelated unfinished original review');
+    assert(resolveCurrentDisposition(input(false, false)).completionEligible, 'both original judgments must actually resolve before completion');
+  },
+}, {
+  name: 'current self-check receives one formal origin and qualified previous-run checks stay reusable',
+  async run() {
+    const { root } = setupGoalRuntimeHost('cursor', false);
+    const feature = 'bc-openCard', frameworkRoot = FRAMEWORK_SOURCE_ROOT, family = 'coding' as const;
+    const reader = require('../../scripts/utils/verify-feature-completion') as typeof import('../../scripts/utils/verify-feature-completion');
+    const original = reader.readReusableCheckResult;
+    let supplied = false, onlyOriginGap = false;
+    try {
+      authorizeFixtureConstruction(root, 'request', '真机测试银行卡开卡流程', [family]);
+      // Supply only the self-check producer's files; qualification, lineage repair and dispatch remain production decisions.
+      reader.readReusableCheckResult = options => {
+        if (options.projectRoot === root && options.runId && options.phase === family && !supplied) {
+          const eventFile = featureFilePath(root, feature, `goal-runs/${options.runId}/events.jsonl`);
+          const events = fs.existsSync(eventFile) ? fs.readFileSync(eventFile, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line)) : [];
+          const author = [...events].reverse().find(event => event.type === 'agent_invoke_end' && event.phase === 'work-unit-author');
+          if (author
+            && !events.some(event => event.type === 'harness_start' && event.phase === family)) {
+            supplied = true;
+            const keys = ['MAISON_GOAL_RUN_ID', 'MAISON_GOAL_ATTEMPT', 'MAISON_GOAL_ATTEMPT_PHASE', 'MAISON_GOAL_RUNNER'];
+            const before = keys.map(key => process.env[key]);
+            try {
+              Object.assign(process.env, { MAISON_GOAL_RUN_ID: options.runId, MAISON_GOAL_ATTEMPT: String(author.invoke_id).slice('work-unit-author-'.length), MAISON_GOAL_ATTEMPT_PHASE: 'work-unit-author', MAISON_GOAL_RUNNER: '1' });
+              const source = path.join(root, PRODUCT_FILE);
+              const observed = fs.readFileSync(source, 'utf8');
+              const report = generateScriptReport(path.join(frameworkRoot, 'harness'), family, feature, root, [{ id: 'file_completeness', category: 'structure',
+                description: 'controlled self-check reads the actual product', severity: 'BLOCKER', status: observed.length ? 'PASS' : 'FAIL', details: source }], frameworkRoot);
+              writeRunSummaryBase(root, report, frameworkRoot);
+              writePhaseReceipt(root, feature, family);
+              writePhaseEvidenceManifest(root, resolvePhaseEvidenceManifest({ projectRoot: root, frameworkRoot, feature, phase: family,
+                requirementSha: computeRunRequirementSha(root, feature, options.runId), extraInputs: [source] }));
+              finalizePhaseClosure({ projectRoot: root, frameworkRoot, feature, phase: family, goalRunId: options.runId,
+                goalAttemptId: String(author.invoke_id).slice('work-unit-author-'.length), persistPhaseState: () => undefined,
+                prepareEvidence: () => ({ extraInputs: [source], requirementSha: computeRunRequirementSha(root, feature, options.runId) }), assessAfterCommit: () => undefined });
+            } finally { keys.forEach((key, index) => { if (before[index] === undefined) delete process.env[key]; else process.env[key] = before[index]; }); }
+            const qualified = original(options);
+            assert(qualified && (qualified.summary as Record<string, unknown>).run_id === options.runId, 'self-check files must pass real material qualification before testing their missing formal origin');
+            const { loadEffectiveExecutionScope } = require('../../scripts/utils/goal-run-creation') as typeof import('../../scripts/utils/goal-run-creation');
+            const disposition = reader.resolveCompletionDisposition({ projectRoot: root, frameworkRoot, feature, runId: options.runId,
+              executionScope: loadEffectiveExecutionScope(root, feature, options.runId, frameworkRoot), chain: [family], currentResults: [qualified] });
+            onlyOriginGap = disposition.completionBlocking.every(problem => problem.phase === 'scope' && problem.id === 'execution_scope'
+              && problem.detail.includes('reused evidence invalid'));
+            assert(onlyOriginGap, 'qualified self-check may lack formal lineage, but must have no unrelated work: ' + JSON.stringify(disposition.completionBlocking));
+          }
+        }
+        return original(options);
+      };
+      const first = await runGoalRuntimeChain(root, { frameworkRoot, adapter: 'cursor', freshStartPhase: family, freshEndPhase: family, onAuthor: () => {} });
+      assert(supplied && onlyOriginGap);
+      assert.equal(first.events.filter(event => event.type === 'harness_start' && event.phase === family).length, 1, 'one completed self-check still requires exactly one formal method call');
+      assert.equal(first.events.filter(event => event.type === 'harness_end' && event.phase === family).length, 1);
+      assert.equal(first.events.at(-1)?.status, 'CHAIN_SLICE_COMPLETED');
+      reader.readReusableCheckResult = original;
+      const sourceRun = path.basename(first.reportDir);
+      const firstManifest = JSON.parse(fs.readFileSync(path.join(first.reportDir, 'manifest.json'), 'utf8'));
+      const nextId = 'qualified-original-reuse';
+      const { createGoalRun } = require('../../scripts/utils/goal-run-creation') as typeof import('../../scripts/utils/goal-run-creation');
+      createGoalRun({ projectRoot: root, manifest: { ...firstManifest, run_id: nextId,
+        report_dir: path.posix.join(path.posix.dirname(firstManifest.report_dir), nextId) }, chain: [family] });
+      const next = await runGoalRuntimeChain(root, { frameworkRoot, adapter: 'cursor', resume: nextId, noAutoForce: true,
+        onAuthor: () => { throw new Error('qualified historical results must not buy another author'); } });
+      assert.notEqual(next.reportDir, first.reportDir, 'historical qualification must be observed from a different actual run');
+      assert.deepEqual(next.harnessPhases, [], 'an unchanged qualified old-run check is reused without another formal method');
+      assert.equal(next.events.at(-1)?.status, 'CHAIN_SLICE_COMPLETED');
+      const reused = original({ projectRoot: root, frameworkRoot, feature, runId: path.basename(next.reportDir), phase: family });
+      assert(reused && (reused.summary as Record<string, unknown>).run_id === sourceRun, 'reuse retains the real original producer identity');
+    } finally { reader.readReusableCheckResult = original; clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
+  },
+}, {
+  name: 'historical finished call without phase halt retains its actual completion observation',
+  run() {
+    const file = path.join(__dirname, '../fixtures/host-recovery-history/20261023/20261023T044016Z-fe4512/project/doc/features/bc-openCard-2/bank-card-opening-flow/goal-runs/20261023T044016Z-fe4512/events.jsonl');
+    const events = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line));
+    assert(!events.some(event => event.type === 'phase_halt'), 'preserved S0 really has no phase_halt');
+    const ended = events.find(event => event.type === 'agent_invoke_end' && event.invoke_id === 'coding-i3');
+    assert(ended && invocationCompleted({ ...ended, exitCode: ended.exit_code }), 'the actual historical call remains an observed completion');
   },
 }, {
   name: 'stale inherited asset restores actual producer while soft visual debt stays disclosed',

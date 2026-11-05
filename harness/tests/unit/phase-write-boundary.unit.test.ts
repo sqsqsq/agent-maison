@@ -108,6 +108,28 @@ function resolve(root: string, phaseOrder: readonly string[] = CHAIN, executionR
 export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
 
+  run(results, 'RC11 current unit owns unpredicted implementation resources while review remains read-only', () => {
+    const root = makeHost();
+    try {
+      const resources = ['element/color.json', 'element/string.json', 'profile/route_map.json']
+        .map(file => `02-Feature/Card/src/main/resources/base/${file}`);
+      const boundary = resolve(root, CHAIN, 'author', constructionScope());
+      const before = capturePhaseInvocationSnapshot(boundary);
+      for (const resource of resources) {
+        assert(resolvePhasePathOwnership(boundary, resource).owner === 'coding' && workUnitMayWritePath(boundary, resource), resource);
+        write(root, resource, JSON.stringify({ current: 'implementation resource' }));
+      }
+      const diff = diffPhaseInvocationSnapshots(before, capturePhaseInvocationSnapshot(boundary));
+      assert(diff.kind === 'changed', 'actual resource creation must be observed');
+      if (diff.kind !== 'changed') return;
+      assert(resources.every(file => diff.changes.some(change => change.path === file)), 'all three real resource kinds must remain in the write observation');
+      assert(classifyPhaseInvocationChanges(boundary, 'coding', diff.changes).violations.length === 0, 'unpredicted resources within the authorized module are legitimate implementation');
+      const reviewer = resolve(root, CHAIN, 'verifier', constructionScope());
+      assert(classifyPhaseInvocationChanges(reviewer, 'review', diff.changes).violations.length === resources.length, 'independent review cannot acquire resource write authority');
+      assert(!workUnitMayWritePath(boundary, '02-Feature/Other/src/main/resources/base/element/string.json'), 'an unrelated module remains outside the unit');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+  });
+
   run(results, 'absent watch root is an empty preimage; creation is observed and read failures remain unverifiable', () => {
     const root = makeHost();
     const boundary = { ...resolve(root, CHAIN, 'verifier'), protectedRoots: ['not-created'] };

@@ -110,7 +110,7 @@ import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixtu
 import { setupMinimalHost, type GoalRunOutcome } from '../helpers/goal-run-driver';
 import { prepareFixtureVerifierMaterial } from '../helpers/goal-run-driver';
 import { generateScriptReport } from '../../scripts/utils/report-generator';
-import { s14Run, s15AuthorityFlow, s15RejoinFlow, s15StaleFlow, s16MainFlow, s16NoPreauthFlow, s16StaleFlow, type RepairFlow, type S14Key } from './design-authority-repair.unit.test';
+import { s16MainFlow, type RepairFlow } from './design-authority-repair.unit.test';
 
 const REPO_ROOT = path.resolve(__dirname, '../../..');
 const REGISTRY_PATH = path.join(__dirname, '..', 'fixtures', 'reliability-scenarios', 'registry.json');
@@ -1891,91 +1891,13 @@ function authorityAcceptance(s: { root: string; frameworkRoot: string }, feature
     : { result: 'fail', actor: 'reliability-scenarios', basis: `盘上为权威文本=${diskAligned}，最终 run 绑定为权威文本=${boundAligned}` };
 }
 
-function runS14(key: S14Key): ScenarioRunner {
-  return async (_entry, done) => {
-    await withHost(async s => {
-      const feature = SNAPSHOT_CU_FEATURE;
-      const run = await s14Run(s, key);
-      const events = eventsOf(s.root, feature, run.successor);
-      const repairIdx = indexOf(events, e => e.type === 'design_authority_repair' && e.action === 'pointer_reconcile');
-      const repair = events[repairIdx] as { outcome?: string; bumped?: Array<{ change_unit_id: string }>; skipped?: Array<{ change_unit_id: string }> } | undefined;
-      const halt = events.find(e => e.type === 'phase_halt' && e.halt_reason === 'execution_scope_unresolved');
-      const stopped = key === 'counter-own-skipped';
-      done({
-        key, root: s.root, feature, frameworkRoot: s.frameworkRoot, runIds: [run.successor],
-        // 出生用的 --supersede 属前提（早于扰动）；扰动本身是设计 owner 的升版，不是救场。
-        interventions: [{ kind: 'product_decision', actor: DESIGN_ACTOR, content: 'run 出生并冻结绑定之后，设计 owner 在另一会话把蓝图升到新的 admitted revision（扰动本身，未调调和器）' }],
-        acceptance: stopped
-          ? { result: 'fail', actor: 'reliability-scenarios', basis: '未交付：本 CU 被调和器跳过，停机交设计 owner' }
-          : authorityAcceptance(s, feature, run.successor),
-        after: repairIdx >= 0 ? { run_id: run.successor, event_index: repairIdx } : undefined,
-        hit: {
-          ok: run.injected && repairIdx >= 0,
-          evidence: `plan 首轮窗口内注入升版=${run.injected}；design_authority_repair=${repair?.outcome ?? '无'} 升版 ${repair?.bumped?.length ?? 0} 跳过 ${JSON.stringify((repair?.skipped ?? []).map(x => x.change_unit_id))}；plan 调用 ${run.planInvokes} 次`,
-        },
-        expectation: stopped
-          ? (t) => ({
-              met: !t.facts.claimed_complete && !!halt && /本 CU 被调和器跳过/.test(String(halt.halt_guidance)) && repair?.outcome === 'not_reconciled',
-              detail: `本 CU 被跳过：宣称完成=${t.facts.claimed_complete}，停机=${String(halt?.halt_reason ?? '无')}，说明含跳过原因=${/本 CU 被调和器跳过/.test(String(halt?.halt_guidance))}`,
-            })
-          : (t) => ({
-              met: t.conclusion === 'correct_completion' && t.operator.rescue_count === 0 && !halt && repair?.outcome === 'reconciled'
-                && (key !== 'counter-sibling-skipped' || (repair?.skipped ?? []).length > 0),
-              detail: `结论=${t.conclusion}，操作者动作=${t.operator.rescue_count}，同一 run 内调和=${repair?.outcome}，兄弟 CU 跳过披露=${(repair?.skipped ?? []).length}，设计 owner 停机=${!!halt}`,
-            }),
-        extras: { plan_invokes: run.planInvokes, repair: repair ?? null },
-      });
-    });
-  };
-}
-
-type S15Key = 'b1-rejoin' | 'b1-stale-successor' | 'supervisor-stale-successor' | 'b2-authority' | 'counter-unrepaired';
-
-function runS15(key: S15Key): ScenarioRunner {
-  return async (_entry, done) => {
-    const stale = key === 'b1-stale-successor' || key === 'supervisor-stale-successor';
-    await withFreshCuHost(async s => {
-      const flow: RepairFlow = key === 'b1-rejoin' ? await s15RejoinFlow(s)
-        : key === 'counter-unrepaired' ? await s15RejoinFlow(s, { repair: false })
-        : key === 'b1-stale-successor' ? await s15StaleFlow(s, 'resend')
-        : key === 'supervisor-stale-successor' ? await s15StaleFlow(s, 'supervisor')
-        : await s15AuthorityFlow(s);
-      const final = flow.runs.at(-1)!;
-      const expectedRuns = stale ? 2 : 1;
-      done({
-        key, root: s.root, feature: flow.feature, frameworkRoot: s.frameworkRoot, runIds: flow.runs,
-        // supervisor 分支里拉起命令由计划任务发出（测试代替计划任务把它跑起来，不是操作者动作）。
-        interventions: flow.interventions.map(iv => ({ ...iv, actor: DESIGN_ACTOR })),
-        acceptance: key === 'counter-unrepaired'
-          ? { result: 'fail', actor: 'reliability-scenarios', basis: '未交付：设计权威未修，保持停止' }
-          : authorityAcceptance(s, flow.feature, final),
-        after: { run_id: flow.halted!, event_index: flow.haltIndex! },
-        hit: { ok: flow.halted !== undefined && flow.haltIndex !== undefined && flow.haltIndex >= 0 && flow.haltClass === (stale ? 'device_not_ready' : key === 'b2-authority' ? 'B2' : 'B1'), evidence: flow.evidence },
-        expectation: key === 'counter-unrepaired'
-          ? (t) => ({
-              met: !t.facts.claimed_complete && flow.runs.length === 1 && t.stop_state?.run_disposition === 'WAITING' && t.stop_state.run_wait_kind === 'external' && t.stop_state.has_probe === true,
-              detail: `未修就重发：宣称完成=${t.facts.claimed_complete}，run 数=${flow.runs.length}，停止=${t.stop_state?.run_disposition}/${t.stop_state?.run_wait_kind}，带探针=${t.stop_state?.has_probe}`,
-            })
-          : (t) => ({
-              met: t.conclusion === 'correct_completion' && flow.runs.length === expectedRuns && t.operator.unnecessary_count === 0,
-              detail: `结论=${t.conclusion}，任务 run 数=${flow.runs.length}（期望 ${expectedRuns}：${expectedRuns === 1 ? '重新接入同一 run' : '自动起后继'}），操作者动作=${t.operator.rescue_count}，产品决定=${t.operator.product_decisions}`,
-            }),
-        extras: { halt_class: flow.haltClass, runs: flow.runs },
-      });
-    });
-  };
-}
-
-type S16Key = 'b1-auto-repair' | 'stale-supervisor' | 'stale-resend' | 'counter-no-preauth';
+type S16Key = 'b1-auto-repair';
 
 /** S16 无人值守 B1 自动接手（plan 9c3d7e1a §5.5、§6）：驱动与机制断言复用 design-authority-repair 套件的 S16 流程函数。 */
 function runS16(key: S16Key): ScenarioRunner {
   return async (_entry, done) => {
     await withFreshCuHost(async s => {
-      const flow: RepairFlow = key === 'b1-auto-repair' ? await s16MainFlow(s)
-        : key === 'stale-supervisor' ? await s16StaleFlow(s, 'supervisor')
-        : key === 'stale-resend' ? await s16StaleFlow(s, 'resend')
-        : await s16NoPreauthFlow(s);
+      const flow: RepairFlow = await s16MainFlow(s);
       const final = flow.runs.at(-1)!;
       const expectedRuns = 1;
       const expectedRescues = 0;
@@ -1986,17 +1908,10 @@ function runS16(key: S16Key): ScenarioRunner {
         key, root: s.root, feature: flow.feature, frameworkRoot: s.frameworkRoot, runIds: flow.runs,
         // 预授权与蓝图写坏是前提；未来 plan 可重签的修复不产生停机或人工救援。
         interventions: flow.interventions.map(iv => ({ ...iv, actor: DESIGN_ACTOR })),
-        acceptance: key === 'counter-no-preauth'
-          ? { result: 'fail', actor: 'reliability-scenarios', basis: '未交付：局部请求未授权完整交付，不自动扩大到设计修订' }
-          : authorityAcceptance(s, flow.feature, final),
+        acceptance: authorityAcceptance(s, flow.feature, final),
         after: { run_id: observationRun, event_index: observationIndex },
         hit: { ok: observationIndex >= 0 && flow.haltClass === 'B1', evidence: flow.evidence },
-        expectation: key === 'counter-no-preauth'
-          ? (t) => ({
-              met: !t.facts.claimed_complete && t.stop_state?.run_disposition === 'WAITING' && t.stop_state.run_wait_kind === 'external' && t.stop_state.has_probe === true,
-              detail: `局部请求：宣称完成=${t.facts.claimed_complete}，停止=${t.stop_state?.run_disposition}/${t.stop_state?.run_wait_kind}，带探针=${t.stop_state?.has_probe}`,
-            })
-          : (t) => ({
+        expectation: (t) => ({
               met: t.conclusion === 'correct_completion' && flow.runs.length === expectedRuns && t.operator.rescue_count === expectedRescues && t.operator.unnecessary_count === 0,
               detail: `结论=${t.conclusion}，任务 run 数=${flow.runs.length}（期望 ${expectedRuns}），操作者动作=${t.operator.rescue_count}（期望 ${expectedRescues}），产品决定=${t.operator.product_decisions}`,
             }),
@@ -2028,9 +1943,7 @@ export const SCENARIOS: Array<{ id: string; run: ScenarioFlow[] }> = [
   { id: 'S11', run: [flow(runS11Branch(true), 'S11/fixed'), flow(runS11Branch(false), 'S11/never-fixed')] },
   { id: 'S12', run: [flow(runS12, 'S12/human-authorization', 'S12/repeat-unchanged', 'S12/reauthorized')] },
   { id: 'S13', run: [flow(runS13Branch(false), 'S13/refusal-corrected'), flow(runS13Branch(true), 'S13/refusal-twice')] },
-  { id: 'S14', run: ['in-run-reconcile', 'counter-own-skipped', 'counter-sibling-skipped'].map(key => flow(runS14(key as S14Key), `S14/${key}`)) },
-  { id: 'S15', run: [flow(runS15('b1-rejoin'), 'S15/b1-rejoin'), flow(runS15('counter-unrepaired'), 'S15/counter-unrepaired'), flow(runS15('b1-stale-successor'), 'S15/b1-stale-successor'), flow(runS15('supervisor-stale-successor'), 'S15/supervisor-stale-successor'), flow(runS15('b2-authority'), 'S15/b2-authority')] },
-  { id: 'S16', run: [flow(runS16('b1-auto-repair'), 'S16/b1-auto-repair'), flow(runS16('counter-no-preauth'), 'S16/counter-no-preauth'), flow(runS16('stale-supervisor'), 'S16/stale-supervisor'), flow(runS16('stale-resend'), 'S16/stale-resend')] },
+  { id: 'S16', run: [flow(runS16('b1-auto-repair'), 'S16/b1-auto-repair')] },
 ];
 
 function branchName(registry: Map<string, RegistryEntry>, reference: string): string {

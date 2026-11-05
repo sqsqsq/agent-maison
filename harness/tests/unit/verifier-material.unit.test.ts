@@ -81,6 +81,51 @@ function countAcceptanceCollections<T>(run: () => T): { result: T; count: number
 
 const cases: Array<{ name: string; run: () => void }> = [
   {
+    name: 'CU canonical blueprint material follows consumed content and preserves unchanged legacy whole-blueprint bindings',
+    run: () => {
+      const { loadHostSnapshot, SNAPSHOT_CU_FEATURE } = require('../fixtures/host-snapshot-3.1.0/generate') as typeof import('../fixtures/host-snapshot-3.1.0/generate');
+      const { loadCanonicalBlueprint } = require('../../scripts/utils/component-blueprint-path') as typeof import('../../scripts/utils/component-blueprint-path');
+      const { blueprintAuthorContent } = require('../../scripts/utils/component-blueprint-model') as typeof import('../../scripts/utils/component-blueprint-model');
+      const { reconcileChangeUnitBlueprintRefs } = require('../../scripts/utils/change-unit-design-preparation') as typeof import('../../scripts/utils/change-unit-design-preparation');
+      const { changeConsumedTargetContent, changeUnconsumedBlueprintContent } = require('./phase-evidence-manifest.unit.test') as typeof import('./phase-evidence-manifest.unit.test');
+      const host = loadHostSnapshot();
+      try {
+        const { blueprint, canonicalPath } = loadCanonicalBlueprint(host.root, 'ledger-app-blueprint');
+        const file = path.relative(host.root, canonicalPath).replace(/\\/g, '/');
+        const build = (feature = SNAPSHOT_CU_FEATURE) => buildVerifierMaterialView({ projectRoot: host.root, feature, phase: 'review',
+          gateFingerprint: null, phaseRuleText: 'rule', templateText: 'template', checks: CHECKS,
+          contextFiles: [{ label: file, kind: 'path', content: '' }] });
+        const before = build(), whole = build('whole-blueprint');
+        const legacy = { ...before, files: before.files.map(entry => entry.path === file ? { ...entry,
+          sha256: createHash('sha256').update(stableStringify(blueprintAuthorContent(blueprint, true))).digest('hex') } : entry) };
+        legacy.material_sha256 = computeMaterialSha256(legacy);
+        const matches = (material: typeof before) => verifierMaterialFileMatchesCurrent({ projectRoot: host.root, feature: SNAPSHOT_CU_FEATURE, material, file });
+        assert(matches(before) && matches(legacy), 'both current scoped and unchanged historical whole bindings remain valid');
+        assert(verifierMaterialsEquivalent(legacy, before, host.root), 'unchanged current author content proves the old recipe migration');
+        blueprint.revision = Number(blueprint.revision) + 1;
+        for (const result of blueprint.derived_results as Array<{ input_revision: number }>) result.input_revision = Number(blueprint.revision);
+        changeUnconsumedBlueprintContent(blueprint);
+        fs.writeFileSync(canonicalPath, YAML.stringify(blueprint));
+        const reconciled = reconcileChangeUnitBlueprintRefs(host.root, 'ledger-app-blueprint');
+        assert(reconciled.bumped.some(entry => entry.change_unit_id === 'ledger-refresh') && !reconciled.skipped.length, JSON.stringify(reconciled));
+        const after = build();
+        assert.equal(after.files.find(entry => entry.path === file)?.sha256, before.files.find(entry => entry.path === file)?.sha256,
+          'unconsumed wording and identity changes preserve the CU canonical blueprint entry');
+        assert(matches(before));
+        assert(!matches(legacy) && !verifierMaterialsEquivalent(legacy, build(), host.root), 'changed old whole bindings cannot be guessed equivalent');
+        assert.notEqual(build('whole-blueprint').material_sha256, whole.material_sha256, 'whole-blueprint review still sees real author content changes');
+        blueprint.revision = Number(blueprint.revision) + 1;
+        for (const result of blueprint.derived_results as Array<{ input_revision: number }>) result.input_revision = Number(blueprint.revision);
+        changeConsumedTargetContent(blueprint); fs.writeFileSync(canonicalPath, YAML.stringify(blueprint));
+        const changed = reconcileChangeUnitBlueprintRefs(host.root, 'ledger-app-blueprint');
+        assert(changed.bumped.some(entry => entry.change_unit_id === 'ledger-refresh') && !changed.skipped.length, JSON.stringify(changed));
+        assert(verifierMaterialFileHash({ projectRoot: host.root, feature: SNAPSHOT_CU_FEATURE, file }), 'the changed canonical CU remains readable after real reconciliation');
+        assert(!matches(before), 'consumed target content remains binding');
+        assert.notEqual(build().material_sha256, before.material_sha256);
+      } finally { clearFrameworkConfigCache(); fs.rmSync(host.root, { recursive: true, force: true }); }
+    },
+  },
+  {
     name: 'P2 actual run control manifest budget is material-neutral; requirement, write authority and non-control files remain binding',
     run: () => {
       const f = codingFixture(false, true), file = path.join(f.root, f.manifest.report_dir, 'manifest.json');

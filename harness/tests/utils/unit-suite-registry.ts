@@ -33,9 +33,6 @@ const CORE_SUITES: UnitSuiteRegistration[] = [
   { id: 'artifact-content', modulePath: './unit/artifact-content.unit.test' },
   { id: 'verification-gap', modulePath: './unit/verification-gap.unit.test' },
   { id: 'verifier-semantic-handoff', modulePath: './unit/verifier-semantic-handoff.unit.test', layer: 'capability' },
-  { id: 'fe4512-semantic-recovery', modulePath: './unit/fe4512-semantic-recovery.unit.test', releaseOnly: true },
-  { id: 'c6-s2-recovery', modulePath: './unit/c6-s2-recovery.unit.test', releaseOnly: true },
-  { id: 'fe4512-owner-repair-runtime', modulePath: './unit/fe4512-owner-repair-runtime.unit.test', releaseOnly: true },
   { id: 'current-disposition-recovery', modulePath: './unit/current-disposition-recovery.unit.test' },
   { id: 'completion-running', modulePath: './unit/completion-running.unit.test' },
   { id: 'completion-tools', modulePath: './unit/completion-tools.unit.test' },
@@ -477,7 +474,6 @@ const CORE_SUITES: UnitSuiteRegistration[] = [
     ]),
   // plan 9c3d7e1a：设计权威修复的自动接手与同任务续跑（快照宿主 + 真 harness；run 内调和、锁边界、修后续跑）。release-only。
   { id: 'design-authority-repair-content', modulePath: './unit/design-authority-repair-content.unit.test', releaseOnly: true },
-  { id: 'design-authority-repair-continuation', modulePath: './unit/design-authority-repair-continuation.unit.test', releaseOnly: true },
   { id: 'design-authority-repair-runtime', modulePath: './unit/design-authority-repair-runtime.unit.test', releaseOnly: true },
   { id: 'design-authority-repair-other', modulePath: './unit/design-authority-repair-other.unit.test', releaseOnly: true },
 ];

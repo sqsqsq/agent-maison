@@ -219,7 +219,8 @@ export function codingTestStrengthReply(p: RealChainProject, phase: string): str
   let strengthReply = '';
   if (strength?.affected_files?.length) {
     for (const file of strength.affected_files) {
-      assert(file === REAL_CHAIN_TEST || file === CU_TEST, `fixture verifier needs a specific test-strength decision for ${file}`);
+      const initialRepositoryTest = `${p.modulePath}/src/ohosTest/ets/test/BankRepository.initial.test.ets`;
+      assert(file === REAL_CHAIN_TEST || file === CU_TEST || file === initialRepositoryTest, `fixture verifier needs a specific test-strength decision for ${file}`);
       const current = fs.readFileSync(path.join(p.root, file), 'utf8');
       const original = codingTestPreservation({ projectRoot: p.root, feature: p.feature, file, runId: p.runId });
       assert(!/真实前置测试版本不在|测试引用不在|删除或不可读取/.test(original.reason), `original test evidence unavailable: ${original.reason}`);
@@ -234,6 +235,9 @@ export function codingTestStrengthReply(p: RealChainProject, phase: string): str
       assert(newCases.length > 0 && !/\b(?:it|describe)\.(?:skip|only|todo)\b/.test(current), 'current test assertions must be present and enabled');
       if (file === CU_TEST) assert(current.includes('ledger.add(120)') && current.includes('ledger.restore([45, 55])')
         && current.includes('assertEqual(120)') && current.includes('assertEqual(100)'), 'current ledger tests must check both actual business entry points and expected values');
+      else if (file === initialRepositoryTest) assert(current.includes('[AC-3]') && current.includes('new BankRepository().list()')
+        && current.includes('expect(banks).not().assertNull()') && current.includes('expect(banks.length).assertEqual(0)'),
+        'the new unit criterion requires the actual repository call and its complete initial-state assertions');
       else assert(current.includes("service.openCard('cmb')") && current.includes("service.openCard('')")
         && current.includes('expect(opened).assertTrue()') && current.includes('expect(rejected).assertFalse()')
         && current.includes('expect(banks.length).assertEqual(0)'), 'current card tests must preserve both real success/failure paths and list result');
