@@ -1,3 +1,4 @@
+import { bindControlledProcess, controlledModelBinding } from '../utils/controlled-model-process';
 // agent-invoke-settle.unit.test.ts — exit-first child settlement + pipe inheritance integration
 
 import * as fs from 'fs';
@@ -14,7 +15,7 @@ import {
   killProcessTree,
   probeAdapterVersion,
   defaultHeadlessInvokePlan,
-  invokeAgentHeadless,
+  invokeAgentHeadless as nativeInvokeAgentHeadless,
   resolveAgentOutputIdleMs,
   readProviderSessionId,
   withProviderSession,
@@ -27,6 +28,7 @@ import {
   INVOKE_OUTPUT_MEMORY_CAP,
   agentEventsLogPath,
 } from '../../scripts/utils/agent-invoke';
+const invokeAgentHeadless = bindControlledProcess(nativeInvokeAgentHeadless);
 import { createCodexTerminalScanner } from '../../scripts/utils/codex-terminal-events';
 import { extractCodexAgentMessageText } from '../../scripts/utils/codex-terminal-events';
 import { applyIndependentQuestioningOutput, parseIndependentQuestioningOutput, validateBlueprintQuestioning } from '../../scripts/utils/blueprint-questioning';
@@ -50,6 +52,7 @@ function fakeChild(): ChildProcess {
 }
 
 function createWorkUnitExecutionContext(input: WorkUnitExecutionContext): WorkUnitExecutionContext {
+  input = { ...input, adapterModel: input.adapterModel ?? controlledModelBinding(input.adapter, input.projectRoot) };
   const observed = observeWorkUnitProviderSession(input);
   if ('status' in observed) throw new Error(observed.details);
   return freezeWorkUnitExecutionContext(input, observed);
@@ -68,7 +71,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         for (const adapter of ['generic', 'opencode', 'chrys']) for (const split of [false, true]) {
           const directory = path.join(root, `${adapter}-${split}`); fs.mkdirSync(directory);
           const log = path.join(directory, 'agent-output.log');
-          const result = await invokeAgentHeadless({ argv: [process.execPath, script], label: 'raw stdout with stderr', adapterName: adapter }, root,
+          const result = await invokeAgentHeadless({ argv: [process.execPath, script], label: 'raw stdout with stderr' }, root,
             { outputLogPath: log, ...(split ? { toolEventCapture: 'structured_events' as const } : {}) });
           assert(result.exitCode === 0 && result.stdout.length < INVOKE_OUTPUT_MEMORY_CAP, `${adapter}/${split}: a real short result must complete`);
           assert(fs.existsSync(agentEventsLogPath(log)) === split, `${adapter}/${split}: the actual split availability must match the fixture`);
@@ -196,7 +199,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         const acquired = casAcquireRunOwner(runDir, 'n3-run', 0, { kind: 'process', owner_id: 'n3-owner', lease_ms: 60_000 });
         if (!acquired.ok) throw new Error('the N3 fixture must acquire its real request owner');
         const context: WorkUnitExecutionContext = { runId: 'n3-run', feature: f.feature, workflowId: 'obligation-driven', track: 'full', chain: ['coding'], phase: 'coding', attemptId: 'resume-one',
-          owner: { ...acquired.token, kind: 'process' }, projectRoot: f.root, frameworkRoot: f.frameworkRoot, runDir, reportDir: path.relative(f.root, runDir), adapter: 'codex',
+          owner: { ...acquired.token, kind: 'process' }, projectRoot: f.root, frameworkRoot: f.frameworkRoot, runDir, reportDir: path.relative(f.root, runDir), adapter: 'codex', adapterModel: controlledModelBinding('codex', f.root),
           authority: { write_mode: 'full-access', approval_mode: 'never' }, provider_session_id: 'original-native',
           childEnv: {}, runtimeFacts: { receiptRequired: false, resume: true, successor: false } };
         const boundary = resolvePhaseWriteBoundary({ projectRoot: f.root, frameworkRoot: f.frameworkRoot, feature: f.feature,
@@ -328,7 +331,7 @@ process.exit(v==='empty-zero'||v==='authentication'||v==='quota'?0:1);`);
       const root = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-author-wait-'));
       const runDir = path.join(root, 'run'); fs.mkdirSync(runDir);
       const current: WorkUnitExecutionContext = { runId: 'waiting-run', feature: 'demo', workflowId: 'obligation-driven', track: 'full', chain: ['coding'], phase: role === 'author' ? 'coding' : 'review', attemptId: `${role}-one`, executionRole: role,
-        owner: { run_id: 'waiting-run', owner_id: 'owner', epoch: 1, kind: 'process' }, projectRoot: root, frameworkRoot: path.resolve(__dirname, '../../..'), runDir, reportDir: 'run', adapter: 'codex',
+        owner: { run_id: 'waiting-run', owner_id: 'owner', epoch: 1, kind: 'process' }, projectRoot: root, frameworkRoot: path.resolve(__dirname, '../../..'), runDir, reportDir: 'run', adapter: 'codex', adapterModel: controlledModelBinding('codex', root),
         childEnv: {}, runtimeFacts: { receiptRequired: false, resume: false, successor: false } };
       const issued = writePhaseExecutionRequestMaterial({ context: current, invokeId: current.attemptId, preSnapshot: null, writeBoundary: null,
         gateTimeoutMs: 10_000, cleanupReserveMs: 100, issuedAt: new Date().toISOString() });
@@ -359,7 +362,7 @@ process.exit(v==='empty-zero'||v==='authentication'||v==='quota'?0:1);`);
       const root = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-author-unit-'));
       const runDir = path.join(root, 'caller-run'); fs.mkdirSync(runDir);
       const base: WorkUnitExecutionContext = { runId: 'caller', feature: 'cu-existing', workflowId: 'obligation-driven', track: 'full', chain: ['coding'], phase: 'coding', attemptId: 'current',
-        owner: { run_id: 'caller', owner_id: 'owner', epoch: 1, kind: 'process' }, projectRoot: root, frameworkRoot: path.resolve(__dirname, '../../..'), runDir, reportDir: 'caller-run', adapter: 'codex',
+        owner: { run_id: 'caller', owner_id: 'owner', epoch: 1, kind: 'process' }, projectRoot: root, frameworkRoot: path.resolve(__dirname, '../../..'), runDir, reportDir: 'caller-run', adapter: 'codex', adapterModel: controlledModelBinding('codex', root),
         childEnv: {}, runtimeFacts: { receiptRequired: false, resume: false, successor: false } };
       const append = (directory: string, event: Record<string, unknown>) => fs.appendFileSync(path.join(directory, 'events.jsonl'), JSON.stringify(event) + '\n');
       const record = async (ctx: WorkUnitExecutionContext, id: string) => {
@@ -415,7 +418,7 @@ process.exit(v==='empty-zero'||v==='authentication'||v==='quota'?0:1);`);
       const originalIdle = timers.DEFAULT_AGENT_OUTPUT_IDLE_MS;
       const ctx: WorkUnitExecutionContext = { runId: 'idle-run', feature: 'demo', workflowId: 'obligation-driven', track: 'full', chain: ['coding'],
         phase: 'coding', attemptId: 'idle-one', owner: { run_id: 'idle-run', owner_id: 'idle-owner', epoch: 1, kind: 'process' },
-        projectRoot: root, frameworkRoot: path.resolve(__dirname, '../../..'), runDir, reportDir: 'run', adapter: 'codex',
+        projectRoot: root, frameworkRoot: path.resolve(__dirname, '../../..'), runDir, reportDir: 'run', adapter: 'codex', adapterModel: controlledModelBinding('codex', root),
         childEnv: {}, runtimeFacts: { receiptRequired: false, resume: false, successor: false } };
       const events = path.join(runDir, 'events.jsonl');
       const tick = path.join(root, 'grandchild-tick');
@@ -440,7 +443,7 @@ process.exit(v==='empty-zero'||v==='authentication'||v==='quota'?0:1);`);
         timers.DEFAULT_AGENT_OUTPUT_IDLE_MS = originalIdle;
         const next = createWorkUnitExecutionContext({ ...ctx, phase: 'ut', attemptId: 'idle-two' });
         assert(next.provider_session_id === 'idle-native-42', 'the next request resumes the original observed native identity');
-        const nativePlan = defaultHeadlessInvokePlan('codex', { write_mode: 'full-access', approval_mode: 'never' }, 'continue');
+        const nativePlan = defaultHeadlessInvokePlan('codex', { write_mode: 'full-access', approval_mode: 'never' }, 'continue', undefined, controlledModelBinding('codex', root));
         const expected = withProviderSession(nativePlan, next.provider_session_id);
         const fakeCli = path.join(root, 'resume-cli.cjs'), received = path.join(root, 'resume-received.json');
         fs.writeFileSync(fakeCli, `const fs=require('fs'),assert=require('assert').strict;
@@ -508,7 +511,7 @@ process.stdin.on('end',()=>{
       let terminalPid = 0;
       try {
         const ctx: WorkUnitExecutionContext = { runId: 'active-run', feature: 'demo', workflowId: 'obligation-driven', track: 'full', chain: ['coding'], phase: 'coding', attemptId: 'active-one',
-          owner: { run_id: 'active-run', owner_id: 'active-owner', epoch: 1, kind: 'process' }, projectRoot: root, frameworkRoot: root, runDir: root, reportDir: '.', adapter: 'codex',
+          owner: { run_id: 'active-run', owner_id: 'active-owner', epoch: 1, kind: 'process' }, projectRoot: root, frameworkRoot: root, runDir: root, reportDir: '.', adapter: 'codex', adapterModel: controlledModelBinding('codex', root),
           childEnv: {}, runtimeFacts: { receiptRequired: false, resume: false, successor: false } };
         const body = `const t=setInterval(()=>process.stderr.write('actual native progress\\n'),100);setTimeout(()=>{clearInterval(t);process.stdout.write('{"type":"turn.completed"}\\n');},2200);`;
         const executor = new DetachedGoalPhaseExecutor(() => ({ cwd: root, plan: { argv: [process.execPath, '-e', body], label: 'controlled active author', adapterName: 'terminal-replay-fixture' },
@@ -707,7 +710,9 @@ process.stdin.on('end',()=>{
     run: () => {
       const authority = { write_mode: 'full-access' as const, approval_mode: 'never' as const, max_turns: 1 };
       for (const adapter of ['codex', 'claude', 'deepseek-harness']) {
-        const plan = defaultHeadlessInvokePlan(adapter, authority, 'continue', undefined, 'pinned-model');
+        const binding = adapter === 'deepseek-harness' ? JSON.stringify({ value: 'pinned-model', provider: 'fixture',
+          config_source: path.join(os.tmpdir(), 'dsh-fixture-home/profiles/foreground/cordis.patch.yml') }) : 'pinned-model';
+        const plan = defaultHeadlessInvokePlan(adapter, authority, 'continue', undefined, binding);
         const resumed = withProviderSession(plan, 'exact-id-42');
         assert(!resumed.argv.includes('--last'), adapter);
         assert(!resumed.argv.includes('--max-turns') && !resumed.argv.includes('--max-budget-usd'), 'no quota');

@@ -13,6 +13,7 @@ import { createCodexTerminalScanner, resolveTerminalEventParser } from './codex-
 import { reconcileGuardianOwnership, terminateGuardianProcessOnly, awaitGuardianGone } from './goal-containment-reconcile';
 import { defaultProcessProbe } from './device-session';
 import { invocationCompleted, invocationEndFacts } from './invocation-completion';
+import { modelMismatchInEvents } from './adapter-model';
 
 export interface HandoffReference { path: string; sha256: string }
 export interface SessionExecutionReport { status: 'passed' | 'failed' | 'waiting'; phase: string; details?: string }
@@ -421,6 +422,11 @@ export function acceptSessionExecution(input: {
     || (report.details !== undefined && typeof report.details !== 'string')) throw new Error('[session-handoff] invalid execution result');
   const current = readSessionExecution(runDir);
   if (!current || current.reference.sha256 !== issued.reference.sha256) throw new Error('[session-handoff] stale request');
+  const rawEvents = path.join(runDir, path.dirname(issued.reference.path), 'agent-events.jsonl');
+  if (report.status === 'passed' && fs.existsSync(rawEvents)) {
+    const mismatch = modelMismatchInEvents(issued.request.context.adapter, issued.request.context.adapterModel, fs.readFileSync(rawEvents, 'utf8'));
+    if (mismatch) throw new Error(`[session-handoff] ${mismatch}；不能将失配调用签为通过`);
+  }
   const token = issued.request.context.owner;
   const control = readRunControl(runDir, token.run_id);
   if (!control?.owner || control.current_epoch !== token.epoch || control.owner.owner_id !== token.owner_id

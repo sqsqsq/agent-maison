@@ -19,8 +19,6 @@ import {
   type HeadlessInvokePlan,
 } from '../../scripts/utils/agent-invoke';
 import {
-  collectTriedModels,
-  decideModelAlternative,
   normalizeAdapterModelCliValue,
   resolveFinalModelPin,
 } from '../../scripts/utils/goal-manifest-cli';
@@ -125,7 +123,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       const argv = planArgv('opencode', 'gpt-4o');
       assert.deepStrictEqual(argv.slice(-2), ['-m', 'gpt-4o']);
       assert.strictEqual(argv[0], 'run');
-      assert.strictEqual(argv[1], '--dangerously-skip-permissions');
+      assert.strictEqual(argv[1], '--auto');
     },
   },
   {
@@ -153,7 +151,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert.deepStrictEqual(cursor.slice(0, 3), ['-p', '--force', '--trust']);
       const opencode = planArgv('opencode');
       assert(!opencode.includes('-m') && !opencode.includes('--model'), opencode.join(' '));
-      assert.deepStrictEqual(opencode.slice(0, 3), ['run', '--dangerously-skip-permissions', '--dir']);
+      assert.deepStrictEqual(opencode.slice(0, 3), ['run', '--auto', '--format']);
       const ca = planArgv('codeagent');
       assert(!ca.includes('--model'), ca.join(' '));
     },
@@ -201,7 +199,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       const preflightCall = src.match(/resolveHeadlessInvokePlan\(\s*adapter,\s*cap\.capability!,\s*manifest\.unattended,\s*vars\.PROMPT,\s*vars,\s*undefined,\s*sessionBinary\.binary,\s*\)/);
       assert(preflightCall, 'runGoalPreflight 的 binary-gate plan 构造应刻意不带 modelPin（无 model 旗标；session binary 注入）');
       // (b) runVisionCanaryProbe L386 plan 构造：7 参（带 manifest.adapter_model_pin.value + session binary）
-      const probeCall = src.match(/resolveHeadlessInvokePlan\(\s*adapter,\s*cap\.capability,\s*manifest\.unattended,\s*prompt,\s*vars,\s*manifest\.adapter_model_pin\?\.value,\s*input\.resolvedBinary,\s*\)/);
+      const probeCall = src.match(/resolveHeadlessInvokePlan\(\s*adapter,\s*cap\.capability,\s*manifest\.unattended,\s*prompt,\s*vars,\s*adapterModelBinding\(manifest\.adapter_model_pin\),\s*input\.resolvedBinary,\s*\)/);
       assert(probeCall, 'runVisionCanaryProbe 的 headless plan 构造应带 manifest.adapter_model_pin.value + resolvedBinary（无 model 旗标）');
     },
   },
@@ -686,7 +684,7 @@ const cases: Array<{ name: string; run: () => void }> = [
   },
   // ------------------------- plan 4e6fb3b6 §6.4：钉值来源 -------------------------
   {
-    name: 'P3 A10 后继出生经生产继承链（inheritSuccessorManifest → resolveFinalModelPin）连同来源继承获准替代钉值，仍可继续替代；恢复与同值显式钉不改来源；出生时显式换型号即用户钉死',
+    name: 'P3 A10 后继出生经生产继承链（inheritSuccessorManifest → resolveFinalModelPin）连同来源继承获准替代钉值，历史来源只读保真、不能继续替代；恢复与同值显式钉不改来源；出生时显式换型号即用户钉死',
     run: () => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), 'goal-pin-src-'));
       try {
@@ -719,30 +717,17 @@ const cases: Array<{ name: string; run: () => void }> = [
         assert.ok(born.ok && born.pin?.source === 'approved_alternative', `后继须连同来源继承：${JSON.stringify(born)}`);
         const pin = born.ok ? born.pin : undefined;
         assert.strictEqual(isUserPinnedModel(pin), false, '来源为获准替代的钉值不算用户钉死');
-        const next = decideModelAlternative({
-          adapter: 'codex', pin, approvedModels: ['gpt-alt-1', 'gpt-alt-2'],
-          tried: collectTriedModels([], pin), remainingMs: 60_000,
-        });
-        assert.deepStrictEqual(next, { kind: 'switch', model: 'gpt-alt-2', tried: ['gpt-alt-1'] }, '再次不受支持时可以继续替代');
         const resumed = birth(undefined, true);
         assert.ok(resumed.ok && resumed.pin?.source === 'approved_alternative', '恢复不改来源');
-        // 批二 review R4 更正：原断言只锁"同值显式钉保留来源"，漏了"本次调用内按用户钉死"。现在：不带 override 时 manifest
-        // 的来源不改（改来源=改身份字段，须经授权），但本次调用显式给了型号，替代决策按用户钉死处理；带 override 才把来源落为用户。
+        // Historical automatic alternatives need a new manifest authorization even when the model name is unchanged.
         const sameExplicit = birth('gpt-alt-1', true);
-        assert.ok(sameExplicit.ok && sameExplicit.pin?.source === 'approved_alternative',
-          `同值显式钉、不带 override：manifest 来源不变：${JSON.stringify(sameExplicit)}`);
-        assert.strictEqual(decideModelAlternative({
-          adapter: 'codex', pin: sameExplicit.ok ? sameExplicit.pin : undefined, explicitModel: 'gpt-alt-1',
-          approvedModels: ['gpt-alt-1', 'gpt-alt-2'], tried: ['gpt-alt-1'], remainingMs: 60_000,
-        }).kind, 'refuse', '本次显式给了型号 = 用户钉死，不替代');
+        assert.ok(!sameExplicit.ok && /override-manifest/.test(sameExplicit.message),
+          `历史替代来源不能因同名参数继续执行：${JSON.stringify(sameExplicit)}`);
         const sameExplicitOverride = birth('gpt-alt-1', true, true);
         assert.ok(sameExplicitOverride.ok && sameExplicitOverride.pin?.source === undefined,
           `同值显式钉 + --override-manifest：来源落为用户显式钉值：${JSON.stringify(sameExplicitOverride)}`);
         const userBirth = birth('gpt-user');
         assert.ok(userBirth.ok && userBirth.pin?.source === undefined && isUserPinnedModel(userBirth.pin), '出生时显式换型号=用户钉死');
-        assert.strictEqual(decideModelAlternative({
-          adapter: 'codex', pin: userBirth.ok ? userBirth.pin : undefined, approvedModels: ['gpt-alt-2'], tried: ['gpt-user'], remainingMs: 60_000,
-        }).kind, 'refuse');
         assert.throws(() => validateAdapterModelPinValue('codex', 'x', 'robot'), /source/, '来源只接受两个取值');
       } finally {
         fs.rmSync(root, { recursive: true, force: true });

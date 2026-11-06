@@ -47,7 +47,7 @@ export function resolveVisualProviderFromLocal(
 ): VisualProviderLocalState {
   const raw = local?.vision?.visual_provider;
   if (!raw) return { kind: 'absent' };
-  const ref: ProviderRef = { adapter: raw.adapter, model: raw.model };
+  const ref: ProviderRef = { ...raw };
   if (isVisualProviderSupported(frameworkRoot, ref.adapter)) return { kind: 'ok', ref };
   return {
     kind: 'unsupported',

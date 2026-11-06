@@ -348,9 +348,12 @@ function assertFrozenInputs(host: Host, context: any): void {
 
 function prepare(host: Host, id: string): { options: any; prepared: any; entry: any } {
   const entry = host.load('scripts/goal-mode-entry');
-  const prepared = entry.prepareGoalModeRun({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: BLUEPRINT, adapter: 'claude', runId: id,
+  const original = entry.prepareGoalModeRun({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: BLUEPRINT, adapter: 'claude', runId: id,
     requirement: REQUIREMENT, requirementSourceFiles: ['requirements/ledger.md'], requestedResults: [REQUIREMENT], requestedPhases: ['plan', 'coding', 'ut'],
     unattended: { write_mode: 'full-access', approval_mode: 'never' }, autonomyAuthorized: true });
+  const prepared = entry.prepareGoalModeRun({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: BLUEPRINT, adapter: 'claude', runId: id,
+    requirement: REQUIREMENT, adapterModelPin: { adapter: 'claude', value: 'claude-opus-5-5', provider: 'anthropic', reasoning_effort: 'high', config_source: path.join(host.root, 'controlled-model-home', 'settings.json') }, modelOverride: true });
+  assert.equal(prepared.manifest.run_id, original.manifest.run_id, 'legacy no-pin initial run must be rebound through the same entry');
   assert(prepared.manifest.initial_design && !prepared.manifest.execution_scope);
   return { entry, prepared, options: { projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: BLUEPRINT, runId: prepared.manifest.run_id,
     adapter: 'claude', runMode: 'attended', authorization: { mode: 'goal_mode', autonomyAuthorized: true } } };
@@ -365,7 +368,7 @@ const cases = [{
   name: 'daily design: empty request reaches canonical CU completion with real TypeScript and Node assertions',
   run: () => withHost(async host => {
     const control = prepare(host, 'daily-design-complete');
-    let designAuthors = 0, constructionAuthors = 0;
+    let designAuthors = 0, constructionAuthors = 0, visualReissued = false;
     let step = await withRuntimeTest({ root: host.root }, () => control.entry.runGoalModeSessionStep(control.options));
     for (let call = 0; step.type === 'phase_execute_request' && call < 16; call++) {
       const raw = JSON.parse(fs.readFileSync(step.request.path, 'utf8'));
@@ -373,8 +376,30 @@ const cases = [{
       assert(issued, 'every actor must consume its actual signed execution original');
       const context = issued.request.context, phase = context.phase;
       const currentManifest = JSON.parse(fs.readFileSync(path.join(context.runDir, 'manifest.json'), 'utf8'));
+      assert.equal(context.adapterModel, host.load('scripts/utils/adapter-model').adapterModelBinding(currentManifest.adapter_model_pin), 'each actual request inherits the complete manifest binding');
       assert.equal(currentManifest.requirement, REQUIREMENT, 'the original request stays bound across the real actor family');
       if (context.feature !== BLUEPRINT) assert.deepEqual(currentManifest.delivery_origin, { feature: BLUEPRINT, run_id: control.prepared.manifest.run_id });
+      if (phase === 'work-unit-author' && !visualReissued) {
+        const readVisual = host.load('scripts/utils/phase-state').readGoalVisualProviderEnv;
+        const oldVisual = readVisual(context.childEnv);
+        assert.equal(oldVisual.provider, 'visual-a');
+        const visualProviderPin = { ...oldVisual, provider: 'visual-b' };
+        const root = control.entry.prepareGoalModeRun({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: BLUEPRINT,
+          adapter: 'claude', requirement: REQUIREMENT, visualProviderPin, modelOverride: true });
+        assert.deepEqual(root.manifest.adapter_model_pin, currentManifest.adapter_model_pin);
+        control.prepared.manifest = root.manifest;
+        const oldRequest = step.request;
+        const refused = await control.entry.runGoalModeSessionStep({ ...control.options, requestPath: oldRequest.path, action: 'execute' });
+        assert.equal(refused.status, 'waiting'); assert.match(refused.detail, /绑定/);
+        assert(!fs.existsSync(path.join(path.dirname(oldRequest.path), 'agent-output.log')));
+        step = await withRuntimeTest({ root: host.root }, () => control.entry.runGoalModeSessionStep(control.options));
+        assert.equal(step.phase, phase); assert.notEqual(step.request.sha256, oldRequest.sha256);
+        const next = JSON.parse(fs.readFileSync(step.request.path, 'utf8')).context;
+        assert.deepEqual(readVisual(next.childEnv), visualProviderPin);
+        assert.deepEqual(JSON.parse(fs.readFileSync(path.join(next.runDir, 'manifest.json'), 'utf8')).visual_provider_pin, visualProviderPin);
+        visualReissued = true;
+        continue;
+      }
       if (phase === 'initial-design-author') assert(context.instruction?.includes(REQUIREMENT));
       if (phase === 'initial-design-questioning') assert(context.instruction?.includes('requirements/ledger.md'), 'blind Q receives the source location before reading it');
       let output = '已按真实签名请求产出当前作者材料，质量由原检查决定。';
@@ -396,7 +421,16 @@ const cases = [{
       } else if (phase.endsWith('-verifier-format-repair')) verifierReply(host, context, phase.replace(/-verifier-format-repair$/, ''));
       else assert.fail('unexpected production responsibility: ' + phase);
       step = await report(host, control, step, output);
+      if (phase === 'initial-design-decomposition') {
+        const selected = { ...control.prepared.manifest.adapter_model_pin, provider: 'https://second-fixture.invalid' };
+        const rebound = control.entry.prepareGoalModeRun({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: BLUEPRINT,
+          adapter: 'claude', requirement: REQUIREMENT, adapterModelPin: selected, visualProviderPin: { adapter: 'codex', model: 'gpt-6.1-sol', provider: 'visual-a', config_source: path.join(host.root, 'native/config.toml') }, modelOverride: true });
+        assert.equal(rebound.manifest.run_id, control.prepared.manifest.run_id);
+        control.prepared.manifest = rebound.manifest;
+        step = await withRuntimeTest({ root: host.root }, () => control.entry.runGoalModeSessionStep(control.options));
+      }
     }
+    assert(visualReissued);
     assert.notEqual(step.type, 'phase_execute_request', JSON.stringify(step));
     const units = host.load('scripts/utils/change-unit-path').enumerateCanonicalChangeUnits(host.root, BLUEPRINT);
     assert.equal(units.length, 1, 'the public decomposition consumer must publish the canonical CU');

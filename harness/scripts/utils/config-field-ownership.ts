@@ -23,7 +23,7 @@ export const LOCAL_VISION_KEYS = new Set(['image_input_override', 'canary', 'vis
 /** framework.local.json.vision.visual_provider 允许键——**model 必填**，无 model 即无 provider 身份。
  * 支持资格不在此校验（那是 adapter catalog 的 visual_provider 声明真源）：这里只保证形状合法，
  * 让「旧 local 里 adapter 已失去资格」能被读到并按输入形态分流（交互重选 / 无人值守 WARN+blind）。 */
-export const LOCAL_VISION_VISUAL_PROVIDER_KEYS = new Set(['adapter', 'model']);
+export const LOCAL_VISION_VISUAL_PROVIDER_KEYS = new Set(['adapter', 'model', 'provider', 'reasoning_effort', 'config_source', 'route_identity']);
 /** framework.local.json.vision.canary 允许键（probed_via：I1 交互式金丝雀 plan b7e42d19；
  * probe_version：探测协议版本 plan c7d2e9a4——旧缓存缺字段自动 stale 重探）。 */
 export const LOCAL_VISION_CANARY_KEYS = new Set([

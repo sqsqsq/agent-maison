@@ -610,3 +610,18 @@ Enforcement: `agents/adapter-schema.yaml`, `agents/codex/adapter.yaml`, `harness
 
 - **WHEN** an adapter declares `commands.subagents` and no top-level `subagents`
 - **THEN** its template entries SHALL keep the `commands.subagents.template_dir` origin and the same targets as before
+
+### Requirement: Complete model binding across adapters
+
+Every framework-dispatched responsibility SHALL replay its frozen provider, complete native model ID and applicable reasoning settings, or wait before a paid request. DSH SHALL load its foreground native model-source layer before the framework patch, remain headless, and validate final --dump-config source metadata without reading/copying credentials. Native auxiliary models SHALL retain foreground behavior. An observable main-model mismatch SHALL cancel the invocation immediately through the existing lifecycle.
+
+DSH startup SHALL capture its exact session/home/profile from the foreground shell, use that session's last request header at launch, and freeze the actual profile source plus a non-secret route identity in the existing model pin. Manual request identifiers remain overrides. A same-path endpoint change SHALL require an authorized selection change. Native records that omit reasoning metadata SHALL not be treated as contradicting an explicit header. OpenCode user messages SHALL read the variant from their native nested model structure. Visual reuse SHALL compare the complete role binding and preserve the original invocation identity.
+
+For native deepseek-official and deepseek-account routes absent from profile provider declarations, DSH SHALL bind the native version, provider, model and effective non-secret endpoint rather than require a synthetic pi-ai declaration. A detached child SHALL consume the captured pin unchanged, even when original model arguments remain present. Visual selection SHALL share the existing authorization decision at birth and rejoin. OpenCode foreground source-location parameters SHALL not alone constitute an explicit model change.
+
+Enforcement: `harness/scripts/utils/adapter-model.ts`, `harness/scripts/utils/agent-invoke.ts`
+
+#### Scenario: DSH source exists only in desktop layer
+
+- **WHEN** the selected volcengine route exists only in the foreground source layer
+- **THEN** headless SHALL compose that layer, validate complete source metadata, and let native MISSING_CREDENTIAL reach the existing hard-failure classifier without trying another model

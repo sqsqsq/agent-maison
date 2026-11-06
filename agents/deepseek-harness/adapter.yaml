@@ -56,7 +56,10 @@ notes: |
   - 原生续接使用 --session-id <精确ID>；缺失/不可用时由执行协调器依当前事实重建专用上下文。
     2026-10-29 CLI 0.2.1-rc.3 隔离验证：插入无关会话后精确续接原会话，产物与对话标记一致；
     记录位于 harness/reports/72b6f0d9/p1/native/deepseek-harness/。
-  - 不支持 --adapter-model 或自动替代模型；用户在 DSH 自身配置默认模型。
+  - 主模型由 adapter_model_pin 绑定独立 provider、完整 model ID 和适用推理设置；不拆分含斜杠 ID。
+    启动轮从原生 shell 的 DSH_SESSION_ID/DSH_HOME/DSH_PROFILE_DIR 自动捕获，按准确 SID 取最后一个请求头；
+    来源使用实际 profile，非秘密路由摘要保存在同一 pin，不能因路径相同而接受 endpoint 漂移。
+    headless 加载前台模型来源配置层后施加框架补丁，每次调用前以最终 --dump-config 核对来源；不自动替代模型。
     不声明 verifier、视觉 provider、结构化 widget 或精确用量。
   - Maison 不安装 DSH，不改用户 profile/home patch/.env，不复制 GUI 凭据。
   - Windows / npm 版 dsh 0.2.1-rc.2 已通过隔离接口探针（stdin/cwd/环境凭据及权限覆盖）。

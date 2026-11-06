@@ -1,3 +1,38 @@
+export interface AdapterModelRouteFields {
+  provider?: string;
+  reasoning_effort?: string;
+  config_source?: string;
+  route_identity?: string;
+}
+export function normalizeModelRouteFields(r: Record<string, unknown>, where = 'adapter_model_pin'): AdapterModelRouteFields {
+  const extra: AdapterModelRouteFields = {};
+  for (const key of ['provider', 'reasoning_effort', 'config_source', 'route_identity'] as const) {
+    if (r[key] === undefined) continue;
+    if (typeof r[key] !== 'string' || !(r[key] as string).trim() || /[\u0000-\u001F\u007F]/.test(r[key] as string)) {
+      throw new Error(`[model-binding] ${where}.${key} 必须为非空、无控制字符的字符串`);
+    }
+    extra[key] = (r[key] as string).trim();
+    if (key === 'route_identity' && !/^[a-f0-9]{64}$/.test(extra[key]!)) throw new Error('[model-binding] route_identity 必须为 SHA-256 非秘密路由摘要');
+    if (key === 'provider' && /^https?:\/\//.test(extra[key]!)) {
+      const url = new URL(extra[key]!);
+      if (url.username || url.password || [...url.searchParams.keys()].some(name => /^(?:api_?key|token|access_token|secret|sig|signature)$/i.test(name))) {
+        throw new Error('[model-binding] provider 必须为非秘密路由身份；凭据应保留在原生认证设置中');
+      }
+    }
+  }
+  return extra;
+}
+
+export function adapterModelBinding(pin?: { adapter?: string; value: string; source?: string } & AdapterModelRouteFields): string | undefined {
+  // A historical automatic alternative is readable, but does not authorize another invocation.
+  if (!pin || pin.source === 'approved_alternative') return undefined;
+  if (!pin.provider && !pin.reasoning_effort && !pin.config_source && !pin.route_identity) return pin.value;
+  return JSON.stringify({ value: pin.value, ...(pin.provider ? { provider: pin.provider } : {}),
+    ...(pin.reasoning_effort ? { reasoning_effort: pin.reasoning_effort } : {}),
+    ...(pin.config_source ? { config_source: pin.config_source } : {}),
+    ...(pin.route_identity ? { route_identity: pin.route_identity } : {}) });
+}
+
 // ============================================================================
 // Harness 公共类型定义
 // ============================================================================
@@ -26,7 +61,7 @@ export function isClaudeKernelAdapter(name: string | null | undefined): boolean 
  * 落在 types.ts 而非 goal-manifest.ts——个人级 config、CLI、manifest、invoke 执行器四面
  * 共用，不让 config 层反向依赖 manifest 层。
  */
-export interface ProviderRef {
+export interface ProviderRef extends AdapterModelRouteFields {
   adapter: string;
   model: string;
 }

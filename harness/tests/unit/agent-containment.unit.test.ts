@@ -170,7 +170,7 @@ process.stdin.on('end', () => process.stdout.write(JSON.stringify({
         const args = ['--profile', 'headless', 'literal %PATH%', 'quoted"value', ''];
         const prompt = 'stdin 中文\n$` 和 %PATH% 都应原样传递';
         const result = await invokeAgentHeadless({
-          argv: [shim, ...args], adapterName: 'deepseek-harness', label: 'electron-shim-fixture',
+          argv: [shim, ...args], label: 'electron-shim-fixture',
           resolvedBinary: { path: shim, kind: 'cmd' }, useCrossSpawn: true,
           useStdin: true, stdin: prompt,
         }, cwd, { containment: { runId: 'desktop-shim', invokeId: 'fixed-args' }, timeoutMs: 15000 });

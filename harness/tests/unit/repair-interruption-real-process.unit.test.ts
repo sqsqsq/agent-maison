@@ -1,3 +1,4 @@
+import { bindControlledProcess } from '../utils/controlled-model-process';
 // ============================================================================
 // repair-interruption-real-process.unit.test.ts — plan a2f7c9e4 t6（§4.2「真实进程中断可恢复」）
 // ----------------------------------------------------------------------------
@@ -22,11 +23,12 @@ import * as path from 'path';
 import * as YAML from 'yaml';
 import { createHash } from 'crypto';
 import {
-  invokeAgentHeadless,
+  invokeAgentHeadless as nativeInvokeAgentHeadless,
   killProcessTree,
   type AgentInvokeOptions,
   type AgentInvokeResult,
 } from '../../scripts/utils/agent-invoke';
+const invokeAgentHeadless = bindControlledProcess(nativeInvokeAgentHeadless);
 import { clearFrameworkConfigCache } from '../../config';
 import { prepareFeatureScopeCandidate } from '../../scripts/utils/feature-track';
 import {

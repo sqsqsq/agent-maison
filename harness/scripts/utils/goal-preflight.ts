@@ -1,3 +1,4 @@
+import { adapterModelBinding } from './adapter-model';
 /**
  * goal-runner preflight — adapter-aware / provenance-aware (not bare personal-setup gate).
  */
@@ -359,7 +360,7 @@ export function decideVisionCanaryProbe(input: {
   // 无 pin 时 modelPin=undefined，谓词精确退化为 canaryAdmissibleForRun（run 绑定一步不少，
   // 防 v5 公式把本处退化到只剩 fresh 而重新引入 07-24 跨 run 缓存事故）；pin 在场时才追加
   // 模型匹配（resume 改 pin 同 run_id 的旧模型缓存不再被跳过重探）。
-  const modelPin = manifest.adapter_model_pin?.value;
+  const modelPin = adapterModelBinding(manifest.adapter_model_pin);
   if (!forceRefresh && isVisionCanaryFresh(canary, adapter)) {
     if (canaryAdmissibleForExecution(canary, { runId: manifest.run_id, modelPin })) {
       return { action: 'skip', reason: 'fresh_cache_present' };
@@ -445,7 +446,7 @@ export async function runVisionCanaryProbe(input: {
       manifest.unattended,
       prompt,
       vars,
-      manifest.adapter_model_pin?.value,
+      adapterModelBinding(manifest.adapter_model_pin),
       input.resolvedBinary,
     );
     const invoke = input.executePrompt ? await input.executePrompt(prompt, answerKey, imagePath) : await (input.invokeFn ?? invokeAgentHeadless)(plan!, projectRoot, {
@@ -506,7 +507,7 @@ export async function runVisionCanaryProbe(input: {
           // （cursor auto 等），诚实记 unknown；scope 判级据此封顶 run_probed 且不跨 run。
           // plan d7f3a9c4 t3：**pin 在场时前提不再成立**——模型是用户显式指定并已回放进
           // argv，receipt 记 pin.value（采信须模型匹配）；无 pin 时继续记 'unknown'（现状）。
-          model: manifest.adapter_model_pin?.value ?? 'unknown',
+          model: adapterModelBinding(manifest.adapter_model_pin) ?? 'unknown',
           probe_context: 'goal_preflight',
           run_id: manifest.run_id,
         },
@@ -730,7 +731,7 @@ export function evaluateFidelityTierPreflight(input: FidelityPreflightInput): Fi
       ? { requirementSourceFiles: manifest.requirement_source_files }
       : {}),
     // plan d7f3a9c4 t3：preflight 能力探测带最终裁决 pin（manifest 派生）。
-    ...(manifest.adapter_model_pin ? { modelPin: manifest.adapter_model_pin.value } : {}),
+    ...(manifest.adapter_model_pin ? { modelPin: adapterModelBinding(manifest.adapter_model_pin)! } : {}),
     // plan ab072691 t2①：视觉委托身份同样只从 manifest 冻结值派生（不重读 local）。
     ...(manifest.visual_provider_pin ? { visualProviderPin: manifest.visual_provider_pin } : {}),
     now: input.now,
@@ -790,7 +791,7 @@ function evaluateDownstreamStartFidelity(input: FidelityPreflightInput): Fidelit
   );
   const identity = {
     runId: manifest.run_id,
-    ...(manifest.adapter_model_pin ? { modelPin: manifest.adapter_model_pin.value } : {}),
+    ...(manifest.adapter_model_pin ? { modelPin: adapterModelBinding(manifest.adapter_model_pin)! } : {}),
   };
   const probe = resolveContextAdapterImageInput(projectRoot, frameworkRoot, manifest.adapter, identity);
   const ocrAvailable = resolveOcrAvailableForRun(projectRoot, input.profileDir ?? '', manifest.adapter, identity);

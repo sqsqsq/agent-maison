@@ -16,7 +16,7 @@ import {
   type DependencyPolicy,
 } from './phase-transition-policy';
 import { isValidFidelityTarget } from './fidelity-shared';
-import type { ProviderRef } from './types';
+import { normalizeModelRouteFields, type AdapterModelRouteFields, type ProviderRef } from './types';
 import { relFeaturesDir } from '../../config';
 
 /** Read-only legacy declaration; current writers and execution do not consume it. */
@@ -27,7 +27,7 @@ export interface GoalBudget {
   max_transient_api_retries?: number;
 }
 
-export interface AdapterModelPin {
+export interface AdapterModelPin extends AdapterModelRouteFields {
   /** 最终 effective adapter（resolveFinalModelPin 单点裁决后写入） */
   adapter: string;
   /** 用户显式 --adapter-model 的权威模型值，或获准替代换上的型号（见 source） */
@@ -39,7 +39,7 @@ export interface AdapterModelPin {
   source?: ModelPinSource;
 }
 
-export type ModelPinSource = 'user' | 'approved_alternative';
+export type ModelPinSource = 'user' | 'frontend' | 'approved_alternative';
 
 /** 用户钉死的型号框架不替换；来源为获准替代的钉值不算用户钉死（plan 4e6fb3b6 §6.4）。 */
 export function isUserPinnedModel(pin: AdapterModelPin | undefined): boolean {
@@ -517,7 +517,7 @@ function parsePreAuthorizedMutations(
   return out.length > 0 ? out : undefined;
 }
 
-function normalizeAdapterModelPin(raw: unknown): AdapterModelPin | undefined {
+export function normalizeAdapterModelPin(raw: unknown): AdapterModelPin | undefined {
   if (raw === undefined || raw === null) return undefined;
   if (typeof raw !== 'object' || Array.isArray(raw)) {
     throw new Error('[goal-manifest] adapter_model_pin 必须为对象');
@@ -528,6 +528,7 @@ function normalizeAdapterModelPin(raw: unknown): AdapterModelPin | undefined {
     adapter: String(r.adapter).trim(),
     value: String(r.value).trim(),
     ...(r.source !== undefined ? { source: r.source as ModelPinSource } : {}),
+    ...normalizeModelRouteFields(r),
   };
 }
 
@@ -542,7 +543,7 @@ const KNOWN_MODEL_PIN_ADAPTERS = new Set([
  * 违规整体拒绝加载/解析。
  */
 export function validateAdapterModelPinValue(adapter: unknown, value: unknown, source?: unknown): void {
-  if (source !== undefined && source !== 'user' && source !== 'approved_alternative') {
+  if (source !== undefined && source !== 'user' && source !== 'frontend' && source !== 'approved_alternative') {
     throw new Error('[goal-manifest] adapter_model_pin.source 键在场时须为 user|approved_alternative');
   }
   if (typeof adapter !== 'string' || !adapter.trim()) {
@@ -600,7 +601,7 @@ function normalizeVisualProviderPin(raw: unknown): ProviderRef | undefined {
   }
   const r = raw as Record<string, unknown>;
   validateVisualProviderPinValue(r.adapter, r.model);
-  return { adapter: String(r.adapter).trim(), model: String(r.model).trim() };
+  return { adapter: String(r.adapter).trim(), model: String(r.model).trim(), ...normalizeModelRouteFields(r) };
 }
 
 function validateLegacyBlindVisualField(input: Record<string, unknown>): void {
@@ -1177,6 +1178,7 @@ export function validateLoadedGoalManifest(
   // plan d7f3a9c4 t2：加载时 shape 校验 adapter_model_pin（adapter/value shape 违规
   // 整体拒绝加载——停机篡改应命中既有 manifest_identity_drift）。
   if (manifest.adapter_model_pin !== undefined) {
+    normalizeAdapterModelPin(manifest.adapter_model_pin);
     validateAdapterModelPinValue(
       manifest.adapter_model_pin.adapter,
       manifest.adapter_model_pin.value,
@@ -1185,6 +1187,7 @@ export function validateLoadedGoalManifest(
   }
   // plan ab072691 t1⑤：同款加载期 shape 校验（停机篡改命中既有 manifest_identity_drift）。
   if (manifest.visual_provider_pin !== undefined) {
+    normalizeVisualProviderPin(manifest.visual_provider_pin);
     validateVisualProviderPinValue(
       manifest.visual_provider_pin.adapter,
       manifest.visual_provider_pin.model,

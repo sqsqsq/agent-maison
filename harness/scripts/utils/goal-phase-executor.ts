@@ -67,6 +67,7 @@ export interface WorkUnitExecutionContext {
 export type GoalPhaseExecutorStatus = 'passed' | 'failed' | 'waiting';
 
 export interface GoalPhaseExecutorResult {
+  readonly model_binding_mismatch?: string;
   readonly status: GoalPhaseExecutorStatus;
   readonly phase: string;
   readonly details?: string;
@@ -218,7 +219,7 @@ export function observeWorkUnitProviderSession(context: WorkUnitExecutionContext
     if (previous.attemptId === context.attemptId && previous.phase === context.phase
       && previous.owner.owner_id === context.owner.owner_id && previous.owner.epoch === context.owner.epoch) continue;
     if (previous.runId !== context.runId || previous.feature !== context.feature
-      || previous.adapter !== context.adapter || previous.adapterModel !== context.adapterModel
+      || previous.adapter !== context.adapter
       || path.resolve(previous.projectRoot) !== path.resolve(context.projectRoot)
       || workUnitExecutionRole(previous, request.purpose) !== role) continue;
     const at = events.indexOf(event);
@@ -236,8 +237,11 @@ export function observeWorkUnitProviderSession(context: WorkUnitExecutionContext
         command: 'phase_execute_request', ...(nativeId ? { provider_session_id: nativeId } : {}),
         details: `原${role === 'author' ? '作者' : '独立核验'}调用 ${event.invoke_id}（${event.phase}）尚无真实结束或回收/调和事实；保留原请求 ${path.join(dir, names[0])}，原生SID=${nativeId ?? '尚未记录可核实ID'}。等待该原调用真实交回、进程退出及owner对账；事实补齐后沿原run的next/resume继续，不启动第二个执行者，也不补写原生结束。` };
     }
-    if (role === 'verifier' || recovered) continue;
+    if (previous.adapterModel !== context.adapterModel || role === 'verifier' || recovered) continue;
     const ended = [...events].reverse().find(row => row.type === 'agent_invoke_end' && row.invoke_id === event.invoke_id);
+    if ((ended as Record<string, unknown> | undefined)?.model_binding_mismatch) {
+      recovered = rebuildWorkUnitExecutionContext(context, '上一调用的原生模型已失配，不续用其SID'); continue;
+    }
     const unavailable = (ended as Record<string, any> | undefined)?.nativeSessionRebuildReason;
     if (unavailable === 'provider_session_not_found' || unavailable === 'provider_session_id_conflict' || unavailable === 'provider_session_resume_not_accepted') { recovered = rebuildWorkUnitExecutionContext(context, unavailable); continue; }
     // A native session must not retain a previous permission contract after authority changes.
@@ -348,7 +352,7 @@ export class DetachedGoalPhaseExecutor implements GoalPhaseExecutor {
       if (type === 'error' || type === 'turn.failed' || type === 'result' && record.is_error === true
         || type === 'system' && record.subtype === 'api_retry') environmentDiagnostic = JSON.stringify(record);
     } }, resolveTerminalEventParser(context.adapter)) : null;
-    let result: AgentInvokeResult & Partial<Pick<GoalPhaseExecutorResult, 'status' | 'details'>> = await this.invoke(invocation.plan, invocation.cwd, { ...options,
+    let result: AgentInvokeResult & Partial<Pick<GoalPhaseExecutorResult, 'status' | 'details'>> = await this.invoke({ ...invocation.plan, adapterName: context.adapter, modelBinding: context.adapterModel }, invocation.cwd, { ...options,
       providerSessionId: context.provider_session_id,
       userDeadlineAt: context.user_deadline_at,
       ...(Number.isFinite(toolDeadline) ? { deadlineMs: toolDeadline, timeoutMs: Math.max(1, toolDeadline - Date.now()) } : {}),
@@ -364,6 +368,8 @@ export class DetachedGoalPhaseExecutor implements GoalPhaseExecutor {
         if (originalRequest) controls.onObservation(observeSessionExecution(context.runDir, originalRequest));
       },
     });
+    if (result.skipped && result.exitCode !== 0) return { ...result, phase: context.phase, status: 'waiting',
+      nativeSessionRebuildReason: undefined, details: result.stderr || '模型请求前提尚未满足；保留原请求与成果，条件补齐后继续。' };
     if (resumeScanner) {
       if (!envelopeObserved) resumeScanner.push(result.stdout);
       resumeScanner.flush();

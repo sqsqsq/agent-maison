@@ -578,8 +578,8 @@ export function resolveInvokeHardCliFailure(
   // 解析后的 terminal 正文排最前：stdout 里的同一信封是转义形态，签名命不中。
   if (facts.exitCode !== 0) {
     if (facts.stderr.split(/\r?\n/).some(line => /^dsh: MISSING_CREDENTIAL:/.test(line))) {
-      return 'DSH 缺少凭据（MISSING_CREDENTIAL）：请在同一 DSH_HOME 的桌面版/Web 模型设置中保存 headless 实际模型路由所需 key 后重跑；'
-        + '也可在启动 Goal 的那个环境或 DSH_HOME/.env 中配置 DEEPSEEK_API_KEY。保存凭据优先于环境；'
+      return 'DSH 缺少凭据（MISSING_CREDENTIAL）：请在同一 DSH_HOME 的 DSH 模型设置中保存所选模型来源要求的密钥后重跑；'
+        + '也可配置到启动 Goal 的环境或 DSH_HOME/.env 后重跑。保存凭据优先于环境；'
         + 'DSH 工具 shell 会过滤 KEY 类变量，不能假设主会话环境凭据会继承。不要输出密钥；这是外部配置错误，不是内容失败。';
     }
     const hit = codexModel400Hit(facts);

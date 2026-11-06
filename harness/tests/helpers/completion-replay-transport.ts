@@ -15,7 +15,7 @@ export function installReplayTransport(configFile: string): () => void {
     const argv = [process.execPath, '-r', require.resolve('ts-node/register/transpile-only'), '-e',
       `require(${JSON.stringify(actor)}).replayAuthor(${JSON.stringify(configFile)}).catch(e=>{console.error(e.stack);process.exitCode=1;});`];
     fs.appendFileSync(path.join(input.stateDir, 'transport-plans.jsonl'), JSON.stringify({ adapter: plan.adapterName, argv: plan.argv, executed_argv: argv }) + '\n');
-    return original({ argv, label: 'controlled Node tool replay; no model CLI', adapterName: 'terminal-replay-fixture' }, cwd,
+    return original({ argv, label: 'controlled Node tool replay; no model CLI', adapterName: undefined }, cwd,
       { ...options, terminalEventParser: 'codex_turn_jsonl', toolEventCapture: 'structured_events',
         extraEnv: { ...options.extraEnv, TS_NODE_PROJECT: path.join(harness, 'tsconfig.json') },
         onObservation: observation => {

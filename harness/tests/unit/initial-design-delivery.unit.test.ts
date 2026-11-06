@@ -49,6 +49,169 @@ function publicCli(project:Project,script:string,args:string[]):Record<string,an
   assert.equal(result.status,0,`${script}: ${result.stderr}\n${result.stdout}\n${result.error??''}`);return JSON.parse(result.stdout.trim());
 }
 const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
+  name: '8f2c6b91 followup visual birth rejects an input-manifest route change without authorization',
+  async run() {
+    await withProject(project => {
+      const source = path.join(project.root, 'native-codex/config.toml'), input = path.join(project.root, 'doc/request-input.yaml');
+      const definition = YAML.parse(fs.readFileSync(input, 'utf8'));
+      definition.visual_provider_pin = { adapter: 'codex', model: 'gpt-6.1-sol', provider: 'route-a', config_source: source };
+      fs.writeFileSync(input, YAML.stringify(definition)); const before = fs.readFileSync(input);
+      const args = ['--prepare-run', '--run-mode', 'attended', '--manifest', 'doc/request-input.yaml', '--visual-adapter', 'codex',
+        '--visual-model', 'gpt-6.1-sol', '--visual-provider', 'route-b', '--visual-model-config', source];
+      const denied = runRuntimeTestChild({ root: project.root }, () => spawnSync(process.execPath,
+        ['-r', 'ts-node/register/transpile-only', 'scripts/goal-mode-entry.ts', '--project-root', project.root, '--feature', project.feature, ...args],
+        { cwd: project.harnessDir, encoding: 'utf8', timeout: 30000 }));
+      assert.equal(denied.status, 1); assert.match(denied.stderr, /visual_provider_pin.*override-manifest/s);
+      assert.deepEqual(fs.readFileSync(input), before); assert.deepEqual(fs.readdirSync(path.join(project.root, 'doc/features')), []);
+      const born = publicCli(project, 'goal-mode-entry', [...args, '--override-manifest']);
+      assert.equal(JSON.parse(fs.readFileSync(born.manifest, 'utf8')).visual_provider_pin.provider, 'route-b');
+    });
+  },
+}, {
+  name: '8f2c6b91 followup OpenCode public prepare reads variant from frontend with only a source directory',
+  async run() {
+    await withProject(project => {
+      const file = path.join(project.root, 'frontend-export.json'), config = path.join(project.root, 'native-home/.config/opencode');
+      fs.mkdirSync(config, { recursive: true });
+      fs.writeFileSync(file, JSON.stringify({ info: { id: 'session-export', directory: project.root }, messages: [{ info: { id: 'message-export', role: 'user',
+        model: { providerID: 'fixture', modelID: 'model', variant: 'high' } } }] }));
+      const prepared = publicCli(project, 'goal-mode-entry', ['--prepare-run', '--run-mode', 'attended', '--adapter', 'opencode',
+        '--requirement-file', 'doc/requirement.md', '--frontend-request-file', file, '--frontend-session-id', 'session-export',
+        '--frontend-request-id', 'message-export', '--adapter-model-config', config]);
+      const manifest = JSON.parse(fs.readFileSync(prepared.manifest, 'utf8'));
+      assert.deepEqual(manifest.adapter_model_pin, { adapter: 'opencode', value: 'fixture/model', source: 'frontend', provider: 'fixture', reasoning_effort: 'high', config_source: config });
+      assert(!fs.readFileSync(path.join(path.dirname(prepared.manifest), 'events.jsonl'), 'utf8').includes('agent_invoke_start'));
+    });
+  },
+}, {
+  name: '8f2c6b91 automatic foreground UI changes cannot reselect an ordinary task or its authorized successor',
+  async run() {
+    await withProject(async project => {
+      const configFile = path.join(project.root, 'framework.config.json');
+      fs.writeFileSync(configFile, JSON.stringify({ ...JSON.parse(fs.readFileSync(configFile, 'utf8')), project_profile: { name: 'generic' } }));
+      writeLocalConfig(project.root, { schema_version: '1.0', agent_adapter: 'deepseek-harness' });
+      const model = require(path.join(project.harnessDir, 'scripts/utils/adapter-model')) as typeof import('../../scripts/utils/adapter-model');
+      const home = path.join(project.root, 'native-home'), source = path.join(home, 'profiles/actual-foreground/cordis.patch.yml');
+      fs.mkdirSync(path.dirname(source), { recursive: true });
+      fs.writeFileSync(source, YAML.stringify([{ id: 'llm-pi-ai', config: { providers: { volcengine: { api: 'openai-completions', baseURL: 'http://127.0.0.1:1/v1',
+        apiKeyEnv: 'FIXTURE_KEY', models: [{ id: 'volcengine/deepseek-v4.1-flash', contextWindow: 1000000, input: ['text'] }] } } } }]));
+      const selected = model.freezeModelPin({ adapter: 'deepseek-harness', provider: 'volcengine', value: 'volcengine/deepseek-v4.1-flash', reasoning_effort: 'high', config_source: source })!;
+      const args = ['--prepare-run', '--run-mode', 'attended', '--adapter', selected.adapter, '--requirement-file', 'doc/requirement.md'];
+      publicCli(project, 'goal-mode-entry', ['--prepare-scope', '--completion-target', 'request', '--requested-results', project.requirement,
+        '--requested-phases', 'spec', '--requirement-file', 'doc/requirement.md', '--impact-behavior-change', 'false',
+        '--impact-reason', '内部模型选择验收，不改变界面', '--impact-basis', 'doc/requirement.md']);
+      const born = publicCli(project, 'goal-mode-entry', [...args, '--run-id', 'ordinary-existing', '--adapter-model', selected.value,
+        '--adapter-provider', selected.provider!, '--adapter-reasoning', 'high', '--adapter-model-config', source]);
+      const original = JSON.parse(fs.readFileSync(born.manifest, 'utf8'));
+      const sid = 'session-ordinary-foreground', file = path.join(home, 'sessions/project', sid, 'session.v4.jsonl.zstd'); fs.mkdirSync(path.dirname(file), { recursive: true });
+      const save = Object.fromEntries(['DSH_HOME', 'DSH_SESSION_ID', 'DSH_PROFILE_DIR'].map(key => [key, process.env[key]]));
+      const native = (config: unknown) => fs.writeFileSync(file, Buffer.concat([{ type: 'session', id: sid, cwd: project.root },
+        { type: 'request/header', seq: 598, data: { header: { config } } }].map(row => (require('zlib') as any).zstdCompressSync(Buffer.from(JSON.stringify(row) + '\n')))));
+      try {
+        Object.assign(process.env, { DSH_HOME: home, DSH_SESSION_ID: sid, DSH_PROFILE_DIR: path.dirname(source) });
+        for (const config of [{ provider: 'not-in-profile', model: 'unfreezable-ui-choice' },
+          { provider: selected.provider, model: selected.value, reasoningEffort: 'low' }]) {
+          native(config);
+          const joined = publicCli(project, 'goal-mode-entry', args);
+          assert.equal(joined.run_id, original.run_id); assert.equal(joined.continuation, 'rejoin');
+          assert.deepEqual(JSON.parse(fs.readFileSync(joined.manifest, 'utf8')).adapter_model_pin, original.adapter_model_pin);
+        }
+        native({ provider: 'not-in-profile', model: 'unfreezable-ui-choice' });
+        const successor = publicCli(project, 'goal-mode-entry', [...args, '--supersede', original.run_id]);
+        const manifest = JSON.parse(fs.readFileSync(successor.manifest, 'utf8'));
+        assert.notEqual(successor.run_id, original.run_id); assert.equal(manifest.successor_of, original.run_id);
+        assert.deepEqual(manifest.adapter_model_pin, original.adapter_model_pin);
+      } finally { for (const [key, value] of Object.entries(save)) if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+    });
+  },
+}, {
+  name: '8f2c6b91 detached launcher treats explicit new run-id as birth and captures the pin before controlled child startup',
+  async run() {
+    await withProject(async project => {
+      const runtime = require(path.join(project.harnessDir, 'scripts/goal-phase-runtime')) as typeof import('../../scripts/goal-phase-runtime');
+      const before = process.argv, id = 'new-detached-model-task'; let spawns = 0;
+      const configFile = path.join(project.root, 'framework.config.json');
+      fs.writeFileSync(configFile, JSON.stringify({ ...JSON.parse(fs.readFileSync(configFile, 'utf8')), materialized_adapters: ['claude'] }));
+      fs.writeFileSync(path.join(project.root, 'CLAUDE.md'), '# Controlled host entry\n');
+      const runDir = path.join(project.root, 'doc/features', project.feature, 'goal-runs', id);
+      assert(!fs.existsSync(path.join(runDir, 'manifest.json')));
+      const args = ['--project-root', project.root, '--feature', project.feature, '--detach', '--run-id', id, '--adapter', 'claude',
+        '--requirement-file', 'doc/requirement.md', '--adapter-model', 'claude-opus-5-5', '--adapter-provider', 'anthropic',
+        '--adapter-model-config', path.join(project.root, 'native/settings.json')];
+      runtime.__testing_setDetachSpawn(((_exec: string, childArgs: string[]) => {
+        spawns++; const captured = JSON.parse(childArgs[childArgs.indexOf('--captured-model-pin') + 1]);
+        assert.equal(captured.value, 'claude-opus-5-5'); assert.equal(captured.provider, 'anthropic');
+        fs.writeFileSync(path.join(runDir, 'manifest.json'), JSON.stringify({ run_id: id }));
+        fs.writeFileSync(path.join(runDir, 'events.jsonl'), JSON.stringify({ type: 'run_start', run_id: id }) + '\n');
+        return { pid: process.pid, exitCode: null, once: () => undefined, unref: () => undefined };
+      }) as never);
+      try {
+        process.argv = [process.execPath, path.join(project.harnessDir, 'scripts/goal-runner.ts'), ...args];
+        const result = await withRuntimeTest({ root: project.root }, () => runtime.main({ args }));
+        assert.equal(result, 0); assert.equal(spawns, 1);
+      } finally { process.argv = before; runtime.__testing_setDetachSpawn(null); }
+    });
+  },
+}, {
+  name: '8f2c6b91 backend initial author persists model mismatch and cold recovery excludes its native SID',
+  async run() {
+    await withProject(async project => {
+      writeLocalConfig(project.root, { schema_version: '1.0', agent_adapter: 'claude', vision: { image_input_override: 'none' } });
+      const runtime = require(path.join(project.harnessDir, 'scripts/goal-phase-runtime')) as typeof import('../../scripts/goal-phase-runtime');
+      const phases = require(path.join(project.harnessDir, 'scripts/utils/goal-phase-executor')) as typeof import('../../scripts/utils/goal-phase-executor');
+      let calls = 0, observed: import('../../scripts/utils/goal-phase-executor').WorkUnitExecutionContext | undefined;
+      const args = ['--project-root', project.root, '--feature', project.feature, '--adapter', 'claude', '--requirement-file', 'doc/requirement.md',
+        '--foreground-ok', '--authorize-autonomy', '--runtime-executor', 'detached', '--runtime-owner', 'process', '--adapter-model', 'claude-opus-5-5',
+        '--adapter-provider', 'anthropic', '--adapter-model-config', path.join(project.root, 'native/settings.json')];
+      const result = await withRuntimeTest({ root: project.root }, () => new runtime.GoalPhaseRuntime({ args, ownerKind: 'process', executor: {
+        async execute(context) { calls++; observed = context; return { status: 'failed', phase: context.phase, exitCode: 1, stdout: '', stderr: '',
+          command: 'controlled-model-result', provider_session_id: 'wrong-native-sid', model_binding_mismatch: 'controlled native provider mismatch' }; },
+      } }).run());
+      assert.notEqual(result, 0); assert.equal(calls, 1); assert(observed);
+      const events = fs.readFileSync(path.join(observed.runDir, 'events.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+      const ended = events.find(event => event.type === 'agent_invoke_end');
+      assert.equal(ended.model_binding_mismatch, 'controlled native provider mismatch');
+      const recovered = phases.observeWorkUnitProviderSession({ ...observed, attemptId: 'cold-model-retry' });
+      assert(!('status' in recovered)); assert.equal(recovered.provider_session_id, undefined);
+    });
+  },
+}, {
+  name: '8f2c6b91 public prepare CLI without manifest freezes primary and visual routes and applies an authorized A to B rejoin',
+  async run() {
+    await withProject(project => {
+      const source = path.join(project.root, 'native-claude/settings.json');
+      const visualSource = path.join(project.root, 'native-codex/config.toml');
+      const common = ['--prepare-run', '--run-mode', 'attended', '--adapter', 'claude', '--requirement-file', 'doc/requirement.md',
+        '--adapter-provider', 'anthropic', '--adapter-model-config', source];
+      const created = publicCli(project, 'goal-mode-entry', [...common, '--adapter-model', 'claude-opus-5-5',
+        '--user-deadline-at', '2030-01-01T00:00:00.000Z', '--visual-adapter', 'codex', '--visual-model', 'gpt-6.1-sol',
+        '--visual-provider', 'visual-route-one', '--visual-reasoning', 'high', '--visual-model-config', visualSource]);
+      const first = JSON.parse(fs.readFileSync(created.manifest, 'utf8'));
+      assert.equal(first.adapter_model_pin.value, 'claude-opus-5-5'); assert.equal(first.adapter_model_pin.provider, 'anthropic');
+      assert.equal(first.adapter_model_pin.config_source, source);
+      assert.deepEqual(first.visual_provider_pin, { adapter: 'codex', model: 'gpt-6.1-sol', provider: 'visual-route-one', reasoning_effort: 'high', config_source: visualSource });
+      const joined = publicCli(project, 'goal-mode-entry', [...common, '--adapter-model', 'claude-sonnet-5-5', '--visual-adapter', 'codex',
+        '--visual-model', 'gpt-6.1-sol', '--visual-provider', 'visual-route-two', '--override-manifest']);
+      assert.equal(joined.run_id, created.run_id);
+      const second = JSON.parse(fs.readFileSync(joined.manifest, 'utf8'));
+      assert.equal(second.adapter_model_pin.value, 'claude-sonnet-5-5'); assert.equal(second.adapter_model_pin.provider, 'anthropic');
+      assert.equal(second.user_deadline_at, first.user_deadline_at);
+      assert.deepEqual(second.visual_provider_pin, { ...first.visual_provider_pin, provider: 'visual-route-two' });
+      const events = fs.readFileSync(path.join(path.dirname(joined.manifest), 'events.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+      assert.equal(events.filter(event => event.type === 'run_created').length, 1);
+      assert(!events.some(event => event.type === 'agent_invoke_start'));
+      assert.equal(events.filter(event => event.type === 'manifest_identity_rebase').length, 1);
+      assert.deepEqual(events.find(event => event.type === 'manifest_identity_rebase').changed_fields.sort(), ['adapter_model_pin', 'visual_provider_pin']);
+      const priorBytes = fs.readFileSync(joined.manifest);
+      const successor = publicCli(project, 'goal-mode-entry', [...common, '--adapter-model', 'claude-haiku-5-5', '--visual-adapter', 'codex',
+        '--visual-model', 'gpt-6.1-sol', '--visual-provider', 'visual-route-three', '--supersede', joined.run_id]);
+      const next = JSON.parse(fs.readFileSync(successor.manifest, 'utf8'));
+      assert.notEqual(successor.run_id, joined.run_id); assert.equal(next.adapter_model_pin.value, 'claude-haiku-5-5');
+      assert.deepEqual(next.visual_provider_pin, { ...first.visual_provider_pin, provider: 'visual-route-three' });
+      assert.deepEqual(fs.readFileSync(joined.manifest), priorBytes, 'successor birth must not first rewrite the source run pins');
+    });
+  },
+}, {
   name: 'f3b8e6a1 real public prepare CLI preserves the explicit user deadline and model pin while ignoring legacy quota fields',
   async run() {
     await withProject(project => {
@@ -1298,6 +1461,7 @@ cases.push({
 
 export function getCases() { return cases; }
 const dailyPrefixes = [
+  "8f2c6b91 ",
   "f3b8e6a1 public preparation births a managed raw-request root",
   "f3b8e6a1 public next reuses the original signed design request",
   "P2 M1 current initial Q denial and a completed no-op author return"

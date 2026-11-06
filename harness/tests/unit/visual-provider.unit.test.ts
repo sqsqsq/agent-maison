@@ -740,6 +740,10 @@ test('t4 三元复用键：hash / provider / protocol_version 任一不齐即重
     observations: [{ region: 'top', fact: 'x' }],
   };
   assert.strictEqual(isVisualObservationReusable(doc, { imageHash: 'h1', provider }), true);
+  const routed = { ...provider, provider: 'route-one', reasoning_effort: 'high', config_source: '/native/settings.json' };
+  const routedDoc = { ...doc, provider: routed };
+  assert.strictEqual(isVisualObservationReusable(routedDoc, { imageHash: 'h1', provider: { ...routed, provider: 'route-two' } }), false);
+  assert.strictEqual(isVisualObservationReusable(routedDoc, { imageHash: 'h1', provider: { ...routed, reasoning_effort: 'low' } }), false);
   assert.strictEqual(
     isVisualObservationReusable(doc, { imageHash: 'h2', provider }),
     false,
@@ -2681,9 +2685,9 @@ test('e9d49418: 真实回执复用原观察、换attempt零调用、当前严格
     fs.writeFileSync(path.join(reports, 'device-test-install.meta.json'), JSON.stringify({ hapPath: hap }));
     const receiptPath = path.join(f.tmp, 'doc/features/feat/device-testing/reports/critic-receipt.json');
     const ctx = { projectRoot: f.tmp, feature: 'feat', phase: 'testing', fidelityTarget: 'pixel_1to1', acceptanceStrictness: 'best_effort' };
-    let calls = 0, model = 'm';
+    let calls = 0, model = 'm', route = 'route-one', effort = 'high';
     const run = (attemptId: string) => runVisualProviderReview(ctx as never, { frameworkRoot: FRAMEWORK_ROOT,
-      provider: { adapter: 'codex', model }, runId: 'R', attemptId,
+      provider: { adapter: 'codex', model, provider: route, reasoning_effort: effort }, runId: 'R', attemptId,
       invoke: async input => {
         calls++;
         const targets = collectReviewTargets(ctx as never, JSON.parse(fs.readFileSync(f.jsonPath, 'utf8')).screens);
@@ -2703,8 +2707,11 @@ test('e9d49418: 真实回执复用原观察、换attempt零调用、当前严格
     assert.strictEqual(calls, 1);
     assert.strictEqual(fs.readFileSync(receiptPath, 'utf8'), originalReceipt, '不改写原回执身份');
     assert.strictEqual(second.kind === 'applied' && second.invocation.input_provenance, 'unverified');
+    assert.strictEqual(second.kind === 'applied' && second.invocation.provider.provider, 'route-one');
     assert.strictEqual(JSON.parse(fs.readFileSync(f.jsonPath, 'utf8')).screens[0].verdict, 'fail', 'hard须按原major重裁');
-    for (const changed of ['shot', 'ref', 'hap', 'nav', 'brief', 'elements', 'provider', 'invalidated', 'legacy']) {
+    for (const changed of ['route-only', 'effort-only', 'shot', 'ref', 'hap', 'nav', 'brief', 'elements', 'provider', 'invalidated', 'legacy']) {
+      if (changed === 'route-only') route = 'route-two';
+      if (changed === 'effort-only') effort = 'low';
       if (changed === 'shot' || changed === 'ref') fs.appendFileSync(path.join(path.dirname(f.jsonPath), `${changed}.png`), changed);
       if (changed === 'hap') fs.appendFileSync(hap, 'next-build');
       if (changed === 'nav') fs.writeFileSync(visualDiffNavConfigPath(f.tmp, 'feat'), 'nav-input');

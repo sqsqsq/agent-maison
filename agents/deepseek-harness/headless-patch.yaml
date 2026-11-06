@@ -9,3 +9,8 @@
   disabled: false
 - id: deepseek-account
   disabled: false
+- id: agent-default-model
+  config:
+    provider: !!js JSON.parse(process.env.MAISON_GOAL_MODEL_PIN).provider
+    model: !!js JSON.parse(process.env.MAISON_GOAL_MODEL_PIN).value
+    reasoningEffort: !!js JSON.parse(process.env.MAISON_GOAL_MODEL_PIN).reasoning_effort

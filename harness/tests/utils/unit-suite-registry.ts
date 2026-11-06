@@ -28,6 +28,7 @@ export function discoverProfileUnitSuites(profilesRoot = path.resolve(__dirname,
  */
 interface UnitSuiteRegistration { id: string; modulePath: string; releaseOnly?: boolean; layer?: 'function' | 'capability' }
 const CORE_SUITES: UnitSuiteRegistration[] = [
+  { id: 'adapter-model-consistency', modulePath: './unit/adapter-model-consistency.unit.test', layer: 'capability' },
   { id: 'test-infrastructure', modulePath: './unit/test-infrastructure.unit.test' },
   { id: 'daily-recovery-journey', modulePath: './unit/daily-recovery-journey.unit.test', layer: 'capability' },
   { id: 'daily-design-journey', modulePath: './unit/daily-design-journey.unit.test', layer: 'capability' },

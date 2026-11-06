@@ -199,7 +199,7 @@ Business convergence SHALL use the existing completed comparable acceptance eval
 
 ### Requirement: Headless goal runs pin an explicit adapter model
 
-The runner SHALL accept a user-supplied `--adapter-model <id>` that is the authoritative model input for a headless run. It SHALL be replayed into every headless agent argv that actually performs work (the formal per-phase invocation and the vision canary probe), SHALL be recorded in the manifest as `adapter_model_pin: {adapter, value}` with `adapter` equal to the final effective adapter, and SHALL be echoed in dry-run plan output. The CLI value SHALL be trimmed then validated to be non-empty, at most 128 characters, and free of control characters; no model-name allowlist SHALL be introduced. The runner SHALL NOT read any adapter private configuration as a pin source, and SHALL NOT use Codex `-c model=<raw>`.
+The runner SHALL resolve task-explicit selection before the exact launching foreground request configuration, freezing the complete native model ID, provider route and applicable reasoning settings in adapter_model_pin. All execution projections SHALL derive from this sole source. Formal IDs SHALL be precisely matched against native metadata or a native exact-selection contract, without framework fuzzy matching. A missing or unreplayable selection SHALL wait before paid requests. Old pin formats remain readable without rewriting their identity hashes; execution requires sufficient replay information. approved_models SHALL be ignored with one startup warning and SHALL NOT authorize substitution. Native model mismatch SHALL cancel the current invocation and prevent later dispatch or acceptance as passed.
 
 Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/agent-invoke.ts`, `harness/scripts/utils/goal-manifest.ts`, `harness/scripts/utils/goal-manifest-cli.ts`
 
@@ -213,15 +213,15 @@ Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/agent-invo
 - **WHEN** `--adapter-model` is supplied, or the loaded manifest / successor inheritance carries an `adapter_model_pin`, and the effective adapter is chrys or generic
 - **THEN** the run SHALL BLOCKER-fail during single-point pin adjudication, before any manifest identity computation or plan construction
 
-#### Scenario: No pin leaves behavior unchanged
+#### Scenario: Missing selection waits before a paid request
 
 - **WHEN** no `--adapter-model` is supplied, the loaded manifest has no `adapter_model_pin`, and no successor inheritance carries a pin
-- **THEN** every adapter's argv SHALL be element-for-element identical to the pre-pin baseline and no manifest key SHALL be added
+- **THEN** the launching request SHALL supply the binding or execution SHALL wait without a backend default
 
 #### Scenario: Pin binds the canary receipt and its admissibility
 
 - **WHEN** an explicit `--adapter-model` pin is present
-- **THEN** the vision canary receipt SHALL record `model = pin.value`, and a canary SHALL only be admitted or skipped when its model matches the pin value; the observed model SHALL remain append-only telemetry and SHALL NOT become a pin source or participate in any policy branch
+- **THEN** the vision canary receipt SHALL record `model = complete binding projection`, and a canary SHALL only be admitted or skipped when its complete binding matches; observed mismatch SHALL stop execution but SHALL NOT become a pin source
 
 ### Requirement: Adapter model pin lifecycle is adjudicated at a single point
 
@@ -247,7 +247,7 @@ Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-manif
 #### Scenario: Old manifest without the pin key stays compatible
 
 - **WHEN** loading a manifest that has no `adapter_model_pin` key
-- **THEN** identity computation SHALL not add the key, resume SHALL proceed with no pin, and no drift shall be reported for the absent key
+- **THEN** identity computation SHALL not add the key, read-only access SHALL remain valid, while execution waits for authorized binding, and no drift shall be reported for the absent key
 
 #### Scenario: Tampered pin surfaces as manifest identity drift
 

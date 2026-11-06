@@ -21,7 +21,7 @@ import {
   invokeVisualProvider,
   type VisualProviderInvocation,
 } from './visual-provider-invoke';
-import type { ProviderRef } from './types';
+import { adapterModelBinding, type ProviderRef } from './types';
 
 /** 观察协议版本——形态/prompt 契约变更时 +1，旧 sidecar 自动 stale 重产。 */
 export const VISUAL_OBSERVATION_PROTOCOL_VERSION = 1;
@@ -93,7 +93,7 @@ export function isVisualObservationReusable(
     d.protocol_version === VISUAL_OBSERVATION_PROTOCOL_VERSION &&
     d.image_hash === expected.imageHash &&
     d.provider?.adapter === expected.provider.adapter &&
-    d.provider?.model === expected.provider.model &&
+    adapterModelBinding(d.provider && { ...d.provider, value: d.provider.model }) === adapterModelBinding({ ...expected.provider, value: expected.provider.model }) &&
     Array.isArray(d.observations)
   );
 }

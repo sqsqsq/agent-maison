@@ -35,7 +35,8 @@ export function extractProviderSessionId(record: Record<string, unknown>, adapte
     : (adapterName === 'claude' || adapterName === 'codeagent')
       && (record.type === 'system' && record.subtype === 'init'
         || record.type === 'result' && record.subtype === 'success' && record.is_error !== true) ? record.session_id
-      : adapterName === 'deepseek-harness' && record.type === 'session' ? record.sessionId : undefined;
+      : adapterName === 'deepseek-harness' && record.type === 'session' ? record.sessionId
+        : adapterName === 'opencode' && ['step_start', 'step_finish', 'text', 'tool_use'].includes(String(record.type)) ? record.sessionID : undefined;
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 

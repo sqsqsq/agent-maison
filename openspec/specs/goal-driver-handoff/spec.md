@@ -91,3 +91,19 @@ Enforcement: `harness/scripts/goal-phase-runtime.ts`, `harness/scripts/utils/goa
 #### Scenario: Compatibility helper publishes intent
 - **WHEN** a compatibility caller requests session-to-process handoff
 - **THEN** it writes only the mailbox request and does not append lifecycle events or release the owner itself
+
+### Requirement: Both transports retain complete model authorization
+
+Attended execute and detached invocation SHALL consume the same manifest pin projection through WorkUnitExecutionContext.adapterModel. Provider-only and reasoning-only authorized changes SHALL change dispatch conditions, prevent old SID/canary reuse and invalidate only unexecuted requests. Already accepted business results remain readable; started calls SHALL first be observed or settled under their existing owner. Cold recovery SHALL inspect original events rather than a final text or 64 KiB memory tail before accepting a mismatched invocation.
+
+Enforcement: `harness/scripts/goal-mode-entry.ts`, `harness/scripts/utils/session-execution-handoff.ts`, `harness/scripts/utils/goal-phase-executor.ts`
+
+#### Scenario: Provider changes with fixed business input
+
+- **WHEN** only the authorized provider changes
+- **THEN** deduplication SHALL permit new dispatch and native session selection SHALL exclude the old provider SID
+
+#### Scenario: Independent visual responsibility retains its own route
+
+- **WHEN** an authorized visual_provider_pin includes provider, reasoning_effort and config_source
+- **THEN** manifest loading and child environment transport SHALL retain those fields, and the final readonly invocation SHALL replay that responsibility's binding without substituting the primary model

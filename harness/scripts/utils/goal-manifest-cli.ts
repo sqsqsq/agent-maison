@@ -5,6 +5,9 @@
 import { isUserPinnedModel, parseUserDeadlineAt, type GoalManifest, type AdapterModelPin } from './goal-manifest';
 import type { FeaturePhase } from './phase-transition-policy';
 import type { ProviderRef } from './types';
+import { adapterModelBinding, launchModelPin, assertModelReplay } from './adapter-model';
+import { normalizeModelRouteFields } from './types';
+import { loadLocalConfig } from './framework-local-config';
 
 export interface ManifestCliArgv {
   manifest?: string;
@@ -109,6 +112,7 @@ export function normalizeAdapterModelCliValue(raw: unknown): string | undefined 
 }
 
 export interface ResolveFinalModelPinInput {
+  cliPin?: AdapterModelPin;
   /** 已归一/校验的 --adapter-model CLI 值（无 pin 时 undefined），或 undefined */
   cliValue?: string;
   /** reconcile 后的 effective adapter */
@@ -134,7 +138,7 @@ export type ResolveFinalModelPinResult =
   | { ok: false; message: string };
 
 function modelPinUnsupported(adapter: string): boolean {
-  return adapter === 'chrys' || adapter === 'generic' || adapter === 'deepseek-harness';
+  return adapter === 'chrys' || adapter === 'generic';
 }
 
 /**
@@ -164,7 +168,7 @@ export function resolveFinalModelPin(
   input: ResolveFinalModelPinInput,
 ): ResolveFinalModelPinResult {
   const {
-    cliValue,
+    cliValue: cliRawValue,
     effectiveAdapter,
     originalAdapter,
     manifestPin,
@@ -174,7 +178,11 @@ export function resolveFinalModelPin(
     overrideManifest,
     overrideAdapter,
   } = input;
-  const makePin = (value: string): AdapterModelPin => ({ adapter: effectiveAdapter, value });
+  const cliValue = input.cliPin?.source === 'frontend' && manifestPin ? undefined : input.cliPin?.value ?? cliRawValue;
+  const makePin = (value: string): AdapterModelPin => {
+    const { source: _history, ...prior } = manifestPin?.adapter === effectiveAdapter ? manifestPin : {} as Partial<AdapterModelPin>;
+    return { ...prior, ...input.cliPin, adapter: effectiveAdapter, value };
+  };
   // adapter 变化以 **reconcile/applyManifestCliOverrides 前的原始 adapter** 判定（旧 run/source
   // 无 pin 时，pin.adapter 不存在，无法据此推断原 adapter）。
   const adapterChanged = originalAdapter !== undefined && originalAdapter !== effectiveAdapter;
@@ -191,7 +199,7 @@ export function resolveFinalModelPin(
       ok: false,
       message:
         `[goal-runner] BLOCKER: adapter ${effectiveAdapter} 不支持 --adapter-model 模型钉` +
-        '（无模型回放旗标）；请移除 CLI flag，或清除 manifest 中的 adapter_model_pin。',
+        '；缺少精确回放契约，保留原任务等待支持，不发送模型请求。',
     };
   }
 
@@ -265,15 +273,13 @@ export function resolveFinalModelPin(
   }
 
   // cliValue 在场、manifest 绑定 run。
-  if (manifestPin && manifestPin.value === cliValue && !adapterChanged && !pinAdapterMismatch) {
+  if (manifestPin && adapterModelBinding(manifestPin) === adapterModelBinding(makePin(cliValue)) && !adapterChanged && !pinAdapterMismatch) {
     // 同值幂等。plan 4e6fb3b6 批二 review R4：来源的落盘走身份授权路径——带 --override-manifest 才改为用户显式钉值；
     // 不带则 manifest 原样（改来源即改身份字段，未授权会被当成漂移）。本次调用内是否按用户钉死，由替代决策看
     // "本次显式给了型号"（decideModelAlternative.explicitModel）决定，不依赖这里的来源。
     return {
       ok: true,
-      pin: overrideManifest || !manifestPin.source
-        ? makePin(cliValue)
-        : { ...makePin(cliValue), source: manifestPin.source },
+      pin: overrideManifest ? makePin(cliValue) : manifestPin,
     };
   }
   // resume 同时换 adapter 与模型 → 两个 override 都必须有。
@@ -299,68 +305,6 @@ export function resolveFinalModelPin(
     };
   }
   return { ok: true, pin: makePin(cliValue) };
-}
-
-// ----------------------------------------------------------------------------
-// plan 4e6fb3b6 §6.2：模型不受支持时的获准替代（纯决策；执行与事件在 goal-phase-runtime）
-// ----------------------------------------------------------------------------
-
-/** 未钉型号时实际用的是 adapter CLI 的用户配置默认型号——列"已试过"时用这个说法。 */
-export const ADAPTER_DEFAULT_MODEL_LABEL = '(adapter 默认型号)';
-
-export type ModelAlternativeDecision =
-  | { kind: 'switch'; model: string; tried: string[] }
-  | {
-      kind: 'refuse';
-      reason: 'user_pinned' | 'adapter_unsupported' | 'not_configured' | 'budget_exhausted' | 'exhausted';
-      tried: string[];
-    };
-
-/**
- * 已试过 = 历次替代事件的 from/to + 当前生效的型号（它刚被判不受支持）。未钉型号记为默认型号标签。
- * events 取交付周期血缘（祖先 + 当前 run），后继与恢复不会把试过的型号再试一遍。
- */
-export function collectTriedModels(
-  events: ReadonlyArray<{ type?: string; from?: unknown; to?: unknown }>,
-  currentPin: AdapterModelPin | undefined,
-): string[] {
-  const tried: string[] = [];
-  const add = (v: unknown): void => {
-    const label = typeof v === 'string' && v.trim() ? v.trim() : ADAPTER_DEFAULT_MODEL_LABEL;
-    if (!tried.includes(label)) tried.push(label);
-  };
-  for (const e of events) {
-    if (e.type !== 'adapter_model_substituted') continue;
-    add(e.from);
-    add(e.to);
-  }
-  add(currentPin?.value);
-  return tried;
-}
-
-/**
- * 四行表（plan §6.2）：用户显式钉了型号 → 交还；没钉、清单里还有没试过的、预算未尽 → 换下一个；
- * 清单为空 / 全部试过 / 预算已尽 → 交还并列出试过的型号。不支持 pin 的 adapter 同样不能自动替代。
- */
-export function decideModelAlternative(input: {
-  adapter: string;
-  pin: AdapterModelPin | undefined;
-  /** 本次调用显式给的 --adapter-model（批二 review R4：显式给了即按用户钉死，不论 manifest 里记的来源） */
-  explicitModel?: string;
-  approvedModels: readonly string[];
-  tried: readonly string[];
-  remainingMs: number;
-}): ModelAlternativeDecision {
-  const tried = [...input.tried];
-  if (input.explicitModel !== undefined || isUserPinnedModel(input.pin)) return { kind: 'refuse', reason: 'user_pinned', tried };
-  if (modelPinUnsupported(input.adapter)) {
-    return { kind: 'refuse', reason: 'adapter_unsupported', tried };
-  }
-  if (input.approvedModels.length === 0) return { kind: 'refuse', reason: 'not_configured', tried };
-  if (!(input.remainingMs > 0)) return { kind: 'refuse', reason: 'budget_exhausted', tried };
-  const next = input.approvedModels.find((m) => !tried.includes(m));
-  if (!next) return { kind: 'refuse', reason: 'exhausted', tried };
-  return { kind: 'switch', model: next, tried };
 }
 
 // ----------------------------------------------------------------------------
@@ -424,6 +368,25 @@ export interface ResolveFinalVisualProviderPinInput {
   overrideManifest: boolean;
 }
 
+/** Visual selection only inherits its own authorized configuration, never the primary route. */
+export function resolveVisualProviderCliSelection(argv: Record<string, any>, projectRoot: string, authorized?: ProviderRef): ProviderRef | undefined {
+  const ref = normalizeVisualProviderCliPair(argv['visual-adapter'], argv['visual-model']);
+  const routeKeys = ['visual-provider', 'visual-reasoning', 'visual-model-config'];
+  if (!ref) {
+    if (routeKeys.some(key => argv[key] !== undefined)) throw new Error('视觉路由参数须与 --visual-adapter/--visual-model 一起提供');
+    return undefined;
+  }
+  const configured = authorized ?? loadLocalConfig(projectRoot)?.vision?.visual_provider;
+  const base = configured?.adapter === ref.adapter ? configured : undefined;
+  const selected = launchModelPin({ 'adapter-model': ref.model,
+    ...(argv['visual-provider'] !== undefined ? { 'adapter-provider': argv['visual-provider'] } : {}),
+    ...(argv['visual-reasoning'] !== undefined ? { 'adapter-reasoning': argv['visual-reasoning'] } : {}),
+    ...(argv['visual-model-config'] !== undefined ? { 'adapter-model-config': argv['visual-model-config'] } : {}) }, ref.adapter, projectRoot,
+    { ...base, adapter: ref.adapter, value: base?.model ?? ref.model });
+  assertModelReplay(selected);
+  return { ...ref, ...normalizeModelRouteFields(selected as unknown as Record<string, unknown>) };
+}
+
 export type ResolveFinalVisualProviderPinResult =
   | { ok: true; pin?: ProviderRef }
   | { ok: false; message: string };
@@ -445,9 +408,10 @@ export type ResolveFinalVisualProviderPinResult =
 export function resolveFinalVisualProviderPin(
   input: ResolveFinalVisualProviderPinInput,
 ): ResolveFinalVisualProviderPinResult {
-  const { cliRef, manifestPin, isResume, hasManifestFlag, isSuccessor, overrideManifest } = input;
+  const { cliRef: rawCliRef, manifestPin, isResume, hasManifestFlag, isSuccessor, overrideManifest } = input;
+  const cliRef = rawCliRef && rawCliRef.adapter === manifestPin?.adapter ? { ...manifestPin, ...rawCliRef } : rawCliRef;
   const sameRef = (a?: ProviderRef, b?: ProviderRef): boolean =>
-    Boolean(a && b && a.adapter === b.adapter && a.model === b.model);
+    Boolean(a && b && a.adapter === b.adapter && adapterModelBinding({ ...a, value: a.model }) === adapterModelBinding({ ...b, value: b.model }));
 
   // successor 出生特权：显式双参数即新 run 出生输入，可覆盖继承值。
   if (isSuccessor && !isResume) {

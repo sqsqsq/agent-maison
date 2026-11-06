@@ -1,5 +1,9 @@
 import * as path from 'path';
 import * as fs from 'fs';
+import { readGoalVisualProviderEnv } from './utils/phase-state';
+import { adapterModelBinding, freezeModelPin, launchModelPin, modelMismatchInEvents, rebindTaskModel } from './utils/adapter-model';
+import { resolveInvokeHardCliFailure } from './utils/vision-canary';
+import { warnRetiredModelAlternatives } from './utils/framework-local-config';
 import { readSessionExecution, acceptedSessionReport, acceptSessionExecution, normalizeSessionReport, inspectSessionExecutionBeforeRuntime, sessionRunMaterialPath, sessionReportInputPath, executionRequestForInvoke, observeSessionExecution, stopBoundExecution, sessionExecutionDeadlineMs, type IssuedSessionExecution, type SessionExecutionReport } from './utils/session-execution-handoff';
 import * as YAML from 'yaml';
 import minimist from 'minimist';
@@ -79,7 +83,7 @@ import { loadInertLegacyFidelityIntentSsot } from './utils/fidelity-shared';
 import { designDeliveryNextStep, DesignDeliveryPreparationRequired } from './utils/design-delivery-entry';
 import { findInitialDesignRun, prepareInitialDesignRun, projectInitialDesignDelivery, initialDesignPhasePolicy, initialDesignScopeActionIssues } from './utils/initial-design-delivery';
 import type { ProviderRef } from './utils/types';
-import { applyManifestCliOverrides, validateManifestCliOverrides } from './utils/goal-manifest-cli';
+import { applyManifestCliOverrides, validateManifestCliOverrides, resolveVisualProviderCliSelection, resolveFinalVisualProviderPin, resolveFinalModelPin } from './utils/goal-manifest-cli';
 import { assertCanonicalDeliveryChild, originalDeliveryForManifest } from './utils/delivery-origin';
 export type { GoalModeInSessionOptions } from './utils/goal-phase-runtime';
 export { deriveInSessionFingerprint } from './utils/goal-phase-runtime';
@@ -126,7 +130,9 @@ export interface PrepareGoalModeRunOptions {
   budget?: GoalBudget;
   unattended?: UnattendedContract;
   adapterModelPin?: AdapterModelPin;
+  modelOverride?: boolean;
   visualProviderPin?: ProviderRef;
+  resolveVisualProviderPin?: (frozen?: ProviderRef, successor?: boolean) => ProviderRef | undefined;
   fidelity?: GoalManifest['fidelity'];
   deliveryOrigin?: GoalManifest['delivery_origin'];
   dependencyPolicy?: GoalManifest['dependency_policy'];
@@ -155,7 +161,7 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
     if (origin.requirement !== options.requirement || origin.adapter !== options.adapter) throw new Error('[goal-mode-entry] child cannot replace original requirement or adapter');
     options = { ...options, requirementSourceFiles: origin.requirement_source_files, userDeadlineAt: origin.user_deadline_at, unattended: origin.unattended,
       adapterSource: typeof origin.adapter_provenance === 'string' && (RUN_ADAPTER_PROVENANCES as readonly string[]).includes(origin.adapter_provenance) ? origin.adapter_provenance as RunAdapterProvenance : undefined,
-      adapterModelPin: origin.adapter_model_pin, visualProviderPin: origin.visual_provider_pin, fidelity: origin.fidelity,
+      adapterModelPin: origin.adapter_model_pin, modelOverride: true, visualProviderPin: origin.visual_provider_pin, fidelity: origin.fidelity,
       dependencyPolicy: origin.dependency_policy, minimumAssurance: origin.minimum_assurance, preAuthorizedMutations: origin.pre_authorized_mutations };
   }
   const feature = options.feature.trim();
@@ -176,7 +182,7 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
         call: {
           requirement,
           ...(options.requirementSourceFiles?.length ? { requirementSourceFiles: options.requirementSourceFiles } : {}),
-          attended: true,
+          attended: true, adapterModelPin: options.adapterModelPin,
           supersede: options.supersede,
         },
       });
@@ -185,7 +191,7 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
   const next = previousInitial ? null : designDeliveryNextStep({ ...options, feature });
   if (initial || previousInitial || next) {
     const prepared = prepareInitialDesignRun({ ...options, feature,
-      visualProviderPin: options.visualProviderPin ?? resolveUnattendedVisualProviderPin(loadLocalConfig(options.projectRoot), options.frameworkRoot).pin });
+      visualProviderPin: options.visualProviderPin ?? (!previousInitial ? resolveUnattendedVisualProviderPin(loadLocalConfig(options.projectRoot), options.frameworkRoot).pin : undefined) });
     const continuation: RunContinuationDecision = prepared.created
       ? prepared.continuation ?? { kind: 'fresh', explicit: false, reason: '原始正式请求进入同一受管设计段' }
       : { kind: 'rejoin', explicit: false, runId: prepared.manifest.run_id, started: true, reason: '接回原始正式请求与其现有设计/CU工作' };
@@ -196,7 +202,9 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
       feature, featuresDir: relFeaturesDir(options.projectRoot),
     });
     const existingDir = path.resolve(options.projectRoot, ...existing.report_dir.split('/'));
-    return { manifest: existing, manifestPath: path.join(existingDir, 'manifest.json'), runDir: existingDir, continuation };
+    const bound = rebindTaskModel(existing, options.adapterModelPin, options.projectRoot, options.modelOverride === true,
+      options.resolveVisualProviderPin?.(existing.visual_provider_pin, false) ?? options.visualProviderPin);
+    return { manifest: bound, manifestPath: path.join(existingDir, 'manifest.json'), runDir: existingDir, continuation };
   }
   const workflow = resolveWorkflowSpec(options.projectRoot, { frameworkRoot: options.frameworkRoot });
   if (continuation.kind === 'successor') {
@@ -216,14 +224,17 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
     }
     const baseline = resolveGoalRunBaseline(options.projectRoot, feature, source.run_id);
     if (baseline.available) source.run_base_sha = baseline.baseSha; else delete source.run_base_sha;
+    const selectedModel = options.adapterModelPin?.source === 'frontend' && source.adapter_model_pin
+      ? source.adapter_model_pin : freezeModelPin(options.adapterModelPin, options.projectRoot);
+    const selectedVisual = options.resolveVisualProviderPin?.(source.visual_provider_pin, true) ?? options.visualProviderPin;
     const birthInput = buildGoalManifestFromInput({
       feature, run_id: options.runId, requirement, adapter: source.adapter,
       ...(options.userDeadlineAt ? { user_deadline_at: options.userDeadlineAt } : {}),
       ...(options.requirementSourceFiles?.length ? { requirement_source_files: options.requirementSourceFiles } : {}),
       start_phase: source.start_phase, end_phase: source.end_phase,
       unattended: options.unattended ?? { write_mode: 'full-access', approval_mode: 'never' },
-      ...(options.adapterModelPin ? { adapter_model_pin: options.adapterModelPin } : {}),
-      ...(options.visualProviderPin ? { visual_provider_pin: options.visualProviderPin } : {}),
+      ...(selectedModel ? { adapter_model_pin: selectedModel } : {}),
+      ...(selectedVisual ? { visual_provider_pin: selectedVisual } : {}),
       ...(options.fidelity ? { fidelity: options.fidelity } : {}),
       ...(options.deliveryOrigin ? { delivery_origin: options.deliveryOrigin } : {}),
       ...(options.dependencyPolicy ? { dependency_policy: options.dependencyPolicy } : {}),
@@ -257,6 +268,8 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
   const birth = resolveBirthExecutionScope(options.projectRoot, feature, workflow, options.frameworkRoot, requirement);
   const executionScope = birth.scope;
   if (executionScope && !executionScope.phase_chain.length) throw new Error('[goal-mode-entry] empty scope: verify existing results without creating a run');
+  options = { ...options, adapterModelPin: freezeModelPin(options.adapterModelPin, options.projectRoot),
+    visualProviderPin: options.resolveVisualProviderPin?.(undefined, false) ?? options.visualProviderPin };
   const manifest = buildGoalManifestFromInput(
     {
       feature,
@@ -721,6 +734,17 @@ async function runGoalExecutionAction(options: Parameters<typeof runGoalModeSess
   }
   const accepted = acceptedSessionReport(actualRunDir, issued);
   if (accepted) return { ...view(), duplicate: true, status: accepted.report.status };
+  const currentManifest = loadGoalRunManifestFromRun(options.projectRoot, issued.request.context.runId, { feature: issued.request.context.feature });
+  const origin = originalDeliveryForManifest(options.projectRoot, currentManifest);
+  const modelBinding = adapterModelBinding((origin ?? currentManifest).adapter_model_pin);
+  const started = loadAuthoritativeEvents(path.join(actualRunDir, 'events.jsonl')).some(event => event.type === 'agent_process_bound' && event.invoke_id === issued.request.invoke_id)
+    || ['agent-events.jsonl', 'agent-output.log'].some(name => fs.existsSync(path.join(actualRunDir, path.dirname(issued.reference.path), name)));
+  const expectedVisual = (origin ?? currentManifest).visual_provider_pin;
+  const requestVisual = readGoalVisualProviderEnv(issued.request.context.childEnv ?? {});
+  const visualMismatch = issued.request.purpose !== 'vision_canary' && (expectedVisual?.adapter !== requestVisual?.adapter
+    || adapterModelBinding(expectedVisual && { ...expectedVisual, value: expectedVisual.model }) !== adapterModelBinding(requestVisual && { ...requestVisual, value: requestVisual.model }));
+  if ((!modelBinding || modelBinding !== issued.request.context.adapterModel || visualMismatch) && !started) return { ...view(), status: 'waiting',
+    detail: '旧请求的模型绑定缺失或已失效；保留已接受成果，通过原任务授权入口补绑并重新签发未执行请求。未启动模型请求。' };
   const original = issued.request.context;
   if (original.owner.kind !== 'session') throw new Error('[goal-mode-entry] a process owner already executes its request');
   resumeIssuedSessionOwner(actualRunDir, original.owner);
@@ -785,8 +809,9 @@ async function runGoalExecutionAction(options: Parameters<typeof runGoalModeSess
           if (bindingStillAlive) throw new Error(bindingError);
           emit({ type: 'agent_process_settled', run_id: context.runId, phase: context.phase, invoke_id: issued.request.invoke_id,
             status: result.status, ...invocationEndFacts(result), kill_attempted: result.kill_attempted });
-          report = { status: bindingError ? 'failed' : result.status, phase: context.phase,
-            details: bindingError ?? result.details ?? readInvokeFinalText(result.stdout, path.join(directory, 'agent-output.log'), context.adapter) ?? `native exit=${result.exitCode}` };
+          const hardFailure = resolveInvokeHardCliFailure(result, { formalInvoke: true });
+          report = { status: bindingError ? 'failed' : hardFailure ? 'waiting' : result.status, phase: context.phase,
+            details: bindingError ?? hardFailure ?? result.details ?? readInvokeFinalText(result.stdout, path.join(directory, 'agent-output.log'), context.adapter) ?? `native exit=${result.exitCode}` };
         } finally { clearInterval(heartbeat); }
       }
       fs.writeFileSync(resultPath, JSON.stringify(report) + '\n');
@@ -814,7 +839,8 @@ async function main(): Promise<void> {
       'impact-behavior-change', 'impact-reason', 'impact-basis',
       // f9c2e6b4 t4：与 goal-runner 同名同义，共用同一读取函数（相对路径按 projectRoot 解析）
       'requirement-file', 'manifest', 'supersede',
-      'user-deadline-at',
+      'user-deadline-at', 'adapter-model', 'adapter-provider', 'adapter-reasoning', 'adapter-model-config', 'frontend-request-file', 'frontend-session-id', 'frontend-request-id',
+      'visual-adapter', 'visual-model', 'visual-provider', 'visual-reasoning', 'visual-model-config',
     ],
     boolean: ['force', 'force-takeover', 'prepare-run', 'prepare-scope', 'overwrite', 'help', 'next', 'authorize-autonomy', 'override-manifest', 'override-start', 'override-end', 'execute-request', 'observe', 'interrupt'],
   });
@@ -842,6 +868,7 @@ async function main(): Promise<void> {
     return;
   }
   const projectRoot = path.resolve(String(argv['project-root'] ?? process.cwd()));
+  warnRetiredModelAlternatives(loadLocalConfig(projectRoot));
   const frameworkRoot = path.resolve(String(argv['framework-root'] ?? defaultGoalModeFrameworkRoot()));
   const inputDefinition = argv.manifest && argv['prepare-run'] ? loadGoalManifestDefinition(String(argv.manifest), projectRoot) : undefined;
   const inputManifest = inputDefinition?.manifest;
@@ -876,14 +903,28 @@ async function main(): Promise<void> {
     throw new Error(`--adapter-source 非法：${adapterSourceRaw}`);
   }
   if (prepareRun) {
+    const model = resolveFinalModelPin({ cliPin: launchModelPin(argv, adapter, projectRoot, inputManifest?.adapter_model_pin),
+      manifestPin: inputManifest?.adapter_model_pin, effectiveAdapter: adapter, originalAdapter: inputManifest?.adapter,
+      isResume: false, hasManifestFlag: !!inputManifest, isSuccessor: Boolean(argv.supersede),
+      overrideManifest: Boolean(argv['override-manifest']), overrideAdapter: Boolean(argv['override-adapter']) });
+    if (!model.ok) throw new Error(model.message);
+    const selectVisual = (frozen = inputManifest?.visual_provider_pin, successor = false) => {
+      const visual = resolveFinalVisualProviderPin({ cliRef: resolveVisualProviderCliSelection(argv, projectRoot, frozen),
+        manifestPin: frozen, isResume: Boolean(frozen) && !successor, hasManifestFlag: !!inputManifest,
+        isSuccessor: successor, overrideManifest: Boolean(argv['override-manifest']) });
+      if (!visual.ok) throw new Error(visual.message);
+      return visual.pin;
+    };
     const prepared = prepareGoalModeRun({
       projectRoot,
       frameworkRoot,
       feature,
       runId: runId || undefined,
       adapter,
+      adapterModelPin: model.pin, modelOverride: Boolean(argv['override-manifest']),
+      resolveVisualProviderPin: selectVisual,
       ...(inputManifest ? { unattended: inputManifest.unattended,
-        adapterModelPin: inputManifest.adapter_model_pin, visualProviderPin: inputManifest.visual_provider_pin, fidelity: inputManifest.fidelity,
+        fidelity: inputManifest.fidelity,
         dependencyPolicy: inputManifest.dependency_policy, minimumAssurance: inputManifest.minimum_assurance, preAuthorizedMutations: inputManifest.pre_authorized_mutations,
         ...(inputManifest.adapter_provenance && (RUN_ADAPTER_PROVENANCES as readonly string[]).includes(inputManifest.adapter_provenance) ? { adapterSource: inputManifest.adapter_provenance as RunAdapterProvenance } : {}) } : {}),
       ...(adapterSourceRaw

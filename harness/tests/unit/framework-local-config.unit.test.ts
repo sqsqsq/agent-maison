@@ -23,7 +23,6 @@ import {
   LOCAL_CONFIG_FILENAME,
   mergeLocalIntoToolchain,
   resolveAgentAdapterSource,
-  resolveApprovedModels,
   resolveUnattendedB1Repair,
   updateLocalConfig,
   writeLocalConfig,
@@ -42,7 +41,7 @@ function mkTmp(): string {
 const cases: Array<{ name: string; run: () => void }> = [
   {
     // plan 4e6fb3b6 §6.1
-    name: 'P3 t4 adapters.<adapter>.approved_models：按序去重读出；缺省=无替代；解析不了按未配置并提示，不拖垮整个 local；原样 round-trip',
+    name: 'P3 t4 retired adapters.approved_models：任意历史形状不阻断读取，原样 round-trip',
     run: () => {
       const root = mkTmp();
       try {
@@ -53,16 +52,11 @@ const cases: Array<{ name: string; run: () => void }> = [
           adapters: { codex: { approved_models: [' gpt-a ', 'gpt-b', 'gpt-a'] }, claude: { approved_models: 'x' } },
         });
         const local = loadLocalConfig(root);
-        assert.deepStrictEqual(resolveApprovedModels(local, 'codex'), { models: ['gpt-a', 'gpt-b'] });
-        const bad = resolveApprovedModels(local, 'claude');
-        assert.deepStrictEqual(bad.models, [], '解析不了按未配置处理');
-        assert.ok(bad.warning?.includes('adapters.claude.approved_models'), `须提示：${bad.warning}`);
-        assert.deepStrictEqual(resolveApprovedModels(local, 'cursor'), { models: [] }, '没有这一项就没有替代，也不提示');
-        assert.deepStrictEqual(resolveApprovedModels(null, 'codex'), { models: [] }, '无 local 文件');
+        assert.deepStrictEqual(local?.adapters?.codex.approved_models, [' gpt-a ', 'gpt-b', 'gpt-a']);
+        assert.strictEqual(local?.adapters?.claude.approved_models, 'x');
         for (const v of [[''], ['a'.repeat(129)], ['ok', 1], ['bad\u0001']]) {
           writeRaw({ schema_version: '1.0', adapters: { codex: { approved_models: v } } });
-          const r = resolveApprovedModels(loadLocalConfig(root), 'codex');
-          assert.ok(r.models.length === 0 && !!r.warning, `非法值 ${JSON.stringify(v)} 须按未配置并提示`);
+          assert.deepStrictEqual(loadLocalConfig(root)?.adapters?.codex.approved_models, v);
         }
         writeRaw({ schema_version: '1.0', adapters: 'nope' });
         const warned: string[] = [];

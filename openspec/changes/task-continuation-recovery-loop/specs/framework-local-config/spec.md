@@ -2,7 +2,7 @@
 
 ### Requirement: Approved model alternatives are personal settings per adapter
 
-`framework.local.json` SHALL accept an optional top-level `adapters` object whose entries are keyed by adapter name and MAY carry `approved_models: string[]`, the ordered list of models the user approves as substitutes when the pinned or default model is unsupported. The field SHALL be registered in top-level key ownership and in `specs/framework.local.schema.json`. Loading SHALL preserve the `adapters` object losslessly so round-trip writes never drop it; a non-object `adapters` SHALL be dropped with one warning per process instead of failing the whole local config. At the point of use, a missing list SHALL mean no alternatives; a list that is not an array of non-empty strings of at most 128 characters without control characters SHALL be treated as not configured with a hint. Values SHALL be trimmed, de-duplicated by first occurrence, and tried in the given order. The list SHALL NOT override a model the user pinned and SHALL NOT raise any budget.
+`framework.local.json` SHALL preserve legacy adapters entries for lossless round-trip. approved_models SHALL be ignored for every value shape, with one startup warning, and SHALL NOT authorize any substitute model. No retired value-shape validation SHALL block startup.
 
 Enforcement: `harness/scripts/utils/framework-local-config.ts`, `harness/scripts/utils/config-field-ownership.ts`, `specs/framework.local.schema.json`
 

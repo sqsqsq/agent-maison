@@ -39,8 +39,10 @@ import {
   writeVisualProviderInvokeEvent,
   VISUAL_PROVIDER_DEFAULT_TIMEOUT_MS,
   type VisualProviderInvocation,
+  type VisualProviderInvokeEvent,
 } from '../../../harness/scripts/utils/visual-provider-invoke';
-import type { ProviderRef } from '../../../harness/scripts/utils/types';
+import { adapterModelBinding, type ProviderRef } from '../../../harness/scripts/utils/types';
+import { parseAdapterModelBinding } from '../../../harness/scripts/utils/adapter-model';
 import {
   visualResidualDisposition,
   DEVICE_BBOX_CONTRACT,
@@ -727,6 +729,7 @@ export function writeDelegatedCriticReceipt(input: {
     critic_run_id: criticRunId,
     adapter: input.provider.adapter,
     model: input.provider.model,
+    model_binding: adapterModelBinding({ ...input.invocation.provider, value: input.invocation.provider.model }),
     prompt_hash: createHash('sha256').update(input.prompt, 'utf-8').digest('hex').slice(0, 16),
     input_provenance: provenance,
     image_inputs: imageInputs,
@@ -781,7 +784,8 @@ function readReusableReview(ctx: CheckContext, frameworkRoot: string, provider: 
     const prior = receipt.reuse as VisualReviewReuseBinding | undefined;
     if (!prior?.observation_path || prior.input_hash !== binding.input_hash
       || prior.build_fingerprint !== binding.build_fingerprint || prior.nav_fingerprint !== binding.nav_fingerprint
-      || receipt.adapter !== provider.adapter || receipt.model !== provider.model) return null;
+      || receipt.adapter !== provider.adapter || receipt.model !== provider.model
+      || receipt.model_binding !== adapterModelBinding({ ...provider, value: provider.model })) return null;
     const relative = validateProjectRelativePath(ctx.projectRoot, prior.observation_path, 'visual observation');
     const eventPath = path.resolve(ctx.projectRoot, relative);
     const declaration = loadVisualProviderDeclaration(frameworkRoot, provider.adapter);
@@ -798,9 +802,13 @@ function readReusableReview(ctx: CheckContext, frameworkRoot: string, provider: 
     if (receipt.critic_run_id !== (runId && attemptId ? `${runId}-${attemptId}` : `interactive-${invokeId}`)) return null;
     const payload = validateVisualProviderReviewPayload(body, { targets, runId, attemptId, requireRegionAttest });
     if (!payload.ok) return null;
-    const invocation = JSON.parse(fs.readFileSync(path.join(path.dirname(eventPath), 'invoke-event.json'), 'utf8')) as VisualProviderInvocation;
-    if (invocation.outcome !== 'success' || invocation.invoke_id !== invokeId) return null;
-    return { payload, invocation: { ...invocation, provider, body, workspace_dirtied: false, input_provenance: 'unverified' as const } };
+    const event = JSON.parse(fs.readFileSync(path.join(path.dirname(eventPath), 'invoke-event.json'), 'utf8')) as VisualProviderInvokeEvent;
+    const selected = parseAdapterModelBinding(event.provider, event.model_binding);
+    if (event.outcome !== 'success' || event.invoke_id !== invokeId || event.provider !== provider.adapter
+      || !selected || selected.value !== event.model || event.model_binding !== receipt.model_binding) return null;
+    const { adapter, value, ...route } = selected;
+    return { payload, invocation: { ...event, provider: { ...route, adapter, model: value }, body,
+      workspace_dirtied: false, input_provenance: 'unverified' as const } };
   } catch { return null; }
 }
 

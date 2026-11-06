@@ -1,3 +1,6 @@
+import { adapterModelBinding } from './types';
+import { normalizeModelRouteFields } from './types';
+import type { ProviderRef } from './types';
 // ============================================================================
 // 阶段状态机 + 闭环同步（.current-phase.json / summary.json）
 // ============================================================================
@@ -126,23 +129,27 @@ export const MAISON_GOAL_VISUAL_PROVIDER_MODEL_ENV = 'MAISON_GOAL_VISUAL_PROVIDE
 /** 成对注入的唯一执行器（成对写、成对清——半个身份既冻结不了也回放不了）。 */
 export function applyGoalVisualProviderEnv(
   env: NodeJS.ProcessEnv,
-  pin: { adapter: string; model: string } | undefined,
+  pin: ProviderRef | undefined,
 ): void {
   deleteEnvKeyCaseInsensitive(env, MAISON_GOAL_VISUAL_PROVIDER_ADAPTER_ENV);
   deleteEnvKeyCaseInsensitive(env, MAISON_GOAL_VISUAL_PROVIDER_MODEL_ENV);
   if (pin?.adapter && pin.model) {
     env[MAISON_GOAL_VISUAL_PROVIDER_ADAPTER_ENV] = pin.adapter;
-    env[MAISON_GOAL_VISUAL_PROVIDER_MODEL_ENV] = pin.model;
+    env[MAISON_GOAL_VISUAL_PROVIDER_MODEL_ENV] = adapterModelBinding({ ...pin, value: pin.model })!;
   }
 }
 
 /** 从当前进程 env 读回冻结 provider 身份（成对齐全才算数）。 */
 export function readGoalVisualProviderEnv(
   env: NodeJS.ProcessEnv = process.env,
-): { adapter: string; model: string } | undefined {
+): ProviderRef | undefined {
   const adapter = env[MAISON_GOAL_VISUAL_PROVIDER_ADAPTER_ENV]?.trim();
   const model = env[MAISON_GOAL_VISUAL_PROVIDER_MODEL_ENV]?.trim();
-  return adapter && model ? { adapter, model } : undefined;
+  if (!adapter || !model) return undefined;
+  if (!model.startsWith('{')) return { adapter, model };
+  const value = JSON.parse(model);
+  if (typeof value.value !== 'string' || !value.value) return undefined;
+  return { adapter, model: value.value, ...normalizeModelRouteFields(value) };
 }
 
 export function isGoalOrchestrationEnv(): boolean {

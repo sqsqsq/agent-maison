@@ -542,7 +542,7 @@ export function generateGoalReportMarkdown(
       for (const m of pinMismatches) {
         lines.push(
           `| ↳ 模型核验 | — | — | — | — | adapter_model_observed=${String(m.observed).replace(/\|/g, '\\|')}` +
-            ` ≠ adapter_model_pin=${String(m.pin).replace(/\|/g, '\\|')}（仅告警，verdict/路由不变） | — |`,
+            ` ≠ adapter_model_pin=${String(m.pin).replace(/\|/g, '\\|')}（停止后续派发，保留成果等待恢复授权绑定） | — |`,
         );
       }
       // plan 9c3d7e1a §4.3：框架在本 run 内做的设计侧修复（纯记录，不参与裁决）。

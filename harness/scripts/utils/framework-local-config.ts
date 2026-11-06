@@ -1,3 +1,5 @@
+import { normalizeModelRouteFields } from './types';
+import type { ProviderRef } from './types';
 // ============================================================================
 // framework-local-config.ts — personal per-developer settings (framework.local.json)
 // ============================================================================
@@ -71,7 +73,7 @@ export interface FrameworkLocalConfigVision {
    * 「旧 local 记着一个已失去资格的 adapter」这件事**能被读出来**并按输入形态分流：
    * 交互态提示重选、无人值守 WARN+忽略+blind、显式 CLI fail-fast。
    */
-  visual_provider?: { adapter: string; model: string };
+  visual_provider?: ProviderRef;
 }
 
 /** t6 toolchain-probe-truth（plan e6a3c9f4）：机器探测快照（写入权限固定，见 schema 注释） */
@@ -135,9 +137,7 @@ export interface FrameworkLocalConfigDevice {
 }
 
 /**
- * plan 4e6fb3b6 §6.1：按 adapter 的个人级设置。目前只有 `approved_models`——模型不受支持时框架可按序
- * 换用的获准替代型号。解析器对这一节只做"是对象"的检查并原样保留（坏值不致整个 local 读不出、写回不丢），
- * 取值合法性由 resolveApprovedModels 在消费点判：解析不了按未配置处理并给出提示。
+ * 历史 adapter 设置原样保留以免写回丢失用户配置；approved_models 只提示停用，不参与执行。
  */
 export interface FrameworkLocalAdapterSettings {
   approved_models?: unknown;
@@ -441,7 +441,7 @@ function validateLocalSchema(parsed: unknown): FrameworkLocalConfig {
           '（provider 身份须冻结具体模型；不写 model 等于没有 provider）',
         );
       }
-      outVision.visual_provider = { adapter: vpAdapter, model: vpModel };
+      outVision.visual_provider = { adapter: vpAdapter, model: vpModel, ...normalizeModelRouteFields(vpObj) };
     }
 
     if (outVision.image_input_override || outVision.canary || outVision.visual_provider) {
@@ -535,34 +535,13 @@ function rejectUnknownObjectKeys(
   }
 }
 
-/**
- * plan 4e6fb3b6 §6.1：`adapters.<adapter>.approved_models` 的消费点校验。没有这一项 = 没有替代；
- * 解析不了（不是数组、含非字符串/空串/超 128 字符/控制字符）按未配置处理，并在 warning 里给出提示。
- * 型号去首尾空白、按首次出现去重，保持用户给的顺序（按序尝试）。
- */
-export function resolveApprovedModels(
-  local: FrameworkLocalConfig | null | undefined,
-  adapter: string,
-): { models: string[]; warning?: string } {
-  const adapters = (local as { adapters?: unknown } | null | undefined)?.adapters;
-  const where = `framework.local.json 的 adapters.${adapter}.approved_models`;
-  if (adapters === undefined) return { models: [] };
-  if (!adapters || typeof adapters !== 'object' || Array.isArray(adapters)) {
-    return { models: [], warning: `framework.local.json 的 adapters 不是对象，获准替代型号按未配置处理` };
+/** Startup-scoped warning; the caller owns its once-per-launch lifetime. */
+let retiredModelWarningShown = false;
+export function warnRetiredModelAlternatives(local: FrameworkLocalConfig | null): void {
+  if (!retiredModelWarningShown && Object.values(local?.adapters ?? {}).some(entry => entry && typeof entry === 'object' && Object.prototype.hasOwnProperty.call(entry, 'approved_models'))) {
+    retiredModelWarningShown = true;
+    console.warn('[framework-local-config] approved_models 已停用并忽略；不会自动替代任务模型。');
   }
-  const entry = (adapters as Record<string, unknown>)[adapter];
-  if (entry === undefined) return { models: [] };
-  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
-    return { models: [], warning: `framework.local.json 的 adapters.${adapter} 不是对象，获准替代型号按未配置处理` };
-  }
-  const raw = (entry as Record<string, unknown>).approved_models;
-  if (raw === undefined) return { models: [] };
-  const valid = Array.isArray(raw) && raw.every((v) =>
-    typeof v === 'string' && v.trim() !== '' && v.trim().length <= 128 && !/[\u0000-\u001F\u007F]/.test(v));
-  if (!valid) {
-    return { models: [], warning: `${where} 解析不了（须为型号字符串数组，每项非空、≤128 字符、无控制字符），按未配置处理` };
-  }
-  return { models: [...new Set((raw as string[]).map((v) => v.trim()))] };
 }
 
 /** Legacy value reader only. Unattended design authority now comes from the original task, not this retired opt-in. */

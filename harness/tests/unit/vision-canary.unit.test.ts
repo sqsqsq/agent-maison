@@ -33,7 +33,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         const executor = new DetachedGoalPhaseExecutor(() => ({ plan: {} as never, cwd: '.' }),
           (async () => ({ ...completed, ...negative })) as never);
         const result = await executor.execute(context);
-        assert(result.status === (Object.keys(negative).length ? 'failed' : 'passed'), JSON.stringify(result));
+        assert(result.status === ('skipped' in negative ? 'waiting' : Object.keys(negative).length ? 'failed' : 'passed'), JSON.stringify(result));
         assert(result.exitCode === 1, 'raw cleanup exit1 must be retained');
       }
       const waiting = await new AttendedGoalPhaseExecutor(async () => ({ status: 'waiting' })).execute(context);

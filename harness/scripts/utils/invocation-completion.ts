@@ -12,12 +12,13 @@ export interface InvocationCompletionFacts {
   readonly spawn_error?: unknown;
   readonly kill_reason?: unknown;
   readonly interrupted?: unknown;
+  readonly model_binding_mismatch?: unknown;
 }
 
 export function invocationCompleted(facts: InvocationCompletionFacts): boolean {
   if (facts.status === 'waiting' || facts.status === 'failed' || facts.skipped === true || facts.interrupted === true) return false;
   if (facts.timed_out === true || facts.kill_reason === 'agent_timeout' || facts.silent_killed === true ||
-      facts.terminal_failure_observed === true || facts.spawn_error) return false;
+      facts.terminal_failure_observed === true || facts.spawn_error || facts.model_binding_mismatch) return false;
   return facts.exitCode === 0 || facts.completion_observed === true;
 }
 
@@ -36,6 +37,7 @@ export function invocationEndFacts(facts: Partial<AgentInvokeResult> & { exit_co
     interrupted: facts.interrupted, signal: facts.signal, spawn_error: facts.spawn_error,
     completion_observed: facts.completion_observed, terminal_failure_observed: facts.terminal_failure_observed,
     terminal_error_excerpt: facts.terminal_error_excerpt,
+    model_binding_mismatch: facts.model_binding_mismatch,
     kill_reason: facts.kill_reason ?? (facts.timed_out === true ? 'agent_timeout' : undefined),
     provider_session_id: facts.provider_session_id, nativeSessionRebuildReason: facts.nativeSessionRebuildReason,
     readonly_enforced: facts.readonly_enforced, readonly_diagnostic: facts.readonly_diagnostic,

@@ -1,3 +1,4 @@
+import { adapterModelBinding } from './utils/adapter-model';
 /**
  * fidelity-intent-init — plan f6b2d9a4 T2：phase-driven 路由初始化 CLI。
  *
@@ -201,7 +202,7 @@ function main(): number {
     profileDir: loadResolvedProfile(projectRoot, cfg).profileDir,
     ...(attendedManifest?.fidelity ? { manifestFidelity: attendedManifest.fidelity } : {}),
     ...(attendedManifest?.adapter_model_pin
-      ? { modelPin: attendedManifest.adapter_model_pin.value }
+      ? { modelPin: adapterModelBinding(attendedManifest.adapter_model_pin)! }
       : {}),
     // plan ab072691 t2①：视觉委托身份——attended goal 用 manifest 冻结值（不重读 local，
     // 与 model pin 同纪律）；普通交互态（无 attended manifest）读个人级 local。

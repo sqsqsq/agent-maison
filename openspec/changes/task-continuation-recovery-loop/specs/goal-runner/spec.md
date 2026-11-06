@@ -4,7 +4,7 @@
 
 The runner SHALL accept a user-supplied `--adapter-model <id>` that is the authoritative model input for a headless run. It SHALL be replayed into every headless agent argv that actually performs work (the formal per-phase invocation and the vision canary probe), SHALL be recorded in the manifest as `adapter_model_pin: {adapter, value}` with `adapter` equal to the final effective adapter, and SHALL be echoed in dry-run plan output. The CLI value SHALL be trimmed then validated to be non-empty, at most 128 characters, and free of control characters; no model-name allowlist SHALL be introduced. The runner SHALL NOT read any adapter private configuration as a pin source, and SHALL NOT use Codex `-c model=<raw>`.
 
-The pin MAY additionally carry `source: user | approved_alternative`. The key SHALL be written only when an approved alternative is persisted; a pin without `source` SHALL be read as a user pin. This is read semantics only: loading an existing manifest SHALL NOT write the key back and SHALL NOT change its identity digest. An explicit `--adapter-model` on the current call SHALL be treated as a user pin for that call even when it equals a stored approved-alternative value. Approved alternatives SHALL come only from `framework.local.json adapters.<adapter>.approved_models`, never from adapter private configuration.
+The pin MAY carry user or frontend provenance; approved_alternative is read-only historical provenance. Old identity digests SHALL remain unchanged on reads. Model changes require task authorization; approved_models SHALL NOT grant replacement authority.
 
 Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/agent-invoke.ts`, `harness/scripts/utils/goal-manifest.ts`, `harness/scripts/utils/goal-manifest-cli.ts`
 
@@ -31,7 +31,7 @@ Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/agent-invo
 #### Scenario: Legacy pin without source reads as a user pin
 
 - **WHEN** a manifest written before this change carries `adapter_model_pin: {adapter, value}` without `source`
-- **THEN** the pin SHALL be treated as user-pinned (never substituted), the file SHALL stay byte-identical, and its identity digest SHALL equal the `run_created.manifest_identity_fields` recorded at birth
+- **THEN** the runner SHALL preserve results and wait for task-authorized selection, without trying another model
 
 ### Requirement: Adapter model pin lifecycle is adjudicated at a single point
 
@@ -69,18 +69,18 @@ Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-manif
 #### Scenario: Startup substitution survives resume without drift
 
 - **WHEN** the startup canary switched the pin from the default to an approved alternative and the run later halts and is resumed without `--override-manifest`
-- **THEN** the resume SHALL NOT report `manifest_identity_drift` and SHALL continue with the substituted model
+- **THEN** the runner SHALL preserve results and wait for task-authorized selection, without trying another model
 
 #### Scenario: Successor inherits an approved-alternative pin and may keep substituting
 
 - **WHEN** a successor is born without `--adapter-model` from a source whose pin has `source: approved_alternative`
-- **THEN** the successor pin SHALL keep the value and the source, and a later model-unsupported failure MAY substitute the next approved model
+- **THEN** the runner SHALL preserve results and wait for task-authorized selection, without trying another model
 
 ### Requirement: Canary probe hard CLI failure is a pre-phase blocker
 
 When the vision canary probe actually executes (`decideVisionCanaryProbe` returns `action === 'probe'`), a structured hard CLI failure SHALL be classified separately from ordinary invoke failures and SHALL escalate to a run-level BLOCKER before the first formal phase. The two newly covered classes are a child spawn race and a CLI/config argument incompatibility (unknown/unexpected/unrecognized argument or config load error). The probe SHALL return a `hard_cli_failure` outcome distinct from the existing invoke/invalid outcomes; only `hard_cli_failure` SHALL block. The existing resolved-binary preflight gate SHALL be preserved unchanged and SHALL NOT be double-counted as new protection. Skip paths (cache hit, dry-run, chain without a UI phase, local override) SHALL NOT gain this protection. Ordinary quota/API errors, auth errors other than the Codex terminal-failure envelope with status 401 or 403, and invalid vision answers SHALL remain non-blocking, and the existing binary gate behavior SHALL be unchanged.
 
-When the hard failure is "model unsupported" (the recovered Codex 400 envelope with one of its recorded phrasings) and the user has not pinned the model on this call or in the manifest, the runner SHALL first try the next untried model from `framework.local.json adapters.<adapter>.approved_models`, record the substitution, and re-probe; it SHALL block only when no alternative is available, and the halt guidance SHALL state why (user-pinned, adapter without model replay, not configured, all tried, budget exhausted) and list the tried models. Each probe SHALL be allowed `min(120 s, remaining run budget)`; when the remaining budget is already exhausted at startup the probe SHALL be skipped and the subsequent budget check SHALL halt the run.
+When a model is unsupported, the runner SHALL preserve the task and wait for recovery or task-authorized model selection. It SHALL NOT rotate models or re-probe approved_models candidates.
 
 Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-preflight.ts`, `harness/scripts/utils/agent-invoke.ts`, `harness/scripts/utils/vision-canary.ts`
 
@@ -104,12 +104,12 @@ Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-prefl
 #### Scenario: Unsupported model with an approved list substitutes before blocking
 
 - **WHEN** the probe reports the model as unsupported, the model is not user-pinned, and `approved_models` lists an untried model
-- **THEN** the runner SHALL switch to that model, emit `adapter_model_substituted`, re-probe with the new model, and continue without a halt when the new model is supported
+- **THEN** the runner SHALL preserve results and wait for task-authorized selection, without trying another model
 
 #### Scenario: Remaining budget shorter than the probe timeout bounds the probe
 
 - **WHEN** a resumed run has less remaining wall-clock budget than 120 seconds when the probe starts
-- **THEN** the probe SHALL be allowed at most the remaining budget, and once the budget is exhausted no further alternative SHALL be tried
+- **THEN** the runner SHALL preserve results and wait for task-authorized selection, without trying another model
 
 ### Requirement: Truncated-chain runs machine-verify upstream closures before starting
 

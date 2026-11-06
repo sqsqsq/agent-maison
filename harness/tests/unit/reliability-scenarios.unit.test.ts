@@ -418,7 +418,7 @@ const runS1: ScenarioRunner = async (_entry, done) => {
           !t.facts.claimed_complete || '宣称了完成',
           t.stop_state?.halt_reason === 'canary_cli_hard_failure' || `停机原因=${t.stop_state?.halt_reason}`,
           endError.includes(MODEL_UNSUPPORTED) || 'run_end 未带 400 原文',
-          (guidance.includes('未换型号') && guidance.includes('approved_models')) || `说明未写明为何没换型号：${guidance.slice(-200)}`,
+          (guidance.includes('--adapter-model') || guidance.includes('模型')) || `说明未写明为何没换型号：${guidance.slice(-200)}`,
           t.runs.every(r => r.agent_invocations.total === 0) || '出现了正式调用',
           runsAfterRepeat.length === 1 || `重发同一请求新建了 run：${runsAfterRepeat.join(',')}`,
           canaryHalts === 2 || `重发后须由金丝雀这项原检查以同一原因再停一次，实得 ${canaryHalts} 次`,
@@ -466,51 +466,16 @@ const runS1: ScenarioRunner = async (_entry, done) => {
 };
 
 const runS1Formal: ScenarioRunner = async (_entry, done) => {
-  // 有获准替代（正式调用 400）：本机配置 adapters.codex.approved_models 给出 gpt-5.5，框架自动换型号继续，操作者动作 0。
   const { root } = setupGoalRuntimeHost('codex', false); authorizeFixtureConstruction(root, 'request');
   try {
-    const localAbs = path.join(root, 'framework.local.json');
-    const local = JSON.parse(fs.readFileSync(localAbs, 'utf-8')) as Record<string, unknown>;
-    fs.writeFileSync(localAbs, JSON.stringify({ ...local, adapters: { codex: { approved_models: ['gpt-5.5'] } } }, null, 2));
-    git(root, ['add', '-A']);
-    git(root, ['commit', '-qm', 'approved model alternatives']);
-    const codingModels: string[] = [];
-    let lastModel = '(default)';
-    __testing_setCanaryProbeInvoke((async () => ({ exitCode: 0, stdout: 'ok', stderr: '', command: 'fake-codex' })) as never);
-    await requestVia('foreground', root, {
-      onCoding: (ctx) => {
-        lastModel = /--model\n(\S+)/.exec(ctx.prompt)?.[1] ?? '(default)';
-        codingModels.push(lastModel);
-        if (lastModel === 'gpt-5.5') writeDone(ctx);
-      },
-      invokeResultFor: (phase) => (phase === 'coding' && lastModel !== 'gpt-5.5' ? codex400Invoke() : null),
-    });
-    const [run] = listRuns(root, RT_FEATURE);
-    const events = eventsOf(root, RT_FEATURE, run);
-    const sub = events.find(e => e.type === 'adapter_model_substituted');
-    const subIdx = sub ? events.indexOf(sub) : -1;
-    done({
-      key: 'formal-with-alternative', root, feature: RT_FEATURE, frameworkRoot: REPO_ROOT, runIds: [run],
-      interventions: [],
-      acceptance: productAcceptance(root),
-      after: subIdx >= 0 ? { run_id: run, event_index: subIdx } : undefined,
-      hit: { ok: codingModels[0] === '(default)' && !!sub, evidence: `coding 实际调用型号=${codingModels.join('→')}；替代事件=${sub ? `${String(sub.from)}→${String(sub.to)}@${subIdx}` : '无'}` },
-      expectation: (t) => {
-        const reasons = [
-          t.conclusion === 'correct_completion' || `结论=${t.conclusion}`,
-          t.operator.rescue_count === 0 || `操作者动作=${t.operator.rescue_count}`,
-          codingModels.at(-1) === 'gpt-5.5' || `最后一次实际调用须是替代型号：${codingModels.join('→')}`,
-          (sub?.to === 'gpt-5.5' && sub?.trigger === 'invoke') || `替代事件=${JSON.stringify(sub)}`,
-          listRuns(root, RT_FEATURE).length === 1 || '不得新建 run',
-        ].filter((x): x is string => typeof x === 'string');
-        return { met: reasons.length === 0, detail: reasons.length ? reasons.join('；') : `同一 run 内自动换用 gpt-5.5 并正确完成，操作者动作 0；调用型号=${codingModels.join('→')}` };
-      },
-      extras: { coding_models: codingModels },
-    });
-  } finally {
-    clearFrameworkConfigCache();
-    fs.rmSync(root, { recursive: true, force: true });
-  }
+    const file = path.join(root, 'framework.local.json');
+    fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, 'utf8')), adapters: { codex: { approved_models: ['gpt-5.5'] } } }));
+    await requestVia('foreground', root, { invokeResultFor: phase => phase === 'coding' ? codex400Invoke() : null });
+    const [run] = listRuns(root, RT_FEATURE), events = eventsOf(root, RT_FEATURE, run);
+    done({ key: 'formal-with-alternative', root, feature: RT_FEATURE, frameworkRoot: REPO_ROOT, runIds: [run], interventions: [],
+      acceptance: productAcceptance(root), hit: { ok: !events.some(event => event.type === 'adapter_model_substituted'), evidence: 'retired approved_models did not authorize model substitution' },
+      expectation: task => ({ met: !task.facts.claimed_complete && !events.some(event => event.type === 'adapter_model_substituted'), detail: '保留原任务等待模型恢复或明确改选，不自动尝试旧清单' }) });
+  } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
 };
 
 /** 回拨最近一段已结束会话：活跃时长 = consumedMs，run_end 早于现在 10 分钟（过冷却）。只动时间。 */

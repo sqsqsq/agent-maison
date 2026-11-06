@@ -134,7 +134,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         vars,
       );
       assert(plan.argv.includes('run'), plan.argv.join(' '));
-      assert(plan.argv.includes('--dangerously-skip-permissions'), plan.argv.join(' '));
+      assert(plan.argv.includes('--auto'), plan.argv.join(' '));
       const dirIdx = plan.argv.indexOf('--dir');
       assert(dirIdx >= 0, plan.argv.join(' '));
       assert.strictEqual(plan.argv[dirIdx + 1], vars.PROJECT_ROOT);

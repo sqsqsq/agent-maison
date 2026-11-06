@@ -1,3 +1,4 @@
+import { bindControlledProcess } from '../utils/controlled-model-process';
 // ============================================================================
 // codex-terminal-closure.unit.test.ts — Codex terminal 收口（plan e6b3f8d2 t1）
 // ----------------------------------------------------------------------------
@@ -17,10 +18,11 @@ import {
 import * as os from 'os';
 import {
   defaultHeadlessInvokePlan,
-  invokeAgentHeadless,
+  invokeAgentHeadless as nativeInvokeAgentHeadless,
   resolveHeadlessInvokePlan,
   type AgentInvokeResult,
 } from '../../scripts/utils/agent-invoke';
+const invokeAgentHeadless = bindControlledProcess(nativeInvokeAgentHeadless);
 import { deriveInvokeUsage } from '../../scripts/utils/usage-capture';
 import { extractCodexAgentMessageText } from '../../scripts/utils/codex-terminal-events';
 import {

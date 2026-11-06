@@ -1,3 +1,5 @@
+import { controlledModelBinding } from '../utils/controlled-model-process';
+import { parseAdapterModelBinding } from '../../scripts/utils/adapter-model';
 import { unitCaseGroups } from '../utils/unit-case-selection';
 import assert from 'assert';
 import * as fs from 'fs';
@@ -90,7 +92,7 @@ export async function replayAuthor(configFile: string): Promise<void> {
 function fixture(mode: ReplayInput['mode'], ownerKind: 'process' | 'session') {
   const host = loadHostSnapshot(); clearFrameworkConfigCache(); handWriteProjections(host.root);
   const feature = SNAPSHOT_CU_FEATURE, runId = `running-${mode}-${ownerKind}`;
-  const manifest = buildGoalManifestFromInput({ feature, run_id: runId, adapter: 'codex', start_phase: 'spec', end_phase: 'spec',
+  const manifest = buildGoalManifestFromInput({ feature, run_id: runId, adapter: 'codex', adapter_model_pin: parseAdapterModelBinding('codex', controlledModelBinding('codex', host.root)), start_phase: 'spec', end_phase: 'spec',
     requirement: '核验已批准账本验收候选；原canonical设计和验收不变。', unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: host.root });
   createGoalRun({ manifest, projectRoot: host.root, chain: ['spec'] });
   const runDir = path.join(host.root, manifest.report_dir), stateDir = path.join(host.root, 'controlled-author'); fs.mkdirSync(stateDir);
@@ -101,7 +103,7 @@ function fixture(mode: ReplayInput['mode'], ownerKind: 'process' | 'session') {
   assert(acquired.ok); if (!acquired.ok) throw new Error('cannot acquire the actual fixture fence');
   const context = createWorkUnitExecutionContext({ runId, feature, workflowId: 'obligation-driven', track: 'full', chain: ['spec'], phase: 'spec', attemptId: 'author-one',
     owner: { ...acquired.token, kind: ownerKind }, projectRoot: host.root, frameworkRoot: host.frameworkRoot, runDir, reportDir: manifest.report_dir,
-    adapter: 'codex', authority: { write_mode: 'full-access', approval_mode: 'never' }, instruction: '修复当前实际验收差额，读取每次真实检查反馈；不得改canonical原验收。',
+    adapter: 'codex', adapterModel: controlledModelBinding('codex', host.root), authority: { write_mode: 'full-access', approval_mode: 'never' }, instruction: '修复当前实际验收差额，读取每次真实检查反馈；不得改canonical原验收。',
     childEnv: { MAISON_GOAL_RUN_ID: runId }, runtimeFacts: { receiptRequired: true, resume: false, successor: false } });
   const emit = (event: Record<string, unknown>) => fs.appendFileSync(path.join(runDir, 'events.jsonl'), JSON.stringify({ ts: new Date().toISOString(), ...event }) + '\n');
   const boundary = resolvePhaseWriteBoundary({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature, runId, executionRole: 'author',
@@ -272,7 +274,7 @@ const api=require(${JSON.stringify(path.join(SOURCE_HARNESS, 'scripts/utils/agen
 api.DEFAULT_AGENT_OUTPUT_IDLE_MS=${idleMs};
 const interval=global.setInterval;let beats=0;global.setInterval=(fn,ms,...args)=>interval(ms===30000?()=>{fn(...args);fs.writeFileSync(${JSON.stringify(path.join(f.stateDir, 'framework-heartbeats'))},String(++beats));}:fn,ms===30000?100:ms,...args);
 const original=api.invokeAgentHeadless;
-api.invokeAgentHeadless=(plan,cwd,options)=>{const argv=[process.execPath,${JSON.stringify(actor)}];fs.writeFileSync(${JSON.stringify(path.join(f.stateDir, 'transport-plan.json'))},JSON.stringify({originalAdapter:plan.adapterName,originalArgv:plan.argv,executedArgv:argv,hasOldTimeout:options.timeoutMs!==undefined}));return original({argv,label:'controlled native output-idle replay; no model CLI',adapterName:'terminal-replay-fixture'},cwd,{...options,terminalEventParser:'codex_turn_jsonl',toolEventCapture:'structured_events'});};
+api.invokeAgentHeadless=(plan,cwd,options)=>{const argv=[process.execPath,${JSON.stringify(actor)}];fs.writeFileSync(${JSON.stringify(path.join(f.stateDir, 'transport-plan.json'))},JSON.stringify({originalAdapter:plan.adapterName,originalArgv:plan.argv,executedArgv:argv,hasOldTimeout:options.timeoutMs!==undefined}));return original({argv,label:'controlled native output-idle replay; no model CLI',adapterName:undefined},cwd,{...options,terminalEventParser:'codex_turn_jsonl',toolEventCapture:'structured_events'});};
 `);
     const command = ['-r', require.resolve('ts-node/register/transpile-only'), '-r', preload, path.join(SOURCE_HARNESS, 'scripts/goal-mode-entry.ts'),
       '--feature', f.context.feature, '--run-id', f.input.runId, '--adapter', 'codex', '--run-mode', 'attended',

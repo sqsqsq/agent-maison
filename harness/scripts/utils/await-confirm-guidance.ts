@@ -1,31 +1,3 @@
-
-/**
- * plan 4e6fb3b6 §6.2：模型不受支持而框架没有换型号时的说明行——写明是型号被用户钉死，
- * 还是获准替代清单为空 / 已全部试过 / 预算已尽，并列出试过的型号。
- */
-export function describeModelAlternativeRefusal(opts: {
-  adapter: string;
-  reason: 'user_pinned' | 'adapter_unsupported' | 'not_configured' | 'budget_exhausted' | 'exhausted';
-  tried: readonly string[];
-  pinned?: string;
-}): string {
-  const tried = opts.tried.length > 0 ? opts.tried.join('、') : '（无）';
-  const configKey = `framework.local.json → adapters.${opts.adapter}.approved_models`;
-  switch (opts.reason) {
-    case 'user_pinned':
-      return `未换型号：型号由用户用 --adapter-model 钉死（${opts.pinned ?? tried}），框架不替换用户钉死的型号；换成可用型号需要你重新指定。`;
-    case 'adapter_unsupported':
-      return `未换型号：adapter ${opts.adapter} 没有模型回放旗标，框架无法替换型号。试过的型号：${tried}。`;
-    case 'not_configured':
-      return `未换型号：没有配置获准替代型号（${configKey}）。试过的型号：${tried}。`;
-    case 'budget_exhausted':
-      return `未换型号：用户明示截止已到，不再尝试下一个获准替代型号。试过的型号：${tried}。`;
-    case 'exhausted':
-    default:
-      return `未换型号：获准替代清单（${configKey}）里的型号已全部试过。试过的型号：${tried}。`;
-  }
-}
-
 /**
  * plan a7c3f9e2 t4/t5 编译形态未确定的说明（原在 goal-phase-runtime 内联），plan 4e6fb3b6 §3.3
  * 补齐四件事。缺的输入是"选哪个 product"——这是产品决定，框架不替宿主猜。

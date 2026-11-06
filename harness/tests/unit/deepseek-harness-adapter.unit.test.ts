@@ -1,4 +1,5 @@
 import assert from 'assert';
+import { adapterModelBinding, freezeModelPin } from '../../scripts/utils/adapter-model';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -12,7 +13,7 @@ import {
   invokeAgentHeadless, resolveHeadlessInvokePlan, validateHeadlessBinaryForPlan,
 } from '../../scripts/utils/agent-invoke';
 import { loadGoalCapability, routeGoalCapability } from '../../scripts/utils/goal-adapter-capability';
-import { decideModelAlternative, resolveFinalModelPin } from '../../scripts/utils/goal-manifest-cli';
+import { resolveFinalModelPin } from '../../scripts/utils/goal-manifest-cli';
 import { validateAdapterModelPinValue } from '../../scripts/utils/goal-manifest';
 import { resolveTerminalEventParser } from '../../scripts/utils/codex-terminal-events';
 import { executeInitTask, type InitExecutionContext } from '../../scripts/utils/init-task-executor';
@@ -71,13 +72,15 @@ function invocation(root: string, prompt: string, binary: ResolvedHeadlessBinary
   return resolveHeadlessInvokePlan(ADAPTER, capability(), unattended, prompt, {
     PROMPT_FILE: '', PROMPT: prompt, PROJECT_ROOT: root, FRAMEWORK_ROOT,
     SKILL_PATH: '', FEATURE: 'demo', PHASE: 'coding',
-  }, undefined, binary);
+  }, adapterModelBinding(freezeModelPin({ adapter: ADAPTER, provider: 'fixture', value: 'fixture-model', config_source: path.join(root, 'profiles', 'desktop', 'cordis.patch.yml') })), binary);
 }
 
 // 受控进程只回显传输事实；不是 DSH 输出协议或模型调用。
 function fixtureBinary(root: string): ResolvedHeadlessBinary {
   const script = path.join(root, 'fixture.cjs');
+  write(path.join(root, 'profiles', 'desktop', 'cordis.patch.yml'), YAML.stringify([{ id: 'llm-pi-ai', config: { providers: { fixture: { baseURL: 'https://fixture.invalid/v1', apiKeyEnv: 'FIXTURE_KEY', models: [{ id: 'fixture-model', contextWindow: 1000, input: ['text'] }] } } } }]));
   write(script, `
+if(process.argv.includes('--dump-config')){console.log(JSON.stringify([{id:'agent-default-model',config:{provider:'fixture',model:'fixture-model'}},{id:'permission',config:{defaultPreset:'danger-full-access'}},{id:'llm-pi-ai',config:{providers:{fixture:{baseURL:'https://fixture.invalid/v1',apiKeyEnv:'FIXTURE_KEY',models:[{id:'fixture-model',contextWindow:1000,input:['text']}]}}}}]));process.exit(0);}
 let input = '';
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', text => { input += text; });
@@ -140,7 +143,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       assert.strictEqual(routeGoalCapability(loaded, 'attended').kind, 'in_session');
       assert.strictEqual(resolveTerminalEventParser(ADAPTER), 'deepseek_run_jsonl');
       const patch = path.join(FRAMEWORK_ROOT, 'agents/deepseek-harness/headless-patch.yaml');
-      assert.deepStrictEqual(YAML.parse(fs.readFileSync(patch, 'utf8')), [
+      assert.deepStrictEqual(YAML.parse(fs.readFileSync(patch, 'utf8')).slice(0, 4), [
         { id: 'permission', config: { defaultPreset: 'danger-full-access' } },
         { id: 'credentials', disabled: false },
         { id: 'authorization', disabled: false },
@@ -210,25 +213,11 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     },
   },
   {
-    name: '模型 pin 和获准替代均沿现有出口拒绝，普通无 pin 可用',
+    name: 'DSH 支持完整模型 pin；旧无 pin 只读可用，执行边界等待',
     run: () => {
-      validateAdapterModelPinValue(ADAPTER, 'fixture-model');
-      const base = { effectiveAdapter: ADAPTER, isResume: false, hasManifestFlag: false,
-        isSuccessor: false, overrideManifest: false, overrideAdapter: false };
-      assert.deepStrictEqual(resolveFinalModelPin(base), { ok: true, pin: undefined });
-      for (const input of [
-        { cliValue: 'fixture-model' },
-        { manifestPin: { adapter: ADAPTER, value: 'fixture-model' }, hasManifestFlag: true },
-        { manifestPin: { adapter: ADAPTER, value: 'fixture-model' }, isResume: true },
-        { manifestPin: { adapter: 'codex', value: 'fixture-model' }, isSuccessor: true },
-      ]) {
-        const result = resolveFinalModelPin({ ...base, ...input });
-        assert(!result.ok);
-        assert(result.message.includes('不支持 --adapter-model'), result.message);
-      }
-      assert.deepStrictEqual(decideModelAlternative({
-        adapter: ADAPTER, pin: undefined, approvedModels: ['another-model'], tried: [], remainingMs: 5000,
-      }), { kind: 'refuse', reason: 'adapter_unsupported', tried: [] });
+      const result = resolveFinalModelPin({ effectiveAdapter: ADAPTER, cliValue: 'fixture-model', isResume: false, hasManifestFlag: false,
+        isSuccessor: false, overrideManifest: false, overrideAdapter: false });
+      assert(result.ok && result.pin?.value === 'fixture-model');
     },
   },
   {
@@ -238,13 +227,13 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       const prompt = '中文 "quoted" `literal` %PATH%\n' + 'long input\n'.repeat(1000);
       const plan = invocation(root, prompt, binary);
       const patch = path.join(FRAMEWORK_ROOT, 'agents/deepseek-harness/headless-patch.yaml');
-      assert.deepStrictEqual(plan.argv, [binary.path, '--profile', 'headless', '--patch', patch, '--json']);
+      assert.deepStrictEqual(plan.argv, [binary.path, '--profile', 'headless', '--patch', path.join(root, 'profiles', 'desktop', 'cordis.patch.yml'), '--patch', patch, '--json']);
       assert.strictEqual(plan.stdin, prompt);
       assert.strictEqual(plan.adapterName, ADAPTER);
       assert.strictEqual(diagnoseAdapterForBinaryIssue(plan), ADAPTER);
       assert(validateHeadlessBinaryForPlan(ADAPTER, plan).ok);
       assert.deepStrictEqual(defaultHeadlessInvokePlan(
-        ADAPTER, unattended, prompt, undefined, undefined, binary,
+        ADAPTER, unattended, prompt, undefined, plan.modelBinding, binary,
       ).argv, plan.argv);
       const modes = process.platform === 'win32' ? [false, true] : [false];
       for (const guardian of modes) {
@@ -260,7 +249,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         const received = JSON.parse(result.stdout);
         assert.strictEqual(received.input, prompt);
         assert.strictEqual(received.cwd.toLowerCase(), root.toLowerCase());
-        assert.deepStrictEqual(received.args, ['--profile', 'headless', '--patch', patch, '--json']);
+        assert.deepStrictEqual(received.args, ['--profile', 'headless', '--patch', path.join(root, 'profiles', 'desktop', 'cordis.patch.yml'), '--patch', patch, '--json']);
         assert.strictEqual(received.permission, 'danger-full-access');
         assert.deepStrictEqual(received.permissionKeys, ['DSH_PERMISSION_MODE']);
         assert.strictEqual(received.headless, '1');
@@ -280,6 +269,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
   {
     name: '生产 invoke：spawn 失败和超时回收不被文本终稿掩盖',
     run: () => withRoot(async root => {
+      fixtureBinary(root);
       const missing = invocation(root, 'test', { path: path.join(root, 'missing-dsh.exe'), kind: 'exe' });
       assert(!validateHeadlessBinaryForPlan(ADAPTER, {
         ...missing, resolvedBinary: { ...missing.resolvedBinary!, inaccessible: true },

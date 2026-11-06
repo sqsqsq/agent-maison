@@ -149,6 +149,9 @@ function authorUt(root: string): void {
 
 /** Profile-native boundary adaptation only; real assertion status is never replaced. */
 export function adaptNative(root: string): void {
+  const manifest = moduleAt(root, 'scripts/utils/goal-manifest').loadGoalRunManifestFromRun(root, 'session-cli', { feature: 'clamp' });
+  moduleAt(root, 'scripts/utils/adapter-model').rebindTaskModel(manifest, { adapter: 'claude', value: 'claude-opus-5-5', provider: 'anthropic',
+    config_source: path.join(root, 'controlled-model-home', 'settings.json') }, root, true);
   fs.appendFileSync(path.join(root, 'framework/profiles/generic/harness/ut-host-impl.js'), `
 const originalRun = exports.utHostImpl.checkUtHvigorTest;
 exports.utHostImpl.checkUtHvigorTest = (ctx, ...args) => {

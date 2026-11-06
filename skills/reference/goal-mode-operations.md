@@ -38,3 +38,23 @@ run-control.json 的 epoch、原 request、invoke_id、accepted report 与进程
 设备安装、真机测试/截图和 PIN 由既有 device readiness/credential gate 处理。不能自行猜密码、绕门、重置设备或复制秘密。DSH 使用同一 DSH_HOME 中真实 headless 路由的已保存凭据或正式环境来源；子工具可能过滤 KEY/PASSWORD/SECRET/TOKEN，不假设它会透传。框架不读取或复制凭据；缺凭据按真实外部条件恢复。模型与视觉 provider 只用当前 adapter 支持的明确钉值，不编造替代能力。
 
 框架 HALT/报错说明本次原件与影响；授权工作仍由共同协调器继续。缺正式完成、部件装配或 release 证据时保持具体未完项，不能以全部 CU 绿、作者退出0或六检查族 PASS 代签原终点。
+
+## 模型选择与费用授权
+
+前台 agent 先判断用户是否在本次任务中明确指定运行模型（业务正文提及模型不算）。对照当前 adapter/provider 的实际模型清单校对缩写、错字或原生别名为正式完整 ID；唯一时直接校对，歧义才列候选请用户确定。启动摘要显示原输入和最终正式 ID、provider、推理设置。框架只精确匹配正式 ID，不模糊匹配、不试发候选。
+
+显式选择通过 manifest 的 `adapter_model_pin: {adapter,value,provider?,reasoning_effort?,config_source?,route_identity?}` 或 `--adapter-model <完整ID> --adapter-provider <路由> [--adapter-reasoning <设置>] [--adapter-model-config <原生配置路径>]` 转交。模型 ID 中的斜杠保持原样。DSH 无显式模型参数时，从前台 agent shell 的 `DSH_SESSION_ID/DSH_HOME/DSH_PROFILE_DIR` 自动定位准确会话，复用启动时最后一个 `request/header` 及实际 profile 的 `cordis.patch.yml`；不要求人工猜测 seq，不默认取 desktop。三个 `--frontend-request-*` 参数保留为覆盖手段，原生配置来源须准确；Codex 请求 ID 为 turn_id。缺准确来源时保全等待，不从 lastUsed、最近会话、模型自称或后台默认值补齐。
+
+DSH 非秘密来源声明摘要保存在既有 pin 的 `route_identity`，最终 dump-config 必须与它一致；同路径 endpoint 改变也不可静默接受。补绑在锁内重读 manifest，既有截止时间等身份漂移须先处置；本次只授权模型字段。历史替代来源不授权新调用。独立视觉 CLI 可使用 `--visual-provider/--visual-reasoning/--visual-model-config`，缺省仅继承已授权的同 adapter 视觉配置；观察 sidecar 与评审回执按完整绑定复用，保留原调用身份。
+
+DSH 内置 `deepseek-official/deepseek-account` 未在 profile 声明时，以实际 DSH 版本、provider、model 和生效的非秘密 endpoint 计算同一 pin 的路由身份；原生选择、版本与请求核对仍生效。profile 自定义路由继续核对来源声明。detach 子进程保留父进程已经捕获的 pin，当前配置只供核对，不重新授权 endpoint。视觉新建/接回统一裁决，显式改选可在同一锁内与主 pin 一起更新；OpenCode 的前台导出配置目录是来源定位参数，不是要求重复型号的改选参数。
+
+前台自动捕获仅供新任务或无 pin 的旧任务绑定；已有任务接回及业务后继保持原 pin，不以 UI 改选触发换模型或起后继。仅在接续裁决确认需要绑定时冻结该来源，忽略无需使用的前台选择。
+
+主模型唯一真源是 manifest.adapter_model_pin。作者、质询、核验、格式修复、重试与恢复均消费自己的冻结绑定。仅 UI 改选不改变任务；任务明确改选沿既有 --override-manifest 入口，保留成果，重新签发尚未执行的旧绑定请求，排除旧 provider/推理设置的 SID 和能力缓存。原生辅助小模型保留前台原行为。
+
+DSH 以 headless 启动，先加载前台模型来源配置层，再施加框架权限及模型补丁。付费前以最终 --dump-config 核对 provider/model、baseURL/apiKeyEnv/contextWindow/input。凭据由 DSH 原生读取，框架不复制凭据；MISSING_CREDENTIAL 按既有硬失败交回。approved_models 已停用，每次启动提示一次后忽略任何旧值，不自动替代、不重探候选。
+
+当前原生能力不足或无法准确回放时，在付费前等待；实际同类原生主模型字段失配时立即取消并停止后续派发。启动参数、配置核对和请求身份观察分别报告；只有响应后可见的身份不能保证此前零误扣。
+
+原生来源路径约定：DSH 为 `DSH_HOME/profiles/<profile>/cordis.patch.yml`，Codex 为 `CODEX_HOME/config.toml`，Claude 为 `CLAUDE_CONFIG_DIR/settings.json`，OpenCode 当前为 `<home>/.config/opencode`。OpenCode 可从准确 session 的原生 export JSON 读取指定消息 ID 的 provider/model/variant；需同时提供前台原生配置目录。额外配置层无法准确绑定时先等待。独立视觉 pin 可在原有 `adapter/model` 中补充 `provider/reasoning_effort/config_source`，运输复用同一组字段，不继承主模型的路由。

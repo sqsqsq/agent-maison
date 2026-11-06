@@ -1,4 +1,5 @@
 #!/usr/bin/env ts-node
+import { adapterModelBinding, freezeModelPin, launchModelPin, parseAdapterModelBinding, modelMismatchInEvents, rebindTaskModel } from './utils/adapter-model';
 import { collectActionableDefects, resolveCurrentHapSha256Full, validateDeviceTestEvidenceBinding, readFreshVisualDisposition, type ActionableDefect, type UnverifiedDefect, type ActionableCollectResult, type DeviceTestCollectContext } from './utils/actionable-evidence';
 export { collectActionableDefects, resolveCurrentHapSha256Full, validateDeviceTestEvidenceBinding, readFreshVisualDisposition } from './utils/actionable-evidence';
 export type { ActionableDefect, UnverifiedDefect, ActionableCollectResult, DeviceTestCollectContext } from './utils/actionable-evidence';
@@ -103,7 +104,6 @@ import {
   type DeviceTestEvidenceDoc,
 } from './utils/device-test-evidence-shared';
 import {
-  describeModelAlternativeRefusal,
   buildProductSelectionUnresolvedGuidance,
 } from './utils/await-confirm-guidance';
 import {
@@ -127,7 +127,7 @@ import { preflightDeviceTestEvidenceCapability } from '../capability-registry';
 import type { CheckResult, HarnessResolvedProfile, ProviderRef, VisionMode } from './utils/types';
 import { workflowForExistingRun, resolveWorkflowSpec } from '../workflow-loader';
 import { resolveContextAdapterImageInput, isFreshCanaryForExecution } from './utils/multimodal-probe';
-import { loadLocalConfig as loadFrameworkLocalConfig, resolveApprovedModels, resolveUnattendedB1Repair } from './utils/framework-local-config';
+import { loadLocalConfig as loadFrameworkLocalConfig, warnRetiredModelAlternatives, resolveUnattendedB1Repair } from './utils/framework-local-config';
 import {
   designRepairInvokeLabel,
   designRepairSignature,
@@ -322,7 +322,6 @@ import {
   type WorkUnitExecutionContext,
   type WorkUnitExecutionControls,
 } from './utils/goal-phase-executor';
-import { parseClaudeInitModel, resolvePinVerifyMismatch } from './utils/claude-envelope';
 import {
   deleteRunTrustState,
   isValidRunIdBasename,
@@ -405,7 +404,7 @@ import {
 import {
   applyClosurePatchFromReceiptValidation,
   applyGoalModelPinEnv,
-  applyGoalVisualProviderEnv,
+  applyGoalVisualProviderEnv, readGoalVisualProviderEnv,
   hasGoalExecutionSignal,
   isGoalHeadlessEnv,
   MAISON_GOAL_MODEL_PIN_ENV,
@@ -494,9 +493,8 @@ import {
   validateManifestCliOverrides,
   normalizeAdapterModelCliValue,
   resolveFinalModelPin,
-  decideModelAlternative,
-  collectTriedModels,
   normalizeVisualProviderCliPair,
+  resolveVisualProviderCliSelection,
   resolveFinalVisualProviderPin,
   type ManifestCliArgv,
 } from './utils/goal-manifest-cli';
@@ -1555,7 +1553,7 @@ async function runHarnessPhase(
   };
   // plan d7f3a9c4 t3：model pin 注入链②（gate harness）——有 pin 才携带；无 pin 显式清理
   //（共享执行器：先清大小写变体再写唯一大写键，父环境残留不会漏入子进程）。
-  applyGoalModelPinEnv(childEnv, manifest?.adapter_model_pin?.value);
+  applyGoalModelPinEnv(childEnv, adapterModelBinding(manifest?.adapter_model_pin));
   // plan ab072691 t5①：provider 身份注入 gate harness——provider 评审发生在 gate 进程里
   // （capture 之后、严格 dispatch 之前），而那个进程没有 manifest。同一条注入纪律：
   // 成对写、成对清；无 pin 时只清不写（gate 侧取不到即按未配置处理，落 blind）。
@@ -2529,7 +2527,7 @@ export function resolvePhaseCapabilityAdvisory(
 
   const mmProbe = resolveContextAdapterImageInput(projectRoot, frameworkRoot, manifest.adapter, {
     runId: manifest.run_id,
-    ...(manifest.adapter_model_pin ? { modelPin: manifest.adapter_model_pin.value } : {}),
+    ...(manifest.adapter_model_pin ? { modelPin: adapterModelBinding(manifest.adapter_model_pin)! } : {}),
   });
   const toolkit = loadProfileOcrToolkit(resolvedProfile.profileDir);
   // E1：金丝雀 verdict=ocr_capable 是补充信号（agent 自身展示了从图片提取文字的能力，即便
@@ -2537,7 +2535,7 @@ export function resolvePhaseCapabilityAdvisory(
   // cursor review（E6 后）：与 harness-runner.ts 门禁钳制共用同一口径，不再各算一遍。
   const ocrAvailable = resolveOcrAvailableForRun(projectRoot, resolvedProfile.profileDir, manifest.adapter, {
     runId: manifest.run_id,
-    ...(manifest.adapter_model_pin ? { modelPin: manifest.adapter_model_pin.value } : {}),
+    ...(manifest.adapter_model_pin ? { modelPin: adapterModelBinding(manifest.adapter_model_pin)! } : {}),
   });
   // 能力只回答当前执行是否能读图。产物质量由当次 gate 判断，不得反向致盲后续 attempt。
   const effectiveSnap = capSnap;
@@ -3752,7 +3750,12 @@ function decideLaunchContinuation(
   const requirement = !argv.resume && typeof argv.requirement === 'string' && argv.requirement.trim() ? argv.requirement : undefined;
   const call: ContinuationCallFacts = {
     ...(requirement ? { requirement, ...(opts.requirementSources?.length ? { requirementSourceFiles: opts.requirementSources } : {}) } : {}),
-    ...(model ? { model } : {}),
+    ...(model ? { model, ...(['adapter-provider', 'adapter-reasoning', 'adapter-model-config'].some(key => argv[key] !== undefined) ? {
+      adapterModelPin: { adapter: String(argv.adapter ?? 'generic'), value: model,
+        ...(argv['adapter-provider'] !== undefined ? { provider: String(argv['adapter-provider']) } : {}),
+        ...(argv['adapter-reasoning'] !== undefined ? { reasoning_effort: String(argv['adapter-reasoning']) } : {}),
+        ...(argv['adapter-model-config'] !== undefined ? { config_source: path.resolve(projectRoot, String(argv['adapter-model-config'])) } : {}) }
+    } : {}) } : {}),
     ...(opts.attended ? { attended: true } : {}),
   };
   const runProbe = opts.runProbe;
@@ -3828,6 +3831,11 @@ async function runDetachLauncher(argv: minimist.ParsedArgs, runProbe?: (probe: s
   const supersedeTargets = normalizeSupersedeTargets(argv.supersede);
   let runId = raw.runId ?? (originalDesign && !supersedeTargets.includes(originalDesign.run_id) ? originalDesign.run_id : newRunId());
   let launchArgs = process.argv.slice(2);
+  let sourceManifest = originalDesign ?? (raw.isResume && raw.runId ? loadGoalRunManifestFromRun(projectRoot, raw.runId, { feature })
+    : argv.manifest ? loadGoalManifestFile(String(argv.manifest), projectRoot) : undefined);
+  const launchAdapter = reconcileRunAdapter({ projectRoot, requestedAdapter: argv.adapter ? String(argv.adapter) : sourceManifest?.adapter,
+    override: Boolean(argv['override-adapter']), adapterSource: argv['adapter-source'] ? String(argv['adapter-source']) : undefined }).effectiveAdapter;
+  let capturedPin = launchModelPin(argv, launchAdapter, projectRoot, sourceManifest?.adapter_model_pin);
   // plan 9c3d7e1a §5.3：supervisor 只负责拉起 `--resume`；原 run 继续还是起后继由这里与子进程用同一判断决定。
   if (isResume && !raw.dryRun) {
     let recovery: RunContinuationDecision | null = null;
@@ -3871,6 +3879,9 @@ async function runDetachLauncher(argv: minimist.ParsedArgs, runProbe?: (probe: s
         return 1;
       }
       runId = decision.runId;
+      sourceManifest = loadGoalRunManifestFromRun(projectRoot, decision.runId, { feature });
+    } else if (decision.kind === 'successor') {
+      sourceManifest = loadGoalRunManifestFromRun(projectRoot, decision.source, { feature });
     }
   }
   const reportDirRel = resolveGoalReportDir({ featuresDir, feature, runId, dryRun: raw.dryRun });
@@ -3907,6 +3918,8 @@ async function runDetachLauncher(argv: minimist.ParsedArgs, runProbe?: (probe: s
       return 1;
     }
   }
+  capturedPin = capturedPin?.source === 'frontend' && sourceManifest?.adapter_model_pin ? undefined : freezeModelPin(capturedPin, projectRoot);
+  if (capturedPin) launchArgs.push('--captured-model-pin', JSON.stringify(capturedPin));
   const reportDirAbs = path.join(projectRoot, ...reportDirRel.split('/'));
   fs.mkdirSync(reportDirAbs, { recursive: true });
   const logPathAbs = path.join(reportDirAbs, 'detach.log');
@@ -4035,7 +4048,7 @@ export function designRepairNeedsContinuation(events: readonly GoalRunEvent[], c
     && !records.slice(repairAt + 1, haltAt).some(event => event.type === 'agent_invoke_start' && chain.includes(String(event.phase)));
 }
 
-function parseGoalRuntimeArgs(args: readonly string[]): minimist.ParsedArgs {
+export function parseGoalRuntimeArgs(args: readonly string[]): minimist.ParsedArgs {
   return minimist([...args], {
     string: [
       'feature', 'requirement', 'adapter', 'adapter-source', 'start', 'end', 'resume', 'manifest',
@@ -4051,10 +4064,10 @@ function parseGoalRuntimeArgs(args: readonly string[]): minimist.ParsedArgs {
       // 是 recovery intent 不是授权——旗标可被模型拼出，故不进 AuthorityFacts。
       // plan d7f3a9c4 t1：显式模型钉（仅 headless runner 链路；in-session attended
       // 由宿主会话自跑不适用）。
-      'adapter-model',
+      'adapter-model', 'adapter-provider', 'adapter-reasoning', 'adapter-model-config', 'frontend-request-file', 'frontend-session-id', 'frontend-request-id', 'captured-model-pin',
       // plan ab072691 t1④：只读视觉 provider 的显式身份（**成对必填**）。
       // 与 --adapter-model 对仗但独立：那是 primary 执行身份，这是第二个「只看图」endpoint。
-      'visual-adapter', 'visual-model',
+      'visual-adapter', 'visual-model', 'visual-provider', 'visual-reasoning', 'visual-model-config',
       // plan a2f7c9e4 §3.7：随 --resume 给的返修诊断材料（驱动方假设，非需求）；只进返修窗口提示词，
       // 不进 manifest、需求哈希或接续决策。
       'repair-notes',
@@ -4209,7 +4222,7 @@ export class GoalPhaseRuntime {
         }
         return { ...(frozen ? { work: value.workInput!.material } : { instruction }), purpose,
           facts: value.factsContext, authority: value.authority, chain: value.chain,
-          adapter: value.adapter, model: value.adapterModel, deadline: value.user_deadline_at };
+          adapter: value.adapter, model: value.adapterModel, visual: readGoalVisualProviderEnv(value.childEnv ?? {}), deadline: value.user_deadline_at };
       };
       for (let at = history.length - 1; unit && at >= 0; at--) {
         const start = history[at];
@@ -4311,6 +4324,7 @@ export class GoalPhaseRuntime {
       if (rejectsResumeRequirementFile(argv)) return 2;
       const priorRunId = argv.resume ?? argv['attach-created'];
       const { projectRoot: root, frameworkRoot } = resolveRuntimeLayout(options, argv);
+      if (!this.deliveryParent) warnRetiredModelAlternatives(loadFrameworkLocalConfig(root));
       if (!this.deliveryParent && !argv.help && !argv.h && !argv['dry-run'] && !(argv.detach && !argv['detached-child'])) {
         if (guardNestedGoalRunner()) return 1;
         const feature = typeof argv.feature === 'string' ? argv.feature : argv.manifest ? resolveRawRunInput(argv as Record<string, unknown>, root).feature : undefined;
@@ -4331,11 +4345,11 @@ export class GoalPhaseRuntime {
             if (request && (findInitialDesignRun({ projectRoot: root, feature }) || designDeliveryNextStep({ projectRoot: root, frameworkRoot, feature, ...request }))) {
               const source = argv.manifest ? loadGoalManifestFile(String(argv.manifest), root) : existing ?? undefined;
               const adapter = String(argv.adapter ?? source?.adapter ?? 'generic');
-              const pin = resolveFinalModelPin({ cliValue: normalizeAdapterModelCliValue(argv['adapter-model']), effectiveAdapter: adapter,
+              const pin = resolveFinalModelPin({ cliValue: normalizeAdapterModelCliValue(argv['adapter-model']), cliPin: launchModelPin(argv, adapter, root, source?.adapter_model_pin), effectiveAdapter: adapter,
                 originalAdapter: source?.adapter, manifestPin: source?.adapter_model_pin, isResume: false, hasManifestFlag: !!argv.manifest,
                 isSuccessor: false, overrideManifest: Boolean(argv['override-manifest']), overrideAdapter: Boolean(argv['override-adapter']) });
               if (!pin.ok) throw new Error(pin.message);
-              const visual = resolveFinalVisualProviderPin({ cliRef: normalizeVisualProviderCliPair(argv['visual-adapter'], argv['visual-model']),
+              const visual = resolveFinalVisualProviderPin({ cliRef: resolveVisualProviderCliSelection(argv, root, source?.visual_provider_pin),
                 manifestPin: source?.visual_provider_pin, isResume: false, hasManifestFlag: !!argv.manifest, isSuccessor: false, overrideManifest: Boolean(argv['override-manifest']) });
               if (!visual.ok) throw new Error(visual.message);
               const localVisual = visual.pin ?? resolveUnattendedVisualProviderPin(loadFrameworkLocalConfig(root), frameworkRoot).pin;
@@ -4401,6 +4415,8 @@ export class GoalPhaseRuntime {
 
   /** Initial P1/P2 work is a segment of this runtime, using its existing execution transports. */
   private async runInitialDesign(manifest: InitialDesignGoalManifest, projectRoot: string, frameworkRoot: string, argv: minimist.ParsedArgs): Promise<number> {
+    manifest = rebindTaskModel(manifest, launchModelPin(argv, manifest.adapter!, projectRoot, manifest.adapter_model_pin) ?? (argv.manifest ? loadGoalManifestFile(String(argv.manifest), projectRoot).adapter_model_pin : undefined), projectRoot, Boolean(argv['override-manifest']),
+      resolveVisualProviderCliSelection(argv, projectRoot, manifest.visual_provider_pin));
     const requestedDeadline = argv['user-deadline-at'] === undefined ? undefined : parseUserDeadlineAt(argv['user-deadline-at']);
     if (requestedDeadline !== undefined && requestedDeadline !== manifest.user_deadline_at && !argv['override-manifest']) {
       throw new Error('原请求截止不会因resume重置；明确调整原root截止须同时提供 --user-deadline-at 与 --override-manifest。');
@@ -4857,11 +4873,11 @@ export class GoalPhaseRuntime {
         const timeoutMs = 0;
         if (!token) throw new Error('[initial-design] no original author window after CU handoff');
         const childEnv: Record<string, string> = { MAISON_GOAL_RUN_ID: manifest.run_id, MAISON_GOAL_ATTEMPT: invokeId, MAISON_GOAL_ATTEMPT_PHASE: label,
-          ...(manifest.adapter_model_pin ? { [MAISON_GOAL_MODEL_PIN_ENV]: manifest.adapter_model_pin.value } : {}) };
+          ...(manifest.adapter_model_pin ? { [MAISON_GOAL_MODEL_PIN_ENV]: adapterModelBinding(manifest.adapter_model_pin)! } : {}) };
         applyGoalVisualProviderEnv(childEnv, manifest.visual_provider_pin);
         const prepared = this.prepareExecutionContext({ ...workUnitExecutionInputs(manifest, purpose, projectRoot), runId: manifest.run_id, feature: manifest.feature, workflowId: 'obligation-driven', track: 'full',
           chain: [label], phase: label, attemptId: invokeId, owner: { ...token, kind: transport }, projectRoot, frameworkRoot,
-          runDir, reportDir: manifest.report_dir, adapter: manifest.adapter ?? 'generic', adapterModel: manifest.adapter_model_pin?.value,
+          runDir, reportDir: manifest.report_dir, adapter: manifest.adapter ?? 'generic', adapterModel: adapterModelBinding(manifest.adapter_model_pin),
           instruction: prompt, workInput: { material: { purpose, segments }, evaluation: currentDesignEvaluation },
           runtimeFacts: { receiptRequired: false, resume: !!argv.resume, successor: false }, childEnv }, explicitlyContinued);
         if ('status' in prepared) return conclude('executor_waiting', prepared.details ?? '等待原设计调用的真实交回。');
@@ -4893,7 +4909,7 @@ export class GoalPhaseRuntime {
           try {
             if (!capability.valid || !capability.capability) throw new Error(capability.issues.join('; '));
             headlessPlan = resolveHeadlessInvokePlan(manifest.adapter ?? 'generic', capability.capability, manifest.unattended, instruction,
-              { PROMPT: instruction, PROMPT_FILE: promptFile, PROJECT_ROOT: projectRoot, FRAMEWORK_ROOT: frameworkRoot, FEATURE: manifest.feature, PHASE: label, SKILL_PATH: path.join(frameworkRoot, 'skills/project/component-design/SKILL.md') }, manifest.adapter_model_pin?.value);
+              { PROMPT: instruction, PROMPT_FILE: promptFile, PROJECT_ROOT: projectRoot, FRAMEWORK_ROOT: frameworkRoot, FEATURE: manifest.feature, PHASE: label, SKILL_PATH: path.join(frameworkRoot, 'skills/project/component-design/SKILL.md') }, adapterModelBinding(manifest.adapter_model_pin));
           } catch (error) { return conclude('adapter_cli_hard_failure', (error as Error).message); }
         }
         const issuedAt = new Date().toISOString();
@@ -4930,7 +4946,7 @@ export class GoalPhaseRuntime {
         activeAgentKill = null;
         if (containmentError && containmentStillAlive) return conclude('agent_containment_unresolved', containmentError);
         if (fs.existsSync(observed.blueprintPath)) fs.writeFileSync(path.join(invocationDir, 'draft-output.yaml'), fs.readFileSync(observed.blueprintPath), { flag: 'wx' });
-        emit({ type: 'agent_invoke_end', phase: label, purpose, invoke_id: invokeId, status: result.status, exit_code: result.exitCode,
+        emit({ ...invocationEndFacts(result), type: 'agent_invoke_end', phase: label, purpose, invoke_id: invokeId, status: result.status, exit_code: result.exitCode,
           command: result.command, usage: result.usage,
           duration_ms: result.duration_ms, provider_session_id: result.provider_session_id, interrupted: result.interrupted, nativeSessionRebuildReason: result.nativeSessionRebuildReason, readonly_enforced: result.readonly_enforced, readonly_diagnostic: result.readonly_diagnostic, completion_observed: result.completion_observed, terminal_failure_observed: result.terminal_failure_observed, timed_out: result.timed_out,
           silent_killed: result.silent_killed, skipped: result.skipped, kill_attempted: result.kill_attempted, terminal_error_excerpt: result.terminal_error_excerpt, ...(result.spawn_error ? { spawn_error: result.spawn_error } : {}) });
@@ -4994,7 +5010,7 @@ export class GoalPhaseRuntime {
         if (!cap.valid || !cap.capability) throw new Error(cap.issues.join('; '));
         resolveHeadlessInvokePlan(manifest.adapter ?? 'generic', cap.capability, manifest.unattended, '',
           { PROMPT: '', PROMPT_FILE: path.join(runDir, 'design-repair', 'author-prompt.md'), PROJECT_ROOT: projectRoot,
-            FRAMEWORK_ROOT: frameworkRoot, FEATURE: manifest.feature, PHASE: 'design-repair-author', SKILL_PATH: path.join(frameworkRoot, DESIGN_REPAIR_CONTRACT_DOC) }, manifest.adapter_model_pin?.value);
+            FRAMEWORK_ROOT: frameworkRoot, FEATURE: manifest.feature, PHASE: 'design-repair-author', SKILL_PATH: path.join(frameworkRoot, DESIGN_REPAIR_CONTRACT_DOC) }, adapterModelBinding(manifest.adapter_model_pin));
       } catch (error) { return { outcome: 'not_dispatched', reason: `原设计责任方运输能力不可用，未派发/未记尝试；恢复该能力后重发同一请求：${(error as Error).message}` }; }
     }
     const signature = priorSignature ?? designRepairSignature(designFeature, 'initial-design', brief.items, designRepairInputFingerprint(projectRoot, designFeature));
@@ -5074,11 +5090,11 @@ export class GoalPhaseRuntime {
     const promptFile = path.join(dir, 'prompt.md');
     const kind = this.options.sessionHandoff || this.options.executor ? 'session' : 'process';
     const childEnv: Record<string, string> = { MAISON_GOAL_RUN_ID: manifest.run_id, MAISON_GOAL_ATTEMPT: invokeId, MAISON_GOAL_ATTEMPT_PHASE: label,
-      ...(manifest.adapter_model_pin ? { [MAISON_GOAL_MODEL_PIN_ENV]: manifest.adapter_model_pin.value } : {}) };
+      ...(manifest.adapter_model_pin ? { [MAISON_GOAL_MODEL_PIN_ENV]: adapterModelBinding(manifest.adapter_model_pin)! } : {}) };
     applyGoalVisualProviderEnv(childEnv, manifest.visual_provider_pin);
     const prepared = this.prepareExecutionContext({ ...workUnitExecutionInputs(manifest, purpose, projectRoot), runId: manifest.run_id, feature: manifest.feature, workflowId: 'obligation-driven', track: 'full', chain: [label], phase: label,
       attemptId: invokeId, owner: { ...token, kind }, projectRoot, frameworkRoot, runDir, reportDir: manifest.report_dir,
-      adapter: manifest.adapter ?? 'generic', adapterModel: manifest.adapter_model_pin?.value, instruction: text,
+      adapter: manifest.adapter ?? 'generic', adapterModel: adapterModelBinding(manifest.adapter_model_pin), instruction: text,
       workInput: { material: { purpose, segments: [...guard?.material ?? [text], ...(guard?.evaluation ? [{
         acceptanceKey: guard.evaluation.acceptanceKey, inputs: guard.evaluation.inputs,
         disposition: dispositionFacts(guard.evaluation.disposition) }] : [])] }, evaluation: guard?.evaluation },
@@ -5108,7 +5124,7 @@ export class GoalPhaseRuntime {
     const executor = this.options.executor ?? new DetachedGoalPhaseExecutor(() => {
       if (!capability.valid || !capability.capability) throw new Error(capability.issues.join('; '));
       return { plan: resolveHeadlessInvokePlan(context.adapter, capability.capability, manifest.unattended, text,
-        { PROMPT: text, PROMPT_FILE: promptFile, PROJECT_ROOT: projectRoot, FRAMEWORK_ROOT: frameworkRoot, FEATURE: manifest.feature, PHASE: label, SKILL_PATH: path.join(frameworkRoot, 'skills/reference/design-repair-unattended.md') }, manifest.adapter_model_pin?.value),
+        { PROMPT: text, PROMPT_FILE: promptFile, PROJECT_ROOT: projectRoot, FRAMEWORK_ROOT: frameworkRoot, FEATURE: manifest.feature, PHASE: label, SKILL_PATH: path.join(frameworkRoot, 'skills/reference/design-repair-unattended.md') }, adapterModelBinding(manifest.adapter_model_pin)),
         cwd: projectRoot, options: { outputLogPath: path.join(dir, 'agent-output.log'), extraEnv: childEnv,
           ...(process.platform === 'win32' ? { containment: { runId: manifest.run_id, invokeId } } : {}),
           usageCapture: capability.capability.usage_capture, toolEventCapture: capability.capability.tool_event_provenance,
@@ -5125,7 +5141,7 @@ export class GoalPhaseRuntime {
     const result = await this.executeExecutor(context, executor); activeAgentKill = null;
     if (containmentError && containmentAlive) return { started: true, ok: false, containmentUnresolved: true, detail: containmentError };
     const post = guard ? capturePhaseInvocationSnapshot(guard.resolution, guard.options) : undefined;
-    emit({ type: 'agent_invoke_end', phase: label, purpose, invoke_id: invokeId, status: result.status, exit_code: result.exitCode, command: result.command,
+    emit({ ...invocationEndFacts(result), type: 'agent_invoke_end', phase: label, purpose, invoke_id: invokeId, status: result.status, exit_code: result.exitCode, command: result.command,
       duration_ms: result.duration_ms, usage: result.usage, timed_out: result.timed_out, provider_session_id: result.provider_session_id, interrupted: result.interrupted, nativeSessionRebuildReason: result.nativeSessionRebuildReason, readonly_enforced: result.readonly_enforced, readonly_diagnostic: result.readonly_diagnostic, completion_observed: result.completion_observed, terminal_failure_observed: result.terminal_failure_observed,
       silent_killed: result.silent_killed, skipped: result.skipped, kill_attempted: result.kill_attempted,
       terminal_error_excerpt: result.terminal_error_excerpt, ...(result.spawn_error ? { spawn_error: result.spawn_error } : {}) });
@@ -5216,8 +5232,14 @@ export class GoalPhaseRuntime {
           nextScope = scopeWork(handoff, scope?.unresolved.map(gap => `${gap.obligation_id}: ${gap.reason}`) ?? ['尚无合法范围候选']);
           return { status: 'paused' as const, reason: '原设计责任方继续准备当前真实CU的范围输入' };
         }
-        const prepared = mode.prepareGoalModeRun({ projectRoot, frameworkRoot, feature: handoff.featureId, adapter: manifest.adapter ?? 'generic',
-          requirement: manifest.requirement ?? '', deliveryOrigin: { feature: manifest.feature, run_id: manifest.run_id } });
+        let prepared: ReturnType<typeof mode.prepareGoalModeRun>;
+        try { prepared = mode.prepareGoalModeRun({ projectRoot, frameworkRoot, feature: handoff.featureId, adapter: manifest.adapter ?? 'generic',
+          requirement: manifest.requirement ?? '', deliveryOrigin: { feature: manifest.feature, run_id: manifest.run_id } }); }
+        catch (error) {
+          if (!/scope动作A|scope候选缺少/.test((error as Error).message)) throw error;
+          nextScope = scopeWork(handoff, [(error as Error).message]);
+          return { status: 'paused' as const, reason: '原scope责任方补齐原请求动作，保留当前请求与模型绑定。' };
+        }
         if (isInitialDesignManifest(prepared.manifest)) throw new Error('[initial-design] canonical CU unexpectedly entered initial design');
         child = prepared.manifest;
       }
@@ -5227,6 +5249,7 @@ export class GoalPhaseRuntime {
         runConcluded = true;
         return { status: 'paused' as const, runId: child.run_id, reason: '原请求的真实child仍由存活的feature锁持有者推进；沿当前执行观察，不启动第二作者。' };
       }
+      child = rebindTaskModel(child, manifest.adapter_model_pin, projectRoot, true, manifest.visual_provider_pin);
       const childRunDir = path.resolve(projectRoot, child.report_dir);
       const reportPath = this.options.sessionHandoff?.requestPath;
       const relativeReport = reportPath ? path.relative(childRunDir, path.resolve(reportPath)) : '..';
@@ -5378,13 +5401,16 @@ export class GoalPhaseRuntime {
     }
     if (context.owner.owner_id !== 'dry-run') {
       assertFencedOwner(context.runDir, context.owner, 'runtime_post_executor');
-      const observedModel = parseClaudeInitModel(result.stdout) ?? undefined;
-      const mismatch = resolvePinVerifyMismatch({ pin: context.adapterModel, observed: observedModel });
+      const original = executionRequestForInvoke(context.runDir);
+      const rawPath = original ? path.resolve(context.runDir, path.dirname(original.reference.path), 'agent-events.jsonl') : undefined;
+      const mismatch = result.model_binding_mismatch ?? modelMismatchInEvents(context.adapter, context.adapterModel,
+        rawPath && fs.existsSync(rawPath) ? fs.readFileSync(rawPath, 'utf8') : result.stdout);
       if (mismatch) {
-        const original = executionRequestForInvoke(context.runDir);
         appendEvent(context.reportDir, context.projectRoot, { type: 'pin_verify_mismatch', phase: context.phase,
           invoke_id: original?.request.context.attemptId === context.attemptId ? original.request.invoke_id : context.attemptId,
-          adapter: context.adapter, pin: mismatch.pin, observed: mismatch.observed });
+          adapter: context.adapter, pin: context.adapterModel, observed: mismatch });
+        result = { ...result, status: 'waiting', exitCode: 1, completion_observed: false, terminal_failure_observed: true,
+          model_binding_mismatch: mismatch, nativeSessionRebuildReason: undefined, details: mismatch + '；保留成果，等待恢复任务授权路由。' };
       }
     }
     const reason = controls?.signal?.reason;
@@ -5410,6 +5436,7 @@ export async function main(options: GoalPhaseRuntimeLaunchOptions = {}): Promise
   setupSignalHandlers();
 
   const argv = parseGoalRuntimeArgs(options.args ?? process.argv.slice(2));
+  warnRetiredModelAlternatives(loadFrameworkLocalConfig(resolveRuntimeLayout(options, argv).projectRoot));
 
   const executorMode = String(argv['runtime-executor'] ?? (options.executor ? 'attended' : 'detached'));
   if (executorMode !== 'attended' && executorMode !== 'detached') {
@@ -5916,6 +5943,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
   {
     const finalPin = resolveFinalModelPin({
       cliValue: cliAdapterModel,
+      cliPin: launchModelPin(argv, manifest.adapter!, projectRoot, manifest.adapter_model_pin),
       effectiveAdapter: manifest.adapter!,
       originalAdapter: manifestAdapterBeforeCliOverrides,
       manifestPin: manifest.adapter_model_pin,
@@ -5930,7 +5958,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
       return 1;
     }
     if (finalPin.pin) {
-      manifest.adapter_model_pin = finalPin.pin;
+      manifest.adapter_model_pin = !argv.resume && !attachCreatedRunId && !manifest.successor_of ? freezeModelPin(finalPin.pin, projectRoot) : finalPin.pin;
     } else {
       // 无 pin：不落键（与旧 manifest 兼容 + 身份字段集条件纳入同源约束）。
       delete manifest.adapter_model_pin;
@@ -5942,6 +5970,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
   // **resume 一律不重读 local**——冻结值就是冻结值，停机期间改个人配置不得悄悄换掉本 run
   // 的视觉 endpoint（与 requirement/model pin 的既有纪律同源）。
   {
+    cliVisualProvider = resolveVisualProviderCliSelection(argv, projectRoot, manifest.visual_provider_pin);
     const finalVisualPin = resolveFinalVisualProviderPin({
       cliRef: cliVisualProvider,
       manifestPin: manifest.visual_provider_pin,
@@ -6577,7 +6606,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         event.type === 'agent_invoke_start' && (event as { purpose?: string }).purpose === 'vision_canary') : undefined;
     const recordedCanary = priorCanary?.invoke_id ? sessionExecutionForInvoke(path.resolve(projectRoot, manifest.report_dir), priorCanary.invoke_id) : null;
     const canarySession = recordedCanary?.request.context.adapter === (manifest.adapter ?? 'generic')
-      && recordedCanary.request.context.adapterModel === manifest.adapter_model_pin?.value ? recordedCanary : null;
+      && recordedCanary.request.context.adapterModel === adapterModelBinding(manifest.adapter_model_pin) ? recordedCanary : null;
     const canarySequence = () => loadAuthoritativeEvents(path.join(projectRoot, manifest.report_dir, 'events.jsonl'))
       .filter(event => event.type === 'agent_invoke_start' && (event as { purpose?: string }).purpose === 'vision_canary').length + 1;
     const canaryInvokeId = canarySession?.request.invoke_id ?? `vision-canary-p${canarySequence()}`;
@@ -6599,7 +6628,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         track: goalTrack, chain: [...chain.map(String), 'vision-canary'], phase: 'vision-canary', attemptId: canaryInvokeId,
         owner: { ...runControl.token, kind: runtimeOwnerKind }, projectRoot, frameworkRoot,
         runDir: path.resolve(projectRoot, manifest.report_dir), reportDir: manifest.report_dir, adapter: manifest.adapter ?? 'generic',
-        adapterModel: manifest.adapter_model_pin?.value, instruction: `${text}\n将上文规定的原始逐行答卷放入本请求报告的 details；仅读取题图，不读取同目录答案材料。`,
+        adapterModel: adapterModelBinding(manifest.adapter_model_pin), instruction: `${text}\n将上文规定的原始逐行答卷放入本请求报告的 details；仅读取题图，不读取同目录答案材料。`,
         runtimeFacts: { receiptRequired: false, resume: Boolean(argv.resume), successor: false,
           runBaseSha: resolveRunBaseline(manifest, loadAuthoritativeEvents(path.join(projectRoot, manifest.report_dir, 'events.jsonl'))).baseSha }, childEnv: {} });
       if ('status' in prepared) return prepared as Awaited<ReturnType<InvokeAgentFn>>;
@@ -6656,89 +6685,6 @@ Goal runner — tool-agnostic multi-phase orchestrator
       dryRun,
       forceRefresh: Boolean(argv['refresh-vision-probe']),
     });
-    /**
-     * plan 4e6fb3b6 §6.2：金丝雀或正式调用判为"模型不受支持"后的获准替代。
-     * 用户显式钉的型号不换；否则按 framework.local.json adapters.<adapter>.approved_models 的顺序取下一个没试过的，
-     * 预算未尽才换。换型号 = 身份改写：写 manifest（来源记为获准替代）+ 只授权 adapter_model_pin 的
-     * manifest_identity_rebase + adapter_model_substituted 事件；然后按既有判定重探金丝雀（钉值变了，旧缓存不再被采信）。
-     * 重探仍不受支持就继续下一个；清单尽/预算尽/用户钉死则交还，note 说明原因并列出试过的型号。
-     */
-    const trySubstituteApprovedModel = async (
-      phaseName: string,
-      trigger: 'canary' | 'invoke',
-    ): Promise<
-      | { switched: true; probe?: Awaited<ReturnType<typeof runVisionCanaryProbe>> }
-      | { switched: false; note: string; hardFailure?: string }
-    > => {
-      for (;;) {
-        const adapterName = manifest.adapter ?? 'generic';
-        let local: ReturnType<typeof loadFrameworkLocalConfig> = null;
-        try {
-          local = loadFrameworkLocalConfig(projectRoot);
-        } catch (error) {
-          console.warn(`[goal-runner] framework.local.json 读不出，获准替代型号按未配置处理：${(error as Error).message}`);
-        }
-        const approved = resolveApprovedModels(local, adapterName);
-        if (approved.warning) console.warn(`[goal-runner] ${approved.warning}`);
-        const lineageEvents = [
-          ...ancestorEvents,
-          ...loadAuthoritativeEvents(path.join(projectRoot, manifest.report_dir, 'events.jsonl')),
-        ] as ReadonlyArray<{ type?: string; from?: unknown; to?: unknown }>;
-        const decision = decideModelAlternative({
-          adapter: adapterName,
-          pin: manifest.adapter_model_pin,
-          // 批二 review R4：本次调用显式给了型号 = 用户钉死，本次不替代（不论 manifest 里记的来源）
-          ...(cliAdapterModel !== undefined ? { explicitModel: cliAdapterModel } : {}),
-          approvedModels: approved.models,
-          tried: collectTriedModels(lineageEvents, manifest.adapter_model_pin),
-          remainingMs: remainingUserMs(),
-        });
-        if (decision.kind === 'refuse') {
-          return {
-            switched: false,
-            note: describeModelAlternativeRefusal({
-              adapter: adapterName, reason: decision.reason, tried: decision.tried,
-              ...(cliAdapterModel !== undefined
-                ? { pinned: cliAdapterModel }
-                : manifest.adapter_model_pin ? { pinned: manifest.adapter_model_pin.value } : {}),
-            }),
-          };
-        }
-        const from = manifest.adapter_model_pin?.value ?? null;
-        manifest.adapter_model_pin = { adapter: adapterName, value: decision.model, source: 'approved_alternative' };
-        writeGoalManifest(manifest, projectRoot);
-        goalEvents.emit({
-          type: 'manifest_identity_rebase',
-          to_fields: computeManifestIdentityFields(manifest),
-          authorized_by: 'approved_model_alternatives',
-          changed_fields: ['adapter_model_pin'],
-        });
-        goalEvents.emit({
-          type: 'adapter_model_substituted',
-          phase: phaseName,
-          trigger,
-          from,
-          to: decision.model,
-          tried: decision.tried,
-        });
-        console.warn(
-          `[goal-runner] 型号 ${from ?? '(adapter 默认型号)'} 不受支持——按获准替代清单换用 ${decision.model}` +
-            `（已试：${decision.tried.join('、')}）`,
-        );
-        if (decideCanaryProbe().action !== 'probe' || !(remainingUserMs() > 0)) return { switched: true };
-        const reprobe = await runCanaryWithinBudget();
-        if (reprobe.outcome === 'hard_cli_failure' && reprobe.modelUnsupported) continue;
-        if (reprobe.outcome === 'hard_cli_failure') {
-          return {
-            switched: false,
-            hardFailure: reprobe.error ?? '视觉金丝雀探测遇 CLI/adapter 兼容性问题',
-            note: `换用获准替代型号 ${decision.model} 后金丝雀遇到其它 CLI 硬失败，停止替代。`,
-          };
-        }
-        return { switched: true, probe: reprobe };
-      }
-    };
-
     // E1（多模态降级阶梯 plan d4a8f3c6）：UI 需求且无 local override/新鲜缓存时，探测层
     // 才刚被声明式 image_input 骗过（案A mx 2.7 套壳）——先跑一次金丝雀实测校准，
     // 结果缓存进 framework.local.json（adapter 变更即失效），后续 phase 的能力块直接读缓存。
@@ -6748,21 +6694,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
     // 真实 action==='probe' 路径上记录并升 run 级 BLOCKER；终态发射在 manifest 落盘后
     //（见 writeGoalManifest 之后的 canary_cli_hard_failure 块），保证 run 有可监控终态。
     let canaryHardCliFailure: string | null = null;
-    let canaryModelAlternativeNote: string | null = null;
     if (visionProbeDecision.action === 'probe' && !(remainingUserMs() > 0)) {
       console.warn('[goal-runner] 用户明示时限已到——不启动新的视觉能力探测');
     } else if (visionProbeDecision.action === 'probe') {
       let probeResult: Awaited<ReturnType<typeof runVisionCanaryProbe>> = await runCanaryWithinBudget();
       if (canaryHandoffIssued) { runConcluded = true; return 3; }
-      if (probeResult.outcome === 'hard_cli_failure' && probeResult.modelUnsupported) {
-        const substituted = await trySubstituteApprovedModel(String(chain[0]), 'canary');
-        if (substituted.switched) {
-          probeResult = substituted.probe ?? { ran: false };
-        } else {
-          canaryModelAlternativeNote = substituted.note;
-          if (substituted.hardFailure) probeResult = { ...probeResult, error: substituted.hardFailure };
-        }
-      }
       if (probeResult.outcome === 'hard_cli_failure') {
         canaryHardCliFailure = probeResult.error ?? '视觉金丝雀探测遇 CLI/adapter 兼容性问题';
       } else if (probeResult.ran && probeResult.outcome === 'valid_cached') {
@@ -6779,7 +6715,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           // LKG 日志必须与消费面口径一致，否则谎报"沿用旧缓存"。
           if (isFreshCanaryForExecution(canary, manifest.adapter ?? 'generic', {
             runId: manifest.run_id,
-            ...(manifest.adapter_model_pin ? { modelPin: manifest.adapter_model_pin.value } : {}),
+            ...(manifest.adapter_model_pin ? { modelPin: adapterModelBinding(manifest.adapter_model_pin)! } : {}),
           })) {
             lkg = { probed_at: canary!.probed_at, verdict: canary!.verdict };
           }
@@ -6816,8 +6752,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
       const guidance =
         `视觉金丝雀探测遇 CLI/adapter 兼容性问题（非需求代码）：${canaryHardCliFailure}\n` +
         '这是 CLI/config 参数不兼容、模型不可用或 spawn race——请核对 adapter 版本/配置/模型/环境后重跑' +
-        '（--refresh-vision-probe 触发重探）；不是需求或产品代码问题，不进入正式 phase。' +
-        (canaryModelAlternativeNote ? `\n${canaryModelAlternativeNote}` : '');
+        '（--refresh-vision-probe 触发重探）；不是需求或产品代码问题，不进入正式 phase。';
       goalEvents.emit({
         type: 'phase_halt',
         phase: chain[0],
@@ -7260,7 +7195,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
     const familiesNow = () => applicableCheckFamilies(scopeNow(), terminalEventCtx?.chain.map(String) ?? chain.map(String));
     if (dryRun) {
       console.log(`[dry-run] work unit ${manifest.feature} checks=${familiesNow().join(',')}`);
-      if (manifest.adapter_model_pin) console.log(`[dry-run] adapter_model_pin=${manifest.adapter_model_pin.adapter}/${manifest.adapter_model_pin.value}`);
+      if (manifest.adapter_model_pin) console.log(`[dry-run] adapter_model_pin=${manifest.adapter_model_pin.adapter}/${adapterModelBinding(manifest.adapter_model_pin)!}`);
     }
     const readWork = () => {
       const families = familiesNow();
@@ -7506,7 +7441,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         executionRole: role, runId: manifest.run_id, feature: manifest.feature, workflowId: workflow.name, track: goalTrack,
         chain: familiesNow(), phase: label, attemptId,
         owner: runControl ? { ...runControl.token, kind: runtimeOwnerKind } : { run_id: manifest.run_id, owner_id: 'dry-run', epoch: 0, kind: runtimeOwnerKind },
-        projectRoot, frameworkRoot, runDir, reportDir: manifest.report_dir, adapter: manifest.adapter ?? 'generic', adapterModel: manifest.adapter_model_pin?.value,
+        projectRoot, frameworkRoot, runDir, reportDir: manifest.report_dir, adapter: manifest.adapter ?? 'generic', adapterModel: adapterModelBinding(manifest.adapter_model_pin),
         factsContext, instruction: text, workInput: workInput ?? { material: { purpose: purpose ?? label, segments: [text] } },
         runtimeFacts: { runBaseSha: resolveRunBaseline(manifest, history).baseSha,
           receiptRequired: false, resume: !!argv.resume, successor: !!manifest.successor_of }, childEnv: env }, explicitlyContinued);
@@ -7521,7 +7456,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
       const plan = executorMode === 'attended' ? { argv: [], label: 'phase_execute_request', adapterName: manifest.adapter! }
         : resolveHeadlessInvokePlan(manifest.adapter!, cap.capability!, manifest.unattended, instruction,
           { PROMPT: instruction, PROMPT_FILE: promptFile, PROJECT_ROOT: projectRoot, FRAMEWORK_ROOT: frameworkRoot, FEATURE: manifest.feature,
-            PHASE: label, SKILL_PATH: phaseSkillPath(frameworkRoot, family as FeaturePhase) }, manifest.adapter_model_pin?.value, sessionBinary?.binary ?? null);
+            PHASE: label, SKILL_PATH: phaseSkillPath(frameworkRoot, family as FeaturePhase) }, adapterModelBinding(manifest.adapter_model_pin), sessionBinary?.binary ?? null);
       const issuedAt = new Date().toISOString();
       const materialInput = { context, invokeId, issuedAt, ...(purpose ? { purpose } : {}),
         gateTimeoutMs: 0, cleanupReserveMs: 0, preSnapshot: pre, writeBoundary: boundary, snapshotOptions };
@@ -7571,7 +7506,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         onChildExit: () => { childExited = true; activeAgentKill = null; },
       } }), injectedInvokeAgent ?? invokeAgentHeadless));
       activeAgentKill = null;
-      goalEvents.emit({ type: 'agent_invoke_end', phase: label, invoke_id: invokeId, purpose, status: result.status,
+      goalEvents.emit({ ...invocationEndFacts(result), type: 'agent_invoke_end', phase: label, invoke_id: invokeId, purpose, status: result.status,
         exit_code: result.exitCode, command: result.command, duration_ms: result.duration_ms ?? Date.now() - started,
         provider_session_id: result.provider_session_id, interrupted: result.interrupted, nativeSessionRebuildReason: result.nativeSessionRebuildReason,
         completion_observed: result.completion_observed, terminal_failure_observed: result.terminal_failure_observed,
@@ -7657,12 +7592,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
       if (!invocationCompleted(result) && !rebuild) {
         const hardFailure = resolveInvokeHardCliFailure(result, { formalInvoke: true });
         if (hardFailure) {
-          const alternative = isModelUnsupportedFailure(result) ? await trySubstituteApprovedModel(label, 'invoke') : null;
-          if (alternative?.switched) rebuild = true;
-          else {
-            wait(label, `${hardFailure}${alternative && !alternative.switched ? `\n${alternative.note}` : ''}`, 'adapter_cli_hard_failure');
-            return { context, result, invokeId, rebuild };
-          }
+          wait(label, hardFailure, 'adapter_cli_hard_failure');
+          return { context, result, invokeId, rebuild };
         }
       }
       if (!invocationCompleted(result) && !rebuild) {

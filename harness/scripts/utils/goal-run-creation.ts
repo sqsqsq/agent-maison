@@ -10,6 +10,7 @@ import { FEATURE_PHASE_ORDER } from './phase-transition-policy';
 
 import * as crypto from 'crypto';
 import * as fs from 'fs';
+import { adapterModelBinding } from './adapter-model';
 import * as path from 'path';
 import { execFileSync } from 'child_process';
 import * as YAML from 'yaml';
@@ -572,6 +573,7 @@ export interface ContinuationCallFacts {
   requirementSourceFiles?: string[];
   /** 本次显式给的 --adapter-model。 */
   model?: string;
+  adapterModelPin?: import('./goal-manifest').AdapterModelPin;
   /** 本次带了既有的预算授权（--override-manifest）；有权者改了 run manifest 的预算后以它授权。 */
   /** 显式的恢复（--resume / --attach-created）、接续（--supersede）、强制新开（--force）：行为与现状相同。 */
   resume?: string;
@@ -877,7 +879,9 @@ export function decideRunContinuation(input: {
     }
     // 需求增量：本次文本与合并后的全文、原请求、整个历史增量块都不全文相同（批三返修 R1：与后继合并同一判据，不用子串）
     if (requirement && !isRepeatedRequirement(priorRequirement, requirement)) out.push('requirement_increment');
-    if (call.model && call.model !== run.manifest.adapter_model_pin?.value) out.push('model_changed');
+    if (call.adapterModelPin ? !(call.adapterModelPin.source === 'frontend' && run.manifest.adapter_model_pin)
+      && adapterModelBinding({ ...run.manifest.adapter_model_pin, ...call.adapterModelPin }) !== adapterModelBinding(run.manifest.adapter_model_pin)
+      : call.model && call.model !== run.manifest.adapter_model_pin?.value) out.push('model_changed');
 
     return out;
   };

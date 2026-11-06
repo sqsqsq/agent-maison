@@ -1,3 +1,4 @@
+import { adapterModelBinding } from './adapter-model';
 // ============================================================================
 // visual-provider-invoke.ts — 只读视觉 provider 执行器（plan ab072691 t3）
 // ============================================================================
@@ -137,6 +138,7 @@ export function resolveVisualProviderInvokePlan(input: VisualProviderPlanInput):
     resolvedBinary: resolved,
     useCrossSpawn: shouldUseCrossSpawn(resolved),
     adapterName: provider.adapter,
+    modelBinding: adapterModelBinding({ ...provider, value: provider.model }),
   };
   const modelFlag = declaration.model_replay;
 
@@ -654,6 +656,7 @@ export interface VisualProviderInvokeEvent {
   type: 'visual_provider_invoke';
   provider: string;
   model: string;
+  model_binding?: string;
   purpose: VisualProviderPurpose;
   image_hashes: string[];
   outcome: VisualProviderOutcome;
@@ -696,6 +699,7 @@ export function buildVisualProviderInvokeEvent(
     type: 'visual_provider_invoke',
     provider: inv.provider.adapter,
     model: inv.provider.model,
+    model_binding: adapterModelBinding({ ...inv.provider, value: inv.provider.model }),
     purpose: inv.purpose,
     image_hashes: inv.image_hashes,
     outcome: inv.outcome,

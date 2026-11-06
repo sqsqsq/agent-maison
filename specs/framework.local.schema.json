@@ -23,13 +23,8 @@
         "type": "object",
         "properties": {
           "approved_models": {
-            "type": "array",
-            "description": "Approved alternative models, tried in order when the effective model is rejected as unsupported and the user did not pin a model with --adapter-model. Absent = no alternatives (current behavior).",
-            "items": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 128
-            }
+            "description": "Deprecated. Ignored for every value shape; one startup warning. Task model changes require explicit authorization.",
+            "deprecated": true
           }
         }
       }
@@ -258,6 +253,40 @@
                 "interactive"
               ],
               "description": "Probe origin; absent treated as 'goal' (backward compat)"
+            }
+          },
+          "additionalProperties": false
+        },
+        "visual_provider": {
+          "type": "object",
+          "required": [
+            "adapter",
+            "model"
+          ],
+          "properties": {
+            "adapter": {
+              "type": "string",
+              "minLength": 1
+            },
+            "model": {
+              "type": "string",
+              "minLength": 1
+            },
+            "provider": {
+              "type": "string",
+              "minLength": 1
+            },
+            "reasoning_effort": {
+              "type": "string",
+              "minLength": 1
+            },
+            "config_source": {
+              "type": "string",
+              "minLength": 1
+            },
+            "route_identity": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
             }
           },
           "additionalProperties": false

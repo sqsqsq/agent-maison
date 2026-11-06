@@ -90,7 +90,7 @@ function testCursorAlwaysTrust(): void {
 function testOpencodePinnedBypass(): void {
   const argv = defaultHeadlessInvokePlan('opencode', LEGACY_VARIANTS[0], 'probe').argv;
   assert(
-    argv.includes('--dangerously-skip-permissions'),
+    argv.includes('--auto'),
     `opencode 的 bypass 旗标是全场唯一正确样板，防「统一重构」误删：${argv.join(' ')}`,
   );
 }

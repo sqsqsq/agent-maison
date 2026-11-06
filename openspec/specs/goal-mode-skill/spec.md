@@ -294,3 +294,14 @@ The main Agent SHALL honor the fresh design handoff in `complex-capability-meta-
 #### Scenario: Budget-only approval
 - **WHEN** the user approves only a budget change
 - **THEN** existing override semantics MAY apply but design authority SHALL remain unchanged
+
+### Requirement: Foreground resolves task model intent before launch
+
+The foreground agent SHALL proofread explicit task model names against the actual adapter/provider catalog and hand off formal IDs. Without explicit input it SHALL supply the exact launching session/project/request configuration, never lastUsed or a later UI change. Missing selection, ambiguity or unsupported replay SHALL preserve recoverable waiting before paid requests.
+
+Enforcement: `skills/project/goal-mode/SKILL.md`, `harness/scripts/utils/adapter-model.ts`
+
+#### Scenario: Foreground Auto has no exact route
+
+- **WHEN** no definite launching-request model can be recovered
+- **THEN** the task SHALL wait for an explicit selection without a backend default

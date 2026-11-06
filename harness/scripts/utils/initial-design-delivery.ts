@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+import { rebindTaskModel, freezeModelPin } from './adapter-model';
 import * as path from 'path';
 import * as YAML from 'yaml';
 import { createHash } from 'crypto';
@@ -90,8 +91,9 @@ export interface InitialDesignRunInput {
   userDeadlineAt?: string;
   supersede?: string[];
   requestedResults?: string[]; requestedPhases?: string[]; startPhase?: string; endPhase?: string;
-  budget?: GoalBudget; unattended?: UnattendedContract; adapterModelPin?: AdapterModelPin;
+  budget?: GoalBudget; unattended?: UnattendedContract; adapterModelPin?: AdapterModelPin; modelOverride?: boolean;
   visualProviderPin?: ProviderRef; fidelity?: GoalManifest['fidelity'];
+  resolveVisualProviderPin?: (frozen?: ProviderRef, successor?: boolean) => ProviderRef | undefined;
   dependencyPolicy?: GoalManifest['dependency_policy']; minimumAssurance?: GoalManifest['minimum_assurance'];
   preAuthorizedMutations?: GoalManifest['pre_authorized_mutations'];
 }
@@ -151,7 +153,8 @@ export function prepareInitialDesignRun(input: InitialDesignRunInput): { manifes
       throw new Error('[initial-design] --supersede is outside the current original request');
     }
   }
-  const rejoin = prior;
+  const rejoin = prior && targets[0] !== prior.run_id ? rebindTaskModel(prior, input.adapterModelPin, input.projectRoot, input.modelOverride === true,
+    input.resolveVisualProviderPin?.(prior.visual_provider_pin, false) ?? input.visualProviderPin) : prior;
   if (rejoin && targets[0] !== rejoin.run_id) {
     if (rejoin.adapter !== input.adapter) throw new Error('[initial-design] adapter differs from the bound original request');
     const runDir = path.resolve(input.projectRoot, rejoin.report_dir);
@@ -164,6 +167,9 @@ export function prepareInitialDesignRun(input: InitialDesignRunInput): { manifes
   const source = continuation?.kind === 'successor'
     ? loadGoalRunManifestFromRun(input.projectRoot, continuation.source, { feature: input.feature }) : previous;
   if (source && !isInitialDesignManifest(source)) throw new Error('[initial-design] original request continuation source is a construction run');
+  input = { ...input, adapterModelPin: freezeModelPin(input.adapterModelPin?.source === 'frontend' && source?.adapter === input.adapter && source.adapter_model_pin
+    ? source.adapter_model_pin : input.adapterModelPin, input.projectRoot),
+    visualProviderPin: input.resolveVisualProviderPin?.(source?.visual_provider_pin, Boolean(source)) ?? input.visualProviderPin };
   const sourceEnd = source ? resolveEffectiveRunEnd(loadEventsJsonlStrict(path.resolve(input.projectRoot, source.report_dir, 'events.jsonl')).events) : undefined;
   const newCycle = sourceEnd?.status === 'COMPLETED';
   if (source && !newCycle && source.adapter !== input.adapter) throw new Error('[initial-design] 未完成原请求更正须保留原adapter合同；先通过既有入口处理明确的adapter变更。');
