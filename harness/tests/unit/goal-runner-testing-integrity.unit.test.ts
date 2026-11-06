@@ -6561,10 +6561,10 @@ test('c3f8a2d7 t5 连续回放：testing FAIL（产品+provider 缺席）→ 回
     seedReplay(root, { feature: FEATURE, productFixed: false });
     writeFile(root, `${resolveHylyreToolConfig(root).vendor_dir}/release.manifest.json`, JSON.stringify({ schema: 1, hylyre_version: '0.5.1' }));
     const spec = fs.readFileSync(featureFilePath(root, FEATURE, 'spec/spec.md'), 'utf8');
-    const Jimp = require('jimp');
+    const { Jimp } = require('jimp');
     for (const match of spec.matchAll(/path:\s*(doc\/features\/[^\s}]+)/g)) {
       const target = path.resolve(root, match[1]); fs.mkdirSync(path.dirname(target), { recursive: true });
-      await new Jimp(12, 12, 0xffffffff).writeAsync(target);
+      await new Jimp({ width: 12, height: 12, color: 0xffffffff }).write(target);
       referenceInputs.push(match[1]);
     }
     const ui = loadUiSpecFile(uiSpecAbsPath(root, FEATURE));
@@ -6572,7 +6572,7 @@ test('c3f8a2d7 t5 连续回放：testing FAIL（产品+provider 缺席）→ 回
     const assets = ui.assets ?? [];
     for (const asset of assets) if (asset.resolved_path) {
       const target = path.resolve(root, asset.resolved_path); fs.mkdirSync(path.dirname(target), { recursive: true });
-      await new Jimp(12, 12, 0xffffffff).writeAsync(target);
+      await new Jimp({ width: 12, height: 12, color: 0xffffffff }).write(target);
     }
     writeFile(root, path.relative(root, assetManifestAbsPath(root, FEATURE)), require('yaml').stringify({ schema_version: '1.0',
       assets: assets.map(asset => ({ key: asset.key, purpose: 'replay fixture', has_source: !!asset.resolved_path && fs.existsSync(path.resolve(root, asset.resolved_path)) })) }));
@@ -6745,10 +6745,10 @@ for (const { genuineSourceChange, completeEvidence } of [
       seedReplay(root, { feature: FEATURE, productFixed: true });
       if (completeEvidence) {
         const assets = loadUiSpecFile(uiSpecAbsPath(root, FEATURE))!.assets ?? [];
-        const Jimp = require('jimp');
+        const { Jimp } = require('jimp');
         for (const asset of assets) if (asset.resolved_path) {
           const target = path.resolve(root, asset.resolved_path); fs.mkdirSync(path.dirname(target), { recursive: true });
-          await new Jimp(12, 12, 0xffffffff).writeAsync(target);
+          await new Jimp({ width: 12, height: 12, color: 0xffffffff }).write(target);
         }
         writeFile(root, path.relative(root, assetManifestAbsPath(root, FEATURE)), require('yaml').stringify({ schema_version: '1.0',
           assets: assets.map(asset => ({ key: asset.key, purpose: 'replay fixture', has_source: !!asset.resolved_path && fs.existsSync(path.resolve(root, asset.resolved_path)) })) }));

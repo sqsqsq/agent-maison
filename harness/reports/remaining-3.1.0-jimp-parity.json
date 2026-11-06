@@ -1,0 +1,119 @@
+{
+  "root": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\maison-jimp-parity-iAcZxO",
+  "mode": "baseline",
+  "node": "v24.15.0",
+  "metrics": {
+    "crop": {
+      "ok": true,
+      "width": 124,
+      "height": 126
+    },
+    "top": {
+      "ok": true,
+      "width": 1320,
+      "height": 400
+    },
+    "sample": {
+      "sampled": true,
+      "hex": "#474733",
+      "samples": 15624
+    },
+    "stats": {
+      "ok": true,
+      "width": 1320,
+      "height": 2172,
+      "uniqueColors": 57,
+      "lumaStddev": 15.97,
+      "contentRatio": 0.2732
+    },
+    "hist": {
+      "ok": true,
+      "similarity": 0.9805400080894798
+    },
+    "tile": {
+      "ok": true,
+      "similarity": 0.000004597812623757078,
+      "grid": 3
+    },
+    "edge": {
+      "ok": true,
+      "divergence": 0.5545086933537275,
+      "tiles": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          1
+        ],
+        [
+          0,
+          2
+        ],
+        [
+          1,
+          0
+        ],
+        [
+          1,
+          1
+        ],
+        [
+          1,
+          2
+        ],
+        [
+          2,
+          0
+        ],
+        [
+          2,
+          1
+        ],
+        [
+          2,
+          2
+        ]
+      ],
+      "grid": {
+        "rows": 3,
+        "cols": 3
+      }
+    },
+    "contact": {
+      "ok": true,
+      "entries": 1,
+      "missing": 0
+    }
+  },
+  "images": {
+    "crop": {
+      "width": 124,
+      "height": 126,
+      "pixels": "6dbe7520ab4c67eb4a800f9338e39262ea43384da7824579faa3a274c8d02a04",
+      "png": "fde741e44a4459b1b052f79287547363579c7d7d39bf74cc78c0e130415dcd11"
+    },
+    "top": {
+      "width": 1320,
+      "height": 400,
+      "pixels": "9cdcddd371c62e283efcc31a4091d08153604df085c7e1fef223f56693c64e9a",
+      "png": "df6c1e7f2e016ad60d09ffcba8dac995141ab69109b3df73742f7719d12e109a"
+    },
+    "canary": {
+      "width": 300,
+      "height": 300,
+      "pixels": "42d0ebfd5423d460d8cf3fe5246cc2923721dc650b01b49ad0d447fb2c7d1dd3",
+      "png": "ff33c70c6c12617e6f8b180ecad7680daafc2d07610c3f7a6789d2b3a3f5cc07"
+    },
+    "contact": {
+      "width": 696,
+      "height": 790,
+      "pixels": "7036880e3a3d142ec6c772849b8dad90ed80f997fe32e1626aea95efdbf4a912",
+      "png": "1b3fa458c1a5716573418aa68a7bb31e06e5b4a50f6761a8b7d921024d7213d1"
+    }
+  },
+  "pixelParity": null,
+  "sameVersionDeterminism": null,
+  "changedEncoding": []
+}

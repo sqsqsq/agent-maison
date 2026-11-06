@@ -171,8 +171,8 @@ async function runVisualGate(root: string, tier: 'hard' | 'soft', opts: { omitSc
   fs.mkdirSync(f('device-testing/device-screenshots'), { recursive: true });
   fs.writeFileSync(f('device-testing/visual-diff.md'), '# Visual diff\n');
   const shotRel = `doc/features/${FEATURE}/device-testing/device-screenshots/shot-home.png`;
-  const Jimp = require('jimp');
-  await new Jimp(12, 12, 0xff0000ff).writeAsync(path.join(root, shotRel));
+  const { Jimp } = require('jimp');
+  await new Jimp({ width: 12, height: 12, color: 0xff0000ff }).write(path.join(root, shotRel));
   fs.mkdirSync(f('ux-reference'), { recursive: true });
   fs.copyFileSync(path.join(root, shotRel), f('ux-reference/ref.png'));
   const hash = hashScreenshotFile(path.join(root, shotRel));
@@ -698,10 +698,10 @@ export function seedReplay(root: string, opts: ReplayOpts): void {
 async function writeRestoredProviderVerdicts(root: string, feature = REPLAY_FEATURE): Promise<void> {
   // 夹具不带二进制参考图：在 spec 声明的权威参考路径上补同名占位图（宿主这些文件真实存在）
   const specMd = fs.readFileSync(resolveFeatureArtifact(root, feature, 'spec/spec.md').actualPath, 'utf-8');
-  const Jimp = require('jimp');
+  const { Jimp } = require('jimp');
   for (const m of specMd.matchAll(/path:\s*(doc\/features\/[^\s}]+)/g)) {
     fs.mkdirSync(path.dirname(path.join(root, m[1])), { recursive: true });
-    await new Jimp(12, 12, 0xffffffff).writeAsync(path.join(root, m[1]));
+    await new Jimp({ width: 12, height: 12, color: 0xffffffff }).write(path.join(root, m[1]));
   }
   const uiScreens = loadUiSpecFile(uiSpecAbsPath(root, feature))?.screens ?? [];
   const refOf = (target: string): string | undefined =>

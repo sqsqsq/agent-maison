@@ -12,7 +12,7 @@
 
 const path = require('path');
 const harnessRoot = path.resolve(__dirname, '../../../harness');
-const Jimp = require(require.resolve('jimp', { paths: [harnessRoot] }));
+const { Jimp } = require(require.resolve('jimp', { paths: [harnessRoot] }));
 const { createWorker } = require(require.resolve('tesseract.js', { paths: [harnessRoot] }));
 
 function fail(msg) {

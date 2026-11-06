@@ -30,7 +30,7 @@ const HARNESS_ROOT = path.resolve(__dirname, '..', '..');
 function loadJimp(): any {
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    return require(require.resolve('jimp', { paths: [HARNESS_ROOT] }));
+    return require(require.resolve('jimp', { paths: [HARNESS_ROOT] })).Jimp;
   } catch {
     return null;
   }
@@ -379,7 +379,7 @@ test('v2 FP: 同内容仅设备比例缩放 → 拉伸抵消、哨兵静默（FP
   if (!Jimp || !isJimpAvailable()) return; // 无 jimp 环境跳过，不失败
   const w = 200;
   // 整页稿：10 条水平带（结构/边缘），宽高比 0.349（200×573）
-  const ref = new Jimp(w, 573, 0xffffffff);
+  const ref = new Jimp({ width: w, height: 573, color: 0xffffffff });
   ref.scan(0, 0, w, 573, (_x: number, y: number, idx: number) => {
     const v = Math.floor(y / (573 / 10)) % 2 ? 40 : 220;
     ref.bitmap.data[idx] = v;
@@ -387,12 +387,12 @@ test('v2 FP: 同内容仅设备比例缩放 → 拉伸抵消、哨兵静默（FP
     ref.bitmap.data[idx + 2] = v;
     ref.bitmap.data[idx + 3] = 255;
   });
-  const dev = ref.clone().resize(w, 321); // 同内容、设备宽高比 0.623
+  const dev = ref.clone().resize({ w: w, h: 321 }); // 同内容、设备宽高比 0.623
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'edge-fp-'));
   const refP = path.join(dir, 'ref.png');
   const devP = path.join(dir, 'dev.png');
-  await ref.writeAsync(refP);
-  await dev.writeAsync(devP);
+  await ref.write(refP);
+  await dev.write(devP);
   const res = computeEdgeDensityTileDivergence(refP, devP);
   assert.ok(res.ok, `edge-tile 应成功：${res.error ?? ''}`);
   const screen: VisualDiffScreenEntry = {

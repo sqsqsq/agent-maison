@@ -1,0 +1,95 @@
+{
+  "command": "npm run test:changed -- --results-out reports/remaining-3.1.0-jimp-changed.json",
+  "ok": false,
+  "passed": 5373,
+  "failed": 0,
+  "groups": 925,
+  "formalNotExecuted": 424,
+  "wallMs": 915418.0996,
+  "inputSnapshot": "fc75d9dc2c44b083c50012f628f2fd73a38534f0ea1d403bd982528dd1785630",
+  "endingSnapshot": "405bc1b12bd081f8406ead086dd5b152995d7ce77c7019731cee2f624860c157",
+  "existingInputDrift": [
+    ".cursor/plans/harness_Jimp升级与消费者安全告警清理_7b9c43d2.plan.md"
+  ],
+  "targets": [
+    {
+      "id": "visual-fidelity",
+      "groups": 1,
+      "passed": 154,
+      "failed": 0
+    },
+    {
+      "id": "visual-defect-enum",
+      "groups": 1,
+      "passed": 30,
+      "failed": 0
+    },
+    {
+      "id": "visual-provider",
+      "groups": 1,
+      "passed": 85,
+      "failed": 0
+    },
+    {
+      "id": "visual-minor-deterministic",
+      "groups": 1,
+      "passed": 3,
+      "failed": 0
+    },
+    {
+      "id": "test-report-writer",
+      "groups": 1,
+      "passed": 20,
+      "failed": 0
+    },
+    {
+      "id": "vision-canary",
+      "groups": 1,
+      "passed": 24,
+      "failed": 0
+    },
+    {
+      "id": "vision-canary-interactive",
+      "groups": 1,
+      "passed": 11,
+      "failed": 0
+    },
+    {
+      "id": "profile:hmos-app:round6-bbox-crop-validation",
+      "groups": 1,
+      "passed": 43,
+      "failed": 0
+    },
+    {
+      "id": "profile:hmos-app:asset-integrity",
+      "groups": 1,
+      "passed": 16,
+      "failed": 0
+    },
+    {
+      "id": "profile:hmos-app:asset-materialization",
+      "groups": 1,
+      "passed": 23,
+      "failed": 0
+    },
+    {
+      "id": "profile:hmos-app:quiescence-sampling",
+      "groups": 1,
+      "passed": 8,
+      "failed": 0
+    },
+    {
+      "id": "profile:hmos-app:ocr-toolkit",
+      "groups": 1,
+      "passed": 17,
+      "failed": 0
+    }
+  ],
+  "extraTarget": {
+    "suite": "goal-runner-testing-integrity-late",
+    "case": "c3f8a2d7 t5",
+    "passed": 1,
+    "failed": 0
+  },
+  "disposition": "All 5373 assertions passed. Runner exited 1 because plan text and newly tracked e2 evidence changed during execution; Jimp production/test inputs remained byte-identical. No result/state file was rewritten to turn this green. Final frozen full run remains required."
+}
