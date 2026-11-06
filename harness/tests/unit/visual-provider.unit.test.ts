@@ -163,9 +163,9 @@ const FULL_PERMISSION_FLAGS = [
 // t1 — 支持列表唯一真源
 // ---------------------------------------------------------------------------
 
-test('t1 支持列表唯一真源：首批三项由 adapter.yaml 完整声明派生', () => {
+test('t1 支持列表唯一真源：由 adapter.yaml 完整声明派生', () => {
   const names = listVisualProviderAdapterNames(FRAMEWORK_ROOT);
-  assert.deepStrictEqual([...names].sort(), ['claude', 'codex', 'opencode']);
+  assert.deepStrictEqual([...names].sort(), ['claude', 'codex', 'deepseek-harness', 'opencode']);
   // 人读文案与校验消费同一份结果（禁止第二处枚举）
   assert.strictEqual(formatVisualProviderSupportList(FRAMEWORK_ROOT), names.join('、'));
 });
@@ -446,7 +446,7 @@ function planFor(adapter: string, images: string[] = []) {
   const decl = loadVisualProviderDeclaration(FRAMEWORK_ROOT, adapter);
   assert.ok(decl.ok, `${adapter} 声明缺失`);
   return resolveVisualProviderInvokePlan({
-    provider: { adapter, model: `${adapter}-vision-model` },
+    provider: { adapter, model: `${adapter}-vision-model`, ...(adapter === 'deepseek-harness' ? { provider: 'route', config_source: path.join(os.tmpdir(), 'dsh-plan-source.yaml') } : {}) },
     declaration: (decl as { ok: true; declaration: never }).declaration,
     imagePaths: images,
     prompt: 'review these screens',
@@ -474,6 +474,10 @@ test('t3 model 真实回放：声明的 model_replay 旗标后紧跟 model 值',
     assert.ok(decl.ok);
     const flag = (decl as { ok: true; declaration: { model_replay: string } }).declaration.model_replay;
     const { plan } = planFor(adapter);
+    if (adapter === 'deepseek-harness') {
+      assert.strictEqual(JSON.parse(plan.modelBinding!).value, `${adapter}-vision-model`);
+      continue;
+    }
     const i = plan.argv.indexOf(flag);
     assert.ok(i > 0, `${adapter} argv 应含 model 回放旗标 ${flag}`);
     assert.strictEqual(plan.argv[i + 1], `${adapter}-vision-model`);
@@ -2732,6 +2736,72 @@ test('e9d49418: 真实回执复用原观察、换attempt零调用、当前严格
       assert.strictEqual(calls, before + 1, changed + ' must re-evaluate');
     }
   } finally { fs.rmSync(f.tmp, { recursive: true, force: true }); }
+});
+
+test('4e92 DSH binding replay is limited to the readonly patch combination and preserves full model IDs', () => {
+  const declaration = { readonly_invoke: 'profile_read_only_patch', image_transport: 'prompt_path', stdout_envelope: 'final_jsonl' };
+  assert.ok(parseVisualProviderDeclaration(declaration).ok);
+  for (const changed of [{ ...declaration, readonly_invoke: 'read_only_sandbox' }, { ...declaration, stdout_envelope: 'result_json' },
+    { ...declaration, image_transport: 'native_image_flag' }, { ...declaration, model_replay: '' }]) assert.ok(!parseVisualProviderDeclaration(changed).ok);
+  const parsed = parseVisualProviderDeclaration(declaration); assert.ok(parsed.ok); if (!parsed.ok) return;
+  const source = path.join(os.tmpdir(), 'fixture-dsh-source.yaml');
+  const { plan } = resolveVisualProviderInvokePlan({ provider: { adapter: 'deepseek-harness', provider: 'route', model: 'vendor/full/model-id', config_source: source },
+    declaration: parsed.declaration, projectRoot: os.tmpdir(), imagePaths: [], prompt: 'read images' });
+  assert.deepStrictEqual(plan.argv.slice(1), ['--profile', 'headless', '--patch', source, '--patch', path.join(FRAMEWORK_ROOT, 'agents/deepseek-harness/visual-readonly-patch.yaml'), '--json']);
+  assert.strictEqual(JSON.parse(plan.modelBinding!).value, 'vendor/full/model-id');
+  const patch = (require('yaml') as typeof import('yaml')).parse(fs.readFileSync(path.join(FRAMEWORK_ROOT, 'agents/deepseek-harness/visual-readonly-patch.yaml'), 'utf8')) as any[];
+  for (const id of ['image-offload', 'agent-instructions', 'skill-filesystem', 'tool-skill', 'tool-bash', 'tool-pwsh', 'tool-workflow', 'tool-subagent', 'tool-subagent-fork', 'tool-plugin-manager', 'tool-executor-ptc']) assert.strictEqual(patch.find(row => row.id === id)?.disabled, true, id);
+  assert.strictEqual(patch.find(row => row.id === 'compaction-basic').config.auto, false);
+  assert.deepStrictEqual(patch.find(row => row.id === 'tool-fs').config, { read: true, readImage: true, write: false, edit: false, applyPatch: false });
+});
+
+test('4e92 DSH final projection rejects a broken last final and preserves a long final without turn_end', () => {
+  const project = (stdout: string) => projectVisualProviderBody('final_jsonl', { stdout });
+  for (const suffix of ['{"type":"final","text":""}', '{"type":"final","text":null}', '{"type":"final","text":']) {
+    assert.ok(!project(JSON.stringify({ type: 'final', text: 'old' }) + '\n' + suffix).body);
+  }
+  assert.strictEqual(project(JSON.stringify({ type: 'text', text: 'intermediate' })).body, null);
+  const long = 'visual'.repeat(200_000);
+  assert.strictEqual(project(JSON.stringify({ type: 'final', text: long })).body, long);
+});
+
+test('4e92 DSH consumes paired successful per-image reads, original stdout, and the existing workspace boundary', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-visual-offline-'));
+  try {
+    const framework = path.join(root, 'framework'), adapter = path.join(framework, 'agents/deepseek-harness'); fs.mkdirSync(adapter, { recursive: true });
+    fs.writeFileSync(path.join(adapter, 'adapter.yaml'), 'visual_provider:\n  readonly_invoke: profile_read_only_patch\n  image_transport: prompt_path\n  stdout_envelope: final_jsonl\n');
+    const images = ['a.png', 'b.png'].map(file => path.join(root, file)); for (const file of images) fs.writeFileSync(file, file);
+    fs.writeFileSync(path.join(root, 'sentinel.txt'), 'before\n');
+    execFileSync('git', ['init', '-q'], { cwd: root }); execFileSync('git', ['add', '-A'], { cwd: root });
+    execFileSync('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'readonly inputs'], { cwd: root });
+    const pair = (id: string, file: string, status = 'completed') => [{ type: 'tool_call', callId: id, tool: 'read_image', input: { file_path: file } }, { type: 'tool_result', callId: id, status }];
+    const all = [...pair('a', 'a.png'), ...pair('b', process.platform === 'win32' ? images[1].toUpperCase() : images[1])];
+    const final = { type: 'final', text: '{"current":true}' };
+    for (const scenario of ['success', 'missing', 'error', 'recovered', 'unrelated-error', 'nonzero', 'no-final', 'empty-images', 'full-stdout', 'dirty']) {
+      let events: unknown[] = all;
+      if (scenario === 'missing') events = pair('a', images[0]);
+      if (scenario === 'error') events = [...pair('a', images[0]), ...pair('b', images[1], 'error')];
+      if (scenario === 'recovered') events = [...pair('failed', images[1], 'error'), ...all];
+      if (scenario === 'unrelated-error') events = [...all, { type: 'tool_call', callId: 'other', tool: 'read', input: {} }, { type: 'tool_result', callId: 'other', status: 'error' }];
+      if (scenario === 'empty-images') events = [];
+      const raw = [...events, ...(scenario === 'no-final' ? [] : [final])].map(row => JSON.stringify(row)).join('\n');
+      const evidence = scenario === 'full-stdout' ? root + '-evidence' : undefined;
+      const result = await invokeVisualProvider({ projectRoot: root, frameworkRoot: framework, provider: { adapter: 'deepseek-harness', provider: 'route', model: 'full/model-id', config_source: path.join(root, 'native-source.yaml') },
+        purpose: 'review', imagePaths: scenario === 'empty-images' ? [] : images, prompt: 'read actual inputs', invokeId: scenario, evidenceDir: evidence,
+        invokeAgent: async (plan, cwd, options) => {
+          assert.strictEqual(cwd, root); assert.strictEqual(plan.readonlyInvocation, true);
+          assert.ok(plan.argv[plan.argv.lastIndexOf('--patch') + 1].endsWith('visual-readonly-patch.yaml'));
+          if (evidence) fs.writeFileSync(path.join(evidence, 'agent-events.jsonl'), raw);
+          if (scenario === 'dirty') fs.appendFileSync(path.join(root, 'sentinel.txt'), 'changed\n');
+          return { exitCode: scenario === 'nonzero' ? 1 : 0, stdout: evidence ? '{"type":"final","text":"wrong tail"}' : raw,
+            stderr: '', command: 'controlled DSH protocol fixture', ...(scenario === 'nonzero' ? { completion_observed: true } : {}) };
+        } });
+      const expected = ['missing', 'error', 'no-final', 'dirty'].includes(scenario) ? 'invalid' : scenario === 'nonzero' ? 'unavailable' : 'success';
+      assert.strictEqual(result.outcome, expected, scenario + ': ' + result.reason);
+      if (expected === 'success') { assert.strictEqual(result.body, final.text); assert.strictEqual(result.input_provenance, 'unverified', 'DSH does not add a generic critic parser registration'); }
+      if (scenario === 'dirty') assert.strictEqual(result.workspace_dirtied, true);
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); fs.rmSync(root + '-evidence', { recursive: true, force: true }); }
 });
 
 export async function runAll(): Promise<UnitCaseResult[]> {

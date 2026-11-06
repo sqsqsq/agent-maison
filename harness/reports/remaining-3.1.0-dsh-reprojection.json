@@ -1,0 +1,44 @@
+{
+  "originalRoot": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\maison-dsh-visual-real-Ru01ho",
+  "originalOutcome": "invalid",
+  "projectionCorrection": "DSH 0.2.2-rc.1 read_image uses input.file_path, not input.path; only the consumer projection changed. Replayed the same actual successful producer stdout without a new paid request.",
+  "outcome": "success",
+  "body": "```json\n{\n  \"run_id\": \"4e92a7c6\",\n  \"attempt_id\": \"H1\",\n  \"image_hashes\": [\"b8c6158ffff1b6e6\", \"f300cece15317a45\"],\n  \"quadrant_colors\": [\"red\", \"green\", \"blue\", \"yellow\"],\n  \"observations\": [\n    {\n      \"region\": \"first\",\n      \"fact\": \"Top-left quadrant is solid red, top-right is solid green, bottom-left is solid blue, bottom-right is solid yellow, meeting at a centered four-way boundary.\"\n    },\n    {\n      \"region\": \"second\",\n      \"fact\": \"Two Chinese text labels actually visible are \\\"添卡成功\\\" (the large success heading) and \\\"完成\\\" (the bottom button label).\"\n    }\n  ]\n}\n```",
+  "inputProvenance": "unverified",
+  "imageHashes": [
+    "b8c6158ffff1b6e6",
+    "f300cece15317a45"
+  ],
+  "randomGeometry": true,
+  "existingObservationValidation": true,
+  "nativeHeaders": [
+    {
+      "provider": "deepseek-official",
+      "model": "deepseek-flash",
+      "reasoningEffort": "high"
+    }
+  ],
+  "nativePermissions": [
+    {
+      "type": "permission/preset",
+      "data": {
+        "preset": "read-only"
+      }
+    },
+    {
+      "type": "sandbox/mode",
+      "data": {
+        "mode": "read-only"
+      }
+    },
+    {
+      "type": "approval/policy",
+      "data": {
+        "policy": "never"
+      }
+    }
+  ],
+  "projectUnchanged": true,
+  "pairedReadConditionSatisfied": true,
+  "genericReceiptNote": "No generic DSH parser registration was added; the existing provenance resolver remains authoritative and discloses unverified."
+}

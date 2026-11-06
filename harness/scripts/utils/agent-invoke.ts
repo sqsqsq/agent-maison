@@ -296,6 +296,8 @@ export function readInvokeFinalText(stdout: string, outputLogPath: string, adapt
 }
 
 export interface HeadlessInvokePlan {
+  /** Native readonly intent set by the visual plan builder, not a generic verifier request. */
+  readonlyInvocation?: true;
   /** Projection of the responsibility's frozen pin, never an independent selection. */
   modelBinding?: string;
   argv: string[];
@@ -409,7 +411,8 @@ export function providerSessionUnavailableReason(
 }
 
 export function withInvocationAuthorization(plan: HeadlessInvokePlan, options: AgentInvokeOptions): HeadlessInvokePlan {
-  const readonly = options.readonlyInvocation === true && ['codex', 'claude'].includes(plan.adapterName ?? '');
+  const readonly = options.readonlyInvocation === true && ['codex', 'claude'].includes(plan.adapterName ?? '')
+    || plan.adapterName === 'deepseek-harness' && plan.readonlyInvocation === true;
   if (!options.authorization && !readonly) return plan;
   const argv = [...plan.argv];
   const authority = options.authorization;
@@ -441,7 +444,12 @@ export function withInvocationAuthorization(plan: HeadlessInvokePlan, options: A
     else if (authority?.allowed_tools) argv.push('--tools', authority.allowed_tools.join(','),
       '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}');
   } else if (plan.adapterName === 'deepseek-harness') {
-    if (readonly || !fullAccess || authority?.allowed_tools !== undefined) {
+    const patch = path.resolve(__dirname, '../../../agents/deepseek-harness/visual-readonly-patch.yaml');
+    const lastPatch = argv.lastIndexOf('--patch');
+    if (readonly && (lastPatch < 0 || path.resolve(argv[lastPatch + 1] ?? '') !== patch)) {
+      throw new Error('provider_authorization_unsupported: deepseek-harness visual readonly patch must be last');
+    }
+    if (!readonly && !fullAccess || authority?.allowed_tools !== undefined) {
       throw new Error('provider_authorization_unsupported: deepseek-harness requires a verified permission patch');
     }
   } else if (readonly || !fullAccess || authority?.allowed_tools !== undefined) {
@@ -1198,6 +1206,7 @@ export function buildAgentSpawnEnv(
   baseEnv: NodeJS.ProcessEnv,
   extraEnv?: Record<string, string>,
   adapterName?: string,
+  readonlyInvocation = false,
 ): NodeJS.ProcessEnv {
   const merged: NodeJS.ProcessEnv = { ...baseEnv };
   // d9e4b7c1 T1（v12 P2 泛化）：extraEnv 每个键先清大小写变体再写唯一键——父环境存在
@@ -1212,9 +1221,9 @@ export function buildAgentSpawnEnv(
     merged.OPENCODE_PERMISSION = extraEnv?.OPENCODE_PERMISSION ?? '{"*":"allow"}';
   }
   if (adapterName === 'deepseek-harness') {
-    // Headless 的执行权限不能被父 shell 或调用方残留的限制值降档。
+    // 本次用途决定权限；父 shell 和 extraEnv 的残留不能改变档位。
     deleteEnvKeyCaseInsensitive(merged, 'DSH_PERMISSION_MODE');
-    merged.DSH_PERMISSION_MODE = 'danger-full-access';
+    merged.DSH_PERMISSION_MODE = readonlyInvocation ? 'read-only' : 'danger-full-access';
   }
   // plan d7f3a9c4 t3：model pin 只随 extraEnv 显式带入——无 pin（extraEnv 缺键/空值）时显式
   // 清理父环境残留（含大小写变体），不得让陈旧 pin 漏入 agent 子进程冒充"已钉"。走共享
@@ -1287,7 +1296,7 @@ export function spawnHeadlessChild(
     return spawn(invocation.file, invocation.args, {
       cwd,
       // shim 字面设置同样经过清洗；runner 显式上下文优先，不能在清洗后回带信任锚。
-      env: buildAgentSpawnEnv(process.env, { ...resolved.env, ...opts.extraEnv }, plan.adapterName),
+      env: buildAgentSpawnEnv(process.env, { ...resolved.env, ...opts.extraEnv }, plan.adapterName, plan.readonlyInvocation === true),
       stdio,
       shell: false as const,
       windowsHide: true,
@@ -1299,7 +1308,7 @@ export function spawnHeadlessChild(
     // P0-7①：agent 子进程剥离 NODE_OPTIONS 预加载注入（防经 agent 环境二次传导进工具链）。
     // t10（codex 六轮 P0-2）：信任锚材料不进 agent env。
     // b7e4d2a9 Todo3：合并后统一 strip + HEADLESS 最后定档（见 buildAgentSpawnEnv）。
-    env: buildAgentSpawnEnv(process.env, opts.extraEnv, plan.adapterName),
+    env: buildAgentSpawnEnv(process.env, opts.extraEnv, plan.adapterName, plan.readonlyInvocation === true),
     stdio,
     detached: !isWin,
     shell: false as const,
@@ -1371,7 +1380,7 @@ async function spawnHeadlessAsync(
   opts: AgentInvokeOptions,
 ): Promise<AgentInvokeResult> {
   const started = Date.now();
-  const nativeModelEnv = buildAgentSpawnEnv(process.env, opts.extraEnv, plan.adapterName);
+  const nativeModelEnv = buildAgentSpawnEnv(process.env, opts.extraEnv, plan.adapterName, plan.readonlyInvocation === true);
   let codexAfterBytes = 0;
   try {
     const previous = plan.adapterName === 'codex' && opts.providerSessionId ? nativeCodexSessionFile(opts.providerSessionId, nativeModelEnv) : undefined;
@@ -1839,32 +1848,32 @@ export async function invokeAgentHeadless(
   if (plan.adapterName) {
     try {
       const pin = parseAdapterModelBinding(plan.adapterName, plan.modelBinding);
-      assertModelReplay(pin, cwd, buildAgentSpawnEnv(process.env, opts?.extraEnv, plan.adapterName), invokeDeadline);
+      assertModelReplay(pin, cwd, buildAgentSpawnEnv(process.env, opts?.extraEnv, plan.adapterName, plan.readonlyInvocation === true), invokeDeadline);
       plan = withFrozenModelArguments(plan);
       opts = { ...opts, extraEnv: { ...opts?.extraEnv, [MAISON_GOAL_MODEL_PIN_ENV]: plan.modelBinding! } };
       if (['claude', 'codeagent'].includes(pin.adapter) && pin.provider) {
         opts.extraEnv!.CLAUDE_CONFIG_DIR = path.dirname(pin.config_source!);
-        assertClaudeModelRoute(pin, cwd, buildAgentSpawnEnv(process.env, opts.extraEnv, pin.adapter));
+        assertClaudeModelRoute(pin, cwd, buildAgentSpawnEnv(process.env, opts.extraEnv, pin.adapter, plan.readonlyInvocation === true));
         opts.extraEnv!.ANTHROPIC_BASE_URL = pin.provider === 'anthropic' ? 'https://api.anthropic.com' : pin.provider;
       }
       if (pin.adapter === 'codex' && pin.config_source) opts.extraEnv!.CODEX_HOME = path.dirname(pin.config_source);
       if (pin.adapter === 'opencode') {
-        const ambient = buildAgentSpawnEnv(process.env, opts.extraEnv, pin.adapter);
+        const ambient = buildAgentSpawnEnv(process.env, opts.extraEnv, pin.adapter, plan.readonlyInvocation === true);
         if (['OPENCODE_CONFIG', 'OPENCODE_CONFIG_CONTENT', 'OPENCODE_CONFIG_DIR'].some(key => ambient[key])) {
           throw new Error('OpenCode 存在未绑定的额外配置层；保留任务，提供可准确回放的原生配置来源后继续。未启动模型请求。');
         }
         const home = openCodeModelHome(pin);
         Object.assign(opts.extraEnv!, { HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: path.join(home, '.config'),
           XDG_DATA_HOME: path.join(home, '.local/share'), XDG_STATE_HOME: path.join(home, '.local/state') });
-        const failure = verifyOpenCodeModelConfig(plan.argv[0], pin, buildAgentSpawnEnv(process.env, opts.extraEnv, pin.adapter), cwd, invokeDeadline);
+        const failure = verifyOpenCodeModelConfig(plan.argv[0], pin, buildAgentSpawnEnv(process.env, opts.extraEnv, pin.adapter, plan.readonlyInvocation === true), cwd, invokeDeadline);
         if (failure) throw new Error(failure);
       }
       if (pin.adapter === 'deepseek-harness') {
         opts.extraEnv!.DSH_HOME = dshModelHome(pin);
-        const failure = verifyDshModelConfig(plan.argv, pin, buildAgentSpawnEnv(process.env, opts.extraEnv, pin.adapter), cwd, invokeDeadline);
+        const failure = verifyDshModelConfig(plan.argv, pin, buildAgentSpawnEnv(process.env, opts.extraEnv, pin.adapter, plan.readonlyInvocation === true), cwd, invokeDeadline, plan.readonlyInvocation === true);
         if (failure) throw new Error(failure);
       } else if (plan.resolvedBinary && ['codex', 'claude', 'codeagent', 'cursor'].includes(pin.adapter)) {
-        const failure = await verifyNativeModelCatalogue(plan.argv[0], pin, buildAgentSpawnEnv(process.env, opts.extraEnv, pin.adapter), cwd, invokeDeadline, opts.signal);
+        const failure = await verifyNativeModelCatalogue(plan.argv[0], pin, buildAgentSpawnEnv(process.env, opts.extraEnv, pin.adapter, plan.readonlyInvocation === true), cwd, invokeDeadline, opts.signal);
         if (failure) throw new Error(failure);
       }
     } catch (error) {
@@ -1879,8 +1888,9 @@ export async function invokeAgentHeadless(
 
   const result = await spawnHeadlessAsync(plan, cwd, { ...opts, ...(Number.isFinite(invokeDeadline)
     ? { deadlineMs: invokeDeadline, timeoutMs: Math.max(1, invokeDeadline - Date.now()) } : {}) });
-  if (opts?.readonlyInvocation) {
-    result.readonly_enforced = ['codex', 'claude'].includes(plan.adapterName ?? '');
+  if (opts?.readonlyInvocation || plan.readonlyInvocation) {
+    result.readonly_enforced = ['codex', 'claude'].includes(plan.adapterName ?? '')
+      || plan.adapterName === 'deepseek-harness' && plan.readonlyInvocation === true;
     if (!result.readonly_enforced) result.readonly_diagnostic =
       '当前 adapter 未强制原生只读；调用方须以既有调用前后快照核对实际写入，不能据此签发通过。';
   }

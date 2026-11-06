@@ -509,7 +509,7 @@ export function modelMismatchInEvents(adapter: string, binding: string | undefin
 }
 
 /** Final native composition, after authorization/resume transforms; never a credential precheck. */
-export function verifyDshModelConfig(argv: string[], pin: AdapterModelPin, env: NodeJS.ProcessEnv, cwd: string, deadline = Infinity): string | undefined {
+export function verifyDshModelConfig(argv: string[], pin: AdapterModelPin, env: NodeJS.ProcessEnv, cwd: string, deadline = Infinity, readonlyInvocation = false): string | undefined {
   assertModelReplay(pin, cwd, env, deadline);
   const args = argv.slice(1).filter(arg => arg !== '--json');
   const sid = args.indexOf('--session-id'); if (sid >= 0) args.splice(sid, 2);
@@ -534,7 +534,11 @@ export function verifyDshModelConfig(argv: string[], pin: AdapterModelPin, env: 
       for (const key of ['contextWindow', 'input']) if (JSON.stringify(model?.[key]) !== JSON.stringify(source.model[key])) return `DSH 模型来源 ${key} 不一致`;
       if (!model) return 'DSH 模型来源未生效';
     }
-    if (entries.find(row => row.id === 'permission')?.config?.defaultPreset !== 'danger-full-access') return 'DSH 框架权限补丁未生效';
+    const permission = entries.find(row => row.id === 'permission')?.config;
+    if (readonlyInvocation) {
+      const preset = permission?.presets?.['read-only'];
+      if (permission?.defaultPreset !== 'read-only' || preset?.sandbox !== 'read-only' || preset?.approval !== 'never') return 'DSH 视觉只读权限补丁未生效';
+    } else if (permission?.defaultPreset !== 'danger-full-access') return 'DSH 框架权限补丁未生效';
   } catch { return 'DSH 最终配置无法与前台模型来源精确核对'; }
   return undefined;
 }

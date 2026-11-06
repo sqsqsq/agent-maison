@@ -1,0 +1,35 @@
+{
+  "root": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\maison-dsh-visual-real-HKxFza",
+  "version": "0.2.2-rc.1",
+  "provider": {
+    "adapter": "deepseek-harness",
+    "provider": "deepseek-official",
+    "config_source": "C:\\Users\\shengqsq\\.dsh\\profiles\\headless\\cordis.patch.yml",
+    "route_identity": "6e61c4e281b0f9c0bae8b306d6d201b57fc3516db61ea0e182770529d469305c",
+    "model": "deepseek-flash"
+  },
+  "argv": [
+    "D:\\Program Files\\DeepSeek Harness\\resources\\runtime\\cli\\bin\\dsh.cmd",
+    "--profile",
+    "headless",
+    "--patch",
+    "C:\\Users\\shengqsq\\.dsh\\profiles\\headless\\cordis.patch.yml",
+    "--patch",
+    "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\maison-dsh-visual-real-HKxFza\\earlier-model.yaml",
+    "--patch",
+    "D:\\1.code\\agent-maison\\agents\\deepseek-harness\\visual-readonly-patch.yaml",
+    "--json"
+  ],
+  "outcome": "unavailable",
+  "reason": "provider 观测到失败终态：terminal failure",
+  "body": null,
+  "inputProvenance": "unverified",
+  "projectFilesUnchanged": true,
+  "validation": null,
+  "credentials": "Resolved only by DSH itself; no credential file was read, copied or hashed by the probe.",
+  "developmentWriteProbe": "Not run after a failed paid visual invocation; no retries or alternate model.",
+  "nativeErrors": [],
+  "toolNames": [],
+  "actualReadImages": 0,
+  "failureCause": "The selected pin omitted reasoning_effort, while the actual native request header selected high; the shared model binding watcher correctly interrupted before any image tool call."
+}

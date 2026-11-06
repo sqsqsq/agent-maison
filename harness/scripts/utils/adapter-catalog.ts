@@ -423,6 +423,7 @@ export const VISUAL_PROVIDER_READONLY_INVOKE_MODES = [
   'read_only_sandbox',
   'ask_mode',
   'permission_deny_non_read',
+  'profile_read_only_patch',
 ] as const;
 export type VisualProviderReadonlyInvoke = (typeof VISUAL_PROVIDER_READONLY_INVOKE_MODES)[number];
 
@@ -436,6 +437,7 @@ export const VISUAL_PROVIDER_STDOUT_ENVELOPES = [
   'turn_jsonl',
   'result_json',
   'events_json',
+  'final_jsonl',
 ] as const;
 export type VisualProviderStdoutEnvelope = (typeof VISUAL_PROVIDER_STDOUT_ENVELOPES)[number];
 
@@ -444,7 +446,7 @@ export interface VisualProviderDeclaration {
   image_transport: VisualProviderImageTransport;
   stdout_envelope: VisualProviderStdoutEnvelope;
   /** 模型回放旗标 token（如 `--model` / `-m`）——model 必须真实进入该旗标 */
-  model_replay: string;
+  model_replay?: string;
 }
 
 export type VisualProviderDeclarationParse =
@@ -494,7 +496,13 @@ export function parseVisualProviderDeclaration(raw: unknown): VisualProviderDecl
   if (!stdoutEnvelope.ok) return stdoutEnvelope;
   const modelReplayRaw = obj.model_replay;
   const modelReplay = typeof modelReplayRaw === 'string' ? modelReplayRaw.trim() : '';
-  if (!modelReplay.startsWith('-') || modelReplay.length < 2 || /\s/.test(modelReplay)) {
+  const bindingReplay = readonlyInvoke.value === 'profile_read_only_patch'
+    && imageTransport.value === 'prompt_path' && stdoutEnvelope.value === 'final_jsonl';
+  if (readonlyInvoke.value === 'profile_read_only_patch' && !bindingReplay) {
+    return { ok: false, reason: 'profile_read_only_patch 要求 prompt_path 与 final_jsonl' };
+  }
+  if ((!bindingReplay || modelReplayRaw !== undefined)
+    && (!modelReplay.startsWith('-') || modelReplay.length < 2 || /\s/.test(modelReplay))) {
     return {
       ok: false,
       reason: `visual_provider.model_replay 必须是单个模型回放旗标 token（如 --model），收到 ${String(modelReplayRaw)}`,
@@ -506,7 +514,7 @@ export function parseVisualProviderDeclaration(raw: unknown): VisualProviderDecl
       readonly_invoke: readonlyInvoke.value,
       image_transport: imageTransport.value,
       stdout_envelope: stdoutEnvelope.value,
-      model_replay: modelReplay,
+      ...(modelReplay ? { model_replay: modelReplay } : {}),
     },
   };
 }

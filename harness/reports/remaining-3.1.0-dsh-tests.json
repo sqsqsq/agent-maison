@@ -1,0 +1,67 @@
+{
+  "first": {
+    "ok": false,
+    "groups": 874,
+    "passed": 5082,
+    "failed": 1,
+    "reused": 51,
+    "formalNotExecuted": 424,
+    "wallMs": 921160.7977,
+    "input": "62c5a60c19faa9e59a97fe11d8397c341c89dd4d06aa55d1571cfa47125353a5",
+    "ending": "62c5a60c19faa9e59a97fe11d8397c341c89dd4d06aa55d1571cfa47125353a5",
+    "failedCases": [
+      {
+        "group": "agent-invoke-settle",
+        "name": "P1 readonly is independent from review identity and unsupported native readonly is disclosed",
+        "error": "provider_authorization_unsupported: deepseek-harness visual readonly patch must be last"
+      }
+    ]
+  },
+  "final": {
+    "ok": true,
+    "groups": 802,
+    "passed": 4173,
+    "failed": 0,
+    "reused": 123,
+    "reusedCases": 1204,
+    "effectiveDailyPassed": 5377,
+    "formalNotExecuted": 424,
+    "wallMs": 910621.8199,
+    "input": "99819fc83fb7ee5f17554084c814a4e417e1fcf208afc2e1c2a0935d9286a647",
+    "ending": "99819fc83fb7ee5f17554084c814a4e417e1fcf208afc2e1c2a0935d9286a647",
+    "failedCases": []
+  },
+  "targeted": {
+    "visualProvider": {
+      "passed": 88,
+      "failed": 0
+    },
+    "deepseekAdapter": {
+      "passed": 9,
+      "failed": 0
+    },
+    "originalReadonlyRegression": {
+      "passed": 1,
+      "failed": 0
+    }
+  },
+  "typecheck": true,
+  "openspec": {
+    "passed": 65,
+    "failed": 0
+  },
+  "change": "Native readonly intent is carried only by the visual HeadlessInvokePlan; ordinary DSH readonly verifier requests retain their existing snapshot fallback.",
+  "afterPurposeFix": {
+    "ok": true,
+    "groups": 857,
+    "passed": 4905,
+    "failed": 0,
+    "reused": 68,
+    "formalNotExecuted": 424,
+    "wallMs": 1002474.1114,
+    "input": "acd03d23fa6929290722c90acfa2819b019c99c720790c4e52ca7cd67c6d365b",
+    "ending": "acd03d23fa6929290722c90acfa2819b019c99c720790c4e52ca7cd67c6d365b",
+    "failedCases": []
+  },
+  "disclosure": "DSH paired success is required for body acceptance; generic input_provenance remains unverified because no critic parser registry entry was added."
+}

@@ -1,4 +1,4 @@
-import { adapterModelBinding } from './adapter-model';
+import { adapterModelBinding, dshModelSource, parseAdapterModelBinding } from './adapter-model';
 // ============================================================================
 // visual-provider-invoke.ts — 只读视觉 provider 执行器（plan ab072691 t3）
 // ============================================================================
@@ -48,7 +48,7 @@ import {
   type VisualProviderStdoutEnvelope,
 } from './adapter-catalog';
 import { extractClaudeFinalResultText } from './claude-envelope';
-import { extractCodexAgentMessageText } from './codex-terminal-events';
+import { extractCodexAgentMessageText, extractProviderFinalText } from './codex-terminal-events';
 import { hasImageReadParser, parseImageReadEventsFor } from './critic-receipt-producer';
 import { resolveHeadlessBinary, shouldUseCrossSpawn } from './headless-binary-resolve';
 import type { AgentInvokeUsage } from './usage-capture';
@@ -140,9 +140,17 @@ export function resolveVisualProviderInvokePlan(input: VisualProviderPlanInput):
     adapterName: provider.adapter,
     modelBinding: adapterModelBinding({ ...provider, value: provider.model }),
   };
-  const modelFlag = declaration.model_replay;
+  const modelFlag = declaration.model_replay!;
 
   switch (declaration.readonly_invoke) {
+    case 'profile_read_only_patch': {
+      if (provider.adapter !== 'deepseek-harness') throw new Error('profile_read_only_patch 尚未接通该 adapter');
+      const pin = parseAdapterModelBinding(provider.adapter, base.modelBinding);
+      if (!pin) throw new Error('DSH 视觉调用缺少冻结模型绑定');
+      const argv = [bin, '--profile', 'headless', '--patch', dshModelSource(pin), '--patch',
+        path.resolve(__dirname, '../../../agents/deepseek-harness/visual-readonly-patch.yaml'), '--json'];
+      return { plan: { ...base, readonlyInvocation: true, argv, label: `${path.basename(bin)} --profile headless --patch visual-readonly …` } };
+    }
     case 'safe_mode_read_only_tools': {
       // 两个控制面**都要关**：`--safe-mode` 隔离工程定制（settings.json / hooks /
       // 入口文件 / skills / plugins / MCP / 自定义命令与子 agent），`--tools Read` 把模型
@@ -350,6 +358,10 @@ export function projectVisualProviderBody(
       const body = extractOpenCodeFinalText(result.stdout);
       return body === null ? { body: null, reason: '无确定性 final result（无 step_finish 终态或无终稿文本）' } : { body };
     }
+    case 'final_jsonl': {
+      const body = extractProviderFinalText(result.stdout, 'deepseek-harness');
+      return body === null ? { body: null, reason: '无完整的最后 final 正文' } : { body };
+    }
     default: {
       const never: never = envelope;
       return { body: null, reason: `未接线的 stdout_envelope: ${String(never)}` };
@@ -461,6 +473,26 @@ function resolveInputProvenance(
   }
 }
 
+/** DSH may exit 0 after a failed image tool; only paired successful reads cover an input. */
+function dshReadImages(raw: string, projectRoot: string, imagePaths: string[]): boolean {
+  const canonical = (file: string): string => {
+    const absolute = path.resolve(projectRoot, file);
+    return process.platform === 'win32' ? absolute.toLowerCase() : absolute;
+  };
+  const calls = new Map<string, string>(), read = new Set<string>();
+  for (const line of raw.split(/\r?\n/)) {
+    let event: Record<string, any>;
+    try { event = JSON.parse(line); } catch { continue; }
+    if (!event || typeof event.callId !== 'string') continue;
+    if (event.type === 'tool_call' && event.tool === 'read_image' && typeof event.input?.file_path === 'string') {
+      calls.set(event.callId, canonical(event.input.file_path));
+    } else if (event.type === 'tool_result' && event.status === 'completed' && !event.error) {
+      const image = calls.get(event.callId); if (image) read.add(image);
+    }
+  }
+  return imagePaths.every(file => read.has(canonical(file)));
+}
+
 /**
  * 执行一次 provider 调用。
  *
@@ -564,15 +596,20 @@ export async function invokeVisualProvider(
       { ...common, timed_out: true, ...(exhausted ? { deadline_exhausted: true } : {}) });
   }
   if (result.terminal_failure_observed === true) {
-    return fail('unavailable', `provider 观测到失败终态：${result.terminal_error_excerpt ?? 'terminal failure'}`, common);
+    return fail('unavailable', `provider 观测到失败终态：${result.model_binding_mismatch ?? result.terminal_error_excerpt ?? 'terminal failure'}`, common);
   }
-  if (!invocationCompleted(result)) {
+  if (!invocationCompleted(result) || input.provider.adapter === 'deepseek-harness' && result.exitCode !== 0) {
     return fail('unavailable', `provider 调用未完成（exit=${result.exitCode}）`, common);
   }
 
-  const projected = projectVisualProviderBody(decl.declaration.stdout_envelope, result);
+  const dsh = input.provider.adapter === 'deepseek-harness';
+  const raw = dsh && eventsPath && fs.existsSync(eventsPath) ? fs.readFileSync(eventsPath, 'utf8') : result.stdout;
+  const projected = projectVisualProviderBody(decl.declaration.stdout_envelope, dsh ? { ...result, stdout: raw } : result);
   if (projected.body === null || projected.body.trim().length === 0) {
     return fail('invalid', projected.reason ?? 'provider 正文为空', common);
+  }
+  if (dsh && !dshReadImages(raw, input.projectRoot, input.imagePaths)) {
+    return fail('invalid', 'DSH 本次输入图片缺少配对的成功 read_image 证据', common);
   }
   if (dirtied) {
     // 丢弃本轮结果 + 记录事实；**不自动 revert**（那会覆盖人可能想留的现场），**不 halt**。

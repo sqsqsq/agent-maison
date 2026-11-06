@@ -186,6 +186,7 @@ DeepSeek Harness 使用 `deepseek-harness` adapter、自有 `.dsh/skills` 和共
 （`^[a-z0-9]+(?:-[a-z0-9]+)*$`）；大写/下划线可能被 DSH 告警后忽略，Maison 不自动改名。
 默认模型、环境凭据、权限覆盖和实测范围见
 [Goal runbook · DeepSeek Harness](../docs/operations/goal-mode-runbook.md#deepseek-harnessdsh)。
+独立视觉使用单独的只读 patch 与公共模型绑定；开发全权限和视觉只读的接线、锁定版本实测及限制见同节。
 
 ## 工程指纹与 adapter 推测（承接 scan-project）
 

@@ -1,0 +1,59 @@
+{
+  "root": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\maison-dsh-dev-real-weGz5V\\development",
+  "argv": [
+    "D:\\Program Files\\DeepSeek Harness\\resources\\runtime\\cli\\bin\\dsh.cmd",
+    "--profile",
+    "headless",
+    "--patch",
+    "C:\\Users\\shengqsq\\.dsh\\profiles\\headless\\cordis.patch.yml",
+    "--patch",
+    "D:\\1.code\\agent-maison\\agents\\deepseek-harness\\headless-patch.yaml",
+    "--json"
+  ],
+  "containment": {
+    "runId": "4e92a7c6-dev",
+    "invokeId": "H3"
+  },
+  "exitCode": 0,
+  "stderr": "[llm-deepseek-api-key] model listing from https://api.deepseek.com/models loaded 2 model(s), skipped 0 row(s)\n",
+  "pid": 9452,
+  "completion": true,
+  "expectedWritten": true,
+  "actualWritten": "5c12a1c3b3a2\n",
+  "sentinelUnchanged": true,
+  "nativePermissions": [
+    {
+      "type": "permission/preset",
+      "data": {
+        "preset": "danger-full-access"
+      }
+    },
+    {
+      "type": "sandbox/mode",
+      "data": {
+        "mode": "danger-full-access"
+      }
+    },
+    {
+      "type": "approval/policy",
+      "data": {
+        "policy": "never"
+      }
+    }
+  ],
+  "toolNames": [
+    "write"
+  ],
+  "provider_session_id": "session-16950cea-3272-4460-8e2f-e1ef9435b280",
+  "toolCalls": [
+    {
+      "callId": "call_00_ET_9p6tcf4WwbMFxv8fB6F39031",
+      "tool": "write",
+      "file_path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\maison-dsh-dev-real-weGz5V\\development\\result.txt"
+    }
+  ],
+  "projectFiles": [
+    "result.txt",
+    "sentinel.txt"
+  ]
+}

@@ -80,7 +80,7 @@ function fixtureBinary(root: string): ResolvedHeadlessBinary {
   const script = path.join(root, 'fixture.cjs');
   write(path.join(root, 'profiles', 'desktop', 'cordis.patch.yml'), YAML.stringify([{ id: 'llm-pi-ai', config: { providers: { fixture: { baseURL: 'https://fixture.invalid/v1', apiKeyEnv: 'FIXTURE_KEY', models: [{ id: 'fixture-model', contextWindow: 1000, input: ['text'] }] } } } }]));
   write(script, `
-if(process.argv.includes('--dump-config')){console.log(JSON.stringify([{id:'agent-default-model',config:{provider:'fixture',model:'fixture-model'}},{id:'permission',config:{defaultPreset:'danger-full-access'}},{id:'llm-pi-ai',config:{providers:{fixture:{baseURL:'https://fixture.invalid/v1',apiKeyEnv:'FIXTURE_KEY',models:[{id:'fixture-model',contextWindow:1000,input:['text']}]}}}}]));process.exit(0);}
+if(process.argv.includes('--dump-config')){console.log(JSON.stringify([{id:'agent-default-model',config:{provider:'fixture',model:'fixture-model'}},{id:'permission',config:process.argv.some(arg=>arg.endsWith('visual-readonly-patch.yaml'))&&process.env.DSH_TEST_BAD_READONLY!=='1'?{defaultPreset:'read-only',presets:{'read-only':{sandbox:'read-only',approval:'never'}}}:{defaultPreset:'danger-full-access'}},{id:'llm-pi-ai',config:{providers:{fixture:{baseURL:'https://fixture.invalid/v1',apiKeyEnv:'FIXTURE_KEY',models:[{id:'fixture-model',contextWindow:1000,input:['text']}]}}}}]));process.exit(0);}
 let input = '';
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', text => { input += text; });
@@ -288,6 +288,33 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     }),
   },
 ];
+
+cases.push({
+  name: '4e92 DSH production precheck and spawn use the same readonly intent without changing development permissions',
+  run: () => withRoot(async root => {
+    const binary = fixtureBinary(root), developer = invocation(root, 'development', binary);
+    const script = path.join(root, 'fixture.cjs'), count = path.join(root, 'requests.jsonl');
+    fs.appendFileSync(script, '\nif(!process.argv.includes("--dump-config"))require("fs").appendFileSync(' + JSON.stringify(count) + ',"started\\n");\n');
+    const source = developer.argv[developer.argv.indexOf('--patch') + 1];
+    const visual = { ...developer, readonlyInvocation: true as const, argv: [binary.path, '--profile', 'headless', '--patch', source, '--patch', path.join(FRAMEWORK_ROOT, 'agents/deepseek-harness/visual-readonly-patch.yaml'), '--json'] };
+    const extraEnv = { DSH_PERMISSION_MODE: 'danger-full-access', dsh_permission_mode: 'workspace-write', Dsh_Permission_Mode: 'danger-full-access' };
+    const dev = await invokeAgentHeadless(developer, root, { extraEnv });
+    assert.strictEqual(JSON.parse(dev.stdout).permission, 'danger-full-access');
+    const readonly = await invokeAgentHeadless(visual, root, { readonlyInvocation: true, extraEnv });
+    assert.strictEqual(readonly.exitCode, 0, readonly.stderr);
+    assert.strictEqual(readonly.readonly_enforced, true);
+    assert.strictEqual(JSON.parse(readonly.stdout).permission, 'read-only');
+    assert.deepStrictEqual(JSON.parse(readonly.stdout).permissionKeys, ['DSH_PERMISSION_MODE']);
+    const started = fs.readFileSync(count, 'utf8');
+    const bad = await invokeAgentHeadless(visual, root, { readonlyInvocation: true, extraEnv: { ...extraEnv, DSH_TEST_BAD_READONLY: '1' } });
+    assert(bad.skipped && bad.stderr.includes('只读权限补丁未生效'));
+    const missing = await invokeAgentHeadless({ ...visual, argv: visual.argv.filter(arg => !arg.endsWith('visual-readonly-patch.yaml')) }, root, { readonlyInvocation: true });
+    assert(missing.stderr.includes('readonly patch must be last'));
+    assert.strictEqual(fs.readFileSync(count, 'utf8'), started, 'bad readonly configuration must not reach a model request');
+    assert.strictEqual(buildAgentSpawnEnv(extraEnv, extraEnv, ADAPTER).DSH_PERMISSION_MODE, 'danger-full-access');
+    assert.strictEqual(buildAgentSpawnEnv(extraEnv, extraEnv, ADAPTER, true).DSH_PERMISSION_MODE, 'read-only');
+  }),
+});
 
 export async function runAll(): Promise<UnitCaseResult[]> {
   const results: UnitCaseResult[] = [];

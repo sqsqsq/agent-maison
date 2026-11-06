@@ -1,0 +1,15 @@
+{
+  "binary": {
+    "path": "D:\\Program Files\\DeepSeek Harness\\resources\\runtime\\cli\\bin\\dsh.cmd",
+    "kind": "cmd",
+    "shadowed": []
+  },
+  "project": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\maison-dsh-t0-NgW2Fu",
+  "source": "C:\\Users\\shengqsq\\.dsh\\profiles\\headless\\cordis.patch.yml",
+  "version": "0.2.2-rc.1",
+  "defaultModel": {
+    "provider": "deepseek-official",
+    "model": "deepseek-flash"
+  },
+  "candidates": []
+}

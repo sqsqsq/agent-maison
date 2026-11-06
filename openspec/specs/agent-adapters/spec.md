@@ -369,7 +369,9 @@ Enforcement: `harness/scripts/utils/vision-canary.ts`, `harness/scripts/utils/co
 
 The adapter schema SHALL define an optional `visual_provider` object with the frozen shape
 `{readonly_invoke, image_transport, stdout_envelope, model_replay}`. A declaration is **complete**
-only when every one of those fields is present and valid.
+only when every field is present and valid, except that the combination
+`profile_read_only_patch` / `prompt_path` / `final_jsonl` MAY omit `model_replay`
+and SHALL replay the existing frozen `modelBinding` instead of inventing a model flag.
 
 Provider support and provider run-time eligibility SHALL be derived **solely** by scanning that field
 across the adapter catalog. The framework SHALL NOT maintain a TypeScript adapter whitelist, SHALL
@@ -383,9 +385,8 @@ The ordinary `goal_capability` block SHALL NOT participate in provider eligibili
 stdout-envelope contract. An adapter MAY therefore be a provider without being materialized as a
 project adapter and without a usable `goal_capability`.
 
-The first batch SHALL declare `visual_provider` for `claude`, `codex` and `opencode` only.
-`codeagent`, `chrys`, `generic` and `cursor` SHALL NOT declare it and SHALL NOT be usable as
-providers. A mechanism id kept in the vocabulary without any adapter claiming it (`ask_mode`,
+Eligibility SHALL follow each adapter's currently qualified declaration, including DSH's
+independently verified read-only profile composition. A mechanism id kept in the vocabulary without any adapter claiming it (`ask_mode`,
 `result_json`) SHALL NOT by itself confer eligibility on any adapter.
 
 Each declaration SHALL be admitted only after a real invocation smoke run on the locked CLI version
@@ -393,8 +394,26 @@ proves the declared read-only isolation, model replay and image transport. Where
 not actually provide the declared isolation, the declaration SHALL NOT be admitted, and the provider
 SHALL NOT fall back to the adapter's project-default configuration.
 
-Enforcement: `agents/adapter-schema.yaml`, `agents/{claude,codex,opencode}/adapter.yaml`,
+Enforcement: `agents/adapter-schema.yaml`, `agents/{claude,codex,opencode,deepseek-harness}/adapter.yaml`,
 `harness/scripts/utils/adapter-catalog.ts`, `harness/scripts/utils/visual-provider-invoke.ts`
+
+#### Scenario: DSH visual composition separates model replay from development permissions
+
+- **WHEN** DSH is invoked as a visual provider with a frozen provider, full model ID and native source
+- **THEN** the source patch SHALL precede the fixed visual patch, and precheck and spawn SHALL share the read-only intent
+- **AND** the effective session SHALL be read-only/never with only required reading tools, image offload disabled and automatic compaction disabled
+- **AND** ordinary development invocations SHALL retain their existing full-access contract
+
+#### Scenario: DSH final and image evidence belong to the current invocation
+
+- **WHEN** a DSH visual invocation returns, including a tool error followed by exit zero
+- **THEN** acceptance SHALL require exit zero, the last complete final text and paired successful read_image evidence for every current input image
+- **AND** a missing or malformed last final SHALL NOT reuse an earlier final, and no extra turn_end anchor SHALL be required
+- **AND** the existing identity, image hash, payload and workspace checks SHALL continue to apply
+
+Enforcement: `agents/deepseek-harness/visual-readonly-patch.yaml`, `harness/scripts/utils/agent-invoke.ts`,
+`harness/scripts/utils/adapter-model.ts`, `harness/scripts/utils/codex-terminal-events.ts`,
+`harness/tests/unit/visual-provider.unit.test.ts`, `harness/tests/unit/deepseek-harness-adapter.unit.test.ts`
 
 #### Scenario: a Claude-kernel fork is not admitted by family
 

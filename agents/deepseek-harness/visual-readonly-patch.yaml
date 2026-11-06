@@ -1,0 +1,72 @@
+- id: permission
+  config:
+    defaultPreset: read-only
+    presets:
+      read-only:
+        sandbox: read-only
+        approval: never
+- id: credentials
+  disabled: false
+- id: authorization
+  disabled: false
+- id: deepseek-account
+  disabled: false
+- id: tool-fs
+  config:
+    read: true
+    readImage: true
+    write: false
+    edit: false
+    applyPatch: false
+- id: compaction-basic
+  config:
+    auto: false
+- id: tool-executor-native
+  disabled: false
+- id: tool-plugin-manager
+  disabled: true
+- id: tool-working-directory
+  disabled: true
+- id: tool-bash
+  disabled: true
+- id: tool-pwsh
+  disabled: true
+- id: tool-jobs
+  disabled: true
+- id: agent-instructions
+  disabled: true
+- id: skill-filesystem
+  disabled: true
+- id: tool-skill
+  disabled: true
+- id: plan-mode
+  disabled: true
+- id: tool-subagent-control
+  disabled: true
+- id: tool-subagent
+  disabled: true
+- id: tool-subagent-fork
+  disabled: true
+- id: workflow-ptc
+  disabled: true
+- id: tool-workflow
+  disabled: true
+- id: ptc-runtime
+  disabled: true
+- id: tool-todo
+  disabled: true
+- id: tool-goal
+  disabled: true
+- id: tool-web
+  disabled: true
+- id: mcp-resources
+  disabled: true
+- id: tool-executor-ptc
+  disabled: true
+- id: image-offload
+  disabled: true
+- id: agent-default-model
+  config:
+    provider: !!js JSON.parse(process.env.MAISON_GOAL_MODEL_PIN).provider
+    model: !!js JSON.parse(process.env.MAISON_GOAL_MODEL_PIN).value
+    reasoningEffort: !!js JSON.parse(process.env.MAISON_GOAL_MODEL_PIN).reasoning_effort

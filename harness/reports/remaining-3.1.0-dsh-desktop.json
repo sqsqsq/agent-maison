@@ -1,0 +1,39 @@
+{
+  "root": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\maison-dsh-visual-real-Ru01ho",
+  "version": "0.2.2-rc.1",
+  "provider": {
+    "adapter": "deepseek-harness",
+    "provider": "deepseek-official",
+    "reasoning_effort": "high",
+    "config_source": "C:\\Users\\shengqsq\\.dsh\\profiles\\headless\\cordis.patch.yml",
+    "route_identity": "6e61c4e281b0f9c0bae8b306d6d201b57fc3516db61ea0e182770529d469305c",
+    "model": "deepseek-flash"
+  },
+  "argv": [
+    "D:\\Program Files\\DeepSeek Harness\\resources\\runtime\\cli\\bin\\dsh.cmd",
+    "--profile",
+    "headless",
+    "--patch",
+    "C:\\Users\\shengqsq\\.dsh\\profiles\\headless\\cordis.patch.yml",
+    "--patch",
+    "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\maison-dsh-visual-real-Ru01ho\\earlier-model.yaml",
+    "--patch",
+    "D:\\1.code\\agent-maison\\agents\\deepseek-harness\\visual-readonly-patch.yaml",
+    "--json"
+  ],
+  "nativeOutcome": {
+    "exitCode": 0,
+    "terminal_error_excerpt": "",
+    "stderr": "[llm-deepseek-api-key] model listing from https://api.deepseek.com/models loaded 2 model(s), skipped 0 row(s)\n",
+    "readonly_enforced": true,
+    "provider_session_id": "session-c3bb6247-2376-4c01-93d6-b974d349946c"
+  },
+  "outcome": "invalid",
+  "reason": "DSH 本次输入图片缺少配对的成功 read_image 证据",
+  "body": null,
+  "inputProvenance": "unverified",
+  "projectFilesUnchanged": true,
+  "validation": null,
+  "credentials": "Resolved only by DSH itself; no credential file was read, copied or hashed by the probe.",
+  "developmentWriteProbe": "Subsequently passed in a separate isolated project; see remaining-3.1.0-dsh-development.json."
+}
