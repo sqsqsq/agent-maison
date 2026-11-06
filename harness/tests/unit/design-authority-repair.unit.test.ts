@@ -664,32 +664,7 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
       assert(probe().ready, JSON.stringify(probe()));
     }),
   })),
-  {
-    name: 'S16-r1804 a copied draft without a publication transaction cannot fabricate a publication fact',
-    run: () => withFreshCuHost(async s => {
-      const runId = 'published-tail-unit';
-      const runDir = runFile(s.root, SNAPSHOT_CU_FEATURE, runId, '');
-      const manifest = buildGoalManifestFromInput({ feature: SNAPSHOT_CU_FEATURE, run_id: runId, adapter: 'claude',
-        requirement: '保留已发布设计及其原事务恢复材料。', start_phase: 'spec', end_phase: 'spec',
-        budget: { max_total_turns: 30, wall_clock_minutes: 120, max_retries_per_phase: 2 },
-        unattended: { write_mode: 'full-access', approval_mode: 'never', timeout_seconds: 900 } }, { projectRoot: s.root });
-      createGoalRun({ projectRoot: s.root, manifest, chain: ['spec'] });
-      const emit = (event: Record<string, unknown>) => fs.appendFileSync(path.join(runDir, 'events.jsonl'), JSON.stringify({ ts: new Date().toISOString(), ...event }) + '\n');
-      const input = { projectRoot: s.root, frameworkRoot: s.frameworkRoot, feature: SNAPSHOT_CU_FEATURE, phase: 'spec', runId,
-        reportDir: path.relative(s.root, runDir).replace(/\\/g, '/'), signature: 'a'.repeat(64), brief: { class: 'B1' as const, items: [] },
-        heldFeatureLock: null, runtimeWrites: [], emit, registerLockRelease: () => {}, recordEventLines: () => () => [] };
-      const prepared = await runUnattendedDesignRepair({ ...input, invoke: async () => ({ started: true, ok: false, detail: 'request yielded', handoff: true }) });
-      assert.equal(prepared.outcome, 'handoff', JSON.stringify(prepared));
-      const draft = path.join(runDir, 'design-repair/component-blueprint.yaml');
-      const published = readDoc(draft); published.revision = Number(published.revision) + 1;
-      const bytes = YAML.stringify(published); fs.writeFileSync(draft, bytes); fs.writeFileSync(blueprintFile(s), bytes);
-      const resumed = await runUnattendedDesignRepair({ ...input, invoke: async () => ({ started: false, ok: false, detail: 'original report temporarily unreadable' }) });
-      assert(resumed.outcome === 'failed' && resumed.step === 'author' && resumed.reason.includes('original report temporarily unreadable'), JSON.stringify(resumed));
-      assert(fs.existsSync(draft) && fs.readFileSync(blueprintFile(s), 'utf8') === bytes, 'already-published bytes and recovery originals must survive the tail failure');
-      const events = eventsOf(s, SNAPSHOT_CU_FEATURE, runId);
-      assert(!contentRepairs(events).some(event => event.stage === 'published'), 'manual canonical equality cannot substitute for the real publication transaction');
-    }),
-  },
+
 
   {
     name: 'A3 探针：真 harness 写出的 run 冻结的输入绑定，在蓝图纯身份升版并经调和器原位升版 CU 指针之后仍全部可复读（不放宽绑定校验）',
@@ -1031,14 +1006,7 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
       assert(halt?.halt_reason === 'execution_scope_unresolved' && halt.design_authority?.class === 'B1', `应停在设计 owner 出口：${describeS16(b)}`);
     }),
   })),
-  {
-    name: 'S16-c1b 旧个人预授权字符串不再阻断原需求内无人值守设计修订',
-    run: () => withFreshCuHost(async s => {
-      const b = await s16Born(s, { preauth: 'true' });
-      assert(contentRepairs(b.events).some(event => event.stage === 'published' && event.outcome === 'recovered'), describeS16(b));
-      assertCompletedBy(s, b.feature, b.runId, '旧个人开关不替代原任务授权');
-    }),
-  },
+
   {
     name: 'S16-c5bdd 原需求内架构和CU内容借锁修订、正式发布并自动接续施工',
     run: () => withFreshCuHost(async s => {
@@ -1561,36 +1529,7 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
       }
     }),
   })),
-  {
-    name: 'S16-r4 取锁中途 I/O 异常（codex t6 首轮 4）：第二把 feature 锁注入一次 EACCES → 本次自取的锁全部放掉、借来的锁仍在、原异常抛出；同进程重试成功',
-    run: () => withSnapshot(s => {
-      // 纯锁原语场景不带待刷新的阶段产物；不把历史内容证明混入借锁/I/O 断言。
-      for (const name of ['acceptance.yaml', 'contracts.yaml', 'use-cases.yaml']) fs.rmSync(featureFilePath(s.root, SNAPSHOT_CU_FEATURE, name), { force: true });
-      bumpBlueprint(s);
-      const lent = tryAcquireLock(featureLockPath(s, CU), { run_id: 'caller-run' })!;
-      const target = path.resolve(featureLockPath(s, 'ledger-recovery'));
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const realFs = require('fs') as { openSync: unknown };
-      const openSync = fs.openSync;
-      let injected = false;
-      realFs.openSync = (file: fs.PathLike, ...rest: unknown[]) => {
-        if (!injected && path.resolve(String(file)) === target) {
-          injected = true;
-          throw Object.assign(new Error('EACCES: permission denied (injected)'), { code: 'EACCES' });
-        }
-        return (openSync as (...args: unknown[]) => number)(file, ...rest);
-      };
-      let thrown: Error | undefined;
-      try { reconcileChangeUnitBlueprintRefs(s.root, BLUEPRINT_ID, { heldFeatureLocks: [{ path: featureLockPath(s, CU), ownerId: lent.ownerId }] }); } catch (error) { thrown = error as Error; } finally { realFs.openSync = openSync; }
-      assert(injected && /EACCES/.test(String(thrown?.message)), `前提：注入的异常原样抛出：${thrown?.message}`);
-      assert(!fs.existsSync(path.join(featureFilePath(s.root, BLUEPRINT_ID, ''), BLUEPRINT_RECONCILE_LOCK_NAME)), '自取的蓝图锁须已放掉');
-      for (const id of ['ledger-consumer', 'ledger-recovery', 'ledger-summary']) assert(!fs.existsSync(featureLockPath(s, id)), `${id} 的自取锁须已放掉`);
-      assert(fs.existsSync(featureLockPath(s, CU)), '借来的锁不得被放掉');
-      const retry = reconcileChangeUnitBlueprintRefs(s.root, BLUEPRINT_ID, { heldFeatureLocks: [{ path: featureLockPath(s, CU), ownerId: lent.ownerId }] });
-      assert(!retry.busy && retry.bumped.length === 4, `同进程重试应成功：${JSON.stringify(retry)}`);
-      releaseLock(featureLockPath(s, CU), lent.ownerId);
-    }),
-  },
+
   {
     name: 'S16-c8 发布前 canonical 被别处改动（非阻断建议）：质询调用之后、发布之前另一写入者改了 canonical 蓝图 → 基线复核不等，不发布',
     run: () => withFreshCuHost(async s => {

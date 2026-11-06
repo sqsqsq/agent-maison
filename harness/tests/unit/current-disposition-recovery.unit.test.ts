@@ -1473,4 +1473,5 @@ export async function runSelectedCases(filter?: string) {
 }
 export async function runAll() { return (await runSelectedCases()).results; }
 
-export const listCaseGroups = () => unitCaseGroups(cases.map(c => c.name));
+export const listCaseGroups = () => unitCaseGroups(cases.map(c => c.name)).map(group => ({ ...group,
+  releaseOnly: group.caseNames.some(name => name.startsWith('R4 current object coverage legacy ')) }));

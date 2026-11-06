@@ -3,13 +3,15 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { pathToFileURL } from 'url';
-import { buildImpactPlan, changedInputs, GroupFootprint, includeAdditionalGroups, InputSnapshot, registryFingerprint, snapshotTestInputs, TestGroup, TestRunState, updateTestState } from '../utils/test-impact';
+import { buildImpactPlan, changedInputs, CODING_REPAIR_CASE, GroupFootprint, includeAdditionalGroups, InputSnapshot, NORMAL_DESIGN_CASE, registryFingerprint, snapshotTestInputs, TestGroup, TestRunState, updateTestState } from '../utils/test-impact';
 import { execFileSync, spawnSync } from 'child_process';
 import { assertFunctionDependencies, buildTestDependencyGraph, inferTestLayer, REPO_ROOT } from '../utils/test-dependency-graph';
 import { guardFunctionProcesses, observeTestInputs } from '../utils/test-input-observer';
 import { mergeGroupCoverage } from '../utils/test-coverage';
 import { exactCaseSelector, matchesUnitCase } from '../utils/unit-case-selection';
-import { groupTimingHints, mergeOverlappingGroups, readExecutionTimingResults } from '../utils/unit-case-groups';
+import { enumerateUnitGroups, groupTimingHints, mergeOverlappingGroups, readExecutionTimingResults } from '../utils/unit-case-groups';
+import { discoverProfileUnitSuites } from '../utils/unit-suite-registry';
+import { collectAllFixtureDirs } from '../utils/fixture-registry';
 import { orderSuiteTasks, runSuiteProcesses, UnitWorkerResult } from '../utils/unit-suite-processes';
 import type { UnitCaseResult } from '../run-unit';
 import { testPollInterval } from '../utils/runtime-test-control';
@@ -30,7 +32,9 @@ function setup(root: string) {
   const before: InputSnapshot = { head: 'same', id: 'before', files: { 'harness/tests/unit/a.unit.test.ts': 'test1', 'harness/scripts/a.ts': 'a1', 'harness/scripts/b.ts': 'b1', 'docs/runbook.md': 'd1' } };
   const groups: TestGroup[] = [
     { id: 'function', suiteId: 'function', modulePath: path.join(root, 'harness/tests/unit/a.unit.test.ts'), layer: 'function' },
-    ...['cap-a', 'cap-b', 'unknown', 'text-only', 'old-red'].map(id => ({ id, suiteId: id, modulePath: path.join(root, `harness/tests/unit/${id}.unit.test.ts`), layer: 'capability' as const })),
+    ...['cap-a', 'cap-b', 'unknown', 'text-only', 'old-red'].map(id => ({ id, suiteId: id === 'text-only' ? 'docs-authoring-lint' : id, modulePath: path.join(root, `harness/tests/unit/${id}.unit.test.ts`), layer: 'capability' as const })),
+    { id: 'normal-design', suiteId: 'daily-design-journey', caseNames: [NORMAL_DESIGN_CASE], modulePath: path.join(root, 'harness/tests/unit/daily-design-journey.unit.test.ts'), layer: 'capability' },
+    { id: 'coding-repair', suiteId: 'daily-recovery-journey', caseNames: [CODING_REPAIR_CASE], modulePath: path.join(root, 'harness/tests/unit/daily-recovery-journey.unit.test.ts'), layer: 'capability' },
   ];
   const state: TestRunState = { version: 1, registry: registryFingerprint(groups, root), snapshots: { before }, graph: buildTestDependencyGraph(Object.keys(before.files), root), groups: {} };
   for (const group of groups) state.groups[group.id] = { result: pass(group.id), snapshotId: 'before', modulePath: path.relative(root, group.modulePath).replace(/\\/g, '/'), layer: group.layer, footprint: footprint({ executed: group.id === 'cap-a' ? ['harness/scripts/a.ts'] : [] }) };
@@ -46,15 +50,60 @@ cases.push({ name: 'impact: both layers include imports, executed source and tex
   assert.deepStrictEqual(plan.selected.map(row => row.group.id), ['function', 'cap-a', 'unknown', 'text-only', 'old-red']);
   assert(plan.reused.includes('cap-b')); assert(plan.typecheck);
 }) });
-cases.push({ name: 'impact: document reads, directory membership, unknown reads and no blanket plan exemption', run: () => temporary(root => {
+cases.push({ name: 'impact: published prose selects its reader and one representative while development plans use their own validation', run: () => temporary(root => {
   const { before, groups, state } = setup(root);
   state.groups.unknown.footprint = footprint({ readsComplete: false });
   const doc = { ...before, id: 'doc', files: { ...before.files, 'docs/runbook.md': 'd2' } };
-  assert.deepStrictEqual(buildImpactPlan(groups, doc, state, root).selected.map(row => row.group.id), ['cap-a', 'cap-b', 'unknown', 'text-only', 'old-red']);
+  assert.deepStrictEqual(buildImpactPlan(groups, doc, state, root).selected.map(row => row.group.id), ['text-only', 'old-red', 'normal-design']);
   const addedPlan = { ...before, id: 'added', files: { ...before.files, '.cursor/plans/new.plan.md': 'p' } };
-  assert.deepStrictEqual(buildImpactPlan(groups, addedPlan, state, root).selected.map(row => row.group.id), ['cap-a', 'cap-b', 'unknown', 'text-only', 'old-red']);
+  assert.deepStrictEqual(buildImpactPlan(groups, addedPlan, state, root).selected.map(row => row.group.id), ['old-red']);
+  const developmentSpec = {...before, files: {...before.files, 'openspec/specs/example/spec.md': 'updated behavior prose'}};
+  assert.deepStrictEqual(buildImpactPlan(groups, developmentSpec, state, root).selected.map(row => row.group.id), ['old-red']);
   const unexplained = { ...before, files: { ...before.files, 'unrecognized.md': 'new' } };
   assert.equal(buildImpactPlan(groups, unexplained, state, root).selected.length, groups.filter(group => group.layer === 'capability').length);
+}) });
+cases.push({ name: 'prose: dirty snapshots distinguish text from declarations, source unions and old failures remain mandatory', run: () => temporary(root => {
+  const {groups, state} = setup(root);
+  const file = 'skills/feature/coding/SKILL.md';
+  fs.mkdirSync(path.dirname(path.join(root, file)), {recursive: true});
+  const original = '---\nname: coding\ndescription: initial\n---\n# Coding\n\nOriginal body.\n';
+  fs.writeFileSync(path.join(root, file), original);
+  const git = (...args: string[]) => execFileSync('git', args, {cwd: root, stdio: 'ignore'});
+  git('init', '-q'); git('add', '.'); git('-c', 'user.name=F', '-c', 'user.email=f@e.test', 'commit', '-qm', 'base');
+  const structure: TestGroup = {id: 'authority', suiteId: 'phase-write-boundary', modulePath: path.join(root, 'harness/tests/unit/authority.unit.test.ts'), layer: 'capability'};
+  const formal: TestGroup = {...structure, id: 'formal-red', suiteId: 'formal', releaseOnly: true};
+  groups.push(structure, formal);
+  const before = snapshotTestInputs(root);
+  state.snapshots = {[before.id]: before};
+  state.graph = buildTestDependencyGraph(Object.keys(before.files), root);
+  for (const group of groups) state.groups[group.id] = {result: pass(group.id), snapshotId: before.id,
+    modulePath: path.relative(root, group.modulePath).replace(/\\/g, '/'), layer: group.layer, footprint: footprint({files: [file], directories: ['skills']})};
+  state.groups['old-red'].result.ok = false; state.groups['formal-red'].result.ok = false;
+  state.registry = registryFingerprint(groups, root);
+  fs.writeFileSync(path.join(root, file), original.replace('Original body.', 'Rephrased body.'));
+  const prose = snapshotTestInputs(root);
+  assert.equal(prose.head, before.head); assert.equal(prose.documentStructures![file], before.documentStructures![file]);
+  const plain = buildImpactPlan(groups, prose, state, root);
+  assert.deepStrictEqual(plain.selected.map(row => row.group.id), ['function', 'text-only', 'old-red', 'coding-repair']);
+  assert(plain.reused.includes('normal-design') && !plain.reused.includes('coding-repair'));
+  assert(plain.formal.some(row => row.id === formal.id && row.status === 'previous-failure'));
+  assert(!plain.typecheck && !plain.full);
+  const combined = buildImpactPlan(groups, {...prose, files: {...prose.files, 'docs/runbook.md': 'new published text'}}, state, root);
+  assert(combined.selected.some(row => row.group.id === 'normal-design'));
+  assert(!combined.selected.some(row => row.group.id === 'coding-repair'), 'mixed published purposes share one full representative');
+  fs.writeFileSync(path.join(root, file), original.replace('description: initial', 'description: changed'));
+  const changedStructure = buildImpactPlan(groups, snapshotTestInputs(root), state, root);
+  assert(changedStructure.selected.some(row => row.group.id === 'authority' && row.reasons.some(reason => reason.startsWith('published structure/contract'))));
+  fs.writeFileSync(path.join(root, 'harness/scripts/a.ts'), 'export const a = 2;\n');
+  const mixed = buildImpactPlan(groups, snapshotTestInputs(root), state, root);
+  assert(mixed.typecheck && mixed.selected.some(row => row.group.id === 'function'));
+  assert(mixed.selected.some(row => row.group.id === 'coding-repair'));
+  state.registry = 'old-public-identity';
+  const invalidated = buildImpactPlan(groups, prose, state, root);
+  assert.equal(invalidated.selected.length, groups.filter(group => !group.releaseOnly).length);
+  assert.equal(invalidated.full, false); assert(!invalidated.selected.some(row => row.group.id === formal.id));
+  assert.throws(() => buildImpactPlan(groups.filter(group => group.id !== 'coding-repair'), prose, {...state, registry: registryFingerprint(groups, root)}, root), /exact coding repair representative/);
+  assert.throws(() => buildImpactPlan(groups.filter(group => group.id !== 'normal-design'), {...before, files: {...before.files, 'docs/runbook.md': 'changed'}}, {...state, registry: registryFingerprint(groups, root)}, root), /exact normal design representative/);
 }) });
 cases.push({ name: 'impact: proved development-rule contents can be exempt, while membership, readers and old failures remain required', run: () => temporary(root => {
   const {before, groups, state} = setup(root);
@@ -172,17 +221,81 @@ cases.push({ name: 'plans: independent fixture and release-only selection retain
   const { before, groups, state } = setup(root);
   const fixture: TestGroup = { id: 'fixture:sample', suiteId: 'fixture:sample', modulePath: path.join(root, 'harness/tests/fixtures/sample'), layer: 'capability', kind: 'fixture' };
   const release: TestGroup = { id: 'release', suiteId: 'release', modulePath: path.join(root, 'harness/tests/unit/release.unit.test.ts'), layer: 'capability', releaseOnly: true };
-  groups.push(fixture, release); state.registry = registryFingerprint(groups, root);
+  const untestedRed: TestGroup = {...release, id: 'formal-unexecuted', suiteId: 'formal-unexecuted'};
+  groups.push(fixture, release, untestedRed); state.registry = registryFingerprint(groups, root);
   state.groups[fixture.id] = { result: pass(fixture.id), snapshotId: 'before', modulePath: 'harness/tests/fixtures/sample', layer: 'capability', footprint: footprint() };
   state.groups.release = { result: pass('release'), snapshotId: 'before', modulePath: 'harness/tests/unit/release.unit.test.ts', layer: 'capability', footprint: footprint({ files: ['docs/runbook.md'] }) };
+  state.groups[untestedRed.id] = {...state.groups.release, result: {...pass(untestedRed.id), ok: false}};
   const after = { ...before, files: { ...before.files, 'harness/tests/fixtures/sample/EXPECTED.json': 'new' } };
   const plan = buildImpactPlan(groups, after, state, root);
   assert.deepStrictEqual(plan.selected.map(row => row.group.id), ['old-red', 'fixture:sample']);
   includeAdditionalGroups(plan, groups, ['release']);
   assert.deepStrictEqual(plan.selected.map(row => row.group.id), ['old-red', 'fixture:sample', 'release']);
+  assert(!plan.formal.some(row => row.id === 'release')); assert.equal(plan.full, false);
+  assert(plan.formal.some(row => row.id === untestedRed.id && row.status === 'previous-failure'));
   const docs = buildImpactPlan(groups, { ...before, files: { ...before.files, 'docs/runbook.md': 'new' } }, state, root);
-  assert(docs.selected.some(row => row.group.id === 'release' && row.group.releaseOnly));
+  assert(!docs.selected.some(row => row.group.id === 'release'));
+  assert(docs.formal.some(row => row.id === 'release' && row.status === 'not-executed'));
+  const literal: TestGroup = {...release, id: 'release::["literal, (case)"]'};
+  groups.push(literal);
+  const exact = buildImpactPlan(groups, before, state, root);
+  includeAdditionalGroups(exact, groups, literal.id);
+  assert(exact.selected.some(row => row.group.id === literal.id), 'a printed exact group containing commas is one addition');
+  assert(!exact.formal.some(row => row.id === literal.id)); assert.equal(exact.full, false);
+  assert(exact.formal.some(row => row.id === untestedRed.id && row.status === 'previous-failure'));
 }) });
+cases.push({ name: 'tiers: actual workers honor inherited and mixed groups, overlapping daily protection, profile discovery and fixture union', run: () => temporary(async root => {
+  const modulePath = path.join(root, 'mixed.ts');
+  const selection = path.resolve(__dirname, '../utils/unit-case-selection.ts');
+  fs.writeFileSync(modulePath, `const {matchesUnitCase}=require(${JSON.stringify(selection)});\nexport\nconst listCaseGroups=()=>[{caseNames:['daily'],releaseOnly:false},{caseNames:['daily','shared'],releaseOnly:true},{caseNames:['formal']}];\nexport const runAll=()=>[{name:'daily',ok:true},{name:'daily',ok:true},{name:'shared',ok:true},{name:'formal',ok:false,error:'formal sentinel'}];\nexport const runSelectedCases=(selector)=>{const results=runAll().filter(row=>matchesUnitCase(row.name,selector));return {results,matchedCaseCount:results.length,executionTimings:[]}};\n`);
+  const groups = await enumerateUnitGroups([{ id: 'mixed', modulePath: modulePath.slice(0, -3), layer: 'capability', releaseOnly: true }], 2);
+  assert.equal(groups.length, 2);
+  assert.equal(groups.find(group => group.caseNames?.includes('daily'))!.releaseOnly, false);
+  assert.equal(groups.find(group => group.caseNames?.includes('formal'))!.releaseOnly, true);
+  const snapshot: InputSnapshot = { head: 'same', id: 'tier', files: {} };
+  const daily = buildImpactPlan(groups, snapshot, undefined, root, 'daily');
+  const full = buildImpactPlan(groups, snapshot, undefined, root, 'full');
+  assert.equal(daily.scope, 'daily'); assert.equal(daily.full, false); assert.equal(daily.selected.length, 1);
+  assert.equal(full.full, true); assert.equal(full.selected.length, 2);
+  assert.deepStrictEqual([...daily.selected.map(row => row.group.id), ...daily.formal.map(row => row.id)].sort(), groups.map(group => group.id).sort());
+  const dailyResults = await runSuiteProcesses(daily.selected.map(row => row.group), 2, {});
+  assert(dailyResults.every(result => result.ok)); assert.deepStrictEqual(dailyResults.flatMap(result => result.results.map(row => row.name)).sort(), ['daily', 'daily', 'shared']);
+  const state = updateTestState(groups, snapshot, snapshot, dailyResults, undefined, false, root, 'daily');
+  assert.equal(state.lastRun!.scope, 'daily'); assert.equal(state.completeRun, undefined);
+  const partialFull = updateTestState(groups, snapshot, snapshot, dailyResults, state, true, root);
+  assert.equal(partialFull.completeRun!.ok, false);
+  includeAdditionalGroups(daily, groups, ['mixed']);
+  assert.equal(daily.scope, 'daily'); assert.equal(daily.full, false); assert.equal(daily.formal.length, 0);
+  const formalResults = await runSuiteProcesses(daily.selected.filter(row => row.group.releaseOnly).map(row => row.group), 1, {});
+  assert.equal(formalResults[0].ok, false);
+  const changed = buildImpactPlan(groups, snapshot, undefined, root);
+  assert.equal(changed.full, false); assert.equal(changed.selected.length, 1);
+  fs.mkdirSync(path.join(root, 'sample/harness/tests/unit'), {recursive: true});
+  fs.writeFileSync(path.join(root, 'sample/harness/tests/unit/discovered.unit.test.ts'), '');
+  assert.equal(discoverProfileUnitSuites(root)[0].id, 'profile:sample:discovered');
+  assert.equal(collectAllFixtureDirs().length, 41);
+  const emptyModule = path.join(root, 'empty.ts');
+  fs.writeFileSync(emptyModule, 'export\nconst listCaseGroups=()=>[]; export const runAll=()=>[];');
+  await assert.rejects(enumerateUnitGroups([{id: 'empty', modulePath: emptyModule.slice(0, -3), layer: 'function'}], 1), /case enumeration is empty/);
+  const emptyExecution = path.join(root, 'zero.js');
+  fs.writeFileSync(emptyExecution, 'exports.runAll=()=>[];');
+  const [zero] = await runSuiteProcesses([{id: 'zero', modulePath: emptyExecution, layer: 'function'}], 1, {});
+  assert.equal(zero.ok, false); assert(zero.results.some(row => row.error?.includes('zero cases')));
+  assert.throws(() => mergeOverlappingGroups([{caseNames: ['wrong'], releaseOnly: 'false' as unknown as boolean}]), /releaseOnly must be boolean/);
+}) });
+cases.push({name: 'coverage: longest aliases preserve first duplicate priority and four-step chained mappings', run: () => temporary(root => {
+  const copied = path.join(root, 'copy'), intermediate = path.join(root, 'intermediate.ts');
+  const exact = path.join(copied, 'special.ts'), sibling = path.join(copied, 'other.ts');
+  const first = path.join(REPO_ROOT, 'harness/scripts/first'), last = path.join(REPO_ROOT, 'harness/scripts/last');
+  const original = path.join(REPO_ROOT, 'harness/scripts/special.ts');
+  const aliases: Array<[string, string]> = [[copied, first], [copied, last], [exact, intermediate], [intermediate, original]];
+  for (let index = 0; index < 3000; index++) aliases.push([path.join(root, `unrelated-${index}`), path.join(REPO_ROOT, 'unrelated')]);
+  fs.writeFileSync(path.join(root, 'coverage-123-1-0.json'), JSON.stringify({result: [{url: pathToFileURL(exact).href}, {url: pathToFileURL(sibling).href}]}));
+  const merged = mergeGroupCoverage(root, 123, {files: [exact, sibling], directories: [], complete: true, reasons: [], aliases});
+  assert(merged.executionComplete, merged.reasons.join('; '));
+  assert.deepStrictEqual(merged.executed, ['harness/scripts/first/other.ts', 'harness/scripts/special.ts']);
+  assert.deepStrictEqual(merged.files, merged.executed);
+})});
 cases.push({ name: 'function: goal dependency and all native child process variants are mechanically rejected', run: () => temporary(root => {
   fs.writeFileSync(path.join(root, 'entry.ts'), 'export const goalMain = () => {}; goalMain();\n');
   const graph = buildTestDependencyGraph(['entry.ts'], root);

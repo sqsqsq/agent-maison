@@ -4542,7 +4542,18 @@ export class GoalPhaseRuntime {
             if (start.phase === 'design-repair-questioning' && (!result || denied)) continue;
             const authorReturned = records.slice(records.indexOf(start) + 1).some(event => event.type === 'agent_invoke_end'
               && event.phase === 'initial-design-author' && invocationCompleted({ ...event, exitCode: event.exit_code }));
-            if (denied && authorReturned) return { questioningCurrent: false, questioningResult: null };
+            if (denied && authorReturned) {
+              const before = original.beforeDocument ?? asRecord(YAML.parse(original.beforeBlueprint));
+              const sources = [...new Set([...blueprintSourceRefFiles(projectRoot, before, true), ...blueprintSourceRefFiles(projectRoot, blueprint, true)])]
+                .filter(file => path.resolve(file) !== path.resolve(blueprintPath));
+              const unchanged = before && stableStringify(blueprintAuthorContent(before)) === stableStringify(blueprintAuthorContent(blueprint))
+                && sources.every(file => {
+                  const relative = path.relative(projectRoot, file).replace(/\\/g, '/');
+                  const entry = original.preSnapshot?.entries.find(item => item.kind === 'file' && item.path === relative);
+                  return entry ? fs.existsSync(file) && createHash('sha256').update(fs.readFileSync(file)).digest('hex') === entry.sha256 : !fs.existsSync(file);
+                });
+              if (!unchanged) return { questioningCurrent: false, questioningResult: null };
+            }
             return { questioningCurrent: !!result, questioningResult: result };
           }
           return { questioningCurrent: false, questioningResult: null };
@@ -4570,7 +4581,7 @@ export class GoalPhaseRuntime {
           resumeDesignWork = false;
           if (repaired.outcome === 'handoff') { preserveOwner = true; runConcluded = true; return 3; }
           if (repaired.outcome === 'published') {
-            if (repaired.step === 'reconcile') return conclude('execution_scope_unresolved', repaired.reason);
+            if (!repaired.recovered) return repairStop(repaired);
             continue;
           }
           if (continueRepair(repaired)) continue;
@@ -4691,7 +4702,7 @@ export class GoalPhaseRuntime {
               if (continueRepair(repaired)) continue currentDesignWork;
               return repairStop(repaired);
             }
-            if (repaired.step === 'reconcile') return conclude('execution_scope_unresolved', repaired.reason);
+            if (!repaired.recovered) return repairStop(repaired);
             observed = readInitialDesignDelivery({ projectRoot, frameworkRoot, manifest, ...questioningObservation() });
             break;
           }
@@ -4728,7 +4739,7 @@ export class GoalPhaseRuntime {
           resumeDesignWork = false;
           if (repaired.outcome === 'handoff') { preserveOwner = true; runConcluded = true; return 3; }
           if (repaired.outcome === 'published') {
-            if (repaired.step === 'reconcile') return conclude('execution_scope_unresolved', repaired.reason);
+            if (!repaired.recovered) return repairStop(repaired);
             continue;
           }
           if (continueRepair(repaired)) continue;
@@ -7845,7 +7856,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           }
           if (returnedFeedback) { designDeclineFeedback = returnedFeedback; designDeclineCandidates = candidates; }
           else {
-            if (repaired.outcome === 'published' && repaired.step !== 'reconcile' || repaired.outcome === 'failed' && repaired.evaluation?.completed
+            if (repaired.outcome === 'published' && repaired.recovered || repaired.outcome === 'failed' && repaired.evaluation?.completed
               && repaired.evaluation.disposition.completionBlocking.some(problem => problem.action === 'repair')) continue;
             if (repaired.outcome === 'failed' && repaired.step !== 'declined' && latestProviderSessionCanRebuild(runDir, loadAuthoritativeEvents(eventsPath))) continue;
             wait('work-unit-author', repaired.reason, repaired.reason.startsWith('no_progress_guard:') ? 'no_progress_guard'

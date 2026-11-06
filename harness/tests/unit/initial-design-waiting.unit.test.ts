@@ -18,7 +18,7 @@ import { deriveDesignPreparationReadiness } from '../../scripts/utils/change-uni
 import { repairAdapter, s16Born } from './design-authority-repair.unit.test';
 import { BLUEPRINT_ID, withFreshCuHost, project, specFirstCuHooks } from './lifecycle-evolution.unit.test';
 import { runGoalRuntimeChain } from './goal-runner-testing-integrity.unit.test';
-import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
+import { matchesUnitCase, selectedUnitCases, startCaseTiming, unitCaseGroups, type UnitExecutionTiming } from '../utils/unit-case-selection';
 import type { UnitCaseResult } from '../run-unit';
 import { reportFixtureQuestioning, seedLedgerQuestioningInput } from '../utils/initial-questioning-fixture';
 import { withRuntimeTest, preserveRuntimeTestEvidence, type RuntimeTestControl } from '../utils/runtime-test-control';
@@ -136,9 +136,18 @@ async function unfinishedContentBaseline(kind: 'timeout' | 'terminal-failure' | 
       } } }).run());
     assert(!events(prepared.runDir).some(row => row.halt_reason === 'no_progress_guard'), `${kind} must not become completed content even with exit0/completion=true`);
     assert.equal(calls, kind === 'transport' ? 1 : 2, 'failed content does not prevent the next real responsibility from being attempted');
-    const next = await runGoalModeSessionStep({ projectRoot, frameworkRoot, feature: prepared.manifest.feature, runId: prepared.manifest.run_id,
-      adapter: 'claude', runMode: 'attended', authorization }) as Json;
-    assert.equal(next.type, 'phase_execute_request');
+    const options = { projectRoot, frameworkRoot, feature: prepared.manifest.feature, runId: prepared.manifest.run_id,
+      adapter: 'claude', runMode: 'attended' as const, authorization };
+    const next = await runGoalModeSessionStep(options) as Json;
+    if (kind === 'transport') {
+      assert.equal(next.type, 'phase_execute_request');
+    } else {
+      assert.equal(next.type, 'goal_session_result');
+      assert.equal(next.result.status, 'waiting', 'the later explicit waiting result remains unknown content');
+      assert.equal(readOriginalDeliveryActivity(projectRoot, prepared.manifest)!.calls, calls, 'ordinary reentry cannot buy another actor for unchanged waiting');
+      const resumed = await runGoalModeSessionStep({ ...options, forceTakeover: true }) as Json;
+      assert.equal(resumed.type, 'phase_execute_request', 'an explicit continuation retries unknown content instead of borrowing the older failed completion');
+    }
     assert.equal(readOriginalDeliveryActivity(projectRoot, prepared.manifest)!.calls, calls + 1);
   } finally { fs.rmSync(projectRoot, { recursive: true, force: true }); clearFrameworkConfigCache(); }
 }
@@ -310,6 +319,13 @@ const cases = [
   { name: 'f3b8e6a1 waiting: normal questioning resumes its original transaction without replaying a successful author', run: normalQuestioningWaiting },
 ];
 export function getCases() { return cases; }
+const dailyPrefixes = [
+  "d18f6c42 timeout invocation",
+  "d18f6c42 terminal-failure invocation",
+  "d18f6c42 transport invocation"
+];
+export const listCaseGroups = () => unitCaseGroups(cases.map(test => test.name)).map(group => ({ ...group,
+  releaseOnly: !group.caseNames.some(name => dailyPrefixes.some(prefix => name.startsWith(prefix))) }));
 export async function runSelectedCases(filter?: string) {
   const results: UnitCaseResult[] = [], timings: UnitExecutionTiming[] = [];
   for (const test of cases) {

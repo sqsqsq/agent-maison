@@ -22,6 +22,7 @@ import { withRuntimeTest } from '../utils/runtime-test-control';
 const SOURCE = 'src/math/src/main/clamp.ts';
 const TEST = 'src/math/src/test/clamp.test.ts';
 const BAD = 'export function clamp(value: number, min: number, max: number): number { return min; }\n';
+const COMPILE_BAD = 'export function clamp(value: number, min: number, max: number): number { return "wrong type"; }\n';
 const GOOD = 'export function clamp(value: number, min: number, max: number): number { return Math.min(max, Math.max(min, value)); }\n';
 const TEST_SOURCE = [
   "import { it } from 'node:test';",
@@ -98,7 +99,7 @@ export function researchSessionUnit(root: string, context: { factsContext?: impo
   const raw = fs.readFileSync(file, 'utf8'), facts = parseContextExploration(raw);
   assert(!facts.error);
   const declared = Array.isArray(facts.fm.source_code_paths) ? facts.fm.source_code_paths : [];
-  const sources = [...new Set([...declared, TEST, 'src/math/src/test/expect.ts'])];
+  const sources = [...new Set([...declared, ...[TEST, 'src/math/src/test/expect.ts'].filter(file => fs.existsSync(path.join(root, file)))])];
   for (const source of sources) fs.readFileSync(path.join(root, source));
   const deltas = raw.match(/^##\s*phase_delta:[\s\S]*/m)?.[0] ?? '';
   fs.writeFileSync(file, '---\n' + YAML.stringify({ ...facts.fm, source_code_paths: sources }) + '---\n' + facts.body);
@@ -147,7 +148,7 @@ function authorUt(root: string): void {
 }
 
 /** Profile-native boundary adaptation only; real assertion status is never replaced. */
-function adaptNative(root: string): void {
+export function adaptNative(root: string): void {
   fs.appendFileSync(path.join(root, 'framework/profiles/generic/harness/ut-host-impl.js'), `
 const originalRun = exports.utHostImpl.checkUtHvigorTest;
 exports.utHostImpl.checkUtHvigorTest = (ctx, ...args) => {
@@ -158,11 +159,13 @@ exports.utHostImpl.checkUtHvigorTest = (ctx, ...args) => {
 }
 
 interface GoalResult { root: string; failedInputs: string[]; invocations: string[]; rawGap: boolean }
-export async function runGoal(root: string, mode: 'detached' | 'session', scenario: 'repair' | 'gap', resume = false): Promise<GoalResult> {
+export async function runGoal(root: string, mode: 'detached' | 'session', scenario: 'repair' | 'gap' | 'transient' | 'daily-repair' | 'daily-compile-repair' | 'normal', resume = false): Promise<GoalResult> {
   const runtime = moduleAt(root, 'scripts/goal-phase-runtime');
   const entry = moduleAt(root, 'scripts/goal-mode-entry');
   const invocations: string[] = [], failedInputs: string[] = [];
   let codingCalls = 0, rawGap = false;
+  let transientReturned = false;
+  const repairsProduct = scenario === 'repair' || scenario === 'daily-repair';
   const selfCheck = (phase: string, fence?: any, extraEnv?: Record<string, string>): number => {
     const args = [path.join(root, 'framework/harness/node_modules/ts-node/dist/bin.js'), '--project', path.join(root, 'framework/harness/tsconfig.json'),
       path.join(root, 'framework/harness/harness-runner.ts'), '--project-root', root, '--phase', phase, '--feature', 'clamp'];
@@ -213,24 +216,37 @@ export async function runGoal(root: string, mode: 'detached' | 'session', scenar
     }
     if (phase === 'work-unit-author') {
       const native = path.join(root, 'doc/features/clamp/ut/reports/node-tests.tap');
-      if (fs.existsSync(native) && /# fail [1-9]/.test(fs.readFileSync(native, 'utf8')))
+      const priorNativeFailure = fs.existsSync(native) && /# fail [1-9]/.test(fs.readFileSync(native, 'utf8'));
+      if (priorNativeFailure)
         failedInputs.push(sha(read(root, SOURCE)) + ':' + sha(read(root, TEST)));
+      if (scenario === 'daily-compile-repair') {
+        const report = 'doc/features/clamp/coding/reports/script-report.json';
+        if (fs.existsSync(path.join(root, report))) {
+          const compile = json(root, report).checks.find((check: any) => check.id === 'coding_compile' && check.status === 'FAIL' && /TS2322/.test(check.details));
+          if (compile) {
+            assert.equal(read(root, SOURCE), COMPILE_BAD, 'repair must consume the actual failing implementation');
+            write(root, 'doc/features/clamp/coding/reports/native-compile-failure.json', read(root, report));
+            failedInputs.push(sha(read(root, SOURCE)));
+          }
+        }
+      }
       const issued = moduleAt(root, 'scripts/utils/session-execution-handoff').executionRequestForInvoke(
         path.join(root, 'doc/features/clamp/goal-runs/session-cli'));
       const context = fence ?? issued?.request.context;
       assert(context && context.phase === phase && context.runId === 'session-cli', 'the author must consume its actual unit request');
       const methods = context.chain.filter((method: string) => ['coding', 'review', 'ut'].includes(method));
       for (const method of methods) {
-        if (method === 'coding') { codingCalls++; write(root, SOURCE, scenario === 'repair' && !resume && !failedInputs.includes(sha(BAD) + ':' + sha(TEST_SOURCE)) ? BAD : GOOD); }
+        if (method === 'coding') { codingCalls++; write(root, SOURCE, scenario === 'daily-compile-repair' ? (failedInputs.length ? GOOD : COMPILE_BAD) : repairsProduct && !resume && !failedInputs.includes(sha(BAD) + ':' + sha(TEST_SOURCE)) ? BAD : GOOD); }
         if (method === 'review') authorReview(root);
         if (method === 'ut') authorUt(root);
         authorFacts(root, method);
       }
       researchSessionUnit(root, context);
-      for (const method of methods) selfCheck(method, mode === 'session' ? context : undefined, extraEnv ?? context.childEnv);
+      for (const method of methods) if (!['transient', 'daily-compile-repair', 'daily-repair'].includes(scenario) || scenario === 'daily-repair' && method === 'ut' && !priorNativeFailure)
+        selfCheck(method, mode === 'session' ? context : undefined, extraEnv ?? context.childEnv);
       return 0; // The model returned its artifacts; actual native failures remain formal tool evidence.
     }
-    if (phase === 'coding') { codingCalls++; write(root, SOURCE, scenario === 'repair' && codingCalls === 1 && !resume ? BAD : GOOD); }
+    if (phase === 'coding') { codingCalls++; write(root, SOURCE, repairsProduct && codingCalls === 1 && !resume ? BAD : GOOD); }
     if (phase === 'review') authorReview(root);
     if (phase === 'ut') authorUt(root);
     authorFacts(root, phase);
@@ -254,6 +270,13 @@ export async function runGoal(root: string, mode: 'detached' | 'session', scenar
       runtime.__testing_setInvokeAgent(async (_plan: unknown, _cwd: string, options: any) => {
         const phase = options.extraEnv.MAISON_GOAL_PHASE ?? /\/phases\/([a-z-]+)\//.exec(String(options.outputLogPath).replace(/\\/g, '/'))?.[1];
         assert(phase, 'actual transport must identify its phase');
+        if (scenario === 'transient' && !transientReturned && phase === 'work-unit-author') {
+          transientReturned = true;
+          const error = JSON.stringify({type: 'result', subtype: 'error_during_execution', is_error: true, api_error_status: 429, result: 'API Error: 429 finite test transport rate limit'});
+          write(root, path.relative(root, options.outputLogPath), error + '\n');
+          return { exitCode: 1, stdout: '', stderr: error, duration_ms: 0, command: 'controlled-external-model-transport',
+            terminal_failure_observed: true, terminal_error_excerpt: error };
+        }
         const started = Date.now();
         const output = `Explicit author model substitute executing ${phase}; actual checkers and native tests run below.\n`;
         write(root, path.relative(root, options.outputLogPath), output);
@@ -263,7 +286,7 @@ export async function runGoal(root: string, mode: 'detached' | 'session', scenar
         return { exitCode: code, stdout: output, stderr: '', duration_ms: Date.now() - started, command: 'test-model-substitute' };
       });
       try {
-        await withRuntimeTest({ root: root }, () => new runtime.GoalPhaseRuntime({ args: ['--feature', 'clamp', resume ? '--resume' : '--attach-created', 'session-cli', ...(resume ? ['--force-resume'] : []), '--adapter', 'claude', '--foreground-ok', '--project-root', root, '--framework-root', path.join(root, 'framework')],
+        await withRuntimeTest({ root: root }, () => new runtime.GoalPhaseRuntime({ args: ['--feature', 'clamp', resume ? '--resume' : '--attach-created', 'session-cli', ...(resume ? ['--force-resume'] : []), ...(scenario === 'transient' ? ['--authorize-autonomy'] : []), '--adapter', 'claude', '--foreground-ok', '--project-root', root, '--framework-root', path.join(root, 'framework')],
           layout: { kind: 'consumer', projectRoot: root, frameworkRoot: path.join(root, 'framework'), frameworkRel: 'framework' } }).run());
       } finally { runtime.__testing_setInvokeAgent(null); }
     }

@@ -138,7 +138,7 @@ export function sanitizePackageJson(pkg) {
   if (out.scripts && typeof out.scripts === 'object') {
     const scripts = { ...out.scripts };
     for (const key of Object.keys(scripts)) {
-      if (key.startsWith('release:') || key === 'test:changed') {
+      if (key.startsWith('release:') || key.startsWith('candidate:') || key.startsWith('test:')) {
         delete scripts[key];
       }
       if (key === 'openspec' || key === 'openspec:validate') {
@@ -155,9 +155,7 @@ export function sanitizePackageJson(pkg) {
 export function sanitizeHarnessPackageJson(pkg) {
   const out = JSON.parse(JSON.stringify(pkg));
   if (out.scripts && typeof out.scripts === 'object') {
-    delete out.scripts['test:unit'];
-    delete out.scripts['test:fixtures'];
-    delete out.scripts['test:changed'];
+    for (const key of Object.keys(out.scripts)) if (key.startsWith('test:')) delete out.scripts[key];
     out.scripts.test = 'npm run check:global';
   }
   return out;
@@ -322,12 +320,16 @@ export function runSyntheticRuleTests(repoRoot, rules) {
       'release:pack': 'node scripts/pack-release.mjs',
       'release:verify': 'node scripts/verify-release-pack.mjs',
       'test:changed': 'npm --prefix harness run test:changed',
+      'test:daily': 'npm --prefix harness run test:daily',
+      'candidate:build': 'node scripts/candidate-release.mjs build',
     },
     devDependencies: { archiver: '^7.0.0', 'extract-zip': '^2.0.1' },
   };
   const sanitized = sanitizePackageJson(pkg);
   if (sanitized.scripts['release:pack']) errors.push('sanitize: release:pack still present');
   if (sanitized.scripts['test:changed']) errors.push('sanitize: test:changed still present');
+  if (sanitized.scripts['test:daily']) errors.push('sanitize: test:daily still present');
+  if (sanitized.scripts['candidate:build']) errors.push('sanitize: candidate:build still present');
   if (sanitized.devDependencies) errors.push('sanitize: devDependencies still present');
   if (!sanitized.scripts.test) errors.push('sanitize: test script removed');
   if (sanitized.scripts.openspec) errors.push('sanitize: openspec script still present');
@@ -339,6 +341,7 @@ export function runSyntheticRuleTests(repoRoot, rules) {
       'test:unit': 'ts-node tests/run-unit.ts',
       'test:fixtures': 'ts-node tests/run-tests.ts',
       'test:changed': 'ts-node tests/run-test-plan.ts',
+      'test:daily': 'ts-node tests/run-test-plan.ts --daily',
       'check:catalog': 'ts-node harness-runner.ts --phase catalog',
       'check:glossary': 'ts-node harness-runner.ts --phase glossary',
       'check:docs': 'ts-node harness-runner.ts --phase docs',
@@ -349,6 +352,7 @@ export function runSyntheticRuleTests(repoRoot, rules) {
   if (sanitizedHarness.scripts['test:unit']) errors.push('sanitizeHarness: test:unit still present');
   if (sanitizedHarness.scripts['test:fixtures']) errors.push('sanitizeHarness: test:fixtures still present');
   if (sanitizedHarness.scripts['test:changed']) errors.push('sanitizeHarness: test:changed still present');
+  if (sanitizedHarness.scripts['test:daily']) errors.push('sanitizeHarness: test:daily still present');
   if (sanitizedHarness.scripts.test !== 'npm run check:global') {
     errors.push('sanitizeHarness: test must be npm run check:global');
   }

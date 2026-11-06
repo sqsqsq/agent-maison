@@ -57,7 +57,7 @@ function provisionFramework(): { root: string; harnessDir: string } {
       fs.copyFileSync(path.join(FRAMEWORK_ROOT, 'harness', f), path.join(harness, f));
     }
   }
-  for (const d of ['scripts', 'schemas', 'templates', 'prompts', 'code-graph', 'framework', 'graph-extractor', 'state', 'trace']) {
+  for (const d of ['scripts', 'schemas', 'templates', 'prompts', 'code-graph', 'graph-extractor', 'state', 'trace']) {
     copyDir(path.join(FRAMEWORK_ROOT, 'harness', d), path.join(harness, d));
   }
   // junction node_modules（Windows Only；避免复制 88MB）

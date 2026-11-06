@@ -3,7 +3,7 @@ import { beginTestCase } from './runtime-test-control';
 import type { UnitCaseResult } from '../run-unit';
 
 export interface UnitExecutionTiming { caseNames: string[]; durationMs: number }
-export interface UnitCaseGroup { caseNames: string[]; serialResources?: string[]; serialReason?: string }
+export interface UnitCaseGroup { caseNames: string[]; releaseOnly?: boolean; serialResources?: string[]; serialReason?: string }
 const EXACT_PREFIX = '\u001eexact:';
 export function exactCaseSelector(names: string[]): string { return EXACT_PREFIX + JSON.stringify(names); }
 export function unitCaseGroups(names: string[]): UnitCaseGroup[] {

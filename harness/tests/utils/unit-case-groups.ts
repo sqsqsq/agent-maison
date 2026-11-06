@@ -26,13 +26,16 @@ export function mergeOverlappingGroups(groups: UnitCaseGroup[]): UnitCaseGroup[]
   const out: UnitCaseGroup[] = [];
   for (const group of groups) {
     if (!Array.isArray(group.caseNames) || !group.caseNames.length || group.caseNames.some(name => typeof name !== 'string')) throw new Error('invalid case-group enumeration');
+    if (group.releaseOnly !== undefined && typeof group.releaseOnly !== 'boolean') throw new Error('case-group releaseOnly must be boolean');
     const overlaps = out.filter(item => item.caseNames.some(name => group.caseNames.includes(name)));
     if (!overlaps.length) out.push({ ...group, caseNames: [...group.caseNames] });
     else {
       const first = overlaps[0];
+      first.releaseOnly = first.releaseOnly === true && group.releaseOnly === true && overlaps.every(item => item.releaseOnly === true);
       first.caseNames.push(...group.caseNames);
       first.serialResources = [...new Set([...(first.serialResources ?? []), ...(group.serialResources ?? [])])];
       for (const other of overlaps.slice(1)) {
+        first.serialResources.push(...(other.serialResources ?? []));
         first.caseNames.push(...other.caseNames); out.splice(out.indexOf(other), 1);
       }
     }
@@ -51,9 +54,11 @@ export async function enumerateUnitGroups(suites: RegisteredUnitSuite[], workers
     const result = enumeration.get(suite.id);
     if (result && (!result.ok || !result.caseGroups)) throw new Error(`suite ${suite.id} case enumeration failed: ${result.error ?? 'missing groups'}`);
     if (!result) { groups.push({ ...base, id: suite.id }); continue; }
-    for (const group of mergeOverlappingGroups(result.caseGroups!)) {
+    if (!result.caseGroups!.length) throw new Error(`suite ${suite.id} case enumeration is empty`);
+    for (const group of mergeOverlappingGroups(result.caseGroups!.map(group => ({ ...group, releaseOnly: group.releaseOnly ?? suite.releaseOnly ?? false })))) {
       if (selector !== undefined && !group.caseNames.some(name => matchesUnitCase(name, selector))) continue;
       groups.push({ ...base, id: `${suite.id}::${JSON.stringify(group.caseNames)}`, caseNames: group.caseNames,
+        releaseOnly: group.releaseOnly,
         selector: exactCaseSelector(group.caseNames), requirePreselection: true,
         serialResources: [...new Set([...(suite.serialResources ?? []), ...(group.serialResources ?? [])])] });
     }

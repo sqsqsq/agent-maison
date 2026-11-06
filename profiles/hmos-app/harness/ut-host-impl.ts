@@ -69,6 +69,7 @@ import {
   type UtHvigorTestFailureModule,
 } from './ut-hvigor-test-failure';
 import { EXCLUDED_SEGMENTS } from '../../../harness/scripts/utils/product-source-snapshot';
+import { executedUtChecks } from '../../../harness/scripts/utils/ut-execution-evidence';
 import {
   evaluateSuiteRatchet,
   suiteFailureKey,
@@ -1383,6 +1384,9 @@ export function checkUtHvigorTest(
           `total=${totals.total}, passed=${totals.passed}, failed=${totals.failed}；` +
           `目标设备：${devProbe.targets.join(' / ')}${ratchetNote}${reuseNote}`,
       },
+      ...perModule.flatMap(item => executedUtChecks(ctx.projectRoot,
+        targetCases.filter(candidate => item.packagePath !== undefined && candidate.path.replace(/\\/g, '/').startsWith(item.packagePath.replace(/\\/g, '/').replace(/\/$/, '') + '/')),
+        item.result.testResult?.passed_tests ?? [])),
     ];
   }
 

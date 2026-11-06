@@ -969,7 +969,9 @@ export function runAll(): UnitCaseResult[] {
     asRecords(flow.subscriptions)[0]!.publication_ref = 'publication:ledger-changed';
     flow.viewpoint_contract = { arbitrary: { nested: 'hidden-viewpoint' } };
     asRecords(asRecord(bp.discovery)?.facts)[0]!.fact_id = 'hidden-fact-id';
-    asRecords(asRecord(asRecord(bp.review_summary)?.questioning)?.items)[0]!.question_id = 'hidden-question-id';
+    const pendingQuestion = asRecords(asRecord(asRecord(bp.review_summary)?.questioning)?.items)[0]!;
+    Object.assign(pendingQuestion, { question_id: 'hidden-question-id', disposition: 'open_decision',
+      question: '账目恢复失败时如何保留原投影？', answer: '等待设计方确认恢复方案。' });
     asRecord(bp.discovery)!.frontier = { fingerprint: 'hidden-frontier' };
     const decisions = asRecords(asRecord(bp.decisions_and_gaps)?.decisions);
     decisions.push({ decision_id: 'move-ledger', kind: 'architecture_impact', change: 'move_module', module: 'ledger', from_layer: 'old-layer', to_layer: 'new-layer', rationale: 'owner remains stable', status: 'decided', owner: 'architecture-owner' });
@@ -979,7 +981,7 @@ export function runAll(): UnitCaseResult[] {
     for (const hidden of ['hidden-source-kind', 'hidden-time', 'hidden-strength', 'hidden-viewpoint', 'hidden-fact-id', 'hidden-question-id', 'hidden-frontier', 'observed_at', 'viewpoint_contract', 'source_fingerprint', 'identity_neutral_digest', '<details>', '条目 1']) {
       assert(!body.includes(hidden), `递归/机器元数据残留：${hidden}`);
     }
-    for (const kept of ['| 字段 | 类型 | 必需 | 可空 | 语义 | 来源 |', '| amount | decimal-string | 是 | 否 | signed ledger amount | contracts/ledger-api.yaml#/dtos/CreateEntryRequestV1/fields/0 |', 'CreateEntryResponseV1', 'LedgerEntry.parent', '核实未变：src/ledger/LedgerRepository.ts', 'old-layer → new-layer', 'owner remains stable', 'Existing repository；Existing create operation', 'LedgerDataSource', 'App composition root', 'Surface source failure and preserve prior projection.', '再次提取条件', '| 范围 | 问题 | 裁决 | 回答 |']) {
+    for (const kept of ['| 字段 | 类型 | 必需 | 可空 | 语义 | 来源 |', '| amount | decimal-string | 是 | 否 | signed ledger amount | contracts/ledger-api.yaml#/dtos/CreateEntryRequestV1/fields/0 |', 'CreateEntryResponseV1', 'LedgerEntry.parent', '核实未变：src/ledger/LedgerRepository.ts', 'old-layer → new-layer', 'owner remains stable', 'Existing repository；Existing create operation', 'LedgerDataSource', 'App composition root', 'Surface source failure and preserve prior projection.', '再次提取条件', '| 范围 | 处理结果 | 问题 | 回答与依据 |', '待人决定', '账目恢复失败时如何保留原投影？', '等待设计方确认恢复方案。']) {
       assert(markdown.includes(kept), `评审业务信息缺失：${kept}`);
     }
     const section = body.slice(body.indexOf('#### 运行流与状态明细'), body.indexOf('### C 完整验收'));

@@ -126,7 +126,7 @@ test('395 self-check and formal gate use real UT provider once; cleared guide wi
     write('AppScope/app.json5', { app: { bundleName: 'example.app' } });
     write('WalletMain/src/main/module.json5', { module: { name: 'WalletMain', type: 'har' } });
     write('WalletMain/src/ohosTest/module.json5', { module: { name: 'walletmain_test' } });
-    write('WalletMain/src/ohosTest/ets/test/Example.test.ets', 'export function test() {}');
+    write('WalletMain/src/ohosTest/ets/test/Example.test.ets', "it('ExamplePass', () => {});\n");
     write('WalletMain/build/default/outputs/ohosTest/WalletMain-ohosTest-unsigned.hap', 'test-input');
     write('WalletMain/build/default/outputs/ohosTest/WalletMain-ohosTest-signed.hap', 'immutable-test-package');
     Object.assign(process.env, { HARNESS_HDC_EXE: process.execPath, HARNESS_HDC_TARGET: 'fixture', MAISON_DEVICE_ATTEMPT_FROZEN: '1', MAISON_GOAL_RUN_ID: 'run-395', MAISON_GOAL_ATTEMPT_PHASE: 'ut', MAISON_GOAL_ATTEMPT: 'i1' });
@@ -138,7 +138,7 @@ test('395 self-check and formal gate use real UT provider once; cleared guide wi
       else if (args.includes('dumpLayout')) stdout = '/data/local/tmp/layout_123.json';
       else if (args.some(a => a.includes('layout_123'))) stdout = JSON.stringify(guide ? oobeTree() : clearTree());
       else if (args.includes('install')) stdout = 'install bundle successfully.';
-      else if (args.includes('test')) { aaCalls++; guide = !pass; stdout = pass ? 'OHOS_REPORT_RESULT: stream=Tests run: 1, Failure: 0, Error: 0, Pass: 1' : 'start ability successfully'; }
+      else if (args.includes('test')) { aaCalls++; guide = !pass; stdout = pass ? 'OHOS_REPORT_STATUS: class=Example\nOHOS_REPORT_STATUS: test=ExamplePass\nOHOS_REPORT_STATUS_CODE: 0\nOHOS_REPORT_RESULT: stream=Tests run: 1, Failure: 0, Error: 0, Pass: 1' : 'start ability successfully'; }
       return { stdout, stderr: '', status: 0, signal: null, pid: 0, output: [] };
     }) as typeof cp.spawnSync;
     resetHdcExecutableCache(); resetHdcServerWarmState();
@@ -152,7 +152,7 @@ test('395 self-check and formal gate use real UT provider once; cleared guide wi
     const builds = new Map([[utBuildCollectorKey(root, 'WalletMain', 'default')!, { executed: true, exitCode: 0, errors: [], logExcerpt: 'BUILD SUCCESSFUL', durationMs: 0,
       buildInvocation: { module: 'WalletMain', target: 'ohosTest', task: 'genOnDeviceTestHap', product: 'default', buildMode: 'test' },
       builtHap: { path: hap, sha256: require('../../build-fingerprint').computeHapSha256Full(hap) } }]]);
-    const run = () => checkUtHvigorTest(ctx, [{ path: 'WalletMain/src/ohosTest/ets/test/Example.test.ets' }], [], builds);
+    const run = () => checkUtHvigorTest(ctx, [{ path: 'WalletMain/src/ohosTest/ets/test/Example.test.ets' }], [{ path: 'WalletMain/src/ohosTest/ets/test/Example.test.ets', test: 'ExamplePass' }], builds);
     const first = run(); assert.equal(aaCalls, 1, JSON.stringify(first)); assert(first[0].device_setup);
     const liveGateInput = require('../../../../../harness/scripts/utils/device-readiness-deps').buildDeviceReadinessInput(root);
     assert.equal((await ensureDeviceReady(liveGateInput)).state, 'BLOCKED', '生产 deps.snapshot 必须接通');
@@ -177,6 +177,8 @@ test('395 self-check and formal gate use real UT provider once; cleared guide wi
     assert(!observeSetupForUnexecutedTrace({ schema_version: '0.4-p0', feature: 'f', phase: 'testing', outcome: 'failed', cases: [{ id: 'TC-1', status: '失败', steps: [{ role: 'assertion', outcome: { status: 'failed' } }] as never }] }));
     guide = false; pass = true;
     const recovered = run(); assert.equal(aaCalls, 2, JSON.stringify(recovered)); assert.equal(recovered[0].status, 'PASS');
+    assert.deepEqual(recovered.find(check => check.id === 'ExamplePass')?.affected_files, ['WalletMain/src/ohosTest/ets/test/Example.test.ets']);
+    assert.equal(recovered.find(check => check.id === 'ExamplePass')?.status, 'PASS', '真实 HMOS provider 必须产出闭合可消费的逐条结果');
     const after = listExecutionKeyRuns(reports, 'ut'); assert.equal(after[0].record.execution_key, before[0].record.execution_key);
     assert.equal(after[0].record.outcome, 'success');
     assert.equal(run()[0].status, 'PASS'); assert.equal(aaCalls, 2, '原成功复用不变');

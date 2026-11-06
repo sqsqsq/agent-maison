@@ -706,4 +706,5 @@ export function runSelectedCases(filter?: string) {
 
 export function runAll(): UnitCaseResult[] { return runSelectedCases().results; }
 
-export const listCaseGroups = () => unitCaseGroups(cases.map(c => c.name));
+export const listCaseGroups = () => unitCaseGroups(cases.map(c => c.name))
+  .map(group => ({ ...group, releaseOnly: group.caseNames.some(name => name.startsWith('S2 shared entry and producer')) }));

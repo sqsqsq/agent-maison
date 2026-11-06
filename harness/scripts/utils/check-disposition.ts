@@ -529,7 +529,7 @@ export function resolveCurrentDisposition(input: CurrentDispositionInput): Curre
       });
     }
     // verdict只是上述当前事实的聚合；已有具体负面依据时不再制造一个丢owner/等待条件的任务。
-    const failed = currentChecks.filter(check => check.status === 'FAIL');
+    const failed = currentChecks.filter(check => check.status === 'FAIL' && resolveCheckDisposition(check).action !== 'disclose');
     const failuresRefuted = failed.length > 0 && failed.every(check => check.id === 'coding_existing_test_preserved'
       && !!check.affected_files?.length && check.verification?.verdict === 'refuted');
     if (phase.verdict !== 'PASS' && !failuresRefuted && (input.endpoint !== 'request' || summaryPresent)

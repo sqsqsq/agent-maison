@@ -58,3 +58,31 @@ Enforcement: `scripts/release-excludes.json`, `scripts/pack-release.mjs`, `scrip
 
 - **WHEN** `npm run release:pack` is executed
 - **THEN** consumer-facing documentation under `docs/` outside `docs/vendor/` SHALL still be present
+
+### Requirement: Candidate testing cannot replace formal release testing
+
+Candidate build SHALL execute the daily test gate, pack once, and verify and run
+consumer lifecycle smoke against that same zip. Candidate completion MUST NOT
+claim formal release qualification.
+
+Formal `release:all` MUST retain full testing. Candidate promotion MUST either
+reuse a passing full result and `completeRun` for the matching stable source
+snapshot, or execute the full gate on that matching source. Daily results and
+changed selection MUST NOT satisfy this requirement. Sanitized, LF-normalized
+source release contents MUST match the candidate contents; matching HEAD alone
+is insufficient. Promotion SHALL move the original candidate zip.
+
+#### Scenario: Daily candidate still needs formal proof
+- **WHEN** a candidate has passed daily tests, zip verification and consumer smoke
+- **THEN** promotion MUST still require matching full test proof and the existing formal gates
+
+#### Scenario: Full proof has the wrong source
+- **WHEN** full results are unstable, incomplete or belong to a source whose release contents differ from the candidate
+- **THEN** promotion MUST reject that proof and MUST NOT move the candidate to a formal artifact
+
+#### Scenario: Developer test scripts are sanitized
+- **WHEN** a consumer artifact is staged
+- **THEN** development `test:*`, `candidate:*` and `release:*` scripts MUST be removed
+- **AND** consumer `harness/package.json` SHALL keep `npm test` as `check:global`
+
+> **Enforced by:** `scripts/candidate-release.mjs`, `scripts/release-all.mjs`, `scripts/release-pack-rules.mjs`, `scripts/tests/candidate-gates.unit.mjs`

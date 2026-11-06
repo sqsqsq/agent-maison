@@ -1,10 +1,18 @@
 import { listCaseGroups as listGroups } from './design-authority-repair.unit.test';
 import { getCases as designRepairCases, runSelectedCases as selectDesignRepair } from './design-authority-repair.unit.test';
+import { getCases as dailyCases, runSelectedCases as selectDaily, listCaseGroups as dailyGroups } from './design-authority-repair-daily.unit.test';
+import { selectedUnitCases } from '../utils/unit-case-selection';
 
-export const getCases = () => designRepairCases('content');
+export const getCases = () => [...designRepairCases('content'), ...dailyCases('content')];
 
-export const runSelectedCases = (selector?: string) => selectDesignRepair(selector, 'content');
+export const runSelectedCases = async (selector?: string) => {
+  const original = await selectDesignRepair(selector, 'content'), daily = await selectDaily(selector, 'content');
+  return selectedUnitCases([...original.results, ...daily.results], selector, [...original.executionTimings, ...daily.executionTimings]);
+};
 
 export const runAll = async () => (await runSelectedCases()).results;
 
-export const listCaseGroups = () => listGroups('content');
+export const listCaseGroups = () => [
+  ...listGroups('content').map(group => ({ ...group, releaseOnly: !group.caseNames.some(name => name.includes('S16-c1804p ')) })),
+  ...dailyGroups('content'),
+];

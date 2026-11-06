@@ -34,6 +34,7 @@ import {
 } from './goal-runner-testing-integrity.unit.test';
 import type { CheckResult } from '../../scripts/utils/types';
 import type { UnitCaseResult } from '../run-unit';
+import { matchesUnitCase, selectedUnitCases, startCaseTiming, unitCaseGroups, type UnitExecutionTiming } from '../utils/unit-case-selection';
 
 /** complete：回放全部样本行后 exit 0；complete-then-linger：回放含 turn.completed 后不退出（等收口 kill）；
  *  exit-no-terminal：只回放非终态行后 exit 1；kill：只回放非终态行后挂住，由测试从外部杀进程树。 */
@@ -236,11 +237,18 @@ test('[真实子进程：spawn/终止/事件解析，不等于真实 Codex CLI �
   }
 });
 
-export async function runAll(): Promise<UnitCaseResult[]> {
+export async function runSelectedCases(selector?: string) {
   const results: UnitCaseResult[] = [];
+  const timings: UnitExecutionTiming[] = [];
   for (const c of cases) {
+    if (!matchesUnitCase(c.name, selector)) continue;
+    const finish = startCaseTiming([c.name], timings);
     try { await c.run(); results.push({ name: c.name, ok: true }); }
     catch (e) { results.push({ name: c.name, ok: false, error: String((e as Error).stack ?? (e as Error).message) }); }
+    finally { finish(); }
   }
-  return results;
+  return selectedUnitCases(results, selector, timings);
 }
+export const runAll = async (): Promise<UnitCaseResult[]> => (await runSelectedCases()).results;
+export const listCaseGroups = () => unitCaseGroups(cases.map(c => c.name)).map(group => ({ ...group,
+  releaseOnly: !group.caseNames.some(name => name.includes('返修被外部 kill')) }));

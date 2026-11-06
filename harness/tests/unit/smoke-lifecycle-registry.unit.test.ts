@@ -71,10 +71,9 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     // #8（总纲 A【P0】）不在册也照绿——守门函数把自己的漏洞钉死了。
     const eight = m.CASE_REGISTRY.find(c => c.id === 8);
     assert(eight !== undefined, 'plan A【P0】定义的 #8（fresh head 失配）必须在册');
-    // T2 5a-1（2026-08-07）落地：#8 已由 goal stage 第四段整机覆盖——登记态随之转正。
-    // 本断言从"须如实 pending"翻为"须 covered 且指向 goal"（登记态回退=行为丢失预警）。
-    assertEq(eight!.status, 'covered', '#8 已实现（5a-1），登记态不得回退 pending');
-    assertEq(eight!.coveredBy, 'goal', '#8 整机面由 goal stage 覆盖');
+    assertEq(eight!.status, 'retired', '#8旧视觉head控制面退役，不能把普通fresh误称失配回放');
+    assert(Boolean(eight!.retiredReason?.includes('已无相应故障注入')), '#8须明确当前驱动不再制造旧故障');
+    assert(eight!.coveredBy === undefined, '#8保留编号但不得虚报某stage已经覆盖');
     const nine = m.CASE_REGISTRY.find(c => c.id === 9);
     assert(nine !== undefined, '2026-09-01 发布件升级事故 #9 必须在册');
     assertEq(nine!.status, 'covered', '#9 必须由真实 stage 覆盖');

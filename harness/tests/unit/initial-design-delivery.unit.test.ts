@@ -9,7 +9,7 @@ import * as YAML from 'yaml';
 import { provisionFrameworkUnder, git } from '../utils/real-chain-host';
 import { writeLocalConfig } from '../../scripts/utils/framework-local-config';
 import { clearFrameworkConfigCache } from '../../config';
-import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
+import { matchesUnitCase, selectedUnitCases, startCaseTiming, unitCaseGroups, type UnitExecutionTiming } from '../utils/unit-case-selection';
 import type { UnitCaseResult } from '../run-unit';
 import { reportFixtureQuestioning, seedLedgerQuestioningInput } from '../utils/initial-questioning-fixture';
 import { runRuntimeTestChild, withRuntimeTest, preserveRuntimeTestEvidence } from '../utils/runtime-test-control';
@@ -1297,6 +1297,13 @@ cases.push({
 });
 
 export function getCases() { return cases; }
+const dailyPrefixes = [
+  "f3b8e6a1 public preparation births a managed raw-request root",
+  "f3b8e6a1 public next reuses the original signed design request",
+  "P2 M1 current initial Q denial and a completed no-op author return"
+];
+export const listCaseGroups = () => unitCaseGroups(cases.map(test => test.name)).map(group => ({ ...group,
+  releaseOnly: !group.caseNames.some(name => dailyPrefixes.some(prefix => name.startsWith(prefix))) }));
 export async function runSelectedCases(filter?: string) {
   const results: UnitCaseResult[] = [], timings: UnitExecutionTiming[] = [];
   for (const test of cases) {

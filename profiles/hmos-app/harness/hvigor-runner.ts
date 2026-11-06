@@ -168,6 +168,7 @@ export interface HypiumTestResult {
   failed: number;
   skipped: number;
   failures: Array<{ suite: string; test: string; message: string }>;
+  passed_tests?: Array<{ suite: string; test: string }>;
 }
 
 export interface ProjectDependencyIssue {
@@ -1140,6 +1141,7 @@ function parseHypiumOutput(log: string): HypiumTestResult {
   const lines = log.split(/\r?\n/);
 
   let curSuite = '';
+  let pendingTest = '';
   for (const line of lines) {
     // OHOS_REPORT_RESULT 汇总行（hypium）
     //  OHOS_REPORT_RESULT: Tests run: 12, Failure: 2, Error: 0, Pass: 10
@@ -1162,9 +1164,16 @@ function parseHypiumOutput(log: string): HypiumTestResult {
     //  搭配 OHOS_REPORT_STATUS: test=<name> 与 stack=<msg>
     const mTest = line.match(/OHOS_REPORT_STATUS:\s*test=(.+)/);
     if (mTest) {
+      pendingTest = mTest[1].trim();
       // 保存"最近一个 test" 便于配对 stack
       (result as unknown as Record<string, string>).__lastTest = mTest[1].trim();
       continue;
+    }
+
+    const status = line.match(/OHOS_REPORT_STATUS_CODE:\s*(-?\d+)\s*$/);
+    if (status && Number(status[1]) !== 1) {
+      if (Number(status[1]) === 0 && pendingTest) (result.passed_tests ??= []).push({ suite: curSuite, test: pendingTest });
+      pendingTest = '';
     }
 
     const mStack = line.match(/OHOS_REPORT_STATUS:\s*stack=(.+)/);

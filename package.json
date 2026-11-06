@@ -6,6 +6,7 @@
   "scripts": {
     "test": "npm --prefix harness test --",
     "test:changed": "npm --prefix harness run test:changed --",
+    "test:daily": "npm --prefix harness run test:daily --",
     "harness:install": "npm --prefix harness install",
     "openspec": "openspec",
     "openspec:validate": "openspec validate --all --strict && node scripts/check-openspec-enforcement-paths.mjs",

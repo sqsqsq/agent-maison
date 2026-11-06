@@ -28,8 +28,8 @@ import { withRuntimeTest, type RuntimeTestControl } from '../utils/runtime-test-
 export const RESULT_MARK = '<<goal-run-result>>';
 
 export function expectedDriverInterruption(scenario: string): string | undefined {
-  if (scenario === 'crash_scope_in_run') return 'injected crash after actual scope check result';
-  return ['crash_after_scope_event', 'crash_scope_in_run', 'successor_source_crash'].includes(scenario)
+  if (scenario === 'crash_scope_in_run' || scenario === 'successor_source_crash') return 'injected crash after actual scope check result';
+  return scenario === 'crash_after_scope_event'
     ? 'injected crash after phase_backtrack_requested' : undefined;
 }
 
@@ -82,14 +82,14 @@ export function prepareFixtureVerifierMaterial(input: {
  */
 function loadFrameworkModules(frameworkRoot: string): {
   goal: Record<string, unknown>;
-  config: { clearFrameworkConfigCache(): void };
+  config: Pick<typeof import('../../config'), 'clearFrameworkConfigCache' | 'featureFilePath'>;
 } {
   const req = (rel: string): Record<string, unknown> =>
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     require(path.join(frameworkRoot, rel)) as Record<string, unknown>;
   return {
     goal: req('harness/scripts/goal-runner'),
-    config: req('harness/config') as unknown as { clearFrameworkConfigCache(): void },
+    config: req('harness/config') as unknown as Pick<typeof import('../../config'), 'clearFrameworkConfigCache' | 'featureFilePath'>,
   };
 }
 
@@ -203,6 +203,7 @@ const FIXTURE_MODULE_PKG = `02-Feature/${FIXTURE_MODULE}`;
 const FIXTURE_PRODUCT_STRUCT = 'SamplePage';
 const FIXTURE_PRODUCT_FILE = `${FIXTURE_MODULE_PKG}/src/main/ets/${FIXTURE_PRODUCT_STRUCT}.ets`;
 const FIXTURE_OUT_OF_SCOPE_FILE = '01-Product/ProductShell/src/main/ets/pages/OutOfScopePage.ets';
+const SOURCE_WRITE_REQUIREMENT = '仅在现有SamplePage源码追加控制测试注释，不改变行为、契约、验收或UI；核验coding请求，不声明Feature完整交付。';
 
 /**
  * 写夹具的 contracts.yaml——**唯一入口**。
@@ -445,7 +446,7 @@ async function runScenario(args: {
   const receiptDiagnostics: Array<{ phase: string; status: string; message?: string }> = [];
   let crashMutationInjected = false;
   let utSourceMutationInjected = false;
-  const checksConstructionScope = scenario === 'crash_scope_in_run' || scenario === 'crash_rerequest';
+  const checksConstructionScope = scenario === 'crash_scope_in_run' || scenario === 'crash_rerequest' || scenario === 'successor_source_crash';
   const constructionScopeCheck = (): import('../../scripts/utils/types').CheckResult => {
     const { SpecLoader } = require(path.join(frameworkRoot, 'harness/scripts/utils/spec-loader')) as typeof import('../../scripts/utils/spec-loader');
     const { parseScope } = require(path.join(frameworkRoot, 'harness/scripts/utils/scope-parser')) as typeof import('../../scripts/utils/scope-parser');
@@ -492,10 +493,25 @@ async function runScenario(args: {
         if (scenario === 'crash_rerequest') writeFixtureContracts(root, feature, [FIXTURE_PRODUCT_FILE]);
       }
     }
-    if (scenario === 'ut_source_mutation' && phase === 'ut' && !utSourceMutationInjected) {
+    if (scenario === 'ut_source_mutation' && phase === 'work-unit-author' && !utSourceMutationInjected) {
       utSourceMutationInjected = true;
-      w(root, FIXTURE_PRODUCT_FILE,
-        `struct ${FIXTURE_PRODUCT_STRUCT} { build() { Text("mutated-during-ut") } }`);
+      fs.appendFileSync(path.join(root, FIXTURE_PRODUCT_FILE), '\n// source-write-smoke: request-only authorized edit\n');
+      const handoff = require(path.join(frameworkRoot, 'harness/scripts/utils/session-execution-handoff')) as typeof import('../../scripts/utils/session-execution-handoff');
+      const issued = activeRun && handoff.executionRequestForInvoke(path.join(root, 'doc/features', feature, 'goal-runs', activeRun), path.basename(path.dirname(invokeOpts.outputLogPath!)));
+      if (!issued) throw new Error('source-write author must read its actual request');
+      const context = issued.request.context, admitted = context.factsContext;
+      if (admitted) {
+        const factsFile = config.featureFilePath(root, feature, 'context/facts.md');
+        if (!fs.existsSync(factsFile)) {
+          const sources = admitted.source_paths.filter(file => fs.existsSync(path.join(root, file)) && fs.statSync(path.join(root, file)).isFile());
+          for (const file of sources) fs.readFileSync(path.join(root, file));
+          w(root, path.relative(root, factsFile), '---\n' + require('yaml').stringify({ schema_version: '1.1', feature, run_id: context.runId,
+            established_by: admitted.first_phase, ready_to_produce: true, has_blocker_coverage_risk: false, exploration_mode: 'sequential',
+            source_code_paths: sources, key_inputs_read: sources, files_inspected_count: sources.length, searches_performed_estimate: 1,
+            subagents_used: 'none', decisions_unlocked: ['request-only source comment'] }) + '---\n## Code Facts\n');
+        }
+        require('../fixtures/host-snapshot-3.1.0/migrate').researchSnapshotFacts(root, factsFile, admitted.first_phase, admitted);
+      }
     }
     return { exitCode: 0, timedOut: false, stdout: '', stderr: '', command: 'noop' };
   });
@@ -562,14 +578,7 @@ async function runScenario(args: {
                   details_excerpt: 'ut_hvigor_build 已 FAIL，test 阶段自动短路。',
                 },
               ]
-            : scenario === 'successor_source_crash'
-              && String(ph) === 'coding' && !crashMutationInjected
-              ? [{
-                  id: 'coding_scope_declared',
-                  classification: 'code_regression',
-                  details_excerpt: '注入：coding 首轮判 FAIL，触发同阶段重跑。',
-                }]
-              : null;
+            : null;
       // 崩溃窗注入点：coding **首轮 harness 桩内**——此刻 agent invoke 的写窗口已关闭
       // （pre/post 快照比对已完成）、post_agent 授权门也已走过，因此这次写入不会被
       // 归属给 agent。它与同轮的 FAIL blocker 一起落盘，runner 据此重跑 coding，
@@ -608,7 +617,7 @@ async function runScenario(args: {
           workflowVerifierPrompt: verifier.workflowVerifierPrompt(workflows.loadWorkflowSpec(frameworkRoot, 'spec-driven'), ph), adapterHasVerifierSubagent: true });
         const writerOptions = prepareFixtureVerifierMaterial({ projectRoot: pr, frameworkRoot, report, options: { verifierPlan: plan } });
         let summary = summaryWriter.writeRunSummaryBase(pr, report, frameworkRoot, writerOptions);
-        if (scenario === 'crash_scope_in_run' && String(ph) === 'coding' && scopeCheck?.status === 'FAIL')
+        if ((scenario === 'crash_scope_in_run' || scenario === 'successor_source_crash') && String(ph) === 'coding' && scopeCheck?.status === 'FAIL')
           throw new Error(expectedDriverInterruption(scenario));
         if (!failureBlockers && scopeCheck?.status !== 'FAIL' && summary.verifier_subject_id) {
           publishFixtureVerifierEvidence({ projectRoot: pr, reportsDir: dir, feature: feat, phase: ph, subjectId: summary.verifier_subject_id, skipSummaryPatch: true,
@@ -690,12 +699,6 @@ async function runScenario(args: {
     });
   }
 
-  if (scenario === 'successor_source_crash') {
-    scope.__testing_setAfterInvalidationRequested?.(() => {
-      throw new Error('injected crash after phase_backtrack_requested');
-    });
-  }
-
   if (scenario === 'resume_after_crash_scope') {
     if (!extra) throw new Error('resume_after_crash_scope 需要 extra=runId');
     // 修复 live 漂移；恢复只消费已落盘的失效 record，不再重复制造新交接。
@@ -765,6 +768,20 @@ async function runScenario(args: {
     || scenario === 'resume_after_crash_scope') {
     if (!extra) throw new Error(`${scenario} 需要 extra=runId`);
     process.argv = [...argvBase, '--resume', extra];
+  } else if (scenario === 'ut_source_mutation') {
+    const { readFeatureFrozenScope } = require(path.join(frameworkRoot, 'harness/scripts/utils/feature-execution-scope')) as typeof import('../../scripts/utils/feature-execution-scope');
+    const executionScope = readFeatureFrozenScope(root, feature)?.execution_scope;
+    if (!executionScope?.obligations.some(item => item.kind === 'implementation' && item.applicability === 'required')) {
+      throw new Error('source-write fixture requires a production-generated implementation duty');
+    }
+    const input = path.join(root, '.goal-driver-source-request.yaml');
+    w(root, '.goal-driver-source-request.yaml', require('yaml').stringify({
+      feature, adapter: 'cursor', requirement: SOURCE_WRITE_REQUIREMENT,
+      execution_scope: executionScope, chain_override: executionScope.phase_chain,
+      start_phase: executionScope.phase_chain[0], end_phase: executionScope.phase_chain.at(-1),
+      unattended: { write_mode: 'full-access', approval_mode: 'never' },
+    }));
+    process.argv = ['node', 'goal-runner.ts', '--feature', feature, '--foreground-ok', '--manifest', input, '--force'];
   } else if (scenario === 'device_park') {
     // 全链启动：spec→review 由写盘桩 PASS 走过（截断链 preflight 消费的是文件，
     // `--start ut` 空宿主必被"上游 missing/stale"拒启——实证过），ut 撞设备门停放。
@@ -932,8 +949,22 @@ if (require.main === module) {
   }
   // provision：只对既有宿主铺 hmos goal 夹具，不跑 run（smoke 对 cloneRoot 用）
   if (scenario === 'provision') {
-    provisionHmosGoalFixture(path.resolve(projectRootArg), feature);
-    freezeExistingGoalDelivery(path.resolve(projectRootArg), feature);
+    const projectRoot = path.resolve(projectRootArg);
+    provisionHmosGoalFixture(projectRoot, feature);
+    if (extraArg === 'source-write') {
+      const frameworkRoot = frameworkRootArg && frameworkRootArg !== '-' ? path.resolve(frameworkRootArg) : DEV_FRAMEWORK_ROOT;
+      const configFile = path.join(projectRoot, 'framework.config.json');
+      const configData = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+      configData.active_workflow = 'obligation-driven';
+      fs.writeFileSync(configFile, JSON.stringify(configData));
+      require(path.join(frameworkRoot, 'harness/config')).clearFrameworkConfigCache();
+      const track = require(path.join(frameworkRoot, 'harness/scripts/utils/feature-track')) as typeof import('../../scripts/utils/feature-track');
+      const candidate = track.prepareFeatureScopeCandidate({ projectRoot, frameworkRoot, feature, completionTarget: 'request',
+        requestedResults: [SOURCE_WRITE_REQUIREMENT], requestedPhases: ['coding'], requirement: SOURCE_WRITE_REQUIREMENT,
+        impact: { userVisibleBehaviorChange: false, reason: '仅添加注释，运行行为保持不变', basisPaths: [FIXTURE_PRODUCT_FILE] } });
+      require(path.join(frameworkRoot, 'harness/scripts/utils/feature-execution-scope')).freezeFeatureExecutionScope({ projectRoot, feature,
+        scope: candidate.scope, candidateFingerprint: track.featureScopeCandidateFingerprint(projectRoot, feature) });
+    } else freezeExistingGoalDelivery(projectRoot, feature);
     process.stdout.write(`\n${RESULT_MARK}${JSON.stringify({ provisioned: true })}\n`);
     process.exit(0);
   }

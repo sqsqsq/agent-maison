@@ -46,7 +46,7 @@ import { DetachedGoalPhaseExecutor, workUnitExecutionRole, type GoalPhaseExecuto
 import { extractProviderFinalText, resolveTerminalEventParser } from '../../scripts/utils/codex-terminal-events';
 import { GoalPhaseRuntime } from '../../scripts/goal-phase-runtime';
 import { deriveChangeUnitReadySet } from '../../scripts/utils/change-unit-ready-set';
-import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
+import { matchesUnitCase, selectedUnitCases, startCaseTiming, unitCaseGroups, type UnitExecutionTiming } from '../utils/unit-case-selection';
 import type { UnitCaseResult } from '../run-unit';
 import { withRuntimeTest, preserveRuntimeTestEvidence, type RuntimeTestControl } from '../utils/runtime-test-control';
 const runGoalModeSessionStep = (options: Parameters<typeof runGoalModeSessionStepUnchecked>[0], testControl: RuntimeTestControl = {}) =>
@@ -1215,4 +1215,11 @@ export async function runSelectedCases(filter?: string) {
   }
   return selectedUnitCases(results, filter, timings);
 }
+const dailyPrefixes = [
+  "P2 current public Q and mechanical CU closure",
+  "f3b8e6a1 initial repair: normal canonical run",
+  "P3 design helper returns complete denied Q evaluation"
+];
+export const listCaseGroups = () => unitCaseGroups(getCases().map(test => test.name)).map(group => ({ ...group,
+  releaseOnly: !group.caseNames.some(name => dailyPrefixes.some(prefix => name.startsWith(prefix))) }));
 export async function runAll() { return (await runSelectedCases()).results; }

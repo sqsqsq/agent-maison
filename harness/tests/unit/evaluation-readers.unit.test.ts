@@ -18,7 +18,7 @@ const feature = 'cu-YmMtb3BlbkNhcmQtMgBvcGVuLWNhcmQtZmxvdw';
 const rel = 'doc/features/bc-openCard-2/open-card-flow';
 const runId = '20261019T033030Z-1b91ba';
 
-/** Count real parsing/validation, not reader invocations; restore before another test. */
+/** Byte parsing may be reused across actions; validation must remain once per action. */
 function counted<T>(action: () => T): { value: T; counts: Record<string, number> } {
   const yaml = require('yaml') as typeof import('yaml');
   const blueprint = require('../../scripts/utils/component-blueprint-validator') as typeof import('../../scripts/utils/component-blueprint-validator');
@@ -54,7 +54,7 @@ const cases: Array<{ name: string; run(): Promise<void> }> = [
       assert.throws(() => readers.blueprint(root, { ...owner, target: { kind: 'decision', id: 'not-present' } }));
     });
     assert.equal(captured.counts['blueprint.validate'], 1);
-    assert.equal(captured.counts['blueprint.parse'], 1);
+    assert((captured.counts['blueprint.parse'] ?? 0) <= 1, JSON.stringify(captured.counts));
     assert.equal(captured.counts['cu.parse'], 1);
   }) },
   { name: 'blueprint-only digests share validation within an action and revalidate in the next action', run: () => withProject(({ root }) => {
@@ -68,7 +68,7 @@ const cases: Array<{ name: string; run(): Promise<void> }> = [
         for (let i = 0; i < 5; i++) assert.equal(identityNeutralDigest(root, 'acceptance@1', artifact, readers), first);
       });
       assert.equal(captured.counts['blueprint.validate'], 1);
-      assert.equal(captured.counts['blueprint.parse'], 1);
+      assert((captured.counts['blueprint.parse'] ?? 0) <= 1, JSON.stringify(captured.counts));
     }
   }) },
   { name: 'DSL-only publication invalidates the next action without a manual reader-cache reset', run: () => withProject(({ root }) => {
@@ -146,14 +146,14 @@ const cases: Array<{ name: string; run(): Promise<void> }> = [
       assert(prompt.includes('Goal run phase: coding') && prompt.includes(manifest.requirement));
     });
     assert.equal(coding.counts['blueprint.validate'], 1, JSON.stringify(coding.counts));
-    assert.equal(coding.counts['blueprint.parse'], 1);
+    assert((coding.counts['blueprint.parse'] ?? 0) <= 1, JSON.stringify(coding.counts));
     assert.equal(coding.counts['cu.validate'], 1);
     const assessed = counted(() => {
       const observation = observeFeatureState({ projectRoot: root, frameworkRoot, feature, runId, writeProjection: false });
       return { observation, result: assessObservation(observation, { mode: 'manual' }) };
     });
     assert.equal(assessed.counts['blueprint.validate'], 1, JSON.stringify(assessed.counts));
-    assert.equal(assessed.counts['blueprint.parse'], 1);
+    assert((assessed.counts['blueprint.parse'] ?? 0) <= 1, JSON.stringify(assessed.counts));
     const phases = assessed.value.observation.phases;
     for (const phase of ['spec', 'plan']) {
       const observed = phases.find(item => item.phase === phase);

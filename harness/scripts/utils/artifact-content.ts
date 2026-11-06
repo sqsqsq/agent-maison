@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import * as YAML from 'yaml';
+import { parseYamlCached } from './yaml-read-cache';
 import { auditSchemaSupport, validateLiteSchema, type LiteSchemaViolation } from './lite-json-schema';
 
 type Row = Record<string, any>;
@@ -17,12 +17,15 @@ export class ArtifactSchemaError extends Error {}
 
 function contentSchema(artifact: string, frameworkRoot: string): Row {
   try {
-    const inventory = YAML.parse(fs.readFileSync(path.join(frameworkRoot, 'specs/artifact-schemas/inventory.yaml'), 'utf8'));
+    const inventoryPath = path.join(frameworkRoot, 'specs/artifact-schemas/inventory.yaml');
+    const inventory = parseYamlCached<Row>(inventoryPath, fs.readFileSync(inventoryPath, 'utf8'));
     const entry = inventory.artifacts.find((item: Row) => item.id === artifact);
     if (!entry) throw new Error(`unregistered artifact ${artifact}`);
+    const schemaPath = artifact === 'ui-spec@1' ? path.join(frameworkRoot, 'harness/schemas/ui-spec.schema.json')
+      : path.join(frameworkRoot, 'specs/artifact-schemas', entry.schema);
     const schema = artifact === 'ui-spec@1'
-      ? JSON.parse(fs.readFileSync(path.join(frameworkRoot, 'harness/schemas/ui-spec.schema.json'), 'utf8'))
-      : YAML.parse(fs.readFileSync(path.join(frameworkRoot, 'specs/artifact-schemas', entry.schema), 'utf8'));
+      ? JSON.parse(fs.readFileSync(schemaPath, 'utf8'))
+      : parseYamlCached<Row>(schemaPath, fs.readFileSync(schemaPath, 'utf8'));
     if (!row(schema)) throw new Error('schema root must be an object');
     for (const key of Object.keys(schema)) if (key.startsWith('x-')) delete schema[key];
     const unsupported = auditSchemaSupport(schema);

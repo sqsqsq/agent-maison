@@ -140,6 +140,8 @@ const cases: Array<{ name: string; run: () => void }> = [
       assertEq(r?.failed, 0, 'failed');
       assertEq(r?.skipped, 0, 'skipped');
       assertEq(r?.failures.length, 0, 'failures.length');
+      assertEq(r?.passed_tests?.length, 1, '只保留逐条通过原件，不能从汇总数补造第二条');
+      assertEq(r?.passed_tests?.[0].test, '[AC-1] HomeRepository 返回非空', '实际成功用例身份');
     },
   },
   {
@@ -150,6 +152,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       assertEq(r?.total, 5, 'total');
       assertEq(r?.passed, 2, 'passed');
       assertEq(r?.failed, 3, 'failed (Failure 2 + Error 1)');
+      assertEq(r?.passed_tests, undefined, '只有统计不能生成逐条成功证据');
       assertEq(r?.skipped, 0, 'skipped');
     },
   },
@@ -189,6 +192,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       assertEq(r?.failures.length, 1, 'failures.length');
       assertEq(r?.failures[0].suite, 'MySuite', 'failure.suite');
       assertEq(r?.failures[0].test, 'should compute total correctly', 'failure.test');
+      assertEq(r?.passed_tests, undefined, '失败用例不能进入成功证据');
       assertEq(
         r?.failures[0].message,
         'AssertionError: expected 5 to equal 6',

@@ -96,7 +96,9 @@ staging 时会对 zip 内 `package.json` **sanitize**：移除 `release:*` scrip
 
 ## 开发验收（BLOCKER）
 
-每轮开发执行 `npm run test:changed` 生成并执行按需测试计划，全部必选项通过；plan 收口与发版门禁各执行一次 `npm test` 完整全量（typecheck、全部 unit/profile 含 release-only、全部 fixtures）。已知未通过项不可豁免；同一轮窄返修复用有效通过结果，不重复全测；本次基建全量可同时作为本 plan 收口全量。
+每轮开发执行 `npm run test:changed`，运行日常域按需计划且全部必选项通过；普通 plan 收口与中间候选包执行 `npm run test:daily` 日常全集（含 typecheck、全部有效 fixture）及本次必要验证。正式发版执行一次 `npm test`，完整覆盖日常与扩展域的全部有效 unit/profile/fixture。测试执行或分类基建变更须定向证明没有漏组、串 scope 或绕过正式晋升，不因此例行重跑数小时业务全量。已确认影响日常承诺的缺陷不得通过分层豁免；同一输入的有效结果按影响复用，纯计划/文字改动仍按验证比例处理。
+
+`candidate:build` 使用日常全集，随后打包、同 zip 校验与消费者 lifecycle smoke；`candidate:promote` 保留 zip 身份、consumer golden 与发布 plan 门禁，并要求与候选发布内容一致、输入稳定的正式全量通过证明。主干前进后可用 `--source-root <保留的受测副本>` 补全量；含未提交改动的候选不能只凭 `source_commit` 还原来源，来源缺失时须重新构建。只有正式全量与 golden 均通过、仅 plan 门禁未过时才可标记 eligible。
 
 maison 自身不走 feature phase skill 管线；`harness-runner` 在消费者实例工程内跑 phase 集成测试。
 

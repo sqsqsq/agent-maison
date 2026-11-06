@@ -27,7 +27,7 @@ import { observeChangeUnitCompletion } from '../../scripts/utils/change-unit-com
 import { SNAPSHOT_CU_FEATURE } from '../fixtures/host-snapshot-3.1.0/generate';
 import { loadMigratedHostSnapshot } from '../fixtures/host-snapshot-3.1.0/migrate';
 import type { CheckContext, AcceptanceSpec } from '../../scripts/utils/types';
-import { matchesUnitCase, selectedUnitCases, startCaseTiming, SelectedUnitCases, UnitExecutionTiming } from '../utils/unit-case-selection';
+import { matchesUnitCase, selectedUnitCases, startCaseTiming, unitCaseGroups, SelectedUnitCases, UnitExecutionTiming } from '../utils/unit-case-selection';
 
 const frameworkRoot = path.resolve(__dirname, '../../..');
 type Fixture = ReturnType<typeof createBlueprintReviewDesignFixture>;
@@ -1119,3 +1119,7 @@ export async function runSelectedCases(selector?: string): Promise<SelectedUnitC
   return selectedUnitCases(results, selector, timings);
 }
 export async function runAll() { return (await runSelectedCases()).results; }
+export const listCaseGroups = () => [
+  ...unitCaseGroups(cases.map(test => test.name)),
+  { caseNames: ['previously completed but non-retired CU is still checked after authoritative content becomes invalid'], releaseOnly: true },
+];

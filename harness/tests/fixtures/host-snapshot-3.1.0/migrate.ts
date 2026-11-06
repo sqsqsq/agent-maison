@@ -13,7 +13,7 @@ import { resolveWorkflowSpec } from '../../../workflow-loader';
 import { resolveSuccessorExecutionScope } from '../../../scripts/utils/feature-execution-scope';
 import { assessFeature } from '../../../scripts/utils/feature-assessment';
 import { resolveChangeUnitExpectedExecution } from '../../../scripts/utils/change-unit-completion';
-import { publishRequestedVerifier, readDeliveredVerifierRequest, writeSpecMaterials, writeCuSpecMaterials } from '../../unit/real-chain.unit.test';
+import { publishRequestedVerifier, readDeliveredVerifierRequest, writeSpecMaterials, writeCuSpecMaterials, writeTestPlan } from '../../unit/real-chain.unit.test';
 import { computeMaterialSha256, readVerifierMaterialOrNull } from '../../../scripts/utils/verifier-material';
 import { loadVerifierEvidenceForSubject } from '../../../scripts/utils/verifier-evidence';
 import { runGoalRuntimeChain } from '../../unit/goal-runner-testing-integrity.unit.test';
@@ -136,6 +136,10 @@ export async function migrateHostSnapshot(s: Snapshot, feature: string) {
       if (owners.has('spec') || disposition.completionBlocking.some(problem => problem.action === 'repair' && (problem.owner === 'spec' || problem.phase === 'spec'))) {
         if (feature === SNAPSHOT_CU_FEATURE) writeCuSpecMaterials(current); else writeSpecMaterials(current, undefined, { preserveUnchanged: true });
       }
+      // Re-author the stale plan/hint through the current writer; the real gate must generate fresh native evidence.
+      if (feature === SNAPSHOT_FLAT_FEATURE && context.chain.includes('testing')
+        && disposition.completionBlocking.some(problem => (problem.source_phase ?? problem.phase) === 'testing'
+          && (problem.action === 'repair' || problem.action === 'verify'))) writeTestPlan(current);
       if (baseline) fs.writeFileSync(facts, baseline);
       researchSnapshotFacts(s.root, facts, admitted.first_phase, admitted);
       for (const family of context.chain) if (family !== admitted.first_phase) researchSnapshotFacts(s.root, facts, family, admitted);

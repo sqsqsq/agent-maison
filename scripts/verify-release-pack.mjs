@@ -210,6 +210,7 @@ function assertZipContents(frameworkRoot) {
   const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
   for (const key of Object.keys(pkg.scripts ?? {})) {
     if (key.startsWith('release:')) fail(`sanitized package.json still has script: ${key}`);
+    if (key.startsWith('candidate:') || key.startsWith('test:')) fail(`sanitized package.json still has development script: ${key}`);
   }
   if (pkg.devDependencies?.archiver || pkg.devDependencies?.['extract-zip']) {
     fail('sanitized package.json still has release devDependencies');
@@ -227,9 +228,7 @@ function assertZipContents(frameworkRoot) {
   if (harnessPkg.scripts?.['test:fixtures']) {
     fail('sanitized harness/package.json still has test:fixtures');
   }
-  if (harnessPkg.scripts?.['test:changed'] || pkg.scripts?.['test:changed']) {
-    fail('sanitized package.json still has development test:changed');
-  }
+  for (const key of Object.keys(harnessPkg.scripts ?? {})) if (key.startsWith('test:')) fail(`sanitized harness/package.json still has development script: ${key}`);
   if (!harnessPkg.scripts?.['check:global']) {
     fail('sanitized harness/package.json missing check:global');
   }

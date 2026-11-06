@@ -31,6 +31,7 @@ import { computeProductWorktreeDigest } from '../../scripts/utils/worktree-diges
 import { buildGoalManifestFromInput } from '../../scripts/utils/goal-manifest';
 import { createGoalRun } from '../../scripts/utils/goal-run-creation';
 import { resolveExecutionScope } from '../../scripts/utils/execution-scope';
+import { matchesUnitCase, selectedUnitCases, unitCaseGroups } from '../utils/unit-case-selection';
 
 export interface UnitCaseResult {
   name: string;
@@ -1148,9 +1149,10 @@ const cases: Array<{ name: string; run: () => void }> = [
   },
 ];
 
-export function runAll(): UnitCaseResult[] {
+function executeCases(selector?: string): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
   for (const c of cases) {
+    if (!matchesUnitCase(c.name, selector)) continue;
     try {
       c.run();
       results.push({ name: c.name, ok: true });
@@ -1160,3 +1162,8 @@ export function runAll(): UnitCaseResult[] {
   }
   return results;
 }
+export const runAll = () => executeCases();
+export const runSelectedCases = (selector?: string) => selectedUnitCases(executeCases(selector), selector, []);
+export const listCaseGroups = () => unitCaseGroups(cases.map(test => test.name))
+  .map(group => ({ ...group, releaseOnly: !group.caseNames.some(name =>
+    name.startsWith('goal sync-closure') || name.startsWith('full×strict（缺省') || name.startsWith('T4：current summary')) }));

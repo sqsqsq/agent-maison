@@ -6576,6 +6576,10 @@ test('c3f8a2d7 t5 连续回放：testing FAIL（产品+provider 缺席）→ 回
     }
     writeFile(root, path.relative(root, assetManifestAbsPath(root, FEATURE)), require('yaml').stringify({ schema_version: '1.0',
       assets: assets.map(asset => ({ key: asset.key, purpose: 'replay fixture', has_source: !!asset.resolved_path && fs.existsSync(path.resolve(root, asset.resolved_path)) })) }));
+    // Keep authored replay inputs; the actual testing callback recreates results only after a legal birth.
+    const unbornReports = path.resolve(featurePhaseReportsDir(root, FEATURE, 'testing'));
+    assert(unbornReports.startsWith(path.resolve(root) + path.sep), 'replay preparation may only clear its own temporary results');
+    fs.rmSync(unbornReports, { recursive: true, force: true });
     authorizeFixtureConstruction(root, 'request');
     // ① 首个请求：testing 第 1 轮真实失败 → 回 coding；第 2 轮只剩 provider 缺席 → 延迟停下
     const first = await requestVia('foreground', root, common);
@@ -7211,6 +7215,30 @@ test('b7d2e9f4 §3.3 orphaned_session：只有出生事件的 run 挂着过期 s
   }
 });
 
+interface VerifierDeliveryInput { invokeId: string; subject: string; material: string; feedback: string; continuation: number }
+function verifierDeliveryInput(root: string, feature: string, ctx: AgentCtx, subject: string, continuation: number): VerifierDeliveryInput {
+  const runDir = featureFilePath(root, feature, `goal-runs/${ctx.runId}`);
+  const start = readEvents(runDir).filter(event => event.type === 'agent_invoke_start' && event.phase === ctx.phase).at(-1);
+  const original = start?.invoke_id ? executionRequestForInvoke(runDir, String(start.invoke_id)) : null;
+  assert(original?.request.context.attemptId === ctx.goalAttemptId, 'the verifier must consume its actual signed invocation input');
+  const material = original!.request.context.workInput?.material;
+  assert(material?.purpose === 'verifier_format_repair' && typeof material.segments.at(-1) === 'string', 'the verifier original must contain its actual material and delivered format feedback');
+  return {invokeId: String(start!.invoke_id), subject, material: JSON.stringify(material!.segments.slice(0, -1)), feedback: String(material!.segments.at(-1)), continuation};
+}
+function completedVerifierInputs(deliveries: VerifierDeliveryInput[], events: Array<Record<string, unknown>>): VerifierDeliveryInput[] {
+  const completed = deliveries.filter(delivery => events.some(event => event.type === 'agent_invoke_end' && event.invoke_id === delivery.invokeId
+    && invocationCompleted({...event, exitCode: event.exit_code})));
+  assert(new Set(deliveries.map(delivery => delivery.invokeId)).size === deliveries.length, 'each real verifier invocation has a unique original');
+  const inputs = completed.map(delivery => JSON.stringify([delivery.continuation, delivery.subject, delivery.material, delivery.feedback]));
+  assert(new Set(inputs).size === inputs.length, 'a completed response with unchanged material and already delivered feedback cannot purchase another invocation');
+  return completed;
+}
+function assertFirstFormatOpportunity(deliveries: VerifierDeliveryInput[], events: Array<Record<string, unknown>>, subject: string): void {
+  const completed = completedVerifierInputs(deliveries, events).filter(delivery => delivery.subject === subject && delivery.continuation === 0);
+  assert(completed.length === 2 && completed[0].feedback === '' && completed[1].feedback.length > 0
+    && completed[0].material === completed[1].material, 'the first actual bad response receives exactly one newly delivered format opportunity, then unchanged bad content waits');
+}
+
 for (const variant of ['corrected', 'still-bad', 'refuted', 'reentered', 'waiting-resumed', 'interrupted-resumed', 'no-end-resumed', 'new-subject'] as const) cases.push({
   group: 'late',
   name: `c6a3d918 verifier format recovery ${variant}: bounded attempt and real budget/candidate consumption`,
@@ -7232,6 +7260,8 @@ for (const variant of ['corrected', 'still-bad', 'refuted', 'reentered', 'waitin
       const unfinished = variant === 'waiting-resumed' || variant === 'interrupted-resumed' || variant === 'no-end-resumed';
       const deliveredSubjects: string[] = [];
       const deliveredAttempts: string[] = [];
+      const deliveries: VerifierDeliveryInput[] = [];
+      let continuation = 0, correctionAvailable = false;
       const rawReviewVerdicts: string[] = [];
       const terminal = () => '\n' + (require('../utils/verifier-evidence-fixture') as typeof import('../utils/verifier-evidence-fixture')).renderResultBlock(subject, 'PASS', 0);
       const one = '- issue: CR-1\n  verdict: confirmed\n  evidence: AllBanksPage.ets | 修复真实逻辑';
@@ -7329,12 +7359,13 @@ for (const variant of ['corrected', 'still-bad', 'refuted', 'reentered', 'waitin
           if (fs.existsSync(path.join(root, reportRel))) fs.readFileSync(path.join(root, reportRel), 'utf8');
           deliveredSubjects.push(request!.subject_id);
           deliveredAttempts.push(String(ctx.goalAttemptId));
+          deliveries.push(verifierDeliveryInput(root, feature, ctx, request!.subject_id, continuation));
           if (unfinished && corrections === 1) {
             if (variant === 'waiting-resumed') return { status: 'waiting', details: 'finite verifier provider is waiting; continue the original request when available' };
             if (variant === 'interrupted-resumed') return { exitCode: 130, interrupted: true, stderr: 'finite verifier interrupted before producing a report' };
             throw new Error('finite verifier callback ended before an invoke_end was recorded');
           }
-          const stillBad = variant === 'still-bad' || variant === 'reentered' || variant === 'new-subject' || unfinished && corrections === 2;
+          const stillBad = variant === 'still-bad' || variant === 'reentered' || variant === 'new-subject' || unfinished && !correctionAvailable;
           writeFile(root, reportRel, verifierBody(!stillBad));
         },
       };
@@ -7356,27 +7387,30 @@ for (const variant of ['corrected', 'still-bad', 'refuted', 'reentered', 'waitin
           probe = await runGoalRuntimeChain(root, { ...options, resume: resumedRunId, forceResume: true, noAutoForce: true });
         } else probe = await runGoalRuntimeChain(root, { ...options, resume: resumedRunId, noAutoForce: true });
         const starts = probe.events.filter(event => event.type === 'agent_invoke_start' && event.purpose === 'verifier_format_repair');
-        assert(corrections === 2 && starts.length === 2 && starts[0].invoke_id !== starts[1].invoke_id,
+        assert(corrections === 3 && starts.length === 3 && new Set(starts.map(start => start.invoke_id)).size === 3,
           `ordinary continuation must actually resume the same verifier with a unique invocation: ${JSON.stringify({ corrections, starts, ends: probe.events.filter(event => event.type === 'run_end') })}`);
         assert(new Set(deliveredSubjects).size === 1, 'a retry of unfinished work must retain the actual original subject');
+        assertFirstFormatOpportunity(deliveries, probe.events, deliveredSubjects[0]);
         assert(probe.events.some(event => event.type === 'phase_halt' && event.run_disposition === 'WAITING'), '已交回但正文仍未知必须自然等待原核验条件，不借配额或伪造可比进展');
         assert(!probe.events.some(event => event.type === 'phase_halt' && event.halt_reason === 'budget_turns'), 'a budget exit is not the no-progress proof');
         if (variant === 'waiting-resumed') {
+          correctionAvailable = true; continuation++;
           probe = await runGoalRuntimeChain(root, { ...options, resume: resumedRunId, forceResume: true, noAutoForce: true });
           assert(corrections >= 3 && explicitCorrectionAccepted && new Set(deliveredSubjects.slice(0, 3)).size === 1,
             `explicit continuation must validate the original correction before the author changes review inputs: ${JSON.stringify({ corrections, deliveredSubjects, tail: probe.events.slice(-5) })}`);
         }
       }
       if (variant === 'reentered') {
-        assert(corrections === 1 && probe.events.some(event => event.type === 'agent_invoke_end' && event.purpose === 'verifier_format_repair'), '重入前必须有实际已交回的同一核验');
+        assertFirstFormatOpportunity(deliveries, probe.events, deliveredSubjects[0]);
+        const beforeCalls = corrections;
         const resumedRunId = path.basename(probe.reportDir);
         const originalEvents = fs.readFileSync(path.join(probe.reportDir, 'events.jsonl'));
         probe = await runGoalRuntimeChain(root, { ...options, noAutoForce: true });
-        assert(corrections === 1 && probe.invokedPhases.length === 0 && probe.harnessPhases.length === 0
+        assert(corrections === beforeCalls && probe.invokedPhases.length === 0 && probe.harnessPhases.length === 0
           && fs.readFileSync(path.join(probe.reportDir, 'events.jsonl')).subarray(0, originalEvents.length).equals(originalEvents), '同条件普通重入不能新买独核或改原历史');
       }
       if (variant === 'new-subject') {
-        assert(corrections === 1, '更新材料前必须实际完成原subject的核验');
+        assertFirstFormatOpportunity(deliveries, probe.events, deliveredSubjects[0]);
         writeFile(root, `doc/features/${feature}/review/review-report.md`, reviewBody.replace('不应扩至100家', '当前只有一家入口；请按更新后的实际材料逐项核实'));
         changedMaterial = true;
         probe = await runGoalRuntimeChain(root, { ...options, resume: path.basename(probe.reportDir), noAutoForce: true });
@@ -7384,13 +7418,14 @@ for (const variant of ['corrected', 'still-bad', 'refuted', 'reentered', 'waitin
       const latestEnds = probe.events.slice(probe.events.map(event => event.type).lastIndexOf('run_start')).filter(event => event.type === 'run_end');
       assert(!latestEnds.some(event => event.status === 'INTERRUPTED'), `最终不得以异常结束：${JSON.stringify(latestEnds)}`);
       const repairStarts = probe.events.filter(event => event.type === 'agent_invoke_start' && event.purpose === 'verifier_format_repair');
-      if (variant === 'corrected' || variant === 'refuted' || variant === 'still-bad' || variant === 'waiting-resumed') {
-        assert(repairStarts.length > 0, 'the actual current independent verifier must execute, not a prewritten completion');
-      } else assert(repairStarts.length === (unfinished || variant === 'new-subject' ? 2 : 1),
-        `${variant} actual independent correction delivery count: ${JSON.stringify(repairStarts)}`);
+      assert(repairStarts.length > 0 && repairStarts.length === deliveries.length, 'the actual current independent verifier must execute, not a prewritten completion');
       assert(corrections === repairStarts.length, '纠错调用事件丢失');
-      if (variant === 'new-subject') assert(changedMaterial && corrections === 2 && new Set(deliveredSubjects).size === 2,
-        `new material must reach the current independent verifier in the same attempt: ${JSON.stringify({ corrections, deliveredSubjects, deliveredAttempts })}`);
+      completedVerifierInputs(deliveries, probe.events);
+      if (variant === 'still-bad') assertFirstFormatOpportunity(deliveries, probe.events, deliveredSubjects[0]);
+      if (variant === 'new-subject') {
+        assert(changedMaterial && new Set(deliveredSubjects).size === 2, `new material must reach the current independent verifier: ${JSON.stringify({corrections, deliveredSubjects, deliveredAttempts})}`);
+        for (const currentSubject of new Set(deliveredSubjects)) assertFirstFormatOpportunity(deliveries, probe.events, currentSubject);
+      }
       if (variant === 'still-bad' || variant === 'reentered' || variant === 'new-subject') {
         assert(probe.events.some(event => event.type === 'phase_halt' && event.run_disposition === 'WAITING'), 'an unchanged unreadable independent response must wait without claiming completion');
         assert(!probe.events.some(event => event.type === 'phase_halt' && event.halt_reason === 'budget_turns'), 'budget exhaustion is not no-progress acceptance');
@@ -7416,7 +7451,7 @@ for (const variant of ['corrected', 'still-bad', 'refuted', 'reentered', 'waitin
           ended: probe.events.some(end => end.type === 'harness_end' && end.phase === event.phase && end.invoke_id === event.invoke_id) })),
         independent: repairStarts.map(event => ({ invoke: event.invoke_id,
           ended: probe.events.some(end => end.type === 'agent_invoke_end' && end.invoke_id === event.invoke_id) })),
-        deliveredSubjects, rawReviewVerdicts, end: probe.events.filter(event => event.type === 'run_end').at(-1),
+        deliveredSubjects, deliveries, rawReviewVerdicts, end: probe.events.filter(event => event.type === 'run_end').at(-1),
       }));
     } catch (error) {
       try {
@@ -7524,6 +7559,7 @@ for (const variant of ['corrected', 'still-bad', 'refuted', 'reentered', 'reques
   const { UT_REAL_ASSERTION_CHECK } = await import('./repair-candidates.unit.test');
   const { renderResultBlock } = await import('../utils/verifier-evidence-fixture');
   let corrections = 0, gates = 0, cut = false, reportRel = '', subject = '';
+  const deliveries: VerifierDeliveryInput[] = [];
   try {
     const checks = [{ id: 'ut_hvigor_build', category: 'structure', severity: 'BLOCKER', status: 'PASS', description: 'native compile complete', details: 'compile passed' },
       { ...UT_REAL_ASSERTION_CHECK, category: 'structure', description: '真实断言失败的生产格式器与归因' }] as CheckResult[];
@@ -7551,11 +7587,13 @@ for (const variant of ['corrected', 'still-bad', 'refuted', 'reentered', 'reques
         if (variant !== 'refuted' && (gates === 1 || variant !== 'corrected')) assert(summary.next_action === 'run_verifier_for_repair', '格式缺项须 D1 诊断动作');
         return { checks, writerOptions };
       },
-      onOutOfChain: ({ prompt, goalAttemptId }: AgentCtx) => {
+      onOutOfChain: (ctx: AgentCtx) => {
+        const {prompt, goalAttemptId} = ctx;
         const request = parseVerifierRequest(prompt.slice(prompt.lastIndexOf('\n{') + 1));
         assert(request?.phase === 'ut' && request.subject_id === subject, 'actual current UT request must reach its own independent provider');
         assert(request !== null && fs.readFileSync(path.resolve(root, request.prompt_path)).length > 0, 'the independent provider reads its bound actual prompt');
         corrections++;
+        deliveries.push(verifierDeliveryInput(root, feature, ctx, request!.subject_id, 0));
         assert(!prompt.includes('Then run the existing') && Boolean(goalAttemptId), '子 Agent 不应重复跑 harness，仍须原 attempt 身份');
         writeFile(root, reportRel, body(variant === 'corrected') + renderResultBlock(subject, 'PASS', 0));
       },
@@ -7577,10 +7615,14 @@ for (const variant of ['corrected', 'still-bad', 'refuted', 'reentered', 'reques
     };
     let probe = await runGoalRuntimeChain(root, options);
     if (variant === 'reentered') {
-      assert(corrections === 1 && probe.events.some(event => event.type === 'agent_invoke_end' && event.purpose === 'verifier_format_repair'), 'UT重入前须实际完成原格式核验');
+      assertFirstFormatOpportunity(deliveries, probe.events, subject);
+      const beforeCalls = corrections;
       probe = await runGoalRuntimeChain(root, { ...options, noAutoForce: true });
+      assert(corrections === beforeCalls && probe.invokedPhases.length === 0 && probe.harnessPhases.length === 0, 'UT unchanged ordinary reentry cannot buy another verifier or checker');
     }
-    assert(corrections === (variant === 'refuted' || variant === 'request-missing' || variant === 'request-mismatched' ? 0 : 1), `UT ${variant} corrections=${corrections}`);
+    assert(corrections === (variant === 'refuted' || variant === 'request-missing' || variant === 'request-mismatched' ? 0 : variant === 'corrected' ? 1 : 2), `UT ${variant} corrections=${corrections}`);
+    completedVerifierInputs(deliveries, probe.events);
+    if (variant === 'still-bad') assertFirstFormatOpportunity(deliveries, probe.events, subject);
     assert(probe.exitCode !== 0 && !probe.events.slice(probe.events.map(event => event.type).lastIndexOf('run_start')).some(event => event.type === 'run_end' && event.status === 'INTERRUPTED'), '真实失败必须准确退出而非异常/洗绿');
     assert(readExecutionActivity(probe.events).calls === probe.events.filter(event => event.type === 'agent_invoke_start').length, '纠错或恢复漏预算');
     const summary = JSON.parse(fs.readFileSync(featureFilePath(root, feature, 'ut/reports/summary.json'), 'utf8'));

@@ -83,9 +83,9 @@ structure_checks:
 
   usecase_ui_bindings_nonempty:
     description: >
-      use-cases.yaml 中每个 use_case 的 ui_bindings 至少有 1 条，
-      且全体 user_actions 合起来 ≥ 1 条（否则这条流不涉及 UI 触发，
-      应直接用 dag.yaml 测 Repository 级函数，不应产出 use-cases.yaml）。
+      明确 ui_change=none 且未声明任何 UI 绑定的数据流程不要求 UI 绑定。
+      其余 use_case 的 ui_bindings 至少有 1 条，且全体 user_actions 合起来 ≥ 1 条；
+      UI 声明缺失时不推定为纯数据流程。
     severity: BLOCKER
     rule:
       only_if_exists: "<features_dir>/{feature}/use-cases.yaml"

@@ -8,6 +8,7 @@ import { Module } from 'module';
 import * as ts from 'typescript';
 import { spawnSync } from 'child_process';
 import { resolveArtifactContent, ArtifactSchemaError } from '../../scripts/utils/artifact-content';
+import { parseYamlCached } from '../../scripts/utils/yaml-read-cache';
 import { SpecLoader } from '../../scripts/utils/spec-loader';
 import { readBoundInput, resolveCapabilityInputs, type PhaseInputContext } from '../../scripts/utils/capability-resolution';
 import { stableStringify } from '../../scripts/utils/phase-evidence-manifest';
@@ -49,6 +50,25 @@ function loadedModule(file: string, source: string, overrides: Record<string, un
   return mod.exports;
 }
 const cases: Array<{ name: string; run(): void }> = [
+  { name: 'YAML parsing reuses identical current text while isolating callers and observing same-length edits', run() { temporary(root => {
+    const file = path.join(root, 'metadata.yaml'), firstText = 'first: &entry { value: one }\nsecond: *entry\n';
+    fs.writeFileSync(file, firstText);
+    const yaml = require('yaml') as typeof YAML, originalParse = yaml.parse; let parses = 0;
+    (yaml as any).parse = (...args: unknown[]) => { parses++; return (originalParse as any)(...args); };
+    try {
+      const first = parseYamlCached<any>(file, fs.readFileSync(file, 'utf8'));
+      assert.strictEqual(first.first, first.second, 'document aliases are preserved');
+      first.first.value = 'caller mutation';
+      const second = parseYamlCached<any>(file, fs.readFileSync(file, 'utf8'));
+      assert.equal(second.second.value, 'one'); assert.equal(parses, 1, 'unchanged bytes avoid another parse');
+      const stat = fs.statSync(file); fs.writeFileSync(file, firstText.replace('one', 'two')); fs.utimesSync(file, stat.atime, stat.mtime);
+      assert.equal(parseYamlCached<any>(file, fs.readFileSync(file, 'utf8')).first.value, 'two');
+      assert.equal(parses, 2, 'same length and timestamp cannot hide changed text');
+      assert.throws(() => parseYamlCached(file, 'broken: [unterminated'));
+      assert.throws(() => parseYamlCached(file, 'broken: [unterminated'));
+      assert.equal(parses, 4, 'failed parses are never accepted as cached data');
+    } finally { (yaml as any).parse = originalParse; }
+  }); } },
   { name: 'real-chain framework assets and executed content loader stay in the isolated copy without source junctions', run() { temporary(root => {
     const before = process.env.NODE_PATH;
     try {

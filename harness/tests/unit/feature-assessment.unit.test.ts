@@ -457,4 +457,14 @@ export async function runSelectedCases(selector?: string) {
 }
 export async function runAll(): Promise<UnitCaseResult[]> { return (await runSelectedCases()).results; }
 
-export const listCaseGroups = () => unitCaseGroups(cases.map(c => `feature-assessment: ${c.name}`));
+// Current completion facts stay daily; historical migrations and projection matrices are formal.
+const dailyAssessmentPrefixes = [
+  'feature-assessment: 7d9c2e41 missing required conclusion',
+  'feature-assessment: codex P1-1',
+  'feature-assessment: P4 A11',
+  'feature-assessment: #17 unknown',
+  'feature-assessment: #18 只改 acceptance.yaml',
+  'feature-assessment: ★2 只改 change-unit.yaml',
+];
+export const listCaseGroups = () => unitCaseGroups(cases.map(c => `feature-assessment: ${c.name}`))
+  .map(group => ({ ...group, releaseOnly: !group.caseNames.some(name => dailyAssessmentPrefixes.some(prefix => name.startsWith(prefix))) }));

@@ -18,6 +18,7 @@ import { createGoalRun } from '../../scripts/utils/goal-run-creation';
 import type { ChangeUnitArtifact } from '../../scripts/utils/change-unit-model';
 import type { ContractsSpec } from '../../scripts/utils/types';
 import type { UnitCaseResult } from '../run-unit';
+import { matchesUnitCase, selectedUnitCases, unitCaseGroups } from '../utils/unit-case-selection';
 
 const frameworkRoot = path.resolve(__dirname, '../../..');
 const blueprintId = 'ledger-app-blueprint';
@@ -234,51 +235,63 @@ const cases: Array<{ name: string; run(f: Fixture): void }> = [
   } },
 ];
 
-export async function runAll(): Promise<UnitCaseResult[]> {
-  const results: UnitCaseResult[] = cases.map(test => {
+const historicalName = 'real historical completion cannot become unfinished through stale/broken/missing projections or a retained successful terminal';
+const resumedName = 'a real successful run resumed to HALTED cannot become unfinished when only its Feature projection is missing';
+
+async function executeCases(selector?: string): Promise<UnitCaseResult[]> {
+  const results: UnitCaseResult[] = cases.filter(test => matchesUnitCase(test.name, selector)).map(test => {
     const f = createBlueprintReviewDesignFixture();
     try { clearFrameworkConfigCache(); test.run(f); return { name: test.name, ok: true }; }
     catch (error) { return { name: test.name, ok: false, error: (error as Error).stack }; }
     finally { clearFrameworkConfigCache(); fs.rmSync(f.root, { recursive: true, force: true }); }
   });
-  const historical = await loadMigratedHostSnapshot([SNAPSHOT_CU_FEATURE]);
-  const name = 'real historical completion cannot become unfinished through stale/broken/missing projections or a retained successful terminal';
-  try {
-    const loaded = loadCanonicalChangeUnit(historical.root, blueprintId, 'ledger-refresh'); const cu = asChangeUnitArtifact(loaded.changeUnit);
-    assert.equal(observeChangeUnitCompletion(historical.root, cu).state, 'VALID');
-    const oldCU = fs.readFileSync(loaded.canonicalPath);
-    fs.appendFileSync(path.join(historical.root, 'src/ledger/LedgerFeature.ets'), '\n// isolated implementation change after completion\n');
-    const expected = resolveChangeUnitExpectedExecution(historical.root, SNAPSHOT_CU_FEATURE);
-    const assessment = assessFeature(historical.root, SNAPSHOT_CU_FEATURE, { ...expected, frameworkRoot: historical.frameworkRoot });
-    assert.equal(assessment.record.state, 'ok'); assert(!assessment.complete);
-    assert.equal(observeChangeUnitCompletion(historical.root, cu).state, 'INCOMPLETE');
-    assert.throws(() => reviseChangeUnitContent(historical.root, blueprintId, [revision(historical.root)]), /成功终局|不能按未完成/);
-    const projection = featureFilePath(historical.root, SNAPSHOT_CU_FEATURE, 'feature-completion.json'); fs.writeFileSync(projection, '{broken');
-    assert.throws(() => reviseChangeUnitContent(historical.root, blueprintId, [revision(historical.root)]), /成功终局|不能按未完成/);
-    fs.rmSync(projection); assert.equal(observeChangeUnitCompletion(historical.root, cu).state, 'INVALID');
-    assert.throws(() => reviseChangeUnitContent(historical.root, blueprintId, [revision(historical.root)]), /成功终局/);
-    assert(fs.readFileSync(loaded.canonicalPath).equals(oldCU)); results.push({ name, ok: true });
-  } catch (error) { results.push({ name, ok: false, error: (error as Error).stack }); }
-  finally { clearFrameworkConfigCache(); fs.rmSync(historical.root, { recursive: true, force: true }); }
-  const resumed = loadHostSnapshot();
-  const resumedName = 'a real successful run resumed to HALTED cannot become unfinished when only its Feature projection is missing';
-  try {
-    const projectionFile = featureFilePath(resumed.root, SNAPSHOT_CU_FEATURE, 'feature-completion.json');
-    const projection = JSON.parse(fs.readFileSync(projectionFile, 'utf8'));
-    const originalFile = path.resolve(resumed.root, projection.original_path); const original = fs.readFileSync(originalFile);
-    const record = JSON.parse(original.toString('utf8'));
-    const eventsFile = featureFilePath(resumed.root, SNAPSHOT_CU_FEATURE, `goal-runs/${record.run_id}/events.jsonl`);
-    fs.appendFileSync(eventsFile, [{ type: 'run_start', run_id: record.run_id, ts: '2026-10-11T00:00:00Z' },
-      { type: 'run_end', run_id: record.run_id, status: 'HALTED', ts: '2026-10-11T00:01:00Z' }].map(event => JSON.stringify(event) + '\n').join(''));
-    fs.rmSync(projectionFile);
-    const row = revision(resumed.root); row.candidate.providerId = row.candidate.artifact.provenance.extraction_method;
-    const cuFile = loadCanonicalChangeUnit(resumed.root, blueprintId, 'ledger-refresh').canonicalPath;
-    const preserved = bytes([cuFile, originalFile, path.join(path.dirname(originalFile), 'manifest.json'), eventsFile]);
-    assert.throws(() => reviseChangeUnitContent(resumed.root, blueprintId, [row]), /成功|完成|历史/);
-    assert.notEqual(observeChangeUnitCompletion(resumed.root, asChangeUnitArtifact(loadCanonicalChangeUnit(resumed.root, blueprintId, 'ledger-refresh').changeUnit)).state, 'ABSENT');
-    unchanged(preserved); assert(fs.readFileSync(originalFile).equals(original)); assert(!fs.existsSync(projectionFile));
-    results.push({ name: resumedName, ok: true });
-  } catch (error) { results.push({ name: resumedName, ok: false, error: (error as Error).stack }); }
-  finally { clearFrameworkConfigCache(); fs.rmSync(resumed.root, { recursive: true, force: true }); }
+  if (matchesUnitCase(historicalName, selector)) {
+    const historical = await loadMigratedHostSnapshot([SNAPSHOT_CU_FEATURE]);
+    const name = historicalName;
+    try {
+      const loaded = loadCanonicalChangeUnit(historical.root, blueprintId, 'ledger-refresh'); const cu = asChangeUnitArtifact(loaded.changeUnit);
+      assert.equal(observeChangeUnitCompletion(historical.root, cu).state, 'VALID');
+      const oldCU = fs.readFileSync(loaded.canonicalPath);
+      fs.appendFileSync(path.join(historical.root, 'src/ledger/LedgerFeature.ets'), '\n// isolated implementation change after completion\n');
+      const expected = resolveChangeUnitExpectedExecution(historical.root, SNAPSHOT_CU_FEATURE);
+      const assessment = assessFeature(historical.root, SNAPSHOT_CU_FEATURE, { ...expected, frameworkRoot: historical.frameworkRoot });
+      assert.equal(assessment.record.state, 'ok'); assert(!assessment.complete);
+      assert.equal(observeChangeUnitCompletion(historical.root, cu).state, 'INCOMPLETE');
+      assert.throws(() => reviseChangeUnitContent(historical.root, blueprintId, [revision(historical.root)]), /成功终局|不能按未完成/);
+      const projection = featureFilePath(historical.root, SNAPSHOT_CU_FEATURE, 'feature-completion.json'); fs.writeFileSync(projection, '{broken');
+      assert.throws(() => reviseChangeUnitContent(historical.root, blueprintId, [revision(historical.root)]), /成功终局|不能按未完成/);
+      fs.rmSync(projection); assert.equal(observeChangeUnitCompletion(historical.root, cu).state, 'INVALID');
+      assert.throws(() => reviseChangeUnitContent(historical.root, blueprintId, [revision(historical.root)]), /成功终局/);
+      assert(fs.readFileSync(loaded.canonicalPath).equals(oldCU)); results.push({ name, ok: true });
+    } catch (error) { results.push({ name, ok: false, error: (error as Error).stack }); }
+    finally { clearFrameworkConfigCache(); fs.rmSync(historical.root, { recursive: true, force: true }); }
+  }
+  if (matchesUnitCase(resumedName, selector)) {
+    const resumed = loadHostSnapshot();
+    try {
+      const projectionFile = featureFilePath(resumed.root, SNAPSHOT_CU_FEATURE, 'feature-completion.json');
+      const projection = JSON.parse(fs.readFileSync(projectionFile, 'utf8'));
+      const originalFile = path.resolve(resumed.root, projection.original_path); const original = fs.readFileSync(originalFile);
+      const record = JSON.parse(original.toString('utf8'));
+      const eventsFile = featureFilePath(resumed.root, SNAPSHOT_CU_FEATURE, `goal-runs/${record.run_id}/events.jsonl`);
+      fs.appendFileSync(eventsFile, [{ type: 'run_start', run_id: record.run_id, ts: '2026-10-11T00:00:00Z' },
+        { type: 'run_end', run_id: record.run_id, status: 'HALTED', ts: '2026-10-11T00:01:00Z' }].map(event => JSON.stringify(event) + '\n').join(''));
+      fs.rmSync(projectionFile);
+      const row = revision(resumed.root); row.candidate.providerId = row.candidate.artifact.provenance.extraction_method;
+      const cuFile = loadCanonicalChangeUnit(resumed.root, blueprintId, 'ledger-refresh').canonicalPath;
+      const preserved = bytes([cuFile, originalFile, path.join(path.dirname(originalFile), 'manifest.json'), eventsFile]);
+      assert.throws(() => reviseChangeUnitContent(resumed.root, blueprintId, [row]), /成功|完成|历史/);
+      assert.notEqual(observeChangeUnitCompletion(resumed.root, asChangeUnitArtifact(loadCanonicalChangeUnit(resumed.root, blueprintId, 'ledger-refresh').changeUnit)).state, 'ABSENT');
+      unchanged(preserved); assert(fs.readFileSync(originalFile).equals(original)); assert(!fs.existsSync(projectionFile));
+      results.push({ name: resumedName, ok: true });
+    } catch (error) { results.push({ name: resumedName, ok: false, error: (error as Error).stack }); }
+    finally { clearFrameworkConfigCache(); fs.rmSync(resumed.root, { recursive: true, force: true }); }
+  }
   return results;
 }
+export const runAll = () => executeCases();
+export const runSelectedCases = async (selector?: string) => selectedUnitCases(await executeCases(selector), selector, []);
+export const listCaseGroups = () => [
+  ...unitCaseGroups(cases.map(test => test.name)),
+  ...unitCaseGroups([historicalName, resumedName]).map(group => ({ ...group, releaseOnly: true })),
+];

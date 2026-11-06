@@ -1,7 +1,7 @@
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as YAML from 'yaml';
+import { parseYamlCached } from './yaml-read-cache';
 import { featuresDirPath } from '../../config';
 import {
   BLUEPRINT_ARTIFACT,
@@ -103,7 +103,7 @@ export function loadCanonicalBlueprint(projectRoot: string, blueprintId: string)
   const bytes = fs.readFileSync(canonicalPath);
   let parsed: unknown;
   try {
-    parsed = YAML.parse(bytes.toString('utf8'));
+    parsed = parseYamlCached(canonicalPath, bytes.toString('utf8'));
   } catch (error) {
     throw new ComponentBlueprintResolutionError(
       'component_blueprint_yaml_invalid',

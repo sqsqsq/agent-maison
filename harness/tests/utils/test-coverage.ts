@@ -10,19 +10,36 @@ export function mergeGroupCoverage(directory: string, workerPid: number | undefi
   const started = performance.now();
   const executed = new Set<string>(), reasons = new Set(reads?.coverageUnknown ?? []), pids = new Set<number>();
   const reportedScripts = new Map<number, Set<string>>();
-  const aliases = [...(reads?.aliases ?? [])].sort((a, b) => b[0].length - a[0].length);
+  const aliases = new Map<string, string>();
+  for (const [destination, source] of reads?.aliases ?? []) if (!aliases.has(destination)) aliases.set(destination, source);
+  const mappedPaths = new Map<string, string>();
+  const generatedFiles = new Set(reads?.generatedFiles ?? []);
   let bytes = 0;
   const normalize = (raw: string, execution = false): string | undefined => {
     let file: string;
     try { file = raw.startsWith('file:') ? fileURLToPath(raw) : path.resolve(raw); } catch { return; }
-    for (let pass = 0; pass < 4; pass++) {
-      const alias = aliases.find(([to]) => file === to || file.startsWith(to + path.sep));
-      if (!alias) break;
-      file = path.join(alias[1], path.relative(alias[0], file));
+    const cached = mappedPaths.get(file);
+    if (cached !== undefined) file = cached;
+    else {
+      const original = file;
+      for (let pass = 0; pass < 4; pass++) {
+        let prefix = file, source: string | undefined;
+        // Ancestors visit the longest matching destination first, including nested copies.
+        for (;;) {
+          source = aliases.get(prefix);
+          if (source !== undefined && (file === prefix || file.startsWith(prefix + path.sep))) break;
+          const parent = path.dirname(prefix);
+          if (parent === prefix) { source = undefined; break; }
+          prefix = parent;
+        }
+        if (source === undefined) break;
+        file = path.join(source, path.relative(prefix, file));
+      }
+      mappedPaths.set(original, file);
     }
     const relative = path.relative(REPO_ROOT, file).replace(/\\/g, '/');
     if (relative.startsWith('../') || path.isAbsolute(relative)) {
-      if (execution && /\.[cm]?tsx?$/.test(file) && !file.includes('node_modules') && !reads?.generatedFiles?.includes(file)) reasons.add(`unmapped external source: ${file}`);
+      if (execution && /\.[cm]?tsx?$/.test(file) && !file.includes('node_modules') && !generatedFiles.has(file)) reasons.add(`unmapped external source: ${file}`);
       return;
     }
     if (relative.split('/').includes('node_modules') || /^harness\/(?:dist|reports)\//.test(relative)) return;

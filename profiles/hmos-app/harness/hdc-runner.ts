@@ -1181,6 +1181,7 @@ export function parseHypiumStdout(out: string): HypiumTestResult | undefined {
   let matched = false;
   let curSuite = '';
   let lastTest = '';
+  let pendingTest = '';
   for (const line of out.split(/\r?\n/)) {
     // OHOS_REPORT_RESULT: stream=Tests run: X, Failure: Y, Error: Z, Pass: W, Ignore: V
     const mSummary = line.match(/Tests run:\s*(\d+),\s*Failure:\s*(\d+),\s*Error:\s*(\d+),\s*Pass:\s*(\d+)(?:,\s*Ignore:\s*(\d+))?/);
@@ -1195,7 +1196,12 @@ export function parseHypiumStdout(out: string): HypiumTestResult | undefined {
     const mClass = line.match(/OHOS_REPORT_STATUS:\s*class=(.+)/);
     if (mClass) { curSuite = mClass[1].trim(); continue; }
     const mTest = line.match(/OHOS_REPORT_STATUS:\s*test=(.+)/);
-    if (mTest) { lastTest = mTest[1].trim(); continue; }
+    if (mTest) { lastTest = pendingTest = mTest[1].trim(); continue; }
+    const status = line.match(/OHOS_REPORT_STATUS_CODE:\s*(-?\d+)\s*$/);
+    if (status && Number(status[1]) !== 1) {
+      if (Number(status[1]) === 0 && pendingTest) (result.passed_tests ??= []).push({ suite: curSuite, test: pendingTest });
+      pendingTest = '';
+    }
     const mStack = line.match(/OHOS_REPORT_STATUS:\s*stack=(.+)/);
     if (mStack) {
       result.failures.push({ suite: curSuite, test: lastTest || '<unknown>', message: mStack[1].trim() });

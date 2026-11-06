@@ -480,11 +480,10 @@ exploration_mode: sequential
   },];
 
 
-function modernFactsCase(request: boolean): void {
+function modernFactsCase(request: boolean, sourceCount = 6, phase = request ? 'review' : 'coding'): void {
   const dir = mkProject();
   try {
-    const phase = request ? 'review' : 'coding';
-    const sourcePaths = Array.from({ length: 6 }, (_, i) => 'src/file' + i + '.ts');
+    const sourcePaths = Array.from({ length: sourceCount }, (_, i) => 'src/file' + i + '.ts');
     for (const source of sourcePaths) {
       const file = path.join(dir, source); fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, 'export const value = 1;\n');
     }
@@ -496,8 +495,8 @@ function modernFactsCase(request: boolean): void {
       schema_version: '1.1',
       ...(request ? { request_sha256: 'a'.repeat(64) } : { feature: 'demo', run_id: 'real-run' }),
       established_by: phase, ready_to_produce: true, has_blocker_coverage_risk: false,
-      source_code_paths: sourcePaths, key_inputs_read: sourcePaths, files_inspected_count: 12,
-      searches_performed_estimate: 10, decisions_unlocked: ['verified target implementation'],
+      source_code_paths: sourcePaths, key_inputs_read: sourcePaths, files_inspected_count: sourceCount,
+      searches_performed_estimate: sourceCount, decisions_unlocked: ['verified target implementation'],
       exploration_mode: 'sequential', change_intent: 'typo_fix', estimated_loc_delta: 1, single_function_scope: true,
     };
     const body = '\n## Code Facts\n| 路径 | 事实 | 影响 |\n|---|---|---|\n' + sourcePaths.map(p => '| ' + p + ' | exports current value | review existing behavior |').join('\n');
@@ -622,6 +621,7 @@ cases.push(
     } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   } },
   { name: 'facts 1.1: coding establishes real baseline and successor preserves provenance', run: () => modernFactsCase(false) },
+  { name: 'facts 1.1: a one-source plan run uses its admitted source budget and keeps baseline checks', run: () => modernFactsCase(false, 1, 'plan') },
   { name: 'facts 1.1: request review uses explicit report directory and exclusive subject', run: () => modernFactsCase(true) },
   { name: 'P3-T9 an unregistered declared source is disclosed as a ledger WARN, while a changed source still blocks', run: unboundDeclaredSourceIsLedgerWarn },
 );

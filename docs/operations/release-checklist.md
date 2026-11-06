@@ -10,7 +10,7 @@ AgentMaison 自身发 zip 发布件（`framework-<semver>.zip`）前的 BLOCKER 
    npm run release:all
    ```
 
-   发布链内调用一次 `npm test`，执行 typecheck、全部 unit/profile（含 release-only）及全部 fixture；无需发布前再单独跑全量。日常每轮开发使用 `npm run test:changed`，plan 收口单独执行一次 `npm test`。下面的 pack/verify 命令用于分步诊断，完整发布链已经包含它们。
+   发布链内调用一次 `npm test`，完整执行日常与扩展域的 typecheck、全部有效 unit/profile（含 release-only）及 fixture；无需发布前再单独跑全量。每轮开发使用 `npm run test:changed` 日常域按需计划，普通 plan 收口使用 `npm run test:daily` 日常全集和本次必要验证。测试执行/分类基础设施改动用定向接线验证证明无漏组、scope 串用或正式晋升绕过，不因此例行重跑数小时业务全量；已知日常缺陷不能通过分层豁免。下面的 pack/verify 命令用于分步诊断，完整发布链已经包含它们。
 
    **release-only 套件**也包含在 `npm test` 完整全量中；底层 `test:unit` 默认仍保留原诊断筛选行为。单跑：
 
@@ -68,6 +68,25 @@ AgentMaison 自身发 zip 发布件（`framework-<semver>.zip`）前的 BLOCKER 
    ```
 
    bump 前须已通过 `release:check-plans`；随后补 `RELEASE-NOTES-v<上一版本>.md`。
+
+## 中间候选与正式晋升
+
+```bash
+npm run candidate:build
+npm run candidate:promote -- --evaluator-report <consumer-golden-report.json>
+# 主干已前进时，指定保留的候选来源；该来源的 package.json 决定候选版本
+npm run candidate:promote -- --source-root <受测隔离副本> --evaluator-report <consumer-golden-report.json>
+```
+
+构建候选先运行 `test:daily` 日常全集，再 pack、校验同一 zip、执行同 zip 消费者 lifecycle smoke；候选通过可按原授权回灌宿主。候选 sidecar 记录日常测试输入 id 和来源目录，`complete` 只说明候选构建及 smoke 完成，尚不代表正式发布资格。
+
+晋升保留 zip SHA、包内 manifest、consumer golden 和发布 plan 门禁。正式完整测试必须对应其来源当前稳定的 `InputSnapshot`，结果明确为 `scope=full`、`full=true`，并有同输入的 `completeRun` 通过事实；daily/changed 或阶段检查不能代替。没有可复用证明时，在匹配来源执行一次 `npm test`，发布 plan 门禁也使用该来源的版本窗口。来源先经已有 pack 的 `--stage-only` 得到 sanitize/LF 后发布集合，与候选逐文件对齐；只比较，不重打候选 zip。多文件、缺文件、内容或版本不一致，以及测试后输入漂移，均不得晋升。
+
+请保留候选对应的受测副本。干净提交可用其 `source_commit` 还原隔离来源；含未提交内容时仅 HEAD 不足以重现。找不到匹配来源须重新构建候选，不改写当前工作区凑一致。仅开发期 plan/测试输入变化可以产生新的 full 输入 id，前提是正式结果绑定实际来源，且发布集合仍与候选相同；不要求 full id 等于最初 daily id。
+
+只有正式全量、同 zip smoke、golden 和包身份均通过，而发布 plan 门禁未过时，保留 `eligible` 候选并等待 plan 完结；其它失败不授予正式资格。最终晋升移动原 zip，保持宿主已验收的字节。开发期 `test:*`、`candidate:*` 和 `release:*` 脚本不进消费者 package；消费者 `framework/harness` 的 `npm test` 仍为 `check:global`。
+
+来源 plan 状态改变会使输入快照变化，`eligible` 后重新 promote 可能需要重新执行全量；正式发布前先确认来源门禁已准备完成。
 
 ## 人工（可选）
 

@@ -24,6 +24,7 @@ export interface UnitWorkerResult {
   executionMs: number | null;
   startupMs: number | null;
   totalMs: number | null;
+  cleanupMs?: number;
   matchedCaseCount?: number;
   executionTimings?: UnitExecutionTiming[];
   caseGroups?: UnitCaseGroup[];
@@ -197,7 +198,9 @@ export async function runSuiteProcesses(
         delete result.inputReads;
         coverageDirectories.delete(coverageDir);
       }
+      const cleanupStarted = performance.now();
       const cleanupError = cleanupWorkerTemp(tmp);
+      const cleanupMs = performance.now() - cleanupStarted;
       if (!result) result = workerFailure(task.id, timeoutError ?? spawnError ?? interrupted ?? `worker 未返回结果（exit=${code}, signal=${signal}）`);
       if (mergeRuntimeTestFailures(result.results, [...lateFailures, ...runtimeErrors,
         ...(timeoutError ? [{ error: timeoutError, caseNames: timeoutCaseNames }] : [])])) result.ok = false;
@@ -211,6 +214,7 @@ export async function runSuiteProcesses(
         if (result.status === 'completed') result.status = 'worker-error';
       }
       result.totalMs = totalMs;
+      result.cleanupMs = cleanupMs;
       result.startupMs = startupMs;
       results.set(task.id, result);
       console.log(`[TIME] suite ${task.id} (${result.status})：startup=${startupMs === null ? '未执行' : `${(startupMs / 1000).toFixed(3)}s`}, process=${(totalMs / 1000).toFixed(3)}s`);

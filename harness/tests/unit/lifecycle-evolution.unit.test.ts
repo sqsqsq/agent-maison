@@ -880,10 +880,15 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
   }) },
 ];
 
+// The Node representative imports parity's existing design helpers; load it after this fixture's constants exist.
+function currentCompletionCases(): ReturnType<typeof import('./lifecycle-evolution-daily.unit.test')['getCases']> {
+  return (require('./lifecycle-evolution-daily.unit.test') as typeof import('./lifecycle-evolution-daily.unit.test')).getCases();
+}
+
 export async function runSelectedCases(selector?: string): Promise<SelectedUnitCases> {
   const results: UnitCaseResult[] = [];
   const timings: UnitExecutionTiming[] = [];
-  for (const c of cases) {
+  for (const c of [...cases, ...currentCompletionCases()]) {
     const name = `lifecycle-evolution: ${c.name}`;
     if (!matchesUnitCase(name, selector)) continue;
     const endTiming = startCaseTiming([name], timings);
@@ -901,4 +906,5 @@ export async function runSelectedCases(selector?: string): Promise<SelectedUnitC
 
 export async function runAll(): Promise<UnitCaseResult[]> { return (await runSelectedCases()).results; }
 
-export const listCaseGroups = () => unitCaseGroups(cases.map(c => `lifecycle-evolution: ${c.name}`));
+export const listCaseGroups = () => unitCaseGroups([...cases, ...currentCompletionCases()].map(c => `lifecycle-evolution: ${c.name}`))
+  .map(group => ({ ...group, releaseOnly: !group.caseNames.some(name => name.includes('L7 #11 ')) }));

@@ -26,6 +26,7 @@ import {
   checkNamedBusinessHandler,
   checkOriginTagRequired,
   checkUseCaseSpecSchema,
+  checkUseCaseUiBindingsNonempty,
   checkUtHypiumMockkitPolicy,
   checkUtMachineArtifactParseable,
   checkUtMockPlanContractsConsistent,
@@ -46,7 +47,13 @@ import {
   type UtTemplateKey,
 } from '../../scripts/utils/ut-template-paths';
 import { isCheckNotApplicable, type CheckContext, type CheckResult } from '../../scripts/utils/types';
+import { featureFilePath } from '../../config';
 import { collectPhaseRepairCandidates } from '../../scripts/utils/repair-candidates';
+import { executedUtChecks } from '../../scripts/utils/ut-execution-evidence';
+import { parseHypiumStdout } from '../../../profiles/hmos-app/harness/hdc-runner';
+import { generateScriptReport } from '../../scripts/utils/report-generator';
+import { executedEvidenceInputs } from '../../scripts/utils/phase-closure-finalizer';
+import { createClosureEvidenceIdentity } from '../../scripts/utils/component-closure-evidence';
 
 export interface UnitCaseResult {
   name: string;
@@ -442,6 +449,24 @@ function testNamedHandlerLoadFailureStaysUnmarked(): void {
 
 // ---------------------------------------------------------------------------
 
+function testExplicitDataUseCaseDoesNotRequireUiBindings(): void {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ut-data-usecase-'));
+  try {
+    const useCases = { schema_version: '2', feature: 'demo', use_cases: [{ id: 'data', coordinator: 'Calculator.sum', ui_bindings: [] }] };
+    const ctx = makeCtx({ useCases }); ctx.projectRoot = root;
+    const specFile = featureFilePath(root, 'demo', 'spec/spec.md'); fs.mkdirSync(path.dirname(specFile), { recursive: true });
+    for (const declaration of [undefined, 'none', 'new_or_changed', 'invalid']) {
+      fs.writeFileSync(specFile, declaration ? '```yaml\nui_change: ' + declaration + '\n```\n' : '# No UI declaration\n');
+      const check = checkUseCaseUiBindingsNonempty(ctx)[0];
+      assert(check.status === (declaration === 'none' ? 'SKIP' : 'FAIL'), declaration + ': ' + JSON.stringify(check));
+      if (declaration === 'none') assert(isCheckNotApplicable(check), 'explicit data flow is not a UI applicability gap');
+    }
+    fs.writeFileSync(specFile, '```yaml\nui_change: none\n```\n');
+    (useCases.use_cases[0].ui_bindings as unknown[]).push({ screen: 'screen', user_actions: [] });
+    assert(checkUseCaseUiBindingsNonempty(ctx)[0].status === 'FAIL', 'a declared UI binding must still supply its actions');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+}
+
 export function runAll(): UnitCaseResult[] {
   const cases: Array<{ name: string; fn: () => void }> = [
     { name: '20261016 真实用例：未登记的系统/存储类型只披露，不要求不可表达的替身', fn: () => withHostBoundaryContext(ctx => {
@@ -492,6 +517,27 @@ export function runAll(): UnitCaseResult[] {
         assert(candidates().length === 0, '无效审计不派修');
       } finally { fs.rmSync(root, { recursive: true, force: true }); }
     } },
+    { name: 'native case observations reach exact closure identities and production manifest inputs', fn: () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ut-executed-proof-'));
+      try {
+        const file = 'test/balance.test.ets', name = '[AC-1] restores balance';
+        fs.mkdirSync(path.join(root, 'test'));
+        fs.writeFileSync(path.join(root, file), `it('${name}', () => {});\n`);
+        const raw = `OHOS_REPORT_STATUS: class=Balance\nOHOS_REPORT_STATUS: test=${name}\nOHOS_REPORT_STATUS_CODE: 0\nOHOS_REPORT_RESULT: Tests run: 1, Failure: 0, Error: 0, Pass: 1`;
+        const observations = parseHypiumStdout(raw)!.passed_tests!;
+        const checks = executedUtChecks(root, [{ path: file, test: name }], observations);
+        assert(checks.length === 1 && checks[0].id === name && checks[0].status === 'PASS', JSON.stringify(checks));
+        generateScriptReport('', 'ut', 'balance', root, checks);
+        assert(executedEvidenceInputs(root, 'balance', 'ut', REPO_ROOT).includes(file), 'actual PASS files must enter the existing manifest binding');
+        assert(Boolean(createClosureEvidenceIdentity(root, 'balance', `${file}#${name}`, ['balance'], 'unit_contract')), 'exact native identity must resolve');
+        assert(executedUtChecks(root, [{ path: file, test: name }], []).length === 0, 'aggregate PASS is not a case observation');
+        assert(executedUtChecks(root, [{ path: file, test: name }, { path: 'other.test.ets', test: name }], observations).length === 0, 'ambiguous source cannot be guessed');
+        assert(executedUtChecks(root, [{ path: '../outside.test.ets', test: name }], observations).length === 0, 'outside source cannot be admitted');
+        fs.writeFileSync(path.join(root, file), 'unrelated source');
+        assert(executedUtChecks(root, [{ path: file, test: name }], observations).length === 0, 'missing current symbol cannot borrow native evidence');
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    } },
+    { name: 'explicit non-UI data use cases keep flow checks without inventing UI bindings', fn: testExplicitDataUseCaseDoesNotRequireUiBindings },
     { name: 't1 boundary 对象形式 PASS', fn: testBoundaryObjectFormPasses },
     { name: 't1 boundary 对象不匹配 → WARN(按 boundary.name 报告)', fn: testBoundaryObjectMismatchWarns },
     { name: 't1 旧字符串 boundary 兼容消费', fn: testBoundaryLegacyStringStillConsumed },

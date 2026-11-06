@@ -48,6 +48,10 @@ void (async () => {
     executionStartedAt = performance.now();
     const selected = await executeUnitModule(mod, id, selection.selector, selection.requirePreselection);
     result.results = selected.results;
+    if ((selection.selector === undefined || selection.selector.startsWith('\u001eexact:'))
+      && selected.matchedCaseCount === 0 && result.results.every(item => item.ok)) result.results.push({
+      name: '<suite-selection>', infrastructure: true, ok: false, error: 'unit execution matched zero cases',
+    });
     if (selection.selector?.startsWith('\u001eexact:')) {
       const expected = JSON.parse(selection.selector.slice('\u001eexact:'.length)) as string[];
       const actual = selected.results.filter(item => !item.infrastructure && !item.name.startsWith('<suite-')).map(item => item.name);

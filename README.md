@@ -140,7 +140,9 @@ npx ts-node harness-runner.ts --phase <phase> [--feature <feature-name>]
 
 初始化时由 framework-init S3（`harness-install` 任务）自动完成 `npm install`，此处仅作手动说明。
 
-**Framework 自身回归**（**仅源仓**；发布件 `npm test` 已重定义为 `check:global`）：每轮开发执行 `npm run test:changed` 按需计划；收口执行 `npm test`，包含 **typecheck + 全部 unit/profile（含 release-only）+ 全部 fixture**。含 `INPUT/`/`CMD.json` 的契约基线分列在 [`profiles/hmos-app/harness/tests/fixtures/`](profiles/hmos-app/harness/tests/fixtures) 与 [`profiles/generic/harness/tests/fixtures/`](profiles/generic/harness/tests/fixtures)；入口脚本 [harness/tests/run-tests.ts](harness/tests/run-tests.ts)。
+**Framework 自身回归**（**仅源仓**；发布件 `npm test` 为 `check:global`）：每轮开发执行 `npm run test:changed` 日常域按需计划；普通 plan 收口执行 `npm run test:daily` 日常全集及 typecheck；正式发布执行 `npm test`，包含 **日常与扩展域全部 unit/profile + 全部有效 fixture + typecheck**。日常失败仍须修复，不能靠移到正式域豁免。含 `INPUT/`/`CMD.json` 的契约基线分列在 [`profiles/hmos-app/harness/tests/fixtures/`](profiles/hmos-app/harness/tests/fixtures) 与 [`profiles/generic/harness/tests/fixtures/`](profiles/generic/harness/tests/fixtures)；入口脚本 [harness/tests/run-tests.ts](harness/tests/run-tests.ts)。
+
+`npm run candidate:build` 用日常全集构建中间候选，并校验同一 zip、执行消费者 lifecycle smoke。`npm run release:all` 保留正式完整测试；`candidate:promote` 仅在相同发布内容的稳定来源完整全量通过、consumer golden 与发布 plan 门禁成立后移动同一 zip。候选构建后请保留受测来源；主干已有后续改动时，可传 `--source-root <保留副本>`，不能仅凭相同 HEAD 复用脏树结果。详见[发布清单](docs/operations/release-checklist.md)。
 
 catalog-bootstrap 的全局 phase（无 `--feature`）示例：
 

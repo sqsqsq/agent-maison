@@ -62,6 +62,7 @@ import { isInitialDesignManifest, loadGoalRunManifestFromRun } from './goal-mani
 import { readOriginalDeliveryActivity } from './delivery-origin';
 import { readSupersededAncestorRuns, type GoalRunEvent } from './goal-runner-phase';
 import { relFeaturesDir } from '../../config';
+import { retiredChangeUnitIds } from './component-closure-inputs';
 import { readCurrentDispositionInput } from './verify-feature-completion';
 import { resolveCurrentDisposition } from './check-disposition';
 import { independentVerificationContext } from './verifier-material';
@@ -419,10 +420,13 @@ export interface DesignRepairInvocationGuard {
 function priorRepairFeedback(projectRoot: string, runs: readonly { manifest: { report_dir: string }; events: GoalRunEvent[] }[], blueprintId: string): string[] {
   const failed = runs.flatMap(run => run.events.map((event, index) => ({ run, event, index })))
     .filter(item => item.event.type === 'design_authority_repair' && 'blueprint_id' in item.event && item.event.blueprint_id === blueprintId
-      && 'stage' in item.event && item.event.stage === 'failed' && 'failed_step' in item.event && item.event.failed_step === 'questioning')
+      && 'stage' in item.event && 'failed_step' in item.event
+      && (item.event.stage === 'failed' && item.event.failed_step === 'questioning'
+        || item.event.stage === 'published' && 'outcome' in item.event && item.event.outcome === 'unrecovered' && item.event.failed_step === 'probe'))
     .sort((a, b) => String(a.event.ts).localeCompare(String(b.event.ts))).at(-1);
   if (!failed) return [];
   const runDir = path.resolve(projectRoot, failed.run.manifest.report_dir);
+  if ('stage' in failed.event && failed.event.stage === 'published') return [`前次真实发布探针仍未恢复：${runDir}/events.jsonl\n${String('reason' in failed.event ? failed.event.reason : '')}`];
   const beforeFailure = failed.run.events.slice(0, failed.index);
   const start = repairRoleStart(beforeFailure, 'questioning');
   if (!start?.invoke_id) return [];
@@ -1031,7 +1035,14 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
     const contentChecks = (doc: BlueprintRecord, candidateCu?: ChangeUnitArtifact): CheckResult[] => {
       const currentCu = candidateCu ?? (originalCu ? asChangeUnitArtifact(originalCu.changeUnit)
         : changeUnitId ? asChangeUnitArtifact(loadCanonicalChangeUnit(projectRoot, blueprintId, changeUnitId).changeUnit) : undefined);
-      return [...(currentCu ? [currentCu] : []), ...readBatchCandidates().map(row => row.artifact)].flatMap(unit => {
+      // A root repair must inspect the same existing CU consumers as its final readiness probe.
+      const retired = retiredChangeUnitIds(projectRoot, blueprintId);
+      const units = new Map((currentCu ? [currentCu] : input.phase === 'initial-design'
+        ? enumerateCanonicalChangeUnits(projectRoot, blueprintId).filter(loaded => !retired.has(String(loaded.changeUnit.change_unit_id)))
+          .map(loaded => asChangeUnitArtifact(loaded.changeUnit)) : [])
+        .map(unit => [unit.change_unit_id, unit]));
+      for (const row of readBatchCandidates()) units.set(row.artifact.change_unit_id, row.artifact);
+      return [...units.values()].flatMap(unit => {
         const ctx = { projectRoot, frameworkRoot, feature: deriveChangeUnitFeatureId(blueprintId, unit.change_unit_id), phase: input.phase,
           featureSpec: {}, phaseRule: {} } as CheckContext;
         return [...consumerKinds].flatMap(kind => checkAuthoritativeContentAligned(ctx, kind,
@@ -1172,8 +1183,8 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
         || activeDesignDeclaration && !verifiedQuestion);
       // A verified finding that triggered this transaction is invisible to the draft's own machine checks:
       // the design owner must receive it once before independent questioning.
-      const verifiedTriggerUndelivered = input.brief.items.some(item => /repair_candidate:[a-f0-9]{64}/.test(item.basis))
-        && !repairRoleStart(sessionEvents(runDir), 'author');
+      const verifiedTriggerUndelivered = (input.brief.items.some(item => /repair_candidate:[a-f0-9]{64}/.test(item.basis)) || authorFeedback.length > 0)
+        && !repairRoleStart(sessionEvents(runDir).slice(transactionAt + 1), 'author');
       let preAuthor: ReturnType<typeof capturePhaseInvocationSnapshot>;
       let authorStart: GoalRunEvent | undefined;
       if (!supplementQuestioningFormat && (preparedDisposition.completionBlocking.some(problem => problem.action === 'repair') || cuNeedsAuthor || verifiedTriggerUndelivered)) {

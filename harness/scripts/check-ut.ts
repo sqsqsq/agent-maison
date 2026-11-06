@@ -131,6 +131,8 @@ import { SUMMARY_ASSURANCE_SCHEMA_VERSIONS } from './utils/quality-axes';
 import { extractUtItBlocks } from './utils/ut-it-blocks';
 import { hasExactUtBranchTag, hasExactUtScopeTag } from './utils/ut-tag-match';
 import { isBlockingCheck } from './utils/check-disposition';
+import { loadSpecMarkdown } from './utils/fidelity-shared';
+import { parseUiChangeFromSpecMarkdown } from './utils/ui-spec-shared';
 
 const HARNESS_ROOT = path.resolve(__dirname, '..');
 
@@ -1592,7 +1594,7 @@ export function checkNamedBusinessHandler(ctx: CheckContext): CheckResult[] {
   }];
 }
 
-function checkUseCaseUiBindingsNonempty(ctx: CheckContext): CheckResult[] {
+export function checkUseCaseUiBindingsNonempty(ctx: CheckContext): CheckResult[] {
   const spec = loadUseCaseSpec(ctx);
   if (!spec) {
     return [{
@@ -1605,11 +1607,19 @@ function checkUseCaseUiBindingsNonempty(ctx: CheckContext): CheckResult[] {
       structured: { applicability: CHECK_NOT_APPLICABLE_MARKER },
     }];
   }
+  const specMarkdown = loadSpecMarkdown(ctx.projectRoot, ctx.feature);
+  if (specMarkdown && parseUiChangeFromSpecMarkdown(specMarkdown) === 'none'
+    && (spec.use_cases ?? []).every(uc => !(uc.ui_bindings?.length))) {
+    return [{ id: 'usecase_ui_bindings_nonempty', category: 'structure', severity: 'BLOCKER', status: 'SKIP',
+      description: ruleDesc(ctx, 'structure_checks', 'usecase_ui_bindings_nonempty'),
+      details: 'ui_change=none 且用例未声明 UI 绑定；数据流程仍执行其余用例、DAG 和断言检查。',
+      structured: { applicability: CHECK_NOT_APPLICABLE_MARKER } }];
+  }
   const issues: string[] = [];
   for (const uc of spec.use_cases ?? []) {
     const bindings = uc.ui_bindings ?? [];
     if (bindings.length === 0) {
-      issues.push(`${uc.id}: ui_bindings 为空——不涉及 UI 触发的业务流不应产出 use-cases.yaml`);
+      issues.push(`${uc.id}: ui_bindings 为空，且没有明确的非 UI 范围声明。`);
       continue;
     }
     const totalActions = bindings.reduce(
@@ -1617,7 +1627,7 @@ function checkUseCaseUiBindingsNonempty(ctx: CheckContext): CheckResult[] {
       0,
     );
     if (totalActions === 0) {
-      issues.push(`${uc.id}: 所有 ui_bindings 的 user_actions 合计为 0——请补至少 1 条用户入口，或改用 dag.yaml 直接测 data 层函数`);
+      issues.push(`${uc.id}: 已声明 UI 绑定，但 user_actions 合计为 0；请补齐真实用户入口。`);
     }
   }
   if (issues.length === 0) {
@@ -1637,7 +1647,7 @@ function checkUseCaseUiBindingsNonempty(ctx: CheckContext): CheckResult[] {
     severity: 'BLOCKER',
     status: 'FAIL',
     details: `${issues.length} 处 ui_bindings 问题：\n${truncateList(issues, 10)}`,
-    suggestion: 'use-cases.yaml 的价值在于 UI↔业务入口映射表；若某 use_case 不涉及 UI，应删除该 use_case 或退回 dag.yaml。',
+    suggestion: 'UI 用例补齐真实绑定与用户动作；纯数据流程在 spec 明确 ui_change: none，移除无依据的 UI 绑定，并保留真实业务用例与 DAG。',
   }];
 }
 

@@ -317,10 +317,10 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [{
       assert.equal(summary.next_action, 'review_blocking_skips_then_verifier');
     } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
   },
-}, {
-  name: '7d9 testing unparseable case IDs retry the real report; mixed framework gap remains after content repair',
+}, ...[false, true].map(mixed => ({
+  name: mixed ? '7d9 testing unparseable case IDs retry the real report; mixed framework gap remains after content repair'
+    : '7d9 testing unparseable case IDs retry the real report and recover',
   run: async () => {
-    for (const mixed of [false, true]) {
       const { root } = setupGoalRuntimeHost('codex');
       try {
         const artifact = `doc/features/${FEATURE}/testing/test-report.md`;
@@ -348,9 +348,8 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [{
             ...['script-report.json', 'summary.json', 'phase-evidence-manifest.json'].map(name => path.join(reports, name))]);
         throw error;
       } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
-    }
   },
-}, {
+})), {
   name: '7d9 UT malformed DAG candidate remains a real FAIL and passes after source repair',
   run: () => {
     const { root } = setupGoalRuntimeHost('codex');
@@ -511,4 +510,5 @@ export async function runSelectedCases(filter?: string) {
 }
 export async function runAll(): Promise<UnitCaseResult[]> { return (await runSelectedCases()).results; }
 
-export const listCaseGroups = () => unitCaseGroups(cases.map(c => c.name));
+export const listCaseGroups = () => unitCaseGroups(cases.map(c => c.name)).map(group => ({ ...group,
+  releaseOnly: group.caseNames.some(name => name === '7d9 testing unparseable case IDs retry the real report; mixed framework gap remains after content repair') }));

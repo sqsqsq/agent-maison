@@ -521,6 +521,24 @@ cases.push({ name: 'P2 registered native failure is one known repair, not anothe
   assert(unverified.completionBlocking.some(problem => problem.action === 'verify'));
 } });
 
+cases.push({ name: 'refuted test preservation and disclosed ledger failures do not recreate a verdict repair', run() {
+  const strength = { id: 'coding_existing_test_preserved', status: 'FAIL' as const, severity: 'BLOCKER' as const,
+    details: 'current test changed', affected_files: ['src/example.test.ts'],
+    verification: { issue: 'coding_existing_test_preserved', verdict: 'refuted' as const, evidence: 'actual preimage and current assertions checked' } };
+  const ledger = { id: 'context_exploration_inputs_coverage', status: 'FAIL' as const, severity: 'BLOCKER' as const };
+  assert.strictEqual(resolveCheckDisposition(ledger).action, 'disclose');
+  const phase = { phase: 'coding', summaryPresent: true, verdict: 'FAIL', schemaCurrent: true,
+    closureCommitted: true, lineage: 'fresh' as const, checks: [strength, ledger] };
+  const result = resolveCurrentDisposition({ endpoint: 'request', phases: [phase] });
+  assert.strictEqual(result.completionBlocking.length, 0, JSON.stringify(result));
+  assert(result.disclosed.some(problem => problem.id === ledger.id));
+  const unclear = { ...strength, verification: { ...strength.verification, verdict: 'unclear' as const } };
+  assert(resolveCurrentDisposition({ endpoint: 'request', phases: [{ ...phase, checks: [unclear, ledger] }] }).completionBlocking.length > 0);
+  assert(resolveCurrentDisposition({ endpoint: 'request', phases: [{ ...phase, checks: [] }] }).completionBlocking.some(problem => problem.id === 'verdict_pass'));
+  assert(resolveCurrentDisposition({ endpoint: 'request', phases: [{ ...phase, checks: [strength, ledger,
+    { id: 'native_assertion', status: 'FAIL', severity: 'BLOCKER' }] }] }).completionBlocking.length > 0);
+} });
+
 export function runAll(): UnitCaseResult[] {
   const out: UnitCaseResult[] = [];
   for (const c of cases) {

@@ -4,7 +4,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import * as YAML from 'yaml';
+import { parseYamlCached } from './scripts/utils/yaml-read-cache';
 import { assertSupportedPhaseChain } from './scripts/utils/runtime-policy';
 import { OBLIGATION_PROVIDERS } from './scripts/utils/execution-scope';
 import type { FrameworkConfig } from './config';
@@ -45,7 +45,7 @@ export function loadWorkflowSpec(frameworkRoot: string, workflowName: string): W
   if (!fs.existsSync(filePath)) {
     throw new Error(`[workflow-loader] 未找到 workflow 文件：${filePath}`);
   }
-  const raw = YAML.parse(fs.readFileSync(filePath, 'utf-8')) as Partial<WorkflowSpec>;
+  const raw = parseYamlCached<Partial<WorkflowSpec>>(filePath, fs.readFileSync(filePath, 'utf-8'));
   validateWorkflow(raw, filePath);
   return raw as WorkflowSpec;
 }

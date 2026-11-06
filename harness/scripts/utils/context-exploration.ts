@@ -364,8 +364,9 @@ export function runQuantitativeChecks(
 
   if (options?.factsContext?.baseline) thresholds = { ...thresholds, min_source_code_paths: 0, min_files_inspected: 0, min_searches: 0, min_code_facts: 1 };
   const requestSubject = options?.factsContext && 'request_sha256' in options.factsContext.subject;
-  if (requestSubject) {
-    const count = options!.factsContext!.source_paths.length;
+  // Every admitted subject has a production-derived source set; small runs need the same bound as requests.
+  if (options?.factsContext) {
+    const count = options.factsContext.source_paths.length;
     thresholds = { ...thresholds, min_source_code_paths: Math.min(thresholds.min_source_code_paths ?? 0, count), min_files_inspected: Math.min(thresholds.min_files_inspected ?? 0, count), min_searches: Math.min(thresholds.min_searches ?? 0, Math.max(1, count)), min_code_facts: Math.min(thresholds.min_code_facts ?? 0, Math.max(1, count)) };
   }
 

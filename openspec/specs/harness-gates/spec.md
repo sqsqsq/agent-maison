@@ -5,14 +5,43 @@
 Define the acceptance gates that MUST pass when AgentMaison publishable content
 (`skills/`, `specs/`, `harness/`, etc.) is modified.
 ## Requirements
-### Requirement: Harness unit tests must pass after publishable changes
+### Requirement: Daily and formal tests use distinct execution scopes
 
-The system MUST require `cd harness && npm test` to pass with zero failures before
-any change to publishable content is considered complete.
+Ordinary development SHALL use `test:changed` to execute the necessary daily groups.
+Ordinary plan closure and candidate builds SHALL use `test:daily` and the directly
+required validations. Both commands MUST retain unresolved daily failures and MUST
+NOT automatically select formal-only combinations. Missing or invalid selection
+history MAY expand changed selection only to the daily universe.
 
-#### Scenario: All harness tests pass
-- **WHEN** a developer modifies files under `harness/`, `specs/`, `skills/`, or `workflows/`
-- **THEN** running `npm test` from the repository root (or `npm test` inside `harness/`) MUST report all tests PASS
+`test:daily` MUST execute every effective daily unit/profile group and every valid
+fixture, plus typecheck. Effective group membership SHALL reuse `releaseOnly`,
+with the suite value as the default and a group override where needed. An
+overlapping execution block containing daily protection MUST remain daily.
+
+`npm test` MUST execute the full union of daily and formal groups and all valid
+fixtures without cache subtraction. Only a stable, genuinely full execution with
+every group actually completed and passed MAY write a passing `completeRun`.
+Daily or changed execution MUST NOT be reported as formal full execution.
+
+#### Scenario: Ordinary closure executes the daily universe
+- **WHEN** `test:daily` runs for an ordinary plan closure
+- **THEN** all daily groups, discovered profile groups and valid fixtures execute
+- **AND** formal-only groups remain explicitly unexecuted and no formal full proof is created
+
+#### Scenario: Formal release executes both domains
+- **WHEN** `npm test` runs from the source repository root or `harness/`
+- **THEN** every valid daily and formal group and fixture MUST execute and pass
+- **AND** a passing formal completion proof requires stable tested inputs
+
+#### Scenario: Published prose has focused consumers
+- **WHEN** known Skill or published documentation changes only prose
+- **THEN** changed selection SHALL include its text/projection consumers and one exact normal representative
+- **AND** structural declarations, actual source dependencies and unresolved daily failures remain in the required union
+
+#### Scenario: Explicit formal additions remain visibly scoped
+- **WHEN** a developer explicitly adds a formal group to daily or changed selection
+- **THEN** that group SHALL execute and no longer appear in the unexecuted list
+- **AND** the execution MUST retain its original scope and other unexecuted formal failures
 
 > **Enforced by:** `AGENTS.md`, `harness/package.json`, `harness/tests/`
 
@@ -20,7 +49,8 @@ any change to publishable content is considered complete.
 
 The consumer `npm test` script MUST be redefined to `check:global` (catalog + glossary + docs),
 matching S3 `run-global-phases` behavior. In the release zip, `harness/tests/` is excluded
-from the artifact. Source repo `npm test` (unit + fixtures) remains the developer gate unchanged.
+from the artifact. Source repo `npm test` remains the full formal gate; `test:daily`
+and `test:changed` are developer-only commands and MUST NOT enter the release package.
 
 #### Scenario: Release harness package has consumer test semantics
 - **WHEN** `npm run release:verify` inspects the staged or extracted release artifact
@@ -46,15 +76,22 @@ with a phase-rules YAML file under `specs/phase-rules/`.
 - **WHEN** harness resolves the active workflow
 - **THEN** it MUST load `workflows/spec-driven.workflow.yaml` (or the configured `active_workflow`) and honor each artifact's `requires` dependencies
 
-### Requirement: Release verify is mandatory for dev-tool changes
+### Requirement: Validation follows the changed development boundary
 
-The system MUST require `npm run release:verify` to pass when changes touch
-developer-only directories (`.cursor/`, `.codex/`, `openspec/`) to prevent
-accidental leakage into the release artifact.
+Release membership, sanitizer or packer changes MUST receive targeted release
+verification proving developer tools do not leak into consumer artifacts. Pure
+plan, goal and OpenSpec prose changes SHALL use their corresponding validation
+and diff/LF checks; they MUST NOT require another business full test run or pack
+solely because development documentation changed.
 
-#### Scenario: Dev-tool change verified before merge
-- **WHEN** a change adds or modifies files under `openspec/` or `.cursor/`
-- **THEN** `npm run release:verify` MUST pass confirming excluded paths are absent from the zip
+#### Scenario: Release membership changes are verified
+- **WHEN** a change modifies release inclusion, exclusion or package sanitization
+- **THEN** the corresponding release verification MUST confirm developer-only paths and scripts are absent
+
+#### Scenario: Development prose uses its own validation
+- **WHEN** only a development plan, goal or OpenSpec document changes
+- **THEN** the corresponding document validation and diff/LF checks SHALL be required
+- **AND** no new business full execution is required solely for those text changes
 
 > **Enforced by:** `scripts/verify-release-pack.mjs`, `scripts/release-excludes.json`
 

@@ -1,0 +1,522 @@
+import '../utils/transpile-only-env';
+import assert from 'assert';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import { createHash } from 'crypto';
+import * as YAML from 'yaml';
+import { provisionFrameworkUnder, git, writeHostFile } from '../utils/real-chain-host';
+import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
+import { readDeliveredVerifierRequest } from './real-chain.unit.test';
+import { researchSnapshotFacts } from '../fixtures/host-snapshot-3.1.0/migrate';
+import { withRuntimeTest, preserveRuntimeTestEvidence } from '../utils/runtime-test-control';
+import { matchesUnitCase, selectedUnitCases, startCaseTiming, unitCaseGroups, type UnitExecutionTiming } from '../utils/unit-case-selection';
+import type { UnitCaseResult } from '../run-unit';
+
+const BLUEPRINT = 'ledger-app-blueprint';
+const UNIT = 'ledger-refresh';
+const SOURCE = 'src/ledger/src/main/LedgerFeature.ts';
+const BASELINE_SOURCE = 'src/ledger/LedgerRepository.ts';
+const TEST = 'src/ledger/src/test/LedgerFeature.test.ts';
+const MISSING = 'src/ledger/NotCreatedYet.ts';
+const FIXTURE = path.resolve(__dirname, '../fixtures/component-blueprint/valid');
+const INPUTS = path.resolve(__dirname, '../fixtures/blueprint-design-inputs');
+const CONTRACT = 'contracts/ledger-balance.yaml';
+const REQUIREMENT = '新增账目后刷新余额，并可从保存的账目恢复余额；完成设计、独立质询、施工及真实单元测试。仅账本内部能力，不改UI、不请求设备验证。';
+const ADD_CASE = '[BRANCH-success][AC-1] ledger-refresh adds balance without mutating inputs';
+const RESTORE_CASE = '[BRANCH-success][AC-1] ledger-refresh restores saved arrays';
+const EVIDENCE_REFS = [ADD_CASE, RESTORE_CASE].map(name => `${TEST}#${name}`);
+const PRODUCT = 'export class LedgerFeature {\n  static add(entries: readonly number[], amount: number): { entries: number[]; balance: number } {\n    const next = [...entries, amount]; return { entries: next, balance: LedgerFeature.restore(next) };\n  }\n  static restore(saved: readonly number[]): number { return saved.reduce((a, b) => a + b, 0); }\n}\n';
+const TEST_TEXT = [
+  "import { it } from 'node:test';",
+  "import assert from 'node:assert/strict';",
+  "import { LedgerFeature } from '../main/LedgerFeature';",
+  "const expect = (value: unknown) => ({ toEqual: (expected: unknown): void => assert.deepEqual(value, expected) });",
+  `it(${JSON.stringify(ADD_CASE)}, () => {`,
+  "  const original = [45, 55];",
+  "  const result = LedgerFeature.add(original, 20);",
+  "  expect(original).toEqual([45, 55]);",
+  "  expect(result.entries).toEqual([45, 55, 20]);",
+  "  expect(result.balance).toEqual(120);",
+  "  expect(LedgerFeature.add(result.entries, -20).balance).toEqual(100);",
+  "});",
+  `it(${JSON.stringify(RESTORE_CASE)}, () => {`,
+  "  expect(LedgerFeature.restore(JSON.parse(JSON.stringify([45, 55, 20])))).toEqual(120);",
+  "  expect(LedgerFeature.restore([])).toEqual(0);",
+  "});", '',
+].join('\n');
+type Host = { root: string; frameworkRoot: string; harnessDir: string; load(relative: string): any };
+const read = (root: string, file: string) => fs.readFileSync(path.join(root, file), 'utf8');
+const writeYaml = (root: string, file: string, value: unknown) => writeHostFile(root, file, YAML.stringify(value));
+
+function contractInput(): any {
+  const provenance = { source_kind: 'interface', source_ref: CONTRACT, source_revision: 'v1', observed_at: '2026-11-05T00:00:00Z', evidence_strength: 'authoritative', extraction_method: 'explicit-host-interface-input' };
+  const refs = ['requirements/ledger.md'];
+  const fields = (names: string[], section: string) => names.map((field_id, index) => ({ field_id, type: field_id === 'entries' ? 'number[]' : 'number', required: true, nullable: false,
+    semantics: field_id === 'entries' ? 'finite saved ledger amounts' : field_id === 'amount' ? 'finite added amount' : 'sum of ledger amounts',
+    source_ref: `${CONTRACT}#/${section}/fields/${index}`, provenance }));
+  return { contract_id: 'ledger-balance-v1', operation: { operation_id: 'addAndRestore', direction: 'internal', version: 'v1', source_ref: `${CONTRACT}#/operation`, verification_refs: refs },
+    request_dto: { dto_id: 'LedgerInput', source_ref: `${CONTRACT}#/request_dto`, verification_refs: refs, fields: fields(['entries', 'amount'], 'request_dto') },
+    response_dto: { dto_id: 'LedgerResult', source_ref: `${CONTRACT}#/response_dto`, verification_refs: refs, fields: fields(['entries', 'balance'], 'response_dto') },
+    mappings: ['entries', 'amount', 'balance'].map((field, index) => ({ mapping_id: `ledger-${field}`, kind: 'direct', source_fields: [field], target_field: `LedgerFeature.${field}`, rule: `Preserve the finite ${field} value; add returns a copied snapshot.`, source_ref: `${CONTRACT}#/mappings/${index}`, provenance, verification_refs: refs })),
+    errors: { source_ref: `${CONTRACT}#/errors`, verification_refs: refs, items: { input_contract: 'caller supplies finite numbers and arrays; no I/O or hidden failure channel' } },
+    idempotency: { source_ref: `${CONTRACT}#/idempotency`, verification_refs: refs, rule: 'same inputs produce equal values without mutating the caller' },
+    nfr: { source_ref: `${CONTRACT}#/nfr`, verification_refs: refs, requirements: { side_effects: 'no I/O, subscriptions, shared mutable state or UI' } }, owner: 'ledger-team', needed_by: UNIT, provenance };
+}
+
+async function withHost(run: (host: Host) => Promise<void>): Promise<void> {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'daily-design-')));
+  const priorTrust = process.env.MAISON_GOAL_CHECKPOINT_DIR;
+  process.env.MAISON_GOAL_CHECKPOINT_DIR = path.join(root, '.trust');
+  try {
+    const framework = provisionFrameworkUnder(root);
+    const host = { root, ...framework, load: (relative: string) => require(path.join(framework.harnessDir, relative)) };
+    for (const directory of ['src', 'test', 'requirements', 'contracts', 'mappings']) fs.cpSync(path.join(FIXTURE, directory), path.join(root, directory), { recursive: true });
+    writeHostFile(root, 'requirements/ledger.md', '# REQ-LEDGER-REFRESH\n\n' + REQUIREMENT + '\n');
+    writeYaml(root, CONTRACT, contractInput());
+    writeHostFile(root, 'build-profile.json5', JSON.stringify({ app: { products: [{ name: 'node-test' }] }, modules: [] }));
+    writeHostFile(root, 'src/ledger/LedgerRepository.ts', 'export class LedgerRepository {}\n');
+    writeHostFile(root, SOURCE, 'export class LedgerFeature {}\n');
+    writeHostFile(root, TEST, 'export {};\n');
+    writeHostFile(root, 'framework.config.json', JSON.stringify({ schema_version: '1.1', project_name: 'DailyDesignLedger', active_workflow: 'obligation-driven',
+      project_profile: { name: 'hmos-app' }, architecture: { outer_layers: [{ id: 'src', can_depend_on: [], intra_layer_deps: 'dag' }],
+        module_inner_layers: ['main'], inner_dependency_direction: 'upward', cross_module_exports_file: 'src/main/LedgerFeature.ts' },
+      paths: { features_dir: 'doc/features', module_catalog: 'doc/module-catalog.yaml', glossary: 'doc/glossary.yaml', architecture_md: 'doc/architecture.md', docs_committed: false },
+      materialized_adapters: ['claude'] }));
+    writeHostFile(root, 'framework.local.json', JSON.stringify({ schema_version: '1.0', agent_adapter: 'claude', vision: { image_input_override: 'none' } }));
+    writeHostFile(root, 'AGENTS.md', '# Daily design host\n\nRead requirements/ledger.md and the actual signed request. Produce the requested artifacts; runtime checks determine completion.\n');
+    fs.copyFileSync(path.join(root, 'AGENTS.md'), path.join(root, 'CLAUDE.md'));
+    writeHostFile(root, '.claude/commands/goal-mode.md', 'Read framework/skills/project/goal-mode/SKILL.md and follow it.\n');
+    fs.mkdirSync(path.join(root, '.claude/agents'), { recursive: true });
+    for (const name of ['verifier.md', 'phase-executor.md']) fs.copyFileSync(path.join(framework.frameworkRoot, 'agents/claude/templates/agents', name), path.join(root, '.claude/agents', name));
+    writeYaml(root, 'doc/module-catalog.yaml', { schema_version: '1.0', modules: [{ name: 'ledger', layer: 'src', sub_layer: null, format: 'HAR', one_liner: '账目余额及恢复',
+      responsibilities: ['账目余额'], NOT_responsible_for: ['UI', 'device'], typical_business_terms: ['账本'], easily_confused_with: [], key_exports: ['LedgerFeature'], entry_file: SOURCE }] });
+    writeYaml(root, 'doc/glossary.yaml', { schema_version: '1.0', terms: [{ term: '账本', canonical_module: 'ledger', aliases: [], definition: '保存账目并计算余额' }] });
+    writeHostFile(root, 'doc/architecture.md', '# Architecture\n\nledger owns a host-only TypeScript balance service and Node assertions.\n');
+    writeHostFile(root, '.gitignore', 'framework/\n.trust/\n');
+    // Keep the existing design lens; only its external host toolchain is adapted to real repository TS/Node.
+    const profileDir = path.join(framework.frameworkRoot, 'profiles/hmos-app');
+    const profile = YAML.parse(fs.readFileSync(path.join(profileDir, 'profile.yaml'), 'utf8'));
+    profile.capabilities['coding.compile'] = { provider: 'node_compile', severity: 'BLOCKER' };
+    profile.capabilities['coding.deps_install'] = { provider: 'none', severity: 'SKIP' };
+    profile.capabilities['coding.lint'] = { provider: 'none', severity: 'SKIP' };
+    profile.capabilities['ut.compile'] = { provider: 'node_compile', severity: 'BLOCKER' };
+    profile.capabilities['ut.run'] = { provider: 'node_test', severity: 'BLOCKER' };
+    profile.device_capabilities = profile.device_capabilities.filter((capability: string) => capability !== 'ut.run');
+    for (const capability of ['coding.compile', 'ut.compile', 'ut.run']) delete profile.personal_prerequisites[capability];
+    fs.writeFileSync(path.join(profileDir, 'profile.yaml'), YAML.stringify(profile));
+    fs.cpSync(path.resolve(__dirname, '../utils/session-node-profile'), path.join(profileDir, 'harness'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'doc/features'), { recursive: true });
+    git(root, ['init', '-q', '-b', 'main']);
+    git(root, ['config', 'user.name', 'Daily design fixture']); git(root, ['config', 'user.email', 'daily-design@example.test']);
+    git(root, ['config', 'commit.gpgsign', 'false']); git(root, ['add', '-A']); git(root, ['commit', '-qm', 'Original host inputs before Feature design']);
+    assert.deepEqual(fs.readdirSync(path.join(root, 'doc/features')), []);
+    await run(host);
+  } catch (error) {
+    const files = [SOURCE, TEST, `doc/features/${BLUEPRINT}/blueprint/component-blueprint.yaml`].map(file => path.join(root, file));
+    const originals = preserveRuntimeTestEvidence([root], String(error), [], files);
+    throw new Error(`${error instanceof Error ? error.stack : String(error)}\noriginals: ${originals}`);
+  } finally {
+    for (const file of Object.keys(require.cache)) if (file.startsWith(root + path.sep)) delete require.cache[file];
+    if (priorTrust === undefined) delete process.env.MAISON_GOAL_CHECKPOINT_DIR; else process.env.MAISON_GOAL_CHECKPOINT_DIR = priorTrust;
+    assert(root.startsWith(fs.realpathSync(os.tmpdir()) + path.sep));
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+}
+
+function blueprintDraft(host: Host, missing: boolean): any {
+  const document = YAML.parse(read(FIXTURE, `doc/features/${BLUEPRINT}/blueprint/component-blueprint.yaml`));
+  const prepared = YAML.parse(read(host.root, `doc/features/${BLUEPRINT}/blueprint/component-blueprint.yaml`));
+  document.component_id = prepared.component_id;
+  document.revision = prepared.revision;
+  document.provenance = { source_kind: 'code', source_ref: BASELINE_SOURCE, source_revision: 'host-baseline', observed_at: '2026-11-05T00:00:00Z', evidence_strength: 'observed', extraction_method: 'actual-source-read' };
+  document.discovery.facts = [{ fact_id: 'ledger-baseline', subject: 'LedgerRepository.current-source', value: read(host.root, BASELINE_SOURCE).trim(), provenance: document.provenance }];
+  Object.assign(document.discovery.inputs, { product_requirements: ['requirements/ledger.md'], external_inputs: [CONTRACT], repository_facts: [BASELINE_SOURCE], knowledge_assets: ['doc/architecture.md', 'doc/module-catalog.yaml'] });
+  document.discovery.inputs.current_scope_items = prepared.discovery.inputs.current_scope_items;
+  document.discovery.requirement_traceability = document.discovery.inputs.current_scope_items.map((item: any) => ({ item_id: item.item_id,
+    blueprint_refs: ['view:logical/node:ledger-domain', 'view:scenarios/node:add-entry-scenario', 'contract:ledger-balance-v1'] }));
+  const logicalView = document.design_views.find((view: any) => view.view_id === 'logical');
+  const logical = logicalView.nodes[0];
+  Object.assign(logical, { label: 'Pure LedgerFeature calculation', current_state: 'Empty host class', target_state: 'Typed add and restore return values without mutating inputs', provenance: document.provenance });
+  const readInput = (name: string) => YAML.parse(read(INPUTS, name + '.yaml'));
+  logical.acceptance = readInput('acceptance');
+  Object.assign(logical.acceptance.criteria[0], { description: '新增账目计算余额并从保存数组恢复', verification_steps: EVIDENCE_REFS, expected_result: '新增余额正确、保存数组可恢复且原输入未变', ut_focus: 'pure add/restore input and output' });
+  logical.contracts = JSON.parse(JSON.stringify(readInput('contracts'))
+    .split('src/ledger/LedgerFeature.ets').join(SOURCE).split('test/ledger/LedgerFeature.test.ets').join(TEST));
+  logical.contracts.modules = [{ name: 'ledger', layer: 'src', package_path: 'src/ledger', format: 'HAR', change_type: 'modify' }];
+  logical.contracts.files = [SOURCE];
+  delete logical.contracts.change_unit;
+  logical.use_cases = readInput('use-cases');
+  logical.use_cases.use_cases[0].coordinator = 'LedgerFeature.add';
+  logical.use_cases.use_cases[0].branches[0].scenario = 'pure array input produces a copied snapshot and recoverable balance';
+  for (const view of document.design_views) {
+    view.decisions_and_gaps = [];
+    if (view.view_id === 'deployment') {
+      Object.assign(view, { applicability: 'not_applicable', current_state: 'No component-owned long-lived state or external side effects', target_state: 'Same host-only pure input/output boundary', delta: 'none', nodes: [],
+        applicability_evidence: { disposition: 'not_applicable', evidence_refs: ['requirements/ledger.md', CONTRACT], retrigger_condition: 'Shared mutable state, I/O, asynchronous consumers or deployment enters this component' } });
+      delete view.evolution_impact; delete view.runtime_data_flows;
+    } else {
+      Object.assign(view, { current_state: 'Empty LedgerFeature host input', target_state: 'Pure add and restore balance calculation with real Node assertions', delta: 'Add the requested internal calculation only' });
+      for (const node of view.nodes) node.provenance = node.acceptance || node.contracts || node.use_cases
+        ? { source_kind: 'requirement', source_ref: 'requirements/ledger.md', source_revision: 'v1', observed_at: '2026-11-05T00:00:00Z', evidence_strength: 'authoritative', extraction_method: 'explicit-request-and-interface-design' }
+        : document.provenance;
+      if (view.view_id === 'runtime') {
+        view.nodes = [view.nodes[0]];
+        Object.assign(view.nodes[0], { label: 'LedgerFeature synchronous calculation', current_state: 'Empty host class', target_state: 'Caller-owned array enters add/restore and returns a copied value', owner: 'ledger-team' });
+        delete view.runtime_data_flows;
+        view.runtime_data_flow_disposition = { status: 'not_applicable', evidence_refs: ['requirements/ledger.md', CONTRACT], retrigger_condition: 'I/O, shared state, asynchronous publication or consumers enter the requested pure calculation' };
+      }
+    }
+  }
+  const scenario = document.design_views.find((view: any) => view.view_id === 'scenarios').nodes[0];
+  Object.assign(scenario, { label: 'Add and restore saved array values', current_state: 'No balance calculation', target_state: 'Caller receives new balance; original array unchanged', logical_refs: ['view:logical/node:ledger-domain', 'contract:ledger-balance-v1'], runtime_refs: ['view:runtime/node:ledger-repository'] });
+  document.contracts = [YAML.parse(read(host.root, CONTRACT))];
+  document.relations = document.relations.filter((relation: any) => relation.relation_id === 'domain-owned-by-module');
+  document.relations[0].provenance = document.provenance;
+  document.decisions_and_gaps = { decisions: [], gaps: [] };
+  for (const [key, answer] of Object.entries(document.app_lens) as Array<[string, any]>) {
+    if (key === 'runtime_flow_trigger_assessment') for (const condition of Object.values(answer) as any[]) Object.assign(condition, { applies: false, evidence_refs: [CONTRACT] });
+    else Object.assign(answer, { answer: 'This component computes finite array values synchronously; no UI, I/O, subscriptions or shared mutable state.', evidence_refs: ['requirements/ledger.md', CONTRACT] });
+  }
+  document.derived_results = [];
+  delete document.generated_graphs;
+  if (missing) document.provenance.source_ref = MISSING;
+  delete document.review_summary.questioning;
+  return document;
+}
+
+function questioningReply(host: Host, denyMissing: boolean, blueprintFile = `doc/features/${BLUEPRINT}/blueprint/component-blueprint.yaml`): string {
+  assert(read(host.root, 'requirements/ledger.md').includes(REQUIREMENT), 'the independent response must read its real requirement original');
+  const authority = YAML.parse(read(host.root, CONTRACT));
+  assert.equal(authority.operation.direction, 'internal');
+  const current = YAML.parse(read(host.root, blueprintFile));
+  const template = YAML.parse(read(FIXTURE, `doc/features/${BLUEPRINT}/blueprint/component-blueprint.yaml`));
+  const required = host.load('scripts/utils/blueprint-questioning').requiredQuestioningScopes(current);
+  const items = structuredClone(template.review_summary.questioning.items).filter((item: any) => required.has(item.scope_ref));
+  for (const item of items) Object.assign(item, { question: `Does ${item.scope_ref} preserve the actual internal input/output request?`, answer: 'Read the actual request and internal contract: add returns a copied array and balance; restore recomputes a saved array. No UI or durable-runtime promise is introduced.', evidence_refs: ['requirements/ledger.md', CONTRACT],
+    provenance: { source_kind: 'requirement', source_ref: 'requirements/ledger.md', observed_at: '2026-11-05T00:00:00Z', evidence_strength: 'authoritative', extraction_method: 'actual-independent-input-reading' } });
+  const missing = current.provenance.source_ref === MISSING && !fs.existsSync(path.join(host.root, MISSING));
+  if (denyMissing && missing) Object.assign(items[0], { disposition: 'blocker', question: '当前设计依据是否真实可读？', answer: `当前引用 ${MISSING} 不存在；请设计作者改为已经读取的真实来源，不创建或假报证据。` });
+  return JSON.stringify({ items });
+}
+
+function decompose(host: Host): void {
+  const identity = host.load('scripts/utils/component-blueprint-path').loadCanonicalBlueprint(host.root, BLUEPRINT);
+  const cu = YAML.parse(read(FIXTURE, `doc/features/${BLUEPRINT}/${UNIT}/change-unit.yaml`));
+  const rebind = (value: any): void => {
+    if (!value || typeof value !== 'object') return;
+    if (value.artifact === 'component-blueprint@1') Object.assign(value, { component_id: identity.blueprint.component_id, revision: identity.blueprint.revision,
+      source_fingerprint: identity.blueprint.source_fingerprint, artifact_sha256: identity.artifactSha256 });
+    Object.values(value).forEach(rebind);
+  };
+  rebind(cu);
+  cu.component_id = identity.blueprint.component_id;
+  cu.design_refs = cu.design_refs.filter((ref: any) => ref.target.kind === 'node' && ['ledger-domain', 'ledger-module', 'add-entry-scenario'].includes(ref.target.id));
+  cu.design_refs.push({ ...cu.component_blueprint_ref, target: { kind: 'contract', id: 'ledger-balance-v1' } },
+    { ...cu.component_blueprint_ref, target: { kind: 'node', view_id: 'runtime', id: 'ledger-repository' } },
+    { ...cu.component_blueprint_ref, target: { kind: 'relation', id: 'domain-owned-by-module' } });
+  cu.touches = [{ owner: 'ledger-team', design_ref: cu.design_refs.find((ref: any) => ref.target.id === 'ledger-module'), write_refs: ['planned:src/ledger'] }];
+  cu.target_predicates = [{ predicate_id: 'refresh-behavior', role: 'behavior', description: 'Pure add returns a new snapshot and correct balance; saved arrays restore the same value', provide_ids: ['ledger-refresh-vertical-slice'], verification_refs: EVIDENCE_REFS },
+    { predicate_id: 'balance-contract', role: 'contract', description: 'The typed internal array and balance contract is implemented without side effects', provide_ids: ['ledger-refresh-vertical-slice'], verification_refs: EVIDENCE_REFS }];
+  cu.purpose = 'Land the requested pure internal add and saved-array balance recovery with real TypeScript and Node assertions';
+  cu.provides[0].description = 'Typed internal add and restore functions with real Node assertions';
+  cu.preserved_invariants = [{ invariant_id: 'input-not-mutated', description: 'Caller input arrays remain unchanged', evidence_refs: [EVIDENCE_REFS[0]] }];
+  cu.verification_refs = EVIDENCE_REFS;
+  cu.safe_intermediate_state = { description: 'Pure internal calculation compiles and can be used independently without runtime or UI state', build_validation_refs: EVIDENCE_REFS, compatibility_refs: [EVIDENCE_REFS[0]], recovery_refs: [EVIDENCE_REFS[1]] };
+  cu.provenance.source_revision = `revision-${identity.blueprint.revision}`;
+  cu.provenance.extraction_method = 'builtin-vertical-slice-decomposition';
+  writeHostFile(host.root, `doc/features/${BLUEPRINT}/blueprint/change-unit-candidates.json`, JSON.stringify([{ providerId: 'builtin-vertical-slice-decomposition', artifact: cu }]));
+}
+
+function unitMaterials(host: Host, context: any): void {
+  const feature = context.feature, rel = host.load('scripts/utils/feature-identity').featureRelativePath(feature);
+  const specFile = host.load('config').featureFilePath(host.root, feature, 'spec/spec.md');
+  writeHostFile(host.root, path.relative(host.root, specFile), '# Ledger calculation\n\n```yaml\nui_change: none\n```\n\n' + REQUIREMENT + '\n');
+  for (const family of context.chain) {
+    if (family === 'spec') {
+      const projected = host.load('scripts/utils/blueprint-skill-projection').deriveBlueprintSkillInput(host.root, feature, host.frameworkRoot, 'acceptance');
+      assert.equal(projected.state, 'resolved', projected.detail);
+      // Approved canonical acceptance is already the frozen source; reading it does not materialize a second source.
+    }
+    if (family === 'plan') {
+      const projected = host.load('scripts/utils/blueprint-skill-projection').deriveBlueprintSkillInput(host.root, feature, host.frameworkRoot, 'contracts');
+      assert.equal(projected.state, 'resolved', projected.detail);
+      const identity = host.load('scripts/utils/change-unit-path'), loaded = identity.loadCanonicalChangeUnit(host.root, BLUEPRINT, UNIT);
+      const contracts = structuredClone(projected.value), implementation_refs = [SOURCE], test_refs = EVIDENCE_REFS;
+      contracts.change_unit = { change_unit_ref: identity.createChangeUnitRef(loaded),
+        predicate_mappings: loaded.changeUnit.target_predicates.map((row: any) => ({ predicate_id: row.predicate_id, implementation_refs, test_refs })),
+        provide_mappings: loaded.changeUnit.provides.map((row: any) => ({ provide_id: row.provide_id, implementation_refs, test_refs })),
+        design_ref_mappings: loaded.changeUnit.design_refs.map((design_ref: any) => ({ design_ref, implementation_refs, verification_refs: test_refs })) };
+      writeYaml(host.root, `doc/features/${rel}/contracts.yaml`, contracts);
+      if (projected.artifacts?.['use-cases@1']) writeYaml(host.root, `doc/features/${rel}/use-cases.yaml`, projected.artifacts['use-cases@1']);
+    }
+    if (family === 'coding') writeHostFile(host.root, SOURCE, PRODUCT);
+    if (family === 'review') writeHostFile(host.root, `doc/features/${rel}/review/review-report.md`, '# 审查报告\n\n> **保证等级**: standard\n\n## 1. 审查范围\n- ' + SOURCE + '\n\n## 2. 审查维度\n契约、边界及恢复；真实编译与Node断言另由工具执行。\n\n## 3. 问题清单\n| 编号 | 分类 | 严重程度 | 问题描述 | 涉及文件 | 修复建议 |\n|---|---|---|---|---|---|\n\n## 4. 问题统计\n| 严重程度 | 数量 |\n|---|---|\n| BLOCKER | 0 |\n| MAJOR | 0 |\n| MINOR | 0 |\n\n## 5. 修复建议\n无新增建议。\n\n## 6. 结论\n**审查结论**: 通过\n');
+    if (family === 'ut') {
+      writeHostFile(host.root, TEST, TEST_TEXT);
+      writeYaml(host.root, `doc/features/${rel}/ut/mock-plan.yaml`, { schema_version: '1.0', feature, spies: [] });
+      writeHostFile(host.root, `doc/features/${rel}/ut/testability-audit.md`, '```yaml\n' + YAML.stringify({ records: [{ acceptance_id: 'AC-1', entry_point: { file: SOURCE, symbol: 'add' }, testability_level: 'L1', dependencies: [{ name: 'Array', kind: 'pure' }], verdict: 'testable' }] }) + '```\n');
+      writeHostFile(host.root, `doc/features/${rel}/ut/reports/coverage-evidence.json`, JSON.stringify({ schema_version: '1.0', feature, primary_evidence_source: 'ut_tags', sources: { ut_tags: [TEST] }, mappings: [{ scope_id: 'AC-1', scope_kind: 'acceptance_criterion', evidence_source: 'ut_tags' }] }));
+      writeYaml(host.root, `doc/features/${rel}/ut/reports/flow-dag/ledger_refresh.dag.yaml`, { flow_id: 'ledger_refresh', flow_name: '账目新增与恢复', module: 'ledger', use_case: 'ledger-refresh', branches: ['success'], linked_acceptance: ['AC-1'],
+        entry_point: { module: 'ledger', file: SOURCE, function: 'add' }, nodes: [{ id: 'add', type: 'code_execution', description: '新增账目', source: { file: SOURCE, class: 'LedgerFeature', function: 'add' }, next: ['balance'] },
+          { id: 'balance', type: 'assertion', description: '核对余额', linked_acceptance: ['AC-1'], assertions: [{ type: 'state_check', target: 'balance', expected: '120' }], next: [] }] });
+    }
+  }
+  const facts = host.load('config').featureFilePath(host.root, feature, 'context/facts.md');
+  assert(context.factsContext, 'the author must consume its actual admitted research context');
+  if (!fs.existsSync(facts)) {
+    assert(!context.factsContext.baseline, 'an absent prior facts original cannot become a new baseline');
+    const sources = context.factsContext.source_paths.filter((file: string) => fs.existsSync(path.join(host.root, file)) && fs.statSync(path.join(host.root, file)).isFile());
+    for (const file of sources) fs.readFileSync(path.join(host.root, file));
+    writeHostFile(host.root, path.relative(host.root, facts), '---\n' + YAML.stringify({ schema_version: '1.1', feature, run_id: context.runId,
+      established_by: context.factsContext.first_phase, ready_to_produce: true, has_blocker_coverage_risk: false, exploration_mode: 'sequential',
+      source_code_paths: sources, key_inputs_read: sources, files_inspected_count: sources.length, searches_performed_estimate: 1,
+      subagents_used: 'none', decisions_unlocked: ['ledger balance and recovery'] }) + '---\n## Code Facts\n');
+  }
+  researchSnapshotFacts(host.root, facts, context.factsContext.first_phase, context.factsContext);
+  for (const family of context.chain) if (family !== context.factsContext.first_phase) researchSnapshotFacts(host.root, facts, family, context.factsContext);
+}
+
+function verifierReply(host: Host, context: any, phase: string): void {
+  const reports = host.load('config').featurePhaseReportsDir(host.root, context.feature, phase, host.frameworkRoot);
+  const current = JSON.parse(fs.readFileSync(path.join(reports, 'summary.json'), 'utf8'));
+  const script = JSON.parse(fs.readFileSync(path.join(reports, 'script-report.json'), 'utf8'));
+  const blockedInputs = script.checks.filter((check: any) => check.status === 'FAIL' && check.id.startsWith('capability_'));
+  assert.equal(blockedInputs.length, 0, phase + ': normal verifier received blocked inputs: ' + JSON.stringify(blockedInputs));
+  assert(current.verifier_subject_id, 'only an actual production verifier request may be answered');
+  const request = context.phase.endsWith('-verifier-format-repair')
+    ? readDeliveredVerifierRequest({ ...host, feature: context.feature, module: 'ledger', modulePath: 'src/ledger' },
+      { phase: context.phase, prompt: context.instruction, runId: context.runId })
+    : host.load('scripts/utils/verifier-request').parseVerifierRequest(read(host.root, current.verifier_request));
+  assert(request && request.feature === context.feature && request.phase === phase && request.subject_id === current.verifier_subject_id);
+  const materials = host.load('scripts/utils/verifier-material');
+  const material = materials.readVerifierMaterialOrNull(reports, request.subject_id);
+  assert(material && material.material_sha256 === request.material_sha256 && materials.computeMaterialSha256(material) === request.material_sha256);
+  fs.readFileSync(path.join(host.root, request.prompt_path), 'utf8');
+  for (const file of material.files) if (file.sha256 !== null) fs.readFileSync(path.join(host.root, file.path));
+  host.load('scripts/utils/component-blueprint-path').loadCanonicalBlueprint(host.root, BLUEPRINT);
+  host.load('scripts/utils/change-unit-path').loadCanonicalChangeUnit(host.root, BLUEPRINT, UNIT);
+  if (phase === 'spec' || phase === 'plan') {
+    const kind = phase === 'spec' ? 'acceptance' : 'contracts';
+    const projected = host.load('scripts/utils/blueprint-skill-projection').deriveBlueprintSkillInput(host.root, context.feature, host.frameworkRoot, kind);
+    assert.equal(projected.state, 'resolved', projected.detail);
+    fs.readFileSync(host.load('config').featureFilePath(host.root, context.feature, kind + '.yaml'), 'utf8');
+  }
+  if (['coding', 'review', 'ut'].includes(phase)) assert.equal(read(host.root, SOURCE), PRODUCT, 'the verifier must read the current implementation only after its author responsibility');
+  if (phase === 'ut') {
+    assert.equal(read(host.root, TEST), TEST_TEXT, 'the verifier must inspect unchanged real assertions');
+    const tap = fs.readFileSync(path.join(reports, 'node-tests.tap'), 'utf8');
+    assert.match(tap, /# tests 2/); assert.match(tap, /# fail 0/); assert.match(tap, /# skipped 0/);
+  }
+  let reply = '受控独立模型替身：已读当前真实request、material列出的可用文件与canonical蓝图/CU；按阶段核当前投影或实现，UT另读真实Node TAP，不改机器检查或完成结论。\n';
+  const strength = phase === 'coding' && script.checks.find((check: any) => check.id === 'coding_existing_test_preserved' && check.affected_files?.includes(TEST));
+  if (strength) {
+    assert.equal(read(host.root, TEST), TEST_TEXT, 'the independent model reads the unchanged current assertions');
+    const original = host.load('scripts/utils/repair-responsibility').codingTestPreservation({ projectRoot: host.root, feature: context.feature, runId: context.runId, file: TEST });
+    if (original.beforeText !== undefined) assert.equal(original.beforeText.trim(), 'export {};', 'the actual original had no tests to delete or weaken');
+    else {
+      const sessions = host.load('scripts/utils/session-execution-handoff');
+      const author = sessions.sessionEvents(context.runDir).find((event: any) => event.type === 'agent_invoke_start' && event.phase === 'work-unit-author');
+      const issued = author && sessions.executionRequestForInvoke(context.runDir, author.invoke_id);
+      const before = issued?.request.pre_snapshot?.entries.find((entry: any) => entry.path === TEST && entry.kind === 'file');
+      assert.equal(before?.sha256, createHash('sha256').update('export {};\n').digest('hex'), 'the signed preimage must prove the original empty module');
+    }
+    reply += '\n```issue-verification\n' + YAML.stringify([{ issue: 'coding_existing_test_preserved', verdict: 'refuted',
+      evidence: [TEST, strength.details, '已核实际前像仅为空模块，当前新增六条原生断言直接核 add/restore 余额与输入不变，没有删除或弱化既有断言。'].join(' | ') }]) + '```\n';
+    assert.equal(host.load('scripts/utils/repair-candidates').testStrengthVerification({ check: strength, verifierReportText: reply, verifierSubjectCurrent: true })?.verdict, 'refuted');
+  }
+  if (phase === 'ut') reply += '| id | status | severity | 证据 |\n|---|---|---|---|\n| end_to_end_driving | PASS | BLOCKER | node:test直接调用LedgerFeature.add/restore |\n| business_assertion_value | PASS | BLOCKER | AC-1真实余额断言，失败保留原TAP |\n';
+  publishFixtureVerifierEvidence({ projectRoot: host.root, feature: context.feature, phase, reportsDir: reports, subjectId: current.verifier_subject_id, reportText: reply, skipSummaryPatch: true });
+}
+
+function assertFrozenInputs(host: Host, context: any): void {
+  const prior = new Map(Object.keys(context.childEnv).map(key => [key, process.env[key]]));
+  try {
+    Object.assign(process.env, context.childEnv);
+    for (const phase of context.chain.slice(0, 1)) {
+      const options = { projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: context.feature, phase,
+        goalRunId: context.runId, goalAttemptId: context.attemptId };
+      const entry = host.load('scripts/utils/capability-resolution-entry-input').resolveCapabilityResolutionEntryInput({ ...options, purpose: 'work-unit-author' });
+      const resolved = host.load('scripts/utils/capability-resolution').resolveCapabilityInputs({ ...options, ...entry, track: 'full' });
+      for (const id of phase === 'spec' ? ['requirement'] : phase === 'plan' ? ['acceptance'] : ['acceptance', 'contracts']) {
+        const value = resolved.inputs?.values[id];
+        assert.equal(value?.state, 'resolved', phase + '/' + id + ': ' + JSON.stringify(value ?? resolved.report));
+      }
+    }
+  } finally { for (const [key, value] of prior) if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+}
+
+function prepare(host: Host, id: string): { options: any; prepared: any; entry: any } {
+  const entry = host.load('scripts/goal-mode-entry');
+  const prepared = entry.prepareGoalModeRun({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: BLUEPRINT, adapter: 'claude', runId: id,
+    requirement: REQUIREMENT, requirementSourceFiles: ['requirements/ledger.md'], requestedResults: [REQUIREMENT], requestedPhases: ['plan', 'coding', 'ut'],
+    unattended: { write_mode: 'full-access', approval_mode: 'never' }, autonomyAuthorized: true });
+  assert(prepared.manifest.initial_design && !prepared.manifest.execution_scope);
+  return { entry, prepared, options: { projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: BLUEPRINT, runId: prepared.manifest.run_id,
+    adapter: 'claude', runMode: 'attended', authorization: { mode: 'goal_mode', autonomyAuthorized: true } } };
+}
+
+async function report(host: Host, control: ReturnType<typeof prepare>, step: any, output: string): Promise<any> {
+  return withRuntimeTest({ root: host.root }, () => control.entry.runGoalModeSessionStep({ ...control.options, requestPath: step.request.path,
+    report: { status: 'passed', phase: step.phase, details: output } }));
+}
+
+const cases = [{
+  name: 'daily design: empty request reaches canonical CU completion with real TypeScript and Node assertions',
+  run: () => withHost(async host => {
+    const control = prepare(host, 'daily-design-complete');
+    let designAuthors = 0, constructionAuthors = 0;
+    let step = await withRuntimeTest({ root: host.root }, () => control.entry.runGoalModeSessionStep(control.options));
+    for (let call = 0; step.type === 'phase_execute_request' && call < 16; call++) {
+      const raw = JSON.parse(fs.readFileSync(step.request.path, 'utf8'));
+      const issued = host.load('scripts/utils/session-execution-handoff').readSessionExecution(raw.context.runDir, step.request.path);
+      assert(issued, 'every actor must consume its actual signed execution original');
+      const context = issued.request.context, phase = context.phase;
+      const currentManifest = JSON.parse(fs.readFileSync(path.join(context.runDir, 'manifest.json'), 'utf8'));
+      assert.equal(currentManifest.requirement, REQUIREMENT, 'the original request stays bound across the real actor family');
+      if (context.feature !== BLUEPRINT) assert.deepEqual(currentManifest.delivery_origin, { feature: BLUEPRINT, run_id: control.prepared.manifest.run_id });
+      if (phase === 'initial-design-author') assert(context.instruction?.includes(REQUIREMENT));
+      if (phase === 'initial-design-questioning') assert(context.instruction?.includes('requirements/ledger.md'), 'blind Q receives the source location before reading it');
+      let output = '已按真实签名请求产出当前作者材料，质量由原检查决定。';
+      if (phase === 'initial-design-author') {
+        assert.equal(++designAuthors, 1, 'normal design returned unexpected author feedback: ' + context.instruction);
+        writeYaml(host.root, `doc/features/${BLUEPRINT}/blueprint/component-blueprint.yaml`, blueprintDraft(host, false));
+      }
+      else if (phase === 'initial-design-questioning') output = questioningReply(host, false);
+      else if (phase === 'initial-design-decomposition') decompose(host);
+      else if (phase.startsWith('initial-design-scope-')) {
+        const feature = host.load('scripts/utils/change-unit-path').deriveChangeUnitFeatureId(BLUEPRINT, UNIT);
+        host.load('scripts/utils/feature-track').prepareFeatureScopeCandidate({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature,
+          completionTarget: 'feature', requestedResults: [REQUIREMENT], requestedPhases: ['plan', 'coding', 'ut'], requirement: REQUIREMENT, requirementSourceFiles: ['requirements/ledger.md'],
+          impact: { userVisibleBehaviorChange: false, reason: '账本内部纯TypeScript能力，不涉及UI或设备', basisPaths: [SOURCE] }, overwrite: true });
+      } else if (phase === 'work-unit-author') {
+        assert.equal(++constructionAuthors, 1, 'normal construction received unexpected repair feedback: ' + context.instruction);
+        unitMaterials(host, context);
+        assertFrozenInputs(host, context);
+      } else if (phase.endsWith('-verifier-format-repair')) verifierReply(host, context, phase.replace(/-verifier-format-repair$/, ''));
+      else assert.fail('unexpected production responsibility: ' + phase);
+      step = await report(host, control, step, output);
+    }
+    assert.notEqual(step.type, 'phase_execute_request', JSON.stringify(step));
+    const units = host.load('scripts/utils/change-unit-path').enumerateCanonicalChangeUnits(host.root, BLUEPRINT);
+    assert.equal(units.length, 1, 'the public decomposition consumer must publish the canonical CU');
+    const feature = host.load('scripts/utils/change-unit-path').deriveChangeUnitFeatureId(BLUEPRINT, UNIT);
+    const assessment = host.load('scripts/utils/feature-assessment').assessFeature(host.root, feature, { frameworkRoot: host.frameworkRoot,
+      ...host.load('scripts/utils/change-unit-completion').resolveChangeUnitExpectedExecution(host.root, feature) });
+    assert(assessment.complete && assessment.record.state === 'ok', JSON.stringify(assessment));
+    assert(host.load('scripts/utils/initial-design-delivery').projectInitialDesignDelivery({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, manifest: control.prepared.manifest }).complete);
+    const tap = fs.readFileSync(path.join(host.load('config').featurePhaseReportsDir(host.root, feature, 'ut', host.frameworkRoot), 'node-tests.tap'), 'utf8');
+    assert.match(tap, /# tests 2/); assert.match(tap, /# fail 0/); assert.match(tap, /# skipped 0/);
+    assert.equal(read(host.root, SOURCE), PRODUCT); assert.equal(read(host.root, TEST), TEST_TEXT);
+  }),
+}, {
+  name: 'daily design: missing reference repair and unchanged denial converge through original feedback',
+  run: async () => {
+    for (const repair of [true, false]) await withHost(async host => {
+      const control = prepare(host, 'daily-design-missing-' + repair);
+      let step = await withRuntimeTest({ root: host.root }, () => control.entry.runGoalModeSessionStep(control.options));
+      assert.equal(step.phase, 'initial-design-author');
+      const blueprintPath = `doc/features/${BLUEPRINT}/blueprint/component-blueprint.yaml`;
+      writeYaml(host.root, blueprintPath, blueprintDraft(host, true));
+      step = await report(host, control, step, '当前真实设计尚引用待确认来源，交独立质询。');
+      assert.equal(step.phase, 'initial-design-questioning', JSON.stringify(step));
+      step = await report(host, control, step, questioningReply(host, true));
+      assert.equal(step.phase, 'initial-design-author', JSON.stringify(step));
+      const original = JSON.parse(fs.readFileSync(step.request.path, 'utf8'));
+      assert(original.context.instruction.includes(MISSING), 'the complete current missing-source denial must reach its original author');
+      if (repair) {
+        const document = YAML.parse(read(host.root, blueprintPath));
+        document.provenance.source_ref = 'src/ledger/LedgerRepository.ts';
+        writeYaml(host.root, blueprintPath, document);
+      }
+      const authorStep = step;
+      step = await report(host, control, step, repair ? '已读取现有Repository，修正设计依据；未伪造缺失文件。' : '已读取完整当前否定，本次原样交回，没有任何改动。');
+      if (repair) {
+        assert.equal(step.phase, 'initial-design-questioning', JSON.stringify(step));
+        step = await report(host, control, step, questioningReply(host, false));
+        assert.equal(step.phase, 'initial-design-decomposition', JSON.stringify(step));
+      } else {
+        assert.equal(step.type, 'goal_session_result', JSON.stringify(step));
+        assert.equal(step.result.halt_reason, 'no_progress_guard');
+        const events = () => host.load('scripts/utils/session-execution-handoff').sessionEvents(control.prepared.runDir);
+        const calls = events().filter((event: any) => event.type === 'agent_invoke_start').length;
+        const repeated = await report(host, control, authorStep, '已读取完整当前否定，本次原样交回，没有任何改动。');
+        assert(repeated.duplicate);
+        const observed = await withRuntimeTest({ root: host.root }, () => control.entry.runGoalModeSessionStep(control.options));
+        assert.equal(observed.result.halt_reason, 'no_progress_guard');
+        assert.equal(events().filter((event: any) => event.type === 'agent_invoke_start').length, calls);
+        assert(!events().some((event: any) => event.type === 'run_end' && event.status === 'COMPLETED'));
+      }
+      assert(!fs.existsSync(path.join(host.root, MISSING)), 'a design source correction must not fabricate the absent dependency');
+    });
+  },
+}, {
+  name: 'daily design: root repair checks real CU consumers, repairs weak authority and bounds unchanged handback',
+  run: async () => {
+    for (const repair of [false, true]) await withHost(async host => {
+      const control = prepare(host, 'daily-design-authority-' + repair);
+      const canonical = `doc/features/${BLUEPRINT}/blueprint/component-blueprint.yaml`;
+      const draft = `${control.prepared.manifest.report_dir}/design-repair/component-blueprint.yaml`;
+      const logical = (doc: any) => doc.design_views.find((view: any) => view.view_id === 'logical').nodes[0];
+      let authors = 0, step = await withRuntimeTest({ root: host.root }, () => control.entry.runGoalModeSessionStep(control.options));
+      for (let turn = 0; step.type === 'phase_execute_request' && turn < 10; turn++) {
+        if (step.phase === 'work-unit-author') break;
+        const phase = step.phase;
+        let output = '实际作者材料已交回，由原检查决定是否完成。';
+        if (phase === 'initial-design-author') {
+          const doc = blueprintDraft(host, false); logical(doc).provenance.evidence_strength = 'observed';
+          writeYaml(host.root, canonical, doc);
+        } else if (phase === 'initial-design-questioning') output = questioningReply(host, false);
+        else if (phase === 'initial-design-decomposition') decompose(host);
+        else if (phase === 'design-repair-author') {
+          authors++;
+          const request = JSON.parse(fs.readFileSync(step.request.path, 'utf8'));
+          assert(request.context.instruction.includes('authority_target_provenance_missing'), 'the real CU consumer gap must reach its design owner');
+          if (repair) { const doc = YAML.parse(read(host.root, draft)); logical(doc).provenance.evidence_strength = 'authoritative'; writeYaml(host.root, draft, doc); }
+        } else if (phase === 'design-repair-questioning') output = questioningReply(host, false, draft);
+        else if (phase.startsWith('initial-design-scope-')) {
+          const feature = host.load('scripts/utils/change-unit-path').deriveChangeUnitFeatureId(BLUEPRINT, UNIT);
+          host.load('scripts/utils/feature-track').prepareFeatureScopeCandidate({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature,
+            completionTarget: 'feature', requestedResults: [REQUIREMENT], requestedPhases: ['plan', 'coding', 'ut'], requirement: REQUIREMENT, requirementSourceFiles: ['requirements/ledger.md'],
+            impact: { userVisibleBehaviorChange: false, reason: '账本内部纯TypeScript能力，不涉及UI或设备', basisPaths: [SOURCE] }, overwrite: true });
+        } else assert.fail('unexpected design repair responsibility: ' + phase);
+        step = await report(host, control, step, output);
+      }
+      const events = host.load('scripts/utils/session-execution-handoff').sessionEvents(control.prepared.runDir);
+      const published = events.filter((event: any) => event.type === 'design_authority_repair' && event.stage === 'published');
+      assert(authors > 0 && authors <= 2, 'the owner receives the actual deficit without an unbounded retry');
+      if (repair) {
+        assert.equal(step.phase, 'work-unit-author', JSON.stringify(step));
+        assert.equal(published.length, 1, 'one actual business repair publishes once');
+        assert.equal(published[0].outcome, 'recovered');
+        const request = JSON.parse(fs.readFileSync(step.request.path, 'utf8'));
+        unitMaterials(host, request.context);
+        assertFrozenInputs(host, request.context);
+      } else {
+        assert.equal(step.type, 'goal_session_result', JSON.stringify(step));
+        assert.equal(step.result.status, 'waiting');
+        assert(['no_progress_guard', 'executor_waiting'].includes(step.result.halt_reason), JSON.stringify(step));
+        if (step.result.halt_reason === 'executor_waiting') assert.match(step.result.recovery.halt_guidance, /没有新的可执行工作/);
+        assert.equal(published.length, 0, 'unchanged weak authority cannot be mechanically republished');
+        const calls = events.filter((event: any) => event.type === 'agent_invoke_start').length;
+        await withRuntimeTest({ root: host.root }, () => control.entry.runGoalModeSessionStep(control.options));
+        const after = host.load('scripts/utils/session-execution-handoff').sessionEvents(control.prepared.runDir);
+        assert.equal(after.filter((event: any) => event.type === 'agent_invoke_start').length, calls, 'unchanged reentry cannot purchase another author or Q');
+        assert.equal(after.filter((event: any) => event.type === 'design_authority_repair' && event.stage === 'published').length, 0);
+      }
+    });
+  },
+}];
+
+export const listCaseGroups = () => unitCaseGroups(cases.map(test => test.name));
+export async function runSelectedCases(selector?: string) {
+  const results: UnitCaseResult[] = [], timings: UnitExecutionTiming[] = [];
+  for (const test of cases) if (matchesUnitCase(test.name, selector)) {
+    const finish = startCaseTiming([test.name], timings);
+    try { await test.run(); results.push({ name: test.name, ok: true }); }
+    catch (error) { results.push({ name: test.name, ok: false, error: error instanceof Error ? error.stack : String(error) }); }
+    finally { finish(); }
+  }
+  return selectedUnitCases(results, selector, timings);
+}
+export const runAll = async () => (await runSelectedCases()).results;

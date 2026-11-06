@@ -12,7 +12,7 @@ import { clearFrameworkConfigCache, featureFilePath } from '../../config';
 import { SNAPSHOT_CU_FEATURE } from '../fixtures/host-snapshot-3.1.0/generate';
 import { loadMigratedHostSnapshot } from '../fixtures/host-snapshot-3.1.0/migrate';
 import { loadEffectiveExecutionScope, resolveEffectiveScopeSource } from '../../scripts/utils/goal-run-creation';
-import { matchesUnitCase, selectedUnitCases } from '../utils/unit-case-selection';
+import { matchesUnitCase, selectedUnitCases, unitCaseGroups } from '../utils/unit-case-selection';
 import { runlessCompletionThenRevision, setupRunlessProject } from './execution-scope.unit.test';
 import {
   assessObservation,
@@ -628,3 +628,5 @@ async function executeCases(selector?: string): Promise<UnitCaseResult[]> {
 
 export const runAll = () => executeCases();
 export const runSelectedCases = async (selector?: string) => selectedUnitCases(await executeCases(selector), selector, []);
+export const listCaseGroups = () => unitCaseGroups(cases.map(test => test.name))
+  .map(group => ({ ...group, releaseOnly: group.caseNames.some(name => /^(?:D-2|a2f7c9e4)/.test(name)) }));

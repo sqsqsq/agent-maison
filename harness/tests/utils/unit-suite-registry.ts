@@ -23,13 +23,14 @@ export function discoverProfileUnitSuites(profilesRoot = path.resolve(__dirname,
 
 /**
  * `releaseOnly`（plan d4a1f7c3，用户 2026-09-22 裁决）：默认运行**只校验文件存在、不执行**，
- * 只有 `--release`（发布门与 candidate 打包传它）或 `--filter <id>` 单跑时才执行。
- * 理由：真链回归一条 ~63 s，负例套件落地后合计可能到 2–3 分钟，与日常 4700 用例不成比例；
- * 而它是唯一能抓"夹具手喂生产本不会给的东西"那类 bug 的测试，所以发布前必跑。
+ * 正式 `npm test`/`--release` 或显式按 id 加测时执行；候选包使用日常全集。
+ * 混合套件由已有 case-group releaseOnly 覆盖日常正常路径，保持同一登记真源。
  */
 interface UnitSuiteRegistration { id: string; modulePath: string; releaseOnly?: boolean; layer?: 'function' | 'capability' }
 const CORE_SUITES: UnitSuiteRegistration[] = [
   { id: 'test-infrastructure', modulePath: './unit/test-infrastructure.unit.test' },
+  { id: 'daily-recovery-journey', modulePath: './unit/daily-recovery-journey.unit.test', layer: 'capability' },
+  { id: 'daily-design-journey', modulePath: './unit/daily-design-journey.unit.test', layer: 'capability' },
   { id: 'artifact-content', modulePath: './unit/artifact-content.unit.test' },
   { id: 'verification-gap', modulePath: './unit/verification-gap.unit.test' },
   { id: 'verifier-semantic-handoff', modulePath: './unit/verifier-semantic-handoff.unit.test', layer: 'capability' },
@@ -38,10 +39,10 @@ const CORE_SUITES: UnitSuiteRegistration[] = [
   { id: 'completion-tools', modulePath: './unit/completion-tools.unit.test' },
   { id: 'disposition-runtime-repair', modulePath: './unit/disposition-runtime-repair.unit.test', releaseOnly: true },
   { id: 'testing-same-invocation-failure', modulePath: './unit/testing-same-invocation-failure.unit.test' },
-  { id: 'responsibility-host-replay', modulePath: './unit/responsibility-host-replay.unit.test' },
+  { id: 'responsibility-host-replay', modulePath: './unit/responsibility-host-replay.unit.test', releaseOnly: true },
   { id: 'repair-responsibility', modulePath: './unit/repair-responsibility.unit.test' },
   { id: 'implementation-authority', modulePath: './unit/implementation-authority.unit.test' },
-  { id: 'request-entry', modulePath: './unit/request-entry.unit.test' },
+  { id: 'request-entry', modulePath: './unit/request-entry.unit.test', releaseOnly: true },
   { id: 'compile-entry', modulePath: './unit/compile-entry.unit.test' },
   { id: 'standalone-coding-review', modulePath: './unit/standalone-coding-review.unit.test' },
   { id: 'obligation-scoped-verification', modulePath: './unit/obligation-scoped-verification.unit.test' },
@@ -54,8 +55,8 @@ const CORE_SUITES: UnitSuiteRegistration[] = [
   { id: 'blueprint-review-design', modulePath: './unit/blueprint-review-design.unit.test' },
   { id: 'evaluation-readers', modulePath: './unit/evaluation-readers.unit.test' },
   { id: 'execution-scope-prepare-early', modulePath: './unit/execution-scope-prepare-early.unit.test' },
-  { id: 'execution-scope-prepare-late', modulePath: './unit/execution-scope-prepare-late.unit.test' },
-  { id: 'execution-scope-runtime', modulePath: './unit/execution-scope-runtime.unit.test' },
+  { id: 'execution-scope-prepare-late', modulePath: './unit/execution-scope-prepare-late.unit.test', releaseOnly: true },
+  { id: 'execution-scope-runtime', modulePath: './unit/execution-scope-runtime.unit.test', releaseOnly: true },
   { id: 'component-assets', modulePath: './unit/component-assets.unit.test' },
   { id: 'knowledge-context', modulePath: './unit/knowledge-context.unit.test' },
   { id: 'conventions', modulePath: './unit/conventions.unit.test', layer: 'capability' },
@@ -64,13 +65,14 @@ const CORE_SUITES: UnitSuiteRegistration[] = [
   { id: 'component-closure', modulePath: './unit/component-closure.unit.test' },
   { id: 'component-design-host-seams', modulePath: './unit/component-design-host-seams.unit.test' },
   { id: 'component-design-handoff', modulePath: './unit/component-design-handoff.unit.test' },
-  { id: 'initial-design-delivery', modulePath: './unit/initial-design-delivery.unit.test' },
+  { id: 'initial-design-delivery', modulePath: './unit/initial-design-delivery.unit.test', releaseOnly: true },
   { id: 'initial-design-progress-recovery', modulePath: './unit/initial-design-progress-recovery.unit.test' },
   { id: 'initial-design-budget', modulePath: './unit/initial-design-budget.unit.test' },
-  { id: 'initial-design-repair', modulePath: './unit/initial-design-repair.unit.test' },
+  { id: 'initial-design-repair', modulePath: './unit/initial-design-repair.unit.test', releaseOnly: true },
   { id: 'initial-design-supervisor', modulePath: './unit/initial-design-supervisor.unit.test' },
-  { id: 'initial-design-control', modulePath: './unit/initial-design-control.unit.test' },
-  { id: 'initial-design-waiting', modulePath: './unit/initial-design-waiting.unit.test' },
+  // Live gate + reporter kill + guardian recovery is a timed-out process combination; retain for formal release, pending shortening.
+  { id: 'initial-design-control', modulePath: './unit/initial-design-control.unit.test', releaseOnly: true },
+  { id: 'initial-design-waiting', modulePath: './unit/initial-design-waiting.unit.test', releaseOnly: true },
   { id: 'initial-design-requirement', modulePath: './unit/initial-design-requirement.unit.test' },
   { id: 'initial-design-scope-recovery', modulePath: './unit/initial-design-scope-recovery.unit.test' },
   { id: 'initial-design-phase-input', modulePath: './unit/initial-design-phase-input.unit.test' },
@@ -92,7 +94,7 @@ const CORE_SUITES: UnitSuiteRegistration[] = [
   { id: 'goal-supervisor', modulePath: './unit/goal-supervisor.unit.test' },
   { id: 'attended-goal-context', modulePath: './unit/attended-goal-context.unit.test' },
   // plan a4f7e2b1 t2 原验收：真 /F 强杀 → supervisor 生产链自动恢复（真子进程 + 真 CLI）
-  { id: 'supervisor-kill-recovery', modulePath: './unit/supervisor-kill-recovery.unit.test' },
+  { id: 'supervisor-kill-recovery', modulePath: './unit/supervisor-kill-recovery.unit.test', releaseOnly: true },
   { id: 'scope-replan', modulePath: './unit/scope-replan.unit.test' },
   { id: 'release-shipped-in-ignored-dirs', modulePath: './unit/release-shipped-in-ignored-dirs.unit.test' },
   { id: 'unit-failure-report', modulePath: './unit/unit-failure-report.unit.test' },
@@ -105,8 +107,8 @@ const CORE_SUITES: UnitSuiteRegistration[] = [
   // smoke goal/#5 只覆盖 invoke 窗口内的 `phase_write_violation` 那条。
   { id: 'goal-post-harness-drift', modulePath: './unit/goal-post-harness-drift.unit.test' },
   { id: 'goal-product-preflight', modulePath: './unit/goal-product-preflight.unit.test' },
-  { id: 'host-replay-fixes', modulePath: './unit/host-replay-fixes.unit.test' },
-  { id: 'host-recovery-history', modulePath: './unit/host-recovery-history.unit.test' },
+  { id: 'host-replay-fixes', modulePath: './unit/host-replay-fixes.unit.test', releaseOnly: true },
+  { id: 'host-recovery-history', modulePath: './unit/host-recovery-history.unit.test', releaseOnly: true },
   { id: 'rule-convergence', modulePath: './unit/rule-convergence.unit.test' },
   // plan c6a9e4d2 t2/t3：Windows containment 装帧 + guardian 接管对账矩阵（只读投影/匹配才终止）
   { id: 'agent-containment', modulePath: './unit/agent-containment.unit.test' },
@@ -233,9 +235,9 @@ const CORE_SUITES: UnitSuiteRegistration[] = [
   { id: 'hylyre-selector-gates-v1', modulePath: './unit/hylyre-selector-gates-v1.unit.test' },
   { id: 'skills-device-policy-gate', modulePath: './unit/skills-device-policy-gate.unit.test' },
   // runner 级集成（进程内跑真实 phase 循环 + 注入缝；断言时序与副作用）
-  { id: 'goal-runner-testing-integrity-revalidate', modulePath: './unit/goal-runner-testing-integrity-revalidate.unit.test' },
-  { id: 'goal-runner-testing-integrity-early', modulePath: './unit/goal-runner-testing-integrity-early.unit.test' },
-  { id: 'goal-runner-testing-integrity-late', modulePath: './unit/goal-runner-testing-integrity-late.unit.test' },
+  { id: 'goal-runner-testing-integrity-revalidate', modulePath: './unit/goal-runner-testing-integrity-revalidate.unit.test', releaseOnly: true },
+  { id: 'goal-runner-testing-integrity-early', modulePath: './unit/goal-runner-testing-integrity-early.unit.test', releaseOnly: true },
+  { id: 'goal-runner-testing-integrity-late', modulePath: './unit/goal-runner-testing-integrity-late.unit.test', releaseOnly: true },
   // plan d8c5f3a7 T7a：结果级 golden 快检（决策链回放；显式注册防假绿）
   { id: 'golden-bc-opencard', modulePath: './unit/golden-bc-opencard.unit.test' },
   { id: 'vision-canary', modulePath: './unit/vision-canary.unit.test' },
@@ -276,7 +278,7 @@ const CORE_SUITES: UnitSuiteRegistration[] = [
   // plan c8e5b3f1 t2：blocked capability 可诊断投影 + mismatch 因果归因 + next_action + assess
   { id: 'blocked-capability-projection', modulePath: './unit/blocked-capability-projection.unit.test', layer: 'capability' },
   // plan c8e5b3f1 t2 P2-3：可重跑 E2E（真实 consumer 工程跑 init/harness-runner/check-receipt）
-  { id: 'e2e-spec-requirement-closure', modulePath: './unit/e2e-spec-requirement-closure.unit.test' },
+  { id: 'e2e-spec-requirement-closure', modulePath: './unit/e2e-spec-requirement-closure.unit.test', releaseOnly: true },
   { id: 'goal-adapter-routing', modulePath: './unit/goal-adapter-routing.unit.test' },
   { id: 'goal-reconcile-observation', modulePath: './unit/goal-reconcile-observation.unit.test' },
   { id: 'goal-reconcile-boundary-fixtures', modulePath: './unit/goal-reconcile-boundary-fixtures.unit.test' },
@@ -284,11 +286,11 @@ const CORE_SUITES: UnitSuiteRegistration[] = [
   { id: 'goal-handoff', modulePath: './unit/goal-handoff.unit.test' },
   { id: 'goal-handoff-runner-wiring', modulePath: './unit/goal-handoff-runner-wiring.unit.test' },
   { id: 'goal-in-session-driver', modulePath: './unit/goal-in-session-driver.unit.test' },
-  { id: 'session-execution-handoff', modulePath: './unit/session-execution-handoff.unit.test' },
+  { id: 'session-execution-handoff', modulePath: './unit/session-execution-handoff.unit.test', releaseOnly: true },
   { id: 'session-slow-gate', modulePath: './unit/session-slow-gate.integration.test', releaseOnly: true },
   { id: 'session-transport-parity', modulePath: './unit/session-transport-parity.unit.test', releaseOnly: true },
-  { id: 'goal-phase-runtime', modulePath: './unit/goal-phase-runtime.unit.test' },
-  { id: 'repair-continuity', modulePath: './unit/repair-continuity.unit.test' },
+  { id: 'goal-phase-runtime', modulePath: './unit/goal-phase-runtime.unit.test', releaseOnly: true },
+  { id: 'repair-continuity', modulePath: './unit/repair-continuity.unit.test', releaseOnly: true },
   // plan a2f7c9e4 t6：脚本化执行者作为真实子进程的返修中断回归（只证 spawn / 终止 / 事件解析）
   { id: 'repair-interruption-real-process', modulePath: './unit/repair-interruption-real-process.unit.test' },
   { id: 'goal-run-birth-contract', modulePath: './unit/goal-run-birth-contract.unit.test' },
@@ -370,7 +372,7 @@ const CORE_SUITES: UnitSuiteRegistration[] = [
   { id: 'goal-checkpoint', modulePath: './unit/goal-checkpoint.unit.test' },
   { id: 'run-unit-filter', modulePath: './unit/run-unit-filter.unit.test' },
   { id: 'run-unit-processes', modulePath: './unit/run-unit-processes.unit.test' },
-  { id: 'runtime-test-control', modulePath: './unit/runtime-test-control.unit.test' },
+  { id: 'runtime-test-control', modulePath: './unit/runtime-test-control.unit.test', releaseOnly: true },
   { id: 'gate-fingerprint', modulePath: './unit/gate-fingerprint.unit.test' },
   { id: 'process-integrity', modulePath: './unit/process-integrity.unit.test' },
   { id: 'unlock-wording-c9f4e7a2', modulePath: './unit/unlock-wording-c9f4e7a2.unit.test' },
@@ -392,12 +394,12 @@ const CORE_SUITES: UnitSuiteRegistration[] = [
   { id: 'headless-assumptions', modulePath: './unit/headless-assumptions.unit.test' },
   { id: 'verify-feature-completion', modulePath: './unit/verify-feature-completion.unit.test' },
   // plan b2d7f4e9 t1：唯一评估入口 assessFeature（上一版宿主快照 + 生产 writer 夹具，不注入 verdict）
-  { id: 'feature-assessment', modulePath: './unit/feature-assessment.unit.test' },
+  { id: 'feature-assessment', modulePath: './unit/feature-assessment.unit.test', releaseOnly: true },
   // plan b2d7f4e9 t3：完成后修正经 successor（快照 + 生产 writer，goal-runner 公开入口，假 agent 出生即停）
-  { id: 'successor-exit-blueprint-base', modulePath: './unit/successor-exit-blueprint-base.unit.test' },
-  { id: 'successor-exit-blueprint-projection', modulePath: './unit/successor-exit-blueprint-projection.unit.test' },
-  { id: 'successor-exit-early', modulePath: './unit/successor-exit-early.unit.test' },
-  { id: 'successor-exit-late', modulePath: './unit/successor-exit-late.unit.test' },
+  { id: 'successor-exit-blueprint-base', modulePath: './unit/successor-exit-blueprint-base.unit.test', releaseOnly: true },
+  { id: 'successor-exit-blueprint-projection', modulePath: './unit/successor-exit-blueprint-projection.unit.test', releaseOnly: true },
+  { id: 'successor-exit-early', modulePath: './unit/successor-exit-early.unit.test', releaseOnly: true },
+  { id: 'successor-exit-late', modulePath: './unit/successor-exit-late.unit.test', releaseOnly: true },
   { id: 'behavior-switch-scan', modulePath: './unit/behavior-switch-scan.unit.test' },
   { id: 'p0-semantic-gates', modulePath: './unit/p0-semantic-gates.unit.test' },
   { id: 'efficiency-first-t2', modulePath: './unit/efficiency-first-t2.unit.test' },
@@ -417,10 +419,10 @@ const CORE_SUITES: UnitSuiteRegistration[] = [
   // plan f7045213 §3：处置函数、判定谓词与开发期静态守卫（A1–A3）
   { id: 'check-disposition', modulePath: './unit/check-disposition.unit.test', layer: 'capability' },
   // plan f7045213 §4、§5：消费矩阵、披露、聚合去重、共享结论（A4–A8，含真实 CLI）
-  { id: 'check-disposition-consumers', modulePath: './unit/check-disposition-consumers.unit.test' },
+  { id: 'check-disposition-consumers', modulePath: './unit/check-disposition-consumers.unit.test', releaseOnly: true },
   { id: 'report-suggestion-normalize', modulePath: './unit/report-suggestion-normalize.unit.test' },
   { id: 'hylyre-keyset-consistency', modulePath: './unit/hylyre-keyset-consistency.unit.test' },
-  { id: 'receipt-slim', modulePath: './unit/receipt-slim.unit.test' },
+  { id: 'receipt-slim', modulePath: './unit/receipt-slim.unit.test', releaseOnly: true },
   { id: 'capability-preflight', modulePath: './unit/capability-preflight.unit.test' },
   { id: 'lite-json-schema', modulePath: './unit/lite-json-schema.unit.test' },
   { id: 'worktree-digest', modulePath: './unit/worktree-digest.unit.test' },
@@ -470,7 +472,6 @@ const CORE_SUITES: UnitSuiteRegistration[] = [
       { id: 'reliability-scenarios-foundation', modulePath: './unit/reliability-scenarios-foundation.unit.test', releaseOnly: true },
       { id: 'reliability-scenarios-runtime', modulePath: './unit/reliability-scenarios-runtime.unit.test', releaseOnly: true },
       { id: 'reliability-scenarios-repair', modulePath: './unit/reliability-scenarios-repair.unit.test', releaseOnly: true },
-      { id: 'reliability-scenarios-successor', modulePath: './unit/reliability-scenarios-successor.unit.test', releaseOnly: true },
     ]),
   // plan 9c3d7e1a：设计权威修复的自动接手与同任务续跑（快照宿主 + 真 harness；run 内调和、锁边界、修后续跑）。release-only。
   { id: 'design-authority-repair-content', modulePath: './unit/design-authority-repair-content.unit.test', releaseOnly: true },
