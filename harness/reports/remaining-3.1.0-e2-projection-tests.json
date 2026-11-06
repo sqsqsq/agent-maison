@@ -1,0 +1,62 @@
+{
+  "mode": "workers",
+  "workers": 12,
+  "scope": {
+    "filter": "blueprint-review-design",
+    "release": false,
+    "caseNameFilter": "questioning outcomes",
+    "suiteIds": [
+      "blueprint-review-design"
+    ]
+  },
+  "wallMs": 2757.6448,
+  "ok": true,
+  "suites": [
+    {
+      "id": "blueprint-review-design",
+      "releaseOnly": false,
+      "status": "completed",
+      "ok": true,
+      "loadMs": 2090.1085000000003,
+      "executionMs": 1335.7251999999999,
+      "totalMs": 4257.1893,
+      "results": [
+        {
+          "name": "questioning outcomes replay actual initial process and repair session originals, preserve invalid-round bytes and open relative links",
+          "ok": true
+        },
+        {
+          "name": "questioning outcomes require explicit valid closure, ignore dirty returns, and support legacy process originals",
+          "ok": true
+        },
+        {
+          "name": "questioning outcomes without an associated run disclose only blueprint unresolved facts",
+          "ok": true
+        }
+      ],
+      "startupMs": 1102.6007,
+      "matchedCaseCount": 3,
+      "executionTimings": [
+        {
+          "caseNames": [
+            "questioning outcomes replay actual initial process and repair session originals, preserve invalid-round bytes and open relative links"
+          ],
+          "durationMs": 713.9891000000001
+        },
+        {
+          "caseNames": [
+            "questioning outcomes require explicit valid closure, ignore dirty returns, and support legacy process originals"
+          ],
+          "durationMs": 443.51260000000013
+        },
+        {
+          "caseNames": [
+            "questioning outcomes without an associated run disclose only blueprint unresolved facts"
+          ],
+          "durationMs": 175.90109999999993
+        }
+      ],
+      "cleanupMs": 0.1698999999998705
+    }
+  ]
+}
