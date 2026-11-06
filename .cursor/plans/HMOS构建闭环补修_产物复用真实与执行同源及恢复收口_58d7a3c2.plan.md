@@ -21,7 +21,7 @@ todos:
     status: completed
   - id: t5-integrated-acceptance
     content: 按 §7 完成生产调用链定向回归、每轮 test:changed、一次计划收口 npm test 及相关规范/计划校验；三项整体完成、统一验收交接，不设分项交付停点，不以隔离结果宣称真实宿主签名服务根因或发布完成。
-    status: in_progress
+    status: completed
 ---
 
 # HMOS 构建闭环补修
@@ -260,3 +260,7 @@ suggestion 和实际处置消费者要一并核对，不能只改提示文字而
 开发验收不等于发布或真实宿主交付：没有运行原签名服务/真机的事实必须披露。
 后续真实宿主与设备观察沿既有联合验收安排，不为本批新增独立宿主试验工程、模型学习验收
 或未获授权的设备动作；不得把开发夹具说成 400 根因已经查明。
+
+## 实施记录（2026-11-06）
+
+本批实现已于 `cf66a837` 提交。按现行 AGENTS.md，普通 plan 以 `npm run test:daily` 日常全集及本批必要验证收口。本批专项回归与 CLI 复核结果见[验收记录](../../harness/reports/58d7a3c2/acceptance.md)。测试治理提交 `240c75dd` 的候选在父提交 `886cbef5` 之上完成日常全集，918 组、5,352 通过、0 失败，受测输入包含本批实现。据此完成本 plan 验收。正式全量留在发布门执行。见[主干候选验收记录](../../harness/reports/6a2f8c91/main-candidate-acceptance.md)。
