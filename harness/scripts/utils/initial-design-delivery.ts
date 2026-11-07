@@ -319,7 +319,7 @@ export function readInitialDesignDelivery(input: { projectRoot: string; framewor
       phase: 'component-design', providerState: input.providerState ?? 'unknown' }));
     const state = { ...base, blueprintIssues, disposition };
     const feedback = [...blueprintIssues.filter(issue => issue.severity === 'BLOCKER').map(issue => `${issue.id} ${issue.path}: ${issue.message}`),
-      ...denied.map(item => `独立质询否定 ${String(item.scope_ref)}：${String(item.question)}；${String(item.answer ?? "")}；由设计作者修复，原独立质询再核。`)];
+      ...denied.map(item => `独立质询否定 ${String(item.scope_ref)}：${String(item.question)}；${String(item.answer ?? "")}；verification_refs=${JSON.stringify(item.verification_refs ?? [])}；由设计作者修复，原独立质询再核。`)];
     const units = enumerateCanonicalChangeUnits(input.projectRoot, input.manifest.feature);
     const inspection = inspectActiveChangeUnitRuns(input.projectRoot, units.map(item => asChangeUnitArtifact(item.changeUnit)));
     if (inspection.active.length) {

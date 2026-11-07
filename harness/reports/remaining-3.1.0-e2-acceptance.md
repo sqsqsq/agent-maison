@@ -14,3 +14,11 @@
 `test:changed` 已通过：1 个实跑组、1 passed / 0 failed、复用 924 组，424 个正式组未执行；另有投影 3/3。Claude 实际模型 `claude-opus-5-5`，无必须修复意见。现场 blocker 没有独立 `answer` 字段，单独的 `verification_refs` 数组尚未拼入作者指令；因此只证明原问题全文送达，不声称转发了整个原对象。脚本现支持 `--verify-existing` 重新核对保存的真实结果，并只检查存在的文本字段。
 
 本批最终全量在总交接报告统一登记；`verify-design-loop` 维持 in_progress，等 P4 的一次完整全量及红项处置结束后按实际结果收口。宿主上原 run 的真实续作仍未执行。
+
+## 检视返修复验（2026-11-06）
+
+修正首轮只证明问题正文的缺口：现在每项否定在作者反馈中携带自己的完整 `verification_refs` 数组。回放脚本只有在 scope、question、可选 answer 和整个原数组均通过断言后，才写 `fullDenialDelivered: true`；旧首轮结果仅作历史问题正文证据，不作为依据数组已送达的证明。
+
+执行 `node harness/reports/remaining-3.1.0-e2-replay.cjs --replay-existing`，从原先保留的两个隔离副本再建副本，用其 Git 基线恢复原始事件和蓝图，未重新读取宿主、未接续原副本上的新作者。正式入口结果：i16 的9项否定共99条依据、i170的12项共168条依据全部逐项送达，缺失均为0；仍只签发作者i17/i173，没有新质询。历史尾部、i1作者原稿和两个来源副本的复制源字节均未变；评审投影仍为9/12个未决blocker。
+
+见[返修复验结果](remaining-3.1.0-e2-review-verified.json)。e2定向14/14通过，含大正文真实进程、格式恢复、有效否定与scope收敛；最终影响验证和Claude只读复核见总交接报告。本次未运行完整全量或打包，收口todo继续依实际门禁保留。

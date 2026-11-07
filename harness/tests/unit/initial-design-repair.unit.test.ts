@@ -1169,12 +1169,13 @@ const timer=setInterval(()=>{const bound=process.platform!=='win32'||fs.readFile
   }
   const items = structuredClone(doc.review_summary.questioning.items) as Document[];
   const denied = items.slice(0, 2);
-  denied.forEach((item, index) => Object.assign(item, { disposition: 'blocker', question: `原问题-${index}`, answer: `完整否定依据-${index}\n第二段依据-${index}` }));
+  denied.forEach((item, index) => Object.assign(item, { disposition: 'blocker', question: `原问题-${index}`, answer: `完整否定依据-${index}\n第二段依据-${index}`,
+    verification_refs: [...(item.verification_refs ?? []), 'src/ledger/LedgerRepository.ts'] }));
   const output = mode === 'bare-items' ? JSON.stringify(items) : 'Independent review complete.\n```json\n' + JSON.stringify({ items }) + '\n```';
   await report(output);
   assert.equal(next.phase, 'initial-design-author', 'missing reference and fenced output must deliver all real denials directly to the author');
   const author = readSessionExecution(runDir, (next.request as { path: string }).path)!;
-  for (const item of denied) for (const text of [item.scope_ref, item.question, item.answer]) assert(author.request.context.instruction!.includes(text));
+  for (const item of denied) for (const text of [item.scope_ref, item.question, item.answer, JSON.stringify(item.verification_refs)]) assert(author.request.context.instruction!.includes(text));
   if (mode === 'format' || mode === 'bare-items') {
     const question = events().filter(event => event.type === 'agent_invoke_start' && event.phase === 'initial-design-questioning').at(-1)!;
     assert.equal(fs.readFileSync(path.join(runDir, 'phases', question.phase, question.invoke_id, 'questioning-output.json'), 'utf8'), output);

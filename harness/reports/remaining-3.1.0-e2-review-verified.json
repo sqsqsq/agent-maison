@@ -1,0 +1,64 @@
+{
+  "sourceCopiesUnchanged": true,
+  "hostRead": false,
+  "copiedOriginalFiles": 8656,
+  "rows": [
+    {
+      "scenario": "after-i16",
+      "latestValid": "initial-design-questioning-i16",
+      "blockers": 9,
+      "scopes": [
+        "view:logical",
+        "view:runtime",
+        "flow:flow-open-card-store",
+        "view:development",
+        "view:deployment",
+        "view:scenarios",
+        "app_lens:state_owners",
+        "app_lens:initialization",
+        "terminology:current_scope_items"
+      ],
+      "questionTextDelivered": true,
+      "answerFieldsPresent": 0,
+      "separateVerificationRefsForwarded": true,
+      "verificationRefs": 99,
+      "missingVerificationRefs": 0,
+      "authorI1Preserved": true,
+      "phase": "initial-design-author",
+      "projectionOutcomes": {
+        "blocker": 9
+      },
+      "originalTailPreserved": true
+    },
+    {
+      "scenario": "actual-i172",
+      "latestValid": "initial-design-questioning-i170",
+      "blockers": 12,
+      "scopes": [
+        "view:logical",
+        "view:runtime",
+        "flow:flow-open-card-store",
+        "view:development",
+        "view:deployment",
+        "view:scenarios",
+        "app_lens:data_producers_consumers",
+        "app_lens:lifecycle_triggers",
+        "app_lens:state_owners",
+        "app_lens:initialization",
+        "app_lens:publication_subscription",
+        "terminology:current_scope_items"
+      ],
+      "questionTextDelivered": true,
+      "answerFieldsPresent": 0,
+      "separateVerificationRefsForwarded": true,
+      "verificationRefs": 168,
+      "missingVerificationRefs": 0,
+      "authorI1Preserved": true,
+      "phase": "initial-design-author",
+      "projectionOutcomes": {
+        "blocker": 12
+      },
+      "originalTailPreserved": true
+    }
+  ]
+}
