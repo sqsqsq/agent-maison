@@ -1,0 +1,42 @@
+{
+  "mode": "workers",
+  "workers": 12,
+  "scope": {
+    "filter": "initial-design-repair",
+    "release": true,
+    "caseNameFilter": "initial questioning smaller-scopes",
+    "suiteIds": [
+      "initial-design-repair"
+    ]
+  },
+  "wallMs": 24512.7258,
+  "ok": true,
+  "suites": [
+    {
+      "id": "initial-design-repair",
+      "releaseOnly": true,
+      "status": "completed",
+      "ok": true,
+      "loadMs": 1119.8503,
+      "executionMs": 21892.6748,
+      "totalMs": 23433.9877,
+      "results": [
+        {
+          "name": "e2a4145e initial questioning smaller-scopes uses real signed feedback author and independent recheck",
+          "ok": true
+        }
+      ],
+      "startupMs": 1502.2169000000004,
+      "matchedCaseCount": 1,
+      "executionTimings": [
+        {
+          "caseNames": [
+            "e2a4145e initial questioning smaller-scopes uses real signed feedback author and independent recheck"
+          ],
+          "durationMs": 21891.7377
+        }
+      ],
+      "cleanupMs": 0.26459999999860884
+    }
+  ]
+}

@@ -18,6 +18,7 @@ import {
   isBlockingCheck,
   resolveCheckDisposition,
   resolveCurrentDisposition,
+  renderCurrentDisposition,
   type DispositionEntry,
 } from '../../scripts/utils/check-disposition';
 import {
@@ -450,12 +451,17 @@ const cases: Array<{ name: string; run: () => void }> = [
         endpoint: 'feature-completion',
         phases: [{
           ...base,
-          failingChecks: [{ id: 'p0_semantic_coverage_integrity', status: 'FAIL', severity: 'BLOCKER' }],
+          failingChecks: [{ id: 'p0_semantic_coverage_integrity', status: 'FAIL', severity: 'BLOCKER',
+            details: 'P4 actual AC-1 still fails', affected_files: ['src/current.ts'] }],
           axes: { visual: { applicable: true, required_for_release: true, verdict: 'UNVERIFIED' } },
         }],
       });
       assert.strictEqual(hard.completionEligible, false, '真实硬失败不得被同场披露覆盖');
       assert(hard.completionBlocking.some(p => p.id === 'p0_semantic_coverage_integrity'));
+      const feedback = renderCurrentDisposition(hard);
+      for (const fact of ['p0_semantic_coverage_integrity', 'P4 actual AC-1 still fails', 'src/current.ts']) {
+        assert(feedback.includes(fact), 'raw PASS cannot erase the actual failed object from author feedback: ' + fact);
+      }
     },
   },
   {

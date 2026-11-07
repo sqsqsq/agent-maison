@@ -1,0 +1,8 @@
+请用中文只读检视P4本批变更，不使用子代理，不读任何凭据、不读temp/，不修改文件、不执行Shell。只允许Read/Grep/Glob。
+先读 harness/reports/remaining-3.1.0-p4.patch 与 plan 9b52d6f0（完整文件名在patch）。沿必要真实消费链检查，不全仓重做架构审查。用户明确允许主会话直接实施，已授权每项通过后main提交，不推送/打包/改版本/碰宿主手机。
+本轮前置提交：e2 688a9922，Jimp 06a531a7，DSH 755d6c0e；P4生产仅修一个接线：runChangeUnitProgression buildHandoff 已按既有 unfinished runId 取 frozen scope，但caller原先 invoke(handoff) 丢runId并重新birth，从而恢复时合法SRC修改导致impact依据旧hash异常。现在caller传同一既有runId；不松hash或授权、不加状态协议门禁停机原因。旧异常已稳定两次并保留调用栈 remaining-3.1.0-p4-impact-diagnostic.json；原红 remaining-3.1.0-p4-framework-recovery.json。新版回归须同CU和原请求正式完成。
+P4测试增强：原 root设计修订成功分支原只到work-unit-author，现继续到真实TSC/Node及正式终点（定向1/1过）；反馈id/detail/file与普通framework故障继续合法工作断言。七个生产内存变异全部killed（remaining-3.1.0-p4-mutations.json/cjs）；DSH 0.2.2真实准确旧SID短续接 passed（...p4-dsh-resume.json）。
+诚实边界：初版新增fault注入共用native.compile同时影响coding和UT，source恢复+模块重载后coding真实PASS，跨独核交接后的UT仍保留旧未知（...p4-framework-restart.json）。按用户范围红项策略记录为宽于本批的多producer同版本热修恢复语义问题，不声称修复。它的环境指纹按现有设计不含实现源码，显式继续机会经前一检查/交接消耗。当前plan所需局部入口组合改为仅破坏coding-host-rules.js的真实coding.compile入口，UT仍是真TSC/Node，业务review缺口仍真实交原作者；不是把FAIL改PASS或seed后半状态。请检查是否符合局部入口要求及测试有无直接回归，不把未承诺的所有框架热修场景强加为本项。
+删除审计 ...p4-structure-audit.md 覆盖D1–D11、K1–K10、M01–M54（非只有46行）。发现agents-entry-detail现行旧预算停机段已清，MIGRATION顶部说明覆盖旧分批历史。不要改用户保护a47/6fd/c6，t5/t6始终pending、t8不重开。
+验证当前：首轮changed输入稳定873组5047/1（唯一上述新fault组合），typecheck通过，OpenSpec strict65/65+Enforcement通过。修窄fault后官方根npm test唯一全量正在同一冻结源码运行，包含全部424正式扩展组；尚无结论。此次是源代码检视，不能把正在跑的全量说成通过。未来若红返修只核既有意见/直接回归。
+请一次列出本范围当时可发现的全部必修（四类阻断：确定性正确性、真实授权、硬预算、已承诺完成/自动恢复确定性失败），每条给文件行号、真实触发/后果、最小修复边界。可选加固单列不阻断；不为证据好看增加新机制。无必修请明确通过。不要因为full尚跑而虚构已通过或单独判源缺陷。

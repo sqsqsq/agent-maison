@@ -1,0 +1,64 @@
+{
+  "mode": "workers",
+  "workers": 12,
+  "scope": {
+    "filter": "execution-scope",
+    "release": false,
+    "caseNameFilter": "P4 mutual review and UT",
+    "suiteIds": [
+      "execution-scope-prepare-early",
+      "execution-scope-prepare-late",
+      "execution-scope-runtime"
+    ]
+  },
+  "wallMs": 2630.0229000000004,
+  "ok": true,
+  "suites": [
+    {
+      "id": "execution-scope-prepare-early",
+      "releaseOnly": false,
+      "status": "completed",
+      "ok": true,
+      "loadMs": 828.2031,
+      "executionMs": 8.290200000000027,
+      "totalMs": 1124.0097,
+      "results": [
+        {
+          "name": "P4 mutual review and UT material reads invalidate evidence without becoming a control cycle",
+          "ok": true
+        }
+      ],
+      "startupMs": 1086.2994000000003,
+      "matchedCaseCount": 1,
+      "executionTimings": [
+        {
+          "caseNames": [
+            "P4 mutual review and UT material reads invalidate evidence without becoming a control cycle"
+          ],
+          "durationMs": 7.6317000000000235
+        }
+      ],
+      "cleanupMs": 0.17849999999998545
+    },
+    {
+      "id": "execution-scope-prepare-late",
+      "releaseOnly": true,
+      "status": "not-run",
+      "ok": null,
+      "loadMs": null,
+      "executionMs": null,
+      "totalMs": null,
+      "results": []
+    },
+    {
+      "id": "execution-scope-runtime",
+      "releaseOnly": true,
+      "status": "not-run",
+      "ok": null,
+      "loadMs": null,
+      "executionMs": null,
+      "totalMs": null,
+      "results": []
+    }
+  ]
+}

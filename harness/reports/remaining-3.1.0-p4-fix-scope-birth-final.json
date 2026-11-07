@@ -1,0 +1,52 @@
+{
+  "mode": "workers",
+  "workers": 12,
+  "scope": {
+    "filter": "initial-design-delivery",
+    "release": true,
+    "caseNameFilter": "9f6c2e41 initial construction",
+    "suiteIds": [
+      "initial-design-delivery"
+    ]
+  },
+  "wallMs": 36498.5838,
+  "ok": true,
+  "suites": [
+    {
+      "id": "initial-design-delivery",
+      "releaseOnly": true,
+      "status": "completed",
+      "ok": true,
+      "loadMs": 1402.1485,
+      "executionMs": 67157.1785,
+      "totalMs": 68984.76569999999,
+      "results": [
+        {
+          "name": "9f6c2e41 initial construction births spec and plan with unresolved definitions",
+          "ok": true
+        },
+        {
+          "name": "9f6c2e41 initial construction returns an empty executable chain to its scope owner",
+          "ok": true
+        }
+      ],
+      "startupMs": 884.8851000000004,
+      "matchedCaseCount": 2,
+      "executionTimings": [
+        {
+          "caseNames": [
+            "9f6c2e41 initial construction births spec and plan with unresolved definitions"
+          ],
+          "durationMs": 34715.0075
+        },
+        {
+          "caseNames": [
+            "9f6c2e41 initial construction returns an empty executable chain to its scope owner"
+          ],
+          "durationMs": 32440.7905
+        }
+      ],
+      "cleanupMs": 0.18570000000181608
+    }
+  ]
+}

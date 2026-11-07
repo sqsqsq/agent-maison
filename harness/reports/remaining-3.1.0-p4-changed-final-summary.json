@@ -1,0 +1,52 @@
+{
+  "command": "npm run test:changed -- --results-out reports/remaining-3.1.0-p4-changed-final-pass.json",
+  "ok": true,
+  "passed": 357,
+  "failed": 0,
+  "selected": 101,
+  "reused": 826,
+  "formalNotExecuted": 424,
+  "typecheck": true,
+  "wallMs": 719007.9712,
+  "inputSnapshotId": "ddbe0f63691bc0ef586b4cc1c492a470ef3896677717aadef2bba45e4cefc863",
+  "endingSnapshotId": "ddbe0f63691bc0ef586b4cc1c492a470ef3896677717aadef2bba45e4cefc863",
+  "sourceHashes": {
+    "MIGRATION.md": "bb87ecb1261967f6d62bb91acf2e80acd0e8efa8dba3f256364843eb0bb2fcc0",
+    "harness/scripts/goal-phase-runtime.ts": "2899ac78e2947f50916034ecb60abc0b50c7d534bcc19e56732568cc3482220c",
+    "harness/scripts/utils/execution-scope.ts": "71607aebdcf066804c20fb1f3dc44fa212beb551bfad9400d02d306432df0ee3",
+    "harness/tests/unit/check-disposition.unit.test.ts": "bdc78c86793158bd48b69910b7e56fd505b4c541dfd0311693553ffd2a497b46",
+    "harness/tests/unit/daily-design-journey.unit.test.ts": "c0d3f7edaa7191ded098fdceb108543f4f8c5acc61ef36202540d3c8d469e3a1",
+    "harness/tests/unit/design-authority-repair.unit.test.ts": "674e5335242985e0e5f713ad97c3d03d50fb7bb4f389c0982441b6ee9447a0db",
+    "harness/tests/unit/execution-scope.unit.test.ts": "b9f148530c0c2db62ac150714c3c98b641706b5d9f858b1915ae721c77f29c4b",
+    "harness/tests/unit/goal-headless-guard.unit.test.ts": "9cb781b02c4608b1eebb0a4905dcf4d107a7b4fe1a874843a0f4827f351458d0",
+    "harness/tests/unit/goal-phase-runtime.unit.test.ts": "cfa0b7ebe6d2327aaf7a4e8a0703a68ef910194b92493e2c2208926b52bbf525",
+    "harness/tests/unit/goal-runner-testing-integrity.unit.test.ts": "7b357842ab5351c6b81e73aef5c6cea99165503a4757da5a866fd0ee16b41382",
+    "harness/tests/unit/initial-design-delivery.unit.test.ts": "2201827cc9684ac8677dbe4cc46f8eced77254a9c7f96b4f7e041fa6e48991c0",
+    "harness/tests/unit/initial-design-repair.unit.test.ts": "ba7f47173fec3c43cf4cd60f0b05f355bc9eda4aa1ed5ed5403e47756aee3f65",
+    "harness/tests/unit/real-chain-seams.unit.test.ts": "3bbfe0686774cb33c1124657e5c6cf04142b5a3522a15e228ec9a2648a45aef6",
+    "harness/tests/unit/reliability-scenarios.unit.test.ts": "982e8d07120f54c3850cfaf36500431bbdaf8fa31d436f623cd91828116b0ace",
+    "harness/tests/unit/repair-dependencies.unit.test.ts": "2eecfff279bfc444e34f4f59fa72e6acb022cc190ae3e34d85a8613305348e15",
+    "harness/tests/unit/session-execution-handoff.unit.test.ts": "9ee497e5c67a4aae1842bdea9449dc252583fc5b4acb431b8a2f698c4f45b453",
+    "harness/tests/utils/controlled-model-process.ts": "0516544813894880abb297730d2da1f241b67d47f0189dee8346dbd5b57434c7",
+    "skills/reference/agents-entry-detail.md": "9454fe69385f9d57fecf352d5bef81f077dd11a1400d5742a359fe62f0c8f3d6"
+  },
+  "coverageUnknownGroups": [
+    {
+      "id": "test-infrastructure",
+      "reasons": [
+        "descendant coverage missing: 19728"
+      ],
+      "totalMs": 29282.969100000017
+    },
+    {
+      "id": "completion-running::[\"P2 running detached author is truly interrupted after relevant changes repeat the same canonical deficit; unchanged FAIL is reused\"]",
+      "reasons": [
+        "guardian Node entry coverage missing"
+      ],
+      "totalMs": 37111.28529999999
+    }
+  ],
+  "rawFile": "harness/reports/remaining-3.1.0-p4-changed-final-pass.json",
+  "rawBytes": 26287985,
+  "rawSha256": "d9cbf742bdc0acee43f8c5b9cf15c52888fce52cdb22a374e29245bac40ec5aa"
+}

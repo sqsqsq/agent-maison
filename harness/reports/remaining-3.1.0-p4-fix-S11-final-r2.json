@@ -1,0 +1,42 @@
+{
+  "mode": "workers",
+  "workers": 12,
+  "scope": {
+    "filter": "reliability-scenarios-runtime",
+    "release": true,
+    "caseNameFilter": "S11 真实产品回归 / 回退后修好",
+    "suiteIds": [
+      "reliability-scenarios-runtime"
+    ]
+  },
+  "wallMs": 554667.0273000001,
+  "ok": true,
+  "suites": [
+    {
+      "id": "reliability-scenarios-runtime",
+      "releaseOnly": true,
+      "status": "completed",
+      "ok": true,
+      "loadMs": 793.0497,
+      "executionMs": 552680.5211,
+      "totalMs": 553705.7811,
+      "results": [
+        {
+          "name": "S11 真实产品回归 / 回退后修好",
+          "ok": true
+        }
+      ],
+      "startupMs": 967.3389999999999,
+      "matchedCaseCount": 1,
+      "executionTimings": [
+        {
+          "caseNames": [
+            "S11 真实产品回归 / 回退后修好"
+          ],
+          "durationMs": 552678.3026
+        }
+      ],
+      "cleanupMs": 1.5742000000318512
+    }
+  ]
+}

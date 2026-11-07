@@ -5297,7 +5297,8 @@ export class GoalPhaseRuntime {
       const unit = existing && decision.readySet.units.find(unit => unit.completion.featureId === existing.manifest.feature);
       if (existing && unit) await invoke(buildChangeUnitGoalHandoff(projectRoot, unit.changeUnit, { runId: existing.manifest.run_id, frameworkRoot }), existing.manifest.run_id);
       else return stop('execution_scope_unresolved', decision.reasons.join('\n'));
-    } else await runChangeUnitProgression(projectRoot, manifest.feature, { caller: handoff => invoke(handoff),
+    } else await runChangeUnitProgression(projectRoot, manifest.feature, {
+      caller: handoff => invoke(handoff, deliveryCycleView(projectRoot, handoff.featureId).unfinished.at(-1)?.runId),
       buildHandoff: (root, unit) => {
         const feature = deriveChangeUnitFeatureId(unit.blueprint_id, unit.change_unit_id);
         const prior = deliveryCycleView(root, feature).unfinished.at(-1);

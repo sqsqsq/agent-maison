@@ -1187,7 +1187,7 @@ const cases: Case[] = [{
         (ctx) => ({ plan, cwd: ctx.projectRoot, options: { timeoutMs: 1234, extraEnv: { ...ctx.childEnv } } }),
         async (actualPlan, cwd, options) => {
           called += 1;
-          assert(actualPlan === plan && cwd === '/project', 'invocation plan/cwd drift');
+          assert(actualPlan.argv === plan.argv && actualPlan.adapterName === 'codex' && actualPlan.modelBinding === context().adapterModel && cwd === '/project', 'invocation plan/cwd drift');
           assert(options?.timeoutMs === undefined && options?.deadlineMs === undefined, 'old phase timeout leaked into the dedicated author');
           return {
             exitCode: 7,

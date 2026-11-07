@@ -1,0 +1,11 @@
+请只用Read/Grep/Glob只读复核，不派子代理、不读凭据或temp/、不修改文件、不Shell。语言中文。
+这是同一P4窄复核第3轮。先读 remaining-3.1.0-p4-review-repair.json 的result，它已认可生产execution-scope修复和其余测试侧返修，只有repair-dependencies旧排序断言一条必修。后续仅核既有意见是否修复及本轮直接回归，不重新全仓审架构、不继续叠机制。
+必修现已修：harness/tests/unit/repair-dependencies.unit.test.ts:60附近，保留数据边引起review证据失效的全部强断言（explicitlyInvalidated），重开UT后review和UT均在chain，只按空声明控制下默认[coding,review,ut]排列；用例名/提示同步。真实定向整组10/10，证据 remaining-3.1.0-p4-repair-dependencies.json。当前5378/1且输入稳定的test:changed原始唯一红正是该旧断言，原FAIL报告保留，不包装为PASS；仅按用户当次要求/验证比例补跑此受影响测试组，不重复整轮全量。
+另外三个本轮窄差异请核直接回归：
+1) reliability-scenarios.unit.test.ts补了parseContextExploration/researchSnapshotFacts两个遗漏import及自定义assert的message；原typecheck曾拦下，修后typecheck实际通过（...p4-fixes-typecheck.log）。不是新机制。
+2) session-execution-handoff.unit.test.ts的R2 finally改为嵌套try/finally，确保await done失败也必恢复受控PATH并清理自己的fixture。
+3) S7最后复验的真实失败保全显示已正确拒修优先级差异、冲突披露也在，但脚本onSpec每次拒修前仍调用旧writer重写已批准acceptance（内容未变），引出test_plan_freshness_vs_acceptance，最终no_progress暂停。现仅在无候选初始写作时调用原writer；有据拒修前实际Read原spec的F1=P0和AC-2=P1并断言两者没变，只向原headless-assumptions记既有决定，重复同fingerprint不重记。没有改生产freshness门、没有改通过断言，没有给输入改mtime来造绿。S7最终定向仍运行中，不能提前说已通过。请看reliability-scenarios.unit.test.ts的runS7 onSpec覆写（搜索“reasoned refusal”）。
+其它源码自第2轮后未变。生产核心新增的P4 mutual review/UT反例已修前红修后绿、真控制环仍拒绝，数据失效传播保留；第2轮已沿全部实际调用点核定无过宽，不要重做。
+唯一官方全量原始1350组6016通过/24失败、424正式全包含、源稳定；按用户规定仅一次full，未重跑、未篡改结果。standalone组本轮全量全部自然通过。修后各原失败组分别实跑，S6/S11最终已绿、其它已绿，最后S7还在跑。普通开发结果和正式全量绿证明分开，不能宣称原始npm test全过或正式晋升资格。
+DSH H4因不读凭据未验、Jimp同zip因不打包未验、P4t5/t6真实宿主均pending。无新具体证据不扩大这些边界。
+请给出既有必修是否关闭、三个窄差异有无直接回归；无必修明确通过。可选加固保持非阻断，源复核结论不冒充尚未结束的S7验证。

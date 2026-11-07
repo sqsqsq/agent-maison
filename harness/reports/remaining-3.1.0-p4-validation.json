@@ -1,0 +1,1174 @@
+{
+  "full": {
+    "command": "npm test -- --results-out reports/remaining-3.1.0-p4-full.json",
+    "exitCode": 1,
+    "startedAt": "2026-11-06T19:49:13.3837631Z",
+    "finishedAt": "2026-11-06T22:19:07.6459855Z",
+    "scope": "full",
+    "groups": 1350,
+    "passed": 6016,
+    "failed": 24,
+    "inputStable": true,
+    "formalExpected": 424,
+    "formalMissing": [],
+    "originalStatus": "FAIL",
+    "raw": [
+      {
+        "file": "harness/reports/remaining-3.1.0-p4-full.json",
+        "bytes": 133964658,
+        "sha256": "e62acc3743060d033ff23ce0465ea9aa5dcede2bf16a4576db6f4566527c4e4f"
+      },
+      {
+        "file": "harness/reports/remaining-3.1.0-p4-full.log",
+        "bytes": 56283418,
+        "sha256": "3113e64584226952a12d8b380b441f8cb9e10105ed9c030c18c8006580814fdd"
+      },
+      {
+        "file": "harness/reports/remaining-3.1.0-p4-full-meta.json",
+        "bytes": 200,
+        "sha256": "dd9cc6a54f1dde6f652d417664a48896d6bbc5d820b2a40360fa3a4556cb8251"
+      }
+    ]
+  },
+  "resolutions": [
+    {
+      "number": 1,
+      "originalGroup": "initial-design-delivery::[\"9f6c2e41 initial construction births spec and plan with unresolved definitions\"]",
+      "originalName": "9f6c2e41 initial construction births spec and plan with unresolved definitions",
+      "classification": "测试前提",
+      "rootCauseAndRepair": "scope出生替身只补主CU及直接consumer，漏已有兄弟CU映射；改为按原批准criterion补齐原始gap ID集合，仍走独核与正式发布",
+      "verification": "harness/reports/remaining-3.1.0-p4-fix-scope-birth-final.json",
+      "targetName": "9f6c2e41 initial construction births spec and plan with unresolved definitions",
+      "status": "passed"
+    },
+    {
+      "number": 2,
+      "originalGroup": "initial-design-delivery::[\"9f6c2e41 initial construction returns an empty executable chain to its scope owner\"]",
+      "originalName": "9f6c2e41 initial construction returns an empty executable chain to its scope owner",
+      "classification": "测试前提",
+      "rootCauseAndRepair": "scope出生替身只补主CU及直接consumer，漏已有兄弟CU映射；改为按原批准criterion补齐原始gap ID集合，仍走独核与正式发布",
+      "verification": "harness/reports/remaining-3.1.0-p4-fix-scope-birth-final.json",
+      "targetName": "9f6c2e41 initial construction returns an empty executable chain to its scope owner",
+      "status": "passed"
+    },
+    {
+      "number": 3,
+      "originalGroup": "initial-design-repair::[\"e2a4145e r4 repair questioning real process retains a final answer over 64KiB\"]",
+      "originalName": "e2a4145e r4 repair questioning real process retains a final answer over 64KiB",
+      "classification": "测试前提",
+      "rootCauseAndRepair": "真实进程回放缺模型绑定/原生argv；复用controlledModelBinding并使用受控Codex目录协议与受支持node shim，不改生产预检",
+      "verification": "harness/reports/remaining-3.1.0-p4-fix-repair-large-r2.json",
+      "targetName": "e2a4145e r4 repair questioning real process retains a final answer over 64KiB",
+      "status": "passed"
+    },
+    {
+      "number": 4,
+      "originalGroup": "initial-design-repair::[\"e2a4145e r4 initial questioning execute-request-large preserves real completed originals and author delivery\"]",
+      "originalName": "e2a4145e r4 initial questioning execute-request-large preserves real completed originals and author delivery",
+      "classification": "测试前提",
+      "rootCauseAndRepair": "真实进程回放缺模型绑定/原生argv；复用controlledModelBinding并使用受控Codex目录协议与受支持node shim，不改生产预检",
+      "verification": "harness/reports/remaining-3.1.0-p4-fix-repair-large-r2.json",
+      "targetName": "e2a4145e r4 initial questioning execute-request-large preserves real completed originals and author delivery",
+      "status": "passed"
+    },
+    {
+      "number": 5,
+      "originalGroup": "initial-design-repair::[\"e2a4145e r4 initial questioning large-process preserves real completed originals and author delivery\"]",
+      "originalName": "e2a4145e r4 initial questioning large-process preserves real completed originals and author delivery",
+      "classification": "测试前提",
+      "rootCauseAndRepair": "真实进程回放缺模型绑定/原生argv；复用controlledModelBinding并使用受控Codex目录协议与受支持node shim，不改生产预检",
+      "verification": "harness/reports/remaining-3.1.0-p4-fix-repair-large-r2.json",
+      "targetName": "e2a4145e r4 initial questioning large-process preserves real completed originals and author delivery",
+      "status": "passed"
+    },
+    {
+      "number": 6,
+      "originalGroup": "initial-design-repair::[\"e2a4145e initial questioning same-scopes uses real signed feedback author and independent recheck\"]",
+      "originalName": "e2a4145e initial questioning same-scopes uses real signed feedback author and independent recheck",
+      "classification": "测试前提",
+      "rootCauseAndRepair": "旧例无实际改稿却强求新Q；作者真实补原scope业务说明再复核，同scope暂停与缩小scope进展断言保留",
+      "verification": "harness/reports/remaining-3.1.0-p4-fix-q-scope.json",
+      "targetName": "e2a4145e initial questioning same-scopes uses real signed feedback author and independent recheck",
+      "status": "passed"
+    },
+    {
+      "number": 7,
+      "originalGroup": "initial-design-repair::[\"e2a4145e initial questioning smaller-scopes uses real signed feedback author and independent recheck\"]",
+      "originalName": "e2a4145e initial questioning smaller-scopes uses real signed feedback author and independent recheck",
+      "classification": "测试前提",
+      "rootCauseAndRepair": "旧例无实际改稿却强求新Q；作者真实补原scope业务说明再复核，同scope暂停与缩小scope进展断言保留",
+      "verification": "harness/reports/remaining-3.1.0-p4-fix-q-smaller.json",
+      "targetName": "e2a4145e initial questioning smaller-scopes uses real signed feedback author and independent recheck",
+      "status": "passed"
+    },
+    {
+      "number": 8,
+      "originalGroup": "goal-runner-testing-integrity-early::[\"395 阶段内 OOBE：真实检查归因和 summary 接回原门，等待解除先补 UT；超时不进 testing\"]",
+      "originalName": "395 阶段内 OOBE：真实检查归因和 summary 接回原门，等待解除先补 UT；超时不进 testing",
+      "classification": "测试时间窗",
+      "rootCauseAndRepair": "1秒窗口在实测1.6秒调度成本后即超时；仅测试窗口改15秒，恢复/超时强反例保留",
+      "verification": "harness/reports/remaining-3.1.0-p4-fix-OOBE.json",
+      "targetName": "395 阶段内 OOBE：真实检查归因和 summary 接回原门，等待解除先补 UT；超时不进 testing",
+      "status": "passed"
+    },
+    {
+      "number": 9,
+      "originalGroup": "goal-runner-testing-integrity-late::[\"8d4e6a21 连续回放：旧控制依赖 + 正式 provider override/rebase 保留原业务证据 → 新 provider review 完整恢复\"]",
+      "originalName": "8d4e6a21 连续回放：旧控制依赖 + 正式 provider override/rebase 保留原业务证据 → 新 provider review 完整恢复",
+      "classification": "测试前提",
+      "rootCauseAndRepair": "旧视觉pin仅模型值，缺provider与配置来源；补明确受控路由和公开配置，保留原证据/rebase/缺失反例",
+      "verification": "harness/reports/remaining-3.1.0-p4-fix-provider-rebase.json",
+      "targetName": "8d4e6a21 连续回放：旧控制依赖 + 正式 provider override/rebase 保留原业务证据 → 新 provider review 完整恢复",
+      "status": "passed"
+    },
+    {
+      "number": 10,
+      "originalGroup": "goal-runner-testing-integrity-late::[\"8d4e6a21 连续回放：旧控制依赖 + 正式 provider override/rebase + genuine-source-change 实际责任恢复 → 新 provider review 完整恢复\"]",
+      "originalName": "8d4e6a21 连续回放：旧控制依赖 + 正式 provider override/rebase + genuine-source-change 实际责任恢复 → 新 provider review 完整恢复",
+      "classification": "测试前提",
+      "rootCauseAndRepair": "旧视觉pin仅模型值，缺provider与配置来源；补明确受控路由和公开配置，保留原证据/rebase/缺失反例",
+      "verification": "harness/reports/remaining-3.1.0-p4-fix-provider-rebase.json",
+      "targetName": "8d4e6a21 连续回放：旧控制依赖 + 正式 provider override/rebase + genuine-source-change 实际责任恢复 → 新 provider review 完整恢复",
+      "status": "passed"
+    },
+    {
+      "number": 11,
+      "originalGroup": "goal-runner-testing-integrity-late::[\"8d4e6a21 连续回放：旧控制依赖 + 正式 provider override/rebase 保留原业务证据 → 新 provider review 缺原始证据恢复反例\"]",
+      "originalName": "8d4e6a21 连续回放：旧控制依赖 + 正式 provider override/rebase 保留原业务证据 → 新 provider review 缺原始证据恢复反例",
+      "classification": "测试前提",
+      "rootCauseAndRepair": "旧视觉pin仅模型值，缺provider与配置来源；补明确受控路由和公开配置，保留原证据/rebase/缺失反例",
+      "verification": "harness/reports/remaining-3.1.0-p4-fix-provider-rebase.json",
+      "targetName": "8d4e6a21 连续回放：旧控制依赖 + 正式 provider override/rebase 保留原业务证据 → 新 provider review 缺原始证据恢复反例",
+      "status": "passed"
+    },
+    {
+      "number": 12,
+      "originalGroup": "session-execution-handoff",
+      "originalName": "P1 R3 execute recovery preserves real settled failure and completion-cleanup facts instead of trusting raw terminal text",
+      "classification": "测试前提",
+      "rootCauseAndRepair": "旧直接/公共执行夹具缺冻结模型或只读Codex exec参数；补真实受控进程前提，保留失败、完成清理、中断和授权强断言",
+      "verification": "harness/reports/remaining-3.1.0-p4-fix-handoff-r2.json",
+      "targetName": "P1 R3 execute recovery preserves real settled failure and completion-cleanup facts instead of trusting raw terminal text",
+      "status": "passed"
+    },
+    {
+      "number": 13,
+      "originalGroup": "session-execution-handoff",
+      "originalName": "P1 R2 real request CLI executes once and exposes the same running facts before owner-bound interruption",
+      "classification": "测试前提",
+      "rootCauseAndRepair": "旧直接/公共执行夹具缺冻结模型或只读Codex exec参数；补真实受控进程前提，保留失败、完成清理、中断和授权强断言",
+      "verification": "harness/reports/remaining-3.1.0-p4-fix-handoff-r2.json",
+      "targetName": "P1 R2 real request CLI executes once and exposes the same running facts before owner-bound interruption",
+      "status": "passed"
+    },
+    {
+      "number": 14,
+      "originalGroup": "session-execution-handoff",
+      "originalName": "1804 a bound gate survives interruption and resumes without another accepted author invocation",
+      "classification": "测试前提纠正",
+      "rootCauseAndRepair": "故障钩子在harness_end提交前，before.returned=false；改为未提交检查须补一次且作者不重放。已绑定原生gate阳性仍由全量session-slow-gate通过保留",
+      "verification": "harness/reports/remaining-3.1.0-p4-fix-bound-gate-final.json",
+      "targetName": "1804 interruption before gate handback commits checks once and preserves the accepted author",
+      "status": "passed"
+    },
+    {
+      "number": 15,
+      "originalGroup": "session-execution-handoff",
+      "originalName": "P3 native executor preserves the actual canary tool deadline without reviving a default author phase deadline",
+      "classification": "测试前提",
+      "rootCauseAndRepair": "旧直接/公共执行夹具缺冻结模型或只读Codex exec参数；补真实受控进程前提，保留失败、完成清理、中断和授权强断言",
+      "verification": "harness/reports/remaining-3.1.0-p4-fix-canary-final.json",
+      "targetName": "P3 native executor preserves the actual canary tool deadline without reviving a default author phase deadline",
+      "status": "passed"
+    },
+    {
+      "number": 16,
+      "originalGroup": "goal-phase-runtime",
+      "originalName": "P1 detached executor: old phase timeout is not an author deadline and invocation output stays truthful",
+      "classification": "测试结构断言",
+      "rootCauseAndRepair": "executor补元数据会复制plan对象；改核argv/cwd/模型绑定实际转发，不要求对象引用恒等",
+      "verification": "harness/reports/remaining-3.1.0-p4-fix-phase-plan.json",
+      "targetName": "P1 detached executor: old phase timeout is not an author deadline and invocation output stays truthful",
+      "status": "passed"
+    },
+    {
+      "number": 17,
+      "originalGroup": "real-chain-seams::[\"RC-4 verifier subject：时钟漂移不换代，业务内容变化必须换代\"]",
+      "originalName": "RC-4 verifier subject：时钟漂移不换代，业务内容变化必须换代",
+      "classification": "测试结构断言",
+      "rootCauseAndRepair": "合法同业务正文的核验/闭合代不等于业务换代；保留两个时钟整份material一致与真实业务单变量换代强断言",
+      "verification": "harness/reports/remaining-3.1.0-p4-fix-RC4.json",
+      "targetName": "RC-4 verifier subject：时钟漂移不换代，业务内容变化必须换代",
+      "status": "passed"
+    },
+    {
+      "number": 18,
+      "originalGroup": "real-chain-seams::[\"RC-8c plan 增量小节缺失：原始 FAIL 仍在，plan 通过、进披露清单，链继续推进（A7）\"]",
+      "originalName": "RC-8c plan 增量小节缺失：原始 FAIL 仍在，plan 通过、进披露清单，链继续推进（A7）",
+      "classification": "测试结构断言",
+      "rootCauseAndRepair": "raw FAIL还含已披露searches_min；要求目标原FAIL保留且所有原FAIL都有共同披露依据，不改阈值",
+      "verification": "harness/reports/remaining-3.1.0-p4-fix-RC8c.json",
+      "targetName": "RC-8c plan 增量小节缺失：原始 FAIL 仍在，plan 通过、进披露清单，链继续推进（A7）",
+      "status": "passed"
+    },
+    {
+      "number": 19,
+      "originalGroup": "real-chain-seams::[\"RC-8d plan 增量小节为空：原始 FAIL 仍在，plan 通过、进披露清单，链继续推进（A7）\"]",
+      "originalName": "RC-8d plan 增量小节为空：原始 FAIL 仍在，plan 通过、进披露清单，链继续推进（A7）",
+      "classification": "测试结构断言",
+      "rootCauseAndRepair": "raw FAIL还含已披露searches_min；要求目标原FAIL保留且所有原FAIL都有共同披露依据，不改阈值",
+      "verification": "harness/reports/remaining-3.1.0-p4-fix-RC8d.json",
+      "targetName": "RC-8d plan 增量小节为空：原始 FAIL 仍在，plan 通过、进披露清单，链继续推进（A7）",
+      "status": "passed"
+    },
+    {
+      "number": 20,
+      "originalGroup": "reliability-scenarios-runtime::[\"S6 排除内容已被实现 / 排除元素已写进产品\"]",
+      "originalName": "S6 排除内容已被实现 / 排除元素已写进产品",
+      "classification": "测试替身",
+      "rootCauseAndRepair": "旧冷阶段writer未按真实单元准入准备研究/保基线；复用authorHooks，实际读取新增目标；独核仅响应实际请求。S7有据拒修只写原决定账本，不重写已正确acceptance",
+      "verification": "harness/reports/remaining-3.1.0-p4-fix-S6-final-r2.json",
+      "targetName": "S6 排除内容已被实现 / 排除元素已写进产品",
+      "status": "passed"
+    },
+    {
+      "number": 21,
+      "originalGroup": "reliability-scenarios-runtime::[\"S7 非关键描述冲突 / 冲突 A（屏 id 当元素 id）\",\"S7 非关键描述冲突 / 冲突 B（F1 优先级，作者材料原有）\"]",
+      "originalName": "S7 非关键描述冲突 / 冲突 A（屏 id 当元素 id）",
+      "classification": "测试替身",
+      "rootCauseAndRepair": "旧冷阶段writer未按真实单元准入准备研究/保基线；复用authorHooks，实际读取新增目标；独核仅响应实际请求。S7有据拒修只写原决定账本，不重写已正确acceptance",
+      "verification": "harness/reports/remaining-3.1.0-p4-fix-S7-final-r3.json",
+      "targetName": "S7 非关键描述冲突 / 冲突 A（屏 id 当元素 id）",
+      "status": "passed"
+    },
+    {
+      "number": 22,
+      "originalGroup": "reliability-scenarios-runtime::[\"S7 非关键描述冲突 / 冲突 A（屏 id 当元素 id）\",\"S7 非关键描述冲突 / 冲突 B（F1 优先级，作者材料原有）\"]",
+      "originalName": "S7 非关键描述冲突 / 冲突 B（F1 优先级，作者材料原有）",
+      "classification": "测试替身",
+      "rootCauseAndRepair": "旧冷阶段writer未按真实单元准入准备研究/保基线；复用authorHooks，实际读取新增目标；独核仅响应实际请求。S7有据拒修只写原决定账本，不重写已正确acceptance",
+      "verification": "harness/reports/remaining-3.1.0-p4-fix-S7-final-r3.json",
+      "targetName": "S7 非关键描述冲突 / 冲突 B（F1 优先级，作者材料原有）",
+      "status": "passed"
+    },
+    {
+      "number": 23,
+      "originalGroup": "reliability-scenarios-runtime::[\"S11 真实产品回归 / 回退后修好\"]",
+      "originalName": "S11 真实产品回归 / 回退后修好",
+      "classification": "测试替身",
+      "rootCauseAndRepair": "旧冷阶段writer未按真实单元准入准备研究/保基线；复用authorHooks，实际读取新增目标；独核仅响应实际请求。S7有据拒修只写原决定账本，不重写已正确acceptance",
+      "verification": "harness/reports/remaining-3.1.0-p4-fix-S11-final-r2.json",
+      "targetName": "S11 真实产品回归 / 回退后修好",
+      "status": "passed"
+    },
+    {
+      "number": 24,
+      "originalGroup": "design-authority-repair-content::[\"design-authority-repair: S16-c3f 已完成质询对当前必需scope给合法blocker：保留完整材料，拒绝降低验收的草稿且不发布\"]",
+      "originalName": "design-authority-repair: S16-c3f 已完成质询对当前必需scope给合法blocker：保留完整材料，拒绝降低验收的草稿且不发布",
+      "classification": "测试结构断言",
+      "rootCauseAndRepair": "共同内核须把首轮完整否定交回原作者；A,Q,A,Q有限收敛，第二作者提示核原否定，canonical不降验收/不发布断言保留",
+      "verification": "harness/reports/remaining-3.1.0-p4-fix-S16-c3f.json",
+      "targetName": "design-authority-repair: S16-c3f 已完成质询对当前必需scope给合法blocker：保留完整材料，拒绝降低验收的草稿且不发布",
+      "status": "passed"
+    }
+  ],
+  "old27": [
+    {
+      "id": "F03",
+      "historicalRootCause": "scope-cycle",
+      "name": "179a73 CR-001 real runner repairs original fixture bytes, preserves facts and raw FAIL through independent refutation; real UT adopts unchanged assertions and rejects missing or stale adoption",
+      "fullStatus": "PASS",
+      "currentGroups": [
+        "responsibility-host-replay::[\"179a73 CR-001 real runner repairs original fixture bytes, preserves facts and raw FAIL through independent refutation; real UT adopts unchanged assertions and rejects missing or stale adoption\"]"
+      ],
+      "resolution": "本轮原正式用例自然通过；未反推历史根因",
+      "effectiveStatus": "passed"
+    },
+    {
+      "id": "F07",
+      "historicalRootCause": "initial-q-process",
+      "name": "P2 review R1 process initial Q reuses only actual unchanged invocation originals across a new runtime",
+      "fullStatus": "PASS",
+      "currentGroups": [
+        "initial-design-delivery::[\"P2 review R1 process initial Q reuses only actual unchanged invocation originals across a new runtime\"]"
+      ],
+      "resolution": "本轮原正式用例自然通过；未反推历史根因",
+      "effectiveStatus": "passed"
+    },
+    {
+      "id": "F29",
+      "historicalRootCause": "session-running-observation",
+      "name": "P1 R2 real request CLI executes once and exposes the same running facts before owner-bound interruption",
+      "fullStatus": "FAIL",
+      "currentGroups": [
+        "session-execution-handoff"
+      ],
+      "resolution": "旧直接/公共执行夹具缺冻结模型或只读Codex exec参数；补真实受控进程前提，保留失败、完成清理、中断和授权强断言",
+      "effectiveStatus": "passed",
+      "verification": "harness/reports/remaining-3.1.0-p4-fix-handoff-r2.json"
+    },
+    {
+      "id": "F30",
+      "historicalRootCause": "session-pid-identity",
+      "name": "1804 real gate ignores a reused live PID without killing it and actually runs its next gate",
+      "fullStatus": "PASS",
+      "currentGroups": [
+        "session-execution-handoff"
+      ],
+      "resolution": "本轮原正式用例自然通过；未反推历史根因",
+      "effectiveStatus": "passed",
+      "verification": "harness/reports/remaining-3.1.0-p4-fix-handoff-r2.json"
+    },
+    {
+      "id": "F31",
+      "historicalRootCause": "session-bound-gate-reuse",
+      "name": "1804 a bound gate survives interruption and resumes without another accepted author invocation",
+      "fullStatus": "FAIL",
+      "currentGroups": [
+        "session-execution-handoff"
+      ],
+      "resolution": "故障钩子在harness_end提交前，before.returned=false；改为未提交检查须补一次且作者不重放。已绑定原生gate阳性仍由全量session-slow-gate通过保留",
+      "effectiveStatus": "passed",
+      "verification": "harness/reports/remaining-3.1.0-p4-fix-bound-gate-final.json"
+    },
+    {
+      "id": "F32",
+      "historicalRootCause": "session-slow-gate",
+      "name": "1804 original CLI slow gate survives external reporter kill without overlapping gates, author replay or duplicate final completion",
+      "fullStatus": "PASS",
+      "currentGroups": [
+        "session-slow-gate"
+      ],
+      "resolution": "本轮原正式用例自然通过；未反推历史根因",
+      "effectiveStatus": "passed"
+    },
+    {
+      "id": "F40",
+      "historicalRootCause": "scope-cycle",
+      "name": "real-chain 正例：spec→testing 六阶段真实 harness 全链 PASS + closed",
+      "fullStatus": "PASS",
+      "currentGroups": [
+        "real-chain::[\"real-chain 正例：spec→testing 六阶段真实 harness 全链 PASS + closed\"]"
+      ],
+      "resolution": "本轮原正式用例自然通过；未反推历史根因",
+      "effectiveStatus": "passed"
+    },
+    {
+      "id": "F41",
+      "historicalRootCause": "scope-cycle",
+      "name": "RC-1 plan 起步：待创建预测不拖垮绑定，未实现的预测位置只披露",
+      "fullStatus": "PASS",
+      "currentGroups": [
+        "real-chain-seams::[\"RC-1 plan 起步：待创建预测不拖垮绑定，未实现的预测位置只披露\"]"
+      ],
+      "resolution": "本轮原正式用例自然通过；未反推历史根因",
+      "effectiveStatus": "passed"
+    },
+    {
+      "id": "F42",
+      "historicalRootCause": "scope-cycle",
+      "name": "<suite-runtime>",
+      "fullStatus": "PASS",
+      "currentGroups": [
+        "real-chain-seams::[\"RC-1 plan 起步：待创建预测不拖垮绑定，未实现的预测位置只披露\"]"
+      ],
+      "resolution": "本轮原正式用例自然通过；未反推历史根因",
+      "effectiveStatus": "passed"
+    },
+    {
+      "id": "F43",
+      "historicalRootCause": "scope-cycle",
+      "name": "RC-3 UT 在链上真写测试：coding 不 stale；上游源码带施工归属且豁免只给 coding",
+      "fullStatus": "PASS",
+      "currentGroups": [
+        "real-chain-seams::[\"RC-3 UT 在链上真写测试：coding 不 stale；上游源码带施工归属且豁免只给 coding\"]"
+      ],
+      "resolution": "本轮原正式用例自然通过；未反推历史根因",
+      "effectiveStatus": "passed"
+    },
+    {
+      "id": "F44",
+      "historicalRootCause": "subject-extra-generation",
+      "name": "RC-4 verifier subject：时钟漂移不换代，业务内容变化必须换代",
+      "fullStatus": "FAIL",
+      "currentGroups": [
+        "real-chain-seams::[\"RC-4 verifier subject：时钟漂移不换代，业务内容变化必须换代\"]"
+      ],
+      "resolution": "合法同业务正文的核验/闭合代不等于业务换代；保留两个时钟整份material一致与真实业务单变量换代强断言",
+      "effectiveStatus": "passed",
+      "verification": "harness/reports/remaining-3.1.0-p4-fix-RC4.json"
+    },
+    {
+      "id": "F45",
+      "historicalRootCause": "scope-cycle",
+      "name": "RC-8c plan 增量小节缺失：原始 FAIL 仍在，plan 通过、进披露清单，链继续推进（A7）",
+      "fullStatus": "FAIL",
+      "currentGroups": [
+        "real-chain-seams::[\"RC-8c plan 增量小节缺失：原始 FAIL 仍在，plan 通过、进披露清单，链继续推进（A7）\"]"
+      ],
+      "resolution": "raw FAIL还含已披露searches_min；要求目标原FAIL保留且所有原FAIL都有共同披露依据，不改阈值",
+      "effectiveStatus": "passed",
+      "verification": "harness/reports/remaining-3.1.0-p4-fix-RC8c.json"
+    },
+    {
+      "id": "F46",
+      "historicalRootCause": "scope-cycle",
+      "name": "<suite-runtime>",
+      "fullStatus": "FAIL",
+      "currentGroups": [
+        "real-chain-seams::[\"RC-8c plan 增量小节缺失：原始 FAIL 仍在，plan 通过、进披露清单，链继续推进（A7）\"]"
+      ],
+      "resolution": "raw FAIL还含已披露searches_min；要求目标原FAIL保留且所有原FAIL都有共同披露依据，不改阈值",
+      "effectiveStatus": "passed",
+      "verification": "harness/reports/remaining-3.1.0-p4-fix-RC8c.json"
+    },
+    {
+      "id": "F47",
+      "historicalRootCause": "scope-cycle",
+      "name": "RC-8d plan 增量小节为空：原始 FAIL 仍在，plan 通过、进披露清单，链继续推进（A7）",
+      "fullStatus": "FAIL",
+      "currentGroups": [
+        "real-chain-seams::[\"RC-8d plan 增量小节为空：原始 FAIL 仍在，plan 通过、进披露清单，链继续推进（A7）\"]"
+      ],
+      "resolution": "raw FAIL还含已披露searches_min；要求目标原FAIL保留且所有原FAIL都有共同披露依据，不改阈值",
+      "effectiveStatus": "passed",
+      "verification": "harness/reports/remaining-3.1.0-p4-fix-RC8d.json"
+    },
+    {
+      "id": "F48",
+      "historicalRootCause": "scope-cycle",
+      "name": "<suite-runtime>",
+      "fullStatus": "FAIL",
+      "currentGroups": [
+        "real-chain-seams::[\"RC-8d plan 增量小节为空：原始 FAIL 仍在，plan 通过、进披露清单，链继续推进（A7）\"]"
+      ],
+      "resolution": "raw FAIL还含已披露searches_min；要求目标原FAIL保留且所有原FAIL都有共同披露依据，不改阈值",
+      "effectiveStatus": "passed",
+      "verification": "harness/reports/remaining-3.1.0-p4-fix-RC8d.json"
+    },
+    {
+      "id": "F49",
+      "historicalRootCause": "scope-cycle",
+      "name": "RC-9 testing 回退 coding：review/ut 重验、再进 testing（coding 承接 ut 本 run 产出的测试文件）",
+      "fullStatus": "PASS",
+      "currentGroups": [
+        "real-chain-seams::[\"RC-9 testing 回退 coding：review/ut 重验、再进 testing（coding 承接 ut 本 run 产出的测试文件）\"]"
+      ],
+      "resolution": "本轮原正式用例自然通过；未反推历史根因",
+      "effectiveStatus": "passed"
+    },
+    {
+      "id": "F50",
+      "historicalRootCause": "scope-cycle",
+      "name": "<suite-runtime>",
+      "fullStatus": "PASS",
+      "currentGroups": [
+        "real-chain-seams::[\"RC-9 testing 回退 coding：review/ut 重验、再进 testing（coding 承接 ut 本 run 产出的测试文件）\"]"
+      ],
+      "resolution": "本轮原正式用例自然通过；未反推历史根因",
+      "effectiveStatus": "passed"
+    },
+    {
+      "id": "F51",
+      "historicalRootCause": "scope-cycle",
+      "name": "RC-9b ut 产品断言失败回退 coding：诊断 verifier 签发、coding 次轮 PASS、ut 重验",
+      "fullStatus": "PASS",
+      "currentGroups": [
+        "real-chain-seams::[\"RC-9b ut 产品断言失败回退 coding：诊断 verifier 签发、coding 次轮 PASS、ut 重验\"]"
+      ],
+      "resolution": "本轮原正式用例自然通过；未反推历史根因",
+      "effectiveStatus": "passed"
+    },
+    {
+      "id": "F52",
+      "historicalRootCause": "scope-cycle",
+      "name": "<suite-runtime>",
+      "fullStatus": "PASS",
+      "currentGroups": [
+        "real-chain-seams::[\"RC-9b ut 产品断言失败回退 coding：诊断 verifier 签发、coding 次轮 PASS、ut 重验\"]"
+      ],
+      "resolution": "本轮原正式用例自然通过；未反推历史根因",
+      "effectiveStatus": "passed"
+    },
+    {
+      "id": "F53",
+      "historicalRootCause": "scope-cycle",
+      "name": "RC-13 UT audit上游缺口：实际产物读取、逐条核实、责任coding修复与原UT正式复验",
+      "fullStatus": "PASS",
+      "currentGroups": [
+        "real-chain-seams::[\"RC-13 UT audit上游缺口：实际产物读取、逐条核实、责任coding修复与原UT正式复验\"]"
+      ],
+      "resolution": "本轮原正式用例自然通过；未反推历史根因",
+      "effectiveStatus": "passed"
+    },
+    {
+      "id": "F54",
+      "historicalRootCause": "scope-cycle",
+      "name": "<suite-runtime>",
+      "fullStatus": "PASS",
+      "currentGroups": [
+        "real-chain-seams::[\"RC-13 UT audit上游缺口：实际产物读取、逐条核实、责任coding修复与原UT正式复验\"]"
+      ],
+      "resolution": "本轮原正式用例自然通过；未反推历史根因",
+      "effectiveStatus": "passed"
+    },
+    {
+      "id": "F55",
+      "historicalRootCause": "rc12-timeout",
+      "name": "<suite-worker>",
+      "fullStatus": "PASS",
+      "currentGroups": [
+        "real-chain-seams::[\"RC-12 upstream design-decline: current artifact → verifier → owner → original coding recheck\"]"
+      ],
+      "resolution": "本轮原正式用例自然通过；未反推历史根因",
+      "effectiveStatus": "passed"
+    },
+    {
+      "id": "F63",
+      "historicalRootCause": "reliability-completion",
+      "name": "S6 排除内容已被实现 / 排除元素已写进产品",
+      "fullStatus": "FAIL",
+      "currentGroups": [
+        "reliability-scenarios-runtime::[\"S6 排除内容已被实现 / 排除元素已写进产品\"]"
+      ],
+      "resolution": "旧冷阶段writer未按真实单元准入准备研究/保基线；复用authorHooks，实际读取新增目标；独核仅响应实际请求。S7有据拒修只写原决定账本，不重写已正确acceptance",
+      "effectiveStatus": "passed",
+      "verification": "harness/reports/remaining-3.1.0-p4-fix-S6-final-r2.json"
+    },
+    {
+      "id": "F64",
+      "historicalRootCause": "reliability-completion",
+      "name": "S7 非关键描述冲突 / 冲突 A（屏 id 当元素 id）",
+      "fullStatus": "FAIL",
+      "currentGroups": [
+        "reliability-scenarios-runtime::[\"S7 非关键描述冲突 / 冲突 A（屏 id 当元素 id）\",\"S7 非关键描述冲突 / 冲突 B（F1 优先级，作者材料原有）\"]"
+      ],
+      "resolution": "旧冷阶段writer未按真实单元准入准备研究/保基线；复用authorHooks，实际读取新增目标；独核仅响应实际请求。S7有据拒修只写原决定账本，不重写已正确acceptance",
+      "effectiveStatus": "passed",
+      "verification": "harness/reports/remaining-3.1.0-p4-fix-S7-final-r3.json"
+    },
+    {
+      "id": "F65",
+      "historicalRootCause": "reliability-completion",
+      "name": "S7 非关键描述冲突 / 冲突 B（F1 优先级，作者材料原有）",
+      "fullStatus": "FAIL",
+      "currentGroups": [
+        "reliability-scenarios-runtime::[\"S7 非关键描述冲突 / 冲突 A（屏 id 当元素 id）\",\"S7 非关键描述冲突 / 冲突 B（F1 优先级，作者材料原有）\"]"
+      ],
+      "resolution": "旧冷阶段writer未按真实单元准入准备研究/保基线；复用authorHooks，实际读取新增目标；独核仅响应实际请求。S7有据拒修只写原决定账本，不重写已正确acceptance",
+      "effectiveStatus": "passed",
+      "verification": "harness/reports/remaining-3.1.0-p4-fix-S7-final-r3.json"
+    },
+    {
+      "id": "F66",
+      "historicalRootCause": "reliability-completion",
+      "name": "S11 真实产品回归 / 回退后修好",
+      "fullStatus": "FAIL",
+      "currentGroups": [
+        "reliability-scenarios-runtime::[\"S11 真实产品回归 / 回退后修好\"]"
+      ],
+      "resolution": "旧冷阶段writer未按真实单元准入准备研究/保基线；复用authorHooks，实际读取新增目标；独核仅响应实际请求。S7有据拒修只写原决定账本，不重写已正确acceptance",
+      "effectiveStatus": "passed",
+      "verification": "harness/reports/remaining-3.1.0-p4-fix-S11-final-r2.json"
+    },
+    {
+      "id": "F67",
+      "historicalRootCause": "design-q-repeat",
+      "name": "design-authority-repair: S16-c3f 已完成质询对当前必需scope给合法blocker：保留完整材料，拒绝降低验收的草稿且不发布",
+      "fullStatus": "FAIL",
+      "currentGroups": [
+        "design-authority-repair-content::[\"design-authority-repair: S16-c3f 已完成质询对当前必需scope给合法blocker：保留完整材料，拒绝降低验收的草稿且不发布\"]"
+      ],
+      "resolution": "共同内核须把首轮完整否定交回原作者；A,Q,A,Q有限收敛，第二作者提示核原否定，canonical不降验收/不发布断言保留",
+      "effectiveStatus": "passed",
+      "verification": "harness/reports/remaining-3.1.0-p4-fix-S16-c3f.json"
+    }
+  ],
+  "standalone": {
+    "status": "本轮正式全量全部自然通过，未复现偶发，不猜测修生产"
+  },
+  "changed": {
+    "originalReport": "harness/reports/remaining-3.1.0-p4-changed-repair.json",
+    "passed": 5378,
+    "failed": 1,
+    "inputStable": true,
+    "remainingOriginalFailure": "repair-dependencies旧输入读边排序断言",
+    "targetedRepairReport": "harness/reports/remaining-3.1.0-p4-repair-dependencies.json",
+    "targetedResult": "10/10 passed",
+    "finalImpact": {
+      "selected": 101,
+      "reused": 826,
+      "report": "harness/reports/remaining-3.1.0-p4-changed-final-pass.json",
+      "status": "passed",
+      "passed": 357,
+      "failed": 0,
+      "typecheck": true,
+      "inputStable": true,
+      "snapshotId": "ddbe0f63691bc0ef586b4cc1c492a470ef3896677717aadef2bba45e4cefc863",
+      "wallMs": 719007.9712,
+      "coverageUnknownGroups": [
+        {
+          "id": "test-infrastructure",
+          "reasons": [
+            "descendant coverage missing: 19728"
+          ],
+          "totalMs": 29282.969100000017
+        },
+        {
+          "id": "completion-running::[\"P2 running detached author is truly interrupted after relevant changes repeat the same canonical deficit; unchanged FAIL is reused\"]",
+          "reasons": [
+            "guardian Node entry coverage missing"
+          ],
+          "totalMs": 37111.28529999999
+        }
+      ],
+      "note": "101个日常组实跑，826组复用；本次不执行正式扩展组，424组均在唯一一次原始full中执行。覆盖采集未知按原报告披露，不推断其未记录调用。",
+      "compactReport": "harness/reports/remaining-3.1.0-p4-changed-final-summary.json"
+    }
+  },
+  "productionFixes": [
+    {
+      "file": "harness/scripts/goal-phase-runtime.ts",
+      "problem": "原root恢复丢child runId，重新birth校验合法已改源码而失败",
+      "repair": "传既有unfinished runId，保持冻结scope和原请求绑定",
+      "evidence": "harness/reports/remaining-3.1.0-p4-impact-diagnostic.json"
+    },
+    {
+      "file": "harness/scripts/utils/execution-scope.ts",
+      "problem": "实际材料互读被当成producer检查先完成，造成review与UT控制环",
+      "repair": "排序/执行前置只用既有声明控制及proof，真实读依赖继续用于失效传播",
+      "evidence": [
+        "harness/reports/remaining-3.1.0-p4-scope-diagnostic.json",
+        "harness/reports/remaining-3.1.0-p4-data-cycle-before.json",
+        "harness/reports/remaining-3.1.0-p4-data-cycle-after.json"
+      ]
+    }
+  ],
+  "reviews": [
+    "harness/reports/remaining-3.1.0-p4-review.json",
+    "harness/reports/remaining-3.1.0-p4-review-repair.json",
+    "harness/reports/remaining-3.1.0-p4-review-close.json"
+  ],
+  "unverified": [
+    "DSH H4凭据hash（禁止读取）",
+    "Jimp同zip验证/consumer lifecycle（禁止打包）",
+    "6fe679完整原件级组合链",
+    "P4 t5干净宿主和t6联合收口",
+    "最终源码完整官方全量绿证明（本轮仅一次full，原FAIL未改写）"
+  ],
+  "targetedSummaries": [
+    {
+      "file": "harness/reports/remaining-3.1.0-p4-fix-scope-birth-final.json",
+      "sha256": "e0a13b8d3315fc223a362047981fd3c5274be16668ef595a5ea770063be25a8d",
+      "bytes": 1345,
+      "ok": true,
+      "scope": {
+        "filter": "initial-design-delivery",
+        "release": true,
+        "caseNameFilter": "9f6c2e41 initial construction",
+        "suiteIds": [
+          "initial-design-delivery"
+        ]
+      },
+      "suites": [
+        {
+          "id": "initial-design-delivery",
+          "status": "completed",
+          "ok": true,
+          "results": [
+            {
+              "name": "9f6c2e41 initial construction births spec and plan with unresolved definitions",
+              "ok": true
+            },
+            {
+              "name": "9f6c2e41 initial construction returns an empty executable chain to its scope owner",
+              "ok": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file": "harness/reports/remaining-3.1.0-p4-fix-repair-large-r2.json",
+      "sha256": "6bde62e72b6f914e86a5a9796cb8a83c9dcf84655eb00db24cbac3afe78b62ad",
+      "bytes": 2500,
+      "ok": true,
+      "scope": {
+        "filter": "initial-design-repair",
+        "release": true,
+        "caseNameFilter": "r4",
+        "suiteIds": [
+          "initial-design-repair"
+        ]
+      },
+      "suites": [
+        {
+          "id": "initial-design-repair",
+          "status": "completed",
+          "ok": true,
+          "results": [
+            {
+              "name": "e2a4145e r4 repair questioning real process retains a final answer over 64KiB",
+              "ok": true
+            },
+            {
+              "name": "e2a4145e r4 initial questioning execute-request-large preserves real completed originals and author delivery",
+              "ok": true
+            },
+            {
+              "name": "e2a4145e r4 initial questioning large-process preserves real completed originals and author delivery",
+              "ok": true
+            },
+            {
+              "name": "e2a4145e r4 initial questioning failed-latest preserves real completed originals and author delivery",
+              "ok": true
+            },
+            {
+              "name": "e2a4145e r4 initial questioning bare-items preserves real completed originals and author delivery",
+              "ok": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file": "harness/reports/remaining-3.1.0-p4-fix-q-scope.json",
+      "sha256": "f6c7b0bbf5f4bd67130d693bf14d93bc81aa17c712d745f1c642c7ff2243d3a4",
+      "bytes": 1051,
+      "ok": true,
+      "scope": {
+        "filter": "initial-design-repair",
+        "release": true,
+        "caseNameFilter": "initial questioning same-scopes",
+        "suiteIds": [
+          "initial-design-repair"
+        ]
+      },
+      "suites": [
+        {
+          "id": "initial-design-repair",
+          "status": "completed",
+          "ok": true,
+          "results": [
+            {
+              "name": "e2a4145e initial questioning same-scopes uses real signed feedback author and independent recheck",
+              "ok": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file": "harness/reports/remaining-3.1.0-p4-fix-q-smaller.json",
+      "sha256": "620c33584587742e1f98fff4c47f105e2c1cfb59cd5dc2eb3ec12a4416aaeeec",
+      "bytes": 1045,
+      "ok": true,
+      "scope": {
+        "filter": "initial-design-repair",
+        "release": true,
+        "caseNameFilter": "initial questioning smaller-scopes",
+        "suiteIds": [
+          "initial-design-repair"
+        ]
+      },
+      "suites": [
+        {
+          "id": "initial-design-repair",
+          "status": "completed",
+          "ok": true,
+          "results": [
+            {
+              "name": "e2a4145e initial questioning smaller-scopes uses real signed feedback author and independent recheck",
+              "ok": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file": "harness/reports/remaining-3.1.0-p4-fix-OOBE.json",
+      "sha256": "3e7a81e72f55c7680cbe28f3100168907ea02dbcbc7ee1c7647c4f095df6a467",
+      "bytes": 1102,
+      "ok": true,
+      "scope": {
+        "filter": "goal-runner-testing-integrity-early",
+        "release": true,
+        "caseNameFilter": "395 阶段内 OOBE",
+        "suiteIds": [
+          "goal-runner-testing-integrity-early"
+        ]
+      },
+      "suites": [
+        {
+          "id": "goal-runner-testing-integrity-early",
+          "status": "completed",
+          "ok": true,
+          "results": [
+            {
+              "name": "395 阶段内 OOBE：真实检查归因和 summary 接回原门，等待解除先补 UT；超时不进 testing",
+              "ok": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file": "harness/reports/remaining-3.1.0-p4-fix-provider-rebase.json",
+      "sha256": "8f0a60dc49c7c112bfef2249d31b8f3f12036d885d52c2baa84ce18ac13ba1b9",
+      "bytes": 2097,
+      "ok": true,
+      "scope": {
+        "filter": "goal-runner-testing-integrity-late",
+        "release": true,
+        "caseNameFilter": "8d4e6a21 连续回放",
+        "suiteIds": [
+          "goal-runner-testing-integrity-late"
+        ]
+      },
+      "suites": [
+        {
+          "id": "goal-runner-testing-integrity-late",
+          "status": "completed",
+          "ok": true,
+          "results": [
+            {
+              "name": "8d4e6a21 连续回放：旧控制依赖 + 正式 provider override/rebase 保留原业务证据 → 新 provider review 完整恢复",
+              "ok": true
+            },
+            {
+              "name": "8d4e6a21 连续回放：旧控制依赖 + 正式 provider override/rebase + genuine-source-change 实际责任恢复 → 新 provider review 完整恢复",
+              "ok": true
+            },
+            {
+              "name": "8d4e6a21 连续回放：旧控制依赖 + 正式 provider override/rebase 保留原业务证据 → 新 provider review 缺原始证据恢复反例",
+              "ok": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file": "harness/reports/remaining-3.1.0-p4-fix-handoff-r2.json",
+      "sha256": "d4a809b7fe6beaa1e2989c3e944c268f9aab607191b99784fb47e7fbaff237e1",
+      "bytes": 1442,
+      "ok": true,
+      "scope": {
+        "filter": "session-execution-handoff",
+        "release": true,
+        "caseNameFilter": "P1 R",
+        "suiteIds": [
+          "session-execution-handoff"
+        ]
+      },
+      "suites": [
+        {
+          "id": "session-execution-handoff",
+          "status": "completed",
+          "ok": true,
+          "results": [
+            {
+              "name": "P1 R3 execute recovery preserves real settled failure and completion-cleanup facts instead of trusting raw terminal text",
+              "ok": true
+            },
+            {
+              "name": "P1 R2 real request CLI executes once and exposes the same running facts before owner-bound interruption",
+              "ok": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file": "harness/reports/remaining-3.1.0-p4-fix-bound-gate-final.json",
+      "sha256": "2c7f7422b9521e58cc391442459faa9179a089d0c35d946b059702ff38a9a3e1",
+      "bytes": 1034,
+      "ok": true,
+      "scope": {
+        "filter": "session-execution-handoff",
+        "release": true,
+        "caseNameFilter": "interruption before gate handback",
+        "suiteIds": [
+          "session-execution-handoff"
+        ]
+      },
+      "suites": [
+        {
+          "id": "session-execution-handoff",
+          "status": "completed",
+          "ok": true,
+          "results": [
+            {
+              "name": "1804 interruption before gate handback commits checks once and preserves the accepted author",
+              "ok": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file": "harness/reports/remaining-3.1.0-p4-fix-canary-final.json",
+      "sha256": "33c8f089cded203671091343df938f48d5dd60f3d8ca44d0458de3a4957ce124",
+      "bytes": 1500,
+      "ok": true,
+      "scope": {
+        "filter": "session-execution-handoff",
+        "release": true,
+        "caseNameFilter": "actual canary tool deadline",
+        "suiteIds": [
+          "session-execution-handoff"
+        ]
+      },
+      "suites": [
+        {
+          "id": "session-execution-handoff",
+          "status": "completed",
+          "ok": true,
+          "results": [
+            {
+              "name": "P3 native executor preserves the actual canary tool deadline without reviving a default author phase deadline",
+              "ok": true
+            },
+            {
+              "name": "P3 author deadline ignores old default phase fields and actual canary tool deadline preserves its original issue instant",
+              "ok": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file": "harness/reports/remaining-3.1.0-p4-fix-phase-plan.json",
+      "sha256": "5b038c7501d2418fb01a4c5009dbcac8c81d549e11b37502e27103fd68ebd24d",
+      "bytes": 841,
+      "ok": true,
+      "scope": {
+        "filter": "goal-phase-runtime",
+        "release": true,
+        "caseNameFilter": "P1 detached executor:",
+        "suiteIds": [
+          "goal-phase-runtime"
+        ]
+      },
+      "suites": [
+        {
+          "id": "goal-phase-runtime",
+          "status": "completed",
+          "ok": true,
+          "results": [
+            {
+              "name": "P1 detached executor: old phase timeout is not an author deadline and invocation output stays truthful",
+              "ok": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file": "harness/reports/remaining-3.1.0-p4-fix-RC4.json",
+      "sha256": "e2838bd0f3ca2009e5b3514783343049e76d8a74fc497b2a45e010c437c8a7b4",
+      "bytes": 772,
+      "ok": true,
+      "scope": {
+        "filter": "real-chain-seams",
+        "release": true,
+        "caseNameFilter": "RC-4 verifier",
+        "suiteIds": [
+          "real-chain-seams"
+        ]
+      },
+      "suites": [
+        {
+          "id": "real-chain-seams",
+          "status": "completed",
+          "ok": true,
+          "results": [
+            {
+              "name": "RC-4 verifier subject：时钟漂移不换代，业务内容变化必须换代",
+              "ok": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file": "harness/reports/remaining-3.1.0-p4-fix-RC8c.json",
+      "sha256": "71d5d8089e3ac561c248a627fd24ad7fa6f8d8384c22b5ffa702144a55e99e88",
+      "bytes": 808,
+      "ok": true,
+      "scope": {
+        "filter": "real-chain-seams",
+        "release": true,
+        "caseNameFilter": "RC-8c plan",
+        "suiteIds": [
+          "real-chain-seams"
+        ]
+      },
+      "suites": [
+        {
+          "id": "real-chain-seams",
+          "status": "completed",
+          "ok": true,
+          "results": [
+            {
+              "name": "RC-8c plan 增量小节缺失：原始 FAIL 仍在，plan 通过、进披露清单，链继续推进（A7）",
+              "ok": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file": "harness/reports/remaining-3.1.0-p4-fix-RC8d.json",
+      "sha256": "0f5805bd5be2f4d60ca92ab03ab145480a7cc7e12cffc23f00451c2a34f9d812",
+      "bytes": 797,
+      "ok": true,
+      "scope": {
+        "filter": "real-chain-seams",
+        "release": true,
+        "caseNameFilter": "RC-8d plan",
+        "suiteIds": [
+          "real-chain-seams"
+        ]
+      },
+      "suites": [
+        {
+          "id": "real-chain-seams",
+          "status": "completed",
+          "ok": true,
+          "results": [
+            {
+              "name": "RC-8d plan 增量小节为空：原始 FAIL 仍在，plan 通过、进披露清单，链继续推进（A7）",
+              "ok": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file": "harness/reports/remaining-3.1.0-p4-fix-S6-final-r2.json",
+      "sha256": "8513b8db0f5fd7f8dd43b08d36b92487896b1fb41d5254e09ecdb221e2edaf09",
+      "bytes": 957,
+      "ok": true,
+      "scope": {
+        "filter": "reliability-scenarios-runtime",
+        "release": true,
+        "caseNameFilter": "S6 ",
+        "suiteIds": [
+          "reliability-scenarios-runtime"
+        ]
+      },
+      "suites": [
+        {
+          "id": "reliability-scenarios-runtime",
+          "status": "completed",
+          "ok": true,
+          "results": [
+            {
+              "name": "S6 排除内容已被实现 / 排除元素已写进产品",
+              "ok": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file": "harness/reports/remaining-3.1.0-p4-fix-S7-final-r3.json",
+      "sha256": "3f20d10ea3ac7ee18e17ae6de8589a2f03b98fbaf0964148c99d8a7ff0df7a7c",
+      "bytes": 1207,
+      "ok": true,
+      "scope": {
+        "filter": "reliability-scenarios-runtime",
+        "release": true,
+        "caseNameFilter": "S7 ",
+        "suiteIds": [
+          "reliability-scenarios-runtime"
+        ]
+      },
+      "suites": [
+        {
+          "id": "reliability-scenarios-runtime",
+          "status": "completed",
+          "ok": true,
+          "results": [
+            {
+              "name": "S7 非关键描述冲突 / 冲突 A（屏 id 当元素 id）",
+              "ok": true
+            },
+            {
+              "name": "S7 非关键描述冲突 / 冲突 B（F1 优先级，作者材料原有）",
+              "ok": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file": "harness/reports/remaining-3.1.0-p4-fix-S11-final-r2.json",
+      "sha256": "80240966d802b02b26931c8076350762e3658536426b99be8f9dad4ffda82caf",
+      "bytes": 962,
+      "ok": true,
+      "scope": {
+        "filter": "reliability-scenarios-runtime",
+        "release": true,
+        "caseNameFilter": "S11 真实产品回归 / 回退后修好",
+        "suiteIds": [
+          "reliability-scenarios-runtime"
+        ]
+      },
+      "suites": [
+        {
+          "id": "reliability-scenarios-runtime",
+          "status": "completed",
+          "ok": true,
+          "results": [
+            {
+              "name": "S11 真实产品回归 / 回退后修好",
+              "ok": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file": "harness/reports/remaining-3.1.0-p4-fix-S16-c3f.json",
+      "sha256": "c58dcb7706558df601b663b69c515b390ab96f5e8f614c2f3280f465728ddd51",
+      "bytes": 1153,
+      "ok": true,
+      "scope": {
+        "filter": "design-authority-repair-content",
+        "release": true,
+        "caseNameFilter": "S16-c3f",
+        "suiteIds": [
+          "design-authority-repair-content"
+        ]
+      },
+      "suites": [
+        {
+          "id": "design-authority-repair-content",
+          "status": "completed",
+          "ok": true,
+          "results": [
+            {
+              "name": "design-authority-repair: S16-c3f 已完成质询对当前必需scope给合法blocker：保留完整材料，拒绝降低验收的草稿且不发布",
+              "ok": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "finalGates": {
+    "openspecStrict": {
+      "passed": 65,
+      "failed": 0,
+      "enforcement": "PASS"
+    },
+    "planDefault": "PASS",
+    "diffCheck": "PASS",
+    "lfCheck": "PASS",
+    "sourceUnchangedSinceChanged": true,
+    "protectedTrackedFilesUnchanged": true,
+    "version": "3.1.0",
+    "branch": "main"
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "mode": "workers",
+  "workers": 12,
+  "scope": {
+    "filter": "real-chain-seams",
+    "release": true,
+    "caseNameFilter": "RC-4 verifier",
+    "suiteIds": [
+      "real-chain-seams"
+    ]
+  },
+  "wallMs": 347394.6083,
+  "ok": true,
+  "suites": [
+    {
+      "id": "real-chain-seams",
+      "releaseOnly": true,
+      "status": "completed",
+      "ok": true,
+      "loadMs": 946.0079,
+      "executionMs": 345066.2044,
+      "totalMs": 346249.4703,
+      "results": [
+        {
+          "name": "RC-4 verifier subject：时钟漂移不换代，业务内容变化必须换代",
+          "ok": true
+        }
+      ],
+      "startupMs": 1142.0945000000002,
+      "matchedCaseCount": 1,
+      "executionTimings": [],
+      "cleanupMs": 33.43549999996321
+    }
+  ]
+}

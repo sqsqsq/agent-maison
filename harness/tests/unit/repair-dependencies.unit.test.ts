@@ -58,20 +58,21 @@ const cases: Array<{ name: string; run(): void }> = [
     birth.control_edges = [{ before: 'review', after: 'ut', basis: [{ input_id: 'review', source: { kind: 'derive', provider_id: 'derive.test-targets' }, dependencies: [], source_refs: [], content_fingerprint: 'a'.repeat(64) }] }];
     assert(effectiveScopeView({ birth, events, workflow }).phase_chain.indexOf('review') < effectiveScopeView({ birth, events, workflow }).phase_chain.indexOf('ut'));
   } },
-  { name: '实际manifest输入边即使未重复在obligation.basis，也贯通重开、历史失效和调度', run() {
+  { name: '实际manifest输入边贯通重开和历史失效，但不冒充检查控制顺序', run() {
     const scope = scopeFor(['coding', 'review', 'ut']);
     const independent = { ...workflow, artifacts: workflow.artifacts.map(artifact => ({ ...artifact, requires: [] })) };
     const inputEdges = [{ before: 'ut', after: 'review' }];
     assert.deepStrictEqual(affectedScopePhases(['ut'], workflow.auto_chain!, { scope, workflow: independent, inputEdges }), ['review', 'ut']);
     const history = scopeProofHistory(scope, [{ type: 'phase_verdict', phase: 'review', verdict: 'PASS', action: 'advance' }, { type: 'phase_verdict', phase: 'ut', verdict: 'FAIL' }], workflow.auto_chain!, undefined, independent, { inputEdges });
     assert(history.passed.has('review'));
-    assert(!history.invalidated.has('review'), 'input edges order current work; ordinary FAIL does not revoke another phase proof');
+    assert(!history.invalidated.has('review'), 'ordinary FAIL does not revoke another phase proof');
     const explicitlyInvalidated = scopeProofHistory(scope, [{ type: 'phase_verdict', phase: 'review', verdict: 'PASS', action: 'advance' },
       { type: 'phase_invalidated', phase: 'ut' }], workflow.auto_chain!, undefined, independent, { inputEdges });
     assert(!explicitlyInvalidated.passed.has('review'));
     assert(explicitlyInvalidated.invalidated.has('review'));
     const view = effectiveScopeView({ birth: scope, events: [], workflow: independent, reopen: 'ut', inputEdges });
-    assert(view.phase_chain.indexOf('ut') < view.phase_chain.indexOf('review'));
+    assert(view.phase_chain.includes('review') && view.phase_chain.includes('ut'), 'reopening UT must retain its actual review consumer');
+    assert.deepStrictEqual(view.phase_chain, ['coding', 'review', 'ut'], 'with no declared controls, existing read dependencies do not override the preferred check order');
   } },
   { name: 'current upstream failure blocks completion, resolved observation reuses descendants, and real revocations or stale inputs still reopen', run() {
     const chain = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'];

@@ -438,10 +438,12 @@ export function resolveExecutionScope(input: ExecutionScopeInput, workflow: Work
 }
 
 /** One schedule projection for initial resolution and current effective obligations. */
-export function projectScopeSchedule(scope: ExecutionScope, workflow: WorkflowSpec, dependencyContext: Pick<ScopeDependencyContext, 'inputOwners' | 'inputEdges'> = {}): ExecutionScope {
+export function projectScopeSchedule(scope: ExecutionScope, workflow: WorkflowSpec, _dependencyContext: Pick<ScopeDependencyContext, 'inputOwners' | 'inputEdges'> = {}): ExecutionScope {
   const obligations = structuredClone(scope.obligations);
   const phases = new Map(workflow.artifacts.map(a => [a.id, a]));
-  const dependencies = scopeDependencyEdges(scope, workflow, dependencyContext.inputOwners, dependencyContext.inputEdges);
+  // Existing material reads govern evidence invalidation, not producer-check completion order.
+  // Only declared controls/proofs may constrain which check can execute first.
+  const dependencies = scopeDependencyEdges(scope, workflow);
   const definitionKinds = new Set<string>([...OBLIGATION_PROVIDERS['obligations.spec'], ...OBLIGATION_PROVIDERS['obligations.plan']]);
   const needed = new Set(obligations.filter(o => o.applicability === 'required' && !o.satisfied_by?.length).map(o => o.owner_phase));
   const unresolved: ExecutionScope['unresolved'] = obligations.filter(o => o.applicability === 'unknown').map(o => ({ obligation_id: o.id, owner: o.owner_phase, reason: o.reason, needed_by: [o.owner_phase] }));
@@ -721,7 +723,7 @@ export function effectiveScopeView(input: {
     .filter(phase => authorizedScopePhases(input.birth, input.workflow).includes(phase));
   const effective = recoveryTargets.length ? validateExecutionScope({ ...projected,
     phase_chain: orderScopePhases(new Set([...projected.phase_chain, ...recoveryTargets]), [...projected.phase_chain, ...order],
-      scopeDependencyEdges(scope, input.workflow, input.inputOwners, input.inputEdges)),
+      scopeDependencyEdges(scope, input.workflow)),
     reused_phases: projected.reused_phases.filter(item => !recoveryTargets.includes(item.phase)),
   }) : projected;
   const request = [...input.events].reverse().find(event => event.type === 'phase_backtrack_requested');
@@ -733,8 +735,8 @@ export function effectiveScopeView(input: {
   const reporterIndex = effective.phase_chain.indexOf(reporter);
   const ownerIndex = effective.phase_chain.indexOf(owner);
   if (reporterIndex < 0 || ownerIndex <= reporterIndex) return effective;
-  const dependencies = scopeDependencyEdges(scope, input.workflow, input.inputOwners, input.inputEdges);
-  if (affectedScopePhases([reporter], order, { ...input, scope }).includes(owner)) return effective;
+  const dependencies = scopeDependencyEdges(scope, input.workflow);
+  if (affectedScopePhases([reporter], order, { scope, workflow: input.workflow }).includes(owner)) return effective;
   // Reorder the existing obligation view only: an independent owner repairs first, then the reporter adjudicates.
   const chain = [...effective.phase_chain]; chain.splice(ownerIndex, 1);
   const neededPredecessors = new Set<string>();

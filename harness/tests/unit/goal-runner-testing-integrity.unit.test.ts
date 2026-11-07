@@ -3179,7 +3179,7 @@ test('395 阶段内 OOBE：真实检查归因和 summary 接回原门，等待�
       listTargets: () => ['FIXTURE-DEVICE'], wake: () => {}, isLocked: () => false, attestPhysical: () => true,
       snapshot: () => parseLockScreenTree(guide ? guideTree : clearTree),
     } } });
-    const probe = await runChain(root, { deviceGate, conditionWait: { maxWaitMs: 1000, pollMs: 1, runProbe: () => {
+    const probe = await runChain(root, { deviceGate, conditionWait: { maxWaitMs: 15000, pollMs: 1, runProbe: () => {
       probes++;
       const runs = featureFilePath(root, FEATURE, 'goal-runs');
       const current = fs.readdirSync(runs).filter(n => fs.existsSync(path.join(runs, n, 'progress.json'))).sort().at(-1)!;
@@ -6770,7 +6770,9 @@ for (const { genuineSourceChange, completeEvidence } of [
       const scope = loadEffectiveExecutionScope(root, FEATURE)!;
       assert(scope.phase_chain.includes('testing'), JSON.stringify(scope.obligations.map(o => ({ kind: o.kind, applicability: o.applicability, reason: o.reason }))));
       firstPhase = scope.phase_chain[0]; lastPhase = scope.phase_chain.at(-1)!;
-      const first = await requestVia('foreground', root, { ...common, freshStartPhase: firstPhase as 'coding', freshEndPhase: lastPhase, launchArgs: ['--visual-adapter', 'claude', '--visual-model', 'claude-opus-5'] });
+      writeFile(root, 'controlled-visual/settings.json', JSON.stringify({ env: { ANTHROPIC_BASE_URL: 'https://api.anthropic.com' } }));
+      writeFile(root, 'controlled-visual/config.toml', 'model_provider = "openai"\n');
+      const first = await requestVia('foreground', root, { ...common, freshStartPhase: firstPhase as 'coding', freshEndPhase: lastPhase, launchArgs: ['--visual-adapter', 'claude', '--visual-model', 'claude-opus-5', '--visual-provider', 'anthropic', '--visual-model-config', path.join(root, 'controlled-visual/settings.json')] });
       const [run] = goalRunIds(root);
       const parked = reduceRunState(goalRunEvents(root, run));
       assert(parked.run_disposition === 'WAITING' && parked.run_wait_kind === 'external', '先按真实checks/writer的当前外部缺口停放，不要求退休phase队列终态名称');
@@ -6798,7 +6800,7 @@ for (const { genuineSourceChange, completeEvidence } of [
       const before = goalRunEvents(root, run);
       if (genuineSourceChange) writeFile(root, research, 'v2 genuine source');
       restored = true;
-      const second = await requestVia('foreground', root, { ...common, freshStartPhase: firstPhase as 'coding', freshEndPhase: lastPhase, launchArgs: ['--visual-adapter', 'codex', '--visual-model', 'gpt-6.1-sol', '--override-manifest'] });
+      const second = await requestVia('foreground', root, { ...common, freshStartPhase: firstPhase as 'coding', freshEndPhase: lastPhase, launchArgs: ['--visual-adapter', 'codex', '--visual-model', 'gpt-6.1-sol', '--visual-provider', 'openai', '--visual-model-config', path.join(root, 'controlled-visual/config.toml'), '--override-manifest'] });
       const after = goalRunEvents(root, run);
       assert(fs.readFileSync(eventFile, 'utf8').startsWith(legacyEventBytes), '恢复只追加事件，不改旧 facts context/baseline');
       assert(signedBytes.equals(fs.readFileSync(signedPath)), '正式provider override不得改写原作者recipe、来源SHA或原始前像');

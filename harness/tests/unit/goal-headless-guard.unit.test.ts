@@ -1315,6 +1315,10 @@ function runCases(selector?: string): UnitCaseResult[] {
           undefined, undefined, undefined, undefined, undefined,
           true,
         );
+        for (const prompt of [detached, attended]) {
+          assert(prompt.includes('继续所有不依赖它的授权工作'), 'framework faults must leave independent authorized work available');
+          assert(!prompt.includes('Found a framework bug? HALT'), 'the old blanket framework-fault stop rule must remain retired');
+        }
         for (const needle of ['## Unattended execution', 'MUST NOT stop to ask', 'overrides', 'approval_mode', '§9', 'headless-assumptions']) {
           assert(detached.includes(needle), `detached 应保留模式段：${needle}`);
           assert(!attended.includes(needle), `attended 不得注入模式段：${needle}`);

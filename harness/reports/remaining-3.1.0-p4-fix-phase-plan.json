@@ -1,0 +1,35 @@
+{
+  "mode": "workers",
+  "workers": 12,
+  "scope": {
+    "filter": "goal-phase-runtime",
+    "release": true,
+    "caseNameFilter": "P1 detached executor:",
+    "suiteIds": [
+      "goal-phase-runtime"
+    ]
+  },
+  "wallMs": 1040.7396999999996,
+  "ok": true,
+  "suites": [
+    {
+      "id": "goal-phase-runtime",
+      "releaseOnly": true,
+      "status": "completed",
+      "ok": true,
+      "loadMs": 816.1184999999999,
+      "executionMs": 1.4033000000000584,
+      "totalMs": 1033.9058999999997,
+      "results": [
+        {
+          "name": "P1 detached executor: old phase timeout is not an author deadline and invocation output stays truthful",
+          "ok": true
+        }
+      ],
+      "startupMs": 1002.1569999999997,
+      "matchedCaseCount": 1,
+      "executionTimings": [],
+      "cleanupMs": 0.1972000000000662
+    }
+  ]
+}

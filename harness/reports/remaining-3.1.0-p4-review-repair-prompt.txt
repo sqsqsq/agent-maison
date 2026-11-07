@@ -1,0 +1,18 @@
+这是P4源代码窄复核续轮，只读工具Read/Grep/Glob，不使用子代理，不读任何凭据、temp/，不修改文件、不执行Shell。
+首轮源码复核已通过，报告remaining-3.1.0-p4-review.json（实际claude-opus-5-5）。本轮只看官方全量新证据导致的返修及直接回归，不扩大架构/目标。
+唯一官方根npm test已完整结束：1350组、原424正式扩展全包含，6016通过/24失败、输入稳定，无源码漂移；meta/full-failures.json可读。按用户当次明确要求不重复全量，修后只跑受影响组与test:changed，不能把原始full写成PASS。
+当前源码冻结，最终test:changed及可靠性最后数条仍运行中；这是源码复核，验证未完不得声称全过。完整本批patch在remaining-3.1.0-p4-repair.patch（不含用户保护a47/6fd/c6），首轮runId补接未变。请重点核对新增execution-scope.ts局部修复和测试侧前提纠正，保留原业务强断言。
+生产新增根因：原件回放S6失败保全的当前只读评估稳定报scope控制环。真实工作流的SHA与repo obligation-driven完全相同；remaining-3.1.0-p4-scope-diagnostic.json显示review实际读UT材料得到ut→review，UT读review报告得到review→ut。它们是已存在材料的消费/失效关系，不表示producer检查必须完成。scopeDependencyEdges原位保留所有这些边供affectedScopePhases失效传播；仅projectScopeSchedule/恢复顺序及前置计算改用既有scopeDependencyEdges(scope,workflow)声明控制/phase proof，不把观察到的inputOwners/inputEdges用于排序/检查执行前置。没有新增状态、字段、协议、门禁或停机原因；原参数形状保留兼容。新增P4 mutual review and UT反例修前红/修后绿，断言数据依赖仍传播失效且显式控制环仍拒绝；既有real control dependencies定向过，typecheck过。请沿真实控制依赖/未知输入/恢复消费核对有无过宽。
+测试侧修复：
+- old native replay fixtures缺8f模型路由，使用既有controlledModelBinding/parseAdapterModelBinding；公共execute改受控codex shim，原model/list只读控制协议及真实Node body，不接实际模型。helper新增installControlledCodex为Windows受支持npm node shim，恢复PATH；不放宽生产预检/守卫。大正文r4五例、P1 R两例、canary deadline定向已过。
+- 初建scope出生脚本原只修primary与direct consumer，漏同蓝图另一个真实mapping缺口；现作者/Q按原批准criterion修全部现存CU映射，保留所有predicate/provide/require内容，仅补verification_refs。按原始实际gap ID集合断言（已2/2），不硬写过时3/4计数，不代签后半状态。
+- same/smaller scopes的旧测试无实际改稿却硬要求新Q，违反当前无新条件出口；现作者实际补原scope恢复业务说明，内容hash确变再要求独核，原same scope停/缩小scope进展断言不变，已2/2。
+- RC4原把合法同业务正文的不同核验/闭合subject当业务换代；放开subject身份个数但仍强制其业务hash等于原值，两个控制时钟的整份material逐字段一致、实际业务单变量变化换代断言保持，已过。
+- RC8c/d原要求raw FAIL恰一条，实际还有searches_min且已被共同处置披露；现保留目标原始FAIL，要求所有raw FAIL逐项确在披露清单；不改计数、不改生产阈值，保留实际plan通过/coding工具返回，2组已过。
+- OOBE测试1秒窗口在本轮负载1.6秒即耗尽，真实condition_wait_started已在而未进probe；只把该测试等待窗设15秒，原恢复与超时反例不变，已过。
+- 8d provider override三例补明确provider/config来源，仅测试创建公开受控配置，不读凭据；均已过。
+- F31旧测试hook在harness_end之前抛错，before.returned=false/无end，原所谓已绑定完成不成立（failure-Dd0lXs/observation.json）。改名保留为未提交检查须补原spec一次、accepted author不重放的强反例，已过；真正已绑定原生gate被外杀后的复用阳性由本轮全量session-slow-gate自然通过保留，没有把无原件当可复用。
+- S16-c3f旧断言局部作者/Q只一次，当前共同内核必须将首轮完整否定回原作者；现A,Q,A,Q有限收敛，第二作者提示必须含完整真实首否定，canonical不降验收/不发布强断言保持，已过。
+- S6/S7/S11旧阶段替身未按实际admitted research补事实、且测试作者自行写testing verifier；现复用lifecycle现有authorHooks，只写pending授权方法材料、按原准入保基线/实际读新目标文件、独核只在实际onOutOfChain请求中答。失败时复用preserveRuntimeTestEvidence保存原件/当前评估，不改断言。初版S6和S11复验已过，最终源码的S6/S7/S11仍在跑，结果不能提前写绿。请查此helper有没有改丢原场景扰动/裁决、绕过检查或伪造结果。
+本轮真实边界：自含Node机制验证不是实际HMOS/设备质量；DSH H4不读凭据未验、Jimp同zip验收因不打包未验、P4t5/t6始终pending。全量standalone所有组本轮自然通过，未假定历史偶发根因。
+请一次性列出本范围确有后果的必修（确定性正确性/真实授权/硬预算/已承诺完成自动恢复确定性失败），给文件行、实际反例与最小修复；可选加固不阻断，不新增平行状态/协议。无必修明确通过；不要在后续返修无新具体证据时扩大目标。

@@ -1,0 +1,47 @@
+{
+  "mode": "workers",
+  "workers": 12,
+  "scope": {
+    "filter": "reliability-scenarios-runtime",
+    "release": true,
+    "caseNameFilter": "S7 ",
+    "suiteIds": [
+      "reliability-scenarios-runtime"
+    ]
+  },
+  "wallMs": 576380.3594999999,
+  "ok": true,
+  "suites": [
+    {
+      "id": "reliability-scenarios-runtime",
+      "releaseOnly": true,
+      "status": "completed",
+      "ok": true,
+      "loadMs": 746.0563999999999,
+      "executionMs": 574437.0006,
+      "totalMs": 575439.9088000001,
+      "results": [
+        {
+          "name": "S7 非关键描述冲突 / 冲突 A（屏 id 当元素 id）",
+          "ok": true
+        },
+        {
+          "name": "S7 非关键描述冲突 / 冲突 B（F1 优先级，作者材料原有）",
+          "ok": true
+        }
+      ],
+      "startupMs": 974.8418999999999,
+      "matchedCaseCount": 2,
+      "executionTimings": [
+        {
+          "caseNames": [
+            "S7 非关键描述冲突 / 冲突 A（屏 id 当元素 id）",
+            "S7 非关键描述冲突 / 冲突 B（F1 优先级，作者材料原有）"
+          ],
+          "durationMs": 574434.383
+        }
+      ],
+      "cleanupMs": 1.0779000000329688
+    }
+  ]
+}

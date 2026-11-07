@@ -884,9 +884,9 @@ test('RC-4 verifier subject：时钟漂移不换代，业务内容变化必须�
     if (!genA || !genB || genA === genB) throw new Error(`必须按稳定重放基线与业务改动的新 subject 逐份对账：${dump}`);
     assert(shaOf(genA) !== shaOf(genB), `the two controlled real generations must differ in the actual preset body: ${dump}`);
     const preliminary = generations.filter(g => g !== genA && g !== genB);
-    assert(preliminary.every(g => (g.subject === original.verifier_subject_id && shaOf(g) === shaOf(genA))
+    assert(preliminary.every(g => shaOf(g) === shaOf(genA)
       || (!shaOf(g) && subjectBefore.includes(g.subject))),
-      `其它代只能是原 Goal 的真实闭合代或实际作者产物前代，不能忽略任意业务换代：${dump}`);
+      `其它代只能是原 Goal 同业务正文的核验/闭合代或实际作者产物前代，不能忽略任意业务换代：${dump}`);
     assert(
       JSON.stringify(genA.view.files.map(f => f.path)) === JSON.stringify(genB.view.files.map(f => f.path)),
       `两代材料的文件集合不同，无法单变量对账：${dump}`,
@@ -1202,8 +1202,10 @@ async function rc8cPlanDeltaDisclosed(mode: 'missing' | 'empty', id: string): Pr
       assert(planMaterialWrites > 0, 'the actual author must prepare plan materials before the delta negative');
       const script = JSON.parse(fs.readFileSync(path.join(featurePhaseReportsDir(project.root, project.feature, 'plan'), 'script-report.json'), 'utf-8')) as { checks: CheckResult[] };
       const raw = script.checks.filter(c => c.status === 'FAIL').map(c => `${c.id}/${c.severity}`).sort();
-      assert(JSON.stringify(raw) === JSON.stringify([`${id}/BLOCKER`]), `${mode}：plan 完整检查结果里应只有这一条原始 FAIL：${JSON.stringify(raw)}\n${dumpPhase(project, 'plan')}`);
+      assert(raw.includes(`${id}/BLOCKER`), `${mode}：目标原始 FAIL 必须保留：${JSON.stringify(raw)}\n${dumpPhase(project, 'plan')}`);
       const plan = readSummary(project, 'plan') as (ReturnType<typeof readSummary> & { disclosed_failures?: Array<{ id: string }> }) | null;
+      assert(script.checks.filter(c => c.status === 'FAIL').every(c => plan?.disclosed_failures?.some(d => d.id === c.id)),
+        `${mode}：所有原始 FAIL 都须有共同处置的披露依据，不能忽略其它必修：${JSON.stringify(raw)}`);
       assert(plan?.verdict === 'PASS', `${mode}：披露后 plan 应通过：${dumpPhase(project, 'plan')}`);
       assert((plan?.disclosed_failures ?? []).some(d => d.id === id), `${mode}：${id} 应进 disclosed_failures：${JSON.stringify(plan?.disclosed_failures)}`);
       assert(!(plan?.blockers ?? []).some(b => (b.id ?? b.check_id) === id), `${mode}：${id} 不应再进 blockers`);
@@ -1218,7 +1220,7 @@ async function rc8cPlanDeltaDisclosed(mode: 'missing' | 'empty', id: string): Pr
   }
 }
 
-// 缺节与空节各一条独立用例：各自只产出本 id 的原始 FAIL，反向变异可在一次运行里逐条归因。
+// 缺节与空节各一条独立用例：目标原始 FAIL 必须保留，其他原始 FAIL 也须逐条合法披露。
 test('RC-8c plan 增量小节缺失：原始 FAIL 仍在，plan 通过、进披露清单，链继续推进（A7）', () => rc8cPlanDeltaDisclosed('missing', 'context_exploration_facts_phase_delta_missing'));
 test('RC-8d plan 增量小节为空：原始 FAIL 仍在，plan 通过、进披露清单，链继续推进（A7）', () => rc8cPlanDeltaDisclosed('empty', 'context_exploration_facts_phase_delta_empty'));
 

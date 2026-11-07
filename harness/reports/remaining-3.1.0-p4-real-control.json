@@ -1,0 +1,64 @@
+{
+  "mode": "workers",
+  "workers": 12,
+  "scope": {
+    "filter": "execution-scope",
+    "release": false,
+    "caseNameFilter": "real control dependencies remain ordered",
+    "suiteIds": [
+      "execution-scope-prepare-early",
+      "execution-scope-prepare-late",
+      "execution-scope-runtime"
+    ]
+  },
+  "wallMs": 2624.0969,
+  "ok": true,
+  "suites": [
+    {
+      "id": "execution-scope-prepare-early",
+      "releaseOnly": false,
+      "status": "completed",
+      "ok": true,
+      "loadMs": 826.5566,
+      "executionMs": 8.090599999999995,
+      "totalMs": 1142.4207000000001,
+      "results": [
+        {
+          "name": "real control dependencies remain ordered and cannot be replaced by information alone",
+          "ok": true
+        }
+      ],
+      "startupMs": 1115.9982999999997,
+      "matchedCaseCount": 1,
+      "executionTimings": [
+        {
+          "caseNames": [
+            "real control dependencies remain ordered and cannot be replaced by information alone"
+          ],
+          "durationMs": 7.4506000000000085
+        }
+      ],
+      "cleanupMs": 0.18769999999949505
+    },
+    {
+      "id": "execution-scope-prepare-late",
+      "releaseOnly": true,
+      "status": "not-run",
+      "ok": null,
+      "loadMs": null,
+      "executionMs": null,
+      "totalMs": null,
+      "results": []
+    },
+    {
+      "id": "execution-scope-runtime",
+      "releaseOnly": true,
+      "status": "not-run",
+      "ok": null,
+      "loadMs": null,
+      "executionMs": null,
+      "totalMs": null,
+      "results": []
+    }
+  ]
+}

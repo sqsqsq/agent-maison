@@ -1,0 +1,62 @@
+{
+  "mode": "workers",
+  "workers": 12,
+  "scope": {
+    "filter": "goal-runner-testing-integrity-late",
+    "release": true,
+    "caseNameFilter": "8d4e6a21 连续回放",
+    "suiteIds": [
+      "goal-runner-testing-integrity-late"
+    ]
+  },
+  "wallMs": 62990.9641,
+  "ok": true,
+  "suites": [
+    {
+      "id": "goal-runner-testing-integrity-late",
+      "releaseOnly": true,
+      "status": "completed",
+      "ok": true,
+      "loadMs": 2729.9164,
+      "executionMs": 145545.87110000002,
+      "totalMs": 148963.0745,
+      "results": [
+        {
+          "name": "8d4e6a21 连续回放：旧控制依赖 + 正式 provider override/rebase 保留原业务证据 → 新 provider review 完整恢复",
+          "ok": true
+        },
+        {
+          "name": "8d4e6a21 连续回放：旧控制依赖 + 正式 provider override/rebase + genuine-source-change 实际责任恢复 → 新 provider review 完整恢复",
+          "ok": true
+        },
+        {
+          "name": "8d4e6a21 连续回放：旧控制依赖 + 正式 provider override/rebase 保留原业务证据 → 新 provider review 缺原始证据恢复反例",
+          "ok": true
+        }
+      ],
+      "startupMs": 1115.6786999999995,
+      "matchedCaseCount": 3,
+      "executionTimings": [
+        {
+          "caseNames": [
+            "8d4e6a21 连续回放：旧控制依赖 + 正式 provider override/rebase 保留原业务证据 → 新 provider review 完整恢复"
+          ],
+          "durationMs": 42620.924999999996
+        },
+        {
+          "caseNames": [
+            "8d4e6a21 连续回放：旧控制依赖 + 正式 provider override/rebase + genuine-source-change 实际责任恢复 → 新 provider review 完整恢复"
+          ],
+          "durationMs": 60802.6367
+        },
+        {
+          "caseNames": [
+            "8d4e6a21 连续回放：旧控制依赖 + 正式 provider override/rebase 保留原业务证据 → 新 provider review 缺原始证据恢复反例"
+          ],
+          "durationMs": 42120.0209
+        }
+      ],
+      "cleanupMs": 0.1860999999989872
+    }
+  ]
+}

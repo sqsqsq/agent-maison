@@ -1,0 +1,37 @@
+{
+  "error": "Error: [execution-scope] 影响依据不可用：codebase: 依据字节已变化 C:\\Users\\shengqsq\\AppData\\Local\\Temp\\mu-hIPHWt\\0\\daily-design-g3TMJf\\src\\ledger\\src\\main\\LedgerFeature.ts",
+  "stack": "Error: [execution-scope] 影响依据不可用：codebase: 依据字节已变化 C:\\Users\\shengqsq\\AppData\\Local\\Temp\\mu-hIPHWt\\0\\daily-design-g3TMJf\\src\\ledger\\src\\main\\LedgerFeature.ts\n    at fail (C:\\Users\\shengqsq\\AppData\\Local\\Temp\\mu-hIPHWt\\0\\daily-design-g3TMJf\\framework\\harness\\scripts\\utils\\execution-scope.ts:184:46)\n    at resolveExecutionScope (C:\\Users\\shengqsq\\AppData\\Local\\Temp\\mu-hIPHWt\\0\\daily-design-g3TMJf\\framework\\harness\\scripts\\utils\\execution-scope.ts:313:38)\n    at scopeApi.resolveExecutionScope (D:\\1.code\\agent-maison\\harness\\tests\\unit\\daily-design-journey.unit.test.ts:565:20)\n    at resolveFeatureExecutionScope (C:\\Users\\shengqsq\\AppData\\Local\\Temp\\mu-hIPHWt\\0\\daily-design-g3TMJf\\framework\\harness\\scripts\\utils\\feature-track.ts:134:31)\n    at resolveBirthExecutionScope (C:\\Users\\shengqsq\\AppData\\Local\\Temp\\mu-hIPHWt\\0\\daily-design-g3TMJf\\framework\\harness\\scripts\\utils\\feature-execution-scope.ts:615:47)\n    at invoke (C:\\Users\\shengqsq\\AppData\\Local\\Temp\\mu-hIPHWt\\0\\daily-design-g3TMJf\\framework\\harness\\scripts\\goal-phase-runtime.ts:5230:49)\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async runChangeUnitProgression (C:\\Users\\shengqsq\\AppData\\Local\\Temp\\mu-hIPHWt\\0\\daily-design-g3TMJf\\framework\\harness\\scripts\\utils\\change-unit-progress-loop.ts:184:18)\n    at async GoalPhaseRuntime.continueInitialDesignConstruction (C:\\Users\\shengqsq\\AppData\\Local\\Temp\\mu-hIPHWt\\0\\daily-design-g3TMJf\\framework\\harness\\scripts\\goal-phase-runtime.ts:5300:12)\n    at async GoalPhaseRuntime.runInitialDesign (C:\\Users\\shengqsq\\AppData\\Local\\Temp\\mu-hIPHWt\\0\\daily-design-g3TMJf\\framework\\harness\\scripts\\goal-phase-runtime.ts:4746:24)",
+  "impact": {
+    "user_visible_behavior_change": false,
+    "reason": "账本内部纯TypeScript能力，不涉及UI或设备",
+    "basis": [
+      {
+        "input_id": "codebase",
+        "source": {
+          "kind": "derive",
+          "provider_id": "derive.codebase"
+        },
+        "dependencies": [
+          {
+            "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\mu-hIPHWt\\0\\daily-design-g3TMJf\\src\\ledger\\src\\main\\LedgerFeature.ts",
+            "exists": true,
+            "sha256": "b74aa461c462e4cebf46c1ecb951768207dd5b4760479e50ca88b2636ac0aea8",
+            "role": "derive"
+          }
+        ],
+        "source_refs": [
+          "src/ledger/src/main/LedgerFeature.ts"
+        ],
+        "content_fingerprint": "cdbb64ca570c2affa32721d9228046e29bc4e0ca7d9a90c044d1be1839eb756f"
+      }
+    ]
+  },
+  "resolvedImpact": [
+    {
+      "input_id": "codebase",
+      "ok": false,
+      "related": true,
+      "detail": "codebase: 依据字节已变化 C:\\Users\\shengqsq\\AppData\\Local\\Temp\\mu-hIPHWt\\0\\daily-design-g3TMJf\\src\\ledger\\src\\main\\LedgerFeature.ts"
+    }
+  ]
+}

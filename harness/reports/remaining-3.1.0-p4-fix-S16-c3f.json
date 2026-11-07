@@ -1,0 +1,42 @@
+{
+  "mode": "workers",
+  "workers": 12,
+  "scope": {
+    "filter": "design-authority-repair-content",
+    "release": true,
+    "caseNameFilter": "S16-c3f",
+    "suiteIds": [
+      "design-authority-repair-content"
+    ]
+  },
+  "wallMs": 102173.4037,
+  "ok": true,
+  "suites": [
+    {
+      "id": "design-authority-repair-content",
+      "releaseOnly": true,
+      "status": "completed",
+      "ok": true,
+      "loadMs": 946.2355000000001,
+      "executionMs": 100028.9111,
+      "totalMs": 101207.4413,
+      "results": [
+        {
+          "name": "design-authority-repair: S16-c3f 已完成质询对当前必需scope给合法blocker：保留完整材料，拒绝降低验收的草稿且不发布",
+          "ok": true
+        }
+      ],
+      "startupMs": 1132.4649000000004,
+      "matchedCaseCount": 1,
+      "executionTimings": [
+        {
+          "caseNames": [
+            "design-authority-repair: S16-c3f 已完成质询对当前必需scope给合法blocker：保留完整材料，拒绝降低验收的草稿且不发布"
+          ],
+          "durationMs": 100027.8376
+        }
+      ],
+      "cleanupMs": 1.0377000000007683
+    }
+  ]
+}

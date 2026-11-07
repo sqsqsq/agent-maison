@@ -1,0 +1,35 @@
+{
+  "mode": "workers",
+  "workers": 12,
+  "scope": {
+    "filter": "real-chain-seams",
+    "release": true,
+    "caseNameFilter": "RC-8d plan",
+    "suiteIds": [
+      "real-chain-seams"
+    ]
+  },
+  "wallMs": 196591.3993,
+  "ok": true,
+  "suites": [
+    {
+      "id": "real-chain-seams",
+      "releaseOnly": true,
+      "status": "completed",
+      "ok": true,
+      "loadMs": 953.869,
+      "executionMs": 194307.2131,
+      "totalMs": 195489.679,
+      "results": [
+        {
+          "name": "RC-8d plan 增量小节为空：原始 FAIL 仍在，plan 通过、进披露清单，链继续推进（A7）",
+          "ok": true
+        }
+      ],
+      "startupMs": 1144.8266999999996,
+      "matchedCaseCount": 1,
+      "executionTimings": [],
+      "cleanupMs": 1.084499999997206
+    }
+  ]
+}

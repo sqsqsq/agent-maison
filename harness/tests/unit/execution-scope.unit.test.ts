@@ -85,7 +85,7 @@ import { codingBasePath } from '../../scripts/utils/pass-snapshot';
 import { recomputePhaseEvidenceStaleness } from '../../scripts/utils/phase-evidence-manifest';
 import * as os from 'os';
 import type { AcceptanceSpec, CheckContext, CheckResult } from '../../scripts/utils/types';
-import { resolveExecutionScope, validateExecutionScope, executionScopeFingerprint, executionCompletionPhases, hasNoTestingObligation, findSubtractedRequiredObligations, assertRevisionKeepsRequiredObligations, hasNewSourcedFact, effectiveScopeView, scopeProofHistory, type ScopeHistoryEvent, type ExecutionScope, type ExecutionScopeInput, type ResolvedScopeFacts } from '../../scripts/utils/execution-scope';
+import { resolveExecutionScope, validateExecutionScope, executionScopeFingerprint, executionCompletionPhases, hasNoTestingObligation, findSubtractedRequiredObligations, assertRevisionKeepsRequiredObligations, hasNewSourcedFact, effectiveScopeView, scopeProofHistory, projectScopeSchedule, affectedScopePhases, type ScopeHistoryEvent, type ExecutionScope, type ExecutionScopeInput, type ResolvedScopeFacts } from '../../scripts/utils/execution-scope';
 import { applyScopeRevisions, loadScopeRevisions, resolveRunBaseline, revokedPhasesByRevision, eventsWithScopeRevocations } from '../../scripts/utils/goal-run-creation';
 import { isClosureOnlyRetryPending, readExecutionActivity, loadAuthoritativeEvents } from '../../scripts/utils/goal-runner-phase';
 import { executionRequestForInvoke } from '../../scripts/utils/session-execution-handoff';
@@ -412,6 +412,18 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
     const scope = resolveExecutionScope(input, workflow); assert.deepStrictEqual(scope.phase_chain, ['plan', 'coding']);
     assert.throws(() => validateExecutionScope({ ...scope, phase_chain: ['coding', 'plan'] }), /控制顺序/);
     input.request.requested_phases = ['coding']; assert.throws(() => resolveExecutionScope(input, workflow), /控制前置/);
+  } },
+  { name: 'P4 mutual review and UT material reads invalidate evidence without becoming a control cycle', run() {
+    const scope = resolveExecutionScope(request(['review', 'ut']), workflow);
+    const reads = { inputEdges: [{ before: 'ut', after: 'review' }, { before: 'review', after: 'ut' }] };
+    assert.deepEqual(projectScopeSchedule(scope, workflow, reads).phase_chain, ['review', 'ut'],
+      'reading existing test material in review and the review report in UT does not require either check to finish first');
+    assert.deepEqual(affectedScopePhases(['ut'], scope.phase_chain, { scope, workflow, ...reads }), ['review', 'ut'],
+      'actual data consumers must still lose affected evidence when their input changes');
+    const binding = { input_id: 'control', source: { kind: 'artifact' as const, artifact: 'contracts@1' }, dependencies: [], source_refs: ['contracts.yaml'], content_fingerprint: 'a'.repeat(64) };
+    const controlled = { ...scope, control_edges: reads.inputEdges.map(edge => ({ ...edge, basis: [binding] })) };
+    assert.throws(() => projectScopeSchedule(controlled, workflow, reads), /控制依赖存在环/,
+      'a real declared control cycle remains invalid');
   } },
   { name: 'acceptance layers use the existing gate; invalid layers remain unknown and implementation requires review', run() {
     const binding = { input_id: 'acceptance', source: { kind: 'artifact' as const, artifact: 'acceptance@1' }, dependencies: [], source_refs: ['acceptance.yaml'], content_fingerprint: 'a'.repeat(64) };

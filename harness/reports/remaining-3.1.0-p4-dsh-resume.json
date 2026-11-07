@@ -1,0 +1,19 @@
+{
+  "root": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\maison-dsh-dev-real-weGz5V\\development",
+  "version": "0.2.2-rc.1",
+  "expectedSession": "session-16950cea-3272-4460-8e2f-e1ef9435b280",
+  "actualSession": "session-16950cea-3272-4460-8e2f-e1ef9435b280",
+  "exitCode": 0,
+  "completed": true,
+  "stderr": "[llm-deepseek-api-key] model listing from https://api.deepseek.com/models loaded 2 model(s), skipped 0 row(s)\n",
+  "contentMatches": true,
+  "noReadOrDelegation": true,
+  "calls": [
+    {
+      "tool": "write",
+      "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\maison-dsh-dev-real-weGz5V\\development\\result.txt"
+    }
+  ],
+  "sentinelUnchanged": true,
+  "passed": true
+}

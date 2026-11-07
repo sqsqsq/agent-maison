@@ -1212,14 +1212,16 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
       const failed = repairs_.find(e => e.stage === 'failed');
       assert(repairs_[0]?.stage === 'attempted' && failed?.failed_step === 'questioning' && !repairs_.some(e => e.stage === 'published'), describeS16(b));
       assert.deepEqual(fs.readFileSync(blueprintFile(s)), canonicalBefore, '被否定的降标草稿不得覆盖 canonical 原验收与质询历史');
-      assert.deepEqual(outOfChainStarts(b.events).map(e => e.phase), ['design-repair-author', 'design-repair-questioning']);
-      assert.equal(b.log.prompts['design-repair-author']?.length, 1, '设计事务把当前完整否定交回原执行内核，不再运行退役的局部作者循环');
-      assert.equal(b.log.prompts['design-repair-questioning']?.length, 1);
-      assert.equal(questioningCalls, 1, '即使真实质询会改写措辞，无业务变化也不重派');
+      assert.deepEqual(outOfChainStarts(b.events).map(e => e.phase), ['design-repair-author', 'design-repair-questioning', 'design-repair-author', 'design-repair-questioning']);
+      const feedback = b.log.prompts['design-repair-author'] ?? [];
+      assert.equal(feedback.length, 2, '当前否定须由共同内核送回原设计作者，再按真实验收收敛');
+      assert(feedback[1].includes(`原批准结果「${approved}」`) && feedback[1].includes('本次独立质询措辞-1'), '真实完整否定必须实际送达原作者');
+      assert.equal(b.log.prompts['design-repair-questioning']?.length, 2);
+      assert.equal(questioningCalls, 2, '共同内核在同scope否定无改善后暂停，不靠新措辞继续派发');
       assert(String(failed.reason).includes(`原批准结果「${approved}」`), '否定仍以真实原验收为依据');
       assert(String(failed.reason).includes('view:logical') && String(failed.reason).includes('本次独立质询措辞-1'), '交回完整当前scope和独立否定');
       for (const event of [haltOf(b.events), endOf(b.events)]) {
-        assert(event?.halt_reason === 'executor_waiting' && event.run_disposition === 'WAITING' && event.run_wait_kind === 'external', JSON.stringify(event));
+        assert(['executor_waiting', 'no_progress_guard'].includes(event?.halt_reason) && event?.run_disposition === 'WAITING' && event.run_wait_kind === 'external', JSON.stringify(event));
       }
       const candidate = readDoc(path.join(path.dirname(runFile(s.root, b.feature, b.runId, 'events.jsonl')), 'design-repair/component-blueprint.yaml'));
       assert.equal(candidate.review_summary.questioning.status, 'complete');

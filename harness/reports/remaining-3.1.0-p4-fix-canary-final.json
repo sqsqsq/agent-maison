@@ -1,0 +1,52 @@
+{
+  "mode": "workers",
+  "workers": 12,
+  "scope": {
+    "filter": "session-execution-handoff",
+    "release": true,
+    "caseNameFilter": "actual canary tool deadline",
+    "suiteIds": [
+      "session-execution-handoff"
+    ]
+  },
+  "wallMs": 2346.9063000000006,
+  "ok": true,
+  "suites": [
+    {
+      "id": "session-execution-handoff",
+      "releaseOnly": true,
+      "status": "completed",
+      "ok": true,
+      "loadMs": 833.1361999999999,
+      "executionMs": 1292.3125,
+      "totalMs": 2339.9656000000004,
+      "results": [
+        {
+          "name": "P3 native executor preserves the actual canary tool deadline without reviving a default author phase deadline",
+          "ok": true
+        },
+        {
+          "name": "P3 author deadline ignores old default phase fields and actual canary tool deadline preserves its original issue instant",
+          "ok": true
+        }
+      ],
+      "startupMs": 1027.547,
+      "matchedCaseCount": 2,
+      "executionTimings": [
+        {
+          "caseNames": [
+            "P3 native executor preserves the actual canary tool deadline without reviving a default author phase deadline"
+          ],
+          "durationMs": 1277.6371
+        },
+        {
+          "caseNames": [
+            "P3 author deadline ignores old default phase fields and actual canary tool deadline preserves its original issue instant"
+          ],
+          "durationMs": 14.032500000000255
+        }
+      ],
+      "cleanupMs": 0.2536000000000058
+    }
+  ]
+}

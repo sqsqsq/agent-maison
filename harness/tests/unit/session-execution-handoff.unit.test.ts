@@ -1,4 +1,6 @@
 import assert from 'assert';
+import { bindControlledProcess, controlledModelBinding, installControlledCodex } from '../utils/controlled-model-process';
+import { parseAdapterModelBinding } from '../../scripts/utils/adapter-model';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -23,7 +25,8 @@ import * as YAML from 'yaml';
 import { buildGoalManifestFromInput, writeGoalManifest } from '../../scripts/utils/goal-manifest';
 import { interruptedIssuanceCli, reusedGatePidCli, junctionSessionCli } from '../utils/session-recovery-cli';
 import { reconcileGuardianOwnership } from '../../scripts/utils/goal-containment-reconcile';
-import { invokeAgentHeadless } from '../../scripts/utils/agent-invoke';
+import { invokeAgentHeadless as nativeInvokeAgentHeadless } from '../../scripts/utils/agent-invoke';
+const invokeAgentHeadless = bindControlledProcess(nativeInvokeAgentHeadless);
 import { invocationCompleted } from '../../scripts/utils/invocation-completion';
 import { readReusableCheckResult } from '../../scripts/utils/verify-feature-completion';
 import { withRuntimeTest, preserveRuntimeTestEvidence, type RuntimeTestControl } from '../utils/runtime-test-control';
@@ -44,7 +47,7 @@ function fixture() {
     protectedRoots: ['src'], diagnostics: [], unresolvedSourcePhases: [] };
   const context: WorkUnitExecutionContext = { runId: 'run-1', feature: 'demo', workflowId: 'obligation-driven', track: 'full', chain: ['coding', 'ut'],
     phase: 'coding', attemptId: 'attempt-one', owner: { ...acquired.token, kind: 'session' }, projectRoot: root, frameworkRoot: path.join(root, 'framework'),
-    runDir, reportDir: 'doc/features/demo/coding/reports', adapter: 'codex', instruction: 'Use the original issued snapshot and execute the requested coding change.',
+    runDir, reportDir: 'doc/features/demo/coding/reports', adapter: 'codex', adapterModel: controlledModelBinding('codex', root), instruction: 'Use the original issued snapshot and execute the requested coding change.',
     runtimeFacts: { runBaseSha: 'a'.repeat(40), receiptRequired: true, resume: false, successor: false },
     childEnv: { MAISON_GOAL_RUN_ID: 'run-1', PRIVATE_TEST_CREDENTIAL: 'must-never-be-persisted' } };
   const emit = (event: Record<string, unknown>) => fs.appendFileSync(path.join(runDir, 'events.jsonl'), JSON.stringify({ ts: new Date().toISOString(), ...event }) + '\n');
@@ -79,6 +82,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
         const f = fixture();
         try {
           const manifest = buildGoalManifestFromInput({ feature: 'demo', run_id: 'run-1', adapter: 'codex', start_phase: 'coding', end_phase: 'coding',
+            adapter_model_pin: parseAdapterModelBinding('codex', f.context.adapterModel),
             run_base_sha: 'a'.repeat(40), unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: f.root });
           writeGoalManifest(manifest, f.root); Object.assign(f.context, { reportDir: manifest.report_dir });
           f.start(); const issued = f.issue();
@@ -108,22 +112,24 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
     let child: ReturnType<typeof spawn> | undefined;
     let done: Promise<{ status: number | null; signal: NodeJS.Signals | null; pid: number | undefined; stdout: string }> | undefined;
     let stdout = '', stderr = '';
+    let restoreNative = () => {};
     try {
       const frameworkRoot = path.join(f.root, 'framework');
-      fs.mkdirSync(path.join(frameworkRoot, 'agents/generic'), { recursive: true });
+      fs.mkdirSync(path.join(frameworkRoot, 'agents/codex'), { recursive: true });
       const native = path.join(f.root, 'native-fixture.cjs');
       fs.writeFileSync(native, `const fs=require('fs');fs.appendFileSync('execution-count.txt','once\\n');fs.writeFileSync('src/value.ts','actual partial write\\n');process.stdout.write(JSON.stringify({type:'item.completed',item:{type:'command_execution',command:'actual check',exit_code:1}})+'\\n');setTimeout(()=>{},30000);\n`);
-      const adapter = YAML.parse(fs.readFileSync(path.resolve(__dirname, '../../../agents/generic/adapter.yaml'), 'utf8'));
-      adapter.goal_capability.external_runner.headless_invoke = `${JSON.stringify(process.execPath.replace(/\\/g, '/'))} ${JSON.stringify(native.replace(/\\/g, '/'))}`;
+      const adapter = YAML.parse(fs.readFileSync(path.resolve(__dirname, '../../../agents/codex/adapter.yaml'), 'utf8'));
       adapter.goal_capability.tool_event_provenance = 'structured_events';
-      fs.writeFileSync(path.join(frameworkRoot, 'agents/generic/adapter.yaml'), YAML.stringify(adapter));
-      const manifest = buildGoalManifestFromInput({ feature: 'demo', run_id: 'run-1', adapter: 'generic', start_phase: 'coding', end_phase: 'coding',
+      fs.writeFileSync(path.join(frameworkRoot, 'agents/codex/adapter.yaml'), YAML.stringify(adapter));
+      restoreNative = installControlledCodex(f.root, native);
+      const manifest = buildGoalManifestFromInput({ feature: 'demo', run_id: 'run-1', adapter: 'codex', start_phase: 'coding', end_phase: 'coding',
+        adapter_model_pin: parseAdapterModelBinding('codex', f.context.adapterModel),
         run_base_sha: 'a'.repeat(40), unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: f.root });
       writeGoalManifest(manifest, f.root);
-      Object.assign(f.context, { adapter: 'generic', frameworkRoot, reportDir: manifest.report_dir });
+      Object.assign(f.context, { adapter: 'codex', frameworkRoot, reportDir: manifest.report_dir });
       f.start(); const issued = f.issue();
       const entry = path.resolve(__dirname, '../../scripts/goal-mode-entry.ts');
-      const args = ['-r', require.resolve('ts-node/register/transpile-only'), entry, '--feature', 'demo', '--run-id', 'run-1', '--adapter', 'generic', '--run-mode', 'attended',
+      const args = ['-r', require.resolve('ts-node/register/transpile-only'), entry, '--feature', 'demo', '--run-id', 'run-1', '--adapter', 'codex', '--run-mode', 'attended',
         '--project-root', f.root, '--framework-root', frameworkRoot, '--request', path.resolve(f.runDir, issued.reference.path)];
       const cli = (action: string) => JSON.parse(withRuntimeTest({ root: f.root }, () => execFileSync(process.execPath, [...args, action],
         { cwd: path.resolve(__dirname, '../..'), encoding: 'utf8', timeout: 30000 })));
@@ -151,7 +157,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
       Object.assign(f.context, { attemptId: 'attempt-two' }); f.start('invoke-two'); const second = f.issue('invoke-two');
       const priorExitCode = process.exitCode;
       try {
-        const execution = runGoalModeSessionStep({ projectRoot: f.root, frameworkRoot, feature: 'demo', runId: 'run-1', adapter: 'generic', runMode: 'attended',
+        const execution = runGoalModeSessionStep({ projectRoot: f.root, frameworkRoot, feature: 'demo', runId: 'run-1', adapter: 'codex', runMode: 'attended',
           requestPath: path.resolve(f.runDir, second.reference.path), action: 'execute' });
         const until = Date.now() + 20000;
         while (fs.readFileSync(path.join(f.root, 'execution-count.txt'), 'utf8') !== 'once\nonce\n' && Date.now() < until) await new Promise(resolve => setTimeout(resolve, 50));
@@ -162,16 +168,17 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
         assert.equal(acceptedSessionReport(f.runDir, second)!.event.interrupted, true);
         assert.equal(sessionEvents(f.runDir).filter(event => event.type === 'agent_invoke_end' && event.invoke_id === 'invoke-two').length, 1);
       } finally { process.exitCode = priorExitCode; }
-      Object.assign(f.context, { attemptId: 'attempt-three', authority: { write_mode: 'workspace-write', approval_mode: 'never' } });
+      Object.assign(f.context, { attemptId: 'attempt-three', authority: { write_mode: 'workspace-write', approval_mode: 'never', allowed_tools: ['Read'] } });
       f.start('invoke-three'); const third = f.issue('invoke-three');
-      const narrowed = await runGoalModeSessionStep({ projectRoot: f.root, frameworkRoot, feature: 'demo', runId: 'run-1', adapter: 'generic', runMode: 'attended',
+      const narrowed = await runGoalModeSessionStep({ projectRoot: f.root, frameworkRoot, feature: 'demo', runId: 'run-1', adapter: 'codex', runMode: 'attended',
         requestPath: path.resolve(f.runDir, third.reference.path), action: 'execute' });
-      assert.equal(narrowed.status, 'failed', 'legacy full-access defaults expanded this request’s narrower authorization');
+      assert.equal(narrowed.status, 'failed', 'unsupported native tool restrictions cannot expand to full-access defaults');
       assert.equal(fs.readFileSync(path.join(f.root, 'execution-count.txt'), 'utf8'), 'once\nonce\n', 'an adapter without the narrower permission capability was started at full access');
     } finally {
-      if (child?.pid && child.exitCode === null && child.signalCode === null) child.kill();
-      if (done) await done;
-      f.cleanup();
+      try {
+        if (child?.pid && child.exitCode === null && child.signalCode === null) child.kill();
+        if (done) await done;
+      } finally { restoreNative(); f.cleanup(); }
     }
   },
 }, {
@@ -330,7 +337,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
     } finally { probes.defaultProcessProbe = original; fs.rmSync(root, { recursive: true, force: true }); }
   },
 }, {
-  name: '1804 a bound gate survives interruption and resumes without another accepted author invocation',
+  name: '1804 interruption before gate handback commits checks once and preserves the accepted author',
   async run() {
     const root = setupGoalRuntimeHost('codex').root, runId = 'session-bound-gate-recovery';
     try {
@@ -339,9 +346,14 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
           testControl: { expectedInterruption: 'bound gate interruption after accepted report' },
           afterHarnessPass: () => { interrupted = true; throw new Error('bound gate interruption after accepted report'); } });
         assert(interrupted);
+        const observationOptions = { projectRoot: root, frameworkRoot: path.resolve(__dirname, '../../..'), feature: 'bc-openCard', runId, phase: 'spec' };
+        const reader = require('../../scripts/utils/verify-feature-completion') as typeof import('../../scripts/utils/verify-feature-completion');
+        const before = reader.readCurrentCheckObservation(observationOptions);
+        assert(!before.returned && !before.end, 'this hook interrupts the writer before its formal harness_end, unlike the native bound-job recovery case');
         const resumed = await runGoalRuntimeChain(root, { adapter: 'codex', resume: runId, viaSessionStep: true, skipLegacySeal: true });
         assert.deepEqual(resumed.invokedPhases, []);
-        assert.deepEqual(resumed.harnessPhases, [], 'the actually bound completed gate remains reusable after interruption');
+        assert.deepEqual(resumed.harnessPhases, ['spec'], 'an unpublished check must acquire its formal origin once; real completed bound-job reuse is covered by session-slow-gate');
+        assert(reader.readCurrentCheckObservation(observationOptions).returned, 'the resumed check must really return its original-bound result');
         assert.equal(resumed.events.filter(event => event.type === 'agent_invoke_start').length, 1);
         assert.equal(resumed.events.filter(event => event.type === 'agent_invoke_end' && event.handoff_report).length, 1);
         assert.equal(resumed.exitCode, 0);
@@ -499,7 +511,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
           preSnapshot: capturePhaseInvocationSnapshot(f.boundary), writeBoundary: f.boundary });
         let spawned = false;
         const executor = new DetachedGoalPhaseExecutor(() => ({ cwd: f.root,
-          plan: { argv: [process.execPath, '-e', canary ? 'setInterval(()=>{},1000)' : 'setTimeout(()=>process.exit(0),200)'], label: 'controlled deadline transport', adapterName: 'local-tool' },
+          plan: { argv: [process.execPath, '-e', canary ? 'setInterval(()=>{},1000)' : 'setTimeout(()=>process.exit(0),200)', '--', 'exec'], label: 'controlled deadline transport', adapterName: 'codex' },
           options: { timeoutMs: 1, deadlineMs: Date.now() - 1, onActiveChild: () => { spawned = true; },
             outputLogPath: path.join(f.runDir, path.dirname(issued.reference.path), 'agent-output.log') } }));
         const result = await executor.execute(f.context);

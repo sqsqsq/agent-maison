@@ -1,0 +1,42 @@
+{
+  "mode": "workers",
+  "workers": 12,
+  "scope": {
+    "filter": "goal-runner-testing-integrity-early",
+    "release": true,
+    "caseNameFilter": "395 阶段内 OOBE",
+    "suiteIds": [
+      "goal-runner-testing-integrity-early"
+    ]
+  },
+  "wallMs": 60983.855899999995,
+  "ok": true,
+  "suites": [
+    {
+      "id": "goal-runner-testing-integrity-early",
+      "releaseOnly": true,
+      "status": "completed",
+      "ok": true,
+      "loadMs": 913.7834,
+      "executionMs": 58778.9148,
+      "totalMs": 59915.13159999999,
+      "results": [
+        {
+          "name": "395 阶段内 OOBE：真实检查归因和 summary 接回原门，等待解除先补 UT；超时不进 testing",
+          "ok": true
+        }
+      ],
+      "startupMs": 1112.4894000000004,
+      "matchedCaseCount": 1,
+      "executionTimings": [
+        {
+          "caseNames": [
+            "395 阶段内 OOBE：真实检查归因和 summary 接回原门，等待解除先补 UT；超时不进 testing"
+          ],
+          "durationMs": 58778.1945
+        }
+      ],
+      "cleanupMs": 32.1877999999997
+    }
+  ]
+}

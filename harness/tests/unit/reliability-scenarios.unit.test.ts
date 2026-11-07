@@ -36,6 +36,8 @@ import {
 } from '../utils/reliability-metrics';
 import { loadEventsJsonl } from '../../scripts/utils/goal-runner-phase';
 import { clearFrameworkConfigCache, featureFilePath } from '../../config';
+import { parseContextExploration } from '../../scripts/utils/context-exploration';
+import { researchSnapshotFacts } from '../fixtures/host-snapshot-3.1.0/migrate';
 import { __testing_setCanaryProbeInvoke } from '../../scripts/goal-runner';
 import { spawnSync } from 'child_process';
 import { FEATURE_LOCK_NAME, tryAcquireLock } from '../../scripts/utils/goal-run-lock';
@@ -289,7 +291,21 @@ function makeCollector(entry: RegistryEntry, outcomes: BranchOutcome[]): (b: Bra
       return;
     }
     const task = collectBranch(entry, branch, b);
-    outcomes.push({ ...common, task, expectation: b.expectation(task), taskKey: `${b.root}|${b.runIds.join(',')}` });
+    const expectation = b.expectation(task);
+    if (!expectation.met) {
+      const files = REAL_PHASES.flatMap(phase => ['summary.json', 'script-report.json', 'phase-evidence-manifest.json']
+        .map(file => featureFilePath(b.root, b.feature, `${phase}/reports/${file}`)));
+      const originals = require('../utils/runtime-test-control').preserveRuntimeTestEvidence([b.root], expectation.detail, [branch.label], files);
+      fs.writeFileSync(path.join(originals, 'task.json'), JSON.stringify(task, null, 2) + '\n');
+      try {
+        const scope = loadEffectiveExecutionScope(b.root, b.feature, b.runIds.at(-1), b.frameworkRoot);
+        const assessment = require('../../scripts/utils/feature-assessment').assessFeature(b.root, b.feature, {
+          frameworkRoot: b.frameworkRoot, expectedTrack: 'full', expectedChain: scope ? executionCompletionPhases(scope) : REAL_PHASES });
+        fs.writeFileSync(path.join(originals, 'assessment.json'), JSON.stringify(assessment, null, 2) + '\n');
+      } catch (error) { fs.writeFileSync(path.join(originals, 'assessment-error.txt'), String(error)); }
+      console.log(`RELIABILITY_FAILURE_ORIGINALS=${originals}`);
+    }
+    outcomes.push({ ...common, task, expectation, taskKey: `${b.root}|${b.runIds.join(',')}` });
   };
 }
 
@@ -1047,7 +1063,7 @@ function realChainHooks(project: RealChainProject, overrides: {
   testing?: (ctx: { runId: string; attempt: number }) => void;
   reviewVerifier?: () => void;
 } = {}): Partial<Parameters<typeof runGoalRuntimeChain>[1]> {
-  return {
+  const hooks: Partial<Parameters<typeof runGoalRuntimeChain>[1]> = {
     onOutOfChain: ctx => {
       assert(REAL_PHASES.some(phase => ctx.phase === `${phase}-verifier-format-repair`), `unexpected model purpose: ${ctx.phase}`);
       if (ctx.phase === 'review-verifier-format-repair' && overrides.reviewVerifier) {
@@ -1067,9 +1083,35 @@ function realChainHooks(project: RealChainProject, overrides: {
       project.runId = ctx.runId;
       writeTestPlan(project);
       overrides.testing?.(ctx);
-      if (ctx.attempt > 1) publishVerifier(project, 'testing');
     },
   };
+  hooks.onAuthor = (ctx, context) => {
+    // Keep scenario-specific responses while using the existing admitted-baseline research preparation.
+    // Methods prepare materials; independent replies remain solely in onOutOfChain.
+    const { authorHooks } = require('./lifecycle-evolution.unit.test') as typeof import('./lifecycle-evolution.unit.test');
+    authorHooks(project, {
+      spec: () => hooks.onSpec?.(ctx), plan: () => hooks.onPlan?.(ctx), coding: () => hooks.onCoding?.(ctx),
+      review: () => hooks.onReview?.(ctx), ut: () => hooks.onUt?.(ctx), testing: () => hooks.onTesting?.(ctx),
+    }).onAuthor(ctx, context);
+    const admitted = context.factsContext!;
+    if (!admitted.baseline) {
+      // Newly authored targets were absent from the issue-time codebase. Read them before the first baseline is admitted.
+      const file = featureFilePath(project.root, project.feature, 'context/facts.md');
+      const raw = fs.readFileSync(file, 'utf8'), facts = parseContextExploration(raw);
+      assert(!facts.error, 'the actual author research record must remain parseable');
+      const contracts = YAML.parse(fs.readFileSync(featureFilePath(project.root, project.feature, 'contracts.yaml'), 'utf8'));
+      const declared = facts.fm.source_code_paths as string[];
+      const sources = [...new Set([...declared, ...(contracts.files as string[])])]
+        .filter(source => fs.existsSync(path.join(project.root, source)) && fs.statSync(path.join(project.root, source)).isFile());
+      if (!sources.some(source => !declared.includes(source))) return;
+      for (const source of sources) fs.readFileSync(path.join(project.root, source));
+      const deltas = raw.match(/^##\s*phase_delta:[\s\S]*/m)?.[0] ?? '';
+      fs.writeFileSync(file, '---\n' + YAML.stringify({ ...facts.fm, source_code_paths: sources }) + '---\n' + facts.body);
+      researchSnapshotFacts(project.root, file, admitted.first_phase, admitted);
+      if (deltas) fs.appendFileSync(file, '\n' + deltas);
+    }
+  };
+  return hooks;
 }
 
 function realRun(project: RealChainProject, birthChain: string[], requirement: string, hooks: Partial<Parameters<typeof runGoalRuntimeChain>[1]>, extra: Partial<Parameters<typeof runGoalRuntimeChain>[1]> = {}): ReturnType<typeof runGoalRuntimeChain> {
@@ -1287,11 +1329,15 @@ const runS7: ScenarioRunner = async (_entry, done) => {
     // 冲突 B 的执行者（spec 替身）：返修候选段里有候选即按目标拒修，逐候选追加到 spec 账本（写法取自候选段）。
     const onSpec = hooks.onSpec!;
     hooks.onSpec = ctx => {
-      onSpec(ctx);
       const fps = [...new Set([...ctx.prompt.matchAll(/item_fingerprint: ([0-9a-f]{64})/g)].map(m => m[1]))];
-      if (fps.length === 0) return;
+      if (fps.length === 0) { onSpec(ctx); return; }
+      // A reasoned refusal keeps the already-approved input bytes and their derivation order intact.
+      assert(readText(project.root, specRel).includes('| F1 | 银行列表展示 | P0 |'), 'refusal must read the actual approved function priority');
+      const approved = YAML.parse(readText(project.root, acceptanceRel));
+      assert(approved.criteria.some((criterion: { id: string; priority: string }) => criterion.id === 'AC-2' && criterion.priority === 'P1'), 'refusal must keep the distinct approved acceptance priority');
       const ledger = path.join(project.root, `doc/features/${project.feature}/spec/headless-assumptions.jsonl`);
       for (const fp of fps) {
+        if (readText(project.root, `doc/features/${project.feature}/spec/headless-assumptions.jsonl`).includes(`repair_candidate:${fp}`)) continue;
         fs.appendFileSync(ledger, JSON.stringify({
           decision_id: `s7-decline-${ctx.attempt}-${fp.slice(0, 12)}`, run_id: ctx.runId, phase: 'spec',
           gate_id: `repair_candidate:${fp}`, class: 'goal_conflict',

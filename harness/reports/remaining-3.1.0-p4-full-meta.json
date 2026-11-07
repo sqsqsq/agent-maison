@@ -1,0 +1,6 @@
+{
+  "command": "npm test -- --results-out reports/remaining-3.1.0-p4-full.json",
+  "exitCode": 1,
+  "startedAt": "2026-11-06T19:49:13.3837631Z",
+  "finishedAt": "2026-11-06T22:19:07.6459855Z"
+}

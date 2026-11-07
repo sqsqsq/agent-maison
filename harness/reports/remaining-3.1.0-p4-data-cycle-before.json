@@ -1,0 +1,65 @@
+{
+  "mode": "workers",
+  "workers": 12,
+  "scope": {
+    "filter": "execution-scope",
+    "release": false,
+    "caseNameFilter": "P4 mutual review and UT",
+    "suiteIds": [
+      "execution-scope-prepare-early",
+      "execution-scope-prepare-late",
+      "execution-scope-runtime"
+    ]
+  },
+  "wallMs": 2683.2104000000004,
+  "ok": false,
+  "suites": [
+    {
+      "id": "execution-scope-prepare-early",
+      "releaseOnly": false,
+      "status": "completed",
+      "ok": false,
+      "loadMs": 806.4548,
+      "executionMs": 6.3361999999999625,
+      "totalMs": 1330.4833000000003,
+      "results": [
+        {
+          "name": "P4 mutual review and UT material reads invalidate evidence without becoming a control cycle",
+          "ok": false,
+          "error": "Error: [execution-scope] 适用控制依赖存在环"
+        }
+      ],
+      "startupMs": 1294.1553,
+      "matchedCaseCount": 1,
+      "executionTimings": [
+        {
+          "caseNames": [
+            "P4 mutual review and UT material reads invalidate evidence without becoming a control cycle"
+          ],
+          "durationMs": 5.727800000000002
+        }
+      ],
+      "cleanupMs": 0.18479999999999563
+    },
+    {
+      "id": "execution-scope-prepare-late",
+      "releaseOnly": true,
+      "status": "not-run",
+      "ok": null,
+      "loadMs": null,
+      "executionMs": null,
+      "totalMs": null,
+      "results": []
+    },
+    {
+      "id": "execution-scope-runtime",
+      "releaseOnly": true,
+      "status": "not-run",
+      "ok": null,
+      "loadMs": null,
+      "executionMs": null,
+      "totalMs": null,
+      "results": []
+    }
+  ]
+}

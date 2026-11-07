@@ -1,0 +1,732 @@
+{
+  "scope": {
+    "schema_version": "1.0",
+    "completion_target": "feature",
+    "requested_results": [
+      "银行列表展示与开卡入口"
+    ],
+    "obligations": [
+      {
+        "id": "acceptance-context:pending",
+        "kind": "acceptance-context",
+        "applicability": "required",
+        "reason": "已有验收可用",
+        "basis": [
+          {
+            "input_id": "acceptance",
+            "source": {
+              "kind": "artifact",
+              "artifact": "acceptance@1"
+            },
+            "dependencies": [
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\mu-dbPJiH\\0\\real-chain-tZzt23\\doc\\features\\demo-card\\acceptance.yaml",
+                "exists": true,
+                "sha256": "b0e125f7bf85e4a13539c65fedc059e82f6d5b74f9d17b2204fe0ebbdb236f03",
+                "role": "artifact"
+              }
+            ],
+            "source_refs": [
+              "doc/features/demo-card/acceptance.yaml"
+            ],
+            "content_fingerprint": "352b678a652cf596cc0cb311600a4590404c3d9ef08267470b868b529866a080"
+          }
+        ],
+        "owner_phase": "spec",
+        "satisfied_by": [
+          {
+            "input_id": "acceptance",
+            "source": {
+              "kind": "artifact",
+              "artifact": "acceptance@1"
+            },
+            "dependencies": [
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\mu-dbPJiH\\0\\real-chain-tZzt23\\doc\\features\\demo-card\\acceptance.yaml",
+                "exists": true,
+                "sha256": "b0e125f7bf85e4a13539c65fedc059e82f6d5b74f9d17b2204fe0ebbdb236f03",
+                "role": "artifact"
+              }
+            ],
+            "source_refs": [
+              "doc/features/demo-card/acceptance.yaml"
+            ],
+            "content_fingerprint": "352b678a652cf596cc0cb311600a4590404c3d9ef08267470b868b529866a080"
+          }
+        ]
+      },
+      {
+        "id": "acceptance-context:request:spec",
+        "kind": "acceptance-context",
+        "owner_phase": "spec",
+        "applicability": "required",
+        "reason": "已有验收可用",
+        "basis": [
+          {
+            "input_id": "acceptance",
+            "source": {
+              "kind": "artifact",
+              "artifact": "acceptance@1"
+            },
+            "dependencies": [
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\mu-dbPJiH\\0\\real-chain-tZzt23\\doc\\features\\demo-card\\acceptance.yaml",
+                "exists": true,
+                "sha256": "b0e125f7bf85e4a13539c65fedc059e82f6d5b74f9d17b2204fe0ebbdb236f03",
+                "role": "artifact"
+              }
+            ],
+            "source_refs": [
+              "doc/features/demo-card/acceptance.yaml"
+            ],
+            "content_fingerprint": "352b678a652cf596cc0cb311600a4590404c3d9ef08267470b868b529866a080"
+          }
+        ],
+        "satisfied_by": [
+          {
+            "input_id": "acceptance",
+            "source": {
+              "kind": "artifact",
+              "artifact": "acceptance@1"
+            },
+            "dependencies": [
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\mu-dbPJiH\\0\\real-chain-tZzt23\\doc\\features\\demo-card\\acceptance.yaml",
+                "exists": true,
+                "sha256": "b0e125f7bf85e4a13539c65fedc059e82f6d5b74f9d17b2204fe0ebbdb236f03",
+                "role": "artifact"
+              }
+            ],
+            "source_refs": [
+              "doc/features/demo-card/acceptance.yaml"
+            ],
+            "content_fingerprint": "352b678a652cf596cc0cb311600a4590404c3d9ef08267470b868b529866a080"
+          }
+        ]
+      },
+      {
+        "id": "design-context:pending",
+        "kind": "design-context",
+        "applicability": "required",
+        "reason": "已有设计可用",
+        "basis": [
+          {
+            "input_id": "contracts",
+            "source": {
+              "kind": "artifact",
+              "artifact": "contracts@1"
+            },
+            "dependencies": [
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\mu-dbPJiH\\0\\real-chain-tZzt23\\doc\\features\\demo-card\\contracts.yaml",
+                "exists": true,
+                "sha256": "62d1104bc2c30d70e590280deb55788b3cca87b43442882ffc1635caa2931db0",
+                "role": "artifact"
+              }
+            ],
+            "source_refs": [
+              "doc/features/demo-card/contracts.yaml"
+            ],
+            "content_fingerprint": "93c49db2c4ed32f462a1dd1f4c29e576704f41b04f53b5f9b457dd86597fa8c1"
+          }
+        ],
+        "owner_phase": "plan"
+      },
+      {
+        "id": "design-context:request:plan",
+        "kind": "design-context",
+        "owner_phase": "plan",
+        "applicability": "required",
+        "reason": "用户明确请求 plan",
+        "basis": [
+          {
+            "input_id": "contracts",
+            "source": {
+              "kind": "artifact",
+              "artifact": "contracts@1"
+            },
+            "dependencies": [
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\mu-dbPJiH\\0\\real-chain-tZzt23\\doc\\features\\demo-card\\contracts.yaml",
+                "exists": true,
+                "sha256": "62d1104bc2c30d70e590280deb55788b3cca87b43442882ffc1635caa2931db0",
+                "role": "artifact"
+              }
+            ],
+            "source_refs": [
+              "doc/features/demo-card/contracts.yaml"
+            ],
+            "content_fingerprint": "93c49db2c4ed32f462a1dd1f4c29e576704f41b04f53b5f9b457dd86597fa8c1"
+          }
+        ]
+      },
+      {
+        "id": "implementation:request:coding",
+        "kind": "implementation",
+        "owner_phase": "coding",
+        "applicability": "required",
+        "reason": "用户明确请求 coding",
+        "basis": [
+          {
+            "input_id": "codebase",
+            "source": {
+              "kind": "derive",
+              "provider_id": "derive.codebase"
+            },
+            "dependencies": [
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\mu-dbPJiH\\0\\real-chain-tZzt23\\02-Feature\\FinancialCard\\index.ets",
+                "exists": true,
+                "sha256": "c42372f3cbb70378e8050f918322ab85b85a706f5b51c303961ded13d16a51bb",
+                "role": "derive"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\mu-dbPJiH\\0\\real-chain-tZzt23\\02-Feature\\FinancialCard\\src\\main\\ets\\AllBanksPage.ets",
+                "exists": true,
+                "sha256": "bcfc1638fb78606541e095a1a4f44ecce6a7643bdc5247a90b0b02ef53179510",
+                "role": "derive"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\mu-dbPJiH\\0\\real-chain-tZzt23\\02-Feature\\FinancialCard\\src\\main\\ets\\BankListItem.ets",
+                "exists": true,
+                "sha256": "727e9a2af8334e09b414a53e04f94b7fea76875d30bd73af6307a957b58b9e5f",
+                "role": "derive"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\mu-dbPJiH\\0\\real-chain-tZzt23\\02-Feature\\FinancialCard\\src\\main\\ets\\BankModel.ets",
+                "exists": true,
+                "sha256": "85bf14be522a0c0815a787be2b9e1f739e86be41fb8a25b9f83f47324996b1c4",
+                "role": "derive"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\mu-dbPJiH\\0\\real-chain-tZzt23\\02-Feature\\FinancialCard\\src\\main\\ets\\BankRepository.ets",
+                "exists": true,
+                "sha256": "fa10a20e27b5fa016f02a0e0608747e1f892974bb0a6cf10f7f3021e3ac3c907",
+                "role": "derive"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\mu-dbPJiH\\0\\real-chain-tZzt23\\02-Feature\\FinancialCard\\src\\main\\ets\\BankService.ets",
+                "exists": true,
+                "sha256": "bca6edbcaabe61fba6090d8f396f0105962a18d13dc2eacd88d0802d58045fb6",
+                "role": "derive"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\mu-dbPJiH\\0\\real-chain-tZzt23\\02-Feature\\FinancialCard\\src\\main\\resources\\base\\media\\logo_demo.png",
+                "exists": true,
+                "sha256": "6d51ea2402770798273a2f11d1a64aa04eb290df7790eaaa38ad61420bfeeb1c",
+                "role": "derive"
+              },
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\mu-dbPJiH\\0\\real-chain-tZzt23\\02-Feature\\FinancialCard\\src\\main\\resources\\base\\media\\result_demo.png",
+                "exists": true,
+                "sha256": "0672172608dc6517fd62993f139ade74279b32c3a2e5ee63f425e40f23de9421",
+                "role": "derive"
+              }
+            ],
+            "source_refs": [
+              "02-Feature/FinancialCard/index.ets",
+              "02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets",
+              "02-Feature/FinancialCard/src/main/ets/BankListItem.ets",
+              "02-Feature/FinancialCard/src/main/ets/BankModel.ets",
+              "02-Feature/FinancialCard/src/main/ets/BankRepository.ets",
+              "02-Feature/FinancialCard/src/main/ets/BankService.ets",
+              "02-Feature/FinancialCard/src/main/resources/base/media/logo_demo.png",
+              "02-Feature/FinancialCard/src/main/resources/base/media/result_demo.png"
+            ],
+            "content_fingerprint": "13bb531067a7725d875d437424f1d2602e917842fa81c5a2342a53910bf58cc4"
+          }
+        ]
+      },
+      {
+        "id": "code-review:request:review",
+        "kind": "code-review",
+        "owner_phase": "review",
+        "applicability": "required",
+        "reason": "用户明确请求 review",
+        "basis": []
+      },
+      {
+        "id": "unit-evidence:acceptance",
+        "kind": "unit-evidence",
+        "applicability": "required",
+        "reason": "unit-evidence: AC-2",
+        "basis": [
+          {
+            "input_id": "acceptance",
+            "source": {
+              "kind": "artifact",
+              "artifact": "acceptance@1"
+            },
+            "dependencies": [
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\mu-dbPJiH\\0\\real-chain-tZzt23\\doc\\features\\demo-card\\acceptance.yaml",
+                "exists": true,
+                "sha256": "b0e125f7bf85e4a13539c65fedc059e82f6d5b74f9d17b2204fe0ebbdb236f03",
+                "role": "artifact"
+              }
+            ],
+            "source_refs": [
+              "doc/features/demo-card/acceptance.yaml"
+            ],
+            "content_fingerprint": "352b678a652cf596cc0cb311600a4590404c3d9ef08267470b868b529866a080"
+          }
+        ],
+        "owner_phase": "ut"
+      },
+      {
+        "id": "unit-evidence:request:ut",
+        "kind": "unit-evidence",
+        "owner_phase": "ut",
+        "applicability": "required",
+        "reason": "用户明确请求 ut",
+        "basis": [
+          {
+            "input_id": "acceptance",
+            "source": {
+              "kind": "artifact",
+              "artifact": "acceptance@1"
+            },
+            "dependencies": [
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\mu-dbPJiH\\0\\real-chain-tZzt23\\doc\\features\\demo-card\\acceptance.yaml",
+                "exists": true,
+                "sha256": "b0e125f7bf85e4a13539c65fedc059e82f6d5b74f9d17b2204fe0ebbdb236f03",
+                "role": "artifact"
+              }
+            ],
+            "source_refs": [
+              "doc/features/demo-card/acceptance.yaml"
+            ],
+            "content_fingerprint": "352b678a652cf596cc0cb311600a4590404c3d9ef08267470b868b529866a080"
+          }
+        ]
+      },
+      {
+        "id": "visual-evidence:fidelity",
+        "kind": "visual-evidence",
+        "applicability": "not_applicable",
+        "reason": "fidelity ssot: selected_fidelity=semantic_layout",
+        "basis": [],
+        "owner_phase": "testing"
+      },
+      {
+        "id": "device-evidence:acceptance",
+        "kind": "device-evidence",
+        "applicability": "required",
+        "reason": "device-evidence: AC-1,AC-2",
+        "basis": [
+          {
+            "input_id": "acceptance",
+            "source": {
+              "kind": "artifact",
+              "artifact": "acceptance@1"
+            },
+            "dependencies": [
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\mu-dbPJiH\\0\\real-chain-tZzt23\\doc\\features\\demo-card\\acceptance.yaml",
+                "exists": true,
+                "sha256": "b0e125f7bf85e4a13539c65fedc059e82f6d5b74f9d17b2204fe0ebbdb236f03",
+                "role": "artifact"
+              }
+            ],
+            "source_refs": [
+              "doc/features/demo-card/acceptance.yaml"
+            ],
+            "content_fingerprint": "352b678a652cf596cc0cb311600a4590404c3d9ef08267470b868b529866a080"
+          }
+        ],
+        "owner_phase": "testing"
+      },
+      {
+        "id": "device-evidence:request:testing",
+        "kind": "device-evidence",
+        "owner_phase": "testing",
+        "applicability": "required",
+        "reason": "用户明确请求 testing",
+        "basis": [
+          {
+            "input_id": "acceptance",
+            "source": {
+              "kind": "artifact",
+              "artifact": "acceptance@1"
+            },
+            "dependencies": [
+              {
+                "path": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\mu-dbPJiH\\0\\real-chain-tZzt23\\doc\\features\\demo-card\\acceptance.yaml",
+                "exists": true,
+                "sha256": "b0e125f7bf85e4a13539c65fedc059e82f6d5b74f9d17b2204fe0ebbdb236f03",
+                "role": "artifact"
+              }
+            ],
+            "source_refs": [
+              "doc/features/demo-card/acceptance.yaml"
+            ],
+            "content_fingerprint": "352b678a652cf596cc0cb311600a4590404c3d9ef08267470b868b529866a080"
+          }
+        ]
+      }
+    ],
+    "phase_chain": [
+      "plan",
+      "coding",
+      "review",
+      "ut",
+      "testing"
+    ],
+    "reused_phases": [],
+    "unresolved": [],
+    "policy_fingerprint": "41f6b2baab85ec890f8ef9182ab0f70050269b57c4adde437c7e7798dd27ca94"
+  },
+  "workflowRequires": [
+    {
+      "phase": "extensions",
+      "requires": []
+    },
+    {
+      "phase": "init",
+      "requires": []
+    },
+    {
+      "phase": "catalog",
+      "requires": []
+    },
+    {
+      "phase": "glossary",
+      "requires": []
+    },
+    {
+      "phase": "module-graph",
+      "requires": []
+    },
+    {
+      "phase": "docs",
+      "requires": []
+    },
+    {
+      "phase": "spec",
+      "requires": [
+        "catalog",
+        "glossary"
+      ]
+    },
+    {
+      "phase": "plan",
+      "requires": [
+        "spec"
+      ]
+    },
+    {
+      "phase": "coding",
+      "requires": [
+        "plan"
+      ]
+    },
+    {
+      "phase": "review",
+      "requires": [
+        "coding"
+      ]
+    },
+    {
+      "phase": "ut",
+      "requires": [
+        "coding"
+      ]
+    },
+    {
+      "phase": "testing",
+      "requires": [
+        "ut",
+        "review"
+      ]
+    }
+  ],
+  "inputEdges": [
+    {
+      "before": "plan",
+      "after": "coding"
+    },
+    {
+      "before": "spec",
+      "after": "review"
+    },
+    {
+      "before": "plan",
+      "after": "review"
+    },
+    {
+      "before": "ut",
+      "after": "review"
+    },
+    {
+      "before": "spec",
+      "after": "ut"
+    },
+    {
+      "before": "plan",
+      "after": "ut"
+    },
+    {
+      "before": "review",
+      "after": "ut"
+    },
+    {
+      "before": "spec",
+      "after": "testing"
+    },
+    {
+      "before": "plan",
+      "after": "testing"
+    },
+    {
+      "before": "review",
+      "after": "testing"
+    },
+    {
+      "before": "ut",
+      "after": "testing"
+    }
+  ],
+  "inputOwners": [
+    [
+      "doc/features/demo-card/use-cases.yaml",
+      "plan"
+    ],
+    [
+      "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\p4-scope-diag-0JXAyh\\doc\\features\\demo-card\\use-cases.yaml",
+      "plan"
+    ],
+    [
+      "C:/Users/shengqsq/AppData/Local/Temp/p4-scope-diag-0JXAyh/doc/features/demo-card/use-cases.yaml",
+      "plan"
+    ],
+    [
+      "doc/features/demo-card/acceptance.yaml",
+      "spec"
+    ],
+    [
+      "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\p4-scope-diag-0JXAyh\\doc\\features\\demo-card\\acceptance.yaml",
+      "spec"
+    ],
+    [
+      "C:/Users/shengqsq/AppData/Local/Temp/p4-scope-diag-0JXAyh/doc/features/demo-card/acceptance.yaml",
+      "spec"
+    ],
+    [
+      "doc/features/demo-card/contracts.yaml",
+      "plan"
+    ],
+    [
+      "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\p4-scope-diag-0JXAyh\\doc\\features\\demo-card\\contracts.yaml",
+      "plan"
+    ],
+    [
+      "C:/Users/shengqsq/AppData/Local/Temp/p4-scope-diag-0JXAyh/doc/features/demo-card/contracts.yaml",
+      "plan"
+    ],
+    [
+      "doc/features/demo-card/plan/plan.md",
+      "plan"
+    ],
+    [
+      "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\p4-scope-diag-0JXAyh\\doc\\features\\demo-card\\plan\\plan.md",
+      "plan"
+    ],
+    [
+      "C:/Users/shengqsq/AppData/Local/Temp/p4-scope-diag-0JXAyh/doc/features/demo-card/plan/plan.md",
+      "plan"
+    ],
+    [
+      "doc/features/demo-card/spec/spec.md",
+      "spec"
+    ],
+    [
+      "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\p4-scope-diag-0JXAyh\\doc\\features\\demo-card\\spec\\spec.md",
+      "spec"
+    ],
+    [
+      "C:/Users/shengqsq/AppData/Local/Temp/p4-scope-diag-0JXAyh/doc/features/demo-card/spec/spec.md",
+      "spec"
+    ],
+    [
+      "doc/features/demo-card/spec/ui-spec.yaml",
+      "spec"
+    ],
+    [
+      "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\p4-scope-diag-0JXAyh\\doc\\features\\demo-card\\spec\\ui-spec.yaml",
+      "spec"
+    ],
+    [
+      "C:/Users/shengqsq/AppData/Local/Temp/p4-scope-diag-0JXAyh/doc/features/demo-card/spec/ui-spec.yaml",
+      "spec"
+    ],
+    [
+      "doc/features/demo-card/ut/mock-plan.yaml",
+      "ut"
+    ],
+    [
+      "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\p4-scope-diag-0JXAyh\\doc\\features\\demo-card\\ut\\mock-plan.yaml",
+      "ut"
+    ],
+    [
+      "C:/Users/shengqsq/AppData/Local/Temp/p4-scope-diag-0JXAyh/doc/features/demo-card/ut/mock-plan.yaml",
+      "ut"
+    ],
+    [
+      "doc/features/demo-card/ut/testability-audit.md",
+      "ut"
+    ],
+    [
+      "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\p4-scope-diag-0JXAyh\\doc\\features\\demo-card\\ut\\testability-audit.md",
+      "ut"
+    ],
+    [
+      "C:/Users/shengqsq/AppData/Local/Temp/p4-scope-diag-0JXAyh/doc/features/demo-card/ut/testability-audit.md",
+      "ut"
+    ],
+    [
+      "doc/features/demo-card/review/review-report.md",
+      "review"
+    ],
+    [
+      "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\p4-scope-diag-0JXAyh\\doc\\features\\demo-card\\review\\review-report.md",
+      "review"
+    ],
+    [
+      "C:/Users/shengqsq/AppData/Local/Temp/p4-scope-diag-0JXAyh/doc/features/demo-card/review/review-report.md",
+      "review"
+    ]
+  ],
+  "edges": [
+    {
+      "before": "catalog",
+      "after": "spec"
+    },
+    {
+      "before": "glossary",
+      "after": "spec"
+    },
+    {
+      "before": "spec",
+      "after": "plan"
+    },
+    {
+      "before": "plan",
+      "after": "coding"
+    },
+    {
+      "before": "coding",
+      "after": "review"
+    },
+    {
+      "before": "coding",
+      "after": "ut"
+    },
+    {
+      "before": "ut",
+      "after": "testing"
+    },
+    {
+      "before": "review",
+      "after": "testing"
+    },
+    {
+      "before": "spec",
+      "after": "review"
+    },
+    {
+      "before": "plan",
+      "after": "review"
+    },
+    {
+      "before": "ut",
+      "after": "review"
+    },
+    {
+      "before": "spec",
+      "after": "ut"
+    },
+    {
+      "before": "plan",
+      "after": "ut"
+    },
+    {
+      "before": "review",
+      "after": "ut"
+    },
+    {
+      "before": "spec",
+      "after": "testing"
+    },
+    {
+      "before": "plan",
+      "after": "testing"
+    }
+  ],
+  "withoutGlobalOwners": [
+    {
+      "before": "catalog",
+      "after": "spec"
+    },
+    {
+      "before": "glossary",
+      "after": "spec"
+    },
+    {
+      "before": "spec",
+      "after": "plan"
+    },
+    {
+      "before": "plan",
+      "after": "coding"
+    },
+    {
+      "before": "coding",
+      "after": "review"
+    },
+    {
+      "before": "coding",
+      "after": "ut"
+    },
+    {
+      "before": "ut",
+      "after": "testing"
+    },
+    {
+      "before": "review",
+      "after": "testing"
+    },
+    {
+      "before": "spec",
+      "after": "review"
+    },
+    {
+      "before": "plan",
+      "after": "review"
+    },
+    {
+      "before": "ut",
+      "after": "review"
+    },
+    {
+      "before": "spec",
+      "after": "ut"
+    },
+    {
+      "before": "plan",
+      "after": "ut"
+    },
+    {
+      "before": "review",
+      "after": "ut"
+    },
+    {
+      "before": "spec",
+      "after": "testing"
+    },
+    {
+      "before": "plan",
+      "after": "testing"
+    }
+  ]
+}

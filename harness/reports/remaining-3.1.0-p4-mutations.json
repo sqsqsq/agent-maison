@@ -1,0 +1,107 @@
+{
+  "sourceHashes": {
+    "harness/scripts/goal-phase-runtime.ts": "2899ac78e2947f50916034ecb60abc0b50c7d534bcc19e56732568cc3482220c",
+    "harness/scripts/utils/check-disposition.ts": "0a13cb3d71aec9d7641d4be252951f85b623112a1bb4b166a68092c2f89286a8",
+    "harness/scripts/utils/goal-failure-classifier.ts": "1fc838d4d6f2b29bd472fdd13ff28362f5012e474bfa44256ad61ca143e4d6db",
+    "harness/scripts/utils/agent-invoke.ts": "d9dd6367d37ee402452f2d4b3ece29e3403d3482fe827ea72a9ff6871824ea04",
+    "harness/config.ts": "4f5abd5d0e5d63f2837883d5b1da060acf0e065cc02d24e33bfb9a58b12d437b"
+  },
+  "sourceFilesUnchanged": true,
+  "results": [
+    {
+      "id": "cold-phase-author",
+      "hits": 2,
+      "cases": 1,
+      "killed": true,
+      "failures": [
+        {
+          "name": "daily recovery: real TypeScript failure reaches its author and the original coding request completes",
+          "error": "Error: AssertionError [ERR_ASSERTION]: 0 == 1\n    at D:\\1.code\\agent-maison\\harness\\tests\\unit\\daily-recovery-journey.unit.test.ts:79:12\n    at async withProject (D:\\1.code\\agent-maison\\harness\\tests\\unit\\daily-recovery-journey.unit.test.ts:31:5)\n    at async Object.runSelectedCases (D:\\1.code\\agent-maison\\harness\\tests\\unit\\daily-recovery-journey.unit.test.ts:110:11)\n    at async D:\\1.code\\agent-maison\\harness\\reports\\remaining-3.1.0-p4-mutations.cjs:42:62\noriginals: <expected in-memory mutant; assertion captured>\n    at withProject (D:\\1.code\\agent-maison\\harness\\tests\\unit\\daily-recovery-journey.unit.test.ts:34:11)\n    at async Object.runSelectedCases (D:\\1.code\\agent-maison\\harness\\tests\\unit\\daily-recovery-journey.unit.test.ts:110:11)\n    at async D:\\1.code\\agent-maison\\harness\\reports\\remaining-3.1.0-p4-mutations.cjs:42:62"
+        }
+      ],
+      "exitCode": 0
+    },
+    {
+      "id": "tool-success-is-completion",
+      "hits": 1,
+      "cases": 15,
+      "killed": true,
+      "failures": [
+        {
+          "name": "S0/S1 分离：软视觉残差披露不阻断普通完成，release 仍 BLOCKED；硬失败同时在场仍阻断",
+          "error": "AssertionError [ERR_ASSERTION]: 真实硬失败不得被同场披露覆盖\n\ntrue !== false\n\n    at Object.run (D:\\1.code\\agent-maison\\harness\\tests\\unit\\check-disposition.unit.test.ts:459:14)\n    at Object.runAll (D:\\1.code\\agent-maison\\harness\\tests\\unit\\check-disposition.unit.test.ts:552:9)\n    at D:\\1.code\\agent-maison\\harness\\reports\\remaining-3.1.0-p4-mutations.cjs:42:122\n    at Object.<anonymous> (D:\\1.code\\agent-maison\\harness\\reports\\remaining-3.1.0-p4-mutations.cjs:47:5)\n    at Module._compile (node:internal/modules/cjs/loader:1830:14)\n    at Object.<anonymous> (node:internal/modules/cjs/loader:1961:10)\n    at Module.load (node:internal/modules/cjs/loader:1553:32)\n    at Module._load (node:internal/modules/cjs/loader:1355:12)\n    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)\n    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5)"
+        },
+        {
+          "name": "当前处置：框架执行缺口是等，过期证据是补验，已登记发现按责任归属阻断或披露",
+          "error": "AssertionError [ERR_ASSERTION]: 当前未处置发现必须阻断完成\n\ntrue !== false\n\n    at Object.run (D:\\1.code\\agent-maison\\harness\\tests\\unit\\check-disposition.unit.test.ts:498:14)\n    at Object.runAll (D:\\1.code\\agent-maison\\harness\\tests\\unit\\check-disposition.unit.test.ts:552:9)\n    at D:\\1.code\\agent-maison\\harness\\reports\\remaining-3.1.0-p4-mutations.cjs:42:122\n    at Object.<anonymous> (D:\\1.code\\agent-maison\\harness\\reports\\remaining-3.1.0-p4-mutations.cjs:47:5)\n    at Module._compile (node:internal/modules/cjs/loader:1830:14)\n    at Object.<anonymous> (node:internal/modules/cjs/loader:1961:10)\n    at Module.load (node:internal/modules/cjs/loader:1553:32)\n    at Module._load (node:internal/modules/cjs/loader:1355:12)\n    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)\n    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5)"
+        }
+      ],
+      "exitCode": 0
+    },
+    {
+      "id": "feedback-uses-different-facts",
+      "hits": 1,
+      "cases": 15,
+      "killed": true,
+      "failures": [
+        {
+          "name": "S0/S1 分离：软视觉残差披露不阻断普通完成，release 仍 BLOCKED；硬失败同时在场仍阻断",
+          "error": "AssertionError [ERR_ASSERTION]: raw PASS cannot erase the actual failed object from author feedback: p0_semantic_coverage_integrity\n    at Object.run (D:\\1.code\\agent-maison\\harness\\tests\\unit\\check-disposition.unit.test.ts:463:15)\n    at Object.runAll (D:\\1.code\\agent-maison\\harness\\tests\\unit\\check-disposition.unit.test.ts:552:9)\n    at D:\\1.code\\agent-maison\\harness\\reports\\remaining-3.1.0-p4-mutations.cjs:42:122\n    at Object.<anonymous> (D:\\1.code\\agent-maison\\harness\\reports\\remaining-3.1.0-p4-mutations.cjs:47:5)\n    at Module._compile (node:internal/modules/cjs/loader:1830:14)\n    at Object.<anonymous> (node:internal/modules/cjs/loader:1961:10)\n    at Module.load (node:internal/modules/cjs/loader:1553:32)\n    at Module._load (node:internal/modules/cjs/loader:1355:12)\n    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)\n    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5)"
+        }
+      ],
+      "exitCode": 0
+    },
+    {
+      "id": "file-changes-buy-progress",
+      "hits": 1,
+      "cases": 1,
+      "killed": true,
+      "failures": [
+        {
+          "name": "P2 completion progress: changed bytes with unchanged verified obligations halt only after feedback and completed verification",
+          "error": "字节变化不能洗掉已完成核验的无验收改善"
+        }
+      ],
+      "exitCode": 0
+    },
+    {
+      "id": "native-default-quota",
+      "hits": 1,
+      "cases": 1,
+      "killed": true,
+      "failures": [
+        {
+          "name": "P1 exact native resume keeps current sandbox/model and never selects --last",
+          "error": "no quota"
+        }
+      ],
+      "exitCode": 0
+    },
+    {
+      "id": "framework-bug-halt",
+      "hits": 1,
+      "cases": 1,
+      "killed": true,
+      "failures": [
+        {
+          "name": "V10 buildPhasePrompt: attended 不注入模式段、仍注入红线段；detached 逐字不变",
+          "error": "framework faults must leave independent authorized work available"
+        }
+      ],
+      "exitCode": 0
+    },
+    {
+      "id": "root-run-is-a-feature",
+      "hits": 1,
+      "cases": 10,
+      "killed": true,
+      "failures": [
+        {
+          "name": "P3 project compile enumerates a blueprint workspace with root records and a real CU while an empty design root stays a container",
+          "error": "Error: [enumerateFeatures] 歧义：orders 同时含 blueprint/ 工作区与平铺 Feature 产物，fail-closed。\n    at enumerateFeatures (D:\\1.code\\agent-maison\\harness\\config.ts:1477:23)\n    at Object.run (D:\\1.code\\agent-maison\\harness\\tests\\unit\\compile-entry.unit.test.ts:126:40)\n    at Object.runAll (D:\\1.code\\agent-maison\\harness\\tests\\unit\\compile-entry.unit.test.ts:264:24)\n    at async D:\\1.code\\agent-maison\\harness\\reports\\remaining-3.1.0-p4-mutations.cjs:42:109"
+        }
+      ],
+      "exitCode": 0
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "mode": "workers",
+  "workers": 12,
+  "scope": {
+    "filter": "session-execution-handoff",
+    "release": true,
+    "caseNameFilter": "interruption before gate handback",
+    "suiteIds": [
+      "session-execution-handoff"
+    ]
+  },
+  "wallMs": 5818.4333,
+  "ok": true,
+  "suites": [
+    {
+      "id": "session-execution-handoff",
+      "releaseOnly": true,
+      "status": "completed",
+      "ok": true,
+      "loadMs": 724.9465,
+      "executionMs": 4885.1474,
+      "totalMs": 5811.3575,
+      "results": [
+        {
+          "name": "1804 interruption before gate handback commits checks once and preserves the accepted author",
+          "ok": true
+        }
+      ],
+      "startupMs": 896.5793000000003,
+      "matchedCaseCount": 1,
+      "executionTimings": [
+        {
+          "caseNames": [
+            "1804 interruption before gate handback commits checks once and preserves the accepted author"
+          ],
+          "durationMs": 4884.5998
+        }
+      ],
+      "cleanupMs": 0.22779999999966094
+    }
+  ]
+}

@@ -1,4 +1,7 @@
 import '../utils/transpile-only-env';
+import { bindControlledProcess, controlledModelBinding, installControlledCodex } from '../utils/controlled-model-process';
+import { parseAdapterModelBinding } from '../../scripts/utils/adapter-model';
+import { invokeAgentHeadless } from '../../scripts/utils/agent-invoke';
 import assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -31,7 +34,7 @@ import { reusableDesignQuestioning } from '../../scripts/utils/design-repair-una
 import { repairAdapter } from './design-authority-repair.unit.test';
 import { BLUEPRINT_ID, withFreshCuHost } from './lifecycle-evolution.unit.test';
 import { fixture } from './blueprint-skill-projection.unit.test';
-import { DISPOSITIONS } from '../../scripts/utils/component-blueprint-model';
+import { DISPOSITIONS, blueprintAuthorContent } from '../../scripts/utils/component-blueprint-model';
 import { applyIndependentQuestioningOutput, parseIndependentQuestioningOutput, renderQuestioningResultInstructions, validateBlueprintQuestioning } from '../../scripts/utils/blueprint-questioning';
 import { validateChangeUnit } from '../../scripts/utils/change-unit-validator';
 import { validateChangeUnitDesign } from '../../scripts/utils/change-unit-design-gate';
@@ -65,7 +68,7 @@ function realLargeQuestioningExecutor(directory: string, output: string) {
   fs.mkdirSync(directory, { recursive: true });
   const payload = path.join(directory, 'answer.json'), script = path.join(directory, 'questioning-process.cjs');
   fs.writeFileSync(payload, output);
-  fs.writeFileSync(script, `const fs=require('fs');const text=fs.readFileSync(process.argv[2],'utf8');const adapter=process.argv[3];
+    fs.writeFileSync(script, `const fs=require('fs');const arg=name=>process.argv[process.argv.indexOf(name)+1];const text=fs.readFileSync(arg('--fixture-answer'),'utf8');const adapter=arg('--fixture-adapter');
 setTimeout(()=>{const records=adapter==='codex'?[{type:'thread.started',thread_id:'large-questioning-native'},{type:'item.completed',item:{type:'agent_message',text}},{type:'turn.completed'}]:[{type:'system',subtype:'init',session_id:'large-questioning-native'},{type:'assistant',message:{content:[{type:'text',text}]}},{type:'result',subtype:'success',is_error:false,result:text,session_id:'large-questioning-native'}];for(const record of records)process.stdout.write(JSON.stringify(record)+'\\n');},30);`);
   const results: GoalPhaseExecutorResult[] = [], authors: string[] = [];
   const executor: GoalPhaseExecutor = { async execute(context, controls) {
@@ -74,9 +77,9 @@ setTimeout(()=>{const records=adapter==='codex'?[{type:'thread.started',thread_i
       return { phase: context.phase, status: 'waiting', exitCode: 0, stdout: '', stderr: '', command: 'bounded-author-observation', details: '已收到完整否定；本测试在作者执行前停止。' };
     }
     const physical = new DetachedGoalPhaseExecutor(() => ({ cwd: context.projectRoot,
-      plan: { argv: [process.execPath, script, payload, context.adapter], label: 'real large questioning process', adapterName: 'terminal-replay-fixture' },
+      plan: { argv: [process.execPath, script, ...(context.adapter === 'codex' ? ['exec'] : []), '--fixture-answer', payload, '--fixture-adapter', context.adapter], label: 'real large questioning process', adapterName: context.adapter },
       options: { outputLogPath: path.join(context.runDir, 'phases', context.phase, context.attemptId, 'agent-output.log'),
-        toolEventCapture: 'structured_events', terminalEventParser: resolveTerminalEventParser(context.adapter), completionGraceMs: 100 } }));
+        toolEventCapture: 'structured_events', terminalEventParser: resolveTerminalEventParser(context.adapter), completionGraceMs: 100 } }), bindControlledProcess(invokeAgentHeadless));
     const result = await physical.execute(context, controls);
     assert(result.completion_observed && result.stdout.length <= 65536, JSON.stringify({ message: 'the actual process must complete while preserving the production stdout memory cap',
       exitCode: result.exitCode, completed: result.completion_observed, stdoutLength: result.stdout.length, stderr: result.stderr.slice(-1000) }));
@@ -157,6 +160,7 @@ async function scenario(host: Host, mode: Scenario, beforeRepair?: () => void): 
   const feature = normal ? CU : BLUEPRINT_ID;
   const runId = normal ? 'normal-repair-run' : 'initial-repair-run';
   const common = { feature, run_id: runId, adapter: 'claude', requirement,
+    adapter_model_pin: parseAdapterModelBinding('claude', controlledModelBinding('claude', host.root)),
     unattended: { write_mode: 'full-access', approval_mode: 'never' } };
   const manifest: GoalRunManifest = normal
     ? buildGoalManifestFromInput({ ...common, start_phase: 'plan', end_phase: 'plan' }, { projectRoot: host.root })
@@ -1026,7 +1030,9 @@ async function initialQuestioningLoop(host: Host, mode: 'execute-request-large' 
   }
   write(canonical.canonicalPath, doc);
   assert(!fs.existsSync(path.join(host.root, 'doc/conventions.md')));
-  const manifest = buildInitialDesignGoalManifest({ feature: BLUEPRINT_ID, run_id: `questioning-${mode}`, adapter: mode === 'large-process' ? 'codex' : mode === 'execute-request-large' ? 'generic' : 'claude', requirement,
+  const adapterName = mode === 'large-process' || mode === 'execute-request-large' ? 'codex' : 'claude';
+  const manifest = buildInitialDesignGoalManifest({ feature: BLUEPRINT_ID, run_id: `questioning-${mode}`, adapter: adapterName, requirement,
+    adapter_model_pin: parseAdapterModelBinding(adapterName, controlledModelBinding(adapterName, host.root)),
     unattended: { write_mode: 'full-access', approval_mode: 'never' },
     initial_design: { completion_target: 'feature', requested_results: [requirement], requested_phases: [] } }, { projectRoot: host.root });
   createGoalRun({ projectRoot: host.root, manifest, chain: [] });
@@ -1062,14 +1068,8 @@ async function initialQuestioningLoop(host: Host, mode: 'execute-request-large' 
     const directory = path.join(runDir, 'large-bridge-fixture'); fs.mkdirSync(directory, { recursive: true });
     const payload = path.join(directory, 'answer.json'), native = path.join(directory, 'native.cjs');
     fs.writeFileSync(payload, bridgeOutput);
-    fs.writeFileSync(native, `const fs=require('fs');const [payload,events]=process.argv.slice(2);const deadline=Date.now()+15000;
-const timer=setInterval(()=>{const bound=process.platform!=='win32'||fs.readFileSync(events,'utf8').trim().split('\\n').some(line=>{const e=JSON.parse(line);return e.type==='agent_process_bound'&&e.invoke_id===process.env.MAISON_GOAL_ATTEMPT;});if(bound){clearInterval(timer);process.stdout.write(fs.readFileSync(payload,'utf8')+'\\n');process.stderr.write('bridge diagnostic { stderr: only }\\n');}else if(Date.now()>deadline){clearInterval(timer);process.stderr.write('actual binding was not observed');process.exitCode=1;}},20);`);
-    const adapterFile = path.join(host.frameworkRoot, 'agents/generic/adapter.yaml');
-    const adapter = YAML.parse(fs.readFileSync(adapterFile, 'utf8'));
-    adapter.goal_capability.external_runner.headless_invoke = [process.execPath, native, payload, path.join(runDir, 'events.jsonl')]
-      .map(file => JSON.stringify(file.replace(/\\/g, '/'))).join(' ');
-    adapter.goal_capability.tool_event_provenance = 'structured_events';
-    fs.writeFileSync(adapterFile, YAML.stringify(adapter));
+    fs.writeFileSync(native, `const fs=require('fs');const payload=${JSON.stringify(payload)},events=${JSON.stringify(path.join(runDir, 'events.jsonl'))};const deadline=Date.now()+15000;
+const timer=setInterval(()=>{const bound=process.platform!=='win32'||fs.readFileSync(events,'utf8').trim().split('\\n').some(line=>{const e=JSON.parse(line);return e.type==='agent_process_bound'&&e.invoke_id===process.env.MAISON_GOAL_ATTEMPT;});if(bound){clearInterval(timer);for(const row of [{type:'thread.started',thread_id:'large-bridge-native'},{type:'item.completed',item:{type:'agent_message',text:fs.readFileSync(payload,'utf8')}},{type:'turn.completed'}])process.stdout.write(JSON.stringify(row)+'\\n');process.stderr.write('bridge diagnostic { stderr: only }\\n');}else if(Date.now()>deadline){clearInterval(timer);process.stderr.write('actual binding was not observed');process.exitCode=1;}},20);`);
   }
   let next = await runGoalModeSessionStep(options);
   const report = async (details: string): Promise<void> => {
@@ -1083,11 +1083,14 @@ const timer=setInterval(()=>{const bound=process.platform!=='win32'||fs.readFile
     const { spawnSync } = require('child_process') as typeof import('child_process');
     const { acceptedSessionReport } = require('../../scripts/utils/session-execution-handoff') as typeof import('../../scripts/utils/session-execution-handoff');
     const issued = readSessionExecution(runDir, (next.request as { path: string }).path)!;
-    const result = withRuntimeTest({ root: host.root }, () => spawnSync(process.execPath,
+    const restore = installControlledCodex(host.root, path.join(runDir, 'large-bridge-fixture/native.cjs'));
+    let result: import('child_process').SpawnSyncReturns<string>;
+    try { result = withRuntimeTest({ root: host.root }, () => spawnSync(process.execPath,
       ['-r', require.resolve('ts-node/register/transpile-only'), path.join(host.harnessDir, 'scripts/goal-mode-entry.ts'), '--project-root', host.root,
         '--framework-root', host.frameworkRoot, '--feature', BLUEPRINT_ID, '--run-id', manifest.run_id, '--adapter', options.adapter, '--run-mode', 'attended',
         '--request', path.resolve(runDir, issued.reference.path), '--execute-request'],
-      { cwd: host.harnessDir, windowsHide: true, encoding: 'utf8', timeout: 90000, maxBuffer: 4 * 1024 * 1024 }));
+      { cwd: host.harnessDir, windowsHide: true, encoding: 'utf8', timeout: 90000, maxBuffer: 4 * 1024 * 1024 })); }
+    finally { restore(); }
     assert.equal(result.status, 0, result.stderr.slice(-1500) + result.stdout.slice(-1500));
     assert.equal(JSON.parse(result.stdout.trim()).type, 'goal_session_report_received');
     const accepted = acceptedSessionReport(runDir, issued)!;
@@ -1177,8 +1180,13 @@ const timer=setInterval(()=>{const bound=process.platform!=='win32'||fs.readFile
     assert.equal(fs.readFileSync(path.join(runDir, 'phases', question.phase, question.invoke_id, 'questioning-output.json'), 'utf8'), output);
     return;
   }
-  await report('作者已读取全部反馈并交回当前设计，保留原验收。');
-  assert.equal(next.phase, 'initial-design-questioning', 'an author return needs fresh independent rechecking even if no author bytes changed');
+  const revised = read(canonical.canonicalPath);
+  const beforeRevision = JSON.stringify(blueprintAuthorContent(revised));
+  revised.review_summary.summary += `\n业务补充：${denied[0].scope_ref} 的失败恢复仍使用原账目来源，不丢失已保存账目；交独立质询核对是否已充分解决原否定。`;
+  assert.notEqual(JSON.stringify(blueprintAuthorContent(revised)), beforeRevision, 'fresh Q requires actual authored business material, not just a normal return');
+  write(canonical.canonicalPath, revised);
+  await report('作者已在原设计里补充失败恢复业务说明，保留原验收，交回受影响独核。');
+  assert.equal(next.phase, 'initial-design-questioning', 'actual authored business changes require fresh independent rechecking');
   const recheck: Document[] = items.map((item, index) => ({ ...item, question: `复核措辞-${index}`, answer: `复核回答-${index}` })).reverse();
   if (mode === 'smaller-scopes') recheck.find(item => item.scope_ref === denied[0].scope_ref)!.disposition = 'answered_with_evidence';
   await report(JSON.stringify({ items: recheck }));

@@ -633,13 +633,19 @@ for (const scenario of ['definition-gap', 'empty-chain'] as const) cases.push({
         assert.deepEqual(candidate.provides, originalUnit.provides); assert.deepEqual(candidate.requires, originalUnit.requires);
         return approved[0].id;
       };
+      const originalDesign = YAML.parse(fs.readFileSync(path.join(host.root, 'doc/features', blueprint, 'blueprint/component-blueprint.yaml'), 'utf8'));
+      const originalMappingGaps = enumerateCanonicalChangeUnits(host.root, blueprint).map(row => asChangeUnitArtifact(row.changeUnit))
+        .filter(unit => unit.target_predicates.some(predicate => !predicate.verification_refs.includes('acceptance:' + approvedCriterion(originalDesign, unit))))
+        .map(unit => unit.change_unit_id).sort();
+      assert(originalMappingGaps.length > 0, 'the fixture must really contain approved-criterion mapping gaps');
       const repair = repairAdapter(host, () => undefined, { fix: () => undefined, author: (doc, draft) => {
         const candidatePath = path.join(path.dirname(draft), 'change-unit.yaml');
         assert(fs.existsSync(candidatePath), 'a CU mapping finding must reach its actual CU draft, not a blueprint-only author');
         const candidate = asChangeUnitArtifact(YAML.parse(fs.readFileSync(candidatePath, 'utf8')));
-        const mapApprovedCriterion = (unit: ReturnType<typeof asChangeUnitArtifact>): Set<string> => {
+        const mapApprovedCriterion = (unit: ReturnType<typeof asChangeUnitArtifact>): void => {
           const originalUnit = asChangeUnitArtifact(loadCanonicalChangeUnit(host.root, blueprint, unit.change_unit_id).changeUnit);
-          const criterion = 'acceptance:' + approvedCriterion(doc, unit), changed = new Set<string>();
+          const criterion = 'acceptance:' + approvedCriterion(doc, unit);
+          let changed = false;
           assert.deepEqual(unit.target_predicates.map(item => item.predicate_id), originalUnit.target_predicates.map(item => item.predicate_id));
           for (const predicate of unit.target_predicates) {
             const prior = originalUnit.target_predicates.find(item => item.predicate_id === predicate.predicate_id)!;
@@ -647,16 +653,15 @@ for (const scenario of ['definition-gap', 'empty-chain'] as const) cases.push({
             assert(prior.verification_refs.every(ref => predicate.verification_refs.includes(ref)), 'retain every original predicate verification source');
             if (!predicate.verification_refs.includes(criterion)) {
               predicate.verification_refs.push(criterion);
-              predicate.provide_ids.forEach(id => changed.add(id));
+              changed = true;
             }
           }
-          if (changed.size) repairedUnits.add(unit.change_unit_id);
-          return changed;
+          if (changed) repairedUnits.add(unit.change_unit_id);
         };
-        const changedProvides = mapApprovedCriterion(candidate);
+        mapApprovedCriterion(candidate);
         fs.writeFileSync(candidatePath, YAML.stringify(candidate));
         const consumers = enumerateCanonicalChangeUnits(host.root, blueprint).map(row => asChangeUnitArtifact(row.changeUnit))
-          .filter(unit => unit.requires.some(ref => ref.from_change_unit_id === candidate.change_unit_id && changedProvides.has(ref.provide_id)))
+          .filter(unit => unit.change_unit_id !== candidate.change_unit_id)
           .map(unit => { mapApprovedCriterion(unit); return { providerId: 'design-repair', artifact: unit }; });
         fs.writeFileSync(path.join(path.dirname(draft), 'change-unit-candidates.json'), JSON.stringify(consumers, null, 2) + '\n');
       }, questioning: (doc, draft) => {
@@ -747,7 +752,7 @@ for (const scenario of ['definition-gap', 'empty-chain'] as const) cases.push({
       }
       assert.equal(family.calls, family.events.filter(event => event.type === 'agent_invoke_start').length, 'activity counts every actual original-family invocation once');
       assert(family.calls >= 1 + questions);
-      assert.equal(repairedUnits.size, 3, 'all three existing published-probe mapping gaps must pass the real author/Q/publication path');
+      assert.deepEqual([...repairedUnits].sort(), originalMappingGaps, 'all original published-probe mapping gaps must pass the real author/Q/publication path');
     }); } finally {
       runtime.__testing_setInvokeAgent(null); runtime.__testing_setCanaryProbeInvoke(null);
     }

@@ -364,6 +364,35 @@ async function report(host: Host, control: ReturnType<typeof prepare>, step: any
     report: { status: 'passed', phase: step.phase, details: output } }));
 }
 
+function assertDeliveryComplete(host: Host, control: ReturnType<typeof prepare>, step: any): void {
+  assert.notEqual(step.type, 'phase_execute_request', JSON.stringify(step));
+  const units = host.load('scripts/utils/change-unit-path').enumerateCanonicalChangeUnits(host.root, BLUEPRINT);
+  assert.equal(units.length, 1);
+  const feature = host.load('scripts/utils/change-unit-path').deriveChangeUnitFeatureId(BLUEPRINT, UNIT);
+  const assessment = host.load('scripts/utils/feature-assessment').assessFeature(host.root, feature, { frameworkRoot: host.frameworkRoot,
+    ...host.load('scripts/utils/change-unit-completion').resolveChangeUnitExpectedExecution(host.root, feature) });
+  assert(assessment.complete && assessment.record.state === 'ok', JSON.stringify(assessment));
+  assert(host.load('scripts/utils/initial-design-delivery').projectInitialDesignDelivery({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, manifest: control.prepared.manifest }).complete);
+  const tap = fs.readFileSync(path.join(host.load('config').featurePhaseReportsDir(host.root, feature, 'ut', host.frameworkRoot), 'node-tests.tap'), 'utf8');
+  assert.match(tap, /# tests 2/); assert.match(tap, /# fail 0/); assert.match(tap, /# skipped 0/);
+  assert.equal(read(host.root, SOURCE), PRODUCT); assert.equal(read(host.root, TEST), TEST_TEXT);
+}
+
+async function finishConstruction(host: Host, control: ReturnType<typeof prepare>, step: any): Promise<any> {
+  for (let call = 0; step.type === 'phase_execute_request' && call < 16; call++) {
+    const raw = JSON.parse(fs.readFileSync(step.request.path, 'utf8'));
+    const issued = host.load('scripts/utils/session-execution-handoff').readSessionExecution(raw.context.runDir, step.request.path);
+    assert(issued, 'each continuation consumes its real signed execution request');
+    const context = issued.request.context, phase = context.phase;
+    if (phase === 'work-unit-author') { unitMaterials(host, context); assertFrozenInputs(host, context); }
+    else if (phase.endsWith('-verifier-format-repair')) verifierReply(host, context, phase.replace(/-verifier-format-repair$/, ''));
+    else assert.fail('unexpected construction responsibility: ' + phase);
+    step = await report(host, control, step, '已读取本次实际请求和材料交回；完成与否由真实检查和独核决定。');
+  }
+  assertDeliveryComplete(host, control, step);
+  return step;
+}
+
 const cases = [{
   name: 'daily design: empty request reaches canonical CU completion with real TypeScript and Node assertions',
   run: () => withHost(async host => {
@@ -431,17 +460,7 @@ const cases = [{
       }
     }
     assert(visualReissued);
-    assert.notEqual(step.type, 'phase_execute_request', JSON.stringify(step));
-    const units = host.load('scripts/utils/change-unit-path').enumerateCanonicalChangeUnits(host.root, BLUEPRINT);
-    assert.equal(units.length, 1, 'the public decomposition consumer must publish the canonical CU');
-    const feature = host.load('scripts/utils/change-unit-path').deriveChangeUnitFeatureId(BLUEPRINT, UNIT);
-    const assessment = host.load('scripts/utils/feature-assessment').assessFeature(host.root, feature, { frameworkRoot: host.frameworkRoot,
-      ...host.load('scripts/utils/change-unit-completion').resolveChangeUnitExpectedExecution(host.root, feature) });
-    assert(assessment.complete && assessment.record.state === 'ok', JSON.stringify(assessment));
-    assert(host.load('scripts/utils/initial-design-delivery').projectInitialDesignDelivery({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, manifest: control.prepared.manifest }).complete);
-    const tap = fs.readFileSync(path.join(host.load('config').featurePhaseReportsDir(host.root, feature, 'ut', host.frameworkRoot), 'node-tests.tap'), 'utf8');
-    assert.match(tap, /# tests 2/); assert.match(tap, /# fail 0/); assert.match(tap, /# skipped 0/);
-    assert.equal(read(host.root, SOURCE), PRODUCT); assert.equal(read(host.root, TEST), TEST_TEXT);
+    assertDeliveryComplete(host, control, step);
   }),
 }, {
   name: 'daily design: missing reference repair and unchanged denial converge through original feedback',
@@ -523,9 +542,7 @@ const cases = [{
         assert.equal(step.phase, 'work-unit-author', JSON.stringify(step));
         assert.equal(published.length, 1, 'one actual business repair publishes once');
         assert.equal(published[0].outcome, 'recovered');
-        const request = JSON.parse(fs.readFileSync(step.request.path, 'utf8'));
-        unitMaterials(host, request.context);
-        assertFrozenInputs(host, request.context);
+        step = await finishConstruction(host, control, step);
       } else {
         assert.equal(step.type, 'goal_session_result', JSON.stringify(step));
         assert.equal(step.result.status, 'waiting');
@@ -540,6 +557,74 @@ const cases = [{
       }
     });
   },
+}, {
+  name: 'daily design: a framework entry fault leaves business repair executable and restoration completes the same CU',
+  run: () => withHost(async host => {
+    const nativeFile = path.join(host.frameworkRoot, 'profiles/hmos-app/harness/coding-host-rules.js');
+    const original = fs.readFileSync(nativeFile, 'utf8');
+    const anchor = 'checkCodingCompile: ctx => {';
+    assert.equal(original.split(anchor).length, 2);
+    const broken = original.replace(anchor, anchor + " require('fs').readFileSync(require('path').join(__dirname, 'p4-missing-native-driver.cjs')); ");
+    // Install the real provider fault before any actor preimage; the actors never edit framework.
+    fs.writeFileSync(nativeFile, broken);
+    const control = prepare(host, 'p4-framework-entry-recovery');
+    let step = await withRuntimeTest({ root: host.root }, () => control.entry.runGoalModeSessionStep(control.options));
+    for (let call = 0; step.type === 'phase_execute_request' && step.phase !== 'work-unit-author' && call < 12; call++) {
+      let output = '已读取本次设计请求并交回材料，继续由实际检查判定。';
+      if (step.phase === 'initial-design-author') writeYaml(host.root, `doc/features/${BLUEPRINT}/blueprint/component-blueprint.yaml`, blueprintDraft(host, false));
+      else if (step.phase === 'initial-design-questioning') output = questioningReply(host, false);
+      else if (step.phase === 'initial-design-decomposition') decompose(host);
+      else if (step.phase.startsWith('initial-design-scope-')) {
+        const feature = host.load('scripts/utils/change-unit-path').deriveChangeUnitFeatureId(BLUEPRINT, UNIT);
+        host.load('scripts/utils/feature-track').prepareFeatureScopeCandidate({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature,
+          completionTarget: 'feature', requestedResults: [REQUIREMENT], requestedPhases: ['plan', 'coding', 'ut'], requirement: REQUIREMENT, requirementSourceFiles: ['requirements/ledger.md'],
+          impact: { userVisibleBehaviorChange: false, reason: '账本内部纯TypeScript能力，不涉及UI或设备', basisPaths: [SOURCE] }, overwrite: true });
+      } else assert.fail('unexpected preparation responsibility: ' + step.phase);
+      step = await report(host, control, step, output);
+    }
+    assert.equal(step.phase, 'work-unit-author', JSON.stringify(step));
+    let authors = 0, childRunDir = '', observedMixed = false;
+    for (let call = 0; step.type === 'phase_execute_request' && call < 16; call++) {
+      const raw = JSON.parse(fs.readFileSync(step.request.path, 'utf8'));
+      const issued = host.load('scripts/utils/session-execution-handoff').readSessionExecution(raw.context.runDir, step.request.path);
+      assert(issued); const context = issued.request.context;
+      if (context.phase === 'work-unit-author') {
+        authors++; childRunDir = context.runDir;
+        assert(authors <= 2, 'a framework fault cannot buy repeated unchanged author calls');
+        if (authors === 2) {
+          const disposition = host.load('scripts/utils/verify-feature-completion').resolveCompletionDisposition({ projectRoot: host.root, frameworkRoot: host.frameworkRoot,
+            feature: context.feature, runId: context.runId, chain: context.chain, endpoint: 'request' });
+          assert(disposition.completionBlocking.some((problem: any) => problem.owner === 'framework' && problem.action === 'wait'), JSON.stringify(disposition));
+          const repairs = disposition.completionBlocking.filter((problem: any) => problem.phase === 'review' && problem.action === 'repair');
+          assert(repairs.length > 0, 'the real missing review artifact remains independently repairable');
+          assert(repairs.some((problem: any) => context.instruction.includes(problem.id)), 'the original author receives its actual business deficit');
+          observedMixed = true;
+        }
+        unitMaterials(host, context); assertFrozenInputs(host, context);
+        if (authors === 1) {
+          const review = host.load('config').featureFilePath(host.root, context.feature, 'review/review-report.md');
+          assert(fs.existsSync(review)); fs.unlinkSync(review);
+        }
+      } else if (context.phase.endsWith('-verifier-format-repair')) verifierReply(host, context, context.phase.replace(/-verifier-format-repair$/, ''));
+      else assert.fail('unexpected mixed-fault responsibility: ' + context.phase);
+      step = await report(host, control, step, '实际可做的业务材料已处理；未改framework，工具原件决定剩余故障和完成。');
+      assert.equal(fs.readFileSync(nativeFile, 'utf8'), broken, 'no actor repairs the framework on its own authority');
+    }
+    assert(observedMixed && authors === 2);
+    assert.equal(step.type, 'goal_session_result', JSON.stringify(step));
+    assert.equal(step.result.status, 'waiting', JSON.stringify(step));
+    const handoff = host.load('scripts/utils/session-execution-handoff');
+    const beforeAuthors = handoff.sessionEvents(childRunDir).filter((event: any) => event.type === 'agent_invoke_start' && event.phase === 'work-unit-author').length;
+    // The external condition is restored between invocations, with no active actor write authority.
+    fs.writeFileSync(nativeFile, original);
+    // Framework code repair restarts the coordinator; it does not hot-swap cached Node modules.
+    for (const file of Object.keys(require.cache)) if (file.startsWith(host.frameworkRoot + path.sep)) delete require.cache[file];
+    control.entry = host.load('scripts/goal-mode-entry');
+    step = await withRuntimeTest({ root: host.root }, () => control.entry.runGoalModeSessionStep({ ...control.options, forceTakeover: true }));
+    await finishConstruction(host, control, step);
+    const afterAuthors = handoff.sessionEvents(childRunDir).filter((event: any) => event.type === 'agent_invoke_start' && event.phase === 'work-unit-author').length;
+    assert.equal(afterAuthors, beforeAuthors, 'restored tools verify accepted work without buying another author');
+  }),
 }];
 
 export const listCaseGroups = () => unitCaseGroups(cases.map(test => test.name));

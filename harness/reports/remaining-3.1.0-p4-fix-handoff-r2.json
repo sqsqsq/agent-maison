@@ -1,0 +1,52 @@
+{
+  "mode": "workers",
+  "workers": 12,
+  "scope": {
+    "filter": "session-execution-handoff",
+    "release": true,
+    "caseNameFilter": "P1 R",
+    "suiteIds": [
+      "session-execution-handoff"
+    ]
+  },
+  "wallMs": 23671.0978,
+  "ok": true,
+  "suites": [
+    {
+      "id": "session-execution-handoff",
+      "releaseOnly": true,
+      "status": "completed",
+      "ok": true,
+      "loadMs": 812.0832,
+      "executionMs": 22645.1239,
+      "totalMs": 23662.6865,
+      "results": [
+        {
+          "name": "P1 R3 execute recovery preserves real settled failure and completion-cleanup facts instead of trusting raw terminal text",
+          "ok": true
+        },
+        {
+          "name": "P1 R2 real request CLI executes once and exposes the same running facts before owner-bound interruption",
+          "ok": true
+        }
+      ],
+      "startupMs": 1004.7592,
+      "matchedCaseCount": 2,
+      "executionTimings": [
+        {
+          "caseNames": [
+            "P1 R3 execute recovery preserves real settled failure and completion-cleanup facts instead of trusting raw terminal text"
+          ],
+          "durationMs": 789.4426000000001
+        },
+        {
+          "caseNames": [
+            "P1 R2 real request CLI executes once and exposes the same running facts before owner-bound interruption"
+          ],
+          "durationMs": 21854.9599
+        }
+      ],
+      "cleanupMs": 1.3211999999984982
+    }
+  ]
+}

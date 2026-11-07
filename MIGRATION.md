@@ -2,6 +2,8 @@
 
 当前开发说明不代表已发布或P4宿主验收通过。
 
+本节是当前执行与恢复口径。下方各批迁移条目保留其实施时的历史；其中旧总预算、调用/返修次数、预算提额、阶段冷派工及普通框架故障一律停机的说明已被本节取代，不作为新运行或旧 run 接入当前内核后的执行要求。
+
 - 完整交付使用同一goal-mode-entry / goal-runner；root、各CU、request各有专用作者。spec/plan/coding/review/UT/testing为方法和检查族，不再六phase冷启动，不回主会话代施工。
 - 新builder忽略旧budget；有效unattended不消费max_turns、timeout_seconds、phase_timeout_seconds。用户明示截止使用--user-deadline-at <UTC ISO-8601>，归一到user_deadline_at；未完请求重入/后继/换运输不重置。具体工具期限、取消、native终态/idle、设备、owner/fence和写保护保留。
 - InSessionRoundResult无manual_fallback；runInSessionRound不注入maxRounds=1。runChangeUnitProgression移除maxUnits，一次只返回ready-set事实步；完整原请求由root持续全部适用CU，子run出生/select_one不算交付。

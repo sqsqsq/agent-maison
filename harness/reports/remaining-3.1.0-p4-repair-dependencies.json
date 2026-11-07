@@ -1,0 +1,71 @@
+{
+  "mode": "workers",
+  "workers": 12,
+  "scope": {
+    "filter": "repair-dependencies",
+    "release": false,
+    "caseNameFilter": null,
+    "suiteIds": [
+      "repair-dependencies"
+    ]
+  },
+  "wallMs": 4898.6549,
+  "ok": true,
+  "suites": [
+    {
+      "id": "repair-dependencies",
+      "releaseOnly": false,
+      "status": "completed",
+      "ok": true,
+      "loadMs": 767.9703999999999,
+      "executionMs": 3944.788,
+      "totalMs": 4893.1209,
+      "results": [
+        {
+          "name": "真实requires使review与UT并列，UT返修只撤UT与testing，不撤spec/plan/review",
+          "ok": true
+        },
+        {
+          "name": "真实绑定和control edge可增加依赖；没有依赖上下文时不再按队列后缀作废",
+          "ok": true
+        },
+        {
+          "name": "pending review→UT派修与resume使用同一义务排序，owner完成或拒修后回原评审裁定",
+          "ok": true
+        },
+        {
+          "name": "实际manifest输入边贯通重开和历史失效，但不冒充检查控制顺序",
+          "ok": true
+        },
+        {
+          "name": "current upstream failure blocks completion, resolved observation reuses descendants, and real revocations or stale inputs still reopen",
+          "ok": true
+        },
+        {
+          "name": "原实现义务允许request必要验证；纯review request不能借队列/终点标签取得coding权限",
+          "ok": true
+        },
+        {
+          "name": "correction按真实provider或明确对象定位；缺少或多义verification不猜UT也不回队首",
+          "ok": true
+        },
+        {
+          "name": "生产上游门允许UT处理review待修问题，testing仍保留真实review否决",
+          "ok": true
+        },
+        {
+          "name": "coding只因待采纳测试失败时UT可承接；真实生产失败或混合blocker仍挡UT",
+          "ok": true
+        },
+        {
+          "name": "真实旧PASS报告被当前测试FAIL覆盖时UT可工作，源码契约真stale或manifest篡改仍不可绕过",
+          "ok": true
+        }
+      ],
+      "startupMs": 928.4809999999998,
+      "matchedCaseCount": 10,
+      "executionTimings": [],
+      "cleanupMs": 0.2169000000003507
+    }
+  ]
+}

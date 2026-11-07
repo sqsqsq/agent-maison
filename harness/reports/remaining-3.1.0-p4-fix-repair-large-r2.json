@@ -1,0 +1,82 @@
+{
+  "mode": "workers",
+  "workers": 12,
+  "scope": {
+    "filter": "initial-design-repair",
+    "release": true,
+    "caseNameFilter": "r4",
+    "suiteIds": [
+      "initial-design-repair"
+    ]
+  },
+  "wallMs": 27757.4305,
+  "ok": true,
+  "suites": [
+    {
+      "id": "initial-design-repair",
+      "releaseOnly": true,
+      "status": "completed",
+      "ok": true,
+      "loadMs": 5265.6906,
+      "executionMs": 95260.47170000001,
+      "totalMs": 102069.56219999999,
+      "results": [
+        {
+          "name": "e2a4145e r4 repair questioning real process retains a final answer over 64KiB",
+          "ok": true
+        },
+        {
+          "name": "e2a4145e r4 initial questioning execute-request-large preserves real completed originals and author delivery",
+          "ok": true
+        },
+        {
+          "name": "e2a4145e r4 initial questioning large-process preserves real completed originals and author delivery",
+          "ok": true
+        },
+        {
+          "name": "e2a4145e r4 initial questioning failed-latest preserves real completed originals and author delivery",
+          "ok": true
+        },
+        {
+          "name": "e2a4145e r4 initial questioning bare-items preserves real completed originals and author delivery",
+          "ok": true
+        }
+      ],
+      "startupMs": 1179.1235999999994,
+      "matchedCaseCount": 5,
+      "executionTimings": [
+        {
+          "caseNames": [
+            "e2a4145e r4 repair questioning real process retains a final answer over 64KiB"
+          ],
+          "durationMs": 16975.4729
+        },
+        {
+          "caseNames": [
+            "e2a4145e r4 initial questioning execute-request-large preserves real completed originals and author delivery"
+          ],
+          "durationMs": 25154.8109
+        },
+        {
+          "caseNames": [
+            "e2a4145e r4 initial questioning large-process preserves real completed originals and author delivery"
+          ],
+          "durationMs": 18389.8833
+        },
+        {
+          "caseNames": [
+            "e2a4145e r4 initial questioning failed-latest preserves real completed originals and author delivery"
+          ],
+          "durationMs": 19439.934100000002
+        },
+        {
+          "caseNames": [
+            "e2a4145e r4 initial questioning bare-items preserves real completed originals and author delivery"
+          ],
+          "durationMs": 15296.039999999999
+        }
+      ],
+      "cleanupMs": 0.27260000000023865
+    }
+  ]
+}

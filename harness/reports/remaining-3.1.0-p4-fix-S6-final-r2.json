@@ -1,0 +1,42 @@
+{
+  "mode": "workers",
+  "workers": 12,
+  "scope": {
+    "filter": "reliability-scenarios-runtime",
+    "release": true,
+    "caseNameFilter": "S6 ",
+    "suiteIds": [
+      "reliability-scenarios-runtime"
+    ]
+  },
+  "wallMs": 800651.8832,
+  "ok": true,
+  "suites": [
+    {
+      "id": "reliability-scenarios-runtime",
+      "releaseOnly": true,
+      "status": "completed",
+      "ok": true,
+      "loadMs": 804.1427,
+      "executionMs": 798658.0833,
+      "totalMs": 799682.2374999999,
+      "results": [
+        {
+          "name": "S6 排除内容已被实现 / 排除元素已写进产品",
+          "ok": true
+        }
+      ],
+      "startupMs": 970.0048999999999,
+      "matchedCaseCount": 1,
+      "executionTimings": [
+        {
+          "caseNames": [
+            "S6 排除内容已被实现 / 排除元素已写进产品"
+          ],
+          "durationMs": 798656.094
+        }
+      ],
+      "cleanupMs": 2.205599999986589
+    }
+  ]
+}
