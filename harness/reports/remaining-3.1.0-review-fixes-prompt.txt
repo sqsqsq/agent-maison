@@ -1,0 +1,12 @@
+请只读复核本轮检视返修。只用 Read/Grep/Glob，不改文件、不运行命令、不读凭据、temp/、真实宿主。模型和工具约束由实际CLI参数指定。
+
+范围冻结为此前三条必须修复：
+1. init-task-executor 的 record-visual-provider 要复用已有 resolveVisualProviderCliSelection，保存完整 ProviderRef，先冻结/预检再写盘；不得放宽身份比对、默认选路由或改读凭据。测试从正式初始化写盘、loadLocalConfig、无人值守选择到视觉plan及 assertModelReplay，验证字段和坏路由不落盘。个人设置文档同步需要的输入。
+2. DSH 结构化stdout最后JSON记录提前截断（如 {"type":"fina）不能回用上一条final。正常末尾非final事件及完整长final仍可用。视觉消费反例还包括逐图成功后被截断的最后final。
+3. 初始设计每项否定必须将原 verification_refs 连同 scope/question/可选answer交作者。保留原路由与无额外Q。回放脚本强化逐项数组断言，--replay-existing 只读取此前保留的两个隔离副本，不重新读取宿主；所有来源字节须不变。全套e2定向14/14通过；实际两原件回放结果若尚运行，不视为已通过。
+
+生产改动仅 harness/scripts/utils/init-task-executor.ts、codex-terminal-events.ts、initial-design-delivery.ts。相关测试 visual-provider.unit.test.ts 和 initial-design-repair.unit.test.ts、e2-replay.cjs；视觉89/89通过，修前87/2证明两反例会红（review-visual-before/after.json）；e2结果见review-e2-all.json。当前Git diff还含受保护a47/6fd/c6的用户改动，不能算本批。
+
+P4仅纠正交接：t1继续in_progress，下一步是已保全a21473真实输入+6fe679故障形状的开发隔离组合，不应要求先取得6fe完整原件链或找用户补采。此前两份分开通过证据不冒称组合已完成。双producer热修后UT仍等待的边界保留，不扩修复范围。Jimp同名临时文件并发冲突为原有独立问题，本批不改。
+
+请一次性输出本轮可发现的全部必须修复（给具体触发、后果、最小修法）或明确通过；不要新增假设性门禁/机制或扩大架构审查。后续只核既有意见与返修直接回归。以当前源码逻辑为准，旧P4全量结果只代表旧快照，不要求再跑全量。输出中文、普通文件定位，不用行内评论。

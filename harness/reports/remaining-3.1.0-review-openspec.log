@@ -1,0 +1,72 @@
+
+> agent-maison@3.1.0 openspec:validate
+> openspec validate --all --strict && node scripts/check-openspec-enforcement-paths.mjs
+
+- Validating...
+✓ spec/agent-adapters
+✓ spec/app-component-blueprint
+✓ change/artifact-contract-and-verification-recovery
+✓ change/authorized-runtime-config-recovery
+✓ change/blueprint-backed-skill-design
+✓ change/capability-absence-deferral-and-write-boundary-ownership
+✓ spec/capability-degradation
+✓ spec/change-unit-continuous-progression
+✓ change/check-disposition-single-verdict
+✓ change/closure-owner-attribution-continuity
+✓ spec/code-graph
+✓ spec/code-graph-entrypoints
+✓ change/completion-driven-execution
+✓ spec/complex-capability-meta-model
+✓ spec/component-assembly-coverage-closure
+✓ spec/component-assets
+✓ change/composable-skill-inputs
+✓ change/composable-workflow-foundation
+✓ spec/confirmation-receipts
+✓ spec/correction-routing
+✓ change/current-acceptance-evidence-and-required-work
+✓ change/deferred-is-phase-conclusion-and-explicit-resume-attaches
+✓ spec/delegated-vision
+✓ change/dynamic-workflow-closure-migration
+✓ change/effective-budget-completion-and-repair-diagnosis
+✓ spec/eval-protocol
+✓ spec/feature-artifact-layout
+✓ spec/framework-integrity
+✓ spec/framework-local-config
+✓ change/goal-brief-correctable-judgement
+✓ spec/goal-driver-handoff
+✓ spec/goal-mode-skill
+✓ spec/goal-runner
+✓ spec/harness-gates
+✓ change/hmos-build-closure-repair
+✓ spec/init-orchestration
+✓ spec/instance-extension-management
+✓ change/invocation-completion-ratchet-alignment
+✓ change/ledger-class-failure-containment
+✓ change/managed-initial-design-delivery
+✓ change/obligation-execution-scope
+✓ change/obligation-scoped-verification
+✓ spec/phase-write-boundary
+✓ spec/project-conventions
+✓ spec/reconcile-assessment
+✓ spec/release-boundary
+✓ change/repair-continuity-and-budget-unification
+✓ change/responsibility-dispatch-convergence
+✓ change/rule-subtraction-second-classification
+✓ spec/runtime-policy
+✓ spec/runtime-step-evidence
+✓ change/scope-aware-project-entry
+✓ spec/skill-authoring
+✓ spec/skill-contracts
+✓ spec/skill-quality-tiers
+✓ change/standalone-coding-review
+✓ change/task-continuation-recovery-loop
+✓ spec/ui-spec
+✓ change/unify-knowledge-delivery
+✓ change/ut-diagnosis-not-applicable-skips
+✓ spec/ut-flow-dag-evidence
+✓ spec/verdict-lattice
+✓ spec/visual-capability-routing
+✓ spec/visual-diff
+✓ spec/workflow-tracks
+Totals: 65 passed, 0 failed (65 items)
+[openspec-enforcement] PASS: canonical Enforcement 路径与 glob 均可解析。

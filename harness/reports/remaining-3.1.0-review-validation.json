@@ -1,0 +1,440 @@
+{
+  "baselineHead": "6e84edc15ea541b2a4b8b1b71b019d5abab231e0",
+  "scope": "three review findings and P4 handoff correction",
+  "changed": {
+    "command": "npm run test:changed -- --results-out reports/remaining-3.1.0-review-changed.json",
+    "ok": true,
+    "passed": 5082,
+    "failed": 0,
+    "selected": 876,
+    "reused": 51,
+    "formalNotExecuted": 424,
+    "typecheck": true,
+    "inputStable": true,
+    "snapshotId": "603f53d922e31b90248cfe0580659159bed4343e651597800170c0f914f814a5",
+    "rawFile": "harness/reports/remaining-3.1.0-review-changed.json",
+    "rawBytes": 64101749,
+    "rawSha256": "458c5dc0e273cf83d1381cfe521d9b55434a4e1caaf41ce797b9a10fe7b81f67",
+    "coverageUnknownGroups": [
+      {
+        "id": "adapter-model-consistency",
+        "reasons": [
+          "guardian Node entry coverage missing",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 48270.60849999997
+      },
+      {
+        "id": "test-infrastructure",
+        "reasons": [
+          "descendant coverage missing: 12716"
+        ],
+        "totalMs": 39099.856499999994
+      },
+      {
+        "id": "completion-running::[\"P2 running detached author is truly interrupted after relevant changes repeat the same canonical deficit; unchanged FAIL is reused\"]",
+        "reasons": [
+          "guardian Node entry coverage missing"
+        ],
+        "totalMs": 36486.323199999984
+      },
+      {
+        "id": "standalone-coding-review::[\"8a6d3f21 modern original Scope excludes other: actual code and UI gates reject it\"]",
+        "reasons": [
+          "unobserved execFileSync node PID",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 9858.775600000052
+      },
+      {
+        "id": "standalone-coding-review::[\"8a6d3f21 modern gate rejects observed coding changes to framework without blaming earlier integration\"]",
+        "reasons": [
+          "unobserved execFileSync node PID",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 21489.029099999927
+      },
+      {
+        "id": "standalone-coding-review::[\"b1b2 independent full coding keeps its owned edits through the final facts verdict without run admission\"]",
+        "reasons": [
+          "unobserved execFileSync node PID",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 17470.1446
+      },
+      {
+        "id": "standalone-coding-review::[\"birth to coding uses real bound design without plan and preserves compilation and write scope\"]",
+        "reasons": [
+          "unobserved execFileSync node PID",
+          "Node spawn failed",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 41202.53779999993
+      },
+      {
+        "id": "standalone-coding-review::[\"8a runless coding preserves existing cases; new tests require unchanged UT evidence\"]",
+        "reasons": [
+          "unobserved execFileSync node PID",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 34844.86239999998
+      },
+      {
+        "id": "standalone-coding-review::[\"f3b8d261 U1 a test file UT created in this run stays UT-owned while its bytes are unchanged\"]",
+        "reasons": [
+          "unobserved execFileSync node PID",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 38579.35979999998
+      },
+      {
+        "id": "standalone-coding-review::[\"f3b8d261 U2 byte lock: a UT output whose bytes changed afterwards is coding drift again\"]",
+        "reasons": [
+          "unobserved execFileSync node PID",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 7645.4888000001665
+      },
+      {
+        "id": "standalone-coding-review::[\"f3b8d261 U3 ownership lock: coding rewriting a UT output voids it even after restoring the UT bytes\"]",
+        "reasons": [
+          "unobserved execFileSync node PID",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 18766.077700000023
+      },
+      {
+        "id": "standalone-coding-review::[\"f3b8d261 U4 a test-root file without a UT fact of this run is not handed over\"]",
+        "reasons": [
+          "unobserved execFileSync node PID",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 16355.444099999964
+      },
+      {
+        "id": "standalone-coding-review::[\"f3b8d261 U5 a UT fact never excuses unauthorized product source or an out-of-module file\"]",
+        "reasons": [
+          "unobserved execFileSync node PID",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 15764.708899999969
+      },
+      {
+        "id": "standalone-coding-review::[\"f3b8d261 U6① a baseline test UT rewrote and that is then deleted is not handed over\"]",
+        "reasons": [
+          "unobserved execFileSync node PID",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 17716.10139999981
+      },
+      {
+        "id": "standalone-coding-review::[\"f3b8d261 U6② a UT output moved out of the test root fails on both ends\"]",
+        "reasons": [
+          "unobserved execFileSync node PID",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 10537.2760999999
+      },
+      {
+        "id": "standalone-coding-review::[\"f3b8d261 U6③ UT renaming inside its own root is judged end by end and handed over\"]",
+        "reasons": [
+          "unobserved execFileSync node PID",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 12282.025600000052
+      },
+      {
+        "id": "standalone-coding-review::[\"f3b8d261 U6④ coding deleting or renaming a UT output is never exempt\"]",
+        "reasons": [
+          "unobserved execFileSync node PID",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 10262.145400000038
+      },
+      {
+        "id": "standalone-coding-review::[\"b2d7f4e9 t3c a successor inherits the source run UT output through the lineage, and a later source coding rewrite still voids it\"]",
+        "reasons": [
+          "unobserved execFileSync node PID",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 17808.553199999966
+      },
+      {
+        "id": "standalone-coding-review::[\"8a6d3f21 real modern coding does not request plan revision for a new UI resource\"]",
+        "reasons": [
+          "unobserved execFileSync node PID",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 10948.387600000016
+      },
+      {
+        "id": "standalone-coding-review::[\"D0.3 named write-set violations stay in coding\"]",
+        "reasons": [
+          "unobserved execFileSync node PID",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 10407.769099999918
+      },
+      {
+        "id": "standalone-coding-review::[\"8a6d3f21 writer does not attach a scope revision for ordinary unpredicted implementation\"]",
+        "reasons": [
+          "unobserved execFileSync node PID",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 7887.6718999999575
+      },
+      {
+        "id": "standalone-coding-review::[\"8a6d3f21 ordinary implementation does not become a repair when workflow metadata changes\"]",
+        "reasons": [
+          "unobserved execFileSync node PID",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 11650.319599999813
+      },
+      {
+        "id": "obligation-scoped-verification",
+        "reasons": [
+          "unobserved execFileSync node PID",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 65713.88060000003
+      },
+      {
+        "id": "goal-budget-integration",
+        "reasons": [
+          "descendant coverage missing: 15960"
+        ],
+        "totalMs": 2159.091099999845
+      },
+      {
+        "id": "agent-containment",
+        "reasons": [
+          "descendant coverage missing: 1976",
+          "descendant coverage missing: 58128",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 16639.342799999984
+      },
+      {
+        "id": "device-session",
+        "reasons": [
+          "descendant coverage missing: 49796",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 3426.2027000000235
+      },
+      {
+        "id": "codex-terminal-closure",
+        "reasons": [
+          "descendant coverage missing: 31896",
+          "descendant coverage missing: 57692",
+          "descendant coverage missing: 41312",
+          "descendant coverage missing: 39888",
+          "descendant coverage missing: 47576"
+        ],
+        "totalMs": 19029.320699999924
+      },
+      {
+        "id": "repair-interruption-real-process::[\"[真实子进程：spawn/终止/事件解析，不等于真实 Codex CLI 已验] 原单元返修被外部 kill：保留原反馈与失败原件，恢复后真完成才复验\"]",
+        "reasons": [
+          "guardian Node entry coverage missing"
+        ],
+        "totalMs": 43439.192500000005
+      },
+      {
+        "id": "goal-runner-detach",
+        "reasons": [
+          "descendant coverage missing: 8964",
+          "descendant coverage missing: 51180",
+          "descendant coverage missing: 49948",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 3159.7737000000197
+      },
+      {
+        "id": "deepseek-harness-adapter",
+        "reasons": [
+          "guardian Node entry coverage missing"
+        ],
+        "totalMs": 10802.104100000113
+      },
+      {
+        "id": "agent-invoke-settle",
+        "reasons": [
+          "descendant coverage missing: 26316",
+          "descendant coverage missing: 28084",
+          "descendant coverage missing: 31052",
+          "descendant coverage missing: 52124",
+          "descendant coverage missing: 46904",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 83537.15710000001
+      },
+      {
+        "id": "migrate-feature-phase-paths",
+        "reasons": [
+          "unobserved execFileSync node PID",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 322.1948000001721
+      },
+      {
+        "id": "goal-capability-gate",
+        "reasons": [
+          "descendant coverage missing: 50744"
+        ],
+        "totalMs": 1541.1093999999575
+      },
+      {
+        "id": "profile:hmos-app:hmos-build-closure",
+        "reasons": [
+          "descendant coverage missing: 58300",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 14029.217900000047
+      },
+      {
+        "id": "profile:hmos-app:hylyre-spawn",
+        "reasons": [
+          "unobserved spawnSync node PID",
+          "descendant coverage missing: 0",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 1652.47350000008
+      }
+    ]
+  },
+  "targeted": [
+    {
+      "file": "harness/reports/remaining-3.1.0-review-visual-before.json",
+      "sha256": "fdab00f61c9e31b5bc8b9d975494d9aebbf9c66a8c880cf28d1b27250f959ee3",
+      "ok": false,
+      "passed": 87,
+      "failed": 2
+    },
+    {
+      "file": "harness/reports/remaining-3.1.0-review-visual-after.json",
+      "sha256": "477058d01c2d74b3288a7e732e65ed5f86be2610e0c93c869015237e61731ef3",
+      "ok": true,
+      "passed": 89,
+      "failed": 0
+    },
+    {
+      "file": "harness/reports/remaining-3.1.0-review-e2-all.json",
+      "sha256": "64801a8b501ff2bd64828c3b0f2a41c7c9a05541a9f21e1bbc31b35c2c6b6424",
+      "ok": true,
+      "passed": 14,
+      "failed": 0
+    }
+  ],
+  "e2OriginalReplay": {
+    "sourceCopiesUnchanged": true,
+    "hostRead": false,
+    "copiedOriginalFiles": 8656,
+    "rows": [
+      {
+        "scenario": "after-i16",
+        "latestValid": "initial-design-questioning-i16",
+        "blockers": 9,
+        "scopes": [
+          "view:logical",
+          "view:runtime",
+          "flow:flow-open-card-store",
+          "view:development",
+          "view:deployment",
+          "view:scenarios",
+          "app_lens:state_owners",
+          "app_lens:initialization",
+          "terminology:current_scope_items"
+        ],
+        "questionTextDelivered": true,
+        "answerFieldsPresent": 0,
+        "separateVerificationRefsForwarded": true,
+        "verificationRefs": 99,
+        "missingVerificationRefs": 0,
+        "authorI1Preserved": true,
+        "phase": "initial-design-author",
+        "projectionOutcomes": {
+          "blocker": 9
+        },
+        "originalTailPreserved": true
+      },
+      {
+        "scenario": "actual-i172",
+        "latestValid": "initial-design-questioning-i170",
+        "blockers": 12,
+        "scopes": [
+          "view:logical",
+          "view:runtime",
+          "flow:flow-open-card-store",
+          "view:development",
+          "view:deployment",
+          "view:scenarios",
+          "app_lens:data_producers_consumers",
+          "app_lens:lifecycle_triggers",
+          "app_lens:state_owners",
+          "app_lens:initialization",
+          "app_lens:publication_subscription",
+          "terminology:current_scope_items"
+        ],
+        "questionTextDelivered": true,
+        "answerFieldsPresent": 0,
+        "separateVerificationRefsForwarded": true,
+        "verificationRefs": 168,
+        "missingVerificationRefs": 0,
+        "authorI1Preserved": true,
+        "phase": "initial-design-author",
+        "projectionOutcomes": {
+          "blocker": 12
+        },
+        "originalTailPreserved": true
+      }
+    ],
+    "file": "harness/reports/remaining-3.1.0-e2-review-verified.json",
+    "sha256": "8f01d0131a7e43ec1f4ace6403d149a38a7cbe7b5409480e58e43033f46d1ba2"
+  },
+  "review": {
+    "file": "harness/reports/remaining-3.1.0-review-fixes-claude.json",
+    "sha256": "22e451a8456858d55521f37a94d3cb1f0657c60adecfe64b4354747dcf93ed53",
+    "models": [
+      "claude-opus-5-5"
+    ],
+    "conclusion": "PASS, no must-fix",
+    "command": "claude.cmd -p --model opus --effort high --permission-mode plan --tools Read,Grep,Glob --allowedTools Read,Grep,Glob --settings harness/reports/6a2f8c91/claude-review-readonly-settings.json --strict-mcp-config --mcp-config harness/reports/6a2f8c91/claude-review-no-mcp.json --output-format json --no-session-persistence",
+    "limitation": "CLI reviewed source and original replays; it did not verify the 89/14 counts. Those counts are checked directly against the JSONs above."
+  },
+  "sourceHashes": {
+    "harness/reports/remaining-3.1.0-e2-replay.cjs": "92d2652d6fb6fa1fcc32dcaeb0c7f91107f6ebbdff1818b9c4f023bfbf1c21c6",
+    "harness/scripts/utils/codex-terminal-events.ts": "c23356914d9c59cbc2c189b40cfc99e9ca86e4d05133dc666713a398b31fa56a",
+    "harness/scripts/utils/init-task-executor.ts": "cd4f6a6216e2f8f1a6c378f2f689b76e3a94726db1acc8d8e6a3c7bd86c6ca83",
+    "harness/scripts/utils/initial-design-delivery.ts": "28638b1ea7696292990c620684af39e7246dff2a4adf51f0d937f46750c79e41",
+    "harness/tests/unit/initial-design-repair.unit.test.ts": "3e0f9186595fda82101c7b7f47d74bf82f2cb6a9e46325385bbe3c453d3ece81",
+    "harness/tests/unit/visual-provider.unit.test.ts": "2ad2f7c952e3eb40b7217677ba1211363120bb368b7950da5c4f23e58449a574"
+  },
+  "protectedUserFilesUnchanged": true,
+  "fullNotRerun": true,
+  "version": "3.1.0",
+  "remaining": [
+    "P4 t1 developer-side combined replay is in_progress, not waiting for host acquisition",
+    "multi-producer framework repair may leave UT waiting",
+    "candidate same-zip consumer acceptance",
+    "final source official full green proof",
+    "P4 t5/t6",
+    "DSH H4",
+    "existing Jimp concurrent temporary-file collision"
+  ],
+  "commits": {
+    "dsh": "8249ce54e7a34ba446c1942af178100340dd0744",
+    "e2": "db1ff1c829cb2205ce165371136e465fa12e5465"
+  },
+  "gates": {
+    "openspecStrict": {
+      "passed": 65,
+      "failed": 0,
+      "enforcement": "PASS"
+    },
+    "plan": "PASS",
+    "diff": "PASS",
+    "textLF": "PASS"
+  }
+}
