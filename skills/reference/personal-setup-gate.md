@@ -104,7 +104,8 @@ BLOCKER 确认须 progressive enhancement：[user-confirmation-ux.md](./user-con
 - 选中的 adapter 不在支持列表 → 任务 failed 并回列支持项：**请重选或保持未配置**。框架**不自动改选**、
   **不在多个 provider 之间 fallback**。
 - 写盘由 `record-visual-provider` 任务完成（即 `visualProvider.task`；
-  `executionContext.visualProvider = {adapter, model}`）；**禁止** agent 手写 `framework.local.json`。
+  `executionContext.visualProvider` 携带 `{adapter, model, provider, reasoning_effort, config_source}` 中该 adapter 所需的准确选择）。
+  复用视觉 CLI 的来源解析与路由冻结，缺少必需来源则在写盘前要求补齐，不保存无法回放的半条身份；**禁止** agent 手写 `framework.local.json`。
 - 保持未配置时不写 `framework.local.json`，也不产生质量授权。严格视觉需求在后续
   requirement/capability preflight 诚实 defer；非 strict 可按既有 advisory 策略继续。
 - 无人值守（goal headless）**不走本步**：旧配置失效/读取不可用只 WARN 并按「无 provider」处理，

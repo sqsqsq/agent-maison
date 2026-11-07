@@ -91,6 +91,8 @@ import {
 import { buildVisualDiffSkeletonEntry } from '../../../profiles/hmos-app/harness/visual-diff-capture';
 import { buildVisualProviderAdvisory } from '../../scripts/check-personal-setup';
 import { executeInitTask } from '../../scripts/utils/init-task-executor';
+import { loadLocalConfig } from '../../scripts/utils/framework-local-config';
+import { assertModelReplay, parseAdapterModelBinding } from '../../scripts/utils/adapter-model';
 import { probeInitTaskPlan } from '../../scripts/utils/init-task-planner';
 import { clearFrameworkConfigCache } from '../../config';
 import { projectDelegatedVisualProviderFailure, __testing_checkHylyreFailureRouting } from '../../scripts/check-testing';
@@ -2260,6 +2262,8 @@ test('t1 attended 冻结：prepare 后改 local，gate 仍用 manifest 冻结的
 test('t1 record-visual-provider 走 updateLocalConfig（不手写 JSON、不抹邻段）', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vp-record-'));
   try {
+    const configSource = path.join(tmp, 'settings.json');
+    fs.writeFileSync(configSource, '{}\n');
     fs.writeFileSync(path.join(tmp, 'framework.local.json'), JSON.stringify({
       schema_version: '1.0',
       agent_adapter: 'claude',
@@ -2273,13 +2277,13 @@ test('t1 record-visual-provider 走 updateLocalConfig（不手写 JSON、不抹�
         projectRoot: tmp,
         harnessRoot: path.join(FRAMEWORK_ROOT, 'harness'),
         plan: {} as never,
-        visualProvider: { adapter: 'claude', model: 'm1' },
+        visualProvider: { adapter: 'claude', model: 'm1', provider: 'anthropic', config_source: configSource },
       } as never,
     );
     assert.match(res.message, /vision\.visual_provider=claude:m1/);
     const local = JSON.parse(fs.readFileSync(path.join(tmp, 'framework.local.json'), 'utf-8')) as Record<string, never>;
     assert.deepStrictEqual((local.vision as never as { visual_provider: unknown }).visual_provider,
-      { adapter: 'claude', model: 'm1' });
+      { adapter: 'claude', model: 'm1', provider: 'anthropic', config_source: configSource });
     assert.strictEqual((local.device as never as { unlock: { credential_ref: string } }).unlock.credential_ref,
       'keep-me', '邻段（设备凭据引用）必须无损保留');
     assert.ok((local.vision as never as { canary?: unknown }).canary, 'vision 内既有 canary 段必须保留');
@@ -2295,6 +2299,38 @@ test('t1 record-visual-provider 走 updateLocalConfig（不手写 JSON、不抹�
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
+});
+
+test('4e92 init persists the selected DSH route and reloads it through unattended visual preflight', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vp-init-dsh-'));
+  try {
+    const source = path.join(root, 'native/profiles/visual/cordis.patch.yml');
+    fs.mkdirSync(path.dirname(source), { recursive: true });
+    fs.writeFileSync(source, (require('yaml') as typeof import('yaml')).stringify([{ id: 'llm-pi-ai', config: { providers: {
+      'selected-visual': { api: 'openai-completions', baseURL: 'https://visual.invalid/v1', apiKeyEnv: 'FIXTURE_UNSET_KEY',
+        models: [{ id: 'deepseek-flash', contextWindow: 1_000_000, input: ['text', 'image'] }] },
+    } } }]));
+    const selection = { adapter: 'deepseek-harness', model: 'deepseek-flash', provider: 'selected-visual', reasoning_effort: 'high', config_source: source };
+    executeInitTask({ id: 'record-visual-provider' } as never, 'run' as never, {
+      projectRoot: root, harnessRoot: path.join(FRAMEWORK_ROOT, 'harness'), plan: {} as never, visualProvider: selection,
+    });
+    const local = loadLocalConfig(root);
+    const { pin } = resolveUnattendedVisualProviderPin(local, FRAMEWORK_ROOT);
+    assert.ok(pin);
+    assert.deepStrictEqual({ ...pin, route_identity: undefined }, { ...selection, route_identity: undefined });
+    assert.match(pin.route_identity!, /^[a-f0-9]{64}$/);
+    const declaration = loadVisualProviderDeclaration(FRAMEWORK_ROOT, pin.adapter)!;
+    assert.ok(declaration.ok);
+    const { plan } = resolveVisualProviderInvokePlan({ provider: pin, declaration: declaration.declaration, projectRoot: root, imagePaths: [], prompt: 'read only' });
+    const binding = parseAdapterModelBinding(pin.adapter, plan.modelBinding);
+    assert.doesNotThrow(() => assertModelReplay(binding, root));
+    const before = fs.readFileSync(path.join(root, 'framework.local.json'), 'utf8');
+    assert.throws(() => executeInitTask({ id: 'record-visual-provider' } as never, 'run' as never, {
+      projectRoot: root, harnessRoot: path.join(FRAMEWORK_ROOT, 'harness'), plan: {} as never,
+      visualProvider: { ...selection, provider: 'not-selected' },
+    }));
+    assert.strictEqual(fs.readFileSync(path.join(root, 'framework.local.json'), 'utf8'), before, 'invalid route must fail before writing');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
 test('t1 入口闭环：check-personal-setup advisory 让「问不问」成为确定性判定', () => {
@@ -2757,7 +2793,7 @@ test('4e92 DSH binding replay is limited to the readonly patch combination and p
 
 test('4e92 DSH final projection rejects a broken last final and preserves a long final without turn_end', () => {
   const project = (stdout: string) => projectVisualProviderBody('final_jsonl', { stdout });
-  for (const suffix of ['{"type":"final","text":""}', '{"type":"final","text":null}', '{"type":"final","text":']) {
+  for (const suffix of ['{"type":"final","text":""}', '{"type":"final","text":null}', '{"type":"final","text":', '{"type":"fina', '{']) {
     assert.ok(!project(JSON.stringify({ type: 'final', text: 'old' }) + '\n' + suffix).body);
   }
   assert.strictEqual(project(JSON.stringify({ type: 'text', text: 'intermediate' })).body, null);
@@ -2777,14 +2813,15 @@ test('4e92 DSH consumes paired successful per-image reads, original stdout, and 
     const pair = (id: string, file: string, status = 'completed') => [{ type: 'tool_call', callId: id, tool: 'read_image', input: { file_path: file } }, { type: 'tool_result', callId: id, status }];
     const all = [...pair('a', 'a.png'), ...pair('b', process.platform === 'win32' ? images[1].toUpperCase() : images[1])];
     const final = { type: 'final', text: '{"current":true}' };
-    for (const scenario of ['success', 'missing', 'error', 'recovered', 'unrelated-error', 'nonzero', 'no-final', 'empty-images', 'full-stdout', 'dirty']) {
+    for (const scenario of ['success', 'missing', 'error', 'recovered', 'unrelated-error', 'nonzero', 'no-final', 'truncated-final', 'empty-images', 'full-stdout', 'dirty']) {
       let events: unknown[] = all;
       if (scenario === 'missing') events = pair('a', images[0]);
       if (scenario === 'error') events = [...pair('a', images[0]), ...pair('b', images[1], 'error')];
       if (scenario === 'recovered') events = [...pair('failed', images[1], 'error'), ...all];
       if (scenario === 'unrelated-error') events = [...all, { type: 'tool_call', callId: 'other', tool: 'read', input: {} }, { type: 'tool_result', callId: 'other', status: 'error' }];
       if (scenario === 'empty-images') events = [];
-      const raw = [...events, ...(scenario === 'no-final' ? [] : [final])].map(row => JSON.stringify(row)).join('\n');
+      const raw = [...events, ...(scenario === 'no-final' ? [] : [final])].map(row => JSON.stringify(row)).join('\n')
+        + (scenario === 'truncated-final' ? '\n{"type":"fina' : '');
       const evidence = scenario === 'full-stdout' ? root + '-evidence' : undefined;
       const result = await invokeVisualProvider({ projectRoot: root, frameworkRoot: framework, provider: { adapter: 'deepseek-harness', provider: 'route', model: 'full/model-id', config_source: path.join(root, 'native-source.yaml') },
         purpose: 'review', imagePaths: scenario === 'empty-images' ? [] : images, prompt: 'read actual inputs', invokeId: scenario, evidenceDir: evidence,
@@ -2796,7 +2833,7 @@ test('4e92 DSH consumes paired successful per-image reads, original stdout, and 
           return { exitCode: scenario === 'nonzero' ? 1 : 0, stdout: evidence ? '{"type":"final","text":"wrong tail"}' : raw,
             stderr: '', command: 'controlled DSH protocol fixture', ...(scenario === 'nonzero' ? { completion_observed: true } : {}) };
         } });
-      const expected = ['missing', 'error', 'no-final', 'dirty'].includes(scenario) ? 'invalid' : scenario === 'nonzero' ? 'unavailable' : 'success';
+      const expected = ['missing', 'error', 'no-final', 'truncated-final', 'dirty'].includes(scenario) ? 'invalid' : scenario === 'nonzero' ? 'unavailable' : 'success';
       assert.strictEqual(result.outcome, expected, scenario + ': ' + result.reason);
       if (expected === 'success') { assert.strictEqual(result.body, final.text); assert.strictEqual(result.input_provenance, 'unverified', 'DSH does not add a generic critic parser registration'); }
       if (scenario === 'dirty') assert.strictEqual(result.workspace_dirtied, true);

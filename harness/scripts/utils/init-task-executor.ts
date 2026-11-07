@@ -21,6 +21,8 @@ import {
 } from './config-field-merger';
 import { updateLocalConfig } from './framework-local-config';
 import type { FrameworkLocalConfig } from './framework-local-config';
+import type { ProviderRef } from './types';
+import { resolveVisualProviderCliSelection } from './goal-manifest-cli';
 import {
   formatVisualProviderSupportList,
   isVisualProviderSupported,
@@ -74,7 +76,7 @@ export interface InitExecutionContext {
    * 收集后由 Skill 注入）。**agent 不手写 framework.local.json**——写盘唯一走
    * record-visual-provider 任务的 updateLocalConfig。缺省=用户跳过，本轮 blind。
    */
-  visualProvider?: { adapter: string; model: string };
+  visualProvider?: ProviderRef;
   confirmAnswers?: Record<string, boolean>;
   /** CREATE 模式 ensure-config：整文件 JSON（由 Skill 在 S2 收集后注入） */
   configWritePayload?: Record<string, unknown>;
@@ -706,9 +708,11 @@ export function executeInitTask(
           '请重新选择，或跳过并以 blind 模式继续。',
         );
       }
+      const provider = resolveVisualProviderCliSelection({ 'visual-adapter': adapter, 'visual-model': model,
+        'visual-provider': sel?.provider, 'visual-reasoning': sel?.reasoning_effort, 'visual-model-config': sel?.config_source }, ctx.projectRoot, sel);
       updateLocalConfig(ctx.projectRoot, (cur) => ({
         ...cur,
-        vision: { ...cur.vision, visual_provider: { adapter, model } },
+        vision: { ...cur.vision, visual_provider: provider },
       }));
       return {
         message: `已写入 framework.local.json vision.visual_provider=${adapter}:${model}`,

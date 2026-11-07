@@ -1,0 +1,387 @@
+{
+  "mode": "workers",
+  "workers": 12,
+  "scope": {
+    "filter": "visual-provider",
+    "release": false,
+    "caseNameFilter": null,
+    "suiteIds": [
+      "visual-provider"
+    ]
+  },
+  "wallMs": 26936.0664,
+  "ok": true,
+  "suites": [
+    {
+      "id": "visual-provider",
+      "releaseOnly": false,
+      "status": "completed",
+      "ok": true,
+      "loadMs": 604.9756,
+      "executionMs": 26140.5862,
+      "totalMs": 26928.5429,
+      "results": [
+        {
+          "name": "t1 支持列表唯一真源：由 adapter.yaml 完整声明派生",
+          "ok": true
+        },
+        {
+          "name": "t1 撤声明即撤资格：cursor 第一期不入册（tasks 7.7 账号面受阻）",
+          "ok": true
+        },
+        {
+          "name": "t1 家族不放行：codeagent 与 claude 同内核仍无资格（无自有声明）",
+          "ok": true
+        },
+        {
+          "name": "t1 goal_capability 不参与 provider 资格：完整声明自身即资格",
+          "ok": true
+        },
+        {
+          "name": "t1 声明缺一即不完整（不补默认、不降级可用）",
+          "ok": true
+        },
+        {
+          "name": "t1 CLI 双旗标成对：单给任一 fail-fast，都不给=未配置",
+          "ok": true
+        },
+        {
+          "name": "t1 显式 CLI unsupported → fail-fast 且错误列出 catalog 派生支持项",
+          "ok": true
+        },
+        {
+          "name": "t1 授权矩阵：fresh 接受 / resume 异值须 override / successor 出生输入可覆盖",
+          "ok": true
+        },
+        {
+          "name": "t1 三形态：local 缺失/已支持/已失格 三态判定与提示语",
+          "ok": true
+        },
+        {
+          "name": "t7 无人值守：旧 local 失格只负责 WARN + 忽略，不产生盲跑授权",
+          "ok": true
+        },
+        {
+          "name": "t7/t6 unsupported 反向矩阵：失格 provider 落 blind 且不自动替换、不产生授权",
+          "ok": true
+        },
+        {
+          "name": "t3 legacy allow_blind_visual 输入可读但新 writer 不重发，且对身份/successor 无授权语义",
+          "ok": true
+        },
+        {
+          "name": "t3 新 CLI/manifest writers 不再暴露盲跑质量 waiver",
+          "ok": true
+        },
+        {
+          "name": "t2 三态派生矩阵（含资格不足落 blind）",
+          "ok": true
+        },
+        {
+          "name": "t2 reviewVision 缺省=hasVision：旧调用面钳制表逐字回归",
+          "ok": true
+        },
+        {
+          "name": "t2 delegated 放行 pixel_1to1（primary 盲但有能看图的检查者）",
+          "ok": true
+        },
+        {
+          "name": "t3 四 adapter 只读 plan：全权限旗标结构上不可达",
+          "ok": true
+        },
+        {
+          "name": "t3 model 真实回放：声明的 model_replay 旗标后紧跟 model 值",
+          "ok": true
+        },
+        {
+          "name": "t3 claude 只读 plan：safe-mode + 只读工具集合 + 拒 MCP + stream-json",
+          "ok": true
+        },
+        {
+          "name": "t3 codex 只读 plan：顶层 approval 在 exec 之前、read-only 沙箱、原生 --image",
+          "ok": true
+        },
+        {
+          "name": "t3 ask_mode 机制只读 plan：ask 模式且禁 force/trust",
+          "ok": true
+        },
+        {
+          "name": "t3 opencode 只读 plan：--pure + 非只读工具 deny + 原生 --file",
+          "ok": true
+        },
+        {
+          "name": "t3 turn_jsonl 投影：completion 缺失 / terminal failure / 正文 null 一律拒收",
+          "ok": true
+        },
+        {
+          "name": "t3 stream_json_result 投影只认终态 success result",
+          "ok": true
+        },
+        {
+          "name": "t3 result_json 投影：只取确定性 final result，不吃增量事件",
+          "ok": true
+        },
+        {
+          "name": "t3 events_json 投影：形状以宿主 opencode 1.18.14 真实样本钉死（tasks 7.7）",
+          "ok": true
+        },
+        {
+          "name": "t3 身份回显校验：run/attempt 逐字、image_hashes 集合齐等",
+          "ok": true
+        },
+        {
+          "name": "t3 正文 JSON 提取：围栏 / 裸对象 / 夹在散文里都能取，取不出即 null",
+          "ok": true
+        },
+        {
+          "name": "t3 生命周期唯一性（源码锚定）：provider 不得自建 spawn/timer/kill/terminal/usage",
+          "ok": true
+        },
+        {
+          "name": "t4 三元复用键：hash / provider / protocol_version 任一不齐即重产",
+          "ok": true
+        },
+        {
+          "name": "t4 观察载荷解析：hash 未回显 / 空 observations 一律拒（best-effort，不产 check）",
+          "ok": true
+        },
+        {
+          "name": "t4 sidecar 目录不存在时列举为空数组（不抛、不建目录）",
+          "ok": true
+        },
+        {
+          "name": "c4e7a9b2 A2 产出方同步：prompt 要求 missing_render 带 ref_element 并列出 ref-elements；载荷保留 ref_element",
+          "ok": true
+        },
+        {
+          "name": "33784ed1 A16 unexpected_render：提示词说明新类别；载荷校验、解析、转录贯通 requirement_quote；缺锚拒收",
+          "ok": true
+        },
+        {
+          "name": "t5 载荷校验拒收矩阵：空/漏屏/重复屏/hash 不符/旧 attempt/非法枚举",
+          "ok": true
+        },
+        {
+          "name": "t5 pixel 硬契约：must_fix 为空却无 region_attest → 拒收；method 只接受 vl_screening",
+          "ok": true
+        },
+        {
+          "name": "t5 清旧+合并：只清 provider 结果，T8 转录与其它来源原样保留",
+          "ok": true
+        },
+        {
+          "name": "t5 provider defect 指纹走 legacy 四元组（invoke_id 不入指纹，否则熔断结构性失效）",
+          "ok": true
+        },
+        {
+          "name": "t5 schema 接受 provider provenance（与 T8 并存，非法 producer 仍拒）",
+          "ok": true
+        },
+        {
+          "name": "t5 BLOCKER SKIP 债务投影：visual_diff → needs_fix 债务 → release 阻断",
+          "ok": true
+        },
+        {
+          "name": "t5 编排：provider 不可用 → unusable（不写盘、不抛错、不 halt）",
+          "ok": true
+        },
+        {
+          "name": "delegated provider 贯通：非发布必需 SKIP；release-required unavailable defer；invalid FAIL/retry",
+          "ok": true
+        },
+        {
+          "name": "legacy confirmed_by 无 provider 豁免权：每轮仍重评并清旧 pass/hash",
+          "ok": true
+        },
+        {
+          "name": "6e2f9a10 t3: prompt JSON 示例绑定真实身份，拒绝照抄占位文本，实际观察完整校验通过",
+          "ok": true
+        },
+        {
+          "name": "6e2f9a10 t3: provider 与最终 visual-diff 共用 bbox/引用校验，错误含路径/实际值/期望",
+          "ok": true
+        },
+        {
+          "name": "6e2f9a10 t3: 坏 JSON 保留原生错误、候选与正文位置和有界片段，不计算表达式",
+          "ok": true
+        },
+        {
+          "name": "t3 同 gate 非法refs原body与精确索引回实际provider，最多纠正一次；独立留证/usage，共享deadline",
+          "ok": true
+        },
+        {
+          "name": "t3 缺区域观察不能靠格式纠错补造；精确路径进入既有check/NEXT建议",
+          "ok": true
+        },
+        {
+          "name": "t3 R1 纠正不可用/空正文不洗掉首轮invalid；必需与非必需投影均FAIL，初始unavailable保持原分类",
+          "ok": true
+        },
+        {
+          "name": "t3 硬deadline耗尽不调第二次；首评600秒与一次格式纠错300秒各自有界",
+          "ok": true
+        },
+        {
+          "name": "t3 shot变化回原采集路径，不给旧图改hash或再调provider",
+          "ok": true
+        },
+        {
+          "name": "t3 ref变化回原采集路径，不给旧图改hash或再调provider",
+          "ok": true
+        },
+        {
+          "name": "t3 nav变化回原采集路径，不给旧图改hash或再调provider",
+          "ok": true
+        },
+        {
+          "name": "t3 hap变化回原采集路径，不给旧图改hash或再调provider",
+          "ok": true
+        },
+        {
+          "name": "t3 IO只重试原critic提交事务，成功时不重新调用provider重判产品",
+          "ok": true
+        },
+        {
+          "name": "t5 evaluation_invalidated：合法重评被采信后由 harness 确定性清标记",
+          "ok": true
+        },
+        {
+          "name": "t5 evaluation_invalidated：provider 不可用时标记保留、无假清除",
+          "ok": true
+        },
+        {
+          "name": "t5 死锁闭环①：pixel clean-pass 区域覆盖不全 → 采信前即 invalid，标记保留",
+          "ok": true
+        },
+        {
+          "name": "t5 死锁闭环①-overlay：overlay 屏按基屏归一化后同样受采信前覆盖预检约束",
+          "ok": true
+        },
+        {
+          "name": "t5 死锁闭环②：critic 回执写不出 → 不提交 visual-diff.json、不清标记",
+          "ok": true
+        },
+        {
+          "name": "人签字段无豁免权：provider 不可用时仍清旧 verdict/hash，legacy confirmed_by 仅保留字节",
+          "ok": true
+        },
+        {
+          "name": "t5 受理与披露分立：unverified 且载荷合法 → 照常写入回修（不因证据等级丢弃）",
+          "ok": true
+        },
+        {
+          "name": "t5 critic 回执路径窄分支：native 现状回归 + delegated 走 provider 证据流",
+          "ok": true
+        },
+        {
+          "name": "t2 裁剪守护（源码锚定）：OCR 链无 provider 污染、无 provider 金丝雀",
+          "ok": true
+        },
+        {
+          "name": "t5 skipped 屏不进评审（skip 不得被洗成 pass）",
+          "ok": true
+        },
+        {
+          "name": "t5 目标屏解析吃真实 capture 形态（ref_id → 权威参考图），不是只认 ref_path",
+          "ok": true
+        },
+        {
+          "name": "t5 清场在调用之前：provider 不可用时旧结果被清掉，不跨 attempt 复用",
+          "ok": true
+        },
+        {
+          "name": "t5 清场只动 provider：T8 转录 defect 与其 must_fix 原样保留",
+          "ok": true
+        },
+        {
+          "name": "t5 载荷校验：schema_version 不符 / must_fix 未锚定 一律拒收",
+          "ok": true
+        },
+        {
+          "name": "t5 review 每轮只发一次 invoke（单批覆盖全部目标屏，不按屏散发）",
+          "ok": true
+        },
+        {
+          "name": "t5 交互态（无 run/attempt）也写出结构合法的 unverified 回执",
+          "ok": true
+        },
+        {
+          "name": "t5 unavailable 投影仍跑确定性红线：改判脚本物证照样 BLOCKER FAIL",
+          "ok": true
+        },
+        {
+          "name": "t1 attended 冻结：prepare 后改 local，gate 仍用 manifest 冻结的 provider",
+          "ok": true
+        },
+        {
+          "name": "t1 record-visual-provider 走 updateLocalConfig（不手写 JSON、不抹邻段）",
+          "ok": true
+        },
+        {
+          "name": "4e92 init persists the selected DSH route and reloads it through unattended visual preflight",
+          "ok": true
+        },
+        {
+          "name": "t1 入口闭环：check-personal-setup advisory 让「问不问」成为确定性判定",
+          "ok": true
+        },
+        {
+          "name": "t1 入口文档锚定：visualProvider 已登记为稳定 stdout 字段并写清消费方式",
+          "ok": true
+        },
+        {
+          "name": "t1 personal 任务计划：record-visual-provider 携带 catalog 派生候选",
+          "ok": true
+        },
+        {
+          "name": "t3 review超时走invalid恢复，明确传输面失败保持unavailable",
+          "ok": true
+        },
+        {
+          "name": "t3 真统一invoke接收剩余timeout与绝对deadline；预处理耗尽不启动agent",
+          "ok": true
+        },
+        {
+          "name": "t3 脏检查：invoke 弄脏工作区 → 丢弃本轮结果且**不**自动 revert",
+          "ok": true
+        },
+        {
+          "name": "t3/t5 同一 attempt 的自检与正式检查各留调用证据，不因目标屏数相同覆盖",
+          "ok": true
+        },
+        {
+          "name": "t4 spec观察处理全部15张未缓存参考图，失败不阻断，三元缓存和真改图只补受影响项",
+          "ok": true
+        },
+        {
+          "name": "t5 接线纪律（源码锚定）：provider 评审显式 await、不塞进同步 safeRun；provider 缺陷不进 signal@1",
+          "ok": true
+        },
+        {
+          "name": "b3d7e5a1 T5：长图屏使评审目标为空 → skipped 前复位旧 provider 状态并落盘，不调用 provider",
+          "ok": true
+        },
+        {
+          "name": "e9d49418: 真实回执复用原观察、换attempt零调用、当前严格度重裁；实质输入变化才重评",
+          "ok": true
+        },
+        {
+          "name": "4e92 DSH binding replay is limited to the readonly patch combination and preserves full model IDs",
+          "ok": true
+        },
+        {
+          "name": "4e92 DSH final projection rejects a broken last final and preserves a long final without turn_end",
+          "ok": true
+        },
+        {
+          "name": "4e92 DSH consumes paired successful per-image reads, original stdout, and the existing workspace boundary",
+          "ok": true
+        }
+      ],
+      "startupMs": 768.2241999999999,
+      "matchedCaseCount": 89,
+      "executionTimings": [],
+      "cleanupMs": 0.22769999999945867
+    }
+  ]
+}

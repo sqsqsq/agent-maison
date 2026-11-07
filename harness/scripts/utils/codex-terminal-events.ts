@@ -319,7 +319,7 @@ export function extractProviderFinalText(raw: string, adapterName?: string): str
   for (const line of raw.split(/\r?\n/)) {
     const record = parseEnvelopeLine(line);
     if (record?.type === 'final') final = typeof record.text === 'string' ? record.text : null;
-    else if (!record && /"type"\s*:\s*"final"/.test(line)) final = null;
+    else if (!record && line.trimStart().startsWith('{')) final = null;
   }
   return final;
 }
