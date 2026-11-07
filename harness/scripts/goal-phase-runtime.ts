@@ -4642,11 +4642,11 @@ export class GoalPhaseRuntime {
           const saved = readHandoffMaterial<{ post_snapshot?: ReturnType<typeof capturePhaseInvocationSnapshot> }>(runDir, latest.handoff_report);
           if (issued?.request.pre_snapshot && saved.post_snapshot) {
             const diff = diffPhaseInvocationSnapshots(issued.request.pre_snapshot, saved.post_snapshot);
-            const allowed = issued.request.snapshot_options?.ownedPrefixes ?? [];
+            const allowed = (issued.request.snapshot_options?.ownedPrefixes ?? []).map(prefix => prefix.replace(/\\/g, '/'));
             if (diff.kind === 'unverifiable') return conclude('unauthorized_source_mutation', '设计调用原写快照不可核实；不能猜测恢复前像。');
             const originals = authorWritePreimages(beforeAuthorInvocation(history(), latest.invoke_id));
             if (diff.kind === 'changed') recordAuthorRestorations(history(), diff.changes, String(latest.phase), latest.invoke_id, emit);
-            const outside = diff.kind === 'changed' ? diff.changes.filter(change => !allowed.some(prefix => change.path === prefix || change.path.startsWith(prefix.replace(/\\/g, '/') + '/'))
+            const outside = diff.kind === 'changed' ? diff.changes.filter(change => !allowed.some(prefix => change.path.replace(/\\/g, '/') === prefix || change.path.replace(/\\/g, '/').startsWith(prefix + '/'))
               && (!originals.has(change.path) || originals.get(change.path) !== change.postSha256)) : [];
             if (outside.length && !history().some(event => event.type === 'phase_write_violation' && event.invoke_id === latest.invoke_id)) emit({
               type: 'phase_write_violation', phase: latest.phase, invoke_id: latest.invoke_id,
@@ -5159,13 +5159,22 @@ export class GoalPhaseRuntime {
     const decision = observation.progression;
     if (!decision) return observation;
     if (decision.action === 'ready_for_component_closure') {
+      let closure: ReturnType<typeof writeCanonicalComponentClosure>;
       try {
         assertFencedOwner(path.resolve(projectRoot, manifest.report_dir), originalToken, 'component_closure_writer');
-        writeCanonicalComponentClosure(projectRoot, manifest.feature);
+        closure = writeCanonicalComponentClosure(projectRoot, manifest.feature);
       } catch (error) { return stop('executor_waiting', `正式组装工具尚未交回可核验原件：${(error as Error).message}`,
         { run_disposition: 'WAITING', run_wait_kind: 'external' }); }
       const current = readInitialDesignCompletionDisposition({ projectRoot, frameworkRoot, manifest });
-      if (!current.completionEligible) return stop('executor_waiting', renderCurrentDisposition(current), { run_disposition: 'WAITING', run_wait_kind: 'external' });
+      if (!current.completionEligible) {
+        const knowledge = closure.issues.filter(issue => issue.severity === 'BLOCKER' && issue.id.startsWith('component_closure_knowledge_'));
+        if (knowledge.length) return { ...observation, issues: current.reasons, designRepair: { feature: manifest.feature,
+          brief: { class: 'B1', items: knowledge.map(issue => ({ check: 'component-closure', codes: [issue.id], class: 'B1',
+            artifacts: [path.relative(projectRoot, observation.blueprintPath).replace(/\\/g, '/')],
+            basis: `${issue.path}: ${issue.message}\n当前责任与真实差额：${renderCurrentDisposition(current)}`,
+            needs: ['原资产writer在原请求授权内先归位既有知识资产；P1 owner再补真实knowledge_refs，经原design preparation升CU指针后重跑closure。保留已批准结论与原验收，不新增决定，不写正式完成或组装原件。'] })) } } };
+        return stop('executor_waiting', renderCurrentDisposition(current), { run_disposition: 'WAITING', run_wait_kind: 'external' });
+      }
       emit({ type: 'run_end', status: 'COMPLETED', detail: '全部适用CU与正式组装原件已由同一当前完成事实核验。' });
       fs.writeFileSync(path.resolve(projectRoot, manifest.report_dir, 'goal-report.json'), JSON.stringify(projectInitialDesignDelivery({ projectRoot, frameworkRoot, manifest }), null, 2) + '\n');
       return 0;

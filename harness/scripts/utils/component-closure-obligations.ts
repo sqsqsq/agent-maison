@@ -12,6 +12,7 @@ import { isApplicableView, isChangedView, nodeDeclaresChange } from './blueprint
 import { ResolvedComponentClosureInputs } from './component-closure-inputs';
 import { ClosureEvidenceLevel, compareCodePoint, stableSortStrings } from './component-closure-model';
 import { readCompletedFeatureDesign } from './change-unit-completion';
+import { splitProjectEvidenceRef } from './component-closure-evidence';
 
 export interface ComponentClosureObligation {
   obligation_id: string;
@@ -31,8 +32,9 @@ function obligation(
   kind: string,
   options: Partial<Omit<ComponentClosureObligation, 'obligation_id' | 'kind'>> = {},
 ): ComponentClosureObligation {
+  const key = /^[A-Za-z0-9][A-Za-z0-9._:@/-]*$/.test(id) ? id : `encoded:${Buffer.from(id, 'utf8').toString('base64url')}`;
   return {
-    obligation_id: `obligation:${id}`,
+    obligation_id: `obligation:${key}`,
     kind,
     required: options.required ?? true,
     source_refs: stableSortStrings(options.source_refs ?? []),
@@ -406,7 +408,8 @@ function addFeatureObligations(
       if (!id) continue;
       out.push(obligation(`feature-acceptance:${featureId}:${id}`, 'feature_acceptance', {
         source_refs: 'verification_steps' in item ? item.verification_steps : [],
-        evidence_refs: 'verification_steps' in item ? item.verification_steps : [],
+        // Natural-language acceptance actions are not file#check execution claims.
+        evidence_refs: 'verification_steps' in item ? item.verification_steps.filter(step => splitProjectEvidenceRef(step) !== null) : [],
         owner_hint_change_unit_ids: [unit.changeUnit.change_unit_id],
         evidence_level: item.ut_layer === 'device' || item.ut_layer === 'both' ? 'ui_device' : 'unit_contract',
         mapping_kind: 'completion',

@@ -413,7 +413,7 @@ export function generateTestReport(input: TestReportWriterInput): GeneratedTestR
   }
 
   // 通过率
-  const priorities = [...new Set(exec.map(r => r.priority))].sort();
+  const priorities = [...new Set(exec.length ? ['P0', 'P1', ...exec.map(r => r.priority)] : [])].sort();
   const thresholds: Record<string, number | null> = { P0: 100, P1: 95 };
   const rateRows: string[] = [];
   const rateOf = (rows: ExecRow[]) => {
@@ -429,8 +429,8 @@ export function generateTestReport(input: TestReportWriterInput): GeneratedTestR
   for (const p of priorities) {
     const st = rateOf(exec.filter(r => r.priority === p));
     priorityStats.set(p, st);
-    const th = thresholds[p] ?? null;
-    const ok = th === null ? '—' : st.ratio >= th ? '✅' : '❌';
+    const th = st.total === 0 ? null : thresholds[p] ?? null;
+    const ok = st.total === 0 ? '不适用' : th === null ? '—' : st.ratio >= th ? '✅' : '❌';
     rateRows.push(`| ${p} | ${st.total} | ${st.pass} | ${st.fail} | ${st.blocked} | ${st.skipped}${st.gaps > 0 ? `（含 gap ${st.gaps}）` : ''} | ${pct(st.pass, st.total)} | ${th === null ? '—' : p === 'P0' ? '100%' : `≥ ${th}%`} | ${ok} |`);
   }
   const all = rateOf(exec);
@@ -658,6 +658,7 @@ export function generateTestReport(input: TestReportWriterInput): GeneratedTestR
     ...priorities.map(p => {
       const st = priorityStats.get(p)!;
       const th = thresholds[p] ?? null;
+      if (st.total === 0) return `- ${p} 通过率: —（无该优先级用例）`;
       return `- ${p} 通过率: ${pct(st.pass, st.total)}（${th === null ? '无阈值' : p === 'P0' ? '阈值 100%' : `阈值 ≥ ${th}%`}）`;
     }),
     `- 总体通过率: ${pct(all.pass, all.total)}（阈值 ≥ 90%）`,

@@ -85,7 +85,7 @@ import { codingBasePath } from '../../scripts/utils/pass-snapshot';
 import { recomputePhaseEvidenceStaleness } from '../../scripts/utils/phase-evidence-manifest';
 import * as os from 'os';
 import type { AcceptanceSpec, CheckContext, CheckResult } from '../../scripts/utils/types';
-import { resolveExecutionScope, validateExecutionScope, executionScopeFingerprint, executionCompletionPhases, hasNoTestingObligation, findSubtractedRequiredObligations, assertRevisionKeepsRequiredObligations, hasNewSourcedFact, effectiveScopeView, scopeProofHistory, projectScopeSchedule, affectedScopePhases, type ScopeHistoryEvent, type ExecutionScope, type ExecutionScopeInput, type ResolvedScopeFacts } from '../../scripts/utils/execution-scope';
+import { resolveExecutionScope, validateExecutionScope, executionScopeFingerprint, executionCompletionPhases, hasNoTestingObligation, findSubtractedRequiredObligations, assertRevisionKeepsRequiredObligations, hasNewSourcedFact, effectiveScopeView, scopeProofHistory, projectScopeSchedule, affectedScopePhases, isExecutionSourceBasis, type ScopeHistoryEvent, type ExecutionScope, type ExecutionScopeInput, type ResolvedScopeFacts } from '../../scripts/utils/execution-scope';
 import { applyScopeRevisions, loadScopeRevisions, resolveRunBaseline, revokedPhasesByRevision, eventsWithScopeRevocations } from '../../scripts/utils/goal-run-creation';
 import { isClosureOnlyRetryPending, readExecutionActivity, loadAuthoritativeEvents } from '../../scripts/utils/goal-runner-phase';
 import { executionRequestForInvoke } from '../../scripts/utils/session-execution-handoff';
@@ -112,6 +112,44 @@ function legacyFeatureCompletionFixture(input: Parameters<typeof applyFeatureSco
 }
 
 const cases: Array<{ name: string; run(): void | Promise<void> }> = [
+  { name: 'P4 a21473 deferred required implementation keeps codebase basis historical before coding enters the birth chain', run() {
+    const { root, frameworkRoot, feature } = setupRunlessProject();
+    try {
+      const code = 'src/demo/value.ts';
+      const inputs = resolveCapabilityInputs({ projectRoot: root, frameworkRoot, feature, phase: 'plan', track: 'full', testTargets: [code],
+        inputContext: { schema_version: '1.1', subject: { feature }, obligations: {}, required_outputs: [] } }).inputs!;
+      const current = inputs.values.codebase;
+      assert(current.state === 'resolved');
+      const binding = current.binding;
+      const obligation = { id: 'implementation:request', kind: 'implementation', owner_phase: 'coding', applicability: 'required' as const, reason: 'original authorized implementation', basis: [binding] };
+      const scope: ExecutionScope = { schema_version: '1.0', completion_target: 'feature', requested_results: ['value is 42'],
+        phase_chain: ['spec','plan'], obligations: [obligation], reused_phases: [],
+        unresolved: [{ obligation_id: obligation.id, needed_by: ['coding'], owner: 'spec', reason: 'visual acceptance definition missing at birth' }], policy_fingerprint: '0'.repeat(64) };
+      validateExecutionScope(scope);
+      execFileSync('git', ['init','-q'], { cwd: root }); fs.writeFileSync(path.join(root, '.gitignore'), 'framework\n');
+      execFileSync('git', ['add','.'], { cwd: root });
+      execFileSync('git', ['-c','user.name=Fixture','-c','user.email=fixture@example.test','commit','-qm','base'], { cwd: root });
+      const runId = 'p4-deferred-source';
+      const manifest = buildGoalManifestFromInput({ feature, run_id: runId, requirement: 'value is 42', adapter: 'generic',
+        start_phase: 'spec', end_phase: 'plan', chain_override: scope.phase_chain, execution_scope: scope,
+        unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: root, featuresDir: 'doc/features' });
+      createGoalRun({ projectRoot: root, manifest, chain: scope.phase_chain });
+      const dep = binding.dependencies.find(row => row.path.endsWith('value.ts'))!;
+      assert(dep && dep.role === 'derive');
+      assert(!isExecutionSourceBasis(root, scope, obligation, dep), 'runless research must still bind the original code');
+      assert(isExecutionSourceBasis(root, scope, obligation, dep, runId));
+      fs.writeFileSync(path.join(root, code), 'export const value: number = 42;\n');
+      const issues = executionScopeEvidenceIssues(root, feature, scope, undefined, runId, undefined, frameworkRoot);
+      assert(!issues.some(issue => issue.includes('input binding stale')), issues.join('; '));
+      assert(!isExecutionSourceBasis(root, scope, obligation, { ...dep, role: 'artifact' }, runId));
+      assert(!isExecutionSourceBasis(root, scope, obligation, { ...dep, path: path.join(path.dirname(root), 'outside.ts') }, runId));
+      assert(!isExecutionSourceBasis(root, scope, { ...obligation, applicability: 'not_applicable' }, dep, runId));
+      assert(!isExecutionSourceBasis(root, scope, { ...obligation, kind: 'acceptance-context' }, dep, runId));
+      const proof = { ...scope, unresolved: [], obligations: [{ ...obligation, satisfied_by: [binding] }] };
+      assert(executionScopeEvidenceIssues(root, feature, proof, undefined, runId, undefined, frameworkRoot).some(issue => issue.includes('input binding stale')),
+        'an input supplied as satisfaction proof remains current and cannot borrow the birth-basis exemption');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+  } },
   { name: '66457a08 fidelity uses dereferenced real requirements, never writes or promotes fallback text', run() {
     const { root, frameworkRoot, feature } = setupRunlessProject();
     try {

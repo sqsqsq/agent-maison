@@ -12,6 +12,7 @@ import * as os from 'os';
 import * as path from 'path';
 
 import { clearFrameworkConfigCache, resolveFeatureArtifact, featurePhaseReportsDir } from '../../config';
+import { phaseManifestBindsRuntimeArtifacts } from '../../scripts/utils/runtime-step-evidence';
 import {
   REQUIRED_FEATURE_FILES_BY_PHASE,
   OPTIONAL_FEATURE_FILES_BY_PHASE,
@@ -157,6 +158,30 @@ const addEdgeRemoval = (id: string, from: string, to: string) => (bp: Blueprint)
 interface Case { name: string; run: () => void }
 
 const cases: Case[] = [
+  {
+    name: 'P4 a21473 testing proposal binds exact future runtime receipt and trace; absence or changed bytes still fails',
+    run: () => {
+      const root = mkProject();
+      try {
+        const reports = featurePhaseReportsDir(root, FEATURE, 'testing');
+        fs.mkdirSync(reports, { recursive: true });
+        const trace = path.join(reports, 'round/hylyre/trace.json');
+        fs.mkdirSync(path.dirname(trace), { recursive: true }); fs.writeFileSync(trace, '{"cases":[]}\n');
+        const proposal = { trace_path: trace, goal_run_id: 'actual-run', attempt_id: 'actual-attempt' };
+        const receipt = path.join(reports, 'device-test-evidence.json');
+        const manifest = resolvePhaseEvidenceManifest({ projectRoot: root, feature: FEATURE, phase: 'testing', deviceTestEvidence: proposal });
+        writePhaseEvidenceManifest(root, manifest);
+        assert(phaseManifestBindsRuntimeArtifacts(root, FEATURE, proposal as never)?.includes('device-test-evidence.json'), 'proposal alone does not prove publication');
+        fs.writeFileSync(receipt, JSON.stringify(proposal, null, 2) + '\n');
+        assert.equal(phaseManifestBindsRuntimeArtifacts(root, FEATURE, proposal as never), null);
+        fs.writeFileSync(receipt, JSON.stringify({ ...proposal, attempt_id: 'other-attempt' }, null, 2) + '\n');
+        assert(phaseManifestBindsRuntimeArtifacts(root, FEATURE, proposal as never)?.includes('device-test-evidence.json'));
+        fs.writeFileSync(receipt, JSON.stringify(proposal, null, 2) + '\n');
+        fs.appendFileSync(trace, 'changed');
+        assert(phaseManifestBindsRuntimeArtifacts(root, FEATURE, proposal as never)?.includes('trace.json'));
+      } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+    },
+  },
   ...(['canonical-summary', 'environment'] as const).map(identity => ({
     name: `8d4e6a21 C2 new evidence without control inputs detects inline requirement drift through ${identity} in default/staged readers`,
     run: () => {

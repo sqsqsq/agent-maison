@@ -26,7 +26,8 @@ import {
 import { ClosureEvidenceProvider } from '../../scripts/utils/component-closure-provider-boundary';
 import { parseClosureEvidenceIdentity } from '../../scripts/utils/component-closure-evidence';
 import { renderComponentClosureMarkdown } from '../../scripts/utils/component-closure-review-projection';
-import { ComponentClosureArtifact, ClosureProviderObservation } from '../../scripts/utils/component-closure-model';
+import { ComponentClosureArtifact, ClosureProviderObservation, closureIssue } from '../../scripts/utils/component-closure-model';
+import { deriveComponentClosureVerdict } from '../../scripts/utils/component-closure-verdict';
 import {
   recomputePhaseEvidenceStaleness,
   resolvePhaseEvidenceManifest,
@@ -37,6 +38,7 @@ import { CheckResult, Phase } from '../../scripts/utils/types';
 import { clearSkillsIndexCache, resolveSkillPath } from '../../scripts/utils/resolve-skill-path';
 import { checkCanonicalComponentClosure, writeCanonicalComponentClosure } from '../../scripts/check-component-closure';
 import { resolveComponentClosureInputs } from '../../scripts/utils/component-closure-inputs';
+import { deriveComponentClosureObligations } from '../../scripts/utils/component-closure-obligations';
 import { reconcileChangeUnitBlueprintRefs } from '../../scripts/utils/change-unit-design-preparation';
 import { assembleKnowledge, renderKnowledge } from '../../scripts/utils/knowledge-context';
 import { prepareFeatureScopeCandidate, featureScopeCandidateFingerprint } from '../../scripts/utils/feature-track';
@@ -351,6 +353,49 @@ export function knowledgePlacementRoundtrip(): void {
 
 export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
+  results.push(test('P4 production obligation IDs encode original non-ASCII trigger labels without renaming blueprint data', () => {
+    withProject(projectRoot => {
+      const inputs = resolveComponentClosureInputs(projectRoot, 'ledger-app-blueprint', evaluationOptions());
+      const rows = deriveComponentClosureObligations(projectRoot, inputs);
+      assert(rows.every(row => /^[A-Za-z0-9][A-Za-z0-9._:@/-]*$/.test(row.obligation_id)), JSON.stringify(rows.map(row => row.obligation_id)));
+      const original = rows.filter(row => row.kind === 'runtime_trigger' && row.blueprint_refs.some(ref => ref.includes('用户')));
+      assert(original.length === 2 && new Set(original.map(row => row.obligation_id)).size === 2, JSON.stringify(original));
+      assert(original.every(row => row.obligation_id.startsWith('obligation:encoded:')), 'unsafe generated IDs must be encoded in production');
+    }, blueprint => {
+      const runtime = asRecords(blueprint.design_views).find(view => view.view_id === 'runtime')!;
+      const flow = asRecords(runtime.runtime_data_flows)[0];
+      flow.triggers = [{ kind: '用户点击银行' }, { kind: '用户提交验证码' }];
+    });
+  }));
+  results.push(test('P4 closure knowledge issues retain their real declared owner instead of unassigned', () => {
+    const blueprint = { decisions_and_gaps: { decisions: [{ decision_id: 'placed', owner: 'ledger-team',
+      knowledge_refs: ['doc/glossary.yaml#placed'] }] } };
+    const result = deriveComponentClosureVerdict([], [], [
+      closureIssue('component_closure_knowledge_conclusion_unplaced', 'decision:placed', 'unplaced', 'BLOCKER', 'resolve_authority_or_risk'),
+      closureIssue('component_closure_knowledge_unresolved', 'doc/glossary.yaml#placed', 'unresolved', 'BLOCKER', 'resolve_authority_or_risk'),
+    ], blueprint);
+    assert(result.gaps.length === 2 && result.gaps.every(gap => gap.owner === 'ledger-team' && gap.route === 'resolve_authority_or_risk'), JSON.stringify(result.gaps));
+  }));
+  results.push(test('P4 a21473 natural-language acceptance steps retain intent and use executed construction evidence; explicit bad refs still reject', () => {
+    withProject(projectRoot => {
+      const feature = deriveChangeUnitFeatureId('ledger-app-blueprint', 'ledger-refresh');
+      const file = featureFilePath(projectRoot, feature, 'acceptance.yaml');
+      const acceptance = { feature, source: 'unit fixture acceptance', version: '1', criteria: [{ id: 'AC-HUMAN',
+        description: '填写金额并保存', priority: 'P1', testable: true, expected_result: '列表呈现保存值', ut_layer: 'device', device_focus: '列表呈现保存值',
+        verification_steps: ['填写金额并保存，重新打开列表核实持久化结果'] }], boundaries: [] };
+      const id = acceptance.criteria[0].id;
+      fs.writeFileSync(file, YAML.stringify(acceptance)); writeTrustedEvidenceChain(projectRoot, feature);
+      const first = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', evaluationOptions());
+      const row = first.closure.coverage_rows.find(item => item.obligation_id === `obligation:feature-acceptance:${feature}:${id}`);
+      assert(row?.observation === 'covered' && row.evidence_identities.length > 0, JSON.stringify(row));
+      assert(YAML.parse(fs.readFileSync(file, 'utf8')).criteria[0].verification_steps[0] === acceptance.criteria[0].verification_steps[0], '原验收步骤不改写为机器证据');
+      acceptance.criteria[0].verification_steps = ['test/ledger/closure.test.ts#missingSpecificExecution'];
+      fs.writeFileSync(file, YAML.stringify(acceptance)); writeTrustedEvidenceChain(projectRoot, feature);
+      const second = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', evaluationOptions());
+      const rejected = second.closure.coverage_rows.find(item => item.obligation_id === `obligation:feature-acceptance:${feature}:${id}`);
+      assert(rejected?.observation !== 'covered', 'explicit missing execution cannot borrow generic mapping evidence');
+    });
+  }));
 
   results.push(test('complete multi-CU fixture reconstructs deterministic Component closure', () => {
     withProject(projectRoot => {

@@ -386,7 +386,7 @@ function previousDesignWork(input: { projectRoot: string; manifest: InitialDesig
   const runs = input.deliveryRuns ?? readOriginalDeliveryRuns(input.projectRoot, input.manifest);
   if (input.observation.kind === 'questioning') {
     const available = runs.filter(run => run.manifest.feature === input.manifest.feature)
-      .map(run => ({ run, ...latestUsableDesignQuestioning(path.resolve(input.projectRoot, run.manifest.report_dir), [label], run.events) }));
+      .map(run => ({ run, ...latestUsableDesignQuestioning(path.resolve(input.projectRoot, run.manifest.report_dir), [label], input.projectRoot, run.events) }));
     const usable = available.filter(item => item.original).sort((a, b) => String(a.run.manifest.created_at).localeCompare(String(b.run.manifest.created_at))).at(-1);
     const previous = usable?.original;
     let actualDiff: import('./types').ContextFileEntry[] | null = null;

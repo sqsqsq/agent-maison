@@ -744,7 +744,7 @@ export function resolveCapabilityResolutionEntryInput(
       const consumes = (providerId: string): boolean => inputContracts.some(contract => contract.phase.inputs
         .some(input => input.sources.some(source => source.kind === 'derive' && source.provider_id === providerId)));
       const expectedBindings = scope.obligations.flatMap(obligation => [
-        ...obligation.basis.filter(binding => !binding.dependencies.length || !binding.dependencies.every(dep => isExecutionSourceBasis(options.projectRoot, scope, obligation, dep))),
+        ...obligation.basis.filter(binding => !binding.dependencies.length || !binding.dependencies.every(dep => isExecutionSourceBasis(options.projectRoot, scope, obligation, dep, goalRunId))),
         ...(obligation.satisfied_by ?? []).filter(ref => 'input_id' in ref),
       ]);
       const researchPaths = new Set<string>();

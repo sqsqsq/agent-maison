@@ -174,10 +174,10 @@ export const EXECUTION_SOURCE_KINDS: ReadonlySet<string> = new Set([
   'design-decision', 'acceptance-definition',
 ]);
 
-/** Birth-only code observations; current outputs remain bound by phase evidence. */
-export function isExecutionSourceBasis(projectRoot: string, scope: ExecutionScope, obligation: ExecutionObligation, dependency: ResolutionDependency): boolean {
+/** Run-bound work units may write deferred outputs; runless research retains frozen source inputs. */
+export function isExecutionSourceBasis(projectRoot: string, scope: ExecutionScope, obligation: ExecutionObligation, dependency: ResolutionDependency, runId?: string): boolean {
   return isInsideProjectRoot(projectRoot, resolveDependencyPath(projectRoot, dependency.path, inferLegacyProjectRoot(projectRoot, scope))) && dependency.role === 'derive'
-    && (scope.phase_chain.includes(obligation.owner_phase) || !!obligation.satisfied_by?.some(proof => 'evidence_manifest_aggregate' in proof))
+    && (Boolean(runId) && obligation.applicability === 'required' || scope.phase_chain.includes(obligation.owner_phase) || !!obligation.satisfied_by?.some(proof => 'evidence_manifest_aggregate' in proof))
     && EXECUTION_SOURCE_KINDS.has(obligation.kind);
 }
 

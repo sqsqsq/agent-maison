@@ -1648,7 +1648,7 @@ async function main(): Promise<void> {
       const requirementSha = currentRequirementEvidenceSha({ projectRoot, feature, runId, resolvedInputs });
       if (runId && requirementSha === null) throw new Error(`当前run无法绑定原始需求血缘（run=${runId}）`);
       writePhaseEvidenceManifest(projectRoot, resolvePhaseEvidenceManifest({ projectRoot, feature, phase,
-      frameworkRoot: resolvedFrameworkRoot, resolvedInputs, factsContext,
+      frameworkRoot: resolvedFrameworkRoot, resolvedInputs, factsContext, deviceTestEvidence: context.deviceTestEvidence,
       requirementSha, extraInputs: executedEvidenceInputs(projectRoot, feature, phase, resolvedFrameworkRoot) })); }
     catch (error) { console.warn(`检查原结果已保留；输入/证据绑定未完成，不能复用或据此签完成：${String(error)}`); }
   }

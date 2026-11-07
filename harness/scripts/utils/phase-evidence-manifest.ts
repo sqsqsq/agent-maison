@@ -457,6 +457,10 @@ function guessFrameworkRoot(projectRoot: string): string | null {
 export function resolvePhaseEvidenceManifest(opts: ResolveManifestOptions): PhaseEvidenceManifest {
   const { projectRoot, feature, phase } = opts;
   if (opts.factsContext && !('feature' in opts.factsContext.subject)) throw new Error('Feature evidence requires Feature facts subject');
+  if (opts.resolvedInputs && (!('feature' in opts.resolvedInputs.context.subject) || opts.resolvedInputs.context.subject.feature !== feature || opts.resolvedInputs.phase !== String(phase))) {
+    throw new Error('[phase-evidence-manifest] Feature evidence requires matching Feature invocation');
+  }
+  const reportsDir = featurePhaseReportsDir(projectRoot, feature, String(phase), opts.frameworkRoot);
   const nowIso = (opts.now ? opts.now() : new Date()).toISOString();
 
   const inputNames = opts.resolvedInputs ? [] : [
@@ -482,6 +486,11 @@ export function resolvePhaseEvidenceManifest(opts: ResolveManifestOptions): Phas
       : path.join(projectRoot, staged.canonicalPath);
     const rel = toPosixRel(projectRoot, abs);
     stagedHashes.set(rel, staged.sha256);
+  }
+  // The goal runtime commits this exact proposal after the harness returns.
+  if (String(phase) === 'testing' && opts.deviceTestEvidence) {
+    const rel = toPosixRel(projectRoot, path.join(reportsDir, 'device-test-evidence.json'));
+    if (!stagedHashes.has(rel)) stagedHashes.set(rel, sha256Text(JSON.stringify(opts.deviceTestEvidence, null, 2) + '\n'));
   }
 
   const entryMap = new Map<string, EvidenceEntry>();
@@ -522,9 +531,6 @@ export function resolvePhaseEvidenceManifest(opts: ResolveManifestOptions): Phas
   };
 
   if (opts.resolvedInputs) {
-    if (!('feature' in opts.resolvedInputs.context.subject) || opts.resolvedInputs.context.subject.feature !== feature || opts.resolvedInputs.phase !== String(phase)) {
-      throw new Error('[phase-evidence-manifest] Feature evidence requires matching Feature invocation');
-    }
     for (const value of Object.values(opts.resolvedInputs.values)) {
       const deps = value.state === 'resolved' ? value.binding.dependencies : value.attempts.flatMap(a => a.dependencies);
       for (const dep of deps) {
@@ -569,7 +575,6 @@ export function resolvePhaseEvidenceManifest(opts: ResolveManifestOptions): Phas
   // 路径必须走 featurePhaseReportsDir（尊重 paths.reports_dir_pattern）——手拼
   // `receiptDir/reports` 在自定义 reports_dir_pattern 下会指向空目录，于是 summary/
   // verifier 整组悄悄落到保护面之外（review P1-4 实测：outputs 里这几项为空集）。
-  const reportsDir = featurePhaseReportsDir(projectRoot, feature, String(phase), opts.frameworkRoot);
   for (const name of PHASE_REPORTS_OUTPUT_FILES) {
     const abs = path.join(reportsDir, name);
     const rel = toPosixRel(projectRoot, abs);

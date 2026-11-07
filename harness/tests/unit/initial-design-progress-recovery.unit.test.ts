@@ -11,6 +11,7 @@ import { provisionFrameworkUnder, git, SOURCE_REPO_ROOT } from '../utils/real-ch
 import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
 import type { UnitCaseResult } from '../run-unit';
 import { withRuntimeTest } from '../utils/runtime-test-control';
+import { continueA21473CombinedReplay, prepareA21473ReplayEnvironment, assertA21473SuccessorScopePreserved, assertA21473ExecutedMethods } from '../utils/a21473-combined-replay';
 
 const FIXTURE = path.resolve(__dirname, '../fixtures/host-recovery-history/20261029-a21473');
 const REPORT = path.join(SOURCE_REPO_ROOT, 'harness/reports/initial-design-progress-20261029');
@@ -23,10 +24,11 @@ const write = (root: string, file: string, content: Buffer | string): void => {
   const absolute = path.join(root, file); fs.mkdirSync(path.dirname(absolute), { recursive: true }); fs.writeFileSync(absolute, content);
 };
 
-async function recoverActualA21473(): Promise<void> {
+async function recoverActualA21473(continueReplay?: typeof continueA21473CombinedReplay): Promise<void> {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'maison-a21473-public-next-')));
   const provenance = json(path.join(FIXTURE, 'provenance.json'));
   const sourceHashes: Record<string, string> = {};
+  const reportRoot = continueReplay ? REPORT + '-combined' : REPORT;
   try {
     for (const record of provenance.files) {
       const stored = fs.readFileSync(path.join(FIXTURE, record.copy));
@@ -63,10 +65,15 @@ async function recoverActualA21473(): Promise<void> {
     git(root, ['add', '-A']);
     git(root, ['-c', 'user.name=Isolated acceptance', '-c', 'user.email=acceptance@example.test', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'Preserved a21473 inputs']);
     for (const file of ['harness/scripts/goal-mode-entry.ts', 'harness/scripts/goal-phase-runtime.ts', 'harness/scripts/utils/initial-design-delivery.ts',
-      'harness/scripts/utils/blueprint-admission.ts', 'harness/scripts/utils/design-repair-unattended.ts']) {
+      'harness/scripts/utils/blueprint-admission.ts', 'harness/scripts/utils/design-repair-unattended.ts', 'harness/scripts/utils/execution-scope.ts',
+      'harness/scripts/utils/capability-resolution-entry-input.ts', 'harness/scripts/utils/verify-feature-completion.ts',
+      'harness/scripts/utils/component-closure-obligations.ts', 'harness/scripts/utils/component-closure-evidence.ts',
+      'harness/scripts/utils/component-closure-verdict.ts', 'harness/scripts/utils/component-closure-validator.ts',
+      'harness/scripts/utils/phase-evidence-manifest.ts', 'harness/harness-runner.ts', 'profiles/hmos-app/harness/test-report-writer.ts']) {
       sourceHashes[file] = sha(fs.readFileSync(path.join(SOURCE_REPO_ROOT, file)));
     }
     const { frameworkRoot, harnessDir } = provisionFrameworkUnder(root);
+    if (continueReplay) prepareA21473ReplayEnvironment(root, frameworkRoot);
     for (const [file, hash] of Object.entries(sourceHashes)) {
       assert.equal(sha(fs.readFileSync(path.join(frameworkRoot, file))), hash, 'Source copy drifted; do not start the runtime');
       assert.equal(sha(fs.readFileSync(path.join(SOURCE_REPO_ROOT, file))), hash, 'Source changed during copying; do not start the runtime');
@@ -83,7 +90,7 @@ const runtime=require(${JSON.stringify(path.join(harnessDir, 'scripts/goal-phase
       const result = withRuntimeTest({ root: root }, () => spawnSync(process.execPath, [path.join(harnessDir, 'node_modules/ts-node/dist/bin.js'), '--transpile-only',
         ...(guarded ? ['--require', guard] : []), path.join(harnessDir, 'scripts', script + '.ts'), '--project-root', root, ...args],
       { cwd: harnessDir, env: environment, encoding: 'utf8', windowsHide: true, timeout: 60_000, maxBuffer: 8 * 1024 * 1024 }));
-      write(REPORT, `a21473-${label}.stdout.log`, result.stdout || ''); write(REPORT, `a21473-${label}.stderr.log`, result.stderr || '');
+      write(reportRoot, `a21473-${label}.stdout.log`, result.stdout || ''); write(reportRoot, `a21473-${label}.stderr.log`, result.stderr || '');
       assert(!result.error, String(result.error));
       return { result, value: JSON.parse(result.stdout.trim()) };
     };
@@ -134,15 +141,21 @@ const runtime=require(${JSON.stringify(path.join(harnessDir, 'scripts/goal-phase
     assert.equal(actual.calls, 7);
     assert.equal(actual.signed_request.sha256, next.value.request.sha256);
     assert(actual.active_ms >= 983058, 'The original approximately 16 minutes must remain charged');
-    write(REPORT, 'a21473-issued-request.json.gz', gzipSync(requestBytes));
-    write(REPORT, 'a21473-after.events.jsonl', afterEvents);
-    write(REPORT, 'a21473-normalized-blueprint.yaml', fs.readFileSync(path.join(root, BLUEPRINT)));
-    write(REPORT, 'a21473-replay.json', JSON.stringify({ public_entry: 'goal-mode-entry --next', cli_exit_code: next.result.status,
+    write(reportRoot, 'a21473-issued-request.json.gz', gzipSync(requestBytes));
+    write(reportRoot, 'a21473-after.events.jsonl', afterEvents);
+    write(reportRoot, 'a21473-normalized-blueprint.yaml', fs.readFileSync(path.join(root, BLUEPRINT)));
+    write(reportRoot, 'a21473-replay.json', JSON.stringify({ public_entry: 'goal-mode-entry --next', cli_exit_code: next.result.status,
       requested_phase: next.value.phase, signed_request_sha256: actual.signed_request.sha256, source_hashes: sourceHashes,
       historical_turns: 6, new_author_invocations: 0, new_questioning_invocations: 0, new_decomposition_issued: 1, ...actual,
       complete: false, stopped_before_execution: true, environment_projection: ['temporary host/framework copy of current source', 'minimal codex local adapter', 'isolated trust root', 'temporary Git source baseline'],
       source_freeze_checks: ['before copy', 'copied bytes and source after copy, before runtime', 'source after replay'],
       omitted_inputs: provenance.omitted, redactions: provenance.redactions, unavailable_references: provenance.unavailable_references }, null, 2) + '\n');
+    if (continueReplay) {
+      const priorTrust = process.env.MAISON_GOAL_CHECKPOINT_DIR;
+      process.env.MAISON_GOAL_CHECKPOINT_DIR = path.join(root, '.trust');
+      try { await continueReplay({ root, frameworkRoot, harnessDir, initialStep: next.value, historicalEvents, reportRoot, sourceHashes }); }
+      finally { if (priorTrust === undefined) delete process.env.MAISON_GOAL_CHECKPOINT_DIR; else process.env.MAISON_GOAL_CHECKPOINT_DIR = priorTrust; }
+    }
   } finally {
     try {
       for (const [file, hash] of Object.entries(sourceHashes)) assert.equal(sha(fs.readFileSync(path.join(SOURCE_REPO_ROOT, file))), hash, 'Production freeze changed during replay: ' + file);
@@ -153,7 +166,23 @@ const runtime=require(${JSON.stringify(path.join(harnessDir, 'scripts/goal-phase
   }
 }
 
-const cases = [{ name: 'a21473 original public next normalizes machine admission and issues decomposition with the original six calls and immutable history intact', run: recoverActualA21473 }];
+const cases = [{ name: 'P4 a21473 executed methods require real harness receipts and PASS independently of completion phase reuse', run: async () => {
+    const methods = ['spec', 'plan', 'coding', 'ut', 'testing', 'review'];
+    const history = methods.flatMap(phase => [{ type: 'harness_end', phase, invoke_id: phase + '-actual' },
+      { type: 'phase_verdict', phase, invoke_id: phase + '-actual', verdict: 'PASS' }]);
+    assert.deepEqual(assertA21473ExecutedMethods(history), methods);
+    assert.throws(() => assertA21473ExecutedMethods(history.filter(event => event.phase !== 'spec')), /actual spec method must return PASS/);
+    assert.throws(() => assertA21473ExecutedMethods(history.filter(event => event.type !== 'harness_end' || event.phase !== 'spec')), /actual spec method must have its real harness receipt/);
+  } }, { name: 'P4 a21473 successor scope rejects dropping device or acceptance unit obligations', run: async () => {
+    const scope = { schema_version: '1.0' as const, completion_target: 'feature' as const, requested_results: ['original requirement'],
+      phase_chain: [], reused_phases: [], unresolved: [], policy_fingerprint: 'sha256:' + 'a'.repeat(64) };
+    const duty = (kind: string, reason: string) => ({ id: kind, kind, owner_phase: kind === 'unit-evidence' ? 'ut' : 'testing', applicability: 'required' as const, reason, basis: [] });
+    const original = { ...scope, obligations: [duty('device-evidence', 'original device acceptance'), duty('unit-evidence', 'AC-1 AC-2 AC-3 AC-4 AC-5 AC-6 AC-7 BD-1 BD-2')] };
+    assert.doesNotThrow(() => assertA21473SuccessorScopePreserved(original, structuredClone(original)));
+    assert.throws(() => assertA21473SuccessorScopePreserved(original, { ...scope, obligations: [duty('unit-evidence', 'request:ut')] }), /lost required device-evidence/);
+    assert.throws(() => assertA21473SuccessorScopePreserved(original, { ...scope, obligations: [original.obligations[0], duty('unit-evidence', 'request:ut')] }), /lost required unit coverage/);
+  } }, { name: 'a21473 original public next normalizes machine admission and issues decomposition with the original six calls and immutable history intact', run: () => recoverActualA21473() },
+  { name: 'P4 a21473 original inputs and 6fe679 framework fault share one isolated design construction and formal completion replay', run: () => recoverActualA21473(continueA21473CombinedReplay) }];
 export function getCases() { return cases; }
 export async function runSelectedCases(filter?: string) {
   const results: UnitCaseResult[] = [], timings: UnitExecutionTiming[] = [];

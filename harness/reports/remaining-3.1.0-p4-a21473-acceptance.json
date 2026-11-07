@@ -1,0 +1,2364 @@
+{
+  "kind": "P4 t1 development replay acceptance summary",
+  "generatedAt": "2026-11-07T22:33:34.861Z",
+  "scope": "development mechanism replay; not HMOS or real model delivery",
+  "raw": {
+    "file": "harness/reports/p4-a21473-acceptance-raw.json",
+    "bytes": 1090661,
+    "sha256": "6d414d1ad69a502d07509981201cf48f48cb50230577a5e02b90264af506b61c"
+  },
+  "complete": true,
+  "originalRun": "20261029T005400Z-a21473",
+  "publicEndpoint": {
+    "type": "goal_session_result",
+    "run_id": "20261029T005400Z-a21473",
+    "status": "completed"
+  },
+  "feature": "cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZw",
+  "initialChildRun": "20261107T205752Z-1773de",
+  "childRun": "20261107T214326Z-96626f",
+  "sameChildRun": false,
+  "successor": {
+    "runId": "20261107T214326Z-96626f",
+    "runDir": "C:\\Users\\shengqsq\\AppData\\Local\\Temp\\mu-CUwxBd\\0\\maison-a21473-public-next-9yZW7Q\\doc\\features\\bc-openCard-2\\bank-card-opening\\goal-runs\\20261107T214326Z-96626f",
+    "successorOf": "20261107T205752Z-1773de",
+    "productSha256": "8826995c95725de5d302e2b7ef04f6ef599624f63f100f545e2fcf64d2e475c0"
+  },
+  "authors": 2,
+  "successorAuthorRequests": 1,
+  "observedMixed": true,
+  "restored": true,
+  "knowledgeHandbacks": 1,
+  "designPublications": [
+    {
+      "signature": "f2415018ec069fcd8a652a0c24796bf7e4fc26e0a2739928c882c6d4545b14e9",
+      "new_revision": 2,
+      "outcome": "recovered",
+      "review_projection_stale": false
+    },
+    {
+      "signature": "201bdbf36623c3a60cb67f2d00a104a55a15261c43411cfed2a35a0812f712a0",
+      "new_revision": 3,
+      "outcome": "recovered",
+      "review_projection_stale": false
+    }
+  ],
+  "originalRequirementSha256": "2a6bbd10d4ff297ad9b23670ba0e302f5feef7cc0757e43dd7b04ae909052300",
+  "originalAcceptanceCriteria": 7,
+  "originalQuestioningItems": 19,
+  "immutableHistoryPrefix": true,
+  "sourceHashes": {
+    "harness/scripts/goal-mode-entry.ts": "1fcf96e14f4b7faa86d59ead110347c36d6eaeab4e7b450787717783409e55cc",
+    "harness/scripts/goal-phase-runtime.ts": "70a7190e8fca2f06ec92a75463d2781ef474d83be00975cfdafefbb60931bcbd",
+    "harness/scripts/utils/initial-design-delivery.ts": "4977db027be1189237dcf3eab6cff581715922f6d177370ba201bd68677f9df5",
+    "harness/scripts/utils/blueprint-admission.ts": "ec3ed88eb44f9fe2539fb5f53e4e52ad8bae8c425acc0c000b8dff327996b622",
+    "harness/scripts/utils/design-repair-unattended.ts": "a8dfd2f1db675f655b31447fd6ea81fa7fc42293eb77b5f6511f2bb2393287bb",
+    "harness/scripts/utils/execution-scope.ts": "1d398320386228fd16fe7f50e6e98ac3470ff9a64c234563935ed01200dc65c2",
+    "harness/scripts/utils/capability-resolution-entry-input.ts": "908997640d921e001107388bc15ce62c7f653a1998e615474ac818e894d65f69",
+    "harness/scripts/utils/verify-feature-completion.ts": "8acf3392c7ea042cd190c97dd5cf19a1ea109b8dd1f9c14cd55b88dfd3404fd2",
+    "harness/scripts/utils/component-closure-obligations.ts": "66c7b6a208c6212814916851b65d7477f362afa6415a388592ae13439b3cfaef",
+    "harness/scripts/utils/component-closure-evidence.ts": "8556735104b3981c0c41587ba1c5b07028b07ff9c8c1b52b371450920bf1e5ef",
+    "harness/scripts/utils/component-closure-verdict.ts": "8d4433a45ff2e4c9b2086002b7fb0d536ab67c31ae496d756e938b6c24f453d8",
+    "harness/scripts/utils/component-closure-validator.ts": "71025d82a0053374fbbb61637aaeb93df5d1c34f60bd5ee8de66ffdc52aff1f7",
+    "harness/scripts/utils/phase-evidence-manifest.ts": "927da4b9df272d8c1cf9bd67377efff7343eaf8bb98929d907db3e0e09581f5d",
+    "harness/harness-runner.ts": "cf90f425a0eb8b4be62a8d29d536914d8fb88d53120a3b7e5c29a119051a62b4",
+    "profiles/hmos-app/harness/test-report-writer.ts": "b62f305766ecc98174721ad6ae92d4d718b6849ef9650e8dd393ef8d6623adfb"
+  },
+  "birthChain": [
+    "spec",
+    "plan"
+  ],
+  "effectiveCompletionChain": [
+    "plan",
+    "coding",
+    "review",
+    "ut",
+    "testing"
+  ],
+  "executedMethods": [
+    "spec",
+    "plan",
+    "coding",
+    "ut",
+    "testing",
+    "review"
+  ],
+  "successorScopes": {
+    "original": {
+      "completion_target": "feature",
+      "phase_chain": [
+        "spec",
+        "plan",
+        "coding",
+        "review",
+        "ut",
+        "testing"
+      ],
+      "reused_phases": [],
+      "obligations": [
+        {
+          "id": "acceptance-context:candidate",
+          "kind": "acceptance-context",
+          "owner_phase": "spec",
+          "applicability": "required",
+          "reason": "已有验收可用",
+          "proof_types": []
+        },
+        {
+          "id": "design-context:candidate",
+          "kind": "design-context",
+          "owner_phase": "plan",
+          "applicability": "required",
+          "reason": "已有设计可用",
+          "proof_types": []
+        },
+        {
+          "id": "implementation:request",
+          "kind": "implementation",
+          "owner_phase": "coding",
+          "applicability": "required",
+          "reason": "本次请求包含改代码",
+          "proof_types": []
+        },
+        {
+          "id": "code-review:implementation",
+          "kind": "code-review",
+          "owner_phase": "review",
+          "applicability": "required",
+          "reason": "本次实现交付需要审查",
+          "proof_types": []
+        },
+        {
+          "id": "unit-evidence:acceptance",
+          "kind": "unit-evidence",
+          "owner_phase": "ut",
+          "applicability": "required",
+          "reason": "unit-evidence: AC-1,AC-2,AC-3,AC-4,AC-5,AC-6,AC-7,BD-1,BD-2",
+          "proof_types": []
+        },
+        {
+          "id": "device-evidence:acceptance",
+          "kind": "device-evidence",
+          "owner_phase": "testing",
+          "applicability": "required",
+          "reason": "影响判断：存在用户可见行为变化",
+          "proof_types": []
+        },
+        {
+          "id": "visual-evidence:fidelity",
+          "kind": "visual-evidence",
+          "owner_phase": "testing",
+          "applicability": "required",
+          "reason": "fidelity ssot: pixel_1to1",
+          "proof_types": []
+        }
+      ],
+      "unresolved": []
+    },
+    "final": {
+      "completion_target": "feature",
+      "phase_chain": [],
+      "reused_phases": [
+        "plan",
+        "coding",
+        "review",
+        "ut",
+        "testing"
+      ],
+      "obligations": [
+        {
+          "id": "acceptance-context:pending",
+          "kind": "acceptance-context",
+          "owner_phase": "spec",
+          "applicability": "required",
+          "reason": "已有验收可用",
+          "proof_types": [
+            {
+              "input_id": "acceptance",
+              "source": "accepted definition InputBinding"
+            }
+          ]
+        },
+        {
+          "id": "acceptance-context:request:spec",
+          "kind": "acceptance-context",
+          "owner_phase": "spec",
+          "applicability": "required",
+          "reason": "已有验收可用",
+          "proof_types": [
+            {
+              "input_id": "acceptance",
+              "source": "accepted definition InputBinding"
+            }
+          ]
+        },
+        {
+          "id": "design-context:pending",
+          "kind": "design-context",
+          "owner_phase": "plan",
+          "applicability": "required",
+          "reason": "已有设计可用",
+          "proof_types": [
+            {
+              "phase": "plan",
+              "run_id": "20261107T214326Z-96626f",
+              "evidence_manifest_aggregate": "c1e93d23767bdee0d9dfa6e287ad7196376bf5796f6fadb35ef265f045d013ec"
+            }
+          ]
+        },
+        {
+          "id": "design-context:request:plan",
+          "kind": "design-context",
+          "owner_phase": "plan",
+          "applicability": "required",
+          "reason": "用户明确请求 plan",
+          "proof_types": [
+            {
+              "phase": "plan",
+              "run_id": "20261107T214326Z-96626f",
+              "evidence_manifest_aggregate": "c1e93d23767bdee0d9dfa6e287ad7196376bf5796f6fadb35ef265f045d013ec"
+            }
+          ]
+        },
+        {
+          "id": "implementation:request:coding",
+          "kind": "implementation",
+          "owner_phase": "coding",
+          "applicability": "required",
+          "reason": "用户明确请求 coding",
+          "proof_types": [
+            {
+              "phase": "coding",
+              "run_id": "20261107T214326Z-96626f",
+              "evidence_manifest_aggregate": "656aa20ac28a96e29e358d91f57263ddb0a4256572b7b17ff3e8b7a26162c68c"
+            }
+          ]
+        },
+        {
+          "id": "code-review:request:review",
+          "kind": "code-review",
+          "owner_phase": "review",
+          "applicability": "required",
+          "reason": "用户明确请求 review",
+          "proof_types": [
+            {
+              "phase": "review",
+              "run_id": "20261107T214326Z-96626f",
+              "evidence_manifest_aggregate": "a2091fbf2a397a4b96a610d5a1e8a11860ace1e2b281a30d1d2bbf695139e8e8"
+            }
+          ]
+        },
+        {
+          "id": "unit-evidence:request:ut",
+          "kind": "unit-evidence",
+          "owner_phase": "ut",
+          "applicability": "required",
+          "reason": "用户明确请求 ut",
+          "proof_types": [
+            {
+              "phase": "ut",
+              "run_id": "20261107T214326Z-96626f",
+              "evidence_manifest_aggregate": "2a982fed3ee8ba5165b9e587bfb7a4654679c5afe8485ae039f2d87ae99d41be"
+            }
+          ]
+        },
+        {
+          "id": "unit-evidence:acceptance",
+          "kind": "unit-evidence",
+          "owner_phase": "ut",
+          "applicability": "required",
+          "reason": "unit-evidence: AC-1,AC-2,AC-3,AC-4,AC-5,AC-6,AC-7,BD-1,BD-2",
+          "proof_types": [
+            {
+              "phase": "ut",
+              "run_id": "20261107T214326Z-96626f",
+              "evidence_manifest_aggregate": "2a982fed3ee8ba5165b9e587bfb7a4654679c5afe8485ae039f2d87ae99d41be"
+            }
+          ]
+        },
+        {
+          "id": "visual-evidence:fidelity",
+          "kind": "visual-evidence",
+          "owner_phase": "testing",
+          "applicability": "required",
+          "reason": "fidelity ssot: pixel_1to1",
+          "proof_types": [
+            {
+              "phase": "testing",
+              "run_id": "20261107T214326Z-96626f",
+              "evidence_manifest_aggregate": "4314ec2c58b4de9d798d023ae5b885ce6a309d4a58ddebd15b4082e6f0c18421"
+            }
+          ]
+        },
+        {
+          "id": "device-evidence:acceptance",
+          "kind": "device-evidence",
+          "owner_phase": "testing",
+          "applicability": "required",
+          "reason": "影响判断：存在用户可见行为变化",
+          "proof_types": [
+            {
+              "phase": "testing",
+              "run_id": "20261107T214326Z-96626f",
+              "evidence_manifest_aggregate": "4314ec2c58b4de9d798d023ae5b885ce6a309d4a58ddebd15b4082e6f0c18421"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    }
+  },
+  "assessment": {
+    "complete": true,
+    "record": {
+      "state": "ok",
+      "run_id": "20261107T214326Z-96626f",
+      "generated_at": "2026-11-07T22:06:06.762Z",
+      "reasons": []
+    },
+    "blocking": []
+  },
+  "disposition": {
+    "problems": [
+      {
+        "phase": "plan",
+        "id": "context_exploration_searches_min",
+        "action": "disclose",
+        "affects": "release",
+        "severity": "MAJOR",
+        "detail": "已披露失败（ledger_shape）：当前 6，要求 ≥ 10"
+      },
+      {
+        "phase": "plan",
+        "id": "context_exploration_inputs_coverage",
+        "action": "disclose",
+        "affects": "release",
+        "severity": "MAJOR",
+        "detail": "已披露失败（ledger_shape）：缺少可匹配项：module.json5"
+      },
+      {
+        "phase": "coding",
+        "id": "context_exploration_searches_min",
+        "action": "disclose",
+        "affects": "release",
+        "severity": "MAJOR",
+        "detail": "已披露失败（ledger_shape）：当前 6，要求 ≥ 8"
+      }
+    ],
+    "completionBlocking": [],
+    "releaseBlocking": [
+      {
+        "phase": "plan",
+        "id": "context_exploration_searches_min",
+        "action": "disclose",
+        "affects": "release",
+        "severity": "MAJOR",
+        "detail": "已披露失败（ledger_shape）：当前 6，要求 ≥ 10"
+      },
+      {
+        "phase": "plan",
+        "id": "context_exploration_inputs_coverage",
+        "action": "disclose",
+        "affects": "release",
+        "severity": "MAJOR",
+        "detail": "已披露失败（ledger_shape）：缺少可匹配项：module.json5"
+      },
+      {
+        "phase": "coding",
+        "id": "context_exploration_searches_min",
+        "action": "disclose",
+        "affects": "release",
+        "severity": "MAJOR",
+        "detail": "已披露失败（ledger_shape）：当前 6，要求 ≥ 8"
+      }
+    ],
+    "disclosed": [
+      {
+        "phase": "plan",
+        "id": "context_exploration_searches_min",
+        "action": "disclose",
+        "affects": "release",
+        "severity": "MAJOR",
+        "detail": "已披露失败（ledger_shape）：当前 6，要求 ≥ 10"
+      },
+      {
+        "phase": "plan",
+        "id": "context_exploration_inputs_coverage",
+        "action": "disclose",
+        "affects": "release",
+        "severity": "MAJOR",
+        "detail": "已披露失败（ledger_shape）：缺少可匹配项：module.json5"
+      },
+      {
+        "phase": "coding",
+        "id": "context_exploration_searches_min",
+        "action": "disclose",
+        "affects": "release",
+        "severity": "MAJOR",
+        "detail": "已披露失败（ledger_shape）：当前 6，要求 ≥ 8"
+      }
+    ],
+    "completionEligible": true,
+    "releaseReady": false,
+    "reasons": [
+      "[plan] context_exploration_searches_min: 已披露失败（ledger_shape）：当前 6，要求 ≥ 10",
+      "[plan] context_exploration_inputs_coverage: 已披露失败（ledger_shape）：缺少可匹配项：module.json5",
+      "[coding] context_exploration_searches_min: 已披露失败（ledger_shape）：当前 6，要求 ≥ 8"
+    ]
+  },
+  "fidelity": {
+    "schema_version": "2.0",
+    "inferred_fidelity": "pixel_1to1",
+    "selected_fidelity": "pixel_1to1",
+    "effective_fidelity": "pixel_1to1",
+    "acceptance_strictness": "best_effort",
+    "asset_acquisition_mode": "approximate",
+    "clamped": false,
+    "decision": {
+      "source": "requirement_self_declared",
+      "rationale": "inferred=pixel_1to1(strong_wording) selected=pixel_1to1 effective=pixel_1to1 strictness=best_effort asset=approximate(default)",
+      "decision_id": "fff31883a6a6ce7a"
+    },
+    "execution_identity": "20261107T214326Z-96626f",
+    "requirement_sha256": "44c07207d37659ede531768c11d7f55115f96d649c697e09bff408f117738504",
+    "requirement_provenance": "goal_manifest",
+    "requirement_source_files": [
+      "doc/features/原始需求/1-2-银行卡/原始需求.md"
+    ]
+  },
+  "nodeTap": "TAP version 13\n# Subtest: [BRANCH-success][AC-1] both original bank entries honor supported types and keep one selected type\nok 1 - [BRANCH-success][AC-1] both original bank entries honor supported types and keep one selected type\n  ---\n  duration_ms: 8.5006\n  type: 'test'\n  ...\n# Subtest: [BRANCH-success][AC-2] mock cards retain full data while display is masked and agreement is required\nok 2 - [BRANCH-success][AC-2] mock cards retain full data while display is masked and agreement is required\n  ---\n  duration_ms: 6.5337\n  type: 'test'\n  ...\n# Subtest: [BRANCH-invalid_otp][AC-3][BD-2] OTP reads the mock phone and uses a 60 second deadline with six digits\nok 3 - [BRANCH-invalid_otp][AC-3][BD-2] OTP reads the mock phone and uses a 60 second deadline with six digits\n  ---\n  duration_ms: 3.0498\n  type: 'test'\n  ...\n# Subtest: [BRANCH-success][AC-4][BD-1] real SQLite persists full card fields and duplicate failures retain the full number\nok 4 - [BRANCH-success][AC-4][BD-1] real SQLite persists full card fields and duplicate failures retain the full number\n  ---\n  duration_ms: 5.3623\n  type: 'test'\n  ...\n# Subtest: [BRANCH-success][AC-5] result blocks back, completes once and success or failure removes the intended route segment\nok 5 - [BRANCH-success][AC-5] result blocks back, completes once and success or failure removes the intended route segment\n  ---\n  duration_ms: 3.8795\n  type: 'test'\n  ...\n# Subtest: [BRANCH-save_failure][AC-4][BD-1] pending persistence locks navigation and duplicate submit while a real store failure still returns its card\nok 6 - [BRANCH-save_failure][AC-4][BD-1] pending persistence locks navigation and duplicate submit while a real store failure still returns its card\n  ---\n  duration_ms: 4.3955\n  type: 'test'\n  ...\n# Subtest: [BRANCH-reenter][AC-6] existing route stack and result handoff survive old and new page transitions\nok 7 - [BRANCH-reenter][AC-6] existing route stack and result handoff survive old and new page transitions\n  ---\n  duration_ms: 4.4596\n  type: 'test'\n  ...\n# Subtest: [BRANCH-success][AC-7] development screen projection preserves the four requested sections and excludes NFC activation\nok 8 - [BRANCH-success][AC-7] development screen projection preserves the four requested sections and excludes NFC activation\n  ---\n  duration_ms: 3.7088\n  type: 'test'\n  ...\n# Subtest: [BRANCH-cancel][AC-3] cancelling OTP clears transient values without creating a persisted result\nok 9 - [BRANCH-cancel][AC-3] cancelling OTP clears transient values without creating a persisted result\n  ---\n  duration_ms: 2.6304\n  type: 'test'\n  ...\n# Subtest: [BRANCH-invalid_otp][AC-3] phone lookup failure cannot submit a previous selection and a genuine retry can recover\nok 10 - [BRANCH-invalid_otp][AC-3] phone lookup failure cannot submit a previous selection and a genuine retry can recover\n  ---\n  duration_ms: 3.0841\n  type: 'test'\n  ...\n# Subtest: [BRANCH-success][AC-3][AC-4] card and mock phone never appear in application console output\nok 11 - [BRANCH-success][AC-3][AC-4] card and mock phone never appear in application console output\n  ---\n  duration_ms: 3.8392\n  type: 'test'\n  ...\n1..11\n# tests 11\n# suites 0\n# pass 11\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 117.2717\n",
+  "phases": [
+    {
+      "phase": "spec",
+      "summary": {
+        "verdict": "PASS",
+        "report_validity": "UNVERIFIED",
+        "quality_axes": {
+          "functional": {
+            "applicable": true,
+            "required_for_release": true,
+            "verdict": "PASS",
+            "blocking_class": null,
+            "source_checks": [
+              "acceptance_content_complete",
+              "acceptance_device_focus_present",
+              "acceptance_flow_contract",
+              "acceptance_flow_structure",
+              "acceptance_ut_layer_complete",
+              "acceptance_yaml_present",
+              "asset_acquisition",
+              "asset_manifest",
+              "authoritative_content_aligned",
+              "capability_spec_codebase",
+              "capability_spec_existing_acceptance",
+              "capability_spec_requirement",
+              "design_scope_facts",
+              "legacy_device_testing_todo_deprecated",
+              "node_options_injection"
+            ],
+            "resolution": null
+          },
+          "visual": {
+            "applicable": true,
+            "required_for_release": true,
+            "verdict": "PASS",
+            "blocking_class": null,
+            "source_checks": [
+              "capability_spec_visual_reference",
+              "capture_completeness",
+              "capture_completeness_external",
+              "fidelity_capability_pregate",
+              "fidelity_target_declared",
+              "ui_spec_bbox_semantic",
+              "ui_spec_fidelity_gate",
+              "ui_spec_structure",
+              "visual_handoff",
+              "visual_handoff_denominator"
+            ],
+            "resolution": null
+          },
+          "asset": {
+            "applicable": false,
+            "required_for_release": false,
+            "verdict": "NOT_APPLICABLE",
+            "blocking_class": null,
+            "source_checks": [],
+            "resolution": null
+          },
+          "evidence": {
+            "applicable": false,
+            "required_for_release": false,
+            "verdict": "NOT_APPLICABLE",
+            "blocking_class": null,
+            "source_checks": [],
+            "resolution": null
+          }
+        },
+        "release_readiness": "READY",
+        "completion_status": "COMPLETE",
+        "blocker_count": 0,
+        "fail_count": 0,
+        "disclosed_failures": [],
+        "closure_status": "open",
+        "assurance": "full",
+        "run_id": "20261107T214326Z-96626f",
+        "verifier_subject_id": "8e2dddcdd49accf179c3d03ac30684baabc3018afae0412e327cb100b26d1841",
+        "source_commit_sha": "fd2b9799ac505eb2b38746a0e512cde6a1a1b0a9",
+        "worktree_digest": "12f2ff8d904b6825",
+        "gate_fingerprint": "3.1.0:2a2e89318c9f"
+      },
+      "scriptSummary": {
+        "total": 25,
+        "pass": 20,
+        "fail": 0,
+        "warn": 4,
+        "skip": 1,
+        "blockers": 0,
+        "verdict": "PASS"
+      },
+      "checks": [
+        {
+          "id": "node_options_injection",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "acceptance_yaml_present",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "acceptance_content_complete",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "acceptance_ut_layer_complete",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "acceptance_device_focus_present",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "legacy_device_testing_todo_deprecated",
+          "status": "PASS",
+          "severity": "MINOR"
+        },
+        {
+          "id": "acceptance_flow_structure",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "acceptance_flow_contract",
+          "status": "PASS",
+          "severity": "MAJOR"
+        },
+        {
+          "id": "fidelity_capability_pregate",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "visual_handoff",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "visual_handoff_denominator",
+          "status": "PASS",
+          "severity": "MINOR"
+        },
+        {
+          "id": "fidelity_target_declared",
+          "status": "PASS",
+          "severity": "MINOR"
+        },
+        {
+          "id": "ui_spec_structure",
+          "status": "WARN",
+          "severity": "MAJOR"
+        },
+        {
+          "id": "ui_spec_fidelity_gate",
+          "status": "WARN",
+          "severity": "MAJOR"
+        },
+        {
+          "id": "capture_completeness",
+          "status": "SKIP",
+          "severity": "MINOR"
+        },
+        {
+          "id": "ui_spec_bbox_semantic",
+          "status": "PASS",
+          "severity": "MINOR"
+        },
+        {
+          "id": "capture_completeness_external",
+          "status": "WARN",
+          "severity": "MAJOR"
+        },
+        {
+          "id": "asset_acquisition",
+          "status": "PASS",
+          "severity": "MAJOR"
+        },
+        {
+          "id": "asset_manifest",
+          "status": "WARN",
+          "severity": "MAJOR"
+        },
+        {
+          "id": "authoritative_content_aligned",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "design_scope_facts",
+          "status": "PASS",
+          "severity": "MINOR"
+        },
+        {
+          "id": "capability_spec_requirement",
+          "status": "PASS",
+          "severity": "MINOR"
+        },
+        {
+          "id": "capability_spec_codebase",
+          "status": "PASS",
+          "severity": "MINOR"
+        },
+        {
+          "id": "capability_spec_existing_acceptance",
+          "status": "PASS",
+          "severity": "MINOR"
+        },
+        {
+          "id": "capability_spec_visual_reference",
+          "status": "PASS",
+          "severity": "MINOR"
+        }
+      ]
+    },
+    {
+      "phase": "plan",
+      "summary": {
+        "verdict": "PASS",
+        "report_validity": "UNVERIFIED",
+        "quality_axes": {
+          "functional": {
+            "applicable": true,
+            "required_for_release": true,
+            "verdict": "PASS",
+            "blocking_class": null,
+            "source_checks": [
+              "acceptance_content_complete",
+              "acceptance_device_focus_present",
+              "acceptance_use_cases_resolvable",
+              "acceptance_ut_layer_complete",
+              "acceptance_yaml_present",
+              "authoritative_content_aligned",
+              "capability_plan_codebase",
+              "capability_plan_context",
+              "capability_plan_existing_design",
+              "change_unit_feature_projection",
+              "component_asset_selection",
+              "construction_content_complete",
+              "context_exploration_facts_phase_delta_present",
+              "context_exploration_inputs_coverage",
+              "context_exploration_searches_min",
+              "contract_file_reference_closure",
+              "integration_scope_consistency",
+              "legacy_device_testing_todo_deprecated",
+              "node_options_injection",
+              "spec_constraint_traceability",
+              "usecase_spec_schema"
+            ],
+            "resolution": null
+          },
+          "visual": {
+            "applicable": true,
+            "required_for_release": true,
+            "verdict": "PASS",
+            "blocking_class": null,
+            "source_checks": [
+              "capability_plan_visual_context",
+              "visual_parity_coverage"
+            ],
+            "resolution": null
+          },
+          "asset": {
+            "applicable": false,
+            "required_for_release": false,
+            "verdict": "NOT_APPLICABLE",
+            "blocking_class": null,
+            "source_checks": [],
+            "resolution": null
+          },
+          "evidence": {
+            "applicable": false,
+            "required_for_release": false,
+            "verdict": "NOT_APPLICABLE",
+            "blocking_class": null,
+            "source_checks": [],
+            "resolution": null
+          }
+        },
+        "release_readiness": "READY",
+        "completion_status": "COMPLETE_WITH_GAPS",
+        "blocker_count": 0,
+        "fail_count": 2,
+        "disclosed_failures": [
+          {
+            "id": "context_exploration_searches_min",
+            "protects": "ledger_shape",
+            "severity": "BLOCKER",
+            "details_excerpt": "当前 6，要求 ≥ 10"
+          },
+          {
+            "id": "context_exploration_inputs_coverage",
+            "protects": "ledger_shape",
+            "severity": "BLOCKER",
+            "details_excerpt": "缺少可匹配项：module.json5"
+          }
+        ],
+        "closure_status": "open",
+        "assurance": "full",
+        "run_id": "20261107T214326Z-96626f",
+        "verifier_subject_id": "6856467613e156db44842aab9b87fccdae7c8a9d68de4904266eb179e39c800e",
+        "source_commit_sha": "fd2b9799ac505eb2b38746a0e512cde6a1a1b0a9",
+        "worktree_digest": "12f2ff8d904b6825",
+        "gate_fingerprint": "3.1.0:874e45a17799"
+      },
+      "scriptSummary": {
+        "total": 23,
+        "pass": 21,
+        "fail": 2,
+        "warn": 0,
+        "skip": 0,
+        "blockers": 0,
+        "verdict": "PASS"
+      },
+      "checks": [
+        {
+          "id": "node_options_injection",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "construction_content_complete",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "acceptance_use_cases_resolvable",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "usecase_spec_schema",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "contract_file_reference_closure",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "component_asset_selection",
+          "status": "PASS",
+          "severity": "MAJOR"
+        },
+        {
+          "id": "authoritative_content_aligned",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "change_unit_feature_projection",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "spec_constraint_traceability",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "integration_scope_consistency",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "acceptance_yaml_present",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "acceptance_content_complete",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "acceptance_ut_layer_complete",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "acceptance_device_focus_present",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "legacy_device_testing_todo_deprecated",
+          "status": "PASS",
+          "severity": "MINOR"
+        },
+        {
+          "id": "context_exploration_searches_min",
+          "status": "FAIL",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "context_exploration_inputs_coverage",
+          "status": "FAIL",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "context_exploration_facts_phase_delta_present",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "visual_parity_coverage",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "capability_plan_context",
+          "status": "PASS",
+          "severity": "MINOR"
+        },
+        {
+          "id": "capability_plan_codebase",
+          "status": "PASS",
+          "severity": "MINOR"
+        },
+        {
+          "id": "capability_plan_existing_design",
+          "status": "PASS",
+          "severity": "MINOR"
+        },
+        {
+          "id": "capability_plan_visual_context",
+          "status": "PASS",
+          "severity": "MINOR"
+        }
+      ]
+    },
+    {
+      "phase": "coding",
+      "summary": {
+        "verdict": "PASS",
+        "report_validity": "UNVERIFIED",
+        "quality_axes": {
+          "functional": {
+            "applicable": true,
+            "required_for_release": true,
+            "verdict": "PASS",
+            "blocking_class": null,
+            "source_checks": [
+              "arkui_bindsheet_double_close",
+              "arkui_clip_overlap_risk",
+              "arkui_push_without_guard",
+              "arkui_singleton_flow_multi_subscriber",
+              "asset_materialization_sanity",
+              "asset_placeholder_present",
+              "async_await_pattern",
+              "capability_coding_context",
+              "capability_coding_spec_context",
+              "change_unit_feature_projection",
+              "code_to_plan",
+              "coding_compile",
+              "coding_existing_test_preserved",
+              "coding_run_status",
+              "component_new_static_checks",
+              "context_exploration_facts_phase_delta_present",
+              "context_exploration_searches_min",
+              "coordinator_file_exists_if_declared",
+              "diff_within_scope",
+              "file_completeness",
+              "har_index_export",
+              "host_entry_reachability",
+              "inter_module_dependency",
+              "layer_compliance",
+              "module_config_registered",
+              "named_business_handler",
+              "naming_conventions",
+              "no_any_type",
+              "no_hardcoded_strings",
+              "node_options_injection",
+              "oh_package_dependencies",
+              "page_registration",
+              "plan_file_to_code",
+              "plan_to_code",
+              "product_behavior_switch_scan",
+              "resource_string_interpolation",
+              "structure_declaration_ledger",
+              "ui_diff_within_declared_files",
+              "upstream_verdict_gate",
+              "visual_parity_unverified_crop"
+            ],
+            "resolution": null
+          },
+          "visual": {
+            "applicable": true,
+            "required_for_release": true,
+            "verdict": "PASS",
+            "blocking_class": null,
+            "source_checks": [
+              "capability_coding_visual_context",
+              "static_fidelity_score",
+              "visual_parity"
+            ],
+            "resolution": null
+          },
+          "asset": {
+            "applicable": false,
+            "required_for_release": false,
+            "verdict": "NOT_APPLICABLE",
+            "blocking_class": null,
+            "source_checks": [],
+            "resolution": null
+          },
+          "evidence": {
+            "applicable": false,
+            "required_for_release": false,
+            "verdict": "NOT_APPLICABLE",
+            "blocking_class": null,
+            "source_checks": [],
+            "resolution": null
+          }
+        },
+        "release_readiness": "READY",
+        "completion_status": "COMPLETE_WITH_GAPS",
+        "blocker_count": 0,
+        "fail_count": 1,
+        "disclosed_failures": [
+          {
+            "id": "context_exploration_searches_min",
+            "protects": "ledger_shape",
+            "severity": "BLOCKER",
+            "details_excerpt": "当前 6，要求 ≥ 8"
+          }
+        ],
+        "closure_status": "open",
+        "assurance": "degraded",
+        "run_id": "20261107T214326Z-96626f",
+        "verifier_subject_id": "e9a5de3132ba0f13a136c44a5e53c75d2861843f67eda46af47fe084c21bd403",
+        "source_commit_sha": "fd2b9799ac505eb2b38746a0e512cde6a1a1b0a9",
+        "worktree_digest": "12f2ff8d904b6825",
+        "gate_fingerprint": "3.1.0:f5ef90933eec"
+      },
+      "scriptSummary": {
+        "total": 44,
+        "pass": 35,
+        "fail": 1,
+        "warn": 6,
+        "skip": 2,
+        "blockers": 0,
+        "verdict": "PASS"
+      },
+      "checks": [
+        {
+          "id": "node_options_injection",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "context_exploration_searches_min",
+          "status": "FAIL",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "context_exploration_facts_phase_delta_present",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "upstream_verdict_gate",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "host_entry_reachability",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "file_completeness",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "layer_compliance",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "inter_module_dependency",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "no_hardcoded_strings",
+          "status": "PASS",
+          "severity": "MAJOR"
+        },
+        {
+          "id": "har_index_export",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "module_config_registered",
+          "status": "SKIP",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "oh_package_dependencies",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "page_registration",
+          "status": "WARN",
+          "severity": "MAJOR"
+        },
+        {
+          "id": "naming_conventions",
+          "status": "WARN",
+          "severity": "MAJOR"
+        },
+        {
+          "id": "no_any_type",
+          "status": "PASS",
+          "severity": "MAJOR"
+        },
+        {
+          "id": "async_await_pattern",
+          "status": "PASS",
+          "severity": "MINOR"
+        },
+        {
+          "id": "arkui_bindsheet_double_close",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "arkui_push_without_guard",
+          "status": "PASS",
+          "severity": "MAJOR"
+        },
+        {
+          "id": "arkui_singleton_flow_multi_subscriber",
+          "status": "PASS",
+          "severity": "MAJOR"
+        },
+        {
+          "id": "arkui_clip_overlap_risk",
+          "status": "PASS",
+          "severity": "MAJOR"
+        },
+        {
+          "id": "resource_string_interpolation",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "named_business_handler",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "coordinator_file_exists_if_declared",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "component_new_static_checks",
+          "status": "WARN",
+          "severity": "MAJOR"
+        },
+        {
+          "id": "component_new_static_checks",
+          "status": "WARN",
+          "severity": "MAJOR"
+        },
+        {
+          "id": "change_unit_feature_projection",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "coding_compile",
+          "status": "PASS",
+          "severity": "BLOCKER",
+          "details": "Development Node compilation: 02-Feature/WalletMain/src/main/ets/domain/flow/BankCardFlow.ts; native .ets NOT compiled: 02-Feature/WalletMain/src/main/ets/data/model/BankInfo.ets, 02-Feature/WalletMain/src/main/ets/data/model/BankCard.ets, 02-Feature/WalletMain/src/main/ets/data/model/AddCardResultParams.ets, 02-Feature/WalletMain/src/main/ets/data/repository/BankRepository.ets, 02-Feature/WalletMain/src/main/ets/data/repository/CardRepository.ets, 02-Feature/WalletMain/src/main/ets/domain/flow/OpenCardFlow.ets, 02-Feature/WalletMain/src/main/ets/presentation/components/BankTypeSheet.ets, 02-Feature/WalletMain/src/main/ets/presentation/components/OtpSheet.ets, 02-Feature/WalletMain/src/main/ets/presentation/pages/AddBankCardPage.ets, 02-Feature/WalletMain/src/main/ets/presentation/pages/AllBanksPage.ets, 02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardSelectionPage.ets, 02-Feature/WalletMain/src/main/ets/presentation/pages/AddCardResultPage.ets, 02-Feature/WalletMain/src/main/ets/presentation/pages/HomeTabPage.ets, 02-Feature/WalletMain/src/main/ets/shared/HomeLaunchBridge.ets, 02-Feature/WalletMain/src/main/ets/shared/constant/BankConstants.ets, 02-Feature/WalletMain/src/main/ets/index.ets, 04-BusinessBase/AccountManager/src/main/ets/domain/service/AccountService.ets, 01-Product/Phone/src/main/ets/pages/index.ets, 02-Feature/WalletMain/src/main/ets/data/model/SaveResult.ets\nexit=0\n"
+        },
+        {
+          "id": "visual_parity",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "visual_parity_unverified_crop",
+          "status": "PASS",
+          "severity": "MAJOR"
+        },
+        {
+          "id": "asset_materialization_sanity",
+          "status": "PASS",
+          "severity": "MAJOR"
+        },
+        {
+          "id": "asset_placeholder_present",
+          "status": "PASS",
+          "severity": "MAJOR"
+        },
+        {
+          "id": "static_fidelity_score",
+          "status": "WARN",
+          "severity": "MAJOR"
+        },
+        {
+          "id": "structure_declaration_ledger",
+          "status": "PASS",
+          "severity": "MINOR"
+        },
+        {
+          "id": "plan_to_code",
+          "status": "SKIP",
+          "severity": "MINOR"
+        },
+        {
+          "id": "plan_file_to_code",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "code_to_plan",
+          "status": "WARN",
+          "severity": "MAJOR"
+        },
+        {
+          "id": "diff_within_scope",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "coding_existing_test_preserved",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "ui_diff_within_declared_files",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "product_behavior_switch_scan",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "coding_run_status",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "capability_coding_context",
+          "status": "PASS",
+          "severity": "MINOR"
+        },
+        {
+          "id": "capability_coding_spec_context",
+          "status": "PASS",
+          "severity": "MINOR"
+        },
+        {
+          "id": "capability_coding_visual_context",
+          "status": "PASS",
+          "severity": "MINOR"
+        }
+      ]
+    },
+    {
+      "phase": "ut",
+      "summary": {
+        "verdict": "PASS",
+        "report_validity": "UNVERIFIED",
+        "quality_axes": {
+          "functional": {
+            "applicable": true,
+            "required_for_release": true,
+            "verdict": "PASS",
+            "blocking_class": null,
+            "source_checks": [
+              "[BRANCH-cancel][AC-3] cancelling OTP clears transient values without creating a persisted result",
+              "[BRANCH-invalid_otp][AC-3] phone lookup failure cannot submit a previous selection and a genuine retry can recover",
+              "[BRANCH-invalid_otp][AC-3][BD-2] OTP reads the mock phone and uses a 60 second deadline with six digits",
+              "[BRANCH-reenter][AC-6] existing route stack and result handoff survive old and new page transitions",
+              "[BRANCH-save_failure][AC-4][BD-1] pending persistence locks navigation and duplicate submit while a real store failure still returns its card",
+              "[BRANCH-success][AC-1] both original bank entries honor supported types and keep one selected type",
+              "[BRANCH-success][AC-2] mock cards retain full data while display is masked and agreement is required",
+              "[BRANCH-success][AC-3][AC-4] card and mock phone never appear in application console output",
+              "[BRANCH-success][AC-4][BD-1] real SQLite persists full card fields and duplicate failures retain the full number",
+              "[BRANCH-success][AC-5] result blocks back, completes once and success or failure removes the intended route segment",
+              "[BRANCH-success][AC-7] development screen projection preserves the four requested sections and excludes NFC activation",
+              "acceptance_content_complete",
+              "acceptance_coverage",
+              "acceptance_device_focus_present",
+              "acceptance_ut_layer_complete",
+              "acceptance_yaml_present",
+              "boundaries_all_stubbed",
+              "boundary_coverage",
+              "boundary_matches_contracts",
+              "branch_coverage_full",
+              "capability_ut_core_context",
+              "capability_ut_design_context",
+              "change_unit_feature_projection",
+              "characterization_trace_matches",
+              "context_exploration_facts_phase_delta_present",
+              "dag_acyclic",
+              "dag_assertion_linked_branch",
+              "dag_boundary_matches_spec",
+              "dag_cohesion",
+              "dag_files_parseable",
+              "dag_linked_usecase",
+              "dag_node_type_valid",
+              "dag_schema_compliance",
+              "dag_source_file_exists",
+              "dag_spy_preset_resolvable",
+              "dag_to_acceptance",
+              "dag_to_source",
+              "harness_host_artifact_pollution",
+              "it_drives_flow",
+              "it_name_has_ac_or_branch_tag",
+              "legacy_device_testing_todo_deprecated",
+              "mock_stub_for_async",
+              "named_business_handler",
+              "node_options_injection",
+              "origin_tag_required",
+              "test_registration",
+              "upstream_verdict_gate",
+              "usecase_spec_recommended",
+              "usecase_spec_schema",
+              "usecase_ui_bindings_nonempty",
+              "ut_ac_coverage_report_written",
+              "ut_assertion_exists",
+              "ut_case_per_unit_ac",
+              "ut_coverage_evidence_mappings_complete",
+              "ut_coverage_evidence_present",
+              "ut_coverage_evidence_resolves",
+              "ut_file_naming",
+              "ut_framework_import",
+              "ut_hvigor_build",
+              "ut_hvigor_test",
+              "ut_hypium_mockkit_policy",
+              "ut_import_whitelist",
+              "ut_mock_plan_contracts_consistent",
+              "ut_mock_plan_parseable",
+              "ut_mock_plan_present",
+              "ut_mock_plan_typed",
+              "ut_no_src_mutation",
+              "ut_run",
+              "ut_run_status",
+              "ut_testability_audit_parseable",
+              "ut_testability_audit_present",
+              "ut_tsc_compiles",
+              "ut_unsupported_targets_handled"
+            ],
+            "resolution": null
+          },
+          "visual": {
+            "applicable": false,
+            "required_for_release": false,
+            "verdict": "NOT_APPLICABLE",
+            "blocking_class": null,
+            "source_checks": [],
+            "resolution": null
+          },
+          "asset": {
+            "applicable": false,
+            "required_for_release": false,
+            "verdict": "NOT_APPLICABLE",
+            "blocking_class": null,
+            "source_checks": [],
+            "resolution": null
+          },
+          "evidence": {
+            "applicable": true,
+            "required_for_release": true,
+            "verdict": "PASS",
+            "blocking_class": null,
+            "source_checks": [
+              "capability_ut_use_case_context"
+            ],
+            "resolution": null
+          }
+        },
+        "release_readiness": "READY",
+        "completion_status": "COMPLETE",
+        "blocker_count": 0,
+        "fail_count": 0,
+        "disclosed_failures": [],
+        "closure_status": "open",
+        "assurance": "full",
+        "run_id": "20261107T214326Z-96626f",
+        "verifier_subject_id": "49ca5d7d2d69b34dabd78641fcc7e5131399e03e02d2ee7dca90b8210a777693",
+        "source_commit_sha": "fd2b9799ac505eb2b38746a0e512cde6a1a1b0a9",
+        "worktree_digest": "12f2ff8d904b6825",
+        "gate_fingerprint": "3.1.0:a3c747e03307"
+      },
+      "scriptSummary": {
+        "total": 74,
+        "pass": 68,
+        "fail": 0,
+        "warn": 2,
+        "skip": 4,
+        "blockers": 0,
+        "verdict": "PASS"
+      },
+      "checks": [
+        {
+          "id": "node_options_injection",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "change_unit_feature_projection",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "dag_files_parseable",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "ut_testability_audit_parseable",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "context_exploration_facts_phase_delta_present",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "upstream_verdict_gate",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "acceptance_yaml_present",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "acceptance_content_complete",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "acceptance_ut_layer_complete",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "acceptance_device_focus_present",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "legacy_device_testing_todo_deprecated",
+          "status": "PASS",
+          "severity": "MINOR"
+        },
+        {
+          "id": "harness_host_artifact_pollution",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "usecase_spec_recommended",
+          "status": "PASS",
+          "severity": "MINOR"
+        },
+        {
+          "id": "usecase_spec_schema",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "usecase_ui_bindings_nonempty",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "boundary_matches_contracts",
+          "status": "PASS",
+          "severity": "MAJOR"
+        },
+        {
+          "id": "named_business_handler",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "ut_testability_audit_present",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "ut_unsupported_targets_handled",
+          "status": "SKIP",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "ut_mock_plan_parseable",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "ut_mock_plan_present",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "ut_mock_plan_typed",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "ut_mock_plan_contracts_consistent",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "dag_schema_compliance",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "dag_node_type_valid",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "dag_acyclic",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "dag_source_file_exists",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "dag_linked_usecase",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "dag_boundary_matches_spec",
+          "status": "PASS",
+          "severity": "MAJOR"
+        },
+        {
+          "id": "dag_assertion_linked_branch",
+          "status": "PASS",
+          "severity": "MAJOR"
+        },
+        {
+          "id": "dag_cohesion",
+          "status": "PASS",
+          "severity": "MAJOR"
+        },
+        {
+          "id": "dag_spy_preset_resolvable",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "ut_file_naming",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "ut_framework_import",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "ut_hypium_mockkit_policy",
+          "status": "SKIP",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "ut_assertion_exists",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "ut_tsc_compiles",
+          "status": "PASS",
+          "severity": "BLOCKER",
+          "details": "exit=0\n"
+        },
+        {
+          "id": "ut_hvigor_build",
+          "status": "PASS",
+          "severity": "BLOCKER",
+          "details": "exit=0\n"
+        },
+        {
+          "id": "ut_hvigor_test",
+          "status": "PASS",
+          "severity": "BLOCKER",
+          "details": "node --test exit=0; selected=11; executed=11; failed=0; skipped=0; log=C:\\Users\\shengqsq\\AppData\\Local\\Temp\\mu-CUwxBd\\0\\maison-a21473-public-next-9yZW7Q\\doc\\features\\bc-openCard-2\\bank-card-opening\\ut\\reports\\node-tests.tap\nTAP version 13\n# Subtest: [BRANCH-success][AC-1] both original bank entries honor supported types and keep one selected type\nok 1 - [BRANCH-success][AC-1] both original bank entries honor supported types and keep one selected type\n  ---\n  duration_ms: 8.5006\n  type: 'test'\n  ...\n# Subtest: [BRANCH-success][AC-2] mock cards retain full data while display is masked and agreement is required\nok 2 - [BRANCH-success][AC-2] mock cards retain full data while display is masked and agreement is required\n  ---\n  duration_ms: 6.5337\n  type: 'test'\n  ...\n# Subtest: [BRANCH-invalid_otp][AC-3][BD-2] OTP reads the mock phone and uses a 60 second deadline with six digits\nok 3 - [BRANCH-invalid_otp][AC-3][BD-2] OTP reads the mock phone and uses a 60 second deadline with six digits\n  ---\n  duration_ms: 3.0498\n  type: 'test'\n  ...\n# Subtest: [BRANCH-success][AC-4][BD-1] real SQLite persists full card fields and duplicate failures retain the full number\nok 4 - [BRANCH-success][AC-4][BD-1] real SQLite persists full card fields and duplicate failures retain the full number\n  ---\n  duration_ms: 5.3623\n  type: 'test'\n  ...\n# Subtest: [BRANCH-success][AC-5] result blocks back, completes once and success or failure removes the intended route segment\nok 5 - [BRANCH-success][AC-5] result blocks back, completes once and success or failure removes the intended route segment\n  ---\n  duration_ms: 3.8795\n  type: 'test'\n  ...\n# Subtest: [BRANCH-save_failure][AC-4][BD-1] pending persistence locks navigation and duplicate submit while a real store failure still returns its card\nok 6 - [BRANCH-save_failure][AC-4][BD-1] pending persistence locks navigation and duplicate submit while a real store failure still returns its card\n  ---\n  duration_ms: 4.3955\n  type: 'test'\n  ...\n# Subtest: [BRANCH-reenter][AC-6] existing route stack and result handoff survive old and new page transitions\nok 7 - [BRANCH-reenter][AC-6] existing route stack and result handoff survive old and new page transitions\n  ---\n  duration_ms: 4.4596\n  type: 'test'\n  ...\n# Subtest: [BRANCH-success][AC-7] development screen projection preserves the four requested sections and excludes NFC activation\nok 8 - [BRANCH-success][AC-7] development screen projection preserves the four requested sections and excludes NFC activation\n  ---\n  duration_ms: 3.7088\n  type: 'test'\n  ...\n# Subtest: [BRANCH-cancel][AC-3] cancelling OTP clears transient values without creating a persisted result\nok 9 - [BRANCH-cancel][AC-3] cancelling OTP clears transient values without creating a persisted result\n  ---\n  duration_ms: 2.6304\n  type: 'test'\n  ...\n# Subtest: [BRANCH-invalid_otp][AC-3] phone lookup failure cannot submit a previous selection and a genuine retry can recover\nok 10 - [BRANCH-invalid_otp][AC-3] phone lookup failure cannot submit a previous selection and a genuine retry can recover\n  ---\n  duration_ms: 3.0841\n  type: 'test'\n  ...\n# Subtest: [BRANCH-success][AC-3][AC-4] card and mock phone never appear in application console output\nok 11 - [BRANCH-success][AC-3][AC-4] card and mock phone never appear in application console output\n  ---\n  duration_ms: 3.8392\n  type: 'test'\n  ...\n1..11\n# tests 11\n# suites 0\n# pass 11\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 117.2717\n"
+        },
+        {
+          "id": "ut_run",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "[BRANCH-success][AC-1] both original bank entries honor supported types and keep one selected type",
+          "status": "PASS",
+          "severity": "MINOR"
+        },
+        {
+          "id": "[BRANCH-success][AC-2] mock cards retain full data while display is masked and agreement is required",
+          "status": "PASS",
+          "severity": "MINOR"
+        },
+        {
+          "id": "[BRANCH-invalid_otp][AC-3][BD-2] OTP reads the mock phone and uses a 60 second deadline with six digits",
+          "status": "PASS",
+          "severity": "MINOR"
+        },
+        {
+          "id": "[BRANCH-success][AC-4][BD-1] real SQLite persists full card fields and duplicate failures retain the full number",
+          "status": "PASS",
+          "severity": "MINOR"
+        },
+        {
+          "id": "[BRANCH-success][AC-5] result blocks back, completes once and success or failure removes the intended route segment",
+          "status": "PASS",
+          "severity": "MINOR"
+        },
+        {
+          "id": "[BRANCH-save_failure][AC-4][BD-1] pending persistence locks navigation and duplicate submit while a real store failure still returns its card",
+          "status": "PASS",
+          "severity": "MINOR"
+        },
+        {
+          "id": "[BRANCH-reenter][AC-6] existing route stack and result handoff survive old and new page transitions",
+          "status": "PASS",
+          "severity": "MINOR"
+        },
+        {
+          "id": "[BRANCH-success][AC-7] development screen projection preserves the four requested sections and excludes NFC activation",
+          "status": "PASS",
+          "severity": "MINOR"
+        },
+        {
+          "id": "[BRANCH-cancel][AC-3] cancelling OTP clears transient values without creating a persisted result",
+          "status": "PASS",
+          "severity": "MINOR"
+        },
+        {
+          "id": "[BRANCH-invalid_otp][AC-3] phone lookup failure cannot submit a previous selection and a genuine retry can recover",
+          "status": "PASS",
+          "severity": "MINOR"
+        },
+        {
+          "id": "[BRANCH-success][AC-3][AC-4] card and mock phone never appear in application console output",
+          "status": "PASS",
+          "severity": "MINOR"
+        },
+        {
+          "id": "ut_no_src_mutation",
+          "status": "WARN",
+          "severity": "MAJOR"
+        },
+        {
+          "id": "mock_stub_for_async",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "test_registration",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "ut_import_whitelist",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "boundaries_all_stubbed",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "it_name_has_ac_or_branch_tag",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "it_drives_flow",
+          "status": "WARN",
+          "severity": "MAJOR"
+        },
+        {
+          "id": "dag_to_acceptance",
+          "status": "PASS",
+          "severity": "MAJOR"
+        },
+        {
+          "id": "acceptance_coverage",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "dag_to_source",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "ut_coverage_evidence_present",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "ut_coverage_evidence_mappings_complete",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "ut_coverage_evidence_resolves",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "origin_tag_required",
+          "status": "SKIP",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "characterization_trace_matches",
+          "status": "SKIP",
+          "severity": "MAJOR"
+        },
+        {
+          "id": "branch_coverage_full",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "ut_case_per_unit_ac",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "boundary_coverage",
+          "status": "PASS",
+          "severity": "MAJOR"
+        },
+        {
+          "id": "ut_ac_coverage_report_written",
+          "status": "PASS",
+          "severity": "MINOR"
+        },
+        {
+          "id": "ut_run_status",
+          "status": "PASS",
+          "severity": "MINOR"
+        },
+        {
+          "id": "capability_ut_core_context",
+          "status": "PASS",
+          "severity": "MINOR"
+        },
+        {
+          "id": "capability_ut_design_context",
+          "status": "PASS",
+          "severity": "MINOR"
+        },
+        {
+          "id": "capability_ut_use_case_context",
+          "status": "PASS",
+          "severity": "MINOR"
+        }
+      ]
+    },
+    {
+      "phase": "testing",
+      "summary": {
+        "verdict": "PASS",
+        "report_validity": "PASS",
+        "quality_axes": {
+          "functional": {
+            "applicable": true,
+            "required_for_release": true,
+            "verdict": "PASS",
+            "blocking_class": null,
+            "source_checks": [
+              "acceptance_content_complete",
+              "acceptance_device_focus_present",
+              "acceptance_to_test_case",
+              "acceptance_ut_layer_complete",
+              "acceptance_yaml_present",
+              "boundary_coverage",
+              "capability_testing_code_context",
+              "context_exploration_facts_phase_delta_present",
+              "defect_to_test_case",
+              "device_case_contract",
+              "legacy_device_testing_todo_deprecated",
+              "negative_verdict_closure",
+              "node_options_injection",
+              "p0_identity_injection",
+              "pass_criteria_defined",
+              "plan_references_unit_layer_ac",
+              "plan_to_report_consistency",
+              "product_behavior_switch_scan",
+              "test_case_flow_consistency",
+              "test_case_priority_values",
+              "test_case_to_acceptance",
+              "test_environment_defined",
+              "test_plan_freshness_vs_acceptance",
+              "test_report_generated",
+              "testing_artifact_integrity",
+              "testing_case_execution_completeness",
+              "testing_execution_channel",
+              "testing_run_status",
+              "ui_entry_coverage",
+              "upstream_verdict_gate"
+            ],
+            "resolution": null
+          },
+          "visual": {
+            "applicable": true,
+            "required_for_release": true,
+            "verdict": "PASS",
+            "blocking_class": null,
+            "source_checks": [
+              "runtime_mount_conformance",
+              "visual_debt_disclosure",
+              "visual_diff",
+              "visual_diff_capture",
+              "visual_feedback"
+            ],
+            "resolution": null
+          },
+          "asset": {
+            "applicable": false,
+            "required_for_release": false,
+            "verdict": "NOT_APPLICABLE",
+            "blocking_class": null,
+            "source_checks": [],
+            "resolution": null
+          },
+          "evidence": {
+            "applicable": true,
+            "required_for_release": true,
+            "verdict": "PASS",
+            "blocking_class": null,
+            "source_checks": [
+              "capability_testing_cases",
+              "capability_testing_design_context",
+              "device_test_build",
+              "device_test_evidence",
+              "device_test_install",
+              "device_test_run",
+              "hylyre_evidence_gate",
+              "hylyre_selector_runtime_gate",
+              "p0_coverage_integrity",
+              "p0_pass_rate_dual_metrics",
+              "p0_runtime_step_evidence",
+              "p0_runtime_step_evidence_boundary",
+              "p0_semantic_coverage_integrity",
+              "report_trace_reconciliation",
+              "review_closure_attestation"
+            ],
+            "resolution": null
+          }
+        },
+        "release_readiness": "READY",
+        "completion_status": "COMPLETE",
+        "blocker_count": 0,
+        "fail_count": 0,
+        "disclosed_failures": [],
+        "closure_status": "open",
+        "assurance": "full",
+        "run_id": "20261107T214326Z-96626f",
+        "verifier_subject_id": "0e2209295a18837f9fed92fe411ca9fc86bee48fc33b5b1111bb034eccdbcb14",
+        "source_commit_sha": "fd2b9799ac505eb2b38746a0e512cde6a1a1b0a9",
+        "worktree_digest": "12f2ff8d904b6825",
+        "gate_fingerprint": "3.1.0:fe61a7ef9f6d"
+      },
+      "scriptSummary": {
+        "total": 58,
+        "pass": 50,
+        "fail": 0,
+        "warn": 5,
+        "skip": 3,
+        "blockers": 0,
+        "verdict": "PASS"
+      },
+      "checks": [
+        {
+          "id": "node_options_injection",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "context_exploration_facts_phase_delta_present",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "testing_execution_channel",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "p0_identity_injection",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "plan_references_unit_layer_ac",
+          "status": "SKIP",
+          "severity": "MINOR"
+        },
+        {
+          "id": "device_test_build",
+          "status": "PASS",
+          "severity": "BLOCKER",
+          "details": "product=default buildMode=debug\nHAP: C:\\Users\\shengqsq\\AppData\\Local\\Temp\\mu-CUwxBd\\0\\maison-a21473-public-next-9yZW7Q\\build\\default\\outputs\\default\\entry-default-signed.hap\nhvigor 已执行；日志: (无)"
+        },
+        {
+          "id": "device_test_install",
+          "status": "PASS",
+          "severity": "BLOCKER",
+          "details": "已安装: C:\\Users\\shengqsq\\AppData\\Local\\Temp\\mu-CUwxBd\\0\\maison-a21473-public-next-9yZW7Q\\build\\default\\outputs\\default\\entry-default-signed.hap"
+        },
+        {
+          "id": "hylyre_evidence_gate",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "device_test_run",
+          "status": "PASS",
+          "severity": "BLOCKER",
+          "details": "真机执行复用：device_run=reused_by_execution_key（最近同键 run 20261107T211945Z-163 成功、证据完整（执行事实与派生副本均已冻结）；同键无需重新操作设备，--force-device 可强制真跑）\nexecution_key：ea010ecc4bad62414d2ce644c271e482a7439bf3dfcb2bce00200c1cf3be4502（复用；决策：最近同键 run 20261107T211945Z-163 成功、证据完整（执行事实与派生副本均已冻结））\n报告：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\mu-CUwxBd\\0\\maison-a21473-public-next-9yZW7Q\\doc\\features\\bc-openCard-2\\bank-card-opening\\testing\\reports\\20261107T211945Z-163\\hylyre\\test-report.md\ntrace：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\mu-CUwxBd\\0\\maison-a21473-public-next-9yZW7Q\\doc\\features\\bc-openCard-2\\bank-card-opening\\testing\\reports\\20261107T211945Z-163\\hylyre\\trace.json"
+        },
+        {
+          "id": "visual_diff_capture",
+          "status": "PASS",
+          "severity": "MINOR"
+        },
+        {
+          "id": "device_test_evidence",
+          "status": "PASS",
+          "severity": "BLOCKER",
+          "details": "native CaseResult.steps[] 保持唯一证据源；goal identity/HAP/trace proposal 交 runtime 正式提交。"
+        },
+        {
+          "id": "ui_entry_coverage",
+          "status": "PASS",
+          "severity": "MAJOR"
+        },
+        {
+          "id": "plan_required_chapters",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "test_case_table_format",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "test_case_priority_values",
+          "status": "PASS",
+          "severity": "MAJOR"
+        },
+        {
+          "id": "test_case_flow_consistency",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "test_environment_defined",
+          "status": "WARN",
+          "severity": "MAJOR"
+        },
+        {
+          "id": "pass_criteria_defined",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "plan_metadata_header",
+          "status": "WARN",
+          "severity": "MINOR"
+        },
+        {
+          "id": "upstream_verdict_gate",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "acceptance_yaml_present",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "acceptance_content_complete",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "acceptance_ut_layer_complete",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "acceptance_device_focus_present",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "legacy_device_testing_todo_deprecated",
+          "status": "PASS",
+          "severity": "MINOR"
+        },
+        {
+          "id": "device_case_contract",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "test_plan_freshness_vs_acceptance",
+          "status": "PASS",
+          "severity": "BLOCKER",
+          "details": "test-plan.md 不早于 acceptance.yaml（按 mtime）。"
+        },
+        {
+          "id": "acceptance_to_test_case",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "test_case_to_acceptance",
+          "status": "PASS",
+          "severity": "MAJOR"
+        },
+        {
+          "id": "boundary_coverage",
+          "status": "WARN",
+          "severity": "MAJOR"
+        },
+        {
+          "id": "visual_diff",
+          "status": "WARN",
+          "severity": "MAJOR"
+        },
+        {
+          "id": "runtime_mount_conformance",
+          "status": "SKIP",
+          "severity": "MINOR"
+        },
+        {
+          "id": "visual_feedback",
+          "status": "SKIP",
+          "severity": "MINOR"
+        },
+        {
+          "id": "test_report_generated",
+          "status": "PASS",
+          "severity": "MINOR"
+        },
+        {
+          "id": "report_trace_reconciliation",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "report_required_chapters",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "execution_result_table",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "defect_table_format",
+          "status": "PASS",
+          "severity": "MAJOR"
+        },
+        {
+          "id": "report_conclusion_with_verdict",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "negative_verdict_closure",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "visual_debt_disclosure",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "plan_to_report_consistency",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "defect_to_test_case",
+          "status": "PASS",
+          "severity": "MAJOR"
+        },
+        {
+          "id": "review_closure_attestation",
+          "status": "WARN",
+          "severity": "MAJOR"
+        },
+        {
+          "id": "product_behavior_switch_scan",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "p0_coverage_integrity",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "p0_pass_rate_dual_metrics",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "p0_semantic_coverage_integrity",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "p0_runtime_step_evidence_boundary",
+          "status": "PASS",
+          "severity": "MINOR"
+        },
+        {
+          "id": "testing_case_execution_completeness",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "testing_artifact_integrity",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "hylyre_selector_runtime_gate",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "p0_runtime_step_evidence",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "pass_rate_calculated",
+          "status": "PASS",
+          "severity": "BLOCKER",
+          "details": "通过率统计章节包含各优先级通过率数值，且分子与机器证据/执行口径一致。"
+        },
+        {
+          "id": "testing_run_status",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "capability_testing_cases",
+          "status": "PASS",
+          "severity": "MINOR"
+        },
+        {
+          "id": "capability_testing_code_context",
+          "status": "PASS",
+          "severity": "MINOR"
+        },
+        {
+          "id": "capability_testing_design_context",
+          "status": "PASS",
+          "severity": "MINOR"
+        }
+      ]
+    },
+    {
+      "phase": "review",
+      "summary": {
+        "verdict": "PASS",
+        "report_validity": "PASS",
+        "quality_axes": {
+          "functional": {
+            "applicable": true,
+            "required_for_release": true,
+            "verdict": "PASS",
+            "blocking_class": null,
+            "source_checks": [
+              "capability_review_code_context",
+              "capability_review_design_context",
+              "capability_review_use_cases",
+              "change_unit_feature_projection",
+              "component_new_static_checks",
+              "conditional_pass_closure",
+              "context_exploration_facts_phase_delta_present",
+              "conventions_coverage",
+              "issue_to_coding_rule",
+              "issue_to_file",
+              "negative_verdict_closure",
+              "node_options_injection",
+              "review_reference_lint",
+              "review_scope_to_design",
+              "scope_declaration",
+              "upstream_verdict_gate"
+            ],
+            "resolution": null
+          },
+          "visual": {
+            "applicable": true,
+            "required_for_release": true,
+            "verdict": "PASS",
+            "blocking_class": null,
+            "source_checks": [
+              "capability_review_visual_context",
+              "visual_fidelity_review"
+            ],
+            "resolution": null
+          },
+          "asset": {
+            "applicable": false,
+            "required_for_release": false,
+            "verdict": "NOT_APPLICABLE",
+            "blocking_class": null,
+            "source_checks": [],
+            "resolution": null
+          },
+          "evidence": {
+            "applicable": true,
+            "required_for_release": true,
+            "verdict": "PASS",
+            "blocking_class": null,
+            "source_checks": [
+              "capability_review_acceptance_context"
+            ],
+            "resolution": null
+          }
+        },
+        "release_readiness": "READY",
+        "completion_status": "COMPLETE",
+        "blocker_count": 0,
+        "fail_count": 0,
+        "disclosed_failures": [],
+        "closure_status": "open",
+        "assurance": "degraded",
+        "run_id": "20261107T214326Z-96626f",
+        "verifier_subject_id": "5f4ba470cfbfd90cf4f867ce157c288c7ce5b229563fa181c4a662e1f38755e0",
+        "source_commit_sha": "fd2b9799ac505eb2b38746a0e512cde6a1a1b0a9",
+        "worktree_digest": "12f2ff8d904b6825",
+        "gate_fingerprint": "3.1.0:5de6d03750bc"
+      },
+      "scriptSummary": {
+        "total": 27,
+        "pass": 20,
+        "fail": 0,
+        "warn": 4,
+        "skip": 3,
+        "blockers": 0,
+        "verdict": "PASS"
+      },
+      "checks": [
+        {
+          "id": "node_options_injection",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "context_exploration_facts_phase_delta_present",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "required_chapters",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "issue_table_format",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "severity_values",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "issue_category_values",
+          "status": "PASS",
+          "severity": "MAJOR"
+        },
+        {
+          "id": "statistics_summary",
+          "status": "PASS",
+          "severity": "MAJOR"
+        },
+        {
+          "id": "review_reference_lint",
+          "status": "PASS",
+          "severity": "MAJOR"
+        },
+        {
+          "id": "scope_declaration",
+          "status": "PASS",
+          "severity": "MAJOR"
+        },
+        {
+          "id": "conclusion_with_verdict",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "metadata_header",
+          "status": "WARN",
+          "severity": "MINOR"
+        },
+        {
+          "id": "visual_fidelity_review",
+          "status": "WARN",
+          "severity": "MAJOR"
+        },
+        {
+          "id": "issue_to_file",
+          "status": "SKIP",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "issue_to_coding_rule",
+          "status": "SKIP",
+          "severity": "MINOR"
+        },
+        {
+          "id": "review_scope_to_design",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "conventions_coverage",
+          "status": "SKIP",
+          "severity": "MAJOR"
+        },
+        {
+          "id": "component_new_static_checks",
+          "status": "WARN",
+          "severity": "MAJOR"
+        },
+        {
+          "id": "component_new_static_checks",
+          "status": "WARN",
+          "severity": "MAJOR"
+        },
+        {
+          "id": "change_unit_feature_projection",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "conditional_pass_closure",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "negative_verdict_closure",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "upstream_verdict_gate",
+          "status": "PASS",
+          "severity": "BLOCKER"
+        },
+        {
+          "id": "capability_review_code_context",
+          "status": "PASS",
+          "severity": "MINOR"
+        },
+        {
+          "id": "capability_review_design_context",
+          "status": "PASS",
+          "severity": "MINOR"
+        },
+        {
+          "id": "capability_review_acceptance_context",
+          "status": "PASS",
+          "severity": "MINOR"
+        },
+        {
+          "id": "capability_review_use_cases",
+          "status": "PASS",
+          "severity": "MINOR"
+        },
+        {
+          "id": "capability_review_visual_context",
+          "status": "PASS",
+          "severity": "MINOR"
+        }
+      ]
+    }
+  ],
+  "environment": [
+    "preserved input files only; isolated Git baseline and trust root",
+    "minimal declared layer/app/build/adapter setup; original catalog and glossary preserved before real writer dispatch",
+    "Node TSC and 11 node:test/SQLite cases run for real; native .ets explicitly not compiled",
+    "existing executable device build/install/run fixtures; production parsers, gates and completion unchanged",
+    "device prerequisites removed for this declared non-device environment; native tools denied before launch",
+    "original pixel_1to1 preserved; unavailable capture follows production disclosure, release remains blocked"
+  ],
+  "nativeToolAttemptsBlockedBeforeLaunch": [],
+  "unverified": [
+    "HarmonyOS compilation and native UI",
+    "real devices, layout and pixels",
+    "real author/model quality",
+    "shared coding/UT producer restoration"
+  ]
+}

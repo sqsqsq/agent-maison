@@ -28,7 +28,7 @@ export function providerForEvidenceLevel(
   return null;
 }
 
-function splitProjectEvidenceRef(rawRef: string): { pathPart: string; symbol: string } | null {
+export function splitProjectEvidenceRef(rawRef: string): { pathPart: string; symbol: string } | null {
   if (!rawRef || rawRef.startsWith('planned:') || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(rawRef)) return null;
   const hash = rawRef.indexOf('#');
   if (hash < 1 || hash === rawRef.length - 1) return null;

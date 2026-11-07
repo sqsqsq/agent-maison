@@ -102,7 +102,7 @@ export function evaluateComponentClosure(
   issues.push(...validateComponentClosureEvolutionSeams(projectRoot, inputs));
   const knowledge = validateComponentClosureKnowledge(projectRoot, inputs);
   issues.push(...knowledge.issues);
-  const verdict = deriveComponentClosureVerdict(rows, providers, issues);
+  const verdict = deriveComponentClosureVerdict(rows, providers, issues, inputs.blueprint.blueprint);
   const currentDisposition = resolveCurrentDisposition({ endpoint: 'request', phases: [], additionalProblems: [
     ...verdict.currentDisposition.problems,
     ...inputs.currentUnits.flatMap(unit => unit.completionObservation.currentDisposition?.releaseBlocking ?? []),

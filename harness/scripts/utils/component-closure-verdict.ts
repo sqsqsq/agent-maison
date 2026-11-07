@@ -9,6 +9,7 @@ import {
   stableSortStrings,
 } from './component-closure-model';
 import { resolveCurrentDisposition, type CurrentDisposition } from './check-disposition';
+import { asRecord, asRecords, asStrings, type BlueprintRecord } from './component-blueprint-model';
 
 function gapClassification(issue: ComponentClosureIssue): ComponentClosureGap['classification'] {
   if (/conflict|duplicate/.test(issue.id)) return 'conflict';
@@ -28,6 +29,7 @@ export function deriveComponentClosureVerdict(
   rows: ComponentClosureCoverageRow[],
   providers: ClosureProviderObservation[],
   issues: ComponentClosureIssue[],
+  blueprint?: BlueprintRecord,
 ): { gaps: ComponentClosureGap[]; degradations: ClosureDegradation[]; verdict: ClosureVerdict; currentDisposition: CurrentDisposition } {
   const gaps: ComponentClosureGap[] = [];
   for (const row of rows.filter(item => item.required && item.observation !== 'covered')) {
@@ -44,12 +46,18 @@ export function deriveComponentClosureVerdict(
     });
   }
   for (const issue of issues.filter(item => item.severity === 'BLOCKER')) {
+    const decisions = asRecords(asRecord(blueprint?.decisions_and_gaps)?.decisions).filter(decision =>
+      issue.path === `decision:${String(decision.decision_id)}` || asStrings(decision.knowledge_refs).includes(issue.path));
+    const owners = stableSortStrings(rows.filter(row => row.obligation_id === issue.path
+      || row.blueprint_refs.includes(issue.path) || row.source_refs.includes(issue.path)).flatMap(row => row.owner_change_unit_ids));
+    const authorityOwners = issue.id.startsWith('component_closure_knowledge_')
+      ? stableSortStrings(decisions.flatMap(decision => typeof decision.owner === 'string' && decision.owner ? [decision.owner] : [])) : [];
     gaps.push({
       gap_id: `gap:issue:${issue.id}:${Math.abs(hashCode(`${issue.path}\0${issue.message}`))}`,
       classification: gapClassification(issue),
       obligation_refs: issue.path.startsWith('obligation:') ? [issue.path] : [],
       source_refs: [issue.path],
-      owner: 'unassigned',
+      owner: authorityOwners.join('+') || owners.join('+') || 'unassigned',
       needed_by: 'component-closure',
       reason: issue.message,
       unlock_condition: '按指定 repair route 修复权威上游后重新派生。',

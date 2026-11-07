@@ -10,7 +10,9 @@ import { loadCanonicalBlueprint } from '../../scripts/utils/component-blueprint-
 import { deriveChangeUnitFeatureId } from '../../scripts/utils/change-unit-path';
 import { reconcileChangeUnitBlueprintRefs, BLUEPRINT_RECONCILE_LOCK_NAME } from '../../scripts/utils/change-unit-design-preparation';
 import { diagnoseBlueprintSkillAuthority, deriveBlueprintSkillInput } from '../../scripts/utils/blueprint-skill-projection';
-import { writeBackAdmission, reusableDesignQuestioning, questioningDependencyChanges, runUnattendedDesignRepair } from '../../scripts/utils/design-repair-unattended';
+import { writeBackAdmission, reusableDesignQuestioning, questioningDependencyChanges, runUnattendedDesignRepair, designRepairTarget } from '../../scripts/utils/design-repair-unattended';
+import { GoalPhaseRuntime } from '../../scripts/goal-phase-runtime';
+import { ensureRunControl, casAcquireRunOwner } from '../../scripts/utils/goal-run-control';
 import { capturePhaseInvocationSnapshot, diffPhaseInvocationSnapshots } from '../../scripts/utils/phase-write-boundary';
 import { buildGoalManifestFromInput } from '../../scripts/utils/goal-manifest';
 import { createGoalRun } from '../../scripts/utils/goal-run-creation';
@@ -40,7 +42,7 @@ async function withProject(run: (root: string) => void | Promise<void>): Promise
   projectionFixture(root); // Approved author input only; no goal result or completion is supplied.
   fs.writeFileSync(path.join(root, 'framework.config.json'), JSON.stringify({ schema_version: '1.1', project_name: 'design repair boundaries',
     project_profile: { name: 'generic' }, active_workflow: 'obligation-driven', paths: { features_dir: 'doc/features' },
-    architecture: { outer_layers: [{ id: 'src', can_depend_on: [] }], module_inner_layers: ['shared', 'data', 'domain', 'presentation'] } }));
+    architecture: { outer_layers: [{ id: 'src', can_depend_on: [] }], module_inner_layers: ['shared', 'data', 'domain', 'presentation'], inner_dependency_direction: 'upward', cross_module_exports_file: 'index.ts' } }));
   try { clearFrameworkConfigCache(); await run(root); }
   finally { clearFrameworkConfigCache(); assert.equal(path.dirname(root), path.resolve(os.tmpdir())); fs.rmSync(root, { recursive: true, force: true }); }
 }
@@ -55,11 +57,16 @@ function repairInput(root: string, runId: string, requirement?: string) {
     start_phase: 'spec', end_phase: 'spec', unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: root });
   const created = createGoalRun({ projectRoot: root, manifest, chain: ['spec'] });
   const runDir = path.join(root, manifest.report_dir), rows: Json[] = [];
+  let recording: Array<{ file: string; line: string }> | undefined;
   const input = { projectRoot: root, frameworkRoot: FRAMEWORK, feature: FEATURE, phase: 'spec', runId,
     reportDir: manifest.report_dir, signature: 'a'.repeat(64), brief: { class: 'B1' as const, items: [] },
     ...(requirement ? { requirement } : {}), heldFeatureLock: null, runtimeWrites: [],
-    emit: (event: Json) => { rows.push(event); fs.appendFileSync(path.join(runDir, 'events.jsonl'), JSON.stringify({ ts: new Date().toISOString(), ...event }) + '\n'); },
-    registerLockRelease: (_release: (() => void) | null) => {}, recordEventLines: () => () => [] as Array<{ file: string; line: string }> };
+    emit: (event: Json) => { rows.push(event); const file = path.join(runDir, 'events.jsonl'), line = JSON.stringify({ ts: new Date().toISOString(), ...event }) + '\n';
+      fs.appendFileSync(file, line); recording?.push({ file, line }); },
+    registerLockRelease: (_release: (() => void) | null) => {}, recordEventLines: () => {
+      const lines: Array<{ file: string; line: string }> = []; recording = lines;
+      return () => { recording = undefined; return lines; };
+    } };
   void created;
   return { input, runDir, rows };
 }
@@ -124,6 +131,106 @@ const cases: Array<{ name: string; group: Group; run: () => Promise<void> }> = [
     assert(retained?.items.some((item: Json) => item.disposition === 'blocker' && item.answer === denial.items[0].answer));
   }),
 }, {
+  name: 'daily design content: changing only a knowledge asset invalidates positive Q while retaining real denial', group: 'content',
+  run: () => withProject(root => {
+    const loaded = loadCanonicalBlueprint(root, BLUEPRINT), doc = loaded.blueprint as Json;
+    const relative = 'doc/glossary.yaml', file = path.join(root, relative);
+    fs.writeFileSync(file, 'terms: []\n');
+    doc.discovery.inputs.knowledge_assets.push(relative); write(loaded.canonicalPath, doc);
+    const generated = path.join(root, 'doc/component-index.yaml'); fs.writeFileSync(generated, 'generated: before\n');
+    doc.discovery.inputs.knowledge_assets.push('doc/component-index.yaml'); write(loaded.canonicalPath, doc);
+    const pre = capturePhaseInvocationSnapshot({ projectRoot: root, protectedRoots: ['doc', 'src', 'requirements', 'contracts'] });
+    const input = { projectRoot: root, blueprintPath: loaded.canonicalPath, blueprint: doc,
+      beforeBlueprint: fs.readFileSync(loaded.canonicalPath, 'utf8'), output: JSON.stringify(doc.review_summary.questioning),
+      providerId: 'independent-design-questioning', completed: true, preSnapshot: pre, postSnapshot: pre };
+    assert(reusableDesignQuestioning(input));
+    fs.writeFileSync(generated, 'generated: after construction\n');
+    assert(reusableDesignQuestioning(input), 'machine index refresh is not a business knowledge writer change');
+    fs.appendFileSync(file, '# actual writer change without any blueprint change\n');
+    assert.equal(reusableDesignQuestioning(input), null);
+    assert(questioningDependencyChanges(root, doc, pre, loaded.canonicalPath).some(entry => path.resolve(entry.path) === file));
+    const denial = structuredClone(doc.review_summary.questioning); denial.items[0].disposition = 'blocker';
+    assert(reusableDesignQuestioning({ ...input, output: JSON.stringify(denial) }), 'effective denial still goes directly to the author');
+  }),
+}, {
+  name: 'daily design runtime: failed unpublished non-knowledge transaction ends before same-run knowledge repair archives fresh originals', group: 'runtime',
+  run: () => withProject(async root => {
+    const loaded = loadCanonicalBlueprint(root, BLUEPRINT), doc = loaded.blueprint as Json;
+    const relative = 'doc/glossary.yaml', asset = 'terms: []\n';
+    fs.writeFileSync(path.join(root, relative), asset); doc.discovery.inputs.knowledge_assets.push(relative);
+    delete doc.decisions_and_gaps.decisions.find((row: Json) => row.decision_id === 'seam-shape').knowledge_refs;
+    write(loaded.canonicalPath, doc); reconcileChangeUnitBlueprintRefs(root, BLUEPRINT);
+    const canonical = fs.readFileSync(loaded.canonicalPath);
+    const { input, runDir, rows } = repairInput(root, 'daily-ended-then-knowledge', '在原确认范围归位 LedgerDataSource，不改变批准结论。');
+    const first = await runUnattendedDesignRepair({ ...input, designTarget: designRepairTarget(root, BLUEPRINT),
+      invoke: async () => ({ started: false, ok: false, detail: 'controlled first non-knowledge author failure' }) });
+    assert.equal(first.outcome, 'failed'); assert(rows.some(row => row.stage === 'failed'));
+    const original = JSON.parse(fs.readFileSync(path.join(runDir, 'design-repair/original-context.json'), 'utf8'));
+    assert.deepEqual(original.knowledgeOriginals, {});
+    let invoked = false;
+    const next = await runUnattendedDesignRepair({ ...input, signature: 'b'.repeat(64), designTarget: designRepairTarget(root, BLUEPRINT),
+      brief: { class: 'B1', items: [{ check: 'component-closure', codes: ['component_closure_knowledge_conclusion_unplaced'], class: 'B1', artifacts: [loaded.canonicalPath], basis: 'decision:seam-shape', needs: [] }] },
+      invoke: async (purpose, prompt, guard) => {
+        invoked = true; assert.equal(purpose, 'author'); assert(prompt.includes('P1 owner reconciliation'));
+        assert(guard?.options?.ownedPrefixes?.some(prefix => path.resolve(root, prefix) === path.join(root, relative)));
+        return { started: false, ok: false, detail: 'controlled new knowledge writer reached' };
+      } });
+    assert(invoked, JSON.stringify(next)); assert.equal(next.outcome, 'failed');
+    assert('reason' in next && next.reason.includes('controlled new knowledge writer reached') && !next.reason.includes('原件缺失'));
+    const attempts = rows.filter(row => row.stage === 'attempted'); assert.equal(attempts.length, 2);
+    assert.notEqual(attempts[0].handoff_context.path, attempts[1].handoff_context.path);
+    const fresh = JSON.parse(fs.readFileSync(path.join(runDir, attempts[1].handoff_context.path), 'utf8'));
+    assert.equal(Buffer.from(fresh.knowledgeOriginals[relative], 'base64').toString(), asset);
+    assert(fs.readFileSync(loaded.canonicalPath).equals(canonical)); assert(!rows.some(row => row.stage === 'published'));
+  }),
+}, ...(['allowed', 'outside', 'canonical', 'questioning'] as const).map(mode => ({
+  name: `daily design runtime: executor knowledge writer ${mode} preserves the exact author and Q boundary`, group: 'runtime' as const,
+  run: () => withProject(async root => {
+    const loaded = loadCanonicalBlueprint(root, BLUEPRINT), doc = loaded.blueprint as Json;
+    const relative = 'doc/glossary.yaml', file = path.join(root, relative), before = 'terms: []\n';
+    fs.writeFileSync(file, before); doc.discovery.inputs.knowledge_assets.push(relative);
+    const decision = doc.decisions_and_gaps.decisions.find((row: Json) => row.decision_id === 'seam-shape');
+    delete decision.knowledge_refs; write(loaded.canonicalPath, doc); reconcileChangeUnitBlueprintRefs(root, BLUEPRINT);
+    const { input, runDir, rows } = repairInput(root, `daily-knowledge-${mode}`, '只归位已批准的 LedgerDataSource 结论，保留原范围与验收。');
+    const manifest = JSON.parse(fs.readFileSync(path.join(runDir, 'manifest.json'), 'utf8'));
+    const control = ensureRunControl(runDir, input.runId);
+    const acquired = casAcquireRunOwner(runDir, input.runId, control.current_epoch, { kind: 'session', owner_id: 'actual-executor-test', lease_ms: 60_000 });
+    assert(acquired.ok); let questionCalls = 0;
+    const runtime = new GoalPhaseRuntime({ executor: { execute: async context => {
+      const draftFile = path.join(runDir, 'design-repair/component-blueprint.yaml');
+      if (context.phase === 'design-repair-author') {
+        assert(context.instruction?.includes('原资产writer') || context.instruction?.includes('原资产 writer'));
+        const candidate = read(draftFile);
+        candidate.decisions_and_gaps.decisions.find((row: Json) => row.decision_id === 'seam-shape').knowledge_refs = [`${relative}#decision:seam-shape`];
+        const writes = [[draftFile, YAML.stringify(candidate)], [file, YAML.stringify({ terms: [{ term: 'LedgerDataSource', aliases: ['decision:seam-shape'], definition: decision.stable_contract }] })]];
+        if (mode === 'outside') writes.push([path.join(root, 'requirements/ledger.md'), 'unauthorized replacement\n']);
+        if (mode === 'canonical') writes.push([loaded.canonicalPath, YAML.stringify(candidate)]);
+        execFileSync(process.execPath, ['-e', 'const fs=require("fs");for(const [p,s] of JSON.parse(fs.readFileSync(0,"utf8")))fs.writeFileSync(p,s)'], { input: JSON.stringify(writes) });
+        return { status: 'passed', phase: context.phase, exitCode: 0, stdout: '', stderr: '', command: 'real node asset writer' };
+      }
+      questionCalls++;
+      assert(context.instruction?.includes('本事务知识资产的实际改动'));
+      assert(context.instruction?.includes('terms: []\\n'));
+      assert(context.instruction?.includes('未涉及条目未被改写'));
+      if (mode === 'questioning') execFileSync(process.execPath, ['-e', 'require("fs").appendFileSync(process.argv[1],"# forbidden Q write\\n")', file]);
+      return { status: 'passed', phase: context.phase, exitCode: 0, stdout: '', stderr: '', command: 'independent Q transport', details: JSON.stringify(doc.review_summary.questioning) };
+    } } });
+    const result = await runUnattendedDesignRepair({ ...input, designTarget: designRepairTarget(root, BLUEPRINT),
+      brief: { class: 'B1', items: [{ check: 'component-closure', codes: ['component_closure_knowledge_conclusion_unplaced'], class: 'B1', artifacts: [loaded.canonicalPath], basis: 'decision:seam-shape', needs: [] }] },
+      invoke: (purpose, prompt, guard) => runtime.invokeDesignOwner(manifest, root, FRAMEWORK, acquired.token, purpose, prompt, guard, input.emit) });
+    if (mode === 'allowed') {
+      assert.equal(result.outcome, 'published', JSON.stringify(result)); assert.equal(questionCalls, 1);
+      assert(rows.some(row => row.stage === 'published'));
+      const published = loadCanonicalBlueprint(root, BLUEPRINT);
+      assert.equal(published.blueprint.revision, Number(doc.revision) + 1);
+      assert.equal(deriveBlueprintSkillInput(root, FEATURE, FRAMEWORK, 'acceptance').state, 'resolved', 'normal reconciliation repoints the CU');
+    } else {
+      assert.equal(result.outcome, 'violation', JSON.stringify(result));
+      assert.equal(questionCalls, mode === 'questioning' ? 1 : 0);
+      assert(!rows.some(row => row.stage === 'published'));
+    }
+  }),
+})), {
   name: 'daily design runtime: snapshot distinguishes authorized draft and own heartbeat from protected input writes', group: 'runtime',
   run: () => withProject(root => {
     const draft = 'doc/features/repair/goal-runs/current/design-repair/draft.yaml', own = 'doc/features/repair/goal-runs/current/liveness.json';

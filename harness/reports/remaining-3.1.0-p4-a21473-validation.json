@@ -1,0 +1,528 @@
+{
+  "sourceBaseCommit": "e26b5c2a47a78e7948719aaf5c189f4bd0ca6f2a",
+  "branch": "main",
+  "generatedAt": "2026-11-07T22:33:34.938Z",
+  "singleCombination": {
+    "command": "node tests/test-runtime.cjs tests/run-unit.ts --filter initial-design-progress-recovery --case \"P4 a21473 original inputs\" --serial --results-out reports/p4-a21473-routed-final-r8.json",
+    "exitCode": 0,
+    "ok": true,
+    "passed": 1,
+    "failed": 0,
+    "wallMs": 3829593.6669,
+    "raw": {
+      "file": "harness/reports/p4-a21473-routed-final-r8.json",
+      "bytes": 1104,
+      "sha256": "edf2f6109d17fd4f5e816fdf6488804b4bf28b5d4f55ff4b4c7bd8edcf1d1c48"
+    }
+  },
+  "changed": {
+    "command": "npm run test:changed -- --results-out reports/p4-a21473-changed-final.json --plan-out reports/p4-a21473-changed-final-plan.json --timings-from reports/p4-a21473-routed-final-r8.json",
+    "exitCode": 1,
+    "originalOk": false,
+    "originalReportPreservedAsFail": true,
+    "passed": 5394,
+    "failed": 1,
+    "selectedGroups": 937,
+    "reusedGroups": 0,
+    "formalGroupsNotExecuted": 424,
+    "typecheckPassed": true,
+    "inputSnapshot": "8e2c6d1fd725f3c4c8aab4ea684ba2f47cdcd91a58316b257d255de6c4578624",
+    "endingSnapshot": "8e2c6d1fd725f3c4c8aab4ea684ba2f47cdcd91a58316b257d255de6c4578624",
+    "inputStable": true,
+    "wallMs": 4920219.7723,
+    "unknownReadCoverageGroups": [
+      {
+        "id": "adapter-model-consistency",
+        "reasons": [
+          "guardian Node entry coverage missing",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 33494.282600000035
+      },
+      {
+        "id": "test-infrastructure",
+        "reasons": [
+          "descendant coverage missing: 54068"
+        ],
+        "totalMs": 27352.19750000001
+      },
+      {
+        "id": "completion-running::[\"P2 running detached author is truly interrupted after relevant changes repeat the same canonical deficit; unchanged FAIL is reused\"]",
+        "reasons": [
+          "guardian Node entry coverage missing"
+        ],
+        "totalMs": 34254.125
+      },
+      {
+        "id": "standalone-coding-review::[\"8a6d3f21 modern original Scope excludes other: actual code and UI gates reject it\"]",
+        "reasons": [
+          "unobserved execFileSync node PID",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 5526.483899999992
+      },
+      {
+        "id": "standalone-coding-review::[\"8a6d3f21 modern gate rejects observed coding changes to framework without blaming earlier integration\"]",
+        "reasons": [
+          "unobserved execFileSync node PID",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 12555.39890000003
+      },
+      {
+        "id": "standalone-coding-review::[\"b1b2 independent full coding keeps its owned edits through the final facts verdict without run admission\"]",
+        "reasons": [
+          "unobserved execFileSync node PID",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 8286.174599999911
+      },
+      {
+        "id": "standalone-coding-review::[\"birth to coding uses real bound design without plan and preserves compilation and write scope\"]",
+        "reasons": [
+          "unobserved execFileSync node PID",
+          "Node spawn failed",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 17491.22999999998
+      },
+      {
+        "id": "standalone-coding-review::[\"8a runless coding preserves existing cases; new tests require unchanged UT evidence\"]",
+        "reasons": [
+          "unobserved execFileSync node PID",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 13985.731099999975
+      },
+      {
+        "id": "standalone-coding-review::[\"f3b8d261 U1 a test file UT created in this run stays UT-owned while its bytes are unchanged\"]",
+        "reasons": [
+          "unobserved execFileSync node PID",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 16875.86459999997
+      },
+      {
+        "id": "standalone-coding-review::[\"f3b8d261 U2 byte lock: a UT output whose bytes changed afterwards is coding drift again\"]",
+        "reasons": [
+          "unobserved execFileSync node PID",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 5750.00569999998
+      },
+      {
+        "id": "standalone-coding-review::[\"f3b8d261 U3 ownership lock: coding rewriting a UT output voids it even after restoring the UT bytes\"]",
+        "reasons": [
+          "unobserved execFileSync node PID",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 9428.431299999938
+      },
+      {
+        "id": "standalone-coding-review::[\"f3b8d261 U4 a test-root file without a UT fact of this run is not handed over\"]",
+        "reasons": [
+          "unobserved execFileSync node PID",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 7737.091899999999
+      },
+      {
+        "id": "standalone-coding-review::[\"f3b8d261 U5 a UT fact never excuses unauthorized product source or an out-of-module file\"]",
+        "reasons": [
+          "unobserved execFileSync node PID",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 7352.208100000047
+      },
+      {
+        "id": "standalone-coding-review::[\"f3b8d261 U6① a baseline test UT rewrote and that is then deleted is not handed over\"]",
+        "reasons": [
+          "unobserved execFileSync node PID",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 8788.10580000002
+      },
+      {
+        "id": "standalone-coding-review::[\"f3b8d261 U6② a UT output moved out of the test root fails on both ends\"]",
+        "reasons": [
+          "unobserved execFileSync node PID",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 5917.600999999908
+      },
+      {
+        "id": "standalone-coding-review::[\"f3b8d261 U6③ UT renaming inside its own root is judged end by end and handed over\"]",
+        "reasons": [
+          "unobserved execFileSync node PID",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 5297.64320000005
+      },
+      {
+        "id": "standalone-coding-review::[\"f3b8d261 U6④ coding deleting or renaming a UT output is never exempt\"]",
+        "reasons": [
+          "unobserved execFileSync node PID",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 4975.636599999969
+      },
+      {
+        "id": "standalone-coding-review::[\"b2d7f4e9 t3c a successor inherits the source run UT output through the lineage, and a later source coding rewrite still voids it\"]",
+        "reasons": [
+          "unobserved execFileSync node PID",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 8186.578699999955
+      },
+      {
+        "id": "standalone-coding-review::[\"8a6d3f21 real modern coding does not request plan revision for a new UI resource\"]",
+        "reasons": [
+          "unobserved execFileSync node PID",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 6384.388600000064
+      },
+      {
+        "id": "standalone-coding-review::[\"D0.3 named write-set violations stay in coding\"]",
+        "reasons": [
+          "unobserved execFileSync node PID",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 6353.359199999948
+      },
+      {
+        "id": "standalone-coding-review::[\"8a6d3f21 writer does not attach a scope revision for ordinary unpredicted implementation\"]",
+        "reasons": [
+          "unobserved execFileSync node PID",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 5544.14579999994
+      },
+      {
+        "id": "standalone-coding-review::[\"8a6d3f21 ordinary implementation does not become a repair when workflow metadata changes\"]",
+        "reasons": [
+          "unobserved execFileSync node PID",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 6262.876500000013
+      },
+      {
+        "id": "obligation-scoped-verification",
+        "reasons": [
+          "unobserved execFileSync node PID",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 61176.96409999998
+      },
+      {
+        "id": "goal-budget-integration",
+        "reasons": [
+          "descendant coverage missing: 37320"
+        ],
+        "totalMs": 2269.2142999999924
+      },
+      {
+        "id": "agent-containment",
+        "reasons": [
+          "descendant coverage missing: 34364",
+          "descendant coverage missing: 58100",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 10134.101000000024
+      },
+      {
+        "id": "device-session",
+        "reasons": [
+          "descendant coverage missing: 34336",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 1987.4126000000397
+      },
+      {
+        "id": "codex-terminal-closure",
+        "reasons": [
+          "descendant coverage missing: 43036",
+          "descendant coverage missing: 46016",
+          "descendant coverage missing: 6284",
+          "descendant coverage missing: 46692",
+          "descendant coverage missing: 45700"
+        ],
+        "totalMs": 11976.638500000001
+      },
+      {
+        "id": "repair-interruption-real-process::[\"[真实子进程：spawn/终止/事件解析，不等于真实 Codex CLI 已验] 原单元返修被外部 kill：保留原反馈与失败原件，恢复后真完成才复验\"]",
+        "reasons": [
+          "guardian Node entry coverage missing"
+        ],
+        "totalMs": 28347.728000000003
+      },
+      {
+        "id": "goal-runner-detach",
+        "reasons": [
+          "descendant coverage missing: 30272",
+          "descendant coverage missing: 16352",
+          "descendant coverage missing: 60640",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 2200.659400000004
+      },
+      {
+        "id": "deepseek-harness-adapter",
+        "reasons": [
+          "guardian Node entry coverage missing"
+        ],
+        "totalMs": 6437.727199999965
+      },
+      {
+        "id": "agent-invoke-settle",
+        "reasons": [
+          "descendant coverage missing: 58084",
+          "descendant coverage missing: 12716",
+          "descendant coverage missing: 56816",
+          "descendant coverage missing: 57544",
+          "descendant coverage missing: 10636",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 69788.47929999995
+      },
+      {
+        "id": "migrate-feature-phase-paths",
+        "reasons": [
+          "unobserved execFileSync node PID",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 693.7316000000574
+      },
+      {
+        "id": "goal-capability-gate",
+        "reasons": [
+          "descendant coverage missing: 21200"
+        ],
+        "totalMs": 1431.4883999999147
+      },
+      {
+        "id": "design-authority-repair-runtime::[\"daily design runtime: executor knowledge writer allowed preserves the exact author and Q boundary\"]",
+        "reasons": [
+          "unobserved execFileSync node PID",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 3742.2811999999685
+      },
+      {
+        "id": "design-authority-repair-runtime::[\"daily design runtime: executor knowledge writer outside preserves the exact author and Q boundary\"]",
+        "reasons": [
+          "unobserved execFileSync node PID",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 3108.431099999929
+      },
+      {
+        "id": "design-authority-repair-runtime::[\"daily design runtime: executor knowledge writer canonical preserves the exact author and Q boundary\"]",
+        "reasons": [
+          "unobserved execFileSync node PID",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 2663.8465999999316
+      },
+      {
+        "id": "design-authority-repair-runtime::[\"daily design runtime: executor knowledge writer questioning preserves the exact author and Q boundary\"]",
+        "reasons": [
+          "unobserved execFileSync node PID",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 3736.3142000000225
+      },
+      {
+        "id": "profile:hmos-app:hmos-build-closure",
+        "reasons": [
+          "descendant coverage missing: 14620",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 10792.93180000002
+      },
+      {
+        "id": "profile:hmos-app:hylyre-spawn",
+        "reasons": [
+          "unobserved spawnSync node PID",
+          "descendant coverage missing: 0",
+          "Node/guardian exit unobserved or killed"
+        ],
+        "totalMs": 1174.5456999999005
+      }
+    ],
+    "raw": [
+      {
+        "file": "harness/reports/p4-a21473-changed-final.json",
+        "bytes": 68108208,
+        "sha256": "749d397ac1079983ffbb0cfe0bb0608f049ace51bdf80e80af3b6e29b4bc3592"
+      },
+      {
+        "file": "harness/reports/p4-a21473-changed-final.log",
+        "bytes": 13161497,
+        "sha256": "4f080e834726919d075764f8ac9b31d708d68d91fd6d6914651ab83420eac57c"
+      },
+      {
+        "file": "harness/reports/p4-a21473-changed-final-plan.json",
+        "bytes": 7913264,
+        "sha256": "74bb884e54061beab7d8c857be04e26bbc7340e0587643cf75234fa119e0a3d6"
+      }
+    ],
+    "combinationCases": [
+      {
+        "name": "P4 a21473 executed methods require real harness receipts and PASS independently of completion phase reuse",
+        "ok": true
+      },
+      {
+        "name": "P4 a21473 successor scope rejects dropping device or acceptance unit obligations",
+        "ok": true
+      },
+      {
+        "name": "a21473 original public next normalizes machine admission and issues decomposition with the original six calls and immutable history intact",
+        "ok": true
+      },
+      {
+        "name": "P4 a21473 original inputs and 6fe679 framework fault share one isolated design construction and formal completion replay",
+        "ok": true
+      }
+    ],
+    "failedGroups": [
+      "blueprint-review-design::[\"questioning outcomes require explicit valid closure, ignore dirty returns, and support legacy process originals\"]"
+    ]
+  },
+  "onlyFailureResolution": {
+    "original": {
+      "group": "blueprint-review-design::[\"questioning outcomes require explicit valid closure, ignore dirty returns, and support legacy process originals\"]",
+      "name": "questioning outcomes require explicit valid closure, ignore dirty returns, and support legacy process originals",
+      "ok": false,
+      "error": "AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:\n+ actual - expected\n\n  [\n+   'blocker'\n-   'withdrawn'\n  ]\n\n    at Object.run (D:\\1.code\\agent-maison\\harness\\tests\\unit\\blueprint-review-design.unit.test.ts:89:12)\n    at D:\\1.code\\agent-maison\\harness\\tests\\unit\\blueprint-review-design.unit.test.ts:1098:13\n    at Array.map (<anonymous>)\n    at Object.runSelectedCases (D:\\1.code\\agent-maison\\harness\\tests\\unit\\blueprint-review-design.unit.test.ts:1096:72)\n    at executeUnitModule (D:\\1.code\\agent-maison\\harness\\tests\\utils\\unit-case-selection.ts:78:40)\n    at D:\\1.code\\agent-maison\\harness\\tests\\unit-worker.ts:49:45\n    at Object.<anonymous> (D:\\1.code\\agent-maison\\harness\\tests\\unit-worker.ts:95:3)\n    at Module._compile (node:internal/modules/cjs/loader:1830:14)\n    at Object.require.extensions..ts (D:\\1.code\\agent-maison\\harness\\tests\\compiled-register.cjs:32:10)\n    at Module.load (node:internal/modules/cjs/loader:1553:32)"
+    },
+    "classification": "test fixture omitted real business knowledge asset preimages; production strictness unchanged",
+    "repairFile": "harness/tests/fixtures/blueprint-review-questioning.ts",
+    "repairFileSha256": "8861d2ec38d817540f61a6f766a38e95cb259d39cefd3b7a239d5d7949870d78",
+    "directConsumers": [
+      "harness/tests/unit/blueprint-review-design.unit.test.ts"
+    ],
+    "targetedCommand": "node tests/test-runtime.cjs tests/run-unit.ts --filter blueprint-review-design --serial --results-out reports/p4-a21473-review-outcomes-fix.json",
+    "targetedExitCode": 0,
+    "targetedPassed": 62,
+    "targetedFailed": 0,
+    "sameNamePass": {
+      "name": "questioning outcomes require explicit valid closure, ignore dirty returns, and support legacy process originals",
+      "ok": true
+    },
+    "raw": {
+      "file": "harness/reports/p4-a21473-review-outcomes-fix.json",
+      "bytes": 24422,
+      "sha256": "f5ad30d37c24f27045a2cef2ad00b5a93dce3f5103897925332637d3030a4920"
+    },
+    "postFixInputs": {
+      "beforeSnapshot": "8e2c6d1fd725f3c4c8aab4ea684ba2f47cdcd91a58316b257d255de6c4578624",
+      "afterSnapshot": "888c2be7a1e0680fedba0835b5e94dba25dae892a3a8fdc1ab89a65c486ae60d",
+      "changedInputs": [
+        "harness/tests/fixtures/blueprint-review-questioning.ts"
+      ],
+      "productionFilesChecked": 15,
+      "productionDrift": []
+    },
+    "allOriginalFailuresResolved": true,
+    "uniqueOriginalCasesValidatedAfterTargetedRepair": 5395,
+    "note": "No consolidated PASS was fabricated. Only this fixture changed; sole consuming suite passed 62/0. Other valid results are reused; no second whole test:changed, daily or official full run.",
+    "allFailedGroupsResolved": true
+  },
+  "directed": [
+    {
+      "file": "harness/reports/p4-a21473-knowledge-boundary-tests-final.json",
+      "bytes": 5650,
+      "sha256": "d8c2616769b7f30dab76f35a7fe72f9f4eec3a0b28b620577448b34970896081",
+      "passed": 16,
+      "failed": 0,
+      "exitCode": 0
+    },
+    {
+      "file": "harness/reports/p4-a21473-successor-scope-regression.json",
+      "bytes": 1055,
+      "sha256": "dfcc02b07b7ea5fdc04f7a0b1b5dade526a036ef29fe79616999ce1c4fe0fec2",
+      "passed": 1,
+      "failed": 0,
+      "exitCode": 0
+    },
+    {
+      "file": "harness/reports/p4-a21473-method-receipts-regression.json",
+      "bytes": 1089,
+      "sha256": "cc124eca32f709abae4e6e96d0db7f762d4d62894bd116161fb1a190e88c91be",
+      "passed": 1,
+      "failed": 0,
+      "exitCode": 0
+    }
+  ],
+  "acceptance": {
+    "file": "harness/reports/remaining-3.1.0-p4-a21473-acceptance.json",
+    "bytes": 81253,
+    "sha256": "d75590f664768e2df17f49550e4a2cd703e58ca43582cad48776caddd791ae61"
+  },
+  "readonlyReviews": {
+    "file": "harness/reports/remaining-3.1.0-p4-a21473-reviews.json",
+    "bytes": 80101,
+    "sha256": "062d7aa0e2da9ebd5f1dc80ecd7aa2f5f540c7513f6d1e6a13822c1907e10fca"
+  },
+  "previousOfficialFull": {
+    "report": "harness/reports/remaining-3.1.0-p4-validation.json",
+    "passed": 6016,
+    "failed": 24,
+    "formalGroupsExecuted": 424,
+    "originalFailPreserved": true,
+    "finalSourceOfficialFullGreen": false
+  },
+  "checks": {
+    "openspecStrict": {
+      "exitCode": 0,
+      "passed": 65,
+      "failed": 0,
+      "enforcement": "PASS",
+      "raw": {
+        "file": "harness/reports/p4-a21473-openspec-final.log",
+        "bytes": 2697,
+        "sha256": "2d2015d1c0afae1d69495adc839b574513acda539d0bd0f8c44034a6ff6af5cf"
+      }
+    },
+    "plan": {
+      "exitCode": 0,
+      "originalBodyPreserved": true,
+      "onlyTodoStatusAndAppendedRecord": true,
+      "raw": {
+        "file": "harness/reports/p4-a21473-plans-final.log",
+        "bytes": 76,
+        "sha256": "fb8fff392c8bcb1d51d54b764bc6728e67c7ae898776f06b6c6d1ab6ee1557a5"
+      }
+    },
+    "diffAndLf": {
+      "diffExitCode": 0,
+      "checkedExplicitPaths": 30,
+      "carriageReturnFiles": [],
+      "note": "All 30 explicit paths checked; staged diff passed; protected user files excluded.",
+      "stagedDiffExitCode": 0
+    }
+  },
+  "status": {
+    "p4t1": "completed",
+    "p4t3": "in_progress",
+    "p4t5": "pending",
+    "p4t6": "pending"
+  },
+  "boundaries": [
+    "No push, packaging, version change, real host/device operation or credential reads",
+    "User a47/6fd6c8c1/c6ae8b4f/temp changes excluded",
+    "Native .ets/HMOS, real device/layout/pixels/model quality unverified",
+    "Shared coding+UT producer recovery boundary remains",
+    "DSH H4 and same-zip consumer verification remain; Jimp tile-min concurrency independent"
+  ],
+  "documentationOnlyUpdates": [
+    ".cursor/plans/持续执行重构P4_全链验收与宿主真实交付_9b52d6f0.plan.md",
+    "harness/reports/remaining-3.1.0-handoff.md"
+  ],
+  "finalHandoffReview": {
+    "file": "harness/reports/p4-a21473-handoff-review.json",
+    "bytes": 5187,
+    "sha256": "28f7c27678c229583eb1057183285bd623b0eef9f52d40cfaf32d3f2a69bd57a"
+  }
+}

@@ -4,6 +4,8 @@ import * as path from 'path';
 import * as YAML from 'yaml';
 import { featureFilePath } from '../../config';
 import type { BlueprintRecord } from '../../scripts/utils/component-blueprint-model';
+import { asRecord, asStrings } from '../../scripts/utils/component-blueprint-model';
+import { validateProjectRelativePath } from '../../scripts/utils/project-relative-path';
 
 /** Archived process/session materials, consumed through the production original reader. */
 export function writeReviewQuestioningRound(input: {
@@ -16,10 +18,19 @@ export function writeReviewQuestioningRound(input: {
   const directory = path.join(runDir, 'phases', phase, invokeId);
   fs.mkdirSync(directory, { recursive: true });
   const before = YAML.stringify(input.before);
-  const digest = (bytes: string) => crypto.createHash('sha256').update(bytes).digest('hex');
-  const pre = { sha256: digest(before), failureReason: null,
-    entries: [{ path: path.relative(input.root, input.blueprintFile).replace(/\\/g, '/'), kind: 'file', sha256: digest(before) }] };
-  const post = input.dirty ? { ...pre, sha256: 'f'.repeat(64), entries: [{ ...pre.entries[0], sha256: 'd'.repeat(64) }] } : pre;
+  const digest = (bytes: string | Buffer) => crypto.createHash('sha256').update(bytes).digest('hex');
+  const assets = asStrings(asRecord(asRecord(input.before.discovery)?.inputs)?.knowledge_assets)
+    .filter(file => !/^[A-Za-z][A-Za-z0-9+.-]*:/.test(file)).flatMap(file => {
+      try {
+        const relative = validateProjectRelativePath(input.root, file, 'questioning fixture knowledge input');
+        const absolute = path.resolve(input.root, relative);
+        return fs.existsSync(absolute) && fs.statSync(absolute).isFile()
+          ? [{ path: relative.replace(/\\/g, '/'), kind: 'file', sha256: digest(fs.readFileSync(absolute)) }] : [];
+      } catch { return []; }
+    });
+  const entries = [{ path: path.relative(input.root, input.blueprintFile).replace(/\\/g, '/'), kind: 'file', sha256: digest(before) }, ...assets];
+  const pre = { sha256: digest(JSON.stringify(entries)), failureReason: null, entries };
+  const post = input.dirty ? { ...pre, sha256: 'f'.repeat(64), entries: pre.entries.map((entry, index) => index === 0 ? { ...entry, sha256: 'd'.repeat(64) } : entry) } : pre;
   const output = typeof input.result === 'string' ? input.result : `Independent review follows.\n\`\`\`json\n${JSON.stringify(input.result)}\n\`\`\``;
   const write = (name: string, data: unknown) => {
     const file = path.join(directory, name), bytes = JSON.stringify(data, null, 2) + '\n'; fs.writeFileSync(file, bytes);

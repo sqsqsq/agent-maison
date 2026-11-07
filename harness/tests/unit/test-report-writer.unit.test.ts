@@ -202,6 +202,32 @@ async function runVisualGate(root: string, tier: 'hard' | 'soft', opts: { omitSc
 
 const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
   {
+    name: 'P4 a21473 单一优先级：生成报告补齐空P0/P1的不适用统计，正式通过率校验可消费且不虚报百分比',
+    run: () => {
+      for (const priority of ['P0', 'P1', 'empty']) {
+        const root = mkProject();
+        try {
+          const seeded = seed(root);
+          const planMd = PLAN_MD.split('\n').filter(line => !line.includes('TC-003') && (priority !== 'empty' || !line.includes('TC-00'))).join('\n').replace(/P[01]/g, priority);
+          const trace = JSON.parse(fs.readFileSync(seeded.tracePath, 'utf8'));
+          if (priority === 'empty') trace.cases = [];
+          for (const row of trace.cases) row.priority = priority;
+          writeJson(seeded.tracePath, trace);
+          const gen = generateTestReport(input(root, seeded, { planMd, channelDecl: evaluateExecutionChannelDeclaration(planMd) }));
+          const ctx = { projectRoot: root, feature: FEATURE, phase: 'testing', phaseRule: {} } as unknown as CheckContext;
+          if (priority === 'empty') { assert.equal(checkPassRateCalculated(ctx, gen.content)[0].status, 'FAIL'); continue; }
+          const absent = priority === 'P0' ? 'P1' : 'P0';
+          assert(gen.content.includes(`| ${priority} | 2 | 2 | 0 | 0 | 0 | 100% |`));
+          assert(gen.content.includes(`| ${absent} | 0 | 0 | 0 | 0 | 0 | — |`));
+          assert(gen.content.includes('不适用'));
+          assert(gen.content.includes(`- ${absent} 通过率: —（无该优先级用例）`));
+          assert.equal(checkPassRateCalculated(ctx, gen.content)[0].status, 'PASS');
+          assert.deepEqual(reconcileReportWithHylyreTrace(gen.content, seeded.tracePath, { hylyreTcIds: ['TC-001','TC-002'] }).mismatches, []);
+        } finally { fs.rmSync(root, { recursive: true, force: true }); }
+      }
+    },
+  },
+  {
     name: '全过 + 1 条 gap：既有解析器逐格读回，timing/trace 对账零失配，结论有条件达标（gap 与稳定性 UNKNOWN 披露）',
     run: () => {
       const root = mkProject();
