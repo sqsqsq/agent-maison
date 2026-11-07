@@ -8,10 +8,10 @@ todos:
     status: completed
   - id: migrate
     content: 更新 harness 依赖及本地锁文件，适配三个生产直接调用点和既有测试造图代码，完成同图对照与目标测试。
-    status: in_progress
+    status: cancelled
   - id: consumer
     content: 完成现有开发和收口测试，对同一临时发布件执行 release:verify、consumer smoke、干净安装审计和真实读写图验收。
-    status: pending
+    status: cancelled
 ---
 
 # Harness Jimp 升级与消费者安全告警清理
@@ -56,3 +56,11 @@ todos:
 ### P4 统一验收记录（2026-11-06）
 
 P4唯一一次根目录官方全量实际覆盖1350组（含全部424个正式扩展组），6016通过/24失败、输入稳定。24条原红项完成定性、局部修复及对应定向复验；最终test:changed为101组实跑357通过/0失败、826组复用，typecheck通过、首尾快照相同。原始full报告保持FAIL，不将补测拼成全量通过；本轮不重复整轮全量或单跑test:daily。 Jimp像素/确定性及临时消费者读写结论保持有效。migrate保留in_progress，不以修后补测冒称官方全量绿；consumer继续pending，待同zip消费者验证。Node低于20只记录升级环境处置，未打兼容补丁。本次只追加记录，不改计划正文。
+
+### 回退与取消（2026-11-07）
+
+按用户与Codex确认撤回升级：Jimp 1.6.1依赖zod 3，GHSA-mrhx-c7xc-m3w5影响4.6.6以下版本，3.x没有修复版，当前Jimp升级路线无法解除此公告。升级虽消除了file-type ASF中危链，却变成同一zod公告在各Jimp子包重复计数的29条high，与本plan安全告警清理目标相反。baseline保留completed，migrate与consumer均cancelled，不把取消当作验收完成。
+
+仅反向应用06a531a7中指定10个非.cursor、非reports文件的Jimp差异，保留后续DSH、e2及P4修复，未删除历史报告。在harness执行npm install，本地忽略锁文件重新解析且不入库；npm ls jimp实测0.22.12，依赖树和已安装目录均无zod。实际audit由0 moderate/29 high回到4 moderate/0 high，四项仅为file-type ASF公告GHSA-5v7r-6r5c-r473及其Jimp传递链；未执行audit fix或override。活跃harness/profiles代码未残留本轮v1 API写法，历史报告与夹具不作为活跃调用改写。
+
+本轮验证按test:changed的实际选择及未覆盖的§3第2条目标组执行，不额外跑test:daily或正式全量；最终结果和Claude Code CLI只读复核见总交接报告。tile-min临时文件并发冲突独立保留，本次不处理；不推送、不打包、不改版本号。等上游 Jimp 改用 zod ≥4.6.6 后再议。

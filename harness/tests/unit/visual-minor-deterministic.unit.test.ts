@@ -32,8 +32,8 @@ async function withGate(api: VisualModule, run: (probe: {
     write('doc/features/demo/device-testing/visual-diff.md', '# Visual diff\n');
     const shot = 'doc/features/demo/device-testing/device-screenshots/shot-home.png';
     fs.mkdirSync(path.dirname(path.join(root, shot)), { recursive: true });
-    const { Jimp } = require('jimp');
-    await new Jimp({ width: 12, height: 12, color: 0xff0000ff }).write(path.join(root, shot));
+    const Jimp = require('jimp');
+    await new Jimp(12, 12, 0xff0000ff).writeAsync(path.join(root, shot));
     fs.mkdirSync(path.join(root, 'doc/features/demo/ux-reference'), { recursive: true });
     fs.copyFileSync(path.join(root, shot), path.join(root, 'doc/features/demo/ux-reference/ref.png'));
     const hash = api.hashScreenshotFile(path.join(root, shot));

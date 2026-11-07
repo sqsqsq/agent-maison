@@ -9,7 +9,7 @@
 
 const path = require('path');
 const harnessRoot = path.resolve(__dirname, '../../../harness');
-const { Jimp } = require(require.resolve('jimp', { paths: [harnessRoot] }));
+const Jimp = require(require.resolve('jimp', { paths: [harnessRoot] }));
 
 const NEAR_WHITE = 240;
 const NEAR_BLACK = 20;
@@ -82,15 +82,15 @@ function trimUniformEdges(img, minContentRatio = 0.12) {
     right--;
   }
   if (right <= left || bottom <= top) return img;
-  return img.clone().crop({ x: left, y: top, w: right - left + 1, h: bottom - top + 1 });
+  return img.clone().crop(left, top, right - left + 1, bottom - top + 1);
 }
 
 async function runCrop(imagePath, bbox, padding, outPath) {
   const img = await Jimp.read(imagePath);
   const { x, y, cw, ch } = bboxPixels(img, bbox, padding);
-  let cropped = img.clone().crop({ x: x, y: y, w: cw, h: ch });
+  let cropped = img.clone().crop(x, y, cw, ch);
   cropped = trimUniformEdges(cropped);
-  await cropped.write(outPath);
+  await cropped.writeAsync(outPath);
   return { ok: true, width: cropped.bitmap.width, height: cropped.bitmap.height };
 }
 
@@ -102,8 +102,8 @@ async function runCrop(imagePath, bbox, padding, outPath) {
 async function runCropTop(imagePath, heightStr, outPath) {
   const img = await Jimp.read(imagePath);
   const h = Math.max(1, Math.min(img.bitmap.height, parseInt(heightStr, 10) || 0));
-  const cropped = img.clone().crop({ x: 0, y: 0, w: img.bitmap.width, h: h });
-  await cropped.write(outPath);
+  const cropped = img.clone().crop(0, 0, img.bitmap.width, h);
+  await cropped.writeAsync(outPath);
   return { ok: true, width: cropped.bitmap.width, height: cropped.bitmap.height };
 }
 
@@ -145,8 +145,8 @@ async function runHistSim(pathA, pathB) {
   const imgA = await Jimp.read(pathA);
   const imgB = await Jimp.read(pathB);
   const size = 64;
-  imgA.resize({ w: size, h: size });
-  imgB.resize({ w: size, h: size });
+  imgA.resize(size, size);
+  imgB.resize(size, size);
   const bins = 8;
   const nBins = bins * bins * bins;
   const histA = new Float64Array(nBins);
@@ -190,8 +190,8 @@ async function runTileMinSim(pathA, pathB, gridStr) {
   const imgA = await Jimp.read(pathA);
   const imgB = await Jimp.read(pathB);
   const size = 128;
-  imgA.resize({ w: size, h: size });
-  imgB.resize({ w: size, h: size });
+  imgA.resize(size, size);
+  imgB.resize(size, size);
   const tile = Math.floor(size / grid);
   let minSim = 1;
   for (let gy = 0; gy < grid; gy++) {
@@ -200,12 +200,12 @@ async function runTileMinSim(pathA, pathB, gridStr) {
       const y = gy * tile;
       const w = gx === grid - 1 ? size - x : tile;
       const h = gy === grid - 1 ? size - y : tile;
-      const cropA = imgA.clone().crop({ x: x, y: y, w: w, h: h });
-      const cropB = imgB.clone().crop({ x: x, y: y, w: w, h: h });
+      const cropA = imgA.clone().crop(x, y, w, h);
+      const cropB = imgB.clone().crop(x, y, w, h);
       const tmpA = path.join(require('os').tmpdir(), `tile-a-${gx}-${gy}.png`);
       const tmpB = path.join(require('os').tmpdir(), `tile-b-${gx}-${gy}.png`);
-      await cropA.write(tmpA);
-      await cropB.write(tmpB);
+      await cropA.writeAsync(tmpA);
+      await cropB.writeAsync(tmpB);
       const part = await runHistSim(tmpA, tmpB);
       try { require('fs').unlinkSync(tmpA); } catch { /* ignore */ }
       try { require('fs').unlinkSync(tmpB); } catch { /* ignore */ }
@@ -237,7 +237,7 @@ async function runEdgeTile(refPath, shotPath, rowsStr, colsStr, threshStr) {
   const TW = 180;
   const TH = 360;
   const toGray = (img) => {
-    const g = img.clone().greyscale().resize({ w: TW, h: TH });
+    const g = img.clone().greyscale().resize(TW, TH);
     const { data } = g.bitmap;
     const a = new Float64Array(TW * TH);
     for (let i = 0; i < TW * TH; i++) a[i] = data[i << 2];
@@ -294,7 +294,7 @@ async function runStats(imagePath) {
   const w0 = img.bitmap.width;
   const h0 = img.bitmap.height;
   const scale = Math.min(1, 64 / Math.max(w0, h0));
-  const s = scale < 1 ? img.clone().resize({ w: Math.max(1, Math.round(w0 * scale)), h: Math.max(1, Math.round(h0 * scale)) }) : img;
+  const s = scale < 1 ? img.clone().resize(Math.max(1, Math.round(w0 * scale)), Math.max(1, Math.round(h0 * scale))) : img;
   const { width: w, height: h, data } = s.bitmap;
   const colors = new Set();
   let contentPx = 0;
@@ -361,7 +361,7 @@ async function runContactSheet(argsJsonPath) {
   const src = await Jimp.read(args.source);
   const LEFT_W = 480;
   const leftH = Math.max(1, Math.round((src.bitmap.height / src.bitmap.width) * LEFT_W));
-  const left = src.clone().resize({ w: LEFT_W, h: leftH });
+  const left = src.clone().resize(LEFT_W, leftH);
   const RED = 0xff2020ff;
   for (const e of args.entries || []) {
     const [nx, ny, nw, nh] = (e.bbox || []).map(Number);
@@ -373,7 +373,7 @@ async function runContactSheet(argsJsonPath) {
   const entries = args.entries || [];
   const rightH = Math.max(CELL_H, entries.length * CELL_H);
   const totalH = Math.max(leftH, rightH);
-  const canvas = new Jimp({ width: LEFT_W + 16 + THUMB_W, height: totalH, color: 0xffffffff });
+  const canvas = new Jimp(LEFT_W + 16 + THUMB_W, totalH, 0xffffffff);
   canvas.composite(left, 0, 0);
   let missing = 0;
   for (let i = 0; i < entries.length; i++) {
@@ -384,13 +384,13 @@ async function runContactSheet(argsJsonPath) {
       const scale = Math.min(THUMB_W / crop.bitmap.width, (CELL_H - 12) / crop.bitmap.height, 1);
       const tw = Math.max(1, Math.round(crop.bitmap.width * scale));
       const th = Math.max(1, Math.round(crop.bitmap.height * scale));
-      canvas.composite(crop.resize({ w: tw, h: th }), LEFT_W + 16, cy + 6);
+      canvas.composite(crop.resize(tw, th), LEFT_W + 16, cy + 6);
     } catch {
       missing++;
       drawRect(canvas, LEFT_W + 16, cy + 6, THUMB_W, CELL_H - 12, RED);
     }
   }
-  await canvas.write(args.outPath);
+  await canvas.writeAsync(args.outPath);
   return { ok: true, entries: entries.length, missing };
 }
 

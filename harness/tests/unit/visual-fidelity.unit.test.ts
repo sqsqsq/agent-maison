@@ -159,8 +159,8 @@ function writeMinimalColorPng(outPath: string, w: number, h: number, rgba: numbe
   if (!isJimpAvailable()) throw new Error('jimp required for png fixture');
   const harnessRoot = path.resolve(__dirname, '../..');
   const r = spawnSync(process.execPath, ['-e', `
-    const { Jimp } = require('jimp');
-    new Jimp({ width: ${w}, height: ${h}, color: ${rgba} }).write(${JSON.stringify(outPath)}).then(()=>process.exit(0)).catch(e=>{console.error(e);process.exit(1);});
+    const Jimp=require('jimp');
+    new Jimp(${w}, ${h}, ${rgba}).writeAsync(${JSON.stringify(outPath)}).then(()=>process.exit(0)).catch(e=>{console.error(e);process.exit(1);});
   `], { encoding: 'utf-8', cwd: harnessRoot });
   if (r.status !== 0) throw new Error(r.stderr || r.stdout || 'png gen failed');
 }

@@ -2581,9 +2581,9 @@ test('t4 spec观察处理全部15张未缓存参考图，失败不阻断，三�
       schema_version: '1.1', project_name: 'p', paths: { features_dir: 'doc/features' },
     }));
     clearFrameworkConfigCache();
-    const images = Array.from({ length: 15 }, (_, index) => path.join(tmp, 'ref-' + index + '.png') as `${string}.png`);
-    const { Jimp }: typeof import('jimp') = require('jimp');
-    await Promise.all(images.map((file, index) => new Jimp({ width: 2, height: 2, color: (0x110000ff + index * 0x000a0000) >>> 0 }).write(file)));
+    const images = Array.from({ length: 15 }, (_, index) => path.join(tmp, 'ref-' + index + '.png'));
+    const Jimp: typeof import('jimp') = require('jimp');
+    await Promise.all(images.map((file, index) => new Jimp(2, 2, (0x110000ff + index * 0x000a0000) >>> 0).writeAsync(file)));
     transport.invokeVisualProvider = input => {
       assert.strictEqual(input.purpose, 'spec_observation');
       assert.strictEqual(input.timeoutMs, 1_000, '每次具体工具期限仍透传，不变成整单配额');
@@ -2606,7 +2606,7 @@ test('t4 spec观察处理全部15张未缓存参考图，失败不阻断，三�
     const before = new Map(produced.map(file => [file, fs.readFileSync(path.join(tmp, file), 'utf8')]));
     assert.deepStrictEqual(await produceVisualObservationSidecars(input), produced);
     assert.strictEqual(calls.length, images.length * 2, '三元相同必须复用，不重买provider');
-    await new Jimp({ width: 2, height: 2, color: 0xff00ffff }).write(images[13]);
+    await new Jimp(2, 2, 0xff00ffff).writeAsync(images[13]);
     await produceVisualObservationSidecars(input);
     assert.strictEqual(calls.length, images.length * 2 + 1);
     assert.strictEqual(calls.at(-1), images[13], '真实改图只补该图');

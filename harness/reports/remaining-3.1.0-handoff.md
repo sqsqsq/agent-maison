@@ -14,7 +14,7 @@
 |---|---|---|
 | 前序三份 plan 状态 | c67c3db1 | 只包含 6a2f8c91、58d7a3c2、86c4d5be，已独立复核提交 |
 | e2a4145e | 688a9922；1ae7d7ee | 指定原件隔离接续与评审投影已验；原始全量未绿，verify-design-loop 保持 in_progress |
-| 7b9c43d2 | 06a531a7；46893cda | Jimp 1.6.1、像素与同版本确定性及干净安装读写已验；migrate 保持 in_progress，consumer 同 zip 验收 pending |
+| 7b9c43d2 | 06a531a7；46893cda（历史升级） | 已回退并取消：恢复 jimp ^0.22.12，实际解析0.22.12；baseline保留completed，migrate/consumer均cancelled。audit由29 high回到仅file-type ASF链4 moderate，无zod；历史报告保留。 |
 | 4e92a7c6 | 755d6c0e；371a15be | DSH 独立只读视觉与真实桌面调用已验；t3 保持 in_progress，t4 因 H4 未验仍 in_progress |
 | P4 9b52d6f0 | fc3eadca | 本批实现与修红、同源/恢复反例已验；t2/t4 完成，t1 开发侧组合回放尚未接通、t3 官方完整绿证明未取得，保持 in_progress；t5/t6 pending |
 
@@ -145,3 +145,11 @@ P4 t1等待理由已纠正：下一步为开发侧把a21473真实输入与6fe679
 返修实现提交：DSH初始化与终稿 8249ce54；e2否定依据送达 db1ff1c8。本次只读复核、定向与影响验证原件随交接更正单独入库。
 
 本轮影响报告仍有覆盖采集未知组，已保留在验证汇总和原始JSON；这些是调用覆盖观测缺口，不是测试失败，不据此推断未观测调用已被覆盖。
+
+## Jimp回退与取消（2026-11-07）
+
+7b9c43d2已回退并取消：只撤06a531a7中10个代码/测试文件的Jimp升级差异，保留后续修复和全部历史报告。harness依赖恢复为^0.22.12，npm install实际解析0.22.12，依赖树无zod；audit从29 high（zod同一公告重复计数）回到仅file-type ASF链4 moderate，0 high。此前关于Jimp1.6.1及29 high的段落为历史结论，以本条现状为准，升级专属consumer义务已取消，不解除后续候选包的常规验证。
+
+baseline保持completed，migrate/consumer改为cancelled；plan名称及正文不改。tile-min并发临时文件问题独立保留。本次不推送、不打包、不改版本，锁文件不提交。等上游 Jimp 改用 zod ≥4.6.6 后再议。
+
+回退验证：test:changed原始PASS，927组实跑5380通过/0失败，typecheck通过、首尾输入快照一致，未额外跑test:daily或正式全量。13类指定目标均已选中，另补4个实际改造图的testing-integrity扩展用例，4/4通过。Claude Code CLI只读复核实际模型claude-opus-5-5，代码及记账无必须修复项；其当时等待测试完成的条件现已满足。plan、diff与本批文本LF检查通过。

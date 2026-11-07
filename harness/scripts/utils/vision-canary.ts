@@ -13,8 +13,7 @@
 // （那属 gate-integrity 红线域，非本模块职责）。
 
 import * as crypto from 'crypto';
-import { Jimp, loadFont, HorizontalAlign, VerticalAlign } from 'jimp';
-const { SANS_32_BLACK } = require('jimp/fonts') as { SANS_32_BLACK: string };
+import Jimp from 'jimp';
 import { extractClaudeFinalResultText, planUsesClaudeStreamJson } from './claude-envelope';
 import { extractCodexAgentMessageText } from './codex-terminal-events';
 import { codexTerminalFailureStatus } from './goal-headless-sentinel';
@@ -124,27 +123,27 @@ export async function renderCanaryImage(
   answerKey: CanaryAnswerKey,
 ): Promise<void> {
   const half = CANARY_SIZE / 2;
-  const image = new Jimp({ width: CANARY_SIZE, height: CANARY_SIZE, color: 0xffffffff });
+  const image = new Jimp(CANARY_SIZE, CANARY_SIZE, 0xffffffff);
   for (const q of answerKey.geometry_questions) {
     const origin = quadrantOrigin(q.id, half);
     const colorHex = CANARY_COLORS_HEX[q.expected_color];
     if (!origin || colorHex === undefined) continue;
-    image.composite(new Jimp({ width: half, height: half, color: colorHex }), origin.x, origin.y);
+    image.composite(new Jimp(half, half, colorHex), origin.x, origin.y);
   }
-  const font = await loadFont(SANS_32_BLACK);
-  image.print({
+  const font = await Jimp.loadFont(Jimp.FONT_SANS_32_BLACK);
+  image.print(
     font,
-    x: 0,
-    y: half - 20,
-    text: {
+    0,
+    half - 20,
+    {
       text: answerKey.text_token,
-      alignmentX: HorizontalAlign.CENTER,
-      alignmentY: VerticalAlign.MIDDLE,
+      alignmentX: Jimp.HORIZONTAL_ALIGN_CENTER,
+      alignmentY: Jimp.VERTICAL_ALIGN_MIDDLE,
     },
-    maxWidth: CANARY_SIZE,
-    maxHeight: 40,
-  });
-  await image.write(outPath as `${string}.${string}`);
+    CANARY_SIZE,
+    40,
+  );
+  await image.writeAsync(outPath);
 }
 
 /** 发给 agent 的一次性能力探测 prompt——非正式任务，明确允许诚实答"看不见"。 */
