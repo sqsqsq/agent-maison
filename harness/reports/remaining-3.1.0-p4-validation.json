@@ -25,8 +25,13 @@
       },
       {
         "file": "harness/reports/remaining-3.1.0-p4-full-meta.json",
-        "bytes": 200,
-        "sha256": "dd9cc6a54f1dde6f652d417664a48896d6bbc5d820b2a40360fa3a4556cb8251"
+        "bytes": 194,
+        "sha256": "d4302690d1176ff8a33b0a852c0691368f2affc006b5b9daee8e79f82f562ec6",
+        "beforeLfNormalization": {
+          "sha256": "dd9cc6a54f1dde6f652d417664a48896d6bbc5d820b2a40360fa3a4556cb8251",
+          "bytes": 200
+        },
+        "note": "Only metadata line endings were normalized to LF for the commit; full.json and full.log were not changed."
       }
     ]
   },
