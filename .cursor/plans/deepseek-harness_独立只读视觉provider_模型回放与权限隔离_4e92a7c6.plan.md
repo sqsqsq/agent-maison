@@ -14,7 +14,7 @@ todos:
     status: completed
   - id: t3-regression-and-desktop-validation
     content: "T3：执行 test:daily 及按影响选取的回归和正式桌面探针；H1 使用任一已配置图像路由，优先非默认，验证模型身份、逐图读取及开发/视觉权限隔离。"
-    status: in_progress
+    status: completed
   - id: t4-declaration-and-delivery
     content: "T4：仅在必要验收成立后交付 visual_provider 声明、能力说明及 agent-adapters OpenSpec 同步，汇总改动、版本、证据与限制；不提交、不打包、不回灌宿主，不修改 6d2e9a47 和 6fd6c8c1"
     status: in_progress
@@ -257,3 +257,10 @@ P4唯一一次根目录官方全量实际覆盖1350组（含全部424个正式�
 本轮仅追加此记录，frontmatter状态与原计划正文未改；提交依用户本次授权，不打包/推送/改版本，不操作真实宿主/手机，不读取或复制凭据，不改写/提交a47、6fd6c8c1、c6ae8b4f三份用户修改及temp/。
 
 本批Claude Code CLI只读复核PASS，实际模型claude-opus-5-5，仅Read/Grep/Glob，无必修项；plan/diff/LF与保护文件哈希核对通过。真实卡死仍由既有45分钟单次调用看门狗兜底，此为测试侧等待上限，生产SLA未变。
+
+
+## 实施记录（2026-11-08，用户裁决收口）
+
+用户裁决按本轮证据收口、原始 FAIL 原件保留。采用e54bffd0官方全量6060/1（1365组，含全部425个正式扩展组）的原始证据；唯一红项为session-slow-gate夹具90秒时限，0297a27a仅改测试两行、定向1/0。按用户本次裁决，发布件内容与e54bffd0相同，据此完成本todo，不把原始FAIL改写为全量绿。最终全绿回执由正式发版release:all内置全量产出，本次不运行测试或发版流程。
+
+本次仅将t3-regression-and-desktop-validation标为completed；t4-declaration-and-delivery保持in_progress，H4未验，不读取凭据或扩称凭据隔离已验。 本次只更新该todo状态并追加本记录，不改计划正文，不打包、不推送、不改版本、不操作宿主。
