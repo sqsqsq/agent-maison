@@ -10,7 +10,7 @@ import { loadCanonicalBlueprint } from '../../scripts/utils/component-blueprint-
 import { deriveChangeUnitFeatureId } from '../../scripts/utils/change-unit-path';
 import { reconcileChangeUnitBlueprintRefs, BLUEPRINT_RECONCILE_LOCK_NAME } from '../../scripts/utils/change-unit-design-preparation';
 import { diagnoseBlueprintSkillAuthority, deriveBlueprintSkillInput } from '../../scripts/utils/blueprint-skill-projection';
-import { writeBackAdmission, reusableDesignQuestioning, questioningDependencyChanges, runUnattendedDesignRepair, designRepairTarget } from '../../scripts/utils/design-repair-unattended';
+import { writeBackAdmission, reusableDesignQuestioning, readDesignQuestioningOriginal, recordDesignRepairInvocation, designRepairInvokeLabel, questioningDependencyChanges, runUnattendedDesignRepair, designRepairTarget, type DesignRepairInvokeOutcome } from '../../scripts/utils/design-repair-unattended';
 import { GoalPhaseRuntime } from '../../scripts/goal-phase-runtime';
 import { ensureRunControl, casAcquireRunOwner } from '../../scripts/utils/goal-run-control';
 import { capturePhaseInvocationSnapshot, diffPhaseInvocationSnapshots } from '../../scripts/utils/phase-write-boundary';
@@ -183,7 +183,74 @@ const cases: Array<{ name: string; group: Group; run: () => Promise<void> }> = [
     assert.equal(Buffer.from(fresh.knowledgeOriginals[relative], 'base64').toString(), asset);
     assert(fs.readFileSync(loaded.canonicalPath).equals(canonical)); assert(!rows.some(row => row.stage === 'published'));
   }),
-}, ...(['allowed', 'outside', 'canonical', 'questioning'] as const).map(mode => ({
+}, ...(['questioner-blueprint', 'questioner-cu', 'unscoped-decline'] as const).map(mode => ({
+  name: `daily design runtime: rejected ${mode} work cannot cross a fresh transaction boundary`, group: 'runtime' as const,
+  run: () => withProject(async root => {
+    const loaded = loadCanonicalBlueprint(root, BLUEPRINT), approved = structuredClone(loaded.blueprint) as Json;
+    const defective = structuredClone(approved), candidateId = 'repair_candidate:' + 'c'.repeat(64);
+    node(defective).acceptance = '原验收需要作者恢复机器结构';
+    if (mode === 'unscoped-decline') defective.decisions_and_gaps.decisions[0].decision_id = candidateId;
+    write(loaded.canonicalPath, defective); reconcileChangeUnitBlueprintRefs(root, BLUEPRINT);
+    const canonical = fs.readFileSync(loaded.canonicalPath);
+    const { input, runDir, rows } = repairInput(root, `daily-rejected-${mode}`, mode === 'unscoped-decline' ? undefined : '恢复原验收，保留批准范围。');
+    const brief = { class: 'B1' as const, items: [{ check: 'design', class: 'B1' as const, codes: [], artifacts: [], basis: candidateId, needs: [] }] };
+    let questionCalls = 0, calls = 0;
+    const draft = path.join(runDir, 'design-repair/component-blueprint.yaml');
+    const invoke: Parameters<typeof runUnattendedDesignRepair>[0]['invoke'] = async (purpose, _prompt, guard) => {
+      assert(guard);
+      const phase = designRepairInvokeLabel(purpose), invokeId = `${phase}-${++calls}`;
+      fs.mkdirSync(path.join(runDir, 'phases', phase, invokeId), { recursive: true });
+      input.emit({ type: 'agent_invoke_start', phase, invoke_id: invokeId, command: 'isolated author or Q substitute' });
+      const doc = read(draft);
+      let output: string | undefined;
+      if (purpose === 'author') {
+        node(doc).acceptance = node(approved).acceptance;
+        if (mode === 'unscoped-decline') {
+          doc.title = 'unauthorized author title';
+          doc.decisions_and_gaps.decisions[0].rationale = 'declined: 无可核实依据的拒修';
+        }
+        write(draft, doc);
+      } else {
+        questionCalls++;
+        if (mode === 'questioner-blueprint') { doc.title = 'unauthorized Q title'; write(draft, doc); }
+        if (mode === 'questioner-cu') {
+          const cu = path.join(runDir, 'design-repair/change-unit.yaml'), value = read(cu);
+          value.description = 'unauthorized Q CU description'; write(cu, value);
+        }
+        const items = structuredClone(approved.review_summary.questioning.items);
+        Object.assign(items.find((item: Json) => item.scope_ref === 'view:logical'), { disposition: 'blocker', answer: '当前原验收未满足，保留否定，不认可拒修。' });
+        output = JSON.stringify({ items });
+      }
+      input.emit({ type: 'agent_invoke_end', phase, invoke_id: invokeId, exit_code: 0 });
+      const outcome: DesignRepairInvokeOutcome = { started: true, invokeId, ok: true, detail: 'isolated author or Q completed', output,
+        preSnapshot: guard.pre, postSnapshot: capturePhaseInvocationSnapshot(guard.resolution, guard.options) };
+      recordDesignRepairInvocation(runDir, purpose, invokeId, outcome);
+      return outcome;
+    };
+    const first = await runUnattendedDesignRepair({ ...input, brief, invoke });
+    assert(first.outcome === (mode === 'unscoped-decline' ? 'failed' : 'violation') && first.step === 'questioning', JSON.stringify(first)); assert.equal(questionCalls, 1);
+    assert(first.reason.includes(mode === 'unscoped-decline' ? '拒修理由未被独立质询' : '调用改了草稿之外的文件'), first.reason);
+    const events = fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    const question = events.find(event => event.type === 'agent_invoke_start' && event.phase === 'design-repair-questioning');
+    const saved = readDesignQuestioningOriginal(runDir, question, events);
+    assert(saved?.completed, 'the regression must contain a real completed Q original');
+    const reusable = reusableDesignQuestioning({ ...saved, projectRoot: root, blueprintPath: draft, blueprint: read(draft) });
+    if (mode === 'unscoped-decline') assert(reusable, 'the scope counter must contain an otherwise usable completed denial');
+    else assert.equal(reusable, null, 'the original pre/post snapshot must invalidate Q writes before any later transaction');
+    let received: { purpose: string; blueprint: Json; cu?: Json } | undefined;
+    const second = await runUnattendedDesignRepair({ ...input, brief, invoke: async purpose => {
+      received = { purpose, blueprint: read(draft), ...(mode === 'questioner-cu' ? { cu: read(path.join(runDir, 'design-repair/change-unit.yaml')) } : {}) };
+      return { started: false, ok: false, detail: 'fresh author receives only authorized baseline' };
+    } });
+    assert(received, JSON.stringify(second)); assert.equal(received.purpose, 'author');
+    assert.equal(received.blueprint.title, defective.title, 'unreviewed or unscoped work must not become the next author baseline');
+    assert.deepEqual(node(received.blueprint).acceptance, node(defective).acceptance, 'rebuild the candidate from the actual canonical baseline');
+    if (mode === 'questioner-cu') assert.notEqual(received.cu!.description, 'unauthorized Q CU description');
+    assert(second.outcome === 'failed' && second.reason.includes('fresh author receives only authorized baseline'), JSON.stringify(second));
+    assert.equal(rows.filter(row => row.stage === 'attempted').length, 2); assert(!rows.some(row => row.stage === 'published'));
+    assert(fs.readFileSync(loaded.canonicalPath).equals(canonical));
+  }),
+})), ...(['allowed', 'outside', 'canonical', 'questioning'] as const).map(mode => ({
   name: `daily design runtime: executor knowledge writer ${mode} preserves the exact author and Q boundary`, group: 'runtime' as const,
   run: () => withProject(async root => {
     const loaded = loadCanonicalBlueprint(root, BLUEPRINT), doc = loaded.blueprint as Json;

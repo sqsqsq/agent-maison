@@ -1,0 +1,1145 @@
+{
+  "sourceCommit": "265540f6a3634b47a80822ff59d3fcea7c3d2f24",
+  "officialFull": {
+    "command": "npm test -- --results-out reports/remaining-3.1.0-p4-t3-full.json --plan-out reports/remaining-3.1.0-p4-t3-full-plan.json --timings-from reports/p4-a21473-changed-final.json",
+    "exitCode": 1,
+    "originalStatus": "FAIL",
+    "scope": "full",
+    "passed": 6045,
+    "failed": 9,
+    "groups": 1361,
+    "formalExpected": 424,
+    "formalMissing": [],
+    "reused": 0,
+    "inputStable": true,
+    "startedAt": "2026-11-08T01:49:13.629Z",
+    "wallMs": 11833848.2969,
+    "finishedAtApprox": "2026-11-08T05:06:27.477Z",
+    "unknownCoverageGroups": 55,
+    "raw": [
+      {
+        "file": "harness/reports/remaining-3.1.0-p4-t3-full.json",
+        "bytes": 134300521,
+        "sha256": "a097eeab1485151c23d2d809acd63b5672a69da23ef1610278f19e0a06ff2a37"
+      },
+      {
+        "file": "harness/reports/remaining-3.1.0-p4-t3-full.log",
+        "bytes": 55763634,
+        "sha256": "5dc78a187701286ce7ddfe6ce0a7313f197fb4269c802800d251887ad678a86a"
+      },
+      {
+        "file": "harness/reports/remaining-3.1.0-p4-t3-full-plan.json",
+        "bytes": 965819,
+        "sha256": "2d7ba99f8fa7ba200c9e3108848a39d480bd65885a0f8f686814a2719f48f007"
+      }
+    ]
+  },
+  "originalFailures": [
+    {
+      "group": "initial-design-progress-recovery",
+      "name": "<suite-worker>",
+      "error": "test case timeout: P4 a21473 original inputs and 6fe679 framework fault share one isolated design construction and formal completion replay\noriginals: D:\\1.code\\agent-maison\\harness\\reports\\test-runtime-control\\failure-8UsIGp"
+    },
+    {
+      "group": "initial-design-repair::[\"d18f6c42 M2 M4 public post-Q pause blocks next and forced continuation delivers complete feedback to a fresh author\"]",
+      "name": "d18f6c42 M2 M4 public post-Q pause blocks next and forced continuation delivers complete feedback to a fresh author",
+      "error": "AssertionError [ERR_ASSERTION]: {\"initialQuestioningCalls\":1,\"current\":{\"blueprintPath\":\"C:\\\\Users\\\\shengqsq\\\\AppData\\\\Local\\\\Temp\\\\mu-JvFMjr\\\\5h\\\\real-chain-u3pfJd\\\\doc\\\\features\\\\ledger-app-blueprint\\\\blueprint\\\\component-blueprint.yaml\",\"candidatesPath\":\"C:\\\\Users\\\\shengqsq\\\\AppData\\\\Local\\\\Temp\\\\mu-JvFMjr\\\\5h\\\\real-chain-u3pfJd\\\\doc\\\\features\\\\ledger-app-blueprint\\\\blueprint\\\\change-unit-candidates.json\",\"blueprintIssues\":[{\"id\":\"blueprint_reader_guide_missing\",\"severity\":\"WARN\",\"path\":\"$.review_summary.reader_guide\",\"message\":\"尚未补写评审说明；按当前设计字段展示。\"}],\"disposition\":{\"problems\":[],\"completionBlocking\":[],\"releaseBlocking\":[],\"disclosed\":[],\"completionEligible\":true,\"releaseReady\":true,\"reasons\":[]},\"kind\":\"author\",\"designRepair\":{\"feature\":\"cu-bGVkZ2VyLWFwcC1ibHVlcHJpbnQAbGVkZ2VyLXJlZnJlc2g\",\"brief\":{\"class\":\"B2\",\"items\":[{\"check\":\"authoritative_content_aligned\",\"codes\":[\"change_unit_schema_invalid\",\"change_unit_provenance_owner_unresolvable\",\"component_blueprint_identity_mismatch\"],\"class\":\"B2\",\"artifacts\":[\"doc/features/ledger-app-blueprint/ledger-refresh/change-unit.yaml\",\"doc/features/ledger-app-blueprint/blueprint/component-blueprint.yaml\"],\"basis\":\"acceptance: component-design: minLength 不符：须 ≥1; 无法通过 owner blueprint 校验 provenance：artifact_sha256 bytes=sha256:f5b476653c95e476cb352c19ecc9f2a0802964b72862dbc26c497064de90ba73 ref=sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\\nComponentBlueprintResolutionError: artifact_sha256 bytes=sha256:f5b476653c95e476cb352c19ecc9f2a0802964b72862dbc26c497064de90ba73 ref=sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\\n来源：doc/features/ledger-app-blueprint/ledger-refresh/change-unit.yaml、doc/features/ledger-app-blueprint/blueprint/component-blueprint.yaml\",\"needs\":[\"canonical CU 未过 schema / 语义门：需要设计 owner 判断；从未完成且无运行/已停住时用 reviseChangeUnitContent 同 ID 修订，运行中 busy；完成后新增交付或拆分/合并/迁移用新 ID + supersedes，补足原义务沿既有同 Feature 恢复\",\"CU 的 owner 蓝图不可解析：需要修蓝图或确认 CU 指向\",\"蓝图缺失、无法解析、身份与引用不符或未过准入：需要修蓝图并重新准入\"]},{\"check\":\"authoritative_content_aligned\",\"codes\":[\"change_unit_schema_invalid\",\"change_unit_provenance_owner_unresolvable\",\"component_blueprint_identity_mismatch\"],\"class\":\"B2\",\"artifacts\":[\"doc/features/ledger-app-blueprint/ledger-refresh/change-unit.yaml\",\"doc/features/ledger-app-blueprint/blueprint/component-blueprint.yaml\"],\"basis\":\"contracts: component-design: minLength 不符：须 ≥1; 无法通过 owner blueprint 校验 provenance：artifact_sha256 bytes=sha256:f5b476653c95e476cb352c19ecc9f2a0802964b72862dbc26c497064de90ba73 ref=sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\\nComponentBlueprintResolutionError: artifact_sha256 bytes=sha256:f5b476653c95e476cb352c19ecc9f2a0802964b72862dbc26c497064de90ba73 ref=sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\\n来源：doc/features/ledger-app-blueprint/ledger-refresh/change-unit.yaml、doc/features/ledger-app-blueprint/blueprint/component-blueprint.yaml\",\"needs\":[\"canonical CU 未过 schema / 语义门：需要设计 owner 判断；从未完成且无运行/已停住时用 reviseChangeUnitContent 同 ID 修订，运行中 busy；完成后新增交付或拆分/合并/迁移用新 ID + supersedes，补足原义务沿既有同 Feature 恢复\",\"CU 的 owner 蓝图不可解析：需要修蓝图或确认 CU 指向\",\"蓝图缺失、无法解析、身份与引用不符或未过准入：需要修蓝图并重新准入\"]}]}},\"progression\":{\"action\":\"blocked\",\"reasons\":[\"ledger-refresh:change_unit_schema_invalid:minLength 不符：须 ≥1\",\"ledger-refresh:change_unit_provenance_owner_unresolvable:无法通过 owner blueprint 校验 provenance：artifact_sha256 bytes=sha256:f5b476653c95e476cb352c19ecc9f2a0802964b72862dbc26c497064de90ba73 ref=sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\",\"ledger-refresh:change_unit_completion_invalid:[change_unit_schema_invalid] minLength 不符：须 ≥1；[change_unit_provenance_owner_unresolvable] 无法通过 owner blueprint 校验 provenance：artifact_sha256 bytes=sha256:f5b476653c95e476cb352c19ecc9f2a0802964b72862dbc26c497064de90ba73 ref=sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\"],\"readySet\":{\"units\":[{\"changeUnit\":{\"artifact\":\"change-unit@1\",\"component_id\":\"ledger\",\"change_unit_id\":\"ledger-refresh\",\"revision\":1,\"priority\":10,\"component_blueprint_ref\":{\"artifact\":\"component-blueprint@1\",\"component_id\":\"ledger\",\"blueprint_id\":\"ledger-app-blueprint\",\"revision\":2,\"source_fingerprint\":\"sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5\",\"artifact_sha256\":\"sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\",\"target\":{\"kind\":\"blueprint\",\"id\":\"ledger-app-blueprint\"}},\"provenance\":{\"source_kind\":\"component-blueprint\",\"source_ref\":\"doc/features/ledger-app-blueprint/blueprint/component-blueprint.yaml#blueprint:ledger-app-blueprint\",\"source_revision\":\"revision-2\",\"observed_at\":\"2026-08-19T12:00:00+08:00\",\"evidence_strength\":\"authoritative\",\"extraction_method\":\"consumer-validated-decomposition\"},\"purpose\":\"Land the approved ledger refresh vertical slice without creating a second runtime authority.\",\"preconditions\":[],\"requires\":[],\"provides\":[{\"provide_id\":\"ledger-refresh-vertical-slice\",\"description\":\"Ledger mutation, publication, consumer refresh, recovery and host seam are constructable.\"}],\"design_refs\":[{\"artifact\":\"component-blueprint@1\",\"component_id\":\"ledger\",\"blueprint_id\":\"ledger-app-blueprint\",\"revision\":2,\"source_fingerprint\":\"sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5\",\"artifact_sha256\":\"sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\",\"target\":{\"kind\":\"node\",\"view_id\":\"logical\",\"id\":\"ledger-domain\"}},{\"artifact\":\"component-blueprint@1\",\"component_id\":\"ledger\",\"blueprint_id\":\"ledger-app-blueprint\",\"revision\":2,\"source_fingerprint\":\"sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5\",\"artifact_sha256\":\"sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\",\"target\":{\"kind\":\"node\",\"view_id\":\"runtime\",\"id\":\"ledger-repository\"}},{\"artifact\":\"component-blueprint@1\",\"component_id\":\"ledger\",\"blueprint_id\":\"ledger-app-blueprint\",\"revision\":2,\"source_fingerprint\":\"sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5\",\"artifact_sha256\":\"sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\",\"target\":{\"kind\":\"node\",\"view_id\":\"runtime\",\"id\":\"ledger-store\"}},{\"artifact\":\"component-blueprint@1\",\"component_id\":\"ledger\",\"blueprint_id\":\"ledger-app-blueprint\",\"revision\":2,\"source_fingerprint\":\"sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5\",\"artifact_sha256\":\"sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\",\"target\":{\"kind\":\"flow\",\"view_id\":\"runtime\",\"id\":\"ledger-refresh-flow\"}},{\"artifact\":\"component-blueprint@1\",\"component_id\":\"ledger\",\"blueprint_id\":\"ledger-app-blueprint\",\"revision\":2,\"source_fingerprint\":\"sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5\",\"artifact_sha256\":\"sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\",\"target\":{\"kind\":\"node\",\"view_id\":\"development\",\"id\":\"ledger-module\"}},{\"artifact\":\"component-blueprint@1\",\"component_id\":\"ledger\",\"blueprint_id\":\"ledger-app-blueprint\",\"revision\":2,\"source_fingerprint\":\"sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5\",\"artifact_sha256\":\"sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\",\"target\":{\"kind\":\"node\",\"view_id\":\"scenarios\",\"id\":\"add-entry-scenario\"}},{\"artifact\":\"component-blueprint@1\",\"component_id\":\"ledger\",\"blueprint_id\":\"ledger-app-blueprint\",\"revision\":2,\"source_fingerprint\":\"sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5\",\"artifact_sha256\":\"sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\",\"target\":{\"kind\":\"relation\",\"id\":\"repository-publishes-store\"}},{\"artifact\":\"component-blueprint@1\",\"component_id\":\"ledger\",\"blueprint_id\":\"ledger-app-blueprint\",\"revision\":2,\"source_fingerprint\":\"sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5\",\"artifact_sha256\":\"sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\",\"target\":{\"kind\":\"relation\",\"id\":\"domain-owned-by-module\"}},{\"artifact\":\"component-blueprint@1\",\"component_id\":\"ledger\",\"blueprint_id\":\"ledger-app-blueprint\",\"revision\":2,\"source_fingerprint\":\"sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5\",\"artifact_sha256\":\"sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\",\"target\":{\"kind\":\"contract\",\"id\":\"create-entry-v1\"}},{\"artifact\":\"component-blueprint@1\",\"component_id\":\"ledger\",\"blueprint_id\":\"ledger-app-blueprint\",\"revision\":2,\"source_fingerprint\":\"sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5\",\"artifact_sha256\":\"sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\",\"target\":{\"kind\":\"decision\",\"id\":\"seam-shape\"}}],\"touches\":[{\"owner\":\"ledger-team\",\"design_ref\":{\"artifact\":\"component-blueprint@1\",\"component_id\":\"ledger\",\"blueprint_id\":\"ledger-app-blueprint\",\"revision\":2,\"source_fingerprint\":\"sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5\",\"artifact_sha256\":\"sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\",\"target\":{\"kind\":\"node\",\"view_id\":\"development\",\"id\":\"ledger-module\"}},\"write_refs\":[\"planned:src/ledger\",\"planned:test/ledger\"]}],\"preserved_invariants\":[{\"invariant_id\":\"repository-commit-before-publication\",\"description\":\"Repository commit remains authoritative and precedes publication.\",\"evidence_refs\":[\"verify:ledger-flow\"]}],\"target_predicates\":[{\"predicate_id\":\"refresh-behavior\",\"role\":\"behavior\",\"description\":\"\",\"provide_ids\":[\"ledger-refresh-vertical-slice\"],\"verification_refs\":[\"verify:ledger-flow\",\"acceptance:AC-1\"]},{\"predicate_id\":\"runtime-owner\",\"role\":\"owner\",\"description\":\"LedgerRepository owns durable ledger state.\",\"provide_ids\":[\"ledger-refresh-vertical-slice\"],\"verification_refs\":[\"verify:state-owner\",\"acceptance:AC-1\"]},{\"predicate_id\":\"page-consumer\",\"role\":\"consumer\",\"description\":\"Ledger page consumes initial and published snapshots.\",\"provide_ids\":[\"ledger-refresh-vertical-slice\"],\"verification_refs\":[\"verify:add-entry-scenario\",\"acceptance:AC-1\"]},{\"predicate_id\":\"source-contract\",\"role\":\"contract\",\"description\":\"The approved create-entry operation and mappings remain authoritative.\",\"provide_ids\":[\"ledger-refresh-vertical-slice\"],\"verification_refs\":[\"verify:create-entry-operation\",\"acceptance:AC-1\"]},{\"predicate_id\":\"repository-provider\",\"role\":\"provider\",\"description\":\"Host LedgerRepository provides LedgerDataSource.\",\"provide_ids\":[\"ledger-refresh-vertical-slice\"],\"verification_refs\":[\"verify:ledger-source-contract\",\"acceptance:AC-1\"]},{\"predicate_id\":\"lifecycle-recovery\",\"role\":\"recovery\",\"description\":\"The store rebuilds from the repository after process recreation.\",\"provide_ids\":[\"ledger-refresh-vertical-slice\"],\"verification_refs\":[\"verify:process-recreation\",\"acceptance:AC-1\"]}],\"verification_refs\":[\"verify:ledger-flow\",\"verify:ledger-source-contract\"],\"safe_intermediate_state\":{\"description\":\"The vertical slice builds and recovers independently while preserving standalone Feature compatibility.\",\"build_validation_refs\":[\"verify:feature-build\"],\"compatibility_refs\":[\"verify:standalone-feature\"],\"recovery_refs\":[\"verify:process-recreation\"]},\"blockers\":[],\"blueprint_id\":\"ledger-app-blueprint\"},\"completion\":{\"state\":\"INVALID\",\"featureId\":\"cu-bGVkZ2VyLWFwcC1ibHVlcHJpbnQAbGVkZ2VyLXJlZnJlc2g\",\"reasons\":[\"[change_unit_schema_invalid] minLength 不符：须 ≥1\",\"[change_unit_provenance_owner_unresolvable] 无法通过 owner blueprint 校验 provenance：artifact_sha256 bytes=sha256:f5b476653c95e476cb352c19ecc9f2a0802964b72862dbc26c497064de90ba73 ref=sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\"]},\"ready\":false,\"blockers\":[{\"id\":\"change_unit_schema_invalid\",\"message\":\"minLength 不符：须 ≥1\",\"legal\":true},{\"id\":\"change_unit_provenance_owner_unresolvable\",\"message\":\"无法通过 owner blueprint 校验 provenance：artifact_sha256 bytes=sha256:f5b476653c95e476cb352c19ecc9f2a0802964b72862dbc26c497064de90ba73 ref=sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\",\"legal\":true},{\"id\":\"change_unit_completion_invalid\",\"message\":\"[change_unit_schema_invalid] minLength 不符：须 ≥1；[change_unit_provenance_owner_unresolvable] 无法通过 owner blueprint 校验 provenance：artifact_sha256 bytes=sha256:f5b476653c95e476cb352c19ecc9f2a0802964b72862dbc26c497064de90ba73 ref=sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\",\"legal\":true}]}],\"ready\":[],\"completionById\":{},\"carryForwardById\":{},\"cycles\":[],\"issues\":[],\"silentProgressStall\":false,\"allCompleted\":false}},\"issues\":[\"acceptance: component-design: minLength 不符：须 ≥1; 无法通过 owner blueprint 校验 provenance：artifact_sha256 bytes=sha256:f5b476653c95e476cb352c19ecc9f2a0802964b72862dbc26c497064de90ba73 ref=sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\\nComponentBlueprintResolutionError: artifact_sha256 bytes=sha256:f5b476653c95e476cb352c19ecc9f2a0802964b72862dbc26c497064de90ba73 ref=sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\\n来源：doc/features/ledger-app-blueprint/ledger-refresh/change-unit.yaml、doc/features/ledger-app-blueprint/blueprint/component-blueprint.yaml\",\"contracts: component-design: minLength 不符：须 ≥1; 无法通过 owner blueprint 校验 provenance：artifact_sha256 bytes=sha256:f5b476653c95e476cb352c19ecc9f2a0802964b72862dbc26c497064de90ba73 ref=sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\\nComponentBlueprintResolutionError: artifact_sha256 bytes=sha256:f5b476653c95e476cb352c19ecc9f2a0802964b72862dbc26c497064de90ba73 ref=sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\\n来源：doc/features/ledger-app-blueprint/ledger-refresh/change-unit.yaml、doc/features/ledger-app-blueprint/blueprint/component-blueprint.yaml\"]}}\n    at scenario (D:\\1.code\\agent-maison\\harness\\tests\\unit\\initial-design-repair.unit.test.ts:480:16)\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async withFreshCuHost (D:\\1.code\\agent-maison\\harness\\tests\\unit\\lifecycle-evolution.unit.test.ts:191:5)\n    at async Object.runSelectedCases (D:\\1.code\\agent-maison\\harness\\tests\\unit\\initial-design-repair.unit.test.ts:1221:11)\n    at async D:\\1.code\\agent-maison\\harness\\tests\\unit-worker.ts:49:22"
+    },
+    {
+      "group": "initial-design-repair::[\"d18f6c42 M3 M4 unpublished new architecture layer stays paused until real candidate progress and retains full feedback\"]",
+      "name": "d18f6c42 M3 M4 unpublished new architecture layer stays paused until real candidate progress and retains full feedback",
+      "error": "AssertionError [ERR_ASSERTION]: {\"initialQuestioningCalls\":1,\"current\":{\"blueprintPath\":\"C:\\\\Users\\\\shengqsq\\\\AppData\\\\Local\\\\Temp\\\\mu-JvFMjr\\\\4s\\\\real-chain-k98RN4\\\\doc\\\\features\\\\ledger-app-blueprint\\\\blueprint\\\\component-blueprint.yaml\",\"candidatesPath\":\"C:\\\\Users\\\\shengqsq\\\\AppData\\\\Local\\\\Temp\\\\mu-JvFMjr\\\\4s\\\\real-chain-k98RN4\\\\doc\\\\features\\\\ledger-app-blueprint\\\\blueprint\\\\change-unit-candidates.json\",\"blueprintIssues\":[{\"id\":\"blueprint_reader_guide_missing\",\"severity\":\"WARN\",\"path\":\"$.review_summary.reader_guide\",\"message\":\"尚未补写评审说明；按当前设计字段展示。\"}],\"disposition\":{\"problems\":[],\"completionBlocking\":[],\"releaseBlocking\":[],\"disclosed\":[],\"completionEligible\":true,\"releaseReady\":true,\"reasons\":[]},\"kind\":\"author\",\"designRepair\":{\"feature\":\"cu-bGVkZ2VyLWFwcC1ibHVlcHJpbnQAbGVkZ2VyLXJlZnJlc2g\",\"brief\":{\"class\":\"B2\",\"items\":[{\"check\":\"authoritative_content_aligned\",\"codes\":[\"change_unit_schema_invalid\",\"change_unit_provenance_owner_unresolvable\",\"component_blueprint_identity_mismatch\"],\"class\":\"B2\",\"artifacts\":[\"doc/features/ledger-app-blueprint/ledger-refresh/change-unit.yaml\",\"doc/features/ledger-app-blueprint/blueprint/component-blueprint.yaml\"],\"basis\":\"acceptance: component-design: minLength 不符：须 ≥1; 无法通过 owner blueprint 校验 provenance：artifact_sha256 bytes=sha256:f5b476653c95e476cb352c19ecc9f2a0802964b72862dbc26c497064de90ba73 ref=sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\\nComponentBlueprintResolutionError: artifact_sha256 bytes=sha256:f5b476653c95e476cb352c19ecc9f2a0802964b72862dbc26c497064de90ba73 ref=sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\\n来源：doc/features/ledger-app-blueprint/ledger-refresh/change-unit.yaml、doc/features/ledger-app-blueprint/blueprint/component-blueprint.yaml\",\"needs\":[\"canonical CU 未过 schema / 语义门：需要设计 owner 判断；从未完成且无运行/已停住时用 reviseChangeUnitContent 同 ID 修订，运行中 busy；完成后新增交付或拆分/合并/迁移用新 ID + supersedes，补足原义务沿既有同 Feature 恢复\",\"CU 的 owner 蓝图不可解析：需要修蓝图或确认 CU 指向\",\"蓝图缺失、无法解析、身份与引用不符或未过准入：需要修蓝图并重新准入\"]},{\"check\":\"authoritative_content_aligned\",\"codes\":[\"change_unit_schema_invalid\",\"change_unit_provenance_owner_unresolvable\",\"component_blueprint_identity_mismatch\"],\"class\":\"B2\",\"artifacts\":[\"doc/features/ledger-app-blueprint/ledger-refresh/change-unit.yaml\",\"doc/features/ledger-app-blueprint/blueprint/component-blueprint.yaml\"],\"basis\":\"contracts: component-design: minLength 不符：须 ≥1; 无法通过 owner blueprint 校验 provenance：artifact_sha256 bytes=sha256:f5b476653c95e476cb352c19ecc9f2a0802964b72862dbc26c497064de90ba73 ref=sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\\nComponentBlueprintResolutionError: artifact_sha256 bytes=sha256:f5b476653c95e476cb352c19ecc9f2a0802964b72862dbc26c497064de90ba73 ref=sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\\n来源：doc/features/ledger-app-blueprint/ledger-refresh/change-unit.yaml、doc/features/ledger-app-blueprint/blueprint/component-blueprint.yaml\",\"needs\":[\"canonical CU 未过 schema / 语义门：需要设计 owner 判断；从未完成且无运行/已停住时用 reviseChangeUnitContent 同 ID 修订，运行中 busy；完成后新增交付或拆分/合并/迁移用新 ID + supersedes，补足原义务沿既有同 Feature 恢复\",\"CU 的 owner 蓝图不可解析：需要修蓝图或确认 CU 指向\",\"蓝图缺失、无法解析、身份与引用不符或未过准入：需要修蓝图并重新准入\"]}]}},\"progression\":{\"action\":\"blocked\",\"reasons\":[\"ledger-refresh:change_unit_schema_invalid:minLength 不符：须 ≥1\",\"ledger-refresh:change_unit_provenance_owner_unresolvable:无法通过 owner blueprint 校验 provenance：artifact_sha256 bytes=sha256:f5b476653c95e476cb352c19ecc9f2a0802964b72862dbc26c497064de90ba73 ref=sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\",\"ledger-refresh:change_unit_completion_invalid:[change_unit_schema_invalid] minLength 不符：须 ≥1；[change_unit_provenance_owner_unresolvable] 无法通过 owner blueprint 校验 provenance：artifact_sha256 bytes=sha256:f5b476653c95e476cb352c19ecc9f2a0802964b72862dbc26c497064de90ba73 ref=sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\"],\"readySet\":{\"units\":[{\"changeUnit\":{\"artifact\":\"change-unit@1\",\"component_id\":\"ledger\",\"change_unit_id\":\"ledger-refresh\",\"revision\":1,\"priority\":10,\"component_blueprint_ref\":{\"artifact\":\"component-blueprint@1\",\"component_id\":\"ledger\",\"blueprint_id\":\"ledger-app-blueprint\",\"revision\":2,\"source_fingerprint\":\"sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5\",\"artifact_sha256\":\"sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\",\"target\":{\"kind\":\"blueprint\",\"id\":\"ledger-app-blueprint\"}},\"provenance\":{\"source_kind\":\"component-blueprint\",\"source_ref\":\"doc/features/ledger-app-blueprint/blueprint/component-blueprint.yaml#blueprint:ledger-app-blueprint\",\"source_revision\":\"revision-2\",\"observed_at\":\"2026-08-19T12:00:00+08:00\",\"evidence_strength\":\"authoritative\",\"extraction_method\":\"consumer-validated-decomposition\"},\"purpose\":\"Land the approved ledger refresh vertical slice without creating a second runtime authority.\",\"preconditions\":[],\"requires\":[],\"provides\":[{\"provide_id\":\"ledger-refresh-vertical-slice\",\"description\":\"Ledger mutation, publication, consumer refresh, recovery and host seam are constructable.\"}],\"design_refs\":[{\"artifact\":\"component-blueprint@1\",\"component_id\":\"ledger\",\"blueprint_id\":\"ledger-app-blueprint\",\"revision\":2,\"source_fingerprint\":\"sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5\",\"artifact_sha256\":\"sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\",\"target\":{\"kind\":\"node\",\"view_id\":\"logical\",\"id\":\"ledger-domain\"}},{\"artifact\":\"component-blueprint@1\",\"component_id\":\"ledger\",\"blueprint_id\":\"ledger-app-blueprint\",\"revision\":2,\"source_fingerprint\":\"sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5\",\"artifact_sha256\":\"sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\",\"target\":{\"kind\":\"node\",\"view_id\":\"runtime\",\"id\":\"ledger-repository\"}},{\"artifact\":\"component-blueprint@1\",\"component_id\":\"ledger\",\"blueprint_id\":\"ledger-app-blueprint\",\"revision\":2,\"source_fingerprint\":\"sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5\",\"artifact_sha256\":\"sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\",\"target\":{\"kind\":\"node\",\"view_id\":\"runtime\",\"id\":\"ledger-store\"}},{\"artifact\":\"component-blueprint@1\",\"component_id\":\"ledger\",\"blueprint_id\":\"ledger-app-blueprint\",\"revision\":2,\"source_fingerprint\":\"sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5\",\"artifact_sha256\":\"sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\",\"target\":{\"kind\":\"flow\",\"view_id\":\"runtime\",\"id\":\"ledger-refresh-flow\"}},{\"artifact\":\"component-blueprint@1\",\"component_id\":\"ledger\",\"blueprint_id\":\"ledger-app-blueprint\",\"revision\":2,\"source_fingerprint\":\"sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5\",\"artifact_sha256\":\"sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\",\"target\":{\"kind\":\"node\",\"view_id\":\"development\",\"id\":\"ledger-module\"}},{\"artifact\":\"component-blueprint@1\",\"component_id\":\"ledger\",\"blueprint_id\":\"ledger-app-blueprint\",\"revision\":2,\"source_fingerprint\":\"sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5\",\"artifact_sha256\":\"sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\",\"target\":{\"kind\":\"node\",\"view_id\":\"scenarios\",\"id\":\"add-entry-scenario\"}},{\"artifact\":\"component-blueprint@1\",\"component_id\":\"ledger\",\"blueprint_id\":\"ledger-app-blueprint\",\"revision\":2,\"source_fingerprint\":\"sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5\",\"artifact_sha256\":\"sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\",\"target\":{\"kind\":\"relation\",\"id\":\"repository-publishes-store\"}},{\"artifact\":\"component-blueprint@1\",\"component_id\":\"ledger\",\"blueprint_id\":\"ledger-app-blueprint\",\"revision\":2,\"source_fingerprint\":\"sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5\",\"artifact_sha256\":\"sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\",\"target\":{\"kind\":\"relation\",\"id\":\"domain-owned-by-module\"}},{\"artifact\":\"component-blueprint@1\",\"component_id\":\"ledger\",\"blueprint_id\":\"ledger-app-blueprint\",\"revision\":2,\"source_fingerprint\":\"sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5\",\"artifact_sha256\":\"sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\",\"target\":{\"kind\":\"contract\",\"id\":\"create-entry-v1\"}},{\"artifact\":\"component-blueprint@1\",\"component_id\":\"ledger\",\"blueprint_id\":\"ledger-app-blueprint\",\"revision\":2,\"source_fingerprint\":\"sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5\",\"artifact_sha256\":\"sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\",\"target\":{\"kind\":\"decision\",\"id\":\"seam-shape\"}}],\"touches\":[{\"owner\":\"ledger-team\",\"design_ref\":{\"artifact\":\"component-blueprint@1\",\"component_id\":\"ledger\",\"blueprint_id\":\"ledger-app-blueprint\",\"revision\":2,\"source_fingerprint\":\"sha256:a0185cdd8ca8118f9fbe075f05cb53cfb9e15e1429004c0dd75ca907ba7aa6b5\",\"artifact_sha256\":\"sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\",\"target\":{\"kind\":\"node\",\"view_id\":\"development\",\"id\":\"ledger-module\"}},\"write_refs\":[\"planned:src/ledger\",\"planned:test/ledger\"]}],\"preserved_invariants\":[{\"invariant_id\":\"repository-commit-before-publication\",\"description\":\"Repository commit remains authoritative and precedes publication.\",\"evidence_refs\":[\"verify:ledger-flow\"]}],\"target_predicates\":[{\"predicate_id\":\"refresh-behavior\",\"role\":\"behavior\",\"description\":\"\",\"provide_ids\":[\"ledger-refresh-vertical-slice\"],\"verification_refs\":[\"verify:ledger-flow\",\"acceptance:AC-1\"]},{\"predicate_id\":\"runtime-owner\",\"role\":\"owner\",\"description\":\"LedgerRepository owns durable ledger state.\",\"provide_ids\":[\"ledger-refresh-vertical-slice\"],\"verification_refs\":[\"verify:state-owner\",\"acceptance:AC-1\"]},{\"predicate_id\":\"page-consumer\",\"role\":\"consumer\",\"description\":\"Ledger page consumes initial and published snapshots.\",\"provide_ids\":[\"ledger-refresh-vertical-slice\"],\"verification_refs\":[\"verify:add-entry-scenario\",\"acceptance:AC-1\"]},{\"predicate_id\":\"source-contract\",\"role\":\"contract\",\"description\":\"The approved create-entry operation and mappings remain authoritative.\",\"provide_ids\":[\"ledger-refresh-vertical-slice\"],\"verification_refs\":[\"verify:create-entry-operation\",\"acceptance:AC-1\"]},{\"predicate_id\":\"repository-provider\",\"role\":\"provider\",\"description\":\"Host LedgerRepository provides LedgerDataSource.\",\"provide_ids\":[\"ledger-refresh-vertical-slice\"],\"verification_refs\":[\"verify:ledger-source-contract\",\"acceptance:AC-1\"]},{\"predicate_id\":\"lifecycle-recovery\",\"role\":\"recovery\",\"description\":\"The store rebuilds from the repository after process recreation.\",\"provide_ids\":[\"ledger-refresh-vertical-slice\"],\"verification_refs\":[\"verify:process-recreation\",\"acceptance:AC-1\"]}],\"verification_refs\":[\"verify:ledger-flow\",\"verify:ledger-source-contract\"],\"safe_intermediate_state\":{\"description\":\"The vertical slice builds and recovers independently while preserving standalone Feature compatibility.\",\"build_validation_refs\":[\"verify:feature-build\"],\"compatibility_refs\":[\"verify:standalone-feature\"],\"recovery_refs\":[\"verify:process-recreation\"]},\"blockers\":[],\"blueprint_id\":\"ledger-app-blueprint\"},\"completion\":{\"state\":\"INVALID\",\"featureId\":\"cu-bGVkZ2VyLWFwcC1ibHVlcHJpbnQAbGVkZ2VyLXJlZnJlc2g\",\"reasons\":[\"[change_unit_schema_invalid] minLength 不符：须 ≥1\",\"[change_unit_provenance_owner_unresolvable] 无法通过 owner blueprint 校验 provenance：artifact_sha256 bytes=sha256:f5b476653c95e476cb352c19ecc9f2a0802964b72862dbc26c497064de90ba73 ref=sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\"]},\"ready\":false,\"blockers\":[{\"id\":\"change_unit_schema_invalid\",\"message\":\"minLength 不符：须 ≥1\",\"legal\":true},{\"id\":\"change_unit_provenance_owner_unresolvable\",\"message\":\"无法通过 owner blueprint 校验 provenance：artifact_sha256 bytes=sha256:f5b476653c95e476cb352c19ecc9f2a0802964b72862dbc26c497064de90ba73 ref=sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\",\"legal\":true},{\"id\":\"change_unit_completion_invalid\",\"message\":\"[change_unit_schema_invalid] minLength 不符：须 ≥1；[change_unit_provenance_owner_unresolvable] 无法通过 owner blueprint 校验 provenance：artifact_sha256 bytes=sha256:f5b476653c95e476cb352c19ecc9f2a0802964b72862dbc26c497064de90ba73 ref=sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\",\"legal\":true}]}],\"ready\":[],\"completionById\":{},\"carryForwardById\":{},\"cycles\":[],\"issues\":[],\"silentProgressStall\":false,\"allCompleted\":false}},\"issues\":[\"acceptance: component-design: minLength 不符：须 ≥1; 无法通过 owner blueprint 校验 provenance：artifact_sha256 bytes=sha256:f5b476653c95e476cb352c19ecc9f2a0802964b72862dbc26c497064de90ba73 ref=sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\\nComponentBlueprintResolutionError: artifact_sha256 bytes=sha256:f5b476653c95e476cb352c19ecc9f2a0802964b72862dbc26c497064de90ba73 ref=sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\\n来源：doc/features/ledger-app-blueprint/ledger-refresh/change-unit.yaml、doc/features/ledger-app-blueprint/blueprint/component-blueprint.yaml\",\"contracts: component-design: minLength 不符：须 ≥1; 无法通过 owner blueprint 校验 provenance：artifact_sha256 bytes=sha256:f5b476653c95e476cb352c19ecc9f2a0802964b72862dbc26c497064de90ba73 ref=sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\\nComponentBlueprintResolutionError: artifact_sha256 bytes=sha256:f5b476653c95e476cb352c19ecc9f2a0802964b72862dbc26c497064de90ba73 ref=sha256:339adc9c74f433a74ea085f8dccf2490d4c7424e66bbd184a70a9e613e25a439\\n来源：doc/features/ledger-app-blueprint/ledger-refresh/change-unit.yaml、doc/features/ledger-app-blueprint/blueprint/component-blueprint.yaml\"]}}\n    at scenario (D:\\1.code\\agent-maison\\harness\\tests\\unit\\initial-design-repair.unit.test.ts:480:16)\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async withFreshCuHost (D:\\1.code\\agent-maison\\harness\\tests\\unit\\lifecycle-evolution.unit.test.ts:191:5)\n    at async Object.runSelectedCases (D:\\1.code\\agent-maison\\harness\\tests\\unit\\initial-design-repair.unit.test.ts:1221:11)\n    at async D:\\1.code\\agent-maison\\harness\\tests\\unit-worker.ts:49:22"
+    },
+    {
+      "group": "initial-design-repair::[\"9f6c2e41 bounded session replay preserves pending partial work and never reuses A1 or Q1\"]",
+      "name": "9f6c2e41 bounded session replay preserves pending partial work and never reuses A1 or Q1",
+      "error": "AssertionError [ERR_ASSERTION]: the first valid denial with a missing reference must return directly to its author\n    at scenario (D:\\1.code\\agent-maison\\harness\\tests\\unit\\initial-design-repair.unit.test.ts:440:18)\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async withFreshCuHost (D:\\1.code\\agent-maison\\harness\\tests\\unit\\lifecycle-evolution.unit.test.ts:191:5)\n    at async Object.runSelectedCases (D:\\1.code\\agent-maison\\harness\\tests\\unit\\initial-design-repair.unit.test.ts:1221:11)\n    at async D:\\1.code\\agent-maison\\harness\\tests\\unit-worker.ts:49:22"
+    },
+    {
+      "group": "session-execution-handoff",
+      "name": "P1 R2 real request CLI executes once and exposes the same running facts before owner-bound interruption",
+      "error": "AssertionError [ERR_ASSERTION]: false == true\n    at Object.run (D:\\1.code\\agent-maison\\harness\\tests\\unit\\session-execution-handoff.unit.test.ts:148:54)\n    at async Object.runSelectedCases (D:\\1.code\\agent-maison\\harness\\tests\\unit\\session-execution-handoff.unit.test.ts:769:11)\n    at async D:\\1.code\\agent-maison\\harness\\tests\\unit-worker.ts:49:22"
+    },
+    {
+      "group": "session-slow-gate",
+      "name": "1804 original CLI slow gate survives external reporter kill without overlapping gates, author replay or duplicate final completion",
+      "error": "Error: AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:\n\n  (rows(path.join(root, 'observations/native-gates.jsonl')).some(event => event.kind === 'enter'))\n\n    at interruptedReport (D:\\1.code\\agent-maison\\harness\\tests\\unit\\session-slow-gate.integration.test.ts:154:9)\n    at async execute (D:\\1.code\\agent-maison\\harness\\tests\\unit\\session-slow-gate.integration.test.ts:194:9)\n    at async Object.runSelectedCases (D:\\1.code\\agent-maison\\harness\\tests\\unit\\session-slow-gate.integration.test.ts:240:9)\n    at async D:\\1.code\\agent-maison\\harness\\tests\\unit-worker.ts:49:22\nIsolated acceptance root: C:\\Users\\shengqsq\\AppData\\Local\\Temp\\mu-JvFMjr\\2u\\maison-slow-gate-H02glR\\host\n    at execute (D:\\1.code\\agent-maison\\harness\\tests\\unit\\session-slow-gate.integration.test.ts:228:11)\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async Object.runSelectedCases (D:\\1.code\\agent-maison\\harness\\tests\\unit\\session-slow-gate.integration.test.ts:240:9)\n    at async D:\\1.code\\agent-maison\\harness\\tests\\unit-worker.ts:49:22\ntest child terminated by signal: SIGTERM\noriginals: D:\\1.code\\agent-maison\\harness\\reports\\test-runtime-control\\failure-lsLPDI"
+    },
+    {
+      "group": "lifecycle-evolution::[\"lifecycle-evolution: daily current completion: real Node delivery and shared unfinished-run, record and evidence guards\"]",
+      "name": "lifecycle-evolution: daily current completion: real Node delivery and shared unfinished-run, record and evidence guards",
+      "error": "Error: AssertionError [ERR_ASSERTION]: ut self-check did not publish its result: \n\n[harness] BLOCKER: [attended-goal-context] session lease 已过期或非法\n\n    at selfCheck (D:\\1.code\\agent-maison\\harness\\tests\\unit\\session-transport-parity.unit.test.ts:180:11)\n    at work (D:\\1.code\\agent-maison\\harness\\tests\\unit\\session-transport-parity.unit.test.ts:249:9)\n    at runGoal (D:\\1.code\\agent-maison\\harness\\tests\\unit\\session-transport-parity.unit.test.ts:267:22)\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async Object.currentCompletion [as run] (D:\\1.code\\agent-maison\\harness\\tests\\unit\\lifecycle-evolution-daily.unit.test.ts:31:5)\n    at async Object.runSelectedCases (D:\\1.code\\agent-maison\\harness\\tests\\unit\\lifecycle-evolution.unit.test.ts:897:7)\n    at async D:\\1.code\\agent-maison\\harness\\tests\\unit-worker.ts:49:22\noriginals: D:\\1.code\\agent-maison\\harness\\reports\\test-runtime-control\\failure-iZTyT7\n    at Object.currentCompletion [as run] (D:\\1.code\\agent-maison\\harness\\tests\\unit\\lifecycle-evolution-daily.unit.test.ts:94:11)\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async Object.runSelectedCases (D:\\1.code\\agent-maison\\harness\\tests\\unit\\lifecycle-evolution.unit.test.ts:897:7)\n    at async D:\\1.code\\agent-maison\\harness\\tests\\unit-worker.ts:49:22"
+    },
+    {
+      "group": "design-authority-repair-content::[\"design-authority-repair: S16-c3f 已完成质询对当前必需scope给合法blocker：保留完整材料，拒绝降低验收的草稿且不发布\"]",
+      "name": "design-authority-repair: S16-c3f 已完成质询对当前必需scope给合法blocker：保留完整材料，拒绝降低验收的草稿且不发布",
+      "error": "AssertionError [ERR_ASSERTION]: Expected values to be loosely deep-equal:\n\n[\n  'design-repair-author',\n  'design-repair-questioning'\n]\n\nshould loosely deep-equal\n\n[\n  'design-repair-author',\n  'design-repair-questioning',\n  'design-repair-author',\n  'design-repair-questioning'\n]\n    at D:\\1.code\\agent-maison\\harness\\tests\\unit\\design-authority-repair.unit.test.ts:1215:14\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async withFreshCuHost (D:\\1.code\\agent-maison\\harness\\tests\\unit\\lifecycle-evolution.unit.test.ts:191:5)\n    at async runSelectedCases (D:\\1.code\\agent-maison\\harness\\tests\\unit\\design-authority-repair.unit.test.ts:1637:7)\n    at async Object.runSelectedCases (D:\\1.code\\agent-maison\\harness\\tests\\unit\\design-authority-repair-content.unit.test.ts:9:20)\n    at async D:\\1.code\\agent-maison\\harness\\tests\\unit-worker.ts:49:22"
+    },
+    {
+      "group": "design-authority-repair-content::[\"design-authority-repair: S16-c8 发布前 canonical 被别处改动（非阻断建议）：质询调用之后、发布之前另一写入者改了 canonical 蓝图 → 基线复核不等，不发布\"]",
+      "name": "<suite-worker>",
+      "error": "test invocation timeout: C:\\Users\\shengqsq\\AppData\\Local\\Temp\\mu-JvFMjr\\35\\real-chain-Adu8wG\noriginals: D:\\1.code\\agent-maison\\harness\\reports\\test-runtime-control\\failure-f3nKpw"
+    }
+  ],
+  "currentStatus": "All nine original failures resolved by the affected-case evidence below; final changed PASS. Original official full remains FAIL. P4 t3 remains in_progress; t5/t6 pending.",
+  "frozenSource": {
+    "harness/scripts/utils/design-repair-unattended.ts": "9d427b294e6db67dc0f0eba3b54d45d679271c2587bd2e0c15ef8a65900dcecc",
+    "harness/tests/unit/design-authority-repair-daily.unit.test.ts": "89cf6f58056d677268b13a62a07e0c60c820529b8a27a7241f7e14a4a2a69685",
+    "harness/tests/unit/design-authority-repair.unit.test.ts": "72738f018948188dbac061cf1dd1ee58c2101c1640368024df7db4c2ba477a70",
+    "harness/tests/unit/initial-design-progress-recovery.unit.test.ts": "8f85944cd292d88a39bc26ecf2d1ceaf4e4647556856e57486f906b906f94ac2",
+    "harness/tests/unit/initial-design-repair.unit.test.ts": "6f25c5dfd75eda0eb12350f993510954d95b23f94906634d28c638823d99e986",
+    "harness/tests/unit/session-execution-handoff.unit.test.ts": "a452c527a7551a06ef29149dafce7604e38bd8e39cb92032bf035761ee3db524",
+    "harness/tests/unit/session-slow-gate.integration.test.ts": "a5a9f46270108da9efe1507bb52c576b588da2e0e4fabe13babf2bfb59646300",
+    "harness/tests/unit/session-transport-parity.unit.test.ts": "215a2b9920ca5efa51db9595d0dc3d65a0b207517a7913e52b6a1a0d3248ae56"
+  },
+  "inventory": {
+    "original": {
+      "daily": 937,
+      "formal": 424
+    },
+    "final": {
+      "daily": 940,
+      "formal": 425
+    },
+    "formalAdded": [
+      "initial-design-repair::[\"P4 signed session Q CU mutation is rejected and the next transaction rebuilds canonical auxiliary work\"]"
+    ],
+    "dailyAdded": [
+      "design-authority-repair-runtime::[\"daily design runtime: rejected questioner-blueprint work cannot cross a fresh transaction boundary\"]",
+      "design-authority-repair-runtime::[\"daily design runtime: rejected questioner-cu work cannot cross a fresh transaction boundary\"]",
+      "design-authority-repair-runtime::[\"daily design runtime: rejected unscoped-decline work cannot cross a fresh transaction boundary\"]"
+    ],
+    "formalRemoved": [],
+    "dailyRemoved": [],
+    "crossScope": []
+  },
+  "previousRedCoverage": {
+    "prior24": [
+      {
+        "number": 1,
+        "originalName": "9f6c2e41 initial construction births spec and plan with unresolved definitions",
+        "targetName": "9f6c2e41 initial construction births spec and plan with unresolved definitions",
+        "current": {
+          "group": "initial-design-delivery::[\"9f6c2e41 initial construction births spec and plan with unresolved definitions\"]",
+          "ok": true
+        }
+      },
+      {
+        "number": 2,
+        "originalName": "9f6c2e41 initial construction returns an empty executable chain to its scope owner",
+        "targetName": "9f6c2e41 initial construction returns an empty executable chain to its scope owner",
+        "current": {
+          "group": "initial-design-delivery::[\"9f6c2e41 initial construction returns an empty executable chain to its scope owner\"]",
+          "ok": true
+        }
+      },
+      {
+        "number": 3,
+        "originalName": "e2a4145e r4 repair questioning real process retains a final answer over 64KiB",
+        "targetName": "e2a4145e r4 repair questioning real process retains a final answer over 64KiB",
+        "current": {
+          "group": "initial-design-repair::[\"e2a4145e r4 repair questioning real process retains a final answer over 64KiB\"]",
+          "ok": true
+        }
+      },
+      {
+        "number": 4,
+        "originalName": "e2a4145e r4 initial questioning execute-request-large preserves real completed originals and author delivery",
+        "targetName": "e2a4145e r4 initial questioning execute-request-large preserves real completed originals and author delivery",
+        "current": {
+          "group": "initial-design-repair::[\"e2a4145e r4 initial questioning execute-request-large preserves real completed originals and author delivery\"]",
+          "ok": true
+        }
+      },
+      {
+        "number": 5,
+        "originalName": "e2a4145e r4 initial questioning large-process preserves real completed originals and author delivery",
+        "targetName": "e2a4145e r4 initial questioning large-process preserves real completed originals and author delivery",
+        "current": {
+          "group": "initial-design-repair::[\"e2a4145e r4 initial questioning large-process preserves real completed originals and author delivery\"]",
+          "ok": true
+        }
+      },
+      {
+        "number": 6,
+        "originalName": "e2a4145e initial questioning same-scopes uses real signed feedback author and independent recheck",
+        "targetName": "e2a4145e initial questioning same-scopes uses real signed feedback author and independent recheck",
+        "current": {
+          "group": "initial-design-repair::[\"e2a4145e initial questioning same-scopes uses real signed feedback author and independent recheck\"]",
+          "ok": true
+        }
+      },
+      {
+        "number": 7,
+        "originalName": "e2a4145e initial questioning smaller-scopes uses real signed feedback author and independent recheck",
+        "targetName": "e2a4145e initial questioning smaller-scopes uses real signed feedback author and independent recheck",
+        "current": {
+          "group": "initial-design-repair::[\"e2a4145e initial questioning smaller-scopes uses real signed feedback author and independent recheck\"]",
+          "ok": true
+        }
+      },
+      {
+        "number": 8,
+        "originalName": "395 阶段内 OOBE：真实检查归因和 summary 接回原门，等待解除先补 UT；超时不进 testing",
+        "targetName": "395 阶段内 OOBE：真实检查归因和 summary 接回原门，等待解除先补 UT；超时不进 testing",
+        "current": {
+          "group": "goal-runner-testing-integrity-early::[\"395 阶段内 OOBE：真实检查归因和 summary 接回原门，等待解除先补 UT；超时不进 testing\"]",
+          "ok": true
+        }
+      },
+      {
+        "number": 9,
+        "originalName": "8d4e6a21 连续回放：旧控制依赖 + 正式 provider override/rebase 保留原业务证据 → 新 provider review 完整恢复",
+        "targetName": "8d4e6a21 连续回放：旧控制依赖 + 正式 provider override/rebase 保留原业务证据 → 新 provider review 完整恢复",
+        "current": {
+          "group": "goal-runner-testing-integrity-late::[\"8d4e6a21 连续回放：旧控制依赖 + 正式 provider override/rebase 保留原业务证据 → 新 provider review 完整恢复\"]",
+          "ok": true
+        }
+      },
+      {
+        "number": 10,
+        "originalName": "8d4e6a21 连续回放：旧控制依赖 + 正式 provider override/rebase + genuine-source-change 实际责任恢复 → 新 provider review 完整恢复",
+        "targetName": "8d4e6a21 连续回放：旧控制依赖 + 正式 provider override/rebase + genuine-source-change 实际责任恢复 → 新 provider review 完整恢复",
+        "current": {
+          "group": "goal-runner-testing-integrity-late::[\"8d4e6a21 连续回放：旧控制依赖 + 正式 provider override/rebase + genuine-source-change 实际责任恢复 → 新 provider review 完整恢复\"]",
+          "ok": true
+        }
+      },
+      {
+        "number": 11,
+        "originalName": "8d4e6a21 连续回放：旧控制依赖 + 正式 provider override/rebase 保留原业务证据 → 新 provider review 缺原始证据恢复反例",
+        "targetName": "8d4e6a21 连续回放：旧控制依赖 + 正式 provider override/rebase 保留原业务证据 → 新 provider review 缺原始证据恢复反例",
+        "current": {
+          "group": "goal-runner-testing-integrity-late::[\"8d4e6a21 连续回放：旧控制依赖 + 正式 provider override/rebase 保留原业务证据 → 新 provider review 缺原始证据恢复反例\"]",
+          "ok": true
+        }
+      },
+      {
+        "number": 12,
+        "originalName": "P1 R3 execute recovery preserves real settled failure and completion-cleanup facts instead of trusting raw terminal text",
+        "targetName": "P1 R3 execute recovery preserves real settled failure and completion-cleanup facts instead of trusting raw terminal text",
+        "current": {
+          "group": "session-execution-handoff",
+          "ok": true
+        }
+      },
+      {
+        "number": 13,
+        "originalName": "P1 R2 real request CLI executes once and exposes the same running facts before owner-bound interruption",
+        "targetName": "P1 R2 real request CLI executes once and exposes the same running facts before owner-bound interruption",
+        "current": {
+          "group": "session-execution-handoff",
+          "ok": false
+        }
+      },
+      {
+        "number": 14,
+        "originalName": "1804 a bound gate survives interruption and resumes without another accepted author invocation",
+        "targetName": "1804 interruption before gate handback commits checks once and preserves the accepted author",
+        "current": {
+          "group": "session-execution-handoff",
+          "ok": true
+        }
+      },
+      {
+        "number": 15,
+        "originalName": "P3 native executor preserves the actual canary tool deadline without reviving a default author phase deadline",
+        "targetName": "P3 native executor preserves the actual canary tool deadline without reviving a default author phase deadline",
+        "current": {
+          "group": "session-execution-handoff",
+          "ok": true
+        }
+      },
+      {
+        "number": 16,
+        "originalName": "P1 detached executor: old phase timeout is not an author deadline and invocation output stays truthful",
+        "targetName": "P1 detached executor: old phase timeout is not an author deadline and invocation output stays truthful",
+        "current": {
+          "group": "goal-phase-runtime",
+          "ok": true
+        }
+      },
+      {
+        "number": 17,
+        "originalName": "RC-4 verifier subject：时钟漂移不换代，业务内容变化必须换代",
+        "targetName": "RC-4 verifier subject：时钟漂移不换代，业务内容变化必须换代",
+        "current": {
+          "group": "real-chain-seams::[\"RC-4 verifier subject：时钟漂移不换代，业务内容变化必须换代\"]",
+          "ok": true
+        }
+      },
+      {
+        "number": 18,
+        "originalName": "RC-8c plan 增量小节缺失：原始 FAIL 仍在，plan 通过、进披露清单，链继续推进（A7）",
+        "targetName": "RC-8c plan 增量小节缺失：原始 FAIL 仍在，plan 通过、进披露清单，链继续推进（A7）",
+        "current": {
+          "group": "real-chain-seams::[\"RC-8c plan 增量小节缺失：原始 FAIL 仍在，plan 通过、进披露清单，链继续推进（A7）\"]",
+          "ok": true
+        }
+      },
+      {
+        "number": 19,
+        "originalName": "RC-8d plan 增量小节为空：原始 FAIL 仍在，plan 通过、进披露清单，链继续推进（A7）",
+        "targetName": "RC-8d plan 增量小节为空：原始 FAIL 仍在，plan 通过、进披露清单，链继续推进（A7）",
+        "current": {
+          "group": "real-chain-seams::[\"RC-8d plan 增量小节为空：原始 FAIL 仍在，plan 通过、进披露清单，链继续推进（A7）\"]",
+          "ok": true
+        }
+      },
+      {
+        "number": 20,
+        "originalName": "S6 排除内容已被实现 / 排除元素已写进产品",
+        "targetName": "S6 排除内容已被实现 / 排除元素已写进产品",
+        "current": {
+          "group": "reliability-scenarios-runtime::[\"S6 排除内容已被实现 / 排除元素已写进产品\"]",
+          "ok": true
+        }
+      },
+      {
+        "number": 21,
+        "originalName": "S7 非关键描述冲突 / 冲突 A（屏 id 当元素 id）",
+        "targetName": "S7 非关键描述冲突 / 冲突 A（屏 id 当元素 id）",
+        "current": {
+          "group": "reliability-scenarios-runtime::[\"S7 非关键描述冲突 / 冲突 A（屏 id 当元素 id）\",\"S7 非关键描述冲突 / 冲突 B（F1 优先级，作者材料原有）\"]",
+          "ok": true
+        }
+      },
+      {
+        "number": 22,
+        "originalName": "S7 非关键描述冲突 / 冲突 B（F1 优先级，作者材料原有）",
+        "targetName": "S7 非关键描述冲突 / 冲突 B（F1 优先级，作者材料原有）",
+        "current": {
+          "group": "reliability-scenarios-runtime::[\"S7 非关键描述冲突 / 冲突 A（屏 id 当元素 id）\",\"S7 非关键描述冲突 / 冲突 B（F1 优先级，作者材料原有）\"]",
+          "ok": true
+        }
+      },
+      {
+        "number": 23,
+        "originalName": "S11 真实产品回归 / 回退后修好",
+        "targetName": "S11 真实产品回归 / 回退后修好",
+        "current": {
+          "group": "reliability-scenarios-runtime::[\"S11 真实产品回归 / 回退后修好\"]",
+          "ok": true
+        }
+      },
+      {
+        "number": 24,
+        "originalName": "design-authority-repair: S16-c3f 已完成质询对当前必需scope给合法blocker：保留完整材料，拒绝降低验收的草稿且不发布",
+        "targetName": "design-authority-repair: S16-c3f 已完成质询对当前必需scope给合法blocker：保留完整材料，拒绝降低验收的草稿且不发布",
+        "current": {
+          "group": "design-authority-repair-content::[\"design-authority-repair: S16-c3f 已完成质询对当前必需scope给合法blocker：保留完整材料，拒绝降低验收的草稿且不发布\"]",
+          "ok": false
+        }
+      }
+    ],
+    "old27": [
+      {
+        "id": "F03",
+        "name": "179a73 CR-001 real runner repairs original fixture bytes, preserves facts and raw FAIL through independent refutation; real UT adopts unchanged assertions and rejects missing or stale adoption",
+        "targetName": "179a73 CR-001 real runner repairs original fixture bytes, preserves facts and raw FAIL through independent refutation; real UT adopts unchanged assertions and rejects missing or stale adoption",
+        "currentGroups": [
+          "responsibility-host-replay::[\"179a73 CR-001 real runner repairs original fixture bytes, preserves facts and raw FAIL through independent refutation; real UT adopts unchanged assertions and rejects missing or stale adoption\"]"
+        ],
+        "cases": [
+          {
+            "name": "179a73 CR-001 real runner repairs original fixture bytes, preserves facts and raw FAIL through independent refutation; real UT adopts unchanged assertions and rejects missing or stale adoption",
+            "group": "responsibility-host-replay::[\"179a73 CR-001 real runner repairs original fixture bytes, preserves facts and raw FAIL through independent refutation; real UT adopts unchanged assertions and rejects missing or stale adoption\"]",
+            "ok": true
+          }
+        ]
+      },
+      {
+        "id": "F07",
+        "name": "P2 review R1 process initial Q reuses only actual unchanged invocation originals across a new runtime",
+        "targetName": "P2 review R1 process initial Q reuses only actual unchanged invocation originals across a new runtime",
+        "currentGroups": [
+          "initial-design-delivery::[\"P2 review R1 process initial Q reuses only actual unchanged invocation originals across a new runtime\"]"
+        ],
+        "cases": [
+          {
+            "name": "P2 review R1 process initial Q reuses only actual unchanged invocation originals across a new runtime",
+            "group": "initial-design-delivery::[\"P2 review R1 process initial Q reuses only actual unchanged invocation originals across a new runtime\"]",
+            "ok": true
+          }
+        ]
+      },
+      {
+        "id": "F29",
+        "name": "P1 R2 real request CLI executes once and exposes the same running facts before owner-bound interruption",
+        "targetName": "P1 R2 real request CLI executes once and exposes the same running facts before owner-bound interruption",
+        "currentGroups": [
+          "session-execution-handoff"
+        ],
+        "cases": [
+          {
+            "name": "P1 R2 real request CLI executes once and exposes the same running facts before owner-bound interruption",
+            "group": "session-execution-handoff",
+            "ok": false
+          }
+        ]
+      },
+      {
+        "id": "F30",
+        "name": "1804 real gate ignores a reused live PID without killing it and actually runs its next gate",
+        "targetName": "1804 real gate ignores a reused live PID without killing it and actually runs its next gate",
+        "currentGroups": [
+          "session-execution-handoff"
+        ],
+        "cases": [
+          {
+            "name": "1804 real gate ignores a reused live PID without killing it and actually runs its next gate",
+            "group": "session-execution-handoff",
+            "ok": true
+          }
+        ]
+      },
+      {
+        "id": "F31",
+        "name": "1804 a bound gate survives interruption and resumes without another accepted author invocation",
+        "targetName": "1804 interruption before gate handback commits checks once and preserves the accepted author",
+        "currentGroups": [
+          "session-execution-handoff"
+        ],
+        "cases": [
+          {
+            "name": "1804 interruption before gate handback commits checks once and preserves the accepted author",
+            "group": "session-execution-handoff",
+            "ok": true
+          }
+        ]
+      },
+      {
+        "id": "F32",
+        "name": "1804 original CLI slow gate survives external reporter kill without overlapping gates, author replay or duplicate final completion",
+        "targetName": "1804 original CLI slow gate survives external reporter kill without overlapping gates, author replay or duplicate final completion",
+        "currentGroups": [
+          "session-slow-gate"
+        ],
+        "cases": [
+          {
+            "name": "1804 original CLI slow gate survives external reporter kill without overlapping gates, author replay or duplicate final completion",
+            "group": "session-slow-gate",
+            "ok": false
+          }
+        ]
+      },
+      {
+        "id": "F40",
+        "name": "real-chain 正例：spec→testing 六阶段真实 harness 全链 PASS + closed",
+        "targetName": "real-chain 正例：spec→testing 六阶段真实 harness 全链 PASS + closed",
+        "currentGroups": [
+          "real-chain::[\"real-chain 正例：spec→testing 六阶段真实 harness 全链 PASS + closed\"]"
+        ],
+        "cases": [
+          {
+            "name": "real-chain 正例：spec→testing 六阶段真实 harness 全链 PASS + closed",
+            "group": "real-chain::[\"real-chain 正例：spec→testing 六阶段真实 harness 全链 PASS + closed\"]",
+            "ok": true
+          }
+        ]
+      },
+      {
+        "id": "F41",
+        "name": "RC-1 plan 起步：待创建预测不拖垮绑定，未实现的预测位置只披露",
+        "targetName": "RC-1 plan 起步：待创建预测不拖垮绑定，未实现的预测位置只披露",
+        "currentGroups": [
+          "real-chain-seams::[\"RC-1 plan 起步：待创建预测不拖垮绑定，未实现的预测位置只披露\"]"
+        ],
+        "cases": [
+          {
+            "name": "RC-1 plan 起步：待创建预测不拖垮绑定，未实现的预测位置只披露",
+            "group": "real-chain-seams::[\"RC-1 plan 起步：待创建预测不拖垮绑定，未实现的预测位置只披露\"]",
+            "ok": true
+          }
+        ]
+      },
+      {
+        "id": "F42",
+        "name": "<suite-runtime>",
+        "targetName": "<suite-runtime>",
+        "currentGroups": [
+          "real-chain-seams::[\"RC-1 plan 起步：待创建预测不拖垮绑定，未实现的预测位置只披露\"]"
+        ],
+        "cases": [
+          {
+            "group": "real-chain-seams::[\"RC-1 plan 起步：待创建预测不拖垮绑定，未实现的预测位置只披露\"]",
+            "ok": true
+          }
+        ]
+      },
+      {
+        "id": "F43",
+        "name": "RC-3 UT 在链上真写测试：coding 不 stale；上游源码带施工归属且豁免只给 coding",
+        "targetName": "RC-3 UT 在链上真写测试：coding 不 stale；上游源码带施工归属且豁免只给 coding",
+        "currentGroups": [
+          "real-chain-seams::[\"RC-3 UT 在链上真写测试：coding 不 stale；上游源码带施工归属且豁免只给 coding\"]"
+        ],
+        "cases": [
+          {
+            "name": "RC-3 UT 在链上真写测试：coding 不 stale；上游源码带施工归属且豁免只给 coding",
+            "group": "real-chain-seams::[\"RC-3 UT 在链上真写测试：coding 不 stale；上游源码带施工归属且豁免只给 coding\"]",
+            "ok": true
+          }
+        ]
+      },
+      {
+        "id": "F44",
+        "name": "RC-4 verifier subject：时钟漂移不换代，业务内容变化必须换代",
+        "targetName": "RC-4 verifier subject：时钟漂移不换代，业务内容变化必须换代",
+        "currentGroups": [
+          "real-chain-seams::[\"RC-4 verifier subject：时钟漂移不换代，业务内容变化必须换代\"]"
+        ],
+        "cases": [
+          {
+            "name": "RC-4 verifier subject：时钟漂移不换代，业务内容变化必须换代",
+            "group": "real-chain-seams::[\"RC-4 verifier subject：时钟漂移不换代，业务内容变化必须换代\"]",
+            "ok": true
+          }
+        ]
+      },
+      {
+        "id": "F45",
+        "name": "RC-8c plan 增量小节缺失：原始 FAIL 仍在，plan 通过、进披露清单，链继续推进（A7）",
+        "targetName": "RC-8c plan 增量小节缺失：原始 FAIL 仍在，plan 通过、进披露清单，链继续推进（A7）",
+        "currentGroups": [
+          "real-chain-seams::[\"RC-8c plan 增量小节缺失：原始 FAIL 仍在，plan 通过、进披露清单，链继续推进（A7）\"]"
+        ],
+        "cases": [
+          {
+            "name": "RC-8c plan 增量小节缺失：原始 FAIL 仍在，plan 通过、进披露清单，链继续推进（A7）",
+            "group": "real-chain-seams::[\"RC-8c plan 增量小节缺失：原始 FAIL 仍在，plan 通过、进披露清单，链继续推进（A7）\"]",
+            "ok": true
+          }
+        ]
+      },
+      {
+        "id": "F46",
+        "name": "<suite-runtime>",
+        "targetName": "<suite-runtime>",
+        "currentGroups": [
+          "real-chain-seams::[\"RC-8c plan 增量小节缺失：原始 FAIL 仍在，plan 通过、进披露清单，链继续推进（A7）\"]"
+        ],
+        "cases": [
+          {
+            "group": "real-chain-seams::[\"RC-8c plan 增量小节缺失：原始 FAIL 仍在，plan 通过、进披露清单，链继续推进（A7）\"]",
+            "ok": true
+          }
+        ]
+      },
+      {
+        "id": "F47",
+        "name": "RC-8d plan 增量小节为空：原始 FAIL 仍在，plan 通过、进披露清单，链继续推进（A7）",
+        "targetName": "RC-8d plan 增量小节为空：原始 FAIL 仍在，plan 通过、进披露清单，链继续推进（A7）",
+        "currentGroups": [
+          "real-chain-seams::[\"RC-8d plan 增量小节为空：原始 FAIL 仍在，plan 通过、进披露清单，链继续推进（A7）\"]"
+        ],
+        "cases": [
+          {
+            "name": "RC-8d plan 增量小节为空：原始 FAIL 仍在，plan 通过、进披露清单，链继续推进（A7）",
+            "group": "real-chain-seams::[\"RC-8d plan 增量小节为空：原始 FAIL 仍在，plan 通过、进披露清单，链继续推进（A7）\"]",
+            "ok": true
+          }
+        ]
+      },
+      {
+        "id": "F48",
+        "name": "<suite-runtime>",
+        "targetName": "<suite-runtime>",
+        "currentGroups": [
+          "real-chain-seams::[\"RC-8d plan 增量小节为空：原始 FAIL 仍在，plan 通过、进披露清单，链继续推进（A7）\"]"
+        ],
+        "cases": [
+          {
+            "group": "real-chain-seams::[\"RC-8d plan 增量小节为空：原始 FAIL 仍在，plan 通过、进披露清单，链继续推进（A7）\"]",
+            "ok": true
+          }
+        ]
+      },
+      {
+        "id": "F49",
+        "name": "RC-9 testing 回退 coding：review/ut 重验、再进 testing（coding 承接 ut 本 run 产出的测试文件）",
+        "targetName": "RC-9 testing 回退 coding：review/ut 重验、再进 testing（coding 承接 ut 本 run 产出的测试文件）",
+        "currentGroups": [
+          "real-chain-seams::[\"RC-9 testing 回退 coding：review/ut 重验、再进 testing（coding 承接 ut 本 run 产出的测试文件）\"]"
+        ],
+        "cases": [
+          {
+            "name": "RC-9 testing 回退 coding：review/ut 重验、再进 testing（coding 承接 ut 本 run 产出的测试文件）",
+            "group": "real-chain-seams::[\"RC-9 testing 回退 coding：review/ut 重验、再进 testing（coding 承接 ut 本 run 产出的测试文件）\"]",
+            "ok": true
+          }
+        ]
+      },
+      {
+        "id": "F50",
+        "name": "<suite-runtime>",
+        "targetName": "<suite-runtime>",
+        "currentGroups": [
+          "real-chain-seams::[\"RC-9 testing 回退 coding：review/ut 重验、再进 testing（coding 承接 ut 本 run 产出的测试文件）\"]"
+        ],
+        "cases": [
+          {
+            "group": "real-chain-seams::[\"RC-9 testing 回退 coding：review/ut 重验、再进 testing（coding 承接 ut 本 run 产出的测试文件）\"]",
+            "ok": true
+          }
+        ]
+      },
+      {
+        "id": "F51",
+        "name": "RC-9b ut 产品断言失败回退 coding：诊断 verifier 签发、coding 次轮 PASS、ut 重验",
+        "targetName": "RC-9b ut 产品断言失败回退 coding：诊断 verifier 签发、coding 次轮 PASS、ut 重验",
+        "currentGroups": [
+          "real-chain-seams::[\"RC-9b ut 产品断言失败回退 coding：诊断 verifier 签发、coding 次轮 PASS、ut 重验\"]"
+        ],
+        "cases": [
+          {
+            "name": "RC-9b ut 产品断言失败回退 coding：诊断 verifier 签发、coding 次轮 PASS、ut 重验",
+            "group": "real-chain-seams::[\"RC-9b ut 产品断言失败回退 coding：诊断 verifier 签发、coding 次轮 PASS、ut 重验\"]",
+            "ok": true
+          }
+        ]
+      },
+      {
+        "id": "F52",
+        "name": "<suite-runtime>",
+        "targetName": "<suite-runtime>",
+        "currentGroups": [
+          "real-chain-seams::[\"RC-9b ut 产品断言失败回退 coding：诊断 verifier 签发、coding 次轮 PASS、ut 重验\"]"
+        ],
+        "cases": [
+          {
+            "group": "real-chain-seams::[\"RC-9b ut 产品断言失败回退 coding：诊断 verifier 签发、coding 次轮 PASS、ut 重验\"]",
+            "ok": true
+          }
+        ]
+      },
+      {
+        "id": "F53",
+        "name": "RC-13 UT audit上游缺口：实际产物读取、逐条核实、责任coding修复与原UT正式复验",
+        "targetName": "RC-13 UT audit上游缺口：实际产物读取、逐条核实、责任coding修复与原UT正式复验",
+        "currentGroups": [
+          "real-chain-seams::[\"RC-13 UT audit上游缺口：实际产物读取、逐条核实、责任coding修复与原UT正式复验\"]"
+        ],
+        "cases": [
+          {
+            "name": "RC-13 UT audit上游缺口：实际产物读取、逐条核实、责任coding修复与原UT正式复验",
+            "group": "real-chain-seams::[\"RC-13 UT audit上游缺口：实际产物读取、逐条核实、责任coding修复与原UT正式复验\"]",
+            "ok": true
+          }
+        ]
+      },
+      {
+        "id": "F54",
+        "name": "<suite-runtime>",
+        "targetName": "<suite-runtime>",
+        "currentGroups": [
+          "real-chain-seams::[\"RC-13 UT audit上游缺口：实际产物读取、逐条核实、责任coding修复与原UT正式复验\"]"
+        ],
+        "cases": [
+          {
+            "group": "real-chain-seams::[\"RC-13 UT audit上游缺口：实际产物读取、逐条核实、责任coding修复与原UT正式复验\"]",
+            "ok": true
+          }
+        ]
+      },
+      {
+        "id": "F55",
+        "name": "<suite-worker>",
+        "targetName": "<suite-worker>",
+        "currentGroups": [
+          "real-chain-seams::[\"RC-12 upstream design-decline: current artifact → verifier → owner → original coding recheck\"]"
+        ],
+        "cases": [
+          {
+            "group": "real-chain-seams::[\"RC-12 upstream design-decline: current artifact → verifier → owner → original coding recheck\"]",
+            "ok": true
+          }
+        ]
+      },
+      {
+        "id": "F63",
+        "name": "S6 排除内容已被实现 / 排除元素已写进产品",
+        "targetName": "S6 排除内容已被实现 / 排除元素已写进产品",
+        "currentGroups": [
+          "reliability-scenarios-runtime::[\"S6 排除内容已被实现 / 排除元素已写进产品\"]"
+        ],
+        "cases": [
+          {
+            "name": "S6 排除内容已被实现 / 排除元素已写进产品",
+            "group": "reliability-scenarios-runtime::[\"S6 排除内容已被实现 / 排除元素已写进产品\"]",
+            "ok": true
+          }
+        ]
+      },
+      {
+        "id": "F64",
+        "name": "S7 非关键描述冲突 / 冲突 A（屏 id 当元素 id）",
+        "targetName": "S7 非关键描述冲突 / 冲突 A（屏 id 当元素 id）",
+        "currentGroups": [
+          "reliability-scenarios-runtime::[\"S7 非关键描述冲突 / 冲突 A（屏 id 当元素 id）\",\"S7 非关键描述冲突 / 冲突 B（F1 优先级，作者材料原有）\"]"
+        ],
+        "cases": [
+          {
+            "name": "S7 非关键描述冲突 / 冲突 A（屏 id 当元素 id）",
+            "group": "reliability-scenarios-runtime::[\"S7 非关键描述冲突 / 冲突 A（屏 id 当元素 id）\",\"S7 非关键描述冲突 / 冲突 B（F1 优先级，作者材料原有）\"]",
+            "ok": true
+          }
+        ]
+      },
+      {
+        "id": "F65",
+        "name": "S7 非关键描述冲突 / 冲突 B（F1 优先级，作者材料原有）",
+        "targetName": "S7 非关键描述冲突 / 冲突 B（F1 优先级，作者材料原有）",
+        "currentGroups": [
+          "reliability-scenarios-runtime::[\"S7 非关键描述冲突 / 冲突 A（屏 id 当元素 id）\",\"S7 非关键描述冲突 / 冲突 B（F1 优先级，作者材料原有）\"]"
+        ],
+        "cases": [
+          {
+            "name": "S7 非关键描述冲突 / 冲突 B（F1 优先级，作者材料原有）",
+            "group": "reliability-scenarios-runtime::[\"S7 非关键描述冲突 / 冲突 A（屏 id 当元素 id）\",\"S7 非关键描述冲突 / 冲突 B（F1 优先级，作者材料原有）\"]",
+            "ok": true
+          }
+        ]
+      },
+      {
+        "id": "F66",
+        "name": "S11 真实产品回归 / 回退后修好",
+        "targetName": "S11 真实产品回归 / 回退后修好",
+        "currentGroups": [
+          "reliability-scenarios-runtime::[\"S11 真实产品回归 / 回退后修好\"]"
+        ],
+        "cases": [
+          {
+            "name": "S11 真实产品回归 / 回退后修好",
+            "group": "reliability-scenarios-runtime::[\"S11 真实产品回归 / 回退后修好\"]",
+            "ok": true
+          }
+        ]
+      },
+      {
+        "id": "F67",
+        "name": "design-authority-repair: S16-c3f 已完成质询对当前必需scope给合法blocker：保留完整材料，拒绝降低验收的草稿且不发布",
+        "targetName": "design-authority-repair: S16-c3f 已完成质询对当前必需scope给合法blocker：保留完整材料，拒绝降低验收的草稿且不发布",
+        "currentGroups": [
+          "design-authority-repair-content::[\"design-authority-repair: S16-c3f 已完成质询对当前必需scope给合法blocker：保留完整材料，拒绝降低验收的草稿且不发布\"]"
+        ],
+        "cases": [
+          {
+            "name": "design-authority-repair: S16-c3f 已完成质询对当前必需scope给合法blocker：保留完整材料，拒绝降低验收的草稿且不发布",
+            "group": "design-authority-repair-content::[\"design-authority-repair: S16-c3f 已完成质询对当前必需scope给合法blocker：保留完整材料，拒绝降低验收的草稿且不发布\"]",
+            "ok": false
+          }
+        ]
+      }
+    ]
+  },
+  "sourceCommitMeaning": "Main baseline at official full start; final runtime files are bound by frozenSource hashes, unchanged through the final changed run.",
+  "changed": {
+    "command": "npm run test:changed -- --workers 4 --results-out reports/p4-t3-changed-accepted.json --plan-out reports/p4-t3-changed-accepted-plan.json --timings-from reports/remaining-3.1.0-p4-t3-full.json",
+    "exitCode": 0,
+    "originalStatus": "PASS",
+    "scope": "changed",
+    "passed": 2360,
+    "failed": 0,
+    "groups": 599,
+    "reused": 341,
+    "formalNotExecutedByChanged": 425,
+    "typecheckPassed": true,
+    "inputStable": true,
+    "inputSnapshot": "162d35f7fd5108e0e223993438a9335af0bbdc215197a05d5f6e4008fee0e196",
+    "endingSnapshotId": "162d35f7fd5108e0e223993438a9335af0bbdc215197a05d5f6e4008fee0e196",
+    "wallMs": 5501712.1667,
+    "unknownCoverageGroups": 40,
+    "raw": [
+      {
+        "file": "harness/reports/p4-t3-changed-accepted.json",
+        "bytes": 53404243,
+        "sha256": "dcf9a231f9af6cb048f0a75535046ecb2cd065bbb34bba51b239eb07bdb28ed6"
+      },
+      {
+        "file": "harness/reports/p4-t3-changed-accepted.log",
+        "bytes": 7942362,
+        "sha256": "3f2e13b86f5223c7104ceaecad5432ca6757b109c2c7f259cbf0d620daf48487"
+      },
+      {
+        "file": "harness/reports/p4-t3-changed-accepted-plan.json",
+        "bytes": 3304565,
+        "sha256": "1cc55d9969a5bdf086bf7231f49d671e92aafa5e92722c3c18ffedf9d6883020"
+      }
+    ]
+  },
+  "targeted": [
+    {
+      "file": "harness/reports/p4-t3-m2m3-attribution.json",
+      "bytes": 1464,
+      "sha256": "e3a0dcbe8a19a5a391bc9b6b3d74655e7e52cd70a173d288a9cd7c1f55287d50",
+      "exitCode": 0,
+      "passed": 2,
+      "failed": 0,
+      "cases": [
+        "d18f6c42 M2 M4 public post-Q pause blocks next and forced continuation delivers complete feedback to a fresh author",
+        "d18f6c42 M3 M4 unpublished new architecture layer stays paused until real candidate progress and retains full feedback"
+      ]
+    },
+    {
+      "file": "harness/reports/p4-t3-bounded-verified.json",
+      "bytes": 1014,
+      "sha256": "4840462d3dafa843872622db6d62f4c6313b1f7045fa3f81890086d8400cf142",
+      "exitCode": 0,
+      "passed": 1,
+      "failed": 0,
+      "cases": [
+        "9f6c2e41 bounded session replay preserves pending partial work and never reuses A1 or Q1"
+      ]
+    },
+    {
+      "file": "harness/reports/p4-t3-session-handoff.json",
+      "bytes": 12257,
+      "sha256": "ec374da4acebfdbe5195774911fce3d8aee3d30c4579deb463a0356ec08bae34",
+      "exitCode": 0,
+      "passed": 29,
+      "failed": 0,
+      "cases": [
+        "P1 R3 execute recovery preserves real settled failure and completion-cleanup facts instead of trusting raw terminal text",
+        "P1 R2 real request CLI executes once and exposes the same running facts before owner-bound interruption",
+        "P1 running observations reuse native facts and owner-bound interruption preserves writes without declaring completion",
+        "1804 real CLI junction project-root aliases share one signed request and waiting report without duplicate invocation",
+        "1804 real next recovers request commit throw and external kill before signing without another invocation or force",
+        "1804 real gate ignores a reused live PID without killing it and actually runs its next gate",
+        "1804 real CLI resumes a gate whose PID was reused by a SYSTEM process without killing it",
+        "1804 session calls are excluded from legacy process cleanup while genuine unclosed headless invocations remain protected",
+        "1804 junction run material paths allow missing directories but reject parent escape and final symlinks",
+        "1804 report input excludes only its exact current-fence file while neighboring run materials stay in the guarded snapshot",
+        "1804 report archive precedes observed writes and replay freezes the original post after an observation crash",
+        "1804 unqueryable old gate identity waits without a fake harness end and later validates the accepted author",
+        "1804 interruption before gate handback commits checks once and preserves the accepted author",
+        "1804 cooperative owner re-sign preserves the original attempt, deadline and pre-snapshot while rejecting the old unconsumed report",
+        "1804 unsigned material cannot dispatch; replaying committed reads preserves request bytes, deadline, snapshot and invocation count",
+        "1804 handoff retains frozen device/provider identifiers and opaque credential references while excluding raw secret and ambient values",
+        "1804 wrong phase, invalid report and stale owner fence reject before report or attribution writes",
+        "1804 signed event identity mismatch and modified request bytes reject without side effects",
+        "1804 accepted report attributes writes against the issued pre-snapshot and duplicate reports do not recount or reattribute",
+        "P3 native executor preserves the actual canary tool deadline without reviving a default author phase deadline",
+        "P3 author deadline ignores old default phase fields and actual canary tool deadline preserves its original issue instant",
+        "1804 same-fence expired and orphaned reports time out once without physical kill or validation eligibility",
+        "1804 waiting and failed reports remain truthful and a later retry or invalidation removes validation-only eligibility",
+        "1804 crash after attribution or report material preserves exactly one write observation and one accepted report",
+        "1804 production session entry duplicate next/report and wrong-phase report preserve the same dispatch and formal gates",
+        "1804 production session accepted report survives a gate interruption and resumes validation without author reinvocation",
+        "P1 production sessions do not inherit a default deadline from the old phase timeout",
+        "1804 production waiting report preserves the original condition and only explicit continuation retries its author",
+        "P1 production next reuses an unreported session beyond an old phase timeout without resigning it"
+      ]
+    },
+    {
+      "file": "harness/reports/p4-t3-slow-gate.json",
+      "bytes": 1109,
+      "sha256": "773355ef2c07769784e3b53b9a73fd34988cf96e67983b6014ea1e0d8dff03f9",
+      "exitCode": 0,
+      "passed": 1,
+      "failed": 0,
+      "cases": [
+        "1804 original CLI slow gate survives external reporter kill without overlapping gates, author replay or duplicate final completion"
+      ]
+    },
+    {
+      "file": "harness/reports/p4-t3-lifecycle-daily-fixed.json",
+      "bytes": 1094,
+      "sha256": "9dc40d840a1226179ba08afd3bda47ea153e9abcc6bb9cf2ada64878a5d3bf4c",
+      "exitCode": 0,
+      "passed": 1,
+      "failed": 0,
+      "cases": [
+        "lifecycle-evolution: daily current completion: real Node delivery and shared unfinished-run, record and evidence guards"
+      ]
+    },
+    {
+      "file": "harness/reports/p4-t3-s16-verified.json",
+      "bytes": 2099,
+      "sha256": "913baaab9cc74d2e6edeba566044ff315c1014e727379c0ebcf121336d8ef2af",
+      "exitCode": 0,
+      "passed": 2,
+      "failed": 0,
+      "cases": [
+        "design-authority-repair: S16-c3f 已完成质询对当前必需scope给合法blocker：保留完整材料，拒绝降低验收的草稿且不发布",
+        "design-authority-repair: S16-c8 发布前 canonical 被别处改动（非阻断建议）：质询调用之后、发布之前另一写入者改了 canonical 蓝图 → 基线复核不等，不发布"
+      ]
+    },
+    {
+      "file": "harness/reports/p4-t3-daily-final-attribution.json",
+      "bytes": 8512,
+      "sha256": "900841c6a63b01d2db11b8b4fb3b943983f35b0b6b4328ef209ed063e7fa8fd6",
+      "exitCode": 0,
+      "passed": 19,
+      "failed": 0,
+      "cases": [
+        "daily design content: original requirement dispatch ignores the retired personal B1 switch and preserves authority",
+        "daily design content: actual malformed authority is diagnosed and the owner repair restores projection",
+        "daily design content: author self-reported admission cannot hide missing required design evidence",
+        "daily design content: independent Q reuse requires a completed read-only original and retains a real blocker",
+        "daily design content: changing only a knowledge asset invalidates positive Q while retaining real denial",
+        "daily design runtime: failed unpublished non-knowledge transaction ends before same-run knowledge repair archives fresh originals",
+        "daily design runtime: rejected questioner-blueprint work cannot cross a fresh transaction boundary",
+        "daily design runtime: rejected questioner-cu work cannot cross a fresh transaction boundary",
+        "daily design runtime: rejected unscoped-decline work cannot cross a fresh transaction boundary",
+        "daily design runtime: executor knowledge writer allowed preserves the exact author and Q boundary",
+        "daily design runtime: executor knowledge writer outside preserves the exact author and Q boundary",
+        "daily design runtime: executor knowledge writer canonical preserves the exact author and Q boundary",
+        "daily design runtime: executor knowledge writer questioning preserves the exact author and Q boundary",
+        "daily design runtime: snapshot distinguishes authorized draft and own heartbeat from protected input writes",
+        "daily design runtime: unreadable protected input is unverifiable rather than clean",
+        "daily design runtime: a newly referenced normally excluded input remains an unknown original",
+        "daily design runtime: unresolved containment cannot publish or start questioning",
+        "daily design runtime: failed second lock releases owned locks and retains the borrowed feature lock",
+        "daily design runtime: copied canonical bytes cannot invent a publication transaction"
+      ]
+    },
+    {
+      "file": "harness/reports/p4-t3-session-q-verified.json",
+      "bytes": 1043,
+      "sha256": "b46b9ce7f6f369f1f5fb004ec17aa897e777ebe385eb471060a09028d709e41b",
+      "exitCode": 0,
+      "passed": 1,
+      "failed": 0,
+      "cases": [
+        "P4 signed session Q CU mutation is rejected and the next transaction rebuilds canonical auxiliary work"
+      ]
+    }
+  ],
+  "resolutions": [
+    {
+      "originalGroup": "initial-design-progress-recovery",
+      "originalName": "<suite-worker>",
+      "label": "组合90分钟超时",
+      "classification": "测试预算",
+      "rootCauseAndRepair": "12-worker官方轮次超时仍有真实阶段进展；仅长单例复用现有120分钟suite预算",
+      "verification": "harness/reports/p4-t3-changed-accepted.json",
+      "status": "passed"
+    },
+    {
+      "originalGroup": "initial-design-repair::[\"d18f6c42 M2 M4 public post-Q pause blocks next and forced continuation delivers complete feedback to a fresh author\"]",
+      "originalName": "d18f6c42 M2 M4 public post-Q pause blocks next and forced continuation delivers complete feedback to a fresh author",
+      "label": "M2",
+      "classification": "生产回归",
+      "rootCauseAndRepair": "失败事务重建重置候选；冻结材料漏否定；原Q完成历史未跨事务承接",
+      "verification": "harness/reports/p4-t3-m2m3-attribution.json",
+      "status": "passed"
+    },
+    {
+      "originalGroup": "initial-design-repair::[\"d18f6c42 M3 M4 unpublished new architecture layer stays paused until real candidate progress and retains full feedback\"]",
+      "originalName": "d18f6c42 M3 M4 unpublished new architecture layer stays paused until real candidate progress and retains full feedback",
+      "label": "M3",
+      "classification": "生产回归",
+      "rootCauseAndRepair": "同M2，并丢失未发布CU/架构候选",
+      "verification": "harness/reports/p4-t3-m2m3-attribution.json",
+      "status": "passed"
+    },
+    {
+      "originalGroup": "initial-design-repair::[\"9f6c2e41 bounded session replay preserves pending partial work and never reuses A1 or Q1\"]",
+      "originalName": "9f6c2e41 bounded session replay preserves pending partial work and never reuses A1 or Q1",
+      "label": "bounded replay",
+      "classification": "生产回归及测试旧假设",
+      "rootCauseAndRepair": "同M2；旧单attempted断言改为两次独立原件事务",
+      "verification": "harness/reports/p4-t3-bounded-verified.json",
+      "status": "passed"
+    },
+    {
+      "originalGroup": "session-execution-handoff",
+      "originalName": "P1 R2 real request CLI executes once and exposes the same running facts before owner-bound interruption",
+      "label": "P1 R2 real CLI",
+      "classification": "测试时序",
+      "rootCauseAndRepair": "native30秒自退先于真实owner-bound interrupt；等待真实事件，保原看门狗",
+      "verification": "harness/reports/p4-t3-session-handoff.json",
+      "status": "passed"
+    },
+    {
+      "originalGroup": "session-slow-gate",
+      "originalName": "1804 original CLI slow gate survives external reporter kill without overlapping gates, author replay or duplicate final completion",
+      "label": "slow gate",
+      "classification": "测试时序",
+      "rootCauseAndRepair": "固定30秒未等到实际gate enter；改等实际gate和进程绑定",
+      "verification": "harness/reports/p4-t3-slow-gate.json",
+      "status": "passed"
+    },
+    {
+      "originalGroup": "lifecycle-evolution::[\"lifecycle-evolution: daily current completion: real Node delivery and shared unfinished-run, record and evidence guards\"]",
+      "originalName": "lifecycle-evolution: daily current completion: real Node delivery and shared unfinished-run, record and evidence guards",
+      "label": "lifecycle current completion",
+      "classification": "测试客户端",
+      "rootCauseAndRepair": "手工session同步selfcheck堵续租；异步execFile按生产20秒续同一60秒租约",
+      "verification": "harness/reports/p4-t3-lifecycle-daily-fixed.json",
+      "status": "passed"
+    },
+    {
+      "originalGroup": "design-authority-repair-content::[\"design-authority-repair: S16-c3f 已完成质询对当前必需scope给合法blocker：保留完整材料，拒绝降低验收的草稿且不发布\"]",
+      "originalName": "design-authority-repair: S16-c3f 已完成质询对当前必需scope给合法blocker：保留完整材料，拒绝降低验收的草稿且不发布",
+      "label": "S16-c3f",
+      "classification": "生产回归",
+      "rootCauseAndRepair": "同M2；保留完整否定、原验收与A,Q,A,Q无改善暂停",
+      "verification": "harness/reports/p4-t3-s16-verified.json",
+      "status": "passed"
+    },
+    {
+      "originalGroup": "design-authority-repair-content::[\"design-authority-repair: S16-c8 发布前 canonical 被别处改动（非阻断建议）：质询调用之后、发布之前另一写入者改了 canonical 蓝图 → 基线复核不等，不发布\"]",
+      "originalName": "<suite-worker>",
+      "label": "S16-c8",
+      "classification": "测试夹具",
+      "rootCauseAndRepair": "每轮Q反复注入外部canonical变化；单次写入后替身作者waiting，仍核拒绝发布和外部字节不变",
+      "verification": "harness/reports/p4-t3-s16-verified.json",
+      "status": "passed"
+    }
+  ],
+  "reviewRepair": {
+    "classification": "P1 real authorization direct regression, fixed within existing design-repair module",
+    "repair": "Q readonly candidates use the existing signed pre_snapshot and returned post_snapshot; resume consumes the original attribution before author work; auxiliary carry requires the actual Q preimage hashes; original B1 scope stays enforced. No new persistent state, protocol, gate or halt reason.",
+    "positiveEvidence": [
+      "harness/reports/p4-t3-daily-final-attribution.json",
+      "harness/reports/p4-t3-session-q-verified.json",
+      "harness/reports/p4-t3-m2m3-attribution.json"
+    ],
+    "reviews": {
+      "file": "harness/reports/remaining-3.1.0-p4-t3-reviews.json",
+      "bytes": 22233,
+      "sha256": "999a7ce56b22e8d76a3c2fe08d8d81dd12a39b402d7e32c598d774ef59a1c6e7"
+    }
+  },
+  "mutations": [
+    {
+      "description": "omit Q readonly inputs from existing pre_snapshot",
+      "expectedExitCode": 1,
+      "actualExitCode": 1,
+      "expectedFailures": [
+        {
+          "name": "P4 signed session Q CU mutation is rejected and the next transaction rebuilds canonical auxiliary work",
+          "error": "AssertionError [ERR_ASSERTION]: the signed Q request must bind the CU preimage using the existing snapshot"
+        }
+      ],
+      "raw": {
+        "file": "harness/reports/p4-t3-mutation-snapshot-final.json",
+        "bytes": 904,
+        "sha256": "b03516ae8e0f530ee5b350168992e3391eb03c2eda10a1f598e78061049339d0"
+      }
+    },
+    {
+      "description": "omit original B1 scope predicate",
+      "expectedExitCode": 1,
+      "actualExitCode": 1,
+      "expectedFailures": [
+        {
+          "name": "daily design runtime: rejected unscoped-decline work cannot cross a fresh transaction boundary",
+          "error": "AssertionError [ERR_ASSERTION]: unreviewed or unscoped work must not become the next author baseline"
+        }
+      ],
+      "raw": {
+        "file": "harness/reports/p4-t3-mutation-scope-final.json",
+        "bytes": 883,
+        "sha256": "47ab3789efa999f39f878c2af89fecc3d6a83aa06764e7f54c4fe88de43566b9"
+      }
+    }
+  ],
+  "combinedReplay": {
+    "group": "initial-design-progress-recovery",
+    "passed": 4,
+    "failed": 0,
+    "executionTimings": [
+      {
+        "caseNames": [
+          "P4 a21473 executed methods require real harness receipts and PASS independently of completion phase reuse"
+        ],
+        "durationMs": 6.222700000000032
+      },
+      {
+        "caseNames": [
+          "P4 a21473 successor scope rejects dropping device or acceptance unit obligations"
+        ],
+        "durationMs": 0.779399999999896
+      },
+      {
+        "caseNames": [
+          "a21473 original public next normalizes machine admission and issues decomposition with the original six calls and immutable history intact"
+        ],
+        "durationMs": 47882.8206
+      },
+      {
+        "caseNames": [
+          "P4 a21473 original inputs and 6fe679 framework fault share one isolated design construction and formal completion replay"
+        ],
+        "durationMs": 5401807.111
+      }
+    ],
+    "liveObservedRootRun": "20261029T005400Z-a21473",
+    "liveObservedRootEnd": {
+      "status": "COMPLETED",
+      "at": "2026-11-08T08:01:59.359Z"
+    },
+    "scope": "isolated real preserved inputs + fault shape; actual TSC/Node and formal endpoints. Not real model quality, native .ets, phone or host release acceptance."
+  },
+  "finalGates": {
+    "openspecStrict": {
+      "exitCode": 0,
+      "passed": 65,
+      "failed": 0,
+      "raw": {
+        "file": "harness/reports/p4-t3-openspec-final.log",
+        "bytes": 2697,
+        "sha256": "2d2015d1c0afae1d69495adc839b574513acda539d0bd0f8c44034a6ff6af5cf"
+      }
+    },
+    "runtimeSourceFrozen": true,
+    "protectedFilesUnchanged": {
+      ".cursor/goals/效率与准确率平衡总体目标_默认基线自主交付与可调精细度及可靠恢复_a47c9d62.goal.md": true,
+      ".cursor/plans/交付结论与调用恢复收口_全消费者同源与双运输一致_6fd6c8c1.plan.md": true,
+      ".cursor/plans/验收事实与必修执行闭环补修_处置同源及有界恢复_c6ae8b4f.plan.md": true
+    },
+    "plan": {
+      "command": "node scripts/check-plan-version.mjs",
+      "mode": "default",
+      "version": "3.1.0",
+      "exitCode": 0,
+      "raw": {
+        "file": "harness/reports/p4-t3-plans-final.log",
+        "sha256": "fb8fff392c8bcb1d51d54b764bc6728e67c7ae898776f06b6c6d1ab6ee1557a5"
+      }
+    },
+    "diffLF": {
+      "diffCheckExitCode": 0,
+      "lfPassed": true,
+      "filesChecked": 13,
+      "scope": "explicit batch files only; protected user files excluded"
+    }
+  },
+  "unverified": [
+    "Final-source official full green receipt (original full FAIL preserved; only affected groups rerun)",
+    "DSH H4 credentials check",
+    "Same-zip candidate install/release verify/consumer lifecycle",
+    "Real HMOS native .ets/device/visual and model-quality delivery",
+    "Same framework entry affecting both coding and UT recovery boundary",
+    "Independent Jimp tile-min temporary-file concurrency"
+  ],
+  "todos": {
+    "p4t1": "completed",
+    "p4t3": "in_progress",
+    "p4t5": "pending",
+    "p4t6": "pending",
+    "e2andDSHfullDependent": "in_progress"
+  },
+  "structuralRecheck": {
+    "topLevelLegacyCliAbsent": true,
+    "goalTimeoutAbsent": true,
+    "legacyUtilsOnlyExports": true,
+    "commonBridgeDelegates": true,
+    "overviewNineLessons": true,
+    "overviewLayersAndCapabilities": true,
+    "architectureDevelopmentAndHostPending": true,
+    "retiredSymbolsAdded": [],
+    "planAppendOnly": true
+  },
+  "cleanup": {
+    "status": "skipped",
+    "action": "bulk removal of ignored task-specific p4-t3 probe files under harness/reports",
+    "automaticReview": "rejected",
+    "statedReason": "blocked by policy",
+    "filesRemoved": false,
+    "commitScope": "Only the two compact acceptance JSON summaries and existing handoff/audit/plan records are committed; raw/probe files stay local and ignored."
+  }
+}

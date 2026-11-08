@@ -10,7 +10,7 @@ import * as YAML from 'yaml';
 import { provisionFrameworkUnder, git, SOURCE_REPO_ROOT } from '../utils/real-chain-host';
 import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
 import type { UnitCaseResult } from '../run-unit';
-import { withRuntimeTest } from '../utils/runtime-test-control';
+import { TEST_SUITE_TIMEOUT_MS, withRuntimeTest } from '../utils/runtime-test-control';
 import { continueA21473CombinedReplay, prepareA21473ReplayEnvironment, assertA21473SuccessorScopePreserved, assertA21473ExecutedMethods } from '../utils/a21473-combined-replay';
 
 const FIXTURE = path.resolve(__dirname, '../fixtures/host-recovery-history/20261029-a21473');
@@ -182,13 +182,13 @@ const cases = [{ name: 'P4 a21473 executed methods require real harness receipts
     assert.throws(() => assertA21473SuccessorScopePreserved(original, { ...scope, obligations: [duty('unit-evidence', 'request:ut')] }), /lost required device-evidence/);
     assert.throws(() => assertA21473SuccessorScopePreserved(original, { ...scope, obligations: [original.obligations[0], duty('unit-evidence', 'request:ut')] }), /lost required unit coverage/);
   } }, { name: 'a21473 original public next normalizes machine admission and issues decomposition with the original six calls and immutable history intact', run: () => recoverActualA21473() },
-  { name: 'P4 a21473 original inputs and 6fe679 framework fault share one isolated design construction and formal completion replay', run: () => recoverActualA21473(continueA21473CombinedReplay) }];
+  { name: 'P4 a21473 original inputs and 6fe679 framework fault share one isolated design construction and formal completion replay', timeoutMs: TEST_SUITE_TIMEOUT_MS, run: () => recoverActualA21473(continueA21473CombinedReplay) }];
 export function getCases() { return cases; }
 export async function runSelectedCases(filter?: string) {
   const results: UnitCaseResult[] = [], timings: UnitExecutionTiming[] = [];
   for (const test of cases) {
     if (!matchesUnitCase(test.name, filter)) continue;
-    const stop = startCaseTiming([test.name], timings);
+    const stop = startCaseTiming([test.name], timings, { timeoutMs: test.timeoutMs });
     try { await test.run(); results.push({ name: test.name, ok: true }); }
     catch (error) { results.push({ name: test.name, ok: false, error: (error as Error).stack ?? String(error) }); }
     finally { stop(); }

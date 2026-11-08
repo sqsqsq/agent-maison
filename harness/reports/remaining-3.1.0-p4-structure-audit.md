@@ -95,3 +95,14 @@
 | M54 | architecture 已转开发现状且真实宿主pending；overview 保三层分离、能力拆解和3.1–3.9教训。754/91/P7旧执行口径由P3清理，a47/6fd/c6本轮用户保护改动不碰，未覆盖联合义务不自动关闭。 |
 
 测试结果和仍存真实缺陷须以本次 full/定向原件及逐条红项表为准。结构去向不替代业务验收，未取到6fe679完整保全链不冒称已有原件级全链覆盖。
+
+
+## 2026-11-08 t3 复核
+
+D1–D11、K1–K10、M01–M54逐项去向仍完整（11/10/54行，无缺号）。本批生产差异仅在既有design-repair-unattended事务内补候选/反馈/写归因恢复；没有新增持久状态、协议、门禁、停机原因、旧额度或阶段作者fallback。唯一for(;;)仍是格式反馈修复；保留原件和新事务归档不等于恢复冷作者循环。
+
+D1表述澄清：已删除的是顶层入口`harness/scripts/goal-in-session-driver.ts`；`harness/scripts/utils/goal-in-session-driver.ts`仍保留且只有API/type重导出，不能把它误报为已删。其runInSessionRound经utils/goal-phase-runtime的薄桥转入goal-mode-entry和同一GoalPhaseRuntime，没有独立生命周期/派工权。`harness/scripts/utils/goal-timeout.ts`仍不存在，resumePostAgentPhases/manual_fallback等未由本批生产差异新增。
+
+architecture仍明确“开发仓现状、P4真实宿主/发布pending”；overview的三层分离、关键能力拆解与3.1–3.9九节均保留。新增3个日常反例和1个正式会话反例；对照原清单无删除组、无日常/正式串scope，正式清单由424变425。原424组已在本轮官方全量执行，新正式组另定向1/0。共同保护以本轮原始全量、影响验证及定向原件为证，不能把结构审计本身当业务验收。
+
+本轮组合用已保全a21473真实输入与6fe679故障形状，在同一隔离工程到根请求COMPLETED；t1已完成，不再以缺少6fe679完整原件链作为等待理由。一次官方全量原始6045/9，修后test:changed为2360/0，原FAIL保留；最终源码官方完整绿证明仍未取得。t5/t6及既有双producer热修后UT等待等未覆盖边界保持原状态。详见remaining-3.1.0-p4-t3-validation.json与handoff。

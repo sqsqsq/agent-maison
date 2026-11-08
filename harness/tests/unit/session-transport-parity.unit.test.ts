@@ -7,7 +7,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import * as YAML from 'yaml';
-import { spawnSync } from 'child_process';
+import { execFile, spawnSync } from 'child_process';
 import { prepareSessionCliProject } from '../utils/session-cli-project';
 import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
 import { facts as requestFacts } from './request-entry.unit.test';
@@ -169,14 +169,25 @@ export async function runGoal(root: string, mode: 'detached' | 'session', scenar
   let codingCalls = 0, rawGap = false;
   let transientReturned = false;
   const repairsProduct = scenario === 'repair' || scenario === 'daily-repair';
-  const selfCheck = (phase: string, fence?: any, extraEnv?: Record<string, string>): number => {
+  const selfCheck = async (phase: string, fence?: any, extraEnv?: Record<string, string>): Promise<number> => {
     const args = [path.join(root, 'framework/harness/node_modules/ts-node/dist/bin.js'), '--project', path.join(root, 'framework/harness/tsconfig.json'),
       path.join(root, 'framework/harness/harness-runner.ts'), '--project-root', root, '--phase', phase, '--feature', 'clamp'];
     if (fence) args.push('--goal-run-id', 'session-cli', '--goal-attempt-id', fence.attemptId, '--goal-owner-id', fence.owner.owner_id, '--goal-owner-epoch', String(fence.owner.epoch));
     const env = { ...process.env }; for (const key of Object.keys(env)) if (/^MAISON_(GOAL_|FEATURE)/i.test(key)) delete env[key];
     Object.assign(env, extraEnv ?? {}, { MAISON_GOAL_CHECKPOINT_DIR: path.join(root, '.trust') });
-    const invoke = (tail: string) => spawnSync(process.execPath, [...args, tail], { cwd: path.join(root, 'framework/harness'), env, encoding: 'utf8', timeout: 60000, windowsHide: true });
-    let checked = invoke('--summary');
+    const invoke = async (tail: string) => {
+      const renew = () => { if (fence) moduleAt(root, 'scripts/utils/goal-run-control').renewSessionLease(fence.runDir, fence.owner, 60_000); };
+      renew();
+      let heartbeat: ReturnType<typeof setInterval> | undefined;
+      try {
+        return await new Promise<{ status: number; error?: Error; stdout: string; stderr: string }>((resolve, reject) => {
+          const child = execFile(process.execPath, [...args, tail], { cwd: path.join(root, 'framework/harness'), env, encoding: 'utf8', timeout: 60000, windowsHide: true },
+            (error, stdout, stderr) => resolve({ status: error ? typeof error.code === 'number' ? error.code : 1 : 0, error: error ?? undefined, stdout, stderr }));
+          if (fence) heartbeat = setInterval(() => { try { renew(); } catch (error) { child.kill(); reject(error); } }, 20_000);
+        });
+      } finally { if (heartbeat) clearInterval(heartbeat); }
+    };
+    let checked = await invoke('--summary');
     assert(fs.existsSync(path.join(root, `doc/features/clamp/${phase}/reports/summary.json`)),
       `${phase} self-check did not publish its result: ${checked.error?.message ?? ''}\n${checked.stdout}\n${checked.stderr}`);
     let current = summary(root, phase);
@@ -192,7 +203,7 @@ export async function runGoal(root: string, mode: 'detached' | 'session', scenar
       assert(line > 0);
       fs.appendFileSync(path.join(root, 'doc/features/clamp/ut/testability-audit.md'), `\n## 问题清单\n| ID | 严重程度 | 分类 | 涉及文件 | 问题描述 | 修复建议 | 状态 |\n|---|---|---|---|---|---|---|\n| UP-CLAMP | MAJOR | 产品实现 | ${SOURCE} | \`${nativeLog}:${line}\` 与 \`${SOURCE}:1\` 表明实际clamp违反已批准AC-2/3；UT不拥有产品源码 | coding恢复既有夹取规格，保留当前测试和验收 | 未关闭 |\n`);
       // Existing authored upstream issues admit diagnosis without inventing DAG/interfaces or changing old SKIPs.
-      checked = invoke('--summary'); current = summary(root, phase);
+      checked = await invoke('--summary'); current = summary(root, phase);
       upstreamVerification = modelIssueVerification(root);
       assert.equal(current.next_action, 'run_verifier_for_repair');
     }
@@ -205,7 +216,7 @@ export async function runGoal(root: string, mode: 'detached' | 'session', scenar
     }
     return checked.status ?? 1;
   };
-  const work = (phase: string, fence?: any, extraEnv?: Record<string, string>, instruction?: string): number => {
+  const work = async (phase: string, fence?: any, extraEnv?: Record<string, string>, instruction?: string): Promise<number> => {
     invocations.push(phase);
     if (phase.endsWith('-verifier-format-repair')) {
       const method = phase.replace(/-verifier-format-repair$/, '');
@@ -246,7 +257,7 @@ export async function runGoal(root: string, mode: 'detached' | 'session', scenar
       }
       researchSessionUnit(root, context);
       for (const method of methods) if (!['transient', 'daily-compile-repair', 'daily-repair'].includes(scenario) || scenario === 'daily-repair' && method === 'ut' && !priorNativeFailure)
-        selfCheck(method, mode === 'session' ? context : undefined, extraEnv ?? context.childEnv);
+        await selfCheck(method, mode === 'session' ? context : undefined, extraEnv ?? context.childEnv);
       return 0; // The model returned its artifacts; actual native failures remain formal tool evidence.
     }
     if (phase === 'coding') { codingCalls++; write(root, SOURCE, repairsProduct && codingCalls === 1 && !resume ? BAD : GOOD); }
@@ -264,7 +275,7 @@ export async function runGoal(root: string, mode: 'detached' | 'session', scenar
       for (let round = 0; step.type === 'phase_execute_request' && round < 14; round++) {
         const requestPath = step.request.path;
         const original = JSON.parse(fs.readFileSync(requestPath, 'utf8'));
-        const code = work(original.context.phase, original.context, original.context.childEnv, original.context.instruction);
+        const code = await work(original.context.phase, original.context, original.context.childEnv, original.context.instruction);
         step = await withRuntimeTest({ root: options.projectRoot }, () => entry.runGoalModeSessionStep({ ...options, requestPath, report: { phase: original.context.phase, status: code === 0 ? 'passed' : 'failed',
           details: `${original.context.phase}: author selfcheck exit ${code}; actual script/native outcomes remain in the original phase reports.` } }));
       }
@@ -284,7 +295,7 @@ export async function runGoal(root: string, mode: 'detached' | 'session', scenar
         const output = `Explicit author model substitute executing ${phase}; actual checkers and native tests run below.\n`;
         write(root, path.relative(root, options.outputLogPath), output);
         const instruction = phase.endsWith('-verifier-format-repair') ? fs.readFileSync(path.join(path.dirname(options.outputLogPath), 'prompt.md'), 'utf8') : undefined;
-        const code = work(phase, undefined, options.extraEnv, instruction);
+        const code = await work(phase, undefined, options.extraEnv, instruction);
         fs.appendFileSync(options.outputLogPath, `Author selfcheck exited ${code}; script/native outcomes are unchanged.\n`);
         return { exitCode: code, stdout: output, stderr: '', duration_ms: Date.now() - started, command: 'test-model-substitute' };
       });

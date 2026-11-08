@@ -141,13 +141,12 @@ async function interruptedReport(root: string, requestPath: string, runDir: stri
   void exited.catch(() => undefined);
   let originalFailure = false;
   try {
-  const deadline = Date.now() + 30_000;
   let binding: Record<string, any> | undefined;
-  while (Date.now() < deadline) {
+  for (;;) {
     const native = rows(path.join(root, 'observations/native-gates.jsonl'));
     binding = rows(path.join(runDir, 'events.jsonl')).find(event => event.type === 'harness_start' && event.process_role === 'harness' && event.phase === 'coding');
     if (native.some(event => event.kind === 'enter') && binding) break;
-    if (child.exitCode !== null) throw new Error('Report exited before the delayed real gate: ' + fs.readFileSync(path.join(root, 'observations/killed-report.stderr.log'), 'utf8'));
+    if (child.exitCode !== null || child.signalCode !== null) throw new Error('Report exited before the delayed real gate: ' + fs.readFileSync(path.join(root, 'observations/killed-report.stderr.log'), 'utf8'));
     await pause(50);
   }
   assert(binding, 'must observe the production harness process binding');

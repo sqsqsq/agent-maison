@@ -117,7 +117,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
       const frameworkRoot = path.join(f.root, 'framework');
       fs.mkdirSync(path.join(frameworkRoot, 'agents/codex'), { recursive: true });
       const native = path.join(f.root, 'native-fixture.cjs');
-      fs.writeFileSync(native, `const fs=require('fs');fs.appendFileSync('execution-count.txt','once\\n');fs.writeFileSync('src/value.ts','actual partial write\\n');process.stdout.write(JSON.stringify({type:'item.completed',item:{type:'command_execution',command:'actual check',exit_code:1}})+'\\n');setTimeout(()=>{},30000);\n`);
+      fs.writeFileSync(native, `const fs=require('fs');fs.appendFileSync('execution-count.txt','once\\n');fs.writeFileSync('src/value.ts','actual partial write\\n');process.stdout.write(JSON.stringify({type:'item.completed',item:{type:'command_execution',command:'actual check',exit_code:1}})+'\\n');setInterval(()=>{},1000);\n`);
       const adapter = YAML.parse(fs.readFileSync(path.resolve(__dirname, '../../../agents/codex/adapter.yaml'), 'utf8'));
       adapter.goal_capability.tool_event_provenance = 'structured_events';
       fs.writeFileSync(path.join(frameworkRoot, 'agents/codex/adapter.yaml'), YAML.stringify(adapter));
@@ -138,8 +138,10 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
       done = withRuntimeTest({ root: f.root, timeoutMs: 120_000 }, () => new Promise<{ status: number | null; signal: NodeJS.Signals | null; pid: number | undefined; stdout: string }>((resolve, reject) => {
         child!.once('close', (status, signal) => resolve({ status, signal, pid: child?.pid, stdout })); child!.once('error', reject);
       }));
-      const deadline = Date.now() + 20000;
-      while ((!fs.existsSync(path.join(f.root, 'execution-count.txt')) || !sessionEvents(f.runDir).some(event => event.type === 'agent_process_bound')) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50));
+      while (!fs.existsSync(path.join(f.root, 'execution-count.txt')) || !sessionEvents(f.runDir).some(event => event.type === 'agent_process_bound')) {
+        assert(child.exitCode === null && child.signalCode === null, stderr || stdout);
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
       assert(fs.existsSync(path.join(f.root, 'execution-count.txt')), stderr || stdout);
       const observed = cli('--observe').observation;
       assert.equal(observed.settled, false); assert.equal(observed.toolEvents.length, 1); assert.equal(observed.changes.kind, 'changed');

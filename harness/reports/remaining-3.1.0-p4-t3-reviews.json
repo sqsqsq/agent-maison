@@ -1,0 +1,82 @@
+{
+  "readonlyTools": [
+    "Read",
+    "Grep",
+    "Glob"
+  ],
+  "singleSession": true,
+  "finalSourceHashes": {
+    "harness/scripts/utils/design-repair-unattended.ts": "9d427b294e6db67dc0f0eba3b54d45d679271c2587bd2e0c15ef8a65900dcecc",
+    "harness/tests/unit/design-authority-repair-daily.unit.test.ts": "89cf6f58056d677268b13a62a07e0c60c820529b8a27a7241f7e14a4a2a69685",
+    "harness/tests/unit/design-authority-repair.unit.test.ts": "72738f018948188dbac061cf1dd1ee58c2101c1640368024df7db4c2ba477a70",
+    "harness/tests/unit/initial-design-progress-recovery.unit.test.ts": "8f85944cd292d88a39bc26ecf2d1ceaf4e4647556856e57486f906b906f94ac2",
+    "harness/tests/unit/initial-design-repair.unit.test.ts": "6f25c5dfd75eda0eb12350f993510954d95b23f94906634d28c638823d99e986",
+    "harness/tests/unit/session-execution-handoff.unit.test.ts": "a452c527a7551a06ef29149dafce7604e38bd8e39cb92032bf035761ee3db524",
+    "harness/tests/unit/session-slow-gate.integration.test.ts": "a5a9f46270108da9efe1507bb52c576b588da2e0e4fabe13babf2bfb59646300",
+    "harness/tests/unit/session-transport-parity.unit.test.ts": "215a2b9920ca5efa51db9595d0dc3d65a0b207517a7913e52b6a1a0d3248ae56"
+  },
+  "rounds": [
+    {
+      "round": 1,
+      "command": "Get-Content -Raw harness/reports/p4-t3-review-prompt.txt | claude.cmd -p --model opus --effort high --permission-mode plan --tools Read,Grep,Glob --allowedTools Read,Grep,Glob --settings harness/reports/6a2f8c91/claude-review-readonly-settings.json --strict-mcp-config --mcp-config harness/reports/6a2f8c91/claude-review-no-mcp.json --output-format json --no-session-persistence",
+      "requestedModel": "opus",
+      "effort": "high",
+      "actualModels": [
+        "claude-opus-5-5"
+      ],
+      "durationMs": 511330,
+      "turns": 53,
+      "permissionDenials": [],
+      "conclusion": "FAIL; mandatory findings subsequently repaired",
+      "result": "**结论：不通过。** 生产侧有 1 条必须修的缺陷（P1，本批引入的回归），测试侧有 1 条旧断言必须改（P2）。其余改动都核过，没有问题。整个过程只用了 Read/Grep/Glob，没改任何文件。（会话里 Write 工具不可用，计划文件没写成，结论直接写在这里。）\n\n## 必须修复\n\n### F1 · P1（阻断，第②类：真实授权）新事务可能把\"质询没审过、或没过范围检查\"的草稿当作候选保留\n\n- **位置**：`harness/scripts/utils/design-repair-unattended.ts:840-850`\n- **问题**：判断能否保留时，传给 `reusableDesignQuestioning` 的 `blueprint` 是那次质询自己的 `before`，没有和磁盘上当前的 `draftFile` 比较。遇到否定结论时它在 `:218` 就直接返回了，所以附属草稿也没核对。结果只要求\"有一次完成且合法的质询\"，不要求\"保留的这份草稿就是它审过的那份\"。\n- **反例 1（任何模式都会触发）**：\n  1. 质询调用越权改了草稿，事务在 `:1068`「独立质询修改了只读设计输入」以 `failed_step: questioning` 失败，草稿停在被改后的样子。\n  2. `design-repair/` 目录本来就在快照排除范围内（`:962`），前后快照仍然干净，质询原件仍判为可用，于是 `keepRejectedWork=true`。\n  3. 下个事务从核实方写的内容起步。如果后面不派作者，新质询一旦通过，核实方写的设计内容就会被发布。\n- **反例 2（无 requirement 的事务；`manifest.requirement` 是可选字段，两处调用方都直接透传）**：\n  1. 作者在拒修路径里顺手改了范围外字段，拒修质询不认可，在 `:1359` 以 questioning 失败。\n  2. 这条路径在 `:1375` 的范围检查之前就返回了，越界改动从没被检查过。\n  3. 下个事务保留草稿后，`outOfScopePaths(authorPreimage, …)` 只比较保留草稿和作者新改动，越界部分从此看不到，最后随发布进入 canonical。\n- 修复前，新事务一律把草稿重置为基线，这两种情况都不会发生。\n- **最小修法**（只改保留判定，不加状态）：\n  1. 复用 `:1017-1018` 已有的 `reviewedCurrentWork` 比较：`compareRelatedInputSnapshots(designWorkSnapshot(现存作者草稿, { ...saved.additionalInputs, [draftFile]: saved.beforeBlueprint }), designWorkSnapshot(现存作者草稿)) === 'unchanged'`，不一致就不保留。这条挡住反例 1。\n  2. 无 requirement 时再要求 `outOfScopePaths(基线, 保留草稿, blueprintId, input.brief.items)` 为空，否则不保留。这条挡住反例 2。\n- **必须继续成立的反例**：\n  - M2/M3：同基线、经正常质询否定的候选仍要保留。草稿等于质询前像加上质询结果，`designWorkSnapshot` 默认不计质询字段，比较结果是 unchanged。\n  - S16-c8：canonical 被别处改过之后不保留。\n\n### F2 · P2（测试侧，不是生产缺陷）bounded session replay 仍断言整段只有 1 个 attempted\n\n- **位置**：`harness/tests/unit/initial-design-repair.unit.test.ts:454`\n- **证据**：定向运行留下的失败原件 `harness/reports/test-runtime-control/failure-GRkNXP/0/events.jsonl` 显示的顺序是：attempted → 作者 → 质询否定 → failed(questioning) → 第二个 attempted → 作者 → 质询通过 → published(recovered)。这正是你定的\"失败事务结束、下次新建事务\"语义。\n- `:450/452/455/458` 都和这些事件对得上，`:454` 断言 1 个就必然失败。原件日志里没有断言文本，这个判断是从事件反推的。\n- **最小修法**：改成断言 2 个 attempted，且第二个排在 `failed_step: questioning` 之后。\n\n## 已核过、没有问题的部分\n\n- **`:1011` 的回退取值**：`guarded` 第一次被调用在 `:1283`，晚于 `:1161` 的 `repairQuestions` 声明，不会遇到 TDZ。`:1014` 改用按 `invoke_id` 的 `findIndex`，修掉了跨数组 `indexOf` 返回 -1 后取全量事件的问题。\n- **跨事务的无进展比较**：\n  - 历史按 attempted 的 baseline 等于当前 baseline 来串，遇到非 reconcile 的 published 就清空，评估都从真实质询原件重建。\n  - `completed` 要求三项同时成立：`verified`、`!authorAfterQuestion`、`reviewedCurrentWork`。\n  - S16-c3f 预期的\"两轮同一 scope 否定后暂停\"在这条逻辑下成立。\n- **不沿用旧通过**：`guarded('questioning')` 只复用本事务内的质询，或本事务还没派作者时的 initial Q，旧事务的通过不会被拿来发布。\n- **冻结材料带实际否定**：`:1281-1283` 把带 `authorFeedback` 的 `authorMaterial` 作为 material 传入。`priorRepairFeedback` 改成原文输出（含 `verification_refs`），测试目录里没有用例依赖旧的 JSON 格式。\n- **daily「failed unpublished non-knowledge → same-run knowledge fresh originals」仍受保护**：第一次失败发生在 author 步，不进保留分支；`knowledgeOriginals` 在 `:857-859` 不论是否保留都重新读取。你上一批定的语义没变。\n- **S16-c8**：canonical 改过后 `priorBaseline` 不相等，不保留候选。\n- **120 分钟预算**：`timeoutMs` 依次经过 `startCaseTiming` → `beginTestCase` → 父进程 `testTimeout(packet.timeoutMs, …)` 生效，复用的是现有的 `TEST_SUITE_TIMEOUT_MS`。\n- **transport-parity 心跳**：用真实的 `renewSessionLease`（fence token，租约 60 秒、每 20 秒续一次），`execFile` 的退出码语义和原来的 `spawnSync` 一致。\n- **handoff 的 `setInterval` 与 slow-gate 去掉固定 30 秒期限**：这两处的超时兜底都交给用例超时。\n\n## 非阻断建议\n\n1. `:844` 的 `readHandoffMaterial` 没包 try。`:1154` 的同类读取有 catch，建议这里读不到时也退回不保留，否则 original-context 损坏后每个新事务都会以 runtime 失败。\n2. 保留判定只比较了蓝图基线。handoff 里本来就有 `cu`/`config` 基线，可以顺带比较，防止两次事务之间 canonical CU 或配置被别处改过、旧候选在发布时把这次改动覆盖掉（目前想不出现实的触发路径）。\n3. handoff 里的 native 夹具现在永远不会自己退出，用例中途失败时可能留下孤儿进程。可以加一个较长的自退兜底，比如 10 分钟。\n4. 上面两处去掉自身期限的等待循环，失败时要等到用例超时（90 分钟）才暴露，可以接受。\n\n## 修完后建议只重跑受影响的组\n\n- 要重跑的用例：\n  - `initial-design-repair`：M2、M3、bounded session replay\n  - `design-authority-repair`：S16-c3f、S16-c8\n  - `design-authority-repair-daily`：整组\n- 给 F1 补一条最小反例：质询越权改草稿导致 questioning 失败后，下个事务的草稿必须回到基线。\n- 原来的全量结果仍记为 FAIL（6045 通过 / 9 失败），定向通过不能算作第二轮全量通过。",
+      "raw": {
+        "file": "harness/reports/p4-t3-claude-r1.json",
+        "bytes": 8983,
+        "sha256": "75aa065b020b5965103ea2d0c08cb4d3a8b71292a3926a38a71bdee256acb992"
+      }
+    },
+    {
+      "round": 2,
+      "command": "Get-Content -Raw harness/reports/p4-t3-review-r2-prompt.txt | claude.cmd -p --model opus --effort high --permission-mode plan --tools Read,Grep,Glob --allowedTools Read,Grep,Glob --settings harness/reports/6a2f8c91/claude-review-readonly-settings.json --strict-mcp-config --mcp-config harness/reports/6a2f8c91/claude-review-no-mcp.json --output-format json --no-session-persistence",
+      "requestedModel": "opus",
+      "effort": "high",
+      "actualModels": [
+        "claude-opus-5-5"
+      ],
+      "durationMs": 282641,
+      "turns": 23,
+      "permissionDenials": [],
+      "conclusion": "FAIL; mandatory findings subsequently repaired",
+      "result": "**结论：不通过，1 条必修。** F2 已修好。F1 在回调和进程两种运输下修好了，但在会话运输下没修住：r1 的反例 1（质询改了 CU 或架构候选）仍然成立，而且是 r2 新带进来的回归。这次只用了 Read/Grep/Glob，没改任何文件，也没跑测试。计划文件写不了（Write 不可用），结论直接写在这里。\n\n## 必须修复\n\n### F1-r2 · 阻断（② 真实授权）会话运输下，`questioning-output.json` 存在不能证明质询没改只读输入\n\n**位置**：`harness/scripts/utils/design-repair-unattended.ts:850-853`（保留判定）。前提在 `:992`、`:1072-1081`、`:1452` 失效；后像来自 `harness/scripts/utils/session-execution-handoff.ts:462-465`。\n\n**r2 的前提**：\"这个原件只在 guarded 确认 Q 没改只读输入之后才写出。\"这句话在回调和进程运输下成立，在会话运输下不成立。\n\n**会话运输下的实际过程**：\n1. 第一次进 `guarded('questioning')` 时，`:998` 取到的是 Q 之前的字节。随后调用返回 handoff，`:1042` 直接返回，没走到 `:1073` 的只读比较。\n2. Q 在会话里改了 `design-repair/change-unit.yaml`（或 architecture.json、change-unit-candidates.json）。会话快照排除了 `${runRel}/design-repair`（`:968`），所以快照前后仍判 clean。\n3. 交回被接受时，`session-execution-handoff.ts:462-465` 把当时的 design-repair 文件存进 `draft_outputs`，存下的是 Q 改过之后的内容。\n4. 重新进入时：\n   - `:1255` 用已经被改的 CU 重写候选；\n   - `:1423-1425` 再取\"Q 之前\"的字节，取到的其实也是改后的；\n   - `guarded` 走 `:982-995` 的复用分支。否定结论在 `reusableDesignQuestioning` 的 `:218` 直接返回，`:992` 写出 `questioning-output.json`，全程没有只读比较。\n   - 即使不走复用分支，`:1073` 和 `:1452` 比较的两边也都是改后的内容，必然相等。\n5. 否定之后，`:1477` 记一条 `failed_step: questioning`。\n6. 下一个事务判断能不能保留时：\n   - `questioning-output.json` 存在；\n   - `additionalInputs` 取的是改后的 `draft_outputs`，和当前 CU 比较结果是 unchanged；\n   - 蓝图有 `blueprint-before.yaml` 记录调用前的原样，能查出来；CU 和架构没有这样的记录，查不出来。\n   - 结果 `keepRejectedWork = true`，`:879` 和 `:881` 不再把 CU 和架构重置为原件。\n\n**后果**：\n- 质询方越权写进 CU 或架构的内容会跨过事务边界，成为下一位作者的起点。之后只要某次 Q 通过，就会随 CU 修订或架构发布进入 canonical。\n- HEAD 上新事务一律重置这些辅助候选，这条路走不通，所以是本批引入的。\n- 这条路径确实在用：`harness/tests/unit/initial-design-repair.unit.test.ts:278-282` 的 session-retry 本来就断言\"新事务保留作者对 CU 的改动\"。\n- r2 新增的三个 daily 反例都用回调 invoke（`harness/tests/unit/design-authority-repair-daily.unit.test.ts:150-180`），由 `:1073` 兜住，覆盖不到会话运输。\n\n**最小修法**（扩展已有的调用前原样记录，不加状态、协议、门禁或停机原因）：\n1. 在 `guarded` 写 `blueprint-before.yaml` 的同一处（`:1038-1040`，同一目录，同样用 `wx`），对 questioning 调用把 `readonlyInputs` 里辅助草稿的调用前字节也落盘，和现有蓝图记录同类。\n2. 保留判定时，辅助文件改用这些调用前字节和当前文件比较，不再用 `draft_outputs`。记录缺失就不保留。`questioning-output.json` 是否存在不再作判据，三种运输用同一个判据。\n3. 如果你认为这算新增记录、不能接受，退路是：会话运输下的 Q 一律不保留 CU 和架构候选。代价是 `initial-design-repair:281` 断言的\"会话下保留 CU\"要放弃，这需要你拍板。\n\n**补 1 条反例**：复用 session-retry 夹具。会话 Q 改了 CU 并给出否定，原事务以 questioning 失败；断言下一事务开始时 CU 已回到原件。\n\n**必须继续成立**：M2/M3 会话下正常否定的候选仍保留 CU 改动；S16-c8 和 bounded replay 的结果不变。\n\n## 已核过、通过\n\n- **F1（回调和进程运输）**：`:1079` 只在 `:1073` 只读比较通过后才写原件。Q 改蓝图由 `blueprint-before.yaml` 的比较挡住，Q 改 CU 由原件缺失挡住。读旧 context 失败会落进 catch，不保留。\n- **无 requirement 越界**：`outOfScopePaths(priorBaseline, current, …)` 挡住了作者在拒修时越界改 title。\n- **daily 三个反例**：\n  - `:187` 断言旧 Q 是可用的已完成否定，不会因夹具无效而假绿；\n  - 第二个事务检查作者起点是基线（`:191-193`）；\n  - canonical 字节不变，没有发布；\n  - 用的是真实的 guard、snapshot 和 `recordDesignRepairInvocation`。\n- **F2**：`initial-design-repair.unit.test.ts:266-270` 断言 session-retry 有 2 个 attempted，各自的 `handoff_context.path` 不同，两次 baseline 都等于实际 canonical 原字节。与 r1 原件的事件顺序一致。\n- **r1 非阻断第 1 条**：`:844` 的读取已放进 try。\n- **S16-c8**：等待替身只在那一次外部写入之后生效，`:1545` 断言只注入一次。`:1557-1559` 仍断言原事务以 questioning 失败、没有发布、canonical 保留外部写入的字节。这只是测试侧限流，不能当作生产通过的证据。\n- **其余改动**（`:1017/1020/1028` 的取值修正、`repairStarts` 按基线串联、`authorMaterial` 冻结、反馈改为原文、超时和心跳）：上轮已核过，这轮没看到直接回归。\n\n## 非阻断建议\n\n1. **无 requirement 时实际上从不保留**：`outOfScopePaths` 不排除 `review_summary.questioning/admission`，而保留下来的候选必然带着新的 Q 结果和准入，和基线不同，所以 B1 无 requirement 时总是不保留，行为等同 HEAD，安全上没问题。r1 给这条修法时写得不够准，这里更正。想在这种情况下也能保留，比较前先去掉 `review_summary`；不需要就维持现状。unscoped-decline 反例只能证明\"会拒绝\"，不能证明\"能区分合法与越界\"。\n2. **已有缺口，不算本批缺陷**：会话 Q 改了辅助候选、结论又是通过时，同一事务内就会发布，HEAD 上已经存在。上面的修法会让 `:1073` 和 `:1452` 在会话重新进入时真正比较，可以顺带收掉。\n\n## 验证口径\n\n- 官方全量仍记 FAIL（6045 通过 / 9 失败，all424），定向通过不能算作全量绿。\n- `test:changed` 要在源码冻结后重跑才算数。\n- 这次复核没跑任何测试，结论只来自代码阅读和 r1 原件。",
+      "raw": {
+        "file": "harness/reports/p4-t3-claude-r2.json",
+        "bytes": 8779,
+        "sha256": "ee4e1b25197486469053e9e4faf07fe8df3dbdadc12826b951565032069a778c"
+      }
+    },
+    {
+      "round": 3,
+      "command": "Get-Content -Raw harness/reports/p4-t3-review-r3-prompt.txt | claude.cmd -p --model opus --effort high --permission-mode plan --tools Read,Grep,Glob --allowedTools Read,Grep,Glob --settings harness/reports/6a2f8c91/claude-review-readonly-settings.json --strict-mcp-config --mcp-config harness/reports/6a2f8c91/claude-review-no-mcp.json --output-format json --no-session-persistence",
+      "requestedModel": "opus",
+      "effort": "high",
+      "actualModels": [
+        "claude-opus-5-5"
+      ],
+      "durationMs": 108564,
+      "turns": 14,
+      "permissionDenials": [],
+      "conclusion": "PASS; required signed-session and M2/M3 positive reruns passed",
+      "result": "**结论：PASS，没有必须修复的问题。** r2 的 F1（会话运输下，质询方越权改了 CU 或架构候选，改动却留进下一事务）已经堵住，本次改动也没看到直接回归。这次只用了 Read/Grep/Glob，没跑测试，没写任何文件。计划文件也没写，因为你禁止写文件。\n\n有一个前提：你说会话签名反例和 M2/M3 复验还在跑，这两项绿了，PASS 才成立。\n\n## r2 F1 怎么收口的\n\n1. **签名前像现在含辅助草稿。** `harness/scripts/utils/design-repair-unattended.ts:1017-1018` 让质询调用的 `includeFiles` 包含 `repairWorkFiles`。质询的 `executionRole` 是 `verifier`，按 `harness/scripts/utils/phase-write-boundary.ts:122-124`，显式包含的文件会越过 `${runRel}/design-repair` 这条运行时排除规则。所以签名前像里有蓝图、CU、架构、批候选、知识资产的真实哈希。\n2. **会话后像用的是同一套选项。** `harness/scripts/utils/session-execution-handoff.ts:441-445` 交回时按请求自带的 `snapshot_options` 取后像，Q 改了 CU 就会显示为 changed。r2 反例的第 2 步（前后快照都判干净）就此不成立。\n3. **重新进入时先核写归因，再用后像。**\n   - `design-repair-unattended.ts:817-827` 复用了已有的 `diffPhaseInvocationSnapshots`，不干净就走已有的 `AttemptFailure('questioning', …, {changes…})`。\n   - 失败会在 `:1626-1629` 按已有 violation 路径落成 `failed_step: questioning`。\n   - `roleRepairEnded` 防止同一个 Q 被重复消费。这次没有新增状态、记录格式或停机原因。\n4. **复用分支同样拦住。** `:999-1003` 的复用依赖 `reusableDesignQuestioning`，后者在 `:201-202` 要求前后像干净。脏的 Q 不会再被复用，也不会把否定结论写进 `questioning-output.json`。\n5. **保留判据改用签名前像的哈希。**\n   - `:861-863` 要求每个辅助草稿都和 Q 签名前像里的哈希逐项相等，前像里没有这项就不保留。\n   - 越权的 Q 已经被 `:366-369` 拒绝，`saved` 为 null，`keepRejectedWork` 必为 false。\n   - 原 B1 的范围约束（`:866-867`）还在。\n6. **反例对准了生产链路。** `initial-design-repair.unit.test.ts:350-385` 跑的是真实签名请求。它依次断言：\n   - 签名前像含 CU 条目；\n   - 交回的后像哈希和前像不同；\n   - 原 Q 原件不可复用；\n   - 下一次公开 next 只派出一个新作者，CU 已回到 canonical；\n   - canonical 的蓝图和 CU 字节不变，没有发布。\n\n   这正好覆盖 r2 指出的会话路径。daily 的三个反例也去掉了回调里的断言，改成断言公开结果。\n\n## 直接回归核查（无问题）\n\n- **回调和进程运输：** 前像和后像用同一份 `snapshotOptions`，扩大的包含范围对两边对称。Q 不碰草稿时结果仍是 clean，`:1079` 的原有判定不变。\n- **M2/M3 合法否定：** 作者改过的 CU 进入 Q 的前像，Q 没再动它，下一事务哈希相等，候选照常保留。这和你说的复验内容一致。\n- **`repairQuestions` 的定义顺序：** 它在 `:1180` 定义，`guarded` 第一次被调用在 `:1302`，不会出现 TDZ。\n- **旧 run 的 Q 原件：** 前像里没有草稿条目时不保留，回到 canonical 基线重建。这偏保守，不会扩大授权。\n\n## 非阻断建议（不升级）\n\n1. **`latestRole` 不按蓝图过滤。** `:792` 取 `latestRole` 时没有按 `blueprint_id` 过滤，而 `roleRepairEnded`（`:817-819`）过滤了。只有同一个 run 里交替修两份蓝图时，才可能多记一条 failed。目前没有这种场景，是假设性风险。\n2. **未作结论的旧 run 会丢掉候选。** 已在途、但 Q 原件是本次修改前生成的 run，被否定后的候选不再保留，作者要从 canonical 重做一轮。这只影响效率，不影响正确性。\n\n## 验证口径\n\n- 你报告的结果：daily 19/0、完整 typecheck 0、两项变异会变红。这些我没有复跑，结论只来自代码阅读。\n- 会话签名反例和 M2/M3 复验还在跑，以它们的实际结果为准。\n- 官方全量仍记 FAIL（6045 / 9，all424），不算全量绿。源码冻结后的 `test:changed` 仍需完整跑过。",
+      "raw": {
+        "file": "harness/reports/p4-t3-claude-r3.json",
+        "bytes": 6272,
+        "sha256": "4f356de9dafea3fb45fb4974285f177cc3a7b85b44a20885feb6e5d4966fe390"
+      }
+    }
+  ],
+  "requiredPositiveEvidence": [
+    "harness/reports/p4-t3-session-q-verified.json",
+    "harness/reports/p4-t3-m2m3-attribution.json"
+  ],
+  "officialFullStatus": "FAIL; no stitched official-green claim"
+}

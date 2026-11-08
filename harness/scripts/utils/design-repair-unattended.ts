@@ -468,7 +468,7 @@ function priorRepairFeedback(projectRoot: string, runs: readonly { manifest: { r
     const returned = saved.outcome?.output ?? saved.report?.details;
     const denied = returned ? independentQuestioningBlockers({ review_summary: { questioning: parseIndependentQuestioningOutput(returned) } })
       : doc ? independentQuestioningBlockers(doc) : [];
-    return denied.length ? [`前次同请求事务的真实质询差额（仅待核线索，不恢复失败草稿、不沿用旧结论）：${source}\n${JSON.stringify(denied.map(item => ({ scope_ref: item.scope_ref, question: item.question, answer: item.answer })), null, 2)}`] : [];
+    return denied.length ? [`前次同请求事务的真实质询差额（交原作者返修，不沿用旧通过或发布结论）：${source}\n${denied.map(item => `${String(item.scope_ref)}：${String(item.question)}\n${String(item.answer ?? '')}\nverification_refs: ${JSON.stringify(item.verification_refs ?? [])}`).join('\n\n')}`] : [];
   } catch {
     return [`前次质询原件暂不可读：${source}；原失败说明仅作线索：${String('reason' in failed.event ? failed.event.reason : '')}`];
   }
@@ -814,6 +814,17 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
       if (result.handoff) { release(); return { outcome: 'handoff', reason: '原设计请求仍待实际结果；候选与原快照未改写。' }; }
       if (!result.ok) throw new AttemptFailure(purpose, result.detail);
     }
+    const roleRepairEnded = latestRole && currentEvents.slice(currentEvents.indexOf(latestRole) + 1).some(event => event.type === 'design_authority_repair'
+      && (event as Record<string, unknown>).blueprint_id === blueprintId && (event as Record<string, unknown>).stage === 'failed'
+      && (event as Record<string, unknown>).failed_step === 'questioning');
+    if (latestRole?.phase === designRepairInvokeLabel('questioning') && roleEnded && !roleRepairEnded) {
+      const saved = questioningOriginal(runDir, latestRole, currentEvents);
+      if (saved?.preSnapshot && saved.postSnapshot) {
+        const diff = diffPhaseInvocationSnapshots(saved.preSnapshot, saved.postSnapshot);
+        if (diff.kind !== 'clean') throw new AttemptFailure('questioning', '独立质询原调用的只读输入写归因未通过，不能把后像交给作者或发布。',
+          { changes: diff.kind === 'changed' ? diff.changes : [], preSnapshot: saved.preSnapshot.sha256, postSnapshot: saved.postSnapshot.sha256 });
+      }
+    }
     const ancestors = family ? [] : readSupersededAncestorRuns({ projectRoot, featuresDir: relFeaturesDir(projectRoot), feature: input.feature, currentEvents });
     const historyRuns = family?.runs ?? [{ manifest, events: currentEvents }, ...ancestors.map(run => ({
       manifest: loadGoalRunManifestFromRun(projectRoot, run.run_id, { feature: input.feature }), events: run.events,
@@ -834,6 +845,27 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
     const batchDraftFile = isInitialDesignManifest(manifest) && input.requirement ? path.join(draftDir, 'change-unit-candidates.json') : undefined;
     const architectureDraftFile = path.join(draftDir, 'architecture.json');
     const configFile = path.join(projectRoot, 'framework.config.json');
+    let keepRejectedWork = false;
+    const latestRepair = [...transactionEvents].reverse().find(event => event.type === 'design_authority_repair'
+      && (event as Record<string, unknown>).blueprint_id === blueprintId) as Record<string, unknown> | undefined;
+    if (!priorAttempt && latestRepair?.stage === 'failed'
+      && latestRepair.failed_step === 'questioning' && fs.existsSync(draftFile)) try {
+      const attempted = [...transactionEvents.slice(0, transactionEvents.indexOf(latestRepair as GoalRunEvent))].reverse().find(event => event.type === 'design_authority_repair'
+        && (event as Record<string, unknown>).blueprint_id === blueprintId && (event as Record<string, unknown>).stage === 'attempted') as Record<string, unknown> | undefined;
+      const priorBaseline = attempted?.handoff_context && readHandoffMaterial<{ baseline: string }>(runDir, attempted.handoff_context as HandoffReference).baseline;
+      const question = repairRoleStart(transactionEvents, 'questioning');
+      const saved = question && questioningOriginal(runDir, question, transactionEvents);
+      const current = asRecord(YAML.parse(fs.readFileSync(draftFile, 'utf8')));
+      const result = saved && current && reusableDesignQuestioning({ ...saved, projectRoot, blueprintPath: draftFile, blueprint: current });
+      const files = [draftFile, ...(input.requirement ? [architectureDraftFile, ...(changeUnitId ? [cuDraftFile] : []), ...(batchDraftFile ? [batchDraftFile] : [])] : [])];
+      const reviewed = saved && files.slice(1).every(file => {
+        const pre = saved.preSnapshot?.entries.find(entry => entry.kind === 'file' && entry.path === path.relative(projectRoot, file).replace(/\\/g, '/'));
+        return !!pre && fs.existsSync(file) && pre.sha256 === sha256Hex(fs.readFileSync(file));
+      }) && compareRelatedInputSnapshots(designWorkSnapshot(files,
+        { ...saved.additionalInputs, [draftFile]: saved.beforeBlueprint }), designWorkSnapshot(files)) === 'unchanged';
+      keepRejectedWork = priorBaseline === fs.readFileSync(canonicalPath).toString('base64') && !!result && !!reviewed
+        && (!!input.requirement || outOfScopePaths(YAML.parse(Buffer.from(priorBaseline, 'base64').toString('utf8')), current!, blueprintId, input.brief.items).length === 0);
+    } catch { /* Unavailable or unreviewed prior work is rebuilt from the new canonical baseline. */ }
     type OriginalContext = { baseline: string; cu?: string; config?: string; knowledgeOriginals?: Record<string, string>; startedAt: string; brief: DesignRepairBriefLike; eventOriginals?: Record<string, string> };
     let original: OriginalContext;
     if (priorAttempt?.handoff_context) original = readHandoffMaterial<OriginalContext>(runDir, priorAttempt.handoff_context as HandoffReference);
@@ -854,10 +886,11 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
       fs.writeFileSync(file, bytes, { flag: 'wx' });
       input.emit({ ...base, stage: 'attempted', preauthorization: input.requirement ? `${input.reportDir}/manifest.json#requirement` : DESIGN_REPAIR_PREAUTH_KEY,
         handoff_context: { path: path.relative(runDir, file).replace(/\\/g, '/'), sha256: sha256Hex(Buffer.from(bytes)) } });
-      fs.writeFileSync(draftFile, Buffer.from(original.baseline, 'base64'));
-      if (original.cu) fs.writeFileSync(cuDraftFile, Buffer.from(original.cu, 'base64'));
-      if (batchDraftFile) fs.writeFileSync(batchDraftFile, '[]\n');
-      if (original.config) fs.writeFileSync(architectureDraftFile, JSON.stringify(JSON.parse(Buffer.from(original.config, 'base64').toString('utf8')).architecture, null, 2) + '\n');
+      // A new baseline must not erase the current unpublished work awaiting its real denial feedback.
+      if (!keepRejectedWork) fs.writeFileSync(draftFile, Buffer.from(original.baseline, 'base64'));
+      if (original.cu && (!keepRejectedWork || !fs.existsSync(cuDraftFile))) fs.writeFileSync(cuDraftFile, Buffer.from(original.cu, 'base64'));
+      if (batchDraftFile && (!keepRejectedWork || !fs.existsSync(batchDraftFile))) fs.writeFileSync(batchDraftFile, '[]\n');
+      if (original.config && (!keepRejectedWork || !fs.existsSync(architectureDraftFile))) fs.writeFileSync(architectureDraftFile, JSON.stringify(JSON.parse(Buffer.from(original.config, 'base64').toString('utf8')).architecture, null, 2) + '\n');
     }
     const baseline = Buffer.from(original.baseline, 'base64');
     const baseDoc = YAML.parse(baseline.toString('utf8')) as BlueprintRecord;
@@ -981,7 +1014,8 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
       const resolution = { projectRoot, protectedRoots: snapshotRoots(projectRoot),
         executionRole: purpose === 'questioning' ? 'verifier' as const : 'author' as const,
         immutableInputPaths };
-      const snapshotOptions = { ownedPrefixes: purpose === 'author' ? owned : workspaceOwned, runtimeExcluded: excluded, includeFiles: referenced };
+      const snapshotOptions = { ownedPrefixes: purpose === 'author' ? owned : workspaceOwned, runtimeExcluded: excluded,
+        includeFiles: purpose === 'questioning' ? [...new Set([...referenced, ...repairWorkFiles.map(relOf)])] : referenced };
       const capture = (): ReturnType<typeof capturePhaseInvocationSnapshot> => capturePhaseInvocationSnapshot(resolution, snapshotOptions);
       let pre = capture();
       // 调用前就不可验证：还没有派出调用，尝试失败（不发布）；调用后不可验证：可能有越界写入而无从核对，按违规处置。
@@ -993,10 +1027,10 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
       try {
         const current = readDraft(purpose);
         const roleEvents = sessionEvents(runDir);
-        const latestQuestion = repairRoleStart(roleEvents, 'questioning');
+        const latestQuestion = repairRoleStart(roleEvents, 'questioning') ?? repairQuestions.at(-1);
         const saved = latestQuestion ? questioningOriginal(runDir, latestQuestion, roleEvents) : null;
         const verified = saved && batchWasReviewed(saved, latestQuestion) && reusableDesignQuestioning({ ...saved, projectRoot, blueprintPath: draftFile, blueprint: current });
-        const authorAfterQuestion = latestQuestion && roleEvents.slice(roleEvents.indexOf(latestQuestion) + 1)
+        const authorAfterQuestion = latestQuestion && roleEvents.slice(roleEvents.findIndex(event => event.invoke_id === latestQuestion.invoke_id && event.type === 'agent_invoke_start') + 1)
           .some(event => event.type === 'agent_invoke_end' && event.phase === designRepairInvokeLabel('author') && invocationCompleted({ ...event, exitCode: event.exit_code }));
         const currentWork = designWorkSnapshot(repairWorkFiles);
         const reviewedCurrentWork = saved && compareRelatedInputSnapshots(designWorkSnapshot(repairWorkFiles,
@@ -1004,7 +1038,7 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
         const cu = originalCu && fs.existsSync(cuDraftFile) ? asChangeUnitArtifact(YAML.parse(fs.readFileSync(cuDraftFile, 'utf8'))) : undefined;
         result = await input.invoke(purpose, prompt, { pre, resolution, options: snapshotOptions,
           material,
-          evaluation: evaluationOf(current, currentWork, !!verified && !authorAfterQuestion, pre, cu),
+          evaluation: evaluationOf(current, currentWork, !!verified && !authorAfterQuestion && !!reviewedCurrentWork, pre, cu),
           history: [...comparableHistory, ...(previousEvaluation ? [previousEvaluation] : [])],
           feedbackDelivered: !!reviewedCurrentWork && (feedbackDelivered || authorFeedback.length > 0) });
       } finally {
@@ -1128,9 +1162,24 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
     const starts = sessionEvents(runDir);
     const transactionAt = starts.map(event => event.type === 'design_authority_repair' && 'stage' in event && event.stage === 'attempted').lastIndexOf(true);
     const initialQuestion = [...starts.slice(0, transactionAt)].reverse().find(event => event.type === 'agent_invoke_start' && event.phase === 'initial-design-questioning');
-    const priorQuestions = [...(initialQuestion ? [initialQuestion] : []), ...starts.slice(transactionAt + 1)
-      .filter(event => event.type === 'agent_invoke_start' && event.phase === designRepairInvokeLabel('questioning'))];
-    const lastAuthor = repairRoleStart(starts, 'author');
+    const repairStarts: GoalRunEvent[] = [];
+    let matchingRepair = false;
+    for (const event of starts) {
+      const repair = event as Record<string, unknown>;
+      if (event.type === 'design_authority_repair' && repair.blueprint_id === blueprintId) {
+        if (repair.stage === 'published' && !(repair.outcome === 'unrecovered' && repair.failed_step === 'reconcile')) {
+          repairStarts.length = 0; matchingRepair = false;
+        } else if (repair.stage === 'attempted') {
+          try { matchingRepair = !!repair.handoff_context && readHandoffMaterial<OriginalContext>(runDir, repair.handoff_context as HandoffReference).baseline === original.baseline; }
+          catch { matchingRepair = false; }
+        }
+      }
+      if (matchingRepair && event.type === 'agent_invoke_start'
+        && (event.phase === designRepairInvokeLabel('author') || event.phase === designRepairInvokeLabel('questioning'))) repairStarts.push(event);
+    }
+    const repairQuestions = repairStarts.filter(event => event.phase === designRepairInvokeLabel('questioning'));
+    const priorQuestions = [...(initialQuestion ? [initialQuestion] : []), ...repairQuestions];
+    const lastAuthor = [...repairStarts].reverse().find(event => event.phase === designRepairInvokeLabel('author'));
     const authorAt = lastAuthor ? starts.indexOf(lastAuthor) : starts.length;
     for (const start of priorQuestions) {
       const saved = questioningOriginal(runDir, start, starts);
@@ -1248,8 +1297,9 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
       let authorStart: GoalRunEvent | undefined;
       if (!supplementQuestioningFormat && (preparedDisposition.completionBlocking.some(problem => problem.action === 'repair') || cuNeedsAuthor || verifiedTriggerUndelivered)) {
         const authorBase = authorPrompt(input, draftFile, canonicalRel, authorDrafts, transactionTiming, currentCuInput ?? undefined, knowledgeAssets);
-        const invoked = await guarded('author', [authorBase,
-          ...preparedDisposition.completionBlocking.map(problem => `${problem.id}: ${problem.detail}\n对象与证据：${(problem.evidence ?? []).join('、')}`), ...authorFeedback].join('\n\n'), currentRefs, afterQuestioning, [authorBase]);
+        const authorMaterial = [authorBase,
+          ...preparedDisposition.completionBlocking.map(problem => `${problem.id}: ${problem.detail}\n对象与证据：${(problem.evidence ?? []).join('、')}`), ...authorFeedback];
+        const invoked = await guarded('author', authorMaterial.join('\n\n'), currentRefs, afterQuestioning, authorMaterial);
         if ('handoff' in invoked) { release(); return { outcome: 'handoff', reason: 'session execution request committed' }; }
         preAuthor = invoked;
         authorStart = usedInvocation;

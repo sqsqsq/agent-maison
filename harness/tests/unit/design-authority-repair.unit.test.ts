@@ -1212,7 +1212,7 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
       const failed = repairs_.find(e => e.stage === 'failed');
       assert(repairs_[0]?.stage === 'attempted' && failed?.failed_step === 'questioning' && !repairs_.some(e => e.stage === 'published'), describeS16(b));
       assert.deepEqual(fs.readFileSync(blueprintFile(s)), canonicalBefore, '被否定的降标草稿不得覆盖 canonical 原验收与质询历史');
-      assert.deepEqual(outOfChainStarts(b.events).map(e => e.phase), ['design-repair-author', 'design-repair-questioning', 'design-repair-author', 'design-repair-questioning']);
+      assert.deepEqual(outOfChainStarts(b.events).map(e => e.phase), ['design-repair-author', 'design-repair-questioning', 'design-repair-author', 'design-repair-questioning'], describeS16(b));
       const feedback = b.log.prompts['design-repair-author'] ?? [];
       assert.equal(feedback.length, 2, '当前否定须由共同内核送回原设计作者，再按真实验收收敛');
       assert(feedback[1].includes(`原批准结果「${approved}」`) && feedback[1].includes('本次独立质询措辞-1'), '真实完整否定必须实际送达原作者');
@@ -1540,7 +1540,9 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
       const original = validator.validateComponentBlueprint;
       let touchedAt: string | undefined;
       try {
-        const b = await s16Born(s, { adapter: { questioning: () => {
+        const b = await s16Born(s, { adapter: { author: () => touchedAt ? { status: 'waiting', exitCode: 0,
+          details: '本用例只核对一次并发写入的发布拒绝；后续作者尚未交回新候选。' } : undefined, questioning: () => {
+          assert(!touchedAt, 'inject only the original concurrent write, not an endlessly changing canonical input');
           // 下一次校验（运行时对草稿的发布前校验）之前，另一会话手工改了 canonical 蓝图。
           validator.validateComponentBlueprint = ((value: unknown, context: Parameters<typeof validateComponentBlueprint>[1]) => {
             validator.validateComponentBlueprint = original;
