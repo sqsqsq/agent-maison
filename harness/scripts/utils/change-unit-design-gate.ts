@@ -158,13 +158,20 @@ export function deriveClosure(blueprint: BlueprintRecord, roots: string[], proje
   return required;
 }
 
-/** Provider-side projection, before the original CU consumer validates and publishes it. */
+/** A dependency is context; only an explicit CU selection may inherit its delivery content. */
+function carriesDeliveryContent(record: BlueprintRecord | undefined): boolean {
+  return !!record && ['acceptance', 'contracts', 'use_cases'].some(field => record[field] !== undefined);
+}
+
+/** Complete context references without selecting another target's delivery obligations. */
 export function completeChangeUnitDesignRefs(blueprint: BlueprintRecord, cu: import('./change-unit-model').ChangeUnitArtifact,
   projectRoot: string): import('./change-unit-model').ChangeUnitArtifact {
   const next = structuredClone(cu);
   const refs = new Set(next.design_refs.map(blueprintRefAddress));
-  for (const address of deriveClosure(blueprint, [...refs], projectRoot)) {
-    if (refs.has(address)) continue;
+  const index = stableAddressIndex(blueprint);
+  const roots = [...new Set([...refs, ...next.touches.map(touch => blueprintRefAddress(touch.design_ref))])];
+  for (const address of deriveClosure(blueprint, roots, projectRoot)) {
+    if (refs.has(address) || carriesDeliveryContent(index.get(address))) continue;
     const nested = /^view:([^/]+)\/(node|flow):(.+)$/.exec(address);
     const flat = /^(blueprint|view|relation|decision|contract):(.+)$/.exec(address);
     const target: ComponentBlueprintRef['target'] | undefined = nested
@@ -221,8 +228,9 @@ export function validateChangeUnitDesign(
   }
   const required = deriveClosure(blueprint, [...roots], projectRoot);
   const explicit = new Set(explicitAddresses);
+  const addressIndex = stableAddressIndex(blueprint);
   for (const address of [...required].sort()) {
-    if (!explicit.has(address)) {
+    if (!explicit.has(address) && !carriesDeliveryContent(addressIndex.get(address))) {
       issues.push(changeUnitIssue(
         'change_unit_design_closure_incomplete',
         '$.design_refs',
@@ -231,7 +239,6 @@ export function validateChangeUnitDesign(
     }
   }
 
-  const addressIndex = stableAddressIndex(blueprint);
   for (const address of [...required].sort()) {
     const record = addressIndex.get(address);
     if (!record) continue;

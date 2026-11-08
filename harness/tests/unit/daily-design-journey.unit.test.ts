@@ -228,6 +228,11 @@ function decompose(host: Host): void {
   writeHostFile(host.root, `doc/features/${BLUEPRINT}/blueprint/change-unit-candidates.json`, JSON.stringify([{ providerId: 'builtin-vertical-slice-decomposition', artifact: cu }]));
 }
 
+function unitReviewReport(host: Host, feature: string): void {
+  const rel = host.load('scripts/utils/feature-identity').featureRelativePath(feature);
+  writeHostFile(host.root, `doc/features/${rel}/review/review-report.md`, '# 审查报告\n\n> **保证等级**: standard\n\n## 1. 审查范围\n- ' + SOURCE + '\n\n## 2. 审查维度\n契约、边界及恢复；真实编译与Node断言另由工具执行。\n\n## 3. 问题清单\n| 编号 | 分类 | 严重程度 | 问题描述 | 涉及文件 | 修复建议 |\n|---|---|---|---|---|---|\n\n## 4. 问题统计\n| 严重程度 | 数量 |\n|---|---|\n| BLOCKER | 0 |\n| MAJOR | 0 |\n| MINOR | 0 |\n\n## 5. 修复建议\n无新增建议。\n\n## 6. 结论\n**审查结论**: 通过\n');
+}
+
 function unitMaterials(host: Host, context: any): void {
   const feature = context.feature, rel = host.load('scripts/utils/feature-identity').featureRelativePath(feature);
   const specFile = host.load('config').featureFilePath(host.root, feature, 'spec/spec.md');
@@ -251,7 +256,7 @@ function unitMaterials(host: Host, context: any): void {
       if (projected.artifacts?.['use-cases@1']) writeYaml(host.root, `doc/features/${rel}/use-cases.yaml`, projected.artifacts['use-cases@1']);
     }
     if (family === 'coding') writeHostFile(host.root, SOURCE, PRODUCT);
-    if (family === 'review') writeHostFile(host.root, `doc/features/${rel}/review/review-report.md`, '# 审查报告\n\n> **保证等级**: standard\n\n## 1. 审查范围\n- ' + SOURCE + '\n\n## 2. 审查维度\n契约、边界及恢复；真实编译与Node断言另由工具执行。\n\n## 3. 问题清单\n| 编号 | 分类 | 严重程度 | 问题描述 | 涉及文件 | 修复建议 |\n|---|---|---|---|---|---|\n\n## 4. 问题统计\n| 严重程度 | 数量 |\n|---|---|\n| BLOCKER | 0 |\n| MAJOR | 0 |\n| MINOR | 0 |\n\n## 5. 修复建议\n无新增建议。\n\n## 6. 结论\n**审查结论**: 通过\n');
+    if (family === 'review') unitReviewReport(host, feature);
     if (family === 'ut') {
       writeHostFile(host.root, TEST, TEST_TEXT);
       writeYaml(host.root, `doc/features/${rel}/ut/mock-plan.yaml`, { schema_version: '1.0', feature, spies: [] });
@@ -583,34 +588,37 @@ const cases = [{
       step = await report(host, control, step, output);
     }
     assert.equal(step.phase, 'work-unit-author', JSON.stringify(step));
-    let authors = 0, childRunDir = '', observedMixed = false;
+    let authors = 0, reviewers = 0, childRunDir = '', observedMixed = false;
     for (let call = 0; step.type === 'phase_execute_request' && call < 16; call++) {
       const raw = JSON.parse(fs.readFileSync(step.request.path, 'utf8'));
       const issued = host.load('scripts/utils/session-execution-handoff').readSessionExecution(raw.context.runDir, step.request.path);
       assert(issued); const context = issued.request.context;
       if (context.phase === 'work-unit-author') {
         authors++; childRunDir = context.runDir;
-        assert(authors <= 2, 'a framework fault cannot buy repeated unchanged author calls');
-        if (authors === 2) {
-          const disposition = host.load('scripts/utils/verify-feature-completion').resolveCompletionDisposition({ projectRoot: host.root, frameworkRoot: host.frameworkRoot,
-            feature: context.feature, runId: context.runId, chain: context.chain, endpoint: 'request' });
-          assert(disposition.completionBlocking.some((problem: any) => problem.owner === 'framework' && problem.action === 'wait'), JSON.stringify(disposition));
-          const repairs = disposition.completionBlocking.filter((problem: any) => problem.phase === 'review' && problem.action === 'repair');
-          assert(repairs.length > 0, 'the real missing review artifact remains independently repairable');
-          assert(repairs.some((problem: any) => context.instruction.includes(problem.id)), 'the original author receives its actual business deficit');
-          observedMixed = true;
-        }
+        assert.equal(authors, 1, 'a missing independent report cannot repurchase the implementation author');
         unitMaterials(host, context); assertFrozenInputs(host, context);
         if (authors === 1) {
           const review = host.load('config').featureFilePath(host.root, context.feature, 'review/review-report.md');
           assert(fs.existsSync(review)); fs.unlinkSync(review);
         }
+      } else if (context.phase === 'review') {
+        reviewers++;
+        assert.equal(reviewers, 1, 'the independent report writer runs once for its actual deficit');
+        assert.equal(issued.request.write_boundary.executionRole, 'verifier');
+        const disposition = host.load('scripts/utils/verify-feature-completion').resolveCompletionDisposition({ projectRoot: host.root, frameworkRoot: host.frameworkRoot,
+          feature: context.feature, runId: context.runId, chain: context.chain, endpoint: 'request' });
+        assert(disposition.completionBlocking.some((problem: any) => problem.owner === 'framework' && problem.action === 'wait'), JSON.stringify(disposition));
+        const repairs = disposition.completionBlocking.filter((problem: any) => problem.phase === 'review' && problem.action === 'repair');
+        assert(repairs.some((problem: any) => context.instruction.includes(problem.id)), 'the independent writer receives the actual report deficit');
+        assert.equal(read(host.root, SOURCE), PRODUCT);
+        unitReviewReport(host, context.feature);
+        observedMixed = true;
       } else if (context.phase.endsWith('-verifier-format-repair')) verifierReply(host, context, context.phase.replace(/-verifier-format-repair$/, ''));
       else assert.fail('unexpected mixed-fault responsibility: ' + context.phase);
       step = await report(host, control, step, '实际可做的业务材料已处理；未改framework，工具原件决定剩余故障和完成。');
       assert.equal(fs.readFileSync(nativeFile, 'utf8'), broken, 'no actor repairs the framework on its own authority');
     }
-    assert(observedMixed && authors === 2);
+    assert(observedMixed && authors === 1 && reviewers === 1);
     assert.equal(step.type, 'goal_session_result', JSON.stringify(step));
     assert.equal(step.result.status, 'waiting', JSON.stringify(step));
     const handoff = host.load('scripts/utils/session-execution-handoff');

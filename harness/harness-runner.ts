@@ -893,13 +893,15 @@ async function main(): Promise<void> {
       });
     }
   }
-  // C1 feature-track：按 feature 声明的 track 过滤合法 phase（缺省 full = 现状零变化；
-  // D1.2：权威说不清（冻结入口已给出 BLOCKER）时**跳过这一步**——那时的 track 声明不可信，
-  // 真正的失败会由下方 `capabilityInputChecks` 以 execution_scope_frozen 报出来。
-  if (
-    !phaseIsGlobal && feature && feature !== GLOBAL_FEATURE_SENTINEL &&
-    !featureScopeFreezeChecks.length && !capabilityInputChecks.length
-  ) {
+  // Rejected authority has no right to replace the current run's reports.
+  if (featureScopeFreezeChecks.length || capabilityInputChecks.length) {
+    for (const check of [...featureScopeFreezeChecks, ...capabilityInputChecks]) {
+      console.error(`[${check.id}] ${check.details}\n${check.suggestion ?? ''}`);
+    }
+    process.exit(1);
+  }
+  // Authority is established before selecting this feature's legal check family.
+  if (!phaseIsGlobal && feature && feature !== GLOBAL_FEATURE_SENTINEL) {
     const featureTrack = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, feature));
     const trackChain = resolvePhaseChain(workflowSpec, featureTrack);
     if (!trackChain.idSet.has(phase)) {
@@ -1026,9 +1028,6 @@ async function main(): Promise<void> {
   let factsContext: import('./scripts/utils/context-facts').FactsInvocationContext | undefined;
   if (!phaseIsGlobal && capabilityInputChecks.length === 0) {
     try {
-      // D1.2：冻结 / 核对已在 track 过滤**之前**做过（第三轮阻断 3），这里只把它的结论
-      // 按 §3 问题 2 的既定形状报进本阶段的 capability 输入检查——不重复执行冻结。
-      capabilityInputChecks.push(...featureScopeFreezeChecks);
       const explicitRequirement = Object.prototype.hasOwnProperty.call(args, 'requirement')
         || Object.prototype.hasOwnProperty.call(args, 'requirement-file');
       if (process.env.MAISON_GOAL_RUN_ID?.trim() && explicitRequirement) {

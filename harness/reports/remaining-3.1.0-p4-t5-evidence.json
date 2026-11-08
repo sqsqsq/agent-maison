@@ -1,0 +1,195 @@
+{
+  "source_commit": "2e72e6d2bc4ab0d63062acf613bc063294fb2b2b",
+  "source_modified": true,
+  "projection_replay": {
+    "kind": "original-decomposition-roots; isolated pure production projection, no run execution",
+    "explicitRoots": [
+      {
+        "kind": "node",
+        "view_id": "development",
+        "id": "dev-card-store"
+      },
+      {
+        "kind": "node",
+        "view_id": "development",
+        "id": "dev-phone-nav"
+      },
+      {
+        "kind": "contract",
+        "id": "card-open-persist"
+      }
+    ],
+    "beforeReferences": 41,
+    "afterReferences": 26,
+    "beforeFiles": [
+      "02-Feature/WalletMain/src/main/ets/data/store/WalletCardStore.ets",
+      "02-Feature/WalletMain/src/main/ets/data/repository/CardRecordRepository.ets",
+      "02-Feature/WalletMain/src/main/ets/data/model/CardRecord.ets",
+      "02-Feature/WalletMain/src/main/ets/shared/constant/CardOpenConstants.ets",
+      "01-Product/Phone/src/main/ets/pages/index.ets",
+      "01-Product/Phone/src/main/ets/phoneability/PhoneAbility.ets",
+      "02-Feature/WalletMain/src/main/ets/presentation/components/CardTypeSheet.ets",
+      "02-Feature/WalletMain/src/main/ets/presentation/pages/AddBankCardPage.ets",
+      "02-Feature/WalletMain/src/main/ets/presentation/pages/AllBanksPage.ets",
+      "02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardListPage.ets",
+      "02-Feature/WalletMain/src/main/ets/presentation/pages/CardOpenResultPage.ets",
+      "02-Feature/WalletMain/src/main/ets/index.ets",
+      "02-Feature/WalletMain/src/main/resources/base/profile/route_map.json",
+      "02-Feature/WalletMain/src/main/resources/base/element/string.json",
+      "02-Feature/WalletMain/src/main/resources/base/element/color.json",
+      "02-Feature/WalletMain/src/main/resources/base/element/float.json",
+      "02-Feature/WalletMain/src/main/ets/domain/service/CardOpenCoordinator.ets",
+      "02-Feature/WalletMain/src/main/ets/domain/service/SmsCodeService.ets",
+      "02-Feature/WalletMain/src/main/ets/domain/service/CardOpenValidator.ets",
+      "02-Feature/WalletMain/src/main/ets/data/model/CardOpenResult.ets"
+    ],
+    "afterFiles": [
+      "02-Feature/WalletMain/src/main/ets/data/store/WalletCardStore.ets",
+      "02-Feature/WalletMain/src/main/ets/data/repository/CardRecordRepository.ets",
+      "02-Feature/WalletMain/src/main/ets/data/model/CardRecord.ets",
+      "02-Feature/WalletMain/src/main/ets/shared/constant/CardOpenConstants.ets",
+      "01-Product/Phone/src/main/ets/pages/index.ets",
+      "01-Product/Phone/src/main/ets/phoneability/PhoneAbility.ets"
+    ],
+    "siblingFilesRemovedFromAutomaticSelection": [
+      "CardOpenCoordinator",
+      "SmsCodeService",
+      "CardTypeSheet",
+      "CardOpenResultPage",
+      "CardOpenValidator",
+      "CardOpenResult",
+      "BankCardListPage"
+    ],
+    "publishedCuUnchanged": true,
+    "remainingDesignWork": "Original CU selections and the shared Phone node need design-owner reconciliation; missing acceptance is not fabricated."
+  },
+  "original_run": {
+    "parentRun": "doc/features/bc-openCard-2/goal-runs/20261108T101421Z-d5a320",
+    "childRun": "doc/features/bc-openCard-2/cu-card-storage/goal-runs/20261108T115921Z-2f8034",
+    "publishedRevision": 2,
+    "publishedAt": "2026-11-08T11:55:13.575Z",
+    "admissionAfterQuestioning": "pass",
+    "blueprintIdentityMatchesCu": true,
+    "frozenResults": [
+      "按已准入 CU cu-card-storage 交付卡片库与数据访问层：WalletCardStore（init/ready）、CardRecordRepository（persistCard/queryAll/hasAnyCard）、CardRecord 模型与 CardOpenConstants；并由 PhoneAbility.onCreate 经 WalletMain index.ets 的初始化桥启动 wallet_card.db 打开与 bank_card 建表；不新增或改动任何页面、路由与可见交互。"
+    ],
+    "authorCalls": [
+      {
+        "at": "2026-11-08T12:02:00.273Z",
+        "invoke": "work-unit-author-i1"
+      },
+      {
+        "at": "2026-11-08T12:27:07.774Z",
+        "invoke": "work-unit-author-i2"
+      },
+      {
+        "at": "2026-11-08T12:55:02.694Z",
+        "invoke": "work-unit-author-i3"
+      }
+    ],
+    "authorWrites": [
+      {
+        "at": "2026-11-08T12:20:35.456Z",
+        "invoke": "work-unit-author-i1",
+        "paths": [
+          "01-Product/Phone/src/main/ets/phoneability/PhoneAbility.ets",
+          "02-Feature/WalletMain/src/main/ets/data/model/CardRecord.ets",
+          "02-Feature/WalletMain/src/main/ets/data/repository/CardRecordRepository.ets",
+          "02-Feature/WalletMain/src/main/ets/data/store/WalletCardStore.ets",
+          "02-Feature/WalletMain/src/main/ets/index.ets",
+          "02-Feature/WalletMain/src/main/ets/shared/constant/CardOpenConstants.ets",
+          "02-Feature/WalletMain/src/ohosTest/ets/test/card_storage_ut.test.ets",
+          "02-Feature/WalletMain/src/ohosTest/ets/test/List.test.ets",
+          "doc/features/bc-openCard-2/cu-card-storage/acceptance.yaml",
+          "doc/features/bc-openCard-2/cu-card-storage/contracts.yaml",
+          "doc/features/bc-openCard-2/cu-card-storage/plan/notes.md",
+          "doc/features/bc-openCard-2/cu-card-storage/plan/plan.md",
+          "doc/features/bc-openCard-2/cu-card-storage/plan/visual-parity.yaml",
+          "doc/features/bc-openCard-2/cu-card-storage/spec/asset-manifest.yaml",
+          "doc/features/bc-openCard-2/cu-card-storage/spec/notes.md",
+          "doc/features/bc-openCard-2/cu-card-storage/spec/ref-elements.yaml",
+          "doc/features/bc-openCard-2/cu-card-storage/spec/spec.md",
+          "doc/features/bc-openCard-2/cu-card-storage/spec/ui-spec.yaml",
+          "doc/features/bc-openCard-2/cu-card-storage/use-cases.yaml"
+        ]
+      },
+      {
+        "at": "2026-11-08T12:36:27.385Z",
+        "invoke": "work-unit-author-i2",
+        "paths": [
+          "02-Feature/WalletMain/src/ohosTest/ets/test/card_storage_ut.test.ets",
+          "doc/features/bc-openCard-2/cu-card-storage/contracts.yaml",
+          "doc/features/bc-openCard-2/cu-card-storage/ut/notes.md",
+          "doc/features/bc-openCard-2/cu-card-storage/ut/testability-audit.md"
+        ]
+      },
+      {
+        "at": "2026-11-08T13:01:06.396Z",
+        "invoke": "work-unit-author-i3",
+        "paths": [
+          "02-Feature/WalletMain/src/main/ets/data/repository/CardRecordRepository.ets",
+          "02-Feature/WalletMain/src/ohosTest/ets/test/card_storage_ut.test.ets",
+          "04-BusinessBase/AccountManager/BuildProfile.ets",
+          "05-SystemBase/CommFunc/BuildProfile.ets",
+          "05-SystemBase/CommUI/BuildProfile.ets",
+          "doc/features/bc-openCard-2/cu-card-storage/testing/notes.md",
+          "doc/features/bc-openCard-2/cu-card-storage/ut/notes.md"
+        ]
+      }
+    ],
+    "managedChecks": 38,
+    "latestManagedUt": "2026-11-08T14:03:41.150Z",
+    "laterUnboundUtReport": "2026-11-08T14:28:31.708Z",
+    "unboundUtChecks": [
+      "execution_scope_frozen",
+      "capability_resolution_contract"
+    ],
+    "parentResumeAssessment": "Reuse original parent and design revision; correct CU ownership through existing design repair. Direct unchanged child resume is insufficient."
+  },
+  "originals": [
+    {
+      "file": "doc/features/bc-openCard-2/blueprint/component-blueprint.yaml",
+      "sha256": "f6a9ffe9c571a9358d615d2a632020462c155aabdd1230f40a66dc19e88be5c5"
+    },
+    {
+      "file": "doc/features/bc-openCard-2/cu-card-storage/change-unit.yaml",
+      "sha256": "848632e72d5f2a1d1d9e73aaed82ea6ddceda95ead06dfe1122db4e6611d0eef"
+    },
+    {
+      "file": "doc/features/bc-openCard-2/goal-runs/20261108T101421Z-d5a320/events.jsonl",
+      "sha256": "3e810a79699e514d0a762109ee66e57d4e53b1c688806b9cf23ccae9c957250a"
+    },
+    {
+      "file": "doc/features/bc-openCard-2/cu-card-storage/goal-runs/20261108T115921Z-2f8034/events.jsonl",
+      "sha256": "b895eaad580849d3c772b9f5c089615578cf30a531731f9f8f5632a7a7cbcfd6"
+    },
+    {
+      "file": "doc/features/bc-openCard-2/cu-card-storage/goal-runs/20261108T115921Z-2f8034/manifest.json",
+      "sha256": "e57890671b979c4ec0fb4cd9f46cd85c0e57b005831e239c9b9b42e08c10e6b0"
+    },
+    {
+      "file": "doc/features/bc-openCard-2/cu-card-storage/goal-runs/20261108T115921Z-2f8034/phases/work-unit-author/work-unit-author-i1/agent-output.log",
+      "sha256": "3589d66335c21f535231f3093c630ece188cdda62b66fd4565380a3d72dcce3a"
+    },
+    {
+      "file": "doc/features/bc-openCard-2/cu-card-storage/goal-runs/20261108T115921Z-2f8034/phases/work-unit-author/work-unit-author-i2/agent-output.log",
+      "sha256": "5e667fd12fb6384fac48876e804880cd817323fb3294590112bcd90dd3745cfa"
+    },
+    {
+      "file": "doc/features/bc-openCard-2/cu-card-storage/goal-runs/20261108T115921Z-2f8034/phases/work-unit-author/work-unit-author-i3/agent-output.log",
+      "sha256": "01cba631030e559d546691ef0cc95fb95abacba49c1e63992ee6d0ae30f14605"
+    },
+    {
+      "file": "doc/features/bc-openCard-2/goal-runs/20261108T101421Z-d5a320/phases/initial-design-decomposition/initial-design-decomposition-i10/agent-output.log",
+      "sha256": "a95c764bcc55c1cbd6a9b02cbad1e84663c1b003f1fd6fe8bc7436e82459dbfc"
+    },
+    {
+      "file": "doc/features/bc-openCard-2/cu-card-storage/ut/reports/script-report.json",
+      "sha256": "0ef5316cd4d12eeb4f7cd138e2248300a2fb9da3352cf54a9eacf6cc2968273d"
+    },
+    {
+      "file": "doc/features/bc-openCard-2/cu-card-storage/ut/reports/summary.json",
+      "sha256": "a49483921893786140254cecc6d00a289a1b91f5f74bc9d6b2ab6c38116cabe6"
+    }
+  ]
+}

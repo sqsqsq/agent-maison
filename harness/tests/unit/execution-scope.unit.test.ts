@@ -2683,6 +2683,29 @@ cases.push({ name: 'revalidate without authority refuses before spawning and lea
   } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
 } });
 
+cases.push({ name: 'P4 t5 rejected runless UT preserves the original run reports', run() {
+  const { root, frameworkRoot, feature } = setupRunlessProject();
+  const repo = path.resolve(__dirname, '../../..');
+  try {
+    seedRunlessChain(root, feature, ['coding', 'review', 'ut']);
+    const reportsDir = featurePhaseReportsDir(root, feature, 'ut', frameworkRoot);
+    fs.writeFileSync(path.join(reportsDir, 'script-report.json'), JSON.stringify({ checks: [], summary: { verdict: 'PASS' } }));
+    const originals = new Map(['script-report.json', 'summary.json', 'phase-evidence-manifest.json'].map(name =>
+      [name, fs.readFileSync(path.join(reportsDir, name))]));
+    const result = runRuntimeTestChild({ root }, () => spawnSync(process.execPath,
+      ['-r', require.resolve('ts-node/register/transpile-only'), path.join(repo, 'harness/harness-runner.ts'),
+        '--phase', 'ut', '--feature', feature, '--project-root', root, '--framework-root', frameworkRoot],
+      { cwd: root, encoding: 'utf8', timeout: 180000, env: { ...process.env,
+        TS_NODE_PROJECT: path.join(repo, 'harness/tsconfig.json'), MAISON_GOAL_RUN_ID: '', MAISON_GOAL_ATTEMPT: '' } }));
+    const output = (result.stdout ?? '') + (result.stderr ?? '');
+    assert.equal(result.status, 1, output);
+    assert(output.includes('execution_scope_frozen') && output.includes('没有 run 身份、也没有 feature 冻结记录'), output);
+    assert(!output.includes('schema mismatch'), 'authority rejection must not manufacture a second capability diagnosis');
+    for (const [name, bytes] of originals) assert(fs.readFileSync(path.join(reportsDir, name)).equals(bytes), `${name} was overwritten`);
+    assert(!fs.existsSync(featureFrozenScopePath(root, feature)));
+  } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+} });
+
 cases.push({ name: 'revalidate under a run identity keeps out-of-scope phases out of the target set', run() {
   // ②：run 权威（范围 = coding 起）、feature 目录无冻结记录（宿主 f829b8 形态）；范围外 plan 有 stale summary。
   const { root, frameworkRoot, feature } = setupRunlessProject();
@@ -3233,11 +3256,7 @@ cases.push({ name: 'D1 a coding-only runless request is managed through the cand
   // plan 7e1d4b93 · R3 的生产路径用例。回答的是需求 §8 问题 1：coding-only 的不建 run
   // 请求里，「候选 → 首次阶段调用冻结 → 候选指纹核对」这条路真实成立到什么程度。
   //
-  // **三个独立 root**，不在同一个 root 里串（plan §3 问题 4）：场景 B 的冻结失败检查会被
-  // `harness-runner.ts:996-1000` 经 `generateScriptReport` 写进 `script-report.json`
-  // （`report-generator.ts:148-150`），而 `phasesWithExistingEvidence`
-  // （`feature-execution-scope.ts:665`）把它算作「这个阶段跑过」，同 root 的后续首次冻结
-  // 必撞 `:480-486` 的 D1.3 第三行。
+  // 三个独立 root 分别验证正常冻结、无权威拒绝、候选与源码先后顺序的观测边界。
   const repo = path.resolve(__dirname, '../../..');
   const runlessCodingOnly = () => setupRunlessProject({ chain: ['coding'], completionTarget: 'request' });
   /** `execution_scope` 是 feature.yaml 里的**字段**，不是文件——解析后删字段再写回。 */
@@ -3287,29 +3306,23 @@ cases.push({ name: 'D1 a coding-only runless request is managed through the cand
   }
 
   // ---- 场景 B：没有候选 → 阶段根本跑不起来（「必须先经候选入口」的机器面）----
-  // 这个 root 用完即弃：失败检查已落盘成 script-report.json，再冻结会撞 D1.3 第三行。
+  // 拒绝不能制造阶段证据，补回真实候选后同一 root 仍能正常冻结。
   {
     const { root, frameworkRoot, feature } = runlessCodingOnly();
     try {
       seedGit(root);
+      const candidate = fs.readFileSync(featureTrackDeclPath(root, feature));
       dropCandidate(root, feature);
       const blocked = runPhase(root, frameworkRoot, feature, 'coding');
-      // 报告确实落盘（`harness-runner.ts:996-1000` → `generateScriptReport`）——实跑确认，
-      // 不留「未落盘」的兜底分支（那条分支实测走不到，留着就是死代码）。
       const reportPath = path.join(featurePhaseReportsDir(root, feature, 'coding', frameworkRoot), 'script-report.json');
-      assert(fs.existsSync(reportPath), '候选缺失时 harness 未写出 script-report.json：' + combined(blocked));
-      const report = JSON.parse(fs.readFileSync(reportPath, 'utf8')) as { checks: Array<{ id: string; status: string; severity: string; suggestion?: string }> };
-      const check = report.checks.find(c => c.id === 'execution_scope_frozen');
-      assert(check, '候选缺失时没有 execution_scope_frozen 检查项：' + JSON.stringify(report.checks.map(c => c.id)));
-      assert.equal(check!.status, 'FAIL', JSON.stringify(check));
-      assert.equal(check!.severity, 'BLOCKER', JSON.stringify(check));
-      assert(check!.suggestion?.includes('--prepare-scope'), '候选缺失的 suggestion 未指向 --prepare-scope：' + JSON.stringify(check));
       const summaryPath = path.join(featurePhaseReportsDir(root, feature, 'coding', frameworkRoot), 'summary.json');
-      assert(fs.existsSync(summaryPath), '候选缺失时 harness 未写出当前 base summary：' + combined(blocked));
-      const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf8')) as { verdict?: string; blockers?: Array<{ id?: string }> };
-      assert.equal(summary.verdict, 'FAIL');
-      assert(summary.blockers?.some(item => item.id === 'execution_scope_frozen'), JSON.stringify(summary));
+      assert.equal(blocked.status, 1, combined(blocked));
+      assert(combined(blocked).includes('execution_scope_frozen') && combined(blocked).includes('--prepare-scope'), combined(blocked));
+      assert(!fs.existsSync(reportPath) && !fs.existsSync(summaryPath), '没有权威的拒绝不得发布阶段报告');
       assert(!fs.existsSync(featureFrozenScopePath(root, feature)), '没有候选却冻结了范围');
+      fs.writeFileSync(featureTrackDeclPath(root, feature), candidate);
+      const recovered = runPhase(root, frameworkRoot, feature, 'coding');
+      assert(fs.existsSync(featureFrozenScopePath(root, feature)), '补回候选后不得被先前拒绝污染：' + combined(recovered));
     } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
   }
 

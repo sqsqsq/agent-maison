@@ -39,6 +39,7 @@ import { inspectAcceptanceItem, inspectTypedConstructionContent, inspectUseCaseI
 import { collectCleanPassIssues, readReusableCheckResult } from '../../scripts/utils/verify-feature-completion';
 import type { UnitCaseResult } from '../run-unit';
 import { asChangeUnitArtifact, createChangeUnitRef, loadCanonicalChangeUnit } from '../../scripts/utils/change-unit-path';
+import { completeChangeUnitDesignRefs, validateChangeUnitDesign } from '../../scripts/utils/change-unit-design-gate';
 
 const frameworkRoot = path.resolve(__dirname, '../../..');
 const sha = (file: string) => 'sha256:' + createHash('sha256').update(fs.readFileSync(file)).digest('hex');
@@ -94,6 +95,38 @@ export function planContracts(f: ReturnType<typeof fixture>): ContractsSpec & { 
 }
 
 const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Promise<void> }> = [
+  { name: 'P4 t5 dependency closure checks sibling content without selecting its delivery obligations', run(f) {
+    const blueprint = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
+    let cu = asChangeUnitArtifact(YAML.parse(fs.readFileSync(f.cuFile, 'utf8')));
+    const scenarioRef = cu.design_refs.find(ref => ref.target.kind === 'node' && ref.target.view_id === 'scenarios')!;
+    const flowRef = cu.design_refs.find(ref => ref.target.kind === 'flow')!;
+    const scenario = resolveBlueprintTarget(blueprint, scenarioRef.target);
+    scenario.acceptance = { criteria: [{ id: 'SIBLING-AC', description: 'A different CU delivers the UI.' }] };
+    scenario.contracts = { files: ['src/sibling/Screen.ets'] };
+    scenario.use_cases = { use_cases: [{ id: 'SIBLING-UC' }] };
+    scenario.provenance = { ...asRecord(scenario.provenance), evidence_strength: 'authoritative' };
+    cu.design_refs = cu.design_refs.filter(ref => ref !== scenarioRef && ref !== flowRef);
+    const completed = completeChangeUnitDesignRefs(blueprint, cu, f.root);
+    assert(!completed.design_refs.some(ref => ref.target.id === scenarioRef.target.id || ref.target.id === flowRef.target.id));
+    const selected = selectBlueprintSkillContent(blueprint, completed);
+    assert(!JSON.stringify(selected.acceptance).includes('SIBLING-AC'));
+    assert(!JSON.stringify(selected.contracts).includes('src/sibling/Screen.ets'));
+    assert(!JSON.stringify(selected.useCases).includes('SIBLING-UC'));
+    const resolveRef = ((_: string, ref: ComponentBlueprintRef) => ({ ref, blueprint,
+      target: resolveBlueprintTarget(blueprint, ref.target) })) as typeof import('../../scripts/utils/component-blueprint-path').resolveComponentBlueprintRef;
+    const design = validateChangeUnitDesign(f.root, { ...completed }, { resolveBlueprintRef: resolveRef });
+    assert(design.requiredAddresses.some(address => address.endsWith('/node:' + scenarioRef.target.id)), 'dependency remains in the checked closure');
+    assert(!design.issues.some(issue => issue.id === 'change_unit_design_closure_incomplete'), JSON.stringify(design.issues));
+    scenario.status = 'open_decision';
+    assert(validateChangeUnitDesign(f.root, { ...completed }, { resolveBlueprintRef: resolveRef }).issues
+      .some(issue => issue.id === 'change_unit_current_design_unresolved'), 'unselected dependencies still require effective decisions');
+    delete scenario.status;
+    const explicit = completeChangeUnitDesignRefs(blueprint, { ...cu, design_refs: [...cu.design_refs, scenarioRef] }, f.root);
+    const inherited = selectBlueprintSkillContent(blueprint, explicit);
+    assert(JSON.stringify(inherited.acceptance).includes('SIBLING-AC') && JSON.stringify(inherited.contracts).includes('src/sibling/Screen.ets')
+      && JSON.stringify(inherited.useCases).includes('SIBLING-UC'), 'explicit content is inherited whole, never filtered by touches or predicate IDs');
+    assert.deepEqual(completeChangeUnitDesignRefs(blueprint, completed, f.root), completed);
+  } },
   { name: 'P3 S16 raw authority FAIL binds canonical dependencies; old caches missing them recheck and restored authority invalidates the old FAIL', run(f) {
     materializeBlueprintSkillInputs(f.root, f.feature, frameworkRoot, undefined, 'spec');
     const original = fs.readFileSync(f.blueprintFile);

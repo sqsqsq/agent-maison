@@ -513,8 +513,9 @@ export function readCurrentCheckObservation(opts: { projectRoot: string; framewo
   const current = resolvePhaseEvidenceManifest({ projectRoot: opts.projectRoot, frameworkRoot: opts.frameworkRoot,
     feature: opts.feature, phase: opts.phase, requirementSha: computeRunRequirementSha(opts.projectRoot, opts.feature, opts.runId),
     extraInputs: returnedPaths });
-  const businessInputs = (manifest: typeof current) => phaseEvidenceBusinessInputs(opts.projectRoot, opts.feature, manifest, opts);
-  const currentInputs = new Map([...businessInputs(current), ...(loaded?.integrityOk ? businessInputs(loaded.manifest) : [])]
+  // Checkers consume authored phase outputs too; restoring one must invalidate its old missing verdict.
+  const checkedArtifacts = (manifest: typeof current) => [...phaseEvidenceBusinessInputs(opts.projectRoot, opts.feature, manifest, opts), ...manifest.outputs];
+  const currentInputs = new Map([...checkedArtifacts(current), ...(loaded?.integrityOk ? checkedArtifacts(loaded.manifest) : [])]
     .map(entry => [entry.path, entry]));
   for (const file of returnedPaths) {
     const entry = boundEntries.get(file);
@@ -526,7 +527,7 @@ export function readCurrentCheckObservation(opts: { projectRoot: string; framewo
   const environmentInput = (value: string | null | undefined) => value == null
     ? { exists: false, contentHash: '' }
     : { exists: true, contentHash: crypto.createHash('sha256').update(String(value)).digest('hex') };
-  const snapshot = (entries: ReturnType<typeof businessInputs>, environment: typeof current.environment, observeCurrent = false): ArtifactSnapshot => {
+  const snapshot = (entries: ReturnType<typeof checkedArtifacts>, environment: typeof current.environment, observeCurrent = false): ArtifactSnapshot => {
     const inputs: ArtifactSnapshot = {};
     for (const entry of entries) {
       if (runtime(entry.path)) continue;
@@ -544,7 +545,7 @@ export function readCurrentCheckObservation(opts: { projectRoot: string; framewo
     && entry.sha256 === sha256File(summary));
   if (bound && loaded) {
     const recordedSources = sourceFiles.flatMap(file => { const entry = boundEntries.get(file); return entry ? [entry] : []; });
-    const recorded = snapshot([...businessInputs(loaded.manifest), ...recordedSources], loaded.manifest.environment);
+    const recorded = snapshot([...checkedArtifacts(loaded.manifest), ...recordedSources], loaded.manifest.environment);
     // Actual dependencies discovered by this tool extend the original start view, without replacing its observed environment.
     if (previous) previous = { ...recorded, ...previous };
     else previous = recorded;

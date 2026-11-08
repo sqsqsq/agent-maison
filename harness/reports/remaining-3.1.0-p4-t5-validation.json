@@ -1,0 +1,286 @@
+{
+  "date": "2026-11-08",
+  "base_commit": "2e72e6d2bc4ab0d63062acf613bc063294fb2b2b",
+  "branch": "main",
+  "version": "3.1.0",
+  "changed": {
+    "command": "npm run test:changed -- --workers 4 --results-out reports/remaining-3.1.0-p4-t5-changed.json --plan-out reports/remaining-3.1.0-p4-t5-test-plan.json --timings-from reports/remaining-3.1.0-p4-t3-e54-full.json",
+    "result": "FAIL",
+    "exit_code": 1,
+    "passed": 5092,
+    "failed": 3,
+    "executed_groups": 891,
+    "reused_groups": 50,
+    "formal_not_executed": 425,
+    "input_stable": true,
+    "input_snapshot": "81c2b8ea7daecd48f04896f1283eb0d6557adddb67d7fe260b42a89962903038",
+    "wall_ms": 4800730.3508,
+    "unknown_coverage_groups": 39,
+    "originals": [
+      {
+        "path": "harness/reports/remaining-3.1.0-p4-t5-changed.json",
+        "sha256": "4042e18f2194293eade44f98393db9d7c27fecdfe06862cfb046dc72c942a488"
+      },
+      {
+        "path": "harness/reports/remaining-3.1.0-p4-t5-changed.log",
+        "sha256": "cdd0be73b48581499a9f731654dc655ceeb8763dddd14ed46296b86c90748640"
+      },
+      {
+        "path": "harness/reports/remaining-3.1.0-p4-t5-test-plan.json",
+        "sha256": "7c785276a5a3389d9d2c11c498dc38a9ac205568ddcfbe421c7fc642e0799b0e"
+      }
+    ]
+  },
+  "combined_replay": [
+    {
+      "id": "initial-design-progress-recovery",
+      "passed": 4,
+      "failed": 0,
+      "total_ms": 4759952.4475
+    }
+  ],
+  "targeted": [
+    {
+      "command": "npm run test:unit -- --filter execution-scope-runtime --case \"D1 a coding-only runless request\"",
+      "passed": 1,
+      "failed": 0,
+      "path": "harness/reports/p4-t5-fixed-runless.log",
+      "sha256": "536909078cef666844a3b2ab9ff12407bfeef05253f9e112300753bc95177f09"
+    },
+    {
+      "command": "npm run test:unit -- --filter verification-gap --case \"7d9 mixed execution gap\"",
+      "passed": 1,
+      "failed": 0,
+      "path": "harness/reports/p4-t5-fixed-mixed-gap.log",
+      "sha256": "91106eec54f7b0848797176ca07e3bd846aa4c16bf034d1c64b9deccefd5ae3f"
+    },
+    {
+      "command": "npm run test:unit -- --filter daily-design-journey --case \"daily design: a framework entry fault\"",
+      "passed": 1,
+      "failed": 0,
+      "path": "harness/reports/p4-t5-fixed-entry-recovery.log",
+      "sha256": "e0d4e7dd96cbae2fadc0d3e378da56a2621d0f782a52bf8d7f7a32156dced3f4"
+    },
+    {
+      "command": "npm run test:unit -- --filter verification-gap --workers 1",
+      "passed": 19,
+      "failed": 0,
+      "path": "harness/reports/p4-t5-verification-gap-final.log",
+      "sha256": "7b7ba2cbcf926c02e9d56e9c9cd3cd9a6c6cf696bbf2f0ce7a219a628264e190"
+    },
+    {
+      "command": "npm run test:unit -- --filter current-disposition-recovery --workers 2",
+      "passed": 45,
+      "failed": 1,
+      "path": "harness/reports/p4-t5-current-disposition-final.log",
+      "sha256": "da4480e9846c3900bc81a7ce2810102f4f318421ec787c430fee03501775e94e"
+    },
+    {
+      "command": "npm run test:unit -- --filter current-disposition-recovery --case \"R4 current object coverage\" --workers 2",
+      "passed": 2,
+      "failed": 0,
+      "path": "harness/reports/p4-t5-r4-final.log",
+      "sha256": "f6d6fa6aa9a30063965194b4efbbd2d9b38e98b30436c687c75bd35d7803de43"
+    },
+    {
+      "command": "npm run test:unit -- --filter goal-phase-runtime --workers 1",
+      "passed": 48,
+      "failed": 0,
+      "path": "harness/reports/p4-t5-goal-runtime-accepted.log",
+      "sha256": "1750abc7b1b5fc969c90024e9dc011955f69bd7835c8e043bb7c8424fe05c7ea"
+    },
+    {
+      "command": "npm run test:unit -- --filter blueprint-skill-projection",
+      "passed": 41,
+      "failed": 0,
+      "path": "harness/reports/p4-t5-blueprint-projection.log",
+      "sha256": "d963e88a3e7d48723914f1029d15dae0fae02a994a843fde318903a3598265b1"
+    },
+    {
+      "command": "npm run test:unit -- --filter component-assets",
+      "passed": 49,
+      "failed": 0,
+      "path": "harness/reports/p4-t5-component-assets.log",
+      "sha256": "34098bd349f10648cf5beafdfa67372172c081defaec939f51785955e9fec798"
+    },
+    {
+      "command": "npm run test:unit -- --filter change-unit-progression",
+      "passed": 98,
+      "failed": 0,
+      "path": "harness/reports/p4-t5-change-unit.log",
+      "sha256": "bce9d5b391687bd27c1b7e750410b24585eeaa8fcbdaf423cabad6f7b478b67d"
+    },
+    {
+      "command": "npm run test:unit -- --filter goal-phase-runtime --case \"P2\"",
+      "passed": 6,
+      "failed": 0,
+      "path": "harness/reports/p4-t5-unknown-recovery.log",
+      "sha256": "c559104ce124325cab1d510ddfcdeaa9763377e688b89e76b6717609c2fa72df"
+    }
+  ],
+  "red_disposition": [
+    {
+      "group": "daily-design-journey",
+      "kind": "test assumption; subsequent real-entry regression exposed a production observation omission",
+      "fix": "Independent report writer replaces repeated implementation author; common observation includes authored phase outputs.",
+      "target": "p4-t5-fixed-entry-recovery.log"
+    },
+    {
+      "group": "verification-gap",
+      "kind": "test fixture",
+      "fix": "Use actual product source with a real frozen write grant; recheck affected UT once.",
+      "target": "p4-t5-verification-gap-final.log"
+    },
+    {
+      "group": "execution-scope-runtime",
+      "kind": "test expectation",
+      "fix": "Rejected authority must not publish reports; restoring the candidate allows freezing in the same project.",
+      "target": "p4-t5-fixed-runless.log"
+    },
+    {
+      "group": "current-disposition-recovery / R4 legacy",
+      "kind": "supplemental production classification regression",
+      "fix": "Withdraw blanket no_progress classification for unverifiable originals; keep the existing completed-object comparison.",
+      "target": "p4-t5-r4-final.log"
+    }
+  ],
+  "post_changed_production": [
+    {
+      "file": "harness/harness-runner.ts",
+      "sha256": "e39f1a8b08e2beb379f4e73c11e1c1bc673d23ce38d27c220723b32d411a2025",
+      "changed_after_raw_run": false
+    },
+    {
+      "file": "harness/scripts/goal-phase-runtime.ts",
+      "sha256": "92f43735d073eabb046a8bb31cd6ed24c5049fdb0ee2dbbca43e56b7b6b704bc",
+      "changed_after_raw_run": true
+    },
+    {
+      "file": "harness/scripts/utils/change-unit-design-gate.ts",
+      "sha256": "953d63146d365fdf57e324b6e7ca5d86a2170a034feda12d424765e8b6256142",
+      "changed_after_raw_run": false
+    },
+    {
+      "file": "harness/scripts/utils/verify-feature-completion.ts",
+      "sha256": "1fd9c16d07be621626f9b07761b67a54a2e354a93b942634da57df0c38ed8c53",
+      "changed_after_raw_run": true
+    }
+  ],
+  "post_changed_scope": "Only affected groups were rerun; the original changed FAIL is retained. No second whole changed/daily/full run. Final runtime suite includes the actual timestamped merged-report producer and new-evidence counterexample.",
+  "readonly_review_command": "Get-Content -Raw <prompt> | claude.cmd -p --model opus --effort high --permission-mode plan --tools Read,Grep,Glob --allowedTools Read,Grep,Glob --settings harness/reports/6a2f8c91/claude-review-readonly-settings.json --strict-mcp-config --mcp-config harness/reports/6a2f8c91/claude-review-no-mcp.json --output-format json --no-session-persistence",
+  "reviews": [
+    {
+      "round": 1,
+      "kind": "diagnosis",
+      "result": "root causes identified",
+      "models": [
+        "claude-opus-5-5"
+      ],
+      "permission_denials": [],
+      "duration_ms": 556467,
+      "path": "harness/reports/p4-t5-diagnosis-review.json",
+      "sha256": "e4b0990cba1a769a6af24a08429354435c8ca8fa7ffcc2288fe8d976eff4edc6"
+    },
+    {
+      "round": 2,
+      "kind": "code review",
+      "result": "PASS",
+      "models": [
+        "claude-opus-5-5"
+      ],
+      "permission_denials": [],
+      "duration_ms": 416481,
+      "path": "harness/reports/p4-t5-code-review.json",
+      "sha256": "67c1c4092505c6069f21aeecd38b2e017579dfb262f035338339b6a304bf556a"
+    },
+    {
+      "round": 3,
+      "kind": "code review",
+      "result": "FAIL: generated merged/AI report publications omitted",
+      "models": [
+        "claude-opus-5-5"
+      ],
+      "permission_denials": [],
+      "duration_ms": 425978,
+      "path": "harness/reports/p4-t5-followup-review.json",
+      "sha256": "c4076fd5a66e324e1cca84bcc94e8b7909c6121e7cbc31371b7f49208b4cc537"
+    },
+    {
+      "round": 4,
+      "kind": "code review",
+      "result": "PASS",
+      "models": [
+        "claude-opus-5-5"
+      ],
+      "permission_denials": [],
+      "duration_ms": 226487,
+      "path": "harness/reports/p4-t5-publication-review.json",
+      "sha256": "0e2b88bdeef9783db121187ad49a589b27bdabce273c7421b0226c8eb1c88cb0"
+    }
+  ],
+  "gates": {
+    "typecheck": {
+      "exit_code": 0,
+      "path": "harness/reports/p4-t5-typecheck-final.log",
+      "sha256": "dfa0518d00f664264582e136e7385afa5719489b0550424c299f80da7c0d46a8"
+    },
+    "openspec": {
+      "passed": 65,
+      "failed": 0,
+      "path": "harness/reports/p4-t5-openspec-final.log",
+      "sha256": "2d2015d1c0afae1d69495adc839b574513acda539d0bd0f8c44034a6ff6af5cf"
+    },
+    "plan": {
+      "result": "PASS",
+      "path": "harness/reports/p4-t5-plans-final.log",
+      "sha256": "fb8fff392c8bcb1d51d54b764bc6728e67c7ae898776f06b6c6d1ab6ee1557a5"
+    },
+    "diff_lf": {
+      "result": "PASS",
+      "files": 17,
+      "plan_append_only": true,
+      "t5": "pending",
+      "t6": "pending"
+    }
+  },
+  "host": {
+    "root": "D:/1.code/SimulatedWalletForHmos",
+    "mode": "read-only; no resume or writes",
+    "projection_evidence": {
+      "path": "harness/reports/remaining-3.1.0-p4-t5-evidence.json",
+      "sha256": "8b29fa7916b328e58891b0a763303abd33a7f855a76b97f53b618ae948089e7b"
+    },
+    "resume": "Prefer the original parent and retained rev2 design; formally reconcile old CU selections. An unchanged child resume is insufficient; existing successor path may be required."
+  },
+  "protected": [
+    {
+      "file": ".cursor/goals/效率与准确率平衡总体目标_默认基线自主交付与可调精细度及可靠恢复_a47c9d62.goal.md",
+      "sha256": "0c43697f7c844dc4c3dfbb2b19f91916a2ea5df780f5533e572a391f40453d3e",
+      "unchanged_from_raw_test_start": true
+    },
+    {
+      "file": ".cursor/plans/交付结论与调用恢复收口_全消费者同源与双运输一致_6fd6c8c1.plan.md",
+      "sha256": "1b09f0756431e1ff25987eee328523be48b960cba47fc2024b9b16145379a285",
+      "unchanged_from_raw_test_start": true
+    },
+    {
+      "file": ".cursor/plans/验收事实与必修执行闭环补修_处置同源及有界恢复_c6ae8b4f.plan.md",
+      "sha256": "00d4a1a60f9db1124cddad29c6380ff6dae22034fc83369c2fdcadfcb796e3a8",
+      "unchanged_from_raw_test_start": true
+    }
+  ],
+  "pending": [
+    "P4 t5 host delivery",
+    "P4 t6 joint closure",
+    "new release artifact integration and host continuation"
+  ],
+  "not_performed": [
+    "packaging",
+    "push",
+    "version change",
+    "host mutation/resume",
+    "phone operations",
+    "credential inspection/copy"
+  ],
+  "final_review": "PASS: R3 publication omission fixed via existing summary pointers; real merged-report timestamp and nested-evidence regression covered"
+}

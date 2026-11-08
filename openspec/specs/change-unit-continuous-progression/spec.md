@@ -558,13 +558,21 @@ CU touches and development nodes SHALL identify the planned slice, not an exhaus
 
 Normal single/batch acceptance and content revision SHALL derive existing dependencies with the same closure function before validation and atomic publication. Authors supply root references and substantive decisions; derived dependencies need not be copied manually. Open decisions, conflicts, missing targets and wrong identities SHALL NOT be made constructable by completing references.
 
+Dependency traversal SHALL NOT select delivery content on behalf of a CU. Targets carrying `acceptance`, `contracts`, or `use_cases` MUST be explicitly selected in `design_refs` before their whole content is inherited. Automatic reference completion SHALL add only context targets without these fields. The full derived closure, including unselected content targets, SHALL still be checked for resolvable authority and unresolved decisions. Existing explicit selections MUST NOT be silently removed or filtered by touches or predicate identifiers; ownership corrections SHALL use the existing design-owner and CU-content revision path.
+
 #### Scenario: Implementation needs another predicted-outside module
 - **WHEN** actual implementation affects another module within the original request
 - **THEN** the module-list difference alone SHALL NOT invalidate projection; public contracts and architecture permission SHALL still be checked
 
 #### Scenario: Only root references were supplied
 - **WHEN** all dependency decisions already exist and are effective
-- **THEN** normal acceptance SHALL complete the dependency closure and validate exactly the artifact it publishes
+- **THEN** normal acceptance SHALL complete context references, validate the full dependency closure, and publish the same explicit delivery selections it validated
+
+#### Scenario: Shared dependency reaches another CU's delivery target
+- **WHEN** a selected storage target reaches a UI target through a shared contract, consumer relation, or scenario
+- **THEN** its authority and unresolved decisions SHALL remain in the dependency checks
+- **AND** its acceptance, files, and use cases SHALL NOT be inherited unless the CU explicitly selects that UI target
+- **AND** explicitly selecting the target SHALL inherit its complete content without filtering individual acceptance identifiers or files
 
 #### Scenario: A derived dependency is unresolved
 - **WHEN** closure includes an open or conflicting decision

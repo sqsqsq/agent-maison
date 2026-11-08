@@ -17,6 +17,10 @@ feature/source 由派生补写，schema_version 不自动补；最终 use-cases 
 
 ## 设计期挂载与共同继承
 
+`design_refs` 中携带 `acceptance`、`contracts` 或 `use_cases` 的目标必须由 CU 作者明确选择。依赖闭包仍完整解析、检查权威来源及未决事项，但自动补全只补不携带交付内容的上下文引用；不能因共享契约、消费者关系或场景关联，把兄弟目标的验收、写集、用例自动变成本 CU 的义务。需要交付该内容时，设计作者显式引用原目标，仍整体继承，不按 touches 或验收编号筛掉其中的条目。
+
+存量 CU 已经声明的目标保持原语义。若旧闭包补全导致归属冲突，交原设计 owner 经现有 CU 内容修订入口改正选择及必要的承载内容，再由原范围修订/接续机制处理受影响产物；不在恢复时静默删引用、裁剪 required 义务或重写历史证据。
+
 acceptance 挂 scenarios/logical 等设计目标；contracts 挂 development 节点和 runtime flow；use_cases 挂 runtime flow。目标 provenance 保留已有 authoritative 要求。引用目标后内容整体参与该 CU 合并：数组沿 `[module,file,holder,id??name??class??data]` 行身份去重、同身份不同内容报 authority_content_conflict；对象只在内容完全相同时接受，不逐键拼接。
 
 CU-A 引 S+A、CU-B 引 S+B：共享 S 只放双方共同验收/写集/用例，A/B 专属 AC/BD/NFR、files、用例放独占目标。module_dependencies/navigation/resource_keys/acceptance.flows 等对象集中在一个承载目标，不拆开等自动拼接。整个 change_unit 不在设计期编写，也不进入设计内容投影；每个 Feature 的专属映射交 plan，缺失、未知谓词、过期身份或越权文件仍由原施工门拒绝。合法先后写同文件不新增门禁，不能按 predicate 隐藏误继承的 AC/文件，也不因 CU 修订/替代复制稳定设计节点。

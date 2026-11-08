@@ -14,6 +14,7 @@ import {
   DetachedGoalPhaseExecutor,
   validateWorkUnitExecutionContext,
   PHASE_EXECUTION_CONTEXT_FORBIDDEN_FIELDS,
+  workUnitExecutionRole,
   type WorkUnitExecutionContext,
 } from '../../scripts/utils/goal-phase-executor';
 import { GoalPhaseRuntime } from '../../scripts/utils/goal-phase-runtime';
@@ -148,6 +149,128 @@ function assertOnlyChangedChecksResume(before: RunProbe, resumed: RunProbe): voi
 }
 
 const cases: Case[] = [{
+  name: 'P4 t5 rewriting an invalid review report is not new work for its independent writer',
+  run: async () => {
+    for (const newProof of [false, true]) {
+    const root = setupGoalRuntimeHost('codex', false).root;
+    const reportRel = 'doc/features/bc-openCard/review/review-report.md';
+    const reportPath = path.join(root, reportRel);
+    const proofRel = 'doc/features/bc-openCard/testing/reports/external-proof/summary.json';
+    let proofPublished = false;
+    let reviewers = 0;
+    try {
+      const probe = await runGoalRuntimeChain(root, { ...declareSourceRepairRequest(root).launch,
+        adapter: 'codex', runId: 'p4-review-output-is-not-input', onAuthor: () => undefined,
+        onReview: () => {
+          assert(++reviewers <= 4, 'unchanged checked feedback must converge without an external kill');
+          fs.mkdirSync(path.dirname(reportPath), { recursive: true });
+          fs.writeFileSync(reportPath, `# Draft ${reviewers}\nThe required conclusion is still missing. Evidence: ${proofRel}\n`);
+        },
+        onHarnessSummary: ({ phase }) => {
+          if (phase !== 'review') return null;
+          if (newProof && reviewers === 2 && !proofPublished) {
+            fs.mkdirSync(path.dirname(path.join(root, proofRel)), { recursive: true });
+            fs.writeFileSync(path.join(root, proofRel), '{"actual_new_input":true}\n');
+            proofPublished = true;
+          }
+          const checks = fixtureReadDependencies(root, [{
+          id: fs.existsSync(reportPath) ? 'conclusion_with_verdict' : 'review_report_exists',
+          category: 'structure', severity: 'BLOCKER', status: 'FAIL', description: 'a readable independent review conclusion is required',
+          details: fs.existsSync(reportPath) ? '审查结论声明仍缺失' : '独立审查报告缺失', affected_files: [reportRel],
+          }], [PRODUCT_FILE]);
+          const reports = require('../../scripts/utils/report-generator') as typeof import('../../scripts/utils/report-generator');
+          const frameworkRoot = path.resolve(__dirname, '../../..');
+          reports.generateMergedReport(path.join(frameworkRoot, 'harness'), root, 'review', 'bc-openCard',
+            reports.buildScriptReport('review', 'bc-openCard', root, checks), undefined, frameworkRoot);
+          return { checks };
+        },
+      });
+      assert(reviewers === (newProof ? 3 : 2), 'only changed feedback or actual new evidence may buy a writer call: ' + reviewers);
+      assert(probe.exitCode !== 0 && probe.events.some(event => event.type === 'phase_halt'), 'the unchanged real FAIL must remain waiting');
+      assert(!probe.events.some(event => event.type === 'run_end' && ['COMPLETED', 'INTERRUPTED'].includes(String(event.status))),
+        'convergence must neither fabricate completion nor rely on an external interruption');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+    }
+  },
+}, {
+  name: 'P4 t5 unchanged returned review does not suppress an actionable source repair',
+  run: async () => {
+    const root = setupGoalRuntimeHost('codex', false).root;
+    const marker = 'P4_T5_ACTUAL_REPAIR';
+    let invalidatedReview = false;
+    let repaired = false;
+    let authors = 0;
+    try {
+      const probe = await runGoalRuntimeChain(root, { ...declareSourceRepairRequest(root).launch,
+        adapter: 'codex', runId: 'p4-repair-before-wait',
+        onAuthor: ctx => {
+          authors++;
+          if (ctx.prompt.includes(marker) && !repaired) {
+            fs.appendFileSync(path.join(root, PRODUCT_FILE), `\n// ${marker}\n`);
+            repaired = true;
+          }
+        },
+        onHarnessSummary: ({ phase }) => {
+          if (phase !== 'ut') return null;
+          if (!invalidatedReview) {
+            // The real return remains in events; its report publication is no longer reusable.
+            fs.writeFileSync(path.join(root, 'doc/features/bc-openCard/review/reports/phase-evidence-manifest.json'), '{}');
+            invalidatedReview = true;
+          }
+          return { checks: [productEvidenceCheck(root, marker)] };
+        },
+      });
+      assert(repaired && authors === 2, JSON.stringify({ repaired, authors, invoked: probe.invokedPhases }));
+      const repairReturn = probe.events.map(event => event.type === 'agent_invoke_end' && event.phase === 'work-unit-author').lastIndexOf(true);
+      const haltedAt = probe.events.findIndex(event => event.type === 'phase_halt');
+      assert(haltedAt > repairReturn && !probe.events.some(event => event.type === 'run_end' && event.status === 'COMPLETED'),
+        'repair must finish before the remaining unavailable review proof waits; missing proof never becomes PASS');
+      assert(probe.harnessPhases.filter(phase => phase === 'ut').length === 2, 'only the actual repair changes the UT input');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+  },
+}, {
+  name: 'P4 t5 missing review report invokes its independent writer within the original work loop',
+  run: async () => {
+    for (const executorMode of ['detached', 'attended'] as const) {
+    const root = setupGoalRuntimeHost('codex', false).root;
+    const reportRel = 'doc/features/bc-openCard/review/review-report.md';
+    const reportPath = path.join(root, reportRel);
+    let authors = 0;
+    let reviewers = 0;
+    try {
+      const request = declareSourceRepairRequest(root);
+      const probe = await runGoalRuntimeChain(root, { ...request.launch, adapter: 'codex', runId: 'p4-independent-review', executorMode,
+        invokeResultFor: phase => phase === 'work-unit-author' ? { provider_session_id: 'p4-original-author-session' } : null,
+        onAuthor: (ctx, context) => {
+          authors++;
+          assert(workUnitExecutionRole(context) === 'author', 'implementation uses its original author');
+          assert(ctx.prompt.indexOf('完成当前源码修复与原验证终点') < ctx.prompt.indexOf('核实并修复'), 'the frozen unit goal precedes the parent requirement');
+        },
+        onReview: ctx => {
+          reviewers++;
+          assert(ctx.prompt.includes('独立审查') && ctx.prompt.includes('作者原件'), 'independent review receives the original author arguments');
+          fs.mkdirSync(path.dirname(reportPath), { recursive: true });
+          fs.writeFileSync(reportPath, '# Actual independent review\nRead the actual source and its frozen request.\n');
+        },
+        onHarnessSummary: ({ phase }) => phase === 'review' ? { checks: fixtureReadDependencies(root, [{
+          id: 'review_report_exists', category: 'structure', severity: 'BLOCKER',
+          status: fs.existsSync(reportPath) ? 'PASS' : 'FAIL', description: 'the actual independent review report exists',
+          details: fs.existsSync(reportPath) ? 'actual report returned' : 'independent review report missing',
+          affected_files: [reportRel], failure_kind: 'missing_review_report', blocking_class: 'review_context',
+        }], [PRODUCT_FILE]) } : null,
+      });
+      assert(authors === 1 && reviewers === 1, JSON.stringify({ authors, reviewers, invoked: probe.invokedPhases }));
+      const start = probe.events.find(event => event.type === 'agent_invoke_start' && event.phase === 'review');
+      assert(start?.handoff_request, 'review is a real issued work-unit invocation');
+      const original = require('../../scripts/utils/session-execution-handoff').executionRequestForInvoke(probe.reportDir, start.invoke_id);
+      assert(workUnitExecutionRole(original.request.context) === 'verifier', 'review must not reuse the implementation role');
+      assert(original.request.context.provider_session_id !== 'p4-original-author-session', 'independent review cannot inherit the implementation session');
+      assert(path.resolve(root, original.request.write_boundary.verifierResultPath) === path.resolve(reportPath), 'review has only its report write grant');
+      assert(probe.exitCode === 0, JSON.stringify(probe.events.filter(event => event.type === 'run_end')));
+    } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+    }
+  },
+}, {
   name: 'P1 R2 an unbound historical execution cannot be force re-signed and its partial report remains immutable',
   run: async () => {
     const root = setupGoalRuntimeHost('codex').root, runId = 'receipt-unbound-takeover';
