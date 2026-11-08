@@ -11,7 +11,7 @@ import { researchSessionUnit, sessionNodeTestStrengthReply } from './session-tra
 import type { SessionExecutionRequest } from '../../scripts/utils/session-execution-handoff';
 import type { UnitCaseResult } from '../run-unit';
 import { startCaseTiming, type SelectedUnitCases, type UnitExecutionTiming } from '../utils/unit-case-selection';
-import { runRuntimeTestChild, withRuntimeTest } from '../utils/runtime-test-control';
+import { runRuntimeTestChild, TEST_RUN_TIMEOUT_MS, withRuntimeTest } from '../utils/runtime-test-control';
 
 const { instrumentSlowCompile, observeAndInterrupt, verifyCompletion } = require('../utils/session-cli-interruption.cjs') as {
   instrumentSlowCompile(root: string): void; observeAndInterrupt(root: string, evidence: string, timeoutMs: number): Promise<Record<string, unknown>>;
@@ -59,7 +59,7 @@ function controlArgs(action: string[]): string[] {
 }
 function run(root: string, entry: 'goal-mode-entry' | 'harness-runner', args: string[], label: string) {
   const result = runRuntimeTestChild({ root, evidenceFiles: [`observations/${label}.stdout.log`, `observations/${label}.stderr.log`] }, () => {
-    const child = spawnSync(process.execPath, cliArgs(root, entry, args), { cwd: path.join(root, 'framework/harness'), env: environment(root), encoding: 'utf8', timeout: 90_000, windowsHide: true });
+    const child = spawnSync(process.execPath, cliArgs(root, entry, args), { cwd: path.join(root, 'framework/harness'), env: environment(root), encoding: 'utf8', timeout: TEST_RUN_TIMEOUT_MS, windowsHide: true });
     write(root, `observations/${label}.stdout.log`, child.stdout ?? ''); write(root, `observations/${label}.stderr.log`, child.stderr ?? '');
     return child;
   });

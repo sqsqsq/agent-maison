@@ -78,5 +78,25 @@
     "harness/reports/p4-t3-session-q-verified.json",
     "harness/reports/p4-t3-m2m3-attribution.json"
   ],
-  "officialFullStatus": "FAIL; no stitched official-green claim"
+  "officialFullStatus": "Latest e54 official full remains FAIL 6060/1; sole fixture failure repaired and affected group passed1/0; no stitched full-green claim.",
+  "e54OfficialFollowupReview": {
+    "scope": "Two-line private fixture timeout correction plus truthful official FAIL/targeted PASS handoff; no production changes",
+    "command": "Get-Content -Raw harness/reports/remaining-3.1.0-p4-t3-e54-review-prompt.txt | claude.cmd -p --model opus --effort high --permission-mode plan --tools Read,Grep,Glob --allowedTools Read,Grep,Glob --settings harness/reports/6a2f8c91/claude-review-readonly-settings.json --strict-mcp-config --mcp-config harness/reports/6a2f8c91/claude-review-no-mcp.json --output-format json --no-session-persistence",
+    "requestedModel": "opus",
+    "effort": "high",
+    "actualModels": [
+      "claude-opus-5-5"
+    ],
+    "permissionDenials": [],
+    "durationMs": 89774,
+    "turns": 21,
+    "conclusion": "PASS; no mandatory findings",
+    "result": "## 结论：PASS，没有必须修复的问题，可以收口\n\n**冻结范围**：只看 e54bffd0 这次官方全量之后的一处测试改动（两行），以及验证记录、交接文档和三个 plan 末尾追加的实施记录。生产代码、超时、协议、门禁、停机原因都不在本批，没有重新审计。\n\n### 1. 唯一红项的定性：正确，是测试夹具的问题，不是生产缺陷\n- 全量日志 `remaining-3.1.0-p4-t3-e54-full.log:169677` 写的是 `FAIL; 6060 passed, 1 failed; formal not executed=0`。日志里外层 `FAIL` 行只有一条，在 `:166921`，就是 `[session-slow-gate] 1804 …`。负例里出现的 FAIL 没有混进来。\n- 失败原件里的时间线：\n  - 14:18:54.7 接续开始（resume）。\n  - 后面 coding、review、UT 三个检查都有真实的 `harness_start/harness_end`。三者都退出码 1，但 `phase_verdict` 分别是 FAIL / PASS / PASS。\n  - coding 的 FAIL 原因是\"独立核验结果待补\"，这是正常流程，随后会派核验请求，用例里的 `requestedVerifier` 专门处理这一步。\n  - 14:20:08.8 UT 结束，离 90 秒边界（约 14:20:24.7）还剩约 16 秒。\n  - `run-control.json` 显示 owner 仍是 `active`，租约到 14:20:54。\n  - 之后被 `ETIMEDOUT`/`SIGTERM` 截断，stderr 是空的。\n- 也就是说，CLI 在 4 个 worker 并发的负载下，用 74 秒连续跑完三个真实检查，正在准备下一个核验请求时被夹具自己设的 90 秒上限杀掉。原件里没有生产侧卡死或出错的迹象。\n\n### 2. 修法：同源、有界，没有把 90 秒当成生产承诺\n- 改动在 `session-slow-gate.integration.test.ts:14,62`：导入已有常量，把 `90_000` 换成 `TEST_RUN_TIMEOUT_MS`，这个常量在 `runtime-test-control.ts:8`，值是 45 分钟。\n- `spawnSync` 会卡住 worker 的事件循环，所以 worker 里 `withRuntimeTest` 自带的 `setTimeout` 看门狗（`runtime-test-control.ts:207`）在同步调用期间触发不了。\n- 真正兜底的是父进程。它收到 `test-run-start` 后按同一个 `TEST_RUN_TIMEOUT_MS` 起计时（`unit-suite-processes.ts:259-260`），每个用例另有 90 分钟上限（`:261`），整个套件也有超时（`:241`）。\n- 所以改完以后仍然是单次调用、单个用例、整个套件三层都有上限，和原来的单次调用看门狗用的是同一个值。\n- 90 秒只出现在这个文件的私有 `run()` 里，不是生产 SLA，去掉它不影响任何生产契约。\n\n### 3. 恢复行为的强断言：完整保留\ndiff 只动了那两行。下面这些断言都没变：\n- 作者 `agent_invoke_start` 恰好 1 次，作者报告被接受 1 次（`:203-204`）。\n- 真实编译器至少重新进入 2 次，原生 gate 不重叠：`live_prior_pids` 全空（`:205-206`）。\n- `feature_completion_generated` 恰好 1 次，`CHAIN_SLICE_COMPLETED` 恰好 1 次（`:208-211`）。\n- coding 的 `harness_start` 2 次、`harness_end` 1 次；不能伪造进程结算，不能触发预算事件（`:212-215`）。\n- 作者调用 3 次，UT summary 为 PASS，`verifyCompletion` 通过。\n\n修后定向结果 `remaining-3.1.0-p4-t3-e54-slow-gate-fixed.json`：`ok: true`，1/0，用时 131 秒。\n\n### 4. 资料是否诚实：如实\n- `latestOfficialFull` 记的是 `exitCode: 1`、`originalStatus: \"FAIL\"`、6060/1、1365 组、正式组 425 个全部执行、0 复用，首尾输入快照一致，并附原件的 SHA-256。\n- `latestPostFullChanges.sourceCommitMeaning` 明确写了\"不声称最终源码官方全量绿\"。\n- 交接文档和三个 plan 的追加记录都写\"6060/1 + 定向 1/0\"，不把补测说成全量通过。\n- plan 只在文末追加，frontmatter 和正文的 diff 都是零：P4 t3、e2 verify、DSH t3 仍是 in_progress，t5/t6 仍是 pending，H4 没有关闭。\n\n### 非阻断建议\n1. `remaining-3.1.0-p4-t3-validation.json` 的 `latestPostFullGates` 里，`planDiffLF: \"pending final record checks\"` 和 `readonlyReview: \"pending\"` 还是占位。交接文档说本轮复核\"另见复核记录的本轮追加\"，所以收口时请把这两项和 reviews.json 的追加按实际结果补上，免得记录里一直写着 pending。\n2. 代价说明（只记录，不改）：这个用例以后如果真的卡死，要等父进程 45 分钟的看门狗才会失败，比原来的 90 秒慢。这和其它 runtime 测试是同一套口径，换来的是重负载下不再误报，可以接受。\n\n### 撤回意见\n无。\n\n我只用了 Read、Grep、Glob，没有执行命令、没有写文件，也没有碰宿主、手机、凭据、`temp/` 和三份受保护的用户修改。",
+    "reviewedChangedTestSha256": "7fd9191f91a0d7711ec6e1c8aa213ef093bfb48f4f2ea8ec925c44983fd69610",
+    "raw": {
+      "file": "harness/reports/remaining-3.1.0-p4-t3-e54-claude-review.json",
+      "bytes": 6665,
+      "sha256": "1ca76691aeb28c5bf149ba87bd43939f902ea6671132addf9acc30e231e7084a"
+    }
+  }
 }

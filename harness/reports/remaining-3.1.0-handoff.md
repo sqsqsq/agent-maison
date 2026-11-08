@@ -1,6 +1,6 @@
 # 3.1.0 剩余开发交接
 
-当前状态（2026-11-08）：本轮一次官方全量6045/9，原424个正式扩展组全部执行；9条已按边界逐条修复/补测通过。最终冻结源码test:changed实跑599组2360/0、复用341组，组合4例全过；新增签名会话正式反例另定向1/0，当前正式清单425组。原始官方FAIL保留，t3仍in_progress；t1已完成，t5/t6 pending。详见文末本轮记录。
+当前状态（2026-11-08，本轮e54bffd0完整全量）：官方一次实跑1365组、全部425个正式扩展组，6060通过/1失败，输入稳定。唯一session-slow-gate测试时限问题已局部修复、同名组定向1/0；typecheck及OpenSpec strict通过。原始FAIL保留，不自动开第二轮全量；P4 t3、e2 verify、DSH t3继续in_progress，t5/t6 pending。详见文末本轮记录。
 
 本文原始全量和P4影响验证对应截至`6e84edc1`的快照；检视后的三处返修与最新验证另列文末，不把旧快照结果冒称当前源码完整全量通过。
 
@@ -216,3 +216,19 @@ framework等待期间，真实UT错误仍交作者修复；入口恢复后同chi
 **仍未完成：** 最终源码官方完整绿证明（本轮遵守“只重跑受影响组”，未再整轮全测，t3保持in_progress）；e2/DSH依赖该绿证明的收口todo；DSH H4、候选包同zip消费者验收、原生.ets/真机/真实模型质量、同入口同时影响coding/UT的恢复边界。t5/t6仍pending。后续由用户安排候选包、P4 t5干净宿主及t6联合收口；不再把t1列为等待补采。Jimp已回退取消，tile-min独立并发问题未动。
 
 未推送、打包、改版本或操作真实宿主/手机，未读取/复制凭据；三份用户既有修改及temp/未改写、未提交。仅验收摘要加入提交；本机临时探测文件的批量删除被自动审批拒绝（工具仅返回blocked by policy），本轮跳过清理，忽略目录内的过程文件保留且不提交。
+
+## 2026-11-08：e54bffd0 官方全量与唯一红项
+
+本轮受测main为e54bffd0，测试期间没有源码修改。只执行一次官方`npm test -- --workers 4`，1365/1365组实跑、全部425个正式扩展组执行、0组复用：**6060通过/1失败，原始FAIL、退出1，输入首尾稳定，用时375.18分钟**。原JSON/log/plan与精确版本、时间及SHA-256留在本机；汇总见[验证记录](remaining-3.1.0-p4-t3-validation.json)的latestOfficialFull。本次不是最终源码官方全量绿证明，前轮6016/24、6045/9及各次补测仍为历史记录，不互相改写。
+
+| 原始红项 | 定性、后果与最小修法 | 修后验证 |
+|---|---|---|
+| session-slow-gate / 1804 original CLI slow gate survives external reporter kill without overlapping gates, author replay or duplicate final completion | 测试夹具90秒CLI时限不足：恢复--next会连续跑coding/review/UT真实检查；原件三族已返回、租约有效，CLI随后被ETIMEDOUT/SIGTERM截断。仅把私有run()的spawnSync时限复用现有TEST_RUN_TIMEOUT_MS（与外层单次调用看门狗同源），生产代码/时限/协议/授权均不改，原业务强断言不变。 | 原同名正式集成组1/0；真实编译/Node测试、无原生gate重叠、作者调用及接受报告均一次、完成原件恰一次等断言全部保留并通过。 |
+
+本轮唯一代码差异是测试文件两行（导入现有常量、替换90秒字面量）；私有helper只有该正式组使用，没有改变注册、分类或测试选择范围。按当次“修后只补受影响组”定向执行，不再次运行全量或日常全集。原全量原件保持FAIL，补测不被写成全量通过。typecheck、OpenSpec strict 65/0及plan/diff/LF按本轮材料核验；实际Claude Code CLI只读复核另见[复核记录](remaining-3.1.0-p4-t3-reviews.json)的本轮追加。
+
+P4 t3、e2 verify-design-loop、DSH t3均仍in_progress；DSH t4/H4未因此完成，P4 t5/t6保持pending，t1仍completed且不等待用户补采。后续正式全量绿证明、候选包同zip消费者、干净宿主t5和联合t6仍未完成；原生.ets/真机/真实模型交付质量、同入口影响coding/UT的恢复边界与独立Jimp tile-min问题仍按既有披露保留。官方覆盖观测53组未知，属于观测缺口，不据此推断未观测调用已覆盖。
+
+三份用户既有修改和temp/未改写、未提交；未打包、推送、改版本、操作真实宿主或手机，未读取/复制凭据。本轮只保留全量及唯一受影响组、必要校验/复核原件和简要汇总，没有重试上轮被自动审批拒绝的批量清理。
+
+本批最终只读复核PASS（Claude Code CLI，实际claude-opus-5-5，无必修）；原完整恢复语义断言全部保留。plan、diff/LF及保护文件哈希核对通过。代价仅为测试真的卡死时按既有45分钟单次调用看门狗失败，生产时限未变。

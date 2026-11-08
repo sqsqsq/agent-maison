@@ -81,7 +81,7 @@
       "error": "test invocation timeout: C:\\Users\\shengqsq\\AppData\\Local\\Temp\\mu-JvFMjr\\35\\real-chain-Adu8wG\noriginals: D:\\1.code\\agent-maison\\harness\\reports\\test-runtime-control\\failure-f3nKpw"
     }
   ],
-  "currentStatus": "All nine original failures resolved by the affected-case evidence below; final changed PASS. Original official full remains FAIL. P4 t3 remains in_progress; t5/t6 pending.",
+  "currentStatus": "e54 official full: FAIL 6060/1, 1365 groups including all 425 formal groups, input stable. The sole fixture timeout was repaired and the affected original group passed 1/0. No second full run; P4 t3, e2 verify and DSH t3 remain in_progress.",
   "frozenSource": {
     "harness/scripts/utils/design-repair-unattended.ts": "9d427b294e6db67dc0f0eba3b54d45d679271c2587bd2e0c15ef8a65900dcecc",
     "harness/tests/unit/design-authority-repair-daily.unit.test.ts": "89cf6f58056d677268b13a62a07e0c60c820529b8a27a7241f7e14a4a2a69685",
@@ -1141,5 +1141,160 @@
     "statedReason": "blocked by policy",
     "filesRemoved": false,
     "commitScope": "Only the two compact acceptance JSON summaries and existing handoff/audit/plan records are committed; raw/probe files stay local and ignored."
+  },
+  "latestTestedSourceCommit": "e54bffd0b4f6393d737020af5d397419f7c2016b",
+  "latestOfficialFull": {
+    "sourceCommit": "e54bffd0b4f6393d737020af5d397419f7c2016b",
+    "command": "npm test -- --workers 4 --results-out reports/remaining-3.1.0-p4-t3-e54-full.json --plan-out reports/remaining-3.1.0-p4-t3-e54-full-plan.json --timings-from reports/p4-t3-changed-accepted.json",
+    "exitCode": 1,
+    "originalStatus": "FAIL",
+    "scope": "full",
+    "full": true,
+    "groups": 1365,
+    "formalExpected": 425,
+    "formalMissing": [],
+    "reused": 0,
+    "passed": 6060,
+    "failed": 1,
+    "inputStable": true,
+    "inputSnapshot": "e46914e11d1a2ad8cb2ec12af3eee6152517ab3d704af1c7f2eedb7de5eefeef",
+    "endingSnapshotId": "e46914e11d1a2ad8cb2ec12af3eee6152517ab3d704af1c7f2eedb7de5eefeef",
+    "startedAt": "2026-11-08T08:37:00.124Z",
+    "reportWrittenAt": "2026-11-08T14:52:10.459Z",
+    "wallMs": 22510625.237,
+    "unknownCoverageGroups": 53,
+    "frozenSource": {
+      "harness/scripts/utils/design-repair-unattended.ts": "9d427b294e6db67dc0f0eba3b54d45d679271c2587bd2e0c15ef8a65900dcecc",
+      "harness/tests/unit/design-authority-repair-daily.unit.test.ts": "89cf6f58056d677268b13a62a07e0c60c820529b8a27a7241f7e14a4a2a69685",
+      "harness/tests/unit/design-authority-repair.unit.test.ts": "72738f018948188dbac061cf1dd1ee58c2101c1640368024df7db4c2ba477a70",
+      "harness/tests/unit/initial-design-progress-recovery.unit.test.ts": "8f85944cd292d88a39bc26ecf2d1ceaf4e4647556856e57486f906b906f94ac2",
+      "harness/tests/unit/initial-design-repair.unit.test.ts": "6f25c5dfd75eda0eb12350f993510954d95b23f94906634d28c638823d99e986",
+      "harness/tests/unit/session-execution-handoff.unit.test.ts": "a452c527a7551a06ef29149dafce7604e38bd8e39cb92032bf035761ee3db524",
+      "harness/tests/unit/session-slow-gate.integration.test.ts": "a5a9f46270108da9efe1507bb52c576b588da2e0e4fabe13babf2bfb59646300",
+      "harness/tests/unit/session-transport-parity.unit.test.ts": "215a2b9920ca5efa51db9595d0dc3d65a0b207517a7913e52b6a1a0d3248ae56"
+    },
+    "raw": [
+      {
+        "file": "harness/reports/remaining-3.1.0-p4-t3-e54-full.json",
+        "bytes": 135345300,
+        "sha256": "36babf47ae8c4826b35400972e8869f6ba719ad41e793d4bb7d09c2dbe02f376"
+      },
+      {
+        "file": "harness/reports/remaining-3.1.0-p4-t3-e54-full.log",
+        "bytes": 55719344,
+        "sha256": "071af1ff8eecc49e26049d98aafd92cd9e181a79ce1656182d31d8789126cc2a"
+      },
+      {
+        "file": "harness/reports/remaining-3.1.0-p4-t3-e54-full-plan.json",
+        "bytes": 969138,
+        "sha256": "6d76148edf1d0ce8956daae90c92867ad4c57bcfc5909889a1ed8f59de72fe32"
+      },
+      {
+        "file": "harness/reports/remaining-3.1.0-p4-t3-e54-start.json",
+        "bytes": 2234,
+        "sha256": "2840c5b84da16ae948688462b75746e12247e9d71728f9c632a07467f09ab0db"
+      }
+    ]
+  },
+  "latestFailureResolution": {
+    "group": "session-slow-gate",
+    "name": "1804 original CLI slow gate survives external reporter kill without overlapping gates, author replay or duplicate final completion",
+    "error": "Error: Error: test child terminated by signal: SIGTERM\ntest child timeout: spawnSync D:\\Program Files\\nodejs\\node.exe ETIMEDOUT\noriginals: D:\\1.code\\agent-maison\\harness\\reports\\test-runtime-control\\failure-jQ7kYw\n    at finish (D:\\1.code\\agent-maison\\harness\\tests\\utils\\runtime-test-control.ts:225:13)\n    at withRuntimeTest (D:\\1.code\\agent-maison\\harness\\tests\\utils\\runtime-test-control.ts:233:3)\n    at runRuntimeTestChild (D:\\1.code\\agent-maison\\harness\\tests\\utils\\runtime-test-control.ts:238:18)\n    at run (D:\\1.code\\agent-maison\\harness\\tests\\unit\\session-slow-gate.integration.test.ts:61:37)\n    at execute (D:\\1.code\\agent-maison\\harness\\tests\\unit\\session-slow-gate.integration.test.ts:194:25)\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async Object.runSelectedCases (D:\\1.code\\agent-maison\\harness\\tests\\unit\\session-slow-gate.integration.test.ts:239:9)\n    at async D:\\1.code\\agent-maison\\harness\\tests\\unit-worker.ts:49:22\nIsolated acceptance root: C:\\Users\\shengqsq\\AppData\\Local\\Temp\\mu-vae6Rm\\79\\maison-slow-gate-h8XdVc\\host\n    at execute (D:\\1.code\\agent-maison\\harness\\tests\\unit\\session-slow-gate.integration.test.ts:227:11)\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async Object.runSelectedCases (D:\\1.code\\agent-maison\\harness\\tests\\unit\\session-slow-gate.integration.test.ts:239:9)\n    at async D:\\1.code\\agent-maison\\harness\\tests\\unit-worker.ts:49:22",
+    "classification": "测试夹具的独立时限与真实恢复调用不匹配；未发现生产缺陷",
+    "rootCause": "私有run()对同步CLI另设90秒上限；resume --next会执行coding/review/UT等原生检查并产生后续核验请求。原件显示90秒内三族均有真实harness返回，租约仍有效，CLI随后被ETIMEDOUT/SIGTERM截断。",
+    "repair": "仅将spawnSync的90_000改为既有TEST_RUN_TIMEOUT_MS，与runRuntimeTestChild单次调用看门狗同源，仍有单次/用例/套件界限。生产逻辑、时限、授权和协议均未改。",
+    "file": "harness/tests/unit/session-slow-gate.integration.test.ts",
+    "oldTimeoutMs": 90000,
+    "newTimeoutConstant": "TEST_RUN_TIMEOUT_MS",
+    "newTimeoutMs": 2700000,
+    "assertionsUnchanged": true,
+    "consumer": "仅既有session-slow-gate正式组的私有helper；registry分类与测试名称不变",
+    "originals": "harness/reports/test-runtime-control/failure-jQ7kYw",
+    "targeted": {
+      "command": "node tests/test-runtime.cjs tests/run-unit.ts --filter session-slow-gate --serial --results-out reports/remaining-3.1.0-p4-t3-e54-slow-gate-fixed.json",
+      "exitCode": 0,
+      "passed": 1,
+      "failed": 0,
+      "case": "1804 original CLI slow gate survives external reporter kill without overlapping gates, author replay or duplicate final completion",
+      "wallMs": 131007.1413,
+      "raw": [
+        {
+          "file": "harness/reports/remaining-3.1.0-p4-t3-e54-slow-gate-fixed.json",
+          "bytes": 1060,
+          "sha256": "ad0506f6f0a485f3fe52865dd1fa5c22db8554b511fe91beb66be03f4e94d8cc"
+        },
+        {
+          "file": "harness/reports/remaining-3.1.0-p4-t3-e54-slow-gate-fixed.log",
+          "bytes": 1091,
+          "sha256": "3587a2cea893d49b08c827f5f8b6233a4dfe8f7ab1f1c24c2304043cf5100934"
+        }
+      ]
+    },
+    "nonblockingCost": "A genuinely stuck fixture invocation can now wait for the existing45-minute watchdog, rather than its former90-second cutoff; production response deadlines are unchanged."
+  },
+  "latestPostFullChanges": {
+    "kind": "test fixture only",
+    "changedFile": "harness/tests/unit/session-slow-gate.integration.test.ts",
+    "sha256": "7fd9191f91a0d7711ec6e1c8aa213ef093bfb48f4f2ea8ec925c44983fd69610",
+    "productionCodeChanged": false,
+    "verificationScope": "按本次修后只补受影响组，仅定向原session-slow-gate正式集成组；未再次执行全量或日常全集。",
+    "sourceCommitMeaning": "Raw official receipt binds e54 before this two-line fixture-only change; no final-source official green claim."
+  },
+  "latestPostFullGates": {
+    "typecheck": {
+      "exitCode": 0,
+      "raw": {
+        "file": "harness/reports/remaining-3.1.0-p4-t3-e54-typecheck.log",
+        "bytes": 74,
+        "sha256": "dfa0518d00f664264582e136e7385afa5719489b0550424c299f80da7c0d46a8"
+      }
+    },
+    "openspecStrict": {
+      "exitCode": 0,
+      "passed": 65,
+      "failed": 0,
+      "raw": {
+        "file": "harness/reports/remaining-3.1.0-p4-t3-e54-openspec.log",
+        "bytes": 2697,
+        "sha256": "2d2015d1c0afae1d69495adc839b574513acda539d0bd0f8c44034a6ff6af5cf"
+      }
+    },
+    "planDiffLF": {
+      "exitCode": 0,
+      "lfPassed": true,
+      "filesChecked": 7,
+      "plansAppendOnly": true,
+      "protectedFilesUnchanged": {
+        ".cursor/goals/效率与准确率平衡总体目标_默认基线自主交付与可调精细度及可靠恢复_a47c9d62.goal.md": true,
+        ".cursor/plans/交付结论与调用恢复收口_全消费者同源与双运输一致_6fd6c8c1.plan.md": true,
+        ".cursor/plans/验收事实与必修执行闭环补修_处置同源及有界恢复_c6ae8b4f.plan.md": true
+      }
+    },
+    "readonlyReview": {
+      "conclusion": "PASS",
+      "actualModels": [
+        "claude-opus-5-5"
+      ],
+      "permissionDenials": [],
+      "raw": {
+        "file": "harness/reports/remaining-3.1.0-p4-t3-e54-claude-review.json",
+        "bytes": 6665,
+        "sha256": "1ca76691aeb28c5bf149ba87bd43939f902ea6671132addf9acc30e231e7084a"
+      },
+      "aggregate": {
+        "file": "harness/reports/remaining-3.1.0-p4-t3-reviews.json",
+        "bytes": 28153,
+        "sha256": "04cf2bc47c485bbcae660140f633fd415c94b97ba9f076740cd7a2a71f59dc55"
+      }
+    },
+    "plan": {
+      "exitCode": 0,
+      "command": "node scripts/check-plan-version.mjs",
+      "raw": {
+        "file": "harness/reports/remaining-3.1.0-p4-t3-e54-plans-final.log",
+        "bytes": 76,
+        "sha256": "fb8fff392c8bcb1d51d54b764bc6728e67c7ae898776f06b6c6d1ab6ee1557a5"
+      }
+    }
   }
 }
