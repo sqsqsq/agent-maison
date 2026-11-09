@@ -39,7 +39,9 @@ import { clearSkillsIndexCache, resolveSkillPath } from '../../scripts/utils/res
 import { checkCanonicalComponentClosure, writeCanonicalComponentClosure } from '../../scripts/check-component-closure';
 import { resolveComponentClosureInputs } from '../../scripts/utils/component-closure-inputs';
 import { deriveComponentClosureObligations } from '../../scripts/utils/component-closure-obligations';
-import { reconcileChangeUnitBlueprintRefs } from '../../scripts/utils/change-unit-design-preparation';
+import { reconcileChangeUnitBlueprintRefs, acceptChangeUnitDecomposition, deriveDesignPreparationReadiness } from '../../scripts/utils/change-unit-design-preparation';
+import { readChangeUnitDesignOwnership, validateChangeUnitDesign } from '../../scripts/utils/change-unit-design-gate';
+import { deriveBlueprintDesignObligations } from '../../scripts/utils/component-blueprint-obligations';
 import { assembleKnowledge, renderKnowledge } from '../../scripts/utils/knowledge-context';
 import { prepareFeatureScopeCandidate, featureScopeCandidateFingerprint } from '../../scripts/utils/feature-track';
 import { freezeFeatureExecutionScope } from '../../scripts/utils/feature-execution-scope';
@@ -353,6 +355,79 @@ export function knowledgePlacementRoundtrip(): void {
 
 export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
+  results.push(test('design ownership: root-only multi-CU proposals return all missing claims before acceptance and close after author selection', () => {
+    withProject(projectRoot => {
+      const loaded = enumerateCanonicalChangeUnits(projectRoot, 'ledger-app-blueprint');
+      const candidates = loaded.map(unit => ({ providerId: 'consumer-validated-decomposition', artifact: clone(asChangeUnitArtifact(unit.changeUnit)) }));
+      const originalRefs = new Map(candidates.map(candidate => [candidate.artifact.change_unit_id, clone(candidate.artifact.design_refs)]));
+      for (const candidate of candidates) candidate.artifact.design_refs = candidate.artifact.design_refs.filter(ref => !['relation', 'decision', 'contract'].includes(ref.target.kind));
+      for (const unit of loaded) fs.unlinkSync(unit.canonicalPath);
+      assert(candidates.every(candidate => validateChangeUnitDesign(projectRoot, candidate.artifact as unknown as BlueprintRecord).verdict === 'constructable'),
+        'the counterexample must pass single-CU closure checking');
+      const proposal = JSON.stringify(candidates);
+      let rejection = '';
+      try { acceptChangeUnitDecomposition(projectRoot, 'ledger-app-blueprint', candidates); } catch (error) { rejection = String(error); }
+      assert(rejection.includes('change_unit_design_closure_incomplete') && rejection.includes('relation:repository-publishes-store')
+        && rejection.includes('relation:domain-owned-by-module') && rejection.includes('contract:create-entry-v1') && rejection.includes('decision:seam-shape'), rejection);
+      assert(JSON.stringify(candidates) === proposal && loaded.every(unit => !fs.existsSync(unit.canonicalPath)), 'rejection must not mutate or partially publish');
+      // The decomposition author chooses one owner; the other CUs do not inherit the anchors through dependency traversal.
+      const owner = candidates.find(candidate => candidate.artifact.change_unit_id === 'ledger-refresh')!;
+      owner.artifact.design_refs = originalRefs.get('ledger-refresh')!;
+      const authored = candidates.map(candidate => JSON.stringify(candidate.artifact.design_refs));
+      const accepted = acceptChangeUnitDecomposition(projectRoot, 'ledger-app-blueprint', candidates);
+      assert(accepted.accepted.every((unit, index) => JSON.stringify(unit.changeUnit.design_refs) === authored[index]), 'consumer changed author ownership');
+      const ready = deriveDesignPreparationReadiness(projectRoot, 'ledger-app-blueprint');
+      assert(ready.ready && !ready.ownershipIssues.length, JSON.stringify(ready));
+      prepareCompleteProject(projectRoot);
+      const evaluated = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', evaluationOptions());
+      assert(!evaluated.issues.some(issue => issue.id === 'component_closure_design_unconsumed'), JSON.stringify(evaluated.issues));
+      const anchorRows = evaluated.closure.coverage_rows.filter(row => row.evidence_level !== 'fact' && ['cross_view_relation', 'design_decision', 'authority_contract'].includes(row.kind));
+      assert(anchorRows.length === 4 && anchorRows.every(row => row.observation === 'covered'
+        && JSON.stringify(row.owner_change_unit_ids) === '["ledger-refresh"]' && row.feature_mapping_refs.length > 0),
+        JSON.stringify(anchorRows.map(row => ({ id: row.obligation_id, owners: row.owner_change_unit_ids, observation: row.observation }))));
+      const ownerNow = enumerateCanonicalChangeUnits(projectRoot, 'ledger-app-blueprint').find(unit => unit.changeUnit.change_unit_id === 'ledger-refresh')!;
+      const successor = clone(asChangeUnitArtifact(ownerNow.changeUnit));
+      successor.change_unit_id = 'owner-successor'; successor.supersedes = createChangeUnitRef(ownerNow);
+      successor.design_refs = successor.design_refs.filter(ref => ref.target.kind !== 'relation');
+      assert(readChangeUnitDesignOwnership(projectRoot, 'ledger-app-blueprint', [successor]).some(issue => issue.message.includes('relation:domain-owned-by-module')),
+        'a prospective exact superseder cannot borrow ownership from the unit it retires');
+      mutateFeatureContracts(projectRoot, 'ledger-refresh', contracts => {
+        const sidecar = asRecord(contracts.change_unit)!;
+        sidecar.design_ref_mappings = asRecords(sidecar.design_ref_mappings).filter(mapping => asRecord(asRecord(mapping.design_ref)?.target)?.kind !== 'relation');
+      });
+      const missingMap = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', evaluationOptions());
+      assert(missingMap.closure.coverage_rows.filter(row => row.kind === 'cross_view_relation').every(row => row.observation !== 'covered'),
+        'an owner without its required Feature design mappings cannot borrow another owner or pass coverage');
+    });
+  }));
+  results.push(test('design ownership: unreachable contracts changed dependencies and requirement carriers share P3 ownership diagnostics', () => {
+    withProject(projectRoot => {
+      const loaded = loadCanonicalBlueprint(projectRoot, 'ledger-app-blueprint');
+      const blueprint = clone(loaded.blueprint);
+      const units = enumerateCanonicalChangeUnits(projectRoot, 'ledger-app-blueprint').map(unit => asChangeUnitArtifact(unit.changeUnit));
+      const logical = asRecords(blueprint.design_views).find(view => view.view_id === 'logical')!;
+      const original = asRecords(logical.nodes)[0];
+      const dependency = { ...clone(original), node_id: 'new-dependency', current_state: 'before', target_state: 'after', design_basis_refs: [] };
+      logical.nodes = [...asRecords(logical.nodes), dependency];
+      original.design_basis_refs = [...asStrings(original.design_basis_refs), 'view:logical/node:new-dependency'];
+      const contract = { ...clone(asRecords(blueprint.contracts)[0]), contract_id: 'unreachable-contract' };
+      blueprint.contracts = [...asRecords(blueprint.contracts), contract];
+      const discovery = asRecord(blueprint.discovery)!;
+      const inputs = asRecord(discovery.inputs)!;
+      inputs.current_scope_items = [...asRecords(inputs.current_scope_items), { item_id: 'new-source', kind: 'requirement', source_ref: 'requirements/ledger.md' }];
+      discovery.requirement_traceability = [...asRecords(discovery.requirement_traceability), { item_id: 'new-source', blueprint_refs: ['view:logical/node:new-dependency'] }];
+      const issues = readChangeUnitDesignOwnership(projectRoot, 'ledger-app-blueprint', [], blueprint);
+      const details = issues.map(issue => issue.message).join('\n');
+      assert(details.includes('contract:unreachable-contract') && details.includes('view:logical/node:new-dependency') && details.includes('source:requirement:new-source'), details);
+      const rows = deriveBlueprintDesignObligations({ blueprint: { ...loaded, blueprint }, currentUnits: units.map(changeUnit => ({ changeUnit })) });
+      assert(rows.some(row => row.kind === 'blueprint_target_node' && row.blueprint_refs.includes('view:logical/node:new-dependency') && !row.owner_hint_change_unit_ids.length),
+        'a changed dependency needs an explicit owner even when no CU selects it yet');
+      dependency.target_state = dependency.current_state;
+      const unchanged = deriveBlueprintDesignObligations({ blueprint: { ...loaded, blueprint }, currentUnits: units.map(changeUnit => ({ changeUnit })) });
+      assert(unchanged.some(row => row.kind === 'blueprint_current_fact' && row.blueprint_refs.includes('view:logical/node:new-dependency') && !row.owner_hint_change_unit_ids.length),
+        'unselected unchanged dependency nodes must stay facts');
+    });
+  }));
   results.push(test('P4 production obligation IDs encode original non-ASCII trigger labels without renaming blueprint data', () => {
     withProject(projectRoot => {
       const inputs = resolveComponentClosureInputs(projectRoot, 'ledger-app-blueprint', evaluationOptions());

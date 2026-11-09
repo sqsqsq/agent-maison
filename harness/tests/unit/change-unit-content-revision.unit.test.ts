@@ -85,11 +85,17 @@ function addDependency(f: Fixture): void {
 }
 
 const cases: Array<{ name: string; run(f: Fixture): void }> = [
-  { name: 'explicit selection revision removes context refs once and preserves the second identical proposal', run(f) {
+  { name: 'design ownership: losing every relation owner rejects atomically while one explicit owner is sufficient', run(f) {
+    const dropRelations = (cu: ChangeUnitArtifact) => { cu.design_refs = cu.design_refs.filter(ref => ref.target.kind !== 'relation'); };
+    reject(f, ['ledger-refresh', 'ledger-report'].map(id => revision(f.root, id, dropRelations)), /change_unit_design_closure_incomplete.*relation:/s);
+    const relations = asChangeUnitArtifact(loadCanonicalChangeUnit(f.root, blueprintId, 'ledger-refresh').changeUnit).design_refs.filter(ref => ref.target.kind === 'relation');
     const row = revision(f.root, 'ledger-refresh', cu => { cu.design_refs = cu.design_refs.filter(ref => ref.target.kind !== 'relation'); });
-    const first = reviseChangeUnitContent(f.root, blueprintId, [row]);
-    assert.equal(first.revised.length, 1, 'removing an explicit responsibility is a real authored revision');
+    const receiver = revision(f.root, 'ledger-report', cu => { cu.design_refs.push(...relations.filter(ref => !cu.design_refs.some(selected => JSON.stringify(selected.target) === JSON.stringify(ref.target)))); });
+    const first = reviseChangeUnitContent(f.root, blueprintId, [row, receiver]);
+    assert.equal(first.revised.length, 2, 'transferring explicit responsibility changes both authored CU definitions');
     assert.deepStrictEqual(asChangeUnitArtifact(first.revised[0].changeUnit).design_refs, row.candidate.artifact.design_refs);
+    assert(asChangeUnitArtifact(loadCanonicalChangeUnit(f.root, blueprintId, 'ledger-report').changeUnit).design_refs.some(ref => ref.target.kind === 'relation'),
+      'the other CU explicitly retains the relationship responsibility');
     const original = bytes(files(f));
     for (let i = 0; i < 2; i++) {
       const result = reviseChangeUnitContent(f.root, blueprintId, [revision(f.root, 'ledger-refresh', () => {})]);

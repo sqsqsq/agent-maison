@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { featureFilePath, loadArchitectureDsl } from '../../config';
+import { featureFilePath, loadArchitectureDsl, type ArchitectureDsl } from '../../config';
 import { AdmittedModules, componentDependencyAllowed, resolveAdmittedModules } from './component-assets';
 import { TermFact, terminologyFacts } from './blueprint-discovery';
 import {
@@ -494,8 +494,9 @@ export function relevantArchitectureImpactDecisions(
   blueprint: BlueprintRecord,
   modifiable: string[],
   designDecisionIds: string[] = [],
+  architecture?: ArchitectureDsl,
 ): BlueprintRecord[] {
-  const admitted = resolveAdmittedModules(projectRoot, blueprint);
+  const admitted = resolveAdmittedModules(projectRoot, blueprint, architecture);
   const touched = new Set([...modifiable, ...modifiable.map(name => admitted.modules.get(name)).filter((l): l is string => Boolean(l))]);
   return selectRelevantArchitectureImpactDecisions(blueprint, touched, designDecisionIds);
 }
@@ -518,18 +519,19 @@ export function architectureImpactIssues(
   blueprint: BlueprintRecord,
   modifiable: string[],
   designDecisionIds: string[] = [],
+  architecture: ArchitectureDsl = loadArchitectureDsl(projectRoot),
 ): { issues: ChangeUnitProjectionIssue[]; warnings: string[] } {
   const issues: ChangeUnitProjectionIssue[] = [];
   const warnings: string[] = [];
-  const admitted = resolveAdmittedModules(projectRoot, blueprint);
-  const layers = new Set(loadArchitectureDsl(projectRoot).outer_layers.map(layer => layer.id));
+  const admitted = resolveAdmittedModules(projectRoot, blueprint, architecture);
+  const layers = new Set(architecture.outer_layers.map(layer => layer.id));
   const fail = (id: string, message: string) => issues.push(issue('cu_architecture_impact_not_effective', `decision:${id} ${message}`, 'reconcile_blueprint'));
   for (const decision of asRecords(asRecord(blueprint.decisions_and_gaps)?.decisions)) {
     if (decision.kind === 'architecture_impact' && decision.change === 'dsl_other') {
       warnings.push(`decision:${String(decision.decision_id ?? '?')} dsl_other（${asStrings(decision.affected_items).join('、')}）不机检：请人工核对该 DSL 变更已经权威批准并经 framework-init 获准路径落盘。`);
     }
   }
-  for (const decision of relevantArchitectureImpactDecisions(projectRoot, blueprint, modifiable, designDecisionIds)) {
+  for (const decision of relevantArchitectureImpactDecisions(projectRoot, blueprint, modifiable, designDecisionIds, architecture)) {
     const id = String(decision.decision_id ?? '?');
     const change = String(decision.change ?? '');
     const endpoints = architectureImpactEndpoints(decision);
@@ -542,7 +544,7 @@ export function architectureImpactIssues(
     if (change !== 'dependency_edge') continue;
     const unresolved = endpoints.filter(name => !admitted.modules.has(name) && !layers.has(name));
     if (unresolved.length > 0) { fail(id, `端点无法解析为获准模块或外层 id：${unresolved.join('、')}。`); continue; }
-    const allowed = componentDependencyAllowed(projectRoot, endpoints[0], endpoints[1], admitted.declared);
+    const allowed = componentDependencyAllowed(projectRoot, endpoints[0], endpoints[1], admitted.declared, architecture);
     if (decision.direction === 'add' && !allowed) fail(id, `${endpoints[0]} → ${endpoints[1]} 当前 DSL 不允许；先经 设计 owner 的正式 DSL 修订通道（无人值守原需求内自动修订）改 DSL，plan 不是 DSL writer。`);
     if (decision.direction === 'remove' && allowed) fail(id, `${endpoints[0]} → ${endpoints[1]} 已批准删除但当前 DSL 仍允许（删除未生效）；先经 framework-init 获准路径改 DSL。`);
   }
@@ -600,7 +602,7 @@ export function validateChangeUnitFeatureProjection(
   useCasesPresent: boolean,
   phase: ProjectionPhase,
   dags: DagProjectionLike[] = [],
-  options: { changeUnitOverride?: ChangeUnitArtifact; designOnly?: boolean; resolveBlueprintRef?: typeof resolveComponentBlueprintRef } = {},
+  options: { changeUnitOverride?: ChangeUnitArtifact; designOnly?: boolean; resolveBlueprintRef?: typeof resolveComponentBlueprintRef; architecture?: ArchitectureDsl } = {},
 ): ChangeUnitProjectionResult {
   const section = asRecord(contracts?.change_unit);
   if (!section && !options.designOnly) {
@@ -664,7 +666,7 @@ export function validateChangeUnitFeatureProjection(
       warnings.push(`实际计划涉及预测 touches 之外的模块：${outside.join(', ')}。review 须核实必要性、公共契约兼容与影响；真实架构变化仍回设计责任方。`);
     }
     const designDecisionIds = cu.design_refs.filter(ref => ref.target.kind === 'decision').map(ref => ref.target.id);
-    const architecture = architectureImpactIssues(projectRoot, (options.resolveBlueprintRef ?? resolveComponentBlueprintRef)(projectRoot, cu.component_blueprint_ref).blueprint, modifiable, designDecisionIds);
+    const architecture = architectureImpactIssues(projectRoot, (options.resolveBlueprintRef ?? resolveComponentBlueprintRef)(projectRoot, cu.component_blueprint_ref).blueprint, modifiable, designDecisionIds, options.architecture);
     issues.push(...architecture.issues);
     warnings.push(...architecture.warnings);
   } catch (error) {

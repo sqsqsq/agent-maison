@@ -412,6 +412,12 @@ export async function rc10HostRuleCombination(record: '20261019' | '20261020' = 
           if (authoredReview) doc.review_summary = { ...machineReview, ...authoredReview };
         }
         if (!later) {
+          if (!authoredDeliveryTargets.some(target => target.kind === 'decision' && target.id === 'full-card-number')) {
+            assert(ctx.prompt.includes('decision:full-card-number'), 'the actual design author must receive the missing ownership address');
+            const target = { kind: 'decision' as const, id: 'full-card-number' };
+            assert(resolveBlueprintTarget(doc, target), 'the author claims the preserved full-card-number decision');
+            authoredDeliveryTargets.push(target);
+          }
           const candidateFile = path.join(path.dirname(draft!), 'change-unit.yaml');
           const candidate = YAML.parse(fs.readFileSync(candidateFile, 'utf8'));
           candidate.design_refs = authoredDeliveryTargets.map(target => ({ ...candidate.component_blueprint_ref, target }));
@@ -572,6 +578,16 @@ export async function rc10HostRuleCombination(record: '20261019' | '20261020' = 
         value.change_unit.change_unit_ref = createChangeUnitRef(current);
         value.change_unit.design_ref_mappings = value.change_unit.design_ref_mappings.map((mapping: any) => ({ ...mapping,
           design_ref: (current.changeUnit.design_refs as any[]).find(ref => ref.target.kind === mapping.design_ref.target.kind && ref.target.id === mapping.design_ref.target.id && ref.target.view_id === mapping.design_ref.target.view_id) ?? mapping.design_ref }));
+        const fullCard = !later && (current.changeUnit.design_refs as any[]).find(ref => ref.target.kind === 'decision' && ref.target.id === 'full-card-number');
+        if (fullCard && !value.change_unit.design_ref_mappings.some((mapping: any) => mapping.design_ref.target.id === 'full-card-number')) {
+          const mask = '02-Feature/WalletMain/src/main/ets/domain/service/BankCardMaskService.ets';
+          const repository = '02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets';
+          assert(fs.readFileSync(path.join(root, mask), 'utf8').includes('maskCardNumber'));
+          assert(fs.readFileSync(path.join(root, repository), 'utf8').includes('full_card_number'));
+          value.change_unit.design_ref_mappings.push({ design_ref: structuredClone(fullCard),
+            implementation_refs: [mask + '#BankCardMaskService', repository + '#BankCardRepository'],
+            verification_refs: ['planned:02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_2_ut.test.ets', rel + '/acceptance.yaml'] });
+        }
         if (design) for (const state of value.state_management ?? []) if (state.design_ref) {
           Object.assign(state.design_ref, currentBlueprintIdentity(loadCanonicalBlueprint(root, 'bc-openCard-2')));
         }

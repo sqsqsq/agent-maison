@@ -1,11 +1,10 @@
+import { blueprintClosureRequirements } from './component-blueprint-obligations';
 import * as fs from 'fs';
 import * as crypto from 'crypto';
 import { featureFilePath } from '../../config';
 import { ComponentBlueprintRef } from './component-blueprint-model';
 import { loadCanonicalBlueprint, resolveComponentBlueprintRef, sha256Bytes } from './component-blueprint-path';
 import {
-  currentScopeItems,
-  requirementTraceability,
   resolveCurrentScopeSource,
 } from './blueprint-requirement-traceability';
 import { stableJson } from './blueprint-discovery';
@@ -209,8 +208,7 @@ export function resolveComponentClosureInputs(
     issues.push(closureIssue('component_closure_blueprint_invalid', 'component_blueprint_ref', (error as Error).message, 'BLOCKER', 'reconcile_blueprint'));
   }
 
-  const exactMappings = new Map(requirementTraceability(blueprint.blueprint).map(item => [item.item_id, item.blueprint_refs]));
-  const requirements = currentScopeItems(blueprint.blueprint)
+  const requirements = blueprintClosureRequirements(blueprint.blueprint)
     .map(item => {
       let actualSourceSha256: string | undefined;
       try {
@@ -224,7 +222,7 @@ export function resolveComponentClosureInputs(
         source_ref: item.source_ref,
         ...(item.source_revision ? { source_revision: item.source_revision } : {}),
         ...(actualSourceSha256 ? { source_sha256: actualSourceSha256 } : {}),
-        blueprint_refs: stableSortStrings(exactMappings.get(item.item_id) ?? []),
+        blueprint_refs: item.blueprint_refs,
       };
     })
     .sort((a, b) => compareCodePoint(a.item_id, b.item_id));

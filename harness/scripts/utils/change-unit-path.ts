@@ -154,7 +154,7 @@ export function validateChangeUnitRefShape(value: unknown): ChangeUnitRef {
   return value as ChangeUnitRef;
 }
 
-export function createChangeUnitRef(loaded: LoadedChangeUnit): ChangeUnitRef {
+export function createChangeUnitRef(loaded: Pick<LoadedChangeUnit, 'changeUnit' | 'artifactSha256'>): ChangeUnitRef {
   const cu = loaded.changeUnit;
   return validateChangeUnitRefShape({
     artifact: CHANGE_UNIT_ARTIFACT,

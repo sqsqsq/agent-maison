@@ -20,6 +20,7 @@ import { enumerateCanonicalChangeUnits, asChangeUnitArtifact, deriveChangeUnitFe
 import { diagnoseBlueprintSkillAuthority, diagnoseDesignAuthority, compareAuthoritativeContent } from './blueprint-skill-projection';
 import { resolveProbeFrameworkRoot } from '../../repo-layout';
 import { deriveChangeUnitReadySet } from './change-unit-ready-set';
+import { readChangeUnitDesignOwnership } from './change-unit-design-gate';
 import { deriveChangeUnitProgressionDecision, inspectActiveChangeUnitRuns } from './change-unit-progress-loop';
 import { profileHasDesignLens } from './blueprint-provider-boundary';
 import { loadEventsJsonlStrict, resolveEffectiveRunEnd } from './goal-runner-phase';
@@ -332,6 +333,12 @@ export function readInitialDesignDelivery(input: { projectRoot: string; framewor
     if (!units.length) return { ...state, kind: 'decompose', issues: ['已准入蓝图尚无canonical CU，提出ChangeUnitCandidate[]供原consumer原子接受。'] };
     const readySet = deriveChangeUnitReadySet(input.projectRoot, input.manifest.feature);
     const progression = deriveChangeUnitProgressionDecision(readySet, inspection);
+    const ownershipIssues = readChangeUnitDesignOwnership(input.projectRoot, input.manifest.feature);
+    const ownershipFindings = ownershipIssues.map(issue => ({
+        check: 'plan:cu:design-basis', class: 'B2' as const, codes: [issue.id],
+        artifacts: [path.relative(input.projectRoot, blueprintPath).replace(/\\/g, '/')], basis: issue.message,
+        needs: ['原设计作者通过既有CU候选批次为缺失义务选择责任单元；关系/决定/契约和变更目标须明确认领，保留原请求及未变依赖边界。不得让机器补写依赖，也不得降低验收或代写完成原件。'],
+      }));
     const designCandidates = readySet.units.filter(item => item.completion.state !== 'VALID'
       && (item.changeUnit === progression.selected || item.blockers.length > 0
         || item.completion.currentDisposition?.completionBlocking.some(problem => problem.owner === 'external' && problem.action === 'repair')));
@@ -341,7 +348,7 @@ export function readInitialDesignDelivery(input: { projectRoot: string; framewor
       const frameworkRoot = input.frameworkRoot ?? resolveProbeFrameworkRoot(input.projectRoot, __dirname);
       const phases = new Set(candidate.completion.currentDisposition?.completionBlocking
         .filter(problem => problem.owner === 'external' && problem.action === 'repair').map(problem => problem.source_phase ?? problem.phase));
-      const findings = diagnoseBlueprintSkillAuthority(input.projectRoot, frameworkRoot, feature).findings;
+      const findings = [...diagnoseBlueprintSkillAuthority(input.projectRoot, frameworkRoot, feature).findings, ...ownershipFindings];
       for (const phase of phases) {
         let runId: string | undefined;
         try { runId = JSON.parse(fs.readFileSync(path.join(featurePhaseReportsDir(input.projectRoot, feature, phase, frameworkRoot), 'summary.json'), 'utf8')).run_id; }
@@ -356,6 +363,8 @@ export function readInitialDesignDelivery(input: { projectRoot: string; framewor
         return { ...state, kind: 'author', designRepair, progression, issues: diagnosis.findings.map(item => item.basis) };
       }
     }
+    if (ownershipFindings.length) return { ...state, kind: 'author', issues: ownershipIssues.map(issue => issue.message),
+      designRepair: { feature: input.manifest.feature, brief: { class: 'B2', items: ownershipFindings } } };
     return { ...state, kind: 'construction', progression, issues: progression.reasons };
   } catch (error) {
     if (!(error instanceof ComponentBlueprintResolutionError)) throw error;

@@ -21,7 +21,7 @@ import { defaultProcessProbe } from '../../scripts/utils/device-session';
 import { reconcileGuardianOwnership, terminateGuardianProcessOnly, awaitGuardianGone } from '../../scripts/utils/goal-containment-reconcile';
 import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
 import type { UnitCaseResult } from '../run-unit';
-import { withRuntimeTest } from '../utils/runtime-test-control';
+import { withRuntimeTest, TEST_RUN_TIMEOUT_MS } from '../utils/runtime-test-control';
 
 const BLUEPRINT = 'ledger-app-blueprint';
 const ROOT_ID = 'control-root', CHILD_ID = 'control-child';
@@ -77,9 +77,9 @@ function env(f: Family): NodeJS.ProcessEnv {
   for (const key of Object.keys(value)) if (/^MAISON_GOAL_(?!CHECKPOINT_DIR)/i.test(key)) delete value[key];
   return value;
 }
-function cli(f: Family, action: string[], label: string): any {
+function cli(f: Family, action: string[], label: string, timeoutMs = CLI_TIMEOUT_MS): any {
   const result = withRuntimeTest({ root: f.root }, () => spawnSync(process.execPath, cliArgs(f, action),
-    { cwd: f.harnessDir, env: env(f), encoding: 'utf8', timeout: CLI_TIMEOUT_MS, windowsHide: true }));
+    { cwd: f.harnessDir, env: env(f), encoding: 'utf8', timeout: timeoutMs, windowsHide: true }));
   write(f.root, `observations/${label}.stdout.log`, result.stdout || ''); write(f.root, `observations/${label}.stderr.log`, result.stderr || '');
   assert(!result.error, String(result.error));
   const line = result.stdout.trim().split(/\r?\n/).reverse().find(line => line.startsWith('{'));
@@ -182,7 +182,7 @@ const cases: Array<{ name: string; run(): Promise<void> }> = [{
       assert.equal(oldControl.owner?.kind, 'session'); assert(Date.parse(oldControl.owner!.lease_expires_at!) > Date.now());
       ownedReporter(f, reporter, false); await closed;
       assert(isLockStale(readLockRecord(featureLock)!));
-      // Test precondition: the dead reporter keeps its fence with a lease longer than the 90s CLI envelope.
+      // Prove recovery and gate entry precede lease expiry; subsequent real checks have their own run watchdog.
       const retainedControl = renewSessionLease(f.childDir, { run_id: CHILD_ID, owner_id: oldControl.owner!.owner_id, epoch: oldControl.current_epoch }, 5 * 60_000);
       const { lease_expires_at: _oldLease, ...oldOwner } = oldControl.owner!;
       const { lease_expires_at: _retainedLease, ...retainedOwner } = retainedControl.owner!;
@@ -191,8 +191,8 @@ const cases: Array<{ name: string; run(): Promise<void> }> = [{
       const leaseDeadline = Date.parse(retainedControl.owner!.lease_expires_at!); assert(leaseDeadline > Date.now() + CLI_TIMEOUT_MS);
       const resumedAt = Date.now();
       write(f.root, 'observations/n1-timeline.json', JSON.stringify({ reporter_started_at: reporterStartedAt, reporter_pid: reporter.pid,
-        original_control: oldControl, retained_control: retainedControl, lease_deadline: leaseDeadline, resumed_at: resumedAt, cli_timeout_ms: CLI_TIMEOUT_MS }, null, 2) + '\n');
-      const resumed = cli(f, ['--next'], 'dead-pid-next');
+        original_control: oldControl, retained_control: retainedControl, lease_deadline: leaseDeadline, resumed_at: resumedAt, cli_timeout_ms: TEST_RUN_TIMEOUT_MS }, null, 2) + '\n');
+      const resumed = cli(f, ['--next'], 'dead-pid-next', TEST_RUN_TIMEOUT_MS);
       const after = rows(childEvents), native = rows(nativeFile);
       assert(native.filter(row => row.kind === 'enter').length >= 2, 'dead PID must immediately rejoin the accepted gate rather than wait for the logical lease');
       assert(resumedAt < leaseDeadline, 'the resume began before lease expiry');

@@ -33,12 +33,12 @@ import {
 } from './change-unit-design-preparation';
 import { changeUnitDirectory, enumerateCanonicalChangeUnits, parseChangeUnitFeatureId, loadCanonicalChangeUnit, createChangeUnitRef, asChangeUnitArtifact, resolveChangeUnitRefFromLoaded } from './change-unit-path';
 import { LIVENESS_BEACON_FILENAME } from './liveness-beacon';
-import { componentBlueprintPath, loadCanonicalBlueprint, resolveComponentBlueprintRefFromLoaded } from './component-blueprint-path';
+import { componentBlueprintPath, loadCanonicalBlueprint, resolveComponentBlueprintRefFromLoaded, resolveBlueprintCandidateRefFromLoaded } from './component-blueprint-path';
 import type { ChangeUnitArtifact, ChangeUnitRef } from './change-unit-model';
 import type { ChangeUnitCandidate } from './change-unit-provider-boundary';
 import type { ComponentBlueprintRef } from './component-blueprint-model';
 import { blueprintIdentityPointers, currentBlueprintIdentity } from './change-unit-blueprint-identity';
-import { validateChangeUnitDesign } from './change-unit-design-gate';
+import { validateChangeUnitDesign, readChangeUnitDesignOwnership } from './change-unit-design-gate';
 import { evaluateChangeUnitCarryForward } from './change-unit-reconciliation';
 import { validateChangeUnit } from './change-unit-validator';
 import { publishArchitectureRevision } from './init-task-executor';
@@ -1132,8 +1132,20 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
         const ctx = { projectRoot, frameworkRoot, feature: deriveChangeUnitFeatureId(blueprintId, unit.change_unit_id), phase: input.phase,
           featureSpec: {}, phaseRule: {} } as CheckContext;
         return [...consumerKinds].flatMap(kind => checkAuthoritativeContentAligned(ctx, kind,
-          deriveBlueprintCandidateSkillInput(projectRoot, ctx.feature, frameworkRoot, kind, { blueprint: doc, changeUnit: unit })));
+          deriveBlueprintCandidateSkillInput(projectRoot, ctx.feature, frameworkRoot, kind, { blueprint: doc, changeUnit: unit, architecture: context.architecture })));
       });
+      // Before the first decomposition there are no CU candidates to repair; acceptance owns that next boundary.
+      const hasUnits = units.size > 0 || enumerateCanonicalChangeUnits(projectRoot, blueprintId)
+        .some(unit => !retired.has(String(unit.changeUnit.change_unit_id)));
+      const ownership = hasUnits ? readChangeUnitDesignOwnership(projectRoot, blueprintId, [...units.values()], doc) : [];
+      if (ownership.length) {
+        const files = [canonicalPath, ...enumerateCanonicalChangeUnits(projectRoot, blueprintId).map(unit => unit.canonicalPath)];
+        const dependencies = files.map(file => ({ path: file, exists: true, sha256: sha256Hex(fs.readFileSync(file)), role: 'artifact' as const }));
+        const ctx = { projectRoot, frameworkRoot, feature: input.feature, phase: input.phase, featureSpec: {}, phaseRule: {} } as CheckContext;
+        checks.push(...checkAuthoritativeContentAligned(ctx, 'contracts', { state: 'invalid', dependencies,
+          reason: 'other', codes: [...new Set(ownership.map(issue => issue.id))], detail: ownership.map(issue => issue.message).join('\n') })
+          .map(check => ({ ...check, description: '整批CU对当前蓝图必需设计义务的显式认领', affected_files: files })));
+      }
       if (knowledgeRepair) {
         const candidate = { ...loadCanonicalBlueprint(projectRoot, blueprintId), blueprint: doc };
         checks.push(...validateComponentClosureKnowledge(projectRoot, { blueprint: candidate } as Parameters<typeof validateComponentClosureKnowledge>[1]).issues
@@ -1286,8 +1298,10 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
         && blocker.owner === 'component-design' && blocker.observation === 'machine') : [];
       const activeDesignDeclaration = currentCuInput && deriveChangeUnitBlockers({ ...asChangeUnitArtifact(currentCuInput), blockers: designDeclarations }, { projectRoot })
         .some(observation => observation.active);
-      const cuNeedsAuthor = currentCuInput && (validateChangeUnit(currentCuInput, { projectRoot, canonicalPath: originalCu!.canonicalPath }).some(issue => issue.severity === 'BLOCKER')
-        || validateChangeUnitDesign(projectRoot, currentCuInput).verdict !== 'constructable'
+      const candidateBlueprint = loadCanonicalBlueprint(projectRoot, blueprintId);
+      const resolveCandidateRef = (_root: string, value: unknown) => resolveBlueprintCandidateRefFromLoaded(candidateBlueprint, authorPreimage, value);
+      const cuNeedsAuthor = currentCuInput && (validateChangeUnit(currentCuInput, { projectRoot, canonicalPath: originalCu!.canonicalPath, resolveBlueprintRef: resolveCandidateRef }).some(issue => issue.severity === 'BLOCKER')
+        || validateChangeUnitDesign(projectRoot, currentCuInput, { resolveBlueprintRef: resolveCandidateRef }).verdict !== 'constructable'
         || activeDesignDeclaration && !verifiedQuestion);
       // A verified finding that triggered this transaction is invisible to the draft's own machine checks:
       // the design owner must receive it once before independent questioning.

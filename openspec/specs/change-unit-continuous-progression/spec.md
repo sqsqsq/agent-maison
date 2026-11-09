@@ -560,13 +560,22 @@ Normal single/batch acceptance and content revision SHALL validate the full depe
 
 Dependency traversal SHALL NOT select delivery content or assign construction ownership on behalf of a CU. Only explicitly selected `design_refs` contribute inherited content and direct ownership. This distinction MUST remain when a previously content-free dependency later gains `acceptance`, `contracts`, or `use_cases`. The full derived closure SHALL still be checked for resolvable authority and unresolved decisions. Existing selections MUST NOT be silently removed or filtered by touches or predicate identifiers; ownership corrections SHALL use the existing design-owner and CU-content revision path.
 
+Whole-batch acceptance, content revision and design readiness SHALL require an explicit owner for every required non-fact design obligation derived by P3. Design preparation and P3 SHALL share that derivation, including changed nodes and runtime flows, relations, decisions, contracts and current requirement carriers. One appropriate active CU is sufficient; a CU MUST NOT be forced to claim another CU's entire transitive closure. Exact retired units MUST NOT supply ownership. Missing ownership SHALL return the existing `change_unit_design_closure_incomplete` finding to the design author before construction, and unpublished design repairs SHALL check their proposed CU set before publication. No inferred references or ownership ledger SHALL be persisted. Feature design mappings and coverage SHALL continue to require evidence for each explicitly declared owner.
+
 #### Scenario: Implementation needs another predicted-outside module
 - **WHEN** actual implementation affects another module within the original request
 - **THEN** the module-list difference alone SHALL NOT invalidate projection; public contracts and architecture permission SHALL still be checked
 
 #### Scenario: Only root references were supplied
-- **WHEN** all dependency decisions already exist and are effective
-- **THEN** normal acceptance SHALL validate the full derived dependency closure and publish only the explicit delivery selections it received
+- **WHEN** only delivery roots are supplied and required relations, decisions or contracts have no explicit owner in the proposed active CU set
+- **THEN** the batch SHALL be rejected atomically with missing ownership addresses, including obligations outside all individual dependency closures
+- **AND** the author may assign each obligation to one appropriate CU and resubmit through the same consumer
+- **AND** acceptance SHALL publish exactly the authored references, while the other CUs need not repeat those claims
+
+#### Scenario: A sibling owns a dependent contract
+- **WHEN** CU B explicitly owns a contract that CU A only reaches as dependency context, and that contract later gains delivery content
+- **THEN** CU A SHALL neither inherit the new content nor become its owner
+- **AND** a new unclaimed obligation SHALL appear in design readiness instead of being silently assigned through dependency traversal
 
 #### Scenario: Shared dependency reaches another CU's delivery target
 - **WHEN** a selected storage target reaches a UI target through a shared contract, consumer relation, or scenario

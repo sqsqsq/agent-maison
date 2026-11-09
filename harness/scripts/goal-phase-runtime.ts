@@ -5079,7 +5079,8 @@ export class GoalPhaseRuntime {
         eventLineRecorder = (file, line) => { previous?.(file, line); lines.push({ file, line }); };
         return () => { eventLineRecorder = previous; return lines; }; },
       recheckReadiness: () => { const ready = deriveDesignPreparationReadiness(projectRoot, manifest.feature);
-        return { ready: ready.ready, reason: ready.ready ? '原始请求的真实P1/P2 readiness已重派生' : JSON.stringify(ready.perUnit) }; },
+        return { ready: ready.ready, reason: ready.ready ? '原始请求的真实P1/P2 readiness已重派生'
+          : JSON.stringify({ units: ready.perUnit, ownership: ready.ownershipIssues }) }; },
     });
   }
 

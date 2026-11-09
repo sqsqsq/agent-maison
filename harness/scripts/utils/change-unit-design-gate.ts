@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+import * as YAML from 'yaml';
 import { componentIndexPath } from '../../config';
 import {
   BlueprintRecord,
@@ -9,17 +10,61 @@ import {
   getId,
   nonEmptyString,
 } from './component-blueprint-model';
-import { resolveComponentBlueprintRef } from './component-blueprint-path';
+import { resolveComponentBlueprintRef, loadCanonicalBlueprint, sha256Bytes } from './component-blueprint-path';
+import { asChangeUnitArtifact, createChangeUnitRef, enumerateCanonicalChangeUnits } from './change-unit-path';
+import { deriveBlueprintDesignObligations } from './component-blueprint-obligations';
+import { stableJson } from './blueprint-discovery';
+import type { ComponentClosureIssue } from './component-closure-model';
 import { stableAddressIndex } from './blueprint-addressing';
 import { blueprintComponentDecisions } from './component-assets';
 import {
   ChangeUnitIssue,
+  ChangeUnitArtifact,
   ChangeUnitRecord,
   blueprintRefAddress,
   changeUnitIssue,
   changeUnitRecords,
   sameBlueprintIdentity,
 } from './change-unit-model';
+
+/** Whole-component ownership, using the same obligations and exact retirement as P3. No reference is written. */
+export function readChangeUnitDesignOwnership(projectRoot: string, blueprintId: string,
+  candidates: readonly ChangeUnitArtifact[] = [], blueprintOverride?: BlueprintRecord): ChangeUnitIssue[] {
+  const loadedBlueprint = loadCanonicalBlueprint(projectRoot, blueprintId);
+  const units = new Map(enumerateCanonicalChangeUnits(projectRoot, blueprintId).map(loaded =>
+    [String(loaded.changeUnit.change_unit_id), { changeUnit: asChangeUnitArtifact(loaded.changeUnit), ref: createChangeUnitRef(loaded) }]));
+  for (const candidate of candidates) {
+    if (candidate.blueprint_id !== blueprintId || candidate.component_id !== loadedBlueprint.blueprint.component_id) {
+      return [changeUnitIssue('change_unit_identity_mismatch', '$.component_id', '设计认领候选必须属于当前蓝图及部件。')];
+    }
+    const existing = units.get(candidate.change_unit_id);
+    const content = (unit: ChangeUnitArtifact) => stableJson({ ...unit,
+      design_refs: [...unit.design_refs].sort((a, b) => stableJson(a.target).localeCompare(stableJson(b.target))) });
+    // Keep real canonical bytes for unchanged proposals; changed/new targets use the prospective writer bytes.
+    const ref = existing && content(existing.changeUnit) === content(candidate) ? existing.ref : createChangeUnitRef({ changeUnit: candidate as unknown as ChangeUnitRecord,
+      artifactSha256: sha256Bytes(Buffer.from(YAML.stringify(candidate))) });
+    units.set(candidate.change_unit_id, { changeUnit: candidate, ref });
+  }
+  // Avoid the projection/design import cycle; this is P3's existing retirement predicate.
+  const { inspectRetirement } = require('./component-closure-inputs') as typeof import('./component-closure-inputs');
+  const retirementIssues: ComponentClosureIssue[] = [];
+  const retired = inspectRetirement([...units.values()], retirementIssues);
+  const disputed = new Set(retirementIssues.map(issue => issue.path));
+  const currentUnits = [...units.values()].filter(unit => !retired.has(unit.changeUnit.change_unit_id)
+    || disputed.has(`change-unit:${unit.changeUnit.change_unit_id}`));
+  const obligations = deriveBlueprintDesignObligations({ blueprint: { ...loadedBlueprint, blueprint: blueprintOverride ?? loadedBlueprint.blueprint }, currentUnits });
+  const missing = new Map<string, string[]>();
+  for (const item of obligations) {
+    if (!item.required || item.evidence_level === 'fact' || item.mapping_kind !== 'design' || item.owner_hint_change_unit_ids.length) continue;
+    const roots = item.kind.startsWith('source_') ? item.blueprint_refs : item.mapping_id ? [item.mapping_id] : item.blueprint_refs;
+    const targets = [...new Set(roots.map(address => address.replace(/^(view:runtime\/flow:[^/]+)\/.*/, '$1')))].sort();
+    const key = targets.join('、');
+    missing.set(key, [...missing.get(key) ?? [], item.obligation_id]);
+  }
+  return [...missing].sort(([a], [b]) => a.localeCompare(b)).map(([targets, obligations]) => changeUnitIssue(
+    'change_unit_design_closure_incomplete', '$.design_refs',
+    `整批活动CU尚未认领必需设计义务 ${obligations.join('、')}；${targets ? `由设计作者选择一个责任CU，在design_refs显式认领以下承载之一：${targets}` : '没有可认领承载，请先补齐蓝图的需求追溯'}。不要求每个CU重复认领，不把依赖自动写入选择。`));
+}
 
 const DIRECT_REF_FIELDS = [
   'design_basis_refs',

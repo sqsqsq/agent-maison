@@ -1,0 +1,564 @@
+{
+  "generated_at": "2026-11-09T14:53:12.742Z",
+  "base_commit": "7080620a1254c84da6f76dadcfd33ebf14f9e146",
+  "branch": "main",
+  "scope": "7080620a CU explicit ownership/P3 closure follow-up",
+  "decision": "whole-batch explicit ownership; shared P3 obligations; no inferred design_refs",
+  "changed": {
+    "command": "npm run test:changed -- --add component-closure,change-unit-content-revision,change-unit-revision-recovery,change-unit-progression,initial-design-delivery,initial-design-progress-recovery,initial-design-budget,initial-design-repair,initial-design-supervisor,initial-design-control,initial-design-waiting,initial-design-requirement,initial-design-scope-recovery,initial-design-phase-input,real-chain,real-chain-seams,design-authority-repair-content,design-authority-repair-runtime,design-authority-repair-other,blueprint-skill-projection --plan-out reports/cu-closure-ownership-changed-plan.json --results-out reports/cu-closure-ownership-changed-results.json",
+    "scope": "changed",
+    "ok": false,
+    "passed": 5213,
+    "failed": 2,
+    "groups": 1011,
+    "workers": 12,
+    "reused": 50,
+    "formal_selected": 118,
+    "formal_not_executed": 309,
+    "input_stable": true,
+    "input_snapshot": "daa153f362a1ab1a7207f5d70c3b256dcb40ba47e2c8ef94a397c4bbdf9de427",
+    "ending_snapshot": "daa153f362a1ab1a7207f5d70c3b256dcb40ba47e2c8ef94a397c4bbdf9de427",
+    "wall_ms": 6584789.341,
+    "coverage_unknown_groups": 44,
+    "exit_code": 1,
+    "original_fail_preserved": true,
+    "raw": [
+      {
+        "path": "harness/reports/cu-closure-ownership-changed-results.json",
+        "sha256": "a0f9a0f99fb9751e55a08a7f9c72a6d86a2c96f64f8e438e743b1117a693dcfa",
+        "bytes": 123117344
+      },
+      {
+        "path": "harness/reports/cu-closure-ownership-changed.log",
+        "sha256": "556409ab9825171bfe42d63e1d66a34e01aab3c13b8df628ce5b5fc790dbaa2b",
+        "bytes": 47953862
+      },
+      {
+        "path": "harness/reports/cu-closure-ownership-changed-plan.json",
+        "sha256": "8e5c2b5b9dbf4413e1712abd7006ff6dbf61e7eb66d912978ddb53ccf395a5ce",
+        "bytes": 19286013
+      },
+      {
+        "path": "harness/reports/cu-closure-ownership-changed-exit.txt",
+        "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+        "bytes": 2
+      }
+    ]
+  },
+  "required_suite_coverage": [
+    {
+      "suite": "component-closure",
+      "groups": 50,
+      "passed": 50,
+      "failed": 0
+    },
+    {
+      "suite": "change-unit-content-revision",
+      "groups": 16,
+      "passed": 16,
+      "failed": 0
+    },
+    {
+      "suite": "change-unit-revision-recovery",
+      "groups": 1,
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "suite": "change-unit-progression",
+      "groups": 1,
+      "passed": 97,
+      "failed": 0
+    },
+    {
+      "suite": "initial-design-delivery",
+      "groups": 27,
+      "passed": 27,
+      "failed": 0
+    },
+    {
+      "suite": "initial-design-progress-recovery",
+      "groups": 1,
+      "passed": 4,
+      "failed": 0
+    },
+    {
+      "suite": "initial-design-budget",
+      "groups": 9,
+      "passed": 9,
+      "failed": 0
+    },
+    {
+      "suite": "initial-design-repair",
+      "groups": 35,
+      "passed": 35,
+      "failed": 0
+    },
+    {
+      "suite": "initial-design-supervisor",
+      "groups": 1,
+      "passed": 8,
+      "failed": 0
+    },
+    {
+      "suite": "initial-design-control",
+      "groups": 1,
+      "passed": 0,
+      "failed": 1
+    },
+    {
+      "suite": "initial-design-waiting",
+      "groups": 6,
+      "passed": 6,
+      "failed": 0
+    },
+    {
+      "suite": "initial-design-requirement",
+      "groups": 1,
+      "passed": 4,
+      "failed": 0
+    },
+    {
+      "suite": "initial-design-scope-recovery",
+      "groups": 1,
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "suite": "initial-design-phase-input",
+      "groups": 1,
+      "passed": 4,
+      "failed": 0
+    },
+    {
+      "suite": "real-chain",
+      "groups": 9,
+      "passed": 9,
+      "failed": 0
+    },
+    {
+      "suite": "real-chain-seams",
+      "groups": 13,
+      "passed": 12,
+      "failed": 1
+    },
+    {
+      "suite": "design-authority-repair-content",
+      "groups": 19,
+      "passed": 19,
+      "failed": 0
+    },
+    {
+      "suite": "design-authority-repair-runtime",
+      "groups": 23,
+      "passed": 23,
+      "failed": 0
+    },
+    {
+      "suite": "design-authority-repair-other",
+      "groups": 17,
+      "passed": 17,
+      "failed": 0
+    },
+    {
+      "suite": "blueprint-skill-projection",
+      "groups": 1,
+      "passed": 43,
+      "failed": 0
+    }
+  ],
+  "original_failures": [
+    {
+      "group": "initial-design-control",
+      "name": "N1 original CLI waits for a live child machine gate without false events and immediately recovers a dead reporter before its session lease expires",
+      "error": "Error: EPERM, Permission denied: \\\\?\\C:\\Users\\shengqsq\\AppData\\Local\\Temp\\mu-kkGL4q\\1h\\real-chain-5bm6wJ '\\\\?\\C:\\Users\\shengqsq\\AppData\\Local\\Temp\\mu-kkGL4q\\1h\\real-chain-5bm6wJ'\n    at Object.rmSync (node:fs:1222:18)\n    at withFreshCuHost (D:\\1.code\\agent-maison\\harness\\tests\\unit\\lifecycle-evolution.unit.test.ts:195:13)\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async withFamily (D:\\1.code\\agent-maison\\harness\\tests\\unit\\initial-design-control.unit.test.ts:39:3)\n    at async Object.run (D:\\1.code\\agent-maison\\harness\\tests\\unit\\initial-design-control.unit.test.ts:144:17)\n    at async Object.runSelectedCases (D:\\1.code\\agent-maison\\harness\\tests\\unit\\initial-design-control.unit.test.ts:246:11)\n    at async D:\\1.code\\agent-maison\\harness\\tests\\unit-worker.ts:49:22\ntest child terminated by signal: SIGTERM\ntest child timeout: spawnSync D:\\Program Files\\nodejs\\node.exe ETIMEDOUT\noriginals: D:\\1.code\\agent-maison\\harness\\reports\\test-runtime-control\\failure-n8urMs"
+    },
+    {
+      "group": "real-chain-seams::[\"RC-10 20261019真实输入：设计修订、入口声明补齐、coding资源归属及UT交接\"]",
+      "name": "RC-10 20261019真实输入：设计修订、入口声明补齐、coding资源归属及UT交接",
+      "error": "{\"phases\":[\"work-unit-author\",\"design-repair-author\",\"design-repair-questioning\",\"design-repair-author\",\"design-repair-questioning\"],\"end\":{\"ts\":\"2026-11-09T12:20:08.336Z\",\"type\":\"run_end\",\"status\":\"HALTED\",\"halt_reason\":\"executor_waiting\",\"error\":\"原作者 design-repair-author-i4 已真实交回；当前签名指令、反馈、研究输入、权限和产品原件均未变化，没有新的可执行工作。保留全部未完项，补齐原producer/对象证明、真实条件改变或用户明确继续后接回，不重发同一请求。\",\"run_disposition\":\"WAITING\",\"run_wait_kind\":\"external\"},\"handoffBlocked\":{\"phase\":\"coding\",\"detail\":\"coding lacks a fresh bound tool result: coding: <no summary>\"}}"
+    }
+  ],
+  "targeted": {
+    "n1": {
+      "ok": true,
+      "passed": 1,
+      "failed": 0,
+      "case": "N1 original CLI waits for a live child machine gate without false events and immediately recovers a dead reporter before its session lease expires",
+      "wall_ms": 70524.6922,
+      "raw": [
+        {
+          "path": "harness/reports/cu-closure-ownership-n1-results.json",
+          "sha256": "a611b5f63a7b5cad68d25413e1df14f05aab7065bfacce8c4c5f8ee557216250",
+          "bytes": 1109
+        },
+        {
+          "path": "harness/reports/cu-closure-ownership-n1.log",
+          "sha256": "ab9d4b06c60728e1e2647b6251129a5a2e444877f1b0589a2a0f65f06cf35b32",
+          "bytes": 1372
+        }
+      ],
+      "command": "npm run test:unit -- --filter initial-design-control --workers 1 --results-out reports/cu-closure-ownership-n1-results.json",
+      "exit_code": 0,
+      "diagnostic_only_after_test": "cli_timeout_ms now records the already-tested TEST_RUN_TIMEOUT_MS; r5 reviewed; behavior/assertions unchanged"
+    },
+    "rc10": {
+      "ok": true,
+      "passed": 1,
+      "failed": 0,
+      "case": "RC-10 20261019真实输入：设计修订、入口声明补齐、coding资源归属及UT交接",
+      "wall_ms": 1700173.6264,
+      "raw": [
+        {
+          "path": "harness/reports/cu-closure-ownership-rc10-final-results.json",
+          "sha256": "4741e45853e2eed5270c44d53069e12244aaa8058ddd23bc2b2cee15cfa7be7e",
+          "bytes": 804
+        },
+        {
+          "path": "harness/reports/cu-closure-ownership-rc10-final.log",
+          "sha256": "f96c941f0c5799097fbfe52e6858d5b0c4cc46c763712b99119c7371b905cfab",
+          "bytes": 4681477
+        }
+      ],
+      "command": "npm run test:unit -- --filter real-chain-seams --case \"RC-10 20261019\" --workers 1 --results-out reports/cu-closure-ownership-rc10-final-results.json",
+      "exit_code": 0
+    },
+    "rc10_first_target": {
+      "intentionally_stopped": true,
+      "exit_code": 1,
+      "reason": "known missing design mapping after explicit claim; actual plan author now writes real implementation mapping",
+      "raw": [
+        {
+          "path": "harness/reports/cu-closure-ownership-rc10.log",
+          "sha256": "5a1186b5d32e32e3b39b143adca760ab9be691f732da4623a4a94a55104d4eee",
+          "bytes": 4742008
+        },
+        {
+          "path": "harness/reports/cu-closure-ownership-rc10-interrupted-exit.txt",
+          "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+          "bytes": 2
+        }
+      ]
+    }
+  },
+  "combination": {
+    "complete": true,
+    "original_run": "20261029T005400Z-a21473",
+    "child_run": "20261109T132714Z-96e82e",
+    "public_status": "completed",
+    "executed_methods": [
+      "spec",
+      "plan",
+      "coding",
+      "ut",
+      "testing",
+      "review"
+    ],
+    "original_requirement_sha256": "2a6bbd10d4ff297ad9b23670ba0e302f5feef7cc0757e43dd7b04ae909052300",
+    "immutable_history": true,
+    "authors": 2,
+    "knowledge_handbacks": 1,
+    "unverified": [
+      "HarmonyOS compilation and native UI",
+      "real devices, layout and pixels",
+      "real author/model quality",
+      "shared coding/UT producer restoration"
+    ],
+    "group_results": [
+      {
+        "name": "P4 a21473 executed methods require real harness receipts and PASS independently of completion phase reuse",
+        "ok": true
+      },
+      {
+        "name": "P4 a21473 successor scope rejects dropping device or acceptance unit obligations",
+        "ok": true
+      },
+      {
+        "name": "a21473 original public next normalizes machine admission and issues decomposition with the original six calls and immutable history intact",
+        "ok": true
+      },
+      {
+        "name": "P4 a21473 original inputs and 6fe679 framework fault share one isolated design construction and formal completion replay",
+        "ok": true
+      }
+    ],
+    "raw": {
+      "path": "harness/reports/cu-closure-ownership-combination.json",
+      "sha256": "5568a3303b3c6cc0ed51a9a9a8b0ab1a285bb03eb57ea0ec317275bc733b3faf",
+      "bytes": 1090793
+    }
+  },
+  "reviews": [
+    {
+      "round": 1,
+      "verdict": "scope review",
+      "models": [
+        "claude-opus-5-5"
+      ],
+      "session_id": "d8fb8100-d683-431e-b521-27786571e185",
+      "permission_denials": [],
+      "spawned_subagents": 0,
+      "command": "Get-Content -Raw harness/reports/cu-closure-ownership-review-scope.txt | claude.cmd -p --model opus --effort high --permission-mode plan --tools Read,Grep,Glob --allowedTools Read,Grep,Glob --settings harness/reports/6a2f8c91/claude-review-readonly-settings.json --strict-mcp-config --mcp-config harness/reports/6a2f8c91/claude-review-no-mcp.json --output-format json --no-session-persistence",
+      "conclusion": "**结论：只在单个 CU 的依赖闭包上做检查，修不好这次回归。这个范围一头太宽，一头太窄，两头都会造成终点确定性失败。** 建议沿用方案 1 的方向（设计期报给作者、不自动补引用），但要改成**整批 CU 的认领检查**，判据直接复用 P3 自己生成义务的那段代码，挂在已有的整批入口上。\n> 本轮只用了 Read/Grep。工具集里没有 Write 和 ExitPlanMode，而且你要求不写文件，所以没落 plan 文件，结论都在下面。\n## 为什么只查单 CU 闭包不够",
+      "raw": [
+        {
+          "path": "harness/reports/cu-closure-ownership-review-scope.txt",
+          "sha256": "8ca21bb26f2851374bc5aa9c3004f76248f9ff31dfce35615c91eb7923612031",
+          "bytes": 2532
+        },
+        {
+          "path": "harness/reports/cu-closure-ownership-review-r1.json",
+          "sha256": "14ef7837d82bde4b0f48419187ee1497fe8b1c19664f581b7090c4118287648c",
+          "bytes": 10173
+        }
+      ]
+    },
+    {
+      "round": 2,
+      "verdict": "FAIL: M1; resolved in r3",
+      "models": [
+        "claude-opus-5-5"
+      ],
+      "session_id": "ba499d4a-9c8a-4ab9-b37f-326fdafaf635",
+      "permission_denials": [],
+      "spawned_subagents": 0,
+      "command": "Get-Content -Raw harness/reports/cu-closure-ownership-review-code.txt | claude.cmd -p --model opus --effort high --permission-mode plan --tools Read,Grep,Glob --allowedTools Read,Grep,Glob --settings harness/reports/6a2f8c91/claude-review-readonly-settings.json --strict-mcp-config --mcp-config harness/reports/6a2f8c91/claude-review-no-mcp.json --output-format json --no-session-persistence",
+      "conclusion": "# 复核 r2：整批 CU 显式认领\n**结论：还不能通过，有 1 条必须修复。** 改动本身都做对了，但在一条已有的恢复路径上，原来接续一次就能走下去，现在会永久停住。\n本轮只用了 Read/Grep/Glob，没有跑任何测试。本会话的 Write 和 ExitPlanMode 都不可用，所以没有写计划文件，结论都在下面。",
+      "raw": [
+        {
+          "path": "harness/reports/cu-closure-ownership-review-code.txt",
+          "sha256": "08f8b8c122c6c7cf0aed855fc529e4a22d5a6a32eabbe91684d389ed386966ef",
+          "bytes": 3859
+        },
+        {
+          "path": "harness/reports/cu-closure-ownership-review-r2.json",
+          "sha256": "0ff77e2ab9f6c96e7d783216288cf25741a2031558e00cd2613acae859c31d64",
+          "bytes": 8888
+        }
+      ]
+    },
+    {
+      "round": 3,
+      "verdict": "PASS",
+      "models": [
+        "claude-opus-5-5"
+      ],
+      "session_id": "a072b9bd-0c49-4a24-afa3-0fbd2fc21cc9",
+      "permission_denials": [],
+      "spawned_subagents": 0,
+      "command": "Get-Content -Raw harness/reports/cu-closure-ownership-review-final.txt | claude.cmd -p --model opus --effort high --permission-mode plan --tools Read,Grep,Glob --allowedTools Read,Grep,Glob --settings harness/reports/6a2f8c91/claude-review-readonly-settings.json --strict-mcp-config --mcp-config harness/reports/6a2f8c91/claude-review-no-mcp.json --output-format json --no-session-persistence",
+      "conclusion": "# 复核 r3：M1 与直接回归修法\n**结论：PASS。** M1 已经修好，架构恢复那条直接回归的修法也完整正确。没有越过基线身份，没有提前发布，也没有新增必停路径。没有必须修复项。\n- **模型**：claude-opus-5-5（Opus 5.5）。",
+      "raw": [
+        {
+          "path": "harness/reports/cu-closure-ownership-review-final.txt",
+          "sha256": "c0442e4b6988278f0b4cda77e6624894a20b84b33eb25539c13846158fc9b30e",
+          "bytes": 2704
+        },
+        {
+          "path": "harness/reports/cu-closure-ownership-review-r3.json",
+          "sha256": "b19956e2a6d8cb09d44b2f7478adf3b31bc28e396c3ce43fbfd52005bdb5836c",
+          "bytes": 7464
+        }
+      ]
+    },
+    {
+      "round": 4,
+      "verdict": "PASS",
+      "models": [
+        "claude-opus-5-5"
+      ],
+      "session_id": "8f470006-a307-43b8-a481-9741d4736ab1",
+      "permission_denials": [],
+      "spawned_subagents": 0,
+      "command": "Get-Content -Raw harness/reports/cu-closure-ownership-review-tests.txt | claude.cmd -p --model opus --effort high --permission-mode plan --tools Read,Grep,Glob --allowedTools Read,Grep,Glob --settings harness/reports/6a2f8c91/claude-review-readonly-settings.json --strict-mcp-config --mcp-config harness/reports/6a2f8c91/claude-review-no-mcp.json --output-format json --no-session-persistence",
+      "conclusion": "两处测试修正都保留了真实判据，也没有直接回归，结论 **PASS**。本轮没有必须修复项，也没有撤回意见。\n实际模型：Opus 5.5（`claude-opus-5-5`）。全程只用了 Read/Grep/Glob，没有执行命令、没有改文件、没有派子代理。测试实测以你这边正在跑的结果为准。\n## 1. RC-10：设计作者补认领（`harness/tests/utils/host-rule-combination.ts:414-434`）",
+      "raw": [
+        {
+          "path": "harness/reports/cu-closure-ownership-review-tests.txt",
+          "sha256": "9966f9c7b7e023c77894b41bfe6604ffa511326b8dde65d0ee48ef7a1bb070f7",
+          "bytes": 2273
+        },
+        {
+          "path": "harness/reports/cu-closure-ownership-review-r4.json",
+          "sha256": "28f6b0cd1a239ffba8c26ee2226628e940add492ce5fcab0d7264ad6b041d37f",
+          "bytes": 6356
+        }
+      ]
+    },
+    {
+      "round": 5,
+      "verdict": "PASS",
+      "models": [
+        "claude-opus-5-5"
+      ],
+      "session_id": "463bb2d4-4dfc-47ab-9b71-b62daf48d872",
+      "permission_denials": [],
+      "spawned_subagents": 0,
+      "command": "Get-Content -Raw harness/reports/cu-closure-ownership-review-mapping.txt | claude.cmd -p --model opus --effort high --permission-mode plan --tools Read,Grep,Glob --allowedTools Read,Grep,Glob --settings harness/reports/6a2f8c91/claude-review-readonly-settings.json --strict-mcp-config --mcp-config harness/reports/6a2f8c91/claude-review-no-mcp.json --output-format json --no-session-persistence",
+      "conclusion": "# 窄复核结论（模型：Opus 5.5，`claude-opus-5-5`）：**PASS**\n只用了 Read/Grep/Glob，没有执行命令，也没有改文件。三份用户修改文件、temp 和真实宿主都没读。生产代码只读了 `checkDesignMappings` 及它的引用检查，用来核对消费链。\n## 1. RC10 plan 作者补 full-card-number 的 design mapping",
+      "raw": [
+        {
+          "path": "harness/reports/cu-closure-ownership-review-mapping.txt",
+          "sha256": "3070bac60d2d13368872303c28957f1b4e4b54504366b7e4178a0b87be657f93",
+          "bytes": 1882
+        },
+        {
+          "path": "harness/reports/cu-closure-ownership-review-r5.json",
+          "sha256": "b9775ccde1161d50c30ec235e625198d5571558b44c9cd9f4fe473778a4744a0",
+          "bytes": 5413
+        }
+      ]
+    }
+  ],
+  "checks": {
+    "typecheck": {
+      "exit_code": 0,
+      "raw": {
+        "path": "harness/reports/cu-closure-ownership-typecheck.log",
+        "sha256": "dfa0518d00f664264582e136e7385afa5719489b0550424c299f80da7c0d46a8",
+        "bytes": 74
+      }
+    },
+    "openspec_strict": {
+      "passed": 65,
+      "failed": 0,
+      "exit_code": 0,
+      "raw": {
+        "path": "harness/reports/cu-closure-ownership-openspec.log",
+        "sha256": "2d2015d1c0afae1d69495adc839b574513acda539d0bd0f8c44034a6ff6af5cf",
+        "bytes": 2697
+      }
+    },
+    "plan": {
+      "exit_code": 0,
+      "raw": {
+        "path": "harness/reports/cu-closure-ownership-plan-check.log",
+        "sha256": "fb8fff392c8bcb1d51d54b764bc6728e67c7ae898776f06b6c6d1ab6ee1557a5",
+        "bytes": 76
+      }
+    },
+    "diff": {
+      "command": "git diff --check",
+      "exit_code": 0
+    },
+    "lf": {
+      "files": 27,
+      "carriage_returns": 0
+    }
+  },
+  "production_unchanged_after_changed": [
+    {
+      "path": "docs/concepts/blueprint-design-inputs.md",
+      "sha256": "0d49c118d9f90d470ad4835b681d0a658ac731d1a90b06f6bc9411d6d8a2956a",
+      "matches_changed_snapshot": true
+    },
+    {
+      "path": "harness/scripts/goal-phase-runtime.ts",
+      "sha256": "add8791773122eca95e69b32ed51938c30f4ff11f4cffbc2191cccae3f3bc1ca",
+      "matches_changed_snapshot": true
+    },
+    {
+      "path": "harness/scripts/utils/blueprint-skill-projection.ts",
+      "sha256": "f9237ec516cd834c8cbc042e86fec22eb86a4a1e6ef280af2eba3f42d15adf15",
+      "matches_changed_snapshot": true
+    },
+    {
+      "path": "harness/scripts/utils/change-unit-design-gate.ts",
+      "sha256": "d82cd85be6899395b3168f608f3197805f0b2cb7400a1af89b42d0f5643ecdea",
+      "matches_changed_snapshot": true
+    },
+    {
+      "path": "harness/scripts/utils/change-unit-design-preparation.ts",
+      "sha256": "ee1d76aa4f00bc32c6a06ec54c5a66938549a73a56784a0088cfed8aec6fbcf8",
+      "matches_changed_snapshot": true
+    },
+    {
+      "path": "harness/scripts/utils/change-unit-feature-projection.ts",
+      "sha256": "0f7d66548061284323cadaee774cf9891f531fed95df96a0f98da81bedbb1026",
+      "matches_changed_snapshot": true
+    },
+    {
+      "path": "harness/scripts/utils/change-unit-path.ts",
+      "sha256": "f35c5039c0d799067aee1faaced5db8aa576a9cfc104590d9195da2bda402482",
+      "matches_changed_snapshot": true
+    },
+    {
+      "path": "harness/scripts/utils/change-unit-provider-boundary.ts",
+      "sha256": "bac3a9d1caae444e172c7e866b669b7ec6f9034b43af7c5dd6b475db00a2c510",
+      "matches_changed_snapshot": true
+    },
+    {
+      "path": "harness/scripts/utils/component-blueprint-path.ts",
+      "sha256": "187b4b84135302fdd17a8bddab9a2f50f9281c0805b99fcd2d955195f4117d66",
+      "matches_changed_snapshot": true
+    },
+    {
+      "path": "harness/scripts/utils/component-closure-inputs.ts",
+      "sha256": "1d2cea771a93776001d10f4b68708030c1cdb97853ec2aa2446dabfc2881f244",
+      "matches_changed_snapshot": true
+    },
+    {
+      "path": "harness/scripts/utils/component-closure-obligations.ts",
+      "sha256": "6af91d7e3dd392a3f603c71d4985b8df5aaa94ba81007b623f42ff96b87547fa",
+      "matches_changed_snapshot": true
+    },
+    {
+      "path": "harness/scripts/utils/design-repair-unattended.ts",
+      "sha256": "983035f623608e346c9543c38dfacf42152545e493465ed679c85d17e86fbdff",
+      "matches_changed_snapshot": true
+    },
+    {
+      "path": "harness/scripts/utils/initial-design-delivery.ts",
+      "sha256": "fe19a2a1da2a94d191974cbcdec6a5849e46adf93e0fe732deb19d185102b0f5",
+      "matches_changed_snapshot": true
+    },
+    {
+      "path": "openspec/specs/change-unit-continuous-progression/spec.md",
+      "sha256": "3e88e0cf36e8e72f6dc354b8b98866270e891b065bc77da1e1579bc9ec080582",
+      "matches_changed_snapshot": true
+    },
+    {
+      "path": "skills/project/component-design/SKILL.md",
+      "sha256": "f94c5445f8b41123c452fa514a728f48b744276cea0ec9886159ca5c20c06744",
+      "matches_changed_snapshot": true
+    },
+    {
+      "path": "skills/reference/app-component-blueprint-workflow.md",
+      "sha256": "bac58c1267fb448dfcceb635c0541b0a2a8f3c42356eb88a29110a94ad49d88d",
+      "matches_changed_snapshot": true
+    },
+    {
+      "path": "harness/scripts/utils/component-blueprint-obligations.ts",
+      "sha256": "e5c669cd215a6f67245611127580dc4d81dc02c874cb79938dda0ffd523b11ad",
+      "matches_changed_snapshot": true
+    }
+  ],
+  "protected_files": [
+    {
+      "path": ".cursor/goals/效率与准确率平衡总体目标_默认基线自主交付与可调精细度及可靠恢复_a47c9d62.goal.md",
+      "sha256": "0c43697f7c844dc4c3dfbb2b19f91916a2ea5df780f5533e572a391f40453d3e",
+      "unchanged": true
+    },
+    {
+      "path": ".cursor/plans/交付结论与调用恢复收口_全消费者同源与双运输一致_6fd6c8c1.plan.md",
+      "sha256": "1b09f0756431e1ff25987eee328523be48b960cba47fc2024b9b16145379a285",
+      "unchanged": true
+    },
+    {
+      "path": ".cursor/plans/验收事实与必修执行闭环补修_处置同源及有界恢复_c6ae8b4f.plan.md",
+      "sha256": "00d4a1a60f9db1124cddad29c6380ff6dae22034fc83369c2fdcadfcb796e3a8",
+      "unchanged": true
+    }
+  ],
+  "boundary": {
+    "full_or_daily_rerun": false,
+    "package": false,
+    "push": false,
+    "version_change": false,
+    "host_or_phone_access": false,
+    "credentials_read_or_copied": false,
+    "p4_t5": "pending",
+    "p4_t6": "pending"
+  },
+  "conclusion": "Original changed FAIL retained; both original red cases passed targeted verification; no claim of full-suite green."
+}

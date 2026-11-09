@@ -4,7 +4,7 @@ import * as YAML from 'yaml';
 import { ChangeUnitArtifact } from './change-unit-model';
 import { changeUnitPath, loadCanonicalChangeUnit, type LoadedChangeUnit } from './change-unit-path';
 import { assertValidChangeUnit } from './change-unit-validator';
-import { validateChangeUnitDesign } from './change-unit-design-gate';
+import { validateChangeUnitDesign, readChangeUnitDesignOwnership } from './change-unit-design-gate';
 
 export type ChangeUnitProviderSeam = 'cu_decomposition' | 'relation_ready_analysis' | 'candidate_selection';
 
@@ -145,6 +145,12 @@ export function acceptChangeUnitCandidates(
     }
     seen.add(id);
     targets.push(validateChangeUnitCandidate(projectRoot, candidate));
+  }
+  for (const blueprintId of new Set(candidates.map(candidate => candidate.artifact.blueprint_id))) {
+    const ownership = readChangeUnitDesignOwnership(projectRoot, blueprintId,
+      candidates.filter(candidate => candidate.artifact.blueprint_id === blueprintId).map(candidate => candidate.artifact));
+    if (ownership.length) throw new ChangeUnitCandidateRejected('change_unit_candidate_design_rejected',
+      ownership.map(issue => `${issue.id}: ${issue.message}`).join('\n'));
   }
 
   const written: string[] = [];

@@ -162,6 +162,13 @@ export function resolveComponentBlueprintRefFromLoaded(loaded: ReturnType<typeof
   return { canonicalPath: loaded.canonicalPath, blueprint: loaded.blueprint, target: resolveBlueprintTarget(loaded.blueprint, ref.target), ref };
 }
 
+/** Unpublished targets use candidate content while retaining the locked canonical source identity. */
+export function resolveBlueprintCandidateRefFromLoaded(loaded: ReturnType<typeof loadCanonicalBlueprint>, blueprint: BlueprintRecord,
+  value: unknown): ResolvedBlueprintTarget {
+  const ref = assertLoadedBlueprintRefIdentity(loaded, value);
+  return { canonicalPath: loaded.canonicalPath, blueprint, target: resolveBlueprintTarget(blueprint, ref.target), ref };
+}
+
 export function resolveComponentBlueprintRef(projectRoot: string, value: unknown, snapshot?: ReturnType<typeof loadCanonicalBlueprint>): ResolvedBlueprintTarget {
   const ref = validateComponentBlueprintRefShape(value);
   const loaded = snapshot ?? loadCanonicalBlueprint(projectRoot, ref.blueprint_id);

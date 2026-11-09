@@ -58,7 +58,7 @@ const runGoalModeSessionStep = (options: Parameters<typeof runGoalModeSessionSte
 
 type Host = Parameters<Parameters<typeof withFreshCuHost>[0]>[0];
 type Document = Record<string, any>;
-type Scenario = 'session-questioner-cu-write' | 'session-format-bad-twice' | 'large-process-repair' | 'session-pass-missing-reference' | 'format-retry' | 'missing-reference' | 'root' | 'lock-contention' | 'outside-write' | 'readiness-blocked' | 'normal' | 'retry' | 'session-retry' | 'machine-session' | 'design-owner' | 'design-owner-external' | 'design-owner-retain' | 'session-progress-recovery' | 'session-architecture-recovery';
+type Scenario = 'session-questioner-cu-write' | 'session-format-bad-twice' | 'large-process-repair' | 'session-pass-missing-reference' | 'format-retry' | 'missing-reference' | 'root' | 'lock-contention' | 'outside-write' | 'readiness-blocked' | 'normal' | 'retry' | 'session-retry' | 'machine-session' | 'ownership-session' | 'ownership-noop-session' | 'design-owner' | 'design-owner-external' | 'design-owner-retain' | 'session-progress-recovery' | 'session-architecture-recovery';
 const CU = deriveChangeUnitFeatureId(BLUEPRINT_ID, 'ledger-refresh');
 const requirement = '在已准入账目蓝图的原目标内补齐CU设计引用，再继续账目刷新与恢复的完整交付；不得降低验收或修改框架。';
 const read = (file: string): Document => YAML.parse(fs.readFileSync(file, 'utf8'));
@@ -143,7 +143,8 @@ async function scenario(host: Host, mode: Scenario, beforeRepair?: () => void): 
       { ...declared, blocker_id: 'device-execution-condition', gate: 'execution', owner: 'testing' },
       { ...declared, blocker_id: 'other-design-owner', owner: 'external-owner' },
     ] : [declared];
-  } else if (businessRepair) defective.target_predicates[0].description = '';
+  } else if ((mode === 'ownership-session' || mode === 'ownership-noop-session')) defective.design_refs = defective.design_refs.filter((ref: Document) => ref.target.kind !== 'relation');
+  else if (businessRepair) defective.target_predicates[0].description = '';
   else defective.design_refs = defective.design_refs.filter((ref: Document) => ref.target.view_id !== 'development');
   write(unit.canonicalPath, defective);
   const before = deriveDesignPreparationReadiness(host.root, BLUEPRINT_ID);
@@ -151,6 +152,9 @@ async function scenario(host: Host, mode: Scenario, beforeRepair?: () => void): 
     assert(before.ready, 'all current authority/design projections must already be valid');
     assert.equal(diagnoseBlueprintSkillAuthority(host.root, host.frameworkRoot, CU).findings.length, 0);
     assert(!deriveChangeUnitReadySet(host.root, BLUEPRINT_ID).units[0].ready, 'the retained declaration still blocks the real ready-set');
+  } else if ((mode === 'ownership-session' || mode === 'ownership-noop-session')) {
+    assert(!before.ready && before.ownershipIssues.some(issue => issue.message.includes('relation:domain-owned-by-module')));
+    assert(before.perUnit.every(row => row.verdict === 'constructable'), 'single-CU projection remains valid; the missing fact is batch ownership');
   } else assert(!before.ready && before.perUnit.some(row => row.changeUnitId === 'ledger-refresh' && row.verdict !== 'constructable'), 'the actual CU design gap must block readiness');
   const issues = before.perUnit.find(row => row.changeUnitId === 'ledger-refresh')!;
   const brief: DesignRepairBriefLike = { class: 'B2', items: [{ check: 'plan:cu:design-basis', class: 'B2', codes: issues.issueIds,
@@ -281,8 +285,20 @@ async function scenario(host: Host, mode: Scenario, beforeRepair?: () => void): 
       // Metadata jitter still cannot change the verified obligation identity.
       doc.source_fingerprint = doc.discovery.source_fingerprint = 'regenerated-by-runtime';
     }
+    if ((mode === 'ownership-session' || mode === 'ownership-noop-session')) {
+      assert(receivedPrompt.includes('relation:domain-owned-by-module') && receivedPrompt.includes('整批活动CU尚未认领'),
+        'actual missing ownership must reach the design author: ' + receivedPrompt.slice(-2800));
+      const primary = path.join(path.dirname(draft), 'change-unit.yaml');
+      const candidate = read(fs.existsSync(primary) ? primary : unit.canonicalPath);
+      if (mode !== 'ownership-noop-session') candidate.design_refs = approvedCu.design_refs.map((ref: Document) => ({ ...candidate.component_blueprint_ref, target: structuredClone(ref.target) }));
+      if (fs.existsSync(primary)) write(primary, candidate);
+      else fs.writeFileSync(path.join(path.dirname(draft), 'change-unit-candidates.json'), JSON.stringify([{ providerId: candidate.provenance.extraction_method, artifact: candidate }]));
+      return;
+    }
     const cuDraft = path.join(path.dirname(draft), 'change-unit.yaml');
     const candidate = read(cuDraft);
+    if (mode === 'session-architecture-recovery' && authorCalls === 1) candidate.design_refs.push({ ...candidate.component_blueprint_ref,
+      target: { kind: 'decision', id: 'add-recovery-module' } });
     if (!ownerCase && !businessRepair) candidate.design_refs = approvedCu.design_refs.map((ref: Document) => ({
       ...candidate.component_blueprint_ref, target: structuredClone(ref.target) }));
     if (businessRepair) candidate.target_predicates = structuredClone(approvedCu.target_predicates);
@@ -291,12 +307,12 @@ async function scenario(host: Host, mode: Scenario, beforeRepair?: () => void): 
     if (mode === 'outside-write') fs.appendFileSync(path.join(host.root, 'src/ledger/LedgerFeature.ets'), '\n// unauthorized product edit\n');
   }, questioning: updateQuestioning });
   try {
-    if (mode === 'machine-session') {
+    if (mode === 'machine-session' || (mode === 'ownership-session' || mode === 'ownership-noop-session')) {
       const options = { projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature, runId, adapter: 'claude', runMode: 'attended',
         authorization: { mode: 'goal_mode' as const, autonomyAuthorized: true } };
       const next = await settleInitialQuestioning(await runGoalModeSessionStep(options), options);
       assert.equal(next.phase, 'design-repair-author', 'an omitted delivery selection must reach its real author');
-      assert(!read(unit.canonicalPath).design_refs.some((ref: Document) => ref.target.view_id === 'development'),
+      assert(!read(unit.canonicalPath).design_refs.some((ref: Document) => (mode === 'ownership-session' || mode === 'ownership-noop-session') ? ref.target.kind === 'relation' : ref.target.view_id === 'development'),
         'the coordinator must not invent the missing author selection');
       const authorRequest = readSessionExecution(runDir, next.request.path)!;
       await adapter.onOutOfChain({ phase: next.phase, prompt: authorRequest.request.context.instruction!, attempt: 1, runId });
@@ -310,6 +326,11 @@ async function scenario(host: Host, mode: Scenario, beforeRepair?: () => void): 
         report: { status: 'passed', phase: question.phase, details: q.stdout } });
       const rows = fs.readFileSync(eventFile, 'utf8').trim().split('\n').map(line => JSON.parse(line) as Document);
       assert.equal(initialQuestioningCalls, 1, JSON.stringify(next)); assert.equal(questioningCalls, 1); assert.equal(authorCalls, 1);
+      if (mode === 'ownership-noop-session') {
+        assert(!rows.some(row => row.type === 'design_authority_repair' && row.stage === 'published'), 'positive Q cannot publish an unclaimed design obligation');
+        assert(deriveDesignPreparationReadiness(host.root, BLUEPRINT_ID).ownershipIssues.length > 0, 'the remaining ownership failure must stay visible');
+        return;
+      }
       assert(rows.some(row => row.type === 'design_authority_repair' && row.stage === 'published'), JSON.stringify({ next: afterQuestion.phase,
         repairs: rows.filter(row => row.type === 'design_authority_repair').map(row => ({ stage: row.stage, outcome: row.outcome, reason: row.reason })) }));
       const ready = deriveDesignPreparationReadiness(host.root, BLUEPRINT_ID);
@@ -525,7 +546,8 @@ async function scenario(host: Host, mode: Scenario, beforeRepair?: () => void): 
         const request = readSessionExecution(runDir, requestPath)!;
         if (next.phase === 'design-repair-author' && authorCalls === 1) {
           const material = request.request.context.workInput!.material.segments!.filter(value => typeof value === 'string').join('\n');
-          assert(material.includes('真实内容差额-1\n\n当前独立核实的第二段证据-1'), 'the frozen work input must deliver the complete denial to the next author');
+          assert(material.includes('真实内容差额-1\n\n当前独立核实的第二段证据-1'),
+            'the frozen work input must deliver the complete denial to the next author: ' + material.slice(-2600));
           assert.deepEqual(read(path.join(runDir, 'design-repair/change-unit.yaml')).target_predicates, approvedCu.target_predicates,
             'a fresh transaction baseline must retain the first author correction in the unpublished candidate');
           if (mode === 'session-architecture-recovery') assert(JSON.parse(fs.readFileSync(path.join(runDir, 'design-repair/architecture.json'), 'utf8'))
@@ -809,6 +831,8 @@ export async function resumePhysicalDesignPublication(host: Host, runId: string)
 }
 
 const cases = [
+  { name: 'design ownership: a positive Q cannot publish candidates that still leave the batch unclaimed', mode: 'ownership-noop-session' },
+  { name: 'design ownership: accepted root-only CUs reach their design author and publish explicit claims before construction', mode: 'ownership-session' },
   { name: 'P4 signed session Q CU mutation is rejected and the next transaction rebuilds canonical auxiliary work', mode: 'session-questioner-cu-write' },
   { name: '86c4d5be design repair Q two bad returns waits across repeated report and next without a third call', mode: 'session-format-bad-twice' },
   { name: 'e2a4145e r4 repair questioning real process retains a final answer over 64KiB', mode: 'large-process-repair' },

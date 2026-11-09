@@ -19,6 +19,8 @@ feature/source 由派生补写，schema_version 不自动补；最终 use-cases 
 
 `design_refs` 只保存 CU 作者明确选择承担交付责任的目标，包括本单元要落实的节点、流程、验收承载与业务决定；所有 touches 的目标也须在其中。机器按需派生完整依赖闭包，用来解析来源及检查未决事项，不把任何派生地址写回 `design_refs`。依赖节点后来新增 `acceptance`、`contracts` 或 `use_cases`，不会因此变成本 CU 的交付或负责人声明。需要交付该内容时，设计作者显式引用原目标，仍整体继承，不按 touches 或验收编号筛掉其中的条目。
 
+设计准备同时检查整批活动 CU 的认领是否覆盖组装所需的设计义务。判据与 P3 共用：变更节点、变更 runtime flow、关系、契约、需交付的决定，以及当前需求的承载，至少有一个显式责任单元；关系端点的引用不能代替关系本身。未变且未被选择的依赖仍是事实，`not_applicable` 且无人认领的决定仍按事实处理。缺失认领用既有 `change_unit_design_closure_incomplete` 在接受、内容修订及 readiness 返回，既有设计修复也在发布前检查同一候选集合；不另存归属表，不代作者补写引用。每个实际 owner 仍须有对应的 Feature design mapping 与证明。
+
 存量 CU 已经声明的目标保持原语义。若旧闭包补全导致归属冲突，交原设计 owner 经现有 CU 内容修订入口改正选择及必要的承载内容，再由原范围修订/接续机制处理受影响产物；不在恢复时静默删引用、裁剪 required 义务或重写历史证据。
 
 acceptance 挂 scenarios/logical 等设计目标；contracts 挂 development 节点和 runtime flow；use_cases 挂 runtime flow。目标 provenance 保留已有 authoritative 要求。引用目标后内容整体参与该 CU 合并：数组沿 `[module,file,holder,id??name??class??data]` 行身份去重、同身份不同内容报 authority_content_conflict；对象只在内容完全相同时接受，不逐键拼接。

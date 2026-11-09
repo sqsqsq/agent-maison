@@ -38,7 +38,7 @@ import {
   type ProjectionRefresh,
   recordedArtifactContentEquivalent,
 } from './blueprint-skill-projection';
-import { validateChangeUnitDesign } from './change-unit-design-gate';
+import { validateChangeUnitDesign, readChangeUnitDesignOwnership } from './change-unit-design-gate';
 import { deriveModifiableModules } from './change-unit-feature-projection';
 import { loadCanonicalBlueprint, sha256Bytes } from './component-blueprint-path';
 import { blockerIssues, validateComponentBlueprint } from './component-blueprint-validator';
@@ -225,6 +225,9 @@ export function reviseChangeUnitContent(projectRoot: string, blueprintId: string
       pending.push({ loaded, candidate });
     }
     const prospective = all.filter(row => !retired.has(String(row.changeUnit.change_unit_id))).map(row => pending.find(item => item.loaded.canonicalPath === row.canonicalPath)?.candidate.artifact ?? asChangeUnitArtifact(row.changeUnit));
+    const ownership = readChangeUnitDesignOwnership(projectRoot, blueprintId, pending.map(item => item.candidate.artifact));
+    if (ownership.length) throw new ChangeUnitCandidateRejected('change_unit_candidate_design_rejected',
+      ownership.map(issue => `${issue.id}: ${issue.message}`).join('\n'));
     for (const unit of prospective) for (const dependency of unit.requires) {
       const provider = prospective.find(row => row.change_unit_id === dependency.from_change_unit_id);
       if (!provider || !provider.provides.some(row => row.provide_id === dependency.provide_id)) throw new ChangeUnitCandidateRejected('change_unit_candidate_design_rejected', `change_unit_dependency_provider_missing/provide_mismatch: ${unit.change_unit_id} → ${dependency.from_change_unit_id}/${dependency.provide_id}`);
@@ -595,6 +598,8 @@ function reconcileUnderLocks(projectRoot: string, blueprintId: string, mayWrite:
 export interface DesignPreparationReadiness {
   /** 设计准备段是否完成：≥1 活动（未被精确 supersede 退役）canonical CU 且每个都过设计可施工门。 */
   ready: boolean;
+  /** Derived batch diagnostics; ownership is never written back into CU references. */
+  ownershipIssues: ReturnType<typeof readChangeUnitDesignOwnership>;
   /** 派生前的蓝图指针原位升版结果（reconcileChangeUnitBlueprintRefs），供 agent 看见升了谁、跳过谁及原因。 */
   blueprintRefs: BlueprintRefReconciliation;
   reviewDocument?: BlueprintReviewResult;
@@ -621,7 +626,7 @@ export function deriveDesignPreparationReadiness(
 ): DesignPreparationReadiness {
   const blueprintRefs = reconcileChangeUnitBlueprintRefs(projectRoot, blueprintId);
   // 竞争退出：没有调和就不派生 readiness（按旧指针算出的结论不可用）——报忙，由调用方稍后重试。
-  if (blueprintRefs.busy) return { ready: false, blueprintRefs, changeUnitIds: [], perUnit: [], entersConstruction: false, nextEntry: 'component-design' };
+  if (blueprintRefs.busy) return { ready: false, ownershipIssues: [], blueprintRefs, changeUnitIds: [], perUnit: [], entersConstruction: false, nextEntry: 'component-design' };
   const reviewDocument = summarizeBlueprintReviewResults(blueprintRefs.reviewDocument, materializeBlueprintReview(projectRoot, blueprintId));
   // 只对活动 CU 要求可施工：被精确 supersede 的历史 CU 已退役，不重新施工（与 closure 同一退役判定）。
   const retired = retiredChangeUnitIds(projectRoot, blueprintId);
@@ -641,9 +646,11 @@ export function deriveDesignPreparationReadiness(
       projectionIssues,
     };
   }).sort((a, b) => (a.changeUnitId < b.changeUnitId ? -1 : a.changeUnitId > b.changeUnitId ? 1 : 0));
-  const ready = perUnit.length > 0 && perUnit.every(item => item.verdict === 'constructable');
+  const ownershipIssues = readChangeUnitDesignOwnership(projectRoot, blueprintId);
+  const ready = perUnit.length > 0 && !ownershipIssues.length && perUnit.every(item => item.verdict === 'constructable');
   return {
     ready,
+    ownershipIssues,
     blueprintRefs,
     reviewDocument,
     changeUnitIds: perUnit.map(item => item.changeUnitId),

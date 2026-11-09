@@ -4,10 +4,10 @@ import * as os from 'os';
 import * as path from 'path';
 import * as YAML from 'yaml';
 import { createHash } from 'crypto';
-import { deriveBlueprintSkillInput, materializeBlueprintSkillInputs, BlueprintProjectionPreparationError, designScopeRevisionChecks, checkTypedConstructionContent, checkAuthoritativeContentAligned, diagnoseBlueprintSkillAuthority, diagnoseDesignAuthority, selectBlueprintSkillContent } from '../../scripts/utils/blueprint-skill-projection';
+import { deriveBlueprintSkillInput, deriveBlueprintCandidateSkillInput, materializeBlueprintSkillInputs, BlueprintProjectionPreparationError, designScopeRevisionChecks, checkTypedConstructionContent, checkAuthoritativeContentAligned, diagnoseBlueprintSkillAuthority, diagnoseDesignAuthority, selectBlueprintSkillContent } from '../../scripts/utils/blueprint-skill-projection';
 import { resolveBlueprintTarget } from '../../scripts/utils/blueprint-addressing';
 import { asRecord, type BlueprintRecord, type ComponentBlueprintRef } from '../../scripts/utils/component-blueprint-model';
-import { resolveFeatureArtifact, clearFrameworkConfigCache, loadFrameworkConfig } from '../../config';
+import { resolveFeatureArtifact, clearFrameworkConfigCache, loadFrameworkConfig, loadArchitectureDsl } from '../../config';
 import { loadResolvedProfile } from '../../profile-loader';
 import { resolveCapabilityInputs, readBoundInput } from '../../scripts/utils/capability-resolution';
 import { SpecLoader } from '../../scripts/utils/spec-loader';
@@ -15,7 +15,7 @@ import checkSpec from '../../scripts/check-spec';
 import checkPlan, { checkContractFileReferenceClosure } from '../../scripts/check-plan';
 import { designOwnerBlockers, buildDesignOwnerGuidance } from '../../scripts/goal-phase-runtime';
 import { buildSummaryBlockers } from '../../scripts/utils/summary-blockers';
-import { checkChangeUnitFeatureProjection } from '../../scripts/utils/change-unit-feature-projection';
+import { checkChangeUnitFeatureProjection, architectureImpactIssues } from '../../scripts/utils/change-unit-feature-projection';
 import { checkDesignToCode } from '../../scripts/check-coding';
 import type { CheckContext, ContractsSpec } from '../../scripts/utils/types';
 import { resolveExecutionScope } from '../../scripts/utils/execution-scope';
@@ -39,7 +39,7 @@ import { inspectAcceptanceItem, inspectTypedConstructionContent, inspectUseCaseI
 import { collectCleanPassIssues, readReusableCheckResult } from '../../scripts/utils/verify-feature-completion';
 import type { UnitCaseResult } from '../run-unit';
 import { asChangeUnitArtifact, createChangeUnitRef, loadCanonicalChangeUnit } from '../../scripts/utils/change-unit-path';
-import { validateChangeUnitDesign } from '../../scripts/utils/change-unit-design-gate';
+import { validateChangeUnitDesign, readChangeUnitDesignOwnership } from '../../scripts/utils/change-unit-design-gate';
 import { acceptChangeUnitCandidate } from '../../scripts/utils/change-unit-provider-boundary';
 import { ownersForAddress } from '../../scripts/utils/change-unit-addressing';
 
@@ -97,6 +97,54 @@ export function planContracts(f: ReturnType<typeof fixture>): ContractsSpec & { 
 }
 
 const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Promise<void> }> = [
+  { name: 'design ownership: explicit architecture decision uses the same unpublished DSL without changing construction authority', run(f) {
+    const blueprint = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
+    const cu = asChangeUnitArtifact(YAML.parse(fs.readFileSync(f.cuFile, 'utf8')));
+    const configFile = path.join(f.root, 'framework.config.json');
+    const before = fs.existsSync(configFile) ? fs.readFileSync(configFile) : undefined;
+    const architecture = structuredClone(loadArchitectureDsl(f.root));
+    architecture.outer_layers.push({ id: '05-Candidate', can_depend_on: [], intra_layer_deps: 'forbid' });
+    blueprint.decisions_and_gaps.decisions.push({ decision_id: 'new-layer-owner', kind: 'architecture_impact', change: 'add_module',
+      module: 'new-owner-module', layer: '05-Candidate', status: 'decided_with_authority', rationale: '原请求中明确的恢复职责',
+      owner: 'design-owner', verification_refs: ['view:development'], provenance: structuredClone(blueprint.provenance) });
+    cu.design_refs.push({ ...cu.component_blueprint_ref, target: { kind: 'decision', id: 'new-layer-owner' } });
+    const missing = deriveBlueprintCandidateSkillInput(f.root, f.feature, frameworkRoot, 'contracts', { blueprint, changeUnit: cu });
+    assert(missing.state === 'invalid' && missing.codes?.includes('cu_architecture_impact_not_effective'), JSON.stringify(missing));
+    const proposed = deriveBlueprintCandidateSkillInput(f.root, f.feature, frameworkRoot, 'contracts', { blueprint, changeUnit: cu, architecture });
+    assert.equal(proposed.state, 'resolved', proposed.detail);
+    assert(architectureImpactIssues(f.root, blueprint, ['ledger'], ['new-layer-owner']).issues.some(issue => issue.id === 'cu_architecture_impact_not_effective'),
+      'construction must still reject an unpublished layer');
+    assert(!loadArchitectureDsl(f.root).outer_layers.some(layer => layer.id === '05-Candidate'));
+    assert.equal(fs.existsSync(configFile), before !== undefined);
+    if (before) assert(fs.readFileSync(configFile).equals(before), 'candidate diagnostics cannot publish the DSL');
+  } },
+  { name: 'design ownership: a dependent contract later gaining delivery content stays with its explicit owner', run(f) {
+    const blueprint = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
+    const owner = asChangeUnitArtifact(YAML.parse(fs.readFileSync(f.cuFile, 'utf8')));
+    const dependent = structuredClone(owner);
+    dependent.change_unit_id = 'dependent-reader';
+    dependent.provenance.extraction_method = 'consumer-validated-decomposition';
+    dependent.design_refs = dependent.design_refs.filter(ref => ref.target.kind !== 'contract');
+    const accepted = acceptChangeUnitCandidate(f.root, { providerId: 'consumer-validated-decomposition', artifact: dependent });
+    const current = asChangeUnitArtifact(accepted.changeUnit);
+    const target = owner.design_refs.find(ref => ref.target.kind === 'contract')!;
+    const address = 'contract:' + target.target.id;
+    const before = selectBlueprintSkillContent(blueprint, current);
+    const contract = resolveBlueprintTarget(blueprint, target.target);
+    contract.acceptance = { criteria: [{ id: 'OWNER-ONLY-AC', description: 'Only the original owner delivers this contract addition.' }] };
+    contract.contracts = { files: ['src/owner/NewContract.ts'] };
+    contract.provenance = { ...asRecord(contract.provenance), evidence_strength: 'authoritative' };
+    const after = selectBlueprintSkillContent(blueprint, current);
+    assert.deepEqual(after.acceptance, before.acceptance);
+    assert.deepEqual(after.contracts, before.contracts);
+    assert.deepEqual(ownersForAddress([current, owner], address), [owner.change_unit_id]);
+    const owned = selectBlueprintSkillContent(blueprint, owner);
+    assert(JSON.stringify(owned.acceptance).includes('OWNER-ONLY-AC') && JSON.stringify(owned.contracts).includes('src/owner/NewContract.ts'));
+    blueprint.contracts.push({ ...structuredClone(contract), contract_id: 'new-unassigned-contract' });
+    const missing = readChangeUnitDesignOwnership(f.root, owner.blueprint_id, [], blueprint);
+    assert(missing.some(issue => issue.message.includes('contract:new-unassigned-contract')), 'the new obligation must return to design instead of being assigned through dependency traversal');
+    assert(!current.design_refs.some(ref => ref.target.id === 'new-unassigned-contract'));
+  } },
   { name: 'goal alignment: publication preserves explicit roots when an unowned dependency later gains delivery content', run(f) {
     const blueprint = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
     const cu = asChangeUnitArtifact(YAML.parse(fs.readFileSync(f.cuFile, 'utf8')));

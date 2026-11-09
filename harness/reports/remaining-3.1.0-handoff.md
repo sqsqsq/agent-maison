@@ -255,3 +255,13 @@ P4 t3、e2 verify-design-loop、DSH t3均仍in_progress；DSH t4/H4未因此完�
 非knowledge组装自动派回本批仅评估，未交付；原knowledge分支仍需补跨发布事务的共同进展判断，不能据此宣称A10全部完成。宿主未操作，原父run及有效设计成果优先保留；新发布件集成后的正式CU修订与实际接续仍待用户t5验收，t6随后联合收口。本次未打包、推送或改版本，t5/t6保持pending。
 
 逐项红项定性、真实复核调用和验证原件见 [本批报告](remaining-3.1.0-goal-alignment.md) 与 [验证记录](remaining-3.1.0-goal-alignment-validation.json)。
+
+## 2026-11-09：7080620a 的 CU 显式认领返修
+
+采用整批显式认领方案。设计接受、内容修订、readiness、原设计修复与 P3 共用蓝图/source 义务生成，缺少关系/决定/契约等 owner 时在设计期交回作者；不自动补 design_refs，不让依赖将来新增交付内容后被继承。每个 owner 的 Feature design mapping/coverage 仍须真实成立。前轮 R01 接受删除最后关系 owner 的断言不正确，本批恢复必要反例并修复生产缺口，历史测试结论不改写。零 CU 需求修复保留先发布再拆分的路径；未发布候选同时使用本事务蓝图与 DSL，正式施工仍用已发布事实。
+
+本轮 test:changed 默认12并发，1011/1011组实跑（含118正式组）、5213通过/2失败、输入稳定；50组复用、309其它正式组未执行，观测未知44组。a21473真实输入+6fe679故障形状组合4/0到正式终点。两条原红均为测试侧：RC-10替身遗漏已有决定认领及其施工映射，N1恢复CLI的90秒测试时限不足；修后同名定向各1/0。RC-10首次补测在明确发现映射缺口后中止，日志保留，最终完整补测另有回执。未重复全量或日常全集，不把补测拼成整轮全绿；生产与发布指引在整轮之后未变。
+
+typecheck、OpenSpec strict65/0、plan、diff/LF通过。Claude Code CLI只读复核，实际claude-opus-5-5，生产r3与测试r4/r5均PASS；无必修遗留。P4 t5/t6保持pending，宿主和手机未操作，未打包、推送或改版本；三份用户修改与temp/保留。
+
+详情：[本批说明及红项表](remaining-3.1.0-cu-ownership.md) · [验证与真实复核记录](remaining-3.1.0-cu-ownership-validation.json)。

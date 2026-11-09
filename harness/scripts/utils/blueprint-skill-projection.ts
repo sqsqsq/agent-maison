@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import * as YAML from 'yaml';
-import { resolveFeatureArtifact, loadFrameworkConfig, featureFilePath } from '../../config';
+import { resolveFeatureArtifact, loadFrameworkConfig, featureFilePath, type ArchitectureDsl } from '../../config';
 import { loadWorkflowSpec } from '../../workflow-loader';
 import { loadEffectiveExecutionScope, resolveEffectiveScopeSource } from './goal-run-creation';
 import { resolveExecutionScope, findSubtractedRequiredObligations, type ExecutionScope, type ExecutionScopeInput } from './execution-scope';
@@ -12,7 +12,7 @@ import { asRecord, asRecords, asStrings, type BlueprintRecord } from './componen
 import { resolveBlueprintTarget } from './blueprint-addressing';
 import type { ComponentBlueprintRef } from './component-blueprint-model';
 import type { ChangeUnitArtifact } from './change-unit-model';
-import { componentBlueprintPath, loadCanonicalBlueprint, resolveComponentBlueprintRef, resolveComponentBlueprintRefFromLoaded, validateComponentBlueprintRefShape } from './component-blueprint-path';
+import { componentBlueprintPath, loadCanonicalBlueprint, resolveComponentBlueprintRef, resolveComponentBlueprintRefFromLoaded, resolveBlueprintCandidateRefFromLoaded, validateComponentBlueprintRefShape } from './component-blueprint-path';
 import { parseChangeUnitFeatureId, loadCanonicalChangeUnit, asChangeUnitArtifact, changeUnitPath, BLUEPRINT_REF_STALE_ISSUE } from './change-unit-path';
 import { validateChangeUnitDesign } from './change-unit-design-gate';
 import { validateChangeUnit } from './change-unit-validator';
@@ -380,7 +380,8 @@ export function blueprintSourceRefFiles(projectRoot: string, blueprint: unknown,
  * 投影只读取 canonical CU/design 来源；阶段产物由责任阶段的对齐门与 materialize writer 检查，
  * 不拿待比较的 use-cases.yaml 反向判定设计权威是否有效。
  */
-export function deriveBlueprintSkillInput(projectRoot: string, feature: string, frameworkRoot: string, kind: BlueprintProjectionKind, authorityReaders?: IdentityNeutralDigestReaders): BlueprintSkillProjection {
+export function deriveBlueprintSkillInput(projectRoot: string, feature: string, frameworkRoot: string, kind: BlueprintProjectionKind, authorityReaders?: IdentityNeutralDigestReaders,
+  candidateArchitecture?: ArchitectureDsl): BlueprintSkillProjection {
   const dependencies: ResolutionDependency[] = [];
   const depend = (file: string): void => {
     const actual = existingProjectPathSpelling(projectRoot, file);
@@ -505,7 +506,8 @@ export function deriveBlueprintSkillInput(projectRoot: string, feature: string, 
         }
       }
       if (closure.invalid_paths.length) fail('authority_contract_write_set_open', 'plan: 非法文件引用：' + closure.invalid_paths.map(issue => issue.message).join('; '));
-      const projection = validateChangeUnitFeatureProjection(projectRoot, feature, contracts, parsed.acceptance, !!parsed.useCases, 'plan', [], { changeUnitOverride: cu, designOnly: true, resolveBlueprintRef: resolveRef });
+      const projection = validateChangeUnitFeatureProjection(projectRoot, feature, contracts, parsed.acceptance, !!parsed.useCases, 'plan', [],
+        { changeUnitOverride: cu, designOnly: true, resolveBlueprintRef: resolveRef, architecture: candidateArchitecture });
       if (projection.issues.length) fail(projection.issues.flatMap(i => i.codes ?? [i.id]), 'plan/component-design: ' + projection.issues.map(i => i.message).join('; '));
     }
     if (messages.length) return invalid();
@@ -520,22 +522,16 @@ export function deriveBlueprintSkillInput(projectRoot: string, feature: string, 
 
 /** Current unpublished content diagnostics through the same consumer; never an input binding or publication. */
 export function deriveBlueprintCandidateSkillInput(projectRoot: string, feature: string, frameworkRoot: string, kind: BlueprintProjectionKind,
-  candidate: { blueprint: BlueprintRecord; changeUnit: ChangeUnitArtifact }): BlueprintSkillProjection {
+  candidate: { blueprint: BlueprintRecord; changeUnit: ChangeUnitArtifact; architecture?: ArchitectureDsl }): BlueprintSkillProjection {
   const readers = createIdentityNeutralDigestReaders();
   const originalUnit = loadCanonicalChangeUnit(projectRoot, candidate.changeUnit.blueprint_id, candidate.changeUnit.change_unit_id);
   const originalBlueprint = loadCanonicalBlueprint(projectRoot, candidate.changeUnit.blueprint_id);
   readers.loadChangeUnit = (root, blueprint, unit) => blueprint === candidate.changeUnit.blueprint_id && unit === candidate.changeUnit.change_unit_id
     ? { ...originalUnit, changeUnit: { ...candidate.changeUnit } } : loadCanonicalChangeUnit(root, blueprint, unit);
-  readers.blueprint = (_root, value) => {
-    const ref = validateComponentBlueprintRefShape(value);
-    // Unpublished targets may be new; their source identity must still name the actual locked baseline.
-    const resolved = resolveComponentBlueprintRefFromLoaded(originalBlueprint,
-      { ...ref, target: asChangeUnitArtifact(originalUnit.changeUnit).component_blueprint_ref.target });
-    return { ...resolved, ref, blueprint: candidate.blueprint, target: resolveBlueprintTarget(candidate.blueprint, ref.target) };
-  };
+  readers.blueprint = (_root, value) => resolveBlueprintCandidateRefFromLoaded(originalBlueprint, candidate.blueprint, value);
   readers.changeUnitIssues = (root, loaded) => validateChangeUnit(loaded.changeUnit,
     { projectRoot: root, canonicalPath: loaded.canonicalPath, resolveBlueprintRef: readers.blueprint });
-  return deriveBlueprintSkillInput(projectRoot, feature, frameworkRoot, kind, readers);
+  return deriveBlueprintSkillInput(projectRoot, feature, frameworkRoot, kind, readers, candidate.architecture);
 }
 
 export interface AuthoritativeDriftItem { id: string; field: string; expected: unknown; actual: unknown }
