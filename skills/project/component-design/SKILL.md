@@ -14,6 +14,8 @@ description: Create or continue a component design from the user's request and e
 
 本 Skill 只编排 P1 蓝图内部工作流与 P2 设计准备段，自身不直接写 canonical CU、不启动 Goal Mode。
 
+拆分或修订 CU 时，作者须明确选择 `design_refs`：列出该单元负责交付的节点、流程、验收内容及要落实的业务决定，并包含所有 touches 目标。单纯为了理解设计而读取的依赖、消费者、相邻场景不列为本单元交付选择；依赖闭包由机器按需解析校验，不回写引用或分配负责人。机器不会替你选择交付承载，也不会按验收编号裁剪已选内容。已有 CU 的归属错误通过原内容修订入口处理，不能静默删引用或手改 canonical。
+
 ## 触发条件
 
 - “新需求 / 要改这个功能 / 这个 Story 怎么做 / 建部件设计 / Story Design / 继续设计 / 查看或质询蓝图 / 调和蓝图”

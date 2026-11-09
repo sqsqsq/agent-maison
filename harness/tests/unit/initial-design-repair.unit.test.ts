@@ -283,6 +283,8 @@ async function scenario(host: Host, mode: Scenario, beforeRepair?: () => void): 
     }
     const cuDraft = path.join(path.dirname(draft), 'change-unit.yaml');
     const candidate = read(cuDraft);
+    if (!ownerCase && !businessRepair) candidate.design_refs = approvedCu.design_refs.map((ref: Document) => ({
+      ...candidate.component_blueprint_ref, target: structuredClone(ref.target) }));
     if (businessRepair) candidate.target_predicates = structuredClone(approvedCu.target_predicates);
     if (ownerCase) candidate.blockers = structuredClone((mode === 'design-owner-retain' ? defective : approvedCu).blockers ?? []);
     write(cuDraft, candidate);
@@ -293,12 +295,25 @@ async function scenario(host: Host, mode: Scenario, beforeRepair?: () => void): 
       const options = { projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature, runId, adapter: 'claude', runMode: 'attended',
         authorization: { mode: 'goal_mode' as const, autonomyAuthorized: true } };
       const next = await settleInitialQuestioning(await runGoalModeSessionStep(options), options);
+      assert.equal(next.phase, 'design-repair-author', 'an omitted delivery selection must reach its real author');
+      assert(!read(unit.canonicalPath).design_refs.some((ref: Document) => ref.target.view_id === 'development'),
+        'the coordinator must not invent the missing author selection');
+      const authorRequest = readSessionExecution(runDir, next.request.path)!;
+      await adapter.onOutOfChain({ phase: next.phase, prompt: authorRequest.request.context.instruction!, attempt: 1, runId });
+      const question = await runGoalModeSessionStep({ ...options, requestPath: next.request.path,
+        report: { status: 'passed', phase: next.phase, details: '原作者显式恢复本CU的development交付选择' } }) as Document;
+      assert.equal(question.phase, 'design-repair-questioning');
+      const qRequest = readSessionExecution(runDir, question.request.path)!;
+      const q = await adapter.onOutOfChain({ phase: question.phase, prompt: qRequest.request.context.instruction!, attempt: 1, runId });
+      assert(typeof q?.stdout === 'string');
+      const afterQuestion = await runGoalModeSessionStep({ ...options, requestPath: question.request.path,
+        report: { status: 'passed', phase: question.phase, details: q.stdout } });
       const rows = fs.readFileSync(eventFile, 'utf8').trim().split('\n').map(line => JSON.parse(line) as Document);
-      assert.equal(initialQuestioningCalls, 1, JSON.stringify(next)); assert.equal(questioningCalls, 0); assert.equal(authorCalls, 0);
-      assert(!rows.some(row => row.type === 'agent_invoke_start' && String(row.phase).startsWith('design-repair-')),
-        'mechanical CU closure purchased another author or Q over the same verified blueprint');
-      assert(rows.some(row => row.type === 'design_authority_repair' && row.stage === 'published'), JSON.stringify(next));
-      assert(deriveDesignPreparationReadiness(host.root, BLUEPRINT_ID).ready, JSON.stringify(next));
+      assert.equal(initialQuestioningCalls, 1, JSON.stringify(next)); assert.equal(questioningCalls, 1); assert.equal(authorCalls, 1);
+      assert(rows.some(row => row.type === 'design_authority_repair' && row.stage === 'published'), JSON.stringify({ next: afterQuestion.phase,
+        repairs: rows.filter(row => row.type === 'design_authority_repair').map(row => ({ stage: row.stage, outcome: row.outcome, reason: row.reason })) }));
+      const ready = deriveDesignPreparationReadiness(host.root, BLUEPRINT_ID);
+      assert(ready.ready, JSON.stringify(ready));
       return;
     }
     if (ownerCase) {
@@ -627,8 +642,7 @@ async function scenario(host: Host, mode: Scenario, beforeRepair?: () => void): 
           assert.equal(prompt.includes('框架本次派生后的stale结果'), stale.length > 0);
           if (stale.length) assert(prompt.includes(JSON.stringify(stale.map((item: Document) => ({ result_id: item.result_id, kind: item.kind, input_revision: item.input_revision, status: item.status, superseded_by_revision: item.superseded_by_revision })), null, 2)));
         }
-        if (mode === 'large-process-repair') {
-          assert.equal(purpose, 'questioning');
+        if (mode === 'large-process-repair' && purpose === 'questioning') {
           const actual = await adapter.onOutOfChain({ phase: designRepairInvokeLabel(purpose), prompt, attempt: 1, runId });
           assert(typeof actual?.stdout === 'string' && actual.stdout.length > 65536);
           const transport = realLargeQuestioningExecutor(path.join(runDir, 'design-repair/large-process-fixture'), actual.stdout);
@@ -689,8 +703,8 @@ async function scenario(host: Host, mode: Scenario, beforeRepair?: () => void): 
         'the completed independent denial returns current repair facts to the sole root coordinator');
       const round = mode === 'format-retry' ? 2 : 1;
       assert(result.reason.includes(`真实内容差额-${round}\n\n当前独立核实的第二段证据-${round}`), 'every original Q paragraph remains in the returned feedback');
-      assert.deepEqual(purposes, mode === 'format-retry' ? ['questioning', 'questioning'] : ['questioning'], 'only unusable output gets a same-role format supplement');
-      assert.equal(authorCalls, 0); assert.equal(questioningCalls, mode === 'format-retry' ? 2 : 1);
+      assert.deepEqual(purposes, mode === 'format-retry' ? ['author', 'questioning', 'questioning'] : ['author', 'questioning'], 'the owner restores its explicit selection; only unusable Q output gets a format supplement');
+      assert.equal(authorCalls, 1); assert.equal(questioningCalls, mode === 'format-retry' ? 2 : 1);
       if (mode === 'format-retry') assert(adapter.log.prompts['design-repair-questioning'][1].includes('上次质询未交回可用对象，请按既有格式返回。'));
       if (mode === 'missing-reference') assert(result.evaluation?.inputs['dependency:doc/conventions.md']?.exists === false, 'known absent references must remain completed evaluation inputs');
       if (mode === 'large-process-repair') {
@@ -705,7 +719,7 @@ async function scenario(host: Host, mode: Scenario, beforeRepair?: () => void): 
       assert.equal(result.outcome, 'published', JSON.stringify(result));
       assert(result.outcome === 'published');
       assert.equal(result.recovered, mode !== 'readiness-blocked', JSON.stringify(result));
-      assert.deepEqual(purposes, ['questioning']);
+      assert.deepEqual(purposes, ['author', 'questioning']);
       assert.equal(rows.filter(row => row.type === 'design_authority_repair' && row.stage === 'attempted').length, 1);
       assert.equal(rows.filter(row => row.type === 'design_authority_repair' && row.stage === 'published').length, 1);
       assert.equal(readinessCalls, normal ? 0 : 1);
@@ -802,7 +816,7 @@ const cases = [
   { name: 'e2a4145e repair transaction supplements malformed output once and consumes the valid denial', mode: 'format-retry' },
   { name: 'e2a4145e repair transaction missing reference keeps a completed denial for the original author coordinator', mode: 'missing-reference' },
   { name: 'S16 lock contention dispatches nothing and the same transaction publishes once after the other CU releases its lock', mode: 'lock-contention' },
-  { name: 'P2 current public Q and mechanical CU closure publish without another author or questioning invocation', mode: 'machine-session' },
+  { name: 'P2 current public Q cannot replace the CU author explicit selection before independent publication', mode: 'machine-session' },
   { name: 'f3b8e6a1 initial repair: real root repairs an admitted blueprint CU and reaches real readiness without a construction child', mode: 'root' },
   { name: 'f3b8e6a1 initial repair: root author writes outside its draft and the existing publication guard rejects it', mode: 'outside-write' },
   { name: 'f3b8e6a1 initial repair: actual readiness failure after publication remains unrecovered for an initial-design phase', mode: 'readiness-blocked' },
@@ -1273,7 +1287,7 @@ export async function runSelectedCases(filter?: string) {
   return selectedUnitCases(results, filter, timings);
 }
 const dailyPrefixes = [
-  "P2 current public Q and mechanical CU closure",
+  "P2 current public Q cannot replace",
   "f3b8e6a1 initial repair: normal canonical run",
   "P3 design helper returns complete denied Q evaluation"
 ];

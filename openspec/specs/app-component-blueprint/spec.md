@@ -844,7 +844,7 @@ provider 只能通过上述协议提供输入或派生报告，不能直接改�
 #### Scenario: Finish handoff with zero or existing change units
 
 - **WHEN** 用户要求完成设计交接，蓝图已 admitted
-- **THEN** 0 CU 时调用既有 P2 设计准备与 consumer validator 首次生成 1..N canonical CU；已有 CU 时复用并派生 design_refs/readiness，不重复接受；修订走既有 superseding 规则
+- **THEN** 0 CU 时调用既有 P2 设计准备与 consumer validator 首次生成 1..N canonical CU；已有 CU 时保留作者明确选择的 design_refs，按需派生依赖闭包与 readiness，不重复接受；修订走既有 superseding 规则
 - **AND** 完整交接仍要求 admitted 蓝图、1..N canonical CU、design_refs 与 readiness，局部操作完成不冒充交接完成，不选择 CU、不启动 Goal Mode/P3
 
 #### Scenario: Install and update expose only the unified entry

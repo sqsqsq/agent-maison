@@ -484,6 +484,33 @@ export interface RepairResponsibility {
   reason: string;
 }
 
+/** Independent repair is selected by the actual artifact producer, not the check that reported it. */
+export function independentArtifactRepairs(input: RepairResponsibilityContext & { currentDisposition: CurrentDisposition }):
+  Array<{ owner: string; file: string; problems: CurrentDispositionProblem[] }> {
+  let context: RepairResponsibilityContext;
+  try { context = repairResponsibilityContext(input); }
+  catch { return []; } // The common fact reader retains the unavailable authority; no writer grant is inferred.
+  if (!context.contracts || !context.projectRoot) return [];
+  const { workUnitExecutionRole } = require('./goal-phase-executor') as typeof import('./goal-phase-executor');
+  const tasks = new Map<string, { owner: string; file: string; problems: CurrentDispositionProblem[] }>();
+  for (const problem of input.currentDisposition.completionBlocking) {
+    if (problem.action !== 'repair' || !problem.files?.length) continue;
+    let files: string[];
+    try { files = [...new Set(problem.files.map(file => normalizeResponsibilityPath(context.projectRoot!, file)))]; }
+    catch { continue; }
+    if (files.length !== 1) continue;
+    const domains = context.contracts.domains.filter(domain => domain.kind === 'artifact' && domain.match === 'exact' && domain.path === files[0]);
+    const owners = [...new Set(domains.map(domain => domain.owner))];
+    if (owners.length !== 1 || workUnitExecutionRole({ phase: owners[0] }) !== 'verifier'
+      || context.profile?.phasesDisabled.has(owners[0])
+      || !context.executionScope?.obligations.some(obligation => obligation.owner_phase === owners[0] && obligation.applicability === 'required')) continue;
+    const file = path.resolve(context.projectRoot, files[0]);
+    const task = tasks.get(file) ?? { owner: owners[0], file, problems: [] };
+    task.problems.push(problem); tasks.set(file, task);
+  }
+  return [...tasks.values()];
+}
+
 /** Authored established_by is only a locator; an existing admission or signed facts entry proves it. */
 export function factsRepairResponsibility(input: RepairResponsibilityContext): RepairResponsibility | null {
   if (!input.projectRoot || !input.feature || !input.frameworkRoot) return null;

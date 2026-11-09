@@ -158,30 +158,6 @@ export function deriveClosure(blueprint: BlueprintRecord, roots: string[], proje
   return required;
 }
 
-/** A dependency is context; only an explicit CU selection may inherit its delivery content. */
-function carriesDeliveryContent(record: BlueprintRecord | undefined): boolean {
-  return !!record && ['acceptance', 'contracts', 'use_cases'].some(field => record[field] !== undefined);
-}
-
-/** Complete context references without selecting another target's delivery obligations. */
-export function completeChangeUnitDesignRefs(blueprint: BlueprintRecord, cu: import('./change-unit-model').ChangeUnitArtifact,
-  projectRoot: string): import('./change-unit-model').ChangeUnitArtifact {
-  const next = structuredClone(cu);
-  const refs = new Set(next.design_refs.map(blueprintRefAddress));
-  const index = stableAddressIndex(blueprint);
-  const roots = [...new Set([...refs, ...next.touches.map(touch => blueprintRefAddress(touch.design_ref))])];
-  for (const address of deriveClosure(blueprint, roots, projectRoot)) {
-    if (refs.has(address) || carriesDeliveryContent(index.get(address))) continue;
-    const nested = /^view:([^/]+)\/(node|flow):(.+)$/.exec(address);
-    const flat = /^(blueprint|view|relation|decision|contract):(.+)$/.exec(address);
-    const target: ComponentBlueprintRef['target'] | undefined = nested
-      ? { kind: nested[2] as 'node' | 'flow', view_id: nested[1], id: nested[3] }
-      : flat ? { kind: flat[1] as ComponentBlueprintRef['target']['kind'], id: flat[2] } : undefined;
-    if (target) next.design_refs.push({ ...next.component_blueprint_ref, target });
-  }
-  return next;
-}
-
 export function validateChangeUnitDesign(
   projectRoot: string,
   changeUnit: ChangeUnitRecord,
@@ -227,18 +203,19 @@ export function validateChangeUnitDesign(
     if (ref) roots.add(blueprintRefAddress(ref));
   }
   const required = deriveClosure(blueprint, [...roots], projectRoot);
-  const explicit = new Set(explicitAddresses);
   const addressIndex = stableAddressIndex(blueprint);
-  for (const address of [...required].sort()) {
-    if (!explicit.has(address) && !carriesDeliveryContent(addressIndex.get(address))) {
-      issues.push(changeUnitIssue(
-        'change_unit_design_closure_incomplete',
-        '$.design_refs',
-        `当前 delta 闭包缺稳定地址 ${address}。`,
-      ));
+  if (fs.existsSync(componentIndexPath(projectRoot))) {
+    const explicit = new Set(explicitAddresses);
+    const selections = asRecords(asRecord(blueprint.decisions_and_gaps)?.decisions).filter(decision =>
+      decision.kind === 'component_asset_selection' && explicit.has(String(decision.target_ref)));
+    for (const address of explicit) for (const component of asRecords(asRecord(addressIndex.get(address)?.contracts)?.components)) {
+      selections.push(...blueprintComponentDecisions(blueprint, component));
+    }
+    for (const address of new Set(selections.map(decision => `decision:${String(decision.decision_id)}`))) {
+      if (!explicit.has(address)) issues.push(changeUnitIssue('change_unit_design_closure_incomplete', '$.design_refs',
+        `显式交付目标须声明其采用的选型决定 ${address}；依赖闭包不会代作者认领交付。`));
     }
   }
-
   for (const address of [...required].sort()) {
     const record = addressIndex.get(address);
     if (!record) continue;

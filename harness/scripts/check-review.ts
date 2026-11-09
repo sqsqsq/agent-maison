@@ -542,13 +542,14 @@ function checkScopeDeclaration(ctx: CheckContext, report: string): CheckResult[]
 }
 
 function checkConclusionWithVerdict(ctx: CheckContext<'feature' | 'request'>, report: string): CheckResult[] {
+  const affected_files = [ctx.subject === 'request' ? ctx.request.inputs.review_report : relFeatureArtifact(ctx.projectRoot, ctx.feature, 'review-report.md')];
   const section = getSectionContent(report, '结论') ?? getSectionContent(report, '审查结论');
   if (!section) {
     return [{
       id: 'conclusion_with_verdict', category: 'structure',
       description: ruleDesc(ctx, 'structure_checks', 'conclusion_with_verdict'),
       severity: 'BLOCKER', status: 'FAIL',
-      details: '未找到「结论」或「审查结论」章节。',
+      details: '未找到「结论」或「审查结论」章节。', affected_files,
     }];
   }
 
@@ -561,7 +562,7 @@ function checkConclusionWithVerdict(ctx: CheckContext<'feature' | 'request'>, re
       id: 'conclusion_with_verdict', category: 'structure',
       description: ruleDesc(ctx, 'structure_checks', 'conclusion_with_verdict'),
       severity: 'BLOCKER', status: 'FAIL',
-      details: '「结论」中未找到可机读的审查结论声明行。',
+      details: '「结论」中未找到可机读的审查结论声明行。', affected_files,
       suggestion: '请在结论中写出明确的声明行，例如 `**审查结论**: 不通过`（裁决词须紧邻在"审查结论:"之后）。',
     }];
   }
@@ -569,7 +570,7 @@ function checkConclusionWithVerdict(ctx: CheckContext<'feature' | 'request'>, re
   const required = parseReviewIssueRows(report).filter(row => reviewIssueRequiresRepair(row, ctx.subject === 'request' ? null : loadFidelityIntentSsot(ctx.projectRoot, ctx.feature)));
   if (foundVerdict === '通过' && required.length > 0) {
     return [{ id: 'conclusion_with_verdict', category: 'structure', description: ruleDesc(ctx, 'structure_checks', 'conclusion_with_verdict'),
-      severity: 'BLOCKER', status: 'FAIL', details: `仍有 ${required.length} 项必须返修，不能声明通过。`, suggestion: '修复真实缺陷后复审；误报须更正原报告再重验。' }];
+      severity: 'BLOCKER', status: 'FAIL', affected_files, details: `仍有 ${required.length} 项必须返修，不能声明通过。`, suggestion: '修复真实缺陷后复审；误报须更正原报告再重验。' }];
   }
   const table = getIssueTable(report);
   if (table) {
@@ -586,7 +587,7 @@ function checkConclusionWithVerdict(ctx: CheckContext<'feature' | 'request'>, re
           id: 'conclusion_with_verdict', category: 'structure',
           description: ruleDesc(ctx, 'structure_checks', 'conclusion_with_verdict'),
           severity: 'BLOCKER', status: 'FAIL',
-          details: `存在 ${blockerCount} 个 BLOCKER 问题，但结论为"${foundVerdict}"而非"不通过"。`,
+          details: `存在 ${blockerCount} 个 BLOCKER 问题，但结论为"${foundVerdict}"而非"不通过"。`, affected_files,
           suggestion: '当存在 BLOCKER 级问题时，结论必须为"不通过"。',
         }];
       }
@@ -596,7 +597,7 @@ function checkConclusionWithVerdict(ctx: CheckContext<'feature' | 'request'>, re
           id: 'conclusion_with_verdict', category: 'structure',
           description: ruleDesc(ctx, 'structure_checks', 'conclusion_with_verdict'),
           severity: 'BLOCKER', status: 'WARN',
-          details: `无 BLOCKER 问题，但结论为"不通过"。`,
+          details: `无 BLOCKER 问题，但结论为"不通过"。`, affected_files,
           suggestion: '无 BLOCKER 时结论通常为"通过"或"有条件通过"。',
         }];
       }
@@ -607,7 +608,7 @@ function checkConclusionWithVerdict(ctx: CheckContext<'feature' | 'request'>, re
     id: 'conclusion_with_verdict', category: 'structure',
     description: ruleDesc(ctx, 'structure_checks', 'conclusion_with_verdict'),
     severity: 'BLOCKER', status: 'PASS',
-    details: `结论为"${foundVerdict}"，与问题统计一致。`,
+    details: `结论为"${foundVerdict}"，与问题统计一致。`, affected_files,
   }];
 }
 

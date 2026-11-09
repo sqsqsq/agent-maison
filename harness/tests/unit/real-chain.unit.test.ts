@@ -1699,7 +1699,7 @@ test('4f combined 新 CU UI unknown→spec 调研物化→coding/review→L3 返
   }
 });
 
-for (const oldCu of [false, true]) test(`66457a08 real entry: ${oldCu ? 'derived ref auto-closure; original B2 unknown design→owner halt→formal readiness recovery' : 'selection closure derived→accept/readiness→in-memory fidelity→spec→plan PASS'}`, async () => {
+for (const oldCu of [false, true]) test(`66457a08 real entry: ${oldCu ? 'explicit selection; original B2 unknown design→owner halt→formal readiness recovery' : 'explicit selection→accept/readiness→in-memory fidelity→spec→plan PASS'}`, async () => {
   const project = provisionRealChainProject();
   try {
     scaffoldRealChainHost(project, 'claude'); writeHostFile(project.root, 'CLAUDE.md', '# CLAUDE\n');
@@ -1726,9 +1726,16 @@ for (const oldCu of [false, true]) test(`66457a08 real entry: ${oldCu ? 'derived
     for (const dir of fs.readdirSync(workspace, { withFileTypes: true }).filter(d => d.isDirectory() && d.name !== 'blueprint')) {
       fs.rmSync(path.join(workspace, dir.name), { recursive: true, force: true });
     }
+    let rejected = false;
+    try { acceptChangeUnitDecomposition(cu.root, 'ledger-app-blueprint', [candidate]); }
+    catch (error) { rejected = /change_unit_design_closure_incomplete/.test(String(error)); }
+    assert(rejected, 'a missing required selection must return to its author');
+    candidate.artifact.design_refs.push({ ...candidate.artifact.component_blueprint_ref, target: { kind: 'decision', id: 'ledger-ui-selection' } });
+    const selected = structuredClone(candidate.artifact.design_refs);
     acceptChangeUnitDecomposition(cu.root, 'ledger-app-blueprint', [candidate]);
-    assert(!candidate.artifact.design_refs.some(ref => ref.target.id === 'ledger-ui-selection'), 'normalization must not mutate the submitted roots');
-    assert(asChangeUnitArtifact(loadCanonicalChangeUnit(cu.root, 'ledger-app-blueprint', 'ledger-refresh').changeUnit).design_refs.some(ref => ref.target.id === 'ledger-ui-selection'), 'normal accept must publish the derived selection closure');
+    assert(JSON.stringify(candidate.artifact.design_refs) === JSON.stringify(selected), 'consumer must not mutate the authored selection');
+    assert(JSON.stringify(asChangeUnitArtifact(loadCanonicalChangeUnit(cu.root, 'ledger-app-blueprint', 'ledger-refresh').changeUnit).design_refs) === JSON.stringify(selected),
+      'normal accept publishes the explicit author selection unchanged');
     const readiness = deriveDesignPreparationReadiness(cu.root, 'ledger-app-blueprint');
     assert(readiness.ready, JSON.stringify(readiness));
     if (!oldCu) materializeBlueprintSkillInputs(cu.root, cu.feature, cu.frameworkRoot, undefined, 'spec');
@@ -1799,6 +1806,12 @@ for (const oldCu of [false, true]) test(`66457a08 real entry: ${oldCu ? 'derived
     const handoff = oldCu ? 'TEST_CURRENT_DESIGN_OWNER_REQUEST' : 'TEST_CURRENT_DEFINITIONS_READY';
     let observedOwner: {runId: string; invokeId: string} | undefined;
     let definitionsReady = false;
+    const observeDefinitions = (runId: string): void => {
+      if (oldCu) return;
+      try { assertCurrentOwnerEvidence(cu, 'spec', runId); assertCurrentOwnerEvidence(cu, 'plan', runId); definitionsReady = true; }
+      catch { return; }
+      throw new Error(handoff);
+    };
     const sourceBeforeRequest = fs.readFileSync(path.join(cu.root, CU_SOURCE));
     const launch: NonNullable<Parameters<typeof runGoalRuntimeChain>[1]> = {
       frameworkRoot: cu.frameworkRoot, featureId: cu.feature, adapter: 'claude', realHarness: true,
@@ -1821,14 +1834,12 @@ for (const oldCu of [false, true]) test(`66457a08 real entry: ${oldCu ? 'derived
           return {exitCode: 1, stdout: '', stderr: handoff};
         }
         assert(publishRequestedVerifier(cu, ctx), 'unexpected model purpose: ' + ctx.phase);
+        observeDefinitions(ctx.runId);
       },
+      ...(!oldCu ? { onReview: (ctx: { runId: string }) => observeDefinitions(ctx.runId) } : {}),
       onAuthor: (ctx, context) => {
         authorLogPath = ctx.outputLogPath;
-        if (!oldCu && context.runtimeFacts.runBaseSha) {
-          try { assertCurrentOwnerEvidence(cu, 'spec', ctx.runId); assertCurrentOwnerEvidence(cu, 'plan', ctx.runId); definitionsReady = true; }
-          catch { /* Wait for the actual current definition evidence. */ }
-          if (definitionsReady) throw new Error(handoff);
-        }
+        if (context.runtimeFacts.runBaseSha) observeDefinitions(ctx.runId);
         hooks.onAuthor(ctx, context);
       },
     });

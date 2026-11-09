@@ -7,7 +7,7 @@ import { clearFrameworkConfigCache } from '../../config';
 import { synthesizeTestChainProfile, type RealChainProject } from './real-chain-host';
 import { withProject } from '../unit/rule-convergence.unit.test';
 import { runGoalRuntimeChain } from '../unit/goal-runner-testing-integrity.unit.test';
-import { publishRequestedVerifier, readDeliveredVerifierRequest, readSummary, assertCurrentPhaseClosed, assertCurrentPhaseDutiesSatisfied, assertCurrentOwnerEvidence, preserveChainFailure } from '../unit/real-chain.unit.test';
+import { publishRequestedVerifier, readDeliveredVerifierRequest, readSummary, assertCurrentPhaseDutiesSatisfied, assertCurrentOwnerEvidence, preserveChainFailure } from '../unit/real-chain.unit.test';
 import { blueprintAuthorContent, asRecord } from '../../scripts/utils/component-blueprint-model';
 import { refreshBlueprintFingerprints } from '../../scripts/utils/design-repair-unattended';
 import { createIndependentQuestioningResult, validateBlueprintQuestioning } from '../../scripts/utils/blueprint-questioning';
@@ -225,6 +225,7 @@ export async function rc10HostRuleCombination(record: '20261019' | '20261020' = 
     const loaded = loadCanonicalChangeUnit(root, 'bc-openCard-2', unitId);
     // The original rev4 CU is unavailable. This controlled legacy binding is labelled, not presented as recovered history.
     for (const ref of blueprintIdentityPointers(loaded.changeUnit)) if (ref) Object.assign(ref, currentBlueprintIdentity(blueprint));
+    const authoredDeliveryTargets = (loaded.changeUnit.design_refs as any[]).map(ref => structuredClone(ref.target));
     if (!later) loaded.changeUnit.design_refs = (loaded.changeUnit.design_refs as any[]).filter(ref => !String(ref.target.id).startsWith('ui_'));
     fs.writeFileSync(loaded.canonicalPath, YAML.stringify(loaded.changeUnit));
     // Support environment, before the baseline commit/freeze: the shared support pages trip a name-only lint whose basis is checked here.
@@ -256,7 +257,7 @@ export async function rc10HostRuleCombination(record: '20261019' | '20261020' = 
     let handoffBlocked: { phase: string; detail: string } | undefined;
     let resourceWrites = 0;
     const authorRequests: Array<{ invokeId: string; context: WorkUnitExecutionContext; request: NonNullable<ReturnType<typeof executionRequestForInvoke>>['request'] }> = [];
-    const assertHandoffReady = later && !upstream ? assertCurrentPhaseDutiesSatisfied : assertCurrentPhaseClosed;
+    const assertHandoffReady = assertCurrentPhaseDutiesSatisfied;
     const isClosed = (phase: string, runId: string): boolean => {
       try { assertHandoffReady(project, phase, runId); return true; } catch (error) {
         handoffBlocked = { phase, detail: error instanceof Error ? error.message : String(error) };
@@ -410,10 +411,21 @@ export async function rc10HostRuleCombination(record: '20261019' | '20261020' = 
           Object.assign(doc, authored);
           if (authoredReview) doc.review_summary = { ...machineReview, ...authoredReview };
         }
+        if (!later) {
+          const candidateFile = path.join(path.dirname(draft!), 'change-unit.yaml');
+          const candidate = YAML.parse(fs.readFileSync(candidateFile, 'utf8'));
+          candidate.design_refs = authoredDeliveryTargets.map(target => ({ ...candidate.component_blueprint_ref, target }));
+          fs.writeFileSync(candidateFile, YAML.stringify(candidate));
+        }
         fs.writeFileSync(draft!, YAML.stringify(doc));
         return;
       }
       assert(ctx.phase === 'design-repair-questioning', 'only the independent questioning result may be returned here');
+      if (!later) {
+        const candidate = YAML.parse(fs.readFileSync(path.join(path.dirname(draft!), 'change-unit.yaml'), 'utf8'));
+        assert.deepStrictEqual(candidate.design_refs.map((ref: any) => ref.target), authoredDeliveryTargets,
+          'independent Q must verify the actual author selection before publication');
+      }
       const expected = structuredClone(repairedBlueprint);
       if (design && upstream === 'design-repair') {
         const flow = resolveBlueprintTarget(expected, { kind: 'flow', view_id: 'runtime', id: 'flow-open-card' }) as any;
@@ -441,6 +453,20 @@ export async function rc10HostRuleCombination(record: '20261019' | '20261020' = 
       frameworkRoot, featureId: feature, realHarness: true, adapter: 'codex', freshRequirement: original.requirement,
       ...(upstream ? { viaRuntimeClass: true, noAutoForce: true } : {}),
       freshStartPhase: prepared.scope.phase_chain[0] as 'spec', freshEndPhase: prepared.scope.phase_chain.at(-1),
+      onReview: ctx => {
+        project.runId = ctx.runId;
+        const latest = authorRequests.at(-1);
+        if (later) { assert(latest); tryHandoff('review', latest, ctx.runId); return; }
+        const current = YAML.parse(fs.readFileSync(path.join(root, rel, 'contracts.yaml'), 'utf8'));
+        const files = partitionConstructionFiles(root, path.join(frameworkRoot, 'profiles/hmos-app'), current).implementation;
+        const report = ['# 审查报告', '', '> **模块标识**: WalletMain', '> **审查日期**: 2026-10-19', '> **审查版本**: 1.0', '> **保证等级**: standard', '',
+          '## 1. 审查范围', '', ...files.map(file => `- ${file}`), '', '## 2. 审查维度', '', '| 维度 | 结论 |', '|---|---|', '| 契约一致性 | 通过 |', '| 视觉保真 | 通过 |', '',
+          '## 3. 问题清单', '', '| 编号 | 分类 | 严重程度 | 问题描述 | 涉及文件 | 修复建议 |', '|---|---|---|---|---|---|', '', '本轮无问题。', '',
+          '## 4. 问题统计', '', '| 严重程度 | 数量 |', '|---|---|', '| BLOCKER | 0 |', '| MAJOR | 0 |', '| MINOR | 0 |', '| INFO | 0 |', '',
+          '## 5. 修复建议', '', '无。', '', '## 6. 结论', '', '**审查结论**: 通过', ''].join('\n');
+        fs.mkdirSync(path.join(root, rel, 'review'), { recursive: true });
+        fs.writeFileSync(path.join(root, rel, 'review/review-report.md'), report);
+      },
       onOutOfChain: ctx => {
         // P3 verifies after the author's handback, so the next verifier call is the first point where earlier closures are settled.
         const latest = authorRequests.at(-1);
@@ -579,18 +605,7 @@ export async function rc10HostRuleCombination(record: '20261019' | '20261020' = 
         } else recordFacts('coding');
 
           },
-          review: () => {
-        if (later) { attemptHandoff('review'); return; }
-        project.runId = ctx.runId; recordFacts('review');
-        const current = YAML.parse(fs.readFileSync(path.join(root, rel, 'contracts.yaml'), 'utf8'));
-        const files = partitionConstructionFiles(root, path.join(frameworkRoot, 'profiles/hmos-app'), current).implementation;
-        const report = ['# 审查报告', '', '> **模块标识**: WalletMain', '> **审查日期**: 2026-10-19', '> **审查版本**: 1.0', '> **保证等级**: standard', '',
-          '## 1. 审查范围', '', ...files.map(file => `- ${file}`), '', '## 2. 审查维度', '', '| 维度 | 结论 |', '|---|---|', '| 契约一致性 | 通过 |', '| 视觉保真 | 通过 |', '',
-          '## 3. 问题清单', '', '| 编号 | 分类 | 严重程度 | 问题描述 | 涉及文件 | 修复建议 |', '|---|---|---|---|---|---|', '', '本轮无问题。', '',
-          '## 4. 问题统计', '', '| 严重程度 | 数量 |', '|---|---|', '| BLOCKER | 0 |', '| MAJOR | 0 |', '| MINOR | 0 |', '| INFO | 0 |', '',
-          '## 5. 修复建议', '', '无。', '', '## 6. 结论', '', '**审查结论**: 通过', ''].join('\n');
-        fs.mkdirSync(path.join(root, rel, 'review'), { recursive: true }); fs.writeFileSync(path.join(root, rel, 'review/review-report.md'), report);
-          },
+          review: () => { /* The actual independent review invocation owns its report. */ },
           ut: () => attemptHandoff('ut'),
         });
         try { hooks.onAuthor(ctx, context); }
@@ -669,7 +684,7 @@ export async function rc10HostRuleCombination(record: '20261019' | '20261020' = 
       assert(ownerReceived, 'verified proposal never reached its actual owner');
       if (upstream === 'plan-repair') assert(handoffFactsChecked, 'real handoff must exercise the original baseline and rejection counterexamples');
       assert(events.some(event => event.type === 'phase_verdict' && event.phase === 'coding' && event.verdict === 'FAIL'), 'diagnosis washed away the original compile FAIL');
-      assertCurrentPhaseClosed(project, 'coding');
+      assertHandoffReady(project, 'coding');
       if (upstream.includes('decline')) assert(originalReceived, 'original stage never received the refusal reason');
       if (design) assert(events.some(event => event.type === 'design_authority_repair'
         && (upstream === 'design-decline' ? event.stage === 'failed' && event.failed_step === 'declined' : event.stage === 'published')));
@@ -697,7 +712,7 @@ export async function rc10HostRuleCombination(record: '20261019' | '20261020' = 
     assert(result.events.some(event => event.type === 'phase_verdict' && event.phase === 'plan' && event.verdict === 'FAIL' && String(event.blocker_signature).includes('integration_scope_consistency')));
     assert(authorRequests.some(row => /integration_scope_consistency|entry_symbol/.test(row.context.instruction ?? '')),
       'the actual signed author must receive the real definition failure before supplementing it');
-    assertCurrentPhaseClosed(project, 'coding');
+    assertHandoffReady(project, 'coding');
     // P3 runs every check each round; before the published design reaches the author, contracts are still empty by construction.
     const publishedAt = result.events.map(event => event.type === 'design_authority_repair' && event.stage === 'published').lastIndexOf(true);
     const followUp = result.events.findIndex((event, index) => index > publishedAt && event.type === 'agent_invoke_start' && event.phase === 'work-unit-author');

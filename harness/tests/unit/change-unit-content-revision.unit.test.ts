@@ -85,11 +85,14 @@ function addDependency(f: Fixture): void {
 }
 
 const cases: Array<{ name: string; run(f: Fixture): void }> = [
-  { name: '8a6d3f21 root-only revision derives relations and remains unchanged across two accepts', run(f) {
+  { name: 'explicit selection revision removes context refs once and preserves the second identical proposal', run(f) {
     const row = revision(f.root, 'ledger-refresh', cu => { cu.design_refs = cu.design_refs.filter(ref => ref.target.kind !== 'relation'); });
+    const first = reviseChangeUnitContent(f.root, blueprintId, [row]);
+    assert.equal(first.revised.length, 1, 'removing an explicit responsibility is a real authored revision');
+    assert.deepStrictEqual(asChangeUnitArtifact(first.revised[0].changeUnit).design_refs, row.candidate.artifact.design_refs);
     const original = bytes(files(f));
     for (let i = 0; i < 2; i++) {
-      const result = reviseChangeUnitContent(f.root, blueprintId, [row]);
+      const result = reviseChangeUnitContent(f.root, blueprintId, [revision(f.root, 'ledger-refresh', () => {})]);
       assert.deepStrictEqual(result.unchanged, ['ledger-refresh']); assert.deepStrictEqual(result.revised, []);
       unchanged(original);
     }

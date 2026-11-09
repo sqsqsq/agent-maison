@@ -34,7 +34,7 @@
 
 蓝图在 changed development 或涉 UI 的 logical/scenarios 视图读取资产。选型结论只登记在扁平 decision：`kind: component_asset_selection`、`target_ref: view:development/node:<id>`、`asset_resolution`、`component_ref`、`rationale` 及既有 owner/provenance/verification_refs/status。UI 对象同时包括独立节点与节点 typed contracts 内的页面/组件；同一已明确目标的决定可覆盖多个组件，不强制拆节点。非 custom 必须 component_ref，adapt/evolve/custom 必须 rationale。provenance.source_ref 只指配置的 index/catalog 证据。verified_unchanged development 禁止产出选型决策。
 
-CU 用既有 `design_refs` 保存依赖引用，不复写选型结论。Feature 的 `design_ref_mappings.implementation_refs` 与单值 `asset_selection: {resolution, component_ref?, rationale?, bindings?}` 是同一权威的施工投影：既有目标关系能唯一确定时，缺失映射与副本由共享投影派生，不要求 plan 再抄一遍；显式冲突不得覆盖。映射关联 `file#组件name`（文件唯一组件可省略 #name），不得新增 decision_ref。resolution/component_ref 与 decision 严格相等；rationale 保留组件上游施工契约的说明，无上游说明时使用决定的理由，不与总理由逐字比较；bindings 为本地参数绑定对象。多资产沿原 components/children 树拆条目。
+CU 用既有 `design_refs` 显式选择本单元落实的目标及其选型决定，不复写选型结论，也不写入自动推导的依赖闭包。Feature 的 `design_ref_mappings.implementation_refs` 与单值 `asset_selection: {resolution, component_ref?, rationale?, bindings?}` 是同一权威的施工投影：既有目标关系能唯一确定时，缺失映射与副本由共享投影派生，不要求 plan 再抄一遍；显式冲突不得覆盖。映射关联 `file#组件name`（文件唯一组件可省略 #name），不得新增 decision_ref。resolution/component_ref 与 decision 严格相等；rationale 保留组件上游施工契约的说明，无上游说明时使用决定的理由，不与总理由逐字比较；bindings 为本地参数绑定对象。多资产沿原 components/children 树拆条目。
 
 UI 强制谓词沿既有 kind：page/component/builder，以及既有 Component/ComponentV2/Builder decorator 或 navigation destination 信号；不为工具类新增枚举约束。有 index 时命中谓词的条目必须选型。旧 Feature 缺局部映射交 plan，缺权威决定或 CU 依赖则交设计 owner；不在无权阶段重复重试。
 

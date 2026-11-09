@@ -1,0 +1,651 @@
+{
+  "generated_at": "2026-11-09T10:19:51.535Z",
+  "base_commit": "a7d47252837a2cee0a9491b8390f5ced8c0bf71f",
+  "branch": "main",
+  "scope": "72b6f0d9目标对齐返修",
+  "official_full": {
+    "scope": "full",
+    "ok": false,
+    "passed": 6046,
+    "failed": 21,
+    "groups": 1366,
+    "workers": 12,
+    "reused": 0,
+    "formal_groups": 425,
+    "formal_not_executed": 0,
+    "input_stable": true,
+    "input_snapshot": "be47b58c2f1d49f3b0613d79b3e1f66f6500c8f48be1ab0fda262e879541ebcc",
+    "ending_snapshot": "be47b58c2f1d49f3b0613d79b3e1f66f6500c8f48be1ab0fda262e879541ebcc",
+    "wall_ms": 9111951.4355,
+    "coverage_unknown_groups": 53,
+    "exit_code": 1,
+    "command": "npm test -- --plan-out D:/1.code/agent-maison/harness/reports/goal-alignment-full-plan.json",
+    "raw": [
+      {
+        "path": "harness/reports/goal-alignment-full.json",
+        "sha256": "2d5c941fcc71977de01656bbddcf359d451b62fb39bfa455f6ee0bc2bb6ce662",
+        "bytes": 134464503
+      },
+      {
+        "path": "harness/reports/goal-alignment-full.log",
+        "sha256": "4b1f58b6d9ab5c078d608c3a896898216c31ba1d341eae5f4b26599a6cf211d3",
+        "bytes": 58072842
+      },
+      {
+        "path": "harness/reports/goal-alignment-full-plan.json",
+        "sha256": "84e701e05e1ced7ea60472388fc343dfdc87b81dfe494966c1c1d5cfb6b0de74",
+        "bytes": 969844
+      },
+      {
+        "path": "harness/reports/goal-alignment-full-exit.txt",
+        "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+        "bytes": 2
+      }
+    ],
+    "original_fail_preserved": true
+  },
+  "final_changed": {
+    "scope": "changed",
+    "ok": true,
+    "passed": 5399,
+    "failed": 0,
+    "groups": 941,
+    "workers": 12,
+    "reused": 0,
+    "formal_groups": 0,
+    "formal_not_executed": 425,
+    "input_stable": true,
+    "input_snapshot": "a52b810d0b24811a131ccb39b3fab2fdc254431b5cb4166997370c518c3cf8c5",
+    "ending_snapshot": "a52b810d0b24811a131ccb39b3fab2fdc254431b5cb4166997370c518c3cf8c5",
+    "wall_ms": 6407140.6839,
+    "coverage_unknown_groups": 39,
+    "exit_code": 0,
+    "command": "npm run test:changed -- --plan-out D:/1.code/agent-maison/harness/reports/goal-alignment-changed-plan.json --results-out D:/1.code/agent-maison/harness/reports/goal-alignment-changed.json",
+    "raw": [
+      {
+        "path": "harness/reports/goal-alignment-changed.json",
+        "sha256": "63d2ee870f6206ea07c8f53105c7199b85af89eb0451465460ad037ca487eab1",
+        "bytes": 63022607
+      },
+      {
+        "path": "harness/reports/goal-alignment-changed.log",
+        "sha256": "9543a7dd02039373f2cf4fb973ca4154e66ad75d18f2575f033f55cf24992d76",
+        "bytes": 9084622
+      },
+      {
+        "path": "harness/reports/goal-alignment-changed-plan.json",
+        "sha256": "a6d6892904b6fb89a340f67c6d321fe5a382b0edca92843c61b851e660060ed6",
+        "bytes": 3479368
+      },
+      {
+        "path": "harness/reports/goal-alignment-changed-exit.txt",
+        "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+        "bytes": 2
+      }
+    ]
+  },
+  "no_second_full": true,
+  "no_test_daily": true,
+  "red_items": [
+    {
+      "id": "R01",
+      "original_group": "change-unit-content-revision::[\"8a6d3f21 root-only revision derives relations and remains unchanged across two accepts\"]",
+      "original_name": "8a6d3f21 root-only revision derives relations and remains unchanged across two accepts",
+      "original_infrastructure": false,
+      "classification": "测试夹具或断言的旧语义",
+      "cause": "旧测试把删除交付选择当成可自动补回的依赖；现验真实修订一次及重复候选不变。",
+      "disposition": "已修并定向通过",
+      "original_error_excerpt": "AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:\n+ actual - expected\n\n+ []\n- [\n-   'ledger-refresh'\n- ]\n\n    at Object.run (D:\\1.code\\agent-maison\\harness\\tests\\unit\\change-unit-content-revision.unit.test.ts:93:14)\n    at D:\\1.code\\agent-maison\\harness\\tests\\unit\\change-unit-content-revision.unit.test.ts:244:45\n    at Array.map (<anonymous>)\n    at executeCases (D:\\1.code\\agent-maison\\harness\\tests\\unit\\change-unit-content-revision.unit.test.ts:242:96)\n    at Object.runSelectedCases (D:\\1.code\\agent-maison\\harness\\tests\\unit\\change-unit-content-revision.unit.test.ts:293:86)\n    at executeUnitModule (D:\\1.code\\agent-maison\\harness\\tests\\utils\\unit-case-selection.ts:78:40)\n    at D:\\1.code\\agent-maison\\harness\\tests\\unit-worker.ts:49:45\n    at Object.<anonymous> (D:\\1.code\\agent-maison\\harness\\tests\\unit-worker.ts:95:3)\n    at Module._compile (node:internal/modules/cjs/loader:1830:14)\n    at Object.require.extensions..ts (D:\\1.code\\agent-maison\\harness\\tests\\compiled-register.cjs:32:10)",
+      "target": {
+        "path": "harness/reports/goal-alignment-cu-revision.log",
+        "sha256": "f7cea77b0bb7fe182d100f9fe07da21b1fb3ac682cc00e67e7a921b44a34c9e4",
+        "bytes": 1724,
+        "case": "explicit selection revision removes context refs once and preserves the second identical proposal",
+        "status": "PASS",
+        "exit_code": 0
+      }
+    },
+    {
+      "id": "R02",
+      "original_group": "execution-scope-runtime::[\"D1 three real runless harness-runner phase calls freeze once and stay run-free\"]",
+      "original_name": "D1 three real runless harness-runner phase calls freeze once and stay run-free",
+      "original_infrastructure": false,
+      "classification": "测试夹具或断言的旧语义",
+      "cause": "旧测试要求无身份拒绝覆盖报告；现验非零拒绝、原错误码和正式报告字节保留。",
+      "disposition": "已修并定向通过",
+      "original_error_excerpt": "AssertionError [ERR_ASSERTION]: 候选漂移后真实 CLI 没有报 execution_scope_frozen：[\"node_options_injection\",\"phase_disabled_by_profile\",\"capability_coding_plan_context\"]",
+      "target": {
+        "path": "harness/reports/goal-alignment-runless-results.json",
+        "sha256": "4a177ad53ba6a7a61e559a5f071535394db43c484b9e94a5d6b6129bfddb025a",
+        "bytes": 1000,
+        "case": "D1 three real runless harness-runner phase calls freeze once and stay run-free",
+        "status": "PASS"
+      }
+    },
+    {
+      "id": "R03",
+      "original_group": "execution-scope-runtime::[\"c6a3d918 UT real missing use-case restores chain-external plan in same run\"]",
+      "original_name": "c6a3d918 UT real missing use-case restores chain-external plan in same run",
+      "original_infrastructure": false,
+      "classification": "测试夹具或断言的旧语义",
+      "cause": "固定plan调用次数过强；原件证明输入从未知到真实用例/facts发生变化，现验无同输入重跑以及作者→plan→UT的实际成功顺序。",
+      "disposition": "已修并定向通过",
+      "original_error_excerpt": "Error: AssertionError [ERR_ASSERTION]: 链外 plan 必须实际验证\n    at runScopeScenario (D:\\1.code\\agent-maison\\harness\\tests\\unit\\execution-scope.unit.test.ts:1573:16)\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async runSelectedCases (D:\\1.code\\agent-maison\\harness\\tests\\unit\\execution-scope.unit.test.ts:4264:11)\n    at async D:\\1.code\\agent-maison\\harness\\tests\\unit-worker.ts:49:22\noriginals: D:\\1.code\\agent-maison\\harness\\reports\\test-runtime-control\\failure-nX4cSj",
+      "target": {
+        "path": "harness/reports/goal-alignment-ut-scope-results.json",
+        "sha256": "23c74e769a0fb032a5be9b8c83582512b5820538f9c7aa28ae2ee7eadce76def",
+        "bytes": 1000,
+        "case": "c6a3d918 UT real missing use-case restores chain-external plan in same run",
+        "status": "PASS"
+      }
+    },
+    {
+      "id": "R04",
+      "original_group": "component-design-handoff::[\"8a6d3f21 normal CU acceptance derives existing dependency references without mutating the proposal\"]",
+      "original_name": "8a6d3f21 normal CU acceptance derives existing dependency references without mutating the proposal",
+      "original_infrastructure": false,
+      "classification": "测试夹具或断言的旧语义",
+      "cause": "旧测试要求消费者增补引用；现验原样发布作者选择、闭包仍检查。",
+      "disposition": "已修并定向通过",
+      "original_error_excerpt": "Error: normal acceptance omitted the existing dependency closure\n    at assert (D:\\1.code\\agent-maison\\harness\\tests\\unit\\component-design-handoff.unit.test.ts:75:25)\n    at D:\\1.code\\agent-maison\\harness\\tests\\unit\\component-design-handoff.unit.test.ts:234:7\n    at withProject (D:\\1.code\\agent-maison\\harness\\tests\\unit\\component-design-handoff.unit.test.ts:91:9)\n    at D:\\1.code\\agent-maison\\harness\\tests\\unit\\component-design-handoff.unit.test.ts:227:5\n    at test (D:\\1.code\\agent-maison\\harness\\tests\\unit\\component-design-handoff.unit.test.ts:82:9)\n    at runAll (D:\\1.code\\agent-maison\\harness\\tests\\unit\\component-design-handoff.unit.test.ts:226:16)\n    at selectedExecutionBlocks (D:\\1.code\\agent-maison\\harness\\tests\\utils\\unit-case-selection.ts:42:27)\n    at Object.runSelectedCases (D:\\1.code\\agent-maison\\harness\\tests\\unit\\component-design-handoff.unit.test.ts:1638:79)\n    at executeUnitModule (D:\\1.code\\agent-maison\\harness\\tests\\utils\\unit-case-selection.ts:78:40)\n    at D:\\1.code\\agent-maison\\harness\\tests\\unit-worker.ts:49:45",
+      "target": {
+        "path": "harness/reports/goal-alignment-cu-handoff.log",
+        "sha256": "3bc91b883cd4142249fa0ca34339e5ea1c1f4775835888319cc0e60acd66d65a",
+        "bytes": 1653,
+        "case": "normal CU acceptance preserves explicit selection and derives dependencies only for checking",
+        "status": "PASS",
+        "exit_code": 0
+      }
+    },
+    {
+      "id": "R05",
+      "original_group": "initial-design-repair::[\"e2a4145e r4 repair questioning real process retains a final answer over 64KiB\"]",
+      "original_name": "e2a4145e r4 repair questioning real process retains a final answer over 64KiB",
+      "original_infrastructure": false,
+      "classification": "测试夹具或断言的旧语义",
+      "cause": "夹具删除明确交付选择却期待机器补写；现在由实际作者按当前事务身份补选，独立质询和原事务继续，原拒绝/写界/恢复断言保留。",
+      "disposition": "已修并定向通过",
+      "original_error_excerpt": "AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:\n\n  (result.outcome === 'failed' && result.step === 'questioning')\n\n    at scenario (D:\\1.code\\agent-maison\\harness\\tests\\unit\\initial-design-repair.unit.test.ts:687:13)\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async withFreshCuHost (D:\\1.code\\agent-maison\\harness\\tests\\unit\\lifecycle-evolution.unit.test.ts:191:5)\n    at async Object.runSelectedCases (D:\\1.code\\agent-maison\\harness\\tests\\unit\\initial-design-repair.unit.test.ts:1269:11)\n    at async D:\\1.code\\agent-maison\\harness\\tests\\unit-worker.ts:49:22",
+      "target": {
+        "path": "harness/reports/goal-alignment-initial-repair-results.json",
+        "sha256": "2236c1fd1771d2bb145b333aef2822f664facdbf7b118503f3156ae17e27e423",
+        "bytes": 13052,
+        "case": "e2a4145e r4 repair questioning real process retains a final answer over 64KiB",
+        "status": "PASS"
+      }
+    },
+    {
+      "id": "R06",
+      "original_group": "initial-design-repair::[\"e2a4145e repair transaction supplements malformed output once and consumes the valid denial\"]",
+      "original_name": "e2a4145e repair transaction supplements malformed output once and consumes the valid denial",
+      "original_infrastructure": false,
+      "classification": "测试夹具或断言的旧语义",
+      "cause": "夹具删除明确交付选择却期待机器补写；现在由实际作者按当前事务身份补选，独立质询和原事务继续，原拒绝/写界/恢复断言保留。",
+      "disposition": "已修并定向通过",
+      "original_error_excerpt": "AssertionError [ERR_ASSERTION]: only unusable output gets a same-role format supplement\n    at scenario (D:\\1.code\\agent-maison\\harness\\tests\\unit\\initial-design-repair.unit.test.ts:692:14)\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async withFreshCuHost (D:\\1.code\\agent-maison\\harness\\tests\\unit\\lifecycle-evolution.unit.test.ts:191:5)\n    at async Object.runSelectedCases (D:\\1.code\\agent-maison\\harness\\tests\\unit\\initial-design-repair.unit.test.ts:1269:11)\n    at async D:\\1.code\\agent-maison\\harness\\tests\\unit-worker.ts:49:22",
+      "target": {
+        "path": "harness/reports/goal-alignment-initial-repair-results.json",
+        "sha256": "2236c1fd1771d2bb145b333aef2822f664facdbf7b118503f3156ae17e27e423",
+        "bytes": 13052,
+        "case": "e2a4145e repair transaction supplements malformed output once and consumes the valid denial",
+        "status": "PASS"
+      }
+    },
+    {
+      "id": "R07",
+      "original_group": "initial-design-repair::[\"e2a4145e repair transaction missing reference keeps a completed denial for the original author coordinator\"]",
+      "original_name": "e2a4145e repair transaction missing reference keeps a completed denial for the original author coordinator",
+      "original_infrastructure": false,
+      "classification": "测试夹具或断言的旧语义",
+      "cause": "夹具删除明确交付选择却期待机器补写；现在由实际作者按当前事务身份补选，独立质询和原事务继续，原拒绝/写界/恢复断言保留。",
+      "disposition": "已修并定向通过",
+      "original_error_excerpt": "AssertionError [ERR_ASSERTION]: only unusable output gets a same-role format supplement\n    at scenario (D:\\1.code\\agent-maison\\harness\\tests\\unit\\initial-design-repair.unit.test.ts:692:14)\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async withFreshCuHost (D:\\1.code\\agent-maison\\harness\\tests\\unit\\lifecycle-evolution.unit.test.ts:191:5)\n    at async Object.runSelectedCases (D:\\1.code\\agent-maison\\harness\\tests\\unit\\initial-design-repair.unit.test.ts:1269:11)\n    at async D:\\1.code\\agent-maison\\harness\\tests\\unit-worker.ts:49:22",
+      "target": {
+        "path": "harness/reports/goal-alignment-initial-repair-results.json",
+        "sha256": "2236c1fd1771d2bb145b333aef2822f664facdbf7b118503f3156ae17e27e423",
+        "bytes": 13052,
+        "case": "e2a4145e repair transaction missing reference keeps a completed denial for the original author coordinator",
+        "status": "PASS"
+      }
+    },
+    {
+      "id": "R08",
+      "original_group": "initial-design-repair::[\"S16 lock contention dispatches nothing and the same transaction publishes once after the other CU releases its lock\"]",
+      "original_name": "S16 lock contention dispatches nothing and the same transaction publishes once after the other CU releases its lock",
+      "original_infrastructure": false,
+      "classification": "测试夹具或断言的旧语义",
+      "cause": "夹具删除明确交付选择却期待机器补写；现在由实际作者按当前事务身份补选，独立质询和原事务继续，原拒绝/写界/恢复断言保留。",
+      "disposition": "已修并定向通过",
+      "original_error_excerpt": "AssertionError [ERR_ASSERTION]: {\"outcome\":\"published\",\"recovered\":false,\"step\":\"post_publish\",\"revision\":3,\"reason\":\"已发布 rev 3、之后失败：CU ledger-refresh 升版后未通过 canonical 校验（整批未落盘）：change_unit_touch_not_in_design_refs@$.touches[0].design_ref\"}\n    at scenario (D:\\1.code\\agent-maison\\harness\\tests\\unit\\initial-design-repair.unit.test.ts:707:14)\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async withFreshCuHost (D:\\1.code\\agent-maison\\harness\\tests\\unit\\lifecycle-evolution.unit.test.ts:191:5)\n    at async Object.runSelectedCases (D:\\1.code\\agent-maison\\harness\\tests\\unit\\initial-design-repair.unit.test.ts:1269:11)\n    at async D:\\1.code\\agent-maison\\harness\\tests\\unit-worker.ts:49:22",
+      "target": {
+        "path": "harness/reports/goal-alignment-initial-repair-results.json",
+        "sha256": "2236c1fd1771d2bb145b333aef2822f664facdbf7b118503f3156ae17e27e423",
+        "bytes": 13052,
+        "case": "S16 lock contention dispatches nothing and the same transaction publishes once after the other CU releases its lock",
+        "status": "PASS"
+      }
+    },
+    {
+      "id": "R09",
+      "original_group": "initial-design-repair::[\"P2 current public Q and mechanical CU closure publish without another author or questioning invocation\"]",
+      "original_name": "P2 current public Q and mechanical CU closure publish without another author or questioning invocation",
+      "original_infrastructure": false,
+      "classification": "测试夹具或断言的旧语义",
+      "cause": "夹具删除明确交付选择却期待机器补写；现在由实际作者按当前事务身份补选，独立质询和原事务继续，原拒绝/写界/恢复断言保留。",
+      "disposition": "已修并定向通过",
+      "original_error_excerpt": "AssertionError [ERR_ASSERTION]: mechanical CU closure purchased another author or Q over the same verified blueprint\n    at scenario (D:\\1.code\\agent-maison\\harness\\tests\\unit\\initial-design-repair.unit.test.ts:298:13)\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async withFreshCuHost (D:\\1.code\\agent-maison\\harness\\tests\\unit\\lifecycle-evolution.unit.test.ts:191:5)\n    at async Object.runSelectedCases (D:\\1.code\\agent-maison\\harness\\tests\\unit\\initial-design-repair.unit.test.ts:1269:11)\n    at async D:\\1.code\\agent-maison\\harness\\tests\\unit-worker.ts:49:22",
+      "target": {
+        "path": "harness/reports/goal-alignment-initial-repair-results.json",
+        "sha256": "2236c1fd1771d2bb145b333aef2822f664facdbf7b118503f3156ae17e27e423",
+        "bytes": 13052,
+        "case": "P2 current public Q cannot replace the CU author explicit selection before independent publication",
+        "status": "PASS"
+      }
+    },
+    {
+      "id": "R10",
+      "original_group": "initial-design-repair::[\"f3b8e6a1 initial repair: real root repairs an admitted blueprint CU and reaches real readiness without a construction child\"]",
+      "original_name": "f3b8e6a1 initial repair: real root repairs an admitted blueprint CU and reaches real readiness without a construction child",
+      "original_infrastructure": false,
+      "classification": "测试夹具或断言的旧语义",
+      "cause": "夹具删除明确交付选择却期待机器补写；现在由实际作者按当前事务身份补选，独立质询和原事务继续，原拒绝/写界/恢复断言保留。",
+      "disposition": "已修并定向通过",
+      "original_error_excerpt": "AssertionError [ERR_ASSERTION]: {\"outcome\":\"published\",\"recovered\":false,\"step\":\"post_publish\",\"revision\":3,\"reason\":\"已发布 rev 3、之后失败：CU ledger-refresh 升版后未通过 canonical 校验（整批未落盘）：change_unit_touch_not_in_design_refs@$.touches[0].design_ref\"}\n    at scenario (D:\\1.code\\agent-maison\\harness\\tests\\unit\\initial-design-repair.unit.test.ts:707:14)\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async withFreshCuHost (D:\\1.code\\agent-maison\\harness\\tests\\unit\\lifecycle-evolution.unit.test.ts:191:5)\n    at async Object.runSelectedCases (D:\\1.code\\agent-maison\\harness\\tests\\unit\\initial-design-repair.unit.test.ts:1269:11)\n    at async D:\\1.code\\agent-maison\\harness\\tests\\unit-worker.ts:49:22",
+      "target": {
+        "path": "harness/reports/goal-alignment-initial-repair-results.json",
+        "sha256": "2236c1fd1771d2bb145b333aef2822f664facdbf7b118503f3156ae17e27e423",
+        "bytes": 13052,
+        "case": "f3b8e6a1 initial repair: real root repairs an admitted blueprint CU and reaches real readiness without a construction child",
+        "status": "PASS"
+      }
+    },
+    {
+      "id": "R11",
+      "original_group": "initial-design-repair::[\"f3b8e6a1 initial repair: actual readiness failure after publication remains unrecovered for an initial-design phase\"]",
+      "original_name": "f3b8e6a1 initial repair: actual readiness failure after publication remains unrecovered for an initial-design phase",
+      "original_infrastructure": false,
+      "classification": "测试夹具或断言的旧语义",
+      "cause": "夹具删除明确交付选择却期待机器补写；现在由实际作者按当前事务身份补选，独立质询和原事务继续，原拒绝/写界/恢复断言保留。",
+      "disposition": "已修并定向通过",
+      "original_error_excerpt": "AssertionError [ERR_ASSERTION]: Expected values to be loosely deep-equal:\n\n[\n  'author',\n  'questioning'\n]\n\nshould loosely deep-equal\n\n[\n  'questioning'\n]\n    at scenario (D:\\1.code\\agent-maison\\harness\\tests\\unit\\initial-design-repair.unit.test.ts:708:14)\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async withFreshCuHost (D:\\1.code\\agent-maison\\harness\\tests\\unit\\lifecycle-evolution.unit.test.ts:191:5)\n    at async Object.runSelectedCases (D:\\1.code\\agent-maison\\harness\\tests\\unit\\initial-design-repair.unit.test.ts:1269:11)\n    at async D:\\1.code\\agent-maison\\harness\\tests\\unit-worker.ts:49:22",
+      "target": {
+        "path": "harness/reports/goal-alignment-initial-repair-results.json",
+        "sha256": "2236c1fd1771d2bb145b333aef2822f664facdbf7b118503f3156ae17e27e423",
+        "bytes": 13052,
+        "case": "f3b8e6a1 initial repair: actual readiness failure after publication remains unrecovered for an initial-design phase",
+        "status": "PASS"
+      }
+    },
+    {
+      "id": "R12",
+      "original_group": "initial-design-repair::[\"f3b8e6a1 initial repair: normal canonical run retains its default design subject and original recovery probe\"]",
+      "original_name": "f3b8e6a1 initial repair: normal canonical run retains its default design subject and original recovery probe",
+      "original_infrastructure": false,
+      "classification": "测试夹具或断言的旧语义",
+      "cause": "夹具删除明确交付选择却期待机器补写；现在由实际作者按当前事务身份补选，独立质询和原事务继续，原拒绝/写界/恢复断言保留。",
+      "disposition": "已修并定向通过",
+      "original_error_excerpt": "AssertionError [ERR_ASSERTION]: {\"outcome\":\"failed\",\"step\":\"questioning\",\"reason\":\"本事务当前全部机器问题与独立质询未过项：C:\\\\Users\\\\shengqsq\\\\AppData\\\\Local\\\\Temp\\\\mu-W6Fmvs\\\\dt\\\\real-chain-zqts8j\\\\doc\\\\features\\\\ledger-app-blueprint\\\\ledger-refresh\\\\goal-runs\\\\normal-repair-run\\\\phases\\\\design-repair-questioning\\\\design-repair-questioning-2\\nauthority_projection_invalid：设计权威投影不可用（component-design: touch view:development/node:ledger-module 必须同时出现在 design_refs。）\\n保留当前未发布候选，在原授权写集内修复并由同一独立职责重新核实；不要改写质询或准入结果，不把旧运输成功当作本轮完成。\",\"evaluation\":{\"acceptanceKey\":\"64e8bd263da6ae75317ad4126786c97ae6993f2dedb42655f68331bf59bd3d45\",\"inputs\":{\"C:\\\\Users\\\\shengqsq\\\\AppData\\\\Local\\\\Temp\\\\mu-W6Fmvs\\\\dt\\\\real-chain-zqts8j\\\\doc\\\\features\\\\ledger-app-blueprint\\\\ledger-refresh\\\\goal-runs\\\\normal-repair-run\\\\design-repair\\\\component-blueprint.yaml\":{\"exists\":true,\"contentHash\":\"917ca9bc2659e41e8ac19020cdf979a01aad2924cbe7325b8450d03f825b1ab5\"},\"C:\\\\Users\\\\shengqsq\\\\AppData\\\\Local\\\\Temp\\\\mu-W6Fmvs\\\\dt\\\\real-chain-zqts8j\\\\doc\\\\features\\\\ledger-app-blueprint\\\\ledger-refresh\\\\goal-runs\\\\normal-repair-run\\\\design-repair\\\\change-unit.yaml\":{\"exists\":true,\"contentHash\":\"00bbda72f665052a6bd4ca38cfcdca92cdce99baf86e95169249372226c8e54d\"},\"C:\\\\Users\\\\shengqsq\\\\AppData\\\\Local\\\\Temp\\\\mu-W6Fmvs\\\\dt\\\\real-chain-zqts8j\\\\doc\\\\features\\\\ledger-app-blueprint\\\\ledger-refresh\\\\goal-runs\\\\normal-repair-run\\\\design-repair\\\\architecture.json\":{\"exists\":true,\"contentHash\":\"12804ab553f2075a72a80f956f358fcf1b7a82e37525132998d52898a8826a59\"},\"dependency:src/ledger/LedgerRepository.ts\":{\"exists\":true,\"contentHash\":\"7efc5f7f7c854f259d7a37e88edd",
+      "target": {
+        "path": "harness/reports/goal-alignment-initial-repair-results.json",
+        "sha256": "2236c1fd1771d2bb145b333aef2822f664facdbf7b118503f3156ae17e27e423",
+        "bytes": 13052,
+        "case": "f3b8e6a1 initial repair: normal canonical run retains its default design subject and original recovery probe",
+        "status": "PASS"
+      }
+    },
+    {
+      "id": "R13",
+      "original_group": "initial-design-repair::[\"P3 design helper returns complete denied Q evaluation to the original root kernel without a local retry\"]",
+      "original_name": "P3 design helper returns complete denied Q evaluation to the original root kernel without a local retry",
+      "original_infrastructure": false,
+      "classification": "测试夹具或断言的旧语义",
+      "cause": "夹具删除明确交付选择却期待机器补写；现在由实际作者按当前事务身份补选，独立质询和原事务继续，原拒绝/写界/恢复断言保留。",
+      "disposition": "已修并定向通过",
+      "original_error_excerpt": "AssertionError [ERR_ASSERTION]: only unusable output gets a same-role format supplement\n    at scenario (D:\\1.code\\agent-maison\\harness\\tests\\unit\\initial-design-repair.unit.test.ts:692:14)\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async withFreshCuHost (D:\\1.code\\agent-maison\\harness\\tests\\unit\\lifecycle-evolution.unit.test.ts:191:5)\n    at async Object.runSelectedCases (D:\\1.code\\agent-maison\\harness\\tests\\unit\\initial-design-repair.unit.test.ts:1269:11)\n    at async D:\\1.code\\agent-maison\\harness\\tests\\unit-worker.ts:49:22",
+      "target": {
+        "path": "harness/reports/goal-alignment-initial-repair-results.json",
+        "sha256": "2236c1fd1771d2bb145b333aef2822f664facdbf7b118503f3156ae17e27e423",
+        "bytes": 13052,
+        "case": "P3 design helper returns complete denied Q evaluation to the original root kernel without a local retry",
+        "status": "PASS"
+      }
+    },
+    {
+      "id": "R14",
+      "original_group": "initial-design-waiting::[\"f3b8e6a1 waiting: design author and independent questioning keep one open transaction across waiting\"]",
+      "original_name": "f3b8e6a1 waiting: design author and independent questioning keep one open transaction across waiting",
+      "original_infrastructure": false,
+      "classification": "测试夹具或断言的旧语义",
+      "cause": "实际作者补回选择时须使用当前草稿根身份，不能复制旧Q之前的引用SHA。",
+      "disposition": "已修并定向通过",
+      "original_error_excerpt": "Error: AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:\n\n  (after.some(row => row.type === 'design_authority_repair' && row.stage === 'published' && row.outcome === 'recovered'))\n\n    at D:\\1.code\\agent-maison\\harness\\tests\\unit\\initial-design-waiting.unit.test.ts:242:11\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async withFreshCuHost (D:\\1.code\\agent-maison\\harness\\tests\\unit\\lifecycle-evolution.unit.test.ts:191:5)\n    at async Object.repairWaiting [as run] (D:\\1.code\\agent-maison\\harness\\tests\\unit\\initial-design-waiting.unit.test.ts:156:3)\n    at async Object.runSelectedCases (D:\\1.code\\agent-maison\\harness\\tests\\unit\\initial-design-waiting.unit.test.ts:334:11)\n    at async D:\\1.code\\agent-maison\\harness\\tests\\unit-worker.ts:49:22\noriginals: D:\\1.code\\agent-maison\\harness\\reports\\test-runtime-control\\failure-ZzhW0R\n    at D:\\1.code\\agent-maison\\harness\\tests\\unit\\initial-design-waiting.unit.test.ts:254:13\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async withFreshCuHost (D:\\1.code\\agent-maison\\harness\\tests\\unit\\lifecycle-evolution.unit.test.ts:191:5)\n    at async Object.repairWaiting [as run] (D:\\1.code\\agent-maison\\harness\\tests\\unit\\initial-design-waiting.unit.test.ts:156:3)\n    at async Object.runSelectedCases (D:\\1.code\\agent-maison\\harness\\tests\\unit\\initial-design-waiting.unit.test.ts:334:11)\n    at async D:\\1.code\\agent-maison\\harness\\tests\\unit-worker.ts:49:22",
+      "target": {
+        "path": "harness/reports/goal-alignment-waiting-results.json",
+        "sha256": "d31179493151ea42d7c0aa9f3685061357e8a15a6fc0165b71165a721df98446",
+        "bytes": 1067,
+        "case": "f3b8e6a1 waiting: design author and independent questioning keep one open transaction across waiting",
+        "status": "PASS"
+      }
+    },
+    {
+      "id": "R15",
+      "original_group": "real-chain::[\"66457a08 real entry: selection closure derived→accept/readiness→in-memory fidelity→spec→plan PASS\"]",
+      "original_name": "66457a08 real entry: selection closure derived→accept/readiness→in-memory fidelity→spec→plan PASS",
+      "original_infrastructure": false,
+      "classification": "测试夹具或断言的旧语义",
+      "cause": "缺选型决定先由真实consumer拒绝，再由作者明确选入；定义完成在实际核验交回处观察，不为了观察额外派作者。",
+      "disposition": "已修并定向通过",
+      "original_error_excerpt": "候选 ledger-refresh 未通过设计闭包门（blocked）：change_unit_design_closure_incomplete: 显式交付目标须声明其采用的选型决定 decision:ledger-ui-selection；依赖闭包不会代作者认领交付。",
+      "target": {
+        "path": "harness/reports/goal-alignment-real-selection-final-results.json",
+        "sha256": "a863d58980f2451ea5cc95ec344ff851860d60a3eec6d322b4e9979236043348",
+        "bytes": 1025,
+        "case": "66457a08 real entry: explicit selection→accept/readiness→in-memory fidelity→spec→plan PASS",
+        "status": "PASS"
+      }
+    },
+    {
+      "id": "R16",
+      "original_group": "real-chain::[\"66457a08 real entry: derived ref auto-closure; original B2 unknown design→owner halt→formal readiness recovery\"]",
+      "original_name": "66457a08 real entry: derived ref auto-closure; original B2 unknown design→owner halt→formal readiness recovery",
+      "original_infrastructure": false,
+      "classification": "测试夹具或断言的旧语义",
+      "cause": "缺选型决定先由真实consumer拒绝，再由作者明确选入；定义完成在实际核验交回处观察，不为了观察额外派作者。",
+      "disposition": "已修并定向通过",
+      "original_error_excerpt": "候选 ledger-refresh 未通过设计闭包门（blocked）：change_unit_design_closure_incomplete: 显式交付目标须声明其采用的选型决定 decision:ledger-ui-selection；依赖闭包不会代作者认领交付。",
+      "target": {
+        "path": "harness/reports/goal-alignment-real-selection-results.json",
+        "sha256": "3d022317d5cb67344f93b452282a44a390c75b8fa5872a8f17af6e25a90b19dc",
+        "bytes": 1587,
+        "case": "66457a08 real entry: explicit selection; original B2 unknown design→owner halt→formal readiness recovery",
+        "status": "PASS",
+        "reuse_note": "该文件中旧CU用例PASS有效；另一新CU用例随后单独修复通过。后续观察点改动在oldCu分支直接返回，不改变此分支。"
+      }
+    },
+    {
+      "id": "R17",
+      "original_group": "real-chain-seams::[\"RC-10 20261019真实输入：设计修订、入口声明补齐、coding资源归属及UT交接\"]",
+      "original_name": "<suite-worker>",
+      "original_infrastructure": true,
+      "classification": "测试夹具或断言的旧语义",
+      "cause": "85分钟超时的两个基础设施记录源自旧夹具：遗漏CU选择没有实际作者补、报告写手藏在普通作者钩子、交接强求旧阶段回执。改由原设计作者明确选入、独立writer写报告、当前职责/上游证据决定交接；未改超时。",
+      "disposition": "已修并定向通过",
+      "original_error_excerpt": "test invocation timeout: C:\\Users\\shengqsq\\AppData\\Local\\Temp\\mu-W6Fmvs\\3\\maison-rules-ioZjAq\noriginals: D:\\1.code\\agent-maison\\harness\\reports\\test-runtime-control\\failure-fjLd6O",
+      "target": {
+        "path": "harness/reports/goal-alignment-rc10-results.json",
+        "sha256": "b13243d35d8c1f37b35367a58541940156f2ab8fdc4d0415cc76a8da0099dfb5",
+        "bytes": 790,
+        "case": "RC-10 20261019真实输入：设计修订、入口声明补齐、coding资源归属及UT交接",
+        "status": "PASS"
+      }
+    },
+    {
+      "id": "R18",
+      "original_group": "real-chain-seams::[\"RC-10 20261019真实输入：设计修订、入口声明补齐、coding资源归属及UT交接\"]",
+      "original_name": "<suite-runtime>",
+      "original_infrastructure": true,
+      "classification": "测试夹具或断言的旧语义",
+      "cause": "85分钟超时的两个基础设施记录源自旧夹具：遗漏CU选择没有实际作者补、报告写手藏在普通作者钩子、交接强求旧阶段回执。改由原设计作者明确选入、独立writer写报告、当前职责/上游证据决定交接；未改超时。",
+      "disposition": "已修并定向通过",
+      "original_error_excerpt": "test invocation timeout after 5100000ms\noriginals: D:\\1.code\\agent-maison\\harness\\reports\\test-runtime-control\\failure-ZWx1W8",
+      "target": {
+        "path": "harness/reports/goal-alignment-rc10-results.json",
+        "sha256": "b13243d35d8c1f37b35367a58541940156f2ab8fdc4d0415cc76a8da0099dfb5",
+        "bytes": 790,
+        "case": "RC-10 20261019真实输入：设计修订、入口声明补齐、coding资源归属及UT交接",
+        "status": "PASS"
+      }
+    },
+    {
+      "id": "R19",
+      "original_group": "real-chain-seams::[\"RC-12 upstream design-decline: current artifact → verifier → owner → original coding recheck\"]",
+      "original_name": "RC-12 upstream design-decline: current artifact → verifier → owner → original coding recheck",
+      "original_infrastructure": false,
+      "classification": "测试夹具或断言的旧语义",
+      "cause": "旧夹具强求阶段物理closed/receipt，不能表达共同完成事实；当前职责仍要求fresh工具结果、真实源码/编译及独立核实。",
+      "disposition": "已修并定向通过",
+      "original_error_excerpt": "{\"phases\":[\"work-unit-author\",\"coding-verifier-format-repair\",\"review\",\"design-repair-author\",\"design-repair-questioning\",\"work-unit-author\",\"spec-verifier-format-repair\",\"plan-verifier-format-repair\",\"coding-verifier-format-repair\",\"review\"],\"end\":{\"ts\":\"2026-11-09T05:11:33.454Z\",\"type\":\"run_end\",\"status\":\"HALTED\",\"halt_reason\":\"executor_waiting\",\"error\":\"原独立核验 review-i10 已真实交回；当前签名指令、反馈、研究输入、权限和产品原件均未变化，没有新的可执行工作。保留全部未完项，补齐原producer/对象证明、真实条件改变或用户明确继续后接回，不重发同一请求。\",\"run_disposition\":\"WAITING\",\"run_wait_kind\":\"external\"},\"handoffBlocked\":{\"phase\":\"coding\",\"detail\":\"coding lacks its real closure receipt: coding: verdict=PASS next=run_verifier_for_repair\\n    WARN/MAJOR file_completeness: 5/17 个文件缺失：\\n  - 02-Feature/WalletMain/src/main/ets/presentation/components/SmsVerificationSheet.ets\\n  - 02-Feature/WalletMain/src/main/ets/presentation/pages/CardOpenResultPage.ets\\n  - 02-Feature/WalletMain/src/main/ets/\\n    WARN/MAJOR page_registration: 以下实际页面所属模块未识别到静态路由形式，须由 review/真机核验可达性：02-Feature/WalletMain/src/main/ets/presentation/pages/AddBankCardPage.ets、02-Feature/WalletMain/src/main/ets/presentation/pages/AllBanksPage.ets、02-Feature/WalletMain/src/main/ets/p\\n    WARN/MAJOR naming_conventions: 1 处命名规范问题：\\n  - 02-Feature/WalletMain/src/main/ets/shared/constant/BankConstants.ets:4: 资源 key \\\"*\\\" 不是 snake_case\\n    WARN/MAJOR component_uncurated: WalletMain/src/main/ets/presentation/pages/AddBankCardPage.ets#buildAddBankCardPage: uncurated；按需增量策展\\n    WARN/MAJOR change_unit_feature_projection: canonical CU 映射完整；use_cases_required=true，dag_required=true。实现引用仅作定位，不证明行为完成。\\n以下私有实现定",
+      "target": {
+        "path": "harness/reports/goal-alignment-rc12-results.json",
+        "sha256": "64f6f5e6e8795ea8ffc46a81b3482ececdeabc39bebb656a5323a0c97794633c",
+        "bytes": 807,
+        "case": "RC-12 upstream design-decline: current artifact → verifier → owner → original coding recheck",
+        "status": "PASS"
+      }
+    },
+    {
+      "id": "R20",
+      "original_group": "design-authority-repair-content::[\"design-authority-repair: S16-c1804p physical exit after publication before event resumes original transaction without a second revision\"]",
+      "original_name": "design-authority-repair: S16-c1804p physical exit after publication before event resumes original transaction without a second revision",
+      "original_infrastructure": false,
+      "classification": "测试夹具或断言的旧语义",
+      "cause": "同一修复夹具的选择/身份旧假设；继续严格验证物理发布中断复用原作者与Q、不得再升版。",
+      "disposition": "已修并定向通过",
+      "original_error_excerpt": "AssertionError [ERR_ASSERTION]: {\"outcome\":\"published\",\"recovered\":false,\"step\":\"post_publish\",\"revision\":3,\"reason\":\"已发布 rev 3、之后失败：the published transaction must reuse its real original author and Q reports\"}\n    at Object.resumePhysicalDesignPublication (D:\\1.code\\agent-maison\\harness\\tests\\unit\\initial-design-repair.unit.test.ts:791:11)\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async Object.run (D:\\1.code\\agent-maison\\harness\\tests\\unit\\design-authority-repair.unit.test.ts:974:9)\n    at async runSelectedCases (D:\\1.code\\agent-maison\\harness\\tests\\unit\\design-authority-repair.unit.test.ts:1639:7)\n    at async Object.runSelectedCases (D:\\1.code\\agent-maison\\harness\\tests\\unit\\design-authority-repair-content.unit.test.ts:9:20)\n    at async D:\\1.code\\agent-maison\\harness\\tests\\unit-worker.ts:49:22",
+      "target": {
+        "path": "harness/reports/goal-alignment-publication-results.json",
+        "sha256": "2e762c1cdf476b7a6868f111fb2f8487f7bc7334b911f852763226c4ef8d3e41",
+        "bytes": 1126,
+        "case": "design-authority-repair: S16-c1804p physical exit after publication before event resumes original transaction without a second revision",
+        "status": "PASS"
+      }
+    },
+    {
+      "id": "R21",
+      "original_group": "design-authority-repair-content::[\"design-authority-repair: S16-c5bdd 原需求内架构和CU内容借锁修订、正式发布并自动接续施工\"]",
+      "original_name": "design-authority-repair: S16-c5bdd 原需求内架构和CU内容借锁修订、正式发布并自动接续施工",
+      "original_infrastructure": false,
+      "classification": "测试夹具或断言的旧语义",
+      "cause": "新增设计决定属于作者交付选择，须在实际CU草稿明确选入；原正式发布和自动续作验收不变。",
+      "disposition": "已修并定向通过",
+      "original_error_excerpt": "AssertionError [ERR_ASSERTION]: content revision must run through the real CU consumer while borrowing feature locks\n    at D:\\1.code\\agent-maison\\harness\\tests\\unit\\design-authority-repair.unit.test.ts:1035:13\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async withFreshCuHost (D:\\1.code\\agent-maison\\harness\\tests\\unit\\lifecycle-evolution.unit.test.ts:191:5)\n    at async runSelectedCases (D:\\1.code\\agent-maison\\harness\\tests\\unit\\design-authority-repair.unit.test.ts:1639:7)\n    at async Object.runSelectedCases (D:\\1.code\\agent-maison\\harness\\tests\\unit\\design-authority-repair-content.unit.test.ts:9:20)\n    at async D:\\1.code\\agent-maison\\harness\\tests\\unit-worker.ts:49:22",
+      "target": {
+        "path": "harness/reports/goal-alignment-content-results.json",
+        "sha256": "4cc4e7c53fc9fd938fd56de8e7e6e13725aa848964f90f10ea5d4093bd7a31be",
+        "bytes": 1075,
+        "case": "design-authority-repair: S16-c5bdd 原需求内架构和CU内容借锁修订、正式发布并自动接续施工",
+        "status": "PASS"
+      }
+    }
+  ],
+  "source": {
+    "production_unchanged_after_full": true,
+    "final_tested_sources_unchanged": true,
+    "final_file_hashes": {
+      "docs/concepts/blueprint-design-inputs.md": "ac5a8a3850679456ea0f1cd742f1bf1773e2dc53ee3525bdcd734bf838b370fe",
+      "docs/concepts/component-assets.md": "a6bbff9ae32607182e4f598ca2ab2a8579663537437b27b987d91dfe86f3fa88",
+      "harness/scripts/check-review.ts": "1b36e968e9c8f03537d2a005e95b65cb3e1af89431dfcf774a1592b8211fa930",
+      "harness/scripts/goal-phase-runtime.ts": "cbf77b1030bb81ae7534d258c90abf3a2bd775c09f87e21dee142acc6f83c0b1",
+      "harness/scripts/utils/change-unit-design-gate.ts": "f0aab6f1900ef06799ba142eb20ebfb4f2b7b2fb3d94827fddca79fc102beeee",
+      "harness/scripts/utils/change-unit-design-preparation.ts": "18d00249445269f9ea59199f8541ad5b0ce44f8f535543eabaec947d7c91394b",
+      "harness/scripts/utils/change-unit-provider-boundary.ts": "542538ee1ca3f85516d31855aa12bfd22c9e0cd8ac9626c632b4c3bd896b34f5",
+      "harness/scripts/utils/design-repair-unattended.ts": "a5a2a3826d1084778cd4ff8a6084f1e14c8c4111ed94b28f14d2d92bc29ccded",
+      "harness/scripts/utils/repair-responsibility.ts": "b85e80af2ef6ed1a4b619c39836f6b284e56dccccc456089ffbdbe7208c432a2",
+      "harness/tests/fixtures/change-unit/negative-cases.yaml": "fcd5e06fce0469ef5680fdd2100d713420ccdb63a27f05bcbce4aff10b23ef25",
+      "harness/tests/unit/blueprint-skill-projection.unit.test.ts": "95ba229948971e5b15da4662dd0714e6bdc7a37d2fcd6430344e15d08b51ee07",
+      "harness/tests/unit/change-unit-content-revision.unit.test.ts": "89754589addeedc9728a1c779faf5247b41845f2a642e995327bbd6556cdfa6a",
+      "harness/tests/unit/change-unit-progression.unit.test.ts": "4468d9152a7dd7509c536fee0c6576ae1e4a9bd8ac413793437637714175e602",
+      "harness/tests/unit/component-design-handoff.unit.test.ts": "f1389811839ed0b3ba09ccaaee817153f48ace4dd620a81f16e3d1063633c2c4",
+      "harness/tests/unit/design-authority-repair.unit.test.ts": "7eb70e2a90c9851a41e42c78a69daac0791c9a682d90854bb2721fffa9047fb6",
+      "harness/tests/unit/execution-scope.unit.test.ts": "6a9672a256534a4d605ce7919128fc6d50e4183bcbdbdc7bd0600b27b9092c78",
+      "harness/tests/unit/goal-phase-runtime.unit.test.ts": "5d5cc1a53b2ab38c3938dd62f93e4f9b34da7be2910e4d47579931454d14ca54",
+      "harness/tests/unit/initial-design-repair.unit.test.ts": "d31cc639e33e8a82b640e179a914d042351a5f289dfb3bd49cd15ae383c81b60",
+      "harness/tests/unit/initial-design-waiting.unit.test.ts": "15d64f5432a75de98479f4b26c136af3ca75d0f2233c633c8f1a0d46e6675dc4",
+      "harness/tests/unit/real-chain.unit.test.ts": "c6b367e6f5e2b1de392e2a6ffaa741a9524b2137879939678c28187749d0aee8",
+      "harness/tests/utils/host-rule-combination.ts": "c8b9a4cb086b3240b317c42203fa984a39288d4877e8de4ab5dc567e66a574e8",
+      "openspec/specs/app-component-blueprint/spec.md": "d0accc31cc2a334f557353ef4d1398a6e73ef5d14a0dd294c689ca19ff03e849",
+      "openspec/specs/change-unit-continuous-progression/spec.md": "5c02ad6e2a020614691fb726daa195687b0b81bca97d859161d345e5e00e8710",
+      "skills/project/component-design/SKILL.md": "626bce8a12b83683271ba2250897be65619771d1f7beb9a32b76ac6ec5572e0a",
+      "skills/reference/app-component-blueprint-workflow.md": "9dbc8d132cff53d4e8ae9a467b737862971f3b5ca47174a24ed04715d56e2edf",
+      "skills/reference/spec-workflow-detail.md": "6023feb54f08c052b8ddcfa11bb7d2b7711b0a3579ba3d7a69632095ad5dfe6f"
+    },
+    "pre_full_snapshot": {
+      "path": "harness/reports/goal-alignment-tested-source.json",
+      "sha256": "5be84867447346f4c07af551f9da7921ab3e0dbbaa31a60db31a0291923e8b6d",
+      "bytes": 2287
+    }
+  },
+  "reviews": [
+    {
+      "round": 1,
+      "status": "范围复核",
+      "requested_model": "opus",
+      "effort": "high",
+      "actual_models": [
+        "claude-opus-5-5"
+      ],
+      "permission_denials": [],
+      "duration_ms": 439353,
+      "tools": [
+        "Read",
+        "Grep",
+        "Glob"
+      ],
+      "permission_mode": "plan",
+      "session_id": "ed673c3e-32f0-4941-9bb4-602e6f51a5fb",
+      "raw": {
+        "path": "harness/reports/goal-alignment-repair-review-r1.json",
+        "sha256": "7146bf8347b49f4464b1190724338f80d8f993d4be35473283a9a736b01430c5",
+        "bytes": 11975
+      },
+      "conclusion": "# a7d47252 与 72b6f0d9 不一致的返修：最小完整边界\n\n本次只读复核，没改文件、没跑命令（方案文件本会话写不了，直接贴在下面）。磁盘现状：开发方已经把 `completeChangeUnitDesignRefs` 和闭包缺失报错 `change_unit_design_closure_incomplete` 整段删掉，两处调用也去掉了。有四处测试还在引用旧行为：\n- `blueprint-skill-projection.unit.test.ts:42,109-128`\n- `component-assets.unit.test.ts:277-299`\n- `change-unit-progression.unit.test.ts:394`\n- `negative-cases.yaml:7`\n\n三项都要在本批修：必修 1 是阻断类③（无界消耗），必修 2 是类①（正确性），顺带问题是类④（自动恢复确定性失败）。\n\n## 必修 1：审查写手接入统一进展比较（类③：无界消耗）\n\n**根因**\n- **写手原件不带反馈记录**：写手在 `goal-phase-runtime.ts:7921` 派发时没带 `evaluation`（同类的 verifier-format-repair 在 `:7977` 带了）。所以写手原件证明不了\"收到过哪份反馈\"，`workUnitFeedbackDelivered`（`goal-phase-executor.ts:28`）对它永远是\"没交付\"。\n- **进展判断只认作者**：`:7882` 那行进展判断用的\"已交付\"（`:7868`）只拿作者原件比，而写手的问题在 `:7791` 已经被剔出作者返修集合。`evaluateCompletionProgress`（`goal-failure-classifier.ts:929`）遇到\"未交付\"一律不停，往复因此永远不会被判无进展。\n- **派发前比较管不了往复**：`:4227-4246` 只和上一次比材料。材料里带着当前处置文字，A↔B 来回摆时每次都算新材料，这一层本来就拦不住往复。\n\n**最小边界**\n1. 写手的 `workInput` 加上 `evaluation: current.evaluation`，照抄 `:7977`，不新增字段。\n2. \"反馈已交付\"改为按问题的原输出职责判定：作者问题拿作者原件比，写手问题拿同 run 最近一次已完成的写手原件比。`:7859`、`:7868`、`:7876` 三处共用这一个判定。`authorReturned` 按\"对应责任方已交回\"算。\n3. 无进展照旧走 `:7884` 的 `no_progress_guard` 暂停。同 run 恢复照旧走\"用户明确继续\"那条通路。\n4. `needsReviewWriter`（`:7258`）改用既有的产物 owner 判定：问题的 `files` 全部是某个 owner 的 artifact 产物（取自 `readRepairResponsibilityContracts` 的 domains，`repair-responsibility.ts:264-280`），并且 `workUnitExecutionRole({phase: owner}) === 'verifier'`。这样就去掉了字面量 `'review'` 和 `review_report_exists`。\n   - 不能用 `repairOwnerArtifactTargets`（`:522`），它要求文件已存在，报告缺失时查不到。\n   - 已核：缺失项带 `affected_files`（`check-review.ts:1076`）。\n   - 当前视图里拿不到 files 时，保留现有的路径比较作兜底。\n\n**必须保持**\n- 只比较已完成的评估；检查没跑完或输入变化无法判定（`unknown`）时，不能判无进展。\n- 写手只能写审查报告。\n- 不加次数上限、墙钟或账本。\n\n**反例**\n- 往复正例：最多在第 2 次可比评估签名重复时暂停，不靠超时。\n- 写手交回后子问题真实减少：判为有进展，继续。\n- 评估未完成：不暂停。\n- 暂停后用户明确继续：同 run 再派一次写手；没有明确继续时，接续保持原暂停。\n- 作者问题和写手问题同时存在、只有作者交付了：不判无进展。\n\n## 必修 2：`design_refs` 只放显式选择（类①：正确性）\n\n1. 开发方的删补全方向是对的：`deriveClosure` 仍按需计算，整个闭包仍查未决、blocker、contract 未准入和引用解析不到。\n\n2. **需要补的一点（必修）：闭包缺失报错不能整段删，要收窄后保留。**\n   - 收窄后的规则：对每个显式选中的节点，它对应的 `component_asset_selection` 决定，以及经 `blueprintComponentDecisions` 得到的决定，都必须在 `design_refs` 里。有多个决定时全部要求。\n   - 场景、关系、兄弟节点这类普通依赖不要求列出。\n   - 沿用原 issue id，route 仍是 `repair_change_unit`，消息带精确的 `decision:<id>`。\n   - 依据：这是 66457a08 已批准的契约（锚点 `component-assets.unit.test.ts:270-314`，`app-component-blueprint-workflow.md:205` 也这样写）。整段删掉会让 10-15 宿主事故（CU 漏引选型决定）退回到 plan 阶段才发现，多绕一整轮 spec→plan。\n\n3. **下游消费链已核，保持现状即可，不要为了测试变绿去改接：**\n   - `component-selection-check.ts:40,76,103` 只认显式 `design_refs`，**不能改成读闭包**，否则依赖节点上的选型会被隐式认领。\n   - `ownersForAddress` 继续只读显式 refs。\n   - `selectBlueprintSkillContent`（`blueprint-skill-projection.ts:341`）只合并显式 refs，正是要的效果。\n   - `in_scope_modules` 只从 touches 派生，不受影响。\n\n4. **存量 CU**：不做加载期过滤（本来也分不出哪些 ref 是机器补的）。旧 refs 原样保留，走独立审查→设计 owner→`reviseChangeUnitContent` 修订。\n\n5. **文字同步（M50 要求写作指南与工具同源）：**\n   - `design-repair-unattended.ts:966` 作者提示里\"框架只先补齐设计引用闭包\"已经不成立，要改。\n   - `docs/concepts/blueprint-design-inputs.md:20` 改成\"不自动写入任何依赖\"。\n   - `app-component-blueprint-workflow.md:205` 的\"当前闭包目标\"改成\"本 CU 显式选择的目标\"。\n   - `component-design/SKILL.md:90,139` 补一句：作者显式列出要交付的节点（带 acceptance/contracts/use_cases 的）及其选型决定；依赖由机器解析。\n\n6. **测试只能换断言，不能放宽：**\n   - `blueprint-skill-projection` 测试改成断言\"不写回、依赖仍在 `requiredAddresses` 里、只有显式选择才进投影\"。\n   - omitted-scenario 两处改成\"依赖场景不要求列出\"，并补一条反例：依赖场景是 `open_decision` 时，仍报 `change_unit_current_design_unresolved`。\n   - `component-assets` 那段原样保留。\n\n**反例**\n- 兄弟 UI 节点经共享契约进入闭包：不进本 CU 投影，本 CU 也不成为它的 owner。\n- 依赖里有 blocker 或未准入 contract：仍是 `reconcile_blueprint`。\n- 显式节点缺选型决定：设计期报精确地址，校验不改写 CU 字节。\n- 存量 CU 的旧 refs 不被静默删除。\n\n## 顺带问题：组装核验差额回流（本批必修，类④：自动恢复确定性失败）\n\n**为什么本批要修**：必修 2 做完后，没人显式选中的已变更依赖会更常落到 owners=0。现状下这会确定性停在 `WAITING external`，与 §2.2 的停止出口（设计缺口不在其中）和 A10 不符。\n\n**只改 `goal-phase-runtime.ts:5205-5212` 一处**，读 `closure.closure.gaps`，按既有的 `gap.route` 分流：\n\n| 缺口 | 处置 |\n|---|---|\n| 来自 issue 的缺口，route 是 `reconcile_blueprint` 或 `repair_or_add_change_unit` | 合并进同一个 `designRepair` brief，回原设计单元 |\n| 来自覆盖行的缺口，route 同上，**且 `owner === 'unassigned'`** | 同上 |\n| 有 owner 的行（即使 route 是 `reconcile_blueprint`） | 属于证据层，不改设计，继续等待 |\n| knowledge 缺口 | 保留现有分支和 `knowledgeWriterAssets` 的资产写权，不扩大到其它项 |\n| `repair_feature_or_evidence`、`resolve_authority_or_risk`、真实授权或 provider 缺口 | 照旧 `WAITING`，不当 PASS |\n\n**`repair_feature_or_evidence` 的复用边界**\n- **能直接复用：**\n  - `repairInitialDesignOwner`→`runUnattendedDesignRepair`。初始设计自带批量 CU 草稿（`design-repair-unattended.ts:845`），可以修蓝图并批量修订**已有** CU。\n  - 发布后 `recheckReadiness`：CU 升版后其 completion 失效，ready set 会重新选中它，进入子 run 续接（A10）。\n  - 授权缺失时走 `:4789` 原出口。\n  - 根因其实是 CU 承诺缺失的情况，会以 owner=unassigned 或 CU 结构 issue 的形式出现，已被上表覆盖。\n- **本批接不通（不加新机制）：**\n  - owner CU 已经 completion VALID、组装核验却说缺 Feature 映射或证据：ready set 认为全部完成，现在没有\"重开已完成 CU 去补证据\"的路由，接通就得新增路由或状态。本批保持等待，并写清 owner CU、缺口和解除条件。\n  - 需要**新增** CU：批量修订禁止造新 ID（`:925`），作者拒绝后走既有的拒绝/暂停出口。\n\n**反例**\n- 无 owner 的已变更依赖：派设计修复，加进已有 CU 或修蓝图，该 CU 重新施工，组装核验通过（A10 正例）。\n- 有 owner 的证据缺口：不派设计修复，不报 PASS。\n- 设计修复发布后同一缺口原样还在、且没有相关变化：必须有用例证明会走既有进展判断、可续暂停，不能无限重派。\n- 授权或风险缺口：保持等待。\n\n## 非阻断建议\n- `design-repair-unattended.ts:184` 的旧签名 `designWorkHasNoProgress` 没有生产调用，可以顺手删。\n- `openspec/specs/app-component-blueprint/spec.md:847` 里\"派生 design_refs\"的措辞可以同步。\n- `docs/architecture.md` §5 失败处置表可以补一行\"组装核验设计缺口→回设计单元\"。\n- 设计期能否提前发现\"已变更节点没人显式选\"，以后再议，本批不加检查。\n\n## 验证\n- **`npm run test:changed`**：另外要显式跑它不会选中的 release-only 组：`component-assets`、`change-unit-progression`、`blueprint-skill-projection`、`initial-design-repair`、`design-authority-repair*`、production-closure，以及写手收敛相关套件。\n- **写手往复替身探针**：要自然结束在 `no_progress_guard`，作者和写手调用都是个位数，不靠超时。\n- **收口全量**：按仓库要求跑；打包和上宿主由你决定。"
+    },
+    {
+      "round": 2,
+      "status": "返修（两条）",
+      "requested_model": "opus",
+      "effort": "high",
+      "actual_models": [
+        "claude-opus-5-5"
+      ],
+      "permission_denials": [],
+      "duration_ms": 497303,
+      "tools": [
+        "Read",
+        "Grep",
+        "Glob"
+      ],
+      "permission_mode": "plan",
+      "session_id": "19ab8490-4ce8-4bff-967e-73fdde6ad4ed",
+      "raw": {
+        "path": "harness/reports/goal-alignment-repair-review-r2.json",
+        "sha256": "cf8baeb2c7c14711ad52d0fa301a5b7a9cb049c1d87f041f00342bd56ca05717",
+        "bytes": 8270
+      },
+      "conclusion": "## 复核结论：不通过，有 2 条必修\n\n只用 Read/Grep 看了代码，没跑任何测试，没改文件。范围按 r1 冻结。r1 的必修 1、必修 2 主体已按边界落实。剩下两个问题：一个是本批新加的分支带进来的回归，另一个是 r1 要求证明的情况，本批没有覆盖。\n\n---\n\n### 必须修复\n\n**1. 写手被局部暂停后，主循环可能空转，永远不停也不派调用**（类③无界消耗 / 类④本该停下交回却一直卡着）\n\n- **触发条件**：同时满足下面三点：\n  - 写手的往复已经被判无进展（`goal-phase-runtime.ts:7972`）；\n  - 另一个检查族还挂着一个 `verify` 问题，所以走 `:7974-7975` 的 `continue`，跳过写手；\n  - 这个 `verify` 本轮执行不了，比如框架崩溃类的 verify，或者没有 verifier_request。这种情况在 `:8054-8056` 被直接跳过，什么都不跑。\n- **后果**：\n  - 循环结束后走到 `:8170`，写手那条 repair 还在，于是看能不能停：\n    - `repairs` 已经把写手的问题剔掉，变成空的；\n    - 所以 `feedbackAwaitingEvaluation` 是 false，`:8171` 那个等待不会触发；\n    - 程序执行 `continue currentWork`。\n  - 下一轮读到的状态完全一样，再走一遍同样的路，`:8186` 的收尾等待永远到不了。\n  - 结果是 run 一直空转读盘，不发调用、不写暂停，也不交回给用户。\n  - 改之前，`verify` 单独存在时会走到 `:8186` 正常等待。是这次的 `continue` 把这条路堵住了。\n- **最小修法**：\n  - 把本轮被局部暂停的独立职责问题记下来；\n  - `:8170` 只按\"没被暂停的 repair\"决定要不要 continue；\n  - 如果本轮没执行检查、没派作者，剩下的 repair 又全是已暂停的，就 `wait(独立职责, …, 'no_progress_guard')`。\n  - 不需要新增状态或次数。\n- **补一个反例**：写手往复，同时另一族挂一个执行不了的 verify。要求它自然停在 WAITING，不靠超时。\n\n**2. 组装核验的设计修复发布后，如果同一缺口还在，没有任何进展判断**（类③；这是 r1 顺带问题里点名要用例证明的那条，本批没有满足）\n\n- **触发路径**：\n  - `goal-phase-runtime.ts:4805-4807`：发布成功且恢复后，无条件 `continue`；\n  - `:5216-5220`：重新跑组装核验，同一缺口原样还在，又派一次设计修复。\n- **为什么拦不住**：\n  - 修复签名里包含输入指纹（`:5064`），每次发布都会改蓝图字节，所以每轮都算新签名、开新事务；\n  - `design-repair-unattended.ts:1170-1171` 发布后就清空比较历史，质询那层的进展比较跨不过事务。\n  - 这个缺口是组装层的，质询（独立核查设计的那一步）本身看不到。只要质询放行了一次没修好的发布，就会\"作者 → 质询 → 发布 → CU 重施工 → 组装核验 → 再派\"一直循环。\n  - 本批把派发范围从知识缺口扩大到所有设计类路由，这条路能触发的情况也随之变多。\n  - 现有测试只证明了\"能派过去并成功发布一次\"，以及\"路由分得对\"（`design-authority-repair-daily.unit.test.ts:77`、`component-closure.unit.test.ts:357`）。\n- **最小修法**：\n  - 派发前复用已有的 `design_authority_repair` 已发布事件来比较：上一次已发布的组装核验修复带着同一组缺口编号和依据，本次核验又原样报出来，就 `stop('no_progress_guard')`，之后可以续跑；\n  - 用户明确继续时放行一次；\n  - 不加次数，不加新状态。\n- **补一个反例**：发布后缺口原样还在，要求停在可续暂停。\n\n---\n\n### 非阻断建议\n\n- **测试夹具和生产对不上**：夹具给 `conclusion_with_verdict` 加了 `affected_files`（`goal-phase-runtime.unit.test.ts:178-180`），但生产的 `check-review.ts:548-611` 没有这个字段。\n  - 实际后果：生产里\"报告缺结论\"会走作者，不走写手。按 artifact 写权，作者可以改审查报告。\n  - 这不是回归，老的写手判定同样要求问题带文件路径。只是这个测试证明的往复，在生产里并不是这个形状。\n  - 建议补一例生产形状的用例，或者在测试名里注明。\n- **旧文字还没清**：\n  - `design-repair-unattended.ts:10` 头注释\"已知CU闭包\"已经过时；\n  - `:184` 旧签名 `designWorkHasNoProgress` 还在，r1 的这条非阻断建议没处理。\n\n### 撤回意见\n\n无。\n\n---\n\n### 已核通过、无需再改\n\n- **写手的反馈与进展**：\n  - 写手现在带着 `evaluation` 派发（`:7979-7980`）。\n  - \"反馈已交付\"有三个条件：原件交回、产品没变、相关输入没变。输入不可比（`unknown`）时不会判无进展。\n  - 往复会在第 2 次重复签名时停下：没变化的冷恢复保持暂停，明确继续时再派一次。\n  - 作者和写手的问题同时存在、只有一方交付时，不会判无进展，因为 `feedbackToResponsibleProducers` 要求所有责任方都收到反馈。\n- **产物负责人**：负责人从 artifact domain 加执行角色推出来（`repair-responsibility.ts:488-512`），按阶段名和检查 id 的特判已经删掉。\n- **design_refs**：\n  - 只保留作者选择，整个依赖闭包仍然检查未决项、blocker 和未准入契约（`change-unit-design-gate.ts:219-240`）；\n  - 显式目标的选型决定仍然要求作者写进去（`:207-218`），touches 由 validator 保证已在 design_refs 里；\n  - 投影只合并显式选择的引用；\n  - 指针升版只做规范校验，不跑设计门禁，不会因为这次收窄而失败。\n- **组装核验分流**：\n  - 知识缺口保留原来的 B1 处理和资产写权，写权按缺口编号判定，混在一起时不会丢；\n  - 已有负责 CU 的证据缺口、provider 缺口、授权缺口都不派设计修复；\n  - 派发过程不修改核验原件。\n- **文档同步**：component-design SKILL、workflow 文档和 spec 的口径已经和\"不回写依赖、作者显式选择\"一致。\n\n**结论**：2 条必修修完、各补一个反例，并通过定向用例后，就可以收口。"
+    },
+    {
+      "round": 3,
+      "status": "PASS",
+      "requested_model": "opus",
+      "effort": "high",
+      "actual_models": [
+        "claude-opus-5-5"
+      ],
+      "permission_denials": [],
+      "duration_ms": 191602,
+      "tools": [
+        "Read",
+        "Grep",
+        "Glob"
+      ],
+      "permission_mode": "plan",
+      "session_id": "b04c0106-1687-40f7-8244-b067334073bb",
+      "raw": {
+        "path": "harness/reports/goal-alignment-repair-review-r3.json",
+        "sha256": "1c790af83626859d8230036081bd6831e1cf42db11f74e2084355b6f282685c1",
+        "bytes": 7643
+      },
+      "conclusion": "## 复核结论：PASS，没有阻断\n\n这次只用 Read/Grep 看了代码和 r2 原文。没跑测试，也没写任何文件，包括 plan 模式要求的计划文件：你明确禁止写文件，以你的要求为准。r1 已通过的设计没有重开。\n\n### r2 必修 1（写手被暂停后主循环空转）：已修好\n\n- **局部暂停的记录**：`harness/scripts/goal-phase-runtime.ts:7932` 每轮新建一个临时 Set；`:7975-7978` 判定无进展时，把写手的报告文件记进去，然后继续处理其它检查。没有新增持久状态，也没有新增次数。\n- **收尾判断**：`:8171-8178` 会看剩下的 repair 是否全部属于本轮被暂停的写手。如果是：\n  - 本轮执行过检查：再走一轮；\n  - 本轮没执行任何检查：按 `no_progress_guard` 进入可续的 WAITING。\n- **\"全部属于暂停写手\"这个判断靠得住**：\n  - 它按对象引用比较；\n  - `independentArtifactRepairs` 直接从同一次读出的 `completionBlocking` 里取问题对象（`utils/repair-responsibility.ts:496-509`）；\n  - 所以同一轮读出的 `after.independent` 和 `after.disposition` 是同一批对象，不会因为是复制品而永远对不上。\n- **不会无界循环**：\n  - \"执行过检查\"只在条件真有变化时才成立，因为检查要先过 `hasNewWorkConditions` 才会跑；\n  - 一个跑不了的 verify 走到 `:8057` 会直接跳过，不会让\"执行过检查\"变成真，也就买不到下一轮。\n- **新反例是真生产形状**：\n  - UT 返回的是 `framework_bug`/`framework_internal` 的 FAIL，生产上会落成 `verify` 动作（`utils/check-disposition.ts:445`）；\n  - 这个 UT 没有 verifier_request，正好是 r2 描述的触发条件；\n  - 测试断言写手 2 次、UT 只执行 1 次、自然停在 WAITING，并且明确要求不靠外部中断收敛。\n- **间接空转路径也排查了**：担心的是 `:8163` 因为\"观察到的输入变了\"而反复 `continue`。\n  - 写手被判无进展有两个前提：检查在写手之后跑过，且写手的相关输入没变（这里读的是当前文件值，见 `verify-feature-completion.ts:511-541`）；\n  - 所以检查之后不会剩下只被它看到、写手却看不到的输入变化；\n  - 这条路实际触发不了，也不是本批引入的。\n\n### r2 必修 2（组装核验修复发布后没有进展判断）：同意撤回，这条从必修移到撤回\n\n- **改动确实已撤**：\n  - `componentClosureDesignRepair` 在 `harness/scripts` 和 `harness/tests` 下都搜不到了；\n  - `initial-design-delivery.ts`、`component-closure.unit.test.ts`、`design-authority-repair-daily.unit.test.ts` 都不在本次会话开始时的改动列表里。\n- **剩下的是原有分支**：`goal-phase-runtime.ts:4800-4808` 的发布后 `continue` 是原来的 knowledge 分支，形状没变。\n- **撤回理由**：r2 判这条为必修，前提是本批把派发范围扩大到了所有设计类路由。扩面撤掉以后，剩下的跨发布比较缺口是原有的，不是本批引入的回归。\n- **对外口径**：你的口径是对的。这件事不能报告成已完成，也不能宣称 goal A10 全部完成。非知识类组装缺口仍然停着等待；原 knowledge 分支同样缺跨发布比较。这两点都要在报告里写明，作为后续待办。\n\n### 已吸收的非阻断建议（审查报告\"缺结论\"该交给谁）\n\n- **生产输出带上了报告文件**：`check-review.ts:545` 给 `conclusion_with_verdict` 的所有 FAIL、WARN、PASS 结果都带上了报告路径。生产里的\"缺结论\"现在会交给独立写手，不再落到普通作者头上。\n- **真实的产品否定洗不掉**：最坏的情况是报告写着\"通过\"，但仍列着必须返修项（`:571-573`）。\n  - 这条交给写手修，写手只能把报告改成前后一致；\n  - 如果写手把结论改成\"不通过\"，`negative_verdict_closure`（`:1150-1173`）会独立拦下来；\n  - 这个检查不带报告文件、按产品否定处理，所以仍然交给作者修产品；\n  - 写手主动删掉自己报的问题行，属于审查者本来就有的权限，不是本批新开的口子。\n- **测试不再手造归属**：`goal-phase-runtime.unit.test.ts:177-184` 直接调用生产的 `review.check`，筛出两个报告检查，并断言它们的文件归属来自生产输出。r2 指出的\"测试形状和生产对不上\"已经解决。\n\n### 非阻断建议（可选，不影响收口）\n\n- **路径写法不一致**：`check-review.ts:545` 在 request 模式下给的 `ctx.request.inputs.review_report` 是绝对路径（`capability-resolution-entry-input.ts:140`）。同文件 `:950` 用的是 `path.relative`。责任判定那边的路径归一化能处理绝对路径，不影响派发；只是报告里会显示绝对路径。想统一的话，改成 `:950` 的写法就行。\n- **r1 留下的旧导出**：`design-repair-unattended.ts:184` 的 `designWorkHasNoProgress` 还在。头注释已经同步了。\n\n### 撤回意见\n\n- r2 必修 2：理由见上，相关扩面已整体撤回。\n\n### 收口还差测试\n\n我没跑测试。按 AGENTS.md 的开发验收要求，本批还需要跑一次 `npm run test:changed`，必选项全部通过才算收口。\n\n这次 `conclusion_with_verdict` 的所有结果都多了文件路径，有可能波及按完整检查对象比较的用例，看结果时请留意：\n- `negative-verdict-gate`\n- `standalone-coding-review`\n- `verifier-production-routing`\n- `review-context`\n- 以及 `tests/utils/check-disposition-baseline.json`"
+    },
+    {
+      "round": 4,
+      "status": "PASS",
+      "requested_model": "opus",
+      "effort": "high",
+      "actual_models": [
+        "claude-opus-5-5"
+      ],
+      "permission_denials": [],
+      "duration_ms": 242001,
+      "tools": [
+        "Read",
+        "Grep",
+        "Glob"
+      ],
+      "permission_mode": "plan",
+      "session_id": "1ae786d1-79d4-46eb-9e84-c348e790fde6",
+      "raw": {
+        "path": "harness/reports/goal-alignment-repair-review-r4.json",
+        "sha256": "dc1c01728fd664a0108fb9df246411afb9122bb07de201af05e87b1caec29352",
+        "bytes": 7640
+      },
+      "conclusion": "## 复核结论：PASS，没有必须修复项\n\n这次只用 Read/Grep 读了 8 个测试文件、21 条原始失败和生产闸门 `change-unit-design-gate.ts:207-217`。没跑测试，也没写任何文件。plan 模式要求写计划文件，但你明确禁止写文件，按你的要求处理。r3 已通过的设计没有重开。\n\n逐条对照 21 条原始失败，测试返修和 r3 生产规则一致：作者必须显式选入交付目标，消费者只校验闭包、不回写。没有发现靠改断言盖掉产品或协议错误，也没有发现直接回归或假绿。\n\n### 逐项核对\n\n1. **content-revision / component-design-handoff**\n   - 删掉 relation 引用会产生一次真实修订；同一份候选再交两次都返回 unchanged，字节不变。\n   - 消费者原样保留作者的选择（`component-design-handoff.unit.test.ts:232-233`）。\n   - 仍断言结论为 `constructable`，且 `requiredAddresses` 里有 relation（`:235`）。闭包校验还在，只是不再冒充交付归属。\n\n2. **initial-design-repair / waiting / physical tail**\n   - 作者替身用当前草稿的 `component_blueprint_ref` 补回已批准的目标（`initial-design-repair.unit.test.ts:286-287`，`initial-design-waiting.unit.test.ts:213`），没有抄旧身份。\n   - machine-session 先断言协调器不会代补缺失的选择（`:299-300`），再断言作者、Q、初始 Q 各只调用 1 次（`:312`）。\"不多叫一次\"的约束保留了。\n   - 格式补充、长终稿、越权写、锁竞争、读就绪失败、旧 FAIL 不改成 PASS 等断言都在。各分支的 purposes 序列只在前面多了真实作者那一步。\n\n3. **design-authority-repair S16-c5bdd**\n   - 作者在 CU 草稿里显式选入两个新增的设计决定（`:1031-1035`）。\n   - 发布、架构生效、发布后接续施工、完成证明这些断言都没动。\n\n4. **real-chain 66457a08**\n   - 先由真实消费者以 `change_unit_design_closure_incomplete` 拒绝，再由作者显式选入，并断言没有被改写（`:1729-1738`）。\n   - 观察点前移到 verifier 和 review 回调。判据还是 `assertCurrentOwnerEvidence`，要么走当前已接受的输入，要么要求 fresh 工具结果、当前没有未完成职责、有 closed/receipt，不会提前判成定义已完成。\n   - \"不得偷偷施工\"的源码字节断言保留（`:1846-1849`）。\n\n5. **execution-scope**\n   - D1：漂移后断言非零退出、输出带 `[execution_scope_frozen]`、原报告和摘要字节不变（`:3241-3245`）。这比旧版要求覆盖报告更严。\n   - UT 缺定义用例：每次 plan 重检的 `related_input_snapshot` 必须不同（`:1575`）。这是按内容生成的快照，同一输入重跑一定变红；作者交回 → plan 通过 → UT 成功的顺序保留了（`:1582`）。\n\n6. **host-rule-combination**\n   - 交接判据改用 `assertCurrentPhaseDutiesSatisfied`，看 fresh 工具结果和当前完成问题（`real-chain.unit.test.ts:86-93`），不再看退休的 closed/receipt 门槛。\n   - review 报告只在实际触发的 `review` 物理调用里写（`goal-runner-testing-integrity.unit.test.ts:656,713`）。传了 `onAuthor` 时，普通作者不会触发这个回调。\n   - RC10 的作者替身恢复的是原记录里明确选择的目标；Q 用 `deepStrictEqual` 核对真实草稿（`host-rule-combination.ts:414-428`），没有调用 `deriveClosure`。\n\n### 必须修复\n\n无。\n\n### 非阻断建议\n\n1. **作者替身没有核对收到的提示**\n   - 位置：`initial-design-repair.unit.test.ts:286`、`initial-design-waiting.unit.test.ts:213`、`host-rule-combination.ts:414-419`。\n   - 现状：这三处无条件补回选择，不先看提示里有没有要求。\n   - 生产提示里已经有这句：`design-repair-unattended.ts:966`\"作者须显式选择本单元要交付的目标及其选型决定\"，所以现在没有实际后果。但以后这句如果被删，这三条测试仍然会绿，而真实作者不知道要补，宿主就会卡住。\n   - 最小改法：在 machine-session（提示由生产生成）和 RC10 的作者回调里，各加一条断言，要求提示包含这句话。\n\n2. **RC10 交接前，上游 spec/plan 仍可能撞旧门槛**\n   - 位置：`host-rule-combination.ts:274`。\n   - 现状：上游证据仍经 `assertCurrentOwnerEvidence` 判断；不走\"已接受输入\"时，会回落到 `assertCurrentPhaseClosed`，也就是 closed/receipt 门槛。\n   - RC12 已经 1/0，说明当前这条路走得通。如果 RC10 定向复验卡在 `HOST_HANDOFF_BLOCKED` 且 phase 为 plan、报 \"lacks its real closure receipt\"，那是测试侧的旧门槛，不是生产错误。届时把上游判据也换成 `assertCurrentPhaseDutiesSatisfied` 即可，不用重开生产。\n\n3. **S16-c5bdd 的断言文案过时**：`design-authority-repair.unit.test.ts:1041` 仍写 \"use the same closure\"，建议改成\"作者显式选择\"。纯文字。\n\n### 撤回意见\n\n无。这是本批测试返修的首轮复核。\n\n### 收口条件（不扩大范围）\n\n- **RC10 定向复验**：原失败是 `real-chain-seams` 整组超时，所以需要在用例预算内跑到 1/0，代码复核不能替代这个结果。\n- **`npm run test:changed`**：必选项全部通过。\n- **全量结果的口径**：官方全量照实报 6046 通过 / 21 失败。21 条已在测试侧返修并定向通过，但不能拼成\"全量全绿\"。\n- **r3 已披露的边界照旧**：非 knowledge 组装缺口仍不会自动派回；knowledge 分支仍缺跨事务比较；不宣称 A10 全部闭环。"
+    }
+  ],
+  "review_command": "Get-Content -Raw <prompt> | claude.cmd -p --model opus --effort high --permission-mode plan --tools Read,Grep,Glob --allowedTools Read,Grep,Glob --settings harness/reports/6a2f8c91/claude-review-readonly-settings.json --strict-mcp-config --mcp-config harness/reports/6a2f8c91/claude-review-no-mcp.json --output-format json --no-session-persistence",
+  "combined_replay": [
+    {
+      "name": "P4 a21473 executed methods require real harness receipts and PASS independently of completion phase reuse",
+      "ok": true
+    },
+    {
+      "name": "P4 a21473 successor scope rejects dropping device or acceptance unit obligations",
+      "ok": true
+    },
+    {
+      "name": "a21473 original public next normalizes machine admission and issues decomposition with the original six calls and immutable history intact",
+      "ok": true
+    },
+    {
+      "name": "P4 a21473 original inputs and 6fe679 framework fault share one isolated design construction and formal completion replay",
+      "ok": true
+    }
+  ],
+  "gates": {
+    "typecheck": {
+      "passed": true,
+      "via": "最终test:changed"
+    },
+    "openspec_strict": {
+      "passed": true,
+      "receipt": {
+        "path": "harness/reports/goal-alignment-openspec.log",
+        "sha256": "2d2015d1c0afae1d69495adc839b574513acda539d0bd0f8c44034a6ff6af5cf",
+        "bytes": 2697
+      }
+    },
+    "plan": {
+      "passed": true,
+      "receipt": {
+        "path": "harness/reports/goal-alignment-plans.log",
+        "sha256": "fb8fff392c8bcb1d51d54b764bc6728e67c7ae898776f06b6c6d1ab6ee1557a5",
+        "bytes": 76
+      }
+    },
+    "diff_check": {
+      "passed": true
+    },
+    "plan_append_only": true,
+    "protected_unchanged": true,
+    "LF": {
+      "passed": true,
+      "files": 30
+    }
+  },
+  "boundaries": {
+    "host_operated": false,
+    "phone_operated": false,
+    "packaged": false,
+    "pushed": false,
+    "version_changed": false,
+    "subagents": false,
+    "new_branch_or_worktree": false,
+    "p4_t5": "pending",
+    "p4_t6": "pending",
+    "nonknowledge_closure_dispatch": "未交付，扩展已撤回",
+    "knowledge_cross_publication_progress": "既有缺口保留，不能宣称A10全部闭环",
+    "credentials_read_or_copied": false
+  },
+  "note": "官方全量6046/21保持FAIL；21条修后定向通过和最终changed5399/0不得拼成官方全量绿。r4仅代码复核，当时RC10及changed待验；本记录使用其后实际通过结果。"
+}

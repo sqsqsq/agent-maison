@@ -7,7 +7,7 @@ import { readHandoffMaterial, sessionEvents, readExecutionRequestOriginal, sessi
 import { invocationCompleted } from './invocation-completion';
 // ============================================================================
 // design-repair-unattended.ts — 既有两层锁内的设计候选、独立质询与发布事务。
-// 先准备机器字段/已知CU闭包，仅真实设计差额交作者；Q按原件、业务内容与依赖证明复用或补核。
+// 先准备机器身份字段，交付选择由作者明确给出；Q按原件、业务内容与依赖证明复用或补核。
 // 原写界与真实检查通过后才原子发布，并交原CU consumer/调和器与恢复探针。
 // 未发布候选和调用原件保留供恢复；发布后不回滚，调和/探针失败仍记未恢复。
 // ============================================================================
@@ -38,7 +38,7 @@ import type { ChangeUnitArtifact, ChangeUnitRef } from './change-unit-model';
 import type { ChangeUnitCandidate } from './change-unit-provider-boundary';
 import type { ComponentBlueprintRef } from './component-blueprint-model';
 import { blueprintIdentityPointers, currentBlueprintIdentity } from './change-unit-blueprint-identity';
-import { completeChangeUnitDesignRefs, validateChangeUnitDesign } from './change-unit-design-gate';
+import { validateChangeUnitDesign } from './change-unit-design-gate';
 import { evaluateChangeUnitCarryForward } from './change-unit-reconciliation';
 import { validateChangeUnit } from './change-unit-validator';
 import { publishArchitectureRevision } from './init-task-executor';
@@ -934,8 +934,8 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
         return { providerId: row.providerId, artifact: candidate };
       });
     };
-    const prepareCu = (doc: BlueprintRecord, value: ChangeUnitArtifact): ChangeUnitArtifact => {
-      const candidate = completeChangeUnitDesignRefs(doc, value, projectRoot);
+    const prepareCu = (value: ChangeUnitArtifact): ChangeUnitArtifact => {
+      const candidate = structuredClone(value);
       const pointers = blueprintIdentityPointers(candidate as unknown as BlueprintRecord);
       const identity = currentBlueprintIdentity(loadCanonicalBlueprint(projectRoot, blueprintId));
       const key = (ref: BlueprintRecord | undefined): string => stableStringify(Object.keys(identity).map(field => ref?.[field]));
@@ -963,7 +963,7 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
     const transactionTiming = [
       `本事务真实基线：blueprint_id=${String(baseDoc.blueprint_id)}；revision=${String(baseDoc.revision)}；source_fingerprint=${String(baseDoc.source_fingerprint)}；artifact_sha256=sha256:${sha256Hex(baseline)}。`,
       `本次可写的是本事务当前未发布候选，首轮从基线准备，后续承接已生成候选；相对基线只预留同一个revision=${Number(baseDoc.revision) + 1}，身份由框架维护，作者不自行升版。`,
-      ...(originalCu ? ['CU候选的component_blueprint_ref、design_refs和touches.design_ref中的revision/source_fingerprint/artifact_sha256在发布前可仍绑定已核基线；框架只先补齐设计引用闭包，待质询通过并发布最终蓝图字节后，才用最终身份统一重绑，再经原CU consumer、调和与readiness严格复验。不得要求作者在发布前伪填未来hash或把候选冒充已可施工。'] : []),
+      ...(originalCu ? ['CU候选的component_blueprint_ref、design_refs和touches.design_ref中的revision/source_fingerprint/artifact_sha256在发布前可仍绑定已核基线；作者须显式选择本单元要交付的目标及其选型决定，依赖闭包只作机器校验、不回写design_refs。待质询通过并发布最终蓝图字节后，才用最终身份统一重绑，再经原CU consumer、调和与readiness严格复验。不得要求作者在发布前伪填未来hash或把候选冒充已可施工。'] : []),
       ...(batchDraftFile ? [`原设计单元如需同步修订当前已报缺口或provide确受影响的消费者，使用 ${batchDraftFile} 的既有 ChangeUnitCandidate[]（每项 {providerId, artifact}）；主CU仍在change-unit.yaml。只提交同蓝图已存在的真实CU候选，不造新ID、不删除消费者、不虚构依赖或审批；保原承诺与requires，独立Q核对整批真实变化后交原原子consumer事务。没有相关变化时保持空数组。`] : []),
       '质询必须核对正确blueprint_id、稳定target的存在与语义、契约、原需求和真实内容；上述事务时点不豁免错蓝图、错目标、无依据身份或实际内容缺陷，仍可依据具体证据否定。',
     ];
@@ -1265,11 +1265,11 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
       // Re-entry replays prior rounds from their real role archives, never from the author's output as preimage.
       let currentCuInput = originalCu ? asRecord(YAML.parse(fs.readFileSync(cuDraftFile, 'utf8'))) : undefined;
       if (currentCuInput && input.requirement) {
-        currentCuInput = prepareCu(authorPreimage, asChangeUnitArtifact(currentCuInput)) as unknown as BlueprintRecord;
+        currentCuInput = prepareCu(asChangeUnitArtifact(currentCuInput)) as unknown as BlueprintRecord;
         fs.writeFileSync(cuDraftFile, YAML.stringify(currentCuInput));
       }
       if (batchDraftFile && input.requirement) fs.writeFileSync(batchDraftFile, JSON.stringify(readBatchCandidates()
-        .map(row => ({ ...row, artifact: prepareCu(authorPreimage, row.artifact) })), null, 2) + '\n');
+        .map(row => ({ ...row, artifact: prepareCu(row.artifact) })), null, 2) + '\n');
       const currentRefs = [...new Set([...baselineRefs, ...blueprintSourceRefFiles(projectRoot, authorPreimage).map(relOf)])];
       const latestQuestion = repairRoleStart(sessionEvents(runDir), 'questioning');
       const savedQuestion = latestQuestion ? questioningOriginal(runDir, latestQuestion) : null;
@@ -1419,12 +1419,6 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
           throw new AttemptFailure('architecture', '架构配置变化没有已裁决的 architecture_impact 依据');
         }
         refreshBlueprintFingerprints(authored);
-        if (cuCandidate) {
-          cuCandidate = completeChangeUnitDesignRefs(authored, cuCandidate, projectRoot);
-          fs.writeFileSync(cuDraftFile, YAML.stringify(cuCandidate));
-        }
-        batchCandidates = batchCandidates.map(row => ({ ...row, artifact: completeChangeUnitDesignRefs(authored, row.artifact, projectRoot) }));
-        if (batchDraftFile) fs.writeFileSync(batchDraftFile, JSON.stringify(batchCandidates, null, 2) + '\n');
       }
       // 派生结论只从基线派生，作者对它的改动不采信（与上方"运行时覆盖"的豁免一致）：旧结论按既有规则标 stale、保留原输入版本。
       if (Array.isArray(baseDoc.derived_results)) {

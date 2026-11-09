@@ -430,7 +430,7 @@ import {
   itemFingerprintOf,
   type RepairCandidate,
 } from './utils/repair-candidates';
-import { resolveRepairResponsibility, repairResponsibilityContext, readRepairDependencyContext } from './utils/repair-responsibility';
+import { resolveRepairResponsibility, repairResponsibilityContext, readRepairDependencyContext, independentArtifactRepairs } from './utils/repair-responsibility';
 import { loadGoalCapability } from './utils/goal-adapter-capability';
 import { deriveReconcileObservation } from './utils/goal-reconcile-observation';
 import { validateMinimumAssurance } from './utils/skill-contract';
@@ -4190,6 +4190,87 @@ function readGateCompletionHistory(projectRoot: string, runDir: string, events: 
   });
 }
 
+/** Current product changes come from the original guarded handback, never regenerated tool bookkeeping. */
+function readReturnedWorkProduct(context: WorkUnitExecutionContext, original: NonNullable<ReturnType<typeof executionRequestForInvoke>>,
+  history: readonly GoalRunEvent[], at: number): { current: ReturnType<typeof capturePhaseInvocationSnapshot>; productChanged: boolean } | GoalPhaseExecutorResult {
+  const role = workUnitExecutionRole(context);
+  const actorName = role === 'author' ? '原作者' : '原独立核验';
+  const start = history[at];
+  const prior = original.request.pre_snapshot, boundary = original.request.write_boundary;
+  if (!prior || !boundary) return { status: 'waiting', phase: context.phase, exitCode: 1, stdout: '', stderr: '', command: 'phase_execute_request', skipped: true,
+    details: `${actorName} ${start.invoke_id} 已交回，但原请求的前像/写界原件缺失，不能确认新的工作条件。恢复原件、真实输入改变或用户明确继续后接回；不因缺少原件反复派发。` };
+  const current = capturePhaseInvocationSnapshot(boundary, original.request.snapshot_options);
+  const writeObservations = history.slice(at + 1).flatMap(event => {
+    const value = asRecord(event);
+    return event.type === 'phase_write_observed' && event.invoke_id === start.invoke_id && value?.pre_snapshot === prior.sha256
+      && typeof value.post_snapshot === 'string' && /^[0-9a-f]{64}$/.test(value.post_snapshot)
+      && (Array.isArray(value.owned) || Array.isArray(value.observations)) ? [value] : [];
+  });
+  const writes = writeObservations.map(value => value.post_snapshot as string);
+  let handedBackSha = writes.at(-1) ?? prior.sha256;
+  try {
+    const received = acceptedSessionReport(context.runDir, original);
+    if (received?.event.handoff_report) handedBackSha = readHandoffMaterial<{ post_snapshot?: typeof prior }>(context.runDir,
+      received.event.handoff_report).post_snapshot?.sha256 ?? handedBackSha;
+    const designResult = path.resolve(context.runDir, path.dirname(original.reference.path), 'design-result.json');
+    if (!writes.length && fs.existsSync(designResult)) {
+      const outcome = JSON.parse(fs.readFileSync(designResult, 'utf8')).outcome as DesignRepairInvokeOutcome;
+      if (outcome.preSnapshot?.sha256 === prior.sha256) handedBackSha = outcome.postSnapshot?.sha256 ?? handedBackSha;
+    }
+  } catch (error) {
+    return { status: 'waiting', phase: context.phase, exitCode: 1, stdout: '', stderr: '', command: 'phase_execute_request', skipped: true,
+      details: `${actorName} ${start.invoke_id} 已交回但原后像不可核实：${(error as Error).message}。恢复该原件后继续，不重派或猜测结束。` };
+  }
+  let productChanged = current.sha256 !== handedBackSha;
+  if (productChanged && ['initial-design-questioning', 'design-repair-questioning'].includes(context.phase) && boundary.verifierResultPath) {
+    const questioning = readDesignQuestioningOriginal(context.runDir, start, history);
+    if (questioning?.completed && questioning.preSnapshot && questioning.postSnapshot?.sha256 === handedBackSha
+      && diffPhaseInvocationSnapshots(questioning.preSnapshot, questioning.postSnapshot).kind === 'clean'
+      && fs.existsSync(boundary.verifierResultPath) && fs.readFileSync(boundary.verifierResultPath, 'utf8') === questioning.output) {
+      const returned = diffPhaseInvocationSnapshots(questioning.postSnapshot, current);
+      const originalPath = path.relative(context.projectRoot, boundary.verifierResultPath).replace(/\\/g, '/');
+      // The runner archives raw Q output after the read-only window; that receipt is not new design work.
+      if (returned.kind === 'changed' && returned.changes.every(change => change.path === originalPath)) productChanged = false;
+    }
+  }
+  if (productChanged && !current.failureReason && role === 'verifier') {
+    // Keep full snapshots for write protection; machine publication between calls is not new product work.
+    const publications = new Set([...new Set([...context.chain, context.phase])].flatMap(phase => {
+      const reports = featurePhaseReportsDir(context.projectRoot, context.feature, phase, context.frameworkRoot);
+      const summary = asRecord(readPhaseSummary(context.projectRoot, context.feature, phase as FeaturePhase).summary);
+      const declared = ['script_report', 'merged_report', 'ai_prompt', 'summary_json'].flatMap(key => {
+        if (typeof summary?.[key] !== 'string') return [];
+        try {
+          const file = path.resolve(context.projectRoot, validateProjectRelativePath(context.projectRoot, summary[key], 'published report'));
+          return path.dirname(file) === path.resolve(reports) ? [file] : [];
+        } catch { return []; }
+      });
+      return [...declared,
+        phaseEvidenceManifestPath(context.projectRoot, context.feature, phase),
+        path.join(receiptDirPath(context.projectRoot, context.feature, phase), 'phase-completion-receipt.md')];
+    }).map(file => path.relative(context.projectRoot, file).replace(/\\/g, '/')));
+    const runtime = (file: string): boolean => publications.has(file);
+    const returned = new Map<string, { how: unknown; hash: string | null }>();
+    let attributable = true;
+    for (const event of writeObservations) for (const value of [...(Array.isArray(event.owned) ? event.owned : []), ...(Array.isArray(event.observations) ? event.observations : [])]) {
+      const row = asRecord(value);
+      if (!row || typeof row.path !== 'string') { attributable = false; continue; }
+      if (runtime(row.path)) continue;
+      const hash = row.post_sha256 !== undefined ? row.post_sha256 : row.postSha256;
+      if (hash !== null && (typeof hash !== 'string' || !/^[0-9a-f]{64}$/.test(hash))) { attributable = false; continue; }
+      returned.set(row.path, { how: row.how, hash });
+    }
+    const delta = diffPhaseInvocationSnapshots(prior, current);
+    if (attributable && delta.kind !== 'unverifiable') {
+      const actual = new Map(current.entries.map(entry => [entry.path, entry.sha256]));
+      const onlyReturned = delta.kind === 'clean' || delta.changes.every(change => runtime(change.path)
+        || returned.get(change.path)?.how === change.how && returned.get(change.path)?.hash === change.postSha256);
+      if (onlyReturned && [...returned].every(([file, value]) => (actual.get(file) ?? null) === value.hash)) productChanged = false;
+    }
+  }
+  return { current, productChanged };
+}
+
 export class GoalPhaseRuntime {
   private readonly options: GoalPhaseRuntimeLaunchOptions;
   constructor(options: GoalPhaseRuntimeLaunchOptions = {}, private readonly deliveryParent?: InitialDesignGoalManifest) { this.options = withExecutionControls(options); }
@@ -4244,78 +4325,9 @@ export class GoalPhaseRuntime {
           original.request.invoke_id, original.reference.sha256));
         const materialChanged = nextMaterial !== previousMaterial && requestedMaterial !== previousMaterial;
         if (hasNewWorkConditions({ returned: true, explicitlyContinued, materialChanged, productChanged: false, scopeChanged: false })) break;
-        const prior = original.request.pre_snapshot, boundary = original.request.write_boundary;
-        if (!prior || !boundary) return { status: 'waiting', phase: context.phase, exitCode: 1, stdout: '', stderr: '', command: 'phase_execute_request', skipped: true,
-          details: `${actorName} ${start.invoke_id} 已交回，但原请求的前像/写界原件缺失，不能确认新的工作条件。恢复原件、真实输入改变或用户明确继续后接回；不因缺少原件反复派发。` };
-        const current = capturePhaseInvocationSnapshot(boundary, original.request.snapshot_options);
-        const writeObservations = history.slice(at + 1).flatMap(event => {
-          const value = asRecord(event);
-          return event.type === 'phase_write_observed' && event.invoke_id === start.invoke_id && value?.pre_snapshot === prior.sha256
-            && typeof value.post_snapshot === 'string' && /^[0-9a-f]{64}$/.test(value.post_snapshot)
-            && (Array.isArray(value.owned) || Array.isArray(value.observations)) ? [value] : [];
-        });
-        const writes = writeObservations.map(value => value.post_snapshot as string);
-        let handedBackSha = writes.at(-1) ?? prior.sha256;
-        try {
-          const received = acceptedSessionReport(context.runDir, original);
-          if (received?.event.handoff_report) handedBackSha = readHandoffMaterial<{ post_snapshot?: typeof prior }>(context.runDir,
-            received.event.handoff_report).post_snapshot?.sha256 ?? handedBackSha;
-          const designResult = path.resolve(context.runDir, path.dirname(original.reference.path), 'design-result.json');
-          if (!writes.length && fs.existsSync(designResult)) {
-            const outcome = JSON.parse(fs.readFileSync(designResult, 'utf8')).outcome as DesignRepairInvokeOutcome;
-            if (outcome.preSnapshot?.sha256 === prior.sha256) handedBackSha = outcome.postSnapshot?.sha256 ?? handedBackSha;
-          }
-        } catch (error) {
-          return { status: 'waiting', phase: context.phase, exitCode: 1, stdout: '', stderr: '', command: 'phase_execute_request', skipped: true,
-            details: `${actorName} ${start.invoke_id} 已交回但原后像不可核实：${(error as Error).message}。恢复该原件后继续，不重派或猜测结束。` };
-        }
-        let productChanged = current.sha256 !== handedBackSha;
-        if (productChanged && ['initial-design-questioning', 'design-repair-questioning'].includes(context.phase) && boundary.verifierResultPath) {
-          const questioning = readDesignQuestioningOriginal(context.runDir, start, history);
-          if (questioning?.completed && questioning.preSnapshot && questioning.postSnapshot?.sha256 === handedBackSha
-            && diffPhaseInvocationSnapshots(questioning.preSnapshot, questioning.postSnapshot).kind === 'clean'
-            && fs.existsSync(boundary.verifierResultPath) && fs.readFileSync(boundary.verifierResultPath, 'utf8') === questioning.output) {
-            const returned = diffPhaseInvocationSnapshots(questioning.postSnapshot, current);
-            const originalPath = path.relative(context.projectRoot, boundary.verifierResultPath).replace(/\\/g, '/');
-            // The runner archives raw Q output after the read-only window; that receipt is not new design work.
-            if (returned.kind === 'changed' && returned.changes.every(change => change.path === originalPath)) productChanged = false;
-          }
-        }
-        if (productChanged && !current.failureReason && role === 'verifier') {
-          // Keep full snapshots for write protection; machine publication between calls is not new product work.
-          const publications = new Set([...new Set([...context.chain, context.phase])].flatMap(phase => {
-            const reports = featurePhaseReportsDir(context.projectRoot, context.feature, phase, context.frameworkRoot);
-            const summary = asRecord(readPhaseSummary(context.projectRoot, context.feature, phase as FeaturePhase).summary);
-            const declared = ['script_report', 'merged_report', 'ai_prompt', 'summary_json'].flatMap(key => {
-              if (typeof summary?.[key] !== 'string') return [];
-              try {
-                const file = path.resolve(context.projectRoot, validateProjectRelativePath(context.projectRoot, summary[key], 'published report'));
-                return path.dirname(file) === path.resolve(reports) ? [file] : [];
-              } catch { return []; }
-            });
-            return [...declared,
-              phaseEvidenceManifestPath(context.projectRoot, context.feature, phase),
-              path.join(receiptDirPath(context.projectRoot, context.feature, phase), 'phase-completion-receipt.md')];
-          }).map(file => path.relative(context.projectRoot, file).replace(/\\/g, '/')));
-          const runtime = (file: string): boolean => publications.has(file);
-          const returned = new Map<string, { how: unknown; hash: string | null }>();
-          let attributable = true;
-          for (const event of writeObservations) for (const value of [...(Array.isArray(event.owned) ? event.owned : []), ...(Array.isArray(event.observations) ? event.observations : [])]) {
-            const row = asRecord(value);
-            if (!row || typeof row.path !== 'string') { attributable = false; continue; }
-            if (runtime(row.path)) continue;
-            const hash = row.post_sha256 !== undefined ? row.post_sha256 : row.postSha256;
-            if (hash !== null && (typeof hash !== 'string' || !/^[0-9a-f]{64}$/.test(hash))) { attributable = false; continue; }
-            returned.set(row.path, { how: row.how, hash });
-          }
-          const delta = diffPhaseInvocationSnapshots(prior, current);
-          if (attributable && delta.kind !== 'unverifiable') {
-            const actual = new Map(current.entries.map(entry => [entry.path, entry.sha256]));
-            const onlyReturned = delta.kind === 'clean' || delta.changes.every(change => runtime(change.path)
-              || returned.get(change.path)?.how === change.how && returned.get(change.path)?.hash === change.postSha256);
-            if (onlyReturned && [...returned].every(([file, value]) => (actual.get(file) ?? null) === value.hash)) productChanged = false;
-          }
-        }
+        const product = readReturnedWorkProduct(context, original, history, at);
+        if ('status' in product) return product;
+        const { current, productChanged } = product;
         if (!current.failureReason && hasNewWorkConditions({ returned: true, explicitlyContinued, materialChanged,
           productChanged, scopeChanged: false })) break;
         return { status: 'waiting', phase: context.phase, exitCode: 1, stdout: '', stderr: '', command: 'phase_execute_request', skipped: true,
@@ -7252,13 +7264,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
       const facts = readCurrentDispositionInput(input);
       const disposition = resolveCurrentDisposition(facts);
       flushProgress(false, false, disposition);
-      return { input, facts, disposition, results, evaluation: currentCompletionEvaluation(input, disposition) };
+      const independent = independentArtifactRepairs({ projectRoot, frameworkRoot, feature: manifest.feature,
+        runId: manifest.run_id, executionScope: input.executionScope, currentDisposition: disposition });
+      return { input, facts, disposition, results, independent, evaluation: currentCompletionEvaluation(input, disposition) };
     };
-    const reviewReportPath = resolveFeatureArtifact(projectRoot, manifest.feature, 'review-report.md').actualPath;
-    const needsReviewWriter = (problem: CurrentDisposition['problems'][number]): boolean => problem.action === 'repair'
-      && (problem.source_phase ?? problem.phase) === 'review'
-      && (problem.id === 'review_report_exists' || problem.owner === 'review'
-        && !!problem.files?.some(file => path.resolve(projectRoot, file) === path.resolve(reviewReportPath)));
     const wait = (phase: string, detail: string, incident = 'executor_waiting', facts: Record<string, unknown> = {}): void => {
       if (incident === 'no_progress_guard') {
         const conflicts = renderGoalBrief(assembleGoalBrief(projectRoot, manifest.feature, { runId: manifest.run_id }), { sections: ['resolved_conflicts'] });
@@ -7379,6 +7388,35 @@ Goal runner — tool-agnostic multi-phase orchestrator
       .flatMap(event => [...(event as Record<string, any>).owned ?? [], ...(event as Record<string, any>).observations ?? []])
       .filter((write: any) => typeof write.path === 'string' && write.pre_sha256 !== write.post_sha256) as Array<{
         path: string; post_sha256: string | null; owner?: string | null; roles?: Array<{ kind: string }> }>;
+    const independentCalls = (task: { owner: string; file: string }, history: readonly GoalRunEvent[]) => history.flatMap((start, index) => {
+      if (start.type !== 'agent_invoke_start' || !start.invoke_id || start.phase !== task.owner) return [];
+      const original = executionRequestForInvoke(runDir, start.invoke_id);
+      const output = original?.request.write_boundary?.verifierResultPath;
+      if (!original || !output || path.resolve(projectRoot, output) !== task.file
+        || workUnitExecutionRole(original.request.context, original.request.purpose) !== 'verifier'
+        || !original.request.context.workInput?.evaluation) return [];
+      const ended = history.findIndex((event, at) => at > index && event.type === 'agent_invoke_end' && event.invoke_id === start.invoke_id);
+      if (ended < 0 || !invocationCompleted({ ...history[ended], exitCode: history[ended].exit_code })) return [];
+      return [{ context: original.request.context, original, evaluation: original.request.context.workInput.evaluation, index, ended }];
+    });
+    const feedbackToResponsibleProducers = (work: ReturnType<typeof readWork>, disposition: CurrentDisposition,
+      author: ReturnType<typeof lastAuthor>, history: readonly GoalRunEvent[]): boolean => {
+      const repairs = disposition.completionBlocking.filter(problem => problem.action === 'repair');
+      return repairs.length > 0 && repairs.every(problem => {
+        const task = work.independent.find(task => problem.files?.length
+          && problem.files.every(file => path.resolve(projectRoot, file) === task.file));
+        const call = task ? independentCalls(task, history).at(-1) : undefined;
+        const context = task ? call?.context : author?.original?.request.context;
+        if (!context) return false;
+        if (call) {
+          const product = readReturnedWorkProduct(context, call.original, history, call.index);
+          if ('status' in product || product.current.failureReason || product.productChanged) return false;
+        }
+        const feedback = { ...disposition, problems: [problem] };
+        return workUnitFeedbackDelivered(context, feedback) ?? context.instruction?.includes(
+          renderWorkUnitAuthorFeedback({ projectRoot, frameworkRoot, feature: manifest.feature, disposition: feedback })) === true;
+      });
+    };
     const checkWorkConditions = (family: string, work: ReturnType<typeof readWork>, actor = lastAuthor()) => {
       const observation = readCurrentCheckObservation({ projectRoot, frameworkRoot, feature: manifest.feature,
         runId: manifest.run_id, phase: family });
@@ -7676,7 +7714,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
       `# 工作单元 ${manifest.feature}`,
       ...(scope ? [`本单元冻结交付目标：${scope.completion_target}`,
         ...scope.requested_results.map(result => `- ${result}`),
-        '以下原始需求是父请求背景；本单元按上述冻结目标及 canonical CU 边界交付。共享设计归属冲突须交原设计责任方处理。'] : []),
+        '原始请求及验收来源仍是权威；上述目标限定本单元的交付范围。共享设计归属冲突须交原设计责任方处理。'] : []),
       manifest.requirement ?? '',
       `原请求来源：${(manifest.requirement_source_files ?? []).join(', ') || '当前冻结的原始请求'}`,
       `当前适用检查族：${work.input.chain.join(', ')}。这些是工具/方法，不是轮流启动作者的阶段。`,
@@ -7788,7 +7826,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
       const author = lastAuthor();
       let designDeclineFeedback = '';
       let designDeclineCandidates: string[] = [];
-      const repairs = before.disposition.completionBlocking.filter(problem => problem.action === 'repair' && !needsReviewWriter(problem));
+      const repairs = before.disposition.completionBlocking.filter(problem => problem.action === 'repair'
+        && !before.independent.some(task => task.problems.includes(problem)));
       const designRoot = originalDeliveryForManifest(projectRoot, manifest);
       const designFamilies = [...new Set(repairs.filter(problem => problem.owner === 'external').map(problem => problem.source_phase ?? problem.phase))];
       const findings = designFamilies
@@ -7868,11 +7907,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
       const checkedFeedbackDelivered = !designDeclineFeedback && !explicitlyContinued && !newDriverHypothesis && !!author?.original && completedEvaluations.some(evaluation =>
         evaluation.acceptanceKey === before.evaluation.acceptanceKey && evaluation.completed
         && evaluation.disposition.completionBlocking.some(problem => problem.action === 'repair')
-        && (workUnitFeedbackDelivered(author.original!.request.context, { ...evaluation.disposition,
-          problems: evaluation.disposition.completionBlocking.filter(problem => problem.action === 'repair') })
-          ?? evaluation.disposition.completionBlocking.filter(problem => problem.action === 'repair').every(problem =>
-          author.original!.request.context.instruction?.includes(renderWorkUnitAuthorFeedback({ projectRoot, frameworkRoot, feature: manifest.feature,
-            disposition: { ...evaluation.disposition, problems: [problem] } })))));
+        && feedbackToResponsibleProducers(before, evaluation.disposition, author, currentEvents));
       if (!explicitlyContinued && findLastRunEnd(startupEvents)?.halt_reason === 'no_progress_guard'
         && authorFeedbackDelivered && authorAssessmentCompleted
         && currentEvents.findIndex(event => event.type === 'agent_invoke_end' && event.invoke_id === author?.start.invoke_id)
@@ -7881,7 +7916,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
       }
       const progress = completionProgressFromHistory(before.evaluation, completedEvaluations, checkedFeedbackDelivered, !!author);
       const feedbackAwaitingEvaluation = authorFeedbackDelivered && (!authorAssessmentCompleted || progress.reused);
-      if (progress.halt) { wait('work-unit-author', `已交付当前反馈且真实检查仍无验收改善，保全后可续暂停。\n${renderCurrentDisposition(before.disposition)}`, 'no_progress_guard'); break; }
+      if (progress.halt) { wait(repairs.length ? 'work-unit-author' : before.independent[0]?.owner ?? 'work-unit-author',
+        `已向当前责任方交付反馈且真实检查仍无验收改善，保全后可续暂停。\n${renderCurrentDisposition(before.disposition)}`, 'no_progress_guard'); break; }
       if (before.evaluation.completed && !progress.reused && progress.evaluation === before.evaluation) completedEvaluations.push(before.evaluation);
       if (!author || newDriverHypothesis || designDeclineFeedback || repairs.length && !feedbackAwaitingEvaluation && !verificationPending) {
         const prepared = await authorInstruction(before, designDeclineFeedback, designDeclineCandidates);
@@ -7893,6 +7929,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
       }
       let executedCheck = false;
       let rebuildTransport = false;
+      const pausedIndependent = new Set<string>();
       const selectedFamilies = familiesNow();
       for (const family of selectedFamilies) {
         assertGoalBoundary('current_check');
@@ -7901,14 +7938,15 @@ Goal runner — tool-agnostic multi-phase orchestrator
         }
         let current = readWork();
         if (!current.facts.phases.some(result => result.phase === family)) continue;
-        if (family === 'review' && current.disposition.completionBlocking.some(needsReviewWriter) && !affectedCheck(family, current)) {
+        const independent = current.independent.find(task => task.owner === family);
+        if (independent && !affectedCheck(family, current)) {
           const actor = lastAuthor();
           const authorResult = actor?.end.handoff_report
             ? path.resolve(runDir, actor.end.handoff_report.path)
             : actor?.start.invoke_id ? path.join(runDir, 'phases', actor.start.phase!, actor.start.invoke_id, 'agent-output.log') : undefined;
-          const reportRel = path.relative(projectRoot, reviewReportPath).replace(/\\/g, '/');
+          const reportRel = path.relative(projectRoot, independent.file).replace(/\\/g, '/');
           const instruction = [
-            `独立审查本工作单元 ${manifest.feature}，按 ${phaseSkillPath(frameworkRoot, 'review')} 的正式方法写入 ${reportRel}。`,
+            `独立审查本工作单元 ${manifest.feature}，按 ${phaseSkillPath(frameworkRoot, family as FeaturePhase)} 的正式方法写入 ${reportRel}。`,
             `冻结交付目标：${(current.input.executionScope?.requested_results ?? []).join('\n')}`,
             `读取当前 canonical CU、设计来源、实际改动及作者原件；设计与 CU 归属冲突须在问题表列明具体权威文件和依据，交原责任方修订。`,
             ...(authorResult ? [`作者原件：${path.relative(projectRoot, authorResult).replace(/\\/g, '/')}。完整保留其中的拒修理由并独立核实；原件缺失时如实披露，不猜测作者结论。`] : []),
@@ -7918,8 +7956,29 @@ Goal runner — tool-agnostic multi-phase orchestrator
           const observed = readCurrentCheckObservation({ projectRoot, frameworkRoot, feature: manifest.feature, runId: manifest.run_id, phase: family });
           // The report is a checker input, not new work created by its own writer's previous output.
           const writerInputs = Object.fromEntries(Object.entries(observed.inputs).filter(([file]) => file !== reportRel));
-          const reviewed = await invokeWork('review', instruction, reviewReportPath, 'review', continuationAvailable(),
-            { material: { purpose: 'review', segments: [instruction, writerInputs] } });
+          const relevantChecks = current.results.filter(result => result.phase === family).map(result => ({ ...result,
+            checks: result.checks.filter(check => check.affected_files?.some(file => path.resolve(projectRoot, file) === independent.file)) }));
+          const disposition = resolveCurrentDisposition({ endpoint: 'request', phases: [], additionalProblems: independent.problems });
+          const evaluation = { ...currentCompletionEvaluation({ ...current.input, chain: [family], currentResults: relevantChecks }, disposition), inputs: writerInputs };
+          const history = loadAuthoritativeEvents(eventsPath);
+          const calls = independentCalls(independent, history);
+          const previous = calls.at(-1);
+          const checkedAt = history.map(event => event.type === 'harness_end' && event.phase === family
+            && event.invoke_id === observed.end?.invoke_id && event.ts === observed.end?.ts).lastIndexOf(true);
+          const continued = continuationAvailable();
+          const product = previous ? readReturnedWorkProduct(previous.context, previous.original, history, previous.index) : undefined;
+          const delivered = !!previous && !!product && !('status' in product) && !product.current.failureReason && !product.productChanged
+            && compareRelatedInputSnapshots(previous.evaluation.inputs, evaluation.inputs) === 'unchanged'
+            && workUnitFeedbackDelivered(previous.context, previous.evaluation.disposition) === true;
+          const progress = completionProgressFromHistory(evaluation, calls.map(call => call.evaluation), delivered,
+            !!previous && checkedAt > previous.ended);
+          if (!continued && progress.halt) {
+            // Finish other executable work before pausing; an unexecutable verify cannot buy another loop.
+            pausedIndependent.add(independent.file);
+            continue;
+          }
+          const reviewed = await invokeWork(independent.owner, instruction, independent.file, independent.owner, continued,
+            { material: { purpose: independent.owner, segments: [instruction, writerInputs] }, evaluation });
           if (reviewed === 3) return 3;
           if (!reviewed || halted) break;
           continue currentWork;
@@ -8110,6 +8169,13 @@ Goal runner — tool-agnostic multi-phase orchestrator
         return !selectedFamilies.includes(result.phase);
       })) continue;
       if (after.disposition.completionBlocking.some(problem => problem.action === 'repair')) {
+        const paused = after.independent.filter(task => pausedIndependent.has(task.file));
+        if (paused.length && after.disposition.completionBlocking.filter(problem => problem.action === 'repair')
+          .every(problem => paused.some(task => task.problems.includes(problem)))) {
+          if (executedCheck) continue;
+          wait(paused[0].owner, `独立职责已收到反馈并交回产物，实际检查证明相同问题未解决或往复出现；其它职责本轮也无可执行工作，保留原件与未完项，条件变化后接回。\n${renderCurrentDisposition(after.disposition)}`, 'no_progress_guard');
+          break;
+        }
         if (feedbackAwaitingEvaluation && !executedCheck) {
           wait('work-unit-author', `同一工作、当前必修对象和相关输入已有真实作者交回，当前结果没有新的可执行验证；不重派同一反馈。保留未完项，补齐原验证依据、相关条件变化或用户明确继续后接回。\n${renderCurrentDisposition(after.disposition)}`);
           break;

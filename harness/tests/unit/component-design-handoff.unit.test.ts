@@ -223,16 +223,17 @@ export function runContentWarnCases(): UnitCaseResult[] {
 
 export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
-  results.push(test('8a6d3f21 normal CU acceptance derives existing dependency references without mutating the proposal', () => {
+  results.push(test('normal CU acceptance preserves explicit selection and derives dependencies only for checking', () => {
     withProject(projectRoot => {
       const candidate = candidateFrom(projectRoot, 'ledger-refresh', 'derived-closure-cu');
-      const originalRefs = candidate.artifact.design_refs.length;
       candidate.artifact.design_refs = candidate.artifact.design_refs.filter(ref => ref.target.kind !== 'relation');
       const before = JSON.stringify(candidate);
       const accepted = acceptChangeUnitDecomposition(projectRoot, BLUEPRINT_ID, [candidate]).accepted[0];
       assert(JSON.stringify(candidate) === before, 'consumer mutated the author proposal');
-      assert((accepted.changeUnit.design_refs as unknown[]).length >= originalRefs, 'normal acceptance omitted the existing dependency closure');
-      assert(validateChangeUnitDesign(projectRoot, accepted.changeUnit).verdict === 'constructable', 'published artifact differs from the validated closure');
+      assert(JSON.stringify(accepted.changeUnit.design_refs) === JSON.stringify(candidate.artifact.design_refs), 'consumer must preserve the author selection');
+      const design = validateChangeUnitDesign(projectRoot, accepted.changeUnit);
+      assert(design.verdict === 'constructable' && design.requiredAddresses.some(address => address.startsWith('relation:')),
+        'context remains checked without becoming delivery ownership');
     });
   }));
 

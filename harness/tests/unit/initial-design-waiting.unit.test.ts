@@ -210,6 +210,7 @@ async function repairWaiting(): Promise<void> {
       const file = path.join(path.dirname(draft), 'change-unit.yaml');
       const candidate: Json = YAML.parse(fs.readFileSync(file, 'utf8'));
       candidate.target_predicates = structuredClone(approved.target_predicates);
+      candidate.design_refs = approved.design_refs.map((ref: Json) => ({ ...candidate.component_blueprint_ref, target: structuredClone(ref.target) }));
       fs.writeFileSync(file, YAML.stringify(candidate));
     } });
     const request = JSON.parse(fs.readFileSync(retry.request.path, 'utf8'));

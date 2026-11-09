@@ -149,6 +149,77 @@ function assertOnlyChangedChecksResume(before: RunProbe, resumed: RunProbe): voi
 }
 
 const cases: Case[] = [{
+  name: 'goal alignment: independent output oscillation pauses through common progress and resumes the same run',
+  run: async () => {
+    for (const mode of ['oscillate', 'improve', 'unavailable-verify'] as const) {
+      const root = setupGoalRuntimeHost('codex', false).root;
+      const reportRel = 'doc/features/bc-openCard/review/review-report.md';
+      const reportPath = path.join(root, reportRel);
+      let writers = 0, finish = false;
+      try {
+        const options: Parameters<typeof runGoalRuntimeChain>[1] = { ...declareSourceRepairRequest(root).launch,
+          adapter: 'codex', runId: 'goal-alignment-' + mode, onAuthor: () => undefined,
+          onReview: () => {
+            assert(++writers <= 5, 'the production comparison must stop oscillation without a simulated timeout');
+            fs.mkdirSync(path.dirname(reportPath), { recursive: true });
+            if (finish || mode === 'improve' && writers > 1) fs.writeFileSync(reportPath, '# Review\n## 结论\n**审查结论**: 通过\n');
+            else if (writers % 2) fs.writeFileSync(reportPath, '# Review without conclusion\n');
+            else fs.rmSync(reportPath, { force: true });
+          },
+          onHarnessSummary: async ({ phase }) => {
+            if (phase === 'ut' && mode === 'unavailable-verify') return { checks: fixtureReadDependencies(root, [{
+              id: 'capability_resolution_contract', category: 'structure', severity: 'BLOCKER', status: 'FAIL',
+              description: 'the current checker cannot execute', details: 'controlled framework checker exception',
+              failure_kind: 'framework_bug', blocking_class: 'framework_internal',
+            }], [PRODUCT_FILE]) };
+            if (phase !== 'review') return null;
+            const frameworkRoot = path.resolve(__dirname, '../../..');
+            const review = (await import('../../scripts/check-review')).default;
+            const { SpecLoader } = await import('../../scripts/utils/spec-loader');
+            const loader = new SpecLoader(root, undefined, undefined, frameworkRoot);
+            const actual = await review.check({ subject: 'feature', phase: 'review', feature: 'bc-openCard', projectRoot: root, frameworkRoot,
+              phaseRule: loader.loadPhaseRule('review'), featureSpec: loader.loadFeatureSpec('bc-openCard') } as import('../../scripts/utils/types').CheckContext<'feature'>);
+            const reportChecks = actual.filter(check => ['review_report_exists', 'conclusion_with_verdict'].includes(check.id));
+            assert(reportChecks.length > 0 && reportChecks.every(check => check.affected_files?.includes(reportRel)),
+              'the production report checker must identify its actual artifact producer');
+            const checks: import('../../scripts/utils/types').CheckResult[] = fixtureReadDependencies(root, [...reportChecks, {
+              id: 'file_completeness', category: 'structure', severity: 'BLOCKER', status: 'PASS',
+              description: 'the controlled check reads the current product', details: fs.readFileSync(path.join(root, PRODUCT_FILE), 'utf8'),
+              affected_files: [PRODUCT_FILE],
+            }], [PRODUCT_FILE]);
+            const reports = require('../../scripts/utils/report-generator') as typeof import('../../scripts/utils/report-generator');
+            reports.generateMergedReport(path.join(frameworkRoot, 'harness'), root, 'review', 'bc-openCard',
+              reports.buildScriptReport('review', 'bc-openCard', root, checks), undefined, frameworkRoot);
+            return { checks };
+          },
+        };
+        const first = await runGoalRuntimeChain(root, options);
+        assert(writers === 2, 'each new report deficit gets its actual opportunity, a repeated signature does not: ' + writers);
+        assert(!first.events.some(event => event.type === 'run_end' && event.status === 'INTERRUPTED'), 'no external stop proves convergence');
+        if (mode === 'improve') {
+          assert(first.exitCode === 0 && !first.events.some(event => event.type === 'phase_halt' && event.halt_reason === 'no_progress_guard'),
+            'a real repaired conclusion must complete without a no-progress halt');
+        } else {
+          assert(first.exitCode !== 0 && first.events.some(event => event.type === 'phase_halt' && event.halt_reason === 'no_progress_guard'),
+            'missing report and missing conclusion oscillation must pause through common progress');
+          if (mode === 'unavailable-verify') {
+            assert(first.harnessPhases.filter(phase => phase === 'ut').length === 1, 'unavailable verification cannot spin or buy repeated checks');
+            assert(first.events.some(event => event.type === 'phase_halt' && event.run_disposition === 'WAITING'), 'paused producer must yield a resumable wait');
+            continue;
+          }
+          const resume = { ...options, resume: path.basename(first.reportDir), noAutoForce: true, skipLegacySeal: true };
+          const unchanged = await runGoalRuntimeChain(root, resume);
+          assert(unchanged.invokedPhases.length === 0 && writers === 2, 'unchanged cold resume preserves the real pause');
+          finish = true;
+          const continued = await runGoalRuntimeChain(root, { ...resume, forceResume: true });
+          assert(continued.exitCode === 0 && Number(writers) === 3, 'explicit continuation repairs and completes the original run: '
+            + JSON.stringify(continued.events.filter(event => event.type === 'phase_halt' || event.type === 'run_end')));
+          assert(continued.reportDir === first.reportDir, 'continuation cannot replace the run or its history');
+        }
+      } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+    }
+  },
+}, {
   name: 'P4 t5 rewriting an invalid review report is not new work for its independent writer',
   run: async () => {
     for (const newProof of [false, true]) {

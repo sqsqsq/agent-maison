@@ -1028,6 +1028,11 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
             module: 'ledger', rationale: '账务领域只维护稳定账目投影，展示和导航职责仍归页面模块' });
           ledgerDomain(doc).target_state = 'Stable ledger domain projection; presentation and navigation remain in FinancialCard';
           (ledgerDomain(doc).design_basis_refs ??= []).push('decision:ledger-dependency', 'decision:ledger-responsibility');
+          const cuFile = path.join(path.dirname(draft), 'change-unit.yaml');
+          const candidate = YAML.parse(fs.readFileSync(cuFile, 'utf8'));
+          for (const id of ['ledger-dependency', 'ledger-responsibility']) candidate.design_refs.push({ ...candidate.component_blueprint_ref,
+            target: { kind: 'decision', id } });
+          fs.writeFileSync(cuFile, YAML.stringify(candidate));
         } },
       });
       assert(contentRepairs(b.events).some(event => event.stage === 'published' && event.outcome === 'recovered' && event.architecture_changed === true), describeS16(b));

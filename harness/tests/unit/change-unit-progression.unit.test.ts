@@ -386,12 +386,14 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     expectIssue(result.issues.map(item => item.id), 'change_unit_design_ref_unresolvable');
   }));
 
-  results.push(test('omitted scenario address is derived as a closure gap', () => {
+  results.push(test('unselected scenario remains checked context without becoming a delivery selection', () => {
     const cu = validChangeUnit();
     cu.design_refs = (cu.design_refs as ComponentBlueprintRef[])
       .filter(ref => !(ref.target.kind === 'node' && ref.target.view_id === 'scenarios'));
     const result = validateChangeUnitDesign(VALID_PROJECT, cu);
-    expectIssue(result.issues.map(item => item.id), 'change_unit_design_closure_incomplete');
+    assert(result.verdict === 'constructable', JSON.stringify(result.issues));
+    assert(result.requiredAddresses.some(address => address.startsWith('view:scenarios/')), 'dependency must remain in the derived closure');
+    assert(!(cu.design_refs as ComponentBlueprintRef[]).some(ref => ref.target.view_id === 'scenarios'), 'validation must not rewrite the selection');
   }));
 
   results.push(test('current open decision blocks but unrelated future gap does not', () => {
@@ -1304,10 +1306,6 @@ export async function runAll(): Promise<UnitCaseResult[]> {
       if (fixtureCase.surface === 'design') {
         const cu = validChangeUnit();
         if (fixtureCase.mutator === 'dangling-design') (cu.design_refs as ComponentBlueprintRef[])[0].target.id = 'not-real';
-        if (fixtureCase.mutator === 'omit-scenario') {
-          cu.design_refs = (cu.design_refs as ComponentBlueprintRef[])
-            .filter(ref => !(ref.target.kind === 'node' && ref.target.view_id === 'scenarios'));
-        }
         const result = validateChangeUnitDesign(VALID_PROJECT, cu);
         if (['missing-construction-symbol', 'planned-impl-ref-at-ut'].includes(fixtureCase.id)) assert(result.issues.length === 0, 'private locator is advisory: ' + JSON.stringify(result.issues));
         else expectIssue(result.issues.map(item => item.id), fixtureCase.expected_issue);

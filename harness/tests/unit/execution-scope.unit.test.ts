@@ -1570,7 +1570,10 @@ async function runScopeScenario(mode: 'ut-l3-code' | 'ut-l3-spec' | 'ut-design-g
       assert.equal(readExecutionActivity(sourceEvents).calls, invokes.length, '修订或恢复遗漏实际调用');
       if (utDesignGap) {
         assert.equal(sourceEvents.filter(event => event.type === 'harness_start' && event.phase === 'review').length, 2, 'new upstream plan work invalidates the old downstream review once');
-        assert.equal(sourceEvents.filter(event => event.type === 'harness_start' && event.phase === 'plan').length, 1, '链外 plan 必须实际验证');
+        const planChecks = sourceEvents.filter(event => event.type === 'harness_start' && event.phase === 'plan');
+        assert(planChecks.length > 0, '链外 plan 必须实际验证');
+        for (let index = 1; index < planChecks.length; index++) assert.notDeepStrictEqual(planChecks[index].related_input_snapshot,
+          planChecks[index - 1].related_input_snapshot, 'plan 只能因实际输入或可观察依据变化重验');
         assert(probe.harnessPhases.filter(phase => phase === 'ut').length >= 2, '补齐定义后必须实际复验UT；已完成UT作者可复用');
         const planCheckedAt = sourceEvents.map(event => event.type === 'harness_end' && event.phase === 'plan' && event.exit_code === 0).lastIndexOf(true);
         const planOwnerReturnedAt = sourceEvents.slice(0, planCheckedAt).map(event => event.type === 'agent_invoke_end' && event.phase === 'work-unit-author' && event.exit_code === 0).lastIndexOf(true);
@@ -3228,19 +3231,18 @@ cases.push({ name: 'D1 three real runless harness-runner phase calls freeze once
     assert(!fs.existsSync(featureFilePath(root, feature, 'goal-runs')), '无 run 路径造出了 goal-runs 目录');
     assert(!fs.existsSync(featureFilePath(root, feature, 'feature-completion.json')), 'direct phase checks must not create Feature completion');
     assert.equal(readFeatureFrozenScope(root, feature)!.revisions.length, 0, 'direct phase checks must not act as the scope runner');
-    // ⑤ 候选漂移 → 真实 CLI 报 execution_scope_frozen BLOCKER
+    // ⑤ 无身份调用在准入处拒绝漂移，不覆盖既有正式报告。
+    const reportPath = path.join(featurePhaseReportsDir(root, feature, 'coding', frameworkRoot), 'script-report.json');
+    const summaryPath = path.join(featurePhaseReportsDir(root, feature, 'coding', frameworkRoot), 'summary.json');
+    const originalReport = fs.readFileSync(reportPath), originalSummary = fs.readFileSync(summaryPath);
     const drifted = YAML.parse(fs.readFileSync(featureTrackDeclPath(root, feature), 'utf8'));
     drifted.execution_scope.request.requested_results = ['drifted'];
     fs.writeFileSync(featureTrackDeclPath(root, feature), YAML.stringify(drifted));
-    runPhase('coding');
-    const report = JSON.parse(fs.readFileSync(path.join(featurePhaseReportsDir(root, feature, 'coding', frameworkRoot), 'script-report.json'), 'utf8')) as { checks: Array<{ id: string; status: string; severity: string }> };
-    const blocker = report.checks.find(check => check.id === 'execution_scope_frozen');
-    assert(blocker, '候选漂移后真实 CLI 没有报 execution_scope_frozen：' + JSON.stringify(report.checks.map(check => check.id)));
-    assert.equal(blocker!.status, 'FAIL');
-    assert.equal(blocker!.severity, 'BLOCKER');
-    const summary = JSON.parse(fs.readFileSync(path.join(featurePhaseReportsDir(root, feature, 'coding', frameworkRoot), 'summary.json'), 'utf8')) as { verdict?: string; blockers?: Array<{ id?: string }> };
-    assert.equal(summary.verdict, 'FAIL');
-    assert(summary.blockers?.some(item => item.id === 'execution_scope_frozen'), '当前 scope 失败未刷新 base summary');
+    const rejected = runPhase('coding');
+    assert.notEqual(rejected.status, 0, 'drifting runless input must be rejected');
+    assert(combined(rejected).includes('[execution_scope_frozen]'), combined(rejected));
+    assert(fs.readFileSync(reportPath).equals(originalReport) && fs.readFileSync(summaryPath).equals(originalSummary),
+      'a rejected runless caller must preserve the original current reports');
     // Restore the original candidate, then transfer the unfinished legacy scope and existing reports.
     fs.writeFileSync(featureTrackDeclPath(root, feature), YAML.stringify(decl));
     const priorReport = fs.readFileSync(path.join(featurePhaseReportsDir(root, feature, 'coding', frameworkRoot), 'script-report.json'));
