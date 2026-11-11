@@ -361,6 +361,12 @@ export function checkCodingExistingTestPreserved(ctx: CheckContext): CheckResult
 }
 
 export function checkDiffWithinScope(ctx: CheckContext): CheckResult[] {
+  const contractsInput = ctx.resolvedInputs?.values.contracts;
+  if (contractsInput && contractsInput.state !== 'resolved') return [{
+    id: 'diff_within_scope', category: 'traceability', severity: 'BLOCKER', status: 'SKIP',
+    description: '施工范围输入尚未就绪', failure_kind: 'capability_missing',
+    details: `contracts 输入${contractsInput.state}；范围检查未执行，不构成越界判定。${contractsInput.detail}`,
+  }];
   if (ctx.resolvedInputs) {
     const result = (status: 'PASS' | 'FAIL', details: string, files?: string[]): CheckResult[] => [{ id: 'diff_within_scope', category: 'traceability', severity: 'BLOCKER', status, description: '实现遵守原请求真实边界及阶段职责，预测文件不作许可', details, affected_files: files, ...(status === 'FAIL' ? { failure_kind: 'scope_violation', suggestion: '核对原请求明确限制与实际改动；误改由本阶段恢复，真实需求或公共契约变化交责任方。' } : {}) }];
     const runId = process.env.MAISON_GOAL_RUN_ID?.trim();
@@ -481,6 +487,12 @@ export function checkDiffWithinScope(ctx: CheckContext): CheckResult[] {
  * 任何 strictness 均 BLOCKER（不受视觉 fidelity 档位影响）。
  */
 function checkUiDiffWithinDeclaredFiles(ctx: CheckContext): CheckResult[] {
+  const contractsInput = ctx.resolvedInputs?.values.contracts;
+  if (contractsInput && contractsInput.state !== 'resolved') return [{
+    id: 'ui_diff_within_declared_files', category: 'traceability', severity: 'BLOCKER', status: 'SKIP',
+    description: 'UI范围输入尚未就绪', failure_kind: 'capability_missing',
+    details: `contracts 输入${contractsInput.state}；UI范围检查未执行，不构成越界判定。${contractsInput.detail}`,
+  }];
   const runId = process.env.MAISON_GOAL_RUN_ID?.trim() || null;
   const r = runUiDiffWithinDeclaredFiles({
     projectRoot: ctx.projectRoot,

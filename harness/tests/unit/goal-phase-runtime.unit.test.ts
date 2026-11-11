@@ -121,11 +121,10 @@ function productEvidenceCheck(root: string, marker: string, file = PRODUCT_FILE)
       sha256: require('crypto').createHash('sha256').update(bytes).digest('hex'), role: 'artifact' }] } };
 }
 
-function declareSourceRepairRequest(root: string) {
+function declareSourceRepairRequest(root: string, requestedPhases: Array<'spec' | 'plan' | 'coding' | 'review' | 'ut' | 'testing'> = ['spec', 'plan', 'coding', 'review', 'ut', 'testing']) {
   const configPath = path.join(root, 'framework.config.json');
   const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
   config.active_workflow = 'obligation-driven'; fs.writeFileSync(configPath, JSON.stringify(config)); clearFrameworkConfigCache();
-  const requestedPhases = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'] as const;
   const requirement = `核实并修复 ${PRODUCT_FILE} 的受控源码标记断言，执行当前全部适用验证，不改变界面或设备交互。`;
   const prepared = prepareFeatureScopeCandidate({ projectRoot: root, frameworkRoot: path.resolve(__dirname, '../../..'), feature: 'bc-openCard',
     completionTarget: 'request', requestedResults: ['完成当前源码修复与原验证终点'], requestedPhases: [...requestedPhases], requirement,
@@ -148,7 +147,113 @@ function assertOnlyChangedChecksResume(before: RunProbe, resumed: RunProbe): voi
   }
 }
 
-const cases: Case[] = [{
+const semanticReviewCases: Case[] = (['normal', 'api429'] as const).map(mode => ({
+  name: mode === 'normal' ? '3f8a6c21 repaired product reaches independent review without a report-format failure'
+    : '3f8a6c21 interrupted semantic review retries before any check can consume the old report',
+  run: async () => {
+    const adapter = mode === 'normal' ? 'deepseek-harness' : 'codex';
+    const root = setupGoalRuntimeHost(adapter, false).root;
+    const reportRel = 'doc/features/bc-openCard/review/review-report.md', report = path.join(root, reportRel);
+    const marker = 'CR_001_FIXED_3F8A6C21';
+    let authors = 0, reviewers = 0;
+    try {
+      fs.mkdirSync(path.dirname(report), { recursive: true });
+      fs.writeFileSync(report, '# Original review\nCR-001: pending product repair\n**审查结论**: 不通过\n');
+      const launch = declareSourceRepairRequest(root, ['coding', 'review']).launch;
+      const sourceManifest = YAML.parse(launch.freshManifestContent); sourceManifest.adapter = adapter;
+      const probe = await runGoalRuntimeChain(root, { ...launch, freshManifestContent: YAML.stringify(sourceManifest),
+        adapter, runId: `3f8a6c21-semantic-review-${mode}`,
+        invokeResultFor: (phase, attempt) => phase === 'review' && mode === 'api429' && attempt === 1 ? {
+          exitCode: 1, stdout: '', stderr: 'API Error: 429 finite review interruption', terminal_failure_observed: true,
+          terminal_error_excerpt: 'turn.failed: {"type":"error","status":429,"error":{"type":"rate_limit_error","message":"finite review interruption"}}',
+        } : null,
+        onAuthor: ctx => {
+          assert(++authors <= 4, 'same required work must not dispatch forever');
+          if (ctx.prompt.includes('CR-001') && !fs.readFileSync(path.join(root, PRODUCT_FILE), 'utf8').includes(marker)) {
+            fs.appendFileSync(path.join(root, PRODUCT_FILE), `\n// ${marker}\n`);
+          }
+        },
+        onReview: ctx => {
+          assert(++reviewers <= 2, 'unchanged handback cannot trigger another semantic review');
+          assert(ctx.prompt.includes('CR-001'), 'the reviewer must receive the actual unresolved finding');
+          assert(fs.readFileSync(path.join(root, PRODUCT_FILE), 'utf8').includes(marker), 'independent review must see the actual repair');
+          if (mode === 'api429' && reviewers === 1) return;
+          fs.writeFileSync(report, '# Updated independent review\nCR-001: verified fixed\n**审查结论**: 通过\n');
+        },
+        onHarnessSummary: ({ phase }) => {
+          if (phase === 'coding') return { checks: fixtureReadDependencies(root, [productEvidenceCheck(root, marker)], [PRODUCT_FILE]) };
+          if (phase !== 'review') return null;
+          assert(!(mode === 'api429' && reviewers === 1), 'a failed review must be retried before the checker stamps its old report');
+          const fixed = fs.readFileSync(path.join(root, PRODUCT_FILE), 'utf8').includes(marker);
+          const reviewed = fs.readFileSync(report, 'utf8').includes('verified fixed');
+          return { checks: fixtureReadDependencies(root, [
+            { id: 'file_completeness', category: 'structure', severity: 'BLOCKER', status: fixed ? 'PASS' : 'FAIL',
+              description: 'original product requirement', details: 'CR-001 requires actual product repair', affected_files: [PRODUCT_FILE] },
+            { id: 'negative_verdict_closure', category: 'structure', severity: 'BLOCKER', status: reviewed ? 'PASS' : 'FAIL',
+              description: 'independent verdict', details: 'CR-001 must be independently rechecked', failure_kind: 'negative_review_verdict' },
+          ], [PRODUCT_FILE, reportRel]) };
+        },
+      });
+      assert(probe.exitCode === 0 && reviewers === (mode === 'api429' ? 2 : 1), `the original request must complete after a successful independent recheck: exit=${probe.exitCode} reviewers=${reviewers}`);
+      assert(probe.events.some(event => event.type === 'agent_invoke_start' && event.phase === 'review'), 'a real independent invocation must be recorded');
+      if (mode === 'api429') assert(probe.events.filter(event => event.type === 'transient_api_retry_scheduled' && event.phase === 'review').length === 1,
+        'the original failed call must remain visible and buy exactly one bounded transport retry');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  },
+}));
+
+const cases: Case[] = [...semanticReviewCases, {
+  name: '3f8a6c21 unchanged old review wakes after scope proof invalidation and a no-op author handback',
+  run: async () => {
+    const root = setupGoalRuntimeHost('deepseek-harness', false).root;
+    const reportRel = 'doc/features/bc-openCard/review/review-report.md', report = path.join(root, reportRel);
+    const marker = 'UNCHANGED_PRODUCT_3F8A6C21';
+    const findings = ['CR-001', 'CR-002', 'CR-003', 'CR-004', 'CR-005'];
+    let authors = 0, reviewers = 0;
+    try {
+      fs.appendFileSync(path.join(root, PRODUCT_FILE), `\n// ${marker}\n`);
+      fs.mkdirSync(path.dirname(report), { recursive: true });
+      fs.writeFileSync(report, '# Original independent report\n' + findings.join('\n') + '\n**审查结论**: 不通过\n');
+      const options = {
+        adapter: 'deepseek-harness', onAuthor: () => { authors++; },
+        onReview: (ctx: { prompt: string }) => {
+          reviewers++;
+          assert(findings.every(id => ctx.prompt.includes(id)), 'all original findings, including the still-unproven one, must reach the reviewer');
+          fs.writeFileSync(report, '# Current independent report\nCR-001 through CR-004 verified repaired; CR-005 remains unproven\n**审查结论**: 不通过\n');
+        },
+        onHarnessSummary: ({ phase }: { phase: string }) => phase === 'coding'
+          ? { checks: fixtureReadDependencies(root, [productEvidenceCheck(root, marker)], [PRODUCT_FILE]) }
+          : phase === 'review' ? { checks: fixtureReadDependencies(root, [{
+            id: 'negative_verdict_closure', category: 'structure', severity: 'BLOCKER', status: 'FAIL',
+            description: 'original independent findings', details: findings.join(', '), failure_kind: 'negative_review_verdict',
+          } as import('../../scripts/utils/types').CheckResult], [PRODUCT_FILE, reportRel]) } : null,
+      };
+      const launch = declareSourceRepairRequest(root, ['coding', 'review']).launch;
+      const sourceManifest = YAML.parse(launch.freshManifestContent); sourceManifest.adapter = options.adapter;
+      const first = await runGoalRuntimeChain(root, { ...options, ...launch, freshManifestContent: YAML.stringify(sourceManifest) });
+      assert(reviewers === 0 && authors > 0, 'unchanged old report alone must not purchase a reviewer');
+      const runId = path.basename(first.reportDir);
+      const before = (require('../../scripts/utils/verify-feature-completion') as typeof import('../../scripts/utils/verify-feature-completion'))
+        .readCurrentCheckObservation({ projectRoot: root, frameworkRoot: path.resolve(__dirname, '../../..'), feature: 'bc-openCard', runId, phase: 'review' });
+      assert(before.returned && !before.changed, 'the recovery point must already have a returned unchanged review check');
+      const productBytes = fs.readFileSync(path.join(root, PRODUCT_FILE));
+      // Historical proof withdrawal is fixture input; publication itself is exercised by the real-plan V4 case.
+      fs.appendFileSync(path.join(first.reportDir, 'events.jsonl'), JSON.stringify({
+        type: 'phase_invalidated', phase: 'review', ts: new Date().toISOString(), reason: 'scope proof withdrawn after the old review check',
+      }) + '\n');
+      backdateLastRunEnd(root, runId);
+      const resumed = await runGoalRuntimeChain(root, { ...options, resume: runId, forceResume: true });
+      assert(Number(reviewers) === 1 && fs.readFileSync(path.join(root, PRODUCT_FILE)).equals(productBytes),
+        'scope invalidation must wake exactly one independent review despite no new product write');
+      assert(resumed.exitCode !== 0 && !resumed.events.some(event => event.type === 'run_end' && event.status === 'CHAIN_SLICE_COMPLETED'),
+        'the remaining CR-005 cannot disappear when other findings are reviewed');
+      const resumedEvents = resumed.events.slice(first.events.length);
+      const lastAuthor = resumed.events.filter(event => event.type === 'agent_invoke_start' && event.phase === 'work-unit-author').at(-1);
+      assert(lastAuthor && !resumed.events.some(event => event.type === 'phase_write_observed' && event.invoke_id === lastAuthor.invoke_id
+        && ((event as any).owned?.length || (event as any).observations?.length)), 'the latest author must really have handed back without writes');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  },
+}, {
   name: 'goal alignment: independent output oscillation pauses through common progress and resumes the same run',
   run: async () => {
     for (const mode of ['oscillate', 'improve', 'unavailable-verify'] as const) {

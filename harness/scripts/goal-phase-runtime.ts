@@ -4986,7 +4986,7 @@ export class GoalPhaseRuntime {
                 if (process.platform !== 'win32' || pid <= 0) return;
                 const bound = bindGuardianOrKill(pid, `${manifest.run_id}/${invokeId}`);
                 if (!bound.ok) { containmentError = bound.error; containmentStillAlive = bound.stillAlive; return; }
-                emit({ type: 'agent_process_bound', phase: label, invoke_id: invokeId, pid, started_at_ms: bound.identity.startedAtMs,
+                emit({ type: 'agent_process_bound', run_id: manifest.run_id, phase: label, invoke_id: invokeId, pid, started_at_ms: bound.identity.startedAtMs,
                   executable: bound.identity.executable, token: `${manifest.run_id}/${invokeId}` });
               }, onChildExit: () => { childExited = true; activeAgentKill = null; } } };
         }, injectedInvokeAgent ?? invokeAgentHeadless);
@@ -4998,7 +4998,7 @@ export class GoalPhaseRuntime {
           command: result.command, usage: result.usage,
           duration_ms: result.duration_ms, provider_session_id: result.provider_session_id, interrupted: result.interrupted, nativeSessionRebuildReason: result.nativeSessionRebuildReason, readonly_enforced: result.readonly_enforced, readonly_diagnostic: result.readonly_diagnostic, completion_observed: result.completion_observed, terminal_failure_observed: result.terminal_failure_observed, timed_out: result.timed_out,
           silent_killed: result.silent_killed, skipped: result.skipped, kill_attempted: result.kill_attempted, terminal_error_excerpt: result.terminal_error_excerpt, ...(result.spawn_error ? { spawn_error: result.spawn_error } : {}) });
-        if (childExited && !containmentError) emit({ type: 'agent_process_settled', phase: label, invoke_id: invokeId, exit_code: result.exitCode, timed_out: result.timed_out });
+        if (childExited && !containmentError) emit({ type: 'agent_process_settled', run_id: manifest.run_id, phase: label, invoke_id: invokeId, exit_code: result.exitCode, timed_out: result.timed_out });
         const hardCli = resolveInvokeHardCliFailure(result, { formalInvoke: true });
         if (hardCli || containmentError) return conclude('adapter_cli_hard_failure', hardCli ?? containmentError!);
         const post = capturePhaseInvocationSnapshot(resolution, snapshotOptions);
@@ -5182,7 +5182,7 @@ export class GoalPhaseRuntime {
             if (process.platform !== 'win32' || pid <= 0) return;
             const ownership = bindGuardianOrKill(pid, `${manifest.run_id}/${invokeId}`);
             if (!ownership.ok) { containmentError = ownership.error; containmentAlive = ownership.stillAlive; return; }
-            emit({ type: 'agent_process_bound', phase: label, invoke_id: invokeId, pid, started_at_ms: ownership.identity.startedAtMs,
+            emit({ type: 'agent_process_bound', run_id: manifest.run_id, phase: label, invoke_id: invokeId, pid, started_at_ms: ownership.identity.startedAtMs,
               executable: ownership.identity.executable, token: `${manifest.run_id}/${invokeId}` });
           }, onChildExit: () => { childExited = true; activeAgentKill = null; } } };
     }, injectedInvokeAgent ?? invokeAgentHeadless);
@@ -5194,7 +5194,7 @@ export class GoalPhaseRuntime {
       duration_ms: result.duration_ms, usage: result.usage, timed_out: result.timed_out, provider_session_id: result.provider_session_id, interrupted: result.interrupted, nativeSessionRebuildReason: result.nativeSessionRebuildReason, readonly_enforced: result.readonly_enforced, readonly_diagnostic: result.readonly_diagnostic, completion_observed: result.completion_observed, terminal_failure_observed: result.terminal_failure_observed,
       silent_killed: result.silent_killed, skipped: result.skipped, kill_attempted: result.kill_attempted,
       terminal_error_excerpt: result.terminal_error_excerpt, ...(result.spawn_error ? { spawn_error: result.spawn_error } : {}) });
-    if (childExited && !containmentError) emit({ type: 'agent_process_settled', phase: label, invoke_id: invokeId, exit_code: result.exitCode });
+    if (childExited && !containmentError) emit({ type: 'agent_process_settled', run_id: manifest.run_id, phase: label, invoke_id: invokeId, exit_code: result.exitCode });
     const outcome: DesignRepairInvokeOutcome = { started: true, invokeId, ok: invocationCompleted(result) && !containmentError, status: result.status,
       ...(purpose === 'questioning' ? { output: result.details ?? readInvokeFinalText(result.stdout, path.join(dir, 'agent-output.log'), manifest.adapter ?? 'generic') ?? '' } : {}),
       detail: containmentError ?? result.details ?? `exit=${result.exitCode}`, preSnapshot: guard?.pre, postSnapshot: post };
@@ -7603,7 +7603,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         timed_out: result.timed_out, silent_killed: result.silent_killed, skipped: result.skipped, signal: result.signal,
         readonly_enforced: result.readonly_enforced, readonly_diagnostic: result.readonly_diagnostic,
         ...(result.spawn_error ? { spawn_error: result.spawn_error } : {}) });
-      if (childExited) goalEvents.emit({ type: 'agent_process_settled', phase: label, invoke_id: invokeId, exit_code: result.exitCode });
+      if (childExited) goalEvents.emit({ type: 'agent_process_settled', run_id: manifest.run_id, phase: label, invoke_id: invokeId, exit_code: result.exitCode });
       const post = capturePhaseInvocationSnapshot(boundary, snapshotOptions);
       const changes = diffPhaseInvocationSnapshots(pre, post);
       const writes = changes.kind === 'changed' ? classifyPhaseInvocationChanges(boundary, label, changes.changes) : null;
@@ -7939,8 +7939,14 @@ Goal runner — tool-agnostic multi-phase orchestrator
         }
         let current = readWork();
         if (!current.facts.phases.some(result => result.phase === family)) continue;
-        const independent = current.independent.find(task => task.owner === family);
-        if (independent && !affectedCheck(family, current)) {
+        const reviewConditions = checkWorkConditions(family, current);
+        const artifactRepair = current.independent.find(task => task.owner === family);
+        const recheckIndependent = !artifactRepair && (reviewConditions.productChanged || reviewConditions.observation.changed || reviewConditions.scopeChanged)
+          ? independentArtifactRepairs({ ...current.input, currentDisposition: current.disposition, recheckFamilies: [family] }).find(task => task.owner === family)
+          : undefined;
+        const semanticRecheck = !!recheckIndependent;
+        const independent = artifactRepair ?? recheckIndependent;
+        if (independent && (semanticRecheck || !affectedCheck(family, current))) {
           const actor = lastAuthor();
           const authorResult = actor?.end.handoff_report
             ? path.resolve(runDir, actor.end.handoff_report.path)
@@ -7948,6 +7954,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           const reportRel = path.relative(projectRoot, independent.file).replace(/\\/g, '/');
           const instruction = [
             `独立审查本工作单元 ${manifest.feature}，按 ${phaseSkillPath(frameworkRoot, family as FeaturePhase)} 的正式方法写入 ${reportRel}。`,
+            `原始请求：${manifest.requirement ?? ''}`,
             `冻结交付目标：${(current.input.executionScope?.requested_results ?? []).join('\n')}`,
             `读取当前 canonical CU、设计来源、实际改动及作者原件；设计与 CU 归属冲突须在问题表列明具体权威文件和依据，交原责任方修订。`,
             ...(authorResult ? [`作者原件：${path.relative(projectRoot, authorResult).replace(/\\/g, '/')}。完整保留其中的拒修理由并独立核实；原件缺失时如实披露，不猜测作者结论。`] : []),
@@ -7982,7 +7989,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
             { material: { purpose: independent.owner, segments: [instruction, writerInputs] }, evaluation });
           if (reviewed === 3) return 3;
           if (!reviewed || halted) break;
-          continue currentWork;
+          if (!semanticRecheck || reviewed.rebuild) continue currentWork;
+          current = readWork();
         }
         let summary = readPhaseSummary(projectRoot, manifest.feature, family as FeaturePhase).summary;
         if (current.results.some(result => result.phase === family) && await awaitDeviceCondition(family, summary)) current = readWork();

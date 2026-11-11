@@ -11,6 +11,8 @@ fabricates a file when the device cannot be read.
 
 from __future__ import annotations
 
+from hylyre.image_io import write_image
+
 import json
 from pathlib import Path
 from typing import Any
@@ -73,7 +75,7 @@ async def capture_failure_boundary(
     png_path = base / f"{safe}.png"
     try:
         raw = await agent.ui.screenshot()
-        png_path.write_bytes(raw)
+        write_image(raw, png_path)
         artifacts.append(artifact_from_file("screenshot", png_path, base=path_base))
     except Exception as e:  # noqa: BLE001
         diagnostic_log(f"failure_diag screenshot failed: {e!r}")

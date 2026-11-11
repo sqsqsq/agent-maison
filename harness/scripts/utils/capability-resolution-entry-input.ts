@@ -31,7 +31,7 @@ import { tryLoadDiffExcludeTestPathRegexes, tryLoadProfileCodingHost, tryLoadUtS
 import { SpecLoader } from './spec-loader';
 import { computeRequirementShaFromText } from './fidelity-shared';
 import { findUnclosedGuardianBounds } from './goal-containment-reconcile';
-import { resolvePhaseWriteBoundary, resolvePhasePathOwnership } from './phase-write-boundary';
+import { resolvePhaseWriteBoundary, resolvePhasePathOwnership, unrestoredAuthorWrites } from './phase-write-boundary';
 import { workUnitMayWritePath } from './repair-responsibility';
 import { invocationCompleted } from './invocation-completion';
 import { deriveBlueprintSkillInput } from './blueprint-skill-projection';
@@ -39,6 +39,10 @@ import { asRecord } from './component-blueprint-model';
 
 /** Revision-trigger kinds: historical evidence for why a revision happened, never a current target. */
 const REVISION_TRIGGER_KINDS = new Set(['design-decision', 'acceptance-definition']);
+
+function collectsConstructionSources(options: { phase: string; purpose?: string }): boolean {
+  return options.purpose === 'work-unit-author' || ['coding', 'review', 'ut', 'testing'].includes(options.phase);
+}
 
 export interface PreparedRequest {
   schema_version: '1.0';
@@ -253,6 +257,9 @@ export function loadFormalFactsObservation(options: FactsInvocationLookup): {
     const anchor = records.find(record => record.original.context.attemptId === options.attemptId && record.completed
       && record.original.context.chain.includes(options.phase));
     if (!anchor) return undefined;
+    if (anchor.start.phase === 'work-unit-author') return completedFactsBaselineFromHistory({ ...options,
+      featuresDir: options.featuresDir ?? relFeaturesDir(options.projectRoot), goalAttemptId: options.attemptId },
+    options.runId, options.frameworkRoot ?? path.resolve(__dirname, '../../..'), manifest, history, false);
     const facts = fs.readFileSync(resolveFactsAbsPath(options.projectRoot, options.feature), 'utf8');
     const current = [...records].reverse().filter(record => record.completed)
       .map(record => record.start.facts_context ?? record.original.context.factsContext)
@@ -408,10 +415,12 @@ export function resolveFactsPhaseOwnedSources(options: {
     if (!scope || !options.runId && !executionCompletionPhases(scope).includes(options.phase)) return new Set();
     const boundary = resolveFactsWriteBoundary(options, scope);
     if (boundary.unresolvedSourcePhases.includes(options.phase)) return new Set();
+    const { workUnitExecutionRole } = require('./goal-phase-executor') as typeof import('./goal-phase-executor');
     return new Set(Object.entries(context.source_owners ?? {}).filter(([source, owner]) => {
       const granted = resolvePhasePathOwnership(boundary, source);
       return owner === options.phase && (options.runId
-        ? workUnitMayWritePath(boundary, source) && granted.roles.some(role => role.kind === 'source' || role.kind === 'artifact')
+        ? workUnitMayWritePath(boundary, source) && granted.roles.some(role => role.kind === 'source'
+          || role.kind === 'artifact' && workUnitExecutionRole({ phase: granted.owner ?? '' }) !== 'verifier')
         : granted.owner === options.phase && granted.roles.some(role => role.kind === 'source'));
     }).map(([source]) => source));
   } catch { return new Set(); }
@@ -428,7 +437,8 @@ export function loadCompletedFactsObservation(options: CapabilityResolutionEntry
   if (!/^i\d+$/.test(options.goalAttemptId ?? '')) return undefined;
   const manifest = loadGoalManifestFromRun(options.projectRoot, runId, { feature: options.feature, featuresDir: options.featuresDir });
   const scope = resolveEffectiveScopeSource(options.projectRoot, options.feature, runId)?.scope;
-  if (!scope || !executionCompletionPhases(scope).includes(options.phase)) return undefined;
+  const { applicableCheckFamilies } = require('./verify-feature-completion') as typeof import('./verify-feature-completion');
+  if (!scope || !applicableCheckFamilies(scope).includes(options.phase)) return undefined;
   const events = eventsWithScopeRevocations(manifest.execution_scope,
     loadAuthoritativeEvents(path.resolve(options.projectRoot, manifest.report_dir, 'events.jsonl')));
   return completedFactsBaselineFromHistory(options, runId, frameworkRoot, manifest, events, carryUnchangedBaseline);
@@ -436,6 +446,7 @@ export function loadCompletedFactsObservation(options: CapabilityResolutionEntry
 
 function completedFactsBaselineFromHistory(options: CapabilityResolutionEntryInputOptions, runId: string, frameworkRoot: string,
   manifest: ReturnType<typeof loadGoalManifestFromRun>, events: ReturnType<typeof loadAuthoritativeEvents>, carryUnchangedBaseline: boolean): ReturnType<typeof loadFormalFactsObservation> {
+  if (unrestoredAuthorWrites(options.projectRoot, events).size) return undefined;
   // An existing exact start belongs to the original admission/resume path, including legacy records.
   if (events.some(e => e.type === 'agent_invoke_start' && e.invoke_id === `${options.phase}-${options.goalAttemptId}`)) return undefined;
   let fence = -1;
@@ -498,8 +509,19 @@ function completedFactsBaselineFromHistory(options: CapabilityResolutionEntryInp
     }
     partialWrites.set(index, (classified?.allowed ?? []).filter(write => write.roles.some(role => role.kind === 'source')));
   }
-  const starts = events.map((e, i) => unitContexts.has(i) || i > fence && e.type === 'agent_invoke_start' && e.phase === options.phase
-    && typeof e.invoke_id === 'string' && new RegExp(`^${options.phase}-i\\d+$`).test(e.invoke_id) ? i : -1).filter(i => i >= 0);
+  const starts = events.flatMap((e, i) => {
+    if (unitContexts.has(i)) return [i];
+    if (i <= fence || e.type !== 'agent_invoke_start' || e.phase !== options.phase || typeof e.invoke_id !== 'string'
+      || !new RegExp(`^${options.phase}-i\\d+$`).test(e.invoke_id)) return [];
+    // A signed report-only verifier is not a legacy research author.
+    let request: UnitRequest | undefined;
+    try { request = executionRequestForInvoke(runDir, e.invoke_id)?.request; }
+    catch { return [i]; } // Unreadable originals keep the legacy admission checks.
+    if (request?.context.runId === runId && request.context.feature === options.feature && request.context.phase === e.phase
+      && request.write_boundary?.executionRole === 'verifier' && request.write_boundary.verifierResultPath
+      && workUnitExecutionRole(request.context, request.purpose) === 'verifier') return [];
+    return [i];
+  });
   if (!starts.length) {
     const handoff = events[fence];
     const returningOwner = handoff?.from_phase ?? handoff?.phase;
@@ -562,11 +584,17 @@ function completedFactsBaselineFromHistory(options: CapabilityResolutionEntryInp
   const owners = unitContexts.has(first) ? [...new Set([options.phase, ...Object.values(context.source_owners ?? {})])] : [options.phase];
   const ownedSources = new Set(owners.flatMap(owner => [...resolveFactsPhaseOwnedSources({ ...options, phase: owner, frameworkRoot, runId }, { ...context,
     source_owners: { ...context.source_owners, ...Object.fromEntries([...candidates].map(source => [source, owner])) } })]));
-  const isOwnedSource = (source: string): boolean => ownedSources.has(source);
+  const profile = loadResolvedProfile(options.projectRoot, loadFrameworkConfig(options.projectRoot), frameworkRoot);
+  const codingHost = tryLoadProfileCodingHost(profile.profileDir);
+  // Snapshot-only build outputs are revalidated by the profile, never admitted as author writes.
+  // Explicit research dependencies still require their original source chain.
+  const generated = new Set([...candidates].filter(file => !initial.has(file) && codingHost?.isGeneratedArtifact?.(options.projectRoot, file, options.feature)));
+  const isOwnedSource = (source: string): boolean => ownedSources.has(source) && !generated.has(source);
   const chain = new Map(initial);
   const written = new Set<string>();
   const observedWritten = new Set<string>();
-  const partialOwners = new Map<string, string>();
+  const writeOwners = new Map<string, string>();
+  const writtenSources = new Set([...partialWrites.values()].flatMap(writes => writes.map(write => write.path)));
   let interrupted: FactsInvocationContext | undefined;
   const phaseAdvanced = events.slice(first + 1).some(event => event.type === 'phase_verdict' && event.phase === options.phase && event.action === 'advance');
   for (let n = 0; n < starts.length; n++) {
@@ -578,13 +606,18 @@ function completedFactsBaselineFromHistory(options: CapabilityResolutionEntryInp
     if (!prior || stableStringify(prior.baseline ?? null) !== stableStringify(context.baseline ?? null)
       || !('run_id' in prior.subject) || prior.subject.run_id !== runId || prior.subject.feature !== options.feature
       || prior.first_phase !== context.first_phase || openBounds.has(start.invoke_id!)
-      || segment.some(e => e.type === 'phase_write_violation' && e.invoke_id === start.invoke_id)) return undefined;
+      || segment.some(e => {
+        if (e.type !== 'phase_write_violation' || e.invoke_id !== start.invoke_id) return false;
+        const violations = asRecord(e)?.violations;
+        return !Array.isArray(violations) || violations.some(write => asRecord(write)?.violation !== 'outside_authority');
+      })) return undefined;
     const partial = partialWrites.get(starts[n]);
     if (partial) {
       for (const write of partial) {
+        if (generated.has(write.path)) continue;
         if (!isOwnedSource(write.path) || chain.has(write.path) && chain.get(write.path) !== write.preSha256) return undefined;
         chain.set(write.path, write.postSha256); written.add(write.path); observedWritten.add(write.path);
-        if (write.owner) partialOwners.set(write.path, write.owner);
+        if (write.owner) writeOwners.set(write.path, write.owner);
       }
       continue;
     }
@@ -594,7 +627,8 @@ function completedFactsBaselineFromHistory(options: CapabilityResolutionEntryInp
       for (const [source, owner] of Object.entries(prior.source_owners ?? {})) if (owner === options.phase) written.delete(source);
       continue;
     }
-    for (const event of segment.slice(ended + 1)) {
+    // Session handback commits its observed writes before the end event; process transport commits them after it.
+    for (const event of segment) {
       if (event.type !== 'phase_write_observed' || !unitContexts.has(starts[n]) && event.phase !== options.phase || event.invoke_id !== start.invoke_id) continue;
       const owned = (event as { owned?: unknown }).owned;
       if (!Array.isArray(owned)) continue;
@@ -602,6 +636,14 @@ function completedFactsBaselineFromHistory(options: CapabilityResolutionEntryInp
         if (!row || typeof row.path !== 'string') return undefined;
         let source: string;
         try { source = path.posix.normalize(validateProjectRelativePath(options.projectRoot, row.path, 'facts write source')); } catch { return undefined; }
+        const request = unitRequests.get(starts[n]);
+        const ownership = request?.write_boundary && resolvePhasePathOwnership(request.write_boundary, source);
+        const signedSource = ownership?.roles.some(role => role.kind === 'source')
+          && workUnitMayWritePath(request!.write_boundary!, source);
+        if (signedSource && !generated.has(source)) {
+          if (!ownership?.owner) return undefined;
+          ownedSources.add(source);
+        }
         if (!isOwnedSource(source)) continue;
         if (typeof row.post_sha256 !== 'string' || !/^[0-9a-f]{64}$/i.test(row.post_sha256)
           || !(row.pre_sha256 === null || typeof row.pre_sha256 === 'string' && /^[0-9a-f]{64}$/i.test(row.pre_sha256))) return undefined;
@@ -610,6 +652,8 @@ function completedFactsBaselineFromHistory(options: CapabilityResolutionEntryInp
         if (chain.has(source) && chain.get(source) !== row.pre_sha256
           && (!interrupted || written.has(source))) return undefined;
         chain.set(source, row.post_sha256); written.add(source);
+        if (ownership?.owner) writeOwners.set(source, ownership.owner);
+        if (signedSource && collectsConstructionSources(options)) writtenSources.add(source);
         if (invocationCompleted({ ...segment[ended], exitCode: segment[ended].exit_code })) observedWritten.add(source);
         else observedWritten.delete(source);
       }
@@ -643,10 +687,11 @@ function completedFactsBaselineFromHistory(options: CapabilityResolutionEntryInp
   }
   const accepted = structuredClone(context);
   for (const source of written) {
-    if (unitContexts.has(first)) (accepted.source_owners ??= {})[source] ??= partialOwners.get(source) ?? options.phase;
+    if (unitContexts.has(first)) (accepted.source_owners ??= {})[source] = writeOwners.get(source) ?? accepted.source_owners[source] ?? options.phase;
     else (accepted.source_owners ??= {})[source] = options.phase;
   }
-  for (const source of partialOwners.keys()) if (!accepted.source_paths.includes(source)) accepted.source_paths.push(source);
+  for (const source of writtenSources)
+    if (writeOwners.has(source) && !accepted.source_paths.includes(source)) accepted.source_paths.push(source);
   const sources = new Map<string, { sha256: string; written: boolean }>();
   if (!context.baseline) for (const dep of businessDependencies) {
     const source = path.relative(options.projectRoot, dep.path).replace(/\\/g, '/');
@@ -758,7 +803,7 @@ export function resolveCapabilityResolutionEntryInput(
         .flatMap(obligation => obligation.basis.flatMap(binding => binding.dependencies
           .filter(dep => dep.role === 'derive' && dep.exists)
           .map(dep => path.relative(options.projectRoot, resolveDependencyPath(options.projectRoot, dep.path, inferLegacyProjectRoot(options.projectRoot, scope))).replace(/\\/g, '/')))))];
-      if ((unitAuthor || ['coding', 'review', 'ut', 'testing'].includes(options.phase)) && scope.obligations.some(obligation => obligation.kind === 'implementation' && obligation.applicability === 'required')) {
+      if (collectsConstructionSources(options) && scope.obligations.some(obligation => obligation.kind === 'implementation' && obligation.applicability === 'required')) {
         // G5：基线走统一来源选择（无 run 时是既有 HARNESS_DIFF_BASE_REF 三态，不是 FAIL）
         const baseline = resolveEffectiveDiffBaseline(options.projectRoot, options.feature, goalRunId);
         const diff = baseline.available ? diffChangedFilesWithStatus({ projectRoot: options.projectRoot, baseRef: baseline.baseSha }) : { entries: [] };
@@ -1043,6 +1088,7 @@ export function resolveCapabilityResolutionEntryInput(
       const establishingResearch = !factsContext.baseline && factsContext.first_phase === options.phase ? sourcePaths : [];
       factsContext.source_paths = [...new Set([
         ...establishingResearch.filter(file => fs.existsSync(path.resolve(options.projectRoot, file))),
+        ...(collectsConstructionSources(options) ? admitted?.source_paths ?? [] : []),
         ...(consumes('derive.codebase') ? codeTargets : []).filter(file => fs.existsSync(path.resolve(options.projectRoot, file))),
         ...(consumes('derive.test-targets') ? testTargets : []).filter(file => fs.existsSync(path.resolve(options.projectRoot, file))),
       ])];

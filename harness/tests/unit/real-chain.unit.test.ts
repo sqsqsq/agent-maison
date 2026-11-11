@@ -57,7 +57,7 @@ import { resolvePhasePathOwnership } from '../../scripts/utils/phase-write-bound
 import { extractUtItBlocks } from '../../scripts/utils/ut-it-blocks';
 import { preserveRuntimeTestEvidence } from '../utils/runtime-test-control';
 import { collectPhaseCompletionIssues, executionScopeEvidenceIssues, readReusableCheckResult } from '../../scripts/utils/verify-feature-completion';
-import { executionCompletionPhases } from '../../scripts/utils/execution-scope';
+import { executionCompletionPhases, validateExecutionScope } from '../../scripts/utils/execution-scope';
 import { resolveCapabilityInputs } from '../../scripts/utils/capability-resolution';
 import { resolveCapabilityResolutionEntryInput } from '../../scripts/utils/capability-resolution-entry-input';
 import { authorCurrentCuPlan } from './component-design-handoff.unit.test';
@@ -861,8 +861,8 @@ export function writeCodingMaterials(p: RealChainProject, opts: { entryTitleId?:
  *   非 pixel 档至少命中 1 类）——本链是 `semantic_layout`（需求文本无强 1:1 措辞），
  *   故四类全引只是为了稳，pixel 专属硬地板不适用。
  */
-export function writeReviewMaterials(p: RealChainProject): void {
-  writeFacts(p, 'review');
+export function writeReviewMaterials(p: RealChainProject, _executionRunId?: string, options?: { includeFacts?: boolean }): void {
+  if (options?.includeFacts !== false) writeFacts(p, 'review');
   // canonical 路径是 `review/review-report.md`；写旧路径会得到 legacy_read_… MAJOR WARN。
   writeHostFile(p.root, `doc/features/${p.feature}/review/review-report.md`, [
     '# 审查报告',
@@ -1512,8 +1512,8 @@ export function writeCuCodingMaterials(p: RealChainProject): void {
   writeCuFacts(p, 'coding');
 }
 
-export function writeCuReviewMaterials(p: RealChainProject, executionRunId = p.runId): void {
-  writeCuFacts(p, 'review');
+export function writeCuReviewMaterials(p: RealChainProject, executionRunId = p.runId, options?: { includeFacts?: boolean }): void {
+  if (options?.includeFacts !== false) writeCuFacts(p, 'review');
   const contracts = YAML.parse(fs.readFileSync(path.join(p.root, `${cuRel(p)}/contracts.yaml`), 'utf8')) as ContractsSpec;
   const entry = resolveCapabilityResolutionEntryInput({ projectRoot: p.root, frameworkRoot: p.frameworkRoot, feature: p.feature, phase: 'review', goalRunId: executionRunId,
     goalAttemptId: process.env.MAISON_GOAL_ATTEMPT, featuresDir: 'doc/features' });
@@ -1935,6 +1935,85 @@ test('real-chain CU 绑定链：plan 生成当前映射与用例后经 coding→
     else console.log('--- kept root', project.root);
     clearFrameworkConfigCache();
   }
+});
+
+test('3f8a6c21 V4 public local contracts revision passes real plan and rebinds downstream checks', async () => {
+  const project = provisionRealChainProject();
+  try {
+    scaffoldRealChainHost(project);
+    writeSpecMaterials(project); writePlanMaterials(project); writeCodingMaterials(project); writeReviewMaterials(project);
+    fs.rmSync(featureFilePath(project.root, project.feature, 'context/facts.md'));
+    const uiFile = featureFilePath(project.root, project.feature, 'spec/ui-spec.yaml');
+    const ui = YAML.parse(fs.readFileSync(uiFile, 'utf8')); delete ui.feature;
+    ui.verified = 'verified'; ui.verified_method = 'vl_multimodal';
+    for (const screen of ui.screens) for (const child of screen.root.children) child.type = child.type === 'list_item' ? 'list_row' : 'content_display';
+    ui.tokens = { gap: { kind: 'spacing', value: '16vp' } };
+    fs.writeFileSync(uiFile, YAML.stringify(ui));
+    writeHostFile(project.root, `doc/features/${project.feature}/plan/visual-parity.yaml`, YAML.stringify({ mappings: { assets: [], tokens: [], components: [] } }));
+    const contractFile = featureFilePath(project.root, project.feature, 'contracts.yaml');
+    const original = fs.readFileSync(contractFile);
+    const requirement = '在原模块范围内细化contracts中银行列表与仓库的调用映射，保留实现并核验当前设计与代码';
+    const prepared = prepareFeatureScopeCandidate({ projectRoot: project.root, frameworkRoot: project.frameworkRoot, feature: project.feature,
+      completionTarget: 'feature', requestedResults: ['细化现有银行列表调用映射并核实实现'], requestedPhases: ['plan', 'coding', 'review', 'ut', 'testing'], requirement,
+      impact: { userVisibleBehaviorChange: false, reason: '仅细化已有映射，不改变界面', basisPaths: [REAL_CHAIN_SOURCE] }, overwrite: true });
+    const oldBindings = prepared.scope.obligations.flatMap(obligation => obligation.basis).filter(binding => binding.input_id === 'contracts');
+    assert(oldBindings.length > 0, 'the original request must actually bind the old contract before the author changes it');
+    git(project.root, ['add', '-A']); git(project.root, ['commit', '-qm', 'seed valid local design and implementation']);
+    let changed = false;
+    const { authorHooks } = await import('./lifecycle-evolution.unit.test');
+    const hooks = authorHooks(project, {
+      plan: p => {
+        const contracts = YAML.parse(fs.readFileSync(contractFile, 'utf8'));
+        const entry = contracts.prd_to_code_traceability.find((row: { prd_id: string }) => row.prd_id === 'AC-1');
+        if (!entry.key_files.includes(REAL_CHAIN_SOURCE_2)) {
+          assert(!changed, 'an unchanged handback cannot manufacture another design revision');
+          entry.key_files.push(REAL_CHAIN_SOURCE_2); contracts.version = '2';
+          fs.writeFileSync(contractFile, YAML.stringify(contracts)); changed = true;
+        }
+      },
+      coding: p => writeCodingMaterials(p),
+      review: writeReviewMaterials,
+      ut: writeUtMaterials,
+      testing: writeTestPlan,
+    });
+    const chain = prepared.scope.phase_chain;
+    const probe = await runGoalRuntimeChain(project.root, { ...hooks, frameworkRoot: project.frameworkRoot, featureId: project.feature,
+      adapter: 'codex', viaSessionStep: true, hostAuthorization: { mode: 'goal_mode', autonomyAuthorized: true },
+      freshRequirement: requirement, freshStartPhase: chain[0] as 'coding', freshEndPhase: chain.at(-1),
+      freshManifestContent: YAML.stringify({ feature: project.feature, adapter: 'codex', requirement, execution_scope: prepared.scope,
+        chain_override: chain, unattended: { write_mode: 'full-access', approval_mode: 'never' } }) });
+    const proofDir = path.resolve(__dirname, '../../reports/3f8a6c21/revision-20261111'); fs.mkdirSync(proofDir, { recursive: true });
+    fs.writeFileSync(path.join(proofDir, `contracts-public-${path.basename(probe.reportDir)}.json`), JSON.stringify({
+      changed, oldBindings,
+      phaseResults: ['plan', 'coding', 'review'].map(phase => ({ phase, summary: readSummary(project, phase),
+        script: JSON.parse(fs.readFileSync(featureFilePath(project.root, project.feature, `${phase}/reports/script-report.json`), 'utf8')) })),
+      events: probe.events.filter(event => ['agent_invoke_start', 'agent_invoke_end', 'phase_write_observed', 'harness_end', 'phase_verdict', 'scope_revised', 'phase_halt', 'run_end'].includes(String(event.type))),
+    }, null, 2) + '\n');
+    assert(changed && !fs.readFileSync(contractFile).equals(original), 'the actual authorized author must revise the pre-existing local contract');
+    const writesAt = probe.events.findIndex(event => event.type === 'phase_write_observed'
+      && ((event as any).owned ?? []).some((write: { path: string }) => write.path === `doc/features/${project.feature}/contracts.yaml`));
+    const planAt = probe.events.findIndex((event, index) => index > writesAt && event.type === 'phase_verdict' && event.phase === 'plan' && event.verdict === 'PASS');
+    const revisionAt = probe.events.findIndex((event, index) => index > planAt && event.type === 'scope_revised'
+      && (event.trigger as { phase?: string })?.phase === 'plan');
+    assert(writesAt >= 0 && planAt > writesAt && revisionAt > planAt, 'real plan checking must precede the actual scope publication');
+    const revised = validateExecutionScope(probe.events[revisionAt].execution_scope);
+    const newBindings = revised.obligations.flatMap(obligation => obligation.basis).filter(binding => binding.input_id === 'contracts');
+    assert(newBindings.length > 0 && newBindings.every(binding => !oldBindings.some(old => old.content_fingerprint === binding.content_fingerprint)),
+      'the published scope must contain the revised contract binding, not the old one');
+    for (const phase of ['coding', 'review']) {
+      assert(probe.events.some((event, index) => index > revisionAt && event.type === 'harness_end' && event.phase === phase),
+        `${phase} must really check the new binding after publication`);
+      assertCurrentPhaseDutiesSatisfied(project, phase, path.basename(probe.reportDir));
+      const report = JSON.parse(fs.readFileSync(featureFilePath(project.root, project.feature, `${phase}/reports/script-report.json`), 'utf8')) as import('../../scripts/utils/types').ScriptReport;
+      const consumed = report.capability_resolutions.flatMap(capability => capability.inputs)
+        .filter(input => input.id === 'contracts' && input.state === 'resolved' && input.binding).map(input => input.binding!);
+      assert(consumed.length > 0 && consumed.every(binding => newBindings.some(current => current.content_fingerprint === binding.content_fingerprint)),
+        `${phase} must consume the actual contract fingerprint published by plan`);
+    }
+    assert(probe.exitCode === 0 && probe.events.some(event => event.type === 'run_end' && event.status === 'CHAIN_SLICE_COMPLETED'),
+      'the original public request must reach its formal completion endpoint');
+  } catch (error) { preserveChainFailure(project, error); throw error; }
+  finally { fs.rmSync(project.root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
 });
 
 test('real-chain 正例：spec→testing 六阶段真实 harness 全链 PASS + closed', async () => {

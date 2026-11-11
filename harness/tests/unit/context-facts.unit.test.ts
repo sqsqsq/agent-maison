@@ -14,7 +14,7 @@ import * as YAML from 'yaml';
 import type { ResolvedPhaseInputs } from '../../scripts/utils/capability-resolution';
 import { checkFactsArtifact, resolveFactsAbsPath, isFactsEstablishingPhase, factsBaselineFingerprint, type FactsInvocationContext } from '../../scripts/utils/context-facts';
 import { featureTrackDeclPath } from '../../scripts/utils/feature-track';
-import { parseContextExploration } from '../../scripts/utils/context-exploration';
+import { parseContextExploration, runQuantitativeChecks } from '../../scripts/utils/context-exploration';
 import { resolveCheckDisposition } from '../../scripts/utils/check-disposition';
 import { SpecLoader } from '../../scripts/utils/spec-loader';
 
@@ -507,6 +507,20 @@ function modernFactsCase(request: boolean, sourceCount = 6, phase = request ? 'r
     const initial = checkFactsArtifact(dir, request ? '' : 'demo', phase, options);
     eq(initial.filter(r => r.status === 'FAIL'), [], 'first real phase facts');
     eq(isFactsEstablishingPhase(phase, context), true, 'actual first phase');
+    if (!request && sourceCount === 1 && phase === 'plan') {
+      fs.writeFileSync(path.join(dir, 'src/created.test.ts'), 'export const tested = true;\n');
+      const expanded = { ...context, source_paths: [...sourcePaths, 'src/created.test.ts'] };
+      const parsed = parseContextExploration(raw);
+      const original = runQuantitativeChecks(dir, 'demo', 'plan', parsed.fm, parsed.body, 'context/facts.md', { ...options, factsContext: expanded });
+      eq(includesId(original, 'context_exploration_source_code_paths_min', 'FAIL'), true, 'establishing research still requires both actual research targets');
+      for (const downstream of ['coding', 'review', 'ut'] as const) {
+        const check = (factsBody: string) => runQuantitativeChecks(dir, 'demo', downstream, parsed.fm, factsBody, 'context/facts.md',
+          { ...options, factsContext: expanded, resolvedInputs: { ...resolvedInputs, phase: downstream } });
+        eq(includesId(check(parsed.body), 'context_exploration_source_code_paths_min', 'FAIL'), false, 'construction writes do not enlarge original research');
+        eq(includesId(check(parsed.body), 'context_exploration_code_facts_min', 'FAIL'), false, 'original researched fact remains sufficient downstream');
+        eq(includesId(check('## Code Facts\n'), 'context_exploration_code_facts_min', 'FAIL'), true, 'an empty downstream fact record still fails');
+      }
+    }
     if (request) {
       eq(fs.existsSync(path.join(dir, 'doc/features')), false, 'request must not create Feature paths');
       fs.writeFileSync(file, raw.replace('request_sha256:', 'feature: demo\nrequest_sha256:'));

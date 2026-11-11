@@ -31,6 +31,8 @@ export interface ProjectCompileResult {
 /** ArkTS / 其它宿主下由 profile 贡献的源码后缀列表（不含点也可，调用方 normalize） */
 export type ProfileCodingHost = {
   readonly sourceFileSuffixes: readonly string[];
+  /** Current validated build output, not a source write attributable to an author. */
+  isGeneratedArtifact?(projectRoot: string, file: string, feature: string): boolean;
   runStructureChecks(ctx: CheckContext, analyses: FileAnalysis[]): CheckResult[];
   runTraceabilityChecks(ctx: CheckContext): CheckResult[];
   /** 真实编译闭环（工具链与失败归因文案由 profile 承担；根 check-coding 仅编排） */

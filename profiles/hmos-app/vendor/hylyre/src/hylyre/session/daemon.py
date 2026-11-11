@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from hylyre.image_io import image_mime
+
 import asyncio
 import json
 import os
@@ -25,7 +27,7 @@ async def _dispatch(agent: HylyreAgent, method: str, params: dict[str, Any]) -> 
         import base64
 
         raw = await agent.ui.screenshot()
-        mime = "image/jpeg" if raw.startswith(b"\xff\xd8\xff") else "image/png"
+        mime = image_mime(raw)
         return {
             "mime": mime,
             "base64": base64.standard_b64encode(raw).decode("ascii"),

@@ -48,6 +48,11 @@ export function findUnclosedGuardianBounds(
   events: ReadonlyArray<unknown>,
 ): GuardianBoundRecord[] {
   const open = new Map<string, GuardianBoundRecord>();
+  const runIds = new Set(events.flatMap(raw => {
+    const runId = raw && typeof raw === 'object' ? (raw as Record<string, unknown>).run_id : undefined;
+    return typeof runId === 'string' && runId ? [runId] : [];
+  }));
+  const legacyRunId = runIds.size === 1 ? [...runIds][0] : '';
   for (const raw of events) {
     if (!raw || typeof raw !== 'object') continue;
     const e = raw as Record<string, unknown>;
@@ -57,7 +62,8 @@ export function findUnclosedGuardianBounds(
       continue;
     }
     const invokeId = typeof e.invoke_id === 'string' ? e.invoke_id : '';
-    const runId = typeof e.run_id === 'string' ? e.run_id : '';
+    // Old settled writers omitted run_id. Only a single-run history can supply it.
+    const runId = typeof e.run_id === 'string' && e.run_id ? e.run_id : legacyRunId;
     const key = `${runId}|${invokeId}`;
     if (type === 'agent_process_bound') {
       const pid = typeof e.pid === 'number' ? e.pid : 0;

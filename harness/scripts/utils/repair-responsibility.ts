@@ -16,6 +16,7 @@ import {
   featureFilePath,
   receiptDirPath,
   relFeaturesDir,
+  resolveFeatureArtifact,
 } from '../../config';
 import type { FeatureTrack } from './runtime-policy';
 import { resolveModulePathPrefixes, resolveImplementationScope, projectImplementationModules } from './diff-scope';
@@ -485,7 +486,7 @@ export interface RepairResponsibility {
 }
 
 /** Independent repair is selected by the actual artifact producer, not the check that reported it. */
-export function independentArtifactRepairs(input: RepairResponsibilityContext & { currentDisposition: CurrentDisposition }):
+export function independentArtifactRepairs(input: RepairResponsibilityContext & { currentDisposition: CurrentDisposition; recheckFamilies?: readonly string[] }):
   Array<{ owner: string; file: string; problems: CurrentDispositionProblem[] }> {
   let context: RepairResponsibilityContext;
   try { context = repairResponsibilityContext(input); }
@@ -507,6 +508,20 @@ export function independentArtifactRepairs(input: RepairResponsibilityContext & 
     const file = path.resolve(context.projectRoot, files[0]);
     const task = tasks.get(file) ?? { owner: owners[0], file, problems: [] };
     task.problems.push(problem); tasks.set(file, task);
+  }
+  for (const owner of input.recheckFamilies ?? []) {
+    if (workUnitExecutionRole({ phase: owner }) !== 'verifier' || context.profile?.phasesDisabled.has(owner)
+      || !context.executionScope?.obligations.some(obligation => obligation.owner_phase === owner && obligation.applicability === 'required')) continue;
+    const problems = input.currentDisposition.completionBlocking.filter(problem => (problem.source_phase ?? problem.phase) === owner
+      && (problem.action === 'repair' || problem.id.startsWith('open_finding:'))
+      && problem.owner !== 'framework' && !problem.id.startsWith('capability_'));
+    if (!problems.length) continue;
+    const outputs = context.contracts.domains.filter(domain => domain.owner === owner && domain.kind === 'artifact' && domain.match === 'exact');
+    const files = new Set(outputs.map(domain => resolveFeatureArtifact(context.projectRoot!, input.feature!, path.posix.basename(domain.path)).actualPath)
+      .filter(file => fs.existsSync(file)));
+    if (files.size !== 1) continue;
+    const file = [...files][0], task = tasks.get(file) ?? { owner, file, problems: [] };
+    task.problems = [...new Set([...task.problems, ...problems])]; tasks.set(file, task);
   }
   return [...tasks.values()];
 }

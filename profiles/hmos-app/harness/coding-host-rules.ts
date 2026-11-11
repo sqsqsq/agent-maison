@@ -8,7 +8,7 @@ import { CHECK_NOT_APPLICABLE_MARKER } from '../../../harness/scripts/utils/type
 import { AstAnalyzer, type FileAnalysis } from '../../../harness/scripts/utils/ast-analyzer';
 import { diffChangedFiles, diffChangedFilesWithStatus, resolveEffectiveDiffBaseline, readFileAtRef } from '../../../harness/scripts/utils/git-diff';
 import type { ProfileCodingHost, ProjectCompileContext, ProjectCompileResult } from '../../../harness/profile-host-loader';
-import { loadFrameworkConfig } from '../../../harness/config';
+import { loadFrameworkConfig, resolveFeatureArtifact } from '../../../harness/config';
 import {
   isCapabilitySkipped,
   isDepsInstallExecutable,
@@ -37,6 +37,9 @@ import {
 
 import { runArkuiStaticRules } from './arkui-static-rules';
 import { blockerFail } from '../../../harness/scripts/utils/check-result-factory';
+import { classifyGeneratedSourceChange } from './generated-source-classifier';
+import { resolveDeviceTestProduct, resolveDeviceTestBuildMode } from './testing-build-conventions';
+import { TEST_REPORT_GENERATED_MARKER } from './test-report-writer';
 import {
   resolveContractFileReferences,
   selectContractReferencePaths,
@@ -1575,6 +1578,19 @@ async function checkCodingLint(ctx: CheckContext): Promise<CheckResult[]> {
 
 export const profileCodingHost: ProfileCodingHost = {
   sourceFileSuffixes: ['.ets'],
+  isGeneratedArtifact(projectRoot, file, feature) {
+    if (path.basename(file) === 'test-report.md') {
+      const report = resolveFeatureArtifact(projectRoot, feature, 'test-report.md').actualPath;
+      return path.resolve(projectRoot, file) === report && fs.existsSync(report)
+        && fs.readFileSync(report, 'utf8').startsWith(TEST_REPORT_GENERATED_MARKER);
+    }
+    if (!file.endsWith('/BuildProfile.ets')) return false;
+    try {
+      return classifyGeneratedSourceChange(projectRoot, { path: file, how: 'modified' }, {
+        product: resolveDeviceTestProduct(projectRoot), buildMode: resolveDeviceTestBuildMode(),
+      }).kind === 'generated_legit';
+    } catch { return false; }
+  },
   runStructureChecks,
   runTraceabilityChecks,
   checkCodingCompile,

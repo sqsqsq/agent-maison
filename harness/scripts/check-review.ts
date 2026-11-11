@@ -85,7 +85,7 @@ function checkReviewContext(ctx: CheckContext): CheckResult[] {
   const results: CheckResult[] = [];
   if (ctx.resolvedInputs?.context.obligations.implementation === 'required') {
     for (const id of ['contracts', 'acceptance']) if (ctx.resolvedInputs.values[id]?.state !== 'resolved') results.push({
-      id: 'review_required_design', category: 'structure', severity: 'BLOCKER', status: 'FAIL', description: '组合实现审查必须有有效设计与验收', details: `required comparison missing: ${id}`, suggestion: '回设计责任方补齐真实对照输入，不能以独立代码审查替代实现验收。',
+      id: 'review_required_design', category: 'structure', severity: 'BLOCKER', status: 'SKIP', failure_kind: 'capability_missing', description: '组合实现审查必须有有效设计与验收', details: `required comparison unavailable; review not executed: ${id}`, suggestion: '回设计责任方补齐真实对照输入，不能以独立代码审查替代实现验收。',
     });
   }
   const files = reviewTargetFiles(ctx);
@@ -661,7 +661,7 @@ function checkIssueToFile(ctx: CheckContext<'feature' | 'request'>, report: stri
   const allFiles = new Set<string>();
   for (const row of table.rows) {
     const cell = (row[fileCol] || '').trim();
-    cell.split(/[,，\n]/)
+    cell.split(/[,，、\n]/)
       .map(file => file.replace(/`/g, '').trim().replace(/:\d+(?:-\d+)?$/, ''))
       .filter(file => file && file !== '-')
       .forEach(file => allFiles.add(file));
@@ -705,7 +705,7 @@ function checkIssueToFile(ctx: CheckContext<'feature' | 'request'>, report: stri
     description: ruleDesc(ctx, 'traceability_checks', 'issue_to_file'),
     severity: 'BLOCKER', status: 'FAIL',
     details: `${missing.length}/${allFiles.size} 个引用文件不存在或路径无效：\n${missing.slice(0, 10).map(f => `  - ${f}`).join('\n')}${missing.length > 10 ? `\n  ... 还有 ${missing.length - 10} 个` : ''}${invalid.length ? '\n' + invalid.slice(0, 10).join('\n') : ''}`,
-    affected_files: missing,
+    affected_files: [ctx.subject === 'request' ? ctx.request.inputs.review_report : relFeatureArtifact(ctx.projectRoot, ctx.feature, 'review-report.md')],
     suggestion: '请确认问题清单中的文件路径是否正确。',
   }];
 }

@@ -49,7 +49,7 @@ import review from '../../scripts/check-review';
 import type { CheckContext, CheckResult } from '../../scripts/utils/types';
 import { loadWorkflowSpec, resolveWorkflowSpec, type WorkflowSpec } from '../../workflow-loader';
 import type { UnitCaseResult } from '../run-unit';
-import { codingTestPreservation } from '../../scripts/utils/repair-responsibility';
+import { codingTestPreservation, independentArtifactRepairs } from '../../scripts/utils/repair-responsibility';
 import { matchesUnitCase, selectedUnitCases, startCaseTiming, SelectedUnitCases, UnitExecutionTiming } from '../utils/unit-case-selection';
 import { writePhaseSummary } from '../utils/completion-chain-seed';
 import { withRunDisposition } from '../../scripts/utils/adjudication';
@@ -200,7 +200,8 @@ function appendRunEvent(f: ReturnType<typeof fixture>, event: Record<string, unk
 }
 
 /** Production admission + write boundary, persisted in the existing invocation event before mutation. */
-function beginFactsInvocation(f: ReturnType<typeof fixture>, fw: string, phase: string, runId: string, attemptId: string, transport: 'process' | 'session' = 'process') {
+function beginFactsInvocation(f: ReturnType<typeof fixture>, fw: string, phase: string, runId: string, attemptId: string, transport: 'process' | 'session' = 'process', unitAuthor = false) {
+  const actorPhase = unitAuthor ? 'work-unit-author' : phase;
   const entry = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase,
     featuresDir: 'doc/features', goalRunId: runId, goalAttemptId: attemptId });
   const boundary = resolvePhaseWriteBoundary({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', runId,
@@ -212,15 +213,15 @@ function beginFactsInvocation(f: ReturnType<typeof fixture>, fw: string, phase: 
   const acquired = control.owner?.state === 'active' ? { ok: true as const, token: { run_id: runId, owner_id: control.owner.owner_id, epoch: control.owner.epoch } }
     : casAcquireRunOwner(runDir, runId, control.current_epoch, { kind: transport, owner_id: 'facts-fixture-owner', lease_ms: 60_000 });
   assert(acquired.ok); if (!acquired.ok) throw new Error('facts fixture owner not acquired');
-  const context: WorkUnitExecutionContext = { runId, feature: 'demo', workflowId: 'obligation-driven', track: 'full', chain: manifest.phase_chain ?? [], phase,
+  const context: WorkUnitExecutionContext = { runId, feature: 'demo', workflowId: 'obligation-driven', track: 'full', chain: manifest.phase_chain ?? [], phase: actorPhase,
     attemptId, owner: { ...acquired.token, kind: transport }, projectRoot: f.root, frameworkRoot: fw, runDir, reportDir: manifest.report_dir,
     adapter: 'generic', authority: manifest.unattended, factsContext: entry.factsContext, instruction: 'Read actual inputs, modify only this unit and self-check before returning.',
     runtimeFacts: { runBaseSha: manifest.run_base_sha, receiptRequired: false, resume: false, successor: false },
-    childEnv: { MAISON_GOAL_RUN_ID: runId, MAISON_GOAL_ATTEMPT: attemptId, MAISON_GOAL_ATTEMPT_PHASE: phase } };
-  appendRunEvent(f, { type: 'agent_invoke_start', phase, invoke_id: `${phase}-${attemptId}`, facts_context: entry.factsContext,
+    childEnv: { MAISON_GOAL_RUN_ID: runId, MAISON_GOAL_ATTEMPT: attemptId, MAISON_GOAL_ATTEMPT_PHASE: actorPhase } };
+  appendRunEvent(f, { type: 'agent_invoke_start', phase: actorPhase, invoke_id: `${actorPhase}-${attemptId}`, facts_context: entry.factsContext,
     owner_id: acquired.token.owner_id, owner_epoch: acquired.token.epoch }, path.join(runDir, 'events.jsonl'));
   const snapshotOptions = { includeFiles: entry.factsContext?.baseline?.dependencies.map(dependency => dependency.path) ?? [] };
-  const input = { context, invokeId: `${phase}-${attemptId}`, preSnapshot: capturePhaseInvocationSnapshot(boundary, snapshotOptions), writeBoundary: boundary, snapshotOptions,
+  const input = { context, invokeId: `${actorPhase}-${attemptId}`, preSnapshot: capturePhaseInvocationSnapshot(boundary, snapshotOptions), writeBoundary: boundary, snapshotOptions,
     gateTimeoutMs: 30_000, cleanupReserveMs: 500 };
   if (transport === 'session') issueSessionExecution({ ...input,
     emit: event => appendRunEvent(f, event as unknown as Record<string, unknown>, path.join(runDir, 'events.jsonl')) });
@@ -307,6 +308,70 @@ async function testWriteCheck(f: ReturnType<typeof fixture>) {
 }
 
 const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; extraContractFiles?: string[]; requirement?: string; materializedAdapter?: 'generic'; run(f: ReturnType<typeof fixture>): Promise<void> | void }> = [
+  { name: '3f8a6c21 reclaimed partial unit preserves source writes alongside validated generated output', run(f) {
+    const fw = frameworkDeclaringTsSources();
+    try {
+      const cfg = JSON.parse(fs.readFileSync(path.join(f.root, 'framework.config.json'), 'utf8'));
+      cfg.project_profile = { name: 'hmos-app', sub_variant: 'app' };
+      f.write('framework.config.json', JSON.stringify(cfg)); clearFrameworkConfigCache();
+      f.write('build-profile.json5', JSON.stringify({ app: { products: [{ name: 'default' }] }, modules: [{ name: 'demo', srcPath: './src/demo', targets: [{ name: 'default', applyToProducts: ['default'] }] }] }));
+      f.write('src/demo/oh-package.json5', '{"version":"1.0.0"}');
+      const file = 'src/demo/BuildProfile.ets';
+      const image = "export const HAR_VERSION = '1.0.0';\nexport const BUILD_MODE_NAME = 'debug';\nexport const DEBUG = true;\nexport const TARGET_NAME = 'default';\nexport default class BuildProfile {\n static readonly HAR_VERSION = HAR_VERSION;\n static readonly BUILD_MODE_NAME = BUILD_MODE_NAME;\n static readonly DEBUG = DEBUG;\n static readonly TARGET_NAME = TARGET_NAME;\n}\n";
+      f.write(file, image); f.facts(); priorResearchBaseline(f, fw);
+      beginFactsInvocation(f, fw, 'coding', f.manifest.run_id, 'i1', 'process', true);
+      f.write('src/demo/value.ts', 'export const value = 42;\n'); f.write(file, image + '// regenerated\n');
+      appendRunEvent(f, { type: 'agent_process_bound', phase: 'work-unit-author', run_id: f.manifest.run_id, invoke_id: 'work-unit-author-i1', pid: 42, started_at_ms: 1 });
+      appendRunEvent(f, { type: 'orphan_reclaimed', phase: 'work-unit-author', run_id: f.manifest.run_id, invoke_id: 'work-unit-author-i1', pid: 42, method: 'guardian_gone' });
+      const helper = require('../../scripts/utils/capability-resolution-entry-input') as typeof import('../../scripts/utils/capability-resolution-entry-input');
+      const observation = helper.loadCompletedFactsObservation({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'coding', featuresDir: 'doc/features', goalAttemptId: 'i2' }, f.manifest.run_id, fw);
+      assert(observation, 'recovered partial work must not be rejected by a generated snapshot-only output');
+      assert.equal(observation.sources.get('src/demo/value.ts')?.written, true);
+      assert(!observation.sources.has(file), 'generated output is not admitted as an author source write');
+    } finally { removeShimFramework(fw); }
+  } },
+  { name: '3f8a6c21 report references accept ideographic commas and semantic recheck reaches the existing independent writer', async run(f) {
+    f.facts(); priorResearchBaseline(f, frameworkRoot);
+    const report = 'doc/features/demo/review/review-report.md';
+    f.write(report, '# Code Review\n## 问题清单\n| 编号 | 严重程度 | 涉及文件 |\n|---|---|---|\n| CR-1 | BLOCKER | `src/demo/value.ts`、`doc/features/demo/contracts.yaml` |\n## 结论\n**审查结论**: 不通过\n');
+    const checks = await review.check(f.context('review'));
+    assert.equal(checks.find(check => check.id === 'issue_to_file')?.status, 'PASS');
+    const { parseReviewIssueRows } = require('../../scripts/utils/repair-candidates') as typeof import('../../scripts/utils/repair-candidates');
+    const reportText = fs.readFileSync(path.join(f.root, report), 'utf8');
+    const parsed = parseReviewIssueRows(reportText);
+    assert.deepStrictEqual(parsed[0]?.files, ['doc/features/demo/contracts.yaml', 'src/demo/value.ts'],
+      'repair candidates must receive the same separate file references as the report checker');
+    assert.deepStrictEqual(parsed, parseReviewIssueRows(reportText.replace('、', ', ')), 'separator spelling cannot change the finding identity');
+    f.write(report, fs.readFileSync(path.join(f.root, report), 'utf8').replace('`src/demo/value.ts`', '`missing.ts`'));
+    const invalid = (await review.check(f.context('review'))).find(check => check.id === 'issue_to_file');
+    assert.equal(invalid?.status, 'FAIL'); assert.deepStrictEqual(invalid?.affected_files, [report]);
+    const disposition = resolveCurrentDisposition({ endpoint: 'request', phases: [], additionalProblems: [{
+      phase: 'review', id: 'negative_verdict_closure', action: 'repair', affects: 'completion', severity: 'BLOCKER', detail: 'unresolved original finding',
+    }] });
+    const input = { projectRoot: f.root, frameworkRoot, feature: 'demo', runId: f.manifest.run_id,
+      executionScope: loadEffectiveExecutionScope(f.root, 'demo', f.manifest.run_id, frameworkRoot), currentDisposition: disposition };
+    assert.equal(independentArtifactRepairs(input).length, 0, 'unchanged negative result alone is not another review');
+    const tasks = independentArtifactRepairs({ ...input, recheckFamilies: ['review'] });
+    assert.equal(tasks.length, 1); assert.equal(tasks[0].file, path.join(f.root, report));
+    assert.equal(tasks[0].owner, 'review'); assert.equal(tasks[0].problems[0].id, 'negative_verdict_closure');
+    const pendingAttestation = resolveCurrentDisposition({ endpoint: 'request', phases: [], additionalProblems: [{
+      phase: 'review', id: 'attestation_present', action: 'verify', affects: 'completion', severity: 'BLOCKER', detail: 'formal verification pending',
+    }] });
+    assert.equal(independentArtifactRepairs({ ...input, currentDisposition: pendingAttestation, recheckFamilies: ['review'] }).length, 0,
+      'a missing formal attestation uses its existing verifier, not a report-author invocation');
+  } },
+  { name: '3f8a6c21 unresolved construction input stays an execution gap rather than a compile or scope failure', async run(f) {
+    f.facts(); const ctx = f.context('coding');
+    ctx.resolvedInputs = structuredClone(ctx.resolvedInputs);
+    ctx.resolvedInputs!.values.contracts = { state: 'invalid', attempts: [], detail: 'input binding stale' };
+    const checks = await coding.check(ctx);
+    for (const id of ['diff_within_scope', 'ui_diff_within_declared_files']) {
+      const check = checks.find(check => check.id === id); assert.equal(check?.status, 'SKIP'); assert.equal(check?.failure_kind, 'capability_missing');
+    }
+    const utChecks = await (require('../../scripts/check-ut').default as typeof coding).check({ ...ctx, phase: 'ut' });
+    assert.equal(utChecks.length, 1); assert.equal(utChecks[0].id, 'ut_hvigor_build'); assert.equal(utChecks[0].status, 'SKIP');
+    assert(!utChecks.some(check => check.status === 'FAIL'), 'unknown inputs cannot manufacture a product failure');
+  } },
   { name: 'P2 formal facts gate observes later completed unit writes at its real start; fake flags, missing originals and outside changes stay strict', baselineTest: true, async run(f) {
     const fw = frameworkDeclaringTsSources();
     const tool = fs.mkdtempSync(path.join(os.tmpdir(), 'formal-facts-tool-'));
@@ -823,6 +888,16 @@ fs.writeFileSync(${JSON.stringify(resultFile)},JSON.stringify(result?{context:re
       const accepted = entry();
       assert.deepStrictEqual(accepted.factsContext?.baseline, original.factsContext?.baseline, 'the original baseline hashes must remain frozen');
       assert(accepted.factsContext?.baseline, 'normal end without a Windows bound is a completed invocation');
+      const restoredEvents = JSON.parse(JSON.stringify(recorded.trim().split('\n').map(line => JSON.parse(line))));
+      restoredEvents.push({ type: 'phase_write_violation', phase: 'coding', invoke_id: 'coding-i1', violations: [{
+        path: 'doc/features/demo/unauthorized.txt', violation: 'outside_authority', pre_sha256: null,
+      }] });
+      fs.writeFileSync(eventsPath, restoredEvents.map((event: unknown) => JSON.stringify(event)).join('\n') + '\n');
+      f.write('doc/features/demo/unauthorized.txt', 'unrestored');
+      assert.throws(entry, /facts/, 'an actual outstanding unauthorized write still rejects admission');
+      fs.unlinkSync(path.join(f.root, 'doc/features/demo/unauthorized.txt'));
+      assert(entry().factsContext?.baseline, 'a restored historical violation cannot poison completed writes');
+      fs.writeFileSync(eventsPath, recorded);
       assert.throws(() => resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'coding', featuresDir: 'doc/features', goalRunId: f.manifest.run_id, goalAttemptId: 'self-check-label' }), /facts baseline stale/, 'a label invocation cannot carry completed source writes');
       const reject = (label: string, mutate: (events: any[]) => void = () => {}) => {
         const events = recorded.trim().split('\n').map(line => JSON.parse(line)); mutate(events);
@@ -2345,7 +2420,8 @@ fs.writeFileSync(${JSON.stringify(resultFile)},JSON.stringify(result?{context:re
     const checks = await review.check(ctx);
     assert.equal(checks.find(check => check.id === 'review_scope_to_design')?.status, 'PASS');
     const incomplete = { ...ctx, resolvedInputs: { ...ctx.resolvedInputs!, values: { ...ctx.resolvedInputs!.values, contracts: { state: 'absent' as const, attempts: [], detail: 'missing required contract' } } } };
-    assert((await review.check(incomplete)).some(check => check.id === 'review_required_design' && check.status === 'FAIL'));
+    assert((await review.check(incomplete)).some(check => check.id === 'review_required_design' && check.status === 'SKIP'
+      && check.failure_kind === 'capability_missing'), 'missing design remains an explicit required execution gap');
   } },
 ];
 

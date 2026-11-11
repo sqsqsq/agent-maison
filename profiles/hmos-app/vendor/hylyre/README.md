@@ -23,7 +23,7 @@ vendor/hylyre/
 ```
 
 - `source.files[]` 逐文件声明 sha256；`tree_sha256` = 对「POSIX 路径升序的 `<path>\n<sha256>\n` 拼接串」整体 sha256。
-- 当前 vendored source：Hylyre `0.5.1`（2026-09-02 集成；上一版 0.5.0 修复件 tree `8f00a37f…`），309 文件，`source.tree_sha256 = 7cb9c540e655706acfd24604ac7e696dc71fcda0f823d232bcbe242be34dad21`；冻结契约仍为 `contracts_tree_sha256 = cc738c272324022d7ed559340e9c710f9b7f5f94aac62c5dd70042e827a21bae`（0.5.1 契约包零变化，`hylyre/contracts/` 226 文件与冻结包逐字节相同）。
+- 当前 vendored source：Hylyre `0.5.2`（截图编码与扩展名一致性修复），310 文件，`source.tree_sha256 = 2c5f64c8c0a41b52306885995d7a5a9674cf14832e3b7826243afde3dffe2100`；冻结契约仍为 `contracts_tree_sha256 = cc738c272324022d7ed559340e9c710f9b7f5f94aac62c5dd70042e827a21bae`（0.5.2 契约包零变化，`hylyre/contracts/` 226 文件与冻结包逐字节相同）。
 - schema 2 manifest 不声明 `wheel`；宿主完整性门只按 `source.files[]`、文件大小与 `source.tree_sha256` 验证实际源码树。
 - 源文件统一 **LF** 落盘并按 LF 字节计算 hash。本仓 `.gitattributes` 只约束 Maison 仓库自身的 checkout，且不进发布件；宿主 checkout 的行尾由宿主自己的 Git 属性决定（`framework/** -text`，见 `skills/reference/consumer-framework-boundary.md`「package identity 与完整性」）。被改成 CRLF 的源码树会在安装前门被拦下并点名行尾改写，不按归一化放行。
 - harness 对齐判定**按 manifest 声明清单**复算 tree hash——vendor 内意外杂物（如 `__pycache__`）不会假触发"发布件损坏"；「src 内未声明文件」的检测由 Hylyre `--verify` 负责。
@@ -90,7 +90,7 @@ python D:\1.code\Hylyre\scripts\build_wheel.py --verify $dst
 - `hylyre run` 共享 callback 的 20 个选项建立所有权表：不支持路径上的**非默认值**一律 usage error——`exit=2`、stderr 单行、零设备、不产 report/trace；默认等价值放行。plan 路径 `--on-fail` 只接受默认 `abort`（`skip`/非法值 exit 2），`run --help` 已注明 `abort|skip` 仅限 `--steps/--steps-file`；写在 17 个 `run` 子命令前面的父级非默认选项不再被吞掉。
 - Maison 传参核对（集成时逐项对照所有权表）：plan 路径 `--plan/--feature/--report-out/--trace-out/--bundle/--skip-assert-expected/--device-sn/--failure-dir`，steps-file 路径 `--steps-file/--bundle/--page-name/--device-sn/--failure-dir(+report 三件套)`，均在各自支持集内；Maison 从不向 plan 传 `--on-fail`。本地 fake 复核：`--on-fail skip|bogus` 四要素成立，`--on-fail abort` 与不传的 trace/report 逐字节一致。
 - 相对需求文的唯一偏离：steps 路径非法 `--on-fail` 由 exit 1 改为 exit 2 且提前到设备连接之前，report 模式不再带 `verify_report failed:` 前缀。Maison 无脚本依赖旧退出码（已 grep），无需适配。
-- 需求 v2 的 P2（by_id presence 通过态 golden 与 fake runner 可配置 presence）顺延 0.5.2，Maison 侧的 contract-composed 夹具与 pin 维持不变。
+- 需求 v2 的 P2（by_id presence 通过态 golden 与 fake runner 可配置 presence）在0.5.1时登记为后续项；本次0.5.2仅交付截图修复，未包含P2。该项后续另行裁决，Maison侧的contract-composed夹具与pin维持不变。
 
 ### Hylyre 0.5.0 CLI / 步骤与证据能力
 

@@ -4292,6 +4292,12 @@ const checker: PhaseChecker = {
 
   async check(ctx: CheckContext<'feature' | 'request'>): Promise<CheckResult[]> {
     if (ctx.subject === 'request') return require('./utils/request-phase').checkRequestTests(ctx);
+    const contractsInput = ctx.resolvedInputs?.values.contracts;
+    if (contractsInput && contractsInput.state !== 'resolved') return [{
+      id: 'ut_hvigor_build', category: 'structure', severity: 'BLOCKER', status: 'SKIP',
+      description: 'UT 输入尚未就绪，未执行依赖检查', failure_kind: 'capability_missing',
+      details: `contracts 输入${contractsInput.state}；未执行模块发现、编译、运行和覆盖检查，不能据此判断无测试模块或编译失败。${contractsInput.detail}`,
+    }];
     const utHost = tryLoadUtHostImpl(ctx.resolvedProfile.profileDir);
     if (!utHost) {
       const loadError = getLastProfileHarnessLoadError();

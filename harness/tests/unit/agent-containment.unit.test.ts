@@ -345,6 +345,17 @@ process.stdin.on('end', () => process.stdout.write(JSON.stringify({
     },
   },
   {
+    name: '3f8a6c21: old settled facts close only uniquely identified run histories',
+    run: () => {
+      const settled = { type: 'agent_process_settled', invoke_id: 'i1' };
+      assert(findUnclosedGuardianBounds([bound(), settled]).length === 0, 'single-run old settled must close its bound');
+      assert(findUnclosedGuardianBounds([bound(), { ...settled, run_id: 'other' }]).length === 1, 'explicit other run cannot close');
+      assert(findUnclosedGuardianBounds([bound(), bound({ run_id: 'r2' }), settled]).length === 2, 'ambiguous old settled cannot close either run');
+      assert(findUnclosedGuardianBounds([bound(), { ...settled, invoke_id: 'i2' }]).length === 1, 'other invocation cannot close');
+      assert(findUnclosedGuardianBounds([bound()]).length === 1, 'an actual unclosed bound remains open');
+    },
+  },
+  {
     name: 't3: orphan_reclaimed 也是闭合事件（reclaimed 后不再进入对账）',
     run: () => {
       const events = [

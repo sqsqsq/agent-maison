@@ -183,6 +183,37 @@ feature.yaml.execution_scope MUST 仅为运行前候选。完整 Feature 交付 
 > `harness/scripts/utils/goal-manifest.ts`、`harness/scripts/goal-mode-entry.ts`、
 > `harness/scripts/utils/verify-feature-completion.ts`、`harness/scripts/check-testing.ts`。
 
+#### Scenario: Returned author writes survive restored mistakes and generated snapshots
+
+- **WHEN** a completed or reclaimed author invocation has valid source changes, a prior outside-authority write has been restored, and a profile validates snapshot-only generated output
+- **THEN** recovery SHALL use current outstanding restoration facts and accurate invocation identity; the restored event or generated snapshot SHALL NOT invalidate unrelated lawful writes
+- **AND** generated output SHALL NOT acquire author-source provenance or prove product PASS; explicit research dependencies and ordinary source-chain mismatches remain subject to their existing checks
+
+#### Scenario: Both handback orders preserve lawful producer output
+
+- **WHEN** a completed invocation records its owned writes before the end event in session transport or after it in process transport
+- **THEN** facts recovery SHALL consume the same invocation's qualified observations in either order, retaining completed-call, ownership and hash-chain checks
+- **AND** a definition producer still present in applicable obligations SHALL be able to check its lawful replacement draft even when the satisfied old input removed it from the birth chain; new bindings require the existing checks and scope publication
+
+#### Scenario: A repaired product reaches independent re-review
+
+- **WHEN** current author writes affect an existing review finding, or relevant new refusal evidence arrives
+- **THEN** the coordinator SHALL reuse its existing material-change comparison to deliver the affected finding, current changes, author reasons and valid evidence to the independent review producer
+- **AND** report-format repair and semantic re-review SHALL NOT repeatedly dispatch one another on unchanged material; unresolved negative findings remain effective until independently closed
+
+#### Scenario: Transport retry and revoked proof do not lose independent review
+
+- **WHEN** independent semantic review returns a recoverable API interruption
+- **THEN** the coordinator SHALL retry that work before a checker can consume the old report and erase the re-review trigger
+- **WHEN** the old review's inputs and the latest author's product writes are unchanged but its scope proof was invalidated
+- **THEN** the existing invalidation SHALL wake the required independent review, preserving findings which remain unproven
+
+#### Scenario: Unresolved construction inputs preserve an execution gap
+
+- **WHEN** required construction inputs cannot be resolved before scope or UT checks
+- **THEN** dependent checks SHALL report their unexecuted capability gap rather than manufacture a scope violation, missing-module conclusion or compile failure
+- **AND** the required gap SHALL still prevent applicable completion while independent authorized work remains executable
+
 ### Requirement: Business automation authority comes from one common entry input
 
 Task automation authority SHALL be a single explicit input: `authorization.autonomyAuthorized`. `goal-runner --detach`, `--resume … --detach` and the supervisor's same-form restart SHALL convert the user's unattended choice into that input at the launcher, pass the existing non-persistent `--authorize-autonomy` argument through to the detached child before `--detach` is stripped, and the session `--authorize-autonomy` SHALL produce the same value. Policy resolution MUST NOT infer authority from `runtimeOwnerKind`, executor mode, `--detached-child`, `manifest.unattended`, `approval_mode`, process owner or any agent ledger. The authorization input SHALL remain bounded by the original request scope, explicit prohibitions, required credentials/irreversible actions and hard budgets; it SHALL NOT upgrade a single-duty request into a complete delivery.

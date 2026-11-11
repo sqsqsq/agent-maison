@@ -228,6 +228,10 @@ export async function runGoal(root: string, mode: 'detached' | 'session', scenar
       modelVerifier(root, method, current, method === 'ut' ? modelIssueVerification(root, false) : '');
       return 0; // Chain-external model repair writes only its requested report, never a phase harness/receipt.
     }
+    if (phase === 'review') {
+      authorReview(root);
+      return 0; // The independent report writer does not run tools or rewrite author research.
+    }
     if (phase === 'work-unit-author') {
       const native = path.join(root, 'doc/features/clamp/ut/reports/node-tests.tap');
       const priorNativeFailure = fs.existsSync(native) && /# fail [1-9]/.test(fs.readFileSync(native, 'utf8'));
@@ -261,7 +265,6 @@ export async function runGoal(root: string, mode: 'detached' | 'session', scenar
       return 0; // The model returned its artifacts; actual native failures remain formal tool evidence.
     }
     if (phase === 'coding') { codingCalls++; write(root, SOURCE, repairsProduct && codingCalls === 1 && !resume ? BAD : GOOD); }
-    if (phase === 'review') authorReview(root);
     if (phase === 'ut') authorUt(root);
     authorFacts(root, phase);
     return selfCheck(phase, fence, extraEnv);

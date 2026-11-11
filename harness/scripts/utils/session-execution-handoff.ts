@@ -251,7 +251,7 @@ export function stopBoundExecution(runDir: string, issued: IssuedSessionExecutio
     if (item.kind === 'guardian_alive_matching' && (!terminateGuardianProcessOnly(item.bound.pid) || !awaitGuardianGone(item.bound.pid))) return { stopped: false, completed: false, detail: '当前绑定执行尚未确认停止。' };
     if (item.kind === 'guardian_identity_unverifiable' && !item.identity_mismatch) return { stopped: false, completed: false, detail: item.reason };
   }
-  emit({ type: 'agent_process_settled', phase: issued.request.context.phase, invoke_id: issued.request.invoke_id,
+  emit({ type: 'agent_process_settled', run_id: issued.request.context.runId, phase: issued.request.context.phase, invoke_id: issued.request.invoke_id,
     owner_id: issued.request.context.owner.owner_id, owner_epoch: issued.request.context.owner.epoch, interrupted: true, exit_code: 1 });
   return { stopped: true, completed: false };
 }

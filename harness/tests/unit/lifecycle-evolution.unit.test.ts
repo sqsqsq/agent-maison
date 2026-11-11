@@ -55,7 +55,7 @@ import { matchesUnitCase, selectedUnitCases, startCaseTiming, SelectedUnitCases,
 
 type Snapshot = ReturnType<typeof loadHostSnapshot>;
 type Phase = 'spec' | 'plan' | 'coding' | 'review' | 'ut' | 'testing';
-type Writer = (p: RealChainProject, executionRunId?: string) => void;
+type Writer = (p: RealChainProject, executionRunId?: string, options?: { preserveUnchanged?: boolean; includeFacts?: boolean }) => void;
 export const BLUEPRINT_ID = 'ledger-app-blueprint';
 const FLAT_WRITERS: Record<Phase, Writer> = {
   spec: writeSpecMaterials, plan: writePlanMaterials, coding: p => writeCodingMaterials(p),
@@ -337,7 +337,7 @@ export function authorHooks(p: RealChainProject, writers: Partial<Record<Phase, 
       .reverse().find(event => event.type === 'agent_invoke_start' && event.phase === phase)?.facts_context;
     const establishing = admission ? isFactsEstablishingPhase(phase, admission) : first === phase;
     p.runId = establishing ? ctx.runId : factsIdentity(p, ctx.runId);
-    writers[phase]?.(p, ctx.runId);
+    writers[phase]?.(p, ctx.runId, phase === 'review' ? { includeFacts: false } : undefined);
     after?.[phase]?.(p);
   };
   const hooks = {

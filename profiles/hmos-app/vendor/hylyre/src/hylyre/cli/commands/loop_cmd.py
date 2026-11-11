@@ -9,6 +9,7 @@ from typing import Any, Awaitable, Callable, TypeVar
 
 from hylyre.api.agent import HylyreAgent
 from hylyre.drivers.hypium import HypiumDriver
+from hylyre.image_io import image_format, image_mime, write_image
 from hylyre.ui_dump_filter import DumpFilterSpec, apply_ui_dump_filter
 from hylyre.ui_dump_hints import augment_ui_dump_payload
 from hylyre.wiring import create_hypium_agent
@@ -110,15 +111,14 @@ def execute_screenshot_bytes(
         import base64
 
         r = _session_ipc(session_file, "screenshot_bytes", {})
-        mime = str(r["mime"])
         raw = base64.standard_b64decode(str(r["base64"]))
-        return mime, raw
+        return image_mime(raw), raw
 
     async def _cap(driver: HypiumDriver) -> bytes:
         return await driver.screenshot()
 
     raw = asyncio.run(_with_hypium_driver(device_sn=device_sn, fn=_cap))
-    mime = "image/jpeg" if raw.startswith(b"\xff\xd8\xff") else "image/png"
+    mime = image_mime(raw)
     return mime, raw
 
 
@@ -128,17 +128,12 @@ def execute_screenshot_file(
     out: Path,
     session_file: Path | None = None,
 ) -> str:
-    """Write screenshot bytes to ``out``; suffix hints jpeg vs png."""
-    mime, raw = execute_screenshot_bytes(
+    """Capture and save a complete image in the requested PNG/JPEG format."""
+    image_format(out)
+    _mime, raw = execute_screenshot_bytes(
         device_sn=device_sn, session_file=session_file
     )
-    out = Path(out)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    suffix = ".jpeg" if mime == "image/jpeg" else ".png"
-    if out.suffix.lower() not in (".jpeg", ".jpg", ".png"):
-        out = out.with_suffix(suffix)
-    out.write_bytes(raw)
-    return str(out.resolve())
+    return write_image(raw, out)
 
 
 def execute_dump_ui_dict(

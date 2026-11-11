@@ -1,20 +1,20 @@
 {
   "schema": 2,
-  "hylyre_version": "0.5.1",
+  "hylyre_version": "0.5.2",
   "source": {
     "root": "src",
-    "file_count": 309,
-    "total_bytes": 987738,
-    "tree_sha256": "7cb9c540e655706acfd24604ac7e696dc71fcda0f823d232bcbe242be34dad21",
+    "file_count": 310,
+    "total_bytes": 991831,
+    "tree_sha256": "2c5f64c8c0a41b52306885995d7a5a9674cf14832e3b7826243afde3dffe2100",
     "files": [
       {
         "path": "README.md",
-        "sha256": "ad9f127853430df29b666f3b158526b911c867f7e67eee83d71fbdcbf1f82a65",
-        "size_bytes": 8451
+        "sha256": "0401a934a0acbe26a5f153070a6966395b4eccbab7c4d674ebf96ecb2b6432ee",
+        "size_bytes": 9203
       },
       {
         "path": "hylyre/__init__.py",
-        "sha256": "7056bdfd0be1f817b6422cd9a6d88052c3f7d212e32ae6eb2b0fd1c18a1b6143",
+        "sha256": "5cd5ca5211ba5dd262af8a31c7ff2be47c50417cbd67e10b36fbb51c80aa15db",
         "size_bytes": 167
       },
       {
@@ -39,8 +39,8 @@
       },
       {
         "path": "hylyre/api/failure_diag.py",
-        "sha256": "2785e16076326e2d8d54670688369b62af1ce919c7114bd7761998f9ac316d00",
-        "size_bytes": 4024
+        "sha256": "756c4b23ba90aeef128a9b7ef4a9a4298f3ebae6367bd6e2345639d1e5681836",
+        "size_bytes": 4066
       },
       {
         "path": "hylyre/api/outcome.py",
@@ -114,8 +114,8 @@
       },
       {
         "path": "hylyre/cli/__main__.py",
-        "sha256": "1c27bd893331e6fbf60ef30a2286dfbfcf5be4b9002288bdf5d93c0be89726b2",
-        "size_bytes": 46835
+        "sha256": "58d576f2561e0731e2a937699478e129b5838b5c02a2a3a99979e804191659d2",
+        "size_bytes": 46866
       },
       {
         "path": "hylyre/cli/commands/__init__.py",
@@ -159,8 +159,8 @@
       },
       {
         "path": "hylyre/cli/commands/loop_cmd.py",
-        "sha256": "fd69bce678fc6374b5a5e02361768363768702044baeefb4e77d9627e3948cbe",
-        "size_bytes": 22954
+        "sha256": "8fe4c7b3cfbf34896c3df0fc1fd46b8b5395f977a79073d1c8eb6a15b065b17c",
+        "size_bytes": 22735
       },
       {
         "path": "hylyre/cli/commands/mock_cmd.py",
@@ -1408,6 +1408,11 @@
         "size_bytes": 21641
       },
       {
+        "path": "hylyre/image_io.py",
+        "sha256": "9c91c34132b76bb887e219b6128815d4edcbd46bfb0a3a8a3a9d519271f4061d",
+        "size_bytes": 3600
+      },
+      {
         "path": "hylyre/mcp/__init__.py",
         "sha256": "35a33520e0005c9feaa1d279880905bb63593ab8ccca469d12f809ef13d4a136",
         "size_bytes": 175
@@ -1419,8 +1424,8 @@
       },
       {
         "path": "hylyre/mcp/server.py",
-        "sha256": "55965ca3670b2b7aa6e1a052c54653f316bc58f0e8cdba9bf6206a98c3f0dcbe",
-        "size_bytes": 45925
+        "sha256": "1ef3494e011b0915b2e5a6c7f281e0d515a8ba9794a6de2940845f72e5dfe808",
+        "size_bytes": 45919
       },
       {
         "path": "hylyre/mcp/tier_a_tools.py",
@@ -1509,8 +1514,8 @@
       },
       {
         "path": "hylyre/session/daemon.py",
-        "sha256": "2d83457fbc36719e631d036fca4af7fa3c9e481c699e7887d1b28c1d6752366a",
-        "size_bytes": 9440
+        "sha256": "88824787eb7bbd80ffffc6874f817d416de44a4ba10ecd1afc3580f437d4d324",
+        "size_bytes": 9431
       },
       {
         "path": "hylyre/session/schema.py",
@@ -1534,8 +1539,8 @@
       },
       {
         "path": "hylyre/vlm/http_vlm.py",
-        "sha256": "0f66eccf10abdbfb8a975c81fb24d24257571476da8c6c0a1a8e4ac65b60d42b",
-        "size_bytes": 4434
+        "sha256": "1b50f01349352df9a7c5fc9d243fa96f9a946bd8b1538ccf62590c855e8dc379",
+        "size_bytes": 4314
       },
       {
         "path": "hylyre/vlm/json_extract.py",
@@ -1549,17 +1554,17 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "4e7dec9b7143015ec202008c40442934ad5e7a2484d44a073b1514c2af561fd3",
-        "size_bytes": 1281
+        "sha256": "b76d702bd4fdb85d3edfd1a8a054ad6f90424c7e1c1c8f09af0f948164b8b3b8",
+        "size_bytes": 1303
       }
     ]
   },
   "contracts_tree_sha256": "cc738c272324022d7ed559340e9c710f9b7f5f94aac62c5dd70042e827a21bae",
-  "generated_at": "2026-09-02T04:56:53Z",
+  "generated_at": "2026-11-10T07:35:28Z",
   "generator": {
     "python": "3.14.5",
     "pip": "pip 26.1.1 from D:\\Program Files\\Python314\\Lib\\site-packages\\pip (python 3.14)",
-    "platform": "Windows-11-10.0.26200-SP0"
+    "platform": "Windows-11-10.0.26300-SP0"
   },
   "note": "Plain-source release. Install with: pip install <src-dir> \"hylyre[device,mcp]\"; pip will fetch transitive deps (hypium/fastmcp/etc.) from PyPI. All text files are LF-normalized; tree_sha256 = sha256 over the concatenation of \"<path>\\n<sha256>\\n\" for all files under source.root sorted by POSIX relative path byte order. Framework harness integration (cold-restart, page save, personal-setup): see downstream-harness-requests.md in this directory.",
   "integration_docs": [

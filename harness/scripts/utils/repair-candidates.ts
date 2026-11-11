@@ -262,7 +262,7 @@ export function parseReviewIssueRows(reportText: string): ReviewIssueRow[] {
     classification: iCategory >= 0 ? (row[iCategory] ?? '').trim() : '',
     state: iState >= 0 ? (row[iState] ?? '').trim() : '',
     files: normalizeReviewFiles((row[iFiles] ?? '')
-      .split(/[,，;；\s]+/)
+      .split(/[,，、;；\s]+/)
       .filter(Boolean)),
     summary: normalizeSummary(
       (iFix >= 0 ? row[iFix] : undefined) || (iDesc >= 0 ? row[iDesc] : undefined) || '',

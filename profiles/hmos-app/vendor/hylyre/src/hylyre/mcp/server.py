@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from hylyre.image_io import image_mime
+
 from hylyre.scenario.step_builder import step_response
 
 import base64
@@ -268,13 +270,13 @@ def build_mcp():  # type: ignore[no-untyped-def]
             if session_id:
                 agent = _session_agent(session_id)
                 raw = await agent.ui.screenshot()
+                mime = image_mime(raw)
             else:
                 import anyio
 
-                _mime, raw = await anyio.to_thread.run_sync(
+                mime, raw = await anyio.to_thread.run_sync(
                     lambda: loop_cmd.execute_screenshot_bytes(device_sn=device_sn)
                 )
-            mime = "image/jpeg" if raw.startswith(b"\xff\xd8\xff") else "image/png"
             payload = {
                 "mime": mime,
                 "base64": base64.standard_b64encode(raw).decode("ascii"),

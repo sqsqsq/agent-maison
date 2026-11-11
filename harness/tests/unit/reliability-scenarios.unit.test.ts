@@ -1077,7 +1077,7 @@ function realChainHooks(project: RealChainProject, overrides: {
       project.runId = ctx.runId;
       if (overrides.coding) overrides.coding(ctx); else writeCodingMaterials(project);
     },
-    onReview: ctx => { project.runId = ctx.runId; writeReviewMaterials(project); },
+    onReview: ctx => { project.runId = ctx.runId; writeReviewMaterials(project, undefined, { includeFacts: ctx.phase !== 'review' }); },
     onUt: ctx => { project.runId = ctx.runId; writeUtMaterials(project); },
     onTesting: ctx => {
       project.runId = ctx.runId;
@@ -1142,8 +1142,8 @@ function reviewReportRel(p: RealChainProject): string {
  * review 裁判替身的"多做核对"（verify-review 检查 1）：在 real-chain 的干净报告上追加一条 MAJOR「其他」，
  * 涉及文件写产品源码，统计与结论随之改为有条件通过。其余章节沿用 writeReviewMaterials。
  */
-function writeReviewWithIssue(p: RealChainProject, issue: { id: string; category: string; desc: string; files: string; fix: string }): void {
-  writeReviewMaterials(p);
+function writeReviewWithIssue(p: RealChainProject, issue: { id: string; category: string; desc: string; files: string; fix: string }, options?: { includeFacts?: boolean }): void {
+  writeReviewMaterials(p, undefined, options);
   const rel = reviewReportRel(p);
   const text = readText(p.root, rel);
   const r1 = `| R-1 | 可读性 | MINOR | 组件缺少用途注释 | ${REAL_CHAIN_NEW_SOURCE} | 补充组件用途注释 |`;
@@ -1225,10 +1225,10 @@ const runS6: ScenarioRunner = async (_entry, done) => {
         reviewFlagged++;
         writeReviewWithIssue(project, {
           id: 'R-2', category: '其他', desc: `实现了需求明确排除的激活NFC元素（需求：「${S6_EXCLUSION}」）`, files: REAL_CHAIN_SOURCE, fix: S6_ISSUE_FIX,
-        });
+        }, { includeFacts: ctx.phase !== 'review' });
         return;
       }
-      writeReviewMaterials(project);
+      writeReviewMaterials(project, undefined, { includeFacts: ctx.phase !== 'review' });
     };
     const probe = await realRun(project, prepared.scope.phase_chain.map(String), requirement, hooks);
     const [run] = listRuns(project.root, project.feature);
@@ -1321,10 +1321,10 @@ const runS7: ScenarioRunner = async (_entry, done) => {
         writeReviewWithIssue(project, {
           id: 'R-2', category: '其他', desc: 'spec.md 功能清单 F1=P0，acceptance 中 F1 的 AC-2 priority=P1，两处优先级不一致',
           files: `${specRel}, ${acceptanceRel}`, fix: S7_B_FIX,
-        });
+        }, { includeFacts: ctx.phase !== 'review' });
         return;
       }
-      writeReviewMaterials(project);
+      writeReviewMaterials(project, undefined, { includeFacts: ctx.phase !== 'review' });
     };
     // 冲突 B 的执行者（spec 替身）：返修候选段里有候选即按目标拒修，逐候选追加到 spec 账本（写法取自候选段）。
     const onSpec = hooks.onSpec!;

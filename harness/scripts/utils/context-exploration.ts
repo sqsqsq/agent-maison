@@ -362,7 +362,9 @@ export function runQuantitativeChecks(
     thresholds = applySequentialMultiplier(thresholds, strategy);
   }
 
-  if (options?.factsContext?.baseline) thresholds = { ...thresholds, min_source_code_paths: 0, min_files_inspected: 0, min_searches: 0, min_code_facts: 1 };
+  if (options?.factsContext && (options.factsContext.baseline || options.factsContext.first_phase !== phase)) {
+    thresholds = { ...thresholds, min_source_code_paths: 0, min_files_inspected: 0, min_searches: 0, min_code_facts: 1 };
+  }
   const requestSubject = options?.factsContext && 'request_sha256' in options.factsContext.subject;
   // Every admitted subject has a production-derived source set; small runs need the same bound as requests.
   if (options?.factsContext) {

@@ -42,7 +42,8 @@
         "inter_module_dependency",
         "layer_compliance",
         "named_business_handler",
-        "plan_to_code"
+        "plan_to_code",
+        "ui_diff_within_declared_files"
       ],
       "dynamic_count": 2
     },

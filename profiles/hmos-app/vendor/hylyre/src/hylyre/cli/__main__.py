@@ -780,7 +780,7 @@ def screenshot_cmd(
         ...,
         "--out",
         "-o",
-        help="Output image path (.jpeg or .png).",
+        help="Output image path (.png, .jpg or .jpeg; encoding follows suffix).",
     ),
     device_sn: Optional[str] = typer.Option(None, "--device-sn"),
     session: Optional[Path] = typer.Option(

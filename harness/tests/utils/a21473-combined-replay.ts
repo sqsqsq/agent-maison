@@ -4,7 +4,7 @@ import * as path from 'path';
 import * as YAML from 'yaml';
 import { createHash } from 'crypto';
 import { withRuntimeTest, preserveRuntimeTestEvidence } from './runtime-test-control';
-import { CARD_CORE, writeA21473ReplayAuthor, answerA21473Verifier, a21473TestReferences } from './a21473-replay-author';
+import { CARD_CORE, writeA21473ReplayAuthor, writeA21473ReplayReview, answerA21473Verifier, a21473TestReferences } from './a21473-replay-author';
 import type { ExecutionScope } from '../../scripts/utils/execution-scope';
 
 export function assertA21473ExecutedMethods(events: ReadonlyArray<Record<string, unknown>>): string[] {
@@ -300,6 +300,9 @@ export async function continueA21473CombinedReplay(input: { root: string; framew
           }
           writeA21473ReplayAuthor(root, frameworkRoot, context, authors === 1);
         }
+      } else if (step.phase === 'review') {
+        assert.equal(context.executionRole, 'verifier');
+        writeA21473ReplayReview(root, frameworkRoot, context.feature);
       } else if (step.phase.endsWith('-verifier-format-repair')) {
         answerA21473Verifier(root, frameworkRoot, context);
       } else if (step.phase.startsWith('initial-design-scope-')) {

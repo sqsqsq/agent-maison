@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from hylyre.image_io import image_mime
+
 import base64
 import os
 from typing import Any
@@ -47,12 +49,7 @@ def _schema_instruction(response_schema: str) -> str:
 
 def image_data_url(image_bytes: bytes) -> str:
     """Build a data URL with a MIME type matching Hypium (often JPEG) or PNG fakes."""
-    if image_bytes.startswith(b"\xff\xd8\xff"):
-        mime = "image/jpeg"
-    elif image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
-        mime = "image/png"
-    else:
-        mime = "image/png"
+    mime = image_mime(image_bytes)
     b64 = base64.standard_b64encode(image_bytes).decode("ascii")
     return f"data:{mime};base64,{b64}"
 

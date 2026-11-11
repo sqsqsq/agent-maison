@@ -20,6 +20,12 @@ const write = (root: string, file: string, value: string, refreshedInput = false
   fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, value);
 };
 const yaml = (root: string, file: string, value: unknown): void => write(root, file, YAML.stringify(value));
+export function writeA21473ReplayReview(root: string, frameworkRoot: string, feature: string): void {
+  const rel = require(path.join(frameworkRoot, 'harness/scripts/utils/feature-identity')).featureRelativePath(feature);
+  const base = `doc/features/${rel}`;
+  const files = [...YAML.parse(fs.readFileSync(path.join(root, base, 'contracts.yaml'), 'utf8')).files, '02-Feature/WalletMain/src/main/ets/domain/flow/LaunchHomeCardMode.ets'];
+  write(root, `${base}/review/review-report.md`, '# 审查报告\n\n> **保证等级**: standard\n\n## 1. 审查范围\n' + files.map((file: string) => '- ' + file).join('\n') + '\n\n## 2. 审查维度\n原需求的数据、OTP、路由及失败恢复。Node开发投影不冒称HarmonyOS UI/真机通过。\n\n## 3. 问题清单\n| 编号 | 分类 | 严重程度 | 问题描述 | 涉及文件 | 修复建议 |\n|---|---|---|---|---|---|\n\n## 4. 问题统计\n| 严重程度 | 数量 |\n|---|---|\n| BLOCKER | 0 |\n| MAJOR | 0 |\n| MINOR | 0 |\n\n## 5. 修复建议\n开发编译和真实Node断言由工具判定；原生UI交t5。\n\n## 6. 结论\n**审查结论**: 通过\n');
+}
 export function writeA21473ReplayAuthor(root: string, frameworkRoot: string, context: any, defective: boolean, inputsOnly = false): void {
   const load = (file: string): any => require(path.join(frameworkRoot, 'harness', file));
   const rel = load('scripts/utils/feature-identity').featureRelativePath(context.feature);
@@ -117,10 +123,7 @@ export function writeA21473ReplayAuthor(root: string, frameworkRoot: string, con
       write(root, `${etsRoot}/${directory}/${name}.ets`, accountImport + `@Component\nexport struct ${name} {\n${accountMethod}  build() { Column() { Text('${name}') } }\n}\n` + builder);
     }
   }
-  if (!inputsOnly && context.chain.includes('review')) {
-    const files = [...YAML.parse(fs.readFileSync(path.join(root, base, 'contracts.yaml'), 'utf8')).files, '02-Feature/WalletMain/src/main/ets/domain/flow/LaunchHomeCardMode.ets'];
-    write(root, `${base}/review/review-report.md`, '# 审查报告\n\n> **保证等级**: standard\n\n## 1. 审查范围\n' + files.map((file: string) => '- ' + file).join('\n') + '\n\n## 2. 审查维度\n原需求的数据、OTP、路由及失败恢复。Node开发投影不冒称HarmonyOS UI/真机通过。\n\n## 3. 问题清单\n| 编号 | 分类 | 严重程度 | 问题描述 | 涉及文件 | 修复建议 |\n|---|---|---|---|---|---|\n\n## 4. 问题统计\n| 严重程度 | 数量 |\n|---|---|\n| BLOCKER | 0 |\n| MAJOR | 0 |\n| MINOR | 0 |\n\n## 5. 修复建议\n开发编译和真实Node断言由工具判定；原生UI交t5。\n\n## 6. 结论\n**审查结论**: 通过\n');
-  }
+  if (!inputsOnly && context.chain.includes('review')) writeA21473ReplayReview(root, frameworkRoot, context.feature);
   if (!inputsOnly && context.chain.includes('ut')) {
     const tests = fs.readFileSync(path.join(FIXTURE, 'BankCardFlow.test.ts'), 'utf8').replace('../main/OpenCardFlow', '../main/ets/domain/flow/BankCardFlow');
     write(root, CARD_TEST, tests);
