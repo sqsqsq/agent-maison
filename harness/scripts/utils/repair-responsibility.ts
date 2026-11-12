@@ -509,11 +509,24 @@ export function independentArtifactRepairs(input: RepairResponsibilityContext & 
     const task = tasks.get(file) ?? { owner: owners[0], file, problems: [] };
     task.problems.push(problem); tasks.set(file, task);
   }
-  for (const owner of input.recheckFamilies ?? []) {
+  const recheckFamilies = new Set([...(input.recheckFamilies ?? []), ...input.currentDisposition.completionBlocking
+    .filter(problem => problem.action === 'verify' && problem.id.startsWith('open_finding:') && problem.owner === (problem.source_phase ?? problem.phase))
+    .map(problem => problem.owner!)]);
+  const testStrength = input.currentDisposition.completionBlocking.filter(problem => problem.id === 'coding_existing_test_preserved' && problem.action === 'verify')
+    .filter(problem => {
+      const { featurePhaseReportsDir } = require('../../config') as typeof import('../../config');
+      try {
+        const directory = featurePhaseReportsDir(context.projectRoot!, input.feature!, problem.source_phase ?? problem.phase, context.frameworkRoot);
+        return !JSON.parse(fs.readFileSync(path.join(directory, 'summary.json'), 'utf8')).verifier_request;
+      } catch { return false; }
+    });
+  if (testStrength.length) recheckFamilies.add('review');
+  for (const owner of recheckFamilies) {
     if (workUnitExecutionRole({ phase: owner }) !== 'verifier' || context.profile?.phasesDisabled.has(owner)
       || !context.executionScope?.obligations.some(obligation => obligation.owner_phase === owner && obligation.applicability === 'required')) continue;
-    const problems = input.currentDisposition.completionBlocking.filter(problem => (problem.source_phase ?? problem.phase) === owner
+    const problems = input.currentDisposition.completionBlocking.filter(problem => owner === 'review' && testStrength.includes(problem) || (problem.source_phase ?? problem.phase) === owner
       && (problem.action === 'repair' || problem.id.startsWith('open_finding:'))
+      && (input.recheckFamilies?.includes(owner) || problem.action === 'verify' && problem.owner === owner)
       && problem.owner !== 'framework' && !problem.id.startsWith('capability_'));
     if (!problems.length) continue;
     const outputs = context.contracts.domains.filter(domain => domain.owner === owner && domain.kind === 'artifact' && domain.match === 'exact');

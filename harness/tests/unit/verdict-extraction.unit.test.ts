@@ -11,7 +11,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { extractDeclaredVerdict } from '../../scripts/utils/markdown-parser';
+import { extractDeclaredVerdict, extractReviewVerdict } from '../../scripts/utils/markdown-parser';
 
 export interface UnitCaseResult {
   name: string;
@@ -68,6 +68,17 @@ function testingSection(verdict: string): string {
 }
 
 const cases: Array<{ name: string; run: () => void }> = [
+  {
+    name: '3f8a6c21 review actual conclusion survives historical heading and conflicting declarations remain unknown',
+    run: () => {
+      const history = '## 二、审查方法\n### 2.2 上一版复审结论\n旧问题已复验。\n';
+      const final = '## 七、结论\n**审查结论**: 不通过\n';
+      assertEq(extractReviewVerdict(history + final).verdict, '不通过', 'actual negative verdict');
+      assertEq(extractReviewVerdict(final + '**审查结论**: 通过\n').verdict, null, 'conflicting declarations');
+      assertEq(extractReviewVerdict('## 结论\n```md\n**审查结论**: 通过\n```\n').verdict, null, 'example cannot certify report');
+      assertEq(extractReviewVerdict(history).verdict, null, 'missing actual declaration');
+    },
+  },
   // ---------------- P0-A：行为回归 ----------------
   {
     name: 'review 声明行=不通过（段内三词污染）→ 不通过',

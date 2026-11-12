@@ -81,6 +81,25 @@ function review(p: PreparedRequest, verdict = '通过') {
   fs.writeFileSync(p.inputs.review_report, `# Review\n## 审查范围\nsrc/value.js\n## 审查方法\nRead source and compare selected baseline.\n## 问题清单\n无问题\n## 问题统计\n| 严重程度 | 数量 |\n|---|---|\n| BLOCKER | 0 |\n| MAJOR | 0 |\n| MINOR | 0 |\n| INFO | 0 |\n## 修复建议\n无\n## 结论\n**审查结论**: ${verdict}\n`);
 }
 const cases: Array<{ name: string; phase?: string; run(f: ReturnType<typeof fixture>): void }> = [
+  { name: '3f8a6c21 request review retains concrete finding identities without inventing independent evidence', run(f) {
+    const p = prepareExplicitRequest(f.options); facts(p, f.root); review(p, '不通过');
+    const original = fs.readFileSync(p.inputs.review_report, 'utf8');
+    const { readCurrentDispositionInput } = require('../../scripts/utils/verify-feature-completion') as typeof import('../../scripts/utils/verify-feature-completion');
+    const { resolveCurrentDisposition } = require('../../scripts/utils/check-disposition') as typeof import('../../scripts/utils/check-disposition');
+    const { problemIdentity } = require('../../scripts/utils/goal-failure-classifier') as typeof import('../../scripts/utils/goal-failure-classifier');
+    const identities: string[] = [];
+    for (const id of ['CR-REQUEST-1', 'CR-REQUEST-2']) {
+      const table = '| 编号 | 严重程度 | 分类 | 问题描述 | 涉及文件 | 修复建议 |\n|---|---|---|---|---|---|\n'
+        + `| ${id} | BLOCKER | 逻辑错误 | 当前 src/value.js:1 尚待独立核实 | src/value.js | 核实 ${id} 的当前行为 |`;
+      fs.writeFileSync(p.inputs.review_report, original.replace('无问题', table).replace('| BLOCKER | 0 |', '| BLOCKER | 1 |'));
+      assert.notEqual(cli(f).status, 0);
+      const disposition = resolveCurrentDisposition(readCurrentDispositionInput({ endpoint: 'request', projectRoot: f.root, request: p }));
+      const finding = disposition.completionBlocking.find(problem => problem.id === `open_finding:${id}`);
+      assert(finding && finding.action === 'verify' && finding.files?.includes('src/value.js'), JSON.stringify(disposition));
+      identities.push(problemIdentity(finding, true));
+    }
+    assert.notEqual(identities[0], identities[1], 'two negative reports must not collapse into the generic verdict identity');
+  } },
   { name: '1804 request provider exceptions retain framework gaps while ordinary failed assertions remain FAIL', phase: 'ut', run(f) {
     const p = prepareExplicitRequest(f.options); facts(p, f.root);
     const provider = path.join(f.framework, 'profiles/request-test/harness/providers/native-request.js');

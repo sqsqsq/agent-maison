@@ -57,7 +57,7 @@
 
 ## Context Facts Gate（BLOCKER，C4 exploration-scale）
 
-该 track 首个 feature phase（旧出生协议为 spec）在写入该阶段主产物前，须在 `<features_dir>/<feature>/context/facts.md` 建立全量事实（frontmatter + `## Code Facts` 表，`source_code_paths` 与可核实的量化阈值由 harness BLOCKER 校验；`decisions_unlocked`、自报的文件数与搜索次数仍须如实填写，缺了会被披露并计入完成缺口、不单独阻断，`ready_to_produce: true` 须真实探索后手动设定）。后续所有 active feature phase（plan/coding/review/ut/testing）只追加 `## phase_delta: <phase>` 增量节（无新增事实须显式写 "none"），不重做全量探索。契约实现见 `framework/harness/scripts/utils/context-facts.ts`；旧版 per-phase `<phase>/context-exploration.md` 仍可读（WARN 提示 backfill），阶段步骤与宿主侧补充路径以各 SKILL 及 profile-addendum（若有）为准。
+该 track 首个 feature phase（旧出生协议为 spec）在写入该阶段主产物前，须在 `<features_dir>/<feature>/context/facts.md` 建立全量事实（frontmatter + `## Code Facts` 表，`source_code_paths` 与可核实的量化阈值由 harness BLOCKER 校验；`decisions_unlocked`、自报的文件数与搜索次数仍须如实填写，缺了会被披露并计入完成缺口、不单独阻断，`ready_to_produce: true` 须真实探索后手动设定）。后续所有 active feature phase（plan/coding/review/ut/testing）只追加 `## phase_delta: <phase>` 增量节（无新增事实须显式写 "none"），不重做全量探索。work-unit 独立复审除外：只读 facts，不追加增量节，新事实写入指定审查报告。契约实现见 `framework/harness/scripts/utils/context-facts.ts`；旧版 per-phase `<phase>/context-exploration.md` 仍可读（WARN 提示 backfill），阶段步骤与宿主侧补充路径以各 SKILL 及 profile-addendum（若有）为准。
 
 `enforced_by`：context-facts。
 

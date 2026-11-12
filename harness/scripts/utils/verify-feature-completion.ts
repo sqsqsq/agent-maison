@@ -41,7 +41,7 @@ import { featureFilePath, featurePhaseReportsDir, receiptDirPath, resolveFeature
 import {
   loadReviewClosureAttestation,
 } from './closure-attestation';
-import { classifyGoalRunsDir, collectRequirementSsotPaths, computeRunRequirementSha, computeRequirementShaFromText, resolveCurrentRequirementSource } from './fidelity-shared';
+import { classifyGoalRunsDir, collectRequirementSsotPaths, computeRunRequirementSha, computeRequirementShaFromText, resolveCurrentRequirementSource, loadFidelityIntentSsot } from './fidelity-shared';
 import { SUMMARY_ASSURANCE_SCHEMA_VERSIONS, validateSummaryV11 } from './quality-axes';
 import { buildSourceInventory } from './closure-attestation';
 import {
@@ -828,7 +828,9 @@ function readRegisteredFindings(summary: unknown, responsibility: import('./repa
       const row = item as { id?: unknown; source?: unknown; details_excerpt?: unknown; affected_files?: string[]; repair_owner?: string };
       if (row?.source !== 'issue-verification' || typeof row.id !== 'string') continue;
       const owner = resolveRepairResponsibility({ ...responsibility, target: { files: row.affected_files, owner: row.repair_owner } }).owner;
-      out.push({ id: row.id, ...(owner ? { owner } : {}), detail: String(row.details_excerpt ?? row.id).slice(0, 500) });
+      out.push({ id: row.id, ...(owner ? { owner } : {}), detail: String(row.details_excerpt ?? row.id),
+        ...(row.affected_files?.length ? { files: row.affected_files } : {}),
+        evidence: [String(row.details_excerpt ?? row.id)] });
     }
   }
   return uniqueFindingObjects(out);
@@ -950,9 +952,19 @@ export function readCurrentDispositionInput(opts: CleanPassOptions | CurrentRequ
       const evidence = typeof check.id === 'string' ? nativeCompileDiagnosticRefs(check, opts.projectRoot) : undefined;
       return evidence === undefined ? check : { ...check, evidence };
     });
+    const reviewIssues = opts.request.phase === 'review' && checks?.some(check => check.id === 'negative_verdict_closure' && check.status === 'FAIL')
+      ? (() => {
+        try {
+          const { parseReviewIssueRows, reviewIssueRequiresRepair } = require('./repair-candidates') as typeof import('./repair-candidates');
+          return parseReviewIssueRows(fs.readFileSync(opts.request.inputs.review_report, 'utf8')).filter(row => reviewIssueRequiresRepair(row))
+            .map(row => ({ id: row.id, detail: row.summary, owner: 'review', verificationRequired: true,
+              files: row.files, evidence: [`review:${row.id}:${row.summary}`] }));
+        } catch { return []; }
+      })() : [];
     return { endpoint: 'request', phases: [{ phase: opts.request.phase, summaryPresent: !!summary,
       verdict: summary?.verdict ?? null, schemaCurrent: false, closureCommitted: false,
-      requiredGaps: (checks ?? []).filter(check => isRequiredCheckGap(check)), checks, failingChecks: (checks ?? []).filter(check => check.status === 'FAIL') }],
+      requiredGaps: (checks ?? []).filter(check => isRequiredCheckGap(check)), checks, failingChecks: (checks ?? []).filter(check => check.status === 'FAIL'),
+      openFindings: reviewIssues }],
       ...(checks === undefined ? { additionalProblems: [{ phase: opts.request.phase, id: 'verdict_pass', action: 'verify' as const,
         affects: 'completion' as const, severity: 'BLOCKER' as const, detail: `当前专项请求 ${opts.request.request_sha256} 尚无结果` }] } : {}) };
   }
@@ -1158,8 +1170,15 @@ export function readCurrentDispositionInput(opts: CleanPassOptions | CurrentRequ
   const findings = sources.flatMap(source => {
     const current = opts.currentResults?.find(result => result.phase === source);
     const summary = readSummaryLattice(projectRoot, feature, source, current?.summary);
+    const sourceRunId = opts.runId ?? (typeof asRecord(summary.raw)?.run_id === 'string' ? asRecord(summary.raw)!.run_id as string : undefined);
     const subject = (summary.raw as { verifier_subject_id?: string } | null)?.verifier_subject_id ?? null;
-    const lateCandidates = subject && independentEvidence(source, subject)
+    const nativeReviewBound = source === 'review' && (!!current || (() => {
+      const report = resolveFeatureArtifact(projectRoot, feature, 'review-report.md');
+      const bound = loadPhaseEvidenceManifest(projectRoot, feature, source);
+      return report.exists && bound?.integrityOk && [...bound.manifest.inputs, ...bound.manifest.outputs].some(entry =>
+        path.resolve(projectRoot, entry.path) === path.resolve(report.actualPath) && entry.sha256 === sha256File(report.actualPath));
+    })());
+    const lateCandidates = nativeReviewBound || subject && independentEvidence(source, subject)
       ? (require('./phase-closure-finalizer') as typeof import('./phase-closure-finalizer')).readCurrentPhaseRepairCandidates({
         projectRoot, frameworkRoot: responsibility.frameworkRoot, feature, phase: source, goalRunId: opts.runId,
         resolvedInputs: current?.resolvedInputs ?? opts.resolvedInputs, authorityReaders: opts.authorityReaders,
@@ -1168,11 +1187,37 @@ export function readCurrentDispositionInput(opts: CleanPassOptions | CurrentRequ
       (summary.raw ?? {}) as Parameters<typeof import('./phase-closure-finalizer').readCurrentPhaseRepairCandidates>[2]) : undefined;
     const registered = readRegisteredFindings(lateCandidates === undefined ? summary.raw
       : { ...asRecord(summary.raw), repair_candidates: lateCandidates }, { ...responsibility, currentPhase: source });
+    const currentCollected = new Set<typeof registered[number]>();
+    if (nativeReviewBound && asRecord(summary.raw)?.report_validity === 'PASS') {
+      const repairs = require('./repair-candidates') as typeof import('./repair-candidates');
+      const phaseIssues = repairs.readPhaseRepairIssues(projectRoot, feature, source, { frameworkRoot: opts.frameworkRoot, runId: sourceRunId });
+      const verifierReportText = (require('./verifier-evidence') as typeof import('./verifier-evidence')).loadVerifierReportTextOrNull(
+        projectRoot, feature, source, { frameworkRoot: opts.frameworkRoot, subjectId: subject, resolvedInputs: current?.resolvedInputs ?? opts.resolvedInputs });
+      if (!verifierReportText && phaseIssues?.independentReviewRows !== undefined) {
+        const projected = structuredClone(asRecord(summary.raw)) as unknown as import('./types').HarnessRunSummary;
+        projected.repair_candidates = lateCandidates;
+        projected.blockers = projected.blockers.filter(blocker => blocker.source !== 'issue-verification');
+        repairs.projectDesignFindingsIntoSummary(projected, repairs.verifiedPhaseDesignFindings({ phaseIssues, verifierReportText: null,
+          responsibility: { projectRoot, feature } }));
+        for (const finding of readRegisteredFindings(projected, { ...responsibility, currentPhase: source })) {
+          if (!registered.some(row => row.id === finding.id)) registered.push(finding);
+        }
+        const fidelity = loadFidelityIntentSsot(projectRoot, feature);
+        for (const row of phaseIssues.rows.filter(row => repairs.reviewIssueRequiresRepair(row, fidelity))) {
+          const known = registered.find(finding => finding.id === row.id || finding.id === `${source}:${row.id}`);
+          const evidence = [`review:${row.id}:${row.summary}`];
+          if (known) {
+            known.evidence = [...(known.evidence ?? []), ...evidence];
+            if (phaseIssues.independentReviewRows.includes(row.id)) currentCollected.add(known);
+          }
+          else registered.push({ id: row.id, detail: row.summary, owner: source, verificationRequired: true, files: row.files, evidence });
+        }
+      }
+    }
     if (!current && lateCandidates === undefined && readReusableCheckResult({ projectRoot, frameworkRoot: opts.frameworkRoot,
       feature, phase: source, runId: opts.runId, currentRequirementSha: opts.currentRequirementSha, authorityReaders: opts.authorityReaders }) === null) {
       for (const finding of registered) { finding.owner = source; finding.verificationRequired = true; }
     }
-    const currentCollected = new Set<typeof registered[number]>();
     if (source === 'testing' && actionableEvidence?.defects.length) {
       const candidates = (require('./repair-candidates') as typeof import('./repair-candidates'))
         .actionableDefectsToCandidates(actionableEvidence.defects, source, responsibility);
@@ -1203,7 +1248,7 @@ export function readCurrentDispositionInput(opts: CleanPassOptions | CurrentRequ
     }
     const sourceChecks = current?.checks ?? readPhaseChecks(projectRoot, feature, source, summary.raw);
     for (const finding of registered) {
-      if (ownerAwaitingSourceVerification(source, finding.owner, finding, currentFindingEvidence(projectRoot, source, finding, sourceChecks).length > 0)) {
+      if (!currentCollected.has(finding) && ownerAwaitingSourceVerification(source, finding.owner, finding, currentFindingEvidence(projectRoot, source, finding, sourceChecks).length > 0)) {
         // 修改职责已交回，缺陷仍开放；下一步是原验证方复核，不是再给同一修改方派一轮。
         finding.owner = source; finding.verificationRequired = true;
       }
@@ -1309,9 +1354,10 @@ export function readCurrentDispositionInput(opts: CleanPassOptions | CurrentRequ
       const evidence = typeof check.id === 'string' ? nativeCompileDiagnosticRefs(check, projectRoot) : undefined;
       if (evidence !== undefined) check = { ...check, evidence };
       if (check.id === 'coding_existing_test_preserved' && check.affected_files?.length) {
-        const { testStrengthVerification } = require('./repair-candidates') as typeof import('./repair-candidates');
-        const verification = testStrengthVerification({ check, verifierReportText: verified?.report_text ?? null,
-          verifierSubjectCurrent: !!verified });
+        const { testStrengthVerification, independentReviewTestStrength } = require('./repair-candidates') as typeof import('./repair-candidates');
+        const verification = verified ? testStrengthVerification({ check, verifierReportText: verified.report_text, verifierSubjectCurrent: true })
+          : independentReviewTestStrength({ projectRoot, feature, check,
+            runId: opts.runId ?? (typeof asRecord(s.raw)?.run_id === 'string' ? asRecord(s.raw)!.run_id as string : undefined) });
         return { ...check, verification: verification ?? undefined,
           verificationRequired: !verification || verification.verdict === 'unclear' };
       }

@@ -340,6 +340,30 @@ export function extractDeclaredVerdict(
   return { verdict: null };
 }
 
+/** A historical subsection mentioning “结论” must not hide the report's actual conclusion. */
+export function extractReviewVerdict(content: string): DeclaredVerdict & { sectionFound: boolean } {
+  const headings = extractHeadings(content);
+  const candidates = headings.filter(heading => /^(?:[一二三四五六七八九十\d.、\s]+)?(?:审查)?结论(?:\s|$|[：:（(])/.test(heading.text));
+  const selected = candidates.length ? candidates : headings.filter(heading => heading.text.includes('结论'));
+  const lines = content.split(/\r?\n/);
+  const declarations: DeclaredVerdict[] = [];
+  for (const heading of selected) {
+    const end = headings.find(other => other.lineNumber > heading.lineNumber && other.level <= heading.level)?.lineNumber ?? lines.length + 1;
+    let fenced = false;
+    for (const line of lines.slice(heading.lineNumber, end - 1)) {
+      if (/^\s*```/.test(line)) { fenced = !fenced; continue; }
+      if (fenced) continue;
+      const declared = extractDeclaredVerdict(line, ['有条件通过', '不通过', '通过']);
+      if (declared.verdict) declarations.push(declared);
+    }
+  }
+  const tier = (declared: DeclaredVerdict) => VERDICT_LABEL_TIERS.findIndex(labels => labels.some(label => lineHasLabel(declared.matchedLine ?? '', label)));
+  const firstTier = Math.min(...declarations.map(tier));
+  const preferred = declarations.filter(declared => tier(declared) === firstTier);
+  const unique = new Set(preferred.map(declared => declared.verdict));
+  return { ...(unique.size === 1 ? preferred[0] : { verdict: null }), sectionFound: selected.length > 0 };
+}
+
 // --------------------------------------------------------------------------
 // Metadata 解析
 // --------------------------------------------------------------------------

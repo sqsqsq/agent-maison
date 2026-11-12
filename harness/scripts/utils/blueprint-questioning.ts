@@ -120,7 +120,7 @@ export function independentQuestioningEnvelope(result: BlueprintRecord, provider
 
 /** Called only after the caller confirms a real isolated invocation completed. */
 export function applyIndependentQuestioningOutput(
-  blueprintPath: string, outputPath: string, output: string, providerId: string,
+  blueprintPath: string, outputPath: string, output: string, providerId: string, projectRoot?: string,
 ): BlueprintRecord {
   if (path.resolve(blueprintPath) === path.resolve(outputPath)) throw new Error('质询原件不能覆盖蓝图。');
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
@@ -133,6 +133,14 @@ export function applyIndependentQuestioningOutput(
   const review = asRecord(blueprint.review_summary) ?? {};
   const questioning = { ...result, ...createIndependentQuestioningResult({ providerId, authoredBy: String(review.authored_by ?? ''),
     items: asRecords(result.items), previous: asRecord(review.questioning) }) };
+  if (projectRoot && typeof blueprint.blueprint_id === 'string') {
+    const { componentBlueprintPath } = require('./component-blueprint-path') as typeof import('./component-blueprint-path');
+    const { enumerateCanonicalChangeUnits } = require('./change-unit-path') as typeof import('./change-unit-path');
+    if (path.resolve(blueprintPath) === path.resolve(componentBlueprintPath(projectRoot, blueprint.blueprint_id))
+      && enumerateCanonicalChangeUnits(projectRoot, blueprint.blueprint_id).some(unit =>
+        asRecord(unit.changeUnit.component_blueprint_ref)?.revision === blueprint.revision)) return questioning;
+    // Bound revisions retain their bytes; the current evaluation reads this invocation's original result.
+  }
   blueprint.review_summary = { ...review, questioning };
   const temporary = `${blueprintPath}.tmp-${process.pid}-questioning`;
   try {

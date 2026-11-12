@@ -2452,7 +2452,7 @@ export function writeRunSummaryBase(
     console.warn(`   ⚠ [repair-candidates] 组装失败（零候选继续）：${(e as Error).message}`);
   }
   if (lattice.report_validity !== 'FAIL') projectDesignFindingsIntoSummary(summary, verifiedPhaseDesignFindings({
-    phaseIssues: verifiedPhaseIssues, verifierReportText, declinedFingerprints, declinedIssues,
+    phaseIssues: verifiedPhaseIssues, verifierReportText, declinedFingerprints, declinedIssues, responsibility: { projectRoot, feature: report.feature },
     verifierSubjectCurrent: carriedVerifierSubjectId === null,
   }));
   const featureScoped = report.feature && report.feature !== GLOBAL_FEATURE_SENTINEL

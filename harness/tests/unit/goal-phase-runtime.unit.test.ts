@@ -147,11 +147,12 @@ function assertOnlyChangedChecksResume(before: RunProbe, resumed: RunProbe): voi
   }
 }
 
-const semanticReviewCases: Case[] = (['normal', 'api429'] as const).map(mode => ({
+const semanticReviewCases: Case[] = (['normal', 'api429', 'unchanged'] as const).map(mode => ({
   name: mode === 'normal' ? '3f8a6c21 repaired product reaches independent review without a report-format failure'
-    : '3f8a6c21 interrupted semantic review retries before any check can consume the old report',
+    : mode === 'api429' ? '3f8a6c21 interrupted semantic review retries before any check can consume the old report'
+      : '3f8a6c21 unchanged independent handback pauses without repurchase or an unchecked busy loop',
   run: async () => {
-    const adapter = mode === 'normal' ? 'deepseek-harness' : 'codex';
+    const adapter = mode === 'api429' ? 'codex' : 'deepseek-harness';
     const root = setupGoalRuntimeHost(adapter, false).root;
     const reportRel = 'doc/features/bc-openCard/review/review-report.md', report = path.join(root, reportRel);
     const marker = 'CR_001_FIXED_3F8A6C21';
@@ -163,6 +164,7 @@ const semanticReviewCases: Case[] = (['normal', 'api429'] as const).map(mode => 
       const sourceManifest = YAML.parse(launch.freshManifestContent); sourceManifest.adapter = adapter;
       const probe = await runGoalRuntimeChain(root, { ...launch, freshManifestContent: YAML.stringify(sourceManifest),
         adapter, runId: `3f8a6c21-semantic-review-${mode}`,
+        ...(mode === 'unchanged' ? { executorMode: 'attended' as const, viaSessionStep: true } : {}),
         invokeResultFor: (phase, attempt) => phase === 'review' && mode === 'api429' && attempt === 1 ? {
           exitCode: 1, stdout: '', stderr: 'API Error: 429 finite review interruption', terminal_failure_observed: true,
           terminal_error_excerpt: 'turn.failed: {"type":"error","status":429,"error":{"type":"rate_limit_error","message":"finite review interruption"}}',
@@ -176,8 +178,9 @@ const semanticReviewCases: Case[] = (['normal', 'api429'] as const).map(mode => 
         onReview: ctx => {
           assert(++reviewers <= 2, 'unchanged handback cannot trigger another semantic review');
           assert(ctx.prompt.includes('CR-001'), 'the reviewer must receive the actual unresolved finding');
+          assert(ctx.prompt.includes('facts只读，不追加phase_delta: review'), 'the signed review instruction must agree with report-only authority');
           assert(fs.readFileSync(path.join(root, PRODUCT_FILE), 'utf8').includes(marker), 'independent review must see the actual repair');
-          if (mode === 'api429' && reviewers === 1) return;
+          if (mode === 'unchanged' || mode === 'api429' && reviewers === 1) return;
           fs.writeFileSync(report, '# Updated independent review\nCR-001: verified fixed\n**审查结论**: 通过\n');
         },
         onHarnessSummary: ({ phase }) => {
@@ -194,7 +197,13 @@ const semanticReviewCases: Case[] = (['normal', 'api429'] as const).map(mode => 
           ], [PRODUCT_FILE, reportRel]) };
         },
       });
-      assert(probe.exitCode === 0 && reviewers === (mode === 'api429' ? 2 : 1), `the original request must complete after a successful independent recheck: exit=${probe.exitCode} reviewers=${reviewers}`);
+      if (mode === 'unchanged') {
+        assert(reviewers === 1, 'the identical completed review must not be purchased again');
+        assert(probe.exitCode !== 0, 'an unchanged negative verdict cannot claim completion');
+        assert(probe.events.some(event => event.type === 'phase_halt' && (event.halt_reason === 'no_progress_guard'
+          || event.halt_reason === 'executor_waiting' && String(event.halt_guidance).includes('没有新的可执行工作'))),
+          'the existing same-input pause must be reached: ' + JSON.stringify(probe.events.filter(event => event.type === 'phase_halt' || event.type === 'run_end')));
+      } else assert(probe.exitCode === 0 && reviewers === (mode === 'api429' ? 2 : 1), `the original request must complete after a successful independent recheck: exit=${probe.exitCode} reviewers=${reviewers}`);
       assert(probe.events.some(event => event.type === 'agent_invoke_start' && event.phase === 'review'), 'a real independent invocation must be recorded');
       if (mode === 'api429') assert(probe.events.filter(event => event.type === 'transient_api_retry_scheduled' && event.phase === 'review').length === 1,
         'the original failed call must remain visible and buy exactly one bounded transport retry');
@@ -203,6 +212,96 @@ const semanticReviewCases: Case[] = (['normal', 'api429'] as const).map(mode => 
 }));
 
 const cases: Case[] = [...semanticReviewCases, {
+  name: '3f8a6c21 report-only validity repair does not repurchase a full product review',
+  run: async () => {
+    const root = setupGoalRuntimeHost('deepseek-harness', false).root;
+    const reportRel = 'doc/features/bc-openCard/review/review-report.md', report = path.join(root, reportRel);
+    let reviews = 0;
+    try {
+      fs.mkdirSync(path.dirname(report), { recursive: true });
+      fs.writeFileSync(report, '# Review\n## 问题清单\n无问题\n## 结论\n待补声明行\n');
+      const launch = declareSourceRepairRequest(root, ['coding', 'review']).launch;
+      const manifest = YAML.parse(launch.freshManifestContent); manifest.adapter = 'deepseek-harness';
+      const probe = await runGoalRuntimeChain(root, { ...launch, freshManifestContent: YAML.stringify(manifest), adapter: 'deepseek-harness',
+        onAuthor: () => {},
+        onReview: ctx => {
+          reviews++;
+          assert(ctx.prompt.includes('仅修补已有报告') && ctx.prompt.includes('结论按问题表如实修正'), 'the actual request must be confined to the report deficit');
+          fs.writeFileSync(report, fs.readFileSync(report, 'utf8').replace('待补声明行', '**审查结论**: 通过'));
+        },
+        onHarnessSummary: ({ phase }) => phase === 'coding'
+          ? { checks: fixtureReadDependencies(root, [{ id: 'file_completeness', category: 'structure', severity: 'BLOCKER', status: 'PASS',
+            description: 'existing fixture input', details: PRODUCT_FILE }], [PRODUCT_FILE]) }
+          : phase === 'review' ? { checks: fixtureReadDependencies(root, [
+            ...require('../../scripts/check-review').checkConclusionWithVerdict({ projectRoot: root, frameworkRoot: path.resolve(__dirname, '../../..'), feature: 'bc-openCard', phase: 'review', phaseRule: {} }, fs.readFileSync(report, 'utf8')),
+            ...require('../../scripts/check-review').checkNegativeVerdictClosure(fs.readFileSync(report, 'utf8')),
+          ], [PRODUCT_FILE, reportRel]) } : null,
+      });
+      assert(probe.exitCode === 0 && reviews === 1, 'one actual format correction and its checker close the request');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  },
+}, {
+  name: '3f8a6c21 DSH independent review findings reach the author without a second verifier capability',
+  run: async () => {
+    const root = setupGoalRuntimeHost('deepseek-harness', false).root;
+    const reportRel = 'doc/features/bc-openCard/review/review-report.md', report = path.join(root, reportRel);
+    const factsRel = 'doc/features/bc-openCard/context/facts.md';
+    const marker = 'REPAIRED_NEW_CR_011';
+    let authors = 0, reviewers = 0;
+    let diagnosis = '';
+    try {
+      fs.mkdirSync(path.dirname(path.join(root, factsRel)), { recursive: true });
+      fs.writeFileSync(path.join(root, factsRel), '# Current research artifact\n');
+      const launch = declareSourceRepairRequest(root, ['coding', 'review']).launch;
+      const manifest = YAML.parse(launch.freshManifestContent); manifest.adapter = 'deepseek-harness';
+      const probe = await runGoalRuntimeChain(root, { ...launch, freshManifestContent: YAML.stringify(manifest), adapter: 'deepseek-harness',
+        executorMode: 'attended', viaSessionStep: true,
+        onAuthor: ctx => {
+          assert(++authors <= 4, 'same input must not buy endless author invocations');
+          if (authors > 1) {
+            const issues = require('../../scripts/utils/repair-candidates').readPhaseRepairIssues(root, 'bc-openCard', 'review', { runId: ctx.runId });
+            const summary = JSON.parse(fs.readFileSync(path.join(root, 'doc/features/bc-openCard/review/reports/summary.json'), 'utf8'));
+            diagnosis = JSON.stringify({ native: issues?.independentReviewRows, rows: issues?.rows, reportValidity: summary.report_validity });
+            const shared = require('../../scripts/utils/verify-feature-completion').readCurrentDispositionInput({ projectRoot: root,
+              frameworkRoot: path.resolve(__dirname, '../../..'), feature: 'bc-openCard', chain: ['review'] });
+            const disposition = require('../../scripts/utils/check-disposition').resolveCurrentDisposition(shared);
+            assert(disposition.completionBlocking.some((problem: any) => problem.id.includes('CR-011') && problem.action === 'repair'),
+              'a parent reader without an explicit run ID must use the actual summary producer: ' + JSON.stringify(disposition));
+          }
+          if (ctx.prompt.includes('CR-011')) fs.appendFileSync(path.join(root, factsRel), `\n<!-- ${marker} -->\n`);
+        },
+        onReview: ctx => {
+          assert(++reviewers <= 2, 'a fixed finding is reviewed once');
+          assert(!ctx.prompt.includes('仅修补已有报告'), 'a repaired artifact requires actual independent review, not format-only preservation');
+          const fixed = fs.readFileSync(path.join(root, factsRel), 'utf8').includes(marker);
+          fs.mkdirSync(path.dirname(report), { recursive: true });
+          fs.writeFileSync(report, [
+            '# Independent review', '## 问题清单',
+            '| 编号 | 严重程度 | 分类 | 问题描述 | 涉及文件 | 修复建议 |', '|---|---|---|---|---|---|',
+            ...fixed ? [] : [`| CR-011 | BLOCKER | 逻辑错误 | 当前账本 ${factsRel}:1 与实现 ${PRODUCT_FILE}:1 不一致 | ${factsRel}、${PRODUCT_FILE} | 修复本次账本对象 |`],
+            '## 结论', `**审查结论**: ${fixed ? '通过' : '不通过'}`, '',
+          ].join('\n'));
+        },
+        onHarnessSummary: ({ phase }) => {
+          if (phase === 'coding') return { checks: fixtureReadDependencies(root, [{ id: 'file_completeness', category: 'structure',
+            severity: 'BLOCKER', status: 'PASS', description: 'fixture product exists', details: PRODUCT_FILE }], [PRODUCT_FILE, factsRel]) };
+          if (phase !== 'review') return null;
+          return { checks: fixtureReadDependencies(root, fs.existsSync(report)
+            ? [...require('../../scripts/check-review').checkNegativeVerdictClosure(fs.readFileSync(report, 'utf8')),
+              ...require('../../scripts/check-review').checkConclusionWithVerdict({ projectRoot: root, frameworkRoot: path.resolve(__dirname, '../../..'),
+                feature: 'bc-openCard', phase: 'review', phaseRule: {} }, fs.readFileSync(report, 'utf8'))]
+            : [{ id: 'review_report_exists', category: 'structure', severity: 'BLOCKER', status: 'FAIL',
+              description: 'real report must be written independently', details: 'review report missing', affected_files: [reportRel] }], [PRODUCT_FILE, factsRel, reportRel]) };
+        },
+      });
+      assert(probe.exitCode === 0, `new finding must be repaired before completion: authors=${authors}, reviewers=${reviewers}; ${diagnosis}; ${JSON.stringify(probe.events.filter(event => event.type === 'phase_halt' || event.type === 'run_end'))}`);
+      assert(reviewers === 2, 'one initial review and one actual repair recheck');
+      assert(authors >= 2 && fs.readFileSync(path.join(root, factsRel), 'utf8').includes(marker), 'the actual new artifact finding reached the author');
+      assert(!probe.events.some(event => event.type === 'agent_invoke_start' && event.purpose === 'verifier'),
+        'DSH must not acquire an undeclared verifier capability');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  },
+}, {
   name: '3f8a6c21 unchanged old review wakes after scope proof invalidation and a no-op author handback',
   run: async () => {
     const root = setupGoalRuntimeHost('deepseek-harness', false).root;

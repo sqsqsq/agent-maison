@@ -172,6 +172,25 @@ export interface RevisedChangeUnitContent {
 }
 
 /** 同一未完成交付的显式 consumer 接点；不刷新 Feature 业务产物或启动 run。 */
+/** The draft checker and atomic consumer validate the same changed promises. */
+export function validateProvideConsumerRevisions(previous: readonly ChangeUnitArtifact[], candidates: readonly ChangeUnitArtifact[]): void {
+  const prospective = previous.map(unit => candidates.find(candidate => candidate.change_unit_id === unit.change_unit_id) ?? unit);
+  for (const candidate of candidates) {
+    const old = previous.find(unit => unit.change_unit_id === candidate.change_unit_id);
+    if (!old) continue;
+    const promise = (unit: ChangeUnitArtifact, id: string): unknown => ({
+      provide: unit.provides.find(row => row.provide_id === id),
+      predicates: unit.target_predicates.filter(row => row.provide_ids.includes(id)).sort((a, b) => a.predicate_id.localeCompare(b.predicate_id)),
+    });
+    for (const provide of old.provides) {
+      if (stableStringify(promise(old, provide.provide_id)) === stableStringify(promise(candidate, provide.provide_id))) continue;
+      const consumers = prospective.filter(unit => unit.requires.some(row => row.from_change_unit_id === old.change_unit_id && row.provide_id === provide.provide_id));
+      if (consumers.some(unit => !candidates.some(row => row.change_unit_id === unit.change_unit_id))) throw new ChangeUnitCandidateRejected('change_unit_candidate_design_rejected',
+        `provide ${old.change_unit_id}/${provide.provide_id} 的承诺变化须在同批显式修订受影响消费者，或用新 provide_id 改线。`);
+    }
+  }
+}
+
 export function reviseChangeUnitContent(projectRoot: string, blueprintId: string, revisions: readonly ChangeUnitContentRevision[],
   options: { heldFeatureLocks?: readonly HeldFeatureLock[]; heldBlueprintLocks?: BlueprintWriteLocks;
     activeRun?: { feature: string; runId: string } } = {}): RevisedChangeUnitContent {
@@ -233,18 +252,8 @@ export function reviseChangeUnitContent(projectRoot: string, blueprintId: string
       if (!provider || !provider.provides.some(row => row.provide_id === dependency.provide_id)) throw new ChangeUnitCandidateRejected('change_unit_candidate_design_rejected', `change_unit_dependency_provider_missing/provide_mismatch: ${unit.change_unit_id} → ${dependency.from_change_unit_id}/${dependency.provide_id}`);
     }
     if (detectChangeUnitDependencyCycles(prospective).length) throw new ChangeUnitCandidateRejected('change_unit_candidate_design_rejected', 'change_unit_dependency_cycle: 内容修订不得引入自循环或依赖环。');
-    for (const item of pending) {
-      const old = asChangeUnitArtifact(item.loaded.changeUnit);
-      const promise = (unit: ChangeUnitArtifact, id: string): unknown => ({
-        provide: unit.provides.find(row => row.provide_id === id),
-        predicates: unit.target_predicates.filter(row => row.provide_ids.includes(id)).sort((a, b) => a.predicate_id.localeCompare(b.predicate_id)),
-      });
-      for (const provide of old.provides) {
-        if (stableStringify(promise(old, provide.provide_id)) === stableStringify(promise(item.candidate.artifact, provide.provide_id))) continue;
-        const consumers = prospective.filter(unit => unit.requires.some(row => row.from_change_unit_id === old.change_unit_id && row.provide_id === provide.provide_id));
-        if (consumers.some(unit => !pending.some(row => row.candidate.artifact.change_unit_id === unit.change_unit_id))) throw new ChangeUnitCandidateRejected('change_unit_candidate_design_rejected', `provide ${old.change_unit_id}/${provide.provide_id} 的承诺变化须在同批显式修订受影响消费者，或用新 provide_id 改线。`);
-      }
-    }
+    validateProvideConsumerRevisions(all.filter(row => !retired.has(String(row.changeUnit.change_unit_id)))
+      .map(row => asChangeUnitArtifact(row.changeUnit)), pending.map(row => row.candidate.artifact));
     const written: LoadedChangeUnit[] = [];
     try {
       pending.forEach((row, index) => { writeCanonicalChangeUnit(row.loaded.canonicalPath, row.candidate.artifact, `${process.pid}-content-${index}`); written.push(row.loaded); });

@@ -117,7 +117,7 @@ review 阶段不执行宿主包管理器依赖安装命令，也不使用 `HARNE
 先执行本页共享方法，再履行下列正式输入、产物和闭环责任；不复制另一份方法。
 
 1. **收集审查上下文**：先确定请求终点和基线。专项按 [request CLI](../../docs/operations/request-harness.md) prepare→Research→报告→同一 checker 执行，不要求本次 coding。组合交付消费 P1/P3 的契约/验收及全部声明源码，逐项对照 CU design_refs、runtime flow、组件资产与惯例；缺必需对照资料仍失败。叙述文档仅在实际需要时读取。
-2. **Research Sub-Phase**（审查前完成）：读取全部目标源码及适用对照。入口指定 review 为首阶段且无有效 facts 时建立绑定本次身份/基线的 facts；有有效基线时才追加 `## phase_delta: review`（无新增写 "none"）。专项使用 request facts/reportDir，不触碰活跃 Feature 的 facts、attestation、receipt 或 events。复杂问题的独立质询仍按既有要求执行。
+2. **Research Sub-Phase**（审查前完成）：读取全部目标源码及适用对照。入口指定 review 为首阶段且无有效 facts 时建立绑定本次身份/基线的 facts；有有效基线时才追加 `## phase_delta: review`（无新增写 "none"）。work-unit 独立复审只读 facts，不追加增量节，新事实写入指定审查报告。专项使用 request facts/reportDir，不触碰活跃 Feature 的 facts、attestation、receipt 或 events。复杂问题的独立质询仍按既有要求执行。
 3. **系统化审查**（5 子维度，详见 reference）：架构合规性（BLOCKER）→ 接口一致性（BLOCKER）→ 编码规范（MAJOR）→ 业务逻辑（MAJOR）→ 数据层（MAJOR/MINOR）；UI 需求另做视觉保真维度（详见 reference，pixel_1to1 P0 全覆盖不许抽查）。
    惯例文件存在时还须执行 reference「工程惯例核对」：以目标文件集合核对全部条目，输出全量台账；适用条目打开范例，存量违反降为 advisory。重复意见只能建议 `/conventions-bootstrap` 升格，不直接写惯例文件。
 4. **生成审查报告**：模板 `templates/review-report-template.md`，**必须包含 6 章节**：审查范围 / 审查方法 / 问题清单（编号+严重程度+分类+描述+涉及文件+修复建议）/ 问题统计 / 修复建议摘要 / 结论。问题分类用预定义类别（分层违规/接口不一致/资源引用/命名规范/硬编码/逻辑错误/异常处理/性能/安全/视觉保真/其他）。严重程度：BLOCKER（架构分层违规/接口签名不一致/文件缺失/资源引用缺失）/ MAJOR（命名/硬编码/异常处理/逻辑错误）/ MINOR（模拟数据隔离/风格/注释）/ INFO（改进建议）。结论：BLOCKER>0→不通过；必须返修的 MAJOR 未闭合不得推进；仅有效 best_effort 非关键视觉保真 MAJOR 时通过/有条件通过均可，保留统计与未关闭状态；hard、功能 MAJOR、BLOCKER 不豁免。

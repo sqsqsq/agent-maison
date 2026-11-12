@@ -244,7 +244,7 @@ function priorResearchBaseline(f: ReturnType<typeof fixture>, fw: string): void 
     factsContext: entry.factsContext, resolvedInputs: resolved.inputs, requirementSha: computeRunRequirementSha(f.root, 'demo', origin.run_id) }));
 }
 
-async function currentReviewFinding(f: ReturnType<typeof fixture>, row: { id: string; files: string; fix: string }) {
+async function currentReviewFinding(f: ReturnType<typeof fixture>, row: { id: string; files: string; fix: string; classification?: string; verdict?: string }) {
   const file = 'doc/features/demo/review/review-report.md';
   f.write(file, ['# Review 报告', '> **模块标识**: demo', '> **审查日期**: 2026-10-30', '> **审查版本**: 1.0', '> **审查人**: isolated test reviewer',
     '## 审查范围', '模块 demo；src/demo/value.ts；doc/features/demo/contracts.yaml；doc/features/demo/acceptance.yaml。',
@@ -252,9 +252,9 @@ async function currentReviewFinding(f: ReturnType<typeof fixture>, row: { id: st
     '| 审查维度 | 依据文档 | 检查要点 |', '|---|---|---|', '| 架构合规性 | contracts.yaml | 当前模块声明 |',
     '| 接口一致性 | contracts.yaml | 实际绑定 |', '| 编码规范 | src/demo/value.ts | 当前源码 |', '| 业务逻辑 | acceptance.yaml | 原验收 |', '| 数据层 | contracts.yaml | 当前模型 |',
     '## 问题清单', '| 编号 | 严重程度 | 分类 | 问题描述 | 涉及文件 | 修复建议 | 状态 |', '|---|---|---|---|---|---|---|',
-    `| ${row.id} | MAJOR | 逻辑错误 | ${row.fix} | ${row.files} | ${row.fix} | 未关闭 |`,
+    `| ${row.id} | MAJOR | ${row.classification ?? '逻辑错误'} | ${row.fix} | ${row.files} | ${row.fix} | 未关闭 |`,
     '## 问题统计', '| 严重程度 | 数量 |', '|---|---|', '| BLOCKER | 0 |', '| MAJOR | 1 |', '| MINOR | 0 |', '| INFO | 0 |',
-    '## 修复建议摘要', row.fix, '## 结论', '**审查结论**: 不通过', ''].join('\n'));
+    '## 修复建议摘要', row.fix, '## 结论', `**审查结论**: ${row.verdict ?? '不通过'}`, ''].join('\n'));
   f.facts(); priorResearchBaseline(f, frameworkRoot);
   const ctx = f.context('review');
   if (ctx.factsContext) (require('../fixtures/host-snapshot-3.1.0/migrate') as typeof import('../fixtures/host-snapshot-3.1.0/migrate'))
@@ -262,8 +262,9 @@ async function currentReviewFinding(f: ReturnType<typeof fixture>, row: { id: st
   const checks = await review.check(ctx);
   assert.equal(checks.find(check => check.id === 'issue_to_file')?.status, 'PASS', 'the actual checker recognizes the real acceptance artifact');
   const original = fs.readFileSync(path.join(f.root, file), 'utf8');
+  const originalRow = original.split('\n').find(line => line.startsWith(`| ${row.id} |`))!;
   for (const invalid of ['doc/features/demo/not-created.yaml', path.join(frameworkRoot, 'README.md').replace(/\\/g, '/')]) {
-    f.write(file, original.replace(`| ${row.files} |`, `| ${invalid} |`));
+    f.write(file, original.replace(originalRow, originalRow.replace(`| ${row.files} |`, `| ${invalid} |`)));
     const checked = (await review.check(ctx)).find(check => check.id === 'issue_to_file');
     assert(checked?.status === 'FAIL' && checked.details.includes(path.basename(invalid)), 'missing/external paths must fail that same real checker: ' + JSON.stringify(checked));
   }
@@ -288,6 +289,36 @@ async function currentReviewFinding(f: ReturnType<typeof fixture>, row: { id: st
     extraOutputs: ['script-report.json', 'summary.json'].map(name => path.join(reportsDir, name)) }));
   return { report, summary };
 }
+
+function recordIndependentReview(f: ReturnType<typeof fixture>): void {
+  const file = 'doc/features/demo/review/review-report.md', bytes = fs.readFileSync(path.join(f.root, file));
+  fs.unlinkSync(path.join(f.root, file));
+  const runId = f.manifest.run_id, runDir = path.join(f.root, f.manifest.report_dir), invokeId = 'review-native-original';
+  const control = ensureRunControl(runDir, runId);
+  const owner = casAcquireRunOwner(runDir, runId, control.current_epoch, { kind: 'process', owner_id: 'independent-review-fixture', pid: process.pid });
+  assert(owner.ok);
+  const context: WorkUnitExecutionContext = { runId, feature: 'demo', workflowId: 'obligation-driven', track: 'full', chain: ['review'], phase: 'review',
+    attemptId: invokeId, owner: { ...owner.token, kind: 'process' }, projectRoot: f.root, frameworkRoot, runDir, reportDir: f.manifest.report_dir,
+    adapter: 'generic', instruction: 'Independently read the current objects and write the actual review report.',
+    runtimeFacts: { receiptRequired: false, resume: false, successor: false }, childEnv: {} };
+  const boundary = resolvePhaseWriteBoundary({ projectRoot: f.root, frameworkRoot, feature: 'demo', runId,
+    phaseOrder: workflow.auto_chain!, track: 'full', profileDir: f.profileDir, productLayerDirs: ['src'], executionRole: 'verifier', verifierResultPath: file });
+  const snapshotOptions = { runtimeExcluded: [f.manifest.report_dir], includeFiles: ['doc/features/demo/context/facts.md'] };
+  const pre = capturePhaseInvocationSnapshot(boundary, snapshotOptions);
+  const issued = writePhaseExecutionRequestMaterial({ context, invokeId, purpose: 'review', issuedAt: new Date().toISOString(),
+    gateTimeoutMs: 0, cleanupReserveMs: 0, preSnapshot: pre, writeBoundary: boundary, snapshotOptions });
+  appendRunEvent(f, { type: 'agent_invoke_start', phase: 'review', purpose: 'review', invoke_id: invokeId, handoff_request: issued.reference,
+    owner_id: owner.token.owner_id, owner_epoch: owner.token.epoch });
+  fs.writeFileSync(path.join(f.root, file), bytes);
+  const post = capturePhaseInvocationSnapshot(boundary, snapshotOptions), diff = diffPhaseInvocationSnapshots(pre, post);
+  assert.equal(diff.kind, 'changed'); if (diff.kind !== 'changed') throw new Error('missing actual independent write');
+  const classified = classifyPhaseInvocationChanges(boundary, 'review', diff.changes);
+  assert.equal(classified.violations.length, 0);
+  appendRunEvent(f, { type: 'phase_write_observed', phase: 'review', invoke_id: invokeId, pre_snapshot: pre.sha256, post_snapshot: post.sha256,
+    owned: classified.allowed.map(write => ({ path: write.path, pre_sha256: write.preSha256, post_sha256: write.postSha256 })) });
+  appendRunEvent(f, { type: 'agent_invoke_end', phase: 'review', purpose: 'review', invoke_id: invokeId, exit_code: 0, completion_observed: true, status: 'passed' });
+  releaseRunOwner(runDir, owner.token);
+}
 async function scopeCheck(f: ReturnType<typeof fixture>) {
   const check = (await coding.check(f.context('coding'))).find(item => item.id === 'diff_within_scope');
   assert(check, 'diff_within_scope missing');
@@ -308,6 +339,26 @@ async function testWriteCheck(f: ReturnType<typeof fixture>) {
 }
 
 const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; extraContractFiles?: string[]; requirement?: string; materializedAdapter?: 'generic'; run(f: ReturnType<typeof fixture>): Promise<void> | void }> = [
+  { name: '3f8a6c21 native review cannot override a current verifier-refuted design finding', async run(f) {
+    const authority = 'doc/features/demo/blueprint/component-blueprint.yaml'; f.write(authority, 'blueprint_id: demo\nrevision: 1\n');
+    const row = { id: 'CR-DESIGN', files: authority, fix: '核对当前设计声明，错误提案须驳回' };
+    const { summary } = await currentReviewFinding(f, row); recordIndependentReview(f);
+    assert(readPhaseRepairIssues(f.root, 'demo', 'review', { frameworkRoot, runId: f.manifest.run_id })?.independentReviewRows?.includes(row.id));
+    const reportsDir = featurePhaseReportsDir(f.root, 'demo', 'review', frameworkRoot);
+    publishFixtureVerifierEvidence({ projectRoot: f.root, reportsDir, feature: 'demo', phase: 'review', verdict: 'PASS', subjectId: summary.verifier_subject_id!,
+      reportText: '```issue-verification\n' + YAML.stringify([{ issue: row.id, verdict: 'refuted', evidence: `${row.files} ${row.fix}；已核原提案不成立` }]) + '```\n' });
+    const disposition = resolveCurrentDisposition(readCurrentDispositionInput({ projectRoot: f.root, frameworkRoot, feature: 'demo', chain: ['review'], runId: f.manifest.run_id }));
+    assert(!disposition.completionBlocking.some(problem => problem.id.includes(row.id) && problem.owner === 'external'), JSON.stringify(disposition));
+  } },
+  { name: '3f8a6c21 native review keeps best-effort visual findings disclosed', requirement: '尽量完成界面，允许视觉差异披露', async run(f) {
+    const { initializeFidelityRouting } = require('../../scripts/utils/goal-preflight') as typeof import('../../scripts/utils/goal-preflight');
+    initializeFidelityRouting({ projectRoot: f.root, frameworkRoot, feature: 'demo', requirement: f.manifest.requirement!,
+      featuresDirRel: 'doc/features', executionIdentity: 'visual-native', requirementProvenance: 'explicit_cli' });
+    const row = { id: 'CR-STYLE', files: 'src/demo/value.ts', fix: '允许披露的颜色细节差异', classification: '视觉保真', verdict: '有条件通过' };
+    await currentReviewFinding(f, row); recordIndependentReview(f);
+    const disposition = resolveCurrentDisposition(readCurrentDispositionInput({ projectRoot: f.root, frameworkRoot, feature: 'demo', chain: ['review'], runId: f.manifest.run_id }));
+    assert(!disposition.completionBlocking.some(problem => problem.id.includes(row.id)), JSON.stringify(disposition));
+  } },
   { name: '3f8a6c21 reclaimed partial unit preserves source writes alongside validated generated output', run(f) {
     const fw = frameworkDeclaringTsSources();
     try {

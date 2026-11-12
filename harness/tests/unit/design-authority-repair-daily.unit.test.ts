@@ -233,10 +233,19 @@ const cases: Array<{ name: string; group: Group; run: () => Promise<void> }> = [
     const events = fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
     const question = events.find(event => event.type === 'agent_invoke_start' && event.phase === 'design-repair-questioning');
     const saved = readDesignQuestioningOriginal(runDir, question, events);
-    assert(saved?.completed, 'the regression must contain a real completed Q original');
-    const reusable = reusableDesignQuestioning({ ...saved, projectRoot: root, blueprintPath: draft, blueprint: read(draft) });
-    if (mode === 'unscoped-decline') assert(reusable, 'the scope counter must contain an otherwise usable completed denial');
-    else assert.equal(reusable, null, 'the original pre/post snapshot must invalidate Q writes before any later transaction');
+    const original = JSON.parse(fs.readFileSync(path.join(runDir, 'phases', question.phase, question.invoke_id, 'design-result.json'), 'utf8')).outcome;
+    assert(original.started && original.ok && original.output.includes('当前原验收未满足')
+      && events.some(event => event.type === 'agent_invoke_end' && event.invoke_id === question.invoke_id && event.exit_code === 0),
+      'the regression must retain the actual completed Q response even when its writes invalidate reuse');
+    if (mode === 'unscoped-decline') {
+      assert(saved?.completed);
+      assert(reusableDesignQuestioning({ ...saved, projectRoot: root, blueprintPath: draft, blueprint: read(draft) }),
+        'the scope counter must contain an otherwise usable completed denial');
+    } else {
+      assert.equal(diffPhaseInvocationSnapshots(original.preSnapshot, original.postSnapshot).kind, 'changed');
+      assert(events.some(event => event.type === 'phase_write_violation' && event.invoke_id === question.invoke_id));
+      assert.equal(saved, null, 'the actual violation invalidates Q reuse before any later transaction');
+    }
     let received: { purpose: string; blueprint: Json; cu?: Json } | undefined;
     const second = await runUnattendedDesignRepair({ ...input, brief, invoke: async purpose => {
       received = { purpose, blueprint: read(draft), ...(mode === 'questioner-cu' ? { cu: read(path.join(runDir, 'design-repair/change-unit.yaml')) } : {}) };

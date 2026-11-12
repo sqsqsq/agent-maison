@@ -645,7 +645,7 @@ export function readCurrentPhaseRepairCandidates(
   // Testing candidates come from native checks and the bounded runtime collectors, not verifier prose.
   // Rebuilding only the model-dependent subset here would erase those already checked objects.
   if (String(opts.phase) === 'testing') return base.repair_candidates;
-  if (!base.verifier_subject_id) return base.repair_candidates;
+  if (!base.verifier_subject_id && opts.phase !== 'review') return base.repair_candidates;
   try {
     const scriptReportPath = path.join(reportsDir, 'script-report.json');
     if (!fs.existsSync(scriptReportPath)) return base.repair_candidates;
@@ -660,7 +660,7 @@ export function readCurrentPhaseRepairCandidates(
       { frameworkRoot: opts.frameworkRoot, subjectId: base.verifier_subject_id, resolvedInputs: opts.resolvedInputs },
     );
     // verifier 无证据（能力 disabled，或该阶段本就不产 verifier 候选）→ 维持 base。
-    if (!verifierReportText) return base.repair_candidates;
+    if (!verifierReportText && opts.phase !== 'review') return base.repair_candidates;
     const phaseIssues = phaseIssuesForVerifierSubject(opts.projectRoot, opts.feature, String(opts.phase),
       base.verifier_subject_id ?? null, opts.frameworkRoot, undefined, opts.goalRunId?.trim() || base.run_id?.trim());
     const reviewReportText = opts.phase === 'review' ? phaseIssues?.reportText ?? null : null;

@@ -22,13 +22,13 @@ import * as path from 'path';
 import * as YAML from 'yaml';
 import { inferLegacyProjectRoot, isInsideProjectRoot, resolveDependencyPath } from './project-relative-path';
 import { createHash } from 'crypto';
-import { extractTables, getSectionContent, extractDeclaredVerdict } from './markdown-parser';
+import { extractTables, getSectionContent, extractDeclaredVerdict, extractReviewVerdict } from './markdown-parser';
 import type { CorrectionCategory } from './correction-routing';
 import type { ExecutionScopeInput } from './execution-scope';
 import type { GoalRunEvent } from './goal-runner-phase';
 import { isBlockingCheck, resultBasisOwner, type CurrentDisposition } from './check-disposition';
 import type { FidelityIntentSsot } from './fidelity-shared';
-import { currentRepairObject, resolveRepairResponsibility, repairResponsibilityContext, repairOwnerArtifactTargets, repairOwnerSourceTargets, workUnitMayWritePath, workUnitWriteDomains, type RepairResponsibilityContext, type RepairResponsibility } from './repair-responsibility';
+import { currentRepairObject, resolveRepairResponsibility, repairResponsibilityContext, repairOwnerArtifactTargets, repairOwnerSourceTargets, workUnitMayWritePath, workUnitWriteDomains, factsRepairResponsibility, type RepairResponsibilityContext, type RepairResponsibility } from './repair-responsibility';
 
 /** 与现有 correction 类别一致，具体负责方由真实对象解析。 */
 export type RepairOwnerCategory = CorrectionCategory;
@@ -69,8 +69,8 @@ export interface RepairCandidate {
 // 指纹（两层）
 // ---------------------------------------------------------------------------
 
-function sha256Hex(text: string): string {
-  return createHash('sha256').update(text, 'utf-8').digest('hex');
+function sha256Hex(text: string | Buffer): string {
+  return createHash('sha256').update(text).digest('hex');
 }
 
 function normalizeFiles(files: readonly string[]): string[] {
@@ -212,6 +212,7 @@ export interface ReviewCandidateInput {
   reviewFidelity?: ReviewFidelity | null;
   /** review-report.md 全文 */
   reportText: string;
+  phaseIssues?: PhaseRepairIssues | null;
   /** verifier.report.md 全文（缺失传 null——零 candidate） */
   verifierReportText: string | null;
   /** @deprecated legacy receipt flag, ignored; human authorization cannot suppress a defect. */
@@ -279,6 +280,83 @@ export interface PhaseRepairIssues {
   rows: ReviewIssueRow[];
   evidenceFiles: Array<{ label: string; content: string }>;
   diagnostics?: string[];
+  /** Derived from an actual independent report invocation, never an authored report flag. */
+  independentReviewRows?: readonly string[];
+}
+
+function independentReviewRows(projectRoot: string, feature: string, runId: string | undefined,
+  reportPath: string, reportText: string, rows: readonly ReviewIssueRow[]): string[] | undefined {
+  if (!runId) return undefined;
+  const { featureFilePath } = require('../../config') as typeof import('../../config');
+  const { executionRequestForInvoke } = require('./session-execution-handoff') as typeof import('./session-execution-handoff');
+  const { invocationCompleted } = require('./invocation-completion') as typeof import('./invocation-completion');
+  const { workUnitExecutionRole } = require('./goal-phase-executor') as typeof import('./goal-phase-executor');
+  const reportHash = sha256Hex(reportText);
+  const runs = repairDeclineHistory(projectRoot, feature, runId).reverse();
+  const completedOriginal = (file: string): boolean => runs.some(run => {
+    const relative = path.relative(featureFilePath(projectRoot, feature, `goal-runs/${run.run_id}`), path.resolve(projectRoot, file));
+    const parts = relative.split(path.sep);
+    return parts.length >= 4 && parts[0] === 'phases' && run.events.some(event => event.type === 'agent_invoke_end'
+      && event.phase === parts[1] && event.invoke_id === parts[2] && invocationCompleted({ ...event, exitCode: event.exit_code }));
+  });
+  for (const run of runs) {
+    for (const start of [...run.events].reverse()) {
+      if (start.type !== 'agent_invoke_start' || start.phase !== 'review' || !start.invoke_id) continue;
+      const original = executionRequestForInvoke(featureFilePath(projectRoot, feature, `goal-runs/${run.run_id}`), start.invoke_id);
+      const request = original?.request;
+      if (!request || request.context.feature !== feature || request.context.runId !== run.run_id
+        || workUnitExecutionRole(request.context, request.purpose) !== 'verifier'
+        || !request.write_boundary?.verifierResultPath || !request.pre_snapshot
+        || path.resolve(projectRoot, request.write_boundary.verifierResultPath) !== path.resolve(projectRoot, reportPath)) continue;
+      const segment = run.events.slice(run.events.indexOf(start) + 1);
+      const end = segment.find(event => event.type === 'agent_invoke_end' && event.invoke_id === start.invoke_id);
+      if (!end || !invocationCompleted({ ...end, exitCode: end.exit_code })
+        || segment.some(event => event.type === 'phase_write_violation' && event.invoke_id === start.invoke_id)) return undefined;
+      const writes = segment.filter(event => event.type === 'phase_write_observed' && event.invoke_id === start.invoke_id)
+        .flatMap(event => {
+          const observed = event as GoalRunEvent & { owned?: Array<{ path: string; post_sha256?: string | null }>;
+            observations?: Array<{ path: string; post_sha256?: string | null }> };
+          return [...(observed.owned ?? []), ...(observed.observations ?? [])];
+        });
+      const output = writes.filter(write => path.resolve(projectRoot, write.path) === path.resolve(projectRoot, reportPath)).at(-1);
+      if (!output) continue;
+      if (output.post_sha256 !== reportHash) return undefined;
+      const current = (file: string): boolean => {
+        const absolute = path.resolve(projectRoot, file);
+        if (!isInsideProjectRoot(projectRoot, absolute)) return false;
+        const entry = request.pre_snapshot!.entries.find(item => path.resolve(projectRoot, item.path) === absolute && item.kind === 'file');
+        try { return fs.existsSync(absolute) ? !!entry && sha256Hex(fs.readFileSync(absolute)) === entry.sha256 : !entry; }
+        catch { return false; }
+      };
+      return rows.filter(row => {
+        const evidence = readableIssueEvidence(projectRoot, row.evidence ?? '', { feature });
+        return row.files.length > 0 && rows.filter(other => other.id === row.id).length === 1
+          && row.files.every(current) && !!row.evidence?.trim() && evidence.every(file => current(file.label) || completedOriginal(file.label));
+      }).map(row => row.id);
+    }
+  }
+  return undefined;
+}
+
+/** The existing test-strength protocol may be returned by the unit's actual independent reviewer. */
+export function independentReviewTestStrength(input: {
+  projectRoot: string; feature: string; runId?: string;
+  check: Parameters<typeof testStrengthVerification>[0]['check'];
+}): IssueVerificationEntry | null {
+  if (input.check.id !== 'coding_existing_test_preserved' || !input.check.affected_files?.length) return null;
+  const { resolveFeatureArtifact } = require('../../config') as typeof import('../../config');
+  const report = resolveFeatureArtifact(input.projectRoot, input.feature, 'review-report.md');
+  if (!report.exists) return null;
+  try {
+    const text = fs.readFileSync(report.actualPath, 'utf8');
+    const result = testStrengthVerification({ check: input.check, verifierReportText: text, verifierSubjectCurrent: true });
+    if (!result) return null;
+    const rows = independentReviewRows(input.projectRoot, input.feature, input.runId,
+      path.relative(input.projectRoot, report.actualPath).replace(/\\/g, '/'), text, [{ id: input.check.id,
+        severity: 'BLOCKER', classification: 'test strength', state: '', files: [...input.check.affected_files],
+        summary: input.check.details ?? '', evidence: result.evidence }]);
+    return rows?.includes(input.check.id) ? result : null;
+  } catch { return null; }
 }
 
 export function verifierSemanticChecks(reportText: string, phase: string, feature?: string): Record<string, unknown>[] {
@@ -477,8 +555,11 @@ export function readPhaseRepairIssues(projectRoot: string, feature: string, phas
       }
       return true;
     });
-    return { phase, reportText, reportPath: path.relative(projectRoot, resolved.actualPath).replace(/\\/g, '/'), rows,
-      evidenceFiles: [...evidenceFiles].map(([label, content]) => ({ label, content })), diagnostics };
+    const reportPath = path.relative(projectRoot, resolved.actualPath).replace(/\\/g, '/');
+    return { phase, reportText, reportPath, rows,
+      evidenceFiles: [...evidenceFiles].map(([label, content]) => ({ label, content })), diagnostics,
+      ...(phase === 'review' ? { independentReviewRows: independentReviewRows(projectRoot, feature,
+        context?.runId ?? process.env.MAISON_GOAL_RUN_ID?.trim(), reportPath, reportText, rows) } : {}) };
   } catch { return null; }
 }
 
@@ -621,16 +702,16 @@ function reviewIssueDiagnosis(
  */
 export function collectReviewRepairCandidates(input: ReviewCandidateInput): RepairCandidate[] {
   if (input.reportValidityBlocked) return [];
-  const section = getSectionContent(input.reportText, '结论')
-    ?? getSectionContent(input.reportText, '审查结论') ?? '';
-  const { verdict } = extractDeclaredVerdict(section, ['有条件通过', '不通过', '通过']);
+  const { verdict } = extractReviewVerdict(input.reportText);
   if (verdict !== '有条件通过' && verdict !== '不通过') return [];
   const verification = parseIssueVerificationBlock(input.verifierReportText ?? '');
-  if (!verification.ok) return [];
+  const independentlyReviewed = !input.verifierReportText && input.phaseIssues?.reportText === input.reportText
+    ? input.phaseIssues.independentReviewRows ?? [] : [];
+  if (!verification.ok && !independentlyReviewed.length) return [];
   const out: RepairCandidate[] = [];
   for (const row of openReviewIssues(input.reportText, input.reviewFidelity)) {
-    if (reviewIssueDiagnosis(row, verification.entries, input)) continue;
-    if (verification.entries.find(entry => entry.issue === row.id)?.verdict !== 'confirmed') continue;
+    if (!independentlyReviewed.includes(row.id) && (reviewIssueDiagnosis(row, verification.entries, input)
+      || verification.entries.find(entry => entry.issue === row.id)?.verdict !== 'confirmed')) continue;
     for (const { category, files } of issueResponsibilityGroups(row, input.responsibility, verification.entries.find(entry => entry.issue === row.id)?.repair_owner)) out.push({
       id: row.id,
       category,
@@ -650,7 +731,11 @@ function issueResponsibilityGroups(row: ReviewIssueRow, context: RepairResponsib
   try { authority = repairResponsibilityContext({ frameworkRoot: path.resolve(__dirname, '../../..'), ...context }); }
   catch { return []; }
   for (const file of row.files) {
-    const result = resolveRepairResponsibility({ ...authority, target: { files: [file], owner: verifiedOwner } });
+    const factsFile = authority.projectRoot && authority.feature
+      ? (require('./context-facts') as typeof import('./context-facts')).resolveFactsAbsPath(authority.projectRoot, authority.feature) : undefined;
+    const factsOwner = factsFile && path.resolve(authority.projectRoot!, file) === path.resolve(factsFile)
+      ? factsRepairResponsibility(authority)?.owner ?? undefined : undefined;
+    const result = resolveRepairResponsibility({ ...authority, target: { files: [file], owner: verifiedOwner, ...(factsOwner ? { factsOwner } : {}) } });
     if (!verifiedRepairOwnerMatches(result, verifiedOwner)) continue;
     if (!result.category) continue;
     const files = groups.get(result.category) ?? []; files.push(file); groups.set(result.category, files);
@@ -667,6 +752,9 @@ export function verifiedPhaseRepairIssues(input: {
   verifierSubjectCurrent?: boolean;
 }): ReviewIssueRow[] {
   const verification = parseIssueVerificationBlock(input.verifierReportText ?? '');
+  if (!input.verifierReportText && input.phaseIssues?.phase === 'review' && input.phaseIssues.independentReviewRows?.length) {
+    return input.phaseIssues.rows.filter(row => input.phaseIssues!.independentReviewRows!.includes(row.id));
+  }
   if (!verification.ok) return [];
   return (input.phaseIssues?.rows ?? []).filter(row => !input.phaseIssues?.diagnostics?.some(message => message.startsWith(`${row.id}：`))
     && !reviewIssueDiagnosis(row, verification.entries, { ...input, sourcePhase: input.phaseIssues?.phase })
@@ -674,10 +762,22 @@ export function verifiedPhaseRepairIssues(input: {
 }
 
 /** Projection of the same verified rows into the existing external/design-authority finding contract. */
-export function verifiedPhaseDesignFindings(input: Parameters<typeof verifiedPhaseRepairIssues>[0]): import('./blueprint-skill-projection').DesignAuthorityFinding[] {
+export function verifiedPhaseDesignFindings(input: Parameters<typeof verifiedPhaseRepairIssues>[0] & {
+  responsibility?: Pick<RepairResponsibilityContext, 'projectRoot' | 'feature'>;
+}): import('./blueprint-skill-projection').DesignAuthorityFinding[] {
   return verifiedPhaseRepairIssues(input).flatMap(row => {
     const artifacts = row.files.filter(isDesignAuthorityRepairFile);
-    if (!artifacts.length || artifacts.length !== row.files.length) return [];
+    if (!artifacts.length) return [];
+    const { projectRoot, feature } = input.responsibility ?? {};
+    const projections = row.files.filter(file => !artifacts.includes(file));
+    if (projections.some(file => {
+      if (!projectRoot || !feature || !['acceptance.yaml', 'contracts.yaml', 'use-cases.yaml'].includes(path.basename(file))) return true;
+      const { resolveFeatureArtifact } = require('../../config') as typeof import('../../config');
+      const target = resolveFeatureArtifact(projectRoot, feature, path.basename(file));
+      try { return path.resolve(projectRoot, file) !== path.resolve(target.actualPath)
+        || !String(YAML.parse(fs.readFileSync(target.actualPath, 'utf8'))?.source ?? '').startsWith('derive.blueprint-'); }
+      catch { return true; }
+    })) return [];
     const verifiedOwner = parseIssueVerificationBlock(input.verifierReportText ?? '').entries.find(entry => entry.issue === row.id)?.repair_owner;
     if (['spec', 'plan'].includes(input.phaseIssues!.phase) && verifiedOwner !== 'external') return [];
     const responsibility = resolveRepairResponsibility({ target: { files: artifacts, owner: verifiedOwner, designAuthority: true } });
@@ -714,7 +814,7 @@ export function readVerifiedPhaseDesignFindings(projectRoot: string, frameworkRo
     const summary = JSON.parse(fs.readFileSync(path.join(featurePhaseReportsDir(projectRoot, feature, phase, frameworkRoot), 'summary.json'), 'utf8'));
     if (summary.report_validity === 'FAIL') return [];
     const phaseIssues = phaseIssuesForVerifierSubject(projectRoot, feature, phase, summary.verifier_subject_id ?? null, frameworkRoot, undefined, runId ?? summary.run_id);
-    return verifiedPhaseDesignFindings({ phaseIssues,
+    return verifiedPhaseDesignFindings({ phaseIssues, responsibility: { projectRoot, feature },
       verifierReportText: loadVerifierReportTextOrNull(projectRoot, feature, phase, { frameworkRoot }),
       ...reviewRepairVerificationContext(projectRoot, feature, runId ?? summary.run_id, Boolean(summary.verifier_request)) });
   } catch { return []; }
@@ -973,6 +1073,7 @@ export function collectPhaseRepairCandidates(input: PhaseCandidateInput): Repair
     out.push(...collectReviewRepairCandidates({
       responsibility: input.responsibility,
       reportText: input.reviewReportText,
+      phaseIssues: input.phaseIssues,
       reviewFidelity: input.reviewFidelity,
       verifierReportText: input.verifierReportText,
       // c7e4a2d9：review 候选依赖报告内容——report invalid 时继续抑制；机器候选不受此闸

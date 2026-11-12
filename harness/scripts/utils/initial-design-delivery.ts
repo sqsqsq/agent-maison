@@ -328,9 +328,7 @@ export function readInitialDesignDelivery(input: { projectRoot: string; framewor
       const progression = deriveChangeUnitProgressionDecision(readySet, inspection);
       return { ...state, kind: 'construction', progression, issues: [...feedback, ...progression.reasons] };
     }
-    if (disposition.completionBlocking.some(problem => problem.action === 'repair')) return { ...state, kind: 'author', issues: feedback };
-    if (disposition.completionBlocking.length) return { ...state, kind: 'questioning', issues: feedback };
-    if (!units.length) return { ...state, kind: 'decompose', issues: ['已准入蓝图尚无canonical CU，提出ChangeUnitCandidate[]供原consumer原子接受。'] };
+    if (!units.length && !disposition.completionBlocking.length) return { ...state, kind: 'decompose', issues: ['已准入蓝图尚无canonical CU，提出ChangeUnitCandidate[]供原consumer原子接受。'] };
     const readySet = deriveChangeUnitReadySet(input.projectRoot, input.manifest.feature);
     const progression = deriveChangeUnitProgressionDecision(readySet, inspection);
     const ownershipIssues = readChangeUnitDesignOwnership(input.projectRoot, input.manifest.feature);
@@ -339,15 +337,24 @@ export function readInitialDesignDelivery(input: { projectRoot: string; framewor
         artifacts: [path.relative(input.projectRoot, blueprintPath).replace(/\\/g, '/')], basis: issue.message,
         needs: ['原设计作者通过既有CU候选批次为缺失义务选择责任单元；关系/决定/契约和变更目标须明确认领，保留原请求及未变依赖边界。不得让机器补写依赖，也不得降低验收或代写完成原件。'],
       }));
-    const designCandidates = readySet.units.filter(item => item.completion.state !== 'VALID'
-      && (item.changeUnit === progression.selected || item.blockers.length > 0
-        || item.completion.currentDisposition?.completionBlocking.some(problem => problem.owner === 'external' && problem.action === 'repair')));
+    const designCandidates = readySet.units.filter(item => item.completion.state !== 'VALID');
+    const deliveryRuns = readOriginalDeliveryRuns(input.projectRoot, input.manifest);
     for (const candidate of designCandidates) {
       const selected = candidate.changeUnit;
       const feature = deriveChangeUnitFeatureId(selected.blueprint_id, selected.change_unit_id);
       const frameworkRoot = input.frameworkRoot ?? resolveProbeFrameworkRoot(input.projectRoot, __dirname);
       const phases = new Set(candidate.completion.currentDisposition?.completionBlocking
         .filter(problem => problem.owner === 'external' && problem.action === 'repair').map(problem => problem.source_phase ?? problem.phase));
+      // An unfinished CU has no completion record yet; its real handoff still identifies the source to re-diagnose.
+      const child = deliveryRuns.filter(run => run.manifest.feature === feature)
+        .sort((a, b) => String(a.events.at(-1)?.ts).localeCompare(String(b.events.at(-1)?.ts))).at(-1);
+      if (child && resolveEffectiveRunEnd(child.events)) {
+        const handoff = [...child.events].reverse().find(event => event.type === 'phase_halt' && asRecord((event as Record<string, unknown>).design_authority)?.items);
+        for (const item of asRecords(asRecord((handoff as Record<string, unknown> | undefined)?.design_authority)?.items)) {
+          const phase = typeof item.check === 'string' ? item.check.split(':')[0] : '';
+          if (featurePhasesFromWorkflow(resolveWorkflowSpec(input.projectRoot, { frameworkRoot })).some(family => family === phase)) phases.add(phase);
+        }
+      }
       const findings = [...diagnoseBlueprintSkillAuthority(input.projectRoot, frameworkRoot, feature).findings, ...ownershipFindings];
       for (const phase of phases) {
         let runId: string | undefined;
@@ -363,6 +370,8 @@ export function readInitialDesignDelivery(input: { projectRoot: string; framewor
         return { ...state, kind: 'author', designRepair, progression, issues: diagnosis.findings.map(item => item.basis) };
       }
     }
+    if (disposition.completionBlocking.some(problem => problem.action === 'repair')) return { ...state, kind: 'author', issues: feedback };
+    if (disposition.completionBlocking.length) return { ...state, kind: 'questioning', issues: feedback };
     if (ownershipFindings.length) return { ...state, kind: 'author', issues: ownershipIssues.map(issue => issue.message),
       designRepair: { feature: input.manifest.feature, brief: { class: 'B2', items: ownershipFindings } } };
     return { ...state, kind: 'construction', progression, issues: progression.reasons };

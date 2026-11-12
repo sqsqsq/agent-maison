@@ -34,6 +34,7 @@ import {
   tableHasColumns,
   getColumnValues,
   extractDeclaredVerdict,
+  extractReviewVerdict,
 } from './utils/markdown-parser';
 import { relFeatureArtifact, relFeatureFile, featureFilePath, conventionsPath, relConventions, resolveFeatureArtifact } from '../config';
 import { loadPhaseRuleWithOverlays } from '../profile-loader';
@@ -541,10 +542,10 @@ function checkScopeDeclaration(ctx: CheckContext, report: string): CheckResult[]
   }];
 }
 
-function checkConclusionWithVerdict(ctx: CheckContext<'feature' | 'request'>, report: string): CheckResult[] {
+export function checkConclusionWithVerdict(ctx: CheckContext<'feature' | 'request'>, report: string): CheckResult[] {
   const affected_files = [ctx.subject === 'request' ? ctx.request.inputs.review_report : relFeatureArtifact(ctx.projectRoot, ctx.feature, 'review-report.md')];
-  const section = getSectionContent(report, '结论') ?? getSectionContent(report, '审查结论');
-  if (!section) {
+  const declaration = extractReviewVerdict(report);
+  if (!declaration.sectionFound) {
     return [{
       id: 'conclusion_with_verdict', category: 'structure',
       description: ruleDesc(ctx, 'structure_checks', 'conclusion_with_verdict'),
@@ -555,7 +556,7 @@ function checkConclusionWithVerdict(ctx: CheckContext<'feature' | 'request'>, re
 
   // 声明式提取：锚定「审查结论:」声明行 + 最长优先，杜绝 '通过'⊂'不通过' 子串误读
   // 与「判定依据/下一步建议」枚举裁决词造成的整段污染。
-  const { verdict: foundVerdict } = extractDeclaredVerdict(section, ['有条件通过', '不通过', '通过']);
+  const foundVerdict = declaration.verdict;
 
   if (!foundVerdict) {
     return [{
@@ -1150,8 +1151,7 @@ const checker: PhaseChecker = {
 export function checkNegativeVerdictClosure(report: string): CheckResult[] {
   const id = 'negative_verdict_closure';
   const description = '负面产品裁决闭环门禁（结论=不通过 → 阻断 phase 闭环，修复重跑后方可推进）';
-  const section = getSectionContent(report, '结论') ?? getSectionContent(report, '审查结论') ?? '';
-  const { verdict } = extractDeclaredVerdict(section, ['有条件通过', '不通过', '通过']);
+  const { verdict } = extractReviewVerdict(report);
   if (verdict !== '不通过') {
     return [{
       id, category: 'structure', description,
@@ -1182,8 +1182,7 @@ export function checkNegativeVerdictClosure(report: string): CheckResult[] {
 function checkConditionalPassClosure(ctx: CheckContext<'feature' | 'request'>, report: string): CheckResult[] {
   const id = 'conditional_pass_closure';
   const description = '「有条件通过」闭环门禁（未闭环 MAJOR 不得推进）';
-  const section = getSectionContent(report, '结论') ?? getSectionContent(report, '审查结论') ?? '';
-  const { verdict } = extractDeclaredVerdict(section, ['有条件通过', '不通过', '通过']);
+  const { verdict } = extractReviewVerdict(report);
   if (verdict !== '有条件通过') {
     return [{ id, category: 'structure', description, severity: 'BLOCKER', status: 'PASS', details: `结论=${verdict ?? '未声明'}，本门禁不适用。` }];
   }

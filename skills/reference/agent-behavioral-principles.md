@@ -18,7 +18,7 @@
 
 ### Framework 约束
 
-1. **每个阶段主产物写入前**，须完成 Research Sub-Phase 并落盘事实：**建立阶段**（旧出生协议为 spec）写 `<features_dir>/<feature>/context/facts.md` 全量事实；**后续 delta 阶段**（plan/coding/review/ut/testing）只追加 `## phase_delta: <phase>` 增量节，不重做全量探索。旧版 per-phase `context-exploration.md`（`schema_version: "1.1.0"`）仍作兼容路径读取。
+1. **每个阶段主产物写入前**，须完成 Research Sub-Phase 并落盘事实：**建立阶段**（旧出生协议为 spec）写 `<features_dir>/<feature>/context/facts.md` 全量事实；**后续 delta 阶段**（plan/coding/review/ut/testing）只追加 `## phase_delta: <phase>` 增量节，不重做全量探索。work-unit 独立复审除外：只读 facts，不追加增量节，新事实写入指定审查报告。旧版 per-phase `context-exploration.md`（`schema_version: "1.1.0"`）仍作兼容路径读取。
 2. **`source_code_paths` 须列出真实 Read/Grep 过的源码路径**；数量下限与磁盘存在性由 harness 在**建立阶段与旧 `context-exploration.md` 兼容路径**校验（delta 阶段只校验 `phase_delta` 节存在且非空——不校验数量不等于可以不读）。
 3. **文档与代码不一致时，以代码为准**，在 Code Facts 中显式标注差异。
 4. **探索深度由 `exploration_strategy` 决定**（v2.10）：plan/coding `default_mode: subagent`，spec/review/ut 用**复合评分**（模块 LOC、跨层、fan-out 等）；L1 trivial 命中豁免条件、L2_small 复合评分低于阈值同样豁免，L4 architectural 全阶段强制。须在 frontmatter 声明 `change_intent` / `estimated_loc_delta` / `touches_layers` / `adds_new_exports`。**该判定同样只在建立阶段与兼容路径生效**（`harness/scripts/utils/context-facts.ts`）——delta 阶段不按数量或 subagent 硬判，复杂问题该起子代理探索仍须起。
@@ -131,6 +131,7 @@
 
 > 下列量化项按**建立阶段**（旧出生协议为 spec）与旧 `context-exploration.md` 兼容路径逐条校验；
 > delta 阶段（plan/coding/review/ut/testing）只校验 `facts.md` 的 `## phase_delta: <phase>` 节存在且非空。
+> work-unit 独立复审除外：只读 facts，不追加增量节，新事实写入指定审查报告。
 
 ```
 [ ] 已完整阅读本文件四原则

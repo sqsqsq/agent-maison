@@ -706,6 +706,32 @@ export function runAll(): UnitCaseResult[] {
     });
   }));
 
+  results.push(test('3f8a6c21 published CU-bound questioning retains canonical bytes and returns the current denial', () => {
+    withTempProject((projectRoot, filePath) => {
+      const loaded = loadCanonicalBlueprint(projectRoot, 'ledger-app-blueprint');
+      const before = fs.readFileSync(filePath);
+      const original = asRecord(asRecord(loaded.blueprint.review_summary)!.questioning)!;
+      const items = clone(asRecords(original.items));
+      items[0].disposition = 'blocker'; items[0].answer = '本次真实质询仍否定';
+      const output = JSON.stringify({ ...original, items });
+      const reference = { artifact: 'component-blueprint@1', component_id: loaded.blueprint.component_id,
+        blueprint_id: loaded.blueprint.blueprint_id, revision: loaded.blueprint.revision,
+        source_fingerprint: loaded.blueprint.source_fingerprint, artifact_sha256: loaded.artifactSha256,
+        target: { kind: 'blueprint', id: loaded.blueprint.blueprint_id } };
+      for (const invocation of ['first-return', 'recovery-read']) {
+        const file = path.join(path.dirname(filePath), `${invocation}.json`);
+        const result = applyIndependentQuestioningOutput(filePath, file, output, 'independent-q', projectRoot);
+        assert(fs.readFileSync(filePath).equals(before), 'published bytes must not drift under unchanged revision');
+        assert(independentQuestioningBlockers({ review_summary: { questioning: result } }).length === 1, 'the denial remains current evidence');
+        assert(resolveComponentBlueprintRef(projectRoot, reference).blueprint.revision === loaded.blueprint.revision, 'the same CU reference still resolves');
+      }
+      const draft = path.join(projectRoot, 'doc/features/ledger-app-blueprint/goal-runs/draft/component-blueprint.yaml');
+      fs.mkdirSync(path.dirname(draft), { recursive: true }); fs.writeFileSync(draft, before);
+      applyIndependentQuestioningOutput(draft, path.join(path.dirname(draft), 'questioning.json'), output, 'independent-q', projectRoot);
+      assert(independentQuestioningBlockers(readYaml(draft)).length === 1, 'unpublished candidates still receive real questioning');
+    });
+  }));
+
   results.push(test('restart write-review renders an unquestioned unadmitted draft without clearing failures and rejects unparseable YAML', () => {
     withTempProject((projectRoot, filePath) => {
       const blueprint = readYaml(filePath);

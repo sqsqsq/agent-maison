@@ -351,17 +351,27 @@ function assertFrozenInputs(host: Host, context: any): void {
   } finally { for (const [key, value] of prior) if (value === undefined) delete process.env[key]; else process.env[key] = value; }
 }
 
-function prepare(host: Host, id: string): { options: any; prepared: any; entry: any } {
+function prepare(host: Host, id: string, adapter = 'claude'): { options: any; prepared: any; entry: any } {
   const entry = host.load('scripts/goal-mode-entry');
-  const original = entry.prepareGoalModeRun({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: BLUEPRINT, adapter: 'claude', runId: id,
+  let adapterModelPin: any = { adapter, value: 'claude-opus-5-5', provider: 'anthropic', reasoning_effort: 'high', config_source: path.join(host.root, 'controlled-model-home', 'settings.json') };
+  if (adapter === 'deepseek-harness') {
+    const source = path.join(host.root, 'controlled-model-home/profiles/fixture/cordis.patch.yml');
+    fs.mkdirSync(path.dirname(source), { recursive: true });
+    fs.writeFileSync(source, YAML.stringify([{ id: 'llm-pi-ai', config: { providers: { volcengine: { api: 'openai-completions',
+      baseURL: 'http://127.0.0.1:1/v1', apiKeyEnv: 'FIXTURE_KEY', models: [{ id: 'volcengine/deepseek-v4.1-flash', contextWindow: 1000000, input: ['text'] }] } } } }]));
+    adapterModelPin = host.load('scripts/utils/adapter-model').freezeModelPin({ adapter, provider: 'volcengine',
+      value: 'volcengine/deepseek-v4.1-flash', config_source: source });
+  }
+  const original = entry.prepareGoalModeRun({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: BLUEPRINT, adapter, runId: id,
     requirement: REQUIREMENT, requirementSourceFiles: ['requirements/ledger.md'], requestedResults: [REQUIREMENT], requestedPhases: ['plan', 'coding', 'ut'],
+    ...(adapter === 'deepseek-harness' ? { adapterModelPin } : {}),
     unattended: { write_mode: 'full-access', approval_mode: 'never' }, autonomyAuthorized: true });
-  const prepared = entry.prepareGoalModeRun({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: BLUEPRINT, adapter: 'claude', runId: id,
-    requirement: REQUIREMENT, adapterModelPin: { adapter: 'claude', value: 'claude-opus-5-5', provider: 'anthropic', reasoning_effort: 'high', config_source: path.join(host.root, 'controlled-model-home', 'settings.json') }, modelOverride: true });
+  const prepared = entry.prepareGoalModeRun({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: BLUEPRINT, adapter, runId: id,
+    requirement: REQUIREMENT, adapterModelPin, modelOverride: true });
   assert.equal(prepared.manifest.run_id, original.manifest.run_id, 'legacy no-pin initial run must be rebound through the same entry');
   assert(prepared.manifest.initial_design && !prepared.manifest.execution_scope);
   return { entry, prepared, options: { projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: BLUEPRINT, runId: prepared.manifest.run_id,
-    adapter: 'claude', runMode: 'attended', authorization: { mode: 'goal_mode', autonomyAuthorized: true } } };
+    adapter, runMode: 'attended', authorization: { mode: 'goal_mode', autonomyAuthorized: true } } };
 }
 
 async function report(host: Host, control: ReturnType<typeof prepare>, step: any, output: string): Promise<any> {
@@ -369,7 +379,7 @@ async function report(host: Host, control: ReturnType<typeof prepare>, step: any
     report: { status: 'passed', phase: step.phase, details: output } }));
 }
 
-function assertDeliveryComplete(host: Host, control: ReturnType<typeof prepare>, step: any): void {
+function assertDeliveryComplete(host: Host, control: ReturnType<typeof prepare>, step: any, testText = TEST_TEXT, testCount = 2): void {
   assert.notEqual(step.type, 'phase_execute_request', JSON.stringify(step));
   const units = host.load('scripts/utils/change-unit-path').enumerateCanonicalChangeUnits(host.root, BLUEPRINT);
   assert.equal(units.length, 1);
@@ -379,8 +389,8 @@ function assertDeliveryComplete(host: Host, control: ReturnType<typeof prepare>,
   assert(assessment.complete && assessment.record.state === 'ok', JSON.stringify(assessment));
   assert(host.load('scripts/utils/initial-design-delivery').projectInitialDesignDelivery({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, manifest: control.prepared.manifest }).complete);
   const tap = fs.readFileSync(path.join(host.load('config').featurePhaseReportsDir(host.root, feature, 'ut', host.frameworkRoot), 'node-tests.tap'), 'utf8');
-  assert.match(tap, /# tests 2/); assert.match(tap, /# fail 0/); assert.match(tap, /# skipped 0/);
-  assert.equal(read(host.root, SOURCE), PRODUCT); assert.equal(read(host.root, TEST), TEST_TEXT);
+  assert(tap.includes(`# tests ${testCount}`)); assert.match(tap, /# fail 0/); assert.match(tap, /# skipped 0/);
+  assert.equal(read(host.root, SOURCE), PRODUCT); assert.equal(read(host.root, TEST), testText);
 }
 
 async function finishConstruction(host: Host, control: ReturnType<typeof prepare>, step: any): Promise<any> {
@@ -399,6 +409,109 @@ async function finishConstruction(host: Host, control: ReturnType<typeof prepare
 }
 
 const cases = [{
+  name: '3f8a6c21 mixed DSH findings repair the original design and return to the CU with zero manual resume',
+  run: async () => withHost(async host => {
+    const config = JSON.parse(read(host.root, 'framework.config.json')); config.materialized_adapters.push('deepseek-harness');
+    writeHostFile(host.root, 'framework.config.json', JSON.stringify(config));
+    writeHostFile(host.root, 'framework.local.json', JSON.stringify({ schema_version: '1.0', agent_adapter: 'deepseek-harness', vision: { image_input_override: 'none' } }));
+    host.load('config').clearFrameworkConfigCache();
+    // Existing assertions are not rewritten to bypass the independent test-strength obligation.
+    const priorAssertion = `\nit('[BRANCH-success][AC-1] ledger-refresh preserves a negative balance', () => {\n  expect(LedgerFeature.add([-20], -5).balance).toEqual(-25);\n});\n`;
+    const existingTests = TEST_TEXT.split('\n').slice(0, 4).join('\n') + '\n' + priorAssertion;
+    writeHostFile(host.root, TEST, existingTests); git(host.root, ['add', '-A']); git(host.root, ['commit', '-qm', 'Existing ledger assertion before the requested implementation']);
+    const control = prepare(host, '3f8a6c21-mixed-design', 'deepseek-harness');
+    const currentTests = TEST_TEXT + priorAssertion;
+    const canonical = `doc/features/${BLUEPRINT}/blueprint/component-blueprint.yaml`;
+    const draft = `${control.prepared.manifest.report_dir}/design-repair/component-blueprint.yaml`;
+    const logical = (doc: any) => doc.design_views.find((view: any) => view.view_id === 'logical').nodes[0];
+    let step = await withRuntimeTest({ root: host.root }, () => control.entry.runGoalModeSessionStep(control.options));
+    let authors = 0, reviews = 0, designRepairs = 0, refused = false, authorFindingDelivered = false;
+    let lastReviewInput: unknown;
+    const childDirs = new Set<string>();
+    for (let call = 0; step.type === 'phase_execute_request' && call < 32; call++) {
+      const issued = JSON.parse(fs.readFileSync(step.request.path, 'utf8')), context = issued.context;
+      const phase = context.phase;
+      let output = '已按本次签发职责交回真实材料；机器检查决定完成。';
+      if (phase === 'initial-design-author') {
+        const doc = blueprintDraft(host, false);
+        logical(doc).use_cases.use_cases[0].ui_bindings = [{ ui: 'LedgerPanel', role: 'entry', user_actions: [{ trigger: '提交账目', calls: ['NavPathStack.pushPath', 'NavPathStack.clear'] }] }];
+        writeYaml(host.root, canonical, doc);
+      } else if (phase === 'initial-design-questioning') output = questioningReply(host, false);
+      else if (phase === 'initial-design-decomposition') decompose(host);
+      else if (phase.startsWith('initial-design-scope-')) {
+        const feature = host.load('scripts/utils/change-unit-path').deriveChangeUnitFeatureId(BLUEPRINT, UNIT);
+        host.load('scripts/utils/feature-track').prepareFeatureScopeCandidate({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature,
+          completionTarget: 'feature', requestedResults: [REQUIREMENT], requestedPhases: ['plan', 'coding', 'review', 'ut'], requirement: REQUIREMENT,
+          requirementSourceFiles: ['requirements/ledger.md'], impact: { userVisibleBehaviorChange: false, reason: '既有内部调用声明，不新增界面', basisPaths: [SOURCE] }, overwrite: true });
+      } else if (phase === 'work-unit-author') {
+        authors++; childDirs.add(context.runDir);
+        unitMaterials(host, { ...context, chain: context.chain.filter((family: string) => family !== 'review') });
+        writeHostFile(host.root, TEST, currentTests);
+        const facts = host.load('config').featureFilePath(host.root, context.feature, 'context/facts.md');
+        if (authors === 1) fs.appendFileSync(facts, '\n## 当前验证声明\n真实Node用例数: 99\n');
+        if (context.instruction.includes('named_business_handler') && context.instruction.includes('NavPathStack')) {
+          refused = true;
+          output = `拒修：NavPathStack.pushPath/clear在工程内没有声明，它们来自蓝图的错误业务入口声明；本CU不能改共享蓝图 ${canonical}。请独立审查并交原设计职责。`;
+        }
+        if (context.instruction.includes('CR-011')) {
+          authorFindingDelivered = true;
+          fs.appendFileSync(facts, '\n真实Node用例数: 3（已对照实际测试原件纠正）\n');
+        }
+      } else if (phase === 'review') {
+        reviews++;
+        const currentIssues = host.load('scripts/utils/repair-candidates').readPhaseRepairIssues(host.root, context.feature, 'review', { frameworkRoot: host.frameworkRoot, runId: context.runId });
+        lastReviewInput = { native: currentIssues?.independentReviewRows, feedback: context.instruction.split('\n').filter((line: string) => line.includes('CR-') || line.includes('negative_verdict_closure')) };
+        assert(!context.instruction.includes('仅修补已有报告'), 'mixed business findings require independent semantic review');
+        const feature = context.feature;
+        const factsPath = host.load('config').featureFilePath(host.root, feature, 'context/facts.md');
+        const factsRel = path.relative(host.root, factsPath).replace(/\\/g, '/');
+        const badCall = logical(YAML.parse(read(host.root, canonical))).use_cases.use_cases[0].ui_bindings[0].user_actions[0].calls.some((value: string) => value.startsWith('NavPathStack.'));
+        const badFacts = !fs.readFileSync(factsPath, 'utf8').includes('真实Node用例数: 3（');
+        if (badCall) assert(refused, 'the actual named-handler failure and author refusal precede independent confirmation');
+        unitReviewReport(host, feature);
+        const reportPath = host.load('config').featureFilePath(host.root, feature, 'review/review-report.md');
+        let text = fs.readFileSync(reportPath, 'utf8');
+        const rows = [
+          ...badCall ? [`| CR-001 | 接口不一致 | BLOCKER | \`${canonical}:1\` 将 NavPathStack.pushPath/clear 写为本CU业务入口；作者已据当前源码拒修 | ${canonical} | 原设计方把错误平台calls改为真实LedgerFeature.add业务入口 |`] : [],
+          ...badFacts ? [`| CR-011 | 逻辑错误 | MAJOR | \`${factsRel}:1\` 声称99条，\`${TEST}:1\` 真实只有3条；应如实纠正 | ${factsRel} | 原单元作者修正实际验证声明为3条 |`] : [],
+        ];
+        text = text.replace('\n\n## 4. 问题统计', '\n' + rows.join('\n') + '\n\n## 4. 问题统计')
+          .replace('| BLOCKER | 0 |', `| BLOCKER | ${badCall ? 1 : 0} |`).replace('| MAJOR | 0 |', `| MAJOR | ${badFacts ? 1 : 0} |`)
+          .replace('**审查结论**: 通过', `**审查结论**: ${rows.length ? '不通过' : '通过'}`);
+        const codingReport = JSON.parse(fs.readFileSync(path.join(host.load('config').featurePhaseReportsDir(host.root, feature, 'coding', host.frameworkRoot), 'script-report.json'), 'utf8'));
+        const strength = codingReport.checks.find((check: any) => check.id === 'coding_existing_test_preserved' && check.affected_files?.length);
+        if (strength) {
+          const original = host.load('scripts/utils/repair-responsibility').codingTestPreservation({ projectRoot: host.root, feature, runId: context.runId, file: TEST });
+          assert.equal(original.beforeText, existingTests, 'independent review reads the real original assertion');
+          assert.equal(read(host.root, TEST), currentTests, 'the old negative-balance assertion remains and both required cases are added');
+          text += '\n```issue-verification\n' + YAML.stringify([{ issue: strength.id, verdict: 'refuted',
+            evidence: `${TEST}；${strength.details}；原负余额断言逐字保留，新增增额及恢复断言直接驱动LedgerFeature.add/restore；未删弱或跳过原断言。` }]) + '```\n';
+        }
+        fs.writeFileSync(reportPath, text);
+      } else if (phase === 'design-repair-author') {
+        designRepairs++;
+        assert(context.instruction.includes('CR-001') && context.instruction.includes('NavPathStack'), 'the design brief must carry the actual finding, not only a hash mismatch: ' + context.instruction.split('\n').filter((line: string) => line.includes('依据：') || line.includes('问题：')).join('\n'));
+        const doc = YAML.parse(read(host.root, draft));
+        logical(doc).use_cases.use_cases[0].ui_bindings[0].user_actions[0].calls = ['LedgerFeature.add'];
+        writeYaml(host.root, draft, doc);
+      } else if (phase === 'design-repair-questioning') output = questioningReply(host, false, draft);
+      else assert.fail('undeclared extra responsibility: ' + phase);
+      step = await report(host, control, step, output);
+    }
+    const observation = step.result?.status === 'waiting' ? host.load('scripts/utils/initial-design-delivery').readInitialDesignDelivery({
+      projectRoot: host.root, frameworkRoot: host.frameworkRoot, manifest: control.prepared.manifest }) : undefined;
+    assert(step.result?.status !== 'waiting', JSON.stringify({ step, authors, reviews, designRepairs, refused, authorFindingDelivered, lastReviewInput,
+      observation: observation && { kind: observation.kind, issues: observation.issues, designRepair: observation.designRepair,
+        disposition: observation.disposition, progression: observation.progression && { action: observation.progression.action, activeRun: observation.progression.activeRun,
+          reasons: observation.progression.reasons, units: observation.progression.readySet.units.map((unit: any) => ({ id: unit.changeUnit.change_unit_id,
+            problems: unit.completion.currentDisposition?.completionBlocking })) } } }));
+    assertDeliveryComplete(host, control, step, currentTests, 3);
+    assert(designRepairs >= 1 && authorFindingDelivered && reviews >= 2, 'both design and author findings must close through their actual owners');
+    const events = [...childDirs].flatMap(dir => host.load('scripts/utils/session-execution-handoff').sessionEvents(dir));
+    assert(events.some((event: any) => event.type === 'phase_halt' && event.design_authority?.items.some((item: any) => item.basis.includes('CR-001'))));
+    assert(!events.some((event: any) => event.type === 'agent_invoke_start' && event.purpose === 'verifier'), 'no second verifier capability was enabled');
+  }),
+}, {
   name: 'daily design: empty request reaches canonical CU completion with real TypeScript and Node assertions',
   run: () => withHost(async host => {
     const control = prepare(host, 'daily-design-complete');
