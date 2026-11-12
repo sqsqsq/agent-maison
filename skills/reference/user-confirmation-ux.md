@@ -66,7 +66,7 @@
 
 ### 3.4 Artifact + portable（registry: `spec.terminology`）
 
-对话 gate 后 **必须写回** artifact；口头 OK 无效。正式需求在 `/component-design` 确认，写回蓝图 `discovery.facts` 的 `term:<术语>` 事实（`provenance.extraction_method: user_confirmed`，由 `check-component-blueprint terminology_facts_confirmed` 校验）；CU-bound spec 的术语映射表只投影蓝图、不再用本确认点。spec 只在非 CU-bound（存量平铺 Feature）使用本确认点，写回 spec `## 0. 术语映射表` 的 `[x]` 列。
+对话 gate 后 **必须写回** artifact；口头 OK 无效。先按 [统一前门](../../docs/operations/project-entry.md) 核适用外框；以下为进入完整蓝图/CU 路径后的术语确认，不为特别简单额外建蓝图或制造确认。适用设计在 `/component-design` 确认，写回蓝图 `discovery.facts` 的 `term:<术语>` 事实（`provenance.extraction_method: user_confirmed`，由 `check-component-blueprint terminology_facts_confirmed` 校验）；CU-bound spec 的术语映射表只投影蓝图、不再用本确认点。spec 只在非 CU-bound（存量平铺 Feature）使用本确认点，写回 spec `## 0. 术语映射表` 的 `[x]` 列。
 
 ```text
 1. 全部确认 confidence=high 的行（写回蓝图 term: 事实 user_confirmed；非 CU-bound：spec [x]）

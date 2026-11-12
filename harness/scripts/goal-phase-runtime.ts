@@ -42,7 +42,7 @@ import { validateProjectRelativePath, isInsideProjectRoot } from './utils/projec
 import { loadVerifierEvidence } from './utils/verifier-evidence';
 import { diffChangedFiles, resolveEffectiveDiffBaseline } from './utils/git-diff';
 import type { GoalRunEvent } from './utils/goal-runner-phase';
-import { executionCompletionPhases, resolveExecutionScope, executionScopeFingerprint, validateExecutionScope, assertRevisionKeepsRequiredObligations, hasNewSourcedFact, affectedScopePhases, authorizedScopePhases, isEffectivePhasePass, type ExecutionScope, type ExecutionScopeInput } from './utils/execution-scope';
+import { executionCompletionPhases, resolveExecutionScope, executionScopeFingerprint, validateExecutionScope, assertRevisionKeepsRequiredObligations, readScopeRevisionUserControl, hasNewSourcedFact, affectedScopePhases, authorizedScopePhases, isEffectivePhasePass, type ExecutionScope, type ExecutionScopeInput } from './utils/execution-scope';
 import { loadFeatureContracts, contractFingerprint, assuranceSatisfies } from './utils/skill-contract';
 import { loadPhaseEvidenceManifest, resolvePhaseEvidenceManifest, recomputeManifestAggregate, writePhaseEvidenceManifest, currentEvidenceEntryHash } from './utils/phase-evidence-manifest';
 import { readScopeAcceptance, collectResolvedScopeFacts, recomputeDefinitionFacts, resolveScopeRevisionProposal, resolveCurrentScopeView, readScopeProofHistory } from './utils/feature-track';
@@ -63,7 +63,7 @@ import * as path from 'path';
 import { StringDecoder } from 'string_decoder';
 import * as YAML from 'yaml';
 import { randomUUID } from 'crypto';
-import { findInitialDesignRun, prepareInitialDesignRun, readInitialDesignDelivery, readInitialDesignCompletionDisposition, projectInitialDesignDelivery, initialDesignAuthorInstruction, initialDesignInvocationLabel, validateInitialDesignInvocation, prepareInitialDesignDraft, type InitialDesignObservation } from './utils/initial-design-delivery';
+import { findInitialDesignRun, prepareInitialDesignRun, readInitialDesignDelivery, readInitialDesignCompletionDisposition, projectInitialDesignDelivery, initialDesignAuthorInstruction, initialDesignInvocationLabel, validateInitialDesignInvocation, prepareInitialDesignDraft, initialDesignRequestOptions, readInitialDesignRequest, initialRequestWriteTargets, type InitialDesignObservation } from './utils/initial-design-delivery';
 import { readOriginalDeliveryActivity, originalDeliveryForManifest } from './utils/delivery-origin';
 import { writeCanonicalComponentClosure } from './check-component-closure';
 import { runChangeUnitProgression, buildChangeUnitGoalHandoff, buildChangeUnitGoalRequest, type ChangeUnitGoalHandoff } from './utils/change-unit-progress-loop';
@@ -789,12 +789,12 @@ function resolveDesignDeliveryRequest(argv: minimist.ParsedArgs, projectRoot: st
   if (requirement.sources.length) cli.requirement_source_files = requirement.sources;
   const check = validateManifestCliOverrides(cli);
   if (!check.ok) throw new Error(check.message);
-  if (!argv.manifest) return { startPhase: cli.start, endPhase: cli.end, requirement: requirement.text, requirementSourceFiles: requirement.sources };
+  if (!argv.manifest) return { startPhase: cli.start, endPhase: cli.end, requirement: requirement.text, requirementSourceFiles: requirement.sources, sessionRef: argv['session-ref'] as string | undefined };
   const definition = loadGoalManifestDefinition(String(argv.manifest), projectRoot);
   const manifest = definition.manifest;
   applyManifestCliOverrides(manifest, cli);
   return { startPhase: manifest.start_phase, endPhase: manifest.end_phase, requirement: manifest.requirement, requirementSourceFiles: manifest.requirement_source_files,
-    requestedPhases: definition.requestedPhases, requestedResults: definition.requestedResults };
+    requestedPhases: definition.requestedPhases, requestedResults: definition.requestedResults, sessionRef: argv['session-ref'] as string | undefined };
 }
 
 function guardNestedGoalRunner(): boolean {
@@ -3824,6 +3824,10 @@ async function runDetachLauncher(argv: minimist.ParsedArgs, runProbe?: (probe: s
   }
   const feature = raw.feature;
   const designRequest = !raw.isResume && !raw.dryRun ? resolveDesignDeliveryRequest(argv, projectRoot) : null;
+  if (designRequest?.sessionRef) {
+    const entry = designDeliveryNextStep({ projectRoot, frameworkRoot: layout.frameworkRoot, feature, ...designRequest });
+    if (entry && entry.type !== 'design_preparation_required') { console.log(JSON.stringify(entry, null, 2)); return 0; }
+  }
   const originalDesign = !raw.dryRun ? findInitialDesignRun({ projectRoot, feature,
     ...(designRequest?.requirement ? { requirement: designRequest.requirement } : {}),
     ...(raw.isResume && raw.runId ? { runId: raw.runId } : {}) }) : null;
@@ -4059,7 +4063,7 @@ export function parseGoalRuntimeArgs(args: readonly string[]): minimist.ParsedAr
       'runtime-executor', 'runtime-owner', 'project-root', 'framework-root',
       // plan f9c2e6b4 t4：多行/长需求的推荐入口（与 --requirement 互斥）。
       // fresh 读取内容并冻结进 manifest；resume 只认已冻结值，不重读源文件。
-      'requirement-file',
+      'requirement-file', 'session-ref',
       // plan a5f9c3e2 t3①：vision lineage 处置的**唯一输入入口**（continue|reset）。
       // 是 recovery intent 不是授权——旗标可被模型拼出，故不进 AuthorityFacts。
       // plan d7f3a9c4 t1：显式模型钉（仅 headless runner 链路；in-session attended
@@ -4402,6 +4406,7 @@ export class GoalPhaseRuntime {
               if (!visual.ok) throw new Error(visual.message);
               const localVisual = visual.pin ?? resolveUnattendedVisualProviderPin(loadFrameworkLocalConfig(root), frameworkRoot).pin;
               const prepared = prepareInitialDesignRun({ projectRoot: root, frameworkRoot, feature,
+                sessionRef: request.sessionRef,
                 requirement: request.requirement ?? '', requirementSourceFiles: request.requirementSourceFiles,
                 adapter, runId: typeof argv['run-id'] === 'string' ? argv['run-id'] : undefined,
                 supersede,
@@ -4533,6 +4538,23 @@ export class GoalPhaseRuntime {
       preserveOwner = true; this.options.sessionHandoff?.onRequest(issued); runConcluded = true; return 3;
     };
     try {
+      if (typeof argv['session-ref'] === 'string') {
+        const { readScopeUserControlSource, readAcceptedScopeUserControlSource } = require('./utils/execution-scope') as typeof import('./utils/execution-scope');
+        const source = readScopeUserControlSource({ session_ref: argv['session-ref'], feature: manifest.feature, run_id: manifest.run_id }, { projectRoot, feature: manifest.feature, runId: manifest.run_id });
+        const already = history().some(event => {
+          const prior = (event as unknown as Record<string, unknown>).user_control;
+          if (event.type !== 'run_start' || !prior) return false;
+          const accepted = readAcceptedScopeUserControlSource(prior as never, { feature: manifest.feature, runId: manifest.run_id });
+          return accepted?.session_ref === source.session_ref && accepted.user?.sha256 === source.user?.sha256;
+        });
+        if (!already && (source.fixed || source.excluded?.length || source.included?.length)) emit({ type: 'run_start', session_started_at: new Date().toISOString(), manifest_identity_fields: computeManifestIdentityFields(manifest), phase_chain: [], user_control: source });
+      }
+      const requestOptions = initialDesignRequestOptions(projectRoot, frameworkRoot, manifest);
+      const { resolveRequestSessionReference } = require('./utils/request-intake') as typeof import('./utils/request-intake');
+      if (fs.existsSync(path.resolve(projectRoot, requestOptions.requestFile)) || typeof argv['session-ref'] === 'string' || resolveRequestSessionReference(undefined, projectRoot).sessionRef) {
+        const { prepareDesignRequest } = require('./utils/automatic-request') as typeof import('./utils/automatic-request');
+        prepareDesignRequest({ ...requestOptions, ...(fs.existsSync(path.resolve(projectRoot, requestOptions.requestFile)) ? {} : { sessionRef: argv['session-ref'] as string | undefined }) });
+      }
       const supplied = this.options.sessionHandoff?.requestPath;
       const ownRequest = supplied && !path.relative(runDir, path.resolve(supplied)).startsWith('..') && !path.isAbsolute(path.relative(runDir, path.resolve(supplied)));
       const prelude = inspectSessionExecutionBeforeRuntime({ runDir, ...(ownRequest ? { requestPath: supplied, report: this.options.sessionHandoff?.report } : {}),
@@ -4678,7 +4700,7 @@ export class GoalPhaseRuntime {
             }
             const violation = validateInitialDesignInvocation(latestPurpose, fs.readFileSync(beforeFile, 'utf8'), output);
             if (violation) return conclude('unauthorized_source_mutation', violation);
-            if (latestPurpose === 'author' && output && invocationCompleted({ ...latest, exitCode: latest.exit_code })
+            if (latestPurpose === 'author' && !readInitialDesignRequest(projectRoot, frameworkRoot, manifest) && output && invocationCompleted({ ...latest, exitCode: latest.exit_code })
               && fs.readFileSync(state.blueprintPath, 'utf8') === output) prepareInitialDesignDraft({ projectRoot, blueprintId: manifest.feature,
               sourceRefs: manifest.requirement_source_files?.length ? manifest.requirement_source_files
                 : [path.relative(projectRoot, path.join(runDir, 'manifest.json')).replace(/\\/g, '/') + '#requirement'],
@@ -4704,10 +4726,31 @@ export class GoalPhaseRuntime {
         }
         const received = current && current.request.invoke_id === this.acceptedSessionInvokeId ? acceptedSessionReport(runDir, current) : undefined;
         const acceptedWaitingDetail = received && invocationWaitingDetail(received.report);
-        if (acceptedWaitingDetail) return conclude('execution_scope_unresolved', acceptedWaitingDetail);
+        if (acceptedWaitingDetail && !readInitialDesignRequest(projectRoot, frameworkRoot, manifest)) return conclude('execution_scope_unresolved', acceptedWaitingDetail);
+        const requestContext = readInitialDesignRequest(projectRoot, frameworkRoot, manifest);
+        let requestPreparationIssue: string | undefined;
+        if (requestContext?.frame === 'small' && fs.existsSync(state.blueprintPath) && !requestContext.prepared.originGap) {
+          const { prepareCanonicalBlueprintSource } = require('./check-component-blueprint') as typeof import('./check-component-blueprint');
+          const { createDesignPreparationWrite } = require('./utils/automatic-request') as typeof import('./utils/automatic-request');
+          const transaction = createDesignPreparationWrite();
+          try {
+            prepareCanonicalBlueprintSource(projectRoot, manifest.feature, { requestIntake: requestContext.prepared.intake, requestSourceItems: requestContext.prepared.currentScopeItems }, { requestFile: requestContext.prepared.requestFile, write: transaction.write });
+            const draft = YAML.parse(fs.readFileSync(state.blueprintPath, 'utf8'));
+            if (asRecord(draft.review_summary)?.admission) { delete draft.review_summary.admission; transaction.write(state.blueprintPath, YAML.stringify(draft)); }
+            transaction.commit();
+          } catch (error) {
+            requestPreparationIssue = `原请求来源准备尚未完成：${String(error)}`;
+          } finally { transaction.rollback(); }
+        }
         let observed = readInitialDesignDelivery({ projectRoot, frameworkRoot, manifest, ...questioningObservation() });
+        if (requestPreparationIssue && observed.request) {
+          const feedback: InitialDesignObservation = { ...observed, kind: 'author',
+            request: { ...observed.request, implementation: false },
+            issues: [...new Set([...observed.issues, requestPreparationIssue])] };
+          observed = { ...feedback, disposition: readInitialDesignCompletionDisposition({ projectRoot, frameworkRoot, manifest, observation: feedback }) };
+        }
         const restoration = unrestoredAuthorWrites(projectRoot, history());
-        if ((observed.kind === 'author' || observed.kind === 'decompose') && !enumerateCanonicalChangeUnits(projectRoot, manifest.feature).length
+        if (!observed.request && (observed.kind === 'author' || observed.kind === 'decompose') && !enumerateCanonicalChangeUnits(projectRoot, manifest.feature).length
           && !observed.progression?.activeRun && fs.existsSync(state.blueprintPath)) {
           try {
             const loaded = loadCanonicalBlueprint(projectRoot, manifest.feature);
@@ -4771,7 +4814,7 @@ export class GoalPhaseRuntime {
             break;
           }
         }
-        if ((observed.kind === 'decompose' || observed.kind === 'construction') && fs.existsSync(observed.candidatesPath)) {
+        if (!observed.request && (observed.kind === 'decompose' || observed.kind === 'construction') && fs.existsSync(observed.candidatesPath)) {
           const candidates: unknown = JSON.parse(fs.readFileSync(observed.candidatesPath, 'utf8'));
           if (!Array.isArray(candidates)) throw new Error('[initial-design] candidates must be an array for the original consumer');
           const canonical = enumerateCanonicalChangeUnits(projectRoot, manifest.feature);
@@ -4791,11 +4834,17 @@ export class GoalPhaseRuntime {
           catch (error) { observed.issues.push((error as Error).message); }
         }
         if (observed.kind === 'construction') {
+          if (observed.request) {
+            const disposition = readInitialDesignCompletionDisposition({ projectRoot, frameworkRoot, manifest, observation: observed });
+            if (disposition.completionEligible) { emit({ type: 'run_end', status: 'COMPLETED', completion_target: 'request', session_started_at: new Date(sessionStart).toISOString() }); return 0; }
+            observed = { ...observed, kind: 'author' };
+          } else {
           const next = await this.continueInitialDesignConstruction(manifest, projectRoot, frameworkRoot, argv, observed, token!, emit, conclude, () => {
             if (token) { releaseRunOwner(runDir, token); token = undefined; }
           }, () => { releaseLock(lockPath, lock.ownerId); });
           if (typeof next === 'number') return next;
           observed = next;
+          }
         }
         if (observed.designRepair) {
           if (!automaticDesignRepair) return conclude('execution_scope_unresolved', `当前设计权威需要原责任方修复；需恢复原请求的自动设计修复授权。${observed.issues.join('\n')}`);
@@ -4812,12 +4861,14 @@ export class GoalPhaseRuntime {
         if (observed.kind === 'questioning') materializeBlueprintReview(projectRoot, manifest.feature);
         const spent = readOriginalDeliveryActivity(projectRoot, manifest)!;
         const purpose = observed.kind === 'questioning' ? 'questioning' : 'author';
-        if (observed.kind === 'author') prepareInitialDesignDraft({ projectRoot, blueprintId: manifest.feature,
+        if (observed.kind === 'author' && !observed.request) prepareInitialDesignDraft({ projectRoot, blueprintId: manifest.feature,
           sourceRefs: manifest.requirement_source_files?.length ? manifest.requirement_source_files
             : [path.relative(projectRoot, path.join(runDir, 'manifest.json')).replace(/\\/g, '/') + '#requirement'],
           observedAt: new Date(sessionStart).toISOString() });
         const label = initialDesignInvocationLabel(observed);
-        const workBaseFiles = [observed.blueprintPath, observed.candidatesPath, ...(observed.scope ? [observed.scope.candidatePath] : [])];
+        const workBaseFiles = [observed.blueprintPath, observed.candidatesPath, ...(observed.scope ? [observed.scope.candidatePath] : []),
+          ...(observed.request ? [observed.request.prepared.requestFile, ...['review', 'ut', 'testing'].map(phase => path.join(observed.request!.prepared.reportDir, phase, 'request.json')),
+            ...initialRequestWriteTargets(projectRoot, frameworkRoot, observed).map(file => path.resolve(projectRoot, file))] : [])];
         const workFiles = [...workBaseFiles];
         try { workFiles.push(...blueprintSourceRefFiles(projectRoot, YAML.parse(fs.readFileSync(observed.blueprintPath, 'utf8')), true)); }
         catch { /* The actual design reader retains unreadable inputs as unknown. */ }
@@ -4825,8 +4876,15 @@ export class GoalPhaseRuntime {
         let currentDesignEvaluation: CompletionEvaluation | undefined;
         if (observed.disposition) {
           const acceptanceKey = createHash('sha256').update(stableStringify({ requirement: manifest.requirement,
+            ...(observed.request ? { request_frame: observed.request.frame } : {}),
             authority: manifest.unattended && { write_mode: manifest.unattended.write_mode, approval_mode: manifest.unattended.approval_mode, allowed_tools: manifest.unattended.allowed_tools } })).digest('hex');
           const records = history() as Array<GoalRunEvent & { purpose?: string }>;
+          if (observed.request && !previousDesignEvaluation) {
+            const prior = records.filter(event => event.type === 'agent_invoke_start' && event.purpose === 'author' && event.invoke_id)
+              .flatMap(event => { const value = executionRequestForInvoke(runDir, event.invoke_id)?.request.context.workInput?.evaluation;
+                return value?.acceptanceKey === acceptanceKey && value.checkFamilies?.includes('request') ? [value] : []; });
+            designEvaluations.push(...prior.slice(0, -1)); previousDesignEvaluation = prior.at(-1) ?? null;
+          }
           const latestEnd = [...records].reverse().find(event => event.type === 'agent_invoke_end');
           const freshQuestion = latestEnd?.invoke_id && [this.acceptedSessionInvokeId, currentQuestioningInvokeId].includes(latestEnd.invoke_id)
             && latestEnd.purpose === 'questioning' ? latestEnd.invoke_id : undefined;
@@ -4840,7 +4898,7 @@ export class GoalPhaseRuntime {
           }
           let priorQuestionAt = -1;
           // Consecutive Qs without an intervening author cannot create separate delivered-feedback cycles.
-          for (const group of previousDesignEvaluation ? [questionGroups.flat()] : questionGroups) for (const [at, start] of [...group].reverse()) {
+          for (const group of observed.request ? [] : previousDesignEvaluation ? [questionGroups.flat()] : questionGroups) for (const [at, start] of [...group].reverse()) {
             const original = readDesignQuestioningOriginal(runDir, start, records);
             if (!original?.completed) continue;
             try {
@@ -4885,7 +4943,7 @@ export class GoalPhaseRuntime {
               ?? deliveredProblems.every(problem => returnedContext.instruction?.includes(renderCurrentDisposition({
                 ...previousDesignEvaluation!.disposition, problems: [problem] }))));
           const evaluation: CompletionEvaluation = { acceptanceKey,
-            inputs: workNow, disposition: observed.disposition, checkFamilies: ['component-design'],
+            inputs: workNow, disposition: observed.disposition, checkFamilies: [observed.request ? 'request' : 'component-design'],
             completed: !observed.disposition.completionBlocking.some(problem => problem.action === 'verify' || problem.action === 'wait') };
           currentDesignEvaluation = evaluation;
           if (previousEnd?.halt_reason === 'no_progress_guard' && !argv['force-resume'] && evaluation.completed
@@ -4915,7 +4973,15 @@ export class GoalPhaseRuntime {
           ? blueprintSourceRefFiles(projectRoot, blueprintAuthorContent(asRecord(YAML.parse(beforeBlueprint)) ?? {}), true)
             .filter(file => isInsideProjectRoot(projectRoot, file)) : [];
         const snapshotOptions = { ownedPrefixes: [path.relative(projectRoot,
-          observed.scope?.candidatePath ?? (observed.kind === 'decompose' ? observed.candidatesPath : observed.kind === 'questioning' ? observed.blueprintPath : path.dirname(observed.blueprintPath))).replace(/\\/g, '/')], runtimeExcluded: [manifest.report_dir], includeFiles: questioningSources };
+          observed.scope?.candidatePath ?? (observed.kind === 'decompose' ? observed.candidatesPath : observed.kind === 'questioning' ? observed.blueprintPath : path.dirname(observed.blueprintPath))).replace(/\\/g, '/'),
+          ...(observed.request ? [path.relative(projectRoot, observed.request.prepared.reportDir).replace(/\\/g, '/'), ...initialRequestWriteTargets(projectRoot, frameworkRoot, observed)] : [])], runtimeExcluded: [manifest.report_dir], includeFiles: questioningSources };
+        const requestTargets = initialRequestWriteTargets(projectRoot, frameworkRoot, observed);
+        const writeBoundary = { ...resolution, feature: manifest.feature, phaseOrder: [],
+          domains: observed.request ? snapshotOptions.ownedPrefixes.map(owned => ({ owner: label,
+            kind: requestTargets.includes(owned) ? 'source' as const : 'artifact' as const,
+            match: requestTargets.includes(owned) ? 'exact' as const : 'prefix' as const,
+            path: owned, source: `original request:${path.relative(projectRoot, observed.request!.prepared.requestFile).replace(/\\/g, '/')}` })) : [],
+          diagnostics: [], unresolvedSourcePhases: [] };
         const pre = capturePhaseInvocationSnapshot(resolution, snapshotOptions);
         if (pre.failureReason) return conclude('framework_bug', pre.failureReason);
         const timeoutMs = 0;
@@ -4927,7 +4993,8 @@ export class GoalPhaseRuntime {
           chain: [label], phase: label, attemptId: invokeId, owner: { ...token, kind: transport }, projectRoot, frameworkRoot,
           runDir, reportDir: manifest.report_dir, adapter: manifest.adapter ?? 'generic', adapterModel: adapterModelBinding(manifest.adapter_model_pin),
           instruction: prompt, workInput: { material: { purpose, segments }, evaluation: currentDesignEvaluation },
-          runtimeFacts: { receiptRequired: false, resume: !!argv.resume, successor: false }, childEnv }, explicitlyContinued);
+          runtimeFacts: { receiptRequired: false, resume: !!argv.resume, successor: false,
+            ...(observed.request?.prepared.intake?.baseline.base ? { runBaseSha: observed.request.prepared.intake.baseline.base } : {}) }, childEnv }, explicitlyContinued);
         if ('status' in prepared) return conclude('executor_waiting', prepared.details ?? '等待原设计调用的真实交回。');
         const context = prepared;
         const instruction = context.instruction ?? prompt;
@@ -4962,14 +5029,14 @@ export class GoalPhaseRuntime {
         }
         const issuedAt = new Date().toISOString();
         const materialInput = { context, invokeId, purpose, issuedAt, timeoutMs, gateTimeoutMs: 0, cleanupReserveMs: 0,
-          preSnapshot: pre, writeBoundary: { ...resolution, feature: manifest.feature, phaseOrder: [], domains: [], diagnostics: [], unresolvedSourcePhases: [] }, snapshotOptions };
+          preSnapshot: pre, writeBoundary, snapshotOptions };
         const original = !this.options.sessionHandoff ? writePhaseExecutionRequestMaterial(materialInput) : undefined;
         emit({ type: 'agent_invoke_start', ts: issuedAt, phase: label, purpose, invoke_id: invokeId, owner_id: token.owner_id, owner_epoch: token.epoch,
           ...(original ? { handoff_request: original.reference, attempt_id: context.attemptId } : {}),
           command: transport === 'session' ? 'phase_execute_request' : 'headless', effective_timeout_ms: timeoutMs });
         if (this.options.sessionHandoff) {
           const issued = issueSessionExecution({ context, invokeId, purpose, timeoutMs, gateTimeoutMs: 0, cleanupReserveMs: 0,
-            preSnapshot: pre, writeBoundary: { ...resolution, feature: manifest.feature, phaseOrder: [], domains: [], diagnostics: [], unresolvedSourcePhases: [] }, snapshotOptions, emit });
+            preSnapshot: pre, writeBoundary, snapshotOptions, emit });
           preserveOwner = true; this.options.sessionHandoff.onRequest(issued); runConcluded = true; return 3;
         }
         let containmentError: string | undefined;
@@ -6128,7 +6195,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
   // The birth scope, validated once: every "what did a revision revoke" projection derives from it.
   const birthScope = manifest.execution_scope ? validateExecutionScope(manifest.execution_scope) : undefined;
   const effectiveBirthScope = manifest.execution_scope
-    ? applyScopeRevisions(validateExecutionScope(manifest.execution_scope), loadAuthoritativeEvents(path.join(projectRoot, manifest.report_dir, 'events.jsonl')))
+    ? applyScopeRevisions(validateExecutionScope(manifest.execution_scope), loadAuthoritativeEvents(path.join(projectRoot, manifest.report_dir, 'events.jsonl')), { projectRoot, feature: manifest.feature, runId: manifest.run_id })
     : undefined;
   // Completion includes the real reused methods after pending work has become empty.
   // Keep the immutable birth chain fallback for a request satisfied only by definition inputs.
@@ -7250,7 +7317,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
     const runDir = path.resolve(projectRoot, manifest.report_dir);
     const kernel = new GoalPhaseRuntime(options);
     const completedEvaluations = readGateCompletionHistory(projectRoot, runDir, loadAuthoritativeEvents(eventsPath));
-    const scopeNow = () => birthScope ? applyScopeRevisions(birthScope, loadAuthoritativeEvents(eventsPath)) : undefined;
+    const scopeNow = () => birthScope ? applyScopeRevisions(birthScope, loadAuthoritativeEvents(eventsPath), { projectRoot, feature: manifest.feature, runId: manifest.run_id }) : undefined;
     const familiesNow = () => applicableCheckFamilies(scopeNow(), terminalEventCtx?.chain.map(String) ?? chain.map(String));
     if (dryRun) {
       console.log(`[dry-run] work unit ${manifest.feature} checks=${familiesNow().join(',')}`);
@@ -7319,7 +7386,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
       runConcluded = true;
       return true;
     };
-    const reviseCurrentScope = (family: string): void => {
+    const reviseCurrentScope = (family: string, userSessionRef?: string): void => {
       const previous = scopeNow();
       if (!previous || !manifest.execution_scope) return;
       try {
@@ -7330,11 +7397,21 @@ Goal runner — tool-agnostic multi-phase orchestrator
             && !phaseCompletionProblems(current.disposition, [result.phase]).length;
         }).map(result => result.phase));
         const result = current.results.find(result => result.phase === family && asRecord(result.summary)?.run_id === manifest.run_id);
-        if (!result) return;
-        const proposed = (result.checks as readonly { id?: string; scope_revision_input?: ExecutionScopeInput }[])
+        if (!result && !userSessionRef) return;
+        const proposed = ((result?.checks ?? []) as readonly { id?: string; scope_revision_input?: ExecutionScopeInput }[])
           .filter(check => check.scope_revision_input);
         const proposals = proposed.flatMap(check => check.scope_revision_input ? [check.scope_revision_input] : []);
-        const summary = asRecord(result.summary);
+        if (userSessionRef) {
+          const proposal: ExecutionScopeInput = { request: { completion_target: previous.completion_target,
+            requested_results: [...previous.requested_results], requested_phases: executionCompletionPhases(previous).length
+              ? executionCompletionPhases(previous) : executionCompletionPhases(birthScope!),
+            ...(previous.request_impact ? { impact: structuredClone(previous.request_impact) } : {}),
+            user_control: { session_ref: userSessionRef, feature: manifest.feature, run_id: manifest.run_id } },
+            facts: structuredClone(previous.obligations), contract_fingerprints: [],
+            ...(previous.control_edges ? { control_edges: structuredClone(previous.control_edges) } : {}) };
+          proposals.splice(0, proposals.length, proposal);
+        }
+        const summary = asRecord(result?.summary);
         const candidates = (summary?.repair_candidates ?? []) as RepairCandidate[];
         if (!proposals.length && candidates.length) {
           const repair = scopeRevisionInputFromRepairCandidates(candidates, { projectRoot, frameworkRoot, feature: manifest.feature,
@@ -7357,13 +7434,14 @@ Goal runner — tool-agnostic multi-phase orchestrator
           currentPhase: family, currentRunId: manifest.run_id, requirement: manifest.requirement, currentResults: current.results, repairCandidates: candidates });
         if (!revision) return;
         assertGoalBoundary('scope_revised');
-        assertRevisionKeepsRequiredObligations(previous, revision.scope);
-        const recorded = loadScopeRevisions(loadAuthoritativeEvents(eventsPath), validateExecutionScope(manifest.execution_scope));
+        const control = readScopeRevisionUserControl(previous, revision.input, { projectRoot, feature: manifest.feature, runId: manifest.run_id, events: loadAuthoritativeEvents(eventsPath), completedPhases: completed }, revision.input.request.user_control);
+        assertRevisionKeepsRequiredObligations(previous, revision.scope, control.allowedSubtractions);
+        const recorded = loadScopeRevisions(loadAuthoritativeEvents(eventsPath), validateExecutionScope(manifest.execution_scope), { projectRoot, feature: manifest.feature, runId: manifest.run_id });
         const needsBaseline = !manifest.run_base_sha && !recorded.some(item => item.run_base_sha)
           && revision.scope.phase_chain.some(phase => phase === 'coding' || phase === 'ut');
         goalEvents.emit({ type: 'scope_revised', revision_index: recorded.length + 1,
           previous_scope_fingerprint: executionScopeFingerprint(previous), execution_scope: revision.scope, revision_input: revision.input,
-          trigger: { phase: family, check_id: proposed[0]?.id ?? 'current_phase_evidence' }, allowed_fields: [...SCOPE_REVISION_FIELDS],
+          trigger: { phase: family, check_id: userSessionRef ? 'user_control' : proposed[0]?.id ?? 'current_phase_evidence' }, allowed_fields: [...SCOPE_REVISION_FIELDS],
           ...(needsBaseline ? { run_base_sha: validateExactSha(resolveGoalRunHeadSha(projectRoot), 'Git HEAD') } : {}) });
       } catch (error) {
         const detail = (error as Error).message;
@@ -7375,6 +7453,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
       }
       options.onScopeRevision?.('applied');
     };
+    // The normal resume/next source creates a proposal; only the existing revision writer appends it.
+    if (typeof argv['session-ref'] === 'string' && !['COMPLETED', 'CHAIN_SLICE_COMPLETED'].includes(String(findLastRunEnd(startupEvents)?.status))) {
+      reviseCurrentScope(familiesNow()[0] ?? String(chain[0] ?? 'coding'), argv['session-ref']);
+    }
     const lastAuthor = () => {
       const history = loadAuthoritativeEvents(eventsPath);
       const start = [...history].reverse().find(event => event.type === 'agent_invoke_start' && event.invoke_id && event.phase
@@ -8207,7 +8289,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
 
     // Current bound results decide completion; outcomes remain the historical execution report.
     const latestOutcome = (phase: string) => [...outcomes].reverse().find(outcome => String(outcome.phase) === phase);
-    const terminalScope = !dryRun && birthScope ? applyScopeRevisions(birthScope, loadAuthoritativeEvents(eventsPath)) : undefined;
+    const terminalScope = !dryRun && birthScope ? applyScopeRevisions(birthScope, loadAuthoritativeEvents(eventsPath), { projectRoot, feature: manifest.feature, runId: manifest.run_id }) : undefined;
     const terminalChain = applicableCheckFamilies(terminalScope, terminalEventCtx?.chain.map(String) ?? chain.map(String));
     const terminalDisposition = !dryRun ? resolveCompletionDisposition({ projectRoot, frameworkRoot, feature: manifest.feature,
       chain: terminalChain, executionScope: terminalScope, workflow, runId: manifest.run_id }) : null;
@@ -8224,7 +8306,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
     // scope forever, so judging eligibility on the birth value made completion structurally
     // unreachable for D2's main scenario (spec discovers a device duty, run continues, completes).
     const completionScope = manifest.execution_scope
-      ? applyScopeRevisions(validateExecutionScope(manifest.execution_scope), loadAuthoritativeEvents(eventsPath))
+      ? applyScopeRevisions(validateExecutionScope(manifest.execution_scope), loadAuthoritativeEvents(eventsPath), { projectRoot, feature: manifest.feature, runId: manifest.run_id })
       : undefined;
     const completionChain = applicableCheckFamilies(completionScope, fullWorkflowChain).map(String);
     const requiresFeatureCompletion = completionScope?.completion_target === 'feature';

@@ -246,9 +246,19 @@ export function reviseChangeUnitContent(projectRoot: string, blueprintId: string
       }
     }
     const written: LoadedChangeUnit[] = [];
+    const projectionBefore: Array<{ file: string; bytes?: Buffer }> = [];
     try {
       pending.forEach((row, index) => { writeCanonicalChangeUnit(row.loaded.canonicalPath, row.candidate.artifact, `${process.pid}-content-${index}`); written.push(row.loaded); });
+      for (const revision of revisions) if (revision.candidate.construction_mapping) {
+        const feature = deriveChangeUnitFeatureId(blueprintId, revision.candidate.artifact.change_unit_id);
+        for (const name of Object.values(BLUEPRINT_PROJECTION_FILES)) {
+          const location = resolveFeatureArtifact(projectRoot, feature, name);
+          projectionBefore.push({ file: location.exists ? location.actualPath : location.canonicalPath, ...(location.exists ? { bytes: fs.readFileSync(location.actualPath) } : {}) });
+        }
+        materializeBlueprintSkillInputs(projectRoot, feature, resolveProbeFrameworkRoot(projectRoot), undefined, undefined, revision.candidate.construction_mapping);
+      }
     } catch (error) {
+      for (const row of projectionBefore) if (row.bytes) fs.writeFileSync(row.file, row.bytes); else if (fs.existsSync(row.file)) fs.unlinkSync(row.file);
       for (const row of written) fs.writeFileSync(row.canonicalPath, row.bytes);
       throw new ChangeUnitCandidateRejected('change_unit_decomposition_write_failed', `内容修订写出失败，整批已回滚：${(error as Error).message}`);
     }
@@ -634,10 +644,21 @@ export function deriveDesignPreparationReadiness(
     .filter(loaded => !retired.has(String(loaded.changeUnit.change_unit_id)));
   const perUnit = units.map(loaded => {
     const design = validateChangeUnitDesign(projectRoot, loaded.changeUnit);
-    const projectionIssues = (['acceptance', 'contracts'] as const).flatMap(kind => {
-      const projection = deriveBlueprintSkillInput(projectRoot, deriveChangeUnitFeatureId(blueprintId, String(loaded.changeUnit.change_unit_id)), resolveProbeFrameworkRoot(projectRoot, __dirname), kind);
-      return projection.state === 'invalid' ? [{ kind, codes: projection.codes ?? [], detail: projection.detail }] : [];
-    });
+    const feature = deriveChangeUnitFeatureId(blueprintId, String(loaded.changeUnit.change_unit_id));
+    const projections = (['acceptance', 'contracts'] as const).map(kind => ({ kind,
+      projection: deriveBlueprintSkillInput(projectRoot, feature, resolveProbeFrameworkRoot(projectRoot, __dirname), kind) }));
+    const projectionIssues = projections.flatMap(({ kind, projection }) => projection.state === 'invalid'
+      ? [{ kind, codes: projection.codes ?? [], detail: projection.detail }] : []);
+    const declared = projections[1].projection;
+    // Readiness admits the actual design, including a design which leaves construction choices
+    // to plan. A complete explicit mapping may be materialized; its absence is not invalid design.
+    if (declared.state === 'resolved' && (declared.value as import('./types').ContractsSpec).change_unit) try {
+      materializeBlueprintSkillInputs(projectRoot, deriveChangeUnitFeatureId(blueprintId, String(loaded.changeUnit.change_unit_id)), resolveProbeFrameworkRoot(projectRoot, __dirname));
+    } catch (error) {
+      // The current canonical design is valid. Conflicting stage output stays with its stage owner;
+      // readiness must not turn a preserved plan/use-case artifact into a design-author defect.
+      console.warn(`[change-unit readiness] 阶段产物保留，由原责任阶段核对：${String(error)}`);
+    }
     return {
       changeUnitId: String(loaded.changeUnit.change_unit_id),
       verdict: projectionIssues.length ? 'blocked' : design.verdict as string,

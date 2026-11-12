@@ -8,6 +8,11 @@ import { asRecord, asRecords, ComponentBlueprintResolutionError, blueprintAuthor
 import { loadFrameworkConfig, relFeaturesDir, featureFilePath, featurePhaseReportsDir } from '../../config';
 import { resolveWorkflowSpec } from '../../workflow-loader';
 import { featurePhasesFromWorkflow } from './phase-transition-policy';
+import { prepareDesignRequest, readDesignGoalOrigin, bindDesignRequestBlueprint, type PreparedDesignRequest } from './automatic-request';
+import { nativeFixedScale } from './request-intake';
+import { collectUnitScopeIds, collectDeviceScopeP0P1 } from './acceptance-layering';
+import { realProjectPath } from './project-relative-path';
+import type { AcceptanceSpec } from './types';
 import { buildInitialDesignGoalManifest, isInitialDesignManifest, isRepeatedRequirement, deriveSuccessorRequirement,
   loadGoalRunManifestFromRun, type GoalManifest, type InitialDesignGoalManifest, type GoalBudget,
   type UnattendedContract, type AdapterModelPin, type RunAdapterProvenance } from './goal-manifest';
@@ -88,6 +93,7 @@ export function prepareInitialDesignDraft(input: {
 
 export interface InitialDesignRunInput {
   projectRoot: string; frameworkRoot: string; feature: string; adapter: string; requirement: string;
+  sessionRef?: string;
   requirementSourceFiles?: string[]; runId?: string; adapterSource?: RunAdapterProvenance;
   userDeadlineAt?: string;
   supersede?: string[];
@@ -222,6 +228,7 @@ export function prepareInitialDesignRun(input: InitialDesignRunInput): { manifes
   if (source) fs.appendFileSync(born.eventsPath, JSON.stringify({ ...buildSupersedeAuditEvent({ targetRunId: source.run_id, supersedingRunId: manifest.run_id,
     ...(newCycle ? { deliveryCycleBoundary: source.run_id } : {}) }), ts: new Date().toISOString(), run_id: manifest.run_id }) + '\n');
   ensureRunControl(runDir, manifest.run_id);
+  if (input.sessionRef) prepareDesignRequest({ ...initialDesignRequestOptions(input.projectRoot, input.frameworkRoot, manifest), sessionRef: input.sessionRef });
   return { manifest, manifestPath: born.manifestPath, runDir, created: true, continuation };
 }
 
@@ -233,6 +240,93 @@ export interface InitialDesignObservation {
   progression?: ReturnType<typeof deriveChangeUnitProgressionDecision>;
   scope?: { feature: string; candidatePath: string; command: string };
   designRepair?: { feature: string; brief: import('./design-repair-unattended').DesignRepairBriefLike };
+  request?: { frame: 'trivial' | 'small'; prepared: PreparedDesignRequest; implementation?: boolean };
+}
+
+/** Existing report carrier for this original Goal, independent of later native message ids. */
+export function initialDesignRequestOptions(projectRoot: string, frameworkRoot: string, manifest: InitialDesignGoalManifest) {
+  const reference = path.relative(projectRoot, path.resolve(projectRoot, manifest.report_dir, 'manifest.json')).replace(/\\/g, '/');
+  const reportDir = `doc/reports/request/goal-${createHash('sha256').update(reference).digest('hex').slice(0, 16)}/component-design`;
+  return { projectRoot, frameworkRoot, blueprintId: manifest.feature, originRequest: reference, reportDir,
+    requestFile: `${reportDir}/request.json` };
+}
+
+/** An explicit accepted user choice affects only this run's remaining outer work. */
+export function readInitialDesignRequest(projectRoot: string, frameworkRoot: string, manifest: InitialDesignGoalManifest): InitialDesignObservation['request'] {
+  if (enumerateCanonicalChangeUnits(projectRoot, manifest.feature).length) return undefined;
+  const options = initialDesignRequestOptions(projectRoot, frameworkRoot, manifest);
+  const origin = readDesignGoalOrigin(projectRoot, options.originRequest);
+  const selected = nativeFixedScale([...origin.controls].reverse().find(source => source.fixed)?.fixed);
+  if (selected !== 'small' && selected !== 'trivial') return undefined;
+  try {
+    const existing = loadCanonicalBlueprint(projectRoot, manifest.feature).blueprint;
+    if (asRecord(asRecord(existing.review_summary)?.admission)?.status === 'pass') return undefined;
+  } catch { /* Unfinished or absent design is exactly the adjustable outer work. */ }
+  return { frame: selected, prepared: prepareDesignRequest({ ...options, readonly: true }) };
+}
+
+export function initialRequestWriteTargets(projectRoot: string, frameworkRoot: string, observed: InitialDesignObservation): string[] {
+  if (!observed.request?.implementation) return [];
+  const { requestProtectedPaths } = require('./capability-resolution-entry-input') as typeof import('./capability-resolution-entry-input');
+  const protectedPaths = requestProtectedPaths(projectRoot, frameworkRoot);
+  const files = [...observed.request.prepared.intake?.targets ?? [], ...observed.request.prepared.intake?.source_reads.filter(file => /\.(?:test|spec)\./i.test(file)) ?? []];
+  // The original request's existing preparation path can add a necessary auxiliary target.
+  // Re-read those same parser-validated targets at the next owner window; known blueprint files
+  // are not a permanent construction lock and no parallel authorization artifact is introduced.
+  const { prepareExplicitRequest } = require('./capability-resolution-entry-input') as typeof import('./capability-resolution-entry-input');
+  for (const phase of ['review', 'ut', 'testing']) try {
+    const dir = path.join(observed.request.prepared.reportDir, phase), file = path.join(dir, 'request.json');
+    if (!fs.existsSync(file)) continue;
+    const prepared = prepareExplicitRequest({ projectRoot, frameworkRoot, phase, requestFile: path.relative(projectRoot, file), reportDir: path.relative(projectRoot, dir), allowPlannedTargets: true });
+    if (path.resolve(prepared.origin_request ?? '') === path.resolve(observed.request.prepared.requestFile)) files.push(...prepared.targets.files, ...prepared.allowed_test_writes);
+  } catch { /* An invalid/stale preparation never expands an author's write boundary. */ }
+  try {
+    const { selectBlueprintRequestContent } = require('./blueprint-skill-projection') as typeof import('./blueprint-skill-projection');
+    const loaded = loadCanonicalBlueprint(projectRoot, String(JSON.parse(fs.readFileSync(observed.request.prepared.requestFile, 'utf8')).blueprint?.ref.blueprint_id ?? path.basename(path.dirname(path.dirname(observed.blueprintPath)))));
+    files.push(...(selectBlueprintRequestContent(loaded.blueprint).contracts?.files as string[] ?? []));
+  } catch { /* Trivial work has no mandatory blueprint; original intake targets still apply. */ }
+  return [...new Set(files)].map(file => realProjectPath(projectRoot, file, 'original request target')).filter(file => !protectedPaths.some(directory => {
+    const relative = path.relative(directory, file); return relative === '' || !relative.startsWith('..' + path.sep) && relative !== '..' && !path.isAbsolute(relative);
+  })).map(file => path.relative(projectRoot, file).replace(/\\/g, '/'));
+}
+
+function initialRequestDisposition(projectRoot: string, frameworkRoot: string, request: NonNullable<InitialDesignObservation['request']>): CurrentDisposition {
+  const { prepared } = request;
+  const problems: CurrentDispositionProblem[] = [];
+  const gap = (phase: string, detail: string): void => { problems.push({ phase, id: 'required_check_conclusion', action: 'repair', affects: 'completion', severity: 'BLOCKER', owner: '当前工作单元', detail }); };
+  if (!prepared.intake || prepared.originGap) gap('component-design', prepared.originGap ?? '原请求来源/起始基线尚未核实');
+  const excluded = new Set(prepared.intake?.control.excluded ?? []);
+  if (!excluded.has('compile')) try {
+    const report = JSON.parse(fs.readFileSync(path.join(prepared.reportDir, 'compile/compile-report.json'), 'utf8'));
+    const { isBlockingCheck, isRequiredCheckGap } = require('./check-disposition') as typeof import('./check-disposition');
+    if (!report.execution?.executed || report.execution.exitCode !== 0 || report.checks.some((check: never) => isBlockingCheck(check) || isRequiredCheckGap(check))
+      || report.intake_context?.baseline.base !== prepared.intake?.baseline.base
+      || report.intake_context?.content_fingerprint !== prepared.intake?.content_fingerprint) gap('coding', '当前原请求的实际编译/架构结果尚未通过或已过期');
+  } catch { gap('coding', '尚无当前原请求实际编译结果'); }
+  let acceptance: AcceptanceSpec | undefined;
+  const rawRequest = fs.existsSync(prepared.requestFile) ? JSON.parse(fs.readFileSync(prepared.requestFile, 'utf8')) : undefined;
+  const explicit = rawRequest?.origin_request ? readDesignGoalOrigin(projectRoot, rawRequest.origin_request).manifest.initial_design.requested_phases : [];
+  if (request.frame === 'small') try {
+    const loaded = loadCanonicalBlueprint(projectRoot, String(JSON.parse(fs.readFileSync(prepared.requestFile, 'utf8')).blueprint.ref.blueprint_id));
+    const { selectBlueprintRequestContent } = require('./blueprint-skill-projection') as typeof import('./blueprint-skill-projection');
+    acceptance = selectBlueprintRequestContent(loaded.blueprint).acceptance as unknown as AcceptanceSpec;
+  } catch { gap('component-design', '原请求的短蓝图当前绑定尚未通过'); }
+  const families = ['review', ...(!acceptance || collectUnitScopeIds(acceptance).length || explicit.includes('ut') ? ['ut'] : []),
+    ...(explicit.includes('testing') || acceptance && (() => { const device = collectDeviceScopeP0P1(acceptance); return device.criteria.length || device.boundaries.length; })() ? ['testing'] : [])];
+  for (const phase of families.filter(phase => !excluded.has(phase))) try {
+    const { prepareExplicitRequest } = require('./capability-resolution-entry-input') as typeof import('./capability-resolution-entry-input');
+    const dir = path.join(prepared.reportDir, phase), file = path.join(dir, 'request.json');
+    const input = prepareExplicitRequest({ projectRoot, frameworkRoot, phase, requestFile: path.relative(projectRoot, file), reportDir: path.relative(projectRoot, dir) });
+    const summary = JSON.parse(fs.readFileSync(path.join(dir, 'summary.json'), 'utf8'));
+    const reportFile = realProjectPath(projectRoot, summary.evidence.script_report, 'request report');
+    if (summary.subject !== 'request' || summary.verdict !== 'PASS' || summary.request_sha256 !== input.request_sha256
+      || stableStringify(summary.targets) !== stableStringify(input.bindings)
+      || summary.evidence.script_report_sha256 !== createHash('sha256').update(fs.readFileSync(reportFile)).digest('hex')) gap(phase, '当前原请求的实际专项结果未通过或输入已变化；保留既有FAIL，不签完成');
+    const { readBoundInput, resolveRequestInputs } = require('./capability-resolution') as typeof import('./capability-resolution');
+    const context = resolveRequestInputs(projectRoot, frameworkRoot, input).context;
+    for (const binding of Object.values(summary.input_bindings ?? {})) readBoundInput({ projectRoot, frameworkRoot, phase, track: 'full', request: input, inputContext: context }, binding as never);
+  } catch (error) { gap(phase, `当前原请求专项结果尚未准备：${String(error)}`); }
+  return resolveCurrentDisposition({ endpoint: 'request', phases: [], additionalProblems: problems });
 }
 
 /** A path name or old closure cannot establish coverage of a different frozen request. */
@@ -301,6 +395,20 @@ export function readInitialDesignDelivery(input: { projectRoot: string; framewor
   const blueprintPath = componentBlueprintPath(input.projectRoot, input.manifest.feature);
   const candidatesPath = path.join(path.dirname(blueprintPath), 'change-unit-candidates.json');
   const base = { blueprintPath, candidatesPath };
+  const request = readInitialDesignRequest(input.projectRoot, input.frameworkRoot ?? resolveProbeFrameworkRoot(input.projectRoot), input.manifest);
+  if (request) {
+    if (request.prepared.originGap || !request.prepared.intake) return { ...base, kind: 'author', request,
+      issues: [request.prepared.originGap ?? '原请求原件/起始基线尚未核实；保留局部能力，不补买完整外框。'] };
+    let blueprintIssues: BlueprintIssue[] = [];
+    if (request.frame === 'small') try {
+      const loaded = loadCanonicalBlueprint(input.projectRoot, input.manifest.feature);
+      blueprintIssues = validateComponentBlueprint(loaded.blueprint, { projectRoot: input.projectRoot, canonicalPath: blueprintPath,
+        requestIntake: request.prepared.intake, requestSourceItems: request.prepared.currentScopeItems });
+    } catch (error) { return { ...base, kind: 'author', request, issues: [String(error)] }; }
+    if (blueprintIssues.some(issue => issue.severity === 'BLOCKER')) return { ...base, kind: 'author', request, blueprintIssues, issues: blueprintIssues.map(issue => issue.message) };
+    const disposition = initialRequestDisposition(input.projectRoot, input.frameworkRoot ?? resolveProbeFrameworkRoot(input.projectRoot), request);
+    return { ...base, kind: 'construction', request: { ...request, implementation: true }, disposition, issues: disposition.reasons };
+  }
   if (!fs.existsSync(blueprintPath)) return { ...base, kind: 'author', issues: ['尚无蓝图，按原始需求与真实工程事实完成当前交付切片。'] };
   try {
     const designRepair = fs.existsSync(blueprintPath) ? requestDesignRepair(input.projectRoot, input.manifest) : undefined;
@@ -456,6 +564,25 @@ function questioningReadingInstruction(blueprintPath: string, recheck: boolean, 
 }
 
 export function initialDesignAuthorInstruction(input: { projectRoot: string; frameworkRoot: string; manifest: InitialDesignGoalManifest; observation: InitialDesignObservation; autonomyAuthorized: boolean; deliveryRuns?: readonly DeliveryRunFacts[]; material?: unknown[] }): string {
+  if (input.observation.request) {
+    const { request } = input.observation, relative = (file: string) => path.relative(input.projectRoot, file).replace(/\\/g, '/');
+    const requestFile = relative(request.prepared.requestFile), reportDir = relative(request.prepared.reportDir);
+    input.material?.push({ original_request: requestFile, requirement: input.manifest.requirement, frame: request.frame,
+      source_refs: request.prepared.sourceRefs, baseline: request.prepared.intake?.baseline,
+      targets: initialRequestWriteTargets(input.projectRoot, input.frameworkRoot, input.observation),
+      excluded: request.prepared.intake?.control.excluded ?? [],
+      ...(input.observation.disposition ? { feedback: dispositionFacts(input.observation.disposition) } : { issues: input.observation.issues }) });
+    return [`原始正式需求：${input.manifest.requirement}`, `继续同一原run ${input.manifest.run_id}；真实user已指定${request.frame === 'small' ? '小型' : '特别简单'}，只调整尚未执行的外框。原业务目标、来源、基线、历史与真实FAIL全部保留。`,
+      `原request：${requestFile}；原始业务来源：${request.prepared.sourceRefs.join('、')}。不得手改request的来源/基线/控制字段。`,
+      request.implementation ? `在同一作者窗口实现并验证本请求；当前真实目标：${initialRequestWriteTargets(input.projectRoot, input.frameworkRoot, input.observation).join('、')}。沿原写界，不改framework、原run/其它请求或清理历史。`
+        : `只在本请求自己的 ${input.observation.blueprintPath} 完成目标/来源、可执行验收ID、已知文件、必要局部选择四项。保留已有业务内容；不填admission，不要求完整视图、独立Q/CU或评审文档。`,
+      request.frame === 'small' ? `小型校验/重绑：npm run check:component-blueprint -- --project-root ${JSON.stringify(input.projectRoot)} --blueprint ${JSON.stringify(input.manifest.feature)} --request-file ${JSON.stringify(requestFile)} --prepare-source --json` : '特别简单不强制蓝图；保留旧材料，直接实现并调用本请求适用能力。',
+      `实际编译：npm run compile -- --project-root ${JSON.stringify(input.projectRoot)} --session-ref ${JSON.stringify(request.prepared.intake?.session_ref ?? '')} --report-dir ${JSON.stringify(reportDir + '/compile')} --json`,
+      `review/UT沿原request：npm run check -- --project-root ${JSON.stringify(input.projectRoot)} --phase <review|ut|testing> --request-file ${JSON.stringify(requestFile)}。UT用真实--test-target/--allow-test-write与canonical路径#AC-ID；必要testing仍须实际执行。固定小型/特别简单不等于排除验证，既有FAIL不能标PASS。`,
+      '已知contracts.files不是永久施工锁。必要新增辅助源码/测试先经上述原request --prepare-request配--target/--test-target/--allow-test-write准备真实目标；保留当前成果并报告新目标，原runtime会在同run重读并签下一原owner写窗口，再写新增路径。不得先越界写入或手改机器授权字段。',
+      `当前未完：${input.observation.issues.join('；')}。缺原件/基线时明确origin_gap，可保留局部工具结果，不伪造完整请求通过。`,
+    ].join('\n\n');
+  }
   const { manifest, observation, frameworkRoot } = input;
   const questioning = observation.kind === 'questioning';
   const designRole = questioning || observation.kind === 'author';
@@ -502,14 +629,14 @@ export function initialDesignAuthorInstruction(input: { projectRoot: string; fra
       `D（原阶段域）=[${initialDesignPhasePolicy(input.projectRoot, frameworkRoot, manifest).domain.join(',')}]；E（明确动作）=[${initialDesignPhasePolicy(input.projectRoot, frameworkRoot, manifest).explicit.join(',')}]。本CU动作A由你按原请求/已准入CU选择，必须保留E且只能取D内阶段。E空不等于没有交付责任；不可删显式testing，也不把域D全抄成用户明确要求。完整feature的验收、设备与视觉义务仍由原resolver全量派生，不列testing不会裁掉真实设备/视觉要求；不得因缺工具缩减原目标。`,
       'impact-behavior-change判断的是最终用户在运行产品上可见或可操作的行为变化，不等同任何内部函数、公开API或部件状态变化。true会使testing入链并要求真实设备工具链；false仍保留验收设备层、性能待定和视觉定档的真实义务。工具缺失不是选择false的理由。依据该CU真实设计、源码与验收给完整判断、理由和实际来源；未知不能默认为false，也不复制root结论。必须整份生成候选，不手改hash。完成本职输入准备后由runtime严格验证、正式出生并施工。',
     ] : []),
-    ...(observation.kind === 'decompose' ? ['本次只提出新CU候选，保留全部已有canonical CU、蓝图及有效交付原件；现有CU内容修订必须交原正式设计发布事务。'] : []),
+    ...(observation.kind === 'decompose' ? ['同一次设计作者交回新CU候选及 construction_mapping：predicate_mappings、provide_mappings、design_ref_mappings 使用既有 contracts.change_unit 同形数组，逐项明确实际 implementation_refs 与 test_refs/verification_refs（未落盘可用 planned:）。不从 touches 或 AC ID 猜测测试文件；已有唯一明确设计映射可复用。consumer 接受 CU 后填真实 change_unit_ref，再由原 writer 整份校验并物化 Feature 契约；不需要额外作者调用补 sidecar。保留全部已有 canonical CU、蓝图及有效交付原件；现有CU内容修订交原正式设计发布事务。'] : []),
     observation.kind === 'questioning'
       ? questioningInstruction!
       : observation.kind === 'author'
         ? '按原始需求与真实工程事实设计当前切片，保留本次必要契约、数据闭环及风险。内部存储契约可direction: internal，不要求制造远程API。不得自写独立questioning；机器admission由runtime派生。'
         : '只在本次签发写集内完成前述候选或范围输入；蓝图设计缺口交原设计责任方，不自行补改蓝图，不扩大当前写集或删除真实义务。',
     ...(observation.kind === 'questioning' ? renderQuestioningResultInstructions(loadCanonicalBlueprint(input.projectRoot, manifest.feature).blueprint, 'initial-design-questioning') : []),
-    `蓝图位置：${observation.blueprintPath}；候选位置：${observation.candidatesPath}。候选形状为[{providerId,artifact}]，已有CU不重复创建。`,
+    `蓝图位置：${observation.blueprintPath}；候选位置：${observation.candidatesPath}。候选形状为[{providerId,artifact,construction_mapping}]；construction_mapping不含change_unit_ref，由接受方填真实身份。已有CU不重复创建。`,
     `实际检查命令（cwd=${path.join(frameworkRoot, 'harness')}）：npm run check:component-blueprint -- --project-root "${input.projectRoot}" --blueprint "${manifest.feature}" ${observation.kind === 'author' ? '--write-review ' : ''}--json。检查仍待质询不等于任务停止，报告真实产物/问题后由runtime继续。`,
     '完成本职工作后真实报告；作者调用结束不是原始交付完成。runtime负责真实检查、独立质询、CU接受/readiness与后续施工，不要自选阶段或伪造CU身份。',
     `当前职责=${observation.kind}。问题：\n${observation.issues.join('\n')}`,
@@ -541,6 +668,8 @@ export interface InitialDesignDeliveryProjection {
 export function readInitialDesignCompletionDisposition(input: { projectRoot: string; frameworkRoot: string; manifest: InitialDesignGoalManifest;
   observation?: InitialDesignObservation }): CurrentDisposition {
   const observed = input.observation ?? readInitialDesignDelivery(input);
+  if (observed.request) return observed.kind === 'construction' ? initialRequestDisposition(input.projectRoot, input.frameworkRoot, observed.request)
+    : resolveCurrentDisposition({ endpoint: 'request', phases: [], additionalProblems: [{ phase: 'component-design', id: 'execution_scope', action: 'repair', affects: 'completion', severity: 'BLOCKER', owner: 'component-design', detail: observed.issues.join('；') }] });
   const problems: CurrentDispositionProblem[] = [...(observed.disposition?.problems ?? [])];
   if (!observed.disposition) problems.push(...resolveCurrentDisposition(readCurrentDispositionInput({ endpoint: 'design', projectRoot: input.projectRoot,
     blueprintPath: observed.blueprintPath, blueprint: undefined, blueprintIssues: observed.blueprintIssues ?? [], phase: 'component-design' })).problems);

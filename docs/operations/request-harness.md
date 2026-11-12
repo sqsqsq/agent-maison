@@ -1,24 +1,76 @@
 # 无 Feature 专项 harness
 
-本入口用于实际写/跑测试，或用户要求经 checker 校验的专业报告，只完成本次 review/UT/testing 请求，不启动 Feature/Goal 链。只审查、解释或设计用例时，直接使用相应 Skill 的共享方法并交付结果，不为方法调用创建 request、facts 或六章报告。路径均由调用方明确指定；不能借用活跃 Feature 或 `_adhoc` 等占位身份。
+本入口用于直接修改的 compile/架构能力，以及实际写/跑测试或经 checker 校验的 review/UT/testing 请求。先消费 [统一前门](project-entry.md) 的本请求与用户覆盖；只完成实际请求终点，不强造 Feature、CU、Goal 或 `_adhoc` 身份。只审查、解释或设计用例时直接用对应 Skill 共享方法，无需 request/facts/六章报告。已有在途 Feature/CU 仍走原范围，不能拆 request 绕开其义务。
 
-纯编译直接使用 `cd framework/harness` 后的 `npm run compile -- --project-root <宿主根> --json`，不写 request JSON、不需要 Feature 或修正登记。编译日志位于宿主 `doc/reports/compile/`；能力缺席、显式跳过或真实失败均不宣称通过。
+纯编译可独立执行 `cd framework/harness` 后的 `npm run compile -- --project-root <宿主根> --json`。直接修改需核请求与实际内容时，在同次调用带 `--session-ref '<绝对原生transcript路径>#<原始user消息ID>'`，不增加分类命令。命令核原件 session/cwd/角色，从正常调研读取带来源事实，不能只给档位文本。缺原件/可靠基线仍可报告实际 compile/显式局部检查；没有可用原生原件时，自动 request 可仅用 `--target` / `--test-target` 实际执行显式局部能力，无需手写 JSON，仍消费同一 request schema/parser/provider。原 request 的 `origin_gap` 保留真实来源与完整对账缺口，工具实际执行结果独立显示，不签完整 review 或请求 PASS，也不能据此授予豁免或固定档位。facts 区分原生作者带来源的调研与原 parser 对当前字节的实际读取，不把机械读取说成语义已获证明。编译日志在宿主 `doc/reports/compile/`；编译绿只证明实际执行的检查。
 
-## Agent / adapter 执行顺序
-
-1. 根据用户已授权目标，写入请求 JSON，选择项目内、framework/.git/features_dir 外的独立报告目录。不要将操作命令字符串写入请求。
-2. Agent 自行执行准备命令，直接使用返回的 `request_sha256`、`baseline`、`bindings`、`reportDir`、`factsPath` 和 `gaps`，不重算身份/哈希；不要把命令清单转交用户代跑。UT 第一次写测试前就 prepare：先查模块/载体与缺口，原授权覆盖的准备继续做，未覆盖才说明具体缺口并取得授权；处理后重新 prepare，再写测试。不得先写到 `src/test` 等不可执行目录再探载体。
-3. 执行 Research，阅读实际目标和明确输入。有 base 时使用输出的具体 commit 审查差异；非 WORKTREE 的 review 输入来自该 commit。生成 P1 `schema_version: "1.1"` facts，subject 只含 request_sha256，established_by 为本次 phase，不写 feature/run_id。
-4. review 写出真实 review-report；UT/testing 完成其已授权输入准备。新增测试只写 allowed_test_writes，必须有实际行为来源：**每条断言自带预期来源登记**——用例名前加 `[CHAR-…]`（只记录现状）或 `[AC-…]` / `[BD-…]` / `[BRANCH-…]`（有来源标签），或在**紧邻该行上方**加 `// characterization` / `// expectation: <项目内相对路径>`；写在 `describe(` 上或文件头的总括注释**不算登记**（无作用域继承，`/* */` 块注释也不算），每条断言须单独成行、以 `it(` 或 `test(` 起行、名字用字符串字面量。`request_expectation_source` 把结果按「已登记来源 / 现状记录 / 历史未登记」三栏**分列**呈现，**不按类写「通过 M 条」**（provider 只给聚合结果，没有逐用例归属）；标注清楚的 characterization **不判 FAIL**，只有本次授权写入里「既无来源又未标注」的断言才是 BLOCKER。分类按行扫描、不解析字符串与模板字符串，把假的用例声明藏进字符串/模板字符串仍能骗过它与两道数量对账——**这条上限如实登记、不靠加机制堵**，登记是否诚实由写测试的人负责。必要输入变化后重新准备并更新 facts 绑定，不能沿用旧哈希。
-5. Agent 运行不带 prepare-request 的同一命令，读取实际 summary/checks。只有请求结果通过才结束；有失败/缺口不声称通过，也不自动追加下一阶段。
+有架构配置时 compile 默认对相关实际文件执行原依赖方向/跨模块出口检查；`--architecture-only` 只执行同一架构判据，不构建，也不要求 Feature 专用蓝图/CU 文档。`--target <项目相对路径>` 可重复限定显式目标，不能据此隐藏本请求其它实际影响。
 
 ```powershell
 cd framework/harness
+npm run compile -- --project-root <host> --session-ref '<绝对transcript>#<原始user消息ID>' --json
+npm run compile -- --project-root <host> --session-ref '<绝对transcript>#<原始user消息ID>' --architecture-only --target src/repository.ts --json
+```
+
+## Agent / adapter 执行顺序
+
+1. 首轮正常调研取得原请求、实际读取路径、Q1/Q2/Q3、独立结果依赖、跨部件、预期明确/做法唯一及起始调查；不要求用户表单或手写 JSON。adapter 从真实原生 payload/环境取得 transcript 与 user ID，沿同一 `--session-ref` 传给首次已有能力命令。边界解释、真实用户原文/定位、覆盖、精确 base/head、初始 dirty 归属及派生外框保存在同一 schema 的原 request；只复制本请求所需内容，不导出整段会话。
+2. **无 `--request-file` 时自动准备**：现有 writer 在本次 `reportDir/request.json` 写执行派生件，使用同一 parser/provider/报告。显式 `--report-dir` 须位于项目内、framework/.git/features_dir 外；省略默认落 `doc/reports/request/<原生请求身份短哈希>/<phase>`，同请求恢复复用。按实际目标可传重复的 `--target`、`--test-target`、`--allow-test-write`，testing 用 `--cases`。这些参数是本次目标/许可，不是可执行命令字符串。
+3. 首次 UT 写入前完成载体准备，自动路径并入首次能力调用；需要先查看 `gaps` 时带原 `--prepare-request`。直接使用返回的 request 路径、哈希、基线、bindings、reportDir/factsPath 与 allowed writes，不自算身份。模块/载体缺口在既有授权内继续补齐，未覆盖才指出具体缺失授权；不得先写到不可执行目录再探载体。自动 prepare 会落上述派生 request/上下文；**显式 request-file 的旧 prepare 仍只读**。
+4. 阅读真实目标/具体 base 到 head 差异。按返回上下文建立本 phase 的 P1 facts（`schema_version: "1.1"`、subject 仅 request_sha256，不写 feature/run_id），review 写真实报告，UT/testing 在 allowed_test_writes 内准备并执行。必要输入改变重新准备，不沿旧绑定宣称当前输入通过。同一请求途中 commit/恢复不重置初始基线；重叠初始 dirty 无前像须披露 unknown，不能吞入用户旧修改。
+5. 实际执行沿同一命令去掉 `--prepare-request`，读取 summary/checks 和真实证据；失败/缺口持续交回原作者，完成本请求全部适用义务才收口。自动/显式请求共用专业检查、隔离、载体和预期来源合同。特别简单以原始用户预期为来源，小型读取同一路径短蓝图的当前身份与具体验收；不建假 CU，不以旧 revision、路径存在或 characterization 冒充本次验收。
+
+```powershell
+cd framework/harness
+npm run check -- --project-root <host> --phase review --session-ref '<绝对transcript>#<原始user消息ID>' --report-dir doc/reports/review-01 --prepare-request
+npm run check -- --project-root <host> --phase review --session-ref '<绝对transcript>#<原始user消息ID>' --report-dir doc/reports/review-01
+```
+
+**断言预期来源不减免**：每条断言自带登记——用例名前加 `[CHAR-…]`（只记录现状）或 `[AC-…]` / `[BD-…]` / `[BRANCH-…]`（有来源标签），或紧邻该行上方加 `// characterization` / `// expectation: <项目内相对路径>`。特别简单可引用自动生成的原 request JSON 项目相对路径，它保存真实用户预期和原生出处；只有未核实 AC 标签不证明预期。旧行为测试随本次修改同步；已完成需求蓝图作为历史施工图，不为小修改重写；在途验收/契约修订仍回原入口。
+
+写在 `describe(` 或文件头的总括注释不算登记，无作用域继承，`/* */` 也不算；每条断言单独一行，以 `it(`/`test(` 起行且名字为字符串字面量。`request_expectation_source` 按“已登记来源/现状记录/历史未登记”分栏，不按类别声称通过多少条。诚实 characterization 不判 FAIL，也不计需求验收；本次允许写入里既无来源又未标注才是 BLOCKER。当前按行扫描，不解析字符串/模板串，假用例文本可骗过扫描与数量对账；这个边界如实保留，写测试者仍负责来源真实。仅来源路径可解析不等于语义已经机器证明。
+
+### 小型蓝图与同一请求的预期来源
+
+小型先完成同协议短蓝图的四样业务内容，再沿原请求实现与调用本能力。第一次设计调用在已有 `check:component-blueprint --session-ref` 中核原生来源并返回真实 `phase: component-design` 的 `request_file/source_refs`，默认只准备 request/稳定原文，不借本页 review/UT/testing 身份。只有获准补 canonical 机器来源时才加 `--prepare-source`；后续 `--request-file <返回路径>` 默认只读重验，不修改 canonical/request/source。已有权威项目内来源优先复用；纯 inline 必需项目内源时，原 writer 保存稳定原文输入底稿，出处绑定保留在同 request，不 hash 可变 request 整文件或建立第二需求真源。具体设计准备见 [蓝图设计输入](../concepts/blueprint-design-inputs.md#小型请求的首次准备与消费)。
+
+后续能力复用原用户目标、覆盖、基线和同一蓝图当前身份及具体验收 ID，自动准备使用原 parser/typed 合并，不新建 CU、假 Feature 或并列设计文件。review 消费目标、短设计、最终 diff 和有效验证；UT 每条预期实际指向当前验收，不以路径存在、旧 revision、只有标签或 characterization 冒充已验。相关蓝图修订后仅重验受影响绑定/断言，其它有效结果复用；仅编译/仅 review 请求仍止于自身终点，小型请求完成不代 CU/Component completion。
+
+设计检查返回的原 `phase: component-design` request 可直接交同一 check 入口续接，不能把原 JSON 手工改成 review/ut：
+
+```powershell
+npm run check -- --project-root <host> --phase review --request-file <原component-design的request_file> --prepare-request
+npm run check -- --project-root <host> --phase ut --request-file <原component-design的request_file> --test-target <合法测试载体内的项目相对路径> --allow-test-write <同一测试文件> --prepare-request
+```
+
+writer 自动在原设计 request 目录的 `<phase>/request.json` 派生本阶段请求；可选 `--report-dir <独立目录>` 覆盖落点。去掉 `--prepare-request` 执行同一命令，review 先在返回目录写真实报告，UT 仍先完成载体及 allowed writes 准备。各阶段保留 `origin_request` 指向原设计 request，以及工具发布的 `blueprint: {ref, acceptance_ids}`；`ref` 为经 canonical/同一 intake 重验的当前 ComponentBlueprintRef，`acceptance_ids` 是真实验收 ID，作者不手填摘要或换身份。派生读取原 user、起始 base 和当前来源，复用原 parser/provider，不重置基线或新建任务。
+
+小型 UT 的每条预期仍在紧邻用例上方登记 `// expectation: <canonical蓝图项目相对路径>#AC-1`；路径和 AC ID 都取本次真实绑定，不写虚构标签。原 `request_expectation_source` 会核当前蓝图 revision/身份、ID 是否存在及绑定验收是否被实际预期断言覆盖；旧 revision、不存在的 AC 或只有 characterization 不能满足绑定 AC。蓝图相关内容修订后回同一设计/请求链更新真实绑定，再核受影响断言，不靠改注释或删 FAIL 清账。
+
+新依据需完整设计时沿同一蓝图原位扩充，完成适用质询/准入后才接受 CU；不重置起点、不推倒合法实现。用户固定外框只披露影响，不暗中加重；已有受管 run 的真实用户调整须沿原范围修订核原文及请求关联，保留历史成果/失败，不拆成新 request 清账。用户仅固定小型不排除 UT/testing，真实产品 FAIL 不因排除后续验证变 PASS。
+
+### 已有 run 的真实用户调整
+
+已有受管任务不改成独立 request。用户明确调整本请求后续流程/验证时，沿原 `goal-mode-entry` 领取/恢复或 `goal-runner --resume` 入口，附本次真实用户消息的同一个 `--session-ref` 定位；不把新控制转述替换 manifest.requirement，也不重置原起始 base。在宿主 `framework/harness` 目录，有人在场的原入口例如：
+
+```powershell
+npx ts-node scripts/goal-mode-entry.ts --project-root <host> --feature <当前feature> --run-id <原run-id> --adapter <原adapter> --run-mode attended --next --session-ref '<绝对原生transcript>#<本次真实user消息ID>'
+```
+
+runtime 从该原件和当前 manifest 的 feature/run_id 自动形成原提案中的 `revision_input.request.user_control: {session_ref, feature, run_id}`，由既有 resolver/writer 追加 `scope_revised`；用户不手填 JSON、不手写事件或免检凭证。新 `--session-ref` 仍实际核原生来源；首次核实的用户原文、哈希和解析指令由机器保留在同一修订输入，历史 reader/恢复沿仓内已接受记录回放，不再要求旧原生文件或旧项目绝对路径仍可用。外部提案自填这些字段不授信；后续普通修订继承本 run 已接受覆盖，普通“继续”没有有效新控制时不改范围。
+
+该入口只把真实用户明确排除、尚未有效完成、且没有真实产品 FAIL 的后续 review/UT/testing 义务标为不适用，**不是验证 PASS**；已完成、有效证据、真实产品失败和历史 CU 均保留。仅指定“按小型”不会自动排除 UT/真机，也不会把既有 CU 改成无 CU 请求。真实目标/验收改变仍沿原设计修正责任，不借控制字段改写原目标、扩写权或清账。
+
+### 兼容显式 request-file
+
+已有手工 request-file 继续通过同一 parser/provider 执行，不因自动入口批量迁移。明确要求使用已有 request 时可沿原命令：
+
+```powershell
 npm run check -- --project-root <host> --phase review --request-file doc/requests/review.json --report-dir doc/reports/review-01 --prepare-request
 npm run check -- --project-root <host> --phase review --request-file doc/requests/review.json --report-dir doc/reports/review-01
 ```
 
-请求示例：
+显式请求示例（自动调用无需编写）：
 
 ```json
 {
@@ -40,7 +92,7 @@ inputs 使用当前 phase catalog 中可从文件读取的输入 ID；code/test_
 
 ## 结果和隔离
 
-准备命令不运行 checker、不创建目录或控制文件。正常执行复用 active workflow 指定的 checker、规则和 profile，忽略环境中的 Feature/Goal 身份；显式混用 Feature/Goal CLI 参数会失败。UT/testing 在调用 provider 前按实际 `ut.run` / `device_test.run` 声明补齐必要 personal setup；不附带无关 adapter 选择，setup 失败不执行测试。prepare 与 review 不触发这项补齐。request 暂不支持 `--report-reconcile-only`，该组合在 provider 调用前拒绝。
+prepare 不运行 checker；显式 request-file 路径不创建目录或控制文件，自动路径会在原 reportDir 保存 request/上下文派生件。正常执行复用 active workflow 指定的 checker、规则和 profile，忽略环境中的 Feature/Goal 身份；显式混用 Feature/Goal CLI 参数会失败。UT/testing 在调用 provider 前按实际 `ut.run` / `device_test.run` 声明补齐必要 personal setup；不附带无关 adapter 选择，setup 失败不执行测试。prepare 与 review 不触发这项补齐。request 暂不支持 `--report-reconcile-only`，该组合在 provider 调用前拒绝。
 
 本目录保存 context/facts.md、专业报告、script-report.json、summary.json；summary 明确 subject=request、completion_target=request，并记录请求、基线、目标、输入绑定与真实 evidence 引用。它不是 Feature receipt、attestation 或 completion，不能据此推进 CU/Feature。
 

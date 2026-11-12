@@ -200,7 +200,16 @@ function questioningReply(host: Host, denyMissing: boolean, blueprintFile = `doc
   return JSON.stringify({ items });
 }
 
-function decompose(host: Host): void {
+function authorConstructionMapping(cu: any, test_refs: string[]): any {
+  const implementation_refs = [SOURCE];
+  return {
+    predicate_mappings: cu.target_predicates.map((row: any) => ({ predicate_id: row.predicate_id, implementation_refs, test_refs })),
+    provide_mappings: cu.provides.map((row: any) => ({ provide_id: row.provide_id, implementation_refs, test_refs })),
+    design_ref_mappings: cu.design_refs.map((design_ref: any) => ({ design_ref, implementation_refs, verification_refs: test_refs })),
+  };
+}
+
+function decompose(host: Host, includeConstructionMapping = true): void {
   const identity = host.load('scripts/utils/component-blueprint-path').loadCanonicalBlueprint(host.root, BLUEPRINT);
   const cu = YAML.parse(read(FIXTURE, `doc/features/${BLUEPRINT}/${UNIT}/change-unit.yaml`));
   const rebind = (value: any): void => {
@@ -225,7 +234,8 @@ function decompose(host: Host): void {
   cu.safe_intermediate_state = { description: 'Pure internal calculation compiles and can be used independently without runtime or UI state', build_validation_refs: EVIDENCE_REFS, compatibility_refs: [EVIDENCE_REFS[0]], recovery_refs: [EVIDENCE_REFS[1]] };
   cu.provenance.source_revision = `revision-${identity.blueprint.revision}`;
   cu.provenance.extraction_method = 'builtin-vertical-slice-decomposition';
-  writeHostFile(host.root, `doc/features/${BLUEPRINT}/blueprint/change-unit-candidates.json`, JSON.stringify([{ providerId: 'builtin-vertical-slice-decomposition', artifact: cu }]));
+  writeHostFile(host.root, `doc/features/${BLUEPRINT}/blueprint/change-unit-candidates.json`, JSON.stringify([{ providerId: 'builtin-vertical-slice-decomposition', artifact: cu,
+    ...(includeConstructionMapping ? { construction_mapping: authorConstructionMapping(cu, EVIDENCE_REFS.map(ref => 'planned:' + ref)) } : {}) }]));
 }
 
 function unitReviewReport(host: Host, feature: string): void {
@@ -247,11 +257,9 @@ function unitMaterials(host: Host, context: any): void {
       const projected = host.load('scripts/utils/blueprint-skill-projection').deriveBlueprintSkillInput(host.root, feature, host.frameworkRoot, 'contracts');
       assert.equal(projected.state, 'resolved', projected.detail);
       const identity = host.load('scripts/utils/change-unit-path'), loaded = identity.loadCanonicalChangeUnit(host.root, BLUEPRINT, UNIT);
-      const contracts = structuredClone(projected.value), implementation_refs = [SOURCE], test_refs = EVIDENCE_REFS;
+      const contracts = structuredClone(projected.value);
       contracts.change_unit = { change_unit_ref: identity.createChangeUnitRef(loaded),
-        predicate_mappings: loaded.changeUnit.target_predicates.map((row: any) => ({ predicate_id: row.predicate_id, implementation_refs, test_refs })),
-        provide_mappings: loaded.changeUnit.provides.map((row: any) => ({ provide_id: row.provide_id, implementation_refs, test_refs })),
-        design_ref_mappings: loaded.changeUnit.design_refs.map((design_ref: any) => ({ design_ref, implementation_refs, verification_refs: test_refs })) };
+        ...authorConstructionMapping(loaded.changeUnit, EVIDENCE_REFS) };
       writeYaml(host.root, `doc/features/${rel}/contracts.yaml`, contracts);
       if (projected.artifacts?.['use-cases@1']) writeYaml(host.root, `doc/features/${rel}/use-cases.yaml`, projected.artifacts['use-cases@1']);
     }
@@ -271,7 +279,8 @@ function unitMaterials(host: Host, context: any): void {
   assert(context.factsContext, 'the author must consume its actual admitted research context');
   if (!fs.existsSync(facts)) {
     assert(!context.factsContext.baseline, 'an absent prior facts original cannot become a new baseline');
-    const sources = context.factsContext.source_paths.filter((file: string) => fs.existsSync(path.join(host.root, file)) && fs.statSync(path.join(host.root, file)).isFile());
+    const sources = [...new Set<string>([...context.factsContext.source_paths, SOURCE, TEST])]
+      .filter(file => fs.existsSync(path.join(host.root, file)) && fs.statSync(path.join(host.root, file)).isFile());
     for (const file of sources) fs.readFileSync(path.join(host.root, file));
     writeHostFile(host.root, path.relative(host.root, facts), '---\n' + YAML.stringify({ schema_version: '1.1', feature, run_id: context.runId,
       established_by: context.factsContext.first_phase, ready_to_produce: true, has_blocker_coverage_risk: false, exploration_mode: 'sequential',
@@ -525,12 +534,18 @@ const cases = [{
           const doc = blueprintDraft(host, false); logical(doc).provenance.evidence_strength = 'observed';
           writeYaml(host.root, canonical, doc);
         } else if (phase === 'initial-design-questioning') output = questioningReply(host, false);
-        else if (phase === 'initial-design-decomposition') decompose(host);
+        // This recovery case starts from a legacy CU whose weak design never published a construction mapping.
+        else if (phase === 'initial-design-decomposition') decompose(host, false);
         else if (phase === 'design-repair-author') {
           authors++;
           const request = JSON.parse(fs.readFileSync(step.request.path, 'utf8'));
           assert(request.context.instruction.includes('authority_target_provenance_missing'), 'the real CU consumer gap must reach its design owner');
-          if (repair) { const doc = YAML.parse(read(host.root, draft)); logical(doc).provenance.evidence_strength = 'authoritative'; writeYaml(host.root, draft, doc); }
+          if (repair) {
+            const doc = YAML.parse(read(host.root, draft)); logical(doc).provenance.evidence_strength = 'authoritative'; writeYaml(host.root, draft, doc);
+            const unit = host.load('scripts/utils/change-unit-path').loadCanonicalChangeUnit(host.root, BLUEPRINT, UNIT).changeUnit;
+            writeHostFile(host.root, `${control.prepared.manifest.report_dir}/design-repair/change-unit-candidates.json`, JSON.stringify([{ providerId: 'builtin-vertical-slice-decomposition', artifact: unit,
+              construction_mapping: authorConstructionMapping(unit, EVIDENCE_REFS.map(ref => 'planned:' + ref)) }]));
+          }
         } else if (phase === 'design-repair-questioning') output = questioningReply(host, false, draft);
         else if (phase.startsWith('initial-design-scope-')) {
           const feature = host.load('scripts/utils/change-unit-path').deriveChangeUnitFeatureId(BLUEPRINT, UNIT);

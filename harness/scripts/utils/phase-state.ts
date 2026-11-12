@@ -172,14 +172,7 @@ export function isGoalHeadlessEnv(): boolean {
  * 在场即为 goal CLI；自检与外层 gate 均只产 proposal，正式写者是 runtime。
  */
 export function hasGoalExecutionSignal(): boolean {
-  return (
-    Boolean(process.env.MAISON_GOAL_RUN_ID?.trim()) ||
-    Boolean(process.env.MAISON_GOAL_ATTEMPT?.trim()) ||
-    // plan b3e8d4c7 t1：新增的 attempt phase 同属 goal 信号——不入并集的话，
-    // 子进程只剩 PHASE 时真实 goal 上下文会被当 manual（与本 plan 的 fail-closed 相悖）。
-    Boolean(process.env.MAISON_GOAL_ATTEMPT_PHASE?.trim()) ||
-    isGoalOrchestrationEnv()
-  );
+  return require('../../../agents/shared/goal-execution-signal.cjs').hasGoalExecutionSignal(process.env);
 }
 
 export function readGoalGateDeadlineMs(env: NodeJS.ProcessEnv = process.env): number | undefined {

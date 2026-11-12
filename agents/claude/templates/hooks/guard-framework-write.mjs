@@ -100,6 +100,11 @@ async function main() {
     process.stderr.write(verdict.reason + '\n');
     process.exit(2);
   }
+  const entry = core.evaluateProjectEntry?.({ projectRoot, filePath: target, payload });
+  if (entry?.decision === 'deny') {
+    process.stderr.write(entry.reason + '\n'); process.exit(2);
+  }
+  if (entry?.sessionRef || entry?.note) process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: [entry.sessionRef ? `Maison原生来源：--session-ref ${JSON.stringify(entry.sessionRef)}` : '', entry.note ?? ''].filter(Boolean).join('\n') } }) + '\n');
   process.exit(0);
 }
 

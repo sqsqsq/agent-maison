@@ -38,7 +38,7 @@ import {
   featurePhaseReportsDir,
 } from '../../../harness/config';
 import { diagnoseInstallBlocking, writeUtInstallDiagJson } from './device-install-diag';
-import { isLibraryFormat, parseJson5 } from './har-export-resolve';
+import { isLibraryFormat, parseJson5, SDK_RESERVED_SCOPE } from './har-export-resolve';
 // type-only：编译期擦除，不构成 hvigor-runner ↔ hdc-runner 运行期 import 环
 // （运行期互调仍走函数内 require，见 runHvigorTest）。
 import type {
@@ -340,11 +340,6 @@ const PROJECT_DEPENDENCY_PATTERNS = [
   /Unable to resolve/i,
   /Module not found/i,
 ];
-
-// ohpm 物理上**无法声明**的点分 SDK / 系统命名空间（SDK 自带，不进 oh-package.json5）。
-// 只收窄到点分命名空间；@hms-* / @hw-* 等连字符 vendor scope 是真·第三方 ohpm 包，绝不在此过滤
-// （否则会把真实缺声明吞成漏报、并破坏现有单测）。
-const SDK_RESERVED_SCOPE = /^@(?:ohos|kit|system|arkts)(?:\.|$)/i;
 
 /** 版本目录碎片（如 @1.0.0-301/oh_modules）——非包名，来自 .ohpm 缓存路径，物理上不可声明。 */
 function isVersionFragmentDep(scope: string, name: string): boolean {

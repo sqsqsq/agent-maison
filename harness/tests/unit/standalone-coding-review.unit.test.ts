@@ -1581,6 +1581,7 @@ fs.writeFileSync(${JSON.stringify(resultFile)},JSON.stringify(result?{context:re
       phaseIssues: readPhaseRepairIssues(f.root, 'demo', 'review', { frameworkRoot, subjectId: summary.verifier_subject_id, runId: f.manifest.run_id }),
       mismatches: material?.files.filter(file => !verifierMaterialFileMatchesCurrent({ projectRoot: f.root, feature: 'demo', material, file: file.path })).map(file => file.path),
       disposition: resolveCurrentDisposition(readCurrentDispositionInput({ projectRoot: f.root, frameworkRoot, feature: 'demo', chain: ['review'], runId: f.manifest.run_id })) };
+    fs.mkdirSync(path.join(frameworkRoot, 'harness/reports/72b6f0d9/p2'), { recursive: true });
     fs.writeFileSync(path.join(frameworkRoot, 'harness/reports/72b6f0d9/p2/c-late-diagnostic-before-finalize.json'), JSON.stringify(diagnostic, null, 2) + '\n');
     const receipt = resolveReceiptFilePath(f.root, 'demo', 'review').path;
     fs.mkdirSync(path.dirname(receipt), { recursive: true });

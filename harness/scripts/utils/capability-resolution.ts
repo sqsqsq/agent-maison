@@ -13,7 +13,7 @@ import { inferLegacyProjectRoot, isInsideProjectRoot, resolveDependencyPath, val
 import { decodeTextFile, SpecLoader } from './spec-loader';
 import { loadWorkflowSpec, workflowForExistingRun } from '../../workflow-loader';
 import { loadGoalManifestFromRun } from './goal-manifest';
-import { deriveBlueprintSkillInput, compareAuthoritativeContent } from './blueprint-skill-projection';
+import { deriveBlueprintSkillInput, deriveRequestBlueprintSkillInput, compareAuthoritativeContent } from './blueprint-skill-projection';
 import { artifactReadCandidatePaths, catalogPath, featureFilePath, loadFrameworkConfig, relFeaturesDir } from '../../config';
 import type { CheckResult } from './types';
 import { normalizeDeviceTestCases } from './device-test-case-kernel';
@@ -303,7 +303,7 @@ function resolveDerive(
     return value.length ? resolvedSourceFileSet(value, dependencies) : { state: 'absent', dependencies, detail: 'requested source targets absent' };
   }
   if (source.provider_id === 'derive.blueprint-acceptance' || source.provider_id === 'derive.blueprint-contracts') {
-    if (feature === undefined) return { state: 'absent', dependencies: [], detail: 'request has no blueprint Feature' };
+    if (feature === undefined) return options.request ? deriveRequestBlueprintSkillInput(projectRoot, options.request, options.frameworkRoot, source.provider_id === 'derive.blueprint-acceptance' ? 'acceptance' : 'contracts') : { state: 'absent', dependencies: [], detail: 'request has no blueprint design source' };
     return deriveBlueprintSkillInput(projectRoot, feature, options.frameworkRoot, source.provider_id === 'derive.blueprint-acceptance' ? 'acceptance' : 'contracts', options.authorityReaders);
   }
   if (options.inputContext) {
@@ -925,6 +925,7 @@ export function resolveRequestInputs(projectRoot: string, frameworkRoot: string,
   const inputContext: PhaseInputContext = { schema_version: '1.1', subject: { request_sha256: request.request_sha256 }, obligations: {}, required_outputs: [] };
   const resolved: ResolvedPhaseInputs = { phase: request.phase, context: inputContext, values: {}, artifacts: {} };
   const selected = phase.inputs.filter(input => request.inputs[input.id] !== undefined
+    || (request.blueprint && input.sources.some(source => source.kind === 'derive' && ['derive.blueprint-acceptance', 'derive.blueprint-contracts'].includes(source.provider_id)))
     || (request.targets.files.length > 0 && input.sources.some(source => source.kind === 'derive' && source.provider_id === 'derive.codebase'))
     || (request.targets.tests.length > 0 && input.sources.some(source => source.kind === 'derive' && source.provider_id === 'derive.test-targets')));
   if (request.phase === 'review') selected.push({ id: 'review_report', sources: [{ kind: 'artifact', artifact: 'review-report@1' }] });

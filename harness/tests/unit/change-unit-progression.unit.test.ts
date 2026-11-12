@@ -39,6 +39,7 @@ import { ContractsSpec, AcceptanceSpec } from '../../scripts/utils/types';
 import { SpecLoader } from '../../scripts/utils/spec-loader';
 import { observeChangeUnitCompletion, ChangeUnitCompletionState } from '../../scripts/utils/change-unit-completion';
 import { assessFeature, type FeatureAssessment } from '../../scripts/utils/feature-assessment';
+import { prepareFeatureScopeCandidate } from '../../scripts/utils/feature-track';
 import { deriveChangeUnitBlockers } from '../../scripts/utils/change-unit-blockers';
 import { detectChangeUnitDependencyCycles, evaluateChangeUnitDependencies } from '../../scripts/utils/change-unit-dependencies';
 import { evaluateChangeUnitCarryForward } from '../../scripts/utils/change-unit-reconciliation';
@@ -1103,17 +1104,28 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     });
   }));
 
-  results.push(test('M7: a valid batch writes 1..N canonical CUs atomically and derives readiness', () => {
+  results.push(test('M7/B: a valid batch admits 1..N canonical CUs; references alone retain required plan and no completion credit', () => {
     withTempProject(projectRoot => {
       emptyWorkspace(projectRoot);
       // 单 CU 正向：1 个候选是合法交付
       const single = acceptChangeUnitDecomposition(projectRoot, 'ledger-app-blueprint', [candidateOf('prep-single')]);
       assert(single.changeUnitIds.join(',') === 'prep-single', `单 CU 写出失败：${single.changeUnitIds.join(',')}`);
       let readiness = deriveDesignPreparationReadiness(projectRoot, 'ledger-app-blueprint');
-      assert(readiness.ready, `单 CU readiness 未就绪：${JSON.stringify(readiness.perUnit)}`);
+      assert(readiness.ready, `单 CU 基础设计应可准入：${JSON.stringify(readiness.perUnit)}`);
       assert(readiness.entersConstruction === false, '设计准备段不得进入施工');
-      assert(readiness.nextEntry === 'change-unit-progression', `下一步入口应指回施工入口，实际 ${readiness.nextEntry}`);
-      // 施工段前提此时成立
+      assert(readiness.nextEntry === 'change-unit-progression', `下一步应交原施工入口，实际 ${readiness.nextEntry}`);
+      const unit = asChangeUnitArtifact(single.accepted[0].changeUnit);
+      const feature = deriveChangeUnitFeatureId(unit.blueprint_id, unit.change_unit_id);
+      const construction = validateChangeUnitFeatureProjection(projectRoot, feature, undefined, undefined, false, 'plan');
+      assert(construction.issues.some(issue => issue.id === 'change_unit_contracts_sidecar_missing'), JSON.stringify(construction));
+      const { scope } = prepareFeatureScopeCandidate({ projectRoot, frameworkRoot: path.resolve(__dirname, '../../..'), feature, completionTarget: 'feature',
+        requestedResults: ['deliver approved ledger'], requestedPhases: ['plan', 'coding'], requirement: 'deliver approved ledger design' });
+      assert(scope.phase_chain.includes('plan'), JSON.stringify(scope));
+      assert(scope.obligations.some(obligation => obligation.owner_phase === 'plan' && obligation.applicability === 'required' && !obligation.satisfied_by?.length), JSON.stringify(scope));
+      assert(!scope.reused_phases.some(reused => ['plan', 'coding'].includes(reused.phase)), '只有引用不能复用施工信用');
+      assert(!scope.phase_chain.includes('coding') || scope.phase_chain.indexOf('plan') < scope.phase_chain.indexOf('coding'), 'coding 不得绕过未完成的 plan');
+      assert(observeChangeUnitCompletion(projectRoot, unit).state === 'ABSENT', '接纳 CU 不得生成完成信用');
+      // CU 可交施工入口；映射仍由上面的原 plan 义务补齐。
       assert(evaluateConstructionEntry(projectRoot, 'ledger-app-blueprint').canEnter, '≥1 CU 后施工段应可进入');
 
       // 多 CU 正向：追加两个是正常调和追加，不是升级

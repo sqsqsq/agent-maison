@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
+import { isSmallBlueprintRequest, type ComponentBlueprintValidationContext } from './component-blueprint-validator';
 import { asRecord } from './component-blueprint-model';
 import { componentBlueprintPath, loadCanonicalBlueprint } from './component-blueprint-path';
 import { collectBlueprintReviewInputs, reviewChangeUnitBindings } from './blueprint-review-inputs';
@@ -10,7 +11,7 @@ import { enumerateCanonicalChangeUnitIds } from './change-unit-path';
 
 export interface BlueprintReviewResult {
   path: string;
-  status: 'current' | 'refreshed' | 'failed';
+  status: 'current' | 'refreshed' | 'failed' | 'not_applicable';
   writtenPaths: string[];
   sourceGaps: string[];
   reason?: string;
@@ -34,11 +35,12 @@ export function summarizeBlueprintReviewResults(...results: Array<BlueprintRevie
   const final = attempts[attempts.length - 1];
   if (!final) return undefined;
   const writtenPaths = [...new Set(attempts.flatMap(result => result.writtenPaths))];
-  return { ...final, writtenPaths, status: final.status === 'failed' ? 'failed' : writtenPaths.length ? 'refreshed' : 'current' };
+  return { ...final, writtenPaths, status: final.status === 'failed' || final.status === 'not_applicable' ? final.status : writtenPaths.length ? 'refreshed' : 'current' };
 }
 
 /** 展示写入独立于设计/施工判定：任何失败均返回诊断，不抛入原事务。 */
-export function materializeBlueprintReview(projectRoot: string, blueprintId: string): BlueprintReviewResult {
+export function materializeBlueprintReview(projectRoot: string, blueprintId: string, context: ComponentBlueprintValidationContext = {}): BlueprintReviewResult {
+  if (isSmallBlueprintRequest(context)) return { path: blueprintReviewPath(projectRoot, blueprintId), status: 'not_applicable', writtenPaths: [], sourceGaps: [], reason: '小型请求只显示原蓝图摘要，不生成独立评审文档或完整准入。', rebuildCommand: '' };
   const target = blueprintReviewPath(projectRoot, blueprintId);
   const result: BlueprintReviewResult = { path: target, status: 'failed', writtenPaths: [], sourceGaps: [], rebuildCommand: blueprintReviewRebuildCommand(blueprintId) };
   const temporary = `${target}.tmp-${process.pid}-review`;
@@ -91,7 +93,8 @@ export function blueprintReviewDifferences(projection: string, source: ReturnTyp
   return reasons;
 }
 
-export function inspectBlueprintReview(projectRoot: string, blueprintId: string) {
+export function inspectBlueprintReview(projectRoot: string, blueprintId: string, context: ComponentBlueprintValidationContext = {}) {
+  if (isSmallBlueprintRequest(context)) return { path: blueprintReviewPath(projectRoot, blueprintId), status: 'not_applicable', sourceGaps: [], rebuildCommand: '', reasons: [] };
   const target = blueprintReviewPath(projectRoot, blueprintId);
   try {
     const source = loadBlueprintReviewSource(projectRoot, blueprintId);

@@ -81,7 +81,7 @@ profile-skill-asset:<skill-id>/<asset_key>
 | catalog-bootstrap | [project/catalog-bootstrap/SKILL.md](project/catalog-bootstrap/SKILL.md) | `module-catalog.yaml` / `glossary.yaml` |
 | code-graph | [project/code-graph/SKILL.md](project/code-graph/SKILL.md) | 模块 `code-graph.yaml` 建图、core 策展与 module-graph 漂移门禁 |
 | conventions-bootstrap | [project/conventions-bootstrap/SKILL.md](project/conventions-bootstrap/SKILL.md) | 逐条确认策展可选工程惯例资产 |
-| component-design | [project/component-design/SKILL.md](project/component-design/SKILL.md) | **创建或继续部件设计的唯一用户入口**（组织侧称 Story Design）：需求源物化 → 正式性判定 → 蓝图 admitted → 1..N canonical CU → 施工 readiness；局部请求按需结束，完整交接才要求 CU |
+| component-design | [project/component-design/SKILL.md](project/component-design/SKILL.md) | **创建或继续部件设计的唯一用户入口**（组织侧称 Story Design）：先消费统一前门判断；特别简单用直接能力；小型在同协议短蓝图完成四样内容、无 CU/独立质询/独立评审；中型/复杂沿来源 → 完整蓝图 → canonical CU → readiness，明确映射由原 writer 复用/生成；局部请求按需结束 |
 | change-unit-progression | [project/change-unit-progression/SKILL.md](project/change-unit-progression/SKILL.md) | 设计准备段（0 CU 合法入口）与 Change Unit 单并发连续推进 |
 | component-closure | [project/component-closure/SKILL.md](project/component-closure/SKILL.md) | 从蓝图、CU、Feature completion 与既有证据机械派生部件闭环 |
 | goal-mode | [project/goal-mode/SKILL.md](project/goal-mode/SKILL.md) | goal-runner 薄入口 |

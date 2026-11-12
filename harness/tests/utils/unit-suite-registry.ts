@@ -45,6 +45,7 @@ const CORE_SUITES: UnitSuiteRegistration[] = [
   { id: 'implementation-authority', modulePath: './unit/implementation-authority.unit.test' },
   { id: 'request-entry', modulePath: './unit/request-entry.unit.test', releaseOnly: true },
   { id: 'compile-entry', modulePath: './unit/compile-entry.unit.test' },
+  { id: 'request-intake', modulePath: './unit/request-intake.unit.test' },
   { id: 'standalone-coding-review', modulePath: './unit/standalone-coding-review.unit.test' },
   { id: 'obligation-scoped-verification', modulePath: './unit/obligation-scoped-verification.unit.test' },
   { id: 'blueprint-skill-projection', modulePath: './unit/blueprint-skill-projection.unit.test' },

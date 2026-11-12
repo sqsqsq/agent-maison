@@ -846,7 +846,7 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
   try {
     if (manifest.execution_scope) {
       const birth = validateExecutionScope(manifest.execution_scope);
-      applyScopeRevisions(birth, events);
+      applyScopeRevisions(birth, events, { projectRoot, feature: manifest.feature, runId: manifest.run_id });
       const effective = effectiveScopeView({ birth, events, workflow });
       if (effective !== manifest.execution_scope) {
         revisedChain = effective.phase_chain.map(p => normalizePhaseId(p, p)).filter((p): p is FeaturePhase => allowedPhases.includes(p));
@@ -860,7 +860,7 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
   const hasRunStart = events.some((e) => e.type === 'run_start');
   const lastRunEnd = resolveEffectiveRunEnd(events);
 
-  const spanEvents = eventsWithScopeRevocations(manifest.execution_scope, events);
+  const spanEvents = eventsWithScopeRevocations(manifest.execution_scope, events, {}, { projectRoot, feature: manifest.feature, runId: manifest.run_id });
   const invocations = buildInvocationViews(spanEvents, chain);
   const spans = buildPhaseSpans(spanEvents, chain, invocations);
   const currentSpan = findCurrentSpan(spans);

@@ -19,6 +19,35 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import nativeRequest from './native-request.cjs';
+import goalSignal from './goal-execution-signal.cjs';
+
+/** Existing editor hook only: cooperative entry recovery, never a semantic per-request lock. */
+export function evaluateProjectEntry({ projectRoot, filePath, payload, env = process.env }) {
+  const frameworkRoot = path.join(projectRoot, 'framework');
+  if (goalSignal.hasGoalExecutionSignal(env)) return { decision: 'allow' };
+  const transcript = payload?.transcript_path;
+  if (typeof transcript !== 'string' || !transcript) return { decision: 'allow', note: '原生transcript未提供；仅常驻指引与compile/request后验核对，不声称写前已核。' };
+  try {
+    const ref = `${transcript}${payload.prompt_id ? '#' + payload.prompt_id : ''}`;
+    const session = nativeRequest.readNativeSession(ref, projectRoot);
+    if (session.sessionId !== payload.session_id && session.sessionId !== payload.conversation_id) return { decision: 'allow', note: '原生session定位未核，写前检查降级。' };
+    const rel = path.relative(projectRoot, path.resolve(projectRoot, filePath)).replace(/\\/g, '/');
+    if (!nativeRequest.productTarget(projectRoot, frameworkRoot, filePath, [], session.request.text.includes(rel))) return { decision: 'allow' };
+    let sessionExempt = false;
+    for (const message of session.messages.filter(message => message.role === 'user')) {
+      const control = nativeRequest.userControl(message.text);
+      if (control.revoke) sessionExempt = false;
+      if (control.session) sessionExempt = true;
+    }
+    const current = nativeRequest.userControl(session.request.text);
+    if (sessionExempt || current.exempt) return { decision: 'allow', sessionRef: `${session.file}#${session.request.id}` };
+    if (nativeRequest.frontDoorLoaded(session, projectRoot, frameworkRoot)) return { decision: 'allow', sessionRef: `${session.file}#${session.request.id}` };
+    return { decision: 'deny', reason: '[Maison统一前门] 先读根入口及 framework/docs/operations/project-entry.md，沿原请求继续本次写入；不需要用户重发需求。' };
+  } catch {
+    return { decision: 'allow', note: '原生原件暂不可读/格式未支持，写前检查降级；compile/request仍须核来源，不能签完整请求通过。' };
+  }
+}
 
 // --------------------------------------------------------------------------
 // 策略加载（SSOT）

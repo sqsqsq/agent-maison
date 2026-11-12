@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { spawnSync } from 'child_process';
+import { spawnSync, execFileSync, type SpawnSyncReturns } from 'child_process';
 import * as YAML from 'yaml';
 import {
   BlueprintRecord,
@@ -16,8 +16,9 @@ import {
   componentBlueprintPath,
   loadCanonicalBlueprint,
   resolveComponentBlueprintRef,
+  sha256Bytes,
 } from '../../scripts/utils/component-blueprint-path';
-import { validateComponentBlueprint, diagnoseBlueprintContent } from '../../scripts/utils/component-blueprint-validator';
+import { validateComponentBlueprint, diagnoseBlueprintContent, type ComponentBlueprintValidationContext } from '../../scripts/utils/component-blueprint-validator';
 import { BLUEPRINT_REVIEW_FORMAT, renderBlueprintReviewMarkdown } from '../../scripts/utils/blueprint-review-projection';
 import { collectBlueprintReviewInputs } from '../../scripts/utils/blueprint-review-inputs';
 import { generateMermaidViewGraph, generateMermaidPhaseGraph, generateMermaidModuleDependencyGraph, parseMermaidSubset, validateGeneratedBlueprintGraphs } from '../../scripts/utils/blueprint-graph-generator';
@@ -31,10 +32,14 @@ import { applyIndependentQuestioningOutput, independentQuestioningBlockers, requ
   unchangedViewQuestioningScopes, validateBlueprintQuestioning } from '../../scripts/utils/blueprint-questioning';
 import { isApplicableView, isChangedView } from '../../scripts/utils/blueprint-views';
 import { validateRuntimeDataFlows } from '../../scripts/utils/runtime-data-flow-check';
-import { checkCanonicalComponentBlueprint, resolveCliRefTarget } from '../../scripts/check-component-blueprint';
+import { checkCanonicalComponentBlueprint, resolveCliRefTarget, prepareCanonicalBlueprintSource } from '../../scripts/check-component-blueprint';
 import { clearSkillsIndexCache, listBuiltinSkillIds, resolveSkillPath } from '../../scripts/utils/resolve-skill-path';
 import { clearFrameworkConfigCache } from '../../config';
+import { blueprintReviewPath, materializeBlueprintReview, inspectBlueprintReview } from '../../scripts/utils/blueprint-review-materialization';
+import { resolveDeliveryPolicy, type DeliveryFacts } from '../../scripts/utils/execution-scope';
+import type { RequestIntake } from '../../scripts/utils/request-intake';
 import { profileHasDesignLens } from '../../scripts/utils/blueprint-provider-boundary';
+import { enumerateCanonicalChangeUnitIds } from '../../scripts/utils/change-unit-path';
 
 interface UnitCaseResult {
   name: string;
@@ -390,6 +395,66 @@ function withTempProject(run: (projectRoot: string, filePath: string) => void): 
   try { run(projectRoot, filePath); } finally { fs.rmSync(tempRoot, { recursive: true, force: true }); }
 }
 
+function smallBlueprint(projectRoot: string, fixed = true): { blueprint: BlueprintRecord; context: ComponentBlueprintValidationContext } {
+  const source = 'requirements/compact.md', text = `${fixed ? '按小型处理：' : ''}已有标题为空时返回“未命名”，其余标题保持原样。`;
+  fs.mkdirSync(path.join(projectRoot, 'requirements'), { recursive: true }); fs.writeFileSync(path.join(projectRoot, source), text);
+  const items = prepareBlueprintSourceItems(projectRoot, [source], '2026-11-11T00:00:00Z');
+  const provenance = structuredClone(items[0]!.provenance);
+  const blueprint: BlueprintRecord = { artifact: 'component-blueprint@1', component_id: 'ledger', blueprint_id: 'ledger-app-blueprint', revision: 1,
+    provenance, discovery: { inputs: { current_scope_items: items }, requirement_traceability: [{ item_id: items[0]!.item_id, blueprint_refs: ['view:development/node:change'] }] },
+    design_views: [{ view_id: 'development', nodes: [{ node_id: 'change', owner: 'title-owner', current_state: '空标题返回空串', target_state: '空标题返回未命名，其余保持', provenance,
+      verification_refs: ['AC-1'], acceptance: { criteria: [{ id: 'AC-1', priority: 'P1', description: '空标题兼容默认值', testable: true,
+        verification_steps: ['以空串调用标题展示函数'], expected_result: '未命名', ut_layer: 'unit', ut_focus: '空串与非空标题对照' }] }, contracts: { files: ['src/title.ts'] } }] }] };
+  refreshBlueprintFingerprints(blueprint);
+  const facts = Object.fromEntries(Object.entries({ design_tradeoff: false, unclosed_impact: false, irreversible_data: false, dependent_results: false, cross_component: false, expectations_clear: true, unique_approach: fixed })
+    .map(([key, value]) => [key, { value, reason: 'unit fixture: already parsed A context', sources: [source] }])) as unknown as DeliveryFacts;
+  const intake: RequestIntake = { session_ref: 'unit-native#user', session_id: 'unit-native', user: { id: 'user', text, line: 1 },
+    boundary: { origin_user_id: 'user', explanation: '本请求', source_line: 1 }, front_door_loaded: true,
+    control: { exempt: false, scope: 'request', ...(fixed ? { fixed: 'small' as const } : {}), excluded: [], sources: ['unit-native#user'] }, facts, policy: resolveDeliveryPolicy(facts, fixed ? 'small' : undefined),
+    baseline: { base: 'a'.repeat(40), head: 'WORKTREE', source: 'captured', detail: 'unit fixture', initial_dirty: [] }, targets: ['src/title.ts'], attribution_unknown: [], source_reads: [source], content_fingerprint: 'b'.repeat(64), gaps: [] };
+  return { blueprint, context: { projectRoot, requestIntake: intake, requestSourceItems: items } };
+}
+
+function withPublicSmallBlueprint(run: (fixture: {
+  root: string; canonical: string; id: string; source: string; head: string; nativeFile: string;
+  cli: (args: string[], blueprintId?: string) => SpawnSyncReturns<string>;
+  startRequest: (id: string) => void;
+}) => void): void {
+  withTempProject(root => {
+    const { blueprint } = smallBlueprint(root), id = 'compact-cli', source = 'src/title.ts';
+    blueprint.blueprint_id = id;
+    fs.mkdirSync(path.join(root, 'src'), { recursive: true }); fs.writeFileSync(path.join(root, source), 'export const title = "";\n');
+    fs.writeFileSync(path.join(root, '.gitignore'), '.claude-fixture/\ndoc/reports/\n');
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: 'pipe' }).trim();
+    git('init'); git('config', '--local', 'core.autocrlf', 'false'); git('add', '-A');
+    git('-c', 'user.name=BlueprintTest', '-c', 'user.email=blueprint@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '-m', 'source baseline');
+    const head = git('rev-parse', 'HEAD'), home = path.join(root, '.claude-fixture'), session = '11111111-2222-4333-8444-555555555555';
+    const nativeFile = path.join(home, 'projects/fixture', session + '.jsonl'), rows: unknown[] = [];
+    const add = (row: object) => rows.push({ sessionId: session, cwd: root, timestamp: '2026-11-11T12:00:00Z', ...row });
+    let count = 0;
+    const tool = (name: string, input: object, output: string) => {
+      const call = `tool-${++count}`;
+      add({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: call, name, input }] } });
+      add({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: call, content: output }] } });
+    };
+    const startRequest = (userId: string) => {
+      add({ type: 'user', uuid: userId, message: { role: 'user', content: '按小型处理：空标题返回未命名，其余不变。原需求在 requirements/compact.md。' } });
+      tool('Bash', { command: 'git rev-parse HEAD' }, head); tool('Bash', { command: 'git status --porcelain' }, git('status', '--porcelain'));
+      for (const file of [source, 'requirements/compact.md']) tool('Read', { file_path: path.join(root, file) }, fs.readFileSync(path.join(root, file), 'utf8'));
+      add({ type: 'assistant', message: { role: 'assistant', content: '本请求修标题默认值；Q1=否；Q2=否；Q3=否；依赖结果=否；跨部件=否；预期明确=是；做法唯一=是。依据 src/title.ts、requirements/compact.md。' } });
+      fs.mkdirSync(path.dirname(nativeFile), { recursive: true }); fs.writeFileSync(nativeFile, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
+    };
+    startRequest('user-small');
+    // The design is authored after the native request's actual initial HEAD/status observation.
+    const canonical = componentBlueprintPath(root, id); fs.mkdirSync(path.dirname(canonical), { recursive: true }); fs.writeFileSync(canonical, YAML.stringify(blueprint));
+    const framework = path.resolve(__dirname, '../../..');
+    const cli = (args: string[], blueprintId = id) => spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'), path.join(framework, 'harness/scripts/check-component-blueprint.ts'),
+      '--project-root', root, '--framework-root', framework, '--blueprint', blueprintId, '--json', ...args], { cwd: path.join(framework, 'harness'), encoding: 'utf8', timeout: 60000,
+      env: { ...process.env, CLAUDE_CONFIG_DIR: home, TS_NODE_PROJECT: path.join(framework, 'harness/tsconfig.json') } });
+    run({ root, canonical, id, source, head, nativeFile, cli, startRequest });
+  });
+}
+
 function test(name: string, run: () => void): UnitCaseResult {
   try {
     run();
@@ -536,6 +601,218 @@ export function runContentWarnCases(): UnitCaseResult[] {
 
 export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
+
+  results.push(test('B1 public checker prepares genuine design subject once and readonly ref reuses the same request without a CU or review file', () => withPublicSmallBlueprint(({ root, canonical, id, source, head, nativeFile, cli }) => {
+    const first = cli(['--session-ref', nativeFile + '#user-small', '--target', source, '--requirement-source', 'requirements/compact.md', '--report-dir', 'doc/reports/short-design', '--prepare-source', '--write-review']);
+    assert(first.status === 0, first.stderr + first.stdout);
+    const output = JSON.parse(first.stdout), requestPath = path.join(root, output.request_file), request = JSON.parse(fs.readFileSync(requestPath, 'utf8'));
+    assert(request.phase === 'component-design' && request.baseline.base === head && output.design_scope === 'small-request-design', first.stdout);
+    assert(request.blueprint?.ref.blueprint_id === id && request.blueprint.acceptance_ids.includes('AC-1') && output.blueprint_binding.ref.artifact_sha256 === request.blueprint.ref.artifact_sha256, '未绑定实际canonical身份/AC');
+    assert(output.review_document.status === 'not_applicable' && !fs.existsSync(blueprintReviewPath(root, id)), '小型生成了独立review');
+    assert(fs.readdirSync(path.dirname(path.dirname(canonical))).length === 1, '小型创建了CU/其它设计物');
+    const loaded = loadCanonicalBlueprint(root, id), ref: ComponentBlueprintRef = { artifact: 'component-blueprint@1', component_id: String(loaded.blueprint.component_id), blueprint_id: id, revision: Number(loaded.blueprint.revision), source_fingerprint: String(loaded.blueprint.source_fingerprint), artifact_sha256: loaded.artifactSha256, target: { kind: 'node', view_id: 'development', id: 'change' } };
+    const before = [canonical, requestPath, ...output.source_refs.map((file: string) => path.join(root, file))].map(file => fs.readFileSync(file, 'utf8'));
+    const second = cli(['--request-file', output.request_file, '--ref', JSON.stringify(ref)]);
+    assert(second.status === 0, second.stderr + second.stdout);
+    const after = [canonical, requestPath, ...output.source_refs.map((file: string) => path.join(root, file))].map(file => fs.readFileSync(file, 'utf8'));
+    assert(JSON.stringify(before) === JSON.stringify(after), 'readonly重验改写了来源或canonical');
+    const broken = readYaml(canonical); delete asRecords(asRecord(asRecords(asRecords(broken.design_views)[0]!.nodes)[0]!.acceptance)!.criteria)[0]!.expected_result;
+    fs.writeFileSync(canonical, YAML.stringify(broken));
+    const rejected = cli(['--request-file', output.request_file]);
+    assert(rejected.status !== 0 && JSON.parse(rejected.stdout).status === 'FAIL', '同公共checker吞掉坏短验收');
+    const repaired = loaded.blueprint; repaired.revision = Number(repaired.revision) + 1; refreshBlueprintFingerprints(repaired); fs.writeFileSync(canonical, YAML.stringify(repaired));
+    const stale = cli(['--request-file', output.request_file]);
+    assert(stale.status !== 0, 'readonly接受了旧revision绑定');
+    const rebound = cli(['--request-file', output.request_file, '--prepare-source']);
+    assert(rebound.status === 0, rebound.stderr + rebound.stdout);
+    assert(JSON.parse(fs.readFileSync(requestPath, 'utf8')).blueprint.ref.revision === repaired.revision, '修订后仍绑旧revision');
+  })));
+  for (const mode of ['other-request', 'admitted', 'cu', 'completed']) {
+    results.push(test(`R2 public source preparation preserves ${mode} byte-for-byte`, () => withPublicSmallBlueprint(f => {
+      const baseArgs = ['--session-ref', f.nativeFile + '#user-small', '--target', f.source, '--requirement-source', 'requirements/compact.md', '--prepare-source'];
+      let target = f.canonical, requestPath: string | undefined, args = [...baseArgs, '--report-dir', 'doc/reports/foreign-source'];
+      if (mode === 'other-request' || mode === 'completed') {
+        const first = f.cli([...baseArgs, '--report-dir', 'doc/reports/owned-source']);
+        assert(first.status === 0, first.stderr + first.stdout);
+        requestPath = path.join(f.root, JSON.parse(first.stdout).request_file);
+        if (mode === 'other-request') {
+          f.startRequest('user-other'); args[1] = f.nativeFile + '#user-other';
+        } else {
+          const history = path.join(path.dirname(path.dirname(target)), 'goal-runs', 'completed', 'events.jsonl');
+          fs.mkdirSync(path.dirname(history), { recursive: true }); fs.writeFileSync(history, JSON.stringify({ type: 'run_end', status: 'COMPLETED' }) + '\n');
+          args = ['--request-file', path.relative(f.root, requestPath), '--prepare-source'];
+        }
+      } else {
+        target = componentBlueprintPath(f.root, 'ledger-app-blueprint');
+        const units = enumerateCanonicalChangeUnitIds(f.root, 'ledger-app-blueprint');
+        assert(units.length > 0, '保护反例缺少原fixture真实CU');
+        if (mode === 'admitted') {
+          const fixtureRoot = fs.realpathSync(f.root), workspace = path.dirname(path.dirname(target));
+          const directories = units.map(unit => fs.realpathSync(path.resolve(workspace, unit)));
+          assert(directories.every(directory => {
+            const relative = path.relative(fixtureRoot, directory);
+            return relative && !relative.startsWith('..') && !path.isAbsolute(relative) && directory !== workspace
+              && !['blueprint', 'goal-runs'].includes(path.basename(directory));
+          }), 'admitted临时夹具CU清理路径越界或指向保留根');
+          for (const directory of directories) fs.rmSync(directory, { recursive: true, force: true });
+        }
+        assert(mode !== 'admitted' || !enumerateCanonicalChangeUnitIds(f.root, 'ledger-app-blueprint').length, 'admitted专例仍被CU前置条件遮挡');
+      }
+      const before = fs.readFileSync(target), requestBefore = requestPath && fs.readFileSync(requestPath);
+      const rejected = f.cli(args, mode === 'admitted' || mode === 'cu' ? 'ledger-app-blueprint' : f.id);
+      assert(rejected.status !== 0 && JSON.parse(rejected.stdout).status === 'FAIL', `${mode}: ${rejected.stderr}${rejected.stdout}`);
+      const reason = mode === 'cu' ? 'canonical CU' : mode === 'admitted' ? 'admitted' : mode === 'completed' ? '历史完成' : '本请求';
+      assert(rejected.stdout.includes(reason), `${mode}: 未经所有权/历史边界拒绝：${rejected.stdout}`);
+      assert(fs.readFileSync(target).equals(before), `${mode}: 失败污染原canonical字节`);
+      if (requestPath && requestBefore) assert(fs.readFileSync(requestPath).equals(requestBefore), `${mode}: 原request/binding被覆盖`);
+      assert(!fs.existsSync(path.join(f.root, 'doc/reports/foreign-source/request.json')), `${mode}: 失败留下新request`);
+    })));
+  }
+  results.push(test('R2 public failed validation and ref exceptions roll back canonical and original request bindings', () => withPublicSmallBlueprint(f => {
+    const first = f.cli(['--session-ref', f.nativeFile + '#user-small', '--target', f.source, '--requirement-source', 'requirements/compact.md', '--report-dir', 'doc/reports/rollback', '--prepare-source']);
+    assert(first.status === 0, first.stderr + first.stdout);
+    const output = JSON.parse(first.stdout), requestPath = path.join(f.root, output.request_file), valid = readYaml(f.canonical);
+    for (const mode of ['invalid-content', 'invalid-ref']) {
+      const draft = clone(valid); delete draft.source_fingerprint; delete draft.decision_fingerprint;
+      if (mode === 'invalid-content') delete asRecords(asRecord(asRecords(asRecords(draft.design_views)[0]!.nodes)[0]!.acceptance)!.criteria)[0]!.expected_result;
+      fs.writeFileSync(f.canonical, YAML.stringify(draft));
+      const files = [f.canonical, requestPath, ...output.source_refs.map((file: string) => path.join(f.root, file))];
+      const before = files.map(file => fs.readFileSync(file));
+      const rejected = f.cli(['--request-file', output.request_file, '--prepare-source', ...(mode === 'invalid-ref' ? ['--ref', '{}'] : [])]);
+      assert(rejected.status !== 0 && JSON.parse(rejected.stdout).status === 'FAIL', `${mode}: ${rejected.stderr}${rejected.stdout}`);
+      assert(files.every((file, index) => fs.readFileSync(file).equals(before[index]!)), `${mode}: 失败/异常留下半写或丢原binding`);
+    }
+  })));
+  results.push(test('R2 public first failed preparation removes its derived request and stable source without changing the draft', () => withPublicSmallBlueprint(f => {
+    const draft = readYaml(f.canonical); delete draft.provenance; delete draft.source_fingerprint; delete draft.decision_fingerprint;
+    asRecord(asRecord(draft.discovery)!.inputs)!.current_scope_items = [];
+    delete asRecords(asRecord(asRecords(asRecords(draft.design_views)[0]!.nodes)[0]!.acceptance)!.criteria)[0]!.expected_result;
+    fs.writeFileSync(f.canonical, YAML.stringify(draft)); const before = fs.readFileSync(f.canonical);
+    const report = path.join(f.root, 'doc/reports/first-failure');
+    const rejected = f.cli(['--session-ref', f.nativeFile + '#user-small', '--target', f.source, '--report-dir', 'doc/reports/first-failure', '--prepare-source']);
+    assert(rejected.status !== 0 && JSON.parse(rejected.stdout).status === 'FAIL', rejected.stderr + rejected.stdout);
+    assert(fs.readFileSync(f.canonical).equals(before), '首次失败修改了原设计');
+    assert(!fs.existsSync(path.join(report, 'request.json')) && (!fs.existsSync(report) || !fs.readdirSync(report).some(name => name.startsWith('user-'))), '首次失败留下request/source半写');
+  })));
+  results.push(test('R2 public preparation accepts this request unfinished full shape without replacing business content', () => withPublicSmallBlueprint(f => {
+    const first = f.cli(['--session-ref', f.nativeFile + '#user-small', '--target', f.source, '--requirement-source', 'requirements/compact.md', '--report-dir', 'doc/reports/full-shape', '--prepare-source']);
+    assert(first.status === 0, first.stderr + first.stdout);
+    const output = JSON.parse(first.stdout), draft = readYaml(f.canonical), full = validBlueprint();
+    for (const field of ['review_summary', 'decisions_and_gaps', 'relations', 'contracts', 'providers', 'app_lens', 'derived_results']) draft[field] ??= clone(full[field]);
+    delete asRecord(draft.review_summary)!.admission;
+    fs.writeFileSync(f.canonical, YAML.stringify(draft)); const business = JSON.stringify(draft.design_views);
+    const prepared = f.cli(['--request-file', output.request_file, '--prepare-source']);
+    assert(prepared.status === 0, prepared.stderr + prepared.stdout);
+    assert(JSON.stringify(readYaml(f.canonical).design_views) === business, '自有未完成full降档改掉业务内容');
+  })));
+  results.push(test('B3 same-file medium expansion retains short acceptance and code; original questioning/admission gates still run', () => withTempProject((root, file) => {
+    const { blueprint: compact, context } = smallBlueprint(root, false);
+    const local = { decision_id: 'title-choice', kind: 'design_choice', owner: 'title-owner', status: 'decided_with_authority', provenance: compact.provenance, verification_refs: ['AC-1'], resolution: '沿用标题函数', impact: '仅标题模块', alternatives: [{ option: '调用点重复处理', rejected_reason: '重复分支' }] };
+    compact.decisions_and_gaps = { decisions: [local], gaps: [] }; refreshBlueprintFingerprints(compact);
+    fs.mkdirSync(path.join(root, 'src'), { recursive: true }); fs.writeFileSync(path.join(root, 'src/title.ts'), 'export const title = "safe";\n');
+    fs.writeFileSync(file, YAML.stringify(compact));
+    assert(!checkCanonicalComponentBlueprint(root, 'ledger-app-blueprint', context).issues.some(issue => issue.severity === 'BLOCKER'), '初始short不通过');
+    const medium = { ...context, requestIntake: { ...context.requestIntake!, facts: { ...context.requestIntake!.facts, design_tradeoff: { value: true as const, reason: 'unit fixture新事实', sources: ['requirements/compact.md'] } },
+      policy: { ...context.requestIntake!.policy, source: 'rule' as const, selected: 'medium' as const, recommended: 'medium' as const } } };
+    assert(checkCanonicalComponentBlueprint(root, 'ledger-app-blueprint', medium).issues.some(issue => issue.severity === 'BLOCKER'), '只换context就冒充完整设计');
+    const expanded = validBlueprint();
+    assert(expanded.component_id === compact.component_id && expanded.blueprint_id === compact.blueprint_id, '升级改变身份');
+    expanded.revision = Number(compact.revision) + 1;
+    const node = structuredClone(asRecords(asRecords(compact.design_views)[0]!.nodes)[0]!);
+    node.module = 'ledger'; node.design_basis_refs = ['view:logical/node:ledger-domain'];
+    const development = findView(expanded, 'development'); development.nodes = [...asRecords(development.nodes), node];
+    const discovery = asRecord(expanded.discovery)!, inputs = asRecord(discovery.inputs)!, shortDiscovery = asRecord(compact.discovery)!;
+    inputs.current_scope_items = [...asRecords(inputs.current_scope_items), ...asRecords(asRecord(shortDiscovery.inputs)!.current_scope_items)];
+    discovery.requirement_traceability = [...asRecords(discovery.requirement_traceability), ...asRecords(shortDiscovery.requirement_traceability)];
+    asRecord(expanded.decisions_and_gaps)!.decisions = [...asRecords(asRecord(expanded.decisions_and_gaps)!.decisions), local];
+    const review = asRecord(expanded.review_summary)!; delete review.questioning; delete review.admission;
+    refreshBlueprintFingerprints(expanded); writeBackAdmission(expanded, { projectRoot: root, canonicalPath: file }); fs.writeFileSync(file, YAML.stringify(expanded));
+    assert(checkCanonicalComponentBlueprint(root, 'ledger-app-blueprint', medium).issues.some(issue => issue.id === 'blueprint_questioning_provider_missing'), '完整扩充跳过必要独立质询');
+    const questionFixture = asRecord(asRecord(validBlueprint().review_summary)!.questioning)!;
+    applyIndependentQuestioningOutput(file, path.join(root, 'doc/reports/upgrade/questioning.json'), JSON.stringify({ items: questionFixture.items }), 'independent-upgrade-unit-fixture');
+    const questioned = readYaml(file); writeBackAdmission(questioned, { projectRoot: root, canonicalPath: file }); fs.writeFileSync(file, YAML.stringify(questioned));
+    const ready = checkCanonicalComponentBlueprint(root, 'ledger-app-blueprint', medium);
+    assert(!ready.issues.some(issue => issue.severity === 'BLOCKER'), JSON.stringify(ready.issues));
+    const kept = asRecords(findView(ready.blueprint, 'development').nodes).find(item => item.node_id === 'change')!;
+    assert(JSON.stringify(kept.acceptance) === JSON.stringify(node.acceptance) && JSON.stringify(kept.contracts) === JSON.stringify(node.contracts), '升级丢失验收/文件');
+    assert(asRecords(asRecord(ready.blueprint.decisions_and_gaps)!.decisions).some(item => item.decision_id === local.decision_id), '升级丢失局部选择');
+    assert(fs.readFileSync(path.join(root, 'src/title.ts'), 'utf8') === 'export const title = "safe";\n' && ready.canonicalPath === file, '升级推倒源码或换文件');
+  })));
+  results.push(test('B1 shipped short example is consumable by the same checker with its exact source context', () => withTempProject((root) => {
+    const sample = readYaml(path.resolve(__dirname, '../../schemas/examples/compact-blueprint.yaml'));
+    const source = 'framework/harness/schemas/examples/compact-blueprint.source.txt';
+    fs.mkdirSync(path.dirname(path.join(root, source)), { recursive: true });
+    fs.copyFileSync(path.resolve(__dirname, '../../schemas/examples/compact-blueprint.source.txt'), path.join(root, source));
+    const { context } = smallBlueprint(root);
+    context.requestSourceItems = prepareBlueprintSourceItems(root, [source], '2026-11-11T00:00:00Z');
+    assert(!validateComponentBlueprint(sample, context).some(item => item.severity === 'BLOCKER'), '随包样例不能真实消费');
+    assert(validateComponentBlueprint(sample, { projectRoot: root }).some(item => item.severity === 'BLOCKER'), '样例自行授short权限');
+  })));
+  results.push(test('B1 short blueprint uses the same schema only with sourced A small context; full default remains strict', () => withTempProject((root) => {
+    const { blueprint, context } = smallBlueprint(root);
+    const issues = validateComponentBlueprint(blueprint, context);
+    assert(!issues.some(item => item.severity === 'BLOCKER'), JSON.stringify(issues));
+    assert(validateComponentBlueprint(blueprint, { projectRoot: root }).some(item => item.severity === 'BLOCKER'), '仅删除完整字段就被自动判小型');
+    assert(!blueprint.review_summary && !blueprint.providers && !blueprint.app_lens, '小型补了完整空章节');
+    const unknown = { ...context, requestIntake: { ...context.requestIntake!, policy: { ...context.requestIntake!.policy, selected: 'unknown' as const } } };
+    assert(validateComponentBlueprint(blueprint, unknown).some(item => item.severity === 'BLOCKER'), 'unknown自动填为小型');
+  })));
+  results.push(test('B1 short acceptance, source and real local choices stay required without granting admission', () => withTempProject((root) => {
+    const original = smallBlueprint(root);
+    const broken = clone(original.blueprint);
+    delete asRecords(asRecord(asRecords(asRecords(broken.design_views)[0]!.nodes)[0]!.acceptance)!.criteria)[0]!.expected_result;
+    assert(validateComponentBlueprint(broken, original.context).some(item => item.message.includes('预期')), '坏验收被吞');
+    const wrongSource = { ...original.context, requestSourceItems: [] };
+    assert(validateComponentBlueprint(original.blueprint, wrongSource).some(item => item.severity === 'BLOCKER'), '来源未绑定仍通过');
+    const admitted = { ...original.blueprint, review_summary: { admission: { status: 'pass' } } };
+    assert(validateComponentBlueprint(admitted, original.context).some(item => item.path === '$.review_summary.admission'), 'short自报完整admission');
+    const choice = clone(original.blueprint);
+    choice.decisions_and_gaps = { decisions: [{ decision_id: 'local', kind: 'design_choice', owner: 'title-owner', status: 'decided_with_authority', provenance: choice.provenance, verification_refs: ['AC-1'], resolution: '使用已有标题函数' }], gaps: [] };
+    assert(validateComponentBlueprint(choice, original.context).some(item => item.message.includes('局部选择')), '声明了选择却可删取舍');
+    const decision = asRecords(asRecord(choice.decisions_and_gaps)!.decisions)[0]!;
+    decision.impact = '仅标题模块默认值'; decision.alternatives = [{ option: '调用点各自默认', rejected_reason: '会重复分支' }];
+    assert(!validateComponentBlueprint(choice, original.context).some(item => item.severity === 'BLOCKER'), '合法局部选择被要求完整质询');
+  })));
+  results.push(test('B1 request resolver keeps the same verified context while CU default and medium upgrade require full admission', () => withTempProject((root, file) => {
+    const { blueprint, context } = smallBlueprint(root); fs.writeFileSync(file, YAML.stringify(blueprint));
+    const loaded = loadCanonicalBlueprint(root, 'ledger-app-blueprint');
+    const ref: ComponentBlueprintRef = { artifact: 'component-blueprint@1', component_id: String(blueprint.component_id), blueprint_id: String(blueprint.blueprint_id), revision: 1,
+      source_fingerprint: String(blueprint.source_fingerprint), artifact_sha256: loaded.artifactSha256, target: { kind: 'node', view_id: 'development', id: 'change' } };
+    assert(resolveComponentBlueprintRef(root, ref, undefined, context).target !== undefined, 'request下游又丢上下文重验full');
+    let refused = false; try { resolveComponentBlueprintRef(root, ref); } catch { refused = true; }
+    assert(refused, '完整CU入口默认接受short');
+    const medium = { ...context, requestIntake: { ...context.requestIntake!, policy: { ...context.requestIntake!.policy, selected: 'medium' as const } } };
+    assert(validateComponentBlueprint(blueprint, medium).some(item => item.severity === 'BLOCKER'), '升中型没有补完整准入就通过');
+    const summary = renderBlueprintReviewMarkdown(blueprint, loaded.artifactSha256, undefined, context);
+    assert(summary.includes('小型请求设计') && summary.includes('AC-1') && !summary.includes('4+1 与章节对照'), summary);
+    const review = blueprintReviewPath(root, 'ledger-app-blueprint'), existed = fs.existsSync(review);
+    const rendered = materializeBlueprintReview(root, 'ledger-app-blueprint', context);
+    assert(rendered.status === 'not_applicable' && !rendered.writtenPaths.length && fs.existsSync(review) === existed, 'short写出独立review');
+    assert(inspectBlueprintReview(root, 'ledger-app-blueprint', context).status === 'not_applicable', 'short要求完整review');
+  })));
+  results.push(test('B1 explicit source preparation preserves short business content and only supplies machine header/source', () => withTempProject(root => {
+    const { blueprint, context } = smallBlueprint(root), business = JSON.stringify(blueprint.design_views);
+    const blueprintId = 'source-preparation-owned'; blueprint.blueprint_id = blueprintId;
+    const file = componentBlueprintPath(root, blueprintId); fs.mkdirSync(path.dirname(file), { recursive: true });
+    const requestFile = path.join(root, 'doc/reports/source-preparation/request.json');
+    const ref: ComponentBlueprintRef = { artifact: 'component-blueprint@1', component_id: String(blueprint.component_id), blueprint_id: String(blueprint.blueprint_id),
+      revision: Number(blueprint.revision), source_fingerprint: String(blueprint.source_fingerprint), artifact_sha256: sha256Bytes(Buffer.from(YAML.stringify(blueprint))),
+      target: { kind: 'blueprint', id: String(blueprint.blueprint_id) } };
+    fs.mkdirSync(path.dirname(requestFile), { recursive: true });
+    fs.writeFileSync(requestFile, JSON.stringify({ schema_version: '1.0', phase: 'component-design', requested_result: context.requestIntake!.user.text,
+      targets: { files: ['src/title.ts'], tests: [] }, baseline: { base: context.requestIntake!.baseline.base, head: 'WORKTREE' }, inputs: {}, allowed_test_writes: [],
+      intake_context: context.requestIntake, requirement_sources: ['requirements/compact.md'], blueprint: { ref, acceptance_ids: ['AC-1'] } }));
+    for (const field of ['artifact', 'component_id', 'revision', 'source_fingerprint', 'decision_fingerprint', 'provenance']) delete blueprint[field];
+    delete asRecord(blueprint.discovery)!.source_fingerprint;
+    asRecord(asRecord(blueprint.discovery)!.inputs)!.current_scope_items = [];
+    fs.writeFileSync(file, YAML.stringify(blueprint));
+    assert(prepareCanonicalBlueprintSource(root, blueprintId, context, { requestFile }).length === 1, '未准备机器来源');
+    const prepared = loadCanonicalBlueprint(root, blueprintId).blueprint;
+    assert(JSON.stringify(prepared.design_views) === business && !prepared.review_summary && asRecords(prepared.design_views).length === 1, 'source准备改了业务/生成完整骨架');
+    assert(!validateComponentBlueprint(prepared, context).some(item => item.severity === 'BLOCKER'), '准备后短内容仍不可消费');
+    assert(prepareCanonicalBlueprintSource(root, blueprintId, context, { requestFile }).length === 0, '同输入source准备重复写');
+  })));
+
 
   results.push(...runContentWarnCases());
 

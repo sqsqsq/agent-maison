@@ -4,7 +4,8 @@ import * as path from 'path';
 import * as YAML from 'yaml';
 import { createHash } from 'crypto';
 import { asRecord, asRecords, BlueprintRecord, ComponentBlueprintRef } from '../../scripts/utils/component-blueprint-model';
-import { deriveChangeUnitFeatureId } from '../../scripts/utils/change-unit-path';
+import { asChangeUnitArtifact, deriveChangeUnitFeatureId } from '../../scripts/utils/change-unit-path';
+import { acceptChangeUnitCandidates } from '../../scripts/utils/change-unit-provider-boundary';
 import { requiredQuestioningScopes } from '../../scripts/utils/blueprint-questioning';
 import { fingerprintDiscoverySources } from '../../scripts/utils/blueprint-discovery';
 import { currentScopeItems } from '../../scripts/utils/blueprint-requirement-traceability';
@@ -192,22 +193,42 @@ export function createBlueprintReviewDesignFixture(root = fs.mkdtempSync(path.jo
     else item.answer = '账目是当前账号已提交金额记录，映射 ledger；报表缓存是可丢弃的投影，不能当持久真源。';
   });
   const cuFiles = [path.join(workspace, 'ledger-refresh/change-unit.yaml'), path.join(workspace, 'ledger-report/change-unit.yaml')];
-  const bind = () => {
+  const bindUnitReferences = (units: BlueprintRecord[]) => {
     const bytes = fs.readFileSync(blueprintFile); const hash = 'sha256:' + createHash('sha256').update(bytes).digest('hex');
     const bp = YAML.parse(bytes.toString('utf8'));
-    for (const file of cuFiles) {
-      const cu = YAML.parse(fs.readFileSync(file, 'utf8'));
+    for (const cu of units) {
       const walk = (value: unknown): void => {
         if (!value || typeof value !== 'object') return;
         if ((value as BlueprintRecord).artifact === 'component-blueprint@1') Object.assign(value, { revision: bp.revision, source_fingerprint: bp.source_fingerprint, artifact_sha256: hash });
         for (const child of Object.values(value)) walk(child);
       };
-      walk(cu); fs.writeFileSync(file, YAML.stringify(cu));
+      walk(cu);
     }
   };
+  const bind = () => {
+    const units = cuFiles.map(file => YAML.parse(fs.readFileSync(file, 'utf8')) as BlueprintRecord);
+    bindUnitReferences(units);
+    units.forEach((cu, index) => fs.writeFileSync(cuFiles[index], YAML.stringify(cu)));
+  };
   fs.writeFileSync(blueprintFile, YAML.stringify(blueprint));
-  [a, b].forEach((cu, i) => { fs.mkdirSync(path.dirname(cuFiles[i]), { recursive: true }); fs.writeFileSync(cuFiles[i], YAML.stringify(cu)); });
-  bind();
+  const authoredUnits = [
+    { unit: a, implementation: 'src/ledger/LedgerFeature.ets', test: 'test/ledger/LedgerFeature.test.ets' },
+    { unit: b, implementation: 'src/ledger/LedgerReport.ets', test: 'test/ledger/LedgerReport.test.ets' },
+  ];
+  bindUnitReferences(authoredUnits.map(({ unit }) => unit));
+  const providerId = 'builtin-vertical-slice-decomposition';
+  const candidates = authoredUnits.map(({ unit, implementation, test }) => {
+    unit.provenance.extraction_method += ` + ${providerId}`;
+    const cu = asChangeUnitArtifact(unit), implementation_refs = ['planned:' + implementation], test_refs = ['planned:' + test];
+    return { providerId, artifact: cu, construction_mapping: {
+      predicate_mappings: cu.target_predicates.map(row => ({ predicate_id: row.predicate_id, implementation_refs, test_refs })),
+      provide_mappings: cu.provides.map(row => ({ provide_id: row.provide_id, implementation_refs, test_refs })),
+      design_ref_mappings: cu.design_refs.map(design_ref => ({ design_ref,
+        implementation_refs: design_ref.target.kind === 'node' && design_ref.target.id === shared.node_id ? ['planned:src/ledger/LedgerShared.ets'] : implementation_refs,
+        verification_refs: test_refs })),
+    } };
+  });
+  acceptChangeUnitCandidates(root, candidates);
   return { root, blueprintFile, cuFiles, feature: deriveChangeUnitFeatureId('ledger-app-blueprint', 'ledger-refresh'), reportFeature: deriveChangeUnitFeatureId('ledger-app-blueprint', 'ledger-report'), bind };
 }
 /** -br 库级 table_schema 原形状；单表旧输入仍由 hostBlueprintReviewFields 保留。 */

@@ -173,7 +173,7 @@ UT 没有返回执行结果时附本次 faultlog/hilog 诊断；未知原因走�
 
 纯 reader_guide 润色只从蓝图目标的 CU/Feature 业务摘要排除该精确子树，文档精确 SHA 与内容仍变化。已有带戳 spec/plan 沿原调和与安全刷新更新来源身份、保留正文与合法补充字节，完整等价依据不足回责任阶段；流程/契约/验收/ordered_steps 真变化不按润色放行。仅补说明从现有 canonical 继续，不重做源码发现、不启动施工。
 
-新需求在设计期给可引用目标写入已有 acceptance/contracts/use_cases，spec/plan 直接消费 typed 投影，只补未声明的本职责内容，叙述文件按 required_outputs 产出。引用目标会整体继承内容：共享目标只放所有引用 CU 都承担的验收/写集/用例，专属验收/files/用例放独占目标；整个 contracts.change_unit 归 plan 在 Feature 生成；数组按原行身份合并，对象只接受完全相等内容，不逐键拼接。无 ui-spec 依据的 P0 真机验收不编 UI 流程/检查点，spec 取得真实依据后只补缺键，保留原权威预期与现有门禁。存量合法手写产物不强制迁移或静默覆盖。
+新需求在设计期给可引用目标写入已有 acceptance/contracts/use_cases，spec/plan 直接消费 typed 投影，只补未声明的本职责内容，叙述文件按 required_outputs 产出。引用目标会整体继承内容：共享目标只放所有引用 CU 都承担的验收/写集/用例，专属验收/files/用例放独占目标；整个 contracts.change_unit 只落 Feature，先复用合法映射或由原 writer 从设计作者临时交回的已定引用确定生成，真实未决项才交 plan；数组按原行身份合并，对象只接受完全相等内容，不逐键拼接。无 ui-spec 依据的 P0 真机验收不编 UI 流程/检查点，spec 取得真实依据后只补缺键，保留原权威预期与现有门禁。存量合法手写产物不强制迁移或静默覆盖。
 
 正常交接不运行 prepare-blueprint-design 提前物化 Feature 文件；spec/plan 消费推导输入并各写本阶段产物。蓝图仍保留设计 facts、验收、模型、接口与 files，change_unit 由 plan 负责且不进入蓝图设计投影；缺有效 Feature 映射仍需 plan。投影带用例时 plan 必须写 use-cases.yaml 供业务 UT，required_outputs 不只看原文件存在。旧 expected_boundary_calls 经共同入口归一到 expected_port_calls，两键冲突诊断。已有带戳文件可沿同一权威对齐合法补充；只有设计/CU 内容未变才仅刷新来源/引用身份并保留补充原字节，真实变化退责任、不 merge。
 
@@ -423,7 +423,24 @@ token、command、登录配置不得进入 manifest。
 从不进作者上下文；交互模式由行为规约原则 1 第 8 条指引作者读 knowledge。
 
 
-## 3.1.0：正式需求统一经部件内设计阶段（路由变化）
+## 3.1.0：统一产品前门与按规模设计（A/B）
+
+所有产品修改默认先消费 [project-entry.md](docs/operations/project-entry.md) 的唯一四档规则；真实 user 的豁免、升/降档和验证限制优先。正常调研给出有来源的语义事实，机器从同源输入派生外框，不新增分类命令/模型、用户表单、票据或档位注册表。新请求仍用 obligation-driven，四档不恢复已退役 lite。
+
+- 特别简单无需蓝图/CU/设计评审文件，直接修改后用 compile、同一架构判据及适用 review/UT/testing request；专项依最终内容，注释/排版不按路径误触发。已有失败保留，未执行不作 PASS，用户固定外框不自动加重。
+- compile/check 接受同一 `--session-ref '<绝对原生transcript路径>#<原始user消息ID>'`，核原件 session/cwd/角色。无 request-file 时原 writer 自动在 reportDir 保存同 schema request.json；自动 prepare 会保存执行派生件，显式 request-file prepare 仍只读，旧调用继续兼容。默认报告位置与完整参数见 [request CLI](docs/operations/request-harness.md)。首次测试写入前的载体/允许写界准备仍保留，不能用假 Feature 或内部脚本绕过。
+- 起始基线沿首次真实调查或唯一可重建 reflog；途中 commit/恢复不重置。无关初始 dirty 不吞入，重叠无前像保留 unknown；缺原件/可靠基线仍可编译或检查显式目标，不能签完整 diff 对账或完整 review PASS。不批量改写旧 run、Feature/CU、蓝图或报告。
+- 支持的原生编辑 hook 只证明同会话已加载前门规则，补读即可恢复；不保证逐请求语义分类。Shell/脚本/场外进程及未覆盖工具有盲区。客户端真实版本、实证和降级见 [adapter 说明](agents/README.md#前门规则与真实客户端证据)，环境缺认证/程序与未支持分开报告，Codex CLI 不代 Desktop。UPDATE 只刷新已授权 adapter 的项目产物，不绕原生信任、不改全局配置。
+- 小型在原路径、同一 component-blueprint@1/schema/checker 写短内容：改动点、可检验验收、已知文件、必要局部选择。共同身份/来源/revision 保留，不补未涉及视图、verified_unchanged 证明或完整选型，不建 CU/独立设计质询/独立评审文件。首次已有蓝图 check 用 `--session-ref` 同次准备真实 component-design request/稳定原文；不先编译或借 review 假 phase。只有授权补 canonical 机器来源才加 `--prepare-source`，后续 `--request-file` 默认只读，不写 canonical/request/source；纯 inline 确需项目内源时，同 writer 保存稳定原文输入底稿，不 hash 可变 request 整文件、不另建需求/设计真源。
+- 小型沿原 request 继续实现与验证；review/UT 消费当前蓝图身份及具体验收，旧 revision、裸标签、路径存在与 characterization 不代验收。相关修订只失效受影响断言/绑定；短设计完成、请求完成和完整 admitted/CU/Component 完成分别报告。
+- 中型原设计作者同次在既有临时交回给出真实实现/测试映射，CU 接受后原 resolver 填精确身份，原 writer 复用或确定生成唯一 Feature contracts.change_unit。已定映射不再只因缺物理文件安排 plan 模型，不制造 plan PASS/receipt；真正未决项仍回原责任方。候选不搬进蓝图，不凭 touches/文件名猜测试，失败不半写、只读状态不物化。
+- 短蓝图升级沿同一路径/ID/revision 扩充适用完整设计、独立质询与准入后接受 CU，保留原验收、代码、基线和有效证据。用户固定外框不暗中加重；在途真实用户调整沿原 run 范围修订核原文及请求关联，保留历史 CU/完成/FAIL，不拆独立 request 清账。用户只说按小型不等于排除 UT/真机；真实产品失败仍失败。复杂多 CU 与原 Component closure/组合证据终点保持。
+
+本节取代下方 M7 历史说明中“正式需求一律完整交接/不设档位”及旧 lite 的现行推荐范围；中型/复杂、已有 CU 和在途责任继续原准入/恢复/完成约束。旧日期、裁决和完成事实保留。消费者仍只集成 Maison 验证发布件到 framework/；本节文档不表示已正式发版或完成真实宿主联合验收。
+
+## 3.1.0：正式需求统一经部件内设计阶段（M7 历史路由记录）
+
+> 现行适用范围见上一节：完整设计要求限定于新外框的中型/复杂及已有 CU；小型采用同协议短蓝图与原 request，无 CU/独立设计质询/独立评审。以下保留原迁移事实，change-lite 不再是新请求入口。
 
 3.1.0 起，**部件演进蓝图从"复杂多变更单元需求才启用的可选路线"重定位为"正式需求必经的
 部件内设计阶段"**（组织侧常称 Story Design）。

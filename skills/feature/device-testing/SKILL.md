@@ -11,10 +11,10 @@
 | 解锁手机 / 唤醒设备 | `cd framework/harness && npx ts-node scripts/device-policy.ts --ready --json`，按 [device-policy-gate 正道节](../../reference/device-policy-gate.md) 处置 | 交付实际就绪结果；无需 Feature/bundle/报告 |
 | 只设计用例 | [共享用例设计方法](../../reference/device-testing-workflow-detail.md#共享用例设计方法) | 交付用例；不调用设备、setup、安装或 request |
 | 即席导航、观察或调试 | [Step 4.B](../../reference/device-testing-workflow-detail.md#step-4b-即席模式ad-hoc不绑正式需求)；步骤可由 Agent 从目标推导 | 交付实际 trace/观察结果；导航成功不代表业务预期通过 |
-| 设计用例并验证修复 | 先共享设计方法，再 [request CLI](../../../docs/operations/request-harness.md) 的 testing 路径，`--prepare-request` 后执行 | 每条提供可执行步骤与明确预期结果；分别报告通过、失败、未验证 |
+| 设计用例并验证修复 | 先共享设计方法，再 [request CLI](../../../docs/operations/request-harness.md) 的 testing 路径，首次能力调用自动准备；显式 request-file 可先 `--prepare-request` 后执行 | 每条提供可执行步骤与明确预期结果；分别报告通过、失败、未验证 |
 | 正式 Feature/CU testing | 先完整读 [正式阶段](../../reference/device-testing-workflow-detail.md#正式-featurecu-阶段) 再执行 | 消费绑定验收/范围及原 required 证据，按正式完成判定收口 |
 
-步骤设计由 Agent 完成；用户只需提供目标行为和可查证的预期，不必先写点击脚本。已有正式交付责任不改走独立路径。
+步骤设计由 Agent 完成；用户只需提供目标行为和可查证的预期，不必先写点击脚本。已有 Feature/CU 交付责任不改走独立路径；小型沿自身原 request/当前短蓝图验收，专项按实际 UI/导航/集成义务执行，不因轻设计省略或伪称真机通过。
 完整交付由原协调器按共同当前处置和已有授权继续，不在phase边界重复确认或轮流派作者。独立请求到本次原终点结束；真正独立核验保持另一个上下文。
 解锁、即席和正式执行共用 [设备策略](../../reference/device-policy-gate.md)：实际操作时保留授权和 PIN 红线；即席 CLI 已含设备门，不必预先重复 `--ready`。
 

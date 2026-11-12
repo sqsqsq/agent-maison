@@ -372,7 +372,7 @@ const args = minimist(process.argv.slice(2), {
     'phase', 'feature', 'ai-report', 'adapter', 'workflow', 'adhoc-cases', 'correction-request',
     'q-requirement', 'q-contract', 'q-code', 'goal-run-id', 'goal-attempt-id',
     'goal-owner-id', 'goal-owner-epoch', 'from', 'screen',
-    'request-file', 'report-dir', 'project-root', 'framework-root', 'module', 'term', 'package-path', 'path',
+    'request-file', 'report-dir', 'project-root', 'framework-root', 'module', 'term', 'package-path', 'path', 'session-ref', 'target', 'test-target', 'allow-test-write', 'cases',
     'requirement', 'requirement-file',
   ],
   boolean: ['list', 'help', 'verbose', 'clear-state', 'sync-closure', 'report-reconcile-only', 'force-device', 'revalidate', 'measure', 'summary', 'failures-only', 'skip-visual-handoff', 'skip-ui-spec', 'skip-visual-parity', 'correction-init', 'adhoc-correction', 'prepare-request'],
@@ -456,7 +456,7 @@ Harness — Spec/Harness 验证工具
   -p, --phase <phase>       指定验证阶段（合法集合由当前 workflow 决定，默认见 framework/workflows/spec-driven.workflow.yaml）
   --workflow <name>         覆盖 framework.config.json 的 active_workflow（CLI 优先）
   -f, --feature <name>      指定功能模块名 (如 home-page)；全局 scope 阶段可不填（默认 _global）
-  --request-file <path>     review/ut/testing 专项请求 JSON；必须配 --report-dir，不与 Feature/Goal 身份并用
+  --request-file <path>     专项请求 JSON 配 --report-dir；或复用 component-design 原 request 自动续接 review/ut，不与 Feature/Goal 身份并用
   --report-dir <path>       专项请求独立报告目录（项目内、Feature/framework/.git 外）
   --prepare-request        只解析专项目标、基线和待补输入，输出 JSON，不写控制文件或运行 checker
   --adapter <adapter_name>      init 必选；须与 framework/agents/<adapter_name>/ 存在且含 adapter.yaml（其他阶段忽略）
@@ -564,7 +564,7 @@ async function main(): Promise<void> {
   }
 
   const harnessRoot = __dirname;
-  if (args['request-file'] !== undefined || args['report-dir'] !== undefined || args['prepare-request']) {
+  if (args['request-file'] !== undefined || args['report-dir'] !== undefined || args['prepare-request'] || args['session-ref'] !== undefined || args.target !== undefined || args['test-target'] !== undefined) {
     const detected = detectRepoLayout(harnessRoot);
     try {
       process.exitCode = await runExplicitRequest({ args, projectRoot: typeof args['project-root'] === 'string' ? path.resolve(args['project-root']) : detected.projectRoot,

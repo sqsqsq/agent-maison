@@ -1,0 +1,50 @@
+artifact: component-blueprint@1
+component_id: title-component
+blueprint_id: compact-title-change
+revision: 1
+provenance: &a1
+  source_kind: requirement
+  source_ref: framework/harness/schemas/examples/compact-blueprint.source.txt
+  observed_at: 2026-11-11T00:00:00Z
+  evidence_strength: authoritative
+  extraction_method: runtime_requirement_source
+discovery:
+  inputs:
+    current_scope_items:
+      - item_id: requirement:d6b33f08602487e3da9e532db9962f23cceaac1685dcf1d315ec3a2515495bd6
+        kind: requirement
+        source_ref: framework/harness/schemas/examples/compact-blueprint.source.txt
+        source_sha256: sha256:841ed7825664f39bb9a414b7c398c8cc0aebd51eb14b25d02d75233ba30b8a4d
+        provenance: *a1
+  requirement_traceability:
+    - item_id: requirement:d6b33f08602487e3da9e532db9962f23cceaac1685dcf1d315ec3a2515495bd6
+      blueprint_refs:
+        - view:development/node:change
+  source_fingerprint: sha256:6451a0afdf281740ac1034554fbdc86f1ab6a9d4825933cf9f239bac054f1e79
+design_views:
+  - view_id: development
+    nodes:
+      - node_id: change
+        owner: title-owner
+        current_state: 空标题返回空串
+        target_state: 空标题返回未命名，非空标题不变
+        provenance: *a1
+        verification_refs:
+          - AC-1
+        acceptance:
+          criteria:
+            - id: AC-1
+              priority: P1
+              description: 空标题的兼容默认值
+              testable: true
+              verification_steps:
+                - 以空串调用标题函数
+                - 以非空标题调用同一函数作对照
+              expected_result: 空串得到未命名；非空标题保持原样
+              ut_layer: unit
+              ut_focus: 空值默认与已有值兼容
+        contracts:
+          files:
+            - entry/src/main/ets/title/Title.ets
+source_fingerprint: sha256:6451a0afdf281740ac1034554fbdc86f1ab6a9d4825933cf9f239bac054f1e79
+decision_fingerprint: sha256:74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b

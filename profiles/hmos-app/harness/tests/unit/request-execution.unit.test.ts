@@ -169,6 +169,18 @@ const cases: Array<{ name: string; run(): Promise<void> | void }> = [{
     } finally { if (old === undefined) delete process.env.HARNESS_SKIP_HVIGOR_TEST; else process.env.HARNESS_SKIP_HVIGOR_TEST = old; fs.rmSync(f.root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
   },
 }, {
+  name: 'B daily regression: a blueprint request with absent derived acceptance remains blocked without an artifacts TypeError',
+  async run() {
+    const f = fixture('ut'), old = process.env.HARNESS_SKIP_HVIGOR_TEST;
+    try {
+      process.env.HARNESS_SKIP_HVIGOR_TEST = '1';
+      f.ctx.request.blueprint = { ref: { artifact: 'component-blueprint@1', component_id: 'missing-derived', blueprint_id: 'missing-derived', revision: 1,
+        source_fingerprint: 'sha256:' + 'a'.repeat(64), artifact_sha256: 'sha256:' + 'b'.repeat(64), target: { kind: 'blueprint', id: 'missing-derived' } }, acceptance_ids: ['AC-1'] };
+      const checks = await checkRequestTests(f.ctx);
+      assert(checks.some(check => check.id === 'request_expectation_source' && check.status === 'FAIL' && check.details.includes('验收分层输入不可用')));
+    } finally { if (old === undefined) delete process.env.HARNESS_SKIP_HVIGOR_TEST; else process.env.HARNESS_SKIP_HVIGOR_TEST = old; fs.rmSync(f.root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+  },
+}, {
   name: '1804 request inputs, native product failures, environment gaps and legacy SKIP retain distinct conclusions',
   async run() {
     const f = fixture('testing');

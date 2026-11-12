@@ -1066,7 +1066,7 @@ export function readCurrentDispositionInput(opts: CleanPassOptions | CurrentRequ
         const workflow = opts.workflow ?? (birth ? (require('../../workflow-loader') as typeof import('../../workflow-loader'))
           .resolveWorkflowSpec(projectRoot, { frameworkRoot: responsibility.frameworkRoot }) : undefined);
         const projected = eventsWithScopeRevocations(birth, run.events, birth && workflow
-          ? readRepairDependencyContext(projectRoot, feature, workflow, birth, responsibility.frameworkRoot) : {});
+          ? readRepairDependencyContext(projectRoot, feature, workflow, birth, responsibility.frameworkRoot) : {}, { projectRoot, feature, runId: run.run_id });
         const originals = new Set(run.events);
         let previous: typeof repairEvents[number] | undefined;
         for (const event of projected) {
@@ -1717,7 +1717,7 @@ export function generateFeatureCompletion(opts: GenerateCompletionOptions): {
       // D2.6: how many revisions produced this effective scope — reconciled on verify.
       // D1：feature 载体的修订记在冻结记录的 `revisions[]` 里，数的是同一件事。
       scope_revision_count: runId
-        ? loadScopeRevisions(loadAuthoritativeRunEvents(opts.projectRoot, opts.feature, runId), loadFrozenExecutionScope(opts.projectRoot, opts.feature, runId)!).length
+        ? loadScopeRevisions(loadAuthoritativeRunEvents(opts.projectRoot, opts.feature, runId), loadFrozenExecutionScope(opts.projectRoot, opts.feature, runId)!, { projectRoot: opts.projectRoot, feature: opts.feature, runId }).length
         : (readFeatureFrozenScope(opts.projectRoot, opts.feature)?.revisions.length ?? 0) } : {}),
     chain: [...opts.chain],
     artifact_hashes: {
@@ -2096,7 +2096,7 @@ export function inspectCompletionRecord(opts: VerifyCompletionOptions): Completi
       if (completion.run_id) {
         // run 载体：完成后的修订只发生在后继 run，本 run 的修订数必须与凭证相等。
         frozenScope = resolveEffectiveScopeSource(projectRoot, feature, completion.run_id)?.scope;
-        const revisions = loadScopeRevisions(loadAuthoritativeRunEvents(projectRoot, feature, completion.run_id), birthScope).length;
+        const revisions = loadScopeRevisions(loadAuthoritativeRunEvents(projectRoot, feature, completion.run_id), birthScope, { projectRoot, feature, runId: completion.run_id }).length;
         if ((declared ?? 0) !== revisions) return invalidRecord(`scope_revision_count 与事件失配：凭证=${declared ?? 0} ≠ 事件=${revisions}`);
         currentScope = loadEffectiveExecutionScope(projectRoot, feature, completion.run_id);
       } else {

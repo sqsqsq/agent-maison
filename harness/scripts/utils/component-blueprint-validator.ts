@@ -4,9 +4,15 @@ import {
   BlueprintRecord,
   asRecord,
   asRecords,
+  asStrings,
+  nonEmptyString,
   issue,
   BLUEPRINT_SCHEMA,
 } from './component-blueprint-model';
+import type { RequestIntake } from './request-intake';
+import { loadFrameworkConfig } from '../../config';
+import { validateProjectRelativePath } from './project-relative-path';
+import { VALID_UT_LAYERS } from './acceptance-layering';
 import { validateLiteSchema } from './lite-json-schema';
 import { stableAddressIndex } from './blueprint-addressing';
 import { validateBlueprintProvenance } from './blueprint-provenance';
@@ -19,9 +25,9 @@ import { validateBlueprintAdmission } from './blueprint-admission';
 import { inspectGeneratedBlueprintGraphs } from './blueprint-graph-generator';
 import { validateBlueprintReconciliation } from './blueprint-reconciliation';
 import { validateEvolutionDecisions } from './blueprint-evolution-decisions';
-import { validateBlueprintProviders } from './blueprint-provider-boundary';
+import { profileHasDesignLens, validateBlueprintProviders } from './blueprint-provider-boundary';
 import { fingerprintDiscoverySources, validateTerminologyFacts } from './blueprint-discovery';
-import { currentScopeItems, validateRequirementTraceability } from './blueprint-requirement-traceability';
+import { currentScopeItems, validateRequirementTraceability, type CurrentScopeItem } from './blueprint-requirement-traceability';
 import { BlueprintGraphDisplayInspection, inspectBlueprintGraphDisplay } from './blueprint-reader-guide';
 import { inspectAcceptanceItem, inspectPerformanceItem, inspectTypedConstructionContent, inspectUseCaseItem, inspectDesignContentCollections, type DesignContentIssue } from './design-content-checks';
 
@@ -32,7 +38,15 @@ export interface ComponentBlueprintValidationContext {
   architecture?: import('../../config').ArchitectureDsl;
   /** Only a canonical reader may supply already-read authority sources. */
   sourceCache?: Map<string, unknown>;
+  /** Fresh A request parsing only; never copied from a blueprint's self-declared depth. */
+  requestIntake?: RequestIntake;
+  requestSourceItems?: readonly CurrentScopeItem[];
 }
+
+export function isSmallBlueprintRequest(context: ComponentBlueprintValidationContext): boolean {
+  return context.requestIntake?.policy.selected === 'small';
+}
+
 
 export function validateComponentBlueprint(
   value: unknown,
@@ -41,7 +55,7 @@ export function validateComponentBlueprint(
   const blueprint = asRecord(value);
   if (!blueprint) return [issue('component_blueprint_root_invalid', '$', 'canonical YAML 根对象必须是 map。')];
   const out = validateComponentBlueprintUpstream(blueprint, context);
-  out.push(...validateBlueprintAdmission(blueprint, out));
+  if (!isSmallBlueprintRequest(context)) out.push(...validateBlueprintAdmission(blueprint, out));
   return out;
 }
 
@@ -52,6 +66,10 @@ export function validateComponentBlueprintUpstream(
 ): BlueprintIssue[] {
   const out: BlueprintIssue[] = [];
   for (const violation of validateLiteSchema(blueprint, BLUEPRINT_SCHEMA)) {
+    out.push(issue('component_blueprint_schema_invalid', violation.path, violation.message));
+  }
+  const small = isSmallBlueprintRequest(context);
+  if (!small) for (const violation of validateLiteSchema(blueprint, { $ref: '#/$defs/fullContent' }, BLUEPRINT_SCHEMA)) {
     out.push(issue('component_blueprint_schema_invalid', violation.path, violation.message));
   }
   if (blueprint.artifact !== BLUEPRINT_ARTIFACT) {
@@ -71,6 +89,15 @@ export function validateComponentBlueprintUpstream(
       `来源指纹必须由 discovery facts 确定性计算：computed=${computedSourceFingerprint}, discovery=${String(discovery?.source_fingerprint)}, root=${String(blueprint.source_fingerprint)}。`,
     ));
   }
+  if (small) {
+    out.push(...validateBlueprintProvenance(blueprint), ...validateRequirementTraceability(blueprint, context.projectRoot),
+      ...validateSmallBlueprintContent(blueprint, context),
+      ...validateBlueprintContracts(blueprint, { projectRoot: context.projectRoot, sourceCache: context.sourceCache }),
+      ...validateBlueprintReconciliation(blueprint),
+      ...validateEvolutionDecisions(blueprint, context.projectRoot, context.architecture),
+      ...validateTerminologyFacts(blueprint, context.projectRoot, context.architecture));
+    return out;
+  }
   const generatedGraphs = inspectGeneratedBlueprintGraphs(blueprint);
   const upstream = [
     ...validateBlueprintProvenance(blueprint),
@@ -88,6 +115,68 @@ export function validateComponentBlueprintUpstream(
   ];
   out.push(...upstream);
   out.push(...diagnoseBlueprintPresentationShape(blueprint, inspectBlueprintGraphDisplay(blueprint, generatedGraphs.graphIssues)));
+  return out;
+}
+
+/** The same typed acceptance/contracts parser is shared with request consumers; no CU is fabricated. */
+function validateSmallBlueprintContent(blueprint: BlueprintRecord, context: ComponentBlueprintValidationContext): BlueprintIssue[] {
+  const out: BlueprintIssue[] = [];
+  const invalid = (at: string, message: string): void => { out.push(issue('component_blueprint_schema_invalid', at, message)); };
+  const intake = context.requestIntake!;
+  if (!context.projectRoot || !profileHasDesignLens(loadFrameworkConfig(context.projectRoot).project_profile.name)) {
+    invalid('$', '当前profile没有已支持的蓝图design lens。');
+  }
+  if (!intake.user?.id || !intake.user.text || !intake.baseline.base || intake.gaps.length || intake.attribution_unknown.length) {
+    invalid('$.provenance', '短内容可解析，但原生请求/准确基线或归属未核；不能签小型请求设计通过。');
+  }
+  const expected = context.requestSourceItems ?? [], actual = currentScopeItems(blueprint);
+  if (!expected.length || !actual.length) invalid('$.discovery.inputs.current_scope_items', '小型设计仍须绑定同一原request的真实用户来源。');
+  for (const item of expected) if (!actual.some(value => value.item_id === item.item_id && value.source_ref === item.source_ref && value.source_sha256 === item.source_sha256)) {
+    invalid('$.discovery.inputs.current_scope_items', `原request来源没有完整保留：${item.source_ref}`);
+  }
+  for (const item of actual) if (!expected.some(value => value.item_id === item.item_id && value.source_ref === item.source_ref && value.source_sha256 === item.source_sha256)) {
+    invalid('$.discovery.inputs.current_scope_items', `来源未绑定到当前原request：${item.source_ref}`);
+  }
+  if (asRecord(blueprint.review_summary)?.admission !== undefined) invalid('$.review_summary.admission', '小型请求设计不产生完整设计admission，不接受自报admitted。');
+  const views = asRecords(blueprint.design_views), seen = new Set<string>();
+  for (const view of views) {
+    const id = String(view.view_id);
+    if (seen.has(id)) invalid('$.design_views', `view_id重复：${id}`);
+    seen.add(id);
+  }
+  try {
+    const { selectBlueprintRequestContent } = require('./blueprint-skill-projection') as typeof import('./blueprint-skill-projection');
+    const content = selectBlueprintRequestContent(blueprint);
+    for (const [field, value] of [['acceptance', content.acceptance], ['contracts', content.contracts], ['use_cases', content.useCases]] as const) {
+      if (value) for (const problem of inspectDesignContentCollections(field, value, `$.${field}`)) invalid(problem.path, problem.message);
+    }
+    const criteria = asRecords(content.acceptance?.criteria);
+    if (!criteria.length) invalid('$.design_views', '短蓝图必须有可执行、带稳定ID的typed acceptance.criteria。');
+    const ids = new Set<string>();
+    for (const [index, item] of criteria.entries()) {
+      const at = `$.acceptance.criteria[${index}]`;
+      for (const problem of inspectAcceptanceItem(item, true, at)) invalid(problem.path, problem.message);
+      if (ids.has(String(item.id))) invalid(at + '.id', `验收ID重复：${String(item.id)}`);
+      ids.add(String(item.id));
+      if (!VALID_UT_LAYERS.includes(item.ut_layer as never)) invalid(at + '.ut_layer', '验收须沿原分层声明unit/device/both验证方式。');
+    }
+    for (const [index, item] of asRecords(content.acceptance?.boundaries).entries()) {
+      for (const problem of inspectAcceptanceItem(item, false, `$.acceptance.boundaries[${index}]`)) invalid(problem.path, problem.message);
+    }
+    for (const [index, item] of asRecords(content.acceptance?.performance).entries()) {
+      for (const problem of inspectPerformanceItem(item, `$.acceptance.performance[${index}]`)) invalid(problem.path, problem.message);
+    }
+    const files = asStrings(content.contracts?.files);
+    if (!files.length || files.length !== (Array.isArray(content.contracts?.files) ? content.contracts.files.length : 0)) invalid('$.contracts.files', '短蓝图必须保留当前已知的typed contracts.files；目标不是施工锁。');
+    for (const file of files) if (context.projectRoot) try { validateProjectRelativePath(context.projectRoot, file, 'blueprint contracts.files'); } catch (error) { invalid('$.contracts.files', String(error)); }
+    for (const problem of inspectTypedConstructionContent(content.contracts, '$.contracts')) invalid(problem.path, problem.message);
+  } catch (error) { invalid('$.design_views', `短蓝图typed内容不能确定消费：${(error as Error).message}`); }
+  for (const decision of asRecords(asRecord(blueprint.decisions_and_gaps)?.decisions)) {
+    if (decision.kind !== 'design_choice') continue;
+    if (!nonEmptyString(decision.resolution ?? decision.rationale) || !nonEmptyString(decision.impact) || !asRecords(decision.alternatives).length) {
+      invalid('$.decisions_and_gaps.decisions', '实际局部选择须保留选项、取舍及本模块影响；没有选择时可省略。');
+    }
+  }
   return out;
 }
 

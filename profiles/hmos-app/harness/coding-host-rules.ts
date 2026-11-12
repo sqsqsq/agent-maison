@@ -78,13 +78,13 @@ function readFileIfExists(filePath: string): string | null {
 }
 
 
-function structureRuleDefined(ctx: CheckContext, id: string): boolean {
+function structureRuleDefined(ctx: Pick<CheckContext, 'phaseRule'>, id: string): boolean {
   const sc = ctx.phaseRule.structure_checks as Record<string, unknown> | undefined;
   return Boolean(sc && Object.prototype.hasOwnProperty.call(sc, id));
 }
 
 function ruleDesc(
-  ctx: CheckContext,
+  ctx: Pick<CheckContext, 'phaseRule'>,
   section: 'structure_checks' | 'semantic_checks' | 'traceability_checks',
   id: string,
 ): string {
@@ -137,6 +137,11 @@ function checkNoHardcodedStrings(ctx: CheckContext, analyses: FileAnalysis[]): C
 }
 
 function checkHarIndexExport(ctx: CheckContext): CheckResult[] {
+  return checkProjectExportEntries({ projectRoot: ctx.projectRoot, phaseRule: ctx.phaseRule,
+    resolvedProfile: ctx.resolvedProfile, modules: ctx.featureSpec.contracts?.modules ?? [] });
+}
+
+function checkProjectExportEntries(ctx: Pick<CheckContext, 'projectRoot' | 'phaseRule' | 'resolvedProfile'> & { modules: ContractsSpec['modules'] }): CheckResult[] {
   if (!structureRuleDefined(ctx, 'har_index_export')) {
     return [
       {
@@ -166,8 +171,7 @@ function checkHarIndexExport(ctx: CheckContext): CheckResult[] {
     ];
   }
 
-  const contracts = ctx.featureSpec.contracts;
-  if (!contracts?.modules?.length) {
+  if (!ctx.modules.length) {
     return [
       {
         id: 'har_index_export',
@@ -180,7 +184,7 @@ function checkHarIndexExport(ctx: CheckContext): CheckResult[] {
     ];
   }
 
-  const libraryModules = contracts.modules.filter(m => isLibraryFormat(m.format));
+  const libraryModules = ctx.modules.filter(m => isLibraryFormat(m.format));
   if (libraryModules.length === 0) {
     return [
       {
@@ -1595,5 +1599,17 @@ export const profileCodingHost: ProfileCodingHost = {
   runTraceabilityChecks,
   checkCodingCompile,
   compileProject,
+  checkProjectArchitecture(ctx) {
+    const modules = projectImplementationModules(ctx.projectRoot)
+      .filter(module => ctx.files.some(file => file.startsWith(module.package_path + '/')))
+      .map(module => {
+        const meta = readFileIfExists(path.join(ctx.projectRoot, module.package_path, 'src/main/module.json5'));
+        let kind: string | undefined;
+        try { kind = meta ? (parseJson5(meta) as { module?: { type?: string } }).module?.type : undefined; } catch { /* The original config/build checker reports malformed config. */ }
+        return { ...module, layer: module.package_path.split('/')[0], change_type: 'modify',
+          format: kind === 'shared' ? 'HSP' : kind === 'har' ? 'HAR' : 'HAP' };
+      });
+    return modules.length ? checkProjectExportEntries({ ...ctx, modules }) : [];
+  },
   checkCodingLint,
 };

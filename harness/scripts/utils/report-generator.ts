@@ -171,6 +171,8 @@ export function generateRequestScriptReport(ctx: RequestCheckContext, checks: Ch
     request: ctx.request, checks: finalized, summary }));
   if (!disposition.completionEligible) summary.verdict = summary.verdict === 'INCOMPLETE' ? 'INCOMPLETE' : 'FAIL';
   const common = { subject: 'request', completion_target: 'request', request_sha256: ctx.request.request_sha256, phase: ctx.phase,
+    ...(ctx.request.intake_context ? { request_origin: `${ctx.request.intake_context.session_id}#${ctx.request.intake_context.user.id}` } : {}),
+    ...(ctx.request.origin_gap ? { origin_gap: ctx.request.origin_gap } : {}),
     requested_result: ctx.request.requested_result, baseline: ctx.request.baseline, targets: ctx.request.bindings,
     timestamp: new Date().toISOString(), project_root: ctx.projectRoot };
   const inputBindings = Object.fromEntries(Object.entries(ctx.resolvedInputs.values).filter(([, value]) => value.state === 'resolved').map(([id, value]) => [id, value.state === 'resolved' ? value.binding : null]));

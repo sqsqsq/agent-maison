@@ -1,11 +1,11 @@
 import type { IdentityNeutralDigestReaders } from './identity-neutral-digest';
 import { readRepairDependencyContext } from './repair-responsibility';
-import { phaseCompletionProblems } from './check-disposition';
-import { resolveExecutionScope, executionScopeFingerprint, effectiveScopeView, scopeProofHistory, phaseEvidenceIsCurrent, scopeRevisionInvalidations, authorizedScopePhases, acceptsDefinitionInputProof, EXECUTION_SOURCE_KINDS, OBLIGATION_PROVIDERS, type ScopeHistoryEvent, type ScopeEvidenceRef, type ExecutionScope, type ExecutionScopeInput, type ResolvedScopeFacts } from './execution-scope';
+import { phaseCompletionProblems, isBlockingCheck } from './check-disposition';
+import { resolveExecutionScope, readScopeRevisionUserControl, applyScopeUserControl, assertRevisionKeepsRequiredObligations, executionScopeFingerprint, effectiveScopeView, scopeProofHistory, phaseEvidenceIsCurrent, scopeRevisionInvalidations, authorizedScopePhases, acceptsDefinitionInputProof, EXECUTION_SOURCE_KINDS, OBLIGATION_PROVIDERS, type ScopeHistoryEvent, type ScopeEvidenceRef, type ExecutionScope, type ExecutionScopeInput, type ResolvedScopeFacts } from './execution-scope';
 import { createHash } from 'crypto';
 import * as path from 'path';
 import type { WorkflowSpec } from '../../workflow-loader';
-import type { AcceptanceSpec } from './types';
+import type { AcceptanceSpec, ContractsSpec } from './types';
 import { readBoundInput, DEPENDENCY_ONLY_PROVIDER_IDS, type InputBinding } from './capability-resolution';
 import { inferLegacyProjectRoot, isInsideProjectRoot, resolveDependencyPath } from './project-relative-path';
 import { loadEffectiveExecutionScope, resolveEffectiveScopeSource } from './goal-run-creation';
@@ -567,7 +567,7 @@ function deriveDefinitionContext(
     designAvailable: !!contracts,
     acceptanceAvailable: !!acceptance,
     acceptanceGap: authorityGapOf(ctx, 'acceptance', acceptanceInput),
-    contractsGap: authorityGapOf(ctx, 'contracts', contractsInput),
+    contractsGap: authorityGapOf(ctx, 'contracts', contractsInput, wantsImplementation || requestedPhases.some(phase => workflow.artifacts.some(artifact => artifact.id === phase && artifact.obligation_provider_id === 'obligations.plan'))),
   };
 }
 
@@ -582,15 +582,17 @@ function authorityGapOf(
   ctx: { projectRoot: string; frameworkRoot: string; feature: string },
   kind: 'acceptance' | 'contracts',
   input: { binding: InputBinding; value: unknown } | undefined,
+  needsConstruction = true,
 ): string | undefined {
   if (!input) return undefined;
   const drift = input.binding.source.kind === 'artifact'
     ? describeAuthoritativeDrift(authoritativeContentDrift(ctx.projectRoot, ctx.feature, ctx.frameworkRoot, kind, input.value), kind)
     : undefined;
-  if (drift || kind !== 'contracts' || !ctx.feature.startsWith('cu-')) return drift;
-  const spec = new SpecLoader(ctx.projectRoot, undefined, undefined, ctx.frameworkRoot).loadFeatureSpec(ctx.feature);
-  const projection = validateChangeUnitFeatureProjection(ctx.projectRoot, ctx.feature, spec.contracts, spec.acceptance, !!spec.useCases, 'plan');
-  return projection.issues.length ? `plan 尚未交付当前 CU 的施工映射：${projection.issues.map(item => `${item.id}: ${item.message}`).join('；')}` : undefined;
+  if (drift || kind !== 'contracts' || !needsConstruction || !ctx.feature.startsWith('cu-')) return drift;
+  const { resolveChangeUnitConstructionInputs } = require('./blueprint-skill-projection') as typeof import('./blueprint-skill-projection');
+  const candidate = resolveChangeUnitConstructionInputs(ctx.projectRoot, ctx.feature, ctx.frameworkRoot, input.value as ContractsSpec);
+  if (candidate.gap) return candidate.gap;
+  return undefined; // The shared candidate reader already checked the same projection.
 }
 
 /**
@@ -990,9 +992,23 @@ export function resolveScopeRevisionProposal(input: {
     throw new Error('[execution-scope] request-scope revision cannot add phases');
   }
   const progress = resolveCurrentScopeView(input);
+  const { loadAuthoritativeRunEvents } = require('./goal-run-creation') as typeof import('./goal-run-creation');
+  const control = readScopeRevisionUserControl(previous, proposal, input.currentRunId ? {
+    projectRoot, feature, runId: input.currentRunId, events: loadAuthoritativeRunEvents(projectRoot, feature, input.currentRunId), completedPhases: input.completedPhases,
+    failedPhases: new Set((input.currentResults ?? []).filter(result => result.checks.some(check => isBlockingCheck(check)
+      && !['externalBlocked', 'framework_internal'].includes(check.blocking_class ?? ''))).map(result => result.phase)),
+  } : undefined);
+  if (control.source) proposal.request.user_control = control.source;
+  else delete proposal.request.user_control;
   const repairFactIds = new Set(proposal.facts.filter(fact => (input.repairCandidates ?? []).some(candidate => fact.id.endsWith(`:${candidate.id}`))).map(fact => fact.id));
   for (const obligation of previous.obligations) {
     if (obligation.applicability !== 'required') continue;
+    if (control.allowedSubtractions.has(obligation.id)) {
+      const declared = proposal.facts.find(fact => fact.id === obligation.id && fact.kind === obligation.kind);
+      if (declared) declared.applicability = obligation.applicability;
+      else proposal.facts.push(structuredClone(obligation));
+      continue;
+    }
     const existing = proposal.facts.find(fact => fact.id === obligation.id);
     const effective = progress.obligations.find(item => item.id === obligation.id)!;
     if (!existing) proposal.facts.push(structuredClone(effective));
@@ -1037,7 +1053,9 @@ export function resolveScopeRevisionProposal(input: {
     }
     facts = collectResolvedScopeFacts(proposal, ctx);
   }
-  const resolved = resolveExecutionScope(proposal, workflow, readScopeAcceptance(projectRoot, proposal, { feature, frameworkRoot }), facts);
+  const resolved = applyScopeUserControl(resolveExecutionScope(proposal, workflow, readScopeAcceptance(projectRoot, proposal, { feature, frameworkRoot }), facts), workflow, control);
+  assertRevisionKeepsRequiredObligations(previous, resolved, control.allowedSubtractions);
+  if (resolved.phase_chain.some(phase => !authorizedScopePhases(birth ?? previous, workflow).includes(phase))) throw new Error('[execution-scope] request-scope revision cannot add phases');
   // A fresh qualified owner proof must be recorded even when this proposal already
   // describes the live progress view. Only the recorded scope is the no-op baseline.
   if (executionScopeFingerprint(resolved) === executionScopeFingerprint(previous)) return null;
@@ -1048,7 +1066,7 @@ export function resolveScopeRevisionProposal(input: {
   const reopened = proposal.facts.some(fact => repairFactIds.has(fact.id)
     && !fact.satisfied_by?.length && progress.obligations.some(prior => prior.id === fact.id && prior.satisfied_by?.length));
   // A current trusted finding is new knowledge; its unchanged product file need not be rewritten to earn recovery.
-  if (!hasNewSourcedFact(previous, proposal.facts, input.currentRunId ?? '') && !confirmedRepair && !reopened
+  if (!control.newSource && !hasNewSourcedFact(previous, proposal.facts, input.currentRunId ?? '') && !confirmedRepair && !reopened
     && !previous.obligations.some(prior => prior.satisfied_by?.length && !progress.obligations.find(o => o.id === prior.id)?.satisfied_by?.length)) throw new Error('[execution-scope] revision requires new sourced facts');
   return { scope: resolved, input: proposal };
 }

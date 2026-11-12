@@ -12,12 +12,14 @@ import { checkFactsArtifact } from './context-facts';
 import { generateRequestScriptReport } from './report-generator';
 import { resolveCurrentDisposition, isRequiredCheckGap } from './check-disposition';
 import { readCurrentDispositionInput } from './verify-feature-completion';
-import type { CheckResult, HarnessResolvedProfile, PhaseChecker, RequestCheckContext } from './types';
+import type { AcceptanceSpec, CheckResult, HarnessResolvedProfile, PhaseChecker, RequestCheckContext } from './types';
+import { collectUnitScopeIds } from './acceptance-layering';
 import { dispatchRequestTests, dispatchRequestTargetProbe, isCapabilitySkipped } from '../../capability-registry';
 import { isInsideProjectRoot } from './project-relative-path';
 import { classifyUtExpectations, extractUtItBlocks, type UtExpectationScan } from './ut-it-blocks';
 import { ensurePersonalSetup } from './personal-setup-gate';
 import { executeCheckAsync, CheckExecutionError } from './check-execution';
+import { prepareAutomaticRequest, prepareDesignVerificationRequest, materializeAutomaticFacts, automaticRequestChecks } from './automatic-request';
 
 export async function checkRequestTests(ctx: RequestCheckContext): Promise<CheckResult[]> {
   // R2：预期来源登记与 provider 执行**并列产出**，每条 return 路径都带上它（失败、未执行、provider 异常同样要呈现）。
@@ -93,6 +95,12 @@ function scanRequestExpectations(ctx: RequestCheckContext): ExpectationScanState
     sourcedPath: 0, sourcedTag: 0, characterization: 0, unregisteredAuthorized: [], unregisteredReadonly: 0, identifiedTotal: 0,
   };
   const projectRoot = fs.realpathSync(ctx.projectRoot);
+  const blueprint = ctx.request.blueprint;
+  const acceptance = blueprint ? ctx.resolvedInputs.artifacts?.['acceptance@1'] as AcceptanceSpec | undefined : undefined;
+  const unitIds = blueprint && acceptance ? collectUnitScopeIds(acceptance).filter(id => blueprint.acceptance_ids.includes(id)) : [];
+  if (blueprint && !acceptance) state.blocking.push('当前蓝图验收分层输入不可用，不能核对 UT 分母');
+  const covered = new Set<string>();
+  const blueprintFile = blueprint ? require('./component-blueprint-path').componentBlueprintPath(projectRoot, blueprint.ref.blueprint_id) as string : undefined;
   for (const file of ctx.request.targets.tests) {
     const content = ctx.request.sourceContents.find(item => item.path === file)?.content;
     if (content === undefined) continue; // 授权写入但尚未落盘：既有 `gaps` 已经报过，这里不重复问责
@@ -139,6 +147,13 @@ function scanRequestExpectations(ctx: RequestCheckContext): ExpectationScanState
           continue;
         }
         row.ref_sha256 = crypto.createHash('sha256').update(fs.readFileSync(real)).digest('hex');
+        if (blueprint && blueprintFile && path.resolve(real) === path.resolve(blueprintFile)) {
+          const id = entry.ref!.slice(entry.ref!.indexOf('#') + 1);
+          if (!entry.ref!.includes('#') || !blueprint.acceptance_ids.includes(id)) {
+            row.class = 'unregistered';
+            state.blocking.push(`${file} 的断言「${entry.name}」没有引用当前蓝图绑定的验收 ID：${entry.ref}`);
+          } else covered.add(id);
+        }
         state.sourcedPath += 1;
       } else if (entry.class === 'sourced') state.sourcedTag += 1;
       else if (entry.class === 'characterization') state.characterization += 1;
@@ -146,6 +161,9 @@ function scanRequestExpectations(ctx: RequestCheckContext): ExpectationScanState
       else state.unregisteredReadonly += 1;
       state.rows.push(row);
     }
+  }
+  if (blueprint) for (const id of unitIds) if (!covered.has(id)) {
+    state.blocking.push(`当前蓝图验收 ${id} 没有对应来源断言；characterization 或仅标签不能替代请求验收`);
   }
   return state;
 }
@@ -211,14 +229,27 @@ export function checkRequestInputs(ctx: RequestCheckContext): CheckResult[] {
 
 export async function runExplicitRequest(options: { projectRoot: string; frameworkRoot: string; args: Record<string, unknown> }): Promise<number> {
   options = { ...options, projectRoot: fs.realpathSync(options.projectRoot), frameworkRoot: fs.realpathSync(options.frameworkRoot) };
-  const { args } = options;
+  const args = { ...options.args };
+  if (typeof args['request-file'] === 'string') {
+    const file = require('./project-relative-path').realProjectPath(options.projectRoot, args['request-file'], 'request-file');
+    if (JSON.parse(fs.readFileSync(file, 'utf8')).phase === 'component-design') {
+      const continued = prepareDesignVerificationRequest(options.projectRoot, options.frameworkRoot, args);
+      args['request-file'] = continued.requestFile; args['report-dir'] = continued.reportDir;
+    }
+  }
+  if (args['request-file'] === undefined) {
+    const automatic = prepareAutomaticRequest(options.projectRoot, options.frameworkRoot, args);
+    args['request-file'] = automatic.requestFile; args['report-dir'] = automatic.reportDir;
+  }
   if (typeof args['request-file'] !== 'string' || typeof args['report-dir'] !== 'string') throw new Error('--request-file and --report-dir must be supplied together');
   for (const key of ['feature', 'f', 'goal-run-id', 'goal-attempt-id', 'goal-owner-id', 'goal-owner-epoch', 'run-id', 'attach-created', 'resume', 'manifest', 'sync-closure', 'revalidate', 'report-reconcile-only']) if (args[key] !== undefined && args[key] !== false) throw new Error(`request cannot be combined with --${key}`);
   const saved: Record<string, string | undefined> = {};
   for (const key of Object.keys(process.env)) if (/^MAISON_(GOAL_|FEATURE|CURRENT_PHASE|PHASE_|RUN_ID|ORCHESTRATION)/i.test(key)) { saved[key] = process.env[key]; delete process.env[key]; }
   try {
-    const parseOptions = { projectRoot: options.projectRoot, frameworkRoot: options.frameworkRoot, phase: String(args.phase ?? ''), requestFile: args['request-file'], reportDir: args['report-dir'] };
-    const prepared = prepareExplicitRequest(parseOptions);
+    const parseOptions = { projectRoot: options.projectRoot, frameworkRoot: options.frameworkRoot, phase: String(args.phase ?? ''), requestFile: args['request-file'], reportDir: args['report-dir'], allowPlannedTargets: args['prepare-request'] === true };
+    let prepared = prepareExplicitRequest(parseOptions);
+    materializeAutomaticFacts(prepared, options.projectRoot);
+    if (prepared.intake_context || prepared.origin_gap) prepared = prepareExplicitRequest(parseOptions);
     const config = loadFrameworkConfig(options.projectRoot);
     const workflow = resolveWorkflowSpec(options.projectRoot, { frameworkRoot: options.frameworkRoot, config, workflowOverride: typeof args.workflow === 'string' ? args.workflow : undefined });
     const artifact = workflow.artifacts.find(artifact => artifact.id === prepared.phase);
@@ -267,6 +298,13 @@ export async function runExplicitRequest(options: { projectRoot: string; framewo
     for (const input of Object.values(ctx.resolvedInputs.values)) if (input.state === 'resolved') {
       try { readBoundInput({ projectRoot: ctx.projectRoot, frameworkRoot: ctx.frameworkRoot, phase: ctx.phase, track: 'full', inputContext: ctx.resolvedInputs.context, request: prepared, adhocCases: prepared.inputs.cases && fs.existsSync(prepared.inputs.cases) ? fs.readFileSync(prepared.inputs.cases, 'utf8') : undefined }, input.binding); }
       catch (error) { checks.push(requestFailure('request_binding_stale', String(error))); }
+    }
+    checks.push(...automaticRequestChecks(prepared.intake_context, ctx.projectRoot));
+    if (prepared.origin_gap) checks.push(requestFailure('request_input_unresolved', prepared.origin_gap));
+    if (prepared.intake_context) {
+      const intake = prepared.intake_context;
+      const gaps = [...intake.gaps, ...intake.attribution_unknown.map(file => `初始dirty与本请求重叠且前像未隔离：${file}`), ...(intake.policy.selected === 'unknown' ? ['档位事实尚未核齐'] : [])];
+      if (gaps.length) checks.push(requestFailure('request_input_unresolved', gaps.join('；') + '；局部能力结果保留，不能签完整diff已对账/完整review通过'));
     }
     const result = generateRequestScriptReport(ctx, checks);
     console.log(JSON.stringify({ subject: 'request', request_sha256: prepared.request_sha256, verdict: result.verdict, report: result.reportPath }));

@@ -887,8 +887,12 @@ const cases: Array<{ name: string; run(f: Fixture): void }> = [
   } },
   { name: 'one rich fixture yields 4+1 detail, true shared/exclusive inheritance and read-only handoff', run(f) {
     const bp = blueprint(f); assert.deepStrictEqual(validateComponentBlueprint(bp, { projectRoot: f.root }).filter(i => i.severity === 'BLOCKER'), []);
+    const publications = [f.feature, f.reportFeature].flatMap(feature => ['acceptance.yaml', 'contracts.yaml', 'use-cases.yaml'].map(name => featureFilePath(f.root, feature, name)));
+    const publishedBytes = publications.map(file => fs.readFileSync(file));
     const ready = deriveDesignPreparationReadiness(f.root, 'ledger-app-blueprint'); assert(ready.ready, JSON.stringify(ready.perUnit));
-    for (const feature of [f.feature, f.reportFeature]) for (const name of ['acceptance.yaml', 'contracts.yaml', 'use-cases.yaml', 'spec.md', 'plan.md']) assert(!fs.existsSync(featureFilePath(f.root, feature, name)), name);
+    publications.forEach((file, index) => assert(fs.readFileSync(file).equals(publishedBytes[index]), 'readiness rewrote the original consumer publication: ' + file));
+    for (const feature of [f.feature, f.reportFeature]) for (const name of ['spec.md', 'plan.md', 'spec/reports/summary.json', 'plan/reports/summary.json']) assert(!fs.existsSync(featureFilePath(f.root, feature, name)), name);
+    for (const file of ['src/ledger/LedgerFeature.ets', 'src/ledger/LedgerReport.ets', 'src/ledger/LedgerShared.ets', 'test/ledger/LedgerFeature.test.ets', 'test/ledger/LedgerReport.test.ets']) assert(!fs.existsSync(path.join(f.root, file)), 'handoff generated a predicted product/test file: ' + file);
     const text = render(f);
     const statements = ['未声明可展示的同视图结构边；以上对象表保留，不从名称、目录或字段类型猜连线。', '未声明上游依赖；不从目录、purpose 或数组顺序推断施工顺序。', '未声明的索引、事务、存储配置不由 renderer 推断。'];
     const bodyMechanismStatements = (document: string) => document.slice(document.indexOf('## 1 方案摘要'), document.indexOf('## 技术与追溯参考')).split('\n').filter(line => statements.some(statement => line.includes(statement)));

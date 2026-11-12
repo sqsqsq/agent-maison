@@ -48,6 +48,7 @@ function mkConsumerProject(): string {
     path.join(fw, 'specs', 'runtime-artifact-policy.json'),
   );
   fs.copyFileSync(CORE_ABS, path.join(fw, 'agents', 'shared', 'guard-framework-write-core.mjs'));
+  for (const name of ['native-request.cjs', 'goal-execution-signal.cjs']) fs.copyFileSync(frameworkAbs(LAYOUT, `agents/shared/${name}`), path.join(fw, 'agents/shared', name));
   return root;
 }
 
