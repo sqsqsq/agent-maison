@@ -649,12 +649,12 @@ const cases: Array<{ name: string; run: () => void }> = [
       const BOUNDARY_PARALLEL_SENTENCE =
         '**准备工作（读代码、看截图、查依据）可以并行**，禁的只是依赖未满足就提前施工。';
       const BOUNDARY_LOCAL_REQUEST_SENTENCE =
-        '**局部 review / UT / testing 请求**先按终点用共享方法；只审查/解释/设计用例不要求 request、facts 或报告，实际写/跑测试或要求 checker 校验报告才走 request，不强迫建蓝图或 Feature；**无 Feature 的独立测试请求，落笔写测试之前先跑 `--prepare-request` 确认落点与载体**；**已有 Feature/CU 上下文的测试沿其有效范围和阶段入口执行**，不得把正式交付中的测试拆成独立请求。';
+        '**局部 review / UT / testing 请求**先按终点用共享方法；只审查/解释/设计用例不要求 request、facts 或报告，实际写/跑测试或要求 checker 校验报告才走 request，不强迫建蓝图或 Feature；**无 Feature 的独立测试请求，落笔写测试之前完成载体与允许写界准备；自动准备并入首次能力调用**，显式 request-file 仍可先跑 `--prepare-request`；**已有 Feature/CU 上下文的测试沿其有效范围和阶段入口执行**，不得把正式交付中的测试拆成独立请求。';
       const BOUNDARY_RESUME_SENTENCE =
         '**恢复已有任务**复用既有有效范围与证据，不因本节重跑完整链。';
       for (const [why, sentence] of [
         ['准备工作可并行（需求 R1 边界①）', BOUNDARY_PARALLEL_SENTENCE],
-        ['局部请求走各自准备路径 + 写测试前先 --prepare-request（需求 R1 边界② / task_d09f8f18）', BOUNDARY_LOCAL_REQUEST_SENTENCE],
+        ['局部请求走各自准备路径 + 写测试前完成自动/显式载体准备（需求 R1 边界② / task_d09f8f18）', BOUNDARY_LOCAL_REQUEST_SENTENCE],
         ['恢复已有任务复用有效范围（需求 R1 边界③）', BOUNDARY_RESUME_SENTENCE],
       ] as const) {
         assert(section.includes(sentence), `AGENTS 模板 §4.0 缺边界原句：${why}。期望逐字包含：\n${sentence}`);
@@ -663,10 +663,10 @@ const cases: Array<{ name: string; run: () => void }> = [
       // 措辞用「落笔写测试之前」而非「动手写之前」：后者含子串「手写」，会踩中既有
       // `D0.2 …` 用例对「手写来源/指纹」的全文禁词断言（:304）。语义时点不变，
       // 不去削弱那条既有断言（偏离登记见 plan §10）。
-      const PREPARE_REQUEST_TIMING = '**落笔写测试之前先跑 `--prepare-request` 确认落点与载体**';
+      const PREPARE_REQUEST_TIMING = '落笔写测试之前完成载体与允许写界准备；自动准备并入首次能力调用';
       assert(
         read('docs/operations/project-entry.md').includes(PREPARE_REQUEST_TIMING),
-        `project-entry 缺「写之前先跑 --prepare-request」时点半句（需求 R1 边界②）。期望逐字包含：\n${PREPARE_REQUEST_TIMING}`,
+        `project-entry 缺「写之前完成载体准备」时点半句（需求 R1 边界②）。期望逐字包含：\n${PREPARE_REQUEST_TIMING}`,
       );
     },
   },

@@ -11,15 +11,8 @@
     "source_fingerprint",
     "decision_fingerprint",
     "provenance",
-    "review_summary",
     "design_views",
-    "decisions_and_gaps",
-    "relations",
-    "contracts",
-    "providers",
-    "discovery",
-    "app_lens",
-    "derived_results"
+    "discovery"
   ],
   "properties": {
     "artifact": { "const": "component-blueprint@1" },
@@ -41,7 +34,6 @@
     },
     "decisions_and_gaps": {
       "type": "object",
-      "required": ["decisions", "gaps"],
       "properties": {
         "decisions": { "type": "array", "items": { "$ref": "#/$defs/decision" } },
         "gaps": { "type": "array", "items": { "$ref": "#/$defs/gap" } }
@@ -52,7 +44,7 @@
     "providers": { "type": "array", "items": { "type": "object", "required": ["provider_id"] } },
     "discovery": {
       "type": "object",
-      "required": ["source_fingerprint", "facts", "conflicts", "inputs", "requirement_traceability"],
+      "required": ["source_fingerprint", "inputs", "requirement_traceability"],
       "properties": {
         "source_fingerprint": { "$ref": "#/$defs/sha256", "readOnly": true },
         "facts": { "type": "array", "items": { "type": "object" } },
@@ -75,6 +67,15 @@
     "generated_graphs": { "type": "array", "items": { "type": "object" } }
   },
   "$defs": {
+    "fullContent": {
+      "type": "object",
+      "required": ["review_summary", "decisions_and_gaps", "relations", "contracts", "providers", "app_lens", "derived_results"],
+      "properties": {
+        "decisions_and_gaps": { "required": ["decisions", "gaps"] },
+        "discovery": { "required": ["facts", "conflicts"] },
+        "design_views": { "items": { "required": ["viewpoint_contract", "applicability", "stakeholders", "purpose", "current_state", "target_state", "delta", "decisions_and_gaps", "verification_refs"] } }
+      }
+    },
     "questioning": {
       "type": "object",
       "properties": {
@@ -134,19 +135,7 @@
     },
     "view": {
       "type": "object",
-      "required": [
-        "view_id",
-        "viewpoint_contract",
-        "applicability",
-        "stakeholders",
-        "purpose",
-        "current_state",
-        "target_state",
-        "delta",
-        "decisions_and_gaps",
-        "verification_refs",
-        "nodes"
-      ],
+      "required": ["view_id", "nodes"],
       "properties": {
         "view_id": { "enum": ["logical", "runtime", "development", "deployment", "scenarios"] },
         "viewpoint_contract": { "type": "string", "minLength": 1 },

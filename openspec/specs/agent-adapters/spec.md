@@ -644,3 +644,37 @@ Enforcement: `harness/scripts/utils/adapter-model.ts`, `harness/scripts/utils/ag
 
 - **WHEN** the selected volcengine route exists only in the foreground source layer
 - **THEN** headless SHALL compose that layer, validate complete source metadata, and let native MISSING_CREDENTIAL reach the existing hard-failure classifier without trying another model
+
+
+### Requirement: Adapters share source-bound intake and disclose write-time limits
+
+所有已物化 adapter 的根入口/常驻规则/Skill 跳板 SHALL 指向 `docs/operations/project-entry.md` 同一前门，不各维护档位表。可用原生 payload/环境 SHALL 提供真实 transcript/session 与 user 消息定位给原 compile/request 的 session-ref，reader 核角色/session/cwd；无可用原件 SHALL 准确降级，不把模型转述当用户覆盖。
+
+已验证的编辑 hook SHALL 仅机械核同一原生会话可消费上下文是否已加载前门规则，缺失拒绝本次产品编辑并提示补读后继续。压缩明确保留规则可复用，普通“继续”不因新 user 消息重复拒绝。语义新请求/本请求豁免边界 SHALL 由原入口解释并核真实用户来源，不宣称 hook 可逐请求分类。原派出作者 SHALL 复用 RUN_ID/ATTEMPT/ATTEMPT_PHASE/HEADLESS 的既有同源信号并集免重复入口，不免 framework 写保护、授权或真实完成核验。
+
+仅实测成立的客户端/事件/编辑工具 SHALL 声称写前保证。Shell/脚本/场外进程/未覆盖工具盲区、无 hook 的规则与后验降级 SHALL 披露；未测/环境缺认证或程序 SHALL NOT 写成产品不支持。Codex Desktop 与 CLI SHALL 分别取证，不绕原生信任、不改用户全局配置；现有 hook/settings 以结构化合并保留宿主其它条目。
+
+#### Scenario: Reading the rule recovers an intercepted edit
+- **WHEN** 同会话支持的产品编辑因未加载规则被拒，随后真实读取根入口与 project-entry
+- **THEN** 重试可继续原请求，既有成果保留；该结果只证明规则加载，不签专项通过
+
+#### Scenario: Cursor author loses only the headless marker
+- **WHEN** 已派作者保留既有运行/attempt 信号而子进程缺 HEADLESS
+- **THEN** 仍沿同源作者谓词免重复入口，framework 写保护继续生效
+
+#### Scenario: A CLI result is not a Desktop result
+- **WHEN** Codex CLI 通过而 Desktop hook 未实测，或某客户端缺本机认证/程序
+- **THEN** 报告对应未测/环境缺口与降级，SHALL NOT 声称 Desktop 已拦截或产品不支持
+
+> **Enforced by:** 已物化入口、原 guard hook 与原生 transcript reader；真实客户端能力证据见 `agents/README.md`，开发夹具不能替代原生结果。
+
+
+### Requirement: Compact design reuses the adapter intake without claiming new client evidence
+
+adapter 入口 SHALL 消费同一四档结果及当前原 request；小型 SHALL 指向同协议短蓝图与后续适用能力，不强建 CU/独立设计质询/独立评审文件，不恢复 lite 或另维护档位表。首次授权蓝图准备 SHALL 使用真实 component-design 上下文，不借 review 假身份。此能力接线 SHALL NOT 扩大任何客户端 hook 的实测结论，CLI/隔离开发通过不代表 Desktop、业务宿主、真机或效率验收通过。
+
+#### Scenario: An adapter handles a small request
+- **WHEN** 同源规则或真实 user 指定小型
+- **THEN** 入口消费原 request 的短设计和当前验收来源，不新建 Feature/CU 或新执行器；该结果不改变客户端 hook 未测边界
+
+> **Enforced by:** 已物化根入口/Skill 指引、原 design/request 消费者；客户端实证沿 `agents/README.md` 分别记录。

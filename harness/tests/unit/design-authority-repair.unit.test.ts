@@ -1033,12 +1033,22 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
           for (const id of ['ledger-dependency', 'ledger-responsibility']) candidate.design_refs.push({ ...candidate.component_blueprint_ref,
             target: { kind: 'decision', id } });
           fs.writeFileSync(cuFile, YAML.stringify(candidate));
+          const implementation_refs = ['src/ledger/LedgerFeature.ets'], test_refs = ['src/ledger/src/ohosTest/ets/test/LedgerFeature.test.ets'];
+          fs.writeFileSync(path.join(path.dirname(draft), 'change-unit-candidates.json'), JSON.stringify([{ providerId: candidate.provenance.extraction_method, artifact: candidate,
+            construction_mapping: {
+              predicate_mappings: candidate.target_predicates.map((row: Ev) => ({ predicate_id: row.predicate_id, implementation_refs, test_refs })),
+              provide_mappings: candidate.provides.map((row: Ev) => ({ provide_id: row.provide_id, implementation_refs, test_refs })),
+              design_ref_mappings: candidate.design_refs.map((design_ref: Ev) => ({ design_ref, implementation_refs, verification_refs: test_refs })),
+            } }]));
         } },
       });
       assert(contentRepairs(b.events).some(event => event.stage === 'published' && event.outcome === 'recovered' && event.architecture_changed === true), describeS16(b));
       const cu = loadCanonicalChangeUnit(s.root, BLUEPRINT_ID, CU).changeUnit;
       assert((cu.design_refs as Ev[]).some(ref => ref.target.id === 'ledger-dependency'), 'content revision must run through the real CU consumer while borrowing feature locks');
       assert((cu.design_refs as Ev[]).some(ref => ref.target.id === 'ledger-responsibility'), 'module responsibility revision must use the same closure and content consumer');
+      const mapping = readDoc(featureFilePath(s.root, b.feature, 'contracts.yaml')).change_unit;
+      assert(mapping.design_ref_mappings.some((row: Ev) => row.design_ref.target.id === 'ledger-dependency'), '原作者临时映射未由正式consumer/writer消费');
+      assert.equal(mapping.change_unit_ref.artifact_sha256, loadCanonicalChangeUnit(s.root, BLUEPRINT_ID, CU).artifactSha256);
       const config = readJson<Ev>(path.join(s.root, 'framework.config.json'));
       assert.equal(config.architecture.outer_layers.find((row: Ev) => row.id === '02-Feature').intra_layer_deps, 'sublayer');
       const publishedAt = b.events.findIndex(event => event.type === 'design_authority_repair' && event.stage === 'published');

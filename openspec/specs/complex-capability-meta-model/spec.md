@@ -99,7 +99,7 @@ legacy allowlist 与 `version`/`deferred_to` 既有语义不变。不强制所�
   事实真源，MUST NOT 拥有 phase 运行裁决权；当前态断言 MUST 引用代码/schema/接口/测试等
   事实来源；
 - **Change Unit**：凡属某部件蓝图分解产物的单元 MUST 引用恰好一份所属蓝图，只消费显式
-  `requires`、只声明显式 `provides`；**非正式维护动作**（不改变部件行为、外部契约、数据/
+  `requires`、只声明显式 `provides`；**统一前门的特别简单请求及非正式维护动作**（维护包括不改变部件行为、外部契约、数据/
   NFR、运行语义或架构责任的纯文档与机械维护，以及恢复明确既有预期且不需改变验收/契约或新设计的普通 bug 修复）MUST NOT 被要求建立蓝图或 canonical CU，它
   按请求终点与真实输入独立执行，不强造 Feature/CU/run；**存量平铺 Feature**（无 `change_unit_ref`）MUST 保持既有
   行为，MUST NOT 被自动迁移、自动转为 CU 或自动 credit completion；上述两类单元在显式归属
@@ -134,39 +134,32 @@ legacy allowlist 与 `version`/`deferred_to` 既有语义不变。不强制所�
 
 ### Requirement: Dual entry semantics
 
-**统一正式需求入口（2026-08-29 修订）**：每一项**正式需求** MUST 经过部件演进蓝图这一部件
-内设计阶段；蓝图 MUST NOT 被定义为"复杂多单元需求才启用的可选路线"。上游输入 MUST 支持
-两种形态，且两者 MUST 是同一入口的两种输入而不是两条路线：
+2026-11-11 A 取代 M7“一切正式需求均完整蓝图/CU/不设档位”的普遍适用范围。所有产品修改 MUST 先消费 `docs/operations/project-entry.md` 唯一规则及真实用户来源，MUST NOT 仅以“正式需求”标签、行数、文件数或模块数决定完整设计。特别简单 MUST 可不新建设计文件/CU而经原 compile/架构及适用 request 能力完成；中型/复杂及已有 CU MUST 保留原完整设计/准入与完成责任。小型 MUST 使用同一蓝图协议的短内容和原 request，无 CU/独立设计质询/独立评审文件；MUST NOT 将短内容结构通过称为完整 admitted 或据此绕过完整 CU gate。
 
-- **本部件直供**：直接从原始需求、当前事实与人工提供的外部约束建立蓝图，MUST NOT 以"能力
-  架构蓝图缺失 / G2 未建设"为由阻塞；
-- **跨部件投影**：MUST 只消费人工或上游提供的投影引用——Maison MUST NOT 重新裁决其它部件
-  的架构，MUST NOT 由 AI 补造缺失的外部契约（缺失时 MUST 落 open decision 或带责任方的
-  blocker）。
+进入蓝图的上游输入仍 MUST 是同一入口的两种形态，而非两条运行路线：
 
-蓝图协议 MUST 唯一：MUST NOT 引入 compact/full 档位、蓝图类型字段、升级信号或升级状态机；
-内容深度 MUST 由本次演进的真实影响面派生（见「Conditional design obligations」）。
+- 本部件直供 MUST 可从原需求、当前事实与合法外部约束建立蓝图，不因能力架构蓝图缺失阻塞；
+- 跨部件投影 MUST 只消费人工/上游提供的引用，不重裁其它部件架构，不补造外部契约；真实缺口保留 owner 与解除条件。
 
-#### Scenario: 外部契约缺失不得补造
+蓝图协议 MUST 保持唯一，不恢复 lite、不增平行设计真源或升级状态机。四档外框 MUST 由同源事实与真实用户覆盖派生，不由可手改蓝图类型字段或删除必需字段选择。完整路径仍按真实影响展开条件义务；短内容通过真实 request 来源、当前蓝图身份与具体 AC 消费，不以可解析替代完整请求验收。
 
-- **WHEN** 建立蓝图时 SE 尚未提供云侧同步契约
-- **THEN** 蓝图对应条目为 open_decision/blocker 并标注责任方与解除条件，不出现 AI
-  生成的契约内容
+#### Scenario: Existing-page routing is not forced to medium
+- **WHEN** 两个已有页面间新增明确跳转，三问均否、预期及唯一做法有据，影响可在本次同步并验证
+- **THEN** 规则可得特别简单，真实路由验证仍适用，MUST NOT 仅因路由文件或“正式”标签强制完整蓝图
 
-#### Scenario: 小型正式需求不得绕过蓝图
+#### Scenario: An external consumer requires complete design
+- **WHEN** 接口存在仓外消费者且无用户固定外框
+- **THEN** Q2 为是并得中型，消费完整设计及兼容验证责任
 
-- **WHEN** 一项正式需求预计只需要一个 Change Unit
-- **THEN** 它仍 MUST 先经过蓝图（薄蓝图 → 1 个 CU），MUST NOT 直接进入 spec/plan 或
-  change-lite 施工；实现 MUST NOT 提供"小需求跳过蓝图"的合法路径
+#### Scenario: Missing external contract is not invented
+- **WHEN** 蓝图需要云侧契约而上游未提供
+- **THEN** 保留 open_decision/blocker 及责任方，MUST NOT 用 AI 补造契约
 
-#### Scenario: 提议为蓝图新增档位被拒绝
+#### Scenario: A small request retains one compact design authority
+- **WHEN** 同源事实或真实用户指定小型且完成四样必要内容
+- **THEN** 同一 schema/checker MUST 可验证该请求短设计，无 CU/独立设计质询/独立评审文件；完整 CU 的消费仍要求完整 admitted，不能以短结构通过代替
 
-- **WHEN** 某 change 提出为蓝图新增 compact/full 档位、蓝图类型字段或从薄到全的升级状态机
-- **THEN** 该 change 违反本契约，openspec review MUST 拒绝——深度伸缩只能由条件式设计义务
-  表达
-
-> **Enforced by:** 本 capability spec 作为 P1 change（蓝图建立与调和）与
-> `/component-design` 编排入口的准入约束，运行时 enforcement 随 P1 落地并回填引用
+> **Enforced by:** `docs/operations/project-entry.md`、`skills/project/component-design/SKILL.md`、`harness/scripts/utils/execution-scope.ts` 与现有设计入口/准入消费者；真实宿主及 B 短内容消费分别验收。
 
 ### Requirement: Authority boundaries and failure semantics
 
@@ -491,9 +484,9 @@ MUST 返回明确的 unsupported / missing design lens 失败，MUST NOT 把 Ser
 
 ### Requirement: Applicable construction obligations preserve layered completion
 
-蓝图 MUST 保持正式需求目标与共同决策权威，设计期在可引用目标写入已有 acceptance/contracts/use_cases；CU MUST 保持当前切片、目标谓词与 design_refs。spec/plan MUST 直接消费已有合法 typed 投影，只补本次未声明的本职责验收/施工细节，叙述文件仅按 required_outputs 产出，MUST NOT 为阶段形式重写共同设计或生成空文件。P0 真机验收无 UI 依据时保留设计验收，真实 UI 流程/检查点由 spec 不冲突补充；改变已声明权威内容 MUST 回原设计 owner。正常交接 MUST NOT 物化 Feature 文件；spec/plan 直接消费推导输入，各写本阶段产物。整个 contracts.change_unit MUST 由 plan 生成，设计 facts/验收/接口/模型/files 仍归蓝图；无有效映射仍安排 plan。当前投影带用例时，plan required_outputs MUST 要求真实 use-cases.yaml，交业务 UT 消费，不只看已有文件。已有带戳文件的不冲突补充使用同一权威对齐，刷新仅在设计/CU 内容不变时更新身份，真变退责任而不合并。未完成活动 CU 仅无运行或已停住时经 consumer 同 ID 内容修订，running busy，历史完成和退役事实保留，并通过既有 binding 缺口回 plan 恢复；不得重置预算或新增状态/协议。信息/格式承接 MUST NOT 代替真实授权与先行控制事实。
+蓝图 MUST 保持正式需求目标与共同决策权威，设计期在可引用目标写入已有 acceptance/contracts/use_cases；CU MUST 保持当前切片、目标谓词与 design_refs。spec/plan MUST 直接消费已有合法 typed 投影，只补本次未声明的本职责验收/施工细节，叙述文件仅按 required_outputs 产出，MUST NOT 为阶段形式重写共同设计或生成空文件。P0 真机验收无 UI 依据时保留设计验收，真实 UI 流程/检查点由 spec 不冲突补充；改变已声明权威内容 MUST 回原设计 owner。正常 typed 交接 MUST NOT 为叙述阶段提前物化重复设计文件；已有合法映射 MUST 复用，原设计作者 MUST 在同次临时交回明确实现/测试引用，CU 接受后原 resolver 填真实身份，由原投影/物化 writer 在授权写界校验发布唯一 Feature contracts.change_unit。设计 facts/验收/接口/模型/files 仍归蓝图，映射不存回蓝图；已定唯一引用只需确定生成，不能为缺物理映射再安排 plan 模型、制造 plan PASS/receipt。仅真实未决决定或测试归属才交原责任方/plan。当前投影带用例时，plan required_outputs MUST 要求真实 use-cases.yaml，交业务 UT 消费，不只看已有文件。已有带戳文件的不冲突补充使用同一权威对齐，刷新仅在设计/CU 内容不变时更新身份，真变退责任而不合并。未完成活动 CU 仅无运行或已停住时经 consumer 同 ID 内容修订，running busy，历史完成和退役事实保留，并通过既有 binding 缺口回 plan 恢复；不得重置预算或新增状态/协议。信息/格式承接 MUST NOT 代替真实授权与先行控制事实。
 
-目标被 design_refs 引用后，其三类内容 MUST 整体进入该 CU 合并；共享目标只承载所有引用者共同承担的内容，专属验收、files 与用例 MUST 放独占目标，整个 change_unit 映射 MUST 由 Feature plan 生成。数组按原行身份合并、冲突拒绝；对象 MUST 只接受完整相等声明，不能逐键拼接或按 predicate 过滤。文档的纯声明集合 MUST NOT 被当作通过完整只读 readiness 的授权或产品完成证明；absent 明确原补设计责任，已声明 invalid 复用原原因返回 not-ready，不新增缺字段门禁。
+目标被 design_refs 引用后，其三类内容 MUST 整体进入该 CU 合并；共享目标只承载所有引用者共同承担的内容，专属验收、files 与用例 MUST 放独占目标，整个 change_unit 映射 MUST 经原 writer 复用或从真实设计临时候选确定生成到唯一 Feature contracts.yaml，不复制为蓝图设计内容；不能从 touches/同名文件/AC ID 猜测试归属。数组按原行身份合并、冲突拒绝；对象 MUST 只接受完整相等声明，不能逐键拼接或按 predicate 过滤。文档的纯声明集合 MUST NOT 被当作通过完整只读 readiness 的授权或产品完成证明；absent 明确原补设计责任，已声明 invalid 复用原原因返回 not-ready，不新增缺字段门禁。
 
 独立 Skill 完成只表示请求职责完成；Feature 完成 MUST 由同一有效范围、适用目标与既有真实运行证据验证，不以末段名称或阶段自报完成判定。CU MUST 只消费独立验证的 VALID completion 和当前 CU 映射；Component closure MUST 继续检查共同决策、目标覆盖与真实组装义务；跨部件能力完成仍归上游。合法无蓝图维护/专项入口 MUST NOT 被强造蓝图、Code Graph 或 CU。
 

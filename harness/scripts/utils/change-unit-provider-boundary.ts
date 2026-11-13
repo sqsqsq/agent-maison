@@ -44,6 +44,7 @@ export function validateChangeUnitProviderBoundary(
 export interface ChangeUnitCandidate {
   providerId: string;
   artifact: ChangeUnitArtifact;
+  construction_mapping?: import('./blueprint-skill-projection').ChangeUnitConstructionMapping;
 }
 
 export function dropUnacceptedChangeUnitCandidates(_candidates: readonly ChangeUnitCandidate[]): ChangeUnitCandidate[] {
@@ -154,12 +155,30 @@ export function acceptChangeUnitCandidates(
   }
 
   const written: string[] = [];
+  const projections: Array<{ file: string; previous?: Buffer }> = [];
   try {
     candidates.forEach((candidate, index) => {
       writeCanonicalChangeUnit(targets[index]!, candidate.artifact, `${process.pid}-${index}`);
       written.push(targets[index]!);
     });
+    const { materializeBlueprintSkillInputs, resolveChangeUnitConstructionInputs, BLUEPRINT_PROJECTION_FILES } = require('./blueprint-skill-projection') as typeof import('./blueprint-skill-projection');
+    const { deriveChangeUnitFeatureId } = require('./change-unit-path') as typeof import('./change-unit-path');
+    const { resolveFeatureArtifact } = require('../../config') as typeof import('../../config');
+    const { resolveProbeFrameworkRoot } = require('../../repo-layout') as typeof import('../../repo-layout');
+    for (const candidate of candidates) {
+      const feature = deriveChangeUnitFeatureId(candidate.artifact.blueprint_id, candidate.artifact.change_unit_id);
+      const frameworkRoot = resolveProbeFrameworkRoot(projectRoot);
+      if (!candidate.construction_mapping && resolveChangeUnitConstructionInputs(projectRoot, feature, frameworkRoot).gap) continue;
+      for (const name of Object.values(BLUEPRINT_PROJECTION_FILES)) {
+        const location = resolveFeatureArtifact(projectRoot, feature, name);
+        projections.push({ file: location.exists ? location.actualPath : location.canonicalPath,
+          ...(location.exists ? { previous: fs.readFileSync(location.actualPath) } : {}) });
+      }
+      materializeBlueprintSkillInputs(projectRoot, feature, frameworkRoot, undefined, undefined, candidate.construction_mapping);
+    }
   } catch (error) {
+    for (const projection of projections) if (projection.previous) fs.writeFileSync(projection.file, projection.previous);
+    else if (fs.existsSync(projection.file)) fs.unlinkSync(projection.file);
     for (const target of written) {
       if (fs.existsSync(target)) fs.unlinkSync(target);
     }

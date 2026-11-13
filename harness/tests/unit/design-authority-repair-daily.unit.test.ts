@@ -5,9 +5,9 @@ import * as os from 'os';
 import * as path from 'path';
 import { execFileSync } from 'child_process';
 import * as YAML from 'yaml';
-import { clearFrameworkConfigCache, featureFilePath } from '../../config';
+import { clearFrameworkConfigCache, featureFilePath, resolveFeatureArtifact } from '../../config';
 import { loadCanonicalBlueprint } from '../../scripts/utils/component-blueprint-path';
-import { deriveChangeUnitFeatureId } from '../../scripts/utils/change-unit-path';
+import { deriveChangeUnitFeatureId, loadCanonicalChangeUnit, asChangeUnitArtifact } from '../../scripts/utils/change-unit-path';
 import { reconcileChangeUnitBlueprintRefs, BLUEPRINT_RECONCILE_LOCK_NAME } from '../../scripts/utils/change-unit-design-preparation';
 import { diagnoseBlueprintSkillAuthority, deriveBlueprintSkillInput } from '../../scripts/utils/blueprint-skill-projection';
 import { writeBackAdmission, reusableDesignQuestioning, readDesignQuestioningOriginal, recordDesignRepairInvocation, designRepairInvokeLabel, questioningDependencyChanges, runUnattendedDesignRepair, designRepairTarget, type DesignRepairInvokeOutcome } from '../../scripts/utils/design-repair-unattended';
@@ -19,7 +19,7 @@ import { createGoalRun } from '../../scripts/utils/goal-run-creation';
 import { tryAcquireLock, releaseLock, FEATURE_LOCK_NAME } from '../../scripts/utils/goal-run-lock';
 import { matchesUnitCase, selectedUnitCases, startCaseTiming, unitCaseGroups, type UnitExecutionTiming } from '../utils/unit-case-selection';
 import type { UnitCaseResult } from '../run-unit';
-import { fixture as projectionFixture } from './blueprint-skill-projection.unit.test';
+import { fixture as projectionFixture, planContracts } from './blueprint-skill-projection.unit.test';
 
 type Json = Record<string, any>;
 type Group = 'content' | 'runtime';
@@ -37,13 +37,13 @@ const node = (doc: Json): Json => {
   const found = find(doc); assert(found, 'valid fixture contains ledger-domain'); return found;
 };
 
-async function withProject(run: (root: string) => void | Promise<void>): Promise<void> {
+async function withProject(run: (root: string, fixture: ReturnType<typeof projectionFixture>) => void | Promise<void>): Promise<void> {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'design-repair-daily-'));
-  projectionFixture(root); // Approved author input only; no goal result or completion is supplied.
+  const fixture = projectionFixture(root); // Approved author input only; no goal result or completion is supplied.
   fs.writeFileSync(path.join(root, 'framework.config.json'), JSON.stringify({ schema_version: '1.1', project_name: 'design repair boundaries',
     project_profile: { name: 'generic' }, active_workflow: 'obligation-driven', paths: { features_dir: 'doc/features' },
     architecture: { outer_layers: [{ id: 'src', can_depend_on: [] }], module_inner_layers: ['shared', 'data', 'domain', 'presentation'], inner_dependency_direction: 'upward', cross_module_exports_file: 'index.ts' } }));
-  try { clearFrameworkConfigCache(); await run(root); }
+  try { clearFrameworkConfigCache(); await run(root, fixture); }
   finally { clearFrameworkConfigCache(); assert.equal(path.dirname(root), path.resolve(os.tmpdir())); fs.rmSync(root, { recursive: true, force: true }); }
 }
 
@@ -72,6 +72,50 @@ function repairInput(root: string, runId: string, requirement?: string) {
 }
 
 const cases: Array<{ name: string; group: Group; run: () => Promise<void> }> = [{
+  name: 'daily design content: mapping-only primary handback retains the newly published blueprint identity', group: 'content',
+  run: () => withProject(async (root, fixture) => {
+    const approved = loadCanonicalBlueprint(root, BLUEPRINT);
+    const authored = planContracts(fixture), { change_unit_ref: _identity, ...construction_mapping } = authored.change_unit;
+    const defective = structuredClone(approved.blueprint) as Json; node(defective).acceptance = '需要原作者恢复的机器结构'; write(approved.canonicalPath, defective);
+    reconcileChangeUnitBlueprintRefs(root, BLUEPRINT);
+    const beforeCu = loadCanonicalChangeUnit(root, BLUEPRINT, 'ledger-refresh'), beforeArtifact = asChangeUnitArtifact(beforeCu.changeUnit);
+    construction_mapping.design_ref_mappings = construction_mapping.design_ref_mappings.map((row, index) => ({ ...row, design_ref: beforeArtifact.design_refs[index] }));
+    const { input, runDir } = repairInput(root, 'daily-mapping-only-primary', '校正当前设计标题并明确本CU既有施工映射，保留所有业务承诺和验收。');
+    let calls = 0;
+    const result = await runUnattendedDesignRepair({ ...input,
+      invoke: async (purpose, _prompt, guard) => {
+        assert(guard); const phase = designRepairInvokeLabel(purpose), invokeId = `${phase}-${++calls}`;
+        fs.mkdirSync(path.join(runDir, 'phases', phase, invokeId), { recursive: true });
+        input.emit({ type: 'agent_invoke_start', phase, invoke_id: invokeId, command: 'controlled design author or independent Q' });
+        const draft = path.join(runDir, 'design-repair/component-blueprint.yaml');
+        if (purpose === 'author') {
+          const doc = read(draft); node(doc).acceptance = node(approved.blueprint as Json).acceptance;
+          doc.title = String(doc.title ?? 'Ledger') + ' — current source binding'; write(draft, doc);
+          fs.writeFileSync(path.join(runDir, 'design-repair/change-unit-candidates.json'), JSON.stringify([{
+            providerId: beforeArtifact.provenance.extraction_method, artifact: beforeArtifact, construction_mapping }]));
+        }
+        input.emit({ type: 'agent_invoke_end', phase, invoke_id: invokeId, exit_code: 0 });
+        const outcome: DesignRepairInvokeOutcome = { started: true, invokeId, ok: true, detail: 'controlled design handback',
+          ...(purpose === 'questioning' ? { output: JSON.stringify({ items: (approved.blueprint as Json).review_summary.questioning.items }) } : {}),
+          preSnapshot: guard.pre, postSnapshot: capturePhaseInvocationSnapshot(guard.resolution, guard.options) };
+        recordDesignRepairInvocation(runDir, purpose, invokeId, outcome); return outcome;
+      } });
+    assert.equal(result.outcome, 'published', JSON.stringify(result));
+    assert.equal(calls, 2, 'the real defective input must execute the controlled author and independent Q before publication');
+    const published = loadCanonicalBlueprint(root, BLUEPRINT), current = loadCanonicalChangeUnit(root, BLUEPRINT, 'ledger-refresh');
+    const currentArtifact = asChangeUnitArtifact(current.changeUnit);
+    assert.equal(published.blueprint.revision, Number(approved.blueprint.revision) + 1);
+    assert.equal(currentArtifact.component_blueprint_ref.revision, published.blueprint.revision);
+    assert.equal(currentArtifact.component_blueprint_ref.artifact_sha256, published.artifactSha256);
+    assert.equal(currentArtifact.revision, beforeArtifact.revision + 1, 'mapping publication bumped the same pointer twice');
+    assert.deepEqual(currentArtifact.provenance, beforeArtifact.provenance, 'pointer-only publication rewrote the original CU provenance');
+    const location = resolveFeatureArtifact(root, FEATURE, 'contracts.yaml');
+    assert(location.exists, JSON.stringify({ result, location }));
+    const stage = read(location.actualPath);
+    assert.equal(stage.change_unit.change_unit_ref.artifact_sha256, current.artifactSha256);
+    assert(stage.change_unit.design_ref_mappings.every((row: Json) => row.design_ref.revision === published.blueprint.revision));
+  }),
+}, {
   name: 'daily design content: original requirement dispatch ignores the retired personal B1 switch and preserves authority', group: 'content',
   run: () => withProject(async root => {
     fs.writeFileSync(path.join(root, 'framework.local.json'), JSON.stringify({ schema_version: '1.0', design_repair: { unattended_b1: 'true' } }));

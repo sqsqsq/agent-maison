@@ -30,7 +30,7 @@ import type { CheckContext } from '../../scripts/utils/types';
 import type { UnitCaseResult } from '../run-unit';
 import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
 import { installReplayTransport, type ReplayInput } from '../helpers/completion-replay-transport';
-import { withRuntimeTest } from '../utils/runtime-test-control';
+import { withRuntimeTest, preserveRuntimeTestEvidence } from '../utils/runtime-test-control';
 import { defaultProcessProbe } from '../../scripts/utils/device-session';
 
 const SOURCE_HARNESS = path.resolve(__dirname, '../..');
@@ -255,13 +255,19 @@ async function runPublicOutputIdle(active: boolean) {
     fs.writeFileSync(actor, `const fs=require('fs'),path=require('path'),{spawn}=require('child_process');
 const state=${JSON.stringify(f.stateDir)};
 const command=${JSON.stringify(args)};
+const record=(event,fields={})=>fs.appendFileSync(path.join(state,'selfcheck-lifecycle.jsonl'),JSON.stringify({event,at:Date.now(),pid:process.pid,...fields})+'\\n');
+record('actor-start');
 process.stdout.write(JSON.stringify({type:'item.started',item:{type:'command_execution',command:command.join(' ')}})+'\\n');
 const tool=spawn(process.execPath,command,{cwd:${JSON.stringify(SOURCE_HARNESS)},env:process.env,windowsHide:true,stdio:['ignore','pipe','pipe']});
+record('selfcheck-spawn',{tool_pid:tool.pid,command});
 let output='',errors='';
-tool.stdout.on('data',chunk=>{output+=chunk;process.stderr.write(chunk);});
-tool.stderr.on('data',chunk=>{errors+=chunk;process.stderr.write(chunk);});
-tool.on('close',code=>{
+tool.stdout.on('data',chunk=>{if(!output.length)record('selfcheck-first-stdout');output+=chunk;process.stderr.write(chunk);});
+tool.stderr.on('data',chunk=>{if(!errors.length)record('selfcheck-first-stderr');errors+=chunk;process.stderr.write(chunk);});
+tool.on('error',error=>{record('selfcheck-spawn-error',{message:error.message,code:error.code});throw error;});
+tool.on('close',(code,signal)=>{
+ record('selfcheck-close',{code,signal,stdout_bytes:Buffer.byteLength(output),stderr_bytes:Buffer.byteLength(errors)});
  fs.writeFileSync(path.join(state,'actual-selfcheck.json'),JSON.stringify({command,code,stdout:output,stderr:errors}));
+ record('selfcheck-original-written');
  fs.mkdirSync(path.dirname(${JSON.stringify(partialFile)}),{recursive:true});fs.writeFileSync(${JSON.stringify(partialFile)},'actual author partial notes\\n');
  process.stdout.write(JSON.stringify({type:'item.completed',item:{type:'command_execution',command:command.join(' '),status:code===0?'completed':'failed',exit_code:code,aggregated_output:output}})+'\\n');
  if(${JSON.stringify(active)}){const timer=setInterval(()=>process.stdout.write('actual native output growth\\n'),200);setTimeout(()=>{clearInterval(timer);fs.writeFileSync(path.join(state,'natural-completion'),'done');process.stdout.write('{"type":"turn.completed"}\\n');},${idleMs + 500});}
@@ -274,7 +280,7 @@ const api=require(${JSON.stringify(path.join(SOURCE_HARNESS, 'scripts/utils/agen
 api.DEFAULT_AGENT_OUTPUT_IDLE_MS=${idleMs};
 const interval=global.setInterval;let beats=0;global.setInterval=(fn,ms,...args)=>interval(ms===30000?()=>{fn(...args);fs.writeFileSync(${JSON.stringify(path.join(f.stateDir, 'framework-heartbeats'))},String(++beats));}:fn,ms===30000?100:ms,...args);
 const original=api.invokeAgentHeadless;
-api.invokeAgentHeadless=(plan,cwd,options)=>{const argv=[process.execPath,${JSON.stringify(actor)}];fs.writeFileSync(${JSON.stringify(path.join(f.stateDir, 'transport-plan.json'))},JSON.stringify({originalAdapter:plan.adapterName,originalArgv:plan.argv,executedArgv:argv,hasOldTimeout:options.timeoutMs!==undefined}));return original({argv,label:'controlled native output-idle replay; no model CLI',adapterName:undefined},cwd,{...options,terminalEventParser:'codex_turn_jsonl',toolEventCapture:'structured_events'});};
+api.invokeAgentHeadless=(plan,cwd,options)=>{const argv=[process.execPath,${JSON.stringify(actor)}];fs.writeFileSync(${JSON.stringify(path.join(f.stateDir, 'transport-plan.json'))},JSON.stringify({originalAdapter:plan.adapterName,originalArgv:plan.argv,executedArgv:argv,hasOldTimeout:options.timeoutMs!==undefined,started_at:Date.now(),output_idle_ms:api.resolveAgentOutputIdleMs(cwd)}));return original({argv,label:'controlled native output-idle replay; no model CLI',adapterName:undefined},cwd,{...options,terminalEventParser:'codex_turn_jsonl',toolEventCapture:'structured_events'}).then(result=>{fs.writeFileSync(${JSON.stringify(path.join(f.stateDir,'transport-result.json'))},JSON.stringify(result));return result;});};
 `);
     const command = ['-r', require.resolve('ts-node/register/transpile-only'), '-r', preload, path.join(SOURCE_HARNESS, 'scripts/goal-mode-entry.ts'),
       '--feature', f.context.feature, '--run-id', f.input.runId, '--adapter', 'codex', '--run-mode', 'attended',
@@ -289,6 +295,15 @@ api.invokeAgentHeadless=(plan,cwd,options)=>{const argv=[process.execPath,${JSON
     });
     const code = execution.status;
     const accepted = acceptedSessionReport(f.runDir, f.issued);
+    const actualFile = path.join(f.stateDir, 'actual-selfcheck.json');
+    const readDiagnostic = (name: string): string | undefined => { const file = path.join(f.stateDir, name); return fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : undefined; };
+    const diagnosticDir = path.resolve(__dirname, '../../reports/maison-b-selfcheck'); fs.mkdirSync(diagnosticDir, { recursive: true });
+    fs.writeFileSync(path.join(diagnosticDir, `${path.basename(f.root)}-${active ? 'active' : 'silent'}.json`), JSON.stringify({
+      root: f.root, active, code, accepted, stdout, stderr, plan: readDiagnostic('transport-plan.json'), transport: readDiagnostic('transport-result.json'),
+      lifecycle: readDiagnostic('selfcheck-lifecycle.jsonl'), selfcheck: readDiagnostic('actual-selfcheck.json'), events: sessionEvents(f.runDir) }, null, 2) + '\n');
+    assert(fs.existsSync(actualFile), JSON.stringify({ missing: actualFile, code, accepted, stdout, stderr,
+      lifecycle: fs.existsSync(path.join(f.stateDir, 'selfcheck-lifecycle.jsonl')) ? fs.readFileSync(path.join(f.stateDir, 'selfcheck-lifecycle.jsonl'), 'utf8') : 'actor did not record startup',
+      transport: fs.existsSync(path.join(f.stateDir, 'transport-result.json')) ? JSON.parse(fs.readFileSync(path.join(f.stateDir, 'transport-result.json'), 'utf8')) : 'transport did not settle' }));
     const actual = JSON.parse(fs.readFileSync(path.join(f.stateDir, 'actual-selfcheck.json'), 'utf8'));
     const diagnostics = JSON.stringify({ code, accepted, actual, stdout, stderr });
     assert.equal(code, 0, diagnostics);
@@ -310,6 +325,12 @@ api.invokeAgentHeadless=(plan,cwd,options)=>{const argv=[process.execPath,${JSON
       assert.equal(fs.readFileSync(path.join(f.stateDir, 'grandchild-tick'), 'utf8'), tick, 'the public stop kills the real descendant tree');
       assert(observeSessionExecution(f.runDir, f.issued).settled, 'the original accepted interrupted request remains observable for continuation');
     }
+  } catch (error) {
+    const phaseDir = path.dirname(path.resolve(f.runDir, f.issued.reference.path));
+    const evidenceFiles = [f.stateDir, phaseDir].flatMap(directory => fs.existsSync(directory)
+      ? fs.readdirSync(directory).map(name => path.join(directory, name)).filter(file => fs.statSync(file).isFile()) : []);
+    const evidence = preserveRuntimeTestEvidence([f.root], String(error), undefined, evidenceFiles, { stdout, stderr });
+    throw new Error(`${(error as Error).stack ?? String(error)}\noriginals: ${evidence}`);
   } finally {
     if (child?.pid && child.exitCode === null && child.signalCode === null) await agentInvoke.killProcessTree(child.pid);
     const pidFile = path.join(f.stateDir, 'grandchild-pid');

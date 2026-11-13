@@ -283,7 +283,7 @@ const cases: TestCase[] = [...fallbackAndInvalidCases,
 
 function modernFixture(root: string, artifact = 'contracts@1', policy = 'fail'): { framework: string; context: PhaseInputContext; resolve: (context?: PhaseInputContext) => ReturnType<typeof resolveCapabilityInputs> } {
   const framework = path.join(root, 'maison');
-  for (const relative of ['skills/feature', 'skills/legacy', 'workflows', 'specs/artifact-schemas']) {
+  for (const relative of ['skills/feature', 'workflows', 'specs/artifact-schemas']) {
     fs.cpSync(path.join(FRAMEWORK_ROOT, relative), path.join(framework, relative), { recursive: true });
   }
   write(root, 'framework.config.json', JSON.stringify({ active_workflow: 'spec-driven', paths: { features_dir: 'doc/features' }, project_profile: { name: 'generic' } }));

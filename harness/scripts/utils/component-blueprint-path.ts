@@ -14,7 +14,7 @@ import {
   nonEmptyString,
 } from './component-blueprint-model';
 import { resolveBlueprintTarget } from './blueprint-addressing';
-import { blockerIssues, validateComponentBlueprint } from './component-blueprint-validator';
+import { blockerIssues, validateComponentBlueprint, type ComponentBlueprintValidationContext } from './component-blueprint-validator';
 
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const SHA256_PATTERN = /^sha256:[a-f0-9]{64}$/;
@@ -169,12 +169,13 @@ export function resolveBlueprintCandidateRefFromLoaded(loaded: ReturnType<typeof
   return { canonicalPath: loaded.canonicalPath, blueprint, target: resolveBlueprintTarget(blueprint, ref.target), ref };
 }
 
-export function resolveComponentBlueprintRef(projectRoot: string, value: unknown, snapshot?: ReturnType<typeof loadCanonicalBlueprint>): ResolvedBlueprintTarget {
+export function resolveComponentBlueprintRef(projectRoot: string, value: unknown, snapshot?: ReturnType<typeof loadCanonicalBlueprint>,
+  context: ComponentBlueprintValidationContext = {}): ResolvedBlueprintTarget {
   const ref = validateComponentBlueprintRefShape(value);
   const loaded = snapshot ?? loadCanonicalBlueprint(projectRoot, ref.blueprint_id);
   assertLoadedBlueprintRefIdentity(loaded, ref);
   const validationIssues = blockerIssues(validateComponentBlueprint(loaded.blueprint, {
-    projectRoot,
+    ...context, projectRoot,
     canonicalPath: loaded.canonicalPath,
     sourceCache: new Map([[path.resolve(loaded.canonicalPath), loaded.blueprint]]),
   }));

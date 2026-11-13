@@ -119,6 +119,7 @@ export interface PrepareGoalModeRunOptions {
   requirement: string;
   /** plan c4e8a1f7 T2：--requirement-file 来源列表（goal-mode-entry 与 goal-runner 同源解析） */
   requirementSourceFiles?: string[];
+  sessionRef?: string;
   userDeadlineAt?: string;
   startPhase?: string;
   endPhase?: string;
@@ -189,8 +190,10 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
   if (continuation.kind === 'hold') throw new Error(`[goal-mode-entry] ${continuation.guidance}`);
   const initial = existingInitial;
   const next = previousInitial ? null : designDeliveryNextStep({ ...options, feature });
+  if (next && next.type !== 'design_preparation_required') throw new DesignDeliveryPreparationRequired(next);
   if (initial || previousInitial || next) {
     const prepared = prepareInitialDesignRun({ ...options, feature,
+      sessionRef: (next?.type === 'design_preparation_required' ? next.materials.session_ref : options.sessionRef?.trim()) || undefined,
       visualProviderPin: options.visualProviderPin ?? (!previousInitial ? resolveUnattendedVisualProviderPin(loadLocalConfig(options.projectRoot), options.frameworkRoot).pin : undefined) });
     const continuation: RunContinuationDecision = prepared.created
       ? prepared.continuation ?? { kind: 'fresh', explicit: false, reason: '原始正式请求进入同一受管设计段' }
@@ -355,6 +358,7 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
 }
 
 export interface GoalModeHostBridgeOptions {
+  sessionRef?: string;
   sessionHandoff?: import('./goal-phase-runtime').GoalPhaseRuntimeLaunchOptions['sessionHandoff'];
   overrideManifest?: boolean;
   onScopeRevision?: import('./goal-phase-runtime').GoalPhaseRuntimeLaunchOptions['onScopeRevision'];
@@ -480,6 +484,7 @@ export async function runGoalModeHostBridge(
       '--runtime-owner', 'session',
       '--project-root', options.projectRoot,
       '--framework-root', options.frameworkRoot,
+      ...(options.sessionRef ? ['--session-ref', options.sessionRef] : []),
       ...(options.forceTakeover ? ['--force-resume'] : []),
       ...(options.overrideManifest ? ['--override-manifest'] : []),
     ],
@@ -612,7 +617,7 @@ export async function runGoalModeSessionStep(options: Omit<GoalModeHostBridgeOpt
         report: options.report, forceTakeover: options.forceTakeover });
       if (options.report) {
         const prior = prelude.accepted;
-        if (prior) {
+        if (prior && !options.sessionRef) {
           return { type: 'goal_session_report_received', run_id: original.run_id, delivery_run_id: original.run_id, phase: prior.report.phase,
             status: prior.report.status, duplicate: true, next_command: command('--next'), report: path.resolve(request.request.context.runDir, prior.event.handoff_report!.path) };
         }
@@ -621,6 +626,7 @@ export async function runGoalModeSessionStep(options: Omit<GoalModeHostBridgeOpt
     let issued: IssuedSessionExecution | undefined;
     const runtime = new GoalPhaseRuntime({ args: ['--feature', original.feature, '--resume', original.run_id,
       '--project-root', options.projectRoot, '--framework-root', options.frameworkRoot, '--runtime-executor', 'attended', '--runtime-owner', 'session', '--foreground-ok',
+      ...(options.sessionRef ? ['--session-ref', options.sessionRef] : []),
       ...(options.overrideManifest ? ['--override-manifest'] : []), ...(options.forceTakeover ? ['--force-resume'] : [])],
       authorization: options.authorization, leaseMs: options.leaseMs,
       sessionHandoff: { requestPath: options.requestPath, report: options.report ? normalizeSessionReport(options.report) : undefined,
@@ -673,7 +679,7 @@ export async function runGoalModeSessionStep(options: Omit<GoalModeHostBridgeOpt
       return { type: 'goal_session_report_received', run_id: options.runId, phase: accepted.report.phase, status: accepted.report.status, duplicate: true,
         next_command: command('--next'), report: path.resolve(runDir, accepted.event.handoff_report!.path) };
     }
-    if (prelude.reusable) return project(prelude.reusable);
+  if (prelude.reusable && !options.sessionRef) return project(prelude.reusable);
   }
   let issued: IssuedSessionExecution | undefined;
   const controlLog = path.join(runDir, 'session-control.log');
@@ -838,7 +844,7 @@ async function main(): Promise<void> {
       'completion-target', 'requested-results', 'requested-phases',
       'impact-behavior-change', 'impact-reason', 'impact-basis',
       // f9c2e6b4 t4：与 goal-runner 同名同义，共用同一读取函数（相对路径按 projectRoot 解析）
-      'requirement-file', 'manifest', 'supersede',
+      'requirement-file', 'manifest', 'supersede', 'session-ref',
       'user-deadline-at', 'adapter-model', 'adapter-provider', 'adapter-reasoning', 'adapter-model-config', 'frontend-request-file', 'frontend-session-id', 'frontend-request-id',
       'visual-adapter', 'visual-model', 'visual-provider', 'visual-reasoning', 'visual-model-config',
     ],
@@ -918,6 +924,7 @@ async function main(): Promise<void> {
     const prepared = prepareGoalModeRun({
       projectRoot,
       frameworkRoot,
+      sessionRef: argv['session-ref'],
       feature,
       runId: runId || undefined,
       adapter,
@@ -988,7 +995,7 @@ async function main(): Promise<void> {
     }
     const impactBasis = list(argv['impact-basis']);
     const source = resolveRequirementInput({ requirement: argv.requirement, requirementFile: argv['requirement-file'], projectRoot });
-    const next = designDeliveryNextStep({ projectRoot, frameworkRoot, feature, completionTarget, requestedPhases, requirement: source.text, requirementSourceFiles: source.sources });
+    const next = designDeliveryNextStep({ projectRoot, frameworkRoot, feature, completionTarget, requestedPhases, requirement: source.text, requirementSourceFiles: source.sources, sessionRef: argv['session-ref'] });
     if (next) {
       console.log(JSON.stringify(next, null, 2));
       return;
@@ -1079,6 +1086,7 @@ async function main(): Promise<void> {
     report = parseSessionReportResult(argv['report-result'], reportRunDir, sessionReportInputPath(reportRunDir, issued));
   }
   const result = await runGoalModeSessionStep({ projectRoot, frameworkRoot, feature, runId, adapter, runMode,
+    sessionRef: argv['session-ref'],
     ...(actions[0] ? { action: actions[0] as 'execute' | 'observe' | 'interrupt' } : {}),
     forceTakeover: Boolean(argv['force-takeover']), overrideManifest: Boolean(argv['override-manifest']),
     authorization: { mode: mode as 'manual' | 'batch_authorized' | 'goal_mode', autonomyAuthorized: Boolean(argv['authorize-autonomy']),

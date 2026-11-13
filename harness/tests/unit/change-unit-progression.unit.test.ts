@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as YAML from 'yaml';
+import { execFileSync } from 'child_process';
 import { ArchitectureDsl, LEGACY_DEFAULT_DSL, clearFrameworkConfigCache, featureDir } from '../../config';
 import { checkChangeUnitFeatureProjection, deriveModifiableModules } from '../../scripts/utils/change-unit-feature-projection';
 import checkSpecPhase, { checkChangeUnitBoundSpecScope } from '../../scripts/check-spec';
@@ -39,6 +40,7 @@ import { ContractsSpec, AcceptanceSpec } from '../../scripts/utils/types';
 import { SpecLoader } from '../../scripts/utils/spec-loader';
 import { observeChangeUnitCompletion, ChangeUnitCompletionState } from '../../scripts/utils/change-unit-completion';
 import { assessFeature, type FeatureAssessment } from '../../scripts/utils/feature-assessment';
+import { prepareFeatureScopeCandidate } from '../../scripts/utils/feature-track';
 import { deriveChangeUnitBlockers } from '../../scripts/utils/change-unit-blockers';
 import { detectChangeUnitDependencyCycles, evaluateChangeUnitDependencies } from '../../scripts/utils/change-unit-dependencies';
 import { evaluateChangeUnitCarryForward } from '../../scripts/utils/change-unit-reconciliation';
@@ -59,6 +61,7 @@ import {
 import {
   ChangeUnitDecompositionRejected,
   acceptChangeUnitDecomposition,
+  changeUnitDecompositionFeedback,
   deriveDesignPreparationReadiness,
   evaluateConstructionEntry,
   evaluateDesignPreparationEntry,
@@ -1062,6 +1065,57 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     return { providerId: 'builtin-vertical-slice-decomposition', artifact };
   }
 
+  /** Isolated native-format input; no real model/client or business-host provenance is claimed. */
+  function withManagedIntake(projectRoot: string, fixed: boolean | 'legacy', body: (context: {
+    policy(): import('../../scripts/utils/request-intake').RequestIntake;
+    requestFile: string; correctToComplex(): void;
+  }) => void): void {
+    const priorHome = process.env.CLAUDE_CONFIG_DIR, priorTrust = process.env.MAISON_GOAL_CHECKPOINT_DIR;
+    const frameworkRoot = path.resolve(__dirname, '../../..');
+    try {
+      const home = path.join(projectRoot, '.native-scale');
+      process.env.CLAUDE_CONFIG_DIR = home; process.env.MAISON_GOAL_CHECKPOINT_DIR = path.join(projectRoot, '.scale-trust');
+      fs.writeFileSync(path.join(projectRoot, 'framework.config.json'), JSON.stringify({ schema_version: '1.0', project_name: 'Scale', project_profile: { name: 'hmos-app' }, active_workflow: 'obligation-driven', features_dir: 'doc/features' }));
+      fs.writeFileSync(path.join(projectRoot, '.gitignore'), '.native-scale/\n.scale-trust/\n');
+      const source = 'src/ledger/LedgerSourceSeam.ts', other = 'src/other-result.ts';
+      fs.writeFileSync(path.join(projectRoot, other), 'export const independentResult = true;\n');
+      const git = (args: string[]) => execFileSync('git', args, { cwd: projectRoot, encoding: 'utf8', stdio: 'pipe' }).trim();
+      git(['init', '-q']); git(['add', '-A']); git(['-c', 'user.name=ScaleTest', '-c', 'user.email=scale@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'scale baseline']);
+      const requirement = (fixed === true ? '按中型处理。' : '') + '本请求完成账目设计，原需求见 requirements/ledger.md。';
+      const session = 'scale-native', file = path.join(home, 'projects/scale', session + '.jsonl');
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      const records: object[] = []; let sequence = 0;
+      const add = (row: object) => records.push({ sessionId: session, cwd: projectRoot, timestamp: new Date().toISOString(), ...row });
+      const flush = () => fs.writeFileSync(file, records.map(row => JSON.stringify(row)).join('\n') + '\n');
+      const tool = (name: string, input: object, output: string) => {
+        const id = 'scale-tool-' + (++sequence);
+        add({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id, name, input }] } });
+        add({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: output }] } });
+      };
+      add({ type: 'user', uuid: 'scale-user', message: { role: 'user', content: requirement } });
+      tool('Bash', { command: 'git rev-parse HEAD' }, git(['rev-parse', 'HEAD'])); tool('Bash', { command: 'git status --porcelain' }, git(['status', '--porcelain']));
+      for (const relative of [source, 'requirements/ledger.md']) tool('Read', { file_path: path.join(projectRoot, relative) }, fs.readFileSync(path.join(projectRoot, relative), 'utf8'));
+      add({ type: 'assistant', message: { role: 'assistant', content: `本请求 scale-user：Q1=是；Q2=否；Q3=否；依赖结果=否；跨部件=否；预期明确=是；做法唯一=否。依据 ${source}。` } }); flush();
+      clearFrameworkConfigCache();
+      const { prepareInitialDesignRun, initialDesignRequestOptions } = require('../../scripts/utils/initial-design-delivery') as typeof import('../../scripts/utils/initial-design-delivery');
+      const { prepareDesignRequest } = require('../../scripts/utils/automatic-request') as typeof import('../../scripts/utils/automatic-request');
+      const run = prepareInitialDesignRun({ projectRoot, frameworkRoot, feature: 'ledger-app-blueprint', adapter: 'claude', requirement,
+        requirementSourceFiles: ['requirements/ledger.md'], ...(fixed === 'legacy' ? {} : { sessionRef: file + '#scale-user' }), runId: 'scale-original' });
+      const options = initialDesignRequestOptions(projectRoot, frameworkRoot, run.manifest);
+      body({ requestFile: path.resolve(projectRoot, options.requestFile), policy: () => {
+        const prepared = prepareDesignRequest({ ...options, readonly: true });
+        assert(prepared.intake, prepared.originGap ?? 'original intake missing'); return prepared.intake;
+      }, correctToComplex: () => {
+        tool('Read', { file_path: path.join(projectRoot, other) }, fs.readFileSync(path.join(projectRoot, other), 'utf8'));
+        add({ type: 'assistant', message: { role: 'assistant', content: `本请求纠正原判断：依赖结果=是；跨部件=是，${other} 是另一部件独立可验结果，当前交付依赖该结果；依据 ${source}、${other}。` } }); flush();
+      } });
+    } finally {
+      if (priorHome === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = priorHome;
+      if (priorTrust === undefined) delete process.env.MAISON_GOAL_CHECKPOINT_DIR; else process.env.MAISON_GOAL_CHECKPOINT_DIR = priorTrust;
+      clearFrameworkConfigCache();
+    }
+  }
+
   results.push(test('M7: admitted blueprint with zero CUs is a legal design-preparation entry', () => {
     withTempProject(projectRoot => {
       emptyWorkspace(projectRoot);
@@ -1103,17 +1157,28 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     });
   }));
 
-  results.push(test('M7: a valid batch writes 1..N canonical CUs atomically and derives readiness', () => {
+  results.push(test('M7/B: a valid batch admits 1..N canonical CUs; references alone retain required plan and no completion credit', () => {
     withTempProject(projectRoot => {
       emptyWorkspace(projectRoot);
       // 单 CU 正向：1 个候选是合法交付
       const single = acceptChangeUnitDecomposition(projectRoot, 'ledger-app-blueprint', [candidateOf('prep-single')]);
       assert(single.changeUnitIds.join(',') === 'prep-single', `单 CU 写出失败：${single.changeUnitIds.join(',')}`);
       let readiness = deriveDesignPreparationReadiness(projectRoot, 'ledger-app-blueprint');
-      assert(readiness.ready, `单 CU readiness 未就绪：${JSON.stringify(readiness.perUnit)}`);
+      assert(readiness.ready, `单 CU 基础设计应可准入：${JSON.stringify(readiness.perUnit)}`);
       assert(readiness.entersConstruction === false, '设计准备段不得进入施工');
-      assert(readiness.nextEntry === 'change-unit-progression', `下一步入口应指回施工入口，实际 ${readiness.nextEntry}`);
-      // 施工段前提此时成立
+      assert(readiness.nextEntry === 'change-unit-progression', `下一步应交原施工入口，实际 ${readiness.nextEntry}`);
+      const unit = asChangeUnitArtifact(single.accepted[0].changeUnit);
+      const feature = deriveChangeUnitFeatureId(unit.blueprint_id, unit.change_unit_id);
+      const construction = validateChangeUnitFeatureProjection(projectRoot, feature, undefined, undefined, false, 'plan');
+      assert(construction.issues.some(issue => issue.id === 'change_unit_contracts_sidecar_missing'), JSON.stringify(construction));
+      const { scope } = prepareFeatureScopeCandidate({ projectRoot, frameworkRoot: path.resolve(__dirname, '../../..'), feature, completionTarget: 'feature',
+        requestedResults: ['deliver approved ledger'], requestedPhases: ['plan', 'coding'], requirement: 'deliver approved ledger design' });
+      assert(scope.phase_chain.includes('plan'), JSON.stringify(scope));
+      assert(scope.obligations.some(obligation => obligation.owner_phase === 'plan' && obligation.applicability === 'required' && !obligation.satisfied_by?.length), JSON.stringify(scope));
+      assert(!scope.reused_phases.some(reused => ['plan', 'coding'].includes(reused.phase)), '只有引用不能复用施工信用');
+      assert(!scope.phase_chain.includes('coding') || scope.phase_chain.indexOf('plan') < scope.phase_chain.indexOf('coding'), 'coding 不得绕过未完成的 plan');
+      assert(observeChangeUnitCompletion(projectRoot, unit).state === 'ABSENT', '接纳 CU 不得生成完成信用');
+      // CU 可交施工入口；映射仍由上面的原 plan 义务补齐。
       assert(evaluateConstructionEntry(projectRoot, 'ledger-app-blueprint').canEnter, '≥1 CU 后施工段应可进入');
 
       // 多 CU 正向：追加两个是正常调和追加，不是升级
@@ -1121,6 +1186,62 @@ export async function runAll(): Promise<UnitCaseResult[]> {
       assert(more.changeUnitIds.join(',') === 'prep-a,prep-b', `多 CU 写出失败：${more.changeUnitIds.join(',')}`);
       readiness = deriveDesignPreparationReadiness(projectRoot, 'ledger-app-blueprint');
       assert(readiness.changeUnitIds.join(',') === 'prep-a,prep-b,prep-single', `枚举不完整：${readiness.changeUnitIds.join(',')}`);
+    });
+  }));
+
+  results.push(test('medium intake rejects multi-CU publication, ignores hand-edited labels, and accepts sourced complex correction', () => {
+    withTempProject(projectRoot => {
+      emptyWorkspace(projectRoot);
+      withManagedIntake(projectRoot, false, context => {
+        const intake = context.policy();
+        assert(intake.policy.selected === 'medium' && intake.policy.source === 'rule', JSON.stringify(intake.policy));
+        const blueprint = path.join(projectRoot, 'doc/features/ledger-app-blueprint/blueprint/component-blueprint.yaml');
+        const before = fs.readFileSync(blueprint), candidates = [candidateOf('scale-a'), candidateOf('scale-b')];
+        const reject = () => {
+          let feedback = '';
+          try { acceptChangeUnitDecomposition(projectRoot, 'ledger-app-blueprint', candidates); }
+          catch (error) { feedback = (error as Error).message; }
+          assert(feedback.includes('中型') && feedback.includes('原分解作者') && feedback.includes('新独立结果/跨部件事实'), feedback);
+          assert(enumerateCanonicalChangeUnits(projectRoot, 'ledger-app-blueprint').length === 0, 'multi-CU rejection published canonical units');
+          assert(fs.readFileSync(blueprint).equals(before), 'candidate feedback rewrote blueprint/admission');
+        };
+        reject();
+        const originalRequest = fs.readFileSync(context.requestFile);
+        const edited = JSON.parse(originalRequest.toString('utf8')); edited.intake_context.policy.selected = 'complex'; edited.intake_context.policy.change_units = 'multiple';
+        fs.writeFileSync(context.requestFile, JSON.stringify(edited)); reject(); fs.writeFileSync(context.requestFile, originalRequest);
+        const historical = ['history-a', 'history-b'].map(id => candidateOf(id).artifact);
+        const completed = deriveChangeUnitReadySet(projectRoot, 'ledger-app-blueprint', { units: historical,
+          completion: completionAdapter(new Map(historical.map(unit => [deriveChangeUnitFeatureId(unit.blueprint_id, unit.change_unit_id), 'VALID' as const]))) });
+        assert(!changeUnitDecompositionFeedback(intake, completed.units, ['current-only']), 'valid historical units counted against this request');
+        context.correctToComplex();
+        const corrected = context.policy();
+        assert(corrected.policy.selected === 'complex' && corrected.policy.source === 'rule', JSON.stringify(corrected.policy));
+        assert(corrected.facts.cross_component.sources.includes('src/other-result.ts'), 'complex correction lacks the newly read source');
+        assert(acceptChangeUnitDecomposition(projectRoot, 'ledger-app-blueprint', candidates).accepted.length === 2, 'sourced complex design could not continue');
+      });
+    });
+  }));
+
+  results.push(test('user-fixed medium preserves original multi-CU acceptance behavior', () => {
+    withTempProject(projectRoot => {
+      emptyWorkspace(projectRoot);
+      withManagedIntake(projectRoot, true, context => {
+        assert(context.policy().policy.source === 'user', 'fixture did not bind a real fixed-frame user message');
+        const accepted = acceptChangeUnitDecomposition(projectRoot, 'ledger-app-blueprint', [candidateOf('fixed-a'), candidateOf('fixed-b')]);
+        assert(accepted.accepted.length === 2, 'automatic recommendation overrode the fixed user frame');
+      });
+    });
+  }));
+
+  results.push(test('legacy initial run without a recorded intake retains multi-CU acceptance without creating a request', () => {
+    withTempProject(projectRoot => {
+      emptyWorkspace(projectRoot);
+      withManagedIntake(projectRoot, 'legacy', context => {
+        assert(!fs.existsSync(context.requestFile), 'legacy fixture unexpectedly has an original intake');
+        const accepted = acceptChangeUnitDecomposition(projectRoot, 'ledger-app-blueprint', [candidateOf('legacy-a'), candidateOf('legacy-b')]);
+        assert(accepted.accepted.length === 2, 'legacy run acquired a new frame restriction');
+        assert(!fs.existsSync(context.requestFile), 'acceptance manufactured intake for a legacy run');
+      });
     });
   }));
 

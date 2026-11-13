@@ -229,3 +229,41 @@ Task automation authority SHALL be a single explicit input: `authorization.auton
 #### Scenario: Both transports see the same waiting semantics
 - **WHEN** the same condition blocks a session-owned and a process-owned complete delivery
 - **THEN** both SHALL use the same probe, remaining budget and cutoff; returning a waiting item to the session SHALL change only transport/presentation, not the recovery decision or business disposition
+
+
+### Requirement: Unified intake derives one proportionate envelope
+
+所有产品修改 SHALL 默认消费 `docs/operations/project-entry.md` 的唯一规则，Agent SHALL 提供有原文/实际读路径来源的 Q1/Q2/Q3、独立结果及依赖、跨部件、预期明确和做法唯一事实；机器 SHALL 从事实派生外框，SHALL NOT 只接受档位名。复杂优先，其次三问任一是为中型；三问全否且预期可验/有源、唯一做法为特别简单，否则局部选择/预期待补为小型。unknown SHALL 保留并只补影响当前决定的事实，不当否、不自动永久升档，不新增分类 CLI/模型/用户表单。
+
+真实 user 明确升/降档、豁免或验证限制 SHALL 优先；原件角色、session/cwd 与请求关联 SHALL 核实，assistant 转述/引用文件/代码块 SHALL NOT 授豁免。默认豁免只及本请求/续作，明确会话范围才扩展，撤销恢复。无固定选择仅新依据或有据纠错可重算；真实失败、既有成果、授权和硬预算 SHALL 保留。
+
+compile/request SHALL 按精确起始基线与最终内容派生专项，复用原 parser/provider/结果，SHALL NOT 按路径命中把注释当逻辑改变。接口、路由、持久化、金额/幂等与架构等适用验证独立于外框；用户明确限制时披露未执行，编译绿 SHALL NOT 冒充 review/UT/真机通过。途中 commit/恢复 SHALL NOT 重置基线，无关初始 dirty 排除，重叠无前像/原件或 reflog 不唯一 SHALL 保持 unknown，不签完整对账。
+
+#### Scenario: User fixes a smaller envelope
+- **WHEN** user 明确按小型且未排除专项，实际 diff 改变接口签名
+- **THEN** 保持用户外框，补适用接口/调用方验证，不偷偷加重流程、不洗掉已有 FAIL
+
+#### Scenario: Comments do not create a payment obligation
+- **WHEN** 支付目录的实际内容仅注释/错字变化
+- **THEN** 不仅因路径触发支付逻辑专项，用户明确验证要求仍保留
+
+#### Scenario: An ambiguous baseline is not replaced by current HEAD
+- **WHEN** 无首次 HEAD 记录且 user 开始时刻的 reflog 同秒多次移动或记录缺失
+- **THEN** 起点与相关完整 diff 结论保持 unknown，已可执行的显式局部能力继续，不将当前 HEAD 当可信起点
+
+> **Enforced by:** 原 compile/request 入口、`harness/scripts/utils/execution-scope.ts` 及同源原生请求/内容影响解析；真实客户端与业务验收分开记录。
+
+
+### Requirement: Sourced user reductions stay in the original run
+
+用户在已有受管 run 中明确减少流程或验证范围时，原入口 SHALL 核同一正式 request/原生 user 原文及请求关联，经原 scope_revised/revision_input 调整对应未执行工作。共同谓词、提案生产者、runtime writer 与恢复 reader SHALL 同源消费该真实覆盖；无源 Agent 重答、改名或删除结果 SHALL NOT 删除/降级 required。用户仅固定小型 SHALL NOT 隐式排除 UT/testing；真实目标/验收变化仍走原修正责任。旧 CU、历史完成、原基线、有效证据和真实产品 FAIL SHALL 保留，不重建独立 request 清账、不把排除验证改判 PASS，不新增 ledger/审批/运行权威。
+
+#### Scenario: User excludes future device verification in an existing run
+- **WHEN** 真实 user 明确本请求后续不跑真机，而产品目标未变
+- **THEN** 仅相应未执行验证按原范围修订处理，resume 重读同一有效范围，保留其它义务和失败历史
+
+#### Scenario: An author tries to erase a failed obligation
+- **WHEN** 只有 Agent 换说法或删 FAIL，没有可核真实用户调整
+- **THEN** 原 required 保护继续拒绝减责；真实产品 FAIL 不能因声明排除验证变 PASS
+
+> **Enforced by:** 同一 execution-scope 判据、feature-track 提案、原 runtime scope writer 与 goal-run-creation reader；原始用户来源来自正式 request intake。

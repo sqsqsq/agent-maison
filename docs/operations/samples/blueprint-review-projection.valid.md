@@ -9,10 +9,10 @@ derived_from:
   change_units:
     - change_unit_id: ledger-refresh
       binding: bound
-      identity_neutral_digest: b68d436854eed3931e13e0f7bfeb22af51ccbc420e58c53632fa2fe75a045a49
+      identity_neutral_digest: c9b2fdc1887af4216148d74e70aea602fabb30eeec08100f0f969badb13f261d
     - change_unit_id: ledger-report
       binding: bound
-      identity_neutral_digest: 28ae8de49a05459d5c44bb22113d32110099d464701ff2adc59a383494e65654
+      identity_neutral_digest: 959ecc75945516a17b0cc541f2a99be4925de963ae27b6257615a70023058922
 projection: component-blueprint-review@13
 ---
 

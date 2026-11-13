@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { createHash } from 'crypto';
+import { execFileSync } from 'child_process';
 import * as YAML from 'yaml';
 import { provisionFrameworkUnder, git, writeHostFile } from '../utils/real-chain-host';
 import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
@@ -111,7 +112,12 @@ async function withHost(run: (host: Host) => Promise<void>): Promise<void> {
     git(root, ['config', 'user.name', 'Daily design fixture']); git(root, ['config', 'user.email', 'daily-design@example.test']);
     git(root, ['config', 'commit.gpgsign', 'false']); git(root, ['add', '-A']); git(root, ['commit', '-qm', 'Original host inputs before Feature design']);
     assert.deepEqual(fs.readdirSync(path.join(root, 'doc/features')), []);
+    let deviceGateCalls = 0;
+    host.load('scripts/goal-phase-runtime').__testing_setDeviceReadinessGate(() => {
+      deviceGateCalls++; throw new Error('Isolated TypeScript/Node fixture must not inspect or wake a device');
+    });
     await run(host);
+    assert.equal(deviceGateCalls, 0, 'internal TypeScript/Node delivery unexpectedly entered the device gate');
   } catch (error) {
     const files = [SOURCE, TEST, `doc/features/${BLUEPRINT}/blueprint/component-blueprint.yaml`].map(file => path.join(root, file));
     const originals = preserveRuntimeTestEvidence([root], String(error), [], files);
@@ -200,7 +206,16 @@ function questioningReply(host: Host, denyMissing: boolean, blueprintFile = `doc
   return JSON.stringify({ items });
 }
 
-function decompose(host: Host): void {
+function authorConstructionMapping(cu: any, test_refs: string[]): any {
+  const implementation_refs = [SOURCE];
+  return {
+    predicate_mappings: cu.target_predicates.map((row: any) => ({ predicate_id: row.predicate_id, implementation_refs, test_refs })),
+    provide_mappings: cu.provides.map((row: any) => ({ provide_id: row.provide_id, implementation_refs, test_refs })),
+    design_ref_mappings: cu.design_refs.map((design_ref: any) => ({ design_ref, implementation_refs, verification_refs: test_refs })),
+  };
+}
+
+function decompose(host: Host, includeConstructionMapping = true): void {
   const identity = host.load('scripts/utils/component-blueprint-path').loadCanonicalBlueprint(host.root, BLUEPRINT);
   const cu = YAML.parse(read(FIXTURE, `doc/features/${BLUEPRINT}/${UNIT}/change-unit.yaml`));
   const rebind = (value: any): void => {
@@ -225,7 +240,8 @@ function decompose(host: Host): void {
   cu.safe_intermediate_state = { description: 'Pure internal calculation compiles and can be used independently without runtime or UI state', build_validation_refs: EVIDENCE_REFS, compatibility_refs: [EVIDENCE_REFS[0]], recovery_refs: [EVIDENCE_REFS[1]] };
   cu.provenance.source_revision = `revision-${identity.blueprint.revision}`;
   cu.provenance.extraction_method = 'builtin-vertical-slice-decomposition';
-  writeHostFile(host.root, `doc/features/${BLUEPRINT}/blueprint/change-unit-candidates.json`, JSON.stringify([{ providerId: 'builtin-vertical-slice-decomposition', artifact: cu }]));
+  writeHostFile(host.root, `doc/features/${BLUEPRINT}/blueprint/change-unit-candidates.json`, JSON.stringify([{ providerId: 'builtin-vertical-slice-decomposition', artifact: cu,
+    ...(includeConstructionMapping ? { construction_mapping: authorConstructionMapping(cu, EVIDENCE_REFS.map(ref => 'planned:' + ref)) } : {}) }]));
 }
 
 function unitReviewReport(host: Host, feature: string): void {
@@ -241,17 +257,16 @@ function unitMaterials(host: Host, context: any): void {
     if (family === 'spec') {
       const projected = host.load('scripts/utils/blueprint-skill-projection').deriveBlueprintSkillInput(host.root, feature, host.frameworkRoot, 'acceptance');
       assert.equal(projected.state, 'resolved', projected.detail);
-      // Approved canonical acceptance is already the frozen source; reading it does not materialize a second source.
+      // The spec author must rebuild its own output after design repair changes the bound source.
+      writeYaml(host.root, `doc/features/${rel}/acceptance.yaml`, projected.value);
     }
     if (family === 'plan') {
       const projected = host.load('scripts/utils/blueprint-skill-projection').deriveBlueprintSkillInput(host.root, feature, host.frameworkRoot, 'contracts');
       assert.equal(projected.state, 'resolved', projected.detail);
       const identity = host.load('scripts/utils/change-unit-path'), loaded = identity.loadCanonicalChangeUnit(host.root, BLUEPRINT, UNIT);
-      const contracts = structuredClone(projected.value), implementation_refs = [SOURCE], test_refs = EVIDENCE_REFS;
+      const contracts = structuredClone(projected.value);
       contracts.change_unit = { change_unit_ref: identity.createChangeUnitRef(loaded),
-        predicate_mappings: loaded.changeUnit.target_predicates.map((row: any) => ({ predicate_id: row.predicate_id, implementation_refs, test_refs })),
-        provide_mappings: loaded.changeUnit.provides.map((row: any) => ({ provide_id: row.provide_id, implementation_refs, test_refs })),
-        design_ref_mappings: loaded.changeUnit.design_refs.map((design_ref: any) => ({ design_ref, implementation_refs, verification_refs: test_refs })) };
+        ...authorConstructionMapping(loaded.changeUnit, EVIDENCE_REFS) };
       writeYaml(host.root, `doc/features/${rel}/contracts.yaml`, contracts);
       if (projected.artifacts?.['use-cases@1']) writeYaml(host.root, `doc/features/${rel}/use-cases.yaml`, projected.artifacts['use-cases@1']);
     }
@@ -271,7 +286,8 @@ function unitMaterials(host: Host, context: any): void {
   assert(context.factsContext, 'the author must consume its actual admitted research context');
   if (!fs.existsSync(facts)) {
     assert(!context.factsContext.baseline, 'an absent prior facts original cannot become a new baseline');
-    const sources = context.factsContext.source_paths.filter((file: string) => fs.existsSync(path.join(host.root, file)) && fs.statSync(path.join(host.root, file)).isFile());
+    const sources = [...new Set<string>([...context.factsContext.source_paths, SOURCE, TEST])]
+      .filter(file => fs.existsSync(path.join(host.root, file)) && fs.statSync(path.join(host.root, file)).isFile());
     for (const file of sources) fs.readFileSync(path.join(host.root, file));
     writeHostFile(host.root, path.relative(host.root, facts), '---\n' + YAML.stringify({ schema_version: '1.1', feature, run_id: context.runId,
       established_by: context.factsContext.first_phase, ready_to_produce: true, has_blocker_coverage_risk: false, exploration_mode: 'sequential',
@@ -351,7 +367,7 @@ function assertFrozenInputs(host: Host, context: any): void {
   } finally { for (const [key, value] of prior) if (value === undefined) delete process.env[key]; else process.env[key] = value; }
 }
 
-function prepare(host: Host, id: string, adapter = 'claude'): { options: any; prepared: any; entry: any } {
+function prepare(host: Host, id: string, adapter = 'claude', sessionRef?: string): { options: any; prepared: any; entry: any } {
   const entry = host.load('scripts/goal-mode-entry');
   let adapterModelPin: any = { adapter, value: 'claude-opus-5-5', provider: 'anthropic', reasoning_effort: 'high', config_source: path.join(host.root, 'controlled-model-home', 'settings.json') };
   if (adapter === 'deepseek-harness') {
@@ -365,7 +381,7 @@ function prepare(host: Host, id: string, adapter = 'claude'): { options: any; pr
   const original = entry.prepareGoalModeRun({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: BLUEPRINT, adapter, runId: id,
     requirement: REQUIREMENT, requirementSourceFiles: ['requirements/ledger.md'], requestedResults: [REQUIREMENT], requestedPhases: ['plan', 'coding', 'ut'],
     ...(adapter === 'deepseek-harness' ? { adapterModelPin } : {}),
-    unattended: { write_mode: 'full-access', approval_mode: 'never' }, autonomyAuthorized: true });
+    unattended: { write_mode: 'full-access', approval_mode: 'never' }, autonomyAuthorized: true, sessionRef });
   const prepared = entry.prepareGoalModeRun({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: BLUEPRINT, adapter, runId: id,
     requirement: REQUIREMENT, adapterModelPin, modelOverride: true });
   assert.equal(prepared.manifest.run_id, original.manifest.run_id, 'legacy no-pin initial run must be rebound through the same entry');
@@ -406,6 +422,116 @@ async function finishConstruction(host: Host, control: ReturnType<typeof prepare
   }
   assertDeliveryComplete(host, control, step);
   return step;
+}
+
+/** Synthetic native-format research; the runtime/consumer and final TS/Node execution remain real. */
+function mediumSession(host: Host): string {
+  const home = path.resolve(__dirname, '../../reports/medium-single-cu/daily-native', path.basename(host.root));
+  process.env.CLAUDE_CONFIG_DIR = home;
+  const session = 'medium-daily', file = path.join(home, 'projects/fixture', session + '.jsonl');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const rows: object[] = []; let sequence = 0;
+  const add = (row: object) => rows.push({ sessionId: session, cwd: host.root, timestamp: new Date().toISOString(), ...row });
+  const tool = (name: string, input: object, output: string) => {
+    const id = 'medium-tool-' + (++sequence);
+    add({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id, name, input }] } });
+    add({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: output }] } });
+  };
+  const gitText = (args: string[]) => execFileSync('git', args, { cwd: host.root, encoding: 'utf8', stdio: 'pipe' }).trim();
+  add({ type: 'user', uuid: 'medium-user', message: { role: 'user', content: REQUIREMENT } });
+  tool('Bash', { command: 'git rev-parse HEAD' }, gitText(['rev-parse', 'HEAD']));
+  tool('Bash', { command: 'git status --porcelain' }, gitText(['status', '--porcelain']));
+  for (const file of [SOURCE, TEST, 'requirements/ledger.md']) tool('Read', { file_path: path.join(host.root, file) }, read(host.root, file));
+  add({ type: 'assistant', message: { role: 'assistant', content: `本请求 medium-user：Q1=是；Q2=否；Q3=否；依赖结果=否；跨部件=否；预期明确=是；做法唯一=否。依据 ${SOURCE} 与 ${TEST}。` } });
+  fs.writeFileSync(file, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
+  return file + '#medium-user';
+}
+
+async function completeDelivery(medium = false): Promise<void> {
+  const previousHome = process.env.CLAUDE_CONFIG_DIR;
+  try { return await withHost(async host => {
+    const control = prepare(host, medium ? 'daily-medium-single' : 'daily-design-complete', 'claude', medium ? mediumSession(host) : undefined);
+    let designAuthors = 0, constructionAuthors = 0, decompositionAuthors = 0, visualReissued = false;
+    let step = await withRuntimeTest({ root: host.root }, () => control.entry.runGoalModeSessionStep(control.options));
+    for (let call = 0; step.type === 'phase_execute_request' && call < 16; call++) {
+      const raw = JSON.parse(fs.readFileSync(step.request.path, 'utf8'));
+      const issued = host.load('scripts/utils/session-execution-handoff').readSessionExecution(raw.context.runDir, step.request.path);
+      assert(issued, 'every actor must consume its actual signed execution original');
+      const context = issued.request.context, phase = context.phase;
+      const currentManifest = JSON.parse(fs.readFileSync(path.join(context.runDir, 'manifest.json'), 'utf8'));
+      assert.equal(context.adapterModel, host.load('scripts/utils/adapter-model').adapterModelBinding(currentManifest.adapter_model_pin), 'each actual request inherits the complete manifest binding');
+      assert.equal(currentManifest.requirement, REQUIREMENT, 'the original request stays bound across the real actor family');
+      if (context.feature !== BLUEPRINT) assert.deepEqual(currentManifest.delivery_origin, { feature: BLUEPRINT, run_id: control.prepared.manifest.run_id });
+      if (phase === 'work-unit-author' && !visualReissued) {
+        const readVisual = host.load('scripts/utils/phase-state').readGoalVisualProviderEnv;
+        const oldVisual = readVisual(context.childEnv);
+        assert.equal(oldVisual.provider, 'visual-a');
+        const visualProviderPin = { ...oldVisual, provider: 'visual-b' };
+        const root = control.entry.prepareGoalModeRun({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: BLUEPRINT,
+          adapter: 'claude', requirement: REQUIREMENT, visualProviderPin, modelOverride: true });
+        assert.deepEqual(root.manifest.adapter_model_pin, currentManifest.adapter_model_pin);
+        control.prepared.manifest = root.manifest;
+        const oldRequest = step.request;
+        const refused = await control.entry.runGoalModeSessionStep({ ...control.options, requestPath: oldRequest.path, action: 'execute' });
+        assert.equal(refused.status, 'waiting'); assert.match(refused.detail, /绑定/);
+        assert(!fs.existsSync(path.join(path.dirname(oldRequest.path), 'agent-output.log')));
+        step = await withRuntimeTest({ root: host.root }, () => control.entry.runGoalModeSessionStep(control.options));
+        assert.equal(step.phase, phase); assert.notEqual(step.request.sha256, oldRequest.sha256);
+        const next = JSON.parse(fs.readFileSync(step.request.path, 'utf8')).context;
+        assert.deepEqual(readVisual(next.childEnv), visualProviderPin);
+        assert.deepEqual(JSON.parse(fs.readFileSync(path.join(next.runDir, 'manifest.json'), 'utf8')).visual_provider_pin, visualProviderPin);
+        visualReissued = true;
+        continue;
+      }
+      if (phase === 'initial-design-author') assert(context.instruction?.includes(REQUIREMENT));
+      if (phase === 'initial-design-questioning') assert(context.instruction?.includes('requirements/ledger.md'), 'blind Q receives the source location before reading it');
+      let output = '已按真实签名请求产出当前作者材料，质量由原检查决定。';
+      if (phase === 'initial-design-author') {
+        assert.equal(++designAuthors, 1, 'normal design returned unexpected author feedback: ' + context.instruction);
+        writeYaml(host.root, `doc/features/${BLUEPRINT}/blueprint/component-blueprint.yaml`, blueprintDraft(host, false));
+      }
+      else if (phase === 'initial-design-questioning') output = questioningReply(host, false);
+      else if (phase === 'initial-design-decomposition') {
+        decompositionAuthors++;
+        const file = `doc/features/${BLUEPRINT}/blueprint/change-unit-candidates.json`;
+        if (medium && decompositionAuthors === 2) {
+          assert(context.instruction.includes('自动判为中型') && context.instruction.includes('原分解作者'), 'policy feedback never reached the actual signed author request');
+          assert.equal(JSON.parse(read(host.root, file)).length, 2, 'rejected author candidates were discarded');
+          assert.equal(host.load('scripts/utils/change-unit-path').enumerateCanonicalChangeUnits(host.root, BLUEPRINT).length, 0, 'multi-CU batch was published before feedback');
+          assert(!host.load('scripts/utils/session-execution-handoff').sessionEvents(control.prepared.runDir).some((event: any) => event.type === 'phase_halt'), 'medium feedback became an external halt');
+        }
+        decompose(host);
+        if (medium && decompositionAuthors === 1) {
+          const candidates = JSON.parse(read(host.root, file)), second = structuredClone(candidates[0]);
+          second.artifact.change_unit_id = UNIT + '-second'; candidates.push(second);
+          writeHostFile(host.root, file, JSON.stringify(candidates));
+        }
+      }
+      else if (phase.startsWith('initial-design-scope-')) {
+        const feature = host.load('scripts/utils/change-unit-path').deriveChangeUnitFeatureId(BLUEPRINT, UNIT);
+        host.load('scripts/utils/feature-track').prepareFeatureScopeCandidate({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature,
+          completionTarget: 'feature', requestedResults: [REQUIREMENT], requestedPhases: ['plan', 'coding', 'ut'], requirement: REQUIREMENT, requirementSourceFiles: ['requirements/ledger.md'],
+          impact: { userVisibleBehaviorChange: false, reason: '账本内部纯TypeScript能力，不涉及UI或设备', basisPaths: [SOURCE] }, overwrite: true });
+      } else if (phase === 'work-unit-author') {
+        assert.equal(++constructionAuthors, 1, 'normal construction received unexpected repair feedback: ' + context.instruction);
+        unitMaterials(host, context);
+        assertFrozenInputs(host, context);
+      } else if (phase.endsWith('-verifier-format-repair')) verifierReply(host, context, phase.replace(/-verifier-format-repair$/, ''));
+      else assert.fail('unexpected production responsibility: ' + phase);
+      step = await report(host, control, step, output);
+      if (phase === 'initial-design-decomposition' && (!medium || decompositionAuthors === 2)) {
+        const selected = { ...control.prepared.manifest.adapter_model_pin, provider: 'https://second-fixture.invalid' };
+        const rebound = control.entry.prepareGoalModeRun({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: BLUEPRINT,
+          adapter: 'claude', requirement: REQUIREMENT, adapterModelPin: selected, visualProviderPin: { adapter: 'codex', model: 'gpt-6.1-sol', provider: 'visual-a', config_source: path.join(host.root, 'native/config.toml') }, modelOverride: true });
+        assert.equal(rebound.manifest.run_id, control.prepared.manifest.run_id);
+        control.prepared.manifest = rebound.manifest;
+        step = await withRuntimeTest({ root: host.root }, () => control.entry.runGoalModeSessionStep(control.options));
+      }
+    }
+    assert(visualReissued);
+    assert.equal(decompositionAuthors, medium ? 2 : 1);
+    assertDeliveryComplete(host, control, step);
+  }); } finally { if (previousHome === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = previousHome; }
 }
 
 const cases = [{
@@ -513,73 +639,10 @@ const cases = [{
   }),
 }, {
   name: 'daily design: empty request reaches canonical CU completion with real TypeScript and Node assertions',
-  run: () => withHost(async host => {
-    const control = prepare(host, 'daily-design-complete');
-    let designAuthors = 0, constructionAuthors = 0, visualReissued = false;
-    let step = await withRuntimeTest({ root: host.root }, () => control.entry.runGoalModeSessionStep(control.options));
-    for (let call = 0; step.type === 'phase_execute_request' && call < 16; call++) {
-      const raw = JSON.parse(fs.readFileSync(step.request.path, 'utf8'));
-      const issued = host.load('scripts/utils/session-execution-handoff').readSessionExecution(raw.context.runDir, step.request.path);
-      assert(issued, 'every actor must consume its actual signed execution original');
-      const context = issued.request.context, phase = context.phase;
-      const currentManifest = JSON.parse(fs.readFileSync(path.join(context.runDir, 'manifest.json'), 'utf8'));
-      assert.equal(context.adapterModel, host.load('scripts/utils/adapter-model').adapterModelBinding(currentManifest.adapter_model_pin), 'each actual request inherits the complete manifest binding');
-      assert.equal(currentManifest.requirement, REQUIREMENT, 'the original request stays bound across the real actor family');
-      if (context.feature !== BLUEPRINT) assert.deepEqual(currentManifest.delivery_origin, { feature: BLUEPRINT, run_id: control.prepared.manifest.run_id });
-      if (phase === 'work-unit-author' && !visualReissued) {
-        const readVisual = host.load('scripts/utils/phase-state').readGoalVisualProviderEnv;
-        const oldVisual = readVisual(context.childEnv);
-        assert.equal(oldVisual.provider, 'visual-a');
-        const visualProviderPin = { ...oldVisual, provider: 'visual-b' };
-        const root = control.entry.prepareGoalModeRun({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: BLUEPRINT,
-          adapter: 'claude', requirement: REQUIREMENT, visualProviderPin, modelOverride: true });
-        assert.deepEqual(root.manifest.adapter_model_pin, currentManifest.adapter_model_pin);
-        control.prepared.manifest = root.manifest;
-        const oldRequest = step.request;
-        const refused = await control.entry.runGoalModeSessionStep({ ...control.options, requestPath: oldRequest.path, action: 'execute' });
-        assert.equal(refused.status, 'waiting'); assert.match(refused.detail, /绑定/);
-        assert(!fs.existsSync(path.join(path.dirname(oldRequest.path), 'agent-output.log')));
-        step = await withRuntimeTest({ root: host.root }, () => control.entry.runGoalModeSessionStep(control.options));
-        assert.equal(step.phase, phase); assert.notEqual(step.request.sha256, oldRequest.sha256);
-        const next = JSON.parse(fs.readFileSync(step.request.path, 'utf8')).context;
-        assert.deepEqual(readVisual(next.childEnv), visualProviderPin);
-        assert.deepEqual(JSON.parse(fs.readFileSync(path.join(next.runDir, 'manifest.json'), 'utf8')).visual_provider_pin, visualProviderPin);
-        visualReissued = true;
-        continue;
-      }
-      if (phase === 'initial-design-author') assert(context.instruction?.includes(REQUIREMENT));
-      if (phase === 'initial-design-questioning') assert(context.instruction?.includes('requirements/ledger.md'), 'blind Q receives the source location before reading it');
-      let output = '已按真实签名请求产出当前作者材料，质量由原检查决定。';
-      if (phase === 'initial-design-author') {
-        assert.equal(++designAuthors, 1, 'normal design returned unexpected author feedback: ' + context.instruction);
-        writeYaml(host.root, `doc/features/${BLUEPRINT}/blueprint/component-blueprint.yaml`, blueprintDraft(host, false));
-      }
-      else if (phase === 'initial-design-questioning') output = questioningReply(host, false);
-      else if (phase === 'initial-design-decomposition') decompose(host);
-      else if (phase.startsWith('initial-design-scope-')) {
-        const feature = host.load('scripts/utils/change-unit-path').deriveChangeUnitFeatureId(BLUEPRINT, UNIT);
-        host.load('scripts/utils/feature-track').prepareFeatureScopeCandidate({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature,
-          completionTarget: 'feature', requestedResults: [REQUIREMENT], requestedPhases: ['plan', 'coding', 'ut'], requirement: REQUIREMENT, requirementSourceFiles: ['requirements/ledger.md'],
-          impact: { userVisibleBehaviorChange: false, reason: '账本内部纯TypeScript能力，不涉及UI或设备', basisPaths: [SOURCE] }, overwrite: true });
-      } else if (phase === 'work-unit-author') {
-        assert.equal(++constructionAuthors, 1, 'normal construction received unexpected repair feedback: ' + context.instruction);
-        unitMaterials(host, context);
-        assertFrozenInputs(host, context);
-      } else if (phase.endsWith('-verifier-format-repair')) verifierReply(host, context, phase.replace(/-verifier-format-repair$/, ''));
-      else assert.fail('unexpected production responsibility: ' + phase);
-      step = await report(host, control, step, output);
-      if (phase === 'initial-design-decomposition') {
-        const selected = { ...control.prepared.manifest.adapter_model_pin, provider: 'https://second-fixture.invalid' };
-        const rebound = control.entry.prepareGoalModeRun({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: BLUEPRINT,
-          adapter: 'claude', requirement: REQUIREMENT, adapterModelPin: selected, visualProviderPin: { adapter: 'codex', model: 'gpt-6.1-sol', provider: 'visual-a', config_source: path.join(host.root, 'native/config.toml') }, modelOverride: true });
-        assert.equal(rebound.manifest.run_id, control.prepared.manifest.run_id);
-        control.prepared.manifest = rebound.manifest;
-        step = await withRuntimeTest({ root: host.root }, () => control.entry.runGoalModeSessionStep(control.options));
-      }
-    }
-    assert(visualReissued);
-    assertDeliveryComplete(host, control, step);
-  }),
+  run: () => completeDelivery(),
+}, {
+  name: 'medium automatic decomposition returns multi-CU feedback to its author and completes one CU with real TypeScript and Node assertions',
+  run: () => completeDelivery(true),
 }, {
   name: 'daily design: missing reference repair and unchanged denial converge through original feedback',
   run: async () => {
@@ -638,12 +701,18 @@ const cases = [{
           const doc = blueprintDraft(host, false); logical(doc).provenance.evidence_strength = 'observed';
           writeYaml(host.root, canonical, doc);
         } else if (phase === 'initial-design-questioning') output = questioningReply(host, false);
-        else if (phase === 'initial-design-decomposition') decompose(host);
+        // This recovery case starts from a legacy CU whose weak design never published a construction mapping.
+        else if (phase === 'initial-design-decomposition') decompose(host, false);
         else if (phase === 'design-repair-author') {
           authors++;
           const request = JSON.parse(fs.readFileSync(step.request.path, 'utf8'));
           assert(request.context.instruction.includes('authority_target_provenance_missing'), 'the real CU consumer gap must reach its design owner');
-          if (repair) { const doc = YAML.parse(read(host.root, draft)); logical(doc).provenance.evidence_strength = 'authoritative'; writeYaml(host.root, draft, doc); }
+          if (repair) {
+            const doc = YAML.parse(read(host.root, draft)); logical(doc).provenance.evidence_strength = 'authoritative'; writeYaml(host.root, draft, doc);
+            const unit = host.load('scripts/utils/change-unit-path').loadCanonicalChangeUnit(host.root, BLUEPRINT, UNIT).changeUnit;
+            writeHostFile(host.root, `${control.prepared.manifest.report_dir}/design-repair/change-unit-candidates.json`, JSON.stringify([{ providerId: 'builtin-vertical-slice-decomposition', artifact: unit,
+              construction_mapping: authorConstructionMapping(unit, EVIDENCE_REFS.map(ref => 'planned:' + ref)) }]));
+          }
         } else if (phase === 'design-repair-questioning') output = questioningReply(host, false, draft);
         else if (phase.startsWith('initial-design-scope-')) {
           const feature = host.load('scripts/utils/change-unit-path').deriveChangeUnitFeatureId(BLUEPRINT, UNIT);

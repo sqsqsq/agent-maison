@@ -1,7 +1,7 @@
 // ============================================================================
 // ArkTS/ETS AST 分析器
 // ============================================================================
-// 对 .ets 文件做轻量级静态分析（基于正则），提取：
+// 对 .ets 文件做轻量级静态分析（导入复用 TS 语法解析，其余按 ArkTS 行扫描），提取：
 //   - import 语句（模块路径、来源层级）
 //   - class/interface/struct 声明与方法签名
 //   - 装饰器使用 (@State, @Prop, @Link, @Entry, @Component 等)
@@ -9,12 +9,16 @@
 //   - 硬编码字符串检测
 //   - export 语句
 //
-// 不依赖完整 AST parser — ArkTS 尚无成熟的 TS 兼容 parser，
-// 故采用正则 + 行扫描方案，在准确率和可移植性之间取得平衡。
+// ArkUI DSL 不交给 TS 类型检查；导入目标复用现有 catalog/config 和模块出口解析。
 // ============================================================================
 
 import * as fs from 'fs';
 import * as path from 'path';
+import type * as TsModule from '../../../harness/node_modules/typescript';
+import { createRequire, isBuiltin } from 'module';
+import { loadCatalog } from '../../../harness/scripts/utils/catalog-parser';
+import { projectImplementationModules } from '../../../harness/scripts/utils/diff-scope';
+import { parseJson5, readOhPackageField, resolveHarExportEntryPath, SDK_RESERVED_SCOPE } from './har-export-resolve';
 import {
   ArchitectureDsl,
   loadArchitectureDsl,
@@ -22,6 +26,8 @@ import {
   buildInnerLayerIndex,
   getForbiddenInnerImports,
 } from '../../../harness/config';
+
+const ts: typeof TsModule = createRequire(path.resolve(__dirname, '../../../harness/package.json'))('typescript');
 
 // --------------------------------------------------------------------------
 // 数据结构
@@ -37,6 +43,8 @@ export interface ImportInfo {
   /** 按路径推断的来源架构层（outer layer id，实际值来自 DSL） */
   sourceArchLayer?: string;
   lineNumber: number;
+  targetFile?: string;
+  unresolved?: boolean;
 }
 
 export interface MethodSignature {
@@ -84,6 +92,8 @@ export interface FileAnalysis {
   exports: string[];
 }
 
+export { extractExportSurface } from '../../../harness/scripts/utils/export-surface';
+
 // --------------------------------------------------------------------------
 // 分析器（层级信息来自 framework.config.json · architecture DSL）
 // --------------------------------------------------------------------------
@@ -94,6 +104,8 @@ export class AstAnalyzer {
   private innerLayers: string[];
   private innerLayerIndex: Map<string, number>;
   private outerLayerIndex: Map<string, number>;
+  private modules: Array<{ name: string; package_path: string; entry_file?: string }>;
+  private compilerOptions: TsModule.CompilerOptions;
 
   constructor(projectRoot: string, arch?: ArchitectureDsl) {
     this.projectRoot = projectRoot;
@@ -101,6 +113,16 @@ export class AstAnalyzer {
     this.innerLayers = this.arch.module_inner_layers;
     this.innerLayerIndex = buildInnerLayerIndex(this.arch);
     this.outerLayerIndex = buildOuterLayerIndex(this.arch);
+    const loaded = loadCatalog(projectRoot);
+    const cards = loaded.ok ? loaded.catalog.modules : [];
+    this.modules = projectImplementationModules(projectRoot, cards.map(card => ({ name: card.name, package_path: `${card.layer}/${card.name}` })))
+      .map(mod => ({ ...mod, entry_file: cards.find(card => `${card.layer}/${card.name}` === mod.package_path)?.entry_file }))
+      .sort((a, b) => b.package_path.length - a.package_path.length);
+    const configFile = ts.findConfigFile(projectRoot, ts.sys.fileExists);
+    const config = configFile ? ts.readConfigFile(configFile, ts.sys.readFile) : undefined;
+    this.compilerOptions = configFile && config && !config.error
+      ? ts.parseJsonConfigFileContent(config.config, ts.sys, path.dirname(configFile)).options : {};
+
   }
 
   /** 分析单个 .ets 文件 */
@@ -138,52 +160,94 @@ export class AstAnalyzer {
   // --------------------------------------------------------------------------
 
   private extractImports(lines: string[], currentFilePath: string): ImportInfo[] {
+    const source = lines.join('\n');
+    const file = ts.createSourceFile(currentFilePath, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
     const results: ImportInfo[] = [];
-    const importRe = /^\s*import\s+\{([^}]+)\}\s+from\s+['"]([^'"]+)['"]/;
-    const importDefaultRe = /^\s*import\s+(\w+)\s+from\s+['"]([^'"]+)['"]/;
-
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      let match = importRe.exec(line);
-      let importedNames: string[] = [];
-      let modulePath = '';
-
-      if (match) {
-        importedNames = match[1].split(',').map(s => s.trim()).filter(Boolean);
-        modulePath = match[2];
-      } else {
-        match = importDefaultRe.exec(line);
-        if (match) {
-          importedNames = [match[1]];
-          modulePath = match[2];
-        } else {
-          continue;
-        }
+    const add = (modulePath: string, node: TsModule.Node, importedNames: string[] = [], dynamic = false): void => {
+      const targetFile = dynamic ? undefined : this.resolveImport(modulePath, currentFilePath);
+      const info: ImportInfo = { raw: node.getText(file), modulePath, importedNames,
+        isRelative: modulePath.startsWith('.'), lineNumber: file.getLineAndCharacterOfPosition(node.getStart(file)).line + 1,
+        targetFile: targetFile && targetFile !== 'external' ? targetFile : undefined,
+        unresolved: !targetFile };
+      // A missing target does not erase a relative path's already known layer direction.
+      if (info.isRelative) {
+        const relativeTarget = path.posix.normalize(path.posix.join(path.posix.dirname(currentFilePath), modulePath));
+        info.sourceInternalLayer = this.inferInternalLayer(relativeTarget);
+        info.sourceArchLayer = this.getFileArchLayer(relativeTarget);
       }
-
-      const isRelative = modulePath.startsWith('.');
-      const info: ImportInfo = {
-        raw: line.trim(),
-        importedNames,
-        modulePath,
-        isRelative,
-        lineNumber: i + 1,
-      };
-
-      if (isRelative) {
-        const resolvedPath = path.posix.resolve(
-          path.posix.dirname(currentFilePath),
-          modulePath
-        );
-        info.sourceInternalLayer = this.inferInternalLayer(resolvedPath);
+      if (info.targetFile) {
+        info.sourceInternalLayer = this.inferInternalLayer(info.targetFile);
+        info.sourceArchLayer = this.getFileArchLayer(info.targetFile);
       }
-
-      info.sourceArchLayer = this.inferArchLayer(modulePath, currentFilePath);
-
       results.push(info);
+    };
+    for (const node of file.statements) {
+      if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
+        const clause = node.importClause;
+        const names = clause?.namedBindings;
+        add(node.moduleSpecifier.text, node, [...(clause?.name ? [clause.name.text] : []),
+          ...(names ? ts.isNamedImports(names) ? names.elements.map(item => item.getText(file)) : [names.name.text] : [])]);
+      } else if (ts.isExportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
+        add(node.moduleSpecifier.text, node);
+      }
     }
-
+    const visit = (node: TsModule.Node): void => {
+      if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+        const arg = node.arguments[0];
+        add(arg && ts.isStringLiteral(arg) ? arg.text : '<dynamic import>', node, [], !arg || !ts.isStringLiteral(arg));
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(file);
     return results;
+  }
+
+  private moduleAt(file: string) {
+    return this.modules.find(mod => file === mod.package_path || file.startsWith(mod.package_path + '/'));
+  }
+
+  private exportFile(mod: { name: string; package_path: string; entry_file?: string }): string {
+    return mod.entry_file || resolveHarExportEntryPath(this.projectRoot, mod, this.arch.cross_module_exports_file).relPath;
+  }
+
+  private resolveImport(specifier: string, currentFile: string): string | undefined {
+    if (SDK_RESERVED_SCOPE.test(specifier) || isBuiltin(specifier)) return 'external';
+    const localFile = (base: string): string | undefined => {
+      const rel = path.relative(this.projectRoot, base).replace(/\\/g, '/');
+      const mod = this.modules.find(item => item.package_path === rel);
+      const candidates = mod ? [path.join(this.projectRoot, this.exportFile(mod))]
+        : [base, ...['.ets', '.ts', '.tsx', '.js', '.jsx', '.mts', '.cts', '.mjs', '.cjs'].map(ext => base + ext),
+          ...['index.ets', 'index.ts', 'index.js'].map(name => path.join(base, name))];
+      const found = candidates.find(file => fs.existsSync(file) && fs.statSync(file).isFile());
+      if (!found) return;
+      const resolved = path.relative(this.projectRoot, fs.realpathSync(found)).replace(/\\/g, '/');
+      return resolved.startsWith('../') || path.isAbsolute(resolved) ? undefined : resolved;
+    };
+    if (specifier.startsWith('.')) return localFile(path.resolve(this.projectRoot, path.dirname(currentFile), specifier));
+    const named = this.modules.find(mod => [mod.name, readOhPackageField(this.projectRoot, mod.package_path, 'name')]
+      .some(name => name && (specifier === name || specifier.startsWith(name + '/'))));
+    if (named) {
+      const name = [named.name, readOhPackageField(this.projectRoot, named.package_path, 'name')]
+        .find(value => value && (specifier === value || specifier.startsWith(value + '/')))!;
+      return localFile(path.join(this.projectRoot, named.package_path, specifier.slice(name.length)));
+    }
+    if ([...this.outerLayerIndex.keys()].some(layer => specifier.startsWith(layer + '/'))) return localFile(path.resolve(this.projectRoot, specifier));
+    const resolved = ts.resolveModuleName(specifier, path.resolve(this.projectRoot, currentFile), this.compilerOptions, ts.sys).resolvedModule;
+    if (resolved) return resolved.isExternalLibraryImport ? 'external' : localFile(resolved.resolvedFileName);
+    const own = this.moduleAt(currentFile);
+    for (const dir of [own?.package_path, ''].filter((value): value is string => value !== undefined)) {
+      for (const name of ['oh-package.json5', 'package.json']) {
+        try {
+          const data = parseJson5(fs.readFileSync(path.join(this.projectRoot, dir, name), 'utf8')) as { dependencies?: Record<string, string>; devDependencies?: Record<string, string> };
+          for (const [dep, version] of Object.entries({ ...data.dependencies, ...data.devDependencies })) {
+            if (specifier !== dep && !specifier.startsWith(dep + '/')) continue;
+            if (/^file:/.test(version)) return localFile(path.resolve(this.projectRoot, dir, version.slice(5), specifier.slice(dep.length + 1)));
+            if (!/^(?:link:|workspace:)/.test(version)) return 'external';
+          }
+        } catch { /* Missing or unsupported package metadata leaves the import unresolved. */ }
+      }
+    }
+    return undefined;
   }
 
   // --------------------------------------------------------------------------
@@ -404,18 +468,6 @@ export class AstAnalyzer {
     return undefined;
   }
 
-  /** 从 import 路径推断 outer architecture layer（候选值由 DSL outer_layers[].id 提供） */
-  private inferArchLayer(modulePath: string, currentFile: string): string | undefined {
-    const combined = modulePath.startsWith('.')
-      ? path.posix.resolve(path.posix.dirname(currentFile), modulePath)
-      : modulePath;
-
-    for (const layer of this.outerLayerIndex.keys()) {
-      if (combined.includes(layer)) return layer;
-    }
-    return undefined;
-  }
-
   /** 获取文件所属的内部层 */
   getFileInternalLayer(filePath: string): string | undefined {
     return this.inferInternalLayer(filePath);
@@ -425,7 +477,7 @@ export class AstAnalyzer {
   getFileArchLayer(filePath: string): string | undefined {
     const normalized = filePath.replace(/\\/g, '/');
     for (const layer of this.outerLayerIndex.keys()) {
-      if (normalized.includes(layer)) return layer;
+      if (normalized === layer || normalized.startsWith(layer + '/')) return layer;
     }
     return undefined;
   }
@@ -511,9 +563,7 @@ export class AstAnalyzer {
     for (const imp of analysis.imports) {
       const importArchLayer = imp.sourceArchLayer;
       if (!importArchLayer || !this.outerLayerIndex.has(importArchLayer)) continue;
-      if (importArchLayer === fileArchLayer) continue;
-
-      if (!allowed.has(importArchLayer)) {
+      if (importArchLayer !== fileArchLayer && !allowed.has(importArchLayer)) {
         violations.push({
           file: analysis.filePath,
           import: imp,
@@ -521,6 +571,11 @@ export class AstAnalyzer {
           importArchLayer,
           message: `${fileArchLayer} 层不可依赖 ${importArchLayer} 层 (${analysis.filePath} line ${imp.lineNumber})`,
         });
+      }
+      const own = this.moduleAt(analysis.filePath), target = imp.targetFile ? this.moduleAt(imp.targetFile) : undefined;
+      if (own && target && own.package_path !== target.package_path && imp.targetFile !== this.exportFile(target)) {
+        violations.push({ file: analysis.filePath, import: imp, fileArchLayer, importArchLayer,
+          message: `${own.name} 跨模块访问 ${target.name} 必须经出口 ${this.exportFile(target)}，不能直达 ${imp.targetFile} (${analysis.filePath} line ${imp.lineNumber})` });
       }
     }
     return violations;

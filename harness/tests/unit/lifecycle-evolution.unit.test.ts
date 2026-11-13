@@ -355,6 +355,9 @@ export function authorHooks(p: RealChainProject, writers: Partial<Record<Phase, 
     const disposition = resolveCompletionDisposition({ projectRoot: p.root, frameworkRoot: p.frameworkRoot, feature: p.feature,
       runId: ctx.runId, chain: [...context.chain], ...(scope ? { executionScope: scope } : {}) });
     for (const problem of disposition.completionBlocking) if (problem.action === 'repair') pending.add(problem.owner ?? problem.phase);
+    // This model-output fixture must repair the business implementation when the real DAG reader
+    // reports its entry point missing; a cached successful compile is not a behavioral result.
+    if (context.chain.includes('coding') && disposition.completionBlocking.some(problem => problem.id === 'dag_to_source' && problem.action === 'repair')) pending.add('coding');
     if (!fs.existsSync(featureFilePath(p.root, p.feature, 'acceptance.yaml'))) pending.add('spec');
     if (!fs.existsSync(featureFilePath(p.root, p.feature, 'contracts.yaml'))) pending.add('plan');
     const factsFile = featureFilePath(p.root, p.feature, 'context/facts.md');

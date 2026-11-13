@@ -1,5 +1,7 @@
 # App Component Blueprint 内部工作流
 
+先消费 [统一入口](../../docs/operations/project-entry.md) 的外框与用户来源。小型以同协议短蓝图只写改动点、可检验验收、已知文件及必要局部选择，来源与原 request 保留，不补未涉及视图/verified_unchanged/完整选型，不产 CU/独立设计质询/独立评审文件；首次准备与下游来源见 [蓝图设计输入](../../docs/concepts/blueprint-design-inputs.md)。本文其余完整 4+1、质询、CU 和评审交付要求适用于中型/复杂及已有 CU，特别简单不进入。
+
 交给 CU 设计准备的 `design_refs` 是作者的交付选择，不是依赖目录。明确选入本 CU 负责的节点、流程、验收承载及要落实的业务决定；尤其检查共享目标是否混入兄弟 CU 的内容。已选目标的内容会整体继承，并作为组装负责人依据；仅供理解的依赖由机器按需派生闭包，不回写成选择。已有错误选择沿原设计/CU 内容修订处理，不靠重命名条目、手改 canonical 或裁剪验收洗掉差额。
 
 整批活动 CU 要覆盖 P3 的全部必需设计义务：变更节点、变更 runtime flow、每条 relation/contract、非 `not_applicable` 的决定，以及每条当前需求至少一个蓝图承载。通常由实际交付该内容的单元认领，跨 CU 关系由消费方承担本侧证明；不让每个 CU 重复认领整个传递闭包。未变的依赖节点和相邻场景可不列，但当前需求承载或已声明变更的目标不能漏掉。接受、修订及 readiness 的未认领诊断须在设计期交作者补选；不得用自动补引用或降低义务消除诊断。
@@ -63,7 +65,7 @@ provider 固定内置并消费同一协议；id 必须唯一，requirement 只�
 
 **按 4+1 完成可评审设计**：App lens 回答十个根问题时分别使用本问题的真实依据，不复制同一个通用答案。场景（+1）描述目标用户、前提、旅程、人群差异并追到其它视图；逻辑表达能力边界、实体字段/枚举、操作/DTO/映射/错误/幂等；运行表达触发→首次加载→权威/状态→写入/发布→订阅消费→失败恢复，附完整调用步骤、设计期生成的时序图及用例分支；开发表达已消费 DSL 分层、真实目录/文件、组件/接口职责和已声明持久化设计；部署表达实际落点与外部责任、配套顺序及兼容性。核实未变只写结论与依据，未知、不适用、未记录分别说明。取舍、异常、部件质量属性、数据生命周期与 AC/BD/NFR 展开到能审查约束、失败与代价的粒度。代码骨架不入蓝图；图由下述同源设计生成，不替代步骤或分支。
 
-**设计期 typed 内容**：被 CU `design_refs` 引用的目标在设计期写入已有 `acceptance`、`contracts`、`use_cases`。acceptance 挂 scenarios/logical 等设计目标，包含 ID、优先级、步骤/预期、分层与 focus；contracts 挂 development 节点/runtime flow，包含真实模块目录、根级 module_dependencies、模型字段、接口签名、组件、files 写集和状态；**整个 contracts.change_unit 由 plan 在 Feature contracts.yaml 生成**。use_cases 挂 runtime flow，包含阶段、UI/数据边界、命名调用、主路径/分支去向、预期和 linked_acceptance，分支新写 expected_port_calls。数据边界写 contracts 中登记的真实 Repository/Service 类；导航栈这类 UI 运行时能力不算数据边界。目标 provenance 仍须满足已有 authoritative 要求，作者写内容不等于拥有外部裁决权。详见[蓝图设计输入](../../docs/concepts/blueprint-design-inputs.md)。
+**设计期 typed 内容**：被 CU `design_refs` 引用的目标在设计期写入已有 `acceptance`、`contracts`、`use_cases`。acceptance 挂 scenarios/logical 等设计目标，包含 ID、优先级、步骤/预期、分层与 focus；contracts 挂 development 节点/runtime flow，包含真实模块目录、根级 module_dependencies、模型字段、接口签名、组件、files 写集和状态；**原设计作者同次在临时交回里明确映射候选，CU 接受后原 writer 填真实身份并复用/确定生成唯一 Feature contracts.change_unit，只有真实未决项才交 plan**。use_cases 挂 runtime flow，包含阶段、UI/数据边界、命名调用、主路径/分支去向、预期和 linked_acceptance，分支新写 expected_port_calls。数据边界写 contracts 中登记的真实 Repository/Service 类；导航栈这类 UI 运行时能力不算数据边界。目标 provenance 仍须满足已有 authoritative 要求，作者写内容不等于拥有外部裁决权。详见[蓝图设计输入](../../docs/concepts/blueprint-design-inputs.md)。
 
 **共享不是切片过滤**：引用一个目标就整体继承其设计内容。CU-A 引 S+A、CU-B 引 S+B：S 只放双方共同验收、共同合法写入文件/模型/用例；A/B 专属验收、files、用例放独占目标，设计节点保持语义稳定，不因 CU 身份变化复制版本节点。数组按既有行身份去重并合并，同行身份不同内容报 authority_content_conflict；对象不逐键拼接，module_dependencies/navigation/resource_keys/acceptance.flows 等分别集中在一个承载目标，重复声明只有全内容相等才接受。change_unit 属于 plan 的 Feature 产物，不进入蓝图设计投影，完整映射仍由 plan 原门校验。不能用 predicate 或模块范围过滤误继承内容，合法文件先后交叠不新增门禁。AC/BD 普通 ID 在一次 CU 机器投影中唯一（沿原行身份）；文档按“来源目标 + 编号”展示，不吞不同目标各自 AC-1，不新加全蓝图唯一门禁。
 

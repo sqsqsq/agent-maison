@@ -48,15 +48,9 @@
 
 设计期已有 acceptance/contracts/use_cases 时直接消费 typed 推导输入并写本阶段 acceptance，正常交接不提前物化。P0 device/both 义务不依赖 linked_flow；UI 相关性沿有效 ui_change/需求判断，UI 义务缺 checkpoint 时由 spec 根据真实 ui-spec 补齐。linked_flow 只关联业务用例；flows 可选，声明才核屏链。spec 只补本职责的 checkpoint/屏幕流程等缺键，保留已有权威预期，通过原对齐与 P0 门；已有带来源戳文件也沿同一规则补充，不换戳绕过。缺内容才在本职责补设计，叙述文件仅按 required_outputs 产出。
 
-**正式性兜底复核（M7，非阻断）**：spec 是 full 轨第一次冻结施工意图的地方，也是正式需求的兜底复核点——**正式需求的 spec 一律位于蓝图与 Change Unit 之后，spec 不再是任何正式需求的第一个设计产物**。开始 Step 1 前先按判据自查一次：
+**入口兜底复核（M7 口径由统一前门取代）**：本 Skill 只处理已派生的 spec 职责，先核 [统一前门](../../../docs/operations/project-entry.md) 的原始请求与有效范围。特别简单不因“正式需求”标签补蓝图/spec；小型按短蓝图原 request 消费验收，不为阶段形式新增 spec/plan；中型/复杂及已有 CU 继续完整蓝图/CU 准入。若本请求需要完整设计而缺蓝图/CU，把具体设计缺口交回 `/component-design`，保留草稿与已有成果，不能由 spec 追认已施工代码。
 
-> **正式需求**＝有明确交付或验收责任，且拟改变**部件行为、外部契约、数据/NFR、运行语义或架构责任**的事项；不改变这些语义的纯文档和机械维护除外。
-
-- 事项**符合**该判据却**没有**经过部件内设计阶段（当前 Feature 不由某个 canonical `change_unit_ref` 派生）→ 说明"这应先经 [`/component-design`](../../project/component-design/SKILL.md) 建立部件演进蓝图"，给出回退入口，由用户裁决是回退还是按当前理解继续；命中即停的成本只是一份 spec 草稿；
-- **上游显式**把它标为正式需求时，该分类具有权威性，不得用本地判断降级；
-- 信息不足以判断时**问人**，不猜测；
-- 需要用户裁决时用共享确认点 `design.formality_routing`（与 `/component-design` 同一条目，见 [user-confirmation-ux.md](../../reference/user-confirmation-ux.md)），不另建状态；
-- 这是**指引不是门禁**：不加机器 BLOCKER、不改 `track_scoring`、不新增档位。
+上游真实预期和授权保留，但“正式”标签不替代四档事实。unknown 先复用已有验收、蓝图、catalog 和源码补依据，只有影响正确交付的真实语义缺口才用既有适用确认点；不新增分类表单、机器票据或新的确认状态。已有 CU/run 沿其职责与冻结范围恢复，不拆 request 降低在途义务。
 
 ## 流程骨架
 

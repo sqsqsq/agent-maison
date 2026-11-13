@@ -42,7 +42,7 @@ workflow-loader MUST 同时接受 `schema_version: "1.0"`（全量视作 full �
 
 ### Requirement: New requests compose obligations instead of selecting tracks
 
-新协议 MUST 根据请求终点、未满足义务与有效事实确定执行范围；workflow 预设顺序 MUST NOT 自动成为全部必跑义务。新任务 MUST NOT 使用 change/exit 或要求用户选择 lite/full；fork/extension 未知职责 MUST 报 unknown 或缺口，不得默认为可跳过。项目级 Skill MUST 可在自身输入和授权满足时独立调用，不强制变成 Feature phase。
+新请求默认 MUST 使用 obligation-driven，并在蓝图前消费统一前门的四档事实与真实用户覆盖；四档 MUST NOT 恢复 lite/full 执行轨，小型 MUST 经同协议短蓝图及原 request 完成适用工作，无 CU/独立设计质询/独立评审文件；中型/复杂及已有 CU 保留完整准入。新协议 MUST 根据请求终点、未满足义务与有效事实确定执行范围；workflow 预设顺序 MUST NOT 自动成为全部必跑义务。新任务 MUST NOT 使用 change/exit 或要求用户选择 lite/full；fork/extension 未知职责 MUST 报 unknown 或缺口，不得默认为可跳过。项目级 Skill MUST 可在自身输入和授权满足时独立调用，不强制变成 Feature phase。
 
 #### Scenario: Existing design supports a logic repair
 - **WHEN** 正式需求已通过蓝图准入且验收/施工投影有效，仅需实现、审查和单元证据
@@ -53,4 +53,4 @@ workflow-loader MUST 同时接受 `schema_version: "1.0"`（全量视作 full �
 - **THEN** 范围 MUST 保留 unknown 与责任方，MUST NOT 默认省略或自动执行未知阶段
 
 > **Enforced by (planned P2/P6/P7):** `harness/scripts/utils/runtime-policy.ts`、
-> `harness/workflow-loader.ts`、`workflows/spec-driven.workflow.yaml`；g1 仅建立规范。
+> `harness/workflow-loader.ts`、`workflows/obligation-driven.workflow.yaml`；旧 spec-driven 定义只供原出生协议兼容。

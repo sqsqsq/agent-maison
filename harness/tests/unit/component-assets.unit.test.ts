@@ -9,6 +9,7 @@ import { scanComponentIndex, serializeComponentIndex, readComponentIndex, mergeC
 import { fingerprintDiscoverySources } from '../../scripts/utils/blueprint-discovery';
 import { currentScopeItems } from '../../scripts/utils/blueprint-requirement-traceability';
 import { validateComponentClosureKnowledge } from '../../scripts/utils/component-closure-knowledge';
+import { extractExportSurface } from '../../scripts/utils/export-surface';
 import { componentStaticChecks } from '../../../profiles/hmos-app/harness/component-extractor';
 import { checkComponentCatalog, componentResult } from '../../scripts/utils/component-catalog-check';
 import { checkComponentSelections, componentProjectionErrors } from '../../scripts/utils/component-selection-check';
@@ -49,6 +50,28 @@ const ID = 'SharedUi/src/SettingRow.ets#SettingRow';
 const SOURCE = `@Component\nexport struct SettingRow {\n @Prop title: string = '';\n build() { Text(this.title).fontSize('16fp') }\n}\n`;
 const cases: Array<{ name: string; run: () => void }> = [];
 function test(name: string, run: () => void) { cases.push({ name, run }); }
+test('export surface: unexported ArkUI DSL changes do not create interface unknowns or hide real exports', () => {
+  const ui = `@Entry\n@Component\nstruct Screen { build() { Column() { Text('old') } } }\n`;
+  const before = extractExportSurface(ui + 'export function value(input: number): string { return String(input); }');
+  const bodyOnly = extractExportSurface(ui.replace("Text('old')", "Row() { Text('new') }") + 'export function value(input: number): string { return String(input); }');
+  assert.deepEqual(before.unknown, []); assert.deepEqual(bodyOnly.unknown, []); assert.deepEqual(before.signatures, bodyOnly.signatures);
+  assert.notDeepEqual(before.signatures, extractExportSurface(ui + 'export function value(input: boolean): string { return String(input); }').signatures);
+  assert.deepEqual(extractExportSurface(ui).signatures, []); assert.deepEqual(extractExportSurface(ui).unknown, []);
+});
+test('export surface: exported ArkTS props and named exports remain observable while UI bodies are ignored', () => {
+  const source = `@Component\nexport struct Card { @Prop title: string = ''; build() { Column() { Text(this.title) } } }\n`;
+  const before = extractExportSurface(source), body = extractExportSurface(source.replace('Text(this.title)', 'Row() { Text(this.title) }'));
+  assert.deepEqual(before.unknown, []); assert.deepEqual(body.unknown, []); assert.deepEqual(before.signatures, body.signatures);
+  assert.notDeepEqual(before.signatures, extractExportSurface(source.replace('title: string', 'title: number')).signatures);
+  assert.notDeepEqual(before.signatures, extractExportSurface(source.replace('@Prop', '@Link')).signatures);
+  assert.deepEqual(before.signatures, extractExportSurface(source.replace('@Prop title', '@Prop /* documentation */ title')).signatures);
+  assert.deepEqual(extractExportSurface(source.replace('export struct', 'struct')).signatures, extractExportSurface(source.replace('export struct', 'struct').replace('@Prop', '@Link')).signatures);
+  const named = source.replace('export struct', 'struct') + '\nexport { Card as PublicCard };\n';
+  assert.notDeepEqual(extractExportSurface(named).signatures, extractExportSurface(named.replace('title: string', 'title: number')).signatures);
+  assert(extractExportSurface('export const value = factory();').unknown.length);
+  assert(extractExportSurface('@Component\nexport struct Card { value = factory(); build() { Column() {} } }').unknown.length);
+  assert(extractExportSurface('export struct Broken { build( {').unknown.length);
+});
 function write(root: string, file: string, content: string) { const abs = path.join(root, file); fs.mkdirSync(path.dirname(abs), { recursive: true }); fs.writeFileSync(abs, content, 'utf8'); }
 function setup(run: (root: string) => void) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-assets-'));

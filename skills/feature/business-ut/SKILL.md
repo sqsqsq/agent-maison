@@ -13,10 +13,10 @@ review 等待本职责修测试时，依真实 coding 输入和 requires/control
 | 请求 | 入口 | 终点 |
 |---|---|---|
 | 只设计测试或判断可测性 | 读目标和预期，按下方共享方法设计 | 交付用例/缺口，不写测试、不探设备、不要求 facts/报告 |
-| 补、修或运行指定测试 | [request CLI](../../../docs/operations/request-harness.md)：写前先 `--prepare-request` 确认目标与载体，再 Research、写入授权测试并实际执行 | 交付所选用例的真实结果及未覆盖项，不新建 Feature |
+| 补、修或运行指定测试 | [request CLI](../../../docs/operations/request-harness.md)：写前完成目标/载体/允许写界准备，自动准备并入首次能力调用，显式 request-file 可先 `--prepare-request`；再 Research、写入授权测试并实际执行 | 交付所选用例的真实结果及未覆盖项，不新建 Feature |
 | 正式 Feature/CU UT | 先完整读 [正式阶段](../../reference/business-ut-workflow-detail.md#正式-featurecu-阶段) 再执行，消费绑定的 unit/both AC、契约、范围和 required 产物 | 原阶段闭环；不自行删验收、改产品或追加 testing |
 
-已有正式任务不拆成独立 request。request 和正式调用按 [输入契约](../../../docs/concepts/skill-contracts.md#facts-11) 读取真实身份；方法调用不生成身份/facts。
+已有 Feature/CU 受管任务不拆成独立 request；小型沿自身原 request/短蓝图，不借其它 Feature。其当前蓝图身份与具体验收 ID 由原输入链绑定，逐条预期仍须对照该条目；旧 revision、仅路径存在或 characterization 不代本次验收。request 和正式调用按 [输入契约](../../../docs/concepts/skill-contracts.md#facts-11) 读取真实身份；方法调用不生成身份/facts。
 完整交付由原协调器按共同当前处置和已有授权继续，不在phase边界重复确认或轮流派作者。独立请求到本次原终点结束；真正独立核验保持另一个上下文。
 
 ## 共享测试方法
@@ -34,7 +34,7 @@ review 等待本职责修测试时，依真实 coding 输入和 requires/control
 ### 落点、执行与恢复（实际写或跑测试时）
 
 正式 UT 有上游缺口时在既有 audit 的 YAML 之外写同款问题表，按[上游问题与拒修返回](../../reference/coding-workflow-detail.md#可选上游问题与拒修返回)引用当前证据、经原 verifier 核实后交 owner；保留真实 FAIL，收到拒修理由后修自身测试或补真实新事实。
-先读 `framework/profiles/<project_profile.name>/skills/business-ut/profile-addendum.md`。hmos 当前执行已配置模块 `src/ohosTest/` 下的 Hypium 用例；先 prepare 并直接消费返回的 `request_sha256`、`baseline`、`bindings`、`reportDir`、`factsPath`、`gaps`，不手算身份/哈希。
+先读 `framework/profiles/<project_profile.name>/skills/business-ut/profile-addendum.md`。hmos 当前执行已配置模块 `src/ohosTest/` 下的 Hypium 用例；在首次写入前完成自动/显式载体准备，并直接消费返回的 `request_sha256`、`baseline`、`bindings`、`reportDir`、`factsPath`、`gaps`，不手算身份/哈希。
 测试载体或 `build-profile.json5` 配置缺失时先判断原授权：已覆盖所需工程改动就继续；未覆盖才先向用户说明具体改动与原因，得到认可后再做。能力未提供或缺口尚未解决时如实停在该处，不改投其它目录、不用其它模块的通过代替。
 载体处理后重新 prepare，再按返回落点写测试与套件注册；测试写入受 `allowed_test_writes` 限制。prepare 不执行测试，成功不能当作 UT PASS。
 任何需要编译或跑测试的校验一律经框架执行器（纯编译用 `npm run compile`，测试用专项 request CLI 或正式 `harness-runner --phase`）；不裸调 hvigor，也不引导用户去运行宿主自带脚本。确认工具链本身跑 `check-personal-setup.ts --json --ensure`；失败诊断先读同次 `hvigor-*.meta.json` 的 `envProbe`（`DEVECO_SDK_HOME_PATH` 本次实际取值 / `JAVA_HOME` / 变量**是否设置**——布尔为 true 不等于框架派生成功）与 `command`、`exitCode`，再读构建日志正文，重新解析出来的值只作辅助且须标为「当前值」，安装目录扫描第三顺位。

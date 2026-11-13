@@ -235,7 +235,7 @@ const cases: Array<{ name: string; run(): void }> = [
   }); } },
   { name: 'real capability resolver reports malformed input and accepts the owner repair through its normal artifact path', run() { temporary(root => {
     const framework = path.join(root, 'maison');
-    for (const relative of ['skills/feature', 'skills/legacy', 'workflows', 'specs/artifact-schemas']) fs.cpSync(path.join(frameworkRoot, relative), path.join(framework, relative), { recursive: true });
+    for (const relative of ['skills/feature', 'workflows', 'specs/artifact-schemas']) fs.cpSync(path.join(frameworkRoot, relative), path.join(framework, relative), { recursive: true });
     write(root, 'framework.config.json', JSON.stringify({ active_workflow: 'spec-driven', paths: { features_dir: 'doc/features' }, project_profile: { name: 'generic' } }));
     write(framework, 'skills/feature/code-review/contract.yaml', { schema_version: '1.1', skill: 'code-review', skill_doc: 'SKILL.md', phases: { review: {
       inputs: [{ id: 'payload', sources: [{ kind: 'artifact', artifact: 'use-cases@1' }] }], capabilities: [{ id: 'capability_review_payload', axis: 'functional', inputs: ['payload'], obligation_kinds: ['review-context'], on_missing: 'fail' }], produces: [{ artifact: 'review-report@1' }], verifies: { check: 'check-review.ts' },
@@ -253,7 +253,7 @@ const cases: Array<{ name: string; run(): void }> = [
   }); } },
   { name: 'real capability supplied entry rejects malformed memory, resolves repaired calls and detects bypassing its own validation', run() { temporary(root => {
     const framework = path.join(root, 'maison');
-    for (const relative of ['skills/feature', 'skills/legacy', 'workflows', 'specs/artifact-schemas']) fs.cpSync(path.join(frameworkRoot, relative), path.join(framework, relative), { recursive: true });
+    for (const relative of ['skills/feature', 'workflows', 'specs/artifact-schemas']) fs.cpSync(path.join(frameworkRoot, relative), path.join(framework, relative), { recursive: true });
     write(root, 'framework.config.json', JSON.stringify({ active_workflow: 'spec-driven', paths: { features_dir: 'doc/features' }, project_profile: { name: 'generic' } }));
     write(framework, 'skills/feature/code-review/contract.yaml', { schema_version: '1.1', skill: 'code-review', skill_doc: 'SKILL.md', phases: { review: {
       inputs: [{ id: 'design', sources: [{ kind: 'derive', provider_id: 'derive.blueprint-contracts' }] }, { id: 'payload', sources: [{ kind: 'artifact', artifact: 'use-cases@1' }] }],

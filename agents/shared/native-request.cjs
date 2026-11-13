@@ -1,0 +1,217 @@
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+
+function text(value) {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) return value.map(item => text(item?.text ?? item?.content ?? '')).join('\n');
+  return '';
+}
+function unquote(value) {
+  return value.replace(/```[\s\S]*?```/g, '').split(/\r?\n/).filter(line => !/^\s*>/.test(line)).join('\n');
+}
+function canonical(file) {
+  const value = fs.realpathSync(file.replace(/^\\\\\?\\/, ''));
+  return process.platform === 'win32' ? value.toLowerCase() : value;
+}
+function samePath(left, right) {
+  try { return canonical(left) === canonical(right); } catch { return false; }
+}
+function inside(root, file) {
+  try { const relative = path.relative(canonical(root), canonical(file)); return relative === '' || !relative.startsWith('..') && !path.isAbsolute(relative); } catch { return false; }
+}
+function codexSession(sessionId, env = process.env) {
+  const home = env.CODEX_HOME || path.join(os.homedir(), '.codex');
+  const index = path.join(home, 'state_5.sqlite');
+  if (!fs.existsSync(index)) return { gap: 'Codex当前精确线程索引state_5.sqlite不可用' };
+  let db;
+  try {
+    const { DatabaseSync } = require('node:sqlite');
+    db = new DatabaseSync(index, { readOnly: true });
+    const row = db.prepare('SELECT id, rollout_path, cwd FROM threads WHERE id=?').get(sessionId);
+    if (!row || typeof row.rollout_path !== 'string' || !row.rollout_path) return { gap: 'Codex当前精确线程没有可读原件定位' };
+    return { file: row.rollout_path, sessionId: row.id, cwd: row.cwd };
+  } catch { return { gap: '当前Node运行时无法只读消费Codex精确线程索引' }; }
+  finally { db?.close(); }
+}
+function currentNativeSession(env = process.env) {
+  const sessionId = env.CODEX_THREAD_ID || env.CODEX_SESSION_ID;
+  return sessionId ? codexSession(sessionId, env) : { gap: '当前原生环境没有精确session/thread定位；可传原生--session-ref' };
+}
+function nativeStore(file, env = process.env) {
+  const claude = env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
+  const codex = env.CODEX_HOME || path.join(os.homedir(), '.codex');
+  if (inside(path.join(claude, 'projects'), file)) return 'claude';
+  if ([path.join(codex, 'sessions'), path.join(codex, 'archived_sessions')].some(root => inside(root, file))) return 'codex';
+  throw new Error('原件不在已配置客户端的原生存储内；任意JSONL不授用户豁免/覆盖');
+}
+function toolSucceeded(tool) { return tool.error !== true && Number.isInteger(tool.resultLine) && tool.resultLine > tool.line; }
+function nativeEnvelopes(output) {
+  const values = [];
+  for (const line of output.split(/\r?\n/)) {
+    try {
+      const parsed = JSON.parse(line);
+      const value = parsed?.value ?? parsed;
+      if (value && typeof value.output === 'string' && ('chunk_id' in value || 'wall_time_seconds' in value || 'exit_code' in value)) values.push(value);
+    } catch { /* A native output can contain plain text alongside its structured calls. */ }
+  }
+  return values;
+}
+function plainToolOutput(output) {
+  const values = nativeEnvelopes(output);
+  return values.length ? values.map(value => value.output).join('\n') : output;
+}
+function resultFailed(payload) {
+  if (payload.is_error === true || payload.error || typeof payload.exit_code === 'number' && payload.exit_code !== 0) return true;
+  const output = text(payload.output);
+  if (nativeEnvelopes(output).some(value => typeof value.exit_code === 'number' && value.exit_code !== 0)) return true;
+  try {
+    const parsed = JSON.parse(output);
+    if (parsed.isError === true || parsed.error || typeof parsed.exit_code === 'number' && parsed.exit_code !== 0) return true;
+  } catch { /* Most native outputs are text envelopes. */ }
+  const prelude = output.split(/\nOutput:/, 1)[0].slice(0, 500);
+  return /^(?:Script (?:failed|error)|apply_patch (?:verification )?failed|Failed to find expected lines)/i.test(prelude) || /(?:Process exited with code|Exit code:)\s*[1-9]\d*/.test(prelude);
+}
+function fullRead(row) {
+  const file = row.toolUseResult?.file;
+  if (!file || typeof file.filePath !== 'string' || typeof file.content !== 'string') return undefined;
+  return { path: file.filePath, content: file.content,
+    complete: file.startLine === 1 && file.numLines === file.totalLines && file.content.split('\n').length === file.totalLines };
+}
+function patchText(tool) {
+  if (/^(?:apply_patch|functions\.apply_patch)$/.test(tool.name)) return typeof tool.input === 'string' ? tool.input : tool.input?.patch ?? '';
+  if (!/^(?:exec|functions\.exec)$/.test(tool.name) || typeof tool.input !== 'string') return '';
+  const call = /\btools\.apply_patch\(\s*("(?:\\.|[^"\\])*")\s*\)/.exec(tool.input);
+  try { return call ? JSON.parse(call[1]) : ''; } catch { return ''; }
+}
+function isEditingTool(tool) {
+  return toolSucceeded(tool) && (/^(?:Write|Edit|MultiEdit|NotebookEdit|Delete)$/i.test(tool.name) || patchText(tool).startsWith('*** Begin Patch'));
+}
+
+/** Explicitly located session only; no newest-session search or cross-session index. */
+function readNativeSession(reference, projectRoot) {
+  const split = reference.lastIndexOf('#');
+  const file = split < 0 ? reference : reference.slice(0, split);
+  const selected = split < 0 ? undefined : reference.slice(split + 1);
+  const store = nativeStore(file);
+  const rows = fs.readFileSync(file, 'utf8').split(/\r?\n/).filter(Boolean).map(line => JSON.parse(line));
+  const meta = rows.find(row => row.type === 'session_meta' || row.type === 'session/header' || row.type === 'session');
+  const header = meta?.payload ?? meta?.data?.header ?? meta?.data ?? meta;
+  const sessionId = header?.id ?? header?.sessionId ?? header?.session_id ?? rows.find(row => row.sessionId || row.session_id)?.sessionId ?? rows.find(row => row.session_id)?.session_id;
+  const cwd = header?.cwd ?? rows.find(row => row.cwd)?.cwd;
+  if (typeof sessionId !== 'string' || !cwd || !samePath(cwd, projectRoot)) throw new Error('原生会话缺少准确 session/项目身份');
+  if (!path.basename(file).includes(sessionId)) throw new Error('原生文件名与session身份不一致');
+  if (store === 'codex') {
+    const located = codexSession(sessionId);
+    if (!located.file || !samePath(located.file, file)) throw new Error(located.gap || 'Codex索引已指向其它历史页，当前分页原件未完整覆盖');
+    if (header?.parent_thread_id || header?.thread_source === 'subagent' || header?.source?.subagent) throw new Error('子代理原件不能冒充根用户原请求或授权');
+    if (header?.history_base || rows.some(row => row.type === 'history_base')) throw new Error('Codex history_base前段未可靠覆盖；仅可执行局部能力，不签完整请求通过');
+  }
+  const messages = [];
+  const tools = [];
+  const pending = new Map();
+  let turn;
+  let seq = 0;
+  for (const row of rows) {
+    seq += 1;
+    if ((row.sessionId || row.session_id) && (row.sessionId ?? row.session_id) !== sessionId) throw new Error('原件混入其它 session');
+    const payload = row.payload ?? row.data ?? row;
+    if (row.type === 'turn_context') turn = payload.turn_id;
+    const message = ['user', 'assistant'].includes(row.type) ? row.message : row.type === 'response_item' && payload.type === 'message' ? payload : undefined;
+    const role = row.isCompactSummary ? 'summary' : row.isMeta ? undefined : message?.role ?? (['user', 'assistant'].includes(row.type) ? row.type : undefined);
+    const at = row.timestamp ?? row.created_at ?? payload.timestamp;
+    const id = row.uuid ?? row.id ?? payload.id ?? (role === 'user' ? turn : undefined) ?? `line:${seq}`;
+    if (role === 'user' || role === 'assistant' || role === 'summary') {
+      const parts = message?.content ?? payload.content ?? payload.message;
+      const content = text(Array.isArray(parts) ? parts.filter(item => ['text', 'input_text', 'output_text'].includes(item.type)) : parts);
+      const injected = store === 'codex' && role === 'user' && /^(?:# AGENTS\.md instructions(?: for(?:\s|$)|\r?\n|$)|<environment_context>)/.test(content.trim());
+      if (content && !injected) messages.push({ id, role, text: content, at, line: seq, prompt_id: row.promptId });
+      for (const item of Array.isArray(message?.content) ? message.content : []) {
+        if (item.type === 'tool_use') pending.set(item.id, { name: item.name, input: item.input, line: seq, at });
+        if (item.type === 'tool_result' && pending.has(item.tool_use_id)) {
+          tools.push({ ...pending.get(item.tool_use_id), output: typeof row.toolUseResult?.stdout === 'string' ? row.toolUseResult.stdout : text(item.content), error: item.is_error === true, read: fullRead(row), resultLine: seq }); pending.delete(item.tool_use_id);
+        }
+      }
+    }
+    if (row.type === 'response_item' && ['function_call', 'custom_tool_call'].includes(payload.type)) {
+      let input = payload.arguments ?? payload.input;
+      try { input = JSON.parse(input); } catch { /* Native custom calls contain source text. */ }
+      pending.set(payload.call_id, { name: payload.name, input, line: seq, at });
+    }
+    if (row.type === 'response_item' && ['function_call_output', 'custom_tool_call_output'].includes(payload.type) && pending.has(payload.call_id)) {
+      tools.push({ ...pending.get(payload.call_id), output: plainToolOutput(text(payload.output)), error: resultFailed(payload), resultLine: seq }); pending.delete(payload.call_id);
+    }
+  }
+  // Claude tool-result envelopes carry role=user but grant no new user instruction.
+  const users = messages.filter(message => message.role === 'user');
+  let request = selected ? users.find(message => message.id === selected || message.prompt_id === selected) : users.at(-1);
+  if (!selected && request) {
+    const boundary = [...messages].reverse().find(message => message.role === 'assistant' && message.line > request.line
+      && /继续原任务|本请求.{0,12}续作/.test(message.text) && !/新独立请求/.test(message.text));
+    const originals = boundary ? users.filter(message => message.line < request.line && boundary.text.includes(message.id)) : [];
+    if (originals.length === 1) request = originals[0];
+  }
+  if (!request) throw new Error('找不到定位的真实 user 消息');
+  return { file: fs.realpathSync(file), sessionId, cwd: fs.realpathSync(cwd), request, messages, tools };
+}
+
+function userControl(message) {
+  const value = unquote(message).replace(/“[^”]*”|「[^」]*」|"[^"]*"|(?<!\w)'[^']*'(?!\w)/g, '');
+  // Discussion, quoted phrases and negated opt-outs do not grant an exemption.
+  const discussing = clause => /(?:讨论|举例|如果|假如|是否|能否|什么叫|不要说|不代表|不能|并非|不是|不要不走|别不走|不要不用|不要(?:按|使用|采用)|不(?:按|使用|采用))/.test(clause);
+  const clauses = value.split(/[，,；;。\n]/).filter(clause => !discussing(clause));
+  const revoke = clauses.some(clause => /(?:恢复|重新|继续)(?:使用|走)\s*Maison(?:流程)?(?:\s|$)|恢复\s*Maison(?:流程)?(?:\s|$)|(?:恢复|重新|继续)(?:使用|走)?\s*框架流程(?:\s|$)|撤销\s*(?:本请求|本会话)?\s*(?:Maison)?豁免(?:\s|$)/i.test(clause));
+  const exempt = !revoke && clauses.some(clause => /(?:不走|不用|跳过|绕过)\s*Maison|(?:do not|don't) use Maison/i.test(clause));
+  const fixed = clauses.map(clause => /(?:按|使用|采用|指定(?:为)?)\s*(特别简单|小型|中型|复杂)(?:(?:流程|档|来做|执行|处理)|\s*$)/.exec(clause)?.[1]).filter(Boolean).at(-1);
+  const excluded = clauses.flatMap(clause => [...clause.matchAll(/(?:不跑|跳过|不要运行|仅不执行)\s*(review|UT|单测|测试|真机|编译|架构检查)(?=\s*$|验证|检查)/gi)]).map(match => ({ review: 'review', ut: 'ut', 单测: 'ut', 测试: 'testing', 真机: 'testing', 编译: 'compile', 架构检查: 'architecture' })[match[1].toLowerCase()] ?? match[1]);
+  const included = clauses.flatMap(clause => [...clause.trim().matchAll(/^(?:(?:本请求|本轮|本次|这次)\s*)?(?:(?:现在|请)\s*){0,2}(?:(?:恢复|重新)\s*(?:(?:运行|执行|跑)\s*)?|(?:运行|执行|跑)\s*)(review|UT|单测|测试|真机|编译|架构检查)(?:测试|验证|检查)?\s*$/gi)]).map(match => ({ review: 'review', ut: 'ut', 单测: 'ut', 测试: 'testing', 真机: 'testing', 编译: 'compile', 架构检查: 'architecture' })[match[1].toLowerCase()] ?? match[1]);
+  return { exempt, session: exempt && /(?:本|整个|这次)会话|(?:this|whole) session/i.test(value), revoke, fixed, excluded, included };
+}
+
+function toolInput(tool) {
+  return typeof tool.input === 'string' ? tool.input : typeof tool.input?.cmd === 'string' ? tool.input.cmd : typeof tool.input?.command === 'string' ? tool.input.command : JSON.stringify(tool.input ?? {});
+}
+function editedPaths(tools) {
+  const files = new Set();
+  for (const tool of tools.filter(isEditingTool)) {
+    const input = tool.input ?? {};
+    if (/^(?:Write|Edit|MultiEdit|NotebookEdit|Delete)$/i.test(tool.name)) {
+      const file = input.file_path ?? input.path ?? input.target_file ?? input.notebook_path;
+      if (typeof file === 'string') files.add(file);
+    }
+    for (const match of patchText(tool).matchAll(/^\*\*\* (?:Add|Update|Delete) File: (.+)$/gm)) files.add(match[1].trim());
+  }
+  return [...files];
+}
+
+function frontDoorLoaded(session, projectRoot, frameworkRoot) {
+  const entry = path.join(frameworkRoot, 'docs/operations/project-entry.md');
+  const after = [...session.messages].reverse().find(message => message.role === 'summary');
+  const retained = after && /(?:project-entry\.md|统一前门).{0,80}(?:已(?:读|加载)|loaded|read)|(?:已(?:读|加载)|loaded|read).{0,80}project-entry\.md/i.test(after.text);
+  return Boolean(retained || session.tools.some(tool => {
+    if (after && tool.line < after.line) return false;
+    const input = toolInput(tool).replace(/\\\\/g, '/').replace(/\\/g, '/');
+    if (!toolSucceeded(tool) || !/(?:Read|read_file|exec|shell|command|functions)/i.test(tool.name) || !input.includes('project-entry.md') || !tool.output.trim()) return false;
+    return input.includes(entry.replace(/\\/g, '/')) || input.includes('framework/docs/operations/project-entry.md') || (samePath(projectRoot, frameworkRoot) && input.includes('docs/operations/project-entry.md'));
+  }));
+}
+
+function productTarget(projectRoot, frameworkRoot, filePath, roots = [], explicit = false) {
+  const abs = path.resolve(projectRoot, filePath);
+  const rel = path.relative(projectRoot, abs).replace(/\\/g, '/');
+  const framework = path.relative(projectRoot, frameworkRoot).replace(/\\/g, '/');
+  let config = {};
+  try { config = JSON.parse(fs.readFileSync(path.join(projectRoot, 'framework.config.json'), 'utf8')); } catch { /* Missing config gives a weaker path domain. */ }
+  const featureRoot = config.paths?.features_dir ?? 'doc/features';
+  if (rel.startsWith('../') || path.isAbsolute(rel) || rel === framework || rel.startsWith(framework + '/')
+    || rel === featureRoot || rel.startsWith(featureRoot + '/') || /^(?:\.git|\.cursor|\.codex|\.claude|\.cac|\.opencode)\//.test(rel)) return false;
+  if (/^(?:doc\/reports|doc\/runs)\//.test(rel)) return false;
+  if (explicit) return true;
+  const configured = (config.architecture?.outer_layers ?? []).map(layer => layer.id);
+  return [...configured, ...roots].some(root => rel === root || rel.startsWith(root.replace(/\/$/, '') + '/'))
+    || /(?:^|\/)(?:src|res|resources|assets)\//.test(rel)
+    || /(?:^|\/)(?:package|oh-package|module|build-profile|app)\.json5?$/.test(rel);
+}
+
+module.exports = { samePath, currentNativeSession, nativeStore, toolSucceeded, isEditingTool, readNativeSession, userControl, editedPaths, frontDoorLoaded, toolInput, unquote, productTarget };

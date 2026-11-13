@@ -16,6 +16,7 @@ import { resolveCapabilityResolutionEntryInput } from '../../scripts/utils/capab
 import { validateChangeUnitFeatureProjection } from '../../scripts/utils/change-unit-feature-projection';
 import { loadCanonicalChangeUnit, asChangeUnitArtifact, createChangeUnitRef, deriveChangeUnitFeatureId } from '../../scripts/utils/change-unit-path';
 import { acceptChangeUnitCandidates } from '../../scripts/utils/change-unit-provider-boundary';
+import { observeChangeUnitCompletion } from '../../scripts/utils/change-unit-completion';
 import { evaluateAcceptanceFlowStructure } from '../../scripts/utils/p0-semantic-gates';
 import { sha256Bytes } from '../../scripts/utils/component-blueprint-path';
 import type { CheckContext, AcceptanceSpec } from '../../scripts/utils/types';
@@ -258,17 +259,30 @@ const cases: Array<{ name: string; run(f: Fixture): void }> = [
     assert.throws(() => materializeBlueprintSkillInputs(f.root, f.feature, frameworkRoot), /use-cases.yaml.*冲突/);
     assert(fs.readFileSync(featureFilePath(f.root, f.feature, 'use-cases.yaml')).equals(before));
   } },
-  { name: 'design handoff is read-only and CU mappings belong to plan rather than blueprint projections', run(f) {
+  { name: 'B design handoff admits readable design but another CU mapping cannot satisfy its required plan or completion', run(f) {
     const bp = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
     const nodes = bp.design_views.flatMap((v: any) => [...(v.nodes ?? []), ...(v.runtime_data_flows ?? [])]);
     for (const node of nodes.filter((n: any) => n.contracts)) node.contracts.change_unit = { change_unit_ref: { change_unit_id: 'retired-other-unit' } };
     fs.writeFileSync(f.blueprintFile, YAML.stringify(bp)); f.bind();
     const readiness = deriveDesignPreparationReadiness(f.root, 'ledger-app-blueprint');
-    assert(readiness.ready, JSON.stringify(readiness.perUnit));
+    assert(readiness.ready && readiness.perUnit.every(unit => unit.verdict === 'constructable'), JSON.stringify(readiness.perUnit));
+    assert.equal(readiness.entersConstruction, false);
+    assert.equal(readiness.nextEntry, 'change-unit-progression');
     for (const name of ['acceptance.yaml', 'contracts.yaml', 'use-cases.yaml']) assert(!resolveFeatureArtifact(f.root, f.feature, name).exists);
     const c = deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, 'contracts');
     assert.equal(c.state, 'resolved', c.detail); assert.equal((c.value as any).change_unit, undefined);
     assert(c.artifacts?.['use-cases@1']);
+    const construction = validateChangeUnitFeatureProjection(f.root, f.feature, c.value as any,
+      c.artifacts?.['acceptance@1'] as AcceptanceSpec, true, 'plan');
+    assert(construction.issues.some(issue => issue.id === 'change_unit_contracts_sidecar_missing'), JSON.stringify(construction));
+    const { scope } = prepareFeatureScopeCandidate({ projectRoot: f.root, frameworkRoot, feature: f.feature, completionTarget: 'feature',
+      requestedResults: ['deliver approved ledger'], requestedPhases: ['coding'], requirement: 'deliver approved ledger design' });
+    assert(scope.phase_chain.includes('plan'), JSON.stringify(scope));
+    assert(scope.obligations.some(obligation => obligation.owner_phase === 'plan' && obligation.applicability === 'required' && !obligation.satisfied_by?.length));
+    assert(!scope.reused_phases.some(reused => ['plan', 'coding'].includes(reused.phase)));
+    assert(!scope.phase_chain.includes('coding') || scope.phase_chain.indexOf('plan') < scope.phase_chain.indexOf('coding'));
+    const cu = asChangeUnitArtifact(loadCanonicalChangeUnit(f.root, 'ledger-app-blueprint', 'ledger-refresh').changeUnit);
+    assert.equal(observeChangeUnitCompletion(f.root, cu).state, 'ABSENT');
   } },
   { name: 'plan requires projected use-cases before a physical file exists and UT reads the stage file', run(f) {
     const bp = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));

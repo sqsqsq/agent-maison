@@ -195,6 +195,7 @@ export function preflightValidateHooksConfigTargets(
         const upsert = computeHooksConfigUpsert(
           fs.existsSync(tgAbs) ? fs.readFileSync(tgAbs, 'utf-8') : null,
           fs.readFileSync(tplAbs, 'utf-8'),
+          projectRoot,
         );
         if (upsert.status === 'invalid_json' || upsert.status === 'invalid_schema') {
           seenTargets.add(targetRel);
@@ -254,6 +255,7 @@ function assertStructuredUpsertTargetsMergeable(
     const upsert = computeHooksConfigUpsert(
       fs.existsSync(tgAbs) ? fs.readFileSync(tgAbs, 'utf-8') : null,
       fs.readFileSync(tplAbs, 'utf-8'),
+      ctx.projectRoot,
     );
     if (upsert.status === 'invalid_json' || upsert.status === 'invalid_schema') {
       blocked.push({ targetRel: normalizeTargetRel(f.targetRel), effect: 'blocked' });
@@ -320,6 +322,7 @@ function syncTemplateTarget(
     const upsert = computeHooksConfigUpsert(
       fs.existsSync(tgAbs) ? fs.readFileSync(tgAbs, 'utf-8') : null,
       tplBuf.toString('utf-8'),
+      ctx.projectRoot,
     );
     if (upsert.status === 'invalid_json' || upsert.status === 'invalid_schema') {
       return { targetRel: norm, effect: 'blocked' };

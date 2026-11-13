@@ -33,6 +33,103 @@ const DESIRED = JSON.stringify({
 
 const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
   {
+    name: 'Codex repository relocation updates the one owned script and preserves similar or composite host commands',
+    run: () => {
+      const template = fs.readFileSync(frameworkAbs(LAYOUT, 'agents/codex/templates/hooks.json'), 'utf8');
+      const rootA = 'D:/work/repoA', rootB = 'E:/clone/repoB';
+      const scriptA = `${rootA}/framework/agents/codex/hooks/guard-framework-write.mjs`;
+      const scriptB = `${rootB}/framework/agents/codex/hooks/guard-framework-write.mjs`;
+      const commandA = `node "${scriptA}"`, commandB = `node "${scriptB}"`;
+      const original = JSON.parse(computeHooksConfigUpsert(null, template, rootA).nextText!);
+      const handler = original.hooks.PreToolUse[0].hooks[0];
+      handler.team_handler = 'keep'; handler.async = true; handler.timeout = 99;
+      const hostHandlers = [
+        { type: 'mcp_tool', server: 'team', tool: 'audit' },
+        ...[
+          `node "${scriptA}.backup"`,
+          `node "${rootA}/other-framework/agents/codex/hooks/guard-framework-write.mjs"`,
+          `node "${rootA}/framework/agents/cursor/hooks/guard-framework-write.mjs"`,
+          `node "${rootA}/framework/agents/codex/hooks/another.mjs"`,
+          `node tools/framework/agents/codex/hooks/guard-framework-write.mjs`,
+          `${commandA} && node team-hook.mjs`, `${commandA} --team-option`, `echo ${commandA}`,
+        ].map(command => ({ type: 'command', command, team_field: 'unchanged' })),
+      ];
+      const oldGroup = { ...original.hooks.PreToolUse[0], matcher: 'old-team-matcher', team_group: 'keep', hooks: [handler, ...hostHandlers] };
+      original.hooks.PreToolUse = [oldGroup];
+      original.team_meta = { keep: true };
+      original.hooks.Stop = [{ hooks: [{ type: 'command', command: 'node team-stop.mjs' }] }];
+      const updated = computeHooksConfigUpsert(JSON.stringify(original), template, rootB);
+      assert(updated.status === 'updated', updated.status);
+      const next = JSON.parse(updated.nextText!), groups = next.hooks.PreToolUse;
+      const owned = groups.flatMap((group: any) => group.hooks).filter((item: any) => item.command === commandA || item.command === commandB);
+      assert(owned.length === 1 && owned[0].command === commandB, 'A→B retained a stale owned handler: ' + JSON.stringify(owned));
+      assert(owned[0].commandWindows === commandB && owned[0].async === false && owned[0].timeout === 10 && owned[0].team_handler === 'keep', 'relocation lost managed updates or unrelated owned fields');
+      assert(groups.length === 2 && JSON.stringify(groups[0]) === JSON.stringify({ ...oldGroup, hooks: hostHandlers }), 'host handler/group fields or matcher changed');
+      assert(groups[1].team_group === 'keep' && groups[1].matcher === 'Edit|Write', 'owned group lost metadata or current matcher');
+      assert(JSON.stringify(next.team_meta) === JSON.stringify(original.team_meta) && JSON.stringify(next.hooks.Stop) === JSON.stringify(original.hooks.Stop), 'unrelated document fields changed');
+      assert(computeHooksConfigUpsert(updated.nextText!, template, rootB).status === 'unchanged', 'relocated upsert is not idempotent');
+      for (const removed of [computeHooksConfigRemoval(updated.nextText!, [commandA]), computeHooksConfigRemoval(updated.nextText!, [], [scriptA])]) {
+        assert(removed.status === 'removed', removed.status);
+        const doc = JSON.parse(removed.nextText!);
+        assert(doc.hooks.PreToolUse.length === 1 && JSON.stringify(doc.hooks.PreToolUse[0]) === JSON.stringify({ ...oldGroup, hooks: hostHandlers }), 'removal used another ownership rule or deleted a host command');
+        assert(JSON.stringify(doc.hooks.Stop) === JSON.stringify(original.hooks.Stop), 'removal changed another event');
+      }
+      assert(computeHooksConfigRemoval(updated.nextText!, ['node unrelated.mjs']).status === 'unchanged', 'another cleanup scope claimed the Codex guard');
+    },
+  },
+  {
+    name: 'Codex nested hooks preserve host groups and fields through real adapter sync, idempotence and removal',
+    run: () => {
+      const template = fs.readFileSync(frameworkAbs(LAYOUT, 'agents/codex/templates/hooks.json'), 'utf8');
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-upsert-'));
+      const desired = JSON.parse(computeHooksConfigUpsert(null, template, root).nextText!), group = desired.hooks.PreToolUse[0], command = group.hooks[0].command;
+      const host = { description: 'team description', team_meta: { keep: true }, hooks: {
+        PreToolUse: [{ matcher: 'old-matcher', team_group: 'keep', hooks: [
+          { type: 'command', command, commandWindows: 'node stale-owned.js', async: true, timeout: 99, team_handler: 'keep' },
+          { type: 'mcp_tool', server: 'team', tool: 'audit', input: { keep: true } },
+        ] }, { matcher: 'duplicate', hooks: [{ type: 'command', command }] }],
+        Stop: [{ hooks: [{ type: 'command', command: 'node team-stop.js' }] }],
+      } };
+      try {
+        const target = path.join(root, '.codex/hooks.json'); fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, JSON.stringify(host));
+        const { __testing } = require('../../scripts/check-init') as typeof import('../../scripts/check-init');
+        const adapter = __testing.loadAdapter('codex'); assert(adapter !== null, 'codex descriptor missing');
+        assert(adapter.templateFiles.some(file => file.targetRel === '.codex/hooks.json' && file.kind === 'structured_upsert'), 'adapter bypassed existing upsert materialization');
+        __testing.applyInitMechanismSync(root, adapter, { includeTargets: new Set(['.codex/hooks.json']) });
+        const bytes = fs.readFileSync(target, 'utf8'), result = JSON.parse(bytes);
+        const inspections = __testing.inspect03({ projectRoot: root, adapter: { ...adapter, templateFiles: adapter.templateFiles.filter(file => file.targetRel === '.codex/hooks.json') }, cfg: __testing.loadRawFrameworkConfig(root), renderEnv: null });
+        assert(inspections.length === 1 && inspections[0].status === 'EMPTY', 'read-only inspector did not consume the same project-root rendering: ' + JSON.stringify(inspections));
+        assert(result.description === host.description && JSON.stringify(result.team_meta) === JSON.stringify(host.team_meta), 'host top-level fields changed');
+        assert(JSON.stringify(result.hooks.Stop) === JSON.stringify(host.hooks.Stop), 'host other event changed');
+        const groups = result.hooks.PreToolUse;
+        assert(groups.length === 2 && groups[0].matcher === 'old-matcher', 'host matcher changed or owned duplicates remain');
+        assert(JSON.stringify(groups[0].hooks) === JSON.stringify([host.hooks.PreToolUse[0].hooks[1]]), 'host nested handler changed');
+        assert(groups[1].matcher === group.matcher && groups[1].team_group === 'keep' && groups[1].hooks[0].team_handler === 'keep', 'owned update discarded unrelated fields');
+        assert(groups[1].hooks[0].timeout === 10 && groups[1].hooks[0].command === command, 'owned fields not reconciled');
+        assert(groups[1].hooks[0].commandWindows === command && groups[1].hooks[0].async === false, 'owned Windows command or background flag bypassed the current synchronous guard');
+        assert(computeHooksConfigUpsert(bytes, template, root).status === 'unchanged', 'Codex upsert is not idempotent');
+        const removed = JSON.parse(computeHooksConfigRemoval(bytes, [command]).nextText!);
+        assert(removed.hooks.PreToolUse.length === 1 && JSON.stringify(removed.hooks.PreToolUse[0]) === JSON.stringify(groups[0]), 'removal changed host group');
+        assert(!('version' in JSON.parse(computeHooksConfigUpsert(null, template, root).nextText!)), 'Codex format gained Cursor version field');
+        const doc = YAML.parse(fs.readFileSync(frameworkAbs(LAYOUT, 'agents/codex/adapter.yaml'), 'utf8'));
+        assert(resolveEnforcementTier({ settings_file: doc.settings_file, hooks: doc.hooks }, { mode: 'interactive' }) === 'soft_rule_only', 'write-only guard cannot advertise Stop/closure capability');
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    },
+  },
+  {
+    name: 'Codex nested hook schema errors preserve the complete host document',
+    run: () => {
+      const desired = fs.readFileSync(frameworkAbs(LAYOUT, 'agents/codex/templates/hooks.json'), 'utf8');
+      for (const existing of ['{bad', JSON.stringify({ hooks: { PreToolUse: [{ matcher: 'team', hooks: 'not-an-array' }] } })]) {
+        const result = computeHooksConfigUpsert(existing, desired, os.tmpdir());
+        assert(['invalid_json', 'invalid_schema'].includes(result.status) && result.nextText === undefined, 'malformed host config was overwritten');
+      }
+      assert(computeHooksConfigUpsert(null, JSON.stringify({ hooks: { PreToolUse: [{ hooks: [] }] } })).status === 'invalid_json', 'empty owned group silently accepted');
+      assert(computeHooksConfigUpsert(null, desired).status === 'invalid_json', 'unexpanded project-root command was materialized');
+    },
+  },
+  {
     name: '真实 Claude/CA 模板变量、无花括号变量与 Windows 绝对路径识别',
     run: () => {
       for (const adapter of ['claude', 'codeagent']) {
@@ -275,6 +372,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         fs.writeFileSync(path.join(fw, 'RELEASE-MANIFEST.json'), JSON.stringify({ schema_version: '1.0', files: [] }), 'utf-8');
         fs.copyFileSync(frameworkAbs(LAYOUT, 'specs/runtime-artifact-policy.json'), path.join(fw, 'specs', 'runtime-artifact-policy.json'));
         fs.copyFileSync(frameworkAbs(LAYOUT, 'agents/shared/guard-framework-write-core.mjs'), path.join(fw, 'agents', 'shared', 'guard-framework-write-core.mjs'));
+        for (const name of ['native-request.cjs', 'goal-execution-signal.cjs']) fs.copyFileSync(frameworkAbs(LAYOUT, `agents/shared/${name}`), path.join(fw, 'agents/shared', name));
         fs.copyFileSync(CURSOR_SHELL_ABS, path.join(fw, 'agents', 'cursor', 'hooks', 'guard-framework-write.mjs'));
 
         const run = (toolInput: Record<string, unknown>) =>

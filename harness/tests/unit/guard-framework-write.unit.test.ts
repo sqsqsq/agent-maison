@@ -31,8 +31,8 @@ function assert(cond: boolean, msg: string): void {
 // consumer fixture：<tmp>/framework/{RELEASE-MANIFEST.json, agents/shared/core, specs/policy}
 // --------------------------------------------------------------------------
 
-function mkConsumerProject(): string {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'guard-fw-'));
+function mkConsumerProject(prefix = 'guard-fw-'): string {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   const fw = path.join(root, 'framework');
   fs.mkdirSync(path.join(fw, 'agents', 'shared'), { recursive: true });
   fs.mkdirSync(path.join(fw, 'specs'), { recursive: true });
@@ -48,6 +48,7 @@ function mkConsumerProject(): string {
     path.join(fw, 'specs', 'runtime-artifact-policy.json'),
   );
   fs.copyFileSync(CORE_ABS, path.join(fw, 'agents', 'shared', 'guard-framework-write-core.mjs'));
+  for (const name of ['native-request.cjs', 'goal-execution-signal.cjs']) fs.copyFileSync(frameworkAbs(LAYOUT, `agents/shared/${name}`), path.join(fw, 'agents/shared', name));
   return root;
 }
 
@@ -97,6 +98,89 @@ async function loadCore(): Promise<CoreModule> {
 }
 
 const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
+  {
+    name: 'Codex materialized command launches from a source subdirectory in a non-Git consumer',
+    run: () => {
+      const root = mkConsumerProject('guard codex launch ');
+      try {
+        const script = path.join(root, 'framework/agents/codex/hooks/guard-framework-write.mjs');
+        fs.mkdirSync(path.dirname(script), { recursive: true });
+        fs.copyFileSync(frameworkAbs(LAYOUT, 'agents/codex/hooks/guard-framework-write.mjs'), script);
+        const { __testing } = require('../../scripts/check-init') as typeof import('../../scripts/check-init');
+        __testing.applyInitMechanismSync(root, __testing.loadAdapter('codex'), { includeTargets: new Set(['.codex/hooks.json']) });
+        const config = JSON.parse(fs.readFileSync(path.join(root, '.codex/hooks.json'), 'utf8'));
+        const handler = config.hooks.PreToolUse[0].hooks[0];
+        const command = process.platform === 'win32' ? handler.commandWindows ?? handler.command : handler.command;
+        const sub = path.join(root, 'src', 'sub directory'); fs.mkdirSync(sub, { recursive: true });
+        assert(!fs.existsSync(path.join(root, '.git')), 'launch must not depend on a Git repository');
+        for (const sessionCwd of [root, sub]) {
+          const result = spawnSync(command, { cwd: sessionCwd, shell: true, encoding: 'utf8', input: JSON.stringify({
+            hook_event_name: 'PreToolUse', tool_name: 'apply_patch', cwd: sessionCwd,
+            tool_input: { command: `*** Begin Patch\n*** Delete File: ${path.join(root, 'framework/protected.js')}\n*** End Patch` },
+          }) });
+          assert(result.status === 0 && JSON.parse(result.stdout || '{}').hookSpecificOutput?.permissionDecision === 'deny',
+            `materialized command failed from ${sessionCwd}: exit=${result.status}; ${result.stderr}; ${result.stdout}`);
+        }
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    },
+  },
+  {
+    name: 'Codex production shell adapts all patch targets and preserves shared entry, author and framework rules',
+    run: () => {
+      // Synthetic protocol fixture, not a Desktop execution. The real shared reader uses this exact isolated index.
+      const root = mkConsumerProject();
+      try {
+        const hooksDir = path.join(root, 'framework/agents/codex/hooks'); fs.mkdirSync(hooksDir, { recursive: true });
+        const hook = path.join(hooksDir, 'guard-framework-write.mjs');
+        fs.copyFileSync(frameworkAbs(LAYOUT, 'agents/codex/hooks/guard-framework-write.mjs'), hook);
+        fs.mkdirSync(path.join(root, 'src'), { recursive: true }); fs.writeFileSync(path.join(root, 'src/probe.js'), 'before\n');
+        const home = path.join(root, '.native-codex-fixture'); fs.mkdirSync(path.join(home, 'sessions'), { recursive: true });
+        const file = path.join(home, 'sessions/rollout-codex-hook-test.jsonl');
+        const rows: unknown[] = [
+          { type: 'session_meta', payload: { id: 'codex-hook-test', cwd: root, originator: 'Codex Desktop' } },
+          { type: 'response_item', payload: { type: 'message', id: 'real-user-fixture', role: 'user', content: [{ type: 'input_text', text: '将 src/probe.js 的 before 改为 after。' }] } },
+        ];
+        const flush = () => fs.writeFileSync(file, rows.map(row => JSON.stringify(row)).join('\n') + '\n'); flush();
+        const { DatabaseSync } = require('node:sqlite') as any;
+        const db = new DatabaseSync(path.join(home, 'state_5.sqlite'));
+        db.exec('CREATE TABLE threads(id TEXT PRIMARY KEY, rollout_path TEXT, cwd TEXT)');
+        db.prepare('INSERT INTO threads VALUES(?,?,?)').run('codex-hook-test', file, root); db.close();
+        const env: NodeJS.ProcessEnv = { ...process.env, CODEX_HOME: home };
+        const signals = ['MAISON_GOAL_RUN_ID', 'MAISON_GOAL_ATTEMPT', 'MAISON_GOAL_ATTEMPT_PHASE', 'MAISON_GOAL_RUNNER', 'MAISON_GOAL_HEADLESS'];
+        for (const key of signals) delete env[key];
+        const run = (command: string, extra: NodeJS.ProcessEnv = {}, payloadCwd = root, transcript: string | undefined = file) => {
+          const result = spawnSync(process.execPath, [hook], { cwd: root, env: { ...env, ...extra }, encoding: 'utf8',
+            input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'apply_patch', tool_input: { command }, cwd: payloadCwd, session_id: 'codex-hook-test', transcript_path: transcript }) });
+          assert(result.status === 0, `Codex shell failed: ${result.stderr}`);
+          return result.stdout.trim() ? JSON.parse(result.stdout) : {};
+        };
+        const patch = '*** Begin Patch\n*** Update File: src/probe.js\n@@\n-before\n+after\n*** End Patch';
+        const denied = run(patch); assert(denied.hookSpecificOutput?.permissionDecision === 'deny' && denied.hookSpecificOutput.permissionDecisionReason.includes('统一前门'), JSON.stringify(denied));
+        for (const signal of signals) assert(!run(patch, { [signal]: '1' }).hookSpecificOutput?.permissionDecision, `${signal} did not reuse the shared author predicate`);
+        const protectedPatches = [
+          '*** Delete File: framework/skills/protected.md',
+          '*** Update File: src/probe.js\n*** Move to: framework/protected.js',
+          '*** Update File: framework/protected.js\n*** Move to: src/moved.js',
+          '*** Add File: src/new.js\n+new\n*** Delete File: framework/protected.js',
+          `*** Update File: ${path.join(root, 'framework/protected space.js')}`,
+        ];
+        for (const command of protectedPatches) {
+          const actual = run(command, { MAISON_GOAL_RUN_ID: 'fixture' });
+          assert(actual.hookSpecificOutput?.permissionDecision === 'deny' && actual.hookSpecificOutput.permissionDecisionReason.includes('framework 写保护'), JSON.stringify(actual));
+        }
+        const sub = path.join(root, 'sub'); fs.mkdirSync(sub);
+        assert(run('*** Delete File: ../framework/protected.js', {}, sub).hookSpecificOutput?.permissionDecision === 'deny', 'relative patch target ignored payload cwd or physical root');
+        assert(!run('*** Add File: framework/harness/reports/run.json').hookSpecificOutput?.permissionDecision, 'shared runtime policy was replaced');
+        rows.push({ type: 'response_item', payload: { type: 'function_call', name: 'exec_command', call_id: 'entry-read', arguments: JSON.stringify({ cmd: 'Get-Content -Raw framework/docs/operations/project-entry.md', workdir: root }) } },
+          { type: 'response_item', payload: { type: 'function_call_output', call_id: 'entry-read', output: JSON.stringify({ exit_code: 0, chunk_id: 'entry', output: 'Fixture current entry read through the native tool result.' }) } }); flush();
+        const allowed = run(patch); assert(!allowed.hookSpecificOutput?.permissionDecision && allowed.hookSpecificOutput?.additionalContext.includes('real-user-fixture'), JSON.stringify(allowed));
+        assert(!run('*** Update File: src/probe.js\n*** Move to: src/renamed.js\n*** Add File: src/new.js').hookSpecificOutput?.permissionDecision, 'ordinary multi-target move did not recover after read');
+        const gap = run(patch, {}, root, 'missing-transcript');
+        assert(!gap.hookSpecificOutput?.permissionDecision && gap.hookSpecificOutput?.additionalContext.includes('降级'), 'unreadable native source was falsely signed or blocked');
+        assert(!run('unrecognized input').hookSpecificOutput?.permissionDecision, 'unsupported patch invented enforcement');
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    },
+  },
   {
     name: 'A1 claude 壳：写 framework/harness/scripts/tmp.js → exit 2 + 教育文案（本事故第一条腿）',
     run: () => {

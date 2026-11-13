@@ -5,7 +5,7 @@
 ## Requirements
 ### Requirement: P1 exposes conventions through the existing provider and provenance protocol
 
-Every P1 blueprint MUST contain exactly one static optional `conventions-knowledge` Seam Card in the existing `providers[]` protocol with frozen authority and source rules. If the default path is not explicitly configured and its file is absent, the card MUST state `available: false` and `missing_disposition: not_applicable`. If `paths.conventions` is explicitly configured but the file is missing or unreadable, the card MUST state `available: false` and `missing_disposition: unknown|degraded`; it MUST NOT state `not_applicable` or claim conventions were consumed. A readable file MUST be read in full, while only applicable ids are represented as existing `discovery.facts` with `provenance.source_kind: convention`, `<configured-path>#<id>` source refs and authoritative evidence strength. Nodes and decisions MUST reuse existing provenance or verification refs; no conventions-specific blueprint field is permitted.
+Every complete P1 blueprint MUST contain exactly one static optional `conventions-knowledge` Seam Card in the existing `providers[]` protocol with frozen authority and source rules. If the default path is not explicitly configured and its file is absent, the card MUST state `available: false` and `missing_disposition: not_applicable`. If `paths.conventions` is explicitly configured but the file is missing or unreadable, the card MUST state `available: false` and `missing_disposition: unknown|degraded`; it MUST NOT state `not_applicable` or claim conventions were consumed. A readable file MUST be read in full, while only applicable ids are represented as existing `discovery.facts` with `provenance.source_kind: convention`, `<configured-path>#<id>` source refs and authoritative evidence strength. Nodes and decisions MUST reuse existing provenance or verification refs; no conventions-specific blueprint field is permitted.
 
 The static Seam Card freezes `authority_rule` as `Project conventions are stable knowledge input, not current-code authority.` and `source_rule` as `Applicable facts cite the configured conventions file and exact heading id.` Its definition is applicable project conventions; consumers are the blueprint builder, App lens and independent questioning; provider is the static conventions reader; requirement is optional. Replacement preserves the existing fact/provenance protocol and stales affected P1 results; exit drops temporary reads but retains canonical provenance; conflicts retain both refs and do not override current code authority.
 
@@ -73,7 +73,7 @@ The App lens MUST read index/catalog and live candidate usage when development o
 
 ### Requirement: Static optional component-assets seam reports honest availability
 
-Every blueprint MUST have one static optional component-assets Seam Card in the existing provider rules table. Frozen authority_rule is `Source is component fact authority; curation is human selection guidance.` and source_rule is `Selection evidence cites the configured component index or catalog; component_ref identifies the asset.` Index absence MUST NOT claim available=true or emit selections. No UI dimension permits not_applicable; UI dimension requires unknown|degraded and an unknown gap with owner/needed_by/unlock_condition. Future slices may use open_decision; current-slice dependency MUST use blocker through existing admission rules. No registry or additional state is permitted.
+Every complete blueprint MUST have one static optional component-assets Seam Card in the existing provider rules table. Frozen authority_rule is `Source is component fact authority; curation is human selection guidance.` and source_rule is `Selection evidence cites the configured component index or catalog; component_ref identifies the asset.` Index absence MUST NOT claim available=true or emit selections. No UI dimension permits not_applicable; UI dimension requires unknown|degraded and an unknown gap with owner/needed_by/unlock_condition. Future slices may use open_decision; current-slice dependency MUST use blocker through existing admission rules. No registry or additional state is permitted.
 
 #### Scenario: UI asset unavailable
 - **WHEN** UI targets exist and no index is readable
@@ -136,7 +136,7 @@ App 部件发现 MUST 为每个当前态断言、设计输入、冲突和 unknow
 
 ### Requirement: Viewpoint contracts and App view instances are separate
 
-蓝图 MUST 区分可复用的 `viewpoint contract` 与某次蓝图的 `view instance`。同一蓝图内的 view id MUST 稳定使用 `logical`、`runtime`、`development`、`deployment`、`scenarios`；`logical`、`development`、`scenarios` 必需，可执行 App 的 `runtime` 必需，`deployment` MUST 按部件固有的平台、进程、独立持久化、外部边界和运行拓扑裁决，不随单次需求切换适用性。五个 view MUST 是同一蓝图的观察面，不得生成五份独立真源。
+完整设计蓝图 MUST 区分可复用的 `viewpoint contract` 与某次蓝图的 `view instance`。同一蓝图内的 view id MUST 稳定使用 `logical`、`runtime`、`development`、`deployment`、`scenarios`；`logical`、`development`、`scenarios` 必需，可执行 App 的 `runtime` 必需，`deployment` MUST 按部件固有的平台、进程、独立持久化、外部边界和运行拓扑裁决，不随单次需求切换适用性。五个 view MUST 是同一蓝图的观察面，不得生成五份独立真源。
 
 适用 deployment 时，所有 scenario（包括纯本地场景）的 `deployment_refs` MUST 指向本部件自己的实际运行节点，外部节点 MUST NOT 替代本部件落点。外部参与方节点 MUST 只记录当前事实，`current_state = target_state` 且无本次 delta；根级 contracts MUST 只登记本部件实际消费或提供的接口，由消费该契约的 CU 经 `design_refs` 认领本部件侧证据，指向外部节点的 relation 同样 MUST 由该 CU 引用。外部方自己的施工中本部件不消费的部分，阻挡当前切片时 MUST 复用 gap 与 CU blocker 表达解除条件，其余 MAY 用 `coordination/rollout` 说明，MUST NOT 建根级 contract 或让本部件 CU 虚假认领。rollout MUST NOT 自动成为 CU `requires` 或执行授权。
 
@@ -204,9 +204,9 @@ App 部件发现 MUST 为每个当前态断言、设计输入、冲突和 unknow
 
 ### Requirement: A legal blueprint and a complete design handoff are separate bars
 
-**合法 `component-blueprint@1`（P1 协议层）** MUST 只要求：闭集 `discovery.inputs.current_scope_items`（≥1 项，逐项带项目内可解析 `source_ref`、原始字节 `source_sha256`、provenance）+ 至少一个 `applicable` + `changed` 视图 + 必要的当前/目标/delta + 决策/缺口/关系/验证义务满足本 capability 其余条目。合法性 MUST NOT 包含 Change Unit 数量——P1 MUST NOT 反向依赖 P2。
+**完整形态合法 `component-blueprint@1`（P1 协议层）** MUST 只要求：闭集 `discovery.inputs.current_scope_items`（≥1 项，逐项带项目内可解析 `source_ref`、原始字节 `source_sha256`、provenance）+ 至少一个 `applicable` + `changed` 视图 + 必要的当前/目标/delta + 决策/缺口/关系/验证义务满足本 capability 其余条目。合法性 MUST NOT 包含 Change Unit 数量——P1 MUST NOT 反向依赖 P2。
 
-**完整 `/component-design` 设计交付（编排层）** MUST 同时满足：蓝图 admitted + 已分解 1..N canonical `change-unit@1` + 每个 CU 建立 `design_refs` 引用 + 后续施工 readiness。该层验收由 `/component-design` 编排入口承担，MUST NOT 被写进蓝图自身的合法性判据。
+**中型/复杂及已有 CU 的完整 `/component-design` 设计交付（编排层）** MUST 同时满足：蓝图 admitted + 已分解 1..N canonical `change-unit@1` + 每个 CU 建立 `design_refs` 引用 + 后续施工 readiness。该层验收由 `/component-design` 编排入口承担，MUST NOT 被写进蓝图自身的合法性判据。
 
 因此 `admitted blueprint + 0 CU` MUST 是一个**合法状态**（P2 设计准备子流程的合法入口），而不是蓝图校验失败。
 
@@ -217,7 +217,7 @@ App 部件发现 MUST 为每个当前态断言、设计输入、冲突和 unknow
 
 #### Scenario: A design handoff without change units is incomplete
 
-- **WHEN** `/component-design` 在蓝图 admitted 后返回，却没有任何 canonical CU 与 readiness
+- **WHEN** 中型/复杂完整 `/component-design` 在蓝图 admitted 后返回，却没有任何 canonical CU 与 readiness
 - **THEN** 编排层必须判定设计交付未完成，而不是宣称完成；该判定 MUST NOT 通过修改蓝图合法性实现
 
 > **Enforced by (P1 implementation):** `harness/scripts/utils/component-blueprint-validator.ts`, `skills/project/component-design/SKILL.md`, `skills/project/change-unit-progression/SKILL.md`
@@ -923,3 +923,22 @@ Architecture impact SHALL be recorded as the flat decision subtype `kind: archit
 
 > **Enforced by:** `harness/scripts/utils/blueprint-evolution-decisions.ts`, `harness/scripts/utils/component-closure-knowledge.ts`, `harness/schemas/app-component-blueprint.schema.json`, `harness/tests/unit/component-assets.unit.test.ts`, `harness/tests/unit/change-unit-progression.unit.test.ts`
 
+
+
+### Requirement: Compact content is conditionally validated on the same blueprint contract
+
+统一前门的真实 request intake SHALL 决定蓝图内容义务，不在蓝图新增可手填档位。小型 SHALL 沿原路径、component-blueprint@1、同一 schema/checker 保留共同身份/来源/revision，只写改动点、稳定 ID 的可检验验收、当前已知文件及必要局部选择。不涉及的视图、verified_unchanged 证明、完整组件选型、providers 卡表、独立设计质询、CU 和评审投影 SHALL NOT 为满足完整形态而补空或强制产生；已声明内容仍须真实可核，来源与 typed 验收检查不减免。完整形态的 4+1、条件义务、质询、准入及 CU 消费仍按原规则，不因 schema 接受短结构而放宽。
+
+首次授权准备 SHALL 在已有 check 调用里先消费正式原 request 与稳定来源再核蓝图，返回原 request；只读检查不改 canonical。来源/基线 unknown SHALL 只报告结构与具体未核项，SHALL NOT 签小型完整完成或完整 admitted。小型授权终点 SHALL 明确为本请求设计，renderer 可读短内容作正常摘要但 SHALL NOT 为渲染补完整章节或产独立 component-blueprint.review.md。
+
+新事实需中型/复杂且用户未固定外框时，SHALL 在同一路径/blueprint_id 扩充当前适用内容，沿原 revision/来源保留既有验收、决定、代码、基线和有效证据；完成真实独立质询与准入后才由原 consumer 接受 CU。短结构通过 SHALL NOT 直接变成 admitted；用户固定外框则只披露影响，不能暗中加重或洗掉 FAIL。
+
+#### Scenario: A compact design has only four business contents
+- **WHEN** 正式 intake 支持小型，短蓝图具备四样内容及共同身份/来源
+- **THEN** 同一 checker 可核小型设计，不要求 CU/独立设计质询/独立评审文件，完整 CU reader 仍拒绝将其当 admitted
+
+#### Scenario: A short design upgrades in place
+- **WHEN** 新依据支持中型且用户未固定小型
+- **THEN** 原文件/ID 原位修订并完成适用完整准入后接受 CU，不新建第二份蓝图或重置原请求基线
+
+> **Enforced by:** `harness/schemas/app-component-blueprint.schema.json`、同一 component-blueprint validator/path/CLI、原 blueprint/request writer 与 renderer；指引见 `docs/operations/project-entry.md`。

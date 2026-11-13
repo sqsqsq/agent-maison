@@ -43,22 +43,23 @@
 
 ## 四、工作流与 Skill 路由
 
-### 4.0 需求路由（正式性与请求终点）
+### 4.0 需求路由（统一前门与请求终点）
 
-> **两问定路由**：① 本轮要动什么（**范围**）；② 按什么标准算对（**验收语义**）。「不改实现」只回答①，不免除②。
-> **正式需求**＝有明确交付或验收责任，且拟改变**部件行为、外部契约、数据/NFR、运行语义或架构责任**的事项；不改变这些语义的**纯文档和机械维护**除外。**主 Agent 的前置责任**：把本次请求接入对应执行路径。同一交付单元的下游产出必须以**已具备的上游依据和有效范围**为输入——不得边补前置边提前施工，不得要求设计追认已写好的实现。**委派不豁免你**：子 Agent 的边界是它那个 Skill 的边界，不解除你自己的前置责任。已有有效输入与证据按规则复用，缺口交回责任方。
+所有产品修改默认先消费 [统一入口规则](framework/docs/operations/project-entry.md)，普通自然语言、维护、补测试同样适用；只有真实用户明确豁免才跳过。先答本轮**范围**与**验收语义**两问；「不改实现」只回答范围，不免除验收语义。判类前**先查已有依据**（既有 acceptance、蓝图、[{{MODULE_CATALOG_PATH}}]({{MODULE_CATALOG_PATH}})、约束知识及源码），查到即复用并写明引用；查完仍存在影响断言或交付的语义缺口时，**只就该缺口**问用户。首轮正常调研提供有来源的 Q1/Q2/Q3、独立结果依赖、跨部件、预期明确与做法唯一事实，首次产品修改前一句话解释初判；机器从事实派生外框，不能只填档位名，不新增分类命令/模型/表单/确认，不按行数或文件数分类。规则、判例、用户覆盖与 unknown 恢复只维护在统一入口。支持的编辑 hook 只证明同会话规则已加载，不保证逐请求语义；Shell/脚本/场外进程/未覆盖工具有盲区，无 hook 依指引及能力调用后验，真实能力见 [adapter 说明](framework/agents/README.md#前门规则与真实客户端证据)。用户可升/降档、限定验证；真实 user 原文及请求边界优先，assistant 转述/引用/代码块不授豁免。默认豁免限本请求与续作，新请求恢复 Maison；明确本会话豁免才扩大，撤销即恢复。无固定选择仅新依据或有据纠错能双向调整，保留代码、有效证据及真实 FAIL；未执行不作 PASS，权限/秘密/不可逆动作/硬预算沿原边界。
 
-判类前**先查已有依据**（既有 acceptance、蓝图、[{{MODULE_CATALOG_PATH}}]({{MODULE_CATALOG_PATH}})、约束知识）：查到即复用并写明引用；恢复明确既有预期的普通 bug 按维护处理（包括已完成 Feature），不新建蓝图/Feature/后继 run；只有涉及**新增或变更预期、契约或新的设计决定**才进入设计职责，再决定复用、修订还是新建蓝图——不因「不改实现」跳过②，也不因「补测试」强制新建蓝图。查完仍存在影响断言或交付的语义缺口时，**只就该缺口**问用户。正式需求进入 [component-design](framework/skills/project/component-design/SKILL.md)，沿已有需求源、蓝图与 CU 设计继续；上游明确的正式分类不得降级。非正式维护按本次范围直接完成、不创建蓝图；任何需要编译或跑测试的校验一律经框架执行器（纯编译用 `npm run compile`，测试用专项 request CLI 或正式 `harness-runner --phase`）；不裸调 hvigor，也不引导用户去运行宿主自带脚本。执行器会从 `framework.local.json` 补齐工具链环境（`DEVECO_SDK_HOME` / JBR）——裸调不会执行这段补齐逻辑。三条边界。**准备工作（读代码、看截图、查依据）可以并行**，禁的只是依赖未满足就提前施工。**局部 review / UT / testing 请求**先按终点用共享方法；只审查/解释/设计用例不要求 request、facts 或报告，实际写/跑测试或要求 checker 校验报告才走 request，不强迫建蓝图或 Feature；**无 Feature 的独立测试请求，落笔写测试之前先跑 `--prepare-request` 确认落点与载体**；**已有 Feature/CU 上下文的测试沿其有效范围和阶段入口执行**，不得把正式交付中的测试拆成独立请求。**恢复已有任务**复用既有有效范围与证据，不因本节重跑完整链。
+**按外框交付**：特别简单直接修改，无新增设计文件/CU；小型在同一路径/协议写短蓝图，只保留改动点、可检验验收、已知文件和必要局部选择，不建 CU、不派独立设计质询、不产独立评审文件。中型/复杂及已有 CU 保留完整设计/准入；已有明确映射由原 writer 复用/生成，不为转录再跑 plan。新事实可使短蓝图原位扩充完整设计，用户固定外框不自动加重；在途真实用户调整沿原 run 的范围修订核源，保留历史 CU/成果/FAIL，不拆 request 清账。各档依最终内容补接口、路由、持久化、金额/幂等及架构等适用验证；注释/排版不按路径误触发逻辑专项，编译绿不代表其它专项已跑。
+
+**主 Agent 的前置责任**：把本次请求接入对应执行路径。同一交付单元的下游产出必须以**已具备的上游依据和有效范围**为输入——不得边补前置边提前施工，不得要求设计追认已写好的实现。**委派不豁免你**：子 Agent 的边界是它那个 Skill 的边界，不解除你自己的前置责任。已有有效输入与证据按规则复用，缺口交回责任方。compile/request 用同一 `--session-ref '<绝对原生transcript路径>#<原始user消息ID>'` 核原件角色、会话与目录，自动准备同 schema request，不手写 JSON/假 Feature/内部脚本，细则见 [request CLI](framework/docs/operations/request-harness.md)。**准备工作（读代码、看截图、查依据）可以并行**，禁的只是依赖未满足就提前施工。**局部 review / UT / testing 请求**先按终点用共享方法；只审查/解释/设计用例不要求 request、facts 或报告，实际写/跑测试或要求 checker 校验报告才走 request，不强迫建蓝图或 Feature；**无 Feature 的独立测试请求，落笔写测试之前完成载体与允许写界准备；自动准备并入首次能力调用**，显式 request-file 仍可先跑 `--prepare-request`；**已有 Feature/CU 上下文的测试沿其有效范围和阶段入口执行**，不得把正式交付中的测试拆成独立请求。**恢复已有任务**复用既有有效范围与证据，不因本节重跑完整链。任何需要编译或跑测试的校验一律经框架执行器（纯编译用 `npm run compile`，测试用专项 request CLI 或正式 `harness-runner --phase`）；不裸调 hvigor，也不引导用户去运行宿主自带脚本。执行器会从 `framework.local.json` 补齐工具链环境（`DEVECO_SDK_HOME` / JBR）——裸调不会执行这段补齐逻辑，`framework/` 只读保护始终优先。
 
 | 请求终点 | 主 Agent 的职责 |
 |---|---|
-| 只编译工程 | `cd framework/harness` 后运行 `npm run compile -- --project-root <宿主根> --json`；不要求 Feature、diff 或修正登记 |
-| 显式 Skill / 局部维护 | 按请求终点使用共享方法；实际执行再用 project CLI 或 request CLI；产出请求结果后结束 |
+| 只编译工程 | `cd framework/harness` 后运行 `npm run compile -- --project-root <宿主根> --json`；不强造 Feature；特别简单需完整核请求时带原生 session-ref |
+| 特别简单 / 小型产品修改 / 显式局部能力 | 特别简单直接修改；小型先完成同协议短设计，再沿同一原 request 调用 compile/架构及适用 review/UT/testing，断言绑定当前蓝图具体验收；请求结果不冒充 CU/Component 完成 |
 | 查看 / 局部设计 / 完整设计 | 复用已有产物，按缺口继续；component-design 到本次设计终点或 CU readiness 即交还结果，不启动施工 |
-| 完整实现交付 | 主Agent最初判类并传原请求/来源/影响与可信授权；有人经prepare-run/next/report-result，无人经goal-runner --detach，共用一个完成协调器及各root/CU/request专用作者。无CU先受管设计、真实独立质询和发布，再持续全部适用CU和原部件终点。公开检查用原作者request/owner/fence，不重派同名phase作者。全部CU绿或evaluate条件绿不代签component，正式writer记录并重读校验后才消费。需求、模型/视觉钉和显式用户UTC截止按原件继承；新run无默认总轮次/阶段配额。完整交付授权后持续执行，不重复phase确认；真实范围变化、秘密、不可逆操作和用户限制仍按原授权。 |
-| 继续 | 先读取已有 active run、冻结范围和 successor/revision；恢复该运行，不重新选择流程 |
+| 完整实现交付（完整设计；中型/复杂及已有 CU） | 主Agent最初判类并传原请求/来源/影响与可信授权；有人经prepare-run/next/report-result，无人经goal-runner --detach，共用一个完成协调器及各root/CU/request专用作者。无CU先受管设计、真实独立质询和发布，再持续全部适用CU和原部件终点。公开检查用原作者request/owner/fence，不重派同名phase作者。全部CU绿或evaluate条件绿不代签component，正式writer记录并重读校验后才消费。需求、模型/视觉钉和显式用户UTC截止按原件继承；新run无默认总轮次/阶段配额。完整交付授权后持续执行，不重复phase确认；真实范围变化、秘密、不可逆操作和用户限制仍按原授权。 |
+| 继续 | 先读取已有 active run、冻结范围和 successor/revision；恢复该运行，不重新选择流程，同请求不因途中 commit/恢复重置起始基线或洗掉失败 |
 
-阶段不是固定套餐：有可复用输入不补物理文档；unknown 交既有责任方补依据；仅 review 不自动安排 UT/testing。会话按 `--next` 返回的精确命令上报：`--report-result '@<当前请求结果输入文件>' --request '<已签发请求绝对路径>'`。只写该请求指定的结果输入文件，原请求、身份与时限保持原件。正常 CU/Feature 的 `feature.yaml.execution_scope` 是出生前候选，run 的 `manifest.execution_scope` 是冻结范围权威；无 CU 的受管初始设计变体没有施工范围，不代表写产品获准。新任务按义务计算范围，旧运行恢复见 MIGRATION。
+阶段不是固定套餐：有可复用输入不补物理文档；unknown 交既有责任方补依据；仅 review 不自动安排 UT/testing。会话按 `--next` 返回的精确命令上报：`--report-result '@<当前请求结果输入文件>' --request '<已签发请求绝对路径>'`。只写该请求指定的结果输入文件，原请求、身份与时限保持原件。正常 CU/Feature 的 `feature.yaml.execution_scope` 是出生前候选，run 的 `manifest.execution_scope` 是冻结范围权威；无 CU 的受管初始设计变体没有施工范围，不代表写产品获准。新请求使用 obligation-driven，按义务计算范围，旧运行恢复见 MIGRATION。
 
 **普通请求由主 Agent 负责**：framework-init 仅用于明确安装、更新、配置或 adapter 物化意图；产物提及 framework 不构成 init 意图。init-next-steps 是可选建议，不授权 catalog、glossary、Graph 或 Feature 全链。入口与独立动作见 [项目请求入口](framework/docs/operations/project-entry.md)。
 

@@ -1,5 +1,5 @@
 import type { IdentityNeutralDigestReaders } from './identity-neutral-digest';
-import { validateExecutionScope, assertRevisionKeepsRequiredObligations, scopeProofHistory, effectiveScopeView, type ScopeDependencyContext } from './execution-scope';
+import { validateExecutionScope, readScopeRevisionUserControl, assertRevisionKeepsRequiredObligations, scopeProofHistory, effectiveScopeView, type ScopeDependencyContext, type ScopeRevisionAuthorityContext, type ExecutionScopeInput } from './execution-scope';
 import { FEATURE_PHASE_ORDER } from './phase-transition-policy';
 /**
  * Fresh goal-run birth contract.
@@ -78,7 +78,7 @@ const SCOPE_REVISION_EVENT = 'scope_revised';
  * The same before/after constraints the writer enforces are re-applied here, so an entry that is
  * merely well-formed cannot become the effective scope (review B8).
  */
-export function loadScopeRevisions(events: readonly GoalRunEvent[], birth: ExecutionScope): ScopeRevisedEvent[] {
+export function loadScopeRevisions(events: readonly GoalRunEvent[], birth: ExecutionScope, context?: ScopeRevisionAuthorityContext): ScopeRevisedEvent[] {
   const revisions = events.filter(event => event.type === SCOPE_REVISION_EVENT) as unknown as ScopeRevisedEvent[];
   if (!revisions.length) return [];
   let previousScope = birth;
@@ -93,7 +93,10 @@ export function loadScopeRevisions(events: readonly GoalRunEvent[], birth: Execu
     if (next.completion_target !== previousScope.completion_target || JSON.stringify(next.requested_results) !== JSON.stringify(previousScope.requested_results)) {
       throw new Error(`[execution-scope] 修订 #${revision.revision_index} 改写了请求边界`);
     }
-    assertRevisionKeepsRequiredObligations(previousScope, next);
+    const control = readScopeRevisionUserControl(previousScope, revision.revision_input as ExecutionScopeInput | undefined,
+      context ? { ...context, events: events.slice(0, events.indexOf(revision as unknown as GoalRunEvent)) } : undefined,
+      (revision.revision_input as ExecutionScopeInput | undefined)?.request?.user_control);
+    assertRevisionKeepsRequiredObligations(previousScope, next, control.allowedSubtractions);
     previousScope = next;
     previous = executionScopeFingerprint(next);
   });
@@ -101,8 +104,8 @@ export function loadScopeRevisions(events: readonly GoalRunEvent[], birth: Execu
 }
 
 /** Effective scope = birth scope + revisions applied in `revision_index` order. */
-export function applyScopeRevisions(birth: ExecutionScope, events: readonly GoalRunEvent[]): ExecutionScope {
-  const revisions = loadScopeRevisions(events, birth);
+export function applyScopeRevisions(birth: ExecutionScope, events: readonly GoalRunEvent[], context?: ScopeRevisionAuthorityContext): ExecutionScope {
+  const revisions = loadScopeRevisions(events, birth, context);
   return revisions.length ? revisions[revisions.length - 1].execution_scope : birth;
 }
 
@@ -114,9 +117,9 @@ export function applyScopeRevisions(birth: ExecutionScope, events: readonly Goal
  * atomic: there is no window in which the new scope is readable but the revocation is not, so an
  * interrupt between two writes cannot resurrect a pre-revision PASS (review B1/2).
  */
-export function revokedPhasesByRevision(birth: ExecutionScope, events: readonly GoalRunEvent[], dependencies: ScopeDependencyContext = {}): Map<number, string[]> {
+export function revokedPhasesByRevision(birth: ExecutionScope, events: readonly GoalRunEvent[], dependencies: ScopeDependencyContext = {}, context?: ScopeRevisionAuthorityContext): Map<number, string[]> {
   const out = new Map<number, string[]>();
-  loadScopeRevisions(events, birth);
+  loadScopeRevisions(events, birth, context);
   const order = [...new Set([...FEATURE_PHASE_ORDER, ...birth.obligations.map(o => o.owner_phase)])];
   const history = scopeProofHistory(birth, events, order, undefined, dependencies.workflow, dependencies);
   for (const [index, phases] of history.revisions) if (phases.length) out.set(Number((events[index] as unknown as ScopeRevisedEvent).revision_index), phases);
@@ -128,9 +131,9 @@ export function revokedPhasesByRevision(birth: ExecutionScope, events: readonly 
  * is followed by the per-phase invalidation it implies. Pure projection — nothing is persisted, so
  * the recovery path and the in-run path read the same truth from the same single event.
  */
-export function eventsWithScopeRevocations(birth: ExecutionScope | undefined, events: readonly GoalRunEvent[], dependencies: ScopeDependencyContext = {}): GoalRunEvent[] {
+export function eventsWithScopeRevocations(birth: ExecutionScope | undefined, events: readonly GoalRunEvent[], dependencies: ScopeDependencyContext = {}, context?: ScopeRevisionAuthorityContext): GoalRunEvent[] {
   if (!birth) return [...events];
-  const revoked = revokedPhasesByRevision(birth, events, dependencies);
+  const revoked = revokedPhasesByRevision(birth, events, dependencies, context);
   if (!revoked.size) return [...events];
   const out: GoalRunEvent[] = [];
   for (const event of events) {
@@ -182,7 +185,7 @@ export function resolveEffectiveScopeSource(
     if (transfer && transfer.scope_fingerprint !== executionScopeFingerprint(birth)) {
       throw new Error(`[execution-scope] run ${runId} 的出生范围与 feature 记录登记的转交指纹失配：run 出生=${executionScopeFingerprint(birth).slice(0, 16)} feature 登记=${transfer.scope_fingerprint.slice(0, 16)}`);
     }
-    return { scope: applyScopeRevisions(birth, loadAuthoritativeRunEvents(projectRoot, feature, runId)), source: 'run', run_id: runId };
+    return { scope: applyScopeRevisions(birth, loadAuthoritativeRunEvents(projectRoot, feature, runId), { projectRoot, feature, runId }), source: 'run', run_id: runId };
   }
   if (!record) return undefined;
   // 无 run 身份而记录声明已转交：权威在那个 run 上，这里不得返回 feature 范围。

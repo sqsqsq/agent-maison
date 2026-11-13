@@ -1,6 +1,6 @@
 # Goal 模式（同一完成协调器）
 
-正式完整交付从原始需求进入唯一 `GoalPhaseRuntime`：设计单元形成蓝图及适用 CU，各施工单元完成授权工作，必要组装和部件义务也按原请求核验。作者退出、蓝图准入、CU ready、子 run 出生或单项工具 PASS 都不是原请求完成。维护、单独设计、review/UT/testing 与纯编译保留各自终点，见 [统一入口](../../../docs/operations/project-entry.md)。
+先消费 [统一前门](../../../docs/operations/project-entry.md) 的同源事实和用户覆盖，不以“正式需求”标签强制完整外框。特别简单走直接能力；小型在同协议短蓝图完成四样业务内容后沿原 request 实现和验证，不建 CU/独立设计质询/独立评审文件，不进入要求 selected CU 的初建设计分支。中型/复杂及已有 CU 的完整交付从原始需求进入唯一 `GoalPhaseRuntime`：设计单元形成蓝图及适用 CU，各施工单元完成授权工作，必要组装和部件义务也按原请求核验。作者退出、蓝图准入、CU ready、子 run 出生或单项工具 PASS 都不是原请求完成。维护、单独设计、review/UT/testing 与纯编译保留各自终点，见 [统一入口](../../../docs/operations/project-entry.md)。
 
 本 Skill 只选择呈现与运输、转交原请求和可信授权。当前输入、全部未完项、责任、解除条件与完成/发布结论由同一个 `readCurrentDispositionInput → resolveCurrentDisposition` 链产生；`assess`、NEXT、状态和报告只是投影，不再推荐阶段作者队列。
 

@@ -166,7 +166,7 @@ Source bindings SHALL preserve frozen file existence and bytes while aligning th
 
 ### Requirement: New complete delivery has one runtime authority
 
-新完整交付 SHALL 统一在真实 run 冻结范围并由同一 GoalPhaseRuntime 完成；会话用非驻留 next/report，无人值守用 detached。旧 feature 冻结范围、修订和 completion SHALL 保留读取，未完成范围 SHALL 经既有出生/正式转交后继续，不改原件、不补历史事件、不签新的无 run completion。纯维护、编译、局部设计和单职责 request SHALL 保留原终点，不扩大为完整交付。
+需完整设计/施工的新交付（中型/复杂及已有 CU）SHALL 统一在真实 run 冻结范围并由同一 GoalPhaseRuntime 完成；会话用非驻留 next/report，无人值守用 detached。旧 feature 冻结范围、修订和 completion SHALL 保留读取，未完成范围 SHALL 经既有出生/正式转交后继续，不改原件、不补历史事件、不签新的无 run completion。纯维护、编译、局部设计和单职责 request SHALL 保留原终点，不扩大为完整交付。
 
 #### Scenario: Existing runless work continues
 - **WHEN** a previously frozen runless Feature has unfinished authorized delivery
@@ -179,3 +179,37 @@ request checker/provider SHALL 通过共同异常分类保留意外框架缺口�
 #### Scenario: A new request follows a failed invocation
 - **WHEN** a separately submitted request has no reliable same-invocation identity
 - **THEN** the provider SHALL execute according to existing successful-reuse criteria instead of replaying a stale FAIL as if it were the same invocation
+
+
+### Requirement: Direct changes reuse automatic request preparation
+
+原 compile/check CLI SHALL 接受同一可选 `--session-ref <绝对transcript路径>#<原始user消息ID>`，reader SHALL 核原件 session/cwd/角色与本请求关联。无 request-file 时 SHALL 由原 writer 在已有 reportDir 保存同 schema request.json，以原用户原文/定位、调研事实、用户覆盖、真实基线和派生外框承载调用；SHALL NOT 要求 Agent 手写 JSON、假 Feature、独立分类命令、第二运行器或场外状态。显式 request-file SHALL 保持同 parser/provider/报告兼容。
+
+UT 首次写入前 SHALL 完成原载体与 allowed writes 准备；自动 prepare 可落执行派生件，显式 request-file prepare 保持只读。特别简单的断言 MAY 引用自动 request 中的真实原用户预期，SHALL NOT 仅凭未核 AC 标签或 characterization 声称验收。直接架构能力 SHALL 复用原依赖方向/跨模块出口判据，不强加 Feature 专用蓝图/CU 文档。缺原件/基线 SHALL 保留具体 unknown，不阻止诚实局部编译，但不得签完整 diff/review PASS。
+
+#### Scenario: A direct change needs no hand-written request
+- **WHEN** 特别简单修改后通过 session-ref 调用 review/UT 及显式报告目录
+- **THEN** 原 writer 保存 request.json，原 prepare/provider/checker 消费同一身份和来源，不制造 Feature/CU
+
+#### Scenario: Test preparation remains before the first write
+- **WHEN** 自动 UT 请求尚无可执行测试载体
+- **THEN** 首次能力准备列真实缺口，在原授权内补齐后才写测试，不先写不可执行目录或用别的模块 PASS 代替
+
+> **Enforced by:** 原 compile/check CLI、request parser/writer/provider、`docs/operations/request-harness.md`。
+
+
+### Requirement: Compact requests consume current blueprint acceptance without a change unit
+
+小型 SHALL 在原路径使用同一 component-blueprint@1、身份、来源与 revision，只要求改动点、typed 可检验验收、已知文件及必要局部选择。无 CU request SHALL 复用同一蓝图 reader/typed 合并/SpecLoader 读取当前蓝图身份和相关验收，SHALL NOT 创建假 Feature/CU/design_refs 或第二执行器。review SHALL 同时得到原目标、短设计、实际 diff 和有效验证；UT 原 request SHALL 绑定当前蓝图身份与具体验收 ID，并逐条核预期来源，不能以文件存在、旧 revision、裸标签或 characterization 冒充验收。相关修订 SHALL 只失效受影响绑定和断言，原基线与其它有效证据保留。
+
+首次已有 check:component-blueprint 的授权设计准备 SHALL 复用原自动 request writer 的核源与持久化共用部分，接受同一 session-ref 并返回原 request，不借 review/ut/testing 假 phase、不要求先编译或额外 prepare。已有权威项目内来源 SHALL 优先复用；纯 inline 必需项目内源时，原 writer SHALL 先保存已核用户原文的稳定输入底稿，再生成同一 source_ref/原始字节哈希并校验蓝图；SHALL NOT 把可变 request 整文件当稳定源、扩 source_ref 语法或增加可编辑设计真源。只读 check SHALL NOT 擅自写 canonical/revision/源文件；来源准备须有真实设计写入授权。
+
+#### Scenario: First compact check has only inline input
+- **WHEN** 已核原生 user 只有 inline 原话且本次授权设计准备
+- **THEN** 同一次 check 先由原 writer 保存必要稳定原文输入，再核来源/蓝图并返回原 request；无需额外分类或伪造 phase
+
+#### Scenario: Old acceptance cannot validate a revised blueprint
+- **WHEN** 短蓝图相关验收 revision/内容改变
+- **THEN** 原 request 的旧绑定不能通过，受影响断言重新核源/验证；characterization 仍只记现状
+
+> **Enforced by:** 原 component-blueprint CLI、request writer/parser、capability-resolution 与 blueprint-skill-projection、request expectation check；行为指引见 `docs/concepts/blueprint-design-inputs.md`、`docs/operations/request-harness.md`。

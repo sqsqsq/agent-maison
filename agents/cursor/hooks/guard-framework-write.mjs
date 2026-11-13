@@ -18,7 +18,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
-import { evaluateFrameworkWrite } from '../../shared/guard-framework-write-core.mjs';
+import { evaluateFrameworkWrite, evaluateProjectEntry } from '../../shared/guard-framework-write-core.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 本文件位于 <projectRoot>/framework/agents/cursor/hooks/ → 上溯 4 级即 projectRoot。
@@ -85,7 +85,9 @@ function main() {
     });
     return;
   }
-  emit({ permission: 'allow' });
+  const entry = evaluateProjectEntry({ projectRoot, filePath: fileAbs, payload });
+  if (entry.decision === 'deny') { emit({ permission: 'deny', user_message: 'Maison统一前门：先读取入口', agent_message: entry.reason }); return; }
+  emit({ permission: 'allow', ...(entry.sessionRef || entry.note ? { agent_message: [entry.sessionRef ? `Maison原生来源：--session-ref ${JSON.stringify(entry.sessionRef)}` : '', entry.note ?? ''].filter(Boolean).join('\n') } : {}) });
 }
 
 try {

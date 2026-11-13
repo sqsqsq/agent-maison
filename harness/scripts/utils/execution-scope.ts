@@ -7,6 +7,50 @@ import { checkAcceptanceUtLayerComplete } from './check-acceptance';
 import { collectDeviceScopeIds, collectUnitScopeIds, hasUnknownPerformanceLayer } from './acceptance-layering';
 
 export type ObligationApplicability = 'required' | 'not_applicable' | 'unknown';
+
+export type DeliveryScale = 'trivial' | 'small' | 'medium' | 'complex';
+export type IntakeTruth = true | false | 'unknown';
+export interface IntakeFact { value: IntakeTruth; reason: string; sources: string[] }
+export interface DeliveryFacts {
+  design_tradeoff: IntakeFact;
+  unclosed_impact: IntakeFact;
+  irreversible_data: IntakeFact;
+  dependent_results: IntakeFact;
+  cross_component: IntakeFact;
+  expectations_clear: IntakeFact;
+  unique_approach: IntakeFact;
+}
+export interface DeliveryPolicy {
+  recommended: DeliveryScale | 'unknown';
+  selected: DeliveryScale | 'unknown';
+  source: 'rule' | 'user';
+  unknown: string[];
+  blueprint: 'none' | 'compact' | 'full' | 'shared' | 'unknown';
+  change_units: 'none' | 'single' | 'multiple' | 'unknown';
+}
+
+/** The outer design frame, independent of check-family names and file counts. */
+export function resolveDeliveryPolicy(facts: DeliveryFacts, userSelection?: DeliveryScale): DeliveryPolicy {
+  const value = (key: keyof DeliveryFacts): IntakeTruth => {
+    const fact = facts[key];
+    return fact?.reason.trim() && fact.sources.length ? fact.value : 'unknown';
+  };
+  const complex = [value('dependent_results'), value('cross_component')];
+  const risks = [value('design_tradeoff'), value('unclosed_impact'), value('irreversible_data')];
+  const unknown = (Object.keys(facts) as Array<keyof DeliveryFacts>).filter(key => value(key) === 'unknown');
+  let recommended: DeliveryPolicy['recommended'];
+  if (complex.includes(true)) recommended = 'complex';
+  else if (complex.includes('unknown')) recommended = 'unknown';
+  else if (risks.includes(true)) recommended = 'medium';
+  else if (risks.includes('unknown')) recommended = 'unknown';
+  else if (value('expectations_clear') === true && value('unique_approach') === true) recommended = 'trivial';
+  else if (value('expectations_clear') === 'unknown' || value('unique_approach') === 'unknown') recommended = 'unknown';
+  else recommended = 'small';
+  const selected = userSelection ?? recommended;
+  return { recommended, selected, source: userSelection ? 'user' : 'rule', unknown,
+    blueprint: ({ trivial: 'none', small: 'compact', medium: 'full', complex: 'shared', unknown: 'unknown' } as const)[selected],
+    change_units: ({ trivial: 'none', small: 'none', medium: 'single', complex: 'multiple', unknown: 'unknown' } as const)[selected] };
+}
 export interface ScopeEvidenceRef {
   phase: string;
   /** D1 §4.2.4：feature 载体（无 run）没有 run 身份——**不伪造**，此处缺省。 */
@@ -89,6 +133,8 @@ export interface ExecutionScopeInput {
      * 校验走 §4.1.0 既有的 `resolved.basis` 通道，不另建第二套。
      */
     requirement_basis?: InputBinding;
+    /** Native user locator bound to this existing run; no writable approval or replacement goal. */
+    user_control?: ScopeUserControlSource;
   };
   facts: Array<Omit<ExecutionObligation, 'owner_phase'>>;
   /** Conditional control facts; an information producer is not automatically a predecessor. */
@@ -128,11 +174,158 @@ export function hasNoTestingObligation(scope: ExecutionScope): boolean {
  * `kind` through `OBLIGATION_PROVIDERS`.
  * `not_applicable -> required` is an upgrade and stays legal; `required -> anything else` does not.
  */
-export function findSubtractedRequiredObligations(previous: ExecutionScope, next: ExecutionScope): string[] {
+export function findSubtractedRequiredObligations(previous: ExecutionScope, next: ExecutionScope, allowed: ReadonlySet<string> = new Set()): string[] {
   return previous.obligations
     .filter(old => old.applicability === 'required'
-      && !next.obligations.some(fact => fact.id === old.id && fact.kind === old.kind && fact.applicability === 'required'))
+      && !next.obligations.some(fact => fact.id === old.id && fact.kind === old.kind && (fact.applicability === 'required'
+        || allowed.has(old.id) && fact.applicability === 'not_applicable')))
     .map(old => old.id);
+}
+
+const SCOPE_CONTROL_FAMILIES: Readonly<Record<string, string>> = { 'code-review': 'review', 'unit-evidence': 'ut', 'device-evidence': 'testing', 'visual-evidence': 'testing' };
+
+export interface ScopeUserControlSource {
+  session_ref: string; feature: string; run_id: string;
+  /** Filled by the native reader at acceptance, retained in the existing revision event. */
+  user?: { id: string; text: string; sha256: string; at?: string };
+  excluded?: string[];
+  included?: string[];
+  fixed?: string;
+}
+export type VerifiedScopeUserControlSource = ScopeUserControlSource & {
+  user: NonNullable<ScopeUserControlSource['user']>; excluded: string[]; included: string[];
+};
+type ScopeUserControlIdentity = { feature: string; runId: string };
+
+function assertScopeControlIdentity(source: ScopeUserControlSource, context?: ScopeUserControlIdentity): void {
+  if (!source || typeof source.session_ref !== 'string' || !source.session_ref.includes('#') || !source.feature || !source.run_id
+    || context && (source.feature !== context.feature || source.run_id !== context.runId)) {
+    throw new Error('[execution-scope] user控制来源必须绑定当前project/feature/run与精确原生user');
+  }
+}
+function scopeControlLocator(source: ScopeUserControlSource): string {
+  return executionScopeFingerprint({ session_ref: source.session_ref, feature: source.feature, run_id: source.run_id });
+}
+
+/** New caller input always reads native storage; caller-filled snapshots do not confer authority. */
+export function readScopeUserControlSource(source: ScopeUserControlSource,
+  context: ScopeUserControlIdentity & { projectRoot: string }): VerifiedScopeUserControlSource {
+  assertScopeControlIdentity(source, context);
+  const native = require('../../../agents/shared/native-request.cjs') as {
+    readNativeSession(ref: string, root: string): { file: string; request: { id: string; text: string; at?: string } };
+    userControl(text: string): { excluded: string[]; included: string[]; fixed?: string };
+  };
+  const session = native.readNativeSession(source.session_ref, context.projectRoot), user = session.request;
+  const directive = native.userControl(user.text);
+  return { session_ref: `${session.file}#${user.id}`, feature: context.feature, run_id: context.runId,
+    user: { id: user.id, text: user.text, sha256: crypto.createHash('sha256').update(user.text).digest('hex'), ...(user.at ? { at: user.at } : {}) },
+    excluded: [...directive.excluded], included: [...directive.included], ...(directive.fixed ? { fixed: directive.fixed } : {}) };
+}
+
+/** Only authoritative event readers call this on an already accepted source, never on a new proposal. */
+export function readAcceptedScopeUserControlSource(source: ScopeUserControlSource,
+  context?: ScopeUserControlIdentity): VerifiedScopeUserControlSource | undefined {
+  assertScopeControlIdentity(source, context);
+  if (!source.user) return undefined; // Legacy locator-only events still need their original source once.
+  const user = source.user, fragment = source.session_ref.slice(source.session_ref.lastIndexOf('#') + 1);
+  const families = (value: unknown): value is string[] => Array.isArray(value)
+    && value.every(item => typeof item === 'string' && ['review', 'ut', 'testing', 'compile', 'architecture'].includes(item));
+  if (typeof user.id !== 'string' || user.id !== fragment || typeof user.text !== 'string'
+    || user.sha256 !== crypto.createHash('sha256').update(user.text).digest('hex')
+    || !families(source.excluded) || !families(source.included)
+    || source.fixed !== undefined && !['特别简单', '小型', '中型', '复杂'].includes(source.fixed)) {
+    throw new Error('[execution-scope] 已接受的user控制原文/消息身份/指令不完整或失配');
+  }
+  return structuredClone(source) as VerifiedScopeUserControlSource;
+}
+
+export interface ScopeRevisionAuthorityContext {
+  projectRoot: string; feature: string; runId: string;
+  events?: readonly { type?: string; phase?: string; verdict?: string; blocking_class?: string; revision_input?: unknown; execution_scope?: ExecutionScope }[];
+  completedPhases?: ReadonlySet<string>;
+  failedPhases?: ReadonlySet<string>;
+}
+export interface ScopeRevisionUserControl {
+  allowedSubtractions: ReadonlySet<string>;
+  includedObligations: ReadonlySet<string>;
+  exclusionSources?: ReadonlyMap<string, string>;
+  inclusionSources?: ReadonlyMap<string, string>;
+  newSource: boolean;
+  source?: NonNullable<ExecutionScopeInput['request']['user_control']>;
+}
+
+/** New controls are native-verified; replay inherits the accepted bytes in this run's revision_input. */
+export function readScopeRevisionUserControl(previous: ExecutionScope, input: Pick<ExecutionScopeInput, 'request'> | undefined,
+  context?: ScopeRevisionAuthorityContext, acceptedSource?: ScopeUserControlSource): ScopeRevisionUserControl {
+  const empty = (): ScopeRevisionUserControl => ({ allowedSubtractions: new Set(), includedObligations: new Set(), newSource: false });
+  const revisions = (context?.events ?? []).filter(event => event.type === 'scope_revised');
+  const history = revisions.flatMap(event => { const source = (event.revision_input as ExecutionScopeInput | undefined)?.request?.user_control; return source ? [source] : []; });
+  const latest = history.at(-1);
+  const supplied = input?.request?.user_control ?? latest;
+  if (!supplied) return empty();
+  type Source = NonNullable<ExecutionScopeInput['request']['user_control']>;
+  const cache = new Map<string, { source: VerifiedScopeUserControlSource; control: VerifiedScopeUserControlSource }>();
+  const read = (ref: Source, accepted?: Source) => {
+    assertScopeControlIdentity(ref, context);
+    const key = scopeControlLocator(ref);
+    let found = cache.get(key);
+    if (!found) {
+      const recorded = accepted && scopeControlLocator(accepted) === key ? readAcceptedScopeUserControlSource(accepted, context) : undefined;
+      if (!recorded && !context) throw new Error('[execution-scope] 未接受的user控制缺少当前project核源上下文');
+      const source = recorded ?? readScopeUserControlSource(ref, context!);
+      found = { source, control: source };
+      cache.set(key, found);
+    }
+    return found;
+  };
+  const recorded = acceptedSource ?? (!input?.request?.user_control ? latest
+    : supplied.user ? history.find(prior => scopeControlLocator(prior) === scopeControlLocator(supplied)) : undefined);
+  let actual = read(supplied, recorded);
+  const meaningful = actual.control.excluded.length || actual.control.included?.length || actual.control.fixed;
+  const seen = history.some(prior => scopeControlLocator(prior) === scopeControlLocator(actual.source));
+  if ((!meaningful || seen && latest && scopeControlLocator(latest) !== scopeControlLocator(actual.source)) && latest) actual = read(latest, latest);
+  else if (!meaningful) return empty();
+  const exclusions = new Map<string, string>(), inclusions = new Map<string, string>(), cutIds = new Set<string>();
+  const applyDirective = (value: ReturnType<typeof read>): void => {
+    for (const family of value.control.excluded) { exclusions.set(family, value.source.session_ref); inclusions.delete(family); }
+    for (const family of value.control.included ?? []) { exclusions.delete(family); inclusions.set(family, value.source.session_ref); }
+  };
+  for (const event of revisions) {
+    const proposed = event.revision_input as ExecutionScopeInput | undefined, ref = proposed?.request?.user_control;
+    if (!ref) continue;
+    applyDirective(read(ref, ref));
+    for (const after of event.execution_scope?.obligations ?? []) {
+      const before = Array.isArray(proposed?.facts) ? proposed.facts.find(fact => fact.id === after.id && fact.kind === after.kind) : undefined;
+      if (before && before.applicability !== 'not_applicable' && after.applicability === 'not_applicable' && exclusions.has(SCOPE_CONTROL_FAMILIES[after.kind])) cutIds.add(after.id);
+      if (after.applicability === 'required') cutIds.delete(after.id);
+    }
+  }
+  applyDirective(actual);
+  const failedPhases = new Set(context?.failedPhases ?? []), protectedPhases = new Set(context?.completedPhases ?? []);
+  for (const event of context?.events ?? []) if (event.type === 'phase_verdict' && event.phase) {
+    if (event.verdict === 'PASS') protectedPhases.add(event.phase);
+    if (event.verdict === 'FAIL' && !['externalBlocked', 'framework_internal'].includes(event.blocking_class ?? '')) failedPhases.add(event.phase);
+  }
+  for (const phase of failedPhases) protectedPhases.add(phase);
+  if (previous.obligations.some(obligation => obligation.applicability === 'required' && failedPhases.has(obligation.owner_phase) && exclusions.has(SCOPE_CONTROL_FAMILIES[obligation.kind]))) {
+    throw new Error('[execution-scope] 用户调整只减少未来工作，不能核销已有真实FAIL；保留失败与原责任。');
+  }
+  const allowed = new Set(previous.obligations.filter(obligation => !obligation.satisfied_by?.length && !protectedPhases.has(obligation.owner_phase)
+    && exclusions.has(SCOPE_CONTROL_FAMILIES[obligation.kind])).map(obligation => obligation.id));
+  const included = new Set(previous.obligations.filter(obligation => obligation.applicability === 'not_applicable' && cutIds.has(obligation.id)
+    && inclusions.has(SCOPE_CONTROL_FAMILIES[obligation.kind])).map(obligation => obligation.id));
+  return { allowedSubtractions: allowed, includedObligations: included, exclusionSources: exclusions, inclusionSources: inclusions, source: actual.source,
+    newSource: !history.some(prior => scopeControlLocator(prior) === scopeControlLocator(actual.source)) };
+}
+
+/** Retain obligation identity/history; an explicit unexecuted exclusion is NA, never a test PASS. */
+export function applyScopeUserControl(scope: ExecutionScope, workflow: WorkflowSpec, control: ScopeRevisionUserControl): ExecutionScope {
+  if (!control.allowedSubtractions.size && !control.includedObligations.size) return scope;
+  const obligations = scope.obligations.map(obligation => control.allowedSubtractions.has(obligation.id) && obligation.applicability !== 'not_applicable' && !obligation.satisfied_by?.length
+    ? { ...obligation, applicability: 'not_applicable' as const, reason: `真实user排除本run尚未执行的验证（${control.exclusionSources?.get(SCOPE_CONTROL_FAMILIES[obligation.kind]) ?? control.source?.session_ref}）；不是验证PASS。` }
+    : obligation.applicability === 'not_applicable' && control.includedObligations.has(obligation.id)
+      ? { ...obligation, applicability: 'required' as const, reason: `真实user恢复本run验证（${control.inclusionSources?.get(SCOPE_CONTROL_FAMILIES[obligation.kind]) ?? control.source?.session_ref}）。` } : obligation);
+  return projectScopeSchedule({ ...scope, obligations }, workflow);
 }
 
 /**
@@ -157,8 +350,8 @@ export function hasNewSourcedFact(previous: ExecutionScope, facts: ExecutionScop
 }
 
 /** Runtime-side form: throws with the offending ids. Same predicate, one implementation. */
-export function assertRevisionKeepsRequiredObligations(previous: ExecutionScope, next: ExecutionScope): void {
-  const subtracted = findSubtractedRequiredObligations(previous, next);
+export function assertRevisionKeepsRequiredObligations(previous: ExecutionScope, next: ExecutionScope, allowed: ReadonlySet<string> = new Set()): void {
+  const subtracted = findSubtractedRequiredObligations(previous, next, allowed);
   if (subtracted.length) throw new Error(`[execution-scope] 修订不得删除或降级 required 义务：${subtracted.join(', ')}`);
 }
 
@@ -429,7 +622,9 @@ export function resolveExecutionScope(input: ExecutionScopeInput, workflow: Work
   if (request.completion_target === 'feature' && implementation && !obligations.some(o => o.kind === 'code-review' && o.applicability === 'required')) {
     const reviewer = workflow.artifacts.find(a => a.obligation_provider_id === 'obligations.review');
     if (!reviewer) fail('实现交付缺少审查责任 provider');
-    obligations.push({ id: 'code-review:implementation', kind: 'code-review', owner_phase: reviewer.id, applicability: 'required', reason: '本次实现交付需要审查', basis: [...implementation.basis] });
+    const existing = obligations.find(obligation => obligation.id === 'code-review:implementation' && obligation.kind === 'code-review');
+    const required = { id: 'code-review:implementation', kind: 'code-review', owner_phase: reviewer.id, applicability: 'required' as const, reason: '本次实现交付需要审查', basis: [...implementation.basis] };
+    if (existing) Object.assign(existing, required); else obligations.push(required);
   }
   return projectScopeSchedule({ schema_version: '1.0', completion_target: request.completion_target, requested_results: [...request.requested_results], obligations, phase_chain: [], reused_phases: [], unresolved: [],
     policy_fingerprint: executionScopeFingerprint({ workflow, contracts: input.contract_fingerprints }),

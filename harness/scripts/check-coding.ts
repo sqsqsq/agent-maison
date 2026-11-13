@@ -62,7 +62,7 @@ import { codingTestPreservation } from './utils/repair-responsibility';
 // Helpers
 // --------------------------------------------------------------------------
 
-function ruleDesc(ctx: CheckContext, section: 'structure_checks' | 'semantic_checks' | 'traceability_checks', id: string): string {
+function ruleDesc(ctx: Pick<CheckContext, 'phaseRule'>, section: 'structure_checks' | 'semantic_checks' | 'traceability_checks', id: string): string {
   const checks = ctx.phaseRule[section] as Record<string, { description: string }>;
   return checks?.[id]?.description?.trim() ?? id;
 }
@@ -123,7 +123,7 @@ function checkFileCompleteness(ctx: CheckContext): CheckResult[] {
   }];
 }
 
-function checkLayerCompliance(ctx: CheckContext, analyses: FileAnalysis[]): CheckResult[] {
+function checkLayerCompliance(ctx: Pick<CheckContext, 'projectRoot' | 'phaseRule'>, analyses: FileAnalysis[]): CheckResult[] {
   const cfg = loadFrameworkConfig(ctx.projectRoot);
   const analyzer = new AstAnalyzer(ctx.projectRoot, cfg.architecture);
   const violations: Array<{ file: string; msg: string }> = [];
@@ -154,7 +154,7 @@ function checkLayerCompliance(ctx: CheckContext, analyses: FileAnalysis[]): Chec
   }];
 }
 
-function checkInterModuleDependency(ctx: CheckContext, analyses: FileAnalysis[]): CheckResult[] {
+function checkInterModuleDependency(ctx: Pick<CheckContext, 'projectRoot' | 'phaseRule'>, analyses: FileAnalysis[]): CheckResult[] {
   const cfg = loadFrameworkConfig(ctx.projectRoot);
   const analyzer = new AstAnalyzer(ctx.projectRoot, cfg.architecture);
   const violations: Array<{ file: string; msg: string }> = [];
@@ -165,6 +165,13 @@ function checkInterModuleDependency(ctx: CheckContext, analyses: FileAnalysis[])
     }
   }
 
+  const unresolved = analyses.flatMap(a => a.imports.filter(imp => imp.unresolved)
+    .map(imp => `${a.filePath}:${imp.lineNumber} ${imp.modulePath}`));
+  if (violations.length === 0 && unresolved.length) {
+    return [{ id: 'inter_module_dependency', category: 'structure', description: ruleDesc(ctx, 'structure_checks', 'inter_module_dependency'),
+      severity: 'BLOCKER', status: 'WARN', details: `静态导入目标未解析，不能证明跨模块出口合规：\n${unresolved.join('\n')}`,
+      suggestion: '按现有 catalog/config 核对别名或动态目标，并补本请求的真实依赖验证。' }];
+  }
   if (violations.length === 0) {
     return [{ id: 'inter_module_dependency', category: 'structure', description: ruleDesc(ctx, 'structure_checks', 'inter_module_dependency'), severity: 'BLOCKER', status: analyses.length > 0 ? 'PASS' : 'SKIP', details: analyses.length > 0 ? `${analyses.length} 个文件均符合分层依赖规则。` : '无可分析的宿主源码文件（按 profile 源码后缀、实际 diff 与可读定位线索选择）。' }];
   }
@@ -182,6 +189,13 @@ function checkInterModuleDependency(ctx: CheckContext, analyses: FileAnalysis[])
     affected_files: [...new Set(violations.map(v => v.file))],
     suggestion: directionHint,
   }];
+}
+
+/** Direct changes and Feature coding share the exact architecture predicates. */
+export function checkArchitectureFiles(projectRoot: string, files: string[], phaseRule: CheckContext['phaseRule']): CheckResult[] {
+  const analyses = new AstAnalyzer(projectRoot).analyzeFiles(files.filter(file => /\.(?:ets|[cm]?[jt]sx?)$/.test(file)));
+  const context = { projectRoot, phaseRule };
+  return [...checkLayerCompliance(context, analyses), ...checkInterModuleDependency(context, analyses)];
 }
 
 // --------------------------------------------------------------------------

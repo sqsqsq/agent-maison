@@ -94,7 +94,7 @@ P1 调用上下文、阶段指令、assess、完成验证和 CU expected executi
 
 | 消费面 | 内容/字段 | 现有 reader | 来源与缺失行为 | 本次新产出/真实先行操作 | 绑定与 owner |
 |---|---|---|---|---|---|
-| spec | 需求原文、范围、代码和视觉参考 | capability-resolution、check-spec、verify-spec | 当前 requirement、源码、参考图；缺必需预期/参考则 blocked | 验收不明确才补 spec；正式需求先蓝图 | binding + 实际输出；P1/P3 |
+| spec | 需求原文、范围、代码和视觉参考 | capability-resolution、check-spec、verify-spec | 当前 requirement、源码、参考图；缺必需预期/参考则 blocked | 验收不明确才补 spec；先消费统一前门，小型同协议短蓝图，无 CU；中型/复杂及已有 CU 先完整设计/准入 | binding + 实际输出；P1/P3 |
 | plan | spec、criteria/boundaries、源码、ui-spec | SpecLoader、check-plan、verify-plan | 有效验收/获准切片；新设计缺口回责任方 | 仅未满足施工设计要求新 plan；共同决策不能在此重裁 | contracts/design_refs；P1/P3 |
 | coding | files/modules/interfaces/state_management、验收、use_cases、视觉契约 | SpecLoader、check-coding、verify-coding | 当前 contracts/验收与源码；required 缺失 blocked | 首次写入前 facts 与真实授权；不要求本次新 plan/spec | binding、源码和写集；P1/P4，投影 P3 |
 | review | diff/源码、对照契约、plan、验收、ui-spec | SpecLoader、check-review、verify-review | 真实审查目标；可选设计增强缺失诚实降级 | 已有代码可独立审查；review-report 是本阶段输出 | 输入 binding 与审查证据；P1/P4 |

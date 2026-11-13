@@ -69,7 +69,7 @@ import { resolveComponentClosureInputs } from '../../scripts/utils/component-clo
 import { deriveComponentClosureObligations } from '../../scripts/utils/component-closure-obligations';
 import { buildChangeUnitGoalHandoff } from '../../scripts/utils/change-unit-progress-loop';
 import { observeChangeUnitCompletion } from '../../scripts/utils/change-unit-completion';
-import { generateFeatureCompletion, verifyReusedExecutionScope, executionScopeEvidenceIssues } from '../../scripts/utils/verify-feature-completion';
+import { generateFeatureCompletion, inspectCompletionRecord, verifyReusedExecutionScope, executionScopeEvidenceIssues } from '../../scripts/utils/verify-feature-completion';
 import { assessFeature, assessmentReasons } from '../../scripts/utils/feature-assessment';
 
 /** plan b2d7f4e9：唯一评估入口 assessFeature 的 VALID/INVALID 投影（complete ⇔ VALID）。 */
@@ -85,7 +85,7 @@ import { codingBasePath } from '../../scripts/utils/pass-snapshot';
 import { recomputePhaseEvidenceStaleness } from '../../scripts/utils/phase-evidence-manifest';
 import * as os from 'os';
 import type { AcceptanceSpec, CheckContext, CheckResult } from '../../scripts/utils/types';
-import { resolveExecutionScope, validateExecutionScope, executionScopeFingerprint, executionCompletionPhases, hasNoTestingObligation, findSubtractedRequiredObligations, assertRevisionKeepsRequiredObligations, hasNewSourcedFact, effectiveScopeView, scopeProofHistory, projectScopeSchedule, affectedScopePhases, isExecutionSourceBasis, type ScopeHistoryEvent, type ExecutionScope, type ExecutionScopeInput, type ResolvedScopeFacts } from '../../scripts/utils/execution-scope';
+import { resolveExecutionScope, validateExecutionScope, executionScopeFingerprint, executionCompletionPhases, hasNoTestingObligation, readScopeRevisionUserControl, applyScopeUserControl, findSubtractedRequiredObligations, assertRevisionKeepsRequiredObligations, hasNewSourcedFact, effectiveScopeView, scopeProofHistory, projectScopeSchedule, affectedScopePhases, isExecutionSourceBasis, type ScopeHistoryEvent, type ExecutionScope, type ExecutionScopeInput, type ResolvedScopeFacts } from '../../scripts/utils/execution-scope';
 import { applyScopeRevisions, loadScopeRevisions, resolveRunBaseline, revokedPhasesByRevision, eventsWithScopeRevocations } from '../../scripts/utils/goal-run-creation';
 import { isClosureOnlyRetryPending, readExecutionActivity, loadAuthoritativeEvents } from '../../scripts/utils/goal-runner-phase';
 import { executionRequestForInvoke } from '../../scripts/utils/session-execution-handoff';
@@ -4249,6 +4249,172 @@ cases.push({ name: 'formal definition proof causal: caller maps cannot mint or s
   const reused = effectiveScopeView({ birth: accepted.birth, events: [{ type: 'scope_revised', execution_scope: accepted.cached }], workflow,
     definitionProofs: new Map([['design:causal', [forged]]]), stalePhases: ['plan'] });
   assert.deepStrictEqual(reused.obligations.find(obligation => obligation.id === 'design:causal')!.satisfied_by, [accepted.ref], 'only the original registered ref may be consumed');
+} });
+
+
+/** Native-format fixture only; late process controls intentionally carry no Q answers or HEAD. */
+function nativeScopeControl(root: string, feature: string, runId: string) {
+  const previousHome = process.env.CLAUDE_CONFIG_DIR, home = path.resolve(__dirname, '../../reports/maison-b-scope/native', path.basename(root));
+  const session = 'aaaaaaaa-1111-4444-8888-bbbbbbbbbbbb', file = path.join(home, 'projects/control', session + '.jsonl');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const rows = [ ['skip', '本次不跑真机。'], ['restore', '本次恢复真机测试。'], ['small', '按小型处理。'], ['continue', '继续。'], ['skip-again', '现在仍不跑真机。'] ]
+    .map(([uuid, content]) => ({ type: 'user', uuid, sessionId: session, cwd: root, timestamp: new Date().toISOString(), message: { role: 'user', content } }));
+  fs.writeFileSync(file, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
+  process.env.CLAUDE_CONFIG_DIR = home;
+  return { home, file, source: (id: string) => ({ session_ref: `${file}#${id}`, feature, run_id: runId }),
+    restore: () => { if (previousHome === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = previousHome; } };
+}
+function userControlProposal(scope: ExecutionScope, source?: NonNullable<ExecutionScopeInput['request']['user_control']>): ExecutionScopeInput {
+  return { request: { completion_target: scope.completion_target, requested_results: [...scope.requested_results], requested_phases: executionCompletionPhases(scope).length ? executionCompletionPhases(scope) : ['testing'],
+    ...(scope.request_impact ? { impact: structuredClone(scope.request_impact) } : {}), ...(source ? { user_control: source } : {}) }, facts: structuredClone(scope.obligations), contract_fingerprints: [] };
+}
+function scopeControlEvent(before: ExecutionScope, next: ExecutionScope, input: ExecutionScopeInput, index = 1) {
+  return { type: 'scope_revised', revision_index: index, previous_scope_fingerprint: executionScopeFingerprint(before), execution_scope: next,
+    revision_input: input, trigger: { phase: 'testing', check_id: 'user_control' }, allowed_fields: [...SCOPE_REVISION_FIELDS] };
+}
+cases.push({ name: 'B user-control: native late user can reduce only future checks and the same source replays on the same run', run() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'scope-control-')), feature = 'control', runId = 'same-run', native = nativeScopeControl(root, feature, runId);
+  try {
+    const birth = resolveExecutionScope(request(['testing']), workflow, d2Acceptance('device'), d2Facts());
+    const proposal = userControlProposal(birth, native.source('skip')), ctx = { projectRoot: root, feature, runId };
+    const control = readScopeRevisionUserControl(birth, proposal, ctx), next = applyScopeUserControl(birth, workflow, control);
+    proposal.request.user_control = control.source;
+    assert(control.newSource && control.allowedSubtractions.size > 0); assert(!next.phase_chain.includes('testing'));
+    assert(next.obligations.filter(item => item.kind === 'device-evidence').every(item => item.applicability === 'not_applicable' && !item.satisfied_by?.length));
+    assert.deepEqual(next.requested_results, birth.requested_results); assert.equal(next.completion_target, birth.completion_target);
+    assertRevisionKeepsRequiredObligations(birth, next, control.allowedSubtractions);
+    assert.throws(() => assertRevisionKeepsRequiredObligations(birth, next), /不得删除或降级/);
+    const event = scopeControlEvent(birth, next, proposal);
+    assert.equal(executionScopeFingerprint(applyScopeRevisions(birth, [event] as never, ctx)), executionScopeFingerprint(next));
+    assert.throws(() => applyScopeRevisions(birth, [event] as never, { ...ctx, runId: 'other-run' }), /当前project/);
+    assert.equal(control.source?.user?.id, 'skip'); assert.equal(control.source?.user?.text, '本次不跑真机。');
+    assert.equal(control.source?.user?.sha256, createHash('sha256').update('本次不跑真机。').digest('hex'));
+    assert.deepEqual(control.source?.excluded, ['testing']);
+    fs.renameSync(native.file, native.file + '.moved');
+    assert.equal(executionScopeFingerprint(applyScopeRevisions(birth, [event] as never, { ...ctx, projectRoot: root + '-moved' })), executionScopeFingerprint(next));
+    assert.equal(executionScopeFingerprint(applyScopeRevisions(birth, [event] as never)), executionScopeFingerprint(next));
+    const inherited = readScopeRevisionUserControl(next, userControlProposal(next), { ...ctx, events: [event] });
+    assert(!inherited.newSource); assert(inherited.allowedSubtractions.size > 0);
+    // A new locator, even with caller-filled snapshot fields, still has to read native storage.
+    assert.throws(() => readScopeRevisionUserControl(birth, userControlProposal(birth,
+      { ...control.source!, session_ref: native.file + '#invented' }), ctx));
+    assert.throws(() => readScopeRevisionUserControl(birth, userControlProposal(birth, native.source('skip')), { ...ctx, events: [event] }));
+    const damaged = structuredClone(event); damaged.revision_input.request.user_control!.user!.text = '不跑UT';
+    assert.throws(() => applyScopeRevisions(birth, [damaged] as never, ctx), /原文\/消息身份\/指令/);
+  } finally { native.restore(); fs.rmSync(root, { recursive: true, force: true }); }
+} });
+cases.push({ name: 'B user-control: ordinary revisions inherit exclusion and restoration does not invent originally NA visual checks', run() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'scope-control-')), feature = 'control', runId = 'same-run', native = nativeScopeControl(root, feature, runId);
+  try {
+    const birth = resolveExecutionScope(request(['testing']), workflow, d2Acceptance('device'), d2Facts());
+    const proposal = userControlProposal(birth, native.source('skip')), ctx = { projectRoot: root, feature, runId };
+    const accepted = readScopeRevisionUserControl(birth, proposal, ctx), cut = applyScopeUserControl(birth, workflow, accepted);
+    proposal.request.user_control = accepted.source;
+    const first = scopeControlEvent(birth, cut, proposal);
+    const active = { ...ctx, events: [first] };
+    const inherited = readScopeRevisionUserControl(cut, userControlProposal(cut), active);
+    assert(!inherited.newSource); assert(!applyScopeUserControl(birth, workflow, inherited).phase_chain.includes('testing'));
+    const fixed = readScopeRevisionUserControl(cut, userControlProposal(cut, native.source('small')), active);
+    assert(!applyScopeUserControl(birth, workflow, fixed).phase_chain.includes('testing'), 'flow preference silently revoked testing exclusion');
+    const restoreInput = userControlProposal(cut, native.source('restore'));
+    const restoreControl = readScopeRevisionUserControl(cut, restoreInput, active), restored = applyScopeUserControl(cut, workflow, restoreControl);
+    restoreInput.request.user_control = restoreControl.source;
+    assert(restored.phase_chain.includes('testing')); assert(restored.obligations.filter(item => item.kind === 'visual-evidence').every(item => item.applicability === 'not_applicable'));
+    const second = scopeControlEvent(cut, restored, restoreInput, 2);
+    assert.equal(executionScopeFingerprint(applyScopeRevisions(birth, [first, second] as never, ctx)), executionScopeFingerprint(restored));
+    const smallOnly = readScopeRevisionUserControl(birth, userControlProposal(birth, native.source('small')), ctx);
+    assert.equal(smallOnly.allowedSubtractions.size, 0, '按小型 was mistaken for skip UT/testing');
+  } finally { native.restore(); fs.rmSync(root, { recursive: true, force: true }); }
+} });
+cases.push({ name: 'B user-control: forged origin, unsourced reanswer, completed checks and real failures cannot be cleared', run() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'scope-control-')), feature = 'control', runId = 'same-run', native = nativeScopeControl(root, feature, runId);
+  try {
+    const birth = resolveExecutionScope(request(['testing']), workflow, d2Acceptance('device'), d2Facts()), ctx = { projectRoot: root, feature, runId };
+    const proposal = userControlProposal(birth);
+    const self = readScopeRevisionUserControl(birth, proposal, ctx); assert.equal(self.allowedSubtractions.size, 0);
+    const forged = path.join(root, 'pretend.jsonl'); fs.copyFileSync(native.file, forged);
+    assert.throws(() => readScopeRevisionUserControl(birth, userControlProposal(birth, { ...native.source('skip'), session_ref: forged + '#skip' }), ctx), /原生存储/);
+    const input = userControlProposal(birth, native.source('skip'));
+    assert.throws(() => readScopeRevisionUserControl(birth, input, { ...ctx, events: [{ type: 'phase_verdict', phase: 'testing', verdict: 'FAIL' }] }), /真实FAIL/);
+    const complete = projectScopeSchedule({ ...birth, obligations: birth.obligations.map(item => item.applicability !== 'required' ? item : { ...item, satisfied_by: [{ phase: 'testing', run_id: runId, evidence_manifest_aggregate: 'e'.repeat(64) }] }) }, workflow);
+    const control = readScopeRevisionUserControl(complete, input, { ...ctx, completedPhases: new Set(['testing']) });
+    assert.equal(control.allowedSubtractions.size, 0); assert.equal(executionScopeFingerprint(applyScopeUserControl(complete, workflow, control)), executionScopeFingerprint(complete));
+  } finally { native.restore(); fs.rmSync(root, { recursive: true, force: true }); }
+} });
+cases.push({ name: 'B user-control: completion inspection replays accepted source after native storage disappears without inventing completion', run() {
+  const { root, frameworkRoot, feature } = setupRunlessProject({ chain: ['ut', 'testing'], completionTarget: 'request' });
+  const runId = 'user-control-record', native = nativeScopeControl(root, feature, runId);
+  try {
+    fs.writeFileSync(path.join(root, '.gitignore'), 'framework/\n.native-control/\ndoc/reports/\n');
+    execFileSync('git', ['init', '-q'], { cwd: root }); execFileSync('git', ['add', '-A'], { cwd: root });
+    execFileSync('git', ['-c', 'user.name=Fixture', '-c', 'user.email=f@e.test', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'baseline'], { cwd: root });
+    const prepared = prepareGoalModeRun({ projectRoot: root, frameworkRoot, feature, runId, adapter: 'generic', requirement: '把 value 改成 42' });
+    const birth = prepared.manifest.execution_scope!, proposal = userControlProposal(birth, native.source('skip'));
+    const control = readScopeRevisionUserControl(birth, proposal, { projectRoot: root, feature, runId });
+    proposal.request.user_control = control.source;
+    const next = applyScopeUserControl(birth, resolveWorkflowSpec(root, { frameworkRoot }), control);
+    fs.appendFileSync(path.join(prepared.runDir, 'events.jsonl'), JSON.stringify(scopeControlEvent(birth, next, proposal)) + '\n');
+    // A deliberately incomplete request record exercises the completion reader's scope replay.
+    // It must stay INVALID for the real request endpoint, with no fabricated phase PASS.
+    const recordFile = path.join(prepared.runDir, 'feature-completion.json');
+    const record = { schema_version: '1.2', feature, run_id: runId, scope_source: 'run', workflow_track: 'full',
+      generated_at: new Date().toISOString(), execution_scope_fingerprint: executionScopeFingerprint(next), scope_revision_count: 1,
+      chain: ['ut'], phases: [{ phase: 'ut', run_id: runId, attempt: null, gate_fingerprint: null, receipt_sha256: null, evidence_manifest_aggregate: null }],
+      artifact_hashes: { spec_md: null, acceptance_yaml: null, contracts_yaml: null }, requirement_sha256: null,
+      review_attestation_aggregate: null, testing_source_aggregate: null, parent_run_id: null, supersedes: [] };
+    const bytes = JSON.stringify(record); fs.writeFileSync(recordFile, bytes);
+    fs.writeFileSync(featureFilePath(root, feature, 'feature-completion.json'), JSON.stringify({ schema_version: '1.2',
+      original_path: path.relative(root, recordFile).replace(/\\/g, '/'), original_sha256: createHash('sha256').update(bytes).digest('hex') }));
+    const inspect = () => inspectCompletionRecord({ projectRoot: root, frameworkRoot, feature, expectedChain: ['ut'], expectedTrack: 'full' });
+    const before = inspect(); assert.equal(before.verdict, 'INVALID'); assert(before.reasons.some(reason => reason.includes('不是 Feature 完成目标')), JSON.stringify(before));
+    fs.renameSync(native.file, native.file + '.moved');
+    assert.deepEqual(inspect(), before);
+  } finally { native.restore(); fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+} });
+cases.push({ name: 'B user-control: public next constructs the source proposal and same-run resume keeps the original goal and baseline', async run() {
+  const { root, frameworkRoot, feature } = setupRunlessProject({ chain: ['ut', 'testing'], completionTarget: 'request' });
+  const runId = 'user-control-public', native = nativeScopeControl(root, feature, runId), repo = path.resolve(__dirname, '../../..');
+  try {
+    const configFile = path.join(root, 'framework.config.json'), config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+    config.materialized_adapters = ['codex']; fs.writeFileSync(configFile, JSON.stringify(config));
+    const localFile = path.join(root, 'framework.local.json'), local = JSON.parse(fs.readFileSync(localFile, 'utf8')); local.agent_adapter = 'codex'; fs.writeFileSync(localFile, JSON.stringify(local)); clearFrameworkConfigCache();
+    fs.writeFileSync(path.join(root, '.gitignore'), 'framework/\n.native-control/\ndoc/reports/\n');
+    execFileSync('git', ['init', '-q'], { cwd: root }); execFileSync('git', ['add', '-A'], { cwd: root });
+    execFileSync('git', ['-c', 'user.name=Fixture', '-c', 'user.email=f@e.test', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'baseline'], { cwd: root });
+    const prepared = prepareGoalModeRun({ projectRoot: root, frameworkRoot, feature, runId, adapter: 'codex', requirement: '把 value 改成 42' });
+    const original = JSON.parse(fs.readFileSync(prepared.manifestPath, 'utf8'));
+    const invoke = (ref?: string) => spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'), path.join(repo, 'harness/scripts/goal-mode-entry.ts'),
+      '--next', '--run-mode', 'attended', '--adapter', 'codex', '--feature', feature, '--run-id', runId, '--project-root', root, '--framework-root', frameworkRoot,
+      ...(ref ? ['--session-ref', ref] : [])], { cwd: root, encoding: 'utf8', timeout: 45000,
+      env: { ...process.env, CLAUDE_CONFIG_DIR: native.home, TS_NODE_PROJECT: path.join(repo, 'harness/tsconfig.json') } });
+    const first = invoke(native.source('skip').session_ref);
+    const eventsFile = path.join(prepared.runDir, 'events.jsonl'), events = loadAuthoritativeEvents(eventsFile);
+    const revisions = events.filter(event => event.type === 'scope_revised') as Array<import('../../scripts/utils/goal-runner-phase').GoalRunEvent & { revision_input: ExecutionScopeInput; execution_scope: ExecutionScope }>;
+    assert.equal(revisions.length, 1, first.stderr + first.stdout);
+    assert.equal(revisions[0].revision_input.request.user_control?.run_id, runId); assert(!revisions[0].execution_scope.phase_chain.includes('testing'));
+    const second = invoke();
+    assert.equal(loadAuthoritativeEvents(eventsFile).filter(event => event.type === 'scope_revised').length, 1, second.stderr + second.stdout);
+    assert(!loadEffectiveExecutionScope(root, feature, runId)!.phase_chain.includes('testing'));
+    // The next real user arrives in another native session after the accepted source was removed.
+    const nextSession = 'cccccccc-2222-4444-8888-dddddddddddd', nextNative = path.join(path.dirname(native.file), nextSession + '.jsonl');
+    fs.renameSync(native.file, native.file + '.moved');
+    fs.writeFileSync(nextNative, fs.readFileSync(native.file + '.moved', 'utf8').split('aaaaaaaa-1111-4444-8888-bbbbbbbbbbbb').join(nextSession));
+    assert(!fs.existsSync(native.file));
+    const restored = invoke(nextNative + '#restore');
+    assert.equal(loadAuthoritativeEvents(eventsFile).filter(event => event.type === 'scope_revised').length, 2, restored.stderr + restored.stdout);
+    assert(loadEffectiveExecutionScope(root, feature, runId)!.phase_chain.includes('testing'));
+    fs.appendFileSync(eventsFile, JSON.stringify({ type: 'phase_verdict', phase: 'testing', verdict: 'FAIL', action: 'halt', run_id: runId, ts: new Date().toISOString() }) + '\n');
+    const rejected = invoke(nextNative + '#skip-again');
+    const failedHistory = loadAuthoritativeEvents(eventsFile);
+    assert.equal(failedHistory.filter(event => event.type === 'scope_revised').length, 2, rejected.stderr + rejected.stdout);
+    assert(failedHistory.some(event => event.type === 'phase_verdict' && event.phase === 'testing' && event.verdict === 'FAIL'));
+    assert(loadEffectiveExecutionScope(root, feature, runId)!.phase_chain.includes('testing'), 'existing FAIL disappeared through a process override');
+
+    const current = JSON.parse(fs.readFileSync(prepared.manifestPath, 'utf8'));
+    assert.equal(current.requirement, original.requirement); assert.equal(current.run_base_sha, original.run_base_sha); assert.deepEqual(current.execution_scope, original.execution_scope);
+    assert.equal(fs.readdirSync(featureFilePath(root, feature, 'goal-runs')).length, 1, 'control created another run');
+    assert(!loadAuthoritativeEvents(eventsFile).some(event => event.type === 'phase_verdict' && event.phase === 'testing' && event.verdict === 'PASS'), 'user exclusion fabricated a test PASS');
+  } finally { native.restore(); fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
 } });
 
 type ScopeGroup = 'prepare-early' | 'prepare-late' | 'runtime';

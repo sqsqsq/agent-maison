@@ -100,6 +100,77 @@ const cases: Array<{ name: string; phase?: string; run(f: ReturnType<typeof fixt
     }
     assert.notEqual(identities[0], identities[1], 'two negative reports must not collapse into the generic verdict identity');
   } },
+  { name: 'B2 original short design request feeds public review and real Node UT with current blueprint acceptance identity', phase: 'ut', run(f) {
+    // Isolated hmos-app lens fixture with an actual Node UT provider; this does not test the HMOS SDK.
+    fs.renameSync(path.join(f.framework, 'profiles/request-test'), path.join(f.framework, 'profiles/hmos-app'));
+    const profileFile = path.join(f.framework, 'profiles/hmos-app/profile.yaml');
+    const profile = YAML.parse(fs.readFileSync(profileFile, 'utf8')); profile.name = 'hmos-app'; fs.writeFileSync(profileFile, YAML.stringify(profile));
+    profile.capabilities['coding.compile'] = { provider: 'node-syntax', severity: 'BLOCKER' }; fs.writeFileSync(profileFile, YAML.stringify(profile));
+    fs.writeFileSync(path.join(f.framework, 'profiles/hmos-app/harness/coding-host-rules.js'), `const fs=require('fs'),path=require('path'),cp=require('child_process');exports.profileCodingHost={sourceFileSuffixes:['js'],runStructureChecks(){return[]},runTraceabilityChecks(){return[]},checkCodingCompile(){return[]},compileProject(ctx){const run=cp.spawnSync(process.execPath,['--check',path.join(ctx.projectRoot,'src/value.js')],{encoding:'utf8'});fs.writeFileSync(path.join(ctx.reportDir,'node-check.log'),run.stdout+run.stderr);return{checks:[{id:'coding_compile',category:'structure',severity:'BLOCKER',status:run.status===0?'PASS':'FAIL',description:'actual Node syntax',details:run.stdout+run.stderr}],execution:{executed:true,exitCode:run.status,command:'node --check src/value.js'}}}};`);
+    const configFile = path.join(f.root, 'framework.config.json'), config = JSON.parse(fs.readFileSync(configFile, 'utf8')); config.project_profile.name = 'hmos-app'; fs.writeFileSync(configFile, JSON.stringify(config)); clearFrameworkConfigCache();
+    const bpFile = 'doc/features/compact-value/blueprint/component-blueprint.yaml', requirement = 'requirements/value.txt';
+    const user = '按小型处理：value 从41改为42。原需求见 requirements/value.txt，保留其它行为。';
+    fs.mkdirSync(path.join(f.root, 'requirements')); fs.writeFileSync(path.join(f.root, requirement), user);
+    fs.writeFileSync(path.join(f.root, 'src/value.js'), 'exports.value = 41;\n');
+    const ut = "const test=require('node:test'),assert=require('node:assert/strict');\n// expectation: " + bpFile + "#AC-1\ntest('value',()=>assert.equal(require('../src/value.js').value,42));\n";
+    fs.writeFileSync(path.join(f.root, 'tests/value.test.cjs'), ut);
+    const { prepareBlueprintSourceItems } = require('../../scripts/utils/blueprint-discovery') as typeof import('../../scripts/utils/blueprint-discovery');
+    const items = prepareBlueprintSourceItems(f.root, [requirement], '2026-11-11T12:00:00Z'), provenance = items[0].provenance;
+    const bp = { artifact: 'component-blueprint@1', component_id: 'value', blueprint_id: 'compact-value', revision: 1, provenance,
+      discovery: { inputs: { current_scope_items: items }, requirement_traceability: [{ item_id: items[0].item_id, blueprint_refs: ['view:development/node:value'] }] },
+      design_views: [{ view_id: 'development', nodes: [{ node_id: 'value', owner: 'value-owner', current_state: 'value=41', target_state: 'value=42', provenance, verification_refs: ['AC-1'],
+        acceptance: { criteria: [{ id: 'AC-1', priority: 'P1', description: 'value returns42', testable: true, verification_steps: ['read value'], expected_result: '42', ut_layer: 'unit', ut_focus: 'value result' }] }, contracts: { files: ['src/value.js'] } }] }] };
+    const acceptance = bp.design_views[0].nodes[0].acceptance;
+    Object.assign(acceptance, { criteria: [...acceptance.criteria, { ...acceptance.criteria[0], id: 'AC-2', description: '设备显示当前value', ut_layer: 'device', device_focus: '实际设备显示42' }] });
+    bp.design_views[0].nodes[0].verification_refs.push('AC-2');
+    const { refreshBlueprintFingerprints } = require('../../scripts/utils/design-repair-unattended') as typeof import('../../scripts/utils/design-repair-unattended');
+    refreshBlueprintFingerprints(bp); fs.mkdirSync(path.dirname(path.join(f.root, bpFile)), { recursive: true });
+    fs.writeFileSync(path.join(f.root, '.gitignore'), 'framework/\n.native-fixture/\ndoc/reports/\n');
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: f.root, encoding: 'utf8', stdio: 'pipe' }).trim();
+    git('init'); git('add', '-A'); git('-c', 'user.name=BTest', '-c', 'user.email=b@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '-m', 'baseline');
+    const home = path.join(f.root, '.native-fixture'), session = '11111111-2222-4333-8444-555555555555', nativeFile = path.join(home, 'projects/fixture', session + '.jsonl');
+    const rows: object[] = [], add = (row: object) => rows.push({ sessionId: session, cwd: f.root, timestamp: '2026-11-11T12:00:00Z', ...row });
+    add({ type: 'user', uuid: 'short-user', message: { role: 'user', content: user } }); let count = 0;
+    const tool = (name: string, input: object, output: string) => { const id = `tool-${++count}`; add({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id, name, input }] } }); add({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: output }] } }); };
+    tool('Bash', { command: 'git rev-parse HEAD' }, git('rev-parse', 'HEAD')); tool('Bash', { command: 'git status --porcelain' }, '');
+    fs.writeFileSync(path.join(f.root, bpFile), YAML.stringify(bp));
+    for (const file of ['src/value.js', 'tests/value.test.cjs', requirement]) tool('Read', { file_path: path.join(f.root, file) }, fs.readFileSync(path.join(f.root, file), 'utf8'));
+    add({ type: 'assistant', message: { role: 'assistant', content: '本请求仅调整value；Q1=否；Q2=否；Q3=否；依赖结果=否；跨部件=否；预期明确=是；做法唯一=是。依据 src/value.js、requirements/value.txt。' } });
+    tool('Edit', { file_path: path.join(f.root, 'src/value.js'), old_string: '41', new_string: '42' }, 'success'); fs.writeFileSync(path.join(f.root, 'src/value.js'), 'exports.value = 42;\n');
+    fs.mkdirSync(path.dirname(nativeFile), { recursive: true }); fs.writeFileSync(nativeFile, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
+    const saved = process.env.CLAUDE_CONFIG_DIR; process.env.CLAUDE_CONFIG_DIR = home;
+    const invoke = (script: string, args: string[]) => spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'), path.join(repo, 'harness', script), '--project-root', f.root, ...(script === 'scripts/compile.ts' ? [] : ['--framework-root', f.framework]), ...args], { cwd: path.join(repo, 'harness'), encoding: 'utf8', timeout: 60000, env: { ...process.env, TS_NODE_PROJECT: path.join(repo, 'harness/tsconfig.json') } });
+    try {
+      const design = invoke('scripts/check-component-blueprint.ts', ['--blueprint', 'compact-value', '--session-ref', nativeFile + '#short-user', '--target', 'src/value.js', '--requirement-source', requirement, '--report-dir', 'doc/reports/design', '--prepare-source', '--json']);
+      assert.equal(design.status, 0, design.stderr + design.stdout); const subject = JSON.parse(design.stdout).request_file;
+      assert.deepEqual(JSON.parse(fs.readFileSync(path.join(f.root, subject), 'utf8')).blueprint.acceptance_ids, ['AC-1', 'AC-2'], '原设计绑定仍须保完整验收，不能改协议缩成UT分母');
+      const compiled = invoke('scripts/compile.ts', ['--session-ref', nativeFile + '#short-user', '--target', 'src/value.js', '--report-dir', 'doc/reports/design-compile', '--json']);
+      assert.equal(compiled.status, 0, compiled.stderr + compiled.stdout);
+      const compilation = JSON.parse(fs.readFileSync(path.join(f.root, 'doc/reports/design-compile/compile-report.json'), 'utf8'));
+      assert(compilation.execution.executed && compilation.execution.command === 'node --check src/value.js' && compilation.architecture_analyzed === 1);
+      const run = (phase: string, extra: string[] = []) => invoke('harness-runner.ts', ['--phase', phase, '--request-file', subject, ...extra]);
+      const actual = run('ut', ['--test-target', 'tests/value.test.cjs']); assert.equal(actual.status, 0, actual.stderr + actual.stdout);
+      const report = JSON.parse(fs.readFileSync(path.join(f.root, 'doc/reports/design/ut/script-report.json'), 'utf8'));
+      assert(report.checks.some((check: CheckResult) => check.id === 'request_test_execution' && check.status === 'PASS'));
+      assert(report.checks.some((check: CheckResult) => check.id === 'request_expectation_source' && check.status === 'PASS'));
+      assert(fs.readFileSync(path.join(f.root, 'doc/reports/design/ut/native-test.log'), 'utf8').includes('# pass 1'));
+      const prep = run('review', ['--prepare-request']); assert.equal(prep.status, 0, prep.stderr + prep.stdout);
+      review(JSON.parse(prep.stdout)); const reviewed = run('review'); assert.equal(reviewed.status, 0, reviewed.stderr + reviewed.stdout);
+      fs.writeFileSync(path.join(f.root, 'tests/value.test.cjs'), ut.replace('AC-1', 'AC-NOT-CURRENT'));
+      const bad = run('ut', ['--test-target', 'tests/value.test.cjs']); assert.notEqual(bad.status, 0, bad.stdout);
+      const failed = JSON.parse(fs.readFileSync(path.join(f.root, 'doc/reports/design/ut/script-report.json'), 'utf8'));
+      assert(failed.checks.some((check: CheckResult) => check.id === 'request_test_execution' && check.status === 'PASS'), '来源登记失败不应吞掉实际测试结果');
+      assert(failed.checks.some((check: CheckResult) => check.id === 'request_expectation_source' && check.status === 'FAIL'));
+      fs.writeFileSync(path.join(f.root, 'tests/value.test.cjs'), ut.replace('value,42', 'value,41'));
+      assert.notEqual(run('ut', ['--test-target', 'tests/value.test.cjs']).status, 0, '错误预期被包装成通过');
+      const wrong = JSON.parse(fs.readFileSync(path.join(f.root, 'doc/reports/design/ut/script-report.json'), 'utf8'));
+      assert(wrong.checks.some((check: CheckResult) => check.id === 'request_test_execution' && check.status === 'FAIL'));
+      fs.writeFileSync(path.join(f.root, 'tests/value.test.cjs'), ut.replace('// expectation: ' + bpFile + '#AC-1', '// characterization'));
+      assert.notEqual(run('ut', ['--test-target', 'tests/value.test.cjs']).status, 0, 'characterization冒充蓝图验收');
+      fs.writeFileSync(path.join(f.root, 'tests/value.test.cjs'), ut); bp.revision = 2; refreshBlueprintFingerprints(bp); fs.writeFileSync(path.join(f.root, bpFile), YAML.stringify(bp));
+      assert.notEqual(run('ut', ['--test-target', 'tests/value.test.cjs']).status, 0, '旧revision进入了UT');
+    } finally { if (saved === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = saved; }
+  } },
   { name: '1804 request provider exceptions retain framework gaps while ordinary failed assertions remain FAIL', phase: 'ut', run(f) {
     const p = prepareExplicitRequest(f.options); facts(p, f.root);
     const provider = path.join(f.framework, 'profiles/request-test/harness/providers/native-request.js');

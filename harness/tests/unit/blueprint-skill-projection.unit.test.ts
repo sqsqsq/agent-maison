@@ -4,7 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as YAML from 'yaml';
 import { createHash } from 'crypto';
-import { deriveBlueprintSkillInput, deriveBlueprintCandidateSkillInput, materializeBlueprintSkillInputs, BlueprintProjectionPreparationError, designScopeRevisionChecks, checkTypedConstructionContent, checkAuthoritativeContentAligned, diagnoseBlueprintSkillAuthority, diagnoseDesignAuthority, selectBlueprintSkillContent } from '../../scripts/utils/blueprint-skill-projection';
+import { deriveBlueprintSkillInput, deriveBlueprintCandidateSkillInput, materializeBlueprintSkillInputs, BlueprintProjectionPreparationError, designScopeRevisionChecks, checkTypedConstructionContent, checkAuthoritativeContentAligned, diagnoseBlueprintSkillAuthority, diagnoseDesignAuthority, selectBlueprintSkillContent, resolveChangeUnitConstructionInputs } from '../../scripts/utils/blueprint-skill-projection';
 import { resolveBlueprintTarget } from '../../scripts/utils/blueprint-addressing';
 import { asRecord, type BlueprintRecord, type ComponentBlueprintRef } from '../../scripts/utils/component-blueprint-model';
 import { resolveFeatureArtifact, clearFrameworkConfigCache, loadFrameworkConfig, loadArchitectureDsl } from '../../config';
@@ -97,6 +97,65 @@ export function planContracts(f: ReturnType<typeof fixture>): ContractsSpec & { 
 }
 
 const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Promise<void> }> = [
+  { name: 'daily regression: unresolved construction remains real plan work without invalidating readable design', run(f) {
+    const blueprint = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
+    const removeMapping = (value: unknown): void => { if (!value || typeof value !== 'object') return;
+      if (!Array.isArray(value)) delete (value as BlueprintRecord).change_unit;
+      Object.values(value).forEach(removeMapping); };
+    removeMapping(blueprint); fs.writeFileSync(f.blueprintFile, YAML.stringify(blueprint)); f.bind();
+    const source = deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, 'contracts');
+    assert.equal(source.state, 'resolved', source.detail); assert.equal((source.value as ContractsSpec).change_unit, undefined);
+    assert.equal(deriveDesignPreparationReadiness(f.root, 'ledger-app-blueprint').perUnit.find(unit => unit.changeUnitId === 'ledger-refresh')?.verdict, 'constructable');
+    assert.deepEqual(diagnoseBlueprintSkillAuthority(f.root, frameworkRoot, f.feature).findings, []);
+    assert(resolveChangeUnitConstructionInputs(f.root, f.feature, frameworkRoot).gap, 'missing decisions became completed construction');
+    materializeBlueprintSkillInputs(f.root, f.feature, frameworkRoot);
+    const options = { projectRoot: f.root, frameworkRoot, feature: f.feature, completionTarget: 'feature' as const,
+      requestedResults: ['refresh ledger'], requestedPhases: ['coding', 'review', 'ut'], requirement: 'refresh ledger', overwrite: true };
+    assert(prepareFeatureScopeCandidate(options).scope.phase_chain.includes('plan'), 'unresolved construction has no executable owner');
+    // The original plan author now chooses its real mapping; no filename/AC inference supplies it.
+    fs.writeFileSync(resolveFeatureArtifact(f.root, f.feature, 'contracts.yaml').actualPath, YAML.stringify(planContracts(f)));
+    assert(!prepareFeatureScopeCandidate(options).scope.phase_chain.includes('plan'), 'a legitimate current plan was replaced with an incomplete blueprint prediction');
+  } },
+  { name: 'B4 author mapping candidate is accepted through the original writer and immediately consumable by scope preparation', run(f) {
+    const { acceptChangeUnitDecomposition, deriveDesignPreparationReadiness } = require('../../scripts/utils/change-unit-design-preparation') as typeof import('../../scripts/utils/change-unit-design-preparation');
+    const loaded = loadCanonicalChangeUnit(f.root, 'ledger-app-blueprint', 'ledger-refresh'), cu = asChangeUnitArtifact(loaded.changeUnit);
+    const contracts = planContracts(f); const { change_unit_ref: _identity, ...construction_mapping } = contracts.change_unit;
+    fs.rmSync(f.cuFile);
+    const candidateFile = path.join(path.dirname(f.blueprintFile), 'change-unit-candidates.json');
+    fs.writeFileSync(candidateFile, JSON.stringify([{ providerId: cu.provenance.extraction_method, artifact: cu, construction_mapping }]));
+    const acceptedProcess = spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'), path.join(frameworkRoot, 'harness/scripts/check-change-unit.ts'), '--project-root', f.root, '--blueprint', cu.blueprint_id, '--accept-candidates', candidateFile, '--json'],
+      { cwd: path.join(frameworkRoot, 'harness'), encoding: 'utf8', timeout: 60000 });
+    const accepted = JSON.parse(acceptedProcess.stdout); assert.equal(accepted.accepted.length, 1, acceptedProcess.stderr + acceptedProcess.stdout);
+    assert(!fs.existsSync(candidateFile), '接受后临时候选未消费清理');
+    const canonical = loadCanonicalChangeUnit(f.root, cu.blueprint_id, cu.change_unit_id);
+    const output = YAML.parse(fs.readFileSync(resolveFeatureArtifact(f.root, f.feature, 'contracts.yaml').actualPath, 'utf8'));
+    assert.equal(output.change_unit.change_unit_ref.artifact_sha256, canonical.artifactSha256);
+    assert.deepEqual(output.change_unit.predicate_mappings, construction_mapping.predicate_mappings);
+    const readiness = deriveDesignPreparationReadiness(f.root, cu.blueprint_id);
+    assert(readiness.perUnit.find(unit => unit.changeUnitId === cu.change_unit_id)?.verdict === 'constructable', JSON.stringify(readiness));
+    const next = prepareFeatureScopeCandidate(prepareChangeUnitScopeInput({ projectRoot: f.root, frameworkRoot, changeUnit: cu, requirement: 'Refresh the approved ledger', requestedResults: ['refreshed ledger'], requestedPhases: ['coding'] }));
+    assert(next.candidate.request.requirement_basis, 'scope准备仍等待额外人工contracts sidecar');
+    const scopeProcess = spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'), path.join(frameworkRoot, 'harness/scripts/goal-mode-entry.ts'), '--project-root', f.root, '--framework-root', frameworkRoot, '--feature', f.feature,
+      '--prepare-scope', '--completion-target', 'feature', '--requested-results', 'refreshed ledger', '--requested-phases', 'coding', '--requirement', 'Refresh the approved ledger'], { cwd: path.join(frameworkRoot, 'harness'), encoding: 'utf8', timeout: 60000 });
+    assert.equal(scopeProcess.status, 0, scopeProcess.stderr + scopeProcess.stdout);
+    const stage = resolveFeatureArtifact(f.root, f.feature, 'contracts.yaml').actualPath;
+    const incomplete = YAML.parse(fs.readFileSync(stage, 'utf8')); delete incomplete.change_unit; incomplete.author_notes = 'retain existing owner detail'; fs.writeFileSync(stage, YAML.stringify(incomplete));
+    const { reviseChangeUnitContent } = require('../../scripts/utils/change-unit-design-preparation') as typeof import('../../scripts/utils/change-unit-design-preparation');
+    const beforeRevision = fs.readFileSync(f.cuFile);
+    const repaired = reviseChangeUnitContent(f.root, cu.blueprint_id, [{ expectedRef: createChangeUnitRef(canonical), candidate: { providerId: cu.provenance.extraction_method, artifact: asChangeUnitArtifact(canonical.changeUnit), construction_mapping } }]);
+    assert(repaired.unchanged.includes(cu.change_unit_id) && fs.readFileSync(f.cuFile).equals(beforeRevision), '只补映射不应改CU内容/revision');
+    const repairedStage = YAML.parse(fs.readFileSync(stage, 'utf8'));
+    assert(repairedStage.change_unit && repairedStage.author_notes === 'retain existing owner detail', '原writer补映射时覆盖合法人工补充');
+    const badRoot = fixture();
+    try {
+      const invalid = structuredClone(construction_mapping); invalid.predicate_mappings[0].test_refs = [];
+      const bad = asChangeUnitArtifact(loadCanonicalChangeUnit(badRoot.root, cu.blueprint_id, cu.change_unit_id).changeUnit); fs.rmSync(badRoot.cuFile);
+      const before = fs.existsSync(resolveFeatureArtifact(badRoot.root, badRoot.feature, 'contracts.yaml').actualPath);
+      assert.throws(() => acceptChangeUnitDecomposition(badRoot.root, bad.blueprint_id, [{ providerId: bad.provenance.extraction_method, artifact: bad, construction_mapping: invalid }]), /test_refs|test|映射|原子写出/);
+      assert(!fs.existsSync(badRoot.cuFile), '坏映射留下canonical CU');
+      assert.equal(fs.existsSync(resolveFeatureArtifact(badRoot.root, badRoot.feature, 'contracts.yaml').actualPath), before, '失败留下部分Feature契约');
+    } finally { fs.rmSync(badRoot.root, { recursive: true, force: true }); }
+  } },
   { name: 'design ownership: explicit architecture decision uses the same unpublished DSL without changing construction authority', run(f) {
     const blueprint = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
     const cu = asChangeUnitArtifact(YAML.parse(fs.readFileSync(f.cuFile, 'utf8')));
@@ -108,6 +167,9 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
       module: 'new-owner-module', layer: '05-Candidate', status: 'decided_with_authority', rationale: '原请求中明确的恢复职责',
       owner: 'design-owner', verification_refs: ['view:development'], provenance: structuredClone(blueprint.provenance) });
     cu.design_refs.push({ ...cu.component_blueprint_ref, target: { kind: 'decision', id: 'new-layer-owner' } });
+    const designContracts = asRecord(resolveBlueprintTarget(blueprint, cu.design_refs[0].target).contracts)!;
+    (designContracts.files as string[]).push('framework.config.json');
+    (asRecord(designContracts.change_unit)!.design_ref_mappings as BlueprintRecord[]).push({ design_ref: { kind: 'decision', id: 'new-layer-owner' }, implementation_refs: ['framework.config.json'], verification_refs: ['planned:test/ledger/LedgerFeature.test.ets'] });
     const missing = deriveBlueprintCandidateSkillInput(f.root, f.feature, frameworkRoot, 'contracts', { blueprint, changeUnit: cu });
     assert(missing.state === 'invalid' && missing.codes?.includes('cu_architecture_impact_not_effective'), JSON.stringify(missing));
     const proposed = deriveBlueprintCandidateSkillInput(f.root, f.feature, frameworkRoot, 'contracts', { blueprint, changeUnit: cu, architecture });

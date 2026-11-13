@@ -6,11 +6,11 @@ import { currentScopeItems, requirementTraceability } from './blueprint-requirem
 import { ownersForAddress } from './change-unit-addressing';
 import { blueprintRefAddress } from './change-unit-model';
 import { BlueprintReviewInputs, ReviewChangeUnit, reviewChangeUnitBindings } from './blueprint-review-inputs';
-import { BlueprintContentError, mergeBlueprintTargetContent, projectionContentEqual, projectionRowIdentity, selectBlueprintSkillContent } from './blueprint-skill-projection';
+import { BlueprintContentError, mergeBlueprintTargetContent, projectionContentEqual, projectionRowIdentity, selectBlueprintSkillContent, selectBlueprintRequestContent } from './blueprint-skill-projection';
 import type { ComponentBlueprintRef } from './component-blueprint-model';
 import { generateMermaidViewGraph, generateMermaidRelationGraph, generateMermaidPhaseGraph, generateMermaidModuleDependencyGraph, parseMermaidSubset, validateGeneratedBlueprintGraphs } from './blueprint-graph-generator';
 import { evaluateDerivedConclusionFreshness } from './derived-conclusion-freshness';
-import { diagnoseBlueprintPresentationShape } from './component-blueprint-validator';
+import { diagnoseBlueprintPresentationShape, isSmallBlueprintRequest, type ComponentBlueprintValidationContext } from './component-blueprint-validator';
 import { extractAcceptanceIdRefs } from './check-acceptance';
 import { normalizeUseCasePortCalls } from './spec-loader';
 import { BlueprintGraphDisplayInspection, inspectBlueprintGraphDisplay } from './blueprint-reader-guide';
@@ -711,7 +711,24 @@ function renderReaderBody(blueprint: BlueprintRecord, inputs: BlueprintReviewInp
 
 /** 同一确定性编排生成问题导向正文和完整参考，只消费 canonical 蓝图与 CU。 */
 export function renderBlueprintReviewMarkdown(blueprint: BlueprintRecord, artifactSha256: string,
-  inputs: BlueprintReviewInputs = { units: [], sourceGaps: [], closureExists: false }): string {
+  inputs: BlueprintReviewInputs = { units: [], sourceGaps: [], closureExists: false }, context: ComponentBlueprintValidationContext = {}): string {
+  if (isSmallBlueprintRequest(context)) {
+    const content = selectBlueprintRequestContent(blueprint);
+    return [
+      '# 小型请求设计', '',
+      `蓝图 ${text(blueprint.blueprint_id)} · revision ${text(blueprint.revision)} · ${text(artifactSha256)}`, '',
+      '授权终点为本请求的局部设计；不代表完整设计准入、CU或Component完成。', '',
+      '## 改动点', '', text(context.requestIntake?.user.text), '',
+      ...table(['来源', '原始内容摘要'], currentScopeItems(blueprint).map(item => [item.source_ref, item.source_sha256])),
+      '## 可检验验收', '',
+      ...table(['ID', '操作/输入', '可观察预期', '验证方式'], asRecords(content.acceptance?.criteria).map(item => [item.id, refs(item.verification_steps), item.expected_result, item.ut_layer])),
+      '## 当前文件目标', '', ...asStrings(content.contracts?.files).map(file => `- ${text(file)}`), '',
+      ...asRecords(asRecord(blueprint.decisions_and_gaps)?.decisions).flatMap(decision => [
+        `### ${text(decision.decision_id)}`, '', text(decision.resolution ?? decision.rationale), '', text(decision.impact), '',
+        ...table(['选项', '取舍'], asRecords(decision.alternatives).map(option => [option.option, option.rejected_reason])),
+      ]),
+    ].join('\n');
+  }
   if (!nonEmptyString(blueprint.component_id) || !nonEmptyString(blueprint.blueprint_id)) throw new Error('生成评审投影前必须有 component_id 与 blueprint_id。');
   const review = asRecord(blueprint.review_summary) ?? {}; const admission = asRecord(review.admission); const views = asRecords(blueprint.design_views);
   const view = (id: string) => views.find(v => v.view_id === id); const current = inputs.units.filter(item => !item.retiredBy);

@@ -9,10 +9,10 @@
 | 请求 | 输入与执行 | 终点 |
 |---|---|---|
 | 普通审查、解释代码 | 确定目标文件与比较基线，读取下方共享方法和适用项目知识 | 在对话交付发现及覆盖说明；不创建 request、facts 或报告模板 |
-| 用户要求持久且经 checker 校验的报告 | 用 [request CLI](../../../docs/operations/request-harness.md)，`targets.files` 点名目标；先 `--prepare-request`，再 Research、写报告、执行同一命令 | 只写显式 report-dir；如实呈现结构检查和审查结论 |
+| 用户要求持久且经 checker 校验的报告 | 用 [request CLI](../../../docs/operations/request-harness.md)，`targets.files` 点名目标；自动路径在首次能力调用准备，显式 request-file 可先 `--prepare-request`，再 Research、写报告、执行同一命令 | 只写显式 report-dir；如实呈现结构检查和审查结论 |
 | 正式 Feature/CU review | 先完整读 [正式前置](../../reference/code-review-workflow-detail.md#正式-featurecu-前置) 与 [正式阶段](../../reference/code-review-workflow-detail.md#正式-featurecu-阶段) 再执行，消费绑定契约与写范围 | 按原 required 证据闭环，不自动追加 UT/testing |
 
-已有正式交付责任继续用对应 Feature 路径。纯审查不要求 DevEco、设备、全局 setup、需求号或六章报告。
+已有 Feature/CU 交付责任继续原有效范围，不拆独立 request。小型沿自身原 request，读取原目标、同协议短蓝图当前验收、最终 diff 与有效验证，不强造 CU/Feature 或把短设计称完整 admitted。纯审查不要求 DevEco、设备、全局 setup、需求号或六章报告。
 完整交付由原协调器按共同当前处置和已有授权继续，不在phase边界重复确认或轮流派作者。独立请求到本次原终点结束；真正独立核验保持另一个上下文。
 request/正式调用的输入身份与 facts 按 [输入契约](../../../docs/concepts/skill-contracts.md#facts-11) 解析；不自行补造身份。
 

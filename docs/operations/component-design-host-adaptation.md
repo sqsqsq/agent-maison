@@ -40,7 +40,7 @@ checker 不自动升 revision；只有被接受的新事实、权威裁决或冲
 
 设计 owner 在 canonical 蓝图完成 4+1：场景（+1）与旅程、逻辑边界和模型、运行顺序与分支/恢复、开发目录/文件与组件、适用部署落点和外部配套；同时写清选择与被否方案、质量属性、数据生命周期和验收。实读应能回答需求/范围、当前问题、工作方案、模块责任、选择依据、CU 交付与安全中间态、风险验收七问。详细程度取决于真实关切，不按行数压缩必要细节。
 
-会被 CU 引用的设计目标在设计期写入已有 `acceptance`、`contracts`、`use_cases` 结构。验收含 AC/BD/NFR、优先级、步骤/预期、分层与 focus；契约保留类型/接口、模型、组件、目录/文件和状态，**整个 contracts.change_unit 由 plan 在 Feature contracts.yaml 生成**；用例含阶段、主路径/分支及预期，新写 expected_port_calls，旧 expected_boundary_calls 经共同归一化兼容、冲突诊断。来源权威仍按既有 provenance 校验。`contracts.files` 是唯一施工写集，目录表、`touches`、图和 `source_ref` 都不能扩大它。
+会被 CU 引用的设计目标在设计期写入已有 `acceptance`、`contracts`、`use_cases` 结构。验收含 AC/BD/NFR、优先级、步骤/预期、分层与 focus；契约保留类型/接口、模型、组件、目录/文件和状态，**contracts.change_unit 仍只落 Feature contracts.yaml；原设计作者同次明确映射候选，CU 接受后由原 writer 填真实身份、复用或确定生成，只有真正未决项才交 plan**；用例含阶段、主路径/分支及预期，新写 expected_port_calls，旧 expected_boundary_calls 经共同归一化兼容、冲突诊断。来源权威仍按既有 provenance 校验。`contracts.files` 是唯一施工写集，目录表、`touches`、图和 `source_ref` 都不能扩大它。
 
 引用一个目标即整体继承其设计内容。共享目标 S 只放所有引用者都承担的验收、合法写集和用例；CU-A 引 S+A、CU-B 引 S+B，专属 AC/BD/NFR、files 和用例放 A/B。数组沿已有行身份去重并合并，同身份不同内容拒绝；对象只接受完全相同内容，不逐键拼接。`module_dependencies`、`navigation`、`resource_keys`、acceptance 的 `flows` 等对象分别集中在一个承载目标。存量蓝图 change_unit 不参与共同设计合并；当前 Feature 映射仍由 plan 原门校验。设计节点保持语义稳定，不因 CU 替代或修订复制版本节点。不能按 predicate 隐藏误继承的验收或文件，合法先后写同一文件不自动判错。
 
@@ -107,7 +107,9 @@ deployment 是否适用依据部件固有的运行拓扑：平台、进程、独
 
 ### 3.0 什么时候必须用这条接缝
 
-**单一判据**：每项正式需求最终必须形成**至少一个合法 `currentScopeItem`**（项目内可解析
+先按 [统一前门](project-entry.md) 判断本请求。以下来源物化规则适用于实际进入蓝图设计的请求；特别简单沿自动 request 保留真实用户来源，不因此强造 currentScopeItem 或 provider manifest。小型使用同协议短蓝图、原 request 与验收来源，不建 CU/独立质询/评审文件；中型/复杂及已有 CU 保留完整设计和三条宿主接缝的适用责任。
+
+**单一判据**：每项进入蓝图的当前需求最终必须形成**至少一个合法 `currentScopeItem`**（项目内可解析
 `source_ref` + 原始字节 hash + provenance + authority）。达成方式有两条，**都合法、产出同一
 形状**：
 
