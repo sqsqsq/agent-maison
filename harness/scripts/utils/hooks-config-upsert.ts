@@ -1,5 +1,5 @@
 // ============================================================================
-// hooks-config-upsert.ts — cursor .cursor/hooks.json 结构化 upsert（plan e8f5a2c7 G1b）
+// hooks-config-upsert.ts — Cursor/Codex 宿主 hooks.json 结构化 upsert
 // ============================================================================
 // 第四轮 P1 钉死：.cursor/hooks.json 是宿主原生共享配置（团队可能已有格式化/审计/安全
 // hooks）——绝不 verbatim 整文件覆盖；只对 framework 自有条目做结构化 upsert。
@@ -49,6 +49,34 @@ function entryCommand(e: unknown): string | null {
   if (!e || typeof e !== 'object' || Array.isArray(e)) return null;
   const c = (e as Record<string, unknown>).command;
   return typeof c === 'string' && c.trim() ? c.trim() : null;
+}
+
+interface HooksConfigGroup { hooks: HooksConfigEntry[]; [key: string]: unknown }
+function groupHandlers(e: unknown): unknown[] | null {
+  return e && typeof e === 'object' && !Array.isArray(e) && Array.isArray((e as Record<string, unknown>).hooks)
+    ? (e as { hooks: unknown[] }).hooks : null;
+}
+
+/** Codex groups can contain host handlers: split those out before updating our matcher. */
+function upsertGroupArray(existing: unknown, desired: HooksConfigGroup, owned: ReadonlySet<string>): unknown[] {
+  const next: unknown[] = [];
+  let placed = false;
+  for (const value of Array.isArray(existing) ? existing : []) {
+    const handlers = groupHandlers(value)!;
+    const ours = handlers.filter(handler => { const command = entryCommand(handler); return command !== null && owned.has(command); });
+    if (!ours.length) { next.push(value); continue; }
+    const group = value as Record<string, unknown>;
+    const others = handlers.filter(handler => !ours.includes(handler));
+    if (others.length) next.push({ ...group, hooks: others });
+    if (!placed) {
+      next.push({ ...group, ...desired, hooks: desired.hooks.map(handler => ({
+        ...(ours.find(old => entryCommand(old) === handler.command) as Record<string, unknown> | undefined), ...handler,
+      })) });
+      placed = true;
+    }
+  }
+  if (!placed) next.push(desired);
+  return next;
 }
 
 function stringifyDoc(doc: HooksConfigDoc): string {
@@ -102,8 +130,17 @@ function upsertEventArray(
 export function computeHooksConfigUpsert(
   existingText: string | null,
   desiredText: string,
+  projectRoot?: string,
 ): UpsertResult {
-  const desired = parseDoc(desiredText);
+  let desired = parseDoc(desiredText);
+  if (desired && desiredText.includes('{{PROJECT_ROOT}}')) {
+    if (!projectRoot) return { status: 'invalid_json', note: 'hooks_config 项目路径模板缺物化上下文，拒绝产出无法启动的命令' };
+    // Substitute parsed JSON strings, so Windows paths/quotes are never interpolated into raw JSON.
+    const fill = (value: unknown): unknown => typeof value === 'string' ? value.split('{{PROJECT_ROOT}}').join(projectRoot.replace(/\\/g, '/'))
+      : Array.isArray(value) ? value.map(fill)
+        : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).map(([key, item]) => [key, fill(item)])) : value;
+    desired = fill(desired) as HooksConfigDoc;
+  }
   // 第八轮 codex P2：framework 自有模板损坏不得静默接受（原实现只按"数组事件"过滤，
   // preToolUse 写成对象会滑成"零自有条目"→ created 空壳）。模板完整 schema 硬校验：
   // hooks 须为 plain object；每个声明的 event 值须是**非空数组**且每项含合法 command。
@@ -120,22 +157,25 @@ export function computeHooksConfigUpsert(
       return { status: 'invalid_json', note: `adapter hooks_config 模板的 hooks.${event} 须为非空数组（实际 ${Array.isArray(v) ? '空数组' : typeof v}）——模板损坏，拒绝物化` };
     }
     for (const e of v) {
-      if (entryCommand(e) === null) {
+      const handlers = groupHandlers(e);
+      if (entryCommand(e) === null && (!handlers?.length || handlers.some(handler => entryCommand(handler) === null))) {
         return { status: 'invalid_json', note: `adapter hooks_config 模板的 hooks.${event} 存在缺 command 的条目——ownership key 缺失，拒绝物化` };
       }
     }
   }
-  const desiredEvents = declaredEvents as Array<[string, HooksConfigEntry[]]>;
+  const desiredEvents = declaredEvents as Array<[string, Array<HooksConfigEntry | HooksConfigGroup>]>;
   const ownedCommands = new Set<string>(LEGACY_OWNED_COMMANDS);
   for (const [, entries] of desiredEvents) {
     for (const e of entries) {
-      const c = entryCommand(e);
-      if (c) ownedCommands.add(c);
+      for (const handler of groupHandlers(e) ?? [e]) {
+        const c = entryCommand(handler);
+        if (c) ownedCommands.add(c);
+      }
     }
   }
 
   if (existingText === null) {
-    const created: HooksConfigDoc = { version: desired.version ?? 1, hooks: {} };
+    const created: HooksConfigDoc = { ...desired, hooks: {} };
     for (const [event, entries] of desiredEvents) {
       (created.hooks as Record<string, unknown>)[event] = entries;
     }
@@ -146,7 +186,7 @@ export function computeHooksConfigUpsert(
   if (!doc) {
     return {
       status: 'invalid_json',
-      note: '.cursor/hooks.json 不是合法 JSON——不做整文件覆盖；请修复后重跑（宿主自有配置，framework 不越权重写）',
+      note: 'hooks.json 不是合法 JSON——不做整文件覆盖；请修复后重跑（宿主自有配置，framework 不越权重写）',
     };
   }
 
@@ -155,17 +195,20 @@ export function computeHooksConfigUpsert(
   if (doc.hooks !== undefined && (typeof doc.hooks !== 'object' || doc.hooks === null || Array.isArray(doc.hooks))) {
     return {
       status: 'invalid_schema',
-      note: `.cursor/hooks.json 的 hooks 字段不是对象（实际 ${Array.isArray(doc.hooks) ? 'array' : typeof doc.hooks}）——不做改写；请人工核对宿主配置`,
+      note: `hooks.json 的 hooks 字段不是对象（实际 ${Array.isArray(doc.hooks) ? 'array' : typeof doc.hooks}）——不做改写；请人工核对宿主配置`,
     };
   }
   const existingHooks = (doc.hooks ?? {}) as Record<string, unknown>;
-  for (const [event] of desiredEvents) {
+  for (const [event, entries] of desiredEvents) {
     const cur = existingHooks[event];
     if (cur !== undefined && !Array.isArray(cur)) {
       return {
         status: 'invalid_schema',
-        note: `.cursor/hooks.json 的 hooks.${event} 不是数组（实际 ${typeof cur}）——不做改写；请人工核对宿主配置`,
+        note: `hooks.json 的 hooks.${event} 不是数组（实际 ${typeof cur}）——不做改写；请人工核对宿主配置`,
       };
+    }
+    if (entries.some(entry => groupHandlers(entry)) && Array.isArray(cur) && cur.some(entry => groupHandlers(entry) === null)) {
+      return { status: 'invalid_schema', note: `hooks.json 的 hooks.${event} matcher group 缺 handlers 数组——不做改写` };
     }
   }
 
@@ -175,7 +218,13 @@ export function computeHooksConfigUpsert(
   for (const [event, entries] of desiredEvents) {
     let current = hooks[event];
     for (const desiredEntry of entries) {
-      const r = upsertEventArray(current, desiredEntry, ownedCommands);
+      if (groupHandlers(desiredEntry)) {
+        const next = upsertGroupArray(current, desiredEntry as HooksConfigGroup, ownedCommands);
+        changed = changed || JSON.stringify(current) !== JSON.stringify(next);
+        current = next;
+        continue;
+      }
+      const r = upsertEventArray(current, desiredEntry as HooksConfigEntry, ownedCommands);
       current = r.next;
       changed = changed || r.changed;
     }
@@ -185,7 +234,7 @@ export function computeHooksConfigUpsert(
   if (!changed) return { status: 'unchanged', nextText: existingText };
 
   const nextDoc: HooksConfigDoc = { ...doc, hooks };
-  if (nextDoc.version === undefined) nextDoc.version = desired.version ?? 1;
+  if (nextDoc.version === undefined && desired.version !== undefined) nextDoc.version = desired.version;
   return { status: 'updated', nextText: stringifyDoc(nextDoc) };
 }
 

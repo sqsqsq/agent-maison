@@ -1491,6 +1491,7 @@ function inspect03(env: InspectorEnv): Inspection[] {
       const upsert = computeHooksConfigUpsert(
         tgBuf === null ? null : tgBuf.toString('utf-8'),
         tplBuf.toString('utf-8'),
+        env.projectRoot,
       );
       if (upsert.status === 'unchanged') {
         fileRows.push({
@@ -2026,6 +2027,7 @@ function applyInitMechanismSync(
       const upsert = computeHooksConfigUpsert(
         existingBuf === null ? null : existingBuf.toString('utf-8'),
         tplBuf.toString('utf-8'),
+        projectRoot,
       );
       if (upsert.status === 'invalid_json' || upsert.status === 'invalid_schema') {
         // 第七轮 codex P1-2：blocked 须可见传播（不再记 unchanged 静默）——effect: 'blocked'
@@ -2403,6 +2405,7 @@ const checker: PhaseChecker = {
           const upsert = computeHooksConfigUpsert(
             tgBuf === null ? null : tgBuf.toString('utf-8'),
             tplBuf.toString('utf-8'),
+            ctx.projectRoot,
           );
           if (upsert.status === 'invalid_json' || upsert.status === 'invalid_schema') {
             problems.push(`${f.targetRel}: ${upsert.note ?? upsert.status}`);

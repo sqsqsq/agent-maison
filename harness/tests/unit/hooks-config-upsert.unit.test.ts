@@ -33,6 +33,58 @@ const DESIRED = JSON.stringify({
 
 const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
   {
+    name: 'Codex nested hooks preserve host groups and fields through real adapter sync, idempotence and removal',
+    run: () => {
+      const template = fs.readFileSync(frameworkAbs(LAYOUT, 'agents/codex/templates/hooks.json'), 'utf8');
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-upsert-'));
+      const desired = JSON.parse(computeHooksConfigUpsert(null, template, root).nextText!), group = desired.hooks.PreToolUse[0], command = group.hooks[0].command;
+      const host = { description: 'team description', team_meta: { keep: true }, hooks: {
+        PreToolUse: [{ matcher: 'old-matcher', team_group: 'keep', hooks: [
+          { type: 'command', command, commandWindows: 'node stale-owned.js', async: true, timeout: 99, team_handler: 'keep' },
+          { type: 'mcp_tool', server: 'team', tool: 'audit', input: { keep: true } },
+        ] }, { matcher: 'duplicate', hooks: [{ type: 'command', command }] }],
+        Stop: [{ hooks: [{ type: 'command', command: 'node team-stop.js' }] }],
+      } };
+      try {
+        const target = path.join(root, '.codex/hooks.json'); fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, JSON.stringify(host));
+        const { __testing } = require('../../scripts/check-init') as typeof import('../../scripts/check-init');
+        const adapter = __testing.loadAdapter('codex'); assert(adapter !== null, 'codex descriptor missing');
+        assert(adapter.templateFiles.some(file => file.targetRel === '.codex/hooks.json' && file.kind === 'structured_upsert'), 'adapter bypassed existing upsert materialization');
+        __testing.applyInitMechanismSync(root, adapter, { includeTargets: new Set(['.codex/hooks.json']) });
+        const bytes = fs.readFileSync(target, 'utf8'), result = JSON.parse(bytes);
+        const inspections = __testing.inspect03({ projectRoot: root, adapter: { ...adapter, templateFiles: adapter.templateFiles.filter(file => file.targetRel === '.codex/hooks.json') }, cfg: __testing.loadRawFrameworkConfig(root), renderEnv: null });
+        assert(inspections.length === 1 && inspections[0].status === 'EMPTY', 'read-only inspector did not consume the same project-root rendering: ' + JSON.stringify(inspections));
+        assert(result.description === host.description && JSON.stringify(result.team_meta) === JSON.stringify(host.team_meta), 'host top-level fields changed');
+        assert(JSON.stringify(result.hooks.Stop) === JSON.stringify(host.hooks.Stop), 'host other event changed');
+        const groups = result.hooks.PreToolUse;
+        assert(groups.length === 2 && groups[0].matcher === 'old-matcher', 'host matcher changed or owned duplicates remain');
+        assert(JSON.stringify(groups[0].hooks) === JSON.stringify([host.hooks.PreToolUse[0].hooks[1]]), 'host nested handler changed');
+        assert(groups[1].matcher === group.matcher && groups[1].team_group === 'keep' && groups[1].hooks[0].team_handler === 'keep', 'owned update discarded unrelated fields');
+        assert(groups[1].hooks[0].timeout === 10 && groups[1].hooks[0].command === command, 'owned fields not reconciled');
+        assert(groups[1].hooks[0].commandWindows === command && groups[1].hooks[0].async === false, 'owned Windows command or background flag bypassed the current synchronous guard');
+        assert(computeHooksConfigUpsert(bytes, template, root).status === 'unchanged', 'Codex upsert is not idempotent');
+        const removed = JSON.parse(computeHooksConfigRemoval(bytes, [command]).nextText!);
+        assert(removed.hooks.PreToolUse.length === 1 && JSON.stringify(removed.hooks.PreToolUse[0]) === JSON.stringify(groups[0]), 'removal changed host group');
+        assert(!('version' in JSON.parse(computeHooksConfigUpsert(null, template, root).nextText!)), 'Codex format gained Cursor version field');
+        const doc = YAML.parse(fs.readFileSync(frameworkAbs(LAYOUT, 'agents/codex/adapter.yaml'), 'utf8'));
+        assert(resolveEnforcementTier({ settings_file: doc.settings_file, hooks: doc.hooks }, { mode: 'interactive' }) === 'soft_rule_only', 'write-only guard cannot advertise Stop/closure capability');
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    },
+  },
+  {
+    name: 'Codex nested hook schema errors preserve the complete host document',
+    run: () => {
+      const desired = fs.readFileSync(frameworkAbs(LAYOUT, 'agents/codex/templates/hooks.json'), 'utf8');
+      for (const existing of ['{bad', JSON.stringify({ hooks: { PreToolUse: [{ matcher: 'team', hooks: 'not-an-array' }] } })]) {
+        const result = computeHooksConfigUpsert(existing, desired, os.tmpdir());
+        assert(['invalid_json', 'invalid_schema'].includes(result.status) && result.nextText === undefined, 'malformed host config was overwritten');
+      }
+      assert(computeHooksConfigUpsert(null, JSON.stringify({ hooks: { PreToolUse: [{ hooks: [] }] } })).status === 'invalid_json', 'empty owned group silently accepted');
+      assert(computeHooksConfigUpsert(null, desired).status === 'invalid_json', 'unexpanded project-root command was materialized');
+    },
+  },
+  {
     name: '真实 Claude/CA 模板变量、无花括号变量与 Windows 绝对路径识别',
     run: () => {
       for (const adapter of ['claude', 'codeagent']) {

@@ -24,6 +24,12 @@ rules:
   target_dir: .codex/rules
   template_dir: ../shared/agent-bundle/templates/rules
 
+# Native PreToolUse only; keep Stop/closure capability separate. Never overwrite host hooks.
+hooks_config:
+  template_path: templates/hooks.json
+  target_path: .codex/hooks.json
+  update_policy: auto_overwrite
+
 user_confirmation:
   structured_widget: unsupported
   portable_required: true
@@ -113,4 +119,6 @@ notes: |
   - 与 generic 类似，但 bundle 默认落 `.codex/skills`；非标路径须编辑 framework.config.json。
   - native /goal 第一版仅 metadata + 条件模板占位；闭环裁决由 goal-runner + harness 承担。
   - Stop hook（check-phase-completion）**不做**（plan 7b2e9d4c D5）：goal 主路径是 codex exec，闭环由 harness + check-receipt 判；复检触发＝宿主出现一次 codex 交互会话把未闭环阶段报成完成的事故。
-  - 写守卫（guard-framework-write）**暂缓**（plan 7b2e9d4c D5）：技术可行（hooks.json 结构化 upsert + matcher apply_patch），但无事故记录；复检触发＝宿主出现一次 codex 写入 framework/ 的事故（porcelain 或 release:verify 抓到）。
+  - 写守卫通过 hooks_config 结构化 upsert 注册原生 PreToolUse Edit|Write matcher；apply_patch 的 command 补丁目标交共享 framework/入口规则。物化时用既有项目根上下文生成带引号的绝对脚本路径，支持子目录会话及非Git工程；不覆盖宿主其它 handler，也不增加 Stop/完成能力。
+  - Desktop 包26.1106.6628.0/runtime0.167.0-alpha.4.1已实际验证项目层与准确hook信任后的技术探针：exec封装内canonical apply_patch/Bash命中、拒绝→真读→恢复、framework靶仍拒。该证据只证明原生协议能力，生产共享守卫及自动request/compile的Desktop验收须单列，不用技术探针代签。
+  - 项目与具体hook须由原生客户端信任；不自动绕过或写全局信任。缺原件/不完整历史由共享reader准确降级，Shell与其它未覆盖工具仍是明确盲区。

@@ -125,7 +125,7 @@ function readNativeSession(reference, projectRoot) {
     if (role === 'user' || role === 'assistant' || role === 'summary') {
       const parts = message?.content ?? payload.content ?? payload.message;
       const content = text(Array.isArray(parts) ? parts.filter(item => ['text', 'input_text', 'output_text'].includes(item.type)) : parts);
-      const injected = store === 'codex' && role === 'user' && /^(?:# AGENTS\.md instructions for(?:\s|$)|<environment_context>)/.test(content.trim());
+      const injected = store === 'codex' && role === 'user' && /^(?:# AGENTS\.md instructions(?: for(?:\s|$)|\r?\n|$)|<environment_context>)/.test(content.trim());
       if (content && !injected) messages.push({ id, role, text: content, at, line: seq, prompt_id: row.promptId });
       for (const item of Array.isArray(message?.content) ? message.content : []) {
         if (item.type === 'tool_use') pending.set(item.id, { name: item.name, input: item.input, line: seq, at });

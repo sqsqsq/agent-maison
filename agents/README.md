@@ -220,7 +220,7 @@ DeepSeek Harness 使用 `deepseek-harness` adapter、自有 `.dsh/skills` 和共
 | generic | AGENTS.md | — | `{agent_bundle_root}/skills/*`（bridge 薄跳板；inline 已废弃） | `{agent_bundle_root}/rules/*.mdc` | — | — |
 | claude  | CLAUDE.md | `.claude/commands/*.md` + `.claude/agents/verifier.md` | — | `.claude/rules/*.md` | `.claude/settings.json` | `.claude/hooks/*.mjs` |
 | cursor  | AGENTS.md | — | `.cursor/skills/<skill>/SKILL.md`（模板 SSOT：`shared/agent-bundle/templates/skills-bridge`） | `.cursor/rules/*.mdc` | — | — |
-| codex   | AGENTS.md | —（顶层 `subagents` → `.codex/agents/verifier.toml`，生成物） | `.codex/skills/<skill>/SKILL.md`（bridge 跳板） | `.codex/rules/interaction-renderer.md` | — | — |
+| codex   | AGENTS.md | —（顶层 `subagents` → `.codex/agents/verifier.toml`，生成物） | `.codex/skills/<skill>/SKILL.md`（bridge 跳板） | `.codex/rules/interaction-renderer.md` | — | `.codex/hooks.json`（结构化 upsert；仅 PreToolUse 编辑守卫） |
 | chrys   | AGENTS.md | — | `.agents/skills/<skill>/SKILL.md`（bridge 跳板） | `.agents/rules/interaction-renderer.md` | — | — |
 | opencode | AGENTS.md | —（技能自动注册 slash） | `.opencode/skill/<skill>/SKILL.md`（自有原生目录；bridge 跳板） | `.opencode/rules/interaction-renderer.md` | — | — |
 | codeagent | AGENTS.md | `.cac/commands/*.md`（自有副本）+ `.cac/agents/verifier.md`（共享模板） | — | `.cac/rules/*.md`（共享模板） | `.cac/settings.json` | `.cac/hooks/*.mjs`（共享模板） |
@@ -232,7 +232,7 @@ DeepSeek Harness 使用 `deepseek-harness` adapter、自有 `.dsh/skills` 和共
 
 支持的编辑 hook 只机械证明同一原生会话可消费上下文中已加载前门规则，缺失拒绝当前产品写入、补读即恢复；最近压缩明确保留加载事实可复用。Maison 派出作者按既有 RUN_ID/ATTEMPT/ATTEMPT_PHASE/HEADLESS 信号并集识别免重复入口（包括 Cursor 子进程缺 HEADLESS 但有运行/attempt 信号），仍不免 framework 只读、实际写界和真实完成核验。该信号是合作约定，不声称抵抗任意 Shell 伪造，不增加令牌/身份层。
 
-下表是 **2026-11-11 隔离原生能力及生产接线短例**，不代表正式发布件、业务宿主或设备验收。原命令/退出/字段/用时与源码哈希保存在开发验证目录 `temp/native-client-probes/` 的 `RESULTS.md`、`A8-PRODUCTION-RESULTS.md` 及各项结果原件；这些证据不随发布件。生产 hook 原生调用绑定当时逐文件源码 SHA256；其后仅用户覆盖引用/否定词窄改，当前 core 用真实调用前的原生 JSONL 前缀回放仍保留普通会话拒绝/恢复/继续和作者放行/framework 拒绝五项结论，该回放不是新的原生调用。Node UT 执行前后核对 452 个执行源码哈希未变，动态 runtime 资产另有哈希记录，不以源码快照证明其它客户端已支持。
+下表是 **2026-11-11 至 12 隔离原生能力及生产接线短例**，不代表正式发布件、业务宿主或设备验收。早期原件保存在开发验证目录 `temp/native-client-probes/` 的 `RESULTS.md`、`A8-PRODUCTION-RESULTS.md`；本次 Codex 生产守卫证据保存在 `harness/reports/a6-client-validation/`，这些证据不随发布件。生产 hook 原生调用绑定当时逐文件源码 SHA256；Claude 其后仅用户覆盖引用/否定词窄改，当前 core 用真实调用前的原生 JSONL 前缀回放仍保留普通会话拒绝/恢复/继续和作者放行/framework 拒绝五项结论，该回放不是新的原生调用。Node UT 执行前后核对 452 个执行源码哈希未变，动态 runtime 资产另有哈希记录，不以源码快照证明其它客户端已支持。
 
 | 客户端 | 本次真实观察 | 未测或降级边界 |
 |---|---|---|
@@ -241,12 +241,12 @@ DeepSeek Harness 使用 `deepseek-harness` adapter、自有 `.dsh/skills` 和共
 | 同一自动 request→Node UT | 公共 check:ut 实际执行 Node --test，1 pass/0 fail/0 skipped；测试读取原 request 的用户 final 预期并断言实际文件，request_test_execution、request_expectation_source、request_intake_reconciliation 均 PASS | 使用临时工程和已有测试 provider 模板，不预填结果；只证明该请求的真实 Node UT 消费，不代业务编译、架构正例、HMOS 或设备验证 |
 | Cursor CLI 2026.07.23-e383d2b；Desktop 3.15.6 | 隔离 CLI 在模型执行前 Authentication required，exit 1 | 未登录、未取得真实 hook/transcript/作者环境样本；启动参数缺 HEADLESS 不证明 hook 实际环境。属当前认证缺口，不是产品不支持 |
 | CodeAgent | 正确 codeagentcli 在本机 PATH/常见入口未定位 | 本轮无新原生变量/事件/transcript 样本，不以 Claude 同族壳推定实测成立；当前环境未定位，不是产品不支持 |
-| Codex Desktop 包 26.1103.7773.0，runtime 0.167.0-alpha.3.2 | 已按准确会话环境只读核本任务原生 session_meta/response_item 结构、角色及工具/代理通讯记录；role=user 本身不能证明根用户原始输入，cwd 按原件核实 | 项目 hooks.json 加载/信任/事件/拒绝恢复尚未实际执行，当前按常驻规则＋能力调用后验披露；原请求在 `history_base` 指向的分页前段、且未获可靠的精确同线程读取覆盖时，保留精确来源缺失/完整历史未覆盖缺口，沿 `origin_gap` 只执行显式局部能力，不签完整请求/review PASS，也不推定豁免或固定档位；不扫描其它线程、不新增历史索引。全局 CLI 0.161.0 单列，不能代 Desktop 结果，不写成“不支持 hook” |
+| Codex Desktop 原生会话，header `cli_version=0.167.0-alpha.4.1`，模型 gpt-6.1-sol | 新根会话真实用户发出隔离请求，生产共享前门首次拒写；真实工具完整读取生产 entry 后，原错误补丁已过前门但因独立 `before` 行发生原生 context 校验失败，该 FAIL 保留。同一原请求续作改用准确整行补丁成功，framework 两次尝试均被共享保护拒绝；最终 after/protected。原生 reader 核唯一真实 user、已读入口及成功编辑路径，续作工具转发不新增用户授权。项目层及1项生产 hook 信任经明确授权的官方接口登记 | 仅验证本隔离生产守卫与来源读取链。fixture 未物化根 AGENTS/framework.config；将其当完整宿主的全局 Skill 调查不适用，均不据此判 hook 失败。未跑 compile/request/UT，未验用户覆盖、hook 耗时或业务宿主；工具 shell 路径中的 PrimaryRuntime 26.1110.778.0 不是 Desktop 包号。fork/history_base 或只有注入/工具转发时仍降级，不签完整请求/review PASS，不推定豁免/固定档位。CodeAgent 待内网采集，Cursor 暂缓 |
 | 其它 adapter | 使用同一根规则及能核实的原生来源 | 未有本轮真实编辑 hook 证据时仅声明指引/后验路径，不从物化文件推定写前保证 |
 
 Claude 实际落盘 `uuid` 为原始 user 引用，hook 的 prompt_id 对应原件 promptId，二者不等；新版 api-request-blob 为缓存快照、压缩总结虽 type=user 但带 isCompactSummary/isVisibleInTranscriptOnly，均不得当新用户授权。compact_boundary 是 system 记录，落盘字段 compactMetadata；能明确保留已读规则才复用。Codex 原件中的 agent_message 代理通讯不能当用户；已知 `# AGENTS.md instructions`、`<environment_context>` 等客户端指令/环境注入即使落为 role=user，也不能当用户原请求或流程授权。标有 `thread_source: subagent` 或子代理血缘的会话不能冒充根用户来源，须沿原请求核准确根线程原件；不能从子代理唯一一条 user 记录推定根用户授权。字段按真实版本解析，不以角色、格式可解析或文件存在宣称真实用户来源/语义已由机器证明。
 
-原生 trust/逐 hook review 仍由用户客户端控制，不自动绕过、不改全局配置。Shell 重定向、脚本、场外进程和未覆盖编辑工具是明确盲区；无 hook 时常驻规则及首次 compile/request 后验只覆盖实际进入框架的调用，完全绕开且不再检查的会话没有发现保证。前门保证和原有 framework 编辑写保护分别报告。
+原生 trust/逐 hook review 仍由用户控制；框架物化不自动绕过或改全局信任。Codex 必须信任准确的项目层及当前 hook 定义，祖先目录 trusted 不保证新嵌套项目已启用；未启用或原件不可读时如实降级。Shell 重定向、脚本、场外进程和未覆盖编辑工具是明确盲区；无 hook 时常驻规则及首次 compile/request 后验只覆盖实际进入框架的调用，完全绕开且不再检查的会话没有发现保证。前门保证和原有 framework 编辑写保护分别报告。
 
 ### Layer 3 合作式拦截（settings_file + hooks）
 
