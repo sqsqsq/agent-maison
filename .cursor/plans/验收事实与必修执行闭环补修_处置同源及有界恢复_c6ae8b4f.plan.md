@@ -57,7 +57,7 @@ todos:
     status: completed
   - id: t8-host-continuation
     content: 用户安排发布后按§7接续fe4512原run，核29→30一次核实/零作者、满额机器收口、下游旧PASS与空完成问题的跳过及正式Feature/CU完成；真实缺口不算成功，与既有联合项共用证据，未实测不得关闭。
-    status: pending
+    status: completed
 ---
 
 # 验收事实与必修执行闭环补修
