@@ -239,14 +239,14 @@ DeepSeek Harness 使用 `deepseek-harness` adapter、自有 `.dsh/skills` 和共
 | Claude Code 2.1.322，实际模型 claude-sonnet-5-5 | 复制的生产 hook 壳/core 实际拦截未读入口的 Edit，真实读取根入口和本文指向的规则后同 Edit 恢复，中途 commit 后再 Edit 成功。全新作者会话实际有 RUN_ID/ATTEMPT/ATTEMPT_PHASE/RUNNER、无 HEADLESS，源码 Edit 放行而 framework 金丝雀仍拒写 | 普通/作者进程分别 42.281s/24.147s，hook wrapper 含 Node 子进程约 39–46ms；仅本隔离短例，原生结果绑定当时源码哈希，当前 core 前缀回放不冒充新原生调用 |
 | Claude 真实来源→公共自动 request | 同一原件及真实 user UUID 自动识别目标/原文/真实读取，无需手写 request JSON 或额外 target；真实初始 clean 基线保留中途 commit 前后 before→after→final 的完整 diff，没有用中途 HEAD 重置 | review 公共消费的 intake reconciliation 为 PASS，但缺真实独立 review-report，整体 FAIL 保留；自动准备不代表 review 已通过 |
 | 同一自动 request→Node UT | 公共 check:ut 实际执行 Node --test，1 pass/0 fail/0 skipped；测试读取原 request 的用户 final 预期并断言实际文件，request_test_execution、request_expectation_source、request_intake_reconciliation 均 PASS | 使用临时工程和已有测试 provider 模板，不预填结果；只证明该请求的真实 Node UT 消费，不代业务编译、架构正例、HMOS 或设备验证 |
-| Cursor CLI 2026.07.23-e383d2b；Desktop 3.15.6 | 隔离 CLI 在模型执行前 Authentication required，exit 1 | 未登录、未取得真实 hook/transcript/作者环境样本；启动参数缺 HEADLESS 不证明 hook 实际环境。属当前认证缺口，不是产品不支持 |
+| Cursor CLI 2026.07.23-e383d2b；Desktop 3.15.6 | 隔离 CLI 在模型执行前 Authentication required，exit 1 | 用户决定暂缓。未登录、未取得真实 hook/transcript/作者环境样本；启动参数缺 HEADLESS 不证明 hook 实际环境。属当前认证缺口，不是产品不支持 |
 | CodeAgent | 正确 codeagentcli 在本机 PATH/常见入口未定位 | 本轮无新原生变量/事件/transcript 样本，不以 Claude 同族壳推定实测成立；当前环境未定位，不是产品不支持 |
 | Codex Desktop 原生会话，header `cli_version=0.167.0-alpha.4.1`，模型 gpt-6.1-sol | 新根会话真实用户发出隔离请求，生产共享前门首次拒写；真实工具完整读取生产 entry 后，原错误补丁已过前门但因独立 `before` 行发生原生 context 校验失败，该 FAIL 保留。同一原请求续作改用准确整行补丁成功，framework 两次尝试均被共享保护拒绝；最终 after/protected。原生 reader 核唯一真实 user、已读入口及成功编辑路径，续作工具转发不新增用户授权。项目层及1项生产 hook 信任经明确授权的官方接口登记 | 仅验证本隔离生产守卫与来源读取链。fixture 未物化根 AGENTS/framework.config；将其当完整宿主的全局 Skill 调查不适用，均不据此判 hook 失败。未跑 compile/request/UT，未验用户覆盖、hook 耗时或业务宿主；工具 shell 路径中的 PrimaryRuntime 26.1110.778.0 不是 Desktop 包号。fork/history_base 或只有注入/工具转发时仍降级，不签完整请求/review PASS，不推定豁免/固定档位。CodeAgent 待内网采集，Cursor 暂缓 |
 | 其它 adapter | 使用同一根规则及能核实的原生来源 | 未有本轮真实编辑 hook 证据时仅声明指引/后验路径，不从物化文件推定写前保证 |
 
 Claude 实际落盘 `uuid` 为原始 user 引用，hook 的 prompt_id 对应原件 promptId，二者不等；新版 api-request-blob 为缓存快照、压缩总结虽 type=user 但带 isCompactSummary/isVisibleInTranscriptOnly，均不得当新用户授权。compact_boundary 是 system 记录，落盘字段 compactMetadata；能明确保留已读规则才复用。Codex 原件中的 agent_message 代理通讯不能当用户；已知 `# AGENTS.md instructions`、`<environment_context>` 等客户端指令/环境注入即使落为 role=user，也不能当用户原请求或流程授权。标有 `thread_source: subagent` 或子代理血缘的会话不能冒充根用户来源，须沿原请求核准确根线程原件；不能从子代理唯一一条 user 记录推定根用户授权。字段按真实版本解析，不以角色、格式可解析或文件存在宣称真实用户来源/语义已由机器证明。
 
-原生 trust/逐 hook review 仍由用户控制；框架物化不自动绕过或改全局信任。Codex 必须信任准确的项目层及当前 hook 定义，祖先目录 trusted 不保证新嵌套项目已启用；未启用或原件不可读时如实降级。Shell 重定向、脚本、场外进程和未覆盖编辑工具是明确盲区；无 hook 时常驻规则及首次 compile/request 后验只覆盖实际进入框架的调用，完全绕开且不再检查的会话没有发现保证。前门保证和原有 framework 编辑写保护分别报告。
+原生 trust/逐 hook review 仍由用户控制；框架物化不自动绕过或改全局信任。Codex 的 `.codex/hooks.json` 含本机绝对路径，是本机生成文件。工程移动或克隆后必须重跑 init，并按新定义重新完成 native 信任。Codex 必须信任准确的项目层及当前 hook 定义，祖先目录 trusted 不保证新嵌套项目已启用；未启用或原件不可读时如实降级。Shell 重定向、脚本、场外进程和未覆盖编辑工具是明确盲区；无 hook 时常驻规则及首次 compile/request 后验只覆盖实际进入框架的调用，完全绕开且不再检查的会话没有发现保证。前门保证和原有 framework 编辑写保护分别报告。
 
 ### Layer 3 合作式拦截（settings_file + hooks）
 

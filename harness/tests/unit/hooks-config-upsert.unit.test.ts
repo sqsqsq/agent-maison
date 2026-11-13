@@ -33,6 +33,51 @@ const DESIRED = JSON.stringify({
 
 const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
   {
+    name: 'Codex repository relocation updates the one owned script and preserves similar or composite host commands',
+    run: () => {
+      const template = fs.readFileSync(frameworkAbs(LAYOUT, 'agents/codex/templates/hooks.json'), 'utf8');
+      const rootA = 'D:/work/repoA', rootB = 'E:/clone/repoB';
+      const scriptA = `${rootA}/framework/agents/codex/hooks/guard-framework-write.mjs`;
+      const scriptB = `${rootB}/framework/agents/codex/hooks/guard-framework-write.mjs`;
+      const commandA = `node "${scriptA}"`, commandB = `node "${scriptB}"`;
+      const original = JSON.parse(computeHooksConfigUpsert(null, template, rootA).nextText!);
+      const handler = original.hooks.PreToolUse[0].hooks[0];
+      handler.team_handler = 'keep'; handler.async = true; handler.timeout = 99;
+      const hostHandlers = [
+        { type: 'mcp_tool', server: 'team', tool: 'audit' },
+        ...[
+          `node "${scriptA}.backup"`,
+          `node "${rootA}/other-framework/agents/codex/hooks/guard-framework-write.mjs"`,
+          `node "${rootA}/framework/agents/cursor/hooks/guard-framework-write.mjs"`,
+          `node "${rootA}/framework/agents/codex/hooks/another.mjs"`,
+          `node tools/framework/agents/codex/hooks/guard-framework-write.mjs`,
+          `${commandA} && node team-hook.mjs`, `${commandA} --team-option`, `echo ${commandA}`,
+        ].map(command => ({ type: 'command', command, team_field: 'unchanged' })),
+      ];
+      const oldGroup = { ...original.hooks.PreToolUse[0], matcher: 'old-team-matcher', team_group: 'keep', hooks: [handler, ...hostHandlers] };
+      original.hooks.PreToolUse = [oldGroup];
+      original.team_meta = { keep: true };
+      original.hooks.Stop = [{ hooks: [{ type: 'command', command: 'node team-stop.mjs' }] }];
+      const updated = computeHooksConfigUpsert(JSON.stringify(original), template, rootB);
+      assert(updated.status === 'updated', updated.status);
+      const next = JSON.parse(updated.nextText!), groups = next.hooks.PreToolUse;
+      const owned = groups.flatMap((group: any) => group.hooks).filter((item: any) => item.command === commandA || item.command === commandB);
+      assert(owned.length === 1 && owned[0].command === commandB, 'A→B retained a stale owned handler: ' + JSON.stringify(owned));
+      assert(owned[0].commandWindows === commandB && owned[0].async === false && owned[0].timeout === 10 && owned[0].team_handler === 'keep', 'relocation lost managed updates or unrelated owned fields');
+      assert(groups.length === 2 && JSON.stringify(groups[0]) === JSON.stringify({ ...oldGroup, hooks: hostHandlers }), 'host handler/group fields or matcher changed');
+      assert(groups[1].team_group === 'keep' && groups[1].matcher === 'Edit|Write', 'owned group lost metadata or current matcher');
+      assert(JSON.stringify(next.team_meta) === JSON.stringify(original.team_meta) && JSON.stringify(next.hooks.Stop) === JSON.stringify(original.hooks.Stop), 'unrelated document fields changed');
+      assert(computeHooksConfigUpsert(updated.nextText!, template, rootB).status === 'unchanged', 'relocated upsert is not idempotent');
+      for (const removed of [computeHooksConfigRemoval(updated.nextText!, [commandA]), computeHooksConfigRemoval(updated.nextText!, [], [scriptA])]) {
+        assert(removed.status === 'removed', removed.status);
+        const doc = JSON.parse(removed.nextText!);
+        assert(doc.hooks.PreToolUse.length === 1 && JSON.stringify(doc.hooks.PreToolUse[0]) === JSON.stringify({ ...oldGroup, hooks: hostHandlers }), 'removal used another ownership rule or deleted a host command');
+        assert(JSON.stringify(doc.hooks.Stop) === JSON.stringify(original.hooks.Stop), 'removal changed another event');
+      }
+      assert(computeHooksConfigRemoval(updated.nextText!, ['node unrelated.mjs']).status === 'unchanged', 'another cleanup scope claimed the Codex guard');
+    },
+  },
+  {
     name: 'Codex nested hooks preserve host groups and fields through real adapter sync, idempotence and removal',
     run: () => {
       const template = fs.readFileSync(frameworkAbs(LAYOUT, 'agents/codex/templates/hooks.json'), 'utf8');

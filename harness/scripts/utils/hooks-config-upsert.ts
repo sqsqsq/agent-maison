@@ -5,7 +5,8 @@
 // hooks）——绝不 verbatim 整文件覆盖；只对 framework 自有条目做结构化 upsert。
 // 第五轮 P2 钉死：**ownership key = 稳定的 command 路径**；matcher/timeout/failClosed
 // 等均为 framework 受管可变字段，UPDATE 原位更新；同 command 多条去重保一；command
-// 路径未来变更走 LEGACY_OWNED_COMMANDS 迁移清单；卸载删全部 owned/legacy 条目、保留
+// Codex 项目绝对前缀可变，按已解析的完整脚本尾段归属；脚本本身改名仍走迁移清单。
+// 卸载删全部 owned/legacy 条目、保留
 // 第三方条目与容器。
 
 export interface HooksConfigEntry {
@@ -51,6 +52,20 @@ function entryCommand(e: unknown): string | null {
   return typeof c === 'string' && c.trim() ? c.trim() : null;
 }
 
+function scriptOwnershipKey(script: string): string {
+  const normalized = script.replace(/\\/g, '/');
+  const value = process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+  const codexGuard = 'framework/agents/codex/hooks/guard-framework-write.mjs';
+  // Only the exact relative script or a complete absolute-path suffix belongs to this adapter.
+  return value === codexGuard || /^(?:[a-z]:\/|\/)/i.test(value) && value.endsWith('/' + codexGuard) ? codexGuard : value;
+}
+
+function commandOwnershipKey(command: string): string {
+  const script = extractNodeScriptPath(command);
+  return script !== null && scriptOwnershipKey(script) === 'framework/agents/codex/hooks/guard-framework-write.mjs'
+    ? 'node framework/agents/codex/hooks/guard-framework-write.mjs' : command;
+}
+
 interface HooksConfigGroup { hooks: HooksConfigEntry[]; [key: string]: unknown }
 function groupHandlers(e: unknown): unknown[] | null {
   return e && typeof e === 'object' && !Array.isArray(e) && Array.isArray((e as Record<string, unknown>).hooks)
@@ -63,14 +78,14 @@ function upsertGroupArray(existing: unknown, desired: HooksConfigGroup, owned: R
   let placed = false;
   for (const value of Array.isArray(existing) ? existing : []) {
     const handlers = groupHandlers(value)!;
-    const ours = handlers.filter(handler => { const command = entryCommand(handler); return command !== null && owned.has(command); });
+    const ours = handlers.filter(handler => { const command = entryCommand(handler); return command !== null && owned.has(commandOwnershipKey(command)); });
     if (!ours.length) { next.push(value); continue; }
     const group = value as Record<string, unknown>;
     const others = handlers.filter(handler => !ours.includes(handler));
     if (others.length) next.push({ ...group, hooks: others });
     if (!placed) {
       next.push({ ...group, ...desired, hooks: desired.hooks.map(handler => ({
-        ...(ours.find(old => entryCommand(old) === handler.command) as Record<string, unknown> | undefined), ...handler,
+        ...(ours.find(old => commandOwnershipKey(entryCommand(old)!) === commandOwnershipKey(handler.command)) as Record<string, unknown> | undefined), ...handler,
       })) });
       placed = true;
     }
@@ -101,7 +116,7 @@ function upsertEventArray(
   let changed = false;
   for (const e of arr) {
     const cmd = entryCommand(e);
-    if (cmd !== null && ownedCommands.has(cmd)) {
+    if (cmd !== null && ownedCommands.has(commandOwnershipKey(cmd))) {
       if (!placed) {
         next.push(desired);
         placed = true;
@@ -164,12 +179,12 @@ export function computeHooksConfigUpsert(
     }
   }
   const desiredEvents = declaredEvents as Array<[string, Array<HooksConfigEntry | HooksConfigGroup>]>;
-  const ownedCommands = new Set<string>(LEGACY_OWNED_COMMANDS);
+  const ownedCommands = new Set<string>(LEGACY_OWNED_COMMANDS.map(commandOwnershipKey));
   for (const [, entries] of desiredEvents) {
     for (const e of entries) {
       for (const handler of groupHandlers(e) ?? [e]) {
         const c = entryCommand(handler);
-        if (c) ownedCommands.add(c);
+        if (c) ownedCommands.add(commandOwnershipKey(c));
       }
     }
   }
@@ -278,16 +293,12 @@ export function computeHooksConfigRemoval(
     || Object.values(doc.hooks).some(arr => !Array.isArray(arr))) {
     return { status: 'invalid_schema' };
   }
-  const owned = new Set([...ownedCommands, ...LEGACY_OWNED_COMMANDS]);
-  const normalizeScriptPath = (p: string): string => {
-    const normalized = p.replace(/\\/g, '/');
-    return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
-  };
-  const scripts = new Set(ownedScriptPaths.map(normalizeScriptPath));
+  const owned = new Set([...ownedCommands, ...LEGACY_OWNED_COMMANDS].map(commandOwnershipKey));
+  const scripts = new Set(ownedScriptPaths.map(scriptOwnershipKey));
   const isOwned = (command: string): boolean => {
-    if (owned.has(command)) return true;
+    if (owned.has(commandOwnershipKey(command))) return true;
     const script = extractNodeScriptPath(command);
-    return script !== null && scripts.has(normalizeScriptPath(script));
+    return script !== null && scripts.has(scriptOwnershipKey(script));
   };
   const hooks = { ...(doc.hooks as Record<string, unknown>) };
   let changed = false;
