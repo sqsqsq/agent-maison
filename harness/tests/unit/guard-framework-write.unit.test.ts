@@ -99,6 +99,38 @@ async function loadCore(): Promise<CoreModule> {
 
 const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
   {
+    name: 'CodeAgent native transcript rejects first edit, recovers after production entry Read and still protects framework',
+    run: () => {
+      const root = mkConsumerProject('guard-codeagent-');
+      try {
+        const hooksDir = path.join(root, '.cac/hooks'); fs.mkdirSync(hooksDir, { recursive: true });
+        const hook = path.join(hooksDir, 'guard-framework-write.mjs'); fs.copyFileSync(HOOK_ABS, hook);
+        const configRoot = path.join(root, '.native-codeagent');
+        const store = path.join(configRoot, 'projects', 'synthetic-project'); fs.mkdirSync(store, { recursive: true });
+        const file = path.join(store, 'codeagent-hook-test.jsonl');
+        const entryPath = path.join(root, 'framework/docs/operations/project-entry.md'); fs.mkdirSync(path.dirname(entryPath), { recursive: true });
+        fs.copyFileSync(frameworkAbs(LAYOUT, 'docs/operations/project-entry.md'), entryPath);
+        const rows: unknown[] = [{ type: 'user', uuid: 'native-user', promptId: 'native-prompt', sessionId: 'codeagent-hook-test', cwd: root,
+          isUserPrompt: true, isSidechain: false, version: '1.2615.02.03', message: { role: 'user', content: '将 src/probe.js 的 before 改成 after。' } }];
+        const flush = () => fs.writeFileSync(file, rows.map(row => JSON.stringify(row)).join('\n') + '\n'); flush();
+        const env: NodeJS.ProcessEnv = { ...process.env, CODEAGENT3_PROJECT_DIR: root, CODEAGENT3_CONFIG_DIR: configRoot };
+        for (const key of ['CLAUDE_PROJECT_DIR', 'MAISON_GOAL_RUN_ID', 'MAISON_GOAL_ATTEMPT', 'MAISON_GOAL_ATTEMPT_PHASE', 'MAISON_GOAL_RUNNER', 'MAISON_GOAL_HEADLESS']) delete env[key];
+        const edit = { file_path: path.join(root, 'src/probe.js'), old_string: 'before', new_string: 'after' };
+        const run = (toolInput = edit) => spawnSync(process.execPath, [hook], { cwd: root, env, encoding: 'utf8', input: JSON.stringify({
+          hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_input: toolInput, cwd: root, session_id: 'codeagent-hook-test', transcript_path: file,
+        }) });
+        const denied = run(); assert(denied.status === 2 && denied.stderr.includes('统一前门'), `${denied.status}: ${denied.stderr} ${denied.stdout}`);
+        const content = fs.readFileSync(entryPath, 'utf8');
+        rows.push({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'entry-read', name: 'Read', input: { file_path: entryPath } }] } },
+          { type: 'user', toolUseResult: { type: 'text', file: { filePath: entryPath, content, startLine: 1, numLines: content.split('\n').length, totalLines: content.split('\n').length } },
+            message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'entry-read', content }] } }); flush();
+        const allowed = run(); assert(allowed.status === 0 && allowed.stdout.includes('Maison原生来源') && !allowed.stdout.includes('降级'), `${allowed.status}: ${allowed.stderr} ${allowed.stdout}`);
+        const protectedWrite = run({ ...edit, file_path: path.join(root, 'framework/protected.txt') });
+        assert(protectedWrite.status === 2 && protectedWrite.stderr.includes('framework 写保护'), `${protectedWrite.status}: ${protectedWrite.stderr}`);
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    },
+  },
+  {
     name: 'Codex materialized command launches from a source subdirectory in a non-Git consumer',
     run: () => {
       const root = mkConsumerProject('guard codex launch ');

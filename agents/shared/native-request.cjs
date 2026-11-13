@@ -41,8 +41,10 @@ function currentNativeSession(env = process.env) {
 }
 function nativeStore(file, env = process.env) {
   const claude = env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
+  const codeagent = env.CODEAGENT3_CONFIG_DIR || path.join(os.homedir(), '.cac');
   const codex = env.CODEX_HOME || path.join(os.homedir(), '.codex');
   if (inside(path.join(claude, 'projects'), file)) return 'claude';
+  if (inside(path.join(codeagent, 'projects'), file)) return 'codeagent';
   if ([path.join(codex, 'sessions'), path.join(codex, 'archived_sessions')].some(root => inside(root, file))) return 'codex';
   throw new Error('原件不在已配置客户端的原生存储内；任意JSONL不授用户豁免/覆盖');
 }

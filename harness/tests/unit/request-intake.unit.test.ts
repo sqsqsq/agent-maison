@@ -65,6 +65,48 @@ exports.profileCodingHost={sourceFileSuffixes:['.js'],runStructureChecks:()=>[],
 compileProject(ctx){const run=cp.spawnSync(process.execPath,['--check',path.join(ctx.projectRoot,'src/value.js')],{encoding:'utf8'});fs.writeFileSync(path.join(ctx.reportDir,'node-check.log'),run.stdout+run.stderr);return{checks:[{id:'coding_compile',category:'structure',severity:'BLOCKER',status:run.status===0?'PASS':'FAIL',description:'Node syntax',details:run.stdout+run.stderr}],execution:{executed:true,exitCode:run.status,command:'node --check src/value.js'}}}};`);
 }
 const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Promise<void> }> = [
+  { name: 'CodeAgent default and configured native stores reuse exact Claude-family source parsing', run(f) {
+    const nodeOs = require('os') as typeof import('os');
+    const originalHomedir = nodeOs.homedir;
+    const originalConfigDir = process.env.CODEAGENT3_CONFIG_DIR;
+    const fakeUserHome = path.join(f.root, '.native-home');
+    nodeOs.homedir = () => fakeUserHome;
+    try {
+      for (const configRoot of [undefined, path.join(f.root, '.native-codeagent')]) {
+        if (configRoot) process.env.CODEAGENT3_CONFIG_DIR = configRoot; else delete process.env.CODEAGENT3_CONFIG_DIR;
+        const nativeRoot = configRoot ?? path.join(fakeUserHome, '.cac');
+        const store = path.join(nativeRoot, 'projects', 'synthetic-project');
+        fs.mkdirSync(store, { recursive: true });
+        const file = path.join(store, 'codeagent-test.jsonl');
+        const input = { file_path: path.join(f.root, 'src/value.js') };
+        const content = 'exports.value = 42;\n';
+        const rows = [
+          { type: 'system', subtype: 'init', sessionId: 'codeagent-test', cwd: f.root, version: '1.2615.02.03' },
+          { type: 'user', uuid: 'codeagent-user', promptId: 'codeagent-prompt', sessionId: 'codeagent-test', cwd: f.root,
+            isUserPrompt: true, isSidechain: false, _cac_agentType: 'main', message: { role: 'user', content: '修复 src/value.js。' } },
+          { type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'codeagent-read', name: 'Read', input }] } },
+          { type: 'user', toolUseResult: { type: 'text', file: { filePath: input.file_path, content, startLine: 1, numLines: 2, totalLines: 2 } },
+            message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'codeagent-read', content }] } },
+        ];
+        fs.writeFileSync(file, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
+        assert.equal(native.nativeStore(file), 'codeagent');
+        const session = native.readNativeSession(file, f.root);
+        assert.equal(session.request.id, 'codeagent-user'); assert.equal(session.messages.filter((message: { role: string }) => message.role === 'user').length, 1);
+        assert.equal(session.tools[0].read.complete, true); assert.equal(session.tools[0].read.content, content);
+        const pointer = path.join(nativeRoot, 'sessions', '123.json'); fs.mkdirSync(path.dirname(pointer), { recursive: true }); fs.writeFileSync(pointer, '{}');
+        assert.throws(() => native.readNativeSession(pointer, f.root), /原生存储/);
+        if (configRoot) {
+          const defaultFile = path.join(fakeUserHome, '.cac/projects/synthetic-project/codeagent-test.jsonl');
+          assert.throws(() => native.nativeStore(defaultFile), /原生存储/, 'configured root replaces the default root');
+        }
+      }
+      const outside = path.join(f.root, 'codeagent-test.jsonl'); fs.writeFileSync(outside, '{}\n');
+      assert.throws(() => native.readNativeSession(outside, f.root), /原生存储/);
+    } finally {
+      nodeOs.homedir = originalHomedir;
+      if (originalConfigDir === undefined) delete process.env.CODEAGENT3_CONFIG_DIR; else process.env.CODEAGENT3_CONFIG_DIR = originalConfigDir;
+    }
+  } },
   { name: 'B small entry and inline source use one design request without a Feature candidate or mutable request hash source', run(f) {
     const s = setup(f), first = s.rows[0] as { message: { content: string } }; first.message.content = '按小型处理：' + first.message.content; s.flush();
     const configFile = path.join(f.root, 'framework.config.json'), config = JSON.parse(fs.readFileSync(configFile, 'utf8')); config.project_profile.name = 'hmos-app'; fs.writeFileSync(configFile, JSON.stringify(config)); clearFrameworkConfigCache();
@@ -389,7 +431,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
   const results: UnitCaseResult[] = [];
   for (const test of cases) {
     const f = fixture('ut');
-    const envKeys = ['CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'CODEX_THREAD_ID', 'CODEX_SESSION_ID'] as const;
+    const envKeys = ['CLAUDE_CONFIG_DIR', 'CODEAGENT3_CONFIG_DIR', 'CODEX_HOME', 'CODEX_THREAD_ID', 'CODEX_SESSION_ID'] as const;
     const previousEnv = Object.fromEntries(envKeys.map(key => [key, process.env[key]]));
     process.env.CLAUDE_CONFIG_DIR = path.join(f.root, '.native-claude');
     delete process.env.CODEX_THREAD_ID; delete process.env.CODEX_SESSION_ID;
