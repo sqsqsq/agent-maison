@@ -4394,7 +4394,9 @@ export class GoalPhaseRuntime {
           const supersede = normalizeSupersedeTargets(argv.supersede);
           if (existing && (!supersede.length || priorRunId)) return this.runInitialDesign(originalDeliveryForManifest(root, existing) ?? existing, root, frameworkRoot, argv);
           if (!priorRunId) {
-            if (request && (findInitialDesignRun({ projectRoot: root, feature }) || designDeliveryNextStep({ projectRoot: root, frameworkRoot, feature, ...request }))) {
+            const priorInitial = request ? findInitialDesignRun({ projectRoot: root, feature }) : null;
+            const next = request && !priorInitial ? designDeliveryNextStep({ projectRoot: root, frameworkRoot, feature, ...request }) : null;
+            if (request && (priorInitial || next)) {
               const source = argv.manifest ? loadGoalManifestFile(String(argv.manifest), root) : existing ?? undefined;
               const adapter = String(argv.adapter ?? source?.adapter ?? 'generic');
               const pin = resolveFinalModelPin({ cliValue: normalizeAdapterModelCliValue(argv['adapter-model']), cliPin: launchModelPin(argv, adapter, root, source?.adapter_model_pin), effectiveAdapter: adapter,
@@ -4406,7 +4408,7 @@ export class GoalPhaseRuntime {
               if (!visual.ok) throw new Error(visual.message);
               const localVisual = visual.pin ?? resolveUnattendedVisualProviderPin(loadFrameworkLocalConfig(root), frameworkRoot).pin;
               const prepared = prepareInitialDesignRun({ projectRoot: root, frameworkRoot, feature,
-                sessionRef: request.sessionRef,
+                sessionRef: (next?.type === 'design_preparation_required' ? next.materials.session_ref : request.sessionRef?.trim()) || undefined,
                 requirement: request.requirement ?? '', requirementSourceFiles: request.requirementSourceFiles,
                 adapter, runId: typeof argv['run-id'] === 'string' ? argv['run-id'] : undefined,
                 supersede,
@@ -4550,10 +4552,12 @@ export class GoalPhaseRuntime {
         if (!already && (source.fixed || source.excluded?.length || source.included?.length)) emit({ type: 'run_start', session_started_at: new Date().toISOString(), manifest_identity_fields: computeManifestIdentityFields(manifest), phase_chain: [], user_control: source });
       }
       const requestOptions = initialDesignRequestOptions(projectRoot, frameworkRoot, manifest);
-      const { resolveRequestSessionReference } = require('./utils/request-intake') as typeof import('./utils/request-intake');
-      if (fs.existsSync(path.resolve(projectRoot, requestOptions.requestFile)) || typeof argv['session-ref'] === 'string' || resolveRequestSessionReference(undefined, projectRoot).sessionRef) {
+      const requestFile = path.resolve(projectRoot, requestOptions.requestFile);
+      const existingIntake = fs.existsSync(requestFile) && asRecord(JSON.parse(fs.readFileSync(requestFile, 'utf8')))?.intake_context;
+      const explicitSessionRef = typeof argv['session-ref'] === 'string' ? argv['session-ref'].trim() : undefined;
+      if (existingIntake || explicitSessionRef) {
         const { prepareDesignRequest } = require('./utils/automatic-request') as typeof import('./utils/automatic-request');
-        prepareDesignRequest({ ...requestOptions, ...(fs.existsSync(path.resolve(projectRoot, requestOptions.requestFile)) ? {} : { sessionRef: argv['session-ref'] as string | undefined }) });
+        prepareDesignRequest({ ...requestOptions, ...(existingIntake ? {} : { sessionRef: explicitSessionRef }) });
       }
       const supplied = this.options.sessionHandoff?.requestPath;
       const ownRequest = supplied && !path.relative(runDir, path.resolve(supplied)).startsWith('..') && !path.isAbsolute(path.relative(runDir, path.resolve(supplied)));
@@ -4831,7 +4835,10 @@ export class GoalPhaseRuntime {
             continue;
             }
           }
-          catch (error) { observed.issues.push((error as Error).message); }
+          catch (error) {
+            const feedback: InitialDesignObservation = { ...observed, kind: 'decompose', issues: [...observed.issues, (error as Error).message] };
+            observed = { ...feedback, disposition: readInitialDesignCompletionDisposition({ projectRoot, frameworkRoot, manifest, observation: feedback }) };
+          }
         }
         if (observed.kind === 'construction') {
           if (observed.request) {

@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { createHash } from 'crypto';
+import { execFileSync } from 'child_process';
 import * as YAML from 'yaml';
 import { provisionFrameworkUnder, git, writeHostFile } from '../utils/real-chain-host';
 import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
@@ -360,11 +361,11 @@ function assertFrozenInputs(host: Host, context: any): void {
   } finally { for (const [key, value] of prior) if (value === undefined) delete process.env[key]; else process.env[key] = value; }
 }
 
-function prepare(host: Host, id: string): { options: any; prepared: any; entry: any } {
+function prepare(host: Host, id: string, sessionRef?: string): { options: any; prepared: any; entry: any } {
   const entry = host.load('scripts/goal-mode-entry');
   const original = entry.prepareGoalModeRun({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: BLUEPRINT, adapter: 'claude', runId: id,
     requirement: REQUIREMENT, requirementSourceFiles: ['requirements/ledger.md'], requestedResults: [REQUIREMENT], requestedPhases: ['plan', 'coding', 'ut'],
-    unattended: { write_mode: 'full-access', approval_mode: 'never' }, autonomyAuthorized: true });
+    unattended: { write_mode: 'full-access', approval_mode: 'never' }, autonomyAuthorized: true, sessionRef });
   const prepared = entry.prepareGoalModeRun({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: BLUEPRINT, adapter: 'claude', runId: id,
     requirement: REQUIREMENT, adapterModelPin: { adapter: 'claude', value: 'claude-opus-5-5', provider: 'anthropic', reasoning_effort: 'high', config_source: path.join(host.root, 'controlled-model-home', 'settings.json') }, modelOverride: true });
   assert.equal(prepared.manifest.run_id, original.manifest.run_id, 'legacy no-pin initial run must be rebound through the same entry');
@@ -407,11 +408,34 @@ async function finishConstruction(host: Host, control: ReturnType<typeof prepare
   return step;
 }
 
-const cases = [{
-  name: 'daily design: empty request reaches canonical CU completion with real TypeScript and Node assertions',
-  run: () => withHost(async host => {
-    const control = prepare(host, 'daily-design-complete');
-    let designAuthors = 0, constructionAuthors = 0, visualReissued = false;
+/** Synthetic native-format research; the runtime/consumer and final TS/Node execution remain real. */
+function mediumSession(host: Host): string {
+  const home = path.resolve(__dirname, '../../reports/medium-single-cu/daily-native', path.basename(host.root));
+  process.env.CLAUDE_CONFIG_DIR = home;
+  const session = 'medium-daily', file = path.join(home, 'projects/fixture', session + '.jsonl');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const rows: object[] = []; let sequence = 0;
+  const add = (row: object) => rows.push({ sessionId: session, cwd: host.root, timestamp: new Date().toISOString(), ...row });
+  const tool = (name: string, input: object, output: string) => {
+    const id = 'medium-tool-' + (++sequence);
+    add({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id, name, input }] } });
+    add({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: output }] } });
+  };
+  const gitText = (args: string[]) => execFileSync('git', args, { cwd: host.root, encoding: 'utf8', stdio: 'pipe' }).trim();
+  add({ type: 'user', uuid: 'medium-user', message: { role: 'user', content: REQUIREMENT } });
+  tool('Bash', { command: 'git rev-parse HEAD' }, gitText(['rev-parse', 'HEAD']));
+  tool('Bash', { command: 'git status --porcelain' }, gitText(['status', '--porcelain']));
+  for (const file of [SOURCE, TEST, 'requirements/ledger.md']) tool('Read', { file_path: path.join(host.root, file) }, read(host.root, file));
+  add({ type: 'assistant', message: { role: 'assistant', content: `本请求 medium-user：Q1=是；Q2=否；Q3=否；依赖结果=否；跨部件=否；预期明确=是；做法唯一=否。依据 ${SOURCE} 与 ${TEST}。` } });
+  fs.writeFileSync(file, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
+  return file + '#medium-user';
+}
+
+async function completeDelivery(medium = false): Promise<void> {
+  const previousHome = process.env.CLAUDE_CONFIG_DIR;
+  try { return await withHost(async host => {
+    const control = prepare(host, medium ? 'daily-medium-single' : 'daily-design-complete', medium ? mediumSession(host) : undefined);
+    let designAuthors = 0, constructionAuthors = 0, decompositionAuthors = 0, visualReissued = false;
     let step = await withRuntimeTest({ root: host.root }, () => control.entry.runGoalModeSessionStep(control.options));
     for (let call = 0; step.type === 'phase_execute_request' && call < 16; call++) {
       const raw = JSON.parse(fs.readFileSync(step.request.path, 'utf8'));
@@ -451,7 +475,22 @@ const cases = [{
         writeYaml(host.root, `doc/features/${BLUEPRINT}/blueprint/component-blueprint.yaml`, blueprintDraft(host, false));
       }
       else if (phase === 'initial-design-questioning') output = questioningReply(host, false);
-      else if (phase === 'initial-design-decomposition') decompose(host);
+      else if (phase === 'initial-design-decomposition') {
+        decompositionAuthors++;
+        const file = `doc/features/${BLUEPRINT}/blueprint/change-unit-candidates.json`;
+        if (medium && decompositionAuthors === 2) {
+          assert(context.instruction.includes('自动判为中型') && context.instruction.includes('原分解作者'), 'policy feedback never reached the actual signed author request');
+          assert.equal(JSON.parse(read(host.root, file)).length, 2, 'rejected author candidates were discarded');
+          assert.equal(host.load('scripts/utils/change-unit-path').enumerateCanonicalChangeUnits(host.root, BLUEPRINT).length, 0, 'multi-CU batch was published before feedback');
+          assert(!host.load('scripts/utils/session-execution-handoff').sessionEvents(control.prepared.runDir).some((event: any) => event.type === 'phase_halt'), 'medium feedback became an external halt');
+        }
+        decompose(host);
+        if (medium && decompositionAuthors === 1) {
+          const candidates = JSON.parse(read(host.root, file)), second = structuredClone(candidates[0]);
+          second.artifact.change_unit_id = UNIT + '-second'; candidates.push(second);
+          writeHostFile(host.root, file, JSON.stringify(candidates));
+        }
+      }
       else if (phase.startsWith('initial-design-scope-')) {
         const feature = host.load('scripts/utils/change-unit-path').deriveChangeUnitFeatureId(BLUEPRINT, UNIT);
         host.load('scripts/utils/feature-track').prepareFeatureScopeCandidate({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature,
@@ -464,7 +503,7 @@ const cases = [{
       } else if (phase.endsWith('-verifier-format-repair')) verifierReply(host, context, phase.replace(/-verifier-format-repair$/, ''));
       else assert.fail('unexpected production responsibility: ' + phase);
       step = await report(host, control, step, output);
-      if (phase === 'initial-design-decomposition') {
+      if (phase === 'initial-design-decomposition' && (!medium || decompositionAuthors === 2)) {
         const selected = { ...control.prepared.manifest.adapter_model_pin, provider: 'https://second-fixture.invalid' };
         const rebound = control.entry.prepareGoalModeRun({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: BLUEPRINT,
           adapter: 'claude', requirement: REQUIREMENT, adapterModelPin: selected, visualProviderPin: { adapter: 'codex', model: 'gpt-6.1-sol', provider: 'visual-a', config_source: path.join(host.root, 'native/config.toml') }, modelOverride: true });
@@ -474,8 +513,17 @@ const cases = [{
       }
     }
     assert(visualReissued);
+    assert.equal(decompositionAuthors, medium ? 2 : 1);
     assertDeliveryComplete(host, control, step);
-  }),
+  }); } finally { if (previousHome === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = previousHome; }
+}
+
+const cases = [{
+  name: 'daily design: empty request reaches canonical CU completion with real TypeScript and Node assertions',
+  run: () => completeDelivery(),
+}, {
+  name: 'medium automatic decomposition returns multi-CU feedback to its author and completes one CU with real TypeScript and Node assertions',
+  run: () => completeDelivery(true),
 }, {
   name: 'daily design: missing reference repair and unchanged denial converge through original feedback',
   run: async () => {

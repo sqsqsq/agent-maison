@@ -27,8 +27,6 @@ export interface DeliveryPolicy {
   unknown: string[];
   blueprint: 'none' | 'compact' | 'full' | 'shared' | 'unknown';
   change_units: 'none' | 'single' | 'multiple' | 'unknown';
-  independent_design_review: boolean;
-  review_projection: boolean;
 }
 
 /** The outer design frame, independent of check-family names and file counts. */
@@ -51,9 +49,7 @@ export function resolveDeliveryPolicy(facts: DeliveryFacts, userSelection?: Deli
   const selected = userSelection ?? recommended;
   return { recommended, selected, source: userSelection ? 'user' : 'rule', unknown,
     blueprint: ({ trivial: 'none', small: 'compact', medium: 'full', complex: 'shared', unknown: 'unknown' } as const)[selected],
-    change_units: ({ trivial: 'none', small: 'none', medium: 'single', complex: 'multiple', unknown: 'unknown' } as const)[selected],
-    independent_design_review: selected === 'medium' || selected === 'complex',
-    review_projection: selected === 'medium' || selected === 'complex' };
+    change_units: ({ trivial: 'none', small: 'none', medium: 'single', complex: 'multiple', unknown: 'unknown' } as const)[selected] };
 }
 export interface ScopeEvidenceRef {
   phase: string;

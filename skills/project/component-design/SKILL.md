@@ -93,7 +93,7 @@ current-facts-discovery 前解析 `paths.conventions`（缺失用框架默认值
 
 编写、质询或修订时按 [P1 工作流 §2](../../reference/app-component-blueprint-workflow.md#2-写入同一蓝图) 完成 4+1、七问与设计期 acceptance/contracts/use_cases，保留术语、存储、失败/中断、幂等与质量结论；在现有 ordered_steps 写清完整调用/返回，同次生成 generated_graphs 时序图。原设计 agent 完成可渲染草稿、图、说明与摘要后，先 `check:component-blueprint --write-review --json`，再派既有独立质询先读首屏/正文答八问、后核原 scope 与来源及图文一致；正文止于“技术与追溯参考”入口，八问作答前不读同文档参考区，之后再核参考/YAML；不提前读 YAML 或继承父上下文 YAML/设计摘要，作者一轮修订后重渲，派生身份同步刷新，详见 P1 §4/§5。App lens/质询用中文（代码/API 名可保留），原设计作者同次在已有临时交回明确施工映射候选，CU 接受后原 writer 填真实身份并在授权写界发布唯一 contracts.change_unit；只有真实未决项交 plan，不为转录新增模型调用；缺图或坏图不加 readiness 门，坏时序仅 WARN 并原位说明。完整路径的深度及条件式义务按实际影响展开，外框消费统一前门，保持同一蓝图协议；未触发义务按合法空集/不适用表达，不按行数压缩设计或凑空章节。
 
-### 3. 分解为 1..N canonical Change Unit（经 P2 设计准备子流程）
+### 3. 中型分解为 1 个、复杂分解为多个 canonical Change Unit（经 P2 设计准备子流程）
 
 仅在用户要求完成设计交接且尚无 canonical CU 时进行首次分解；已有 CU 直接复用并转第 4 步。
 **本 Skill 自身不写 canonical CU。** 仅调用 [P2 设计准备段](../change-unit-progression/SKILL.md)，不执行该 Skill 的施工流程。设计作者写 JSON 数组 `[{providerId, artifact}]` 到既有蓝图目录的 `<features_dir>/<blueprint_id>/blueprint/change-unit-candidates.json`（`<features_dir>` 从 `paths.features_dir` 解析）；蓝图工作区根不放临时件，材料归属见[边界细则](../../reference/consumer-framework-boundary.md#材料归属与临时文件清理)。然后在 `framework/harness` 调用公开 consumer 命令；受管运行由 runtime 消费该原接缝，`--accept-candidates` 相对路径按 `--project-root` 解析：
@@ -107,7 +107,7 @@ npm run check:change-unit -- --project-root <host> --blueprint <blueprint-id> --
 1. 入口 = admitted blueprint —— **canonical CU 数量为 0 是合法入口**；
 2. decomposition provider / 设计者只提出**临时候选**（内存 / 临时报告）；
 3. **只有 consumer validator** 可以接受候选：校验 schema、canonical identity、设计闭包、
-   provenance 与来源权威后，**原子**写出 1..N canonical `change-unit@1`。任一候选不通过即
+   provenance 与来源权威后，**原子**写出中型 1 个、复杂多个 canonical `change-unit@1`。任一候选不通过即
    整批拒绝、一个字节都不落盘；
 4. 重复接受 **fail-closed**：目标 canonical 路径已存在即拒绝；未完成内容修订使用独立 consumer 接点，资格/恢复见[蓝图设计输入](../../../docs/concepts/blueprint-design-inputs.md#未完成-cu-内容修订)，不直接覆盖；
 5. 派生 design gate / readiness；派生前把 carry-forward 通过且内容未变的 CU 蓝图指针
@@ -137,7 +137,7 @@ npm run check:change-unit -- --project-root <host> --blueprint <blueprint-id> --
 
 局部操作完成只报告本次结果及剩余缺口。小型终点为原 request 绑定的四样短设计完成，不标完整设计 admitted；随后仅在原实现授权内继续能力调用。新事实需升级时在同一路径/ID 扩完整设计、独立质询/准入后接受 CU，保留成果/基线/真实 FAIL，用户固定外框不暗中升级。在途用户减少流程/验证须回原范围修订核真实原文，不另建 request 清账。
 
-中型/复杂完整设计交接完成 = **admitted blueprint + 已分解 1..N canonical CU + 每个 CU 建立 `design_refs` 引用 + 后续施工 readiness + 当前人读文档及链接**。
+中型/复杂完整设计交接完成 = **admitted blueprint + 中型已分解 1 个、复杂已分解多个 canonical CU + 每个 CU 建立 `design_refs` 引用 + 后续施工 readiness + 当前人读文档及链接**。
 
 注意分层：**合法 `component-blueprint@1` 的判据不含 CU 数量**（P1 不反向依赖 P2）——
 `admitted blueprint + 0 CU` 是合法状态、是设计准备子流程的入口；"完整设计交付"才要求 CU。

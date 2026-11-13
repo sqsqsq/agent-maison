@@ -27,7 +27,7 @@ export function designDeliveryNextStep(input: {
   } catch { /* A name alone is not a canonical CU. */ }
   if (readFeatureFrozenScope(projectRoot, feature)) return null;
   let intake: ReturnType<typeof readRequestIntake> | undefined;
-  try { intake = readRequestIntake({ projectRoot, frameworkRoot, sessionRef: input.sessionRef }); } catch { /* Unavailable origin cannot authorize a direct frame; existing design/recovery remains. */ }
+  try { intake = readRequestIntake({ projectRoot, frameworkRoot, sessionRef: input.sessionRef?.trim() || undefined }); } catch { /* Unavailable origin cannot authorize a direct frame; existing design/recovery remains. */ }
   const { findInitialDesignRun } = require('./initial-design-delivery') as typeof import('./initial-design-delivery');
   const managed = findInitialDesignRun({ projectRoot, feature, requirement: input.requirement });
   const continuation = managed ? null : decideRunContinuation({ projectRoot, frameworkRoot, feature, call: {
@@ -70,7 +70,8 @@ export function designDeliveryNextStep(input: {
   return {
     type: 'design_preparation_required' as const, feature,
     reason: '原始完整交付应先进入同一Goal runtime受管设计；施工仍等待真实蓝图、独立质询与CU准入，候选文件不能代替初始设计。',
-    materials: { requirement: input.requirement, requirement_source_files: input.requirementSourceFiles ?? [], features_dir: relFeaturesDir(projectRoot) },
+    materials: { requirement: input.requirement, requirement_source_files: input.requirementSourceFiles ?? [], features_dir: relFeaturesDir(projectRoot),
+      ...(intake ? { session_ref: intake.session_ref } : {}) },
     next: '以原请求调用既有prepare-run/next或goal-runner启动同一runtime，持续到原终点。prepare-scope本次只投影入口、不写平面候选；以下设计及CU步骤由runtime消费，不交回主Agent手工串接。',
     steps: [
       { skill: 'component-design', action: 'runtime签发受控作者请求，读取原始需求及已有蓝图/准入/CU；续用既有材料，完成蓝图、真实独立质询与校验，不凭空填写CU身份。', command: 'npm run check:component-blueprint -- --project-root <project-root> --blueprint <actual-blueprint-id> --write-review --json' },

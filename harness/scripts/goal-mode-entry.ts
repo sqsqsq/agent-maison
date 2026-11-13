@@ -193,6 +193,7 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
   if (next && next.type !== 'design_preparation_required') throw new DesignDeliveryPreparationRequired(next);
   if (initial || previousInitial || next) {
     const prepared = prepareInitialDesignRun({ ...options, feature,
+      sessionRef: (next?.type === 'design_preparation_required' ? next.materials.session_ref : options.sessionRef?.trim()) || undefined,
       visualProviderPin: options.visualProviderPin ?? (!previousInitial ? resolveUnattendedVisualProviderPin(loadLocalConfig(options.projectRoot), options.frameworkRoot).pin : undefined) });
     const continuation: RunContinuationDecision = prepared.created
       ? prepared.continuation ?? { kind: 'fresh', explicit: false, reason: '原始正式请求进入同一受管设计段' }

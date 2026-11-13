@@ -62,6 +62,8 @@ import { loadEventsJsonlStrict, filterAuthoritativeEvents } from './goal-runner-
 import { loadGoalManifestFromRun } from './goal-manifest';
 import { detectChangeUnitDependencyCycles } from './change-unit-dependencies';
 import { stableStringify } from './phase-evidence-manifest';
+import type { RequestIntake } from './request-intake';
+import type { ChangeUnitReadySet } from './change-unit-ready-set';
 
 export interface DesignPreparationEntry {
   /** 是否可以进入设计准备段。admitted blueprint + 0 CU 是**合法**入口。 */
@@ -135,18 +137,38 @@ export interface AcceptedDecomposition {
   reviewDocument: BlueprintReviewResult;
 }
 
-/**
- * 设计准备段的接受入口：**委托**既有唯一 consumer validator
- * （`acceptChangeUnitCandidates`）完成校验与原子写出，本函数只补一条编排层前置——
- * 候选必须归属目标工作区。
- *
- * 校验/落盘/回滚/重复接受 fail-closed 的语义全部由 consumer 承担，此处不复制。
- */
+/** 原请求的单 CU 约束只回原作者；完成及 retired 历史仍由原 ready-set 解释。 */
+export function changeUnitDecompositionFeedback(intake: RequestIntake, current: ChangeUnitReadySet['units'], proposedIds: readonly string[]): string | undefined {
+  if (intake.control.exempt || intake.policy.source !== 'rule' || intake.policy.change_units !== 'single') return undefined;
+  const pending = current.filter(unit => unit.completion.state !== 'VALID').map(unit => unit.changeUnit.change_unit_id);
+  const proposed = new Set([...pending, ...proposedIds]);
+  if (proposed.size > 1) return `原请求依据已读事实自动判为中型，本次未完成/拟接受集合有 ${proposed.size} 个 CU；请原分解作者在当前候选中合成 1 个 CU，或提供可核的新独立结果/跨部件事实，沿原 intake 纠正并重算为复杂后继续。不能只手改档位；既有完成和 retired 历史不删除。`;
+  return undefined;
+}
+
+/** 核同源外框与工作区归属，再委托唯一 consumer 校验、原子写出及回滚。 */
 export function acceptChangeUnitDecomposition(
   projectRoot: string,
   blueprintId: string,
   candidates: readonly ChangeUnitCandidate[],
 ): AcceptedDecomposition {
+  const { findInitialDesignRun, initialDesignRequestOptions } = require('./initial-design-delivery') as typeof import('./initial-design-delivery');
+  const frameworkRoot = resolveProbeFrameworkRoot(projectRoot);
+  const manifest = findInitialDesignRun({ projectRoot, feature: blueprintId });
+  const options = manifest && initialDesignRequestOptions(projectRoot, frameworkRoot, manifest);
+  const requestFile = options && path.resolve(projectRoot, options.requestFile);
+  // Legacy design has no intake. A recorded request must be re-read, never trust an edited scale label.
+  if (requestFile && fs.existsSync(requestFile) && asRecord(JSON.parse(fs.readFileSync(requestFile, 'utf8')))?.intake_context) {
+    const { prepareDesignRequest } = require('./automatic-request') as typeof import('./automatic-request');
+    const prepared = prepareDesignRequest({ ...options!, readonly: true });
+    const intake = prepared.intake;
+    if (intake && !intake.control.exempt && intake.policy.source === 'rule' && intake.policy.change_units === 'single') {
+      const { deriveChangeUnitReadySet } = require('./change-unit-ready-set') as typeof import('./change-unit-ready-set');
+      const feedback = changeUnitDecompositionFeedback(intake, deriveChangeUnitReadySet(projectRoot, blueprintId).units,
+        candidates.map(candidate => candidate.artifact.change_unit_id));
+      if (feedback) throw new ChangeUnitCandidateRejected('change_unit_candidate_design_rejected', feedback);
+    }
+  }
   for (const candidate of candidates) {
     if (candidate.artifact.blueprint_id !== blueprintId) {
       throw new ChangeUnitCandidateRejected(

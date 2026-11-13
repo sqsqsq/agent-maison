@@ -15,10 +15,13 @@ import { workUnitMayWritePath } from '../../scripts/utils/repair-responsibility'
 import { enumerateCanonicalChangeUnits } from '../../scripts/utils/change-unit-path';
 import { withFreshCuHost } from './lifecycle-evolution.unit.test';
 import { createGoalRun } from '../../scripts/utils/goal-run-creation';
-import { GoalPhaseRuntime } from '../../scripts/goal-phase-runtime';
+import { GoalPhaseRuntime, main as runGoalRunner } from '../../scripts/goal-phase-runtime';
 import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
 import type { UnitCaseResult } from '../run-unit';
 import { withRuntimeTest } from '../utils/runtime-test-control';
+import { designDeliveryNextStep } from '../../scripts/utils/design-delivery-entry';
+import { readRequestIntake } from '../../scripts/utils/request-intake';
+import { acceptChangeUnitDecomposition } from '../../scripts/utils/change-unit-design-preparation';
 
 const FRAMEWORK=path.resolve(__dirname,'../../..');
 const requirement='完整交付新增收件箱批量已读能力，按原始需求完成设计、开发与验收。';
@@ -164,6 +167,102 @@ const cases:Array<{name:string;run():Promise<void>}>= [{
     }
   });},
 }];
+
+for(const mode of ['automatic','explicit','blank','legacy-rejoin','goal-runner','goal-runner-explicit','goal-runner-legacy'] as const)cases.push({
+  name:`automatic origin public prepare-run ${mode} preserves the actual user and original intake boundary`,
+  async run(){await withEmpty(async root=>{
+    const prior=Object.fromEntries(['CODEX_HOME','CODEX_THREAD_ID','CODEX_SESSION_ID'].map(key=>[key,process.env[key]]));
+    const calls:Array<{script:string;args:string[];status:number|null;stdout:string;stderr:string}>=[];
+    try{
+      const runner=mode.startsWith('goal-runner'),legacy=mode==='legacy-rejoin'||mode==='goal-runner-legacy',explicitMode=mode==='explicit'||mode==='goal-runner-explicit';
+      const valid=path.join(FRAMEWORK,'harness/tests/fixtures/component-blueprint/valid'),feature='ledger-app-blueprint';
+      fs.cpSync(valid,root,{recursive:true,filter:source=>{const relative=path.relative(valid,source).replace(/\\/g,'/'),prefix='doc/features/'+feature+'/';return !relative.startsWith(prefix)||relative.slice(prefix.length).split('/')[0]==='blueprint';}});
+      const source='src/ledger/ScaleTarget.ets',text='本请求完成账目设计，原需求见 requirements/ledger.md。';
+      fs.writeFileSync(path.join(root,source),'export const scaleTarget = 1;\n');
+      fs.writeFileSync(path.join(root,'.gitignore'),'.native-codex/\n.trust/\n');
+      const git=(args:string[])=>execFileSync('git',args,{cwd:root,encoding:'utf8',stdio:'pipe'}).trim();
+      git(['init','-q']);git(['add','-A']);git(['-c','user.name=AutoOriginTest','-c','user.email=auto@example.invalid','-c','commit.gpgsign=false','commit','-qm','isolated origin baseline']);
+      const home=path.join(root,'.native-codex');fs.mkdirSync(path.join(home,'sessions'),{recursive:true});
+      process.env.CODEX_HOME=home;delete process.env.CODEX_SESSION_ID;
+      const {DatabaseSync}=require('node:sqlite'),db=new DatabaseSync(path.join(home,'state_5.sqlite'));
+      db.exec('CREATE TABLE threads(id TEXT PRIMARY KEY, rollout_path TEXT, cwd TEXT)');
+      const sources=new Map<string,string>();
+      // Synthetic Codex-format/SQLite fixtures; no native client or model execution is claimed.
+      for(const [session,user]of [['auto-original','original-user'],['auto-other','other-user']]){
+        const file=path.join(home,'sessions','rollout-'+session+'.jsonl'),rows:object[]=[{type:'session_meta',payload:{id:session,session_id:session,cwd:root,thread_source:'user',originator:'isolated origin fixture'}},
+          {type:'response_item',timestamp:new Date().toISOString(),payload:{type:'message',id:user,role:'user',content:[{type:'input_text',text}]}}];
+        let n=0;const command=(cmd:string,output:string)=>{const call_id='origin-call-'+(++n);rows.push({type:'response_item',payload:{type:'function_call',name:'exec_command',call_id,arguments:JSON.stringify({cmd,workdir:root})}},
+          {type:'response_item',payload:{type:'function_call_output',call_id,output:JSON.stringify({chunk_id:call_id,exit_code:0,output})}});};
+        command('git rev-parse HEAD',git(['rev-parse','HEAD']));command('git status --porcelain',git(['status','--porcelain']));
+        command('Get-Content -Raw '+source,fs.readFileSync(path.join(root,source),'utf8'));
+        rows.push({type:'response_item',payload:{type:'message',role:'assistant',content:[{type:'output_text',text:`本请求 ${user}：Q1=是；Q2=否；Q3=否；依赖结果=否；跨部件=否；预期明确=是；做法唯一=否。依据 ${source}。`}]}});
+        fs.writeFileSync(file,rows.map(row=>JSON.stringify(row)).join('\n')+'\n');db.prepare('INSERT INTO threads VALUES(?,?,?)').run(session,file,root);sources.set(user,file+'#'+user);
+      }
+      db.close();fs.appendFileSync(path.join(root,source),'// controlled fixture change\n');
+      if(legacy)delete process.env.CODEX_THREAD_ID;else process.env.CODEX_THREAD_ID=explicitMode?'auto-other':'auto-original';
+      const explicit=explicitMode?sources.get('original-user'):mode==='blank'?'  ':undefined;
+      const options={projectRoot:root,frameworkRoot:FRAMEWORK,feature,requirement:text,sessionRef:explicit};
+      if(!legacy){
+        const intake=readRequestIntake({...options,sessionRef:explicit?.trim()||undefined});assert.equal(intake.policy.selected,'medium');assert.deepEqual(intake.gaps,[]);
+        const entry=designDeliveryNextStep(options);assert(entry?.type==='design_preparation_required');
+        assert.equal(entry.materials.session_ref,sources.get('original-user'));
+        if(mode==='automatic')assert.equal(designDeliveryNextStep({...options,sessionRef:'  '})?.materials.session_ref,sources.get('original-user'));
+      }
+      const invoke=(script:string,args:string[])=>{
+        const result=withRuntimeTest({root},()=>spawnSync(process.execPath,['-r',require.resolve('ts-node/register/transpile-only'),path.join(FRAMEWORK,'harness',script),'--project-root',root,
+          ...(script==='scripts/goal-mode-entry.ts'?['--framework-root',FRAMEWORK]:[]),...args],{cwd:path.join(FRAMEWORK,'harness'),env:{...process.env,TS_NODE_PROJECT:path.join(FRAMEWORK,'harness/tsconfig.json')},encoding:'utf8',timeout:60_000,windowsHide:true}));
+        calls.push({script,args,status:result.status,stdout:result.stdout,stderr:result.stderr});assert(!result.error,String(result.error));return result;
+      };
+      const prepareArgs=['--prepare-run','--run-mode','attended','--feature',feature,'--adapter','codex','--run-id','origin-'+mode,'--requirement',text,...(explicit?['--session-ref',explicit]:[])];
+      const boundedRunner=async()=>{
+        const args=['--project-root',root,'--framework-root',FRAMEWORK,'--foreground-ok','--authorize-autonomy',...prepareArgs.slice(3)];let authors=0;
+        const writer=require('../../scripts/utils/initial-design-delivery') as typeof import('../../scripts/utils/initial-design-delivery'),originalWriter=writer.prepareInitialDesignRun;let births=0;
+        writer.prepareInitialDesignRun=input=>{births++;assert.equal(input.sessionRef,sources.get('original-user'),'fresh runner dropped the producer canonical source');
+          const result=originalWriter(input),options=initialDesignRequestOptions(root,FRAMEWORK,result.manifest);
+          assert.equal(json(path.resolve(root,options.requestFile)).intake_context.user.id,'original-user','carrier was not written by the original birth writer');return result;};
+        let code:number;try{code=await withRuntimeTest({root},()=>runGoalRunner({args,authorization,executor:{async execute(context){
+          authors++;assert(context.phase.startsWith('initial-design-'));
+          const manifest=json(featureFilePath(root,feature,'goal-runs/origin-'+mode+'/manifest.json')),carrier=initialDesignRequestOptions(root,FRAMEWORK,manifest),requestFile=path.resolve(root,carrier.requestFile);
+          if(legacy)assert(!fs.existsSync(requestFile),'goal-runner rejoin manufactured intake');else assert.equal(json(requestFile).intake_context.user.id,'original-user','goal-runner dispatched before its canonical source carrier existed');
+          return{status:'waiting',phase:context.phase,details:'受控executor仅核真实出生与来源载体，不执行模型或伪造设计通过。',exitCode:0,stdout:'',stderr:'',command:'bounded-origin-entry-observer'};
+        }}}));}finally{writer.prepareInitialDesignRun=originalWriter;}
+        assert.equal(births,legacy?0:1,'legacy rejoin called a fresh writer');
+        assert.equal(authors,1,'bounded runner must stop at its first real executor request');assert.notEqual(code,0,'controlled waiting is not a completed delivery');
+        calls.push({script:'goal-phase-runtime.main with controlled first executor',args,status:code,stdout:'bounded executor calls='+authors,stderr:''});
+        return{manifest:featureFilePath(root,feature,'goal-runs/origin-'+mode+'/manifest.json')};
+      };
+      assert(!fs.existsSync(path.join(root,'doc/reports/request')),'intake was prepared before the public producer/writer call');
+      let born:{manifest:string};
+      if(runner&&!legacy)born=await boundedRunner();else{const prepared=invoke('scripts/goal-mode-entry.ts',prepareArgs);assert.equal(prepared.status,0,prepared.stderr+prepared.stdout);born=JSON.parse(prepared.stdout);}
+      const manifest=json(born.manifest),carrier=initialDesignRequestOptions(root,FRAMEWORK,manifest),file=path.resolve(root,carrier.requestFile);
+      if(legacy){
+        assert(!fs.existsSync(file),'source-free legacy birth manufactured intake');const before=fs.readFileSync(born.manifest);
+        process.env.CODEX_THREAD_ID='auto-original';assert.equal(readRequestIntake(options).policy.selected,'medium');
+        if(runner)assert.equal(json((await boundedRunner()).manifest).run_id,manifest.run_id);
+        else{const resumed=invoke('scripts/goal-mode-entry.ts',prepareArgs);assert.equal(resumed.status,0,resumed.stderr+resumed.stdout);assert.equal(json(JSON.parse(resumed.stdout).manifest).run_id,manifest.run_id);}
+        assert(!fs.existsSync(file),'rejoin backfilled a new intake');assert.deepEqual(fs.readFileSync(born.manifest),before);
+      }else{
+        assert(fs.existsSync(file),'automatic source was lost between entry and the original Goal writer');
+        const request=json(file);assert.equal(request.intake_context.user.id,'original-user');assert.equal(request.intake_context.session_ref,sources.get('original-user'));assert.equal(request.intake_context.policy.selected,'medium');assert.equal(request.intake_context.policy.source,'rule');
+        assert.equal(request.origin_request,path.relative(root,born.manifest).replace(/\\/g,'/'));
+      }
+      const candidateFile=path.join(root,'doc/features',feature,'blueprint/change-unit-candidates.json');
+      const candidates=['origin-a','origin-b'].map(id=>{const artifact=YAML.parse(fs.readFileSync(path.join(valid,'doc/features',feature,'ledger-refresh/change-unit.yaml'),'utf8'));artifact.change_unit_id=id;artifact.provenance.extraction_method='builtin-vertical-slice-decomposition + isolated-origin-test';return{providerId:'builtin-vertical-slice-decomposition',artifact};});
+      fs.writeFileSync(candidateFile,JSON.stringify(candidates));const blueprint=featureFilePath(root,feature,'blueprint/component-blueprint.yaml'),beforeBlueprint=fs.readFileSync(blueprint);
+      if(runner){
+        if(!legacy){let feedback='';try{acceptChangeUnitDecomposition(root,feature,candidates);}catch(error){feedback=(error as Error).message;}
+          assert(feedback.includes('原分解作者'),feedback);assert.equal(enumerateCanonicalChangeUnits(root,feature).length,0);assert.deepEqual(fs.readFileSync(blueprint),beforeBlueprint);}
+        return;
+      }
+      const accepted=invoke('scripts/check-change-unit.ts',['--blueprint',feature,'--accept-candidates',path.relative(root,candidateFile),'--json']);
+      if(legacy){assert.equal(accepted.status,0,accepted.stderr+accepted.stdout);assert.equal(enumerateCanonicalChangeUnits(root,feature).length,2);assert(!fs.existsSync(file));}
+      else{assert.notEqual(accepted.status,0);assert((accepted.stderr+accepted.stdout).includes('原分解作者'),accepted.stderr+accepted.stdout);assert.equal(enumerateCanonicalChangeUnits(root,feature).length,0);assert.deepEqual(fs.readFileSync(blueprint),beforeBlueprint);assert(fs.existsSync(candidateFile));}
+    }finally{
+      for(const [key,value]of Object.entries(prior))if(value===undefined)delete process.env[key];else process.env[key]=value;
+      const evidence=path.join(FRAMEWORK,'harness/reports/medium-single-cu/auto-origin-public');fs.mkdirSync(evidence,{recursive:true});fs.writeFileSync(path.join(evidence,mode+'-'+path.basename(root)+'.json'),JSON.stringify({boundary:'isolated native-format/SQLite fixture; public CLI only; no model/client/host acceptance',calls},null,2)+'\n');
+    }
+  });},
+});
 
 for(const frame of ['small','trivial'] as const)cases.push({
   name:`C1 public existing medium run accepts late ${frame} and keeps the original source baseline history and real UT obligation`,
