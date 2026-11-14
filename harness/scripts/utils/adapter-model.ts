@@ -2,7 +2,6 @@ import { adapterModelBinding } from './types';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import * as zlib from 'zlib';
 import * as YAML from 'yaml';
 import crossSpawn from 'cross-spawn';
 import { parseEnv } from 'node:util';
@@ -93,18 +92,10 @@ export async function verifyNativeModelCatalogue(binary: string, pin: AdapterMod
 }
 
 const customTags: YAML.ScalarTag[] = [{ tag: 'tag:yaml.org,2002:js', resolve: (value: string) => ({ __jsExpr: value }) }];
+const dshNative = require('../../../agents/shared/dsh-native-session.cjs');
 /** DSH persistence is a sequence of independent Zstandard frames, not one frame. */
 export function decodeDshSession(bytes: Buffer, allowIncompleteTail = false): string {
-  const chunks: Buffer[] = [];
-  for (let offset = 0; offset < bytes.length;) {
-    try {
-      const decoded = (zlib as any).zstdDecompressSync(bytes.subarray(offset), { info: true });
-      const consumed = decoded.engine.bytesWritten;
-      if (!(consumed > 0)) throw new Error('invalid Zstandard frame');
-      chunks.push(decoded.buffer); offset += consumed;
-    } catch (error) { if (allowIncompleteTail) break; throw error; }
-  }
-  return Buffer.concat(chunks).toString('utf8');
+  return dshNative.decodeDshSession(bytes, allowIncompleteTail);
 }
 export function parseDshConfiguration(text: string): any[] {
   const value = YAML.parse(text, { customTags });
@@ -232,9 +223,8 @@ function nativeSessionMetadata(record: any): any {
 
 /** Reads one explicitly located native request, never lastUsed or a recent session. */
 export function readFrontendModelRequest(input: { adapter: string; projectRoot: string; file: string; sessionId: string; requestId?: string; configSource?: string }): AdapterModelPin {
-  const bytes = fs.readFileSync(input.file);
   if (input.adapter === 'opencode') {
-    const native = JSON.parse(bytes.toString('utf8'));
+    const native = JSON.parse(fs.readFileSync(input.file, 'utf8'));
     if (native.info?.id !== input.sessionId || typeof native.info.directory !== 'string' || path.resolve(native.info.directory) !== path.resolve(input.projectRoot)) throw modelSelectionWait('前台原件不属于准确 session / 项目');
     const message = native.messages?.find((row: any) => row.info?.id === input.requestId)?.info;
     const provider = message?.providerID ?? message?.model?.providerID, model = message?.modelID ?? message?.model?.modelID;
@@ -242,8 +232,14 @@ export function readFrontendModelRequest(input: { adapter: string; projectRoot: 
     return normalizeAdapterModelPin({ adapter: input.adapter, provider, value: `${provider}/${model}`, source: 'frontend',
       config_source: path.resolve(input.projectRoot, input.configSource), ...((message.model?.variant ?? message.variant) ? { reasoning_effort: message.model?.variant ?? message.variant } : {}) })!;
   }
-  const text: string = input.file.endsWith('.zstd') ? decodeDshSession(bytes) : bytes.toString('utf8');
-  const rows = text.split(/\r?\n/).filter(Boolean).map(line => JSON.parse(line));
+  let rows: any[];
+  if (input.adapter === 'deepseek-harness') {
+    rows = dshNative.readDshSession(input.file, { sessionId: input.sessionId, projectRoot: input.projectRoot, allowIncompleteTail: true }).rows;
+  } else {
+    const bytes = fs.readFileSync(input.file);
+    const text = input.file.endsWith('.zstd') ? decodeDshSession(bytes) : bytes.toString('utf8');
+    rows = text.split(/\r?\n/).filter(Boolean).map(line => JSON.parse(line));
+  }
   const header = rows.find(row => row.type === 'session' || row.type === 'session/header' || row.type === 'session_meta');
   const meta = nativeSessionMetadata(header);
   if ((meta?.id ?? meta?.sessionId ?? meta?.session_id) !== input.sessionId || typeof meta?.cwd !== 'string' || !meta.cwd
@@ -351,11 +347,8 @@ export function launchModelPin(argv: Record<string, any>, adapter: string, proje
     try {
     const sessionId = process.env.DSH_SESSION_ID;
     if (!/^session-[a-zA-Z0-9-]+$/.test(sessionId) || !process.env.DSH_HOME || !process.env.DSH_PROFILE_DIR) throw modelSelectionWait('DSH 前台 shell 的 session/home/profile 环境不完整');
-    const sessions = path.join(process.env.DSH_HOME, 'sessions');
-    const files = fs.existsSync(sessions) ? fs.readdirSync(sessions, { withFileTypes: true }).filter(row => row.isDirectory())
-      .map(row => path.join(sessions, row.name, sessionId, 'session.v4.jsonl.zstd')).filter(file => fs.existsSync(file)) : [];
-    if (files.length !== 1) throw modelSelectionWait('DSH_SESSION_ID 未定位到唯一原生会话');
-    foreground = readFrontendModelRequest({ adapter, projectRoot, file: files[0], sessionId,
+    const located = dshNative.locateDshSession(sessionId, process.env);
+    foreground = readFrontendModelRequest({ adapter, projectRoot, file: located.file, sessionId,
       configSource: path.join(process.env.DSH_PROFILE_DIR, 'cordis.patch.yml') });
     } catch (error) {
       if (!(argv['adapter-model'] !== undefined && argv['adapter-provider'] !== undefined && argv['adapter-model-config'] !== undefined)) throw error;
@@ -412,26 +405,29 @@ export function observedMainModel(adapter: string, record: any): { value?: strin
 
 /** Exact SID lookup; no unrelated session contents or 'latest session' heuristic. */
 export function nativeDshModelMismatch(pin: AdapterModelPin, sessionId: string, cwd: string, env: NodeJS.ProcessEnv, turn?: unknown, seen = new Map<string, string>()): string | undefined {
-  const root = path.join(env.DSH_HOME ?? path.join(os.homedir(), '.dsh'), 'sessions');
-  if (!fs.existsSync(root) || !/^session-[a-zA-Z0-9-]+$/.test(sessionId) || turn === undefined) return undefined;
-  const files = seen.has('file') ? [seen.get('file')!] : fs.readdirSync(root, { withFileTypes: true }).filter(row => row.isDirectory())
-    .map(directory => path.join(root, directory.name, sessionId, 'session.v4.jsonl.zstd'));
-  for (const file of files) {
-    if (!fs.existsSync(file)) continue;
-    const stat = fs.statSync(file), version = `${stat.size}:${stat.mtimeMs}:${String(turn)}`;
-    if (seen.get(file) === version) return undefined;
-    seen.set(file, version);
-    const raw = decodeDshSession(fs.readFileSync(file), true);
-    const rows = raw.split(/\r?\n/).filter(Boolean).map(line => JSON.parse(line));
-    const header = nativeSessionMetadata(rows[0]);
-    if (header?.id !== sessionId || typeof header?.cwd !== 'string' || !header.cwd || path.resolve(header.cwd) !== path.resolve(cwd)) continue;
-    seen.set('file', file);
-    const start = rows.findIndex(row => row.type === 'turn/start' && row.data?.turn === turn);
-    if (start < 0) return undefined;
-    for (const row of rows.slice(start)) {
-      const mismatch = modelMismatch(pin, observedMainModel('deepseek-harness', row));
-      if (mismatch) return mismatch;
-    }
+  if (!/^session-[a-zA-Z0-9-]+$/.test(sessionId) || turn === undefined) return undefined;
+  let located: { file: string };
+  try { located = dshNative.locateDshSession(sessionId, env, seen.get('file')); }
+  catch (error) {
+    if (/未定位到唯一|不属于准确 session|ENOENT/.test((error as Error).message)) return undefined;
+    throw error;
+  }
+  const { file } = located;
+  const stat = fs.statSync(file), version = `${stat.size}:${stat.mtimeMs}:${String(turn)}`;
+  if (seen.get(file) === version) return undefined;
+  let rows: any[];
+  try { rows = dshNative.readDshSession(file, { sessionId, projectRoot: cwd, allowIncompleteTail: true }).rows; }
+  catch (error) {
+    if (/不属于准确 session/.test((error as Error).message)) return undefined;
+    throw error;
+  }
+  seen.set(file, version);
+  seen.set('file', file);
+  const start = rows.findIndex(row => row.type === 'turn/start' && row.data?.turn === turn);
+  if (start < 0) return undefined;
+  for (const row of rows.slice(start)) {
+    const mismatch = modelMismatch(pin, observedMainModel('deepseek-harness', row));
+    if (mismatch) return mismatch;
   }
   return undefined;
 }
@@ -466,21 +462,18 @@ export function nativeCodexModelMismatch(pin: AdapterModelPin, sessionId: string
 }
 
 export function nativeOpenCodeModelMismatch(pin: AdapterModelPin, sessionId: string, cwd: string, startedAt: number, seen: Map<string, string>): string | undefined {
-  const file = path.join(openCodeModelHome(pin), '.local/share/opencode/opencode.db');
+  const native = require('../../../agents/shared/opencode-native-session.cjs');
+  const file = native.openCodeDatabase({}, openCodeModelHome(pin));
   if (!fs.existsSync(file)) return undefined;
   const wal = fs.existsSync(`${file}-wal`) ? `${file}-wal` : file;
   const stat = fs.statSync(wal), version = `${stat.size}:${stat.mtimeMs}`;
   if (seen.get(wal) === version) return undefined;
   seen.set(wal, version); seen.set('file', wal);
-  const { DatabaseSync } = require('node:sqlite') as any;
-  const db = new DatabaseSync(file, { readOnly: true });
-  try {
-    const session = db.prepare('SELECT directory FROM session WHERE id=?').get(sessionId);
-    if (typeof session?.directory !== 'string' || path.resolve(session.directory) !== path.resolve(cwd)) return undefined;
+  return native.withOpenCodeSession(file, sessionId, cwd, (db: any) => {
     const rows = db.prepare(`SELECT coalesce(json_extract(data,'$.providerID'),json_extract(data,'$.model.providerID')) AS provider,
       coalesce(json_extract(data,'$.modelID'),json_extract(data,'$.model.modelID')) AS model,
       CASE WHEN json_extract(data,'$.role')='user' THEN coalesce(json_extract(data,'$.model.variant'),json_extract(data,'$.variant')) ELSE json_extract(data,'$.variant') END AS variant
-      FROM message WHERE session_id=? AND time_created>=? AND coalesce(json_extract(data,'$.summary'),0)=0
+      FROM message WHERE session_id=? AND time_created>=? AND coalesce(json_type(data,'$.summary'),'null')<>'true'
       AND json_extract(data,'$.role') IN ('user','assistant') ORDER BY time_created`).all(sessionId, startedAt);
     for (const row of rows) {
       if (typeof row.provider !== 'string' || typeof row.model !== 'string') continue;
@@ -488,8 +481,8 @@ export function nativeOpenCodeModelMismatch(pin: AdapterModelPin, sessionId: str
         ...(typeof row.variant === 'string' ? { reasoning_effort: row.variant } : {}) });
       if (mismatch) return mismatch;
     }
-  } finally { db.close(); }
-  return undefined;
+    return undefined;
+  });
 }
 export function modelMismatch(pin: AdapterModelPin, observed: ReturnType<typeof observedMainModel>): string | undefined {
   if (!observed) return undefined;

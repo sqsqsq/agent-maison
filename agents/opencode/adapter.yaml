@@ -17,6 +17,12 @@ rules:
   target_dir: .opencode/rules
   template_dir: ../shared/agent-bundle/templates/rules
 
+# 原生发现的项目级插件；只传当次 shell 身份并复用共享写前判据。
+hooks:
+  target_dir: .opencode/plugins
+  template_dir: templates/plugins
+  update_policy: auto_overwrite
+
 user_confirmation:
   structured_widget: unsupported
   portable_required: true
@@ -76,6 +82,9 @@ notes: |
     （由 skill / AGENTS.md 内容按需引用），**不是** opencode 有效规则入口。**禁止**为承载规则而擅自
     创建/覆盖用户的 `.opencode/opencode.json`。
   - 模型/凭据由 opencode 自身 config/auth（`~/.config/opencode` 或项目 `.opencode/opencode.json`）提供。
+  - `.opencode/plugins/maison-native-intake.js` 由普通前台自动加载；`--pure` 禁用外部插件。
+    bash 的 shell.env 携带当次 sessionID/callID，PTY 缺字段时不猜会话。编辑工具复用共享
+    framework 写保护与前门检查；shell 重定向仍不在编辑工具守卫范围内。
   - 运行时 headless stdin 灌 prompt，以 agent-invoke.ts 硬化为准。
   - **迁移**：UPDATE 会新增 `.opencode/skill`/`.opencode/rules`；旧版若曾物化到 `.agents`，该目录**不会自动删除**
     （未同时使用 generic/chrys 时可人工清理，避免 opencode 跨目录扫到同名 skill 仅 logWarning 的噪声）。

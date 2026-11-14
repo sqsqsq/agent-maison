@@ -203,8 +203,10 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         const sub = path.join(root, 'sub'); fs.mkdirSync(sub);
         assert(run('*** Delete File: ../framework/protected.js', {}, sub).hookSpecificOutput?.permissionDecision === 'deny', 'relative patch target ignored payload cwd or physical root');
         assert(!run('*** Add File: framework/harness/reports/run.json').hookSpecificOutput?.permissionDecision, 'shared runtime policy was replaced');
+        const entryPath = path.join(root, 'framework/docs/operations/project-entry.md'); fs.mkdirSync(path.dirname(entryPath), { recursive: true });
+        fs.copyFileSync(frameworkAbs(LAYOUT, 'docs/operations/project-entry.md'), entryPath);
         rows.push({ type: 'response_item', payload: { type: 'function_call', name: 'exec_command', call_id: 'entry-read', arguments: JSON.stringify({ cmd: 'Get-Content -Raw framework/docs/operations/project-entry.md', workdir: root }) } },
-          { type: 'response_item', payload: { type: 'function_call_output', call_id: 'entry-read', output: JSON.stringify({ exit_code: 0, chunk_id: 'entry', output: 'Fixture current entry read through the native tool result.' }) } }); flush();
+          { type: 'response_item', payload: { type: 'function_call_output', call_id: 'entry-read', output: JSON.stringify({ exit_code: 0, chunk_id: 'entry', output: fs.readFileSync(entryPath, 'utf8') }) } }); flush();
         const allowed = run(patch); assert(!allowed.hookSpecificOutput?.permissionDecision && allowed.hookSpecificOutput?.additionalContext.includes('real-user-fixture'), JSON.stringify(allowed));
         assert(!run('*** Update File: src/probe.js\n*** Move to: src/renamed.js\n*** Add File: src/new.js').hookSpecificOutput?.permissionDecision, 'ordinary multi-target move did not recover after read');
         const gap = run(patch, {}, root, 'missing-transcript');

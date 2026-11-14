@@ -189,7 +189,7 @@ throw Error('model invocation forbidden');`);
       const { DatabaseSync } = require('node:sqlite'); const db = new DatabaseSync(dbFile);
       db.exec('CREATE TABLE session(id TEXT,directory TEXT);CREATE TABLE message(session_id TEXT,time_created INTEGER,data TEXT);');
       db.prepare('INSERT INTO session VALUES(?,?)').run('native-sid', f.root);
-      db.prepare('INSERT INTO message VALUES(?,?,?)').run('native-sid', 1, JSON.stringify({ role: 'user', model: { providerID: 'fixture', modelID: 'model', variant: 'low' } })); db.close();
+      db.prepare('INSERT INTO message VALUES(?,?,?)').run('native-sid', 1, JSON.stringify({ role: 'user', summary: { diffs: [] }, model: { providerID: 'fixture', modelID: 'model', variant: 'low' } })); db.close();
       assert.match(nativeOpenCodeModelMismatch(selected, 'native-sid', f.root, 0, new Map())!, /reasoning_effort.*low/);
       const final = withFrozenModelArguments(defaultHeadlessInvokePlan('opencode', authority, 'controlled', undefined, adapterModelBinding(selected)));
       assert.equal(final.argv[final.argv.indexOf('--variant') + 1], 'high');

@@ -2,7 +2,7 @@
 
 本入口用于直接修改的 compile/架构能力，以及实际写/跑测试或经 checker 校验的 review/UT/testing 请求。先消费 [统一前门](project-entry.md) 的本请求与用户覆盖；只完成实际请求终点，不强造 Feature、CU、Goal 或 `_adhoc` 身份。只审查、解释或设计用例时直接用对应 Skill 共享方法，无需 request/facts/六章报告。已有在途 Feature/CU 仍走原范围，不能拆 request 绕开其义务。
 
-纯编译可独立执行 `cd framework/harness` 后的 `npm run compile -- --project-root <宿主根> --json`。直接修改需核请求与实际内容时，在同次调用带 `--session-ref '<绝对原生transcript路径>#<原始user消息ID>'`，不增加分类命令。命令核原件 session/cwd/角色，从正常调研读取带来源事实，不能只给档位文本。缺原件/可靠基线仍可报告实际 compile/显式局部检查；没有可用原生原件时，自动 request 可仅用 `--target` / `--test-target` 实际执行显式局部能力，无需手写 JSON，仍消费同一 request schema/parser/provider。原 request 的 `origin_gap` 保留真实来源与完整对账缺口，工具实际执行结果独立显示，不签完整 review 或请求 PASS，也不能据此授予豁免或固定档位。facts 区分原生作者带来源的调研与原 parser 对当前字节的实际读取，不把机械读取说成语义已获证明。编译日志在宿主 `doc/reports/compile/`；编译绿只证明实际执行的检查。
+纯编译可独立执行 `cd framework/harness` 后的 `npm run compile -- --project-root <宿主根> --json`。直接修改的本请求来源及内容核对并入同次能力调用：客户端可自动提供准确来源时省略 `--session-ref`，先设计/先 CLI 无需先触发编辑 hook；已有原 request/Goal 或跨入口交接则原样复用返回的 `session_ref`，不重新选择最新 user。JSONL 引用是绝对原件加真实 user ID（相应格式可用 `line:n`）；DSH 引用是绝对压缩原件加真实 `user/message.data.id`；OpenCode 引用是 `opencode:<原生SQLite绝对路径>?session=<SID>#<userID>`，当次 shell 的 call 引用由桥自动提供，不要求手拼。命令核原件 session/cwd/真实用户来源，从正常调研读取带来源事实，不能只给档位文本。缺原件/可靠基线仍可报告实际 compile/显式局部检查；没有可用原生原件时，自动 request 可仅用 `--target` / `--test-target` 实际执行显式局部能力，无需手写 JSON，仍消费同一 request schema/parser/provider。原 request 的 `origin_gap` 保留真实来源与完整对账缺口，工具实际执行结果独立显示，不签完整 review 或请求 PASS，也不能据此授予豁免或固定档位。facts 区分原生作者带来源的调研与原 parser 对当前字节的实际读取，不把机械读取说成语义已获证明。编译日志在宿主 `doc/reports/compile/`；编译绿只证明实际执行的检查，首个失败原因、后续恢复和仍未知项分别保留原件。
 
 有架构配置时 compile 默认对相关实际文件执行原依赖方向/跨模块出口检查；`--architecture-only` 只执行同一架构判据，不构建，也不要求 Feature 专用蓝图/CU 文档。`--target <项目相对路径>` 可重复限定显式目标，不能据此隐藏本请求其它实际影响。
 
@@ -12,9 +12,11 @@ npm run compile -- --project-root <host> --session-ref '<绝对transcript>#<原�
 npm run compile -- --project-root <host> --session-ref '<绝对transcript>#<原始user消息ID>' --architecture-only --target src/repository.ts --json
 ```
 
+上述显式引用也可替换为原入口返回的 OpenCode 引用；可自动定位的普通 shell 直接省略该参数。OpenCode `--pure` 禁插件，PTY 原生缺 session/call 时保留来源缺口；DSH 首次沿准确原件最后真实 user 建锚，已有引用后固定复用，暂未 flush 不改选会话。当前实现/实测边界见 [adapter说明](../../agents/README.md#前门规则与真实客户端证据)。
+
 ## Agent / adapter 执行顺序
 
-1. 首轮正常调研取得原请求、实际读取路径、Q1/Q2/Q3、独立结果依赖、跨部件、预期明确/做法唯一及起始调查；不要求用户表单或手写 JSON。adapter 从真实原生 payload/环境取得 transcript 与 user ID，沿同一 `--session-ref` 传给首次已有能力命令。边界解释、真实用户原文/定位、覆盖、精确 base/head、初始 dirty 归属及派生外框保存在同一 schema 的原 request；只复制本请求所需内容，不导出整段会话。
+1. 首轮正常调研取得原请求、实际读取路径、Q1/Q2/Q3、独立结果依赖、跨部件、预期明确/做法唯一及起始调查；不要求用户表单或手写 JSON。首次能力命令从真实原生 payload/环境自动定位，已有引用则沿同一 `session_ref` 传递。边界解释、真实用户原文/定位、覆盖、精确 base/head、初始 dirty 归属及派生外框保存在同一 schema 的原 request；只复制本请求所需内容，不导出整段会话。
 2. **无 `--request-file` 时自动准备**：现有 writer 在本次 `reportDir/request.json` 写执行派生件，使用同一 parser/provider/报告。显式 `--report-dir` 须位于项目内、framework/.git/features_dir 外；省略默认落 `doc/reports/request/<原生请求身份短哈希>/<phase>`，同请求恢复复用。按实际目标可传重复的 `--target`、`--test-target`、`--allow-test-write`，testing 用 `--cases`。这些参数是本次目标/许可，不是可执行命令字符串。
 3. 首次 UT 写入前完成载体准备，自动路径并入首次能力调用；需要先查看 `gaps` 时带原 `--prepare-request`。直接使用返回的 request 路径、哈希、基线、bindings、reportDir/factsPath 与 allowed writes，不自算身份。模块/载体缺口在既有授权内继续补齐，未覆盖才指出具体缺失授权；不得先写到不可执行目录再探载体。自动 prepare 会落上述派生 request/上下文；**显式 request-file 的旧 prepare 仍只读**。
 4. 阅读真实目标/具体 base 到 head 差异。按返回上下文建立本 phase 的 P1 facts（`schema_version: "1.1"`、subject 仅 request_sha256，不写 feature/run_id），review 写真实报告，UT/testing 在 allowed_test_writes 内准备并执行。必要输入改变重新准备，不沿旧绑定宣称当前输入通过。同一请求途中 commit/恢复不重置初始基线；重叠初始 dirty 无前像须披露 unknown，不能吞入用户旧修改。
@@ -26,13 +28,15 @@ npm run check -- --project-root <host> --phase review --session-ref '<绝对tran
 npm run check -- --project-root <host> --phase review --session-ref '<绝对transcript>#<原始user消息ID>' --report-dir doc/reports/review-01
 ```
 
+自动来源可用时，上述首次调用可省略 `--session-ref`；准备后沿返回的 request 路径继续，已有锚不因追加消息而漂移。
+
 **断言预期来源不减免**：每条断言自带登记——用例名前加 `[CHAR-…]`（只记录现状）或 `[AC-…]` / `[BD-…]` / `[BRANCH-…]`（有来源标签），或紧邻该行上方加 `// characterization` / `// expectation: <项目内相对路径>`。特别简单可引用自动生成的原 request JSON 项目相对路径，它保存真实用户预期和原生出处；只有未核实 AC 标签不证明预期。旧行为测试随本次修改同步；已完成需求蓝图作为历史施工图，不为小修改重写；在途验收/契约修订仍回原入口。
 
 写在 `describe(` 或文件头的总括注释不算登记，无作用域继承，`/* */` 也不算；每条断言单独一行，以 `it(`/`test(` 起行且名字为字符串字面量。`request_expectation_source` 按“已登记来源/现状记录/历史未登记”分栏，不按类别声称通过多少条。诚实 characterization 不判 FAIL，也不计需求验收；本次允许写入里既无来源又未标注才是 BLOCKER。当前按行扫描，不解析字符串/模板串，假用例文本可骗过扫描与数量对账；这个边界如实保留，写测试者仍负责来源真实。仅来源路径可解析不等于语义已经机器证明。
 
 ### 小型蓝图与同一请求的预期来源
 
-小型先完成同协议短蓝图的四样业务内容，再沿原请求实现与调用本能力。第一次设计调用在已有 `check:component-blueprint --session-ref` 中核原生来源并返回真实 `phase: component-design` 的 `request_file/source_refs`，默认只准备 request/稳定原文，不借本页 review/UT/testing 身份。只有获准补 canonical 机器来源时才加 `--prepare-source`；后续 `--request-file <返回路径>` 默认只读重验，不修改 canonical/request/source。已有权威项目内来源优先复用；纯 inline 必需项目内源时，原 writer 保存稳定原文输入底稿，出处绑定保留在同 request，不 hash 可变 request 整文件或建立第二需求真源。具体设计准备见 [蓝图设计输入](../concepts/blueprint-design-inputs.md#小型请求的首次准备与消费)。
+小型先完成同协议短蓝图的四样业务内容，再沿原请求实现与调用本能力。第一次设计调用在已有 `check:component-blueprint` 中自动核原生来源（已有引用则原样传 `--session-ref`），并返回真实 `phase: component-design` 的 `request_file/source_refs`，默认只准备 request/稳定原文，不借本页 review/UT/testing 身份。只有获准补 canonical 机器来源时才加 `--prepare-source`；后续 `--request-file <返回路径>` 默认只读重验，不修改 canonical/request/source。已有权威项目内来源优先复用；纯 inline 必需项目内源时，原 writer 保存稳定原文输入底稿，出处绑定保留在同 request，不 hash 可变 request 整文件或建立第二需求真源。具体设计准备见 [蓝图设计输入](../concepts/blueprint-design-inputs.md#小型请求的首次准备与消费)。
 
 后续能力复用原用户目标、覆盖、基线和同一蓝图当前身份及具体验收 ID，自动准备使用原 parser/typed 合并，不新建 CU、假 Feature 或并列设计文件。review 消费目标、短设计、最终 diff 和有效验证；UT 每条预期实际指向当前验收，不以路径存在、旧 revision、只有标签或 characterization 冒充已验。相关蓝图修订后仅重验受影响绑定/断言，其它有效结果复用；仅编译/仅 review 请求仍止于自身终点，小型请求完成不代 CU/Component completion。
 

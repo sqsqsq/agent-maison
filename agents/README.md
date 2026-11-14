@@ -29,7 +29,7 @@ framework/agents/
 ├── chrys/                       ← Chrys agent adapter（AGENTS.md + .agents/ bundle + chrys run headless）
 │   ├── adapter.yaml
 │   └── templates/
-├── opencode/                    ← OpenCode CLI adapter（AGENTS.md 共享 + 自有 .opencode/ bundle + opencode run headless）
+├── opencode/                    ← OpenCode adapter（AGENTS.md 共享 + .opencode/ bundle/plugins + opencode run headless）
 │   ├── adapter.yaml
 │   └── templates/
 ├── codeagent/                   ← CodeAgent adapter（Claude Code 内核 fork；AGENTS.md + .cac/ 产物 + codeagentcli headless）
@@ -112,7 +112,7 @@ schema、组合约束与 fallback 以 [`adapter-schema.yaml`](./adapter-schema.y
 | `cursor` | `AGENTS.md` | `.cursor/skills/<skill>/SKILL.md`（16 份内置跳板）、`.cursor/rules/framework.mdc` |
 | `codex` | `AGENTS.md` | `.codex/skills/<skill>/SKILL.md`（bridge 跳板）、`.codex/rules/interaction-renderer.md`、`.codex/agents/verifier.toml`（生成物） |
 | `chrys` | `AGENTS.md` | `.agents/skills/<skill>/SKILL.md`（bridge 跳板）、`.agents/rules/interaction-renderer.md` |
-| `opencode` | `AGENTS.md` | `.opencode/skill/<skill>/SKILL.md`（自有原生目录；bridge 跳板；技能自动注册为 slash）、`.opencode/rules/interaction-renderer.md` |
+| `opencode` | `AGENTS.md` | `.opencode/skill/<skill>/SKILL.md`（自有原生目录；bridge 跳板；技能自动注册为 slash）、`.opencode/rules/interaction-renderer.md`、`.opencode/plugins/maison-native-intake.js`（普通前台的来源/写前接线） |
 | `codeagent` | `AGENTS.md` | `.cac/commands/*.md`（自有副本，身份行=codeagent）、`.cac/agents/verifier.md`、`.cac/settings.json`（变量 `${CODEAGENT3_PROJECT_DIR}`）、`.cac/hooks/*.mjs`、`.cac/rules/*.md`（与 claude 共享模板） |
 
 > **常见误写**：claude adapter **无** `.claude/commands/skills/` 目录；slash 在 `.claude/commands/`，Skill 正文 SSOT 在 `framework/skills/`。`.cursor/skills/` 式 skill 跳板是 **cursor** 专属。
@@ -179,6 +179,8 @@ S1 探测任务表（`materialize-adapter-file:*` 驱动）必须 **逐文件** 
 - 禁止假设结构化 widget 可用
 - **opencode 额外说明**：maison opencode adapter 物化到其**原生主目录** `.opencode/skill/<id>/SKILL.md` + `.opencode/rules/`（`AGENTS.md` 共享，技能自动注册为 slash 命令）。选 `.opencode/skill` 而非 `.agents/skills` 的原因：`.opencode/skill` 是 opencode 长期稳定的主 skill 目录（兼容当前版本及传统原生目录）；`.agents` 外部 skill 发现是较新特性，旧版 `opencode-ai` 读不到。**`.opencode/rules/*` 不被 opencode 自动加载**（`*.mdc` 为 Cursor 格式，对 opencode 惰性），是「引用可达」被动文档（同 chrys `.agents/rules`），非有效规则入口；maison **不**为此创建/覆盖用户的 `.opencode/opencode.json`。与 claude/generic/chrys 同时物化时各写各目录（`.opencode/skill` vs `.claude/skills` vs `.agents/skills`），如扫到同名 skill 仅 logWarning（无害）。
 
+普通 OpenCode 前台从 `.opencode/plugins/maison-native-intake.js` 加载本次 shell 的来源桥及已覆盖编辑工具的共享写前守卫；`--pure` 会禁用外部插件，不具备这条自动来源/写前路径。PTY 若原生只给 cwd，桥不伪造 session/call ID，仍须沿已有原请求引用或如实保留来源缺口。
+
 ## DeepSeek Harness
 
 DeepSeek Harness 使用 `deepseek-harness` adapter、自有 `.dsh/skills` 和共享 `AGENTS.md`；
@@ -222,27 +224,30 @@ DeepSeek Harness 使用 `deepseek-harness` adapter、自有 `.dsh/skills` 和共
 | cursor  | AGENTS.md | — | `.cursor/skills/<skill>/SKILL.md`（模板 SSOT：`shared/agent-bundle/templates/skills-bridge`） | `.cursor/rules/*.mdc` | — | — |
 | codex   | AGENTS.md | —（顶层 `subagents` → `.codex/agents/verifier.toml`，生成物） | `.codex/skills/<skill>/SKILL.md`（bridge 跳板） | `.codex/rules/interaction-renderer.md` | — | `.codex/hooks.json`（结构化 upsert；仅 PreToolUse 编辑守卫） |
 | chrys   | AGENTS.md | — | `.agents/skills/<skill>/SKILL.md`（bridge 跳板） | `.agents/rules/interaction-renderer.md` | — | — |
-| opencode | AGENTS.md | —（技能自动注册 slash） | `.opencode/skill/<skill>/SKILL.md`（自有原生目录；bridge 跳板） | `.opencode/rules/interaction-renderer.md` | — | — |
+| opencode | AGENTS.md | —（技能自动注册 slash） | `.opencode/skill/<skill>/SKILL.md`（自有原生目录；bridge 跳板） | `.opencode/rules/interaction-renderer.md` | — | `.opencode/plugins/maison-native-intake.js`（普通前台） |
 | codeagent | AGENTS.md | `.cac/commands/*.md`（自有副本）+ `.cac/agents/verifier.md`（共享模板） | — | `.cac/rules/*.md`（共享模板） | `.cac/settings.json` | `.cac/hooks/*.mjs`（共享模板） |
 | deepseek-harness | AGENTS.md | —（原生技能入口） | `.dsh/skills/<skill>/SKILL.md`（共享薄跳板） | `.dsh/rules/`（按需引用） | — | — |
 
 ### 前门规则与真实客户端证据
 
-所有已物化 adapter 的根入口/常驻规则/Skill 跳板只引用 [project-entry.md](../docs/operations/project-entry.md) 的唯一规则，不各维护档位表。原生 payload/环境给同一 transcript/session/cwd 与原始 user 消息定位，由原 compile/request 的 `--session-ref '<绝对transcript>#<原始user消息ID>'` 消费，不能以 assistant 转述、路径存在或模型自称授权替代原件。普通“继续”不因新增 user 消息重复加载，语义新请求/本请求豁免边界归原入口，不归纯 hook。
+所有 adapter 的根入口/常驻规则/Skill 跳板必须引用 [project-entry.md](../docs/operations/project-entry.md) 的唯一规则，不各维护档位表；这是统一入口的规则要求，不代表各客户端的新原生来源读取链已全覆盖。原 compile/request 从可用原生环境自动取得同一 session/project 与真实 user 来源；已有请求沿返回的 `session_ref` 复用，需显式交接时把该引用原样传给 `--session-ref`，不要求用户在可自动取得时手配。引用可以是原生 JSONL 原件加消息 ID（相应格式可用 `line:n`）、DSH 压缩原件加真实 `user/message.data.id`，或 OpenCode 原生 SQLite/session/user 引用；不能以 assistant 转述、路径存在或模型自称授权替代原件。普通“继续”不因新增 user 消息重复加载，语义新请求/本请求豁免边界归原入口，不归纯 hook。
 
-支持的编辑 hook 只机械证明同一原生会话可消费上下文中已加载前门规则，缺失拒绝当前产品写入、补读即恢复；最近压缩明确保留加载事实可复用。Maison 派出作者按既有 RUN_ID/ATTEMPT/ATTEMPT_PHASE/HEADLESS 信号并集识别免重复入口（包括 Cursor 子进程缺 HEADLESS 但有运行/attempt 信号），仍不免 framework 只读、实际写界和真实完成核验。该信号是合作约定，不声称抵抗任意 Shell 伪造，不增加令牌/身份层。
+自动精确来源现已接 Codex 线程索引、Claude 原生 shell session、DSH_HOME + DSH_SESSION_ID 及 OpenCode 普通前台插件的当次 session/call。先设计、先 CLI 无需先触发编辑 hook；只消费本次来源，不扫描最近会话，不把外层 Codex 标记冒充当前 DSH/OpenCode/Claude。DSH 首次取准确原件最后一条已落盘真实 user；原 request/Goal 已有引用后固定沿用，不随追加消息换锚。CodeAgent 仍沿 hook/已有显式引用，待内网回传真实 shell 信号及生产守卫结果；Cursor 仅接已核历史格式，未知原生来源/授权继续降级。
 
-下表是 **2026-11-11 至 13 隔离原生能力及生产接线短例**，不代表正式发布件、业务宿主或设备验收。早期原件保存在开发验证目录 `temp/native-client-probes/` 的 `RESULTS.md`、`A8-PRODUCTION-RESULTS.md`；本次 Codex 生产守卫证据保存在 `harness/reports/a6-client-validation/`，这些证据不随发布件。生产 hook 原生调用绑定当时逐文件源码 SHA256；Claude 其后仅用户覆盖引用/否定词窄改，当前 core 用真实调用前的原生 JSONL 前缀回放仍保留普通会话拒绝/恢复/继续和作者放行/framework 拒绝五项结论，该回放不是新的原生调用。Node UT 执行前后核对 452 个执行源码哈希未变，动态 runtime 资产另有哈希记录，不以源码快照证明其它客户端已支持。
+已由原生短例核实的编辑 hook，只在对应工具和场景机械证明同一会话可消费上下文中已加载前门规则，缺失拒绝当前产品写入、补读即恢复；最近压缩明确保留加载事实可复用。实现按既有 RUN_ID/ATTEMPT/ATTEMPT_PHASE/HEADLESS 信号并集识别 Maison 派出作者免重复入口，客户端实际环境以下表为准；仍不免 framework 只读、实际写界和真实完成核验。该信号是合作约定，不声称抵抗任意 Shell 伪造，不增加令牌/身份层。
 
-| 客户端 | 本次真实观察 | 未测或降级边界 |
-|---|---|---|
-| Claude Code 2.1.322，实际模型 claude-sonnet-5-5 | 复制的生产 hook 壳/core 实际拦截未读入口的 Edit，真实读取根入口和本文指向的规则后同 Edit 恢复，中途 commit 后再 Edit 成功。全新作者会话实际有 RUN_ID/ATTEMPT/ATTEMPT_PHASE/RUNNER、无 HEADLESS，源码 Edit 放行而 framework 金丝雀仍拒写 | 普通/作者进程分别 42.281s/24.147s，hook wrapper 含 Node 子进程约 39–46ms；仅本隔离短例，原生结果绑定当时源码哈希，当前 core 前缀回放不冒充新原生调用 |
-| Claude 真实来源→公共自动 request | 同一原件及真实 user UUID 自动识别目标/原文/真实读取，无需手写 request JSON 或额外 target；真实初始 clean 基线保留中途 commit 前后 before→after→final 的完整 diff，没有用中途 HEAD 重置 | review 公共消费的 intake reconciliation 为 PASS，但缺真实独立 review-report，整体 FAIL 保留；自动准备不代表 review 已通过 |
-| 同一自动 request→Node UT | 公共 check:ut 实际执行 Node --test，1 pass/0 fail/0 skipped；测试读取原 request 的用户 final 预期并断言实际文件，request_test_execution、request_expectation_source、request_intake_reconciliation 均 PASS | 使用临时工程和已有测试 provider 模板，不预填结果；只证明该请求的真实 Node UT 消费，不代业务编译、架构正例、HMOS 或设备验证 |
-| Cursor CLI 2026.07.23-e383d2b；Desktop 3.15.6 | 隔离 CLI 在模型执行前 Authentication required，exit 1 | 用户决定暂缓。未登录、未取得真实 hook/transcript/作者环境样本；启动参数缺 HEADLESS 不证明 hook 实际环境。属当前认证缺口，不是产品不支持 |
-| CodeAgent `1.2615.02.03`（内网回传） | 已收到脱敏观察器结构：PreToolUse/PostToolUse/Stop 共9事件，Read3/Edit1，与同一会话/工具摘要及合成 BEFORE→AFTER 对应；version/help 均 exit0。用户确证 transcript 位于 `CODEAGENT3_CONFIG_DIR`（默认 `~/.cac`）的 `projects/`，生产 reader 已接入该根并复用原解析 | 这是观察器样本，未运行 Maison 生产守卫。用户说明采集器7项调整，未提供改后源码，来源核实仍记为采集器自报，不冒称独立审核。已准备使用修后生产源的隔离补测包；入口首拒/真实完整 Read 数值/同请求恢复/framework 写保护均待内网真实补测，不以同族内核或最终 AFTER 代签 |
-| Codex Desktop 原生会话，header `cli_version=0.167.0-alpha.4.1`，模型 gpt-6.1-sol | 新根会话真实用户发出隔离请求，生产共享前门首次拒写；真实工具完整读取生产 entry 后，原错误补丁已过前门但因独立 `before` 行发生原生 context 校验失败，该 FAIL 保留。同一原请求续作改用准确整行补丁成功，framework 两次尝试均被共享保护拒绝；最终 after/protected。原生 reader 核唯一真实 user、已读入口及成功编辑路径，续作工具转发不新增用户授权。项目层及1项生产 hook 信任经明确授权的官方接口登记 | 仅验证本隔离生产守卫与来源读取链。fixture 未物化根 AGENTS/framework.config；将其当完整宿主的全局 Skill 调查不适用，均不据此判 hook 失败。未跑 compile/request/UT，未验用户覆盖、hook 耗时或业务宿主；工具 shell 路径中的 PrimaryRuntime 26.1110.778.0 不是 Desktop 包号。fork/history_base 或只有注入/工具转发时仍降级，不签完整请求/review PASS，不推定豁免/固定档位。CodeAgent 已收观察器结构、生产守卫待内网补测，Cursor 暂缓 |
-| 其它 adapter | 使用同一根规则及能核实的原生来源 | 未有本轮真实编辑 hook 证据时仅声明指引/后验路径，不从物化文件推定写前保证 |
+下表是 **2026-11-11 至 14 隔离原生短例、历史结构及本机合成前台诊断**，不代表正式发布件、业务宿主、设备、完整四档或全能力验收，也不构成效率基准。早期原件保存在开发验证目录 `temp/native-client-probes/` 的 `RESULTS.md`、`A8-PRODUCTION-RESULTS.md`；Codex/CodeAgent 证据与补测包在 `harness/reports/a6-client-validation/`；历史调查在 `harness/reports/adapter-intake-probe/`。本轮实现证据在 `harness/reports/multi-host-intake/` 的 `claude-cli/public-*`、`opencode/frontend-*-evidence.json`、`dsh/live-report.json`、`dsh/live-selfcheck.json` 及定向测试报告。以上均为开发证据、不随发布件；原报告中的权限拒绝、程序失败、未知和后续恢复分别保留，不用最后成功改写首因。旧 hook 原生调用绑定当时源码哈希；本轮从旧验证 worktree 的保留原件取得五个真实调用前缀，以最终生产源再回放 5/5 通过，见 `harness/reports/multi-host-intake/core/legacy-claude-prefix-final-source-replay.json`。该回放不是新的原生调用；下表分别标明本轮实际前台结果。
+
+| 客户端 | 框架实现状态 | 本次原生格式 / CLI 证据 | 未测或降级边界 |
+|---|---|---|---|
+| Claude Code 2.1.322（旧 hook，claude-sonnet-5-5）；2.1.325（本轮 CLI，claude-sonnet-4-6） | 生产 hook、原生 reader、公共自动 request/Node UT 与无编辑 hook 的 shell 自动 session 来源已接通 | 旧生产 hook 短例实测 Edit 首拒、读后同改动恢复、中途 commit 后继续；作者 RUN_ID/ATTEMPT 等信号免重复入口但 framework 仍拒写。原 request 保留初始 clean 基线及 before→after→final diff，公共 Node UT 1 pass/0 fail/0 skipped，执行/预期来源/对账均 PASS。本轮纯 CLI 不传启动 session-id/session-ref，真实 shell SID、CLI 返回、原件与项目匹配，外层 Codex 标记未误用；先设计和公共 compile 取得同一真实 user/用户小型覆盖，Node 语法实际执行 PASS | 旧 review 因缺独立 review-report 整体 FAIL 保留；本轮 design 的请求边界解释 gap 仍保留，不签完整请求/设计完成。首次权限拒绝和后续恢复分别留原件。旧普通/作者42.281s/24.147s、hook约39–46ms不作效率基准；历史回放不算新原生调用。不代业务宿主、HMOS、设备或新一轮生产 hook 全验 |
+| Codex Desktop，header `cli_version=0.167.0-alpha.4.1`，模型 gpt-6.1-sol | 精确线程定位、原生 reader 与生产共享前门/写保护已接通 | 新根真实用户隔离请求首次拒写；真实工具完整读取生产 entry 后，原错误补丁已过前门但因独立 `before` 行发生原生 context 校验 FAIL，原件保留。同请求续作改用准确整行补丁成功，framework 两次均拒写，最终 after/protected。reader 核唯一真实 user、已读入口及成功编辑路径，续作工具转发不新增授权；项目层及1项生产 hook 信任经明确授权的官方接口登记 | 仅验证本隔离守卫及来源读取链；fixture 未物化根 AGENTS/framework.config，全局 Skill 调查不适用，不据此判 hook 失败。未跑 compile/request/UT，未验用户覆盖、hook 耗时或业务宿主。PrimaryRuntime 26.1110.778.0 是 shell 路径组件而非 Desktop 包号。fork/history_base 或只有注入/转发时仍降级，不签完整请求/review PASS，不推定豁免/固定档位 |
+| CodeAgent `1.2615.02.03`（内网回传） | `CODEAGENT3_CONFIG_DIR`（默认 `~/.cac`）下 `projects/` reader 复用原解析；生产守卫待验 | 已回传原生观察器 PreToolUse/PostToolUse/Stop 共9事件、Read3/Edit1，与同会话/工具摘要及 BEFORE→AFTER 对应，version/help exit0，来源根由用户确证。固定补测入口 `harness/reports/a6-client-validation/codeagent-production-probe.zip` 已更新并离线自检；新增原生 shell 仅采集匹配的环境键名：按会话/对话标识、定位名及已知家族 PID/PROCESS_ID 等名称匹配，空匹配和缺回执分开 | 观察器未运行 Maison 生产守卫；用户说明采集器7项调整但未提供改后源码，来源仍为采集器自报。新包不导出环境值、值哈希或全量环境，真实内网尚未执行；入口首拒、真实完整 Read、同请求恢复、framework 保护及当前 shell 身份仍待回传，不以离线包自检或最终 AFTER 代签 |
+| Cursor CLI 2026.07.23-e383d2b；Desktop 3.15.6 | 历史 role/message.content reader、`line:n` 与有限 wrapper 归一已接入；共享入口与 hook 壳已实现 | Maison 历史四份 JSONL 结构已核，55个 user text part 中54个含 `<user_query>`、13个完整外层包装；仅完整已知外层和唯一 user_query 归一，未知/嵌套包装保原文。session/cwd 仍须原件元数据或真实 hook context；55个真实历史 `line:n` 的回放由测试提供身份，不代表在线会话定位已验；缺工具结果不造成功 Read。既有隔离 CLI 在模型前 Authentication required、exit1 | 用户暂缓在线认证；wrapper 授权/当前在线对应未验，`userControlVerified=false`，历史读取不授豁免或固定档位；守卫如实降级，避免无结果历史永久拒写。父子/压缩、真实生产 hook/作者环境、Write/Delete/StrReplace 对应未在线验；认证缺口不等于产品不支持 |
+| OpenCode CLI/TUI 1.18.14，默认 volcengine/glm-5.3-flash | 普通前台项目插件、当次 shell session/call 来源桥、只读 SQLite user/tool reader 与已覆盖编辑工具的共享写前守卫已接通 | 本轮普通非 pure TUI 的原生提交驱动四个合成请求：edit 首拒→真实 read 前门→同改动成功，40→42，framework 拒写且原字节未变；真实 TUI 工具 shell 调用未手填引用，`probe.cjs` 从桥自动派生当前 call→assistant.parentID 对应的 user 引用后，在内部传给公共 API；compile 实际 Node 语法 PASS/特别简单，先设计在产品 read/edit 前取得真实原文/小型。另用同一真实 SID/call 元数据及原件离线回放，公共 `runCompile`/`prepareDesignRequest` 完全省略 `options.sessionRef` 仍同源成功，见 `api-no-session-ref-replay-report.json`；该项不是新前台调用；真实用户豁免+复杂覆盖后未读前门的edit42→43成功。旧CLI read/edit/missing-file及原生 snapshot 精确 before/after 证据保留 | `--pure` 禁插件；原生 PTY 实测只给 cwd、无SID/call，桥不补造ID，外层Codex不冒充。首次fixture漏profiles导致 MODULE_NOT_FOUND/exit1，命令多余句点的权限拒绝及旧权限pattern错误均留原件。design的初始dirty/源码调研/归属/边界gap仍保留，不签设计完成；未验GUI真人、真实压缩、全部工具、四档全自动或业务交付。read展示/通用hunk不是精确前像 |
+| DeepSeek Harness（DSH）0.2.2-rc.3，默认 volcengine/deepseek-v4.1-flash | 准确 SID 定位/多帧解码由模型绑定与 v4 user/tool reader 共用；原 compile/request 自动来源已接通，无新增写前 hook | 新隔离 headless 真实工具 shell保留外层Codex两ID，仍以DSH_SESSION_ID/HOME精确核原件/项目/user；native read→产品编辑前公共compile无ref实际PASS→native edit40→42→read→公共compile无ref实际PASS，两次同源、同user、特别简单。call/result seq+ID及job exit均核实；read完整行窗与非精确字节分开。首次最后真实user、已有引用追加后固定、四档及用户覆盖的正反例有定向测试 | 无request/message/turn环境ID；最后真实user是首次约定，不声称一般并发/steer当前call唯一对应。暂未flush的结果保留gap并沿原源重读，不补造成功。旧sandbox/脚本内部exit1/恢复入口exit1及本轮探针漏模型pin的启动失败均留原件。本次持久化read/edit少末尾LF，不能作精确前像；内部before/after不等于已持久化。仅headless实跑，web/desktop、真实并发/压缩/子代理和全部工具未验 |
+| Chrys | AGENTS/`.agents` bundle 与调用构造已实现；rules 仅引用可达，原生来源未接入 | 用户确认本机未安装，本轮无原生格式、CLI 或 hook 实证；没有安装或全盘搜索 | 现有权限旗标未核，detached 预检以 adapter_headless_permission_unsupported 拒绝，dry-run 为 WARN；不泛化为所有有人会话不可用。不能因文档/argv 存在宣称完整 headless、读图或工具审计支持 |
+| generic | 固定 native reader 不适用；共享入口、显式 `--target/--test-target` 及同 schema 自动 request 的 `origin_gap` 已有 | 任意外部 CLI 无统一原生格式，本轮没有其专用线上实证 | 只保证实际执行的显式局部目标结果；读不到原话时不核档位/完整 diff 归属，不签完整 review 或请求 PASS，不据此授豁免。实际能力仍由宿主 provider/profile 决定，不因有 bundle 或命令模板就称已执行 |
 
 Claude 实际落盘 `uuid` 为原始 user 引用，hook 的 prompt_id 对应原件 promptId，二者不等；新版 api-request-blob 为缓存快照、压缩总结虽 type=user 但带 isCompactSummary/isVisibleInTranscriptOnly，均不得当新用户授权。compact_boundary 是 system 记录，落盘字段 compactMetadata；能明确保留已读规则才复用。Codex 原件中的 agent_message 代理通讯不能当用户；已知 `# AGENTS.md instructions`、`<environment_context>` 等客户端指令/环境注入即使落为 role=user，也不能当用户原请求或流程授权。标有 `thread_source: subagent` 或子代理血缘的会话不能冒充根用户来源，须沿原请求核准确根线程原件；不能从子代理唯一一条 user 记录推定根用户授权。字段按真实版本解析，不以角色、格式可解析或文件存在宣称真实用户来源/语义已由机器证明。
 

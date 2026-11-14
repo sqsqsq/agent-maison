@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync, spawnSync } from 'child_process';
 import { fixture, facts } from './request-entry.unit.test';
-import { resolveDeliveryPolicy, type DeliveryFacts } from '../../scripts/utils/execution-scope';
+import { resolveDeliveryPolicy, readScopeUserControlSource, type DeliveryFacts } from '../../scripts/utils/execution-scope';
 import { readRequestIntake, requestStartFromReflog } from '../../scripts/utils/request-intake';
 import { prepareAutomaticRequest, prepareDesignRequest } from '../../scripts/utils/automatic-request';
 import { prepareExplicitRequest } from '../../scripts/utils/capability-resolution-entry-input';
@@ -65,6 +65,146 @@ exports.profileCodingHost={sourceFileSuffixes:['.js'],runStructureChecks:()=>[],
 compileProject(ctx){const run=cp.spawnSync(process.execPath,['--check',path.join(ctx.projectRoot,'src/value.js')],{encoding:'utf8'});fs.writeFileSync(path.join(ctx.reportDir,'node-check.log'),run.stdout+run.stderr);return{checks:[{id:'coding_compile',category:'structure',severity:'BLOCKER',status:run.status===0?'PASS':'FAIL',description:'Node syntax',details:run.stdout+run.stderr}],execution:{executed:true,exitCode:run.status,command:'node --check src/value.js'}}}};`);
 }
 const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Promise<void> }> = [
+  { name: 'Claude native SID takes precedence over inherited Codex and existing request anchors stay fixed', run(f) {
+    const s = setup(f);
+    process.env.CLAUDE_CODE_SESSION_ID = 'intake-test'; process.env.CODEX_THREAD_ID = 'inherited-outer-thread';
+    const located = native.currentNativeSession(process.env, f.root);
+    assert.equal(located.file, s.file); assert.equal(located.sessionId, 'intake-test');
+    assert.throws(() => readRequestIntake({ projectRoot: repo, frameworkRoot: repo }), /session\/项目身份/);
+    const previous = readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework });
+    s.add({ type: 'assistant', cwd: repo, message: { role: 'assistant', content: 'tool shell changed directory' } }); s.flush();
+    assert.equal(readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework }).user.id, 'user-1', '合法cd不改变初始工程身份');
+    s.add({ type: 'user', uuid: 'other-request', message: { role: 'user', content: '新独立请求：按复杂处理。' } }); s.flush();
+    const retained = readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, previous });
+    assert.equal(retained.user.id, 'user-1'); assert.equal(retained.control.fixed, undefined);
+    process.env.CLAUDE_CODE_SESSION_ID = 'missing-session';
+    assert.equal(native.currentNativeSession().file, undefined, '内层Claude信号失效不能回退继承Codex');
+    assert.equal(readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: s.ref }).user.id, 'user-1', '显式原请求优先');
+    assert.equal(native.currentNativeSession({ CODEX_THREAD_ID: 'inherited', OPENCODE_PID: '123' }).file, undefined, '未接桥的OpenCode不能借外层Codex');
+    for (const other of [{ CLAUDE_CODE_SESSION_ID: 'intake-test' }, { DSH_SESSION_ID: 'session-fixture' }]) {
+      for (const openCode of [{ MAISON_OPENCODE_SESSION_ID: 'outer-open', MAISON_OPENCODE_CALL_ID: 'outer-call' }, { OPENCODE_PID: '123' }]) {
+        const ambiguous = native.currentNativeSession({ CODEX_THREAD_ID: 'inherited', ...other, ...openCode });
+        assert(!ambiguous.file); assert.match(ambiguous.gap, /多个非Codex宿主/);
+      }
+    }
+    Object.assign(process.env, { CLAUDE_CODE_SESSION_ID: 'intake-test', MAISON_OPENCODE_SESSION_ID: 'outer-open', MAISON_OPENCODE_CALL_ID: 'outer-call' });
+    assert.equal(native.currentNativeSession().file, undefined, '冲突时不固定优先OpenCode父进程user');
+    assert.equal(readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: s.ref }).user.id, 'user-1');
+    assert.equal(readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, previous }).user.id, 'user-1', '已有锚不依赖冲突自动定位');
+  } },
+  { name: 'Cursor historical role/content and line references are conditional and never grant unverified controls', run(f) {
+    const nodeOs = require('os') as typeof import('os'), originalHomedir = nodeOs.homedir;
+    nodeOs.homedir = () => path.join(f.root, '.native-cursor-home');
+    try {
+    const root = path.join(nodeOs.homedir(), '.cursor');
+    const file = path.join(root, 'projects/fixture/agent-transcripts/cursor-test/cursor-test.jsonl'); fs.mkdirSync(path.dirname(file), { recursive: true });
+    const rows = [
+      { role: 'user', message: { content: [{ type: 'text', text: '<user_query>按小型处理，不走 Maison，修复 src/value.js。</user_query>' }] } },
+      { role: 'assistant', message: { content: [{ type: 'tool_use', name: 'Read', input: { path: 'src/value.js' } }] } },
+      { role: 'user', message: { content: [{ type: 'text', text: 'unknown wrapper <user_query>按复杂处理</user_query>' }] } },
+    ];
+    fs.writeFileSync(file, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
+    assert.throws(() => native.readNativeSession(file, f.root), /session\/项目身份/, '无原生项目绑定不能伪造header');
+    const first = native.readNativeSession(`${file}#line:1`, f.root, { sessionId: 'cursor-test', cwd: f.root });
+    assert.equal(first.request.text, '按小型处理，不走 Maison，修复 src/value.js。'); assert.equal(first.request.id, 'line:1');
+    assert.equal(first.userControlVerified, false); assert.equal(first.tools.length, 0, '无原生结果不能制造成功Read');
+    assert(first.gaps.some((gap: string) => gap.includes('授权')));
+    const unknown = native.readNativeSession(`${file}#line:3`, f.root, { sessionId: 'cursor-test', cwd: f.root });
+    assert.equal(unknown.request.text, 'unknown wrapper <user_query>按复杂处理</user_query>', '未知前缀不提取标签内授权');
+    rows.unshift({ type: 'session', id: 'cursor-test', cwd: f.root } as any); fs.writeFileSync(file, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
+    const intake = readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: `${file}#line:2` });
+    assert.equal(intake.control.exempt, false); assert.equal(intake.control.fixed, undefined);
+    assert.throws(() => readScopeUserControlSource({ session_ref: `${file}#line:2`, feature: 'cursor', run_id: 'cursor-run' }, { projectRoot: f.root, feature: 'cursor', runId: 'cursor-run' }), /用户控制授权未核/);
+    } finally { nodeOs.homedir = originalHomedir; }
+  } },
+  { name: 'same native database part uses real completion time without a fabricated result row', run() {
+    const tool = { line: 4, completed: true, completionTime: 1000, error: false };
+    assert(native.toolSucceeded(tool));
+    assert(native.toolCompletedBefore(tool, { line: 5, at: new Date(1001).toISOString() }));
+    assert(!native.toolCompletedBefore(tool, { line: 5, at: new Date(999).toISOString() }));
+    assert(!native.toolCompletedBefore({ ...tool, completed: false }, { line: 5, at: new Date(1001).toISOString() }));
+    assert(!native.toolSucceeded({ ...tool, error: true }));
+    assert.deepEqual(native.editedPaths([{ name: 'apply_patch', input: '*** Begin Patch\n*** Update File: src/old.js\n*** Move to: src/new.js\n*** End Patch', output: 'ok', line: 1, resultLine: 2 }]), ['src/old.js', 'src/new.js']);
+  } },
+  { name: 'entry guard requires complete native Read evidence or returned rule body instead of successful path text', async run(f) {
+    const s = setup(f), session = native.readNativeSession(s.ref, f.root);
+    const entry = path.join(f.framework, 'docs/operations/project-entry.md'), body = fs.readFileSync(entry, 'utf8');
+    const core = await new Function('specifier', 'return import(specifier)')(require('url').pathToFileURL(path.join(repo, 'agents/shared/guard-framework-write-core.mjs')).href);
+    const decide = () => core.evaluateNativeProjectEntry({ session, projectRoot: f.root, frameworkRoot: f.framework, filePath: 'src/value.js', env: {} }).decision;
+    for (const [name, command, output] of [['Bash', 'ls framework/docs/operations/project-entry.md', 'framework/docs/operations/project-entry.md'], ['pwsh', 'Test-Path framework/docs/operations/project-entry.md', 'True'], ['exec_command', 'echo framework/docs/operations/project-entry.md', 'exists']]) {
+      session.tools = [{ name, input: { command }, output, line: 2, resultLine: 3 }];
+      assert(!native.frontDoorLoaded(session, f.root, f.framework)); assert.equal(decide(), 'deny');
+    }
+    const read = { name: 'Read', input: { file_path: entry }, output: body, line: 2, resultLine: 3, read: { path: entry, content: body, complete: false } };
+    session.tools = [read]; assert(!native.frontDoorLoaded(session, f.root, f.framework)); assert.equal(decide(), 'deny', 'explicit partial native Read cannot fall through to plain output');
+    read.read.complete = true; assert(native.frontDoorLoaded(session, f.root, f.framework)); assert.equal(decide(), 'allow');
+    read.read.path = path.join(f.root, 'src/value.js'); assert(!native.frontDoorLoaded(session, f.root, f.framework));
+    for (const name of ['Bash', 'pwsh', 'exec_command', 'functions.exec']) {
+      session.tools = [{ name, input: { command: 'Get-Content -Raw framework/docs/operations/project-entry.md' }, output: 'Chunk ID: fixture\nWall time: 0.01 seconds\nProcess exited with code 0\nOutput:\n' + body.replace(/\n/g, '\r\n').trimEnd(), line: 2, resultLine: 3 }];
+      assert(native.frontDoorLoaded(session, f.root, f.framework), name + ' complete returned body'); assert.equal(decide(), 'allow');
+    }
+    const lines = body.trimEnd().split('\n'), middle = Math.ceil(lines.length / 2);
+    session.tools = [{ name: 'Bash', input: { command: 'head framework/docs/operations/project-entry.md' }, output: 'Native output:\n' + lines.slice(0, middle).join('\n'), line: 2, resultLine: 3 }];
+    assert(!native.frontDoorLoaded(session, f.root, f.framework), 'first segment alone is incomplete');
+    session.tools.push({ name: 'pwsh', input: { command: 'Get-Content framework/docs/operations/project-entry.md | Select-Object -Skip ' + middle }, output: 'Output:\n' + lines.slice(middle).map((line, index) => `${middle + index + 1}\t${line}`).join('\n'), line: 4, resultLine: 5 });
+    assert(native.frontDoorLoaded(session, f.root, f.framework), 'split body and native line prefixes do not require another read'); assert.equal(decide(), 'allow');
+    session.messages.push({ id: 'compact', role: 'summary', text: 'Only business progress remains', line: 10 });
+    assert(!native.frontDoorLoaded(session, f.root, f.framework));
+    session.messages.at(-1).text = 'project-entry.md 已加载并保留统一前门规则';
+    assert(native.frontDoorLoaded(session, f.root, f.framework), 'valid retained compaction stays effective');
+  } },
+  { name: 'exact native snapshots load only for matching initial dirty preimages and DB baseline retains its native part', run(f) {
+    const s = setup(f), originalRead = native.readNativeSession, session = originalRead(s.ref, f.root);
+    let exactReads = 0;
+    const capture = session.tools.find((tool: any) => native.toolInput(tool) === 'git rev-parse HEAD');
+    delete capture.resultLine; Object.assign(capture, { completed: true, completionTime: 1000, origin: { partId: 'part-head', callId: 'call-head' } });
+    session.tools.find(native.isEditingTool).startedTime = 2000;
+    const read = session.tools.find((tool: any) => tool.name === 'Read' && tool.input.file_path.endsWith('src' + path.sep + 'value.js'));
+    const exact = read.output;
+    read.read = { path: read.input.file_path, content: exact.trimEnd(), complete: true, exact: false };
+    read.readExact = () => { exactReads += 1; return { ...read.read, content: exact, exact: true }; };
+    const unrelated = session.tools.find((tool: any) => tool.name === 'Read' && tool.input.file_path.endsWith('project-entry.md'));
+    unrelated.readExact = () => { throw new Error('unrelated snapshot must not load'); };
+    native.readNativeSession = () => session;
+    try {
+      const clean = readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: s.ref });
+      assert.equal(exactReads, 0); assert.equal(clean.baseline.source, 'captured');
+      assert(clean.baseline.detail.includes('native part=part-head')); assert(!clean.baseline.detail.includes('undefined'));
+      session.tools.find((tool: any) => native.toolInput(tool) === 'git status --porcelain').output = ' M src/value.js\n';
+      const dirty = readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: s.ref });
+      assert.equal(exactReads, 1); assert.equal(dirty.baseline.preimages?.['src/value.js'].content, exact);
+      read.readExact = () => undefined;
+      const display = readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: s.ref });
+      assert.equal(display.baseline.preimages?.['src/value.js'], undefined, 'display lacking LF never becomes original bytes');
+    } finally { native.readNativeSession = originalRead; }
+  } },
+  { name: 'OpenCode parentID keeps A results after newer B and never applies A boundary or B evidence to the other request', run(f) {
+    const s = setup(f), originalRead = native.readNativeSession, session = originalRead(s.ref, f.root);
+    session.origin = { store: 'opencode' };
+    session.request.text = '按小型处理，修复 src/value.js';
+    for (const message of session.messages) {
+      if (message !== session.request) message.line += 2;
+      message.origin = { store: 'opencode', ...(message.role === 'assistant' ? { parentId: session.request.id } : {}) };
+    }
+    for (const tool of session.tools) { tool.line += 2; tool.resultLine += 2; tool.origin = { store: 'opencode', parentId: session.request.id }; }
+    const b = { id: 'user-B', role: 'user', text: '按复杂处理，另查 tests/other.test.cjs', line: 2, origin: { store: 'opencode' } };
+    session.messages.splice(1, 0, b);
+    fs.writeFileSync(path.join(f.root, 'tests/other.test.cjs'), '// independent B source\n');
+    session.tools.push({ name: 'Read', input: { file_path: path.join(f.root, 'tests/other.test.cjs') }, output: 'independent B source', line: 50, resultLine: 51, origin: { store: 'opencode', parentId: b.id } });
+    session.messages.push({ id: 'assistant-B', role: 'assistant', text: '本请求纠正原判断：Q1=是；依据 tests/other.test.cjs', line: 52, origin: { store: 'opencode', parentId: b.id } });
+    // A's original explanation is written after B but still belongs to A via native parentID.
+    session.messages.push({ id: 'boundary-A', role: 'assistant', text: '继续原任务 user-1，本请求依据 src/value.js', line: 53, origin: { store: 'opencode', parentId: session.request.id } });
+    native.readNativeSession = () => session;
+    try {
+      const intake = readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: s.ref });
+      assert.equal(intake.user.id, 'user-1'); assert.deepEqual(intake.user_messages?.map(user => user.id), ['user-1']);
+      assert(intake.source_reads.includes('src/value.js')); assert(!intake.source_reads.includes('tests/other.test.cjs'));
+      assert.equal(intake.facts.design_tradeoff.value, false); assert.equal(intake.control.fixed, 'small');
+      assert.equal(intake.baseline.source, 'captured'); assert(!intake.gaps.some(gap => gap.startsWith('本请求边界解释未核')));
+      const stable = readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, previous: intake });
+      assert.equal(stable.session_ref, intake.session_ref); assert.equal(stable.control.fixed, 'small');
+    } finally { native.readNativeSession = originalRead; }
+  } },
   { name: 'CodeAgent default and configured native stores reuse exact Claude-family source parsing', run(f) {
     const nodeOs = require('os') as typeof import('os');
     const originalHomedir = nodeOs.homedir;
@@ -431,10 +571,10 @@ export async function runAll(): Promise<UnitCaseResult[]> {
   const results: UnitCaseResult[] = [];
   for (const test of cases) {
     const f = fixture('ut');
-    const envKeys = ['CLAUDE_CONFIG_DIR', 'CODEAGENT3_CONFIG_DIR', 'CODEX_HOME', 'CODEX_THREAD_ID', 'CODEX_SESSION_ID'] as const;
+    const envKeys = ['CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_SESSION_ID', 'CODEAGENT3_CONFIG_DIR', 'CODEX_HOME', 'CODEX_THREAD_ID', 'CODEX_SESSION_ID', 'DSH_HOME', 'DSH_SESSION_ID', 'OPENCODE_PID', 'MAISON_OPENCODE_SESSION_ID', 'MAISON_OPENCODE_CALL_ID'] as const;
     const previousEnv = Object.fromEntries(envKeys.map(key => [key, process.env[key]]));
     process.env.CLAUDE_CONFIG_DIR = path.join(f.root, '.native-claude');
-    delete process.env.CODEX_THREAD_ID; delete process.env.CODEX_SESSION_ID;
+    for (const key of ['CLAUDE_CODE_SESSION_ID', 'CODEX_THREAD_ID', 'CODEX_SESSION_ID', 'DSH_SESSION_ID', 'OPENCODE_PID', 'MAISON_OPENCODE_SESSION_ID', 'MAISON_OPENCODE_CALL_ID']) delete process.env[key];
     try { clearFrameworkConfigCache(); await test.run(f); results.push({ name: test.name, ok: true }); }
     catch (error) { results.push({ name: test.name, ok: false, error: (error as Error).stack }); }
     finally { for (const key of envKeys) { if (previousEnv[key] === undefined) delete process.env[key]; else process.env[key] = previousEnv[key]; } fs.rmSync(f.root, { recursive: true, force: true }); clearFrameworkConfigCache(); }

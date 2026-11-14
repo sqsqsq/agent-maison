@@ -35,7 +35,26 @@ function codexSession(sessionId, env = process.env) {
   } catch { return { gap: '当前Node运行时无法只读消费Codex精确线程索引' }; }
   finally { db?.close(); }
 }
-function currentNativeSession(env = process.env) {
+function claudeSession(sessionId, env = process.env, projectRoot) {
+  if (!/^[\w-]+$/.test(sessionId)) return { gap: 'Claude当前原生session身份无效' };
+  const projects = path.join(env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'projects');
+  try {
+    // Exact SID filename only; never choose a recent transcript or decode a project slug.
+    const files = fs.readdirSync(projects, { withFileTypes: true }).filter(item => item.isDirectory())
+      .map(item => path.join(projects, item.name, sessionId + '.jsonl')).filter(file => fs.existsSync(file) && inside(projects, file));
+    if (files.length !== 1) return { gap: 'Claude当前精确session没有唯一可读原件' };
+    // The reader verifies the initial project identity once. Later tool-shell cd is legitimate.
+    return { file: files[0], sessionId };
+  } catch { return { gap: 'Claude当前精确session原件暂不可读' }; }
+}
+function currentNativeSession(env = process.env, projectRoot) {
+  const openCode = Boolean(env.MAISON_OPENCODE_SESSION_ID || env.MAISON_OPENCODE_CALL_ID || env.OPENCODE_PID);
+  if ([openCode, Boolean(env.DSH_SESSION_ID), Boolean(env.CLAUDE_CODE_SESSION_ID)].filter(Boolean).length > 1) return { gap: '多个非Codex宿主会话信号并存；请沿已有原请求session_ref，不能猜内外会话' };
+  if (env.MAISON_OPENCODE_SESSION_ID || env.MAISON_OPENCODE_CALL_ID) return require('./opencode-native-session.cjs').currentOpenCodeSession(env, projectRoot);
+  if (env.DSH_SESSION_ID) return require('./dsh-native-session.cjs').currentDshSession(env, projectRoot);
+  if (env.CLAUDE_CODE_SESSION_ID) return claudeSession(env.CLAUDE_CODE_SESSION_ID, env, projectRoot);
+  if (env.OPENCODE_PID) return { gap: 'OpenCode当前调用未提供sessionID/callID桥接；不能借用继承的外层线程' };
+  // Verified non-Codex shells inherit CODEX IDs. Reverse nesting needs an explicit/retained ref.
   const sessionId = env.CODEX_THREAD_ID || env.CODEX_SESSION_ID;
   return sessionId ? codexSession(sessionId, env) : { gap: '当前原生环境没有精确session/thread定位；可传原生--session-ref' };
 }
@@ -46,9 +65,18 @@ function nativeStore(file, env = process.env) {
   if (inside(path.join(claude, 'projects'), file)) return 'claude';
   if (inside(path.join(codeagent, 'projects'), file)) return 'codeagent';
   if ([path.join(codex, 'sessions'), path.join(codex, 'archived_sessions')].some(root => inside(root, file))) return 'codex';
+  if (inside(path.join(os.homedir(), '.cursor', 'projects'), file)) return 'cursor';
+  if (inside(path.join(env.DSH_HOME || path.join(os.homedir(), '.dsh'), 'sessions'), file)) return 'dsh';
   throw new Error('原件不在已配置客户端的原生存储内；任意JSONL不授用户豁免/覆盖');
 }
-function toolSucceeded(tool) { return tool.error !== true && Number.isInteger(tool.resultLine) && tool.resultLine > tool.line; }
+function toolSucceeded(tool) { return tool.error !== true && (tool.completed === true || Number.isInteger(tool.resultLine) && tool.resultLine > tool.line); }
+function toolCompletedBefore(tool, message) {
+  if (tool.completed === true && Number.isFinite(tool.completionTime)) {
+    const at = typeof message === 'object' ? Date.parse(message.at) : NaN;
+    return Number.isFinite(at) && tool.completionTime < at;
+  }
+  return Number.isInteger(tool.resultLine) && tool.resultLine < (typeof message === 'object' ? message.line : message);
+}
 function nativeEnvelopes(output) {
   const values = [];
   for (const line of output.split(/\r?\n/)) {
@@ -92,18 +120,21 @@ function isEditingTool(tool) {
 }
 
 /** Explicitly located session only; no newest-session search or cross-session index. */
-function readNativeSession(reference, projectRoot) {
+function readNativeSession(reference, projectRoot, context = {}) {
+  if (reference.startsWith('opencode:')) return require('./opencode-native-session.cjs').readOpenCodeSession(reference, projectRoot);
   const split = reference.lastIndexOf('#');
   const file = split < 0 ? reference : reference.slice(0, split);
   const selected = split < 0 ? undefined : reference.slice(split + 1);
   const store = nativeStore(file);
+  if (store === 'dsh') return require('./dsh-native-session.cjs').readDshRequestSession(reference, projectRoot, { resultFailed });
   const rows = fs.readFileSync(file, 'utf8').split(/\r?\n/).filter(Boolean).map(line => JSON.parse(line));
   const meta = rows.find(row => row.type === 'session_meta' || row.type === 'session/header' || row.type === 'session');
   const header = meta?.payload ?? meta?.data?.header ?? meta?.data ?? meta;
-  const sessionId = header?.id ?? header?.sessionId ?? header?.session_id ?? rows.find(row => row.sessionId || row.session_id)?.sessionId ?? rows.find(row => row.session_id)?.session_id;
-  const cwd = header?.cwd ?? rows.find(row => row.cwd)?.cwd;
+  const sessionId = header?.id ?? header?.sessionId ?? header?.session_id ?? rows.find(row => row.sessionId || row.session_id)?.sessionId ?? rows.find(row => row.session_id)?.session_id ?? (store === 'cursor' ? context.sessionId : undefined);
+  const cwd = header?.cwd ?? rows.find(row => row.cwd)?.cwd ?? (store === 'cursor' ? context.cwd : undefined);
   if (typeof sessionId !== 'string' || !cwd || !samePath(cwd, projectRoot)) throw new Error('原生会话缺少准确 session/项目身份');
   if (!path.basename(file).includes(sessionId)) throw new Error('原生文件名与session身份不一致');
+  if (store !== 'codex' && rows.some(row => row.isSidechain === true || row.agentId)) throw new Error('子代理原件不能冒充根用户原请求或授权');
   if (store === 'codex') {
     const located = codexSession(sessionId);
     if (!located.file || !samePath(located.file, file)) throw new Error(located.gap || 'Codex索引已指向其它历史页，当前分页原件未完整覆盖');
@@ -120,13 +151,17 @@ function readNativeSession(reference, projectRoot) {
     if ((row.sessionId || row.session_id) && (row.sessionId ?? row.session_id) !== sessionId) throw new Error('原件混入其它 session');
     const payload = row.payload ?? row.data ?? row;
     if (row.type === 'turn_context') turn = payload.turn_id;
-    const message = ['user', 'assistant'].includes(row.type) ? row.message : row.type === 'response_item' && payload.type === 'message' ? payload : undefined;
-    const role = row.isCompactSummary ? 'summary' : row.isMeta ? undefined : message?.role ?? (['user', 'assistant'].includes(row.type) ? row.type : undefined);
+    const message = ['user', 'assistant'].includes(row.type) || store === 'cursor' && ['user', 'assistant'].includes(row.role) ? row.message : row.type === 'response_item' && payload.type === 'message' ? payload : undefined;
+    const role = row.isCompactSummary ? 'summary' : row.isMeta ? undefined : message?.role ?? (store === 'cursor' ? row.role : undefined) ?? (['user', 'assistant'].includes(row.type) ? row.type : undefined);
     const at = row.timestamp ?? row.created_at ?? payload.timestamp;
     const id = row.uuid ?? row.id ?? payload.id ?? (role === 'user' ? turn : undefined) ?? `line:${seq}`;
     if (role === 'user' || role === 'assistant' || role === 'summary') {
       const parts = message?.content ?? payload.content ?? payload.message;
-      const content = text(Array.isArray(parts) ? parts.filter(item => ['text', 'input_text', 'output_text'].includes(item.type)) : parts);
+      let content = text(Array.isArray(parts) ? parts.filter(item => ['text', 'input_text', 'output_text'].includes(item.type)) : parts);
+      if (store === 'cursor' && role === 'user') {
+        const wrapper = /^\s*<user_query>([\s\S]*?)<\/user_query>\s*$/.exec(content);
+        if (wrapper && !/<\/?user_query>/.test(wrapper[1])) content = wrapper[1];
+      }
       const injected = store === 'codex' && role === 'user' && /^(?:# AGENTS\.md instructions(?: for(?:\s|$)|\r?\n|$)|<environment_context>)/.test(content.trim());
       if (content && !injected) messages.push({ id, role, text: content, at, line: seq, prompt_id: row.promptId });
       for (const item of Array.isArray(message?.content) ? message.content : []) {
@@ -155,7 +190,8 @@ function readNativeSession(reference, projectRoot) {
     if (originals.length === 1) request = originals[0];
   }
   if (!request) throw new Error('找不到定位的真实 user 消息');
-  return { file: fs.realpathSync(file), sessionId, cwd: fs.realpathSync(cwd), request, messages, tools };
+  return { file: fs.realpathSync(file), sessionId, cwd: fs.realpathSync(cwd), request, messages, tools,
+    ...(store === 'cursor' ? { userControlVerified: false, gaps: ['Cursor历史格式已核；原生包装授权及线上hook对应未验，不授用户豁免或固定档位'] } : {}) };
 }
 
 function userControl(message) {
@@ -182,7 +218,7 @@ function editedPaths(tools) {
       const file = input.file_path ?? input.path ?? input.target_file ?? input.notebook_path;
       if (typeof file === 'string') files.add(file);
     }
-    for (const match of patchText(tool).matchAll(/^\*\*\* (?:Add|Update|Delete) File: (.+)$/gm)) files.add(match[1].trim());
+    for (const match of patchText(tool).matchAll(/^\*\*\* (?:(?:Add|Update|Delete) File|Move to): (.+)$/gm)) files.add(match[1].trim());
   }
   return [...files];
 }
@@ -191,11 +227,22 @@ function frontDoorLoaded(session, projectRoot, frameworkRoot) {
   const entry = path.join(frameworkRoot, 'docs/operations/project-entry.md');
   const after = [...session.messages].reverse().find(message => message.role === 'summary');
   const retained = after && /(?:project-entry\.md|统一前门).{0,80}(?:已(?:读|加载)|loaded|read)|(?:已(?:读|加载)|loaded|read).{0,80}project-entry\.md/i.test(after.text);
+  let body, unseen;
   return Boolean(retained || session.tools.some(tool => {
     if (after && tool.line < after.line) return false;
     const input = toolInput(tool).replace(/\\\\/g, '/').replace(/\\/g, '/');
-    if (!toolSucceeded(tool) || !/(?:Read|read_file|exec|shell|command|functions)/i.test(tool.name) || !input.includes('project-entry.md') || !tool.output.trim()) return false;
-    return input.includes(entry.replace(/\\/g, '/')) || input.includes('framework/docs/operations/project-entry.md') || (samePath(projectRoot, frameworkRoot) && input.includes('docs/operations/project-entry.md'));
+    if (!toolSucceeded(tool) || !/(?:Read|read_file|exec|shell|command|functions|pwsh|bash)/i.test(tool.name) || !input.includes('project-entry.md')) return false;
+    if (!(input.includes(entry.replace(/\\/g, '/')) || input.includes('framework/docs/operations/project-entry.md') || (samePath(projectRoot, frameworkRoot) && input.includes('docs/operations/project-entry.md')))) return false;
+    if (tool.read) return tool.read.complete === true && typeof tool.read.path === 'string' && samePath(path.resolve(projectRoot, tool.read.path), entry);
+    // A successful path lookup is not a rule read. Native preludes and display-only final LF loss are harmless.
+    try { body ??= fs.readFileSync(entry, 'utf8').replace(/\r\n/g, '\n').trimEnd(); } catch { return false; }
+    if (!body) return false;
+    const output = tool.output.replace(/\r\n/g, '\n');
+    if (output.includes(body)) return true;
+    // Existing split reads and native line prefixes still expose the same rule lines.
+    unseen ??= new Set(body.split('\n').filter(line => line.trim()));
+    for (const line of unseen) if (output.includes(line)) unseen.delete(line);
+    return unseen.size === 0;
   }));
 }
 
@@ -216,4 +263,4 @@ function productTarget(projectRoot, frameworkRoot, filePath, roots = [], explici
     || /(?:^|\/)(?:package|oh-package|module|build-profile|app)\.json5?$/.test(rel);
 }
 
-module.exports = { samePath, currentNativeSession, nativeStore, toolSucceeded, isEditingTool, readNativeSession, userControl, editedPaths, frontDoorLoaded, toolInput, unquote, productTarget };
+module.exports = { samePath, currentNativeSession, nativeStore, toolSucceeded, toolCompletedBefore, isEditingTool, readNativeSession, userControl, editedPaths, frontDoorLoaded, toolInput, unquote, productTarget };

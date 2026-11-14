@@ -212,10 +212,11 @@ export function readScopeUserControlSource(source: ScopeUserControlSource,
   context: ScopeUserControlIdentity & { projectRoot: string }): VerifiedScopeUserControlSource {
   assertScopeControlIdentity(source, context);
   const native = require('../../../agents/shared/native-request.cjs') as {
-    readNativeSession(ref: string, root: string): { file: string; request: { id: string; text: string; at?: string } };
+    readNativeSession(ref: string, root: string): { file: string; request: { id: string; text: string; at?: string }; userControlVerified?: boolean };
     userControl(text: string): { excluded: string[]; included: string[]; fixed?: string };
   };
   const session = native.readNativeSession(source.session_ref, context.projectRoot), user = session.request;
+  if (session.userControlVerified === false) throw new Error('[execution-scope] 原生包装的用户控制授权未核，不能接受覆盖或豁免');
   const directive = native.userControl(user.text);
   return { session_ref: `${session.file}#${user.id}`, feature: context.feature, run_id: context.runId,
     user: { id: user.id, text: user.text, sha256: crypto.createHash('sha256').update(user.text).digest('hex'), ...(user.at ? { at: user.at } : {}) },

@@ -87,7 +87,9 @@ Agent 提供带来源的语义事实，工具核实路径、归属及实际差�
 
 ### 原件、基线和内容核对
 
-原生 adapter payload/环境提供同一会话的 transcript、session/cwd 与原始 user 消息 ID。已有 compile/request 命令接收 `--session-ref '<绝对原生transcript路径>#<原始user消息ID>'`；reader 核原件 session、工作目录与角色，文件存在或 Agent 自称不能替代核源。不扫描其它会话。调研一句话可写 `Q1=否；Q2=否；Q3=否；依赖结果=否；跨部件=否；预期明确=是；做法唯一=是；依据 src/...`，其中依据必须是本会话工具实际读过的项目路径；这是 Agent 的调研表达，不是用户表单。
+已有 compile/request/设计入口从可用原生 payload/环境自动取得同一 session/cwd 与真实 user 来源，不要求先触发产品编辑 hook，也不要求用户手配可自动取得的引用。显式交接把返回的 `session_ref` 原样传给 `--session-ref`：JSONL 可为 `<绝对原件>#<真实user ID或line:n>`，DSH 使用 `<绝对原件>#<user/message.data.id>`，OpenCode 为原生 SQLite/session/user 引用。reader 核原件身份、工作目录与真实用户来源，不扫描最近会话，不把外层宿主环境当本次客户端身份；文件存在或 Agent 自称不能替代核源。首次 DSH 取准确原件最后真实 user，已有原 request/Goal 引用后固定沿用，追加消息不换锚；原件暂未落盘沿同来源保留缺口并重读。调研一句话可写 `Q1=否；Q2=否；Q3=否；依赖结果=否；跨部件=否；预期明确=是；做法唯一=是；依据 src/...`，其中依据必须是本会话工具实际读过的项目路径；这是 Agent 的调研表达，不是用户表单。
+
+DSH 注入/actor/seed/压缩记录、OpenCode synthetic/ignored/子会话记录不授新用户权限；Cursor 历史格式可读，但当前包装授权未在线核实，不据历史文本授豁免或固定档位。工具成功按原生调用/结果与真实退出信息核对，结果尚未落盘、内部程序失败、完整行窗与精确字节前像分别保留事实。各客户端实现、普通前台/CLI实测及未验范围见 [adapter说明](../../agents/README.md#前门规则与真实客户端证据)。
 
 起始 HEAD 优先取首次已有调查/hook 的真实记录；缺直接捕获时，仅在原始 user 时间、连续 worktree reflog、唯一时间定位且对象可达时重建。reflog 缺失、同秒多次移动或分支归属不清保持 unknown，不能拿当前 HEAD 冒充起点。同一请求不因途中提交、恢复或返修重置基线。结合原生编辑目标和起点到工作区的实际 diff，纳入删除/重命名/未跟踪；无关初始 dirty 排除，重叠 dirty 有原前像才隔离，否则归属 unknown，保留用户文件。Shell 无写事件不证明没改；无 Git 沿显式目标，缺依据不得签“全部 diff 已对账”或完整 review PASS。
 

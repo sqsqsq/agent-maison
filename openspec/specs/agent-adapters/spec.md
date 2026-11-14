@@ -648,7 +648,7 @@ Enforcement: `harness/scripts/utils/adapter-model.ts`, `harness/scripts/utils/ag
 
 ### Requirement: Adapters share source-bound intake and disclose write-time limits
 
-所有已物化 adapter 的根入口/常驻规则/Skill 跳板 SHALL 指向 `docs/operations/project-entry.md` 同一前门，不各维护档位表。可用原生 payload/环境 SHALL 提供真实 transcript/session 与 user 消息定位给原 compile/request 的 session-ref，reader 核角色/session/cwd；无可用原件 SHALL 准确降级，不把模型转述当用户覆盖。
+所有已物化 adapter 的根入口/常驻规则/Skill 跳板 SHALL 指向 `docs/operations/project-entry.md` 同一前门，不各维护档位表。可用原生 payload/环境 SHALL 给原 compile/request 自动提供真实原件/session 与 user 消息定位；已有请求 SHALL 复用原 session-ref，显式交接支持该原生引用（含 JSONL/DSH 消息引用及 OpenCode SQLite 引用），reader 核真实用户来源/session/cwd；无可用原件 SHALL 准确降级，不把模型转述当用户覆盖。
 
 已验证的编辑 hook SHALL 仅机械核同一原生会话可消费上下文是否已加载前门规则，缺失拒绝本次产品编辑并提示补读后继续。压缩明确保留规则可复用，普通“继续”不因新 user 消息重复拒绝。语义新请求/本请求豁免边界 SHALL 由原入口解释并核真实用户来源，不宣称 hook 可逐请求分类。原派出作者 SHALL 复用 RUN_ID/ATTEMPT/ATTEMPT_PHASE/HEADLESS 的既有同源信号并集免重复入口，不免 framework 写保护、授权或真实完成核验。
 
@@ -666,7 +666,7 @@ Enforcement: `harness/scripts/utils/adapter-model.ts`, `harness/scripts/utils/ag
 - **WHEN** Codex CLI 通过而 Desktop hook 未实测，或某客户端缺本机认证/程序
 - **THEN** 报告对应未测/环境缺口与降级，SHALL NOT 声称 Desktop 已拦截或产品不支持
 
-> **Enforced by:** 已物化入口、原 guard hook 与原生 transcript reader；真实客户端能力证据见 `agents/README.md`，开发夹具不能替代原生结果。
+> **Enforced by:** 已物化入口、原 guard hook 与原生请求 reader；真实客户端能力证据见 `agents/README.md`，开发夹具不能替代原生结果。
 
 
 ### Requirement: Compact design reuses the adapter intake without claiming new client evidence
