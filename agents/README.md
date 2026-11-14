@@ -232,7 +232,7 @@ DeepSeek Harness 使用 `deepseek-harness` adapter、自有 `.dsh/skills` 和共
 
 所有 adapter 的根入口/常驻规则/Skill 跳板必须引用 [project-entry.md](../docs/operations/project-entry.md) 的唯一规则，不各维护档位表；这是统一入口的规则要求，不代表各客户端的新原生来源读取链已全覆盖。原 compile/request 从可用原生环境自动取得同一 session/project 与真实 user 来源；已有请求沿返回的 `session_ref` 复用，需显式交接时把该引用原样传给 `--session-ref`，不要求用户在可自动取得时手配。引用可以是原生 JSONL 原件加消息 ID（相应格式可用 `line:n`）、DSH 压缩原件加真实 `user/message.data.id`，或 OpenCode 原生 SQLite/session/user 引用；不能以 assistant 转述、路径存在或模型自称授权替代原件。普通“继续”不因新增 user 消息重复加载，语义新请求/本请求豁免边界归原入口，不归纯 hook。
 
-自动精确来源现已接 Codex 线程索引、Claude 原生 shell session、DSH_HOME + DSH_SESSION_ID 及 OpenCode 普通前台插件的当次 session/call。先设计、先 CLI 无需先触发编辑 hook；只消费本次来源，不扫描最近会话，不把外层 Codex 标记冒充当前 DSH/OpenCode/Claude。DSH 首次取准确原件最后一条已落盘真实 user；原 request/Goal 已有引用后固定沿用，不随追加消息换锚。CodeAgent 仍沿 hook/已有显式引用，待内网回传真实 shell 信号及生产守卫结果；Cursor 仅接已核历史格式，未知原生来源/授权继续降级。
+自动精确来源现已接 Codex 线程索引、Claude 原生 shell session、DSH_HOME + DSH_SESSION_ID 及 OpenCode 普通前台插件的当次 session/call。先设计、先 CLI 无需先触发编辑 hook；只消费本次来源，不扫描最近会话，不把外层 Codex 标记冒充当前 DSH/OpenCode/Claude。Codex 信号与单一其它有效宿主会话信号（Claude、DSH 或 OpenCode）同时存在时，采用该其它宿主会话；多个非 Codex 宿主信号冲突仍保留 gap，OpenCode PTY 缺少 sessionID/callID 时不回退使用 Codex。DSH 首次取准确原件最后一条已落盘真实 user；原 request/Goal 已有引用后固定沿用，不随追加消息换锚。CodeAgent 仍沿 hook/已有显式引用，待内网回传真实 shell 信号及生产守卫结果；Cursor 仅接已核历史格式，未知原生来源/授权继续降级。
 
 已由原生短例核实的编辑 hook，只在对应工具和场景机械证明同一会话可消费上下文中已加载前门规则，缺失拒绝当前产品写入、补读即恢复；最近压缩明确保留加载事实可复用。实现按既有 RUN_ID/ATTEMPT/ATTEMPT_PHASE/HEADLESS 信号并集识别 Maison 派出作者免重复入口，客户端实际环境以下表为准；仍不免 framework 只读、实际写界和真实完成核验。该信号是合作约定，不声称抵抗任意 Shell 伪造，不增加令牌/身份层。
 

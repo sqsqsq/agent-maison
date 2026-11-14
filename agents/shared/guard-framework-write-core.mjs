@@ -53,7 +53,7 @@ export function evaluateNativeProjectEntry({ session, projectRoot, filePath, fra
     const current = session.userControlVerified === false ? {} : nativeRequest.userControl(session.request.text);
     if (sessionExempt || current.exempt) return { decision: 'allow', sessionRef: `${session.file}#${session.request.id}` };
     if (nativeRequest.frontDoorLoaded(session, projectRoot, frameworkRoot)) return { decision: 'allow', sessionRef: `${session.file}#${session.request.id}` };
-    return { decision: 'deny', reason: '[Maison统一前门] 先读根入口及 framework/docs/operations/project-entry.md，沿原请求继续本次写入；不需要用户重发需求。' };
+    return { decision: 'deny', reason: '[Maison统一前门] 先完整读取根入口及 framework/docs/operations/project-entry.md，沿原请求继续本次写入；不需要用户重发需求。' };
 }
 
 // --------------------------------------------------------------------------

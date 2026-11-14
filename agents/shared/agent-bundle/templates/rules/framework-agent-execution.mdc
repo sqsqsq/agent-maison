@@ -29,7 +29,7 @@ alwaysApply: true
 
 ## 2. 自然语言接入同一执行路径
 
-按 `framework/docs/operations/project-entry.md` 先判原请求终点与真实授权。完整正式需求进入原 root 设计单元，再按 CU 真实依赖施工并核必要部件/组装义务；维护、纯编译或单项请求只取所需工作，不虚构完整 Feature。
+先完整读取根入口及 `framework/docs/operations/project-entry.md`，再判原请求终点与真实授权。完整正式需求进入原 root 设计单元，再按 CU 真实依赖施工并核必要部件/组装义务；维护、纯编译或单项请求只取所需工作，不虚构完整 Feature。
 
 主 Agent 负责解释请求、转交插话和授权、展示进度。需要业务写入时由本单元专用作者上下文执行；主会话只启动 runtime 返回的准确执行命令，不按 Skill 轮流派冷作者或自行施工。单独机器工具可直接调用原公开 CLI，结果止于该工具请求，不等于 Feature/CU/原请求完成。
 

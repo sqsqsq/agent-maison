@@ -86,7 +86,7 @@ function main() {
     return;
   }
   const entry = evaluateProjectEntry({ projectRoot, filePath: fileAbs, payload });
-  if (entry.decision === 'deny') { emit({ permission: 'deny', user_message: 'Maison统一前门：先读取入口', agent_message: entry.reason }); return; }
+  if (entry.decision === 'deny') { emit({ permission: 'deny', user_message: 'Maison统一前门：先完整读取根入口及 framework/docs/operations/project-entry.md', agent_message: entry.reason }); return; }
   emit({ permission: 'allow', ...(entry.sessionRef || entry.note ? { agent_message: [entry.sessionRef ? `Maison原生来源：--session-ref ${JSON.stringify(entry.sessionRef)}` : '', entry.note ?? ''].filter(Boolean).join('\n') } : {}) });
 }
 

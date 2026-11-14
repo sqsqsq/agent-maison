@@ -54,7 +54,7 @@ function currentNativeSession(env = process.env, projectRoot) {
   if (env.DSH_SESSION_ID) return require('./dsh-native-session.cjs').currentDshSession(env, projectRoot);
   if (env.CLAUDE_CODE_SESSION_ID) return claudeSession(env.CLAUDE_CODE_SESSION_ID, env, projectRoot);
   if (env.OPENCODE_PID) return { gap: 'OpenCode当前调用未提供sessionID/callID桥接；不能借用继承的外层线程' };
-  // Verified non-Codex shells inherit CODEX IDs. Reverse nesting needs an explicit/retained ref.
+  // A sole non-Codex host signal takes precedence over inherited CODEX IDs; use Codex only without other host signals.
   const sessionId = env.CODEX_THREAD_ID || env.CODEX_SESSION_ID;
   return sessionId ? codexSession(sessionId, env) : { gap: '当前原生环境没有精确session/thread定位；可传原生--session-ref' };
 }

@@ -119,7 +119,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         const run = (toolInput = edit) => spawnSync(process.execPath, [hook], { cwd: root, env, encoding: 'utf8', input: JSON.stringify({
           hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_input: toolInput, cwd: root, session_id: 'codeagent-hook-test', transcript_path: file,
         }) });
-        const denied = run(); assert(denied.status === 2 && denied.stderr.includes('统一前门'), `${denied.status}: ${denied.stderr} ${denied.stdout}`);
+        const denied = run(); assert(denied.status === 2 && denied.stderr.includes('先完整读取根入口及 framework/docs/operations/project-entry.md'), `${denied.status}: ${denied.stderr} ${denied.stdout}`);
         const content = fs.readFileSync(entryPath, 'utf8');
         rows.push({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'entry-read', name: 'Read', input: { file_path: entryPath } }] } },
           { type: 'user', toolUseResult: { type: 'text', file: { filePath: entryPath, content, startLine: 1, numLines: content.split('\n').length, totalLines: content.split('\n').length } },
@@ -187,7 +187,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
           return result.stdout.trim() ? JSON.parse(result.stdout) : {};
         };
         const patch = '*** Begin Patch\n*** Update File: src/probe.js\n@@\n-before\n+after\n*** End Patch';
-        const denied = run(patch); assert(denied.hookSpecificOutput?.permissionDecision === 'deny' && denied.hookSpecificOutput.permissionDecisionReason.includes('统一前门'), JSON.stringify(denied));
+        const denied = run(patch); assert(denied.hookSpecificOutput?.permissionDecision === 'deny' && denied.hookSpecificOutput.permissionDecisionReason.includes('先完整读取根入口及 framework/docs/operations/project-entry.md'), JSON.stringify(denied));
         for (const signal of signals) assert(!run(patch, { [signal]: '1' }).hookSpecificOutput?.permissionDecision, `${signal} did not reuse the shared author predicate`);
         const protectedPatches = [
           '*** Delete File: framework/skills/protected.md',
