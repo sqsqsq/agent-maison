@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from hylyre.api.agent import HylyreAgent
+from hylyre.api.common_operation_contract import COMMON_OPERATION_REQUIRES_OBSERVATION
 from hylyre.api.outcome import (
     ActionObservation,
     SelectorEvidence,
@@ -41,7 +42,7 @@ from hylyre.scenario.plan_parse import ParsedPlan, TestCase, parse_test_plan
 from hylyre.scenario.reducer import make_case_result, run_outcome, tool_calls_projection
 from hylyre.scenario.results import CaseResult, StepResult
 from hylyre.scenario.step_builder import blocked_by_prior_step, build_step_result
-from hylyre.scenario.step_text import normalize_planned_step_text
+from hylyre.scenario.step_text import iter_plan_steps as _iter_steps, normalize_planned_step_text
 
 #: Namespace for facts that are true of the offline stub, not of a device.
 FAKE_NAMESPACE = "x_hylyre_fake.stub"
@@ -133,7 +134,7 @@ def fake_step_outcome(
             extensions=_STUB_EXTENSIONS,
             diagnostic="fake mode: blocked by fixture",
         )
-    if role == "assertion":
+    if role == "assertion" or COMMON_OPERATION_REQUIRES_OBSERVATION.get(kind, False):
         # A stub has nothing to observe. Reporting a pass here is the
         # empty-assertion false green the protocol exists to remove.
         return OperationBlocked(
@@ -393,6 +394,8 @@ class ScenarioRunner:
                     step,
                     index=step_idx,
                     case_id=case.case_id,
+                    artifact_dir=failure_dir,
+                    artifact_base=artifact_base,
                 )
 
             if current.status in ("failed", "blocked"):
@@ -673,11 +676,6 @@ def _step_triggers_toast_assertion(steps: list[str], index: int) -> bool:
             and parsed["action"].get("type") == "assert_toast"
         )
     )
-
-
-def _iter_steps(text: str) -> list[str]:
-    normalized = text.replace("；", "\n").replace(";", "\n")
-    return [ln.strip() for ln in normalized.splitlines() if ln.strip()]
 
 
 async def _execute_one_step(

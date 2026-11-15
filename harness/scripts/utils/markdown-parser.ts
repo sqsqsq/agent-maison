@@ -199,7 +199,7 @@ function parsePipeRow(line: string): string[] {
   const trimmed = line.trim();
   if (!trimmed.startsWith('|') || !trimmed.endsWith('|')) return [];
   const inner = trimmed.slice(1, -1);
-  return inner.split('|').map(cell => cell.trim());
+  return inner.split(/(?<!\\)\|/).map(cell => cell.replace(/\\\|/g, '|').trim());
 }
 
 // --------------------------------------------------------------------------

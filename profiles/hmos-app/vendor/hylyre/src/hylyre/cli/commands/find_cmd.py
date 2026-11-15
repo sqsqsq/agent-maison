@@ -64,6 +64,7 @@ def find_in_payload(
                         "bounds": attrs.get("bounds") or "",
                         "clickable": attrs.get("clickable") or "",
                         "scrollable": attrs.get("scrollable") or "",
+                        **{name: attrs[name] for name in ("enabled", "checked", "checkable", "focused") if name in attrs},
                     }
                 )
         for ch in n.get("children") or []:

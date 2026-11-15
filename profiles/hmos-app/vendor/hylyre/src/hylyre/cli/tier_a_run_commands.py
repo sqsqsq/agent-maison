@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Optional
 
 import typer
 
 from hylyre.cli.commands import loop_cmd
+from hylyre.api.common_operation_contract import COMMON_OPERATION_KEYS, COMMON_OPERATION_EXAMPLES
 
 # CLI subcommand name -> help example JSON
 _TIER_A_RUN_SPECS: tuple[tuple[str, str], ...] = (
@@ -55,7 +57,7 @@ def _register_one(run_app: typer.Typer, cli_name: str, example: str) -> None:
 
 def register_tier_a_run_commands(run_app: typer.Typer) -> None:
     """Attach Tier A atomic run subcommands to ``run_app``."""
-    for cli_name, example in _TIER_A_RUN_SPECS:
+    for cli_name, example in (*_TIER_A_RUN_SPECS, *((key.replace("_", "-"), json.dumps({key: COMMON_OPERATION_EXAMPLES[key]}, ensure_ascii=False)) for key in COMMON_OPERATION_KEYS)):
         _register_one(run_app, cli_name, example)
 
     def run_start_app_planned_step(

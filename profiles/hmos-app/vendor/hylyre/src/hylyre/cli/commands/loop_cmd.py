@@ -73,7 +73,7 @@ async def _run_atomic_ledger_step(
     # Same builder as the plan runner, same protocol declaration as the trace:
     # an atomic step is not a separate result shape, and passing a failure_dir
     # must not turn it into a batch response.
-    step = await execute_ledger_step(agent, payload, index=0, case_id=case_id)
+    step = await execute_ledger_step(agent, payload, index=0, case_id=case_id, artifact_dir=failure_dir)
 
     failure = step.failure or {}
     if (

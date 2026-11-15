@@ -293,14 +293,37 @@ export function normalizePlannedStepFragment(raw: string): string {
   return s;
 }
 
-/** Normalize full 「测试步骤」 cell: `；` → `;`, strip backticks per fragment. */
+/** Split outside JSON strings/objects so command text survives lint and dispatch unchanged. */
+function splitPlannedStepsCell(raw: string): string[] {
+  const parts: string[] = [];
+  let start = 0;
+  let depth = 0;
+  let quoted = false;
+  let escaped = false;
+  for (let i = 0; i < raw.length; i++) {
+    const char = raw[i]!;
+    if (quoted) {
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === '"') quoted = false;
+    } else if (depth > 0 && char === '"') {
+      quoted = true;
+    } else if (char === '{' || char === '[') {
+      depth++;
+    } else if (char === '}' || char === ']') {
+      depth--;
+    } else if (depth === 0 && (char === ';' || char === '；' || char === '\n' || char === '\r')) {
+      parts.push(normalizePlannedStepFragment(raw.slice(start, i)));
+      start = i + 1;
+    }
+  }
+  parts.push(normalizePlannedStepFragment(raw.slice(start)));
+  return parts.filter(Boolean);
+}
+
+/** Normalize only separators/wrappers outside JSON; keep values byte-for-byte. */
 export function normalizePlannedStepsCell(raw: string): string {
-  const normalized = raw.replace(/；/g, ';');
-  return normalized
-    .split(';')
-    .map(p => normalizePlannedStepFragment(p))
-    .filter(Boolean)
-    .join(' ; ');
+  return splitPlannedStepsCell(raw).join(' ; ');
 }
 
 function stepRootKeys(step: Record<string, unknown>): string[] {
@@ -315,7 +338,7 @@ function isActionWrappedTouchInputSwipeScroll(step: Record<string, unknown>): bo
 }
 
 function hasMarkdownBacktickInCell(stepsRaw: string): boolean {
-  return /`/.test(stepsRaw);
+  return /`/.test(stepsRaw.replace(/"(?:\\.|[^"\\])*"/g, ''));
 }
 
 export const FORMAL_BY_TEXT_MATCHES = ['exact', 'contains'] as const;
@@ -395,6 +418,7 @@ export interface HylyreResetIdentity {
 }
 
 const LIFECYCLE_STEP_ROOTS = new Set(['start_app', 'stop_app']);
+const QUERY_ONLY_STEP_KINDS = new Set(['current_app', 'has_app', 'get_component_property']);
 
 function singleRootOf(step: Record<string, unknown> | undefined): string {
   if (!step) return '';
@@ -514,7 +538,8 @@ export function lintHylyrePlanStepRules(
     }
 
     // plan a6c4e9f2 D4/T3（wrong-screen 最低防线）：每个 Hylyre case 的首个 assertion
-    // 之前必须在同 case 至少有一个 setup/navigation action。这是结构最小规则，不解析
+    // 之前必须在同 case 至少有一个 setup/navigation action；纯查询不改变准备状态。
+    // 这是结构最小规则，不解析
     // precondition 散文、不推导跨 case screen state、不建可达性状态机。
     // 事故形态：入口 case 被跳过后，TC-015 的首断言直接在首页求值——设备从未进入目标页，
     // 失败却被当成产品缺陷。
@@ -523,7 +548,7 @@ export function lintHylyrePlanStepRules(
     if (firstAssertionIndex >= 0) {
       const hasPrecedingAction = normalizedForSetup
         .slice(0, firstAssertionIndex)
-        .some(step => step.role === 'action');
+        .some(step => step.role === 'action' && !QUERY_ONLY_STEP_KINDS.has(step.kind));
       if (!hasPrecedingAction) {
         violations.push({
           rule_id: 'STEP-SETUP',
@@ -639,11 +664,7 @@ export function lintHylyrePlanMarkdown(
 export function parsePlannedStepsFromCell(stepsRaw: string):
   | { ok: true; steps: Record<string, unknown>[]; stepTexts: string[] }
   | { ok: false; error: string } {
-  const normalized = normalizePlannedStepsCell(stepsRaw);
-  const parts = normalized
-    .split(';')
-    .map(s => normalizePlannedStepFragment(s))
-    .filter(Boolean);
+  const parts = splitPlannedStepsCell(stepsRaw);
   const steps: Record<string, unknown>[] = [];
   for (const part of parts) {
     try {

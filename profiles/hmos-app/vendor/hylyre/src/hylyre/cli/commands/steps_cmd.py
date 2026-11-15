@@ -20,6 +20,7 @@ from hylyre.scenario.ledger import (
     toast_assertion_on_unsupported,
 )
 from hylyre.scenario.results import StepResult
+from hylyre.scenario.plan_contract import validate_steps_contract
 from hylyre.scenario.step_builder import (
     batch_response,
     blocked_by_prior_step,
@@ -43,6 +44,9 @@ async def run_steps_on_agent(
     artifact_base: str | Path | None = None,
 ) -> dict[str, Any]:
     """Execute planned JSON dicts sequentially; return structured per-step results."""
+    rejection = validate_steps_contract(steps) if steps else None
+    if rejection is not None:
+        return rejection.envelope()
     mode = _normalize_on_fail(on_fail)
     results: list[dict[str, Any]] = []
     total = len(steps)
@@ -94,6 +98,8 @@ async def run_steps_on_agent(
                 raw,
                 index=idx,
                 case_id=f"step-{idx}",
+                artifact_dir=failure_dir,
+                artifact_base=artifact_base,
             )
         if operation_attempted:
             executed_count += 1
@@ -257,6 +263,9 @@ def execute_run_steps(
     use_fakes: bool = False,
 ) -> dict[str, Any]:
     """CLI/sync entry: offline stub, IPC session daemon, or ephemeral agent."""
+    rejection = validate_steps_contract(steps) if steps else None
+    if rejection is not None:
+        return rejection.envelope()
     if use_fakes:
         if session_file is not None:
             # A session *is* a live device connection, so combining it with
@@ -278,6 +287,8 @@ def execute_run_steps(
         }
         if failure_dir is not None:
             ipc_params["failure_dir"] = str(Path(failure_dir).resolve())
+        if artifact_base is not None:
+            ipc_params["artifact_base"] = str(Path(artifact_base).resolve())
         return _session_ipc(session_file, "run_steps", ipc_params)
 
     async def _go(agent: HylyreAgent) -> dict[str, Any]:

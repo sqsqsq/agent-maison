@@ -123,7 +123,10 @@ def _start_app_failure_hint(bundle: str, page_name: str | None) -> str:
     return " ".join(parts)
 
 
-class HylyreAgent:
+from hylyre.api.common_operations import CommonOperationsMixin
+
+
+class HylyreAgent(CommonOperationsMixin):
     """High-level facade: uses only ``UiDriverBase`` / ``MockControllerBase`` / ``VlmClientBase``."""
 
     def __init__(
@@ -278,7 +281,14 @@ class HylyreAgent:
                 "touch requires exactly one of (x and y), by_text, by_id, by_type, or by_key"
             )
         normalize_match(touch.get("match"), selector=touch)
+        from hylyre.api.common_operation_contract import validate_touch_mode
+        validate_touch_mode(touch)
         wt = float(touch.get("wait_time", wait_time))
+        mode_kwargs = {}
+        if touch.get("mode", "normal") != "normal":
+            mode_kwargs["mode"] = touch["mode"]
+        if "press_time" in touch:
+            mode_kwargs["press_time"] = touch["press_time"]
         scroll_into = touch.get("scroll_into_view")
         if isinstance(scroll_into, dict):
             pred = {
@@ -286,7 +296,7 @@ class HylyreAgent:
                 for k in (
                     "by_text", "by_id", "by_type", "by_key", "match", "scope",
                     "within", "below", "above", "after", "before", "all", "index",
-                    "visible", "clickable", "enabled",
+                    "visible", "clickable", "enabled", "scrollable", "checked", "checkable", "focused",
                 )
                 if touch.get(k) is not None
             }
@@ -299,6 +309,7 @@ class HylyreAgent:
         if uses_native_only(touch):
             kwargs = self._touch_from_payload(touch)
             kwargs["wait_time"] = wt
+            kwargs.update(mode_kwargs)
             await self._ui.touch(**kwargs)
             return _passed_action(
                 "touch",
@@ -313,7 +324,7 @@ class HylyreAgent:
             )
 
             hit = await resolve_touch_hit(self, touch)
-            await self._ui.touch(x=hit.center[0], y=hit.center[1], wait_time=wt)
+            await self._ui.touch(x=hit.center[0], y=hit.center[1], wait_time=wt, **mode_kwargs)
             return _passed_action(
                 "touch",
                 selector=_hit_selector(pred_from_touch_block(touch), hit),
@@ -325,6 +336,7 @@ class HylyreAgent:
 
         kwargs = self._touch_from_payload(touch)
         kwargs["wait_time"] = wt
+        kwargs.update(mode_kwargs)
         await self._ui.touch(**kwargs)
         return _passed_action("touch", selector=_native_selector(touch), engine="native")
 
@@ -558,7 +570,7 @@ class HylyreAgent:
         keys = (
             "by_text", "by_id", "by_type", "by_key", "match", "scope", "within",
             "below", "above", "after", "before", "all", "index", "visible",
-            "clickable", "enabled", "scrollable",
+            "clickable", "enabled", "scrollable", "checked", "checkable", "focused",
         )
         return {
             key: value[key]
@@ -600,7 +612,7 @@ class HylyreAgent:
                 area_pred.get(k) is not None
                 for k in (
                     "all", "scope", "within", "below", "above", "after", "before",
-                    "index", "visible", "clickable", "enabled",
+                    "index", "visible", "clickable", "enabled", "scrollable", "checked", "checkable", "focused",
                 )
             )
         ):
@@ -717,7 +729,7 @@ class HylyreAgent:
                     at_pred.get(k) is not None
                     for k in (
                         "all", "scope", "within", "below", "above", "after", "before",
-                        "index", "visible", "clickable", "enabled",
+                        "index", "visible", "clickable", "enabled", "scrollable", "checked", "checkable", "focused",
                     )
                 ):
                     sel_kw = self._scroll_selector_kwargs(None)

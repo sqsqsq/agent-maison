@@ -74,11 +74,8 @@ def planned_step_kind(step: Any) -> str:
                 return planned_step_kind(parsed)
         return "ai_action"
     if isinstance(step, dict):
-        roots = [str(k) for k in step if k in {
-            "action", "touch", "input", "swipe", "scroll", "scroll_to",
-            "back", "home", "stop_app", "clear_app", "wait", "wait_for",
-            "wait_gone", "wait_idle", "assert_toast", "start_app",
-        }]
+        from hylyre.api.planned_step_keys import PLANNED_STEP_ROOT_KEYS
+        roots = [str(k) for k in step if k in PLANNED_STEP_ROOT_KEYS]
         if len(roots) == 1:
             root = roots[0]
             if root == "action" and isinstance(step.get(root), dict):
@@ -108,9 +105,9 @@ def planned_step_role(step: Any) -> str:
     return "action"
 
 
-async def _execute_step_value(agent: HylyreAgent, step: Any, *, case_id: str) -> Any:
+async def _execute_step_value(agent: HylyreAgent, step: Any, *, case_id: str, artifact_dir: Any = None, artifact_base: Any = None) -> Any:
     if isinstance(step, dict):
-        return await dispatch_planned_step(agent, step, case_id=case_id)
+        return await dispatch_planned_step(agent, step, case_id=case_id, artifact_dir=artifact_dir, artifact_base=artifact_base)
     if not isinstance(step, str):
         raise TypeError(f"{case_id}: planned step must be a JSON object or text")
     normalized = normalize_planned_step_text(step)
@@ -125,7 +122,7 @@ async def _execute_step_value(agent: HylyreAgent, step: Any, *, case_id: str) ->
             raise PlannedStepContractError(
             f"{case_id}: planned JSON step must be an object"
         )
-        return await dispatch_planned_step(agent, payload, case_id=case_id)
+        return await dispatch_planned_step(agent, payload, case_id=case_id, artifact_dir=artifact_dir, artifact_base=artifact_base)
     if agent.vlm is None:
         # Proven unavailable before the operation is dispatched: a capability
         # block, not a failure and not a policy skip.
@@ -150,6 +147,8 @@ async def execute_ledger_step(
     index: int,
     case_id: str,
     device_session: bool | None = None,
+    artifact_dir: Any = None,
+    artifact_base: Any = None,
 ) -> StepResult:
     """Execute one step and always return one finalized StepResult.
 
@@ -162,7 +161,7 @@ async def execute_ledger_step(
     role = planned_step_role(step)
     t0 = time.perf_counter()
     try:
-        value: Any = await _execute_step_value(agent, step, case_id=case_id)
+        value: Any = await _execute_step_value(agent, step, case_id=case_id, artifact_dir=artifact_dir, artifact_base=artifact_base)
         outcome = _require_outcome(value, kind=kind, case_id=case_id)
     except Exception as exc:  # noqa: BLE001 - unexpected only; expected paths return outcomes
         # A wiring bug (an operation returning something that is not an

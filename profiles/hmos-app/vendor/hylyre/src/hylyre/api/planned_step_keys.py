@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from hylyre.api.common_operation_contract import COMMON_OPERATION_KEYS
+
 # Root keys accepted by step_dispatch (excluding legacy "action" envelope).
 PLANNED_STEP_ROOT_KEYS: tuple[str, ...] = (
     "action",
@@ -47,3 +49,7 @@ TIER_A_MCP_TOOL_SUFFIXES: tuple[str, ...] = (
     "assert_toast",
     "scroll_to",
 )
+
+PLANNED_STEP_ROOT_KEYS += COMMON_OPERATION_KEYS
+TIER_A_ATOMIC_CLI_COMMANDS += tuple(k.replace("_", "-") for k in COMMON_OPERATION_KEYS)
+TIER_A_MCP_TOOL_SUFFIXES += COMMON_OPERATION_KEYS

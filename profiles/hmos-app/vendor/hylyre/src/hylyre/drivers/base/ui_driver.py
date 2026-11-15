@@ -56,6 +56,8 @@ class UiDriverBase(ABC):
         by_id: str | None = None,
         match: str | None = None,
         wait_time: float = 0.1,
+        mode: str = "normal",
+        press_time: float | None = None,
     ) -> None:
         raise NotImplementedError
 
@@ -229,3 +231,71 @@ class UiDriverBase(ABC):
         by_id: str | None,
     ) -> None:
         _exactly_one_touch_target(x=x, y=y, by_text=by_text, by_id=by_id)
+
+    async def drag(self, **kwargs: Any) -> Any:
+        """Optional capability; existing driver subclasses remain valid."""
+        raise NotImplementedError("drag is not implemented for this UiDriver")
+
+    async def slide(self, **kwargs: Any) -> Any:
+        """Optional capability; existing driver subclasses remain valid."""
+        raise NotImplementedError("slide is not implemented for this UiDriver")
+
+    async def fling(self, **kwargs: Any) -> Any:
+        """Optional capability; existing driver subclasses remain valid."""
+        raise NotImplementedError("fling is not implemented for this UiDriver")
+
+    async def pinch_in(self, **kwargs: Any) -> Any:
+        """Optional capability; existing driver subclasses remain valid."""
+        raise NotImplementedError("pinch_in is not implemented for this UiDriver")
+
+    async def pinch_out(self, **kwargs: Any) -> Any:
+        """Optional capability; existing driver subclasses remain valid."""
+        raise NotImplementedError("pinch_out is not implemented for this UiDriver")
+
+    async def two_finger_swipe(self, **kwargs: Any) -> Any:
+        """Optional capability; existing driver subclasses remain valid."""
+        raise NotImplementedError("two_finger_swipe is not implemented for this UiDriver")
+
+    async def multi_finger_touch(self, **kwargs: Any) -> Any:
+        """Optional capability; existing driver subclasses remain valid."""
+        raise NotImplementedError("multi_finger_touch is not implemented for this UiDriver")
+
+    async def gesture(self, **kwargs: Any) -> Any:
+        """Optional capability; existing driver subclasses remain valid."""
+        raise NotImplementedError("gesture is not implemented for this UiDriver")
+
+    async def press_key(self, **kwargs: Any) -> Any:
+        """Optional capability; existing driver subclasses remain valid."""
+        raise NotImplementedError("press_key is not implemented for this UiDriver")
+
+    async def press_combination_key(self, **kwargs: Any) -> Any:
+        """Optional capability; existing driver subclasses remain valid."""
+        raise NotImplementedError("press_combination_key is not implemented for this UiDriver")
+
+    async def get_component_property(self, **kwargs: Any) -> Any:
+        """Optional capability; existing driver subclasses remain valid."""
+        raise NotImplementedError("get_component_property is not implemented for this UiDriver")
+
+    async def shell(self, **kwargs: Any) -> Any:
+        """Optional capability; existing driver subclasses remain valid."""
+        raise NotImplementedError("shell is not implemented for this UiDriver")
+
+    async def clear_text(self, **kwargs: Any) -> Any:
+        """Optional capability; existing driver subclasses remain valid."""
+        raise NotImplementedError("clear_text is not implemented for this UiDriver")
+
+    async def move_cursor(self, **kwargs: Any) -> Any:
+        """Optional capability; existing driver subclasses remain valid."""
+        raise NotImplementedError("move_cursor is not implemented for this UiDriver")
+
+    async def current_app(self, **kwargs: Any) -> Any:
+        """Optional capability; existing driver subclasses remain valid."""
+        raise NotImplementedError("current_app is not implemented for this UiDriver")
+
+    async def has_app(self, **kwargs: Any) -> Any:
+        """Optional capability; existing driver subclasses remain valid."""
+        raise NotImplementedError("has_app is not implemented for this UiDriver")
+
+    async def recent_tasks(self, **kwargs: Any) -> Any:
+        """Optional capability; existing driver subclasses remain valid."""
+        raise NotImplementedError("recent_tasks is not implemented for this UiDriver")

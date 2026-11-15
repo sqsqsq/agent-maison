@@ -205,7 +205,7 @@ export function injectP0IdentityAssertions(input: InjectionInput): InjectionResu
 function splitPipeRow(line: string): string[] | null {
   const trimmed = line.trim();
   if (!trimmed.startsWith('|') || !trimmed.endsWith('|')) return null;
-  return trimmed.slice(1, -1).split('|').map(cell => cell.trim());
+  return trimmed.slice(1, -1).split(/(?<!\\)\|/).map(cell => cell.trim());
 }
 
 /** 只重写有注入的行的「测试步骤」单元格；其余行逐字保留。 */
@@ -233,7 +233,7 @@ export function rewriteStepsCells(derivedMd: string, rewritten: Map<string, stri
     }
     const tc = (cells[idCol] ?? '').match(/TC-\d+/i)?.[0]?.toUpperCase();
     if (!tc || !rewritten.has(tc) || stepsCol >= cells.length) continue;
-    cells[stepsCol] = rewritten.get(tc)!;
+    cells[stepsCol] = rewritten.get(tc)!.replace(/\|/g, '\\|');
     lines[i] = `| ${cells.join(' | ')} |`;
   }
   return lines.join('\n');

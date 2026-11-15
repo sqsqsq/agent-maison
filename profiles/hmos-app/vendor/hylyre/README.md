@@ -23,7 +23,7 @@ vendor/hylyre/
 ```
 
 - `source.files[]` 逐文件声明 sha256；`tree_sha256` = 对「POSIX 路径升序的 `<path>\n<sha256>\n` 拼接串」整体 sha256。
-- 当前 vendored source：Hylyre `0.5.2`（截图编码与扩展名一致性修复），310 文件，`source.tree_sha256 = 2c5f64c8c0a41b52306885995d7a5a9674cf14832e3b7826243afde3dffe2100`；冻结契约仍为 `contracts_tree_sha256 = cc738c272324022d7ed559340e9c710f9b7f5f94aac62c5dd70042e827a21bae`（0.5.2 契约包零变化，`hylyre/contracts/` 226 文件与冻结包逐字节相同）。
+- 当前 vendored source：Hylyre `0.6.1`，314 文件，`source.tree_sha256 = bb0dbd365c178147a15d24f3a8edcd5b49224b2427e9213c2496adf7c30800f9`。冻结契约保持 `contracts_tree_sha256 = cc738c272324022d7ed559340e9c710f9b7f5f94aac62c5dd70042e827a21bae`。
 - schema 2 manifest 不声明 `wheel`；宿主完整性门只按 `source.files[]`、文件大小与 `source.tree_sha256` 验证实际源码树。
 - 源文件统一 **LF** 落盘并按 LF 字节计算 hash。本仓 `.gitattributes` 只约束 Maison 仓库自身的 checkout，且不进发布件；宿主 checkout 的行尾由宿主自己的 Git 属性决定（`framework/** -text`，见 `skills/reference/consumer-framework-boundary.md`「package identity 与完整性」）。被改成 CRLF 的源码树会在安装前门被拦下并点名行尾改写，不按归一化放行。
 - harness 对齐判定**按 manifest 声明清单**复算 tree hash——vendor 内意外杂物（如 `__pycache__`）不会假触发"发布件损坏"；「src 内未声明文件」的检测由 Hylyre `--verify` 负责。
@@ -57,7 +57,7 @@ python D:\1.code\Hylyre\scripts\build_wheel.py --verify $dst
 
 同步后 Hylyre 发布包内如仍带 `integration_docs` 等移交文件，**不要**提交进 Maison；`.whl` 同样不得进入本目录。把 harness 侧变更摘要补进下文「Framework 集成要点」。
 
-## Framework 集成要点（vendor 0.5.x）
+## Framework 集成要点
 
 以下由 harness 已落地，消费者读 profile 文档即可，无需另附移交清单。
 

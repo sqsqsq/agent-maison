@@ -5,6 +5,57 @@ from __future__ import annotations
 import re
 
 
+def iter_plan_steps(text: str) -> list[str]:
+    """Split separators outside JSON objects; natural language quotes stay ordinary."""
+    steps: list[str] = []
+    i = 0
+    while i < len(text):
+        while i < len(text) and (text[i].isspace() or text[i] in ";；`"):
+            i += 1
+        if text[i:i + 4].lower() == "json" and text[:i].rstrip().endswith("```"):
+            i += 4
+            continue
+        if i >= len(text):
+            break
+        start = i
+        if text[i] == "{":
+            depth, quoted, escaped = 0, False, False
+            while i < len(text):
+                char = text[i]
+                if quoted:
+                    if escaped:
+                        escaped = False
+                    elif char == "\\":
+                        escaped = True
+                    elif char == '"':
+                        quoted = False
+                elif char == '"':
+                    quoted = True
+                elif char in "{[":
+                    depth += 1
+                elif char in "}]":
+                    depth -= 1
+                i += 1
+                if depth == 0:
+                    break
+            end = i
+            while i < len(text) and text[i] in " \t`":
+                i += 1
+            if i < len(text) and text[i] not in ";；\r\n":
+                # A closing brace is not itself a step separator: retain bad suffixes for JSON rejection.
+                while i < len(text) and text[i] not in ";；\r\n":
+                    i += 1
+                end = i
+            part = normalize_planned_step_text(text[start:end])
+        else:
+            while i < len(text) and text[i] not in ";；\r\n":
+                i += 1
+            part = normalize_planned_step_text(text[start:i])
+        if part:
+            steps.append(part)
+    return steps
+
+
 def normalize_planned_step_text(raw: str) -> str:
     """Strip markdown wrappers so ``json.loads`` can see planned JSON."""
     s = raw.strip()

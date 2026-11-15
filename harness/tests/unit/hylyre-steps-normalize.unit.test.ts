@@ -13,6 +13,14 @@ export interface UnitCaseResult {
 
 const cases: Array<{ name: string; run: () => void }> = [
   {
+    name: 'flatten touch preserves 0.6.0 mode, press_time, rich selector and wait_time',
+    run: () => {
+      const touch = { by_text: 'menu', match: 'exact', mode: 'long', press_time: 3, wait_time: 0.2, scope: 'top_overlay' };
+      const result = normalizePlannedStepsInput([{ action: { type: 'touch', ...touch } }]);
+      if (JSON.stringify(result.steps) !== JSON.stringify([{ touch }])) throw new Error(JSON.stringify(result));
+    },
+  },
+  {
     name: 'unwrap steps wrapper',
     run: () => {
       const r = normalizePlannedStepsInput({

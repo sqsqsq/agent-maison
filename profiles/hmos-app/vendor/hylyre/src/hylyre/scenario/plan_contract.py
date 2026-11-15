@@ -17,11 +17,19 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
+from hylyre.api.common_operation_contract import (
+    COMMON_OPERATION_KEYS,
+    validate_boolean_filters,
+    validate_common_operation,
+    validate_touch_mode,
+)
+from hylyre.api.exceptions import PlannedStepContractError
 from hylyre.api.planned_step_keys import PLANNED_STEP_ROOT_KEYS
 from hylyre.api.selector_contract import SUPPORTED_MATCHES
 from hylyre.contracts import RESULT_PROTOCOL
 from hylyre.scenario.plan_parse import parse_test_plan
 from hylyre.scenario.step_text import (
+    iter_plan_steps,
     looks_like_planned_json,
     normalize_planned_step_text,
 )
@@ -67,13 +75,6 @@ class ContractRejection:
 
     def to_json(self) -> str:
         return json.dumps(self.envelope(), ensure_ascii=False)
-
-
-def iter_plan_steps(text: str) -> list[str]:
-    """Split one plan cell exactly the way the runner will execute it."""
-
-    normalized = text.replace("；", "\n").replace(";", "\n")
-    return [ln.strip() for ln in normalized.splitlines() if ln.strip()]
 
 
 def _bad_match(value: Any) -> bool:
@@ -170,6 +171,14 @@ def validate_planned_step(
         )
 
     root = roots[0]
+    try:
+        validate_boolean_filters(payload)
+        if root in COMMON_OPERATION_KEYS:
+            validate_common_operation(root, payload[root])
+        for _suffix, touch_block in _touch_blocks(payload):
+            validate_touch_mode(touch_block)
+    except PlannedStepContractError as exc:
+        return ContractRejection("contract.invalid_step", path, str(exc), case_id, step_index)
     for block in _walk_dicts(payload):
         for key in _MATCH_KEYS:
             if key in block and _bad_match(block[key]):

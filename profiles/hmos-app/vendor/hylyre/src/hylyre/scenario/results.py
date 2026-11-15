@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 import re
 from typing import Any, Literal
 
+from hylyre.api.component_properties import BOOLEAN_PROPERTIES
 from hylyre.scenario.plan_parse import TestCase
 
 Execution = Literal["completed", "aborted", "infrastructure_failed"]
@@ -233,13 +234,25 @@ class StepResult:
     def to_dict(self) -> dict[str, Any]:
         """Serialized shape as persisted: redacted, structured identity intact."""
 
+        safe_outcome = redact_evidence(self.outcome)
+        observation = self.observation or {}
+        facts = observation.get("facts") or {}
+        if (
+            self.kind == "get_component_property"
+            and observation.get("operation") == "get_component_property"
+            and isinstance(facts.get("property"), str)
+            and facts.get("property") in BOOLEAN_PROPERTIES
+            and isinstance(facts.get("value"), bool)
+        ):
+            # A normalized control-state boolean is machine evidence, not user text.
+            safe_outcome["observation"]["facts"]["value"] = facts["value"]
         return {
             "index": int(self.index),
             "kind": self.kind,
             "role": self.role,
             "duration_ms": round(float(self.duration_ms), 3),
             "device_session": bool(self.device_session),
-            "outcome": redact_evidence(self.outcome),
+            "outcome": safe_outcome,
             "selector": redact_selector(self.selector),
             "artifacts": [dict(a) for a in self.artifacts],
             "diagnostic": redact_text(self.diagnostic),

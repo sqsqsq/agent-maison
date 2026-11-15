@@ -82,6 +82,9 @@ _CONSTRAINT_KEYS = (
     "clickable",
     "enabled",
     "scrollable",
+    "checked",
+    "checkable",
+    "focused",
 )
 
 

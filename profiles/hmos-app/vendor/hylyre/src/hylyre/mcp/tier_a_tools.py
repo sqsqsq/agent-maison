@@ -23,6 +23,8 @@ def register_tier_a_mcp_tools(
 ) -> None:
     """Attach ``hylyre_run_<step>`` tools for each Tier A root key."""
 
+    from hylyre.api.common_operation_contract import COMMON_OPERATION_EXAMPLES
+
     descriptions: dict[str, str] = {
         "back": "System / Nav stack back (planned JSON root back).",
         "home": "Home key / launcher (planned JSON root home).",
@@ -38,7 +40,7 @@ def register_tier_a_mcp_tools(
 
     for suffix in TIER_A_MCP_TOOL_SUFFIXES:
         tool_name = f"hylyre_run_{suffix}"
-        desc = descriptions.get(suffix, f"Planned JSON root {suffix}.")
+        desc = descriptions.get(suffix, f"Planned JSON root {suffix}. Example/defaults: {json.dumps(COMMON_OPERATION_EXAMPLES.get(suffix, {}), ensure_ascii=False)}")
 
         def _make_tool(name: str, description: str) -> None:
             @mcp.tool(name=name, description=description)

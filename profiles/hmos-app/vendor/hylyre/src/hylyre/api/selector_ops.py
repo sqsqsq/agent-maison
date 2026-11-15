@@ -44,7 +44,7 @@ def tree_from_dump(payload: dict[str, Any]) -> dict[str, Any]:
 
 def pred_from_touch_block(touch: dict[str, Any]) -> dict[str, Any]:
     """Build resolver predicate from a touch block (strip touch-only keys)."""
-    skip = frozenset({"x", "y", "wait_time", "scroll_into_view", "prefer_native_text"})
+    skip = frozenset({"x", "y", "wait_time", "scroll_into_view", "prefer_native_text", "mode", "press_time"})
     return {k: v for k, v in touch.items() if k not in skip and v is not None}
 
 
@@ -263,6 +263,7 @@ async def wait_rich_selector(
         presence_observed,
     )
     from hylyre.api.selector_contract import selector_request
+    from hylyre.api.component_properties import BOOLEAN_PROPERTIES, has_boolean_filters, property_value
 
     pred = {
         k: v
@@ -270,22 +271,44 @@ async def wait_rich_selector(
         if k not in ("timeout",) and v is not None
     }
     request = selector_request(pred)
+    lift_text = not has_boolean_filters(pred, properties=frozenset({"checked", "checkable", "focused"}))
     deadline = time.monotonic() + float(timeout)
     hits: list[Any] = []
+    property_facts: dict[str, Any] = {}
     while True:
         payload = await agent.dump_ui()
         tree = tree_from_dump(payload)
-        hits = resolve_targets(tree, pred)
+        hits = resolve_targets(tree, pred, lift_text=lift_text, allow_empty=True)
+
+        names: set[str] = set()
+
+        def identity_only(value: Any) -> Any:
+            if isinstance(value, dict):
+                names.update(k for k in value if k in BOOLEAN_PROPERTIES)
+                return {k: identity_only(v) for k, v in value.items() if k not in BOOLEAN_PROPERTIES}
+            if isinstance(value, list):
+                return [identity_only(v) for v in value]
+            return value
+
+        identity = identity_only(pred)
+        if names:
+            # Diagnostic identity candidates must not reapply an index to a different predicate.
+            identity.pop("index", None)
+            observed_hits = hits or resolve_targets(tree, identity, lift_text=lift_text, allow_empty=True)
+            property_facts = {"property_observations": [
+                {"id": hit.id or None, "properties": {name: property_value(hit.attrs, name) for name in names}}
+                for hit in observed_hits
+            ]}
         present = len(hits) > 0
         if want_gone and not present:
             return OperationPassed(
-                observation=absence_observed(False, candidate_count=0),
+                observation=absence_observed(False, candidate_count=0, **property_facts),
                 selector=SelectorEvidence(request, SelectorResolution.not_found()),
             )
         if not want_gone and present:
             first = hits[0]
             return OperationPassed(
-                observation=presence_observed(True, candidate_count=len(hits)),
+                observation=presence_observed(True, candidate_count=len(hits), **property_facts),
                 selector=SelectorEvidence(
                     request,
                     SelectorResolution(
@@ -309,9 +332,9 @@ async def wait_rich_selector(
 
     observed_present = len(hits) > 0
     observation = (
-        absence_observed(observed_present, candidate_count=len(hits))
+        absence_observed(observed_present, candidate_count=len(hits), **property_facts)
         if want_gone
-        else presence_observed(observed_present, candidate_count=len(hits))
+        else presence_observed(observed_present, candidate_count=len(hits), **property_facts)
     )
     resolution = (
         SelectorResolution.not_found()

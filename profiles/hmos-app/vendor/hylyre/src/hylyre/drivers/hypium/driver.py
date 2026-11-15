@@ -303,7 +303,10 @@ def _native_component_summary(component: Any) -> dict[str, Any]:
     }
 
 
-class HypiumDriver(UiDriverBase):
+from hylyre.drivers.hypium.common_operations import HypiumCommonOperations
+
+
+class HypiumDriver(HypiumCommonOperations, UiDriverBase):
     def __init__(
         self,
         *,
@@ -379,7 +382,11 @@ class HypiumDriver(UiDriverBase):
         by_id: str | None = None,
         match: str | None = None,
         wait_time: float = 0.1,
+        mode: str = "normal",
+        press_time: float | None = None,
     ) -> None:
+        from hylyre.api.common_operation_contract import validate_touch_mode
+        validate_touch_mode({"mode": mode, **({"press_time": press_time} if press_time is not None else {})})
         normalize_match(match)
         self._validate_touch_kwargs(
             x=x, y=y, by_text=by_text, by_id=by_id
@@ -411,15 +418,12 @@ class HypiumDriver(UiDriverBase):
                 },
             )
         wt = float(wait_time)
-        await _to_thread(
-            lambda: raw.touch(
-                target,
-                mode="normal",
-                scroll_target=None,
-                wait_time=wt,
-                offset=None,
-            )
-        )
+        if mode == "long":
+            await self._common_call("long_click", target, press_time=2 if press_time is None else press_time)
+            if wt:
+                await asyncio.sleep(wt)
+        else:
+            await self._common_call("touch", target, mode=mode, scroll_target=None, wait_time=wt, offset=None)
         return {
             "selector": selector_evidence(
                 {"by_text": by_text, "by_id": by_id, "match": match},

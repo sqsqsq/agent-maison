@@ -5,7 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Any
 
-from hylyre.api.exceptions import SelectorContractError, SelectorResolutionError
+from hylyre.api.exceptions import PlannedStepContractError, SelectorContractError, SelectorResolutionError
+from hylyre.api.component_properties import BOOLEAN_PROPERTIES, observable_bool, property_value
 from hylyre.api.selector_contract import normalize_match, text_matches
 from hylyre.ui_dump_hints import parse_bounds_rect
 
@@ -34,6 +35,9 @@ _RICH_PREDICATE_KEYS = frozenset(
         "clickable",
         "enabled",
         "scrollable",
+        "checked",
+        "checkable",
+        "focused",
         "by_type",
         "scroll_into_view",
         "prefer_native_text",
@@ -646,23 +650,23 @@ def _filter_match(attrs: dict[str, Any], pred: dict[str, Any]) -> bool:
         rect = parse_bounds_rect(str(attrs.get("bounds") or ""))
         if rect is None or _bounds_area(rect) <= 0:
             return False
-    if pred.get("clickable") is True and not _attr_bool(attrs, "clickable"):
-        return False
-    if pred.get("enabled") is True and not _attr_bool(attrs, "enabled"):
-        return False
-    if pred.get("scrollable") is True and not _attr_bool(attrs, "scrollable"):
-        return False
+    for name in BOOLEAN_PROPERTIES:
+        if name in pred:
+            if property_value(attrs, name) != pred[name]:
+                return False
     return True
 
 
 def _resolve_anchor_indices(
-    flat: list[_FlatNode], anchor: dict[str, Any], *, screen_area: int
+    flat: list[_FlatNode], anchor: dict[str, Any], *, screen_area: int, lift_text: bool = True
 ) -> list[int]:
     hits: list[int] = []
     for i, fn in enumerate(flat):
         if not _base_selector_match(fn.attrs, anchor):
             continue
-        lifted = _lift_tap_target(flat, i, screen_area=screen_area)
+        if _is_dump_container(fn):
+            continue
+        lifted = _lift_tap_target(flat, i, screen_area=screen_area) if lift_text else fn
         if _filter_match(lifted.attrs, anchor):
             hits.append(lifted.tree_index)
     return hits
@@ -705,18 +709,31 @@ def _relative_match(
     return True
 
 
+def _is_dump_container(fn: _FlatNode) -> bool:
+    """The synthetic hierarchy root is a container, not an unobservable control."""
+    return (
+        fn.depth == 0 and bool(fn.node.get("children"))
+        and str(fn.attrs.get("type") or "") in {"", "Root"}
+        and not any(fn.attrs.get(name) for name in ("id", "key", "text", "originalText"))
+        and all(observable_bool(fn.attrs.get(name)) is None for name in BOOLEAN_PROPERTIES)
+    )
+
+
 def _single_pred_on_flat(
     flat: list[_FlatNode],
     fn: _FlatNode,
     pred: dict[str, Any],
     *,
     screen_area: int,
+    lift_text: bool = True,
 ) -> bool:
+    if _is_dump_container(fn):
+        return False
     has_base = any(pred.get(k) is not None for k in ("by_text", "by_id", "by_type", "by_key"))
     if has_base and not _base_selector_match(fn.attrs, pred):
         return False
 
-    if pred.get("by_text") is not None:
+    if lift_text and pred.get("by_text") is not None:
         target = _lift_tap_target(flat, fn.tree_index, screen_area=screen_area)
     else:
         target = fn
@@ -735,7 +752,7 @@ def _single_pred_on_flat(
             continue
         if not isinstance(anchor, dict):
             return False
-        anchor_idx = _resolve_anchor_indices(flat, anchor, screen_area=screen_area)
+        anchor_idx = _resolve_anchor_indices(flat, anchor, screen_area=screen_area, lift_text=lift_text)
         if not _relative_match(
             flat, target.tree_index, anchor_indices=anchor_idx, relation=rel
         ):
@@ -749,7 +766,10 @@ def _pred_matches_node(
     pred: dict[str, Any],
     *,
     screen_area: int,
+    lift_text: bool = True,
 ) -> bool:
+    if _is_dump_container(fn):
+        return False
     subs = pred.get("all")
     if subs is not None:
         if not isinstance(subs, list) or not subs:
@@ -762,10 +782,10 @@ def _pred_matches_node(
         if text_sub is not None and text_sub_raw is not None:
             if not _base_selector_match(fn.attrs, text_sub):
                 return False
-            target = _lift_tap_target(flat, fn.tree_index, screen_area=screen_area)
+            target = _lift_tap_target(flat, fn.tree_index, screen_area=screen_area) if lift_text else fn
             tidx = target.tree_index
         else:
-            if not _single_pred_on_flat(flat, fn, subs[0], screen_area=screen_area):
+            if not _single_pred_on_flat(flat, fn, subs[0], screen_area=screen_area, lift_text=lift_text):
                 return False
             target = fn
             tidx = fn.tree_index
@@ -773,6 +793,8 @@ def _pred_matches_node(
             if not isinstance(s, dict):
                 return False
             if s is text_sub_raw:
+                if not _filter_match(target.attrs, s):
+                    return False
                 continue
             sp = dict(_text_predicate_with_inherited_match(pred, s) or s)
             for rel in ("within", "below", "above", "after", "before"):
@@ -793,13 +815,13 @@ def _pred_matches_node(
                     continue
                 if not isinstance(anchor, dict):
                     return False
-                anchor_idx = _resolve_anchor_indices(flat, anchor, screen_area=screen_area)
+                anchor_idx = _resolve_anchor_indices(flat, anchor, screen_area=screen_area, lift_text=lift_text)
                 if not _relative_match(
                     flat, tidx, anchor_indices=anchor_idx, relation=rel
                 ):
                     return False
-        return True
-    return _single_pred_on_flat(flat, fn, pred, screen_area=screen_area)
+        return _filter_match(target.attrs, pred)
+    return _single_pred_on_flat(flat, fn, pred, screen_area=screen_area, lift_text=lift_text)
 
 
 def _flat_to_hit(fn: _FlatNode) -> ResolvedHit | None:
@@ -853,7 +875,11 @@ def _sort_hits(hits: list[ResolvedHit]) -> list[ResolvedHit]:
     )
 
 
-def _search_roots(tree: dict[str, Any], pred: dict[str, Any]) -> list[dict[str, Any]]:
+def _search_roots(tree: dict[str, Any], pred: dict[str, Any], *, lift_text: bool = True) -> list[dict[str, Any]]:
+    for name in BOOLEAN_PROPERTIES | {"visible"}:
+        if name in pred and not isinstance(pred[name], bool):
+            raise SelectorContractError(f"{name} must be a JSON boolean", selector=pred)
+
     scope = pred.get("scope")
     within = pred.get("within")
     base_roots: list[dict[str, Any]] | None = None
@@ -869,7 +895,7 @@ def _search_roots(tree: dict[str, Any], pred: dict[str, Any]) -> list[dict[str, 
         for root in roots_to_search:
             flat_all, sa = _flatten_subtree(root)
             for fn in flat_all:
-                if _single_pred_on_flat(flat_all, fn, within, screen_area=sa):
+                if _single_pred_on_flat(flat_all, fn, within, screen_area=sa, lift_text=lift_text):
                     roots.append(fn.node)
         return roots
     if base_roots is not None:
@@ -890,6 +916,10 @@ def _validate_selector_predicate(
         raise SelectorContractError("selector predicate cannot contain cycles", selector=pred)
     seen.add(marker)
     normalize_match(pred.get("match"), selector=pred)
+
+    for name in BOOLEAN_PROPERTIES | {"visible"}:
+        if name in pred and not isinstance(pred[name], bool):
+            raise SelectorContractError(f"{name} must be a JSON boolean", selector=pred)
 
     scope = pred.get("scope")
     if scope is not None and scope != "top_overlay":
@@ -931,7 +961,10 @@ def _validate_selector_predicate(
     seen.remove(marker)
 
 
-def resolve_targets(tree: dict[str, Any], pred: dict[str, Any]) -> list[ResolvedHit]:
+def resolve_targets(
+    tree: dict[str, Any], pred: dict[str, Any], *, lift_text: bool = True, allow_empty: bool = False
+) -> list[ResolvedHit]:
+    """Resolve candidates; waits may accept zero matches before applying a valid index."""
     if not isinstance(tree, dict):
         raise SelectorResolutionError("tree must be a dict")
     if not isinstance(pred, dict):
@@ -948,7 +981,7 @@ def resolve_targets(tree: dict[str, Any], pred: dict[str, Any]) -> list[Resolved
     raw_hits: list[ResolvedHit] = []
     seen: set[tuple[int, int]] = set()
 
-    for root in _search_roots(tree, pred):
+    for root in _search_roots(tree, pred, lift_text=lift_text):
         flat, screen_area = _flatten_subtree(root)
         for fn in flat:
             inline_hits = _inline_hits_for_node(
@@ -956,21 +989,21 @@ def resolve_targets(tree: dict[str, Any], pred: dict[str, Any]) -> list[Resolved
                 text_pred or work_pred,
                 requested_match=requested_match,
                 effective_match=effective_match,
-            )
+            ) if lift_text else []
             if inline_hits:
                 raw_hits.extend(inline_hits)
                 continue
-            if _has_real_inline_descendant(flat, fn, text_pred or work_pred):
+            if lift_text and _has_real_inline_descendant(flat, fn, text_pred or work_pred):
                 continue
-            if not _pred_matches_node(flat, fn, work_pred, screen_area=screen_area):
+            if not _pred_matches_node(flat, fn, work_pred, screen_area=screen_area, lift_text=lift_text):
                 continue
-            if work_pred.get("by_text") is not None or (
+            if lift_text and (work_pred.get("by_text") is not None or (
                 work_pred.get("all")
                 and any(
                     isinstance(s, dict) and s.get("by_text") is not None
                     for s in (work_pred.get("all") or [])
                 )
-            ):
+            )):
                 if _is_noninteractive_inline_node(fn):
                     lifted = fn
                 else:
@@ -980,6 +1013,8 @@ def resolve_targets(tree: dict[str, Any], pred: dict[str, Any]) -> list[Resolved
                 hit = _flat_to_hit(lifted)
             else:
                 hit = _flat_to_hit(fn)
+            if hit is None and not lift_text:
+                raise PlannedStepContractError("matched component has no usable bounds")
             seen_key = (id(root), hit.tree_index) if hit is not None else None
             if hit is None or seen_key in seen:
                 continue
@@ -1002,6 +1037,8 @@ def resolve_targets(tree: dict[str, Any], pred: dict[str, Any]) -> list[Resolved
     index_raw = pred.get("index")
     if index_raw is not None:
         idx = int(index_raw)
+        if allow_empty and not ordered:
+            return []
         if idx < 0 or idx >= len(ordered):
             raise SelectorResolutionError(
                 f"index {idx} out of range for {len(ordered)} hit(s)",
@@ -1011,8 +1048,8 @@ def resolve_targets(tree: dict[str, Any], pred: dict[str, Any]) -> list[Resolved
     return ordered
 
 
-def resolve_one(tree: dict[str, Any], pred: dict[str, Any]) -> ResolvedHit:
-    hits = resolve_targets(tree, pred)
+def resolve_one(tree: dict[str, Any], pred: dict[str, Any], *, lift_text: bool = True) -> ResolvedHit:
+    hits = resolve_targets(tree, pred, lift_text=lift_text)
     if not hits:
         raise SelectorResolutionError(
             f"no matching UI target for predicate {pred!r}",

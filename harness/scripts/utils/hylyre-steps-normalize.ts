@@ -12,13 +12,6 @@ function flattenActionWrapper(step: Record<string, unknown>): Record<string, unk
   if (!action || typeof action !== 'object' || Array.isArray(action)) return null;
   const a = action as Record<string, unknown>;
   const type = typeof a.type === 'string' ? a.type : '';
-  if (type === 'touch' && (a.by_text || a.by_id || a.selector)) {
-    const touch: Record<string, unknown> = {};
-    if (a.by_text) touch.by_text = a.by_text;
-    if (a.by_id) touch.by_id = a.by_id;
-    if (a.selector) touch.selector = a.selector;
-    return { touch };
-  }
   if (type && PLANNED_FROM_ACTION.has(type)) {
     const inner = { ...a };
     delete inner.type;

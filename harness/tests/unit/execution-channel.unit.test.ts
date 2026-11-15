@@ -293,6 +293,37 @@ test('STEP-SETUP：首个 assertion 前无同 case action → BLOCKER（wrong-sc
   assert.strictEqual(assertionOnly.violations.filter(v => v.rule_id === 'STEP-SETUP').length, 1);
 });
 
+test('STEP-SETUP：三个纯查询不算准备动作，direct/action包装一致；旧wait/wait_idle行为保留', () => {
+  const derived = (steps: Record<string, unknown>[]) =>
+    `## 测试用例\n\n| 用例编号 | 测试步骤 | 优先级 |\n| --- | --- | --- |\n| TC-015 | ${steps.map(step => JSON.stringify(step)).join(' ; ')} | P0 |\n`;
+  const assertion = { wait_for: { by_id: 'target_page' } };
+  const touch = { touch: { by_id: 'target_entry' } };
+  const queries: Record<string, unknown>[] = [
+    { current_app: {} },
+    { has_app: { bundle: 'com.example.app' } },
+    { get_component_property: { target: { by_id: 'field' }, property: 'text' } },
+  ];
+  for (const query of queries) {
+    const root = Object.keys(query)[0]!;
+    for (const step of [query, { action: { type: root, ...query[root] as Record<string, unknown> } }]) {
+      const queryOnly = lintHylyrePlanStepRules(derived([step]));
+      assert.strictEqual(queryOnly.ok, true, `${root} without an assertion remains valid`);
+      const missingSetup = lintHylyrePlanStepRules(derived([step, assertion]));
+      assert.deepStrictEqual(missingSetup.violations.map(v => v.rule_id), ['STEP-SETUP'], JSON.stringify(step));
+      assert.strictEqual(lintHylyrePlanStepRules(derived([step, touch, assertion])).ok, true, `${root} then touch supplies setup`);
+    }
+  }
+  for (const setup of [
+    { wait: { seconds: 1 } },
+    { wait_idle: { timeout: 10 } },
+    { shell: { command: 'printf ready' } },
+    { set_checked: { target: { by_id: 'checkbox' }, checked: true } },
+    { recent_tasks: {} },
+  ]) {
+    assert.strictEqual(lintHylyrePlanStepRules(derived([setup, assertion])).ok, true, `${JSON.stringify(setup)} retains its setup behavior`);
+  }
+});
+
 // review P1-2：以下三条直接锁本轮返修的契约，而不是只靠"没打坏旧测试"。
 
 test('设备流水线准入：声明不闭合 → 零设备动作；report-only 无论如何都完整只读重算', () => {

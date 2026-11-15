@@ -24,9 +24,12 @@ import {
   STANDARD_DERIVE_HINT_SCHEMA,
   resolveHylyreResetIdentity,
 } from '../../scripts/utils/hylyre-standard-derive-knowledge';
-import { lintHylyrePlanStepRules, parsePlannedStepsFromCell } from '../../scripts/utils/derived-hylyre-plan';
+import { extractDerivedPlanCases, lintHylyrePlanStepRules, parsePlannedStepsFromCell } from '../../scripts/utils/derived-hylyre-plan';
+import { injectP0IdentityAssertions } from '../../scripts/utils/p0-identity-injection';
 import { loadAppInstallCandidateMeta } from '../../../profiles/hmos-app/harness/hdc-runner';
 import { resolveMainAbilityForBundle } from '../../../profiles/hmos-app/harness/resolve-main-ability';
+import { STEP_SHAPE_CATALOG } from '../../scripts/utils/adhoc-derive-helpers';
+import { normalizePlannedStep } from '../../scripts/utils/planned-step-normalizer';
 import * as os from 'os';
 
 interface UnitCaseResult {
@@ -106,23 +109,43 @@ function vendorSourcePresent(): boolean {
   return fs.existsSync(VENDOR_SRC_KEYS_PY);
 }
 
-/** 双模取真源：源码树 vendor 直读 src 文件；legacy 布局回落 whl zip 解包（公司仓无 whl 亦可过）。 */
-function extractVendorKeys(version: string): string[] {
+/** 静态读取源码；不导入/执行 vendor Python。 */
+function readVendorPython(relative: string, version: string): string {
   let py: string | null;
   if (vendorSourcePresent()) {
-    py = fs.readFileSync(VENDOR_SRC_KEYS_PY, 'utf-8');
+    py = fs.readFileSync(path.join(VENDOR_DIR, 'src', relative), 'utf-8');
   } else {
     const wheelPath = path.join(VENDOR_DIR, `hylyre-${version}-py3-none-any.whl`);
     assert(
       fs.existsSync(wheelPath),
       `vendor 发布件不存在：既无 src/hylyre/api/planned_step_keys.py 也无 ${wheelPath}（manifest 声明 ${version}）`,
     );
-    py = readZipEntry(wheelPath, 'hylyre/api/planned_step_keys.py');
-    assert(py, 'wheel 内未找到 hylyre/api/planned_step_keys.py');
+    py = readZipEntry(wheelPath, relative);
+    assert(py, `wheel 内未找到 ${relative}`);
   }
-  const block = py!.match(/PLANNED_STEP_ROOT_KEYS[^=]*=\s*\(([\s\S]*?)\)/);
-  assert(block, 'planned_step_keys.py 内未匹配到 PLANNED_STEP_ROOT_KEYS 元组');
-  const keys = [...block![1].matchAll(/"([^"]+)"/g)].map(mm => mm[1]);
+  return py!;
+}
+
+/** 支持发布件已有的 literal tuple 和 0.6.0 tuple(literal policy dict)。 */
+function declarationKeys(py: string, name: string): string[] {
+  const tuple = py.match(new RegExp(`^${name}(?:\\s*:[^=\\n]+)?\\s*=\\s*\\(([\\s\\S]*?)\\)`, 'm'));
+  if (tuple) return [...tuple[1]!.matchAll(/["']([a-z_]+)["']/g)].map(match => match[1]!);
+  const derived = py.match(new RegExp(`^${name}\\s*=\\s*tuple\\((\\w+)\\)`, 'm'));
+  assert(derived, `${name} 不是已支持的静态键声明`);
+  const mapping = py.match(new RegExp(`^${derived[1]}(?:\\s*:[^=\\n]+)?\\s*=\\s*\\{([\\s\\S]*?)^\\}`, 'm'));
+  assert(mapping, `${derived[1]} 缺 literal policy dict`);
+  return [...mapping[1]!.matchAll(/^\s*["']([a-z_]+)["']\s*:/gm)].map(match => match[1]!);
+}
+
+function extractVendorKeys(version: string): string[] {
+  const py = readVendorPython('hylyre/api/planned_step_keys.py', version);
+  const keys = declarationKeys(py, 'PLANNED_STEP_ROOT_KEYS');
+  for (const extension of py.matchAll(/^PLANNED_STEP_ROOT_KEYS\s*\+=\s*(\w+)\s*$/gm)) {
+    const imported = py.match(new RegExp(`^from\\s+([\\w.]+)\\s+import\\s+${extension[1]}\\s*$`, 'm'));
+    assert(imported, `${extension[1]} 缺可静态定位的 import`);
+    const source = readVendorPython(`${imported[1]!.replace(/\./g, '/')}.py`, version);
+    keys.push(...declarationKeys(source, extension[1]!));
+  }
   assert(keys.length > 0, 'vendor 键集为空');
   return keys;
 }
@@ -142,6 +165,72 @@ function setDiff(a: Iterable<string>, b: Set<string>): string[] {
 }
 
 const cases: Array<{ name: string; run: () => void }> = [
+  {
+    name: '0.6.0 P0 run-copy注入保留Shell管道、JSON反斜杠及其它列，并保持幂等',
+    run: () => {
+      const command = String.raw`printf 'C:\tmp\|value;中文' | cat`;
+      const text = String.raw`C:\tmp\|literal;；"quoted"\n`;
+      const steps = [{ touch: { by_id: 'open_panel' } }, { shell: { command } }, { input: { by_id: 'field', text } }];
+      const name = String.raw`name\|C:\keep`;
+      const precondition = String.raw`pre\|C:\stage`;
+      const expected = String.raw`expected\|C:\result`;
+      const unchanged = '| TC-002 | keep | - | {"back":{}} | - | P1 | AC-2 |';
+      const source = ['## 测试用例清单', '', '| 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 | 优先级 | 关联 AC |', '|---|---|---|---|---|---|---|', `| TC-001 | ${name} | ${precondition} | ${steps.map(step => JSON.stringify(step)).join(' ; ').replace(/\|/g, '\\|')} | ${expected} | P0 | AC-1 |`, unchanged].join('\n');
+      const acceptance = { flows: { main: ['home', 'panel'] }, criteria: [{ id: 'AC-1', priority: 'P0', ut_layer: 'device', linked_flow: 'main', checkpoint: { pre_screen: 'home', action: { type: 'touch', target_element_id: 'open_panel' }, post_screen: 'panel', required_element_ids: ['panel'] } }] };
+      const injected = injectP0IdentityAssertions({ derivedMd: source, topPlanMd: source, acceptance, canonical: null });
+      assert(injected.changed && injected.injected.length === 1 && injected.gaps.length === 0, JSON.stringify(injected));
+      const row = extractDerivedPlanCases(injected.content)[0]!;
+      const parsed = parsePlannedStepsFromCell(row.steps_raw);
+      assert(parsed.ok, JSON.stringify(parsed));
+      assert(JSON.stringify(parsed.steps) === JSON.stringify([steps[0], { wait_for: { by_id: 'panel', timeout: 10 } }, ...steps.slice(1)]), 'injection must preserve exact command/text values');
+      const line = injected.content.split('\n').find(item => item.startsWith('| TC-001 |'))!;
+      assert(line.startsWith(`| TC-001 | ${name} | ${precondition} | `) && line.endsWith(` | ${expected} | P0 | AC-1 |`), 'non-step columns must stay verbatim');
+      assert(injected.content.split('\n').includes(unchanged), 'unmodified row must remain byte-identical');
+      const again = injectP0IdentityAssertions({ derivedMd: injected.content, topPlanMd: source, acceptance, canonical: null });
+      assert(!again.changed && again.content === injected.content, 'injection must remain idempotent');
+    },
+  },
+  {
+    name: '静态键声明兼容旧literal tuple与0.6.0策略dict派生tuple',
+    run: () => {
+      assert(JSON.stringify(declarationKeys('ROOT: tuple[str, ...] = ("touch", "input")', 'ROOT')) === '["touch","input"]', 'legacy tuple');
+      const source = 'POLICY: dict[str, bool] = {\n    "drag": False,\n    "shell": True,\n}\nKEYS = tuple(POLICY)\n';
+      assert(JSON.stringify(declarationKeys(source, 'KEYS')) === '["drag","shell"]', 'derived ordered tuple');
+    },
+  },
+  {
+    name: '0.6.0 shape catalog覆盖18个新增根键，不提供生命周期占位示例；新增查询仍为action且可通过正式STEP-001',
+    run: () => {
+      const catalog = new Set(STEP_SHAPE_CATALOG.map(shape => shape.root));
+      const old = new Set(['touch', 'input', 'swipe', 'scroll', 'scroll_to', 'back', 'home', 'stop_app', 'clear_app', 'wait', 'wait_for', 'wait_gone', 'wait_idle', 'assert_toast', 'start_app']);
+      const added = PLANNED_STEP_ROOT_KEYS.filter(key => key !== 'action' && !old.has(key));
+      assert(added.length === 18 && added.every(key => catalog.has(key)), 'catalog must cover all 18 added roots');
+      assert(setDiff(catalog, new Set(PLANNED_STEP_ROOT_KEYS)).length === 0, 'catalog must use known roots');
+      assert(['stop_app', 'clear_app', 'start_app'].every(key => !catalog.has(key)), 'lifecycle examples belong to reset_preamble, not the shared catalog');
+      for (const shape of STEP_SHAPE_CATALOG.filter(item => !old.has(item.root))) {
+        const step = normalizePlannedStep(shape.example);
+        assert(step.kind === shape.root && step.role === 'action', `${shape.root} must remain action`);
+        const md = ['## 测试用例清单', '', '| 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 | 优先级 | 关联 AC |', '|---|---|---|---|---|---|---|', `| TC-001 | new operation | - | ${JSON.stringify(shape.example)} | - | P0 | AC-1 |`].join('\n');
+        const lint = lintHylyrePlanStepRules(md);
+        assert(lint.ok, `${shape.root}: ${JSON.stringify(lint.violations)}`);
+      }
+    },
+  },
+  {
+    name: '0.6.0 Shell/input内容分隔符、转义换行及Markdown管道逐字保留',
+    run: () => {
+      const command = 'printf "中文;；\\n" | cat; printf `date`';
+      const steps = [{ shell: { command, timeout: 60 } }, { input: { text: '中文；;\\n"quoted"', by_id: 'field' } }, { back: {} }];
+      const cell = steps.map(step => JSON.stringify(step)).join('；');
+      const parsed = parsePlannedStepsFromCell(cell);
+      assert(parsed.ok && JSON.stringify(parsed.steps) === JSON.stringify(steps), `cell drift: ${JSON.stringify(parsed)}`);
+      const md = ['## 测试用例清单', '', '| 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 | 优先级 | 关联 AC |', '|---|---|---|---|---|---|---|', `| TC-001 | shell | - | ${cell.replace(/\|/g, '\\|')} | - | P0 | AC-1 |`].join('\n');
+      const lint = lintHylyrePlanStepRules(md);
+      assert(lint.ok, JSON.stringify(lint.violations));
+      const wrapped = lintHylyrePlanStepRules(md.replace('{"shell"', '`{"shell"').replace('}| - |', '}`| - |'));
+      assert(!wrapped.ok && wrapped.violations.some(v => v.rule_id === 'STEP-005'), 'Markdown wrappers must remain rejected');
+    },
+  },
   {
     name: '实体比对①：vendor planned_step_keys.py ≡ hylyre-planned-step-keys.ts（集合相等）',
     run: () => {

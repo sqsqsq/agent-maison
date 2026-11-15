@@ -106,6 +106,11 @@ async def _dispatch(agent: HylyreAgent, method: str, params: dict[str, Any]) -> 
             if not isinstance(row, dict):
                 raise ValueError(f"run_steps.steps[{i}] must be object")
             step_objs.append(dict(row))
+        from hylyre.scenario.plan_contract import validate_steps_contract
+
+        rejection = validate_steps_contract(step_objs) if step_objs else None
+        if rejection is not None:
+            return rejection.envelope()
         on_fail_p = params.get("on_fail") or "abort"
         b = params.get("bundle")
         if b:
@@ -116,7 +121,8 @@ async def _dispatch(agent: HylyreAgent, method: str, params: dict[str, Any]) -> 
                 wait_time=float(params.get("wait_time") or 1.0),
             )
         return await _steps_cmd.run_steps_on_agent(
-            agent, step_objs, on_fail=str(on_fail_p), failure_dir=params.get("failure_dir")
+            agent, step_objs, on_fail=str(on_fail_p), failure_dir=params.get("failure_dir"),
+            artifact_base=params.get("artifact_base"),
         )
     if method == "collect_list":
         from hylyre.cli.commands.collect_cmd import collect_list_on_agent

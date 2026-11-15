@@ -7,7 +7,7 @@
 
 与 [`hylyre-planned-step-keys.ts`](../../../../../harness/scripts/utils/hylyre-planned-step-keys.ts) 同步：
 
-`touch` · `input` · `swipe` · `scroll` · **`scroll_to`** · `back` · `home` · `stop_app` · `clear_app` · `wait` · `wait_for` · `wait_gone` · `wait_idle` · `assert_toast` · `start_app`（正式派生：`stop_app`/`start_app` 仅允许作为 case 首部恰好一组复位前奏 `stop_app→start_app`，bundle/page_name 逐字取 derive hint 的 reset_preamble 字段；即席 harness **禁止** steps 内 `start_app`）
+`touch` · `input` · `swipe` · `scroll` · **`scroll_to`** · `back` · `home` · `stop_app` · `clear_app` · `wait` · `wait_for` · `wait_gone` · `wait_idle` · `assert_toast` · `start_app` · `drag` · `slide` · `fling` · `pinch_in` · `pinch_out` · `two_finger_swipe` · `multi_finger_touch` · `gesture` · `press_key` · `press_combination_key` · `get_component_property` · `shell` · `clear_text` · `move_cursor` · `set_checked` · `current_app` · `has_app` · `recent_tasks`（正式派生：`stop_app`/`start_app` 仅允许作为 case 首部恰好一组复位前奏 `stop_app→start_app`，bundle/page_name 逐字取 derive hint 的 reset_preamble 字段；即席 harness **禁止** steps 内 `start_app`）
 
 **禁止作为步骤根键的 CLI 名**：`dump_ui` / `dump-ui` / `page_save` / `screenshot` 等（见 `FORBIDDEN_STEP_ROOT_KEYS`）。
 
@@ -23,7 +23,7 @@
 | `within` / `below` / `above` / `after` / `before` | 相对锚点定位 | `{"within":{"by_text":"短信验证","match":"exact"}}` |
 | `all` | 多条件 AND | `{"all":[{"by_text":"下一步","match":"exact"},{"enabled":true}]}` |
 | `index` | 多命中时取第 N 个（0-based） | `{"by_text":"下一步","match":"exact","index":1}` |
-| `visible` / `clickable` / `enabled` | 过滤不可见/不可点项 | `{"by_text":"下一步","match":"exact","enabled":true}` |
+| `visible` / `clickable` / `enabled` / `scrollable` / `checked` / `checkable` / `focused` | 输入须为JSON布尔；visible仅true限定可见边界，其余六项true/false精确过滤 | `{"by_text":"下一步","match":"exact","enabled":true}` |
 
 **正式 feature 派生计划的 match 纪律**：每个 `by_text` selector 都必须显式写 `match: "exact"` 或 `match: "contains"`；由 acceptance 意图选择，不能按数字/日期等字符特征推断，运行时也禁止 exact→contains fallback。`contains` 不是多候选选择器；action 默认 require unique，需消歧时复用 `index` / `scope` / `within` / `all`。仅 `by_text` 且无其它富字段时，Hylyre 0.2 **默认 `visible: true`** 仍是执行器的可见性默认，不替代 match 声明。
 
@@ -97,6 +97,45 @@
 {"assert_toast":{"text":"成功","timeout":3}}
 ```
 
+## Hylyre 0.6.0 常用设备操作
+
+本版新增18个直接根键；touch仍沿用同一根键。Maison只消费上游注册与既有STEP lint，参数合法性由Hylyre共享预检负责，不在TypeScript复制第二套驱动参数协议。18个新增根键的示例进入标准/即席derive hint的同一step_shape_catalog，touch双击/长按形态为补充示例；替换示例id、坐标为当前页面真实目标。共享目录不提供stop_app/clear_app/start_app占位示例；正式复位前奏只取derive hint的reset_preamble（含同源身份），不得自行拼接。
+
+```json
+{"touch":{"by_id":"item","mode":"double"}}
+{"touch":{"by_id":"item","mode":"long","press_time":3,"wait_time":0.1}}
+{"drag":{"start":{"by_id":"item"},"end":{"x":300,"y":500},"press_time":1.5}}
+{"slide":{"start":{"x":100,"y":200},"end":{"x":300,"y":500},"duration":0.3}}
+{"fling":{"direction":"UP","distance":50,"speed":"fast"}}
+{"pinch_in":{"area":{"by_id":"canvas"},"scale":0.4,"direction":"diagonal"}}
+{"pinch_out":{"area":{"by_id":"canvas"},"scale":1.6,"direction":"diagonal"}}
+{"two_finger_swipe":{"start1":{"x":100,"y":200},"end1":{"x":100,"y":400},"start2":{"x":200,"y":200},"end2":{"x":200,"y":400},"duration":0.5}}
+{"multi_finger_touch":{"points":[{"x":100,"y":200},{"x":200,"y":200}],"duration":0.1}}
+{"gesture":{"fingers":[{"points":[{"x":100,"y":200},{"x":200,"y":300},{"x":300,"y":200}]}],"speed":2000}}
+{"press_key":{"key":"ENTER","mode":"normal"}}
+{"press_combination_key":{"keys":["CTRL_LEFT","A"]}}
+{"get_component_property":{"target":{"by_id":"field"},"property":"text"}}
+{"shell":{"command":"printf 'hylyre\\n'","timeout":60}}
+{"clear_text":{"target":{"by_id":"field"}}}
+{"move_cursor":{"direction":"left","times":1}}
+{"set_checked":{"target":{"by_id":"checkbox"},"checked":true,"timeout":3}}
+{"current_app":{}}
+{"has_app":{"bundle":"com.example.app"}}
+{"recent_tasks":{}}
+```
+
+- 新手势端点是屏幕绝对整数像素或既有富选择器，区域只约束边界，不改变端点原点；全部目标/区域解析且唯一后才注入。需要先滚动的目标显式写scroll_to。
+- drag显式press_time要求设备API>=20且能力可核实；本机SDK无法兑现小于1.5秒的按住时长时blocked，不忽略参数。speed与drag_time不能同时显式给。slide仅duration映射slide_time，默认0.3秒，不接受speed。
+- fling方向与swipe一样不区分大小写，distance=1–100（默认50）；speed仅fast/normal/slow（默认fast）。pinch方向仅diagonal/horizontal；scale分别(0,1)/(1,2)，dead_zone_ratio若给则(0,0.5)。two_finger_swipe默认0.5秒；multi_finger_touch要求2–4点、默认0.1秒；gesture每指至少两点、默认speed=2000，整条一次注入，不用串行slide替代。
+- press_key.key是精确KeyCode名称或非负整数；组合键2–3个不同键，一次同时按下。HMOS或无法确认三键能力时blocked，不能丢第三键。clear_text原生清空真实输入控件；move_cursor对当前焦点移动，不自动点击重置光标。
+- 属性首批id/text/key/type/enabled/focused/clickable/scrollable/checked/checkable；缺属性不是false/空文本。布尔读取将bool或字符串true/false归一；布尔查询facts.value在trace中保留bool，文本值及target.text仍脱敏。get_component_property/current_app/has_app及Shell均是action事实，不能增加断言覆盖；前三个纯查询不计正式STEP-SETUP准备动作，首个断言前仍须有同case的准备/导航动作。set_checked有读前/必要时点击一次/复读结果，可作为普通步骤执行，但不能作为Maison P0 checkpoint绑定动作，也不代替独立业务断言。缺真实观测的fake查询、状态设置和Shell保持blocked。
+- wait_for/wait_gone新增checked/checkable/focused过滤，与已有clickable/enabled/scrollable一样精确匹配true/false。**兼容变化**：显式false过去被忽略的调用应移除该字段；字符串布尔须改成JSON布尔。含新增三状态（含嵌套）的等待使用实际匹配文本节点，其它旧rich等待继续升父；组件读写和新手势area始终定位实际匹配节点。
+- wait_gone只证明完整谓词零匹配，目标消失也成立，不等于目标仍存在且checked=false。需要后者用wait_for checked=false。合法非负index在等待完整谓词零匹配时按presence/absence处理；有候选但index越界仍报错，动作定位索引规则不变。唯一控件无需冗余index:0。缺属性不可观测不会让absence假通过。
+- shell.command原文允许引号、分号、中文、管道和转义换行，timeout默认60秒。设备固定到当前选择/session的serial；stdout与设备exit_code、transport_exit_code分开，非零/超时均失败，stderr不可独立获取时null/false，不重试动作。命令只在当前任务授权范围内执行。Markdown表格的管道按标准写\|（或JSON \u007c），JSON内部中英文分号/转义换行不能拆步或改写。
+- 自 Hylyre 0.6.1 起，正式 Markdown 计划中，步骤 JSON 的 command/text 字符串可直接写字面 `<br/>`。普通文本中的 `<br/>` 仍按原规则换为空格，表格内的竖线仍写作 `\|`。
+
+结果协议仍为hylyre.step-outcome/1、trace schema仍为0.4-p0；native协议最低版本0.5.0不因新增操作无条件上调。能力成功须真实设备反馈，报告verify或动作passed不证明所有业务/端点断言通过。
+
 ## Toast 断言（能力不可用的机器归因）
 
 部分 HarmonyOS 版本 / 设备上 `assert_toast` 可能因环境不支持而失败（非被测应用缺陷）。**处理约定**：
@@ -123,6 +162,6 @@
 
 ## 版本
 
-- Hylyre vendor 发布件：`0.5.2`（`framework/profiles/hmos-app/vendor/hylyre/`，Maison 只交付源码树 `src/`；**不交付 wheel**——Maison 走 plain-source vendor，运行时代码仅兼容外部 legacy wheel 布局）
+- Hylyre vendor 发布件：`0.6.1`（`framework/profiles/hmos-app/vendor/hylyre/`，Maison 只交付源码树 `src/`；**不交付 wheel**——Maison 走 plain-source vendor，运行时代码仅兼容外部 legacy wheel 布局）
 - 结果协议：`hylyre.step-outcome/1`；trace schema：`0.4-p0`。发布件内 `hylyre/contracts/` 与冻结契约包逐字一致（`contracts_tree_sha256 = cc738c272324…1bae`）
 - 字段变更时：同步更新 vendor 发布件、`hylyre-planned-step-keys.ts`、本文件、`hylyre-planned-step-lint.ts`

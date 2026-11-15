@@ -82,9 +82,61 @@ def parse_test_plan(path: Path | str) -> ParsedPlan:
     return ParsedPlan(path=p, cases=tuple(cases))
 
 
+def _normalize_step_breaks(cell: str) -> str:
+    """Replace legacy breaks in the step cell, leaving JSON string data intact."""
+    result: list[str] = []
+    depth = 0
+    quoted = escaped = False
+    at_start = True
+    i = 0
+    while i < len(cell):
+        char = cell[i]
+        if quoted:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                quoted = False
+        elif cell.startswith("<br/>", i):
+            result.append(" ")
+            i += len("<br/>")
+            continue
+        elif depth:
+            if char == '"':
+                quoted = True
+            elif char in "{[":
+                depth += 1
+            elif char in "}]":
+                depth -= 1
+        elif (
+            at_start and cell[i:i + 4].lower() == "json"
+            and "".join(result).rstrip().endswith("```")
+        ):
+            result.append(cell[i:i + 4])
+            i += 4
+            continue
+        elif at_start and char == "{":
+            depth = 1
+            at_start = False
+        elif char in ";；\r\n":
+            at_start = True
+        elif not char.isspace() and char != "`":
+            at_start = False
+        result.append(char)
+        i += 1
+    return "".join(result)
+
+
 def _split_row(line: str) -> list[str]:
-    raw = line.strip().strip("|").split("|")
-    return [
-        normalize_planned_step_text(c.replace("<br/>", " ").strip()) for c in raw
-    ]
+    raw = re.split(r"(?<!\\)\|", line.strip().strip("|"))
+    cells: list[str] = []
+    for index, cell in enumerate(raw):
+        cell = cell.replace(r"\|", "|")
+        if index == 3:
+            cell = normalize_planned_step_text(_normalize_step_breaks(cell))
+        else:
+            cell = normalize_planned_step_text(cell.replace("<br/>", " "))
+        cells.append(cell)
+    return cells
 

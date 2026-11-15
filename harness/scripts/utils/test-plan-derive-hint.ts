@@ -259,7 +259,7 @@ export function buildCanonicalDeriveHintPayload(projectRoot: string, feature: st
       all_or_nothing:
         'if any channel=hylyre case cannot be compiled (step lint, selector BLOCKER, unparseable steps, or no same-case setup/navigation action before its first assertion), do NOT produce a runnable plan — report that case root cause and the next responsible phase instead',
       setup_before_assertion:
-        'every channel=hylyre case MUST contain at least one action step before its first assertion step in the same case (STEP-SETUP); do not rely on screen state left by another case',
+        'every channel=hylyre case MUST contain at least one setup/navigation action before its first assertion step in the same case (STEP-SETUP); current_app/has_app/get_component_property are query actions and do not count as setup; do not rely on screen state left by another case',
       manual_note:
         'manual:<known_class> with no tool primitive is an unsupported_gap: keep it in the denominator, never count it as PASS, and allow completion with disclosure; bare manual or an unknown class is invalid_test before device execution',
     },

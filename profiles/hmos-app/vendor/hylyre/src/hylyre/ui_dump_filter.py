@@ -12,7 +12,7 @@ from hylyre.diagnostic_log import diagnostic_log
 
 
 DEFAULT_MINIMAL_ATTRS: frozenset[str] = frozenset(
-    {"type", "text", "id", "key", "bounds", "clickable", "scrollable"}
+    {"type", "text", "id", "key", "bounds", "clickable", "scrollable", "enabled", "checked", "checkable", "focused"}
 )
 
 
@@ -231,6 +231,7 @@ def tree_to_summary_list(
         "bounds": attrs.get("bounds") or "",
         "clickable": attrs.get("clickable") or "",
         "scrollable": attrs.get("scrollable") or "",
+        **{name: attrs[name] for name in ("enabled", "checked", "checkable", "focused") if name in attrs},
     }
     has_signal = bool(row["text"]) or str(row["clickable"]).lower() == "true"
     if has_signal:

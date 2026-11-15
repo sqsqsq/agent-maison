@@ -95,7 +95,7 @@ export const STEP_SHAPE_CATALOG: Array<{
   example: Record<string, unknown>;
   note: string;
 }> = [
-  { root: 'touch', example: { touch: { by_text: '按钮文案' } }, note: '点击；优先 by_text，稳定后用 by_id' },
+  { root: 'touch', example: { touch: { by_text: '按钮文案', match: 'exact' } }, note: '点击mode默认normal，可选double/long；仅long可给press_time，默认2秒，保留wait_time' },
   { root: 'input', example: { input: { by_id: 'field_id', text: '100' } }, note: '输入文本' },
   { root: 'swipe', example: { swipe: { direction: 'UP', distance: 50 } }, note: '滑动；Nav 返回用 back 勿乱 swipe' },
   { root: 'scroll', example: { scroll: { direction: 'down', steps: 6 } }, note: '滚轮/列表滚动' },
@@ -103,7 +103,7 @@ export const STEP_SHAPE_CATALOG: Array<{
   { root: 'wait', example: { wait: { seconds: 2 } }, note: '固定等待 N 秒；必填 seconds，勿写 timeout' },
   {
     root: 'wait_for',
-    example: { wait_for: { by_text: '加载完成', timeout: 10 } },
+    example: { wait_for: { by_text: '加载完成', match: 'exact', timeout: 10 } },
     note: '等待元素出现；须 selector/by_text/by_id；超时用 timeout（默认 10）',
   },
   {
@@ -117,6 +117,26 @@ export const STEP_SHAPE_CATALOG: Array<{
     note: '等待 UI 空闲；idle_time 可选（默认 0.7）',
   },
   { root: 'assert_toast', example: { assert_toast: { text: '成功', timeout: 3 } }, note: 'Toast 断言；必填 text' },
+  { root: 'home', example: { home: {} }, note: '回桌面' },
+  { root: 'scroll_to', example: { scroll_to: { by_text: '目标文案', match: 'exact', in: { by_type: 'List' } } }, note: '长列表滚动定位；屏内已匹配时不空滚' },
+  { root: "drag", example: {"drag":{"start":{"by_id":"item"},"end":{"x":300,"y":500},"press_time":1.5}}, note: "起终点坐标或富选择器；press_time默认1.5，drag_time默认1；显式speed与drag_time互斥" },
+  { root: "slide", example: {"slide":{"start":{"x":100,"y":200},"end":{"x":300,"y":500},"duration":0.3}}, note: "点到点滑动；duration默认0.3秒；不接受speed" },
+  { root: "fling", example: {"fling":{"direction":"UP","distance":50,"speed":"fast"}}, note: "原生惯性抛滑；direction同swipe，speed仅fast/normal/slow，默认fast" },
+  { root: "pinch_in", example: {"pinch_in":{"area":{"by_id":"canvas"},"scale":0.4,"direction":"diagonal"}}, note: "area必填；scale在(0,1)，默认0.4；direction仅diagonal/horizontal" },
+  { root: "pinch_out", example: {"pinch_out":{"area":{"by_id":"canvas"},"scale":1.6,"direction":"diagonal"}}, note: "area必填；scale在(1,2)，默认1.6；direction仅diagonal/horizontal" },
+  { root: "two_finger_swipe", example: {"two_finger_swipe":{"start1":{"x":100,"y":200},"end1":{"x":100,"y":400},"start2":{"x":200,"y":200},"end2":{"x":200,"y":400},"duration":0.5}}, note: "双指同时移动，duration默认0.5；可选area不改变屏幕绝对像素原点" },
+  { root: "multi_finger_touch", example: {"multi_finger_touch":{"points":[{"x":100,"y":200},{"x":200,"y":200}],"duration":0.1}}, note: "2–4个触点同时按下，duration默认0.1；points是屏幕绝对整数像素或富选择器" },
+  { root: "gesture", example: {"gesture":{"fingers":[{"points":[{"x":100,"y":200},{"x":200,"y":300},{"x":300,"y":200}]}],"speed":2000}}, note: "每指至少两个连续点，speed默认2000；单指/多指轨迹整条一次注入" },
+  { root: "press_key", example: {"press_key":{"key":"ENTER","mode":"normal"}}, note: "Hypium KeyCode精确符号名或非负整数；mode默认normal，可选long/double" },
+  { root: "press_combination_key", example: {"press_combination_key":{"keys":["CTRL_LEFT","A"]}}, note: "2–3个不同键同时按下；HMOS或未确认三键能力时blocked，不降级两键" },
+  { root: "get_component_property", example: {"get_component_property":{"target":{"by_id":"field"},"property":"text"}}, note: "读取十项属性，真实控件target；查询是action，不计STEP-SETUP准备动作，不代替业务断言" },
+  { root: "shell", example: {"shell":{"command":"printf 'hylyre\\n'","timeout":60}}, note: "明确授权设备command原文，timeout默认60秒；分开设备/传输退出码，超时不重试；查询不计断言" },
+  { root: "clear_text", example: {"clear_text":{"target":{"by_id":"field"}}}, note: "target须真实输入控件；使用原生清空，不以input空字符串替代" },
+  { root: "move_cursor", example: {"move_cursor":{"direction":"left","times":1}}, note: "当前焦点光标移动；left/right/up/down/begin/end，times默认1，不重新聚焦" },
+  { root: "set_checked", example: {"set_checked":{"target":{"by_id":"checkbox"},"checked":true,"timeout":3}}, note: "checkable控件读前状态，按需点击一次并复读；已满足changed=false；action不代替业务断言，不能作为P0 checkpoint绑定动作" },
+  { root: "current_app", example: {"current_app":{}}, note: "空对象；读取真实bundle/ability，ability不可得显式null，无bundle则blocked；不计STEP-SETUP准备动作" },
+  { root: "has_app", example: {"has_app":{"bundle":"com.example.app"}}, note: "精确bundle安装查询；未安装是installed=false，仍为成功action；不计STEP-SETUP准备动作" },
+  { root: "recent_tasks", example: {"recent_tasks":{}}, note: "进入系统最近任务；设备需支持相应手势导航" },
 ];
 
 export const STEPS_FILE_CONTRACT = {

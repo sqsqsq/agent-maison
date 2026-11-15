@@ -3,6 +3,7 @@
 // ============================================================================
 
 import { validatePlannedStepsArray } from '../../scripts/utils/hylyre-planned-step-lint';
+import { STEP_SHAPE_CATALOG } from '../../scripts/utils/adhoc-derive-helpers';
 
 export interface UnitCaseResult {
   name: string;
@@ -11,6 +12,23 @@ export interface UnitCaseResult {
 }
 
 const cases: Array<{ name: string; run: () => void }> = [
+  {
+    name: 'Hylyre 0.6.0 catalog roots pass STEP-001; existing start_app policy remains',
+    run: () => {
+      for (const shape of STEP_SHAPE_CATALOG) {
+        const result = validatePlannedStepsArray([shape.example]);
+        if (!result.ok) {
+          throw new Error(`${shape.root}: ${JSON.stringify(result.violations)}`);
+        }
+      }
+      const startApp = validatePlannedStepsArray([{ start_app: { bundle: 'com.example.app' } }]);
+      if (startApp.ok || !startApp.violations.some(v => v.rule_id === 'STEP-002')) throw new Error('adhoc start_app policy changed');
+      const unknown = validatePlannedStepsArray([{ unknown_device_operation: {} }]);
+      if (unknown.ok || !unknown.violations.some(v => v.rule_id === 'STEP-001')) throw new Error('unknown root must fail');
+      const multiple = validatePlannedStepsArray([{ current_app: {}, recent_tasks: {} }]);
+      if (multiple.ok || !multiple.violations.some(v => v.rule_id === 'STEP-001')) throw new Error('multiple roots must fail');
+    },
+  },
   {
     name: 'validatePlannedStepsArray: touch ok',
     run: () => {

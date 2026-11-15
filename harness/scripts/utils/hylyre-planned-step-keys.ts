@@ -1,5 +1,5 @@
 /**
- * Synced from Hylyre vendor source `src/hylyre/api/planned_step_keys.py` (vendor 0.5.2).
+ * Synced from Hylyre vendor source `src/hylyre/api/planned_step_keys.py` (vendor 0.6.1).
  * SSOT for STEP-001 lint; update when the vendor release bumps.
  */
 export const PLANNED_STEP_ROOT_KEYS: readonly string[] = [
@@ -19,6 +19,24 @@ export const PLANNED_STEP_ROOT_KEYS: readonly string[] = [
   'wait_idle',
   'assert_toast',
   'start_app',
+  'drag',
+  'slide',
+  'fling',
+  'pinch_in',
+  'pinch_out',
+  'two_finger_swipe',
+  'multi_finger_touch',
+  'gesture',
+  'press_key',
+  'press_combination_key',
+  'get_component_property',
+  'shell',
+  'clear_text',
+  'move_cursor',
+  'set_checked',
+  'current_app',
+  'has_app',
+  'recent_tasks',
 ] as const;
 
 /** CLI subcommand names that must NOT appear as step JSON root keys (STEP-002). */

@@ -6,7 +6,7 @@
 - **Agent 默认如何用 Hylyre（不必每轮交代）**：[AGENTS.md](AGENTS.md) + [`.cursor/rules/hylyre.mdc`](.cursor/rules/hylyre.mdc)；MCP 一次性配置：[docs/cursor-mcp-setup.md](docs/cursor-mcp-setup.md)
 - **进度**：[docs/progress.md](docs/progress.md)
 - **输出契约（SSOT）**：`hylyre/contracts/`（`trace.json` / 测试报告章节与枚举）；确定性执行、selector 与证据说明见 [docs/deterministic-verification.md](docs/deterministic-verification.md)
-- **当前推荐版本**：Hylyre **0.5.2**；修复截图编码与扩展名一致性，所有图像入口统一完整校验，支持 `.png/.jpg/.jpeg`，不支持或无后缀在采集前拒绝。Step Outcome Protocol v1、trace schema `0.4-p0` 与契约包保持不变。
+- **当前版本**：Hylyre **0.6.1**；修复正式 Markdown 计划的测试步骤列将 JSON 字符串中的字面 `<br/>` 改为空格，Shell/input 原文、转义及多步骤保持不变。0.6.0 常用设备操作及布尔过滤兼容说明见 [变更说明](CHANGELOG.md)；用法见 [常用设备操作](docs/common-device-operations.md)。Step Outcome Protocol v1、trace schema `0.4-p0` 与契约包保持不变。
 
 与业务仓 [SimulatedWalletForHmos](https://github.com/sqsqsq/SimulatedWalletForHmos) 的 **framework** 为**单向输出**关系：本仓不引用其代码；兼容性别名通过 GitHub Actions `compat-framework.yml` **软提醒**（不阻塞主 CI）。
 
@@ -65,6 +65,10 @@ openspec list
 9. **做法 A（Cursor / NL → test-plan JSON）**：由 Agent 将意图写成 `test-plan.md`「测试步骤」列的**单行 JSON**，真机执行步骤时**不必**配置 VLM。约定与示例见 [`docs/agent-plan-a.md`](docs/agent-plan-a.md)、`tests/e2e/fixtures/json-steps-test-plan.md`。**AI 默认如何用 Hylyre**（无需每轮复述）：根目录 [`AGENTS.md`](AGENTS.md) + [`.cursor/rules/hylyre.mdc`](.cursor/rules/hylyre.mdc)；一次性 MCP 配置见 [`docs/cursor-mcp-setup.md`](docs/cursor-mcp-setup.md)
 
 ## 当前阶段
+
+**0.6.1 计划字符串保真修复**：`parse_test_plan` 保留测试步骤列 JSON 字符串中的字面 `<br/>`，包括 Shell 命令和输入文本；其它列及 JSON 字符串外的旧 Markdown `<br/>` 仍替换为空格，标准转义管道、现有反引号/围栏包装和步骤分隔行为保持不变。
+
+**0.6.0 常用设备操作**：支持长按/双击、拖拽/滑动/多指连续轨迹、按键/文本编辑、控件属性/幂等勾选、应用查询及设备 Shell，全部复用公共预检与执行结果链。新增 checked/checkable/focused 三态过滤；无观测 fake 会阻塞查询、断言、状态设置和 Shell。旧 rich 等待保留文本升父，仅含新增状态约束时使用实际匹配节点。布尔 false 的精确过滤、合法 index 零匹配的等待语义及版本限制见 [操作说明](docs/common-device-operations.md)；历史版本和独立协议版本不随产品版本重写。
 
 **0.5.2 截图格式契约修复**：CLI 一次性/会话和失败诊断按请求后缀（大小写不敏感）实际编码；未知或缺失后缀明确失败，不静默改名。所有文件、MCP/守护字节与 VLM 入口均先 `verify()` 再重新打开 `load()`，拒绝空、伪造、坏 CRC 和截断图像。相同格式保留原字节，跨格式保持尺寸和内容；透明 PNG 转 JPEG 使用白底合成（quality 95）；16位灰度PNG按固定0..65535到0..255映射保留亮度，不按每图min/max拉伸。坏图识别/结构/解码错误含截图无效PNG/JPEG上下文和原始原因，依赖与输出I/O错误保持原分类。同目录临时文件关闭后原子替换，失败保留旧图且不返回成功路径/截图附件；诊断失败不掩盖原业务失败。Pillow>=11,<13 为核心依赖，基础安装及 `[device,mcp]` 安装自动取得，无需 dev extras。CLI 缺依赖 exit 2，其它截图失败 exit 1，stderr 给原因且 stdout 无成功路径。见 [变更说明](CHANGELOG.md) 与 [验收报告](docs/releases/0.5.2-acceptance.md)。
 
