@@ -665,6 +665,7 @@ function resolveHvigorCommand(
     : ['hvigorw', 'hvigor'];
   for (const name of globalCandidates) {
     const probe = spawnSync(isWin ? 'where' : 'which', [name], {
+      windowsHide: true,
       encoding: 'utf-8',
       shell: false,
     });

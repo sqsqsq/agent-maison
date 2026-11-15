@@ -109,6 +109,7 @@ export function spawnHylyre(opts: SpawnHylyreOptions): SpawnSyncReturns<string> 
   );
 
   const run = spawnSync(inv.pythonPath, inv.argv, {
+    windowsHide: true,
     cwd: inv.cwd,
     env: inv.env,
     encoding: inv.encoding,

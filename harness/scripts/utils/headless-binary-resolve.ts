@@ -128,7 +128,7 @@ function pickBestCandidate(lines: string[]): { binary: ResolvedHeadlessBinary | 
 }
 
 function resolveViaWhereExe(name: string): { binary: ResolvedHeadlessBinary | null; shadowed: string[] } {
-  const result = spawnSync('where.exe', [name], { encoding: 'utf-8', shell: false });
+  const result = spawnSync('where.exe', [name], { windowsHide: true, encoding: 'utf-8', shell: false });
   if (result.status !== 0 || !result.stdout?.trim()) return { binary: null, shadowed: [] };
   return pickBestCandidate(result.stdout.trim().split(/\r?\n/));
 }

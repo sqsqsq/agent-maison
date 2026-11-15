@@ -201,7 +201,7 @@ function assertBlueprintSourceOwner(projectRoot: string, blueprintId: string, fi
   if (Array.isArray(dirty) && !dirty.some(item => relative === item || relative.startsWith(item.replace(/\/$/, '') + '/')) && intake.baseline.base) {
     try {
       const original = execFileSync('git', ['ls-tree', '--full-tree', '--name-only', intake.baseline.base, '--', relative],
-        { cwd: projectRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+        { windowsHide: true, cwd: projectRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
       if (!original) return undefined;
     } catch { /* Missing baseline evidence cannot establish ownership of an existing design. */ }
   }

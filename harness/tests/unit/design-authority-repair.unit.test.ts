@@ -1411,11 +1411,18 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
             const digest = (file: string): string => (fs.existsSync(file) ? sha(file) : '');
             const start = Object.fromEntries(Object.entries(watched).map(([k, file]) => [k, digest(file)]));
             const heartbeats = (): number => fs.readFileSync(ownEvents, 'utf8').split('\n').filter(Boolean).slice(ownBefore).map(line => JSON.parse(line) as Ev).filter(e => e.type === 'heartbeat').length;
-            for (const deadline = Date.now() + 30_000; ;) {
-              ownUpdated = { heartbeat: heartbeats() > 0, ...Object.fromEntries(Object.entries(watched).map(([k, file]) => [k, digest(file) !== start[k]])) };
-              if (Object.values(ownUpdated).every(Boolean) || Date.now() > deadline) break;
-              await new Promise(resolve => setTimeout(resolve, 200));
-            }
+            const completion = require('../../scripts/utils/verify-feature-completion') as typeof import('../../scripts/utils/verify-feature-completion');
+            const original = completion.resolveCompletionDisposition;
+            let acceptanceEvaluations = 0;
+            completion.resolveCompletionDisposition = input => { acceptanceEvaluations += 1; return original(input); };
+            try {
+              for (const deadline = Date.now() + 30_000; ;) {
+                ownUpdated = { heartbeat: heartbeats() > 0, ...Object.fromEntries(Object.entries(watched).map(([k, file]) => [k, digest(file) !== start[k]])) };
+                if (Object.values(ownUpdated).every(Boolean) || Date.now() > deadline) break;
+                await new Promise(resolve => setTimeout(resolve, 200));
+              }
+            } finally { completion.resolveCompletionDisposition = original; }
+            assert.strictEqual(acceptanceEvaluations, 0, '真实普通心跳更新进度时不得重算验收或启动 git 材料采集');
             touchLock(otherLock, lock!.ownerId);
             fs.appendFileSync(path.join(otherRunDir, 'events.jsonl'), `${JSON.stringify({ ts: new Date().toISOString(), type: 'heartbeat', phase: 'testing' })}\n`);
             writeLivenessBeacon({ projectRoot: s.root, reportDir: path.relative(s.root, otherRunDir).replace(/\\/g, '/'), runId: otherRunId });

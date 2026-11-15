@@ -2780,7 +2780,7 @@ function resolveGitHeadSha(projectRoot: string): string | null {
   if (hit !== undefined) return hit;
   let sha: string | null;
   try {
-    const r = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: projectRoot, encoding: 'utf-8', shell: false });
+    const r = spawnSync('git', ['rev-parse', 'HEAD'], { windowsHide: true, cwd: projectRoot, encoding: 'utf-8', shell: false });
     sha = r.status === 0 ? r.stdout.trim() : null;
   } catch {
     sha = null;
@@ -3638,6 +3638,7 @@ function recordStartCommit(
   }
 
   const headProbe = spawnSync('git', ['rev-parse', 'HEAD'], {
+    windowsHide: true,
     cwd: projectRoot,
     encoding: 'utf-8',
     shell: false,

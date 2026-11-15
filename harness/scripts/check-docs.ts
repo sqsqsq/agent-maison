@@ -71,6 +71,7 @@ const GIT_TIMEOUT_MS = 5_000;
 
 function probeGit(projectRoot: string): GitProbe {
   const r = spawnSync('git', ['rev-parse', '--is-inside-work-tree'], {
+    windowsHide: true,
     cwd: projectRoot,
     encoding: 'utf-8',
     shell: false,
@@ -87,7 +88,7 @@ function gitLastCommitTime(projectRoot: string, relOrAbs: string): string | null
   const r = spawnSync(
     'git',
     ['log', '-1', '--format=%cI', '--', relOrAbs],
-    { cwd: projectRoot, encoding: 'utf-8', shell: false, timeout: GIT_TIMEOUT_MS },
+    { windowsHide: true, cwd: projectRoot, encoding: 'utf-8', shell: false, timeout: GIT_TIMEOUT_MS },
   );
   if (r.status !== 0) return null;
   const out = (r.stdout ?? '').trim();

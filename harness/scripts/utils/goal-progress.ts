@@ -210,7 +210,8 @@ export interface GoalProgressSnapshot {
 }
 
 export interface ProjectProgressInput {
-  currentDisposition?: CurrentDisposition;
+  /** undefined refreshes acceptance; null projects progress before any acceptance observation. */
+  currentDisposition?: CurrentDisposition | null;
   frameworkRoot?: string;
   projectRoot: string;
   manifest: GoalManifest;
@@ -892,8 +893,9 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
   const activeHarness = findUnclosedHarness(events)?.event as (GoalRunEvent & { timeout_ms?: number }) | undefined;
   const grantedTimeout = activeHarness?.effective_timeout_ms ?? activeHarness?.timeout_ms ?? invocation?.start.effective_timeout_ms;
   const phaseTimeoutMs = typeof grantedTimeout === 'number' && Number.isFinite(grantedTimeout) && grantedTimeout > 0 ? grantedTimeout : Infinity;
-  const currentDisposition = input.currentDisposition ?? resolveCompletionDisposition({ projectRoot, frameworkRoot: input.frameworkRoot,
-    feature: manifest.feature, chain, runId: manifest.run_id, workflow });
+  const currentDisposition = input.currentDisposition === undefined
+    ? resolveCompletionDisposition({ projectRoot, frameworkRoot: input.frameworkRoot,
+      feature: manifest.feature, chain, runId: manifest.run_id, workflow }) : input.currentDisposition;
 
   const outputStat = getAgentOutputStat(projectRoot, reportDir, currentPhase, invocation);
 
@@ -959,8 +961,8 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
     if (typeof reason === 'string') statusReason = reason;
   }
 
-  const percent = currentDisposition.completionEligible ? 100 : null;
-  const kind: PercentKind = currentDisposition.completionEligible ? 'estimated' : 'indeterminate';
+  const percent = currentDisposition?.completionEligible ? 100 : null;
+  const kind: PercentKind = currentDisposition?.completionEligible ? 'estimated' : 'indeterminate';
 
   const lastEvent = events.length > 0 ? events[events.length - 1] : null;
   const recentEvents = events.slice(-5).map((e) => ({
@@ -993,7 +995,7 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
   else if (invocation && !invocation.end) nextAction = 'wait_for_agent_invoke_end';
   else if (currentSpan?.substep === 'harness') nextAction = 'wait_for_harness_end';
   else if (currentSpan?.status === 'RETRYING') nextAction = 'wait_for_retry';
-  else nextAction = currentDisposition.completionEligible ? 'await_completion_publication' : 'continue_work_unit';
+  else nextAction = currentDisposition?.completionEligible ? 'await_completion_publication' : 'continue_work_unit';
   const progressRel = path.join(reportDir, 'progress.json').replace(/\\/g, '/');
 
   const phaseStartedAt = currentSpan?.started_at ?? null;
@@ -1039,10 +1041,10 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
     liveness,
     ...(invocation ? { invocation: { label: invocation.start.phase ?? null, invoke_id: invocation.start.invoke_id ?? null,
       started_at: invocation.start.ts ?? null, ended_at: invocation.end?.ts ?? null } } : {}),
-    ...(runState.recovery && (currentDisposition.completionBlocking.some(problem => problem.id === runState.recovery!.reason)
+    ...(runState.recovery && currentDisposition && (currentDisposition.completionBlocking.some(problem => problem.id === runState.recovery!.reason)
       || currentDisposition.completionBlocking.some(problem => problem.phase === '*' && problem.owner === 'framework' && problem.id === 'required_check_conclusion'))
       ? { recovery: runState.recovery } : {}),
-    current_disposition: currentDisposition,
+    ...(currentDisposition ? { current_disposition: currentDisposition } : {}),
     activity: { calls: turnsUsed, active_ms: wallElapsed },
     ...(manifest.budget ? { budget: {
       turns_used: turnsUsed, turns_limit: manifest.budget.max_total_turns,

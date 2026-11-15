@@ -3531,7 +3531,9 @@ function setupProgressHooks(
   workflow: ReturnType<typeof resolveWorkflowSpec>,
   writerState: ProgressWriterState,
 ): (force?: boolean, writeMd?: boolean, currentDisposition?: import('./utils/check-disposition').CurrentDisposition) => void {
-  const flushProgress = (force = false, writeMd = false, currentDisposition?: import('./utils/check-disposition').CurrentDisposition): void => {
+  let observedDisposition: CurrentDisposition | null = null;
+  const flushProgress = (force = false, writeMd = false, currentDisposition?: CurrentDisposition | null): void => {
+    if (currentDisposition) observedDisposition = currentDisposition;
     try {
       assertGoalBoundary('progress_write');
       const now = Date.now();
@@ -3551,6 +3553,7 @@ function setupProgressHooks(
         // e9d4b7a3 t4：progress.json 与 runner 熔断同一折叠入口（supersede lineage）
         featuresDir,
       });
+      observedDisposition = snapshot.current_disposition ?? null;
       writeProgressSnapshotAtomic(projectRoot, manifest.report_dir, snapshot, writeMd);
       writerState.lastWriteMs = now;
     } catch (err) {
@@ -3597,7 +3600,8 @@ function setupProgressHooks(
           projectRoot, reportDir: manifest.report_dir, runId: manifest.run_id,
         });
       } catch { /* 非致命：缺 beacon 会被判 stale，不会被误判存活 */ }
-      flushProgress();
+      // Heartbeats refresh observation only; acceptance is recomputed at work/stage boundaries.
+      flushProgress(false, false, observedDisposition);
     } catch (err) {
       console.warn(
         `[goal-runner] progress heartbeat failed (non-fatal): ${(err as Error).message}`,

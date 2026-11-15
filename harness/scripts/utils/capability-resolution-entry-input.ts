@@ -212,7 +212,7 @@ export function prepareRequestInput(options: { projectRoot: string; frameworkRoo
   for (const file of Object.values(inputs)) if (fs.existsSync(file) && !fs.statSync(file).isFile()) throw new Error('input must be a readable file');
   for (const file of Object.values(inputs)) if (['summary.json', 'script-report.json'].some(name => path.join(reportDir, name) === file) || file === factsPath) throw new Error('input overlaps a machine output/facts path');
   const baselineRaw = object(raw.baseline ?? {}, 'baseline'); keys(baselineRaw, ['base', 'head'], 'baseline');
-  const git = (args: string[]): string => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  const git = (args: string[]): string => execFileSync('git', args, { windowsHide: true, cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
   const ref = (value: unknown): string => { if (typeof value !== 'string' || !value.trim()) throw new Error('baseline ref must be nonempty'); return git(['rev-parse', '--verify', '--end-of-options', `${value}^{commit}`]); };
   const baseline = { ...(baselineRaw.base === undefined ? {} : { base: ref(baselineRaw.base) }), head: baselineRaw.head === undefined || baselineRaw.head === 'WORKTREE' ? 'WORKTREE' : ref(baselineRaw.head) };
   if (intake && (baseline.base !== intake.baseline.base || baseline.head !== 'WORKTREE' || !originRequest && raw.requested_result !== intake.user.text)) throw new Error('自动request的需求/基线必须来自同一原生请求');
@@ -226,7 +226,7 @@ export function prepareRequestInput(options: { projectRoot: string; frameworkRoo
     if (!historicalReview && exists && !fs.statSync(absolute).isFile()) throw new Error(`target is not a file: ${file}`);
     let bytes = !historicalReview && exists ? fs.readFileSync(absolute) : undefined;
     if (baseline.head !== 'WORKTREE' && !allowed.includes(file)) {
-      const committed = execFileSync('git', ['show', `${baseline.head}:${file}`], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
+      const committed = execFileSync('git', ['show', `${baseline.head}:${file}`], { windowsHide: true, cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
       if (options.phase !== 'review' && !bytes?.equals(committed)) throw new Error(`test target differs from selected head: ${file}`);
       bytes = committed;
     }

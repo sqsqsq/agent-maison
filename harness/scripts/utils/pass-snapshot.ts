@@ -234,6 +234,7 @@ export function readCodingBase(
 /** 当前 git HEAD（40-hex）；非 git 仓库/失败 → null。供 runner 锚定 coding_base 用。 */
 export function resolveGitHeadSha(projectRoot: string): string | null {
   const r = spawnSync('git', ['rev-parse', 'HEAD'], {
+    windowsHide: true,
     cwd: projectRoot, encoding: 'utf-8', shell: false,
   });
   if (r.status !== 0) return null;

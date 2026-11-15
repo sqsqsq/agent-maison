@@ -161,6 +161,7 @@ export function installProjectDeps(opts: OhpmInstallOpts): OhpmInstallResult {
 
   const spawnRet = resolved.useShell
     ? spawnSync(resolved.commandDisplay, [], {
+        windowsHide: true,
         cwd: opts.projectRoot,
         shell: true,
         env: childEnv,
@@ -168,6 +169,7 @@ export function installProjectDeps(opts: OhpmInstallOpts): OhpmInstallResult {
         encoding: 'utf-8',
       })
     : spawnSync(resolved.spawnFile, resolved.spawnArgs, {
+        windowsHide: true,
         cwd: opts.projectRoot,
         shell: false,
         env: childEnv,

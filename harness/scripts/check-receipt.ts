@@ -464,6 +464,7 @@ function main(): void {
         let claimedFull = claimedRaw;
         if (claimedRaw) {
           const resolveClaimed = spawnSync('git', ['rev-parse', `${claimedRaw}^{commit}`], {
+            windowsHide: true,
             cwd: projectRoot,
             encoding: 'utf-8',
             shell: false,
@@ -479,7 +480,7 @@ function main(): void {
               'summary 与回执必须出自同一工作状态（旧 summary 冒充/回执后补皆拒）。',
           });
         }
-        const headProbe = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: projectRoot, encoding: 'utf-8', shell: false });
+        const headProbe = spawnSync('git', ['rev-parse', 'HEAD'], { windowsHide: true, cwd: projectRoot, encoding: 'utf-8', shell: false });
         const headSha = headProbe.status === 0 ? headProbe.stdout.trim() : '';
         // v6（codex 第五轮 P1）：HEAD 解析失败=run identity 无法核实 → fail-closed BLOCKER，
         // 不得静默跳过 HEAD 绑定校验（slim 凭证链以 git 为前提）。

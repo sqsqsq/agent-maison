@@ -19,6 +19,7 @@ const HARNESS_ROOT = path.resolve(__dirname, '../../../harness');
 
 function runJimpWorker(args: string[]): Record<string, unknown> {
   const result = spawnSync(process.execPath, [WORKER_PATH, ...args], {
+    windowsHide: true,
     encoding: 'utf-8',
     maxBuffer: 50 * 1024 * 1024,
     cwd: HARNESS_ROOT,

@@ -39,6 +39,7 @@ const ROOT_CONFIG_PATHSPECS = [
 
 function runGit(projectRoot: string, args: string[]): { ok: boolean; stdout: string } {
   const r = spawnSync('git', args, {
+    windowsHide: true,
     cwd: projectRoot,
     encoding: 'utf-8',
     shell: false,

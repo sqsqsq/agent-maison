@@ -218,7 +218,7 @@ export function runRevalidate(
     const run = spawnSync(
       isWin ? 'npx.cmd' : 'npx',
       ['ts-node', '--transpile-only', path.join(harnessRoot, 'harness-runner.ts'), '--phase', target.phase, '--feature', feature],
-      { cwd: harnessRoot, shell: isWin, stdio: 'inherit', env: { ...process.env, [REVALIDATE_ENV]: '1' } },
+      { windowsHide: true, cwd: harnessRoot, shell: isWin, stdio: 'inherit', env: { ...process.env, [REVALIDATE_ENV]: '1' } },
     );
     let summary = readSummary(projectRoot, feature, target.phase, frameworkRoot);
     const verdict = summary?.verdict ?? 'UNKNOWN';

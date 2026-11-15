@@ -343,6 +343,7 @@ function runCreatedHash(input: Omit<RunCreatedEvent, 'event_hash' | 'ts'>): stri
 
 export function resolveGoalRunHeadSha(projectRoot: string): string {
   const value = execFileSync('git', ['rev-parse', 'HEAD'], {
+    windowsHide: true,
     cwd: projectRoot,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],

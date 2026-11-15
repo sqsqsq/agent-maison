@@ -46,7 +46,7 @@ export interface RequestIntake {
 const scales: Record<string, DeliveryScale> = { 特别简单: 'trivial', 小型: 'small', 中型: 'medium', 复杂: 'complex' };
 export function nativeFixedScale(value?: string): DeliveryScale | undefined { return value ? scales[value] : undefined; }
 const labels: Record<keyof DeliveryFacts, string> = { design_tradeoff: 'Q1', unclosed_impact: 'Q2', irreversible_data: 'Q3', dependent_results: '依赖结果', cross_component: '跨部件', expectations_clear: '预期明确', unique_approach: '做法唯一' };
-function git(root: string, args: string[]): string { return execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim(); }
+function git(root: string, args: string[]): string { return execFileSync('git', args, { windowsHide: true, cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim(); }
 function nativePath(root: string, file: string): string {
   return realProjectPath(root, path.relative(root, path.resolve(root, file)).replace(/\\/g, '/'), 'native source');
 }

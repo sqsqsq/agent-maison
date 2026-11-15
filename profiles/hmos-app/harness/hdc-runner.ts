@@ -92,6 +92,7 @@ export function buildHdcSpawnOptions(
     encoding: 'utf-8',
     cwd: ensureHdcIsolatedCwd(),
     shell: useShell,
+    windowsHide: true,
     // codex 十轮（二期）P0：HDC executable 可由 HARNESS_HDC_EXE/HDC_EXE 指定（宿主可控），
     // 属"可执行宿主/设备工具"——统一 wrapper 剥离信任锚 env（此前默认继承 gate harness
     // 完整环境，违反 3.9f 契约）。仅剥离、保留 process.env 的 PATH 原样（不再 merge——

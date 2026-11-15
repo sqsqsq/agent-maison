@@ -423,6 +423,7 @@ function writeConfigMerge(
 
 function runHarnessInstall(harnessRoot: string): string {
   const r = spawnSync('npm', ['install'], {
+    windowsHide: true,
     cwd: harnessRoot,
     shell: true,
     encoding: 'utf-8',
@@ -441,6 +442,7 @@ function runGlobalPhases(harnessRoot: string, projectRoot: string): string {
       'npx',
       ['ts-node', 'harness-runner.ts', '--phase', phase, '--feature', '_global'],
       {
+        windowsHide: true,
         cwd: harnessRoot,
         shell: true,
         encoding: 'utf-8',

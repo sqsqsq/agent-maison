@@ -128,7 +128,7 @@ export function resolveEffectiveDiffBaseline(projectRoot: string, feature: strin
   if (runId?.trim()) return resolveGoalRunBaseline(projectRoot, feature, runId.trim());
   const normalized = normalizeDiffBaseRef(resolveHarnessDiffBaseRef());
   if (normalized.workingOnly) return { available: true, baseSha: normalized.baseRef, source: 'working_tree' };
-  const verify = spawnSync('git', ['rev-parse', '--verify', `${normalized.baseRef}^{commit}`], { cwd: projectRoot, encoding: 'utf-8', shell: false });
+  const verify = spawnSync('git', ['rev-parse', '--verify', `${normalized.baseRef}^{commit}`], { windowsHide: true, cwd: projectRoot, encoding: 'utf-8', shell: false });
   if (verify.status !== 0) {
     return { available: false, reason: `HARNESS_DIFF_BASE_REF 指定的基线不可达（不存在的 commit）：${normalized.baseRef}` };
   }
@@ -153,6 +153,7 @@ export function diffChangedFiles(opts: GitDiffOpts): GitDiffResult {
 
   // 先决：cwd 是否是 git 仓库
   const probe = spawnSync('git', ['rev-parse', '--is-inside-work-tree'], {
+    windowsHide: true,
     cwd, encoding: 'utf-8', shell: false,
   });
   if (probe.status !== 0) {
@@ -181,6 +182,7 @@ export function diffChangedFiles(opts: GitDiffOpts): GitDiffResult {
     // 用于 correction base_commit 这类"必须确认对象真实存在"的场景会被静默放过。
     // 加上 `^{commit}` 强制要求解析到真实存在的 commit 对象，否则 fatal exit 128。
     const verify = spawnSync('git', ['rev-parse', '--verify', `${baseRef}^{commit}`], {
+      windowsHide: true,
       cwd, encoding: 'utf-8', shell: false,
     });
     if (verify.status !== 0) {
@@ -201,7 +203,7 @@ export function diffChangedFiles(opts: GitDiffOpts): GitDiffResult {
     const commit = spawnSync(
       'git',
       ['diff', '--name-only', `${baseRef}..HEAD`, ...pathspecArgs],
-      { cwd, encoding: 'utf-8', shell: false },
+      { windowsHide: true, cwd, encoding: 'utf-8', shell: false },
     );
     if (commit.status === 0 && commit.stdout) {
       commit.stdout.split(/\r?\n/).filter(Boolean).forEach(f => {
@@ -215,7 +217,7 @@ export function diffChangedFiles(opts: GitDiffOpts): GitDiffResult {
   const wt = spawnSync(
     'git',
     ['diff', '--name-only', 'HEAD', ...pathspecArgs],
-    { cwd, encoding: 'utf-8', shell: false },
+    { windowsHide: true, cwd, encoding: 'utf-8', shell: false },
   );
   if (wt.status === 0 && wt.stdout) {
     wt.stdout.split(/\r?\n/).filter(Boolean).forEach(f => {
@@ -228,7 +230,7 @@ export function diffChangedFiles(opts: GitDiffOpts): GitDiffResult {
   const staged = spawnSync(
     'git',
     ['diff', '--name-only', '--cached', ...pathspecArgs],
-    { cwd, encoding: 'utf-8', shell: false },
+    { windowsHide: true, cwd, encoding: 'utf-8', shell: false },
   );
   if (staged.status === 0 && staged.stdout) {
     staged.stdout.split(/\r?\n/).filter(Boolean).forEach(f => {
@@ -241,7 +243,7 @@ export function diffChangedFiles(opts: GitDiffOpts): GitDiffResult {
   const untracked = spawnSync(
     'git',
     ['ls-files', '--others', '--exclude-standard', ...pathspecArgs],
-    { cwd, encoding: 'utf-8', shell: false },
+    { windowsHide: true, cwd, encoding: 'utf-8', shell: false },
   );
   if (untracked.status === 0 && untracked.stdout) {
     untracked.stdout.split(/\r?\n/).filter(Boolean).forEach(f => {
@@ -338,12 +340,14 @@ export function diffChangedFilesWithStatus(opts: {
   const cwd = opts.projectRoot;
   const baseRef = normalizeDiffBaseRef(opts.baseRef).baseRef;
   const probe = spawnSync('git', ['rev-parse', '--is-inside-work-tree'], {
+    windowsHide: true,
     cwd, encoding: 'utf-8', shell: false,
   });
   if (probe.status !== 0) {
     return { executed: false, baseRef, entries: [], error: `非 git 仓库或 git 不可用：${probe.stderr?.trim() ?? ''}` };
   }
   const verify = spawnSync('git', ['rev-parse', '--verify', `${baseRef}^{commit}`], {
+    windowsHide: true,
     cwd, encoding: 'utf-8', shell: false,
   });
   if (verify.status !== 0) {
@@ -354,7 +358,7 @@ export function diffChangedFilesWithStatus(opts: {
   const diff = spawnSync(
     'git',
     ['diff', '--name-status', '-M', '-z', baseRef],
-    { cwd, shell: false, maxBuffer: 64 * 1024 * 1024 },
+    { windowsHide: true, cwd, shell: false, maxBuffer: 64 * 1024 * 1024 },
   );
   if (diff.status !== 0) {
     return {
@@ -369,7 +373,7 @@ export function diffChangedFilesWithStatus(opts: {
   const untracked = spawnSync(
     'git',
     ['ls-files', '--others', '--exclude-standard', '-z'],
-    { cwd, shell: false, maxBuffer: 64 * 1024 * 1024 },
+    { windowsHide: true, cwd, shell: false, maxBuffer: 64 * 1024 * 1024 },
   );
   if (untracked.status === 0 && untracked.stdout) {
     for (const p of (untracked.stdout as Buffer).toString('utf-8').split('\0').filter(Boolean)) {
@@ -405,6 +409,7 @@ export function listFilesAtRef(projectRoot: string, ref: string): ListFilesAtRef
     return { executed: false, ref: '', files: new Set(), error: 'ref 为空' };
   }
   const verify = spawnSync('git', ['rev-parse', '--verify', `${trimmed}^{commit}`], {
+    windowsHide: true,
     cwd, encoding: 'utf-8', shell: false,
   });
   if (verify.status !== 0) {
@@ -416,7 +421,7 @@ export function listFilesAtRef(projectRoot: string, ref: string): ListFilesAtRef
   const ls = spawnSync(
     'git',
     ['ls-tree', '-r', '--name-only', '-z', trimmed],
-    { cwd, shell: false, maxBuffer: 64 * 1024 * 1024 },
+    { windowsHide: true, cwd, shell: false, maxBuffer: 64 * 1024 * 1024 },
   );
   if (ls.status !== 0) {
     return {
@@ -436,7 +441,7 @@ export function readFileAtRef(projectRoot: string, ref: string, relPath: string)
   const res = spawnSync(
     'git',
     ['show', `${ref}:${relPath.replace(/\\/g, '/')}`],
-    { cwd: projectRoot, shell: false, maxBuffer: 64 * 1024 * 1024 },
+    { windowsHide: true, cwd: projectRoot, shell: false, maxBuffer: 64 * 1024 * 1024 },
   );
   if (res.status !== 0) return null;
   return res.stdout as Buffer;

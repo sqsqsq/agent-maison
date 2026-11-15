@@ -45,7 +45,7 @@ export function deriveContentImpact(root: string, intake: RequestIntake): Conten
     let before = '';
     let after = '';
     try { if (intake.baseline.preimages?.[file]) before = intake.baseline.preimages[file].content;
-      else if (intake.baseline.base) before = execFileSync('git', ['show', `${intake.baseline.base}:${entry?.oldPath ?? file}`], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }); } catch { /* Added files have no old content. */ }
+      else if (intake.baseline.base) before = execFileSync('git', ['show', `${intake.baseline.base}:${entry?.oldPath ?? file}`], { windowsHide: true, cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }); } catch { /* Added files have no old content. */ }
     if (fs.existsSync(path.resolve(root, file))) after = fs.readFileSync(path.resolve(root, file), 'utf8');
     if (before === after || codeTokens(before) === codeTokens(after)) continue;
     if (/\.json5?$/i.test(file)) {

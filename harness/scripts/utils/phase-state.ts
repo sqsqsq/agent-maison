@@ -392,6 +392,7 @@ export function tryValidateReceipt(
       '--skip-state-sync',
     ],
     {
+      windowsHide: true,
       cwd: harnessRoot,
       encoding: 'utf-8',
       shell: isWin,

@@ -123,6 +123,7 @@ export function runHylyreUtf8RoundTrip(opts: RunRoundTripOptions): RoundTripVeri
     hylyreArgv: [],
   });
   const run = spawnSync(base.pythonPath, ['-c', PY_ROUNDTRIP_SCRIPT, stepsFile], {
+    windowsHide: true,
     cwd: base.cwd,
     env: base.env,
     encoding: 'utf-8',

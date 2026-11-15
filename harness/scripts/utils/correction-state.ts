@@ -55,6 +55,7 @@ export function requestFingerprint(requestText: string): string {
 /** 当前 HEAD sha（修正起点）；非 git 仓库 → null（调用方 fail-closed）。 */
 export function resolveBaseCommit(projectRoot: string): string | null {
   const r = spawnSync('git', ['rev-parse', 'HEAD'], {
+    windowsHide: true,
     cwd: projectRoot,
     encoding: 'utf-8',
     shell: false,

@@ -55,6 +55,7 @@ export function ocrImageWords(imagePath: string): OcrResult {
     return { ok: false, error: `image not found: ${imagePath}` };
   }
   const proc = spawnSync(process.execPath, [WORKER_PATH, imagePath, TESSDATA_DIR], {
+    windowsHide: true,
     encoding: 'utf-8',
     cwd: HARNESS_ROOT,
     maxBuffer: 64 * 1024 * 1024,

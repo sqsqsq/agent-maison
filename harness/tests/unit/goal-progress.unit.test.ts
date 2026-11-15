@@ -179,6 +179,39 @@ function mkStatusSnapshot(
 
 const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
   {
+    name: 'heartbeat projection reuses acceptance while refreshing progress; explicit observation still recomputes',
+    run: () => {
+      const completion = require('../../scripts/utils/verify-feature-completion') as typeof import('../../scripts/utils/verify-feature-completion');
+      const original = completion.resolveCompletionDisposition;
+      let evaluations = 0;
+      completion.resolveCompletionDisposition = input => { evaluations += 1; return original(input); };
+      try {
+        const manifest = mkManifest({ start_phase: 'coding', end_phase: 'coding' });
+        const started = Date.parse(manifest.created_at);
+        const events: GoalRunEvent[] = [
+          { ts: manifest.created_at, type: 'run_start', chain: ['coding'] },
+          { ts: new Date(started + 1000).toISOString(), type: 'phase_start', phase: 'coding', attempt: 1 },
+          { ts: new Date(started + 2000).toISOString(), type: 'agent_invoke_start', phase: 'coding', invoke_id: 'heartbeat-i1' },
+        ];
+        const input = { projectRoot: '/tmp', manifest, workflow, events, nowMs: started + 3000 };
+        const observed = projectGoalProgress(input);
+        assert(evaluations === 1 && !!observed.current_disposition, '正式投影读取当前验收结论');
+        events.push({ ts: new Date(started + 9000).toISOString(), type: 'heartbeat', phase: 'coding' });
+        const heartbeat = projectGoalProgress({ ...input, nowMs: started + 10_000, currentDisposition: observed.current_disposition });
+        assert(evaluations === 1 && heartbeat.current_disposition === observed.current_disposition, '心跳复用最近验收观测，不重新收集材料');
+        assert(heartbeat.source.events_count === 4 && heartbeat.source.last_event_type === 'heartbeat', '仍读取最新事件');
+        assert(heartbeat.liveness.state === 'ACTIVE' && heartbeat.liveness.seconds_since_activity === 1, '仍刷新活性');
+        assert(heartbeat.phase.status === 'AGENT_RUNNING' && heartbeat.phase.elapsed_ms === 9000
+          && heartbeat.next_action === 'wait_for_agent_invoke_end', '仍保留当前阶段、时长和等待动作');
+        const unobserved = projectGoalProgress({ ...input, currentDisposition: null });
+        assert(evaluations === 1 && unobserved.current_disposition === undefined && unobserved.chain.estimated_percent === null,
+          '无最近验收观测的心跳保持未知，不补跑验收或推断通过');
+        projectGoalProgress({ ...input, nowMs: started + 11_000 });
+        assert(Number(evaluations) === 2, '正式观测仍实时重算，不能复用心跳缓存');
+      } finally { completion.resolveCompletionDisposition = original; }
+    },
+  },
+  {
     name: 'resolveChainFromEvents: prefers run_start.chain',
     run: () => {
       const events = [{ type: 'run_start', chain: ['spec', 'coding'] }] as GoalRunEvent[];

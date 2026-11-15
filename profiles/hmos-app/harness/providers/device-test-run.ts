@@ -477,6 +477,7 @@ export function pythonSpawnEnv(): NodeJS.ProcessEnv {
 function findSystemPythonForVenv(): { cmd: string; args: string[] } | null {
   for (const c of probePythonCandidates()) {
     const r = spawnSync(c.cmd, [...c.args, '-c', 'import sys; assert sys.version_info >= (3, 10)'], {
+      windowsHide: true,
       encoding: 'utf-8',
       env: pythonSpawnEnv(),
     });
@@ -486,7 +487,7 @@ function findSystemPythonForVenv(): { cmd: string; args: string[] } | null {
 }
 
 function canImportHylyre(pythonPath: string, logPath?: string): boolean {
-  const r = spawnSync(pythonPath, ['-c', 'import hylyre'], { encoding: 'utf-8', env: pythonSpawnEnv() });
+  const r = spawnSync(pythonPath, ['-c', 'import hylyre'], { windowsHide: true, encoding: 'utf-8', env: pythonSpawnEnv() });
   if (logPath && (r.stdout || r.stderr)) {
     appendLogSync(logPath, (r.stdout || '') + (r.stderr || ''));
   }
@@ -514,6 +515,7 @@ function hylyrePackageContractsPresent(pythonPath: string, logPath: string): boo
     '    raise SystemExit(1)',
   ].join('\n');
   const r = spawnSync(pythonPath, ['-c', snippet], {
+    windowsHide: true,
     encoding: 'utf-8',
     maxBuffer: 64 * 1024,
     env: pythonSpawnEnv(),
@@ -527,6 +529,7 @@ function hylyrePackageContractsPresent(pythonPath: string, logPath: string): boo
 
 function pipShowVersion(pythonPath: string): string {
   const r = spawnSync(pythonPath, ['-m', 'pip', 'show', 'hylyre'], {
+    windowsHide: true,
     encoding: 'utf-8',
     maxBuffer: 2 * 1024 * 1024,
     env: pythonSpawnEnv(),
@@ -716,6 +719,7 @@ function runHylyrePipInstall(args: {
   const pipStarted = Date.now();
   appendLogSync(args.logPath, `pip install ${pipArgs.join(' ')}\n`);
   const pip = spawnSync(args.pythonPath, pipArgs, {
+    windowsHide: true,
     cwd: args.projectRoot,
     stdio: ['ignore', 'inherit', 'inherit'],
     timeout: defaultPipTimeoutMs(),
@@ -1024,6 +1028,7 @@ export function ensureHylyreReady(opts: HylyreReadyOptions): HylyreReadyResult {
     if (!fs.existsSync(pythonPath)) {
       appendLogSync(logPath, `创建 venv: ${venvRoot}\n`);
       const mk = spawnSync(creator.cmd, [...creator.args, '-m', 'venv', venvRoot], {
+        windowsHide: true,
         cwd: opts.projectRoot,
         stdio: ['ignore', 'inherit', 'inherit'],
         encoding: 'utf-8',
