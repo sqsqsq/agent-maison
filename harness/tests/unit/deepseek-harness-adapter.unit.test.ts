@@ -86,6 +86,11 @@ process.stdin.setEncoding('utf8');
 process.stdin.on('data', text => { input += text; });
 process.stdin.on('end', () => {
   if (process.env.DSH_TEST_WAIT === '1') { setInterval(() => {}, 1000); return; }
+  if (process.env.DSH_TEST_USAGE === '1') {
+    const step={type:'status',phase:'step_end',turn:1,step:1,usage:{inputTokens:2,cacheReadTokens:100,outputTokens:3}};
+    for(const record of [{type:'session',sessionId:'usage-session'},step,step,{type:'status',phase:'turn_end',reason:{kind:'completed'}}])console.log(JSON.stringify(record));
+    return;
+  }
   process.stdout.write(JSON.stringify({
     input, cwd: process.cwd(), args: process.argv.slice(2),
     permission: process.env.DSH_PERMISSION_MODE,
@@ -264,6 +269,18 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       assert(failed.stderr.includes('dsh: model_error: fixture unavailable'));
       assert(!failed.completion_observed);
       assert(!failed.timed_out);
+    }),
+  },
+  {
+    name: 'DSH production invoke retains native step usage once without changing other adapter capture',
+    run: () => withRoot(async root => {
+      const plan = invocation(root, 'usage replay', fixtureBinary(root));
+      const result = await invokeAgentHeadless(plan, root, { usageCapture: 'none', timeoutMs: 10000,
+        outputLogPath: path.join(root, 'agent-output.log'), extraEnv: { DSH_TEST_USAGE: '1' } });
+      assert.strictEqual(result.exitCode, 0, result.stderr);
+      assert.strictEqual(result.usage?.input_tokens, 2); assert.strictEqual(result.usage?.observed_cache_read_tokens, 100);
+      assert.strictEqual(result.usage?.output_tokens, 3); assert.strictEqual(result.usage?.requests, 1);
+      assert.strictEqual(result.usage?.cost_estimate, null);
     }),
   },
   {

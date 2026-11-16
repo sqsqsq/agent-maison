@@ -1,0 +1,27 @@
+{
+  "source_run": "20261115T073957Z-e7af8c",
+  "boundary": "Read-only historical status subset. Q bytes unchanged, scope identities copied only. Pre/post/request aggregate snapshot hashes retained exactly after proving equality; 19328 identical entries omitted. Execution request fields reduced to read-only lookup identity, not executable authority. No product or current host files copied.",
+  "files": [
+    {
+      "source": "phases/initial-design-questioning/initial-design-questioning-i13/questioning-output.json",
+      "sha256": "b1f47be12a71bdc715e33df3f28afb0b2482ad62982db6f997b027ec99b2ba13"
+    },
+    {
+      "source": "phases/initial-design-questioning/initial-design-questioning-i13/blueprint-before.yaml",
+      "sha256": "1bc1f2ce3742cb96a71f8e1949f85b4503b70d801ce0d7b5750286e80ca0f8a2"
+    },
+    {
+      "source": "phases/initial-design-questioning/initial-design-questioning-i13/design-result.json",
+      "sha256": "40605074be863fc032a3d3f4d789504221242259e0bd577b0250622e74bb4590"
+    },
+    {
+      "source": "phases/initial-design-questioning/initial-design-questioning-i13/request-e2.json",
+      "sha256": "f72dc01d7730af85b73f190e4f099f22a91b3615a13a8766e48860994dbb3594"
+    },
+    {
+      "source": "events.jsonl",
+      "sha256": "26604865e7f4da7cdca97f958871f229c293fb22175676036160d230b00e7f3d",
+      "cutoff": "2026-11-15T10:08:34.456Z"
+    }
+  ]
+}

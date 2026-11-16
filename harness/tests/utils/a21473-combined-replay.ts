@@ -43,6 +43,28 @@ const FRAMEWORK_FAULT = " require('fs').readFileSync(require('path').join(__dirn
 const write = (root: string, file: string, value: string): void => {
   const target = path.join(root, file); fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, value);
 };
+/** The historic question identity and every substantive field survive; new provenance must name matching raw output. */
+export function assertA21473QuestioningPreserved(actual: any[], original: any[], readOriginal: (reference: { path: string; sha256: string }) => Buffer): void {
+  const withoutOriginal = (item: any): any => { const { review_original: _original, ...content } = item; return content; };
+  assert.deepEqual(actual.map(withoutOriginal), original.map(withoutOriginal), '原质询ID、结论、依据及全部既有字段必须精确保留');
+  const sources = new Map<string, any[]>();
+  for (const item of actual) {
+    const reference = item.review_original;
+    if (!reference) { assert(!original.find(row => row.scope_ref === item.scope_ref)?.review_original, '不可丢弃既有原件定位'); continue; }
+    assert.equal(typeof reference.path, 'string'); assert.match(reference.sha256, /^[a-f0-9]{64}$/);
+    const key = `${reference.path}\n${reference.sha256}`;
+    if (!sources.has(key)) {
+      const bytes = readOriginal(reference);
+      assert.equal(createHash('sha256').update(bytes).digest('hex'), reference.sha256, '新增逐项出处必须绑定真实原件字节');
+      sources.set(key, JSON.parse(bytes.toString('utf8')).items);
+    }
+    const source = sources.get(key)!.filter(row => row.scope_ref === item.scope_ref && row.scope_kind === item.scope_kind);
+    assert.equal(source.length, 1, '逐项出处须唯一指向本范围的独立返回');
+    const { question_id: _sourceId, ...sourceContent } = withoutOriginal(source[0]);
+    const { question_id: _itemId, ...itemContent } = withoutOriginal(item);
+    assert.deepEqual(sourceContent, itemContent, '原件中的实质回答必须与复用/回填项相同');
+  }
+}
 function assertOriginalCriteria(actual: any[], original: any[]): void {
   assert.equal(actual.length, original.length);
   for (const item of original) {
@@ -361,7 +383,20 @@ export async function continueA21473CombinedReplay(input: { root: string; framew
     const finalBlueprint = YAML.parse(fs.readFileSync(path.join(root, canonical), 'utf8'));
     assertOriginalCriteria(finalBlueprint.design_views.find((view: any) => view.view_id === 'scenarios').nodes[0].acceptance.criteria,
       blueprintBefore.design_views.find((view: any) => view.view_id === 'scenarios').nodes[0].acceptance.criteria);
-    assert.deepEqual(finalBlueprint.review_summary.questioning.items, blueprintBefore.review_summary.questioning.items);
+    const questioningEvents = fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    assertA21473QuestioningPreserved(finalBlueprint.review_summary.questioning.items, blueprintBefore.review_summary.questioning.items, reference => {
+      const file = path.resolve(root, reference.path);
+      assert(file.startsWith(root + path.sep), '质询原件必须在本隔离宿主内');
+      const start = questioningEvents.find(event => event.type === 'agent_invoke_start'
+        && ['initial-design-questioning', 'design-repair-questioning'].includes(event.phase)
+        && path.join(runDir, 'phases', event.phase, event.invoke_id, 'questioning-output.json') === file);
+      assert(start, '新增出处必须属于本run的真实独立质询调用');
+      const original = load('scripts/utils/design-repair-unattended').readDesignQuestioningOriginal(runDir, start, questioningEvents);
+      assert(original?.completed && original.preSnapshot && original.postSnapshot, '新增出处须有完成与只读原件');
+      assert.equal(load('scripts/utils/phase-write-boundary').diffPhaseInvocationSnapshots(original.preSnapshot, original.postSnapshot).kind, 'clean');
+      const bytes = fs.readFileSync(file); assert.equal(bytes.toString('utf8'), original.output);
+      return bytes;
+    });
     assert.equal(fs.readFileSync(path.join(root, manifestBefore.requirement_source_files[0]), 'utf8'), sourceRequirement);
     const rootEvents = fs.readFileSync(path.join(runDir, 'events.jsonl'));
     assert(rootEvents.subarray(0, input.historicalEvents.length).equals(input.historicalEvents));

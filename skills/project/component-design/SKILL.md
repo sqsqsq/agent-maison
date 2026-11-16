@@ -43,7 +43,7 @@ description: Create or continue component design using the unified request envel
 
 ## 先消费统一前门（第 0 步）
 
-完整规则与判例只在 [project-entry.md](../../../docs/operations/project-entry.md)。所有产品修改先核原始请求、已有预期/设计及实际源码，在正常调研给出带路径来源的三问和结果/部件/预期/做法事实，不以“正式需求”标签或 Agent 手填档位决定外框；未知只补影响本次决定的事实，只有真实语义缺口才沿原确认点求解，不把分类本身变成用户停点。
+完整规则与判例只在 [project-entry.md](../../../docs/operations/project-entry.md)。所有产品修改先核原始请求、已有预期/设计及实际源码，在首次选路、设计写入或产品写入前，按前门例句把带路径来源的七项事实发在正常可见助手文本，再进入本档准备/准入；中型/复杂的新完整交付先取得 admitted 设计与真实 CU 准入，历史实现和七项说明不代替施工范围。不以“正式需求”标签或 Agent 手填档位决定外框；未知只补影响本次决定的事实，只有真实语义缺口才沿原确认点求解，不把分类本身变成用户停点。
 
 用户明确升/降档、豁免或验证限制优先，须核真实 user 原文与请求关联；保留真实失败、授权及硬预算。无用户固定选择仅凭新依据双向调整，不能改说法或删除 FAIL 降档。特别简单无新增设计文件/CU，转直接 compile/架构及适用 request 能力，本 Skill 不强建蓝图。**小型只写改动点、可检验验收、已知文件及必要局部选择，保留原身份/来源；不建 CU、不派独立设计质询、不产独立评审文件。** 首次授权设计准备与同一 check/request 的核源、inline 稳定原文底稿、只读不落盘边界见 [蓝图设计输入](../../../docs/concepts/blueprint-design-inputs.md#小型请求的首次准备与消费)；首次已有 check 用 `--session-ref` 准备真实 component-design request，只有授权机器来源写入才加 `--prepare-source`，后续 `--request-file` 默认只读重验；短结构通过不冒充完整 admitted。
 
@@ -92,6 +92,8 @@ npm run check:component-blueprint -- --project-root <宿主根> --blueprint <blu
 current-facts-discovery 前解析 `paths.conventions`（缺失用框架默认值）；文件存在时完整读取，只将适用条目交给既有 fact/provenance/decision 链。`conventions-knowledge` 未启用记 `available=false + not_applicable`，显式配置却不可读记 `unknown|degraded`，不得声称已消费。
 
 编写、质询或修订时按 [P1 工作流 §2](../../reference/app-component-blueprint-workflow.md#2-写入同一蓝图) 完成 4+1、七问与设计期 acceptance/contracts/use_cases，保留术语、存储、失败/中断、幂等与质量结论；在现有 ordered_steps 写清完整调用/返回，同次生成 generated_graphs 时序图。原设计 agent 完成可渲染草稿、图、说明与摘要后，先 `check:component-blueprint --write-review --json`，再派既有独立质询先读首屏/正文答八问、后核原 scope 与来源及图文一致；正文止于“技术与追溯参考”入口，八问作答前不读同文档参考区，之后再核参考/YAML；不提前读 YAML 或继承父上下文 YAML/设计摘要，作者一轮修订后重渲，派生身份同步刷新，详见 P1 §4/§5。App lens/质询用中文（代码/API 名可保留），原设计作者同次在已有临时交回明确施工映射候选，CU 接受后原 writer 填真实身份并在授权写界发布唯一 contracts.change_unit；只有真实未决项交 plan，不为转录新增模型调用；缺图或坏图不加 readiness 门，坏时序仅 WARN 并原位说明。完整路径的深度及条件式义务按实际影响展开，外框消费统一前门，保持同一蓝图协议；未触发义务按合法空集/不适用表达，不按行数压缩设计或凑空章节。
+
+作者从原始需求提取用户可观察结果；需求指定某个对象时，验收须区分本次对象正确与对象错误却看似成功，并连起产生、交接及消费依据，不在路由/日志暴露敏感完整值。失败返回按原文与既有路由说明本轮边界，原图沿来源交到施工/视觉验收。独立方对照原文构造骗过验收的反例，核上下游取得同一本次对象。这是写作/质询指引，无新机器语义检查或评分。修订只复核机器按设计变化、来源依赖及旧未决项列出的范围，交回实际评过的条目；机器沿独立原件复用未变项，具体新证据可重开旧结论。checker 由原 owner 执行，评审读 UTF-8 结果与必要证据，不重复运行、转码或写临时结果；格式缺口局部返修，保留其它有效结论及真实否定。
 
 ### 3. 中型分解为 1 个、复杂分解为多个 canonical Change Unit（经 P2 设计准备子流程）
 

@@ -1,0 +1,14 @@
+{
+  "invoke_id": "initial-design-questioning-i13",
+  "context": {
+    "phase": "initial-design-questioning",
+    "owner": {
+      "kind": "process"
+    }
+  },
+  "pre_snapshot": {
+    "sha256": "e6d407843fefdae8e3b88fae50657fb9ccffdd5785ec59924dfa45ffc8c06f78",
+    "entries": [],
+    "failureReason": null
+  }
+}

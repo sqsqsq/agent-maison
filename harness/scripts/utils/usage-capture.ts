@@ -31,6 +31,8 @@ export interface UsageModelIdentity {
 
 export interface AgentInvokeUsage {
   input_tokens: number | null;
+  /** DSH step_end 已观测缓存读取之和；部分缺失见missing_reason，全缺失为null，不折算费用。 */
+  observed_cache_read_tokens?: number | null;
   output_tokens: number | null;
   tool_tokens: number | null;
   requests: number | null;
@@ -38,6 +40,50 @@ export interface AgentInvokeUsage {
   capture_method: UsageCaptureMethod;
   confidence: 'measured' | 'proxy';
   model_identity?: UsageModelIdentity;
+  missing_reason?: string;
+}
+
+/** One invocation's native stream, before the bounded stdout tail can lose early steps. */
+export function createDshUsageCapture() {
+  let session = '', turn: unknown;
+  const steps = new Map<string, Record<string, unknown>>();
+  return {
+    observe(record: Record<string, unknown>): void {
+      if (record.type === 'session' && typeof record.sessionId === 'string') session = record.sessionId;
+      if (record.type === 'status' && record.phase === 'turn_start') turn = record.turn;
+      if (record.type !== 'status' || record.phase !== 'step_end') return;
+      const nativeTurn = record.turn ?? turn;
+      if (!session || nativeTurn === undefined || record.step === undefined) return;
+      const key = JSON.stringify([session, nativeTurn, record.step]);
+      if (!steps.has(key)) steps.set(key, record.usage && typeof record.usage === 'object' ? record.usage as Record<string, unknown> : {});
+    },
+    result(): AgentInvokeUsage {
+      const missing: string[] = [];
+      const sum = (key: string): number | null => {
+        let total = 0;
+        for (const usage of steps.values()) {
+          const value = asFiniteNumber(usage[key]);
+          if (value === null || value < 0) { missing.push(key); return null; }
+          total += value;
+        }
+        return steps.size ? total : null;
+      };
+      const input = sum('inputTokens'), output = sum('outputTokens');
+      const observedCache = [...steps.values()].map(usage => asFiniteNumber(usage.cacheReadTokens)).filter((value): value is number => value !== null && value >= 0);
+      const cache = observedCache.length ? observedCache.reduce((total, value) => total + value, 0) : null;
+      if (observedCache.length < steps.size) missing.push('cacheReadTokens（仅合计已观测部分，非完整缓存总数）');
+      return { ...proxyUsage('stdout_json'), input_tokens: input, output_tokens: output, observed_cache_read_tokens: cache,
+        requests: steps.size || null, confidence: steps.size && [input, output, cache].some(value => value !== null) ? 'measured' : 'proxy',
+        ...(!steps.size ? { missing_reason: '未观测到带session/turn/step身份的DSH step_end；不推断用量或费用' }
+          : missing.length ? { missing_reason: `已观测step_end缺少${missing.join('、')}；缺失值不推断` } : {}) };
+    },
+  };
+}
+
+export function deriveDshInvokeUsage(stdout: string): AgentInvokeUsage {
+  const capture = createDshUsageCapture();
+  for (const line of stdout.split(/\r?\n/)) try { capture.observe(JSON.parse(line)); } catch { /* Native partial lines carry no finished step. */ }
+  return capture.result();
 }
 
 function proxyUsage(method: UsageCaptureMethod): AgentInvokeUsage {

@@ -1,0 +1,1983 @@
+{
+  "note": "Full scope identities and factual witnesses; counts are derived, not acceptance assertions.",
+  "pairs": [
+    {
+      "first": 3,
+      "revised": 5,
+      "selected": [
+        "view:logical",
+        "view:runtime",
+        "flow:flow-card-open-run",
+        "view:development",
+        "view:deployment",
+        "view:scenarios",
+        "relation:rel-bank-catalog-realized",
+        "relation:rel-card-catalog-realized",
+        "relation:rel-card-record-realized",
+        "relation:rel-open-session-realized",
+        "relation:rel-home-state-realized",
+        "relation:rel-flow-realized",
+        "relation:rel-scenario-realized",
+        "relation:rel-app-deployed",
+        "relation:rel-rdb-deployed",
+        "app_lens:capability_seams",
+        "app_lens:feature_flags",
+        "app_lens:data_producers_consumers",
+        "app_lens:lifecycle_triggers",
+        "app_lens:state_owners",
+        "app_lens:initialization",
+        "app_lens:publication_subscription",
+        "app_lens:ui_refresh",
+        "terminology:current_scope_items"
+      ],
+      "reasons": {
+        "view:logical": {
+          "kind": "unresolved",
+          "basis": "真实 i3 独立原件为 blocker，必须重新质询。"
+        },
+        "view:runtime": {
+          "kind": "unresolved",
+          "basis": "真实 i3 独立原件为 blocker，必须重新质询。"
+        },
+        "flow:flow-card-open-run": {
+          "kind": "unresolved",
+          "basis": "真实 i3 独立原件为 blocker，必须重新质询。"
+        },
+        "view:development": {
+          "kind": "unresolved",
+          "basis": "真实 i3 独立原件为 blocker，必须重新质询。"
+        },
+        "view:deployment": {
+          "kind": "summary",
+          "basis": "公共评审摘要 summary 实质变更，保守交回视图。",
+          "changed": "/review_summary/summary"
+        },
+        "view:scenarios": {
+          "kind": "unresolved",
+          "basis": "真实 i3 独立原件为 blocker，必须重新质询。"
+        },
+        "relation:rel-bank-catalog-realized": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：view:logical → relation:rel-bank-catalog-realized。",
+          "from": "view:logical",
+          "edge": {
+            "kind": "id",
+            "source": "view:logical",
+            "target": "relation:rel-bank-catalog-realized",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/design_views/0/view_id",
+                "value": "logical"
+              },
+              {
+                "side": "before",
+                "path": "/relations/0/from",
+                "value": "view:logical/node:logical-bank-catalog"
+              }
+            ],
+            "id": "view:logical"
+          }
+        },
+        "relation:rel-card-catalog-realized": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：view:logical → relation:rel-card-catalog-realized。",
+          "from": "view:logical",
+          "edge": {
+            "kind": "id",
+            "source": "view:logical",
+            "target": "relation:rel-card-catalog-realized",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/design_views/0/view_id",
+                "value": "logical"
+              },
+              {
+                "side": "before",
+                "path": "/relations/1/from",
+                "value": "view:logical/node:logical-card-catalog"
+              }
+            ],
+            "id": "view:logical"
+          }
+        },
+        "relation:rel-card-record-realized": {
+          "kind": "source",
+          "basis": "该独立项显式依赖的历史文件 doc/features/bc-openCard-2/blueprint/contract-sources/card-open.contract.yaml 改变或缺失。",
+          "dependency": "doc/features/bc-openCard-2/blueprint/contract-sources/card-open.contract.yaml"
+        },
+        "relation:rel-open-session-realized": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：view:logical → relation:rel-open-session-realized。",
+          "from": "view:logical",
+          "edge": {
+            "kind": "id",
+            "source": "view:logical",
+            "target": "relation:rel-open-session-realized",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/design_views/0/view_id",
+                "value": "logical"
+              },
+              {
+                "side": "before",
+                "path": "/relations/3/from",
+                "value": "view:logical/node:logical-open-session"
+              }
+            ],
+            "id": "view:logical"
+          }
+        },
+        "relation:rel-home-state-realized": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：view:logical → relation:rel-home-state-realized。",
+          "from": "view:logical",
+          "edge": {
+            "kind": "id",
+            "source": "view:logical",
+            "target": "relation:rel-home-state-realized",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/design_views/0/view_id",
+                "value": "logical"
+              },
+              {
+                "side": "before",
+                "path": "/relations/4/from",
+                "value": "view:logical/node:logical-home-card-state"
+              }
+            ],
+            "id": "view:logical"
+          }
+        },
+        "relation:rel-flow-realized": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：view:runtime → relation:rel-flow-realized。",
+          "from": "view:runtime",
+          "edge": {
+            "kind": "id",
+            "source": "view:runtime",
+            "target": "relation:rel-flow-realized",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/design_views/1/view_id",
+                "value": "runtime"
+              },
+              {
+                "side": "before",
+                "path": "/relations/5/from",
+                "value": "view:runtime/flow:flow-card-open-run"
+              }
+            ],
+            "id": "view:runtime"
+          }
+        },
+        "relation:rel-scenario-realized": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：view:runtime → relation:rel-scenario-realized。",
+          "from": "view:runtime",
+          "edge": {
+            "kind": "id",
+            "source": "view:runtime",
+            "target": "relation:rel-scenario-realized",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/design_views/1/view_id",
+                "value": "runtime"
+              },
+              {
+                "side": "before",
+                "path": "/relations/6/to",
+                "value": "view:runtime/flow:flow-card-open-run"
+              }
+            ],
+            "id": "view:runtime"
+          }
+        },
+        "relation:rel-app-deployed": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：view:development → relation:rel-app-deployed。",
+          "from": "view:development",
+          "edge": {
+            "kind": "id",
+            "source": "view:development",
+            "target": "relation:rel-app-deployed",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/design_views/2/view_id",
+                "value": "development"
+              },
+              {
+                "side": "before",
+                "path": "/relations/7/from",
+                "value": "view:development/node:dev-phone-routes"
+              }
+            ],
+            "id": "view:development"
+          }
+        },
+        "relation:rel-rdb-deployed": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：view:development → relation:rel-rdb-deployed。",
+          "from": "view:development",
+          "edge": {
+            "kind": "id",
+            "source": "view:development",
+            "target": "relation:rel-rdb-deployed",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/design_views/2/view_id",
+                "value": "development"
+              },
+              {
+                "side": "before",
+                "path": "/relations/8/from",
+                "value": "view:development/node:dev-card-rdb-helper"
+              }
+            ],
+            "id": "view:development"
+          }
+        },
+        "app_lens:module_boundaries": {
+          "kind": "retained",
+          "basis": "作者事实相同、前轮唯一独立项已解决、无本轮依赖闭包命中；沿原件保留。"
+        },
+        "app_lens:capability_seams": {
+          "kind": "consumer",
+          "basis": "结构化证据文件边：fact:fact-no-rdb-implementation → app_lens:capability_seams。",
+          "from": "fact:fact-no-rdb-implementation",
+          "edge": {
+            "kind": "source",
+            "source": "fact:fact-no-rdb-implementation",
+            "target": "app_lens:capability_seams",
+            "witness": [
+              {
+                "side": "current",
+                "path": "/discovery/facts/22/provenance/source_ref",
+                "value": "02-Feature/WalletMain/src/main/ets/data/repository/CardRepository.ets"
+              },
+              {
+                "side": "current",
+                "path": "/app_lens/capability_seams/evidence_refs/1",
+                "value": "02-Feature/WalletMain/src/main/ets/data/repository/CardRepository.ets"
+              }
+            ]
+          }
+        },
+        "app_lens:feature_flags": {
+          "kind": "consumer",
+          "basis": "结构化证据文件边：decision:decision-home-refresh-signal → app_lens:feature_flags。",
+          "from": "decision:decision-home-refresh-signal",
+          "edge": {
+            "kind": "source",
+            "source": "decision:decision-home-refresh-signal",
+            "target": "app_lens:feature_flags",
+            "witness": [
+              {
+                "side": "current",
+                "path": "/decisions_and_gaps/decisions/8/provenance/source_ref",
+                "value": "02-Feature/WalletMain/src/main/ets/presentation/pages/HomeTabPage.ets"
+              },
+              {
+                "side": "previous",
+                "path": "/items/17/verification_refs/2",
+                "value": "02-Feature/WalletMain/src/main/ets/presentation/pages/HomeTabPage.ets:32-39"
+              }
+            ]
+          }
+        },
+        "app_lens:data_producers_consumers": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：contract:card-store → app_lens:data_producers_consumers。",
+          "from": "contract:card-store",
+          "edge": {
+            "kind": "id",
+            "source": "contract:card-store",
+            "target": "app_lens:data_producers_consumers",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/contracts/0/contract_id",
+                "value": "card-store"
+              },
+              {
+                "side": "before",
+                "path": "/app_lens/data_producers_consumers/evidence_refs/0",
+                "value": "contract:card-store"
+              }
+            ],
+            "id": "contract:card-store"
+          }
+        },
+        "app_lens:lifecycle_triggers": {
+          "kind": "unresolved",
+          "basis": "真实 i3 独立原件为 blocker，必须重新质询。"
+        },
+        "app_lens:state_owners": {
+          "kind": "direct",
+          "basis": "两侧/app_lens/state_owners的作者事实不同。",
+          "changed": "/app_lens/state_owners"
+        },
+        "app_lens:initialization": {
+          "kind": "direct",
+          "basis": "两侧/app_lens/initialization的作者事实不同。",
+          "changed": "/app_lens/initialization"
+        },
+        "app_lens:publication_subscription": {
+          "kind": "unresolved",
+          "basis": "真实 i3 独立原件为 blocker，必须重新质询。"
+        },
+        "app_lens:ui_refresh": {
+          "kind": "consumer",
+          "basis": "结构化证据文件边：decision:decision-home-refresh-signal → app_lens:ui_refresh。",
+          "from": "decision:decision-home-refresh-signal",
+          "edge": {
+            "kind": "source",
+            "source": "decision:decision-home-refresh-signal",
+            "target": "app_lens:ui_refresh",
+            "witness": [
+              {
+                "side": "current",
+                "path": "/decisions_and_gaps/decisions/8/provenance/source_ref",
+                "value": "02-Feature/WalletMain/src/main/ets/presentation/pages/HomeTabPage.ets"
+              },
+              {
+                "side": "previous",
+                "path": "/items/23/evidence_refs/1",
+                "value": "02-Feature/WalletMain/src/main/ets/presentation/pages/HomeTabPage.ets"
+              }
+            ]
+          }
+        },
+        "app_lens:process_recovery": {
+          "kind": "retained",
+          "basis": "作者事实相同、前轮唯一独立项已解决、无本轮依赖闭包命中；沿原件保留。"
+        },
+        "terminology:current_scope_items": {
+          "kind": "consumer",
+          "basis": "结构化证据文件边：contract:card-store → terminology:current_scope_items。",
+          "from": "contract:card-store",
+          "edge": {
+            "kind": "source",
+            "source": "contract:card-store",
+            "target": "terminology:current_scope_items",
+            "witness": [
+              {
+                "side": "current",
+                "path": "/contracts/0/request_dto/fields/0/provenance/source_ref",
+                "value": "doc/features/原始需求/1-2-银行卡/原始需求.md#需求规格"
+              },
+              {
+                "side": "previous",
+                "path": "/items/25/evidence_refs/4",
+                "value": "doc/features/原始需求/1-2-银行卡/原始需求.md"
+              }
+            ]
+          }
+        }
+      },
+      "authorityProofs": {
+        "fact:fact-no-rdb-implementation": {
+          "kind": "authority",
+          "basis": "两侧/discovery/facts/22的作者事实不同。",
+          "changed": "/discovery/facts/22"
+        },
+        "decision:decision-home-refresh-signal": {
+          "kind": "authority",
+          "basis": "两侧/decisions_and_gaps/decisions/8的作者事实不同。",
+          "changed": "/decisions_and_gaps/decisions/8"
+        },
+        "contract:card-store": {
+          "kind": "authority",
+          "basis": "两侧/contracts/0的作者事实不同。",
+          "changed": "/contracts/0"
+        }
+      }
+    },
+    {
+      "first": 6,
+      "revised": 8,
+      "selected": [
+        "view:logical",
+        "view:runtime",
+        "flow:flow-card-open-run",
+        "view:development",
+        "view:deployment",
+        "view:scenarios",
+        "relation:rel-bank-catalog-realized",
+        "relation:rel-card-catalog-realized",
+        "relation:rel-card-record-realized",
+        "relation:rel-open-session-realized",
+        "relation:rel-home-state-realized",
+        "relation:rel-flow-realized",
+        "relation:rel-scenario-realized",
+        "relation:rel-app-deployed",
+        "relation:rel-rdb-deployed",
+        "app_lens:module_boundaries",
+        "app_lens:capability_seams",
+        "app_lens:feature_flags",
+        "app_lens:data_producers_consumers",
+        "app_lens:lifecycle_triggers",
+        "app_lens:state_owners",
+        "app_lens:initialization",
+        "app_lens:publication_subscription",
+        "app_lens:ui_refresh",
+        "app_lens:process_recovery",
+        "terminology:current_scope_items"
+      ],
+      "reasons": {
+        "view:logical": {
+          "kind": "fallback",
+          "basis": "qa-performance 的显式 landing 无法唯一定位；保留真实源引用仍全量回退，不能用弱来源覆盖落点缺口。"
+        },
+        "view:runtime": {
+          "kind": "fallback",
+          "basis": "qa-performance 的显式 landing 无法唯一定位；保留真实源引用仍全量回退，不能用弱来源覆盖落点缺口。"
+        },
+        "flow:flow-card-open-run": {
+          "kind": "fallback",
+          "basis": "qa-performance 的显式 landing 无法唯一定位；保留真实源引用仍全量回退，不能用弱来源覆盖落点缺口。"
+        },
+        "view:development": {
+          "kind": "fallback",
+          "basis": "qa-performance 的显式 landing 无法唯一定位；保留真实源引用仍全量回退，不能用弱来源覆盖落点缺口。"
+        },
+        "view:deployment": {
+          "kind": "fallback",
+          "basis": "qa-performance 的显式 landing 无法唯一定位；保留真实源引用仍全量回退，不能用弱来源覆盖落点缺口。"
+        },
+        "view:scenarios": {
+          "kind": "fallback",
+          "basis": "qa-performance 的显式 landing 无法唯一定位；保留真实源引用仍全量回退，不能用弱来源覆盖落点缺口。"
+        },
+        "relation:rel-bank-catalog-realized": {
+          "kind": "fallback",
+          "basis": "qa-performance 的显式 landing 无法唯一定位；保留真实源引用仍全量回退，不能用弱来源覆盖落点缺口。"
+        },
+        "relation:rel-card-catalog-realized": {
+          "kind": "fallback",
+          "basis": "qa-performance 的显式 landing 无法唯一定位；保留真实源引用仍全量回退，不能用弱来源覆盖落点缺口。"
+        },
+        "relation:rel-card-record-realized": {
+          "kind": "fallback",
+          "basis": "qa-performance 的显式 landing 无法唯一定位；保留真实源引用仍全量回退，不能用弱来源覆盖落点缺口。"
+        },
+        "relation:rel-open-session-realized": {
+          "kind": "fallback",
+          "basis": "qa-performance 的显式 landing 无法唯一定位；保留真实源引用仍全量回退，不能用弱来源覆盖落点缺口。"
+        },
+        "relation:rel-home-state-realized": {
+          "kind": "fallback",
+          "basis": "qa-performance 的显式 landing 无法唯一定位；保留真实源引用仍全量回退，不能用弱来源覆盖落点缺口。"
+        },
+        "relation:rel-flow-realized": {
+          "kind": "fallback",
+          "basis": "qa-performance 的显式 landing 无法唯一定位；保留真实源引用仍全量回退，不能用弱来源覆盖落点缺口。"
+        },
+        "relation:rel-scenario-realized": {
+          "kind": "fallback",
+          "basis": "qa-performance 的显式 landing 无法唯一定位；保留真实源引用仍全量回退，不能用弱来源覆盖落点缺口。"
+        },
+        "relation:rel-app-deployed": {
+          "kind": "fallback",
+          "basis": "qa-performance 的显式 landing 无法唯一定位；保留真实源引用仍全量回退，不能用弱来源覆盖落点缺口。"
+        },
+        "relation:rel-rdb-deployed": {
+          "kind": "fallback",
+          "basis": "qa-performance 的显式 landing 无法唯一定位；保留真实源引用仍全量回退，不能用弱来源覆盖落点缺口。"
+        },
+        "app_lens:module_boundaries": {
+          "kind": "fallback",
+          "basis": "qa-performance 的显式 landing 无法唯一定位；保留真实源引用仍全量回退，不能用弱来源覆盖落点缺口。"
+        },
+        "app_lens:capability_seams": {
+          "kind": "fallback",
+          "basis": "qa-performance 的显式 landing 无法唯一定位；保留真实源引用仍全量回退，不能用弱来源覆盖落点缺口。"
+        },
+        "app_lens:feature_flags": {
+          "kind": "fallback",
+          "basis": "qa-performance 的显式 landing 无法唯一定位；保留真实源引用仍全量回退，不能用弱来源覆盖落点缺口。"
+        },
+        "app_lens:data_producers_consumers": {
+          "kind": "fallback",
+          "basis": "qa-performance 的显式 landing 无法唯一定位；保留真实源引用仍全量回退，不能用弱来源覆盖落点缺口。"
+        },
+        "app_lens:lifecycle_triggers": {
+          "kind": "fallback",
+          "basis": "qa-performance 的显式 landing 无法唯一定位；保留真实源引用仍全量回退，不能用弱来源覆盖落点缺口。"
+        },
+        "app_lens:state_owners": {
+          "kind": "fallback",
+          "basis": "qa-performance 的显式 landing 无法唯一定位；保留真实源引用仍全量回退，不能用弱来源覆盖落点缺口。"
+        },
+        "app_lens:initialization": {
+          "kind": "fallback",
+          "basis": "qa-performance 的显式 landing 无法唯一定位；保留真实源引用仍全量回退，不能用弱来源覆盖落点缺口。"
+        },
+        "app_lens:publication_subscription": {
+          "kind": "fallback",
+          "basis": "qa-performance 的显式 landing 无法唯一定位；保留真实源引用仍全量回退，不能用弱来源覆盖落点缺口。"
+        },
+        "app_lens:ui_refresh": {
+          "kind": "fallback",
+          "basis": "qa-performance 的显式 landing 无法唯一定位；保留真实源引用仍全量回退，不能用弱来源覆盖落点缺口。"
+        },
+        "app_lens:process_recovery": {
+          "kind": "fallback",
+          "basis": "qa-performance 的显式 landing 无法唯一定位；保留真实源引用仍全量回退，不能用弱来源覆盖落点缺口。"
+        },
+        "terminology:current_scope_items": {
+          "kind": "fallback",
+          "basis": "qa-performance 的显式 landing 无法唯一定位；保留真实源引用仍全量回退，不能用弱来源覆盖落点缺口。"
+        }
+      },
+      "authorityProofs": {},
+      "fullFallback": {
+        "kind": "unresolved_explicit_landing",
+        "authority": "/quality_attributes/3",
+        "authorityId": "qa-performance",
+        "idField": "qa_id",
+        "field": "/quality_attributes/3/landing",
+        "beforeValue": "单次本地事务写入；卡片库懒初始化；首页只取行数。",
+        "value": "单次本地事务写入、无网络等待；卡片库首用即建（首次启动首页读库即建表），首页只取行数不取明细。 启动耗时与首帧影响尚未实测，本设计不宣称已优化；若实测有可感知影响，再由后续需求评估延迟判定或结果缓存， 且不得引入第二份卡片真源。",
+        "locatedCounterexample": "view:runtime",
+        "sourceWitnesses": [
+          {
+            "side": "before",
+            "path": "/quality_attributes/3/source_ref",
+            "value": "contract:card-store"
+          },
+          {
+            "side": "current",
+            "path": "/quality_attributes/3/source_ref",
+            "value": "design_views/1/runtime_data_flows/0/initial_load"
+          }
+        ],
+        "basis": "变动 qa-performance 的前后显式 landing 均是自然语言、不能唯一定位消费者。source_ref 即使能指向 contract:card-store 或 initial_load，也不能替代未定位的 landing；因此保守重审全部范围。"
+      }
+    },
+    {
+      "first": 13,
+      "revised": 15,
+      "selected": [
+        "view:logical",
+        "view:runtime",
+        "flow:flow-card-open-run",
+        "view:development",
+        "view:deployment",
+        "view:scenarios",
+        "relation:rel-bank-catalog-realized",
+        "relation:rel-card-catalog-realized",
+        "relation:rel-card-record-realized",
+        "relation:rel-open-session-realized",
+        "relation:rel-home-state-realized",
+        "relation:rel-flow-realized",
+        "relation:rel-scenario-realized",
+        "relation:rel-app-deployed",
+        "relation:rel-rdb-deployed",
+        "app_lens:feature_flags",
+        "app_lens:data_producers_consumers",
+        "app_lens:lifecycle_triggers",
+        "app_lens:initialization",
+        "app_lens:publication_subscription",
+        "app_lens:ui_refresh",
+        "terminology:current_scope_items"
+      ],
+      "reasons": {
+        "view:logical": {
+          "kind": "unresolved",
+          "basis": "真实 i13 独立原件为 blocker，必须重新质询。"
+        },
+        "view:runtime": {
+          "kind": "unresolved",
+          "basis": "真实 i13 独立原件为 blocker，必须重新质询。"
+        },
+        "flow:flow-card-open-run": {
+          "kind": "unresolved",
+          "basis": "真实 i13 独立原件为 blocker，必须重新质询。"
+        },
+        "view:development": {
+          "kind": "unresolved",
+          "basis": "真实 i13 独立原件为 open_decision，必须重新质询。"
+        },
+        "view:deployment": {
+          "kind": "summary",
+          "basis": "公共评审摘要 must_review 实质变更，保守交回视图。",
+          "changed": "/review_summary/must_review"
+        },
+        "view:scenarios": {
+          "kind": "unresolved",
+          "basis": "真实 i13 独立原件为 open_decision，必须重新质询。"
+        },
+        "relation:rel-bank-catalog-realized": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：view:logical → relation:rel-bank-catalog-realized。",
+          "from": "view:logical",
+          "edge": {
+            "kind": "id",
+            "source": "view:logical",
+            "target": "relation:rel-bank-catalog-realized",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/design_views/0/view_id",
+                "value": "logical"
+              },
+              {
+                "side": "before",
+                "path": "/relations/0/from",
+                "value": "view:logical/node:logical-bank-catalog"
+              }
+            ],
+            "id": "view:logical"
+          }
+        },
+        "relation:rel-card-catalog-realized": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：view:logical → relation:rel-card-catalog-realized。",
+          "from": "view:logical",
+          "edge": {
+            "kind": "id",
+            "source": "view:logical",
+            "target": "relation:rel-card-catalog-realized",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/design_views/0/view_id",
+                "value": "logical"
+              },
+              {
+                "side": "before",
+                "path": "/relations/1/from",
+                "value": "view:logical/node:logical-card-catalog"
+              }
+            ],
+            "id": "view:logical"
+          }
+        },
+        "relation:rel-card-record-realized": {
+          "kind": "unresolved",
+          "basis": "真实 i13 独立原件为 open_decision，必须重新质询。"
+        },
+        "relation:rel-open-session-realized": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：view:logical → relation:rel-open-session-realized。",
+          "from": "view:logical",
+          "edge": {
+            "kind": "id",
+            "source": "view:logical",
+            "target": "relation:rel-open-session-realized",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/design_views/0/view_id",
+                "value": "logical"
+              },
+              {
+                "side": "before",
+                "path": "/relations/3/from",
+                "value": "view:logical/node:logical-open-session"
+              }
+            ],
+            "id": "view:logical"
+          }
+        },
+        "relation:rel-home-state-realized": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：view:logical → relation:rel-home-state-realized。",
+          "from": "view:logical",
+          "edge": {
+            "kind": "id",
+            "source": "view:logical",
+            "target": "relation:rel-home-state-realized",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/design_views/0/view_id",
+                "value": "logical"
+              },
+              {
+                "side": "before",
+                "path": "/relations/4/from",
+                "value": "view:logical/node:logical-home-card-state"
+              }
+            ],
+            "id": "view:logical"
+          }
+        },
+        "relation:rel-flow-realized": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：view:runtime → relation:rel-flow-realized。",
+          "from": "view:runtime",
+          "edge": {
+            "kind": "id",
+            "source": "view:runtime",
+            "target": "relation:rel-flow-realized",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/design_views/1/view_id",
+                "value": "runtime"
+              },
+              {
+                "side": "before",
+                "path": "/relations/5/from",
+                "value": "view:runtime/flow:flow-card-open-run"
+              }
+            ],
+            "id": "view:runtime"
+          }
+        },
+        "relation:rel-scenario-realized": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：view:runtime → relation:rel-scenario-realized。",
+          "from": "view:runtime",
+          "edge": {
+            "kind": "id",
+            "source": "view:runtime",
+            "target": "relation:rel-scenario-realized",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/design_views/1/view_id",
+                "value": "runtime"
+              },
+              {
+                "side": "before",
+                "path": "/relations/6/to",
+                "value": "view:runtime/flow:flow-card-open-run"
+              }
+            ],
+            "id": "view:runtime"
+          }
+        },
+        "relation:rel-app-deployed": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：view:development → relation:rel-app-deployed。",
+          "from": "view:development",
+          "edge": {
+            "kind": "id",
+            "source": "view:development",
+            "target": "relation:rel-app-deployed",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/design_views/2/view_id",
+                "value": "development"
+              },
+              {
+                "side": "before",
+                "path": "/relations/7/from",
+                "value": "view:development/node:dev-phone-routes"
+              }
+            ],
+            "id": "view:development"
+          }
+        },
+        "relation:rel-rdb-deployed": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：view:development → relation:rel-rdb-deployed。",
+          "from": "view:development",
+          "edge": {
+            "kind": "id",
+            "source": "view:development",
+            "target": "relation:rel-rdb-deployed",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/design_views/2/view_id",
+                "value": "development"
+              },
+              {
+                "side": "before",
+                "path": "/relations/8/from",
+                "value": "view:development/node:dev-card-rdb-helper"
+              }
+            ],
+            "id": "view:development"
+          }
+        },
+        "app_lens:module_boundaries": {
+          "kind": "retained",
+          "basis": "作者事实相同、前轮唯一独立项已解决、无本轮依赖闭包命中；沿原件保留。"
+        },
+        "app_lens:capability_seams": {
+          "kind": "retained",
+          "basis": "作者事实相同、前轮唯一独立项已解决、无本轮依赖闭包命中；沿原件保留。"
+        },
+        "app_lens:feature_flags": {
+          "kind": "consumer",
+          "basis": "结构化证据文件边：decision:decision-home-refresh-signal → app_lens:feature_flags。",
+          "from": "decision:decision-home-refresh-signal",
+          "edge": {
+            "kind": "source",
+            "source": "decision:decision-home-refresh-signal",
+            "target": "app_lens:feature_flags",
+            "witness": [
+              {
+                "side": "current",
+                "path": "/decisions_and_gaps/decisions/10/provenance/source_ref",
+                "value": "02-Feature/WalletMain/src/main/ets/presentation/pages/HomeTabPage.ets"
+              },
+              {
+                "side": "previous",
+                "path": "/items/17/evidence_refs/3",
+                "value": "02-Feature/WalletMain/src/main/ets/presentation/pages/HomeTabPage.ets"
+              }
+            ]
+          }
+        },
+        "app_lens:data_producers_consumers": {
+          "kind": "unresolved",
+          "basis": "真实 i13 独立原件为 open_decision，必须重新质询。"
+        },
+        "app_lens:lifecycle_triggers": {
+          "kind": "consumer",
+          "basis": "结构化证据文件边：decision:decision-home-refresh-signal → app_lens:lifecycle_triggers。",
+          "from": "decision:decision-home-refresh-signal",
+          "edge": {
+            "kind": "source",
+            "source": "decision:decision-home-refresh-signal",
+            "target": "app_lens:lifecycle_triggers",
+            "witness": [
+              {
+                "side": "current",
+                "path": "/decisions_and_gaps/decisions/10/provenance/source_ref",
+                "value": "02-Feature/WalletMain/src/main/ets/presentation/pages/HomeTabPage.ets"
+              },
+              {
+                "side": "previous",
+                "path": "/items/19/evidence_refs/2",
+                "value": "02-Feature/WalletMain/src/main/ets/presentation/pages/HomeTabPage.ets"
+              }
+            ]
+          }
+        },
+        "app_lens:state_owners": {
+          "kind": "retained",
+          "basis": "作者事实相同、前轮唯一独立项已解决、无本轮依赖闭包命中；沿原件保留。"
+        },
+        "app_lens:initialization": {
+          "kind": "unresolved",
+          "basis": "真实 i13 独立原件为 open_decision，必须重新质询。"
+        },
+        "app_lens:publication_subscription": {
+          "kind": "unresolved",
+          "basis": "真实 i13 独立原件为 open_decision，必须重新质询。"
+        },
+        "app_lens:ui_refresh": {
+          "kind": "consumer",
+          "basis": "结构化证据文件边：decision:decision-home-refresh-signal → app_lens:ui_refresh。",
+          "from": "decision:decision-home-refresh-signal",
+          "edge": {
+            "kind": "source",
+            "source": "decision:decision-home-refresh-signal",
+            "target": "app_lens:ui_refresh",
+            "witness": [
+              {
+                "side": "current",
+                "path": "/decisions_and_gaps/decisions/10/provenance/source_ref",
+                "value": "02-Feature/WalletMain/src/main/ets/presentation/pages/HomeTabPage.ets"
+              },
+              {
+                "side": "previous",
+                "path": "/items/23/evidence_refs/1",
+                "value": "02-Feature/WalletMain/src/main/ets/presentation/pages/HomeTabPage.ets"
+              }
+            ]
+          }
+        },
+        "app_lens:process_recovery": {
+          "kind": "retained",
+          "basis": "作者事实相同、前轮唯一独立项已解决、无本轮依赖闭包命中；沿原件保留。"
+        },
+        "terminology:current_scope_items": {
+          "kind": "consumer",
+          "basis": "结构化证据文件边：contract:card-store → terminology:current_scope_items。",
+          "from": "contract:card-store",
+          "edge": {
+            "kind": "source",
+            "source": "contract:card-store",
+            "target": "terminology:current_scope_items",
+            "witness": [
+              {
+                "side": "current",
+                "path": "/contracts/0/request_dto/fields/0/provenance/source_ref",
+                "value": "doc/features/原始需求/1-2-银行卡/原始需求.md#需求规格"
+              },
+              {
+                "side": "previous",
+                "path": "/items/25/evidence_refs/3",
+                "value": "doc/features/原始需求/1-2-银行卡/原始需求.md"
+              }
+            ]
+          }
+        }
+      },
+      "authorityProofs": {
+        "decision:decision-home-refresh-signal": {
+          "kind": "authority",
+          "basis": "两侧/decisions_and_gaps/decisions/10的作者事实不同。",
+          "changed": "/decisions_and_gaps/decisions/10"
+        },
+        "contract:card-store": {
+          "kind": "authority",
+          "basis": "两侧/contracts/0的作者事实不同。",
+          "changed": "/contracts/0"
+        }
+      }
+    },
+    {
+      "first": 15,
+      "revised": 17,
+      "selected": [
+        "view:logical",
+        "view:runtime",
+        "flow:flow-card-open-run",
+        "view:development",
+        "view:deployment",
+        "view:scenarios",
+        "relation:rel-bank-catalog-realized",
+        "relation:rel-card-catalog-realized",
+        "relation:rel-card-record-realized",
+        "relation:rel-open-session-realized",
+        "relation:rel-home-state-realized",
+        "relation:rel-flow-realized",
+        "relation:rel-scenario-realized",
+        "relation:rel-app-deployed",
+        "relation:rel-rdb-deployed",
+        "app_lens:data_producers_consumers",
+        "app_lens:initialization",
+        "terminology:current_scope_items"
+      ],
+      "reasons": {
+        "view:logical": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：contract:card-store → view:logical。",
+          "from": "contract:card-store",
+          "edge": {
+            "kind": "id",
+            "source": "contract:card-store",
+            "target": "view:logical",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/contracts/0/contract_id",
+                "value": "card-store"
+              },
+              {
+                "side": "before",
+                "path": "/design_views/0/nodes/2/verification_refs/1",
+                "value": "contract:card-store"
+              }
+            ],
+            "id": "contract:card-store"
+          }
+        },
+        "view:runtime": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：view:development → view:runtime。",
+          "from": "view:development",
+          "edge": {
+            "kind": "id",
+            "source": "view:development",
+            "target": "view:runtime",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/design_views/2/view_id",
+                "value": "development"
+              },
+              {
+                "side": "before",
+                "path": "/design_views/1/nodes/0/design_basis_refs/1",
+                "value": "view:development/node:dev-card-open-session"
+              }
+            ],
+            "id": "view:development"
+          }
+        },
+        "flow:flow-card-open-run": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：view:development → flow:flow-card-open-run。",
+          "from": "view:development",
+          "edge": {
+            "kind": "id",
+            "source": "view:development",
+            "target": "flow:flow-card-open-run",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/design_views/2/view_id",
+                "value": "development"
+              },
+              {
+                "side": "before",
+                "path": "/design_views/1/runtime_data_flows/0/source_of_truth/authority",
+                "value": "view:development/node:dev-card-record-repo"
+              }
+            ],
+            "id": "view:development"
+          }
+        },
+        "view:development": {
+          "kind": "unresolved",
+          "basis": "真实 i15 独立原件为 blocker，必须重新质询。"
+        },
+        "view:deployment": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：decision:decision-rdb-security → view:deployment。",
+          "from": "decision:decision-rdb-security",
+          "edge": {
+            "kind": "id",
+            "source": "decision:decision-rdb-security",
+            "target": "view:deployment",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/decisions_and_gaps/decisions/6/decision_id",
+                "value": "decision-rdb-security"
+              },
+              {
+                "side": "before",
+                "path": "/design_views/3/decisions_and_gaps/0",
+                "value": "decision:decision-rdb-security"
+              }
+            ],
+            "id": "decision:decision-rdb-security"
+          }
+        },
+        "view:scenarios": {
+          "kind": "unresolved",
+          "basis": "真实 i15 独立原件为 open_decision，必须重新质询。"
+        },
+        "relation:rel-bank-catalog-realized": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：view:development → relation:rel-bank-catalog-realized。",
+          "from": "view:development",
+          "edge": {
+            "kind": "id",
+            "source": "view:development",
+            "target": "relation:rel-bank-catalog-realized",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/design_views/2/view_id",
+                "value": "development"
+              },
+              {
+                "side": "before",
+                "path": "/relations/0/to",
+                "value": "view:development/node:dev-bank-info-model"
+              }
+            ],
+            "id": "view:development"
+          }
+        },
+        "relation:rel-card-catalog-realized": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：view:development → relation:rel-card-catalog-realized。",
+          "from": "view:development",
+          "edge": {
+            "kind": "id",
+            "source": "view:development",
+            "target": "relation:rel-card-catalog-realized",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/design_views/2/view_id",
+                "value": "development"
+              },
+              {
+                "side": "before",
+                "path": "/relations/1/to",
+                "value": "view:development/node:dev-bank-card-catalog"
+              }
+            ],
+            "id": "view:development"
+          }
+        },
+        "relation:rel-card-record-realized": {
+          "kind": "unresolved",
+          "basis": "真实 i15 独立原件为 blocker，必须重新质询。"
+        },
+        "relation:rel-open-session-realized": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：view:development → relation:rel-open-session-realized。",
+          "from": "view:development",
+          "edge": {
+            "kind": "id",
+            "source": "view:development",
+            "target": "relation:rel-open-session-realized",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/design_views/2/view_id",
+                "value": "development"
+              },
+              {
+                "side": "before",
+                "path": "/relations/3/to",
+                "value": "view:development/node:dev-card-open-session"
+              }
+            ],
+            "id": "view:development"
+          }
+        },
+        "relation:rel-home-state-realized": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：view:development → relation:rel-home-state-realized。",
+          "from": "view:development",
+          "edge": {
+            "kind": "id",
+            "source": "view:development",
+            "target": "relation:rel-home-state-realized",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/design_views/2/view_id",
+                "value": "development"
+              },
+              {
+                "side": "before",
+                "path": "/relations/4/to",
+                "value": "view:development/node:dev-home-repository"
+              }
+            ],
+            "id": "view:development"
+          }
+        },
+        "relation:rel-flow-realized": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：view:development → relation:rel-flow-realized。",
+          "from": "view:development",
+          "edge": {
+            "kind": "id",
+            "source": "view:development",
+            "target": "relation:rel-flow-realized",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/design_views/2/view_id",
+                "value": "development"
+              },
+              {
+                "side": "before",
+                "path": "/relations/5/to",
+                "value": "view:development/node:dev-card-record-repo"
+              }
+            ],
+            "id": "view:development"
+          }
+        },
+        "relation:rel-scenario-realized": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：view:scenarios → relation:rel-scenario-realized。",
+          "from": "view:scenarios",
+          "edge": {
+            "kind": "id",
+            "source": "view:scenarios",
+            "target": "relation:rel-scenario-realized",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/design_views/4/view_id",
+                "value": "scenarios"
+              },
+              {
+                "side": "before",
+                "path": "/relations/6/from",
+                "value": "view:scenarios/node:sc-open-card-success"
+              }
+            ],
+            "id": "view:scenarios"
+          }
+        },
+        "relation:rel-app-deployed": {
+          "kind": "unresolved",
+          "basis": "真实 i15 独立原件为 open_decision，必须重新质询。"
+        },
+        "relation:rel-rdb-deployed": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：view:development → relation:rel-rdb-deployed。",
+          "from": "view:development",
+          "edge": {
+            "kind": "id",
+            "source": "view:development",
+            "target": "relation:rel-rdb-deployed",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/design_views/2/view_id",
+                "value": "development"
+              },
+              {
+                "side": "before",
+                "path": "/relations/8/from",
+                "value": "view:development/node:dev-card-rdb-helper"
+              }
+            ],
+            "id": "view:development"
+          }
+        },
+        "app_lens:module_boundaries": {
+          "kind": "retained",
+          "basis": "作者事实相同、前轮唯一独立项已解决、无本轮依赖闭包命中；沿原件保留。"
+        },
+        "app_lens:capability_seams": {
+          "kind": "retained",
+          "basis": "作者事实相同、前轮唯一独立项已解决、无本轮依赖闭包命中；沿原件保留。"
+        },
+        "app_lens:feature_flags": {
+          "kind": "retained",
+          "basis": "作者事实相同、前轮唯一独立项已解决、无本轮依赖闭包命中；沿原件保留。"
+        },
+        "app_lens:data_producers_consumers": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：contract:card-store → app_lens:data_producers_consumers。",
+          "from": "contract:card-store",
+          "edge": {
+            "kind": "id",
+            "source": "contract:card-store",
+            "target": "app_lens:data_producers_consumers",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/contracts/0/contract_id",
+                "value": "card-store"
+              },
+              {
+                "side": "before",
+                "path": "/app_lens/data_producers_consumers/evidence_refs/0",
+                "value": "contract:card-store"
+              }
+            ],
+            "id": "contract:card-store"
+          }
+        },
+        "app_lens:lifecycle_triggers": {
+          "kind": "retained",
+          "basis": "作者事实相同、前轮唯一独立项已解决、无本轮依赖闭包命中；沿原件保留。"
+        },
+        "app_lens:state_owners": {
+          "kind": "retained",
+          "basis": "作者事实相同、前轮唯一独立项已解决、无本轮依赖闭包命中；沿原件保留。"
+        },
+        "app_lens:initialization": {
+          "kind": "unresolved",
+          "basis": "真实 i15 独立原件为 open_decision，必须重新质询。"
+        },
+        "app_lens:publication_subscription": {
+          "kind": "retained",
+          "basis": "作者事实相同、前轮唯一独立项已解决、无本轮依赖闭包命中；沿原件保留。"
+        },
+        "app_lens:ui_refresh": {
+          "kind": "retained",
+          "basis": "作者事实相同、前轮唯一独立项已解决、无本轮依赖闭包命中；沿原件保留。"
+        },
+        "app_lens:process_recovery": {
+          "kind": "retained",
+          "basis": "作者事实相同、前轮唯一独立项已解决、无本轮依赖闭包命中；沿原件保留。"
+        },
+        "terminology:current_scope_items": {
+          "kind": "consumer",
+          "basis": "结构化证据文件边：contract:card-store → terminology:current_scope_items。",
+          "from": "contract:card-store",
+          "edge": {
+            "kind": "source",
+            "source": "contract:card-store",
+            "target": "terminology:current_scope_items",
+            "witness": [
+              {
+                "side": "current",
+                "path": "/contracts/0/request_dto/fields/0/provenance/source_ref",
+                "value": "doc/features/原始需求/1-2-银行卡/原始需求.md#需求规格"
+              },
+              {
+                "side": "previous",
+                "path": "/items/25/evidence_refs/3",
+                "value": "doc/features/原始需求/1-2-银行卡/原始需求.md"
+              }
+            ]
+          }
+        }
+      },
+      "authorityProofs": {
+        "contract:card-store": {
+          "kind": "authority",
+          "basis": "两侧/contracts/0的作者事实不同。",
+          "changed": "/contracts/0"
+        },
+        "decision:decision-rdb-security": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：contract:card-store → decision:decision-rdb-security。",
+          "from": "contract:card-store",
+          "edge": {
+            "kind": "id",
+            "source": "contract:card-store",
+            "target": "decision:decision-rdb-security",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/contracts/0/contract_id",
+                "value": "card-store"
+              },
+              {
+                "side": "before",
+                "path": "/decisions_and_gaps/decisions/6/verification_refs/1",
+                "value": "contract:card-store"
+              }
+            ],
+            "id": "contract:card-store"
+          }
+        }
+      }
+    },
+    {
+      "first": 8,
+      "revised": 10,
+      "selected": [
+        "view:logical",
+        "view:runtime",
+        "flow:flow-card-open-run",
+        "view:development",
+        "view:deployment",
+        "view:scenarios",
+        "relation:rel-bank-catalog-realized",
+        "relation:rel-card-catalog-realized",
+        "relation:rel-card-record-realized",
+        "relation:rel-open-session-realized",
+        "relation:rel-home-state-realized",
+        "relation:rel-flow-realized",
+        "relation:rel-scenario-realized",
+        "relation:rel-app-deployed",
+        "relation:rel-rdb-deployed"
+      ],
+      "reasons": {
+        "view:logical": {
+          "kind": "guide",
+          "basis": "变动读者节 14 未唯一定位；现有规则保守保留视图复核。",
+          "changed": "/review_summary/reader_guide/sections/14"
+        },
+        "view:runtime": {
+          "kind": "direct",
+          "basis": "两侧/design_views/1的作者事实不同。",
+          "changed": "/design_views/1"
+        },
+        "flow:flow-card-open-run": {
+          "kind": "unresolved",
+          "basis": "真实 i8 独立原件为 blocker，必须重新质询。"
+        },
+        "view:development": {
+          "kind": "unresolved",
+          "basis": "真实 i8 独立原件为 blocker，必须重新质询。"
+        },
+        "view:deployment": {
+          "kind": "unresolved",
+          "basis": "真实 i8 独立原件为 blocker，必须重新质询。"
+        },
+        "view:scenarios": {
+          "kind": "guide",
+          "basis": "变动读者节 14 未唯一定位；现有规则保守保留视图复核。",
+          "changed": "/review_summary/reader_guide/sections/14"
+        },
+        "relation:rel-bank-catalog-realized": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：view:logical → relation:rel-bank-catalog-realized。",
+          "from": "view:logical",
+          "edge": {
+            "kind": "id",
+            "source": "view:logical",
+            "target": "relation:rel-bank-catalog-realized",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/design_views/0/view_id",
+                "value": "logical"
+              },
+              {
+                "side": "before",
+                "path": "/relations/0/from",
+                "value": "view:logical/node:logical-bank-catalog"
+              }
+            ],
+            "id": "view:logical"
+          }
+        },
+        "relation:rel-card-catalog-realized": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：view:logical → relation:rel-card-catalog-realized。",
+          "from": "view:logical",
+          "edge": {
+            "kind": "id",
+            "source": "view:logical",
+            "target": "relation:rel-card-catalog-realized",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/design_views/0/view_id",
+                "value": "logical"
+              },
+              {
+                "side": "before",
+                "path": "/relations/1/from",
+                "value": "view:logical/node:logical-card-catalog"
+              }
+            ],
+            "id": "view:logical"
+          }
+        },
+        "relation:rel-card-record-realized": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：view:logical → relation:rel-card-record-realized。",
+          "from": "view:logical",
+          "edge": {
+            "kind": "id",
+            "source": "view:logical",
+            "target": "relation:rel-card-record-realized",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/design_views/0/view_id",
+                "value": "logical"
+              },
+              {
+                "side": "before",
+                "path": "/relations/2/from",
+                "value": "view:logical/node:logical-card-record"
+              }
+            ],
+            "id": "view:logical"
+          }
+        },
+        "relation:rel-open-session-realized": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：view:logical → relation:rel-open-session-realized。",
+          "from": "view:logical",
+          "edge": {
+            "kind": "id",
+            "source": "view:logical",
+            "target": "relation:rel-open-session-realized",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/design_views/0/view_id",
+                "value": "logical"
+              },
+              {
+                "side": "before",
+                "path": "/relations/3/from",
+                "value": "view:logical/node:logical-open-session"
+              }
+            ],
+            "id": "view:logical"
+          }
+        },
+        "relation:rel-home-state-realized": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：view:logical → relation:rel-home-state-realized。",
+          "from": "view:logical",
+          "edge": {
+            "kind": "id",
+            "source": "view:logical",
+            "target": "relation:rel-home-state-realized",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/design_views/0/view_id",
+                "value": "logical"
+              },
+              {
+                "side": "before",
+                "path": "/relations/4/from",
+                "value": "view:logical/node:logical-home-card-state"
+              }
+            ],
+            "id": "view:logical"
+          }
+        },
+        "relation:rel-flow-realized": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：view:runtime → relation:rel-flow-realized。",
+          "from": "view:runtime",
+          "edge": {
+            "kind": "id",
+            "source": "view:runtime",
+            "target": "relation:rel-flow-realized",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/design_views/1/view_id",
+                "value": "runtime"
+              },
+              {
+                "side": "before",
+                "path": "/relations/5/from",
+                "value": "view:runtime/flow:flow-card-open-run"
+              }
+            ],
+            "id": "view:runtime"
+          }
+        },
+        "relation:rel-scenario-realized": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：view:runtime → relation:rel-scenario-realized。",
+          "from": "view:runtime",
+          "edge": {
+            "kind": "id",
+            "source": "view:runtime",
+            "target": "relation:rel-scenario-realized",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/design_views/1/view_id",
+                "value": "runtime"
+              },
+              {
+                "side": "before",
+                "path": "/relations/6/to",
+                "value": "view:runtime/flow:flow-card-open-run"
+              }
+            ],
+            "id": "view:runtime"
+          }
+        },
+        "relation:rel-app-deployed": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：view:development → relation:rel-app-deployed。",
+          "from": "view:development",
+          "edge": {
+            "kind": "id",
+            "source": "view:development",
+            "target": "relation:rel-app-deployed",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/design_views/2/view_id",
+                "value": "development"
+              },
+              {
+                "side": "before",
+                "path": "/relations/7/from",
+                "value": "view:development/node:dev-phone-routes"
+              }
+            ],
+            "id": "view:development"
+          }
+        },
+        "relation:rel-rdb-deployed": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：view:development → relation:rel-rdb-deployed。",
+          "from": "view:development",
+          "edge": {
+            "kind": "id",
+            "source": "view:development",
+            "target": "relation:rel-rdb-deployed",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/design_views/2/view_id",
+                "value": "development"
+              },
+              {
+                "side": "before",
+                "path": "/relations/8/from",
+                "value": "view:development/node:dev-card-rdb-helper"
+              }
+            ],
+            "id": "view:development"
+          }
+        },
+        "app_lens:module_boundaries": {
+          "kind": "retained",
+          "basis": "作者事实相同、前轮唯一独立项已解决、无本轮依赖闭包命中；沿原件保留。"
+        },
+        "app_lens:capability_seams": {
+          "kind": "retained",
+          "basis": "作者事实相同、前轮唯一独立项已解决、无本轮依赖闭包命中；沿原件保留。"
+        },
+        "app_lens:feature_flags": {
+          "kind": "retained",
+          "basis": "作者事实相同、前轮唯一独立项已解决、无本轮依赖闭包命中；沿原件保留。"
+        },
+        "app_lens:data_producers_consumers": {
+          "kind": "retained",
+          "basis": "作者事实相同、前轮唯一独立项已解决、无本轮依赖闭包命中；沿原件保留。"
+        },
+        "app_lens:lifecycle_triggers": {
+          "kind": "retained",
+          "basis": "作者事实相同、前轮唯一独立项已解决、无本轮依赖闭包命中；沿原件保留。"
+        },
+        "app_lens:state_owners": {
+          "kind": "retained",
+          "basis": "作者事实相同、前轮唯一独立项已解决、无本轮依赖闭包命中；沿原件保留。"
+        },
+        "app_lens:initialization": {
+          "kind": "retained",
+          "basis": "作者事实相同、前轮唯一独立项已解决、无本轮依赖闭包命中；沿原件保留。"
+        },
+        "app_lens:publication_subscription": {
+          "kind": "retained",
+          "basis": "作者事实相同、前轮唯一独立项已解决、无本轮依赖闭包命中；沿原件保留。"
+        },
+        "app_lens:ui_refresh": {
+          "kind": "retained",
+          "basis": "作者事实相同、前轮唯一独立项已解决、无本轮依赖闭包命中；沿原件保留。"
+        },
+        "app_lens:process_recovery": {
+          "kind": "retained",
+          "basis": "作者事实相同、前轮唯一独立项已解决、无本轮依赖闭包命中；沿原件保留。"
+        },
+        "terminology:current_scope_items": {
+          "kind": "retained",
+          "basis": "作者事实相同、前轮唯一独立项已解决、无本轮依赖闭包命中；沿原件保留。"
+        }
+      },
+      "authorityProofs": {}
+    },
+    {
+      "first": 10,
+      "revised": 13,
+      "selected": [
+        "view:runtime",
+        "flow:flow-card-open-run",
+        "view:development",
+        "view:scenarios",
+        "relation:rel-bank-catalog-realized",
+        "relation:rel-card-catalog-realized",
+        "relation:rel-card-record-realized",
+        "relation:rel-open-session-realized",
+        "relation:rel-home-state-realized",
+        "relation:rel-flow-realized",
+        "relation:rel-scenario-realized",
+        "relation:rel-app-deployed",
+        "relation:rel-rdb-deployed"
+      ],
+      "reasons": {
+        "view:runtime": {
+          "kind": "direct",
+          "basis": "两侧/design_views/1的作者事实不同。",
+          "changed": "/design_views/1"
+        },
+        "flow:flow-card-open-run": {
+          "kind": "direct",
+          "basis": "两侧/design_views/1/runtime_data_flows/0的作者事实不同。",
+          "changed": "/design_views/1/runtime_data_flows/0"
+        },
+        "view:development": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：view:scenarios → view:development。",
+          "from": "view:scenarios",
+          "edge": {
+            "kind": "id",
+            "source": "view:scenarios",
+            "target": "view:development",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/design_views/4/view_id",
+                "value": "scenarios"
+              },
+              {
+                "side": "before",
+                "path": "/design_views/2/nodes/11/design_basis_refs/1",
+                "value": "view:scenarios/node:sc-open-card-success"
+              }
+            ],
+            "id": "view:scenarios"
+          }
+        },
+        "view:scenarios": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：view:runtime → view:scenarios。",
+          "from": "view:runtime",
+          "edge": {
+            "kind": "id",
+            "source": "view:runtime",
+            "target": "view:scenarios",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/design_views/1/view_id",
+                "value": "runtime"
+              },
+              {
+                "side": "before",
+                "path": "/design_views/4/nodes/0/runtime_refs/0",
+                "value": "view:runtime/flow:flow-card-open-run"
+              }
+            ],
+            "id": "view:runtime"
+          }
+        },
+        "relation:rel-bank-catalog-realized": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：view:development → relation:rel-bank-catalog-realized。",
+          "from": "view:development",
+          "edge": {
+            "kind": "id",
+            "source": "view:development",
+            "target": "relation:rel-bank-catalog-realized",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/design_views/2/view_id",
+                "value": "development"
+              },
+              {
+                "side": "before",
+                "path": "/relations/0/to",
+                "value": "view:development/node:dev-bank-info-model"
+              }
+            ],
+            "id": "view:development"
+          }
+        },
+        "relation:rel-card-catalog-realized": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：view:development → relation:rel-card-catalog-realized。",
+          "from": "view:development",
+          "edge": {
+            "kind": "id",
+            "source": "view:development",
+            "target": "relation:rel-card-catalog-realized",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/design_views/2/view_id",
+                "value": "development"
+              },
+              {
+                "side": "before",
+                "path": "/relations/1/to",
+                "value": "view:development/node:dev-bank-card-catalog"
+              }
+            ],
+            "id": "view:development"
+          }
+        },
+        "relation:rel-card-record-realized": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：view:development → relation:rel-card-record-realized。",
+          "from": "view:development",
+          "edge": {
+            "kind": "id",
+            "source": "view:development",
+            "target": "relation:rel-card-record-realized",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/design_views/2/view_id",
+                "value": "development"
+              },
+              {
+                "side": "before",
+                "path": "/relations/2/to",
+                "value": "view:development/node:dev-card-record-repo"
+              }
+            ],
+            "id": "view:development"
+          }
+        },
+        "relation:rel-open-session-realized": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：view:development → relation:rel-open-session-realized。",
+          "from": "view:development",
+          "edge": {
+            "kind": "id",
+            "source": "view:development",
+            "target": "relation:rel-open-session-realized",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/design_views/2/view_id",
+                "value": "development"
+              },
+              {
+                "side": "before",
+                "path": "/relations/3/to",
+                "value": "view:development/node:dev-card-open-session"
+              }
+            ],
+            "id": "view:development"
+          }
+        },
+        "relation:rel-home-state-realized": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：view:development → relation:rel-home-state-realized。",
+          "from": "view:development",
+          "edge": {
+            "kind": "id",
+            "source": "view:development",
+            "target": "relation:rel-home-state-realized",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/design_views/2/view_id",
+                "value": "development"
+              },
+              {
+                "side": "before",
+                "path": "/relations/4/to",
+                "value": "view:development/node:dev-home-repository"
+              }
+            ],
+            "id": "view:development"
+          }
+        },
+        "relation:rel-flow-realized": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：view:runtime → relation:rel-flow-realized。",
+          "from": "view:runtime",
+          "edge": {
+            "kind": "id",
+            "source": "view:runtime",
+            "target": "relation:rel-flow-realized",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/design_views/1/view_id",
+                "value": "runtime"
+              },
+              {
+                "side": "before",
+                "path": "/relations/5/from",
+                "value": "view:runtime/flow:flow-card-open-run"
+              }
+            ],
+            "id": "view:runtime"
+          }
+        },
+        "relation:rel-scenario-realized": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：view:runtime → relation:rel-scenario-realized。",
+          "from": "view:runtime",
+          "edge": {
+            "kind": "id",
+            "source": "view:runtime",
+            "target": "relation:rel-scenario-realized",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/design_views/1/view_id",
+                "value": "runtime"
+              },
+              {
+                "side": "before",
+                "path": "/relations/6/to",
+                "value": "view:runtime/flow:flow-card-open-run"
+              }
+            ],
+            "id": "view:runtime"
+          }
+        },
+        "relation:rel-app-deployed": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：view:development → relation:rel-app-deployed。",
+          "from": "view:development",
+          "edge": {
+            "kind": "id",
+            "source": "view:development",
+            "target": "relation:rel-app-deployed",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/design_views/2/view_id",
+                "value": "development"
+              },
+              {
+                "side": "before",
+                "path": "/relations/7/from",
+                "value": "view:development/node:dev-phone-routes"
+              }
+            ],
+            "id": "view:development"
+          }
+        },
+        "relation:rel-rdb-deployed": {
+          "kind": "consumer",
+          "basis": "稳定 ID 边：view:development → relation:rel-rdb-deployed。",
+          "from": "view:development",
+          "edge": {
+            "kind": "id",
+            "source": "view:development",
+            "target": "relation:rel-rdb-deployed",
+            "witness": [
+              {
+                "side": "before",
+                "path": "/design_views/2/view_id",
+                "value": "development"
+              },
+              {
+                "side": "before",
+                "path": "/relations/8/from",
+                "value": "view:development/node:dev-card-rdb-helper"
+              }
+            ],
+            "id": "view:development"
+          }
+        },
+        "view:logical": {
+          "kind": "retained",
+          "basis": "作者事实相同、前轮唯一独立项已解决、无本轮依赖闭包命中；沿原件保留。"
+        },
+        "view:deployment": {
+          "kind": "retained",
+          "basis": "作者事实相同、前轮唯一独立项已解决、无本轮依赖闭包命中；沿原件保留。"
+        },
+        "app_lens:module_boundaries": {
+          "kind": "retained",
+          "basis": "作者事实相同、前轮唯一独立项已解决、无本轮依赖闭包命中；沿原件保留。"
+        },
+        "app_lens:capability_seams": {
+          "kind": "retained",
+          "basis": "作者事实相同、前轮唯一独立项已解决、无本轮依赖闭包命中；沿原件保留。"
+        },
+        "app_lens:feature_flags": {
+          "kind": "retained",
+          "basis": "作者事实相同、前轮唯一独立项已解决、无本轮依赖闭包命中；沿原件保留。"
+        },
+        "app_lens:data_producers_consumers": {
+          "kind": "retained",
+          "basis": "作者事实相同、前轮唯一独立项已解决、无本轮依赖闭包命中；沿原件保留。"
+        },
+        "app_lens:lifecycle_triggers": {
+          "kind": "retained",
+          "basis": "作者事实相同、前轮唯一独立项已解决、无本轮依赖闭包命中；沿原件保留。"
+        },
+        "app_lens:state_owners": {
+          "kind": "retained",
+          "basis": "作者事实相同、前轮唯一独立项已解决、无本轮依赖闭包命中；沿原件保留。"
+        },
+        "app_lens:initialization": {
+          "kind": "retained",
+          "basis": "作者事实相同、前轮唯一独立项已解决、无本轮依赖闭包命中；沿原件保留。"
+        },
+        "app_lens:publication_subscription": {
+          "kind": "retained",
+          "basis": "作者事实相同、前轮唯一独立项已解决、无本轮依赖闭包命中；沿原件保留。"
+        },
+        "app_lens:ui_refresh": {
+          "kind": "retained",
+          "basis": "作者事实相同、前轮唯一独立项已解决、无本轮依赖闭包命中；沿原件保留。"
+        },
+        "app_lens:process_recovery": {
+          "kind": "retained",
+          "basis": "作者事实相同、前轮唯一独立项已解决、无本轮依赖闭包命中；沿原件保留。"
+        },
+        "terminology:current_scope_items": {
+          "kind": "retained",
+          "basis": "作者事实相同、前轮唯一独立项已解决、无本轮依赖闭包命中；沿原件保留。"
+        }
+      },
+      "authorityProofs": {}
+    }
+  ]
+}

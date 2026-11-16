@@ -40,7 +40,8 @@ import { collectCleanPassIssues, readReusableCheckResult } from '../../scripts/u
 import type { UnitCaseResult } from '../run-unit';
 import { asChangeUnitArtifact, createChangeUnitRef, loadCanonicalChangeUnit } from '../../scripts/utils/change-unit-path';
 import { validateChangeUnitDesign, readChangeUnitDesignOwnership } from '../../scripts/utils/change-unit-design-gate';
-import { acceptChangeUnitCandidate } from '../../scripts/utils/change-unit-provider-boundary';
+import { acceptChangeUnitCandidate, ChangeUnitCandidateRejected } from '../../scripts/utils/change-unit-provider-boundary';
+import { initialDesignCandidateRejection } from '../../scripts/utils/initial-design-delivery';
 import { ownersForAddress } from '../../scripts/utils/change-unit-addressing';
 
 const frameworkRoot = path.resolve(__dirname, '../../..');
@@ -293,6 +294,7 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     const flowRef = cu.design_refs.find((ref: ComponentBlueprintRef) => ref.target.kind === 'flow');
     const flow = asRecord(resolveBlueprintTarget(doc, flowRef.target))!;
     delete ((flow.contracts as BlueprintRecord).state_management as BlueprintRecord[])[0].owner_ref;
+    delete (flow.state_owner as BlueprintRecord).ref;
     fs.writeFileSync(f.blueprintFile, YAML.stringify(doc)); f.bind();
     const projection = deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, 'contracts');
     assert.equal(projection.state, 'invalid');
@@ -345,6 +347,7 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     const flowRef = cu.design_refs.find((ref: ComponentBlueprintRef) => ref.target.kind === 'flow');
     const flow = asRecord(resolveBlueprintTarget(doc, flowRef.target))!;
     delete ((flow.contracts as BlueprintRecord).state_management as BlueprintRecord[])[0].owner_ref;
+    delete (flow.state_owner as BlueprintRecord).ref;
     cu.touches[0].design_ref = cu.design_refs[0];
     fs.writeFileSync(f.blueprintFile, YAML.stringify(doc)); fs.writeFileSync(f.cuFile, YAML.stringify(cu)); f.bind();
     const before = fs.readFileSync(f.blueprintFile);
@@ -358,6 +361,88 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     assert.throws(() => materializeBlueprintSkillInputs(f.root, f.feature, frameworkRoot), BlueprintProjectionPreparationError);
     assert(fs.readFileSync(f.blueprintFile).equals(before), '汇总诊断改了canonical业务');
     assert(!fs.existsSync(resolveFeatureArtifact(f.root, f.feature, 'acceptance.yaml').actualPath), 'invalid投影写出了部分PASS产物');
+  } },
+  { name: 'a920e013 historical i11 flow mirrors unique authority without changing original bytes or accepting ambiguous publications', run() {
+    const directory = path.join(__dirname, '../fixtures/host-recovery-history/20261115-design-recovery/owner-projection');
+    const original = fs.readFileSync(path.join(directory, 'i12-runtime-flow.json'));
+    const saved = JSON.parse(original.toString('utf8'));
+    const ref = { ...saved.blueprint_identity, artifact_sha256: 'sha256:' + JSON.parse(fs.readFileSync(path.join(directory, 'sources.json'), 'utf8')).sources[1].sha256,
+      target: { kind: 'flow', view_id: 'runtime', id: saved.flow.flow_id } } as ComponentBlueprintRef;
+    const blueprint = { ...saved.blueprint_identity, design_views: [{ view_id: 'runtime', runtime_data_flows: [saved.flow] }] };
+    const cu = { design_refs: [ref] } as Parameters<typeof selectBlueprintSkillContent>[1];
+    const selected = selectBlueprintSkillContent(blueprint, cu);
+    const state = (selected.contracts!.state_management as BlueprintRecord[])[0];
+    assert.deepEqual(state.design_ref, ref);
+    assert.equal(state.owner_ref, saved.flow.state_owner.ref);
+    assert.deepEqual(state.contract_refs, ['contract:card-store']);
+    for (const [field, id] of [['mutations', 'mutation_id'], ['publications', 'publication_id'], ['subscriptions', 'subscription_id'], ['consumers', 'consumer_id']] as const) {
+      assert.deepEqual((state[field] as BlueprintRecord[]).map(row => row[id]), saved.flow[field].map((row: BlueprintRecord) => row[id]));
+    }
+    assert.equal((state.subscriptions as BlueprintRecord[])[0].publication_ref, 'publication:card-open-handoff');
+    delete saved.flow.consumers.find((row: BlueprintRecord) => row.consumer_id === 'home-card-state').update_ref;
+    const unresolved = selectBlueprintSkillContent(blueprint, cu).contracts!.state_management as BlueprintRecord[];
+    assert.equal((unresolved[0].subscriptions as BlueprintRecord[])[0].publication_ref, undefined, '两个发布源不可凭唯一订阅猜选');
+    assert.deepEqual(fs.readFileSync(path.join(directory, 'i12-runtime-flow.json')), original);
+  } },
+  { name: 'a920e013 flow projection fills only source-backed mirror fields and preserves conflicts and stale identities', run(f) {
+    const doc = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
+    const cu = YAML.parse(fs.readFileSync(f.cuFile, 'utf8'));
+    const ref = cu.design_refs.find((row: ComponentBlueprintRef) => row.target.kind === 'flow');
+    const flow = asRecord(resolveBlueprintTarget(doc, ref.target))!;
+    const state = ((flow.contracts as BlueprintRecord).state_management as BlueprintRecord[])[0];
+    state.design_ref = `view:runtime/flow:${ref.target.id}`;
+    for (const key of ['owner_ref', 'contract_refs', 'mutations', 'publications', 'subscriptions', 'consumers']) delete state[key];
+    fs.writeFileSync(f.blueprintFile, YAML.stringify(doc)); f.bind();
+    const resolved = deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, 'contracts');
+    assert.equal(resolved.state, 'resolved', resolved.detail);
+    assert.equal((resolved.value as ContractsSpec).state_management![0].subscriptions![0].publication_ref, 'publication:ledger-changed');
+    const before = fs.readFileSync(f.blueprintFile);
+    materializeBlueprintSkillInputs(f.root, f.feature, frameworkRoot);
+    assert.deepEqual(fs.readFileSync(f.blueprintFile), before, '机器投影不回写蓝图');
+    state.owner_ref = 'view:runtime/node:other-owner';
+    fs.writeFileSync(f.blueprintFile, YAML.stringify(doc)); f.bind();
+    const conflict = deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, 'contracts');
+    assert.equal(conflict.state, 'invalid'); assert(conflict.codes?.includes('authority_content_conflict'), conflict.detail);
+    delete state.owner_ref;
+    state.design_ref = { ...ref, artifact_sha256: 'sha256:' + '0'.repeat(64) };
+    fs.writeFileSync(f.blueprintFile, YAML.stringify(doc)); f.bind();
+    assert.equal(deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, 'contracts').state, 'invalid', '旧完整身份不能按 flow 名静默改签');
+    const other: BlueprintRecord = { ...structuredClone(flow), flow_id: 'other-flow' }; delete other.contracts;
+    doc.design_views.find((view: BlueprintRecord) => view.view_id === 'runtime').runtime_data_flows.push(other);
+    const otherRef = { ...ref, target: { ...ref.target, id: 'other-flow' } };
+    cu.design_refs.push(otherRef); state.design_ref = otherRef;
+    assert.throws(() => selectBlueprintSkillContent(doc, cu), /跨 flow/);
+  } },
+  { name: 'a920e013 atomic candidate rollback retains upstream machine diagnosis while candidate mapping stays with its author', run(f) {
+    const doc = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
+    const unit = YAML.parse(fs.readFileSync(f.cuFile, 'utf8'));
+    const flow = asRecord(resolveBlueprintTarget(doc, unit.design_refs.find((ref: ComponentBlueprintRef) => ref.target.kind === 'flow').target))!;
+    ((flow.contracts as BlueprintRecord).state_management as BlueprintRecord[])[0].publications = [];
+    fs.writeFileSync(f.blueprintFile, YAML.stringify(doc)); f.bind();
+    const candidate = { providerId: 'builtin-vertical-slice-decomposition', artifact: asChangeUnitArtifact(YAML.parse(fs.readFileSync(f.cuFile, 'utf8'))) };
+    candidate.artifact.provenance.extraction_method += ';' + candidate.providerId;
+    const mapping = structuredClone((asRecord(resolveBlueprintTarget(doc, unit.design_refs[0].target))!.contracts as BlueprintRecord).change_unit) as any;
+    delete mapping.change_unit_ref;
+    fs.unlinkSync(f.cuFile);
+    const observation = { kind: 'decompose' as const, blueprintPath: f.blueprintFile, candidatesPath: path.join(path.dirname(f.blueprintFile), 'change-unit-candidates.json'), issues: [] };
+    let rejected: ChangeUnitCandidateRejected | undefined;
+    try { acceptChangeUnitCandidate(f.root, { ...candidate, construction_mapping: mapping }); }
+    catch (error) { assert(error instanceof ChangeUnitCandidateRejected); rejected = error; }
+    assert(rejected?.designAuthority?.some(item => item.codes.includes('change_unit_runtime_fact_mapping_missing')), JSON.stringify(rejected));
+    const routed = initialDesignCandidateRejection(observation, rejected, candidate.artifact.blueprint_id);
+    assert.equal(routed.kind, 'author'); assert.equal(routed.designRepair?.feature, candidate.artifact.blueprint_id);
+    assert(!fs.existsSync(f.cuFile)); assert(!resolveFeatureArtifact(f.root, f.feature, 'contracts.yaml').exists, '拒绝必须保留原子回滚');
+    delete ((flow.contracts as BlueprintRecord).state_management as BlueprintRecord[])[0].publications;
+    fs.writeFileSync(f.blueprintFile, YAML.stringify(doc));
+    const current = { revision: doc.revision, source_fingerprint: doc.source_fingerprint, artifact_sha256: sha(f.blueprintFile) };
+    for (const ref of [candidate.artifact.component_blueprint_ref, ...candidate.artifact.design_refs, ...candidate.artifact.touches.map(item => item.design_ref)]) Object.assign(ref, current);
+    mapping.predicate_mappings = [];
+    try { acceptChangeUnitCandidate(f.root, { ...candidate, construction_mapping: mapping }); assert.fail('候选映射缺口不应接受'); }
+    catch (error) {
+      assert(error instanceof ChangeUnitCandidateRejected);
+      assert.equal(error.designAuthority, undefined, '候选缺 mapping 不得错派蓝图作者');
+      assert.equal(initialDesignCandidateRejection(observation, error, candidate.artifact.blueprint_id).kind, 'decompose');
+    }
   } },
   { name: 'P2 exact known flow relation projects mechanically regardless of record location; ambiguity stays unresolved', run(f) {
     const doc = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
@@ -405,6 +490,7 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     const flowRef = cu.design_refs.find((ref: ComponentBlueprintRef) => ref.target.kind === 'flow');
     const flow = asRecord(resolveBlueprintTarget(doc, flowRef.target))!;
     delete ((flow.contracts as BlueprintRecord).state_management as BlueprintRecord[])[0].owner_ref;
+    delete (flow.state_owner as BlueprintRecord).ref;
     fs.writeFileSync(f.blueprintFile, YAML.stringify(doc)); f.bind();
     const projected = deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, 'contracts');
     assert.equal(projected.state, 'invalid', projected.detail);

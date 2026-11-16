@@ -11,7 +11,7 @@ import { provisionFrameworkUnder, git, SOURCE_REPO_ROOT } from '../utils/real-ch
 import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
 import type { UnitCaseResult } from '../run-unit';
 import { TEST_SUITE_TIMEOUT_MS, withRuntimeTest } from '../utils/runtime-test-control';
-import { continueA21473CombinedReplay, prepareA21473ReplayEnvironment, assertA21473SuccessorScopePreserved, assertA21473ExecutedMethods } from '../utils/a21473-combined-replay';
+import { continueA21473CombinedReplay, prepareA21473ReplayEnvironment, assertA21473SuccessorScopePreserved, assertA21473ExecutedMethods, assertA21473QuestioningPreserved } from '../utils/a21473-combined-replay';
 
 const FIXTURE = path.resolve(__dirname, '../fixtures/host-recovery-history/20261029-a21473');
 const REPORT = path.join(SOURCE_REPO_ROOT, 'harness/reports/initial-design-progress-20261029');
@@ -166,7 +166,19 @@ const runtime=require(${JSON.stringify(path.join(harnessDir, 'scripts/goal-phase
   }
 }
 
-const cases = [{ name: 'P4 a21473 executed methods require real harness receipts and PASS independently of completion phase reuse', run: async () => {
+const cases = [{ name: 'P4 a21473 original questioning keeps exact identities and answers while validating incremental source bytes', run: async () => {
+    const original = [{ question_id: 'historic-q', scope_kind: 'view', scope_ref: 'view:runtime', question: '原问题', answer: '原准确回答',
+      disposition: 'answered_with_evidence', evidence_refs: ['original-source'], owner: 'independent' }];
+    const bytes = Buffer.from(JSON.stringify({ items: original }));
+    const reference = { path: 'actual-independent-output.json', sha256: sha(bytes) };
+    const current = [{ ...original[0], review_original: reference }];
+    assert.doesNotThrow(() => assertA21473QuestioningPreserved(current, original, () => bytes));
+    assert.throws(() => assertA21473QuestioningPreserved([{ ...current[0], question_id: 'changed-q' }], original, () => bytes), /精确保留/);
+    assert.throws(() => assertA21473QuestioningPreserved([{ ...current[0], answer: '错误回答' }], original, () => bytes), /精确保留/);
+    assert.throws(() => assertA21473QuestioningPreserved(current, original, () => Buffer.from(JSON.stringify({ items: [] }))), /真实原件字节/);
+    const other = Buffer.from(JSON.stringify({ items: [{ ...original[0], answer: '另一份真实但不匹配的回答' }] }));
+    assert.throws(() => assertA21473QuestioningPreserved([{ ...current[0], review_original: { ...reference, sha256: sha(other) } }], original, () => other), /实质回答/);
+  } }, { name: 'P4 a21473 executed methods require real harness receipts and PASS independently of completion phase reuse', run: async () => {
     const methods = ['spec', 'plan', 'coding', 'ut', 'testing', 'review'];
     const history = methods.flatMap(phase => [{ type: 'harness_end', phase, invoke_id: phase + '-actual' },
       { type: 'phase_verdict', phase, invoke_id: phase + '-actual', verdict: 'PASS' }]);

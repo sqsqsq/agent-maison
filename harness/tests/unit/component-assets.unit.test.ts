@@ -453,7 +453,12 @@ test('20261016 真实蓝图/CU/契约：组件理由与总理由不互锁，已�
   const originalFiles = [...value.files];
   assert.equal(value.components.filter(c => c.asset_selection?.resolution === 'custom').length, 4);
   assert.deepEqual(componentProjectionErrors(root, value, cu), []);
-  assert.equal(compareAuthoritativeContent(projected, value).state, 'aligned');
+  const originalDrift = compareAuthoritativeContent(projected, value);
+  assert.equal(originalDrift.state, 'aligned', JSON.stringify(originalDrift));
+  assert.equal(value.state_management![0].mutations![0].kind, undefined, '兼容比较不得回写历史手写契约');
+  const conflictingKind = structuredClone(value);
+  conflictingKind.state_management![0].mutations![0].kind = 'background';
+  assert.equal(compareAuthoritativeContent(projected, conflictingKind).state, 'drift', '明确矛盾的 mutation kind 仍须拒绝');
   const closure = (contracts: ContractsSpec) => checkContractFileReferenceClosure(context(root, contracts))[0];
   const missingMedia = closure(value);
   assert.equal(missingMedia.status, 'PASS');

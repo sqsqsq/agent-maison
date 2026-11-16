@@ -1,0 +1,73 @@
+{
+  "source_host": "SimulatedWalletForHmos",
+  "source_run": "20261115T073957Z-e7af8c",
+  "read_only_source": true,
+  "files": [
+    {
+      "source": "phases/initial-design-questioning/initial-design-questioning-i2/questioning-output.json",
+      "stored": "questioning-i2.json.gz",
+      "sha256": "619e03dec3a4c783da01bb4cdd27bb6024a2028a47c3bded64df729241f4824b",
+      "bytes": 48639,
+      "encoding": "gzip, original UTF-8 bytes unchanged"
+    },
+    {
+      "source": "phases/initial-design-questioning/initial-design-questioning-i5/questioning-output.json",
+      "stored": "questioning-i5.json.gz",
+      "sha256": "c185d3dcd7207636f470abe46fc1a1d1e62156e2731d4a49823c5c2a8478c19f",
+      "bytes": 70428,
+      "encoding": "gzip, original UTF-8 bytes unchanged"
+    },
+    {
+      "source": "phases/initial-design-questioning/initial-design-questioning-i2/blueprint-before.yaml",
+      "stored": "questioning-i2-scopes.json",
+      "sha256": "90575c9c796f9926a4c82a048714ff455246ff2104d619119176032cdf529182",
+      "transform": "Only original required-scope identifiers and author identity; no business verdicts generated."
+    },
+    {
+      "source": "phases/initial-design-questioning/initial-design-questioning-i5/blueprint-before.yaml",
+      "stored": "questioning-i5-scopes.json",
+      "sha256": "9d13ad16a50c25b94898b7d77eaa8f93acd45a5eacdcab08bbdfce155e998f36",
+      "transform": "Only original required-scope identifiers and author identity; no business verdicts generated."
+    }
+  ],
+  "i2": [
+    {
+      "ts": "2026-11-15T08:01:37.810Z",
+      "type": "agent_invoke_start",
+      "phase": "initial-design-questioning",
+      "purpose": "questioning",
+      "invoke_id": "initial-design-questioning-i2"
+    },
+    {
+      "ts": "2026-11-15T08:12:18.285Z",
+      "type": "agent_invoke_end",
+      "phase": "initial-design-questioning",
+      "purpose": "questioning",
+      "invoke_id": "initial-design-questioning-i2",
+      "status": "passed",
+      "exit_code": 0,
+      "completion_observed": true,
+      "provider_session_id": "session-fe219dea-d25b-41e9-a7c1-78cfa5945de4"
+    }
+  ],
+  "i5": [
+    {
+      "ts": "2026-11-15T08:34:02.328Z",
+      "type": "agent_invoke_start",
+      "phase": "initial-design-questioning",
+      "purpose": "questioning",
+      "invoke_id": "initial-design-questioning-i5"
+    },
+    {
+      "ts": "2026-11-15T08:44:17.463Z",
+      "type": "agent_invoke_end",
+      "phase": "initial-design-questioning",
+      "purpose": "questioning",
+      "invoke_id": "initial-design-questioning-i5",
+      "status": "passed",
+      "exit_code": 0,
+      "completion_observed": true,
+      "provider_session_id": "session-d2e3fe59-4343-4255-bf2b-570f71ab9f47"
+    }
+  ]
+}

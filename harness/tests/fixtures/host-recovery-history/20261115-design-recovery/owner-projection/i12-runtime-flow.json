@@ -1,0 +1,559 @@
+{
+  "blueprint_identity": {
+    "artifact": "component-blueprint@1",
+    "component_id": "bc-openCard-2",
+    "blueprint_id": "bc-openCard-2",
+    "revision": 1,
+    "source_fingerprint": "sha256:af1573dea54cabc358282beb48233c49bcd582cb525e40368e00a75d7c55b097"
+  },
+  "flow": {
+    "flow_id": "flow-card-open-run",
+    "label": "开卡写入与首页消费",
+    "provenance": {
+      "source_kind": "requirement",
+      "source_ref": "doc/features/原始需求/1-2-银行卡/原始需求.md#需求规格",
+      "observed_at": "2026-11-15T08:20:00.000Z",
+      "evidence_strength": "authoritative",
+      "extraction_method": "author_requirement_read"
+    },
+    "data_domain_refs": [
+      "data_domain:card_records",
+      "data_domain:card_open_session",
+      "data_domain:home_card_state"
+    ],
+    "external_contract_refs": [
+      "contract:card-store"
+    ],
+    "source_of_truth": {
+      "authority": "view:development/node:dev-card-record-repo",
+      "persistence": "contract:card-store",
+      "reconciliation": "以卡片库为唯一权威：页面与会话只持有本轮临时态，结果以后端插入确认返回为准； 同一卡号重复提交按唯一约束覆盖为一行，读取方始终按库内最新一行展示，不用内存缓存做二次真源。",
+      "projections_and_caches": [
+        "view:development/node:dev-card-open-session",
+        "view:development/node:dev-home-repository"
+      ]
+    },
+    "triggers": [
+      {
+        "trigger_id": "trigger-submit-code",
+        "kind": "user_action",
+        "timing": "用户在输入验证码半模态点「下一步」且已满 6 位数字时触发一次提交",
+        "idempotency": "宿主 onSubmit 入口先判 submitting，为真直接早退（不组草稿、不调仓储、不再 push）；为假才置 submitting 并继续；半模态同时按 submitting 禁用按钮与输入；同一卡号重复提交另由 card_no 唯一约束 + ON_CONFLICT_REPLACE 收敛为一行",
+        "verification_refs": [
+          "acceptance:AC-8",
+          "acceptance:AC-9",
+          "acceptance:AC-14"
+        ]
+      },
+      {
+        "trigger_id": "trigger-home-attach",
+        "kind": "lifecycle",
+        "timing": "冷启动进入首页 Tab、首页首次挂载时读取卡片库判定展示态",
+        "idempotency": "只读查询，可重复执行；同一库状态得到同一展示态",
+        "verification_refs": [
+          "acceptance:AC-11"
+        ]
+      },
+      {
+        "trigger_id": "trigger-handoff-published",
+        "kind": "publication",
+        "timing": "结果页完成成功路径发布 CardOpenHandoff 并递增序号后，首页 @StorageLink 序号变化触发 @Watch 回调重查",
+        "idempotency": "首页记录已处理序号，同一序号只重查一次；跳号时按最新序号刷新一次",
+        "verification_refs": [
+          "acceptance:AC-11"
+        ]
+      }
+    ],
+    "initial_load": {
+      "initial_load_id": "card-open-snapshot",
+      "strategy": "按消费者各自取一次快照：结果页 attach 时读 CardOpenSession.getResult()； 首页 attach 时调用 WalletCardRepository.countCards(context) 只取行数判定有卡/无卡。 需要卡片明细时（后续详情页）按 record_id 单行读取。",
+      "consumer_snapshots": {
+        "card-open-result-page": "CardOpenSession.getResult() 的内存结果（本轮唯一一次写入的结果反射）",
+        "home-card-state": "WalletCardRepository.countCards(context) 的行数（库为准）"
+      },
+      "owner": "WalletMain 首页与卡数据层",
+      "data_scope": "当前应用沙箱内 wallet_card 表 + 进程内开卡会话；不按账号分区",
+      "freshness": "首页在 attach 与每次序号变化后重查；清栈本身不产生任何首页生命周期回调，因此不依赖 aboutToAppear 重跑。 结果页只在 attach 读一次快照（同一轮结果不变化），不做轮询、不设 TTL。",
+      "verification_refs": [
+        "acceptance:AC-11"
+      ]
+    },
+    "state_owner": {
+      "ref": "view:development/node:dev-card-open-session",
+      "states": [
+        "无会话（空闲）",
+        "已选银行与卡类型（会话已建立）",
+        "已选具体卡片（会话持有完整卡号）",
+        "已有结果（成功或失败，供结果页读取）",
+        "已完成退出（会话已 reset，回到无会话）"
+      ],
+      "not_holding": [
+        "卡片库内的卡片行（权威归 WalletCardRepository / 卡片库）",
+        "提交中 submitting 与验证码输入/倒计时（页面级 UI 状态，宿主选卡页与验证码半模态各自持有）"
+      ],
+      "verification_refs": [
+        "acceptance:AC-7",
+        "acceptance:AC-12",
+        "acceptance:AC-14"
+      ]
+    },
+    "mutations": [
+      {
+        "mutation_id": "mutation-insert-card",
+        "kind": "user_submit",
+        "description": "宿主页（BankCardSelectPage）调用 WalletCardRepository.saveCard(context, draft)：拿 RDB 单例、确认 wallet_card 表存在后执行一次插入，等待插入返回行标识；成功返回 accepted=true 与 record_id，失败抛错。",
+        "persistence_ref": "contract:card-store",
+        "publication_ref": "publication:session-result",
+        "recovery_ref": "recovery:card-open-failure",
+        "verification_refs": [
+          "acceptance:AC-8",
+          "acceptance:AC-9"
+        ]
+      }
+    ],
+    "publications": [
+      {
+        "publication_id": "session-result",
+        "payload": "CardOpenResult{outcome: success|failure, cardNo(完整，仅内存), cardNoMasked, recordId, bankName, cardType, failureReason}",
+        "semantics": "会话内结果对象，成功与失败都写一次，只供结果页读取本轮结果；不广播、不留存到下一轮",
+        "publisher": "view:development/node:dev-card-open-session",
+        "timing": "插入返回或抛错后立即写入会话（成功与失败都写），结果页再随 push 读会话",
+        "consumers": [
+          "card-open-result-page"
+        ],
+        "verification_refs": [
+          "acceptance:AC-10"
+        ]
+      },
+      {
+        "publication_id": "card-open-handoff",
+        "payload": "CardOpenHandoff{outcome: success, recordId, cardNoMasked, bankName, cardType}（仅成功路径发布）",
+        "semantics": "成功完成时写入 AppStorage 的交接对象，只含结果态、行标识与脱敏卡号；完整卡号不进入交接对象",
+        "publisher": "view:development/node:dev-card-open-session",
+        "timing": "结果页成功态点「完成」时由 CardOpenBridge.publishCardOpened 写入，失败路径不发布",
+        "consumers": [
+          "home-card-state"
+        ],
+        "verification_refs": [
+          "acceptance:AC-11"
+        ]
+      }
+    ],
+    "subscriptions": [
+      {
+        "subscription_id": "subscription-home-refresh",
+        "consumer_ref": "consumer:home-card-state",
+        "attach": "HomeTabPage 通过 @StorageLink('wallet_card_open_seq') 绑定序号并在 @Watch 回调里重查；aboutToAppear 另做一次冷启动读库",
+        "detach": "序号变化回调随组件生命周期自动解绑；aboutToDisappear 中停止内部延迟重查任务",
+        "cleanup": "不注册长期监听对象，只保留一份 @StorageLink 绑定；页面销毁后不再执行重查",
+        "replay_or_snapshot": "订阅前先按 attach 读一次行数作快照；后续以序号变化增量重查，跳号只补一次",
+        "ordering": "先 publish 交接对象与序号、再 stack.clear()；序号回调可能在清栈前触发，露出时首页已是新态，顺序不颠倒",
+        "verification_refs": [
+          "acceptance:AC-11"
+        ]
+      }
+    ],
+    "consumers": [
+      {
+        "consumer_id": "card-open-result-page",
+        "description": "结果页按会话中的结果态渲染成功/失败，并在完成时执行本轮栈清理",
+        "consumption": "只读会话结果（结果态、脱敏卡号、行标识、失败原因）；不改写库内数据、不读库",
+        "handling": "成功按「发布交接与序号 → clear() 回首页 → reset()」执行；失败按「不发布 → popToName(ROUTE_ADD_CARD_ENTRY) 落到添加卡片页 → reset()」执行，见 decision-failure-exit-landing",
+        "initial_load_ref": "initial-load:card-open-snapshot",
+        "update_ref": "publication:session-result",
+        "verification_refs": [
+          "acceptance:AC-10",
+          "acceptance:AC-12"
+        ]
+      },
+      {
+        "consumer_id": "home-card-state",
+        "description": "首页在序号变化后按库内记录数切换有卡/无卡态，并保留新卡标识供后续详情页引导",
+        "consumption": "只读交接对象（结果态、行标识、脱敏卡号、银行、卡类型）与序号变化",
+        "handling": "读库失败时退回既有常量行为并保留首页提示，不阻塞页面",
+        "initial_load_ref": "initial-load:card-open-snapshot",
+        "update_ref": "publication:card-open-handoff"
+      }
+    ],
+    "failure_recovery": {
+      "recovery_id": "card-open-failure",
+      "handling": "RDB 打开、DDL 或插入任一步抛错时，仓储不返回行标识，会话置失败态，结果页展示失败文案； 不写任何卡片行，也不修改既有行。",
+      "retry": "失败后不自动重试；用户点完成回到添加卡片页（AddCardEntryPage）后可整轮重试。建表语句使用 IF NOT EXISTS， 因此重复初始化不会失败（BD-5）。",
+      "user_visibility": "结果页失败态（图标 + 文案），并保留本次提交的脱敏卡号",
+      "verification_refs": [
+        "acceptance:AC-8",
+        "acceptance:AC-10"
+      ]
+    },
+    "lifecycle_coverage": {
+      "cold_start": {
+        "status": "covered",
+        "evidence_refs": [
+          "02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets"
+        ],
+        "note": "冷启动时首页 attach 读库判定展示态；本轮之前无卡则保持引导态。"
+      },
+      "warm_resume": {
+        "status": "covered",
+        "evidence_refs": [
+          "design_views/2/nodes/8"
+        ],
+        "note": "回前台不触发首页重查（库未变、无生命周期回调）；验证码倒计时按发送时间戳重算，恢复后剩余秒数正确。"
+      },
+      "page_attach": {
+        "status": "covered",
+        "evidence_refs": [
+          "acceptance:AC-5",
+          "acceptance:AC-11"
+        ],
+        "note": "选卡页与结果页 attach 时从会话取本轮上下文；首页 attach 时读库。结果页清栈不触发首页 attach，刷新只走序号回调。"
+      },
+      "page_detach": {
+        "status": "covered",
+        "evidence_refs": [
+          "design_views/2/nodes/8"
+        ],
+        "note": "验证码半模态关闭时清掉计时器与回调，避免回调打到已销毁页面。"
+      },
+      "account_switch": {
+        "status": "not_applicable",
+        "evidence_refs": [
+          "04-BusinessBase/AccountManager/src/main/ets/shared/constant/AccountConstants.ets"
+        ],
+        "note": "卡片库当前没有账号维度，账号切换不改变卡库内容，本需求不引入分区。"
+      },
+      "process_recreation": {
+        "status": "covered",
+        "evidence_refs": [
+          "design_views/1/runtime_data_flows/0/state_owner/states"
+        ],
+        "note": "进程重建后内存会话与倒计时不恢复，用户重走开卡；已提交的卡片行仍在库内，首页仍按库判定。"
+      },
+      "background_write": {
+        "status": "not_applicable",
+        "evidence_refs": [
+          "design_views/2/nodes/6"
+        ],
+        "note": "没有任何后台或定时写入；写入只由用户提交触发。"
+      }
+    },
+    "evidence_refs": [
+      "02-Feature/WalletMain/src/main/ets/presentation/pages/AddBankCardPage.ets",
+      "02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets",
+      "05-SystemBase/CommFunc/src/main/ets/shared/navigation/NavPathContext.ets"
+    ],
+    "verification_refs": [
+      "acceptance:AC-8",
+      "acceptance:AC-11"
+    ],
+    "logical_contract_refs": [
+      "contract:card-store"
+    ],
+    "development_owner_ref": "view:development/node:dev-card-record-repo",
+    "decisions_and_gaps": [
+      "decision:decision-rdb-security",
+      "decision:decision-home-refresh-signal"
+    ],
+    "contracts": {
+      "state_management": [
+        {
+          "design_ref": "view:runtime/flow:flow-card-open-run",
+          "state": "本轮开卡会话（银行与卡类型、选中卡片、提交结果）；库内卡片行归卡片库，submitting 归宿主选卡页",
+          "holder": "view:development/node:dev-card-open-session",
+          "scope": "单轮开卡（银行、卡类型、选中卡片、提交结果）",
+          "owner": "WalletMain 开卡流程",
+          "ordered_steps": [
+            "步骤 1（选卡类型半模态）：BankCardTypeSheet 只做展示与单选，通过 onConfirm(bank, cardType) 把结果交回宿主页；宿主页（AddBankCardPage 或 AllBanksPage）收到回调后把 sheetVisible 置 false 关闭半模态、调用 CardOpenSession.begin(bankCode, bankName, cardType) 建立本轮会话（同时清空上一轮结果），再 NavPathContext.stack().pushPath({name: CardOpenConstants.ROUTE_BANK_CARD_SELECT})；关闭与跳转都由宿主页负责，半模态组件不持有导航栈。",
+            "步骤 2（选卡页取数）：BankCardSelectPage.aboutToAppear → 从会话读银行与卡类型（读不到则 showToast 后 pop 回上一页）→ BankCardCatalogRepository.getCardOptions(bankCode, cardType) 取 1–2 张卡；等待 Promise 返回后以 MaskUtil.maskCardNo(cardNo) 渲染卡号。",
+            "步骤 3（选卡）：用户点某张卡 → 页面本地 selectedIndex 更新并调用 CardOpenSession.selectCard(option)（会话持有完整卡号）；点「下一步」时同时校验已选卡与协议已勾选，任一不满足则按钮置灰。",
+            "步骤 4（打开验证码半模态）：BankCardSelectPage 把 smsVisible 置 true 拉起 SmsCodeSheet；SmsCodeSheet.aboutToAppear 调 AccountService.getUserProfile() 取 phone 并用 MaskUtil.maskPhone 展示（取不到时只显示通用文案），随即触发一次模拟发送、记录 sentAt 并每秒刷新剩余秒数（60 - (now - sentAt)）；半模态关闭时清掉计时器。",
+            "步骤 5（输入与可点判定）：输入框只保留数字且最多 6 位；宿主页把 CardOpenService.isValidSmsCode 作为 isCodeValid 回调注入半模态，半模态每次输入变化用 isCodeValid(code) 计算 canSubmit，false 时「下一步」保持置灰。倒计时归零后按钮显示「重新发送」， 点击后重置 sentAt 并重新计时。",
+            "步骤 6（提交与早退守卫）：SmsCodeSheet 点「下一步」→ 回调 onSubmit(code) 给宿主页；宿主页 onSubmit 入口先判 submitting：为真直接 return（早退，不组草稿、不调仓储、不再 push）； 为假才置 submitting = true 并把 submitting 作为入参传回半模态（半模态据 submitting 禁用提交按钮与输入）， 再调 CardOpenService.buildDraft(session, Date.now())；若返回 null（会话缺卡片等异常），submitting 复位、关闭半模态并提示「开卡信息已失效，请重新选择卡片」，不写库。",
+            "步骤 7（调用仓储）：宿主页调 WalletCardRepository.saveCard(context, draft)，context 来自 this.getUIContext().getHostContext() as Context（与既有 AddBankCardPage 取 Context 的写法一致）；等待 Promise 返回或抛错。",
+            "步骤 8（写库）：WalletCardRepository.saveCard → CardRdbHelper.getStore(context)（进程内单例；首次 getRdbStore(context, StoreConfig{name: 卡片库名, securityLevel: S3, encrypt: true})）→ executeSql(CREATE TABLE IF NOT EXISTS wallet_card ...) → insert(wallet_card, values, ON_CONFLICT_REPLACE)；插入返回行标识时组 CardSaveResult{accepted:true, recordId, cardNo}，打开库/建表/插入任一步抛错则抛给调用方。",
+            "步骤 9（结果落会话）：宿主页捕获返回或异常 → CardOpenService.toResult(session, save) 或 toFailureResult(session, reason) 组装 CardOpenResult → CardOpenSession.finish(result) 写入结果（成功与失败都写）、submitting 复位 → 关闭验证码半模态 → NavPathContext.stack().pushPath({name: CardOpenConstants.ROUTE_ADD_CARD_RESULT})；结果页从会话读取，路由参数不携带完整卡号。",
+            "步骤 10（结果页展示）：AddCardResultPage.aboutToAppear → CardOpenSession.getResult()；有结果按成功/失败渲染，无结果（异常进入）按失败渲染并允许完成；NavDestination hideTitleBar 且 onBackPressed 返回 true，拦下返回与左滑。",
+            "步骤 11（完成·成功）：结果页读会话结果 → CardOpenBridge.publishCardOpened(handoff) 把 CardOpenHandoff{outcome:success, recordId, cardNoMasked, bankName, cardType} 写入 AppStorage 键 wallet_card_open_handoff，并把 AppStorage 键 wallet_card_open_seq 递增 → NavPathContext.stack().clear() 移出本轮全部开卡页面并露出钱包首页 → CardOpenSession.reset() 清掉会话中的完整卡号 → 首页 @StorageLink(wallet_card_open_seq) 序号变化触发 @Watch 回调 → HomeRepository.getCardDisplayMode(context) 读库判定有卡态并刷新首页数据。",
+            "步骤 12（完成·失败）：结果页不发布 CardOpenHandoff（首页无需感知失败）→ NavPathContext.stack().popToName(CardOpenConstants.ROUTE_ADD_CARD_ENTRY) 移除本轮结果页、选卡页、（若经过的）全部银行页与添加银行卡页，落到标题为「添加卡片」的 AddCardEntryPage；若栈中没有该页（异常入口），退化为 clear() 回首页 → CardOpenSession.reset()。落点依据见 decision-failure-exit-landing（规格 6「关闭 1-6 全部页面」＋页面说明 4「从添加银行卡页面开始剔除」＋「回到最开始的添加卡片页面」）。"
+          ],
+          "verification_refs": [
+            "acceptance:AC-8",
+            "acceptance:AC-11",
+            "acceptance:AC-12"
+          ]
+        }
+      ],
+      "files": [
+        "02-Feature/WalletMain/src/main/ets/data/local/CardRdbHelper.ets",
+        "02-Feature/WalletMain/src/main/ets/data/local/CardOpenBridge.ets",
+        "02-Feature/WalletMain/src/main/ets/data/model/CardOpenModels.ets",
+        "02-Feature/WalletMain/src/main/ets/data/repository/WalletCardRepository.ets",
+        "02-Feature/WalletMain/src/main/ets/domain/service/CardOpenService.ets",
+        "02-Feature/WalletMain/src/main/ets/domain/service/CardOpenSession.ets",
+        "02-Feature/WalletMain/src/main/ets/shared/constant/CardOpenConstants.ets",
+        "02-Feature/WalletMain/src/main/resources/base/element/string.json"
+      ],
+      "module_dependencies": {
+        "WalletMain": [
+          "AccountManager",
+          "CommUI",
+          "CommFunc"
+        ],
+        "AccountManager": [
+          "CommFunc"
+        ],
+        "Phone": [
+          "WalletMain"
+        ]
+      }
+    },
+    "use_cases": {
+      "schema_version": "1.0",
+      "use_cases": [
+        {
+          "id": "UC-card-type-select",
+          "coordinator": "AddBankCardPage",
+          "coordinator_note": "同一实现由 AddBankCardPage 与 AllBanksPage 两个入口复用；本用例只覆盖「选卡类型」这一段，后续阶段见 UC-card-open",
+          "ui_bindings": [
+            {
+              "ui": "AddBankCardPage",
+              "role": "entry",
+              "user_actions": [
+                {
+                  "trigger": "点任一银行行",
+                  "calls": "AddBankCardPage.handleBankTap"
+                }
+              ]
+            },
+            {
+              "ui": "AllBanksPage",
+              "role": "entry",
+              "user_actions": [
+                {
+                  "trigger": "在分组列表点任一银行行",
+                  "calls": "AllBanksPage.handleBankTap"
+                }
+              ]
+            },
+            {
+              "ui": "BankCardTypeSheet",
+              "role": "dialog",
+              "user_actions": [
+                {
+                  "trigger": "选中一种卡类型后点「同意并继续」",
+                  "calls": "BankCardTypeSheet.onConfirm"
+                },
+                {
+                  "trigger": "点关闭按钮或半模态外区域",
+                  "calls": "BankCardTypeSheet.onCancel"
+                }
+              ]
+            }
+          ],
+          "data_boundaries": [
+            {
+              "name": "BankRepository",
+              "type": "BankInfo[]",
+              "kind": "system",
+              "methods": [
+                "getBanks"
+              ]
+            }
+          ],
+          "state_model": {
+            "phases": [
+              "选卡类型",
+              "选卡"
+            ]
+          },
+          "branches": [
+            {
+              "id": "BR-S1",
+              "scenario": "选中一种卡类型确认，关闭半模态并进入选卡页",
+              "expected_phase_seq": [
+                "选卡类型",
+                "选卡"
+              ],
+              "linked_acceptance": [
+                "AC-1",
+                "AC-2",
+                "AC-3"
+              ]
+            },
+            {
+              "id": "BR-S2",
+              "scenario": "取消半模态，不建立会话、不跳转、不写库",
+              "expected_phase_seq": [
+                "选卡类型"
+              ],
+              "linked_acceptance": [
+                "BD-7"
+              ]
+            },
+            {
+              "id": "BR-S3",
+              "scenario": "银行没有声明支持卡类型，只能关闭半模态",
+              "expected_phase_seq": [
+                "选卡类型"
+              ],
+              "linked_acceptance": [
+                "BD-1"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "UC-card-open",
+          "coordinator": "BankCardSelectPage",
+          "coordinator_note": "选卡页只编排本页之后（选卡、验证码、提交写库、结果页）；选卡类型与进入本页由 UC-card-type-select 的宿主页负责",
+          "ui_bindings": [
+            {
+              "ui": "BankCardSelectPage",
+              "role": "entry",
+              "user_actions": [
+                {
+                  "trigger": "点某张卡片行",
+                  "calls": "BankCardSelectPage.handleCardSelect"
+                },
+                {
+                  "trigger": "勾选协议后点「下一步」",
+                  "calls": "BankCardSelectPage.handleNext"
+                }
+              ]
+            },
+            {
+              "ui": "SmsCodeSheet",
+              "role": "dialog",
+              "user_actions": [
+                {
+                  "trigger": "输入或删除验证码数字",
+                  "calls": "SmsCodeSheet.handleCodeChange"
+                },
+                {
+                  "trigger": "倒计时归零后点「重新发送」",
+                  "calls": "SmsCodeSheet.handleResend"
+                },
+                {
+                  "trigger": "满 6 位后点「下一步」",
+                  "calls": "SmsCodeSheet.handleSubmit"
+                },
+                {
+                  "trigger": "点关闭按钮",
+                  "calls": "SmsCodeSheet.handleClose"
+                }
+              ]
+            },
+            {
+              "ui": "AddCardResultPage",
+              "role": "result",
+              "user_actions": [
+                {
+                  "trigger": "点「完成」",
+                  "calls": "AddCardResultPage.handleComplete"
+                }
+              ]
+            }
+          ],
+          "data_boundaries": [
+            {
+              "name": "WalletCardRepository",
+              "type": "CardSaveResult",
+              "kind": "storage",
+              "methods": [
+                "saveCard",
+                "countCards",
+                "getCardById"
+              ]
+            },
+            {
+              "name": "CardRdbHelper",
+              "type": "relationalStore.RdbStore",
+              "kind": "storage",
+              "methods": [
+                "getStore"
+              ]
+            }
+          ],
+          "state_model": {
+            "phases": [
+              "选卡",
+              "验证码",
+              "提交写库",
+              "结果展示",
+              "完成退出"
+            ]
+          },
+          "branches": [
+            {
+              "id": "BR-1",
+              "scenario": "成功开卡并从结果页完成",
+              "expected_phase_seq": [
+                "选卡",
+                "验证码",
+                "提交写库",
+                "结果展示",
+                "完成退出"
+              ],
+              "linked_acceptance": [
+                "AC-8",
+                "AC-10",
+                "AC-11"
+              ]
+            },
+            {
+              "id": "BR-2",
+              "scenario": "写入失败后从结果页完成",
+              "expected_phase_seq": [
+                "选卡",
+                "验证码",
+                "提交写库",
+                "结果展示",
+                "完成退出"
+              ],
+              "linked_acceptance": [
+                "BD-4",
+                "AC-10",
+                "AC-12"
+              ]
+            },
+            {
+              "id": "BR-4",
+              "scenario": "验证码倒计时归零后重新发送并重新计时",
+              "expected_phase_seq": [
+                "选卡",
+                "验证码"
+              ],
+              "linked_acceptance": [
+                "AC-6"
+              ]
+            },
+            {
+              "id": "BR-5",
+              "scenario": "提交前组装草稿失败（会话缺卡片），不写库并提示重选",
+              "expected_phase_seq": [
+                "选卡",
+                "验证码"
+              ],
+              "linked_acceptance": [
+                "BD-6"
+              ]
+            },
+            {
+              "id": "BR-6",
+              "scenario": "提交期间重复点击，只发生一次写入",
+              "expected_phase_seq": [
+                "选卡",
+                "验证码",
+                "提交写库"
+              ],
+              "linked_acceptance": [
+                "AC-9",
+                "AC-14"
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

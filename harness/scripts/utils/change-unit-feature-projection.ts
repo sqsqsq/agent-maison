@@ -345,7 +345,7 @@ function checkVerticalSlice(
         if (expectedOwner && mapped.owner_ref !== expectedOwner) {
           issues.push(issue('change_unit_runtime_stable_id_mismatch', `${blueprintRefAddress(ref)} owner_ref 必须为 ${expectedOwner}。`));
         }
-        const expectedContracts = new Set(asStrings(flow.logical_contract_refs));
+        const expectedContracts = new Set([...asStrings(flow.logical_contract_refs), ...asStrings(flow.external_contract_refs)]);
         const actualContracts = new Set(asStrings(mapped.contract_refs));
         if ([...expectedContracts].some(id => !actualContracts.has(id))
           || [...actualContracts].some(id => !expectedContracts.has(id))) {

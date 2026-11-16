@@ -63,7 +63,7 @@ import * as path from 'path';
 import { StringDecoder } from 'string_decoder';
 import * as YAML from 'yaml';
 import { randomUUID } from 'crypto';
-import { findInitialDesignRun, prepareInitialDesignRun, readInitialDesignDelivery, readInitialDesignCompletionDisposition, projectInitialDesignDelivery, initialDesignAuthorInstruction, initialDesignInvocationLabel, validateInitialDesignInvocation, prepareInitialDesignDraft, initialDesignRequestOptions, readInitialDesignRequest, initialRequestWriteTargets, type InitialDesignObservation } from './utils/initial-design-delivery';
+import { findInitialDesignRun, prepareInitialDesignRun, readInitialDesignDelivery, readInitialDesignCompletionDisposition, projectInitialDesignDelivery, initialDesignAuthorInstruction, initialDesignInvocationLabel, validateInitialDesignInvocation, prepareInitialDesignDraft, initialDesignRequestOptions, readInitialDesignRequest, initialRequestWriteTargets, initialDesignCandidateRejection, type InitialDesignObservation } from './utils/initial-design-delivery';
 import { readOriginalDeliveryActivity, originalDeliveryForManifest } from './utils/delivery-origin';
 import { writeCanonicalComponentClosure } from './check-component-closure';
 import { runChangeUnitProgression, buildChangeUnitGoalHandoff, buildChangeUnitGoalRequest, type ChangeUnitGoalHandoff } from './utils/change-unit-progress-loop';
@@ -3827,10 +3827,10 @@ async function runDetachLauncher(argv: minimist.ParsedArgs, runProbe?: (probe: s
     return 1;
   }
   const feature = raw.feature;
-  const designRequest = !raw.isResume && !raw.dryRun ? resolveDesignDeliveryRequest(argv, projectRoot) : null;
-  if (designRequest?.sessionRef) {
+  const designRequest = !raw.isResume ? resolveDesignDeliveryRequest(argv, projectRoot) : null;
+  if (designRequest && (raw.dryRun || designRequest.sessionRef)) {
     const entry = designDeliveryNextStep({ projectRoot, frameworkRoot: layout.frameworkRoot, feature, ...designRequest });
-    if (entry && entry.type !== 'design_preparation_required') { console.log(JSON.stringify(entry, null, 2)); return 0; }
+    if (entry && (raw.dryRun || entry.type !== 'design_preparation_required')) { console.log(JSON.stringify(entry, null, 2)); return 0; }
   }
   const originalDesign = !raw.dryRun ? findInitialDesignRun({ projectRoot, feature,
     ...(designRequest?.requirement ? { requirement: designRequest.requirement } : {}),
@@ -4381,6 +4381,11 @@ export class GoalPhaseRuntime {
       const priorRunId = argv.resume ?? argv['attach-created'];
       const { projectRoot: root, frameworkRoot } = resolveRuntimeLayout(options, argv);
       if (!this.deliveryParent) warnRetiredModelAlternatives(loadFrameworkLocalConfig(root));
+      if (!this.deliveryParent && argv['dry-run'] && !priorRunId && !argv.help && !argv.h) {
+        const feature = typeof argv.feature === 'string' ? argv.feature : argv.manifest ? resolveRawRunInput(argv as Record<string, unknown>, root).feature : undefined;
+        const next = feature ? designDeliveryNextStep({ projectRoot: root, frameworkRoot, feature, ...resolveDesignDeliveryRequest(argv, root) }) : null;
+        if (next) { console.log(JSON.stringify(next, null, 2)); return 0; }
+      }
       if (!this.deliveryParent && !argv.help && !argv.h && !argv['dry-run'] && !(argv.detach && !argv['detached-child'])) {
         if (guardNestedGoalRunner()) return 1;
         const feature = typeof argv.feature === 'string' ? argv.feature : argv.manifest ? resolveRawRunInput(argv as Record<string, unknown>, root).feature : undefined;
@@ -4732,7 +4737,7 @@ export class GoalPhaseRuntime {
             }
             const violation = validateInitialDesignInvocation(latestPurpose, fs.readFileSync(beforeFile, 'utf8'), output);
             if (violation) return conclude('unauthorized_source_mutation', violation);
-            if (latestPurpose === 'author' && !readInitialDesignRequest(projectRoot, frameworkRoot, manifest) && output && invocationCompleted({ ...latest, exitCode: latest.exit_code })
+            if (latestPurpose === 'author' && latest.phase === 'initial-design-author' && !readInitialDesignRequest(projectRoot, frameworkRoot, manifest) && output && invocationCompleted({ ...latest, exitCode: latest.exit_code })
               && !authorWritePreimages(beforeAuthorInvocation(prior, latest.invoke_id)).size
               && fs.readFileSync(state.blueprintPath, 'utf8') === output) prepareInitialDesignDraft({ projectRoot, blueprintId: manifest.feature,
               sourceRefs: manifest.requirement_source_files?.length ? manifest.requirement_source_files
@@ -4848,7 +4853,7 @@ export class GoalPhaseRuntime {
             }
           }
           catch (error) {
-            const feedback: InitialDesignObservation = { ...observed, kind: 'decompose', issues: [...observed.issues, (error as Error).message] };
+            const feedback = initialDesignCandidateRejection(observed, error, manifest.feature);
             observed = { ...feedback, disposition: readInitialDesignCompletionDisposition({ projectRoot, frameworkRoot, manifest, observation: feedback }) };
           }
         }
@@ -4979,10 +4984,11 @@ export class GoalPhaseRuntime {
         resumeDesignWork = false;
         const invokeId = `${label}-i${spent.calls + 1}`;
         const invocationDir = path.join(runDir, 'phases', label, invokeId);
+        const checkerResultPath = path.join(invocationDir, 'checker-result.json');
         const segments: unknown[] = [];
         const prompt = initialDesignAuthorInstruction({ projectRoot, frameworkRoot, manifest, observation: observed, autonomyAuthorized: automaticDesignRepair,
-          deliveryRuns: 'runs' in spent ? spent.runs : undefined, material: segments })
-          + (observed.disposition ? `\n当前全部未完项（方法不是写权限；原授权及未恢复写入仍有效）：\n${renderCurrentDisposition(observed.disposition)}` : '');
+          deliveryRuns: 'runs' in spent ? spent.runs : undefined, material: segments, checkerResultPath })
+          + (purpose !== 'questioning' && observed.disposition ? `\n当前全部未完项（方法不是写权限；原授权及未恢复写入仍有效）：\n${renderCurrentDisposition(observed.disposition)}` : '');
         const promptFile = path.join(invocationDir, 'prompt.md');
         const beforeBlueprint = fs.existsSync(observed.blueprintPath) ? fs.readFileSync(observed.blueprintPath, 'utf8') : '';
         const resolution = { projectRoot, executionRole: workUnitExecutionRole({ phase: label }, purpose),
@@ -5024,7 +5030,7 @@ export class GoalPhaseRuntime {
             const files = fs.readdirSync(invocationDir);
             if (!actualDir.startsWith(actualRun + path.sep) || path.relative(expectedDir, actualDir) !== ''
               || history().some(event => event.invoke_id === invokeId)
-              || files.some(file => !['prompt.md', 'blueprint-before.yaml'].includes(file)
+              || files.some(file => !['prompt.md', 'blueprint-before.yaml', 'checker-result.json'].includes(file)
                 || !fs.lstatSync(path.join(invocationDir, file)).isFile())) {
               return conclude('execution_scope_unresolved', `设计候选 ${invokeId} 存在已启动或不可核实的原件；保留该目录与原请求，先沿真实调用/工具事实恢复，不覆盖旧guard。`);
             }
@@ -5034,6 +5040,10 @@ export class GoalPhaseRuntime {
           fs.mkdirSync(invocationDir, { recursive: true });
           fs.writeFileSync(promptFile, instruction);
           fs.writeFileSync(path.join(invocationDir, 'blueprint-before.yaml'), beforeBlueprint, { flag: 'wx' });
+          if (purpose === 'questioning') fs.writeFileSync(checkerResultPath, JSON.stringify({
+            blueprint_sha256: createHash('sha256').update(beforeBlueprint).digest('hex'),
+            issues: observed.blueprintIssues ?? [], disposition: observed.disposition,
+          }) + '\n', { encoding: 'utf8', flag: 'wx' });
         } catch (error) {
           return conclude('execution_scope_unresolved', `设计调用准备原件暂不可写：${(error as Error).message}；保留当前成果，恢复该目录访问后明确继续，不覆盖已有调用原件。`);
         }
@@ -5081,7 +5091,7 @@ export class GoalPhaseRuntime {
         if (containmentError && containmentStillAlive) return conclude('agent_containment_unresolved', containmentError);
         if (fs.existsSync(observed.blueprintPath)) fs.writeFileSync(path.join(invocationDir, 'draft-output.yaml'), fs.readFileSync(observed.blueprintPath), { flag: 'wx' });
         emit({ ...invocationEndFacts(result), type: 'agent_invoke_end', phase: label, purpose, invoke_id: invokeId, status: result.status, exit_code: result.exitCode,
-          command: result.command, usage: result.usage,
+          command: result.command,
           duration_ms: result.duration_ms, provider_session_id: result.provider_session_id, interrupted: result.interrupted, nativeSessionRebuildReason: result.nativeSessionRebuildReason, readonly_enforced: result.readonly_enforced, readonly_diagnostic: result.readonly_diagnostic, completion_observed: result.completion_observed, terminal_failure_observed: result.terminal_failure_observed, timed_out: result.timed_out,
           silent_killed: result.silent_killed, skipped: result.skipped, kill_attempted: result.kill_attempted, terminal_error_excerpt: result.terminal_error_excerpt, ...(result.spawn_error ? { spawn_error: result.spawn_error } : {}) });
         if (childExited && !containmentError) emit({ type: 'agent_process_settled', run_id: manifest.run_id, phase: label, invoke_id: invokeId, exit_code: result.exitCode, timed_out: result.timed_out });
@@ -5277,7 +5287,7 @@ export class GoalPhaseRuntime {
     if (containmentError && containmentAlive) return { started: true, ok: false, containmentUnresolved: true, detail: containmentError };
     const post = guard ? capturePhaseInvocationSnapshot(guard.resolution, guard.options) : undefined;
     emit({ ...invocationEndFacts(result), type: 'agent_invoke_end', phase: label, purpose, invoke_id: invokeId, status: result.status, exit_code: result.exitCode, command: result.command,
-      duration_ms: result.duration_ms, usage: result.usage, timed_out: result.timed_out, provider_session_id: result.provider_session_id, interrupted: result.interrupted, nativeSessionRebuildReason: result.nativeSessionRebuildReason, readonly_enforced: result.readonly_enforced, readonly_diagnostic: result.readonly_diagnostic, completion_observed: result.completion_observed, terminal_failure_observed: result.terminal_failure_observed,
+      duration_ms: result.duration_ms, timed_out: result.timed_out, provider_session_id: result.provider_session_id, interrupted: result.interrupted, nativeSessionRebuildReason: result.nativeSessionRebuildReason, readonly_enforced: result.readonly_enforced, readonly_diagnostic: result.readonly_diagnostic, completion_observed: result.completion_observed, terminal_failure_observed: result.terminal_failure_observed,
       silent_killed: result.silent_killed, skipped: result.skipped, kill_attempted: result.kill_attempted,
       terminal_error_excerpt: result.terminal_error_excerpt, ...(result.spawn_error ? { spawn_error: result.spawn_error } : {}) });
     if (childExited && !containmentError) emit({ type: 'agent_process_settled', run_id: manifest.run_id, phase: label, invoke_id: invokeId, exit_code: result.exitCode });
@@ -5640,10 +5650,14 @@ export async function main(options: GoalPhaseRuntimeLaunchOptions = {}): Promise
 
   if (argv.help) {
     console.log(`
-Goal runner — tool-agnostic multi-phase orchestrator
+Goal runner — original request design and construction runtime
 
-  npx ts-node scripts/goal-runner.ts --feature <f> --requirement "<text>" --adapter claude
-    [--start spec] [--end testing] [--dry-run] [--resume <run-id> --feature <f>] [--manifest <file>]
+  From the selected project's framework/harness directory:
+  npx ts-node scripts/goal-runner.ts --feature <original-request-id> --requirement-file "doc/requirements/request.md" --adapter <active-adapter> --detach
+    Requirement paths are relative to --project-root (the selected project), not framework/harness.
+    Fresh full delivery needs no feature.yaml: the same runtime prepares design, independent questioning and real CUs.
+    [--requirement "<text>"] [--dry-run] [--resume <run-id> --feature <f>] [--manifest <file>]
+    --dry-run shows the same next step and known gaps without starting design or a real run.
     [--force-resume] [--override-start] [--override-end] [--override-manifest]
     [--adapter-model <id>]   play the explicit model into headless argv (codex/claude/codeagent/cursor/opencode)
     [--visual-adapter <a> --visual-model <id>]
@@ -5749,9 +5763,12 @@ Goal runner — tool-agnostic multi-phase orchestrator
   const launchFeature = (() => {
     try { return resolveRawRunInput(argv as unknown as Record<string, unknown>, projectRoot).feature; } catch { return undefined; /* 下方同一解析会如实报错 */ }
   })();
-  if (!argv.resume && !attachCreatedRunId && !argv['dry-run'] && !normalizeSupersedeTargets(argv.supersede).length && launchFeature) {
+  if (!argv.resume && !attachCreatedRunId && !normalizeSupersedeTargets(argv.supersede).length && launchFeature) {
     const next = designDeliveryNextStep({ projectRoot, frameworkRoot, feature: launchFeature, ...resolveDesignDeliveryRequest({ ...argv, requirement: argv['requirement-file'] ? undefined : argv.requirement }, projectRoot) });
-    if (next) return new GoalPhaseRuntime(options).run();
+    if (next) {
+      if (argv['dry-run']) { console.log(JSON.stringify(next, null, 2)); return 0; }
+      return new GoalPhaseRuntime(options).run();
+    }
   }
   const publicationResume = options.sessionHandoff && typeof argv.resume === 'string' && launchFeature
     ? (() => {

@@ -66,6 +66,10 @@ export function collectReviewQuestioning(projectRoot: string, blueprint: Bluepri
   for (const round of rounds.sort((a, b) => a.time.localeCompare(b.time) || a.order - b.order)) {
     const author = crypto.createHash('sha256').update(stableStringify(blueprintAuthorContent(round.blueprint))).digest('hex');
     for (const item of asRecords(round.result.items)) {
+      const original = asRecord(item.review_original);
+      if (typeof original?.path === 'string' && !round.originals.some(file =>
+        path.resolve(path.dirname(canonicalPath), file) === path.resolve(projectRoot, original.path as string))) continue;
+      // Merged unchanged items retain their original review episode, rather than becoming fresh approvals.
       const scope = String(item.scope_ref);
       const state = scopes.get(scope) ?? {};
       if (item.disposition === 'blocker') {

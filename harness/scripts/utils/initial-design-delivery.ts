@@ -32,7 +32,7 @@ import { loadEventsJsonlStrict, resolveEffectiveRunEnd } from './goal-runner-pha
 import { acceptedSessionReport, readHandoffMaterial, sessionReportInputPath, sessionExecutionForInvoke, type SessionExecutionReport } from './session-execution-handoff';
 import { readOriginalDeliveryActivity, readOriginalDeliveryRuns, resolveOriginalDeliveryExecution, currentOriginalDelivery, type DeliveryRunFacts } from './delivery-origin';
 import { independentQuestioningBlockers } from './blueprint-questioning';
-import { renderQuestioningResultInstructions } from './blueprint-questioning';
+import { renderQuestioningResultInstructions, selectQuestioningScopes } from './blueprint-questioning';
 import { extractProviderFinalText } from './codex-terminal-events';
 import { invocationCompleted } from './invocation-completion';
 import { dispositionFacts } from './goal-failure-classifier';
@@ -45,6 +45,7 @@ import { resolveCurrentDisposition, type CurrentDisposition, type CurrentDisposi
 import { loadCanonicalComponentClosure } from './component-closure-path';
 import { validateComponentClosure } from './component-closure-validator';
 import { independentVerificationContext } from './verifier-material';
+import { ChangeUnitCandidateRejected } from './change-unit-provider-boundary';
 
 /** The caller places this existing writer outside the native invocation's attribution window. */
 export function prepareInitialDesignDraft(input: {
@@ -390,6 +391,14 @@ export function validateInitialDesignInvocation(purpose: 'author' | 'questioning
 }
 
 /** Observation only; admission, candidate acceptance and P3 writes remain runtime-owned. */
+export function initialDesignCandidateRejection(observed: InitialDesignObservation, error: unknown, rootFeature: string): InitialDesignObservation {
+  const findings = error instanceof ChangeUnitCandidateRejected ? error.designAuthority : undefined;
+  return { ...observed, kind: findings?.length ? 'author' : 'decompose',
+    issues: [...observed.issues, (error as Error).message],
+    ...(findings?.length ? { designRepair: { feature: rootFeature,
+      brief: { class: findings.some(item => item.class === 'B2') ? 'B2' as const : 'B1' as const, items: findings } } } : {}) };
+}
+
 export function readInitialDesignDelivery(input: { projectRoot: string; frameworkRoot?: string; manifest: InitialDesignGoalManifest;
   providerState?: 'available' | 'unavailable' | 'unknown'; questioningCurrent?: boolean; questioningResult?: BlueprintRecord | null }): InitialDesignObservation {
   const blueprintPath = componentBlueprintPath(input.projectRoot, input.manifest.feature);
@@ -495,7 +504,7 @@ export function initialDesignInvocationLabel(observation: InitialDesignObservati
     : `initial-design-${observation.kind === 'questioning' ? 'questioning' : 'author'}`;
 }
 
-function previousDesignWork(input: { projectRoot: string; manifest: InitialDesignGoalManifest; observation: InitialDesignObservation; deliveryRuns?: readonly DeliveryRunFacts[] }): { lines: string[]; questioned: boolean; formatRepair?: boolean } {
+function previousDesignWork(input: { projectRoot: string; manifest: InitialDesignGoalManifest; observation: InitialDesignObservation; deliveryRuns?: readonly DeliveryRunFacts[] }): { lines: string[]; questioned: boolean; formatRepair?: boolean; selectedScopes?: string[] } {
   const directory = path.dirname(input.observation.blueprintPath);
   const files = fs.existsSync(directory) ? fs.readdirSync(directory, { withFileTypes: true })
     .filter(item => item.isFile() && /\.(md|yaml|json)$/.test(item.name)).map(item => path.join(directory, item.name)) : [];
@@ -515,22 +524,31 @@ function previousDesignWork(input: { projectRoot: string; manifest: InitialDesig
       .map(run => ({ run, ...latestUsableDesignQuestioning(path.resolve(input.projectRoot, run.manifest.report_dir), [label], input.projectRoot, run.events) }));
     const usable = available.filter(item => item.original).sort((a, b) => String(a.run.manifest.created_at).localeCompare(String(b.run.manifest.created_at))).at(-1);
     const previous = usable?.original;
+    let selectedScopes: string[] | undefined;
     let actualDiff: import('./types').ContextFileEntry[] | null = null;
     let affectedDependencies: import('./capability-resolution').ResolutionDependency[] = [];
     try {
       const current = loadCanonicalBlueprint(input.projectRoot, input.manifest.feature).blueprint;
-      affectedDependencies = questioningDependencyChanges(input.projectRoot, current, previous?.preSnapshot, input.observation.blueprintPath);
-      if (previous) actualDiff = [{ label: '(actual blueprint changes)', content: JSON.stringify(compareAuthoritativeContent(
-        blueprintAuthorContent(YAML.parse(previous.beforeBlueprint)), blueprintAuthorContent(current)), null, 2) }];
+      affectedDependencies = questioningDependencyChanges(input.projectRoot, current, previous?.preSnapshot, input.observation.blueprintPath, undefined, usable?.result ?? undefined);
+      selectedScopes = selectQuestioningScopes(previous?.beforeDocument, current, usable?.result ?? undefined,
+        affectedDependencies.map(item => path.relative(input.projectRoot, item.path).replace(/\\/g, '/')));
+      if (previous) {
+        const difference = compareAuthoritativeContent(blueprintAuthorContent(YAML.parse(previous.beforeBlueprint)), blueprintAuthorContent(current));
+        actualDiff = [{ label: '(actual blueprint changes)', content: JSON.stringify({ state: difference.state,
+          locations: 'items' in difference ? difference.items.map(item => ({ id: item.id, field: item.field })) : [],
+          before: previous.beforeSource, current: input.observation.blueprintPath }) }];
+      }
     } catch { /* Missing originals retain full first-reading context. */ }
     parts.push(...independentVerificationContext({ previousOriginal: previous
-      ? { label: previous.source, kind: 'path', content: '上轮公开独立质询完整原件；读取全部结论及未闭合项。' } : null,
+      ? { label: previous.source, kind: 'path', content: '上轮独立原件；只定向读取本轮范围的原结论及来源，未变项由机器保留。' } : null,
       actualDiff, affectedDependencies, currentEvidence: [{ label: input.observation.blueprintPath, kind: 'path', content: '当前设计与全部机器缺口；旧run基线不是上次Q前像。' }] })
       .map(entry => `${entry.label}\n${entry.content}`));
-    if (usable?.result) parts.push(`前次未通过的完整质询项（历史线索，必须逐项复核，不是当前结论）：\n${JSON.stringify(asRecords(usable.result.items)
-      .filter(item => item.disposition === 'blocker').map(item => ({ scope_ref: item.scope_ref, question: item.question, answer: item.answer })), null, 2)}`);
+    if (usable?.result) {
+      const relevant = asRecords(usable.result.items).filter(item => selectedScopes?.includes(String(item.scope_ref)));
+      parts.push(`本轮相关旧结论与未决项位置：${previous?.source}。scope=${relevant.map(item => item.scope_ref).join('、')}；依原件定向核实，不复制全部旧回答。`);
+    }
     if (available.some(item => item.unavailable)) parts.push('上次质询未交回可用对象，请按既有格式返回。');
-    return { lines: parts, questioned: !!previous, formatRepair: available.some(item => item.unavailable) };
+    return { lines: parts, questioned: !!previous, selectedScopes, formatRepair: available.some(item => item.unavailable) };
   }
   const previous = runs.filter(run => run.manifest.feature === input.manifest.feature).flatMap(run => run.events
     .filter(event => event.type === 'agent_invoke_end' && event.phase === label && event.invoke_id).map(event => ({ run, event })))
@@ -568,11 +586,11 @@ function questioningReadingInstruction(blueprintPath: string, recheck: boolean, 
   const verification = '正文阅读后再读取以下来源位置、当前YAML/schema及必要源码核源，按当前必答scope完成实质质询；特别核实每个gap.needed_by按真实业务属于当前切片还是受控远期，机器编号不改变原gap.status，仍不明确或原blocker未解除就否定并交作者澄清业务gap；前次结论不能代替本轮核验。';
   material.push(review, verification);
   return `${range}\n${recheck
-    ? '这是修订后的独立复核：按P1 §4/§5收尾顺序，从头通读当前正文，核既有意见、修法直接影响及跨段一致性；需要依据时再定向核相关原文、事实与精确验收。不重做完整八问、全需求/全源码或架构评审，不仅看diff或凭初稿记忆。'
+    ? '这是修订后的独立复核：按P1 §4/§5核本轮指定scope、既有意见、修法直接影响及相关跨段一致性；按变更位置读相关正文，再定向核原文、事实与精确验收。不重做完整八问、全需求/全源码或架构评审，不仅看diff或凭初稿记忆。'
     : '这是首次独立阅读：先只读首屏和上述正文范围，按P1 §5逐题回答八问并定位仍看不懂之处；完成前不读参考区、YAML、需求原文或项目源码，不用作者解释替正文补全含义。'}\n${verification}`;
 }
 
-export function initialDesignAuthorInstruction(input: { projectRoot: string; frameworkRoot: string; manifest: InitialDesignGoalManifest; observation: InitialDesignObservation; autonomyAuthorized: boolean; deliveryRuns?: readonly DeliveryRunFacts[]; material?: unknown[] }): string {
+export function initialDesignAuthorInstruction(input: { projectRoot: string; frameworkRoot: string; manifest: InitialDesignGoalManifest; observation: InitialDesignObservation; autonomyAuthorized: boolean; deliveryRuns?: readonly DeliveryRunFacts[]; material?: unknown[]; checkerResultPath?: string }): string {
   if (input.observation.request) {
     const { request } = input.observation, relative = (file: string) => path.relative(input.projectRoot, file).replace(/\\/g, '/');
     const requestFile = relative(request.prepared.requestFile), reportDir = relative(request.prepared.reportDir);
@@ -612,7 +630,7 @@ export function initialDesignAuthorInstruction(input: { projectRoot: string; fra
     ]),
     `需求原件${questioning ? '位置（正文阅读后核源）' : ''}：${sources}`,
     `固定blueprint_id=${manifest.feature}；产品工程根=${input.projectRoot}；框架根=${frameworkRoot}。`,
-    renderBlueprintFieldResponsibilities(),
+    ...(questioning ? [] : [renderBlueprintFieldResponsibilities()]),
     ...(observation.kind === 'author' ? [`机器分配的当前切片技术标识=${sliceId}。作者只在业务gap.needed_by引用；admission整块（含current_slice和编号）由runtime维护，作者不得写入。`] : []),
     `读取 ${path.join(frameworkRoot, 'skills/project/component-design/SKILL.md')} 及其P1工作流；${questioning ? '工程AGENTS、catalog/glossary/architecture和必要源码在正文阅读后按核源步骤读取。' : '执行前读取工程AGENTS、catalog/glossary/architecture和相关真实源码。'}`,
     `当前准确schema：${schemas.map(name => path.join(frameworkRoot, 'harness/schemas', name)).join('；')}。${questioning ? '正文阅读后核源时' : ''}读取schema原文与相关跨视图检查规则，不猜字段、不复制示例答案。`,
@@ -644,11 +662,12 @@ export function initialDesignAuthorInstruction(input: { projectRoot: string; fra
       : observation.kind === 'author'
         ? '按原始需求与真实工程事实设计当前切片，保留本次必要契约、数据闭环及风险。内部存储契约可direction: internal，不要求制造远程API。不得自写独立questioning；机器admission由runtime派生。'
         : '只在本次签发写集内完成前述候选或范围输入；蓝图设计缺口交原设计责任方，不自行补改蓝图，不扩大当前写集或删除真实义务。',
-    ...(observation.kind === 'questioning' ? renderQuestioningResultInstructions(loadCanonicalBlueprint(input.projectRoot, manifest.feature).blueprint, 'initial-design-questioning') : []),
+    ...(observation.kind === 'questioning' ? renderQuestioningResultInstructions(loadCanonicalBlueprint(input.projectRoot, manifest.feature).blueprint, 'initial-design-questioning', prior.selectedScopes) : []),
     `蓝图位置：${observation.blueprintPath}；候选位置：${observation.candidatesPath}。候选形状为[{providerId,artifact,construction_mapping}]；construction_mapping不含change_unit_ref，由接受方填真实身份。已有CU不重复创建。`,
-    `实际检查命令（cwd=${path.join(frameworkRoot, 'harness')}）：npm run check:component-blueprint -- --project-root "${input.projectRoot}" --blueprint "${manifest.feature}" ${observation.kind === 'author' ? '--write-review ' : ''}--json。检查仍待质询不等于任务停止，报告真实产物/问题后由runtime继续。`,
+    questioning ? `机器checker由原owner已执行；UTF-8结构化结果：${input.checkerResultPath ?? '本提示当前机器缺口'}。读取该结果及必要证据，不自行重复发现命令、重定向、转码或写临时JSON；输入已变化使结果过期时才定向重算。`
+      : `实际检查命令（cwd=${path.join(frameworkRoot, 'harness')}）：npm run check:component-blueprint -- --project-root "${input.projectRoot}" --blueprint "${manifest.feature}" ${observation.kind === 'author' ? '--write-review ' : ''}--json。检查仍待质询不等于任务停止，报告真实产物/问题后由runtime继续。`,
     '完成本职工作后真实报告；作者调用结束不是原始交付完成。runtime负责真实检查、独立质询、CU接受/readiness与后续施工，不要自选阶段或伪造CU身份。',
-    `当前职责=${observation.kind}。问题：\n${observation.issues.join('\n')}`,
+    `当前职责=${observation.kind}。${questioning && input.checkerResultPath ? `当前机器缺口见 ${input.checkerResultPath}。` : `问题：\n${observation.issues.join('\n')}`}`,
   ];
   // Historical prose is reading context; candidates and actual dependencies are observed separately.
   input.material?.push(...parts.filter(part => !prior.lines.includes(part)).map(part =>
@@ -667,6 +686,8 @@ export interface InitialDesignDeliveryProjection {
   current?: { feature: string; run_id?: string; phase?: string; deadline?: string };
   issues: string[];
   activity: { calls: number; active_ms: number };
+  last_invocation?: { invoke_id: string; phase?: string; call_status: string; result_usable: boolean | null;
+    questioning?: { blockers: number; open_decisions: number; source: string } };
   current_disposition: CurrentDisposition;
   next_action: string;
   /** Read-only cursor across this request's original and origin-bound run events. */
@@ -726,6 +747,23 @@ export function projectInitialDesignDelivery(input: { projectRoot: string; frame
   const currentInvoke = [...execution.events].reverse().find(event => event.type === 'agent_invoke_start'
     && !execution.events.some(end => end.type === 'agent_invoke_end' && end.invoke_id === event.invoke_id));
   const currentPhase = pending?.request.context.phase ?? currentInvoke?.phase;
+  const lastEnd = [...execution.events].reverse().find(event => event.type === 'agent_invoke_end' && event.invoke_id);
+  let lastInvocation: InitialDesignDeliveryProjection['last_invocation'];
+  if (lastEnd?.invoke_id) {
+    lastInvocation = { invoke_id: lastEnd.invoke_id, ...(lastEnd.phase ? { phase: String(lastEnd.phase) } : {}),
+      call_status: String(lastEnd.status ?? 'unknown'), result_usable: null };
+    if (String(lastEnd.phase).includes('questioning')) {
+      const usable = latestUsableDesignQuestioning(execution.runDir, [String(lastEnd.phase)], projectRoot, execution.events);
+      const matches = usable.original?.invokeId === lastEnd.invoke_id;
+      lastInvocation.result_usable = matches && !!usable.result;
+      if (matches && usable.result && usable.original) {
+        const items = asRecords(usable.result.items);
+        lastInvocation.questioning = { blockers: items.filter(item => item.disposition === 'blocker').length,
+          open_decisions: items.filter(item => item.disposition === 'open_decision').length,
+          source: path.relative(projectRoot, usable.original.source).replace(/\\/g, '/') };
+      }
+    }
+  }
   const executing = !!pending || !!currentInvoke || execution.control?.owner?.state === 'active';
   const complete = end?.status === 'COMPLETED' && currentDisposition.completionEligible;
   const stage = observed.kind === 'scope' || complete ? 'construction' : observed.kind;
@@ -741,6 +779,7 @@ export function projectInitialDesignDelivery(input: { projectRoot: string; frame
     issues: currentDisposition.reasons,
     current_disposition: currentDisposition,
     activity: { calls: activity.calls, active_ms: activity.active_ms },
+    ...(lastInvocation ? { last_invocation: lastInvocation } : {}),
     next_action: complete ? 'delivery_completed' : pending ? 'execute_signed_request' : active ? 'resume_active' : stage,
     event_count: activity.events.length,
   };

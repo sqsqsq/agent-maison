@@ -1,0 +1,14 @@
+{
+  "outcome": {
+    "preSnapshot": {
+      "sha256": "e6d407843fefdae8e3b88fae50657fb9ccffdd5785ec59924dfa45ffc8c06f78",
+      "entries": [],
+      "failureReason": null
+    },
+    "postSnapshot": {
+      "sha256": "e6d407843fefdae8e3b88fae50657fb9ccffdd5785ec59924dfa45ffc8c06f78",
+      "entries": [],
+      "failureReason": null
+    }
+  }
+}

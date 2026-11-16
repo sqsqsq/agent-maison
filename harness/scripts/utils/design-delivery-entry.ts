@@ -67,9 +67,12 @@ export function designDeliveryNextStep(input: {
   const requirementArguments = input.requirementSourceFiles?.length === 1
     ? ['--requirement-file', input.requirementSourceFiles[0]]
     : ['--requirement', input.requirement ?? ''];
+  const unknown = !managed && intake?.policy.selected === 'unknown'
+    ? '档位未知，按完整设计推进；如属小改，可先完整读取相关来源，把七项按下列例句发在正常可见助手文本，再调用同一入口；勿等最后总结。值和路径须按本请求实际调研替换：“Q1=否，Q2=否，Q3=否，依赖结果=否，跨部件=否，预期明确=是，做法唯一=否。依据：<已读需求相对路径>、<已读源码相对路径>。”无需等待用户或自动重调。'
+    : '';
   return {
     type: 'design_preparation_required' as const, feature,
-    reason: '原始完整交付应先进入同一Goal runtime受管设计；施工仍等待真实蓝图、独立质询与CU准入，候选文件不能代替初始设计。',
+    reason: unknown + '原始完整交付应先进入同一Goal runtime受管设计；施工仍等待真实蓝图、独立质询与CU准入，候选文件不能代替初始设计。',
     materials: { requirement: input.requirement, requirement_source_files: input.requirementSourceFiles ?? [], features_dir: relFeaturesDir(projectRoot),
       ...(intake ? { session_ref: intake.session_ref } : {}) },
     next: '以原请求调用既有prepare-run/next或goal-runner启动同一runtime，持续到原终点。prepare-scope本次只投影入口、不写平面候选；以下设计及CU步骤由runtime消费，不交回主Agent手工串接。',

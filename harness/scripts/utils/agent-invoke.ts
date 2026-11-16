@@ -18,7 +18,7 @@ import {
 } from './headless-binary-resolve';
 import { MAISON_GOAL_HEADLESS_ENV, MAISON_GOAL_MODEL_PIN_ENV, applyGoalModelPinEnv } from './phase-state';
 import { deleteEnvKeyCaseInsensitive, sanitizeSpawnEnv, stripTrustAnchorEnv } from './process-integrity';
-import { deriveInvokeUsage, type AgentInvokeUsage, type UsageCaptureMethod } from './usage-capture';
+import { createDshUsageCapture, deriveInvokeUsage, type AgentInvokeUsage, type UsageCaptureMethod } from './usage-capture';
 import { parseEnvelopeLine } from './claude-envelope';
 import { parseAdapterModelBinding, assertModelReplay, dshModelSource, dshModelHome, openCodeModelHome, verifyOpenCodeModelConfig, verifyNativeModelCatalogue, nativeOpenCodeModelMismatch, assertClaudeModelRoute, modelMismatch, observedMainModel, verifyDshModelConfig, nativeDshModelMismatch, nativeCodexSessionFile, nativeCodexModelMismatch } from './adapter-model';
 import {
@@ -1451,6 +1451,7 @@ async function spawnHeadlessAsync(
   // One structured scanner publishes native identity and terminal facts without interpreting model prose.
   let modelBindingMismatch: string | undefined;
   let nativeTurn: unknown;
+  const dshUsage = plan.adapterName === 'deepseek-harness' ? createDshUsageCapture() : undefined;
   let nativeWatcher: fs.FSWatcher | undefined, nativeWatchingClosed = false;
   const expectedModel = parseAdapterModelBinding(plan.adapterName ?? 'generic', plan.modelBinding);
   const terminalHooks: { onCompleted?: () => void; onFailed?: () => void } = {};
@@ -1460,6 +1461,7 @@ async function spawnHeadlessAsync(
           onCompleted: () => terminalHooks.onCompleted?.(),
           onFailed: () => terminalHooks.onFailed?.(),
           onRecord: (record) => {
+            dshUsage?.observe(record);
             if (plan.adapterName === 'deepseek-harness' && record.type === 'status' && record.phase === 'turn_start') nativeTurn = record.turn;
             checkNativeModel();
             if (expectedModel && !modelBindingMismatch) {
@@ -1781,7 +1783,7 @@ async function spawnHeadlessAsync(
     kill_exit_code: killResult.kill_exit_code,
     kill_error: killResult.kill_error,
     // usage 是旁路事实：按声明采集，失败降 proxy，不影响主流程
-    usage: deriveInvokeUsage(opts.usageCapture, stdout, stderr),
+    usage: dshUsage ? dshUsage.result() : deriveInvokeUsage(opts.usageCapture, stdout, stderr),
   };
 }
 

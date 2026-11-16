@@ -1,0 +1,79 @@
+{
+  "blueprint_id": "bc-openCard-2",
+  "component_id": "bc-openCard-2",
+  "review_summary": {},
+  "design_views": [
+    {
+      "view_id": "logical",
+      "applicability": "applicable",
+      "evolution_impact": "changed",
+      "runtime_data_flows": []
+    },
+    {
+      "view_id": "runtime",
+      "applicability": "applicable",
+      "evolution_impact": "changed",
+      "runtime_data_flows": [
+        {
+          "flow_id": "flow-card-open-run"
+        }
+      ]
+    },
+    {
+      "view_id": "development",
+      "applicability": "applicable",
+      "evolution_impact": "changed",
+      "runtime_data_flows": []
+    },
+    {
+      "view_id": "deployment",
+      "applicability": "applicable",
+      "evolution_impact": "changed",
+      "runtime_data_flows": []
+    },
+    {
+      "view_id": "scenarios",
+      "applicability": "applicable",
+      "evolution_impact": "changed",
+      "runtime_data_flows": []
+    }
+  ],
+  "relations": [
+    {
+      "relation_id": "rel-bank-catalog-realized"
+    },
+    {
+      "relation_id": "rel-card-catalog-realized"
+    },
+    {
+      "relation_id": "rel-card-record-realized"
+    },
+    {
+      "relation_id": "rel-open-session-realized"
+    },
+    {
+      "relation_id": "rel-home-state-realized"
+    },
+    {
+      "relation_id": "rel-flow-realized"
+    },
+    {
+      "relation_id": "rel-scenario-realized"
+    },
+    {
+      "relation_id": "rel-app-deployed"
+    },
+    {
+      "relation_id": "rel-rdb-deployed"
+    }
+  ],
+  "discovery": {
+    "inputs": {
+      "current_scope_items": [
+        {
+          "item_id": "requirement:bb42ca1ee40aa012040295a2f98f8ee5e4d0cc7331d11b91a3fb19a02dd20814"
+        }
+      ]
+    }
+  }
+}

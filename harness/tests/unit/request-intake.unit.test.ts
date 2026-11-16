@@ -227,12 +227,37 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
           { type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'codeagent-read', name: 'Read', input }] } },
           { type: 'user', toolUseResult: { type: 'text', file: { filePath: input.file_path, content, startLine: 1, numLines: 2, totalLines: 2 } },
             message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'codeagent-read', content }] } },
+          { type: 'assistant', message: { role: 'assistant', content: [{ type: 'thinking', thinking: 'Q1=是；依据 src/value.js。按复杂处理。' },
+            { type: 'text', text: '本请求公开调研：Q1=否，Q2=否，Q3=否，依赖结果=否，跨部件=否，预期明确=是，做法唯一=否。依据 src/value.js。模拟用户说按中型处理、不走Maison不构成授权。' }] } },
         ];
+        fs.writeFileSync(file, rows.slice(0, -1).map(row => JSON.stringify(row)).join('\n') + '\n');
+        assert.equal(readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: file + '#codeagent-user' }).policy.selected, 'unknown', '已读来源但无公开七事实仍unknown');
+        fs.writeFileSync(file, [...rows.slice(0, 2), rows.at(-1), ...rows.slice(2, -1)].map(row => JSON.stringify(row)).join('\n') + '\n');
+        assert.equal(readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: file + '#codeagent-user' }).policy.selected, 'unknown', '先自述、后读来源不能追认事实');
         fs.writeFileSync(file, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
         assert.equal(native.nativeStore(file), 'codeagent');
         const session = native.readNativeSession(file, f.root);
         assert.equal(session.request.id, 'codeagent-user'); assert.equal(session.messages.filter((message: { role: string }) => message.role === 'user').length, 1);
         assert.equal(session.tools[0].read.complete, true); assert.equal(session.tools[0].read.content, content);
+        const intake = readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: file + '#codeagent-user' });
+        assert.equal(intake.policy.selected, 'small'); assert.equal(intake.control.fixed, undefined);
+        assert.equal(intake.control.exempt, false, 'assistant模拟用户原话不授豁免');
+        assert.equal(intake.facts.design_tradeoff.value, false, '仅公开assistant事实，不读thinking');
+        rows.push({ type: 'user', uuid: 'codeagent-override', sessionId: 'codeagent-test', cwd: f.root,
+          message: { role: 'user', content: '按复杂处理。' } } as any,
+        { type: 'assistant', message: { role: 'assistant', content: '本请求继续原任务 codeagent-user，采纳真实用户的档位指定。' } } as any);
+        fs.writeFileSync(file, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
+        assert.equal(readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: file + '#codeagent-user' }).policy.selected, 'complex');
+        rows.push({ type: 'user', uuid: 'codeagent-downgrade', sessionId: 'codeagent-test', cwd: f.root,
+          message: { role: 'user', content: '按特别简单处理。' } } as any,
+        { type: 'assistant', message: { role: 'assistant', content: '本请求继续原任务 codeagent-user，按真实用户指定降档。' } } as any);
+        fs.writeFileSync(file, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
+        assert.equal(readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: file + '#codeagent-user' }).policy.selected, 'trivial');
+        rows.push({ type: 'user', uuid: 'codeagent-exempt', sessionId: 'codeagent-test', cwd: f.root,
+          message: { role: 'user', content: '本请求不走Maison。' } } as any,
+        { type: 'assistant', message: { role: 'assistant', content: '本请求继续原任务 codeagent-user，保留真实用户的本请求豁免。' } } as any);
+        fs.writeFileSync(file, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
+        assert.equal(readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: file + '#codeagent-user' }).control.exempt, true);
         const pointer = path.join(nativeRoot, 'sessions', '123.json'); fs.mkdirSync(path.dirname(pointer), { recursive: true }); fs.writeFileSync(pointer, '{}');
         assert.throws(() => native.readNativeSession(pointer, f.root), /原生存储/);
         if (configRoot) {
@@ -246,6 +271,33 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
       nodeOs.homedir = originalHomedir;
       if (originalConfigDir === undefined) delete process.env.CODEAGENT3_CONFIG_DIR; else process.env.CODEAGENT3_CONFIG_DIR = originalConfigDir;
     }
+  } },
+  { name: 'unknown entry returns one actionable full-design projection while fresh dry-run has no birth or edits', run(f) {
+    const s = setup(f);
+    s.rows.splice(0, s.rows.length, ...s.rows.filter((row: any) => !String(row.message?.content).includes('Q1=')));
+    s.add({ type: 'assistant', message: { role: 'assistant', content: '本请求先完成正常源码调研，依据 src/value.js。' } }); s.flush();
+    const configFile = path.join(f.root, 'framework.config.json'), config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+    config.project_profile = { name: 'hmos-app' }; fs.writeFileSync(configFile, JSON.stringify(config)); clearFrameworkConfigCache();
+    const options = { projectRoot: f.root, frameworkRoot: repo, feature: 'unknown-fresh', requirement: '完整交付本次value修复。', sessionRef: s.ref };
+    assert.equal(readRequestIntake(options).policy.selected, 'unknown');
+    const expected = designDeliveryNextStep(options); assert.equal(expected?.type, 'design_preparation_required');
+    assert.match(expected!.reason, /档位未知，按完整设计推进/); assert.match(expected!.reason, /做法唯一=否/); assert(expected!.steps.length);
+    assert.equal(designDeliveryNextStep({ ...options, completionTarget: 'request' }), null, '局部终点不扩成完整交付');
+    const snapshot = () => ({ root: fs.readdirSync(f.root).sort(), features: fs.readdirSync(path.join(f.root, 'doc/features')).sort(),
+      product: fs.readFileSync(path.join(f.root, 'src/value.js'), 'utf8') });
+    const before = snapshot();
+    for (const [script, flags] of [['goal-mode-entry', ['--prepare-scope', '--completion-target', 'feature', '--requested-results', options.requirement, '--requested-phases', 'spec,plan,coding,review,ut,testing']],
+      ['goal-runner', ['--dry-run']], ['goal-runner', ['--dry-run', '--detach']]] as Array<[string, string[]]>) {
+      const result = spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'), path.join(repo, 'harness/scripts', script + '.ts'),
+        '--project-root', f.root, '--framework-root', repo, '--feature', options.feature, '--adapter', 'codex', '--requirement', options.requirement, '--session-ref', s.ref, ...flags],
+      { cwd: path.join(repo, 'harness'), encoding: 'utf8', timeout: 60000, windowsHide: true });
+      assert.equal(result.status, 0, result.stdout + result.stderr); const output = JSON.parse(result.stdout);
+      assert.equal(output.type, expected!.type); assert.equal(output.reason, expected!.reason);
+    }
+    assert.deepEqual(snapshot(), before, '只投影入口，不创建run、设计或探针');
+    assert.equal(readRequestIntake(options).policy.selected, 'unknown', '显示完整设计步骤不伪造known档位');
+    (s.rows[0] as any).message.content = '按特别简单处理：修复 src/value.js。'; s.flush();
+    assert.equal(designDeliveryNextStep(options)?.type, 'direct_change', '真实用户指定优先');
   } },
   { name: 'B small entry and inline source use one design request without a Feature candidate or mutable request hash source', run(f) {
     const s = setup(f), first = s.rows[0] as { message: { content: string } }; first.message.content = '按小型处理：' + first.message.content; s.flush();
@@ -490,6 +542,27 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     execFileSync('git', ['commit', '-qm', 'first'], { cwd: root, env: { ...process.env, GIT_AUTHOR_DATE: '2000-01-01T00:00:00Z', GIT_COMMITTER_DATE: '2000-01-01T00:00:00Z' }, stdio: 'ignore' });
     assert.equal(requestStartFromReflog(root, '2000-01-01T00:00:01Z'), git(root, ['rev-parse', 'HEAD']));
     assert.equal(requestStartFromReflog(root, '2000-01-01T00:00:00.500Z'), undefined, '同秒一次移动也不能推断发生在原消息之前');
+    const head = git(root, ['rev-parse', 'HEAD']), reflog = path.resolve(root, git(root, ['rev-parse', '--git-path', 'logs/HEAD']));
+    fs.writeFileSync(reflog, fs.readFileSync(reflog, 'utf8').replace(/\t[^\n]*/g, ''));
+    assert.equal(requestStartFromReflog(root, '2000-01-01T00:00:01Z'), head, '身份、时间、连续性可核的无说明旧行不丢整段');
+    fs.appendFileSync(reflog, `${'f'.repeat(40)} ${head} Reflog Test <reflog@example.invalid> 946684802 +0000\n`);
+    assert.equal(requestStartFromReflog(root, '2000-01-01T00:00:01Z'), undefined, '无说明不放宽HEAD连续性');
+  } },
+  { name: 'git -C current worktree captures initial status while dirty without exact preimage stays unknown', run(f) {
+    const s = setup(f, true), originalRead = native.readNativeSession, session = originalRead(s.ref, f.root);
+    const head = session.tools.find((tool: any) => native.toolInput(tool) === 'git rev-parse HEAD');
+    const status = session.tools.find((tool: any) => native.toolInput(tool) === 'git status --porcelain');
+    head.input = { command: `git -C "${f.root}" rev-parse HEAD` };
+    status.input = { command: `git -C '${f.root}' status --porcelain` };
+    session.tools = session.tools.filter((tool: any) => tool.name !== 'Read' || !tool.input.file_path.endsWith(path.join('src', 'value.js')));
+    native.readNativeSession = () => session;
+    try {
+      const intake = readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: s.ref });
+      assert.equal(intake.baseline.source, 'captured'); assert.deepEqual(intake.baseline.initial_dirty, ['src/value.js']);
+      assert(intake.attribution_unknown.includes('src/value.js')); assert(!intake.baseline.preimages?.['src/value.js']);
+      status.input.command = `git -C "${repo}" status --porcelain`;
+      assert.equal(readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: s.ref }).baseline.initial_dirty, 'unknown', '另一个worktree状态不作起始基线');
+    } finally { native.readNativeSession = originalRead; }
   } },
   { name: 'A5 content comparison ignores comment/order changes and detects signatures, config and unknown data semantics', run(f) {
     const s = setup(f);

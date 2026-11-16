@@ -1,0 +1,6 @@
+{"type":"session","sessionId":"session-i12"}
+{"type":"status","phase":"step_end","turn":6,"step":1,"usage":{"inputTokens":5614,"outputTokens":2356,"cacheReadTokens":747264}}
+{"type":"status","phase":"step_end","turn":6,"step":2,"usage":{"inputTokens":2635,"outputTokens":2006,"cacheReadTokens":752768}}
+{"type":"status","phase":"step_end","turn":6,"step":3,"usage":{"inputTokens":2194,"outputTokens":895,"cacheReadTokens":755328}}
+{"type":"status","phase":"step_end","turn":6,"step":4,"usage":{"inputTokens":992,"outputTokens":1519,"cacheReadTokens":757504}}
+{"type":"status","phase":"step_end","turn":6,"step":5,"usage":{"inputTokens":1722,"outputTokens":1945,"cacheReadTokens":758400}}

@@ -1,7 +1,8 @@
 # {{AGENT_ENTRY_FILE}} — {{PROJECT_NAME}}（{{PROJECT_TYPE_LABEL}}）全局指令
 
-> 由 `framework/skills/project/framework-init` 基于 `framework/templates/AGENTS.md.template` 实例化生成，是本工程所有 AI coding agent 的**全局系统指令**。
-> 每次对话开始：先读完这里的全局约束，再按当前任务跳到对应 Skill 执行。**这里只列清单，不复述细节**——展开文本见 [framework/skills/reference/agents-entry-detail.md](framework/skills/reference/agents-entry-detail.md)（条件加载：需要某条红线的完整判据文本时读）。
+> 由 `framework/skills/project/framework-init` 基于 `framework/templates/AGENTS.md.template` 实例化生成，是本工程所有 AI coding agent 的**全局系统指令**。每次对话开始：先读完这里的全局约束，再按当前任务跳到对应 Skill 执行。**这里只列清单，不复述细节**——展开文本见 [framework/skills/reference/agents-entry-detail.md](framework/skills/reference/agents-entry-detail.md)（条件加载：需要某条红线的完整判据文本时读）。
+
+**产品修改先后顺序**：先完整读取[统一前门](framework/docs/operations/project-entry.md)及本请求需求与源码，在**首次选路、设计写入或产品写入前**把七项发在正常可见助手文本，例如：“Q1=否，Q2=否，Q3=否，依赖结果=否，跨部件=否，预期明确=是，做法唯一=否。依据：<已读需求相对路径>、<已读源码相对路径>。”值和路径须按实际已读来源替换；内部思考、工具参数和最后总结不代替这次说明。随后按 §4.0 进入对应准备/准入：特别简单直接修改，不新增分类命令；小型先完成同协议短设计；中型/复杂的新完整交付先由既有 Goal 路径取得 admitted 设计与真实 CU 准入，再按有效范围施工。已公开七项、发现历史实现或已有短蓝图都不代替 CU 准入。真实用户覆盖、仅设计/局部终点、已有 run 与 unknown 仍按统一前门及原请求边界处理。
 
 ## 一、基础信息
 
@@ -45,7 +46,7 @@
 
 ### 4.0 需求路由（统一前门与请求终点）
 
-所有产品修改默认先完整读取根入口及 [统一入口规则](framework/docs/operations/project-entry.md)，普通自然语言、维护、补测试同样适用；只有真实用户明确豁免才跳过。先答本轮**范围**与**验收语义**两问；「不改实现」只回答范围，不免除验收语义。判类前**先查已有依据**（既有 acceptance、蓝图、[{{MODULE_CATALOG_PATH}}]({{MODULE_CATALOG_PATH}})、约束知识及源码），查到即复用并写明引用；查完仍存在影响断言或交付的语义缺口时，**只就该缺口**问用户。首轮正常调研提供有来源的 Q1/Q2/Q3、独立结果依赖、跨部件、预期明确与做法唯一事实，首次产品修改前一句话解释初判；机器从事实派生外框，不能只填档位名，不新增分类命令/模型/表单/确认，不按行数或文件数分类。规则、判例、用户覆盖与 unknown 恢复只维护在统一入口。支持的编辑 hook 只证明同会话规则已加载，不保证逐请求语义；Shell/脚本/场外进程/未覆盖工具有盲区，无 hook 依指引及能力调用后验，真实能力见 [adapter 说明](framework/agents/README.md#前门规则与真实客户端证据)。用户可升/降档、限定验证；真实 user 原文及请求边界优先，assistant 转述/引用/代码块不授豁免。默认豁免限本请求与续作，新请求恢复 Maison；明确本会话豁免才扩大，撤销即恢复。无固定选择仅新依据或有据纠错能双向调整，保留代码、有效证据及真实 FAIL；未执行不作 PASS，权限/秘密/不可逆动作/硬预算沿原边界。
+所有产品修改默认消费开头的前门顺序，普通自然语言、维护、补测试同样适用；只有真实用户明确豁免才跳过。先答本轮**范围**与**验收语义**两问；「不改实现」只回答范围，不免除验收语义。判类前**先查已有依据**（既有 acceptance、蓝图、[{{MODULE_CATALOG_PATH}}]({{MODULE_CATALOG_PATH}})、约束知识及源码），查到即复用并写明引用；查完仍存在影响断言或交付的语义缺口时，**只就该缺口**问用户。机器从事实派生外框，不能只填档位名，不新增分类命令/模型/表单/确认，不按行数或文件数分类。规则、判例、用户覆盖与 unknown 恢复只维护在[统一入口规则](framework/docs/operations/project-entry.md)。支持的编辑 hook 只证明同会话规则已加载，不保证逐请求语义；Shell/脚本/场外进程/未覆盖工具有盲区，无 hook 依指引及能力调用后验，真实能力见 [adapter 说明](framework/agents/README.md#前门规则与真实客户端证据)。用户可升/降档、限定验证；真实 user 原文及请求边界优先，assistant 转述/引用/代码块不授豁免。默认豁免限本请求与续作，新请求恢复 Maison；明确本会话豁免才扩大，撤销即恢复。无固定选择仅新依据或有据纠错能双向调整，保留代码、有效证据及真实 FAIL；未执行不作 PASS，权限/秘密/不可逆动作/硬预算沿原边界。新完整开发请求返回 unknown 时，按入口给出的完整设计步骤继续；同一作者可在启动前补事实后调用同一入口，不等待用户、不新增分类轮次。仅设计、局部验证、真实用户指定与已有 run 仍沿原终点。
 
 **按外框交付**：特别简单直接修改，无新增设计文件/CU；小型在同一路径/协议写短蓝图，只保留改动点、可检验验收、已知文件和必要局部选择，不建 CU、不派独立设计质询、不产独立评审文件。中型/复杂及已有 CU 保留完整设计/准入；已有明确映射由原 writer 复用/生成，不为转录再跑 plan。新事实可使短蓝图原位扩充完整设计，用户固定外框不自动加重；在途真实用户调整沿原 run 的范围修订核源，保留历史 CU/成果/FAIL，不拆 request 清账。各档依最终内容补接口、路由、持久化、金额/幂等及架构等适用验证；注释/排版不按路径误触发逻辑专项，编译绿不代表其它专项已跑。
 
@@ -103,9 +104,7 @@
 
 ## 五、当前事实与完成判定
 
-检查、独核和输入绑定沿原writer保真。readCurrentDispositionInput / resolveCurrentDisposition是唯一当前处置，status/progress/NEXT/完成及release只读同一结果；本次已有currentResults/disposition直接透传。FAIL/unknown/缺正式原件不签完成，events中的COMPLETED或作者退出0也不能替代业务依据。完整原请求还需其真实Feature/CU/部件终点；普通完成与发布就绪分别投影。
-
-跨会话先接原run和原请求；有效结果复用，同条件等待不重派，真实条件变化后只补受影响部分。原生SID失效则重建专用上下文并披露。原用户截止不重置，取消/设备/写保护及真实调用结束继续有效。
+检查、独核和输入绑定沿原writer保真。readCurrentDispositionInput / resolveCurrentDisposition是唯一当前处置，status/progress/NEXT/完成及release只读同一结果；本次已有currentResults/disposition直接透传。FAIL/unknown/缺正式原件不签完成，events中的COMPLETED或作者退出0也不能替代业务依据。完整原请求还需其真实Feature/CU/部件终点；普通完成与发布就绪分别投影。跨会话先接原run和原请求；有效结果复用，同条件等待不重派，真实条件变化后只补受影响部分。原生SID失效则重建专用上下文并披露。原用户截止不重置，取消/设备/写保护及真实调用结束继续有效。
 
 ## 六、与用户交互的硬性规则
 

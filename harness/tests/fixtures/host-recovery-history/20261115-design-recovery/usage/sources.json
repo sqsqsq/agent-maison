@@ -1,0 +1,256 @@
+{
+  "boundary": "Read-only extraction of ended i1-i14. Only native step_end identity and input/output/cache-read counters remain; session IDs replaced one-to-one. No public text or machine paths retained.",
+  "source_run": "20261115T073957Z-e7af8c",
+  "sources": [
+    {
+      "invocation": 1,
+      "source": "initial-design-author/initial-design-author-i1/agent-events.jsonl",
+      "source_sha256": "af97176236a40ad23acb42d668893822a5a96a526053289254ce202a573de9ff",
+      "fixture": "i1.jsonl",
+      "fixture_sha256": "fdb4ca6688379c6ec6c226bb5e9c21bede0a1523e6d6ca7ace0c3886f4a45c22",
+      "usage": {
+        "input_tokens": 421122,
+        "output_tokens": 139947,
+        "tool_tokens": null,
+        "requests": 142,
+        "cost_estimate": null,
+        "capture_method": "stdout_json",
+        "confidence": "measured",
+        "observed_cache_read_tokens": 38997120,
+        "missing_reason": "已观测step_end缺少cacheReadTokens（仅合计已观测部分，非完整缓存总数）；缺失值不推断"
+      }
+    },
+    {
+      "invocation": 2,
+      "source": "initial-design-questioning/initial-design-questioning-i2/agent-events.jsonl",
+      "source_sha256": "3a926873e28f8a9f30dd7c8b4e86c0662a5696be82cf5d42609dd4ed2b13d20e",
+      "fixture": "i2.jsonl",
+      "fixture_sha256": "9159c663bf53c0bc6d4a6d6a03a06d00b98cf1c93181ec07aebc8d9b7a15ba7a",
+      "usage": {
+        "input_tokens": 317143,
+        "output_tokens": 87889,
+        "tool_tokens": null,
+        "requests": 56,
+        "cost_estimate": null,
+        "capture_method": "stdout_json",
+        "confidence": "measured",
+        "observed_cache_read_tokens": 9087104,
+        "missing_reason": "已观测step_end缺少cacheReadTokens（仅合计已观测部分，非完整缓存总数）；缺失值不推断"
+      }
+    },
+    {
+      "invocation": 3,
+      "source": "initial-design-questioning/initial-design-questioning-i3/agent-events.jsonl",
+      "source_sha256": "a201d09eb796633e01a24c9410cde738b37cbe427d9d4a4cea8ea2b9cc101a81",
+      "fixture": "i3.jsonl",
+      "fixture_sha256": "beb029b768eef30a4edcef3cebf495b42cc69a5c06de19c974998e5a34fa702e",
+      "usage": {
+        "input_tokens": 307058,
+        "output_tokens": 104814,
+        "tool_tokens": null,
+        "requests": 84,
+        "cost_estimate": null,
+        "capture_method": "stdout_json",
+        "confidence": "measured",
+        "observed_cache_read_tokens": 15521664
+      }
+    },
+    {
+      "invocation": 4,
+      "source": "initial-design-author/initial-design-author-i4/agent-events.jsonl",
+      "source_sha256": "e20c68acca4e038cef669ce179c07ec0f09eb2b3457e0322c512d350c9293b3b",
+      "fixture": "i4.jsonl",
+      "fixture_sha256": "e88703859bdc3f5b332c5b8d2124723c47955c1f2afabae74e6ee734c5f1a10d",
+      "usage": {
+        "input_tokens": 125700,
+        "output_tokens": 56014,
+        "tool_tokens": null,
+        "requests": 88,
+        "cost_estimate": null,
+        "capture_method": "stdout_json",
+        "confidence": "measured",
+        "observed_cache_read_tokens": 42585472,
+        "missing_reason": "已观测step_end缺少cacheReadTokens（仅合计已观测部分，非完整缓存总数）；缺失值不推断"
+      }
+    },
+    {
+      "invocation": 5,
+      "source": "initial-design-questioning/initial-design-questioning-i5/agent-events.jsonl",
+      "source_sha256": "135e2cff6e16e38deef28af39d4335587c09c332f983802c8fd3ddc5ce428d30",
+      "fixture": "i5.jsonl",
+      "fixture_sha256": "92ba197b2bd45d07e4a83aba33ef296f542735ceddeaa7c81efc8c9b4f89d9b8",
+      "usage": {
+        "input_tokens": 420363,
+        "output_tokens": 74622,
+        "tool_tokens": null,
+        "requests": 63,
+        "cost_estimate": null,
+        "capture_method": "stdout_json",
+        "confidence": "measured",
+        "observed_cache_read_tokens": 19223296,
+        "missing_reason": "已观测step_end缺少cacheReadTokens（仅合计已观测部分，非完整缓存总数）；缺失值不推断"
+      }
+    },
+    {
+      "invocation": 6,
+      "source": "initial-design-questioning/initial-design-questioning-i6/agent-events.jsonl",
+      "source_sha256": "92cc0313478dcc78ea1ebf127692bdc3da6d48eac82e4c43b71287de1865431b",
+      "fixture": "i6.jsonl",
+      "fixture_sha256": "1295346f243e8500788e9a43c56bb8594b0834cc1b4b4354c81e437054977ad9",
+      "usage": {
+        "input_tokens": 240345,
+        "output_tokens": 67330,
+        "tool_tokens": null,
+        "requests": 54,
+        "cost_estimate": null,
+        "capture_method": "stdout_json",
+        "confidence": "measured",
+        "observed_cache_read_tokens": 11761280
+      }
+    },
+    {
+      "invocation": 7,
+      "source": "initial-design-author/initial-design-author-i7/agent-events.jsonl",
+      "source_sha256": "c5354073607d20c161c401eb352a475a3ee59be9eb49f9a9ad73a63ccdfc02fd",
+      "fixture": "i7.jsonl",
+      "fixture_sha256": "6d54f2a2c6930b5642ac63334cd5d62ddd0e6a2197b0f51c00efb3f00e102d54",
+      "usage": {
+        "input_tokens": 94269,
+        "output_tokens": 39557,
+        "tool_tokens": null,
+        "requests": 91,
+        "cost_estimate": null,
+        "capture_method": "stdout_json",
+        "confidence": "measured",
+        "observed_cache_read_tokens": 53648000
+      }
+    },
+    {
+      "invocation": 8,
+      "source": "initial-design-questioning/initial-design-questioning-i8/agent-events.jsonl",
+      "source_sha256": "ecf3bfc82006d3aad0acda789bdd7d62b03677f42f25389c4b13385aa9134b37",
+      "fixture": "i8.jsonl",
+      "fixture_sha256": "f422e2693eed30e47228f33ad098c0361959e065feff4e24803f2bfc84169e47",
+      "usage": {
+        "input_tokens": 323165,
+        "output_tokens": 99751,
+        "tool_tokens": null,
+        "requests": 48,
+        "cost_estimate": null,
+        "capture_method": "stdout_json",
+        "confidence": "measured",
+        "observed_cache_read_tokens": 10180864
+      }
+    },
+    {
+      "invocation": 9,
+      "source": "initial-design-author/initial-design-author-i9/agent-events.jsonl",
+      "source_sha256": "4cb8f32bd92b0130d760237c4b52a5496830aa55a2df40c8052abc4c609f3ade",
+      "fixture": "i9.jsonl",
+      "fixture_sha256": "9736fbbc462f1ebe348245cd2564a46db8ec78800982f191a645a041a814bcfd",
+      "usage": {
+        "input_tokens": 36931,
+        "output_tokens": 14388,
+        "tool_tokens": null,
+        "requests": 33,
+        "cost_estimate": null,
+        "capture_method": "stdout_json",
+        "confidence": "measured",
+        "observed_cache_read_tokens": 21178624
+      }
+    },
+    {
+      "invocation": 10,
+      "source": "initial-design-questioning/initial-design-questioning-i10/agent-events.jsonl",
+      "source_sha256": "bea0880611c01e1a7289e49e5f13e27faa3ce906a63b57f5e6a3601cc2bcd899",
+      "fixture": "i10.jsonl",
+      "fixture_sha256": "2d6ed31509d032e74c52f0d09ad127f3af1fe78743d7fbce45aad9e68546926a",
+      "usage": {
+        "input_tokens": 310774,
+        "output_tokens": 92663,
+        "tool_tokens": null,
+        "requests": 64,
+        "cost_estimate": null,
+        "capture_method": "stdout_json",
+        "confidence": "measured",
+        "observed_cache_read_tokens": 13758976
+      }
+    },
+    {
+      "invocation": 11,
+      "source": "initial-design-decomposition/initial-design-decomposition-i11/agent-events.jsonl",
+      "source_sha256": "2976f71fb961afbeefd68652198d3720b6f53a721a256fbd614faa362a2938f1",
+      "fixture": "i11.jsonl",
+      "fixture_sha256": "e11b3db5b7a64710e8e499f32505714d31545cc9bb3e7932873efead33fa4516",
+      "usage": {
+        "input_tokens": 96304,
+        "output_tokens": 45699,
+        "tool_tokens": null,
+        "requests": 62,
+        "cost_estimate": null,
+        "capture_method": "stdout_json",
+        "confidence": "measured",
+        "observed_cache_read_tokens": 43556608
+      }
+    },
+    {
+      "invocation": 12,
+      "source": "initial-design-decomposition/initial-design-decomposition-i12/agent-events.jsonl",
+      "source_sha256": "2972e9cd8988944be0ef79b3f51ad323ffab0a16a7ec2ccdfb4b45f081f02683",
+      "fixture": "i12.jsonl",
+      "fixture_sha256": "3fe16b6f1fb18cff3657da488b2a175915befc92aa01fd43518326a72251b836",
+      "usage": {
+        "input_tokens": 13157,
+        "output_tokens": 8721,
+        "tool_tokens": null,
+        "requests": 5,
+        "cost_estimate": null,
+        "capture_method": "stdout_json",
+        "confidence": "measured",
+        "observed_cache_read_tokens": 3771264
+      }
+    },
+    {
+      "invocation": 13,
+      "source": "initial-design-questioning/initial-design-questioning-i13/agent-events.jsonl",
+      "source_sha256": "48fcb387039d10de7301475112594f69d526cac3b8c306e7cd2be0e4c00deaf7",
+      "fixture": "i13.jsonl",
+      "fixture_sha256": "9d43e0113f298e0edd2c53799106c3e5535105f99bc5051ad90f1138109028ed",
+      "usage": {
+        "input_tokens": 344152,
+        "output_tokens": 77835,
+        "tool_tokens": null,
+        "requests": 57,
+        "cost_estimate": null,
+        "capture_method": "stdout_json",
+        "confidence": "measured",
+        "observed_cache_read_tokens": 12940928,
+        "missing_reason": "已观测step_end缺少cacheReadTokens（仅合计已观测部分，非完整缓存总数）；缺失值不推断"
+      }
+    },
+    {
+      "invocation": 14,
+      "source": "initial-design-author/initial-design-author-i14/agent-events.jsonl",
+      "source_sha256": "dd0c5e1192639e2e79a667c6058dfee0d841fac5ba89702f2d79b4c6158ecb32",
+      "fixture": "i14.jsonl",
+      "fixture_sha256": "0ce361f33adb60dd62b5c583c214a576cb0d1e05cde9665fcf34a13e4b8a5f67",
+      "usage": {
+        "input_tokens": 742690,
+        "output_tokens": 36203,
+        "tool_tokens": null,
+        "requests": 71,
+        "cost_estimate": null,
+        "capture_method": "stdout_json",
+        "confidence": "measured",
+        "observed_cache_read_tokens": 50775296,
+        "missing_reason": "已观测step_end缺少cacheReadTokens（仅合计已观测部分，非完整缓存总数）；缺失值不推断"
+      }
+    }
+  ],
+  "total": {
+    "requests": 918,
+    "input_tokens": 3793173,
+    "observed_cache_read_tokens": 346986496,
+    "output_tokens": 945433
+  }
+}

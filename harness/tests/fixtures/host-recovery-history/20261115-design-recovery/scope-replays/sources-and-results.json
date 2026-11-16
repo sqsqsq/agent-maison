@@ -1,0 +1,719 @@
+{
+  "sourceRun": "20261115T073957Z-e7af8c",
+  "readOnlyEndedArtifacts": true,
+  "transform": "blueprintAuthorContent plus original author identity; Q prose is replaced by SHA256, verdicts/validation shape/evidence addresses retained; preSnapshot entries narrowed to declared source/evidence paths across these actual originals (dependency results checked against full snapshots); public review frontmatter retained; no reasoning or native transcript stored",
+  "r3SelectorSha256": "8b1e5d023f11fc6d9bd8638d413903fb4420a31d36210cd5931847eb6e510c65",
+  "selectorSha256": "f4fedf95e3ee0ede17209895e63e486b448977146200894e19815f2dfb652a0b",
+  "snapshotReduction": [
+    {
+      "invocation": "3",
+      "originalEntries": 19327,
+      "preservedEntries": 47,
+      "independentWriteDiff": "clean"
+    },
+    {
+      "invocation": "5",
+      "originalEntries": 19327,
+      "preservedEntries": 47,
+      "independentWriteDiff": "clean"
+    },
+    {
+      "invocation": "6",
+      "originalEntries": 19327,
+      "preservedEntries": 47,
+      "independentWriteDiff": "clean"
+    },
+    {
+      "invocation": "8",
+      "originalEntries": 19327,
+      "preservedEntries": 47,
+      "independentWriteDiff": "clean"
+    },
+    {
+      "invocation": "10",
+      "originalEntries": 19327,
+      "preservedEntries": 47,
+      "independentWriteDiff": "clean"
+    },
+    {
+      "invocation": "13",
+      "originalEntries": 19328,
+      "preservedEntries": 47,
+      "independentWriteDiff": "clean"
+    },
+    {
+      "invocation": "15",
+      "originalEntries": 19328,
+      "preservedEntries": 47,
+      "independentWriteDiff": "clean"
+    },
+    {
+      "invocation": "17",
+      "originalEntries": 19328,
+      "preservedEntries": 47,
+      "independentWriteDiff": "clean"
+    }
+  ],
+  "bundleSha256": "be812bb1f56c8084140d4074e9be19420d540f860799261e467569b4d674a3c8",
+  "bundleBytes": 1956256,
+  "sources": [
+    {
+      "invocation": "initial-design-questioning-i3",
+      "file": "blueprint-before.yaml",
+      "sha256": "25922ae74f2833cf60f7ce61d361dd4db267eb1d576239d17729907610fb996b",
+      "bytes": 237844
+    },
+    {
+      "invocation": "initial-design-questioning-i3",
+      "file": "questioning-output.json",
+      "sha256": "d2ef769772430f1a8f99b5bb4bdfc6500db5bf3ba8cfd5cf853b3943fed424fa",
+      "bytes": 60058
+    },
+    {
+      "invocation": "initial-design-questioning-i3",
+      "file": "design-result.json",
+      "sha256": "944d8cadf311f3f4e6abfb3ecd8c44ddbda481a9a959dc868eeeb5b417deb601",
+      "bytes": 7419988
+    },
+    {
+      "invocation": "initial-design-questioning-i3",
+      "file": "agent-events.jsonl",
+      "sha256": "a201d09eb796633e01a24c9410cde738b37cbe427d9d4a4cea8ea2b9cc101a81",
+      "bytes": 592058
+    },
+    {
+      "invocation": "initial-design-questioning-i5",
+      "file": "blueprint-before.yaml",
+      "sha256": "9d13ad16a50c25b94898b7d77eaa8f93acd45a5eacdcab08bbdfce155e998f36",
+      "bytes": 278675
+    },
+    {
+      "invocation": "initial-design-questioning-i5",
+      "file": "questioning-output.json",
+      "sha256": "c185d3dcd7207636f470abe46fc1a1d1e62156e2731d4a49823c5c2a8478c19f",
+      "bytes": 70428
+    },
+    {
+      "invocation": "initial-design-questioning-i5",
+      "file": "design-result.json",
+      "sha256": "830bce4d6b1615002d8ce673ea3055cda49f8087f10736997cc45de5f94681d0",
+      "bytes": 7485037
+    },
+    {
+      "invocation": "initial-design-questioning-i5",
+      "file": "agent-events.jsonl",
+      "sha256": "135e2cff6e16e38deef28af39d4335587c09c332f983802c8fd3ddc5ce428d30",
+      "bytes": 489690
+    },
+    {
+      "invocation": "initial-design-questioning-i6",
+      "file": "blueprint-before.yaml",
+      "sha256": "272a48855089dbe31d3a649f538bb18ee6501a001d5afa6a7b2a5c789e033997",
+      "bytes": 289282
+    },
+    {
+      "invocation": "initial-design-questioning-i6",
+      "file": "questioning-output.json",
+      "sha256": "bc8daa450a5c3836d5b4c33fc84f7ec1dea632d4d90d5ba3c12c278174ea3888",
+      "bytes": 77557
+    },
+    {
+      "invocation": "initial-design-questioning-i6",
+      "file": "design-result.json",
+      "sha256": "701ac202701ddc87725c70b854c75b609100609a062c41481b61dde0b4314efb",
+      "bytes": 7506242
+    },
+    {
+      "invocation": "initial-design-questioning-i6",
+      "file": "agent-events.jsonl",
+      "sha256": "92cc0313478dcc78ea1ebf127692bdc3da6d48eac82e4c43b71287de1865431b",
+      "bytes": 529156
+    },
+    {
+      "invocation": "initial-design-questioning-i8",
+      "file": "blueprint-before.yaml",
+      "sha256": "e13c2cff927a260417ee06d5ac103dcdf50a2de01af7d8734b1233ed353db69f",
+      "bytes": 311886
+    },
+    {
+      "invocation": "initial-design-questioning-i8",
+      "file": "questioning-output.json",
+      "sha256": "dd5fa0777cc4878e59ce926aac56d4cd907bbeafa88daf47f090ec4af4ec55c0",
+      "bytes": 61915
+    },
+    {
+      "invocation": "initial-design-questioning-i8",
+      "file": "design-result.json",
+      "sha256": "e8fb3add61db2d9d841c4408984d8afe27240bde7ebe429fd38734e79c2cae61",
+      "bytes": 7519924
+    },
+    {
+      "invocation": "initial-design-questioning-i8",
+      "file": "agent-events.jsonl",
+      "sha256": "ecf3bfc82006d3aad0acda789bdd7d62b03677f42f25389c4b13385aa9134b37",
+      "bytes": 523182
+    },
+    {
+      "invocation": "initial-design-questioning-i10",
+      "file": "blueprint-before.yaml",
+      "sha256": "d36b63c5137f2a8a79bfaa78d247c0fd4c4aa48aafe0b879c8e024f3a1cf83ad",
+      "bytes": 306697
+    },
+    {
+      "invocation": "initial-design-questioning-i10",
+      "file": "questioning-output.json",
+      "sha256": "cc4ee37549866304ab8d836818d6ab43877cbc5b058979f4c632852b06318930",
+      "bytes": 71406
+    },
+    {
+      "invocation": "initial-design-questioning-i10",
+      "file": "design-result.json",
+      "sha256": "7805c0e9046be0f5050125d2330d5c2abd66a42ed5df2a76450c0225a017c085",
+      "bytes": 7523338
+    },
+    {
+      "invocation": "initial-design-questioning-i10",
+      "file": "agent-events.jsonl",
+      "sha256": "bea0880611c01e1a7289e49e5f13e27faa3ce906a63b57f5e6a3601cc2bcd899",
+      "bytes": 478165
+    },
+    {
+      "invocation": "initial-design-questioning-i13",
+      "file": "blueprint-before.yaml",
+      "sha256": "1bc1f2ce3742cb96a71f8e1949f85b4503b70d801ce0d7b5750286e80ca0f8a2",
+      "bytes": 312841
+    },
+    {
+      "invocation": "initial-design-questioning-i13",
+      "file": "questioning-output.json",
+      "sha256": "b1f47be12a71bdc715e33df3f28afb0b2482ad62982db6f997b027ec99b2ba13",
+      "bytes": 73897
+    },
+    {
+      "invocation": "initial-design-questioning-i13",
+      "file": "design-result.json",
+      "sha256": "40605074be863fc032a3d3f4d789504221242259e0bd577b0250622e74bb4590",
+      "bytes": 7534332
+    },
+    {
+      "invocation": "initial-design-questioning-i13",
+      "file": "agent-events.jsonl",
+      "sha256": "48fcb387039d10de7301475112594f69d526cac3b8c306e7cd2be0e4c00deaf7",
+      "bytes": 494576
+    },
+    {
+      "invocation": "initial-design-questioning-i15",
+      "file": "blueprint-before.yaml",
+      "sha256": "f32fe57547e2635617fe65ccb5da209858b71968d721f34509d6531d2517bfdb",
+      "bytes": 323085
+    },
+    {
+      "invocation": "initial-design-questioning-i15",
+      "file": "questioning-output.json",
+      "sha256": "acd661a3624e0030e7487dd48bc7859c352611f3dbaec426ae7407d5abc9c5fc",
+      "bytes": 70110
+    },
+    {
+      "invocation": "initial-design-questioning-i15",
+      "file": "design-result.json",
+      "sha256": "c5218cc5e2815444c6744b3675f0cca9492be05466a1a6589b1a2409762d77dd",
+      "bytes": 7544126
+    },
+    {
+      "invocation": "initial-design-questioning-i15",
+      "file": "agent-events.jsonl",
+      "sha256": "1f4009c611e8f20aed0c5dbe2775719c38d5f512dd822692f9ca5cbdeae71fa7",
+      "bytes": 539767
+    },
+    {
+      "invocation": "initial-design-questioning-i17",
+      "file": "blueprint-before.yaml",
+      "sha256": "5569ee7607eac4c32c8cc2ab476bb773e3dd8d05806438c8612131673b76329a",
+      "bytes": 320405
+    },
+    {
+      "invocation": "initial-design-questioning-i17",
+      "file": "questioning-output.json",
+      "sha256": "3e276b37e86d8b70a07fafa3c46c3130d4cae47b78d9f29528600990ff08b3d7",
+      "bytes": 74209
+    },
+    {
+      "invocation": "initial-design-questioning-i17",
+      "file": "design-result.json",
+      "sha256": "d48fd1efd39a50214697b0f414d3c7b03bf88ec0f04160f6f4b04327197bdbee",
+      "bytes": 7544692
+    },
+    {
+      "invocation": "initial-design-questioning-i17",
+      "file": "agent-events.jsonl",
+      "sha256": "9f6219f206d6fc70a68ac532969666e3200e70140defa3c4c2038474f85a8326",
+      "bytes": 515716
+    }
+  ],
+  "pairs": [
+    {
+      "first": 3,
+      "revised": 5,
+      "r3Selected": [
+        "view:logical",
+        "view:runtime",
+        "flow:flow-card-open-run",
+        "view:development",
+        "view:deployment",
+        "view:scenarios",
+        "relation:rel-bank-catalog-realized",
+        "relation:rel-card-catalog-realized",
+        "relation:rel-card-record-realized",
+        "relation:rel-open-session-realized",
+        "relation:rel-home-state-realized",
+        "relation:rel-flow-realized",
+        "relation:rel-scenario-realized",
+        "relation:rel-app-deployed",
+        "relation:rel-rdb-deployed",
+        "app_lens:module_boundaries",
+        "app_lens:capability_seams",
+        "app_lens:feature_flags",
+        "app_lens:data_producers_consumers",
+        "app_lens:lifecycle_triggers",
+        "app_lens:state_owners",
+        "app_lens:initialization",
+        "app_lens:publication_subscription",
+        "app_lens:ui_refresh",
+        "app_lens:process_recovery",
+        "terminology:current_scope_items"
+      ],
+      "selected": [
+        "view:logical",
+        "view:runtime",
+        "flow:flow-card-open-run",
+        "view:development",
+        "view:deployment",
+        "view:scenarios",
+        "relation:rel-bank-catalog-realized",
+        "relation:rel-card-catalog-realized",
+        "relation:rel-card-record-realized",
+        "relation:rel-open-session-realized",
+        "relation:rel-home-state-realized",
+        "relation:rel-flow-realized",
+        "relation:rel-scenario-realized",
+        "relation:rel-app-deployed",
+        "relation:rel-rdb-deployed",
+        "app_lens:capability_seams",
+        "app_lens:feature_flags",
+        "app_lens:data_producers_consumers",
+        "app_lens:lifecycle_triggers",
+        "app_lens:state_owners",
+        "app_lens:initialization",
+        "app_lens:publication_subscription",
+        "app_lens:ui_refresh",
+        "terminology:current_scope_items"
+      ],
+      "changedDependencies": [
+        {
+          "path": "doc/features/bc-openCard-2/blueprint/contract-sources/card-open.contract.yaml",
+          "exists": true,
+          "sha256": "e5a4d2e9ae014262d4e20e236030fa49d4ebaeffac04d3c4623b8cf3a37b400e",
+          "role": "artifact"
+        }
+      ],
+      "pendingBefore": [
+        {
+          "scope": "view:logical",
+          "disposition": "blocker"
+        },
+        {
+          "scope": "view:runtime",
+          "disposition": "blocker"
+        },
+        {
+          "scope": "flow:flow-card-open-run",
+          "disposition": "blocker"
+        },
+        {
+          "scope": "view:development",
+          "disposition": "blocker"
+        },
+        {
+          "scope": "view:scenarios",
+          "disposition": "blocker"
+        },
+        {
+          "scope": "app_lens:lifecycle_triggers",
+          "disposition": "blocker"
+        },
+        {
+          "scope": "app_lens:publication_subscription",
+          "disposition": "blocker"
+        }
+      ],
+      "originalVersusProjectionEqual": true
+    },
+    {
+      "first": 6,
+      "revised": 8,
+      "r3Selected": [
+        "view:logical",
+        "view:runtime",
+        "flow:flow-card-open-run",
+        "view:development",
+        "view:deployment",
+        "view:scenarios",
+        "relation:rel-bank-catalog-realized",
+        "relation:rel-card-catalog-realized",
+        "relation:rel-card-record-realized",
+        "relation:rel-open-session-realized",
+        "relation:rel-home-state-realized",
+        "relation:rel-flow-realized",
+        "relation:rel-scenario-realized",
+        "relation:rel-app-deployed",
+        "relation:rel-rdb-deployed",
+        "app_lens:module_boundaries",
+        "app_lens:capability_seams",
+        "app_lens:feature_flags",
+        "app_lens:data_producers_consumers",
+        "app_lens:lifecycle_triggers",
+        "app_lens:state_owners",
+        "app_lens:initialization",
+        "app_lens:publication_subscription",
+        "app_lens:ui_refresh",
+        "app_lens:process_recovery",
+        "terminology:current_scope_items"
+      ],
+      "selected": [
+        "view:logical",
+        "view:runtime",
+        "flow:flow-card-open-run",
+        "view:development",
+        "view:deployment",
+        "view:scenarios",
+        "relation:rel-bank-catalog-realized",
+        "relation:rel-card-catalog-realized",
+        "relation:rel-card-record-realized",
+        "relation:rel-open-session-realized",
+        "relation:rel-home-state-realized",
+        "relation:rel-flow-realized",
+        "relation:rel-scenario-realized",
+        "relation:rel-app-deployed",
+        "relation:rel-rdb-deployed",
+        "app_lens:module_boundaries",
+        "app_lens:capability_seams",
+        "app_lens:feature_flags",
+        "app_lens:data_producers_consumers",
+        "app_lens:lifecycle_triggers",
+        "app_lens:state_owners",
+        "app_lens:initialization",
+        "app_lens:publication_subscription",
+        "app_lens:ui_refresh",
+        "app_lens:process_recovery",
+        "terminology:current_scope_items"
+      ],
+      "changedDependencies": [],
+      "pendingBefore": [
+        {
+          "scope": "flow:flow-card-open-run",
+          "disposition": "blocker"
+        },
+        {
+          "scope": "view:development",
+          "disposition": "blocker"
+        },
+        {
+          "scope": "view:scenarios",
+          "disposition": "blocker"
+        },
+        {
+          "scope": "app_lens:feature_flags",
+          "disposition": "blocker"
+        },
+        {
+          "scope": "app_lens:initialization",
+          "disposition": "blocker"
+        }
+      ],
+      "originalVersusProjectionEqual": true
+    },
+    {
+      "first": 13,
+      "revised": 15,
+      "r3Selected": [
+        "view:logical",
+        "view:runtime",
+        "flow:flow-card-open-run",
+        "view:development",
+        "view:deployment",
+        "view:scenarios",
+        "relation:rel-bank-catalog-realized",
+        "relation:rel-card-catalog-realized",
+        "relation:rel-card-record-realized",
+        "relation:rel-open-session-realized",
+        "relation:rel-home-state-realized",
+        "relation:rel-flow-realized",
+        "relation:rel-scenario-realized",
+        "relation:rel-app-deployed",
+        "relation:rel-rdb-deployed",
+        "app_lens:module_boundaries",
+        "app_lens:capability_seams",
+        "app_lens:feature_flags",
+        "app_lens:data_producers_consumers",
+        "app_lens:lifecycle_triggers",
+        "app_lens:state_owners",
+        "app_lens:initialization",
+        "app_lens:publication_subscription",
+        "app_lens:ui_refresh",
+        "app_lens:process_recovery",
+        "terminology:current_scope_items"
+      ],
+      "selected": [
+        "view:logical",
+        "view:runtime",
+        "flow:flow-card-open-run",
+        "view:development",
+        "view:deployment",
+        "view:scenarios",
+        "relation:rel-bank-catalog-realized",
+        "relation:rel-card-catalog-realized",
+        "relation:rel-card-record-realized",
+        "relation:rel-open-session-realized",
+        "relation:rel-home-state-realized",
+        "relation:rel-flow-realized",
+        "relation:rel-scenario-realized",
+        "relation:rel-app-deployed",
+        "relation:rel-rdb-deployed",
+        "app_lens:feature_flags",
+        "app_lens:data_producers_consumers",
+        "app_lens:lifecycle_triggers",
+        "app_lens:initialization",
+        "app_lens:publication_subscription",
+        "app_lens:ui_refresh",
+        "terminology:current_scope_items"
+      ],
+      "changedDependencies": [
+        {
+          "path": "doc/features/bc-openCard-2/blueprint/contract-sources/card-open.contract.yaml",
+          "exists": true,
+          "sha256": "3bc46d2f1639f53d73c275d79882087da1c41b694a6105a2d96835c3b2304d62",
+          "role": "artifact"
+        },
+        {
+          "path": "02-Feature/WalletMain/src/main/ets/data/model/WalletCardRecord.ets",
+          "exists": false,
+          "sha256": null,
+          "role": "artifact"
+        }
+      ],
+      "pendingBefore": [
+        {
+          "scope": "view:logical",
+          "disposition": "blocker"
+        },
+        {
+          "scope": "view:runtime",
+          "disposition": "blocker"
+        },
+        {
+          "scope": "flow:flow-card-open-run",
+          "disposition": "blocker"
+        },
+        {
+          "scope": "view:development",
+          "disposition": "open_decision"
+        },
+        {
+          "scope": "view:scenarios",
+          "disposition": "open_decision"
+        },
+        {
+          "scope": "relation:rel-card-record-realized",
+          "disposition": "open_decision"
+        },
+        {
+          "scope": "app_lens:data_producers_consumers",
+          "disposition": "open_decision"
+        },
+        {
+          "scope": "app_lens:initialization",
+          "disposition": "open_decision"
+        },
+        {
+          "scope": "app_lens:publication_subscription",
+          "disposition": "open_decision"
+        }
+      ],
+      "originalVersusProjectionEqual": true
+    },
+    {
+      "first": 15,
+      "revised": 17,
+      "r3Selected": [
+        "view:logical",
+        "view:runtime",
+        "flow:flow-card-open-run",
+        "view:development",
+        "view:deployment",
+        "view:scenarios",
+        "relation:rel-bank-catalog-realized",
+        "relation:rel-card-catalog-realized",
+        "relation:rel-card-record-realized",
+        "relation:rel-open-session-realized",
+        "relation:rel-home-state-realized",
+        "relation:rel-flow-realized",
+        "relation:rel-scenario-realized",
+        "relation:rel-app-deployed",
+        "relation:rel-rdb-deployed",
+        "app_lens:module_boundaries",
+        "app_lens:capability_seams",
+        "app_lens:feature_flags",
+        "app_lens:data_producers_consumers",
+        "app_lens:lifecycle_triggers",
+        "app_lens:state_owners",
+        "app_lens:initialization",
+        "app_lens:publication_subscription",
+        "app_lens:ui_refresh",
+        "app_lens:process_recovery",
+        "terminology:current_scope_items"
+      ],
+      "selected": [
+        "view:logical",
+        "view:runtime",
+        "flow:flow-card-open-run",
+        "view:development",
+        "view:deployment",
+        "view:scenarios",
+        "relation:rel-bank-catalog-realized",
+        "relation:rel-card-catalog-realized",
+        "relation:rel-card-record-realized",
+        "relation:rel-open-session-realized",
+        "relation:rel-home-state-realized",
+        "relation:rel-flow-realized",
+        "relation:rel-scenario-realized",
+        "relation:rel-app-deployed",
+        "relation:rel-rdb-deployed",
+        "app_lens:data_producers_consumers",
+        "app_lens:initialization",
+        "terminology:current_scope_items"
+      ],
+      "changedDependencies": [
+        {
+          "path": "doc/features/bc-openCard-2/blueprint/contract-sources/card-open.contract.yaml",
+          "exists": true,
+          "sha256": "ca950ec78c19535630c86e1a21ca76ed2f189070d3f20854b7eeab4342451dab",
+          "role": "artifact"
+        }
+      ],
+      "pendingBefore": [
+        {
+          "scope": "view:development",
+          "disposition": "blocker"
+        },
+        {
+          "scope": "view:scenarios",
+          "disposition": "open_decision"
+        },
+        {
+          "scope": "relation:rel-card-record-realized",
+          "disposition": "blocker"
+        },
+        {
+          "scope": "relation:rel-app-deployed",
+          "disposition": "open_decision"
+        },
+        {
+          "scope": "app_lens:initialization",
+          "disposition": "open_decision"
+        }
+      ],
+      "originalVersusProjectionEqual": true
+    },
+    {
+      "first": 8,
+      "revised": 10,
+      "r3Selected": [
+        "view:logical",
+        "view:runtime",
+        "flow:flow-card-open-run",
+        "view:development",
+        "view:deployment",
+        "view:scenarios",
+        "relation:rel-bank-catalog-realized",
+        "relation:rel-card-catalog-realized",
+        "relation:rel-card-record-realized",
+        "relation:rel-open-session-realized",
+        "relation:rel-home-state-realized",
+        "relation:rel-flow-realized",
+        "relation:rel-scenario-realized",
+        "relation:rel-app-deployed",
+        "relation:rel-rdb-deployed"
+      ],
+      "selected": [
+        "view:logical",
+        "view:runtime",
+        "flow:flow-card-open-run",
+        "view:development",
+        "view:deployment",
+        "view:scenarios",
+        "relation:rel-bank-catalog-realized",
+        "relation:rel-card-catalog-realized",
+        "relation:rel-card-record-realized",
+        "relation:rel-open-session-realized",
+        "relation:rel-home-state-realized",
+        "relation:rel-flow-realized",
+        "relation:rel-scenario-realized",
+        "relation:rel-app-deployed",
+        "relation:rel-rdb-deployed"
+      ],
+      "changedDependencies": [],
+      "pendingBefore": [
+        {
+          "scope": "flow:flow-card-open-run",
+          "disposition": "blocker"
+        },
+        {
+          "scope": "view:development",
+          "disposition": "blocker"
+        },
+        {
+          "scope": "view:deployment",
+          "disposition": "blocker"
+        }
+      ],
+      "originalVersusProjectionEqual": true
+    },
+    {
+      "first": 10,
+      "revised": 13,
+      "r3Selected": [
+        "view:runtime",
+        "flow:flow-card-open-run",
+        "view:development",
+        "view:scenarios",
+        "relation:rel-bank-catalog-realized",
+        "relation:rel-card-catalog-realized",
+        "relation:rel-card-record-realized",
+        "relation:rel-open-session-realized",
+        "relation:rel-home-state-realized",
+        "relation:rel-flow-realized",
+        "relation:rel-scenario-realized",
+        "relation:rel-app-deployed",
+        "relation:rel-rdb-deployed"
+      ],
+      "selected": [
+        "view:runtime",
+        "flow:flow-card-open-run",
+        "view:development",
+        "view:scenarios",
+        "relation:rel-bank-catalog-realized",
+        "relation:rel-card-catalog-realized",
+        "relation:rel-card-record-realized",
+        "relation:rel-open-session-realized",
+        "relation:rel-home-state-realized",
+        "relation:rel-flow-realized",
+        "relation:rel-scenario-realized",
+        "relation:rel-app-deployed",
+        "relation:rel-rdb-deployed"
+      ],
+      "changedDependencies": [],
+      "pendingBefore": [],
+      "originalVersusProjectionEqual": true
+    }
+  ]
+}

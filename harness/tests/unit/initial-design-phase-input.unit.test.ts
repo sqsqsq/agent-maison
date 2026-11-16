@@ -3,6 +3,8 @@ import assert from 'assert';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { createHash } from 'crypto';
+import { gunzipSync } from 'zlib';
 import { spawnSync, execFileSync } from 'child_process';
 import * as YAML from 'yaml';
 import { clearFrameworkConfigCache, featureFilePath } from '../../config';
@@ -22,6 +24,7 @@ import { withRuntimeTest } from '../utils/runtime-test-control';
 import { designDeliveryNextStep } from '../../scripts/utils/design-delivery-entry';
 import { readRequestIntake } from '../../scripts/utils/request-intake';
 import { acceptChangeUnitDecomposition } from '../../scripts/utils/change-unit-design-preparation';
+import { runStatusWatchLoop } from '../../scripts/utils/goal-progress';
 
 const FRAMEWORK=path.resolve(__dirname,'../../..');
 const requirement='完整交付新增收件箱批量已读能力，按原始需求完成设计、开发与验收。';
@@ -113,6 +116,53 @@ function prepare(root:string,feature:string,extra:Partial<Parameters<typeof prep
   return prepareInitialDesignRun({projectRoot:root,frameworkRoot:FRAMEWORK,feature,adapter:'codex',requirement,budget,unattended,...extra});
 }
 const cases:Array<{name:string;run():Promise<void>}>= [{
+  name:'a920 true i13 original shows passed call with three blockers and six open decisions through public status after same-run recovery',
+  async run(){await withEmpty(root=>{
+    // Historical read-only subset: no canonical product/design is manufactured or admitted.
+    fs.symlinkSync(FRAMEWORK,path.join(root,'framework'),process.platform==='win32'?'junction':'dir');
+    const fixture=path.join(FRAMEWORK,'harness/tests/fixtures/host-recovery-history/20261115-design-recovery/status-i13');
+    const sources=json(path.join(fixture,'sources.json')),output=gunzipSync(fs.readFileSync(path.join(fixture,'questioning-output.json.gz')));
+    assert.equal(createHash('sha256').update(output).digest('hex'),sources.files.find((entry:any)=>entry.source.endsWith('/questioning-output.json')).sha256);
+    const manifest=prepare(root,'bc-openCard-2').manifest,runDir=path.resolve(root,manifest.report_dir),eventFile=path.join(runDir,'events.jsonl');
+    const events=json(path.join(fixture,'events.json')) as Array<Record<string,unknown>>;
+    const append=(rows:typeof events)=>fs.appendFileSync(eventFile,rows.map(row=>JSON.stringify(row)).join('\n')+'\n');
+    const read=()=>{
+      const result=spawnSync(process.execPath,['-r',require.resolve('ts-node/register/transpile-only'),path.join(FRAMEWORK,'harness/scripts/goal-status.ts'),
+        '--project-root',root,'--feature',manifest.feature,'--run-id',manifest.run_id,'--json'],{cwd:path.join(FRAMEWORK,'harness'),encoding:'utf8',timeout:30000,windowsHide:true});
+      assert.equal(result.status,0,result.stderr+result.stdout);return JSON.parse(result.stdout);
+    };
+    append(events.slice(0,2));assert.equal(read().status,'HALTED','保留真实i12停止记录');
+    const phaseDir=path.join(runDir,'phases/initial-design-questioning/initial-design-questioning-i13');fs.mkdirSync(phaseDir,{recursive:true});
+    fs.copyFileSync(path.join(fixture,'blueprint-scopes.json'),path.join(phaseDir,'blueprint-before.yaml'));
+    fs.copyFileSync(path.join(fixture,'request-fields.json'),path.join(phaseDir,'request-e2.json'));
+    fs.copyFileSync(path.join(fixture,'result-fields.json'),path.join(phaseDir,'design-result.json'));
+    fs.writeFileSync(path.join(phaseDir,'questioning-output.json'),output);
+    append(events.slice(2));const resumed=read();
+    assert.equal(resumed.status,'RUNNING','真实后续run_start使旧HALT失效');assert.equal(resumed.halt_reason,undefined);
+    assert.equal(resumed.current.phase,'initial-design-author');assert.equal(resumed.current.run_id,manifest.run_id);
+    assert.equal(resumed.last_invocation.call_status,'passed');assert.equal(resumed.last_invocation.result_usable,true);
+    assert.equal(resumed.last_invocation.questioning.blockers,3);assert.equal(resumed.last_invocation.questioning.open_decisions,6);
+    assert.equal(resumed.last_invocation.questioning.source,path.relative(root,path.join(phaseDir,'questioning-output.json')).replace(/\\/g,'/'));
+    assert.equal(resumed.next_action,'author');assert.equal(resumed.complete,false,'历史Q交回不是当前产品完成');
+    assert.equal(fs.existsSync(path.join(root,'doc/features/bc-openCard-2/blueprint/component-blueprint.yaml')),false);
+  });},
+},{
+  name:'status watch observes halt and same-run resume in one refresh and shows the latest active responsibility',
+  async run(){await withEmpty(async root=>{
+    const manifest=prepare(root,'watch-original').manifest,file=path.resolve(root,manifest.report_dir,'events.jsonl');
+    const append=(event:Record<string,unknown>)=>fs.appendFileSync(file,JSON.stringify({ts:new Date().toISOString(),...event})+'\n');
+    append({type:'run_start'});append({type:'agent_invoke_start',invoke_id:'author-i1',phase:'initial-design-author'});
+    const seen:Array<ReturnType<typeof projectInitialDesignDelivery>>=[];
+    await runStatusWatchLoop({intervalMs:1,maxTicks:3,render:()=>{
+      seen.push(projectInitialDesignDelivery({projectRoot:root,frameworkRoot:FRAMEWORK,manifest}));
+      if(seen.length===1){append({type:'agent_invoke_end',invoke_id:'author-i1',phase:'initial-design-author',status:'waiting'});append({type:'run_end',status:'HALTED',halt_reason:'executor_waiting'});}
+      if(seen.length===2){append({type:'run_start'});append({type:'agent_invoke_start',invoke_id:'author-i2',phase:'initial-design-author'});}
+    }});
+    assert.deepEqual(seen.map(row=>row.status),['RUNNING','HALTED','RUNNING']);
+    assert(seen.every(row=>row.run_id===manifest.run_id));assert.equal(seen[2].current?.phase,'initial-design-author');
+    assert.equal(seen[2].last_invocation?.call_status,'waiting');assert(!seen[2].complete);
+  });},
+},{
   name:'raw manifest declarations preserve absent E and explicit top-level or nested actions without normal defaults',
   async run(){await withEmpty(root=>{
     for(const extra of [{},{requested_phases:[]},{requested_phases:['testing']},{initial_design:{requested_phases:['testing']}}]){

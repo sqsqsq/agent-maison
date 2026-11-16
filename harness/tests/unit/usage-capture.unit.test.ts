@@ -8,8 +8,11 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { createHash } from 'crypto';
 import {
   deriveInvokeUsage,
+  deriveDshInvokeUsage,
+  createDshUsageCapture,
   extractTrailingJsonObject,
   mergeUsageIntoTraceFile,
 } from '../../scripts/utils/usage-capture';
@@ -36,6 +39,54 @@ const CLAUDE_ENVELOPE = JSON.stringify({
 });
 
 const cases: Array<{ name: string; run: () => void }> = [
+  {
+    name: 'DSH ended i1-i14 original counter replay matches frozen steps/cache/output without counting mirrored logs twice',
+    run: () => {
+      const root = path.resolve(__dirname, '../fixtures/host-recovery-history/20261115-design-recovery/usage');
+      const sources = JSON.parse(fs.readFileSync(path.join(root, 'sources.json'), 'utf8')).sources as Array<{ invocation: number; fixture: string; fixture_sha256: string; usage: unknown }>;
+      let raw = '';
+      for (const [index, source] of sources.entries()) {
+        eq(source.invocation, index + 1, '调用顺序');
+        const bytes = fs.readFileSync(path.join(root, source.fixture));
+        eq(createHash('sha256').update(bytes).digest('hex'), source.fixture_sha256, '脱敏原件哈希');
+        eq(deriveDshInvokeUsage(bytes.toString('utf8')), source.usage, '逐调用原生计数'); raw += bytes.toString('utf8');
+      }
+      const usage = deriveDshInvokeUsage(raw + raw);
+      eq(usage.requests, 918, '原生步数'); eq(usage.input_tokens, 3793173, '新增输入');
+      eq(usage.observed_cache_read_tokens, 346986496, '已观测缓存读取'); eq(usage.output_tokens, 945433, '输出');
+      eq(usage.missing_reason?.includes('非完整缓存总数'), true, '缺省缓存字段不填零');
+      eq(deriveDshInvokeUsage(sources.slice(0, 13).map(source => fs.readFileSync(path.join(root, source.fixture), 'utf8')).join('')).requests, 847, 'i1-i13独立截止');
+    },
+  },
+  {
+    name: 'DSH native step_end sums per-step new input/cache/output once across mirrors and turns; ignores provider totals',
+    run: () => {
+      const session = (sessionId: string) => ({ type: 'session', sessionId });
+      const step = (turn: number, id: number, inputTokens: number, cacheReadTokens: number, outputTokens: number) =>
+        ({ type: 'status', phase: 'step_end', turn, step: id, usage: { inputTokens, cacheReadTokens, outputTokens, totalTokens: 9999 } });
+      const rows = [session('A'), step(1, 1, 2, 100, 3), step(1, 1, 2, 100, 3),
+        { type: 'status', phase: 'turn_end', usage: { inputTokens: 10000 } }, step(2, 1, 5, 200, 7),
+        session('B'), step(1, 1, 11, 300, 13), session('A'), step(1, 1, 2, 100, 3)];
+      const usage = deriveDshInvokeUsage(rows.map(row => JSON.stringify(row)).join('\n'));
+      eq(usage.input_tokens, 18, '新增输入'); eq(usage.observed_cache_read_tokens, 600, '缓存读取独立');
+      eq(usage.output_tokens, 23, '输出'); eq(usage.requests, 3, '原生步数'); eq(usage.cost_estimate, null, '不推费用');
+      eq(usage.confidence, 'measured', '原生计数');
+      eq(deriveInvokeUsage('none', rows.map(row => JSON.stringify(row)).join('\n'), '').input_tokens, null, '其它adapter采集规则不变');
+    },
+  },
+  {
+    name: 'DSH interrupted invocation retains observed steps; missing counts stay null with a reason',
+    run: () => {
+      const capture = createDshUsageCapture();
+      capture.observe({ type: 'session', sessionId: 'A' });
+      capture.observe({ type: 'status', phase: 'step_end', turn: 1, step: 1, usage: { inputTokens: 2, outputTokens: 3 } });
+      capture.observe({ type: 'status', phase: 'step_start', turn: 1, step: 2 });
+      const usage = capture.result();
+      eq(usage.input_tokens, 2, '已观测输入'); eq(usage.output_tokens, 3, '已观测输出'); eq(usage.requests, 1, '未完成步不计');
+      eq(usage.observed_cache_read_tokens, null, '缺缓存计数'); eq(usage.missing_reason?.includes('cacheReadTokens'), true, '缺口可见');
+      eq(deriveDshInvokeUsage('{"type":"status","phase":"step_end"}').requests, null, '无身份不猜计数');
+    },
+  },
   {
     name: 'none/undefined → proxy：token 全 null，capture_method 保真',
     run: () => {

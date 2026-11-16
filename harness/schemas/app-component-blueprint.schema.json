@@ -92,6 +92,7 @@
       "required": ["question", "owner"],
       "properties": {
         "question_id": { "readOnly": true },
+          "review_original": { "readOnly": true, "type": "object", "properties": { "path": { "type": "string" }, "sha256": { "type": "string" } } },
         "frontier_fingerprint": { "readOnly": true, "deprecated": true },
         "question": { "type": "string" }, "owner": { "type": "string" }
       }

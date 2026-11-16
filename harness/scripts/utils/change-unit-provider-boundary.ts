@@ -52,7 +52,8 @@ export function dropUnacceptedChangeUnitCandidates(_candidates: readonly ChangeU
 }
 
 export class ChangeUnitCandidateRejected extends Error {
-  constructor(public readonly code: string, message: string) {
+  constructor(public readonly code: string, message: string,
+    public readonly designAuthority?: import('./blueprint-skill-projection').DesignAuthorityFinding[]) {
     super(message);
     this.name = 'ChangeUnitCandidateRejected';
   }
@@ -156,6 +157,7 @@ export function acceptChangeUnitCandidates(
 
   const written: string[] = [];
   const projections: Array<{ file: string; previous?: Buffer }> = [];
+  let projectionCandidate: ChangeUnitCandidate | undefined;
   try {
     candidates.forEach((candidate, index) => {
       writeCanonicalChangeUnit(targets[index]!, candidate.artifact, `${process.pid}-${index}`);
@@ -166,6 +168,7 @@ export function acceptChangeUnitCandidates(
     const { resolveFeatureArtifact } = require('../../config') as typeof import('../../config');
     const { resolveProbeFrameworkRoot } = require('../../repo-layout') as typeof import('../../repo-layout');
     for (const candidate of candidates) {
+      projectionCandidate = candidate;
       const feature = deriveChangeUnitFeatureId(candidate.artifact.blueprint_id, candidate.artifact.change_unit_id);
       const frameworkRoot = resolveProbeFrameworkRoot(projectRoot);
       if (!candidate.construction_mapping && resolveChangeUnitConstructionInputs(projectRoot, feature, frameworkRoot).gap) continue;
@@ -177,6 +180,15 @@ export function acceptChangeUnitCandidates(
       materializeBlueprintSkillInputs(projectRoot, feature, frameworkRoot, undefined, undefined, candidate.construction_mapping);
     }
   } catch (error) {
+    const { BlueprintProjectionPreparationError, classifyDesignAuthorityCodes } = require('./blueprint-skill-projection') as typeof import('./blueprint-skill-projection');
+    const projection = error instanceof BlueprintProjectionPreparationError ? error.projection : undefined;
+    const codes = projection?.codes ?? [];
+    const verdict = classifyDesignAuthorityCodes(codes);
+    const designAuthority = projection?.state === 'invalid' && codes.length && verdict.artifacts.every(kind => kind === 'blueprint') && projectionCandidate
+      ? [{ check: 'authoritative_content_aligned', class: verdict.class, codes,
+        artifacts: [...new Set(projectionCandidate.artifact.design_refs.map(ref => require('./component-blueprint-path').componentBlueprintPath(projectRoot, ref.blueprint_id) as string))]
+          .map(file => path.relative(projectRoot, file).replace(/\\/g, '/')),
+        basis: projection.detail ?? (error as Error).message, needs: verdict.needs, ...(projection.locations ? { locations: projection.locations } : {}) }] : undefined;
     for (const projection of projections) if (projection.previous) fs.writeFileSync(projection.file, projection.previous);
     else if (fs.existsSync(projection.file)) fs.unlinkSync(projection.file);
     for (const target of written) {
@@ -185,6 +197,7 @@ export function acceptChangeUnitCandidates(
     throw new ChangeUnitCandidateRejected(
       'change_unit_decomposition_write_failed',
       `原子写出失败并已回滚本批：${(error as Error).message}`,
+      designAuthority,
     );
   }
   return candidates.map(candidate => loadCanonicalChangeUnit(

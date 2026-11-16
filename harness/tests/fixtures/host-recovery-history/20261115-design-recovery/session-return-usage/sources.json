@@ -1,0 +1,21 @@
+{
+  "boundary": "R1 frozen independent DSH calls: exact step_end counters and turn/step IDs only; session IDs replaced one-to-one, cwd/text/tools omitted. Final/turn_end are controlled replay transport markers, never historical business verdicts. Frozen source project was read only.",
+  "sources": [
+    {
+      "source_run": "a920-R1-Q-i10-i13",
+      "source": "phases/initial-design-questioning/initial-design-questioning-i1/agent-events.jsonl",
+      "source_sha256": "465160e5b81f12b307fae3eae98885b6aee9aea72916eed0722d448fd934c055",
+      "fixture": "r1-i1.jsonl",
+      "fixture_sha256": "d18113277ee8d3f74b94fe38e83baab5cfbe9dd553a04521540ab102a69673e3",
+      "observed_steps": 49
+    },
+    {
+      "source_run": "a920-R1-Q-i10-i13",
+      "source": "phases/initial-design-questioning/initial-design-questioning-i2/agent-events.jsonl",
+      "source_sha256": "030cd22211df322020feb556653b326322feb35417ba96e4a47ca186e8cb98ba",
+      "fixture": "r1-i2.jsonl",
+      "fixture_sha256": "d054785c529bd6341db17c351a4d346136caa264773acb4828e2af1943c8a499",
+      "observed_steps": 68
+    }
+  ]
+}

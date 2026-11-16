@@ -452,15 +452,65 @@ export function selectBlueprintSkillContent(blueprint: BlueprintRecord, cu: Chan
   const selected = cu.design_refs.flatMap(ref => {
     const target = attempt(() => structuredClone(resolveBlueprintTarget(blueprint, ref.target)));
     if (!target) return [];
-    if (ref.target.kind === 'flow') for (const state of asRecords(asRecord(target.contracts)?.state_management)) if (state.design_ref === undefined) state.design_ref = ref;
     return [{ ref, target }];
   });
-  const contracts = attempt(() => mergeBlueprintTargetContent(selected, 'contracts', onError));
-  for (const state of asRecords(contracts?.state_management)) {
-    if (state.design_ref !== undefined || typeof state.owner_ref !== 'string') continue;
-    const flows = selected.filter(({ ref, target }) => ref.target.kind === 'flow' && asRecord(target.state_owner)?.ref === state.owner_ref);
-    if (flows.length === 1) state.design_ref = structuredClone(flows[0].ref);
+  const flows = selected.filter(({ ref }) => ref.target.kind === 'flow');
+  for (const part of selected) for (const state of asRecords(asRecord(part.target.contracts)?.state_management)) {
+    const matching = state.design_ref === undefined
+      ? part.ref.target.kind === 'flow' ? [part] : flows.filter(({ target }) => asRecord(target.state_owner)?.ref === state.owner_ref)
+      : flows.filter(({ ref }) => typeof state.design_ref === 'string'
+        ? state.design_ref === `flow:${ref.target.id}` || state.design_ref === `view:${ref.target.view_id}/flow:${ref.target.id}`
+        : canonical(state.design_ref) === canonical(ref));
+    // An explicit cross-flow or stale identity is never replaced by a convenient owner match.
+    if (matching.length !== 1) continue;
+    if (part.ref.target.kind === 'flow' && matching[0].ref !== part.ref) {
+      attempt(() => { throw new BlueprintContentError('authority_content_conflict', `${part.ref.target.id}: state_management.design_ref 跨 flow 指向 ${matching[0].ref.target.id}`,
+        [{ blueprint_id: part.ref.blueprint_id, target: part.ref.target, field: 'contracts.state_management.design_ref' }]); });
+      continue;
+    }
+    const { ref, target: flow } = matching[0];
+    attempt(() => {
+      const location = (field: string): DesignAuthorityLocation[] => [{ blueprint_id: part.ref.blueprint_id, target: part.ref.target, field: `contracts.state_management.${field}` }];
+      const fill = (row: BlueprintRecord, key: string, value: unknown, field = key): void => {
+        if (value === undefined) return;
+        if (row[key] === undefined) row[key] = structuredClone(value);
+        else if (canonical(row[key]) !== canonical(value)) throw new BlueprintContentError('authority_content_conflict', `${ref.target.id}: ${field} 期望=${JSON.stringify(value)} 实际=${JSON.stringify(row[key])}`, location(field));
+      };
+      state.design_ref = structuredClone(ref);
+      fill(state, 'owner_ref', asRecord(flow.state_owner)?.ref);
+      const contracts = [...new Set([...asStrings(flow.logical_contract_refs), ...asStrings(flow.external_contract_refs)])];
+      if (state.contract_refs !== undefined && canonical([...asStrings(state.contract_refs)].sort()) === canonical([...contracts].sort())) state.contract_refs = contracts;
+      else if (contracts.length) fill(state, 'contract_refs', contracts);
+      for (const [field, id, keys] of [
+        ['mutations', 'mutation_id', ['mutation_id', 'kind', 'publication_ref', 'recovery_ref']],
+        ['publications', 'publication_id', ['publication_id']],
+        ['subscriptions', 'subscription_id', ['subscription_id', 'consumer_ref', 'publication_ref', 'replay_or_snapshot', 'cleanup']],
+        ['consumers', 'consumer_id', ['consumer_id', 'initial_load_ref', 'update_ref']],
+      ] as const) {
+        const source = asRecords(flow[field]).map(row => {
+          const result = Object.fromEntries(keys.filter(key => row[key] !== undefined).map(key => [key, row[key]]));
+          if (field === 'subscriptions' && result.publication_ref === undefined) {
+            const consumers = asRecords(flow.consumers).filter(consumer => `consumer:${String(consumer.consumer_id)}` === row.consumer_ref);
+            const publication = consumers.length === 1 ? consumers[0].update_ref : undefined;
+            if (typeof publication === 'string' && asRecords(flow.publications).filter(item => `publication:${String(item.publication_id)}` === publication).length === 1) result.publication_ref = publication;
+          }
+          return result;
+        });
+        if (!source.length) continue;
+        if (state[field] === undefined) state[field] = structuredClone(source);
+        else for (const expected of source) {
+          const rows = asRecords(state[field]).filter(row => row[id] === expected[id]);
+          if (rows.length !== 1) continue; // Original stable-ID checks retain missing/duplicate/unknown authored rows.
+          for (const [key, value] of Object.entries(expected)) {
+            // Existing lifecycle choices can be more specific than the flow's description.
+            if (['replay_or_snapshot', 'cleanup'].includes(key) && rows[0][key] !== undefined) continue;
+            fill(rows[0], key, value, `${field}.${String(expected[id])}.${key}`);
+          }
+        }
+      }
+    });
   }
+  const contracts = attempt(() => mergeBlueprintTargetContent(selected, 'contracts', onError));
   return { selected, acceptance: attempt(() => mergeBlueprintTargetContent(selected, 'acceptance', onError)), contracts,
     useCases: attempt(() => mergeBlueprintTargetContent(selected, 'use_cases', onError)) };
 }
@@ -643,16 +693,19 @@ export function deriveBlueprintSkillInput(projectRoot: string, feature: string, 
 
 /** Current unpublished content diagnostics through the same consumer; never an input binding or publication. */
 export function deriveBlueprintCandidateSkillInput(projectRoot: string, feature: string, frameworkRoot: string, kind: BlueprintProjectionKind,
-  candidate: { blueprint: BlueprintRecord; changeUnit: ChangeUnitArtifact; architecture?: ArchitectureDsl }): BlueprintSkillProjection {
+  candidate: { blueprint: BlueprintRecord; changeUnit: ChangeUnitArtifact; architecture?: ArchitectureDsl; constructionMapping?: ChangeUnitConstructionMapping }): BlueprintSkillProjection {
   const readers = createIdentityNeutralDigestReaders();
-  const originalUnit = loadCanonicalChangeUnit(projectRoot, candidate.changeUnit.blueprint_id, candidate.changeUnit.change_unit_id);
+  const canonicalPath = changeUnitPath(projectRoot, candidate.changeUnit.blueprint_id, candidate.changeUnit.change_unit_id);
+  const bytes = Buffer.from(YAML.stringify(candidate.changeUnit));
+  const originalUnit = fs.existsSync(canonicalPath) ? loadCanonicalChangeUnit(projectRoot, candidate.changeUnit.blueprint_id, candidate.changeUnit.change_unit_id)
+    : { canonicalPath, bytes, artifactSha256: 'sha256:' + crypto.createHash('sha256').update(bytes).digest('hex'), changeUnit: candidate.changeUnit };
   const originalBlueprint = loadCanonicalBlueprint(projectRoot, candidate.changeUnit.blueprint_id);
   readers.loadChangeUnit = (root, blueprint, unit) => blueprint === candidate.changeUnit.blueprint_id && unit === candidate.changeUnit.change_unit_id
     ? { ...originalUnit, changeUnit: { ...candidate.changeUnit } } : loadCanonicalChangeUnit(root, blueprint, unit);
   readers.blueprint = (_root, value) => resolveBlueprintCandidateRefFromLoaded(originalBlueprint, candidate.blueprint, value);
   readers.changeUnitIssues = (root, loaded) => validateChangeUnit(loaded.changeUnit,
     { projectRoot: root, canonicalPath: loaded.canonicalPath, resolveBlueprintRef: readers.blueprint });
-  return deriveBlueprintSkillInput(projectRoot, feature, frameworkRoot, kind, readers, candidate.architecture);
+  return deriveBlueprintSkillInput(projectRoot, feature, frameworkRoot, kind, readers, candidate.architecture, candidate.constructionMapping);
 }
 
 export interface AuthoritativeDriftItem { id: string; field: string; expected: unknown; actual: unknown }
@@ -741,7 +794,20 @@ export function compareAuthoritativeContent(projected: unknown, actual: unknown)
         if (!facts.design_ref && !facts.owner_ref && !facts.contract_refs) delete facts.data;
         return facts;
       }).filter(row => Object.keys(row).length > 0);
-      alignNode(runtime(value), runtime(record[key]), key, '', key, items);
+      const expectedStates = runtime(value), actualStates = structuredClone(runtime(record[key]));
+      // Optional mutation kind is flow-derived; older exact-bound mirrors may omit it.
+      for (const state of actualStates) {
+        if (asRecord(state.design_ref)?.artifact !== 'component-blueprint@1') continue;
+        const sources = expectedStates.filter(source => projectionRowIdentity(source) === projectionRowIdentity(state)
+          && canonical(source.design_ref) === canonical(state.design_ref));
+        if (sources.length !== 1) continue;
+        for (const mutation of asRecords(state.mutations)) {
+          if (mutation.kind !== undefined) continue;
+          const declarations = asRecords(sources[0].mutations).filter(source => source.mutation_id === mutation.mutation_id);
+          if (declarations.length === 1 && declarations[0].kind !== undefined) mutation.kind = structuredClone(declarations[0].kind);
+        }
+      }
+      alignNode(expectedStates, actualStates, key, '', key, items);
       continue;
     }
     if (key === 'interfaces' || key === 'data_models') {
@@ -788,7 +854,7 @@ export function describeAuthoritativeDrift(drift: AuthoritativeContentDrift, kin
 /** A recoverable preparation finding; filesystem/programming errors retain their original type. */
 export class BlueprintProjectionPreparationError extends Error {
   constructor(readonly owner: 'spec' | 'plan' | 'external', readonly artifacts: string[],
-    readonly reason: 'conflict' | 'stale' | 'invalid', message: string) { super(message); }
+    readonly reason: 'conflict' | 'stale' | 'invalid', message: string, readonly projection?: BlueprintSkillProjection) { super(message); }
 }
 
 /** 责任阶段门（spec → acceptance / plan → contracts）：BLOCKER `authoritative_content_aligned`。不适用时不出行。 */
@@ -838,7 +904,7 @@ export function materializeBlueprintSkillInputs(projectRoot: string, feature: st
   for (const result of projections) if (result.state !== 'resolved') {
     if (refresh) return preserveStageFiles();
     if (phase && result.state === 'absent') return preserveStageFiles();
-    throw new BlueprintProjectionPreparationError('external', [], 'invalid', result.detail ?? 'blueprint projection invalid');
+    throw new BlueprintProjectionPreparationError('external', [], 'invalid', result.detail ?? 'blueprint projection invalid', result);
   }
   const artifacts: Record<string, unknown> = {
     ...(contracts?.artifacts?.['contracts@1'] ? { 'contracts@1': contracts.artifacts['contracts@1'] } : {}),
@@ -848,7 +914,10 @@ export function materializeBlueprintSkillInputs(projectRoot: string, feature: st
   if (!refresh && contracts?.state === 'resolved' && (contracts.value as ContractsSpec).change_unit) {
     const actual = validateChangeUnitFeatureProjection(projectRoot, feature, contracts.value as ContractsSpec,
       contracts.artifacts?.['acceptance@1'] as AcceptanceSpec | undefined, !!contracts.artifacts?.['use-cases@1'], 'plan');
-    if (actual.issues.length) throw new BlueprintProjectionPreparationError('external', [], 'invalid', actual.issues.map(issue => issue.message).join('; '));
+    if (actual.issues.length) throw new BlueprintProjectionPreparationError('external', [], 'invalid', actual.issues.map(issue => issue.message).join('; '), {
+      state: 'invalid', dependencies: contracts.dependencies, codes: actual.issues.flatMap(issue => issue.codes ?? [issue.id]),
+      detail: actual.issues.map(issue => issue.message).join('; '),
+    });
   }
   if (refresh) {
     const identity = parseChangeUnitFeatureId(feature);
@@ -946,6 +1015,13 @@ const DESIGN_AUTHORITY_CLASS_ROWS: ReadonlyArray<readonly [DesignRepairClass, De
   ['B2', 'blueprint', '多个 design_ref 目标的同一内容互相冲突：需要有权者裁决保留哪一份', ['authority_content_conflict']],
   ['B2', 'blueprint', '蓝图验收内容未过内容门或缺少 CU 已引用的验收 ID：需要补全验收定义', ['authority_acceptance_content_invalid']],
   ['B2', 'change_unit', 'CU predicate 缺明确验收 ID 映射：需要补全当前 CU 的验收引用', ['authority_predicate_acceptance_unmapped']],
+  ['B2', 'change_unit', '候选施工落点缺失或不属于本 CU：交候选作者修正映射，保留蓝图权威', [
+    'change_unit_mapping_ref_unconsumable', 'change_unit_mapping_path_invalid', 'change_unit_mapping_file_missing', 'change_unit_mapping_symbol_missing',
+    'change_unit_predicate_mapping_duplicate', 'change_unit_predicate_mapping_unknown', 'change_unit_predicate_mapping_missing', 'change_unit_predicate_mapping_incomplete',
+    'change_unit_provide_mapping_duplicate', 'change_unit_provide_mapping_unknown', 'change_unit_provide_mapping_missing', 'change_unit_provide_mapping_incomplete',
+    'change_unit_design_mapping_missing', 'change_unit_design_mapping_duplicate', 'change_unit_design_mapping_unknown', 'change_unit_design_mapping_incomplete',
+    'change_unit_definition_copied', 'change_unit_projection_unknown_field', 'change_unit_feature_identity_mismatch',
+  ]],
   ['B2', 'blueprint', '蓝图施工契约不完整或路径引用无效：由设计 owner 修正实质契约，文件预测不作授权', ['authority_construction_content_incomplete', 'authority_contract_files_missing', 'authority_contract_write_set_open']],
   // ---- B2：canonical CU 的加载与解析（§1 #1–#2；change-unit-path）----
   ['B2', 'change_unit', 'canonical CU 缺失、无法解析或身份与路径不符：需要恢复或确认 CU 定义', [

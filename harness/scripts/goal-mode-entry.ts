@@ -856,7 +856,9 @@ async function main(): Promise<void> {
       '--run-mode attended [--project-root <root>] [--framework-root <framework>] [--force-takeover]\n' +
       'Fresh attended run: add --prepare-run --requirement "<text>" (optionally --run-id/--start/--end; --force records an operator override).\n' +
       'Original request continuation: --prepare-run --supersede <current-run-id> preserves the audited request, real results and explicit user deadline.\n' +
-      'Scope candidate (run this BEFORE --prepare-run; the two flags are mutually exclusive):\n' +
+      'Fresh full delivery needs no feature.yaml: --prepare-scope projects design/CU preparation; --prepare-run enters the same original-request runtime.\n' +
+      'Run from the selected project framework/harness; --requirement-file paths are relative to --project-root.\n' +
+      'Scope preparation (optional read-only entry projection for a fresh original request; mutually exclusive with --prepare-run):\n' +
       '  --prepare-scope --feature <f> --completion-target <request|feature>\n' +
       '    --requested-results "<text>" (repeatable) --requested-phases spec,plan,coding,review,ut\n' +
       '    requested-phases declares actual work, within the authorized phases; a default six-phase allowance is not six explicit requests. Feature evidence is still derived.\n' +

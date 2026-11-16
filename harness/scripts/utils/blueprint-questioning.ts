@@ -12,11 +12,15 @@ import {
   nonEmptyString,
   DISPOSITIONS,
   BLUEPRINT_SCHEMA,
+  blueprintAuthorContent,
   renderBlueprintFieldResponsibilities,
 } from './component-blueprint-model';
 import { extractJsonObjectFromText } from './json-object-from-text';
 import { validateProvenanceRecord } from './blueprint-provenance';
 import { APP_LENS_QUESTIONS, isApplicableView, isChangedView } from './blueprint-views';
+import { stableStringify } from './phase-evidence-manifest';
+import { resolveBlueprintReaderSource } from './blueprint-reader-guide';
+import { stableAddressIndex } from './blueprint-addressing';
 
 /**
  * M7：evolution_impact 显式接线。**每个 applicable 视图**（含 verified_unchanged）都进入
@@ -68,13 +72,270 @@ function questioningId(kind: unknown, ref: unknown): string {
   return `q:${crypto.createHash('sha256').update(String(kind ?? '') + '\n' + String(ref ?? '')).digest('hex').slice(0, 16)}`;
 }
 
-export function renderQuestioningResultInstructions(blueprint: BlueprintRecord, providerId: string): string[] {
+/** Normalize only an address whose owning view and flow both identify one current target. */
+export function normalizeQuestioningItems(blueprint: BlueprintRecord, items: BlueprintRecord[]): BlueprintRecord[] {
+  const scopes = requiredQuestioningScopes(blueprint);
+  const normalized = items.map(item => {
+    const match = /^view:([^/]+)\/flow:(.+)$/.exec(String(item.scope_ref));
+    const owners = match && asRecords(blueprint.design_views).filter(view => view.view_id === match[1]
+      && asRecords(view.runtime_data_flows).some(flow => flow.flow_id === match[2]));
+    const occurrences = match && asRecords(blueprint.design_views).flatMap(view => asRecords(view.runtime_data_flows)).filter(flow => flow.flow_id === match[2]).length;
+    return match && owners?.length === 1 && occurrences === 1 && scopes.get(`flow:${match[2]}`) === 'flow'
+      && item.scope_kind === 'flow' ? { ...item, scope_ref: `flow:${match[2]}` } : item;
+  });
+  const emptyPlaceholder = (item: BlueprintRecord): boolean => {
+    const provenance = asRecord(item.provenance);
+    return item.disposition === 'not_applicable' && !nonEmptyString(item.answer) && !nonEmptyString(item.rationale)
+      && !asStrings(item.evidence_refs).length && !item.authority && provenance?.evidence_strength === 'unknown'
+      && nonEmptyString(item.question) && item.question === item.owner && item.question === provenance.source_ref
+      && asStrings(item.verification_refs).length > 0 && asStrings(item.verification_refs).every(ref => ref === item.question);
+  };
+  return normalized.filter(item => !emptyPlaceholder(item) || !normalized.some(other => other !== item
+    && other.scope_ref === item.scope_ref && !emptyPlaceholder(other)));
+}
+
+/** Scope facts and explicit references, rather than shared business nouns, establish the reuse boundary. */
+export function selectQuestioningScopes(before: BlueprintRecord | undefined, current: BlueprintRecord,
+  previous?: BlueprintRecord, changedDependencies: readonly string[] = []): string[] {
+  const required = requiredQuestioningScopes(current);
+  if (!before || !previous) return [...required.keys()];
+  try { stableAddressIndex(before); stableAddressIndex(current); }
+  catch { return [...required.keys()]; }
+  const authorities = [
+    { section: 'decisions_and_gaps', key: 'decisions', id: 'decision_id' },
+    { section: 'decisions_and_gaps', key: 'gaps', id: 'gap_id' },
+    { key: 'contracts', id: 'contract_id' },
+    { section: 'discovery', key: 'facts', id: 'fact_id' },
+    { key: 'quality_attributes', id: 'qa_id' },
+    { key: 'data_domains', id: 'data_domain_id' },
+  ];
+  const normalizeReference = (ref: string): string => ref.replace(/^data_domain:/, 'data-domain:');
+  const address = (key: string, id: string): string => {
+    id = normalizeReference(id);
+    const kind = key.slice(0, -3).replace(/_/g, '-');
+    return id.startsWith(kind + ':') ? id : `${kind}:${id}`;
+  };
+  const oldContent = blueprintAuthorContent(before), nextContent = blueprintAuthorContent(current);
+  let duplicateAuthority = false;
+  const authorityRefs = new Set<string>();
+  const facts = (content: BlueprintRecord): Map<string, unknown> => {
+    const out = new Map<string, unknown>();
+    for (const view of asRecords(content.design_views)) {
+      out.set(`view:${view.view_id}`, view);
+      for (const flow of asRecords(view.runtime_data_flows)) out.set(`flow:${flow.flow_id}`, flow);
+    }
+    for (const relation of asRecords(content.relations)) out.set(`relation:${relation.relation_id}`, relation);
+    for (const question of APP_LENS_QUESTIONS) out.set(`app_lens:${question}`, asRecord(content.app_lens)?.[question]);
+    out.set('terminology:current_scope_items', asRecord(content.discovery)?.inputs);
+    for (const { section, key, id } of authorities) {
+      for (const row of asRecords(section ? asRecord(content[section])?.[key] : content[key])) {
+        if (nonEmptyString(row[id])) {
+          const ref = address(id, row[id]);
+          authorityRefs.add(ref);
+          if (out.has(ref)) duplicateAuthority = true;
+          out.set(ref, row);
+        }
+      }
+    }
+    return out;
+  };
+  const old = facts(oldContent), next = facts(nextContent), affected = new Set<string>(), changedBusiness = new Set<string>();
+  if (duplicateAuthority) return [...required.keys()];
+  for (const ref of old.keys()) if (!next.has(ref)) changedBusiness.add(ref);
+  const items = normalizeQuestioningItems(before, asRecords(previous.items));
+  const invalid = validateBlueprintQuestioning({ ...before, review_summary: { ...asRecord(before.review_summary), questioning: previous } })
+    .filter(error => error.id !== 'blueprint_admission_false_pass' && error.id !== 'blueprint_questioning_coverage_missing');
+  const invalidIndexes = new Set(invalid.flatMap(error => {
+    const index = /\.items\[(\d+)\]/.exec(error.path); return index ? [Number(index[1])] : [];
+  }));
+  for (const ref of required.keys()) {
+    const candidates = items.filter(item => item.scope_ref === ref);
+    if (!old.has(ref) || stableStringify(old.get(ref)) !== stableStringify(next.get(ref))
+      || candidates.some(item => ['blocker', 'open_decision'].includes(String(item.disposition)))) {
+      affected.add(ref); changedBusiness.add(ref);
+    }
+    if (candidates.length !== 1 || asRecords(previous.items).some((item, index) => invalidIndexes.has(index) && item.scope_ref === ref)) affected.add(ref);
+  }
+  const global = (doc: BlueprintRecord): BlueprintRecord => {
+    const copy = blueprintAuthorContent(doc);
+    for (const key of ['design_views', 'relations', 'app_lens', 'reader_guide', 'review_summary']) delete copy[key];
+    const app = { ...asRecord(doc.app_lens) }; for (const question of APP_LENS_QUESTIONS) delete app[question];
+    if (Object.keys(app).length) copy.app_lens = app;
+    // Derived graph bytes do not add business authority; compare their source entries instead.
+    delete copy.generated_graphs;
+    for (const { section, key } of authorities) {
+      if (section) { const record = asRecord(copy[section]); if (record) delete record[key]; }
+      else delete copy[key];
+    }
+    const discovery = asRecord(copy.discovery); if (discovery) delete discovery.inputs;
+    for (const section of ['discovery', 'decisions_and_gaps']) if (asRecord(copy[section]) && !Object.keys(copy[section] as BlueprintRecord).length) delete copy[section];
+    return copy;
+  };
+  if (stableStringify(global(before)) !== stableStringify(global(current))) return [...required.keys()];
+  const changedAuthorities = new Set<string>();
+  for (const { section, key, id } of authorities) {
+    const rows = (doc: BlueprintRecord): unknown => section ? asRecord(doc[section])?.[key] : doc[key];
+    const oldRows = rows(oldContent), nextRows = rows(nextContent);
+    if (stableStringify(oldRows) === stableStringify(nextRows)) continue;
+    for (const values of [oldRows, nextRows]) {
+      if (values === undefined) continue;
+      if (!Array.isArray(values) || values.some(row => !asRecord(row) || !nonEmptyString(row[id]))) return [...required.keys()];
+      const ids = values.map(row => address(id, String(row[id])));
+      if (new Set(ids).size !== ids.length) return [...required.keys()];
+    }
+    const refs = [...asRecords(oldRows), ...asRecords(nextRows)].map(row => address(id, String(row[id])));
+    for (const ref of refs) if (stableStringify(old.get(ref)) !== stableStringify(next.get(ref))) {
+      changedAuthorities.add(ref); changedBusiness.add(ref);
+    }
+  }
+  const summary = (doc: BlueprintRecord): BlueprintRecord => {
+    const copy = { ...asRecord(blueprintAuthorContent(doc).review_summary) }; delete copy.reader_guide; return copy;
+  };
+  if (stableStringify(summary(before)) !== stableStringify(summary(current))) {
+    for (const ref of required.keys()) if (ref.startsWith('view:')) { affected.add(ref); changedBusiness.add(ref); }
+  }
+  const oldGuide = asRecords(asRecord(asRecord(before.review_summary)?.reader_guide)?.sections);
+  const newGuide = asRecords(asRecord(asRecord(current.review_summary)?.reader_guide)?.sections);
+  for (let index = 0; index < Math.max(oldGuide.length, newGuide.length); index++) {
+    if (stableStringify(oldGuide[index]) === stableStringify(newGuide[index])) continue;
+    let located = false;
+    for (const [doc, section] of [[before, oldGuide[index]], [current, newGuide[index]]] as const) {
+      for (const pointer of asStrings(section?.source_refs)) {
+        const view = /^\/design_views\/(\d+)(?:\/runtime_data_flows\/(\d+))?/.exec(pointer);
+        const relation = /^\/relations\/(\d+)/.exec(pointer), lens = /^\/app_lens\/([^/]+)/.exec(pointer);
+        if (view) {
+          const target = asRecords(doc.design_views)[Number(view[1])];
+          if (target && required.has(`view:${target.view_id}`)) { affected.add(`view:${target.view_id}`); located = true; }
+          const flow = view[2] && asRecords(target?.runtime_data_flows)[Number(view[2])];
+          if (flow && required.has(`flow:${flow.flow_id}`)) affected.add(`flow:${flow.flow_id}`);
+        } else if (relation) {
+          const target = asRecords(doc.relations)[Number(relation[1])];
+          if (target && required.has(`relation:${target.relation_id}`)) { affected.add(`relation:${target.relation_id}`); located = true; }
+        } else if (lens && required.has(`app_lens:${lens[1]}`)) { affected.add(`app_lens:${lens[1]}`); located = true; }
+      }
+    }
+    if (!located) for (const ref of required.keys()) if (ref.startsWith('view:')) affected.add(ref);
+  }
+  // A reader guide's source_digest refresh alone is a new projection identity, not a new business fact.
+  for (const dependency of changedDependencies) {
+    const file = dependency.replace(/\\/g, '/');
+    const related = items.filter(item => [...asStrings(item.verification_refs), ...asStrings(item.evidence_refs),
+      String(asRecord(item.provenance)?.source_ref ?? '')].some(ref => {
+        const source = ref.replace(/\\/g, '/').split(/#|:(?=\d)/)[0];
+        return source === file || file.startsWith(source + '/');
+      }));
+    if (!related.length) return [...required.keys()];
+    related.forEach(item => { affected.add(String(item.scope_ref)); changedBusiness.add(String(item.scope_ref)); });
+  }
+  const identifiers = (value: unknown): Set<string> => {
+    const ids = new Set<string>();
+    const visit = (input: unknown): void => {
+      if (Array.isArray(input)) { input.forEach(visit); return; }
+      const record = asRecord(input); if (!record) return;
+      for (const [key, child] of Object.entries(record)) {
+        if (key.endsWith('_id') && nonEmptyString(child)) ids.add(address(key, child));
+        else visit(child);
+      }
+    }; visit(value); return ids;
+  };
+  const allIds = new Set([...old.values(), ...next.values()].flatMap(value => [...identifiers(value)]));
+  const rawIds = new Map<string, Set<string>>();
+  for (const id of allIds) {
+    const raw = id.slice(id.indexOf(':') + 1);
+    if (!rawIds.has(raw)) rawIds.set(raw, new Set());
+    rawIds.get(raw)!.add(id);
+  }
+  const knownIds = new Set([...allIds, ...required.keys()]);
+  let ambiguous = false, unresolved = false;
+  const references = (value: unknown, doc: BlueprintRecord, resolvePointers = false): Set<string> => {
+    const refs = new Set<string>();
+    const visit = (input: unknown, field = '', depth = 0): void => {
+      if (typeof input === 'string') {
+        const local = new Set([...input.matchAll(/(?:^|[^\p{L}\p{N}._:-])([a-z][a-z0-9_-]*:[\p{L}\p{N}][\p{L}\p{N}._:-]*)/gu)]
+          .map(match => normalizeReference(match[1])));
+        if (field === 'ref' || /_refs?$/.test(field) || ['decisions_and_gaps', 'needed_by', 'landing'].includes(field)) {
+          const pointer = input.startsWith('/') ? input : '/' + input;
+          if (resolvePointers && resolveBlueprintReaderSource(doc, pointer)) {
+            const lens = /^\/app_lens\/([^/]+)(?:\/|$)/.exec(pointer);
+            const scope = lens ? `app_lens:${lens[1]}` : /^\/discovery\/inputs(?:\/|$)/.test(pointer) ? 'terminology:current_scope_items' : undefined;
+            if (scope) {
+              if (required.has(scope)) local.add(scope); else unresolved = true;
+            } else {
+              const parts = pointer.split('/');
+              let located = false;
+              for (let length = parts.length; length > 1; length--) {
+                const owner = asRecord(resolveBlueprintReaderSource(doc, parts.slice(0, length).join('/'))?.value);
+                const id = owner && Object.entries(owner).find(([key, value]) => key.endsWith('_id') && nonEmptyString(value));
+                if (id && knownIds.has(address(id[0], String(id[1])))) {
+                  local.add(address(id[0], String(id[1]))); located = true; break;
+                }
+              }
+              if (!located) unresolved = true;
+            }
+          } else if (resolvePointers && /^\/(?:(?:design_views|relations|contracts|quality_attributes|data_domains)\/\d+(?:\/|$)|decisions_and_gaps\/(?:decisions|gaps)(?:\/|$)|discovery\/(?:facts|inputs)(?:\/|$)|app_lens\/)/.test(pointer)) {
+            unresolved = true;
+          } else if (/^(?:source|evidence|verification|knowledge)_refs?$/.test(field)
+            && !/^[A-Za-z][A-Za-z0-9+.-]*:/.test(input) && /[\\/]|\.[A-Za-z0-9]+(?:#|:|$)/.test(input)) {
+            local.add('source:' + input.replace(/\\/g, '/').split(/#|:(?=\d)/)[0]);
+          }
+          const matches = rawIds.get(input);
+          if (matches && matches.size > 1) ambiguous = true;
+          if (matches?.size === 1) matches.forEach(ref => local.add(ref));
+          // These fields declare a design landing; slice ownership and asset/source references do not.
+          if (resolvePointers && depth === 1 && ['landing', 'target_ref'].includes(field) && nonEmptyString(input)
+            && (![...local].some(ref => knownIds.has(ref)) || [...local].some(ref => !knownIds.has(ref)))) unresolved = true;
+        }
+        local.forEach(ref => refs.add(ref));
+      } else if (Array.isArray(input)) input.forEach(child => visit(child, field, depth));
+      else if (asRecord(input)) for (const [key, child] of Object.entries(input as BlueprintRecord)) {
+        if (!key.endsWith('_id')) visit(child, key, depth + 1);
+      }
+    }; visit(value); return refs;
+  };
+  const unresolvedRefs = new Set<string>();
+  const dependencies = new Map<string, Set<string>>();
+  const ids = new Map<string, Set<string>>();
+  for (const ref of new Set([...old.keys(), ...next.keys()])) {
+    const prior = items.filter(item => item.scope_ref === ref).map(item => ({ evidence_refs: item.evidence_refs,
+      verification_refs: item.verification_refs, provenance: item.provenance }));
+    unresolved = false;
+    dependencies.set(ref, new Set([...references(old.get(ref), oldContent, authorityRefs.has(ref)), ...references(next.get(ref), nextContent, authorityRefs.has(ref)),
+      ...[...references(prior, oldContent, true)].filter(source => authorityRefs.has(source) || source.startsWith('source:'))]));
+    if (unresolved) unresolvedRefs.add(ref);
+    ids.set(ref, new Set([ref, ...identifiers(old.get(ref)), ...identifiers(next.get(ref))]));
+  }
+  if (ambiguous && changedBusiness.size || [...changedAuthorities].some(ref => unresolvedRefs.has(ref))) return [...required.keys()];
+  // Authority rows can explicitly name their landing; retain both old and new scope references.
+  for (const ref of authorityRefs) {
+    for (const scope of required.keys()) if ([...ids.get(scope) ?? []].some(id => dependencies.get(ref)?.has(id))
+      || changedAuthorities.has(ref) && [...dependencies.get(ref) ?? []].some(source => source.startsWith('source:') && dependencies.get(scope)?.has(source))) {
+      dependencies.get(scope)!.add(ref);
+    }
+  }
+  const consumers = new Map<string, Set<string>>();
+  for (const [ref, declared] of ids) consumers.set(ref, new Set([...dependencies]
+    .filter(([other, refs]) => other !== ref && [...refs].some(id => declared.has(id))).map(([other]) => other)));
+  const expand = (seeds: Iterable<string>, graph = consumers): Set<string> => {
+    const reached = new Set(seeds);
+    for (const ref of reached) graph.get(ref)?.forEach(consumer => reached.add(consumer));
+    return reached;
+  };
+  for (const ref of changedAuthorities) if (![...expand([ref])].some(scope => required.has(scope))) return [...required.keys()];
+  // Ordinary scope edits keep their existing boundary; only changed authority seeds traverse global entries.
+  const scopeConsumers = new Map([...consumers].filter(([ref]) => !authorityRefs.has(ref))
+    .map(([ref, refs]) => [ref, new Set([...refs].filter(consumer => !authorityRefs.has(consumer)))]));
+  for (const ref of [...expand(changedBusiness, scopeConsumers), ...expand(changedAuthorities)]) if (required.has(ref)) affected.add(ref);
+  return [...required.keys()].filter(ref => affected.has(ref));
+}
+
+export function renderQuestioningResultInstructions(blueprint: BlueprintRecord, providerId: string, selected?: readonly string[]): string[] {
   const existing = asRecords(asRecord(asRecord(blueprint.review_summary)?.questioning)?.items);
-  const scopes = [...requiredQuestioningScopes(blueprint)].map(([ref, kind]) => {
+  const scopes = [...requiredQuestioningScopes(blueprint)].filter(([ref]) => !selected || selected.includes(ref)).map(([ref, kind]) => {
     const id = existing.find(item => item.scope_ref === ref && nonEmptyString(item.question_id))?.question_id ?? questioningId(kind, ref);
     return `- ${ref}（${kind}；question_id=${String(id)}，机器已给出）`;
   });
-  const unchanged = [...unchangedViewQuestioningScopes(blueprint)].map(([ref, refs]) => `- ${ref}：须核实不变声明及其依据（answered_with_evidence，evidence_refs 至少含其一：${refs.join(', ') || '（未声明）'}）`);
+  const unchanged = [...unchangedViewQuestioningScopes(blueprint)].filter(([ref]) => !selected || selected.includes(ref))
+    .map(([ref, refs]) => `- ${ref}：须核实不变声明及其依据（answered_with_evidence，evidence_refs 至少含其一：${refs.join(', ') || '（未声明）'}）`);
   return [
     `质询方标识 provider_id：${providerId}`,
     `只返回现有 questioning JSON 的 items[]。每项业务必填：${BLUEPRINT_SCHEMA.$defs.questioningItem.required.join(' / ')}，另给 scope_kind / scope_ref / disposition / verification_refs / provenance；answered_with_evidence 另需 answer 与 evidence_refs。`,
@@ -83,6 +344,8 @@ export function renderQuestioningResultInstructions(blueprint: BlueprintRecord, 
     '',
     '## 必答范围（每个恰好一项）',
     ...scopes,
+    '只交回本轮实际复核的上述条目；未变项由机器沿原件复用，不复制整份旧回答。有具体新证据可重开其它scope，同时在answer及verification_refs给出新证据。用紧凑JSON返回，不写临时结果或复述完整材料。',
+    '对照原始需求的用户可观察结果，构造能骗过当前验收的反例；需求指定某个对象时，核实上下游接到的是同一本次对象，不能只证明页面看似成功。失败返回落点依据原文及既有路由解释；参考图按既有来源核验并保留到施工/视觉验收。',
     ...(unchanged.length ? ['', '## verified_unchanged 视图', ...unchanged] : []),
   ];
 }
@@ -118,6 +381,20 @@ export function independentQuestioningEnvelope(result: BlueprintRecord, provider
   return { ...result, items, status: 'complete', provider_id: providerId, isolated_context: true, writes_ssot: false };
 }
 
+export function mergeIndependentQuestioningResult(blueprint: BlueprintRecord, result: BlueprintRecord, providerId: string,
+  previous?: BlueprintRecord, selected: readonly string[] = [...requiredQuestioningScopes(blueprint).keys()],
+  original?: { path: string; sha256: string }): BlueprintRecord {
+  const fresh = normalizeQuestioningItems(blueprint, asRecords(result.items)).map(item => {
+    const copy = { ...item }; delete copy.review_original;
+    return original ? { ...copy, review_original: original } : copy;
+  });
+  const current = new Set(fresh.map(item => String(item.scope_ref)));
+  const retained = asRecords(previous?.items).filter(item => requiredQuestioningScopes(blueprint).get(String(item.scope_ref)) === item.scope_kind
+    && !selected.includes(String(item.scope_ref)) && !current.has(String(item.scope_ref)));
+  return independentQuestioningEnvelope({ ...result, items: [...retained, ...fresh] }, providerId,
+    asRecord(blueprint.review_summary)?.authored_by, previous);
+}
+
 /** Called only after the caller confirms a real isolated invocation completed. */
 export function applyIndependentQuestioningOutput(
   blueprintPath: string, outputPath: string, output: string, providerId: string, projectRoot?: string,
@@ -131,8 +408,19 @@ export function applyIndependentQuestioningOutput(
   const blueprint = asRecord(YAML.parse(fs.readFileSync(blueprintPath, 'utf8')));
   if (!blueprint) throw new Error('蓝图不可解析，无法回填真实质询结果。');
   const review = asRecord(blueprint.review_summary) ?? {};
-  const questioning = { ...result, ...createIndependentQuestioningResult({ providerId, authoredBy: String(review.authored_by ?? ''),
-    items: asRecords(result.items), previous: asRecord(review.questioning) }) };
+  let questioning = mergeIndependentQuestioningResult(blueprint, result, providerId, asRecord(review.questioning));
+  // Managed invocations already bind the exact before-image, completion and write snapshots.
+  const invocationDir = path.dirname(outputPath), phasesDir = path.dirname(path.dirname(invocationDir));
+  if (projectRoot && path.basename(phasesDir) === 'phases') {
+    const runDir = path.dirname(phasesDir);
+    const { readDesignQuestioningOriginal, reusableDesignQuestioning } = require('./design-repair-unattended') as typeof import('./design-repair-unattended');
+    const { sessionEvents } = require('./session-execution-handoff') as typeof import('./session-execution-handoff');
+    const events = sessionEvents(runDir);
+    const start = events.find(event => event.type === 'agent_invoke_start' && event.invoke_id === path.basename(invocationDir));
+    const original = start && readDesignQuestioningOriginal(runDir, start, events);
+    const verified = original && reusableDesignQuestioning({ ...original, projectRoot, blueprintPath, blueprint });
+    if (verified) questioning = verified;
+  }
   if (projectRoot && typeof blueprint.blueprint_id === 'string') {
     const { componentBlueprintPath } = require('./component-blueprint-path') as typeof import('./component-blueprint-path');
     const { enumerateCanonicalChangeUnits } = require('./change-unit-path') as typeof import('./change-unit-path');

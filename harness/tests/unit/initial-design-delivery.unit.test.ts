@@ -1291,6 +1291,13 @@ cases.push({
       const qDirectory = path.join(runDir, 'phases', String(q.phase), qRequest.request.invoke_id);
       assert.deepEqual(fs.readFileSync(path.join(qDirectory, 'blueprint-before.yaml')), beforeQ);
       assert.equal(fs.readFileSync(path.join(qDirectory, 'questioning-output.json'), 'utf8'), output);
+      const projected = (require('../../scripts/utils/initial-design-delivery') as typeof import('../../scripts/utils/initial-design-delivery'))
+        .projectInitialDesignDelivery({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, manifest });
+      assert.equal(projected.last_invocation?.call_status, 'passed', '正常调用结束不改写成业务通过');
+      assert.equal(projected.last_invocation?.result_usable, true);
+      assert.equal(projected.last_invocation?.questioning?.blockers, 1, '状态保留独立原件的业务否定');
+      assert.equal(projected.last_invocation?.questioning?.source, path.relative(host.root, path.join(qDirectory, 'questioning-output.json')).replace(/\\/g, '/'));
+      assert.equal(projected.current?.phase, 'initial-design-author', '恢复后显示实际活跃责任');
       const authorPath = (author.request as { path: string }).path, authorRequest = handoff.readSessionExecution(runDir, authorPath)!;
       assert(authorRequest.request.context.instruction!.includes(answer), 'the actual author must receive the complete current denial');
       const qualifiedBlueprint = fs.readFileSync(canonical.canonicalPath);
@@ -1464,8 +1471,123 @@ cases.push({
   },
 });
 
+for (const scenario of ['derived', 'source-gap', 'repair', 'no-progress'] as const) cases.push({
+  name: `a920e013 public candidate ${scenario} keeps root ownership, original transaction and finite recovery`,
+  async run() {
+    const { withFreshCuHost } = require('./lifecycle-evolution.unit.test') as typeof import('./lifecycle-evolution.unit.test');
+    const { fixture } = require('./blueprint-skill-projection.unit.test') as typeof import('./blueprint-skill-projection.unit.test');
+    const entry = require('../../scripts/goal-mode-entry') as typeof import('../../scripts/goal-mode-entry');
+    const handoff = require('../../scripts/utils/session-execution-handoff') as typeof import('../../scripts/utils/session-execution-handoff');
+    const manifests = require('../../scripts/utils/goal-manifest') as typeof import('../../scripts/utils/goal-manifest');
+    const { createGoalRun } = require('../../scripts/utils/goal-run-creation') as typeof import('../../scripts/utils/goal-run-creation');
+    const identity = require('../../scripts/utils/change-unit-path') as typeof import('../../scripts/utils/change-unit-path');
+    const { resolveBlueprintTarget } = require('../../scripts/utils/blueprint-addressing') as typeof import('../../scripts/utils/blueprint-addressing');
+    const { repairAdapter } = require('./design-authority-repair.unit.test') as typeof import('./design-authority-repair.unit.test');
+    await withFreshCuHost(async host => {
+      const f = fixture(host.root), blueprint = 'ledger-app-blueprint';
+      seedLedgerQuestioningInput(host.root);
+      const doc = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
+      const unit = YAML.parse(fs.readFileSync(f.cuFile, 'utf8'));
+      const flowRef = unit.design_refs.find((ref: { target: { kind: string } }) => ref.target.kind === 'flow');
+      const flow = resolveBlueprintTarget(doc, flowRef.target);
+      const state = (flow.contracts as any).state_management[0];
+      state.design_ref = `view:runtime/flow:${flowRef.target.id}`;
+      for (const field of ['owner_ref', 'contract_refs', 'mutations', 'publications', 'subscriptions', 'consumers']) delete state[field];
+      if (scenario === 'source-gap') delete (flow.consumers as any[])[0].update_ref;
+      else if (scenario !== 'derived') {
+        // The source flow is admitted; an explicitly conflicting mirror still needs its design owner.
+        state.owner_ref = 'view:runtime/node:ledger-store';
+      }
+      fs.writeFileSync(f.blueprintFile, YAML.stringify(doc)); f.bind();
+      const artifact = identity.asChangeUnitArtifact(YAML.parse(fs.readFileSync(f.cuFile, 'utf8')));
+      const providerId = 'builtin-vertical-slice-decomposition'; artifact.provenance.extraction_method += ';' + providerId;
+      const contracts = resolveBlueprintTarget(doc, artifact.design_refs[0].target).contracts as any;
+      const mapping = structuredClone(contracts.change_unit); delete mapping.change_unit_ref;
+      for (const canonical of identity.enumerateCanonicalChangeUnits(host.root, blueprint)) fs.unlinkSync(canonical.canonicalPath);
+      const candidatesPath = path.join(path.dirname(f.blueprintFile), 'change-unit-candidates.json');
+      fs.writeFileSync(candidatesPath, JSON.stringify([{ providerId, artifact, construction_mapping: mapping }]) + '\n');
+      let pendingBytes = fs.readFileSync(candidatesPath);
+      const manifest = manifests.buildInitialDesignGoalManifest({ feature: blueprint, run_id: `projection-${scenario}`, adapter: 'codex',
+        requirement: '新增一笔账目后刷新账页并在重启后恢复余额',
+        initial_design: { completion_target: 'feature', requested_results: ['账目刷新和恢复'], requested_phases: ['coding'] },
+        budget: { max_total_turns: 20, wall_clock_minutes: 120 }, unattended: UNATTENDED }, { projectRoot: host.root });
+      const root = createGoalRun({ projectRoot: host.root, manifest, chain: [] }), runDir = path.dirname(root.manifestPath);
+      const options = { projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: blueprint, runId: manifest.run_id,
+        adapter: 'codex', runMode: 'attended', authorization: { mode: 'goal_mode' as const, autonomyAuthorized: true } };
+      const diagnostic = (value: Record<string, unknown>): string => value.request
+        ? handoff.readSessionExecution(runDir, (value.request as { path: string }).path)!.request.context.instruction!.slice(-4500) : JSON.stringify(value);
+      let result = await withRuntimeTest({ root: host.root }, () => entry.runGoalModeSessionStep(options));
+      if (scenario === 'source-gap') {
+        assert.equal(result.phase, 'initial-design-author', diagnostic(result));
+        assert.match(diagnostic(result), /runtime_flow_consumer_update_missing/);
+        assert.equal(result.run_id, manifest.run_id);
+        assert.deepEqual((await withRuntimeTest({ root: host.root }, () => entry.runGoalModeSessionStep(options))).request, result.request);
+        assert.equal(identity.enumerateCanonicalChangeUnits(host.root, blueprint).length, 0);
+        assert.deepEqual(fs.readFileSync(candidatesPath), pendingBytes);
+        assert(!handoff.sessionEvents(runDir).some(event => event.type === 'run_end' && 'run_wait_kind' in event && event.run_wait_kind === 'human'));
+        return;
+      }
+      if (result.phase === 'initial-design-questioning') result = await reportFixtureQuestioning(options, result, runDir, f.blueprintFile);
+      if (result.phase === 'initial-design-decomposition') {
+        const requestPath = (result.request as { path: string }).path, issued = handoff.readSessionExecution(runDir, requestPath)!;
+        const current = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
+        const signed = { revision: current.revision, source_fingerprint: current.source_fingerprint,
+          artifact_sha256: 'sha256:' + createHash('sha256').update(fs.readFileSync(f.blueprintFile)).digest('hex') };
+        for (const ref of [artifact.component_blueprint_ref, ...artifact.design_refs, ...artifact.touches.map(row => row.design_ref)]) Object.assign(ref, signed);
+        fs.writeFileSync(candidatesPath, JSON.stringify([{ providerId, artifact, construction_mapping: mapping }]) + '\n');
+        pendingBytes = fs.readFileSync(candidatesPath);
+        result = await withRuntimeTest({ root: host.root }, () => entry.runGoalModeSessionStep({ ...options, requestPath,
+          report: { status: 'passed', phase: issued.request.context.phase, details: 'returned the candidate against the current admitted blueprint' } }));
+      }
+      if (scenario === 'derived') {
+        assert(identity.enumerateCanonicalChangeUnits(host.root, blueprint).some(row => row.changeUnit.change_unit_id === artifact.change_unit_id), diagnostic(result));
+        assert.equal(handoff.sessionEvents(runDir).filter(event => event.type === 'agent_invoke_start' && String(event.phase).includes('decomposition')).length, 1, '唯一派生不重派候选');
+        return;
+      }
+      assert.equal(result.phase, 'design-repair-author', diagnostic(result));
+      const first = result.request as { path: string };
+      const repeated = await withRuntimeTest({ root: host.root }, () => entry.runGoalModeSessionStep(options));
+      assert.deepEqual(repeated.request, result.request, '断电后同一签发恢复，不另派作者');
+      assert.deepEqual(fs.readFileSync(candidatesPath), pendingBytes);
+      const originalContext = fs.readFileSync(path.join(runDir, 'design-repair/original-context.json'));
+      const repair = repairAdapter(host, () => undefined, { fix: () => undefined, author: current => {
+        if (scenario === 'repair') delete (resolveBlueprintTarget(current, flowRef.target).contracts as any).state_management[0].owner_ref;
+      } });
+      let attempts = 0;
+      while (result.type === 'phase_execute_request' && String(result.phase).startsWith('design-repair-') && attempts++ < 8) {
+        const requestPath = (result.request as { path: string }).path, issued = handoff.readSessionExecution(runDir, requestPath)!;
+        const returned = await repair.onOutOfChain({ phase: issued.request.context.phase, prompt: issued.request.context.instruction!, attempt: 1, runId: manifest.run_id });
+        result = await withRuntimeTest({ root: host.root }, () => entry.runGoalModeSessionStep({ ...options, requestPath,
+          report: { status: 'passed', phase: issued.request.context.phase, details: typeof returned?.details === 'string' ? returned.details : 'returned the original design owner draft' } }));
+      }
+      assert(attempts < 8, '无改善必须有限收敛');
+      const events = handoff.sessionEvents(runDir);
+      assert.equal(events.filter(event => event.type === 'design_authority_repair' && 'stage' in event && event.stage === 'attempted').length, 1, '换 owner 不重置事务');
+      assert.deepEqual(fs.readFileSync(path.join(runDir, 'design-repair/original-context.json')), originalContext);
+      assert.equal(JSON.parse(fs.readFileSync(root.manifestPath, 'utf8')).run_id, manifest.run_id);
+      if (scenario === 'repair') {
+        const accepted = identity.enumerateCanonicalChangeUnits(host.root, blueprint);
+        assert.equal(accepted.length, 1, JSON.stringify(result)); assert.equal(accepted[0].changeUnit.change_unit_id, artifact.change_unit_id);
+        assert.equal((accepted[0].changeUnit.component_blueprint_ref as any).revision, doc.revision + 1);
+        assert(!events.some(event => event.type === 'run_end' && 'run_wait_kind' in event && event.run_wait_kind === 'human'));
+        assert.equal(events.filter(event => event.type === 'agent_invoke_start' && String(event.phase).includes('decomposition')).length, 1, '真实缺口只回设计原 owner');
+      } else {
+        assert.equal(result.type, 'goal_session_result');
+        const stopped = [...events].reverse().find(event => event.type === 'run_end') as Record<string, unknown> | undefined;
+        assert(stopped && (stopped.halt_reason === 'no_progress_guard'
+          || stopped.halt_reason === 'executor_waiting' && String(stopped.halt_guidance).includes('没有新的可执行工作')), JSON.stringify({ result, events: events.slice(-3) }));
+        assert.equal(stopped.status, 'HALTED'); assert.notEqual(stopped.run_wait_kind, 'human');
+        assert.equal(identity.enumerateCanonicalChangeUnits(host.root, blueprint).length, 0);
+        assert.deepEqual(fs.readFileSync(candidatesPath), pendingBytes, '无改善保留未接受候选');
+      }
+      assert(first.path.includes('design-repair-author'));
+    });
+  },
+});
+
 export function getCases() { return cases; }
 const dailyPrefixes = [
+  "a920e013 ",
   "8f2c6b91 ",
   "f3b8e6a1 public preparation births a managed raw-request root",
   "f3b8e6a1 public next reuses the original signed design request",

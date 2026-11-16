@@ -47,6 +47,12 @@ const scales: Record<string, DeliveryScale> = { 特别简单: 'trivial', 小型:
 export function nativeFixedScale(value?: string): DeliveryScale | undefined { return value ? scales[value] : undefined; }
 const labels: Record<keyof DeliveryFacts, string> = { design_tradeoff: 'Q1', unclosed_impact: 'Q2', irreversible_data: 'Q3', dependent_results: '依赖结果', cross_component: '跨部件', expectations_clear: '预期明确', unique_approach: '做法唯一' };
 function git(root: string, args: string[]): string { return execFileSync('git', args, { windowsHide: true, cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim(); }
+function currentWorktreeGit(tool: NativeTool, root: string, command: RegExp): boolean {
+  const match = /\bgit\s+(?:-C\s+(?:"([^"\r\n]+)"|'([^'\r\n]+)'|(\S+))\s+)?([^\r\n]*)/.exec(native.toolInput(tool));
+  if (!match || !command.test(match[4])) return false;
+  const cwd = (tool.input as { cwd?: string; workdir?: string })?.cwd ?? (tool.input as { workdir?: string })?.workdir ?? root;
+  return native.samePath(path.resolve(cwd, match[1] ?? match[2] ?? match[3] ?? '.'), root);
+}
 function nativePath(root: string, file: string): string {
   return realProjectPath(root, path.relative(root, path.resolve(root, file)).replace(/\\/g, '/'), 'native source');
 }
@@ -70,7 +76,7 @@ export function requestStartFromReflog(root: string, at: string): string | undef
   try {
     const file = git(root, ['rev-parse', '--git-path', 'logs/HEAD']);
     const rows = fs.readFileSync(path.resolve(root, file), 'utf8').trim().split('\n').map(line => {
-      const match = /^([a-f0-9]{40}) ([a-f0-9]{40}) .+> (\d+) [+-]\d{4}\t/.exec(line);
+      const match = /^([a-f0-9]{40}) ([a-f0-9]{40}) .+ <[^<>]*> (\d+) [+-]\d{4}(?:\t.*)?$/.exec(line.replace(/\r$/, ''));
       return match ? { old: match[1], head: match[2], at: Number(match[3]) } : undefined;
     });
     if (!rows.length || rows.some(row => !row)) return;
@@ -181,7 +187,7 @@ export function readRequestIntake(options: { projectRoot: string; frameworkRoot:
   let baseline: RequestIntake['baseline'] = { head: 'WORKTREE', source: 'unknown', detail: '起始HEAD未核', initial_dirty: 'unknown' };
   const firstWrite = tools.find(native.isEditingTool);
   const beforeWrite = (tool: NativeTool): boolean => !firstWrite || (Number.isFinite(firstWrite.startedTime) ? native.toolCompletedBefore(tool, { id: '', role: '', text: '', at: new Date(firstWrite.startedTime!).toISOString(), line: firstWrite.line }) : native.toolCompletedBefore(tool, firstWrite.line));
-  const capture = tools.find(tool => native.toolSucceeded(tool) && beforeWrite(tool) && /git\s+(?:-C\s+\S+\s+)?rev-parse\s+(?:--verify\s+)?HEAD/.test(native.toolInput(tool)) && /\b[a-f0-9]{40}\b/.test(tool.output));
+  const capture = tools.find(tool => native.toolSucceeded(tool) && beforeWrite(tool) && currentWorktreeGit(tool, root, /^rev-parse\s+(?:--verify\s+)?HEAD\b/) && /\b[a-f0-9]{40}\b/.test(tool.output));
   if (capture) {
     const hashes = [...new Set(capture.output.match(/\b[a-f0-9]{40}\b/g))];
     const location = capture.origin?.partId ? `${session.file} (native part=${capture.origin.partId}${capture.origin.callId ? ', call=' + capture.origin.callId : ''})`
@@ -192,7 +198,7 @@ export function readRequestIntake(options: { projectRoot: string; frameworkRoot:
     const base = requestStartFromReflog(root, origin.at);
     if (base) baseline = { ...baseline, base, source: 'reflog', detail: `本worktree HEAD reflog覆盖${origin.at}` };
   }
-  const status = tools.find(tool => native.toolSucceeded(tool) && beforeWrite(tool) && /git\s+status\b[^\n]*(?:--porcelain|--short|\s-s(?=[\s"';]|$))/.test(native.toolInput(tool)));
+  const status = tools.find(tool => native.toolSucceeded(tool) && beforeWrite(tool) && currentWorktreeGit(tool, root, /^status\b[^\n]*(?:--porcelain|--short|\s-s(?=[\s"';]|$))/));
   if (status) baseline.initial_dirty = status.output.split(/\r?\n/).filter(line => /^[ MADRCU?!]{2} /.test(line)).map(line => line.slice(3).split(' -> ').at(-1)!.replace(/\\/g, '/'));
   if (Array.isArray(baseline.initial_dirty)) {
     const preimages: NonNullable<RequestIntake['baseline']['preimages']> = {};

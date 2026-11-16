@@ -41,5 +41,6 @@ export function invocationEndFacts(facts: Partial<AgentInvokeResult> & { exit_co
     kill_reason: facts.kill_reason ?? (facts.timed_out === true ? 'agent_timeout' : undefined),
     provider_session_id: facts.provider_session_id, nativeSessionRebuildReason: facts.nativeSessionRebuildReason,
     readonly_enforced: facts.readonly_enforced, readonly_diagnostic: facts.readonly_diagnostic,
+    ...(facts.usage !== undefined ? { usage: facts.usage } : {}),
   };
 }

@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { execFileSync } from 'child_process';
+import { createHash } from 'crypto';
 import * as YAML from 'yaml';
 import { clearFrameworkConfigCache, featureFilePath, resolveFeatureArtifact } from '../../config';
 import { loadCanonicalBlueprint } from '../../scripts/utils/component-blueprint-path';
@@ -20,6 +21,7 @@ import { tryAcquireLock, releaseLock, FEATURE_LOCK_NAME } from '../../scripts/ut
 import { matchesUnitCase, selectedUnitCases, startCaseTiming, unitCaseGroups, type UnitExecutionTiming } from '../utils/unit-case-selection';
 import type { UnitCaseResult } from '../run-unit';
 import { fixture as projectionFixture, planContracts } from './blueprint-skill-projection.unit.test';
+import { readHandoffMaterial } from '../../scripts/utils/session-execution-handoff';
 
 type Json = Record<string, any>;
 type Group = 'content' | 'runtime';
@@ -330,7 +332,23 @@ const cases: Array<{ name: string; group: Group; run: () => Promise<void> }> = [
       }
       questionCalls++;
       assert(context.instruction?.includes('本事务知识资产的实际改动'));
-      assert(context.instruction?.includes('terms: []\\n'));
+      const attempt = [...rows].reverse().find(row => row.type === 'design_authority_repair' && row.stage === 'attempted')!;
+      const reference = attempt.handoff_context;
+      assert(context.instruction?.includes(`${path.resolve(runDir, reference.path)}#/knowledgeOriginals`));
+      assert(context.instruction?.includes(`原件SHA256=${reference.sha256}`));
+      const baseline = readHandoffMaterial<{ knowledgeOriginals: Record<string, string> }>(runDir, reference);
+      const originalBytes = Buffer.from(baseline.knowledgeOriginals[relative], 'base64');
+      assert.equal(originalBytes.toString('utf8'), before, '独立方能沿提示定位并读出准确的原字节');
+      const section = context.instruction!.split('## 本事务知识资产的实际改动')[1]?.split('\n逐条独立核对资产')[0];
+      const arrayStart = section?.indexOf('\n[') ?? -1;
+      assert(section && arrayStart >= 0, '独立提示保留逐项当前路径及前后hash');
+      const change = JSON.parse(section.slice(arrayStart + 1).trim()).find((item: Json) => item.path === relative);
+      const currentBytes = fs.readFileSync(file);
+      assert.equal(change.before_sha256, createHash('sha256').update(originalBytes).digest('hex'));
+      assert.equal(change.current_sha256, createHash('sha256').update(currentBytes).digest('hex'));
+      const terms = YAML.parse(currentBytes.toString('utf8')).terms;
+      assert.equal(terms.find((item: Json) => item.term === 'LedgerDataSource').definition, decision.stable_contract,
+        '沿当前path能核到原批准结论的准确落盘值');
       assert(context.instruction?.includes('未涉及条目未被改写'));
       if (mode === 'questioning') execFileSync(process.execPath, ['-e', 'require("fs").appendFileSync(process.argv[1],"# forbidden Q write\\n")', file]);
       return { status: 'passed', phase: context.phase, exitCode: 0, stdout: '', stderr: '', command: 'independent Q transport', details: JSON.stringify(doc.review_summary.questioning) };

@@ -1,0 +1,21 @@
+{
+  "run_id": "20261115T073957Z-e7af8c",
+  "feature": "bc-openCard-2",
+  "sources": [
+    {
+      "invocation": "initial-design-decomposition-i11",
+      "file": "agent-events.jsonl",
+      "sha256": "2976f71fb961afbeefd68652198d3720b6f53a721a256fbd614faa362a2938f1",
+      "projection": "i11-diagnosis.md",
+      "selection": "type=final.text 的阻塞点段；仅诊断，不作为业务通过预期"
+    },
+    {
+      "invocation": "initial-design-decomposition-i12",
+      "file": "blueprint-before.yaml",
+      "sha256": "d37fd1ed630843c450f9e1bdeac338858605f6b182dc46a6b79f8eedd516beb9",
+      "projection": "i12-runtime-flow.json",
+      "selection": "蓝图身份与 design_views[view_id=runtime].runtime_data_flows[flow_id=flow-card-open-run]；字段原样保留"
+    }
+  ],
+  "scope": "历史只读结构回放；不代表独立质询、业务交付或真实宿主验收通过"
+}

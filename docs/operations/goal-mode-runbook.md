@@ -10,6 +10,8 @@
 
 新完整正式请求先按原始需求进入受管设计；canonical CU 尚不存在时不造平面 Feature/scope。初始设计、真实独立质询、正式发布、CU readiness、所有适用 CU 与原部件终点由同一 root 协调器持续处理。设计 ready、select_one 或子 run 出生均不是交付。
 
+从宿主 `framework/harness` 调用 `npx ts-node scripts/goal-runner.ts --project-root <宿主根> --feature <原请求id> --requirement-file doc/requirements/request.md --adapter <当前adapter> --dry-run` 可先看同一入口的下一步、范围与已知缺口。需求路径相对宿主根；fresh 完整交付不要求先有 feature.yaml。dry-run 不签发设计、不创建真实 run、不启动模型或子进程；确认入口后沿原授权去掉 `--dry-run` 进入同一 runtime。
+
 ## 当前差额与反馈
 
 readCurrentDispositionInput 组装当前适用义务、真实工具结果和独立发现，resolveCurrentDisposition 是唯一处置。assess、NEXT、report、status、progress 与 Feature/CU/component/release 消费同一结果；瞬时 currentResults/disposition 可在本次调用透传，不另存第二完成状态。
@@ -35,6 +37,10 @@ run-control epoch 与真实 request/accepted report 防重复和旧 owner 迟报
 ## 状态与终点
 
 活性（原调用是否运行/结束）与业务完成分开显示。events-only 历史可读并展示 elapsed/activity，但缺 manifest/原件时业务未知；读取错误不能签 PASS。calls/active_ms 是统计，不是配额。历史 budget 仅可标注历史。
+
+`npx ts-node scripts/goal-status.ts --feature <原请求id> --run-id <原run> --watch` 沿现有刷新周期显示停止、恢复及最新活跃职责，无需长时间固定 sleep。初始设计的 `last_invocation.call_status=passed` 只表示正常交回；`result_usable`、`questioning.blockers/open_decisions` 和原件 `source` 分别说明结果可消费性与业务结论，下一责任方由当前 disposition 决定。机器读取加 `--json`，观察不得另派作者或重置 run。
+
+DSH `invoke_end.usage` 只合计本次调用原生 step_end，按 session/turn/step 去重；新增 `input_tokens` 与 `observed_cache_read_tokens` 分开，后者仅合计实际公开的缓存字段。部分缺失通过 `missing_reason` 说明，全缺失保持 null；中断仅计已观测步骤，不推费用、不因缺计数停机。其它 adapter 保留既有用量采集口径，字节、逻辑输入及缓存读取均不等于新增计费 token。
 
 Feature/CU 需要适用义务和正式完成原件；部件还需其装配及正式 closure 原件，release 使用同一事实的发布条件。全部 CU 完成或 evaluate 条件绿不代签 component：原机器 writer 正式写出、重读校验后才可使用。普通完成与发布就绪分开，未知保持未知。
 
