@@ -1,3 +1,5 @@
+import { sameInvocationUtFailure } from '../ut-host-impl';
+import { effectiveForceDevice } from '../../../../harness/scripts/utils/managed-goal-invocation';
 /**
  * ut.run → provider `hvigor_hypium`（含 probeDevices 供 env 提示）
  */
@@ -126,8 +128,6 @@ export async function runRequestTests(ctx: RequestCheckContext) {
   };
   const started = startExecutionKeyRun(ctx.reportDir, 'ut', inputs);
   const runDir = started.runDir; let record = started.record;
-  const gate = await applyPhaseEntryDeviceGate({ projectRoot: ctx.projectRoot, phase: 'ut', startedBy: 'request-' + ctx.request.request_sha256, log: message => console.error(message) });
-  if (!gate.ok) reject(gate.reason ?? 'UT device environment unavailable', 'device_blocked');
   const identity = resolveExecutionDeviceIdentity();
   const builds = new Map<string, HvigorRunResult>();
   const haps: Array<[string, string | null]> = [];
@@ -139,11 +139,21 @@ export async function runRequestTests(ctx: RequestCheckContext) {
     haps.push([group.name, artifact.artifactValidation?.status === 'valid' ? computeHapSha256Full(artifact.signedPath) : null]);
   }
   Object.assign(inputs, { hap_sha256_full: sha256Text(JSON.stringify(haps)), device: identity.device, display_env: identity.display_env });
-  record = { ...record, inputs, execution_key: computeExecutionKey(inputs) }; writeExecutionKeyRecord(runDir, record);
+  record = { ...record, inputs, execution_key: computeExecutionKey(inputs), ...(ctx.goalInvocation ? { goal_invocation: ctx.goalInvocation } : {}) }; writeExecutionKeyRecord(runDir, record);
   const artifacts = [...utFrozenRunArtifacts([...groups.keys()]), ...[...groups.keys()].map(name => ({ top: 'hvigor-build.' + name + '.log', frozen: 'frozen.hvigor-build.' + name + '.log', group: 'execution' as const }))];
   const eligible = haps.every(([name, digest]) => digest && builds.get(name)?.builtHap?.sha256 === digest) && [...builds.values()].every(isHvigorBuildSuccessful);
-  const reused = !ctx.forceDevice && eligible && identity.device
-    ? decideReuse(ctx.reportDir, record.execution_key, { leg: 'ut', artifacts, excludeRunDir: runDir }).reusable : null;
+  const failedInvocation = ctx.goalInvocation && eligible && identity.device
+    ? sameInvocationUtFailure(ctx.reportDir, record.execution_key, artifacts, ctx.goalInvocation, identity.device, runDir) : null;
+  const reused = failedInvocation ?? (!effectiveForceDevice(ctx.forceDevice, ctx) && eligible && identity.device
+    ? decideReuse(ctx.reportDir, record.execution_key, { leg: 'ut', artifacts, excludeRunDir: runDir, invocation: ctx.goalInvocation }).reusable : null);
+  if (!reused) {
+  const gate = await applyPhaseEntryDeviceGate({ projectRoot: ctx.projectRoot, phase: 'ut', startedBy: 'request-' + ctx.request.request_sha256, log: message => console.error(message) });
+  if (!gate.ok) reject(gate.reason ?? 'UT device environment unavailable', 'device_blocked');
+  const selected = resolveExecutionDeviceIdentity();
+  Object.assign(inputs, { device: selected.device, display_env: selected.display_env });
+  record = { ...record, inputs, execution_key: computeExecutionKey(inputs) };
+  writeExecutionKeyRecord(runDir, record);
+  }
   if (reused) restoreFrozenRunArtifacts(reused.runDir, runDir, artifacts);
   for (const [name, build] of builds) if (build.logPath && fs.existsSync(path.resolve(build.logPath))) fs.copyFileSync(path.resolve(build.logPath), path.join(runDir, 'hvigor-build.' + name + '.log'));
   const checks: CheckResult[] = []; const evidence_paths: string[] = []; let total = 0; let failed = 0; let executed = true;
@@ -170,7 +180,8 @@ export async function runRequestTests(ctx: RequestCheckContext) {
     const buildLog = path.join(runDir, 'hvigor-build.' + group.name + '.log');
     if (fs.existsSync(buildLog)) evidence_paths.push(buildLog);
   }
+  if (failedInvocation) fs.unlinkSync(path.join(runDir, 'execution-key.json'));
   const frozen = freezeRunArtifacts(runDir, runDir, artifacts);
-  writeExecutionKeyRecord(runDir, { ...record, outcome: executed && failed === 0 ? 'success' : 'failed', timing_complete: frozen.length === artifacts.length, frozen_files: frozen });
+  if (!failedInvocation) writeExecutionKeyRecord(runDir, { ...record, outcome: executed && failed === 0 ? 'success' : 'failed', timing_complete: frozen.length === artifacts.length, frozen_files: frozen });
   return { executed, total, failed, checks, evidence_paths: [...new Set([...evidence_paths, ...findFilesRecursive(runDir, /^(?!frozen\.)/)])] };
 }

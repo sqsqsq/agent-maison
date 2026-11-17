@@ -83,6 +83,7 @@ export type UtHostImpl = {
     featureNewUtFiles?: Array<{ path: string }>,
     /** plan 5e1c7a93 D1：同次 check-ut 调用内共享的 ohosTest 出包结果（调用方按次创建） */
     builds?: Map<string, unknown>,
+    partition?: Pick<UtFilePartition, 'scopeSources' | 'scopeDiagnostics'>,
   ): CheckResult[];
   checkUtHvigorTest(
     ctx: CheckContext,
@@ -91,7 +92,8 @@ export type UtHostImpl = {
     targetCases?: Array<{ path: string; test: string }>,
     /** plan 5e1c7a93 D1：build 阶段出的包；缺席即走 runHvigorTest 内建出包，行为逐字不变 */
     builds?: Map<string, unknown>,
-  ): CheckResult[];
+    partition?: Pick<UtFilePartition, 'scopeSources' | 'scopeDiagnostics'>,
+  ): CheckResult[] | Promise<CheckResult[]>;
   checkTestRegistration(
     ctx: CheckContext,
     utFiles: Array<{ path: string }>,

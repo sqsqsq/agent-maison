@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as YAML from 'yaml';
-import { prepareFeatureScopeCandidate } from '../../scripts/utils/feature-track';
+import { prepareFeatureScopeCandidate, refreshScopeBindingInput } from '../../scripts/utils/feature-track';
 import { execFileSync } from 'child_process';
 import { loadWorkflowSpec } from '../../workflow-loader';
 import { resolveFeatureArtifact, clearFrameworkConfigCache } from '../../config';
@@ -37,6 +37,8 @@ import {
   type RunProbe,
   PRODUCT_FILE,
   fixtureReadDependencies,
+  authorizeFixtureConstruction,
+  writeVisualDiff,
 } from './goal-runner-testing-integrity.unit.test';
 import {
   buildGoalManifestFromInput,
@@ -212,6 +214,150 @@ const semanticReviewCases: Case[] = (['normal', 'api429', 'unchanged'] as const)
 }));
 
 const cases: Case[] = [...semanticReviewCases, {
+  name: '4c8d73b1 successor facts reuse requires an audited original and unchanged observed sources',
+  run: async () => {
+    const root = setupGoalRuntimeHost('codex', false).root;
+    const marker = 'SUCCESSOR_4C8D73B1';
+    const parent = '4c8d73b1-facts-parent', child = '4c8d73b1-facts-child';
+    const facts = path.join(root, 'doc/features/bc-openCard/context/facts.md');
+    const originalSource = fs.readFileSync(path.join(root, PRODUCT_FILE));
+    try {
+      const launch = declareSourceRepairRequest(root, ['coding']).launch;
+      let parentAuthors = 0;
+      const first = await runGoalRuntimeChain(root, { ...launch, adapter: 'codex', runId: parent,
+        onAuthor: (_ctx, context) => {
+          assert(++parentAuthors <= 3, 'unchanged source repair must converge');
+          const sources = context.factsContext!.source_paths.filter(source => fs.existsSync(path.join(root, source)));
+          const rows = sources.map(source => `| ${source} | ${fs.readFileSync(path.join(root, source)).length} bytes actually read | preserve source repair contract |`);
+          fs.mkdirSync(path.dirname(facts), { recursive: true });
+          fs.writeFileSync(facts, '---\n' + YAML.stringify({ schema_version: '1.1', feature: 'bc-openCard', run_id: parent,
+            established_by: context.factsContext!.first_phase, source_code_paths: sources, key_inputs_read: sources,
+            files_inspected_count: sources.length, searches_performed_estimate: 4, decisions_unlocked: ['source repair'],
+            ready_to_produce: true, has_blocker_coverage_risk: false, exploration_mode: 'sequential' })
+            + '---\n## Code Facts\n| 路径 | 事实 | 影响 |\n|---|---|---|\n' + rows.join('\n') + '\n## phase_delta: coding\nOriginal source unchanged.\n');
+        },
+        onHarnessSummary: ({ phase }) => phase === 'coding' ? { checks: fixtureReadDependencies(root, [productEvidenceCheck(root, marker)], [PRODUCT_FILE]) } : null,
+      });
+      assert(first.exitCode !== 0, 'the unresolved parent must retain its real failure');
+      const originalFacts = fs.readFileSync(facts, 'utf8');
+      let inherited = false;
+      const second = await runGoalRuntimeChain(root, { ...launch, adapter: 'codex', runId: child, supersede: [parent],
+        onAuthor: (_ctx, context) => {
+          inherited = !!context.factsContext?.baseline;
+          assert(inherited && context.factsContext!.baseline!.established_by === 'coding', 'new run must inherit actual establishing provenance from the original producer');
+          assert(fs.readFileSync(facts, 'utf8') === originalFacts, 'inheriting facts must not rewrite the predecessor run identity');
+          fs.appendFileSync(path.join(root, PRODUCT_FILE), `\n// ${marker}\n`);
+        },
+        onHarnessSummary: ({ phase }) => phase === 'coding' ? { checks: fixtureReadDependencies(root, [productEvidenceCheck(root, marker)], [PRODUCT_FILE]) } : null,
+      });
+      assert(inherited && second.exitCode === 0, 'the audited successor completes after its actual source repair');
+      const { loadSuccessorFactsBaseline } = require('../../scripts/utils/capability-resolution-entry-input') as typeof import('../../scripts/utils/capability-resolution-entry-input');
+      assert(!loadSuccessorFactsBaseline({ projectRoot: root, frameworkRoot: path.resolve(__dirname, '../../..'), feature: 'bc-openCard', featuresDir: 'doc/features', phase: 'coding', goalAttemptId: 'i99' }, child, path.resolve(__dirname, '../../..')),
+        'source changes after the predecessor observation cannot be washed into an inherited baseline');
+      fs.writeFileSync(path.join(root, PRODUCT_FILE), originalSource);
+      const contract = path.join(root, 'doc/features/bc-openCard/contracts.yaml');
+      const changedAuthority = YAML.parse(fs.readFileSync(contract, 'utf8')); changedAuthority.version = 'changed-construction-authority';
+      fs.writeFileSync(contract, YAML.stringify(changedAuthority));
+      const entry = require('../../scripts/utils/capability-resolution-entry-input') as typeof import('../../scripts/utils/capability-resolution-entry-input');
+      const lookup = { projectRoot: root, frameworkRoot: path.resolve(__dirname, '../../..'), feature: 'bc-openCard', featuresDir: 'doc/features', phase: 'coding', goalAttemptId: 'i99' };
+      assert(entry.loadCompletedFactsObservation(lookup, parent, lookup.frameworkRoot), 'unchanged product observations alone remain available after the authority change');
+      assert(!loadSuccessorFactsBaseline(lookup, child, lookup.frameworkRoot), 'changed establishing-phase evidence must reject inherited admission before an author receives baseline=true');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  },
+}, {
+  name: '4c8d73b1 compatible input drift is re-signed once while real contract changes remain owned',
+  run: async () => {
+    const root = setupGoalRuntimeHost('codex', false).root;
+    try {
+      const request = declareSourceRepairRequest(root, ['coding']);
+      const contracts = path.join(root, 'doc/features/bc-openCard/contracts.yaml');
+      fs.appendFileSync(contracts, '\n# same parsed contract, current observed bytes\n');
+      const ctx = { projectRoot: root, frameworkRoot: path.resolve(__dirname, '../../..'), feature: 'bc-openCard', requirement: YAML.parse(request.launch.freshManifestContent).requirement };
+      const proposal = refreshScopeBindingInput(ctx, request.scope);
+      assert(proposal, 'current compatible bytes must produce a proposal for the existing revision writer');
+      const probe = await runGoalRuntimeChain(root, { ...request.launch, adapter: 'codex', runId: '4c8d73b1-binding',
+        onAuthor: () => undefined,
+        onHarnessSummary: ({ phase }) => phase === 'coding' ? { checks: fixtureReadDependencies(root, [{ ...productEvidenceCheck(root, ''), status: 'PASS' }], [PRODUCT_FILE]) } : null,
+      });
+      assert(probe.exitCode === 0 && probe.events.filter(event => event.type === 'scope_revised').length >= 1, 'formal checks must consume the re-signed compatible input');
+      const raw = YAML.parse(fs.readFileSync(contracts, 'utf8')); raw.files = [...(raw.files ?? []), '02-Feature/Outside/src/Outside.ets'];
+      fs.writeFileSync(contracts, YAML.stringify(raw));
+      const altered = refreshScopeBindingInput(ctx, request.scope);
+      const before = request.scope.obligations.flatMap(fact => fact.basis).find(binding => binding.input_id === 'contracts');
+      const after = altered?.facts.flatMap(fact => fact.basis).find(binding => binding.input_id === 'contracts');
+      assert(!after || after.content_fingerprint === before?.content_fingerprint, 'a changed construction contract cannot be automatically accepted by its consumer');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  },
+}, {
+  name: '4c8d73b1 final testing evidence gaps dispatch only the original verifier when conditions exist',
+  run: async () => {
+    for (const available of [true, false]) {
+      const root = setupGoalRuntimeHost('codex', false).root;
+      let introduced = false, supplements = 0;
+      try {
+        const hap = path.join(root, 'build/default/app.hap'), stat = fs.statSync(hap);
+        fs.writeFileSync(path.join(root, 'doc/features/bc-openCard/testing/reports/device-test-install.meta.json'), JSON.stringify({
+          hapPath: hap, hapMtimeMs: stat.mtimeMs, hapSizeBytes: stat.size,
+          hapSha256: require('crypto').createHash('sha256').update(fs.readFileSync(hap)).digest('hex').slice(0, 12),
+        }));
+        authorizeFixtureConstruction(root, 'request');
+        const probe = await runGoalRuntimeChain(root, { adapter: 'codex', runId: `4c8d73b1-final-${available}`,
+          deviceGate: (input: { sessionId: string }) => !available && input.sessionId.startsWith('testing-evidence-')
+            ? { outcome: { phase: 'testing', verdict: 'INCOMPLETE', halted: true, retries: 0,
+              halt_reason: 'device_not_ready', halt_guidance: 'original failure-state device unavailable' } }
+            : { env: { HARNESS_HDC_TARGET: 'fake-device', MAISON_DEVICE_TARGET_KIND: 'physical' },
+              target: { serial: 'fake-device', targetKind: 'physical' }, notes: ['controlled original device'] },
+          onAuthor: (_ctx, context) => {
+            if (context.workInput?.material?.purpose !== 'testing-evidence') return;
+            assert(++supplements === 1, 'unchanged evidence gaps must not buy repeated verifier work');
+            assert(context.phase === 'testing' && context.childEnv.HARNESS_HDC_TARGET === 'fake-device', 'the signed original testing method retains the actual authorized target');
+            assert(context.instruction?.includes('只补') && context.instruction.includes('失败页面必须实际到达原失败场景'), 'the actual producer receives the object and its evidence obligation');
+            writeVisualDiff(root, [{ id: 'original-failure-page', verdict: 'pass', mustFix: [] }]);
+          },
+          onTestingHarness: () => {
+            if (introduced) return;
+            introduced = true;
+            writeVisualDiff(root, [{ id: 'original-failure-page', verdict: 'warn', mustFix: ['failure-page evidence must match the current HAP'], buildFp: 'different-old-hap' }]);
+          },
+        });
+        assert(introduced, 'the actual formal testing path must encounter the original mismatched evidence');
+        if (available) {
+          assert(supplements === 1 && probe.invokedPhases.includes('testing'), 'available conditions must dispatch the existing testing producer before WAITING: ' + JSON.stringify(probe.events.filter(event => event.type === 'phase_halt')));
+          assert(probe.harnessPhases.filter(phase => phase === 'testing').length === 2, 'only the affected formal testing check is repeated after its real producer returns');
+          assert(probe.exitCode === 0, 'current applicable evidence can finish the original request');
+        } else {
+          assert(supplements === 0 && probe.exitCode !== 0, 'unavailable device conditions cannot dispatch a verifier or sign completion');
+          assert(probe.events.some(event => event.type === 'phase_halt' && String(event.halt_guidance).includes('original failure-state device unavailable')), 'the original exact waiting condition remains visible');
+        }
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    }
+  },
+}, {
+  name: '4c8d73b1 production author self-check keeps writer-owned visual debt without rollback calls',
+  run: async () => {
+    const root = setupGoalRuntimeHost('codex', false).root;
+    const marker = 'GENERATOR_4C8D73B1';
+    let authors = 0;
+    try {
+      const launch = declareSourceRepairRequest(root, ['coding']).launch;
+      const { writeVisualDebt, deriveVisualDebt, visualDebtJsonPath, visualDebtMdPath } = require('../../scripts/utils/visual-debt') as typeof import('../../scripts/utils/visual-debt');
+      const probe = await runGoalRuntimeChain(root, { ...launch, adapter: 'codex', runId: '4c8d73b1-owned-debt',
+        onAuthor: () => {
+          assert(++authors === 1, 'a real debt producer must not buy a separate rollback author');
+          fs.appendFileSync(path.join(root, PRODUCT_FILE), `\n// ${marker}\n`);
+          writeVisualDebt(root, deriveVisualDebt('bc-openCard', [{ id: 'visual_diff', status: 'FAIL', severity: 'MAJOR',
+            details: 'actual self-check debt' }], null));
+        },
+        onHarnessSummary: ({ phase }) => phase === 'coding'
+          ? { checks: fixtureReadDependencies(root, [productEvidenceCheck(root, marker)], [PRODUCT_FILE]) } : null,
+      });
+      assert(probe.exitCode === 0, 'the original source request must finish without generated-file recovery: ' + JSON.stringify(probe.events.filter(event => event.type === 'phase_halt')));
+      assert(fs.existsSync(visualDebtJsonPath(root, 'bc-openCard')) && fs.existsSync(visualDebtMdPath(root, 'bc-openCard')), 'both actual ledger products remain');
+      assert(probe.events.some(event => event.type === 'phase_write_observed' && event.producer === 'visual-debt'), 'the original writer must publish actual production facts');
+      assert(!probe.events.some(event => event.type === 'phase_write_violation'), 'machine bytes cannot be charged to the author');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  },
+}, {
   name: '3f8a6c21 report-only validity repair does not repurchase a full product review',
   run: async () => {
     const root = setupGoalRuntimeHost('deepseek-harness', false).root;
@@ -2019,6 +2165,49 @@ const cases: Case[] = [...semanticReviewCases, {
     },
   },
 ];
+
+cases.push({
+  name: '4c8 deferred testing and UT device blockers retain the original runtime condition wait and same attempt',
+  run: async () => {
+    const readiness = require('../../scripts/utils/device-readiness-gate') as typeof import('../../scripts/utils/device-readiness-gate');
+    const { prepareHarnessDeviceExecution } = require('../../harness-runner') as typeof import('../../harness-runner');
+    const originalSelect = readiness.selectDeviceExecutionTarget, originalGate = readiness.applyPhaseEntryDeviceGate;
+    try {
+      for (const family of ['ut', 'testing']) {
+        const root = setupGoalRuntimeHost('codex', false).root;
+        const requirement = '真机测试银行卡开卡流程';
+        authorizeFixtureConstruction(root, 'request', requirement, [family]);
+        let unlocked = false, checks = 0;
+        const selected = { HARNESS_HDC_TARGET: 'fake-device', MAISON_DEVICE_TARGET_KIND: 'physical',
+          MAISON_DEVICE_SESSION_ID: 'selected', MAISON_DEVICE_ATTEMPT_FROZEN: '0' };
+        (readiness as any).selectDeviceExecutionTarget = () => ({ target: { serial: 'fake-device', targetKind: 'physical' }, env: selected });
+        (readiness as any).applyPhaseEntryDeviceGate = async () => unlocked ? { ok: true, notes: [] }
+          : { ok: false, code: 'blocked', reason: 'manual fixture is locked', notes: [] };
+        try {
+          const probe = await runGoalRuntimeChain(root, { adapter: 'codex', freshRequirement: requirement, freshStartPhase: family as 'ut' | 'testing', freshEndPhase: family,
+            deviceGate: (input: { phase: string }) => unlocked ? { env: selected, target: { serial: 'fake-device', targetKind: 'physical' }, notes: [] }
+              : { outcome: { phase: input.phase, verdict: 'FAIL', halted: true, retries: 0, halt_reason: 'device_not_ready',
+                halt_guidance: 'manual fixture is locked', blocking_class: 'externalBlocked', failure_kind: 'device_blocked', probe: 'device_readiness' }, notes: [] },
+            conditionWait: { maxWaitMs: 15000, pollMs: 1, runProbe: () => { unlocked = true; return { ready: true }; } },
+            onHarnessSummary: async ({ phase }) => {
+              if (phase !== family) return null;
+              checks++;
+              const failed = await prepareHarnessDeviceExecution({ projectRoot: root, phase, deferred: true });
+              return failed ? { checks: [{ id: family === 'ut' ? 'ut_hvigor_build' : 'device_test_build', category: 'structure',
+                severity: 'BLOCKER', status: 'PASS', description: 'bounded current build', details: 'same HAP before readiness' }, failed] } : null;
+            },
+          });
+          assert(checks >= 2 && unlocked, `${family}: original checker must continue after its condition probe ${JSON.stringify({ checks, unlocked, phases: probe.harnessPhases, halts: probe.events.filter(event => event.type === 'phase_halt') })}`);
+          const starts = probe.events.filter(event => event.type === 'harness_start' && event.phase === family);
+          assert(starts.length >= 2 && starts[0].invoke_id === starts[1].invoke_id, `${family}: readiness recovery must keep actor attempt identity`);
+          assert(probe.events.some(event => event.type === 'condition_wait_started' && event.phase === family), `${family}: condition wait started`);
+          assert(probe.events.some(event => event.type === 'condition_wait_ready' && event.phase === family), `${family}: same wait recovered`);
+          assert(!probe.events.some(event => event.type === 'phase_halt' && event.phase === family && event.halt_reason === 'executor_waiting'), `${family}: no missing-summary executor halt`);
+        } finally { fs.rmSync(root, { recursive: true, force: true }); }
+      }
+    } finally { (readiness as any).selectDeviceExecutionTarget = originalSelect; (readiness as any).applyPhaseEntryDeviceGate = originalGate; }
+  },
+});
 
 export async function runSelectedCases(selector?: string): Promise<import('../utils/unit-case-selection').SelectedUnitCases> {
   const results: UnitCaseResult[] = [];

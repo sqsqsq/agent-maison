@@ -1,4 +1,4 @@
-import { executeCheck } from './utils/check-execution';
+import { executeCheck, executeCheckAsync } from './utils/check-execution';
 // ============================================================================
 // UT 阶段脚本 Harness — check-ut.ts
 // ============================================================================
@@ -4518,6 +4518,7 @@ const checker: PhaseChecker = {
         [...scopedUtFiles, ...targetResolution.explicitTargetFiles.filter(e => !scopedUtFiles.some(s => s.path === e.path))],
         featureNewUtFiles,
         utBuilds,
+        partition,
       ),
       'ut_hvigor_build',
     );
@@ -4538,7 +4539,8 @@ const checker: PhaseChecker = {
         description: ruleDesc(ctx, 'structure_checks', 'ut_hvigor_test'),
         severity: 'BLOCKER',
         status: 'FAIL',
-        details: 'ut_hvigor_build 已 FAIL，test 阶段自动短路为 FAIL（避免重复跑和日志噪声）。请先修复编译。',
+        details: 'ut_hvigor_build 已 FAIL，test 阶段自动短路为 FAIL（避免重复跑和日志噪声）。请先处理原构建反馈。\n'
+          + hvigorBuildResults.filter(check => check.id === 'ut_hvigor_build' && check.status === 'FAIL').map(check => check.details).join('\n'),
       });
     } else if (compileSkippedProfile) {
       results.push(
@@ -4574,7 +4576,7 @@ const checker: PhaseChecker = {
         ...scopedUtFiles,
         ...targetResolution.explicitTargetFiles.filter(e => !scopedUtFiles.some(s => s.path === e.path)),
       ];
-      results.push(...executeCheck(ctx, () => utHost.checkUtHvigorTest(ctx, runScope, targetCases, utBuilds), 'ut_hvigor_test'));
+      results.push(...await executeCheckAsync(ctx, () => utHost.checkUtHvigorTest(ctx, runScope, targetCases, utBuilds, partition), 'ut_hvigor_test'));
     }
     // v2.2 红线 5.2：business-ut 不得擅改业务源码
     results.push(...executeCheck(ctx, () => checkUtNoSrcMutation(ctx), 'ut_no_src_mutation'));

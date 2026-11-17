@@ -1,3 +1,4 @@
+import { issueManagedInvocation } from '../utils/managed-invocation';
 /**
  * golden-nav-capture-wiring.unit.test.ts — c4e8b1d3 Todo 3 入口级接线
  *
@@ -274,7 +275,7 @@ function loadVisualDiffJson(root: string): Array<Record<string, unknown>> {
 const cases: Array<{ name: string; run: () => void | Promise<void> }> = [];
 function test(name: string, run: () => void | Promise<void>): void { cases.push({ name, run }); }
 
-test('① golden P1 bank_card_list_sheet：nav 校验通过（不判多余键）且产出 __overlay__0 采集', () => {
+test('① golden P1 bank_card_list_sheet：nav 校验通过（不判多余键）且产出 __overlay__0 采集', async () => {
   const c = setup();
   const prev = process.env.MAISON_GOLDEN_CONTRACT;
   try {
@@ -304,7 +305,7 @@ test('① golden P1 bank_card_list_sheet：nav 校验通过（不判多余键）
 // ② golden forbidden target → nav 集合 + 负向证据
 // ---------------------------------------------------------------------------
 
-test('② golden forbidden HomeTab：进 nav 到达集合、被导航并产出 run/build 绑定 wrapper 证据', () => {
+test('② golden forbidden HomeTab：进 nav 到达集合、被导航并产出 run/build 绑定 wrapper 证据', async () => {
   const c = setup();
   const prev = process.env.MAISON_GOLDEN_CONTRACT;
   try {
@@ -344,7 +345,7 @@ test('② golden forbidden HomeTab：进 nav 到达集合、被导航并产出 r
 // ③ 无 golden env → 严格 P0-only
 // ---------------------------------------------------------------------------
 
-test('③a 无 MAISON_GOLDEN_CONTRACT：target 集合 P0-only，P1 屏不进入采集', () => {
+test('③a 无 MAISON_GOLDEN_CONTRACT：target 集合 P0-only，P1 屏不进入采集', async () => {
   const c = setup();
   try {
     assert.strictEqual(process.env.MAISON_GOLDEN_CONTRACT ?? '', '',
@@ -367,7 +368,7 @@ test('③a 无 MAISON_GOLDEN_CONTRACT：target 集合 P0-only，P1 屏不进入�
   }
 });
 
-test('③b 无 MAISON_GOLDEN_CONTRACT：普通 P1 屏写入 nav 配置仍判「多余/错写屏名」', () => {
+test('③b 无 MAISON_GOLDEN_CONTRACT：普通 P1 屏写入 nav 配置仍判「多余/错写屏名」', async () => {
   const c = setup();
   try {
     writeFile(c.projectRoot, `doc/features/${FEATURE}/device-testing/visual-diff-nav.json`, JSON.stringify({
@@ -392,7 +393,7 @@ test('③b 无 MAISON_GOLDEN_CONTRACT：普通 P1 屏写入 nav 配置仍判「�
 // ④ golden 目标缺失/形态不符 → fail-closed（不跳过 nav 校验）
 // ---------------------------------------------------------------------------
 
-test('④ golden declared 缺失 → nav gate fail-closed 点名（不静默，不跳过 nav 校验）', () => {
+test('④ golden declared 缺失 → nav gate fail-closed 点名（不静默，不跳过 nav 校验）', async () => {
   const c = setup();
   const prev = process.env.MAISON_GOLDEN_CONTRACT;
   try {
@@ -419,7 +420,7 @@ test('④ golden declared 缺失 → nav gate fail-closed 点名（不静默，�
   }
 });
 
-test('④b golden 形态漂移（overlay-root 屏却期望同名 capture）→ nav gate fail-closed 点名', () => {
+test('④b golden 形态漂移（overlay-root 屏却期望同名 capture）→ nav gate fail-closed 点名', async () => {
   const c = setup();
   const prev = process.env.MAISON_GOLDEN_CONTRACT;
   try {
@@ -449,7 +450,7 @@ test('④b golden 形态漂移（overlay-root 屏却期望同名 capture）→ n
 // ⑤ identity 解析消费的 target 集合与 nav/capture 相同
 // ---------------------------------------------------------------------------
 
-test('⑤a golden P1 overlay 屏的已确认 identity 被 capture 消费（identity_fingerprint 落条目）', () => {
+test('⑤a golden P1 overlay 屏的已确认 identity 被 capture 消费（identity_fingerprint 落条目）', async () => {
   const c = setup();
   const prev = process.env.MAISON_GOLDEN_CONTRACT;
   try {
@@ -471,7 +472,7 @@ test('⑤a golden P1 overlay 屏的已确认 identity 被 capture 消费（ident
   }
 });
 
-test('⑤b golden forbidden HomeTab 缺已确认 identity → pixel hard 下 nav 校验拦截（forbidden 在 identity 集内）', () => {
+test('⑤b golden forbidden HomeTab 缺已确认 identity → pixel hard 下 nav 校验拦截（forbidden 在 identity 集内）', async () => {
   const c = setup();
   const prev = process.env.MAISON_GOLDEN_CONTRACT;
   try {
@@ -540,7 +541,7 @@ interface GateMocks {
 }
 
 /** 只替换设备传输面；其余（执行键、复用判定、冻结件回填、采集入口）全走生产代码 */
-function withGateMocks<T>(reportsDir: string, fn: (m: GateMocks) => T): T {
+async function withGateMocks<T>(reportsDir: string, fn: (m: GateMocks) => T | Promise<T>): Promise<T> {
   /* eslint-disable @typescript-eslint/no-require-imports */
   const registry = require('../../capability-registry') as Record<string, unknown>;
   const hylyreShot = require('../../../profiles/hmos-app/harness/visual-diff-hylyre-screenshot') as Record<string, unknown>;
@@ -592,7 +593,7 @@ function withGateMocks<T>(reportsDir: string, fn: (m: GateMocks) => T): T {
   hylyreShot.buildHylyreLayoutDumpFn = () => devs.layoutDumpFn;
   hylyreShot.buildHylyreNavExecutorFn = (opts: Record<string, unknown>) => { m.navOpts.push(opts); return devs.navExecutorFn; };
   try {
-    return fn(m);
+    return await fn(m);
   } finally {
     registry.dispatchDeviceTestEnsureReady = saved.ensureReady;
     registry.dispatchDeviceTestRun = saved.run;
@@ -607,13 +608,13 @@ const REUSE_PASS_LINE =
   '同键复用：设备截图沿用被复用 run 的产物（visual-diff.json / device-screenshots），参考图或 ui-spec 变化时按现有截图重新比较，不重跑交互。';
 
 /** 两轮门禁：第一轮 mock 真跑（spec.md 暂缺 → 不采集），第二轮同键复用（spec.md 就位） */
-function runGateTwice(c: UnitCtx, m: GateMocks, holder: Parameters<typeof __testing_checkDeviceTestRunGate>[1]): {
+async function runGateTwice(c: UnitCtx, m: GateMocks, holder: Parameters<typeof __testing_checkDeviceTestRunGate>[1]): Promise<{
   first: CheckResult[]; second: CheckResult[];
-} {
+}> {
   const specMd = path.join(c.projectRoot, 'doc', 'features', FEATURE, 'spec', 'spec.md');
   const specBody = fs.readFileSync(specMd, 'utf-8');
   fs.rmSync(specMd);
-  const first = __testing_checkDeviceTestRunGate(c.ctx, { ...holder });
+  const first = await __testing_checkDeviceTestRunGate(c.ctx, { ...holder });
   const firstRun = first.find(r => r.id === 'device_test_run') as CheckResult & { structured?: Record<string, unknown> };
   assert.ok(firstRun, `第一轮须产出 device_test_run：${JSON.stringify(first.map(r => [r.id, r.status]))}`);
   assert.strictEqual(firstRun.status, 'PASS', `第一轮真跑须 PASS：${firstRun.details}`);
@@ -621,7 +622,7 @@ function runGateTwice(c: UnitCtx, m: GateMocks, holder: Parameters<typeof __test
   assert.strictEqual(m.runCalls, 1, '第一轮真跑一次');
   assert.deepStrictEqual(m.events, [], '第一轮无 spec.md：不采集');
   fs.writeFileSync(specMd, specBody, 'utf-8');
-  const second = __testing_checkDeviceTestRunGate(c.ctx, { ...holder });
+  const second = await __testing_checkDeviceTestRunGate(c.ctx, { ...holder });
   const secondRun = second.find(r => r.id === 'device_test_run') as CheckResult & { structured?: Record<string, unknown> };
   assert.ok(secondRun, `第二轮须产出 device_test_run：${JSON.stringify(second.map(r => [r.id, r.status]))}`);
   assert.strictEqual(secondRun.structured?.reused_by_execution_key, true, `第二轮须同键复用：${secondRun.details}`);
@@ -629,7 +630,7 @@ function runGateTwice(c: UnitCtx, m: GateMocks, holder: Parameters<typeof __test
   return { first, second };
 }
 
-test('B07-V4 golden 生效时复用不绕过：不推"同键复用 PASS"、走采集入口、nav omitBundle=true、details 带 golden_contract', () => {
+test('B07-V4 golden 生效时复用不绕过：不推"同键复用 PASS"、走采集入口、nav omitBundle=true、details 带 golden_contract', async () => {
   const c = setup();
   const prev = process.env.MAISON_GOLDEN_CONTRACT;
   try {
@@ -638,8 +639,8 @@ test('B07-V4 golden 生效时复用不绕过：不推"同键复用 PASS"、走�
     const sha16 = crypto.createHash('sha256').update(fs.readFileSync(goldenAbs)).digest('hex').slice(0, 16);
     writeFile(c.projectRoot, `doc/features/${FEATURE}/device-testing/visual-diff-nav.json`, baseNav().navFile);
     const { reportsDir, holder } = writeReuseGateFixture(c);
-    withGateMocks(reportsDir, m => {
-      const { second } = runGateTwice(c, m, holder);
+    await withGateMocks(reportsDir, async m => {
+      const { second } = await runGateTwice(c, m, holder);
       const captures = second.filter(r => r.id === 'visual_diff_capture');
       assert.strictEqual(captures.length, 1, `恰一条 visual_diff_capture：${JSON.stringify(captures)}`);
       const cap = captures[0];
@@ -668,15 +669,15 @@ test('B07-V4 golden 生效时复用不绕过：不推"同键复用 PASS"、走�
   }
 });
 
-test('B07-V5 无 golden 时复用不变：逐字相同的 PASS 行 + golden_contract=none，传输面零事件', () => {
+test('B07-V5 无 golden 时复用不变：逐字相同的 PASS 行 + golden_contract=none，传输面零事件', async () => {
   const c = setup();
   const prev = process.env.MAISON_GOLDEN_CONTRACT;
   try {
     delete process.env.MAISON_GOLDEN_CONTRACT;
     writeFile(c.projectRoot, `doc/features/${FEATURE}/device-testing/visual-diff-nav.json`, baseNav().navFile);
     const { reportsDir, holder } = writeReuseGateFixture(c);
-    withGateMocks(reportsDir, m => {
-      const { second } = runGateTwice(c, m, holder);
+    await withGateMocks(reportsDir, async m => {
+      const { second } = await runGateTwice(c, m, holder);
       const captures = second.filter(r => r.id === 'visual_diff_capture');
       assert.strictEqual(captures.length, 1, `恰一条 visual_diff_capture：${JSON.stringify(captures)}`);
       assert.strictEqual(captures[0].status, 'PASS');
@@ -695,22 +696,22 @@ test('B07-V5 无 golden 时复用不变：逐字相同的 PASS 行 + golden_cont
 
 // B08 D1（plan 9b2d5e7c）：真实 checkDeviceTestRunGate 两轮——复用轮把执行键身份写进 holder
 //（evidence writer 据此写 reused_by_execution_key / execution_key / reused_run_dir）。
-test('B08-V1 接线：真跑轮 holder.deviceRunReused=false；同键复用轮 holder 带 deviceRunReused=true、同一 executionKey、reusedRunDir 指向被复用 run（相对 projectRoot）', () => {
+test('B08-V1 接线：真跑轮 holder.deviceRunReused=false；同键复用轮 holder 带 deviceRunReused=true、同一 executionKey、reusedRunDir 指向被复用 run（相对 projectRoot）', async () => {
   const c = setup();
   const prev = process.env.MAISON_GOLDEN_CONTRACT;
   try {
     delete process.env.MAISON_GOLDEN_CONTRACT;
     writeFile(c.projectRoot, `doc/features/${FEATURE}/device-testing/visual-diff-nav.json`, baseNav().navFile);
     const { reportsDir, holder } = writeReuseGateFixture(c);
-    withGateMocks(reportsDir, m => {
+    await withGateMocks(reportsDir, async m => {
       const h1 = { ...holder } as typeof holder & { deviceRunReused?: boolean; executionKey?: string | null; reusedRunDir?: string | null };
-      const first = __testing_checkDeviceTestRunGate(c.ctx, h1);
+      const first = await __testing_checkDeviceTestRunGate(c.ctx, h1);
       assert.strictEqual((first.find(r => r.id === 'device_test_run') as CheckResult).status, 'PASS');
       assert.strictEqual(h1.deviceRunReused, false, '真跑轮不是复用');
       assert.ok(/^[0-9a-f]{64}$/.test(String(h1.executionKey)), `真跑轮也记执行键：${h1.executionKey}`);
       assert.strictEqual(h1.reusedRunDir, null);
       const h2 = { ...holder } as typeof h1;
-      const second = __testing_checkDeviceTestRunGate(c.ctx, h2);
+      const second = await __testing_checkDeviceTestRunGate(c.ctx, h2);
       const secondRun = second.find(r => r.id === 'device_test_run') as CheckResult & { structured?: Record<string, unknown> };
       assert.strictEqual(secondRun.structured?.reused_by_execution_key, true, `第二轮须同键复用：${secondRun.details}`);
       assert.strictEqual(m.runCalls, 1, 'device_test 未重跑');
@@ -729,6 +730,93 @@ test('B08-V1 接线：真跑轮 holder.deviceRunReused=false；同键复用轮 h
   }
 });
 
+
+test('4c8 author and formal testing decide reuse before readiness and forced install; manual force with one leftover variable remains fresh', async () => {
+  const c = setup(); const savedEnv = { ...process.env };
+  const registry = require('../../capability-registry'); const oldInstall = registry.dispatchDeviceTestInstall;
+  try {
+    const { reportsDir, holder } = writeReuseGateFixture(c);
+    Object.assign(process.env, issueManagedInvocation(c.projectRoot, FRAMEWORK_ROOT, FEATURE, 'device-order', 'work-unit-author', 'i1'));
+    c.ctx.forceDevice = true;
+    let installs = 0, readiness = 0;
+    c.ctx.prepareDeviceExecution = async () => { readiness++; };
+    registry.dispatchDeviceTestInstall = () => {
+      installs++; const stat = fs.statSync(holder.hapPath!); const digest = computeHapSha256Full(holder.hapPath!);
+      fs.writeFileSync(path.join(reportsDir, 'device-test-install.meta.json'), JSON.stringify({ ok: true, exitCode: 0, durationMs: 17,
+        hapPath: holder.hapPath, hapSha256: digest!.slice(0, 12), hapMtimeMs: stat.mtimeMs, hapSizeBytes: stat.size, reused: false, timestamp: '2026-11-01T00:00:00.000Z' }));
+      return { ok: true, executed: true, reused: false, hapSha256Full: digest, errors: [] };
+    };
+    await withGateMocks(reportsDir, async m => {
+      const fresh = () => ({ ...holder, installPending: true, installPassed: false, installExecuted: false, installOk: false, hapSha256Full: null });
+      await __testing_checkDeviceTestRunGate(c.ctx, fresh());
+      assert.strictEqual(installs, 1); assert.strictEqual(readiness, 1); assert.strictEqual(m.runCalls, 1);
+      const physicalMeta = JSON.parse(fs.readFileSync(path.join(reportsDir, 'device-test-install.meta.json'), 'utf8'));
+      const bytes = fs.readFileSync(holder.hapPath!); fs.writeFileSync(holder.hapPath!, bytes);
+      fs.utimesSync(holder.hapPath!, new Date(), new Date(physicalMeta.hapMtimeMs + 10_000));
+      const priorEvidence = '{"goal_run_id":"predecessor"}'; fs.writeFileSync(path.join(reportsDir, 'device-test-evidence.json'), priorEvidence);
+      const formal = await __testing_checkDeviceTestRunGate(c.ctx, fresh());
+      const reusedMeta = JSON.parse(fs.readFileSync(path.join(reportsDir, 'device-test-install.meta.json'), 'utf8'));
+      assert.strictEqual(reusedMeta.timestamp, physicalMeta.timestamp); assert.strictEqual(reusedMeta.durationMs, 17); assert.strictEqual(reusedMeta.exitCode, 0);
+      assert.strictEqual(reusedMeta.reused, true); assert.strictEqual(reusedMeta.hapMtimeMs, fs.statSync(holder.hapPath!).mtimeMs);
+      assert.strictEqual(require('../../scripts/utils/actionable-evidence').resolveCurrentHapSha256Full(c.projectRoot, reportsDir), computeHapSha256Full(holder.hapPath!));
+      assert.strictEqual(fs.readFileSync(path.join(reportsDir, 'device-test-evidence.json'), 'utf8'), priorEvidence, 'only the formal writer can publish a new run identity');
+      assert.ok((formal.find(result => result.id === 'device_test_run')?.structured as any)?.reused_by_execution_key);
+      assert.strictEqual(installs, 1, 'formal same-key check must not reinstall');
+      assert.strictEqual(readiness, 1, 'formal reuse must precede readiness'); assert.strictEqual(m.runCalls, 1);
+      delete process.env.MAISON_GOAL_ATTEMPT; delete process.env.MAISON_GOAL_ATTEMPT_PHASE;
+      process.env.MAISON_GOAL_RUN_ID = 'unrelated-leftover';
+      await __testing_checkDeviceTestRunGate(c.ctx, fresh());
+      assert.strictEqual(installs, 2); assert.strictEqual(readiness, 2); assert.strictEqual(m.runCalls, 2, 'ordinary explicit force is fresh');
+    });
+  } finally {
+    registry.dispatchDeviceTestInstall = oldInstall;
+    for (const key of Object.keys(process.env)) if (!(key in savedEnv)) delete process.env[key]; Object.assign(process.env, savedEnv);
+    teardown(c);
+  }
+});
+
+test('4c8 deferred testing readiness returns its original external blocker and continues the same actor after unlock', async () => {
+  const c = setup(), env = { ...process.env };
+  const gate = require('../../scripts/utils/device-readiness-gate');
+  const { prepareHarnessDeviceExecution } = require('../../harness-runner') as typeof import('../../harness-runner');
+  const registry = require('../../capability-registry'); const originalGate = gate.applyPhaseEntryDeviceGate, originalInstall = registry.dispatchDeviceTestInstall;
+  try {
+    const { reportsDir, holder } = writeReuseGateFixture(c);
+    Object.assign(process.env, issueManagedInvocation(c.projectRoot, FRAMEWORK_ROOT, FEATURE, 'deferred-device', 'work-unit-author', 'i1'));
+    let unlocked = false, preparations = 0, installs = 0;
+    gate.applyPhaseEntryDeviceGate = async () => { preparations++; return unlocked ? { ok: true, notes: [] }
+      : { ok: false, code: 'blocked', reason: 'manual fixture is locked', notes: [] }; };
+    c.ctx.prepareDeviceExecution = () => prepareHarnessDeviceExecution({ projectRoot: c.projectRoot, phase: 'testing', deferred: true });
+    registry.dispatchDeviceTestInstall = () => {
+      installs++; const stat = fs.statSync(holder.hapPath!); const digest = computeHapSha256Full(holder.hapPath!);
+      fs.writeFileSync(path.join(reportsDir, 'device-test-install.meta.json'), JSON.stringify({ ok: true, exitCode: 0, durationMs: 1,
+        hapPath: holder.hapPath, hapSha256: digest!.slice(0, 12), hapMtimeMs: stat.mtimeMs, hapSizeBytes: stat.size, reused: false, timestamp: new Date().toISOString() }));
+      return { ok: true, executed: true, hapSha256Full: digest, errors: [] };
+    };
+    await withGateMocks(reportsDir, async m => {
+      const first = { ...holder, installPending: true, installPassed: false };
+      await __testing_checkDeviceTestRunGate(c.ctx, first);
+      const checks = (first as any).installResults as CheckResult[];
+      assert.strictEqual(checks[0].id, 'device_test_install'); assert.strictEqual(checks[0].failure_kind, 'device_blocked');
+      assert.strictEqual(checks[0].blocking_class, 'externalBlocked'); assert.strictEqual(installs, 0); assert.strictEqual(m.runCalls, 0);
+      assert.strictEqual(require('../../scripts/utils/report-generator').resolveVerdictFromChecks([{ id: 'device_test_build', severity: 'BLOCKER', status: 'PASS', category: 'structure', description: 'bounded build fixture', details: 'current HAP' }, ...checks]), 'INCOMPLETE');
+      unlocked = true;
+      await __testing_checkDeviceTestRunGate(c.ctx, { ...holder, installPending: true, installPassed: false });
+      assert.strictEqual(installs, 1); assert.strictEqual(m.runCalls, 1);
+      await __testing_checkDeviceTestRunGate(c.ctx, { ...holder, installPending: true, installPassed: false });
+      assert.strictEqual(preparations, 2, 'qualified reuse never re-enters readiness'); assert.strictEqual(installs, 1);
+    });
+    gate.applyPhaseEntryDeviceGate = async () => ({ ok: false, code: 'device_policy_unset', reason: 'policy missing', notes: [] });
+    const policy = await prepareHarnessDeviceExecution({ projectRoot: c.projectRoot, phase: 'testing', deferred: true });
+    assert.strictEqual(policy?.failure_kind, 'capability_missing', 'missing policy is not a transient device wait');
+    gate.applyPhaseEntryDeviceGate = async () => { throw new Error('policy store unreadable'); };
+    const broken = await prepareHarnessDeviceExecution({ projectRoot: c.projectRoot, phase: 'testing', deferred: true });
+    assert.strictEqual(broken?.blocking_class, 'framework_internal'); assert.notStrictEqual(broken?.failure_kind, 'device_blocked');
+  } finally {
+    gate.applyPhaseEntryDeviceGate = originalGate; registry.dispatchDeviceTestInstall = originalInstall;
+    for (const key of Object.keys(process.env)) if (!(key in env)) delete process.env[key]; Object.assign(process.env, env); teardown(c);
+  }
+});
 
 test('395 testing 完整 checker：动作步骤被引导拦住，只报设备阻断并停止旧视觉/报告派生', async () => {
   const c = setup();

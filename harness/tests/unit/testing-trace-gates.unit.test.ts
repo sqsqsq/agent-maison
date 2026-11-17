@@ -162,6 +162,47 @@ function makeReportOnlyFixture(): ReportOnlyFixture {
   };
 }
 
+test('4c8 report-only admission requires unchanged product and complete original device evidence; new passing or uncovered findings need observation', () => {
+  const fs = require('fs') as typeof import('fs');
+  const path = require('path') as typeof import('path');
+  const crypto = require('crypto') as typeof import('crypto');
+  const { canReconcileTestingReport } = require('../../scripts/utils/testing-report-reconcile') as typeof import('../../scripts/utils/testing-report-reconcile');
+  const evidence = require('../../scripts/utils/phase-evidence-manifest') as typeof import('../../scripts/utils/phase-evidence-manifest');
+  const keys = require('../../../profiles/hmos-app/harness/execution-key') as typeof import('../../../profiles/hmos-app/harness/execution-key');
+  const f = makeReportOnlyFixture();
+  try {
+    const frameworkRoot = path.resolve(__dirname, '../../..');
+    const runDir = path.dirname(f.tracePath);
+    const inputs = { hap_sha256_full: computeHapSha256Full(f.hapPath), derived_plan_sha256: 'a', device: 'serial', display_env: '',
+      reset_mode: 'cold_restart', hylyre_version: '0.5.0', manifest_version: '0.5.0', profile: 'hmos-app', tool_config_sha256: 'b', flags: [] };
+    const frozen = keys.freezeRunArtifacts(f.reportsDir, runDir);
+    keys.writeExecutionKeyRecord(runDir, { schema_version: '1.0', inputs, execution_key: keys.computeExecutionKey(inputs), trace_path: f.tracePath,
+      run_started_at: f.runStartedAt, outcome: 'success', trace_sha256: null, timing_complete: true, frozen_files: frozen });
+    const evidencePath = path.join(f.reportsDir, 'device-test-evidence.json');
+    fs.writeFileSync(evidencePath, JSON.stringify({ hap_sha256_full: inputs.hap_sha256_full, trace_path: f.tracePath }));
+    const review = path.join(f.root, 'doc/features/demo/review/review-report.md');
+    fs.mkdirSync(path.dirname(review), { recursive: true }); fs.writeFileSync(review, '# review\nno new findings');
+    const source = path.join(f.root, 'app.ets'); fs.writeFileSync(source, 'product');
+    const manifest = evidence.resolvePhaseEvidenceManifest({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'testing', extraInputs: ['app.ets'] });
+    evidence.writePhaseEvidenceManifest(f.root, manifest);
+    const snapshot = (report: string, product = 'product') => ({
+      'doc/features/demo/review/review-report.md': { exists: true, contentHash: crypto.createHash('sha256').update(report).digest('hex') },
+      'app.ets': { exists: true, contentHash: crypto.createHash('sha256').update(product).digest('hex') },
+    });
+    const previous = snapshot('# review\nno new findings'); fs.appendFileSync(review, '\nformat corrected');
+    const opts = { projectRoot: f.root, frameworkRoot, feature: 'demo', previous, current: snapshot(fs.readFileSync(review, 'utf8')) };
+    assert.ok(canReconcileTestingReport(opts));
+    assert.strictEqual(canReconcileTestingReport({ ...opts, productChanged: true }), false);
+    assert.strictEqual(canReconcileTestingReport({ ...opts, scopeChanged: true }), false);
+    assert.strictEqual(canReconcileTestingReport({ ...opts, previous: undefined }), false);
+    assert.strictEqual(canReconcileTestingReport({ ...opts, current: snapshot(fs.readFileSync(review, 'utf8'), 'changed') }), false);
+    fs.writeFileSync(review, '## 问题清单\n| ID | 严重程度 | 涉及文件 | 问题描述 | 状态 |\n|---|---|---|---|---|\n| CR-1 | MAJOR | app.ets | 重验 TC-099 二次打开行为 | open |');
+    assert.strictEqual(canReconcileTestingReport({ ...opts, current: snapshot(fs.readFileSync(review, 'utf8')) }), false);
+    fs.writeFileSync(review, '# report formatting fixed'); fs.unlinkSync(evidencePath);
+    assert.strictEqual(canReconcileTestingReport({ ...opts, current: snapshot(fs.readFileSync(review, 'utf8')) }), false);
+  } finally { fs.rmSync(f.root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+});
+
 function reportOnlyContext(root: string): import('../../scripts/utils/types').CheckContext {
   return {
     phase: 'testing', feature: 'demo', projectRoot: root,

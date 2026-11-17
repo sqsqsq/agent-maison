@@ -142,7 +142,7 @@ const cases: Array<{ name: string; phase?: string; run(f: ReturnType<typeof fixt
     const invoke = (script: string, args: string[]) => spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'), path.join(repo, 'harness', script), '--project-root', f.root, ...(script === 'scripts/compile.ts' ? [] : ['--framework-root', f.framework]), ...args], { cwd: path.join(repo, 'harness'), encoding: 'utf8', timeout: 60000, env: { ...process.env, TS_NODE_PROJECT: path.join(repo, 'harness/tsconfig.json') } });
     try {
       const design = invoke('scripts/check-component-blueprint.ts', ['--blueprint', 'compact-value', '--session-ref', nativeFile + '#short-user', '--target', 'src/value.js', '--requirement-source', requirement, '--report-dir', 'doc/reports/design', '--prepare-source', '--json']);
-      assert.equal(design.status, 0, design.stderr + design.stdout); const subject = JSON.parse(design.stdout).request_file;
+      assert.equal(design.status, 0, design.stderr + design.stdout); let subject = JSON.parse(design.stdout).request_file;
       assert.deepEqual(JSON.parse(fs.readFileSync(path.join(f.root, subject), 'utf8')).blueprint.acceptance_ids, ['AC-1', 'AC-2'], '原设计绑定仍须保完整验收，不能改协议缩成UT分母');
       const compiled = invoke('scripts/compile.ts', ['--session-ref', nativeFile + '#short-user', '--target', 'src/value.js', '--report-dir', 'doc/reports/design-compile', '--json']);
       assert.equal(compiled.status, 0, compiled.stderr + compiled.stdout);
@@ -156,6 +156,16 @@ const cases: Array<{ name: string; phase?: string; run(f: ReturnType<typeof fixt
       assert(fs.readFileSync(path.join(f.root, 'doc/reports/design/ut/native-test.log'), 'utf8').includes('# pass 1'));
       const prep = run('review', ['--prepare-request']); assert.equal(prep.status, 0, prep.stderr + prep.stdout);
       review(JSON.parse(prep.stdout)); const reviewed = run('review'); assert.equal(reviewed.status, 0, reviewed.stderr + reviewed.stdout);
+      bp.revision++;
+      bp.design_views[0].nodes[0].target_state = 'value=42 through the existing module export; preserve the known caller contract';
+      refreshBlueprintFingerprints(bp); fs.writeFileSync(path.join(f.root, bpFile), YAML.stringify(bp));
+      const continued = invoke('scripts/check-component-blueprint.ts', ['--blueprint', 'compact-value', '--session-ref', nativeFile + '#short-user', '--target', 'src/value.js', '--requirement-source', requirement, '--report-dir', 'doc/reports/design', '--prepare-source', '--json']);
+      assert.equal(continued.status, 0, continued.stderr + continued.stdout); subject = JSON.parse(continued.stdout).request_file;
+      assert.equal(run('ut', ['--test-target', 'tests/value.test.cjs']).status, 0, 'a local choice in the same short blueprint must return to the original real verification');
+      const compactFiles = fs.readdirSync(path.join(f.root, 'doc/features/compact-value'), { recursive: true }).map(String);
+      assert(!compactFiles.some(file => /(?:^|[\\/])(?:plan|goal-runs)(?:[\\/]|$)|change-unit\.yaml$/.test(file)), 'the small request must not invoke an independent plan or create CU/Goal state');
+      const intake = require('../../scripts/utils/request-intake') as typeof import('../../scripts/utils/request-intake');
+      assert.equal(intake.readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: nativeFile + '#short-user' }).policy.selected, 'small', 'the original fixed-small user choice persists through local design repair');
       fs.writeFileSync(path.join(f.root, 'tests/value.test.cjs'), ut.replace('AC-1', 'AC-NOT-CURRENT'));
       const bad = run('ut', ['--test-target', 'tests/value.test.cjs']); assert.notEqual(bad.status, 0, bad.stdout);
       const failed = JSON.parse(fs.readFileSync(path.join(f.root, 'doc/reports/design/ut/script-report.json'), 'utf8'));
@@ -167,7 +177,21 @@ const cases: Array<{ name: string; phase?: string; run(f: ReturnType<typeof fixt
       assert(wrong.checks.some((check: CheckResult) => check.id === 'request_test_execution' && check.status === 'FAIL'));
       fs.writeFileSync(path.join(f.root, 'tests/value.test.cjs'), ut.replace('// expectation: ' + bpFile + '#AC-1', '// characterization'));
       assert.notEqual(run('ut', ['--test-target', 'tests/value.test.cjs']).status, 0, 'characterization冒充蓝图验收');
-      fs.writeFileSync(path.join(f.root, 'tests/value.test.cjs'), ut); bp.revision = 2; refreshBlueprintFingerprints(bp); fs.writeFileSync(path.join(f.root, bpFile), YAML.stringify(bp));
+      fs.writeFileSync(path.join(f.root, 'tests/value.test.cjs'), ut);
+      const sourceFile = path.join(f.root, 'src/value.js'), sourceBeforeImpact = fs.readFileSync(sourceFile, 'utf8');
+      fs.appendFileSync(sourceFile, "\nrequire('./unavailable-external-consumer');\n");
+      tool('Edit', { file_path: sourceFile }, 'updated'); tool('Read', { file_path: sourceFile }, fs.readFileSync(sourceFile, 'utf8'));
+      add({ type: 'assistant', message: { role: 'assistant', content: '本请求纠正当前影响：Q1=否；Q2=是；Q3=否；依赖结果=否；跨部件=否；预期明确=是；做法唯一=是。src/value.js 新增外部消费者不可用，无法验证该消费者。依据 src/value.js。' } });
+      fs.writeFileSync(nativeFile, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
+      const limited = intake.readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: nativeFile + '#short-user' });
+      assert.equal(limited.policy.selected, 'small'); assert.equal(limited.policy.recommended, 'medium');
+      assert(limited.facts.unclosed_impact.value === true && limited.facts.unclosed_impact.sources.includes('src/value.js'), 'new impact and its unavailable verification must remain in the same native request facts');
+      assert.notEqual(run('ut', ['--test-target', 'tests/value.test.cjs']).status, 0, 'fixed small cannot hide a real unavailable dependency failure');
+      assert(!fs.readdirSync(path.join(f.root, 'doc/features/compact-value'), { recursive: true }).map(String)
+        .some(file => /(?:^|[\\/])(?:plan|goal-runs)(?:[\\/]|$)|change-unit\.yaml$/.test(file)), 'new impact cannot silently escalate the original fixed-small request');
+      fs.writeFileSync(sourceFile, sourceBeforeImpact); tool('Edit', { file_path: sourceFile }, 'restored actual source');
+      tool('Read', { file_path: sourceFile }, sourceBeforeImpact); fs.writeFileSync(nativeFile, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
+      fs.writeFileSync(path.join(f.root, 'tests/value.test.cjs'), ut); bp.revision++; refreshBlueprintFingerprints(bp); fs.writeFileSync(path.join(f.root, bpFile), YAML.stringify(bp));
       assert.notEqual(run('ut', ['--test-target', 'tests/value.test.cjs']).status, 0, '旧revision进入了UT');
     } finally { if (saved === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = saved; }
   } },

@@ -1,3 +1,5 @@
+import { issueManagedInvocation } from '../utils/managed-invocation';
+import { resolveManagedGoalInvocation, effectiveForceDevice } from '../../scripts/utils/managed-goal-invocation';
 // execution-key.unit.test.ts — plan 07a41ec6 T6：执行键、同键复用判定、稳定性统计（含失败轮）
 
 import assert from 'assert';
@@ -62,6 +64,119 @@ function writeRun(base: string, stamp: string, key: string, opts: { outcome: str
 }
 
 const cases: Array<{ name: string; run: () => void }> = [
+  {
+    name: '4c8 managed actor identity comes from the original request; isolated environment does not disable manual force',
+    run() {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'managed-execution-'));
+      try {
+        fs.writeFileSync(path.join(root, 'framework.config.json'), JSON.stringify({ paths: { features_dir: 'doc/features' } }));
+        const frameworkRoot = path.resolve(__dirname, '../../..');
+        const env = issueManagedInvocation(root, frameworkRoot, 'demo', 'run-device', 'work-unit-author', 'i1');
+        for (const phase of ['testing', 'ut']) {
+          const identity = resolveManagedGoalInvocation({ projectRoot: root, feature: 'demo', phase, env });
+          assert.strictEqual(identity?.phase, 'work-unit-author');
+          assert.strictEqual(identity?.attempt_id, 'i1');
+          assert.strictEqual(effectiveForceDevice(true, { projectRoot: root, feature: 'demo', phase, env }), false);
+        }
+        assert.strictEqual(resolveManagedGoalInvocation({ projectRoot: root, feature: 'demo', env: { ...env, MAISON_GOAL_ATTEMPT_PHASE: 'coding' } }), undefined);
+        assert.strictEqual(effectiveForceDevice(true, { projectRoot: root, env: { MAISON_GOAL_RUN_ID: 'leftover' } }), true);
+        assert.strictEqual(effectiveForceDevice(true, { projectRoot: root, env: { MAISON_GOAL_ATTEMPT: 'leftover' } }), true);
+        assert.strictEqual(effectiveForceDevice(true, { projectRoot: root, env: {} }), true);
+        const journal = path.join(root, 'doc/features/demo/goal-runs/run-device/events.jsonl');
+        fs.appendFileSync(journal, '{unrelated damaged line\n');
+        assert.strictEqual(effectiveForceDevice(true, { projectRoot: root, feature: 'demo', phase: 'testing', env }), false, 'unrelated corruption does not grant managed force');
+        fs.writeFileSync(journal, '{damaged issuer journal\n');
+        assert.strictEqual(effectiveForceDevice(true, { projectRoot: root, feature: 'demo', phase: 'testing', env }), false, 'a damaged bound issuer is not an authorization increase');
+        assert.strictEqual(effectiveForceDevice(true, { projectRoot: root, feature: 'demo', env: { MAISON_GOAL_RUN_ID: 'run-device' } }), true, 'one stale variable remains ordinary manual CLI');
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    },
+  },
+  {
+    name: '4c8 same-invocation FAIL then unexplained PASS remains failure, including success reuse in the next attempt',
+    run() {
+      const base = fs.mkdtempSync(path.join(os.tmpdir(), 'execution-conflict-'));
+      try {
+        const key = computeExecutionKey(BASE_INPUTS);
+        const invocation = { run_id: 'run', phase: 'work-unit-author', attempt_id: 'i1' };
+        for (const [stamp, outcome] of [['20261116T010000Z-001', 'failed'], ['20261116T010001Z-001', 'success']]) {
+          writeRun(base, stamp, key, { outcome });
+          const dir = path.join(base, stamp, 'hylyre');
+          const record = JSON.parse(fs.readFileSync(path.join(dir, 'execution-key.json'), 'utf8'));
+          writeExecutionKeyRecord(dir, { ...record, goal_invocation: invocation });
+        }
+        assert.strictEqual(decideReuse(base, key).reusable, null);
+        assert.strictEqual(decideReuse(base, key, { invocation: { ...invocation, attempt_id: 'i2' } }).reusable, null, 'consumer i2 must not qualify the conflicting PASS produced within i1');
+        assert.match(decideReuse(base, key).reason, /failed.*success/);
+        assert.strictEqual(findSameInvocationFailure(base, key, invocation)?.record.outcome, 'failed');
+        assert.strictEqual(findSameInvocationFailure(base, key, { ...invocation, attempt_id: 'i2' }), null);
+        assert.strictEqual(findSameInvocationFailure(base, key, { ...invocation, phase: 'coding' }), null);
+        const manual = path.join(base, '20261116T010001Z-001', 'hylyre');
+        const pass = JSON.parse(fs.readFileSync(path.join(manual, 'execution-key.json'), 'utf8')); delete pass.goal_invocation;
+        writeExecutionKeyRecord(manual, pass);
+        assert.strictEqual(decideReuse(base, key, { invocation }).reusable, null, 'unowned manual PASS cannot wash this actor FAIL');
+        assert.strictEqual(findSameInvocationFailure(base, key, invocation)?.record.outcome, 'failed');
+        assert.strictEqual(decideReuse(base, key, { invocation: { ...invocation, attempt_id: 'i2' } }).reusable, null, 'the conflicting manual PASS remains unqualified in a successor attempt');
+        writeRun(base, '20261116T010002Z-001', key, { outcome: 'success' });
+        const dir = path.join(base, '20261116T010002Z-001', 'hylyre');
+        const record = JSON.parse(fs.readFileSync(path.join(dir, 'execution-key.json'), 'utf8'));
+        writeExecutionKeyRecord(dir, { ...record, goal_invocation: { ...invocation, attempt_id: 'i2' } });
+        assert.ok(decideReuse(base, key).reusable, 'fresh successful evidence can close the conflict');
+        assert.ok(decideReuse(base, key, { invocation }).reusable, 'the old consumer identity cannot reject a qualified fresh producer');
+        assert.ok(decideReuse(base, key, { invocation: { ...invocation, attempt_id: 'i3' } }).reusable, 'later consumers may reuse the qualified successor success');
+        assert.strictEqual(findSameInvocationFailure(base, key, invocation), null, 'qualified successor evidence does not resurrect the predecessor failure');
+      } finally { fs.rmSync(base, { recursive: true, force: true }); }
+    },
+  },
+
+  {
+    name: 'R5 conflict follows the producer identity in both native legs; changed work and evidence rules remain reusable',
+    run() {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'producer-conflict-'));
+      try {
+        const key = computeExecutionKey(BASE_INPUTS);
+        const failed = { run_id: 'producer-run', phase: 'work-unit-author', attempt_id: 'i1' };
+        const consumer = { ...failed, attempt_id: 'i2' };
+        for (const leg of ['hylyre', 'ut'] as const) {
+          const base = path.join(root, leg);
+          const artifacts = leg === 'ut' ? utFrozenRunArtifacts(['WalletMain']) : FROZEN_RUN_ARTIFACTS;
+          const record = (stamp: string, outcome: string, invocation: typeof failed | undefined, inputs = BASE_INPUTS) => {
+            const dir = path.join(base, stamp, leg); fs.mkdirSync(dir, { recursive: true });
+            const trace = path.join(dir, 'trace.json'); fs.writeFileSync(trace, '{}');
+            for (const item of artifacts) fs.writeFileSync(path.join(dir, item.frozen), '{}');
+            writeExecutionKeyRecord(dir, { schema_version: '1.0', execution_key: computeExecutionKey(inputs), inputs,
+              trace_path: leg === 'ut' ? '' : trace, run_started_at: '2026-11-17T00:00:00.000Z', outcome,
+              trace_sha256: null, timing_complete: true, frozen_files: artifacts.map(item => item.frozen),
+              ...(invocation ? { goal_invocation: invocation } : {}) });
+            return dir;
+          };
+          record('001', 'failed', failed);
+          const pass = record('002', 'success', failed);
+          const options = { leg, artifacts, invocation: consumer };
+          assert.strictEqual(decideReuse(base, key, options).reusable, null, `${leg}: i2 cannot qualify i1's conflicting PASS`);
+          assert.strictEqual(findSameInvocationFailure(base, key, consumer, { leg, artifacts }), null, 'old FAIL is not a new attempt result');
+          assert.ok(findSameInvocationFailure(base, key, failed, { leg, artifacts }), 'original attempt keeps its frozen FAIL');
+          assert.ok(decideReuse(base, key, { ...options, conflictResolved: () => true }).reusable, 'existing verified recovery explanation remains effective');
+          for (const successor of [consumer, { ...failed, run_id: 'audited-successor' }, { ...failed, phase: 'coding' }]) {
+            record('002', 'success', successor);
+            assert.ok(decideReuse(base, key, { ...options, invocation: failed }).reusable, `${leg}: a new producer identity can provide new evidence`);
+          }
+          const changed = { ...BASE_INPUTS, hap_sha256_full: 'f'.repeat(64) };
+          record('003', 'success', failed, changed);
+          assert.ok(decideReuse(base, computeExecutionKey(changed), options).reusable, 'changed real input is its own execution fact');
+          assert.strictEqual(decideReuse(base, key, options).reusable, null, 'an older input is not revived by a newer different key');
+          fs.unlinkSync(path.join(base, '003', leg, artifacts.find(item => item.group === 'execution')!.frozen));
+          assert.strictEqual(decideReuse(base, computeExecutionKey(changed), options).reusable, null, 'missing execution evidence still refuses reuse');
+          fs.rmSync(path.join(base, '003'), { recursive: true, force: true });
+          record('002', 'success', undefined);
+          assert.strictEqual(decideReuse(base, key, options).reusable, null, 'manual PASS cannot wash an identified managed failure');
+          record('001', 'failed', undefined);
+          assert.ok(decideReuse(base, key, { leg, artifacts }).reusable, 'ordinary request/manual records keep their existing success rule');
+          assert.ok(fs.existsSync(pass));
+        }
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    },
+  },
+
   {
     name: 'UT evidence facts keep native module names and source ownership in the profile',
     run: () => {

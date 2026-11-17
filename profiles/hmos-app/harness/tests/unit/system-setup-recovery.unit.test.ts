@@ -1,3 +1,4 @@
+import { issueManagedInvocation } from '../../../../../harness/tests/utils/managed-invocation';
 import assert from 'assert';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -129,7 +130,8 @@ test('395 self-check and formal gate use real UT provider once; cleared guide wi
     write('WalletMain/src/ohosTest/ets/test/Example.test.ets', "it('ExamplePass', () => {});\n");
     write('WalletMain/build/default/outputs/ohosTest/WalletMain-ohosTest-unsigned.hap', 'test-input');
     write('WalletMain/build/default/outputs/ohosTest/WalletMain-ohosTest-signed.hap', 'immutable-test-package');
-    Object.assign(process.env, { HARNESS_HDC_EXE: process.execPath, HARNESS_HDC_TARGET: 'fixture', MAISON_DEVICE_ATTEMPT_FROZEN: '1', MAISON_GOAL_RUN_ID: 'run-395', MAISON_GOAL_ATTEMPT_PHASE: 'ut', MAISON_GOAL_ATTEMPT: 'i1' });
+    Object.assign(process.env, { HARNESS_HDC_EXE: process.execPath, HARNESS_HDC_TARGET: 'fixture', MAISON_DEVICE_ATTEMPT_FROZEN: '1', MAISON_GOAL_RUN_ID: 'run-395', MAISON_GOAL_ATTEMPT_PHASE: 'work-unit-author', MAISON_GOAL_ATTEMPT: 'i1' });
+    issueManagedInvocation(root, repo, 'unit', 'run-395', 'work-unit-author', 'i1');
     delete process.env.MAISON_DEVICE_CREDENTIAL_REF;
     cp.spawnSync = ((exe: string, args: string[] = [], opts: unknown) => {
       if (exe !== process.execPath) return spawn(exe, args, opts as never);
@@ -153,7 +155,18 @@ test('395 self-check and formal gate use real UT provider once; cleared guide wi
       buildInvocation: { module: 'WalletMain', target: 'ohosTest', task: 'genOnDeviceTestHap', product: 'default', buildMode: 'test' },
       builtHap: { path: hap, sha256: require('../../build-fingerprint').computeHapSha256Full(hap) } }]]);
     const run = () => checkUtHvigorTest(ctx, [{ path: 'WalletMain/src/ohosTest/ets/test/Example.test.ets' }], [{ path: 'WalletMain/src/ohosTest/ets/test/Example.test.ets', test: 'ExamplePass' }], builds);
-    const first = run(); assert.equal(aaCalls, 1, JSON.stringify(first)); assert(first[0].device_setup);
+    const readiness = require('../../../../../harness/scripts/utils/device-readiness-gate');
+    const { prepareHarnessDeviceExecution } = require('../../../../../harness/harness-runner') as typeof import('../../../../../harness/harness-runner');
+    const originalPreparation = readiness.applyPhaseEntryDeviceGate;
+    readiness.applyPhaseEntryDeviceGate = async () => ({ ok: false, code: 'blocked', reason: 'manual fixture locked before UT', notes: [] });
+    ctx.prepareDeviceExecution = () => prepareHarnessDeviceExecution({ projectRoot: root, phase: 'ut', deferred: true });
+    try {
+      const notReady = await run(); assert.equal(aaCalls, 0); assert.equal(notReady[0].id, 'ut_hvigor_test');
+      assert.equal(notReady[0].failure_kind, 'device_blocked'); assert.equal(notReady[0].blocking_class, 'externalBlocked');
+      assert.equal(resolveVerdictFromChecks([{ id: 'ut_hvigor_build', severity: 'BLOCKER', status: 'PASS', category: 'structure', description: 'bounded build fixture', details: 'current prebuild' }, ...notReady]), 'INCOMPLETE');
+      readiness.applyPhaseEntryDeviceGate = async () => ({ ok: true, notes: [] });
+    } finally { readiness.applyPhaseEntryDeviceGate = originalPreparation; ctx.prepareDeviceExecution = undefined; }
+    const first = await run(); assert.equal(aaCalls, 1, JSON.stringify(first)); assert(first[0].device_setup);
     const liveGateInput = require('../../../../../harness/scripts/utils/device-readiness-deps').buildDeviceReadinessInput(root);
     assert.equal((await ensureDeviceReady(liveGateInput)).state, 'BLOCKED', '生产 deps.snapshot 必须接通');
     const recorded = JSON.parse(fs.readFileSync(path.join(fixture, 'ut-script-report.json'), 'utf8'));
@@ -163,9 +176,9 @@ test('395 self-check and formal gate use real UT provider once; cleared guide wi
     assert.equal(blockers[0].blocking_class, 'externalBlocked');
     assert.equal(resolveVerdictFromChecks(fullChecks), 'INCOMPLETE');
     const reports = path.join(root, 'doc/features/unit/ut/reports');
-    const before = listExecutionKeyRuns(reports, 'ut'); assert.equal(before.length, 1);
+    const before = listExecutionKeyRuns(reports, 'ut'); assert.equal(before.length, 2);
     const saved = fs.readFileSync(path.join(before[0].runDir, 'execution-key.json'), 'utf8');
-    const closed = run(); assert.equal(aaCalls, 1, JSON.stringify(closed)); assert.equal(closed[0].status, 'FAIL');
+    const closed = await run(); assert.equal(aaCalls, 1, JSON.stringify(closed)); assert.equal(closed[0].status, 'FAIL');
     assert(closed[0].details.includes('采纳同次调用失败'));
     assert.equal(fs.readFileSync(path.join(before[0].runDir, 'execution-key.json'), 'utf8'), saved);
     assert(require('../../device-recovery-bridge').recoverAfterLockFailure(root, 'fixture').systemSetup, '运行期解锁后暴露引导的观察不丢失');
@@ -176,12 +189,12 @@ test('395 self-check and formal gate use real UT provider once; cleared guide wi
     assert(observeSetupForUnexecutedTrace({ schema_version: '0.4-p0', feature: 'f', phase: 'testing', outcome: 'failed', cases: [{ id: 'TC-1', status: '失败', steps: [{ role: 'action', outcome: { status: 'failed' } }] as never }] }));
     assert(!observeSetupForUnexecutedTrace({ schema_version: '0.4-p0', feature: 'f', phase: 'testing', outcome: 'failed', cases: [{ id: 'TC-1', status: '失败', steps: [{ role: 'assertion', outcome: { status: 'failed' } }] as never }] }));
     guide = false; pass = true;
-    const recovered = run(); assert.equal(aaCalls, 2, JSON.stringify(recovered)); assert.equal(recovered[0].status, 'PASS');
+    const recovered = await run(); assert.equal(aaCalls, 2, JSON.stringify(recovered)); assert.equal(recovered[0].status, 'PASS');
     assert.deepEqual(recovered.find(check => check.id === 'ExamplePass')?.affected_files, ['WalletMain/src/ohosTest/ets/test/Example.test.ets']);
     assert.equal(recovered.find(check => check.id === 'ExamplePass')?.status, 'PASS', '真实 HMOS provider 必须产出闭合可消费的逐条结果');
     const after = listExecutionKeyRuns(reports, 'ut'); assert.equal(after[0].record.execution_key, before[0].record.execution_key);
     assert.equal(after[0].record.outcome, 'success');
-    assert.equal(run()[0].status, 'PASS'); assert.equal(aaCalls, 2, '原成功复用不变');
+    assert.equal((await run())[0].status, 'PASS'); assert.equal(aaCalls, 2, '原成功复用不变');
     // 受控修改本测试生成的记录，验证身份/完整性反例；不改历史夹具。
     guide = true; pass = false;
     for (const change of ['run', 'phase', 'attempt', 'legacy', 'missing', 'force', 'input', 'ordinary']) {
@@ -199,8 +212,8 @@ test('395 self-check and formal gate use real UT provider once; cleared guide wi
       if (change === 'ordinary') delete process.env.MAISON_GOAL_ATTEMPT;
       // 本轮可控 prebuild 必须绑定本轮实际包，不能沿用输入变更前的摘要。
       for (const built of builds.values()) built.builtHap.sha256 = require('../../build-fingerprint').computeHapSha256Full(hap);
-      const result = run();
-      assert(!result[0].details.includes('采纳同次调用失败'), change);
+      const result = await run();
+      assert.equal(result[0].details.includes('采纳同次调用失败'), change === 'force', change);
       assert(result[0].device_setup, '装机前引导观察须穿过 hvigor 冻结结果：' + change);
       assert.equal(aaCalls, 2, '装机前阻断不得再发 aa test：' + change);
       assert(listExecutionKeyRuns(reports, 'ut').length > 2, change);

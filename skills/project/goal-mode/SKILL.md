@@ -72,4 +72,6 @@ DSH 以 headless 启动，先加载前台模型来源配置层，再施加框架
 
 报告原请求/工作单元、实际作者/工具/独核调用、当前未完项和解除条件、下一原生执行请求、run 与原件路径。作者已结束、检查未完、等待条件和业务完成分别说明。`activity` 的调用/耗时不是额度或完成率；只读状态不偷偷写 next/cache。
 
-后台 launcher 的有界启动握手区分 ready/terminal/alive_timeout/failed，pid/目录不是健康证明；alive_timeout 不表示失败或允许杀进程。完整交付已授权时持续跟踪原请求，Stop hook/原生 Goal/进程退出只触发共同协调器。不要把已授权命令推给用户，也不另建轮询或私有 phase 循环。具体命令见 [goal-mode-operations](../../reference/goal-mode-operations.md)。
+后台 launcher 的有界启动握手区分 ready/terminal/alive_timeout/failed，pid/目录不是健康证明；alive_timeout 不表示失败或允许杀进程。在原主会话先报告任务、回执时间与 run ID，再执行回执 `wait_command`（`goal-status --wait --json`）；默认单次观察60分钟，原请求终态/需外界处理时提前返回，心跳与子 CU 结束不作整项交付。显式正数 `--timeout-ms` 可改长短；到期按返回 `cursor` 用 `--after` 接续原 run，不签任务失败、不终止或重启后台。观察随终端关闭而结束时，下次会话用原 run ID/游标核对。无 `run_end` 时按运行器写出的匹配进度/心跳、真实同机锁/PID和既有3分钟观察新鲜度判孤儿，不用观察者刷新续命；跨机/缺可靠锁保持未知并有界等待，活着安静不冒认死亡。90分钟接管门不变，不另起任务或固定短睡眠。读取失败、取消、后台失败、等待条件及交付终点分别回报；观察不恢复或停止任务。完整交付已授权时持续跟踪原请求，Stop hook/原生 Goal/进程退出只触发共同协调器。不要把已授权命令推给用户，也不另建轮询或私有 phase 循环。具体命令见 [goal-mode-operations](../../reference/goal-mode-operations.md)。
+
+收到 `attention` 时先报告原因；仅当 `WAITING_EXTERNAL` / `STALLED` 的返回提示确认同机运行器仍存活且可续等，才在同一主会话用返回游标执行 `--after <cursor>` 续等原请求。`changed` 时先读新状态，尚在运行时用新返回的游标执行 `--after <cursor>` 续等，不签交付完成。

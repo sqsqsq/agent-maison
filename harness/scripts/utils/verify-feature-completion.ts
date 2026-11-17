@@ -1187,6 +1187,20 @@ export function readCurrentDispositionInput(opts: CleanPassOptions | CurrentRequ
       (summary.raw ?? {}) as Parameters<typeof import('./phase-closure-finalizer').readCurrentPhaseRepairCandidates>[2]) : undefined;
     const registered = readRegisteredFindings(lateCandidates === undefined ? summary.raw
       : { ...asRecord(summary.raw), repair_candidates: lateCandidates }, { ...responsibility, currentPhase: source });
+    if (source === 'testing') {
+      const { readPendingTestingRetests } = require('./testing-trace-gates') as typeof import('./testing-trace-gates');
+      const { failureRouteSlug } = require('./hylyre-failure-routing-v1') as typeof import('./hylyre-failure-routing-v1');
+      const { resolveCurrentHapSha256Full } = require('./actionable-evidence') as typeof import('./actionable-evidence');
+      const reports = featurePhaseReportsDir(projectRoot, feature, 'testing', opts.frameworkRoot);
+      for (const finding of readPendingTestingRetests({ projectRoot, feature, runId: opts.runId, frameworkRoot: opts.frameworkRoot,
+        currentHapSha256: resolveCurrentHapSha256Full(projectRoot, reports) })) {
+        const id = `testing_failure_routing_${failureRouteSlug(finding.route.caseId, finding.route.stepIndex)}`;
+        if (!registered.some(row => row.id === id)) registered.push({ id, owner: source, verificationRequired: true,
+          detail: `原失败行为须由当前适用证据复验：${finding.route.reason}；触发与预期=${finding.behavior}`,
+          evidence: [path.relative(projectRoot, finding.tracePath).replace(/\\/g, '/'),
+            path.relative(projectRoot, finding.derivedPlanPath).replace(/\\/g, '/')] });
+      }
+    }
     const currentCollected = new Set<typeof registered[number]>();
     if (nativeReviewBound && asRecord(summary.raw)?.report_validity === 'PASS') {
       const repairs = require('./repair-candidates') as typeof import('./repair-candidates');

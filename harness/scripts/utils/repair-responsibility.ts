@@ -524,12 +524,14 @@ export function independentArtifactRepairs(input: RepairResponsibilityContext & 
   for (const owner of recheckFamilies) {
     if (workUnitExecutionRole({ phase: owner }) !== 'verifier' || context.profile?.phasesDisabled.has(owner)
       || !context.executionScope?.obligations.some(obligation => obligation.owner_phase === owner && obligation.applicability === 'required')) continue;
+    const outputs = context.contracts.domains.filter(domain => domain.owner === owner && domain.kind === 'artifact' && domain.match === 'exact');
+    const ownArtifacts = new Set(outputs.map(domain => path.resolve(context.projectRoot!, domain.path)));
     const problems = input.currentDisposition.completionBlocking.filter(problem => owner === 'review' && testStrength.includes(problem) || (problem.source_phase ?? problem.phase) === owner
       && (problem.action === 'repair' || problem.id.startsWith('open_finding:'))
       && (input.recheckFamilies?.includes(owner) || problem.action === 'verify' && problem.owner === owner)
+      && (!problem.files?.length || problem.id.startsWith('open_finding:') || problem.files.some(file => ownArtifacts.has(path.resolve(context.projectRoot!, file))))
       && problem.owner !== 'framework' && !problem.id.startsWith('capability_'));
     if (!problems.length) continue;
-    const outputs = context.contracts.domains.filter(domain => domain.owner === owner && domain.kind === 'artifact' && domain.match === 'exact');
     const files = new Set(outputs.map(domain => resolveFeatureArtifact(context.projectRoot!, input.feature!, path.posix.basename(domain.path)).actualPath)
       .filter(file => fs.existsSync(file)));
     if (files.size !== 1) continue;

@@ -182,9 +182,9 @@ export function acceptChangeUnitCandidates(
   } catch (error) {
     const { BlueprintProjectionPreparationError, classifyDesignAuthorityCodes } = require('./blueprint-skill-projection') as typeof import('./blueprint-skill-projection');
     const projection = error instanceof BlueprintProjectionPreparationError ? error.projection : undefined;
-    const codes = projection?.codes ?? [];
+    const codes = (projection?.codes ?? []).filter(code => classifyDesignAuthorityCodes([code]).artifacts.every(kind => kind === 'blueprint'));
     const verdict = classifyDesignAuthorityCodes(codes);
-    const designAuthority = projection?.state === 'invalid' && codes.length && verdict.artifacts.every(kind => kind === 'blueprint') && projectionCandidate
+    const designAuthority = projection?.state === 'invalid' && codes.length && projectionCandidate
       ? [{ check: 'authoritative_content_aligned', class: verdict.class, codes,
         artifacts: [...new Set(projectionCandidate.artifact.design_refs.map(ref => require('./component-blueprint-path').componentBlueprintPath(projectRoot, ref.blueprint_id) as string))]
           .map(file => path.relative(projectRoot, file).replace(/\\/g, '/')),

@@ -1215,6 +1215,25 @@ cases.push({
   },
 });
 
+cases.push({
+  name: '4c8 report-only visual SKIP preserves existing screen debt and release constraint',
+  run: () => withTmpProject(root => {
+    const vd = require('../../scripts/utils/visual-debt') as typeof import('../../scripts/utils/visual-debt');
+    const qa = require('../../scripts/utils/quality-axes') as typeof import('../../scripts/utils/quality-axes');
+    const { applyVisualDebtPipeline } = require('../../harness-runner') as typeof import('../../harness-runner');
+    const previous = deriveVisualDebt('demo', [{ id: 'visual_diff', status: 'WARN', severity: 'MAJOR', details: 'known residual',
+      structured: { kind: 'visual_diff', downgraded_screens: ['failed-result'] } }], null);
+    vd.writeVisualDebt(root, previous);
+    const checks = [{ id: 'report_reconcile_only', status: 'PASS', severity: 'BLOCKER', category: 'structure', description: 'report' },
+      { id: 'visual_diff', status: 'SKIP', severity: 'MAJOR', category: 'structure', description: 'pixels not observed' }];
+    const lattice = qa.deriveSummaryVerdictLattice(checks as CheckResult[], { phase: 'testing', visualApplicable: true, assetApplicable: false });
+    applyVisualDebtPipeline(root, { feature: 'demo', phase: 'testing', checks } as never, lattice);
+    assertTrue(isDeepStrictEqual(vd.loadVisualDebtEx(root, 'demo').doc?.entries, previous.entries), 'report-only must not close or replace screen debt');
+    assertEq(vd.countBlockingDebt(vd.loadVisualDebtEx(root, 'demo').doc!).open, 1, 'debt still open');
+    assertEq(lattice.release_readiness, 'BLOCKED', 'release remains blocked');
+  }),
+});
+
 export function runAll(): Promise<UnitCaseResult[]> {
   return (async () => {
     const out: UnitCaseResult[] = [];

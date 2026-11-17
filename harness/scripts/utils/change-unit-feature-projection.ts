@@ -656,7 +656,8 @@ export function validateChangeUnitFeatureProjection(
     try { contracts = projectComponentSelections(projectRoot, contracts!, cu); }
     catch (error) { issues.push(issue('component_asset_projection', `蓝图选型权威不可解析：${(error as Error).message}`, 'reconcile_blueprint')); }
     issues.push(...changeUnitMappingIssues(projectRoot, asRecord(contracts!.change_unit)!, cu, phase));
-    issues.push(...componentProjectionFindings(projectRoot, contracts!, cu).map(finding => issue('component_asset_projection', finding.message, finding.route)));
+    issues.push(...componentProjectionFindings(projectRoot, contracts!, cu, options.resolveBlueprintRef)
+      .map(finding => issue('component_asset_projection', finding.message, finding.route)));
   }
   const warnings: string[] = [];
   try {

@@ -1,10 +1,11 @@
+import { resolveManagedGoalInvocation, effectiveForceDevice } from '../../../harness/scripts/utils/managed-goal-invocation';
 /**
  * hmos-app：UT 阶段与宿主测试目录、Hypium、hvigor、hdc 相关的实现（根 check-ut 仅编排）。
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
-import type { UtHostImpl } from '../../../harness/profile-host-loader';
+import type { UtHostImpl, UtFilePartition } from '../../../harness/profile-host-loader';
 import type { CheckContext, CheckResult } from '../../../harness/scripts/utils/types';
 import { compileTestFiles } from '../../../harness/scripts/utils/ts-compile';
 import { findFilesRecursive } from '../../../harness/scripts/utils/find-files-recursive';
@@ -22,7 +23,7 @@ import {
   looksLikeUtCompileCommandMismatch,
 } from '../../../harness/capability-registry';
 import { isSuiteEntryShimContent } from '../../../harness/ut-suite-entry-shim';
-import { partitionUtFiles } from './ut-file-scope';
+import { partitionUtFiles, isUtTestPath } from './ut-file-scope';
 import {
   buildUtInstallBlockingCheckDetails,
   diagnoseInstallBlocking,
@@ -37,6 +38,7 @@ import {
   resolveUtBuildTask,
   isHvigorBuildSuccessful,
   moduleDeclaresOhosTestTarget,
+  listBuildProfileModules,
 } from './hvigor-runner';
 import { computeHvigorInvocationFingerprint } from './toolchain-probe';
 import { featurePhaseReportsDir } from '../../../harness/config';
@@ -70,6 +72,7 @@ import {
 } from './ut-hvigor-test-failure';
 import { EXCLUDED_SEGMENTS } from '../../../harness/scripts/utils/product-source-snapshot';
 import { executedUtChecks } from '../../../harness/scripts/utils/ut-execution-evidence';
+import { projectImplementationModules } from '../../../harness/scripts/utils/diff-scope';
 import {
   evaluateSuiteRatchet,
   suiteFailureKey,
@@ -344,6 +347,53 @@ function findModulesWithUt(ctx: CheckContext): Array<{ name: string; package_pat
   return out;
 }
 
+/** Explain the failed module selection using the same partition and real project module roots. */
+function utModuleSelectionProblem(ctx: CheckContext, modules: Array<{ name: string; package_path: string }>,
+  scoped: Array<{ path: string }>, partition?: Pick<UtFilePartition, 'scopeSources' | 'scopeDiagnostics'>): string | null {
+  const diagnostics = partition?.scopeDiagnostics ?? [];
+  const undiscovered = diagnostics.filter(value => value.startsWith('scope-path-not-discovered:'))
+    .map(value => value.slice('scope-path-not-discovered:'.length));
+  const owns = (module: { package_path: string }, file: string): boolean => file.replace(/\\/g, '/').startsWith(module.package_path.replace(/\\/g, '/').replace(/\/$/, '') + '/');
+  const declared = ctx.featureSpec.contracts?.modules ?? [];
+  const mapping = ctx.featureSpec.contracts?.change_unit;
+  const frozen = new Set([...(ctx.featureSpec.contracts?.files ?? []),
+    ...(mapping?.predicate_mappings ?? []).flatMap(row => row.test_refs),
+    ...(mapping?.provide_mappings ?? []).flatMap(row => row.test_refs),
+    ...(mapping?.design_ref_mappings ?? []).flatMap(row => row.verification_refs)]
+    .map(ref => ref.replace(/^planned:/, '').split('#')[0].replace(/\\/g, '/')).filter(isUtTestPath));
+  const frozenMissed = frozen.size > 0 && !scoped.some(file => frozen.has(file.path.replace(/\\/g, '/')))
+    && (!!partition?.scopeSources.includes('fallback:all') || undiscovered.some(file => frozen.has(file)));
+  if (modules.length && !frozenMissed) return null;
+  const project = [...new Map([...listBuildProfileModules(ctx.projectRoot).map(module => ({ name: module.name, package_path: module.srcPath })),
+    ...projectImplementationModules(ctx.projectRoot)].map(module => [module.package_path, module])).values()];
+  const withUt = project.filter(module => fs.existsSync(path.join(ctx.projectRoot, module.package_path, 'src/ohosTest')));
+  const paths = [...new Set([...frozen, ...undiscovered, ...scoped.map(file => file.path)])];
+  const targets = frozen.size ? [...frozen] : paths;
+  const mismatch = targets.filter(file => withUt.some(module => owns(module, file)) && !declared.some(module => owns(module, file)));
+  let reason: string;
+  if (!project.length) reason = '工程模块信息不可确认，不能据此判断工程没有 ohosTest 模块。';
+  else if (!withUt.length) reason = '当前可确认的工程模块均没有 src/ohosTest/ 目录，工程尚无可执行的 ohosTest 模块。';
+  else if (!declared.length) reason = '工程已有 ohosTest 模块；contracts.modules 缺少 name/package_path 声明，尚未进入真实编译或执行。';
+  else if (mismatch.length) reason = 'contracts.modules[].package_path 与本次测试路径错配，不能以其它模块代替当前作用域。';
+  else if (targets.some(file => !fs.existsSync(path.join(ctx.projectRoot, file)))) reason = '本次作用域中的测试路径不存在；请核对原测试目标或恢复文件。';
+  else reason = '已有模块声明，但本次作用域没有发现可匹配的测试；尚未进入真实编译或执行。';
+  return [reason,
+    `contracts.modules=${declared.map(module => `${module.name}:${module.package_path}`).join(', ') || '(缺失)'}`,
+    `工程 ohosTest 模块=${withUt.map(module => `${module.name}:${module.package_path}`).join(', ') || '(无)'}`,
+    `本次测试路径=${paths.join(', ') || '(无)'}`,
+    ...(diagnostics.length ? [`scope 诊断：${diagnostics.join(' | ')}`] : []),
+    '请由原契约写方按本 CU 已授权的冻结路径核对 modules[].name/package_path；不扩大模块或测试范围。'].join('\n');
+}
+
+function appendUtScopeDiagnostics(checks: CheckResult[], partition?: Pick<UtFilePartition, 'scopeDiagnostics'>): CheckResult[] {
+  const missing = (partition?.scopeDiagnostics ?? []).filter(value => value.startsWith('scope-path-not-discovered:'));
+  for (const check of checks) {
+    const notes = missing.filter(value => !check.details.includes(value));
+    if (notes.length) check.details += '\nscope 诊断（未扩大执行范围）：' + notes.join(' | ');
+  }
+  return checks;
+}
+
 /**
  * 在「发现的 ohosTest 模块」中，只保留拥有至少一个 *本需求 scoped* UT 文件的模块。
  * 判据不依赖模块类型（entry/har 等都可能是合法被测目标）；唯一信号是「该模块下是否有
@@ -466,12 +516,17 @@ export function projectRelativeSourceFile(projectRoot: string, file: string | un
   return rel.split('/').some(seg => EXCLUDED_SEGMENTS.has(seg)) ? null : rel;
 }
 
-export function checkUtHvigorBuild(
+export function checkUtHvigorBuild(...args: Parameters<typeof checkUtHvigorBuildImpl>): CheckResult[] {
+  return appendUtScopeDiagnostics(checkUtHvigorBuildImpl(...args), args[4]);
+}
+
+function checkUtHvigorBuildImpl(
   ctx: CheckContext,
   scopedUtFiles: Array<{ path: string }> = [],
   featureNewUtFiles: Array<{ path: string }> = [],
   /** plan 5e1c7a93 D1：同次 check-ut 调用内共享的出包结果收集器（调用方按次创建） */
   builds?: Map<string, unknown>,
+  partition?: Pick<UtFilePartition, 'scopeSources' | 'scopeDiagnostics'>,
 ): CheckResult[] {
   if (isCapabilitySkipped(ctx.resolvedProfile, 'ut.compile')) {
     const desc = ruleDesc(ctx, 'structure_checks', 'ut_hvigor_build');
@@ -502,7 +557,8 @@ export function checkUtHvigorBuild(
     scopedUtFiles,
     featureNewUtFiles,
   );
-  if (mods.length === 0) {
+  const moduleProblem = utModuleSelectionProblem(ctx, mods, scopedUtFiles, partition);
+  if (moduleProblem) {
     return [
       {
         id: 'ut_hvigor_build',
@@ -510,7 +566,7 @@ export function checkUtHvigorBuild(
         description: ruleDesc(ctx, 'structure_checks', 'ut_hvigor_build'),
         severity: 'BLOCKER',
         status: 'FAIL',
-        details: '未找到包含 src/ohosTest/ 目录的模块。UT 阶段必须有至少一个 ohosTest 模块。',
+        details: moduleProblem,
       },
     ];
   }
@@ -1011,16 +1067,31 @@ function buildUtExecutionKeyInputs(
   };
 }
 
+function utFailureEnvironmentResolved(view: import('./execution-key').ExecutionKeyRunView,
+  artifacts: ReturnType<typeof utFrozenRunArtifacts>, serial: string): boolean {
+  try {
+    const results = artifacts.filter(file => file.top.startsWith('ut-result.')).map(file =>
+      JSON.parse(fs.readFileSync(path.join(view.runDir, file.frozen), 'utf8')) as HvigorRunResult);
+    const knownObstacle = results.some(result => result.onDeviceFailureEvidence?.runDiagnosis?.systemSetup
+      || result.onDeviceFailureEvidence?.installDiagnosis?.systemSetup
+      || [result.onDeviceFailureEvidence?.runDiagnosis?.kind, result.onDeviceFailureEvidence?.installDiagnosis?.kind].includes('device_locked'));
+    if (!knownObstacle) return false;
+    const snapshot = require('./device-recovery-bridge').observeDeviceSnapshot(serial);
+    return snapshot?.locked === false && !snapshot.systemSetup;
+  } catch { return false; }
+}
+
 /** 同轮收口消费原失败；不进入 decideReuse 的成功候选，也不创建新执行记录。 */
-function sameInvocationUtFailure(
+export function sameInvocationUtFailure(
   reportsBase: string, key: string, artifacts: ReturnType<typeof utFrozenRunArtifacts>,
-  invocation: NonNullable<import('./execution-key').ExecutionKeyRecord['goal_invocation']>, serial: string,
+  invocation: NonNullable<import('./execution-key').ExecutionKeyRecord['goal_invocation']>, serial: string, excludeRunDir?: string,
 ): import('./execution-key').ExecutionKeyRunView | null {
   // plan 6fd6c8c1 §4.2：身份/执行键/冻结件判据与 testing 共用 execution-key 的共同 reader；
   // 这里只保留 UT 自己的结果格式与环境复查（产品语义不猜）。
   return findSameInvocationFailure(reportsBase, key, invocation, {
     leg: 'ut',
     artifacts,
+    excludeRunDir,
     usable: latest => {
       const r = latest.record;
       try {
@@ -1041,14 +1112,19 @@ function sameInvocationUtFailure(
   });
 }
 
-export function checkUtHvigorTest(
+export async function checkUtHvigorTest(...args: Parameters<typeof checkUtHvigorTestImpl>): Promise<CheckResult[]> {
+  return appendUtScopeDiagnostics(await checkUtHvigorTestImpl(...args), args[4]);
+}
+
+async function checkUtHvigorTestImpl(
   ctx: CheckContext,
   scopedUtFiles: Array<{ path: string }> = [],
   /** 责任域用例（含所属文件路径）——模块由 package_path 归属推导，构成 module::test 身份 */
   targetCases: Array<{ path: string; test: string }> = [],
   /** plan 5e1c7a93 D1：同次 check-ut 调用内 ut_hvigor_build 出的包；缺席即走内建出包 */
   builds?: Map<string, unknown>,
-): CheckResult[] {
+  partition?: Pick<UtFilePartition, 'scopeSources' | 'scopeDiagnostics'>,
+): Promise<CheckResult[]> {
   if (isCapabilitySkipped(ctx.resolvedProfile, 'ut.run')) {
     const desc = ruleDesc(ctx, 'structure_checks', 'ut_hvigor_test');
     const details =
@@ -1090,7 +1166,8 @@ export function checkUtHvigorTest(
   }
 
   const mods = selectUtModulesToCompile(findModulesWithUt(ctx), scopedUtFiles);
-  if (mods.length === 0) {
+  const moduleProblem = utModuleSelectionProblem(ctx, mods, scopedUtFiles, partition);
+  if (moduleProblem) {
     return [
       {
         id: 'ut_hvigor_test',
@@ -1098,7 +1175,7 @@ export function checkUtHvigorTest(
         description: ruleDesc(ctx, 'structure_checks', 'ut_hvigor_test'),
         severity: 'BLOCKER',
         status: 'FAIL',
-        details: '未找到包含 src/ohosTest/ 目录的模块。UT 阶段必须有至少一个 ohosTest 模块。',
+        details: moduleProblem,
       },
     ];
   }
@@ -1125,6 +1202,74 @@ export function checkUtHvigorTest(
     ];
   }
 
+  // ------------------------------------------------------------------ plan 5e1c7a93 D2
+  // UT 同键复用：整轮键 + 逐模块冻结件。裁决公式一律复用 decideReuse，不新写谓词。
+  const reportsBase = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, 'ut', ctx.frameworkRoot);
+  const moduleNames = mods.map(m => m.name);
+  const utArtifacts = utFrozenRunArtifacts(moduleNames);
+  const eligibility = evaluateUtReuseEligibility(ctx, mods, selection.product ?? undefined, builds);
+  let keyInputs = buildUtExecutionKeyInputs(ctx, mods, targetCases, selection.product ?? undefined, eligibility);
+  let executionKey = computeExecutionKey(keyInputs);
+
+  const managed = resolveManagedGoalInvocation(ctx);
+  const goalInvocation = managed ? { run_id: managed.run_id, phase: managed.phase, attempt_id: managed.attempt_id } : undefined;
+  const forceDevice = effectiveForceDevice(ctx.forceDevice, ctx);
+  const failedInvocation = !forceDevice && eligibility.eligible && keyInputs.device && goalInvocation
+    ? sameInvocationUtFailure(reportsBase, executionKey, utArtifacts, goalInvocation, keyInputs.device) : null;
+
+  // 记录前置（codex round2）：dispatch **之前**先落一条非成功 attempt——decideReuse 只看
+  // 最新一条**带键记录**，没有它时"跑挂/抛异常的那轮"会被上一轮的成功洗绿。
+  const runDir = failedInvocation?.runDir ?? path.join(reportsBase, utRunTimestamp(), 'ut');
+  let preRecordOk = true;
+  try {
+    if (!failedInvocation) {
+    fs.mkdirSync(runDir, { recursive: true });
+    writeExecutionKeyRecord(runDir, {
+      schema_version: '1.0', execution_key: executionKey, inputs: keyInputs,
+      trace_path: '', run_started_at: new Date().toISOString(), outcome: 'started',
+      trace_sha256: null, timing_complete: false, frozen_files: [],
+      ...(goalInvocation ? { goal_invocation: goalInvocation } : {}),
+    });
+    }
+  } catch {
+    preRecordOk = false;
+  }
+
+  const reuse: ReuseDecision = !preRecordOk
+    ? { reusable: null, reason: '执行键前置记录写入失败，本轮不做同键复用' }
+    : forceDevice
+      ? { reusable: null, reason: '--force-device：用户要求真跑' }
+      : !keyInputs.device
+        ? { reusable: null, reason: '设备身份未知（无 HARNESS_HDC_TARGET 且 hdc list targets 非唯一），不做同键复用' }
+        : !eligibility.eligible
+          ? { reusable: null, reason: eligibility.reason }
+          : decideReuse(reportsBase, executionKey, { leg: 'ut', artifacts: utArtifacts, excludeRunDir: runDir, invocation: goalInvocation,
+            conflictResolved: failure => Boolean(keyInputs.device && utFailureEnvironmentResolved(failure, utArtifacts, keyInputs.device)) });
+
+  // plan 423e5d0f P1-2（codex 修正）：**用例失败不短路**——棘轮裁决需要全部选中模块的
+  // 完整结果（半途 PASS=假绿）；只有链路级失败（工具缺失/未执行/无测试结果的异常退出）
+  // 才短路（后续模块大概率同因失败，且修复靶点已明确）。
+  const perModule: UtHvigorTestFailureModule[] = [];
+  // UT leg 无派生统计可重建：evidenceRebuildRequired 一律 fail-closed 回落真跑。
+  const reusedRun = failedInvocation ?? (reuse.reusable && !reuse.evidenceRebuildRequired ? reuse.reusable : null);
+  const reuseNote =
+    `\nexecution_key: ${executionKey.slice(0, 16)}（` +
+    `${failedInvocation ? `采纳同次调用失败 ${failedInvocation.dirStamp}（仍判失败，不重执行）` : reusedRun ? `同键复用 ${reusedRun.dirStamp}` : '本轮真跑'}：${failedInvocation ? '同轮身份和执行输入一致，保留原失败时间与日志' : reuse.reason}）`;
+  if (reusedRun) {
+    // 复用轮：回填逐模块冻结件后按盘重建结果，**不调 dispatchUtRun、不发一条装机/执行 hdc**。
+    restoreFrozenRunArtifacts(reusedRun.runDir, reportsBase, utArtifacts);
+    for (const mod of mods) {
+      perModule.push({ module: mod.name, packagePath: mod.package_path, result: readUtModuleResult(reportsBase, mod.name) });
+    }
+  } else {
+  const preparation = await ctx.prepareDeviceExecution?.();
+  if (preparation) return [preparation];
+  keyInputs = buildUtExecutionKeyInputs(ctx, mods, targetCases, selection.product ?? undefined, eligibility);
+  executionKey = computeExecutionKey(keyInputs);
+  if (preRecordOk) try { writeExecutionKeyRecord(runDir, { schema_version: '1.0', execution_key: executionKey, inputs: keyInputs,
+    trace_path: '', run_started_at: new Date().toISOString(), outcome: 'started', trace_sha256: null,
+    timing_complete: false, frozen_files: [], ...(goalInvocation ? { goal_invocation: goalInvocation } : {}) }); }
+  catch { preRecordOk = false; }
   const devProbe = probeUtRunDevices(ctx);
   if (!devProbe.available) {
     const head = devProbe.hdcPresent
@@ -1167,67 +1312,6 @@ export function checkUtHvigorTest(
     ];
   }
 
-  // ------------------------------------------------------------------ plan 5e1c7a93 D2
-  // UT 同键复用：整轮键 + 逐模块冻结件。裁决公式一律复用 decideReuse，不新写谓词。
-  const reportsBase = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, 'ut', ctx.frameworkRoot);
-  const moduleNames = mods.map(m => m.name);
-  const utArtifacts = utFrozenRunArtifacts(moduleNames);
-  const eligibility = evaluateUtReuseEligibility(ctx, mods, selection.product ?? undefined, builds);
-  const keyInputs = buildUtExecutionKeyInputs(ctx, mods, targetCases, selection.product ?? undefined, eligibility);
-  const executionKey = computeExecutionKey(keyInputs);
-
-  const runId = process.env.MAISON_GOAL_RUN_ID?.trim();
-  const attemptId = process.env.MAISON_GOAL_ATTEMPT?.trim();
-  const attemptPhase = process.env.MAISON_GOAL_ATTEMPT_PHASE?.trim();
-  const goalInvocation = runId && attemptId && attemptPhase === ctx.phase
-    ? { run_id: runId, phase: attemptPhase, attempt_id: attemptId } : undefined;
-  const failedInvocation = !ctx.forceDevice && eligibility.eligible && keyInputs.device && goalInvocation
-    ? sameInvocationUtFailure(reportsBase, executionKey, utArtifacts, goalInvocation, keyInputs.device) : null;
-
-  // 记录前置（codex round2）：dispatch **之前**先落一条非成功 attempt——decideReuse 只看
-  // 最新一条**带键记录**，没有它时"跑挂/抛异常的那轮"会被上一轮的成功洗绿。
-  const runDir = failedInvocation?.runDir ?? path.join(reportsBase, utRunTimestamp(), 'ut');
-  let preRecordOk = true;
-  try {
-    if (!failedInvocation) {
-    fs.mkdirSync(runDir, { recursive: true });
-    writeExecutionKeyRecord(runDir, {
-      schema_version: '1.0', execution_key: executionKey, inputs: keyInputs,
-      trace_path: '', run_started_at: new Date().toISOString(), outcome: 'started',
-      trace_sha256: null, timing_complete: false, frozen_files: [],
-      ...(goalInvocation ? { goal_invocation: goalInvocation } : {}),
-    });
-    }
-  } catch {
-    preRecordOk = false;
-  }
-
-  const reuse: ReuseDecision = !preRecordOk
-    ? { reusable: null, reason: '执行键前置记录写入失败，本轮不做同键复用' }
-    : ctx.forceDevice
-      ? { reusable: null, reason: '--force-device：用户要求真跑' }
-      : !keyInputs.device
-        ? { reusable: null, reason: '设备身份未知（无 HARNESS_HDC_TARGET 且 hdc list targets 非唯一），不做同键复用' }
-        : !eligibility.eligible
-          ? { reusable: null, reason: eligibility.reason }
-          : decideReuse(reportsBase, executionKey, { leg: 'ut', artifacts: utArtifacts, excludeRunDir: runDir });
-
-  // plan 423e5d0f P1-2（codex 修正）：**用例失败不短路**——棘轮裁决需要全部选中模块的
-  // 完整结果（半途 PASS=假绿）；只有链路级失败（工具缺失/未执行/无测试结果的异常退出）
-  // 才短路（后续模块大概率同因失败，且修复靶点已明确）。
-  const perModule: UtHvigorTestFailureModule[] = [];
-  // UT leg 无派生统计可重建：evidenceRebuildRequired 一律 fail-closed 回落真跑。
-  const reusedRun = failedInvocation ?? (reuse.reusable && !reuse.evidenceRebuildRequired ? reuse.reusable : null);
-  const reuseNote =
-    `\nexecution_key: ${executionKey.slice(0, 16)}（` +
-    `${failedInvocation ? `采纳同次调用失败 ${failedInvocation.dirStamp}（仍判失败，不重执行）` : reusedRun ? `同键复用 ${reusedRun.dirStamp}` : '本轮真跑'}：${failedInvocation ? '同轮身份和执行输入一致，保留原失败时间与日志' : reuse.reason}）`;
-  if (reusedRun) {
-    // 复用轮：回填逐模块冻结件后按盘重建结果，**不调 dispatchUtRun、不发一条装机/执行 hdc**。
-    restoreFrozenRunArtifacts(reusedRun.runDir, reportsBase, utArtifacts);
-    for (const mod of mods) {
-      perModule.push({ module: mod.name, packagePath: mod.package_path, result: readUtModuleResult(reportsBase, mod.name) });
-    }
-  } else {
   for (const mod of mods) {
     const res = dispatchUtRun(ctx, {
       projectRoot: ctx.projectRoot,
@@ -1382,7 +1466,7 @@ export function checkUtHvigorTest(
         details:
           `全部 ${perModule.length} 个 ohosTest 模块装机执行通过（target 无失败）：` +
           `total=${totals.total}, passed=${totals.passed}, failed=${totals.failed}；` +
-          `目标设备：${devProbe.targets.join(' / ')}${ratchetNote}${reuseNote}`,
+          `目标设备：${keyInputs.device ?? 'unknown'}${ratchetNote}${reuseNote}`,
       },
       ...perModule.flatMap(item => executedUtChecks(ctx.projectRoot,
         targetCases.filter(candidate => item.packagePath !== undefined && candidate.path.replace(/\\/g, '/').startsWith(item.packagePath.replace(/\\/g, '/').replace(/\/$/, '') + '/')),

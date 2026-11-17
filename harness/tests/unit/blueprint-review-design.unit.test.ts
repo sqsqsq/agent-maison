@@ -124,6 +124,7 @@ const cases: Array<{ name: string; run(f: Fixture): void }> = [
     for (const state of ['active', 'unknown', 'missing', 'not_applicable', 'verified_unchanged', 'body-overrides-return', 'bad-reference']) {
       const bp = blueprint(f); const runtime = asRecords(bp.design_views).find(view => view.view_id === 'runtime')!;
       const graph = { ...generateMermaidViewGraph(bp, 'runtime'), graph_id: 'graph:reference-runtime', label: '运行结构关系', content: 'flowchart LR\nrepo["参考独有存储"]\nstore["参考独有缓存"]\nrepo --> store' };
+      const expected = generateMermaidRelationGraph(bp, graph.relation_refs).content;
       bp.generated_graphs = [graph]; delete asRecord(bp.review_summary)!.reader_guide; delete bp.derived_results;
       if (state === 'unknown') { runtime.applicability = 'unknown'; runtime.evolution_impact = 'unknown'; }
       if (state === 'missing') graph.source_view_id = 'missing';
@@ -133,7 +134,7 @@ const cases: Array<{ name: string; run(f: Fixture): void }> = [
       if (state === 'body-overrides-return') asRecord(bp.review_summary)!.reader_guide = { source_digest: computeBlueprintReaderGuideSourceDigest(bp), sections: [{ section: 'solution', title: '结构说明', prose: '正文显示已有结构。', source_refs: ['/design_views'], graph_ids: [graph.graph_id] }] };
       const text = renderBlueprintReviewMarkdown(bp, 'sha256:view-outlet');
       const omitted = diagnoseBlueprintPresentationShape(bp).filter(row => row.id === 'blueprint_generated_graph_not_displayed');
-      assert.equal(text.includes('```mermaid\n' + graph.content), ['active', 'unknown', 'body-overrides-return'].includes(state), state);
+      assert.equal(text.includes('```mermaid\n' + expected.trimEnd()), ['active', 'unknown', 'body-overrides-return'].includes(state), state);
       assert.equal(omitted.length, ['missing', 'not_applicable', 'verified_unchanged'].includes(state) ? 1 : 0, state);
       if (state === 'bad-reference') assert(validateGeneratedBlueprintGraphs(bp).some(row => row.id === 'blueprint_generated_graph_ref_missing' && row.severity === 'BLOCKER'));
     }
@@ -404,21 +405,28 @@ const cases: Array<{ name: string; run(f: Fixture): void }> = [
       assert.equal(text.split(graph.content).length - 1, 1); assert.equal(reference.split(automatic.content.trimEnd()).length - 1, 1);
     }
   } },
-  { name: 'closeout author relation graph still replaces its automatic view graph without duplicate guide display', run(f) {
+  { name: '4c8d73b1 relation graph display follows authority edges without duplicating the placed graph', run(f) {
     for (const placed of [false, true]) {
       const bp = blueprint(f); const automatic = generateMermaidViewGraph(bp, 'runtime');
       const graph = { graph_id: 'reader-runtime-relations', format: 'mermaid', source_view_id: 'runtime',
-        content: 'flowchart LR\nrepo["持久账目"]\nstore["已提交快照"]\nrepo -->|发布快照| store',
+        content: 'flowchart LR\nrepo["持久账目"]\nstore["已提交快照"]\nstore -->|错误反向边| repo',
         node_refs: ['view:runtime/node:ledger-repository', 'view:runtime/node:ledger-store'], relation_refs: ['relation:repository-publishes-store'] };
       bp.generated_graphs = [graph]; assert.equal(validateGeneratedBlueprintGraphs(bp).length, 0);
       if (placed) asRecord(bp.review_summary)!.reader_guide = { source_digest: computeBlueprintReaderGuideSourceDigest(bp), sections: [
         { section: 'solution', title: '整体方案', prose: '持久账目向缓存发布已提交快照。', source_refs: ['/design_views'], graph_ids: [graph.graph_id] },
       ] };
+      const expected = generateMermaidRelationGraph(bp, graph.relation_refs).content.trimEnd();
       const text = renderBlueprintReviewMarkdown(bp, 'sha256:reader-runtime-relations'); const reference = text.slice(text.indexOf('## 技术与追溯参考'));
       const runtime = reference.slice(reference.indexOf('#### 运行时视图'), reference.indexOf('#### 开发视图'));
-      assert(!runtime.includes(automatic.content.trimEnd())); assert.equal(runtime.includes(graph.content), !placed);
-      assert.equal(text.split(graph.content).length - 1, 1);
+      assert(!runtime.includes(automatic.content.trimEnd())); assert.equal(runtime.includes(expected), !placed);
+      assert(!text.includes(graph.content)); assert.equal(text.split(expected).length - 1, 1);
+      assert(graph.content.includes('错误反向边'), '展示派生不得改写作者原件');
     }
+    const bp = blueprint(f); const graph = generateMermaidViewGraph(bp, 'runtime');
+    bp.generated_graphs = [graph]; asRecords(bp.relations).find(relation => graph.relation_refs.includes(`relation:${relation.relation_id}`))!.to = 'view:runtime/node:missing';
+    const text = renderBlueprintReviewMarkdown(bp, 'sha256:dangling-relation');
+    assert(text.includes('结构图无效，未展示') && text.includes('## 12 验收'), '悬空关系不能吞掉整篇报告');
+    assert(validateCrossViewRelations(bp).some(issue => issue.id === 'blueprint_relation_endpoint_missing'), '原准入的真实悬空关系仍须否定');
   } },
   { name: 'closeout summary links delivery while canonical CU purposes appear only in the construction chapter', run(f) {
     const text = render(f); const summary = text.slice(text.indexOf('## 1 方案摘要'), text.indexOf('## 2 背景、目标与边界'));

@@ -61,6 +61,13 @@ function withEnv(vars: Record<string, string | undefined>, fn: () => void): void
 export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
 
+  run(results, '4c8 select-only binds manual permission before readiness without granting a new credential', () => {
+    withEnv({ MAISON_DEVICE_ATTEMPT_FROZEN: '0', MAISON_DEVICE_CREDENTIAL_REF: undefined,
+      HARNESS_HDC_TARGET: 'PHONE-X', MAISON_DEVICE_SESSION_ID: 'testing-i1' }, () => {
+      assertEq(resolveAttemptCredentialRef(process.cwd()), null, 'select-only manual grant stays manual');
+    });
+  });
+
   run(results, 'P1：attempt 已冻结且**未授权** → 绝不回落读实时配置', () => {
     withEnv(
       { MAISON_DEVICE_ATTEMPT_FROZEN: '1', MAISON_DEVICE_CREDENTIAL_REF: undefined },

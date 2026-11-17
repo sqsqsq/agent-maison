@@ -60,6 +60,11 @@ export interface RoutingResultV1 {
   dispositions: CauseDispositionV1[];
 }
 
+export function failureRouteSlug(caseId: string, stepIndex: number): string {
+  const normalized = String(caseId).toUpperCase().replace(/[^A-Z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
+  return `${normalized.slice(0, 48) || 'UNKNOWN-CASE'}_s${stepIndex}`;
+}
+
 /** 同 case 内是否存在较小 index 且实际 passed 的 action（wrong-screen 准入的唯一判据）。 */
 export function hasPassedActionBefore(steps: StepResultV1[], index: number): boolean {
   return steps.some(

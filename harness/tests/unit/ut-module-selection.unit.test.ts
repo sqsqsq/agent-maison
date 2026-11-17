@@ -17,6 +17,7 @@ import {
   utBuildCollectorKey,
 } from '../../../profiles/hmos-app/harness/ut-host-impl';
 import { buildUtHvigorTestFailDetails } from '../../../profiles/hmos-app/harness/ut-hvigor-test-failure';
+import { partitionUtFiles } from '../../../profiles/hmos-app/harness/ut-file-scope';
 
 export interface UnitCaseResult {
   name: string;
@@ -403,11 +404,11 @@ function readLatestExecutionKeyRecord(fx: UtFixture): Record<string, unknown> | 
   return JSON.parse(fs.readFileSync(path.join(base, latest, 'ut', 'execution-key.json'), 'utf-8')) as Record<string, unknown>;
 }
 
-function withFakeDevice<T>(fn: () => T): T {
+async function withFakeDevice<T>(fn: () => T | Promise<T>): Promise<T> {
   const prev = process.env.HARNESS_HDC_TARGET;
   process.env.HARNESS_HDC_TARGET = 'B03FAKE';
   try {
-    return fn();
+    return await fn();
   } finally {
     if (prev === undefined) delete process.env.HARNESS_HDC_TARGET;
     else process.env.HARNESS_HDC_TARGET = prev;
@@ -423,7 +424,7 @@ interface UtRoundResult {
 }
 
 /** 一轮 check-ut 编排：collector 按次创建，同时传给 build 与 test 两侧。 */
-function runUtRound(fx: UtFixture, opts: { aa?: AaMode; forceDevice?: boolean } = {}): UtRoundResult {
+async function runUtRound(fx: UtFixture, opts: { aa?: AaMode; forceDevice?: boolean } = {}): Promise<UtRoundResult> {
   const roundCtx = opts.forceDevice
     ? ({ ...(fx.ctx as unknown as Record<string, unknown>), forceDevice: true } as unknown as typeof fx.ctx)
     : fx.ctx;
@@ -434,7 +435,7 @@ function runUtRound(fx: UtFixture, opts: { aa?: AaMode; forceDevice?: boolean } 
   try {
     const builds = new Map<string, unknown>();
     checkUtHvigorBuild(roundCtx, [], [], builds);
-    details = checkUtHvigorTest(roundCtx, [], [], builds)[0]?.details ?? '';
+    details = (await checkUtHvigorTest(roundCtx, [], [], builds))[0]?.details ?? '';
   } catch {
     // check-ut.ts:4097 的 safeRun 在生产里兜住这条；本用例只关心它留下了什么记录
     threw = true;
@@ -453,14 +454,14 @@ function runUtRound(fx: UtFixture, opts: { aa?: AaMode; forceDevice?: boolean } 
 
 // V1：真实编排 + 真实 runner。断言全部落在**进程调用边界**：两个模块的
 // genOnDeviceTestHap 恰 2 次（改前 test 阶段会再出一次，共 4 次），且编译日志/meta 不被覆盖。
-function testV1CollectorWiring(): void {
+async function testV1CollectorWiring(): Promise<void> {
   const fx = makeUtOrchestrationFixture([
     { name: 'Alpha', package_path: '02-Feature/Alpha' },
     { name: 'Beta', package_path: '02-Feature/Beta' },
   ]);
   const boundary = installToolBoundary(fx);
   try {
-    withFakeDevice(() => {
+    await withFakeDevice(async () => {
       const builds = new Map<string, unknown>();
       const buildRes = checkUtHvigorBuild(fx.ctx, [], [], builds);
       assert(buildRes[0]?.status === 'PASS', `build 应 PASS：${buildRes[0]?.details}`);
@@ -472,7 +473,7 @@ function testV1CollectorWiring(): void {
       const digestsAfterBuild = readBuildArtifactDigests(fx);
       assert(Object.keys(digestsAfterBuild).length === 4, `每模块一份 log + 一份 meta，实际 ${Object.keys(digestsAfterBuild).join(',')}`);
 
-      const testRes = checkUtHvigorTest(fx.ctx, [], [], builds);
+      const testRes = await checkUtHvigorTest(fx.ctx, [], [], builds);
       assert(
         boundary.spawns.hvigor.length === 2,
         `test 阶段不得再出包（改前两模块共 4 次），实际 ${boundary.spawns.hvigor.length}`,
@@ -508,7 +509,7 @@ function testV1CollectorWiring(): void {
 // V3a（plan §6 / codex review 第 1 轮 #5 补项）：HARNESS_SKIP_HVIGOR=1 的**正式编排**——
 // skippedByEnv ⇒ ut_hvigor_build FAIL ⇒ check-ut.ts:4536 短路，checkUtHvigorTest 根本不被调用。
 // 显式计数：ut.run dispatch 零次、genOnDeviceTestHap 零次、hdc 零次，且 skip 不进 collector。
-function testV3aSkipEnvShortCircuit(): void {
+async function testV3aSkipEnvShortCircuit(): Promise<void> {
   const fx = makeUtOrchestrationFixture([
     { name: 'Alpha', package_path: '02-Feature/Alpha' },
     { name: 'Beta', package_path: '02-Feature/Beta' },
@@ -517,7 +518,7 @@ function testV3aSkipEnvShortCircuit(): void {
   const prev = process.env.HARNESS_SKIP_HVIGOR;
   process.env.HARNESS_SKIP_HVIGOR = '1';
   try {
-    withFakeDevice(() => {
+    await withFakeDevice(async () => {
       const builds = new Map<string, unknown>();
       let buildRes: ReturnType<typeof checkUtHvigorBuild> = [];
       try {
@@ -528,7 +529,7 @@ function testV3aSkipEnvShortCircuit(): void {
       const buildFailed = buildRes.some(r => r.id === 'ut_hvigor_build' && r.status === 'FAIL');
       assert(buildFailed, `显式跳过必须判 ut_hvigor_build FAIL：${buildRes.map(r => `${r.id}=${r.status}`).join(',')}`);
       // check-ut.ts:4536 的短路语义：buildFailed 为真 → 直接产 FAIL，**不调** checkUtHvigorTest
-      if (!buildFailed) checkUtHvigorTest(fx.ctx, [], [], builds);
+      if (!buildFailed) await checkUtHvigorTest(fx.ctx, [], [], builds);
       assert(builds.size === 0, `跳过不得被洗成构建成功进 collector，实际 ${builds.size}`);
       const log = readDispatchLog(fx.root);
       assert(log.run.length === 0, `ut.run dispatch 必须为 0，实际 ${log.run.length}`);
@@ -546,12 +547,12 @@ function testV3aSkipEnvShortCircuit(): void {
 
 // V3b / V11①：无 collector 的路径（check-exit.ts:317 直调形态）——test 侧拿不到 prebuild，
 // 走今天的内建出包，且**不参与执行键复用**（复用资格前置第 1 条不满足）。
-function testV11NoCollectorNoReuse(): void {
+async function testV11NoCollectorNoReuse(): Promise<void> {
   const fx = makeUtOrchestrationFixture([{ name: 'Alpha', package_path: '02-Feature/Alpha' }]);
   const boundary = installToolBoundary(fx);
   try {
-    withFakeDevice(() => {
-      const res = checkUtHvigorTest(fx.ctx, [], []);
+    await withFakeDevice(async () => {
+      const res = await checkUtHvigorTest(fx.ctx, [], []);
       const log = readDispatchLog(fx.root);
       assert(log.run.length > 0, `ut.run 未被调用，checkUtHvigorTest 提前返回：${res[0]?.details}`);
       assert(log.compile.length === 0, 'test 侧不得自己调 ut.compile provider');
@@ -599,8 +600,8 @@ function testCheckUtPassesOneCollectorToBothStages(): void {
     (src.match(/const utBuilds = new Map<string, unknown>\(\);/g) ?? []).length === 1,
     'check-ut 必须按次创建恰一个 collector',
   );
-  assert(/featureNewUtFiles,\s*\n\s*utBuilds,/.test(src), 'collector 必须传给 checkUtHvigorBuild');
-  assert(/checkUtHvigorTest\(ctx, runScope, targetCases, utBuilds\)/.test(src), 'collector 必须传给 checkUtHvigorTest');
+  assert(/featureNewUtFiles,\s*\n\s*utBuilds,\s*\n\s*partition,/.test(src), 'collector 和原分区诊断必须传给 checkUtHvigorBuild');
+  assert(/checkUtHvigorTest\(ctx, runScope, targetCases, utBuilds, partition\)/.test(src), 'collector 和原分区诊断必须传给 checkUtHvigorTest');
 }
 
 // ---------------------------------------------------------------------------
@@ -610,16 +611,16 @@ function testCheckUtPassesOneCollectorToBothStages(): void {
 
 // V4 + V5：输入不变 → 第二轮零装机零执行；改 HAP 字节 → 整轮真跑（键不符）；
 // --force-device → 真跑（用户要求）。
-function testV4V5SameKeyReuse(): void {
+async function testV4V5SameKeyReuse(): Promise<void> {
   const fx = makeUtOrchestrationFixture([{ name: 'Alpha', package_path: '02-Feature/Alpha' }]);
   try {
-    withFakeDevice(() => {
-      const first = runUtRound(fx);
+    await withFakeDevice(async () => {
+      const first = (await runUtRound(fx));
       assert(first.runDispatches === 1, `第一轮应真跑，实际 dispatch ${first.runDispatches}`);
       assert(first.spawns.aaTest.length === 1, `第一轮应真的发一次 aa test，实际 ${first.spawns.aaTest.length}`);
       assert(/本轮真跑/.test(first.details), first.details);
 
-      const second = runUtRound(fx);
+      const second = (await runUtRound(fx));
       assert(second.runDispatches === 0, `第二轮应复用、零 ut.run dispatch，实际 ${second.runDispatches}`);
       assert(
         second.spawns.install.length === 0 && second.spawns.aaTest.length === 0,
@@ -630,12 +631,12 @@ function testV4V5SameKeyReuse(): void {
       // ①HAP 字节变 → 整轮键变 → 真跑。字节由本轮出包产出，所以改的是编译输入（源码），
       // 而不是手改盘上产物——后者会被下一轮 build 原样重写，等于没改。
       fs.writeFileSync(utSourceFile(fx, 'Alpha'), '// changed ut source\n');
-      const third = runUtRound(fx);
+      const third = (await runUtRound(fx));
       assert(third.runDispatches === 1, `HAP 变了必须真跑，实际 ${third.runDispatches}`);
       assert(/其他 execution key/.test(third.details), third.details);
 
       // ②--force-device → 唯一显式逃生口
-      const forced = runUtRound(fx, { forceDevice: true });
+      const forced = (await runUtRound(fx, { forceDevice: true }));
       assert(forced.runDispatches === 1, `--force-device 必须真跑，实际 ${forced.runDispatches}`);
       assert(forced.spawns.aaTest.length === 1, '--force-device 轮必须真的执行一次');
       assert(/--force-device/.test(forced.details), forced.details);
@@ -646,20 +647,20 @@ function testV4V5SameKeyReuse(): void {
 }
 
 // V4b：两个模块，只改**非首模块**的 HAP → 整轮真跑（两个模块的 ut.run 都被调），不出现半复用。
-function testV4bWholeRoundKey(): void {
+async function testV4bWholeRoundKey(): Promise<void> {
   const fx = makeUtOrchestrationFixture([
     { name: 'Alpha', package_path: '02-Feature/Alpha' },
     { name: 'Beta', package_path: '02-Feature/Beta' },
   ]);
   try {
-    withFakeDevice(() => {
-      assert(runUtRound(fx).runDispatches === 2, '第一轮两个模块都真跑');
-      const reused = runUtRound(fx);
+    await withFakeDevice(async () => {
+      assert((await runUtRound(fx)).runDispatches === 2, '第一轮两个模块都真跑');
+      const reused = (await runUtRound(fx));
       assert(reused.runDispatches === 0, '输入不变第二轮应整轮复用');
       assert(reused.spawns.aaTest.length === 0, '复用轮不得发 aa test');
       // 只动**次模块**的编译输入 → 只有 Beta 的 HAP 摘要变
       fs.writeFileSync(utSourceFile(fx, 'Beta'), '// changed ut source of Beta\n');
-      const third = runUtRound(fx);
+      const third = (await runUtRound(fx));
       assert(third.runDispatches === 2, `只改次模块也必须整轮真跑（不半复用），实际 ${third.runDispatches}`);
       assert(third.spawns.aaTest.length === 2, `整轮真跑 = 两个模块都执行，实际 ${third.spawns.aaTest.length}`);
     });
@@ -670,18 +671,18 @@ function testV4bWholeRoundKey(): void {
 
 // V11②（在 spawnSync 边界能证明的那一半；真实 hvigor 增量语义留 B06）：
 // 改测试源码 → 正式编排下 prebuild 真的重新出包 → 新 HAP 摘要 ≠ 记录摘要 → 整轮键变 → 真跑。
-function testV11bRecompileOnSourceChange(): void {
+async function testV11bRecompileOnSourceChange(): Promise<void> {
   const fx = makeUtOrchestrationFixture([{ name: 'Alpha', package_path: '02-Feature/Alpha' }]);
   try {
-    withFakeDevice(() => {
-      assert(runUtRound(fx).runDispatches === 1, '第一轮真跑并落同键成功记录');
-      const reused = runUtRound(fx);
+    await withFakeDevice(async () => {
+      assert((await runUtRound(fx)).runDispatches === 1, '第一轮真跑并落同键成功记录');
+      const reused = (await runUtRound(fx));
       assert(reused.runDispatches === 0, '输入不变第二轮应复用');
       assert(reused.spawns.hvigor.length === 1, '复用轮的 build 阶段照常出包（D1 不改 build 侧语义）');
 
       const srcFile = path.join(fx.root, '02-Feature/Alpha', 'src', 'ohosTest', 'ets', 'test', 'List.test.ets');
       fs.writeFileSync(srcFile, '// changed ut source\n');
-      const after = runUtRound(fx);
+      const after = (await runUtRound(fx));
       assert(after.spawns.hvigor.length === 1, `源码变后仍必须真的经过一次出包，实际 ${after.spawns.hvigor.length}`);
       assert(after.runDispatches === 1, `新 HAP 摘要 → 整轮键变 → 必须真跑，实际 ${after.runDispatches}`);
       assert(after.spawns.aaTest.length === 1, '真跑 = 真的发一次 aa test');
@@ -694,11 +695,11 @@ function testV11bRecompileOnSourceChange(): void {
 
 // codex review 第 1 轮 #1：**退出码 0 + Hypium 断言失败**的生产返回形态——
 // hdc 命令本身成功，失败只在汇总行里。这一轮不得被记成 success，下一轮必须真跑。
-function testCaseFailureNeverRecordedAsSuccess(): void {
+async function testCaseFailureNeverRecordedAsSuccess(): Promise<void> {
   const fx = makeUtOrchestrationFixture([{ name: 'Alpha', package_path: '02-Feature/Alpha' }]);
   try {
-    withFakeDevice(() => {
-      const failed = runUtRound(fx, { aa: 'fail' });
+    await withFakeDevice(async () => {
+      const failed = (await runUtRound(fx, { aa: 'fail' }));
       assert(failed.runDispatches === 1, '第一轮真跑');
       assert(failed.spawns.aaTest.length === 1, 'aa test 真的发了一次');
       const rec = readLatestExecutionKeyRecord(fx);
@@ -708,7 +709,7 @@ function testCaseFailureNeverRecordedAsSuccess(): void {
         `用例失败（Failure: 1、hdc 退出码 0）不得记成 success，实际 outcome=${String(rec!.outcome)}`,
       );
 
-      const next = runUtRound(fx, { aa: 'pass' });
+      const next = (await runUtRound(fx, { aa: 'pass' }));
       assert(next.runDispatches === 1, `失败轮之后必须真跑，实际 ${next.runDispatches}`);
       assert(next.spawns.aaTest.length === 1, '下一轮必须真的重新执行，不得复用失败结果');
       assert(/outcome=failed/.test(next.details), next.details);
@@ -720,15 +721,15 @@ function testCaseFailureNeverRecordedAsSuccess(): void {
 
 // V6：失败轮的记录**由生产路径写出**——链路在进程边界返回非零（不 throw）的一轮记整轮失败，
 // 下一轮不复用、真跑，理由指名「最新同键 run outcome=…」；旧成功不被拿来盖新失败。
-function testV6FailureRecordWrittenByProduction(): void {
+async function testV6FailureRecordWrittenByProduction(): Promise<void> {
   const fx = makeUtOrchestrationFixture([{ name: 'Alpha', package_path: '02-Feature/Alpha' }]);
   try {
-    withFakeDevice(() => {
-      assert(runUtRound(fx).runDispatches === 1, '①先落一条同键成功记录');
-      const failed = runUtRound(fx, { aa: 'nonzero', forceDevice: true });
+    await withFakeDevice(async () => {
+      assert((await runUtRound(fx)).runDispatches === 1, '①先落一条同键成功记录');
+      const failed = (await runUtRound(fx, { aa: 'nonzero', forceDevice: true }));
       assert(failed.runDispatches === 1, '②失败轮本身也要真跑');
       assert(failed.spawns.aaTest.length === 1, '②失败发生在真实 aa test 的进程边界');
-      const third = runUtRound(fx);
+      const third = (await runUtRound(fx));
       assert(third.runDispatches === 1, `③最新同键失败 → 必须真跑，实际 ${third.runDispatches}`);
       assert(/最新同键 run .* outcome=failed/.test(third.details), third.details);
     });
@@ -739,14 +740,14 @@ function testV6FailureRecordWrittenByProduction(): void {
 
 // V6b：先有成功历史，再让 checkUtHvigorTest 抛出（生产里被 check-ut.ts:4097 的 safeRun 兜住）。
 // 抛出轮留下的是 dispatch 前的**非成功前置记录**，它比第一轮的成功更新 → 下一轮真跑。
-function testV6bThrownRoundLeavesNonSuccessRecord(): void {
+async function testV6bThrownRoundLeavesNonSuccessRecord(): Promise<void> {
   const fx = makeUtOrchestrationFixture([{ name: 'Alpha', package_path: '02-Feature/Alpha' }]);
   try {
-    withFakeDevice(() => {
-      assert(runUtRound(fx).runDispatches === 1, '①先落一条同键成功记录');
-      const thrown = runUtRound(fx, { aa: 'throw', forceDevice: true });
+    await withFakeDevice(async () => {
+      assert((await runUtRound(fx)).runDispatches === 1, '①先落一条同键成功记录');
+      const thrown = (await runUtRound(fx, { aa: 'throw', forceDevice: true }));
       assert(thrown.threw, '②本轮应抛出（生产里由 safeRun 兜住）');
-      const third = runUtRound(fx);
+      const third = (await runUtRound(fx));
       assert(third.runDispatches === 1, `③抛出轮之后必须真跑，不得沿用第一轮的成功，实际 ${third.runDispatches}`);
       assert(/outcome=started/.test(third.details), `前置记录应挡住旧成功：${third.details}`);
     });
@@ -787,12 +788,12 @@ export const UT_ASSERTION_FAILURE_STATUS = [
  * plan 31063a73 U3/U4：在既有宿主上按 check-ut 的编排跑一轮真实 UT 生产者（build；build 未失败才 test），
  * provider 取真实 hmos-app profile，合成结果只注入在 spawnSync 进程边界（同本文件 V1）。
  */
-export function runUtGateInPlace(
+export async function runUtGateInPlace(
   root: string,
   feature: string,
   modules: UtModuleSpec[],
   opts: Parameters<typeof installToolBoundary>[1] = {},
-): import('../../scripts/utils/types').CheckResult[] {
+): Promise<import('../../scripts/utils/types').CheckResult[]> {
   const ctx = {
     projectRoot: root,
     feature,
@@ -810,11 +811,11 @@ export function runUtGateInPlace(
   } as unknown as import('../../scripts/utils/types').CheckContext;
   const boundary = installToolBoundary({ root, modules }, opts);
   try {
-    return withFakeDevice(() => {
+    return await withFakeDevice(async () => {
       const builds = new Map<string, unknown>();
       const build = checkUtHvigorBuild(ctx, [], [], builds);
       if (build.some(r => r.id === 'ut_hvigor_build' && r.status === 'FAIL')) return build;
-      return [...build, ...checkUtHvigorTest(ctx, [], [], builds)];
+      return [...build, ...await checkUtHvigorTest(ctx, [], [], builds)];
     });
   } finally {
     boundary.restore();
@@ -861,18 +862,18 @@ function testU1CompileFailureRealPaths(): void {
   }
 }
 
-function testU1AssertionFailureMultiModule(): void {
+async function testU1AssertionFailureMultiModule(): Promise<void> {
   const fx = makeUtOrchestrationFixture([
     { name: 'Alpha', package_path: '02-Feature/Alpha' },
     { name: 'Beta', package_path: '02-Feature/Beta' },
   ]);
   try {
-    withFakeDevice(() => {
+    await withFakeDevice(async () => {
       const boundary = installToolBoundary(fx, { aa: 'fail', aaFailStatus: UT_ASSERTION_FAILURE_STATUS });
       try {
         const builds = new Map<string, unknown>();
         assert(checkUtHvigorBuild(fx.ctx, [], [], builds)[0]?.status === 'PASS', '前提：编译通过');
-        const test = checkUtHvigorTest(fx.ctx, [], [], builds).find(r => r.id === 'ut_hvigor_test');
+        const test = (await checkUtHvigorTest(fx.ctx, [], [], builds)).find(r => r.id === 'ut_hvigor_test');
         assert(test?.status === 'FAIL' && test.failure_kind === 'code_regression',
           `纯断言失败出口应 FAIL 且归 code_regression：${test?.failure_kind} ${test?.details}`);
         const expected = [
@@ -905,8 +906,92 @@ function testU1UnresolvedModulePathKeepsPlaceholder(): void {
   assert(formatted.lines.some(l => l.includes('未能解析模块源码路径：Alpha')), `details 须写明原因：${formatted.lines.join('\n')}`);
 }
 
-export function runAll(): UnitCaseResult[] {
+async function testOriginalModuleDeclarationDiagnostics(): Promise<void> {
+  const fx = makeUtOrchestrationFixture([WALLET, PHONE]);
+  const boundary = installToolBoundary(fx, { buildFailModules: ['WalletMain'], buildFailLog: 'ERROR TS2322: actual isolated compiler failure' });
+  const scoped = [{ path: WALLET.package_path + '/src/ohosTest/ets/test/List.test.ets' }];
+  const contextFile = path.join(fx.root, 'doc/features', fx.feature, 'ut/context-exploration.md');
+  fs.mkdirSync(path.dirname(contextFile), { recursive: true });
+  fs.writeFileSync(contextFile, '---\nsource_code_paths:\n  - ' + scoped[0].path + '\n---\n');
+  const host = require('../../../profiles/hmos-app/harness/ut-host-impl').utHostImpl as import('../../profile-host-loader').UtHostImpl;
+  const partition = () => partitionUtFiles(fx.ctx, host.loadUtFiles(fx.ctx));
+  try {
+    const original = fx.ctx.featureSpec.contracts!.modules;
+    fx.ctx.featureSpec.contracts!.files = [scoped[0].path];
+    fx.ctx.featureSpec.contracts!.modules = [];
+    const missing = partition();
+    const first = checkUtHvigorBuild(fx.ctx, missing.scoped, [], undefined, missing)[0];
+    const firstRun = (await checkUtHvigorTest(fx.ctx, missing.scoped, [], undefined, missing))[0];
+    for (const check of [first, firstRun]) assert(check.status === 'FAIL' && check.details.includes('contracts.modules 缺少 name/package_path')
+      && check.details.includes('scope-path-not-discovered:' + scoped[0].path), 'existing tests with omitted declarations must carry the original scope diagnostics');
+    const checker = require('../../scripts/check-ut').default as typeof import('../../scripts/check-ut').default;
+    const unbound = await checker.check({ ...fx.ctx, subject: 'feature', resolvedInputs: { values: {
+      contracts: { state: 'invalid', detail: 'input binding stale; return to scope owner' },
+    } } } as unknown as import('../../scripts/utils/types').CheckContext<'feature'>);
+    assert(unbound[0]?.status === 'SKIP' && unbound[0].details.includes('未执行模块发现、编译、运行')
+      && unbound[0].details.includes('input binding stale'), 'the original checker still stops before discovery when its frozen construction binding is stale');
+    assert(!boundary.spawns.hvigor.length && !boundary.spawns.aaTest.length && !boundary.spawns.probe.length, 'module selection failure never starts tool/device preparation');
+    fx.ctx.featureSpec.contracts!.modules = original.filter(module => module.name === 'Phone');
+    const wrong = partition();
+    assert(checkUtHvigorBuild(fx.ctx, wrong.scoped, [], undefined, wrong)[0].details.includes('错配'), 'another declared module cannot substitute the actual test target');
+    fx.ctx.featureSpec.contracts!.modules = original;
+    const found = partition();
+    const actual = checkUtHvigorBuild(fx.ctx, found.scoped, [], undefined, found)[0];
+    assert(actual.status === 'FAIL' && actual.details.includes('TS2322'), 'once declarations are restored the original compiler failure returns unchanged');
+    fs.rmSync(path.join(fx.root, WALLET.package_path, 'src/ohosTest'), { recursive: true, force: true });
+    fs.rmSync(path.join(fx.root, PHONE.package_path, 'src/ohosTest'), { recursive: true, force: true });
+    const empty = partition();
+    assert(checkUtHvigorBuild(fx.ctx, empty.scoped, [], undefined, empty)[0].details.includes('工程尚无可执行的 ohosTest 模块'), 'only confirmed absence produces the no-module conclusion');
+  } finally { boundary.restore(); fs.rmSync(fx.root, { recursive: true, force: true }); }
+}
+
+function testUnrelatedUndiscoveredTestsDoNotBlockCurrentModule(): void {
+  const fx = makeUtOrchestrationFixture([WALLET, PHONE]);
+  const git = (...args: string[]) => {
+    const result = (require('child_process') as typeof import('child_process')).spawnSync('git', args, { cwd: fx.root, encoding: 'utf8', windowsHide: true });
+    assert(result.status === 0, result.stderr);
+  };
+  const obsolete = PHONE.package_path + '/src/ohosTest/ets/test/Deleted.test.ets';
+  fs.writeFileSync(path.join(fx.root, obsolete), '// tracked old name\n');
+  git('init', '-q'); git('-c', 'user.name=fixture', '-c', 'user.email=fixture@example.test', 'add', '-A');
+  git('-c', 'user.name=fixture', '-c', 'user.email=fixture@example.test', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'Original module tests');
+  const boundary = installToolBoundary(fx);
+  try {
+    const owned = WALLET.package_path + '/src/ohosTest/ets/test/card_open_ut.test.ets';
+    fs.writeFileSync(path.join(fx.root, owned), "it('current CU', 0, () => { expect(true); });\n");
+    fs.appendFileSync(path.join(fx.root, PHONE.package_path, 'src/ohosTest/ets/test/List.test.ets'), '// another CU\n');
+    fs.rmSync(path.join(fx.root, obsolete));
+    fx.ctx.featureSpec.contracts!.modules = fx.ctx.featureSpec.contracts!.modules.filter(module => module.name === 'WalletMain');
+    fx.ctx.featureSpec.contracts!.files = [owned];
+    const host = require('../../../profiles/hmos-app/harness/ut-host-impl').utHostImpl as import('../../profile-host-loader').UtHostImpl;
+    const part = partitionUtFiles(fx.ctx, host.loadUtFiles(fx.ctx));
+    assert(part.scoped.length === 1 && part.scoped[0].path === owned, 'normal partition selects the current CU test');
+    assert(part.scopeDiagnostics.some(value => value === 'scope-path-not-discovered:' + obsolete), 'normal git partition retains the deleted old name as a diagnosis');
+    const built = checkUtHvigorBuild(fx.ctx, part.scoped, [], undefined, part)[0];
+    assert(built.status === 'PASS' && boundary.spawns.hvigor.length === 1, 'unrelated modified/deleted tests must permit exactly one current module compilation');
+    assert(built.details.includes('scope-path-not-discovered:' + obsolete), 'diagnostics stay visible without becoming a new failure');
+    assert(!fs.existsSync(path.join(fx.root, obsolete)) && fx.ctx.featureSpec.contracts!.modules.length === 1, 'the check neither restores a deleted test nor expands the module declaration');
+    const ownModules = fx.ctx.featureSpec.contracts!.modules;
+    fx.ctx.featureSpec.contracts!.modules = [{ ...PHONE, layer: '01-Product', format: 'HAP', change_type: 'modify' }];
+    const wrong = partitionUtFiles(fx.ctx, host.loadUtFiles(fx.ctx));
+    assert(checkUtHvigorBuild(fx.ctx, wrong.scoped, [], undefined, wrong)[0].status === 'FAIL' && boundary.spawns.hvigor.length === 1,
+      'a changed test in a wrongly declared module cannot replace this CU explicitly undiscovered frozen target');
+    fx.ctx.featureSpec.contracts!.modules = ownModules;
+    git('add', owned); git('-c', 'user.name=fixture', '-c', 'user.email=fixture@example.test', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'Current test materialized');
+    fx.ctx.featureSpec.contracts!.files = [owned.replace('card_open_ut', 'NotProducedYet')];
+    const fallback = partitionUtFiles(fx.ctx, host.loadUtFiles(fx.ctx));
+    assert(fallback.scopeSources.includes('fallback:all'), 'only unrelated git paths remain, producing the real fallback');
+    const missing = checkUtHvigorBuild(fx.ctx, fallback.scoped, [], undefined, fallback)[0];
+    assert(missing.status === 'FAIL' && boundary.spawns.hvigor.length === 1, 'an unrelated all-files fallback cannot replace this CU frozen missing target');
+    fx.ctx.featureSpec.contracts!.files = [];
+    assert(checkUtHvigorBuild(fx.ctx, fallback.scoped, [], undefined, fallback)[0].status === 'PASS', 'git noise alone cannot create a new blocking duty without a frozen target');
+  } finally { boundary.restore(); fs.rmSync(fx.root, { recursive: true, force: true }); }
+}
+
+export async function runAll(): Promise<UnitCaseResult[]> {
   const cases: Array<{ name: string; fn: () => void }> = [
+    { name: '4c8 normal partition ignores other-CU and deleted git test paths while preserving frozen missing targets', fn: testUnrelatedUndiscoveredTestsDoNotBlockCurrentModule },
+    { name: '4c8 original module declarations distinguish missing, mismatched and absent tests before real compile', fn: testOriginalModuleDeclarationDiagnostics },
     { name: 'U1 编译失败出口：affected_files = 工程内源文件 + 模块 ohosTest 目录（31063a73）', fn: testU1CompileFailureRealPaths },
     { name: 'U1 纯断言失败出口：多模块聚合堆栈用例文件 + 各模块 ohosTest 目录（31063a73）', fn: testU1AssertionFailureMultiModule },
     { name: 'U1 解析不到模块路径：保留占位并写明原因（31063a73）', fn: testU1UnresolvedModulePathKeepsPlaceholder },
@@ -930,12 +1015,10 @@ export function runAll(): UnitCaseResult[] {
     { name: 'orders feature-new module first (423e5d0f)', fn: testOrdersFeatureNewModuleFirst },
     { name: 'order stable without feature-new info', fn: testOrderStableWithoutFeatureNew },
   ];
-  return cases.map(({ name, fn }) => {
-    try {
-      fn();
-      return { name, ok: true };
-    } catch (e) {
-      return { name, ok: false, error: e instanceof Error ? e.message : String(e) };
-    }
-  });
+  const results: UnitCaseResult[] = [];
+  for (const { name, fn } of cases) {
+    try { await fn(); results.push({ name, ok: true }); }
+    catch (e) { results.push({ name, ok: false, error: e instanceof Error ? e.message : String(e) }); }
+  }
+  return results;
 }

@@ -32,7 +32,7 @@ function normalizeRel(p: string): string {
   return p.replace(/\\/g, '/');
 }
 
-function isUtTestPath(rel: string): boolean {
+export function isUtTestPath(rel: string): boolean {
   return TEST_FILE_RE.test(rel) && OHOSTEST_PATH_RE.test(rel);
 }
 

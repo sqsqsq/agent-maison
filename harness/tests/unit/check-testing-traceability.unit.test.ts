@@ -9,6 +9,7 @@ import assert from 'assert';
 import { checkAcceptanceToTestCase, checkPlanReferencesUnitLayerAc } from '../../scripts/check-testing';
 import type { CheckContext } from '../../scripts/utils/types';
 import type { UnitCaseResult } from '../run-unit';
+import { testingRetestCases } from '../utils/testing-retest-cases';
 
 const ACCEPTANCE = {
   schema_version: '1.0',
@@ -126,6 +127,7 @@ const cases: Case[] = [
   // R8：plan_references_unit_layer_ac 分档（仅 unit → BLOCKER；混合 → WARN）
   // ------------------------------------------------------------------------
   ...unitLayerCases(),
+  ...testingRetestCases(),
 ];
 
 // R8 夹具：AC-003=unit、AC-004=unit、AC-5=device、AC-8=both、NFR-1=性能。
@@ -162,7 +164,7 @@ function unitLayerCases(): Case[] {
   };
   return [
     {
-      name: 'R8：TC 仅关联 unit 层 AC → BLOCKER FAIL，details 点名 TC 与 AC，并禁掉改 UT / manual 绕路',
+      name: 'R8：TC 仅关联 unit 层 AC → BLOCKER FAIL，保留原失败行为及实际覆盖去向',
       run: () => {
         const r = run([
           '| TC-101 | RDB 去重 | P0 | AC-003 |',
@@ -176,8 +178,9 @@ function unitLayerCases(): Case[] {
           assert.ok(r.details.includes(needle), `details 必须点名 ${needle}：${r.details}`);
         }
         assert.ok(!r.details.includes('TC-103'), `device 层 TC 不得被点名：${r.details}`);
-        assert.match(r.details, /从 test-plan\.md 删除/, r.details);
-        assert.match(r.details, /不要求修改 UT，也不能通过 manual 通道解决/, r.details);
+        assert.match(r.details, /可观察行为及既有 FAIL/, r.details);
+        assert.match(r.details, /实际 UI 生命周期\/交互/, r.details);
+        assert.match(r.details, /不关闭原失败/, r.details);
       },
     },
     {

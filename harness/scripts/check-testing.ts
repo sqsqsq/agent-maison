@@ -1,3 +1,5 @@
+import { adoptInstallMetadataForExecutionReuse } from '../../profiles/hmos-app/harness/providers/device-test-install';
+import { resolveManagedGoalInvocation, effectiveForceDevice } from './utils/managed-goal-invocation';
 import { executeCheck } from './utils/check-execution';
 import { resolveArtifactContent } from './utils/artifact-content';
 import { DEVICE_SETUP_GUIDANCE, type DeviceSetupObservation } from './utils/device-unlock-helper';
@@ -206,6 +208,7 @@ import {
   reconcileReportWithDeviceTestTiming,
   reconcileReportWithHylyreTrace,
   resolveAuthoritativeHylyreTracePath,
+  readPendingTestingRetests,
   evaluateUiEntryCoverage,
   buildEntryUiPriorityMap,
 } from './utils/testing-trace-gates';
@@ -221,7 +224,8 @@ import {
 } from './utils/p0-semantic-gates';
 
 import { evaluateSelectorRuntimeV1 } from './utils/hylyre-selector-gates-v1';
-import { collectFailureRoutesV1 } from './utils/hylyre-failure-routing-v1';
+import { collectFailureRoutesV1, failureRouteSlug } from './utils/hylyre-failure-routing-v1';
+import { resolveCurrentHapSha256Full } from './utils/actionable-evidence';
 import {
   bindChannelEvidence,
   extractTcNfrRefs,
@@ -1667,11 +1671,13 @@ export function checkPlanReferencesUnitLayerAc(ctx: CheckContext, plan: string |
         // 这是"照单删除"清单，必须逐条列全——截断会藏起第 11 条，设备短路文案又复用这段。
         `test-plan 有 ${unitOnlyTcs.length} 条用例仅关联 unit 层 AC/BD，应由 business-ut 覆盖：\n` +
         `${unitOnlyTcs.map(t => `  - ${t}`).join('\n')}\n` +
-        '请从 test-plan.md 删除这些 TC。本问题不要求修改 UT，也不能通过 manual 通道解决。' +
+        '先核对这些 TC 承载的可观察行为及既有 FAIL，再修正 test-plan.md 的验收映射与执行去向。' +
+        '已有 UT 充分覆盖的纯逻辑可移出设备计划；需补充逻辑覆盖时交 business-ut。实际 UI 生命周期/交互须关联适用的 device/both 验收并在设备复验，不得用纯函数 UT 代替。' +
+        '删除、改号、改层或改标 manual 都不关闭原失败；保留原证据，等价新用例覆盖原触发与预期且真实通过后才关闭。' +
         (mixedHits.length > 0 ? `\n另有混合引用（unit + device/both/NFR，仅提示）：\n${truncateList(mixedHits, 10)}` : ''),
       suggestion:
-        '删除这些 TC（连同其执行通道声明与派生 hylyre 行）；unit 层 AC 的覆盖义务在 business-ut，' +
-        '不得改标 manual:*，也不得为它们改写 UT。',
+        '先把原失败及下一项可执行复验交给对应责任方；授权内由原设计/范围 owner 修正验收绑定后再派依赖检查。' +
+        'unit-only TC 仍不得进入设备计划；纯逻辑交 business-ut，UI 复验须保留适用用例与原生执行证据。',
     }];
   }
   if (mixedHits.length > 0) {
@@ -1990,6 +1996,8 @@ const TESTING_HARNESS_ROOT = path.resolve(__dirname, '..');
 /** build → install → run 共享：build 写入 hapPath；install PASS 时置 installPassed */
 interface DeviceTestPipelineHolder {
   deviceTestEvidence?: DeviceTestEvidenceDoc;
+  installPending?: boolean;
+  installResults?: CheckResult[];
   hapPath: string | null;
   installPassed: boolean;
   installExternallyBlocked: boolean;
@@ -3451,11 +3459,6 @@ export function writeDeviceTestEvidenceIfEligible(
  * 改成按缺陷身份取 id：case + step 唯一确定一条 route/disposition
  * （跨行 verifier 已保证同 case 内 step index 不重复），因此 id 稳定且不冲突。
  */
-function defectSlug(caseId: string, stepIndex: number): string {
-  const normalized = String(caseId).toUpperCase().replace(/[^A-Z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
-  return `${normalized.slice(0, 48) || 'UNKNOWN-CASE'}_s${stepIndex}`;
-}
-
 function checkHylyreArtifactIntegrity(
   ctx: CheckContext,
   tracePath: string | null,
@@ -3608,7 +3611,7 @@ function checkHylyreFailureRouting(
       return relative ? [relative] : [];
     }) : [];
     return {
-    id: `testing_failure_routing_${defectSlug(route.caseId, route.stepIndex)}`,
+    id: `testing_failure_routing_${failureRouteSlug(route.caseId, route.stepIndex)}`,
     category: 'structure' as const,
     description: 'Step Outcome v1 责任路由（outcome.failure.domain）',
     severity: 'BLOCKER' as const,
@@ -3637,9 +3640,24 @@ function checkHylyreFailureRouting(
       : '按 outcome.failure.domain 修复/重派生/能力 defer；不得从 diagnostic、TC 名称或报告散文推断责任。',
   };
   });
+  const subject = ctx.factsContext?.subject;
+  const retests = readPendingTestingRetests({ projectRoot: ctx.projectRoot, feature: ctx.feature, frameworkRoot: ctx.frameworkRoot,
+    runId: subject && 'run_id' in subject ? subject.run_id : undefined,
+    currentHapSha256: resolveCurrentHapSha256Full(ctx.projectRoot, featurePhaseReportsDir(ctx.projectRoot, ctx.feature, 'testing', ctx.frameworkRoot)) });
+  for (const finding of retests) {
+    const id = `testing_failure_routing_${failureRouteSlug(finding.route.caseId, finding.route.stepIndex)}`;
+    if (routeResults.some(check => check.id === id)) continue;
+    routeResults.push({ id, category: 'structure', description: '原失败行为的适用复验', severity: 'BLOCKER', status: 'FAIL',
+      failure_kind: 'plan_contract', repair_owner: 'testing', coding_candidate: false,
+      details: `${finding.route.caseId} step ${finding.route.stepIndex} 原失败尚无等价修复后证据：${finding.route.reason}；原触发与预期=${finding.behavior}`,
+      structured: { repair_evidence: { trace_path: path.relative(ctx.projectRoot, finding.tracePath).replace(/\\/g, '/'),
+        case_id: finding.route.caseId, step_index: finding.route.stepIndex,
+        derived_plan_path: path.relative(ctx.projectRoot, finding.derivedPlanPath).replace(/\\/g, '/') } },
+      suggestion: '保留原失败；按当前适用验收重建覆盖原触发与预期的等价复验，可换编号。当前构建的真实通过原件可关闭；删除/跳过/纯UT声明/同名异断言均不足。' });
+  }
   // 机器证明的 blocked capability/infrastructure 根：零 failure route，各投影一次既有 disposition。
   const dispositionResults: CheckResult[] = dispositions.map(item => ({
-    id: `testing_cause_disposition_${defectSlug(item.caseId, item.stepIndex)}`,
+    id: `testing_cause_disposition_${failureRouteSlug(item.caseId, item.stepIndex)}`,
     category: 'structure' as const,
     description: '未执行 blocked 根因的 capability/external disposition',
     severity: 'BLOCKER' as const,
@@ -4141,10 +4159,10 @@ function goldenContractIdentity(projectRoot: string): string {
   return sha256File(path.isAbsolute(raw) ? raw : path.resolve(projectRoot, raw))?.slice(0, 16) ?? 'none';
 }
 
-function checkDeviceTestRunGate(
+async function checkDeviceTestRunGate(
   ctx: CheckContext,
   hapHolder: DeviceTestPipelineHolder,
-): CheckResult[] {
+): Promise<CheckResult[]> {
   const id = 'device_test_run';
   const desc = ruleDesc(ctx, 'structure_checks', id);
 
@@ -4411,7 +4429,7 @@ function checkDeviceTestRunGate(
     // Static plan facts are independent of build/install/run. Keep this after all
     // static SSOT/lint/selector/nav checks so an install failure cannot hide an
     // already-invalid derived plan behind a whole-gate SKIP.
-    if (!hapHolder.installPassed) {
+    if (!hapHolder.installPassed && !hapHolder.installPending) {
       return [
         {
           id,
@@ -4511,7 +4529,7 @@ function checkDeviceTestRunGate(
     const injectionPreview = runP0IdentityInjection(ctx, fs.readFileSync(path.resolve(derivedPath), 'utf-8'), topRaw);
     const deviceIdentity = resolveExecutionDeviceIdentity();
     const executionKeyInputs: ExecutionKeyInputs = {
-      hap_sha256_full: hapHolder.hapSha256Full,
+      hap_sha256_full: hapHolder.installPending && hapHolder.hapPath ? computeHapSha256Full(hapHolder.hapPath) : hapHolder.hapSha256Full,
       derived_plan_sha256: sha256TextForKey(injectionPreview.content),
       device: deviceIdentity.device,
       display_env: deviceIdentity.display_env,
@@ -4522,19 +4540,23 @@ function checkDeviceTestRunGate(
       tool_config_sha256: sha256TextForKey(JSON.stringify(hylyreCfg)),
       flags: ['--skip-assert-expected', ...(coldRestartEnv ? [`HARNESS_DEVICE_TEST_COLD_RESTART=${coldRestartEnv}`] : [])],
     };
-    const executionKey = computeExecutionKey(executionKeyInputs);
+    let executionKey = computeExecutionKey(executionKeyInputs);
     // plan 6fd6c8c1 §4.2：testing 记录沿用现成 goal_invocation 三元组（不造新身份），
     // 同一 run/phase/attempt 的失败事实才能在正式 gate 被消费而不是重跑设备。
-    const goalRunId = process.env.MAISON_GOAL_RUN_ID?.trim();
-    const goalAttemptId = process.env.MAISON_GOAL_ATTEMPT?.trim();
-    const goalAttemptPhase = process.env.MAISON_GOAL_ATTEMPT_PHASE?.trim();
-    const goalInvocation = goalRunId && goalAttemptId && goalAttemptPhase === ctx.phase
-      ? { run_id: goalRunId, phase: goalAttemptPhase, attempt_id: goalAttemptId } : undefined;
-    const reuse = ctx.forceDevice
+    const managed = resolveManagedGoalInvocation(ctx);
+    const goalInvocation = managed ? { run_id: managed.run_id, phase: managed.phase, attempt_id: managed.attempt_id } : undefined;
+    const forceDevice = effectiveForceDevice(ctx.forceDevice, ctx);
+    const reuse = forceDevice
       ? { reusable: null, reason: '--force-device：用户要求真跑' }
-      : !executionKeyInputs.device
+      : !executionKeyInputs.device || !executionKeyInputs.hap_sha256_full
         ? { reusable: null, reason: '设备身份未知（无 HARNESS_HDC_TARGET 且 hdc list targets 非唯一），不做同键复用' }
-        : decideReuse(reportsBase, executionKey);
+        : decideReuse(reportsBase, executionKey, { invocation: goalInvocation, conflictResolved: failure => {
+          const trace = parseHylyreTraceForReuse(failure.record.trace_path);
+          const meta = readJsonRecord(path.join(failure.runDir, 'frozen.device-test-run.meta.json')).value;
+          if (!trace?.device_setup && !meta?.device_setup && trace?.run_failure_kind !== 'device_locked') return false;
+          const snapshot = require('../../profiles/hmos-app/harness/device-recovery-bridge').observeDeviceSnapshot(executionKeyInputs.device);
+          return snapshot?.locked === false && !snapshot.systemSetup;
+        } });
     // plan 5e1c7a93 D3：派生证据不全不再直接拒绝复用——回填后先重建 timing，重建后
     // 覆盖不全则 fail-closed 回落真跑（不带半份统计签发）。执行事实缺口仍由 decideReuse
     // 直接拒绝（reusable=null），走不到这里。
@@ -4544,7 +4566,7 @@ function checkDeviceTestRunGate(
     }
     // 失败结果保留 runner 原始事实；已知设备障碍先复查，解除后必须重新执行。
     let frozenFailure: HylyreRunResult | null = null;
-    let failedInvocation = !ctx.forceDevice && goalInvocation && executionKeyInputs.device
+    let failedInvocation = !forceDevice && goalInvocation && executionKeyInputs.device && executionKeyInputs.hap_sha256_full
       ? findSameInvocationFailure(reportsBase, executionKey, goalInvocation, {
           leg: 'hylyre',
           artifacts: FROZEN_RUN_ARTIFACTS,
@@ -4582,11 +4604,30 @@ function checkDeviceTestRunGate(
         && (!failedInvocation.record.timing_complete || !fs.existsSync(path.join(failedInvocation.runDir, 'frozen.device-test-timing.json'))))) {
       failedInvocation = null;
     }
+    if (failedInvocation) reusable = null;
+    const adoptedInstall = reusable ?? failedInvocation;
+    if (hapHolder.installPending && adoptedInstall) {
+      const sameInputs = Boolean(hapHolder.hapPath && executionKeyInputs.hap_sha256_full && executionKeyInputs.device
+        && adoptedInstall.record.inputs.hap_sha256_full === executionKeyInputs.hap_sha256_full
+        && adoptedInstall.record.inputs.device === executionKeyInputs.device
+        && (!adoptedInstall.record.trace_sha256 || sha256File(adoptedInstall.record.trace_path) === adoptedInstall.record.trace_sha256));
+      if (!sameInputs || !adoptInstallMetadataForExecutionReuse({ projectRoot: ctx.projectRoot, frameworkRoot: ctx.frameworkRoot,
+        harnessRoot: TESTING_HARNESS_ROOT, feature: ctx.feature, phase: ctx.phase, hapPath: hapHolder.hapPath! }, executionKeyInputs.hap_sha256_full!)) {
+        reusable = null; failedInvocation = null;
+      }
+    }
     let hylyreOutDir: string;
     let runPlanPath: string;
     let derivedPlanSha256AtStart: string | null;
     let run: HylyreRunResult;
     if (reusable || failedInvocation) {
+      if (hapHolder.installPending) {
+        hapHolder.installPassed = true;
+        hapHolder.installReused = true;
+        hapHolder.hapSha256Full = executionKeyInputs.hap_sha256_full;
+        hapHolder.installResults = [{ id: 'device_test_install', category: 'structure', description: ruleDesc(ctx, 'structure_checks', 'device_test_install'),
+          severity: 'BLOCKER', status: 'PASS', details: '同执行键冻结事实仍适用，复用原装机与执行事实；未重新装机。' }];
+      }
       const adopted = reusable ?? failedInvocation!;
       hylyreOutDir = adopted.runDir;
       runPlanPath = path.join(hylyreOutDir, 'test-plan.hylyre.md');
@@ -4605,6 +4646,29 @@ function checkDeviceTestRunGate(
       // 冻结件回填（含派生统计重建）已在 adoptFrozenRunArtifactsForReuse 里做过，**每轮只一次**：
       // 再 restore 一次会把重建好的 timing 覆盖回不完整的冻结副本（codex review 第 1 轮 #4）。
     } else {
+      const preparation = await ctx.prepareDeviceExecution?.();
+      if (preparation) {
+        hapHolder.installResults = [preparation];
+        hapHolder.installExternallyBlocked = preparation.failure_kind === 'device_blocked';
+        return [{ id: 'device_test_run', category: 'structure', description: desc, severity: 'BLOCKER', status: 'SKIP',
+          details: '设备执行前置未通过；保留原设备门诊断，未装机或执行用例。' }];
+      }
+      const selectedIdentity = resolveExecutionDeviceIdentity();
+      Object.assign(executionKeyInputs, { device: selectedIdentity.device, display_env: selectedIdentity.display_env });
+      executionKey = computeExecutionKey(executionKeyInputs);
+      if (hapHolder.installPending) {
+        const priorForceInstall = process.env.HARNESS_DEVICE_TEST_FORCE_INSTALL;
+        if (managed) process.env.HARNESS_DEVICE_TEST_FORCE_INSTALL = '1';
+        try {
+          if (managed) fs.rmSync(path.join(reportsBase, 'device-test-evidence.json'), { force: true });
+          hapHolder.installResults = checkDeviceTestInstallGate(ctx, hapHolder);
+        } finally {
+          if (priorForceInstall === undefined) delete process.env.HARNESS_DEVICE_TEST_FORCE_INSTALL;
+          else process.env.HARNESS_DEVICE_TEST_FORCE_INSTALL = priorForceInstall;
+        }
+        if (!hapHolder.installPassed) return [{ id, category: 'structure', description: desc, severity: 'BLOCKER', status: 'SKIP',
+          details: 'device_test.install 未 PASS，未执行真机用例。' }];
+      }
       const freshRun = prepareFreshHylyreRunDir({
         reportsBase,
         sourceHylyrePlanAbsPath: path.resolve(derivedPath),
@@ -4867,7 +4931,7 @@ function checkDeviceTestRunGate(
           reusable
             ? `真机执行复用：device_run=reused_by_execution_key（${reuse.reason}；同键无需重新操作设备，--force-device 可强制真跑）`
             : failedInvocation
-              ? `真机执行失败事实消费：同 run/phase/attempt、同执行键的失败 trace 直接交本轮检查与候选生成（未重复操作设备，--force-device 可强制真跑）`
+              ? `真机执行失败事实消费：同 run/phase/attempt、同执行键的失败 trace 直接交本轮检查与候选生成（未重复操作设备；受管嵌套 force 不授予重跑）`
               : `真机自动化执行完成：exit=${run.exitCode}, ${summary}`,
           `execution_key：${executionKey}（${reusable ? '复用' : failedInvocation ? '同调用失败' : '本轮'}；决策：${reuse.reason}）`,
           `报告：${run.reportPath}`,
@@ -5222,7 +5286,7 @@ export function runDeviceVisualDiffCapture(
 export const __testing_checkDeviceTestRunGate = checkDeviceTestRunGate;
 
 /** Test seam: static derived-plan validation must happen before install-based runtime SKIP. */
-export function __testing_checkDeviceTestRunGateBeforeInstall(ctx: CheckContext): CheckResult[] {
+export function __testing_checkDeviceTestRunGateBeforeInstall(ctx: CheckContext): Promise<CheckResult[]> {
   return checkDeviceTestRunGate(ctx, {
     hapPath: null,
     installPassed: false,
@@ -6150,14 +6214,15 @@ const checker: PhaseChecker = {
                channelDeclaration.detail]),
         ].join('\n\n'),
         suggestion: unitOnlyTcBlocked
-          ? '先按 plan_references_unit_layer_ac 从 test-plan.md 删除仅关联 unit 层 AC 的 TC 再跑 testing。' +
+          ? '先按 plan_references_unit_layer_ac 保留原失败行为并修正覆盖去向；pure-unit 交 business-ut，实际 UI 关联适用验收后复验，再跑 testing。' +
             (channelDeclaration.ok ? '' : `同轮还须修好执行通道声明（${EXECUTION_CHANNEL_DOMAIN}）。`)
           : `先修好顶层 test-plan.md 的执行通道声明（${EXECUTION_CHANNEL_DOMAIN}）再跑 testing；harness 不按用例文字猜通道，也不会只跑"合法子集"。`,
       });
     } else {
       results.push(...checkDeviceTestBuildGate(ctx, deviceTestHapHolder));
-      results.push(...checkDeviceTestInstallGate(ctx, deviceTestHapHolder));
-      results.push(...checkDeviceTestRunGate(ctx, deviceTestHapHolder));
+      deviceTestHapHolder.installPending = true;
+      const runResults = await checkDeviceTestRunGate(ctx, deviceTestHapHolder);
+      results.push(...(deviceTestHapHolder.installResults ?? []), ...runResults);
       // 没进入目标 UI 时保留原失败，避免旧视觉/报告材料再派生内容缺陷。
       if (results.some(result => result.device_setup)) return results;
       // d9e4b7c1 T2：goal 正式 gate 的 evidence 统一写入（build→install→run 全部完成后，

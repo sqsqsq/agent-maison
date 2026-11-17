@@ -17,9 +17,12 @@ export function resolvePhaseWriteBoundary(options: ResolvePhaseWriteBoundaryOpti
   const scope = options.executionScope ?? resolveEffectiveScopeSource(options.projectRoot, options.feature, options.runId)?.scope;
   const raw = readRepairResponsibilityContracts({ ...options, executionScope: scope });
   const known = new Set(raw.phaseOrder);
+  const inventory = options.executionRole === 'author'
+    ? (require('../../config') as typeof import('../../config')).componentIndexPath(options.projectRoot) : undefined;
   return { ...raw, phaseOrder: [...options.phaseOrder],
     ...(options.executionRole === 'author' ? { domains: workUnitWriteDomains(raw.domains, scope),
-      protectedRoots: [...new Set([...raw.protectedRoots, ...raw.domains.filter(domain => domain.kind === 'source').map(domain => domain.path)])] } : {}),
+      protectedRoots: [...new Set([...raw.protectedRoots, ...(inventory ? [normalizeRelative(options.projectRoot, inventory)] : []),
+        ...raw.domains.filter(domain => domain.kind === 'source').map(domain => domain.path)])] } : {}),
     diagnostics: [...raw.diagnostics,
     ...(options.executionRole ? [] : options.phaseOrder.filter(phase => !known.has(phase)).map(phase => `phase ${phase} has no registered skill contract; read-only`))] };
 }
@@ -245,6 +248,7 @@ export function classifyPhaseInvocationChanges(
   resolution: PhaseWriteBoundaryResolution,
   currentPhase: string,
   changes: readonly PhaseInvocationChange[],
+  invocation?: { events: readonly GoalRunEvent[]; invokeId: string },
 ): {
   allowed: Array<PhaseInvocationChange & PhasePathOwnership>;
   violations: PhaseWriteViolation[];
@@ -254,6 +258,7 @@ export function classifyPhaseInvocationChanges(
   const violations: PhaseWriteViolation[] = [];
   const observed: PhaseWriteObservation[] = [];
   for (const change of changes) {
+    if (invocation && isProducedPhaseChange(resolution.projectRoot, currentPhase, change, invocation)) continue;
     const ownership = resolvePhasePathOwnership(resolution, change.path);
     if (resolution.executionRole) {
       if (workUnitMayWritePath(resolution, change.path)) allowed.push({ ...change, ...ownership });
@@ -281,6 +286,77 @@ export function classifyPhaseInvocationChanges(
     });
   }
   return { allowed, violations, observed };
+}
+
+/** Match the actual writer's complete hash chain, including any writes before/after it. */
+export function isProducedPhaseChange(projectRoot: string, phase: string, change: PhaseInvocationChange,
+  invocation: { events: readonly GoalRunEvent[]; invokeId: string }): boolean {
+  const start = invocation.events.findIndex(event => event.type === 'agent_invoke_start'
+    && event.phase === phase && event.invoke_id === invocation.invokeId);
+  if (start < 0) return false;
+  let hash = change.preSha256, produced = false;
+  for (const event of invocation.events.slice(start + 1) as readonly Record<string, any>[]) {
+    if (event.type === 'agent_invoke_end' && event.invoke_id === invocation.invokeId) break;
+    if (event.type !== 'phase_write_observed' || event.invoke_id !== invocation.invokeId || event.phase !== phase) continue;
+    if (event.produced !== undefined && !Array.isArray(event.produced)) return false;
+    for (const row of event.produced ?? []) {
+      if (!row || typeof row !== 'object') return false;
+      if (row.path !== change.path) continue;
+      const expected = event.producer === 'component-index'
+        ? [(require('../../config') as typeof import('../../config')).componentIndexPath(projectRoot)]
+        : event.producer === 'visual-debt' && typeof event.feature === 'string'
+          ? [(require('./visual-debt') as typeof import('./visual-debt')).visualDebtJsonPath(projectRoot, event.feature),
+            (require('./visual-debt') as typeof import('./visual-debt')).visualDebtMdPath(projectRoot, event.feature)] : [];
+      if (!expected.some(file => path.resolve(file) === path.resolve(projectRoot, row.path))
+        || row.pre_sha256 !== hash || typeof row.post_sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(row.post_sha256)
+        || !(row.pre_sha256 === null && row.preimage_base64 === null
+          || typeof row.preimage_base64 === 'string' && sha256Buffer(Buffer.from(row.preimage_base64, 'base64')) === row.pre_sha256)) return false;
+      hash = row.post_sha256; produced = true;
+    }
+  }
+  return produced && hash === change.postSha256;
+}
+
+/** The existing writer records its own bytes; a path or a scanner match alone grants nothing. */
+export function recordProducedPhaseWrites<T>(input: { projectRoot: string; feature: string; producer: 'component-index' | 'visual-debt'; files: string[] }, write: () => T): T {
+  const { resolveManagedGoalInvocation } = require('./managed-goal-invocation') as typeof import('./managed-goal-invocation');
+  const actor = resolveManagedGoalInvocation(input);
+  const { loadAuthoritativeEvents } = require('./goal-runner-phase') as typeof import('./goal-runner-phase');
+  const eventsPath = actor && path.join(actor.run_dir, 'events.jsonl');
+  const active = actor && eventsPath && !loadAuthoritativeEvents(eventsPath).some(event => event.type === 'agent_invoke_end' && event.invoke_id === actor.invoke_id);
+  if (!active || !actor || !eventsPath) return write();
+  const { assertFencedOwner } = require('./goal-run-control') as typeof import('./goal-run-control');
+  assertFencedOwner(actor.run_dir, actor.owner, 'generated_projection_write');
+  const { executionRequestForInvoke } = require('./session-execution-handoff') as typeof import('./session-execution-handoff');
+  const original = executionRequestForInvoke(actor.run_dir, actor.invoke_id)?.request;
+  if (!original?.pre_snapshot || original.pre_snapshot.failureReason) throw new Error('生成物写入缺该调用的真实前像，保留当前字节并恢复原调用观察');
+  const history = loadAuthoritativeEvents(eventsPath);
+  const before = input.files.map(file => {
+    const relative = normalizeRelative(input.projectRoot, file);
+    if (fs.existsSync(file) && (!fs.lstatSync(file).isFile() || fs.lstatSync(file).isSymbolicLink())) throw new Error(`生成物不是普通文件，保留原件：${relative}`);
+    const bytes = fs.existsSync(file) ? fs.readFileSync(file) : null;
+    const expected = original.pre_snapshot!.entries.find(entry => entry.path === relative)?.sha256 ?? null;
+    const current = bytes && sha256Buffer(bytes);
+    const priorProduction = history.some(event => event.type === 'phase_write_observed' && event.invoke_id === actor.invoke_id
+      && ((event as Record<string, any>).produced ?? []).some((row: { path?: string }) => row.path === relative));
+    if ((current !== expected || priorProduction) && !isProducedPhaseChange(input.projectRoot, actor.phase,
+      { path: relative, how: expected === null ? 'added' : current === null ? 'removed' : 'modified', preSha256: expected, postSha256: current },
+      { events: history, invokeId: actor.invoke_id })) throw new Error(`生成物含本调用未归属的修改，原写方不得覆盖：${relative}`);
+    return { file, bytes };
+  });
+  const result = write();
+  const produced = before.flatMap(({ file, bytes }) => {
+    const post = fs.existsSync(file) ? fs.readFileSync(file) : null;
+    if (!post || bytes?.equals(post)) return [];
+    return [{ path: normalizeRelative(input.projectRoot, file), pre_sha256: bytes && sha256Buffer(bytes),
+      post_sha256: sha256Buffer(post), preimage_base64: bytes?.toString('base64') ?? null }];
+  });
+  if (produced.length) {
+    assertFencedOwner(actor.run_dir, actor.owner, 'generated_projection_observed');
+    fs.appendFileSync(eventsPath, JSON.stringify({ ts: new Date().toISOString(), type: 'phase_write_observed', phase: actor.phase,
+      invoke_id: actor.invoke_id, feature: input.feature, producer: input.producer, produced }) + '\n', 'utf8');
+  }
+  return result;
 }
 
 /**

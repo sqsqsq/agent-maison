@@ -419,7 +419,7 @@ export interface RunProbe {
 }
 
 /** The default successful device model executes the existing bounded providers; production gates/writer derive its facts. */
-function produceDefaultMockDeviceFacts(projectRoot: string, frameworkRoot: string, feature: string, runId: string, attemptId: string) {
+async function produceDefaultMockDeviceFacts(projectRoot: string, frameworkRoot: string, feature: string, runId: string, attemptId: string) {
   const acceptance = loadAcceptanceFlowsDoc(projectRoot, feature);
   if (resolveP0DeviceObligations(projectRoot, feature, acceptance).device.length === 0) return null;
   const config = loadFrameworkConfig(projectRoot);
@@ -448,7 +448,7 @@ function produceDefaultMockDeviceFacts(projectRoot: string, frameworkRoot: strin
   process.env.HARNESS_HDC_TARGET ??= installed.probe.devices[0];
   process.env.MAISON_DEVICE_TARGET_KIND ??= installed.probe.kind;
   try {
-    const checks = __testing_checkDeviceTestRunGate(ctx, holder);
+    const checks = await __testing_checkDeviceTestRunGate(ctx, holder);
     checks.push(...__testing_checkP0RuntimeStepEvidenceGate(ctx, checks, holder));
     checks.push(...writeDeviceTestEvidenceIfEligible(ctx, holder));
     return { checks, ctx, capabilityReport: resolution.report };
@@ -4956,11 +4956,11 @@ async function runUtFailureChain(gate: (root: string) => UtGateOpts, onAuthor?: 
     freshRequirement: requirement,
     freshEndPhase: 'ut',
     onAuthor,
-    onHarnessSummary: ({ phase }) => {
+    onHarnessSummary: async ({ phase }) => {
       if (phase !== 'ut') return null;
       const files = fs.readdirSync(path.join(root, UT_DIR), { recursive: true, encoding: 'utf8' })
         .filter(file => file.endsWith('.ets') && fs.statSync(path.join(root, UT_DIR, file)).isFile()).map(file => path.posix.join(UT_DIR, file.replace(/\\/g, '/')));
-      const checks = fixtureReadDependencies(root, runUtGateInPlace(root, FEATURE, [UT_MODULE], gate(root)), files);
+      const checks = fixtureReadDependencies(root, await runUtGateInPlace(root, FEATURE, [UT_MODULE], gate(root)), files);
       gateChecks.push(checks);
       return { checks };
     },

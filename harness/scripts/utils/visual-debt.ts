@@ -315,6 +315,11 @@ function atomicWrite(absPath: string, content: string): void {
 }
 
 export function writeVisualDebt(projectRoot: string, doc: VisualDebtDoc): void {
-  atomicWrite(visualDebtJsonPath(projectRoot, doc.feature), `${JSON.stringify(doc, null, 2)}\n`);
-  atomicWrite(visualDebtMdPath(projectRoot, doc.feature), renderVisualDebtMd(doc));
+  (require('./phase-write-boundary') as typeof import('./phase-write-boundary')).recordProducedPhaseWrites({
+    projectRoot, feature: doc.feature, producer: 'visual-debt',
+    files: [visualDebtJsonPath(projectRoot, doc.feature), visualDebtMdPath(projectRoot, doc.feature)],
+  }, () => {
+    atomicWrite(visualDebtJsonPath(projectRoot, doc.feature), `${JSON.stringify(doc, null, 2)}\n`);
+    atomicWrite(visualDebtMdPath(projectRoot, doc.feature), renderVisualDebtMd(doc));
+  });
 }

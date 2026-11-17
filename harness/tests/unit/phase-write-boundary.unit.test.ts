@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as YAML from 'yaml';
+import { createHash } from 'crypto';
 
 import { clearFrameworkConfigCache } from '../../config';
 import {
@@ -13,6 +14,7 @@ import {
   renderPhaseWriteBoundaryGuidance,
   workUnitProtectedRecordPaths,
   replayUtOwnedWrites,
+  isProducedPhaseChange,
   type PhaseWriteBoundaryResolution,
 } from '../../scripts/utils/phase-write-boundary';
 import type { UnitCaseResult } from '../run-unit';
@@ -107,6 +109,33 @@ function resolve(root: string, phaseOrder: readonly string[] = CHAIN, executionR
 
 export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
+
+  run(results, '4c8d73b1 generated ownership requires this invocation writer chain and preserves its exact preimage', () => {
+    const root = makeHost();
+    try {
+      const file = 'doc/component-index.yaml', invokeId = 'work-unit-author-i1';
+      const hash = (text: string) => createHash('sha256').update(text).digest('hex');
+      const start = { type: 'agent_invoke_start', phase: 'work-unit-author', invoke_id: invokeId };
+      const produced = (before: string, after: string) => ({ type: 'phase_write_observed', phase: 'work-unit-author', invoke_id: invokeId,
+        producer: 'component-index', produced: [{ path: file, pre_sha256: hash(before), post_sha256: hash(after), preimage_base64: Buffer.from(before).toString('base64') }] });
+      const first = produced('dirty user preimage', 'current source inventory');
+      const second = produced('current source inventory', 'new source inventory');
+      const change = { path: file, how: 'modified' as const, preSha256: hash('dirty user preimage'), postSha256: hash('new source inventory') };
+      const proves = (events: Array<Record<string, any>>, delta = change) => isProducedPhaseChange(root, 'work-unit-author', delta, { events, invokeId });
+      assert(proves([start, first, second]), 'two real generated updates preserve their actual dirty predecessor');
+      assert(!proves([start]), 'a current-looking path without a producer is not owned');
+      assert(!proves([start, first, second], { ...change, postSha256: hash('author mixed a row') }), 'later author bytes remain a violation');
+      assert(!proves([start, produced('author changed it first', 'new source inventory')]), 'a producer must not hide prior author mutation');
+      assert(!proves([start, first, produced('unobserved concurrent bytes', 'new source inventory')]), 'unknown concurrent changes cannot bridge the chain');
+      assert(!proves([start, { ...first, invoke_id: 'work-unit-author-i0' }, second]), 'old invocation proof cannot carry a restore instruction into this invocation');
+      assert(!proves([start, { ...first, produced: first.produced.map(row => ({ ...row, preimage_base64: Buffer.from('guessed HEAD bytes').toString('base64') })) }, second]), 'guessed restoration bytes cannot be proof');
+      const boundary = resolve(root, CHAIN, 'author', constructionScope());
+      assert(classifyPhaseInvocationChanges(boundary, 'work-unit-author', [change], { events: [start, first, second], invokeId }).violations.length === 0,
+        'the production attribution caller consumes writer facts');
+      assert(classifyPhaseInvocationChanges(boundary, 'work-unit-author', [change]).violations.length === 1,
+        'legacy records without writer facts retain the original write protection');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+  });
 
   run(results, 'RC11 current unit owns unpredicted implementation resources while review remains read-only', () => {
     const root = makeHost();

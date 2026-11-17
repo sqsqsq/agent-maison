@@ -6,7 +6,7 @@ import { gunzipSync } from 'zlib';
 import { createHash } from 'crypto';
 import { BlueprintRecord, asRecord, asRecords } from '../../scripts/utils/component-blueprint-model';
 import { requiredQuestioningScopes, validateBlueprintQuestioning, independentQuestioningBlockers, normalizeQuestioningItems,
-  parseIndependentQuestioningOutput, mergeIndependentQuestioningResult, selectQuestioningScopes } from '../../scripts/utils/blueprint-questioning';
+  parseIndependentQuestioningOutput, mergeIndependentQuestioningResult, selectQuestioningScopes, questioningEvidencePath } from '../../scripts/utils/blueprint-questioning';
 import { questioningDependencyChanges } from '../../scripts/utils/design-repair-unattended';
 import { capturePhaseInvocationSnapshot } from '../../scripts/utils/phase-write-boundary';
 import { clearFrameworkConfigCache } from '../../config';
@@ -41,6 +41,20 @@ export function questioningRecoveryCases() {
       assert(questioningDependencyChanges(root, missing, pre, own).length === 1, '无法解析的内部位置被无依据忽略');
       fs.writeFileSync(review, '# actual unrelated source document\n');
       assert(questioningDependencyChanges(root, blueprint, pre, own).some(item => item.path === review), '非同源投影的新输入被忽略');
+      const external = path.join(path.dirname(root), 'declared-sdk.d.ts');
+      const previous = { items: [{ scope_ref: 'view:runtime', evidence_refs: [external + '#method'] }] };
+      const unknown = questioningDependencyChanges(root, { ...blueprint, discovery: {} }, pre, own, undefined, previous);
+      assert(unknown.length === 1 && questioningEvidencePath(unknown[0].path) === questioningEvidencePath(external)
+        && unknown[0].exists === undefined && unknown[0].state === 'unknown' && unknown[0].sha256 === null, '仓外证据必须保留未知，不能擅自读取或声称不存在');
+      const outside = questioningDependencyChanges(root, { ...blueprint, discovery: {} }, pre, own, undefined,
+        { items: [{ scope_ref: 'view:runtime', evidence_refs: ['../declared-sdk.d.ts#method'] }] });
+      assert(outside.length === 1 && outside[0].state === 'unknown', '仓外相对引用不能静默丢失');
+      assert(questioningEvidencePath('D:\\sdk\\api.d.ts:12#method') === 'd:/sdk/api.d.ts', 'Windows盘符被当成协议或行号');
+      const canonical = 'doc/features/example/blueprint/component-blueprint.yaml';
+      const self = { ...blueprint, discovery: {}, provenance: { source_ref: canonical + '#/design_views/0' } };
+      assert(questioningDependencyChanges(root, self, pre, path.join(root, 'candidate.yaml')).length === 0, '同一蓝图的canonical引用被当作整文件变动');
+      assert(questioningDependencyChanges(root, { ...self, provenance: { source_ref: path.join(root, canonical) + '#/design_views/0' } }, pre,
+        path.join(root, 'candidate.yaml')).length === 0, 'canonical绝对引用的盘符大小写不能改变对象身份');
     } finally { assert(root.startsWith(fs.realpathSync(os.tmpdir()) + path.sep), '临时根越界'); fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
   }));
   results.push(test('a920 independent questioning replays exact i2 alias and i5 placeholder without losing five blockers', () => {
@@ -219,7 +233,12 @@ export function questioningRecoveryCases() {
       const current = clone(before); asRecords(current.contracts)[0].value = 'new';
       expect(selectQuestioningScopes(before, current, previous), ['view:logical'], '有类型ID不与同名其它种类串线');
       asRecords(before.design_views)[0].contract_refs = ['shared']; asRecords(current.design_views)[0].contract_refs = ['shared'];
-      expect(selectQuestioningScopes(before, current, previous), [...requiredQuestioningScopes(current).keys()], '裸ID跨种类歧义保守全量');
+      expect(selectQuestioningScopes(before, current, previous), ['view:logical'], '裸ID优先消费字段的类型');
+      asRecords(before.design_views)[0].authority_refs = ['shared']; asRecords(current.design_views)[0].authority_refs = ['shared'];
+      expect(selectQuestioningScopes(before, current, previous), ['view:logical'], '无类型歧义保留实际候选消费者而不全量');
+      asRecords(current.contracts)[0].value = 'old';
+      asRecords(current.design_views)[3].summary = 'only scenario changed';
+      expect(selectQuestioningScopes(before, current, previous), ['view:scenarios'], '无关同名引用不能扩大局部scope变更');
     }
     {
       const { before, previous } = sample();
@@ -284,6 +303,19 @@ export function questioningRecoveryCases() {
       expect(selectQuestioningScopes(before, current, previous), [], '派生图更新不冒充权威变动');
       asRecords(previous.items).find(item => item.scope_ref === 'view:scenarios')!.disposition = 'blocker';
       expect(selectQuestioningScopes(before, current, previous), ['view:scenarios'], '派生图变化不能切断真实阻断');
+    }
+    {
+      const { before, previous } = sample();
+      before.revision = 1; before.source_fingerprint = 'source'; before.decision_fingerprint = 'decision';
+      before.generated_graphs = [{ graph_id: 'sequence', format: 'mermaid', content: 'sequenceDiagram\nparticipant A\nA->>A: before',
+        node_refs: ['view:runtime/flow:target-flow'], relation_refs: [] }];
+      before.derived_results = [{ result_id: 'sequence', kind: 'generated_graph', status: 'current', input_revision: 1,
+        source_fingerprint: 'source', decision_fingerprint: 'decision' }];
+      const current = clone(before); current.generated_graphs[0].content = 'sequenceDiagram\nparticipant A\nA->>A: changed return';
+      expect(selectQuestioningScopes(before, current, previous), ['view:runtime', 'flow:target-flow', 'app_lens:ui_refresh'], '已展示手写时序图改动沿真实flow闭包重开');
+      const external = path.resolve('outside-evidence.d.ts'), projectRoot = path.join(path.dirname(external), 'project');
+      asRecords(previous.items).find(item => item.scope_ref === 'view:development')!.evidence_refs = ['../outside-evidence.d.ts'];
+      expect(selectQuestioningScopes(before, before, previous, [external], projectRoot), ['view:development'], '仓外相对引用与绝对依赖比较同一对象');
     }
   }));
 

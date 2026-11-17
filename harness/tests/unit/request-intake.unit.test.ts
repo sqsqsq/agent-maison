@@ -580,14 +580,24 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     assert(!deriveContentImpact(f.root, { ...intake, targets: ['src/value.js'] }).length);
   } },
   { name: 'A6 actual automatic UT CLI consumes generated request, native source and original expectation file', run(f) {
+    const caller = path.join(f.root, 'src/caller.js');
+    fs.writeFileSync(caller, "exports.value = require('./value').oldValue;\n");
     const s = setup(f);
-    const args = ['--phase', 'ut', '--session-ref', s.ref, '--test-target', 'tests/value.test.cjs', '--prepare-request'];
+    (s.rows[0] as { message: { content: string } }).message.content = '本请求修复 src/value.js 的 value=42，并按已定 value 接口修复仓内漏改调用方 src/caller.js，运行针对性UT。';
+    s.tool('Read', { file_path: caller }, fs.readFileSync(caller, 'utf8')); s.flush();
+    const args = ['--phase', 'ut', '--session-ref', s.ref, '--target', 'src/value.js', '--target', 'src/caller.js', '--test-target', 'tests/value.test.cjs', '--prepare-request'];
     const prepare = cli(f, args); assert.equal(prepare.status, 0, prepare.stderr + prepare.stdout);
     const output = JSON.parse(prepare.stdout); assert(output.requestFile.endsWith('request.json')); assert(!output.intake_context.gaps.length, JSON.stringify(output.intake_context));
     const requestPath = path.relative(f.root, output.requestFile).replace(/\\/g, '/');
-    fs.writeFileSync(path.join(f.root, 'tests/value.test.cjs'), `const test=require('node:test'),assert=require('node:assert/strict');\n// expectation: ${requestPath}\ntest('value equals requested 42',()=>assert.equal(require('../src/value.js').value,42));\n`);
+    fs.writeFileSync(path.join(f.root, 'tests/value.test.cjs'), `const test=require('node:test'),assert=require('node:assert/strict');\n// expectation: ${requestPath}\ntest('value equals requested 42 through its existing caller',()=>assert.equal(require('../src/caller.js').value,42));\n`);
     s.tool('Write', { file_path: path.join(f.root, 'tests/value.test.cjs') }, 'File written');
     s.tool('Read', { file_path: path.join(f.root, 'tests/value.test.cjs') }, fs.readFileSync(path.join(f.root, 'tests/value.test.cjs'), 'utf8')); s.flush();
+    assert.equal(readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: s.ref }).policy.selected, 'trivial');
+    const missed = cli(f, [...args.slice(0, -1), '--allow-test-write', 'tests/value.test.cjs']);
+    assert.equal(missed.status, 1, 'the real request must retain the missed caller failure');
+    fs.writeFileSync(caller, "exports.value = require('./value').value;\n");
+    s.tool('Edit', { file_path: caller, old_string: '.oldValue', new_string: '.value' }, 'updated');
+    s.tool('Read', { file_path: caller }, fs.readFileSync(caller, 'utf8')); s.flush();
     const result = cli(f, [...args.slice(0, -1), '--allow-test-write', 'tests/value.test.cjs']);
     assert.equal(result.status, 0, result.stderr + result.stdout);
     const report = JSON.parse(fs.readFileSync(path.join(output.reportDir, 'script-report.json'), 'utf8'));
@@ -595,6 +605,7 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     assert(report.checks.some((check: { id: string; status: string }) => check.id === 'request_test_execution' && check.status === 'PASS'));
     assert(report.checks.some((check: { id: string; status: string }) => check.id === 'request_expectation_source' && check.status === 'PASS'));
     assert(!fs.existsSync(path.join(f.root, 'doc/features/user-1')));
+    assert.deepEqual(fs.readdirSync(path.join(f.root, 'doc/features')), ['live'], 'the direct request cannot create a blueprint, plan, CU or Goal');
     const generated = JSON.parse(fs.readFileSync(output.requestFile, 'utf8')); assert.equal(generated.intake_context.user.text, report.requested_result ?? generated.requested_result);
     const testFile = path.join(f.root, 'tests/value.test.cjs');
     const valid = fs.readFileSync(testFile, 'utf8');

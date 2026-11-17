@@ -513,6 +513,47 @@ export function loadCompletedFactsBaseline(options: CapabilityResolutionEntryInp
   return loadCompletedFactsObservation(options, runId, frameworkRoot, carryUnchangedBaseline)?.context;
 }
 
+/** An audited successor carries verified predecessor observations, never just its authored run_id. */
+export function loadSuccessorFactsBaseline(options: CapabilityResolutionEntryInputOptions, runId: string, frameworkRoot: string): FactsInvocationContext | undefined {
+  try {
+    const manifest = loadGoalManifestFromRun(options.projectRoot, runId, { feature: options.feature, featuresDir: options.featuresDir });
+    if (!manifest.successor_of) return undefined;
+    const predecessor = loadGoalManifestFromRun(options.projectRoot, manifest.successor_of, { feature: options.feature, featuresDir: options.featuresDir });
+    const { isAuditedSuccessor } = require('./feature-execution-scope') as typeof import('./feature-execution-scope');
+    if (!isAuditedSuccessor(options.projectRoot, options.feature, predecessor.run_id, runId)
+      || manifest.requirement !== predecessor.requirement
+      || stableStringify(manifest.requirement_source_files ?? []) !== stableStringify(predecessor.requirement_source_files ?? [])
+      || stableStringify(manifest.unattended ?? null) !== stableStringify(predecessor.unattended ?? null)) return undefined;
+    const events = loadAuthoritativeEvents(path.resolve(options.projectRoot, predecessor.report_dir, 'events.jsonl'));
+    const nextAttempt = `i${events.filter(event => event.type === 'agent_invoke_start').length + 1}`;
+    const observed = loadCompletedFactsObservation({ ...options, goalRunId: predecessor.run_id, goalAttemptId: nextAttempt }, predecessor.run_id, frameworkRoot);
+    if (!observed) return undefined;
+    const raw = fs.readFileSync(resolveFactsAbsPath(options.projectRoot, options.feature), 'utf8');
+    const parsed = parseContextExploration(raw);
+    const establishedBy = (parsed.fm as Record<string, unknown>).established_by;
+    if (parsed.error || typeof establishedBy !== 'string') return undefined;
+    if (!observed.context.baseline) {
+      // Existing baselines were checked by loadCompletedFactsObservation; fresh facts acquire that qualification here.
+      const evidence = loadPhaseEvidenceManifest(options.projectRoot, options.feature, establishedBy);
+      const freshness = recomputePhaseEvidenceStaleness(options.projectRoot, options.feature, [establishedBy], {
+        frameworkRoot, runId: predecessor.run_id, authorityReaders: options.authorityReaders,
+        ...(manifest.requirement ? { currentRequirementSha: computeRequirementShaFromText(options.projectRoot, options.feature, manifest.requirement, options.featuresDir) } : {}),
+      })[0];
+      if (!evidence?.integrityOk || freshness?.verdict !== 'fresh') return undefined;
+    }
+    const dependencies = new Map((observed.context.baseline?.dependencies ?? []).map(dependency => [path.resolve(dependency.path), { ...dependency }]));
+    for (const source of observed.context.source_paths) {
+      const accepted = observed.sources.get(source), absolute = path.resolve(options.projectRoot, source);
+      if (!accepted || sha256File(absolute) !== accepted.sha256) return undefined;
+      dependencies.set(absolute, { path: absolute, exists: true, sha256: accepted.sha256, role: 'derive' });
+    }
+    if ([...dependencies.values()].some(dependency => fs.existsSync(dependency.path) !== dependency.exists || sha256File(dependency.path) !== dependency.sha256)) return undefined;
+    return { ...structuredClone(observed.context), subject: { feature: options.feature, run_id: runId },
+      first_phase: manifest.phase_chain?.[0] ?? manifest.execution_scope?.phase_chain[0] ?? options.phase,
+      baseline: { established_by: establishedBy, fingerprint: factsBaselineFingerprint(raw), dependencies: [...dependencies.values()] } };
+  } catch { return undefined; }
+}
+
 /** Read-only postimages; they do not grant a live actor or formal-tool window. */
 export function loadCompletedFactsObservation(options: CapabilityResolutionEntryInputOptions, runId: string, frameworkRoot: string,
   carryUnchangedBaseline = false): ReturnType<typeof loadFormalFactsObservation> {
@@ -585,7 +626,8 @@ function completedFactsBaselineFromHistory(options: CapabilityResolutionEntryInp
     if (next && next[0] < reclaimedAt) { unitContexts.delete(index); continue; }
     const post = next?.[1].pre_snapshot ?? capturePhaseInvocationSnapshot(request.write_boundary!, request.snapshot_options);
     const changes = diffPhaseInvocationSnapshots(request.pre_snapshot!, post);
-    const classified = changes.kind === 'changed' ? classifyPhaseInvocationChanges(request.write_boundary!, request.context.phase, changes.changes) : null;
+    const classified = changes.kind === 'changed' ? classifyPhaseInvocationChanges(request.write_boundary!, request.context.phase, changes.changes,
+      { events, invokeId: request.invoke_id }) : null;
     if (changes.kind === 'unverifiable' || classified?.violations.length || classified?.observed.length) {
       unitContexts.delete(index); continue;
     }
@@ -910,7 +952,8 @@ export function resolveCapabilityResolutionEntryInput(
       };
       const admitted = goalRunId && options.purpose !== 'design-authority-probe' ? loadFactsInvocationContext({ projectRoot: options.projectRoot, frameworkRoot, feature: options.feature,
         phase: options.phase, runId: goalRunId, attemptId: options.goalAttemptId, featuresDir: options.featuresDir, authorityReaders: options.authorityReaders })
-        ?? loadCompletedFactsBaseline(options, goalRunId, frameworkRoot) : undefined;
+        ?? loadCompletedFactsBaseline(options, goalRunId, frameworkRoot)
+        ?? loadSuccessorFactsBaseline(options, goalRunId, frameworkRoot) : undefined;
       if (admitted) {
         Object.assign(factsContext, admitted);
         for (const source of admitted.source_paths) {

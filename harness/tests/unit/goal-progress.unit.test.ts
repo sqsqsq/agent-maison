@@ -1,3 +1,4 @@
+import { DEFAULT_GOAL_WAIT_TIMEOUT_MS, goalStatusWaitCommand, createGoalWaitReader, waitForGoalStatus, readGoalWaitObservation, type GoalWaitObservation } from '../../scripts/utils/goal-status-wait';
 // goal-progress.unit.test.ts — progress projection, stall, freshness
 
 import { spawnSync } from 'child_process';
@@ -2367,6 +2368,369 @@ cases.push({
         assert(project().liveness.state === 'ACTIVE', failure + ': 正式阶段已有verdict，原超时不再保持未收口停滞');
       });
     }
+  },
+});
+
+cases.push({
+  name: '4c8 wait acknowledged live attention remains bounded while new causes, human action and child changes remain visible',
+  run: async () => {
+    const root = mkGoalCliProjectRoot();
+    try {
+      const snapshot = mkStatusSnapshot({ state: 'STALLED', last_activity_at: null, seconds_since_activity: 300,
+        agent_output_stalled_ms: null, signals: { feature_lock_heartbeat: 'fresh', runner_lock: 'present',
+          agent_output_log: 'unchanged', child_process: 'alive', lingering_pipe: false } });
+      snapshot.status = 'STALLED'; snapshot.status_reason = 'hard_stall_threshold';
+      const original: GoalWaitObservation = { feature: 'demo', run_id: 'same-run', status: 'STALLED', complete: false,
+        event_count: 1, attention: true, stopped: true, snapshot };
+      const first = await waitForGoalStatus({ projectRoot: root, feature: 'demo', runId: 'same-run', read: () => original });
+      assert(first.reason === 'attention' && !!first.cursor, 'first attention is always delivered');
+      let now = 0, reads = 0;
+      const continued = await waitForGoalStatus({ projectRoot: root, feature: 'demo', runId: 'same-run', after: first.cursor, timeoutMs: 25,
+        now: () => now, read: () => { reads++; return { ...original, event_count: reads + 1,
+          snapshot: { ...snapshot, generated_at: new Date(reads).toISOString(), liveness: { ...snapshot.liveness, seconds_since_activity: 300 + reads } } }; },
+        sleep: async ms => { now += ms; } });
+      assert(continued.reason === 'timeout' && continued.elapsed_ms === 25 && reads > 1, 'heartbeats and elapsed time cannot repurchase the same attention');
+      const probe = (observation: GoalWaitObservation, after = first.cursor) => waitForGoalStatus({ projectRoot: root, feature: 'demo', runId: 'same-run', after, read: () => observation });
+      assert((await probe({ ...original, snapshot: { ...snapshot, status_reason: 'different blocker' } })).reason === 'attention', 'a changed cause is reported immediately');
+      assert((await probe({ ...original, snapshot: { ...snapshot, run_disposition: 'WAITING', run_wait_kind: 'human' } })).reason === 'attention', 'human action is never acknowledged away');
+      assert((await probe({ ...original, snapshot: { ...snapshot, liveness: { ...snapshot.liveness, signals: { ...snapshot.liveness.signals, child_process: 'dead' } } } })).reason === 'attention', 'a dead producer cannot hide behind the same cursor');
+      const recovered = await probe({ ...original, feature: 'child', run_id: 'next-run', status: 'RUNNING', attention: false, stopped: false });
+      assert(recovered.reason === 'changed' && recovered.observation?.run_id === 'next-run', 'a healthy current child is reported once');
+      now = 0;
+      assert((await waitForGoalStatus({ projectRoot: root, feature: 'demo', runId: 'same-run', after: recovered.cursor, timeoutMs: 10,
+        read: () => ({ ...original, feature: 'child', run_id: 'next-run', status: 'RUNNING', attention: false, stopped: false }),
+        now: () => now, sleep: async ms => { now += ms; } })).reason === 'timeout', 'the returned changed cursor resumes normal waiting');
+      assert((await probe({ ...original, status: 'HALTED', attention: false })).reason === 'stopped', 'a terminal state retains its original return reason');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  },
+});
+
+cases.push({
+  name: '4c8 wait production CLI accepts an acknowledged live warning across restarts without mutating producer events',
+  run: () => {
+    const results: Array<Record<string, unknown>> = [];
+    for (const kind of ['WAITING_EXTERNAL', 'STALLED']) {
+      const root = mkGoalCliProjectRoot(), feature = 'wait-ack', runId = 'original';
+      const runDir = (id: string) => path.join(root, 'doc/features', feature, 'goal-runs', id);
+      const line = (value: unknown) => JSON.stringify(value) + '\n';
+      const now = () => new Date().toISOString(), old = new Date(Date.now() - FRESHNESS_STALE_MS - 5000).toISOString();
+      const runs = new Set<string>();
+      const writeRun = (id: string, events: unknown[], extra: Partial<GoalManifest> = {}) => {
+        runs.add(id); fs.mkdirSync(runDir(id), { recursive: true });
+        fs.writeFileSync(path.join(runDir(id), 'manifest.json'), JSON.stringify(mkManifest({ feature, run_id: id,
+          report_dir: path.relative(root, runDir(id)).replace(/\\/g, '/'), start_phase: 'spec', end_phase: 'coding',
+          unattended: { write_mode: 'workspace-write', approval_mode: 'never', timeout_seconds: 1 }, ...extra })));
+        fs.writeFileSync(path.join(runDir(id), 'events.jsonl'), events.map(line).join(''));
+        fs.writeFileSync(path.join(root, 'doc/features', feature, 'goal-runs/.feature.lock'), JSON.stringify({ ownerId: 'isolated-producer',
+          pid: process.pid, hostname: os.hostname(), run_id: id, started_at: now(), updated_at: now() }));
+      };
+      const call = (label: string, after?: string) => {
+        const files = [...runs].flatMap(id => ['events.jsonl', 'manifest.json', 'progress.json', 'run-control.json'].map(name => path.join(runDir(id), name)));
+        files.push(path.join(root, 'doc/features', feature, 'goal-runs/.feature.lock'));
+        const before = files.map(file => fs.existsSync(file) ? fs.readFileSync(file) : null);
+        const cli = runGoalStatusCli(['--feature', feature, '--run-id', runId, '--wait', '--json', '--timeout-ms', '100', ...(after ? ['--after', after] : [])], root);
+        assert(cli.status === 0, cli.stderr + cli.stdout);
+        for (let i = 0; i < files.length; i++) assert(before[i] === null ? !fs.existsSync(files[i]) : fs.readFileSync(files[i]).equals(before[i]!), 'wait never writes producer events, locks, control or progress');
+        const value = JSON.parse(cli.stdout);
+        results.push({ kind, label, reason: value.reason, status: value.observation.status, run_id: value.observation.run_id,
+          elapsed_ms: value.elapsed_ms, cursor: value.cursor, eventsUnchanged: true });
+        return value;
+      };
+      try {
+        writeRun(runId, kind === 'WAITING_EXTERNAL'
+          ? [{ ts: now(), type: 'run_start', chain: ['spec', 'coding'] }, { ts: now(), type: 'phase_verdict', phase: 'spec', verdict: 'INCOMPLETE', action: 'defer_external_and_continue_if_allowed' }, { ts: now(), type: 'phase_start', phase: 'coding' }]
+          : [{ ts: old, type: 'run_start', chain: ['coding'] }, { ts: old, type: 'agent_invoke_start', phase: 'coding' }, { ts: old, type: 'agent_invoke_end', phase: 'coding', exit_code: 1, timed_out: true }]);
+        const first = call('first'); assert(first.reason === 'attention' && first.observation.status === kind, JSON.stringify(first));
+        const continued = call('same-state-new-cli', first.cursor); assert(continued.reason === 'timeout', 'same warning accepts explicit continuation in a new CLI process');
+        const journal = path.join(runDir(runId), 'events.jsonl');
+        fs.appendFileSync(journal, line({ ts: kind === 'STALLED' ? old : now(), type: 'heartbeat', phase: 'coding' }));
+        assert(call('heartbeat-same-cursor', first.cursor).reason === 'timeout', 'same cursor ignores heartbeat-only changes');
+        const legacy = JSON.parse(Buffer.from(first.cursor, 'base64url').toString('utf8')); delete legacy.attention;
+        assert(call('legacy-cursor', Buffer.from(JSON.stringify(legacy)).toString('base64url')).reason === 'attention', 'legacy cursors do not pretend a warning was received');
+        if (kind === 'WAITING_EXTERNAL') {
+          fs.appendFileSync(journal, line({ ts: now(), type: 'condition_wait_started', phase: 'coding', reason: 'a different external dependency' }));
+          const changedCause = call('new-cause', continued.cursor); assert(changedCause.reason === 'attention', 'a new obstacle is reported');
+          fs.appendFileSync(journal, line({ ts: now(), type: 'resume' }) + line({ ts: now(), type: 'run_start', chain: ['coding'] }));
+          const healthy = call('recovered', changedCause.cursor); assert(healthy.reason === 'changed' && healthy.observation.status === 'RUNNING', JSON.stringify(healthy));
+          assert(call('changed-cursor', healthy.cursor).reason === 'timeout', 'the returned cursor waits without repeating changed');
+          writeRun('next', [{ ts: now(), type: 'supersede', target_run_id: runId, superseding_run_id: 'next' }, { ts: now(), type: 'run_start', chain: ['spec', 'coding'] }], { successor_of: runId });
+          const successor = call('healthy-successor', changedCause.cursor); assert(successor.reason === 'changed' && successor.observation.run_id === 'next', JSON.stringify(successor));
+          fs.appendFileSync(path.join(runDir('next'), 'events.jsonl'), line({ ts: now(), type: 'phase_verdict', phase: 'spec', verdict: 'INCOMPLETE', action: 'defer_external_and_continue_if_allowed' }) + line({ ts: now(), type: 'phase_start', phase: 'coding' }));
+          const warning = call('successor-warning', changedCause.cursor); assert(warning.reason === 'attention', 'another run cannot inherit the acknowledged obstacle');
+          fs.appendFileSync(path.join(runDir('next'), 'events.jsonl'), line({ ts: now(), type: 'run_end', status: 'HALTED' }));
+          assert(call('terminal', warning.cursor).reason === 'stopped', 'terminal transition always returns');
+          fs.appendFileSync(path.join(runDir('next'), 'events.jsonl'), line({ ts: now(), type: 'resume' }) + line({ ts: now(), type: 'run_start', chain: ['coding'] }) + line({ ts: now(), type: 'run_end', status: 'AWAITING_HUMAN_REVIEW' }));
+          assert(call('human-review', warning.cursor).reason === 'attention', 'human review is never suppressed');
+          fs.appendFileSync(path.join(runDir('next'), 'events.jsonl'), line({ ts: now(), type: 'resume' }) + line({ ts: now(), type: 'run_start', chain: ['coding'] })
+            + line({ ts: now(), type: 'phase_halt', phase: 'coding', run_disposition: 'WAITING', run_wait_kind: 'human' }));
+          assert(call('active-human-action', warning.cursor).reason === 'attention', 'human control is reported before run_end even when liveness remains running');
+          fs.appendFileSync(path.join(runDir('next'), 'events.jsonl'), line({ ts: now(), type: 'phase_halt', phase: 'coding', run_disposition: 'TERMINAL' }));
+          assert(call('active-terminal-control', warning.cursor).reason === 'stopped', 'terminal control is reported before its settling producer exits');
+        } else {
+          fs.writeFileSync(path.join(root, 'doc/features', feature, 'goal-runs/.feature.lock'), JSON.stringify({ ownerId: 'isolated-producer',
+            pid: 2_147_483_647, hostname: os.hostname(), run_id: runId, started_at: old, updated_at: new Date(Date.now() - 7_200_000).toISOString() }));
+          assert(call('dead-producer', continued.cursor).reason === 'attention', 'a dead producer remains an immediate concern');
+        }
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    }
+    const output = path.resolve(__dirname, '../../reports/4c8d73b1-dev/wait-after-cli-results.json');
+    fs.mkdirSync(path.dirname(output), { recursive: true }); fs.writeFileSync(output, JSON.stringify(results, null, 2) + '\n');
+  },
+});
+
+cases.push({
+  name: '4c8 wait stays in one call across heartbeats and child completion; explicit tool timeouts resume its cursor without stopping work',
+  run: async () => {
+    const root = mkGoalCliProjectRoot();
+    try {
+      let now = 0, reads = 0, sleeps = 0;
+      const observation = (stopped = false): GoalWaitObservation => ({ feature: 'demo', run_id: 'root-run',
+        status: stopped ? 'HALTED' : 'RUNNING', complete: false, event_count: reads, attention: false, stopped,
+        snapshot: { next_action: stopped ? 'inspect' : 'wait', current: { feature: 'child' } } as never });
+      const result = await waitForGoalStatus({ projectRoot: root, feature: 'demo', runId: 'root-run',
+        read: () => { reads++; return observation(reads === 4); }, now: () => now,
+        sleep: async () => { sleeps++; now += 180_000; } });
+      assert(result.reason === 'stopped' && reads === 4 && sleeps === 3, JSON.stringify(result));
+      assert(result.elapsed_ms === 540_000, 'default is not a periodic 55-second return');
+      reads = 0; now = 0;
+      const first = await waitForGoalStatus({ projectRoot: root, feature: 'demo', runId: 'root-run', timeoutMs: 100,
+        read: () => observation(), now: () => now, sleep: async ms => { now += ms; } });
+      assert(first.reason === 'timeout' && !!first.cursor, 'explicit limited tool wait returns its cursor');
+      const second = await waitForGoalStatus({ projectRoot: root, feature: 'demo', runId: 'root-run', after: first.cursor,
+        read: () => observation(true) });
+      assert(second.reason === 'stopped', 'a stop written between tools is consumed');
+      const mismatch = await waitForGoalStatus({ projectRoot: root, feature: 'other', runId: 'root-run', after: first.cursor,
+        read: () => observation(true) });
+      assert(mismatch.reason === 'read_error', 'cursor cannot select another request');
+      const cancel = new AbortController(); cancel.abort();
+      assert((await waitForGoalStatus({ projectRoot: root, feature: 'demo', runId: 'root-run', signal: cancel.signal,
+        read: () => { throw new Error('cancelled reader must not run'); } })).reason === 'cancelled', 'cancellation is a reader result only');
+      assert((await waitForGoalStatus({ projectRoot: root, feature: 'demo', runId: 'root-run',
+        read: () => { throw new Error('events unavailable'); } })).reason === 'read_error', 'read errors return explicitly');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  },
+});
+
+cases.push({
+  name: '4c8 wait production CLI ignores old run_end after resume, follows audited successor and binds cursor to directory',
+  run: () => {
+    const root = mkGoalCliProjectRoot(), other = mkGoalCliProjectRoot();
+    const feature = 'wait-production', runId = 'wait-run';
+    const reportRel = `doc/features/${feature}/goal-runs/${runId}`;
+    const reportDir = path.join(root, reportRel);
+    const eventsFile = path.join(reportDir, 'events.jsonl');
+    const now = () => new Date().toISOString();
+    const line = (value: unknown) => JSON.stringify(value) + '\n';
+    const writeRun = (base: string, id: string, events: unknown[], extra: Record<string, unknown> = {}) => {
+      const report = `doc/features/${feature}/goal-runs/${id}`;
+      fs.mkdirSync(path.join(base, report), { recursive: true });
+      fs.writeFileSync(path.join(base, report, 'manifest.json'), JSON.stringify(mkManifest({ feature, run_id: id, report_dir: report,
+        start_phase: 'coding', end_phase: 'coding', ...extra })));
+      fs.writeFileSync(path.join(base, report, 'events.jsonl'), events.map(line).join(''));
+      const lock = { ownerId: 'wait-test', pid: process.pid, hostname: os.hostname(), started_at: now(), updated_at: now(), run_id: id };
+      fs.writeFileSync(path.join(base, `doc/features/${feature}/goal-runs/.feature.lock`), JSON.stringify(lock));
+    };
+    try {
+      const stopped = [{ ts: now(), type: 'run_start', chain: ['coding'] }, { ts: now(), type: 'run_end', status: 'HALTED' }];
+      writeRun(root, runId, stopped);
+      const args = ['--feature', feature, '--run-id', runId, '--wait', '--json'];
+      const terminal = runGoalStatusCli(args, root); assert(terminal.status === 0, terminal.stderr);
+      const prior = JSON.parse(terminal.stdout); assert(prior.observation.status === 'HALTED', terminal.stdout);
+      fs.appendFileSync(eventsFile, line({ ts: now(), type: 'resume' }) + line({ ts: now(), type: 'run_start', chain: ['coding'] }));
+      const running = runGoalStatusCli([...args, '--after', prior.cursor, '--timeout-ms', '30'], root);
+      assert(running.status === 0, running.stderr);
+      const cursor = JSON.parse(running.stdout); assert(cursor.reason === 'timeout' && cursor.observation.status === 'RUNNING', running.stdout);
+      writeRun(other, runId, stopped);
+      const wrong = runGoalStatusCli([...args, '--after', cursor.cursor], other);
+      assert(wrong.status === 1 && JSON.parse(wrong.stdout).reason === 'read_error', wrong.stderr + wrong.stdout);
+      const successor = 'wait-next';
+      writeRun(root, successor, [{ ts: now(), type: 'supersede', target_run_id: runId, superseding_run_id: successor },
+        { ts: now(), type: 'run_start', chain: ['coding'] }], { successor_of: runId });
+      const followed = runGoalStatusCli([...args, '--after', cursor.cursor, '--timeout-ms', '30'], root);
+      const follow = JSON.parse(followed.stdout); assert(follow.reason === 'timeout' && follow.observation.run_id === successor, followed.stderr + followed.stdout);
+      const nextFile = path.join(root, `doc/features/${feature}/goal-runs/${successor}/events.jsonl`);
+      fs.appendFileSync(nextFile, line({ ts: now(), type: 'run_end', status: 'HALTED' }));
+      const before = fs.readFileSync(nextFile, 'utf8');
+      const ended = runGoalStatusCli([...args, '--after', follow.cursor], root);
+      assert(JSON.parse(ended.stdout).observation.run_id === successor, ended.stderr + ended.stdout);
+      assert(fs.readFileSync(nextFile, 'utf8') === before, 'observer does not write business or run events');
+      fs.appendFileSync(nextFile, '{unreadable\n');
+      const unreadable = runGoalStatusCli([...args, '--after', follow.cursor, '--timeout-ms', '50'], root);
+      assert(unreadable.status === 1 && JSON.parse(unreadable.stdout).reason === 'read_error', unreadable.stderr + unreadable.stdout);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); fs.rmSync(other, { recursive: true, force: true }); }
+  },
+});
+
+cases.push({
+  name: '4c8 wait light polling reads no business files on unchanged state or heartbeat; resumed child, successor and preserved-mtime corruption reach the authority reader',
+  run: () => {
+    const root = mkGoalCliProjectRoot(), feature = 'wait-light', runId = 'root';
+    const directory = path.join(root, 'doc/features', feature, 'goal-runs', runId);
+    const eventsFile = path.join(directory, 'events.jsonl');
+    const line = (value: unknown) => JSON.stringify(value) + '\n';
+    const lockModule = require('../../scripts/utils/goal-run-lock') as typeof import('../../scripts/utils/goal-run-lock');
+    const oldAlive = lockModule.isPidAlive;
+    const fsRuntime = require('fs') as typeof import('fs');
+    const oldReadFile = fsRuntime.readFileSync, oldRead = fsRuntime.readSync;
+    let fileReads = 0, boundedBytes = 0;
+    try {
+      fs.mkdirSync(directory, { recursive: true });
+      fs.writeFileSync(path.join(directory, 'manifest.json'), JSON.stringify(mkManifest({ feature, run_id: runId,
+        report_dir: `doc/features/${feature}/goal-runs/${runId}`, start_phase: 'coding', end_phase: 'coding' })));
+      fs.writeFileSync(eventsFile, line({ ts: new Date().toISOString(), type: 'run_start', chain: ['coding'] }));
+      fs.writeFileSync(path.join(directory, 'run-control.json'), JSON.stringify({ current_epoch: 1, owner: {
+        kind: 'process', state: 'active', pid: process.pid, hostname: os.hostname(), owner_id: 'light-test', epoch: 1 } }));
+      const read = createGoalWaitReader({ projectRoot: root, frameworkRoot: path.join(root, 'framework'), featuresDir: 'doc/features', feature, runId });
+      const first = read(); assert(first.status === 'RUNNING', JSON.stringify(first));
+      (fsRuntime as any).readFileSync = (...args: any[]) => { fileReads++; return (oldReadFile as any)(...args); };
+      (fsRuntime as any).readSync = (...args: any[]) => { const bytes = (oldRead as any)(...args); boundedBytes += bytes; return bytes; };
+      assert(read() === first && read() === first, 'unchanged state keeps the authoritative observation');
+      assert(fileReads === 0 && boundedBytes === 0, `static reads=${fileReads}, bytes=${boundedBytes}`);
+      fs.appendFileSync(eventsFile, line({ ts: new Date().toISOString(), type: 'heartbeat' }));
+      assert(read() === first, 'heartbeat does not repurchase business projection');
+      assert(fileReads === 0 && boundedBytes > 0 && boundedBytes < 2048, `heartbeat file reads=${fileReads}, bounded=${boundedBytes}`);
+      const beforeDeath = fileReads;
+      (lockModule as any).isPidAlive = () => false;
+      read(); assert(fileReads > beforeDeath, 'a live-to-dead owner transition triggers the existing authority reader');
+      (lockModule as any).isPidAlive = oldAlive;
+      fs.appendFileSync(eventsFile, line({ ts: new Date().toISOString(), type: 'run_end', status: 'HALTED' }));
+      assert(read().stopped, 'same-run stop reaches authoritative projection');
+      fs.appendFileSync(eventsFile, line({ ts: new Date().toISOString(), type: 'resume' }) + line({ ts: new Date().toISOString(), type: 'run_start', chain: ['coding'] }));
+      assert(read().status === 'RUNNING', 'real resume clears the old terminal');
+      const child = path.join(root, 'doc/features', feature, 'existing-child/goal-runs/child');
+      fs.mkdirSync(child, { recursive: true });
+      fs.writeFileSync(path.join(child, 'events.jsonl'), line({ type: 'heartbeat', ts: new Date().toISOString() }));
+      read(); fileReads = 0;
+      fs.appendFileSync(path.join(child, 'events.jsonl'), line({ type: 'resume', ts: new Date().toISOString() }));
+      read(); assert(fileReads > 0, 'an existing child switch cannot hide behind an unchanged root journal');
+      const successor = path.join(root, 'doc/features', feature, 'goal-runs/next');
+      fs.mkdirSync(successor, { recursive: true });
+      fs.writeFileSync(path.join(successor, 'manifest.json'), JSON.stringify(mkManifest({ feature, run_id: 'next', successor_of: runId,
+        report_dir: `doc/features/${feature}/goal-runs/next`, start_phase: 'coding', end_phase: 'coding' })));
+      fs.writeFileSync(path.join(successor, 'events.jsonl'), line({ type: 'supersede', ts: new Date().toISOString(), target_run_id: runId, superseding_run_id: 'next' })
+        + line({ type: 'run_start', ts: new Date().toISOString(), chain: ['coding'] }));
+      assert(read().run_id === 'next', 'new audited successor is discovered');
+      const target = path.join(successor, 'events.jsonl'), stat = fs.statSync(target);
+      const text = oldReadFile(target, 'utf8'); fs.writeFileSync(target, '!' + text.slice(1)); fs.utimesSync(target, stat.atime, stat.mtime);
+      let failed = false; try { read({ feature, runId: 'next' }); } catch { failed = true; }
+      assert(failed, 'same-size corruption with restored mtime is checked against the real previously observed source');
+    } finally {
+      (fsRuntime as any).readFileSync = oldReadFile; (fsRuntime as any).readSync = oldRead; (lockModule as any).isPidAlive = oldAlive;
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  },
+});
+
+cases.push({
+  name: '4c8 wait default segment is sixty minutes; explicit positive limits can shorten or extend it',
+  run: async () => {
+    const root = mkGoalCliProjectRoot();
+    try {
+      let now = 0;
+      const observation: GoalWaitObservation = { feature: 'demo', run_id: 'same-run', status: 'RUNNING', complete: false,
+        event_count: 1, attention: false, stopped: false, snapshot: { next_action: 'wait' } as never };
+      const run = (timeoutMs?: number) => waitForGoalStatus({ projectRoot: root, feature: 'demo', runId: 'same-run', timeoutMs,
+        read: () => observation, now: () => now, pollMs: DEFAULT_GOAL_WAIT_TIMEOUT_MS,
+        sleep: async ms => { now += ms; } });
+      const initial = await run();
+      assert(initial.reason === 'timeout' && initial.elapsed_ms === 3_600_000 && !!initial.cursor, JSON.stringify(initial));
+      assert(initial.observation === observation, 'latest status remains associated with the same live run');
+      now = 0; const shorter = await run(25);
+      assert(shorter.reason === 'timeout' && shorter.elapsed_ms === 25, 'explicit shorter positive segment');
+      now = 0; const longer = await run(DEFAULT_GOAL_WAIT_TIMEOUT_MS * 2);
+      assert(longer.reason === 'timeout' && longer.elapsed_ms === 7_200_000, 'explicit positive segment may exceed the default');
+      now = 0; const again = await waitForGoalStatus({ projectRoot: root, feature: 'demo', runId: 'same-run', after: initial.cursor, timeoutMs: 10,
+        read: () => observation, now: () => now, sleep: async ms => { now += ms; } });
+      assert(again.reason === 'timeout' && again.observation?.run_id === 'same-run', 'timeout does not restart or finish the producer');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  },
+});
+
+cases.push({
+  name: '4c8 wait runner clock expires without new files or observer self-renewal; unknown and live successors remain bounded',
+  run: () => {
+    const root = mkGoalCliProjectRoot(), feature = 'wait-orphan', runId = 'old';
+    const runDir = path.join(root, 'doc/features', feature, 'goal-runs', runId);
+    const eventsFile = path.join(runDir, 'events.jsonl');
+    const lockModule = require('../../scripts/utils/goal-run-lock') as typeof import('../../scripts/utils/goal-run-lock');
+    const primary = path.join(root, 'doc/features', feature, 'goal-runs', lockModule.FEATURE_LOCK_NAME);
+    const base = Date.now(), realNow = Date.now;
+    let now = base;
+    const write = (file: string, value: unknown) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, JSON.stringify(value)); };
+    const fsRuntime = require('fs') as typeof import('fs'); const realRead = fsRuntime.readFileSync;
+    try {
+      Date.now = () => now;
+      write(path.join(runDir, 'manifest.json'), mkManifest({ feature, run_id: runId, report_dir: path.relative(root, runDir).replace(/\\/g, '/'), start_phase: 'coding', end_phase: 'coding' }));
+      fs.writeFileSync(eventsFile, JSON.stringify({ type: 'run_start', ts: new Date(base).toISOString(), chain: ['coding'] }) + '\n');
+      const lock = { ownerId: 'fixture', pid: process.pid, hostname: os.hostname(), run_id: runId, started_at: new Date(base).toISOString(), updated_at: new Date(base).toISOString() };
+      write(primary, lock);
+      const manifest = mkManifest({ feature, run_id: runId, report_dir: path.relative(root, runDir).replace(/\\/g, '/'), start_phase: 'coding', end_phase: 'coding' });
+      const snapshot = buildLiveGoalStatusSnapshot({ projectRoot: root, featuresDir: 'doc/features', feature, runId,
+        manifest, workflow, nowMs: base });
+      write(path.join(runDir, 'progress.json'), snapshot);
+      write(primary, { ...lock, pid: 2_147_483_647 });
+      const read = createGoalWaitReader({ projectRoot: root, frameworkRoot: FRAMEWORK_ROOT, featuresDir: 'doc/features', feature, runId });
+      assert(!read().attention, 'fresh runner observation is not an invented old orphan');
+      now = base + 60_000;
+      const refreshed = readGoalWaitObservation({ projectRoot: root, frameworkRoot: FRAMEWORK_ROOT, featuresDir: 'doc/features', feature, runId });
+      assert(!refreshed.attention, 'observer recomputation is still within the producer freshness window');
+      let contents = 0;
+      (fsRuntime as any).readFileSync = (...args: any[]) => { contents++; return (realRead as any)(...args); };
+      now = base + FRESHNESS_STALE_MS + 1;
+      const orphan = read();
+      assert(orphan.attention && orphan.status === 'UNKNOWN' && orphan.detail?.includes('orphan_suspected_stale_snapshot') === true, JSON.stringify(orphan));
+      assert(contents === 0, 'time-only orphan check must not repurchase blueprint or admission reads');
+      (fsRuntime as any).readFileSync = realRead;
+      // A foreign fresh snapshot cannot renew this run's producer time.
+      write(path.join(runDir, 'progress.json'), { ...snapshot, run_id: 'unrelated', generated_at: new Date(now).toISOString() });
+      assert(read().attention, 'mismatching progress binding cannot hide the orphan');
+      write(primary, { ...lock, hostname: 'different-host' });
+      const foreign = read();
+      assert(foreign.status === 'UNKNOWN' && !foreign.attention && !foreign.stopped, 'cross-host uncertainty waits within its observation segment');
+      fs.rmSync(primary);
+      const missing = read();
+      assert(missing.status === 'UNKNOWN' && !missing.attention && !missing.stopped, 'no reliable lock does not manufacture a dead PID');
+      const successor = 'next', nextDir = path.join(root, 'doc/features', feature, 'goal-runs', successor);
+      write(path.join(nextDir, 'manifest.json'), mkManifest({ feature, run_id: successor, successor_of: runId,
+        report_dir: path.relative(root, nextDir).replace(/\\/g, '/'), start_phase: 'coding', end_phase: 'coding' }));
+      fs.writeFileSync(path.join(nextDir, 'events.jsonl'), [{ type: 'supersede', target_run_id: runId, superseding_run_id: successor },
+        { type: 'run_start', chain: ['coding'] }].map(event => JSON.stringify({ ...event, ts: new Date(base).toISOString() })).join('\n') + '\n');
+      write(primary, { ...lock, pid: 2_147_483_647 }); // stale predecessor ownership
+      write(path.join(nextDir, lockModule.RUN_LOCK_NAME), { ...lock, run_id: successor }); // actual live successor
+      const next = read();
+      assert(next.run_id === successor && !next.attention && next.status === 'RUNNING', 'a live audited successor is not the dead predecessor');
+    } finally {
+      Date.now = realNow; (fsRuntime as any).readFileSync = realRead; fs.rmSync(root, { recursive: true, force: true });
+    }
+  },
+});
+
+cases.push({
+  name: '4c8 wait command executes unchanged in PowerShell and Git Bash with space paths',
+  run: () => {
+    if (process.platform !== 'win32') return;
+    const initial = mkGoalCliProjectRoot(), root = initial + ' with spaces';
+    fs.renameSync(initial, root);
+    const feature = 'receipt-shell', runId = 'same-receipt';
+    const directory = path.join(root, 'doc/features', feature, 'goal-runs', runId);
+    try {
+      fs.mkdirSync(directory, { recursive: true });
+      fs.writeFileSync(path.join(directory, 'manifest.json'), JSON.stringify(mkManifest({ feature, run_id: runId,
+        report_dir: path.relative(root, directory).replace(/\\/g, '/') })));
+      fs.writeFileSync(path.join(directory, 'events.jsonl'), happyEvents().map(event => JSON.stringify(event)).join('\n') + '\n');
+      const command = goalStatusWaitCommand(root, FRAMEWORK_ROOT, feature, runId);
+      assert(command.startsWith('node '), 'a quoted executable expression is not a portable shell command');
+      const ps = path.join(root, 'original-command.ps1'), sh = path.join(root, 'original-command.sh');
+      fs.writeFileSync(ps, command + '\n'); fs.writeFileSync(sh, command + '\n');
+      const check = (file: string, args: string[]) => {
+        const result = spawnSync(file, args, { windowsHide: true, encoding: 'utf8', timeout: 30_000 });
+        assert(result.status === 0, result.stderr + result.stdout);
+        assert(JSON.parse(result.stdout).observation.run_id === runId, 'execute the original command without a rewritten prefix');
+      };
+      check('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', ps]);
+      const bash = ['D:/Program Files/Git/bin/bash.exe', 'C:/Program Files/Git/bin/bash.exe'].find(file => fs.existsSync(file));
+      if (bash) check(bash, [sh]);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
   },
 });
 

@@ -92,6 +92,12 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     assertEq(phaseRequiresDevice('spec', hmosLike), false, 'spec 不需设备');
     assertEq(phaseRequiresDevice('plan', hmosLike), false, 'plan 不需设备');
     assertEq(phaseRequiresDevice('coding', hmosLike), false, 'coding 不需设备');
+    const pending = { obligations: [{ id: 'device', kind: 'device-evidence', owner_phase: 'testing', applicability: 'unknown' as const,
+      reason: 'the original definition still decides applicability', basis: [] }] };
+    assertEq(phaseRequiresDevice('testing', hmosLike, pending), false, 'unknown lets the checker resolve inputs before device preparation');
+    assertEq(phaseRequiresDevice('testing', hmosLike, { obligations: [{ ...pending.obligations[0], applicability: 'required' }] }), true,
+      'a genuinely required device obligation retains the original gate');
+    assertEq(phaseRequiresDevice('testing', hmosLike), true, 'the final execution gate does not inherit an earlier unknown exemption');
 
     // host-only UT profile：ut 不连设备
     const hostOnly = profileOf(['device_test.run']);
@@ -880,10 +886,35 @@ export async function runAll(): Promise<UnitCaseResult[]> {
       !/if \(!(?:proc)?[Ee]nv\[k\]\) (?:proc)?[Ee]nv\[k\] = v/.test(helperSrc),
       '不得逐键"不存在才写"——那会把陈旧的冻结上下文留在 env 里',
     );
-    assert(
-      /buildTestingTargetKindCap\(phase, gate\.target\)/.test(src),
-      'testing 封顶须走 buildTestingTargetKindCap（复用既有 capsTestingConclusion 判据）',
-    );
+    assert(src.includes('deviceConclusionCap = buildTestingTargetKindCap(phase, target);'),
+      '延迟就绪的实际 onTarget caller 须更新 testing 封顶');
+    assert(src.includes('deviceConclusionCap = buildTestingTargetKindCap(phase, selected.target);'),
+      '只读选择的实际 selected caller 须建立 testing 封顶');
+    const readiness = require('../../scripts/utils/device-readiness-gate') as typeof import('../../scripts/utils/device-readiness-gate');
+    const { prepareHarnessDeviceExecution } = require('../../harness-runner') as typeof import('../../harness-runner');
+    const originalGate = readiness.applyPhaseEntryDeviceGate;
+    try {
+      for (const deferred of [false, true]) for (const phase of ['testing', 'ut']) {
+        for (const targetKind of ['emulator', 'unknown', 'physical'] as const) {
+          const target = { serial: `${targetKind}-fixture`, targetKind };
+          (readiness as { applyPhaseEntryDeviceGate: typeof originalGate }).applyPhaseEntryDeviceGate = async () => ({ ok: true, notes: [], target });
+          let cap: ReturnType<typeof buildTestingTargetKindCap>;
+          let delivered = 0;
+          const failure = await prepareHarnessDeviceExecution({ projectRoot: '/tmp/x', phase, deferred, onTarget: selected => {
+            delivered++;
+            cap = buildTestingTargetKindCap(phase, selected);
+          } });
+          assertEq(failure, undefined, '就绪成功不应制造设备失败');
+          assertEq(delivered, 1, '原门与延迟门均须交回实际目标');
+          assertEq(Boolean(cap!), phase === 'testing' && targetKind !== 'physical', `${phase}/${targetKind}/deferred=${deferred} 封顶一致`);
+          if (cap!) {
+            assertEq(cap.status, 'FAIL', '非真机 testing 不得整体通过');
+            assertEq(cap.id, 'device_target_kind_caps_testing', '沿用既有封顶检查');
+            assert(cap.details.includes(target.serial), '封顶须绑定实际使用目标');
+          }
+        }
+      }
+    } finally { readiness.applyPhaseEntryDeviceGate = originalGate; }
     assert(
       /if \(deviceConclusionCap\) checks\.push\(deviceConclusionCap\)/.test(src),
       '封顶结果须入 checks 账（参与 violations/报告/退出码），否则等于没封',

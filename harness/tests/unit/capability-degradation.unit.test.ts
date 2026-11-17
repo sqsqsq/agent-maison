@@ -39,8 +39,8 @@ const FRAMEWORK_ROOT = path.resolve(__dirname, '..', '..', '..');
 function assert(condition: unknown, message: string): void { if (!condition) throw new Error(message); }
 function expectThrow(fn: () => void, text: string): void { let actual = ''; try { fn(); } catch (error) { actual = (error as Error).message; } assert(actual.includes(text), `expected ${text}, got ${actual}`); }
 function write(root: string, rel: string, text = 'fixture\n'): void { const file = path.join(root, rel); fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, text, 'utf8'); }
-function project(run: (root: string) => void): void { const root = fs.mkdtempSync(path.join(os.tmpdir(), 'capability-degradation-')); write(root, 'framework.config.json', JSON.stringify({ active_workflow: 'spec-driven' })); try { fs.mkdirSync(path.join(root, 'doc', 'features'), { recursive: true }); run(root); } finally { fs.rmSync(root, { recursive: true, force: true }); } }
-interface TestCase { name: string; run: () => void }
+async function project(run: (root: string) => void | Promise<void>): Promise<void> { const root = fs.mkdtempSync(path.join(os.tmpdir(), 'capability-degradation-')); write(root, 'framework.config.json', JSON.stringify({ active_workflow: 'spec-driven' })); try { fs.mkdirSync(path.join(root, 'doc', 'features'), { recursive: true }); await run(root); } finally { fs.rmSync(root, { recursive: true, force: true }); } }
+interface TestCase { name: string; run: () => void | Promise<void> }
 
 const fallbackAndInvalidCases: TestCase[] = [
   {
@@ -70,7 +70,7 @@ const fallbackAndInvalidCases: TestCase[] = [
   },
   {
     name: 'ordered derive fallback retains absent artifact attempt and normalizes adhoc cases with the shared kernel',
-    run: () => project((root) => {
+    run: () => project(async (root) => {
       const adhocCases = 'open home -> tap login';
       const report = resolveCapabilityReport({ frameworkRoot: FRAMEWORK_ROOT, projectRoot: root, feature: 'demo', phase: 'testing', track: 'full', adhocCases });
       const cases = report.capabilities.find((capability) => capability.id === 'capability_testing_cases')!;
@@ -85,7 +85,7 @@ const fallbackAndInvalidCases: TestCase[] = [
   },
   {
     name: 'degenerate explicit adhoc input remains absent and cannot lift a core capability',
-    run: () => project((root) => {
+    run: () => project(async (root) => {
       for (const adhocCases of ['give the card page a bank filter', '->;→']) {
         const report = resolveCapabilityReport({
           frameworkRoot: FRAMEWORK_ROOT,
@@ -105,7 +105,7 @@ const fallbackAndInvalidCases: TestCase[] = [
   },
   {
     name: 'invalid authoritative artifact terminates resolution and blocks capability without fallback',
-    run: () => project((root) => {
+    run: () => project(async (root) => {
       fs.mkdirSync(path.join(root, 'doc', 'features', 'demo', 'acceptance.yaml'), { recursive: true });
       const report = resolveCapabilityReport({ frameworkRoot: FRAMEWORK_ROOT, projectRoot: root, feature: 'demo', phase: 'ut', track: 'full' });
       const core = report.capabilities.find((capability) => capability.id === 'capability_ut_core_context')!;
@@ -118,7 +118,7 @@ const fallbackAndInvalidCases: TestCase[] = [
 const cases: TestCase[] = [...fallbackAndInvalidCases,
   {
     name: 'missing core artifact blocks, records absent high-priority attempt, and cannot satisfy a floor',
-    run: () => project((root) => {
+    run: () => project(async (root) => {
       const report = resolveCapabilityReport({ frameworkRoot: FRAMEWORK_ROOT, projectRoot: root, feature: 'demo', phase: 'ut', track: 'full' });
       assert(report.assurance === 'blocked', `assurance=${report.assurance}`);
       const core = report.capabilities.find((capability) => capability.id === 'capability_ut_core_context')!;
@@ -131,7 +131,7 @@ const cases: TestCase[] = [...fallbackAndInvalidCases,
   },
   {
     name: 'all resolved capability inputs mechanically project full and obey strict consumption bijection',
-    run: () => project((root) => {
+    run: () => project(async (root) => {
       write(root, 'doc/features/demo/acceptance.yaml');
       write(root, 'doc/features/demo/plan/plan.md');
       write(root, 'doc/features/demo/contracts.yaml');
@@ -153,7 +153,7 @@ const cases: TestCase[] = [...fallbackAndInvalidCases,
   },
   {
     name: 'goal requirement derives without binding the change.md fallback candidate',
-    run: () => project((root) => {
+    run: () => project(async (root) => {
       const report = resolveCapabilityReport({
         frameworkRoot: FRAMEWORK_ROOT,
         projectRoot: root,
@@ -170,7 +170,7 @@ const cases: TestCase[] = [...fallbackAndInvalidCases,
     }),
   },  {
     name: 'goal manifest requirement reaches derive requirement without becoming testing adhoc input',
-    run: () => project((root) => {
+    run: () => project(async (root) => {
       const manifest = buildGoalManifestFromInput({
         feature: 'demo',
         requirement: 'open home -> tap login',
@@ -199,7 +199,7 @@ const cases: TestCase[] = [...fallbackAndInvalidCases,
     }),
   },  {
     name: 'testing static derived-plan failure is not hidden by install SKIP',
-    run: () => project((root) => {
+    run: () => project(async (root) => {
       write(root, 'framework.config.json', JSON.stringify({
         schema_version: '1.1',
         project_name: 'capability-test', active_workflow: 'spec-driven',
@@ -231,7 +231,7 @@ const cases: TestCase[] = [...fallbackAndInvalidCases,
         featureSpec: {},
         resolvedProfile: loadResolvedProfile(root, config),
       } as CheckContext;
-      const checks = __testing_checkDeviceTestRunGateBeforeInstall(ctx);
+      const checks = await __testing_checkDeviceTestRunGateBeforeInstall(ctx);
       assert(
         checks[0]?.status === 'FAIL' && checks[0]?.details?.includes('Hylyre'),
         JSON.stringify(checks),
@@ -239,7 +239,7 @@ const cases: TestCase[] = [...fallbackAndInvalidCases,
     }),
   },  {
     name: 'explicit non-UI applicability skips all visual inputs before source resolution',
-    run: () => project((root) => {
+    run: () => project(async (root) => {
       write(root, 'doc/features/demo/spec/spec.md', 'ui_change: false\n');
       const report = resolveCapabilityReport({ frameworkRoot: FRAMEWORK_ROOT, projectRoot: root, feature: 'demo', phase: 'plan', track: 'full' });
       const visual = report.capabilities.find((capability) => capability.id === 'capability_plan_visual_context')!;
@@ -248,7 +248,7 @@ const cases: TestCase[] = [...fallbackAndInvalidCases,
   },
   {
     name: 'pruned leaves quality axes and completion projections unchanged while blocked remains non-closable',
-    run: () => project((root) => {
+    run: () => project(async (root) => {
       const base = resolveCapabilityReport({ frameworkRoot: FRAMEWORK_ROOT, projectRoot: root, feature: 'demo', phase: 'ut', track: 'full' });
       const checks: CheckResult[] = [{ id: 'ut_dag_exists', category: 'structure', description: 'd', severity: 'BLOCKER', status: 'PASS', details: '' }];
       const opts = { phase: 'ut', visualApplicable: false, assetApplicable: false } as const;
@@ -697,6 +697,8 @@ cases.push({
   }),
 });
 
-export function runAll(): Array<{ name: string; ok: boolean; error?: string }> {
-  return cases.map((testCase) => { try { testCase.run(); return { name: testCase.name, ok: true }; } catch (error) { return { name: testCase.name, ok: false, error: (error as Error).message }; } });
+export async function runAll(): Promise<Array<{ name: string; ok: boolean; error?: string }>> {
+  const results = [];
+  for (const testCase of cases) { try { await testCase.run(); results.push({ name: testCase.name, ok: true }); } catch (error) { results.push({ name: testCase.name, ok: false, error: (error as Error).message }); } }
+  return results;
 }

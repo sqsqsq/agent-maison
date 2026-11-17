@@ -12,13 +12,15 @@ export const ASSET_RESOLUTIONS = ['reuse', 'configure', 'adapt', 'evolve', 'cust
 export const STATIC_CHECKS = ['scalable_font_unit', 'no_hardcoded_hex_color', 'declared_touch_target'] as const;
 
 /** Rebuild only the source-derived inventory; never curate or choose an asset. */
-export function refreshComponentIndex(root: string): ReturnType<typeof scanComponentIndex> {
+export function refreshComponentIndex(root: string, feature?: string): ReturnType<typeof scanComponentIndex> {
   const result = scanComponentIndex(root);
   const file = componentIndexPath(root);
   const text = serializeComponentIndex(result.index);
   if (!fs.existsSync(file) || fs.readFileSync(file, 'utf8') !== text) {
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, text, 'utf8');
+    const write = () => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, text, 'utf8'); };
+    if (feature) (require('./phase-write-boundary') as typeof import('./phase-write-boundary')).recordProducedPhaseWrites({
+      projectRoot: root, feature, producer: 'component-index', files: [file] }, write);
+    else write();
   }
   return result;
 }

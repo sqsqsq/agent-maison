@@ -98,20 +98,73 @@ export function planContracts(f: ReturnType<typeof fixture>): ContractsSpec & { 
 }
 
 const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Promise<void> }> = [
+  { name: '4c8 original contract writer completes required authorized modules and preserves declarations', run(f) {
+    const doc = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
+    const cu = YAML.parse(fs.readFileSync(f.cuFile, 'utf8'));
+    const target = asRecord(resolveBlueprintTarget(doc, cu.design_refs[0].target))!;
+    const contracts = target.contracts as BlueprintRecord;
+    const test = '02-Feature/ledger/src/ohosTest/ets/test/ledger.test.ets';
+    fs.mkdirSync(path.dirname(path.join(f.root, test)), { recursive: true });
+    fs.writeFileSync(path.join(f.root, test), '// frozen test target\n');
+    (contracts.files as string[]).push(test);
+    const catalogFile = path.join(f.root, 'doc/module-catalog.yaml');
+    const catalog = YAML.parse(fs.readFileSync(catalogFile, 'utf8'));
+    Object.assign(catalog.modules[0], { format: 'HAR', entry_file: '02-Feature/ledger/src/main/ets/index.ets' });
+    fs.writeFileSync(catalogFile, YAML.stringify(catalog));
+    const save = () => { fs.writeFileSync(f.blueprintFile, YAML.stringify(doc)); f.bind(); clearFrameworkConfigCache(); };
+    save();
+    const read = () => deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, 'contracts');
+    const generated = read();
+    assert.equal(generated.state, 'resolved', generated.detail);
+    assert.deepEqual((generated.value as ContractsSpec).modules, [{ name: 'ledger', layer: '02-Feature', format: 'HAR', change_type: 'modify', package_path: '02-Feature/ledger' }]);
+    contracts.modules = [{ name: 'ledger', package_path: '02-Feature/ledger', change_type: 'add' }]; save();
+    const authoredBytes = fs.readFileSync(f.blueprintFile);
+    const partial = read(); assert.equal(partial.state, 'resolved', partial.detail);
+    assert.deepEqual((partial.value as ContractsSpec).modules, [{ name: 'ledger', layer: '02-Feature', format: 'HAR', change_type: 'add', package_path: '02-Feature/ledger' }],
+      'unique missing metadata is completed while the original declared change type is preserved');
+    const handwritten = structuredClone(partial.value as ContractsSpec);
+    delete (handwritten.modules[0] as unknown as BlueprintRecord).format;
+    const context = { projectRoot: f.root, frameworkRoot, feature: f.feature, phase: 'plan', featureSpec: { contracts: handwritten,
+      acceptance: partial.artifacts?.['acceptance@1'], useCases: partial.artifacts?.['use-cases@1'] } } as unknown as CheckContext;
+    assert(!checkAuthoritativeContentAligned(context, 'contracts').some(check => check.status === 'FAIL'), 'read-only alignment shares deterministic copies without requiring an author to repeat them');
+    assert.equal(handwritten.modules[0].format, undefined, 'read-only alignment never changes the supplied author artifact');
+    handwritten.modules[0].format = 'HSP';
+    assert(checkAuthoritativeContentAligned(context, 'contracts').some(check => check.status === 'FAIL'), 'an explicit conflicting field is never replaced by a derived copy');
+    assert(fs.readFileSync(f.blueprintFile).equals(authoredBytes), 'completion and comparison never rewrite original authority bytes');
+    const other = { name: 'existing-helper', layer: '05-SystemBase', format: 'HAR', change_type: 'modify', package_path: '05-SystemBase/existing-helper' };
+    contracts.modules = [other]; save();
+    const retained = read(); assert.equal(retained.state, 'resolved', retained.detail);
+    assert.deepEqual((retained.value as ContractsSpec).modules[0], other, 'an existing other module stays intact');
+    assert.equal((retained.value as ContractsSpec).modules[1].name, 'ledger');
+    contracts.modules = [{ name: 'ledger', layer: '02-Feature', format: 'HAR', change_type: 'modify', package_path: '02-Feature/wrong' }]; save();
+    const mismatch = read(); assert.equal(mismatch.state, 'invalid'); assert(mismatch.detail?.includes('错配') && mismatch.detail.includes('package_path'));
+    fs.mkdirSync(path.join(f.root, '04-BusinessBase/ledger'), { recursive: true });
+    contracts.modules = structuredClone((generated.value as ContractsSpec).modules); save();
+    const exact = read(); assert.equal(exact.state, 'resolved', exact.detail);
+    assert.deepEqual((exact.value as ContractsSpec).modules, contracts.modules, 'a complete legal declaration with one frozen path match survives another unrelated directory of the same name');
+    contracts.modules = []; save();
+    (contracts.files as string[]).push('04-BusinessBase/ledger/Other.ets'); save();
+    const ambiguous = read(); assert.equal(ambiguous.state, 'invalid'); assert(ambiguous.detail?.includes('不唯一'));
+    assert.equal(fs.existsSync(resolveFeatureArtifact(f.root, f.feature, 'contracts.yaml').actualPath), false, 'failed preparation never writes a partial contract');
+  } },
   { name: 'daily regression: unresolved construction remains real plan work without invalidating readable design', run(f) {
+    const options = { projectRoot: f.root, frameworkRoot, feature: f.feature, completionTarget: 'feature' as const,
+      requestedResults: ['refresh ledger'], requestedPhases: ['coding', 'review', 'ut'], requirement: 'refresh ledger', overwrite: true };
+    for (const name of ['acceptance.yaml', 'use-cases.yaml']) fs.rmSync(resolveFeatureArtifact(f.root, f.feature, name).actualPath, { force: true });
+    materializeBlueprintSkillInputs(f.root, f.feature, frameworkRoot);
+    assert(!prepareFeatureScopeCandidate(options).scope.phase_chain.includes('plan'), 'known canonical mapping must be generated by its existing writer without a plan call');
     const blueprint = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
     const removeMapping = (value: unknown): void => { if (!value || typeof value !== 'object') return;
       if (!Array.isArray(value)) delete (value as BlueprintRecord).change_unit;
       Object.values(value).forEach(removeMapping); };
     removeMapping(blueprint); fs.writeFileSync(f.blueprintFile, YAML.stringify(blueprint)); f.bind();
+    for (const name of ['acceptance.yaml', 'contracts.yaml', 'use-cases.yaml']) fs.rmSync(resolveFeatureArtifact(f.root, f.feature, name).actualPath, { force: true });
     const source = deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, 'contracts');
     assert.equal(source.state, 'resolved', source.detail); assert.equal((source.value as ContractsSpec).change_unit, undefined);
     assert.equal(deriveDesignPreparationReadiness(f.root, 'ledger-app-blueprint').perUnit.find(unit => unit.changeUnitId === 'ledger-refresh')?.verdict, 'constructable');
     assert.deepEqual(diagnoseBlueprintSkillAuthority(f.root, frameworkRoot, f.feature).findings, []);
     assert(resolveChangeUnitConstructionInputs(f.root, f.feature, frameworkRoot).gap, 'missing decisions became completed construction');
     materializeBlueprintSkillInputs(f.root, f.feature, frameworkRoot);
-    const options = { projectRoot: f.root, frameworkRoot, feature: f.feature, completionTarget: 'feature' as const,
-      requestedResults: ['refresh ledger'], requestedPhases: ['coding', 'review', 'ut'], requirement: 'refresh ledger', overwrite: true };
     assert(prepareFeatureScopeCandidate(options).scope.phase_chain.includes('plan'), 'unresolved construction has no executable owner');
     // The original plan author now chooses its real mapping; no filename/AC inference supplies it.
     fs.writeFileSync(resolveFeatureArtifact(f.root, f.feature, 'contracts.yaml').actualPath, YAML.stringify(planContracts(f)));
@@ -423,12 +476,16 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     candidate.artifact.provenance.extraction_method += ';' + candidate.providerId;
     const mapping = structuredClone((asRecord(resolveBlueprintTarget(doc, unit.design_refs[0].target))!.contracts as BlueprintRecord).change_unit) as any;
     delete mapping.change_unit_ref;
+    mapping.predicate_mappings = [];
     fs.unlinkSync(f.cuFile);
     const observation = { kind: 'decompose' as const, blueprintPath: f.blueprintFile, candidatesPath: path.join(path.dirname(f.blueprintFile), 'change-unit-candidates.json'), issues: [] };
     let rejected: ChangeUnitCandidateRejected | undefined;
     try { acceptChangeUnitCandidate(f.root, { ...candidate, construction_mapping: mapping }); }
     catch (error) { assert(error instanceof ChangeUnitCandidateRejected); rejected = error; }
-    assert(rejected?.designAuthority?.some(item => item.codes.includes('change_unit_runtime_fact_mapping_missing')), JSON.stringify(rejected));
+    assert(rejected && rejected.designAuthority, JSON.stringify(rejected));
+    assert(rejected.designAuthority.some(item => item.codes.includes('change_unit_runtime_fact_mapping_missing')), JSON.stringify(rejected));
+    assert(rejected.message.includes('predicate_id'), 'the same candidate must retain its simultaneous mapping gap');
+    assert(rejected.designAuthority.every(item => !item.codes.includes('change_unit_predicate_mapping_missing')), 'candidate work must not be assigned as blueprint work');
     const routed = initialDesignCandidateRejection(observation, rejected, candidate.artifact.blueprint_id);
     assert.equal(routed.kind, 'author'); assert.equal(routed.designRepair?.feature, candidate.artifact.blueprint_id);
     assert(!fs.existsSync(f.cuFile)); assert(!resolveFeatureArtifact(f.root, f.feature, 'contracts.yaml').exists, '拒绝必须保留原子回滚');
@@ -443,6 +500,80 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
       assert.equal(error.designAuthority, undefined, '候选缺 mapping 不得错派蓝图作者');
       assert.equal(initialDesignCandidateRejection(observation, error, candidate.artifact.blueprint_id).kind, 'decompose');
     }
+  } },
+  { name: '4c8d73b1 component mapping precheck acceptance and Feature repair retain their original owners', async run(f) {
+    const contracts = planContracts(f);
+    const { change_unit_ref: _identity, ...mapping } = contracts.change_unit;
+    const doc = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
+    const cu = asChangeUnitArtifact(loadCanonicalChangeUnit(f.root, 'ledger-app-blueprint', 'ledger-refresh').changeUnit);
+    const node = asRecord(resolveBlueprintTarget(doc, { kind: 'node', view_id: 'development', id: 'ledger-module' }))!;
+    asRecord(node.provenance)!.evidence_strength = 'authoritative';
+    node.contracts = { components: [{ name: 'LedgerPanel', module: 'LedgerModule', kind: 'component', file: 'src/ledger/LedgerPanel.ets' }],
+      files: ['src/ledger/LedgerPanel.ets'] };
+    const decision = { decision_id: 'ledger-panel-selection', kind: 'component_asset_selection', target_ref: 'view:development/node:ledger-module',
+      status: 'answered_with_evidence', asset_resolution: 'custom', rationale: 'The scoped presentation has no shared implementation.',
+      owner: 'component-design', verification_refs: ['planned:test/ledger/LedgerFeature.test.ets'],
+      provenance: { ...asRecord(node.provenance), source_ref: 'doc/component-index.yaml' } };
+    doc.decisions_and_gaps.decisions.push(decision);
+    const ref: ComponentBlueprintRef = { ...cu.component_blueprint_ref, target: { kind: 'decision', id: decision.decision_id } };
+    cu.design_refs.push(ref);
+    mapping.design_ref_mappings.push({ design_ref: ref, implementation_refs: ['planned:src/ledger/LedgerPanel.ets#WrongPanel'],
+      verification_refs: ['planned:test/ledger/LedgerFeature.test.ets'] });
+    fs.writeFileSync(path.join(f.root, 'doc/component-index.yaml'), 'schema_version: "1.0"\ncomponents: []\n');
+    const before = [fs.readFileSync(f.blueprintFile), fs.readFileSync(f.cuFile)];
+    const candidate = () => deriveBlueprintCandidateSkillInput(f.root, f.feature, frameworkRoot, 'contracts',
+      { blueprint: doc, changeUnit: cu, constructionMapping: mapping });
+    const invalid = candidate();
+    assert.equal(invalid.state, 'invalid');
+    assert(invalid.codes?.includes('change_unit_design_mapping_incomplete') && invalid.detail?.includes('未命中 components.file#name'), invalid.detail);
+    assert.equal(mapping.design_ref_mappings.at(-1)!.implementation_refs.length, 1, '诊断不得重写作者候选');
+    const missingDeclaration = structuredClone(doc);
+    const uiTarget = resolveBlueprintTarget(missingDeclaration, { kind: 'node', view_id: 'development', id: 'ledger-module' });
+    uiTarget.kind = 'component'; delete (uiTarget.contracts as BlueprintRecord).components;
+    const mixed = deriveBlueprintCandidateSkillInput(f.root, f.feature, frameworkRoot, 'contracts',
+      { blueprint: missingDeclaration, changeUnit: cu, constructionMapping: mapping });
+    assert(mixed.codes?.includes('change_unit_blueprint_reconciliation_required') && mixed.codes.includes('change_unit_design_mapping_incomplete'), mixed.detail);
+    assert(mixed.detail?.includes('contracts.components.file/name'), 'missing blueprint declarations must identify their actual owner before guessing candidate symbols');
+    mapping.design_ref_mappings.at(-1)!.implementation_refs = ['planned:src/ledger/LedgerPanel.ets#LedgerPanel'];
+    const valid = candidate();
+    assert(!valid.codes?.includes('change_unit_design_mapping_incomplete'), valid.detail);
+    assert.deepEqual([fs.readFileSync(f.blueprintFile), fs.readFileSync(f.cuFile)], before, '候选预检不得发布或重签canonical');
+
+    // Formal Feature mapping drift belongs to the Feature writer, even when its design is already published.
+    const { refreshBlueprintFingerprints, writeBackAdmission } = require('../../scripts/utils/design-repair-unattended') as typeof import('../../scripts/utils/design-repair-unattended');
+    doc.providers.find((provider: any) => provider.provider_id === 'component-assets').available = true;
+    refreshBlueprintFingerprints(doc); writeBackAdmission(doc, { projectRoot: f.root, canonicalPath: f.blueprintFile });
+    for (const pointer of [cu.component_blueprint_ref, ...cu.design_refs, ...cu.touches.map(touch => touch.design_ref)]) pointer.source_fingerprint = doc.source_fingerprint;
+    fs.writeFileSync(f.blueprintFile, YAML.stringify(doc)); fs.writeFileSync(f.cuFile, YAML.stringify(cu)); f.bind();
+    const published = asChangeUnitArtifact(loadCanonicalChangeUnit(f.root, 'ledger-app-blueprint', 'ledger-refresh').changeUnit);
+    for (const row of mapping.design_ref_mappings) row.design_ref = published.design_refs.find(ref => JSON.stringify(ref.target) === JSON.stringify(row.design_ref.target))!;
+    materializeBlueprintSkillInputs(f.root, f.feature, frameworkRoot, undefined, undefined, mapping);
+    const file = resolveFeatureArtifact(f.root, f.feature, 'contracts.yaml').actualPath;
+    const authored = YAML.parse(fs.readFileSync(file, 'utf8'));
+    authored.change_unit.design_ref_mappings.find((row: any) => row.design_ref.target.id === decision.decision_id).implementation_refs = ['planned:src/ledger/LedgerPanel.ets#WrongPanel'];
+    fs.writeFileSync(file, YAML.stringify(authored));
+    const projected = deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, 'contracts');
+    assert.equal(projected.state, 'resolved', projected.detail);
+    const loader = new SpecLoader(f.root, undefined, undefined, frameworkRoot), parsed = loader.loadFeatureSpec(f.feature);
+    const checks = await checkPlan.check({ projectRoot: f.root, frameworkRoot, frameworkRel: '', harnessRoot: path.join(frameworkRoot, 'harness'),
+      feature: f.feature, phase: 'plan', featureSpec: parsed, phaseRule: loader.loadPhaseRule('plan'),
+      resolvedProfile: loadResolvedProfile(f.root, loadFrameworkConfig(f.root), frameworkRoot),
+      resolvedInputs: { phase: 'plan', values: {}, artifacts: { 'contracts@1': parsed.contracts, 'acceptance@1': parsed.acceptance, 'use-cases@1': parsed.useCases },
+        context: { schema_version: '1.1', subject: { feature: f.feature }, obligations: {}, required_outputs: [] } } } as CheckContext);
+    assert(checks.some(check => check.id === 'component_asset_projection' && check.status === 'FAIL' && check.repair_owner !== 'external'), JSON.stringify(checks));
+    assert(!checks.some(check => check.id === 'authoritative_content_aligned' && check.repair_owner === 'external'), JSON.stringify(checks));
+
+    // A new decomposition's authored bad landing goes back to that candidate, without publishing either artifact.
+    fs.unlinkSync(file); fs.unlinkSync(f.cuFile);
+    mapping.design_ref_mappings.find(row => row.design_ref.target.id === decision.decision_id)!.implementation_refs = ['planned:src/ledger/LedgerPanel.ets#WrongPanel'];
+    const proposal = { providerId: 'builtin-vertical-slice-decomposition', artifact: published, construction_mapping: mapping };
+    proposal.artifact.provenance.extraction_method += ';' + proposal.providerId;
+    let rejected: ChangeUnitCandidateRejected | undefined;
+    try { acceptChangeUnitCandidate(f.root, proposal); } catch (error) { assert(error instanceof ChangeUnitCandidateRejected); rejected = error; }
+    assert(rejected && !rejected.designAuthority, JSON.stringify(rejected));
+    assert.equal(initialDesignCandidateRejection({ kind: 'decompose', blueprintPath: f.blueprintFile,
+      candidatesPath: path.join(path.dirname(f.blueprintFile), 'change-unit-candidates.json'), issues: [] }, rejected, published.blueprint_id).kind, 'decompose');
+    assert(!fs.existsSync(f.cuFile) && !fs.existsSync(file), '拒绝候选不得留下已物化产物');
   } },
   { name: 'P2 exact known flow relation projects mechanically regardless of record location; ambiguity stays unresolved', run(f) {
     const doc = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));

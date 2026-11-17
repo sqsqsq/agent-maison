@@ -6,17 +6,287 @@ import { resolveArtifactContent } from './artifact-content';
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { createHash } from 'crypto';
+import { featurePhaseReportsDir } from '../../config';
+import { loadGoalManifestFromRun } from './goal-manifest';
+import { loadLineageRunEvents } from './goal-run-creation';
+import { resolveEffectiveRunEnd } from './goal-runner-phase';
+import { inferLegacyProjectRoot, resolveDependencyPath, isInsideProjectRoot } from './project-relative-path';
+import { stableStringify } from './phase-evidence-manifest';
+import { collectFailureRoutesV1, failureRouteSlug, type FailureRouteV1 } from './hylyre-failure-routing-v1';
 import type { HylyreTrace, HylyreTraceCase } from '../../../profiles/hmos-app/harness/providers/device-test-run';
 import { parseHylyreTrace } from '../../../profiles/hmos-app/harness/providers/device-test-run';
 import { listExecutionKeyRuns } from '../../../profiles/hmos-app/harness/execution-key';
 import {
   selectBestNonPlaceholderDerivedPlan,
   tryParseYamlFrontmatter,
+  extractDerivedPlanCases,
+  parsePlannedStepsFromCell,
 } from './derived-hylyre-plan';
-import { dispatchHylyreResult } from './hylyre-result-protocol';
+import { dispatchHylyreResult, requireV1ForGate } from './hylyre-result-protocol';
 import { getSectionContent, extractTables, extractDeclaredVerdict, type MdTable } from './markdown-parser';
 import type { UseCaseDef, UseCasesSpec } from './types';
 import type { DeviceTestTimingDocument } from '../../../profiles/hmos-app/harness/device-test-timings';
+import { normalizePlannedSteps, PLANNED_SELECTOR_DISAMBIGUATION_FIELDS } from './planned-step-normalizer';
+
+export interface PendingTestingRetest {
+  route: FailureRouteV1;
+  tracePath: string;
+  derivedPlanPath: string;
+  behavior: string;
+  candidateEvidence: string[];
+}
+
+/** The original request's feature evidence keeps failed behavior alive across plan edits; no new ledger. */
+export function readPendingTestingRetests(input: {
+  projectRoot: string; feature: string; runId?: string; frameworkRoot?: string; currentHapSha256?: string | null;
+}): PendingTestingRetest[] {
+  if (!input.runId) return [];
+  let since: number;
+  let runIds: Set<string>;
+  let until = Infinity;
+  try {
+    const manifest = loadGoalManifestFromRun(input.projectRoot, input.runId, { feature: input.feature });
+    const events = loadLineageRunEvents(input.projectRoot, input.feature, input.runId);
+    since = Date.parse(manifest.created_at); runIds = new Set([input.runId]);
+    let predecessor = manifest.successor_of;
+    while (predecessor && !runIds.has(predecessor)) {
+      const prior = loadGoalManifestFromRun(input.projectRoot, predecessor, { feature: input.feature });
+      if (prior.requirement !== manifest.requirement) break; // A new authorized request establishes its own applicable behavior.
+      since = Math.min(since, Date.parse(prior.created_at)); runIds.add(predecessor); predecessor = prior.successor_of;
+    }
+    const terminal = resolveEffectiveRunEnd(events);
+    if (terminal?.ts) until = Date.parse(terminal.ts);
+    if (!Number.isFinite(since)) return [];
+  } catch { return []; }
+  const reports = featurePhaseReportsDir(input.projectRoot, input.feature, 'testing', input.frameworkRoot);
+  const sha = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex');
+  const observed = listExecutionKeyRuns(reports).flatMap(view => {
+    const record = view.record;
+    if (Date.parse(record.run_started_at) < since || Date.parse(record.run_started_at) > until || !Number.isFinite(Date.parse(record.run_started_at))
+      || record.goal_invocation && !runIds.has(record.goal_invocation.run_id)) return [];
+    const tracePath = resolveDependencyPath(input.projectRoot, record.trace_path, inferLegacyProjectRoot(input.projectRoot, record));
+    const derivedPlanPath = path.join(view.runDir, 'test-plan.hylyre.md');
+    try {
+      if (![tracePath, derivedPlanPath].every(file => isInsideProjectRoot(fs.realpathSync(input.projectRoot), fs.realpathSync(file)))) return [];
+      const traceBytes = fs.readFileSync(tracePath), planBytes = fs.readFileSync(derivedPlanPath);
+      if (sha(traceBytes) !== record.trace_sha256 || sha(planBytes) !== record.inputs?.derived_plan_sha256) return [];
+      const parsed = requireV1ForGate(JSON.parse(traceBytes.toString('utf8')), { frameworkRoot: input.frameworkRoot });
+      if (!parsed.ok || !parsed.trace) return [];
+      const rows = extractDerivedPlanCases(planBytes.toString('utf8'));
+      const plans = new Map(rows.flatMap(row => {
+        const steps = parsePlannedStepsFromCell(row.steps_raw);
+        return steps.ok ? [[row.tc_id, { ...row, steps: steps.steps }] as const] : [];
+      }));
+      const behavior = new Map([...plans].map(([id, row]) => [id, stableStringify({ precondition: row.precondition, steps: row.steps, expected: row.expected })]));
+      return [{ record, trace: parsed.trace, tracePath, derivedPlanPath, behavior, plans }];
+    } catch { return []; }
+  }).sort((a, b) => Date.parse(a.record.run_started_at) - Date.parse(b.record.run_started_at));
+  const pending = new Map<string, PendingTestingRetest>();
+  let independent: { issues: Map<string, import('./repair-candidates').IssueVerificationEntry[]>; matchesCurrent(file: string): boolean } | null | undefined;
+  const independentEvidence = (): typeof independent => {
+    if (independent !== undefined) return independent;
+    independent = null;
+    try {
+      const verifier = require('./verifier-evidence') as typeof import('./verifier-evidence');
+      const loaded = verifier.loadVerifierEvidence(input.projectRoot, input.feature, 'testing', { frameworkRoot: input.frameworkRoot });
+      if (!loaded.ok) return null;
+      const material = require('./verifier-material') as typeof import('./verifier-material');
+      const view = material.readVerifierMaterialOrNull(reports, loaded.evidence.subject_id);
+      if (!view) return null;
+      const freshness = new Map<string, boolean>();
+      const matchesCurrent = (file: string): boolean => {
+        if (!freshness.has(file)) {
+          try { freshness.set(file, material.verifierMaterialFileMatchesCurrent({ projectRoot: input.projectRoot, feature: input.feature, material: view, file })); }
+          catch { freshness.set(file, false); }
+        }
+        return freshness.get(file)!;
+      };
+      if (!view.files.every(file => matchesCurrent(file.path))) return null;
+      const { parseIssueVerificationBlock } = require('./repair-candidates') as typeof import('./repair-candidates');
+      const issues = new Map<string, import('./repair-candidates').IssueVerificationEntry[]>();
+      for (const entry of parseIssueVerificationBlock(loaded.evidence.report_text).entries) issues.set(entry.issue, [...issues.get(entry.issue) ?? [], entry]);
+      independent = { issues, matchesCurrent };
+    } catch { /* A missing or unreadable independent result remains unknown for this read. */ }
+    return independent;
+  };
+  const independentlyCovered = (prior: typeof observed[number], route: FailureRouteV1, next: typeof observed[number], caseId: string): boolean => {
+    const verification = independentEvidence();
+    if (!verification) return false;
+    const relative = (file: string): string => path.relative(input.projectRoot, file).replace(/\\/g, '/');
+    const files = [prior.tracePath, prior.derivedPlanPath, next.tracePath, next.derivedPlanPath].map(relative);
+    if (!files.every(verification.matchesCurrent)) return false;
+    const matches = verification.issues.get(`testing_failure_routing_${failureRouteSlug(route.caseId, route.stepIndex)}`) ?? [];
+    const evidence = matches[0]?.evidence?.replace(/\\/g, '/');
+    return matches.length === 1 && matches[0].verdict === 'refuted' && !matches[0].invalid_reason && !!evidence
+      && [relative(prior.tracePath), relative(next.tracePath), route.caseId, caseId].every(ref => evidence.includes(ref));
+  };
+  // Formal UT remains available when an adapter has no independent verifier. Every locator
+  // below is qualified by the current scope, source manifest, native case result and build.
+  let unitEvidence: { ids: Set<string>; startedAt: number } | null | undefined;
+  const currentUnitEvidence = (): typeof unitEvidence => {
+    if (unitEvidence !== undefined) return unitEvidence;
+    unitEvidence = null;
+    try {
+      const { loadFrozenExecutionScope, resolveEffectiveScopeSource } = require('./goal-run-creation') as typeof import('./goal-run-creation');
+      const { readScopeAcceptance } = require('./feature-track') as typeof import('./feature-track');
+      const frameworkRoot = input.frameworkRoot ?? (require('../../repo-layout') as typeof import('../../repo-layout')).resolveProbeFrameworkRoot(input.projectRoot, path.resolve(__dirname, '../..'));
+      const birth = loadFrozenExecutionScope(input.projectRoot, input.feature, input.runId!);
+      const scope = resolveEffectiveScopeSource(input.projectRoot, input.feature, input.runId)?.scope;
+      if (!birth || !scope || !scope.obligations.some(obligation => obligation.kind === 'unit-evidence' && obligation.applicability === 'required')) return null;
+      const context = { feature: input.feature, frameworkRoot };
+      const original = readScopeAcceptance(input.projectRoot, { facts: birth.obligations }, context)?.value;
+      const acceptance = readScopeAcceptance(input.projectRoot, { facts: scope.obligations }, context);
+      const current = acceptance?.value;
+      if (!original || !current || !acceptance) return null;
+      const ids = new Set([...(original.criteria ?? []), ...(original.boundaries ?? [])].filter(item => item.ut_layer === 'unit'
+        && [...(current.criteria ?? []), ...(current.boundaries ?? [])].some(now => now.id === item.id && now.ut_layer === 'unit')).map(item => item.id.toUpperCase()));
+      if (!ids.size) return null;
+      const evidence = require('./phase-evidence-manifest') as typeof import('./phase-evidence-manifest');
+      const manifest = evidence.loadPhaseEvidenceManifest(input.projectRoot, input.feature, 'ut');
+      if (!manifest?.integrityOk) return null;
+      const bound = [...manifest.manifest.inputs, ...manifest.manifest.outputs];
+      const freshness = new Map<string, boolean>();
+      const matches = (file: string): boolean => {
+        if (!freshness.has(file)) freshness.set(file, bound.some(entry => entry.path === file && entry.exists
+          && evidence.evidenceEntryMatchesCurrentFile(input.projectRoot, entry, input.feature)));
+        return freshness.get(file)!;
+      };
+      const construction = scope.obligations.flatMap(obligation => obligation.basis).find(binding => binding.source.kind === 'artifact'
+        ? binding.source.artifact === 'contracts@1' : binding.source.provider_id === 'derive.blueprint-contracts');
+      if (!construction || ![...acceptance.binding.source_refs, ...construction.source_refs].every(matches)) return null;
+      const relative = (file: string): string => path.relative(input.projectRoot, file).replace(/\\/g, '/');
+      const utReports = featurePhaseReportsDir(input.projectRoot, input.feature, 'ut', frameworkRoot);
+      const reportFile = path.join(utReports, 'script-report.json');
+      if (!matches(relative(reportFile))) return null;
+      const report = JSON.parse(fs.readFileSync(reportFile, 'utf8')) as import('./types').ScriptReport;
+      const { isRequiredCheckGap } = require('./check-disposition') as typeof import('./check-disposition');
+      if (report.feature !== input.feature || report.phase !== 'ut' || report.summary?.verdict !== 'PASS'
+        || !Array.isArray(report.checks) || report.checks.some(check => isRequiredCheckGap(check))
+        || !report.checks.some(check => check.id === 'ut_hvigor_test' && check.status === 'PASS')) return null;
+      const native = require('../../../profiles/hmos-app/harness/execution-key') as typeof import('../../../profiles/hmos-app/harness/execution-key');
+      const host = require('../../../profiles/hmos-app/harness/ut-host-impl') as typeof import('../../../profiles/hmos-app/harness/ut-host-impl');
+      const profile = (require('../../profile-loader') as typeof import('../../profile-loader')).loadResolvedProfile(input.projectRoot,
+        (require('../../config') as typeof import('../../config')).loadFrameworkConfig(input.projectRoot), frameworkRoot);
+      const latest = native.listExecutionKeyRuns(utReports, 'ut').find(view => Date.parse(view.record.run_started_at) >= since
+        && Date.parse(view.record.run_started_at) <= until && (!view.record.goal_invocation || runIds.has(view.record.goal_invocation.run_id)));
+      if (!latest) return null;
+      const { record, runDir } = latest, modules = native.utExecutionModules(record);
+      const executionInputs = host.currentUtExecutionInputs(input.projectRoot, modules);
+      if (!modules.length || !executionInputs || record.inputs.profile !== profile.name || native.computeExecutionKey(record.inputs) !== record.execution_key
+        || executionInputs.tool_config_sha256 !== record.inputs.tool_config_sha256 || stableStringify(executionInputs.flags) !== stableStringify(record.inputs.flags)
+        || Date.parse(report.timestamp) < Date.parse(record.run_started_at)
+        || Date.parse(manifest.manifest.generated_at) < Date.parse(report.timestamp)
+        || !native.isExecutionRecordReusable(record, runDir, { executionKey: record.execution_key, artifacts: native.utFrozenRunArtifacts(modules) }).ok) return null;
+      const contracts = (require('./capability-resolution') as typeof import('./capability-resolution')).readRunBoundContracts(input.projectRoot, frameworkRoot, input.feature, input.runId, undefined, scope);
+      const hdc = require('../../../profiles/hmos-app/harness/hdc-runner') as typeof import('../../../profiles/hmos-app/harness/hdc-runner');
+      const product = (require('../../../profiles/hmos-app/harness/product-selection') as typeof import('../../../profiles/hmos-app/harness/product-selection')).resolveProductSelection({ projectRoot: input.projectRoot, purpose: 'ut' });
+      if (product.source === 'unresolved') return null;
+      const hapDigests = modules.sort().map(module => {
+        const owner = contracts.modules?.find(item => item.name === module);
+        if (!owner) throw new Error('UT module outside current construction');
+        const hap = hdc.discoverOhosTestArtifacts(input.projectRoot, owner.package_path, module, product.product ?? undefined);
+        if (!hap.signedPath || hap.artifactValidation?.status !== 'valid') throw new Error('current UT build unavailable');
+        return `${module}=${sha(fs.readFileSync(hap.signedPath))}`;
+      });
+      if (native.sha256Text(hapDigests.join('\n')) !== record.inputs.hap_sha256_full) return null;
+      const { loadCoverageEvidence } = require('./coverage-evidence') as typeof import('./coverage-evidence');
+      const coverage = loadCoverageEvidence(input.projectRoot, input.feature);
+      if (coverage?.feature !== input.feature) return null;
+      const { extractUtItBlocks } = require('./ut-it-blocks') as typeof import('./ut-it-blocks');
+      const { hasExactUtScopeTag } = require('./ut-tag-match') as typeof import('./ut-tag-match');
+      const passed = new Set(modules.flatMap(module => {
+        const result = JSON.parse(fs.readFileSync(path.join(runDir, `frozen.ut-result.${module}.json`), 'utf8'));
+        const log = hdc.parseHypiumStdout(fs.readFileSync(path.join(runDir, `frozen.hdc-test.${module}.log`), 'utf8'));
+        return host.utModuleRoundSucceeded(result) && log && log.failed === 0 && log.total > 0 ? (log.passed_tests ?? []).map(test => `${module}\0${test.test}`) : [];
+      }));
+      const covered = new Set<string>();
+      const qualifiedTests = new Map<string, string[]>();
+      for (const mapping of coverage.mappings ?? []) {
+        const file = mapping.evidence_ref, id = mapping.scope_id.toUpperCase();
+        if (!ids.has(id) || mapping.evidence_source !== 'ut_tags' || !file || !matches(file)) continue;
+        const module = contracts.modules?.find(item => file.startsWith(item.package_path.replace(/\/$/, '') + '/'));
+        if (!module || !modules.includes(module.name)) continue;
+        if (!qualifiedTests.has(file)) {
+          const sources = host.utAcceptanceSourcePaths(bound.map(entry => entry.path), [file]);
+          qualifiedTests.set(file, sources.some(source => source.includes('/src/main/')) && sources.every(matches)
+            ? extractUtItBlocks(fs.readFileSync(path.resolve(input.projectRoot, file), 'utf8')).filter(test => passed.has(`${module.name}\0${test.name}`)
+              && report.checks.some(check => check.id === test.name && check.status === 'PASS' && check.affected_files?.includes(file))).map(test => test.name) : []);
+        }
+        if (qualifiedTests.get(file)!.some(name => hasExactUtScopeTag(name, id))) covered.add(id);
+      }
+      unitEvidence = { ids: covered, startedAt: Date.parse(record.run_started_at) };
+    } catch { /* Missing current formal execution is unknown, never a report-string PASS. */ }
+    return unitEvidence;
+  };
+  for (const [index, prior] of observed.entries()) for (const route of collectFailureRoutesV1(prior.trace).routes) {
+    const behavior = prior.behavior.get(route.caseId);
+    if (!behavior) continue;
+    const original = prior.trace.cases.find(test => test.id.toUpperCase() === route.caseId)!;
+    const trigger = (step: typeof original.steps[number], includeSelector = true): string => {
+      const observation = 'observation' in step.outcome ? step.outcome.observation : undefined;
+      return stableStringify({ kind: step.kind, role: step.role, selector: includeSelector ? step.selector?.request : undefined,
+        assertion: observation?.kind === 'assertion' ? observation.assertion_type : undefined,
+        expected: observation?.kind === 'assertion' ? Object.fromEntries(Object.entries(observation.facts ?? {}).filter(([key]) => key.startsWith('expected'))) : undefined });
+    };
+    const testOwned = route.owner === 'testing' && !route.codingCandidate;
+    const repairedTest = (next: typeof observed[number], test: typeof original): boolean => {
+      if (!testOwned) return false;
+      const before = prior.plans.get(route.caseId), after = next.plans.get(test.id.toUpperCase());
+      if (!before || !after || before.precondition !== after.precondition || before.expected !== after.expected || before.ac_ref !== after.ac_ref) return false;
+      const assertions = (steps: Record<string, unknown>[]) => normalizePlannedSteps(steps).filter(step => step.role === 'assertion');
+      const oldAssertions = assertions(before.steps), newAssertions = assertions(after.steps);
+      if (!oldAssertions.length) return false;
+      const selectorMatches = (step: typeof original.steps[number], assertion: typeof oldAssertions[number]): boolean => !assertion.selector
+        || step.selector?.request.kind === assertion.selector.kind && step.selector.request.value === assertion.selector.value
+          && step.selector.request.match === assertion.selector.match;
+      const sameTarget = (left: typeof original.steps[number], right: typeof original.steps[number]): boolean => {
+        const id = (step: typeof left): string | null | undefined => step.selector?.resolution.state === 'unique' ? step.selector.resolution.selected?.id : undefined;
+        return !!id(left) && id(left) === id(right);
+      };
+      const predicate = (assertion: typeof oldAssertions[number]): string => stableStringify({ kind: assertion.kind,
+        body: Object.fromEntries(Object.entries(assertion.body).filter(([key]) => !['by_id', 'by_text', 'by_type', 'by_key', 'match', ...PLANNED_SELECTOR_DISAMBIGUATION_FIELDS].includes(key))) });
+      const actual = (assertion: typeof oldAssertions[number]) => test.steps.find(step => step.index === assertion.index && step.kind === assertion.kind
+        && step.role === 'assertion' && step.outcome.status === 'passed' && selectorMatches(step, assertion));
+      if (!newAssertions.every(actual)) return false;
+      let cursor = 0;
+      const retained = oldAssertions.every(old => {
+        while (cursor < newAssertions.length) {
+          const now = newAssertions[cursor++];
+          if (old.kind === now.kind && stableStringify(old.body) === stableStringify(now.body)) return true;
+          const previous = original.steps.find(step => step.index === old.index && step.kind === old.kind && step.role === 'assertion' && selectorMatches(step, old));
+          const current = actual(now)!;
+          // A selector alias needs the original and new native observations to identify one
+          // actual object; equal prose or an unresolved old selector cannot supply that fact.
+          if (old.selectors.length === 1 && now.selectors.length === 1 && previous && sameTarget(previous, current)
+            && predicate(old) === predicate(now) && trigger(previous, false) === trigger(current, false)) return true;
+        }
+        return false;
+      });
+      // Changing an action is a test repair; retaining the expected prose while weakening
+      // the executable assertion is not. Require each preserved assertion to really pass.
+      return retained
+        && original.steps.filter(step => step.role === 'assertion' && 'observation' in step.outcome && step.outcome.observation?.kind === 'assertion')
+          .every(step => newAssertions.some(assertion => { const now = actual(assertion)!;
+            return trigger(now) === trigger(step) || sameTarget(step, now) && trigger(now, false) === trigger(step, false); }));
+    };
+    const deviceCovered = !!input.currentHapSha256 && observed.slice(index + 1).some(next => next.record.inputs.hap_sha256_full === input.currentHapSha256
+      && next.trace.cases.some(test => test.execution === 'completed'
+        && test.verification === 'passed' && test.evidence === 'complete'
+        && test.steps.some(step => step.role === 'assertion' && step.outcome.status === 'passed')
+        && test.steps.every(step => step.outcome.status === 'passed' || step.kind === 'expected_check' && step.outcome.status === 'skipped')
+        && (next.behavior.get(test.id.toUpperCase()) === behavior && original.steps.filter(step => step.index <= route.stepIndex)
+          .every(step => test.steps.some(now => now.index === step.index && trigger(now) === trigger(step)))
+          || repairedTest(next, test) || independentlyCovered(prior, route, next, test.id))));
+    const refs = testOwned ? (require('./check-acceptance') as typeof import('./check-acceptance')).extractAcceptanceIdRefs(prior.plans.get(route.caseId)?.ac_ref ?? '') : [];
+    const unit = !deviceCovered && refs.length ? currentUnitEvidence() : null;
+    const unitCovered = !!unit && unit.startedAt > Date.parse(prior.record.run_started_at) && refs.every(id => unit.ids.has(id.toUpperCase()));
+    if (!deviceCovered && !unitCovered) pending.set(`${route.caseId}:${route.stepIndex}:${behavior}`, { route, tracePath: prior.tracePath, derivedPlanPath: prior.derivedPlanPath, behavior,
+      candidateEvidence: observed.slice(index + 1).filter(next => !!input.currentHapSha256 && next.record.inputs.hap_sha256_full === input.currentHapSha256)
+        .flatMap(next => [next.tracePath, next.derivedPlanPath]) });
+  }
+  return [...pending.values()];
+}
 
 /** Normalize execution status labels for report↔trace comparison. */
 function normalizeExecStatus(status: string): string {

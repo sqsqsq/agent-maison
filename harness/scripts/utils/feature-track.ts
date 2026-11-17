@@ -1,4 +1,5 @@
 import type { IdentityNeutralDigestReaders } from './identity-neutral-digest';
+import { executionCompletionPhases } from './execution-scope';
 import { readRepairDependencyContext } from './repair-responsibility';
 import { phaseCompletionProblems, isBlockingCheck } from './check-disposition';
 import { resolveExecutionScope, readScopeRevisionUserControl, applyScopeUserControl, assertRevisionKeepsRequiredObligations, executionScopeFingerprint, effectiveScopeView, scopeProofHistory, phaseEvidenceIsCurrent, scopeRevisionInvalidations, authorizedScopePhases, acceptsDefinitionInputProof, EXECUTION_SOURCE_KINDS, OBLIGATION_PROVIDERS, type ScopeHistoryEvent, type ScopeEvidenceRef, type ExecutionScope, type ExecutionScopeInput, type ResolvedScopeFacts } from './execution-scope';
@@ -692,6 +693,30 @@ function candidateInput(
   } catch {
     return undefined;
   }
+}
+
+/** Reparse only still-valid inputs; content/authority changes remain the original owner's work. */
+export function refreshScopeBindingInput(ctx: { projectRoot: string; frameworkRoot: string; feature: string; requirement?: string },
+  previous: ExecutionScope): ExecutionScopeInput | undefined {
+  const legacyRoot = inferLegacyProjectRoot(ctx.projectRoot, previous);
+  let changed = false;
+  const facts = structuredClone(previous.obligations);
+  const refresh = (binding: InputBinding, phase: string): InputBinding => {
+    if (binding.source.kind === 'derive' && ['derive.codebase', 'derive.test-targets', ...DEPENDENCY_ONLY_PROVIDER_IDS].includes(binding.source.provider_id)) return binding;
+    try { readBoundInput({ ...ctx, phase, track: 'full' }, binding, legacyRoot); } catch { return binding; }
+    const current = candidateInput(ctx, phase, binding.input_id)?.binding;
+    if (!current || JSON.stringify(current.source) !== JSON.stringify(binding.source)) return binding;
+    if (executionScopeFingerprint(current) !== executionScopeFingerprint(binding)) { changed = true; return current; }
+    return binding;
+  };
+  for (const fact of facts) {
+    fact.basis = fact.basis.map(binding => refresh(binding, fact.owner_phase));
+    fact.satisfied_by = fact.satisfied_by?.map(proof => 'input_id' in proof ? refresh(proof, fact.owner_phase) : proof);
+  }
+  if (!changed || !hasNewSourcedFact(previous, facts, '')) return undefined;
+  return { request: { completion_target: previous.completion_target, requested_results: [...previous.requested_results],
+    requested_phases: executionCompletionPhases(previous), ...(previous.request_impact ? { impact: structuredClone(previous.request_impact) } : {}) },
+    facts, contract_fingerprints: [], ...(previous.control_edges ? { control_edges: structuredClone(previous.control_edges) } : {}) };
 }
 
 /**

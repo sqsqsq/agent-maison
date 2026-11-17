@@ -9,6 +9,7 @@ import {
   ComponentBlueprintResolutionError,
   asRecord,
   asRecords,
+  asStrings,
   blueprintAuthorContent,
   renderBlueprintFieldResponsibilities,
 } from '../../scripts/utils/component-blueprint-model';
@@ -21,7 +22,7 @@ import {
 import { validateComponentBlueprint, diagnoseBlueprintContent, type ComponentBlueprintValidationContext } from '../../scripts/utils/component-blueprint-validator';
 import { BLUEPRINT_REVIEW_FORMAT, renderBlueprintReviewMarkdown } from '../../scripts/utils/blueprint-review-projection';
 import { collectBlueprintReviewInputs } from '../../scripts/utils/blueprint-review-inputs';
-import { generateMermaidViewGraph, generateMermaidPhaseGraph, generateMermaidModuleDependencyGraph, parseMermaidSubset, validateGeneratedBlueprintGraphs } from '../../scripts/utils/blueprint-graph-generator';
+import { generateMermaidViewGraph, generateMermaidRelationGraph, generateMermaidPhaseGraph, generateMermaidModuleDependencyGraph, parseMermaidSubset, validateGeneratedBlueprintGraphs } from '../../scripts/utils/blueprint-graph-generator';
 import { buildDiscoveryBundle, prepareBlueprintDesignDraft, prepareBlueprintSourceItems } from '../../scripts/utils/blueprint-discovery';
 import { validateCurrentScopeItemShape } from '../../scripts/utils/blueprint-requirement-traceability';
 import { writeBackAdmission, refreshBlueprintFingerprints } from '../../scripts/utils/design-repair-unattended';
@@ -1132,7 +1133,11 @@ export function runAll(): UnitCaseResult[] {
       const visible = markdown.replace(/\\([\\`*_[\]])/g, '$1');
       assert(visible.split(`${expectedPath}：${omitted[0]!.message}`).length === 2, '评审参考未同源展示唯一遗漏诊断');
       assert(!markdown.includes(journey.content), '提醒擅自为遗漏作者图选择了位置');
-      assert(markdown.includes(String(asRecords(bp.generated_graphs)[0]!.content).trimEnd()) && markdown.includes(sequence.content), '结构参考或时序参考未实际展示，零误报缺乏依据');
+      const relationRefs = asStrings(asRecords(bp.generated_graphs)[0]!.relation_refs);
+      assert(relationRefs.length > 0, '反例须有实际权威关系结构图');
+      const relationGraph = generateMermaidRelationGraph(bp, relationRefs);
+      assert(markdown.includes('```mermaid\n' + relationGraph.content.trimEnd()), '结构参考须实际展示由权威relations派生的图');
+      assert(markdown.includes('```mermaid\n' + sequence.content), '作者时序图仍须原样可读，不能以关系图替代');
       assert(fs.readFileSync(filePath).equals(original), '检查或渲染改写了canonical或自动补了graph_ids');
     });
   }));

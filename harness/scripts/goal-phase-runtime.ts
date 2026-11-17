@@ -1,4 +1,6 @@
 #!/usr/bin/env ts-node
+import { goalStatusWaitCommand, DEFAULT_GOAL_WAIT_TIMEOUT_MS } from './utils/goal-status-wait';
+import { canReconcileTestingReport } from './utils/testing-report-reconcile';
 import { adapterModelBinding, freezeModelPin, launchModelPin, parseAdapterModelBinding, modelMismatchInEvents, rebindTaskModel } from './utils/adapter-model';
 import { collectActionableDefects, resolveCurrentHapSha256Full, validateDeviceTestEvidenceBinding, readFreshVisualDisposition, type ActionableDefect, type UnverifiedDefect, type ActionableCollectResult, type DeviceTestCollectContext } from './utils/actionable-evidence';
 export { collectActionableDefects, resolveCurrentHapSha256Full, validateDeviceTestEvidenceBinding, readFreshVisualDisposition } from './utils/actionable-evidence';
@@ -45,7 +47,7 @@ import type { GoalRunEvent } from './utils/goal-runner-phase';
 import { executionCompletionPhases, resolveExecutionScope, executionScopeFingerprint, validateExecutionScope, assertRevisionKeepsRequiredObligations, readScopeRevisionUserControl, hasNewSourcedFact, affectedScopePhases, authorizedScopePhases, isEffectivePhasePass, type ExecutionScope, type ExecutionScopeInput } from './utils/execution-scope';
 import { loadFeatureContracts, contractFingerprint, assuranceSatisfies } from './utils/skill-contract';
 import { loadPhaseEvidenceManifest, resolvePhaseEvidenceManifest, recomputeManifestAggregate, writePhaseEvidenceManifest, currentEvidenceEntryHash } from './utils/phase-evidence-manifest';
-import { readScopeAcceptance, collectResolvedScopeFacts, recomputeDefinitionFacts, resolveScopeRevisionProposal, resolveCurrentScopeView, readScopeProofHistory } from './utils/feature-track';
+import { readScopeAcceptance, collectResolvedScopeFacts, recomputeDefinitionFacts, resolveScopeRevisionProposal, resolveCurrentScopeView, readScopeProofHistory, refreshScopeBindingInput } from './utils/feature-track';
 import { resolveBirthScopeForManifest, resolveSuccessorExecutionScope, registerFeatureScopeTransfer } from './utils/feature-execution-scope';
 import { featureFilePath } from '../config';
 import { designDeliveryNextStep } from './utils/design-delivery-entry';
@@ -269,7 +271,7 @@ import {
   goalProductPurpose,
   resolveProductSelectionViaProfile,
 } from './utils/product-selection-bridge';
-import { runDeviceReadinessGate } from './utils/device-readiness-gate';
+import { runDeviceReadinessGate, selectDeviceExecutionTarget } from './utils/device-readiness-gate';
 import {
   runConditionProbe,
   waitForConditionRecovery,
@@ -1404,6 +1406,7 @@ type RunHarnessFn = (
   // d9e4b7c1 T2（v13 缝扩展）：gate 注入 env（设备元组/冻结配置/强装 flag）——不扩缝则
   // "设备身份透传到 gate"是测试盲区（假绿）
   deviceTargetEnv?: Record<string, string>,
+  reportReconcileOnly?: boolean,
 ) => Promise<HarnessPhaseResult>;
 let injectedRunHarness: RunHarnessFn | null = null;
 export function __testing_setRunHarnessPhase(fn: RunHarnessFn | null): void {
@@ -1505,6 +1508,7 @@ async function runHarnessPhase(
   timeoutMs?: number,
   /** P0-3：就绪门冻结的设备 env（serial/kind/session/credential_ref）——须与 agent 侧同源 */
   deviceTargetEnv: Record<string, string> = {},
+  reportReconcileOnly = false,
 ): Promise<HarnessPhaseResult> {
   const emitHarnessStart = (binding: Record<string, unknown> = {}): void => {
     if (manifest) appendEvent(manifest.report_dir, projectRoot, { type: 'harness_start', phase,
@@ -1515,7 +1519,7 @@ async function runHarnessPhase(
     emitHarnessStart();
     return injectedRunHarness(
       projectRoot, frameworkRoot, phase, feature, dryRun, manifest, roundIdentity, timeoutMs,
-      deviceTargetEnv,
+      deviceTargetEnv, reportReconcileOnly,
     );
   }
   if (dryRun) { emitHarnessStart(); return { exitCode: 0, timedOut: false }; }
@@ -1616,7 +1620,7 @@ async function runHarnessPhase(
     }
   }
   const args = [require.resolve('ts-node/dist/bin.js'), '--project', path.join(harnessDir, 'tsconfig.json'),
-    path.join(harnessDir, 'harness-runner.ts'), '--phase', phase, '--feature', feature, '--summary', '--goal-gate-token', gateToken];
+    path.join(harnessDir, 'harness-runner.ts'), '--phase', phase, '--feature', feature, '--summary', '--goal-gate-token', gateToken, ...(reportReconcileOnly ? ['--report-reconcile-only'] : [])];
   const command = process.platform === 'win32' ? resolveAgentCommand([process.execPath, ...args]) : null;
   if (command && 'error' in command) throw new Error(command.error);
   const guardian = command && !('error' in command)
@@ -1766,6 +1770,11 @@ type DesignOwnerBlocker = { id?: string; details_excerpt?: string; repair_owner?
  * plan f7045213 最终评审返修二：责任在链外设计 owner 的阻断（检查标 repair_owner='external' 且无工具链/外部类
  * blocking_class——device_toolchain 等已由上方 await_operator_toolchain 接住）。当前阶段修不了，重试只会熔断。
  */
+export function testingEvidenceGaps(disposition: CurrentDisposition): CurrentDisposition['completionBlocking'] {
+  return disposition.completionBlocking.filter(problem => problem.owner === 'testing' && problem.action === 'verify'
+    && ['unverifiable_must_fix', 'runtime_step_evidence', 'runtime_step_evidence_identity'].includes(problem.id));
+}
+
 export function designOwnerBlockers(blockers: readonly DesignOwnerBlocker[] | undefined): DesignOwnerBlocker[] {
   return (blockers ?? []).filter((b) => b.repair_owner === 'external' && !b.blocking_class);
 }
@@ -3937,6 +3946,7 @@ async function runDetachLauncher(argv: minimist.ParsedArgs, runProbe?: (probe: s
 
   const childArgs = buildDetachedChildArgv(launchArgs, runId, { resume: isResume });
   const preloadPath = resolveDetachedPreloadPath();
+  const launchedAt = new Date().toISOString();
   const child = (injectedDetachSpawn ?? spawn)(
     process.execPath,
     ['-r', preloadPath, __filename, ...childArgs],
@@ -3976,6 +3986,9 @@ async function runDetachLauncher(argv: minimist.ParsedArgs, runProbe?: (probe: s
       log: path.relative(projectRoot, logPathAbs).replace(/\\/g, '/'),
       pid: child.pid ?? null,
       startup,
+      started_at: launchedAt,
+      wait_command: goalStatusWaitCommand(projectRoot, layout.frameworkRoot, feature, runId),
+      wait_timeout_ms: DEFAULT_GOAL_WAIT_TIMEOUT_MS,
     }),
   );
   return startup.state === 'failed' ? 1 : 0;
@@ -4363,7 +4376,9 @@ export class GoalPhaseRuntime {
       const current = checked || recomputePhaseEvidenceStaleness(context.projectRoot, context.feature, [context.phase], {
         frameworkRoot: context.frameworkRoot, runId: context.runId,
       })[0]?.verdict === 'fresh';
-      if (ended && current && !executableVerification && problems.length && problems.every(problem => problem.action === 'verify' || problem.action === 'wait')
+      const evidenceWork = context.phase === 'testing' && context.workInput?.material?.purpose === 'testing-evidence'
+        && testingEvidenceGaps(disposition).length > 0;
+      if (!evidenceWork && ended && current && !executableVerification && problems.length && problems.every(problem => problem.action === 'verify' || problem.action === 'wait')
         && !disposition.completionBlocking.some(problem => problem.action === 'repair')) {
         return { status: 'waiting', phase: context.phase, exitCode: 1, stdout: '', stderr: '', command: 'phase_execute_request', skipped: true,
           details: `已有匹配的真实检查结果；当前只缺原验证 producer 的证据/条件，同输入不再派作者或重拉检查。解除条件满足后接回原请求，只补受影响验证。\n${renderCurrentDisposition(disposition)}` };
@@ -5174,7 +5189,10 @@ export class GoalPhaseRuntime {
       recordEventLines: () => { const lines: Array<{ file: string; line: string }> = []; const previous = eventLineRecorder;
         eventLineRecorder = (file, line) => { previous?.(file, line); lines.push({ file, line }); };
         return () => { eventLineRecorder = previous; return lines; }; },
-      recheckReadiness: () => { const ready = deriveDesignPreparationReadiness(projectRoot, manifest.feature);
+      recheckReadiness: () => {
+        const current = readInitialDesignDelivery({ projectRoot, frameworkRoot, manifest });
+        if (current.kind === 'decompose' && !current.designRepair) return { ready: true, reason: '当前蓝图已准入，原设计责任已解除；待接受候选继续由既有decompose与consumer核对，不代表CU或整项交付完成' };
+        const ready = deriveDesignPreparationReadiness(projectRoot, manifest.feature);
         return { ready: ready.ready, reason: ready.ready ? '原始请求的真实P1/P2 readiness已重派生'
           : JSON.stringify({ units: ready.perUnit, ownership: ready.ownershipIssues }) }; },
     });
@@ -7399,7 +7417,8 @@ Goal runner — original request design and construction runtime
             const records = loadAuthoritativeEvents(eventsPath);
             recordAuthorRestorations(records, delta.changes, sessionRequest.request.context.phase, sessionRequest.request.invoke_id, goalEvents.emit);
             const originals = authorWritePreimages(beforeAuthorInvocation(records, sessionRequest.request.invoke_id));
-            const writes = classifyPhaseInvocationChanges(sessionRequest.request.write_boundary, sessionRequest.request.context.phase, delta.changes);
+            const writes = classifyPhaseInvocationChanges(sessionRequest.request.write_boundary, sessionRequest.request.context.phase, delta.changes,
+              { events: records, invokeId: sessionRequest.request.invoke_id });
             const violations = writes.violations.filter(write => !originals.has(write.path) || originals.get(write.path) !== write.postSha256);
             if (violations.length && !records.some(event => event.type === 'phase_write_violation' && event.invoke_id === invokeId)) {
               goalEvents.emit({ type: 'phase_write_violation', phase: sessionRequest.request.context.phase, invoke_id: sessionRequest.request.invoke_id,
@@ -7422,7 +7441,7 @@ Goal runner — original request design and construction runtime
       runConcluded = true;
       return true;
     };
-    const reviseCurrentScope = (family: string, userSessionRef?: string): void => {
+    const reviseCurrentScope = (family: string, userSessionRef?: string, onlyCompatibleInputs = false): void => {
       const previous = scopeNow();
       if (!previous || !manifest.execution_scope) return;
       try {
@@ -7433,8 +7452,7 @@ Goal runner — original request design and construction runtime
             && !phaseCompletionProblems(current.disposition, [result.phase]).length;
         }).map(result => result.phase));
         const result = current.results.find(result => result.phase === family && asRecord(result.summary)?.run_id === manifest.run_id);
-        if (!result && !userSessionRef) return;
-        const proposed = ((result?.checks ?? []) as readonly { id?: string; scope_revision_input?: ExecutionScopeInput }[])
+        const proposed = ((onlyCompatibleInputs ? [] : result?.checks ?? []) as readonly { id?: string; scope_revision_input?: ExecutionScopeInput }[])
           .filter(check => check.scope_revision_input);
         const proposals = proposed.flatMap(check => check.scope_revision_input ? [check.scope_revision_input] : []);
         if (userSessionRef) {
@@ -7448,14 +7466,18 @@ Goal runner — original request design and construction runtime
           proposals.splice(0, proposals.length, proposal);
         }
         const summary = asRecord(result?.summary);
-        const candidates = (summary?.repair_candidates ?? []) as RepairCandidate[];
+        const candidates = (onlyCompatibleInputs ? [] : summary?.repair_candidates ?? []) as RepairCandidate[];
         if (!proposals.length && candidates.length) {
           const repair = scopeRevisionInputFromRepairCandidates(candidates, { projectRoot, frameworkRoot, feature: manifest.feature,
             runId: manifest.run_id, currentDisposition: current.disposition });
           if (repair) proposals.push(repair.input);
         }
+        if (!proposals.length) {
+          const refreshed = refreshScopeBindingInput({ projectRoot, frameworkRoot, feature: manifest.feature, requirement: manifest.requirement }, previous);
+          if (refreshed) proposals.push(refreshed);
+        }
         const resolvesDefinition = previous.unresolved.some(gap => gap.owner === family);
-        if (!proposals.length && completed.has(family) && (resolvesDefinition || previous.reused_phases.some(proof => proof.phase === family))) {
+        if (!onlyCompatibleInputs && !proposals.length && completed.has(family) && (resolvesDefinition || previous.reused_phases.some(proof => proof.phase === family))) {
           const refreshed = resolveCurrentScopeView({ projectRoot, frameworkRoot, feature: manifest.feature, workflow, previous,
             currentRunId: manifest.run_id, completedPhases: completed, currentPhase: family, currentResults: current.results });
           if (resolvesDefinition || executionScopeFingerprint(refreshed) !== executionScopeFingerprint(previous)) proposals.push({
@@ -7543,6 +7565,7 @@ Goal runner — original request design and construction runtime
       const checkedAt = history.map(event => event.type === 'harness_end' && event.phase === family
         && event.invoke_id === observation.end?.invoke_id && event.ts === observation.end?.ts).lastIndexOf(true);
       const authorAt = actor ? history.findIndex(event => event.type === 'agent_invoke_end' && event.invoke_id === actor.start.invoke_id) : -1;
+      const producerReturned = family === 'testing' && actor?.original?.request.purpose === 'testing-evidence' && authorAt > checkedAt;
       const writes = actor && authorAt > checkedAt
         ? authorWrites(actor).filter(write => write.roles?.some(role => role.kind === 'source')) : [];
       const paths = new Set(writes.map(write => path.resolve(projectRoot, write.path)));
@@ -7560,7 +7583,7 @@ Goal runner — original request design and construction runtime
       const invalidatedAt = scope ? readScopeProofHistory({ projectRoot, frameworkRoot, feature: manifest.feature,
         workflow, previous: scope, currentRunId: manifest.run_id }).history.invalidatedAt.get(family) : undefined;
       const scopeChanged = invalidatedAt !== undefined && Date.parse(invalidatedAt) > Date.parse(observation.end?.ts ?? '');
-      return { observation, productChanged, scopeChanged };
+      return { observation, productChanged, scopeChanged, producerReturned };
     };
     const missingCheckOrigin = (family: string, work: ReturnType<typeof readWork>, observation?: ReturnType<typeof readCurrentCheckObservation>): boolean => {
       // Current self-check files are observations, not a completed formal call.
@@ -7579,10 +7602,11 @@ Goal runner — original request design and construction runtime
       return false;
     };
     const workCompleted = (work: ReturnType<typeof readWork>): boolean => work.disposition.completionEligible
-      && !work.facts.phases.some(result => missingCheckOrigin(result.phase, work));
+      && !work.facts.phases.some(result => missingCheckOrigin(result.phase, work)
+        || checkWorkConditions(result.phase, work).producerReturned);
     const affectedCheck = (family: string, work: ReturnType<typeof readWork>, actor = lastAuthor()): boolean => {
       const conditions = checkWorkConditions(family, work, actor);
-      if (conditions.observation.changed || conditions.productChanged || conditions.scopeChanged) return true;
+      if (conditions.observation.changed || conditions.productChanged || conditions.scopeChanged || conditions.producerReturned) return true;
       if (conditions.observation.returned) return false;
       if (missingCheckOrigin(family, work, conditions.observation)) return true;
       return work.facts.phases.some(result => result.phase === family && (result.lineage === 'stale' || result.lineage === 'missing'));
@@ -7618,7 +7642,7 @@ Goal runner — original request design and construction runtime
         return false;
       }
     };
-    const invokeWork = async (label: string, text: string, verifierReport?: string, purpose?: string, explicitlyContinued = false, workInput?: WorkUnitInput) => {
+    const invokeWork = async (label: string, text: string, verifierReport?: string, purpose?: string, explicitlyContinued = false, workInput?: WorkUnitInput, deviceEnv?: Record<string, string>) => {
       const history = loadAuthoritativeEvents(eventsPath);
       const attemptId = `i${countAgentInvokeStarts(history) + 1}`;
       const invokeId = `${label}-${attemptId}`;
@@ -7630,14 +7654,18 @@ Goal runner — original request design and construction runtime
       let factsContext: import('./utils/context-facts').FactsInvocationContext | undefined;
       if (manifest.execution_scope && role === 'author') {
         try {
-          factsContext = resolveCapabilityResolutionEntryInput({ projectRoot, frameworkRoot, feature: manifest.feature,
-            phase: family, featuresDir, goalRunId: manifest.run_id, goalAttemptId: attemptId, purpose: 'work-unit-author' }).factsContext;
+          const entry = resolveCapabilityResolutionEntryInput({ projectRoot, frameworkRoot, feature: manifest.feature,
+            phase: family, featuresDir, goalRunId: manifest.run_id, goalAttemptId: attemptId, purpose: 'work-unit-author' });
+          factsContext = entry.factsContext;
+          if (factsContext) text += factsContext.baseline
+            ? `\n当前 facts 已接续可核验基线；保留原 run_id、established_by 和基线正文，只在实际检查的 phase_delta 中记录当前变化。基线建立方：${factsContext.baseline.established_by}。`
+            : `\n当前 facts 须由本工作单元在 ${factsContext.first_phase} 建立。${entry.factsRebuildReason ?? '尚无可复用基线。'}\n先真实读取当前来源并记录事实，再按当前 subject=${JSON.stringify(factsContext.subject)}、established_by=${factsContext.first_phase} 写入 facts；仅更改 run_id 或阶段名不能建立事实。来源：${factsContext.source_paths.join(', ')}。`;
         } catch (error) {
           wait(label, `原工作单元的研究输入暂不能按当前真实来源承接（${family}）：${(error as Error).message}。保留原facts与成果，恢复该来源/绑定后接原请求；不伪造研究完成或另派作者。`);
           return null;
         }
       }
-      const env = { MAISON_GOAL_RUN_ID: manifest.run_id, MAISON_GOAL_ATTEMPT: attemptId, MAISON_GOAL_ATTEMPT_PHASE: label };
+      const env = { ...deviceEnv, MAISON_GOAL_RUN_ID: manifest.run_id, MAISON_GOAL_ATTEMPT: attemptId, MAISON_GOAL_ATTEMPT_PHASE: label };
       applyGoalVisualProviderEnv(env, manifest.visual_provider_pin);
       const boundary = resolvePhaseWriteBoundary({ projectRoot, frameworkRoot, feature: manifest.feature, runId: manifest.run_id,
         executionRole: role, ...(verifierReport ? { verifierResultPath: verifierReport } : {}),
@@ -7727,7 +7755,8 @@ Goal runner — original request design and construction runtime
       if (childExited) goalEvents.emit({ type: 'agent_process_settled', run_id: manifest.run_id, phase: label, invoke_id: invokeId, exit_code: result.exitCode });
       const post = capturePhaseInvocationSnapshot(boundary, snapshotOptions);
       const changes = diffPhaseInvocationSnapshots(pre, post);
-      const writes = changes.kind === 'changed' ? classifyPhaseInvocationChanges(boundary, label, changes.changes) : null;
+      const writes = changes.kind === 'changed' ? classifyPhaseInvocationChanges(boundary, label, changes.changes,
+        { events: loadAuthoritativeEvents(eventsPath), invokeId }) : null;
       if (writes) {
         const originalWrites = authorWritePreimages(history);
         for (const write of writes.violations.filter(write => originalWrites.has(write.path) && originalWrites.get(write.path) === write.postSha256)) {
@@ -7926,6 +7955,51 @@ Goal runner — original request design and construction runtime
       if (!observation.end || observation.end.timed_out || !observation.start?.invoke_id || observation.conditionReady) return false;
       return !!await awaitDeviceReadiness(family, observation.start.invoke_id, true);
     };
+    const supplementTestingEvidence = async (work: ReturnType<typeof readWork>): Promise<boolean | 3> => {
+      const gaps = testingEvidenceGaps(work.disposition);
+      if (!gaps.length || !familiesNow().includes('testing')) return false;
+      const actor = lastAuthor();
+      if (!actor?.original || work.disposition.completionBlocking.some(problem => problem.id === 'acceptance_binding'
+        || /input binding stale|facts baseline stale/.test(problem.detail))) return false;
+      const reports = featurePhaseReportsDir(projectRoot, manifest.feature, 'testing', frameworkRoot);
+      const currentHap = resolveCurrentHapSha256Full(projectRoot, reports);
+      const observed = readCurrentCheckObservation({ projectRoot, frameworkRoot, feature: manifest.feature, runId: manifest.run_id, phase: 'testing' });
+      const session = readDeviceSession(projectRoot, manifest.report_dir);
+      if (observed.start?.ts && observed.end?.ts && observed.start.invoke_id) {
+        const attemptId = observed.start.invoke_id.replace(/^testing-/, '');
+        commitGateDeviceEvidenceProposal(projectRoot, manifest.feature, manifest.run_id, { projectRoot, reportsDir: reports, attemptId,
+          currentHapSha256Full: currentHap, expectedTarget: { serial: session?.serial ?? null, target_kind: session?.target_kind ?? null,
+            session_id: null },
+          harnessWindow: { startMs: Date.parse(observed.start.ts), endMs: Date.parse(observed.end.ts) } });
+        if (readWork().disposition.completionBlocking.filter(problem => gaps.some(gap => gap.id === problem.id)).length < gaps.length) return true;
+      }
+      const instruction = [
+        `原 testing 验证方只补本工作单元 ${manifest.feature} 的当前证据缺口。按 ${phaseSkillPath(frameworkRoot, 'testing')} 使用已有框架采集/验证工具。`,
+        `原始请求：${manifest.requirement ?? ''}`,
+        `当前 HAP SHA-256：${currentHap ?? '尚不可核验'}。`,
+        ...gaps.map(problem => `${problem.id}: ${problem.detail}\n原件：${(problem.files ?? []).join(', ')}`),
+        '先核对已有 native trace、安装记录、截图和构建关联；可由原写方恢复的原件先恢复。缺实际观察时只补上述对象需要的步骤和截图，不重跑无关用例或整套设备检查。',
+        '失败页面必须实际到达原失败场景，并关联当前安装/HAP 与真实步骤；旧构建截图、误采成功页、创建空 JSON 或作者口述不能关闭发现。',
+        '不修改产品、用例断言、设计、验收或手写正式证据。使用框架设备授权；若失败态前置、设备或授权不可用，交回具体等待条件，保留原发现和全部其它产品失败。',
+        '完成后交回本次工具原件，由原 CU 运行受影响的正式检查；本调用不签整项通过。',
+      ].join('\n');
+      const material = { purpose: 'testing-evidence', segments: [instruction, observed.inputs,
+        { hap_sha256: currentHap, device: session ? { serial: session.serial, status: session.status, managed: session.managed } : null }] };
+      const history = loadAuthoritativeEvents(eventsPath);
+      const previous = [...history].reverse().filter(event => event.type === 'agent_invoke_start' && event.phase === 'testing' && event.invoke_id)
+        .map(event => ({ event, original: executionRequestForInvoke(runDir, event.invoke_id!) }))
+        .find(call => call.original?.request.purpose === 'testing-evidence');
+      if (previous?.original && stableStringify(previous.original.request.context.workInput?.material) === stableStringify(material)
+        && history.some(event => event.type === 'agent_invoke_end' && event.invoke_id === previous.event.invoke_id)) return false;
+      if (!currentHap) { wait('testing', `原验证所需当前 HAP 尚不可核验；保留证据缺口，取得当前构建后只补原对象。\n${renderCurrentDisposition(work.disposition)}`); return true; }
+      const ready = await awaitDeviceReadiness('testing', `testing-evidence-${actor.original.request.context.attemptId}`);
+      if (!ready) return true;
+      const readySession = readDeviceSession(projectRoot, manifest.report_dir);
+      material.segments[2] = { hap_sha256: currentHap, device: readySession
+        ? { serial: readySession.serial, status: readySession.status, managed: readySession.managed } : null };
+      const invoked = await invokeWork('testing', instruction, undefined, 'testing-evidence', false, { material, evaluation: work.evaluation }, ready.env);
+      return invoked === 3 ? 3 : !!invoked || halted;
+    };
     currentWork: while (!halted && !dryRun) {
       assertGoalBoundary('current_work');
       const deadline = workUnitExecutionInputs(manifest, undefined, projectRoot).user_deadline_at;
@@ -8058,6 +8132,8 @@ Goal runner — original request design and construction runtime
         if (options.executionControls?.signal?.aborted || deadline && Date.parse(deadline) <= Date.now()) {
           wait(family, '用户取消或明示时限已到；不启动下一检查，保留真实结果与未完项。'); break;
         }
+        reviseCurrentScope(family, undefined, true);
+        if (halted) break;
         let current = readWork();
         if (!current.facts.phases.some(result => result.phase === family)) continue;
         const reviewConditions = checkWorkConditions(family, current);
@@ -8207,7 +8283,7 @@ Goal runner — original request design and construction runtime
         const invokeId = `${family}-${attemptId}`;
         const conditions = checkWorkConditions(family, current, actor);
         const checkObservation = conditions.observation;
-        if (!hasNewWorkConditions({ returned: checkObservation.returned, explicitlyContinued: producerContinued, materialChanged: checkObservation.changed,
+        if (!hasNewWorkConditions({ returned: checkObservation.returned, explicitlyContinued: producerContinued, materialChanged: checkObservation.changed || conditions.producerReturned,
           productChanged: conditions.productChanged, scopeChanged: conditions.scopeChanged })) {
           // An unchanged returned check is reusable observation, not an external wait.
           continue;
@@ -8218,17 +8294,22 @@ Goal runner — original request design and construction runtime
         const capability = (injectedCapabilityGate ?? runInvokeCapabilityGate)({ projectRoot, phase: family as FeaturePhase, retries: 0,
           resolvedProfile, emitEvent: event => goalEvents.emit(event as Record<string, unknown>) });
         if (capability) { outcomes.push(capability.outcome); continue; }
+        if (family === 'testing' && !commitVisualJournal(attemptId, actor)) break;
+        const reportReconcileOnly = family === 'testing' && canReconcileTestingReport({ projectRoot, frameworkRoot,
+          feature: manifest.feature, previous: checkObservation.end?.related_input_snapshot, current: checkObservation.inputs,
+          productChanged: conditions.productChanged, scopeChanged: conditions.scopeChanged });
         let deviceEnv: Record<string, string> = {};
-        if (phaseRequiresDevice(family as FeaturePhase, resolvedProfile)) {
-          const decision = await awaitDeviceReadiness(family, invokeId);
-          if (!decision) break;
-          if (decision.outcome) { outcomes.push(decision.outcome); continue; }
-          deviceEnv = decision.env ?? {};
-        }
-        if (family === 'testing') {
-          if (!commitVisualJournal(attemptId, actor)) break;
-          try { fs.rmSync(deviceTestEvidencePath(featurePhaseReportsDir(projectRoot, manifest.feature, family, frameworkRoot)), { force: true }); } catch { /* The existing identity reader retains any failed cleanup as unknown. */ }
-          deviceEnv = { ...deviceEnv, HARNESS_DEVICE_TEST_FORCE_INSTALL: '1' };
+        // Unknown obligations need input resolution before any physical preparation.
+        if (phaseRequiresDevice(family as FeaturePhase, resolvedProfile, current.input.executionScope) && !reportReconcileOnly) {
+          const selected = (family === 'testing' || family === 'ut')
+            ? selectDeviceExecutionTarget({ projectRoot, sessionId: invokeId }) : null;
+          if (selected) deviceEnv = selected.env;
+          else {
+            const decision = await awaitDeviceReadiness(family, invokeId);
+            if (!decision) break;
+            if (decision.outcome) { outcomes.push(decision.outcome); continue; }
+            deviceEnv = decision.env ?? {};
+          }
         }
         const started = Date.now();
         emitMilestone(`GOAL_WORK event=check family=${family} actor=${actor.start.invoke_id}`);
@@ -8236,7 +8317,7 @@ Goal runner — original request design and construction runtime
         activeExecutionControls = options.executionControls;
         let checked: HarnessPhaseResult;
         try { checked = await runHarnessPhase(projectRoot, frameworkRoot, family as FeaturePhase, manifest.feature, dryRun, manifest,
-          { runId: manifest.run_id, attemptId, actorPhase: actor.original.request.context.phase, relatedInputs: checkObservation.inputs }, deadline ? Math.max(1, Date.parse(deadline) - Date.now()) : undefined, deviceEnv); }
+          { runId: manifest.run_id, attemptId, actorPhase: actor.original.request.context.phase, relatedInputs: checkObservation.inputs }, deadline ? Math.max(1, Date.parse(deadline) - Date.now()) : undefined, deviceEnv, reportReconcileOnly); }
         finally { activeExecutionControls = undefined; }
         const endedAt = Date.now();
         let returnedInputs: ArtifactSnapshot | undefined;
@@ -8253,7 +8334,7 @@ Goal runner — original request design and construction runtime
           outcomes.push({ phase: family as FeaturePhase, verdict: 'INCOMPLETE', halted: true, retries: 0, halt_reason: 'executor_waiting', halt_guidance: checked.waitingDetail ?? '当前工具尚未提供可信结束结果，恢复原工具条件后仅补本检查。' });
           continue;
         }
-        if (family === 'testing') {
+        if (family === 'testing' && !reportReconcileOnly) {
           if (checked.currentCheckObserved && !commitVisualJournal(attemptId, actor)) break;
           const reports = featurePhaseReportsDir(projectRoot, manifest.feature, family, frameworkRoot);
           const device = { attemptId, projectRoot, reportsDir: reports,
@@ -8323,6 +8404,9 @@ Goal runner — original request design and construction runtime
           break;
         }
         if (feedbackAwaitingEvaluation && !executedCheck) {
+          const supplemented = await supplementTestingEvidence(after);
+          if (supplemented === 3) return 3;
+          if (supplemented) continue;
           wait('work-unit-author', `同一工作、当前必修对象和相关输入已有真实作者交回，当前结果没有新的可执行验证；不重派同一反馈。保留未完项，补齐原验证依据、相关条件变化或用户明确继续后接回。\n${renderCurrentDisposition(after.disposition)}`);
           break;
         }
@@ -8337,6 +8421,9 @@ Goal runner — original request design and construction runtime
           return !!request && request.feature === manifest.feature && request.phase === family && request.subject_id === summary.verifier_subject_id;
         } catch { return false; }
       })) continue;
+      const supplemented = await supplementTestingEvidence(after);
+      if (supplemented === 3) return 3;
+      if (supplemented) continue;
       wait(after.disposition.completionBlocking[0]?.source_phase ?? after.disposition.completionBlocking[0]?.phase ?? 'work-unit-author',
         `当前真实调用/检查已经结束，剩余为原producer、独立核验或环境条件缺口；同条件不重派。解除条件满足后接原run，只补受影响部分。\n${outcomes.filter(outcome => outcome.verdict === 'INCOMPLETE' && outcome.halt_guidance).map(outcome => outcome.halt_guidance).join('\n')}\n${renderCurrentDisposition(after.disposition)}`);
     }

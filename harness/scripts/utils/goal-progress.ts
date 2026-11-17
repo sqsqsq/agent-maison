@@ -1074,12 +1074,14 @@ export function buildLiveGoalStatusSnapshot(opts: {
   runId: string;
   tailN?: number;
   nowMs?: number;
+  /** A reader following a specific run may supply its already-bound current lock. */
+  featureLock?: LockRecord | null;
 }): GoalProgressSnapshot {
   const eventsPath = path.join(opts.projectRoot, opts.manifest.report_dir, 'events.jsonl');
   const events = loadEventsJsonl(eventsPath);
-  const featureLock = readLockRecord(
+  const featureLock = opts.featureLock === undefined ? readLockRecord(
     resolveFeatureLockPath(opts.projectRoot, opts.featuresDir, opts.feature),
-  );
+  ) : opts.featureLock;
   const runnerLock = readLockRecord(
     resolveRunnerLockPath(opts.projectRoot, opts.featuresDir, opts.feature, opts.runId, opts.manifest.report_dir),
   );
@@ -1228,15 +1230,25 @@ export function applyFreshnessDegradation(
 ): GoalProgressSnapshot {
   if (TERMINAL_RUN_STATUSES.has(snapshot.status)) return snapshot;
 
-  const nowMs = opts.nowMs ?? Date.now();
-  const generatedMs = new Date(snapshot.generated_at).getTime();
-  if (Number.isNaN(generatedMs)) return { ...snapshot, status: 'UNKNOWN', status_reason: 'invalid_generated_at' };
+  const degraded = observeProgressFreshness(snapshot.generated_at, opts);
+  if (!degraded) return snapshot;
+  const { liveness, ...status } = degraded;
+  return { ...snapshot, ...status, ...(liveness ? { liveness: { ...snapshot.liveness, state: liveness } } : {}) };
+}
 
-  if (nowMs - generatedMs <= FRESHNESS_STALE_MS) return snapshot;
+/** Shared observation only: the timestamp must come from the runner, never the reader's own refresh. */
+export function observeProgressFreshness(
+  generatedAt: string | null | undefined,
+  opts: { liveProbe: boolean; featureLock?: LockRecord | null; nowMs?: number },
+): { status: 'UNKNOWN' | 'RUNNING'; status_reason: string; liveness?: LivenessState } | null {
+  const nowMs = opts.nowMs ?? Date.now();
+  const generatedMs = generatedAt ? Date.parse(generatedAt) : NaN;
+  if (Number.isNaN(generatedMs)) return { status: 'UNKNOWN', status_reason: 'invalid_generated_at' };
+
+  if (nowMs - generatedMs <= FRESHNESS_STALE_MS) return null;
 
   if (!opts.liveProbe) {
     return {
-      ...snapshot,
       status: 'UNKNOWN',
       status_reason: 'snapshot_stale_no_live_probe',
     };
@@ -1245,7 +1257,6 @@ export function applyFreshnessDegradation(
   const lock = opts.featureLock;
   if (!lock) {
     return {
-      ...snapshot,
       status: 'UNKNOWN',
       status_reason: 'snapshot_stale_no_lock',
     };
@@ -1254,7 +1265,6 @@ export function applyFreshnessDegradation(
   const sameHost = lock.hostname === os.hostname();
   if (!sameHost) {
     return {
-      ...snapshot,
       status: 'UNKNOWN',
       status_reason: 'snapshot_stale_cross_host',
     };
@@ -1263,18 +1273,16 @@ export function applyFreshnessDegradation(
   const alive = isPidAlive(lock.pid);
   if (!alive) {
     return {
-      ...snapshot,
       status: 'UNKNOWN',
       status_reason: 'orphan_suspected_stale_snapshot',
-      liveness: { ...snapshot.liveness, state: 'ORPHAN_SUSPECTED' },
+      liveness: 'ORPHAN_SUSPECTED',
     };
   }
 
   return {
-    ...snapshot,
     status: 'RUNNING',
     status_reason: 'snapshot_stale_runner_alive',
-    liveness: { ...snapshot.liveness, state: 'SUSPECTED_STALL' },
+    liveness: 'SUSPECTED_STALL',
   };
 }
 

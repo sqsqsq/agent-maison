@@ -17,7 +17,7 @@ import { casAcquireRunOwner, releaseRunOwner, ensureRunControl } from '../../scr
 import { FEATURE_LOCK_NAME, releaseLock, tryAcquireLock } from '../../scripts/utils/goal-run-lock';
 import { loadCanonicalBlueprint } from '../../scripts/utils/component-blueprint-path';
 import { validateComponentBlueprint } from '../../scripts/utils/component-blueprint-validator';
-import { deriveChangeUnitFeatureId, enumerateCanonicalChangeUnits, loadCanonicalChangeUnit } from '../../scripts/utils/change-unit-path';
+import { deriveChangeUnitFeatureId, enumerateCanonicalChangeUnits, loadCanonicalChangeUnit, asChangeUnitArtifact } from '../../scripts/utils/change-unit-path';
 import { deriveDesignPreparationReadiness, BLUEPRINT_RECONCILE_LOCK_NAME } from '../../scripts/utils/change-unit-design-preparation';
 import { designRepairTarget, designRepairInvokeLabel, designRepairSignature, pendingPublishedDesignRepair, runUnattendedDesignRepair, recordDesignRepairInvocation, readDesignQuestioningOriginal, type DesignRepairBriefLike, type DesignRepairInvokeOutcome } from '../../scripts/utils/design-repair-unattended';
 import { capturePhaseInvocationSnapshot } from '../../scripts/utils/phase-write-boundary';
@@ -37,14 +37,14 @@ import { prepareInitialDesignDraft, readInitialDesignDelivery } from '../../scri
 import { reusableDesignQuestioning } from '../../scripts/utils/design-repair-unattended';
 import { repairAdapter } from './design-authority-repair.unit.test';
 import { BLUEPRINT_ID, withFreshCuHost } from './lifecycle-evolution.unit.test';
-import { fixture } from './blueprint-skill-projection.unit.test';
+import { fixture, planContracts } from './blueprint-skill-projection.unit.test';
 import { DISPOSITIONS, blueprintAuthorContent } from '../../scripts/utils/component-blueprint-model';
 import { applyIndependentQuestioningOutput, parseIndependentQuestioningOutput, renderQuestioningResultInstructions, validateBlueprintQuestioning } from '../../scripts/utils/blueprint-questioning';
 import { validateChangeUnit } from '../../scripts/utils/change-unit-validator';
 import { validateChangeUnitDesign } from '../../scripts/utils/change-unit-design-gate';
 import { diagnoseBlueprintSkillAuthority, diagnoseDesignAuthority } from '../../scripts/utils/blueprint-skill-projection';
 import { designWorkSnapshot } from '../../scripts/utils/design-repair-unattended';
-import { blueprintIdentityPointers } from '../../scripts/utils/change-unit-blueprint-identity';
+import { blueprintIdentityPointers, currentBlueprintIdentity } from '../../scripts/utils/change-unit-blueprint-identity';
 import { inspectGeneratedBlueprintGraphs } from '../../scripts/utils/blueprint-graph-generator';
 import { runGoalModeSessionStep as runGoalModeSessionStepUnchecked } from '../../scripts/goal-mode-entry';
 import { readSessionExecution } from '../../scripts/utils/session-execution-handoff';
@@ -1486,7 +1486,98 @@ const timer=setInterval(()=>{const bound=process.platform!=='win32'||fs.readFile
   }
 }
 
+async function mixedPendingCandidateRepair(): Promise<void> {
+  const f = fixture(), frameworkRoot = path.resolve(__dirname, '../../..');
+  try {
+    const architecture = loadFrameworkConfig(f.root).architecture;
+    fs.writeFileSync(path.join(f.root, 'framework.config.json'), JSON.stringify({ schema_version: '1.1', project_name: 'MixedOwnerRegression',
+      project_profile: { name: 'hmos-app' }, active_workflow: 'obligation-driven', architecture })); clearFrameworkConfigCache();
+    for (const other of enumerateCanonicalChangeUnits(f.root, BLUEPRINT_ID)) if (other.canonicalPath !== f.cuFile) fs.unlinkSync(other.canonicalPath);
+    const contracts = planContracts(f), { change_unit_ref: _identity, ...correct } = contracts.change_unit;
+    const doc = read(f.blueprintFile), unit = asChangeUnitArtifact(loadCanonicalChangeUnit(f.root, BLUEPRINT_ID, 'ledger-refresh').changeUnit);
+    const flowRef = unit.design_refs.find(ref => ref.target.kind === 'flow')!;
+    const flow = resolveBlueprintTarget(doc, flowRef.target);
+    (flow.contracts as Document).state_management[0].publications = [];
+    write(f.blueprintFile, doc); f.bind();
+    prepareInitialDesignDraft({ projectRoot: f.root, blueprintId: BLUEPRINT_ID, sourceRefs: [], observedAt: '2026-11-16T00:00:00Z' });
+    const preparedUnit = asChangeUnitArtifact(loadCanonicalChangeUnit(f.root, BLUEPRINT_ID, 'ledger-refresh').changeUnit);
+    for (const pointer of blueprintIdentityPointers(preparedUnit as unknown as Document)) Object.assign(pointer!, currentBlueprintIdentity(loadCanonicalBlueprint(f.root, BLUEPRINT_ID)));
+    const candidate = { providerId: 'component-design', artifact: preparedUnit,
+      construction_mapping: structuredClone(correct) };
+    candidate.artifact.provenance.extraction_method += ';component-design';
+    for (const row of candidate.construction_mapping.design_ref_mappings) row.design_ref = candidate.artifact.design_refs.find(ref =>
+      JSON.stringify(ref.target) === JSON.stringify(row.design_ref.target))!;
+    candidate.construction_mapping.predicate_mappings = [];
+    fs.unlinkSync(f.cuFile);
+    const candidatesFile = path.join(path.dirname(f.blueprintFile), 'change-unit-candidates.json');
+    let originalCandidates = Buffer.from(JSON.stringify([candidate], null, 2) + '\n');
+    let originalBlueprint = fs.readFileSync(f.blueprintFile);
+    const manifest = buildInitialDesignGoalManifest({ feature: BLUEPRINT_ID, run_id: 'mixed-pending-candidate', adapter: 'claude', requirement,
+      adapter_model_pin: parseAdapterModelBinding('claude', controlledModelBinding('claude', f.root)),
+      unattended: { write_mode: 'full-access', approval_mode: 'never' },
+      initial_design: { completion_target: 'feature', requested_results: [requirement], requested_phases: ['plan', 'coding', 'review', 'ut'] } }, { projectRoot: f.root });
+    createGoalRun({ projectRoot: f.root, frameworkRoot, manifest, chain: [] });
+    const runDir = path.join(f.root, manifest.report_dir), options = { projectRoot: f.root, frameworkRoot, feature: BLUEPRINT_ID, runId: manifest.run_id,
+      adapter: 'claude', runMode: 'attended' as const, authorization: { mode: 'goal_mode' as const, autonomyAuthorized: true } };
+    const calls: string[] = []; let step: any = await runGoalModeSessionStep(options);
+    for (let count = 0; step.type === 'phase_execute_request' && count < 8; count++) {
+      if (step.phase.startsWith('initial-design-scope-') || step.phase === 'work-unit-author') break;
+      calls.push(step.phase);
+      const request = readSessionExecution(runDir, step.request.path)!, prompt = String(request.request.context.instruction);
+      let output = '按当前责任修订候选。';
+      if (step.phase === 'design-repair-author') {
+        assert(prompt.includes('publication') && prompt.includes('predicate_id'), 'the one original rejection must retain both known gaps');
+        assert(fs.readFileSync(candidatesFile).equals(originalCandidates), 'source candidate stays exact before authority publication');
+        assert(fs.readFileSync(f.blueprintFile).equals(originalBlueprint));
+        const file = path.join(runDir, 'design-repair/component-blueprint.yaml'), draft = read(file);
+        delete (resolveBlueprintTarget(draft, flowRef.target).contracts as Document).state_management[0].publications;
+        write(file, draft);
+      } else if (step.phase === 'initial-design-questioning' || step.phase === 'design-repair-questioning') {
+        const file = step.phase === 'initial-design-questioning' ? f.blueprintFile : path.join(runDir, 'design-repair/component-blueprint.yaml');
+        output = JSON.stringify({ items: read(file).review_summary.questioning.items });
+      } else if (step.phase === 'initial-design-decomposition') {
+        if (!calls.includes('design-repair-author')) {
+          const identity = currentBlueprintIdentity(loadCanonicalBlueprint(f.root, BLUEPRINT_ID));
+          for (const pointer of blueprintIdentityPointers(candidate.artifact as unknown as Document)) Object.assign(pointer!, identity);
+          for (const row of candidate.construction_mapping.design_ref_mappings) Object.assign(row.design_ref, identity);
+          originalCandidates = Buffer.from(JSON.stringify([candidate], null, 2) + '\n'); fs.writeFileSync(candidatesFile, originalCandidates);
+          originalBlueprint = fs.readFileSync(f.blueprintFile);
+          step = await runGoalModeSessionStep({ ...options, requestPath: step.request.path, report: { status: 'passed', phase: step.phase, details: output } });
+          continue;
+        }
+        assert(!fs.readFileSync(f.blueprintFile).equals(originalBlueprint), 'the blueprint owner must finish before the candidate owner');
+        const current = JSON.parse(fs.readFileSync(candidatesFile, 'utf8'))[0];
+        assert.deepEqual(current.construction_mapping.predicate_mappings, [], 'authority repair must not invent candidate mappings');
+        const archived = JSON.parse(fs.readFileSync(path.join(runDir, 'design-repair/original-context.json'), 'utf8'));
+        assert(Buffer.from(archived.pendingCandidates, 'base64').equals(originalCandidates), 'the original candidate bytes must remain in the existing archive');
+        assert.equal(current.artifact.component_blueprint_ref.artifact_sha256, loadCanonicalBlueprint(f.root, BLUEPRINT_ID).artifactSha256);
+        assert(prompt.includes('predicate_id') && !prompt.includes('change_unit_runtime_fact_mapping_missing'), 'only current candidate gaps return to decomposition');
+        current.construction_mapping.predicate_mappings = structuredClone(correct.predicate_mappings);
+        fs.writeFileSync(candidatesFile, JSON.stringify([current], null, 2) + '\n');
+      } else assert.fail('unexpected owner: ' + step.phase);
+      step = await runGoalModeSessionStep({ ...options, requestPath: step.request.path, report: { status: 'passed', phase: step.phase, details: output } });
+    }
+    assert.equal(calls.filter(phase => phase === 'design-repair-author').length, 1, JSON.stringify({ calls, step }));
+    assert.equal(calls.filter(phase => phase === 'design-repair-questioning').length, 1, JSON.stringify({ calls, step }));
+    assert.equal(calls.filter(phase => phase === 'initial-design-decomposition').length, 2, 'one original proposal and one candidate-only repair: ' + JSON.stringify({ calls, step }));
+    assert(fs.existsSync(f.cuFile), JSON.stringify({ calls, step }));
+    assert(step.type === 'phase_execute_request' && (step.phase.startsWith('initial-design-scope-') || step.phase === 'work-unit-author'), JSON.stringify({ calls, step }));
+    const events = fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    assert(!events.some(event => event.type === 'run_end' && event.status === 'HALTED'), 'the owner handoff must not require manual recovery');
+    assert.equal(events.filter(event => event.type === 'design_authority_repair' && event.stage === 'published').length, 1);
+    assert.equal(loadCanonicalBlueprint(f.root, BLUEPRINT_ID).blueprint.revision, Number(doc.revision) + 1, 'candidate-only repair cannot publish another blueprint');
+    assert(!fs.existsSync(featureFilePath(f.root, BLUEPRINT_ID, 'feature-completion.json')), 'design/candidate repair is not product completion');
+    const evidenceDir = path.resolve(__dirname, '../../reports/4c8d73b1-dev/mixed-owner-root-loop-evidence'); fs.mkdirSync(evidenceDir, { recursive: true });
+    for (const name of ['events.jsonl', 'manifest.json']) fs.copyFileSync(path.join(runDir, name), path.join(evidenceDir, name));
+    fs.copyFileSync(path.join(runDir, 'design-repair/original-context.json'), path.join(evidenceDir, 'original-context.json'));
+    fs.writeFileSync(path.join(evidenceDir, 'counts.json'), JSON.stringify({ calls, designAuthors: 1, designQuestioning: 1,
+      originalProposal: 1, candidateOnlyRepair: 1, blueprintPublications: 1, manualRecovery: 0,
+      nextPhase: step.phase, modelBoundary: 'deterministic fixture role output; request, guard, consumer, publication and root coordinator are production' }, null, 2) + '\n');
+  } finally { clearFrameworkConfigCache(); fs.rmSync(f.root, { recursive: true, force: true }); }
+}
+
 export function getCases() { return [...questioningRecoveryCases(), ...questioningRealReplayCases(), ...cases.map(test => ({ name: test.name, run: () => withFreshCuHost(host => scenario(host, test.mode)) })),
+  { name: 'a920 mixed pending candidate rejection repairs authority once before returning only current mapping work to decomposition', run: mixedPendingCandidateRepair },
   { name: 'a920 signed independent questioning rechecks only affected scopes and merges original results before CU decomposition', run: () => withFreshCuHost(host => initialQuestioningLoop(host, 'incremental')) },
   { name: 'a920 signed independent questioning keeps conflicting originals and repairs only the ambiguous scope', run: () => withFreshCuHost(host => initialQuestioningLoop(host, 'local-format')) },
   { name: '3f8a6c21 actual provide rejection returns to the design author and publishes the corrected consumer batch without manual resume', run: () => provideConsumerRepair() },

@@ -82,8 +82,8 @@ const cases: Array<{ name: string; run(): Promise<void> | void }> = [{
       const gap = await run(); assert(gap.some(check => check.failure_kind === 'framework_bug' && check.status === 'SKIP'));
       assert.equal(listExecutionKeyRuns(f.ctx.reportDir, 'ut')[0].record.outcome, 'started');
       f.ctx.forceDevice = false; crash = false; await run(); assert.equal(executions, 8, 'interrupted attempt must hide older success');
-      blocked = true; const external = await run(); assert(external.some(check => check.failure_kind === 'device_blocked'));
-      blocked = false; await run(); assert.equal(executions, 9, 'unlocking after a blocked request must not resurrect an older success');
+      f.ctx.forceDevice = true; blocked = true; const external = await run(); assert(external.some(check => check.failure_kind === 'device_blocked'));
+      f.ctx.forceDevice = false; blocked = false; await run(); assert.equal(executions, 9, 'unlocking after a blocked request must not resurrect an older success');
       crashBuild = true; const buildGap = await run(); assert(buildGap.some(check => check.failure_kind === 'framework_bug'));
       crashBuild = false; await run(); assert.equal(executions, 10, 'a newer failed build must hide old success');
       assert(listExecutionKeyRuns(f.ctx.reportDir, 'ut').every(run => !run.record.goal_invocation));
@@ -144,11 +144,20 @@ const cases: Array<{ name: string; run(): Promise<void> | void }> = [{
       failed = false; await run(); assert.equal(executions, 7, 'latest failed request must defeat old success');
       unreadable = true; await run(); await run(); assert.equal(executions, 9, 'unprovable installed package always executes');
       unreadable = false; await run(); assert.equal(executions, 10);
-      blocked = true; const external = await run(); assert(external.some(check => check.failure_kind === 'device_blocked'));
-      blocked = false; await run(); assert.equal(executions, 11, 'device recovery after a newer blocked request reruns');
+      f.ctx.forceDevice = true; blocked = true; const external = await run(); assert(external.some(check => check.failure_kind === 'device_blocked'));
+      f.ctx.forceDevice = false; blocked = false; await run(); assert.equal(executions, 11, 'device recovery after a newer blocked request reruns');
       f.ctx.forceDevice = true; nativeInternal = true;
       const internal = await run(); assert.equal(generateRequestScriptReport(f.ctx, internal).verdict, 'INCOMPLETE', JSON.stringify(internal));
       assert(internal.some(check => check.id === 'request_device_native' && check.failure_kind === 'framework_bug'));
+      nativeInternal = false; failed = false; f.ctx.forceDevice = true;
+      let selectedB = false;
+      patch(readiness, 'applyPhaseEntryDeviceGate', async () => { selectedB = true; process.env.HARNESS_HDC_TARGET = 'device-B'; return { ok: true, notes: [] }; }, restores);
+      patch(hdc, 'resolveExecutionDeviceIdentity', () => ({ device: selectedB ? 'device-B' : 'device-A', display_env: '1080x1920' }), restores);
+      patch(hdc, 'runHdcRaw', (_exe: string, argv: string[]) => argv[3] === 'bm' ? { status: 0, stdout: JSON.stringify({ name: 'com.example.request', hapModuleInfos: [{ name: 'entry', hapPath: '/data/app/entry.hap' }] }) }
+        : { status: 0, stdout: (argv[1] === 'device-B' ? 'b' : 'a').repeat(64) + '  /data/app/entry.hap' }, restores);
+      await run();
+      const selectedRecord = listExecutionKeyRuns(f.ctx.reportDir)[0].record;
+      assert.equal(selectedRecord.inputs.device, 'device-B'); assert.equal(selectedRecord.inputs.hap_sha256_full, require('crypto').createHash('sha256').update('entry:/data/app/entry.hap:' + 'b'.repeat(64)).digest('hex'), 'post-gate B cannot inherit A installed HAP identity');
       assert(listExecutionKeyRuns(f.ctx.reportDir).every(run => !run.record.goal_invocation));
     } finally { restores.reverse().forEach(restore => restore()); if (old === undefined) delete process.env.HARNESS_HDC_TARGET; else process.env.HARNESS_HDC_TARGET = old; fs.rmSync(f.root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
   },

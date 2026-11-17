@@ -20,11 +20,11 @@ import * as YAML from 'yaml';
 import { deriveBlueprintAdmission, currentBlueprintSliceId } from './blueprint-admission';
 import { evaluateCompletionProgress, compareRelatedInputSnapshots, type CompletionEvaluation, type ArtifactSnapshot } from './goal-failure-classifier';
 import { reconcileP1DerivedResults } from './blueprint-reconciliation';
-import { renderQuestioningResultInstructions, independentQuestioningBlockers, applyIndependentQuestioningOutput, parseIndependentQuestioningOutput, mergeIndependentQuestioningResult, normalizeQuestioningItems, requiredQuestioningScopes, selectQuestioningScopes, validateBlueprintQuestioning } from './blueprint-questioning';
+import { renderQuestioningResultInstructions, independentQuestioningBlockers, applyIndependentQuestioningOutput, parseIndependentQuestioningOutput, mergeIndependentQuestioningResult, normalizeQuestioningItems, requiredQuestioningScopes, selectQuestioningScopes, validateBlueprintQuestioning, questioningEvidencePath } from './blueprint-questioning';
 import { resolveBlueprintReaderSource } from './blueprint-reader-guide';
 import { resolveBlueprintTarget } from './blueprint-addressing';
 import { blueprintSourceRefFiles, compareAuthoritativeContent, deriveBlueprintCandidateSkillInput, checkAuthoritativeContentAligned,
-  type BlueprintProjectionKind, type DesignAuthorityFinding, type DesignRepairClass } from './blueprint-skill-projection';
+  classifyDesignAuthorityCodes, type BlueprintProjectionKind, type DesignAuthorityFinding, type DesignRepairClass } from './blueprint-skill-projection';
 import {
   HeldFeatureLock,
   acquireBlueprintWriteLocks,
@@ -38,7 +38,7 @@ import { changeUnitDirectory, enumerateCanonicalChangeUnits, parseChangeUnitFeat
 import { LIVENESS_BEACON_FILENAME } from './liveness-beacon';
 import { componentBlueprintPath, loadCanonicalBlueprint, resolveComponentBlueprintRefFromLoaded, resolveBlueprintCandidateRefFromLoaded } from './component-blueprint-path';
 import type { ChangeUnitArtifact, ChangeUnitRef } from './change-unit-model';
-import type { ChangeUnitCandidate } from './change-unit-provider-boundary';
+import { ChangeUnitCandidateRejected, type ChangeUnitCandidate } from './change-unit-provider-boundary';
 import type { ComponentBlueprintRef } from './component-blueprint-model';
 import { blueprintIdentityPointers, currentBlueprintIdentity } from './change-unit-blueprint-identity';
 import { validateChangeUnitDesign, readChangeUnitDesignOwnership } from './change-unit-design-gate';
@@ -218,8 +218,8 @@ export function reusableDesignQuestioning(input: {
     const review = asRecord(before.review_summary) ?? {};
     const changedDependencies = input.previousBlueprint ? questioningDependencyChanges(input.projectRoot, before, input.previousSnapshot,
       input.blueprintPath || componentBlueprintPath(input.projectRoot, String(before.blueprint_id)), input.preSnapshot, input.previous)
-      .map(item => path.relative(input.projectRoot, item.path).replace(/\\/g, '/')) : [];
-    const selected = selectQuestioningScopes(input.previousBlueprint, before, input.previous, changedDependencies);
+      .map(item => isInsideProjectRoot(input.projectRoot, item.path) ? path.relative(input.projectRoot, item.path).replace(/\\/g, '/') : item.path) : [];
+    const selected = selectQuestioningScopes(input.previousBlueprint, before, input.previous, changedDependencies, input.projectRoot);
     const result = mergeIndependentQuestioningResult(before, parsed, input.providerId, input.previous, selected,
       input.source ? { path: path.relative(input.projectRoot, input.source).replace(/\\/g, '/'),
         sha256: sha256Hex(fs.existsSync(input.source) ? fs.readFileSync(input.source) : Buffer.from(input.output)) } : undefined);
@@ -252,26 +252,38 @@ function questioningKnowledgeFiles(projectRoot: string, blueprint: BlueprintReco
 }
 
 /** Existing Q input hashes identify affected files; missing originals are explicit, never guessed as unchanged. */
+export type QuestioningDependency = Omit<ResolutionDependency, 'exists'> & { exists?: boolean; state?: 'unknown'; detail?: string };
 export function questioningDependencyChanges(projectRoot: string, blueprint: BlueprintRecord, pre?: ReturnType<typeof capturePhaseInvocationSnapshot>, ownPath?: string,
-  observed?: ReturnType<typeof capturePhaseInvocationSnapshot>, previous?: BlueprintRecord): ResolutionDependency[] {
+  observed?: ReturnType<typeof capturePhaseInvocationSnapshot>, previous?: BlueprintRecord): QuestioningDependency[] {
   const itemFiles = asRecords(previous?.items).flatMap(item => [...asStrings(item.verification_refs), ...asStrings(item.evidence_refs),
     String(asRecord(item.provenance)?.source_ref ?? '')]).flatMap(ref => {
-    const relative = ref.replace(/\\/g, '/').split(/#|:(?=\d)/)[0];
-    if (!relative || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(relative)) return [];
+    const relative = questioningEvidencePath(ref);
+    if (!relative) return [];
     try {
-      const file = path.resolve(projectRoot, validateProjectRelativePath(projectRoot, relative, 'questioning evidence input'));
-      const snapshotFiles = pre?.entries.filter(entry => entry.path === relative || entry.path.startsWith(relative + '/')) ?? [];
+      // A declared external input stays unknown; locating its existing consumer grants no file read authorization.
+      const absolute = path.resolve(projectRoot, relative);
+      if (path.win32.isAbsolute(relative) && !path.isAbsolute(relative)) return [relative];
+      if (!isInsideProjectRoot(projectRoot, absolute)) return [absolute];
+      const inside = path.isAbsolute(relative) ? path.relative(projectRoot, relative).replace(/\\/g, '/') : relative;
+      const file = path.resolve(projectRoot, validateProjectRelativePath(projectRoot, inside, 'questioning evidence input'));
+      const snapshotFiles = pre?.entries.filter(entry => entry.path === inside || entry.path.startsWith(inside + '/')) ?? [];
       return snapshotFiles.length ? snapshotFiles.map(entry => path.resolve(projectRoot, entry.path))
         : /\.[A-Za-z0-9]+$/.test(relative) ? [file] : [];
     } catch { return []; }
   });
-  return [...new Set([...blueprintSourceRefFiles(projectRoot, blueprintAuthorContent(blueprint), true), ...questioningKnowledgeFiles(projectRoot, blueprint), ...itemFiles])].flatMap(file => {
-    if (ownPath && path.resolve(file) === path.resolve(ownPath)) return [];
+  const files = [...blueprintSourceRefFiles(projectRoot, blueprintAuthorContent(blueprint), true), ...questioningKnowledgeFiles(projectRoot, blueprint), ...itemFiles];
+  return [...new Map(files.map(file => [questioningEvidencePath(file), file])).values()].flatMap<QuestioningDependency>(file => {
+    // Both candidate and canonical references identify the blueprint facts already compared by stable scope.
+    if (questioningEvidencePath(file) === questioningEvidencePath(componentBlueprintPath(projectRoot, String(blueprint.blueprint_id)))
+      || ownPath && questioningEvidencePath(file) === questioningEvidencePath(ownPath)) return [];
     const relative = path.relative(projectRoot, file).replace(/\\/g, '/');
     // In-document pointers are already compared as design facts; they are not absent host files.
-    if (!fs.existsSync(file) && resolveBlueprintReaderSource(blueprint, '/' + relative)) return [];
+    const inside = path.isAbsolute(file) && isInsideProjectRoot(projectRoot, file);
+    if (!inside) return [{ path: file, state: 'unknown' as const, sha256: null, role: 'artifact' as const,
+      detail: '仓外、未读取；存在性及内容未知，不据此判为缺失。' }];
+    if (inside && !fs.existsSync(file) && resolveBlueprintReaderSource(blueprint, '/' + relative)) return [];
     const review = path.join(path.dirname(componentBlueprintPath(projectRoot, String(blueprint.blueprint_id))), 'component-blueprint.review.md');
-    if (path.resolve(file) === path.resolve(review) && fs.existsSync(file)) {
+    if (questioningEvidencePath(file) === questioningEvidencePath(review) && fs.existsSync(file)) {
       try {
         const header = asRecord(YAML.parse(/^---\r?\n([\s\S]*?)\r?\n---/.exec(fs.readFileSync(file, 'utf8'))?.[1] ?? ''));
         const source = asRecord(header?.derived_from);
@@ -285,7 +297,7 @@ export function questioningDependencyChanges(projectRoot: string, blueprint: Blu
     if (observed) {
       const entry = observed.entries.find(item => item.path === relative && item.kind === 'file');
       exists = !!entry; sha256 = entry?.sha256 ?? null;
-    } else if (isInsideProjectRoot(projectRoot, file)) {
+    } else if (inside) {
       exists = fs.existsSync(file);
       try { if (exists) sha256 = sha256Hex(fs.readFileSync(file)); } catch { /* Unreadable input remains a gap in the public Q context. */ }
     }
@@ -781,7 +793,7 @@ function questioningPrompt(input: UnattendedDesignRepairInput, draftFile: string
       canonicalPath: componentBlueprintPath(input.projectRoot, String(draft.blueprint_id)) }) }) + '\n', { encoding: 'utf8' });
   const changedDependencies = questioningDependencyChanges(input.projectRoot, draft, previous?.preSnapshot, draftFile, undefined, usable.result ?? undefined);
   const selected = selectQuestioningScopes(previous?.beforeDocument, draft, usable.result ?? undefined,
-    changedDependencies.map(item => path.relative(input.projectRoot, item.path).replace(/\\/g, '/')));
+    changedDependencies.map(item => isInsideProjectRoot(input.projectRoot, item.path) ? path.relative(input.projectRoot, item.path).replace(/\\/g, '/') : item.path), input.projectRoot);
   let actualDiff: import('./types').ContextFileEntry[] | null = null;
   if (previous?.completed && previous.preSnapshot && previous.postSnapshot && diffPhaseInvocationSnapshots(previous.preSnapshot, previous.postSnapshot).kind === 'clean') {
     try {
@@ -1242,9 +1254,16 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
       const checks = [...units.values()].flatMap(unit => {
         const ctx = { projectRoot, frameworkRoot, feature: deriveChangeUnitFeatureId(blueprintId, unit.change_unit_id), phase: input.phase,
           featureSpec: {}, phaseRule: {} } as CheckContext;
-        return [...consumerKinds].flatMap(kind => checkAuthoritativeContentAligned(ctx, kind,
-          deriveBlueprintCandidateSkillInput(projectRoot, ctx.feature, frameworkRoot, kind, { blueprint: doc, changeUnit: unit, architecture: context.architecture,
-            constructionMapping: readBatchCandidates().find(row => row.artifact.change_unit_id === unit.change_unit_id)?.construction_mapping })));
+        return [...consumerKinds].flatMap(kind => {
+          let projection = deriveBlueprintCandidateSkillInput(projectRoot, ctx.feature, frameworkRoot, kind, { blueprint: doc, changeUnit: unit, architecture: context.architecture,
+            constructionMapping: readBatchCandidates().find(row => row.artifact.change_unit_id === unit.change_unit_id)?.construction_mapping });
+          if (pendingIds.has(unit.change_unit_id) && projection.state === 'invalid' && projection.codes?.length) {
+            const codes = projection.codes.filter(code => classifyDesignAuthorityCodes([code]).artifacts.every(artifact => artifact === 'blueprint'));
+            if (!codes.length) return []; // The unpublished candidate keeps its own remaining work after the authority is repaired.
+            projection = { ...projection, codes, detail: `先修本次蓝图责任；待接受候选的映射仍由原候选作者在新事实下核对，不阻止已修好的蓝图发布。\n${projection.detail ?? ''}` };
+          }
+          return checkAuthoritativeContentAligned(ctx, kind, projection);
+        });
       });
       const previousUnits = enumerateCanonicalChangeUnits(projectRoot, blueprintId)
         .filter(unit => !retired.has(String(unit.changeUnit.change_unit_id))).map(unit => asChangeUnitArtifact(unit.changeUnit));
@@ -1708,15 +1727,22 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
         revisions.push({ expectedRef: createChangeUnitRef(current), candidate });
       }
       const pending = batchCandidates.filter(candidate => pendingIds.has(candidate.artifact.change_unit_id));
+      let candidateRemainder: string | undefined;
       if (pending.length) {
         const existing = enumerateCanonicalChangeUnits(projectRoot, blueprintId);
         const alreadyAccepted = pending.every(candidate => existing.some(unit => canon(asChangeUnitArtifact(unit.changeUnit)) === canon(candidate.artifact)));
         if (!alreadyAccepted) {
           if (!pendingCandidatesFile || !fs.existsSync(pendingCandidatesFile)
             || !fs.readFileSync(pendingCandidatesFile).equals(Buffer.from(original.pendingCandidates!, 'base64'))) throw new Error('待接受候选已变化；保留当前候选，由原责任方重核，不用旧事务覆盖。');
-          acceptChangeUnitDecomposition(projectRoot, blueprintId, pending);
+          try { acceptChangeUnitDecomposition(projectRoot, blueprintId, pending); }
+          catch (error) {
+            if (!(error instanceof ChangeUnitCandidateRejected) || error.designAuthority?.length) throw error;
+            // Original bytes stay in the transaction archive; only the original pending input receives current machine bindings.
+            fs.writeFileSync(pendingCandidatesFile, JSON.stringify(pending, null, 2) + '\n');
+            candidateRemainder = `蓝图责任已修复；保留原候选交既有decompose处理当前仍有效的候选问题：${error.message}`;
+          }
         }
-        if (pendingCandidatesFile && fs.existsSync(pendingCandidatesFile)
+        if (!candidateRemainder && pendingCandidatesFile && fs.existsSync(pendingCandidatesFile)
           && fs.readFileSync(pendingCandidatesFile).equals(Buffer.from(original.pendingCandidates!, 'base64'))) fs.unlinkSync(pendingCandidatesFile);
       }
       if (revisions.length || unchanged.length) {
@@ -1734,6 +1760,7 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
       const own = result.skipped.find(item => submitted.has(item.change_unit_id));
       reconciled = !result.busy && !own && (!changeUnitId || reconciled || result.bumped.some(item => item.change_unit_id === changeUnitId));
       reconcileNote = result.busy ?? (own ? `本 CU 被调和器跳过：${own.reasons.join('；')}` : reconciled ? '设计发布已交原调和器；各CU的真实差异由P1/P2重评' : '本 CU 未被升版');
+      if (candidateRemainder) reconcileNote += `；${candidateRemainder}`;
       Object.assign(evidence, { bumped: result.bumped, skipped: result.skipped });
     } catch (error) {
       reconciled = false;

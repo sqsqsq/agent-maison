@@ -11,7 +11,7 @@ import { parseScope } from './scope-parser';
 import { resolveComponentBlueprintRef } from './component-blueprint-path';
 import { ComponentBlueprintRef, asRecord, asRecords, asStrings, type BlueprintRecord } from './component-blueprint-model';
 import { ChangeUnitArtifact, sameBlueprintIdentity, sameBlueprintTarget } from './change-unit-model';
-import { resolveBlueprintTarget } from './blueprint-addressing';
+import { resolveBlueprintTarget, stableAddressIndex } from './blueprint-addressing';
 import { loadCatalog } from './catalog-parser';
 import { validateProjectRelativePath } from './project-relative-path';
 import { resolveGoalRunBaseline } from './goal-run-baseline';
@@ -50,20 +50,23 @@ function projectSelectionFacts(root: string, contracts: ContractsSpec, cu: Chang
       && mapping.implementation_refs.some(raw => selectionRefMatches(raw, component, projected.components)));
     if (mapped) continue;
     const mapping = section.design_ref_mappings.find(mapping => sameBlueprintTarget(mapping.design_ref, ref));
+    if (mapping) continue; // An authored landing is a choice to validate, not an absent projection to complete.
     const implementation = fs.existsSync(path.join(root, component.file)) ? key : `planned:${key}`;
-    if (mapping) mapping.implementation_refs.push(implementation);
-    else section.design_ref_mappings.push({ design_ref: ref, implementation_refs: [implementation], verification_refs: asStrings(decision.verification_refs) });
+    section.design_ref_mappings.push({ design_ref: ref, implementation_refs: [implementation], verification_refs: asStrings(decision.verification_refs) });
   }
   return projected;
 }
 
 export interface ComponentProjectionFinding { message: string; route: 'repair_feature_mapping' | 'repair_change_unit' | 'reconcile_blueprint' }
 /** The caller keeps the cause/owner instead of flattening every failure into plan work. */
-export function componentProjectionFindings(root: string, contracts: ContractsSpec, cu: ChangeUnitArtifact): ComponentProjectionFinding[] {
+export function componentProjectionFindings(root: string, contracts: ContractsSpec, cu: ChangeUnitArtifact, resolveRef = resolveComponentBlueprintRef,
+  origin: 'feature' | 'blueprint' = 'feature'): ComponentProjectionFinding[] {
   if (!fs.existsSync(componentIndexPath(root))) return [];
   let blueprint: BlueprintRecord;
+  let targets: Map<string, BlueprintRecord>;
   try {
-    blueprint = resolveComponentBlueprintRef(root, cu.component_blueprint_ref).blueprint;
+    blueprint = resolveRef(root, cu.component_blueprint_ref).blueprint;
+    targets = stableAddressIndex(blueprint);
     contracts = projectSelectionFacts(root, contracts, cu, blueprint);
   }
   catch (error) { return [{ message: `蓝图选型权威不可解析：${(error as Error).message}`, route: 'reconcile_blueprint' }]; }
@@ -78,6 +81,11 @@ export function componentProjectionFindings(root: string, contracts: ContractsSp
       if (!sameBlueprintIdentity(ref, cu.component_blueprint_ref)) throw new Error(`${ref.target.id}: 映射身份与 canonical CU 不一致`);
       const decision = asRecord(resolveBlueprintTarget(blueprint, ref.target));
       if (decision?.kind !== 'component_asset_selection') continue;
+      const target = targets.get(String(decision.target_ref));
+      if (origin === 'blueprint' && components.length === 0 && target && isUiComponent(target) && !(typeof target.file === 'string' && typeof target.name === 'string')
+        && !asRecords(asRecord(target.contracts)?.components).some(component => typeof component.file === 'string' && typeof component.name === 'string')) {
+        findings.push({ route: 'reconcile_blueprint', message: `${ref.target.id}: 蓝图目标 ${String(decision.target_ref)} 缺少可消费的 contracts.components.file/name 声明；由蓝图责任方补齐，不从文件名猜符号。候选已有实现引用保留，声明齐备后再核对其 file#name 落点。` });
+      }
       if (!['answered_with_evidence', 'decided_with_authority'].includes(String(decision.status))) findings.push({ route: 'reconcile_blueprint', message: `${ref.target.id}: 选型权责未闭合，不能进入 Feature 施工；新边回设计 owner，按当前请求授权正式裁决` });
       let consumers = 0;
       for (const component of components) {

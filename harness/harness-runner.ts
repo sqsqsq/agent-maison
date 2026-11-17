@@ -101,6 +101,7 @@ import {
   intermediateRoundsJournalPath,
 } from './scripts/utils/intermediate-rounds-journal';
 import { deleteEnvKeyCaseInsensitive, runProcessIntegrityPreflight } from './scripts/utils/process-integrity';
+import { effectiveForceDevice } from './scripts/utils/managed-goal-invocation';
 import { validateAttendedGoalContext } from './scripts/utils/attended-goal-context';
 import {
   resolveFidelityContextFromFeature,
@@ -157,6 +158,8 @@ import { resolvePhasePersonalPrerequisites } from './scripts/utils/phase-persona
 import { runCapabilityPreflight, emitHarnessPreflightGap } from './scripts/utils/capability-preflight';
 import {
   applyPhaseEntryDeviceGate,
+  selectDeviceExecutionTarget,
+  applyFrozenDeviceEnv,
   buildTestingTargetKindCap,
 } from './scripts/utils/device-readiness-gate';
 import { phaseRequiresDevice, phaseHasNativeExecution } from './scripts/utils/phase-device-requirement';
@@ -384,6 +387,32 @@ const args = minimist(process.argv.slice(2), {
     v: 'verbose',
   },
 });
+
+/** Deferred native execution reports its real gate result so the runtime can keep the original condition wait. */
+export async function prepareHarnessDeviceExecution(input: { projectRoot: string; phase: string; deferred?: boolean;
+  onTarget?: (target: import('./scripts/utils/device-readiness-gate').DeviceTarget) => void }): Promise<CheckResult | undefined> {
+  let gate: import('./scripts/utils/device-readiness-gate').PhaseEntryDeviceGateDecision | undefined;
+  let executionError: string | undefined;
+  try {
+    gate = await applyPhaseEntryDeviceGate({ projectRoot: input.projectRoot, phase: input.phase,
+      startedBy: `harness-${input.phase}-${process.pid}`, log: line => console.log(`   · [device] ${line}`) });
+  } catch (error) { executionError = `设备策略检查执行失败：${(error as Error).message}`; }
+  if (gate?.ok) {
+    if (gate.target) input.onTarget?.(gate.target);
+    return undefined;
+  }
+  const details = executionError ?? gate?.reason ?? '设备前置未通过';
+  if (!input.deferred) { console.error(`   ✗ ${details.replace(/\n/g, '\n     ')}`); process.exit(1); }
+  const external = gate?.code === 'blocked' || gate?.code === 'ambiguous' || gate?.code === 'device_policy_unset';
+  const check: CheckResult = {
+    id: 'device_test_install', category: 'structure', description: '设备执行前置就绪', severity: 'BLOCKER', status: 'FAIL', details,
+    failure_kind: gate?.code === 'blocked' ? 'device_blocked' : external ? 'capability_missing' : 'framework_bug',
+    blocking_class: external ? 'externalBlocked' : 'framework_internal',
+    suggestion: gate?.code === 'blocked' ? '由原协调器等待设备条件恢复，在同一调用继续；不修改产品或绕过设备门。'
+      : external ? '按设备门原诊断补齐策略或明确目标后接回原任务。' : '核查设备策略/配置读取与门执行错误，保留已有原件后修复同一入口。',
+  };
+  return input.phase === 'ut' ? { ...check, id: 'ut_hvigor_test' } : check;
+}
 
 export function bindAttendedGoalContext(input: {
   projectRoot: string;
@@ -818,7 +847,7 @@ async function main(): Promise<void> {
       : rawPhase;
   const reportReconcileOnly = Boolean(args['report-reconcile-only']);
   // plan 07a41ec6 T6：唯一显式逃生口——用户要 fresh / N 轮稳定性时强制真跑，不复用同键 run
-  const forceDevice = Boolean(args['force-device']);
+  const forceDevice = effectiveForceDevice(Boolean(args['force-device']), { projectRoot, feature, phase });
 
   const fwConfigEarly = loadFrameworkConfig(projectRoot);
   let workflowSpec: WorkflowSpec;
@@ -1014,7 +1043,7 @@ async function main(): Promise<void> {
         const inventory = (require('yaml') as typeof import('yaml')).parse(fs.readFileSync(componentIndexPath(projectRoot), 'utf8'));
         if (inventory?.schema_version === '1.0' && Array.isArray(inventory.components)) {
           const { refreshComponentIndex } = require('./scripts/utils/component-assets') as typeof import('./scripts/utils/component-assets');
-          refreshComponentIndex(projectRoot);
+          refreshComponentIndex(projectRoot, feature);
         }
       } catch (error) { console.warn(`组件索引未刷新，由原检查报告具体缺口：${(error as Error).message}`); }
     }
@@ -1161,40 +1190,23 @@ async function main(): Promise<void> {
    * 在门这里生成、稍后 push——目标分类只有门知道，而 checks 数组要到 Step 2 才存在。
    */
   let deviceConclusionCap: CheckResult | undefined;
-  if (phaseRequiresDevice(phase, resolvedProfile) && !reportReconcileOnly) {
-    {
-      let gate;
-      try {
-        // 起门 → notes → 托管回收登记 → 原子注入 env，整条接线在 applyPhaseEntryDeviceGate
-        // 内（c7d2a9e4 D1：即席 CLI 与 device:ready 共用同一条，纪律不抄第二遍）。
-        gate = await applyPhaseEntryDeviceGate({
-          projectRoot,
-          phase,
-          startedBy: `harness-${phase}-${process.pid}`,
-          log: line => console.log(`   · [device] ${line}`),
-        });
-      } catch (err) {
-        // 策略检查/就绪核心自身执行失败（凭据库不可读、配置损坏…）：与
-        // `device_policy_unset`（正常态）严格区分——必须停止，不得当成"未配置"
-        // 去引导用户重新登记凭据。
-        console.error(`   ✗ 设备策略检查执行失败：${(err as Error).message.replace(/\n/g, '\n     ')}`);
-        process.exit(1);
-      }
-      if (!gate.ok) {
-        console.error(`   ✗ ${(gate.reason ?? '设备前置未通过').replace(/\n/g, '\n     ')}`);
-        process.exit(1);
-      }
-      // 模拟器/未知目标上的 testing **不得冒充真机整体通过**（harness-gates spec）。
-      // 既有封顶判据只在 goal-runner 被消费；普通模式此前根本没有 target kind 可用，
-      // 新门产出后直接复用同一函数，不依赖 agent 自报。
-      if (gate.target) {
-        deviceConclusionCap = buildTestingTargetKindCap(phase, gate.target);
-        if (deviceConclusionCap) {
-          console.log(`   ⚠ [device] testing 结论将被封顶（target_kind=${gate.target.targetKind}，非 physical）`);
-        }
-      }
-    }
-  }
+  const prepareDeviceExecution = async (deferred = false): Promise<CheckResult | undefined> => {
+    if (!phaseRequiresDevice(phase, resolvedProfile, devicePreparationScope) || reportReconcileOnly) return undefined;
+    return prepareHarnessDeviceExecution({ projectRoot, phase, deferred, onTarget: target => {
+      deviceConclusionCap = buildTestingTargetKindCap(phase, target);
+      if (deviceConclusionCap) console.log(`   ⚠ [device] testing 结论将被封顶（target_kind=${target.targetKind}，非 physical）`);
+    } });
+  };
+  const devicePreparationScope = phaseIsGlobal ? undefined
+    : (require('./scripts/utils/goal-run-creation') as typeof import('./scripts/utils/goal-run-creation')).resolveEffectiveScopeSource(
+      projectRoot, feature, process.env.MAISON_GOAL_RUN_ID?.trim())?.scope;
+  if ((phase === 'testing' || phase === 'ut') && phaseRequiresDevice(phase, resolvedProfile, devicePreparationScope) && !reportReconcileOnly) {
+    const selected = selectDeviceExecutionTarget({ projectRoot, sessionId: process.env.MAISON_DEVICE_SESSION_ID ?? `harness-${phase}-${process.pid}` });
+    if (selected) {
+      applyFrozenDeviceEnv(process.env, selected.env);
+      deviceConclusionCap = buildTestingTargetKindCap(phase, selected.target);
+    } else await prepareDeviceExecution();
+  } else if (phase !== 'testing' && phase !== 'ut') await prepareDeviceExecution();
 
   if (!phaseIsGlobal && !forceDevice && !reportReconcileOnly && !args['skip-ui-spec'] && !args['skip-visual-handoff'] && !args['skip-visual-parity']) {
     const reused = readReusableCheckResult({ projectRoot, feature, phase, frameworkRoot: resolvedFrameworkRoot,
@@ -1254,6 +1266,7 @@ async function main(): Promise<void> {
   });
   const context: CheckContext = {
     gateDeadlineMs: readGoalGateDeadlineMs(),
+    prepareDeviceExecution: () => prepareDeviceExecution(true),
     module: args.module, term: args.term, packagePath: args['package-path'], docPath: args.path,
     resolvedInputs,
     factsContext,
@@ -2026,7 +2039,11 @@ export function applyVisualDebtPipeline(
       throw new Error(`visual-debt.json 损坏（${prevLoad.reason}）——单调 ledger 不可信，禁止按"无历史"重建`);
     }
     const prev = prevLoad.doc;
-    let debtDoc = annotateAssetTriState(deriveVisualDebt(report.feature, report.checks, prev), report.checks);
+    // A report-only pass did not observe pixels and cannot settle screen debt.
+    const debtChecks = report.checks.some(check => check.id === 'report_reconcile_only')
+      ? report.checks.filter(check => check.id !== 'visual_diff'
+        && (check.structured as { kind?: string } | undefined)?.kind !== 'visual_diff') : report.checks;
+    let debtDoc = annotateAssetTriState(deriveVisualDebt(report.feature, debtChecks, prev), debtChecks);
     if (debtDoc.entries.length === 0 && !prev) return; // 无债务面（非 UI/全绿且无历史）不落空文件
 
     writeVisualDebt(projectRoot, debtDoc);

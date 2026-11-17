@@ -156,6 +156,24 @@ function writeInstallArtifacts(
   }
 }
 
+/** A byte-identical rebuilt HAP changes local stat fields, not the recorded physical installation. */
+export function adoptInstallMetadataForExecutionReuse(opts: DeviceTestInstallOptions, expectedHapSha256Full: string): boolean {
+  const metaPath = path.join(featurePhaseReportsDir(opts.projectRoot, opts.feature, opts.phase, opts.frameworkRoot), 'device-test-install.meta.json');
+  const temporary = `${metaPath}.${process.pid}.tmp`;
+  try {
+    if (!/^[a-f0-9]{64}$/i.test(expectedHapSha256Full)) return false;
+    const prior = JSON.parse(fs.readFileSync(metaPath, 'utf8')) as Record<string, unknown>;
+    const stat = fs.statSync(opts.hapPath);
+    if (prior.ok !== true || typeof prior.hapSha256 !== 'string' || !prior.hapSha256
+      || !expectedHapSha256Full.startsWith(prior.hapSha256.toLowerCase())
+      || computeHapSha256Full(opts.hapPath) !== expectedHapSha256Full) return false;
+    fs.writeFileSync(temporary, JSON.stringify({ ...prior, reused: true, hapPath: opts.hapPath,
+      hapMtimeMs: stat.mtimeMs, hapSizeBytes: stat.size }, null, 2) + '\n', 'utf8');
+    fs.renameSync(temporary, metaPath);
+    return true;
+  } catch { try { fs.unlinkSync(temporary); } catch { /* Preserve the prior physical record. */ } return false; }
+}
+
 /** plan b3d7e5a1 T3（codex P1）：设备 versionCode 的唯一展示口径——null 永远写成未解析，不写成确定值。 */
 export function describeDeviceVersionCode(parse: { versionCode: number | null; versionCodeUnknownReason?: 'parsed_zero' }): string {
   if (parse.versionCode !== null) return String(parse.versionCode);

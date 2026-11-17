@@ -2,7 +2,7 @@ import assert from 'assert';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import { codingTestPreservation, compareExistingTestPreservation, resolveRepairResponsibility, repairResponsibilityContext, readRepairDependencyContext } from '../../scripts/utils/repair-responsibility';
+import { codingTestPreservation, compareExistingTestPreservation, resolveRepairResponsibility, repairResponsibilityContext, readRepairDependencyContext, independentArtifactRepairs } from '../../scripts/utils/repair-responsibility';
 import { resolvePhaseEvidenceManifest, writePhaseEvidenceManifest } from '../../scripts/utils/phase-evidence-manifest';
 import { clearFrameworkConfigCache } from '../../config';
 import type { ExecutionScope } from '../../scripts/utils/execution-scope';
@@ -149,6 +149,26 @@ export function runAll(): UnitCaseResult[] {
       assert.equal(resolveRepairResponsibility({ ...context, projectRoot: undefined, feature: undefined, target }).action, 'unavailable', 'the view cannot invent actual unit identity or write authority');
       assert.equal(resolveRepairResponsibility({ ...context, contracts: { ...authority.contracts, feature: 'another-unit' }, target }).action, 'unavailable', 'another unit write domain cannot authorize the current object');
     } finally { clearFrameworkConfigCache(); fs.rmSync(host, { recursive: true, force: true }); }
+  });
+  check('4c8 review recheck uses artifact responsibility while retaining its real independent findings', () => {
+    const fixture = require('./goal-runner-testing-integrity.unit.test') as typeof import('./goal-runner-testing-integrity.unit.test');
+    const { featureFilePath } = require('../../config') as typeof import('../../config');
+    const { resolveCurrentDisposition } = require('../../scripts/utils/check-disposition') as typeof import('../../scripts/utils/check-disposition');
+    const host = fixture.setupGoalRuntimeHost('codex').root;
+    try {
+      const report = featureFilePath(host, fixture.FEATURE, 'review/review-report.md');
+      fs.mkdirSync(path.dirname(report), { recursive: true }); fs.writeFileSync(report, '# Current original independent report\n');
+      const authority = repairResponsibilityContext({ projectRoot: host, frameworkRoot: root, feature: fixture.FEATURE, workflow });
+      const base = { phase: 'review', source_phase: 'review', action: 'repair' as const, severity: 'BLOCKER' as const,
+        affects: 'completion' as const, detail: 'actual original check feedback' };
+      const recheck = (problem: typeof base & { id: string; files: string[] }) => independentArtifactRepairs({ ...authority,
+        currentDisposition: resolveCurrentDisposition({ endpoint: 'feature-completion', phases: [], additionalProblems: [problem] }), recheckFamilies: ['review'] });
+      assert.equal(recheck({ ...base, id: 'component_asset_projection', files: [featureFilePath(host, fixture.FEATURE, 'contracts.yaml')] }).length, 0,
+        'a raw contract mapping error found by review stays with its actual mapping writer');
+      assert(recheck({ ...base, id: 'review_report_format', files: [report] }).some(task => task.owner === 'review'), 'the reviewer still repairs its own report');
+      assert(recheck({ ...base, id: 'open_finding:CR-real', files: [fixture.PRODUCT_FILE] }).some(task => task.owner === 'review'),
+        'a real independent product finding still receives reassessment after its inputs change');
+    } finally { fs.rmSync(host, { recursive: true, force: true }); clearFrameworkConfigCache(); }
   });
   return results;
 }

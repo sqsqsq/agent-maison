@@ -19,11 +19,12 @@ import {
 } from './utils/goal-progress';
 import { resolveChangeUnitExpectedExecution } from './utils/change-unit-completion';
 import { assessFeature, assessmentReasons } from './utils/feature-assessment';
+import { createGoalWaitReader, parseGoalWaitCursor, waitForGoalStatus } from './utils/goal-status-wait';
 
 async function main(): Promise<number> {
   const argv = minimist(process.argv.slice(2), {
-    string: ['feature', 'run-id', 'project-root'],
-    boolean: ['json', 'markdown', 'watch', 'help'],
+    string: ['feature', 'run-id', 'project-root', 'after', 'timeout-ms'],
+    boolean: ['json', 'markdown', 'watch', 'wait', 'help'],
     alias: { f: 'feature', h: 'help' },
     default: { 'run-id': 'latest' },
   });
@@ -33,6 +34,9 @@ async function main(): Promise<number> {
 Goal status — progress projection reader
 
   npx ts-node scripts/goal-status.ts --feature <f> [--run-id latest|id] [--project-root <root>] [--json|--markdown] [--watch] [--tail N] [--max-ticks N]
+  npx ts-node scripts/goal-status.ts --feature <f> --run-id <id> --wait --json [--after <cursor>] [--timeout-ms N]
+  --wait 默认观察60分钟，原请求终态或需外界处理时提前返回；--timeout-ms 正数可调整本段长短。
+  到期返回 timeout/最近状态/cursor，用 --after 续等；不终止或重启后台任务。
 `);
     return 0;
   }
@@ -54,6 +58,7 @@ Goal status — progress projection reader
   let workflow = resolveWorkflowSpec(projectRoot, { config: cfg, frameworkRoot });
 
   let runId = String(argv['run-id'] ?? 'latest');
+  if (argv.after && runId === 'latest') runId = parseGoalWaitCursor(String(argv.after)).requested_run_id;
   if (runId === 'latest') {
     const latest = resolveLatestRunId(projectRoot, featuresDir, feature);
     if (!latest) {
@@ -77,6 +82,31 @@ Goal status — progress projection reader
   const maxTicks = Number(argv['max-ticks']) || 0;
   const wantJson = Boolean(argv.json);
   const wantMd = Boolean(argv.markdown);
+
+  if (argv.wait) {
+    if (watch) throw new Error('[goal-status] --wait and --watch are separate display modes');
+    const timeoutMs = argv['timeout-ms'] === undefined ? undefined : Number(argv['timeout-ms']);
+    if (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs <= 0)) throw new Error('[goal-status] --timeout-ms must be positive');
+    const cancel = new AbortController();
+    const onCancel = () => cancel.abort();
+    process.once('SIGINT', onCancel);
+    process.once('SIGTERM', onCancel);
+    try {
+      const read = createGoalWaitReader({ projectRoot, frameworkRoot, featuresDir, feature, runId });
+      const result = await waitForGoalStatus({ projectRoot, feature, runId, after: argv.after, timeoutMs, signal: cancel.signal,
+        read });
+      if (wantJson) console.log(JSON.stringify(result, null, 2));
+      else console.log([`Goal ${result.observation?.feature ?? feature} · run ${result.observation?.run_id ?? runId}`,
+        `等待结果：${result.reason}；状态：${result.observation?.status ?? 'UNKNOWN'}；完成：${result.observation?.complete ?? false}`,
+        result.detail, result.observation?.snapshot.next_action ? `下一步：${result.observation.snapshot.next_action}` : null,
+        result.cursor ? `cursor=${result.cursor}` : null].filter(Boolean).join('\n'));
+      return result.reason === 'read_error' ? 1 : result.reason === 'cancelled' ? 130 : 0;
+    } finally {
+      process.removeListener('SIGINT', onCancel);
+      process.removeListener('SIGTERM', onCancel);
+    }
+  }
+  if (argv.after || argv['timeout-ms'] !== undefined) throw new Error('[goal-status] --after/--timeout-ms require --wait');
 
   const renderOnce = (): void => {
     if (isInitialDesignManifest(manifest)) {

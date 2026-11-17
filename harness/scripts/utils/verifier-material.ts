@@ -125,7 +125,24 @@ export function collectTestStrengthContext(input: CurrentAcceptanceEvidenceInput
 }
 
 export function collectCurrentAcceptanceEvidence(input: CurrentAcceptanceEvidenceInput): ContextFileEntry[] {
+  const { featurePhaseReportsDir } = require('../../config') as typeof import('../../config');
   const entries = [...collectTestStrengthContext(input), ...collectNativeAcceptanceEvidence(input)];
+  const subject = input.factsContext?.subject;
+  const runId = input.runId ?? (subject && 'run_id' in subject ? subject.run_id : undefined);
+  if (runId) {
+    const { readPendingTestingRetests } = require('./testing-trace-gates') as typeof import('./testing-trace-gates');
+    const { failureRouteSlug } = require('./hylyre-failure-routing-v1') as typeof import('./hylyre-failure-routing-v1');
+    const { resolveCurrentHapSha256Full } = require('./actionable-evidence') as typeof import('./actionable-evidence');
+    const reports = featurePhaseReportsDir(input.projectRoot, input.feature, 'testing', input.frameworkRoot);
+    const pending = readPendingTestingRetests({ ...input, runId, currentHapSha256: resolveCurrentHapSha256Full(input.projectRoot, reports) });
+    if (pending.length) entries.push({ label: '(original failed behaviors awaiting equivalent retest)', content: JSON.stringify(pending.map(finding => ({
+      issue: `testing_failure_routing_${failureRouteSlug(finding.route.caseId, finding.route.stepIndex)}`,
+      original_failure: finding.route, behavior: finding.behavior,
+      trace: toPosixRel(input.projectRoot, finding.tracePath), plan: toPosixRel(input.projectRoot, finding.derivedPlanPath),
+    })), null, 2) + '\n原发现按行为和原件定位，不按CR序号或用例名称等同。代码已改与行为已复验分别报告；删除、改号、换层、跳过或纯逻辑UT不能证明实际UI生命周期已修。用适用的新原生证据覆盖原触发与预期；如修正测试而换步骤，在原issue-verification逐条给refuted/confirmed/unclear并列原失败与新证据，不用摘要PASS代替。' });
+    for (const finding of pending) for (const file of [finding.tracePath, finding.derivedPlanPath, ...finding.candidateEvidence]) entries.push({
+      label: toPosixRel(input.projectRoot, file), kind: 'path', content: 'Read原失败与适用候选复验的完整触发/预期；原失败仅为历史依据，新用例与断言是否等价须独立核实。' });
+  }
   return entries.length ? [{ label: '(current acceptance evidence)', content: '本次材料选择已完成；下列源码与真实原件供独立核验，缺执行仍保持未知。' },
     ...new Map(entries.map(entry => [entry.label + '\0' + entry.content, entry])).values()] : [];
 }
@@ -632,7 +649,7 @@ export function independentVerificationContext(input: {
   previousOriginal?: ContextFileEntry | null;
   actualDiff: readonly ContextFileEntry[] | null;
   openFindings?: PhaseRepairIssues | null;
-  affectedDependencies?: readonly ResolutionDependency[];
+  affectedDependencies?: readonly (Omit<ResolutionDependency, 'exists'> & { exists?: boolean; state?: 'unknown'; detail?: string })[];
   currentEvidence?: readonly ContextFileEntry[];
   declineContext?: readonly ContextFileEntry[];
   testStrengthCheck?: { id: string; details?: string; affected_files?: readonly string[] };

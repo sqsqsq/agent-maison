@@ -159,7 +159,9 @@ compile/request 准备上下文时按最终实际内容派生专项，不新增�
 
 “继续”先读当前 active run、冻结 execution_scope 和 successor/revision，不重新选择流程。普通维护直接按请求范围完成，不跑 correction-init；恢复明确既有预期、未改变验收/契约且不需新设计决定的普通 bug 修复也属于维护；已完成 Feature 的此类维护不自动创建后继 run。新正式请求使用 obligation-driven；旧 run 通过内部兼容定义恢复，旧公共跳板由 UPDATE 备份清理。真实授权、策展语义、未获授权的限制调整和外部不可逆动作继续使用既有确认点；已有授权不重复询问。完整交付已授权就持续到原终点，真实授权/实质验收变化、秘密、不可逆动作、硬预算和明确禁止仍沿原边界。init-next-steps 不授予任何后继执行权。
 
-无人值守 detach 的 launcher 会在返回前做一次有界启动确认；调用方只消费同一 JSON 的 `startup`，不因 pid/目录存在宣称健康，也不另等下一次心跳。`alive_timeout` 保留活跃 child 并如实报告尚未就绪；早退保留 `detach.log` 原因。`--attach-created`、`--resume`、manifest 与 `--run-id` 必须解析为同一 run 身份，冲突在 parent fork 前拒绝。当前 terminal cooldown 仍为保守 5 分钟：现有 runtime 没有提供可证明恢复完成的 `blockingCleared` 生产事实，因此本批不缩短、不按 mtime 绕过；错误信息给出剩余秒数。
+无人值守 detach 回执含启动时间、run ID 和 `wait_command`。主会话先报告启动，再在同一轮执行 `goal-status --wait --json`，默认单次观察60分钟，原请求终态或需外界处理时提前返回；显式正数 `--timeout-ms` 可改长短，到期返回 `timeout`、最近状态及绑定 `cursor`，用 `--after` 接续同一请求，不停止或重启后台。观察进程退出后仍用原 run ID/游标核对；无 `run_end` 时沿既有3分钟观察新鲜度及匹配同机锁/PID判孤儿，跨机/缺可靠锁保持未知，90分钟接管门不变；不为心跳或普通状态重复唤醒模型，不把子 CU 完成签成原请求交付。无人值守 detach 的 launcher 会在返回前做一次有界启动确认；调用方只消费同一 JSON 的 `startup`，不因 pid/目录存在宣称健康，也不另等下一次心跳。`alive_timeout` 保留活跃 child 并如实报告尚未就绪；早退保留 `detach.log` 原因。`--attach-created`、`--resume`、manifest 与 `--run-id` 必须解析为同一 run 身份，冲突在 parent fork 前拒绝。当前 terminal cooldown 仍为保守 5 分钟：现有 runtime 没有提供可证明恢复完成的 `blockingCleared` 生产事实，因此本批不缩短、不按 mtime 绕过；错误信息给出剩余秒数。
+
+收到 `attention` 时先报告原因；仅当 `WAITING_EXTERNAL` / `STALLED` 的返回提示确认同机运行器仍存活且可续等，才在同一主会话用返回游标执行 `--after <cursor>` 续等原请求。`changed` 时先读新状态，尚在运行时用新返回的游标执行 `--after <cursor>` 续等，不签交付完成。
 
 新run无框架默认总调用、阶段重试/回退或总墙钟配额；旧budget/timeout仅历史读取，不提额续跑。用户明示截止使用 `--user-deadline-at` 的UTC绝对值，未完任务接回不重置；具体工具期限、取消、原生输出静默保护与owner/fence仍有效。
 

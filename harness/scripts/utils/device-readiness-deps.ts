@@ -786,12 +786,15 @@ export function resolveAttemptCredentialRef(projectRoot: string): string | null 
   const frozen = process.env.MAISON_DEVICE_CREDENTIAL_REF?.trim();
   if (frozen) return frozen;
   if (process.env.MAISON_DEVICE_ATTEMPT_FROZEN === '1') return null;
+  // Select-only has frozen permission, while its readiness gate is still pending.
+  if (process.env.MAISON_DEVICE_ATTEMPT_FROZEN === '0'
+    && process.env.HARNESS_HDC_TARGET?.trim() && process.env.MAISON_DEVICE_SESSION_ID?.trim()) return null;
   return resolveUnlockCredentialRef(projectRoot);
 }
 
 export function buildDeviceReadinessInput(projectRoot: string): DeviceReadinessInput {
   const emulatorProfile = resolveEmulatorProfile(projectRoot);
-  const unlockRef = resolveUnlockCredentialRef(projectRoot);
+  const unlockRef = resolveAttemptCredentialRef(projectRoot);
   const deps: DeviceReadinessDeps = {
     listTargets: listHdcTargets,
     isLocked: probeScreenLocked,

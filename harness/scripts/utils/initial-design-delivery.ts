@@ -11,7 +11,7 @@ import { featurePhasesFromWorkflow } from './phase-transition-policy';
 import { prepareDesignRequest, readDesignGoalOrigin, bindDesignRequestBlueprint, type PreparedDesignRequest } from './automatic-request';
 import { nativeFixedScale } from './request-intake';
 import { collectUnitScopeIds, collectDeviceScopeP0P1 } from './acceptance-layering';
-import { realProjectPath } from './project-relative-path';
+import { realProjectPath, isInsideProjectRoot } from './project-relative-path';
 import type { AcceptanceSpec } from './types';
 import { buildInitialDesignGoalManifest, isInitialDesignManifest, isRepeatedRequirement, deriveSuccessorRequirement,
   loadGoalRunManifestFromRun, type GoalManifest, type InitialDesignGoalManifest, type GoalBudget,
@@ -526,12 +526,12 @@ function previousDesignWork(input: { projectRoot: string; manifest: InitialDesig
     const previous = usable?.original;
     let selectedScopes: string[] | undefined;
     let actualDiff: import('./types').ContextFileEntry[] | null = null;
-    let affectedDependencies: import('./capability-resolution').ResolutionDependency[] = [];
+    let affectedDependencies: ReturnType<typeof questioningDependencyChanges> = [];
     try {
       const current = loadCanonicalBlueprint(input.projectRoot, input.manifest.feature).blueprint;
       affectedDependencies = questioningDependencyChanges(input.projectRoot, current, previous?.preSnapshot, input.observation.blueprintPath, undefined, usable?.result ?? undefined);
       selectedScopes = selectQuestioningScopes(previous?.beforeDocument, current, usable?.result ?? undefined,
-        affectedDependencies.map(item => path.relative(input.projectRoot, item.path).replace(/\\/g, '/')));
+        affectedDependencies.map(item => isInsideProjectRoot(input.projectRoot, item.path) ? path.relative(input.projectRoot, item.path).replace(/\\/g, '/') : item.path), input.projectRoot);
       if (previous) {
         const difference = compareAuthoritativeContent(blueprintAuthorContent(YAML.parse(previous.beforeBlueprint)), blueprintAuthorContent(current));
         actualDiff = [{ label: '(actual blueprint changes)', content: JSON.stringify({ state: difference.state,

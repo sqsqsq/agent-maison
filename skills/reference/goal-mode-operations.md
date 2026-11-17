@@ -19,6 +19,8 @@
 
 ## 停机后继续
 
+收到 `attention` 时先报告原因；仅当 `WAITING_EXTERNAL` / `STALLED` 的返回提示确认同机运行器仍存活且可续等，才在同一主会话用返回游标执行 `--after <cursor>` 续等原请求。`changed` 时先读新状态，尚在运行时用新返回的游标执行 `--after <cursor>` 续等，不签交付完成。
+
 重新发起原请求会先读原 active run、当前范围和真实结果。未知条件未变时保持同一等待，不新增作者、工具、run 或事件；实际 producer/对象/授权条件恢复后重新接入原 run，只补受影响部分。不能把 meta mtime、时间经过或取消终态当业务改善。
 
 真实 no_progress_guard 的相同差额保持暂停；明确继续使用原入口的 --force-resume 或受管会话 --force-takeover，仍须真实授权、原生停止确认、owner/fencing、写保护和原用户截止。已完成交付的新需求或明确重新交付按现 successor/范围修订契约处理，不用新目录洗掉失败。

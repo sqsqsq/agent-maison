@@ -132,6 +132,8 @@ export async function continueA21473CombinedReplay(input: { root: string; framew
   const manifestBefore = JSON.parse(fs.readFileSync(path.join(runDir, 'manifest.json'), 'utf8'));
   assert.equal(manifestBefore.requirement, sourceRequirement);
   const observations: any[] = [];
+  const independentReviews: Array<{ runId: string; invokeId: string; material: string }> = [];
+  const reviewAttestations: Array<{ runId: string; invokeId: string; report: string }> = [];
   const priorOptions = process.env.NODE_OPTIONS;
   const guardPath = path.join(root, 'observations/no-real-tools.cjs');
   process.env.NODE_OPTIONS = `${priorOptions ?? ''} --require ${JSON.stringify(guardPath)}`.trim();
@@ -323,9 +325,27 @@ export async function continueA21473CombinedReplay(input: { root: string; framew
           writeA21473ReplayAuthor(root, frameworkRoot, context, authors === 1);
         }
       } else if (step.phase === 'review') {
-        assert.equal(context.executionRole, 'verifier');
-        writeA21473ReplayReview(root, frameworkRoot, context.feature);
+        assert.equal(load('scripts/utils/goal-phase-executor').workUnitExecutionRole(context, issued.request.purpose), 'verifier');
+        assert.equal(issued.request.write_boundary?.executionRole, 'verifier');
+        assert(issued.request.write_boundary?.verifierResultPath?.endsWith('review-report.md'), 'the signed independent reviewer may write only its original report');
+        assert(observedMixed && authors === 2, 'independent review follows the actual mixed-failure author repair');
+        assert(context.workInput?.material?.purpose === 'review' && Object.keys(context.workInput.evaluation?.inputs ?? {}).length > 0,
+          'the original review request must carry current product inputs and its actual review duty');
+        const material = load('scripts/utils/phase-evidence-manifest').stableStringify({
+          inputs: context.workInput.evaluation.inputs, problems: context.workInput.evaluation.disposition.problems });
+        assert(!independentReviews.some(prior => prior.runId === context.runId && prior.material === material),
+          'the same unchanged signed review work cannot buy a repeated independent invocation');
+        independentReviews.push({ runId: context.runId, invokeId: issued.request.invoke_id, material });
+        writeA21473ReplayReview(root, frameworkRoot, context.feature, context);
       } else if (step.phase.endsWith('-verifier-format-repair')) {
+        if (step.phase === 'review-verifier-format-repair') {
+          assert.equal(load('scripts/utils/goal-phase-executor').workUnitExecutionRole(context, issued.request.purpose), 'verifier');
+          assert.equal(issued.request.write_boundary?.executionRole, 'verifier');
+          const report = issued.request.write_boundary?.verifierResultPath;
+          assert(report && /verifier\.report\.[a-f0-9]+\.md$/.test(report), 'the actual review verifier is restricted to its original subject report');
+          assert(!reviewAttestations.some(prior => prior.runId === context.runId && prior.report === report), 'an unchanged review subject cannot purchase another verification');
+          reviewAttestations.push({ runId: context.runId, invokeId: issued.request.invoke_id, report });
+        }
         answerA21473Verifier(root, frameworkRoot, context);
       } else if (step.phase.startsWith('initial-design-scope-')) {
         const feature = load('scripts/utils/change-unit-path').deriveChangeUnitFeatureId(BLUEPRINT, UNIT);
@@ -351,6 +371,9 @@ export async function continueA21473CombinedReplay(input: { root: string; framew
     const childIds = new Set(observations.filter(row => row.feature === feature).map(row => row.runId));
     const initialChildRun = JSON.parse(fs.readFileSync(path.join(childRunDir, 'manifest.json'), 'utf8')).run_id;
     assert.deepEqual([...childIds], [initialChildRun, ...(successor ? [successor.runId] : [])], 'one CU stays in the original request with at most one linked design-publication successor');
+    assert(independentReviews.length === observations.filter(row => row.phase === 'review').length,
+      'every actual independent review is counted and remains part of the original CU request');
+    assert(reviewAttestations.length > 0, 'formal review still requires its actually signed independent verification');
     if (successor) {
       const snapshot = load('scripts/utils/phase-write-boundary').capturePhaseInvocationSnapshot(productBoundary);
       assert.equal(snapshot.failureReason, null); assert.equal(snapshot.sha256, successor.productSha256, 'successor revalidation never edits implementation or tests');
@@ -411,7 +434,7 @@ export async function continueA21473CombinedReplay(input: { root: string; framew
       originalRun: runId, childRun: childManifest.run_id, feature, complete: true, publicEndpoint: step, sourceHashes: input.sourceHashes, designPublications: publications,
       sameChildRun: !successor, initialChildRun, successor, originalRequirementSha256: createHash('sha256').update(sourceRequirement).digest('hex'),
       originalQuestioningItems: 19, originalAcceptanceCriteria: 7, immutableHistoryPrefix: true,
-      authors, successorAuthorRequests: successor ? 1 : 0, successorScopes, observedMixed, restored, knowledgeHandbacks, birthChain: childManifest.phase_chain, effectiveCompletionChain: chain, executedMethods,
+      authors, independentReviews, reviewAttestations, successorAuthorRequests: successor ? 1 : 0, successorScopes, observedMixed, restored, knowledgeHandbacks, birthChain: childManifest.phase_chain, effectiveCompletionChain: chain, executedMethods,
       mixedEvidence, waitingBeforeRestore, assessment, disposition, fidelity, phases, nodeTap: tap,
       environment: ['preserved input files only; isolated Git baseline and trust root', 'minimal declared layer/app/build/adapter setup; original catalog and glossary preserved before real writer dispatch',
         'Node TSC and 11 node:test/SQLite cases run for real; native .ets explicitly not compiled',

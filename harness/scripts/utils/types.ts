@@ -1042,6 +1042,8 @@ export interface PhaseChecker {
 export type CheckContext<S extends 'feature' | 'request' = 'feature'> = S extends 'request' ? RequestCheckContext : FeatureCheckContext;
 
 export interface RequestCheckContext extends Pick<FeatureCheckContext, 'phase' | 'projectRoot' | 'frameworkRoot' | 'frameworkRel' | 'harnessRoot' | 'phaseRule' | 'resolvedProfile'> {
+  /** Original signed goal producer, resolved before request isolation clears inherited environment. */
+  goalInvocation?: Pick<import('./managed-goal-invocation').ManagedGoalInvocation, 'run_id' | 'phase' | 'attempt_id'>;
   subject: 'request';
   request: import('./capability-resolution-entry-input').PreparedRequest;
   reportDir: string;
@@ -1051,6 +1053,8 @@ export interface RequestCheckContext extends Pick<FeatureCheckContext, 'phase' |
 }
 
 export interface FeatureCheckContext {
+  /** Deferred until keyed reuse has been decided; the existing device gate still owns real execution. */
+  prepareDeviceExecution?: () => Promise<CheckResult | void>;
   /** 当前 gate 已授予的绝对截止；只传剩余时间，不授予写入/收口职责。 */
   gateDeadlineMs?: number;
   /** 同一 pipeline 的未提交 device evidence；仅预览引用，正式件由 runtime 提交。 */

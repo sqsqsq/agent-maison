@@ -20,6 +20,7 @@ import { classifyUtExpectations, extractUtItBlocks, type UtExpectationScan } fro
 import { ensurePersonalSetup } from './personal-setup-gate';
 import { executeCheckAsync, CheckExecutionError } from './check-execution';
 import { prepareAutomaticRequest, prepareDesignVerificationRequest, materializeAutomaticFacts, automaticRequestChecks } from './automatic-request';
+import { resolveManagedGoalInvocation } from './managed-goal-invocation';
 
 export async function checkRequestTests(ctx: RequestCheckContext): Promise<CheckResult[]> {
   // R2：预期来源登记与 provider 执行**并列产出**，每条 return 路径都带上它（失败、未执行、provider 异常同样要呈现）。
@@ -243,6 +244,8 @@ export async function runExplicitRequest(options: { projectRoot: string; framewo
   }
   if (typeof args['request-file'] !== 'string' || typeof args['report-dir'] !== 'string') throw new Error('--request-file and --report-dir must be supplied together');
   for (const key of ['feature', 'f', 'goal-run-id', 'goal-attempt-id', 'goal-owner-id', 'goal-owner-epoch', 'run-id', 'attach-created', 'resume', 'manifest', 'sync-closure', 'revalidate', 'report-reconcile-only']) if (args[key] !== undefined && args[key] !== false) throw new Error(`request cannot be combined with --${key}`);
+  const managed = resolveManagedGoalInvocation({ projectRoot: options.projectRoot, phase: String(args.phase ?? '') });
+  const forceDevice = Boolean(args['force-device']) && !managed;
   const saved: Record<string, string | undefined> = {};
   for (const key of Object.keys(process.env)) if (/^MAISON_(GOAL_|FEATURE|CURRENT_PHASE|PHASE_|RUN_ID|ORCHESTRATION)/i.test(key)) { saved[key] = process.env[key]; delete process.env[key]; }
   try {
@@ -274,7 +277,8 @@ export async function runExplicitRequest(options: { projectRoot: string; framewo
       frameworkRel: path.relative(options.projectRoot, options.frameworkRoot).replace(/\\/g, '/'), harnessRoot: path.join(options.frameworkRoot, 'harness'),
       phaseRule: loadPhaseRuleWithOverlays(prepared.phase, loader.loadPhaseRule(prepared.phase, rulePath), profile),
       resolvedProfile: profile,
-      forceDevice: args['force-device'] === true,
+      forceDevice,
+      ...(managed ? { goalInvocation: { run_id: managed.run_id, phase: managed.phase, attempt_id: managed.attempt_id } } : {}),
       resolvedInputs: resolveRequestInputs(options.projectRoot, options.frameworkRoot, prepared),
       factsContext: { subject: { request_sha256: prepared.request_sha256, report_dir: path.relative(options.projectRoot, prepared.reportDir).replace(/\\/g, '/') }, first_phase: prepared.phase, source_paths: [...new Set([...prepared.bindings.filter(binding => binding.exists).map(binding => binding.path), ...Object.entries(prepared.inputs).filter(([id, file]) => id !== 'review_report' && fs.existsSync(file)).map(([, file]) => path.relative(options.projectRoot, file).replace(/\\/g, '/'))])], required_input_snippets: [] },
     };

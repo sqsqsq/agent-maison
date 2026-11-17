@@ -182,7 +182,7 @@
         "testing_failure_routing_protocol",
         "visual_diff"
       ],
-      "dynamic_count": 124
+      "dynamic_count": 126
     },
     "harness/scripts/check-ut.ts": {
       "literal_ids": [

@@ -29,7 +29,7 @@
   "source_sha256_note": "含 bounded-sync-wait.ts——它是解锁链的实际依赖（settle 原语），2026-07-30 验收时尚不存在，旧记录 new_dependencies_not_covered 明确列出并刻意未纳入；本次一并纳入。",
   "superseded_by_source_change": {
     "recorded_at": "2026-09-07",
-    "by": "2026-09-07 c7d2a9e4 D1/R1：device-readiness-gate.ts 新增 applyPhaseEntryDeviceGate（搬运 harness-runner 入口门接线：起门→notes→托管回收登记→原子注入 env，供 harness-runner / 即席 CLI / device-policy --ready 共用）并给 PhaseEntryDeviceGateDecision 补可选 code；device-readiness-deps.ts 的 runHdc 改为复用 hdc-runner.resolveHdcExecutableSync 解析可执行路径（懒 require，解析失败回落 'hdc'）。未改 ensureDeviceReady 核心解锁/降级逻辑、未改 device-unlock-helper.ts / bounded-sync-wait.ts（二者哈希与本记录一致）。待复验范围：入口门接线与 hdc 路径解析下的真机就绪判定与自动解锁；2026-09-07 宿主中期复验通过（见 interim_reverification），欠账未关闭。；395ff0ab：焦点引导观察与解锁后复验，保留旧真机证据，等待同次联合验收",
+    "by": "2026-09-07 c7d2a9e4 D1/R1：device-readiness-gate.ts 新增 applyPhaseEntryDeviceGate（搬运 harness-runner 入口门接线：起门→notes→托管回收登记→原子注入 env，供 harness-runner / 即席 CLI / device-policy --ready 共用）并给 PhaseEntryDeviceGateDecision 补可选 code；device-readiness-deps.ts 的 runHdc 改为复用 hdc-runner.resolveHdcExecutableSync 解析可执行路径（懒 require，解析失败回落 'hdc'）。未改 ensureDeviceReady 核心解锁/降级逻辑、未改 device-unlock-helper.ts / bounded-sync-wait.ts（二者哈希与本记录一致）。待复验范围：入口门接线与 hdc 路径解析下的真机就绪判定与自动解锁；2026-09-07 宿主中期复验通过（见 interim_reverification），欠账未关闭。；395ff0ab：焦点引导观察与解锁后复验，保留旧真机证据，等待同次联合验收；4c8d73b1 §5：device-readiness-gate.ts 新增 selectDeviceExecutionTarget，沿既有策略只读选择明确或唯一目标并分类，选择本身不唤醒、解锁或装机；真正执行仍走原就绪门，门返回 env 保留已绑定的 MAISON_DEVICE_SESSION_ID。device-readiness-deps.ts 的 buildDeviceReadinessInput 改用 resolveAttemptCredentialRef，沿用本 attempt 已冻结的不透明凭据引用；成组的 select-only 上下文（MAISON_DEVICE_ATTEMPT_FROZEN=0 且有 target/session）无引用时保持 manual，不因之后读取配置而升级为自动解锁。两文件 current_sha256 已按本轮源码刷新；本轮仅有隔离回放与软件定向，没有执行真机复验，历史 source_sha256、verified_sha256 与中期物理复验事实均原样保留，status 继续为 PENDING_REAL_DEVICE_REVERIFICATION。待真机联合复验需覆盖只读选择后进入原就绪/自动解锁链、session 一致、manual 不升级，以及既有多设备和引导/锁屏恢复边界。",
     "status": "PENDING_REAL_DEVICE_REVERIFICATION",
     "note": "上面 source_sha256 是 2026-08-17 真机验收当时所验源码的哈希，**不得为迁就代码改动而重写**——那等于伪造真机证据。本次改动后需在真机上重跑同一验收流程并落新记录；在此之前本条证据只证明「旧代码曾在真机上通过」。",
     "new_dependencies_not_covered": [
@@ -40,12 +40,12 @@
       {
         "path": "harness/scripts/utils/device-readiness-gate.ts",
         "verified_sha256": "fd0e6deb64ecf16a01c853084fa5426dbaefdc0eccb82cce75a58e8eb24627a1",
-        "current_sha256": "0a22172ea0a82c04348c606dcc8806b078a7957f6e2fe9733ce755aca08baf87"
+        "current_sha256": "3448d803ce1cfd76380cbb8ae9eef6e0b486ba41329d0e5cd9498c7c09a62634"
       },
       {
         "path": "harness/scripts/utils/device-readiness-deps.ts",
         "verified_sha256": "4a26d263fec16ac300349daed1de128bef3ed196636c6e1a11827b1387c69c82",
-        "current_sha256": "1bfd8d16bd7cc99bd7a57c884fa71b14a396ab8eef9d57bbe95b7f52be3d3e1d"
+        "current_sha256": "e4eb7314f77c6d2b405e3e822ee3cab24d2353d3eca989b988f6840ec6b09ad1"
       },
       {
         "path": "harness/scripts/utils/device-unlock-helper.ts",

@@ -2,8 +2,10 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import * as YAML from 'yaml';
-import { resolveFeatureArtifact, loadFrameworkConfig, featureFilePath, type ArchitectureDsl } from '../../config';
+import { resolveFeatureArtifact, loadFrameworkConfig, featureFilePath, catalogPath, type ArchitectureDsl } from '../../config';
 import { loadWorkflowSpec } from '../../workflow-loader';
+import { loadResolvedProfile } from '../../profile-loader';
+import { tryLoadUtSourceRootResolver } from '../../profile-host-loader';
 import { loadEffectiveExecutionScope, resolveEffectiveScopeSource } from './goal-run-creation';
 import { resolveExecutionScope, findSubtractedRequiredObligations, readScopeRevisionUserControl, applyScopeUserControl, type ExecutionScope, type ExecutionScopeInput } from './execution-scope';
 import { readScopeAcceptance, collectResolvedScopeFacts, recomputeDefinitionFacts, featureTrackDeclPath } from './feature-track';
@@ -16,8 +18,10 @@ import { componentBlueprintPath, loadCanonicalBlueprint, resolveComponentBluepri
 import { parseChangeUnitFeatureId, loadCanonicalChangeUnit, asChangeUnitArtifact, changeUnitPath, BLUEPRINT_REF_STALE_ISSUE } from './change-unit-path';
 import { validateChangeUnitDesign } from './change-unit-design-gate';
 import { validateChangeUnit } from './change-unit-validator';
-import { checkChangeUnitFeatureProjection, validateChangeUnitFeatureProjection, changeUnitMappingIssues } from './change-unit-feature-projection';
-import { projectComponentSelections } from './component-selection-check';
+import { checkChangeUnitFeatureProjection, validateChangeUnitFeatureProjection, changeUnitMappingIssues, deriveModifiableModules } from './change-unit-feature-projection';
+import { projectImplementationModules } from './diff-scope';
+import { loadCatalog } from './catalog-parser';
+import { projectComponentSelections, componentProjectionFindings } from './component-selection-check';
 import { resolveContractFileReferences, findUnplannedContractFileReferences, CONTRACT_FILE_REFERENCE_FIELDS } from './contract-reference-closure';
 import { checkAcceptanceContent, checkAcceptanceUtLayerComplete, checkAcceptanceDeviceFocusPresent, checkAcceptanceLinkedUseCases, extractAcceptanceIdRefs } from './check-acceptance';
 import { isInsideProjectRoot, existingProjectPathSpelling, inferLegacyProjectRoot, resolveDependencyPath } from './project-relative-path';
@@ -35,6 +39,60 @@ import { ArtifactSchemaError, resolveArtifactContent } from './artifact-content'
 export type BlueprintProjectionKind = 'acceptance' | 'contracts';
 /** Author-produced temporary mapping; canonical identity is filled by the accepting writer. */
 export type ChangeUnitConstructionMapping = Omit<NonNullable<ContractsSpec['change_unit']>, 'change_unit_ref'>;
+
+/** Deterministic copies never replace an authored value, including an explicit invalid one. */
+function completeModuleFields(module: BlueprintRecord, inferred: BlueprintRecord): void {
+  for (const field of ['name', 'layer', 'format', 'change_type', 'package_path']) {
+    if (module[field] === undefined && inferred[field] !== undefined) module[field] = inferred[field];
+  }
+}
+
+/** Complete module metadata only where frozen construction paths identify an authorized real module. */
+function completeConstructionModules(projectRoot: string, frameworkRoot: string, contracts: BlueprintRecord, cu: ChangeUnitArtifact,
+  resolveRef: typeof resolveComponentBlueprintRef, depend: (file: string) => void): void {
+  const originalModules = contracts.modules;
+  if (originalModules !== undefined && !Array.isArray(originalModules)) return; // The original schema reports malformed declarations.
+  const declared = asRecords(originalModules);
+  const files = new Set(resolveContractFileReferences(projectRoot, contracts as unknown as ContractsSpec).planned_files);
+  for (const rows of Object.values(asRecord(contracts.change_unit) ?? {})) for (const row of asRecords(rows)) {
+    for (const key of ['implementation_refs', 'test_refs', 'verification_refs']) for (const ref of asStrings(row[key])) {
+      files.add(ref.replace(/^planned:/, '').split('#')[0]);
+    }
+  }
+  const modules = projectImplementationModules(projectRoot).filter(module =>
+    [...files].some(file => file.startsWith(module.package_path + '/')));
+  if (!modules.length) return; // Flat software inputs have no module contract to manufacture.
+  const profile = loadResolvedProfile(projectRoot, loadFrameworkConfig(projectRoot), frameworkRoot);
+  const utRoots = (tryLoadUtSourceRootResolver(profile.profileDir)?.(projectRoot, modules) ?? [])
+    .map(root => path.relative(projectRoot, root).replace(/\\/g, '/') + '/');
+  if (![...files].some(file => utRoots.some(root => file.startsWith(root)))) return;
+  const allowed = new Set(deriveModifiableModules(projectRoot, cu, resolveRef));
+  const catalog = loadCatalog(projectRoot);
+  depend(catalogPath(projectRoot));
+  const additions: BlueprintRecord[] = [];
+  for (const name of new Set(modules.map(module => module.name))) {
+    if (!allowed.has(name)) continue; // The existing CU write-domain check owns unauthorized paths.
+    const candidates = modules.filter(module => module.name === name);
+    const current = declared.filter(module => module.name === name
+      || module.name === undefined && candidates.some(candidate => module.package_path === candidate.package_path));
+    const cards = catalog.ok ? catalog.catalog.modules.filter(module => module.name === name) : [];
+    const missing = (why: string): never => { throw new BlueprintContentError('authority_construction_content_incomplete',
+      `plan: contracts.modules 的 ${name} 无法确定：${why}；原契约写方须在同次候选补明 name/layer/format/change_type/package_path，保持本 CU 的已授权文件范围。`); };
+    if (candidates.length !== 1 || current.length > 1 || cards.length > 1) missing(`模块归属不唯一（${candidates.map(module => module.package_path).join(', ')}）`);
+    const module = candidates[0], existing = current[0], card = cards[0];
+    if (existing && existing.package_path !== undefined && existing.package_path !== module.package_path) missing(`已有 package_path=${String(existing.package_path)} 与冻结路径所在 ${module.package_path} 错配；不得静默覆盖`);
+    if (existing) {
+      if (card && (existing.layer !== undefined && existing.layer !== card.layer
+        || existing.format !== undefined && card.format && String(existing.format).toUpperCase() !== card.format.toUpperCase())) missing('已有声明与当前模块画像不一致；由原写方核对');
+      completeModuleFields(existing, { name, layer: card?.layer, format: card?.format, change_type: 'modify', package_path: module.package_path });
+      continue;
+    }
+    if (!card?.layer || !card.format) missing(`缺少当前模块画像的 layer/format（实际路径 ${module.package_path}）`);
+    if (!module.package_path.startsWith(card.layer + '/')) missing(`模块画像 layer=${card.layer} 与实际路径 ${module.package_path} 不一致`);
+    additions.push({ name, layer: card.layer, format: card.format, change_type: 'modify', package_path: module.package_path });
+  }
+  if (additions.length) contracts.modules = [...(originalModules ?? []), ...additions];
+}
 
 function constructionMapping(projectRoot: string, feature: string, cu: ChangeUnitArtifact,
   sha: string, selected: BlueprintContentTarget[], authored?: ChangeUnitConstructionMapping, refresh?: ProjectionRefresh): ContractsSpec['change_unit'] | undefined {
@@ -616,6 +674,7 @@ export function deriveBlueprintSkillInput(projectRoot: string, feature: string, 
     if (bundle.contracts) {
       const mapping = attempt(() => constructionMapping(projectRoot, feature, cu, loaded.artifactSha256, selected, authoredMapping, refreshMapping));
       if (mapping) bundle.contracts.change_unit = mapping;
+      attempt(() => completeConstructionModules(projectRoot, frameworkRoot, bundle.contracts!, cu, resolveRef, depend));
     }
     const source = `derive.blueprint-${kind}:${loaded.artifactSha256}:${cu.component_blueprint_ref.artifact_sha256}`;
     const acceptance = bundle.acceptance;
@@ -664,6 +723,10 @@ export function deriveBlueprintSkillInput(projectRoot: string, feature: string, 
       if (contracts.change_unit && (authoredMapping || !stageMapping)) {
         const mappingIssues = changeUnitMappingIssues(projectRoot, contracts.change_unit as unknown as BlueprintRecord, cu, 'plan');
         if (mappingIssues.length) fail(mappingIssues.map(issue => issue.id), 'plan/component-design: ' + mappingIssues.map(issue => issue.message).join('; '));
+        const selections = componentProjectionFindings(projectRoot, contracts, cu, resolveRef, 'blueprint');
+        if (selections.length) fail(selections.map(finding => finding.route === 'reconcile_blueprint'
+          ? 'change_unit_blueprint_reconciliation_required' : 'change_unit_design_mapping_incomplete'),
+        'plan/component-design: ' + selections.map(finding => finding.message).join('; '));
       }
       const contentIssues = attempt(() => checkTypedConstructionContent(projectionContext).filter(check => check.status === 'FAIL')) ?? [];
       if (contentIssues.length) fail('authority_construction_content_incomplete', 'plan: ' + contentIssues.map(check => check.details).join('; '));
@@ -827,7 +890,13 @@ export function authoritativeContentDrift(projectRoot: string, feature: string, 
   if (kind === 'contracts' && feature.startsWith('cu-')) {
     const identity = parseChangeUnitFeatureId(feature);
     const cu = asChangeUnitArtifact(loadCanonicalChangeUnit(projectRoot, identity.blueprintId, identity.changeUnitId).changeUnit);
-    record = projectComponentSelections(projectRoot, record as unknown as ContractsSpec, cu) as unknown as BlueprintRecord;
+    record = structuredClone(projectComponentSelections(projectRoot, record as unknown as ContractsSpec, cu)) as unknown as BlueprintRecord;
+    const expectedModules = asRecords(asRecord(projected.artifacts?.['contracts@1'])?.modules);
+    for (const module of asRecords(record.modules)) {
+      const matches = expectedModules.filter(expected => (module.name === undefined || module.name === expected.name)
+        && (module.package_path === undefined || module.package_path === expected.package_path));
+      if (matches.length === 1) completeModuleFields(module, matches[0]);
+    }
   }
   const primary = projected.artifacts?.[`${kind}@1`];
   const drift = primary ? compareAuthoritativeContent(primary, record) : { state: 'aligned' as const };

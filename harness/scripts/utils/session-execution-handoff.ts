@@ -198,7 +198,7 @@ export function observeSessionExecution(runDir: string, issued: IssuedSessionExe
     provider_session_id: readProviderSessionId(log, request.context.adapter),
     toolEvents, postSnapshot, changes,
     writes: changes?.kind === 'changed' && request.write_boundary
-      ? classifyPhaseInvocationChanges(request.write_boundary, request.context.phase, changes.changes) : null,
+      ? classifyPhaseInvocationChanges(request.write_boundary, request.context.phase, changes.changes, { events, invokeId: request.invoke_id }) : null,
     invocation: [...events].reverse().find(event => event.invoke_id === request.invoke_id && (event.type === 'agent_invoke_end' || event.type === 'agent_process_settled' || event.type === 'agent_invoke_start')),
     settled };
 }
@@ -469,10 +469,10 @@ export function acceptSessionExecution(input: {
   if (pre && boundary && post) {
     const diff = diffPhaseInvocationSnapshots(pre, post);
     if (diff.kind === 'changed') {
-      const writes = classifyPhaseInvocationChanges(boundary, report.phase, diff.changes);
+      const writes = classifyPhaseInvocationChanges(boundary, report.phase, diff.changes, { events: sessionEvents(runDir), invokeId: issued.request.invoke_id });
       const owned = writes.allowed.filter(write => write.roles.some(role => role.kind === 'artifact' || role.kind === 'source'));
       if ((writes.observed.length || owned.length) && !sessionEvents(runDir).some(event => event.type === 'phase_write_observed'
-        && event.invoke_id === issued.request.invoke_id)) input.emit({
+        && event.invoke_id === issued.request.invoke_id && !(event as Record<string, unknown>).producer)) input.emit({
         type: 'phase_write_observed', phase: report.phase, invoke_id: issued.request.invoke_id,
         owned: owned.map(write => ({ path: write.path, how: write.how, pre_sha256: write.preSha256, post_sha256: write.postSha256, roles: write.roles })),
         observations: writes.observed.map(write => ({ path: write.path, how: write.how, disposition: write.disposition,

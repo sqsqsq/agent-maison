@@ -213,6 +213,9 @@ export interface ReuseDecision {
 }
 
 export interface DecideReuseOptions {
+  invocation?: NonNullable<ExecutionKeyRecord['goal_invocation']>;
+  /** Existing leg-specific recovery observation may explain an environmental FAIL followed by PASS. */
+  conflictResolved?: (failure: ExecutionKeyRunView) => boolean;
   leg?: ExecutionKeyLeg;
   /** 本轮期望的冻结件集合；UT leg 由 utFrozenRunArtifacts(mods) 现算（整轮键 + 逐模块冻结件） */
   artifacts?: ReadonlyArray<FrozenArtifactSpec>;
@@ -221,6 +224,23 @@ export interface DecideReuseOptions {
    * 不排除的话最新一条永远是自己，复用恒不命中。
    */
   excludeRunDir?: string;
+}
+
+function sameInvocation(left: ExecutionKeyRecord['goal_invocation'], right: ExecutionKeyRecord['goal_invocation']): boolean {
+  return !!left && !!right && left.run_id === right.run_id && left.phase === right.phase && left.attempt_id === right.attempt_id;
+}
+
+/** A later PASS in the same unchanged attempt cannot erase its earlier FAIL. A fresh attempt may collect new evidence. */
+function precedingInvocationFailure(runs: ExecutionKeyRunView[], latest: ExecutionKeyRunView,
+  invocation = latest.record.goal_invocation): ExecutionKeyRunView | undefined {
+  for (const view of runs.slice(runs.indexOf(latest) + 1)) {
+    if (view.record.execution_key !== latest.record.execution_key) break;
+    // A consumer cannot replace the work identity of the PASS being evaluated.
+    if ((sameInvocation(view.record.goal_invocation, latest.record.goal_invocation ?? invocation)
+      || !latest.record.goal_invocation && !!view.record.goal_invocation)
+      && view.record.outcome !== 'success' && view.record.outcome !== 'started') return view;
+  }
+  return undefined;
 }
 
 /**
@@ -270,11 +290,14 @@ export function decideReuse(
 ): ReuseDecision {
   const artifacts = opts.artifacts ?? FROZEN_RUN_ARTIFACTS;
   const exclude = opts.excludeRunDir ? path.resolve(opts.excludeRunDir) : null;
-  const latest = listExecutionKeyRuns(reportsBase, opts.leg ?? 'hylyre')
-    .filter(r => !exclude || path.resolve(r.runDir) !== exclude)[0];
+  const runs = listExecutionKeyRuns(reportsBase, opts.leg ?? 'hylyre')
+    .filter(r => !exclude || path.resolve(r.runDir) !== exclude);
+  const latest = runs[0];
   if (!latest) return { reusable: null, reason: '无 execution-key 历史 run' };
   const identity = isExecutionRecordReusable(latest.record, latest.runDir, { executionKey, artifacts, label: latest.dirStamp });
   if (!identity.ok) return { reusable: null, reason: identity.reason };
+  const conflict = precedingInvocationFailure(runs, latest, opts.invocation ?? latest.record.goal_invocation);
+  if (conflict && !opts.conflictResolved?.(conflict)) return { reusable: null, reason: `同调用观察冲突：${conflict.dirStamp}=${conflict.record.outcome}，${latest.dirStamp}=success；输入未变，保留原失败待复验` };
   const frozen = latest.record.frozen_files ?? [];
   const present = (name: string): boolean => frozen.includes(name) && fs.existsSync(path.join(latest.runDir, name));
   const missingDerived = artifacts.filter(f => f.group === 'derived' && !present(f.frozen));
@@ -293,6 +316,7 @@ export function decideReuse(
 // ---------------------------------------------------------------- 同调用失败事实
 
 export interface SameInvocationFailureOptions {
+  excludeRunDir?: string;
   leg?: ExecutionKeyLeg;
   artifacts?: ReadonlyArray<FrozenArtifactSpec>;
   /**
@@ -315,7 +339,10 @@ export function findSameInvocationFailure(
   opts: SameInvocationFailureOptions = {},
 ): ExecutionKeyRunView | null {
   const artifacts = opts.artifacts ?? FROZEN_RUN_ARTIFACTS;
-  const latest = listExecutionKeyRuns(reportsBase, opts.leg ?? 'hylyre')[0];
+  const runs = listExecutionKeyRuns(reportsBase, opts.leg ?? 'hylyre')
+    .filter(view => !opts.excludeRunDir || path.resolve(view.runDir) !== path.resolve(opts.excludeRunDir));
+  const newest = runs[0];
+  const latest = newest?.record.outcome === 'success' ? precedingInvocationFailure(runs, newest, invocation) : newest;
   const record = latest?.record;
   const identity = record?.goal_invocation;
   if (!latest || !record || record.execution_key !== executionKey || !identity) return null;

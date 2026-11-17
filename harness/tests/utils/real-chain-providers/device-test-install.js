@@ -10,6 +10,9 @@ const HMOS_HARNESS = path.resolve(__dirname, '..', '..', '..', 'hmos-app', 'harn
 const { computeHapSha256Full, computeHapBuildFingerprint } = require(path.join(HMOS_HARNESS, 'build-fingerprint.ts'));
 const { featurePhaseReportsDir } = require(path.resolve(__dirname, '..', '..', '..', '..', 'harness', 'config.ts'));
 
+// Only the external install action is replaced; current-byte metadata adoption stays production-owned.
+exports.adoptInstallMetadataForExecutionReuse = require(path.join(HMOS_HARNESS, 'providers', 'device-test-install.ts')).adoptInstallMetadataForExecutionReuse;
+
 exports.provider = {
   id: 'hdc_app',
   capability: 'device_test.install',

@@ -239,7 +239,10 @@ function renderSequenceGraph(graph: BlueprintRecord, blueprint: BlueprintRecord,
 function renderReviewGraph(graph: BlueprintRecord, blueprint: BlueprintRecord, issues: BlueprintIssue[]): string[] {
   if (/^\s*sequenceDiagram\b/.test(String(graph.content))) return renderSequenceGraph(graph, blueprint, issues);
   if (issues.length) return [`结构图 ${text(graph.graph_id)} 无效，未展示${issues.every(issue => issue.severity === 'WARN') ? '（非阻断）' : ''}：`, '', ...issues.map(issue => `- ${text(issue.message)}`), ''];
-  return [`结构图：${text(graph.label ?? graph.graph_id)}`, '', '```mermaid', String(graph.content).trimEnd(), '```', ''];
+  try {
+    const content = asStrings(graph.relation_refs).length ? generateMermaidRelationGraph(blueprint, asStrings(graph.relation_refs)).content : String(graph.content);
+    return [`结构图：${text(graph.label ?? graph.graph_id)}`, '', '```mermaid', content.trimEnd(), '```', ''];
+  } catch (error) { return [`结构图 ${text(graph.graph_id)} 无效，未展示：${text((error as Error).message)}`, '']; }
 }
 
 function renderPlacedGraph(graph: BlueprintRecord, blueprint: BlueprintRecord, shown: Set<string>, issues: BlueprintIssue[]): string[] {
@@ -364,7 +367,11 @@ function renderView(view: BlueprintRecord | undefined, blueprint: BlueprintRecor
     for (const g of graphs) {
       const issues = display.graphIssues.get(g) ?? validateGeneratedBlueprintGraphs({ ...blueprint, generated_graphs: [g] });
       if (issues.length) lines.push('结构图无效，未展示：', '', ...issues.map(i => `- ${text(i.message)}`), '');
-      else if (asStrings(g.relation_refs).length) lines.push('```mermaid', String(g.content).trimEnd(), '```', '');
+      else if (asStrings(g.relation_refs).length) {
+        try {
+          lines.push('```mermaid', (declared.length ? generateMermaidRelationGraph(blueprint, asStrings(g.relation_refs)).content : String(g.content)).trimEnd(), '```', '');
+        } catch (error) { lines.push(`结构图无效，未展示：${text((error as Error).message)}`, ''); }
+      }
     }
   }
   return lines;

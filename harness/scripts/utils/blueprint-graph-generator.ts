@@ -104,9 +104,9 @@ export function mermaidLabel(value: unknown): string {
 }
 
 /** 整体联系只取显式 relation，完整地址是节点身份。 */
-export function generateMermaidRelationGraph(blueprint: BlueprintRecord): GeneratedBlueprintGraph {
+export function generateMermaidRelationGraph(blueprint: BlueprintRecord, relationRefs?: readonly string[]): GeneratedBlueprintGraph {
   const index = stableAddressIndex(blueprint);
-  const relations = asRecords(blueprint.relations);
+  const relations = asRecords(blueprint.relations).filter(relation => !relationRefs || relationRefs.includes(`relation:${relation.relation_id}`));
   const nodeRefs = [...new Set(relations.flatMap(r => [String(r.from), String(r.to)]))];
   const alias = new Map(nodeRefs.map((address, i) => [address, `n${i + 1}`]));
   const lines = ['flowchart LR'];
@@ -205,8 +205,11 @@ export function inspectGeneratedBlueprintGraphs(blueprint: BlueprintRecord): { i
     }
     const parseError = parseMermaidSubset(graph.content);
     if (parseError) issues.push(issue('blueprint_generated_graph_parse_failed', `${base}.content`, parseError, severity));
-    for (const ref of [...asStrings(graph.node_refs), ...asStrings(graph.relation_refs)]) {
+    for (const ref of asStrings(graph.node_refs)) {
       if (!addresses.has(ref)) issues.push(issue('blueprint_generated_graph_ref_missing', base, `生成图引用无法落地：${ref}。`, severity));
+    }
+    for (const ref of asStrings(graph.relation_refs)) {
+      if (!ref.startsWith('relation:') || !addresses.has(ref)) issues.push(issue('blueprint_generated_graph_ref_missing', base, `生成图关系引用无法落地：${ref}。`, severity));
     }
     out.push(...issues);
   });

@@ -38,7 +38,9 @@ run-control epoch 与真实 request/accepted report 防重复和旧 owner 迟报
 
 活性（原调用是否运行/结束）与业务完成分开显示。events-only 历史可读并展示 elapsed/activity，但缺 manifest/原件时业务未知；读取错误不能签 PASS。calls/active_ms 是统计，不是配额。历史 budget 仅可标注历史。
 
-`npx ts-node scripts/goal-status.ts --feature <原请求id> --run-id <原run> --watch` 沿现有刷新周期显示停止、恢复及最新活跃职责，无需长时间固定 sleep。初始设计的 `last_invocation.call_status=passed` 只表示正常交回；`result_usable`、`questioning.blockers/open_decisions` 和原件 `source` 分别说明结果可消费性与业务结论，下一责任方由当前 disposition 决定。机器读取加 `--json`，观察不得另派作者或重置 run。
+启动时在原主会话报告任务、`started_at` 和 run ID，随后执行 detach 回执的 `wait_command`，或 `npx ts-node scripts/goal-status.ts --feature <原请求id> --run-id <原run> --wait --json`。该命令单次默认观察60分钟，在原请求终态或需外界处理时提前返回；显式正数 `--timeout-ms <毫秒>` 可调长或调短本段。到期返回 `timeout`、最近状态及绑定 `cursor`，用 `--after <cursor>` 接续同一请求，不签任务失败、不停止或重启后台。初次无游标且仍在运行时建立基线后等待，心跳、子 CU 结束或普通阶段不重复唤醒模型；观察进程随终端退出后，下次会话仍用原 run ID/游标核对。无 `run_end` 时沿既有 goal-progress 的3分钟观察新鲜度及匹配同机锁/PID判孤儿，观察者刷新不续命；跨机或可靠锁缺失保持未知并有界等待，活着但安静不冒认死亡。90分钟锁接管阈值不变。只读观察不停止后台进程，不自动 force-resume。`--watch` 保留终端每两秒重画用途。Claude、Codex、OpenCode、deepseek-harness、CodeAgent、Cursor、chrys 和 generic 均消费同一公共 status/回执协议；前台工具续等、stdout 展示与主动回报的覆盖范围按各客户端实测记录。CodeAgent 内网、chrys、generic 和 Cursor 的真实前台体验须分别记录，不能由其它客户端代签。初始设计的 `last_invocation.call_status=passed` 只表示正常交回；`result_usable`、`questioning.blockers/open_decisions` 和原件 `source` 分别说明结果可消费性与业务结论，下一责任方由当前 disposition 决定。机器读取加 `--json`，观察不得另派作者或重置 run。
+
+已收到活着的 `WAITING_EXTERNAL` / `STALLED` 后，用返回的游标显式续等，同一关注状态不重复返回；新障碍、需人工处理、孤儿或终态仍及时报告。原障碍解除或切到健康后继时返回 `changed` 及新游标，沿新游标继续等待；不带确认信息的旧游标仍先报告关注状态。
 
 DSH `invoke_end.usage` 只合计本次调用原生 step_end，按 session/turn/step 去重；新增 `input_tokens` 与 `observed_cache_read_tokens` 分开，后者仅合计实际公开的缓存字段。部分缺失通过 `missing_reason` 说明，全缺失保持 null；中断仅计已观测步骤，不推费用、不因缺计数停机。其它 adapter 保留既有用量采集口径，字节、逻辑输入及缓存读取均不等于新增计费 token。
 

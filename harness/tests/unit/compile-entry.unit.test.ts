@@ -46,7 +46,7 @@ function compile(root: string, reportDir?: string) {
 const cases: Array<{ name: string; run(root: string): void | Promise<void> }> = [
   {
     name: 'P2 native compiler objects survive real producers writers and reader while line noise and missing identity do not fake progress',
-    run(root) {
+    async run(root) {
       const gc = require('../../scripts/utils/goal-failure-classifier') as typeof import('../../scripts/utils/goal-failure-classifier');
       const { generateScriptReport } = require('../../scripts/utils/report-generator') as typeof import('../../scripts/utils/report-generator');
       const { writeRunSummaryBase } = require('../../harness-runner') as typeof import('../../harness-runner');
@@ -104,7 +104,7 @@ const cases: Array<{ name: string; run(root: string): void | Promise<void> }> = 
       fs.writeFileSync(path.join(root, 'entry/src/ohosTest/ets/test/List.test.ets'), '// current UT input\n');
       fs.writeFileSync(path.join(root, 'entry/src/main/module.json5'), JSON.stringify({ module: { name: 'entry', type: 'har' } }));
       fs.writeFileSync(path.join(root, 'entry/src/ohosTest/module.json5'), JSON.stringify({ module: { name: 'entry_test', type: 'feature' } }));
-      const ut = runUtGateInPlace(root, feature, [{ name: 'entry', package_path: 'entry' }], { buildFailModules: ['entry'], buildFailLog: nativeLine(3, secondMessage) });
+      const ut = await runUtGateInPlace(root, feature, [{ name: 'entry', package_path: 'entry' }], { buildFailModules: ['entry'], buildFailLog: nativeLine(3, secondMessage) });
       const utFailure = ut.find(check => check.id === 'ut_hvigor_build')!;
       assert(utFailure?.status === 'FAIL' && utFailure.details.includes(secondMessage), JSON.stringify(ut));
       assert.deepStrictEqual((utFailure.structured as { compiler_diagnostics: unknown }).compiler_diagnostics,
@@ -115,7 +115,7 @@ const cases: Array<{ name: string; run(root: string): void | Promise<void> }> = 
   },
   {
     name: 'P3 project compile enumerates a blueprint workspace with root records and a real CU while an empty design root stays a container',
-    run(root) {
+    async run(root) {
       const put = (relative: string, text: string): void => {
         const file = path.join(root, relative); fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, text);
       };
@@ -138,7 +138,7 @@ const cases: Array<{ name: string; run(root: string): void | Promise<void> }> = 
   },
   {
     name: 'P3 project compile retains real workspace mixed products and orphan construction failures before running a provider',
-    run(root) {
+    async run(root) {
       const workspace = path.join(root, 'doc/features/orders');
       fs.mkdirSync(path.join(workspace, 'blueprint'), { recursive: true });
       fs.writeFileSync(path.join(workspace, 'blueprint/component-blueprint.yaml'), 'blueprint_id: orders\n');
@@ -160,7 +160,7 @@ const cases: Array<{ name: string; run(root: string): void | Promise<void> }> = 
   },
   {
     name: 'C1/C3 无 Feature、Git、diff 仍执行工程构建并派生 DevEco 环境；两次请求都运行',
-    run(root) {
+    async run(root) {
       const before = JSON.stringify({ feature: 'old-completed', phase: 'coding' });
       fs.mkdirSync(path.dirname(statefilePath(root)), { recursive: true });
       fs.writeFileSync(statefilePath(root), before);
@@ -181,7 +181,7 @@ const cases: Array<{ name: string; run(root: string): void | Promise<void> }> = 
   },
   {
     name: 'C2 真实失败与缺成功标记不能签发编译通过',
-    run(root) {
+    async run(root) {
       for (const mode of ['fail', 'incomplete']) {
         fs.writeFileSync(path.join(root, 'mode.txt'), mode);
         const result = compile(root);
@@ -193,7 +193,7 @@ const cases: Array<{ name: string; run(root: string): void | Promise<void> }> = 
   },
   {
     name: 'C3 工程环境矛盾复用已有一次事务重跑',
-    run(root) {
+    async run(root) {
       fs.writeFileSync(path.join(root, 'mode.txt'), 'retry');
       const result = compile(root);
       assert(result.checks.every(check => check.status === 'PASS'), JSON.stringify(result.checks));
@@ -203,7 +203,7 @@ const cases: Array<{ name: string; run(root: string): void | Promise<void> }> = 
   },
   {
     name: 'C4 非法报告目录在构建前拒绝；链接不能绕过宿主边界',
-    run(root) {
+    async run(root) {
       for (const report of ['../outside', '.git/reports', 'doc/features/borrowed/reports']) assert.throws(() => compile(root, report), /report-dir|project-root|outside project/);
       const link = path.join(root, 'framework');
       fs.symlinkSync(FRAMEWORK_ROOT, link, process.platform === 'win32' ? 'junction' : 'dir');
@@ -213,7 +213,7 @@ const cases: Array<{ name: string; run(root: string): void | Promise<void> }> = 
   },
   {
     name: 'C2 generic 不支持编译时明确未执行',
-    run(root) {
+    async run(root) {
       const file = path.join(root, 'framework.config.json');
       const config = JSON.parse(fs.readFileSync(file, 'utf8'));
       config.project_profile = { name: 'generic' };
@@ -224,7 +224,7 @@ const cases: Array<{ name: string; run(root: string): void | Promise<void> }> = 
   },
   {
     name: 'C1 CLI 从 harness cwd 执行并返回真实 JSON，拒绝模块编译参数',
-    run(root) {
+    async run(root) {
       const args = [require.resolve('ts-node/dist/bin.js'), '--transpile-only', 'scripts/compile.ts', '--project-root', root, '--json'];
       const result = spawnSync(process.execPath, args, { cwd: HARNESS_ROOT, encoding: 'utf8', timeout: 30000 });
       assert.strictEqual(result.status, 0, result.stderr + result.stdout);

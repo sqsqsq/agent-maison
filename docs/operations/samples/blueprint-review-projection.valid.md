@@ -1272,9 +1272,9 @@ flowchart TD
 | LedgerStoreReport | — / app-state-team | 消费者各自保留可变缓存。 | 只读报表快照；不回写账目。 | view:logical/node:report-domain |
 
 ```mermaid
-flowchart TD
-  n1["LedgerRepository"]
-  n2["LedgerStore"]
+flowchart LR
+  n1["LedgerRepository（运行）"]
+  n2["LedgerStore（运行）"]
   n1 -->|publishes_snapshot| n2
 ```
 

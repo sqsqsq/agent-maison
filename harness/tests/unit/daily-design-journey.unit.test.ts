@@ -447,11 +447,12 @@ function mediumSession(host: Host): string {
   return file + '#medium-user';
 }
 
-async function completeDelivery(medium = false): Promise<void> {
+async function completeDelivery(medium = false, moduleRevision = false): Promise<void> {
   const previousHome = process.env.CLAUDE_CONFIG_DIR;
   try { return await withHost(async host => {
     const control = prepare(host, medium ? 'daily-medium-single' : 'daily-design-complete', 'claude', medium ? mediumSession(host) : undefined);
     let designAuthors = 0, constructionAuthors = 0, decompositionAuthors = 0, visualReissued = false;
+    let oldContractBindings: any[] = [], revisedContractFingerprint = '', revisedRunDir = '', revisedFeature = '';
     let step = await withRuntimeTest({ root: host.root }, () => control.entry.runGoalModeSessionStep(control.options));
     for (let call = 0; step.type === 'phase_execute_request' && call < 16; call++) {
       const raw = JSON.parse(fs.readFileSync(step.request.path, 'utf8'));
@@ -488,7 +489,9 @@ async function completeDelivery(medium = false): Promise<void> {
       let output = '已按真实签名请求产出当前作者材料，质量由原检查决定。';
       if (phase === 'initial-design-author') {
         assert.equal(++designAuthors, 1, 'normal design returned unexpected author feedback: ' + context.instruction);
-        writeYaml(host.root, `doc/features/${BLUEPRINT}/blueprint/component-blueprint.yaml`, blueprintDraft(host, false));
+        const draft = blueprintDraft(host, false);
+        if (moduleRevision) draft.design_views.find((view: any) => view.view_id === 'logical').nodes[0].contracts.modules = [];
+        writeYaml(host.root, `doc/features/${BLUEPRINT}/blueprint/component-blueprint.yaml`, draft);
       }
       else if (phase === 'initial-design-questioning') output = questioningReply(host, false);
       else if (phase === 'initial-design-decomposition') {
@@ -513,8 +516,40 @@ async function completeDelivery(medium = false): Promise<void> {
           completionTarget: 'feature', requestedResults: [REQUIREMENT], requestedPhases: ['plan', 'coding', 'ut'], requirement: REQUIREMENT, requirementSourceFiles: ['requirements/ledger.md'],
           impact: { userVisibleBehaviorChange: false, reason: '账本内部纯TypeScript能力，不涉及UI或设备', basisPaths: [SOURCE] }, overwrite: true });
       } else if (phase === 'work-unit-author') {
-        assert.equal(++constructionAuthors, 1, 'normal construction received unexpected repair feedback: ' + context.instruction);
+        constructionAuthors++;
+        assert.equal(constructionAuthors, 1, 'normal construction received unexpected repair feedback: ' + context.instruction);
+        if (moduleRevision) {
+          const scope = host.load('scripts/utils/goal-run-creation').loadEffectiveExecutionScope(host.root, context.feature, context.runId);
+          oldContractBindings = scope.obligations.flatMap((obligation: any) => obligation.basis).filter((binding: any) => binding.input_id === 'contracts');
+          assert(oldContractBindings.length > 0 && oldContractBindings.every((binding: any) => binding.dependencies.length > 0), 'the original CU must already have a nonempty frozen construction binding');
+          const originalFile = host.load('config').featureFilePath(host.root, context.feature, 'contracts.yaml');
+          assert(fs.existsSync(originalFile) && oldContractBindings.some((binding: any) => binding.dependencies.some((dependency: any) =>
+            path.resolve(dependency.path) === originalFile && dependency.exists && dependency.sha256)), 'the old binding must cover an existing contract artifact, not first materialization');
+        }
         unitMaterials(host, context);
+        if (moduleRevision) {
+          const file = host.load('config').featureFilePath(host.root, context.feature, 'contracts.yaml');
+          const contracts = YAML.parse(fs.readFileSync(file, 'utf8'));
+          assert(context.chain.includes('plan'), 'the request must retain its actual authorized mapping producer');
+          assert.deepEqual(contracts.modules, [{ name: 'ledger', layer: 'src', package_path: 'src/ledger', format: 'HAR', change_type: 'modify' }],
+            'the original producer already completed the uniquely authorized module before the CU was bound');
+          const before = structuredClone(contracts);
+          contracts.modules[0].export_file = SOURCE;
+          writeYaml(host.root, path.relative(host.root, file), contracts);
+          const after = YAML.parse(fs.readFileSync(file, 'utf8'));
+          assert.equal(after.modules[0].export_file, SOURCE, 'the mapping writer adds the real export entry inside the original frozen file set');
+          assert.equal(before.modules[0].export_file, undefined);
+          delete before.modules; delete after.modules;
+          assert.deepEqual(after, before, 'the authorized module declaration preserves every other bound contract field');
+          const binding = host.load('scripts/utils/capability-resolution');
+          assert.throws(() => binding.readRunBoundContracts(host.root, host.frameworkRoot, context.feature, context.runId), /input binding stale/,
+            'a semantic module declaration cannot be washed through the old frozen binding');
+          const scope = host.load('scripts/utils/goal-run-creation').loadEffectiveExecutionScope(host.root, context.feature, context.runId);
+          const compatible = host.load('scripts/utils/feature-track').refreshScopeBindingInput({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: context.feature, requirement: REQUIREMENT }, scope);
+          assert(!compatible || compatible.facts.flatMap((fact: any) => fact.basis).filter((item: any) => item.input_id === 'contracts')
+            .every((item: any) => oldContractBindings.some((old: any) => old.content_fingerprint === item.content_fingerprint)), 'without the original producer validation there is no automatic semantic re-sign');
+          revisedRunDir = context.runDir; revisedFeature = context.feature;
+        }
         assertFrozenInputs(host, context);
       } else if (phase.endsWith('-verifier-format-repair')) verifierReply(host, context, phase.replace(/-verifier-format-repair$/, ''));
       else assert.fail('unexpected production responsibility: ' + phase);
@@ -530,7 +565,25 @@ async function completeDelivery(medium = false): Promise<void> {
     }
     assert(visualReissued);
     assert.equal(decompositionAuthors, medium ? 2 : 1);
+    assert.equal(constructionAuthors, 1);
     assertDeliveryComplete(host, control, step);
+    if (moduleRevision) {
+      const events = host.load('scripts/utils/session-execution-handoff').sessionEvents(revisedRunDir);
+      const plan = events.findIndex((event: any, at: number) => event.type === 'phase_verdict' && event.phase === 'plan' && event.verdict === 'PASS'
+        && events.slice(0, at).some((end: any) => end.type === 'harness_end' && end.phase === 'plan' && end.invoke_id === event.invoke_id && !end.timed_out));
+      const revision = events.findIndex((event: any, at: number) => at > plan && event.type === 'scope_revised'
+        && event.trigger?.phase === 'plan' && event.execution_scope.obligations.flatMap((obligation: any) => obligation.basis)
+          .some((binding: any) => binding.input_id === 'contracts' && !oldContractBindings.some((old: any) => old.content_fingerprint === binding.content_fingerprint)));
+      assert(plan >= 0 && revision > plan, 'only the actual mapping producer check may publish the new semantic contract binding');
+      const current = events[revision].execution_scope.obligations.flatMap((obligation: any) => obligation.basis).find((binding: any) => binding.input_id === 'contracts');
+      revisedContractFingerprint = current.content_fingerprint;
+      assert(events.some((event: any, at: number) => at > revision && event.type === 'phase_verdict' && event.phase === 'ut' && event.verdict === 'PASS'
+        && events.slice(revision + 1, at).some((end: any) => end.type === 'harness_end' && end.phase === 'ut' && end.invoke_id === event.invoke_id && !end.timed_out)), 'the original CU must actually execute UT against the new binding');
+      const evidence = { oldContractBindings, revisedContractFingerprint, constructionAuthors, events: events.filter((event: any) => ['agent_invoke_start','agent_invoke_end','phase_write_observed','harness_end','phase_verdict','scope_revised','run_end'].includes(event.type)),
+        nodeTap: read(host.root, path.relative(host.root, path.join(host.load('config').featurePhaseReportsDir(host.root, revisedFeature, 'ut', host.frameworkRoot), 'node-tests.tap'))) };
+      const reportFile = path.resolve(__dirname, '../../reports/4c8d73b1-dev/semantic-module-owner-runtime.json');
+      fs.mkdirSync(path.dirname(reportFile), { recursive: true }); fs.writeFileSync(reportFile, JSON.stringify(evidence, null, 2) + '\n');
+    }
   }); } finally { if (previousHome === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = previousHome; }
 }
 
@@ -639,7 +692,7 @@ const cases = [{
   }),
 }, {
   name: 'daily design: empty request reaches canonical CU completion with real TypeScript and Node assertions',
-  run: () => completeDelivery(),
+  run: () => completeDelivery(false, true),
 }, {
   name: 'medium automatic decomposition returns multi-CU feedback to its author and completes one CU with real TypeScript and Node assertions',
   run: () => completeDelivery(true),

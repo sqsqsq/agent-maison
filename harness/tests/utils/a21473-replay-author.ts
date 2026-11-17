@@ -10,6 +10,15 @@ import { readDeliveredVerifierRequest } from '../unit/real-chain.unit.test';
 export const CARD_CORE = '02-Feature/WalletMain/src/main/ets/domain/flow/BankCardFlow.ts';
 export const CARD_TEST = '02-Feature/WalletMain/src/test/BankCardFlow.test.ts';
 const FIXTURE = path.resolve(__dirname, '../fixtures/a21473-node-replay');
+function testStrengthReply(root: string, checks: any[]): string {
+  const strength = checks.find((check: any) => check.id === 'coding_existing_test_preserved' && check.affected_files?.includes(CARD_TEST));
+  if (!strength) return '';
+  const before = spawnSync('git', ['cat-file','-e',`HEAD:${CARD_TEST}`], {cwd:root,encoding:'utf8',windowsHide:true});
+  assert.notEqual(before.status, 0, 'this specific developer Node test path is absent from the actual isolated Git baseline');
+  const expected = fs.readFileSync(path.join(FIXTURE,'BankCardFlow.test.ts'),'utf8').replace('../main/OpenCardFlow','../main/ets/domain/flow/BankCardFlow');
+  assert.equal(fs.readFileSync(path.join(root,CARD_TEST),'utf8'),expected,'new assertions are unchanged');
+  return '\n```issue-verification\n' + YAML.stringify([{issue:strength.id,verdict:'refuted',evidence:[CARD_TEST,'真实隔离Git基线没有此新Node路径；当前新增断言未被删弱，不声称原宿主无其它UT。',strength.details].join(' | ')}]) + '```\n';
+}
 export function a21473TestReferences(): string[] {
   return [...fs.readFileSync(path.join(FIXTURE, 'BankCardFlow.test.ts'), 'utf8').matchAll(/\bit\('([^']+)'/g)]
     .map(match => `${CARD_TEST}#${match[1]}`);
@@ -20,11 +29,20 @@ const write = (root: string, file: string, value: string, refreshedInput = false
   fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, value);
 };
 const yaml = (root: string, file: string, value: unknown): void => write(root, file, YAML.stringify(value));
-export function writeA21473ReplayReview(root: string, frameworkRoot: string, feature: string): void {
+export function writeA21473ReplayReview(root: string, frameworkRoot: string, feature: string, independentContext?: any): void {
   const rel = require(path.join(frameworkRoot, 'harness/scripts/utils/feature-identity')).featureRelativePath(feature);
   const base = `doc/features/${rel}`;
   const files = [...YAML.parse(fs.readFileSync(path.join(root, base, 'contracts.yaml'), 'utf8')).files, '02-Feature/WalletMain/src/main/ets/domain/flow/LaunchHomeCardMode.ets'];
   write(root, `${base}/review/review-report.md`, '# 审查报告\n\n> **保证等级**: standard\n\n## 1. 审查范围\n' + files.map((file: string) => '- ' + file).join('\n') + '\n\n## 2. 审查维度\n原需求的数据、OTP、路由及失败恢复。Node开发投影不冒称HarmonyOS UI/真机通过。\n\n## 3. 问题清单\n| 编号 | 分类 | 严重程度 | 问题描述 | 涉及文件 | 修复建议 |\n|---|---|---|---|---|---|\n\n## 4. 问题统计\n| 严重程度 | 数量 |\n|---|---|\n| BLOCKER | 0 |\n| MAJOR | 0 |\n| MINOR | 0 |\n\n## 5. 修复建议\n开发编译和真实Node断言由工具判定；原生UI交t5。\n\n## 6. 结论\n**审查结论**: 通过\n');
+  if (independentContext?.instruction?.includes('coding_existing_test_preserved')) {
+    const load = (file: string): any => require(path.join(frameworkRoot, 'harness', file));
+    assert.equal(load('scripts/utils/goal-phase-executor').workUnitExecutionRole(independentContext), 'verifier');
+    const reports = load('config').featurePhaseReportsDir(root, feature, 'coding', frameworkRoot);
+    const script = JSON.parse(fs.readFileSync(path.join(reports, 'script-report.json'), 'utf8'));
+    const verification = testStrengthReply(root, script.checks ?? []);
+    assert(verification, 'the independent review must consume the actual original test-strength check');
+    fs.appendFileSync(path.join(root, base, 'review/review-report.md'), verification);
+  }
 }
 export function writeA21473ReplayAuthor(root: string, frameworkRoot: string, context: any, defective: boolean, inputsOnly = false): void {
   const load = (file: string): any => require(path.join(frameworkRoot, 'harness', file));
@@ -73,10 +91,21 @@ export function writeA21473ReplayAuthor(root: string, frameworkRoot: string, con
         .find((flow: any) => flow.flow_id === state.design_ref?.target?.id);
       if (originalFlow) state.lifecycle_triggers = [...new Set([...(state.lifecycle_triggers ?? []), ...originalFlow.triggers.map((trigger: any) => trigger.kind)])];
     }
+    const componentAssets = load('scripts/utils/component-assets');
+    const selectedComponents = new Map<string, string[]>();
+    for (const component of contracts.components ?? []) {
+      if (!componentAssets.isUiComponent(component) && !component.asset_selection) continue;
+      for (const decision of componentAssets.blueprintComponentDecisions(blueprint.blueprint, component)) {
+        const id = String(decision.decision_id), refs = selectedComponents.get(id) ?? [];
+        refs.push(`${component.file}#${component.name}`); selectedComponents.set(id, refs);
+      }
+    }
     contracts.change_unit = { change_unit_ref: cuPaths.createChangeUnitRef(unit),
       predicate_mappings: unit.changeUnit.target_predicates.map((row: any) => ({ predicate_id: row.predicate_id, implementation_refs, test_refs })),
       provide_mappings: unit.changeUnit.provides.map((row: any) => ({ provide_id: row.provide_id, implementation_refs, test_refs })),
-      design_ref_mappings: unit.changeUnit.design_refs.map((design_ref: any) => ({ design_ref, implementation_refs, verification_refs: test_refs })) };
+      design_ref_mappings: unit.changeUnit.design_refs.map((design_ref: any) => ({ design_ref,
+        implementation_refs: design_ref.target.kind === 'decision' ? selectedComponents.get(design_ref.target.id) ?? implementation_refs : implementation_refs,
+        verification_refs: test_refs })) };
     yaml(root, `${base}/contracts.yaml`, contracts);
     if (result.artifacts?.['use-cases@1']) yaml(root, `${base}/use-cases.yaml`, result.artifacts['use-cases@1']);
     const ui = YAML.parse(fs.readFileSync(path.join(root, base, 'spec/ui-spec.yaml'), 'utf8'));
@@ -226,14 +255,7 @@ export function answerA21473Verifier(root: string, frameworkRoot: string, contex
     fs.readFileSync(path.resolve(root, file.path));
   }
   let text = '已读当前真实request及material中的原件，核对原需求、canonical设计及当前Node开发投影。机器FAIL全部保留，不把框架/能力缺口称为产品通过；Native UI、布局和像素没有被本替身核实。\n';
-  const strength = script.checks.find((check: any) => check.id === 'coding_existing_test_preserved' && check.affected_files?.includes(CARD_TEST));
-  if (strength) {
-    const before = spawnSync('git', ['cat-file','-e',`HEAD:${CARD_TEST}`], {cwd:root,encoding:'utf8',windowsHide:true});
-    assert.notEqual(before.status, 0, 'this specific developer Node test path is absent from the actual isolated Git baseline');
-    const expected = fs.readFileSync(path.join(FIXTURE,'BankCardFlow.test.ts'),'utf8').replace('../main/OpenCardFlow','../main/ets/domain/flow/BankCardFlow');
-    assert.equal(fs.readFileSync(path.join(root,CARD_TEST),'utf8'),expected,'new assertions are unchanged');
-    text += '\n```issue-verification\n' + YAML.stringify([{issue:strength.id,verdict:'refuted',evidence:[CARD_TEST,'真实隔离Git基线没有此新Node路径；当前新增断言未被删弱，不声称原宿主无其它UT。',strength.details].join(' | ')}]) + '```\n';
-  }
+  text += testStrengthReply(root, script.checks);
   if (phase === 'ut') {
     const file=path.join(reportsDir,'node-tests.tap');
     if (fs.existsSync(file)) {

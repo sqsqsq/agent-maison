@@ -821,10 +821,24 @@ export async function runPhaseEntryDeviceGate(opts: {
     notes,
     // 复用 deviceEnvFor：env 形状**只有一份**。此前 profile 侧手拼字段漏了 settle，
     // 造成真机恒零等待（见 device-recovery-bridge 头注），不再手拼第二份。
-    env: deviceEnvFor(res.target, opts.sessionId ?? `harness-${opts.phase}-${process.pid}`, input.credentialRef ?? null),
+    env: deviceEnvFor(res.target, opts.sessionId ?? env.MAISON_DEVICE_SESSION_ID ?? `harness-${opts.phase}-${process.pid}`, input.credentialRef ?? null),
     target: res.target,
     ...(res.managed ? { managed: res.managed } : {}),
   };
+}
+
+/** Select and authorize the existing target without wake/unlock/install. Readiness remains the execution gate's job. */
+export function selectDeviceExecutionTarget(opts: { projectRoot: string; sessionId: string; env?: NodeJS.ProcessEnv }):
+  { target: DeviceTarget; env: Record<string, string> } | null {
+  const status = (require('../device-policy') as typeof import('../device-policy')).collectPolicyStatus(opts.projectRoot);
+  if (status.code !== 'ok') return null;
+  const input = (require('./device-readiness-deps') as typeof import('./device-readiness-deps')).buildDeviceReadinessInput(opts.projectRoot);
+  const targets = input.deps.listTargets().map(serial => serial.trim()).filter(Boolean);
+  const configured = (opts.env ?? process.env).HARNESS_HDC_TARGET?.trim() || input.configuredSerial?.trim();
+  const serial = configured && targets.includes(configured) ? configured : !configured && targets.length === 1 ? targets[0] : null;
+  if (!serial) return null;
+  const target = { serial, targetKind: classifyKind(input, serial, null) };
+  return { target, env: { ...deviceEnvFor(target, opts.sessionId, input.credentialRef ?? null), MAISON_DEVICE_ATTEMPT_FROZEN: '0' } };
 }
 
 /**

@@ -37,7 +37,9 @@ export function declaredDeviceCapabilities(resolved: HarnessResolvedProfile): Se
 export function phaseRequiresDevice(
   phase: string,
   resolved: HarnessResolvedProfile,
+  scope?: Pick<import('./execution-scope').ExecutionScope, 'obligations'>,
 ): boolean {
+  if (scope && !scope.obligations.some(obligation => obligation.owner_phase === phase && obligation.applicability === 'required')) return false;
   const declared = declaredDeviceCapabilities(resolved);
   if (declared.size === 0) return false;
   const caps = PHASE_CAPABILITY_MAP[phase as FeaturePhase] ?? [];

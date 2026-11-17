@@ -1,3 +1,4 @@
+import { issueManagedInvocation } from '../utils/managed-invocation';
 import { unitCaseGroups } from '../utils/unit-case-selection';
 import * as assert from 'assert';
 import * as fs from 'fs';
@@ -11,6 +12,7 @@ import { collectPhaseRepairCandidates } from '../../scripts/utils/repair-candida
 import { __testing_checkDeviceTestRunGate, __testing_checkHylyreFailureRouting } from '../../scripts/check-testing';
 import { computeExecutionKey, sha256Text, writeExecutionKeyRecord, type ExecutionKeyRecord } from '../../../profiles/hmos-app/harness/execution-key';
 import { parseHylyreTrace } from '../../../profiles/hmos-app/harness/providers/device-test-run';
+import { computeHapSha256Full } from '../../../profiles/hmos-app/harness/build-fingerprint';
 import type { CheckContext } from '../../scripts/utils/types';
 import type { UnitCaseResult } from '../run-unit';
 import { matchesUnitCase, startCaseTiming, selectedUnitCases, type UnitExecutionTiming } from '../utils/unit-case-selection';
@@ -20,8 +22,8 @@ const fixture = path.join(__dirname, '../fixtures/host-recovery-history/20261024
 const feature = 'cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93';
 const featureDir = 'doc/features/bc-openCard-2/bank-card-opening-flow';
 const runId = '20261023T044016Z-fe4512';
-const cases: Array<{ name: string; run: () => void }> = [];
-const test = (name: string, run: () => void): void => { cases.push({ name, run }); };
+const cases: Array<{ name: string; run: () => void | Promise<void> }> = [];
+const test = (name: string, run: () => void | Promise<void>): void => { cases.push({ name, run }); };
 const read = (file: string): any => JSON.parse(fs.readFileSync(file, 'utf8'));
 const write = (file: string, value: unknown): void => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, JSON.stringify(value, null, 2)); };
 
@@ -62,6 +64,7 @@ function setup(stamp: string, attempt: string) {
   assert.ok(start && end && (Date.parse(start.ts) <= executedAt && executedAt <= Date.parse(end.ts)
     || gateStart && gateEnd && Date.parse(gateStart.ts) <= executedAt && executedAt <= Date.parse(gateEnd.ts)), '原执行必须确实位于该作者或其正式 gate 窗口');
   record.goal_invocation = { run_id: runId, phase: 'testing', attempt_id: attempt.replace(/^testing-/, '') };
+  issueManagedInvocation(root, frameworkRoot, feature, runId, 'testing', record.goal_invocation.attempt_id);
   record.trace_path = path.join(dir, 'trace.json');
   record.trace_sha256 = sha256Text(fs.readFileSync(record.trace_path, 'utf8'));
   // Path adaptation must preserve every real execution-key input.
@@ -87,7 +90,7 @@ function setup(stamp: string, attempt: string) {
 }
 
 type Fixture = ReturnType<typeof setup>;
-function withExternalDevices<T>(c: Fixture, run: (state: { calls: number; locked: boolean; setup: boolean }) => T): T {
+async function withExternalDevices<T>(c: Fixture, run: (state: { calls: number; locked: boolean; setup: boolean }) => T | Promise<T>): Promise<T> {
   const registry = require('../../capability-registry');
   const hdc = require('../../../profiles/hmos-app/harness/hdc-runner');
   const bridge = require('../../../profiles/hmos-app/harness/device-recovery-bridge');
@@ -110,7 +113,7 @@ function withExternalDevices<T>(c: Fixture, run: (state: { calls: number; locked
   visual.buildHylyreVisualDiffScreenshotFn = countedCapture;
   visual.buildHylyreLayoutDumpFn = countedCapture;
   visual.buildHylyreNavExecutorFn = countedCapture;
-  try { return run(state); } finally {
+  try { return await run(state); } finally {
     registry.dispatchDeviceTestEnsureReady = saved.ready; registry.dispatchDeviceTestRun = saved.run;
     hdc.resolveExecutionDeviceIdentity = saved.identity; bridge.observeDeviceSnapshot = saved.snapshot;
     visual.buildHylyreVisualDiffScreenshotFn = saved.shot; visual.buildHylyreLayoutDumpFn = saved.dump; visual.buildHylyreNavExecutorFn = saved.nav;
@@ -131,15 +134,15 @@ function failureFacts(c: Fixture) {
 
 for (const [attempt, stamp] of [['testing-i15', '20261024T174757Z-893'], ['testing-i15', '20261024T175459Z-004'],
   ['testing-i19', '20261024T184311Z-686'], ['testing-i19', '20261024T185039Z-266']]) {
-  test(`6fd ${attempt} ${stamp} real failed gate consumes frozen facts with zero device calls and keeps repair candidates`, () => {
+  test(`6fd ${attempt} ${stamp} real failed gate consumes frozen facts with zero device calls and keeps repair candidates`, async () => {
     const c = setup(stamp, attempt);
-    withExternalDevices(c, state => {
+    await withExternalDevices(c, async state => {
       const before = failureFacts(c);
       assert.ok(before.candidates.length > 0, '真实失败材料必须确有产品修复候选');
       const original = fs.readFileSync(path.join(c.dir, 'execution-key.json'), 'utf8');
       const meta = fs.readFileSync(path.join(c.dir, 'frozen.device-test-run.meta.json'), 'utf8');
       write(path.join(c.reports, 'device-test-run.meta.json'), { ok: true, exit_code: 0, command: 'unrelated-later-run' });
-      const checks = __testing_checkDeviceTestRunGate(c.ctx, c.holder);
+      const checks = await __testing_checkDeviceTestRunGate(c.ctx, c.holder);
       const gate = checks.find(check => check.id === 'device_test_run')!;
       assert.strictEqual(state.calls, 0, gate?.details);
       assert.strictEqual(gate.status, 'FAIL', gate.details);
@@ -158,13 +161,13 @@ for (const [attempt, stamp] of [['testing-i15', '20261024T174757Z-893'], ['testi
   });
 }
 
-test('6fd latest failure cannot fall back to an older successful execution', () => {
+test('6fd latest failure cannot fall back to an older successful execution', async () => {
   const c = setup('20261024T184311Z-686', 'testing-i19');
   const older = path.join(c.reports, '20261024T000000Z-old', 'hylyre');
   fs.cpSync(c.dir, older, { recursive: true });
   writeExecutionKeyRecord(older, { ...c.record, outcome: 'success' });
-  withExternalDevices(c, state => {
-    const checks = __testing_checkDeviceTestRunGate(c.ctx, c.holder);
+  await withExternalDevices(c, async state => {
+    const checks = await __testing_checkDeviceTestRunGate(c.ctx, c.holder);
     assert.strictEqual(state.calls, 0);
     const gate = checks.find(check => check.id === 'device_test_run')!;
     assert.strictEqual(gate.status, 'FAIL', gate.details);
@@ -173,11 +176,11 @@ test('6fd latest failure cannot fall back to an older successful execution', () 
   });
 });
 
-test('6fd missing derived timing rebuilds from the original failed trace without device execution', () => {
+test('6fd missing derived timing rebuilds from the original failed trace without device execution', async () => {
   const c = setup('20261024T184311Z-686', 'testing-i19');
   fs.unlinkSync(path.join(c.dir, 'frozen.device-test-timing.json'));
-  withExternalDevices(c, state => {
-    const checks = __testing_checkDeviceTestRunGate(c.ctx, c.holder);
+  await withExternalDevices(c, async state => {
+    const checks = await __testing_checkDeviceTestRunGate(c.ctx, c.holder);
     assert.strictEqual(state.calls, 0, JSON.stringify(checks));
     assert.strictEqual(checks.find(check => check.id === 'device_test_run')?.status, 'FAIL');
     const timing = read(path.join(c.reports, 'device-test-timing.json'));
@@ -185,15 +188,15 @@ test('6fd missing derived timing rebuilds from the original failed trace without
   });
 });
 
-test('6fd frozen runner failure and unexecuted result retain their original failure classification', () => {
+test('6fd frozen runner failure and unexecuted result retain their original failure classification', async () => {
   for (const unexecuted of [false, true]) {
     const c = setup('20261024T184311Z-686', 'testing-i19');
     const meta = read(path.join(c.dir, 'frozen.device-test-run.meta.json'));
     meta.ok = unexecuted; meta.executed = !unexecuted; meta.exit_code = 79;
     meta.errors = [{ message: 'original runner unavailable' }];
     write(path.join(c.dir, 'frozen.device-test-run.meta.json'), meta);
-    withExternalDevices(c, state => {
-      const checks = __testing_checkDeviceTestRunGate(c.ctx, c.holder);
+    await withExternalDevices(c, async state => {
+      const checks = await __testing_checkDeviceTestRunGate(c.ctx, c.holder);
       const gate = checks.find(check => check.id === 'device_test_run')!;
       assert.strictEqual(state.calls, 0, JSON.stringify(checks));
       assert.strictEqual(gate.status, 'FAIL');
@@ -204,23 +207,23 @@ test('6fd frozen runner failure and unexecuted result retain their original fail
   }
 });
 
-test('6fd new attempt, changed package, changed input, force and missing facts dispatch external device again', () => {
+test('6fd new attempt, changed package, changed input and missing facts dispatch; managed force consumes its failure', async () => {
   for (const change of ['attempt', 'package', 'input', 'force', 'missing']) {
     const c = setup('20261024T184311Z-686', 'testing-i19');
-    withExternalDevices(c, state => {
+    await withExternalDevices(c, async state => {
       if (change === 'attempt') process.env.MAISON_GOAL_ATTEMPT = 'i20';
       if (change === 'package') c.holder.hapSha256Full = 'f'.repeat(64);
       if (change === 'input') fs.appendFileSync(path.join(c.dir, 'test-plan.hylyre.md'), '\n<!-- changed executable input -->\n');
       if (change === 'force') c.ctx.forceDevice = true;
       if (change === 'missing') fs.unlinkSync(path.join(c.dir, 'frozen.device-test-run.meta.json'));
-      const checks = __testing_checkDeviceTestRunGate(c.ctx, c.holder);
-      assert.strictEqual(state.calls, 1, `${change}: ${JSON.stringify(checks)}`);
+      const checks = await __testing_checkDeviceTestRunGate(c.ctx, c.holder);
+      assert.strictEqual(state.calls, change === 'force' ? 0 : 1, `${change}: ${JSON.stringify(checks)}`);
       assert.strictEqual(checks.find(check => check.id === 'device_test_run')?.status, 'FAIL');
     });
   }
 });
 
-test('6fd frozen tool failure keeps original runner failure and recovered lock dispatches again', () => {
+test('6fd frozen tool failure keeps original runner failure and recovered lock dispatches again', async () => {
   for (const recovered of [false, true]) {
     const c = setup('20261024T184311Z-686', 'testing-i19');
     const trace = read(c.record.trace_path);
@@ -232,10 +235,10 @@ test('6fd frozen tool failure keeps original runner failure and recovered lock d
     const meta = read(path.join(c.dir, 'frozen.device-test-run.meta.json'));
     meta.ok = false; meta.exit_code = null; meta.errors = [{ message: 'original locked runner failure' }];
     write(path.join(c.dir, 'frozen.device-test-run.meta.json'), meta);
-    withExternalDevices(c, state => {
+    await withExternalDevices(c, async state => {
       state.locked = !recovered;
       const before = fs.readFileSync(path.join(c.dir, 'execution-key.json'), 'utf8');
-      const checks = __testing_checkDeviceTestRunGate(c.ctx, c.holder);
+      const checks = await __testing_checkDeviceTestRunGate(c.ctx, c.holder);
       assert.strictEqual(state.calls, recovered ? 1 : 0, JSON.stringify(checks));
       const gate = checks.find(check => check.id === 'device_test_run')!;
       assert.strictEqual(gate.status, 'FAIL');
@@ -248,16 +251,70 @@ test('6fd frozen tool failure keeps original runner failure and recovered lock d
   }
 });
 
-export function runSelectedCases(selector?: string) {
+test('a214 executable install fixture preserves production metadata adoption for a current same-key success with zero new device actions', async () => {
+  const c = setup('20261024T193106Z-353', 'testing-i25');
+  const Module = require('module') as any;
+  const ts = require('typescript') as typeof import('typescript');
+  const fixtureFile = path.join(__dirname, '../utils/real-chain-providers/device-test-install.js');
+  const installedFile = path.join(frameworkRoot, 'profiles/hmos-app/harness/providers/device-test-install.js');
+  const install = new Module(installedFile, module);
+  install.filename = installedFile; install.paths = Module._nodeModulePaths(path.dirname(installedFile));
+  install._compile(fs.readFileSync(fixtureFile, 'utf8'), installedFile);
+  const production = require('../../../profiles/hmos-app/harness/providers/device-test-install') as typeof import('../../../profiles/hmos-app/harness/providers/device-test-install');
+  const checkerFile = path.join(frameworkRoot, 'harness/scripts/check-testing.ts');
+  const checker = new Module(checkerFile, module);
+  checker.filename = checkerFile; checker.paths = Module._nodeModulePaths(path.dirname(checkerFile));
+  const normalRequire = checker.require.bind(checker);
+  checker.require = (request: string) => request === '../../profiles/hmos-app/harness/providers/device-test-install' ? install.exports : normalRequire(request);
+  checker._compile(ts.transpileModule(fs.readFileSync(checkerFile, 'utf8'), { compilerOptions: {
+    module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true,
+  } }).outputText, checkerFile);
+  await withExternalDevices(c, async state => {
+    const registry = require('../../capability-registry'), priorInstall = registry.dispatchDeviceTestInstall;
+    registry.dispatchDeviceTestInstall = () => { state.calls++; throw new Error('unexpected external installation'); };
+    c.ctx.prepareDeviceExecution = async () => { state.calls++; throw new Error('unexpected external readiness'); };
+    try {
+      // Only this controlled package binding is substituted; the native successful cases stay original.
+      fs.writeFileSync(c.holder.hapPath!, 'controlled current a214 fixture build');
+      const hap = computeHapSha256Full(c.holder.hapPath!)!;
+      c.record.inputs.hap_sha256_full = hap; c.record.execution_key = computeExecutionKey(c.record.inputs);
+      writeExecutionKeyRecord(c.dir, c.record);
+      const installed = install.exports.installDeviceTestApp({ projectRoot: c.root, harnessRoot: c.root, frameworkRoot,
+        feature, phase: 'testing', hapPath: c.holder.hapPath });
+      assert.strictEqual(installed.ok, true); assert.strictEqual(installed.hapSha256Full, hap);
+      const metaFile = path.join(c.reports, 'device-test-install.meta.json'), metaBefore = read(metaFile);
+      c.holder.installPending = true; c.holder.installPassed = false; c.holder.installOk = false; c.holder.hapSha256Full = null;
+      const keyBefore = fs.readFileSync(path.join(c.dir, 'execution-key.json'));
+      const checks = await checker.exports.__testing_checkDeviceTestRunGate(c.ctx, c.holder);
+      const gate = checks.find((check: any) => check.id === 'device_test_run');
+      assert.strictEqual(gate?.status, 'PASS', JSON.stringify(checks));
+      assert.strictEqual(install.exports.adoptInstallMetadataForExecutionReuse, production.adoptInstallMetadataForExecutionReuse,
+        'the external fixture must retain the actual production current-byte/meta reader');
+      assert.strictEqual(c.holder.deviceRunReused, true); assert.strictEqual(c.holder.installPassed, true);
+      assert.strictEqual(c.holder.hapSha256Full, hap); assert.strictEqual(state.calls, 0, 'metadata adoption cannot run readiness/install/device execution');
+      const meta = read(metaFile), stat = fs.statSync(c.holder.hapPath!);
+      assert.strictEqual(meta.reused, true); assert.strictEqual(meta.timestamp, metaBefore.timestamp);
+      assert.strictEqual(meta.hapMtimeMs, stat.mtimeMs); assert.strictEqual(meta.hapSizeBytes, stat.size);
+      assert.deepStrictEqual(fs.readFileSync(path.join(c.dir, 'execution-key.json')), keyBefore, 'original frozen execution identity stays intact');
+      fs.appendFileSync(c.holder.hapPath!, 'different product');
+      const prior = fs.readFileSync(metaFile);
+      assert.strictEqual(install.exports.adoptInstallMetadataForExecutionReuse({ projectRoot: c.root, frameworkRoot, harnessRoot: c.root,
+        feature, phase: 'testing', hapPath: c.holder.hapPath }, hap), false, 'a real changed package cannot borrow the old install');
+      assert.deepStrictEqual(fs.readFileSync(metaFile), prior, 'a rejected current package cannot rewrite prior install facts');
+    } finally { registry.dispatchDeviceTestInstall = priorInstall; }
+  });
+});
+
+export async function runSelectedCases(selector?: string) {
   const results: UnitCaseResult[] = [], timings: UnitExecutionTiming[] = [];
   for (const c of cases.filter(c => matchesUnitCase(c.name, selector))) {
     const finish = startCaseTiming([c.name], timings);
-    try { c.run(); results.push({ name: c.name, ok: true }); }
+    try { await c.run(); results.push({ name: c.name, ok: true }); }
     catch (error) { results.push({ name: c.name, ok: false, error: (error as Error).stack }); }
     finally { finish(); }
   }
   return selectedUnitCases(results, selector, timings);
 }
-export function runAll(): UnitCaseResult[] { return runSelectedCases().results; }
+export async function runAll(): Promise<UnitCaseResult[]> { return (await runSelectedCases()).results; }
 
 export const listCaseGroups = () => unitCaseGroups(cases.map(c => c.name));

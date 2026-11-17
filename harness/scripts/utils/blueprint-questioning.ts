@@ -21,6 +21,15 @@ import { APP_LENS_QUESTIONS, isApplicableView, isChangedView } from './blueprint
 import { stableStringify } from './phase-evidence-manifest';
 import { resolveBlueprintReaderSource } from './blueprint-reader-guide';
 import { stableAddressIndex } from './blueprint-addressing';
+import { evaluateDerivedConclusionFreshness } from './derived-conclusion-freshness';
+
+/** Compare declared evidence paths without opening them or treating a Windows drive as a URI scheme. */
+export function questioningEvidencePath(ref: string, projectRoot?: string): string | undefined {
+  let file = ref.replace(/\\/g, '/').split(/#|:(?=\d)/)[0];
+  if (!file || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(file) && !/^[A-Za-z]:\//.test(file)) return undefined;
+  if (projectRoot && !path.isAbsolute(file) && !path.win32.isAbsolute(file)) file = path.resolve(projectRoot, file).replace(/\\/g, '/');
+  return path.posix.normalize(file).replace(/^([A-Z]):/, (_, drive: string) => drive.toLowerCase() + ':');
+}
 
 /**
  * M7：evolution_impact 显式接线。**每个 applicable 视图**（含 verified_unchanged）都进入
@@ -96,7 +105,7 @@ export function normalizeQuestioningItems(blueprint: BlueprintRecord, items: Blu
 
 /** Scope facts and explicit references, rather than shared business nouns, establish the reuse boundary. */
 export function selectQuestioningScopes(before: BlueprintRecord | undefined, current: BlueprintRecord,
-  previous?: BlueprintRecord, changedDependencies: readonly string[] = []): string[] {
+  previous?: BlueprintRecord, changedDependencies: readonly string[] = [], projectRoot?: string): string[] {
   const required = requiredQuestioningScopes(current);
   if (!before || !previous) return [...required.keys()];
   try { stableAddressIndex(before); stableAddressIndex(current); }
@@ -216,13 +225,35 @@ export function selectQuestioningScopes(before: BlueprintRecord | undefined, cur
     }
     if (!located) for (const ref of required.keys()) if (ref.startsWith('view:')) affected.add(ref);
   }
+  // Hand-authored sequence content is displayed authority when current; its precise owners retain independent review.
+  const visibleSequences = (doc: BlueprintRecord): Map<string, BlueprintRecord> => new Map(asRecords(doc.generated_graphs)
+    .filter(graph => graph.format === 'mermaid' && /^\s*sequenceDiagram\b/.test(String(graph.content))
+      && asRecords(doc.derived_results).some(result => result.result_id === graph.graph_id && evaluateDerivedConclusionFreshness(result, doc).current))
+    .map(graph => [String(graph.graph_id), graph]));
+  const oldSequences = visibleSequences(before), nextSequences = visibleSequences(current);
+  for (const id of new Set([...oldSequences.keys(), ...nextSequences.keys()])) {
+    if (stableStringify(asRecords(before.generated_graphs).find(graph => String(graph.graph_id) === id))
+      === stableStringify(asRecords(current.generated_graphs).find(graph => String(graph.graph_id) === id))) continue;
+    let located = false;
+    for (const [doc, graph] of [[before, oldSequences.get(id)], [current, nextSequences.get(id)]] as const) {
+      if (!graph) continue;
+      const index = stableAddressIndex(doc);
+      for (const ref of asStrings(graph.node_refs)) {
+        if (!index.has(ref)) continue;
+        const flow = /^view:[^/]+\/flow:(.+)$/.exec(ref), view = /^view:([^/]+)(?:\/|$)/.exec(ref);
+        const scopes = [flow && `flow:${flow[1]}`, view && `view:${view[1]}`, ref];
+        for (const scope of scopes) if (scope && required.has(scope)) { affected.add(scope); changedBusiness.add(scope); located = true; }
+      }
+    }
+    if (!located) return [...required.keys()];
+  }
   // A reader guide's source_digest refresh alone is a new projection identity, not a new business fact.
   for (const dependency of changedDependencies) {
-    const file = dependency.replace(/\\/g, '/');
+    const file = questioningEvidencePath(dependency, projectRoot);
     const related = items.filter(item => [...asStrings(item.verification_refs), ...asStrings(item.evidence_refs),
       String(asRecord(item.provenance)?.source_ref ?? '')].some(ref => {
-        const source = ref.replace(/\\/g, '/').split(/#|:(?=\d)/)[0];
-        return source === file || file.startsWith(source + '/');
+        const source = questioningEvidencePath(ref, projectRoot);
+        return file && source && (source === file || file.startsWith(source + '/'));
       }));
     if (!related.length) return [...required.keys()];
     related.forEach(item => { affected.add(String(item.scope_ref)); changedBusiness.add(String(item.scope_ref)); });
@@ -246,7 +277,7 @@ export function selectQuestioningScopes(before: BlueprintRecord | undefined, cur
     rawIds.get(raw)!.add(id);
   }
   const knownIds = new Set([...allIds, ...required.keys()]);
-  let ambiguous = false, unresolved = false;
+  let unresolved = false;
   const references = (value: unknown, doc: BlueprintRecord, resolvePointers = false): Set<string> => {
     const refs = new Set<string>();
     const visit = (input: unknown, field = '', depth = 0): void => {
@@ -275,12 +306,14 @@ export function selectQuestioningScopes(before: BlueprintRecord | undefined, cur
           } else if (resolvePointers && /^\/(?:(?:design_views|relations|contracts|quality_attributes|data_domains)\/\d+(?:\/|$)|decisions_and_gaps\/(?:decisions|gaps)(?:\/|$)|discovery\/(?:facts|inputs)(?:\/|$)|app_lens\/)/.test(pointer)) {
             unresolved = true;
           } else if (/^(?:source|evidence|verification|knowledge)_refs?$/.test(field)
-            && !/^[A-Za-z][A-Za-z0-9+.-]*:/.test(input) && /[\\/]|\.[A-Za-z0-9]+(?:#|:|$)/.test(input)) {
-            local.add('source:' + input.replace(/\\/g, '/').split(/#|:(?=\d)/)[0]);
+            && questioningEvidencePath(input) && /[\\/]|\.[A-Za-z0-9]+(?:#|:|$)/.test(input)) {
+            local.add('source:' + questioningEvidencePath(input));
           }
           const matches = rawIds.get(input);
-          if (matches && matches.size > 1) ambiguous = true;
-          if (matches?.size === 1) matches.forEach(ref => local.add(ref));
+          const kind = field.replace(/_refs?$/, '').replace(/^(?:logical|external)_/, '').replace(/_/g, '-');
+          const typed = matches && [...matches].filter(ref => ref.startsWith(kind + ':'));
+          // A bare ambiguous ID reaches its actual candidate consumers; an unrelated ambiguity is not a global change.
+          (typed?.length ? typed : matches)?.forEach(ref => local.add(ref));
           // These fields declare a design landing; slice ownership and asset/source references do not.
           if (resolvePointers && depth === 1 && ['landing', 'target_ref'].includes(field) && nonEmptyString(input)
             && (![...local].some(ref => knownIds.has(ref)) || [...local].some(ref => !knownIds.has(ref)))) unresolved = true;
@@ -304,7 +337,7 @@ export function selectQuestioningScopes(before: BlueprintRecord | undefined, cur
     if (unresolved) unresolvedRefs.add(ref);
     ids.set(ref, new Set([ref, ...identifiers(old.get(ref)), ...identifiers(next.get(ref))]));
   }
-  if (ambiguous && changedBusiness.size || [...changedAuthorities].some(ref => unresolvedRefs.has(ref))) return [...required.keys()];
+  if ([...changedAuthorities].some(ref => unresolvedRefs.has(ref))) return [...required.keys()];
   // Authority rows can explicitly name their landing; retain both old and new scope references.
   for (const ref of authorityRefs) {
     for (const scope of required.keys()) if ([...ids.get(scope) ?? []].some(id => dependencies.get(ref)?.has(id))
