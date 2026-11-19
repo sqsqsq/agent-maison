@@ -624,7 +624,7 @@ function identityNeutralFingerprint(projectRoot: string, source: ContractInputSo
   return identityNeutralDigest(projectRoot, artifact, value, authorityReaders);
 }
 
-function artifactBindingMatches(options: CapabilityResolutionOptions, binding: InputBinding, value: unknown, rawValue?: unknown): boolean {
+export function artifactBindingMatches(options: Pick<CapabilityResolutionOptions, 'projectRoot' | 'authorityReaders'>, binding: InputBinding, value: unknown, rawValue?: unknown): boolean {
   const matches = (candidate: unknown): boolean => fullFingerprint(candidate) === binding.content_fingerprint
     || identityNeutralFingerprint(options.projectRoot, binding.source, candidate, options.authorityReaders) === binding.content_fingerprint;
   if (matches(value)) return true;

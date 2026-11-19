@@ -624,13 +624,15 @@ export async function runGoalModeSessionStep(options: Omit<GoalModeHostBridgeOpt
       }
     }
     let issued: IssuedSessionExecution | undefined;
+    let completedProjection: ReturnType<typeof projectInitialDesignDelivery> | undefined;
     const runtime = new GoalPhaseRuntime({ args: ['--feature', original.feature, '--resume', original.run_id,
       '--project-root', options.projectRoot, '--framework-root', options.frameworkRoot, '--runtime-executor', 'attended', '--runtime-owner', 'session', '--foreground-ok',
       ...(options.sessionRef ? ['--session-ref', options.sessionRef] : []),
       ...(options.overrideManifest ? ['--override-manifest'] : []), ...(options.forceTakeover ? ['--force-resume'] : [])],
       authorization: options.authorization, leaseMs: options.leaseMs,
       sessionHandoff: { requestPath: options.requestPath, report: options.report ? normalizeSessionReport(options.report) : undefined,
-        onRequest: request => { issued = request; } } });
+        onRequest: request => { issued = request; },
+        onCompletedInitialDesign: view => { completedProjection = view; } } });
     const controlLog = path.join(runDir, 'session-control.log');
     const savedConsole = { log: console.log, warn: console.warn, error: console.error };
     const log = (...args: unknown[]): void => fs.appendFileSync(controlLog, args.map(arg => typeof arg === 'string' ? arg : JSON.stringify(arg)).join(' ') + '\n');
@@ -646,7 +648,8 @@ export async function runGoalModeSessionStep(options: Omit<GoalModeHostBridgeOpt
       gate_timeout_ms: issued.request.gate_timeout_ms, cleanup_reserve_ms: issued.request.cleanup_reserve_ms,
       status: 'execution_required', status_line: '按原件完成本职并报告；作者调用结束不表示原始交付完成。',
       next_command: command(`--request ${quote(path.resolve(issued.request.context.runDir, issued.reference.path))} --report-result ${quote('@' + sessionReportInputPath(issued.request.context.runDir, issued))}`) };
-    const view = projectInitialDesignDelivery({ projectRoot: options.projectRoot, frameworkRoot: options.frameworkRoot, manifest: original });
+    const view = completedProjection?.feature === original.feature && completedProjection.run_id === original.run_id
+      ? completedProjection : projectInitialDesignDelivery({ projectRoot: options.projectRoot, frameworkRoot: options.frameworkRoot, manifest: original });
     const status = view.complete ? 'completed' : exitCode === 3 || view.recovery?.run_disposition === 'WAITING' ? 'waiting' : 'fused';
     const result = { status, exit_code: exitCode, halt_reason: view.halt_reason, recovery: view.recovery,
       issues: view.issues, current: view.current, next_action: view.next_action };

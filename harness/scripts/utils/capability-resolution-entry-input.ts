@@ -339,11 +339,16 @@ export function loadFormalFactsObservation(options: FactsInvocationLookup): {
     const anchor = records.find(record => record.original.context.attemptId === options.attemptId && record.completed
       && record.original.context.chain.includes(options.phase));
     if (!anchor) return undefined;
-    if (anchor.start.phase === 'work-unit-author') return completedFactsBaselineFromHistory({ ...options,
-      featuresDir: options.featuresDir ?? relFeaturesDir(options.projectRoot), goalAttemptId: options.attemptId },
-    options.runId, options.frameworkRoot ?? path.resolve(__dirname, '../../..'), manifest, history, false);
+    if (anchor.start.phase === 'work-unit-author' && !anchor.original.context.factsContext?.baseline) {
+      return completedFactsBaselineFromHistory({ ...options,
+        featuresDir: options.featuresDir ?? relFeaturesDir(options.projectRoot), goalAttemptId: options.attemptId },
+      options.runId, options.frameworkRoot ?? path.resolve(__dirname, '../../..'), manifest, history, false);
+    }
     const facts = fs.readFileSync(resolveFactsAbsPath(options.projectRoot, options.feature), 'utf8');
-    const current = [...records].reverse().filter(record => record.completed)
+    // The formal CU gate uses the author admission it is checking. A stale
+    // predecessor report cannot silently replace that admission with fresh facts.
+    const current = anchor.start.phase === 'work-unit-author' ? anchor.original.context.factsContext
+      : [...records].reverse().filter(record => record.completed)
       .map(record => record.start.facts_context ?? record.original.context.factsContext)
       .find(context => context?.baseline && 'feature' in context.subject && context.subject.feature === options.feature
         && 'run_id' in context.subject && context.subject.run_id === options.runId
@@ -360,10 +365,11 @@ export function loadFormalFactsObservation(options: FactsInvocationLookup): {
     const frameworkRoot = options.frameworkRoot ?? path.resolve(__dirname, '../../..');
     const { createIdentityNeutralDigestReaders } = require('./identity-neutral-digest') as typeof import('./identity-neutral-digest');
     const authorityReaders = options.authorityReaders ?? createIdentityNeutralDigestReaders();
-    const allowed = resolveFactsPhaseOwnedSources({ ...options, frameworkRoot, authorityReaders }, { ...context,
-      source_owners: { ...context.source_owners, ...Object.fromEntries(candidates.map(file => [file, options.phase])) } });
+    const allowed = anchor.start.phase === 'work-unit-author' ? new Set(candidates)
+      : resolveFactsPhaseOwnedSources({ ...options, frameworkRoot, authorityReaders }, { ...context,
+        source_owners: { ...context.source_owners, ...Object.fromEntries(candidates.map(file => [file, options.phase])) } });
     const observed = createObservedSourceHashReader(options.projectRoot, options.feature, { frameworkRoot, runId: options.runId,
-      authorityReaders, ownershipEvents: ownedHistory });
+      authorityReaders, ownershipEvents: ownedHistory, includeAuthorArtifacts: true });
     const sources = new Map<string, { sha256: string; written: boolean }>();
     for (const file of candidates) {
       if (!allowed.has(file)) continue;
@@ -633,7 +639,7 @@ function completedFactsBaselineFromHistory(options: CapabilityResolutionEntryInp
     }
     partialWrites.set(index, (classified?.allowed ?? []).filter(write => write.roles.some(role => role.kind === 'source')));
   }
-  const starts = events.flatMap((e, i) => {
+  let starts = events.flatMap((e, i) => {
     if (unitContexts.has(i)) return [i];
     if (i <= fence || e.type !== 'agent_invoke_start' || e.phase !== options.phase || typeof e.invoke_id !== 'string'
       || !new RegExp(`^${options.phase}-i\\d+$`).test(e.invoke_id)) return [];
@@ -646,6 +652,9 @@ function completedFactsBaselineFromHistory(options: CapabilityResolutionEntryInp
       && workUnitExecutionRole(request.context, request.purpose) === 'verifier') return [];
     return [i];
   });
+  const latestResearch = starts.map((index, position) => position > 0 && unitContexts.has(index)
+    && !unitContexts.get(index)!.baseline && !!unitContexts.get(starts[position - 1])?.baseline).lastIndexOf(true);
+  if (latestResearch >= 0) starts = starts.slice(latestResearch);
   if (!starts.length) {
     const handoff = events[fence];
     const returningOwner = handoff?.from_phase ?? handoff?.phase;
@@ -683,6 +692,25 @@ function completedFactsBaselineFromHistory(options: CapabilityResolutionEntryInp
     : !establishingRequest || parsed.error || parsed.fm.schema_version !== '1.1' || parsed.fm.feature !== options.feature
       || (parsed.fm as Record<string, unknown>).run_id !== runId || (parsed.fm as Record<string, unknown>).established_by !== context.first_phase
       || context.first_phase !== (manifest.phase_chain?.[0] ?? manifest.execution_scope?.phase_chain[0])) return undefined;
+  if (!context.baseline && establishingRequest?.snapshot_options?.includeFiles?.some(file => path.resolve(options.projectRoot, file) === factsPath)) {
+    const factsRel = path.relative(options.projectRoot, factsPath).replace(/\\/g, '/');
+    let current = establishingRequest.pre_snapshot!.entries.find(entry => entry.path === factsRel)?.sha256 ?? null;
+    let written = false;
+    for (const [index, request] of unitRequests) {
+      if (!unitContexts.has(index) || index < first || !request.write_boundary
+        || !workUnitMayWritePath(request.write_boundary, factsRel)) continue;
+      for (const event of events) {
+        if (event.type !== 'phase_write_observed' || event.invoke_id !== request.invoke_id) continue;
+        for (const row of (event as { owned?: Array<{ path: string; pre_sha256: string | null; post_sha256: string | null }> }).owned ?? []) {
+          if (row.path !== factsRel) continue;
+          if (row.pre_sha256 !== current || row.pre_sha256 === row.post_sha256) return undefined;
+          current = row.post_sha256;
+          written = true;
+        }
+      }
+    }
+    if (current !== sha256File(factsPath) || latestResearch >= 0 && !written) return undefined;
+  }
   const initial = new Map<string, string | null>();
   // A unit establishing fresh facts has no old phase PASS to borrow. Its signed
   // preimage and completed, lawful writes are the original source chain instead.
@@ -798,7 +826,7 @@ function completedFactsBaselineFromHistory(options: CapabilityResolutionEntryInp
   for (const source of written) if (sha256File(path.join(options.projectRoot, source)) !== chain.get(source)) return undefined;
   if (carryUnchangedBaseline && changed.size) return undefined;
   // Reopening a duty revokes its PASS, not the unchanged original admission.
-  if (context.baseline) {
+  if (context.baseline && !establishingRequest) {
     const evidence = loadPhaseEvidenceManifest(options.projectRoot, options.feature, context.baseline.established_by);
     const requirement = options.requirement ?? manifest.requirement;
     const freshness = recomputePhaseEvidenceStaleness(options.projectRoot, options.feature, [context.baseline.established_by], { frameworkRoot, runId, authorityReaders: options.authorityReaders,
@@ -817,9 +845,9 @@ function completedFactsBaselineFromHistory(options: CapabilityResolutionEntryInp
   for (const source of writtenSources)
     if (writeOwners.has(source) && !accepted.source_paths.includes(source)) accepted.source_paths.push(source);
   const sources = new Map<string, { sha256: string; written: boolean }>();
-  if (!context.baseline) for (const dep of businessDependencies) {
+  for (const dep of businessDependencies) {
     const source = path.relative(options.projectRoot, dep.path).replace(/\\/g, '/');
-    if (dep.sha256 && !written.has(source)) sources.set(source, { sha256: dep.sha256, written: false });
+    if (dep.sha256 && !changed.has(source) && !written.has(source)) sources.set(source, { sha256: dep.sha256, written: false });
   }
   for (const source of observedWritten) {
     const sha256 = chain.get(source);
@@ -917,6 +945,16 @@ export function resolveCapabilityResolutionEntryInput(
         ...(obligation.satisfied_by ?? []).filter(ref => 'input_id' in ref),
       ]);
       const researchPaths = new Set<string>();
+      const testingReports = featurePhaseReportsDir(options.projectRoot, options.feature, 'testing', frameworkRoot);
+      const testingNotes = path.join(receiptDirPath(options.projectRoot, options.feature, 'testing'), 'notes.md');
+      const factsPath = resolveFactsAbsPath(options.projectRoot, options.feature);
+      const isResearchInput = (source: string): boolean => {
+        const absolute = path.resolve(options.projectRoot, source);
+        // Receipt/trace references establish previous checking results.
+        // Current decisions still consume them through their original evidence readers.
+        return absolute !== factsPath && (absolute !== testingNotes && !isInsideProjectRoot(testingReports, absolute)
+          || requirementSourceFiles?.some(file => path.resolve(options.projectRoot, file) === absolute) === true);
+      };
       // §5.1.1a R-target collection: a `design-decision` / `acceptance-definition` derive basis is
       // the historical file that TRIGGERED a revision, not a current target of any phase. Collecting
       // it here re-enters it into `factsContext.source_paths` / `testTargets` and the phase evidence,
@@ -926,7 +964,8 @@ export function resolveCapabilityResolutionEntryInput(
         .filter(obligation => !REVISION_TRIGGER_KINDS.has(obligation.kind))
         .flatMap(obligation => obligation.basis.flatMap(binding => binding.dependencies
           .filter(dep => dep.role === 'derive' && dep.exists)
-          .map(dep => path.relative(options.projectRoot, resolveDependencyPath(options.projectRoot, dep.path, inferLegacyProjectRoot(options.projectRoot, scope))).replace(/\\/g, '/')))))];
+          .map(dep => path.relative(options.projectRoot, resolveDependencyPath(options.projectRoot, dep.path, inferLegacyProjectRoot(options.projectRoot, scope))).replace(/\\/g, '/'))
+          .filter(isResearchInput))))];
       if (collectsConstructionSources(options) && scope.obligations.some(obligation => obligation.kind === 'implementation' && obligation.applicability === 'required')) {
         // G5：基线走统一来源选择（无 run 时是既有 HARNESS_DIFF_BASE_REF 三态，不是 FAIL）
         const baseline = resolveEffectiveDiffBaseline(options.projectRoot, options.feature, goalRunId);
@@ -956,12 +995,11 @@ export function resolveCapabilityResolutionEntryInput(
         ?? loadSuccessorFactsBaseline(options, goalRunId, frameworkRoot) : undefined;
       if (admitted) {
         Object.assign(factsContext, admitted);
-        for (const source of admitted.source_paths) {
+        for (const source of admitted.source_paths.filter(isResearchInput)) {
           researchPaths.add(source);
           if (!sourcePaths.includes(source)) sourcePaths.push(source);
         }
       }
-      const factsPath = resolveFactsAbsPath(options.projectRoot, options.feature);
       let factsRebuildReason: string | undefined;
       if (options.purpose !== 'design-authority-probe' && !admitted && fs.existsSync(factsPath)) {
         try {
@@ -975,6 +1013,12 @@ export function resolveCapabilityResolutionEntryInput(
         const currentResearch = establishing === options.phase
           && (goalRunId ? record.run_id === goalRunId : record.frozen_scope_fingerprint === executionScopeFingerprint(scope));
         if (currentResearch) {
+          if (goalRunId && unitAuthor) {
+            const run = loadGoalManifestFromRun(options.projectRoot, goalRunId, { feature: options.feature, featuresDir: options.featuresDir });
+            const previous = loadAuthoritativeEvents(path.resolve(options.projectRoot, run.report_dir, 'events.jsonl'))
+              .filter(event => event.type === 'agent_invoke_start' && event.phase === 'work-unit-author' && event.facts_context).at(-1)?.facts_context;
+            if (previous?.baseline) factsRebuildReason = 'The previous signed baseline is no longer reusable. Read the current sources and establish facts again under the current birth owner.';
+          }
           // Current first-phase Research may exist before its first closure manifest; it is not a reusable predecessor baseline.
           const declared = Array.isArray(fm.source_code_paths) ? fm.source_code_paths.filter((source): source is string => typeof source === 'string') : [];
           const normalized = declared.map(source => path.posix.normalize(validateProjectRelativePath(options.projectRoot, source, 'facts source')));
@@ -1213,7 +1257,7 @@ export function resolveCapabilityResolutionEntryInput(
       const establishingResearch = !factsContext.baseline && factsContext.first_phase === options.phase ? sourcePaths : [];
       factsContext.source_paths = [...new Set([
         ...establishingResearch.filter(file => fs.existsSync(path.resolve(options.projectRoot, file))),
-        ...(collectsConstructionSources(options) ? admitted?.source_paths ?? [] : []),
+        ...(collectsConstructionSources(options) ? (admitted?.source_paths ?? []).filter(isResearchInput) : []),
         ...(consumes('derive.codebase') ? codeTargets : []).filter(file => fs.existsSync(path.resolve(options.projectRoot, file))),
         ...(consumes('derive.test-targets') ? testTargets : []).filter(file => fs.existsSync(path.resolve(options.projectRoot, file))),
       ])];

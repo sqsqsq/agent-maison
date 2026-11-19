@@ -2,7 +2,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
 import { ChangeUnitArtifact } from './change-unit-model';
-import { changeUnitPath, loadCanonicalChangeUnit, type LoadedChangeUnit } from './change-unit-path';
+import { changeUnitPath, deriveChangeUnitFeatureId, loadCanonicalChangeUnit, type LoadedChangeUnit } from './change-unit-path';
+import { loadCanonicalBlueprint } from './component-blueprint-path';
+import { resolveProbeFrameworkRoot } from '../../repo-layout';
 import { assertValidChangeUnit } from './change-unit-validator';
 import { validateChangeUnitDesign, readChangeUnitDesignOwnership } from './change-unit-design-gate';
 
@@ -91,9 +93,21 @@ export function validateChangeUnitCandidate(projectRoot: string, candidate: Chan
   }
   const design = validateChangeUnitDesign(projectRoot, artifact as unknown as Record<string, unknown>);
   if (design.verdict !== 'constructable') {
+    const { blueprintCandidateAuthorityFindings, deriveBlueprintCandidateSkillInput } = require('./blueprint-skill-projection') as typeof import('./blueprint-skill-projection');
+    const failures = design.issues.map(issue => ({ codes: [issue.id], detail: issue.message, locations: issue.authority ? [issue.authority] : [] }));
+    const designAuthority = blueprintCandidateAuthorityFindings(projectRoot, artifact.blueprint_id, { state: 'invalid', dependencies: [], failures });
+    const projection = deriveBlueprintCandidateSkillInput(projectRoot, deriveChangeUnitFeatureId(artifact.blueprint_id, artifact.change_unit_id), resolveProbeFrameworkRoot(projectRoot),
+      'contracts', { blueprint: loadCanonicalBlueprint(projectRoot, artifact.blueprint_id).blueprint, changeUnit: artifact, constructionMapping: candidate.construction_mapping });
+    for (const finding of blueprintCandidateAuthorityFindings(projectRoot, artifact.blueprint_id, projection)) {
+      if (!designAuthority.some(prior => JSON.stringify(prior.locations) === JSON.stringify(finding.locations)
+        && JSON.stringify(prior.codes) === JSON.stringify(finding.codes))) designAuthority.push(finding);
+    }
     throw new ChangeUnitCandidateRejected(
       'change_unit_candidate_design_rejected',
-      `候选 ${artifact.change_unit_id} 未通过设计闭包门（${design.verdict}）：${design.issues.map(item => `${item.id}: ${item.message}`).join('；')}`,
+      `候选 ${artifact.change_unit_id} 未通过设计闭包门（${design.verdict}）：${design.issues.map(item => `${item.id}: ${item.message}`).join('；')}`
+        + (projection.state === 'invalid' ? '\n' + projection.failures?.filter(failure => !failure.codes.some(code => design.issues.some(issue => issue.id === code)))
+          .map(failure => failure.detail).join('\n') : ''),
+      designAuthority.length ? designAuthority : undefined,
     );
   }
   return target;
@@ -164,9 +178,7 @@ export function acceptChangeUnitCandidates(
       written.push(targets[index]!);
     });
     const { materializeBlueprintSkillInputs, resolveChangeUnitConstructionInputs, BLUEPRINT_PROJECTION_FILES } = require('./blueprint-skill-projection') as typeof import('./blueprint-skill-projection');
-    const { deriveChangeUnitFeatureId } = require('./change-unit-path') as typeof import('./change-unit-path');
     const { resolveFeatureArtifact } = require('../../config') as typeof import('../../config');
-    const { resolveProbeFrameworkRoot } = require('../../repo-layout') as typeof import('../../repo-layout');
     for (const candidate of candidates) {
       projectionCandidate = candidate;
       const feature = deriveChangeUnitFeatureId(candidate.artifact.blueprint_id, candidate.artifact.change_unit_id);
@@ -180,24 +192,19 @@ export function acceptChangeUnitCandidates(
       materializeBlueprintSkillInputs(projectRoot, feature, frameworkRoot, undefined, undefined, candidate.construction_mapping);
     }
   } catch (error) {
-    const { BlueprintProjectionPreparationError, classifyDesignAuthorityCodes } = require('./blueprint-skill-projection') as typeof import('./blueprint-skill-projection');
+    const { BlueprintProjectionPreparationError, blueprintCandidateAuthorityFindings } = require('./blueprint-skill-projection') as typeof import('./blueprint-skill-projection');
     const projection = error instanceof BlueprintProjectionPreparationError ? error.projection : undefined;
-    const codes = (projection?.codes ?? []).filter(code => classifyDesignAuthorityCodes([code]).artifacts.every(kind => kind === 'blueprint'));
-    const verdict = classifyDesignAuthorityCodes(codes);
-    const designAuthority = projection?.state === 'invalid' && codes.length && projectionCandidate
-      ? [{ check: 'authoritative_content_aligned', class: verdict.class, codes,
-        artifacts: [...new Set(projectionCandidate.artifact.design_refs.map(ref => require('./component-blueprint-path').componentBlueprintPath(projectRoot, ref.blueprint_id) as string))]
-          .map(file => path.relative(projectRoot, file).replace(/\\/g, '/')),
-        basis: projection.detail ?? (error as Error).message, needs: verdict.needs, ...(projection.locations ? { locations: projection.locations } : {}) }] : undefined;
+    const designAuthority = projection?.state === 'invalid' && projectionCandidate
+      ? blueprintCandidateAuthorityFindings(projectRoot, projectionCandidate.artifact.blueprint_id, projection) : undefined;
     for (const projection of projections) if (projection.previous) fs.writeFileSync(projection.file, projection.previous);
     else if (fs.existsSync(projection.file)) fs.unlinkSync(projection.file);
     for (const target of written) {
       if (fs.existsSync(target)) fs.unlinkSync(target);
     }
     throw new ChangeUnitCandidateRejected(
-      'change_unit_decomposition_write_failed',
+      projection?.state === 'invalid' ? 'change_unit_candidate_design_rejected' : 'change_unit_decomposition_write_failed',
       `原子写出失败并已回滚本批：${(error as Error).message}`,
-      designAuthority,
+      designAuthority?.length ? designAuthority : undefined,
     );
   }
   return candidates.map(candidate => loadCanonicalChangeUnit(

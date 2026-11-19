@@ -81,16 +81,52 @@ function questioningId(kind: unknown, ref: unknown): string {
   return `q:${crypto.createHash('sha256').update(String(kind ?? '') + '\n' + String(ref ?? '')).digest('hex').slice(0, 16)}`;
 }
 
-/** Normalize only an address whose owning view and flow both identify one current target. */
-export function normalizeQuestioningItems(blueprint: BlueprintRecord, items: BlueprintRecord[]): BlueprintRecord[] {
+const QUESTIONING_SCOPE_HEADING = '## 必答范围（每个恰好一项）';
+type SignedQuestioningScopes = ReadonlyMap<string, { kind: string; questionId: string }>;
+
+/** Read the scope lines already frozen in the independent request material. */
+export function readSignedQuestioningScopes(segments?: readonly unknown[]): SignedQuestioningScopes | undefined {
+  const at = segments?.indexOf(QUESTIONING_SCOPE_HEADING) ?? -1;
+  if (!segments || at < 0 || at !== segments.lastIndexOf(QUESTIONING_SCOPE_HEADING)) return undefined;
+  const scopes = new Map<string, { kind: string; questionId: string }>();
+  const questionIds = new Set<string>();
+  for (const line of segments.slice(at + 1)) {
+    const match = typeof line === 'string' && /^- (\S+)（(view|flow|relation|app_lens|terminology)；question_id=([^，]+)，机器已给出）$/.exec(line);
+    if (!match) break;
+    if (scopes.has(match[1]) || questionIds.has(match[3])) return undefined;
+    scopes.set(match[1], { kind: match[2], questionId: match[3] });
+    questionIds.add(match[3]);
+  }
+  return scopes.size ? scopes : undefined;
+}
+
+/** Normalize only an address with one current target and no competing answer. */
+export function normalizeQuestioningItems(blueprint: BlueprintRecord, items: BlueprintRecord[], signed?: SignedQuestioningScopes): BlueprintRecord[] {
   const scopes = requiredQuestioningScopes(blueprint);
+  if (signed) {
+    try { stableAddressIndex(blueprint); } catch { signed = undefined; }
+  }
+  const flows = asRecords(blueprint.design_views).flatMap(view => asRecords(view.runtime_data_flows));
   const normalized = items.map(item => {
     const match = /^view:([^/]+)\/flow:(.+)$/.exec(String(item.scope_ref));
     const owners = match && asRecords(blueprint.design_views).filter(view => view.view_id === match[1]
       && asRecords(view.runtime_data_flows).some(flow => flow.flow_id === match[2]));
-    const occurrences = match && asRecords(blueprint.design_views).flatMap(view => asRecords(view.runtime_data_flows)).filter(flow => flow.flow_id === match[2]).length;
+    const occurrences = match && flows.filter(flow => flow.flow_id === match[2]).length;
     return match && owners?.length === 1 && occurrences === 1 && scopes.get(`flow:${match[2]}`) === 'flow'
       && item.scope_kind === 'flow' ? { ...item, scope_ref: `flow:${match[2]}` } : item;
+  });
+  const aliases = normalized.map(item => {
+    if (!signed || typeof item.scope_ref !== 'string' || !item.scope_ref || item.scope_ref.includes(':')) return undefined;
+    if (item.scope_kind === 'flow' && flows.filter(flow => flow.flow_id === item.scope_ref).length !== 1) return undefined;
+    const ref = `${String(item.scope_kind)}:${item.scope_ref}`;
+    const scope = signed.get(ref);
+    return scope && scope.kind === item.scope_kind && scopes.get(ref) === item.scope_kind ? ref : undefined;
+  });
+  const attached = normalized.map((item, index) => {
+    const ref = aliases[index];
+    if (!ref || aliases.filter(alias => alias === ref).length !== 1 || normalized.some(other => other.scope_ref === ref)) return item;
+    if (item.question_id !== undefined && item.question_id !== signed?.get(ref)?.questionId) return item;
+    return { ...item, scope_ref: ref };
   });
   const emptyPlaceholder = (item: BlueprintRecord): boolean => {
     const provenance = asRecord(item.provenance);
@@ -99,13 +135,13 @@ export function normalizeQuestioningItems(blueprint: BlueprintRecord, items: Blu
       && nonEmptyString(item.question) && item.question === item.owner && item.question === provenance.source_ref
       && asStrings(item.verification_refs).length > 0 && asStrings(item.verification_refs).every(ref => ref === item.question);
   };
-  return normalized.filter(item => !emptyPlaceholder(item) || !normalized.some(other => other !== item
+  return attached.filter(item => !emptyPlaceholder(item) || !attached.some(other => other !== item
     && other.scope_ref === item.scope_ref && !emptyPlaceholder(other)));
 }
 
 /** Scope facts and explicit references, rather than shared business nouns, establish the reuse boundary. */
 export function selectQuestioningScopes(before: BlueprintRecord | undefined, current: BlueprintRecord,
-  previous?: BlueprintRecord, changedDependencies: readonly string[] = [], projectRoot?: string): string[] {
+  previous?: BlueprintRecord, changedDependencies: readonly string[] = [], projectRoot?: string, revisitFindings = true): string[] {
   const required = requiredQuestioningScopes(current);
   if (!before || !previous) return [...required.keys()];
   try { stableAddressIndex(before); stableAddressIndex(current); }
@@ -159,11 +195,12 @@ export function selectQuestioningScopes(before: BlueprintRecord | undefined, cur
   }));
   for (const ref of required.keys()) {
     const candidates = items.filter(item => item.scope_ref === ref);
-    if (!old.has(ref) || stableStringify(old.get(ref)) !== stableStringify(next.get(ref))
-      || candidates.some(item => ['blocker', 'open_decision'].includes(String(item.disposition)))) {
+    if (!old.has(ref) || stableStringify(old.get(ref)) !== stableStringify(next.get(ref))) {
       affected.add(ref); changedBusiness.add(ref);
     }
-    if (candidates.length !== 1 || asRecords(previous.items).some((item, index) => invalidIndexes.has(index) && item.scope_ref === ref)) affected.add(ref);
+    // Prior findings must be reconsidered, but only changed design facts propagate to their consumers.
+    if (revisitFindings && (candidates.length !== 1 || candidates.some(item => item.disposition === 'blocker' || item.disposition === 'open_decision')
+      || asRecords(previous.items).some((item, index) => invalidIndexes.has(index) && item.scope_ref === ref))) affected.add(ref);
   }
   const global = (doc: BlueprintRecord): BlueprintRecord => {
     const copy = blueprintAuthorContent(doc);
@@ -375,10 +412,13 @@ export function renderQuestioningResultInstructions(blueprint: BlueprintRecord, 
     renderBlueprintFieldResponsibilities(),
     `disposition只能使用以下合法值：${DISPOSITIONS.join(' / ')}；不要用open等其它拼写。`,
     '',
-    '## 必答范围（每个恰好一项）',
+    QUESTIONING_SCOPE_HEADING,
     ...scopes,
     '只交回本轮实际复核的上述条目；未变项由机器沿原件复用，不复制整份旧回答。有具体新证据可重开其它scope，同时在answer及verification_refs给出新证据。用紧凑JSON返回，不写临时结果或复述完整材料。',
-    '对照原始需求的用户可观察结果，构造能骗过当前验收的反例；需求指定某个对象时，核实上下游接到的是同一本次对象，不能只证明页面看似成功。失败返回落点依据原文及既有路由解释；参考图按既有来源核验并保留到施工/视觉验收。',
+    '用原需求逐项核对预期结果、独立验收 ID 和适用观察通道。以反例判断设计是否允许违反当前已授权行为，例如生产者交出的对象与消费者需要的本次对象不一致。失败返回落点依据原文及既有路由解释；参考图按既有来源核验并保留到施工/视觉验收。',
+    '同一适用通道可以承担不同义务。按原需求分别核对输入映射和默认值、生产写入与读回、外部界面与导航、时间上的可见变化、真实调用次数等适用义务。外部界面证据只覆盖界面可见或可操作结果；持久状态和调用次数各归可观察实际状态或调用的通道。不同 CU 的局部同号及多个目标共用同一完整定义可按实际消费范围保留。',
+    '当前义务遗漏或混写、证据通道无法观察所承诺的结果、产品设计存在实质矛盾或违反本次授权时，在对应 scope 给 blocker，写清原文或相冲突的设计出处、条目位置与实际后果。当前产品必须的生产者、接收者、触发、交接或清理尚不成立，也属于设计缺陷。当前必须裁决的需求或授权沿既有未决决定与权限处理。',
+    '设计已明确义务、可观察通道及生产行为时，以设计原文完成 answered_with_evidence。具体测试 API/入口、注入与定位方式、样本数据/隔离/复位前置、用例步骤和断言强度交既有 CU 计划及施工后的独立核验；需要时在答复留一句交接说明。只有这些执行细节未定时不报 blocker 或 open_decision，也不声称测试已执行或义务已验证。远期决定沿原 owner、needed-by 和解除条件记录；其依赖未变时复用原结论。',
     ...(unchanged.length ? ['', '## verified_unchanged 视图', ...unchanged] : []),
   ];
 }
@@ -416,8 +456,8 @@ export function independentQuestioningEnvelope(result: BlueprintRecord, provider
 
 export function mergeIndependentQuestioningResult(blueprint: BlueprintRecord, result: BlueprintRecord, providerId: string,
   previous?: BlueprintRecord, selected: readonly string[] = [...requiredQuestioningScopes(blueprint).keys()],
-  original?: { path: string; sha256: string }): BlueprintRecord {
-  const fresh = normalizeQuestioningItems(blueprint, asRecords(result.items)).map(item => {
+  original?: { path: string; sha256: string }, signed?: SignedQuestioningScopes): BlueprintRecord {
+  const fresh = normalizeQuestioningItems(blueprint, asRecords(result.items), signed).map(item => {
     const copy = { ...item }; delete copy.review_original;
     return original ? { ...copy, review_original: original } : copy;
   });

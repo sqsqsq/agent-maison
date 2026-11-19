@@ -56,9 +56,11 @@ export function testingRetestCases(): Array<{ name: string; run(): void }> {
         const dir = path.join(reports, stamp, 'hylyre'), tracePath = path.join(dir, 'trace.json');
         const bytes = JSON.stringify(trace);
         write(tracePath, bytes); write(path.join(dir, 'test-plan.hylyre.md'), plan);
-        write(path.join(dir, 'execution-key.json'), JSON.stringify({ schema_version: '1.0', execution_key: stamp,
+        const inputs = { hap_sha256_full: hap, derived_plan_sha256: hash(plan), profile: 'hmos-app', device: 'isolated-test',
+          display_env: '', reset_mode: 'warm', hylyre_version: null, manifest_version: null, tool_config_sha256: '', flags: [] };
+        write(path.join(dir, 'execution-key.json'), JSON.stringify({ schema_version: '1.0', execution_key: computeExecutionKey(inputs),
           run_started_at: new Date(Date.parse(manifest.created_at) + seconds * 1000).toISOString(), trace_path: tracePath,
-          trace_sha256: hash(bytes), inputs: { hap_sha256_full: hap, derived_plan_sha256: hash(plan) }, outcome: trace.outcome }));
+          trace_sha256: hash(bytes), inputs, outcome: trace.outcome }));
       };
       const pending = (currentHapSha256: string | null = hap) => readPendingTestingRetests({ projectRoot: root,
         feature: manifest.feature, runId, frameworkRoot, currentHapSha256 });
@@ -178,6 +180,22 @@ export function testingRetestCases(): Array<{ name: string; run(): void }> {
         assert.equal(pending().length, 1, `${verifierState}: changing the original presence predicate to absence does not close`);
       }
       write(path.join(reports, 'summary.json'), JSON.stringify({ verifier_plan: { mode: 'disabled' } }));
+      const indexedSuccess = structuredClone(corrected), indexedFailure = structuredClone(corrected);
+      const indexedRequest = { kind: 'composite', value: 'result label', match: 'exact', constraints: { primary: 'by_text', index: 0 } };
+      indexedSuccess.cases[0].steps[1].selector.request = indexedRequest;
+      const failedIndex = read(path.join(goldens, '../../step/valid/failed-selector-not-found.json'));
+      Object.assign(indexedFailure, { outcome: 'failed' });
+      Object.assign(indexedFailure.cases[0], { status: '失败', execution: 'aborted', verification: 'failed' });
+      Object.assign(indexedFailure.cases[0].steps[1], {
+        outcome: { status: failedIndex.outcome.status, failure: failedIndex.outcome.failure }, artifacts: failedIndex.artifacts,
+        diagnostic: 'index 1 out of range for 1 hit(s)', selector: { request: { ...indexedRequest, constraints: { ...indexedRequest.constraints, index: 1 } },
+          resolution: { state: 'not_found', candidate_count: 0, selected: null, candidates: [] } } });
+      callsFromSteps(indexedFailure); callsFromSteps(indexedSuccess);
+      const indexedPlan = (id: string, index: number) => row(id, 'original visible result', 'corrected_pay_button')
+        .replace('{"wait_for":{"by_id":"result"}}', `{"wait_for":{"by_text":"result label","match":"exact","index":${index}}}`);
+      publish('01', prepare(indexedFailure, 'TC-18'), indexedPlan('TC-18', 1), 5);
+      publish('02', indexedSuccess, indexedPlan('TC-901', 0), 10);
+      assert.equal(pending().length, 1, 'an old diagnostic hit count cannot identify the missing original selector target');
       publish('01', failure, row('TC-18'), 5);
       publish('02', corrected, row('TC-901', 'original visible result', 'corrected_pay_button').replace('"by_id":"result"', '"by_id":"weaker_result"'), 10);
       assert.equal(pending().length, 1, 'unchanged expected prose cannot hide a weakened executable assertion');
@@ -253,8 +271,10 @@ function unitOnlyRetestCase(): { name: string; run(): void } {
         + '| TC-18 | save rollback | failed insert | {"touch":{"by_id":"test_driver"}} ; {"wait_for":{"by_id":"rollback"}} | no half write | P0 | BD-3 |\n';
       const tracePath = path.join(failureDir, 'trace.json'), traceBytes = JSON.stringify(failure);
       write(tracePath, traceBytes); write(path.join(failureDir, 'test-plan.hylyre.md'), plan);
-      write(path.join(failureDir, 'execution-key.json'), JSON.stringify({ schema_version: '1.0', execution_key: 'controlled-failure', run_started_at: '2026-10-24T19:00:05.000Z',
-        trace_path: tracePath, trace_sha256: hash(traceBytes), outcome: 'failed', inputs: { derived_plan_sha256: hash(plan), hap_sha256_full: 'a'.repeat(64) } }));
+      const failureInputs = { hap_sha256_full: 'a'.repeat(64), derived_plan_sha256: hash(plan), profile: 'hmos-app', device: 'isolated-test',
+        display_env: '', reset_mode: 'warm', hylyre_version: null, manifest_version: null, tool_config_sha256: '', flags: [] };
+      write(path.join(failureDir, 'execution-key.json'), JSON.stringify({ schema_version: '1.0', execution_key: computeExecutionKey(failureInputs),
+        run_started_at: '2026-10-24T19:00:05.000Z', trace_path: tracePath, trace_sha256: hash(traceBytes), outcome: 'failed', inputs: failureInputs }));
       write(path.join(reports, 'summary.json'), JSON.stringify({ verifier_plan: { mode: 'disabled' } }));
       const utReports = path.join(root, featureDir, 'ut/reports'), nativeDir = path.join(utReports, '20261024T192859Z-969/ut');
       const keyFile = path.join(nativeDir, 'execution-key.json'), key = read(keyFile), modules = utExecutionModules(key);
@@ -306,7 +326,8 @@ function unitOnlyRetestCase(): { name: string; run(): void } {
       assert.equal(pending().length, 1, 'UT before the original failure is not a new retest'); fs.writeFileSync(keyFile, savedKey);
       const failureRecordFile = path.join(failureDir, 'execution-key.json'), failureRecord = read(failureRecordFile);
       write(path.join(failureDir, 'test-plan.hylyre.md'), plan.replace('P0 | BD-3', 'P0 | BD-3, AC-4'));
-      write(failureRecordFile, JSON.stringify({ ...failureRecord, inputs: { ...failureRecord.inputs, derived_plan_sha256: hash(plan.replace('P0 | BD-3', 'P0 | BD-3, AC-4')) } }));
+      const mixedInputs = { ...failureRecord.inputs, derived_plan_sha256: hash(plan.replace('P0 | BD-3', 'P0 | BD-3, AC-4')) };
+      write(failureRecordFile, JSON.stringify({ ...failureRecord, inputs: mixedInputs, execution_key: computeExecutionKey(mixedInputs) }));
       assert.equal(pending().length, 1, 'mixed device/both requirements cannot be reclassified as pure unit by one matching BD');
       write(path.join(failureDir, 'test-plan.hylyre.md'), plan); write(failureRecordFile, JSON.stringify(failureRecord));
       assert.equal(pending().length, 0, 'later calls observe restored current evidence rather than a cross-call negative cache');
@@ -319,7 +340,8 @@ function unitOnlyRetestCase(): { name: string; run(): void } {
       assert(requireV1ForGate(product, { frameworkRoot }).ok);
       const productBytes = JSON.stringify(product), productPlan = plan.replace(/TC-18/g, 'TC-19');
       write(tracePath, productBytes); write(path.join(failureDir, 'test-plan.hylyre.md'), productPlan);
-      write(failureRecordFile, JSON.stringify({ ...failureRecord, trace_sha256: hash(productBytes), inputs: { ...failureRecord.inputs, derived_plan_sha256: hash(productPlan) } }));
+      const productInputs = { ...failureRecord.inputs, derived_plan_sha256: hash(productPlan) };
+      write(failureRecordFile, JSON.stringify({ ...failureRecord, trace_sha256: hash(productBytes), inputs: productInputs, execution_key: computeExecutionKey(productInputs) }));
       assert.equal(pending().length, 1, 'a product/UI failure is not closed by a unit-only label plus otherwise valid UT evidence');
       assert.equal(pending()[0].route.codingCandidate, true);
     } finally { clearFrameworkConfigCache(); assert(root.startsWith(fs.realpathSync(os.tmpdir()) + path.sep)); fs.rmSync(root, { recursive: true, force: true }); }

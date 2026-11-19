@@ -464,6 +464,47 @@ cases.push({ name: 'e9d49418 B1/B2: 设计期只验已声明定义；合法捷�
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 }});
 
+cases.push({ name: '7d2c49e8 P0 visible values require distinct ordered native assertions on the approved element', run: () => {
+  const root = mkProject();
+  try {
+    writeFile(root, 'doc/features/p0-fixture/spec/ui-spec.yaml', JSON.stringify({ schema_version: '1.0', assets: [],
+      screens: [{ id: 'ready', root: { id: 'trigger', type: 'action_button', order: 0 } },
+        { id: 'active', root: { id: 'remaining', type: 'content_display', order: 0 } }] }));
+    const acceptance = { criteria: [{ id: 'AC-1', priority: 'P0', ut_layer: 'device', checkpoint: {
+      pre_screen: 'ready', action: { type: 'touch', target_element_id: 'trigger' }, post_screen: 'active',
+      required_element_ids: ['remaining'],
+      assertions: [{ element_id: 'remaining', exact_text: '9 seconds' }, { element_id: 'remaining', exact_text: '8 seconds' }],
+    } }] };
+    const planMd = ['## 测试用例', '| 用例编号 | 用例名称 | 优先级 | 关联 AC |', '| --- | --- | --- | --- |', '| TC-001 | delayed submit | P0 | AC-1 |'].join('\n');
+    const relativePlan = 'doc/features/p0-fixture/testing/reports/current/hylyre/test-plan.hylyre.md';
+    const evaluate = (values: string[], id = 'remaining') => {
+      const plan = [{ touch: { by_id: 'trigger' } }, { wait_for: { by_id: 'remaining', timeout: 5 } },
+        ...values.map(value => ({ wait_for: { by_text: value, match: 'exact', index: 0, timeout: 5 } }))];
+      writeFile(root, relativePlan, ['## 测试用例清单', '| 用例编号 | 用例名称 | 测试步骤 |',
+        '| --- | --- | --- |', '| TC-001 | delayed submit | ' + plan.map(step => JSON.stringify(step)).join(' ; ') + ' |'].join('\n'));
+      const steps = plan.map((_, index) => ({ index, kind: index ? 'wait_for' : 'touch', role: index ? 'assertion' : 'action',
+        selector: { request: index < 2 ? { kind: 'by_id', value: index ? 'remaining' : 'trigger' }
+          : { kind: 'composite', value: values[index - 2], match: 'exact', constraints: { primary: 'by_text', index: 0 } },
+          resolution: { state: 'unique', candidate_count: 1, selected: { id: index === 0 ? 'trigger' : index === 1 ? 'remaining' : id } } },
+        outcome: { status: 'passed', observation: index
+          ? { kind: 'assertion', assertion_type: 'presence', matched: true, facts: { expected_present: true, observed_present: true, candidate_count: 1 } }
+          : { kind: 'action', performed: true } },
+      }));
+      const trace = { outcome: 'success', cases: [{ id: 'TC-001', execution: 'completed', verification: 'passed',
+        evidence: 'complete', status: '通过', expected_check_mode: 'disabled_by_flag', steps }] };
+      const options = { ...inputs(root, {}, null, planMd), acceptance, derivedPlanPath: path.join(root, relativePlan),
+        trace, evidenceGate: { native: true } } as unknown as Parameters<typeof evaluateP0SemanticCoverage>[0];
+      return evaluateP0SemanticCoverage(options)[0];
+    };
+    assert.equal(evaluate([]).status, 'FAIL');
+    assert.equal(evaluate(['9 seconds', '9 seconds']).status, 'FAIL');
+    assert.equal(evaluate(['8 seconds', '9 seconds']).status, 'FAIL');
+    assert.equal(evaluate(['9 seconds', '8 seconds'], 'unrelated').status, 'FAIL');
+    const qualified = evaluate(['9 seconds', '8 seconds']);
+    assert.equal(qualified.status, 'PASS', qualified.details);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+}});
+
 export function runAll(): UnitCaseResult[] {
   return cases.map((c) => {
     try {

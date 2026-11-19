@@ -15,8 +15,8 @@ import { inferLegacyProjectRoot, resolveDependencyPath, isInsideProjectRoot } fr
 import { stableStringify } from './phase-evidence-manifest';
 import { collectFailureRoutesV1, failureRouteSlug, type FailureRouteV1 } from './hylyre-failure-routing-v1';
 import type { HylyreTrace, HylyreTraceCase } from '../../../profiles/hmos-app/harness/providers/device-test-run';
-import { parseHylyreTrace } from '../../../profiles/hmos-app/harness/providers/device-test-run';
-import { listExecutionKeyRuns } from '../../../profiles/hmos-app/harness/execution-key';
+import { parseHylyreTrace, resolveFrozenHylyreSelectorTarget } from '../../../profiles/hmos-app/harness/providers/device-test-run';
+import { computeExecutionKey, EXECUTION_KEY_FILE, listExecutionKeyRuns } from '../../../profiles/hmos-app/harness/execution-key';
 import {
   selectBestNonPlaceholderDerivedPlan,
   tryParseYamlFrontmatter,
@@ -34,12 +34,15 @@ export interface PendingTestingRetest {
   tracePath: string;
   derivedPlanPath: string;
   behavior: string;
+  acceptance: unknown[];
   candidateEvidence: string[];
+  reviewCandidates: Array<{ caseId: string; tracePath: string; planPath: string; digest: string; answered?: boolean }>;
 }
 
 /** The original request's feature evidence keeps failed behavior alive across plan edits; no new ledger. */
 export function readPendingTestingRetests(input: {
   projectRoot: string; feature: string; runId?: string; frameworkRoot?: string; currentHapSha256?: string | null;
+  onCovered?: (files: readonly string[]) => void;
 }): PendingTestingRetest[] {
   if (!input.runId) return [];
   let since: number;
@@ -70,20 +73,63 @@ export function readPendingTestingRetests(input: {
     try {
       if (![tracePath, derivedPlanPath].every(file => isInsideProjectRoot(fs.realpathSync(input.projectRoot), fs.realpathSync(file)))) return [];
       const traceBytes = fs.readFileSync(tracePath), planBytes = fs.readFileSync(derivedPlanPath);
-      if (sha(traceBytes) !== record.trace_sha256 || sha(planBytes) !== record.inputs?.derived_plan_sha256) return [];
+      if (sha(traceBytes) !== record.trace_sha256 || sha(planBytes) !== record.inputs?.derived_plan_sha256
+        || computeExecutionKey(record.inputs) !== record.execution_key) return [];
       const parsed = requireV1ForGate(JSON.parse(traceBytes.toString('utf8')), { frameworkRoot: input.frameworkRoot });
-      if (!parsed.ok || !parsed.trace) return [];
+      if (!parsed.ok || !parsed.trace || parsed.trace.feature !== input.feature || parsed.trace.phase !== 'testing') return [];
       const rows = extractDerivedPlanCases(planBytes.toString('utf8'));
       const plans = new Map(rows.flatMap(row => {
         const steps = parsePlannedStepsFromCell(row.steps_raw);
         return steps.ok ? [[row.tc_id, { ...row, steps: steps.steps }] as const] : [];
       }));
       const behavior = new Map([...plans].map(([id, row]) => [id, stableStringify({ precondition: row.precondition, steps: row.steps, expected: row.expected })]));
-      return [{ record, trace: parsed.trace, tracePath, derivedPlanPath, behavior, plans }];
+      const passed = new Map<string, Array<{ caseId: string; test: typeof parsed.trace.cases[number] }>>();
+      if (input.currentHapSha256 && record.inputs.hap_sha256_full === input.currentHapSha256) {
+        for (const test of parsed.trace.cases) {
+          if (test.execution !== 'completed' || test.verification !== 'passed' || test.evidence !== 'complete'
+            || !test.steps.some(step => step.role === 'assertion' && step.outcome.status === 'passed' && step.outcome.observation?.kind === 'assertion')
+            || !test.steps.every(step => step.outcome.status === 'passed' || step.kind === 'expected_check' && step.outcome.status === 'skipped')) continue;
+          const caseId = test.id.toUpperCase(), plan = plans.get(caseId);
+          if (!plan) continue;
+          const group = passed.get(plan.ac_ref) ?? [];
+          group.push({ caseId, test });
+          passed.set(plan.ac_ref, group);
+        }
+      }
+      return [{ record, trace: parsed.trace, tracePath, derivedPlanPath, behavior, plans, passed, keyPath: path.join(view.runDir, EXECUTION_KEY_FILE) }];
     } catch { return []; }
   }).sort((a, b) => Date.parse(a.record.run_started_at) - Date.parse(b.record.run_started_at));
+  if (observed.length === 0) return [];
   const pending = new Map<string, PendingTestingRetest>();
-  let independent: { issues: Map<string, import('./repair-candidates').IssueVerificationEntry[]>; matchesCurrent(file: string): boolean } | null | undefined;
+  const relative = (file: string): string => path.relative(input.projectRoot, file).replace(/\\/g, '/');
+  const { readIndependentReviewOutputs, uniqueIssueVerification } = require('./repair-candidates') as typeof import('./repair-candidates');
+  let review: ReturnType<typeof readIndependentReviewOutputs> | undefined;
+  let effectiveScope: import('./execution-scope').ExecutionScope | null | undefined;
+  const currentScope = () => {
+    if (effectiveScope === undefined) {
+      effectiveScope = null;
+      try {
+        const { resolveEffectiveScopeSource } = require('./goal-run-creation') as typeof import('./goal-run-creation');
+        effectiveScope = resolveEffectiveScopeSource(input.projectRoot, input.feature, input.runId)?.scope ?? null;
+      } catch { /* Keep previously observed failures when current scope cannot be read. */ }
+    }
+    return effectiveScope;
+  };
+  let currentAcceptance: ReturnType<typeof import('./feature-track').readScopeAcceptance> | null;
+  const acceptanceForReview = (frameworkRoot: string) => {
+    if (currentAcceptance !== undefined) return currentAcceptance;
+    currentAcceptance = null;
+    const scope = currentScope();
+    try {
+      const { readScopeAcceptance } = require('./feature-track') as typeof import('./feature-track');
+      if (scope) currentAcceptance = readScopeAcceptance(input.projectRoot,
+        { facts: scope.obligations }, { feature: input.feature, frameworkRoot }) ?? null;
+    } catch { /* No approved current acceptance to interpret changed behavior. */ }
+    return currentAcceptance;
+  };
+  const { extractAcceptanceIdRefs } = require('./check-acceptance') as typeof import('./check-acceptance');
+  let independent: { issues: Map<string, import('./repair-candidates').IssueVerificationEntry[]>; matchesCurrent(file: string): boolean;
+    originals: string[] } | null | undefined;
   const independentEvidence = (): typeof independent => {
     if (independent !== undefined) return independent;
     independent = null;
@@ -106,20 +152,39 @@ export function readPendingTestingRetests(input: {
       const { parseIssueVerificationBlock } = require('./repair-candidates') as typeof import('./repair-candidates');
       const issues = new Map<string, import('./repair-candidates').IssueVerificationEntry[]>();
       for (const entry of parseIssueVerificationBlock(loaded.evidence.report_text).entries) issues.set(entry.issue, [...issues.get(entry.issue) ?? [], entry]);
-      independent = { issues, matchesCurrent };
+      independent = { issues, matchesCurrent, originals: [loaded.evidence.md_path_rel] };
     } catch { /* A missing or unreadable independent result remains unknown for this read. */ }
     return independent;
   };
-  const independentlyCovered = (prior: typeof observed[number], route: FailureRouteV1, next: typeof observed[number], caseId: string): boolean => {
+  const independentlyCovered = (finding: PendingTestingRetest,
+    candidates: readonly { caseId: string; tracePath: string; planPath: string; next: typeof observed[number] }[],
+    prior: typeof observed[number]): boolean => {
+    if (!candidates.length) return false;
+    const issue = 'testing_failure_routing_' + failureRouteSlug(finding.route.caseId, finding.route.stepIndex);
     const verification = independentEvidence();
-    if (!verification) return false;
-    const relative = (file: string): string => path.relative(input.projectRoot, file).replace(/\\/g, '/');
-    const files = [prior.tracePath, prior.derivedPlanPath, next.tracePath, next.derivedPlanPath].map(relative);
-    if (!files.every(verification.matchesCurrent)) return false;
-    const matches = verification.issues.get(`testing_failure_routing_${failureRouteSlug(route.caseId, route.stepIndex)}`) ?? [];
-    const evidence = matches[0]?.evidence?.replace(/\\/g, '/');
-    return matches.length === 1 && matches[0].verdict === 'refuted' && !matches[0].invalid_reason && !!evidence
-      && [relative(prior.tracePath), relative(next.tracePath), route.caseId, caseId].every(ref => evidence.includes(ref));
+    if (finding.reviewCandidates.length) review ??= readIndependentReviewOutputs(input.projectRoot, input.feature, input.runId!);
+    return candidates.some(candidate => {
+      const requiredRefs = [finding.tracePath, finding.derivedPlanPath, candidate.tracePath, candidate.planPath].map(relative);
+      const qualified = (entry: import('./repair-candidates').IssueVerificationEntry | undefined, refs: string[]) => {
+        if (!entry || entry.verdict !== 'refuted') return entry;
+        const evidence = entry.evidence!.replace(/\\/g, '/');
+        return [...refs, finding.route.caseId, candidate.caseId].every(ref => evidence.includes(ref)) ? entry : undefined;
+      };
+      const current = finding.reviewCandidates.find(item => item.caseId === candidate.caseId
+        && item.tracePath === candidate.tracePath && item.planPath === candidate.planPath);
+      const issued = current ? review!.filter(output => output.material[issue]?.includes(current.digest)) : [];
+      const answers = issued.map(output => requiredRefs.every(output.matchesCurrent)
+        ? qualified(uniqueIssueVerification(output.entries, issue), requiredRefs) : undefined);
+      const latest = answers[0];
+      if (current) current.answered = !!latest;
+      const phaseAnswer = verification && requiredRefs.every(verification.matchesCurrent)
+        ? qualified(uniqueIssueVerification(verification.issues.get(issue) ?? [], issue), [requiredRefs[0], requiredRefs[2]]) : undefined;
+      const accepted = (latest?.verdict === 'refuted' || phaseAnswer?.verdict === 'refuted')
+        && (!phaseAnswer || phaseAnswer.verdict === 'refuted') && answers.every(answer => !answer || answer.verdict === 'refuted');
+      if (accepted) input.onCovered?.([...requiredRefs, prior.keyPath, candidate.next.keyPath,
+        ...issued.flatMap((output, index) => answers[index] ? output.originals : []), ...(phaseAnswer ? verification!.originals : [])]);
+      return accepted;
+    });
   };
   // Formal UT remains available when an adapter has no independent verifier. Every locator
   // below is qualified by the current scope, source manifest, native case result and build.
@@ -128,16 +193,17 @@ export function readPendingTestingRetests(input: {
     if (unitEvidence !== undefined) return unitEvidence;
     unitEvidence = null;
     try {
-      const { loadFrozenExecutionScope, resolveEffectiveScopeSource } = require('./goal-run-creation') as typeof import('./goal-run-creation');
+      const { loadFrozenExecutionScope } = require('./goal-run-creation') as typeof import('./goal-run-creation');
       const { readScopeAcceptance } = require('./feature-track') as typeof import('./feature-track');
       const frameworkRoot = input.frameworkRoot ?? (require('../../repo-layout') as typeof import('../../repo-layout')).resolveProbeFrameworkRoot(input.projectRoot, path.resolve(__dirname, '../..'));
+      const scope = currentScope();
+      if (!scope?.obligations.some(obligation => obligation.kind === 'unit-evidence' && obligation.applicability === 'required')) return null;
+      const acceptance = acceptanceForReview(frameworkRoot);
       const birth = loadFrozenExecutionScope(input.projectRoot, input.feature, input.runId!);
-      const scope = resolveEffectiveScopeSource(input.projectRoot, input.feature, input.runId)?.scope;
-      if (!birth || !scope || !scope.obligations.some(obligation => obligation.kind === 'unit-evidence' && obligation.applicability === 'required')) return null;
-      const context = { feature: input.feature, frameworkRoot };
-      const original = readScopeAcceptance(input.projectRoot, { facts: birth.obligations }, context)?.value;
-      const acceptance = readScopeAcceptance(input.projectRoot, { facts: scope.obligations }, context);
-      const current = acceptance?.value;
+      if (!birth || !acceptance) return null;
+      const current = acceptance.value;
+      const original = stableStringify(birth.obligations) === stableStringify(scope.obligations) ? current
+        : readScopeAcceptance(input.projectRoot, { facts: birth.obligations }, { feature: input.feature, frameworkRoot })?.value;
       if (!original || !current || !acceptance) return null;
       const ids = new Set([...(original.criteria ?? []), ...(original.boundaries ?? [])].filter(item => item.ut_layer === 'unit'
         && [...(current.criteria ?? []), ...(current.boundaries ?? [])].some(now => now.id === item.id && now.ut_layer === 'unit')).map(item => item.id.toUpperCase()));
@@ -180,16 +246,9 @@ export function readPendingTestingRetests(input: {
         || !native.isExecutionRecordReusable(record, runDir, { executionKey: record.execution_key, artifacts: native.utFrozenRunArtifacts(modules) }).ok) return null;
       const contracts = (require('./capability-resolution') as typeof import('./capability-resolution')).readRunBoundContracts(input.projectRoot, frameworkRoot, input.feature, input.runId, undefined, scope);
       const hdc = require('../../../profiles/hmos-app/harness/hdc-runner') as typeof import('../../../profiles/hmos-app/harness/hdc-runner');
-      const product = (require('../../../profiles/hmos-app/harness/product-selection') as typeof import('../../../profiles/hmos-app/harness/product-selection')).resolveProductSelection({ projectRoot: input.projectRoot, purpose: 'ut' });
-      if (product.source === 'unresolved') return null;
-      const hapDigests = modules.sort().map(module => {
-        const owner = contracts.modules?.find(item => item.name === module);
-        if (!owner) throw new Error('UT module outside current construction');
-        const hap = hdc.discoverOhosTestArtifacts(input.projectRoot, owner.package_path, module, product.product ?? undefined);
-        if (!hap.signedPath || hap.artifactValidation?.status !== 'valid') throw new Error('current UT build unavailable');
-        return `${module}=${sha(fs.readFileSync(hap.signedPath))}`;
-      });
-      if (native.sha256Text(hapDigests.join('\n')) !== record.inputs.hap_sha256_full) return null;
+      const owners = modules.flatMap(name => (contracts.modules ?? []).filter(module => module.name === name));
+      if (owners.length !== modules.length || host.currentUtExecutionBuildSha(input.projectRoot, owners) !== record.inputs.hap_sha256_full
+        || !record.inputs.hap_sha256_full) return null;
       const { loadCoverageEvidence } = require('./coverage-evidence') as typeof import('./coverage-evidence');
       const coverage = loadCoverageEvidence(input.projectRoot, input.feature);
       if (coverage?.feature !== input.feature) return null;
@@ -230,6 +289,8 @@ export function readPendingTestingRetests(input: {
         expected: observation?.kind === 'assertion' ? Object.fromEntries(Object.entries(observation.facts ?? {}).filter(([key]) => key.startsWith('expected'))) : undefined });
     };
     const testOwned = route.owner === 'testing' && !route.codingCandidate;
+    let originalIndexTarget: { id: string; bounds: string; dumpPath: string } | null | undefined;
+    let matchedDump: string | undefined;
     const repairedTest = (next: typeof observed[number], test: typeof original): boolean => {
       if (!testOwned) return false;
       const before = prior.plans.get(route.caseId), after = next.plans.get(test.id.toUpperCase());
@@ -237,9 +298,13 @@ export function readPendingTestingRetests(input: {
       const assertions = (steps: Record<string, unknown>[]) => normalizePlannedSteps(steps).filter(step => step.role === 'assertion');
       const oldAssertions = assertions(before.steps), newAssertions = assertions(after.steps);
       if (!oldAssertions.length) return false;
-      const selectorMatches = (step: typeof original.steps[number], assertion: typeof oldAssertions[number]): boolean => !assertion.selector
-        || step.selector?.request.kind === assertion.selector.kind && step.selector.request.value === assertion.selector.value
-          && step.selector.request.match === assertion.selector.match;
+      const selectorMatches = (step: typeof original.steps[number], assertion: typeof oldAssertions[number]): boolean => {
+        if (!assertion.selector) return true;
+        const request = step.selector?.request;
+        const kind = request?.kind === 'composite' ? request.constraints?.primary : request?.kind;
+        return !!request && kind === assertion.selector.kind && request.value === assertion.selector.value
+          && (request.match ?? null) === assertion.selector.match;
+      };
       const sameTarget = (left: typeof original.steps[number], right: typeof original.steps[number]): boolean => {
         const id = (step: typeof left): string | null | undefined => step.selector?.resolution.state === 'unique' ? step.selector.resolution.selected?.id : undefined;
         return !!id(left) && id(left) === id(right);
@@ -250,6 +315,7 @@ export function readPendingTestingRetests(input: {
         && step.role === 'assertion' && step.outcome.status === 'passed' && selectorMatches(step, assertion));
       if (!newAssertions.every(actual)) return false;
       let cursor = 0;
+      let repairedIndexDump: string | undefined;
       const retained = oldAssertions.every(old => {
         while (cursor < newAssertions.length) {
           const now = newAssertions[cursor++];
@@ -258,32 +324,82 @@ export function readPendingTestingRetests(input: {
           const current = actual(now)!;
           // A selector alias needs the original and new native observations to identify one
           // actual object; equal prose or an unresolved old selector cannot supply that fact.
-          if (old.selectors.length === 1 && now.selectors.length === 1 && previous && sameTarget(previous, current)
-            && predicate(old) === predicate(now) && trigger(previous, false) === trigger(current, false)) return true;
+          if (old.selectors.length !== 1 || now.selectors.length !== 1 || !previous) continue;
+          if (sameTarget(previous, current) && predicate(old) === predicate(now)
+            && trigger(previous, false) === trigger(current, false)) return true;
+          const selector = old.selector;
+          const originalRequest = previous.selector?.request;
+          const currentRequest = current.selector?.request;
+          const resolved = current.selector?.resolution;
+          const observation = current.outcome.status === 'passed' ? current.outcome.observation : undefined;
+          if (route.domain === 'selector' && previous.index === route.stepIndex && old.kind === 'wait_for' && now.kind === old.kind
+            && previous.outcome.status === 'failed' && previous.outcome.failure.code === 'selector.not_found'
+            && previous.selector?.resolution.state === 'not_found'
+            && selector && (selector.kind === 'by_id' && selector.match === null || selector.kind === 'by_text' && selector.match === 'exact')
+            && old.body[selector.kind] === selector.value && Object.keys(old.body).every(key => [selector.kind, 'index', 'match', 'timeout'].includes(key))
+            && originalRequest?.kind === 'composite' && currentRequest?.kind === 'composite'
+            && typeof old.body.index === 'number' && Number.isInteger(old.body.index) && old.body.index > 0 && now.body.index === 0
+            && stableStringify(originalRequest.constraints) === stableStringify({ primary: selector.kind, index: old.body.index })
+            && stableStringify(currentRequest.constraints) === stableStringify({ primary: selector.kind, index: now.body.index })
+            && old.index === now.index && before.steps.length === after.steps.length
+            && before.steps.every((step, index) => index === old.index || stableStringify(step) === stableStringify(after.steps[index]))
+            && stableStringify({ ...old.body, index: undefined }) === stableStringify({ ...now.body, index: undefined })
+            && resolved?.state === 'unique' && resolved.selected?.id && resolved.selected.bounds
+            && observation?.kind === 'assertion' && observation.assertion_type === 'presence' && observation.matched === true) {
+            if (originalIndexTarget === undefined) {
+              const dumps = previous.artifacts.filter(artifact => artifact.kind === 'ui_dump');
+              originalIndexTarget = dumps.length === 1 ? resolveFrozenHylyreSelectorTarget({
+                projectRoot: input.projectRoot, hylyreVersion: prior.trace.environment.hylyre_version,
+                tracePath: prior.tracePath, artifact: dumps[0],
+                predicate: selector.kind === 'by_id' ? { by_id: selector.value } : { by_text: selector.value, match: 'exact' },
+              }) : null;
+            }
+            if (originalIndexTarget?.id === resolved.selected.id && originalIndexTarget.bounds === resolved.selected.bounds) {
+              repairedIndexDump = originalIndexTarget.dumpPath;
+              return true;
+            }
+          }
         }
         return false;
       });
       // Changing an action is a test repair; retaining the expected prose while weakening
       // the executable assertion is not. Require each preserved assertion to really pass.
-      return retained
+      const covered = retained
         && original.steps.filter(step => step.role === 'assertion' && 'observation' in step.outcome && step.outcome.observation?.kind === 'assertion')
           .every(step => newAssertions.some(assertion => { const now = actual(assertion)!;
             return trigger(now) === trigger(step) || sameTarget(step, now) && trigger(now, false) === trigger(step, false); }));
+      if (covered) matchedDump = repairedIndexDump;
+      return covered;
     };
-    const deviceCovered = !!input.currentHapSha256 && observed.slice(index + 1).some(next => next.record.inputs.hap_sha256_full === input.currentHapSha256
-      && next.trace.cases.some(test => test.execution === 'completed'
-        && test.verification === 'passed' && test.evidence === 'complete'
-        && test.steps.some(step => step.role === 'assertion' && step.outcome.status === 'passed')
-        && test.steps.every(step => step.outcome.status === 'passed' || step.kind === 'expected_check' && step.outcome.status === 'skipped')
-        && (next.behavior.get(test.id.toUpperCase()) === behavior && original.steps.filter(step => step.index <= route.stepIndex)
-          .every(step => test.steps.some(now => now.index === step.index && trigger(now) === trigger(step)))
-          || repairedTest(next, test) || independentlyCovered(prior, route, next, test.id))));
-    const refs = testOwned ? (require('./check-acceptance') as typeof import('./check-acceptance')).extractAcceptanceIdRefs(prior.plans.get(route.caseId)?.ac_ref ?? '') : [];
-    const unit = !deviceCovered && refs.length ? currentUnitEvidence() : null;
+    const before = prior.plans.get(route.caseId)!;
+    const refs = extractAcceptanceIdRefs(before.ac_ref);
+    const candidates = observed.slice(index + 1).flatMap(next => (next.passed.get(before.ac_ref) ?? [])
+      .map(({ test, caseId }) => ({ next, test, caseId, tracePath: next.tracePath, planPath: next.derivedPlanPath })));
+    const equivalent = candidates.find(({ next, test, caseId }) => next.behavior.get(caseId) === behavior
+      && original.steps.filter(step => step.index <= route.stepIndex).every(step => test.steps.some(now =>
+        now.index === step.index && (step.index === route.stepIndex
+          ? now.kind === step.kind && now.role === step.role && stableStringify(now.selector?.request) === stableStringify(step.selector?.request)
+            && now.outcome.status === 'passed' && (now.role !== 'assertion' || now.outcome.observation?.kind === 'assertion')
+          : trigger(now) === trigger(step))))
+      || repairedTest(next, test));
+    if (equivalent) input.onCovered?.([prior.tracePath, prior.derivedPlanPath, prior.keyPath,
+      equivalent.tracePath, equivalent.planPath, equivalent.next.keyPath, ...(matchedDump ? [matchedDump] : [])]);
+    const scoped = !equivalent && candidates.length && refs.length && input.frameworkRoot ? acceptanceForReview(input.frameworkRoot)?.value : null;
+    const acceptance = [...(scoped?.criteria ?? []), ...(scoped?.boundaries ?? [])]
+      .filter(item => refs.includes(item.id.toUpperCase()));
+    const finding: PendingTestingRetest = { route, tracePath: prior.tracePath, derivedPlanPath: prior.derivedPlanPath, behavior, acceptance,
+      candidateEvidence: [...new Set(candidates.flatMap(candidate => [candidate.tracePath, candidate.planPath]))],
+      reviewCandidates: refs.length && acceptance.length === refs.length ? candidates.map(({ next, caseId, tracePath, planPath }) => ({
+        caseId, tracePath, planPath, digest: sha(Buffer.from(stableStringify({ acceptance, caseId, originalCase: route.caseId,
+          originalStep: route.stepIndex, originalTrace: [relative(prior.tracePath), prior.record.trace_sha256],
+          originalPlan: [relative(prior.derivedPlanPath), prior.record.inputs.derived_plan_sha256],
+          trace: [relative(tracePath), next.record.trace_sha256], plan: [relative(planPath), next.record.inputs.derived_plan_sha256],
+          hap: input.currentHapSha256 }))),
+      })) : [] };
+    const deviceCovered = !!equivalent || independentlyCovered(finding, candidates, prior);
+    const unit = !deviceCovered && testOwned && refs.length ? currentUnitEvidence() : null;
     const unitCovered = !!unit && unit.startedAt > Date.parse(prior.record.run_started_at) && refs.every(id => unit.ids.has(id.toUpperCase()));
-    if (!deviceCovered && !unitCovered) pending.set(`${route.caseId}:${route.stepIndex}:${behavior}`, { route, tracePath: prior.tracePath, derivedPlanPath: prior.derivedPlanPath, behavior,
-      candidateEvidence: observed.slice(index + 1).filter(next => !!input.currentHapSha256 && next.record.inputs.hap_sha256_full === input.currentHapSha256)
-        .flatMap(next => [next.tracePath, next.derivedPlanPath]) });
+    if (!deviceCovered && !unitCovered) pending.set(route.caseId + ':' + route.stepIndex + ':' + behavior, finding);
   }
   return [...pending.values()];
 }

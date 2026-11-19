@@ -18,8 +18,11 @@ import {
 import {
   checkUtCoverageEvidencePresent,
   inspectCoverageEvidence,
+  readUtAcceptanceCases,
+  type CoverageEvidenceObservation,
 } from '../../scripts/check-ut';
 import { buildAcCoverageReport, writeAcCoverageReport } from '../../scripts/utils/ac-coverage-report';
+import { readTaggedAcceptanceStrength } from '../../scripts/utils/acceptance-review-strength';
 import { buildVerifierMaterialView } from '../../scripts/utils/verifier-material';
 import { buildVerifierRequest } from '../../scripts/utils/verifier-request';
 import { loadVerifierEvidenceForSubject } from '../../scripts/utils/verifier-evidence';
@@ -117,6 +120,55 @@ function testAcAndBdPrefixesDoNotCrossCover(): void {
   } as never, ['[AC-01] criterion only']);
   assert(report.criteria[0].ut_covered, 'AC-01 should be covered');
   assert(!report.boundaries[0].ut_covered, 'BD-01 must not be covered by AC-01');
+}
+
+function testReviewCasesRespectCurrentCoverage(): void {
+  const feature = 'demo';
+  const ctx = makeCtx('.', feature);
+  const first = { id: 'AC-01', priority: 'P0', ut_layer: 'unit', linked_branch: 'persist' };
+  const second = { id: 'AC-02', priority: 'P0', ut_layer: 'unit' };
+  const third = { id: 'AC-03', priority: 'P0', ut_layer: 'unit' };
+  const optional = { id: 'AC-04', priority: 'P2', ut_layer: 'unit' };
+  const single = { id: 'AC-05', priority: 'P0', ut_layer: 'unit' };
+  const shared = { id: 'AC-06', priority: 'P0', ut_layer: 'unit' };
+  const other = { id: 'AC-07', priority: 'P0', ut_layer: 'unit' };
+  ctx.featureSpec.acceptance!.criteria = [first, second, third, optional, single, shared, other] as never;
+  ctx.featureSpec.useCases = { use_cases: [{ id: 'UC-1', branches: [
+    { id: 'repeat', linked_acceptance: [second.id] }, { id: 'persist', linked_acceptance: [third.id] },
+  ] }] } as never;
+  const file = 'src/test/store.test.ts';
+  const tests = ['[BRANCH-persist] actual', '[BRANCH-repeat] actual', '[AC-02][BRANCH-persist] different scope',
+    '[BRANCH-persist-extra] similar branch', '[BRANCH-single] sole DAG scope', '[BRANCH-open] shared DAG candidate',
+    '[BRANCH-closed] explicit other scope'];
+  const content = tests.map(name => `it('${name}', () => { const name = 'persist'; });`).join('\n');
+  const coverage: CoverageEvidenceObservation = { status: 'loaded', relPath: 'coverage.json', absPath: '', warnings: [], evidence: {
+    schema_version: '1.0', feature, mappings: [
+      { scope_id: first.id, scope_kind: 'acceptance_criterion', evidence_source: 'ac_coverage' },
+      { scope_id: second.id, scope_kind: 'acceptance_criterion', evidence_source: 'dag_ephemeral', evidence_ref: 'linked.dag.yaml' },
+      { scope_id: third.id, scope_kind: 'acceptance_criterion', evidence_source: 'dag_archived', evidence_ref: 'wrong.dag.yaml' },
+    ],
+  } };
+  const resolveCases = readUtAcceptanceCases(ctx, [{ path: file, content }], [
+    { path: 'linked.dag.yaml', source: 'ephemeral', raw: '', dag: { use_case: 'UC-1', linked_acceptance: [second.id, third.id], branches: ['repeat', 'persist'] } },
+    { path: 'actual.dag.yaml', source: 'archived', raw: '', dag: { linked_acceptance: [third.id], branches: ['repeat'] } },
+    { path: 'single.dag.yaml', source: 'ephemeral', raw: '', dag: { linked_acceptance: [single.id],
+      nodes: [{ id: 'assert-single', type: 'assertion', linked_branch: 'single' }] } },
+    { path: 'shared.dag.yaml', source: 'ephemeral', raw: '', dag: { linked_acceptance: [shared.id, other.id], nodes: [
+      { id: 'preserve', type: 'assertion', linked_branch: 'persist' },
+      { id: 'open', type: 'assertion', linked_branch: 'open' },
+      { id: 'closed', type: 'assertion', linked_branch: 'closed', linked_acceptance: [other.id] },
+    ] } },
+  ], coverage);
+  const names = (item: { id: string }) => resolveCases(item).cases.map(test => test.name).join(', ');
+  assert(names(first) === tests[0], 'linked_branch only selects its own exact cases');
+  assert(names(second) === [tests[1], tests[2]].join(', '), 'the selected DAG resolves only its own branch from the current UseCase');
+  assert(names(third) === '' && resolveCases(third).required, 'wrong DAG reference leaves required coverage unresolved');
+  assert(names(optional) === '' && !resolveCases(optional).required, 'an unlinked optional criterion creates no review obligation');
+  assert(names(single) === tests[4], 'a sole DAG scope inherits its actual assertion branch');
+  assert(names(shared) === tests[5] && 'candidate' in resolveCases(shared).cases[0], 'shared DAG only nominates unassigned cases');
+  assert(names(other) === tests[6] && !('candidate' in resolveCases(other).cases[0]), 'another scope keeps its exact assertion');
+  const report = buildAcCoverageReport(feature, ctx.featureSpec.acceptance!, [tests[0]]);
+  assert(report.criteria[0].it_tags.join() === tests[0], 'formal ac-coverage ties linked_branch to a named case');
 }
 
 function testAcCoverageWriteIsSemanticIdempotent(): void {
@@ -256,6 +308,46 @@ function testTwoRealUtHarnessRunsPreserveSubject(): void {
     const sourceChanged = JSON.parse(fs.readFileSync(summaryPath, 'utf8')) as { verifier_subject_id?: string };
     assert(typeof sourceChanged.verifier_subject_id === 'string' && sourceChanged.verifier_subject_id !== beforeSource, 'reviewed source change must advance subject: ' + JSON.stringify(sourceChanged) + String(sourceRun.stderr ?? '') + String(sourceRun.stdout ?? ''));
   } finally { cleanup(); }
+}
+
+function testAcceptanceStrengthApplicability(): void {
+  const { root, frameworkRoot, feature, write, cleanup } = setupRealUtHarnessProject();
+  try {
+    const { scope: executionScope } = prepareFeatureScopeCandidate({ projectRoot: root, frameworkRoot, feature,
+      completionTarget: 'feature', requestedResults: ['unit evidence'], requestedPhases: ['coding', 'review', 'ut'],
+      requirement: 'verify value', overwrite: true, impact: { userVisibleBehaviorChange: false, reason: 'unit only', basisPaths: ['src/demo/value.ts'] } });
+    const input = { projectRoot: root, frameworkRoot, feature, executionScope, runId: 'strength-applicability' };
+    const profileDir = path.join(frameworkRoot, 'profiles/generic');
+    fs.renameSync(path.join(frameworkRoot, 'profiles/test-ut'), profileDir);
+    const profileFile = path.join(profileDir, 'profile.yaml');
+    const profile = { ...YAML.parse(fs.readFileSync(profileFile, 'utf8')), name: 'generic' };
+    const cfg = JSON.parse(fs.readFileSync(path.join(root, 'framework.config.json'), 'utf8'));
+    write('framework.config.json', JSON.stringify({ ...cfg, project_profile: { name: 'generic' } }));
+    clearFrameworkConfigCache();
+    fs.writeFileSync(profileFile, YAML.stringify({ ...profile, phases_disabled: ['ut'] }));
+    assert(readTaggedAcceptanceStrength(input).length === 0, 'disabled UT has no named assertion strength obligation');
+    fs.writeFileSync(profileFile, YAML.stringify({ ...profile, capabilities: { ...profile.capabilities, 'ut.run': { provider: 'none', severity: 'SKIP' } } }));
+    assert(readTaggedAcceptanceStrength(input).length === 0, 'native execution SKIP preserves the ordinary completion path');
+    fs.writeFileSync(profileFile, YAML.stringify(profile));
+    const host = path.join(profileDir, 'harness/ut-host-impl.js');
+    fs.renameSync(host, host + '.off');
+    const missingHost = readTaggedAcceptanceStrength(input)[0];
+    assert(missingHost?.issue === 'ut_profile_host_missing' && 'gap' in missingHost && missingHost.gap.owner === 'framework',
+      'a profile with required native UT must retain a real missing host gap');
+    fs.renameSync(host + '.off', host);
+    const current = readTaggedAcceptanceStrength(input)[0];
+    assert(current?.issue === 'acceptance_test_strength_AC-1' && !('gap' in current) && !current.passed,
+      'an active generic-named profile must require independent review of current named UT');
+    const withoutBinding = { ...executionScope, obligations: executionScope.obligations.map(item => ({ ...item, basis: [] })) };
+    assert(readTaggedAcceptanceStrength({ ...input, executionScope: withoutBinding }).length === 0,
+      'an observation scope without a selected acceptance input has no assertion subject');
+    fs.unlinkSync(path.join(root, 'doc/features', feature, 'acceptance.yaml'));
+    const missingAcceptance = readTaggedAcceptanceStrength(input)[0];
+    assert(missingAcceptance && 'gap' in missingAcceptance && missingAcceptance.gap.owner === 'spec' && missingAcceptance.gap.action === 'verify',
+      'a selected acceptance input which has become unreadable must retain a recoverable spec gap');
+  } finally {
+    cleanup();
+  }
 }
 
 function testDagNodeLevelLinkedAcceptance(): void {
@@ -445,9 +537,11 @@ export function runAll(): UnitCaseResult[] {
     { name: 'mapping requires backing', fn: testMappingNotTrustedWithoutBacking },
     { name: 'DAG mapping requires declared source kind', fn: testDagMappingRequiresDeclaredSourceKind },
     { name: 'AC and BD prefixes do not cross-cover', fn: testAcAndBdPrefixesDoNotCrossCover },
+    { name: 'acceptance strength resolves its own scoped branch and DAG cases', fn: testReviewCasesRespectCurrentCoverage },
     { name: 'ac coverage writer is semantic-idempotent', fn: testAcCoverageWriteIsSemanticIdempotent },
     { name: 'stable coverage preserves verifier subject', fn: testStableCoveragePreservesVerifierSubject },
     { name: 'two real UT harness runs preserve verifier subject', fn: testTwoRealUtHarnessRunsPreserveSubject },
+    { name: 'strength review distinguishes skipped native UT and pending acceptance from unavailable bound inputs', fn: testAcceptanceStrengthApplicability },
     { name: 'dag node linked_acceptance', fn: testDagNodeLevelLinkedAcceptance },
     { name: 'ac_coverage resolvable', fn: testAcCoverageResolvable },
     { name: 'mappings array may be empty file', fn: testMappingsCompleteRequiresRows },

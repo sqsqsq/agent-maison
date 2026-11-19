@@ -97,6 +97,22 @@ export function currentUtExecutionInputs(projectRoot: string, modules: readonly 
   return utToolExecutionInputs(projectRoot, modules, selection.product ?? undefined);
 }
 
+/** Current signed ohosTest bytes used by acceptance execution consumers. */
+export function currentUtExecutionBuildSha(projectRoot: string, modules: readonly { name: string; package_path: string }[]): string | null {
+  try {
+    const product = resolveProductSelection({ projectRoot, purpose: 'ut' });
+    if (!modules.length || product.source === 'unresolved') return null;
+    const digests = modules.map(({ name, package_path }) => {
+      const hap = discoverOhosTestArtifacts(projectRoot, package_path, name, product.product ?? undefined);
+      if (!hap.signedPath || hap.artifactValidation?.status !== 'valid') throw new Error('current UT build unavailable');
+      const digest = computeHapSha256Full(hap.signedPath);
+      if (!digest) throw new Error('current UT build unreadable');
+      return [name, digest] as [string, string];
+    });
+    return aggregateByModule(digests);
+  } catch { return null; }
+}
+
 function utToolExecutionInputs(projectRoot: string, modules: readonly string[], product?: string): Pick<ExecutionKeyInputs, 'tool_config_sha256' | 'flags'> {
   return {
     tool_config_sha256: aggregateByModule(modules.map(module => [module, utBuildCollectorKey(projectRoot, module, product) ?? 'unresolved'])),

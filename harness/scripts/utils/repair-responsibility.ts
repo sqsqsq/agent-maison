@@ -17,6 +17,7 @@ import {
   receiptDirPath,
   relFeaturesDir,
   resolveFeatureArtifact,
+  STRUCTURE_CONFORMANCE_LEDGER,
 } from '../../config';
 import type { FeatureTrack } from './runtime-policy';
 import { resolveModulePathPrefixes, resolveImplementationScope, projectImplementationModules } from './diff-scope';
@@ -294,6 +295,11 @@ export function readRepairResponsibilityContracts(
         source: 'existing phase workspace convention',
       });
     }
+    if (phase === 'coding') addDomain(domains, seen, options.projectRoot, {
+      owner: phase, kind: 'phase_workspace', match: 'exact',
+      path: featureFilePath(options.projectRoot, options.feature, STRUCTURE_CONFORMANCE_LEDGER),
+      source: 'coding structure declaration ledger',
+    });
   }
 
   const predictedScope = loadCodingScope(options);

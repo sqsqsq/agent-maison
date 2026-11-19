@@ -905,17 +905,24 @@ function blueprintIssueReferences(blueprint: BlueprintRecord | undefined, locati
   } catch { return []; }
 }
 
-export function readCurrentDispositionInput(opts: CleanPassOptions | CurrentRequestDispositionOptions | CurrentDesignDispositionOptions): CurrentDispositionInput {
+export function readCurrentDispositionInput(opts: CleanPassOptions | CurrentRequestDispositionOptions | CurrentDesignDispositionOptions):
+  CurrentDispositionInput & { acceptanceStrength?: ReturnType<typeof import('./acceptance-review-strength').readTaggedAcceptanceStrength> } {
   if ('blueprintIssues' in opts) {
     const phase = opts.phase ?? 'component-design';
     const problems: NonNullable<CurrentDispositionInput['additionalProblems']>[number][] = [];
     const providers = new Set(['blueprint_questioning_provider_missing', 'blueprint_required_provider_missing', 'blueprint_conventions_provider_unreadable']);
+    const items = asRecord(asRecord(opts.blueprint?.review_summary)?.questioning)?.items;
+    const unattachedScopes = new Set(opts.blueprintIssues.flatMap(issue => {
+      if (!['blueprint_questioning_scope_invalid', 'blueprint_questioning_scope_duplicate'].includes(issue.id)) return [];
+      const index = /^\$\.review_summary\.questioning\.items\[(\d+)\]\.scope_ref$/.exec(issue.path)?.[1];
+      const item = index !== undefined && Array.isArray(items) ? asRecord(items[Number(index)]) : undefined;
+      return item ? [String(item.scope_ref ?? '')] : [];
+    }));
     for (const issue of opts.blueprintIssues) {
       if (issue.severity !== 'BLOCKER') continue;
       const itemIndex = /^\$\.review_summary\.questioning\.items\[(\d+)\]\.disposition$/.exec(issue.path)?.[1];
-      const items = asRecord(asRecord(opts.blueprint?.review_summary)?.questioning)?.items;
       const item = itemIndex !== undefined && Array.isArray(items) ? asRecord(items[Number(itemIndex)]) : undefined;
-      const realNegative = item?.disposition === 'blocker';
+      const realNegative = item?.disposition === 'blocker' && !unattachedScopes.has(String(item.scope_ref ?? ''));
       // The explicit Q finding below already names this scope; array positions are not another defect.
       if (realNegative && opts.questioningFindings?.some(finding => finding.scope_ref === item.scope_ref)) continue;
       const independentFormat = issue.path.startsWith('$.review_summary.questioning') && !realNegative;
@@ -925,6 +932,7 @@ export function readCurrentDispositionInput(opts: CleanPassOptions | CurrentRequ
         evidence: blueprintIssueReferences(opts.blueprint, issue.path) });
     }
     for (const item of opts.questioningFindings ?? []) {
+      if (unattachedScopes.has(String(item.scope_ref ?? ''))) continue;
       const scope = typeof item.scope_ref === 'string' ? item.scope_ref : '';
       problems.push({ phase, id: `open_finding:questioning:${scope}`, action: 'repair', affects: 'completion', severity: 'BLOCKER', owner: phase,
         detail: `独立质询否定 ${scope}：${String(item.question ?? '')}；${String(item.answer ?? '')}`,
@@ -973,6 +981,23 @@ export function readCurrentDispositionInput(opts: CleanPassOptions | CurrentRequ
   const { projectRoot, feature, chain } = opts;
   const endpoint = opts.endpoint ?? (opts.executionScope?.completion_target === 'request' ? 'request' : 'feature-completion');
   const additionalProblems: NonNullable<CurrentDispositionInput['additionalProblems']>[number][] = [];
+  const strength = (require('./acceptance-review-strength') as typeof import('./acceptance-review-strength')).readTaggedAcceptanceStrength(opts);
+  for (const outcome of strength) {
+    if (outcome.passed) continue;
+    if ('gap' in outcome) {
+      additionalProblems.push({ phase: 'ut', source_phase: 'ut', id: outcome.issue, affects: 'completion',
+        severity: 'BLOCKER', ...outcome.gap, files: outcome.files });
+      continue;
+    }
+    const verdict = outcome.verdict?.verdict;
+    additionalProblems.push({ phase: 'ut', source_phase: 'ut', id: outcome.issue, affects: 'completion', severity: 'BLOCKER',
+      action: verdict === 'confirmed' ? 'repair' : 'verify',
+      owner: verdict === 'confirmed' || verdict === 'refuted' ? 'ut' : 'review',
+      detail: verdict === 'confirmed' ? outcome.verdict!.evidence!
+        : verdict === 'refuted' ? outcome.acceptance.id + ' 的断言强度已核实，仍需当前测试在真实执行原件中通过。'
+        : outcome.acceptance.id + ' 缺适用的逐项独立断言强度结论。' + (outcome.verdict?.evidence ?? ''),
+      files: outcome.files });
+  }
   const actionableEvidence = applicableCheckFamilies(opts.executionScope, chain).includes('testing') && opts.runId
     ? opts.actionableEvidence ?? readCurrentActionableEvidence(projectRoot, feature, opts.runId, opts.frameworkRoot) : undefined;
   if (actionableEvidence) {
@@ -1503,6 +1528,7 @@ export function readCurrentDispositionInput(opts: CleanPassOptions | CurrentRequ
   return {
     endpoint,
     phases,
+    acceptanceStrength: strength,
     additionalProblems: [...additionalProblems, ...findings.filter(finding => !phaseNames.includes(finding.source_phase)).map(finding => ({
       phase: finding.source_phase, id: `open_finding:${finding.id}`, action: finding.verificationRequired ? 'verify' as const : 'repair' as const,
       ...('item_fingerprint' in finding && typeof finding.item_fingerprint === 'string' ? { item_fingerprint: finding.item_fingerprint } : {}),

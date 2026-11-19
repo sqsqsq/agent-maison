@@ -1,12 +1,22 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { featurePhaseReportsDir, resolveFeatureArtifact } from '../../config';
+import { featurePhaseReportsDir, loadFrameworkConfig, resolveFeatureArtifact } from '../../config';
+import { isCapabilitySkipped } from '../../capability-registry';
+import { loadResolvedProfile } from '../../profile-loader';
 import { loadPhaseEvidenceManifest, evidenceEntryMatchesCurrentFile } from './phase-evidence-manifest';
 import { parseReviewIssueRows, reviewIssueRequiresRepair } from './repair-candidates';
 import { listExecutionKeyRuns, FROZEN_RUN_ARTIFACTS } from '../../../profiles/hmos-app/harness/execution-key';
 import { parseHylyreTrace } from '../../../profiles/hmos-app/harness/providers/device-test-run';
 import { resolveCurrentHapSha256Full } from './actionable-evidence';
 import type { ArtifactSnapshot } from './goal-failure-classifier';
+import { resolveP0DeviceObligations } from './p0-semantic-gates';
+import { validateRecordedNativeTraceArtifactBinding } from './native-trace-binding';
+
+export function isRecordedDeviceBuildResult(value: unknown): boolean {
+  const record = value as { hapPath?: unknown; reused?: unknown; hvigorExitCode?: unknown } | null | undefined;
+  return !!record && typeof record.hapPath === 'string' && !!record.hapPath.trim()
+    && typeof record.reused === 'boolean' && record.hvigorExitCode === 0;
+}
 
 /** Admission only: report gates still read every current obligation and retain the original execution outcome. */
 export function canReconcileTestingReport(input: {
@@ -40,6 +50,20 @@ export function canReconcileTestingReport(input: {
   } catch { return false; }
   const trace = parseHylyreTrace(latest.record.trace_path);
   if (!trace) return false;
+  try {
+    const profile = loadResolvedProfile(input.projectRoot, loadFrameworkConfig(input.projectRoot), input.frameworkRoot);
+    if (!isCapabilitySkipped(profile, 'device_test.build')) {
+      const build = JSON.parse(fs.readFileSync(path.join(reportsDir, 'device-test-build.result.json'), 'utf8'));
+      if (!isRecordedDeviceBuildResult(build)) return false;
+    }
+    if (resolveP0DeviceObligations(input.projectRoot, input.feature).device.length) {
+      const run = JSON.parse(fs.readFileSync(path.join(reportsDir, 'device-test-run.meta.json'), 'utf8'));
+      if (!validateRecordedNativeTraceArtifactBinding({
+        trace, expectedFeature: input.feature, tracePath: latest.record.trace_path,
+        testPlanPath: resolveFeatureArtifact(input.projectRoot, input.feature, 'test-plan.md').actualPath,
+      }, run?.artifact_binding).ok) return false;
+    }
+  } catch { return false; }
   const review = resolveFeatureArtifact(input.projectRoot, input.feature, 'review-report.md').actualPath;
   if (fs.existsSync(review)) {
     for (const issue of parseReviewIssueRows(fs.readFileSync(review, 'utf8')).filter(row => reviewIssueRequiresRepair(row))) {

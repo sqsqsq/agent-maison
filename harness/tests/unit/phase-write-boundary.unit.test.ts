@@ -426,7 +426,8 @@ export function runAll(): UnitCaseResult[] {
     const root = makeHost();
     const boundary = resolve(root, CHAIN, 'author');
     const pre = capturePhaseInvocationSnapshot(boundary);
-    const inputs = ['coding/notes.md', 'testing/scripts/smoke.ts', 'testing/inputs/cases.json', 'testing/test-plan.md', 'testing/test-report.md',
+    const inputs = ['coding/notes.md', 'coding/structure-conformance.yaml', 'testing/scripts/smoke.ts', 'testing/inputs/cases.json', 'testing/test-plan.md', 'testing/test-report.md',
+      'device-testing/visual-diff-nav.json',
       'device-testing/device-screenshots/shot-home.png', 'device-testing/device-screenshots/visual-diff.json'];
     const runnerProducts = ['testing/reports/run-1/hylyre/trace.json', 'ut/reports/ac-coverage.json', 'testing/phase-state.json'];
     const protectedWrites = ['feature-completion.json'];
@@ -436,6 +437,9 @@ export function runAll(): UnitCaseResult[] {
     if (diff.kind !== 'changed') return;
     const result = classifyPhaseInvocationChanges(boundary, 'testing', diff.changes);
     for (const rel of inputs) assert(result.allowed.some(row => row.path === `doc/features/${FEATURE}/${rel}`), `${rel} is an input`);
+    assert(result.allowed.some(row => row.path.endsWith('/coding/structure-conformance.yaml') && row.owner === 'coding')
+      && result.allowed.some(row => row.path.endsWith('/device-testing/visual-diff-nav.json') && row.owner === 'testing'),
+      'the actual ledger and navigation consumers agree with the signed writer');
     for (const rel of runnerProducts) assert(!diff.changes.some(row => row.path === `doc/features/${FEATURE}/${rel}`), `${rel} is handled by its existing writer/checker`);
     for (const rel of protectedWrites) assert(result.violations.some(row => row.path === `doc/features/${FEATURE}/${rel}`
       && row.violation === 'outside_authority'), `${rel} stays protected`);

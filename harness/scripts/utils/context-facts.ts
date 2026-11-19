@@ -301,7 +301,8 @@ function checkFactsFile(
         try { hash = crypto.createHash('sha256').update(fs.readFileSync(dep.path)).digest('hex'); } catch { /* stale below */ }
         if (hash !== dep.sha256 || fs.existsSync(dep.path) !== dep.exists) {
           const source = path.relative(projectRoot, dep.path).replace(/\\/g, '/');
-          if (!mayAdvanceSource(source, hash)) issue('context_exploration_facts_source_stale', source);
+          const observed = inheritedSourceHash?.({ path: source, role: 'input', exists: dep.exists, sha256: dep.sha256 }, '');
+          if (!mayAdvanceSource(source, hash) && (!observed || observed.sha256 !== hash)) issue('context_exploration_facts_source_stale', source);
           else {
             ownedSourceDelta = true;
             if (!deltaPaths.includes(source)) ledgerWarn('context_exploration_facts_source_stale', `本阶段授权内源码已变化但未登记精确 delta：${source}；追溯弱一级，不阻断本阶段。`, registrationSuggestion(source));

@@ -26,10 +26,10 @@ import { inspectGeneratedBlueprintGraphs } from './blueprint-graph-generator';
 import { validateBlueprintReconciliation } from './blueprint-reconciliation';
 import { validateEvolutionDecisions } from './blueprint-evolution-decisions';
 import { profileHasDesignLens, validateBlueprintProviders } from './blueprint-provider-boundary';
-import { fingerprintDiscoverySources, validateTerminologyFacts } from './blueprint-discovery';
+import { fingerprintDiscoverySources, stableJson, validateTerminologyFacts } from './blueprint-discovery';
 import { currentScopeItems, validateRequirementTraceability, type CurrentScopeItem } from './blueprint-requirement-traceability';
 import { BlueprintGraphDisplayInspection, inspectBlueprintGraphDisplay } from './blueprint-reader-guide';
-import { inspectAcceptanceItem, inspectPerformanceItem, inspectTypedConstructionContent, inspectUseCaseItem, inspectDesignContentCollections, type DesignContentIssue } from './design-content-checks';
+import { ACCEPTANCE_ID_PATTERN, inspectAcceptanceItem, inspectPerformanceItem, inspectTypedConstructionContent, inspectUseCaseItem, inspectDesignContentCollections, type DesignContentIssue } from './design-content-checks';
 
 export interface ComponentBlueprintValidationContext {
   projectRoot?: string;
@@ -220,7 +220,7 @@ export function diagnoseBlueprintPresentationShape(blueprint: BlueprintRecord, g
   return out;
 }
 
-/** 只看既有设计目标中的条目自身；不合并片段、不派生 CU、不改变准入。 */
+/** 定位设计条目及可能冲突的引用；片段合并与正式裁决仍由实际 CU 消费。 */
 export function diagnoseBlueprintContent(blueprint: BlueprintRecord): BlueprintIssue[] {
   let targets: ReturnType<typeof stableAddressIndex>;
   try { targets = stableAddressIndex(blueprint); } catch { return []; } // 重复地址仍由原 BLOCKER 负责。
@@ -233,6 +233,7 @@ export function diagnoseBlueprintContent(blueprint: BlueprintRecord): BlueprintI
   };
   locate(blueprint, '$');
   const found: DesignContentIssue[] = [];
+  const acceptanceDefinitions = new Map<string, { path: string; content: string }>();
   const useCaseFragments = new Set<BlueprintRecord>();
   let firstUseCasePath: string | undefined;
   let hasUseCaseVersion = false;
@@ -253,10 +254,25 @@ export function diagnoseBlueprintContent(blueprint: BlueprintRecord): BlueprintI
       const at = `${targetPath}.${kind}`;
       found.push(...inspectDesignContentCollections(kind, content, at));
       if (kind === 'acceptance') {
+        const localIds = new Set<string>();
         for (const key of ['criteria', 'boundaries', 'performance'] as const) {
           if (!Array.isArray(content[key])) continue;
-          (content[key] as unknown[]).forEach((item, i) => found.push(...(key === 'performance'
-            ? inspectPerformanceItem(item, `${at}.${key}[${i}]`) : inspectAcceptanceItem(item, key === 'criteria', `${at}.${key}[${i}]`))));
+          (content[key] as unknown[]).forEach((item, i) => {
+            const itemPath = `${at}.${key}[${i}]`;
+            if (key === 'performance') { found.push(...inspectPerformanceItem(item, itemPath)); return; }
+            found.push(...inspectAcceptanceItem(item, key === 'criteria', itemPath));
+            const id = asRecord(item)?.id;
+            if (typeof id !== 'string' || !ACCEPTANCE_ID_PATTERN.test(id)) return;
+            const normalizedId = id.toUpperCase();
+            const definition = stableJson([key, item]);
+            const previous = acceptanceDefinitions.get(normalizedId);
+            if (localIds.has(normalizedId)) {
+              found.push({ path: itemPath, message: `${id} 在同一验收片段内重复，须保留唯一条目或为不同义务分配独立 ID`, fields: ['id'] });
+            } else if (previous && previous.content !== definition) {
+              found.push({ path: itemPath, message: `${id} 与 ${previous.path} 的定义不同；若由同一 CU 消费，按原验收归属核对并为不同义务分配独立 ID`, fields: ['id'] });
+            } else if (!previous) acceptanceDefinitions.set(normalizedId, { path: itemPath, content: definition });
+            localIds.add(normalizedId);
+          });
         }
       } else if (kind === 'contracts') found.push(...inspectTypedConstructionContent(content, at));
       else if (Array.isArray(content.use_cases)) content.use_cases.forEach((item, i) => found.push(...inspectUseCaseItem(item, `${at}.use_cases[${i}]`)));

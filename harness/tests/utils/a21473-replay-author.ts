@@ -10,14 +10,18 @@ import { readDeliveredVerifierRequest } from '../unit/real-chain.unit.test';
 export const CARD_CORE = '02-Feature/WalletMain/src/main/ets/domain/flow/BankCardFlow.ts';
 export const CARD_TEST = '02-Feature/WalletMain/src/test/BankCardFlow.test.ts';
 const FIXTURE = path.resolve(__dirname, '../fixtures/a21473-node-replay');
-function testStrengthReply(root: string, checks: any[]): string {
+type StrengthRow = { issue: string; verdict: 'refuted'; evidence: string; production_paths?: string[] };
+function testPreservationRows(root: string, checks: any[]): StrengthRow[] {
   const strength = checks.find((check: any) => check.id === 'coding_existing_test_preserved' && check.affected_files?.includes(CARD_TEST));
-  if (!strength) return '';
-  const before = spawnSync('git', ['cat-file','-e',`HEAD:${CARD_TEST}`], {cwd:root,encoding:'utf8',windowsHide:true});
+  if (!strength) return [];
+  const before = spawnSync('git', ['cat-file','-e','HEAD:' + CARD_TEST], {cwd:root,encoding:'utf8',windowsHide:true});
   assert.notEqual(before.status, 0, 'this specific developer Node test path is absent from the actual isolated Git baseline');
   const expected = fs.readFileSync(path.join(FIXTURE,'BankCardFlow.test.ts'),'utf8').replace('../main/OpenCardFlow','../main/ets/domain/flow/BankCardFlow');
   assert.equal(fs.readFileSync(path.join(root,CARD_TEST),'utf8'),expected,'new assertions are unchanged');
-  return '\n```issue-verification\n' + YAML.stringify([{issue:strength.id,verdict:'refuted',evidence:[CARD_TEST,'真实隔离Git基线没有此新Node路径；当前新增断言未被删弱，不声称原宿主无其它UT。',strength.details].join(' | ')}]) + '```\n';
+  return [{ issue: strength.id, verdict: 'refuted', evidence: [CARD_TEST, '真实隔离Git基线没有此新Node路径；当前新增断言未被删弱，不声称原宿主无其它UT。', strength.details].join(' | ') }];
+}
+function strengthBlock(rows: StrengthRow[]): string {
+  return rows.length ? '\n```issue-verification\n' + YAML.stringify(rows) + '```\n' : '';
 }
 export function a21473TestReferences(): string[] {
   return [...fs.readFileSync(path.join(FIXTURE, 'BankCardFlow.test.ts'), 'utf8').matchAll(/\bit\('([^']+)'/g)]
@@ -34,15 +38,48 @@ export function writeA21473ReplayReview(root: string, frameworkRoot: string, fea
   const base = `doc/features/${rel}`;
   const files = [...YAML.parse(fs.readFileSync(path.join(root, base, 'contracts.yaml'), 'utf8')).files, '02-Feature/WalletMain/src/main/ets/domain/flow/LaunchHomeCardMode.ets'];
   write(root, `${base}/review/review-report.md`, '# 审查报告\n\n> **保证等级**: standard\n\n## 1. 审查范围\n' + files.map((file: string) => '- ' + file).join('\n') + '\n\n## 2. 审查维度\n原需求的数据、OTP、路由及失败恢复。Node开发投影不冒称HarmonyOS UI/真机通过。\n\n## 3. 问题清单\n| 编号 | 分类 | 严重程度 | 问题描述 | 涉及文件 | 修复建议 |\n|---|---|---|---|---|---|\n\n## 4. 问题统计\n| 严重程度 | 数量 |\n|---|---|\n| BLOCKER | 0 |\n| MAJOR | 0 |\n| MINOR | 0 |\n\n## 5. 修复建议\n开发编译和真实Node断言由工具判定；原生UI交t5。\n\n## 6. 结论\n**审查结论**: 通过\n');
-  if (independentContext?.instruction?.includes('coding_existing_test_preserved')) {
-    const load = (file: string): any => require(path.join(frameworkRoot, 'harness', file));
-    assert.equal(load('scripts/utils/goal-phase-executor').workUnitExecutionRole(independentContext), 'verifier');
+  if (!independentContext) return;
+  const load = (file: string): any => require(path.join(frameworkRoot, 'harness', file));
+  assert.equal(load('scripts/utils/goal-phase-executor').workUnitExecutionRole(independentContext), 'verifier');
+  const rows: StrengthRow[] = [];
+  if (independentContext.instruction.includes('coding_existing_test_preserved')) {
     const reports = load('config').featurePhaseReportsDir(root, feature, 'coding', frameworkRoot);
     const script = JSON.parse(fs.readFileSync(path.join(reports, 'script-report.json'), 'utf8'));
-    const verification = testStrengthReply(root, script.checks ?? []);
-    assert(verification, 'the independent review must consume the actual original test-strength check');
-    fs.appendFileSync(path.join(root, base, 'review/review-report.md'), verification);
+    rows.push(...testPreservationRows(root, script.checks ?? []));
+    assert(rows.some(row => row.issue === 'coding_existing_test_preserved'), 'the independent review must consume the actual original test-strength check');
   }
+  const assertedResults: Record<string, string> = {
+    'AC-1': '两个真实入口按银行支持范围选择卡种，并断言进入选择页',
+    'AC-2': '保留完整卡号、界面投影脱敏，未同意协议不能继续',
+    'AC-3': '核对真实状态机的验证码时限、位数、取消与查号失败恢复',
+    'AC-4': '真实 SQLite 写入后关库重开并核对完整的实际卡数据和错误结果',
+    'AC-5': '结果限制返回，完成动作只消费一次并核对导航栈',
+    'AC-6': '往返中保存既有页面与数据、监听结果，回到原入口',
+    'AC-7': '调用开发业务投影，检查四段的元素结构及无 NFC 激活',
+    'BD-1': '真实库执行重复/失败路径和并发提交约束，逐项核对实际结果',
+    'BD-2': '截止前不许重发，归零后重发并重新验证数字格式',
+  };
+  const questions = Object.keys(independentContext.workInput?.material.acceptanceReview ?? {});
+  if (questions.length) {
+    const source = fs.readFileSync(path.join(root, CARD_TEST), 'utf8');
+    const expected = fs.readFileSync(path.join(FIXTURE, 'BankCardFlow.test.ts'), 'utf8')
+      .replace('../main/OpenCardFlow', '../main/ets/domain/flow/BankCardFlow');
+    assert.equal(source, expected, 'review reads the actual repaired test source');
+    assert.equal(fs.readFileSync(path.join(root, CARD_CORE), 'utf8'), fs.readFileSync(path.join(FIXTURE, 'BankCardFlow.ts'), 'utf8'),
+      'review sees the corrected production source before issuing a strength finding');
+    const tests = load('scripts/utils/ut-it-blocks').extractUtItBlocks(source) as Array<{ name: string }>;
+    const { hasExactUtScopeTag } = load('scripts/utils/ut-tag-match');
+    for (const issue of questions) {
+      const id = issue.replace(/^acceptance_test_strength_/, '');
+      const exact = tests.filter(test => hasExactUtScopeTag(test.name, id));
+      assert(assertedResults[id] && exact.length && independentContext.instruction.includes('| ' + issue + ' |')
+        && exact.every(test => independentContext.instruction.includes(test.name)), 'missing actual review material for ' + issue);
+      rows.push({ issue, verdict: 'refuted', evidence: '`' + CARD_TEST + ':54` ' + exact.map(test => test.name).join('；')
+        + ' 直接运行 `' + CARD_CORE + ':1`：' + assertedResults[id] + '。本结论只核开发 scope 的实际断言，执行与原生 UI 各由原验证消费。',
+        production_paths: [CARD_CORE] });
+    }
+  }
+  fs.appendFileSync(path.join(root, base, 'review/review-report.md'), strengthBlock(rows));
 }
 export function writeA21473ReplayAuthor(root: string, frameworkRoot: string, context: any, defective: boolean, inputsOnly = false): void {
   const load = (file: string): any => require(path.join(frameworkRoot, 'harness', file));
@@ -255,7 +292,7 @@ export function answerA21473Verifier(root: string, frameworkRoot: string, contex
     fs.readFileSync(path.resolve(root, file.path));
   }
   let text = '已读当前真实request及material中的原件，核对原需求、canonical设计及当前Node开发投影。机器FAIL全部保留，不把框架/能力缺口称为产品通过；Native UI、布局和像素没有被本替身核实。\n';
-  text += testStrengthReply(root, script.checks);
+  text += strengthBlock(testPreservationRows(root, script.checks));
   if (phase === 'ut') {
     const file=path.join(reportsDir,'node-tests.tap');
     if (fs.existsSync(file)) {

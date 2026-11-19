@@ -177,9 +177,9 @@ const cases: Array<{ name: string; run(): Promise<void> }> = [
       emit(family, current, { type: 'agent_invoke_start', phase: 'plan', invoke_id: 'current-child-author', effective_timeout_ms: 900_000 });
       emit(family, family.original, { type: 'run_end', status: 'HALTED', halt_reason: 'execution_scope_unresolved', error: 'Previous original controller stopped; the bound child still owns its active work.' });
       const rootBefore = fs.readFileSync(eventFile(family, family.original)), childBefore = fs.readFileSync(eventFile(family, current));
-      const read = (script: string, extra: string[] = []) => {
+      const read = (script: string, extra: string[] = [], target: GoalRunManifest = family.original) => {
         const result = spawnSync(process.execPath, ['-r', 'ts-node/register/transpile-only', path.join(FRAMEWORK, 'harness/scripts', script + '.ts'),
-          '--feature', BLUEPRINT, '--run-id', family.original.run_id, '--project-root', family.root, '--json', ...extra],
+          '--feature', target.feature, '--run-id', target.run_id, '--project-root', family.root, '--json', ...extra],
         { cwd: path.join(FRAMEWORK, 'harness'), encoding: 'utf8', timeout: 30_000, windowsHide: true,
           env: { ...process.env, MAISON_GOAL_CHECKPOINT_DIR: path.join(family.root, '.trust') } });
         assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}\n${result.error ?? ''}`);
@@ -187,6 +187,13 @@ const cases: Array<{ name: string; run(): Promise<void> }> = [
       };
       const status = read('goal-status');
       const monitor = read('goal-monitor', ['--max-seconds', '0']);
+      const waited = read('goal-status', ['--wait', '--timeout-ms', '20'], current);
+      assert.equal(waited.reason, 'timeout', JSON.stringify(waited));
+      assert.equal(waited.observation.run_id, current.run_id);
+      assert.equal(waited.observation.complete, false);
+      const deliveryWait = read('goal-status', ['--wait', '--timeout-ms', '20']);
+      assert.equal(deliveryWait.reason, 'timeout', JSON.stringify(deliveryWait));
+      assert.equal(deliveryWait.observation.run_id, current.run_id);
       assert(status.current, 'public status must expose the current bound child despite an old original terminal');
       assert.equal(status.current.feature, current.feature); assert.equal(status.current.run_id, current.run_id);
       assert.equal(status.current.phase, 'plan'); assert.equal(status.complete, false);

@@ -220,19 +220,37 @@ export function validateNativeTraceArtifactBinding(
   };
 }
 
+const RECORDED_NATIVE_BINDING_KEYS = [
+  'test_plan_path', 'test_plan_sha256', 'derived_plan_path', 'derived_plan_sha256', 'trace_path', 'trace_sha256',
+] as const;
+
 export function parseRecordedNativeBinding(value: unknown): Partial<DeviceTestArtifactBinding> | null {
   if (!isRecord(value)) return null;
   const result: Partial<DeviceTestArtifactBinding> = {};
-  for (const key of [
-    'test_plan_path',
-    'test_plan_sha256',
-    'derived_plan_path',
-    'derived_plan_sha256',
-    'trace_path',
-    'trace_sha256',
-  ] as const) {
+  for (const key of RECORDED_NATIVE_BINDING_KEYS) {
     const string = recordBindingValue(value, key);
     if (string) result[key] = string;
   }
   return Object.keys(result).length > 0 ? result : null;
+}
+
+/** Reconciliation may reuse only the originally recorded native plan/trace identity. */
+export function validateRecordedNativeTraceArtifactBinding(
+  options: Pick<NativeTraceBindingOptions, 'trace' | 'expectedFeature' | 'tracePath' | 'testPlanPath'>,
+  value: unknown,
+): NativeTraceBindingResult {
+  const recorded = parseRecordedNativeBinding(value);
+  const missing = RECORDED_NATIVE_BINDING_KEYS.filter(key => !recorded?.[key]);
+  const result = validateNativeTraceArtifactBinding({
+    ...options,
+    derivedPlanPath: recorded?.derived_plan_path ?? path.join(path.dirname(options.tracePath), 'test-plan.hylyre.md'),
+    expectedTestPlanPath: recorded?.test_plan_path,
+    expectedDerivedPlanPath: recorded?.derived_plan_path,
+    expectedTracePath: recorded?.trace_path,
+    expectedTestPlanSha256: recorded?.test_plan_sha256,
+    expectedDerivedPlanSha256: recorded?.derived_plan_sha256,
+    expectedTraceSha256: recorded?.trace_sha256,
+  });
+  if (missing.length) return { ok: false, reasons: [...result.reasons, 'device-test-run.meta.json 缺 native artifact_binding 字段：' + missing.join(', ')] };
+  return result;
 }

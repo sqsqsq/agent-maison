@@ -52,6 +52,7 @@ export interface AcCheckpoint {
   post_screen?: string;
   required_element_ids?: string[];
   forbidden_element_ids?: string[];
+  assertions?: Array<{ element_id: string; exact_text: string }>;
 }
 
 export interface AcRequirementRef {
@@ -131,8 +132,47 @@ export function checkpointComplete(cp: AcCheckpoint | undefined): boolean {
       cp.post_screen &&
       cp.action?.target_element_id &&
       Array.isArray(cp.required_element_ids) &&
-      cp.required_element_ids.length > 0,
+      cp.required_element_ids.length > 0 &&
+      (cp.assertions === undefined || Array.isArray(cp.assertions) && cp.assertions.length > 0
+        && cp.assertions.every(assertion => typeof assertion?.exact_text === 'string' && !!assertion.exact_text.trim()
+          && typeof assertion.element_id === 'string' && cp.required_element_ids!.includes(assertion.element_id))
+        && new Set(cp.assertions.map(assertion => JSON.stringify([assertion.element_id, assertion.exact_text]))).size === cp.assertions.length),
   );
+}
+
+/** Build a screen chain only where approved linked checkpoints place every screen unambiguously. */
+export function projectAcceptanceFlows(criteria: readonly AcceptanceCriterion[]): Record<string, string[]> {
+  const flows = new Map<string, string[]>();
+  const groups = new Map<string, AcceptanceCriterion[]>();
+  for (const row of criteria.filter(isP0DeviceInteractive)) {
+    if (!row.linked_flow) continue;
+    const group = groups.get(row.linked_flow) ?? [];
+    group.push(row);
+    groups.set(row.linked_flow, group);
+  }
+  for (const [id, rows] of groups) {
+    if (rows.some(row => !checkpointComplete(row.checkpoint))) continue;
+    const checkpoints = rows.map(row => row.checkpoint!);
+    const edges = new Map<string, string>();
+    const screens = new Set(checkpoints.flatMap(cp => [cp.pre_screen!, cp.post_screen!]));
+    if (checkpoints.some(cp => {
+      if (cp.pre_screen === cp.post_screen) return false;
+      if (edges.has(cp.pre_screen!) && edges.get(cp.pre_screen!) !== cp.post_screen) return true;
+      edges.set(cp.pre_screen!, cp.post_screen!);
+      return false;
+    })) continue;
+    const incoming = new Set(edges.values());
+    const starts = [...screens].filter(screen => !incoming.has(screen));
+    if (starts.length !== 1) continue;
+    const chain = new Set<string>();
+    let screen: string | undefined = starts[0];
+    while (screen !== undefined && !chain.has(screen)) {
+      chain.add(screen);
+      screen = edges.get(screen);
+    }
+    if (screen === undefined && chain.size === screens.size) flows.set(id, [...chain]);
+  }
+  return Object.fromEntries(flows);
 }
 
 // ----------------------------------------------------------------------------
@@ -663,6 +703,27 @@ function evaluateNativeCase(
               : `${ac.id} required=${elementId}：step ${plannedIndex} 的 presence StepResult 未通过或身份不匹配（request.kind 须为 by_id 且 selected.id=${elementId}）`,
           );
         }
+      }
+      let nextAssertionIndex = actionIndex + 1;
+      for (const expected of cp!.assertions ?? []) {
+        const matchedAt = nativeSteps.findIndex((step, index) => {
+          if (index < nextAssertionIndex || index >= endIndex || step?.index !== index || step.kind !== 'wait_for' || step.role !== 'assertion') return false;
+          const planned = normalizePlannedStep(derivedSteps[index], index);
+          const request = step.selector?.request;
+          const resolution = step.selector?.resolution;
+          const observation = assertionObservation(step);
+          return planned.kind === 'wait_for' && planned.selectors.some(selector => selector.kind === 'by_text'
+            && selector.match === 'exact' && selector.value === expected.exact_text)
+            && (request?.kind === 'by_text' || request?.kind === 'composite' && request.constraints?.primary === 'by_text')
+            && request.match === 'exact' && request.value === expected.exact_text
+            && resolution?.state === 'unique' && resolution.candidate_count === 1 && resolution.selected?.id === expected.element_id
+            && observation?.assertion_type === 'presence' && observationFacts(step)?.observed_present === true;
+        });
+        if (matchedAt < 0) {
+          reasons.push(ac.id + ' 缺同一触发窗口内按顺序通过的可见值断言 ' + expected.element_id + '=' + JSON.stringify(expected.exact_text));
+          break;
+        }
+        nextAssertionIndex = matchedAt + 1;
       }
       // forbidden 不按 post_screen 限定：要求"应消失的元素"登记在 post_screen 的 ui-spec 里
       // 才能证明它不在场，自相矛盾（宿主 AC-3 的 forbidden 只属 pre_screen）。by_id 字面绑定后

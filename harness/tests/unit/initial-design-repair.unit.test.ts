@@ -47,7 +47,7 @@ import { designWorkSnapshot } from '../../scripts/utils/design-repair-unattended
 import { blueprintIdentityPointers, currentBlueprintIdentity } from '../../scripts/utils/change-unit-blueprint-identity';
 import { inspectGeneratedBlueprintGraphs } from '../../scripts/utils/blueprint-graph-generator';
 import { runGoalModeSessionStep as runGoalModeSessionStepUnchecked } from '../../scripts/goal-mode-entry';
-import { readSessionExecution } from '../../scripts/utils/session-execution-handoff';
+import { acceptedSessionReport, readHandoffMaterial, readSessionExecution, type IssuedSessionExecution } from '../../scripts/utils/session-execution-handoff';
 import { readOriginalDeliveryActivity } from '../../scripts/utils/delivery-origin';
 import { DetachedGoalPhaseExecutor, workUnitExecutionRole, type GoalPhaseExecutor, type GoalPhaseExecutorResult } from '../../scripts/utils/goal-phase-executor';
 import { extractProviderFinalText, resolveTerminalEventParser } from '../../scripts/utils/codex-terminal-events';
@@ -62,7 +62,8 @@ const runGoalModeSessionStep = (options: Parameters<typeof runGoalModeSessionSte
 
 type Host = Parameters<Parameters<typeof withFreshCuHost>[0]>[0];
 type Document = Record<string, any>;
-type Scenario = 'local-format-retry' | 'event-write' | 'event-product-write' | 'session-questioner-cu-write' | 'session-format-bad-twice' | 'large-process-repair' | 'session-pass-missing-reference' | 'format-retry' | 'missing-reference' | 'root' | 'lock-contention' | 'outside-write' | 'readiness-blocked' | 'normal' | 'retry' | 'session-retry' | 'machine-session' | 'ownership-session' | 'ownership-noop-session' | 'design-owner' | 'design-owner-external' | 'design-owner-retain' | 'session-progress-recovery' | 'session-architecture-recovery';
+type Scenario = 'local-format-retry' | 'event-write' | 'event-product-write' | 'session-questioner-cu-write' | 'session-format-bad-twice' | 'large-process-repair' | 'session-pass-missing-reference' | 'format-retry' | 'missing-reference' | 'root' | 'lock-contention' | 'outside-write' | 'readiness-blocked' | 'normal' | 'retry' | 'session-retry' | 'machine-session' | 'ownership-session' | 'ownership-noop-session' | 'design-owner' | 'design-owner-external' | 'design-owner-retain' | 'session-progress-recovery' | 'session-architecture-recovery'
+  | 'session-causal-questioning' | 'session-causal-machine-blocker' | 'session-causal-multiple' | 'session-causal-rollback';
 const CU = deriveChangeUnitFeatureId(BLUEPRINT_ID, 'ledger-refresh');
 const requirement = '在已准入账目蓝图的原目标内补齐CU设计引用，再继续账目刷新与恢复的完整交付；不得降低验收或修改框架。';
 const read = (file: string): Document => YAML.parse(fs.readFileSync(file, 'utf8'));
@@ -109,7 +110,9 @@ async function scenario(host: Host, mode: Scenario, beforeRepair?: () => void): 
   const observedCode = path.join(host.root, 'src/ledger/LedgerRepository.ts');
   fs.mkdirSync(path.dirname(observedCode), { recursive: true });
   fs.writeFileSync(observedCode, 'export const controlledQDependency = true;\n');
-  const recovery = mode === 'session-progress-recovery' || mode === 'session-architecture-recovery';
+  const multipleDenials = mode === 'session-causal-multiple' || mode === 'session-causal-rollback';
+  const causalReentry = multipleDenials || mode === 'session-causal-questioning' || mode === 'session-causal-machine-blocker';
+  const recovery = causalReentry || mode === 'session-progress-recovery' || mode === 'session-architecture-recovery';
   const workspace = featureFilePath(host.root, BLUEPRINT_ID, '');
   for (const unit of enumerateCanonicalChangeUnits(host.root, BLUEPRINT_ID)) {
     if (unit.changeUnit.change_unit_id === 'ledger-refresh') continue;
@@ -259,6 +262,8 @@ async function scenario(host: Host, mode: Scenario, beforeRepair?: () => void): 
     const evidenceRound = recovery ? 1 : questioningCalls;
     if (recovery || ['session-questioner-cu-write', 'format-retry', 'missing-reference', 'large-process-repair'].includes(mode) || (['retry', 'session-retry'].includes(mode) && questioningCalls === 1)) {
       Object.assign(doc.review_summary.questioning.items[0], { disposition: 'blocker', question: '当前范围失败恢复验收是否完整？', answer: `真实内容差额-${evidenceRound}\n\n当前独立核实的第二段证据-${evidenceRound}` });
+      if (multipleDenials) Object.assign(doc.review_summary.questioning.items.find((item: Document) => item.scope_ref === 'app_lens:feature_flags'),
+        { disposition: 'blocker', question: '刷新路径是否明确不受开关影响？', answer: '已有描述未明确覆盖关闭开关的默认刷新路径。' });
       if (mode === 'large-process-repair') doc.review_summary.questioning.items[0].answer += '\n' + '真实依据🌙'.repeat(18000) + '\n事务大交回-END';
     } else {
       doc.review_summary.questioning.items = structuredClone((canonical.blueprint.review_summary as Document).questioning.items);
@@ -271,10 +276,23 @@ async function scenario(host: Host, mode: Scenario, beforeRepair?: () => void): 
     const priorDenial = receivedPrompt.includes('真实内容差额-');
     if (priorDenial) {
       assert(receivedPrompt.includes('当前独立核实的第二段证据-'), 'the actual author request retains both complete paragraphs of the prior public denial');
-      const runtimeView = doc.design_views.find((view: Document) => view.view_id === 'runtime');
-      if (mode === 'session-progress-recovery' && String(runtimeView.purpose).includes('实际补齐失败恢复的业务说明')) return { status: 'waiting', details: '缺少已批准失败恢复依据，保留当前候选和完整前次Q；本次没有新的设计或核验结论。' };
+      const repairedView = doc.design_views.find((view: Document) => view.view_id === (causalReentry ? 'logical' : 'runtime'));
+      if (mode === 'session-progress-recovery' && String(repairedView.purpose).includes('实际补齐失败恢复的业务说明')) return { status: 'waiting', details: '缺少已批准失败恢复依据，保留当前候选和完整前次Q；本次没有新的设计或核验结论。' };
       if (!recovery) doc.review_summary.summary = String(doc.review_summary.summary ?? '') + ' 第二轮已补原范围失败恢复说明';
-      runtimeView.purpose += ` 实际补齐失败恢复的业务说明-${authorCalls}`;
+      if (causalReentry && authorCalls === 3) {
+        if (mode === 'session-causal-machine-blocker') doc.design_views.find((view: Document) => view.view_id === 'runtime').purpose =
+          (canonical.blueprint.design_views as Document[]).find(view => view.view_id === 'runtime')!.purpose;
+        if (multipleDenials) doc.app_lens.feature_flags = { ...doc.app_lens.feature_flags, answer: '开关关闭时仍完成默认刷新和状态发布。' };
+        if (mode === 'session-causal-rollback') repairedView.purpose = (canonical.blueprint.design_views as Document[])
+          .find(view => view.view_id === 'logical')!.purpose;
+      } else {
+        repairedView.purpose += ` 实际补齐失败恢复的业务说明-${authorCalls}`;
+        if (mode === 'session-causal-machine-blocker') {
+          doc.design_views.find((view: Document) => view.view_id === 'runtime').purpose = 0;
+          assert(validateComponentBlueprint(doc, { projectRoot: host.root, canonicalPath: canonical.canonicalPath })
+            .some(issue => issue.id === 'component_blueprint_schema_invalid' && issue.path.endsWith('.purpose')));
+        }
+      }
     }
     if (mode === 'session-architecture-recovery' && authorCalls === 1) {
       const file = path.join(path.dirname(draft), 'architecture.json');
@@ -563,6 +581,81 @@ async function scenario(host: Host, mode: Scenario, beforeRepair?: () => void): 
           details: typeof actual?.details === 'string' ? actual.details : 'actual role output persisted' } });
       };
       let next = await settleInitialQuestioning(await runGoalModeSessionStep(options), options);
+      if (causalReentry) {
+        for (const phase of ['design-repair-author', 'design-repair-questioning']) {
+          assert.equal(next.phase, phase, JSON.stringify(next));
+          next = await reportRole(next);
+        }
+        const draft = path.join(runDir, 'design-repair/component-blueprint.yaml');
+        const denied = read(draft).review_summary.questioning;
+        assert.equal(denied.status, 'complete');
+        assert(denied.items.some((item: Document) => item.scope_ref === 'view:logical' && item.disposition === 'blocker'));
+        assert.equal(next.phase, 'design-repair-author');
+        const replayAuthorReturn = async (issued: IssuedSessionExecution, issueNext = false) => {
+          const accepted = acceptedSessionReport(runDir, issued);
+          assert(accepted?.event.handoff_report);
+          const handback = readHandoffMaterial<{ draft_outputs: Record<string, string> }>(runDir, accepted.event.handoff_report);
+          const events = fs.readFileSync(eventFile, 'utf8').trim().split('\n').map(line => JSON.parse(line) as Document);
+          const ended = events.findIndex(event => event.type === 'agent_invoke_end' && event.invoke_id === issued.request.invoke_id);
+          assert(ended >= 0);
+          // Return to the actual signed handback before the transport can reuse a paid invocation.
+          fs.writeFileSync(eventFile, events.slice(0, ended + 1).map(row => JSON.stringify(row)).join('\n') + '\n');
+          for (const file of ['component-blueprint.yaml', 'change-unit.yaml', 'change-unit-candidates.json', 'architecture.json']) {
+            if (handback.draft_outputs[file]) fs.writeFileSync(path.join(path.dirname(draft), file), Buffer.from(handback.draft_outputs[file], 'base64'));
+          }
+          const attempt = events.slice(0, ended).filter(event => event.type === 'design_authority_repair' && event.stage === 'attempted').at(-1)!;
+          const original = readHandoffMaterial<{ brief: DesignRepairBriefLike }>(runDir, attempt.handoff_context);
+          let nextRole: string | undefined;
+          let nextPrompt = '';
+          let blockers: Array<{ id: string; action: string }> = [];
+          let nextIssued: IssuedSessionExecution | undefined;
+          const kernel = new GoalPhaseRuntime({ sessionHandoff: { onRequest(request) { nextIssued = request; } } });
+          const replay = await runUnattendedDesignRepair({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature, runId,
+            reportDir: manifest.report_dir, requirement, brief: original.brief, signature: attempt.signature, phase: attempt.phase,
+            designTarget: designRepairTarget(host.root, handback.draft_outputs['change-unit.yaml'] ? CU : feature),
+            heldFeatureLock: { path: lockPath, ownerId: lock.ownerId }, runtimeWrites: [], emit, registerLockRelease() {},
+            recordEventLines() { return () => []; },
+            async invoke(role, prompt, guard) {
+              nextRole = role; nextPrompt = prompt; blockers = guard?.evaluation?.disposition.completionBlocking ?? [];
+              if (issueNext && role === 'author') {
+                return kernel.invokeDesignOwner(manifest, host.root, host.frameworkRoot, issued.request.context.owner, role, prompt, guard, emit, true);
+              }
+              return { started: false, ok: false, detail: 'stop at the actual next role', handoff: true };
+            },
+          });
+          assert.equal(replay.outcome, 'handoff', JSON.stringify(replay));
+          return { nextRole, nextPrompt, blockers, nextIssued };
+        };
+        let issued = readSessionExecution(runDir, next.request.path)!;
+        await reportRole(next);
+        let observed = await replayAuthorReturn(issued, mode !== 'session-causal-questioning');
+        if (mode !== 'session-causal-questioning') {
+          assert.equal(observed.nextRole, 'author', JSON.stringify(observed.blockers));
+          assert(observed.nextIssued);
+          assert(!observed.nextPrompt.includes('open_finding:questioning:view:logical:'), 'the partial fix must leave only current author work');
+          assert(observed.nextPrompt.includes(mode === 'session-causal-machine-blocker'
+            ? 'component_blueprint_schema_invalid' : 'open_finding:questioning:app_lens:feature_flags:'));
+          issued = observed.nextIssued;
+          await reportRole({ type: 'phase_execute_request', phase: issued.request.context.phase,
+            request: { path: path.join(runDir, issued.reference.path) } });
+          observed = await replayAuthorReturn(issued);
+        }
+        const { nextRole, nextPrompt, blockers } = observed;
+        if (mode !== 'session-causal-rollback') {
+          assert.equal(nextRole, 'questioning', JSON.stringify(blockers));
+          assert(nextPrompt.includes('- view:logical（'));
+          assert(blockers.some(problem => problem.action === 'verify' && problem.id.includes('blueprint_questioning_provider_missing')));
+          assert(!blockers.some(problem => problem.action === 'repair'));
+        } else {
+          assert.equal(nextRole, 'author', JSON.stringify(blockers));
+          assert(nextPrompt.includes('open_finding:questioning:view:logical:'), 'the rollback must reactivate its original denial');
+          assert(!nextPrompt.includes('open_finding:questioning:app_lens:feature_flags:'), 'the other current fix stays pending independent verification');
+        }
+        assert.equal(authorCalls, mode === 'session-causal-questioning' ? 2 : 3);
+        assert.equal(questioningCalls, 1);
+        assert.deepEqual(fs.readFileSync(canonical.canonicalPath), originalBytes);
+        return;
+      }
       for (const label of ['design-repair-author', 'design-repair-questioning', 'design-repair-author', 'design-repair-questioning']) {
         const request = next.request && readSessionExecution(runDir, (next.request as { path: string }).path);
         assert.equal(next.phase, label, JSON.stringify({ actualPhase: next.phase, nextType: next.type, result: next.result, initialQuestioningCalls,
@@ -887,6 +980,10 @@ const cases = [
   { name: 'f3b8e6a1 initial repair: actual readiness failure after publication remains unrecovered for an initial-design phase', mode: 'readiness-blocked' },
   { name: 'f3b8e6a1 initial repair: normal canonical run retains its default design subject and original recovery probe', mode: 'normal' },
   { name: 'P3 design helper returns complete denied Q evaluation to the original root kernel without a local retry', mode: 'retry' },
+  { name: 'P3 design repair reentry questions a signed author change to the denied scope', mode: 'session-causal-questioning' },
+  { name: 'P3 design repair reentry questions after a later author clears the remaining machine blocker', mode: 'session-causal-machine-blocker' },
+  { name: 'P3 design repair reentry questions both scopes fixed by successive signed authors', mode: 'session-causal-multiple' },
+  { name: 'P3 design repair reentry keeps the original denial when a later author rolls back its scope', mode: 'session-causal-rollback' },
   { name: 'd18f6c42 M2 M4 public post-Q pause blocks next and forced continuation delivers complete feedback to a fresh author', mode: 'session-progress-recovery' },
   { name: 'd18f6c42 M3 M4 unpublished new architecture layer stays paused until real candidate progress and retains full feedback', mode: 'session-architecture-recovery' },
   { name: '9f6c2e41 bounded session replay preserves pending partial work and never reuses A1 or Q1', mode: 'session-retry' },
@@ -1242,7 +1339,7 @@ function questioningReuseProof(): void {
   } finally { assert(fs.realpathSync(f.root).startsWith(fs.realpathSync(os.tmpdir()) + path.sep)); fs.rmSync(f.root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
 }
 
-async function initialQuestioningLoop(host: Host, mode: 'local-format' | 'incremental' | 'execute-request-large' | 'large-process' | 'failed-latest' | 'bare-items' | 'pass-missing-reference' | 'format' | 'bad-twice' | 'same-scopes' | 'smaller-scopes'): Promise<void> {
+async function initialQuestioningLoop(host: Host, mode: 'local-format' | 'incremental' | 'execute-request-large' | 'large-process' | 'failed-latest' | 'bare-items' | 'pass-missing-reference' | 'format' | 'bad-twice' | 'same-scopes' | 'smaller-scopes' | 'acceptance-obligations' | 'verification-details'): Promise<void> {
   const canonical = loadCanonicalBlueprint(host.root, BLUEPRINT_ID);
   const workspace = featureFilePath(host.root, BLUEPRINT_ID, '');
   for (const unit of enumerateCanonicalChangeUnits(host.root, BLUEPRINT_ID)) {
@@ -1258,6 +1355,19 @@ async function initialQuestioningLoop(host: Host, mode: 'local-format' | 'increm
   }
   const doc = read(canonical.canonicalPath);
   if (mode !== 'incremental' && mode !== 'local-format') doc.provenance.source_ref = 'doc/conventions.md';
+  if (mode === 'acceptance-obligations' || mode === 'verification-details') {
+    const contradictory = mode === 'acceptance-obligations';
+    const scenario = doc.design_views.find((view: Document) => view.view_id === 'scenarios').nodes[0];
+    const logical = doc.design_views.find((view: Document) => view.view_id === 'logical').nodes[0];
+    const base = { priority: 'P0', testable: true, verification_steps: ['Submit twice and observe the public result'] };
+    const ui = { ...base, id: 'AC-1', description: 'Visible result', expected_result: 'Result is visible', ut_layer: 'device',
+      device_focus: contradictory ? 'Find result and read the stored record' : 'See the result after production submission' };
+    const counter = { ...base, id: contradictory ? 'AC-1' : 'AC-3', description: 'Dispatch count after production submission',
+      expected_result: 'One delivery', ut_layer: 'unit', ut_focus: 'Observe actual deliveries' };
+    const same = { ...base, id: 'AC-2', description: 'Read only the result title', expected_result: 'Title matches', ut_layer: 'device', device_focus: 'Read the visible title' };
+    scenario.acceptance = { criteria: [ui, same] };
+    logical.acceptance = { criteria: [counter, structuredClone(same)] };
+  }
   if (mode === 'pass-missing-reference') {
     const { refreshBlueprintFingerprints, writeBackAdmission } = require('../../scripts/utils/design-repair-unattended') as typeof import('../../scripts/utils/design-repair-unattended');
     refreshBlueprintFingerprints(doc); writeBackAdmission(doc, { projectRoot: host.root, canonicalPath: canonical.canonicalPath });
@@ -1315,6 +1425,38 @@ const timer=setInterval(()=>{const bound=process.platform!=='win32'||fs.readFile
     next = await runGoalModeSessionStep({ ...options, requestPath, report: { status: 'passed', phase: issued.request.context.phase, details } });
   };
   assert.equal(next.phase, 'initial-design-questioning');
+  if (mode === 'verification-details') {
+    const signed = readSessionExecution(runDir, (next.request as { path: string }).path)!;
+    const instruction = signed.request.context.instruction!;
+    assert.match(instruction, /具体测试 API\/入口、注入与定位方式、样本数据\/隔离\/复位前置、用例步骤和断言强度交既有 CU 计划及施工后的独立核验/);
+    assert(!instruction.includes('核验验收→用例→真实断言'), '施工期核验指令不应出现在设计质询');
+    const items = structuredClone(doc.review_summary.questioning.items) as Document[];
+    const scope = items.find(item => item.scope_ref === 'view:logical')!;
+    Object.assign(scope, { disposition: 'answered_with_evidence',
+      answer: 'AC-3 独立要求生产提交后观察实际发送恰好一次；现有应用内通道可查实际发送，测试注入点及隔离前置留待 CU 验证。' });
+    await report(JSON.stringify({ items }));
+    assert.equal(next.phase, 'initial-design-decomposition', JSON.stringify(next));
+    return;
+  }
+  if (mode === 'acceptance-obligations') {
+    const signed = readSessionExecution(runDir, (next.request as { path: string }).path)!;
+    const checker = JSON.parse(fs.readFileSync(path.join(runDir, path.dirname(signed.reference.path), 'checker-result.json'), 'utf8'));
+    const conflict = checker.issues.find((issue: Document) => issue.message.includes('AC-1 与') && issue.message.includes('定义不同'));
+    assert(conflict?.severity === 'WARN' && conflict.path.includes('.acceptance.criteria[0]'));
+    assert(!checker.issues.some((issue: Document) => issue.message.includes('AC-2 与')), 'identical shared definitions retain their scope');
+    assert.match(signed.request.context.instruction!, /输入映射和默认值.*生产写入与读回.*真实调用次数/);
+    assert.match(signed.request.context.instruction!, /产品设计存在实质矛盾.*在对应 scope 给 blocker/);
+    const items = structuredClone(doc.review_summary.questioning.items) as Document[];
+    const denied = items.find(item => item.scope_ref === 'view:scenarios')!;
+    const answer = 'AC-1 两处定义分别承诺界面结果与实际调用次数。外部 UI 查不到存储真值，原输入转换与默认值也没有独立断言。拆分各义务并保留来源。';
+    Object.assign(denied, { disposition: 'blocker', question: '当前验收是否逐项可证？', answer });
+    await report(JSON.stringify({ items }));
+    assert.equal(next.phase, 'initial-design-author', 'qualified denial must return to the existing design author');
+    const author = readSessionExecution(runDir, (next.request as { path: string }).path)!;
+    assert(author.request.context.instruction!.includes(answer));
+    assert(!fs.existsSync(path.join(path.dirname(canonical.canonicalPath), 'change-unit-candidates.json')));
+    return;
+  }
   if (mode === 'local-format') {
     const items = structuredClone(doc.review_summary.questioning.items) as Document[];
     const duplicate = { ...items[0], answer: '另一项有真实证据的不同结论', verification_refs: ['src/ledger/LedgerRepository.ts'] };
@@ -1486,7 +1628,7 @@ const timer=setInterval(()=>{const bound=process.platform!=='win32'||fs.readFile
   }
 }
 
-async function mixedPendingCandidateRepair(): Promise<void> {
+async function mixedPendingCandidateRepair(invalidReturn?: 'unknown' | 'duplicated' | 'changed'): Promise<void> {
   const f = fixture(), frameworkRoot = path.resolve(__dirname, '../../..');
   try {
     const architecture = loadFrameworkConfig(f.root).architecture;
@@ -1498,6 +1640,7 @@ async function mixedPendingCandidateRepair(): Promise<void> {
     const flowRef = unit.design_refs.find(ref => ref.target.kind === 'flow')!;
     const flow = resolveBlueprintTarget(doc, flowRef.target);
     (flow.contracts as Document).state_management[0].publications = [];
+    doc.contracts[0].provenance = { ...doc.contracts[0].provenance, evidence_strength: 'observed' };
     write(f.blueprintFile, doc); f.bind();
     prepareInitialDesignDraft({ projectRoot: f.root, blueprintId: BLUEPRINT_ID, sourceRefs: [], observedAt: '2026-11-16T00:00:00Z' });
     const preparedUnit = asChangeUnitArtifact(loadCanonicalChangeUnit(f.root, BLUEPRINT_ID, 'ledger-refresh').changeUnit);
@@ -1526,12 +1669,19 @@ async function mixedPendingCandidateRepair(): Promise<void> {
       const request = readSessionExecution(runDir, step.request.path)!, prompt = String(request.request.context.instruction);
       let output = '按当前责任修订候选。';
       if (step.phase === 'design-repair-author') {
-        assert(prompt.includes('publication') && prompt.includes('predicate_id'), 'the one original rejection must retain both known gaps');
+        assert(prompt.includes('change_unit_contract_not_admitted') && prompt.includes('create-entry-v1')
+          && prompt.includes('publication') && prompt.includes('predicate_id'), 'the original rejection must retain closure, projection and candidate gaps together');
+        assert(prompt.includes('当前草稿预装待接受候选（ledger-refresh）'));
         assert(fs.readFileSync(candidatesFile).equals(originalCandidates), 'source candidate stays exact before authority publication');
         assert(fs.readFileSync(f.blueprintFile).equals(originalBlueprint));
         const file = path.join(runDir, 'design-repair/component-blueprint.yaml'), draft = read(file);
         delete (resolveBlueprintTarget(draft, flowRef.target).contracts as Document).state_management[0].publications;
+        draft.contracts[0].provenance.evidence_strength = 'authoritative';
         write(file, draft);
+        const batch = invalidReturn === 'unknown' ? [{ ...candidate, artifact: { ...candidate.artifact, change_unit_id: 'unapproved' } }]
+          : invalidReturn === 'duplicated' ? [candidate, candidate]
+          : invalidReturn === 'changed' ? [{ ...candidate, artifact: { ...candidate.artifact, purpose: 'Change the request' } }] : [];
+        fs.writeFileSync(path.join(runDir, 'design-repair/change-unit-candidates.json'), JSON.stringify(batch) + '\n');
       } else if (step.phase === 'initial-design-questioning' || step.phase === 'design-repair-questioning') {
         const file = step.phase === 'initial-design-questioning' ? f.blueprintFile : path.join(runDir, 'design-repair/component-blueprint.yaml');
         output = JSON.stringify({ items: read(file).review_summary.questioning.items });
@@ -1556,6 +1706,15 @@ async function mixedPendingCandidateRepair(): Promise<void> {
         fs.writeFileSync(candidatesFile, JSON.stringify([current], null, 2) + '\n');
       } else assert.fail('unexpected owner: ' + step.phase);
       step = await runGoalModeSessionStep({ ...options, requestPath: step.request.path, report: { status: 'passed', phase: step.phase, details: output } });
+      if (invalidReturn && calls.at(-1) === 'design-repair-author') {
+        assert.notEqual(step.phase, 'design-repair-questioning');
+        const events = fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8');
+        assert(events.includes('"failed_step":"author_scope"'), JSON.stringify(step));
+        assert(fs.readFileSync(f.blueprintFile).equals(originalBlueprint));
+        assert(fs.readFileSync(candidatesFile).equals(originalCandidates));
+        assert(!fs.existsSync(f.cuFile));
+        return;
+      }
     }
     assert.equal(calls.filter(phase => phase === 'design-repair-author').length, 1, JSON.stringify({ calls, step }));
     assert.equal(calls.filter(phase => phase === 'design-repair-questioning').length, 1, JSON.stringify({ calls, step }));
@@ -1567,19 +1726,91 @@ async function mixedPendingCandidateRepair(): Promise<void> {
     assert.equal(events.filter(event => event.type === 'design_authority_repair' && event.stage === 'published').length, 1);
     assert.equal(loadCanonicalBlueprint(f.root, BLUEPRINT_ID).blueprint.revision, Number(doc.revision) + 1, 'candidate-only repair cannot publish another blueprint');
     assert(!fs.existsSync(featureFilePath(f.root, BLUEPRINT_ID, 'feature-completion.json')), 'design/candidate repair is not product completion');
-    const evidenceDir = path.resolve(__dirname, '../../reports/4c8d73b1-dev/mixed-owner-root-loop-evidence'); fs.mkdirSync(evidenceDir, { recursive: true });
-    for (const name of ['events.jsonl', 'manifest.json']) fs.copyFileSync(path.join(runDir, name), path.join(evidenceDir, name));
-    fs.copyFileSync(path.join(runDir, 'design-repair/original-context.json'), path.join(evidenceDir, 'original-context.json'));
-    fs.writeFileSync(path.join(evidenceDir, 'counts.json'), JSON.stringify({ calls, designAuthors: 1, designQuestioning: 1,
-      originalProposal: 1, candidateOnlyRepair: 1, blueprintPublications: 1, manualRecovery: 0,
-      nextPhase: step.phase, modelBoundary: 'deterministic fixture role output; request, guard, consumer, publication and root coordinator are production' }, null, 2) + '\n');
+    if (process.env.MAISON_EXPORT_7D2C49E8_REPLAY === '1') {
+      const evidenceDir = path.resolve(__dirname, '../../reports/7d2c49e8-dev/mixed-owner-root-loop-evidence'); fs.mkdirSync(evidenceDir, { recursive: true });
+      for (const name of ['events.jsonl', 'manifest.json']) fs.copyFileSync(path.join(runDir, name), path.join(evidenceDir, name));
+      fs.copyFileSync(path.join(runDir, 'design-repair/original-context.json'), path.join(evidenceDir, 'original-context.json'));
+      fs.writeFileSync(path.join(evidenceDir, 'counts.json'), JSON.stringify({ calls, designAuthors: 1, designQuestioning: 1,
+        originalProposal: 1, candidateOnlyRepair: 1, blueprintPublications: 1, manualRecovery: 0,
+        nextPhase: step.phase, modelBoundary: 'deterministic fixture role output; request, guard, consumer, publication and root coordinator are production' }, null, 2) + '\n');
+    }
+  } finally { clearFrameworkConfigCache(); fs.rmSync(f.root, { recursive: true, force: true }); }
+}
+
+async function freshCandidateRejection(repair: boolean): Promise<void> {
+  const f = fixture(), frameworkRoot = path.resolve(__dirname, '../../..');
+  try {
+    const architecture = loadFrameworkConfig(f.root).architecture;
+    fs.writeFileSync(path.join(f.root, 'framework.config.json'), JSON.stringify({ schema_version: '1.1', project_name: 'FreshCandidateRejection',
+      project_profile: { name: 'hmos-app' }, active_workflow: 'obligation-driven', architecture }));
+    clearFrameworkConfigCache();
+    const { change_unit_ref: _ref, ...mapping } = planContracts(f).change_unit;
+    for (const unit of enumerateCanonicalChangeUnits(f.root, BLUEPRINT_ID)) if (unit.canonicalPath !== f.cuFile) fs.unlinkSync(unit.canonicalPath);
+    const artifact = asChangeUnitArtifact(loadCanonicalChangeUnit(f.root, BLUEPRINT_ID, 'ledger-refresh').changeUnit);
+    const constructionMapping: typeof mapping = { ...mapping, predicate_mappings: [] };
+    const candidate = { providerId: 'component-design', artifact, construction_mapping: constructionMapping };
+    artifact.provenance.extraction_method += ';component-design';
+    artifact.component_blueprint_ref.artifact_sha256 = 'sha256:' + '0'.repeat(64);
+    fs.unlinkSync(f.cuFile);
+    const candidates = path.join(path.dirname(f.blueprintFile), 'change-unit-candidates.json');
+    const saveCandidate = () => fs.writeFileSync(candidates, JSON.stringify([candidate]) + '\n');
+    saveCandidate();
+    const manifest = buildInitialDesignGoalManifest({ feature: BLUEPRINT_ID, run_id: 'fresh-candidate-feedback', adapter: 'claude', requirement,
+      adapter_model_pin: parseAdapterModelBinding('claude', controlledModelBinding('claude', f.root)),
+      unattended: { write_mode: 'full-access', approval_mode: 'never' },
+      initial_design: { completion_target: 'feature', requested_results: [requirement], requested_phases: ['plan', 'coding', 'review', 'ut'] } }, { projectRoot: f.root });
+    createGoalRun({ projectRoot: f.root, frameworkRoot, manifest, chain: [] });
+    const runDir = path.join(f.root, manifest.report_dir);
+    const options = { projectRoot: f.root, frameworkRoot, feature: BLUEPRINT_ID, runId: manifest.run_id,
+      adapter: 'claude', runMode: 'attended' as const, authorization: { mode: 'goal_mode' as const, autonomyAuthorized: true } };
+    let step: Record<string, any> = await runGoalModeSessionStep(options);
+    const handBack = async (details: string) => runGoalModeSessionStep({ ...options, requestPath: step.request.path,
+      report: { status: 'passed', phase: step.phase, details } });
+    if (step.phase === 'initial-design-questioning') step = await handBack(JSON.stringify(read(f.blueprintFile).review_summary.questioning));
+    assert.equal(step.phase, 'initial-design-decomposition', JSON.stringify(step));
+    const rejected = readSessionExecution(runDir, step.request.path)!;
+    assert(rejected.request.context.instruction?.includes('change_unit_provenance_owner_unresolvable'));
+    const identity = currentBlueprintIdentity(loadCanonicalBlueprint(f.root, BLUEPRINT_ID));
+    for (const pointer of blueprintIdentityPointers(artifact as unknown as Document)) Object.assign(pointer!, identity);
+    for (const row of mapping.design_ref_mappings) Object.assign(row.design_ref, identity);
+    saveCandidate();
+    step = await handBack('候选已按当前蓝图身份重绑。');
+    assert.equal(step.phase, 'initial-design-decomposition', JSON.stringify(step));
+    const fresh = readSessionExecution(runDir, step.request.path)!;
+    assert.notEqual(fresh.request.invoke_id, rejected.request.invoke_id);
+    assert(fresh.request.context.instruction?.includes('谓词映射')
+      || fresh.request.context.instruction?.includes('predicate_id'));
+    assert(fresh.request.context.workInput?.evaluation?.disposition.completionBlocking.some(problem =>
+      problem.evidence?.includes('change_unit_candidate_design_rejected')));
+    assert(!fs.existsSync(f.cuFile), 'rejecting invalid construction mappings must leave no published CU');
+    if (repair) { constructionMapping.predicate_mappings = mapping.predicate_mappings; saveCandidate(); }
+    step = await handBack(repair ? '补齐候选原目标的施工映射。' : '保留当前候选。');
+    const events = fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    assert.equal(events.filter(event => event.type === 'agent_invoke_start' && event.phase === 'initial-design-decomposition').length, 2);
+    assert(!events.some(event => event.type === 'design_authority_repair'));
+    if (repair) {
+      assert(fs.existsSync(f.cuFile), JSON.stringify(step));
+      assert(String(step.phase).startsWith('initial-design-scope-'), JSON.stringify(step));
+    } else {
+      assert(!fs.existsSync(f.cuFile));
+      const stopped = [...events].reverse().find(event => event.type === 'run_end');
+      assert.equal(stopped?.halt_reason, 'executor_waiting', JSON.stringify(step));
+      assert.match(String(stopped?.halt_guidance), /谓词映射|predicate_id/);
+    }
   } finally { clearFrameworkConfigCache(); fs.rmSync(f.root, { recursive: true, force: true }); }
 }
 
 export function getCases() { return [...questioningRecoveryCases(), ...questioningRealReplayCases(), ...cases.map(test => ({ name: test.name, run: () => withFreshCuHost(host => scenario(host, test.mode)) })),
   { name: 'a920 mixed pending candidate rejection repairs authority once before returning only current mapping work to decomposition', run: mixedPendingCandidateRepair },
+  { name: '7d2c49e8 fresh decomposition rejection sends new mapping feedback before accepting a corrected candidate', run: () => freshCandidateRejection(true) },
+  { name: '7d2c49e8 fresh decomposition rejection preserves the current feedback when unchanged work pauses', run: () => freshCandidateRejection(false) },
+  ...(['unknown', 'duplicated', 'changed'] as const).map(mode => ({ name: `7d2c49e8 pending repair rejects ${mode} author rows before questioning`,
+    run: () => mixedPendingCandidateRepair(mode) })),
   { name: 'a920 signed independent questioning rechecks only affected scopes and merges original results before CU decomposition', run: () => withFreshCuHost(host => initialQuestioningLoop(host, 'incremental')) },
+  { name: '7d2c49e8 design questioning leaves missing test fixtures and injection to CU verification', run: () => withFreshCuHost(host => initialQuestioningLoop(host, 'verification-details')) },
   { name: 'a920 signed independent questioning keeps conflicting originals and repairs only the ambiguous scope', run: () => withFreshCuHost(host => initialQuestioningLoop(host, 'local-format')) },
+  { name: '7d2c49e8 signed design questioning locates conflicting acceptance IDs and returns missing proof duties to its author',
+    run: () => withFreshCuHost(host => initialQuestioningLoop(host, 'acceptance-obligations')) },
   { name: '3f8a6c21 actual provide rejection returns to the design author and publishes the corrected consumer batch without manual resume', run: () => provideConsumerRepair() },
   { name: '3f8a6c21 real design write violation is restored before automatic publication continues', run: () => provideConsumerRepair('restore') },
   { name: '3f8a6c21 actual post-publication readiness gap returns to its design owner without manual resume', run: () => provideConsumerRepair('probe') },

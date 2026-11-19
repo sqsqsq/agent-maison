@@ -12,6 +12,7 @@ import { buildStandardHylyreDerivePayloadBase, resolveHylyreResetIdentity } from
 import { loadUiSpecFile, uiSpecAbsPath } from './ui-spec-shared';
 import { buildSelectorContractQuery } from '../../../profiles/hmos-app/harness/selector-contract';
 import { EXECUTION_CHANNEL_DOMAIN } from './execution-channel';
+import { loadAcceptanceFlowsDoc } from './p0-semantic-gates';
 import { FORMAL_BY_TEXT_MATCHES } from './derived-hylyre-plan';
 import { PLANNED_SELECTOR_DISAMBIGUATION_FIELDS } from './planned-step-normalizer';
 
@@ -171,6 +172,7 @@ export function deriveHintSemanticInputs(value: unknown): unknown | null {
     }; }),
     allowed_step_roots: p.allowed_step_roots, forbidden_in_steps: p.forbidden_in_steps,
     step_shape_catalog: p.step_shape_catalog, wait_field_timing_ref: p.wait_field_timing_ref,
+    acceptance_assertions: p.acceptance_assertions ?? [],
     reset_preamble: reset.available
       ? { available: true, bundle: reset.bundle, page_name: reset.page_name, position: reset.position, order: reset.order }
       : { available: false },
@@ -226,6 +228,9 @@ export function buildCanonicalDeriveHintPayload(projectRoot: string, feature: st
   const available_pages = snapshotBundle ? listSnapshotPages(cacheAbs, snapshotBundle) : [];
   const uiSpec = loadUiSpecFile(uiSpecAbsPath(projectRoot, feature));
   const selector_contract = uiSpec ? buildSelectorContractQuery(uiSpec, feature) : [];
+  const acceptanceAssertions = (loadAcceptanceFlowsDoc(projectRoot, feature)?.criteria ?? [])
+    .filter(item => item.checkpoint?.assertions?.length).map(item => ({ id: item.id, assertions: item.checkpoint!.assertions }));
+
   return {
     // t7a（plan e6a3c9f4）：统一基座（与 check-testing 自动 hint 同源，schema/知识块永不分叉）
     ...buildStandardHylyreDerivePayloadBase(resolveHylyreResetIdentity(projectRoot)),
@@ -263,6 +268,7 @@ export function buildCanonicalDeriveHintPayload(projectRoot: string, feature: st
       manual_note:
         'manual:<known_class> with no tool primitive is an unsupported_gap: keep it in the denominator, never count it as PASS, and allow completion with disclosure; bare manual or an unknown class is invalid_test before device execution',
     },
+    ...(acceptanceAssertions.length ? { acceptance_assertions: acceptanceAssertions } : {}),
     test_cases,
   };
 }

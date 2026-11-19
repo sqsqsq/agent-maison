@@ -336,7 +336,8 @@ export function phaseEvidenceBusinessInputs(projectRoot: string, feature: string
 /** Keep the original invocation baseline intact; consumers use this view after evidence integrity checks. */
 export function factsBaselineBusinessDependencies(projectRoot: string, feature: string,
   context: import('./context-facts').FactsInvocationContext, opts: EvidenceSemanticOptions = {}): import('./capability-resolution').ResolutionDependency[] {
-  const dependencies = context.baseline?.dependencies ?? [];
+  const facts = resolveFactsAbsPath(projectRoot, feature);
+  const dependencies = (context.baseline?.dependencies ?? []).filter(dep => path.resolve(projectRoot, dep.path) !== facts);
   if (!context.baseline) return dependencies;
   const loaded = loadPhaseEvidenceManifest(projectRoot, feature, context.baseline.established_by);
   if (!loaded?.integrityOk) return dependencies;
@@ -889,6 +890,7 @@ export function verifyPhaseEvidenceManifestWithStagedOutputs(input: {
 /** Same owned-write transition proof for freshness and facts re-admission, even while the owner still fails. */
 export function createObservedSourceHashReader(projectRoot: string, feature: string, opts: EvidenceSemanticOptions & {
   ownershipEvents?: readonly import('./goal-runner-phase').GoalRunEvent[];
+  includeAuthorArtifacts?: boolean;
 } = {}):
   (entry: EvidenceEntry, manifestPhase: string, excludedOwnerPhase?: string) => { exists: boolean; sha256: string | null } | null {
   const sourceTransitions = new Map<string, Array<{ phase: string; before: string | null; after: string | null }>>();
@@ -897,8 +899,13 @@ export function createObservedSourceHashReader(projectRoot: string, feature: str
     try {
       const { loadGoalManifestFromRun } = require('./goal-manifest') as typeof import('./goal-manifest');
       const { loadAuthoritativeEvents } = require('./goal-runner-phase') as typeof import('./goal-runner-phase');
+      const { executionRequestForInvoke } = require('./session-execution-handoff') as typeof import('./session-execution-handoff');
+      const { resolvePhasePathOwnership } = require('./phase-write-boundary') as typeof import('./phase-write-boundary');
+      const { workUnitMayWritePath } = require('./repair-responsibility') as typeof import('./repair-responsibility');
+      const { invocationCompleted } = require('./invocation-completion') as typeof import('./invocation-completion');
       const manifest = loadGoalManifestFromRun(projectRoot, evidenceRunId, { feature });
-      const events = opts.ownershipEvents ?? loadAuthoritativeEvents(path.resolve(projectRoot, manifest.report_dir, 'events.jsonl'));
+      const runDir = path.resolve(projectRoot, manifest.report_dir);
+      const events = opts.ownershipEvents ?? loadAuthoritativeEvents(path.join(runDir, 'events.jsonl'));
       const framework = opts?.frameworkRoot ?? guessFrameworkRoot(projectRoot);
       if (framework) {
         const { resolveFactsPhaseOwnedSources } = require('./capability-resolution-entry-input') as typeof import('./capability-resolution-entry-input');
@@ -908,7 +915,19 @@ export function createObservedSourceHashReader(projectRoot: string, feature: str
           const start = [...events.slice(0, index)].reverse().find(row => row.type === 'agent_invoke_start' && row.phase === event.phase && row.invoke_id === event.invoke_id);
           const context = start?.facts_context;
           if (!context || !('run_id' in context.subject) || context.subject.run_id !== evidenceRunId || context.subject.feature !== feature) continue;
-          if (!allowedByPhase.has(event.phase)) {
+          const signed = event.phase === 'work-unit-author'
+            ? executionRequestForInvoke(runDir, event.invoke_id)?.request : undefined;
+          const boundary = signed?.write_boundary;
+          const end = signed && events.find(row => row.type === 'agent_invoke_end' && row.invoke_id === event.invoke_id);
+          if (event.phase === 'work-unit-author' && (!start || !signed || boundary?.executionRole !== 'author'
+            || !end || !invocationCompleted({ ...end, exitCode: end.exit_code })
+            || signed.context.runId !== evidenceRunId || signed.context.feature !== feature
+            || signed.context.phase !== start.phase || signed.context.owner.owner_id !== start.owner_id
+            || signed.context.owner.epoch !== start.owner_epoch
+            || path.resolve(signed.context.projectRoot) !== path.resolve(projectRoot)
+            || path.resolve(signed.context.runDir) !== runDir || signed.pre_snapshot?.failureReason !== null
+            || events.some(row => row.type === 'phase_write_violation' && row.invoke_id === event.invoke_id))) continue;
+          if (!boundary && !allowedByPhase.has(event.phase)) {
             const candidates = events.filter(row => row.type === 'phase_write_observed' && row.phase === event.phase)
               .flatMap(row => (row as { owned?: Array<{ path: string }> }).owned ?? []);
             allowedByPhase.set(event.phase, resolveFactsPhaseOwnedSources({ projectRoot, feature, runId: evidenceRunId,
@@ -917,9 +936,18 @@ export function createObservedSourceHashReader(projectRoot: string, feature: str
           }
           const owned = (event as unknown as { owned?: Array<{ path: string; pre_sha256: string | null; post_sha256: string | null }> }).owned ?? [];
           const hash = (value: unknown): value is string | null => value === null || typeof value === 'string' && /^[a-f0-9]{64}$/i.test(value);
-          for (const write of owned) if (allowedByPhase.get(event.phase)!.has(write.path) && hash(write.pre_sha256) && hash(write.post_sha256)) {
+          for (const write of owned) {
+            if (!hash(write.pre_sha256) || !hash(write.post_sha256)) continue;
+            const signedOwner = boundary && resolvePhasePathOwnership(boundary, write.path);
+            const allowed = boundary
+              ? signedOwner?.status === 'unique' && signedOwner.roles.some(role => role.kind === 'source'
+                || opts.includeAuthorArtifacts && role.kind === 'artifact')
+                && workUnitMayWritePath(boundary, write.path)
+                && (signed!.pre_snapshot!.entries.find(entry => entry.path === write.path)?.sha256 ?? null) === write.pre_sha256
+              : allowedByPhase.get(event.phase)?.has(write.path);
+            if (!allowed) continue;
             const transitions = sourceTransitions.get(write.path) ?? [];
-            transitions.push({ phase: event.phase, before: write.pre_sha256, after: write.post_sha256 });
+            transitions.push({ phase: signedOwner?.owner ?? event.phase, before: write.pre_sha256, after: write.post_sha256 });
             sourceTransitions.set(write.path, transitions);
           }
         }

@@ -51,6 +51,7 @@ export function currentAcceptanceExecutionKeyMatcher(input: { projectRoot: strin
 /** Read-only evidence selection, shared by the phase entry and the original verifier producer. */
 export type CurrentAcceptanceEvidenceInput = Pick<BuildVerifierMaterialInput,
   'projectRoot' | 'feature' | 'phase' | 'frameworkRoot' | 'runId' | 'factsContext' | 'resolvedInputs'> & {
+  testSources?: readonly string[];
   subjectId?: string | null;
   phaseIssues?: import('./repair-candidates').PhaseRepairIssues | null;
   authorityReaders?: IdentityNeutralDigestReaders;
@@ -147,8 +148,18 @@ export function collectCurrentAcceptanceEvidence(input: CurrentAcceptanceEvidenc
     ...new Map(entries.map(entry => [entry.label + '\0' + entry.content, entry])).values()] : [];
 }
 
-function collectNativeAcceptanceEvidence(input: CurrentAcceptanceEvidenceInput): ContextFileEntry[] {
+export function collectNativeAcceptanceEvidence(input: CurrentAcceptanceEvidenceInput,
+  currentUtCaseReport?: ReturnType<typeof import('./ut-execution-evidence').readCurrentUtCaseReport>): ContextFileEntry[] {
   const { projectRoot, feature, phase } = input;
+  if (input.testSources?.length) {
+    const { readCurrentUtCaseReport } = require('./ut-execution-evidence') as typeof import('./ut-execution-evidence');
+    const observed = currentUtCaseReport === undefined ? readCurrentUtCaseReport(input) : currentUtCaseReport;
+    const files = observed?.passed.filter(check => check.affected_files?.some(file => input.testSources!.includes(file) && observed.current(file)))
+      .flatMap(observed.originals) ?? [];
+    if (files.length) return [...new Set(files)].map(label => ({
+      label, kind: 'path', content: 'Read this current native execution original for the signed test sources and exact case names.',
+    }));
+  }
   const { featurePhaseReportsDir, featureFilePath, artifactReadCandidatePaths, loadFrameworkConfig } = require('../../config') as typeof import('../../config');
   const reports = featurePhaseReportsDir(projectRoot, feature, phase, input.frameworkRoot);
   let subject = input.subjectId;
@@ -175,7 +186,7 @@ function collectNativeAcceptanceEvidence(input: CurrentAcceptanceEvidenceInput):
   const nativePrefix = toPosixRel(projectRoot, utReports) + '/';
   const isExecutionKey = currentAcceptanceExecutionKeyMatcher(input);
   const anchors = material?.files.filter(file => file.path.startsWith(nativePrefix) && isExecutionKey(file.path)) ?? [];
-  if (!scopeIds.size && !anchors.length) return [];
+  if (!scopeIds.size && !anchors.length && !input.testSources?.length) return [];
   const read = (file: string): ContextFileEntry | null => {
     const abs = path.resolve(projectRoot, file);
     try {
@@ -257,7 +268,7 @@ function collectNativeAcceptanceEvidence(input: CurrentAcceptanceEvidenceInput):
     const bound = [...manifest.manifest.inputs, ...manifest.manifest.outputs];
     const { loadCoverageEvidence } = require('./coverage-evidence') as typeof import('./coverage-evidence');
     const coverage = loadCoverageEvidence(projectRoot, feature);
-    const tests = scopeIds.size ? coverage?.feature === feature ? [...new Set((coverage.mappings ?? [])
+    const tests = input.testSources?.length ? [...input.testSources] : scopeIds.size ? coverage?.feature === feature ? [...new Set((coverage.mappings ?? [])
       .filter(mapping => scopeIds.has(mapping.scope_id) && mapping.evidence_source === 'ut_tags')
       .map(mapping => mapping.evidence_ref).filter((file): file is string => !!file))] : []
       : manifest.manifest.outputs.filter(entry => entry.owner_phase === 'ut' && anchoredSources.some(file => file.path === entry.path)).map(entry => entry.path);
@@ -270,6 +281,7 @@ function collectNativeAcceptanceEvidence(input: CurrentAcceptanceEvidenceInput):
     // Include the actual assertions and bound production call chain; a tag or success label is only a locator.
     const sourcePaths = new Set(host.utAcceptanceSourcePaths(bound.map(entry => entry.path), tests));
     const sourceEntries = bound.filter(entry => sourcePaths.has(entry.path));
+    if (input.testSources?.length && input.testSources.some(file => !sourceEntries.some(entry => entry.path === file))) return fallback();
     if (!sourceEntries.length || sourceEntries.some(entry => !evidenceEntryMatchesCurrentFile(projectRoot, entry, feature, input.authorityReaders))) return fallback();
     const paths = [...anchoredSources.filter(entry => ownedArtifacts.has(entry.path) || executionConfigFiles.includes(entry.path)).map(entry => entry.path),
       ...sourceEntries.map(entry => entry.path), toPosixRel(projectRoot, path.join(latest.runDir, native.EXECUTION_KEY_FILE)),
@@ -645,6 +657,7 @@ export function independentVerificationContext(input: {
   previousReport?: VerifierEvidence | null;
   previousMaterial?: VerifierMaterialView | null;
   currentMaterial?: VerifierMaterialView | null;
+  designQuestioning?: boolean;
   /** A real public Q original, when Q has P1 before.yaml/pre_snapshot instead of a verifier material manifest. */
   previousOriginal?: ContextFileEntry | null;
   actualDiff: readonly ContextFileEntry[] | null;
@@ -672,7 +685,7 @@ export function independentVerificationContext(input: {
   }
   if (input.affectedDependencies?.length) out.push({ label: '(affected contract dependencies)', content: JSON.stringify(input.affectedDependencies, null, 2) });
   out.push(...(input.actualDiff ?? []), ...(input.currentEvidence ?? []), ...(input.declineContext ?? []));
-  out.push({ label: '(independent acceptance and refusal review)', content:
+  if (!input.designQuestioning) out.push({ label: '(independent acceptance and refusal review)', content:
     '核验验收→用例→真实断言、失败路径及mock与产品真值的关系。来源/覆盖标签和工具绿灯不证明断言充分。对结构化拒修逐项核原依据与反证，以原issue-verification返回confirmed/refuted/unclear；拒修本身不关闭问题。正文中的实质否定不能被总结PASS覆盖。' });
   if (input.testStrengthCheck?.affected_files?.length) out.push({ label: '(current test strength verification)', content: JSON.stringify(input.testStrengthCheck, null, 2)
     + '\n在原issue-verification块以issue=coding_existing_test_preserved返回逐项裁决，evidence须包含全部当前文件与完整原details（可用YAML block scalar保留多行）。confirmed表示当前删弱/跳过致原验收不足；refuted表示已核实合理加强或真实重签后的期望且覆盖充分，不否认原文本差异；unclear/缺原件保留未知。即使文本原样保留，也须核外部fixture/data/mock是否弱化真值。' });

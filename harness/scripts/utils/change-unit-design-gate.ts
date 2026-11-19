@@ -264,23 +264,28 @@ export function validateChangeUnitDesign(
   for (const address of [...required].sort()) {
     const record = addressIndex.get(address);
     if (!record) continue;
+    const ref = targetRef(owner, address);
     if (dispositionBlocks(record)) {
-      issues.push(changeUnitIssue(
+      const issue = changeUnitIssue(
         'change_unit_current_design_unresolved',
         `$.design_refs[${address}]`,
         `${address} 在当前 delta 中仍为 unknown/open decision/blocker。`,
         'BLOCKER',
         'reconcile_blueprint',
-      ));
+      );
+      if (ref) issue.authority = { blueprint_id: ref.blueprint_id, target: ref.target, field: '' };
+      issues.push(issue);
     }
     if (address.startsWith('contract:') && !contractIsAdmitted(record)) {
-      issues.push(changeUnitIssue(
+      const issue = changeUnitIssue(
         'change_unit_contract_not_admitted',
         `$.design_refs[${address}]`,
         `${address} 缺 authoritative provenance，不能进入施工。`,
         'BLOCKER',
         'reconcile_blueprint',
-      ));
+      );
+      if (ref) issue.authority = { blueprint_id: ref.blueprint_id, target: ref.target, field: 'provenance' };
+      issues.push(issue);
     }
   }
 

@@ -53,6 +53,7 @@ import { runGoalModeSessionStep as runGoalModeSessionStepUnchecked } from '../..
 import { readSessionExecution, acceptedSessionReport } from '../../scripts/utils/session-execution-handoff';
 import { withRuntimeTest, preserveRuntimeTestEvidence, type RuntimeTestControl } from '../utils/runtime-test-control';
 import { resolveCompletionDisposition } from '../../scripts/utils/verify-feature-completion';
+import { listDerivedHylyrePlanFiles } from '../../scripts/utils/derived-hylyre-plan';
 const runGoalModeSessionStep = (options: Parameters<typeof runGoalModeSessionStepUnchecked>[0], testControl: RuntimeTestControl = {}) =>
   withRuntimeTest({ root: options.projectRoot, ...testControl }, () => runGoalModeSessionStepUnchecked(options));
 
@@ -214,6 +215,61 @@ const semanticReviewCases: Case[] = (['normal', 'api429', 'unchanged'] as const)
 }));
 
 const cases: Case[] = [...semanticReviewCases, {
+  name: '7d2c49e8 independent strength fills only unanswered signed work and stops after unchanged omissions',
+  run: async () => {
+    const { root } = setupGoalRuntimeHost('deepseek-harness', false);
+    const base = 'doc/features/bc-openCard';
+    const folder = '02-Feature/FinancialCard/src/ohosTest/ets/test';
+    const files = ['First.test.ets', 'Second.test.ets'].map(file => folder + '/' + file);
+    const ids = ['AC-1', 'AC-2'];
+    const report = base + '/review/review-report.md';
+    const write = (file: string, content: string) => {
+      const absolute = path.join(root, file);
+      fs.mkdirSync(path.dirname(absolute), { recursive: true });
+      fs.writeFileSync(absolute, content, 'utf8');
+    };
+    try {
+      write(base + '/acceptance.yaml', YAML.stringify({ feature: 'bc-openCard', criteria: ids.map(id => ({
+        id, priority: 'P0', description: id + ' must test the actual product result', testable: true,
+        verification_steps: ['Observe an actual product result'], expected_result: 'The actual value is 42',
+        ut_layer: 'unit', ut_focus: 'native value and exact assertion',
+      })) }));
+      const contracts = YAML.parse(fs.readFileSync(path.join(root, base, 'contracts.yaml'), 'utf8'));
+      write(base + '/contracts.yaml', YAML.stringify({ ...contracts, files: [...contracts.files, ...files] }));
+      files.forEach((file, index) => write(file, "it('[" + (index ? 'BRANCH-second' : ids[index]) + "] asserted constant', 0, () => { expect(true).assertTrue(); });\n"));
+      const dag = base + '/ut/reports/flow-dag/second.dag.yaml';
+      write(dag, YAML.stringify({ flow_id: 'second', module: 'FinancialCard', branches: ['second'],
+        nodes: [{ id: 'second', type: 'assertion', linked_branch: 'second', linked_acceptance: ['AC-2'] }] }));
+      write(base + '/ut/reports/coverage-evidence.json', JSON.stringify({ schema_version: '1.0', feature: 'bc-openCard',
+        mappings: [{ scope_id: 'AC-2', scope_kind: 'acceptance_criterion', evidence_source: 'dag_ephemeral', evidence_ref: dag }] }));
+      write(report, '# 待审查\n');
+      const requirement = 'Validate the two actual product results in the original unit.';
+      authorizeFixtureConstruction(root, 'request', requirement, ['coding', 'review', 'ut']);
+      const requestIds: string[][] = [];
+      const probe = await runGoalRuntimeChain(root, {
+        adapter: 'deepseek-harness', runId: '7d2c49e8-unanswered-review', freshRequirement: requirement,
+        onAuthor: () => undefined,
+        onReview: context => {
+          const requested = context.prompt.split('\n').flatMap(line => /^\| (acceptance_test_strength_\S+) \|/.exec(line)?.[1] ?? []);
+          requestIds.push(requested);
+          assert(context.prompt.includes('[BRANCH-second] asserted constant'), 'the signed handback must name the DAG-linked it');
+          assert(requestIds.length <= 2, 'a third same-input response is forbidden');
+          const rows = requestIds.length === 1 ? [{ issue: 'acceptance_test_strength_AC-1', verdict: 'unclear',
+            evidence: 'The assertion in ' + files[0] + ' does not identify a live data source for the expected result.' }] : [];
+          write(report, '# 独立审查\n\n**审查结论**: 通过\n\n```issue-verification\n' + YAML.stringify(rows) + '```\n');
+        },
+        onHarnessSummary: ({ phase }) => phase === 'review' ? { checks: fixtureReadDependencies(root, [{
+          id: 'file_completeness', category: 'structure', severity: 'MAJOR', status: 'PASS', description: 'review report observed', details: report,
+        }], [report]) } : null,
+      });
+      assert(JSON.stringify(requestIds) === JSON.stringify([
+        ['acceptance_test_strength_AC-1', 'acceptance_test_strength_AC-2'], ['acceptance_test_strength_AC-2'],
+      ]), JSON.stringify(requestIds));
+      assert(probe.events.some(event => event.type === 'run_end' && event.halt_reason === 'no_progress_guard'),
+        'repeated omission should preserve the original completion gap under no_progress_guard');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  },
+}, {
   name: '4c8d73b1 successor facts reuse requires an audited original and unchanged observed sources',
   run: async () => {
     const root = setupGoalRuntimeHost('codex', false).root;
@@ -221,20 +277,23 @@ const cases: Case[] = [...semanticReviewCases, {
     const parent = '4c8d73b1-facts-parent', child = '4c8d73b1-facts-child';
     const facts = path.join(root, 'doc/features/bc-openCard/context/facts.md');
     const originalSource = fs.readFileSync(path.join(root, PRODUCT_FILE));
+    const establish = (context: WorkUnitExecutionContext) => {
+      const sources = context.factsContext!.source_paths.filter(source => fs.existsSync(path.join(root, source)));
+      const rows = sources.map(source => `| ${source} | ${fs.readFileSync(path.join(root, source)).length} bytes actually read | preserve source repair contract |`);
+      fs.mkdirSync(path.dirname(facts), { recursive: true });
+      fs.writeFileSync(facts, '---\n' + YAML.stringify({ schema_version: '1.1', feature: 'bc-openCard', run_id: context.runId,
+        established_by: context.factsContext!.first_phase, source_code_paths: sources, key_inputs_read: sources,
+        files_inspected_count: sources.length, searches_performed_estimate: 4, decisions_unlocked: ['source repair'],
+        ready_to_produce: true, has_blocker_coverage_risk: false, exploration_mode: 'sequential' })
+        + '---\n## Code Facts\n| 路径 | 事实 | 影响 |\n|---|---|---|\n' + rows.join('\n') + '\n## phase_delta: coding\nOriginal sources inspected.\n');
+    };
     try {
       const launch = declareSourceRepairRequest(root, ['coding']).launch;
       let parentAuthors = 0;
       const first = await runGoalRuntimeChain(root, { ...launch, adapter: 'codex', runId: parent,
         onAuthor: (_ctx, context) => {
           assert(++parentAuthors <= 3, 'unchanged source repair must converge');
-          const sources = context.factsContext!.source_paths.filter(source => fs.existsSync(path.join(root, source)));
-          const rows = sources.map(source => `| ${source} | ${fs.readFileSync(path.join(root, source)).length} bytes actually read | preserve source repair contract |`);
-          fs.mkdirSync(path.dirname(facts), { recursive: true });
-          fs.writeFileSync(facts, '---\n' + YAML.stringify({ schema_version: '1.1', feature: 'bc-openCard', run_id: parent,
-            established_by: context.factsContext!.first_phase, source_code_paths: sources, key_inputs_read: sources,
-            files_inspected_count: sources.length, searches_performed_estimate: 4, decisions_unlocked: ['source repair'],
-            ready_to_produce: true, has_blocker_coverage_risk: false, exploration_mode: 'sequential' })
-            + '---\n## Code Facts\n| 路径 | 事实 | 影响 |\n|---|---|---|\n' + rows.join('\n') + '\n## phase_delta: coding\nOriginal source unchanged.\n');
+          establish(context);
         },
         onHarnessSummary: ({ phase }) => phase === 'coding' ? { checks: fixtureReadDependencies(root, [productEvidenceCheck(root, marker)], [PRODUCT_FILE]) } : null,
       });
@@ -248,7 +307,27 @@ const cases: Case[] = [...semanticReviewCases, {
           assert(fs.readFileSync(facts, 'utf8') === originalFacts, 'inheriting facts must not rewrite the predecessor run identity');
           fs.appendFileSync(path.join(root, PRODUCT_FILE), `\n// ${marker}\n`);
         },
-        onHarnessSummary: ({ phase }) => phase === 'coding' ? { checks: fixtureReadDependencies(root, [productEvidenceCheck(root, marker)], [PRODUCT_FILE]) } : null,
+        onHarnessSummary: ({ phase }) => {
+          if (phase !== 'coding') return null;
+          const runDir = path.join(root, 'doc/features/bc-openCard/goal-runs', child);
+          const file = path.join(runDir, 'events.jsonl');
+          const start = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line))
+            .filter(event => event.type === 'harness_start' && event.phase === phase).at(-1);
+          const attemptId = String(start.invoke_id).slice(phase.length + 1);
+          const token = `${child}/harness/${start.invoke_id}`;
+          fs.appendFileSync(file, JSON.stringify({ ...start, process_role: 'harness', run_id: child, token,
+            pid: process.pid, started_at_ms: Date.now(), executable: process.execPath }) + '\n');
+          const args = process.argv;
+          try {
+            process.argv = [...args, '--goal-gate-token', token];
+            const { loadFormalFactsObservation } = require('../../scripts/utils/capability-resolution-entry-input') as typeof import('../../scripts/utils/capability-resolution-entry-input');
+            const checked = loadFormalFactsObservation({ projectRoot: root, frameworkRoot: path.resolve(__dirname, '../../..'),
+              feature: 'bc-openCard', phase, runId: child, attemptId });
+            assert(checked?.context.baseline?.established_by === 'coding'
+              && checked.sources.get(PRODUCT_FILE)?.written === true, 'the formal gate must use the same inherited baseline and the real signed source write');
+          } finally { process.argv = args; }
+          return { checks: fixtureReadDependencies(root, [productEvidenceCheck(root, marker)], [PRODUCT_FILE]) };
+        },
       });
       assert(inherited && second.exitCode === 0, 'the audited successor completes after its actual source repair');
       const { loadSuccessorFactsBaseline } = require('../../scripts/utils/capability-resolution-entry-input') as typeof import('../../scripts/utils/capability-resolution-entry-input');
@@ -256,12 +335,27 @@ const cases: Case[] = [...semanticReviewCases, {
         'source changes after the predecessor observation cannot be washed into an inherited baseline');
       fs.writeFileSync(path.join(root, PRODUCT_FILE), originalSource);
       const contract = path.join(root, 'doc/features/bc-openCard/contracts.yaml');
-      const changedAuthority = YAML.parse(fs.readFileSync(contract, 'utf8')); changedAuthority.version = 'changed-construction-authority';
+      const originalContract = fs.readFileSync(contract, 'utf8');
+      const changedAuthority = YAML.parse(originalContract); changedAuthority.version = 'changed-construction-authority';
       fs.writeFileSync(contract, YAML.stringify(changedAuthority));
       const entry = require('../../scripts/utils/capability-resolution-entry-input') as typeof import('../../scripts/utils/capability-resolution-entry-input');
       const lookup = { projectRoot: root, frameworkRoot: path.resolve(__dirname, '../../..'), feature: 'bc-openCard', featuresDir: 'doc/features', phase: 'coding', goalAttemptId: 'i99' };
       assert(entry.loadCompletedFactsObservation(lookup, parent, lookup.frameworkRoot), 'unchanged product observations alone remain available after the authority change');
       assert(!loadSuccessorFactsBaseline(lookup, child, lookup.frameworkRoot), 'changed establishing-phase evidence must reject inherited admission before an author receives baseline=true');
+      fs.writeFileSync(contract, originalContract);
+      const rebuilt = '7d2c49e8-facts-rebuild';
+      let rebuilds = 0;
+      const third = await runGoalRuntimeChain(root, { ...launch, adapter: 'codex', runId: rebuilt, supersede: [child],
+        onAuthor: (_ctx, context) => {
+          assert(++rebuilds === 1 && !context.factsContext?.baseline && context.factsContext?.first_phase === 'coding',
+            'the externally replaced source requires a fresh birth-owner admission');
+          fs.appendFileSync(path.join(root, PRODUCT_FILE), `\n// ${marker}\n`);
+          establish(context);
+        },
+        onHarnessSummary: ({ phase }) => phase === 'coding' ? { checks: fixtureReadDependencies(root, [productEvidenceCheck(root, marker)], [PRODUCT_FILE]) } : null,
+      });
+      assert(third.exitCode === 0 && rebuilds === 1 && fs.readFileSync(facts, 'utf8').includes(`run_id: ${rebuilt}`),
+        'the authorized rebuild must be checked in the unchanged successor request');
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   },
 }, {
@@ -329,6 +423,60 @@ const cases: Case[] = [...semanticReviewCases, {
           assert(supplements === 0 && probe.exitCode !== 0, 'unavailable device conditions cannot dispatch a verifier or sign completion');
           assert(probe.events.some(event => event.type === 'phase_halt' && String(event.halt_guidance).includes('original failure-state device unavailable')), 'the original exact waiting condition remains visible');
         }
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    }
+  },
+}, {
+  name: '7d2c49e8 testing preparation is issued with its testing targets before HAP evidence, and an unchanged refusal is not repurchased',
+  run: async () => {
+    for (const knownData of [true, false]) {
+      const root = setupGoalRuntimeHost('codex', false).root;
+      const topPlan = 'doc/features/bc-openCard/testing/test-plan.md';
+      let prepared = '', calls = 0, readiness = 0;
+      try {
+        authorizeFixtureConstruction(root, 'request');
+        const reports = path.join(root, 'doc/features/bc-openCard/testing/reports');
+        for (const file of listDerivedHylyrePlanFiles(reports)) fs.unlinkSync(file.hylyrePath);
+        const run = await runGoalRuntimeChain(root, { adapter: 'codex', runId: `7d2c-testing-prepare-${knownData}`,
+          deviceGate: ({ phase }: { phase: string }) => {
+            if (phase === 'testing') {
+              readiness++;
+              assert(prepared && fs.existsSync(prepared), 'testing readiness must follow executable plan preparation');
+            }
+            return { env: { HARNESS_HDC_TARGET: 'fake-device', MAISON_DEVICE_TARGET_KIND: 'physical' },
+              target: { serial: 'fake-device', targetKind: 'physical' }, notes: ['fixture only'] };
+          },
+          onAuthor: (_ctx, context) => {
+            if (context.workInput?.material?.purpose !== 'testing-preparation') return;
+            assert(++calls === 1, 'the same preparation input may only be issued once');
+            assert(context.instruction?.includes('TC-01') && context.instruction.includes('进程重启只复位进程'),
+              'current structured TC and reset distinction must reach the original author');
+            prepared = /派生文件只写 ([^\n]+?)。/.exec(context.instruction ?? '')?.[1] ?? '';
+            assert(prepared.endsWith('test-plan.hylyre.md'), 'the original request must give the exact canonical preparation target');
+            if (knownData) {
+              fs.mkdirSync(path.dirname(prepared), { recursive: true });
+              fs.writeFileSync(prepared, 'TC-01 isolated test account data prepared as required\n');
+            }
+          },
+          onHarnessSummary: ({ phase }) => phase !== 'testing' ? null : {
+            checks: fixtureReadDependencies(root, [{
+              id: 'device_test_run', category: 'structure', description: 'official derivation check fixture',
+              severity: 'BLOCKER', status: prepared && fs.existsSync(prepared) ? 'PASS' : 'FAIL', repair_owner: 'testing',
+              details: 'TC-01 requires a verifiable isolated account starting state',
+              structured: { derive_hint: { coverage_reason: 'no_derived', missing_tc_ids: ['TC-01'] } },
+            }], [topPlan]),
+          },
+        });
+        assert(calls === 1, 'the missing preparation must reach a writable testing request: ' + JSON.stringify(run.events.filter(event => event.type === 'phase_halt')));
+        assert(readiness === (knownData ? 1 : 0), 'only an executable test plan reaches the actual device boundary');
+        assert(!run.events.some(event => event.type === 'phase_halt' && String(event.halt_guidance).includes('HAP 尚不可核验')),
+          'a missing HAP by itself does not make preparation an external wait');
+        assert(run.harnessPhases.filter(phase => phase === 'testing').length >= 2, 'the producer handback is checked by the original formal check flow');
+        if (knownData) assert(run.events.some(event => event.type === 'phase_write_observed'
+          && (event.owned as Array<{ path?: string; owner?: string }> | undefined)?.some(write => write.path?.endsWith('test-plan.hylyre.md') && write.owner === 'testing')),
+        'the derived plan must be observed under the testing owner');
+        else assert(run.exitCode !== 0 && run.events.some(event => event.type === 'phase_halt' && String(event.halt_guidance).includes('TC-01')),
+          'the actual case remains incomplete when its data state cannot be established');
       } finally { fs.rmSync(root, { recursive: true, force: true }); }
     }
   },

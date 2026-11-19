@@ -4,6 +4,7 @@ import path from 'path';
 import { acCoverageCoversScope, type AcCoverageReport } from './ac-coverage-report';
 import { featureFilePath, relFeatureFile } from '../../config';
 import { isUnitUtLayer } from './acceptance-layering';
+import { hasExactUtBranchTag, hasExactUtScopeTag } from './ut-tag-match';
 export type EvidenceSourceKind =
   | 'dag_archived'
   | 'dag_ephemeral'
@@ -181,6 +182,7 @@ export interface DagEvidenceNodeLink {
 /** Minimal DAG fields for AC/BD ↔ evidence linkage (no harness import cycle). */
 export interface DagEvidenceLink {
   flow_type?: string;
+  branches?: string[];
   linked_acceptance?: string[];
   linked_boundaries?: string[];
   nodes?: DagEvidenceNodeLink[];
@@ -200,6 +202,42 @@ export function dagLinksScopeId(dag: DagEvidenceLink, scopeId: string): boolean 
     if ((node.linked_boundaries ?? []).includes(scopeId)) return true;
   }
   return false;
+}
+
+export function utCaseLinksAcceptance(test: { name: string; body: string }, item: { id: string; linked_branch?: string }): boolean {
+  const branch = item.linked_branch;
+  return hasExactUtScopeTag(test.name, item.id) || !!branch
+    && (hasExactUtBranchTag(test.name, branch) || test.body.includes(branch));
+}
+
+type LinkedUseCaseBranch = { id: string; linked_acceptance?: string[] };
+
+export function useCaseBranchesForScope(branches: readonly LinkedUseCaseBranch[], scopeId: string): string[] {
+  return branches.filter(branch => branch.linked_acceptance?.includes(scopeId)).map(branch => branch.id);
+}
+
+/** Flow-wide branches identify a scope only when the scope is unique. */
+export function dagBranchesForScope(dag: DagEvidenceLink, scopeId: string, useCaseBranches: readonly LinkedUseCaseBranch[] = []): string[] {
+  const nodes = dag.nodes ?? [];
+  const linked = nodes.filter(node => (node.linked_acceptance ?? []).includes(scopeId)
+    || (node.linked_boundaries ?? []).includes(scopeId));
+  const branches = [...linked.flatMap(node => node.linked_branch ? [node.linked_branch] : []),
+    ...useCaseBranchesForScope(useCaseBranches, scopeId).filter(branch => dag.branches?.includes(branch))];
+  if (branches.length) return [...new Set(branches)];
+  const scopeIds = new Set([...(dag.linked_acceptance ?? []), ...(dag.linked_boundaries ?? []),
+    ...nodes.flatMap(node => [...(node.linked_acceptance ?? []), ...(node.linked_boundaries ?? [])])]);
+  if (scopeIds.size !== 1 || !scopeIds.has(scopeId)) return [];
+  return dag.branches?.length ? dag.branches : nodes.flatMap(node => node.linked_branch ? [node.linked_branch] : []);
+}
+
+/** A shared DAG can nominate branch cases for review without assigning them to an acceptance. */
+export function dagBranchCandidatesForScope(dag: DagEvidenceLink, scopeId: string): string[] {
+  const scopes = new Set([...(dag.linked_acceptance ?? []), ...(dag.linked_boundaries ?? [])]);
+  if (scopes.size < 2 || !scopes.has(scopeId)) return [];
+  const nodes = dag.nodes ?? [];
+  const assigned = new Set(nodes.filter(node => node.linked_acceptance?.length || node.linked_boundaries?.length).map(node => node.linked_branch));
+  return [...new Set([...(dag.branches ?? []), ...nodes.flatMap(node => node.linked_branch ? [node.linked_branch] : [])])]
+    .filter(branch => !assigned.has(branch));
 }
 
 /** True only when every DAG that declares flow_type is characterization (mixed → false). */

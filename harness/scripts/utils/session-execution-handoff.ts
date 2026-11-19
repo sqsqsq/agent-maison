@@ -2,7 +2,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { createHash } from 'crypto';
 import type { WorkUnitExecutionContext } from './goal-phase-executor';
-import { featureFilePath } from '../../config';
+import { featureFilePath, resolveFeatureArtifact } from '../../config';
+import { resolvePhasePathOwnership } from './phase-write-boundary';
+import { workUnitMayWritePath } from './repair-responsibility';
 import { assertFencedOwner, readRunControl, setSessionExecutionLease, type RunFenceToken } from './goal-run-control';
 import { loadEventsJsonlStrict, loadAuthoritativeEvents, resolveValidationOnlyEligibility, type GoalRunEvent } from './goal-runner-phase';
 import { capturePhaseInvocationSnapshot, diffPhaseInvocationSnapshots, classifyPhaseInvocationChanges,
@@ -30,6 +32,7 @@ export interface SessionExecutionRequest {
   pre_snapshot: PhaseInvocationSnapshot | null;
   write_boundary: PhaseWriteBoundaryResolution | null;
   snapshot_options?: Parameters<typeof capturePhaseInvocationSnapshot>[1];
+  acceptance_preimage?: string;
 }
 export interface IssuedSessionExecution { request: SessionExecutionRequest; reference: HandoffReference; event: GoalRunEvent }
 export function sessionExecutionDeadlineMs(request: SessionExecutionRequest): number {
@@ -316,6 +319,17 @@ export function writePhaseExecutionRequestMaterial(input: PhaseExecutionRequestM
     pre_snapshot: input.preSnapshot, write_boundary: input.writeBoundary,
     ...(input.snapshotOptions ? { snapshot_options: input.snapshotOptions } : {}),
   };
+  if (context.feature.startsWith('cu-') && input.writeBoundary?.executionRole === 'author' && input.preSnapshot) {
+    const artifact = resolveFeatureArtifact(context.projectRoot, context.feature, 'acceptance.yaml');
+    const relative = path.relative(context.projectRoot, artifact.actualPath).replace(/\\/g, '/');
+    const observed = input.preSnapshot.entries.find(entry => entry.path === relative && entry.kind === 'file');
+    if (observed && workUnitMayWritePath(input.writeBoundary, relative) && resolvePhasePathOwnership(input.writeBoundary, relative).owner === 'spec') {
+      try {
+        const bytes = fs.readFileSync(artifact.actualPath);
+        if (digest(bytes) === observed.sha256) request.acceptance_preimage = bytes.toString('base64');
+      } catch { /* Concurrent change prevents attesting this preimage. */ }
+    }
+  }
   const file = path.join(context.runDir, 'phases', context.phase, input.invokeId, `request-e${context.owner.epoch}.json`);
   if (fs.existsSync(file)) {
     const original = JSON.parse(fs.readFileSync(inside(context.runDir, file), 'utf8')) as SessionExecutionRequest;
@@ -464,13 +478,23 @@ export function acceptSessionExecution(input: {
       if (fs.existsSync(draft)) draftOutputs[name] = fs.readFileSync(draft).toString('base64');
     }
   }
+  if (!saved && boundary?.verifierResultPath && issued.request.context.workInput?.material.acceptanceReview) {
+    const actual = path.resolve(boundary.projectRoot, boundary.verifierResultPath);
+    const observed = post?.entries.find(entry => entry.kind === 'file' && path.resolve(boundary.projectRoot, entry.path) === actual);
+    if (observed) {
+      const bytes = fs.readFileSync(actual);
+      if (digest(bytes) === observed.sha256) draftOutputs['independent-' + path.basename(actual)] = bytes.toString('base64');
+    }
+  }
   // Persist the replay input before any observation can refer to its post-snapshot.
   const archive = saved?.reference ?? immutableJson(runDir, file, { report, post_snapshot: post, ...(Object.keys(draftOutputs).length ? { draft_outputs: draftOutputs } : {}) });
   if (pre && boundary && post) {
     const diff = diffPhaseInvocationSnapshots(pre, post);
     if (diff.kind === 'changed') {
       const writes = classifyPhaseInvocationChanges(boundary, report.phase, diff.changes, { events: sessionEvents(runDir), invokeId: issued.request.invoke_id });
-      const owned = writes.allowed.filter(write => write.roles.some(role => role.kind === 'artifact' || role.kind === 'source'));
+      const signedFiles = new Set((issued.request.snapshot_options?.includeFiles ?? []).map(file => path.resolve(boundary.projectRoot, file)));
+      const owned = writes.allowed.filter(write => write.roles.some(role => role.kind === 'artifact' || role.kind === 'source'
+        || role.kind === 'phase_workspace' && signedFiles.has(path.resolve(boundary.projectRoot, write.path))));
       if ((writes.observed.length || owned.length) && !sessionEvents(runDir).some(event => event.type === 'phase_write_observed'
         && event.invoke_id === issued.request.invoke_id && !(event as Record<string, unknown>).producer)) input.emit({
         type: 'phase_write_observed', phase: report.phase, invoke_id: issued.request.invoke_id,

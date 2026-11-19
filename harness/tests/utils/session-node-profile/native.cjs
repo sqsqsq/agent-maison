@@ -28,6 +28,7 @@ function run(ctx, files) {
   fs.mkdirSync(path.dirname(logPath), { recursive: true });
   fs.writeFileSync(logPath, log);
   return { ok: r.status === 0 && !r.error && executed > 0 && executed === expected && failed === 0 && skipped === 0,
+    executionOriginals: [logPath, ...selected],
     passed_tests: [...log.matchAll(/^ok \d+ - (.+)$/gm)].filter(match => !/\s+#\s*(?:SKIP|TODO)\b/i.test(match[1])).map(match => ({ suite: 'node:test', test: match[1] })),
     details: `node --test exit=${r.status}; selected=${expected}; executed=${executed}; failed=${failed}; skipped=${skipped}; log=${logPath}\n${log}` };
 }

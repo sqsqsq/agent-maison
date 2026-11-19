@@ -351,18 +351,28 @@ test('③a 无 MAISON_GOLDEN_CONTRACT：target 集合 P0-only，P1 屏不进入�
     assert.strictEqual(process.env.MAISON_GOLDEN_CONTRACT ?? '', '',
       '本用例须在无 golden env 下运行');
     // nav 只覆盖 P0 屏（golden P1 / forbidden 键都不出现）
-    writeFile(c.projectRoot, `doc/features/${FEATURE}/device-testing/visual-diff-nav.json`, JSON.stringify({
+    const expected = `doc/features/${FEATURE}/device-testing/visual-diff-nav.json`;
+    const misplaced = `doc/features/${FEATURE}/testing/visual-diff-nav.json`;
+    const navigation = JSON.stringify({
       schema_version: '2.0',
       screens: {
         all_banks: { steps: [], identity: IDENTITY.all_banks },
       },
-    }, null, 2));
+    }, null, 2);
+    writeFile(c.projectRoot, misplaced, navigation);
+    const prior = runDeviceVisualDiffCapture(c.ctx, c.holder, devices([])).find(r => r.id === 'visual_diff_capture');
+    assert.strictEqual(prior?.status, 'FAIL');
+    assert.strictEqual(prior?.repair_owner, 'testing');
+    assert.deepStrictEqual(prior?.affected_files, [expected]);
+    assert.ok(prior?.suggestion?.includes('旧 testing/visual-diff-nav.json'));
+    writeFile(c.projectRoot, expected, navigation);
     const results = runDeviceVisualDiffCapture(c.ctx, c.holder, devices([]));
     const gate = results.find(r => r.id === 'visual_diff_capture') as CheckResult;
     assert.strictEqual(gate?.status, 'PASS', `P0-only nav 应 PASS：${JSON.stringify(results)}`);
     const ids = loadVisualDiffJson(c.projectRoot).map(s => s.screen_id);
     assert.deepStrictEqual(ids, ['all_banks'],
       `普通模式不得扩面采集 P1（golden P1 overlay 不得出现）：${ids.join(', ')}`);
+    assert.strictEqual(fs.readFileSync(path.join(c.projectRoot, misplaced), 'utf8'), navigation);
   } finally {
     teardown(c);
   }

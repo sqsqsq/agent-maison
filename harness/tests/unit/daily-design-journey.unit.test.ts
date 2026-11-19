@@ -249,7 +249,31 @@ function unitReviewReport(host: Host, feature: string): void {
   writeHostFile(host.root, `doc/features/${rel}/review/review-report.md`, '# 审查报告\n\n> **保证等级**: standard\n\n## 1. 审查范围\n- ' + SOURCE + '\n\n## 2. 审查维度\n契约、边界及恢复；真实编译与Node断言另由工具执行。\n\n## 3. 问题清单\n| 编号 | 分类 | 严重程度 | 问题描述 | 涉及文件 | 修复建议 |\n|---|---|---|---|---|---|\n\n## 4. 问题统计\n| 严重程度 | 数量 |\n|---|---|\n| BLOCKER | 0 |\n| MAJOR | 0 |\n| MINOR | 0 |\n\n## 5. 修复建议\n无新增建议。\n\n## 6. 结论\n**审查结论**: 通过\n');
 }
 
-function unitMaterials(host: Host, context: any): void {
+function taggedStrengthRows(host: Host, context: any): Array<{ issue: string; verdict: string; evidence: string; production_paths: string[] }> {
+  const questions = Object.keys(context.workInput?.material.acceptanceReview ?? {});
+  if (!questions.length) return [];
+  assert.deepEqual(questions, ['acceptance_test_strength_AC-1']);
+  assert(context.instruction.includes('| acceptance_test_strength_AC-1 |'));
+  assert.equal(read(host.root, SOURCE), PRODUCT);
+  const testText = read(host.root, TEST);
+  assert(testText.includes("import { LedgerFeature } from '../main/LedgerFeature'"));
+  const testNames = [ADD_CASE, RESTORE_CASE];
+  assert(testNames.every(name => testText.includes(name) && context.instruction.includes(name)));
+  assert(testText.includes('expect(original).toEqual') && testText.includes('expect(result.balance).toEqual')
+    && testText.includes('expect(LedgerFeature.restore(JSON.parse(JSON.stringify'));
+  return [{ issue: questions[0], verdict: 'refuted', evidence: '`' + TEST + ':5` ' + testNames.join('；')
+    + ' 以当前 Node 用例实际调用 `' + SOURCE + ':2-5` 的生产 add/restore，断言余额、原数组未修改及从保存数组恢复。执行证据由原正式 UT 独立读取。',
+    production_paths: [SOURCE] }];
+}
+
+function appendTaggedStrengthReview(host: Host, context: any): void {
+  const rows = taggedStrengthRows(host, context);
+  if (!rows.length) return;
+  const report = host.load('config').featureFilePath(host.root, context.feature, 'review/review-report.md');
+  fs.appendFileSync(report, '\n```issue-verification\n' + YAML.stringify(rows) + '```\n');
+}
+
+function unitMaterials(host: Host, context: any, preserveContracts = false): void {
   const feature = context.feature, rel = host.load('scripts/utils/feature-identity').featureRelativePath(feature);
   const specFile = host.load('config').featureFilePath(host.root, feature, 'spec/spec.md');
   writeHostFile(host.root, path.relative(host.root, specFile), '# Ledger calculation\n\n```yaml\nui_change: none\n```\n\n' + REQUIREMENT + '\n');
@@ -267,7 +291,7 @@ function unitMaterials(host: Host, context: any): void {
       const contracts = structuredClone(projected.value);
       contracts.change_unit = { change_unit_ref: identity.createChangeUnitRef(loaded),
         ...authorConstructionMapping(loaded.changeUnit, EVIDENCE_REFS) };
-      writeYaml(host.root, `doc/features/${rel}/contracts.yaml`, contracts);
+      if (!preserveContracts) writeYaml(host.root, `doc/features/${rel}/contracts.yaml`, contracts);
       if (projected.artifacts?.['use-cases@1']) writeYaml(host.root, `doc/features/${rel}/use-cases.yaml`, projected.artifacts['use-cases@1']);
     }
     if (family === 'coding') writeHostFile(host.root, SOURCE, PRODUCT);
@@ -396,17 +420,36 @@ async function report(host: Host, control: ReturnType<typeof prepare>, step: any
 }
 
 function assertDeliveryComplete(host: Host, control: ReturnType<typeof prepare>, step: any, testText = TEST_TEXT, testCount = 2): void {
-  assert.notEqual(step.type, 'phase_execute_request', JSON.stringify(step));
+  assert.equal(step.type, 'goal_session_result', JSON.stringify(step));
   const units = host.load('scripts/utils/change-unit-path').enumerateCanonicalChangeUnits(host.root, BLUEPRINT);
   assert.equal(units.length, 1);
   const feature = host.load('scripts/utils/change-unit-path').deriveChangeUnitFeatureId(BLUEPRINT, UNIT);
   const assessment = host.load('scripts/utils/feature-assessment').assessFeature(host.root, feature, { frameworkRoot: host.frameworkRoot,
     ...host.load('scripts/utils/change-unit-completion').resolveChangeUnitExpectedExecution(host.root, feature) });
   assert(assessment.complete && assessment.record.state === 'ok', JSON.stringify(assessment));
-  assert(host.load('scripts/utils/initial-design-delivery').projectInitialDesignDelivery({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, manifest: control.prepared.manifest }).complete);
+  const projection = host.load('scripts/utils/initial-design-delivery').projectInitialDesignDelivery({
+    projectRoot: host.root, frameworkRoot: host.frameworkRoot, manifest: control.prepared.manifest,
+  });
+  assert(projection.complete);
+  assert.equal(step.result.status, 'completed');
+  assert.equal(step.result.next_action, projection.next_action);
+  assert.deepEqual(step.result.current, projection.current, 'the returning session uses the released owner view');
+  const terminalReport = JSON.parse(read(control.prepared.runDir, 'goal-report.json'));
+  const terminalProgress = JSON.parse(read(control.prepared.runDir, 'progress.json'));
+  assert.equal(terminalReport.status, 'COMPLETED');
+  assert.deepEqual(terminalProgress, terminalReport, 'both files use the same committed terminal event');
   const tap = fs.readFileSync(path.join(host.load('config').featurePhaseReportsDir(host.root, feature, 'ut', host.frameworkRoot), 'node-tests.tap'), 'utf8');
   assert(tap.includes(`# tests ${testCount}`)); assert.match(tap, /# fail 0/); assert.match(tap, /# skipped 0/);
   assert.equal(read(host.root, SOURCE), PRODUCT); assert.equal(read(host.root, TEST), testText);
+  const completion = JSON.parse(fs.readFileSync(host.load('config').featureFilePath(host.root, feature, 'feature-completion.json'), 'utf8'));
+  const { run_id: runId } = JSON.parse(read(host.root, completion.original_path));
+  assert(runId, 'the completion must refer to the actual CU run');
+  const executionScope = host.load('scripts/utils/goal-run-creation').resolveEffectiveScopeSource(host.root, feature, runId)?.scope;
+  const strength = host.load('scripts/utils/acceptance-review-strength').readTaggedAcceptanceStrength({
+    projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature, runId, executionScope,
+  }).find((item: any) => item.issue === 'acceptance_test_strength_AC-1');
+  assert(strength?.attempted && strength.verdict?.verdict === 'refuted' && strength.passed,
+    'completion must consume the signed AC-1 review and the current real Node execution evidence');
 }
 
 async function finishConstruction(host: Host, control: ReturnType<typeof prepare>, step: any): Promise<any> {
@@ -416,6 +459,7 @@ async function finishConstruction(host: Host, control: ReturnType<typeof prepare
     assert(issued, 'each continuation consumes its real signed execution request');
     const context = issued.request.context, phase = context.phase;
     if (phase === 'work-unit-author') { unitMaterials(host, context); assertFrozenInputs(host, context); }
+    else if (phase === 'review') { unitReviewReport(host, context.feature); appendTaggedStrengthReview(host, context); }
     else if (phase.endsWith('-verifier-format-repair')) verifierReply(host, context, phase.replace(/-verifier-format-repair$/, ''));
     else assert.fail('unexpected construction responsibility: ' + phase);
     step = await report(host, control, step, '已读取本次实际请求和材料交回；完成与否由真实检查和独核决定。');
@@ -447,11 +491,12 @@ function mediumSession(host: Host): string {
   return file + '#medium-user';
 }
 
-async function completeDelivery(medium = false, moduleRevision = false): Promise<void> {
+async function completeDelivery(medium = false, moduleRevision = false, acceptanceRevision = false): Promise<void> {
   const previousHome = process.env.CLAUDE_CONFIG_DIR;
   try { return await withHost(async host => {
-    const control = prepare(host, medium ? 'daily-medium-single' : 'daily-design-complete', 'claude', medium ? mediumSession(host) : undefined);
+    const control = prepare(host, medium ? 'daily-medium-single' : acceptanceRevision ? 'daily-acceptance-resign' : 'daily-design-complete', 'claude', medium ? mediumSession(host) : undefined);
     let designAuthors = 0, constructionAuthors = 0, decompositionAuthors = 0, visualReissued = false;
+    let acceptanceBefore = '', acceptanceIntermediate = '', acceptanceAfter = '', designRepairs = 0;
     let oldContractBindings: any[] = [], revisedContractFingerprint = '', revisedRunDir = '', revisedFeature = '';
     let step = await withRuntimeTest({ root: host.root }, () => control.entry.runGoalModeSessionStep(control.options));
     for (let call = 0; step.type === 'phase_execute_request' && call < 16; call++) {
@@ -463,7 +508,8 @@ async function completeDelivery(medium = false, moduleRevision = false): Promise
       assert.equal(context.adapterModel, host.load('scripts/utils/adapter-model').adapterModelBinding(currentManifest.adapter_model_pin), 'each actual request inherits the complete manifest binding');
       assert.equal(currentManifest.requirement, REQUIREMENT, 'the original request stays bound across the real actor family');
       if (context.feature !== BLUEPRINT) assert.deepEqual(currentManifest.delivery_origin, { feature: BLUEPRINT, run_id: control.prepared.manifest.run_id });
-      if (phase === 'work-unit-author' && !visualReissued) {
+      if (acceptanceRevision && phase === 'review') break; // The normal entry has already rechecked UT; this probe owns only that recovery segment.
+      if (phase === 'work-unit-author' && !visualReissued && !acceptanceRevision) {
         const readVisual = host.load('scripts/utils/phase-state').readGoalVisualProviderEnv;
         const oldVisual = readVisual(context.childEnv);
         assert.equal(oldVisual.provider, 'visual-a');
@@ -491,9 +537,22 @@ async function completeDelivery(medium = false, moduleRevision = false): Promise
         assert.equal(++designAuthors, 1, 'normal design returned unexpected author feedback: ' + context.instruction);
         const draft = blueprintDraft(host, false);
         if (moduleRevision) draft.design_views.find((view: any) => view.view_id === 'logical').nodes[0].contracts.modules = [];
+        if (acceptanceRevision) draft.contracts[0].provenance.evidence_strength = 'observed';
         writeYaml(host.root, `doc/features/${BLUEPRINT}/blueprint/component-blueprint.yaml`, draft);
       }
       else if (phase === 'initial-design-questioning') output = questioningReply(host, false);
+      else if (phase === 'design-repair-author' && acceptanceRevision) {
+        designRepairs++;
+        assert.match(context.instruction, /change_unit_contract_not_admitted/);
+        assert.match(context.instruction, /当前草稿预装待接受候选/);
+        const draftFile = path.join(context.runDir, 'design-repair/component-blueprint.yaml');
+        const draft = YAML.parse(fs.readFileSync(draftFile, 'utf8'));
+        draft.contracts[0].provenance.evidence_strength = 'authoritative';
+        writeYaml(host.root, path.relative(host.root, draftFile), draft);
+        fs.writeFileSync(path.join(context.runDir, 'design-repair/change-unit-candidates.json'), '[]\n');
+      } else if (phase === 'design-repair-questioning' && acceptanceRevision) {
+        output = questioningReply(host, false, path.relative(host.root, path.join(context.runDir, 'design-repair/component-blueprint.yaml')));
+      }
       else if (phase === 'initial-design-decomposition') {
         decompositionAuthors++;
         const file = `doc/features/${BLUEPRINT}/blueprint/change-unit-candidates.json`;
@@ -517,7 +576,7 @@ async function completeDelivery(medium = false, moduleRevision = false): Promise
           impact: { userVisibleBehaviorChange: false, reason: '账本内部纯TypeScript能力，不涉及UI或设备', basisPaths: [SOURCE] }, overwrite: true });
       } else if (phase === 'work-unit-author') {
         constructionAuthors++;
-        assert.equal(constructionAuthors, 1, 'normal construction received unexpected repair feedback: ' + context.instruction);
+        assert(constructionAuthors <= (acceptanceRevision ? 2 : 1), 'construction received unexpected repair feedback: ' + context.instruction);
         if (moduleRevision) {
           const scope = host.load('scripts/utils/goal-run-creation').loadEffectiveExecutionScope(host.root, context.feature, context.runId);
           oldContractBindings = scope.obligations.flatMap((obligation: any) => obligation.basis).filter((binding: any) => binding.input_id === 'contracts');
@@ -526,7 +585,39 @@ async function completeDelivery(medium = false, moduleRevision = false): Promise
           assert(fs.existsSync(originalFile) && oldContractBindings.some((binding: any) => binding.dependencies.some((dependency: any) =>
             path.resolve(dependency.path) === originalFile && dependency.exists && dependency.sha256)), 'the old binding must cover an existing contract artifact, not first materialization');
         }
-        unitMaterials(host, context);
+        if (!acceptanceRevision || constructionAuthors === 1) unitMaterials(host, context, acceptanceRevision);
+        if (acceptanceRevision) {
+          const actions = host.load('scripts/utils/feature-track');
+          const scope = host.load('scripts/utils/goal-run-creation').loadEffectiveExecutionScope(host.root, context.feature, context.runId);
+          const input = { projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: context.feature, requirement: REQUIREMENT,
+            runId: context.runId, runDir: context.runDir };
+          const file = host.load('config').resolveFeatureArtifact(host.root, context.feature, 'acceptance.yaml').actualPath;
+          const current = fs.readFileSync(file, 'utf8');
+          assert.equal(Buffer.from(issued.request.acceptance_preimage, 'base64').toString('utf8'), current);
+          const events = host.load('scripts/utils/session-execution-handoff').sessionEvents(context.runDir);
+          if (constructionAuthors === 1) acceptanceBefore = current;
+          else {
+            assert.equal(current, acceptanceIntermediate);
+            assert(!events.some((event: any) => event.type === 'scope_revised' && event.trigger?.check_id === 'owned_acceptance_binding'));
+            const external = YAML.parse(acceptanceBefore);
+            external.criteria[0].requirement_ref = { source_path: 'requirements/ledger.md', snippet: REQUIREMENT, locator: 'external write' };
+            try {
+              writeYaml(host.root, path.relative(host.root, file), external);
+              assert(!actions.refreshOwnedAcceptanceScopeInput(input, scope, events), 'a foreground write after the first signed handback cannot complete the chain');
+            } finally { fs.writeFileSync(file, acceptanceIntermediate); }
+          }
+          const next = YAML.parse(acceptanceBefore);
+          next.criteria[0].requirement_ref = { source_path: 'requirements/ledger.md', snippet: REQUIREMENT };
+          if (constructionAuthors === 1) next.criteria[0].expected_result = 'Weakened during the first author round';
+          writeYaml(host.root, path.relative(host.root, file), next);
+          if (constructionAuthors === 1) acceptanceIntermediate = fs.readFileSync(file, 'utf8');
+          else acceptanceAfter = fs.readFileSync(file, 'utf8');
+          assert(!actions.refreshOwnedAcceptanceScopeInput(input, scope, events), 'pending execution and a foreground overwrite cannot sign a new scope');
+          assert(!actions.refreshScopeBindingInput(input, scope)?.facts.flatMap((fact: any) => fact.basis).some((binding: any) =>
+            binding.input_id === 'acceptance' && binding.content_fingerprint !== scope.obligations.flatMap((fact: any) => fact.basis)
+              .find((prior: any) => prior.input_id === 'acceptance').content_fingerprint), 'semantic edits must not enter through the equivalent-dependency path');
+          revisedRunDir = context.runDir;
+        }
         if (moduleRevision) {
           const file = host.load('config').featureFilePath(host.root, context.feature, 'contracts.yaml');
           const contracts = YAML.parse(fs.readFileSync(file, 'utf8'));
@@ -550,11 +641,12 @@ async function completeDelivery(medium = false, moduleRevision = false): Promise
             .every((item: any) => oldContractBindings.some((old: any) => old.content_fingerprint === item.content_fingerprint)), 'without the original producer validation there is no automatic semantic re-sign');
           revisedRunDir = context.runDir; revisedFeature = context.feature;
         }
-        assertFrozenInputs(host, context);
-      } else if (phase.endsWith('-verifier-format-repair')) verifierReply(host, context, phase.replace(/-verifier-format-repair$/, ''));
+        if (!acceptanceRevision) assertFrozenInputs(host, context);
+      } else if (phase === 'review') { unitReviewReport(host, context.feature); appendTaggedStrengthReview(host, context); }
+      else if (phase.endsWith('-verifier-format-repair')) verifierReply(host, context, phase.replace(/-verifier-format-repair$/, ''));
       else assert.fail('unexpected production responsibility: ' + phase);
       step = await report(host, control, step, output);
-      if (phase === 'initial-design-decomposition' && (!medium || decompositionAuthors === 2)) {
+      if (phase === 'initial-design-decomposition' && !acceptanceRevision && (!medium || decompositionAuthors === 2)) {
         const selected = { ...control.prepared.manifest.adapter_model_pin, provider: 'https://second-fixture.invalid' };
         const rebound = control.entry.prepareGoalModeRun({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: BLUEPRINT,
           adapter: 'claude', requirement: REQUIREMENT, adapterModelPin: selected, visualProviderPin: { adapter: 'codex', model: 'gpt-6.1-sol', provider: 'visual-a', config_source: path.join(host.root, 'native/config.toml') }, modelOverride: true });
@@ -563,10 +655,47 @@ async function completeDelivery(medium = false, moduleRevision = false): Promise
         step = await withRuntimeTest({ root: host.root }, () => control.entry.runGoalModeSessionStep(control.options));
       }
     }
-    assert(visualReissued);
+    if (!acceptanceRevision) assert(visualReissued);
     assert.equal(decompositionAuthors, medium ? 2 : 1);
-    assert.equal(constructionAuthors, 1);
-    assertDeliveryComplete(host, control, step);
+    assert.equal(constructionAuthors, acceptanceRevision ? 2 : 1);
+    if (!acceptanceRevision) assertDeliveryComplete(host, control, step);
+    if (acceptanceRevision) {
+      assert.equal(designRepairs, 1);
+      const events = host.load('scripts/utils/session-execution-handoff').sessionEvents(revisedRunDir);
+      const observed = events.flatMap((event: any, at: number) => event.type === 'phase_write_observed' && event.phase === 'work-unit-author'
+        && event.owned?.some((write: any) => write.path.endsWith('/acceptance.yaml') && write.roles.some((role: any) => role.source === 'contract:spec.produces(acceptance@1)')) ? [at] : []);
+      assert.equal(observed.length, 2);
+      const revision = events.findIndex((event: any) => event.type === 'scope_revised' && event.trigger?.check_id === 'owned_acceptance_binding');
+      const firstSpec = events.findIndex((event: any) => event.type === 'harness_start' && event.phase === 'spec');
+      const secondSpec = events.findIndex((event: any, at: number) => at > revision && event.type === 'harness_start' && event.phase === 'spec');
+      const rechecked = events.findIndex((event: any, at: number) => at > secondSpec && event.type === 'phase_verdict' && event.phase === 'ut' && event.verdict === 'PASS');
+      assert(firstSpec > observed[0] && observed[1] > firstSpec && revision > observed[1] && secondSpec > revision && rechecked > secondSpec,
+        JSON.stringify(events.map((event: any) => [event.type, event.phase, event.verdict, event.reason])));
+      const feature = host.load('scripts/utils/change-unit-path').deriveChangeUnitFeatureId(BLUEPRINT, UNIT);
+      const scope = host.load('scripts/utils/goal-run-creation').loadEffectiveExecutionScope(host.root, feature, path.basename(revisedRunDir));
+      const context = { projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature, requirement: REQUIREMENT,
+        runId: path.basename(revisedRunDir), runDir: revisedRunDir };
+      const acceptanceFile = host.load('config').resolveFeatureArtifact(host.root, feature, 'acceptance.yaml').actualPath;
+      try {
+        for (const manualEdit of [
+          (doc: any) => { doc.criteria = []; },
+          (doc: any) => { doc.criteria[0].expected_result = 'Weakened by the foreground'; },
+        ]) {
+          const doc = YAML.parse(acceptanceAfter); manualEdit(doc);
+          writeYaml(host.root, path.relative(host.root, acceptanceFile), doc);
+          assert(!host.load('scripts/utils/feature-track').refreshOwnedAcceptanceScopeInput(context, scope, events),
+            'a direct foreground edit of a previously accepted obligation must not get a new binding');
+        }
+      } finally { fs.writeFileSync(acceptanceFile, acceptanceAfter); }
+      if (process.env.MAISON_EXPORT_7D2C49E8_REPLAY === '1') {
+        const dir = path.resolve(__dirname, '../../reports/7d2c49e8-dev/design-acceptance-continuation'); fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(path.join(dir, 'before-acceptance.yaml'), acceptanceBefore);
+        fs.writeFileSync(path.join(dir, 'intermediate-acceptance.yaml'), acceptanceIntermediate);
+        fs.writeFileSync(path.join(dir, 'after-acceptance.yaml'), acceptanceAfter);
+        fs.copyFileSync(path.join(revisedRunDir, 'events.jsonl'), path.join(dir, 'cu-events.jsonl'));
+        fs.copyFileSync(path.join(control.prepared.runDir, 'events.jsonl'), path.join(dir, 'design-events.jsonl'));
+      }
+    }
     if (moduleRevision) {
       const events = host.load('scripts/utils/session-execution-handoff').sessionEvents(revisedRunDir);
       const plan = events.findIndex((event: any, at: number) => event.type === 'phase_verdict' && event.phase === 'plan' && event.verdict === 'PASS'
@@ -659,13 +788,15 @@ const cases = [{
           .replace('**审查结论**: 通过', `**审查结论**: ${rows.length ? '不通过' : '通过'}`);
         const codingReport = JSON.parse(fs.readFileSync(path.join(host.load('config').featurePhaseReportsDir(host.root, feature, 'coding', host.frameworkRoot), 'script-report.json'), 'utf8'));
         const strength = codingReport.checks.find((check: any) => check.id === 'coding_existing_test_preserved' && check.affected_files?.length);
+        const verification = taggedStrengthRows(host, context) as Array<{ issue: string; verdict: string; evidence: string; production_paths?: string[] }>;
         if (strength) {
           const original = host.load('scripts/utils/repair-responsibility').codingTestPreservation({ projectRoot: host.root, feature, runId: context.runId, file: TEST });
           assert.equal(original.beforeText, existingTests, 'independent review reads the real original assertion');
           assert.equal(read(host.root, TEST), currentTests, 'the old negative-balance assertion remains and both required cases are added');
-          text += '\n```issue-verification\n' + YAML.stringify([{ issue: strength.id, verdict: 'refuted',
-            evidence: `${TEST}；${strength.details}；原负余额断言逐字保留，新增增额及恢复断言直接驱动LedgerFeature.add/restore；未删弱或跳过原断言。` }]) + '```\n';
+          verification.push({ issue: strength.id, verdict: 'refuted',
+            evidence: `${TEST}；${strength.details}；原负余额断言逐字保留，新增增额及恢复断言直接驱动LedgerFeature.add/restore；未删弱或跳过原断言。` });
         }
+        if (verification.length) text += '\n```issue-verification\n' + YAML.stringify(verification) + '```\n';
         fs.writeFileSync(reportPath, text);
       } else if (phase === 'design-repair-author') {
         designRepairs++;
@@ -693,6 +824,9 @@ const cases = [{
 }, {
   name: 'daily design: empty request reaches canonical CU completion with real TypeScript and Node assertions',
   run: () => completeDelivery(false, true),
+}, {
+  name: '7d2c49e8 managed runtime repairs closure, retains an omitted candidate, re-signs changed acceptance and runs the dependent check',
+  run: () => completeDelivery(false, false, true),
 }, {
   name: 'medium automatic decomposition returns multi-CU feedback to its author and completes one CU with real TypeScript and Node assertions',
   run: () => completeDelivery(true),
@@ -847,6 +981,7 @@ const cases = [{
         assert(repairs.some((problem: any) => context.instruction.includes(problem.id)), 'the independent writer receives the actual report deficit');
         assert.equal(read(host.root, SOURCE), PRODUCT);
         unitReviewReport(host, context.feature);
+        appendTaggedStrengthReview(host, context);
         observedMixed = true;
       } else if (context.phase.endsWith('-verifier-format-repair')) verifierReply(host, context, context.phase.replace(/-verifier-format-repair$/, ''));
       else assert.fail('unexpected mixed-fault responsibility: ' + context.phase);

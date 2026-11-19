@@ -45,6 +45,7 @@ import {
   resolveFeatureArtifact,
   relFeatureArtifact,
   relFeatureFile,
+  featureFilePath,
   featurePhaseReportsDir,
   receiptDirPath,
   resolveHylyreToolConfig,
@@ -179,6 +180,7 @@ import { normalizeDeviceTestCases } from './utils/device-test-case-kernel';
 import {
   loadVisualDiffNavConfig,
   loadVisualDiffNavConfigV2,
+  visualDiffNavConfigPath,
   resolveIdentityForTargets,
   toLegacyNavConfig,
   validateNavConfig,
@@ -237,9 +239,10 @@ import { injectP0IdentityAssertions } from './utils/p0-identity-injection';
 import { buildCanonicalSelectorIndex, type CanonicalSelectorIndex } from './utils/planned-step-normalizer';
 import { evaluateFailureBoundary, resolveArtifact } from './utils/hylyre-artifact-resolution';
 import {
-  parseRecordedNativeBinding,
+  validateRecordedNativeTraceArtifactBinding,
   validateNativeTraceArtifactBinding,
 } from './utils/native-trace-binding';
+import { isRecordedDeviceBuildResult } from './utils/testing-report-reconcile';
 import {
   evaluateHylyreNativeEvidenceGate,
   parseHylyreTrace,
@@ -2341,31 +2344,12 @@ function checkReportReconcileOnlyPipeline(
       readyRecord.value,
       releaseManifestVersion,
     );
-    const recordedBinding = parseRecordedNativeBinding(run.value?.artifact_binding);
-    const bindingMissing = [
-      'test_plan_path', 'test_plan_sha256', 'derived_plan_path',
-      'derived_plan_sha256', 'trace_path', 'trace_sha256',
-    ].filter(key => !recordedBinding?.[key as keyof DeviceTestArtifactBinding]);
-    const topPlanPath = resolveFeatureArtifact(ctx.projectRoot, ctx.feature, 'test-plan.md').actualPath;
-    const derivedPlanPath = recordedBinding?.derived_plan_path
-      ?? path.join(path.dirname(tracePath ?? reportsDir), 'test-plan.hylyre.md');
-    const binding = validateNativeTraceArtifactBinding({
+    const binding = validateRecordedNativeTraceArtifactBinding({
       trace,
       expectedFeature: ctx.feature,
       tracePath: tracePath ?? path.join(reportsDir, 'trace.json'),
-      testPlanPath: topPlanPath,
-      derivedPlanPath,
-      expectedTestPlanPath: recordedBinding?.test_plan_path,
-      expectedDerivedPlanPath: recordedBinding?.derived_plan_path,
-      expectedTracePath: recordedBinding?.trace_path,
-      expectedTestPlanSha256: recordedBinding?.test_plan_sha256,
-      expectedDerivedPlanSha256: recordedBinding?.derived_plan_sha256,
-      expectedTraceSha256: recordedBinding?.trace_sha256,
-    });
-    if (bindingMissing.length > 0) {
-      binding.reasons.push(`device-test-run.meta.json 缺 native artifact_binding 字段：${bindingMissing.join(', ')}`);
-      binding.ok = false;
-    }
+      testPlanPath: resolveFeatureArtifact(ctx.projectRoot, ctx.feature, 'test-plan.md').actualPath,
+    }, run.value?.artifact_binding);
     if (binding.ok && binding.binding) holder.nativeArtifactBinding = binding.binding;
     if (!binding.ok) {
       issues.push(...binding.reasons.map(reason => `native artifact binding：${reason}`));
@@ -2405,13 +2389,7 @@ function checkReportReconcileOnlyPipeline(
   const runRecord = run.value;
   const buildHapPath = recordedPathForProject(ctx.projectRoot, buildRecord?.hapPath);
   const installHapPath = recordedPathForProject(ctx.projectRoot, installRecord?.hapPath);
-  const buildValid = buildSkipped || Boolean(
-    buildRecord &&
-    typeof buildRecord.hapPath === 'string' &&
-    buildRecord.hapPath.trim() &&
-    typeof buildRecord.reused === 'boolean' &&
-    buildRecord.hvigorExitCode === 0,
-  );
+  const buildValid = buildSkipped || isRecordedDeviceBuildResult(buildRecord);
   if (!buildValid) {
     issues.push(`缺失或无效的 ${path.basename(buildPath)}${build.error ? `（${build.error}）` : ''}`);
   }
@@ -3641,8 +3619,10 @@ function checkHylyreFailureRouting(
   };
   });
   const subject = ctx.factsContext?.subject;
+  const retestInputs = new Set<string>();
   const retests = readPendingTestingRetests({ projectRoot: ctx.projectRoot, feature: ctx.feature, frameworkRoot: ctx.frameworkRoot,
-    runId: subject && 'run_id' in subject ? subject.run_id : undefined,
+    onCovered: files => files.forEach(file => retestInputs.add(path.relative(ctx.projectRoot, path.resolve(ctx.projectRoot, file)).replace(/\\/g, '/'))),
+    runId: subject && 'run_id' in subject ? subject.run_id : process.env.MAISON_GOAL_RUN_ID?.trim(),
     currentHapSha256: resolveCurrentHapSha256Full(ctx.projectRoot, featurePhaseReportsDir(ctx.projectRoot, ctx.feature, 'testing', ctx.frameworkRoot)) });
   for (const finding of retests) {
     const id = `testing_failure_routing_${failureRouteSlug(finding.route.caseId, finding.route.stepIndex)}`;
@@ -3650,7 +3630,7 @@ function checkHylyreFailureRouting(
     routeResults.push({ id, category: 'structure', description: '原失败行为的适用复验', severity: 'BLOCKER', status: 'FAIL',
       failure_kind: 'plan_contract', repair_owner: 'testing', coding_candidate: false,
       details: `${finding.route.caseId} step ${finding.route.stepIndex} 原失败尚无等价修复后证据：${finding.route.reason}；原触发与预期=${finding.behavior}`,
-      structured: { repair_evidence: { trace_path: path.relative(ctx.projectRoot, finding.tracePath).replace(/\\/g, '/'),
+      structured: { pending_testing_retest: true, repair_evidence: { trace_path: path.relative(ctx.projectRoot, finding.tracePath).replace(/\\/g, '/'),
         case_id: finding.route.caseId, step_index: finding.route.stepIndex,
         derived_plan_path: path.relative(ctx.projectRoot, finding.derivedPlanPath).replace(/\\/g, '/') } },
       suggestion: '保留原失败；按当前适用验收重建覆盖原触发与预期的等价复验，可换编号。当前构建的真实通过原件可关闭；删除/跳过/纯UT声明/同名异断言均不足。' });
@@ -3670,7 +3650,13 @@ function checkHylyreFailureRouting(
     details: `${item.caseId} step ${item.stepIndex}：${item.reason}`,
     suggestion: '这是未尝试的机器阻塞，不产生 failure route 也不投 coding；按能力/工具链处置。',
   }));
-  return [...routeResults, ...dispositionResults];
+  const qualifiedRetest: CheckResult[] = retestInputs.size ? [{
+    id: 'testing_failure_routing_protocol', category: 'structure', severity: 'MINOR', status: 'PASS',
+    description: '旧失败的适用复验已按原件核对',
+    details: '适用复验的原始与当前证据已绑定本次检查。',
+    structured: { source_attempt_dependencies: [...retestInputs].map(file => ({ path: file })) },
+  }] : [];
+  return [...routeResults, ...dispositionResults, ...qualifiedRetest];
 }
 
 function checkHylyreRuntimeSelectorGate(
@@ -4159,6 +4145,27 @@ function goldenContractIdentity(projectRoot: string): string {
   return sha256File(path.isAbsolute(raw) ? raw : path.resolve(projectRoot, raw))?.slice(0, 16) ?? 'none';
 }
 
+function missingDeviceDerivedPlan(ctx: CheckContext, reportsBase: string, topRaw: string,
+  topStat: fs.Stats | null, rejectedPaths: readonly string[]): CheckResult {
+  const hintPath = writeDeriveHintFromPlanJson(ctx);
+  const channels = loadExecutionChannelDeclaration(ctx, topRaw);
+  const topIds = extractTcIdsFromPlanTable(topRaw);
+  const hintLine = hintPath
+    ? `派生输入基线：${hintPath}；最新覆盖与路径诊断见本 check 的 structured.derive_hint。`
+    : '未能写入 derive-hint-from-plan.json（检查 testing/reports 目录写权限）。';
+  return {
+    id: 'device_test_run', category: 'structure', description: ruleDesc(ctx, 'structure_checks', 'device_test_run'),
+    severity: 'BLOCKER', status: 'FAIL', repair_owner: 'testing',
+    structured: { derive_hint: {
+      coverage_reason: 'no_derived', top_tc_ids: topIds, derived_tc_ids: [],
+      missing_tc_ids: channels.channels_resolved ? channels.hylyre_tc_ids : topIds,
+      extra_tc_ids: [], selected_derived_path: null, rejected_placeholder_paths: rejectedPaths,
+      source_plan_mtime_iso: topStat?.mtime.toISOString(),
+    } },
+    details: `未找到有效的 Hylyre 派生测试计划（已排除烟测占位；期望路径形如 ${path.join(reportsBase, '<timestamp>', 'hylyre')}）。请按 device-testing Step 4.5 落盘 test-plan.hylyre.md 后重试。\n${hintLine}`,
+  };
+}
+
 async function checkDeviceTestRunGate(
   ctx: CheckContext,
   hapHolder: DeviceTestPipelineHolder,
@@ -4194,47 +4201,26 @@ async function checkDeviceTestRunGate(
     }
 
     const reportsBase = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot);
-    const expectedDir = path.join(reportsBase, '<timestamp>', 'hylyre');
     const topResolved = resolveFeatureArtifact(ctx.projectRoot, ctx.feature, 'test-plan.md');
     const topPath = topResolved.actualPath;
     const topRaw = fs.existsSync(topPath) ? fs.readFileSync(topPath, 'utf-8') : '';
     const topIds = extractTcIdsFromPlanTable(topRaw);
     const topStat = fs.existsSync(topPath) ? fs.statSync(topPath) : null;
     const topPlanSha256AtStart = fs.existsSync(topPath) ? sha256File(topPath) : null;
-
     const pick = selectBestNonPlaceholderDerivedPlan(reportsBase);
     const rejectedRel = pick.rejectedPlaceholders.map(p => absToProjectRel(ctx.projectRoot, p));
 
     if (!pick.selected) {
-      const hintPath = writeDeriveHintFromPlanJson(ctx);
-      const hintLine = hintPath
-        ? `派生输入基线：${hintPath}；最新覆盖与路径诊断见本 check 的 structured.derive_hint。`
-        : '未能写入 derive-hint-from-plan.json（检查 testing/reports 目录写权限）。';
-      return [
-        {
-          id,
-          category: 'structure',
-          description: desc,
-          severity: 'BLOCKER',
-          status: 'FAIL',
-          structured: { derive_hint: {
-            coverage_reason: 'no_derived', top_tc_ids: topIds, derived_tc_ids: [],
-            missing_tc_ids: topIds, extra_tc_ids: [], selected_derived_path: null,
-            rejected_placeholder_paths: rejectedRel,
-            source_plan_mtime_iso: topStat ? new Date(topStat.mtimeMs).toISOString() : undefined,
-          } },
-          details: `未找到有效的 Hylyre 派生测试计划（已排除烟测占位；期望路径形如 ${expectedDir}）。请按 device-testing Step 4.5 落盘 test-plan.hylyre.md 后重试。\n${hintLine}`,
-        },
-      ];
+      return [missingDeviceDerivedPlan(ctx, reportsBase, topRaw, topStat, rejectedRel)];
     }
 
+    const runChannelDecl = loadExecutionChannelDeclaration(ctx, topRaw);
     const derivedPath = pick.selected.hylyrePath;
     const derivedContent = pick.selected.content;
     const explicitSkips = loadExplicitSkipTcIds(derivedPath, derivedContent);
     const derivedIds = extractTcIdsFromPlanTable(derivedContent);
     // plan a6c4e9f2 T3：顶层已声明通道时，派生集合必须**恰好等于** channel=hylyre 集合；
     // explicit skip 不再减除缺口（派生器没有 skip 决策权），且新正式派生不得再产出 skip。
-    const runChannelDecl = loadExecutionChannelDeclaration(ctx, topRaw);
     // 只有声明**整体闭合**才按通道口径对账；部分缺值/非法/重复时上游已 SKIP 掉整段设备
     // 流水线，这里保持 legacy 口径仅为不产生第二套矛盾判定。
     const cov = runChannelDecl.channels_resolved
@@ -5139,6 +5125,8 @@ export function runDeviceVisualDiffCapture(
           ? `缺固化 nav 配置：${navTargetIds.length} 个目标屏（P0 ∪ golden 显式目标，含 forbidden 负向屏）须按屏导航到位采集（≥2 屏另防多屏截同一帧）`
           : null);
   if (navGateError) {
+    const navPath = visualDiffNavConfigPath(ctx.projectRoot, ctx.feature);
+    const legacyNav = featureFilePath(ctx.projectRoot, ctx.feature, 'testing/visual-diff-nav.json');
     return [
       {
         id,
@@ -5146,8 +5134,13 @@ export function runDeviceVisualDiffCapture(
         description: 'device_test.run 后 visual_diff 自动截图与骨架采集',
         severity: 'BLOCKER',
         status: 'FAIL',
+        ...(goldenGateErrors.length ? {} : {
+          repair_owner: 'testing',
+          affected_files: [absToProjectRel(ctx.projectRoot, navPath)],
+        }),
         details: `【nav 配置门禁·完备性（档位无关）】${navGateError}\n不静默裸采（防多屏截同一帧）；补齐 device-testing/visual-diff-nav.json（key=屏标识含 overlay、value=touch/wait_for/back 到达步骤）后重跑。真到不了的屏用 unreachable 显式登记（仅限外部阻塞枚举+绑定失败证据），任一 P0 unreachable → run 封顶非成功状态。`,
-        suggestion: '为每个 P0/target 屏（含 overlay）写固化到达步骤；页面结构无变化则复用、不需重生成。',
+        suggestion: '为每个 P0/target 屏（含 overlay）写固化到达步骤。'
+          + (fs.existsSync(legacyNav) ? '旧 testing/visual-diff-nav.json 可作输入；核对屏集与实际导航后在正式路径交回。' : ''),
       },
     ];
   }
@@ -6135,6 +6128,8 @@ const checker: PhaseChecker = {
         description: '测试计划和测试报告都不存在',
         severity: 'BLOCKER',
         status: 'FAIL',
+        repair_owner: 'testing',
+        affected_files: [relFeatureArtifact(ctx.projectRoot, ctx.feature, 'test-plan.md')],
         details: `未找到 ${relFeatureArtifact(ctx.projectRoot, ctx.feature, 'test-plan.md')} 和 ${relFeatureArtifact(ctx.projectRoot, ctx.feature, 'test-report.md')}。测试阶段至少需要测试计划。`,
         suggestion: '请先运行 device-testing 生成测试计划。',
       };
@@ -6335,7 +6330,16 @@ const checker: PhaseChecker = {
     const visualBlock = { start: visualStart, end: results.length };
 
     if (pipelinePlan.reportOnly) {
-      results.push(...checkReportReconcileOnlyPipeline(ctx, deviceTestHapHolder, plan, report, reportBeforeRebuild));
+      const reports = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot);
+      const derived = selectBestNonPlaceholderDerivedPlan(reports);
+      if (plan && channelDeclaration.ok && !unitOnlyTcBlocked && !derived.selected
+        && !isCapabilitySkipped(ctx.resolvedProfile, 'device_test.run') && !isCapabilitySkipped(ctx.resolvedProfile, 'device_test.install')) {
+        const topPath = resolveFeatureArtifact(ctx.projectRoot, ctx.feature, 'test-plan.md').actualPath;
+        results.push(missingDeviceDerivedPlan(ctx, reports, plan, fs.statSync(topPath, { throwIfNoEntry: false }) ?? null,
+          derived.rejectedPlaceholders.map(file => absToProjectRel(ctx.projectRoot, file))));
+      } else {
+        results.push(...checkReportReconcileOnlyPipeline(ctx, deviceTestHapHolder, plan, report, reportBeforeRebuild));
+      }
     }
     // visual 之后只算一次逐 TC channel binding；报告、P0/AC 与义务门共享同一结果。
     const channelEvidenceBindings = resolveChannelEvidenceBindings(

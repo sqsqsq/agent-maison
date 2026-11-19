@@ -1756,6 +1756,7 @@ export function featureFilePath(
 // --------------------------------------------------------------------------
 
 /** 阶段主产物：basename → workflow phase id */
+export const STRUCTURE_CONFORMANCE_LEDGER = 'coding/structure-conformance.yaml';
 export const PHASE_SCOPED_ARTIFACTS: Readonly<Record<string, string>> = {
   'spec.md': 'spec',
   'plan.md': 'plan',

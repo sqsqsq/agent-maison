@@ -196,6 +196,37 @@ test('4c8 report-only admission requires unchanged product and complete original
     assert.strictEqual(canReconcileTestingReport({ ...opts, scopeChanged: true }), false);
     assert.strictEqual(canReconcileTestingReport({ ...opts, previous: undefined }), false);
     assert.strictEqual(canReconcileTestingReport({ ...opts, current: snapshot(fs.readFileSync(review, 'utf8'), 'changed') }), false);
+    const buildFile = path.join(f.reportsDir, 'device-test-build.result.json');
+    const build = fs.readFileSync(buildFile);
+    fs.unlinkSync(buildFile);
+    assert.ok(!canReconcileTestingReport(opts), 'missing build original belongs to the normal testing checker');
+    fs.writeFileSync(buildFile, build);
+    const acceptanceFile = path.join(f.root, 'doc/features/demo/acceptance.yaml');
+    fs.writeFileSync(acceptanceFile, JSON.stringify({ criteria: [{ id: 'AC-001', priority: 'P0', ut_layer: 'device' }] }));
+    const recordFile = path.join(f.reportsDir, 'device-test-run.meta.json');
+    const record = JSON.parse(fs.readFileSync(recordFile, 'utf8'));
+    const publish = () => evidence.writePhaseEvidenceManifest(f.root, evidence.resolvePhaseEvidenceManifest({
+      projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'testing', extraInputs: ['app.ets'],
+    }));
+    publish();
+    assert.ok(!canReconcileTestingReport(opts), 'a frozen run key cannot replace missing native artifact bindings');
+    const { validateNativeTraceArtifactBinding } = require('../../scripts/utils/native-trace-binding') as typeof import('../../scripts/utils/native-trace-binding');
+    const trace = JSON.parse(fs.readFileSync(f.tracePath, 'utf8'));
+    const derivedPlanPath = path.join(runDir, 'test-plan.hylyre.md');
+    trace.artifacts.plan = derivedPlanPath;
+    fs.writeFileSync(f.tracePath, JSON.stringify(trace));
+    const binding = validateNativeTraceArtifactBinding({ trace,
+      expectedFeature: 'demo', tracePath: f.tracePath, derivedPlanPath,
+      testPlanPath: path.join(f.root, 'doc/features/demo/testing/test-plan.md') });
+    assert.ok(binding.ok, binding.reasons.join('; '));
+    fs.writeFileSync(recordFile, JSON.stringify({ ...record, artifact_binding: binding.binding }));
+    publish();
+    assert.ok(canReconcileTestingReport(opts), 'the same input may reconcile after the original qualification exists');
+    fs.writeFileSync(recordFile, JSON.stringify({ ...record, artifact_binding: { ...binding.binding, trace_sha256: '0'.repeat(64) } }));
+    publish();
+    assert.ok(!canReconcileTestingReport(opts), 'present but stale trace binding cannot proceed report-only');
+    fs.writeFileSync(recordFile, JSON.stringify({ ...record, artifact_binding: binding.binding }));
+    publish();
     fs.writeFileSync(review, '## 问题清单\n| ID | 严重程度 | 涉及文件 | 问题描述 | 状态 |\n|---|---|---|---|---|\n| CR-1 | MAJOR | app.ets | 重验 TC-099 二次打开行为 | open |');
     assert.strictEqual(canReconcileTestingReport({ ...opts, current: snapshot(fs.readFileSync(review, 'utf8')) }), false);
     fs.writeFileSync(review, '# report formatting fixed'); fs.unlinkSync(evidencePath);

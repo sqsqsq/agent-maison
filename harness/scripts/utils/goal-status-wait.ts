@@ -128,8 +128,12 @@ function readWaitView(input: WaitReadInput): WaitView {
   }
   let manifest = loadGoalRunManifestFromRun(input.projectRoot, input.runId, { feature: input.feature, featuresDir: input.featuresDir });
   const original = originalDeliveryForManifest(input.projectRoot, manifest);
-  if (original) {
-    const snapshot = projectInitialDesignDelivery({ ...input, manifest: original });
+  const requestedOriginal = isInitialDesignManifest(manifest);
+  const originalSnapshot = original && projectInitialDesignDelivery({ ...input, manifest: original });
+  const activeChild = requestedOriginal && originalSnapshot && originalSnapshot.current?.feature !== original?.feature
+    ? originalSnapshot.current : undefined;
+  if (original && originalSnapshot && (requestedOriginal && !activeChild?.run_id || originalSnapshot.complete)) {
+    const snapshot = originalSnapshot;
     const execution = resolveOriginalDeliveryExecution(input.projectRoot, original);
     const owner = execution.control?.owner;
     const expired = owner?.kind === 'session' && owner.state === 'active'
@@ -141,7 +145,12 @@ function readWaitView(input: WaitReadInput): WaitView {
         ...(expired ? { detail: '当前 session 租约已过期；报告原因，再经原入口接回同一任务。' }
           : snapshot.halt_reason ? { detail: snapshot.halt_reason } : {}) } };
   }
+  if (activeChild?.run_id) manifest = loadGoalRunManifestFromRun(input.projectRoot, activeChild.run_id,
+    { feature: activeChild.feature, featuresDir: input.featuresDir });
   manifest = currentConstructionRun(input.projectRoot, manifest);
+  if (original && originalDeliveryForManifest(input.projectRoot, manifest)?.run_id !== original.run_id) {
+    throw new Error('[goal-status] construction successor changed original delivery');
+  }
   const loaded = loadEventsJsonlStrict(path.resolve(input.projectRoot, manifest.report_dir, 'events.jsonl'));
   if (loaded.missing || loaded.corruptLines.length) throw new Error('[goal-status] run events missing or unreadable');
   if (isInitialDesignManifest(manifest)) throw new Error('[goal-status] construction successor changed request kind');
@@ -151,7 +160,7 @@ function readWaitView(input: WaitReadInput): WaitView {
   const attention = ['STALLED', 'WAITING_EXTERNAL', 'AWAITING_HUMAN_REVIEW', 'DEFERRED_CAPABILITY_MISSING'].includes(snapshot.status)
     || snapshot.run_disposition === 'WAITING' && snapshot.run_wait_kind === 'human';
   return { manifest, events: loaded.events, lock, observation: { feature: manifest.feature, run_id: manifest.run_id, status: snapshot.status,
-    complete: ['COMPLETED', 'CHAIN_SLICE_COMPLETED'].includes(snapshot.status) && snapshot.current_disposition?.completionEligible === true,
+    complete: !original && ['COMPLETED', 'CHAIN_SLICE_COMPLETED'].includes(snapshot.status) && snapshot.current_disposition?.completionEligible === true,
     event_count: snapshot.source.events_count, attention, stopped: snapshot.run_disposition === 'TERMINAL' || !['RUNNING', 'PENDING', 'UNKNOWN'].includes(snapshot.status), snapshot,
     ...(attention && snapshot.status_reason ? { detail: `${snapshot.status_reason}：报告当前原因，保留原任务并通过原入口处理；观察不恢复或终止运行器。` } : {}) } };
 }

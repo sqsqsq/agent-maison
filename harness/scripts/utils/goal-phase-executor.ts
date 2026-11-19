@@ -20,6 +20,8 @@ export interface WorkUnitInput {
     readonly segments: readonly unknown[];
     readonly repairNotes?: import('./goal-failure-classifier').ArtifactSnapshot;
     readonly designDeclines?: readonly string[];
+    readonly acceptanceReview?: Readonly<Record<string, readonly string[]>>;
+    readonly acceptanceReviewFiles?: readonly string[];
   };
   readonly evaluation?: CompletionEvaluation;
 }

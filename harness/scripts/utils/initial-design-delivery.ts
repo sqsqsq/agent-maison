@@ -240,6 +240,7 @@ export interface InitialDesignObservation {
   disposition?: CurrentDisposition;
   progression?: ReturnType<typeof deriveChangeUnitProgressionDecision>;
   scope?: { feature: string; candidatePath: string; command: string };
+  candidateRejection?: { code: string; detail: string };
   designRepair?: { feature: string; brief: import('./design-repair-unattended').DesignRepairBriefLike };
   request?: { frame: 'trivial' | 'small'; prepared: PreparedDesignRequest; implementation?: boolean };
 }
@@ -393,10 +394,15 @@ export function validateInitialDesignInvocation(purpose: 'author' | 'questioning
 /** Observation only; admission, candidate acceptance and P3 writes remain runtime-owned. */
 export function initialDesignCandidateRejection(observed: InitialDesignObservation, error: unknown, rootFeature: string): InitialDesignObservation {
   const findings = error instanceof ChangeUnitCandidateRejected ? error.designAuthority : undefined;
-  return { ...observed, kind: findings?.length ? 'author' : 'decompose',
-    issues: [...observed.issues, (error as Error).message],
+  const { designRepair: _priorRepair, candidateRejection: _priorRejection, ...current } = observed;
+  const candidateRejection = error instanceof ChangeUnitCandidateRejected && !findings?.length
+    && error.code !== 'change_unit_decomposition_write_failed' ? { code: error.code, detail: error.message } : undefined;
+  return { ...current, kind: findings?.length ? 'author' : 'decompose',
+    issues: [...current.issues, (error as Error).message],
+    ...(candidateRejection ? { candidateRejection } : {}),
     ...(findings?.length ? { designRepair: { feature: rootFeature,
-      brief: { class: findings.some(item => item.class === 'B2') ? 'B2' as const : 'B1' as const, items: findings } } } : {}) };
+      brief: { class: findings.some(item => item.class === 'B2') ? 'B2' as const : 'B1' as const, items: findings,
+        candidateFeedback: (error as Error).message } } } : {}) };
 }
 
 export function readInitialDesignDelivery(input: { projectRoot: string; frameworkRoot?: string; manifest: InitialDesignGoalManifest;
@@ -539,7 +545,7 @@ function previousDesignWork(input: { projectRoot: string; manifest: InitialDesig
           before: previous.beforeSource, current: input.observation.blueprintPath }) }];
       }
     } catch { /* Missing originals retain full first-reading context. */ }
-    parts.push(...independentVerificationContext({ previousOriginal: previous
+    parts.push(...independentVerificationContext({ designQuestioning: true, previousOriginal: previous
       ? { label: previous.source, kind: 'path', content: '上轮独立原件；只定向读取本轮范围的原结论及来源，未变项由机器保留。' } : null,
       actualDiff, affectedDependencies, currentEvidence: [{ label: input.observation.blueprintPath, kind: 'path', content: '当前设计与全部机器缺口；旧run基线不是上次Q前像。' }] })
       .map(entry => `${entry.label}\n${entry.content}`));
@@ -642,13 +648,15 @@ export function initialDesignAuthorInstruction(input: { projectRoot: string; fra
         ? '核对设计方基于原文条件或时间范围的解释是否忠于全部当前适用要求与证据；只有解释会改变原需求/验收，或确实无法同时满足当前适用要求时，才判定需要需求方裁决。授权不代替独立质询、检查或准入。'
         : '原文有不同表述时，在原需求内依据原文自身的条件或时间范围解释，保留全部本次适用要求，将有来源依据的设计决定及两方出处记入现有设计材料，再交独立质询；不改需求，不删验收，不伪称用户逐项确认。'] : []),
     ] : []),
-    '只展开当前交付切片，复用已批准机器投影；按原P1契约声明稳定义务及真实内部/外部契约，不伪造质量结果。',
+    '按原P1范围处理当前交付切片：稳定义务、可观察通道和真实内部/外部契约从原需求及工程事实取得。',
     questioning ? '本次独立质询只读；只通过结果运输返回本次JSON原件，不写蓝图或其它工程文件。'
       : `本次唯一作者写集：${observation.scope?.candidatePath ?? (observation.kind === 'decompose' ? observation.candidatesPath : path.dirname(observation.blueprintPath))}。范围候选仅经现有prepare-scope命令生成。不得写产品源码、测试、framework或其它Feature/CU；不自行签机器准入、receipt、events或完成。`,
     ...prior.lines,
     ...(observation.kind === 'author' ? [
       `本次必须实际编写或补齐 ${observation.blueprintPath}，不是只调查、写author-findings.md或报告尚未完成。已有发现是中间材料；完成必要定向核实后立即把本次真实设计写进schema蓝图，并按当前机器缺口继续修到本职可交接。`,
       '先完成原需求的当前切片、4+1视图、稳定义务、内部/外部契约与数据/导航/失败恢复闭环；不等另一位作者接手，不以尚待独立质询为停止写蓝图的理由。没有真实授权或必需事实时明确具体缺口，不编答案。',
+      '从原需求提取当前切片的预期结果，每个需独立证据的行为给独立验收 ID、真实产品触发和可观察通道。同一应用测试通道也可承担多项义务；例如分别登记输入映射与默认值、生产持久化读回、外部界面与导航、可见时间值变化及实际调用次数。跨层行为说明同一次对象的生产、交接、消费与清理；交回前核对同一 CU 的 ID，保留完整一致的共享定义。',
+      'focus 写应观察的结果与通道。使用已核产品事实写适用 P0 检查点和逐字需求引用；具体测试 API、定位或注入方式、数据前置、可运行用例与断言强度在既有 CU 计划和原验证职责确定。缺测试时保留原义务并将执行留给该职责；先完成本轮产品设计与来源。',
     ] : []),
     ...(observation.scope ? [
       `本次只准备已准入真实CU ${observation.scope.feature} 的施工范围输入，不写产品/测试/蓝图/canonical CU或其它CU。`,
@@ -703,9 +711,12 @@ export function readInitialDesignCompletionDisposition(input: { projectRoot: str
   const problems: CurrentDispositionProblem[] = [...(observed.disposition?.problems ?? [])];
   if (!observed.disposition) problems.push(...resolveCurrentDisposition(readCurrentDispositionInput({ endpoint: 'design', projectRoot: input.projectRoot,
     blueprintPath: observed.blueprintPath, blueprint: undefined, blueprintIssues: observed.blueprintIssues ?? [], phase: 'component-design' })).problems);
-  if (['author', 'decompose', 'scope'].includes(observed.kind) && !observed.disposition?.completionBlocking.length) problems.push({
+  const rejection = observed.candidateRejection;
+  if (['author', 'decompose', 'scope'].includes(observed.kind) && (rejection || !observed.disposition?.completionBlocking.length)) problems.push({
     phase: 'component-design', id: 'execution_scope', action: 'repair', affects: 'completion', severity: 'BLOCKER', owner: 'component-design',
-    detail: observed.issues.join('；') || '原请求的设计/CU工作尚未交回。', files: [path.relative(input.projectRoot, observed.blueprintPath).replace(/\\/g, '/')] });
+    detail: observed.issues.join('；') || '原请求的设计/CU工作尚未交回。',
+    files: [path.relative(input.projectRoot, rejection ? observed.candidatesPath : observed.blueprintPath).replace(/\\/g, '/')],
+    ...(rejection ? { evidence: [rejection.code, 'sha256:' + createHash('sha256').update(rejection.detail).digest('hex')] } : {}) });
   const ready = observed.progression?.readySet;
   for (const unit of ready?.units ?? []) {
     const feature = deriveChangeUnitFeatureId(unit.changeUnit.blueprint_id, unit.changeUnit.change_unit_id);

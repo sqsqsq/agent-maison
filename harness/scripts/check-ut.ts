@@ -44,7 +44,6 @@ import {
   computeUtFileBaseline as resolverComputeUtFileBaseline,
   UT_TARGETS_ENV,
   type UtLegacyIncrement,
-  type UtTargetResolution,
 } from './utils/ut-target-resolver';
 
 /** re-export：单测与既有消费方从 check-ut 导入（实现已移至 ut-target-resolver，P1-1） */
@@ -111,11 +110,15 @@ import {
 import {
   readCoverageEvidence,
   listUnitBothScopeItems,
+  dagBranchCandidatesForScope,
+  dagBranchesForScope,
   dagLinksScopeId,
   dagsAllCharacterization,
   scopeHasResolvableEvidence,
   mappingBackedByResolvableEvidence,
   ephemeralFlowDagDir,
+  utCaseLinksAcceptance,
+  useCaseBranchesForScope,
   type CoverageEvidenceFile,
 } from './utils/coverage-evidence';
 import {
@@ -331,7 +334,7 @@ function truncateList(items: string[], max: number): string {
 // DAG Loading
 // --------------------------------------------------------------------------
 
-export function loadDagFiles(ctx: CheckContext): DagLoadObservation {
+export function loadDagFiles(ctx: Pick<CheckContext, 'projectRoot' | 'feature' | 'featureSpec'>): DagLoadObservation {
   const files: LoadedDagFile[] = [];
   const candidatePaths: string[] = [];
   const probedDirs: string[] = [];
@@ -426,7 +429,7 @@ export function checkDagFilesParseable(
   }];
 }
 
-export function inspectCoverageEvidence(ctx: CheckContext): CoverageEvidenceObservation {
+export function inspectCoverageEvidence(ctx: Pick<CheckContext, 'projectRoot' | 'feature'>): CoverageEvidenceObservation {
   const observed = readCoverageEvidence(ctx.projectRoot, ctx.feature);
   if (observed.status === 'missing') return observed;
   if (observed.status === 'invalid') {
@@ -1892,21 +1895,10 @@ function checkDagAssertionLinkedBranch(
   }
 
   // 构建：AC → branch 的反查映射（来自 acceptance.yaml.linked_branch 或 use-cases.yaml.branches.linked_acceptance）
-  const acToBranch = new Map<string, string>();
   const ac = ctx.featureSpec.acceptance;
-  for (const c of ac?.criteria ?? []) {
-    if (c.linked_branch) acToBranch.set(c.id, c.linked_branch);
-  }
-  for (const b of ac?.boundaries ?? []) {
-    if (b.linked_branch) acToBranch.set(b.id, b.linked_branch);
-  }
-  for (const uc of spec.use_cases ?? []) {
-    for (const br of uc.branches ?? []) {
-      for (const linked of br.linked_acceptance ?? []) {
-        if (!acToBranch.has(linked)) acToBranch.set(linked, br.id);
-      }
-    }
-  }
+  const branchDeclaringScopes = new Set([...(ac?.criteria ?? []), ...(ac?.boundaries ?? [])]
+    .filter(item => item.linked_branch).map(item => item.id));
+  const useCaseBranches = (spec.use_cases ?? []).flatMap(uc => uc.branches ?? []);
 
   const issues: string[] = [];
   const affected: string[] = [];
@@ -1915,7 +1907,7 @@ function checkDagAssertionLinkedBranch(
       if (node.type !== 'assertion') continue;
       const hasLinkedBranch = !!node.linked_branch;
       const linkedAcReversable =
-        (node.linked_acceptance ?? []).some(a => acToBranch.has(a));
+        (node.linked_acceptance ?? []).some(a => branchDeclaringScopes.has(a) || useCaseBranchesForScope(useCaseBranches, a).length > 0);
       if (!hasLinkedBranch && !linkedAcReversable) {
         issues.push(`${p} > ${node.id}: assertion 未声明 linked_branch，且 linked_acceptance 无法反查到 branch`);
         affected.push(p);
@@ -2601,6 +2593,72 @@ function collectItBlocks(
   return blocks;
 }
 
+export function loadUtCoverageTargets(ctx: CheckContext, host: UtHostImpl, goalRunId?: string) {
+  const allUtFiles = host.loadUtFiles(ctx);
+  const partition = host.partitionUtFiles?.(ctx, allUtFiles) ?? {
+    all: allUtFiles,
+    scoped: allUtFiles,
+    scopeSources: ['fallback:all'],
+    scopeDiagnostics: ['profile-partitioner-unavailable'],
+  };
+  const targetResolution = resolveUtTargets(ctx, allUtFiles, partition.scoped, { goalRunId });
+  return { allUtFiles, partition, targetResolution };
+}
+
+/** Reconstruct review subjects from the same sources as the UT traceability checks. */
+export function readUtAcceptanceCases(ctx: CheckContext, utFiles: Array<{ path: string; content: string }>,
+  dags: LoadedDagFile[], observed: CoverageEvidenceObservation) {
+  const acceptance = ctx.featureSpec.acceptance!;
+  const blocks = collectItBlocks(ctx, utFiles);
+  const acReport = buildAcCoverageReport(ctx.feature, acceptance, blocks.map(test => test.name));
+  const requiredIds = new Set(collectTargetUnitBothP0P1(acceptance).map(item => item.id));
+  const useCases = new Map((loadUseCaseSpec(ctx)?.use_cases ?? []).map(flow => [flow.id, flow.branches]));
+  const ownsCase = (dag: DagFile, file: string): boolean => {
+    const owner = dag.module ?? dag.entry_point?.module;
+    return !owner || !!ctx.featureSpec.contracts?.modules?.some(module => module.name === owner
+      && file.startsWith(module.package_path.replace(/\/$/, '') + '/'));
+  };
+  const readExact = (item: { id: string; linked_branch?: string; linked_flow?: string }) => {
+    const mapping = observed.status === 'loaded' ? observed.evidence.mappings?.find(row => row.scope_id === item.id) : undefined;
+    const dagMapping = mapping?.evidence_source === 'dag_archived' || mapping?.evidence_source === 'dag_ephemeral';
+    const evidenceRef = mapping?.evidence_ref?.replace(/\\/g, '/');
+    const flowDags = item.linked_flow ? dags.filter(({ dag }) => dag.use_case === item.linked_flow) : [];
+    const linkedDags = dags.filter(({ dag, source, path: file }) => dagLinksScopeId(dag, item.id)
+      && (!item.linked_flow || !dag.use_case || dag.use_case === item.linked_flow)
+      && (!dagMapping || mapping.evidence_source === 'dag_' + source && (!evidenceRef || evidenceRef === file)));
+    const matches = blocks.filter(test => utCaseLinksAcceptance(test, item));
+    const cases = blocks.filter(test => {
+      if (hasExactUtScopeTag(test.name, item.id)) return true;
+      if (/\[(?:AC|BD|NFR)-[^\]]+\]/i.test(test.name)) return false;
+      if (item.linked_branch && matches.includes(test) && (!flowDags.length || flowDags.some(({ dag }) => ownsCase(dag, test.path)))
+        && (mapping?.evidence_source !== 'ut_tags' || !evidenceRef || evidenceRef === test.path)
+        && (!/\[BRANCH-/i.test(test.name) || hasExactUtBranchTag(test.name, item.linked_branch))) return true;
+      return linkedDags.some(({ dag }) => ownsCase(dag, test.path)
+        && dagBranchesForScope(dag, item.id, dag.use_case ? useCases.get(dag.use_case) : undefined)
+          .some(branch => hasExactUtBranchTag(test.name, branch)));
+    });
+    const covered = scopeHasResolvableEvidence({ projectRoot: ctx.projectRoot, feature: ctx.feature,
+      scopeId: item.id, dags, hasUtTag: matches.length > 0, mapping, acReport });
+    return { cases, linkedDags, required: requiredIds.has(item.id) || covered, evidenceFiles: [
+      ...linkedDags.map(dag => dag.path), ...(mapping && observed.status === 'loaded' ? [observed.relPath] : []),
+    ] };
+  };
+  const results = new Map([...(acceptance.criteria ?? []), ...(acceptance.boundaries ?? []), ...(acceptance.performance ?? [])]
+    .map(item => [item.id, readExact(item)]));
+  const assignedCases = new Set([...results.values()].flatMap(result => result.cases));
+  return (item: { id: string; linked_branch?: string; linked_flow?: string }) => {
+    const { cases, linkedDags, required, evidenceFiles } = results.get(item.id) ?? readExact(item);
+    const unassigned = cases.length ? [] : linkedDags.filter(({ dag }) => !dag.use_case)
+      .map(({ dag }) => ({ dag, branches: dagBranchCandidatesForScope(dag, item.id) }));
+    const possible = unassigned.length ? blocks.filter(test => !assignedCases.has(test)
+      && !/\[(?:AC|BD|NFR)-[^\]]+\]/i.test(test.name)
+      && unassigned.some(({ dag, branches }) => ownsCase(dag, test.path)
+        && branches.some(branch => hasExactUtBranchTag(test.name, branch)))) : [];
+    return { cases: [...cases.map(test => ({ file: test.path, name: test.name })),
+      ...possible.map(test => ({ file: test.path, name: test.name, candidate: true as const }))], required, evidenceFiles };
+  };
+}
+
 function dagsAreCharacterization(dags: Array<{ dag: DagFile }>): boolean {
   return dagsAllCharacterization(dags);
 }
@@ -2768,14 +2826,7 @@ function acHasUtTagOrBranchCoverage(
   utFiles: Array<{ path: string; content: string }>,
   ac: { id: string; linked_branch?: string },
 ): boolean {
-  const itNames = collectItNames(ctx, utFiles);
-  const blocks = collectItBlocks(ctx, utFiles);
-  const foundByTag = itNames.some(n => hasExactUtScopeTag(n, ac.id));
-  const branchId = ac.linked_branch;
-  const foundByBranch = !!branchId && blocks.some(b =>
-    hasExactUtBranchTag(b.name, branchId) || b.body.includes(branchId),
-  );
-  return foundByTag || foundByBranch;
+  return collectItBlocks(ctx, utFiles).some(test => utCaseLinksAcceptance(test, ac));
 }
 
 function collectTargetUnitBothP0P1(acceptance: AcceptanceSpec) {
@@ -4322,13 +4373,7 @@ const checker: PhaseChecker = {
     const coverageObservation = inspectCoverageEvidence(ctx);
     const auditObservation = inspectTestabilityAudit(ctx);
     const mockPlanObservation = inspectMockPlan(ctx);
-    const allUtFiles = utHost.loadUtFiles(ctx);
-    const partition = utHost.partitionUtFiles?.(ctx, allUtFiles) ?? {
-      all: allUtFiles,
-      scoped: allUtFiles,
-      scopeSources: ['fallback:all'],
-      scopeDiagnostics: ['profile-partitioner-unavailable'],
-    };
+    const { allUtFiles, partition, targetResolution } = loadUtCoverageTargets(ctx, utHost);
     const scopedUtFiles = partition.scoped;
     const mockPlanDoc = mockPlanObservation.status === 'loaded' ? mockPlanObservation.value : null;
     const auditRecordsEarly = auditObservation.status === 'loaded' ? auditObservation.value : [];
@@ -4337,7 +4382,6 @@ const checker: PhaseChecker = {
     // 需求工件门禁是否适用）。repair_existing_ut / cover_existing_code 不强制
     // use-cases/AC/DAG/mock-plan（需求工件门禁按模式 SKIP），但源码红线、真实编译/执行、
     // 棘轮、UI 禁入、命名/注册等通用与安全门禁照常。
-    const targetResolution: UtTargetResolution = resolveUtTargets(ctx, allUtFiles, scopedUtFiles);
     const utBaseline = targetResolution.baseline;
     const featureNewUtFiles = targetResolution.targetFiles;
     const legacyIncrements = targetResolution.legacyIncrements;

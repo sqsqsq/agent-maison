@@ -98,6 +98,64 @@ export function planContracts(f: ReturnType<typeof fixture>): ContractsSpec & { 
 }
 
 const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Promise<void> }> = [
+  { name: '7d2c49e8 authoritative UI checkpoints and distinct app-test obligations project without inventing screen or requirement facts', run(f) {
+    const doc = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
+    const unit = YAML.parse(fs.readFileSync(f.cuFile, 'utf8'));
+    const ref = unit.design_refs.find((row: ComponentBlueprintRef) => row.target.kind === 'flow');
+    const flow = resolveBlueprintTarget(doc, ref.target);
+    const file = 'requirements/ledger.md';
+    const snippet = fs.readFileSync(path.join(f.root, file), 'utf8').trim().split('\n').at(-1)!;
+    const criterion = { priority: 'P0', prd_function: null, testable: true, description: snippet,
+      verification_steps: ['Open the ledger and view the committed balance'], expected_result: 'Committed amount is visible' };
+    const checkpoint = (pre_screen: string, post_screen: string) => ({ pre_screen, post_screen,
+      action: { type: 'tap', target_element_id: 'entry_button' }, required_element_ids: ['ledger_total'] });
+    flow.acceptance = { criteria: [
+      { ...criterion, id: 'AC-2', linked_flow: 'ledger-refresh', ut_layer: 'device', device_focus: 'Show entered amount', checkpoint: checkpoint('start', 'entry') },
+      { ...criterion, id: 'AC-3', linked_flow: 'ledger-refresh', ut_layer: 'device', device_focus: 'Show committed balance', checkpoint: checkpoint('entry', 'result') },
+      { ...criterion, id: 'AC-4', ut_layer: 'unit', ut_focus: 'Call the production ledger save against an isolated store and assert the persisted row read back.' },
+      { ...criterion, id: 'AC-5', description: 'Further selector approval pending', ut_layer: 'device', device_focus: 'User confirmation is available' },
+    ] };
+    fs.writeFileSync(f.blueprintFile, YAML.stringify(doc)); f.bind();
+    const before = fs.readFileSync(f.blueprintFile);
+    const projected = deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, 'acceptance');
+    assert.equal(projected.state, 'resolved', projected.detail);
+    const normalized = projected.value as any;
+    assert.deepEqual(normalized.flows, { 'ledger-refresh': ['start', 'entry', 'result'] });
+    assert.deepEqual(normalized.criteria.find((row: any) => row.id === 'AC-2').requirement_ref, { source_path: file, snippet });
+    assert.equal(normalized.criteria.find((row: any) => row.id === 'AC-4').ut_layer, 'unit');
+    assert.equal(normalized.criteria.find((row: any) => row.id === 'AC-5').checkpoint, undefined);
+    assert.equal(normalized.criteria.find((row: any) => row.id === 'AC-5').requirement_ref, undefined);
+    assert(fs.readFileSync(f.blueprintFile).equals(before));
+  } },
+  { name: '7d2c49e8 admission separates wrong refs from blueprint conflicts and defers absent construction mapping', run(f) {
+    const readCandidate = () => {
+      const artifact = asChangeUnitArtifact(YAML.parse(fs.readFileSync(f.cuFile, 'utf8')));
+      return { artifact, providerId: artifact.provenance.extraction_method };
+    };
+    const wrong = readCandidate();
+    const oldUnit = fs.readFileSync(f.cuFile);
+    wrong.artifact.design_refs.push({ ...wrong.artifact.component_blueprint_ref,
+      target: { kind: 'node', view_id: 'development', id: 'not-an-approved-node' } });
+    fs.unlinkSync(f.cuFile);
+    assert.throws(() => acceptChangeUnitCandidate(f.root, wrong), error =>
+      error instanceof ChangeUnitCandidateRejected && error.message.includes('change_unit_design_ref_unresolvable') && !error.designAuthority);
+    assert(!fs.existsSync(f.cuFile));
+    fs.writeFileSync(f.cuFile, oldUnit);
+    const { change_unit_ref: _identity, ...mapping } = planContracts(f).change_unit;
+    const doc = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
+    const source = resolveBlueprintTarget(doc, wrong.artifact.design_refs[0].target).acceptance as any;
+    const flow = resolveBlueprintTarget(doc, wrong.artifact.design_refs.find(ref => ref.target.kind === 'flow')!.target);
+    flow.acceptance = { criteria: [{ ...source.criteria[0], expected_result: 'Conflicting source result' }] };
+    fs.writeFileSync(f.blueprintFile, YAML.stringify(doc)); f.bind();
+    const conflicted = readCandidate();
+    fs.unlinkSync(f.cuFile);
+    acceptChangeUnitCandidate(f.root, conflicted);
+    assert(fs.existsSync(f.cuFile));
+    fs.unlinkSync(f.cuFile);
+    assert.throws(() => acceptChangeUnitCandidate(f.root, { ...conflicted, construction_mapping: mapping }), error => error instanceof ChangeUnitCandidateRejected
+      && !!error.designAuthority?.some(finding => finding.codes.includes('authority_content_conflict')));
+    assert(!fs.existsSync(f.cuFile));
+  } },
   { name: '4c8 original contract writer completes required authorized modules and preserves declarations', run(f) {
     const doc = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
     const cu = YAML.parse(fs.readFileSync(f.cuFile, 'utf8'));

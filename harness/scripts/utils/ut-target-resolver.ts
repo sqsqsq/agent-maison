@@ -107,9 +107,9 @@ export interface UtTargetResolution {
  * （与 ui-scope-gate 同款纪律："其记录时点在 agent 之后"）。也不回退裸 HEAD（同理）。
  * 无可信前置锚 → available=false，按 scoped 全量问责（fail-closed）。
  */
-export function computeUtFileBaseline(ctx: CheckContext): UtFileBaseline {
-  const runId = (process.env.MAISON_GOAL_RUN_ID ?? '').trim();
-  const goalSignal = hasGoalExecutionSignal();
+export function computeUtFileBaseline(ctx: CheckContext, goalRunId?: string): UtFileBaseline {
+  const runId = goalRunId ?? (process.env.MAISON_GOAL_RUN_ID ?? '').trim();
+  const goalSignal = !!goalRunId || hasGoalExecutionSignal();
   const envBaseRef = resolveHarnessDiffBaseRef() ?? '';
   let baseRef: string | undefined;
   let anchorSource = '';
@@ -194,11 +194,12 @@ export function resolveUtTargets(
     /** 用户明确指定的目标文件路径（相对项目根，正斜杠）——直接升格 target；缺省读 env */
     explicitTargets?: string[];
     mode?: UtWorkMode;
+    goalRunId?: string;
   },
 ): UtTargetResolution {
   const reasons: string[] = [];
   const mode = opts?.mode ?? readUtWorkMode();
-  const baseline = computeUtFileBaseline(ctx);
+  const baseline = computeUtFileBaseline(ctx, opts?.goalRunId);
   const explicit = new Set((opts?.explicitTargets ?? readExplicitUtTargets()).map(p => p.replace(/\\/g, '/')));
 
   const targetFiles: UtFileEntryLike[] = [];

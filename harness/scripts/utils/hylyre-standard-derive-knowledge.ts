@@ -135,7 +135,10 @@ export function buildStandardHylyreDeriveKnowledge(reset?: ResolvedHylyreResetId
       '禁止 dump_ui 等 CLI 子命令作根键（观察由 harness 负责）；' +
       'P0 身份断言不用手写：harness 把派生计划装载进 run 目录时按 acceptance checkpoint 自动注入精确形状的 ' +
       '{"wait_for"|"wait_gone":{"by_id":<id>,"timeout":N}}（源派生计划不改），派生只写导航、动作与 UX 断言——' +
-      'visible/enabled 等谓词断言保留但不算身份；scroll/swipe 是合法动作不改 touch；同一 checkpoint 可重复触发，' +
+      'visible/enabled 等谓词断言保留但不算身份；checkpoint.assertions 中的可见值须在同一个触发窗口内按顺序编译为 exact 文案断言，' +
+      '原生解析还须唯一定位到指定元素；倒计时的两个值须不同且有时序，页面存在和同一提示出现两次都不能覆盖。' +
+      '外部 UI 只关联实际断言的验收 ID；应用内真实写/读回、发送调用计数交能观察实际结果的仓库/应用测试，保留缺证据 ID。' +
+      'scroll/swipe 是合法动作不改 touch；同一 checkpoint 可重复触发，' +
       '每次在下次同目标触发或返回/复位前分别注入并验真，不跨区间借断言；仅目标绑定真正歧义或无匹配动作时 invalid_test，保留全部连续导航，不删动作或拆 case。',
   };
 }

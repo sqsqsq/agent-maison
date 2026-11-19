@@ -74,7 +74,7 @@ CU-A 引 S+A、CU-B 引 S+B：共享 S 只放双方共同验收/写集/用例，
 
 普通 AC/BD 的机器行身份只含 id，故单次 CU 投影内唯一；投影合并/冲突规则不变。人读展示身份为“来源目标 + 条目编号”，不同目标各自 AC-1 都保留，不按裸编号全蓝图去重，不新增唯一门禁。contracts.data_models.fields.description/source_ref 为可选说明/来源，现有加载和投影透传，schema 不变。目录来自 modules[].package_path/layer、依赖来自 contracts 根级 module_dependencies、写集仅 files。
 
-无 ui-spec 依据时保留 P0 ID/优先级/步骤/预期/ut_layer/focus，不写 linked_flow/checkpoint/屏幕流程；spec 得到真实 UI 依据后只补未声明键，已有权威预期不改，按原 checkAuthoritativeContentAligned 与 P0 门检查。不得编元素 ID、删 acceptance 或修改门禁。
+P0 外部 UI 验收沿已核界面与导航依据写 checkpoint 和逐字需求引用。已核检查点能唯一组成屏链时，由原投影补齐未声明的 flows。缺依据的检查点交原验收责任方补充，已有语义变动沿既有权威修订。应用内集成测试使用 unit，以独立 ID 保留实际写入、读回等义务。蓝图写预期结果、真实产品触发与可观察通道；具体测试入口、数据前置和断言强度交既有 CU 和独立验收。详见[蓝图工作流](../../skills/reference/app-component-blueprint-workflow.md#2-写入同一蓝图)。
 
 ## 存储内容约定
 

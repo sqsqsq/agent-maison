@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { createRequire } from 'module';
 import type { CheckContext, CheckResult } from '../../../harness/scripts/utils/types';
-import { featureDir } from '../../../harness/config';
+import { featureDir, featureFilePath, STRUCTURE_CONFORMANCE_LEDGER } from '../../../harness/config';
 import {
   loadUiSpecFile,
   type UiSpecComponentNode,
@@ -32,7 +32,7 @@ export interface LedgerEntry {
   how?: string;
 }
 
-export const STRUCTURE_LEDGER_REL = 'coding/structure-conformance.yaml';
+export const STRUCTURE_LEDGER_REL = STRUCTURE_CONFORMANCE_LEDGER;
 
 /** 无 id 节点的合成键（采集与门禁报错同一规则，agent 照抄报错键即可）。 */
 function nodeKey(screenId: string, node: UiSpecComponentNode): string {
@@ -85,7 +85,7 @@ export function collectStructureDeclarations(uiDoc: UiSpecDoc | null): Structure
 }
 
 export function structureLedgerAbsPath(projectRoot: string, feature: string): string {
-  return path.join(featureDir(projectRoot, feature), ...STRUCTURE_LEDGER_REL.split('/'));
+  return featureFilePath(projectRoot, feature, STRUCTURE_LEDGER_REL);
 }
 
 export function loadStructureLedger(absPath: string): LedgerEntry[] | null {

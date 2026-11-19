@@ -7,7 +7,7 @@ import * as path from 'path';
 import type { AcceptanceSpec } from './types';
 import { isUnitUtLayer } from './acceptance-layering';
 import { featureFilePath } from '../../config';
-import { hasExactUtScopeTag } from './ut-tag-match';
+import { hasExactUtBranchTag, hasExactUtScopeTag } from './ut-tag-match';
 
 export interface AcCoverageEntry {
   id: string;
@@ -33,12 +33,12 @@ export interface AcCoverageReport {
 }
 
 function collectItTagsForAc(
-  acId: string,
+  item: { id: string; linked_branch?: string },
   itNames: string[],
 ): string[] {
   const tags: string[] = [];
   for (const name of itNames) {
-    if (hasExactUtScopeTag(name, acId)) tags.push(name);
+    if (hasExactUtScopeTag(name, item.id) || item.linked_branch && hasExactUtBranchTag(name, item.linked_branch)) tags.push(name);
   }
   return tags;
 }
@@ -55,7 +55,7 @@ export function buildAcCoverageReport(
 
   for (const c of acceptance.criteria ?? []) {
     if (!isUnitUtLayer(c.ut_layer)) continue;
-    const it_tags = collectItTagsForAc(c.id, itNames);
+    const it_tags = collectItTagsForAc(c, itNames);
     criteria.push({
       id: c.id,
       kind: 'criterion',
@@ -67,7 +67,7 @@ export function buildAcCoverageReport(
   }
   for (const b of acceptance.boundaries ?? []) {
     if (!isUnitUtLayer(b.ut_layer)) continue;
-    const it_tags = collectItTagsForAc(b.id, itNames);
+    const it_tags = collectItTagsForAc(b, itNames);
     boundaries.push({
       id: b.id,
       kind: 'boundary',

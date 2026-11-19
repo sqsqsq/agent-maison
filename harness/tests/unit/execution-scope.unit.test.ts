@@ -3,7 +3,11 @@ import { resolveValidationOnlyEligibility } from '../../scripts/utils/goal-runne
 import { writeRunSummaryBase } from '../../harness-runner';
 import { generateScriptReport } from '../../scripts/utils/report-generator';
 import { checkContractFileReferenceClosure } from '../../scripts/check-plan';
-import { checkUtUnsupportedTargetsHandled, checkUtTestabilityAuditPresent, inspectTestabilityAudit } from '../../scripts/check-ut';
+import { checkUtUnsupportedTargetsHandled, checkUtTestabilityAuditPresent, inspectTestabilityAudit, checkUtCasePerUnitAc, inspectCoverageEvidence, loadUtCoverageTargets } from '../../scripts/check-ut';
+import { writeCoverageEvidence } from '../../scripts/utils/coverage-evidence';
+import { executedUtChecks } from '../../scripts/utils/ut-execution-evidence';
+import { readTaggedAcceptanceStrength } from '../../scripts/utils/acceptance-review-strength';
+import { tryLoadUtHostImpl } from '../../profile-host-loader';
 import { UT_REAL_ASSERTION_CHECK } from './repair-candidates.unit.test';
 import { renderResultBlock } from '../utils/verifier-evidence-fixture';
 import { parseVerifierRequest } from '../../scripts/utils/verifier-request';
@@ -48,7 +52,7 @@ import {
 import { writeReviewClosureAttestation } from '../../scripts/utils/closure-attestation';
 import { createHash } from 'crypto';
 import { stableStringify, loadPhaseEvidenceManifest } from '../../scripts/utils/phase-evidence-manifest';
-import { setupGoalRuntimeHost, runGoalRuntimeChain } from './goal-runner-testing-integrity.unit.test';
+import { setupGoalRuntimeHost, runGoalRuntimeChain, fixtureReadDependencies } from './goal-runner-testing-integrity.unit.test';
 import { frameworkDeclaringTsSources, removeShimFramework } from './standalone-coding-review.unit.test';
 import { prepareFixtureVerifierMaterial } from '../helpers/goal-run-driver';
 import { designScopeRevisionChecks, checkTypedConstructionContent } from '../../scripts/utils/blueprint-skill-projection';
@@ -576,6 +580,15 @@ async function runScopeScenario(mode: 'ut-l3-code' | 'ut-l3-spec' | 'ut-design-g
       ? 'src/ledger/ClosureFixture.ts' : '02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets');
     const codeRel = path.relative(root, codeFile).replace(/\\/g, '/');
     const originalCode = fs.readFileSync(codeFile);
+    const directUt = mode === 'direct' && !missingMapping;
+    const refreshIssue = 'acceptance_test_strength_AC-REFRESH';
+    const refreshCase = '[AC-REFRESH] reads an independent current ledger snapshot';
+    const refreshTest = '02-Feature/FinancialCard/src/ohosTest/ets/test/ScopeRefresh.test.ets';
+    const refreshReport = featureFilePath(root, feature, 'review/review-report.md');
+    if (directUt) {
+      fs.mkdirSync(path.dirname(refreshReport), { recursive: true });
+      fs.writeFileSync(refreshReport, '# 待独立核验\n');
+    }
     if (continuousCoding === true && specGap) {
       const ref = featureFilePath(root, feature, 'spec/ref-elements.yaml'); fs.mkdirSync(path.dirname(ref), { recursive: true });
       fs.writeFileSync(ref, 'elements: [{element_id: required-search, disposition: defer}]\n');
@@ -585,7 +598,8 @@ async function runScopeScenario(mode: 'ut-l3-code' | 'ut-l3-spec' | 'ut-design-g
     // 补上真实写集，让候选的实现义务与契约授权有交集——链形状与批次 1 一致。
     {
       const declared = YAML.parse(fs.readFileSync(contractsFile, 'utf8'));
-      declared.files = [codeRel];
+      declared.files = directUt ? [codeRel, refreshTest] : [codeRel];
+      if (directUt) declared.modules = [{ name: 'FinancialCard', layer: '02-Feature', package_path: '02-Feature/FinancialCard' }];
       if (utL3 || continuousCoding === true || ['revision-revoke', 'design-gap', 'design-gap-revert'].includes(mode)) {
         // These modes exercise real authorized source edits, so the existing owner resolver needs the actual module location.
         declared.modules = [{ name: 'ledger', layer: '02-Feature', package_path: 'src/ledger' }];
@@ -627,7 +641,9 @@ async function runScopeScenario(mode: 'ut-l3-code' | 'ut-l3-spec' | 'ut-design-g
       // The shared CU fixture carries no acceptance content at all, so this scenario writes its
       // own unit-layer acceptance into the *temp* project root (the shared fixture is untouched).
       fs.writeFileSync(featureFilePath(root, feature, 'acceptance.yaml'),
-        'criteria: [{id: AC-REFRESH, priority: P1, ut_layer: unit, desc: refresh ledger list, expected_result: list refreshed}]\n');
+        directUt ? YAML.stringify({ criteria: [{ id: 'AC-REFRESH', priority: 'P1', ut_layer: 'unit', description: 'refresh ledger list',
+          expected_result: '读取最新账目并保留顺序，随后修改输入列表不改变已取得的快照' }] })
+          : 'criteria: [{id: AC-REFRESH, priority: P1, ut_layer: unit, desc: refresh ledger list, expected_result: list refreshed}]\n');
       const acceptanceBinding = liveBinding('ut', 'acceptance');
       input.facts.push({ id: 'acceptance:cu', kind: 'acceptance-context', applicability: 'required', reason: 'blueprint acceptance projection', basis: [acceptanceBinding], satisfied_by: [acceptanceBinding] });
     }
@@ -697,7 +713,21 @@ async function runScopeScenario(mode: 'ut-l3-code' | 'ut-l3-spec' | 'ut-design-g
     let revokedRevisionIndex: number | undefined;
     let detachedStarted = false;
     let recoveryMarker: string | undefined;
+    const refreshSource = 'exports.refreshLedgerSnapshot = entries => entries.slice();\n';
+    const refreshTestSource = [
+      "const { it } = require('node:test');",
+      "const assert = require('node:assert/strict');",
+      "const { refreshLedgerSnapshot } = require('../../../main/ets/AllBanksPage.ets');",
+      `it(${JSON.stringify(refreshCase)}, () => {`,
+      "  const entries = ['pending'];",
+      "  entries.push('posted');",
+      '  const snapshot = refreshLedgerSnapshot(entries);',
+      "  entries.push('later');",
+      "  assert.deepEqual(snapshot, ['pending', 'posted']);",
+      '});', '',
+    ].join('\n');
     const writeImplementation = () => {
+        if (directUt) { fs.writeFileSync(codeFile, refreshSource); return; }
         if (utL3 && designGap && !fs.readFileSync(codeFile, 'utf8').includes('repairedTestabilitySeam')) fs.appendFileSync(codeFile, '\nexport function repairedTestabilitySeam(): string[] { return []; }\n');
         if (continuousCoding && codingRegression && !fs.readFileSync(codeFile, 'utf8').includes('repairedOwnerRegression')) fs.appendFileSync(codeFile, '\nexport const repairedOwnerRegression = true;\n');
         // `design-gap-revert`：第一轮 coding 误改（触发 plan 裁决），plan 拒绝扩展契约后
@@ -843,6 +873,14 @@ async function runScopeScenario(mode: 'ut-l3-code' | 'ut-l3-spec' | 'ut-design-g
         if (mode !== 'unresolved' && (current.phase_chain.includes('spec') || actualSpecGap)) writeAcceptance();
         if (current.phase_chain.includes('plan') || utDesignGap && designGap && !fs.existsSync(featureFilePath(root, feature, 'use-cases.yaml'))) writeDesign();
         if (current.obligations.some(item => item.kind === 'implementation' && item.applicability === 'required') && context.runtimeFacts.runBaseSha) writeImplementation();
+        if (directUt && context.chain.includes('ut')) {
+          const testFile = path.join(root, refreshTest);
+          fs.mkdirSync(path.dirname(testFile), { recursive: true });
+          fs.writeFileSync(testFile, refreshTestSource);
+          writeCoverageEvidence(root, feature, { schema_version: '1.0', feature, primary_evidence_source: 'ut_tags',
+            sources: { ut_tags: [refreshTest] },
+            mappings: [{ scope_id: 'AC-REFRESH', scope_kind: 'acceptance_criterion', evidence_source: 'ut_tags', evidence_ref: refreshTest }] });
+        }
         const signedFacts = context.factsContext;
         assert(signedFacts, 'the unit author must consume its actual admitted facts context');
         const admitted = resolveCapabilityResolutionEntryInput({ projectRoot: root, frameworkRoot, feature,
@@ -868,7 +906,37 @@ async function runScopeScenario(mode: 'ut-l3-code' | 'ut-l3-spec' | 'ut-design-g
         for (const family of context.chain) if (family !== admitted.first_phase) researchSnapshotFacts(root, factsFile, family, admitted);
         if (!alreadyRead) fs.appendFileSync(factsFile, `\n## phase_delta: ${admitted.first_phase}\n| 路径 | 事实 | 影响 |\n|---|---|---|\n| ${codeRel} | ${sourceObservation}；${actualSource.toString('utf8').trim().split(/\r?\n/).at(-1)!.replace(/\|/g, '/')} | 按实际当前源码重建本单元研究，原准入与baseline不改写 |\n`);
       },
+      onReview: ctx => {
+        if (!directUt || !ctx.prompt.includes(`| ${refreshIssue} |`)) return;
+        assert(ctx.prompt.includes(refreshCase));
+        assert.equal(fs.readFileSync(codeFile, 'utf8'), refreshSource);
+        assert.equal(fs.readFileSync(path.join(root, refreshTest), 'utf8'), refreshTestSource);
+        fs.writeFileSync(refreshReport, '# 独立审查\n\n**审查结论**: 通过\n\n```issue-verification\n'
+          + YAML.stringify([{ issue: refreshIssue, verdict: 'refuted', production_paths: [codeRel],
+            evidence: `\`${refreshTest}:4\` 的 ${refreshCase} 实际调用 \`${codeRel}:1\`，断言新增账目被读出且后续修改不影响快照。` }]) + '```\n');
+      },
       onHarnessSummary: ({ phase }) => {
+        if (directUt && phase === 'ut') {
+          const profile = loadResolvedProfile(root, loadFrameworkConfig(root), frameworkRoot);
+          const host = tryLoadUtHostImpl(profile.profileDir);
+          assert(host);
+          const loader = new SpecLoader(root, undefined, undefined, frameworkRoot);
+          const ctx = { projectRoot: root, frameworkRoot, feature, phase: 'ut', resolvedProfile: profile,
+            phaseRule: loader.loadPhaseRule('ut'), featureSpec: loader.loadFeatureSpec(feature) } as CheckContext;
+          const { targetResolution } = loadUtCoverageTargets(ctx, host, 'p2-attended');
+          const coverage = checkUtCasePerUnitAc(ctx, targetResolution.targetCaseView, inspectCoverageEvidence(ctx));
+          const log = execFileSync(process.execPath, ['--test', '--test-reporter=tap', refreshTest], { cwd: root, encoding: 'utf8' });
+          assert.match(log, /^# tests 1$/m);
+          assert.match(log, /^# skipped 0$/m);
+          const tap = featureFilePath(root, feature, 'ut/reports/refresh.tap');
+          fs.mkdirSync(path.dirname(tap), { recursive: true });
+          fs.writeFileSync(tap, log);
+          const passed = [...log.matchAll(/^ok \d+ - (.+)$/gm)].map(match => ({ suite: 'node:test', test: match[1] }));
+          const named = executedUtChecks(root, [{ path: refreshTest, test: refreshCase }], passed, [tap, refreshTest]);
+          assert.deepStrictEqual(named.map(check => check.id), [refreshCase]);
+          return { checks: [...fixtureReadDependencies(root, [...coverage, { id: 'ut_hvigor_test', category: 'structure',
+            description: 'Isolated fixture executes the actual ledger source via Node', severity: 'BLOCKER', status: 'PASS', details: log }], [codeRel, refreshTest]), ...named] };
+        }
         if (mode === 'design-gap-revert' && phase === 'coding' && designGap && !fs.readFileSync(codeFile).equals(originalCode)) {
           const bytes = fs.readFileSync(codeFile);
           return { checks: [{ id: 'scope_spec_invalidated', category: 'structure', description: '保留原契约并撤回无依据的源码扩展', severity: 'BLOCKER', status: 'FAIL',
@@ -1445,8 +1513,11 @@ async function runScopeScenario(mode: 'ut-l3-code' | 'ut-l3-spec' | 'ut-design-g
     assert.equal(probe.exitCode, 0, JSON.stringify(probe.events.slice(-5)));
     detachedStarted = true;
     if (mode === 'direct') {
-      assert.deepStrictEqual(probe.invokedPhases, ['work-unit-author']);
+      assert.deepStrictEqual(probe.invokedPhases.filter(phase => phase === 'work-unit-author'), ['work-unit-author']);
       assert.deepStrictEqual(probe.harnessPhases, ['coding', 'review', 'ut']);
+      const strength = readTaggedAcceptanceStrength({ projectRoot: root, frameworkRoot, feature, runId: 'p2-attended',
+        executionScope: loadEffectiveExecutionScope(root, feature, 'p2-attended') }).find(row => row.issue === refreshIssue);
+      assert(strength?.passed && strength.verdict?.verdict === 'refuted', '当前具名执行与正式独立交回必须一起通过');
       for (const skipped of ['spec', 'plan', 'testing']) assert(!fs.existsSync(featureFilePath(root, feature, `${skipped}/reports/summary.json`)), 'invented out-of-scope phase summary');
     }
     else {

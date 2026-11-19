@@ -50,8 +50,10 @@ import {
 } from '../../../../harness/scripts/utils/adhoc-ui-reset-meta';
 import type { CapabilityProvider } from './types';
 import type { RuntimeStepTelemetry } from '../../../../harness/scripts/utils/runtime-step-evidence';
+import { resolveArtifact } from '../../../../harness/scripts/utils/hylyre-artifact-resolution';
 import { requireV1ForGate } from '../../../../harness/scripts/utils/hylyre-result-protocol';
 import type {
+  ArtifactRefV1,
   CaseResultV1,
   SelectorV1,
   StepResultV1,
@@ -472,6 +474,62 @@ function probePythonCandidates(): Array<{ cmd: string; args: string[] }> {
  */
 export function pythonSpawnEnv(): NodeJS.ProcessEnv {
   return stripTrustAnchorEnv(process.env).env;
+}
+
+let lastFrozenSelectorTarget: { key: string; target: { id: string; bounds: string } } | undefined;
+
+/** Reuse the shipped resolver on frozen UI evidence without bootstrapping a device session. */
+export function resolveFrozenHylyreSelectorTarget(opts: {
+  projectRoot: string;
+  hylyreVersion: string;
+  tracePath: string;
+  artifact: ArtifactRefV1;
+  predicate: { by_id: string } | { by_text: string; match: 'exact' };
+}): { id: string; bounds: string; dumpPath: string } | null {
+  const dump = resolveArtifact(opts.tracePath, opts.artifact);
+  if (!dump.ok) return null;
+  const dumpPath = dump.absolutePath;
+  const key = JSON.stringify([opts.hylyreVersion, dump.sha256, opts.predicate]);
+  if (lastFrozenSelectorTarget?.key === key) return { ...lastFrozenSelectorTarget.target, dumpPath };
+  const source = path.resolve(__dirname, '../../vendor/hylyre/src');
+  if (!fs.existsSync(source)) return null;
+  const config = resolveHylyreToolConfig(opts.projectRoot);
+  const installedPython = venvPython(path.resolve(opts.projectRoot, process.env.HYLYRE_HOME?.trim() || config.venv_dir));
+  const configuredPython = process.env.HYLYRE_PYTHON?.trim() || installedPython;
+  const candidates = [...(fs.existsSync(configuredPython) ? [{ cmd: configuredPython, args: [] }] : []), ...probePythonCandidates()];
+  const script = `
+import hashlib, json, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from hylyre import __version__
+from hylyre.api.selector_ops import tree_from_dump
+from hylyre.api.selector_resolve import resolve_targets
+request = json.load(sys.stdin)
+data = Path(request['dumpPath']).read_bytes()
+if __version__ != request['hylyreVersion'] or hashlib.sha256(data).hexdigest() != request['dumpSha256']:
+    sys.exit(0)
+payload = json.loads(data)
+if payload.get('schema_version') != 'hylyre-hypium-ui-dump-v1':
+    sys.exit(0)
+targets = resolve_targets(tree_from_dump(payload), request['predicate'])
+if len(targets) == 1:
+    target = targets[0].summary_row()
+    print(json.dumps({'id': target['id'], 'bounds': target['bounds']}))
+`;
+  for (const python of candidates) {
+    const result = spawnSync(python.cmd, [...python.args, '-IB', '-c', script, source], {
+      cwd: source, env: pythonSpawnEnv(), encoding: 'utf8', timeout: 2000, windowsHide: true,
+      input: JSON.stringify({ dumpPath, dumpSha256: dump.sha256, predicate: opts.predicate, hylyreVersion: opts.hylyreVersion }),
+    });
+    if (result.status !== 0) continue;
+    try {
+      const target = JSON.parse(result.stdout);
+      if (typeof target?.id !== 'string' || !target.id || typeof target.bounds !== 'string' || !target.bounds) return null;
+      lastFrozenSelectorTarget = { key, target };
+      return { ...target, dumpPath };
+    } catch { return null; }
+  }
+  return null;
 }
 
 function findSystemPythonForVenv(): { cmd: string; args: string[] } | null {

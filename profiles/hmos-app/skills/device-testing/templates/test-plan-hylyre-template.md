@@ -8,7 +8,9 @@
 > **步骤列必须为裸 JSON**（不要用 Markdown 反引号包裹）；Hylyre `_JSONISH` 不识别反引号。
 > 推荐 **direct 根键**：`{"touch":{"by_text":"…","match":"exact"}}`；正式 feature 的 `by_text` 必须显式选择 `match: exact|contains`，预启由 harness `aa start` 完成，步骤列**不含** `start_app`。
 >
-> 缺少稳定 selector 的用例**不出现在本文件**，直接在顶层 test-report.md 的「执行状态」列标「跳过」。
+> 为每个 Hylyre 用例注明可核对的起始状态与必要准备。可使用已获准的隔离数据或已有可执行准备步骤。进程重启只复位进程。
+> 某个用例缺少可得数据状态或稳定 selector 时，在交回中记录用例、验收 ID 和缺失条件，由原验证方核对。保留原断言和执行通道，等待正式工具生成执行结果。
+> 视觉导航单独交回 feature 下的 `device-testing/visual-diff-nav.json`。旧 `testing/visual-diff-nav.json` 可用于核对当前屏与到达步骤。
 
 ## 测试用例清单
 
@@ -25,4 +27,4 @@
 | TC-011 | 子页污染后下一用例（示例） | 已在「首页」Tab | {"back":{}} ; {"touch":{"by_text":"+","match":"exact"}} | 进入目标子页 | P0 | AC-nav |
 
 <!-- 列表内横向滑须带 area；Nav 返回只用 back，勿用无 area 的 swipe RIGHT -->
-<!-- 不进派生计划的 TC（缺 selector / 需人工）由 agent 在顶层 test-report.md 标「跳过」，不在此处出现 -->
+<!-- 执行通道以顶层计划为准，每个 channel=hylyre 的 TC 保留原用例与有效断言 -->

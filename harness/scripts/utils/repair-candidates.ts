@@ -140,6 +140,7 @@ export interface IssueVerificationEntry {
   invalid_reason?: string;
   /** Existing responsibility field, optional on a current independently-verified issue. No write grant. */
   repair_owner?: string;
+  production_paths?: string[];
 }
 
 const ISSUE_FENCE_RE = new RegExp(
@@ -179,11 +180,18 @@ export function parseIssueVerificationBlock(text: string): {
       verdict: raw === 'confirmed' || raw === 'refuted' ? raw : 'unclear',
       ...(evidence ? { evidence } : {}),
       ...(repairOwner ? { repair_owner: repairOwner } : {}),
+      ...(Array.isArray(row.production_paths) && row.production_paths.every((file: unknown) => typeof file === 'string')
+        ? { production_paths: [...new Set<string>(row.production_paths)] } : {}),
       ...(['confirmed', 'refuted', 'unclear'].includes(raw) ? {} : { invalid_reason: `非法 verdict=${raw}` }),
     });
   }
   if (entries.length === 0) return { ok: false, entries: [], reason: '逐条验证块无合法条目' };
   return { ok: true, entries, reason: `${entries.length} 条逐条验证` };
+}
+
+export function uniqueIssueVerification(entries: readonly IssueVerificationEntry[], issue: string): IssueVerificationEntry | undefined {
+  const rows = entries.filter(row => row.issue === issue);
+  return rows.length === 1 && !rows[0].invalid_reason && !!rows[0].evidence ? rows[0] : undefined;
 }
 
 /** This comparison measures text preservation; only independent current evidence judges the resulting test strength. */
@@ -284,25 +292,16 @@ export interface PhaseRepairIssues {
   independentReviewRows?: readonly string[];
 }
 
-function independentReviewRows(projectRoot: string, feature: string, runId: string | undefined,
-  reportPath: string, reportText: string, rows: readonly ReviewIssueRow[]): string[] | undefined {
-  if (!runId) return undefined;
+function* independentReviewInvocations(projectRoot: string, feature: string, runId: string, reportPath: string) {
   const { featureFilePath } = require('../../config') as typeof import('../../config');
-  const { executionRequestForInvoke } = require('./session-execution-handoff') as typeof import('./session-execution-handoff');
+  const { executionRequestForInvoke, acceptedSessionReport, readHandoffMaterial } = require('./session-execution-handoff') as typeof import('./session-execution-handoff');
   const { invocationCompleted } = require('./invocation-completion') as typeof import('./invocation-completion');
   const { workUnitExecutionRole } = require('./goal-phase-executor') as typeof import('./goal-phase-executor');
-  const reportHash = sha256Hex(reportText);
-  const runs = repairDeclineHistory(projectRoot, feature, runId).reverse();
-  const completedOriginal = (file: string): boolean => runs.some(run => {
-    const relative = path.relative(featureFilePath(projectRoot, feature, `goal-runs/${run.run_id}`), path.resolve(projectRoot, file));
-    const parts = relative.split(path.sep);
-    return parts.length >= 4 && parts[0] === 'phases' && run.events.some(event => event.type === 'agent_invoke_end'
-      && event.phase === parts[1] && event.invoke_id === parts[2] && invocationCompleted({ ...event, exitCode: event.exit_code }));
-  });
-  for (const run of runs) {
+  for (const run of repairDeclineHistory(projectRoot, feature, runId).reverse()) {
+    const runDir = featureFilePath(projectRoot, feature, 'goal-runs/' + run.run_id);
     for (const start of [...run.events].reverse()) {
       if (start.type !== 'agent_invoke_start' || start.phase !== 'review' || !start.invoke_id) continue;
-      const original = executionRequestForInvoke(featureFilePath(projectRoot, feature, `goal-runs/${run.run_id}`), start.invoke_id);
+      const original = executionRequestForInvoke(runDir, start.invoke_id);
       const request = original?.request;
       if (!request || request.context.feature !== feature || request.context.runId !== run.run_id
         || workUnitExecutionRole(request.context, request.purpose) !== 'verifier'
@@ -311,7 +310,7 @@ function independentReviewRows(projectRoot: string, feature: string, runId: stri
       const segment = run.events.slice(run.events.indexOf(start) + 1);
       const end = segment.find(event => event.type === 'agent_invoke_end' && event.invoke_id === start.invoke_id);
       if (!end || !invocationCompleted({ ...end, exitCode: end.exit_code })
-        || segment.some(event => event.type === 'phase_write_violation' && event.invoke_id === start.invoke_id)) return undefined;
+        || segment.some(event => event.type === 'phase_write_violation' && event.invoke_id === start.invoke_id)) continue;
       const writes = segment.filter(event => event.type === 'phase_write_observed' && event.invoke_id === start.invoke_id)
         .flatMap(event => {
           const observed = event as GoalRunEvent & { owned?: Array<{ path: string; post_sha256?: string | null }>;
@@ -319,21 +318,103 @@ function independentReviewRows(projectRoot: string, feature: string, runId: stri
           return [...(observed.owned ?? []), ...(observed.observations ?? [])];
         });
       const output = writes.filter(write => path.resolve(projectRoot, write.path) === path.resolve(projectRoot, reportPath)).at(-1);
-      if (!output) continue;
-      if (output.post_sha256 !== reportHash) return undefined;
-      const current = (file: string): boolean => {
+      let accepted: { post_snapshot?: NonNullable<typeof request.pre_snapshot>; draft_outputs?: Record<string, string> } | undefined;
+      const handedBack = end.handoff_report ? acceptedSessionReport(runDir, original) : undefined;
+      try {
+        if (handedBack?.event.handoff_report) accepted = readHandoffMaterial(runDir, handedBack.event.handoff_report);
+      } catch { continue; }
+      const archivedName = 'independent-' + path.basename(reportPath);
+      const latestHash = output?.post_sha256 ?? (accepted
+        ? accepted.post_snapshot?.entries.find(item => path.resolve(projectRoot, item.path) === path.resolve(projectRoot, reportPath))?.sha256
+        : undefined);
+      if (!latestHash) continue;
+      const entries = new Map(request.pre_snapshot.entries.filter(item => item.kind === 'file')
+        .map(item => [path.resolve(projectRoot, item.path), item.sha256]));
+      const freshness = new Map<string, boolean>();
+      const matchesCurrent = (file: string): boolean => {
+        if (freshness.has(file)) return freshness.get(file)!;
         const absolute = path.resolve(projectRoot, file);
-        if (!isInsideProjectRoot(projectRoot, absolute)) return false;
-        const entry = request.pre_snapshot!.entries.find(item => path.resolve(projectRoot, item.path) === absolute && item.kind === 'file');
-        try { return fs.existsSync(absolute) ? !!entry && sha256Hex(fs.readFileSync(absolute)) === entry.sha256 : !entry; }
-        catch { return false; }
+        let current = false;
+        try {
+          current = isInsideProjectRoot(projectRoot, absolute) && isInsideProjectRoot(fs.realpathSync(projectRoot), fs.realpathSync(absolute))
+            && entries.get(absolute) === sha256Hex(fs.readFileSync(absolute));
+        } catch { /* Missing or unreadable evidence cannot establish freshness. */ }
+        freshness.set(file, current);
+        return current;
       };
-      return rows.filter(row => {
-        const evidence = readableIssueEvidence(projectRoot, row.evidence ?? '', { feature });
-        return row.files.length > 0 && rows.filter(other => other.id === row.id).length === 1
-          && row.files.every(current) && !!row.evidence?.trim() && evidence.every(file => current(file.label) || completedOriginal(file.label));
-      }).map(row => row.id);
+      yield { request, reportHash: latestHash, matchesCurrent, requestPath: path.join(runDir, original.reference.path),
+        archivePath: path.join(runDir, path.dirname(original.reference.path), archivedName), archived: accepted?.draft_outputs?.[archivedName],
+        attendedArchive: handedBack?.event.handoff_report && path.join(runDir, handedBack.event.handoff_report.path) };
     }
+  }
+}
+
+function issuedAcceptanceReviewEntries(text: string, issues: Readonly<Record<string, readonly string[]>>): IssueVerificationEntry[] {
+  const fences = [...text.matchAll(/^ *```issue-verification[ \t]*$/gim)];
+  const titled = [...text.matchAll(/^#{1,6}[ \t]+[^\r\n]*\bissue-verification\b[^\r\n]*\r?\n(?:[ \t]*\r?\n)*[ \t]*```(?:yaml|yml)[ \t]*\r?\n([\s\S]*?)^ *```[ \t]*$/gim)];
+  const isIssued = (issue: unknown): issue is string => typeof issue === 'string' && Object.prototype.hasOwnProperty.call(issues, issue);
+  if (fences.length + titled.length !== 1) return [];
+  if (fences.length === 1) return parseIssueVerificationBlock(text).entries.filter(row => isIssued(row.issue));
+  try {
+    const rows = YAML.parse(titled[0][1]) as Array<Record<string, unknown>>;
+    if (!Array.isArray(rows)) return [];
+    const issued = rows.flatMap(row => {
+      if (row?.issue !== undefined && row.id !== undefined && row.issue !== row.id) {
+        return [row.issue, row.id].filter(isIssued).map(issue => ({ issue, verdict: 'invalid' }));
+      }
+      const issue = row?.issue ?? row?.id;
+      return isIssued(issue) ? [{ ...row, issue }] : [];
+    });
+    return parseIssueVerificationBlock('```issue-verification\n' + YAML.stringify(issued) + '```\n').entries;
+  } catch { return []; }
+}
+
+/** Locate a CU review handback by its existing request, authorized result path and observed digest. */
+export function readIndependentReviewOutputs(projectRoot: string, feature: string, runId: string) {
+  const { resolveFeatureArtifact } = require('../../config') as typeof import('../../config');
+  const report = resolveFeatureArtifact(projectRoot, feature, 'review-report.md');
+  return [...independentReviewInvocations(projectRoot, feature, runId, report.actualPath)].flatMap(invocation => {
+    const material = invocation.request.context.workInput?.material.acceptanceReview;
+    if (!material) return [];
+    const parsed = (bytes: Buffer, file: string) => {
+      const text = bytes.toString('utf8');
+      const entries = issuedAcceptanceReviewEntries(text, material);
+      return { material, entries, matchesCurrent: invocation.matchesCurrent, originals: [invocation.requestPath, file] };
+    };
+    if (invocation.archived && invocation.attendedArchive) {
+      const bytes = Buffer.from(invocation.archived, 'base64');
+      if (sha256Hex(bytes) === invocation.reportHash) return [parsed(bytes, invocation.attendedArchive)];
+    }
+    for (const file of [invocation.archivePath, report.actualPath]) try {
+      const bytes = fs.readFileSync(file);
+      if (sha256Hex(bytes) !== invocation.reportHash) continue;
+      return [parsed(bytes, file)];
+    } catch { /* A replaced or missing original remains unknown. */ }
+    return [];
+  });
+}
+
+function independentReviewRows(projectRoot: string, feature: string, runId: string | undefined,
+  reportPath: string, reportText: string, rows: readonly ReviewIssueRow[]): string[] | undefined {
+  if (!runId) return undefined;
+  const { featureFilePath } = require('../../config') as typeof import('../../config');
+  const { invocationCompleted } = require('./invocation-completion') as typeof import('./invocation-completion');
+  const reportHash = sha256Hex(reportText);
+  const runs = repairDeclineHistory(projectRoot, feature, runId);
+  const completedOriginal = (file: string): boolean => runs.some(run => {
+    const relative = path.relative(featureFilePath(projectRoot, feature, 'goal-runs/' + run.run_id), path.resolve(projectRoot, file));
+    const parts = relative.split(path.sep);
+    return parts.length >= 4 && parts[0] === 'phases' && run.events.some(event => event.type === 'agent_invoke_end'
+      && event.phase === parts[1] && event.invoke_id === parts[2] && invocationCompleted({ ...event, exitCode: event.exit_code }));
+  });
+  for (const invocation of independentReviewInvocations(projectRoot, feature, runId, reportPath)) {
+    if (invocation.reportHash !== reportHash) return undefined;
+    return rows.filter(row => {
+      const evidence = readableIssueEvidence(projectRoot, row.evidence ?? '', { feature });
+      return row.files.length > 0 && rows.filter(other => other.id === row.id).length === 1
+        && row.files.every(invocation.matchesCurrent) && !!row.evidence?.trim()
+        && evidence.every(file => invocation.matchesCurrent(file.label) || completedOriginal(file.label));
+    }).map(row => row.id);
   }
   return undefined;
 }

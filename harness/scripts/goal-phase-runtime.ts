@@ -65,7 +65,7 @@ import * as path from 'path';
 import { StringDecoder } from 'string_decoder';
 import * as YAML from 'yaml';
 import { randomUUID } from 'crypto';
-import { findInitialDesignRun, prepareInitialDesignRun, readInitialDesignDelivery, readInitialDesignCompletionDisposition, projectInitialDesignDelivery, initialDesignAuthorInstruction, initialDesignInvocationLabel, validateInitialDesignInvocation, prepareInitialDesignDraft, initialDesignRequestOptions, readInitialDesignRequest, initialRequestWriteTargets, initialDesignCandidateRejection, type InitialDesignObservation } from './utils/initial-design-delivery';
+import { findInitialDesignRun, prepareInitialDesignRun, readInitialDesignDelivery, readInitialDesignCompletionDisposition, projectInitialDesignDelivery, initialDesignAuthorInstruction, initialDesignInvocationLabel, validateInitialDesignInvocation, prepareInitialDesignDraft, initialDesignRequestOptions, readInitialDesignRequest, initialRequestWriteTargets, initialDesignCandidateRejection, type InitialDesignObservation, type InitialDesignDeliveryProjection } from './utils/initial-design-delivery';
 import { readOriginalDeliveryActivity, originalDeliveryForManifest } from './utils/delivery-origin';
 import { writeCanonicalComponentClosure } from './check-component-closure';
 import { runChangeUnitProgression, buildChangeUnitGoalHandoff, buildChangeUnitGoalRequest, type ChangeUnitGoalHandoff } from './utils/change-unit-progress-loop';
@@ -125,7 +125,7 @@ import { resolveCapabilityResolutionEntryInput, loadCompletedFactsBaseline } fro
 import { SpecLoader } from './utils/spec-loader';
 import { tryLoadUtSourceRootResolver } from '../profile-host-loader';
 import { runCapabilityPreflight, emitHarnessPreflightGap } from './utils/capability-preflight';
-import { preflightDeviceTestEvidenceCapability } from '../capability-registry';
+import { isCapabilitySkipped, preflightDeviceTestEvidenceCapability } from '../capability-registry';
 import type { CheckResult, HarnessResolvedProfile, ProviderRef, VisionMode } from './utils/types';
 import { workflowForExistingRun, resolveWorkflowSpec } from '../workflow-loader';
 import { resolveContextAdapterImageInput, isFreshCanaryForExecution } from './utils/multimodal-probe';
@@ -432,7 +432,8 @@ import {
   itemFingerprintOf,
   type RepairCandidate,
 } from './utils/repair-candidates';
-import { resolveRepairResponsibility, repairResponsibilityContext, readRepairDependencyContext, independentArtifactRepairs } from './utils/repair-responsibility';
+import { resolveRepairResponsibility, repairResponsibilityContext, readRepairDependencyContext, independentArtifactRepairs, workUnitMayWritePath } from './utils/repair-responsibility';
+import { hylyreRunTimestamp, selectBestNonPlaceholderDerivedPlan } from './utils/derived-hylyre-plan';
 import { loadGoalCapability } from './utils/goal-adapter-capability';
 import { deriveReconcileObservation } from './utils/goal-reconcile-observation';
 import { validateMinimumAssurance } from './utils/skill-contract';
@@ -4001,7 +4002,8 @@ export function resolveDetachedPreloadPath(): string {
 
 export interface GoalPhaseRuntimeLaunchOptions {
   /** Nonresident transport only; phase policy and progression remain in this runtime. */
-  sessionHandoff?: { requestPath?: string; report?: SessionExecutionReport; onRequest: (request: IssuedSessionExecution) => void };
+  sessionHandoff?: { requestPath?: string; report?: SessionExecutionReport; onRequest: (request: IssuedSessionExecution) => void;
+    onCompletedInitialDesign?: (view: InitialDesignDeliveryProjection) => void };
   /** Fault-injection seam for the run-internal revision cut; not a runtime mode. */
   onScopeRevision?: (boundary: 'applied') => void;
   /** Explicit argv for embedded callers; CLI callers omit it. */
@@ -4504,16 +4506,20 @@ export class GoalPhaseRuntime {
     const runDir = path.resolve(projectRoot, manifest.report_dir);
     const eventsPath = path.join(runDir, 'events.jsonl');
     const history = (): GoalRunEvent[] => loadEventsJsonlStrict(eventsPath).events;
-    const flushOriginalProgress = (): void => {
-      try { writeProgressSnapshotAtomic(projectRoot, manifest.report_dir, projectInitialDesignDelivery({ projectRoot, frameworkRoot, manifest })); }
-      catch { /* A progress projection never replaces authoritative events or blocks recovery. */ }
-    };
-    const emit = (event: Record<string, unknown>): void => {
+    let completedProjection: InitialDesignDeliveryProjection | undefined;
+    const emit = (event: Record<string, unknown>): InitialDesignDeliveryProjection | undefined => {
       const line = JSON.stringify({ ...event, ts: new Date().toISOString(), run_id: manifest.run_id }) + '\n';
       fs.appendFileSync(eventsPath, line);
       eventLineRecorder?.(eventsPath, line);
       if (event.type === 'run_end') runConcluded = true;
-      flushOriginalProgress();
+      let snapshot: InitialDesignDeliveryProjection | undefined;
+      try {
+        snapshot = projectInitialDesignDelivery({ projectRoot, frameworkRoot, manifest });
+        writeProgressSnapshotAtomic(projectRoot, manifest.report_dir, snapshot);
+      }
+      catch { /* A progress projection never replaces authoritative events or blocks recovery. */ }
+      if (event.type === 'run_end') completedProjection = event.status === 'COMPLETED' && snapshot?.complete ? snapshot : undefined;
+      return snapshot;
     };
     assertGoalRunAttachable(projectRoot, manifest);
     if (guardNestedGoalRunner()) return 1;
@@ -4537,11 +4543,11 @@ export class GoalPhaseRuntime {
     let token: RunFenceToken | undefined;
     let preserveOwner = false;
     const conclude = (reason: string, detail: string, disposition?: Record<string, unknown>): number => {
-      emit({ type: 'run_end', status: 'HALTED', halt_reason: reason, error: detail, halt_guidance: detail,
+      const snapshot = emit({ type: 'run_end', status: 'HALTED', halt_reason: reason, error: detail, halt_guidance: detail,
         ...runDispositionFields(decide({ incident: reason, phase: 'initial-design', detail }, NO_AUTHORITY,
           { orchestration: 'goal', owner_kind: transport, can_prompt_now: transport === 'session', invocation: argv.resume ? 'resume' : 'fresh' })), ...disposition });
       let report: unknown;
-      try { report = projectInitialDesignDelivery({ projectRoot, frameworkRoot, manifest }); }
+      try { report = snapshot ?? projectInitialDesignDelivery({ projectRoot, frameworkRoot, manifest }); }
       catch { report = { run_id: manifest.run_id, feature: manifest.feature, status: 'HALTED', halt_reason: reason, detail }; }
       fs.writeFileSync(path.join(runDir, 'goal-report.json'), JSON.stringify(report, null, 2) + '\n');
       return 1;
@@ -5035,7 +5041,11 @@ export class GoalPhaseRuntime {
           instruction: prompt, workInput: { material: { purpose, segments }, evaluation: currentDesignEvaluation },
           runtimeFacts: { receiptRequired: false, resume: !!argv.resume, successor: false,
             ...(observed.request?.prepared.intake?.baseline.base ? { runBaseSha: observed.request.prepared.intake.baseline.base } : {}) }, childEnv }, explicitlyContinued);
-        if ('status' in prepared) return conclude('executor_waiting', prepared.details ?? '等待原设计调用的真实交回。');
+        if ('status' in prepared) {
+          const detail = prepared.details ?? '等待原设计调用的真实交回。';
+          return conclude('executor_waiting', observed.kind === 'decompose' && observed.issues.length > 1
+            ? [detail, ...observed.issues.slice(1)].join('\n') : detail);
+        }
         const context = prepared;
         const instruction = context.instruction ?? prompt;
         try {
@@ -5154,8 +5164,18 @@ export class GoalPhaseRuntime {
       emit({ type: 'run_end', status: 'INTERRUPTED', error: (error as Error).message });
       throw error;
     } finally {
-    if (token && !preserveOwner) releaseRunOwner(runDir, token);
-      releaseLock(lockPath, lock.ownerId);
+      try {
+        if (token && !preserveOwner) {
+          releaseRunOwner(runDir, token);
+          const current = completedProjection?.current;
+          // A completed root can show its idle owner until release. Other current work needs a fresh bridge read.
+          if (completedProjection && (!current || current.feature === manifest.feature && current.run_id === manifest.run_id
+            && current.phase === undefined && current.deadline === undefined)) {
+            const { current: _finished, ...released } = completedProjection;
+            this.options.sessionHandoff?.onCompletedInitialDesign?.(released);
+          }
+        }
+      } finally { releaseLock(lockPath, lock.ownerId); }
     }
   }
 
@@ -5317,7 +5337,7 @@ export class GoalPhaseRuntime {
   }
 
   private async continueInitialDesignConstruction(manifest: InitialDesignGoalManifest, projectRoot: string, frameworkRoot: string, argv: minimist.ParsedArgs, observation: InitialDesignObservation, originalToken: RunFenceToken,
-    emit: (event: Record<string, unknown>) => void, stop: (reason: string, detail: string, disposition?: Record<string, unknown>) => number,
+    emit: (event: Record<string, unknown>) => InitialDesignDeliveryProjection | undefined, stop: (reason: string, detail: string, disposition?: Record<string, unknown>) => number,
     releaseOriginal: () => void, releaseController: () => void): Promise<number | InitialDesignObservation> {
     const decision = observation.progression;
     if (!decision) return observation;
@@ -5338,8 +5358,9 @@ export class GoalPhaseRuntime {
             needs: ['原资产writer在原请求授权内先归位既有知识资产；P1 owner再补真实knowledge_refs，经原design preparation升CU指针后重跑closure。保留已批准结论与原验收，不新增决定，不写正式完成或组装原件。'] })) } } };
         return stop('executor_waiting', renderCurrentDisposition(current), { run_disposition: 'WAITING', run_wait_kind: 'external' });
       }
-      emit({ type: 'run_end', status: 'COMPLETED', detail: '全部适用CU与正式组装原件已由同一当前完成事实核验。' });
-      fs.writeFileSync(path.resolve(projectRoot, manifest.report_dir, 'goal-report.json'), JSON.stringify(projectInitialDesignDelivery({ projectRoot, frameworkRoot, manifest }), null, 2) + '\n');
+      const snapshot = emit({ type: 'run_end', status: 'COMPLETED', detail: '全部适用CU与正式组装原件已由同一当前完成事实核验。' });
+      const report = snapshot ?? projectInitialDesignDelivery({ projectRoot, frameworkRoot, manifest });
+      fs.writeFileSync(path.resolve(projectRoot, manifest.report_dir, 'goal-report.json'), JSON.stringify(report, null, 2) + '\n');
       return 0;
     }
     let childCode = 1;
@@ -7372,23 +7393,67 @@ Goal runner — original request design and construction runtime
     const kernel = new GoalPhaseRuntime(options);
     const completedEvaluations = readGateCompletionHistory(projectRoot, runDir, loadAuthoritativeEvents(eventsPath));
     const scopeNow = () => birthScope ? applyScopeRevisions(birthScope, loadAuthoritativeEvents(eventsPath), { projectRoot, feature: manifest.feature, runId: manifest.run_id }) : undefined;
-    const familiesNow = () => applicableCheckFamilies(scopeNow(), terminalEventCtx?.chain.map(String) ?? chain.map(String));
+    const familiesForScope = (scope: ReturnType<typeof scopeNow>) => applicableCheckFamilies(scope, terminalEventCtx?.chain.map(String) ?? chain.map(String));
+    const familiesNow = () => familiesForScope(scopeNow());
     if (dryRun) {
       console.log(`[dry-run] work unit ${manifest.feature} checks=${familiesNow().join(',')}`);
       if (manifest.adapter_model_pin) console.log(`[dry-run] adapter_model_pin=${manifest.adapter_model_pin.adapter}/${adapterModelBinding(manifest.adapter_model_pin)!}`);
     }
     const readWork = () => {
-      const families = familiesNow();
+      const executionScope = scopeNow();
+      const families = familiesForScope(executionScope);
       const results = families.map(phase => readReusableCheckResult({ projectRoot, frameworkRoot, feature: manifest.feature, phase, runId: manifest.run_id }))
         .filter((result): result is NonNullable<typeof result> => !!result);
       const input = { projectRoot, frameworkRoot, feature: manifest.feature, runId: manifest.run_id,
-        executionScope: scopeNow(), workflow, chain: families, currentResults: results, minimumAssurance: manifest.minimum_assurance };
+        executionScope, workflow, chain: families, currentResults: results, minimumAssurance: manifest.minimum_assurance };
       const facts = readCurrentDispositionInput(input);
       const disposition = resolveCurrentDisposition(facts);
       flushProgress(false, false, disposition);
       const independent = independentArtifactRepairs({ projectRoot, frameworkRoot, feature: manifest.feature,
         runId: manifest.run_id, executionScope: input.executionScope, currentDisposition: disposition });
-      return { input, facts, disposition, results, independent, evaluation: currentCompletionEvaluation(input, disposition) };
+      const acceptanceReview: Array<{ issue: string; digests: string[]; files: string[]; detail: unknown }> = [];
+      if (input.executionScope?.obligations.some(item => item.owner_phase === 'review' && item.applicability === 'required')
+        && !resolvedProfile.phasesDisabled.has('review')) {
+        // A source compile repair can invalidate the upcoming review. Other diagnostic
+        // findings may instead need the original reviewer to decide the actual ownership.
+        const compileRepair = disposition.completionBlocking.some(problem => problem.action === 'repair'
+          && ['coding', 'ut'].includes(problem.source_phase ?? problem.phase)
+          && (!problem.owner || ['coding', 'ut'].includes(problem.owner))
+          && nativeCompileDiagnosticRefs({ id: problem.id }, projectRoot) !== undefined);
+        if (!compileRepair) {
+          for (const strength of facts.acceptanceStrength ?? []) {
+            if ('gap' in strength || strength.attempted || strength.passed) continue;
+            acceptanceReview.push({ issue: strength.issue, digests: [strength.digest], files: [...strength.files, ...strength.priorProduction],
+              detail: { acceptance: strength.acceptance, tests: strength.tests, files: strength.files } });
+          }
+        }
+        if (results.some(result => result.phase === 'testing' && result.checks.some(check => asRecord(check.structured)?.pending_testing_retest === true))) {
+          const { readPendingTestingRetests } = require('./utils/testing-trace-gates') as typeof import('./utils/testing-trace-gates');
+          const { failureRouteSlug } = require('./utils/hylyre-failure-routing-v1') as typeof import('./utils/hylyre-failure-routing-v1');
+          const toRelative = (file: string) => path.relative(projectRoot, file).replace(/\\/g, '/');
+          const currentHapSha256 = resolveCurrentHapSha256Full(projectRoot, featurePhaseReportsDir(projectRoot, manifest.feature, 'testing', frameworkRoot));
+          const pending = readPendingTestingRetests({ ...input, currentHapSha256 });
+          for (const finding of pending) {
+            const issue = 'testing_failure_routing_' + failureRouteSlug(finding.route.caseId, finding.route.stepIndex);
+            const candidates = finding.reviewCandidates.filter(candidate => !candidate.answered);
+            if (!candidates.length) continue;
+            acceptanceReview.push({ issue, digests: candidates.map(candidate => candidate.digest),
+              files: [finding.tracePath, finding.derivedPlanPath, ...candidates.flatMap(candidate => [candidate.tracePath, candidate.planPath])].map(toRelative),
+              detail: { original: finding.route, acceptance: finding.acceptance, originalTrace: toRelative(finding.tracePath), originalPlan: toRelative(finding.derivedPlanPath),
+                currentHapSha256, retests: candidates.map(candidate => ({ case: candidate.caseId, trace: toRelative(candidate.tracePath), plan: toRelative(candidate.planPath) })) } });
+          }
+        }
+        if (acceptanceReview.length) {
+          const output = resolveFeatureArtifact(projectRoot, manifest.feature, 'review-report.md').actualPath;
+          const task = independent.find(item => item.owner === 'review' && item.file === output);
+          const problems = acceptanceReview.map(question => ({ phase: 'review', id: question.issue, action: 'verify' as const,
+            owner: 'review', affects: 'completion' as const, severity: 'BLOCKER' as const,
+            detail: JSON.stringify(question.detail), files: question.files }));
+          if (task) task.problems.push(...problems);
+          else if (fs.existsSync(output)) independent.push({ owner: 'review', file: output, problems });
+        }
+      }
+      return { input, facts, disposition, results, independent, acceptanceReview, evaluation: currentCompletionEvaluation(input, disposition) };
     };
     const wait = (phase: string, detail: string, incident = 'executor_waiting', facts: Record<string, unknown> = {}): void => {
       if (incident === 'no_progress_guard') {
@@ -7455,6 +7520,11 @@ Goal runner — original request design and construction runtime
         const proposed = ((onlyCompatibleInputs ? [] : result?.checks ?? []) as readonly { id?: string; scope_revision_input?: ExecutionScopeInput }[])
           .filter(check => check.scope_revision_input);
         const proposals = proposed.flatMap(check => check.scope_revision_input ? [check.scope_revision_input] : []);
+        const context = { projectRoot, frameworkRoot, feature: manifest.feature, requirement: manifest.requirement };
+        const { refreshOwnedAcceptanceScopeInput, assertScopeAcceptanceRevision } = require('./utils/feature-track') as typeof import('./utils/feature-track');
+        const records = loadAuthoritativeEvents(eventsPath);
+        const ownedAcceptance = refreshOwnedAcceptanceScopeInput({ ...context, runId: manifest.run_id, runDir }, previous, records);
+        if (ownedAcceptance && !userSessionRef) proposals.splice(0, proposals.length, ownedAcceptance);
         if (userSessionRef) {
           const proposal: ExecutionScopeInput = { request: { completion_target: previous.completion_target,
             requested_results: [...previous.requested_results], requested_phases: executionCompletionPhases(previous).length
@@ -7473,7 +7543,7 @@ Goal runner — original request design and construction runtime
           if (repair) proposals.push(repair.input);
         }
         if (!proposals.length) {
-          const refreshed = refreshScopeBindingInput({ projectRoot, frameworkRoot, feature: manifest.feature, requirement: manifest.requirement }, previous);
+          const refreshed = refreshScopeBindingInput(context, previous);
           if (refreshed) proposals.push(refreshed);
         }
         const resolvesDefinition = previous.unresolved.some(gap => gap.owner === family);
@@ -7492,6 +7562,7 @@ Goal runner — original request design and construction runtime
           currentPhase: family, currentRunId: manifest.run_id, requirement: manifest.requirement, currentResults: current.results, repairCandidates: candidates });
         if (!revision) return;
         assertGoalBoundary('scope_revised');
+        assertScopeAcceptanceRevision(context, previous, revision.scope, ownedAcceptance);
         const control = readScopeRevisionUserControl(previous, revision.input, { projectRoot, feature: manifest.feature, runId: manifest.run_id, events: loadAuthoritativeEvents(eventsPath), completedPhases: completed }, revision.input.request.user_control);
         assertRevisionKeepsRequiredObligations(previous, revision.scope, control.allowedSubtractions);
         const recorded = loadScopeRevisions(loadAuthoritativeEvents(eventsPath), validateExecutionScope(manifest.execution_scope), { projectRoot, feature: manifest.feature, runId: manifest.run_id });
@@ -7499,7 +7570,8 @@ Goal runner — original request design and construction runtime
           && revision.scope.phase_chain.some(phase => phase === 'coding' || phase === 'ut');
         goalEvents.emit({ type: 'scope_revised', revision_index: recorded.length + 1,
           previous_scope_fingerprint: executionScopeFingerprint(previous), execution_scope: revision.scope, revision_input: revision.input,
-          trigger: { phase: family, check_id: userSessionRef ? 'user_control' : proposed[0]?.id ?? 'current_phase_evidence' }, allowed_fields: [...SCOPE_REVISION_FIELDS],
+          trigger: { phase: family, check_id: userSessionRef ? 'user_control' : ownedAcceptance ? 'owned_acceptance_binding'
+            : proposed[0]?.id ?? 'current_phase_evidence' }, allowed_fields: [...SCOPE_REVISION_FIELDS],
           ...(needsBaseline ? { run_base_sha: validateExactSha(resolveGoalRunHeadSha(projectRoot), 'Git HEAD') } : {}) });
       } catch (error) {
         const detail = (error as Error).message;
@@ -7565,7 +7637,14 @@ Goal runner — original request design and construction runtime
       const checkedAt = history.map(event => event.type === 'harness_end' && event.phase === family
         && event.invoke_id === observation.end?.invoke_id && event.ts === observation.end?.ts).lastIndexOf(true);
       const authorAt = actor ? history.findIndex(event => event.type === 'agent_invoke_end' && event.invoke_id === actor.start.invoke_id) : -1;
-      const producerReturned = family === 'testing' && actor?.original?.request.purpose === 'testing-evidence' && authorAt > checkedAt;
+      const retestReviewReturned = family === 'testing' && history.slice(checkedAt + 1).some(event => {
+        if (event.type !== 'agent_invoke_end' || event.phase !== 'review' || !event.invoke_id
+          || !invocationCompleted({ ...event, exitCode: event.exit_code })) return false;
+        const original = executionRequestForInvoke(runDir, event.invoke_id);
+        return Object.keys(original?.request.context.workInput?.material.acceptanceReview ?? {}).some(id => id.startsWith('testing_failure_routing_'));
+      });
+      const producerReturned = retestReviewReturned || family === 'testing' && ['testing-evidence', 'testing-preparation'].includes(actor?.original?.request.purpose ?? '')
+        && authorAt > checkedAt;
       const writes = actor && authorAt > checkedAt
         ? authorWrites(actor).filter(write => write.roles?.some(role => role.kind === 'source')) : [];
       const paths = new Set(writes.map(write => path.resolve(projectRoot, write.path)));
@@ -7642,7 +7721,7 @@ Goal runner — original request design and construction runtime
         return false;
       }
     };
-    const invokeWork = async (label: string, text: string, verifierReport?: string, purpose?: string, explicitlyContinued = false, workInput?: WorkUnitInput, deviceEnv?: Record<string, string>) => {
+    const invokeWork = async (label: string, text: string, verifierReport?: string, purpose?: string, explicitlyContinued = false, workInput?: WorkUnitInput, deviceEnv?: Record<string, string>, testingTargets?: readonly string[]) => {
       const history = loadAuthoritativeEvents(eventsPath);
       const attemptId = `i${countAgentInvokeStarts(history) + 1}`;
       const invokeId = `${label}-${attemptId}`;
@@ -7657,7 +7736,7 @@ Goal runner — original request design and construction runtime
           const entry = resolveCapabilityResolutionEntryInput({ projectRoot, frameworkRoot, feature: manifest.feature,
             phase: family, featuresDir, goalRunId: manifest.run_id, goalAttemptId: attemptId, purpose: 'work-unit-author' });
           factsContext = entry.factsContext;
-          if (factsContext) text += factsContext.baseline
+          if (factsContext && !testingTargets) text += factsContext.baseline
             ? `\n当前 facts 已接续可核验基线；保留原 run_id、established_by 和基线正文，只在实际检查的 phase_delta 中记录当前变化。基线建立方：${factsContext.baseline.established_by}。`
             : `\n当前 facts 须由本工作单元在 ${factsContext.first_phase} 建立。${entry.factsRebuildReason ?? '尚无可复用基线。'}\n先真实读取当前来源并记录事实，再按当前 subject=${JSON.stringify(factsContext.subject)}、established_by=${factsContext.first_phase} 写入 facts；仅更改 run_id 或阶段名不能建立事实。来源：${factsContext.source_paths.join(', ')}。`;
         } catch (error) {
@@ -7673,6 +7752,22 @@ Goal runner — original request design and construction runtime
         resolveUtSourceRoots: tryLoadUtSourceRootResolver(resolvedProfile.profileDir) ?? undefined });
       boundary.immutableInputPaths = [...new Set([...(boundary.immutableInputPaths ?? []),
         ...workUnitProtectedRecordPaths(projectRoot, manifest.feature, runDir)])];
+      const factsFile = label === 'work-unit-author' && !testingTargets && factsContext
+        ? (require('./utils/context-facts') as typeof import('./utils/context-facts')).resolveFactsAbsPath(projectRoot, manifest.feature) : undefined;
+      if (factsFile && factsContext) boundary.domains.push({
+        owner: factsContext.first_phase, kind: 'phase_workspace', match: 'exact',
+        path: path.relative(projectRoot, factsFile).replace(/\\/g, '/'), source: 'signed work-unit facts input',
+      });
+      if (testingTargets?.length) {
+        const ownership = testingTargets.map(file => resolvePhasePathOwnership(boundary, file));
+        const unavailable = ownership.filter(target => target.owner !== 'testing' || !workUnitMayWritePath(boundary, target.path));
+        if (unavailable.length) {
+          wait(label, `测试准备归原写方处理，当前签发写界未授权这些对象：${unavailable.map(target => `${target.path}（${target.owner ?? '写方未解析'}）`).join('；')}。`);
+          return null;
+        }
+        boundary.domains = ownership.map(target => ({ owner: 'testing', kind: 'phase_workspace', match: 'exact', path: target.path,
+          source: 'existing testing preparation input' }));
+      }
       const prepared = kernel.prepareExecutionContext({ ...workUnitExecutionInputs(manifest, purpose, projectRoot),
         executionRole: role, runId: manifest.run_id, feature: manifest.feature, workflowId: workflow.name, track: goalTrack,
         chain: familiesNow(), phase: label, attemptId,
@@ -7684,9 +7779,11 @@ Goal runner — original request design and construction runtime
       if ('status' in prepared) { wait(label, prepared.details ?? '等待原调用真实交回。'); return null; }
       const context = prepared;
       const instruction = context.instruction ?? text;
-      const snapshotOptions = { runtimeExcluded: [manifest.report_dir],
+      const snapshotOptions = { runtimeExcluded: [manifest.report_dir], ...(testingTargets ? { includeFiles: [...testingTargets] } : {}),
+        ...(factsFile ? { includeFiles: [factsFile] } : {}),
         ...(role === 'verifier' && family === 'review' ? { includeFiles: [
           (require('./utils/context-facts') as typeof import('./utils/context-facts')).resolveFactsAbsPath(projectRoot, manifest.feature),
+          ...(context.workInput?.material.acceptanceReviewFiles ?? []).map(file => path.resolve(projectRoot, file)),
         ].filter(file => fs.existsSync(file)) } : {}) };
       const pre = capturePhaseInvocationSnapshot(boundary, snapshotOptions);
       if (pre.failureReason) { wait(label, `调用前写入观察不可核实：${pre.failureReason}`); return null; }
@@ -7695,7 +7792,7 @@ Goal runner — original request design and construction runtime
       const plan = executorMode === 'attended' ? { argv: [], label: 'phase_execute_request', adapterName: manifest.adapter! }
         : resolveHeadlessInvokePlan(manifest.adapter!, cap.capability!, manifest.unattended, instruction,
           { PROMPT: instruction, PROMPT_FILE: promptFile, PROJECT_ROOT: projectRoot, FRAMEWORK_ROOT: frameworkRoot, FEATURE: manifest.feature,
-            PHASE: label, SKILL_PATH: phaseSkillPath(frameworkRoot, family as FeaturePhase) }, adapterModelBinding(manifest.adapter_model_pin), sessionBinary?.binary ?? null);
+            PHASE: label, SKILL_PATH: phaseSkillPath(frameworkRoot, testingTargets ? 'testing' : family as FeaturePhase) }, adapterModelBinding(manifest.adapter_model_pin), sessionBinary?.binary ?? null);
       const issuedAt = new Date().toISOString();
       const materialInput = { context, invokeId, issuedAt, ...(purpose ? { purpose } : {}),
         gateTimeoutMs: 0, cleanupReserveMs: 0, preSnapshot: pre, writeBoundary: boundary, snapshotOptions };
@@ -7805,6 +7902,15 @@ Goal runner — original request design and construction runtime
       if (handedBack.failureReason) {
         wait(label, `真实调用的交回后像不可核实：${handedBack.failureReason}；恢复原观察后继续，不猜新工作条件。`);
         return null;
+      }
+      if (original && verifierReport && context.workInput?.material.acceptanceReview && invocationCompleted(result) && !writes?.violations.length) {
+        const observedReport = handedBack.entries.find(entry => entry.kind === 'file' && path.resolve(projectRoot, entry.path) === verifierReport);
+        if (observedReport) {
+          const bytes = fs.readFileSync(verifierReport);
+          if (createHash('sha256').update(bytes).digest('hex') === observedReport.sha256) {
+            fs.writeFileSync(path.join(runDir, path.dirname(original.reference.path), 'independent-' + path.basename(verifierReport)), bytes, { flag: 'wx' });
+          }
+        }
       }
       if (pre.sha256 !== handedBack.sha256) goalEvents.emit({ type: 'phase_write_observed', phase: label, invoke_id: invokeId,
         pre_snapshot: pre.sha256, post_snapshot: handedBack.sha256,
@@ -7955,7 +8061,76 @@ Goal runner — original request design and construction runtime
       if (!observation.end || observation.end.timed_out || !observation.start?.invoke_id || observation.conditionReady) return false;
       return !!await awaitDeviceReadiness(family, observation.start.invoke_id, true);
     };
+    const testingPreparation = (work: ReturnType<typeof readWork>) => {
+      if (work.disposition.completionBlocking.some(problem => problem.id === 'acceptance_binding'
+        || problem.id.includes('context_exploration_facts_baseline_stale'))) return undefined;
+      const testing = work.results.find(result => result.phase === 'testing');
+      const checks = testing?.checks ?? [];
+      const top = checks.find(check => check.id === 'testing_docs_missing' && check.status === 'FAIL');
+      const derive = checks.find(check => check.id === 'device_test_run' && check.status === 'FAIL'
+        && asRecord(asRecord(check.structured)?.derive_hint));
+      const nav = checks.find(check => check.id === 'visual_diff_capture' && check.status === 'FAIL'
+        && check.affected_files?.length === 1 && check.repair_owner === 'testing');
+      if (!top && !derive && !nav) return undefined;
+      const active = phaseCompletionProblems(work.disposition, ['testing']);
+      const checksToPrepare = [top?.id, derive?.id, nav?.id].filter((id): id is string => !!id);
+      const problems = active.filter(problem => checksToPrepare.some(id => [id, `open_finding:${id}`].includes(problem.id)));
+      if (!problems.length) return undefined;
+      return { top, derive, nav, problems, checks };
+    };
+    const prepareTestingInputs = async (work: ReturnType<typeof readWork>, prepared: NonNullable<ReturnType<typeof testingPreparation>>): Promise<boolean | 3> => {
+      const reports = featurePhaseReportsDir(projectRoot, manifest.feature, 'testing', frameworkRoot);
+      const plan = path.join(reports, hylyreRunTimestamp(), 'hylyre', 'test-plan.hylyre.md');
+      const topPlan = resolveFeatureArtifact(projectRoot, manifest.feature, 'test-plan.md').actualPath;
+      const deriveHint = asRecord(asRecord(prepared.derive?.structured)?.derive_hint);
+      const observation = readCurrentCheckObservation({ projectRoot, frameworkRoot, feature: manifest.feature, runId: manifest.run_id, phase: 'testing' });
+      const outsideReports = (file: string): boolean => {
+        const relative = path.relative(reports, path.resolve(projectRoot, file));
+        return relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
+      };
+      const selected = typeof deriveHint?.selected_derived_path === 'string' && !outsideReports(deriveHint.selected_derived_path)
+        ? path.resolve(projectRoot, deriveHint.selected_derived_path) : undefined;
+      const inputs = Object.fromEntries(Object.entries(observation.inputs).filter(([file]) => outsideReports(file)));
+      const material = { purpose: 'testing-preparation', segments: [
+        prepared.problems.map(problem => problem.id),
+        deriveHint && Object.fromEntries(Object.entries(deriveHint).filter(([key]) => !['source_plan_mtime_iso', 'selected_derived_mtime_iso',
+          'selected_derived_path', 'rejected_placeholder_paths'].includes(key))),
+        selected && fs.existsSync(selected) ? sha256FileHex(selected) : null,
+        prepared.nav?.affected_files, inputs,
+        prepared.checks.filter(check => ['device_test_build', 'device_test_install'].includes(check.id))
+          .map(check => ({ id: check.id, status: check.status, blocking_class: check.blocking_class })),
+        work.evaluation.acceptanceKey,
+      ] };
+      const history = loadAuthoritativeEvents(eventsPath);
+      if (history.some(event => {
+        if (event.type !== 'agent_invoke_start' || !event.invoke_id
+          || (event as Record<string, unknown>).purpose !== 'testing-preparation') return false;
+        const original = executionRequestForInvoke(runDir, event.invoke_id)?.request;
+        return original?.purpose === 'testing-preparation'
+          && stableStringify(original.context.workInput?.material) === stableStringify(material)
+          && history.some(end => end.type === 'agent_invoke_end' && end.invoke_id === event.invoke_id);
+      })) return false;
+      const targets = [...(prepared.top ? [topPlan] : []), ...(prepared.derive ? [plan] : []), ...(prepared.nav?.affected_files ?? [])];
+      const instruction = [
+        `按 ${phaseSkillPath(frameworkRoot, 'testing')} 完成原 testing 负责的准备工作，使用已批准的当前验收和顶层计划。`,
+        ...(prepared.top ? [`依当前验收和适用验证通道在 ${topPlan} 建立正式测试计划，由后续真实执行生成测试报告。`] : []),
+        ...(prepared.derive ? [
+          `读取 ${topPlan} 与当前正式检查的 derive_hint，派生文件只写 ${plan}。`,
+          JSON.stringify(deriveHint),
+          '先按用例核对起始数据。可用已知卡号状态、授权的隔离测试数据或现有可执行准备步骤时，把步骤写入相应用例。进程重启只复位进程，不能证明数据库为空。保留原断言和测试通道，不使用 clear_app 或重置设备。',
+          '继续准备已有真实前置的用例。若某项确需当前不可得的数据，在交回中逐条写用例与验收 ID、缺少的具体状态、现有证据和原验证方可执行的核查。未实际安装时记录为待执行，由正式工具建立证据。',
+        ] : []),
+        ...(prepared.nav ? [
+          `只在 ${prepared.nav.affected_files![0]} 交回视觉导航。若 testing/visual-diff-nav.json 有历史配置，先按当前 ui-spec 屏及路径验证，再将仍适用的步骤写到正式位置。保留历史文件。`,
+        ] : []),
+        '此调用只准备输入，不修改产品、验收、历史原件或手写执行结果。后续由同一运行器走正式构建、安装及适用复验。',
+      ].join('\n');
+      const invoked = await invokeWork('work-unit-author', instruction, undefined, 'testing-preparation', false,
+        { material, evaluation: work.evaluation }, undefined, targets);
+      return invoked === 3 ? 3 : !!invoked || halted;
+    };
     const supplementTestingEvidence = async (work: ReturnType<typeof readWork>): Promise<boolean | 3> => {
+      if (testingPreparation(work)) return false;
       const gaps = testingEvidenceGaps(work.disposition);
       if (!gaps.length || !familiesNow().includes('testing')) return false;
       const actor = lastAuthor();
@@ -7991,7 +8166,7 @@ Goal runner — original request design and construction runtime
         .find(call => call.original?.request.purpose === 'testing-evidence');
       if (previous?.original && stableStringify(previous.original.request.context.workInput?.material) === stableStringify(material)
         && history.some(event => event.type === 'agent_invoke_end' && event.invoke_id === previous.event.invoke_id)) return false;
-      if (!currentHap) { wait('testing', `原验证所需当前 HAP 尚不可核验；保留证据缺口，取得当前构建后只补原对象。\n${renderCurrentDisposition(work.disposition)}`); return true; }
+      if (!currentHap) return false;
       const ready = await awaitDeviceReadiness('testing', `testing-evidence-${actor.original.request.context.attemptId}`);
       if (!ready) return true;
       const readySession = readDeviceSession(projectRoot, manifest.report_dir);
@@ -8022,8 +8197,13 @@ Goal runner — original request design and construction runtime
       const author = lastAuthor();
       let designDeclineFeedback = '';
       let designDeclineCandidates: string[] = [];
+      const preparation = testingPreparation(before);
       const repairs = before.disposition.completionBlocking.filter(problem => problem.action === 'repair'
-        && !before.independent.some(task => task.problems.includes(problem)));
+        && !preparation?.problems.includes(problem)
+        && !before.independent.some(task => task.problems.includes(problem))
+        && !before.acceptanceReview.some(question => question.issue === problem.id && (problem.source_phase ?? problem.phase) === 'testing'
+          && before.results.some(result => result.phase === 'testing' && result.checks.some(check =>
+            check.id === question.issue && asRecord(check.structured)?.pending_testing_retest === true))));
       const designRoot = originalDeliveryForManifest(projectRoot, manifest);
       const designFamilies = [...new Set(repairs.filter(problem => problem.owner === 'external').map(problem => problem.source_phase ?? problem.phase))];
       const findings = designFamilies
@@ -8116,7 +8296,9 @@ Goal runner — original request design and construction runtime
         `已向当前责任方交付反馈且真实检查仍无验收改善，保全后可续暂停。\n${renderCurrentDisposition(before.disposition)}`, 'no_progress_guard'); break; }
       if (before.evaluation.completed && !progress.reused && progress.evaluation === before.evaluation) completedEvaluations.push(before.evaluation);
       if (!author || newDriverHypothesis || designDeclineFeedback || repairs.length && !feedbackAwaitingEvaluation && !verificationPending) {
-        const prepared = await authorInstruction(before, designDeclineFeedback, designDeclineCandidates);
+        const authorWork = preparation ? { ...before, disposition: { ...before.disposition,
+          problems: before.disposition.problems.filter(problem => !preparation.problems.includes(problem)) } } : before;
+        const prepared = await authorInstruction(authorWork, designDeclineFeedback, designDeclineCandidates);
         const invoked = await invokeWork('work-unit-author', prepared.instruction, undefined, undefined, explicitlyContinued, prepared.workInput);
         if (invoked === 3) return 3;
         if (!invoked || halted) break;
@@ -8137,7 +8319,35 @@ Goal runner — original request design and construction runtime
         let current = readWork();
         if (!current.facts.phases.some(result => result.phase === family)) continue;
         const reviewConditions = checkWorkConditions(family, current);
-        const artifactRepair = current.independent.find(task => task.owner === family);
+        let artifactRepair = current.independent.find(task => task.owner === family);
+        let questions = family === 'review' ? current.acceptanceReview : [];
+        let followupQuestions = false;
+        if (artifactRepair && questions.length) {
+          const requested = new Set(questions.map(question => question.issue));
+          const history = loadAuthoritativeEvents(eventsPath);
+          const restart = userContinued ? history.map(event => event.type === 'run_start').lastIndexOf(true) : -1;
+          const calls = independentCalls(artifactRepair, history);
+          const questionInputs = new Map([...new Set(questions.flatMap(question => question.files))]
+            .map(file => [file, sha256FileFull(path.resolve(projectRoot, file)) ?? '']));
+          const deliveries = (question: typeof questions[number], digest: string) => calls.filter(call =>
+            call.index > restart && call.context.workInput?.material.acceptanceReview?.[question.issue]?.includes(digest)
+            && question.files.every(file => call.evaluation.inputs[file]?.contentHash === questionInputs.get(file))).length;
+          questions = questions.flatMap(question => {
+            const remaining = question.digests.filter(digest => deliveries(question, digest) < 2);
+            if (!remaining.length) return [];
+            if (remaining.length === question.digests.length) return [question];
+            const detail = asRecord(question.detail);
+            return [{ ...question, digests: remaining, detail: detail && Array.isArray(detail.retests) ? {
+              ...detail, retests: detail.retests.filter((_, index) => remaining.includes(question.digests[index])),
+            } : question.detail }];
+          });
+          followupQuestions = questions.length > 0 && questions.every(question => question.digests.every(digest => deliveries(question, digest) > 0));
+          const problems = artifactRepair.problems.filter(problem => !requested.has(problem.id) || questions.some(question => question.issue === problem.id));
+          if (!problems.length) {
+            pausedIndependent.add(artifactRepair.file);
+            artifactRepair = undefined;
+          } else artifactRepair = { ...artifactRepair, problems };
+        }
         const recheckIndependent = !artifactRepair && (reviewConditions.productChanged || reviewConditions.observation.changed || reviewConditions.scopeChanged)
           ? independentArtifactRepairs({ ...current.input, currentDisposition: current.disposition, recheckFamilies: [family] }).find(task => task.owner === family)
           : undefined;
@@ -8153,22 +8363,53 @@ Goal runner — original request design and construction runtime
             && !reviewConditions.productChanged && !reviewConditions.scopeChanged && !reviewConditions.observation.changed
             && independent.problems.every(problem => problem.action === 'repair' && !problem.id.startsWith('open_finding:')
               && problem.files?.length === 1 && path.resolve(projectRoot, problem.files[0]) === independent.file);
+          const questionFiles = [...new Set(questions.flatMap(question => question.files))];
+          const questionDigests: Record<string, string[]> = {};
+          for (const question of questions) (questionDigests[question.issue] ??= []).push(...question.digests);
+          const { collectTestStrengthContext, collectNativeAcceptanceEvidence, independentVerificationContext } =
+            require('./utils/verifier-material') as typeof import('./utils/verifier-material');
+          const reviewInputs = { ...current.input, phase: family, subjectId: null };
+          const strengthTests = [...new Set(questions.filter(question => question.issue.startsWith('acceptance_test_strength_'))
+            .flatMap(question => (question.detail as { files: string[] }).files))];
+          const evidence = questions.length ? independentVerificationContext({ actualDiff: null, currentEvidence: [
+            ...collectTestStrengthContext(reviewInputs), ...collectNativeAcceptanceEvidence({ ...reviewInputs, testSources: strengthTests }),
+          ] }) : [];
           const instruction = [
             formatOnly
               ? `仅修补已有报告 ${reportRel} 的格式/引用问题：${independent.problems.map(problem => problem.detail).join('\n')}。保留产品发现与有效依据，结论按问题表如实修正；不重新进行整轮产品审查或重跑构建/测试，真实业务差额仍交原责任方。`
-              : `独立审查本工作单元 ${manifest.feature}，按 ${phaseSkillPath(frameworkRoot, family as FeaturePhase)} 的正式方法写入 ${reportRel}。`,
+              : followupQuestions && independent.problems.every(problem => questions.some(question => question.issue === problem.id))
+                ? `只补 ${reportRel} 中上轮未交出有效回答的问题。保留已有审查和技术结论，在同一个 issue-verification 块中补齐本次表格。`
+                : `独立审查本工作单元 ${manifest.feature}，按 ${phaseSkillPath(frameworkRoot, family as FeaturePhase)} 的正式方法写入 ${reportRel}。`,
             `原始请求：${manifest.requirement ?? ''}`,
             `冻结交付目标：${(current.input.executionScope?.requested_results ?? []).join('\n')}`,
             `读取当前 canonical CU、设计来源、实际改动及作者原件；设计与 CU 归属冲突须在问题表列明具体权威文件和依据，交原责任方修订。`,
             ...(!formatOnly && current.disposition.completionBlocking.some(problem => problem.id === 'coding_existing_test_preserved')
               ? ['对 coding_existing_test_preserved 对照真实前像、当前断言与实际执行原件独立核实。在本报告使用既有 ```issue-verification 块，issue为该check id，verdict为confirmed/refuted/unclear；evidence包含当前检查完整原文、涉及文件和具体判断依据。不改机器检查，不以UT通过代替断言强度判断。'] : []),
             ...(authorResult ? [`作者原件：${path.relative(projectRoot, authorResult).replace(/\\/g, '/')}。完整保留其中的拒修理由并独立核实；原件缺失时如实披露，不猜测作者结论。`] : []),
+            ...(questions.length ? [
+              '同一次审查逐项回答下表。所有 issue 必须在同一个 issue-verification fenced YAML 数组各出现一次，给 verdict=confirmed/refuted/unclear 与 evidence。遗漏的 ID 仍阻止完成。',
+              '输出示例（仅示意语法，替换 issue 及 evidence 后再交回）：',
+              '```issue-verification', '- issue: <下表具体 issue>', '  verdict: unclear', '  evidence: <逐项真实依据>', '  production_paths: []', '```',
+              '代码围栏语言标记逐字使用 issue-verification，字段逐字使用 issue；不要在块里添加下表之外的项目。',
+              '| issue | 当前验收、测试与可用复验原件 |', '| --- | --- |',
+              ...Object.keys(questionDigests).map(issue => '| ' + issue + ' | ' + JSON.stringify(questions.filter(question => question.issue === issue).map(question => question.detail)).replace(/\|/g, '&#124;') + ' |'),
+              'acceptance_test_strength_ 裁决当前源码的断言强度。evidence 用反引号包裹的仓根相对 path:line 引用测试及实际调用的生产路径，写出准确 it() 名和断言的数据来源。每条同时提供 production_paths 数组，逐个列出该结论实际依赖的已调用生产源码仓根相对路径。仅替身等从未调用生产代码时可给空数组。逐项区分替身和生产真值。refuted 表示确有对应实际断言；confirmed 表示不足，说明具体不足和原修复对象；unclear 表示连当前源码都不能裁定。尚未执行时仍按源码判断断言强度，另如实说明缺执行；框架独立核对执行原件。',
+              ...(questions.some(question => (question.detail as { tests?: Array<{ candidate?: true }> }).tests?.some(test => test.candidate))
+                ? ['candidate: true 的 it() 来自当前共享 DAG。逐条核对本验收实际要求与候选断言，refuted 只点名确能证明该验收的完整 it() 名。']
+                : []),
+              'testing_failure_routing_ 只有在当前 HAP 原生复验真实覆盖原承诺、旧失败明确可推翻时给 refuted。逐条引用具体原失败和适用复验的两份 trace、两份计划及原/新 case ID，说明原失败是否为测试错误和行为为何等效。新增返回等操作若改了原承诺要保留缺口。',
+              ...evidence.map(entry => entry.label + '\n' + entry.content),
+            ] : []),
             '本次只写指定审查报告；facts只读，不追加phase_delta: review，新事实写入本报告。不修改产品、测试、设计或正式机器结果，不替作者自签完成。',
             renderCurrentDisposition(current.disposition),
           ].join('\n');
           const observed = readCurrentCheckObservation({ projectRoot, frameworkRoot, feature: manifest.feature, runId: manifest.run_id, phase: family });
           // The report is a checker input, not new work created by its own writer's previous output.
           const writerInputs = Object.fromEntries(Object.entries(observed.inputs).filter(([file]) => file !== reportRel));
+          for (const file of questionFiles) {
+            const contentHash = sha256FileFull(path.resolve(projectRoot, file));
+            writerInputs[file] = { exists: contentHash !== null, contentHash: contentHash ?? '' };
+          }
           const relevantChecks = current.results.filter(result => result.phase === family).map(result => ({ ...result,
             checks: result.checks.filter(check => check.affected_files?.some(file => path.resolve(projectRoot, file) === independent.file)) }));
           const disposition = resolveCurrentDisposition({ endpoint: 'request', phases: [], additionalProblems: independent.problems });
@@ -8185,20 +8426,21 @@ Goal runner — original request design and construction runtime
             && workUnitFeedbackDelivered(previous.context, previous.evaluation.disposition) === true;
           const progress = completionProgressFromHistory(evaluation, calls.map(call => call.evaluation), delivered,
             !!previous && checkedAt > previous.ended);
-          if (!continued && progress.halt) {
+          if (!continued && progress.halt && !questions.length) {
             // Finish other executable work before pausing; an unexecutable verify cannot buy another loop.
             pausedIndependent.add(independent.file);
             continue;
           }
           // Session handback re-enters this loop before its report has been checked.
-          const awaitingCheck = semanticRecheck && !!previous && delivered && checkedAt < previous.ended;
+          const awaitingCheck = !questions.length && semanticRecheck && !!previous && delivered && checkedAt < previous.ended;
           if (awaitingCheck && !affectedCheck(family, current)) {
             pausedIndependent.add(independent.file);
             continue;
           }
           if (!awaitingCheck) {
             const reviewed = await invokeWork(independent.owner, instruction, independent.file, independent.owner, continued,
-              { material: { purpose: independent.owner, segments: [instruction, writerInputs] }, evaluation });
+              { material: { purpose: independent.owner, segments: [instruction, writerInputs],
+                ...(questions.length ? { acceptanceReview: questionDigests, acceptanceReviewFiles: questionFiles } : {}) }, evaluation });
             if (reviewed === 3) return 3;
             if (!reviewed || halted) break;
             if (!semanticRecheck || reviewed.rebuild) continue currentWork;
@@ -8288,19 +8530,23 @@ Goal runner — original request design and construction runtime
           // An unchanged returned check is reusable observation, not an external wait.
           continue;
         }
-        const telemetry = runRuntimeTelemetryPreflightGate({ projectRoot, feature: manifest.feature, phase: family as FeaturePhase,
+        const needsDevice = phaseRequiresDevice(family as FeaturePhase, resolvedProfile, current.input.executionScope);
+        const missingDerived = family === 'testing' && needsDevice
+          && !isCapabilitySkipped(resolvedProfile, 'device_test.run') && !isCapabilitySkipped(resolvedProfile, 'device_test.install')
+          && !selectBestNonPlaceholderDerivedPlan(featurePhaseReportsDir(projectRoot, manifest.feature, family, frameworkRoot)).selected;
+        const telemetry = !missingDerived && runRuntimeTelemetryPreflightGate({ projectRoot, feature: manifest.feature, phase: family as FeaturePhase,
           retries: 0, resolvedProfile, emitPhaseVerdict: event => goalEvents.emitPhaseVerdict(event) });
         if (telemetry) { outcomes.push(telemetry.outcome); continue; }
-        const capability = (injectedCapabilityGate ?? runInvokeCapabilityGate)({ projectRoot, phase: family as FeaturePhase, retries: 0,
+        const capability = !missingDerived && (injectedCapabilityGate ?? runInvokeCapabilityGate)({ projectRoot, phase: family as FeaturePhase, retries: 0,
           resolvedProfile, emitEvent: event => goalEvents.emit(event as Record<string, unknown>) });
         if (capability) { outcomes.push(capability.outcome); continue; }
         if (family === 'testing' && !commitVisualJournal(attemptId, actor)) break;
-        const reportReconcileOnly = family === 'testing' && canReconcileTestingReport({ projectRoot, frameworkRoot,
+        const reportReconcileOnly = missingDerived || family === 'testing' && canReconcileTestingReport({ projectRoot, frameworkRoot,
           feature: manifest.feature, previous: checkObservation.end?.related_input_snapshot, current: checkObservation.inputs,
           productChanged: conditions.productChanged, scopeChanged: conditions.scopeChanged });
         let deviceEnv: Record<string, string> = {};
         // Unknown obligations need input resolution before any physical preparation.
-        if (phaseRequiresDevice(family as FeaturePhase, resolvedProfile, current.input.executionScope) && !reportReconcileOnly) {
+        if (needsDevice && !reportReconcileOnly) {
           const selected = (family === 'testing' || family === 'ut')
             ? selectDeviceExecutionTarget({ projectRoot, sessionId: invokeId }) : null;
           if (selected) deviceEnv = selected.env;
@@ -8334,13 +8580,13 @@ Goal runner — original request design and construction runtime
           outcomes.push({ phase: family as FeaturePhase, verdict: 'INCOMPLETE', halted: true, retries: 0, halt_reason: 'executor_waiting', halt_guidance: checked.waitingDetail ?? '当前工具尚未提供可信结束结果，恢复原工具条件后仅补本检查。' });
           continue;
         }
-        if (family === 'testing' && !reportReconcileOnly) {
-          if (checked.currentCheckObserved && !commitVisualJournal(attemptId, actor)) break;
+        if (family === 'testing' && (!reportReconcileOnly || missingDerived)) {
+          if (!reportReconcileOnly && checked.currentCheckObserved && !commitVisualJournal(attemptId, actor)) break;
           const reports = featurePhaseReportsDir(projectRoot, manifest.feature, family, frameworkRoot);
           const device = { attemptId, projectRoot, reportsDir: reports,
             expectedTarget: { serial: deviceEnv.HARNESS_HDC_TARGET ?? null, target_kind: deviceEnv.MAISON_DEVICE_TARGET_KIND ?? null, session_id: deviceEnv.MAISON_DEVICE_SESSION_ID ?? null },
             harnessWindow: { startMs: started, endMs: endedAt }, currentHapSha256Full: resolveCurrentHapSha256Full(projectRoot, reports) };
-          commitGateDeviceEvidenceProposal(projectRoot, manifest.feature, manifest.run_id, device);
+          if (!reportReconcileOnly) commitGateDeviceEvidenceProposal(projectRoot, manifest.feature, manifest.run_id, device);
           const visual = readFreshVisualDisposition(path.join(reports, 'summary.json'), { runId: manifest.run_id, attemptId, startedAtMs: started });
           const collected = collectActionableDefects(projectRoot, manifest.feature, manifest.run_id, device, visual.downgradedScreens, visual.t8Findings);
           if (collected.unverified.length) goalEvents.emit({ type: 'unverifiable_must_fix', phase: family, invoke_id: invokeId, entries: collected.unverified, count: collected.unverified.length });
@@ -8376,6 +8622,15 @@ Goal runner — original request design and construction runtime
       if (rebuildTransport) continue;
       const after = readWork();
       if (workCompleted(after)) break;
+      // An applicable unanswered question can proceed through the same signed writer loop.
+      if (after.independent.some(task => !pausedIndependent.has(task.file) && task.problems.some(problem =>
+        after.acceptanceReview.some(question => question.issue === problem.id)))) continue;
+      const pendingPreparation = testingPreparation(after);
+      if (pendingPreparation) {
+        const prepared = await prepareTestingInputs(after, pendingPreparation);
+        if (prepared === 3) return 3;
+        if (prepared) continue;
+      }
       const currentOutcomes = new Map<string, GoalPhaseOutcome>();
       for (const outcome of outcomes) currentOutcomes.set(String(outcome.phase), outcome);
       const blockedProbe = [...currentOutcomes.values()].find(outcome => (outcome.probe || outcome.deferred || outcome.halted && outcome.verdict === 'INCOMPLETE'
@@ -8395,7 +8650,8 @@ Goal runner — original request design and construction runtime
         if (after.results.some(bound => bound.phase === result.phase) && result.lineage !== 'stale' && result.lineage !== 'missing') return false;
         return !selectedFamilies.includes(result.phase);
       })) continue;
-      if (after.disposition.completionBlocking.some(problem => problem.action === 'repair')) {
+      if (after.disposition.completionBlocking.some(problem => problem.action === 'repair'
+        && !pendingPreparation?.problems.includes(problem))) {
         const paused = after.independent.filter(task => pausedIndependent.has(task.file));
         if (paused.length && after.disposition.completionBlocking.filter(problem => problem.action === 'repair')
           .every(problem => paused.some(task => task.problems.includes(problem)))) {
@@ -8424,6 +8680,17 @@ Goal runner — original request design and construction runtime
       const supplemented = await supplementTestingEvidence(after);
       if (supplemented === 3) return 3;
       if (supplemented) continue;
+      if (pendingPreparation) {
+        wait('testing', `原测试写方已交回同一准备条件下的结果。逐项核实尚缺的用例前置、派生输入或导航，保留本次原件；取得具体输入后沿原 testing 接回。\n${renderCurrentDisposition(after.disposition)}`, 'no_progress_guard');
+        break;
+      }
+      const unansweredReview = after.independent.find(task => pausedIndependent.has(task.file) && task.problems.some(problem =>
+        after.acceptanceReview.some(question => question.issue === problem.id)));
+      if (unansweredReview) {
+        wait(unansweredReview.owner, '独立核验已交回同一材料，逐项回答仍缺失或无效；已保留有效回答和当前完成差额。相关材料变化或用户明确继续后可接回。\n'
+          + renderCurrentDisposition(after.disposition), 'no_progress_guard');
+        break;
+      }
       wait(after.disposition.completionBlocking[0]?.source_phase ?? after.disposition.completionBlocking[0]?.phase ?? 'work-unit-author',
         `当前真实调用/检查已经结束，剩余为原producer、独立核验或环境条件缺口；同条件不重派。解除条件满足后接原run，只补受影响部分。\n${outcomes.filter(outcome => outcome.verdict === 'INCOMPLETE' && outcome.halt_guidance).map(outcome => outcome.halt_guidance).join('\n')}\n${renderCurrentDisposition(after.disposition)}`);
     }

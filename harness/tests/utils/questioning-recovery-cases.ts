@@ -6,8 +6,11 @@ import { gunzipSync } from 'zlib';
 import { createHash } from 'crypto';
 import { BlueprintRecord, asRecord, asRecords } from '../../scripts/utils/component-blueprint-model';
 import { requiredQuestioningScopes, validateBlueprintQuestioning, independentQuestioningBlockers, normalizeQuestioningItems,
-  parseIndependentQuestioningOutput, mergeIndependentQuestioningResult, selectQuestioningScopes, questioningEvidencePath } from '../../scripts/utils/blueprint-questioning';
+  parseIndependentQuestioningOutput, mergeIndependentQuestioningResult, selectQuestioningScopes, questioningEvidencePath,
+  readSignedQuestioningScopes, renderQuestioningResultInstructions } from '../../scripts/utils/blueprint-questioning';
 import { questioningDependencyChanges } from '../../scripts/utils/design-repair-unattended';
+import { readCurrentDispositionInput } from '../../scripts/utils/verify-feature-completion';
+import { resolveCurrentDisposition } from '../../scripts/utils/check-disposition';
 import { capturePhaseInvocationSnapshot } from '../../scripts/utils/phase-write-boundary';
 import { clearFrameworkConfigCache } from '../../config';
 
@@ -82,6 +85,33 @@ export function questioningRecoveryCases() {
     }
   }));
 
+  results.push(test('7d2c49e8 questioning attaches unique signed bare scopes and sends unattached denials back to verification', () => {
+    const blueprint = validBlueprint();
+    const prior = asRecord(asRecord(blueprint.review_summary)?.questioning)!;
+    const ref = 'view:logical', flow = 'flow:ledger-refresh-flow';
+    const signed = readSignedQuestioningScopes(renderQuestioningResultInstructions(blueprint, 'independent-q', [ref]));
+    assert(signed?.size === 1 && signed.get(ref)?.kind === 'view', 'scope must come from the frozen request lines');
+    const answer: BlueprintRecord = { ...asRecords(prior.items).find(item => item.scope_ref === ref), scope_ref: 'logical', disposition: 'blocker' };
+    delete answer.question_id;
+    const bytes = JSON.stringify(answer);
+    const attached = normalizeQuestioningItems(blueprint, [answer], signed);
+    assert(attached[0].scope_ref === ref && attached[0].disposition === 'blocker' && JSON.stringify(answer) === bytes,
+      'signed attachment must retain independent denial and raw bytes');
+    const forged = { ...answer, question_id: 'q:forged' };
+    const unsigned = { ...answer, scope_kind: 'flow', scope_ref: 'ledger-refresh-flow' };
+    const invalid = normalizeQuestioningItems(blueprint, [forged, unsigned], signed);
+    assert(invalid[0].scope_ref === 'logical' && invalid[1].scope_ref !== flow, 'forged and unsigned answers must stay unattached');
+    const conflict = normalizeQuestioningItems(blueprint, [answer, { ...answer, scope_ref: ref, disposition: 'answered_with_evidence' }], signed);
+    assert(conflict.length === 2 && conflict[0].scope_ref === 'logical', 'conflicting claims must retain their original attachment');
+    const report = mergeIndependentQuestioningResult(blueprint, { items: [forged] }, 'independent-q', undefined, undefined, undefined, signed);
+    const current = { ...blueprint, review_summary: { ...asRecord(blueprint.review_summary), questioning: report } };
+    const disposition = resolveCurrentDisposition(readCurrentDispositionInput({ endpoint: 'design', projectRoot: FIXTURE_ROOT,
+      blueprintPath: path.join(FIXTURE_ROOT, 'component-blueprint.yaml'), blueprint: current, blueprintIssues: validateBlueprintQuestioning(current),
+      questioningFindings: independentQuestioningBlockers(current) }));
+    assert(disposition.completionBlocking.some(problem => problem.id.includes('blueprint_questioning_scope_invalid'))
+      && disposition.completionBlocking.every(problem => problem.action === 'verify'), 'unattached denial must keep the verification gap without becoming author work');
+  }));
+
   results.push(test('a920 independent questioning scopes follow structural dependencies and retain item original references', () => {
     const before = validBlueprint(), current = clone(before);
     const previous = asRecord(asRecord(before.review_summary)?.questioning)!;
@@ -144,6 +174,17 @@ export function questioningRecoveryCases() {
     const expect = (actual: string[], expected: string[], why: string): void => {
       assert(JSON.stringify([...actual].sort()) === JSON.stringify([...expected].sort()), `${why}: ${JSON.stringify(actual)}`);
     };
+    {
+      const { before, previous } = sample();
+      const finding = asRecords(previous.items).find(item => item.scope_ref === 'flow:target-flow')!;
+      for (const disposition of ['blocker', 'open_decision']) {
+        finding.disposition = disposition;
+        expect(selectQuestioningScopes(before, before, previous), ['flow:target-flow'], '旧问题仍复核，只有事实变化传播给消费者');
+      }
+      const current = clone(before);
+      current.design_views[1].runtime_data_flows[0].description = '本轮修改实际分发触发条件';
+      expect(selectQuestioningScopes(before, current, previous), ['view:runtime', 'flow:target-flow', 'app_lens:ui_refresh'], '生产事实变化仍沿显式引用传播');
+    }
     const entries = [
       { section: 'decisions_and_gaps', key: 'decisions', id: 'decision_id', kind: 'decision' },
       { section: 'decisions_and_gaps', key: 'gaps', id: 'gap_id', kind: 'gap' },

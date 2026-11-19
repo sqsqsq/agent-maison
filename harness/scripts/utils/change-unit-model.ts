@@ -109,6 +109,7 @@ export interface ChangeUnitIssue {
   path: string;
   message: string;
   route?: 'repair_change_unit' | 'repair_feature_mapping' | 'reconcile_blueprint';
+  authority?: Pick<ComponentBlueprintRef, 'blueprint_id' | 'target'> & { field: string };
 }
 
 export function changeUnitIssue(
@@ -139,7 +140,7 @@ export function changeUnitNonEmpty(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
-export function blueprintRefAddress(ref: ComponentBlueprintRef): string {
+export function blueprintRefAddress(ref: Pick<ComponentBlueprintRef, 'target'>): string {
   const { kind, id, view_id: viewId } = ref.target;
   if (kind === 'node' || kind === 'flow') return `view:${viewId}/${kind}:${id}`;
   return `${kind}:${id}`;
