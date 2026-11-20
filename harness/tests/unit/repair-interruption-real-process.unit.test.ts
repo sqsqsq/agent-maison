@@ -12,8 +12,7 @@ import { bindControlledProcess } from '../utils/controlled-model-process';
 // 断流时的输出形态、退出码与残留子进程仍待宿主证据。
 //
 // 夹具：既有隔离宿主 `setupGoalRuntimeHost` + `runGoalRuntimeChain`（与 repair-continuity 同一套）。
-// 唯一改变是调用传输：包装 `__testing_setInvokeAgent` 收到的替身——替身照旧执行产物回调、
-// 记录提示词与计数，返回值改用真实子进程的结果。不改夹具文件、不改生产代码。
+// 包装 `__testing_setInvokeAgent` 记录原提示词与计数。绑定完成后，脚本进程写入产品并交回真实终态。
 // ============================================================================
 
 import * as assert from 'assert';
@@ -31,6 +30,7 @@ import {
 const invokeAgentHeadless = bindControlledProcess(nativeInvokeAgentHeadless);
 import { clearFrameworkConfigCache } from '../../config';
 import { prepareFeatureScopeCandidate } from '../../scripts/utils/feature-track';
+import { resolveCompletionDisposition } from '../../scripts/utils/verify-feature-completion';
 import {
   runGoalRuntimeChain, setupGoalRuntimeHost, PRODUCT_FILE,
 } from './goal-runner-testing-integrity.unit.test';
@@ -41,12 +41,17 @@ import { matchesUnitCase, selectedUnitCases, startCaseTiming, unitCaseGroups, ty
 /** complete：回放全部样本行后 exit 0；complete-then-linger：回放含 turn.completed 后不退出（等收口 kill）；
  *  exit-no-terminal：只回放非终态行后 exit 1；kill：只回放非终态行后挂住，由测试从外部杀进程树。 */
 type Mode = 'complete' | 'complete-then-linger' | 'exit-no-terminal' | 'kill';
+type ControlledWrite = { file: string; source: string };
 
+const REPAIR_ID = 'real_product_repair';
+const FIXED = 'real-process-repaired';
+const REPAIRED_SOURCE = `struct AllBanksPage { build() { Text("${FIXED}") } }`;
 const COMPLETED_FIXTURE = path.join(__dirname, 'fixtures', 'codex-terminal-completed.real.jsonl');
 const EXECUTOR_SCRIPT = [
   "const fs = require('fs');",
-  'const [mode, fixture, ready, observed] = process.argv.slice(2);',
+  'const [mode, fixture, ready, observed, repairFile, repairSource] = process.argv.slice(2);',
   'function emit() {',
+  'if (repairFile) fs.writeFileSync(repairFile, repairSource);',
   "const lines = fs.readFileSync(fixture, 'utf8').split(/\\r?\\n/).filter(Boolean);",
   "const terminal = lines.find(l => l.includes('\"turn.completed\"'));",
   "process.stdout.write(lines.filter(l => l !== terminal).join('\\n') + '\\n');",
@@ -55,14 +60,12 @@ const EXECUTOR_SCRIPT = [
   "if (mode === 'kill' || mode === 'complete-then-linger') setInterval(() => {}, 1000);",
   "process.exitCode = mode === 'exit-no-terminal' ? 1 : 0;",
   '}',
-  // A short-lived executor must remain queryable until the real containment observer returns.
-  "if (mode !== 'complete' && mode !== 'exit-no-terminal') emit(); else {",
+  // Product work and terminal output follow the actual containment binding.
   '  const deadline = Date.now() + 10000;',
   '  const wait = setInterval(() => {',
   '    if (fs.existsSync(observed)) { clearInterval(wait); emit(); }',
   '    else if (Date.now() >= deadline) { clearInterval(wait); process.exitCode = 1; }',
   '  }, 10);',
-  '}',
   '',
 ].join('\n');
 
@@ -77,7 +80,7 @@ async function waitFor(cond: () => boolean, tries = 200, intervalMs = 50): Promi
 }
 
 /** 用生产 options 原样（timeout / deadline / extraEnv / containment / onActiveChild …）起真实子进程。 */
-async function scriptedInvoke(cwd: string, o: AgentInvokeOptions, mode: Mode): Promise<AgentInvokeResult> {
+async function scriptedInvoke(cwd: string, o: AgentInvokeOptions, mode: Mode, write?: ControlledWrite): Promise<AgentInvokeResult> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'repair-exec-'));
   const script = path.join(dir, 'scripted-executor.js');
   const ready = path.join(dir, 'ready');
@@ -87,8 +90,9 @@ async function scriptedInvoke(cwd: string, o: AgentInvokeOptions, mode: Mode): P
   // This process replays terminal envelopes; it is not a resumable Codex CLI accepting vendor argv.
   const { providerSessionId: _nativeSession, ...processOptions } = o;
   try {
+    const repair = write ? [path.join(cwd, write.file), write.source] : [];
     const running = invokeAgentHeadless(
-      { argv: [process.execPath, script, mode, COMPLETED_FIXTURE, ready, observed], label: 'scripted terminal replay', adapterName: 'terminal-replay-fixture' },
+      { argv: [process.execPath, script, mode, COMPLETED_FIXTURE, ready, observed, ...repair], label: 'scripted terminal replay', adapterName: 'terminal-replay-fixture' },
       cwd,
       { ...processOptions, terminalEventParser: 'codex_turn_jsonl', toolEventCapture: 'structured_events',
         onActiveChild: (child) => { pid = child.pid; o.onActiveChild?.(child); fs.writeFileSync(observed, 'observed'); } },
@@ -106,10 +110,10 @@ async function scriptedInvoke(cwd: string, o: AgentInvokeOptions, mode: Mode): P
 }
 
 /**
- * 在 body 执行期间，把 runGoalRuntimeChain 安装的替身调用包一层：替身先跑（产物回调、提示词与计数不变），
- * 返回值换成脚本化执行者真实子进程的结果。
+ * 替身记录原提示词与计数，产品写入和返回值来自已绑定的脚本进程。
  */
-async function withRealTransport<T>(modeFor: (phase: string, attempt: number) => Mode, body: () => Promise<T>): Promise<{ value: T; invokes: RealInvoke[] }> {
+async function withRealTransport<T>(modeFor: (phase: string, attempt: number) => Mode, body: () => Promise<T>,
+  repairsProduct?: (phase: string, attempt: number) => boolean | ControlledWrite): Promise<{ value: T; invokes: RealInvoke[] }> {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const runtime = require('../../scripts/goal-phase-runtime') as { __testing_setInvokeAgent: (fn: unknown) => void };
   const original = runtime.__testing_setInvokeAgent;
@@ -121,7 +125,8 @@ async function withRealTransport<T>(modeFor: (phase: string, attempt: number) =>
     const attempt = (attempts.get(phase) ?? 0) + 1;
     attempts.set(phase, attempt);
     const mode = modeFor(phase, attempt);
-    const result = await scriptedInvoke(cwd, o, mode);
+    const write = repairsProduct?.(phase, attempt);
+    const result = await scriptedInvoke(cwd, o, mode, write === true ? { file: PRODUCT_FILE, source: REPAIRED_SOURCE } : write || undefined);
     invokes.push({ phase, attempt, mode, result });
     return result;
   }));
@@ -135,8 +140,6 @@ async function withRealTransport<T>(modeFor: (phase: string, attempt: number) =>
 type Ev = Record<string, unknown>;
 const ofType = (events: Ev[], type: string, phase?: string): Ev[] => events.filter(e => e.type === type && (phase === undefined || e.phase === phase));
 const completedRun = (events: Ev[]): boolean => events.some(e => e.type === 'run_end' && ['COMPLETED', 'CHAIN_SLICE_COMPLETED'].includes(String(e.status)));
-const REPAIR_ID = 'real_product_repair';
-const FIXED = 'real-process-repaired';
 const optionsFor = (root: string) => {
   const configPath = path.join(root, 'framework.config.json');
   const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
@@ -164,7 +167,6 @@ const optionsFor = (root: string) => {
   },
   };
 };
-const repair = (root: string) => fs.writeFileSync(path.join(root, PRODUCT_FILE), `struct AllBanksPage { build() { Text("${FIXED}") } }`);
 const cases: Array<{ name: string; run: () => Promise<void> }> = [];
 const test = (name: string, run: () => Promise<void>) => cases.push({ name, run });
 
@@ -194,15 +196,75 @@ for (const mode of ['kill', 'exit-no-terminal'] as const) {
       let delivered = false;
       const { value: resumed, invokes: resumedInvokes } = await withRealTransport(() => 'complete', () => runGoalRuntimeChain(root, {
         ...options, resume: runId,
-        onAuthor: ctx => { assert.ok(ctx.prompt.includes(REPAIR_ID), 'the original unresolved feedback must actually reach the resumed unit'); delivered = true; repair(root); },
-      }));
+        onAuthor: ctx => { assert.ok(ctx.prompt.includes(REPAIR_ID), 'the original unresolved feedback must actually reach the resumed unit'); delivered = true; },
+      }), phase => phase === 'work-unit-author');
       assert.ok(delivered && resumedInvokes.length === 1 && resumedInvokes[0].result.completion_observed === true, 'real terminal completion, not fake end, permits repair verification');
       assert.equal(resumed.events.filter(event => event.type === 'agent_invoke_start' && event.phase === 'work-unit-author').length, 3);
+      const repaired = resumed.events.filter(event => event.type === 'agent_invoke_start' && event.phase === 'work-unit-author').at(-1);
+      assert.ok(resumed.events.some(event => event.type === 'phase_write_observed' && event.invoke_id === repaired?.invoke_id
+        && (event.owned as { path: string }[] | undefined)?.some(write => write.path === PRODUCT_FILE)),
+      'the repair belongs to the actually bound process window');
       assert.equal(resumed.events.filter(event => event.type === 'harness_start' && event.phase === 'coding').length, 2, 'only the affected producer is rechecked after real repair');
       assert.ok(completedRun(resumed.events), JSON.stringify(ofType(resumed.events, 'run_end')));
     } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
   });
 }
+
+test('[真实子进程] 签发后绑定前的外部写入保全原件，实际进程完成也不计作返修', async () => {
+  const root = setupGoalRuntimeHost('codex', false).root;
+  try {
+    const options = optionsFor(root);
+    const { value: result, invokes } = await withRealTransport(() => 'complete', () => runGoalRuntimeChain(root, {
+      ...options, runId: 'real-interrupt-foreign-before-binding',
+      onAuthor: ctx => {
+        if (ctx.attempt !== 2) return;
+        assert.ok(ctx.prompt.includes(REPAIR_ID));
+        fs.writeFileSync(path.join(root, PRODUCT_FILE), REPAIRED_SOURCE);
+      },
+    }));
+    assert.ok(invokes.at(-1)?.result.completion_observed, 'the actual child returned a real terminal envelope');
+    const observed = result.events.find(event => event.type === 'phase_write_violation');
+    assert.ok((observed?.violations as Array<{ path: string; window: string; violation: string }> | undefined)?.some(write =>
+      write.path === PRODUCT_FILE && write.window === 'before_binding' && write.violation === 'signed_input_drift'));
+    assert.equal(result.events.filter(event => event.type === 'harness_start' && event.phase === 'coding').length, 1);
+    assert.ok(!completedRun(result.events));
+    assert.equal(fs.readFileSync(path.join(root, PRODUCT_FILE), 'utf8'), REPAIRED_SOURCE, 'preserve the foreign bytes for their actual owner');
+    const changedAgain = REPAIRED_SOURCE + '\n// different hash without the owner’s review';
+    fs.writeFileSync(path.join(root, PRODUCT_FILE), changedAgain);
+    const resumed = await withRealTransport(() => 'complete', () => runGoalRuntimeChain(root, {
+      ...options, resume: 'real-interrupt-foreign-before-binding',
+    }));
+    assert.equal(resumed.invokes.length, 0, 'continuation does not sign another worker over unresolved inputs');
+    assert.ok(!completedRun(resumed.value.events));
+    const disposition = resolveCompletionDisposition({ projectRoot: root, feature: 'bc-openCard', runId: 'real-interrupt-foreign-before-binding',
+      chain: ['coding'], frameworkRoot: path.resolve(__dirname, '../../..') });
+    assert.ok(disposition.completionBlocking.some(problem => problem.id === 'phase_write_violation' && problem.files?.includes(PRODUCT_FILE)));
+    assert.equal(fs.readFileSync(path.join(root, PRODUCT_FILE), 'utf8'), changedAgain);
+  } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('[真实子进程] 仅执行窗的越界由原单元按准确前像恢复后继续正式检查', async () => {
+  const root = setupGoalRuntimeHost('codex', false).root;
+  const file = 'framework/phase-restoration-probe.txt';
+  const before = 'original protected bytes\n';
+  const preimage = createHash('sha256').update(before).digest('hex');
+  try {
+    fs.writeFileSync(path.join(root, file), before);
+    const options = optionsFor(root);
+    const run = await withRealTransport(() => 'complete', () => runGoalRuntimeChain(root, {
+      ...options, runId: 'real-execution-window-restoration',
+      onAuthor: ctx => { if (ctx.attempt === 2) assert.ok(ctx.prompt.includes(`${file}: pre_sha256=${preimage}`)); },
+    }), (phase, attempt) => phase === 'work-unit-author' && (attempt === 1 ? { file, source: 'out-of-bound bytes\n' }
+      : attempt === 2 ? { file, source: before } : true));
+    const events = run.value.events;
+    const writes = events.find(event => event.type === 'phase_write_violation');
+    assert.ok((writes?.violations as Array<{ path: string; window: string }> | undefined)?.some(write => write.path === file && write.window === 'execution_window'));
+    const ends = ofType(events, 'agent_invoke_end', 'work-unit-author');
+    assert.equal(ends[0].status, 'failed');
+    assert.equal(fs.readFileSync(path.join(root, file), 'utf8'), before);
+    assert.ok(completedRun(events), 'the original work unit proceeds after exact restoration');
+  } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
+});
 
 test('[真实子进程：spawn/终止/事件解析，不等于真实 Codex CLI 已验] 单元作者真完成后非零清理退出仍收口；检查崩溃恢复只补验证', async () => {
   const lingerAt = (phase: string, attempt: number): Mode => phase === 'work-unit-author' && attempt === 2 ? 'complete-then-linger' : 'complete';
@@ -214,7 +276,7 @@ test('[真实子进程：spawn/终止/事件解析，不等于真实 Codex CLI �
       const options = optionsFor(root);
       const { value: first, invokes } = await withRealTransport(lingerAt, () => runGoalRuntimeChain(root, {
         ...options, runId,
-        onAuthor: ctx => { if (ctx.prompt.includes(REPAIR_ID)) repair(root); },
+        onAuthor: ctx => { if (ctx.attempt === 2) assert.ok(ctx.prompt.includes(REPAIR_ID)); },
         ...(crash ? { testControl: { expectedInterruption: 'gate crash after completed cleanup' },
           onHarnessSummary: ({ phase }: { phase: string }) => {
             if (phase === 'coding' && fs.readFileSync(path.join(root, PRODUCT_FILE), 'utf8').includes(FIXED)) {
@@ -222,7 +284,7 @@ test('[真实子进程：spawn/终止/事件解析，不等于真实 Codex CLI �
             }
             return options.onHarnessSummary({ phase });
           } } : {}),
-      }));
+      }), (phase, attempt) => phase === 'work-unit-author' && attempt === 2);
       const ended = ofType(first.events, 'agent_invoke_end', 'work-unit-author');
       assert.equal(ended.length, 2, 'the completed unit author is not bought again');
       assert.ok(ended[1].exit_code !== 0 && ended[1].completion_observed === true && invokes[1].result.kill_attempted === true,

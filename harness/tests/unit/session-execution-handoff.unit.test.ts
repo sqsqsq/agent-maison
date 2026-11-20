@@ -9,10 +9,10 @@ import { createHash } from 'crypto';
 import { issueSessionExecution, readSessionExecution, acceptSessionExecution, acceptedSessionReport,
   readHandoffMaterial, sessionValidationOnlyEligibility, sessionEvents, resignSessionExecution,
   sessionRunMaterialPath, sessionReportInputPath, sessionExecutionDeadlineMs,
-  observeSessionExecution, interruptSessionExecution,
+  observeSessionExecution, interruptSessionExecution, capturePhaseBinding,
   type SessionExecutionReport } from '../../scripts/utils/session-execution-handoff';
 import { ensureRunControl, casAcquireRunOwner, readRunControl, releaseRunOwner, markExpiredSessionOrphaned } from '../../scripts/utils/goal-run-control';
-import { capturePhaseInvocationSnapshot, type PhaseWriteBoundaryResolution } from '../../scripts/utils/phase-write-boundary';
+import { authorWritePreimages, capturePhaseInvocationSnapshot, type PhaseWriteBoundaryResolution } from '../../scripts/utils/phase-write-boundary';
 import { DetachedGoalPhaseExecutor, type WorkUnitExecutionContext } from '../../scripts/utils/goal-phase-executor';
 import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
 import type { UnitCaseResult } from '../run-unit';
@@ -21,9 +21,11 @@ import { runGoalRuntimeChain, setupGoalRuntimeHost } from './goal-runner-testing
 import { runGoalModeSessionStep as runGoalModeSessionStepUnchecked } from '../../scripts/goal-mode-entry';
 import { loadGoalManifestFromRun } from '../../scripts/utils/goal-manifest';
 import * as goalManifest from '../../scripts/utils/goal-manifest';
-import { execFileSync, spawn } from 'child_process';
+import { execFileSync, spawn, spawnSync } from 'child_process';
 import * as YAML from 'yaml';
 import { buildGoalManifestFromInput, writeGoalManifest } from '../../scripts/utils/goal-manifest';
+import { createGoalRun } from '../../scripts/utils/goal-run-creation';
+import { __testing_setDetachSpawn } from '../../scripts/goal-phase-runtime';
 import { interruptedIssuanceCli, reusedGatePidCli, junctionSessionCli } from '../utils/session-recovery-cli';
 import { reconcileGuardianOwnership } from '../../scripts/utils/goal-containment-reconcile';
 import { invokeAgentHeadless as nativeInvokeAgentHeadless } from '../../scripts/utils/agent-invoke';
@@ -36,8 +38,8 @@ const runGoalModeSessionStep = (options: Parameters<typeof runGoalModeSessionSte
 
 
 const hash = (text: string) => createHash('sha256').update(text).digest('hex');
-function fixture() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'session-handoff-'));
+function fixture(prefix = 'session-handoff-') {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   const runDir = path.join(root, 'doc/features/demo/goal-runs/run-1'); fs.mkdirSync(runDir, { recursive: true });
   fs.mkdirSync(path.join(root, 'src')); fs.writeFileSync(path.join(root, 'src/value.ts'), 'before\n');
   ensureRunControl(runDir, 'run-1');
@@ -55,14 +57,176 @@ function fixture() {
   const start = (invokeId = 'invoke-one', ts = new Date().toISOString()) => emit({ type: 'agent_invoke_start', phase: context.phase, invoke_id: invokeId, attempt_id: context.attemptId, ts });
   const issue = (invokeId = 'invoke-one', emitter = emit, timeoutMs = 60_000) => issueSessionExecution({ context, invokeId, timeoutMs, gateTimeoutMs: 30_000, cleanupReserveMs: 500,
     preSnapshot: capturePhaseInvocationSnapshot(boundary), writeBoundary: boundary, emit: emitter });
+  const bind = (issued: ReturnType<typeof issue>) => emit({ type: 'agent_process_bound', phase: context.phase, invoke_id: issued.request.invoke_id,
+    owner_id: issued.request.context.owner.owner_id, owner_epoch: issued.request.context.owner.epoch, binding_snapshot: capturePhaseBinding(runDir, issued) });
   const report: SessionExecutionReport = { status: 'passed', phase: 'coding', details: 'executor completed; formal gate is still required' };
   const files = (): Record<string, string> => {
     const out: Record<string, string> = {};
     const visit = (dir: string) => { for (const entry of fs.readdirSync(dir, { withFileTypes: true })) { const file = path.join(dir, entry.name); if (entry.isDirectory()) visit(file); else out[path.relative(root, file)] = fs.readFileSync(file).toString('base64'); } }; visit(root); return out;
   };
-  return { root, runDir, context, boundary, emit, start, issue, report, files, cleanup: () => fs.rmSync(root, { recursive: true, force: true }) };
+  return { root, runDir, context, boundary, emit, start, issue, bind, report, files, cleanup: () => fs.rmSync(root, { recursive: true, force: true }) };
 }
+
 const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
+  name: '3ec91fa7 minted controls run verbatim from a dependency-free consumer cwd and preserve the signed request',
+  async run() {
+    const f = fixture("session consumer 'quoted' ");
+    const frameworkRoot = path.resolve(__dirname, '../../..');
+    try {
+      const manifest = buildGoalManifestFromInput({ feature: 'demo', run_id: 'run-1', adapter: 'codex', start_phase: 'coding', end_phase: 'coding',
+        adapter_model_pin: parseAdapterModelBinding('codex', f.context.adapterModel), run_base_sha: 'a'.repeat(40),
+        unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: f.root });
+      createGoalRun({ projectRoot: f.root, frameworkRoot, manifest, chain: ['coding'], resolveHead: () => 'a'.repeat(40) });
+      Object.assign(f.context, { frameworkRoot, reportDir: manifest.report_dir });
+      f.start(); const issued = f.issue();
+      const returned = await runGoalModeSessionStep({ projectRoot: f.root, frameworkRoot, feature: 'demo', runId: 'run-1', adapter: 'codex', runMode: 'attended' });
+      assert.equal(returned.type, 'phase_execute_request');
+      const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^TS_NODE_|^NODE_OPTIONS$/i.test(name)));
+      assert(!fs.existsSync(path.join(f.root, 'node_modules')) && !fs.existsSync(path.join(f.root, 'tsconfig.json')));
+      const shell = process.platform === 'win32' ? 'powershell.exe' : '/bin/sh';
+      const cli = (command: unknown) => {
+        assert.equal(typeof command, 'string');
+        return spawnSync(shell, [...(process.platform === 'win32' ? ['-NoProfile', '-NonInteractive', '-Command'] : ['-c']), String(command)],
+          { cwd: f.root, env, encoding: 'utf8', timeout: 30000, windowsHide: true });
+      };
+      const ok = (command: unknown) => {
+        const result = cli(command);
+        assert.equal(result.status, 0, String(result.error ?? result.stderr));
+        return JSON.parse(result.stdout);
+      };
+      assert.equal(ok(returned.observe_command).observation.invoke_id, issued.request.invoke_id);
+      const refused = cli(returned.interrupt_command);
+      assert.equal(refused.status, 1, refused.stdout + refused.stderr);
+      assert.match(refused.stderr, /没有可核实的原生进程绑定/);
+      assert.equal(acceptedSessionReport(f.runDir, issued), null);
+      f.emit({ type: 'agent_process_settled', phase: f.context.phase, invoke_id: issued.request.invoke_id, status: 'passed', exit_code: 0, completion_observed: true });
+      const received = ok(returned.execute_command);
+      assert.equal(received.type, 'goal_session_report_received');
+      assert.equal(received.status, 'passed');
+      assert.equal(acceptedSessionReport(f.runDir, issued)?.event.handoff_report?.request_sha256, issued.reference.sha256);
+      assert.equal(ok(returned.interrupt_command).interrupted, false);
+      assert.equal(ok(returned.execute_command).duplicate, true);
+      Object.assign(f.context, { attemptId: 'attempt-two' }); f.start('invoke-two'); const next = f.issue('invoke-two');
+      assert.equal(ok(received.next_command).request.sha256, next.reference.sha256);
+      assert.equal(sessionEvents(f.runDir).filter(event => event.type === 'agent_invoke_end').length, 1);
+    } finally { f.cleanup(); }
+  },
+}, {
+  name: '3ec91fa7 public attended next detaches an existing signed request and observers never start a second executor',
+  async run() {
+    const f = fixture();
+    const frameworkRoot = path.resolve(__dirname, '../../..');
+    const program = path.join(f.root, 'controlled-work.cjs');
+    const count = path.join(f.root, 'execution-count.txt');
+    fs.writeFileSync(program, `const f=require('fs');process.stdin.resume();process.stdin.on('end',()=>{
+f.appendFileSync(${JSON.stringify(count)},'once\\n');setTimeout(()=>{
+console.log(JSON.stringify({type:'thread.started',thread_id:'fixture-thread'}));
+console.log(JSON.stringify({type:'turn.completed',usage:{input_tokens:1,output_tokens:1}}));},1000);});`);
+    const restore = installControlledCodex(f.root, program);
+    const previousClaude = process.env.CLAUDE_CONFIG_DIR;
+    let runner: ReturnType<typeof spawn> | undefined;
+    let runnerClosed: Promise<void> | undefined;
+    try {
+      const requirement = '完成这次接口文档交付。请无人值守，后台继续到验收。';
+      process.env.CLAUDE_CONFIG_DIR = path.join(f.root, 'native-claude');
+      const session = path.join(process.env.CLAUDE_CONFIG_DIR, 'projects', 'fixture', 'fixture-claude.jsonl');
+      fs.mkdirSync(path.dirname(session), { recursive: true });
+      fs.writeFileSync(session, JSON.stringify({ type: 'user', uuid: 'user-one', sessionId: 'fixture-claude', cwd: f.root,
+        timestamp: new Date().toISOString(), message: { role: 'user', content: requirement } }) + '\n');
+      fs.writeFileSync(path.join(f.root, 'framework.config.json'), JSON.stringify({ schema_version: '1.1', project_name: 'Handoff fixture',
+        project_profile: { name: 'generic' }, materialized_adapters: ['codex'] }));
+      fs.writeFileSync(path.join(f.root, 'AGENTS.md'), '# Protocol fixture\n');
+      const model = parseAdapterModelBinding('codex', f.context.adapterModel)!;
+      fs.mkdirSync(path.dirname(model.config_source!), { recursive: true }); fs.writeFileSync(model.config_source!, '[features]\n');
+      const manifest = buildGoalManifestFromInput({ feature: 'demo', run_id: 'run-1', adapter: 'codex', requirement, adapter_model_pin: model,
+        start_phase: 'coding', end_phase: 'coding', run_base_sha: 'a'.repeat(40), unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: f.root });
+      createGoalRun({ projectRoot: f.root, frameworkRoot, manifest, chain: ['coding'], resolveHead: () => 'a'.repeat(40) });
+      Object.assign(f.context, { frameworkRoot, reportDir: manifest.report_dir });
+      f.start(); const issued = f.issue();
+      const common = { projectRoot: f.root, frameworkRoot, feature: 'demo', runId: 'run-1', adapter: 'codex', runMode: 'attended' };
+      const result = await runGoalModeSessionStep({ ...common, authorization: { mode: 'goal_mode', autonomyAuthorized: true } });
+      assert.equal(result.type, 'phase_execute_request', JSON.stringify(result));
+      const optedIn = { ...common, sessionRef: `${session}#user-one` };
+      __testing_setDetachSpawn(((_file: string, args: string[], options: object) => spawn(path.join(f.root, 'absent-runner.exe'), args, options)) as typeof spawn);
+      try {
+        const fallback = await runGoalModeSessionStep(optedIn);
+        assert.equal((fallback.request as { path?: string })?.path, path.resolve(f.runDir, issued.reference.path));
+        assert.equal(typeof fallback.execute_command, 'string');
+        assert.equal(typeof fallback.transport_fallback, 'string');
+        assert.equal(fs.existsSync(count), false);
+      } finally { __testing_setDetachSpawn(null); }
+      __testing_setDetachSpawn(((file: string, args: string[], options: object) => {
+        const child = spawn(file, args, options);
+        runner = child;
+        runnerClosed = new Promise<void>(resolve => child.once('close', () => resolve()));
+        return child;
+      }) as typeof spawn);
+      let selected: Awaited<ReturnType<typeof runGoalModeSessionStep>>;
+      try { selected = await runGoalModeSessionStep(optedIn); }
+      finally { __testing_setDetachSpawn(null); }
+      assert.equal(selected.detached, true, JSON.stringify(selected));
+      assert.equal(selected.run_id, manifest.run_id);
+      assert.equal(typeof selected.wait_command, 'string');
+      const watch = { ...common, action: 'observe' as const, requestPath: path.resolve(f.runDir, issued.reference.path) };
+      await Promise.all([runGoalModeSessionStepUnchecked(watch), runGoalModeSessionStepUnchecked(watch)]);
+      const until = Date.now() + 12_000;
+      while (!acceptedSessionReport(f.runDir, issued) && Date.now() < until) await new Promise(resolve => setTimeout(resolve, 50));
+      assert(acceptedSessionReport(f.runDir, issued), fs.readFileSync(path.join(f.runDir, 'detach.log'), 'utf8'));
+      assert.equal(fs.readFileSync(count, 'utf8'), 'once\n');
+      const rows = sessionEvents(f.runDir).filter(event => event.invoke_id === issued.request.invoke_id);
+      for (const type of ['phase_start', 'agent_process_bound', 'agent_invoke_end']) assert.equal(rows.filter(event => event.type === type).length, 1, type);
+    } finally {
+      if (runner) {
+        runner.ref();
+        if (runner.exitCode === null && runner.signalCode === null) runner.kill();
+        await runnerClosed;
+      }
+      if (previousClaude === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = previousClaude;
+      restore(); f.cleanup();
+    }
+  },
+}, {
+  name: '3ec91fa7 write windows reject contaminated handback without assigning a writer or issuing a restore',
+  run() {
+    const f = fixture();
+    try {
+      const target = path.join(f.root, 'src/value.ts');
+      f.boundary.executionRole = 'author';
+      f.boundary.immutableInputPaths = ['src/value.ts'];
+      f.start(); const issued = f.issue();
+      fs.writeFileSync(target, 'after signature, before binding\n');
+      f.bind(issued);
+      fs.writeFileSync(target, 'after binding\n');
+      acceptSessionExecution({ runDir: f.runDir, issued, report: f.report, emit: f.emit });
+      const events = sessionEvents(f.runDir);
+      const violation = events.find(event => event.type === 'phase_write_violation') as { violations?: Array<{ window: string; pre_sha256: string; post_sha256: string }> };
+      assert.deepEqual(violation.violations?.map(change => change.window), ['before_binding', 'execution_window']);
+      assert.equal(violation.violations?.[0].post_sha256, violation.violations?.[1].pre_sha256);
+      assert.equal(acceptedSessionReport(f.runDir, issued)?.event.status, 'failed');
+      assert.equal(authorWritePreimages(events).size, 0);
+      assert.equal(fs.readFileSync(target, 'utf8'), 'after binding\n');
+      fs.writeFileSync(target, 'later third party\n');
+      const observed = observeSessionExecution(f.runDir, issued);
+      assert.equal(observed.postSnapshot?.entries[0].sha256, hash('after binding\n'));
+    } finally { f.cleanup(); }
+  },
+}, {
+  name: '3ec91fa7 old handback retains in-scope byte observations with unknown binding provenance',
+  run() {
+    const f = fixture();
+    try {
+      f.start(); const issued = f.issue();
+      fs.writeFileSync(path.join(f.root, 'src/value.ts'), 'legacy change\n');
+      acceptSessionExecution({ runDir: f.runDir, issued, report: f.report, emit: f.emit });
+      const observed = sessionEvents(f.runDir).find(event => event.type === 'phase_write_observed') as unknown as {
+        owned: unknown[]; observations: Array<{ path: string; window: string; disposition: string; post_sha256: string }> };
+      assert.deepEqual(observed.owned, []);
+      assert.deepEqual(observed.observations.map(write => [write.path, write.window, write.disposition, write.post_sha256]),
+        [['src/value.ts', 'unverified', 'unattributed', hash('legacy change\n')]]);
+      assert.equal(acceptedSessionReport(f.runDir, issued)?.event.status, 'passed');
+    } finally { f.cleanup(); }
+  },
+}, {
   name: 'a920 public execute-request preserves real R1 DSH usage into settled and accepted invocation once',
   async run() {
     const sourceRoot = path.resolve(__dirname, '../fixtures/host-recovery-history/20261115-design-recovery/session-return-usage');
@@ -333,7 +497,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
   run() {
     const f = fixture();
     try {
-      f.start(); const issued = f.issue(); fs.writeFileSync(path.join(f.root, 'src/value.ts'), 'original reported output\n');
+      f.start(); const issued = f.issue(); f.bind(issued); fs.writeFileSync(path.join(f.root, 'src/value.ts'), 'original reported output\n');
       const archive = path.join(f.runDir, path.dirname(issued.reference.path), `execution-report-e${issued.request.context.owner.epoch}.json`);
       assert.throws(() => acceptSessionExecution({ runDir: f.runDir, issued, report: f.report, emit: event => {
         f.emit(event);
@@ -427,13 +591,15 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
       const before = f.files();
       assert.throws(() => acceptSessionExecution({ runDir: f.runDir, issued, report: f.report, emit: f.emit }), /stale request/);
       assert.deepEqual(f.files(), before);
+      f.bind(reissued);
       acceptSessionExecution({ runDir: f.runDir, issued: reissued, report: f.report, emit: f.emit });
       const events = sessionEvents(f.runDir);
       assert.equal(events.filter(event => event.type === 'agent_invoke_start').length, 1);
       assert.equal(events.filter(event => event.type === 'phase_start' && event.handoff_request).length, 2);
       assert.equal(events.filter(event => event.type === 'agent_invoke_end').length, 1);
-      const owned = (events.find(event => event.type === 'phase_write_observed') as unknown as { owned: Array<{ pre_sha256: string; post_sha256: string }> }).owned;
-      assert.equal(owned[0].pre_sha256, hash('before\n')); assert.equal(owned[0].post_sha256, hash('partial work before takeover\n'));
+      const violations = (events.find(event => event.type === 'phase_write_violation') as unknown as { violations: Array<{ window: string; pre_sha256: string; post_sha256: string }> }).violations;
+      assert.equal(violations[0].window, 'before_binding');
+      assert.equal(violations[0].pre_sha256, hash('before\n')); assert.equal(violations[0].post_sha256, hash('partial work before takeover\n'));
     } finally { f.cleanup(); }
   },
 }, {
@@ -527,7 +693,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
   run() {
     const f = fixture();
     try {
-      f.start(); f.issue(); fs.writeFileSync(path.join(f.root, 'src/value.ts'), 'after\n');
+      f.start(); const issued = f.issue(); f.bind(issued); fs.writeFileSync(path.join(f.root, 'src/value.ts'), 'after\n');
       const restored = readSessionExecution(f.runDir)!;
       const result = acceptSessionExecution({ runDir: f.runDir, issued: restored, report: f.report, emit: f.emit });
       assert.deepEqual(result, { duplicate: false, timedOut: false });
@@ -633,7 +799,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
     for (const crashAt of ['phase_write_observed', 'agent_invoke_end']) {
       const f = fixture();
       try {
-        f.start(); const issued = f.issue(); fs.writeFileSync(path.join(f.root, 'src/value.ts'), 'after\n');
+        f.start(); const issued = f.issue(); f.bind(issued); fs.writeFileSync(path.join(f.root, 'src/value.ts'), 'after\n');
         let crashed = false;
         assert.throws(() => acceptSessionExecution({ runDir: f.runDir, issued, report: f.report, emit: event => {
           if (!crashed && event.type === crashAt) { crashed = true; if (crashAt === 'phase_write_observed') f.emit(event); throw new Error('injected report process interruption'); }

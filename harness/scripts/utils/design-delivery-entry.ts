@@ -70,20 +70,20 @@ export function designDeliveryNextStep(input: {
   const unknown = !managed && intake?.policy.selected === 'unknown'
     ? '档位未知，按完整设计推进；如属小改，可先完整读取相关来源，把七项按下列例句发在正常可见助手文本，再调用同一入口；勿等最后总结。值和路径须按本请求实际调研替换：“Q1=否，Q2=否，Q3=否，依赖结果=否，跨部件=否，预期明确=是，做法唯一=否。依据：<已读需求相对路径>、<已读源码相对路径>。”无需等待用户或自动重调。'
     : '';
+  const transport = intake?.control.transport?.mode ?? 'attended';
+  const launch = `npx ts-node scripts/goal-mode-entry.ts --project-root ${JSON.stringify(projectRoot)} --prepare-run --run-mode attended --feature ${JSON.stringify(feature)} --adapter <active-adapter> <requirement-arguments>${intake ? ' --session-ref <session-ref>' : ''}`;
   return {
     type: 'design_preparation_required' as const, feature,
     reason: unknown + '原始完整交付应先进入同一Goal runtime受管设计；施工仍等待真实蓝图、独立质询与CU准入，候选文件不能代替初始设计。',
     materials: { requirement: input.requirement, requirement_source_files: input.requirementSourceFiles ?? [], features_dir: relFeaturesDir(projectRoot),
       ...(intake ? { session_ref: intake.session_ref } : {}) },
-    next: '以原请求调用既有prepare-run/next或goal-runner启动同一runtime，持续到原终点。prepare-scope本次只投影入口、不写平面候选；以下设计及CU步骤由runtime消费，不交回主Agent手工串接。',
+    next: transport === 'unattended' ? '按原始用户选择接入无人值守；启动后在本对话执行回执的 wait_command，直到正式终点或真实等待条件。'
+      : '在当前会话领取并执行准确返回的受管请求，直到正式终点或真实等待条件。',
+    launch: { transport, command: launch, parameters: { requirement_arguments: requirementArguments, ...(intake ? { session_ref: intake.session_ref } : {}) } },
     steps: [
       { skill: 'component-design', action: 'runtime签发受控作者请求，读取原始需求及已有蓝图/准入/CU；续用既有材料，完成蓝图、真实独立质询与校验，不凭空填写CU身份。', command: 'npm run check:component-blueprint -- --project-root <project-root> --blueprint <actual-blueprint-id> --write-review --json' },
       { action: '无 CU 时在既有蓝图 blueprint/ 目录写 JSON 数组 [{providerId, artifact}] 临时候选，不放工作区根；命令接受成功即删除候选（readiness 未就绪也删除），拒绝时保留，清理失败只提示。已有 CU 时仅用 --readiness 重派生（含指针调和和文档物化）。', command: `npm run check:change-unit -- --project-root <project-root> --blueprint <actual-blueprint-id> --accept-candidates "${relFeaturesDir(projectRoot)}/<actual-blueprint-id>/blueprint/change-unit-candidates.json" --json`, resume_command: 'npm run check:change-unit -- --project-root <project-root> --blueprint <actual-blueprint-id> --readiness --json' },
       { skill: 'change-unit-progression', action: '按既有 ready-set/selector 选择，读取命令返回的 canonical Feature id；不跳过 CU 依赖。', command: 'npx ts-node scripts/goal-mode-entry.ts --project-root <project-root> --prepare-scope --feature <returned-feature-id> --completion-target feature --requested-results <requested-results> --requested-phases <requested-phases> <requirement-arguments>', parameters: { project_root: projectRoot, requested_phases: phases, requirement_arguments: requirementArguments, requirement_source_files: input.requirementSourceFiles ?? [] } },
-      { action: '同一runtime在原运输下启动/恢复正常CU；设计与施工成本沿原请求累计，未取得握手不能宣称后台已运行。',
-        attended_command: 'npx ts-node scripts/goal-mode-entry.ts --project-root <project-root> --prepare-run --run-mode attended --feature <selected-returned-feature-id> --adapter <active-adapter> <requirement-arguments>',
-        detached_command: 'npx ts-node scripts/goal-runner.ts --feature <selected-returned-feature-id> --adapter <active-adapter> <requirement-arguments> --detach',
-        parameters: { requirement_arguments: requirementArguments, cwd: '所选工程的 framework/harness', feature: 'check:change-unit 返回的 canonical id，经 P2 ready-set/selector 选择', adapter: '原请求已绑定的 adapter', requirement: '原需求文本；有文件时以原 --requirement-file 替代 --requirement' } },
     ],
   };
 }

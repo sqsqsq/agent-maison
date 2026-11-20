@@ -10,8 +10,8 @@ import { loadEffectiveExecutionScope, resolveEffectiveScopeSource } from './goal
 import { resolveExecutionScope, findSubtractedRequiredObligations, readScopeRevisionUserControl, applyScopeUserControl, type ExecutionScope, type ExecutionScopeInput } from './execution-scope';
 import { readScopeAcceptance, collectResolvedScopeFacts, recomputeDefinitionFacts, featureTrackDeclPath } from './feature-track';
 import { loadGoalManifestFromRun } from './goal-manifest';
-import { asRecord, asRecords, asStrings, getId, type BlueprintRecord } from './component-blueprint-model';
-import { resolveBlueprintTarget } from './blueprint-addressing';
+import { asRecord, asRecords, asStrings, getId, issue, type BlueprintIssue, type BlueprintRecord } from './component-blueprint-model';
+import { resolveBlueprintTarget, stableAddressIndex } from './blueprint-addressing';
 import type { ComponentBlueprintRef } from './component-blueprint-model';
 import type { ChangeUnitArtifact } from './change-unit-model';
 import { componentBlueprintPath, loadCanonicalBlueprint, resolveComponentBlueprintRef, resolveComponentBlueprintRefFromLoaded, resolveBlueprintCandidateRefFromLoaded, validateComponentBlueprintRefShape } from './component-blueprint-path';
@@ -25,7 +25,7 @@ import { projectImplementationModules } from './diff-scope';
 import { loadCatalog } from './catalog-parser';
 import { projectComponentSelections, componentProjectionFindings } from './component-selection-check';
 import { resolveContractFileReferences, findUnplannedContractFileReferences, CONTRACT_FILE_REFERENCE_FIELDS } from './contract-reference-closure';
-import { checkAcceptanceContent, checkAcceptanceUtLayerComplete, checkAcceptanceDeviceFocusPresent, checkAcceptanceLinkedUseCases, extractAcceptanceIdRefs } from './check-acceptance';
+import { acceptanceLinkedUseCaseFailure, checkAcceptanceContent, checkAcceptanceUtLayerComplete, checkAcceptanceDeviceFocusPresent, checkAcceptanceLinkedUseCases, extractAcceptanceIdRefs } from './check-acceptance';
 import { isInsideProjectRoot, existingProjectPathSpelling, inferLegacyProjectRoot, resolveDependencyPath } from './project-relative-path';
 import { evaluateAcceptanceFlowStructure, isP0DeviceInteractive, projectAcceptanceFlows, type AcceptanceCriterion } from './p0-semantic-gates';
 import { SpecLoader, normalizeUseCasePortCalls } from './spec-loader';
@@ -424,6 +424,48 @@ export class BlueprintContentError extends Error {
   constructor(public readonly code: string, message: string, public readonly locations: DesignAuthorityLocation[] = []) { super(message); }
 }
 
+/** Prove only defects that cannot be resolved by selecting a different CU projection. */
+export function blueprintDeclaredAcceptanceIssues(projectRoot: string, feature: string, blueprint: BlueprintRecord): BlueprintIssue[] {
+  let targets: Iterable<BlueprintRecord>;
+  try { targets = stableAddressIndex(blueprint).values(); }
+  catch { return []; } // The canonical validator owns ambiguous design identities.
+  const criteria: BlueprintRecord[] = [];
+  const boundaries: BlueprintRecord[] = [];
+  const cases: BlueprintRecord[] = [];
+  const chains = new Map<string, unknown>();
+  const ambiguousChains = new Set<string>();
+  for (const target of targets) {
+    const acceptance = asRecord(target.acceptance);
+    criteria.push(...asRecords(acceptance?.criteria));
+    boundaries.push(...asRecords(acceptance?.boundaries));
+    cases.push(...asRecords(asRecord(target.use_cases)?.use_cases));
+    for (const [id, flow] of Object.entries(asRecord(acceptance?.flows) ?? {})) {
+      if (chains.has(id) && canonical(chains.get(id)) !== canonical(flow)) ambiguousChains.add(id);
+      else chains.set(id, flow);
+    }
+  }
+  const useCases = new Map<string, { branches: Array<{ id: string }> }>();
+  for (const row of cases) if (typeof row.id === 'string') {
+    const flow = useCases.get(row.id) ?? { branches: [] };
+    flow.branches.push(...asRecords(row.branches).flatMap(branch => typeof branch.id === 'string' ? [{ id: branch.id }] : []));
+    useCases.set(row.id, flow);
+  }
+  const descriptions = new Set<string>();
+  for (const row of [...criteria, ...boundaries]) {
+    if (!useCases.size || typeof row.id !== 'string' || typeof row.ut_layer !== 'string' || typeof row.linked_flow !== 'string') continue;
+    const failure = acceptanceLinkedUseCaseFailure({ id: row.id, ut_layer: row.ut_layer, linked_flow: row.linked_flow,
+      linked_branch: typeof row.linked_branch === 'string' ? row.linked_branch : undefined }, id => useCases.get(id));
+    if (failure) descriptions.add(failure);
+  }
+  const p0 = evaluateAcceptanceFlowStructure(projectRoot, feature, {
+    criteria: [...new Map(criteria.filter(row => typeof row.id === 'string' && typeof row.ut_layer === 'string')
+      .map(row => [canonical(row), row])).values()],
+    flows: Object.fromEntries([...chains].filter(([id]) => !ambiguousChains.has(id))),
+  }, 'blueprint');
+  for (const check of p0) if (check.status === 'FAIL' && check.details) descriptions.add(check.details);
+  return [...descriptions].map(detail => issue('blueprint_content_incomplete', '$.design_views', detail));
+}
+
 function projectAcceptanceStructure(projectRoot: string, blueprint: BlueprintRecord, selected: readonly BlueprintContentLocation[],
   acceptance: BlueprintRecord, depend: (file: string) => void): void {
   const criteria = asRecords(acceptance.criteria);
@@ -611,12 +653,13 @@ export function selectBlueprintSkillContent(blueprint: BlueprintRecord, cu: Chan
  * 蓝图任意深度的 `source_ref`（需求的 current-scope 来源、契约与事实的 provenance、选型证据……）指向的项目内现存文件
  *（绝对路径，按出现顺序去重）。投影的依赖记录与无人值守修复的保护集合共用这一份解析。
  */
-export function blueprintSourceRefFiles(projectRoot: string, blueprint: unknown, includeMissing = false): string[] {
+export function blueprintSourceRefFiles(projectRoot: string, blueprint: unknown, includeMissing = false, includeRef?: (ref: string) => boolean): string[] {
   const files: string[] = [];
   const visit = (value: unknown): void => {
     if (!value || typeof value !== 'object') return;
     for (const [key, child] of Object.entries(value)) {
       if (key === 'source_ref' && typeof child === 'string') {
+        if (includeRef && !includeRef(child)) continue;
         if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(child) && !/^[A-Za-z]:[\\/]/.test(child)) continue;
         const file = path.resolve(projectRoot, child.split('#')[0]);
         const actual = existingProjectPathSpelling(projectRoot, file);

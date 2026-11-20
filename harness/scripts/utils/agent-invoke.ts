@@ -1175,6 +1175,8 @@ export interface AgentInvokeOptions {
    * stdout/stderr 混写一个流会让 stderr 插行破坏 NDJSON（codex 实锤）。
    */
   toolEventCapture?: 'none' | 'structured_events' | 'session_transcript';
+  /** Freeze the original execution input immediately before launching the native process. */
+  beforeSpawn?: () => void;
   /** Called when child spawns — register tree-kill for signal handlers. */
   onActiveChild?: (ctx: { pid: number; kill: () => Promise<KillTreeResult> }) => void;
   onChildExit?: () => void;
@@ -1393,6 +1395,7 @@ async function spawnHeadlessAsync(
       ...(opts.signal?.aborted ? { interrupted: true } : { timed_out: true }) };
   }
   const outputIdleMs = resolveAgentOutputIdleMs(cwd);
+  opts.beforeSpawn?.();
   const child = spawnHeadlessChild(plan, cwd, opts);
   const pid = child.pid ?? 0;
 

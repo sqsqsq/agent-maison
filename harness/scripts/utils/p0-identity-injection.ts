@@ -26,6 +26,9 @@ import {
 } from './planned-step-normalizer';
 import {
   checkpointComplete,
+  checkpointPostScreenIdentified,
+  describeCheckpointAction,
+  resolveCheckpointAction,
   resolveCheckpointActionWindows,
   isBareIdentityAssertion,
   isP0DeviceInteractive,
@@ -130,17 +133,19 @@ export function injectP0IdentityAssertions(input: InjectionInput): InjectionResu
     let changedRow = false;
     for (const ac of acs) {
       const cp = ac.checkpoint!;
-      const target = cp.action!.target_element_id!;
-      const { windows, ambiguousSteps } = resolveCheckpointActionWindows(steps, target, input.canonical, cp.pre_screen);
+      const action = resolveCheckpointAction(cp.action)!;
+      const target = action.kind === 'target' ? action.target : undefined;
+      const { windows, ambiguousSteps } = resolveCheckpointActionWindows(steps, cp, input.canonical, undefined, acs.map(row => row.checkpoint!));
       if (windows.length === 0) {
         gaps.push({
           tc_id: row.tc_id,
           ac_id: ac.id,
           rule_id: 'STEP-P0-IDENTITY',
           message:
-            `${row.tc_id} 没有任何 action 步骤绑定 ${ac.id} 的 checkpoint 元素 ${target}` +
-            `（期望形状：{"touch"|"input"|"swipe"|"scroll":{"by_id":"${target}",…}}，或 by_text 经 ui-spec 映射到该 id）；` +
-            '无法注入身份断言。改法：在该 case 补一步触发动作，或修正 acceptance checkpoint.action.target_element_id。',
+            `${row.tc_id} 没有任何 action 步骤绑定 ${ac.id} 的 ${describeCheckpointAction(cp)}；` +
+            (action.kind === 'back'
+              ? `改法：在 ${cp.pre_screen} 的裸 by_id 身份断言后执行所列返回动作，边缘返回方向取 acceptance。`
+              : `改法：补 touch/input/swipe/scroll 的 by_id=${target}，或由 ui-spec 唯一映射的 by_text，或修正 checkpoint 目标。`),
         });
         continue;
       }
@@ -155,6 +160,21 @@ export function injectP0IdentityAssertions(input: InjectionInput): InjectionResu
             '缺唯一 selector 绑定，不猜。改法：补 by_id 或现有 scope/index 消歧；保留全部导航、返回和重复触发，不删动作、不拆连续流程。',
         });
         continue;
+      }
+      if (action.kind === 'back') {
+        const wrongReturn = windows.filter(window => window.wrongReturn).map(window => window.actionIndex);
+        if (wrongReturn.length > 0) {
+          gaps.push({ tc_id: row.tc_id, ac_id: ac.id, rule_id: 'STEP-P0-IDENTITY', candidates: wrongReturn,
+            message: `${row.tc_id} ${ac.id} 返回 step ${wrongReturn.join(', ')} 的次数或方向不匹配，须执行单次 ${describeCheckpointAction(cp)}。` });
+          continue;
+        }
+        const missingPre = windows.filter(window => window.preIndex === undefined).map(window => window.actionIndex);
+        if (missingPre.length > 0 || !checkpointPostScreenIdentified(cp, input.canonical)) {
+          gaps.push({ tc_id: row.tc_id, ac_id: ac.id, rule_id: 'STEP-P0-IDENTITY', message: missingPre.length > 0
+            ? `${row.tc_id} ${ac.id} 返回 step ${missingPre.join(', ')} 前缺能识别 ${cp.pre_screen} 的裸 wait_for by_id；先在动作窗口内观察起始屏。`
+            : `${row.tc_id} ${ac.id} required_element_ids 无法识别返回后的屏 ${cp.post_screen}；由 acceptance 作者补充该屏身份。` });
+          continue;
+        }
       }
       const wanted: Array<{ id: string; kind: IdentityAssertionKind }> = [
         ...(cp.required_element_ids ?? []).map(id => ({ id, kind: 'wait_for' as const })),

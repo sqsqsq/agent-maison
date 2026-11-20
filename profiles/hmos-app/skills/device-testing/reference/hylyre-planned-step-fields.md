@@ -35,6 +35,14 @@
 
 **P0 身份断言不用手写（plan 07a41ec6 T3/T12）**：harness 装载 run 副本时，按 acceptance checkpoint 自动插入裸 `wait_for by_id`（required）/ `wait_gone by_id`（forbidden），源文件不改。同一 case 的合法重复触发会逐次注入与验证：证据只属于该动作之后、下次同目标触发或更早的返回/复位之前；已有等价裸断言仅在该区间复用。完整的进入→返回→再次进入必须保留，不能删动作或拆 case 来过门禁。`visible` / `enabled` 等 UX 谓词断言原样保留但不代替身份；真正的 selector 目标歧义或无匹配动作仍在跑机前判 invalid_test，点名 TC/step 与缺少的消歧信息。scroll/swipe 不改 touch。已知边界见 profile-addendum。
 
+**系统与边缘返回**：checkpoint 使用 `action: { type: back }` 表示系统返回，派生为 `{"back":{}}`。用 `action: { type: back, mode: swipe, side: RIGHT }` 验证从右侧边缘发起的返回，派生为 `{"back":{"mode":"swipe","side":"RIGHT"}}`。从左侧发起时写 `LEFT`。每个 checkpoint 窗口只执行一次返回，动作前用裸 `wait_for by_id` 观察起始屏，后置屏与禁止节点由 checkpoint 的 `required_element_ids`、`forbidden_element_ids` 承载。已有屏未在 ui-spec 中建模时可在 checkpoint 写 `pre_screen_element_id`。返回被拦截时也须提供前后两次可比较观测。普通横向 `swipe` 保留滚动或浏览语义，导航返回使用设备的边缘返回原语。
+
+同一用例需要证明系统返回与边缘返回的后置条件时，分别声明两个 checkpoint 并将两条验收 ID 关联到该用例。两次执行沿原步骤顺序分别取证。
+
+从其他屏收键盘或做导航复位时，在该动作前的同一窗口用裸 `wait_for by_id` 观察可辨识的所在屏。没有临近屏身份时，设备证据无法区分该动作和检查点返回。输入可能改变界面状态，因此起始屏观测应放在输入之后。
+
+**证据分工**：设备步骤观察页面及倒计时的实际前后值。数据库的生产写入、读回、字段和重复行数，以及发送次数，由应用内测试通过生产调用取证。
+
 ## 滚动（Hylyre 0.2+ · 0.3 先匹配）
 
 **`scroll_to` 根键**（长列表 / 虚拟化，自动滚到目标可见）。Hylyre 0.3+：**滚动前先**在容器子树/全树匹配，目标已在屏内时立即返回，避免空滚。

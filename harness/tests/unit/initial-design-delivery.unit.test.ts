@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { createHash } from 'crypto';
-import { spawnSync } from 'child_process';
+import { execFile, spawn, spawnSync, type ExecFileException } from 'child_process';
 import * as YAML from 'yaml';
 import { provisionFrameworkUnder, git } from '../utils/real-chain-host';
 import { writeLocalConfig } from '../../scripts/utils/framework-local-config';
@@ -49,9 +49,51 @@ function publicCli(project:Project,script:string,args:string[]):Record<string,an
   assert.equal(result.status,0,`${script}: ${result.stderr}\n${result.stdout}\n${result.error??''}`);return JSON.parse(result.stdout.trim());
 }
 const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
+  name: '3ec91fa7 same native followup selects original run transport only when the request is identified',
+  async run() {
+    await withProject(async project => {
+      const entry = require(path.join(project.harnessDir, 'scripts/goal-mode-entry')) as typeof import('../../scripts/goal-mode-entry');
+      const runtime = require(path.join(project.harnessDir, 'scripts/goal-phase-runtime')) as typeof import('../../scripts/goal-phase-runtime');
+      const home = path.join(project.root, 'native-claude'), sid = 'user-transport-followup';
+      const file = path.join(home, 'projects', 'fixture', `${sid}.jsonl`);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      const user = (id: string, content: string) => fs.appendFileSync(file, JSON.stringify({ type: 'user', uuid: id, sessionId: sid,
+        cwd: project.root, timestamp: new Date().toISOString(), message: { role: 'user', content } }) + '\n');
+      const previous = [process.env.CLAUDE_CONFIG_DIR, process.env.CLAUDE_CODE_SESSION_ID];
+      process.env.CLAUDE_CONFIG_DIR = home; process.env.CLAUDE_CODE_SESSION_ID = sid;
+      try {
+        const configPath = path.join(project.root, 'framework.config.json');
+        fs.writeFileSync(configPath, JSON.stringify({ ...JSON.parse(fs.readFileSync(configPath, 'utf8')), materialized_adapters: ['claude'] }));
+        fs.writeFileSync(path.join(project.root, 'CLAUDE.md'), '# Host fixture\n');
+        clearFrameworkConfigCache();
+        user('origin', `${project.requirement}\n我会看着。`);
+        const options = { projectRoot: project.root, frameworkRoot: project.frameworkRoot, feature: project.feature,
+          runId: 'followup-transport-original', adapter: 'claude', runMode: 'attended' };
+        entry.prepareGoalModeRun({ ...options, requirement: project.requirement, requirementSourceFiles: project.requirementSourceFiles, sessionRef: `${file}#origin` });
+        const next = () => withRuntimeTest({ root: project.root }, () => entry.runGoalModeSessionStep(options));
+        const first = await next(); assert.equal(first.type, 'phase_execute_request');
+        let launches = 0;
+        runtime.__testing_setDetachSpawn((() => { launches++; return spawn(process.execPath, ['-e', 'process.exit(7)'], { windowsHide: true }); }) as unknown as typeof spawn);
+        user('unbound-followup', '我离开一会，继续跑。');
+        const retained = await next();
+        assert.equal(launches, 0, 'a short unrelated native message does not grant transport');
+        assert.deepEqual(retained.request, first.request);
+        user('bound-followup', `继续同一份 ${options.runId} 已签请求。我离开一会，继续跑。`);
+        const transferred = await next();
+        assert.equal(launches, 1); assert.equal(transferred.type, 'goal_detach_result');
+        assert.equal(transferred.run_id, options.runId);
+      } finally {
+        runtime.__testing_setDetachSpawn(null);
+        for (const [index, key] of ['CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_SESSION_ID'].entries()) {
+          if (previous[index] === undefined) delete process.env[key]; else process.env[key] = previous[index];
+        }
+      }
+    });
+  },
+}, {
   name: '8f2c6b91 followup visual birth rejects an input-manifest route change without authorization',
   async run() {
-    await withProject(project => {
+    await withProject(async project => {
       const source = path.join(project.root, 'native-codex/config.toml'), input = path.join(project.root, 'doc/request-input.yaml');
       const definition = YAML.parse(fs.readFileSync(input, 'utf8'));
       definition.visual_provider_pin = { adapter: 'codex', model: 'gpt-6.1-sol', provider: 'route-a', config_source: source };
@@ -63,8 +105,33 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
         { cwd: project.harnessDir, encoding: 'utf8', timeout: 30000 }));
       assert.equal(denied.status, 1); assert.match(denied.stderr, /visual_provider_pin.*override-manifest/s);
       assert.deepEqual(fs.readFileSync(input), before); assert.deepEqual(fs.readdirSync(path.join(project.root, 'doc/features')), []);
-      const born = publicCli(project, 'goal-mode-entry', [...args, '--override-manifest']);
+      const launch = () => withRuntimeTest({ root: project.root }, () => new Promise<{
+        pid?: number; status: number | null; signal?: string | null; error?: ExecFileException; stdout: string; stderr: string;
+      }>(resolve => {
+        const child = execFile(process.execPath,
+          ['-r', 'ts-node/register/transpile-only', 'scripts/goal-mode-entry.ts', '--project-root', project.root, '--feature', project.feature,
+            ...args, '--override-manifest'], { cwd: project.harnessDir, encoding: 'utf8', timeout: 30_000 },
+          (error, stdout, stderr) => resolve({ pid: child.pid, status: error ? typeof error.code === 'number' ? error.code : null : 0,
+            signal: error?.signal, error: error ?? undefined, stdout, stderr }));
+      }));
+      const results = await Promise.all([launch(), launch()]);
+      const [born, duplicate] = results.map((result, index) => {
+        const detail = `authorized prepare ${index + 1}: status=${result.status} signal=${result.signal ?? ''} error=${result.error?.message ?? ''}\nstdout: ${result.stdout}\nstderr: ${result.stderr}`;
+        assert.equal(result.status, 0, detail);
+        assert(result.stdout.trim(), detail);
+        let reply: { type: string; manifest: string; run_id: string; continuation: string };
+        try { reply = JSON.parse(result.stdout); }
+        catch (error) { throw new Error(`${detail}\n${String(error)}`); }
+        assert.equal(reply.type, 'goal_run_prepared', detail);
+        return reply;
+      });
       assert.equal(JSON.parse(fs.readFileSync(born.manifest, 'utf8')).visual_provider_pin.provider, 'route-b');
+      assert.equal(duplicate.run_id, born.run_id, 'parallel authorized prepares share one root');
+      assert.deepEqual([born.continuation, duplicate.continuation].sort(), ['fresh', 'rejoin']);
+      const runs = path.dirname(path.dirname(born.manifest));
+      assert.deepEqual(fs.readdirSync(runs), [born.run_id], 'successful creation leaves exactly one root and releases the birth lock');
+      const events = fs.readFileSync(path.join(path.dirname(born.manifest), 'events.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+      assert.equal(events.filter(event => event.type === 'run_created').length, 1);
     });
   },
 }, {
@@ -409,7 +476,8 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
 }, {
   name: 'f3b8e6a1 unadmitted design requests cannot expand their write set into product tests or framework capabilities',
   async run() {
-    for (const target of [`${SOURCE_DIR}/InboxStore.ets`, `${MODULE}/src/ohosTest/ets/test/InboxExisting.test.ets`, 'framework/profiles/hmos-app/harness/coding-host-rules.ts']) {
+    for (const [target, window] of [[`${SOURCE_DIR}/InboxStore.ets`, 'before_binding'], [`${MODULE}/src/ohosTest/ets/test/InboxExisting.test.ets`, 'unverified'],
+      ['framework/profiles/hmos-app/harness/coding-host-rules.ts', 'execution_window']] as const) {
       await withProject(async project => {
         const entry = require(path.join(project.harnessDir, 'scripts/goal-mode-entry')) as typeof import('../../scripts/goal-mode-entry');
         const handoff = require(path.join(project.harnessDir, 'scripts/utils/session-execution-handoff')) as typeof import('../../scripts/utils/session-execution-handoff');
@@ -426,36 +494,54 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
         assert.equal(request.type, 'phase_execute_request');
         const reference = request.request as { path: string };
         const issued = handoff.readSessionExecution(prepared.runDir, reference.path)!;
+        const bind = (signed: typeof issued): void => {
+          const context = signed.request.context;
+          const binding_snapshot = handoff.capturePhaseBinding(prepared.runDir, signed);
+          fs.appendFileSync(path.join(prepared.runDir, 'events.jsonl'), JSON.stringify({ type: 'agent_process_bound',
+            phase: context.phase, invoke_id: signed.request.invoke_id, owner_id: context.owner.owner_id, owner_epoch: context.owner.epoch,
+            pid: 42, binding_snapshot, ts: new Date().toISOString() }) + '\n');
+        };
+        if (window === 'execution_window') bind(issued);
         fs.appendFileSync(absolute, '\n// Exact unauthorized write injected after the signed design request.\n');
+        if (window === 'before_binding') bind(issued);
         const changed = fs.readFileSync(absolute);
         const rejected = await withRuntimeTest({ root: options.projectRoot }, () => entry.runGoalModeSessionStep({ ...options, requestPath: reference.path,
           report: { status: 'passed', phase: issued.request.context.phase, details: 'A normal author exit cannot authorize the injected write.' } }));
-        assert.equal(rejected.type, 'phase_execute_request', 'the same unadmitted author must restore its own unauthorized delta');
-        const recoveryReference = rejected.request as { path: string };
-        const recovery = handoff.readSessionExecution(prepared.runDir, recoveryReference.path)!;
-        assert.equal(recovery.request.context.phase, issued.request.context.phase);
-        assert.equal(recovery.request.purpose, 'author');
-        assert(recovery.request.context.instruction?.includes('Restore only your previous unauthorized writes')
-          && recovery.request.context.instruction.includes(target) && recovery.request.context.instruction.includes(`pre_sha256=${originalSha}`),
-          'recovery must carry the first real dirty preimage, not HEAD or later unauthorized bytes');
-        assert(fs.readFileSync(absolute).equals(changed), 'runtime must preserve untrusted bytes for author recovery, not silently restore them');
-        assert.deepEqual((await withRuntimeTest({ root: options.projectRoot }, () => entry.runGoalModeSessionStep(options))).request, rejected.request, 'an outstanding restoration request must be reused');
+        assert(fs.readFileSync(absolute).equals(changed), 'the authority must see the untrusted bytes and original preimage');
+        if (window === 'execution_window') {
+          assert.equal(rejected.type, 'phase_execute_request', 'the same original author gets the exact restoration');
+          const recovery = handoff.readSessionExecution(prepared.runDir, (rejected.request as { path: string }).path)!;
+          assert(recovery.request.context.instruction?.includes(`${target}: pre_sha256=${originalSha}`));
+          assert.equal(handoff.acceptedSessionReport(prepared.runDir, issued)?.event.status, 'failed');
+          bind(recovery); fs.writeFileSync(absolute, original);
+          const resumed = await withRuntimeTest({ root: options.projectRoot }, () => entry.runGoalModeSessionStep({ ...options,
+            requestPath: path.resolve(prepared.runDir, recovery.reference.path), report: { status: 'passed', phase: recovery.request.context.phase } }));
+          assert.equal(handoff.acceptedSessionReport(prepared.runDir, recovery)?.event.status, 'passed');
+          assert.equal(resumed.type, 'phase_execute_request', `the original design continues after exact restoration: ${JSON.stringify(resumed.result)}`);
+          return;
+        }
+        assert.equal(rejected.type, 'goal_session_result', 'an ambiguous write window cannot grant recovery write authority');
+        assert.equal((rejected.result as { halt_reason?: string }).halt_reason, 'unauthorized_source_mutation');
+        fs.appendFileSync(absolute, '\n// A different unreviewed hash is still unresolved.\n');
+        const repeat = await withRuntimeTest({ root: options.projectRoot }, () => entry.runGoalModeSessionStep(options));
+        assert.equal(repeat.type, 'goal_session_result', 'an unreviewed conflict cannot dispatch another author');
         const beforeRestore = handoff.sessionEvents(prepared.runDir);
         const violation = beforeRestore.find(event => event.type === 'phase_write_violation');
-        assert((violation as Record<string, any>)?.violations.some((row: Record<string, unknown>) => row.path === target && row.pre_sha256 === originalSha));
+        assert((violation as Record<string, any>)?.violations.some((row: Record<string, unknown>) =>
+          row.path === target && row.pre_sha256 === originalSha && row.window === window));
+        const projection = require(path.join(project.harnessDir, 'scripts/utils/initial-design-delivery')) as typeof import('../../scripts/utils/initial-design-delivery');
+        assert(projection.readInitialDesignCompletionDisposition({ projectRoot: project.root, frameworkRoot: project.frameworkRoot, manifest: prepared.manifest as never })
+          .completionBlocking.some(problem => problem.id === 'phase_write_violation' && problem.files?.includes(target)), 'continuation and completion share the same conflict');
         assert(!beforeRestore.some(event => event.type === 'phase_verdict' || event.type === 'feature_completion_generated'),
           'unrestored unauthorized bytes cannot reach a construction gate or completion');
         const manifest = JSON.parse(fs.readFileSync(prepared.manifestPath, 'utf8'));
         assert(manifest.initial_design && !manifest.execution_scope && !manifest.phase_chain, 'recovery grants no construction scope');
         fs.writeFileSync(absolute, original);
-        const restored = await withRuntimeTest({ root: options.projectRoot }, () => entry.runGoalModeSessionStep({ ...options, requestPath: recoveryReference.path,
-          report: { status: 'passed', phase: recovery.request.context.phase, details: 'Restored only the original invocation preimage; the requested design remains incomplete.' } }));
+        const restored = await withRuntimeTest({ root: options.projectRoot }, () => entry.runGoalModeSessionStep(options));
         assert(fs.readFileSync(absolute).equals(original), 'legitimate pre-existing dirty bytes must survive recovery');
         const events = handoff.sessionEvents(prepared.runDir);
-        assert(events.some(event => event.type === 'phase_write_observed' && event.invoke_id === recovery.request.invoke_id
-          && ((event as Record<string, any>).observations ?? []).some((row: Record<string, unknown>) => row.path === target && row.post_sha256 === originalSha)),
-          'the real restored bytes must close the original write constraint');
-        assert(!events.some(event => ['unauthorized_source_mutation', 'phase_write_violation_repeat'].includes(String(event.halt_reason))), JSON.stringify(restored));
+        assert.equal(restored.type, 'phase_execute_request', 'after the input is reconciled, resume the original design responsibility');
+        assert(!events.some(event => event.type === 'phase_backtrack_requested' && event.halt_reason === 'phase_write_violation'), JSON.stringify(restored));
         assert(!events.some(event => event.type === 'run_end' && ['COMPLETED', 'CHAIN_SLICE_COMPLETED'].includes(String(event.status))));
       });
     }
@@ -1471,7 +1557,7 @@ cases.push({
   },
 });
 
-for (const scenario of ['derived', 'source-gap', 'repair', 'no-progress'] as const) cases.push({
+for (const scenario of ['derived', 'source-gap', 'repair', 'no-progress', 'new-acceptance'] as const) cases.push({
   name: `a920e013 public candidate ${scenario} keeps root ownership, original transaction and finite recovery`,
   async run() {
     const { withFreshCuHost } = require('./lifecycle-evolution.unit.test') as typeof import('./lifecycle-evolution.unit.test');
@@ -1550,8 +1636,18 @@ for (const scenario of ['derived', 'source-gap', 'repair', 'no-progress'] as con
       assert.deepEqual(repeated.request, result.request, '断电后同一签发恢复，不另派作者');
       assert.deepEqual(fs.readFileSync(candidatesPath), pendingBytes);
       const originalContext = fs.readFileSync(path.join(runDir, 'design-repair/original-context.json'));
-      const repair = repairAdapter(host, () => undefined, { fix: () => undefined, author: current => {
-        if (scenario === 'repair') delete (resolveBlueprintTarget(current, flowRef.target).contracts as any).state_management[0].owner_ref;
+      const repair = repairAdapter(host, () => undefined, { fix: () => undefined, author: (current, draft) => {
+        if (scenario === 'repair' || scenario === 'new-acceptance') {
+          delete (resolveBlueprintTarget(current, flowRef.target).contracts as any).state_management[0].owner_ref;
+        }
+        if (scenario === 'new-acceptance') {
+          const acceptance = (resolveBlueprintTarget(current, artifact.design_refs[0].target).acceptance as any).criteria;
+          acceptance.push({ ...acceptance[0], id: 'AC-99', description: 'A separate verified ledger behavior' });
+          const file = path.join(path.dirname(draft), 'change-unit-candidates.json');
+          const unapproved = JSON.parse(fs.readFileSync(file, 'utf8'));
+          unapproved[0].artifact.verification_refs.push('AC-99');
+          fs.writeFileSync(file, JSON.stringify(unapproved));
+        }
       } });
       let attempts = 0;
       while (result.type === 'phase_execute_request' && String(result.phase).startsWith('design-repair-') && attempts++ < 8) {
@@ -1565,7 +1661,25 @@ for (const scenario of ['derived', 'source-gap', 'repair', 'no-progress'] as con
       assert.equal(events.filter(event => event.type === 'design_authority_repair' && 'stage' in event && event.stage === 'attempted').length, 1, '换 owner 不重置事务');
       assert.deepEqual(fs.readFileSync(path.join(runDir, 'design-repair/original-context.json')), originalContext);
       assert.equal(JSON.parse(fs.readFileSync(root.manifestPath, 'utf8')).run_id, manifest.run_id);
-      if (scenario === 'repair') {
+      if (scenario === 'new-acceptance') {
+        assert.equal(result.phase, 'initial-design-decomposition', diagnostic(result));
+        assert.match(diagnostic(result), /ledger-refresh → AC-99/);
+        assert.equal(identity.enumerateCanonicalChangeUnits(host.root, blueprint).length, 0);
+        assert(fs.readFileSync(f.blueprintFile, 'utf8').includes('AC-99'), 'the independently reviewed design must be published');
+        const currentCandidate = JSON.parse(fs.readFileSync(candidatesPath, 'utf8'));
+        assert(!currentCandidate[0].artifact.verification_refs.includes('AC-99'), 'read-only candidate edits from the design author must not be accepted');
+        const requestPath = (result.request as { path: string }).path;
+        const candidateWriter = handoff.readSessionExecution(runDir, requestPath)!;
+        assert.deepEqual(candidateWriter.request.snapshot_options?.ownedPrefixes, [path.relative(host.root, candidatesPath).replace(/\\/g, '/')]);
+        currentCandidate[0].artifact.verification_refs.push('AC-99');
+        fs.writeFileSync(candidatesPath, JSON.stringify(currentCandidate));
+        result = await withRuntimeTest({ root: host.root }, () => entry.runGoalModeSessionStep({ ...options, requestPath,
+          report: { status: 'passed', phase: candidateWriter.request.context.phase, details: 'Original decomposition writer binds the new criterion to its original CU' } }));
+        const accepted = identity.enumerateCanonicalChangeUnits(host.root, blueprint);
+        assert.equal(accepted.length, 1, diagnostic(result));
+        assert.equal(accepted[0].changeUnit.change_unit_id, artifact.change_unit_id);
+        assert(identity.asChangeUnitArtifact(accepted[0].changeUnit).verification_refs.includes('AC-99'));
+      } else if (scenario === 'repair') {
         const accepted = identity.enumerateCanonicalChangeUnits(host.root, blueprint);
         assert.equal(accepted.length, 1, JSON.stringify(result)); assert.equal(accepted[0].changeUnit.change_unit_id, artifact.change_unit_id);
         assert.equal((accepted[0].changeUnit.component_blueprint_ref as any).revision, doc.revision + 1);

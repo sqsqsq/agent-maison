@@ -5,6 +5,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { hylyreDerivedPlanPath } from '../../config';
 import { parse as parseYaml } from 'yaml';
 import { getSectionContent, extractTables, type MdTable } from './markdown-parser';
 import type { DeriveHintTestCaseRow } from './test-plan-derive-hint';
@@ -143,7 +144,7 @@ export function listDerivedHylyrePlanFiles(reportsBase: string): DerivedPlanFile
   const out: DerivedPlanFileInfo[] = [];
   for (const ent of fs.readdirSync(reportsBase, { withFileTypes: true })) {
     if (!ent.isDirectory()) continue;
-    const hylyrePath = path.join(reportsBase, ent.name, 'hylyre', 'test-plan.hylyre.md');
+    const hylyrePath = hylyreDerivedPlanPath(reportsBase, ent.name);
     if (!fs.existsSync(hylyrePath)) continue;
     const st = fs.statSync(hylyrePath);
     out.push({
@@ -391,6 +392,7 @@ export type StepLintViolation = {
     | 'STEP-006'
     | 'STEP-007'
     | 'STEP-SETUP'
+    | 'STEP-BACK'
     | 'STEP-WAIT'
     | 'STEP-WAIT-SECONDS';
   severity: 'BLOCKER' | 'WARN';
@@ -632,7 +634,7 @@ export function lintHylyrePlanStepRules(
       }
 
       for (const v of validatePlannedStepObject(step, stepIndex)) {
-        if (v.rule_id !== 'STEP-WAIT' && v.rule_id !== 'STEP-WAIT-SECONDS') continue;
+        if (v.rule_id !== 'STEP-WAIT' && v.rule_id !== 'STEP-WAIT-SECONDS' && v.rule_id !== 'STEP-BACK') continue;
         violations.push({
           rule_id: v.rule_id,
           severity: 'BLOCKER',
@@ -909,14 +911,22 @@ export type FreshHylyreRunDirResult =
 export function prepareFreshHylyreRunDir(opts: {
   reportsBase: string;
   sourceHylyrePlanAbsPath: string;
+  expectedSourceContent?: string;
   nowMs?: number;
 }): FreshHylyreRunDirResult {
   const { reportsBase, sourceHylyrePlanAbsPath } = opts;
   if (!fs.existsSync(sourceHylyrePlanAbsPath)) {
     return { ok: false, error: `源派生计划不存在：${sourceHylyrePlanAbsPath}` };
   }
+  let sourceBytes: Buffer;
+  try { sourceBytes = fs.readFileSync(sourceHylyrePlanAbsPath); }
+  catch (error) { return { ok: false, error: `无法读取源派生计划：${(error as Error).message}` }; }
+  if (opts.expectedSourceContent !== undefined && sourceBytes.toString('utf8') !== opts.expectedSourceContent) {
+    return { ok: false, error: `源派生计划在预检后有变更：${sourceHylyrePlanAbsPath}，重新预检后再执行` };
+  }
   const stamp = hylyreRunTimestamp(opts.nowMs);
-  const runDir = path.join(reportsBase, stamp, 'hylyre');
+  const hylyrePlanAbsPath = hylyreDerivedPlanPath(reportsBase, stamp);
+  const runDir = path.dirname(hylyrePlanAbsPath);
   try {
     // 排他式认领：父目录需先存在——reportsBase 由调用方保证（featurePhaseReportsDir 建模）
     fs.mkdirSync(path.dirname(runDir), { recursive: true });
@@ -931,8 +941,7 @@ export function prepareFreshHylyreRunDir(opts: {
     }
     return { ok: false, error: `无法创建本轮执行目录：${(e as Error).message}` };
   }
-  const hylyrePlanAbsPath = path.join(runDir, 'test-plan.hylyre.md');
-  fs.copyFileSync(sourceHylyrePlanAbsPath, hylyrePlanAbsPath);
+  fs.writeFileSync(hylyrePlanAbsPath, sourceBytes);
 
   // 同目录 derive-manifest.json 若存在一并复制（显式 skip 登记随执行目录走）
   const manifestSrc = path.join(path.dirname(sourceHylyrePlanAbsPath), 'derive-manifest.json');

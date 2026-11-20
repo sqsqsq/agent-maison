@@ -4,6 +4,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { readRepairResponsibilityContracts, normalizeResponsibilityPath, workUnitMayWritePath, workUnitWriteDomains } from './repair-responsibility';
 import type { PhaseWriteDomainKind, PhaseWriteBoundaryResolution, ResolvePhaseWriteBoundaryOptions } from './repair-responsibility';
+import type { CurrentDispositionProblem } from './check-disposition';
+import { validateProjectRelativePath } from './project-relative-path';
 export { partitionConstructionFiles } from './repair-responsibility';
 export { workUnitProtectedRecordPaths } from './repair-responsibility';
 export type { PhaseWriteDomainKind, PhaseWriteMatchKind, PhaseWriteDomain, PhaseWriteBoundaryResolution, ResolvePhaseWriteBoundaryOptions } from './repair-responsibility';
@@ -93,6 +95,17 @@ function snapshotFailure(reason: string): PhaseInvocationSnapshot {
 
 function sha256Buffer(buffer: Buffer): string {
   return crypto.createHash('sha256').update(buffer).digest('hex');
+}
+
+/** Check the physical path as well as the bytes before a rejected write can be restored. */
+export function readPhaseRecoveryFile(projectRoot: string, file: string): { actual: string; bytes: Buffer | null } {
+  const relative = validateProjectRelativePath(projectRoot, path.relative(projectRoot, file), 'rejected write');
+  const expected = path.resolve(fs.realpathSync(projectRoot), relative);
+  const parent = path.dirname(expected);
+  if (path.relative(parent, fs.realpathSync(path.dirname(file))) !== '') throw new Error(`Recovery target has a redirected parent: ${relative}`);
+  const stat = fs.lstatSync(expected, { throwIfNoEntry: false });
+  if (stat && (!stat.isFile() || stat.nlink !== 1)) throw new Error(`Recovery target is not a single-link regular file: ${relative}`);
+  return { actual: expected, bytes: stat ? fs.readFileSync(expected) : null };
 }
 
 /**
@@ -220,6 +233,20 @@ export function diffPhaseInvocationSnapshots(
   return changes.length > 0
     ? { kind: 'changed', changes }
     : { kind: 'unverifiable', reason: 'aggregate changed without a per-path delta' };
+}
+
+export type PhaseWriteWindow = 'before_binding' | 'execution_window' | 'unverified';
+
+/** The three snapshots bound a time window. They do not identify a writer. */
+export function phaseWriteWindows(pre: PhaseInvocationSnapshot, binding: PhaseInvocationSnapshot | null, post: PhaseInvocationSnapshot): {
+  kind: 'unverifiable'; reason: string;
+} | { kind: 'checked'; beforeBinding: PhaseInvocationChange[]; returned: PhaseInvocationChange[]; window: PhaseWriteWindow } {
+  const prior = binding ? diffPhaseInvocationSnapshots(pre, binding) : null;
+  if (prior?.kind === 'unverifiable') return prior;
+  const returned = diffPhaseInvocationSnapshots(binding ?? pre, post);
+  if (returned.kind === 'unverifiable') return returned;
+  return { kind: 'checked', beforeBinding: prior?.kind === 'changed' ? prior.changes : [],
+    returned: returned.kind === 'changed' ? returned.changes : [], window: binding ? 'execution_window' : 'unverified' };
 }
 
 export interface PhaseWriteViolation extends PhaseInvocationChange, PhasePathOwnership {
@@ -427,30 +454,91 @@ export function renderPhaseWriteBoundaryGuidance(
   ];
 }
 
-export function authorWritePreimages(events: readonly GoalRunEvent[]): Map<string, string | null> {
-  const out = new Map<string, string | null>();
-  const ownRecoveries = new Set((events as readonly Record<string, any>[]).filter(event => event.type === 'phase_backtrack_requested' && event.reason === 'phase_write_violation'
-    && typeof event.invoke_id === 'string' && typeof event.from_phase === 'string' && event.from_phase === event.to_phase).map(event => event.invoke_id));
-  for (const event of events as readonly Record<string, any>[]) {
-    if (event.type === 'phase_write_violation' && Array.isArray(event.violations)) for (const value of event.violations) {
-      const row = value as { path?: unknown; violation?: unknown; pre_sha256?: unknown };
-      if ((row.violation === 'outside_authority' || row.violation === 'wrong_phase' && ownRecoveries.has(event.invoke_id))
-        && typeof row.path === 'string' && !out.has(row.path) && (row.pre_sha256 === null || typeof row.pre_sha256 === 'string')) out.set(row.path, row.pre_sha256 as string | null);
-    }
-    if (event.type === 'phase_write_observed') for (const row of [...(event.observations ?? []), ...(event.owned ?? [])]) {
-      if (out.has(row.path) && out.get(row.path) === row.post_sha256) out.delete(row.path);
-    }
-  }
-  return out;
+interface RecordedPhaseWriteConflict {
+  before: string | null;
+  restorable: boolean;
+  start?: GoalRunEvent;
+  owner?: string;
+  observedAt?: string;
 }
 
+function recordedPhaseWriteConflicts(events: readonly GoalRunEvent[]): Map<string, RecordedPhaseWriteConflict> {
+  const conflicts = new Map<string, RecordedPhaseWriteConflict>();
+  const ownRecoveries = new Set((events as readonly Record<string, any>[]).filter(event => event.type === 'phase_backtrack_requested' && event.reason === 'phase_write_violation'
+    && typeof event.invoke_id === 'string' && typeof event.from_phase === 'string' && event.from_phase === event.to_phase).map(event => event.invoke_id));
+  const starts = new Map<string, GoalRunEvent>();
+  for (const event of events as readonly Record<string, any>[]) {
+    if (event.type === 'agent_invoke_start' && event.invoke_id) starts.set(event.invoke_id, event);
+    if (event.type === 'phase_write_violation' && Array.isArray(event.violations)) {
+      const rows = event.violations as Array<{ path?: unknown; violation?: unknown; pre_sha256?: unknown; window?: PhaseWriteWindow; owner?: unknown }>;
+      const start = starts.get(event.invoke_id);
+      const purpose = start && 'purpose' in start && typeof start.purpose === 'string' ? start.purpose : undefined;
+      const author = !!start?.phase && (require('./goal-phase-executor') as typeof import('./goal-phase-executor'))
+        .workUnitExecutionRole({ phase: start.phase }, purpose) === 'author';
+      const uncertain = new Set(rows.filter(row => row.window !== undefined && row.window !== 'execution_window').map(row => row.path));
+      for (const row of rows) {
+        if (typeof row.path !== 'string' || row.pre_sha256 !== null && typeof row.pre_sha256 !== 'string') continue;
+        const selfViolation = row.violation === 'outside_authority' || row.violation === 'wrong_phase' && ownRecoveries.has(event.invoke_id);
+        if (!row.window && !selfViolation) continue;
+        const restorable = selfViolation && (!row.window || row.window === 'execution_window' && author && !uncertain.has(row.path));
+        const previous = conflicts.get(row.path);
+        if (!previous || !!start && previous.start === start && row.window === 'before_binding') {
+          conflicts.set(row.path, { before: row.pre_sha256, restorable, start,
+            owner: typeof row.owner === 'string' ? row.owner : undefined, observedAt: event.ts });
+        } else if (!restorable) previous.restorable = false;
+      }
+    }
+    if (event.type === 'phase_write_observed') {
+      const owned = Array.isArray(event.owned) ? event.owned : [];
+      for (const row of [...(Array.isArray(event.observations) ? event.observations : []), ...owned]) {
+        const conflict = conflicts.get(row.path);
+        if (!conflict) continue;
+        const start = starts.get(event.invoke_id);
+        const ownerStartedFromOriginal = !!start && start !== conflict.start && owned.includes(row) && row.pre_sha256 === conflict.before;
+        if (row.post_sha256 === conflict.before || ownerStartedFromOriginal) conflicts.delete(row.path);
+      }
+    }
+  }
+  return conflicts;
+}
 
-export function unrestoredAuthorWrites(projectRoot: string, events: readonly GoalRunEvent[]): Map<string, string | null> {
-  return new Map([...authorWritePreimages(events)].filter(([file, before]) => {
+export function authorWritePreimages(events: readonly GoalRunEvent[]): Map<string, string | null> {
+  return new Map([...recordedPhaseWriteConflicts(events)].filter(([, conflict]) => conflict.restorable).map(([file, conflict]) => [file, conflict.before]));
+}
+
+export function unresolvedPhaseWrites(projectRoot: string, events: readonly GoalRunEvent[],
+  authority?: { feature: string; frameworkRoot?: string; runId?: string }): Map<string, RecordedPhaseWriteConflict> {
+  return new Map([...recordedPhaseWriteConflicts(events)].filter(([file, conflict]) => {
     const absolute = path.resolve(projectRoot, file);
     if (!absolute.startsWith(path.resolve(projectRoot) + path.sep)) return true;
-    if (!fs.existsSync(absolute)) return before !== null;
+    if (!fs.existsSync(absolute)) return conflict.before !== null;
     if (!fs.lstatSync(absolute).isFile() || fs.lstatSync(absolute).isSymbolicLink()) return true;
-    return crypto.createHash('sha256').update(fs.readFileSync(absolute)).digest('hex') !== before;
+    const current = sha256Buffer(fs.readFileSync(absolute));
+    if (current === conflict.before) return false;
+    if (!authority || conflict.restorable || !conflict.observedAt
+      || !conflict.owner || !/^(spec|prd|plan|design|coding|review|ut|testing)$/.test(conflict.owner)) return true;
+    const { loadPhaseEvidenceManifest } = require('./phase-evidence-manifest') as typeof import('./phase-evidence-manifest');
+    const evidence = loadPhaseEvidenceManifest(projectRoot, authority.feature, conflict.owner);
+    if (!evidence?.integrityOk || !(Date.parse(evidence.manifest.generated_at) > Date.parse(conflict.observedAt))
+      || !evidence.manifest.outputs.some(output => path.resolve(projectRoot, output.path) === absolute && output.sha256 === current)) return true;
+    const { readReusableCheckResult } = require('./verify-feature-completion') as typeof import('./verify-feature-completion');
+    const report = readReusableCheckResult({ projectRoot, ...authority, phase: conflict.owner });
+    const summary = report?.summary as { verdict?: unknown; closure_status?: unknown } | undefined;
+    return summary?.verdict !== 'PASS' || summary.closure_status !== 'closed';
   }));
+}
+
+export function unrestoredAuthorWrites(projectRoot: string, events: readonly GoalRunEvent[]): Map<string, string | null> {
+  return new Map([...unresolvedPhaseWrites(projectRoot, events)].filter(([, conflict]) => conflict.restorable).map(([file, conflict]) => [file, conflict.before]));
+}
+
+export function unresolvedWriteReviewPaths(conflicts: ReadonlyMap<string, RecordedPhaseWriteConflict>): string[] {
+  return [...conflicts].filter(([, conflict]) => !conflict.restorable).map(([file]) => file);
+}
+
+export function phaseWriteConflictProblems(projectRoot: string, events: readonly GoalRunEvent[], authority?: Parameters<typeof unresolvedPhaseWrites>[2]): CurrentDispositionProblem[] {
+  return [...unresolvedPhaseWrites(projectRoot, events, authority)].map(([file, conflict]) => ({ phase: 'scope', id: 'phase_write_violation',
+    action: conflict.restorable ? 'repair' : 'verify', affects: 'completion', severity: 'BLOCKER', files: [file],
+    detail: conflict.restorable ? `先恢复本单元作者自己尚未恢复的越权写入：${file}；pre_sha256=${conflict.before ?? 'missing'}`
+      : `原交回的写入时段存在冲突，保全现场，由对应责任方核对原件：${file}` }));
 }

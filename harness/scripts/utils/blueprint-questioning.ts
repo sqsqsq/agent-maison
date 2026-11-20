@@ -144,7 +144,9 @@ export function selectQuestioningScopes(before: BlueprintRecord | undefined, cur
   previous?: BlueprintRecord, changedDependencies: readonly string[] = [], projectRoot?: string, revisitFindings = true): string[] {
   const required = requiredQuestioningScopes(current);
   if (!before || !previous) return [...required.keys()];
-  try { stableAddressIndex(before); stableAddressIndex(current); }
+  let beforeAddresses: Map<BlueprintRecord, string>, currentAddresses: Map<BlueprintRecord, string>;
+  const addresses = (doc: BlueprintRecord) => new Map([...stableAddressIndex(doc)].map(([key, value]) => [value, key]));
+  try { beforeAddresses = addresses(before); currentAddresses = addresses(current); }
   catch { return [...required.keys()]; }
   const authorities = [
     { section: 'decisions_and_gaps', key: 'decisions', id: 'decision_id' },
@@ -285,10 +287,29 @@ export function selectQuestioningScopes(before: BlueprintRecord | undefined, cur
     if (!located) return [...required.keys()];
   }
   // A reader guide's source_digest refresh alone is a new projection identity, not a new business fact.
+  const originalRefs = (item: BlueprintRecord): string[] => [...asStrings(item.verification_refs), ...asStrings(item.evidence_refs),
+    String(asRecord(item.provenance)?.source_ref ?? '')];
+  const pointerOwner = (doc: BlueprintRecord, ref: string, index: ReadonlyMap<BlueprintRecord, string>): string | undefined => {
+    for (let at = ref; at; at = at.slice(0, at.lastIndexOf('/'))) {
+      const owner = asRecord(resolveBlueprintReaderSource(doc, at)?.value);
+      if (owner && index.has(owner)) return index.get(owner);
+    }
+  };
+  for (const item of items) for (const ref of originalRefs(item)) {
+    if (!ref.startsWith('/') || ref.includes('#') || /:|^\/\//.test(ref) || ref.startsWith('/generated_graphs/')) continue;
+    const oldSource = resolveBlueprintReaderSource(before, ref);
+    const newSource = resolveBlueprintReaderSource(current, ref);
+    if (!!oldSource !== !!newSource) return [...required.keys()];
+    if (!oldSource || !newSource) continue;
+    if (pointerOwner(before, ref, beforeAddresses) !== pointerOwner(current, ref, currentAddresses)) return [...required.keys()];
+    if (stableStringify(oldSource.value) !== stableStringify(newSource.value)) {
+      affected.add(String(item.scope_ref));
+    }
+  }
   for (const dependency of changedDependencies) {
     const file = questioningEvidencePath(dependency, projectRoot);
-    const related = items.filter(item => [...asStrings(item.verification_refs), ...asStrings(item.evidence_refs),
-      String(asRecord(item.provenance)?.source_ref ?? '')].some(ref => {
+    const related = items.filter(item => originalRefs(item).some(ref => {
+        if (resolveBlueprintReaderSource(before, ref) && resolveBlueprintReaderSource(current, ref)) return false;
         const source = questioningEvidencePath(ref, projectRoot);
         return file && source && (source === file || file.startsWith(source + '/'));
       }));
@@ -434,15 +455,68 @@ export function createIndependentQuestioningResult(input: {
 
 /** Read only the existing structured result, never infer a verdict from prose. */
 export function parseIndependentQuestioningOutput(output: string): BlueprintRecord {
-  let parsed: BlueprintRecord | null = null;
-  try { const value: unknown = JSON.parse(output); parsed = Array.isArray(value) ? { items: value } : asRecord(value) ?? null; }
-  catch { /* Wrapped objects retain the existing tolerant extraction path. */ }
-  parsed ??= extractJsonObjectFromText(output) ?? null;
-  const result = asRecord(asRecord(parsed?.review_summary)?.questioning) ?? asRecord(parsed?.questioning) ?? parsed;
-  if (!result || !Array.isArray(result.items) || result.items.some(item => !asRecord(item))) {
+  const decode = (text: string): BlueprintRecord | undefined => {
+    const value: unknown = JSON.parse(text);
+    return Array.isArray(value) ? { items: value } : asRecord(value);
+  };
+  const questioning = (value: BlueprintRecord | undefined): BlueprintRecord | undefined => {
+    const result = asRecord(asRecord(value?.review_summary)?.questioning) ?? asRecord(value?.questioning) ?? value;
+    return result && Array.isArray(result.items) && result.items.every(item => !!asRecord(item)) ? result : undefined;
+  };
+  let parsed: BlueprintRecord | undefined;
+  try { parsed = questioning(decode(output)); }
+  catch {
+    const fences = [...output.matchAll(/^ {0,3}(`{3,}|~{3,})([^\r\n]*)\r?$/gm)];
+    const prose: string[] = [];
+    let offset = 0;
+    const include = (result: BlueprintRecord | undefined): void => {
+      if (!result) return;
+      if (parsed) throw new Error('独立质询须交回唯一的结构化结论。');
+      parsed = result;
+    };
+    for (let index = 0; index < fences.length; index++) {
+      const open = fences[index];
+      prose.push(output.slice(offset, open.index));
+      let closing = index + 1;
+      while (closing < fences.length && (fences[closing][2].trim()
+        || fences[closing][1][0] !== open[1][0] || fences[closing][1].length < open[1].length)) closing++;
+      const close = fences[closing];
+      const body = output.slice(open.index! + open[0].length, close?.index);
+      index = closing;
+      offset = close ? close.index! + close[0].length : output.length;
+      const looksJson = /^[\[{]/.test(body.trimStart());
+      const json = /^\s*json(?:\s|$)/i.test(open[2]) || !open[2].trim() && looksJson;
+      if (!json && !looksJson) continue;
+      let result: BlueprintRecord | undefined;
+      try { result = questioning(decode(body)); }
+      catch (error) {
+        if (json) throw new Error(`独立质询 JSON 围栏不可解析：${(error as Error).message}`);
+      }
+      if ((json || result) && (!result || !close)) {
+        throw new Error('独立质询 JSON 围栏须完整交回 questioning 对象或 items 数组。');
+      }
+      include(result);
+    }
+    prose.push(output.slice(offset));
+    // A legacy object outside the fences is also a possible reply.
+    for (const text of prose) {
+      let result: BlueprintRecord | undefined;
+      try { result = questioning(decode(text)); }
+      catch { result = questioning(extractJsonObjectFromText(text) ?? undefined); }
+      include(result);
+    }
+  }
+  if (!parsed) {
     throw new Error('独立质询必须返回现有 questioning JSON 对象及 items 数组；自然语言总结不能签发结果。');
   }
-  return result;
+  const declaredIds = new Map<string, unknown>();
+  for (const item of asRecords(parsed.items)) if (nonEmptyString(item.question_id)) {
+    if (declaredIds.has(item.question_id) && declaredIds.get(item.question_id) !== item.scope_ref) {
+      throw new Error(`独立质询 question_id 重复占用不同范围：${item.question_id}。`);
+    }
+    declaredIds.set(item.question_id, item.scope_ref);
+  }
+  return parsed;
 }
 
 export function independentQuestioningEnvelope(result: BlueprintRecord, providerId: string, authoredBy: unknown, previous?: BlueprintRecord): BlueprintRecord {

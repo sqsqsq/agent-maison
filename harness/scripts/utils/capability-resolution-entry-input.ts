@@ -31,7 +31,7 @@ import { tryLoadDiffExcludeTestPathRegexes, tryLoadProfileCodingHost, tryLoadUtS
 import { SpecLoader } from './spec-loader';
 import { computeRequirementShaFromText } from './fidelity-shared';
 import { findUnclosedGuardianBounds } from './goal-containment-reconcile';
-import { resolvePhaseWriteBoundary, resolvePhasePathOwnership, unrestoredAuthorWrites } from './phase-write-boundary';
+import { resolvePhaseWriteBoundary, resolvePhasePathOwnership, unresolvedPhaseWrites } from './phase-write-boundary';
 import { workUnitMayWritePath } from './repair-responsibility';
 import { invocationCompleted } from './invocation-completion';
 import { deriveBlueprintSkillInput } from './blueprint-skill-projection';
@@ -320,8 +320,7 @@ export function loadFormalFactsObservation(options: FactsInvocationLookup): {
       || Date.parse(owner.lease_expires_at ?? '') <= Date.now())) return undefined;
     assertFencedOwner(runDir, { run_id: options.runId, owner_id: owner.owner_id, epoch: owner.epoch }, 'formal_facts_observation');
     const history = events.slice(0, gateIndex);
-    const { unrestoredAuthorWrites } = require('./phase-write-boundary') as typeof import('./phase-write-boundary');
-    if (unrestoredAuthorWrites(options.projectRoot, history).size) return undefined;
+    if (unresolvedPhaseWrites(options.projectRoot, history, { feature: options.feature, frameworkRoot: options.frameworkRoot, runId: options.runId }).size) return undefined;
     const { executionRequestForInvoke } = require('./session-execution-handoff') as typeof import('./session-execution-handoff');
     const { workUnitExecutionRole } = require('./goal-phase-executor') as typeof import('./goal-phase-executor');
     const records = history.flatMap((start, index) => {
@@ -575,7 +574,7 @@ export function loadCompletedFactsObservation(options: CapabilityResolutionEntry
 
 function completedFactsBaselineFromHistory(options: CapabilityResolutionEntryInputOptions, runId: string, frameworkRoot: string,
   manifest: ReturnType<typeof loadGoalManifestFromRun>, events: ReturnType<typeof loadAuthoritativeEvents>, carryUnchangedBaseline: boolean): ReturnType<typeof loadFormalFactsObservation> {
-  if (unrestoredAuthorWrites(options.projectRoot, events).size) return undefined;
+  if (unresolvedPhaseWrites(options.projectRoot, events, { feature: options.feature, frameworkRoot, runId }).size) return undefined;
   // An existing exact start belongs to the original admission/resume path, including legacy records.
   if (events.some(e => e.type === 'agent_invoke_start' && e.invoke_id === `${options.phase}-${options.goalAttemptId}`)) return undefined;
   let fence = -1;

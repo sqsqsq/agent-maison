@@ -545,6 +545,33 @@ test('evaluateUiEntryCoverage: AC-8 from acceptance.yaml → P0 blocker', () => 
   assert.strictEqual(cov.majors.length, 0);
 });
 
+test('evaluateUiEntryCoverage 区分组件本地同名处理与真实共享入口，派生覆盖精确匹配入口及调用', () => {
+  const fs = require('fs') as typeof import('fs');
+  const os = require('os') as typeof import('os');
+  const path = require('path') as typeof import('path');
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-entry-owner-'));
+  try {
+    const files = ['AlbumPage.ets', 'MediaSheet.ets'];
+    for (const [file, method] of [[files[0], 'prepareAlbum'], [files[1], 'playSelected']]) {
+      const owner = path.basename(file, '.ets');
+      fs.writeFileSync(path.join(projectRoot, file), `struct ${owner} { private handleNext(): void { this.${method}(); } build() { this.handleNext(); } }`);
+    }
+    const spec: UseCasesSpec = { schema_version: '2.0', feature: 'media', use_cases: [{ id: 'uc-media', coordinator: 'Player',
+      ui_bindings: ['AlbumPage', 'MediaSheet'].map(ui => ({ ui, role: 'entry', user_actions: [{ trigger: 'Next', calls: ['handleNext'] }] })),
+      state_model: { phases: ['start'] }, branches: [{ id: 'play', scenario: 'play', linked_acceptance: ['AC-1'] }],
+    }] };
+    const priorities = buildEntryUiPriorityMap(spec, new Map([['AC-1', 'P0']]));
+    assert.ok(evaluateUiEntryCoverage(spec, '', priorities, { projectRoot, files }).ok);
+    assert.ok(!evaluateUiEntryCoverage(spec, '', priorities, { projectRoot, files: files.slice(0, 1) }).ok);
+    for (const binding of spec.use_cases[0].ui_bindings) binding.user_actions[0].calls = ['flow.playSelected'];
+    const frontmatter = (second: string) => `---\nderived_cases:\n  - {tc_id: TC-01, entry_ui: AlbumPage, calls: flow.playSelected}\n  - {tc_id: TC-02, entry_ui: MediaSheet, calls: ${second}}\n---\n`;
+    assert.ok(evaluateUiEntryCoverage(spec, frontmatter('flow.playSelected'), priorities, { projectRoot, files }).ok);
+    assert.match(evaluateUiEntryCoverage(spec, frontmatter('flow.playSelectedOrSkip'), priorities, { projectRoot, files }).blockers[0], /MediaSheet/);
+  } finally {
+    fs.rmSync(projectRoot, { recursive: true, force: true });
+  }
+});
+
 test('reconcileReportWithHylyreTrace: skip vs fail mismatch', () => {
   const fs = require('fs') as typeof import('fs');
   const os = require('os') as typeof import('os');

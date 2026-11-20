@@ -7,7 +7,7 @@ import { resolveArtifactContent } from './artifact-content';
 import * as fs from 'fs';
 import * as path from 'path';
 import { createHash } from 'crypto';
-import { featurePhaseReportsDir } from '../../config';
+import { featurePhaseReportsDir, HYLYRE_DERIVED_PLAN_FILENAME } from '../../config';
 import { loadGoalManifestFromRun } from './goal-manifest';
 import { loadLineageRunEvents } from './goal-run-creation';
 import { resolveEffectiveRunEnd } from './goal-runner-phase';
@@ -69,7 +69,7 @@ export function readPendingTestingRetests(input: {
     if (Date.parse(record.run_started_at) < since || Date.parse(record.run_started_at) > until || !Number.isFinite(Date.parse(record.run_started_at))
       || record.goal_invocation && !runIds.has(record.goal_invocation.run_id)) return [];
     const tracePath = resolveDependencyPath(input.projectRoot, record.trace_path, inferLegacyProjectRoot(input.projectRoot, record));
-    const derivedPlanPath = path.join(view.runDir, 'test-plan.hylyre.md');
+    const derivedPlanPath = path.join(view.runDir, HYLYRE_DERIVED_PLAN_FILENAME);
     try {
       if (![tracePath, derivedPlanPath].every(file => isInsideProjectRoot(fs.realpathSync(input.projectRoot), fs.realpathSync(file)))) return [];
       const traceBytes = fs.readFileSync(tracePath), planBytes = fs.readFileSync(derivedPlanPath);
@@ -288,6 +288,15 @@ export function readPendingTestingRetests(input: {
         assertion: observation?.kind === 'assertion' ? observation.assertion_type : undefined,
         expected: observation?.kind === 'assertion' ? Object.fromEntries(Object.entries(observation.facts ?? {}).filter(([key]) => key.startsWith('expected'))) : undefined });
     };
+    const triggerActuallyRan = (step: typeof original.steps[number]): boolean => {
+      if (step.outcome.status !== 'passed') return false;
+      if (step.role !== 'action' || !['touch', 'input', 'swipe', 'scroll', 'back'].includes(step.kind)) return true;
+      return step.device_session === true && step.outcome.observation?.kind === 'action' && step.outcome.observation.performed === true;
+    };
+    const didNotSwitchTarget = (before: typeof original.steps[number], after: typeof original.steps[number]): boolean => {
+      const target = before.selector?.resolution.selected?.id;
+      return !target || after.selector?.resolution.selected?.id === target;
+    };
     const testOwned = route.owner === 'testing' && !route.codingCandidate;
     let originalIndexTarget: { id: string; bounds: string; dumpPath: string } | null | undefined;
     let matchedDump: string | undefined;
@@ -314,6 +323,23 @@ export function readPendingTestingRetests(input: {
       const actual = (assertion: typeof oldAssertions[number]) => test.steps.find(step => step.index === assertion.index && step.kind === assertion.kind
         && step.role === 'assertion' && step.outcome.status === 'passed' && selectorMatches(step, assertion));
       if (!newAssertions.every(actual)) return false;
+      const actions = (steps: Record<string, unknown>[]) => normalizePlannedSteps(steps).filter(step => step.role === 'action');
+      const oldActions = actions(before.steps), newActions = actions(after.steps);
+      if (oldActions.length !== newActions.length || !oldActions.every((old, index) => {
+        const now = newActions[index];
+        const previous = original.steps.find(step => step.index === old.index);
+        const current = test.steps.find(step => step.index === now.index && step.kind === now.kind && step.role === 'action');
+        if (old.kind !== now.kind || !current || !triggerActuallyRan(current)) return false;
+        if (stableStringify(old.body) === stableStringify(now.body)) return !previous || didNotSwitchTarget(previous, current);
+        // A failed literal by_id still names its intended object when the new action uniquely observes that same ID.
+        const resolvedOriginalId = previous?.index === route.stepIndex && previous.outcome.status === 'failed'
+          && previous.outcome.failure.code === 'selector.not_found' && previous.selector?.resolution.state === 'not_found'
+          && previous.selector.request.kind === 'by_id' && current.selector?.resolution.state === 'unique'
+          && current.selector.resolution.selected?.id === previous.selector.request.value;
+        return previous && old.selectors.length === 1 && now.selectors.length === 1
+          && selectorMatches(previous, old) && selectorMatches(current, now)
+          && (sameTarget(previous, current) || resolvedOriginalId) && predicate(old) === predicate(now);
+      })) return false;
       let cursor = 0;
       let repairedIndexDump: string | undefined;
       const retained = oldAssertions.every(old => {
@@ -377,7 +403,7 @@ export function readPendingTestingRetests(input: {
       .map(({ test, caseId }) => ({ next, test, caseId, tracePath: next.tracePath, planPath: next.derivedPlanPath })));
     const equivalent = candidates.find(({ next, test, caseId }) => next.behavior.get(caseId) === behavior
       && original.steps.filter(step => step.index <= route.stepIndex).every(step => test.steps.some(now =>
-        now.index === step.index && (step.index === route.stepIndex
+        now.index === step.index && triggerActuallyRan(now) && didNotSwitchTarget(step, now) && (step.index === route.stepIndex
           ? now.kind === step.kind && now.role === step.role && stableStringify(now.selector?.request) === stableStringify(step.selector?.request)
             && now.outcome.status === 'passed' && (now.role !== 'assertion' || now.outcome.observation?.kind === 'assertion')
           : trigger(now) === trigger(step))))
@@ -1077,11 +1103,23 @@ export interface UiEntryCoverageResult {
   warnings: string[];
 }
 
+/** A bare call is UI-local only when its named source owns a private handler and directly invokes it. */
+function localUiHandler(source: string, ui: string, call: string): boolean {
+  if (![ui, call].every(token => /^[A-Za-z_$][\w$]*$/.test(token))) return false;
+  const escape = (token: string) => token.replace(/\$/g, '\\$');
+  const code = source.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`/g, ' ');
+  const owners = [...code.matchAll(/\b(?:class|struct)\s+([A-Za-z_$][\w$]*)/g)];
+  if (owners.length !== 1 || owners[0][1] !== ui) return false;
+  return new RegExp(`\\bprivate\\s+(?:async\\s+)?${escape(call)}\\s*\\(`).test(code)
+    && new RegExp(`\\bthis\\.${escape(call)}\\s*\\(`).test(code);
+}
+
 /** Check multi-entry business calls have derived Hylyre coverage per entry_ui. */
 export function evaluateUiEntryCoverage(
   spec: UseCasesSpec | null,
   derivedMd: string,
   entryPriorities?: Map<string, 'P0' | 'P1' | 'P2' | 'P3'>,
+  source?: { projectRoot: string; files: readonly string[] },
 ): UiEntryCoverageResult {
   const bindings = buildUiEntryBindings(spec);
   const byCall = groupUiEntriesByCall(bindings);
@@ -1094,15 +1132,23 @@ export function evaluateUiEntryCoverage(
   for (const [call, entries] of byCall) {
     const uniqueEntries = [...new Map(entries.map(e => [e.entryUi, e])).values()];
     if (uniqueEntries.length <= 1) continue;
+    const localOwners = source && uniqueEntries.map(({ entryUi }) => {
+      const files = source.files.filter(file => /\.(?:ets|tsx?)$/.test(file) && path.basename(file, path.extname(file)) === entryUi);
+      if (files.length !== 1) return null;
+      try {
+        const resolved = fs.realpathSync(path.resolve(source.projectRoot, files[0]));
+        return isInsideProjectRoot(fs.realpathSync(source.projectRoot), resolved)
+          && localUiHandler(fs.readFileSync(resolved, 'utf-8'), entryUi, call) ? resolved : null;
+      } catch { return null; }
+    });
+    if (localOwners?.every(Boolean) && new Set(localOwners).size === uniqueEntries.length) continue;
 
     const covered = new Set<string>();
     let structuredMatch = false;
 
     for (const entry of uniqueEntries) {
       const hit = derivedMetas.some(meta => {
-        const callMatch =
-          meta.calls.some(c => c.includes(call) || call.includes(c)) ||
-          (meta.linkedFlow && meta.linkedFlow.includes(call));
+        const callMatch = meta.calls.includes(call) || meta.linkedFlow === call;
         const entryMatch = meta.entryUi === entry.entryUi;
         if (callMatch && entryMatch) {
           structuredMatch = true;

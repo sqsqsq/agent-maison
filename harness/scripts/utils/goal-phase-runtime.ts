@@ -13,6 +13,9 @@ import {
   type RunFenceToken,
 } from './goal-run-control';
 import { writeHandoffRequest } from './goal-handoff';
+const { resolveTransportIntent } = require('../../../agents/shared/native-request.cjs') as {
+  resolveTransportIntent: (text: string) => GoalRunMode | null;
+};
 export { GoalPhaseRuntime } from '../goal-phase-runtime';
 
 export interface InSessionPhaseOutcome {
@@ -65,10 +68,7 @@ export interface GoalModeInSessionOptions extends Omit<InSessionRoundOptions, 'r
 }
 
 export function resolveGoalRunModeIntent(text: string, detach = false): GoalRunMode | null {
-  if (detach) return 'unattended';
-  if (/无人值守|我离开|我走了|后台继续|不用等我/.test(text)) return 'unattended';
-  if (/有人在场|遇到问题.*问我|需要.*停下来|我会看着/.test(text)) return 'attended';
-  return null;
+  return detach ? 'unattended' : resolveTransportIntent(text);
 }
 
 export function userFacingRunMode(mode: GoalRunMode): '有人在场' | '无人值守' {

@@ -22,7 +22,7 @@ import {
   type CoverageEvidenceObservation,
 } from '../../scripts/check-ut';
 import { buildAcCoverageReport, writeAcCoverageReport } from '../../scripts/utils/ac-coverage-report';
-import { readTaggedAcceptanceStrength } from '../../scripts/utils/acceptance-review-strength';
+import { acceptanceReviewConflictInstruction, readTaggedAcceptanceStrength, selectSignedAcceptanceReviewVerdict } from '../../scripts/utils/acceptance-review-strength';
 import { buildVerifierMaterialView } from '../../scripts/utils/verifier-material';
 import { buildVerifierRequest } from '../../scripts/utils/verifier-request';
 import { loadVerifierEvidenceForSubject } from '../../scripts/utils/verifier-evidence';
@@ -50,6 +50,26 @@ function testUnitBothScope(): void {
     boundaries: [],
   });
   assert(items.length === 1 && items[0].id === 'AC-2', 'only unit/both');
+}
+
+function testSignedReviewReuse(): void {
+  const issue = 'acceptance_test_strength_AC-1', digest = 'current-material';
+  const refuted = { row: { issue, verdict: 'refuted' as const, evidence: 'Current source and assertion' } };
+  const confirmed = { row: { issue, verdict: 'confirmed' as const, evidence: 'Actual unmet assertion' } };
+  const current = { entries: [confirmed.row], signedSegments: [] };
+  assert(selectSignedAcceptanceReviewVerdict([null, refuted], { ...current, entries: [] }, issue, digest).verdict === refuted,
+    'a missing or unreadable current row must retain the independently valid older row');
+  assert(selectSignedAcceptanceReviewVerdict([null, null], { ...current, entries: [] }, issue, digest).verdict === null,
+    'a stale test or production source must not make the older row reusable');
+  assert(selectSignedAcceptanceReviewVerdict([null, refuted], { ...current, entries: [confirmed.row, refuted.row] }, issue, digest).verdict === null,
+    'an explicit duplicate must not fall back to the earlier answer');
+  const conflict = selectSignedAcceptanceReviewVerdict([confirmed, refuted], current, issue, digest);
+  assert(conflict.conflicting && !conflict.verdict, 'contradictory real answers require the original independent reviewer');
+  const restated = { ...current, signedSegments: [acceptanceReviewConflictInstruction(issue, digest)] };
+  assert(selectSignedAcceptanceReviewVerdict([confirmed, refuted], restated, issue, digest).verdict === confirmed,
+    'only the signed current resolution can settle the contradiction');
+  assert(!selectSignedAcceptanceReviewVerdict([confirmed, refuted], restated, issue, 'changed-source').verdict,
+    'a resolved contradiction cannot carry over to changed material');
 }
 
 function testDagsAllCharacterizationMixed(): void {
@@ -538,6 +558,7 @@ export function runAll(): UnitCaseResult[] {
     { name: 'DAG mapping requires declared source kind', fn: testDagMappingRequiresDeclaredSourceKind },
     { name: 'AC and BD prefixes do not cross-cover', fn: testAcAndBdPrefixesDoNotCrossCover },
     { name: 'acceptance strength resolves its own scoped branch and DAG cases', fn: testReviewCasesRespectCurrentCoverage },
+    { name: '3ec91fa7 signed acceptance rows survive formatting but actual conflicts return to the original review', fn: testSignedReviewReuse },
     { name: 'ac coverage writer is semantic-idempotent', fn: testAcCoverageWriteIsSemanticIdempotent },
     { name: 'stable coverage preserves verifier subject', fn: testStableCoveragePreservesVerifierSubject },
     { name: 'two real UT harness runs preserve verifier subject', fn: testTwoRealUtHarnessRunsPreserveSubject },

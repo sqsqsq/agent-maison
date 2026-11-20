@@ -4,7 +4,7 @@ import * as path from 'path';
 import * as YAML from 'yaml';
 import { createHash } from 'crypto';
 
-import { clearFrameworkConfigCache } from '../../config';
+import { clearFrameworkConfigCache, featurePhaseReportsDir } from '../../config';
 import {
   capturePhaseInvocationSnapshot,
   classifyPhaseInvocationChanges,
@@ -15,6 +15,7 @@ import {
   workUnitProtectedRecordPaths,
   replayUtOwnedWrites,
   isProducedPhaseChange,
+  unresolvedPhaseWrites,
   type PhaseWriteBoundaryResolution,
 } from '../../scripts/utils/phase-write-boundary';
 import type { UnitCaseResult } from '../run-unit';
@@ -23,6 +24,7 @@ import type { ExecutionScope } from '../../scripts/utils/execution-scope';
 import { fixture as blueprintFixture } from './blueprint-skill-projection.unit.test';
 import { emitHarnessPreflightGap, harnessPreflightPath } from '../../scripts/utils/capability-preflight';
 import { readRepairResponsibilityContracts, workUnitMayWritePath } from '../../scripts/utils/repair-responsibility';
+import { resolvePhaseEvidenceManifest, writePhaseEvidenceManifest } from '../../scripts/utils/phase-evidence-manifest';
 
 const FRAMEWORK_ROOT = path.resolve(__dirname, '..', '..', '..');
 const FEATURE = 'owner-fixture';
@@ -109,6 +111,32 @@ function resolve(root: string, phaseOrder: readonly string[] = CHAIN, executionR
 
 export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
+
+  run(results, '3ec91fa7 externally changed phase output requires fresh exact proof from its declared owner', () => {
+    const root = makeHost();
+    try {
+      const file = `doc/features/${FEATURE}/spec/spec.md`;
+      const hash = (value: string) => createHash('sha256').update(value).digest('hex');
+      const events = [{ type: 'phase_write_violation', phase: 'work-unit-author', invoke_id: 'older-call', ts: '2026-11-19T12:00:00Z',
+        violations: [{ path: file, pre_sha256: hash('previous signed bytes'), post_sha256: hash('untrusted'), owner: 'spec',
+          violation: 'signed_input_drift', window: 'before_binding' }] }];
+      const current = { feature: FEATURE, frameworkRoot: FRAMEWORK_ROOT };
+      const blocked = () => unresolvedPhaseWrites(root, events, current).has(file);
+      write(root, file, 'new authority bytes');
+      assert(blocked(), 'changing the hash does not resolve the conflict');
+      const report = (name: string) => path.relative(root, path.join(featurePhaseReportsDir(root, FEATURE, 'spec', FRAMEWORK_ROOT), name));
+      write(root, report('summary.json'), JSON.stringify({ verdict: 'PASS', closure_status: 'closed' }));
+      write(root, report('script-report.json'), JSON.stringify({ checks: [{ id: 'owner-check', severity: 'BLOCKER', status: 'PASS' }] }));
+      const seal = (now: Date) => writePhaseEvidenceManifest(root, resolvePhaseEvidenceManifest({ projectRoot: root,
+        feature: FEATURE, phase: 'spec', frameworkRoot: FRAMEWORK_ROOT, now: () => now }));
+      seal(new Date('2026-11-19T11:59:00Z'));
+      assert(blocked(), 'a stale authority report cannot settle a later conflict');
+      seal(new Date('2026-11-19T12:01:00Z'));
+      assert(!blocked(), 'the registered owner’s formal current proof settles the changed output');
+      write(root, file, 'another unreviewed hash');
+      assert(blocked(), 'the owner’s proof belongs to the checked bytes');
+    } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
+  });
 
   run(results, '4c8d73b1 generated ownership requires this invocation writer chain and preserves its exact preimage', () => {
     const root = makeHost();

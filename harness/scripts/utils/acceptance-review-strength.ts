@@ -42,7 +42,27 @@ type StrengthReview = {
   attempted: boolean;
   verdict: IssueVerificationEntry | undefined;
   passed: boolean;
+  conflicts?: Array<{ verdict: string; originals: string[] }>;
 };
+
+/** Only a signed request that carries the contradiction can supersede both prior answers. */
+export function acceptanceReviewConflictInstruction(issue: string, digest: string): string {
+  return `重新裁定同一材料上的独立结论冲突：${issue}（当前材料 ${digest}）。对照两份原件，解释取舍并引用真实断言与生产证据。`;
+}
+
+export function selectSignedAcceptanceReviewVerdict<T extends { row: IssueVerificationEntry }>(
+  evidence: readonly (T | null)[], latest: { entries: readonly IssueVerificationEntry[]; signedSegments: readonly unknown[] } | undefined,
+  issue: string, digest: string,
+): { verdict: T | null; conflicting: boolean } {
+  const [latestVerdict] = evidence;
+  const [first, ...other] = evidence.filter(verdict => verdict !== null);
+  if (latestVerdict && latest?.signedSegments.includes(acceptanceReviewConflictInstruction(issue, digest))) {
+    return { verdict: latestVerdict, conflicting: false };
+  }
+  const conflicting = !!first && other.some(item => item.row.verdict !== first.row.verdict);
+  const explicitUnusable = !latestVerdict && latest?.entries.some(row => row.issue === issue);
+  return { verdict: !explicitUnusable && !conflicting ? first ?? null : null, conflicting };
+}
 
 export function readTaggedAcceptanceStrength(input: AcceptanceReviewInput) {
   const { projectRoot, feature, runId, executionScope, authorityReaders } = input;
@@ -209,7 +229,11 @@ export function readTaggedAcceptanceStrength(input: AcceptanceReviewInput) {
         if (staleSource) return null;
         return { row, source, asserted };
       });
-      const verdict = verdicts[0] && verdicts.every(other => !other || other.row.verdict === verdicts[0]!.row.verdict) ? verdicts[0] : null;
+      const { verdict, conflicting } = selectSignedAcceptanceReviewVerdict(verdicts, signed[0], issue, digest);
+      const conflicts = conflicting ? signed.flatMap((answer, index) => {
+        const observed = verdicts[index];
+        return observed ? [{ verdict: observed.row.verdict, originals: answer.originals }] : [];
+      }) : undefined;
       const observed = verdict?.row.verdict === 'refuted' ? currentExecution() : null;
       const passed = !!observed && verdict!.source.every(observed.current) && verdict!.asserted.every(test => {
         const exact = observed.report.checks.filter(check => check.id === test.name && check.status === 'PASS' && check.affected_files?.includes(test.file));
@@ -222,7 +246,8 @@ export function readTaggedAcceptanceStrength(input: AcceptanceReviewInput) {
         if (observed.passed.includes(exact[0]) && observed.originals(exact[0]).length) return true;
         return executions().get(owners[0].name)?.has(test.name) === true;
       });
-      return [{ issue, acceptance: item, tests: cases, files: testFiles, priorProduction, digest, attempted: !!verdicts[0], verdict: verdict?.row, passed }];
+      return [{ issue, acceptance: item, tests: cases, files: testFiles, priorProduction, digest, attempted: !!verdict, verdict: verdict?.row, passed,
+        ...(conflicts ? { conflicts } : {}) }];
     });
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);

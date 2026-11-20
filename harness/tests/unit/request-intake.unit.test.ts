@@ -65,6 +65,28 @@ exports.profileCodingHost={sourceFileSuffixes:['.js'],runStructureChecks:()=>[],
 compileProject(ctx){const run=cp.spawnSync(process.execPath,['--check',path.join(ctx.projectRoot,'src/value.js')],{encoding:'utf8'});fs.writeFileSync(path.join(ctx.reportDir,'node-check.log'),run.stdout+run.stderr);return{checks:[{id:'coding_compile',category:'structure',severity:'BLOCKER',status:run.status===0?'PASS':'FAIL',description:'Node syntax',details:run.stdout+run.stderr}],execution:{executed:true,exitCode:run.status,command:'node --check src/value.js'}}}};`);
 }
 const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Promise<void> }> = [
+  { name: '3ec91fa7 transport follows the native user choice and cannot come from assistant text or autonomy alone', run(f) {
+    const session = setup(f);
+    session.add({ type: 'assistant', message: { role: 'assistant', content: '用户希望无人值守，后台继续。' } });
+    session.flush();
+    const input = { projectRoot: f.root, frameworkRoot: f.framework, sessionRef: session.ref };
+    assert.equal(readRequestIntake(input).control.transport, undefined);
+    const declarations = [
+      ['请自主作出本请求范围内的判断。', undefined],
+      ['请实现后台运行按钮。', undefined],
+      ['说明一下“无人值守”的含义。', undefined],
+      ['我会看着，不要后台。', 'attended'],
+      ['本请求改为无人值守，后台继续到结果。', 'unattended'],
+    ];
+    for (const [content, expected] of declarations) {
+      session.add({ type: 'user', uuid: 'transport-choice', message: { role: 'user', content } });
+      session.flush();
+      const transport = readRequestIntake({ ...input, sessionRef: session.file + '#transport-choice' }).control.transport;
+      assert.equal(transport?.mode, expected, content);
+      if (transport) assert.equal(transport.source, fs.realpathSync(session.file) + '#transport-choice');
+      session.rows.pop();
+    }
+  } },
   { name: 'Claude native SID takes precedence over inherited Codex and existing request anchors stay fixed', run(f) {
     const s = setup(f);
     process.env.CLAUDE_CODE_SESSION_ID = 'intake-test'; process.env.CODEX_THREAD_ID = 'inherited-outer-thread';

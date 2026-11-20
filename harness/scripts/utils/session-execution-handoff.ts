@@ -7,7 +7,7 @@ import { resolvePhasePathOwnership } from './phase-write-boundary';
 import { workUnitMayWritePath } from './repair-responsibility';
 import { assertFencedOwner, readRunControl, setSessionExecutionLease, type RunFenceToken } from './goal-run-control';
 import { loadEventsJsonlStrict, loadAuthoritativeEvents, resolveValidationOnlyEligibility, type GoalRunEvent } from './goal-runner-phase';
-import { capturePhaseInvocationSnapshot, diffPhaseInvocationSnapshots, classifyPhaseInvocationChanges,
+import { authorWritePreimages, capturePhaseInvocationSnapshot, diffPhaseInvocationSnapshots, classifyPhaseInvocationChanges, phaseWriteWindows, readPhaseRecoveryFile,
   type PhaseInvocationSnapshot, type PhaseWriteBoundaryResolution } from './phase-write-boundary';
 import { parseCredentialRef } from './device-credential-store';
 import { readProviderSessionId } from './agent-invoke';
@@ -146,6 +146,32 @@ export function readHandoffMaterial<T>(runDir: string, ref: HandoffReference): T
   return JSON.parse(bytes.toString('utf8')) as T;
 }
 
+const bindingSnapshotPath = (runDir: string, issued: Pick<IssuedSessionExecution, 'reference' | 'request'>): string =>
+  inside(runDir, path.join(runDir, path.dirname(issued.reference.path), `binding-e${issued.request.context.owner.epoch}.json`));
+
+export function phaseBindingStarted(runDir: string, issued: IssuedSessionExecution): boolean {
+  return fs.existsSync(bindingSnapshotPath(runDir, issued));
+}
+
+/** Freeze immediately before the native spawn, then bind the original to its process event. */
+export function capturePhaseBinding(runDir: string, issued: Pick<IssuedSessionExecution, 'reference' | 'request'>): HandoffReference | undefined {
+  const request = issued.request;
+  if (!request.pre_snapshot || !request.write_boundary) return undefined;
+  const snapshot = capturePhaseInvocationSnapshot(request.write_boundary, request.snapshot_options);
+  return immutableJson(runDir, bindingSnapshotPath(runDir, issued), { request_sha256: issued.reference.sha256, snapshot });
+}
+
+export function readPhaseBinding(runDir: string, issued: Pick<IssuedSessionExecution, 'reference' | 'request'>,
+  events: readonly GoalRunEvent[]): PhaseInvocationSnapshot | null {
+  const token = issued.request.context.owner;
+  const match = events.find(event => event.type === 'agent_process_bound' && event.invoke_id === issued.request.invoke_id
+    && event.owner_id === token.owner_id && event.owner_epoch === token.epoch && 'binding_snapshot' in event);
+  if (!match || !('binding_snapshot' in match) || !match.binding_snapshot) return null;
+  const result = readHandoffMaterial<{ request_sha256: string; snapshot: PhaseInvocationSnapshot }>(runDir, match.binding_snapshot as HandoffReference);
+  if (result.request_sha256 !== issued.reference.sha256) throw new Error('[session-handoff] binding snapshot does not match the signed request');
+  return result.snapshot;
+}
+
 /** Only committed session phase_start rows grant execution, never an unreferenced file. */
 export function readSessionExecution(runDir: string, requestPath?: string): IssuedSessionExecution | null {
   const events = sessionEvents(runDir);
@@ -194,12 +220,15 @@ export function observeSessionExecution(runDir: string, issued: IssuedSessionExe
       catch { /* Keep the original stream; unstructured or incomplete text is not a tool fact. */ }
     }
   }
-  const postSnapshot = request.pre_snapshot && request.write_boundary
+  const accepted = acceptedSessionReport(runDir, issued, events);
+  const archived = accepted?.event.handoff_report ? readHandoffMaterial<SessionReportMaterial>(runDir, accepted.event.handoff_report) : undefined;
+  const postSnapshot = archived ? archived.post_snapshot : request.pre_snapshot && request.write_boundary
     ? capturePhaseInvocationSnapshot(request.write_boundary, request.snapshot_options) : null;
   const changes = request.pre_snapshot && postSnapshot ? diffPhaseInvocationSnapshots(request.pre_snapshot, postSnapshot) : null;
   return { invoke_id: request.invoke_id,
     provider_session_id: readProviderSessionId(log, request.context.adapter),
     toolEvents, postSnapshot, changes,
+    ...(postSnapshot ? { write_windows: readSessionWriteWindows(runDir, issued, postSnapshot, events) } : {}),
     writes: changes?.kind === 'changed' && request.write_boundary
       ? classifyPhaseInvocationChanges(request.write_boundary, request.context.phase, changes.changes, { events, invokeId: request.invoke_id }) : null,
     invocation: [...events].reverse().find(event => event.invoke_id === request.invoke_id && (event.type === 'agent_invoke_end' || event.type === 'agent_process_settled' || event.type === 'agent_invoke_start')),
@@ -391,6 +420,13 @@ interface SessionReportMaterial {
   draft_outputs?: Record<string, string>;
 }
 
+export function readSessionWriteWindows(runDir: string, issued: IssuedSessionExecution, post: PhaseInvocationSnapshot,
+  events: readonly GoalRunEvent[]) {
+  if (!issued.request.pre_snapshot) return null;
+  try { return phaseWriteWindows(issued.request.pre_snapshot, readPhaseBinding(runDir, issued, events), post); }
+  catch (error) { return { kind: 'unverifiable' as const, reason: (error as Error).message }; }
+}
+
 function reportArchivePath(runDir: string, issued: IssuedSessionExecution): string {
   return path.join(runDir, path.dirname(issued.reference.path), `execution-report-e${issued.request.context.owner.epoch}.json`);
 }
@@ -469,13 +505,20 @@ export function acceptSessionExecution(input: {
     } else fs.writeFileSync(acceptedToolEvents, bytes, { flag: 'wx' });
   }
   if (!saved && (issued.request.purpose === 'author' || issued.request.purpose === 'questioning')) {
+    const archiveDraft = (name: string, draft: string): void => {
+      if (issued.request.purpose === 'questioning') {
+        try {
+          const { bytes } = readPhaseRecoveryFile(boundary?.projectRoot ?? runDir, draft);
+          if (bytes) draftOutputs[name] = bytes.toString('base64');
+        } catch { /* Link or unreadable targets are still visible to the signed snapshot check. */ }
+      } else if (fs.existsSync(draft)) draftOutputs[name] = fs.readFileSync(draft).toString('base64');
+    };
     if (issued.request.context.phase.startsWith('initial-design-') && boundary) {
       const blueprint = featureFilePath(boundary.projectRoot, issued.request.context.feature, 'blueprint/component-blueprint.yaml');
-      if (fs.existsSync(blueprint)) draftOutputs['initial-design-blueprint.yaml'] = fs.readFileSync(blueprint).toString('base64');
+      archiveDraft('initial-design-blueprint.yaml', blueprint);
     }
     for (const name of ['component-blueprint.yaml', 'change-unit.yaml', 'change-unit-candidates.json', 'architecture.json']) {
-      const draft = path.join(runDir, 'design-repair', name);
-      if (fs.existsSync(draft)) draftOutputs[name] = fs.readFileSync(draft).toString('base64');
+      archiveDraft(name, path.join(runDir, 'design-repair', name));
     }
   }
   if (!saved && boundary?.verifierResultPath && issued.request.context.workInput?.material.acceptanceReview) {
@@ -488,29 +531,57 @@ export function acceptSessionExecution(input: {
   }
   // Persist the replay input before any observation can refer to its post-snapshot.
   const archive = saved?.reference ?? immutableJson(runDir, file, { report, post_snapshot: post, ...(Object.keys(draftOutputs).length ? { draft_outputs: draftOutputs } : {}) });
+  let rejectedWrites: string | undefined;
   if (pre && boundary && post) {
-    const diff = diffPhaseInvocationSnapshots(pre, post);
-    if (diff.kind === 'changed') {
-      const writes = classifyPhaseInvocationChanges(boundary, report.phase, diff.changes, { events: sessionEvents(runDir), invokeId: issued.request.invoke_id });
+    const events = sessionEvents(runDir);
+    const windows = readSessionWriteWindows(runDir, issued, post, events)!;
+    if (windows.kind === 'checked') {
+      const writes = classifyPhaseInvocationChanges(boundary, report.phase, windows.returned, { events, invokeId: issued.request.invoke_id });
+      const permitted = issued.request.snapshot_options?.ownedPrefixes?.map(file => file.replace(/\\/g, '/')) ?? [];
+      const invocationStart = events.map(event => event.type === 'agent_invoke_start' && event.invoke_id === issued.request.invoke_id).lastIndexOf(true);
+      const restorations = authorWritePreimages(invocationStart < 0 ? events : events.slice(0, invocationStart));
+      const initialQuestioning = report.phase === 'initial-design-questioning' && boundary.executionRole === 'verifier';
+      const outside = report.phase.startsWith('initial-design-') && !initialQuestioning && !boundary.domains.length
+        ? writes.violations.filter(write => !permitted.some(file => write.path === file || write.path.startsWith(file + '/')))
+        : report.phase.startsWith('design-repair-') ? [] : writes.violations;
+      const violations = [...windows.beforeBinding.map(write => ({ ...write, ...resolvePhasePathOwnership(boundary, write.path), violation: 'signed_input_drift', window: 'before_binding' })),
+        ...outside.filter(write => initialQuestioning || !restorations.has(write.path) || restorations.get(write.path) !== write.postSha256)
+          .map(write => ({ ...write, window: windows.window }))];
+      if (violations.length) {
+        rejectedWrites = `签发输入或写界发生变化，原交回不能采信。对应责任方核对文件：${[...new Set(violations.map(write => write.path))].join('、')}`;
+        if (!events.some(event => event.type === 'phase_write_violation' && event.invoke_id === issued.request.invoke_id)) input.emit({
+          type: 'phase_write_violation', phase: report.phase, invoke_id: issued.request.invoke_id,
+          pre_snapshot: pre.sha256, post_snapshot: post.sha256,
+          violations: violations.map(write => ({ path: write.path, how: write.how, violation: write.violation, window: write.window,
+            pre_sha256: write.preSha256, post_sha256: write.postSha256, ...('roles' in write ? { owner: 'owner' in write ? write.owner : undefined, roles: write.roles } : {}) })),
+        });
+      }
       const signedFiles = new Set((issued.request.snapshot_options?.includeFiles ?? []).map(file => path.resolve(boundary.projectRoot, file)));
-      const owned = writes.allowed.filter(write => write.roles.some(role => role.kind === 'artifact' || role.kind === 'source'
+      const signedChanges = rejectedWrites ? [] : writes.allowed.filter(write => write.roles.some(role => role.kind === 'artifact' || role.kind === 'source'
         || role.kind === 'phase_workspace' && signedFiles.has(path.resolve(boundary.projectRoot, write.path))));
-      if ((writes.observed.length || owned.length) && !sessionEvents(runDir).some(event => event.type === 'phase_write_observed'
+      const owned = windows.window === 'execution_window' ? signedChanges : [];
+      const observations = windows.window === 'unverified'
+        ? [...writes.observed, ...signedChanges.map(write => ({ ...write, disposition: 'unattributed' as const }))] : writes.observed;
+      if ((observations.length || owned.length) && !sessionEvents(runDir).some(event => event.type === 'phase_write_observed'
         && event.invoke_id === issued.request.invoke_id && !(event as Record<string, unknown>).producer)) input.emit({
         type: 'phase_write_observed', phase: report.phase, invoke_id: issued.request.invoke_id,
         owned: owned.map(write => ({ path: write.path, how: write.how, pre_sha256: write.preSha256, post_sha256: write.postSha256, roles: write.roles })),
-        observations: writes.observed.map(write => ({ path: write.path, how: write.how, disposition: write.disposition,
-          owner: write.owner, owner_candidates: write.ownerCandidates, pre_sha256: write.preSha256, post_sha256: write.postSha256, roles: write.roles })),
-        observed_count: writes.observed.length, pre_snapshot: pre.sha256, post_snapshot: post.sha256,
+        observations: observations.map(write => ({ path: write.path, how: write.how, disposition: write.disposition,
+          owner: write.owner, owner_candidates: write.ownerCandidates, window: windows.window, pre_sha256: write.preSha256, post_sha256: write.postSha256, roles: write.roles })),
+        observed_count: observations.length, pre_snapshot: pre.sha256, post_snapshot: post.sha256,
       });
-    } else if (diff.kind === 'unverifiable') input.emit({ type: 'phase_write_boundary_degraded', phase: report.phase, invoke_id: issued.request.invoke_id, detail: diff.reason });
+    } else {
+      rejectedWrites = `原调用的写入时段不可核实：${windows.reason}`;
+      input.emit({ type: 'phase_write_boundary_degraded', phase: report.phase, invoke_id: issued.request.invoke_id, detail: windows.reason });
+    }
   }
   input.emit({ type: 'agent_invoke_end', phase: report.phase, invoke_id: issued.request.invoke_id,
-    status: report.status,
+    status: rejectedWrites ? 'failed' : report.status,
+    ...(rejectedWrites ? { write_evidence_rejected: rejectedWrites } : {}),
     ...(issued.request.purpose ? { purpose: issued.request.purpose, chain_phase: issued.request.chain_phase } : {}),
     command: 'phase_execute_request',
     ...invocationEndFacts({ ...nativeEnd,
-      exit_code: typeof nativeEnd?.exit_code === 'number' ? nativeEnd.exit_code : report.status === 'failed' || timedOut ? 1 : 0,
+      exit_code: rejectedWrites ? 1 : typeof nativeEnd?.exit_code === 'number' ? nativeEnd.exit_code : report.status === 'failed' || timedOut ? 1 : 0,
       interrupted: input.interrupted || nativeEnd?.interrupted === true ? true : undefined,
       provider_session_id: readProviderSessionId(toolEvents, issued.request.context.adapter), timed_out: timedOut }),
     duration_ms: Math.max(0, nowMs - Date.parse(issued.request.issued_at)),

@@ -10,8 +10,9 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import minimist from 'minimist';
-import { buildCanonicalDeriveHintPayload, writeCanonicalDeriveHint } from './utils/test-plan-derive-hint';
-import { resolveFeatureArtifact, featurePhaseReportsDir } from '../config';
+import { buildCanonicalDeriveHintPayload, compareDerivedPlanTcTable, compareDeriveHintSource, writeCanonicalDeriveHint } from './utils/test-plan-derive-hint';
+import { selectBestNonPlaceholderDerivedPlan } from './utils/derived-hylyre-plan';
+import { featureDeviceTestPaths } from '../config';
 
 const argv = minimist(process.argv.slice(2), {
   string: ['feature', 'f', 'project-root', 'p', 'out', 'o'],
@@ -34,7 +35,7 @@ if (!feature) {
   process.exit(2);
 }
 
-const planResolved = resolveFeatureArtifact(projectRoot, feature, 'test-plan.md');
+const { topPlan: planResolved, reportsDir } = featureDeviceTestPaths(projectRoot, feature);
 if (!planResolved.exists) {
   console.error(
     JSON.stringify(
@@ -46,8 +47,20 @@ if (!planResolved.exists) {
   process.exit(1);
 }
 
-const payload = buildCanonicalDeriveHintPayload(projectRoot, feature);
-const canonical = path.join(featurePhaseReportsDir(projectRoot, feature, 'testing'), 'derive-hint-from-plan.json');
+const topPlanMd = fs.readFileSync(planResolved.actualPath, 'utf8');
+const payload = buildCanonicalDeriveHintPayload(projectRoot, feature, topPlanMd);
+const canonical = path.join(reportsDir, 'derive-hint-from-plan.json');
+const selected = selectBestNonPlaceholderDerivedPlan(reportsDir).selected;
+if (selected) {
+  let baseline = null;
+  let derivedAfterHint = false;
+  try {
+    baseline = JSON.parse(fs.readFileSync(canonical, 'utf8'));
+    derivedAfterHint = fs.statSync(selected.hylyrePath).mtimeMs >= fs.statSync(canonical).mtimeMs;
+  } catch { /* Comparison reports the unavailable source. */ }
+  const difference = compareDerivedPlanTcTable(topPlanMd, selected.content, baseline, derivedAfterHint) ?? compareDeriveHintSource(baseline, payload);
+  if (difference) console.error(JSON.stringify({ selected_derived_path: path.relative(projectRoot, selected.hylyrePath), difference }));
+}
 const target = path.resolve(outPath || canonical);
 const pathKey = (file: string): string => process.platform === 'win32' ? path.resolve(file).toLowerCase() : path.resolve(file);
 if (pathKey(target) === pathKey(canonical)) {

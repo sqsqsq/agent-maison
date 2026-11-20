@@ -10,7 +10,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
 
-import { receiptDirPath, resolveFeatureArtifact, relFeaturesDir } from '../../config';
+import { featureDeviceTestPaths, resolveFeatureArtifact, relFeaturesDir } from '../../config';
 import { collectCurrentRequirementText, loadSpecMarkdown, resolveUiRelevanceForRun } from './fidelity-shared';
 // e9d4b7a3 t2：AC/BD id 词法 SSOT 由 acceptance 侧承载，行内引用解析不再自写第二套正则
 import { extractAcceptanceIdRefs } from './check-acceptance';
@@ -38,7 +38,9 @@ import {
 import {
   buildCanonicalSelectorIndex,
   canonicalIdsForPlannedStep,
+  normalizeHylyreBack,
   normalizePlannedStep,
+  readPlannedHylyreBack,
   type CanonicalSelectorIndex,
 } from './planned-step-normalizer';
 
@@ -48,7 +50,8 @@ import {
 
 export interface AcCheckpoint {
   pre_screen?: string;
-  action?: { type?: string; target_element_id?: string; value_class?: string };
+  pre_screen_element_id?: string;
+  action?: { type?: string; target_element_id?: string; value_class?: string; mode?: string; side?: string };
   post_screen?: string;
   required_element_ids?: string[];
   forbidden_element_ids?: string[];
@@ -130,7 +133,8 @@ export function checkpointComplete(cp: AcCheckpoint | undefined): boolean {
     cp &&
       cp.pre_screen &&
       cp.post_screen &&
-      cp.action?.target_element_id &&
+      (cp.pre_screen_element_id === undefined || typeof cp.pre_screen_element_id === 'string' && cp.pre_screen_element_id.trim()) &&
+      resolveCheckpointAction(cp.action) &&
       Array.isArray(cp.required_element_ids) &&
       cp.required_element_ids.length > 0 &&
       (cp.assertions === undefined || Array.isArray(cp.assertions) && cp.assertions.length > 0
@@ -155,8 +159,11 @@ export function projectAcceptanceFlows(criteria: readonly AcceptanceCriterion[])
     const checkpoints = rows.map(row => row.checkpoint!);
     const edges = new Map<string, string>();
     const screens = new Set(checkpoints.flatMap(cp => [cp.pre_screen!, cp.post_screen!]));
+    const forwardScreens = new Set(checkpoints.filter(cp => resolveCheckpointAction(cp.action)?.kind === 'target')
+      .flatMap(cp => [cp.pre_screen!, cp.post_screen!]));
     if (checkpoints.some(cp => {
       if (cp.pre_screen === cp.post_screen) return false;
+      if (resolveCheckpointAction(cp.action)?.kind === 'back' && forwardScreens.has(cp.pre_screen!) && forwardScreens.has(cp.post_screen!)) return false;
       if (edges.has(cp.pre_screen!) && edges.get(cp.pre_screen!) !== cp.post_screen) return true;
       edges.set(cp.pre_screen!, cp.post_screen!);
       return false;
@@ -179,7 +186,7 @@ export function projectAcceptanceFlows(criteria: readonly AcceptanceCriterion[])
 // t4a：check-spec 侧——结构化 checkpoint + 三约束 + requirement_ref 验存
 // ----------------------------------------------------------------------------
 
-export function evaluateAcceptanceFlowStructure(projectRoot: string, feature: string, supplied?: unknown, mode: 'complete' | 'declared' = 'complete'): CheckResult[] {
+export function evaluateAcceptanceFlowStructure(projectRoot: string, feature: string, supplied?: unknown, mode: 'complete' | 'declared' | 'blueprint' = 'complete'): CheckResult[] {
   const id = 'acceptance_flow_structure';
   const description = 'P0 交互 AC 结构化 checkpoint + flows 三约束 + requirement_ref 验存';
   // Canonical design is admitted before spec can supplement UI definitions. Validate what it declares, not stage-owned omissions.
@@ -198,7 +205,7 @@ export function evaluateAcceptanceFlowStructure(projectRoot: string, feature: st
   // ① P0 交互 AC 必须有完整结构化 checkpoint（纯自然语言锚点 FAIL——rev3 起 P0 不降级）
   for (const ac of p0) {
     if (!checkpointComplete(ac.checkpoint)) {
-      failures.push(`${ac.id}：缺完整结构化 checkpoint（pre_screen/action.target_element_id/post_screen/required_element_ids）`);
+      failures.push(`${ac.id}：缺完整结构化 checkpoint（pre_screen/action/post_screen/required_element_ids）；控件动作填 target_element_id，系统返回填 type: back，边缘返回填 type: back、mode: swipe、side: LEFT 或 RIGHT。`);
     }
   }
 
@@ -220,7 +227,8 @@ export function evaluateAcceptanceFlowStructure(projectRoot: string, feature: st
   //    存量 YAML 里的该字段被忽略，不校验、不要求迁移。
   for (const ac of p0) {
     const ref = ac.requirement_ref;
-    if (!ref?.source_path || !ref.snippet) {
+    if (mode === 'blueprint' && ref === undefined) continue; // Projection can fill a uniquely derivable source reference.
+    if (typeof ref?.source_path !== 'string' || !ref.source_path || typeof ref.snippet !== 'string' || !ref.snippet) {
       failures.push(`${ac.id}：缺 requirement_ref{source_path,snippet}`);
       continue;
     }
@@ -229,7 +237,9 @@ export function evaluateAcceptanceFlowStructure(projectRoot: string, feature: st
       failures.push(`${ac.id}：requirement_ref.source_path 不存在：${ref.source_path}`);
       continue;
     }
-    const sourceText = fs.readFileSync(abs, 'utf-8').replace(/\r\n/g, '\n');
+    let sourceText: string;
+    try { sourceText = fs.readFileSync(abs, 'utf-8').replace(/\r\n/g, '\n'); }
+    catch { failures.push(`${ac.id}：requirement_ref.source_path 不可读取：${ref.source_path}`); continue; }
     if (!sourceText.includes(ref.snippet.replace(/\r\n/g, '\n'))) {
       failures.push(`${ac.id}：requirement_ref.snippet 在源文档中不存在（引文伪造/漂移）`);
     }
@@ -243,11 +253,14 @@ export function evaluateAcceptanceFlowStructure(projectRoot: string, feature: st
     if (!checkpointComplete(ac.checkpoint)) continue;
     const cp = ac.checkpoint!;
     const containing = Object.entries(doc.flows).filter(([, flow]) => flow.includes(cp.pre_screen!) && flow.includes(cp.post_screen!));
-    const adjacent = containing.filter(([, flow]) => flow.indexOf(cp.post_screen!) === flow.indexOf(cp.pre_screen!)
-      || flow.indexOf(cp.post_screen!) === flow.indexOf(cp.pre_screen!) + 1);
-    if (containing.length && !adjacent.length) failures.push(`${ac.id}：checkpoint 边 ${cp.pre_screen}→${cp.post_screen} 是无 AC 支撑的跳边（声明屏链中二者不相邻）`);
+    const adjacent = containing.filter(([, flow]) => {
+      const delta = flow.indexOf(cp.post_screen!) - flow.indexOf(cp.pre_screen!);
+      return delta === 0 || delta === 1 || delta < 0 && resolveCheckpointAction(cp.action)?.kind === 'back';
+    });
+    const declared = mode === 'blueprint' ? containing.filter(([flowName]) => ac.linked_flow === flowName) : containing;
+    if (declared.length && !adjacent.length) failures.push(`${ac.id}：checkpoint 边 ${cp.pre_screen}→${cp.post_screen} 是无 AC 支撑的跳边（声明屏链中二者不相邻）`);
     for (const [flowName] of adjacent) {
-      ownedFlows.add(flowName);
+      if (mode !== 'blueprint' || ac.linked_flow === flowName) ownedFlows.add(flowName);
       if (cp.pre_screen !== cp.post_screen) {
         const key = `${flowName}|${cp.pre_screen}>${cp.post_screen}`;
         edgeOwners.set(key, [...(edgeOwners.get(key) ?? []), ac.id]);
@@ -268,7 +281,8 @@ export function evaluateAcceptanceFlowStructure(projectRoot: string, feature: st
       severity: 'BLOCKER', status: 'FAIL',
       repair_owner: 'spec',
       affected_files: [path.relative(projectRoot, resolveFeatureArtifact(projectRoot, feature, obligations && !obligations.uiKnown ? 'spec.md' : 'acceptance.yaml').actualPath).replace(/\\/g, '/')],
-      details: `P0 结构化流程模型不完整（${failures.length} 项）：\n` + failures.slice(0, 10).join('\n') + (failures.length > 10 ? '\n…' : ''),
+      details: `P0 结构化流程模型不完整（${failures.length} 项）：\n` + (mode === 'complete'
+        ? failures.slice(0, 10).join('\n') + (failures.length > 10 ? '\n…' : '') : failures.join('\n')),
       suggestion:
         '为每个 P0 交互 AC 补 checkpoint（pre/action/post/required）与 requirement_ref（source_path + 源文档逐字 snippet）；' +
         'flows 可选；若声明屏链，每条边须由 ≥1 P0 AC 拥有。',
@@ -339,9 +353,40 @@ type ParsedStep = Record<string, unknown>;
 
 export const ACTION_KINDS = new Set(['touch', 'input', 'swipe', 'scroll']);
 /** acceptance checkpoint.action.type 的可绑定值域（tap/click 是 touch 的 acceptance 侧写法） */
-export const CHECKPOINT_ACTION_TYPES = new Set(['tap', 'touch', 'click', 'input', 'swipe', 'scroll']);
+export const CHECKPOINT_ACTION_TYPES = new Set(['tap', 'touch', 'click', 'input', 'swipe', 'scroll', 'back']);
 /** trace 里 selector 为 null 的动作种类：checkpoint 经其后的身份断言（post-state）绑定，不要求 selector 身份 */
 const IDENTITY_FREE_ACTION_KINDS = new Set(['scroll', 'swipe']);
+
+type CheckpointAction =
+  | { kind: 'target'; target: string }
+  | { kind: 'back'; mode: 'key' | 'swipe'; side?: 'LEFT' | 'RIGHT' };
+
+export function resolveCheckpointAction(action: AcCheckpoint['action']): CheckpointAction | null {
+  if (!action || typeof action !== 'object') return null;
+  if (action.type !== undefined && (typeof action.type !== 'string' || !CHECKPOINT_ACTION_TYPES.has(action.type.trim().toLowerCase()))) return null;
+  const kind = action.type?.trim().toLowerCase();
+  if (kind !== 'back') {
+    const target = action.target_element_id;
+    return typeof target === 'string' && target.trim() && action.mode === undefined && action.side === undefined
+      ? { kind: 'target', target } : null;
+  }
+  if (action.target_element_id !== undefined) return null;
+  const back = normalizeHylyreBack(action);
+  return back && { kind: 'back', ...back };
+}
+
+export function describeCheckpointAction(cp: AcCheckpoint): string {
+  const action = resolveCheckpointAction(cp.action);
+  if (action?.kind === 'back') return action.mode === 'key' ? '{"back":{}}' : JSON.stringify({ back: { mode: action.mode, side: action.side } });
+  return `checkpoint 元素 ${action?.target ?? ''}`;
+}
+
+export function checkpointPostScreenIdentified(cp: AcCheckpoint, canonical: CanonicalSelectorIndex | null): boolean {
+  return Boolean(cp.required_element_ids?.some(id => {
+    const screens = new Set(canonical?.byId.get(id)?.map(node => node.screenId));
+    return screens.size === 0 || screens.size === 1 && screens.has(cp.post_screen!);
+  }));
+}
 
 /**
  * plan 07a41ec6 T3：身份断言的**精确形状**——{"wait_for"|"wait_gone":{"by_id":<id>,"timeout":N}}。
@@ -435,6 +480,18 @@ function canonicalIdsForStep(
 function nativeStep(step: unknown): HylyreStepResult | null {
   if (!step || typeof step !== 'object' || Array.isArray(step)) return null;
   return step as HylyreStepResult;
+}
+
+function nativeBackPerformed(step: HylyreStepResult, plan: ReturnType<typeof normalizePlannedStep>): boolean {
+  if (step.index !== plan.index || step.kind !== 'back' || step.role !== 'action'
+    || step.device_session !== true || step.selector !== null || step.outcome?.status !== 'passed') return false;
+  const observed = step.outcome.observation;
+  const action = readPlannedHylyreBack(plan.body);
+  const facts = observed?.facts;
+  // Native v1 records the completed single invocation; its mode/edge come from the bound run plan.
+  return Boolean(action && observed?.kind === 'action' && observed.operation === 'back' && observed.performed === true
+    && facts?.times === action.times && (facts.mode === undefined || facts.mode === action.mode)
+    && (facts.side === undefined || facts.side === (action.mode === 'swipe' ? action.side : undefined)));
 }
 
 // plan a6c4e9f2 T4 返修：以下三个 helper 原来读的是 0.3 flat 字段
@@ -574,15 +631,62 @@ export function findActionStepCandidates(
 /** 注入与消费共用触发区间；目标自身不唯一才是歧义，重复触发不是歧义。 */
 export function resolveCheckpointActionWindows(
   steps: ParsedStep[],
-  targetId: string,
+  targetOrCheckpoint: string | AcCheckpoint,
   canonical: CanonicalSelectorIndex | null,
   screenId?: string,
-): { windows: Array<{ actionIndex: number; endIndex: number }>; ambiguousSteps: number[] } {
-  const candidates = findActionStepCandidates(steps, targetId, canonical, screenId);
+  caseCheckpoints: readonly AcCheckpoint[] = [],
+  observedOnDevice?: (index: number, elementId: string) => boolean,
+): { windows: Array<{ actionIndex: number; endIndex: number; preIndex?: number; wrongReturn?: boolean }>; ambiguousSteps: number[] } {
+  const cp = typeof targetOrCheckpoint === 'string' ? undefined : targetOrCheckpoint;
+  const action = typeof targetOrCheckpoint === 'string' ? { kind: 'target' as const, target: targetOrCheckpoint } : resolveCheckpointAction(cp?.action);
+  if (!action) return { windows: [], ambiguousSteps: [] };
+  if (action.kind === 'back') {
+    const planned = steps.map((step, i) => normalizePlannedStep(step, i));
+    const readOnly = (step: ReturnType<typeof normalizePlannedStep>) => step.role === 'assertion'
+      || ['wait', 'wait_idle', 'get_component_property', 'current_app', 'has_app'].includes(step.kind);
+    const provesPreScreen = (id: string, screens: Set<string>, checkpoint: AcCheckpoint): boolean => {
+      if (screens.size > 0) return screens.size === 1 && screens.has(checkpoint.pre_screen!);
+      return id === checkpoint.pre_screen_element_id || (checkpoint.pre_screen === checkpoint.post_screen && !!checkpoint.required_element_ids?.includes(id));
+    };
+    const otherScreens = caseCheckpoints.filter(other => other.pre_screen !== cp!.pre_screen && checkpointComplete(other));
+    const windows = planned.flatMap((step, actionIndex) => {
+      const configured = step.root === 'back' ? readPlannedHylyreBack(steps[actionIndex].back) : null;
+      if (!configured || configured.mode !== action.mode) return [];
+      let preIndex: number | undefined;
+      for (let i = actionIndex - 1; i >= 0 && readOnly(planned[i]); i -= 1) {
+        const selector = planned[i].selector;
+        if (selector?.kind !== 'by_id' || !isBareIdentityAssertion(steps[i], 'wait_for', selector.value)) continue;
+        const id = selector.value;
+        const screens = new Set(canonical?.byId.get(id)?.map(node => node.screenId));
+        if (provesPreScreen(id, screens, cp!)) {
+          preIndex = i;
+          break;
+        }
+        if (screens.size === 1 || otherScreens.some(other => provesPreScreen(id, screens, other))) {
+          // At consumption, a planned observation alone cannot exclude an action window.
+          if (!observedOnDevice || observedOnDevice(i, id)) return [];
+          break;
+        }
+      }
+      const wrongReturn = configured.times !== 1 || configured.mode === 'swipe' && configured.side !== action.side;
+      if (wrongReturn && preIndex !== undefined && configured.mode === 'swipe' && configured.times === 1
+        && caseCheckpoints.some(other => {
+          const expected = resolveCheckpointAction(other.action);
+          return other.pre_screen === cp!.pre_screen && checkpointComplete(other) && expected?.kind === 'back'
+            && expected.mode === configured.mode && expected.side === configured.side;
+        })) return [];
+      let endIndex = actionIndex + 1;
+      while (endIndex < planned.length && readOnly(planned[endIndex])) endIndex += 1;
+      return [{ actionIndex, endIndex, preIndex, wrongReturn }];
+    });
+    return { windows, ambiguousSteps: [] };
+  }
+  const preScreen = cp?.pre_screen ?? screenId;
+  const candidates = findActionStepCandidates(steps, action.target, canonical, preScreen);
   const ambiguousSteps = candidates.filter(i => {
     const info = normalizePlannedStep(steps[i], i);
     return info.selector?.kind === 'by_text' && canonical !== null &&
-      canonicalIdsForPlannedStep(info, canonical, screenId).length !== 1;
+      canonicalIdsForPlannedStep(info, canonical, preScreen).length !== 1;
   });
   const windows = candidates.map((actionIndex, n) => {
     let endIndex = candidates[n + 1] ?? steps.length;
@@ -634,6 +738,11 @@ function evaluateNativeCase(
   if (traceCase.evidence !== 'complete') reasons.push(`evidence=${String(traceCase.evidence)}`);
   if (!Array.isArray(traceCase.steps) || traceCase.steps.length === 0) reasons.push('CaseResult.steps[] 缺失或为空');
   const nativeSteps = Array.isArray(traceCase.steps) ? traceCase.steps.map(nativeStep) : [];
+  const observedScreen = (index: number, elementId: string): boolean => {
+    const actual = nativeSteps[index];
+    return !!actual && actual.index === index && actual.kind === 'wait_for' && actual.device_session === true
+      && assertionEvidenceMatches(actual, elementId, false);
+  };
   if (traceCase.expected_check_mode === 'checked_vlm') {
     const expected = nativeSteps.find(step => step?.kind === 'expected_check');
     if (
@@ -652,37 +761,59 @@ function evaluateNativeCase(
       if (!actual || actual.kind !== expected.kind || !assertionObservation(actual)) reasons.push(`step ${expected.index} 计划断言缺有效原生证据`);
     }
   }
+  const returnCheckpoints = acs.filter(ac => checkpointAcIds.has(ac.id) && resolveCheckpointAction(ac.checkpoint?.action)?.kind === 'back');
+  if (returnCheckpoints.length > 0) {
+    for (const planned of derivedSteps.map((step, index) => normalizePlannedStep(step, index))) {
+      if (planned.root !== 'back') continue;
+      const actual = nativeSteps[planned.index];
+      if (!actual || !nativeBackPerformed(actual, planned)) reasons.push(`${caseId} step ${planned.index} 缺同轮实际完成的返回动作。`);
+    }
+  }
   for (const ac of acs.filter(ac => checkpointAcIds.has(ac.id))) {
     const cp = ac.checkpoint;
     if (!checkpointComplete(cp) || !canonical) {
       reasons.push(`${ac.id} checkpoint 不完整`);
       continue;
     }
-    const { windows, ambiguousSteps } = resolveCheckpointActionWindows(derivedSteps, cp!.action!.target_element_id!, canonical, cp!.pre_screen!);
+    const obligation = resolveCheckpointAction(cp!.action)!;
+    const target = obligation.kind === 'target' ? obligation.target : undefined;
+    const { windows, ambiguousSteps } = resolveCheckpointActionWindows(derivedSteps, cp!, canonical, undefined,
+      acs.flatMap(row => row.checkpoint ? [row.checkpoint] : []), observedScreen);
     if (windows.length === 0) {
-      reasons.push(`${ac.id} 计划中无绑定 target=${cp!.action!.target_element_id} 的 action（by_id 须字面相等；by_text 须 ui-spec 文本映射）——改法：在该 TC 补一步 touch/input/swipe/scroll 触发动作，或修正 checkpoint.action.target_element_id`);
+      reasons.push(`${ac.id} 计划中无绑定 ${describeCheckpointAction(cp!)} 的 action；核对触发动作和起始屏 ${cp!.pre_screen}。`);
       continue;
     }
     if (ambiguousSteps.length > 0) {
       reasons.push(`${caseId} ${ac.id} 候选 action step ${ambiguousSteps.join(', ')} 的 by_text 对应多个目标，缺唯一 selector 绑定；补 by_id 或现有 scope/index 消歧，保留全部导航动作`);
       continue;
     }
-    for (const { actionIndex, endIndex } of windows) {
-      const action = nativeSteps[actionIndex];
-      const actionPlan = normalizePlannedStep(derivedSteps[actionIndex], actionIndex);
-      const actionCanonicalIds = canonicalIdsForStep(derivedSteps[actionIndex], canonical, cp!.pre_screen!);
-      // plan 07a41ec6 T2：scroll/swipe 在 trace 里 selector 为 null——按步骤种类与顺序定位后经其后的
-      // 身份断言（post-state）绑定，不要求 selector 身份；真实用户动作是 scroll 就保留 scroll，不改 touch。
-      const identityFree = IDENTITY_FREE_ACTION_KINDS.has(actionPlan.kind);
-      const actionOk = Boolean(
-        action && action.index === actionIndex && action.kind === actionPlan.kind && action.role === 'action' && action.outcome?.status === 'passed' &&
-        (identityFree || selectorEvidenceMatches(action, cp!.action!.target_element_id!, false, actionPlan.selector, actionCanonicalIds)),
-      );
-      if (!actionOk) {
-        reasons.push(
-          `${ac.id} action step ${actionIndex}（${actionPlan.kind}）StepResult 缺失或未通过` +
-            (identityFree ? '' : `（须 outcome.status=passed 且 selector 身份匹配 ${cp!.action!.target_element_id}）`),
-        );
+    if (obligation.kind === 'back' && !checkpointPostScreenIdentified(cp!, canonical)) {
+      reasons.push(`${ac.id} required_element_ids 无法识别返回后的屏 ${cp!.post_screen}`);
+      continue;
+    }
+    for (const { actionIndex, endIndex, preIndex, wrongReturn } of windows) {
+      if (wrongReturn) {
+        reasons.push(`${ac.id} action step ${actionIndex} 返回次数或方向不匹配，须执行单次 ${describeCheckpointAction(cp!)}。`);
+        continue;
+      }
+      if (obligation.kind === 'target') {
+        const action = nativeSteps[actionIndex];
+        const actionPlan = normalizePlannedStep(derivedSteps[actionIndex], actionIndex);
+        const actionCanonicalIds = canonicalIdsForStep(derivedSteps[actionIndex], canonical, cp!.pre_screen!);
+        // Older scoped scroll/swipe uses post-state identities because its trace can omit selector resolution.
+        const identityFree = IDENTITY_FREE_ACTION_KINDS.has(actionPlan.kind);
+        if (!action || action.index !== actionIndex || action.kind !== actionPlan.kind || action.role !== 'action' || action.outcome?.status !== 'passed'
+          || !identityFree && !selectorEvidenceMatches(action, obligation.target, false, actionPlan.selector, actionCanonicalIds)) {
+          reasons.push(`${ac.id} action step ${actionIndex}（${actionPlan.kind}）StepResult 缺失或未通过`
+            + (identityFree ? '' : `（须 outcome.status=passed 且 selector 身份匹配 ${target}）`));
+        }
+      }
+      if (obligation.kind === 'back') {
+        const planned = preIndex === undefined ? null : normalizePlannedStep(derivedSteps[preIndex], preIndex);
+        const preId = planned?.selector?.value;
+        if (preIndex === undefined || !preId || !observedScreen(preIndex, preId)) {
+          reasons.push(`${ac.id} action step ${actionIndex} 前缺 ${cp!.pre_screen} 的当轮身份断言。`);
+        }
       }
       for (const elementId of cp!.required_element_ids ?? []) {
         const plannedIndex = findPlannedStepIndex(derivedSteps, elementId, canonical, cp!.post_screen!, actionIndex, false, endIndex);
@@ -695,6 +826,7 @@ function evaluateNativeCase(
           !step ||
           step.index !== plannedIndex ||
           step.kind !== 'wait_for' ||
+          obligation.kind === 'back' && step.device_session !== true ||
           !assertionEvidenceMatches(step, elementId, false, planned?.selector, canonicalIds)
         ) {
           reasons.push(
@@ -707,7 +839,8 @@ function evaluateNativeCase(
       let nextAssertionIndex = actionIndex + 1;
       for (const expected of cp!.assertions ?? []) {
         const matchedAt = nativeSteps.findIndex((step, index) => {
-          if (index < nextAssertionIndex || index >= endIndex || step?.index !== index || step.kind !== 'wait_for' || step.role !== 'assertion') return false;
+          if (index < nextAssertionIndex || index >= endIndex || step?.index !== index || step.kind !== 'wait_for' || step.role !== 'assertion'
+            || obligation.kind === 'back' && step.device_session !== true) return false;
           const planned = normalizePlannedStep(derivedSteps[index], index);
           const request = step.selector?.request;
           const resolution = step.selector?.resolution;
@@ -739,6 +872,7 @@ function evaluateNativeCase(
           !step ||
           step.index !== plannedIndex ||
           step.kind !== 'wait_gone' ||
+          obligation.kind === 'back' && step.device_session !== true ||
           !assertionEvidenceMatches(step, elementId, true, planned?.selector, canonicalIds)
         ) {
           reasons.push(
@@ -772,7 +906,7 @@ function evaluateNativeP0(inp: P0GateInputs): NativeP0Evaluation {
   if (!gate?.native) return fail(`native evidence 未启用：${gate?.reasons.join('；') || '缺少同轮 native Hylyre evidence gate 结果'}；legacy case status 不得贡献 verification=passed`);
   const trace = inp.trace;
   if (!trace) return fail('authoritative trace 缺失，无法消费 CaseResult.steps[]');
-  const reportsBase = path.join(receiptDirPath(inp.projectRoot, inp.feature, 'testing'), 'reports');
+  const reportsBase = featureDeviceTestPaths(inp.projectRoot, inp.feature).reportsDir;
   const selected = inp.derivedPlanPath
     ? fs.existsSync(inp.derivedPlanPath)
       ? { hylyrePath: inp.derivedPlanPath, content: fs.readFileSync(inp.derivedPlanPath, 'utf-8') }

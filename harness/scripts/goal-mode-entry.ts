@@ -1,10 +1,11 @@
 import * as path from 'path';
 import * as fs from 'fs';
+import * as os from 'os';
 import { readGoalVisualProviderEnv } from './utils/phase-state';
 import { adapterModelBinding, freezeModelPin, launchModelPin, modelMismatchInEvents, rebindTaskModel } from './utils/adapter-model';
 import { resolveInvokeHardCliFailure } from './utils/vision-canary';
 import { warnRetiredModelAlternatives } from './utils/framework-local-config';
-import { readSessionExecution, acceptedSessionReport, acceptSessionExecution, normalizeSessionReport, inspectSessionExecutionBeforeRuntime, sessionRunMaterialPath, sessionReportInputPath, executionRequestForInvoke, observeSessionExecution, stopBoundExecution, sessionExecutionDeadlineMs, type IssuedSessionExecution, type SessionExecutionReport } from './utils/session-execution-handoff';
+import { readSessionExecution, acceptedSessionReport, acceptSessionExecution, normalizeSessionReport, inspectSessionExecutionBeforeRuntime, sessionRunMaterialPath, sessionReportInputPath, executionRequestForInvoke, observeSessionExecution, stopBoundExecution, sessionExecutionDeadlineMs, capturePhaseBinding, phaseBindingStarted, uncommittedSessionReport, type HandoffReference, type IssuedSessionExecution, type SessionExecutionReport } from './utils/session-execution-handoff';
 import * as YAML from 'yaml';
 import minimist from 'minimist';
 import type {
@@ -14,14 +15,14 @@ import type {
   GoalModeInSessionOptions,
 } from './utils/goal-phase-runtime';
 import { deriveInSessionFingerprint } from './utils/goal-phase-runtime';
-import { GoalPhaseRuntime, bindGuardianOrKill, resolveManifestIdentityBaseline } from './goal-phase-runtime';
+import { GoalPhaseRuntime, bindGuardianOrKill, launchGoalSessionDetach, resolveManifestIdentityBaseline } from './goal-phase-runtime';
 import { AttendedGoalPhaseExecutor, DetachedGoalPhaseExecutor, createWorkUnitExecutionContext, observeWorkUnitProviderSession, workUnitExecutionInputs } from './utils/goal-phase-executor';
-import { loadEventsJsonl, loadAuthoritativeEvents } from './utils/goal-runner-phase';
-import { resolveHeadlessInvokePlan, extractProviderFinalText, readInvokeFinalText } from './utils/agent-invoke';
+import { loadEventsJsonl, loadAuthoritativeEvents, readSupersededAncestorRuns, resolveEffectiveRunEnd } from './utils/goal-runner-phase';
+import { resolveHeadlessInvokePlan, resolveSessionBinary, extractProviderFinalText, readInvokeFinalText } from './utils/agent-invoke';
 import { invocationCompleted, invocationEndFacts } from './utils/invocation-completion';
 import { reconcileGuardianOwnership } from './utils/goal-containment-reconcile';
 import { defaultProcessProbe } from './utils/device-session';
-import { RUN_LOCK_NAME, tryAcquireLock, releaseLock, touchLock, readLockRecord, isLockStale } from './utils/goal-run-lock';
+import { RUN_LOCK_NAME, tryAcquireLock, releaseLock, touchLock, readLockRecord, isLockStale, isPidAlive } from './utils/goal-run-lock';
 import { resolveGoalRunBaseline } from './utils/goal-run-baseline';
 import { projectCanonicalLifecycle } from './utils/goal-canonical-lifecycle';
 import {
@@ -40,6 +41,7 @@ import {
   loadGoalManifestDefinition,
   loadGoalRunManifestFromRun,
   isInitialDesignManifest,
+  isRepeatedRequirement,
   type InitialDesignGoalManifest,
   resolveRequirementInput,
   RUN_ADAPTER_PROVENANCES,
@@ -81,10 +83,13 @@ import { validateMinimumAssurance } from './utils/skill-contract';
 import { loadGoalCapability, routeGoalCapability } from './utils/goal-adapter-capability';
 import { loadInertLegacyFidelityIntentSsot } from './utils/fidelity-shared';
 import { designDeliveryNextStep, DesignDeliveryPreparationRequired } from './utils/design-delivery-entry';
-import { findInitialDesignRun, prepareInitialDesignRun, projectInitialDesignDelivery, initialDesignPhasePolicy, initialDesignScopeActionIssues } from './utils/initial-design-delivery';
+import { findInitialDesignRun, InitialDesignBirthBusy, prepareInitialDesignRun, projectInitialDesignDelivery, initialDesignPhasePolicy, initialDesignRequestOptions, initialDesignScopeActionIssues, readInitialDesignWriteEvents } from './utils/initial-design-delivery';
+import { unresolvedPhaseWrites } from './utils/phase-write-boundary';
 import type { ProviderRef } from './utils/types';
 import { applyManifestCliOverrides, validateManifestCliOverrides, resolveVisualProviderCliSelection, resolveFinalVisualProviderPin, resolveFinalModelPin } from './utils/goal-manifest-cli';
-import { assertCanonicalDeliveryChild, originalDeliveryForManifest } from './utils/delivery-origin';
+import { assertCanonicalDeliveryChild, originalDeliveryForManifest, resolveOriginalDeliveryExecution } from './utils/delivery-origin';
+import { readRequestIntake, type RequestIntake } from './utils/request-intake';
+import { DEFAULT_GOAL_WAIT_TIMEOUT_MS, goalStatusWaitCommand } from './utils/goal-status-wait';
 export type { GoalModeInSessionOptions } from './utils/goal-phase-runtime';
 export { deriveInSessionFingerprint } from './utils/goal-phase-runtime';
 
@@ -584,16 +589,148 @@ function resolveOriginalDeliveryRequest(projectRoot: string, original: InitialDe
   return issued;
 }
 
-function executionActionCommands(options: Pick<GoalModeHostBridgeOptions, 'authorization' | 'overrideManifest'>, issued: IssuedSessionExecution): Record<string, string> {
+function goalHarnessCommand(frameworkRoot: string, script: string, args: string[]): string {
   const quote = (value: string): string => `'${value.replace(/'/g, process.platform === 'win32' ? "''" : "'\\''")}'`;
+  const harness = path.join(frameworkRoot, 'harness');
+  const argv = [process.execPath, path.join(harness, 'node_modules/ts-node/dist/bin.js'), '--transpile-only', '--project', path.join(harness, 'tsconfig.json'),
+    path.join(harness, 'scripts', script), ...args];
+  return `${process.platform === 'win32' ? '& ' : ''}${argv.map(quote).join(' ')}`;
+}
+
+function goalSessionCommand(options: Pick<GoalModeHostBridgeOptions, 'authorization' | 'overrideManifest' | 'sessionRef'>,
+  context: Pick<GoalModeHostBridgeOptions, 'projectRoot' | 'frameworkRoot' | 'feature' | 'runId' | 'adapter'>, ...action: string[]): string {
+  return goalHarnessCommand(context.frameworkRoot, 'goal-mode-entry.ts', ['--feature', context.feature, '--run-id', context.runId,
+    '--adapter', context.adapter, '--run-mode', 'attended', '--project-root', context.projectRoot, '--framework-root', context.frameworkRoot,
+    ...(options.authorization ? ['--authorization-mode', options.authorization.mode,
+      ...(options.authorization.through_phase ? ['--through-phase', options.authorization.through_phase] : [])] : []),
+    ...(options.authorization?.autonomyAuthorized ? ['--authorize-autonomy'] : []), ...(options.overrideManifest ? ['--override-manifest'] : []),
+    ...(options.sessionRef ? ['--session-ref', options.sessionRef] : []), ...action]);
+}
+
+function executionActionCommands(options: Pick<GoalModeHostBridgeOptions, 'authorization' | 'overrideManifest' | 'sessionRef'>, issued: IssuedSessionExecution): Record<string, string> {
   const context = issued.request.context;
-  const base = `${process.platform === 'win32' ? '& ' : ''}${quote(process.execPath)} -r ${quote(require.resolve('ts-node/register/transpile-only'))} ${quote(path.join(context.frameworkRoot, 'harness/scripts/goal-mode-entry.ts'))} --feature ${quote(context.feature)} --run-id ${quote(context.runId)} --adapter ${quote(context.adapter)} --run-mode attended --project-root ${quote(context.projectRoot)} --framework-root ${quote(context.frameworkRoot)}${options.authorization?.autonomyAuthorized ? ' --authorize-autonomy' : ''}${options.overrideManifest ? ' --override-manifest' : ''}`;
-  const request = ` --request ${quote(path.resolve(context.runDir, issued.reference.path))}`;
-  return { execute_command: `${base}${request} --execute-request`, observe_command: `${base}${request} --observe`, interrupt_command: `${base}${request} --interrupt`, next_command: `${base} --next` };
+  const request = path.resolve(context.runDir, issued.reference.path);
+  return { execute_command: goalSessionCommand(options, context, '--request', request, '--execute-request'),
+    observe_command: goalSessionCommand(options, context, '--request', request, '--observe'),
+    interrupt_command: goalSessionCommand(options, context, '--request', request, '--interrupt'),
+    next_command: goalSessionCommand(options, context, '--next') };
+}
+
+function executionClaimStatus(issued: IssuedSessionExecution) {
+  const lock = readLockRecord(path.join(issued.request.context.runDir, RUN_LOCK_NAME));
+  const running = lock?.run_id === issued.request.context.runId && !isLockStale(lock)
+    && (lock.hostname !== os.hostname() || isPidAlive(lock.pid));
+  return running ? { status: 'execution_running', status_line: '原请求已有实际执行者，使用 observe_command 观察交回。' }
+    : { status: 'execution_required', status_line: '执行原件返回的 execute_command；调用交回后沿原 next_command 继续正式验收。' };
+}
+
+const foregroundWaiting = '前台只等待或汇报当前真实状态。受管文件由有写权的专用执行请求处理。';
+
+type GoalTransportChoice = NonNullable<RequestIntake['control']['transport']> & { originalVerified: boolean };
+
+function goalTransportSelection(options: Pick<GoalModeHostBridgeOptions, 'projectRoot' | 'frameworkRoot' | 'sessionRef'>,
+  manifest: GoalRunManifest): GoalTransportChoice | undefined {
+  let previous: RequestIntake | undefined;
+  if (isInitialDesignManifest(manifest)) {
+    const carrier = initialDesignRequestOptions(options.projectRoot, options.frameworkRoot, manifest);
+    const file = path.resolve(options.projectRoot, carrier.requestFile);
+    if (fs.existsSync(file)) try {
+      const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+      if (saved.origin_request === carrier.originRequest) previous = saved.intake_context;
+    } catch { /* No readable carrier can authenticate a previous choice. */ }
+  }
+  try {
+    const intake = readRequestIntake({ ...options, sessionRef: previous?.session_ref ?? options.sessionRef, previous });
+    const namesOriginal = (source: RequestIntake): boolean => !!source.user.text.trim() && isRepeatedRequirement(manifest.requirement, source.user.text)
+      || manifest.requirement_source_files?.some(file => source.user.text.includes(file)) === true;
+    // The original design carrier links a native user message to this run even when the manifest uses a requirement summary.
+    const originalVerified = !!previous || namesOriginal(intake);
+    if (previous) {
+      try {
+        const live = readRequestIntake(options);
+        const identifiesRun = live.user.text.includes(manifest.run_id);
+        if (live.session_id === intake.session_id && live.user.line > intake.user.line
+          && (namesOriginal(live) || identifiesRun) && live.control.transport) {
+          return { ...live.control.transport, originalVerified: true };
+        }
+      } catch { /* The preserved same-request native message still applies. */ }
+    }
+    if (intake.control.transport) {
+      return { ...intake.control.transport, originalVerified };
+    }
+  } catch { /* Keep the recorded transport when there is no verifiable native request. */ }
+  return undefined;
+}
+
+function goalDeliveryAuthorization(manifest: GoalRunManifest, authorization: GoalModeHostBridgeOptions['authorization'],
+  selection: GoalTransportChoice | undefined): GoalModeHostBridgeOptions['authorization'] {
+  const fullDelivery = isInitialDesignManifest(manifest) || manifest.execution_scope?.completion_target === 'feature';
+  if (fullDelivery && selection?.mode === 'unattended' && selection.originalVerified
+    && (!authorization || authorization.mode === 'goal_mode' && !authorization.through_phase)) {
+    return { mode: 'goal_mode', autonomyAuthorized: true };
+  }
+  return authorization;
+}
+
+async function detachFromGoalMode(options: Parameters<typeof runGoalModeSessionStep>[0], manifest: GoalRunManifest,
+  selection: GoalTransportChoice | undefined): Promise<Record<string, unknown> | null> {
+  if (manifest.adapter !== options.adapter) throw new Error('[goal-mode-entry] attach adapter mismatch');
+  const runDir = path.resolve(options.projectRoot, manifest.report_dir);
+  const execution = isInitialDesignManifest(manifest) ? resolveOriginalDeliveryExecution(options.projectRoot, manifest) : undefined;
+  const owner = execution?.control?.owner ?? readRunControl(runDir, manifest.run_id)?.owner;
+  const wait = { run_id: manifest.run_id, feature: manifest.feature,
+    wait_command: goalStatusWaitCommand(options.projectRoot, options.frameworkRoot, manifest.feature, manifest.run_id),
+    wait_timeout_ms: DEFAULT_GOAL_WAIT_TIMEOUT_MS };
+  if (owner?.kind === 'process' && owner.state === 'active'
+    && (owner.hostname !== os.hostname() || typeof owner.pid === 'number' && isPidAlive(owner.pid))) {
+    return { type: 'goal_detach_result', detached: true, status: 'execution_running', ...wait, status_line: foregroundWaiting };
+  }
+  const events = loadAuthoritativeEvents(path.join(runDir, 'events.jsonl'));
+  const recentTransport = [...execution?.events ?? events].reverse().find(event => event.type === 'phase_start' && 'driver' in event
+    || event.type === 'agent_invoke_start' && event.handoff_request && !!event.command);
+  const lastWasDetached = recentTransport?.type === 'agent_invoke_start' ? recentTransport.command !== 'phase_execute_request'
+    : recentTransport?.driver === 'detached';
+  const transport = selection?.originalVerified ? selection.mode : undefined;
+  if (transport !== 'unattended' && (transport || !lastWasDetached)) return null;
+  const lastEnd = resolveEffectiveRunEnd(events);
+  if (lastEnd && (isInitialDesignManifest(manifest) ? lastEnd.status === 'COMPLETED' && projectInitialDesignDelivery({ ...options, manifest }).complete
+    : ['COMPLETED', 'CHAIN_SLICE_COMPLETED'].includes(String(lastEnd.status)))) {
+    return { type: 'goal_detach_result', ...wait, startup: { state: 'terminal', status: lastEnd.status } };
+  }
+  const cap = loadGoalCapability(options.frameworkRoot, options.adapter);
+  const route = routeGoalCapability(cap, 'unattended', { unattendedPreflightOk: true });
+  const oneShotDsh = process.platform === 'win32' && options.adapter === 'deepseek-harness' && !!process.env.DSH_SESSION_ID
+    && path.basename(process.env.DSH_PROFILE_DIR ?? '').toLowerCase() === 'headless';
+  const resumeCommand = goalSessionCommand(options, options, '--next');
+  const waiting = (detail: string) => ({ type: 'goal_detach_result', detached: false, status: 'waiting', ...wait, resume_command: resumeCommand,
+    detail: `${detail}；保留原 run 与待领请求，在同 adapter 具备受管可执行器的环境接回。`, status_line: foregroundWaiting });
+  const fallback = async (detail: string) => {
+    if (!cap.valid || !resolveSessionBinary(options.adapter).binary || !adapterModelBinding(manifest.adapter_model_pin)) return waiting(detail);
+    try {
+      const step = await runGoalModeSessionStep({ ...options, sessionFallback: true });
+      return { ...step, transport_fallback: `${detail}；会话继续使用同一适配器的已签专用命令，推进依赖前台存活。` };
+    } catch (error) { return waiting(`${detail}。会话接续条件未满足：${(error as Error).message}`); }
+  };
+  if (route.kind === 'halt') return fallback(route.reason);
+  const authorization = goalDeliveryAuthorization(manifest, options.authorization, selection);
+  const args = ['--project-root', options.projectRoot, '--framework-root', options.frameworkRoot, '--feature', manifest.feature,
+    '--resume', manifest.run_id, '--detach', '--adopt-session-transport',
+    ...(authorization ? ['--authorization-mode', authorization.mode,
+      ...(authorization.through_phase ? ['--through-phase', authorization.through_phase] : [])] : []),
+    ...(authorization?.autonomyAuthorized ? ['--authorize-autonomy'] : []), ...(options.overrideManifest ? ['--override-manifest'] : [])];
+  let receipt: Record<string, unknown>;
+  try { receipt = await launchGoalSessionDetach(args); }
+  catch (error) { return waiting((error as Error).message); }
+  const startup = receipt.startup as { state?: string; detail?: string } | undefined;
+  if (startup?.state === 'failed' && startup.detail?.startsWith('child spawn failed:')) return fallback(startup.detail);
+  return { ...wait, ...receipt, ...(oneShotDsh && (startup?.state === 'ready' || startup?.state === 'alive_timeout') ? {
+    detached: false, requires_foreground: true,
+    transport_fallback: '本次由程序执行同一已签请求。当前 Windows DSH headless 结束前台会回收其进程；请保持当前对话并执行 wait_command。',
+  } : {}), status_line: foregroundWaiting };
 }
 
 export async function runGoalModeSessionStep(options: Omit<GoalModeHostBridgeOptions, 'executePhase' | 'sessionHandoff'> & {
-  requestPath?: string; report?: SessionExecutionReport; action?: 'execute' | 'observe' | 'interrupt';
+  requestPath?: string; report?: SessionExecutionReport; action?: 'execute' | 'observe' | 'interrupt'; sessionFallback?: boolean;
 }): Promise<Record<string, unknown>> {
   if (options.action) return runGoalExecutionAction(options);
   assertAttendedRunMode(options.runMode);
@@ -605,19 +742,26 @@ export async function runGoalModeSessionStep(options: Omit<GoalModeHostBridgeOpt
   if (!isInitialDesignManifest(deliveryManifest) && deliveryManifest.delivery_origin) {
     return runGoalModeSessionStep({ ...options, feature: deliveryManifest.delivery_origin.feature, runId: deliveryManifest.delivery_origin.run_id });
   }
+  const selection = goalTransportSelection(options, deliveryManifest);
+  if (!options.report && !options.requestPath && !options.forceTakeover && !options.sessionFallback) {
+    const detached = await detachFromGoalMode(options, deliveryManifest, selection);
+    if (detached) return detached;
+  }
+  const authorization = goalDeliveryAuthorization(deliveryManifest, options.authorization, selection);
+  // Keep an unrelated directive from becoming an original design carrier during an attach.
+  const sessionRef = options.sessionFallback || selection?.mode === 'unattended' && !selection.originalVerified ? undefined : options.sessionRef;
   if (isInitialDesignManifest(deliveryManifest)) {
     const original = deliveryManifest;
     if (original.adapter !== options.adapter) throw new Error('[goal-mode-entry] attach adapter mismatch');
     const runDir = path.resolve(options.projectRoot, original.report_dir);
-    const quote = (value: string): string => `'${value.replace(/'/g, process.platform === 'win32' ? "''" : "'\\''")}'`;
-    const command = (action: string): string => `npx ts-node ${quote(path.join(options.frameworkRoot, 'harness/scripts/goal-mode-entry.ts'))} --feature ${quote(original.feature)} --run-id ${quote(original.run_id)} --adapter ${quote(options.adapter)} --run-mode attended --project-root ${quote(options.projectRoot)} --framework-root ${quote(options.frameworkRoot)}${options.authorization?.autonomyAuthorized ? ' --authorize-autonomy' : ''}${options.overrideManifest ? ' --override-manifest' : ''} ${action}`;
+    const command = (...action: string[]): string => goalSessionCommand(options, options, ...action);
     if (options.requestPath) {
       const request = resolveOriginalDeliveryRequest(options.projectRoot, original, options.requestPath);
       const prelude = inspectSessionExecutionBeforeRuntime({ runDir: request.request.context.runDir, requestPath: options.requestPath,
         report: options.report, forceTakeover: options.forceTakeover });
       if (options.report) {
         const prior = prelude.accepted;
-        if (prior && !options.sessionRef) {
+        if (prior && !sessionRef) {
           return { type: 'goal_session_report_received', run_id: original.run_id, delivery_run_id: original.run_id, phase: prior.report.phase,
             status: prior.report.status, duplicate: true, next_command: command('--next'), report: path.resolve(request.request.context.runDir, prior.event.handoff_report!.path) };
         }
@@ -627,9 +771,9 @@ export async function runGoalModeSessionStep(options: Omit<GoalModeHostBridgeOpt
     let completedProjection: ReturnType<typeof projectInitialDesignDelivery> | undefined;
     const runtime = new GoalPhaseRuntime({ args: ['--feature', original.feature, '--resume', original.run_id,
       '--project-root', options.projectRoot, '--framework-root', options.frameworkRoot, '--runtime-executor', 'attended', '--runtime-owner', 'session', '--foreground-ok',
-      ...(options.sessionRef ? ['--session-ref', options.sessionRef] : []),
+      ...(sessionRef ? ['--session-ref', sessionRef] : []),
       ...(options.overrideManifest ? ['--override-manifest'] : []), ...(options.forceTakeover ? ['--force-resume'] : [])],
-      authorization: options.authorization, leaseMs: options.leaseMs,
+      authorization, leaseMs: options.leaseMs,
       sessionHandoff: { requestPath: options.requestPath, report: options.report ? normalizeSessionReport(options.report) : undefined,
         onRequest: request => { issued = request; },
         onCompletedInitialDesign: view => { completedProjection = view; } } });
@@ -646,15 +790,16 @@ export async function runGoalModeSessionStep(options: Omit<GoalModeHostBridgeOpt
       request: { path: path.resolve(issued.request.context.runDir, issued.reference.path), sha256: issued.reference.sha256 },
       deadline: Number.isFinite(sessionExecutionDeadlineMs(issued.request)) ? new Date(sessionExecutionDeadlineMs(issued.request)).toISOString() : undefined,
       gate_timeout_ms: issued.request.gate_timeout_ms, cleanup_reserve_ms: issued.request.cleanup_reserve_ms,
-      status: 'execution_required', status_line: '按原件完成本职并报告；作者调用结束不表示原始交付完成。',
-      next_command: command(`--request ${quote(path.resolve(issued.request.context.runDir, issued.reference.path))} --report-result ${quote('@' + sessionReportInputPath(issued.request.context.runDir, issued))}`) };
+      ...executionClaimStatus(issued),
+      next_command: command('--request', path.resolve(issued.request.context.runDir, issued.reference.path),
+        '--report-result', '@' + sessionReportInputPath(issued.request.context.runDir, issued)) };
     const view = completedProjection?.feature === original.feature && completedProjection.run_id === original.run_id
       ? completedProjection : projectInitialDesignDelivery({ projectRoot: options.projectRoot, frameworkRoot: options.frameworkRoot, manifest: original });
     const status = view.complete ? 'completed' : exitCode === 3 || view.recovery?.run_disposition === 'WAITING' ? 'waiting' : 'fused';
     const result = { status, exit_code: exitCode, halt_reason: view.halt_reason, recovery: view.recovery,
       issues: view.issues, current: view.current, next_action: view.next_action };
     return { type: 'goal_session_result', run_id: original.run_id, exit_code: status === 'waiting' ? 0 : exitCode, report_dir: runDir, log: controlLog,
-      result, ...(view.recovery ? { recovery: view.recovery } : {}), ...(view.complete ? {} : { next_command: command('--next') }) };
+      result, ...(view.recovery ? { recovery: view.recovery } : {}), ...(view.complete ? {} : { next_command: command('--next'), status_line: foregroundWaiting }) };
   }
   const manifest = loadGoalManifestFromRun(options.projectRoot, options.runId, { feature: options.feature, featuresDir: relFeaturesDir(options.projectRoot) });
   if (manifest.adapter !== options.adapter) throw new Error('[goal-mode-entry] attach adapter mismatch');
@@ -663,26 +808,25 @@ export async function runGoalModeSessionStep(options: Omit<GoalModeHostBridgeOpt
   const prelude = inspectSessionExecutionBeforeRuntime({ runDir, requestPath: options.requestPath, report: options.report, forceTakeover: options.forceTakeover });
   const current = prelude.current;
   if (prelude.report) options = { ...options, report: prelude.report };
-  const quote = (value: string): string => process.platform === 'win32'
-    ? `'${value.replace(/'/g, "''")}'` : `'${value.replace(/'/g, "'\\''")}'`;
-  const command = (action: string, commandRunId = options.runId): string => `npx ts-node ${quote(path.join(options.frameworkRoot, 'harness/scripts/goal-mode-entry.ts'))} --feature ${quote(options.feature)} --run-id ${quote(commandRunId)} --adapter ${quote(options.adapter)} --run-mode attended --project-root ${quote(options.projectRoot)} --framework-root ${quote(options.frameworkRoot)}${options.authorization?.autonomyAuthorized ? ' --authorize-autonomy' : ''}${options.overrideManifest ? ' --override-manifest' : ''} ${action}`;
+  const command = (commandRunId: string, ...action: string[]): string => goalSessionCommand(options, { ...options, runId: commandRunId }, ...action);
   const project = (issued: IssuedSessionExecution): Record<string, unknown> => ({
     ...executionActionCommands(options, issued),
     type: 'phase_execute_request', run_id: issued.request.context.runId, phase: issued.request.context.phase, attempt_id: issued.request.context.attemptId,
     request: { path: path.resolve(issued.request.context.runDir, issued.reference.path), sha256: issued.reference.sha256 },
     log: path.join(runDir, 'session-control.log'),
-    status: 'execution_required', status_line: '读取请求原件，按原身份执行并自检，再报告；本次领取不表示等待或通过。',
+    ...executionClaimStatus(issued),
     deadline: Number.isFinite(sessionExecutionDeadlineMs(issued.request)) ? new Date(sessionExecutionDeadlineMs(issued.request)).toISOString() : undefined,
     gate_timeout_ms: issued.request.gate_timeout_ms, cleanup_reserve_ms: issued.request.cleanup_reserve_ms,
-    next_command: command(`--request ${quote(path.resolve(issued.request.context.runDir, issued.reference.path))} --report-result ${quote('@' + path.relative(issued.request.context.runDir, sessionReportInputPath(issued.request.context.runDir, issued)).replace(/\\/g, '/'))}`, issued.request.context.runId),
+    next_command: command(issued.request.context.runId, '--request', path.resolve(issued.request.context.runDir, issued.reference.path),
+      '--report-result', '@' + path.relative(issued.request.context.runDir, sessionReportInputPath(issued.request.context.runDir, issued)).replace(/\\/g, '/')),
   });
   if (current) {
     const accepted = prelude.accepted;
     if (accepted && options.report) {
       return { type: 'goal_session_report_received', run_id: options.runId, phase: accepted.report.phase, status: accepted.report.status, duplicate: true,
-        next_command: command('--next'), report: path.resolve(runDir, accepted.event.handoff_report!.path) };
+        next_command: command(options.runId, '--next'), report: path.resolve(runDir, accepted.event.handoff_report!.path) };
     }
-  if (prelude.reusable && !options.sessionRef) return project(prelude.reusable);
+    if (prelude.reusable && !sessionRef) return project(prelude.reusable);
   }
   let issued: IssuedSessionExecution | undefined;
   const controlLog = path.join(runDir, 'session-control.log');
@@ -699,7 +843,7 @@ export async function runGoalModeSessionStep(options: Omit<GoalModeHostBridgeOpt
   process.once('exit', showFatalExit);
   let result: InSessionRoundResult;
   try {
-    result = await runGoalModeHostBridge({ ...options,
+    result = await runGoalModeHostBridge({ ...options, authorization, sessionRef,
       executePhase: async () => { throw new Error('nonresident session cannot call an in-process executor'); },
       sessionHandoff: { requestPath: options.requestPath, report: options.report, onRequest: request => { issued = request; } },
     });
@@ -715,9 +859,10 @@ export async function runGoalModeSessionStep(options: Omit<GoalModeHostBridgeOpt
   return { type: 'goal_session_result', run_id: actualRunId, result, log: controlLog,
     exit_code: result.status === 'waiting' ? 0 : result.exit_code ?? 0,
     report_dir: actualRunDir,
-    ...(result.status === 'executed' || result.status === 'waiting' ? { next_command: command('--next', actualRunId) } : {}),
+    ...(result.status === 'waiting' || result.status === 'fused' ? { status_line: foregroundWaiting } : {}),
+    ...(result.status === 'executed' || result.status === 'waiting' ? { next_command: command(actualRunId, '--next') } : {}),
     ...(result.recovery && (result.status === 'waiting' || result.status === 'fused') ? { recovery: result.recovery } : {}),
-    ...(!options.authorization?.autonomyAuthorized ? { authorization_guidance: '本次按需确认；主 Agent 应先核对已有可信原授权再重传。' } : {}) };
+    ...(!authorization?.autonomyAuthorized ? { authorization_guidance: '本次按需确认；主 Agent 应先核对已有可信原授权再重传。' } : {}) };
 }
 
 /** Thin physical transport for an existing request. The ordinary runtime still owns all decisions. */
@@ -742,12 +887,12 @@ async function runGoalExecutionAction(options: Parameters<typeof runGoalModeSess
     return { ...view(), interrupted: stopped.stopped && !stopped.completed, detail: stopped.detail };
   }
   const accepted = acceptedSessionReport(actualRunDir, issued);
-  if (accepted) return { ...view(), duplicate: true, status: accepted.report.status };
+  if (accepted) return { ...view(), duplicate: true, status: accepted.event.status ?? accepted.report.status };
   const currentManifest = loadGoalRunManifestFromRun(options.projectRoot, issued.request.context.runId, { feature: issued.request.context.feature });
   const origin = originalDeliveryForManifest(options.projectRoot, currentManifest);
   const modelBinding = adapterModelBinding((origin ?? currentManifest).adapter_model_pin);
   const started = loadAuthoritativeEvents(path.join(actualRunDir, 'events.jsonl')).some(event => event.type === 'agent_process_bound' && event.invoke_id === issued.request.invoke_id)
-    || ['agent-events.jsonl', 'agent-output.log'].some(name => fs.existsSync(path.join(actualRunDir, path.dirname(issued.reference.path), name)));
+    || phaseBindingStarted(actualRunDir, issued) || ['agent-events.jsonl', 'agent-output.log'].some(name => fs.existsSync(path.join(actualRunDir, path.dirname(issued.reference.path), name)));
   const expectedVisual = (origin ?? currentManifest).visual_provider_pin;
   const requestVisual = readGoalVisualProviderEnv(issued.request.context.childEnv ?? {});
   const visualMismatch = issued.request.purpose !== 'vision_canary' && (expectedVisual?.adapter !== requestVisual?.adapter
@@ -756,23 +901,34 @@ async function runGoalExecutionAction(options: Parameters<typeof runGoalModeSess
     detail: '旧请求的模型绑定缺失或已失效；保留已接受成果，通过原任务授权入口补绑并重新签发未执行请求。未启动模型请求。' };
   const original = issued.request.context;
   if (original.owner.kind !== 'session') throw new Error('[goal-mode-entry] a process owner already executes its request');
-  resumeIssuedSessionOwner(actualRunDir, original.owner);
   const lockPath = path.join(actualRunDir, RUN_LOCK_NAME);
-  const lock = tryAcquireLock(lockPath, { run_id: original.runId, epoch: original.owner.epoch, ownerId: original.owner.owner_id, report_dir: original.reportDir, run_mode: 'authoritative' });
+  const lock = tryAcquireLock(lockPath, { run_id: original.runId, epoch: original.owner.epoch, report_dir: original.reportDir, run_mode: 'authoritative' });
   if (!lock) return { ...view(), status: 'execution_running' };
   const resultPath = sessionReportInputPath(actualRunDir, issued);
   let report: SessionExecutionReport | undefined;
   let acceptedResult: ReturnType<typeof acceptSessionExecution> | undefined;
   try {
+    const received = acceptedSessionReport(actualRunDir, issued);
+    if (received) return { ...view(), duplicate: true, status: received.event.status ?? received.report.status };
+    if (readSessionExecution(actualRunDir)?.reference.sha256 !== issued.reference.sha256) throw new Error('[session-handoff] request is not current');
+    resumeIssuedSessionOwner(actualRunDir, original.owner);
+    renewSessionLease(actualRunDir, original.owner, 60_000);
     if (fs.existsSync(resultPath)) report = normalizeSessionReport(JSON.parse(fs.readFileSync(resultPath, 'utf8')));
-    else {
+    else report = uncommittedSessionReport(actualRunDir, issued) ?? undefined;
+    if (!report) {
       const events = loadAuthoritativeEvents(path.join(actualRunDir, 'events.jsonl'));
       const own = events.filter(event => event.invoke_id === issued.request.invoke_id);
       if (own.some(event => event.type === 'agent_process_bound' || event.type === 'agent_process_settled')) {
-        const reconciled = reconcileGuardianOwnership(own, defaultProcessProbe());
-        if (reconciled.kind === 'outcomes' && reconciled.items.some(item => item.kind === 'guardian_alive_matching' || item.kind === 'guardian_identity_unverifiable' && !item.identity_mismatch)) return { ...view(), status: 'execution_running', detail: '原绑定执行仍在运行或身份不可核实；不会启动第二个执行者。' };
-        for (const event of own.filter(event => event.type === 'agent_process_bound')) emit({ type: 'orphan_reclaimed', phase: original.phase, invoke_id: issued.request.invoke_id, run_id: original.runId, pid: (event as Record<string, unknown>).pid, method: 'existing_identity_reconciliation' });
         const settled = [...own].reverse().find(event => event.type === 'agent_process_settled') as Record<string, any> | undefined;
+        if (!settled) {
+          const reconciled = reconcileGuardianOwnership(own, defaultProcessProbe());
+          if (reconciled.kind === 'outcomes' && reconciled.items.some(item => item.kind === 'guardian_alive_matching'))
+            return { ...view(), status: 'execution_running', detail: '原绑定执行仍在运行，沿原请求观察。' };
+          if (reconciled.kind !== 'outcomes' || !reconciled.items.length
+            || reconciled.items.some(item => item.kind === 'guardian_identity_unverifiable' && !item.identity_mismatch))
+            return { ...view(), status: 'waiting', detail: '原绑定身份不可核实，保留原请求并等待原执行或收容对账。' };
+          for (const event of own.filter(event => event.type === 'agent_process_bound')) emit({ type: 'orphan_reclaimed', phase: original.phase, invoke_id: issued.request.invoke_id, run_id: original.runId, pid: (event as Record<string, unknown>).pid, method: 'existing_identity_reconciliation' });
+        }
         const completed = !!settled && invocationCompleted({ ...settled, exitCode: settled.exit_code });
         const raw = path.join(actualRunDir, path.dirname(issued.reference.path), 'agent-events.jsonl');
         report = { status: completed ? 'passed' : settled?.status === 'waiting' || settled?.interrupted === true ? 'waiting' : 'failed', phase: original.phase,
@@ -780,11 +936,20 @@ async function runGoalExecutionAction(options: Parameters<typeof runGoalModeSess
             : '上次原生执行已停止；沿原结束事实保留失败或未完成，不从裸终态文本签通过，也不重复启动作者。' };
       } else {
         const directory = path.resolve(actualRunDir, path.dirname(issued.reference.path));
-        if (['agent-output.log', 'agent-events.jsonl'].some(name => fs.existsSync(path.join(directory, name)))) return { ...view(), status: 'waiting',
+        if (phaseBindingStarted(actualRunDir, issued) || ['agent-output.log', 'agent-events.jsonl'].some(name => fs.existsSync(path.join(directory, name)))) return { ...view(), status: 'waiting',
           detail: '已有原始执行流但没有可核实绑定；先确认旧执行停止，不重复启动作者。' };
         const manifest = loadGoalRunManifestFromRun(options.projectRoot, original.runId, { feature: original.feature });
         const baseline = resolveManifestIdentityBaseline(events);
         if (baseline && diffManifestIdentityFields(baseline, computeManifestIdentityFields(manifest)).length) throw new Error('[goal-mode-entry] manifest_identity_drift; reconcile through --next before execution');
+        const writeHistory = isInitialDesignManifest(manifest) ? readInitialDesignWriteEvents(options.projectRoot, manifest, events)
+          : [...readSupersededAncestorRuns({ projectRoot: options.projectRoot, featuresDir: relFeaturesDir(options.projectRoot), feature: manifest.feature,
+              seedTargets: manifest.successor_of ? [manifest.successor_of] : [], currentEvents: events }).flatMap(run => run.events), ...events];
+        const conflicts = unresolvedPhaseWrites(options.projectRoot, writeHistory, { feature: manifest.feature, frameworkRoot: options.frameworkRoot, runId: manifest.run_id });
+        if (conflicts.size && !(original.instruction?.includes('## Restore only your previous unauthorized writes')
+          && [...conflicts].every(([file, conflict]) => conflict.restorable && original.instruction!.includes(`${file}: pre_sha256=${conflict.before ?? 'missing'}`)))) {
+          return { ...view(), status: 'waiting', status_line: foregroundWaiting,
+            detail: `原交回的写界冲突仍需对应责任方核对：${[...conflicts.keys()].join('、')}` };
+        }
         const current = workUnitExecutionInputs(manifest, issued.request.purpose, options.projectRoot);
         const input = { ...original, ...current, authority: original.authority ?? current.authority };
         const observed = observeWorkUnitProviderSession(input);
@@ -801,18 +966,21 @@ async function runGoalExecutionAction(options: Parameters<typeof runGoalModeSess
         }, context.adapterModel);
         const heartbeat = setInterval(() => { try { touchLock(lockPath, lock.ownerId); renewSessionLease(actualRunDir, context.owner, 60_000); } catch { /* Fence changes prevent the result from being accepted. */ } }, 30_000);
         let bindingError: string | undefined, bindingStillAlive = false;
+        let bindingSnapshot: HandoffReference | undefined;
         try {
           const result = await new GoalPhaseRuntime().executeExecutor(context, new DetachedGoalPhaseExecutor(() => ({ plan, cwd: context.projectRoot,
             options: { outputLogPath: path.join(directory, 'agent-output.log'), extraEnv: { ...context.childEnv },
               usageCapture: capability.capability!.usage_capture, toolEventCapture: capability.capability!.tool_event_provenance,
               ...(process.platform === 'win32' ? { containment: { runId: context.runId, invokeId: issued.request.invoke_id } } : {}),
+              beforeSpawn: () => { bindingSnapshot = capturePhaseBinding(actualRunDir, issued); },
               onActiveChild: ({ pid }) => {
-                if (process.platform !== 'win32') return;
-                const bound = bindGuardianOrKill(pid, `${context.runId}/${issued.request.invoke_id}`);
-                if (!bound.ok) { bindingError = bound.error; bindingStillAlive = bound.stillAlive; return; }
+                const token = `${context.runId}/${issued.request.invoke_id}`;
+                const bound = process.platform === 'win32' ? bindGuardianOrKill(pid, token) : null;
+                if (bound && !bound.ok) { bindingError = bound.error; bindingStillAlive = bound.stillAlive; return; }
                 emit({ type: 'agent_process_bound', run_id: context.runId, phase: context.phase, invoke_id: issued.request.invoke_id,
-                  owner_id: context.owner.owner_id, owner_epoch: context.owner.epoch, pid, started_at_ms: bound.identity.startedAtMs,
-                  executable: bound.identity.executable, token: `${context.runId}/${issued.request.invoke_id}` });
+                  owner_id: context.owner.owner_id, owner_epoch: context.owner.epoch, pid, token,
+                  ...(bound?.ok ? { started_at_ms: bound.identity.startedAtMs, executable: bound.identity.executable } : {}),
+                  ...(bindingSnapshot ? { binding_snapshot: bindingSnapshot } : {}) });
               },
             } })));
           if (bindingStillAlive) throw new Error(bindingError);
@@ -834,8 +1002,48 @@ async function runGoalExecutionAction(options: Parameters<typeof runGoalModeSess
     acceptedResult = acceptSessionExecution({ runDir: actualRunDir, issued, report: report!, emit });
   } finally { releaseLock(lockPath, lock.ownerId); }
   const commands = executionActionCommands(options, issued);
-  return { type: 'goal_session_report_received', run_id: original.runId, status: report!.status, duplicate: acceptedResult!.duplicate,
+  const acceptedStatus = acceptedSessionReport(actualRunDir, issued)?.event.status ?? report!.status;
+  return { type: 'goal_session_report_received', run_id: original.runId, status: acceptedStatus, duplicate: acceptedResult!.duplicate,
     next_command: commands.next_command, observation: observeSessionExecution(actualRunDir, issued) };
+}
+
+/** The detached process transports an already signed session call under its original fence. */
+export async function adoptGoalSessionExecution(options: Pick<GoalModeHostBridgeOptions, 'projectRoot' | 'frameworkRoot'>,
+  manifest: GoalRunManifest): Promise<'continue' | 'waiting'> {
+  const execution = isInitialDesignManifest(manifest) ? resolveOriginalDeliveryExecution(options.projectRoot, manifest) : undefined;
+  const runDir = execution?.runDir ?? path.resolve(options.projectRoot, manifest.report_dir);
+  const issued = execution?.request ?? readSessionExecution(runDir);
+  if (!issued) return 'continue';
+  const context = issued.request.context;
+  const control = readRunControl(runDir, context.runId);
+  if (control?.owner?.kind !== 'session' || control.current_epoch !== context.owner.epoch || control.owner.owner_id !== context.owner.owner_id
+    || control.owner.state === 'released') return 'continue';
+  const optionsFor = { ...options, feature: context.feature, runId: context.runId, adapter: context.adapter,
+    runMode: 'attended', action: 'execute' as const, requestPath: path.resolve(runDir, issued.reference.path) };
+  const lockPath = path.join(runDir, RUN_LOCK_NAME);
+  while (!acceptedSessionReport(runDir, issued)) {
+    const result = await runGoalExecutionAction(optionsFor);
+    if (result.status === 'execution_running') {
+      await new Promise(resolve => setTimeout(resolve, 1_000));
+      continue;
+    }
+    if (!acceptedSessionReport(runDir, issued)) {
+      console.error(`[goal-mode-entry] ${String(result.detail ?? '已有签发仍在等待真实交回，保持原 owner。')}`);
+      return 'waiting';
+    }
+  }
+  const lock = tryAcquireLock(lockPath, { run_id: context.runId, epoch: context.owner.epoch, report_dir: context.reportDir, run_mode: 'authoritative' });
+  if (!lock) return 'waiting';
+  try {
+    const latest = readRunControl(runDir, context.runId);
+    if (latest?.owner?.owner_id === context.owner.owner_id && latest.current_epoch === context.owner.epoch
+      && latest.owner.state !== 'released') {
+      if (readSessionExecution(runDir)?.reference.sha256 !== issued.reference.sha256 || !acceptedSessionReport(runDir, issued)) return 'waiting';
+      resumeIssuedSessionOwner(runDir, context.owner);
+      releaseRunOwner(runDir, context.owner);
+    }
+  } finally { releaseLock(lockPath, lock.ownerId); }
+  return 'continue';
 }
 
 async function main(): Promise<void> {
@@ -874,7 +1082,8 @@ async function main(): Promise<void> {
       '       --impact-behavior-change false --impact-reason "internal value only" --impact-basis src/ledger/Balance.ets\n' +
       'Long / multi-line requirement: use --requirement-file <path> (mutually exclusive with --requirement).\n' +
       'Explicit user deadline: --user-deadline-at <UTC timestamp>; no default deadline is inferred, and continuation never resets it.\n' +
-      'Protocol: --next returns a saved request and execute_command/observe_command/interrupt_command. Use --execute-request --request <saved path> for the dedicated native executor; --observe/--interrupt use that exact request and owner binding. The main conversation does not perform business edits. Legacy --report-result @<run-relative JSON file> --request <saved path> consumes a result (inline JSON remains supported). Only the current request result input file may be written by the executor. Optional --authorize-autonomy and --override-manifest are trusted launch inputs.',
+      'Verified unattended instructions authorize automatic design repair within the same full delivery, including session fallback. Optional --authorize-autonomy passes trusted explicit autonomy and leaves transport to the original user choice.\n' +
+      'Protocol: --next returns a saved request and execute_command/observe_command/interrupt_command. Use --execute-request --request <saved path> for the dedicated native executor; --observe/--interrupt use that exact request and owner binding. The main conversation does not perform business edits. Legacy --report-result @<run-relative JSON file> --request <saved path> consumes a result (inline JSON remains supported). Only the current request result input file may be written by the executor. --override-manifest is a trusted launch input.',
     );
     return;
   }
@@ -926,7 +1135,7 @@ async function main(): Promise<void> {
       if (!visual.ok) throw new Error(visual.message);
       return visual.pin;
     };
-    const prepared = prepareGoalModeRun({
+    const prepareOptions: PrepareGoalModeRunOptions = {
       projectRoot,
       frameworkRoot,
       sessionRef: argv['session-ref'],
@@ -965,7 +1174,25 @@ async function main(): Promise<void> {
       forceFresh: Boolean(argv.force),
       supersede: (Array.isArray(argv.supersede) ? argv.supersede : argv.supersede ? [argv.supersede] : []).map(String),
       autonomyAuthorized: Boolean(argv['authorize-autonomy']),
-    });
+    };
+    let prepared: ReturnType<typeof prepareGoalModeRun>;
+    const until = Date.now() + 10_000;
+    for (;;) {
+      try { prepared = prepareGoalModeRun(prepareOptions); break; }
+      catch (error) {
+        if (!(error instanceof InitialDesignBirthBusy) || Date.now() >= until) throw error;
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+    }
+    const launch = { projectRoot, frameworkRoot, feature: prepared.manifest.feature, runId: prepared.manifest.run_id,
+      adapter, runMode, sessionRef: argv['session-ref'], overrideManifest: Boolean(argv['override-manifest']),
+      authorization: { mode: 'goal_mode' as const, autonomyAuthorized: Boolean(argv['authorize-autonomy']) } };
+    const detached = await detachFromGoalMode(launch, prepared.manifest, goalTransportSelection(launch, prepared.manifest));
+    if (detached) {
+      console.log(JSON.stringify(detached));
+      if (typeof detached.exit_code === 'number') process.exitCode = detached.exit_code;
+      return;
+    }
     console.log(JSON.stringify({
       type: 'goal_run_prepared',
       run_id: prepared.manifest.run_id,

@@ -51,6 +51,9 @@ export function testingRetestCases(): Array<{ name: string; run(): void }> {
       const row = (id: string, expected = 'original visible result', selector = 'pay_button'): string =>
         '# Plan\n## 测试用例\n| 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 | 优先级 | 关联 AC |\n| --- | --- | --- | --- | --- | --- | --- |\n'
         + `| ${id} | same visible label | original precondition | {"touch":{"by_id":"${selector}"}} ; {"wait_for":{"by_id":"result"}} | ${expected} | P0 | AC-7 |\n`;
+      const correctedTouch = '{"touch":{"by_text":"Pay","match":"exact"}}';
+      const correctedRow = (id: string, expected?: string): string => row(id, expected)
+        .replace('{"touch":{"by_id":"pay_button"}}', correctedTouch);
       const hap = 'a'.repeat(64), reports = path.join(root, relative, 'testing/reports');
       const publish = (stamp: string, trace: any, plan: string, seconds: number): void => {
         const dir = path.join(reports, stamp, 'hylyre'), tracePath = path.join(dir, 'trace.json');
@@ -122,23 +125,27 @@ export function testingRetestCases(): Array<{ name: string; run(): void }> {
       assert.equal(pending().length, 1, 'same expected text with a different trigger is not equivalent; the previous verifier is stale');
       write(path.join(reports, 'summary.json'), JSON.stringify({ verifier_plan: { mode: 'disabled' } }));
       const corrected = structuredClone(success);
-      corrected.cases[0].steps[0].selector.request.value = 'corrected_pay_button';
-      corrected.cases[0].steps[0].selector.resolution.selected.id = 'corrected_pay_button';
-      corrected.cases[0].steps[0].selector.resolution.candidates[0].id = 'corrected_pay_button';
+      corrected.cases[0].steps[0].selector.request = { kind: 'by_text', value: 'Pay', match: 'exact', constraints: {} };
       corrected.cases[0].steps[1].selector = structuredClone(corrected.cases[0].steps[0].selector);
-      corrected.cases[0].steps[1].selector.request.value = 'result';
+      corrected.cases[0].steps[1].selector.request = { kind: 'by_id', value: 'result', match: null, constraints: {} };
       corrected.cases[0].steps[1].selector.resolution.selected.id = 'result';
       corrected.cases[0].steps[1].selector.resolution.candidates[0].id = 'result';
       assert(requireV1ForGate(corrected, { frameworkRoot }).ok);
-      publish('02', corrected, row('TC-901', 'original visible result', 'corrected_pay_button'), 10);
-      assert.equal(pending().length, 0, 'verifier disabled: a corrected action selector with preserved real observable assertions closes a test-owned failure');
+      publish('02', corrected, correctedRow('TC-901'), 10);
+      assert.equal(pending().length, 0, 'verifier disabled: the native alias uniquely resolved the old literal target and preserved its real assertions');
       assert.equal(pending('b'.repeat(64)).length, 1, 'a corrected selector still needs the current HAP');
+      const switchedActionTarget = structuredClone(corrected);
+      switchedActionTarget.cases[0].steps[0].selector.resolution.selected.id = 'other_pay_button';
+      switchedActionTarget.cases[0].steps[0].selector.resolution.candidates[0].id = 'other_pay_button';
+      assert(requireV1ForGate(switchedActionTarget, { frameworkRoot }).ok);
+      publish('02', switchedActionTarget, correctedRow('TC-901'), 10);
+      assert.equal(pending().length, 1, 'the same new alias and same assertions cannot close when native resolution switched target');
       const callsFromSteps = (trace: any): void => { trace.tool_calls = trace.cases.flatMap((test: any) => test.steps.map((step: any) => ({
         case: test.id, index: step.index, kind: step.kind, role: step.role, outcome: { status: step.outcome.status, ...(step.outcome.failure ? { failure: step.outcome.failure } : {}) },
       }))); assert(requireV1ForGate(trace, { frameworkRoot }).ok, JSON.stringify(requireV1ForGate(trace, { frameworkRoot }))); };
       const strengthened = structuredClone(corrected), absence = read(path.join(goldens, '../../step/valid/passed-assertion-absence.json'));
       absence.index = 2; absence.selector.request.value = 'busy_overlay'; strengthened.cases[0].steps.push(absence); callsFromSteps(strengthened);
-      const strengthenedPlan = row('TC-901', 'original visible result', 'corrected_pay_button').replace('{"wait_for":{"by_id":"result"}}',
+      const strengthenedPlan = correctedRow('TC-901').replace('{"wait_for":{"by_id":"result"}}',
         '{"wait_for":{"by_id":"result"}} ; {"wait_gone":{"by_id":"busy_overlay"}}');
       const onlyExtra = structuredClone(corrected); onlyExtra.cases[0].steps[1] = { ...structuredClone(absence), index: 1 }; callsFromSteps(onlyExtra);
       const aliasFailure = structuredClone(failure), aliasSuccess = structuredClone(corrected);
@@ -149,7 +156,7 @@ export function testingRetestCases(): Array<{ name: string; run(): void }> {
       const aliasBefore = row('TC-18').replace('{"touch":{"by_id":"pay_button"}} ; {"wait_for":{"by_id":"result"}}',
         '{"wait_for":{"by_id":"result"}} ; {"touch":{"by_id":"pay_button"}}');
       const aliasAfter = row('TC-901').replace('{"touch":{"by_id":"pay_button"}} ; {"wait_for":{"by_id":"result"}}',
-        '{"wait_for":{"by_text":"result label","match":"exact"}} ; {"touch":{"by_id":"corrected_pay_button"}}');
+        '{"wait_for":{"by_text":"result label","match":"exact"}} ; ' + correctedTouch);
       for (const verifierState of ['disabled', 'malformed']) {
         write(path.join(reports, 'summary.json'), JSON.stringify({ verifier_plan: { mode: verifierState === 'disabled' ? 'disabled' : 'enabled' } }));
         if (verifierState === 'malformed') {
@@ -191,13 +198,13 @@ export function testingRetestCases(): Array<{ name: string; run(): void }> {
         diagnostic: 'index 1 out of range for 1 hit(s)', selector: { request: { ...indexedRequest, constraints: { ...indexedRequest.constraints, index: 1 } },
           resolution: { state: 'not_found', candidate_count: 0, selected: null, candidates: [] } } });
       callsFromSteps(indexedFailure); callsFromSteps(indexedSuccess);
-      const indexedPlan = (id: string, index: number) => row(id, 'original visible result', 'corrected_pay_button')
+      const indexedPlan = (id: string, index: number) => correctedRow(id)
         .replace('{"wait_for":{"by_id":"result"}}', `{"wait_for":{"by_text":"result label","match":"exact","index":${index}}}`);
       publish('01', prepare(indexedFailure, 'TC-18'), indexedPlan('TC-18', 1), 5);
       publish('02', indexedSuccess, indexedPlan('TC-901', 0), 10);
       assert.equal(pending().length, 1, 'an old diagnostic hit count cannot identify the missing original selector target');
       publish('01', failure, row('TC-18'), 5);
-      publish('02', corrected, row('TC-901', 'original visible result', 'corrected_pay_button').replace('"by_id":"result"', '"by_id":"weaker_result"'), 10);
+      publish('02', corrected, correctedRow('TC-901').replace('"by_id":"result"', '"by_id":"weaker_result"'), 10);
       assert.equal(pending().length, 1, 'unchanged expected prose cannot hide a weakened executable assertion');
       publish('02', success, '# Plan\n## 测试用例\n', 10);
       assert.equal(pending().length, 1, 'deleting or merely declaring a new layer cannot close the original failure');
@@ -215,16 +222,16 @@ export function testingRetestCases(): Array<{ name: string; run(): void }> {
       Object.assign(productFailure.cases[0].steps[1], { outcome: failedAssertion.outcome, artifacts: failedAssertion.artifacts });
       productFailure.tool_calls[1].outcome = { status: 'failed', failure: failedAssertion.outcome.failure };
       assert(requireV1ForGate(productFailure, { frameworkRoot }).ok, JSON.stringify(requireV1ForGate(productFailure, { frameworkRoot })));
-      publish('01', productFailure, row('TC-19', 'original visible result', 'corrected_pay_button'), 5);
-      publish('02', corrected, row('TC-901', 'original visible result', 'corrected_pay_button'), 10);
+      publish('01', productFailure, correctedRow('TC-19'), 5);
+      publish('02', corrected, correctedRow('TC-901'), 10);
       assert.equal(pending().length, 0, 'product failure closes on the original trigger and actual equivalent current-build success');
       publish('02', corrected, row('TC-901', 'original visible result', 'other_action'), 10);
       assert.equal(pending().length, 1, 'TC-19 product failure cannot borrow the test-owned action repair exception');
-      publish('02', corrected, row('TC-901', 'weakened visible result', 'corrected_pay_button'), 10);
+      publish('02', corrected, correctedRow('TC-901', 'weakened visible result'), 10);
       assert.equal(pending().length, 1, 'TC-19 same label and a changed observable expectation stay pending');
-      publish('02', corrected, row('TC-901', 'original visible result', 'corrected_pay_button').replace('original precondition', 'other precondition'), 10);
+      publish('02', corrected, correctedRow('TC-901').replace('original precondition', 'other precondition'), 10);
       assert.equal(pending().length, 1, 'TC-19 changed precondition stays pending');
-      publish('02', corrected, row('TC-901', 'original visible result', 'corrected_pay_button'), 10);
+      publish('02', corrected, correctedRow('TC-901'), 10);
       assert.equal(pending('b'.repeat(64)).length, 1, 'TC-19 old HAP stays pending');
       publish('02', corrected, '# Plan\n## 测试用例\n', 10);
       assert.equal(pending().length, 1, 'TC-19 deletion stays pending with verifier disabled');

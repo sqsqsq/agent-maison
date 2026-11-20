@@ -151,9 +151,40 @@ const cases: TestCase[] = [
   {
     name: 'run-mode intent and user-facing status keep transport terms private',
     run: () => {
-      assert(resolveGoalRunModeIntent('我离开一会，继续跑') === 'unattended', 'unattended intent');
-      assert(resolveGoalRunModeIntent('遇到问题停下来问我') === 'attended', 'attended intent');
-      assert(resolveGoalRunModeIntent('帮我完成目标') === null, 'ambiguous intent');
+      const { userControl } = require('../../../agents/shared/native-request.cjs') as { userControl: (text: string) => { transport?: string } };
+      const declarations = [
+        ['我离开一会，继续跑', 'unattended'], ['不用等我', 'unattended'],
+        ['遇到问题先问我', 'attended'], ['遇到问题，先问我', 'attended'], ['遇到问题停下来问我', 'attended'], ['请不要后台继续', 'attended'],
+        ['帮我完成目标', null], ['我不在', null], ['我离开一会，别继续跑', null], ['我不在乎是否开后台', null],
+        ['请实现后台运行按钮', null], ['应用切到后台继续播放', null], ['本次任务要求应用切到后台继续播放', null],
+        ['请你在后台继续完成本次任务', 'unattended'], ['本次任务切到后台继续', 'unattended'], ['后台继续到验收', 'unattended'],
+        ['帮我开发无人值守售货机的支付页面', null],
+        ['新增一个无人值守模式的开关页面', null],
+        ['给无人值守门店做的会员卡页面，请完成开发', null],
+        ['请开发无人值守的自助服务', null],
+        ['无人值守执行引擎需要添加开关', null],
+        ['应用以无人值守方式执行门禁校验', null],
+        ['帮我开发一个以无人值守方式执行盘点的应用', null],
+        ['以无人值守方式运行的自助售货机需要支付页面', null],
+        ['请不要无人值守。', 'attended'],
+        ['不用问我，后台跑完', 'unattended'],
+        ['请无人值守地执行本次任务。', 'unattended'],
+        ['请以无人值守方式完成开发。', 'unattended'],
+        ['无人值守方式完成本次任务', 'unattended'],
+        ['请以无人值守方式执行本次任务', 'unattended'],
+        ['请无人值守交付本次任务。', 'unattended'],
+        ['无人值守自主完成开发、测试和验收，结束后汇报最终结果。', 'unattended'],
+        ['无人值守完成开发和测试', 'unattended'],
+        ['Please run in the background.', 'unattended'],
+        ['发布件已回灌，工程已恢复到需求实施前的干净基线。请按doc/features/原始需求/1-2-银行卡/原始需求.md 及同目录参考图，从头完成 bc-openCard-2。\n无人值守，自主完成开发、测试和验收，结束后汇报最终结果。', 'unattended'],
+        ['讨论如果我离开一会，继续跑', null], ['“无人值守，后台继续”', null],
+        ['遇到问题不要先问我', null], ['不需要停下来', null], ['> 无人值守，后台继续', null], ['```sh\nfoo --detach\n```', null],
+        ['~~~\n无人值守\n~~~', null], ['```log\n后台继续', null],
+      ] as const;
+      for (const [text, mode] of declarations) {
+        assert(resolveGoalRunModeIntent(text) === mode && (userControl(text).transport ?? null) === mode, `unexpected intent: ${text}`);
+      }
+      assert(resolveGoalRunModeIntent('我会看着', true) === 'unattended', 'explicit detach remains authoritative');
       const line = formatGoalRoundStatus({ feature: 'demo', phase: 'spec', round: 1, mode: 'attended' });
       assert(!/in-session|headless|tier|batch/.test(line), `internal terms leaked: ${line}`);
       assertAttendedRunMode('attended');

@@ -148,29 +148,33 @@ const ISSUE_FENCE_RE = new RegExp(
   'i',
 );
 
-/**
- * 从 verifier 报告解析逐条验证块。契约：
- * ```issue-verification
- * - issue: CR-001
- *   verdict: confirmed
- * ```
- * 无块/空块 → ok:false（消费方视为「未逐条验证」，零 candidate——fail-closed）。
- * verdict 非法值按 unclear 处理（不明确不产 candidate）。
- */
-export function parseIssueVerificationBlock(text: string): {
+type IssueVerificationRead = {
   ok: boolean;
   entries: IssueVerificationEntry[];
   reason: string;
-} {
-  if (!text || !text.trim()) return { ok: false, entries: [], reason: 'verifier 报告为空' };
-  const m = ISSUE_FENCE_RE.exec(text);
-  if (!m) return { ok: false, entries: [], reason: `缺 ${ISSUE_VERIFICATION_FENCE} fenced 块` };
-  const entries: IssueVerificationEntry[] = [];
+  unreadable?: { fragment: string; diagnostics: string[] };
+};
+
+function parseIssueVerificationYaml(fragment: string, normalize?: (rows: Array<Record<string, unknown>>) => unknown[]): IssueVerificationRead {
+  const lineCounter = new YAML.LineCounter();
+  const doc = YAML.parseDocument(fragment, { lineCounter, prettyErrors: false });
+  if (doc.errors.length) {
+    const lines = fragment.split(/\r?\n/);
+    return { ok: false, entries: [], reason: `${ISSUE_VERIFICATION_FENCE} YAML不可解析（${doc.errors.length} 项）`,
+      unreadable: { fragment, diagnostics: doc.errors.map(error => {
+        const { line, col } = lineCounter.linePos(error.pos[0]);
+        return `围栏内第 ${line} 行第 ${col} 列 ${error.code}：${error.message}\n${lines[line - 1]?.slice(0, 200) ?? ''}`;
+      }) } };
+  }
   let rows: unknown;
-  try { rows = YAML.parse(m[1]); }
-  catch (error) { return { ok: false, entries: [], reason: `${ISSUE_VERIFICATION_FENCE} YAML不可解析：${(error as Error).message}` }; }
+  try { rows = doc.toJS(); }
+  catch (error) {
+    const reason = `${ISSUE_VERIFICATION_FENCE} YAML不可解析：${(error as Error).message}`;
+    return { ok: false, entries: [], reason, unreadable: { fragment, diagnostics: [reason] } };
+  }
   if (!Array.isArray(rows)) return { ok: false, entries: [], reason: `${ISSUE_VERIFICATION_FENCE} 必须是原逐项数组` };
-  for (const row of rows) {
+  const entries: IssueVerificationEntry[] = [];
+  for (const row of normalize ? normalize(rows) : rows) {
     if (!row || typeof row !== 'object' || typeof row.issue !== 'string' || !row.issue.trim() || typeof row.verdict !== 'string') continue;
     const raw = row.verdict.toLowerCase();
     const evidence = typeof row.evidence === 'string' && row.evidence.trim() ? row.evidence.trim() : undefined;
@@ -187,6 +191,22 @@ export function parseIssueVerificationBlock(text: string): {
   }
   if (entries.length === 0) return { ok: false, entries: [], reason: '逐条验证块无合法条目' };
   return { ok: true, entries, reason: `${entries.length} 条逐条验证` };
+}
+
+/**
+ * 从 verifier 报告解析逐条验证块。契约：
+ * ```issue-verification
+ * - issue: CR-001
+ *   verdict: confirmed
+ * ```
+ * 无块/空块 → ok:false（消费方视为「未逐条验证」，零 candidate——fail-closed）。
+ * verdict 非法值按 unclear 处理（不明确不产 candidate）。
+ */
+export function parseIssueVerificationBlock(text: string): IssueVerificationRead {
+  if (!text || !text.trim()) return { ok: false, entries: [], reason: 'verifier 报告为空' };
+  const m = ISSUE_FENCE_RE.exec(text);
+  if (!m) return { ok: false, entries: [], reason: `缺 ${ISSUE_VERIFICATION_FENCE} fenced 块` };
+  return parseIssueVerificationYaml(m[1]);
 }
 
 export function uniqueIssueVerification(entries: readonly IssueVerificationEntry[], issue: string): IssueVerificationEntry | undefined {
@@ -349,24 +369,23 @@ function* independentReviewInvocations(projectRoot: string, feature: string, run
   }
 }
 
-function issuedAcceptanceReviewEntries(text: string, issues: Readonly<Record<string, readonly string[]>>): IssueVerificationEntry[] {
+export function readIssuedAcceptanceReview(text: string, issues: Readonly<Record<string, readonly string[]>>): IssueVerificationRead {
   const fences = [...text.matchAll(/^ *```issue-verification[ \t]*$/gim)];
   const titled = [...text.matchAll(/^#{1,6}[ \t]+[^\r\n]*\bissue-verification\b[^\r\n]*\r?\n(?:[ \t]*\r?\n)*[ \t]*```(?:yaml|yml)[ \t]*\r?\n([\s\S]*?)^ *```[ \t]*$/gim)];
   const isIssued = (issue: unknown): issue is string => typeof issue === 'string' && Object.prototype.hasOwnProperty.call(issues, issue);
-  if (fences.length + titled.length !== 1) return [];
-  if (fences.length === 1) return parseIssueVerificationBlock(text).entries.filter(row => isIssued(row.issue));
-  try {
-    const rows = YAML.parse(titled[0][1]) as Array<Record<string, unknown>>;
-    if (!Array.isArray(rows)) return [];
-    const issued = rows.flatMap(row => {
+  if (fences.length + titled.length !== 1) return { ok: false, entries: [], reason: '需要唯一的 issue-verification 块' };
+  if (fences.length === 1) {
+    const parsed = parseIssueVerificationBlock(text);
+    const entries = parsed.entries.filter(row => isIssued(row.issue));
+    return { ...parsed, entries, ok: entries.length > 0 };
+  }
+  return parseIssueVerificationYaml(titled[0][1], rows => rows.flatMap(row => {
       if (row?.issue !== undefined && row.id !== undefined && row.issue !== row.id) {
         return [row.issue, row.id].filter(isIssued).map(issue => ({ issue, verdict: 'invalid' }));
       }
       const issue = row?.issue ?? row?.id;
       return isIssued(issue) ? [{ ...row, issue }] : [];
-    });
-    return parseIssueVerificationBlock('```issue-verification\n' + YAML.stringify(issued) + '```\n').entries;
-  } catch { return []; }
+  }));
 }
 
 /** Locate a CU review handback by its existing request, authorized result path and observed digest. */
@@ -374,12 +393,14 @@ export function readIndependentReviewOutputs(projectRoot: string, feature: strin
   const { resolveFeatureArtifact } = require('../../config') as typeof import('../../config');
   const report = resolveFeatureArtifact(projectRoot, feature, 'review-report.md');
   return [...independentReviewInvocations(projectRoot, feature, runId, report.actualPath)].flatMap(invocation => {
-    const material = invocation.request.context.workInput?.material.acceptanceReview;
+    const work = invocation.request.context.workInput?.material;
+    const material = work?.acceptanceReview;
     if (!material) return [];
     const parsed = (bytes: Buffer, file: string) => {
       const text = bytes.toString('utf8');
-      const entries = issuedAcceptanceReviewEntries(text, material);
-      return { material, entries, matchesCurrent: invocation.matchesCurrent, originals: [invocation.requestPath, file] };
+      const result = readIssuedAcceptanceReview(text, material);
+      return { material, signedSegments: work.segments, ...result, matchesCurrent: invocation.matchesCurrent,
+        originals: [invocation.requestPath, file] };
     };
     if (invocation.archived && invocation.attendedArchive) {
       const bytes = Buffer.from(invocation.archived, 'base64');

@@ -3,10 +3,10 @@ import assert from 'assert';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { execFileSync } from 'child_process';
+import { execFileSync, spawnSync } from 'child_process';
 import { createHash } from 'crypto';
 import * as YAML from 'yaml';
-import { clearFrameworkConfigCache, featureFilePath, resolveFeatureArtifact } from '../../config';
+import { clearFrameworkConfigCache, featureFilePath, loadFrameworkConfig, resolveFeatureArtifact } from '../../config';
 import { loadCanonicalBlueprint } from '../../scripts/utils/component-blueprint-path';
 import { deriveChangeUnitFeatureId, loadCanonicalChangeUnit, asChangeUnitArtifact } from '../../scripts/utils/change-unit-path';
 import { reconcileChangeUnitBlueprintRefs, BLUEPRINT_RECONCILE_LOCK_NAME } from '../../scripts/utils/change-unit-design-preparation';
@@ -14,14 +14,20 @@ import { diagnoseBlueprintSkillAuthority, deriveBlueprintSkillInput } from '../.
 import { writeBackAdmission, reusableDesignQuestioning, readDesignQuestioningOriginal, recordDesignRepairInvocation, designRepairInvokeLabel, questioningDependencyChanges, runUnattendedDesignRepair, designRepairTarget, type DesignRepairInvokeOutcome } from '../../scripts/utils/design-repair-unattended';
 import { GoalPhaseRuntime } from '../../scripts/goal-phase-runtime';
 import { ensureRunControl, casAcquireRunOwner } from '../../scripts/utils/goal-run-control';
-import { capturePhaseInvocationSnapshot, diffPhaseInvocationSnapshots } from '../../scripts/utils/phase-write-boundary';
-import { buildGoalManifestFromInput } from '../../scripts/utils/goal-manifest';
+import { capturePhaseInvocationSnapshot, diffPhaseInvocationSnapshots, phaseWriteConflictProblems } from '../../scripts/utils/phase-write-boundary';
+import { buildGoalManifestFromInput, buildInitialDesignGoalManifest } from '../../scripts/utils/goal-manifest';
+import { parseAdapterModelBinding } from '../../scripts/utils/adapter-model';
+import { initialDesignRequestOptions } from '../../scripts/utils/initial-design-delivery';
+import { prepareDesignRequest } from '../../scripts/utils/automatic-request';
 import { createGoalRun } from '../../scripts/utils/goal-run-creation';
-import { tryAcquireLock, releaseLock, FEATURE_LOCK_NAME } from '../../scripts/utils/goal-run-lock';
+import { tryAcquireLock, releaseLock, FEATURE_LOCK_NAME, isPidAlive } from '../../scripts/utils/goal-run-lock';
 import { matchesUnitCase, selectedUnitCases, startCaseTiming, unitCaseGroups, type UnitExecutionTiming } from '../utils/unit-case-selection';
 import type { UnitCaseResult } from '../run-unit';
 import { fixture as projectionFixture, planContracts } from './blueprint-skill-projection.unit.test';
-import { readHandoffMaterial } from '../../scripts/utils/session-execution-handoff';
+import { readHandoffMaterial, sessionEvents } from '../../scripts/utils/session-execution-handoff';
+import { createBlueprintReviewDesignFixture } from '../fixtures/blueprint-review-design';
+import { controlledModelBinding, installControlledCodex } from '../utils/controlled-model-process';
+import { preserveRuntimeTestEvidence } from '../utils/runtime-test-control';
 
 type Json = Record<string, any>;
 type Group = 'content' | 'runtime';
@@ -73,7 +79,162 @@ function repairInput(root: string, runId: string, requirement?: string) {
   return { input, runDir, rows };
 }
 
+async function replayOriginalDesignAuthorization(mode: 'detach' | 'adopt' | 'fallback' | 'confirmation' | 'explicit'): Promise<void> {
+  const host = createBlueprintReviewDesignFixture();
+  const root = host.root, frameworkRoot = path.resolve(__dirname, '../../..'), feature = 'ledger-app-blueprint';
+  const transcriptRoot = path.join(root, 'native-claude');
+  const transcript = path.join(transcriptRoot, 'projects', 'fixture', 'original.jsonl');
+  const sessionRef = transcript + '#original';
+  const requirement = '完成账目刷新与恢复的原始完整交付，维护已准入蓝图的设计契约。';
+  const unattended = mode === 'detach' || mode === 'adopt' || mode === 'fallback';
+  const runId = 'design-authority-transport';
+  const model = parseAdapterModelBinding('codex', controlledModelBinding('codex', root))!;
+  const manifest = buildInitialDesignGoalManifest({ feature, run_id: runId, adapter: 'codex', adapter_model_pin: model, requirement,
+    initial_design: { completion_target: 'feature', requested_results: [requirement], requested_phases: ['plan', 'coding', 'review', 'ut'] },
+    unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: root });
+  const runDir = path.resolve(root, manifest.report_dir), repairDir = path.join(runDir, 'design-repair');
+  const ciArgs = ['--feature', feature, '--adapter', 'codex', '--project-root', root, '--framework-root', frameworkRoot];
+  const native = path.join(root, 'controlled-design.cjs');
+  const preload = path.join(root, 'detach-attempt.cjs'), detachArgs = path.join(root, 'detach-child-argv.json');
+  let restoreNative = () => {};
+  let backgroundPid: number | undefined;
+  let lastOutput = '';
+  try {
+    const architecture = loadFrameworkConfig(root).architecture;
+    fs.writeFileSync(path.join(root, 'framework.config.json'), JSON.stringify({ schema_version: '1.0', project_name: 'Design authorization replay',
+      project_profile: { name: 'hmos-app' }, active_workflow: 'obligation-driven', architecture, materialized_adapters: ['codex'] }));
+    fs.writeFileSync(path.join(root, 'AGENTS.md'), '# Design authorization replay\n');
+    clearFrameworkConfigCache();
+    const unit = loadCanonicalChangeUnit(root, feature, 'ledger-refresh');
+    const original = YAML.parse(fs.readFileSync(unit.canonicalPath, 'utf8'));
+    const description = original.target_predicates[0].description;
+    original.target_predicates[0].description = '';
+    fs.writeFileSync(unit.canonicalPath, YAML.stringify(original));
+    const items = YAML.parse(fs.readFileSync(host.blueprintFile, 'utf8')).review_summary.questioning.items;
+    fs.mkdirSync(path.dirname(model.config_source!), { recursive: true }); fs.writeFileSync(model.config_source!, '[features]\n');
+    createGoalRun({ projectRoot: root, frameworkRoot, manifest, chain: [] });
+    fs.mkdirSync(path.dirname(transcript), { recursive: true });
+    const row = (uuid: string, role: string, content: string) => JSON.stringify({ type: role, uuid, sessionId: 'original', cwd: root,
+      timestamp: new Date().toISOString(), message: { role, content } });
+    fs.writeFileSync(transcript, [row('original', 'user', requirement + (unattended ? '请无人值守，后台继续到验收。' : '请不要后台。')),
+      row('assistant', 'assistant', '请无人值守。'),
+      row('independent', 'user', '这是另一项独立任务。请无人值守。')].join('\n') + '\n');
+    const priorClaude = process.env.CLAUDE_CONFIG_DIR;
+    try {
+      process.env.CLAUDE_CONFIG_DIR = transcriptRoot;
+      if (mode !== 'confirmation') {
+        const prepared = prepareDesignRequest({ ...initialDesignRequestOptions(root, frameworkRoot, manifest), sessionRef });
+        assert.equal(prepared.intake?.control.transport?.mode, unattended ? 'unattended' : 'attended');
+        assert.notEqual(prepared.intake?.user.text, requirement, 'the production carrier must bind the native original independently of the manifest summary');
+      }
+    } finally {
+      if (priorClaude === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = priorClaude;
+    }
+    fs.writeFileSync(native, `const fs=require('fs'),yaml=require(${JSON.stringify(require.resolve('yaml'))});
+process.stdin.resume();process.stdin.on('end',()=>{
+  const phase=process.env.MAISON_GOAL_ATTEMPT_PHASE;
+  const emit=row=>process.stdout.write(JSON.stringify(row)+'\\n');
+  if(phase==='design-repair-author') {
+    const draft=${JSON.stringify(path.join(repairDir, 'change-unit.yaml'))};
+    const content=yaml.parse(fs.readFileSync(draft,'utf8'));
+    content.target_predicates[0].description=${JSON.stringify(description)};
+    fs.writeFileSync(draft,yaml.stringify(content));
+  } else if(phase!=='design-repair-questioning' && phase!=='initial-design-questioning') {
+    process.stderr.write('Error loading config: the controlled model ends after real design publication ('+phase+')\\n');process.exitCode=1;return;
+  }
+  emit({type:'thread.started',thread_id:phase+'-fixture'});
+  emit({type:'item.completed',item:{type:'agent_message',text:phase.endsWith('questioning')?${JSON.stringify(JSON.stringify({ items }))}:'已恢复原批准设计说明。'}});
+  emit({type:'turn.completed'});
+});`);
+    restoreNative = installControlledCodex(root, native);
+    fs.writeFileSync(preload, `if (!process.argv.some(arg => /goal-(?:mode-entry|runner)\\.ts$/.test(arg))) return;
+const fs=require('fs'),{spawn}=require('child_process');
+require(${JSON.stringify(require.resolve('ts-node/register/transpile-only'))});
+require(${JSON.stringify(path.join(frameworkRoot, 'harness/scripts/goal-phase-runtime.ts'))}).__testing_setDetachSpawn((file,args,opts)=>{
+  fs.writeFileSync(${JSON.stringify(detachArgs)},JSON.stringify(args));
+  return spawn(${mode === 'fallback' ? JSON.stringify(path.join(root, 'absent-runner.exe')) : 'file'},args,opts);
+});`);
+    const env = { ...process.env, CLAUDE_CONFIG_DIR: transcriptRoot, TS_NODE_PROJECT: path.join(frameworkRoot, 'harness/tsconfig.json'),
+      NODE_OPTIONS: `--require \"${preload.replace(/\\/g, '/')}\"` };
+    const call = (command: string, args: string[]) => {
+      const child = spawnSync(command, args, { cwd: path.join(frameworkRoot, 'harness'), encoding: 'utf8', env, timeout: 45_000, windowsHide: true });
+      lastOutput = child.stdout + child.stderr;
+      assert.equal(child.status, 0, String(child.error ?? lastOutput));
+      return JSON.parse(child.stdout.trim().split(/\r?\n/).at(-1)!);
+    };
+    const cli = (name: string, ...args: string[]) => call(process.execPath, [path.join(frameworkRoot, 'harness/scripts', name), ...ciArgs, ...args]);
+    const shellCommand = (command: string) => process.platform === 'win32'
+      ? call('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command]) : call('/bin/sh', ['-c', command]);
+    const publications = () => sessionEvents(runDir).filter(event => event.type === 'design_authority_repair' && 'stage' in event && event.stage === 'published');
+    if (mode === 'detach' || mode === 'adopt') {
+      const detached = mode === 'detach' ? cli('goal-runner.ts', '--resume', runId, '--detach')
+        : cli('goal-mode-entry.ts', '--run-mode', 'attended', '--run-id', runId, '--next');
+      backgroundPid = detached.pid;
+      assert.equal(detached.detached, true, JSON.stringify(detached));
+      assert.equal(detached.run_id, runId);
+      assert.equal(detached.transport_fallback, undefined);
+      const deadline = Date.now() + 60_000;
+      while (!sessionEvents(runDir).some(event => event.type === 'run_end') && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 100));
+      assert(sessionEvents(runDir).some(event => event.type === 'run_end'), fs.readFileSync(path.join(runDir, 'detach.log'), 'utf8'));
+    } else {
+      let step = cli('goal-mode-entry.ts', '--run-mode', 'attended', '--run-id', runId, '--next',
+        ...(mode === 'explicit' ? ['--authorize-autonomy'] : []), ...(mode === 'confirmation' ? ['--session-ref', transcript + '#independent'] : []));
+      if (mode === 'confirmation') {
+        const repeated = shellCommand(step.next_command);
+        for (const waiting of [step, repeated]) {
+          assert.equal(waiting.type, 'goal_session_result', JSON.stringify(waiting));
+          assert.equal(waiting.result.halt_reason, 'execution_scope_unresolved', JSON.stringify(waiting));
+          assert.match(JSON.stringify(waiting), /自动设计修复授权/);
+        }
+        assert.equal(fs.existsSync(path.resolve(root, initialDesignRequestOptions(root, frameworkRoot, manifest).requestFile)), false);
+        assert(!sessionEvents(runDir).some(event => event.type === 'agent_invoke_start' && String(event.phase).startsWith('design-repair-')));
+        assert.equal(publications().length, 0);
+        assert.equal(fs.existsSync(detachArgs), false);
+        return;
+      }
+      assert.equal(step.phase, 'design-repair-author', JSON.stringify(step));
+      if (mode === 'fallback') {
+        assert.match(step.transport_fallback, /child spawn failed/);
+        assert(!step.execute_command.includes('--authorize-autonomy'));
+      } else {
+        assert.equal(step.transport_fallback, undefined);
+        assert.equal(fs.existsSync(detachArgs), false);
+      }
+      for (let index = 0; index < 3 && !publications().length; index++) {
+        assert.equal(step.type, 'phase_execute_request', JSON.stringify(step));
+        const executed = shellCommand(step.execute_command);
+        assert.equal(executed.status, 'passed', JSON.stringify(executed));
+        if (mode === 'fallback') assert(!executed.next_command.includes('--authorize-autonomy'));
+        step = shellCommand(executed.next_command);
+      }
+    }
+    if (mode !== 'explicit') {
+      const argv: string[] = JSON.parse(fs.readFileSync(detachArgs, 'utf8'));
+      assert(argv.includes('--detached-child') && argv.includes('--authorize-autonomy'), JSON.stringify(argv));
+      assert.equal(argv.includes('--adopt-session-transport'), mode !== 'detach');
+    }
+    assert.equal(publications().length, 1, JSON.stringify(sessionEvents(runDir).slice(-8)));
+    assert.equal(YAML.parse(fs.readFileSync(unit.canonicalPath, 'utf8')).target_predicates[0].description, description);
+  } catch (error) {
+    const evidence = preserveRuntimeTestEvidence([root], String(error), undefined,
+      [path.join(runDir, 'detach.log'), path.join(runDir, 'session-control.log'), detachArgs, transcript], { stdout: lastOutput });
+    throw new Error(`${mode}: ${(error as Error).stack ?? String(error)}\nReplay evidence: ${evidence}`);
+  } finally {
+    if (backgroundPid && isPidAlive(backgroundPid)) {
+      const deadline = Date.now() + 5_000;
+      while (isPidAlive(backgroundPid) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50));
+      if (isPidAlive(backgroundPid)) try { process.kill(backgroundPid); } catch { /* Background process already exited. */ }
+    }
+    restoreNative(); clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true, maxRetries: 8 });
+  }
+}
+
 const cases: Array<{ name: string; group: Group; run: () => Promise<void> }> = [{
+  name: '3ec91fa7 design authorization parity across public detach, verified session fallback, and confirmation boundaries', group: 'runtime',
+  async run() {
+    for (const mode of ['detach', 'adopt', 'fallback', 'confirmation', 'explicit'] as const) await replayOriginalDesignAuthorization(mode);
+  },
+}, {
   name: 'daily design content: mapping-only primary handback retains the newly published blueprint identity', group: 'content',
   run: () => withProject(async (root, fixture) => {
     const approved = loadCanonicalBlueprint(root, BLUEPRINT);
@@ -229,7 +390,7 @@ const cases: Array<{ name: string; group: Group; run: () => Promise<void> }> = [
     assert.equal(Buffer.from(fresh.knowledgeOriginals[relative], 'base64').toString(), asset);
     assert(fs.readFileSync(loaded.canonicalPath).equals(canonical)); assert(!rows.some(row => row.stage === 'published'));
   }),
-}, ...(['questioner-blueprint', 'questioner-cu', 'unscoped-decline'] as const).map(mode => ({
+}, ...(['questioner-blueprint', 'questioner-cu', 'unscoped-decline', 'questioner-missing-preimage'] as const).map(mode => ({
   name: `daily design runtime: rejected ${mode} work cannot cross a fresh transaction boundary`, group: 'runtime' as const,
   run: () => withProject(async root => {
     const loaded = loadCanonicalBlueprint(root, BLUEPRINT), approved = structuredClone(loaded.blueprint) as Json;
@@ -242,6 +403,8 @@ const cases: Array<{ name: string; group: Group; run: () => Promise<void> }> = [
     const brief = { class: 'B1' as const, items: [{ check: 'design', class: 'B1' as const, codes: [], artifacts: [], basis: candidateId, needs: [] }] };
     let questionCalls = 0, calls = 0;
     const draft = path.join(runDir, 'design-repair/component-blueprint.yaml');
+    const affected = mode === 'questioner-cu' ? path.join(runDir, 'design-repair/change-unit.yaml') : draft;
+    let beforeQuestioning: Buffer | undefined;
     const invoke: Parameters<typeof runUnattendedDesignRepair>[0]['invoke'] = async (purpose, _prompt, guard) => {
       assert(guard);
       const phase = designRepairInvokeLabel(purpose), invokeId = `${phase}-${++calls}`;
@@ -258,7 +421,8 @@ const cases: Array<{ name: string; group: Group; run: () => Promise<void> }> = [
         write(draft, doc);
       } else {
         questionCalls++;
-        if (mode === 'questioner-blueprint') { doc.title = 'unauthorized Q title'; write(draft, doc); }
+        beforeQuestioning = fs.readFileSync(affected);
+        if (mode === 'questioner-blueprint' || mode === 'questioner-missing-preimage') { doc.title = 'unauthorized Q title'; write(draft, doc); }
         if (mode === 'questioner-cu') {
           const cu = path.join(runDir, 'design-repair/change-unit.yaml'), value = read(cu);
           value.description = 'unauthorized Q CU description'; write(cu, value);
@@ -268,14 +432,17 @@ const cases: Array<{ name: string; group: Group; run: () => Promise<void> }> = [
         output = JSON.stringify({ items });
       }
       input.emit({ type: 'agent_invoke_end', phase, invoke_id: invokeId, exit_code: 0 });
+      const preSnapshot = mode === 'questioner-missing-preimage' && purpose === 'questioning'
+        ? { ...guard.pre, entries: guard.pre.entries.map(entry => entry.path.endsWith('/design-repair/component-blueprint.yaml')
+          ? { ...entry, sha256: 'f'.repeat(64) } : entry) } : guard.pre;
       const outcome: DesignRepairInvokeOutcome = { started: true, invokeId, ok: true, detail: 'isolated author or Q completed', output,
-        preSnapshot: guard.pre, postSnapshot: capturePhaseInvocationSnapshot(guard.resolution, guard.options) };
+        preSnapshot, postSnapshot: capturePhaseInvocationSnapshot(guard.resolution, guard.options) };
       recordDesignRepairInvocation(runDir, purpose, invokeId, outcome);
       return outcome;
     };
     const first = await runUnattendedDesignRepair({ ...input, brief, invoke });
     assert(first.outcome === (mode === 'unscoped-decline' ? 'failed' : 'violation') && first.step === 'questioning', JSON.stringify(first)); assert.equal(questionCalls, 1);
-    assert(first.reason.includes(mode === 'unscoped-decline' ? '拒修理由未被独立质询' : '调用改了草稿之外的文件'), first.reason);
+    assert(first.reason.includes(mode === 'unscoped-decline' ? '拒修理由未被独立质询' : '设计交回不能采信'), first.reason);
     const events = fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
     const question = events.find(event => event.type === 'agent_invoke_start' && event.phase === 'design-repair-questioning');
     const saved = readDesignQuestioningOriginal(runDir, question, events);
@@ -292,11 +459,25 @@ const cases: Array<{ name: string; group: Group; run: () => Promise<void> }> = [
       assert(events.some(event => event.type === 'phase_write_violation' && event.invoke_id === question.invoke_id));
       assert.equal(saved, null, 'the actual violation invalidates Q reuse before any later transaction');
     }
+    const conflictPaths = phaseWriteConflictProblems(root, events).flatMap(problem => problem.files ?? []);
+    const affectedDraft = path.relative(root, affected).replace(/\\/g, '/');
+    assert.equal(conflictPaths.includes(affectedDraft), mode !== 'unscoped-decline', 'the callback supplies no bound execution window');
+    if (mode === 'questioner-blueprint' || mode === 'questioner-cu') {
+      assert(beforeQuestioning);
+      fs.writeFileSync(affected, beforeQuestioning);
+    }
     let received: { purpose: string; blueprint: Json; cu?: Json } | undefined;
     const second = await runUnattendedDesignRepair({ ...input, brief, invoke: async purpose => {
       received = { purpose, blueprint: read(draft), ...(mode === 'questioner-cu' ? { cu: read(path.join(runDir, 'design-repair/change-unit.yaml')) } : {}) };
       return { started: false, ok: false, detail: 'fresh author receives only authorized baseline' };
     } });
+    if (mode === 'questioner-missing-preimage') {
+      assert.equal(second.outcome, 'waiting'); assert.equal(received, undefined);
+      assert.equal(read(draft).title, 'unauthorized Q title');
+      assert.equal(rows.filter(row => row.stage === 'attempted').length, 1);
+      assert(fs.readFileSync(loaded.canonicalPath).equals(canonical));
+      return;
+    }
     assert(received, JSON.stringify(second)); assert.equal(received.purpose, 'author');
     assert.equal(received.blueprint.title, defective.title, 'unreviewed or unscoped work must not become the next author baseline');
     assert.deepEqual(node(received.blueprint).acceptance, node(defective).acceptance, 'rebuild the candidate from the actual canonical baseline');
@@ -366,6 +547,9 @@ const cases: Array<{ name: string; group: Group; run: () => Promise<void> }> = [
       assert.equal(result.outcome, 'violation', JSON.stringify(result));
       assert.equal(questionCalls, mode === 'questioning' ? 1 : 0);
       assert(!rows.some(row => row.stage === 'published'));
+      const protectedPath = mode === 'outside' ? 'requirements/ledger.md'
+        : mode === 'canonical' ? path.relative(root, loaded.canonicalPath).replace(/\\/g, '/') : relative;
+      assert(phaseWriteConflictProblems(root, rows).some(problem => problem.files?.includes(protectedPath)), 'non-draft conflicts remain completion blockers');
     }
   }),
 })), {

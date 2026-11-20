@@ -9,7 +9,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
-import { receiptDirPath, resolveFeatureArtifact } from '../../config';
+import { featureDeviceTestPaths, HYLYRE_DERIVED_PLAN_FILENAME, receiptDirPath, resolveFeatureArtifact } from '../../config';
 import { buildSourceInventory } from './closure-attestation';
 import {
   extractDerivedPlanCases,
@@ -27,6 +27,7 @@ import {
 } from './phase-evidence-manifest';
 import {
   resolveP0DeviceObligations,
+  resolveCheckpointAction,
   loadAcceptanceFlowsDoc,
   parsePlanTcEntries,
 } from './p0-semantic-gates';
@@ -195,8 +196,8 @@ export function composeRuntimeFidelityEvidence(
   if (!acceptance || obligations.device.length === 0) return { ok: true, applicable: false };
 
   const acceptanceFile = resolveFeatureArtifact(opts.projectRoot, opts.feature, 'acceptance.yaml');
-  const topPlanFile = resolveFeatureArtifact(opts.projectRoot, opts.feature, 'test-plan.md');
-  const derivedPlanPath = path.join(path.dirname(opts.tracePath), 'test-plan.hylyre.md');
+  const topPlanFile = featureDeviceTestPaths(opts.projectRoot, opts.feature).topPlan;
+  const derivedPlanPath = path.join(path.dirname(opts.tracePath), HYLYRE_DERIVED_PLAN_FILENAME);
   const acceptanceSha = acceptanceFile.exists ? sha256File(acceptanceFile.actualPath) : null;
   const testPlanSha = topPlanFile.exists ? sha256File(topPlanFile.actualPath) : null;
   const derivedPlanSha = sha256File(derivedPlanPath);
@@ -219,6 +220,8 @@ export function composeRuntimeFidelityEvidence(
   }
   if (!obligations.uiKnown) return { ok: false, reason: 'P0 UI 相关性定义缺失，回 spec 补齐 ui_change' };
   if (p0Criteria.length === 0) return { ok: true, applicable: false };
+  const backCriteria = p0Criteria.filter(ac => resolveCheckpointAction(ac.checkpoint?.action)?.kind === 'back');
+  if (backCriteria.length) return { ok: false, reason: `${backCriteria.map(ac => ac.id).join('、')} 的系统/边缘返回需同轮 native StepResult 和前后屏断言，legacy telemetry 无法证明该动作` };
   const envelopeIssue = validateTelemetryEnvelope(trace.runtime_step_telemetry, opts);
   if (envelopeIssue) return { ok: false, reason: envelopeIssue };
   const telemetry = trace.runtime_step_telemetry!;

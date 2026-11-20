@@ -22,6 +22,28 @@ const test = (name: string, run: () => void) => ({ name, run });
 
 export function questioningRecoveryCases() {
   const results: Array<{ name: string; run(): void }> = [];
+  results.push(test('3ec91fa7 reads exactly one complete independent JSON fence, including arrays', () => {
+    const items = [{ scope_kind: 'view', scope_ref: 'view:runtime', disposition: 'blocker', answer: '原否定' }];
+    const fenced = '独立结论\r\n```json\r\n' + JSON.stringify(items) + '\r\n```\r\n';
+    assert(JSON.stringify(parseIndependentQuestioningOutput(fenced).items) === JSON.stringify(items), '围栏改变了原条目');
+    assert(JSON.stringify(parseIndependentQuestioningOutput(JSON.stringify(items)).items) === JSON.stringify(items), '裸数组旧输入不应变化');
+    const shell = '```sh\r\n{ echo diagnostics; }\r\n```\r\n';
+    const text = '~~~text\nread the source and report exact evidence\n~~~\n';
+    const legacy = '原独立回执\n' + JSON.stringify({ review_summary: { questioning: { items } } }) + '\n';
+    const object = '```json\r\n' + JSON.stringify({ items }) + '\r\n```\r\n';
+    for (const valid of [shell + object + text, text + fenced + shell, shell + legacy + text]) {
+      assert(JSON.stringify(parseIndependentQuestioningOutput(valid).items) === JSON.stringify(items), '无关文本与代码围栏不应触发格式返修');
+    }
+    const truncated = fenced.replace(/```\r\n$/, '');
+    const invalidJson = '~~~json\n{"items":\n~~~\n';
+    const extraResult = '```text\n' + JSON.stringify({ items }) + '\n```\n';
+    for (const malformed of [fenced + fenced, fenced + extraResult, fenced + legacy, fenced + truncated, truncated + fenced,
+      fenced + invalidJson, invalidJson + fenced, truncated, fenced.replace(']', ''), '仅以散文称通过']) {
+      let rejected = false;
+      try { parseIndependentQuestioningOutput(malformed); } catch { rejected = true; }
+      assert(rejected, '歧义、截断或无结构的回执没有交原独立方补格式');
+    }
+  }));
   results.push(test('a920 questioning dependency changes distinguish internal pointers and derived review bytes from actual source changes', () => {
     const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'questioning-inputs-')));
     try {
@@ -52,6 +74,19 @@ export function questioningRecoveryCases() {
       const outside = questioningDependencyChanges(root, { ...blueprint, discovery: {} }, pre, own, undefined,
         { items: [{ scope_ref: 'view:runtime', evidence_refs: ['../declared-sdk.d.ts#method'] }] });
       assert(outside.length === 1 && outside[0].state === 'unknown', '仓外相对引用不能静默丢失');
+      const internalRef = '/design_views/0/runtime_data_flows/0/initial_load';
+      assert(questioningDependencyChanges(root, { ...blueprint, discovery: {} }, pre, own, undefined,
+        { items: [{ scope_ref: 'view:runtime', evidence_refs: [internalRef] }] }).length === 0,
+      '合法 JSON Pointer 被当作 Windows 盘根或 POSIX 绝对文件');
+      const sameName = path.join(root, internalRef);
+      fs.mkdirSync(path.dirname(sameName), { recursive: true }); fs.writeFileSync(sameName, 'an actual separate dependency');
+      const actualPath = path.relative(root, sameName).replace(/\\/g, '/');
+      assert(questioningDependencyChanges(root, { ...blueprint, discovery: {} }, pre, own, undefined,
+        { items: [{ scope_ref: 'view:runtime', evidence_refs: [internalRef, actualPath + '#content'] }] })
+        .some(item => item.path === sameName && item.exists === true), '同名真实文件依赖被内部引用吞掉');
+      const posix = questioningDependencyChanges(root, { ...blueprint, discovery: {}, provenance: {} }, pre, own, undefined,
+        { items: [{ scope_ref: 'view:runtime', evidence_refs: ['/external/sdk/read-only.md'] }] });
+      assert(posix.length === 1 && posix[0].state === 'unknown', '外部 POSIX 绝对引用被当作蓝图指针');
       assert(questioningEvidencePath('D:\\sdk\\api.d.ts:12#method') === 'd:/sdk/api.d.ts', 'Windows盘符被当成协议或行号');
       const canonical = 'doc/features/example/blueprint/component-blueprint.yaml';
       const self = { ...blueprint, discovery: {}, provenance: { source_ref: canonical + '#/design_views/0' } };

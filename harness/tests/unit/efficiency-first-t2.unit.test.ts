@@ -10,8 +10,11 @@ import * as os from 'os';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
 
-import { clearFrameworkConfigCache, resolveFeatureArtifact, featurePhaseReportsDir } from '../../config';
+import { clearFrameworkConfigCache, resolveFeatureArtifact, featurePhaseReportsDir, featureDeviceTestPaths, hylyreDerivedPlanPath } from '../../config';
 import { uiSpecAbsPath } from '../../scripts/utils/ui-spec-shared';
+import { deriveChangeUnitFeatureId } from '../../scripts/utils/change-unit-path';
+import { changeUnitMappingIssues } from '../../scripts/utils/change-unit-feature-projection';
+import type { ChangeUnitArtifact } from '../../scripts/utils/change-unit-model';
 import {
   evaluateAcceptanceFlowStructure,
   evaluateP0CoverageIntegrity,
@@ -23,7 +26,7 @@ import {
 } from '../../scripts/utils/p0-semantic-gates';
 import { injectP0IdentityAssertions } from '../../scripts/utils/p0-identity-injection';
 import { extractDerivedPlanCases } from '../../scripts/utils/derived-hylyre-plan';
-import { extractTopPlanTestCasesForDeriveHint } from '../../scripts/utils/test-plan-derive-hint';
+import { compareDerivedPlanTcTable, extractTopPlanTestCasesForDeriveHint } from '../../scripts/utils/test-plan-derive-hint';
 import { derivedPlanStaleByTcTable } from '../../scripts/check-testing';
 import { buildCanonicalSelectorIndex, normalizePlannedStep } from '../../scripts/utils/planned-step-normalizer';
 import {
@@ -203,6 +206,116 @@ function axes(over?: Partial<Record<keyof QualityAxes, Partial<QualityAxes[keyof
 }
 
 const cases: Array<{ name: string; run: () => void }> = [
+  {
+    name: '媒体库候选使用实际 CU 的测试位置，拒绝根工作区与相邻 CU 的同名计划，并兼容旧单 Feature 读路径',
+    run: () => {
+      const root = mkProject();
+      try {
+        const unit = { blueprint_id: 'media-library', change_unit_id: 'watch-history', target_predicates: [{ predicate_id: 'history-retained' }], provides: [], design_refs: [] } as unknown as ChangeUnitArtifact;
+        const feature = deriveChangeUnitFeatureId(unit.blueprint_id, unit.change_unit_id);
+        const own = featureDeviceTestPaths(root, feature);
+        const foreign = featureDeviceTestPaths(root, deriveChangeUnitFeatureId(unit.blueprint_id, 'library-downloads'));
+        const blueprint = featureDeviceTestPaths(root, unit.blueprint_id);
+        const check = (file: string, phase: 'plan' | 'ut' = 'plan') => changeUnitMappingIssues(root, { predicate_mappings: [{
+          predicate_id: 'history-retained', implementation_refs: ['planned:src/media.ts'], test_refs: ['planned:' + path.relative(root, file).replace(/\\/g, '/')],
+        }] }, unit, phase);
+        assert.deepStrictEqual(check(own.stableDerivedPlan, 'ut'), []);
+        assert.deepStrictEqual(check(own.topPlan.canonicalPath), []);
+        for (const misplaced of [blueprint.stableDerivedPlan, foreign.stableDerivedPlan, hylyreDerivedPlanPath(own.reportsDir, 'hypium-run')]) {
+          assert.match(check(misplaced)[0].message, /watch-history.*test-plan\.hylyre\.md/);
+        }
+        const previous = path.join(root, 'doc/features/legacy-media/test-plan.md');
+        writeFile(root, path.relative(root, previous), '# legacy');
+        assert.strictEqual(featureDeviceTestPaths(root, 'legacy-media').topPlan.actualPath, previous);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: '媒体详情页边缘返回必须从详情页真实完成指定侧的单次返回，并逐窗口证明页面留存',
+    run: () => {
+      const root = mkProject();
+      try {
+        const pre = { wait_for: { by_id: 'media_heading', timeout: 10 } };
+        const back = { back: { mode: 'swipe', side: 'RIGHT' } };
+        const later = { touch: { by_id: 'media_refresh' } };
+        const forbidden = { wait_gone: { by_id: 'library_heading', timeout: 10 } };
+        const md = (steps: Record<string, unknown>[]) => [...DERIVED_HEADER,
+          `| TC-021 | 禁止返回媒体库 | ${steps.map(step => JSON.stringify(step)).join(' ; ')} | P0 | AC-21 |`].join('\n');
+        const uiDoc = { screens: [{ id: 'media', priority: 'P0', root: { id: 'media_heading', type: 'text', order: 0 } },
+          { id: 'library', priority: 'P0', root: { id: 'library_heading', type: 'text', order: 0 } }], assets: [], tokens: {} };
+        const ac: AcceptanceFlowsDoc = { flows: {}, criteria: [{ id: 'AC-21', priority: 'P0', ut_layer: 'device',
+          checkpoint: { pre_screen: 'media', post_screen: 'media', action: { type: 'back', mode: 'swipe', side: 'RIGHT' },
+            required_element_ids: ['media_heading'], forbidden_element_ids: ['library_heading'] } }] };
+        writeFile(root, path.relative(root, resolveFeatureArtifact(root, FEATURE, 'acceptance.yaml').canonicalPath), JSON.stringify(ac));
+        writeFile(root, path.relative(root, uiSpecAbsPath(root, FEATURE)), JSON.stringify(uiDoc));
+        const canonical = buildCanonicalSelectorIndex(uiDoc);
+        const load = (steps: Record<string, unknown>[]) => injectP0IdentityAssertions({ derivedMd: md(steps), topPlanMd: md(steps), acceptance: ac, canonical });
+        const prepared = load([pre, back, pre, back]);
+        assert.deepStrictEqual(prepared.gaps, []);
+        assert.strictEqual(prepared.injected.filter(record => record.kind === 'wait_gone').length, 2);
+        assert.strictEqual(load(stepsOf(prepared.content, 'TC-021')).changed, false);
+        const wrongPre = { wait_for: { by_id: 'library_heading', timeout: 10 } };
+        for (const invalid of [[wrongPre, back], [pre, later, back], [pre, { back: {} }],
+          [pre, { back: { mode: 'swipe', side: 'LEFT' } }], [pre, { swipe: { direction: 'LEFT' } }], [pre, { back: { mode: 'swipe', times: 2 } }]]) {
+          assert.strictEqual(load(invalid).gaps.length, 1, JSON.stringify(invalid));
+        }
+        const runPlan = path.join(root, 'run/test-plan.hylyre.md');
+        const check = (steps: Record<string, unknown>[], mutate?: (native: any[]) => void) => {
+          writeFile(root, path.relative(root, runPlan), md(steps));
+          const native = steps.map((step, i) => {
+            const planned = normalizePlannedStep(step, i);
+            const id = planned.selector?.value ?? '';
+            if (planned.kind === 'back') return {
+              ...passedAction(i, 'back', ''), device_session: true, selector: null,
+              outcome: { status: 'passed', observation: { kind: 'action', operation: 'back', performed: true, facts: { times: 1 } } },
+            };
+            if (planned.kind === 'wait_gone') return {
+              ...passedPresence(i, id), kind: 'wait_gone', device_session: true,
+              outcome: { status: 'passed', observation: { kind: 'assertion', assertion_type: 'absence', facts: { observed_present: false } } },
+              selector: { request: { kind: 'by_id', value: id }, resolution: { state: 'not_found', candidate_count: 0, selected: null, candidates: [] } },
+            };
+            if (planned.kind === 'wait_for') return { ...passedPresence(i, id), device_session: true };
+            return { ...passedAction(i, planned.kind, id), device_session: true };
+          });
+          mutate?.(native);
+          const trace = nativeTrace([{ id: 'TC-021', status: '通过', execution: 'completed', verification: 'passed', evidence: 'complete', expected_check_mode: 'empty', steps: native }]);
+          return evaluateP0SemanticCoverage({ projectRoot: root, feature: FEATURE, planMd: prepared.content, reportMd: '', trace,
+            evidenceGate: NATIVE_GATE, derivedPlanPath: runPlan, reportConclusion: null })[0];
+        };
+        const steps = stepsOf(prepared.content, 'TC-021');
+        assert.equal(check(steps).status, 'PASS', check(steps).details);
+        assert.equal(check(steps, native => { native[1].outcome.observation.performed = false; }).status, 'FAIL');
+        assert.equal(check(steps, native => { native[1].outcome.observation.facts.side = 'LEFT'; }).status, 'FAIL');
+        assert.equal(check(steps, native => { native[0].device_session = false; }).status, 'FAIL');
+        assert.equal(check([pre, back, pre, back, pre, forbidden]).status, 'FAIL', '第二次返回的缺席断言不能覆盖第一次');
+        const opposite = { back: { mode: 'swipe', side: 'LEFT' } };
+        const mixedDirections = [pre, opposite, pre, forbidden, pre, back, pre, forbidden];
+        assert.match(load(mixedDirections).gaps[0].message, /方向不匹配/);
+        assert.match(check(mixedDirections).details, /方向不匹配/, '正确的一次返回不能洗掉同一目标屏上方向错误的另一次返回');
+
+        ac.criteria[0].checkpoint!.action = { type: 'back' };
+        writeFile(root, path.relative(root, resolveFeatureArtifact(root, FEATURE, 'acceptance.yaml').canonicalPath), JSON.stringify(ac));
+        const keyBack = { back: {} };
+        const keyboardAndReturn = [{ input: { by_id: 'library_search', text: 'jazz' } }, wrongPre, keyBack,
+          { touch: { by_id: 'album_item' } }, pre, keyBack];
+        const loaded = load(keyboardAndReturn);
+        assert.deepStrictEqual(loaded.gaps, []);
+        assert.equal(loaded.injected.length, 2, '只给详情页上的返回注入后置身份，收键盘原样保留');
+        const runSteps = stepsOf(loaded.content, 'TC-021');
+        assert.deepStrictEqual(runSteps.slice(0, keyboardAndReturn.length), keyboardAndReturn);
+        assert.equal(check(runSteps).status, 'PASS');
+        assert.equal(check(runSteps, native => { native[1].device_session = false; }).status, 'FAIL', '当前 trace 须证明收键盘前确实在另一屏');
+        assert.equal(check(runSteps, native => { native[5].outcome.observation.performed = false; }).status, 'FAIL', '收键盘成功不能替代详情页返回');
+        const noKeyboardScreenProof = runSteps.filter((_, i) => i !== 1);
+        assert.match(load(noKeyboardScreenProof).gaps[0].message, /起始屏/);
+        assert.equal(check(noKeyboardScreenProof).status, 'FAIL');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
   {
     name: '身份断言=精确形状：多任何键（visible 等）都不是身份、kind 不同不是身份',
     run: () => {
@@ -553,6 +666,9 @@ const cases: Array<{ name: string; run: () => void }> = [
       ].join('\n');
       const baseline = { test_cases: extractTopPlanTestCasesForDeriveHint(top) };
       assert.strictEqual(derivedPlanStaleByTcTable(top, derived, baseline), false);
+      assert.deepStrictEqual(compareDerivedPlanTcTable(top, derived.replace('已启动', '已登录'), baseline), {
+        kind: 'behavior', tc_id: 'TC-001', field: 'precondition', top: '已启动', derived: '已登录',
+      });
       for (const [from, to] of [
         ['点击卡包', '点击添加'], ['卡包可见', '添加页可见'], ['已启动', '已登录'],
         ['AC-1', 'AC-2'], ['hylyre', 'visual'],

@@ -248,7 +248,8 @@ interface InvocationView {
   start: GoalRunEvent;
   phase: string | undefined;
   end?: GoalRunEvent;
-  handoff?: GoalRunEvent['handoff_request'];
+  handoff?: GoalRunEvent;
+  boundAtMs?: number;
 }
 
 /** Read-only pairing; anonymous historical ends still close the most recent start. */
@@ -275,8 +276,21 @@ function buildInvocationViews(events: GoalRunEvent[], chain?: FeaturePhase[]): I
       views.push(view);
       open = view;
     } else if (event.type === 'phase_start' && event.handoff_request) {
-      if (open && event.invoke_id && open.start.invoke_id === event.invoke_id) open.handoff = event.handoff_request;
-    } else if (event.type === 'agent_invoke_end' || event.type === 'agent_invoke_recovered') {
+      if (open && event.invoke_id && open.start.invoke_id === event.invoke_id) {
+        open.handoff = event;
+        delete open.boundAtMs;
+      }
+    } else if (open?.handoff && event.invoke_id && open.start.invoke_id === event.invoke_id) {
+      const { handoff } = open;
+      const pid = (event as { pid?: unknown }).pid;
+      if (event.type === 'agent_process_bound' && event.phase === handoff.phase
+        && typeof pid === 'number' && Number.isInteger(pid) && pid > 0
+        && typeof handoff.owner_id === 'string' && handoff.owner_id === event.owner_id
+        && Number.isInteger(handoff.owner_epoch) && handoff.owner_epoch === event.owner_epoch
+        && Number.isFinite(Date.parse(event.ts ?? ''))) open.boundAtMs = Date.parse(event.ts!);
+      if (event.type === 'agent_process_settled') delete open.boundAtMs;
+    }
+    if (event.type === 'agent_invoke_end' || event.type === 'agent_invoke_recovered') {
       if (open && !(open.start.invoke_id && event.invoke_id && open.start.invoke_id !== event.invoke_id)) {
         open.end = event;
         open = null;
@@ -511,9 +525,29 @@ function getAgentOutputStat(
   phase: FeaturePhase | null,
   invocation?: InvocationView | null,
 ): { mtimeMs: number | null; bytes: number; rel: string | null } {
-  if (invocation?.start.command === 'phase_execute_request' || invocation?.handoff || (!invocation && !phase)) {
+  if (!invocation && !phase) {
     return { mtimeMs: null, bytes: 0, rel: null };
   }
+  if (invocation?.handoff) {
+    const reference = invocation.handoff.handoff_request;
+    const boundAtMs = invocation.boundAtMs;
+    if (!reference || boundAtMs === undefined || invocation.end) return { mtimeMs: null, bytes: 0, rel: null };
+    const runDir = path.resolve(projectRoot, reportDir);
+    const signed = path.resolve(runDir, reference.path);
+    const directory = path.dirname(signed);
+    if (!directory.startsWith(runDir + path.sep)) return { mtimeMs: null, bytes: 0, rel: null };
+    const streams = ['agent-events.jsonl', 'agent-output.log', 'agent-stderr.log'].flatMap(name => {
+      const file = path.join(directory, name);
+      try {
+        const stat = fs.lstatSync(file);
+        return stat.isFile() && stat.size > 0 && stat.mtimeMs >= boundAtMs
+          ? [{ rel: relPath(projectRoot, file), mtimeMs: stat.mtimeMs, bytes: stat.size }] : [];
+      } catch { return []; }
+    });
+    return streams.sort((left, right) => right.mtimeMs - left.mtimeMs || right.bytes - left.bytes)[0]
+      ?? { mtimeMs: null, bytes: 0, rel: null };
+  }
+  if (invocation?.start.command === 'phase_execute_request') return { mtimeMs: null, bytes: 0, rel: null };
   const label = invocation?.start.phase ?? phase;
   if (!label) return { mtimeMs: null, bytes: 0, rel: null };
   const outOfChain = invocation && (invocation.phase !== label || typeof (invocation.start as { chain_phase?: unknown }).chain_phase === 'string');
@@ -537,7 +571,7 @@ function resolvePhaseEvidence(
     span.status === 'AGENT_RUNNING' ||
     span.status === 'AGENT_DONE'
   ) {
-    const reference = span.invocation?.end?.handoff_report ?? span.invocation?.handoff;
+    const reference = span.invocation?.end?.handoff_report ?? span.invocation?.handoff?.handoff_request;
     if (reference) return relPath(projectRoot, path.join(projectRoot, reportDir, reference.path));
     return agentLog;
   }
@@ -660,6 +694,8 @@ export function computeLiveness(input: LivenessInput): GoalProgressSnapshot['liv
     'heartbeat',
     'agent_invoke_start',
     'agent_invoke_end',
+    'agent_process_bound',
+    'agent_process_settled',
     'harness_start',
     'harness_end',
     'phase_verdict',

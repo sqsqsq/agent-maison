@@ -214,8 +214,9 @@ const semanticReviewCases: Case[] = (['normal', 'api429', 'unchanged'] as const)
   },
 }));
 
-const cases: Case[] = [...semanticReviewCases, {
-  name: '7d2c49e8 independent strength fills only unanswered signed work and stops after unchanged omissions',
+const independentStrengthCases: Case[] = (['omission', 'unreadable-yaml'] as const).map(mode => ({
+  name: mode === 'omission' ? '7d2c49e8 independent strength fills only unanswered signed work and stops after unchanged omissions'
+    : '3ec91fa7 independent strength repairs an unreadable YAML block through the original review window',
   run: async () => {
     const { root } = setupGoalRuntimeHost('deepseek-harness', false);
     const base = 'doc/features/bc-openCard';
@@ -247,13 +248,26 @@ const cases: Case[] = [...semanticReviewCases, {
       authorizeFixtureConstruction(root, 'request', requirement, ['coding', 'review', 'ut']);
       const requestIds: string[][] = [];
       const probe = await runGoalRuntimeChain(root, {
-        adapter: 'deepseek-harness', runId: '7d2c49e8-unanswered-review', freshRequirement: requirement,
+        adapter: 'deepseek-harness', runId: `independent-review-${mode}`, freshRequirement: requirement,
         onAuthor: () => undefined,
         onReview: context => {
           const requested = context.prompt.split('\n').flatMap(line => /^\| (acceptance_test_strength_\S+) \|/.exec(line)?.[1] ?? []);
           requestIds.push(requested);
           assert(context.prompt.includes('[BRANCH-second] asserted constant'), 'the signed handback must name the DAG-linked it');
           assert(requestIds.length <= 2, 'a third same-input response is forbidden');
+          if (mode === 'unreadable-yaml') {
+            if (requestIds.length === 1) {
+              write(report, '# 独立审查\n\n**审查结论**: 通过\n\n```issue-verification\n' + requested.map(issue =>
+                `- issue: ${issue}\n  verdict: unclear\n  evidence: \`[BRANCH-second] asserted constant\`\n`).join('') + '```\n');
+            } else {
+              assert(context.prompt.includes('仅补原独立审查的 YAML 表示') && context.prompt.includes('BAD_SCALAR_START')
+                && context.prompt.includes('原表片段'), 'the real unreadable handback must reach the same review owner with its exact syntax failures');
+              write(report, '# 独立审查\n\n**审查结论**: 通过\n\n```issue-verification\n' + YAML.stringify(requested.map(issue => ({
+                issue, verdict: 'unclear', evidence: '[BRANCH-second] asserted constant',
+              }))) + '```\n');
+            }
+            return;
+          }
           const rows = requestIds.length === 1 ? [{ issue: 'acceptance_test_strength_AC-1', verdict: 'unclear',
             evidence: 'The assertion in ' + files[0] + ' does not identify a live data source for the expected result.' }] : [];
           write(report, '# 独立审查\n\n**审查结论**: 通过\n\n```issue-verification\n' + YAML.stringify(rows) + '```\n');
@@ -262,14 +276,16 @@ const cases: Case[] = [...semanticReviewCases, {
           id: 'file_completeness', category: 'structure', severity: 'MAJOR', status: 'PASS', description: 'review report observed', details: report,
         }], [report]) } : null,
       });
-      assert(JSON.stringify(requestIds) === JSON.stringify([
-        ['acceptance_test_strength_AC-1', 'acceptance_test_strength_AC-2'], ['acceptance_test_strength_AC-2'],
-      ]), JSON.stringify(requestIds));
-      assert(probe.events.some(event => event.type === 'run_end' && event.halt_reason === 'no_progress_guard'),
+      const signed = ['acceptance_test_strength_AC-1', 'acceptance_test_strength_AC-2'];
+      assert(JSON.stringify(requestIds) === JSON.stringify([signed, mode === 'omission' ? signed.slice(1) : signed]), JSON.stringify(requestIds));
+      if (mode === 'omission') assert(probe.events.some(event => event.type === 'run_end' && event.halt_reason === 'no_progress_guard'),
         'repeated omission should preserve the original completion gap under no_progress_guard');
+      else assert(probe.exitCode !== 0, 'repairing YAML alone must retain unresolved strength claims');
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   },
-}, {
+}));
+
+const cases: Case[] = [...semanticReviewCases, ...independentStrengthCases, {
   name: '4c8d73b1 successor facts reuse requires an audited original and unchanged observed sources',
   run: async () => {
     const root = setupGoalRuntimeHost('codex', false).root;
@@ -479,6 +495,60 @@ const cases: Case[] = [...semanticReviewCases, {
           'the actual case remains incomplete when its data state cannot be established');
       } finally { fs.rmSync(root, { recursive: true, force: true }); }
     }
+  },
+}, {
+  name: '3ec91fa7 narrow testing handback leaves UT and contracts work with their actual writers',
+  run: async () => {
+    const root = setupGoalRuntimeHost('codex', false).root;
+    const feature = 'doc/features/bc-openCard';
+    const top = feature + '/testing/test-plan.md';
+    const contracts = feature + '/contracts.yaml';
+    const testFile = '02-Feature/FinancialCard/src/ohosTest/ets/test/Value.test.ets';
+    const calls: string[] = [];
+    const marker = 'residual writer fixture';
+    try {
+      fs.mkdirSync(path.dirname(path.join(root, testFile)), { recursive: true });
+      fs.writeFileSync(path.join(root, testFile), '// original named test\n');
+      authorizeFixtureConstruction(root, 'request');
+      const planDir = path.join(root, feature, 'testing/reports');
+      for (const file of listDerivedHylyrePlanFiles(planDir)) fs.unlinkSync(file.hylyrePath);
+      const changed = (file: string) => fs.readFileSync(path.join(root, file), 'utf8').includes(marker);
+      const result = await runGoalRuntimeChain(root, { adapter: 'codex', runId: '3ec91fa7-mixed-producers',
+        onAuthor: (_ctx, context) => {
+          if (context.workInput?.material.purpose === 'testing-preparation') {
+            calls.push('testing');
+            const problems = context.workInput.evaluation?.disposition.problems ?? [];
+            assert(problems.every(problem => !problem.files?.some(file => file === testFile || file === contracts)),
+              'narrow request falsely records unrelated work as delivered');
+            return;
+          }
+          if (!calls.includes('testing')) { calls.push('initial'); return; }
+          const text = context.instruction ?? '';
+          assert(text.includes('UT residual assertion') && text.includes('contract residual'),
+            'remaining work must reach the normal author with both concrete objects');
+          calls.push('residual');
+          assert(calls.filter(call => call === 'residual').length === 1, 'unchanged object cannot be bought again');
+          fs.appendFileSync(path.join(root, testFile), `\n// ${marker}\n`);
+          fs.appendFileSync(path.join(root, contracts), `\n# ${marker}\n`);
+        },
+        onHarnessSummary: ({ phase }) => phase !== 'testing' ? null : { checks: fixtureReadDependencies(root, [{
+          id: 'device_test_run', category: 'structure', description: 'official derivation check fixture',
+          severity: 'BLOCKER', status: 'FAIL', repair_owner: 'testing',
+          details: 'TC-01 needs isolated state', structured: { derive_hint: { coverage_reason: 'no_derived', missing_tc_ids: ['TC-01'] } },
+        }, {
+          id: 'ut_named_assertion_residual', category: 'structure', description: 'UT residual assertion',
+          severity: 'BLOCKER', status: changed(testFile) ? 'PASS' : 'FAIL', repair_owner: 'ut',
+          details: 'UT residual assertion', affected_files: [testFile],
+        }, {
+          id: 'contract_named_residual', category: 'structure', description: 'contract residual',
+          severity: 'BLOCKER', status: changed(contracts) ? 'PASS' : 'FAIL', repair_owner: 'plan',
+          details: 'contract residual', affected_files: [contracts],
+        }], [top, contracts, testFile]) },
+      });
+      assert(calls.join(',') === 'initial,testing,residual,testing', JSON.stringify({ calls, outcomes: result.events.slice(-4) }));
+      assert(changed(testFile) && changed(contracts), 'both existing write paths must be available');
+      assert(result.exitCode !== 0, 'the unresolved test preparation cannot be marked complete by unrelated work');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
   },
 }, {
   name: '4c8d73b1 production author self-check keeps writer-owned visual debt without rollback calls',

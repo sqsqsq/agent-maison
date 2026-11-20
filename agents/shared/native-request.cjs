@@ -204,7 +204,32 @@ function userControl(message) {
   const fixed = clauses.map(clause => /(?:按|使用|采用|指定(?:为)?)\s*(特别简单|小型|中型|复杂)(?:(?:流程|档|来做|执行|处理)|\s*$)/.exec(clause)?.[1]).filter(Boolean).at(-1);
   const excluded = clauses.flatMap(clause => [...clause.matchAll(/(?:不跑|跳过|不要运行|仅不执行)\s*(review|UT|单测|测试|真机|编译|架构检查)(?=\s*$|验证|检查)/gi)]).map(match => ({ review: 'review', ut: 'ut', 单测: 'ut', 测试: 'testing', 真机: 'testing', 编译: 'compile', 架构检查: 'architecture' })[match[1].toLowerCase()] ?? match[1]);
   const included = clauses.flatMap(clause => [...clause.trim().matchAll(/^(?:(?:本请求|本轮|本次|这次)\s*)?(?:(?:现在|请)\s*){0,2}(?:(?:恢复|重新)\s*(?:(?:运行|执行|跑)\s*)?|(?:运行|执行|跑)\s*)(review|UT|单测|测试|真机|编译|架构检查)(?:测试|验证|检查)?\s*$/gi)]).map(match => ({ review: 'review', ut: 'ut', 单测: 'ut', 测试: 'testing', 真机: 'testing', 编译: 'compile', 架构检查: 'architecture' })[match[1].toLowerCase()] ?? match[1]);
-  return { exempt, session: exempt && /(?:本|整个|这次)会话|(?:this|whole) session/i.test(value), revoke, fixed, excluded, included };
+  const transport = resolveTransportIntent(message);
+  return { exempt, session: exempt && /(?:本|整个|这次)会话|(?:this|whole) session/i.test(value), revoke, fixed, excluded, included,
+    ...(transport ? { transport } : {}) };
+}
+
+function resolveTransportIntent(message) {
+  const value = unquote(message).replace(/(`{3,}|~{3,})[\s\S]*?(?:\1|$)|`[^`\r\n]*`|“[^”]*”|‘[^’]*’|「[^」]*」|"[^"]*"|(?<!\w)'[^']*'(?!\w)/g, '');
+  const sentences = (value.match(/[^。！？!?；;\n]+[！？!?]?/g) ?? []).filter(sentence =>
+    !/(?:讨论|举例|假如|如果(?!\s*(?:遇到|出现|有)(?:问题|异常|故障))|是否|能否|什么叫|不要说|不代表|并非|不是|[?？]|\b(?:if|example|whether|what is)\b)/i.test(sentence));
+  const clauses = sentences.flatMap(sentence => sentence.split(/[，,]/).map(clause => clause.trim()));
+  const askOnProblem = /(?:遇到|出现|有)(?:问题|异常|故障)[^。！？!?]*问我/;
+  const withoutAsking = /(?:不|别|无需|不用|不要)\s*(?:先)?问我/;
+  const backgroundDirective = /^(?:(?:请|现在|这次|本轮)\s*)*(?:(?:你|(?:本次|当前)?任务|本请求|交付流程)\s*)?(?:(?:在|转入|切到|切换到|放到|改为)\s*)?后台(?:\s*(?:继续|持续)?\s*(?:推进|执行|运行|跑完?|完成|交付|继续)?\s*(?:工作|本次任务|原请求|该任务|这项任务|全部|剩余工作|到(?:验收|结果|完成|正式终点))?)?$/;
+  const unattendedMode = /^(?:(?:请|现在|这次|本次|本轮|全程)\s*)*(?:(?:你|(?:本次|当前)?任务|本请求|交付流程)\s*)?(?:(?:改为|转入|切到|切换到|采用|使用|保持)\s*)?无人值守(?:\s*模式)?[！!]?$/;
+  const unattendedManner = /^(?:(?:请|你|帮我|替我|现在|这次|本次|本轮|全程|本请求|当前任务|任务|交付流程)\s*)*(?:(?:以|按|用)\s*无人值守\s*(?:方式|模式)|无人值守\s*(?:方式|地))\s*(?:(?:继续|持续|自主)\s*)*(?:完成|执行|交付|推进|开发|测试|验收|运行|处理|做|跑)(?!\s*的)/;
+  const unattendedTask = /^(?:请\s*)?(?:你\s*)?(?:全程\s*)?无人值守\s*(?:(?:继续|持续|自主)\s*)*(?:完成|执行|交付|推进)\s*(?:(?:本次|这次|当前|该|全部|整个|剩余)|(?:(?:开发|测试|验收|任务|工作)(?:\s*(?:[、和及与]|以及)\s*(?:开发|测试|验收|任务|工作))*)?[！!]?$)/;
+  const attended = sentences.some(sentence => askOnProblem.test(sentence) && !withoutAsking.test(sentence))
+    || clauses.some(clause => /(?:有人在场|我(?:会|一直|在旁边)看着|我(?:会|现在)在场|(?:请)?(?:不要|别|禁止|不用)\s*(?:转(?:入)?|使用|启动|走|切到)?\s*(?:后台|无人值守)|^(?:请\s*)?(?:在)?前台(?:继续|执行|运行|推进)|需要[^，,。]*停下来|\b(?:do not|don't|no)\s+(?:run\s+in\s+the\s+)?background\b|\b(?:keep|stay)\b.*\bforeground\b)/i.test(clause)
+      && !/(?:不需要|不用|无需|不必|别|不要)\s*停下来|无人在场|没有人在场|不在场|不会看着/.test(clause));
+  const unattended = clauses.some(clause => /(?:不用|不必|无需)\s*(?:等|等待)\s*我/.test(clause)
+    || !/(?:不(?:要|用|许|能)|别|禁止|取消|停止|\b(?:no|not|never|stop)\b)/i.test(clause)
+      && !/^(?:请\s*)?(?:实现|添加|提供|支持|测试|验证|说明|比较|调研|配置|复现)\s*(?:无人值守|后台|--detach)/.test(clause)
+      && (backgroundDirective.test(clause) || unattendedMode.test(clause) || unattendedManner.test(clause) || unattendedTask.test(clause)
+        || /(?:^(?:请\s*)?--detach\s*$|\bunattended\b|^(?:please\s+)?(?:you\s+|this task\s+)?(?:run|continue) in the background\b)/i.test(clause)))
+    || sentences.some(sentence => /我(?:会|先|要|暂时)?(?:离开|走了|不在)[^。！？!?]*(?:[，,]\s*(?:请|你|仍然|照常|也要)?\s*|(?:仍|也要|照常)\s*)继续(?:跑|运行|执行|推进|做|完成|交付)/.test(sentence));
+  return attended === unattended ? null : attended ? 'attended' : 'unattended';
 }
 
 function toolInput(tool) {
@@ -263,4 +288,4 @@ function productTarget(projectRoot, frameworkRoot, filePath, roots = [], explici
     || /(?:^|\/)(?:package|oh-package|module|build-profile|app)\.json5?$/.test(rel);
 }
 
-module.exports = { samePath, currentNativeSession, nativeStore, toolSucceeded, toolCompletedBefore, isEditingTool, readNativeSession, userControl, editedPaths, frontDoorLoaded, toolInput, unquote, productTarget };
+module.exports = { samePath, currentNativeSession, nativeStore, toolSucceeded, toolCompletedBefore, isEditingTool, readNativeSession, userControl, resolveTransportIntent, editedPaths, frontDoorLoaded, toolInput, unquote, productTarget };

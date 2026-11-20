@@ -9,9 +9,9 @@
 
 有人/无人执行复用同一完成协调器和各工作单元专用作者：
 
-- 有人在场：goal-mode-entry.ts --prepare-run --run-mode attended，然后按返回的 --next / --report-result 命令领取和交回真实请求。读取原件并执行返回的 execute_command；observe_command / interrupt_command 只观察或中断该精确请求。
-- 无人值守：goal-runner.ts --feature <feature> --requirement-file <已有需求文件> --detach；使用返回的 startup 结果核启动，不以 pid/目录存在冒充健康。
-- 原授权全权执行由入口明确传递 --authorize-autonomy；日志、never 配置和 Agent 自写说明不构成授权。
+- 有人在场使用 `goal-mode-entry.ts --prepare-run --run-mode attended`。按返回的 `--next` 领取并运行 `execute_command`，已绑定时运行 `observe_command`。接到有原件的交回后按 `next_command` 继续。`interrupt_command` 只中断同一绑定。
+- 用户原话明确无人值守时，即使从上述入口准备或续接，也由程序接回原 `goal-runner.ts --detach` 路径。首份已签请求由后台沿原 owner 执行，取得真实交回后接同一 run。依据 `startup` 和 `wait_command` 的原件持续观察。仅在能确认后台未启动且同 adapter 有专用执行命令时使用返回的会话接续，依赖当前会话继续存活。
+- 已核实的无人值守原话在同一完整交付内授权自动设计修复，会话接续仍有效。直接取得的其他可信自主授权经 `--authorize-autonomy` 转交，运输继续遵从原用户选择。日志、`never` 配置和 Agent 自写说明不构成授权。
 - 仅当用户明示绝对截止时传 --user-deadline-at <UTC ISO-8601>。接回未完任务沿用原截止，不因重启、后继或换运输重置。
 - 公开 check/compile 按适用义务调用；--phase 选择工具检查族，不能要求先生成同名作者或旧阶段闭环。普通只读 assess 默认不写 next.json；显式需要投影才传 --write。
 
@@ -26,6 +26,8 @@
 真实 no_progress_guard 的相同差额保持暂停；明确继续使用原入口的 --force-resume 或受管会话 --force-takeover，仍须真实授权、原生停止确认、owner/fencing、写保护和原用户截止。已完成交付的新需求或明确重新交付按现 successor/范围修订契约处理，不用新目录洗掉失败。
 
 run-control.json 的 epoch、原 request、invoke_id、accepted report 与进程绑定仍是原恢复依据。只对精确 owner/PID/root 中断；不能碰其它任务、伪写 native end 或把未确认 quiesce 算结束。手工改 events、正式报告、manifest 身份或证据不构成恢复。
+
+前台持原 run、请求和游标等待，看到 `FAIL` 只等候或汇报。产品、契约、测试和证据由各自有写权的受管请求处理。签发到绑定、绑定到交回的差异供责任方核对，缺可信快照或出现冲突时保留原件并报告改动时段。快照不指认具体写者。
 
 ## 活性与工具期限
 

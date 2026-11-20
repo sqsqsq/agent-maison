@@ -62,7 +62,7 @@ import {
   phaseEvidenceBusinessInputs,
   currentEvidenceEntryHash,
 } from './phase-evidence-manifest';
-import { unrestoredAuthorWrites } from './phase-write-boundary';
+import { phaseWriteConflictProblems } from './phase-write-boundary';
 import { evaluateCompletionProgress, compareRelatedInputSnapshots, nativeCompileDiagnosticRefs, type CompletionEvaluation, type ArtifactSnapshot } from './goal-failure-classifier';
 import { isProviderToolResult } from './codex-terminal-events';
 import { asRecord, blueprintAuthorContent, type BlueprintRecord, type BlueprintIssue } from './component-blueprint-model';
@@ -1084,10 +1084,7 @@ export function readCurrentDispositionInput(opts: CleanPassOptions | CurrentRequ
   const ancestorRuns = readSupersededAncestorRuns({ projectRoot, feature, featuresDir: relFeaturesDir(projectRoot),
     seedTargets: predecessor ? [predecessor] : [], currentEvents: runEvents });
   const repairEvents = [...ancestorRuns.flatMap(run => run.events).sort((a, b) => String(a.ts).localeCompare(String(b.ts))), ...runEvents];
-  for (const [file, before] of unrestoredAuthorWrites(projectRoot, repairEvents)) {
-    additionalProblems.push({ phase: 'scope', id: 'phase_write_violation', action: 'repair', affects: 'completion', severity: 'BLOCKER',
-      detail: `先恢复本单元作者自己尚未恢复的越权写入：${file}；pre_sha256=${before ?? 'missing'}` });
-  }
+  additionalProblems.push(...phaseWriteConflictProblems(projectRoot, repairEvents, { feature, frameworkRoot: opts.frameworkRoot, runId: opts.runId }));
   const runtimeIssues = readRuntimeCompletionIssues(opts);
   let effectiveEvents: typeof repairEvents | undefined;
   const handbacks = new Map<string, boolean>();

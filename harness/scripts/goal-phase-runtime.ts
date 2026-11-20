@@ -5,9 +5,9 @@ import { adapterModelBinding, freezeModelPin, launchModelPin, parseAdapterModelB
 import { collectActionableDefects, resolveCurrentHapSha256Full, validateDeviceTestEvidenceBinding, readFreshVisualDisposition, type ActionableDefect, type UnverifiedDefect, type ActionableCollectResult, type DeviceTestCollectContext } from './utils/actionable-evidence';
 export { collectActionableDefects, resolveCurrentHapSha256Full, validateDeviceTestEvidenceBinding, readFreshVisualDisposition } from './utils/actionable-evidence';
 export type { ActionableDefect, UnverifiedDefect, ActionableCollectResult, DeviceTestCollectContext } from './utils/actionable-evidence';
-import { pendingPublishedDesignRepair } from './utils/design-repair-unattended';
+import { isDesignQuestioningWriteRecovery, pendingPublishedDesignRepair, readQuestioningBlueprintPreimage, restoreRejectedDesignQuestioning } from './utils/design-repair-unattended';
 import { resolveValidationOnlyEligibility } from './utils/goal-runner-phase';
-import { sessionExecutionDeadlineMs, sessionExecutionTransportInstructionSuffix, issueSessionExecution, writePhaseExecutionRequestMaterial, resignSessionExecution, readSessionExecution, inspectSessionExecutionBeforeRuntime, undeliveredSessionInvocation, executionRequestForInvoke, sessionExecutionForInvoke, sessionToolEventsLogPath, readHandoffMaterial, acceptedSessionReport, acceptSessionExecution, uncommittedSessionReport, sessionValidationOnlyEligibility, type IssuedSessionExecution, type SessionExecutionReport } from './utils/session-execution-handoff';
+import { sessionExecutionDeadlineMs, sessionExecutionTransportInstructionSuffix, issueSessionExecution, writePhaseExecutionRequestMaterial, resignSessionExecution, readSessionExecution, inspectSessionExecutionBeforeRuntime, undeliveredSessionInvocation, executionRequestForInvoke, sessionExecutionForInvoke, sessionToolEventsLogPath, readHandoffMaterial, acceptedSessionReport, acceptSessionExecution, uncommittedSessionReport, sessionValidationOnlyEligibility, capturePhaseBinding, readPhaseBinding, readSessionWriteWindows, type HandoffReference, type IssuedSessionExecution, type SessionExecutionReport } from './utils/session-execution-handoff';
 import { AttendedGoalPhaseExecutor, observeWorkUnitProviderSession, authorUnit, workUnitFeedbackDelivered, type WorkUnitInput } from './utils/goal-phase-executor';
 import { applyIndependentQuestioningOutput, independentQuestioningBlockers } from './utils/blueprint-questioning';
 import { validateComponentBlueprint } from './utils/component-blueprint-validator';
@@ -65,8 +65,8 @@ import * as path from 'path';
 import { StringDecoder } from 'string_decoder';
 import * as YAML from 'yaml';
 import { randomUUID } from 'crypto';
-import { findInitialDesignRun, prepareInitialDesignRun, readInitialDesignDelivery, readInitialDesignCompletionDisposition, projectInitialDesignDelivery, initialDesignAuthorInstruction, initialDesignInvocationLabel, validateInitialDesignInvocation, prepareInitialDesignDraft, initialDesignRequestOptions, readInitialDesignRequest, initialRequestWriteTargets, initialDesignCandidateRejection, type InitialDesignObservation, type InitialDesignDeliveryProjection } from './utils/initial-design-delivery';
-import { readOriginalDeliveryActivity, originalDeliveryForManifest } from './utils/delivery-origin';
+import { findInitialDesignRun, prepareInitialDesignRun, readInitialDesignDelivery, readInitialDesignCompletionDisposition, readInitialDesignWriteEvents, projectInitialDesignDelivery, initialDesignAuthorInstruction, initialDesignInvocationLabel, validateInitialDesignInvocation, prepareInitialDesignDraft, initialDesignRequestOptions, readInitialDesignRequest, initialRequestWriteTargets, initialDesignCandidateRejection, type InitialDesignObservation, type InitialDesignDeliveryProjection } from './utils/initial-design-delivery';
+import { readOriginalDeliveryActivity, originalDeliveryForManifest, resolveOriginalDeliveryExecution } from './utils/delivery-origin';
 import { writeCanonicalComponentClosure } from './check-component-closure';
 import { runChangeUnitProgression, buildChangeUnitGoalHandoff, buildChangeUnitGoalRequest, type ChangeUnitGoalHandoff } from './utils/change-unit-progress-loop';
 import { featureTrackDeclPath, resolveFeatureExecutionScope, prepareChangeUnitScopeInput, prepareFeatureScopeCandidate } from './utils/feature-track';
@@ -557,10 +557,12 @@ import {
   capturePhaseInvocationSnapshot,
   workUnitProtectedRecordPaths,
   classifyPhaseInvocationChanges,
+  phaseWriteWindows,
+  readPhaseRecoveryFile,
   diffPhaseInvocationSnapshots,
   renderPhaseWriteBoundaryGuidance,
   resolvePhasePathOwnership,
-  resolvePhaseWriteBoundary, authorWritePreimages, unrestoredAuthorWrites,
+  resolvePhaseWriteBoundary, authorWritePreimages, unrestoredAuthorWrites, unresolvedPhaseWrites, unresolvedWriteReviewPaths,
   type PhaseWriteBoundaryResolution,
   type PhaseInvocationChange,
 } from './utils/phase-write-boundary';
@@ -2952,7 +2954,7 @@ function buildPhaseWriteRecoveryContextBlock(ctx: PhaseWriteRecoveryPromptContex
 /** Existing violation facts retain the first real preimage; later dirty bytes never replace it. */
 
 function beforeAuthorInvocation(events: readonly GoalRunEvent[], invokeId: string): readonly GoalRunEvent[] {
-  const at = events.findIndex(event => event.type === 'agent_invoke_start' && event.invoke_id === invokeId);
+  const at = events.map(event => event.type === 'agent_invoke_start' && event.invoke_id === invokeId).lastIndexOf(true);
   return at < 0 ? events : events.slice(0, at);
 }
 
@@ -3669,7 +3671,7 @@ export function buildDetachedChildArgv(
   // plan 6fd6c8c1 §4.3.2：父进程已把 `--detach` 归一为无人值守授权；子进程不能再从
   // 剥离后的 argv 猜，也不能靠 --detached-child 自我授权。用既有非持久参数透传原输入；
   // supervisor 的 `--resume … --detach` 同样走这条入口，重启不丢授权。
-  if (!authorized) out.push('--authorize-autonomy');
+  if (!authorized && !rawArgs.includes('--adopt-session-transport')) out.push('--authorize-autonomy');
   return out;
 }
 
@@ -3681,7 +3683,7 @@ export function buildDetachedChildArgv(
  *  - launcher exits 0 fast → host's clean-exit path does not tree-kill the child.
  */
 export type DetachedStartupResult =
-  | { state: 'ready'; event: 'run_start' }
+  | { state: 'ready'; event: 'run_start' | 'execution_attached' }
   | { state: 'terminal'; status: string }
   | { state: 'alive_timeout'; detail: string }
   | { state: 'failed'; detail: string };
@@ -3694,6 +3696,7 @@ export async function waitForDetachedStartup(input: {
   childExitCode: () => number | null;
   childAlive?: () => boolean;
   childError?: () => string | undefined;
+  adoptedExecution?: () => boolean;
   timeoutMs?: number;
   pollMs?: number;
 }): Promise<DetachedStartupResult> {
@@ -3719,6 +3722,7 @@ export async function waitForDetachedStartup(input: {
     const terminal = [...events].reverse().find(event => event.type === 'run_end');
     if (manifestMatches && terminal) return { state: 'terminal', status: String(terminal.status ?? 'unknown') };
     if (manifestMatches && events.some(event => event.type === 'run_start')) return { state: 'ready', event: 'run_start' };
+    if (manifestMatches && input.adoptedExecution?.()) return { state: 'ready', event: 'execution_attached' };
     const exitCode = input.childExitCode();
     if (exitCode !== null) {
       return { state: 'failed', detail: `child exited before authoritative run_start (exit=${exitCode})${logTail() ? `: ${logTail()}` : ''}` };
@@ -3813,8 +3817,8 @@ export function __testing_setDetachSpawn(fn: typeof spawn | null): void {
 }
 
 /** runProbe：与前台同一测试缝（GoalPhaseRuntimeLaunchOptions.conditionWait.runProbe）；生产 CLI 不传，取共享的真实探针。 */
-async function runDetachLauncher(argv: minimist.ParsedArgs, runProbe?: (probe: string, phase: string) => ConditionProbeResult): Promise<number> {
-  const layout = injectedLayout ?? detectRepoLayout(__dirname);
+async function runDetachLauncher(argv: minimist.ParsedArgs, runProbe?: (probe: string, phase: string) => ConditionProbeResult,
+  rawArgs = process.argv.slice(2), layout = resolveRuntimeLayout({}, argv), emitReceipt: (value: Record<string, unknown>) => void = value => console.log(JSON.stringify(value))): Promise<number> {
   const projectRoot = layout.projectRoot;
   const cfg = loadFrameworkConfig(projectRoot);
   const featuresDir = (cfg.paths.features_dir ?? 'doc/features').replace(/\\/g, '/');
@@ -3848,14 +3852,25 @@ async function runDetachLauncher(argv: minimist.ParsedArgs, runProbe?: (probe: s
   let isResume = raw.isResume;
   const supersedeTargets = normalizeSupersedeTargets(argv.supersede);
   let runId = raw.runId ?? (originalDesign && !supersedeTargets.includes(originalDesign.run_id) ? originalDesign.run_id : newRunId());
-  let launchArgs = process.argv.slice(2);
+  let launchArgs = [...rawArgs];
   let sourceManifest = originalDesign ?? (raw.isResume && raw.runId ? loadGoalRunManifestFromRun(projectRoot, raw.runId, { feature })
     : argv.manifest ? loadGoalManifestFile(String(argv.manifest), projectRoot) : undefined);
+  if (isResume && !raw.dryRun && !argv['adopt-session-transport'] && sourceManifest && !argv['force-resume']) {
+    const actual = originalDeliveryForManifest(projectRoot, sourceManifest) ?? sourceManifest;
+    const execution = isInitialDesignManifest(actual) ? resolveOriginalDeliveryExecution(projectRoot, actual) : undefined;
+    const runDir = execution?.runDir ?? path.resolve(projectRoot, actual.report_dir);
+    const pending = execution?.request ?? readSessionExecution(runDir);
+    const owner = readRunControl(runDir, pending?.request.context.runId ?? actual.run_id)?.owner;
+    if (pending && owner?.kind === 'session' && owner.owner_id === pending.request.context.owner.owner_id && owner.state !== 'released') {
+      argv['adopt-session-transport'] = true;
+      launchArgs.push('--adopt-session-transport', '--authorize-autonomy');
+    }
+  }
   const launchAdapter = reconcileRunAdapter({ projectRoot, requestedAdapter: argv.adapter ? String(argv.adapter) : sourceManifest?.adapter,
     override: Boolean(argv['override-adapter']), adapterSource: argv['adapter-source'] ? String(argv['adapter-source']) : undefined }).effectiveAdapter;
   let capturedPin = launchModelPin(argv, launchAdapter, projectRoot, sourceManifest?.adapter_model_pin);
   // plan 9c3d7e1a §5.3：supervisor 只负责拉起 `--resume`；原 run 继续还是起后继由这里与子进程用同一判断决定。
-  if (isResume && !raw.dryRun) {
+  if (isResume && !raw.dryRun && !argv['adopt-session-transport']) {
     let recovery: RunContinuationDecision | null = null;
     try { recovery = decideLaunchContinuation(argv, projectRoot, feature, { plain: true, frameworkRoot: layout.frameworkRoot, ...(runProbe ? { runProbe } : {}) }); } catch { recovery = null; /* 判断不了就照原样恢复，由恢复守卫把关 */ }
     if (resumeTurnsIntoSuccessor(argv, recovery)) {
@@ -3948,51 +3963,57 @@ async function runDetachLauncher(argv: minimist.ParsedArgs, runProbe?: (probe: s
   const childArgs = buildDetachedChildArgv(launchArgs, runId, { resume: isResume });
   const preloadPath = resolveDetachedPreloadPath();
   const launchedAt = new Date().toISOString();
-  const child = (injectedDetachSpawn ?? spawn)(
-    process.execPath,
-    ['-r', preloadPath, __filename, ...childArgs],
-    {
-      detached: true,
-      stdio: ['ignore', logFd, logFd],
-      windowsHide: true,
-      cwd: process.cwd(),
-      // P0-7①：detach 重启的 goal-runner 也不得继承预加载注入（headless-assumptions 曾教操作者
-      // "启动 goal 前设 NODE_OPTIONS"——此处剥离让该路径失效）。自身 -r ts-node/register 属白名单。
-      env: sanitizeSpawnEnv(process.env).env,
-    },
-  );
   let spawnError: string | undefined;
-  child.once('error', error => { spawnError = error.message; });
-  // Parent must release the fd and the child reference: keeps no handle on the log
-  // (so the host's pipe wait can't be extended) and lets the parent exit cleanly.
-  child.unref();
-  fs.closeSync(logFd);
+  let child: ReturnType<typeof spawn> | undefined;
+  try {
+    child = (injectedDetachSpawn ?? spawn)(process.execPath, ['-r', preloadPath, __filename, ...childArgs], {
+      detached: true, stdio: ['ignore', logFd, logFd], windowsHide: true, cwd: process.cwd(),
+      env: { ...sanitizeSpawnEnv(process.env).env, TS_NODE_PROJECT: path.resolve(__dirname, '../tsconfig.json') },
+    });
+    child.once('error', error => { spawnError = error.message; });
+    child.unref();
+  } catch (error) {
+    spawnError = (error as Error).message;
+  } finally { fs.closeSync(logFd); }
+  const childPid = child?.pid;
 
   const startup = await waitForDetachedStartup({
     projectRoot,
     reportDirRel,
     runId,
     baselineEventCount,
-    childExitCode: () => child.exitCode,
-    childAlive: () => typeof child.pid === 'number' && pidExists(child.pid),
+    childExitCode: () => child?.exitCode ?? null,
+    childAlive: () => !!childPid && pidExists(childPid),
     childError: () => spawnError,
+    ...(argv['adopt-session-transport'] && sourceManifest ? { adoptedExecution: () => {
+      const run = isInitialDesignManifest(sourceManifest)
+        ? resolveOriginalDeliveryExecution(projectRoot, sourceManifest) : { runDir: reportDirAbs };
+      const lock = readLockRecord(path.join(run.runDir, RUN_LOCK_NAME));
+      return lock?.pid === childPid && !!childPid && pidExists(childPid);
+    } } : {}),
   });
 
-  console.log(
-    JSON.stringify({
+  emitReceipt({
       detached: true,
       run_id: runId,
       feature,
       report_dir: reportDirRel,
       log: path.relative(projectRoot, logPathAbs).replace(/\\/g, '/'),
-      pid: child.pid ?? null,
+      pid: childPid ?? null,
       startup,
       started_at: launchedAt,
       wait_command: goalStatusWaitCommand(projectRoot, layout.frameworkRoot, feature, runId),
       wait_timeout_ms: DEFAULT_GOAL_WAIT_TIMEOUT_MS,
-    }),
-  );
+  });
   return startup.state === 'failed' ? 1 : 0;
+}
+
+/** Route an already-created original run through the same detached launcher as the public CLI. */
+export async function launchGoalSessionDetach(args: string[]): Promise<Record<string, unknown>> {
+  let receipt: Record<string, unknown> = {};
+  const argv = parseGoalRuntimeArgs(args);
+  const exitCode = await runDetachLauncher(argv, undefined, args, resolveRuntimeLayout({}, argv), value => { receipt = value; });
+  return { type: 'goal_detach_result', ...receipt, exit_code: exitCode };
 }
 
 /** Resolve in the framework process; the detached child may start from a dependency-free consumer cwd. */
@@ -4079,7 +4100,7 @@ export function parseGoalRuntimeArgs(args: readonly string[]): minimist.ParsedAr
       'user-deadline-at',
       // Internal host-bridge inputs. They select transport/owner and explicit repo layout;
       // none of them grant policy authority or alter lifecycle adjudication.
-      'runtime-executor', 'runtime-owner', 'project-root', 'framework-root',
+      'runtime-executor', 'runtime-owner', 'project-root', 'framework-root', 'authorization-mode', 'through-phase',
       // plan f9c2e6b4 t4：多行/长需求的推荐入口（与 --requirement 互斥）。
       // fresh 读取内容并冻结进 manifest；resume 只认已冻结值，不重读源文件。
       'requirement-file', 'session-ref',
@@ -4098,7 +4119,7 @@ export function parseGoalRuntimeArgs(args: readonly string[]): minimist.ParsedAr
     boolean: [
       'help', 'dry-run', 'force-resume', 'override-start', 'override-end', 'override-manifest',
       'override-adapter',
-      'detach', 'detached-child', 'force', 'foreground-ok',
+      'detach', 'detached-child', 'adopt-session-transport', 'force', 'foreground-ok',
       // plan 6fd6c8c1 §4.3.2：后台入口转换后的共同授权输入（非持久；不写 manifest）。
       'authorize-autonomy',
       'refresh-vision-probe',
@@ -4110,11 +4131,30 @@ export function parseGoalRuntimeArgs(args: readonly string[]): minimist.ParsedAr
 /** Preserve the current process's explicit launch posture; continuation grants none. */
 export function inheritRunProcessArgs(argv: Record<string, unknown>): string[] {
   return [...(argv['foreground-ok'] === true ? ['--foreground-ok'] : []), ...(argv['detached-child'] === true ? ['--detached-child'] : []),
+    ...(argv['adopt-session-transport'] === true ? ['--adopt-session-transport'] : []),
+    ...(typeof argv['authorization-mode'] === 'string' ? ['--authorization-mode', argv['authorization-mode']] : []),
+    ...(typeof argv['through-phase'] === 'string' ? ['--through-phase', argv['through-phase']] : []),
     ...(argv['authorize-autonomy'] === true ? ['--authorize-autonomy'] : [])];
 }
 
 function resolveEntryAuthorization(options: GoalPhaseRuntimeLaunchOptions, argv: Record<string, unknown>) {
+  const mode = argv['authorization-mode'];
+  if (!options.authorization && argv['adopt-session-transport'] && (mode === 'manual' || mode === 'batch_authorized' || mode === 'goal_mode')) {
+    return { mode, autonomyAuthorized: argv['authorize-autonomy'] === true,
+      ...(typeof argv['through-phase'] === 'string' ? { through_phase: argv['through-phase'] } : {}) };
+  }
   return options.authorization ?? (argv['authorize-autonomy'] === true ? { mode: 'goal_mode' as const, autonomyAuthorized: true } : undefined);
+}
+
+function phaseBindingCapture(context: WorkUnitExecutionContext, original?: Pick<IssuedSessionExecution, 'request' | 'reference'>) {
+  let snapshot: HandoffReference | undefined;
+  return { beforeSpawn: () => { if (original) snapshot = capturePhaseBinding(context.runDir, original); },
+    fields: () => ({ owner_id: context.owner.owner_id, owner_epoch: context.owner.epoch, ...(snapshot ? { binding_snapshot: snapshot } : {}) }) };
+}
+
+function latestAcceptedExecutionUnconsumed(events: GoalRunEvent[], issued: IssuedSessionExecution): boolean {
+  const last = [...events].reverse().find(event => ['run_start', 'run_end', 'agent_invoke_end'].includes(event.type ?? ''));
+  return last?.type === 'agent_invoke_end' && last.invoke_id === issued.request.invoke_id && last.handoff_report?.request_sha256 === issued.reference.sha256;
 }
 
 function liveFeatureLock(projectRoot: string, feature: string): LockRecord | null {
@@ -4339,7 +4379,9 @@ export class GoalPhaseRuntime {
         if ((role === 'author' ? authorUnit(original.request.context, history, at)
           : previousVerifier ? canonicalRequestInput(previousVerifier) : original.request.context.phase) !== unit) continue;
         const end = history.slice(at + 1).find(event => event.type === 'agent_invoke_end' && event.invoke_id === start.invoke_id);
-        if (!end || !invocationCompleted({ ...end, exitCode: end.exit_code }) && end.status !== 'waiting') break;
+        if (!end || !invocationCompleted({ ...end, exitCode: end.exit_code }) && end.status !== 'waiting'
+          || role === 'verifier' && ['initial-design-questioning', 'design-repair-questioning'].includes(context.phase)
+            && history.some(event => isDesignQuestioningWriteRecovery(event, context.phase, start.invoke_id))) break;
         const frozen = !!context.workInput?.material && !!original.request.context.workInput?.material;
         const nextMaterial = stableStringify(material({ ...context, ...observed }, frozen, context.workInput?.material.purpose));
         const requestedMaterial = stableStringify(material(context, frozen, context.workInput?.material.purpose));
@@ -4409,6 +4451,10 @@ export class GoalPhaseRuntime {
         if (feature) {
           const located = typeof priorRunId === 'string'
             ? loadGoalRunManifestFromRun(root, priorRunId, { feature }) : null;
+          if (located && argv['detached-child'] && argv['adopt-session-transport']) {
+            const { adoptGoalSessionExecution } = await import('./goal-mode-entry');
+            if (await adoptGoalSessionExecution({ projectRoot: root, frameworkRoot }, originalDeliveryForManifest(root, located) ?? located) === 'waiting') return 3;
+          }
           if (located && !isInitialDesignManifest(located) && located.delivery_origin) {
             const original = loadGoalRunManifestFromRun(root, located.delivery_origin.run_id, { feature: located.delivery_origin.feature });
             if (!isInitialDesignManifest(original)) throw new Error('[initial-design] delivery origin does not identify the original design request');
@@ -4601,6 +4647,9 @@ export class GoalPhaseRuntime {
         forceTakeover: Boolean(argv['force-resume']) });
       let current = prelude.current;
       if (prelude.reusable) return exposeRequest(prelude.reusable);
+      if (current && argv['adopt-session-transport'] && latestAcceptedExecutionUnconsumed(history(), current)) {
+        this.acceptedSessionInvokeId = current.request.invoke_id;
+      }
       if (current && !acceptedSessionReport(runDir, current) && argv['force-resume'] && !this.options.sessionHandoff?.report) {
         const currentControl = readRunControl(runDir, manifest.run_id);
         if (currentControl?.owner?.state === 'released' || currentControl?.owner?.state === 'orphaned_session') {
@@ -4687,6 +4736,16 @@ export class GoalPhaseRuntime {
       };
       emit({ type: 'run_start', session_started_at: new Date(sessionStart).toISOString(), manifest_identity_fields: computeManifestIdentityFields(manifest), phase_chain: [] });
       if (transport === 'process' && process.platform === 'win32' && recoverRuntimeGuardians(history(), manifest.run_id, Boolean(argv['force-resume']), emit, conclude)) return 1;
+      const inheritedWriteEvents = readInitialDesignWriteEvents(projectRoot, manifest, []);
+      const writeHistory = (events = history()) => [...inheritedWriteEvents, ...events];
+      const restoreInitialQuestioning = (invokeId: string, pre: ReturnType<typeof capturePhaseInvocationSnapshot>,
+        post: ReturnType<typeof capturePhaseInvocationSnapshot>, windows: ReturnType<typeof phaseWriteWindows>, returned?: string): boolean => {
+        const phase = 'initial-design-questioning';
+        const blueprint = path.relative(projectRoot, componentBlueprintPath(projectRoot, manifest.feature)).replace(/\\/g, '/');
+        const before = readQuestioningBlueprintPreimage(runDir, phase, invokeId);
+        return restoreRejectedDesignQuestioning({ projectRoot, phase, invokeId, events: history(), pre, post, windows,
+          materials: new Map([[blueprint, { preimages: [before], returned }]]), emit });
+      };
       currentDesignWork: for (;;) {
         const state = { blueprintPath: componentBlueprintPath(projectRoot, manifest.feature) };
         const prior = history();
@@ -4694,21 +4753,34 @@ export class GoalPhaseRuntime {
         const latestPurpose = latest && 'purpose' in latest ? latest.purpose : undefined;
         if (latest?.handoff_report && latest.invoke_id) {
           const issued = sessionExecutionForInvoke(runDir, latest.invoke_id);
-          const saved = readHandoffMaterial<{ post_snapshot?: ReturnType<typeof capturePhaseInvocationSnapshot> }>(runDir, latest.handoff_report);
-          if (issued?.request.pre_snapshot && saved.post_snapshot) {
-            const diff = diffPhaseInvocationSnapshots(issued.request.pre_snapshot, saved.post_snapshot);
+          const saved = readHandoffMaterial<{ post_snapshot?: ReturnType<typeof capturePhaseInvocationSnapshot>; draft_outputs?: Record<string, string> }>(runDir, latest.handoff_report);
+          if (issued?.request.pre_snapshot && saved.post_snapshot && !String(latest.phase).startsWith('design-repair-')) {
+            const windows = readSessionWriteWindows(runDir, issued, saved.post_snapshot, prior)!;
             const allowed = (issued.request.snapshot_options?.ownedPrefixes ?? []).map(prefix => prefix.replace(/\\/g, '/'));
-            if (diff.kind === 'unverifiable') return conclude('unauthorized_source_mutation', '设计调用原写快照不可核实；不能猜测恢复前像。');
-            const originals = authorWritePreimages(beforeAuthorInvocation(history(), latest.invoke_id));
-            if (diff.kind === 'changed') recordAuthorRestorations(history(), diff.changes, String(latest.phase), latest.invoke_id, emit);
-            const outside = diff.kind === 'changed' ? diff.changes.filter(change => !allowed.some(prefix => change.path.replace(/\\/g, '/') === prefix || change.path.replace(/\\/g, '/').startsWith(prefix + '/'))
-              && (!originals.has(change.path) || originals.get(change.path) !== change.postSha256)) : [];
-            if (outside.length && !history().some(event => event.type === 'phase_write_violation' && event.invoke_id === latest.invoke_id)) emit({
-              type: 'phase_write_violation', phase: latest.phase, invoke_id: latest.invoke_id,
-              violations: outside.map(change => ({ path: change.path, violation: 'outside_authority', pre_sha256: change.preSha256, post_sha256: change.postSha256 })),
-            });
+            if (windows.kind === 'unverifiable') return conclude('unauthorized_source_mutation', `设计调用原写快照不可核实：${windows.reason}。`);
+            const originalHistory = writeHistory(prior);
+            const originals = authorWritePreimages(beforeAuthorInvocation(originalHistory, latest.invoke_id));
+            const readonlyQuestioning = latest.phase === 'initial-design-questioning' && issued.request.write_boundary?.executionRole === 'verifier';
+            if (!readonlyQuestioning) recordAuthorRestorations(originalHistory, windows.returned, String(latest.phase), latest.invoke_id, emit);
+            const outside = windows.returned.filter(change => (readonlyQuestioning || !allowed.some(prefix => change.path === prefix || change.path.startsWith(prefix + '/')))
+              && (!issued.request.write_boundary || !workUnitMayWritePath(issued.request.write_boundary, change.path))
+              && (readonlyQuestioning || !originals.has(change.path) || originals.get(change.path) !== change.postSha256));
+            const violations = [...windows.beforeBinding.map(change => ({ ...change, window: 'before_binding', violation: 'signed_input_drift' })),
+              ...outside.map(change => ({ ...change, window: windows.window, violation: 'outside_authority' }))];
+            if (violations.length) {
+              if (!prior.some(event => event.type === 'phase_write_violation' && event.invoke_id === latest.invoke_id)) emit({
+                type: 'phase_write_violation', phase: latest.phase, invoke_id: latest.invoke_id,
+                pre_snapshot: issued.request.pre_snapshot.sha256, post_snapshot: saved.post_snapshot.sha256,
+                violations: violations.map(change => ({ path: change.path, violation: change.violation, window: change.window,
+                  pre_sha256: change.preSha256, post_sha256: change.postSha256 })),
+              });
+              if (readonlyQuestioning) restoreInitialQuestioning(latest.invoke_id, issued.request.pre_snapshot, saved.post_snapshot,
+                windows, saved.draft_outputs?.['initial-design-blueprint.yaml']);
+            }
           }
         }
+        const writeReview = unresolvedWriteReviewPaths(unresolvedPhaseWrites(projectRoot, writeHistory()));
+        if (writeReview.length) return conclude('unauthorized_source_mutation', `设计交回不能采信，保全现场并由对应责任方核对：${writeReview.join('、')}`);
         const designEvents = history();
         const activeAttempt = [...designEvents].reverse().find(event => event.type === 'design_authority_repair'
           && 'stage' in event && event.stage === 'attempted' && 'handoff_context' in event
@@ -4717,7 +4789,7 @@ export class GoalPhaseRuntime {
             && (later.stage === 'failed' && (later as Record<string, unknown>).failed_step !== 'no_progress_guard' || later.stage === 'published'
               && !('outcome' in later && later.outcome === 'unrecovered' && 'failed_step' in later && later.failed_step === 'reconcile'))));
         if (activeAttempt && 'handoff_context' in activeAttempt && 'signature' in activeAttempt
-          && !unrestoredAuthorWrites(projectRoot, history()).size) {
+          && !unrestoredAuthorWrites(projectRoot, writeHistory()).size) {
           if (!automaticDesignRepair) return conclude('execution_scope_unresolved', '原设计事务仍未完成；需要恢复本请求已有的自动修复授权后继续，不扩大授权。');
           const original = readHandoffMaterial<{ baseline: string; cu?: string; brief: DesignRepairBriefLike }>(runDir, activeAttempt.handoff_context as import('./utils/session-execution-handoff').HandoffReference);
           const cu = original.cu ? asRecord(YAML.parse(Buffer.from(original.cu, 'base64').toString('utf8'))) : null;
@@ -4734,7 +4806,7 @@ export class GoalPhaseRuntime {
           if (continueRepair(repaired)) continue;
           return repairStop(repaired);
         }
-        if (latest?.invoke_id) {
+        if (latest?.invoke_id && !designEvents.some(event => event.type === 'phase_write_violation' && event.invoke_id === latest.invoke_id)) {
           const invocationDir = path.join(runDir, 'phases', String(latest.phase), latest.invoke_id);
           const beforeFile = path.join(invocationDir, 'blueprint-before.yaml');
           const saved = latest.handoff_report ? readHandoffMaterial<{ draft_outputs?: Record<string, string> }>(runDir, latest.handoff_report) : undefined;
@@ -4759,7 +4831,7 @@ export class GoalPhaseRuntime {
             const violation = validateInitialDesignInvocation(latestPurpose, fs.readFileSync(beforeFile, 'utf8'), output);
             if (violation) return conclude('unauthorized_source_mutation', violation);
             if (latestPurpose === 'author' && latest.phase === 'initial-design-author' && !readInitialDesignRequest(projectRoot, frameworkRoot, manifest) && output && invocationCompleted({ ...latest, exitCode: latest.exit_code })
-              && !authorWritePreimages(beforeAuthorInvocation(prior, latest.invoke_id)).size
+              && !authorWritePreimages(beforeAuthorInvocation(writeHistory(prior), latest.invoke_id)).size
               && fs.readFileSync(state.blueprintPath, 'utf8') === output) prepareInitialDesignDraft({ projectRoot, blueprintId: manifest.feature,
               sourceRefs: manifest.requirement_source_files?.length ? manifest.requirement_source_files
                 : [path.relative(projectRoot, path.join(runDir, 'manifest.json')).replace(/\\/g, '/') + '#requirement'],
@@ -4791,8 +4863,8 @@ export class GoalPhaseRuntime {
             issues: [...new Set([...observed.issues, requestPreparationIssue])] };
           observed = { ...feedback, disposition: readInitialDesignCompletionDisposition({ projectRoot, frameworkRoot, manifest, observation: feedback }) };
         }
-        const restoration = unrestoredAuthorWrites(projectRoot, history());
-        if (!observed.request && (observed.kind === 'author' || observed.kind === 'decompose') && !enumerateCanonicalChangeUnits(projectRoot, manifest.feature).length
+        const restoration = unrestoredAuthorWrites(projectRoot, writeHistory());
+        if (!restoration.size && !observed.request && (observed.kind === 'author' || observed.kind === 'decompose') && !enumerateCanonicalChangeUnits(projectRoot, manifest.feature).length
           && !observed.progression?.activeRun && fs.existsSync(state.blueprintPath)) {
           try {
             const loaded = loadCanonicalBlueprint(projectRoot, manifest.feature);
@@ -5010,6 +5082,7 @@ export class GoalPhaseRuntime {
         const prompt = initialDesignAuthorInstruction({ projectRoot, frameworkRoot, manifest, observation: observed, autonomyAuthorized: automaticDesignRepair,
           deliveryRuns: 'runs' in spent ? spent.runs : undefined, material: segments, checkerResultPath })
           + (purpose !== 'questioning' && observed.disposition ? `\n当前全部未完项（方法不是写权限；原授权及未恢复写入仍有效）：\n${renderCurrentDisposition(observed.disposition)}` : '');
+        if (restoration.size) segments.push({ restoration: Object.fromEntries(restoration) });
         const promptFile = path.join(invocationDir, 'prompt.md');
         const beforeBlueprint = fs.existsSync(observed.blueprintPath) ? fs.readFileSync(observed.blueprintPath, 'utf8') : '';
         const resolution = { projectRoot, executionRole: workUnitExecutionRole({ phase: label }, purpose),
@@ -5096,58 +5169,79 @@ export class GoalPhaseRuntime {
         let containmentError: string | undefined;
         let containmentStillAlive = false;
         let childExited = false;
+        const binding = phaseBindingCapture(context, original);
         const executor = this.options.executor ?? new DetachedGoalPhaseExecutor(() => {
           if (!headlessPlan || !capability.capability) throw new Error('initial design headless capability was not resolved');
           return { plan: headlessPlan,
             cwd: projectRoot, options: { outputLogPath: path.join(invocationDir, 'agent-output.log'),
               extraEnv: childEnv, usageCapture: capability.capability.usage_capture, toolEventCapture: capability.capability.tool_event_provenance,
               ...(process.platform === 'win32' ? { containment: { runId: manifest.run_id, invokeId } } : {}),
+              beforeSpawn: binding.beforeSpawn,
               onActiveChild: ({ pid, kill }) => {
                 activeAgentKill = async () => { await kill(); };
-                if (process.platform !== 'win32' || pid <= 0) return;
-                const bound = bindGuardianOrKill(pid, `${manifest.run_id}/${invokeId}`);
-                if (!bound.ok) { containmentError = bound.error; containmentStillAlive = bound.stillAlive; return; }
-                emit({ type: 'agent_process_bound', run_id: manifest.run_id, phase: label, invoke_id: invokeId, pid, started_at_ms: bound.identity.startedAtMs,
-                  executable: bound.identity.executable, token: `${manifest.run_id}/${invokeId}` });
+                const token = `${manifest.run_id}/${invokeId}`;
+                const bound = process.platform === 'win32' ? bindGuardianOrKill(pid, token) : null;
+                if (bound && !bound.ok) { containmentError = bound.error; containmentStillAlive = bound.stillAlive; return; }
+                emit({ type: 'agent_process_bound', run_id: manifest.run_id, phase: label, invoke_id: invokeId, pid, token,
+                  ...(bound?.ok ? { started_at_ms: bound.identity.startedAtMs, executable: bound.identity.executable } : {}), ...binding.fields() });
               }, onChildExit: () => { childExited = true; activeAgentKill = null; } } };
         }, injectedInvokeAgent ?? invokeAgentHeadless);
         const result = await this.executeExecutor(context, executor);
         activeAgentKill = null;
         if (containmentError && containmentStillAlive) return conclude('agent_containment_unresolved', containmentError);
-        if (fs.existsSync(observed.blueprintPath)) fs.writeFileSync(path.join(invocationDir, 'draft-output.yaml'), fs.readFileSync(observed.blueprintPath), { flag: 'wx' });
-        emit({ ...invocationEndFacts(result), type: 'agent_invoke_end', phase: label, purpose, invoke_id: invokeId, status: result.status, exit_code: result.exitCode,
+        let returnedBlueprint: Buffer | null = null;
+        if (purpose === 'questioning') {
+          try { returnedBlueprint = readPhaseRecoveryFile(projectRoot, observed.blueprintPath).bytes; }
+          catch { /* The signed snapshot retains an unsafe or unreadable return. */ }
+        } else if (fs.existsSync(observed.blueprintPath)) returnedBlueprint = fs.readFileSync(observed.blueprintPath);
+        if (returnedBlueprint) fs.writeFileSync(path.join(invocationDir, 'draft-output.yaml'), returnedBlueprint, { flag: 'wx' });
+        const recordEnd = (rejection?: string): void => { emit({ ...invocationEndFacts(result), type: 'agent_invoke_end', phase: label, purpose, invoke_id: invokeId, status: result.status, exit_code: result.exitCode,
           command: result.command,
           duration_ms: result.duration_ms, provider_session_id: result.provider_session_id, interrupted: result.interrupted, nativeSessionRebuildReason: result.nativeSessionRebuildReason, readonly_enforced: result.readonly_enforced, readonly_diagnostic: result.readonly_diagnostic, completion_observed: result.completion_observed, terminal_failure_observed: result.terminal_failure_observed, timed_out: result.timed_out,
-          silent_killed: result.silent_killed, skipped: result.skipped, kill_attempted: result.kill_attempted, terminal_error_excerpt: result.terminal_error_excerpt, ...(result.spawn_error ? { spawn_error: result.spawn_error } : {}) });
+          silent_killed: result.silent_killed, skipped: result.skipped, kill_attempted: result.kill_attempted, terminal_error_excerpt: result.terminal_error_excerpt, ...(result.spawn_error ? { spawn_error: result.spawn_error } : {}),
+          ...(rejection ? { status: 'failed', exit_code: 1, write_evidence_rejected: rejection } : {}) }); };
         if (childExited && !containmentError) emit({ type: 'agent_process_settled', run_id: manifest.run_id, phase: label, invoke_id: invokeId, exit_code: result.exitCode, timed_out: result.timed_out });
         const hardCli = resolveInvokeHardCliFailure(result, { formalInvoke: true });
-        if (hardCli || containmentError) return conclude('adapter_cli_hard_failure', hardCli ?? containmentError!);
+        if (hardCli || containmentError) { recordEnd(); return conclude('adapter_cli_hard_failure', hardCli ?? containmentError!); }
         const post = capturePhaseInvocationSnapshot(resolution, snapshotOptions);
-        const delta = diffPhaseInvocationSnapshots(pre, post);
-        if (delta.kind === 'unverifiable') return conclude('unauthorized_source_mutation', '设计调用原快照不可核实；不能猜测恢复前像。');
-        const originals = authorWritePreimages(beforeAuthorInvocation(history(), invokeId));
-        if (delta.kind === 'changed') recordAuthorRestorations(history(), delta.changes, label, invokeId, emit);
-        const outside = delta.kind === 'changed' ? delta.changes.filter(change => !snapshotOptions.ownedPrefixes.some(prefix => change.path === prefix || change.path.startsWith(prefix + '/'))
-          && (!originals.has(change.path) || originals.get(change.path) !== change.postSha256)) : [];
-        if (outside.length) {
-          const violations = outside.map(change => ({ path: change.path, violation: 'outside_authority', pre_sha256: change.preSha256, post_sha256: change.postSha256 }));
-          const repeated = history().some(event => event.type === 'phase_write_violation' && JSON.stringify((event as Record<string, any>).violations) === JSON.stringify(violations));
-          emit({ type: 'phase_write_violation', phase: label, invoke_id: invokeId, violations });
-          if (repeated) return conclude('phase_write_violation_repeat', '同一越界写入重复未恢复，保留成果和原前像hash。');
+        const windows = phaseWriteWindows(pre, original ? readPhaseBinding(runDir, original, history()) : null, post);
+        if (windows.kind === 'unverifiable') {
+          const detail = `设计调用原快照不可核实：${windows.reason}。`;
+          recordEnd(detail); return conclude('unauthorized_source_mutation', detail);
+        }
+        const originalHistory = writeHistory();
+        const originals = authorWritePreimages(beforeAuthorInvocation(originalHistory, invokeId));
+        if (purpose === 'author') recordAuthorRestorations(originalHistory, windows.returned, label, invokeId, emit);
+        const outside = windows.returned.filter(change => (purpose === 'questioning' || !snapshotOptions.ownedPrefixes.some(prefix => change.path === prefix || change.path.startsWith(prefix + '/')))
+          && !workUnitMayWritePath(writeBoundary, change.path) && (purpose === 'questioning' || !originals.has(change.path) || originals.get(change.path) !== change.postSha256));
+        const violations = [...windows.beforeBinding.map(change => ({ ...change, window: 'before_binding', violation: 'signed_input_drift' })),
+          ...outside.map(change => ({ ...change, window: windows.window, violation: 'outside_authority' }))];
+        if (violations.length) {
+          if (purpose === 'questioning') recordDesignRepairInvocation(runDir, 'questioning', invokeId, {
+            started: true, ok: false, status: result.status, detail: result.details ?? result.status,
+            output: result.details ?? readInvokeFinalText(result.stdout, path.join(invocationDir, 'agent-output.log'), manifest.adapter ?? 'generic') ?? '',
+            preSnapshot: pre, postSnapshot: post,
+          }, { phase: 'initial-design-questioning', blueprintPath: observed.blueprintPath, projectRoot });
+          emit({ type: 'phase_write_violation', phase: label, invoke_id: invokeId, pre_snapshot: pre.sha256, post_snapshot: post.sha256,
+            violations: violations.map(change => ({ path: change.path, violation: change.violation, window: change.window,
+              pre_sha256: change.preSha256, post_sha256: change.postSha256 })) });
+          recordEnd(`原交回的写界不成立：${[...new Set(violations.map(change => change.path))].join('、')}`);
+          if (purpose === 'questioning') restoreInitialQuestioning(invokeId, pre, post, windows, returnedBlueprint?.toString('base64'));
           continue;
         }
-        if (purpose === 'author' && delta.kind === 'changed') emit({ type: 'phase_write_observed', phase: label, invoke_id: invokeId,
+        recordEnd();
+        if (purpose === 'author' && windows.returned.length) emit({ type: 'phase_write_observed', phase: label, invoke_id: invokeId,
           pre_snapshot: pre.sha256, post_snapshot: post.sha256,
-          owned: delta.changes.map(change => ({ path: change.path, how: change.how, owner: null,
+          owned: windows.returned.map(change => ({ path: change.path, how: change.how, window: windows.window, owner: null,
             pre_sha256: change.preSha256, post_sha256: change.postSha256, roles: [] })), observations: [], observed_count: 0 });
         if (recoverableProviderSessionFailure(context, result)) continue;
         if (purpose === 'questioning' && invocationCompleted(result)) {
           if (fs.readFileSync(observed.blueprintPath, 'utf8') !== beforeBlueprint) return conclude('unauthorized_source_mutation', '独立质询修改了只读蓝图输入。');
           const output = result.details ?? readInvokeFinalText(result.stdout, path.join(invocationDir, 'agent-output.log'), manifest.adapter ?? 'generic') ?? '';
-          if (delta.kind === 'clean') recordDesignRepairInvocation(runDir, 'questioning', invokeId, {
+          if (!windows.returned.length) recordDesignRepairInvocation(runDir, 'questioning', invokeId, {
             started: true, ok: true, status: result.status, detail: result.details ?? result.status, output,
             preSnapshot: pre, postSnapshot: post,
-          }, { phase: 'initial-design-questioning', blueprintPath: observed.blueprintPath });
+          }, { phase: 'initial-design-questioning', blueprintPath: observed.blueprintPath, projectRoot });
           try { applyIndependentQuestioningOutput(observed.blueprintPath, path.join(invocationDir, 'questioning-output.json'),
             output, 'initial-design-questioning', projectRoot); }
           catch { /* Original validation owns incomplete or malformed questioning output. */ }
@@ -5225,6 +5319,11 @@ export class GoalPhaseRuntime {
     acceptedInvokeId = this.acceptedSessionInvokeId): Promise<DesignRepairInvokeOutcome> {
     const runDir = path.resolve(projectRoot, manifest.report_dir);
     const label = designRepairInvokeLabel(purpose);
+    if (purpose === 'questioning' && acceptedInvokeId && loadAuthoritativeEvents(path.join(runDir, 'events.jsonl'))
+      .some(event => isDesignQuestioningWriteRecovery(event, label, acceptedInvokeId))) {
+      if (this.acceptedSessionInvokeId === acceptedInvokeId) this.acceptedSessionInvokeId = undefined;
+      acceptedInvokeId = undefined;
+    }
     if (acceptedInvokeId && guard) {
       try {
       const issued = sessionExecutionForInvoke(runDir, acceptedInvokeId);
@@ -5234,16 +5333,19 @@ export class GoalPhaseRuntime {
       if (request && received && guard.options?.ownedPrefixes?.length && request.purpose === purpose && request.context.phase === label
         && request.context.runId === manifest.run_id && request.context.feature === manifest.feature
         && path.resolve(request.context.projectRoot) === path.resolve(projectRoot) && path.resolve(request.context.runDir) === runDir
-        && request.context.owner.run_id === token.run_id && request.context.owner.owner_id === token.owner_id && request.context.owner.epoch === token.epoch
+        && request.context.owner.run_id === token.run_id && (request.context.owner.owner_id === token.owner_id && request.context.owner.epoch === token.epoch
+          || this.options.args?.includes('--adopt-session-transport') && request.context.owner.kind === 'session' && request.context.owner.epoch + 1 === token.epoch)
         && stableStringify(targets(request.snapshot_options?.ownedPrefixes)) === stableStringify(targets(guard.options?.ownedPrefixes))) {
         if (this.acceptedSessionInvokeId === acceptedInvokeId) this.acceptedSessionInvokeId = undefined;
         const saved = received.event.handoff_report
           ? readHandoffMaterial<{ post_snapshot?: ReturnType<typeof capturePhaseInvocationSnapshot> }>(runDir, received.event.handoff_report) : undefined;
         if (!request.pre_snapshot || !saved?.post_snapshot) return { started: false, ok: false, status: 'waiting', invokeId: request.invoke_id,
           detail: '本次原设计调用已交回但前/后像原件缺失；恢复该准确请求的归档后继续，不另派作者或猜测写入。' };
-        return { started: true, ok: invocationCompleted({ ...received.event, status: received.report.status, exitCode: received.event.exit_code }),
-          invokeId: request.invoke_id, status: received.report.status, detail: received.report.details ?? received.report.status,
-          output: received.report.details ?? '', preSnapshot: request.pre_snapshot, postSnapshot: saved.post_snapshot };
+        const status = received.event.status === 'failed' ? 'failed' : received.report.status;
+        return { started: true, ok: invocationCompleted({ ...received.event, status, exitCode: received.event.exit_code }),
+          invokeId: request.invoke_id, status, detail: received.report.details ?? status,
+          output: received.report.details ?? '', preSnapshot: request.pre_snapshot, postSnapshot: saved.post_snapshot,
+          bindingSnapshot: readPhaseBinding(runDir, issued!, loadAuthoritativeEvents(path.join(runDir, 'events.jsonl'))) ?? undefined };
       }
       } catch (error) {
         return { started: false, ok: false, status: 'waiting', invokeId: acceptedInvokeId,
@@ -5304,6 +5406,7 @@ export class GoalPhaseRuntime {
     }
     const capability = loadGoalCapability(frameworkRoot, manifest.adapter ?? 'generic');
     let containmentError: string | undefined; let containmentAlive = false; let childExited = false;
+    const binding = phaseBindingCapture(context, original);
     const executor = this.options.executor ?? new DetachedGoalPhaseExecutor(() => {
       if (!capability.valid || !capability.capability) throw new Error(capability.issues.join('; '));
       return { plan: resolveHeadlessInvokePlan(context.adapter, capability.capability, manifest.unattended, text,
@@ -5311,13 +5414,14 @@ export class GoalPhaseRuntime {
         cwd: projectRoot, options: { outputLogPath: path.join(dir, 'agent-output.log'), extraEnv: childEnv,
           ...(process.platform === 'win32' ? { containment: { runId: manifest.run_id, invokeId } } : {}),
           usageCapture: capability.capability.usage_capture, toolEventCapture: capability.capability.tool_event_provenance,
+          beforeSpawn: binding.beforeSpawn,
           onActiveChild: ({ pid, kill }) => {
             activeAgentKill = async () => { await kill(); };
-            if (process.platform !== 'win32' || pid <= 0) return;
-            const ownership = bindGuardianOrKill(pid, `${manifest.run_id}/${invokeId}`);
-            if (!ownership.ok) { containmentError = ownership.error; containmentAlive = ownership.stillAlive; return; }
-            emit({ type: 'agent_process_bound', run_id: manifest.run_id, phase: label, invoke_id: invokeId, pid, started_at_ms: ownership.identity.startedAtMs,
-              executable: ownership.identity.executable, token: `${manifest.run_id}/${invokeId}` });
+            const token = `${manifest.run_id}/${invokeId}`;
+            const ownership = process.platform === 'win32' ? bindGuardianOrKill(pid, token) : null;
+            if (ownership && !ownership.ok) { containmentError = ownership.error; containmentAlive = ownership.stillAlive; return; }
+            emit({ type: 'agent_process_bound', run_id: manifest.run_id, phase: label, invoke_id: invokeId, pid, token,
+              ...(ownership?.ok ? { started_at_ms: ownership.identity.startedAtMs, executable: ownership.identity.executable } : {}), ...binding.fields() });
           }, onChildExit: () => { childExited = true; activeAgentKill = null; } } };
     }, injectedInvokeAgent ?? invokeAgentHeadless);
     if (kind === 'session') renewSessionLease(runDir, token, this.options.leaseMs ?? 60_000);
@@ -5331,7 +5435,8 @@ export class GoalPhaseRuntime {
     if (childExited && !containmentError) emit({ type: 'agent_process_settled', run_id: manifest.run_id, phase: label, invoke_id: invokeId, exit_code: result.exitCode });
     const outcome: DesignRepairInvokeOutcome = { started: true, invokeId, ok: invocationCompleted(result) && !containmentError, status: result.status,
       ...(purpose === 'questioning' ? { output: result.details ?? readInvokeFinalText(result.stdout, path.join(dir, 'agent-output.log'), manifest.adapter ?? 'generic') ?? '' } : {}),
-      detail: containmentError ?? result.details ?? `exit=${result.exitCode}`, preSnapshot: guard?.pre, postSnapshot: post };
+      detail: containmentError ?? result.details ?? `exit=${result.exitCode}`, preSnapshot: guard?.pre, postSnapshot: post,
+      bindingSnapshot: original ? readPhaseBinding(runDir, original, loadAuthoritativeEvents(path.join(runDir, 'events.jsonl'))) ?? undefined : undefined };
     recordDesignRepairInvocation(runDir, purpose, invokeId, outcome);
     return outcome;
   }
@@ -5684,7 +5789,7 @@ export async function main(options: GoalPhaseRuntimeLaunchOptions = {}): Promise
   // blocking host shell (e.g. chrys TUI shell tool) is not held for the whole run.
   // The spawned child carries `--detached-child` and runs this same main() normally.
   if (argv.detach && !argv['detached-child']) {
-    return await runDetachLauncher(argv, options.conditionWait?.runProbe);
+    return await runDetachLauncher(argv, options.conditionWait?.runProbe, [...options.args ?? process.argv.slice(2)], resolveRuntimeLayout(options, argv));
   }
 
   if (argv.help) {
@@ -5809,7 +5914,7 @@ Goal runner — original request design and construction runtime
       return new GoalPhaseRuntime(options).run();
     }
   }
-  const publicationResume = options.sessionHandoff && typeof argv.resume === 'string' && launchFeature
+  const publicationResume = (options.sessionHandoff || argv['adopt-session-transport']) && typeof argv.resume === 'string' && launchFeature
     ? (() => {
         const original = loadGoalManifestFromRun(projectRoot, String(argv.resume), { feature: launchFeature });
         return pendingPublishedDesignRepair(projectRoot, path.resolve(projectRoot, original.report_dir));
@@ -5823,7 +5928,7 @@ Goal runner — original request design and construction runtime
       })
     : null;
   // plan 9c3d7e1a §5.3：显式 --resume 也经同一恢复判断；判为起后继时去掉恢复旗标，下面按接续决策的"起后继"出生。
-  if (resumeTurnsIntoSuccessor(argv, plainContinuation)) {
+  if (!argv['adopt-session-transport'] && resumeTurnsIntoSuccessor(argv, plainContinuation)) {
     console.log(`[goal-runner] --resume ${String(argv.resume)} 改为起后继（同一恢复判断）`);
     delete argv.resume;
     delete argv['force-resume'];
@@ -6348,8 +6453,12 @@ Goal runner — original request design and construction runtime
   }
 
   runtimeSessionLogs = !!options.sessionHandoff;
-  let sessionRequest = options.sessionHandoff ? readSessionExecution(path.resolve(projectRoot, manifest.report_dir), options.sessionHandoff.requestPath) : null;
+  let sessionRequest = options.sessionHandoff || argv['adopt-session-transport'] ? readSessionExecution(path.resolve(projectRoot, manifest.report_dir), options.sessionHandoff?.requestPath) : null;
   let acceptedSessionInvokeId: string | undefined;
+  if (sessionRequest && argv['adopt-session-transport'] && latestAcceptedExecutionUnconsumed(
+    loadAuthoritativeEvents(path.resolve(projectRoot, manifest.report_dir, 'events.jsonl')), sessionRequest)) {
+    acceptedSessionInvokeId = sessionRequest.request.invoke_id;
+  }
   const incompleteSessionStart = options.sessionHandoff ? undeliveredSessionInvocation(loadAuthoritativeEvents(path.resolve(projectRoot, manifest.report_dir, 'events.jsonl'))) : undefined;
   const sessionControl = (sessionRequest || incompleteSessionStart) ? readRunControl(path.resolve(projectRoot, manifest.report_dir), manifest.run_id) : null;
   const sameSessionWindow = sessionRequest && sessionControl?.owner && sessionControl.current_epoch === sessionRequest.request.context.owner.epoch
@@ -6538,7 +6647,7 @@ Goal runner — original request design and construction runtime
     }
   }
 
-  if (options.sessionHandoff) {
+  if (options.sessionHandoff || argv['adopt-session-transport']) {
     const runDir = path.resolve(projectRoot, manifest.report_dir);
     const pendingPublication = pendingPublishedDesignRepair(projectRoot, runDir);
     if (pendingPublication) {
@@ -6559,7 +6668,8 @@ Goal runner — original request design and construction runtime
           return { started: true, ok: invocationCompleted({ ...received.event, status: received.report.status, exitCode: received.event.exit_code }),
             invokeId: issued.request.invoke_id, status: received.report.status, detail: received.report.details ?? received.report.status,
             ...(purpose === 'questioning' ? { output: received.report.details ?? '' } : {}),
-            preSnapshot: issued.request.pre_snapshot ?? undefined, postSnapshot: original?.post_snapshot };
+            preSnapshot: issued.request.pre_snapshot ?? undefined, postSnapshot: original?.post_snapshot,
+            bindingSnapshot: readPhaseBinding(runDir, issued, loadAuthoritativeEvents(path.join(runDir, 'events.jsonl'))) ?? undefined };
         },
       });
     }
@@ -6797,6 +6907,15 @@ Goal runner — original request design and construction runtime
     const ancestorEvents = readSupersededAncestorRuns({ projectRoot, featuresDir, feature: manifest.feature,
       seedTargets: [...new Set([...supersededRunIds, ...(manifest.successor_of ? [manifest.successor_of] : [])])], currentEvents: activityStartEvents })
       .flatMap(run => run.events);
+    const startupWriteReview = unresolvedWriteReviewPaths(unresolvedPhaseWrites(projectRoot, [...ancestorEvents, ...activityStartEvents],
+      { feature: manifest.feature, frameworkRoot, runId: manifest.run_id }));
+    if (!dryRun && startupWriteReview.length) {
+      const detail = `原交回的写界冲突仍待对应责任方核对：${startupWriteReview.join('、')}`;
+      goalEvents.emit({ type: 'run_end', status: 'HALTED', halt_reason: 'unauthorized_source_mutation', error: detail,
+        halt_guidance: detail, run_disposition: 'WAITING', run_wait_kind: 'external', session_started_at: sessionStartedAtIso });
+      runConcluded = true;
+      return 1;
+    }
     const explicitDeadline = workUnitExecutionInputs(manifest, undefined, projectRoot).user_deadline_at;
     const remainingUserMs = (): number => explicitDeadline ? Date.parse(explicitDeadline) - Date.now() : Infinity;
 
@@ -7411,7 +7530,7 @@ Goal runner — original request design and construction runtime
       flushProgress(false, false, disposition);
       const independent = independentArtifactRepairs({ projectRoot, frameworkRoot, feature: manifest.feature,
         runId: manifest.run_id, executionScope: input.executionScope, currentDisposition: disposition });
-      const acceptanceReview: Array<{ issue: string; digests: string[]; files: string[]; detail: unknown }> = [];
+      const acceptanceReview: Array<{ issue: string; digests: string[]; files: string[]; detail: unknown; conflicting?: true }> = [];
       if (input.executionScope?.obligations.some(item => item.owner_phase === 'review' && item.applicability === 'required')
         && !resolvedProfile.phasesDisabled.has('review')) {
         // A source compile repair can invalidate the upcoming review. Other diagnostic
@@ -7423,8 +7542,9 @@ Goal runner — original request design and construction runtime
         if (!compileRepair) {
           for (const strength of facts.acceptanceStrength ?? []) {
             if ('gap' in strength || strength.attempted || strength.passed) continue;
-            acceptanceReview.push({ issue: strength.issue, digests: [strength.digest], files: [...strength.files, ...strength.priorProduction],
-              detail: { acceptance: strength.acceptance, tests: strength.tests, files: strength.files } });
+          acceptanceReview.push({ issue: strength.issue, digests: [strength.digest], files: [...strength.files, ...strength.priorProduction],
+            ...(strength.conflicts ? { conflicting: true as const } : {}),
+            detail: { acceptance: strength.acceptance, tests: strength.tests, files: strength.files, priorConflicts: strength.conflicts } });
           }
         }
         if (results.some(result => result.phase === 'testing' && result.checks.some(check => asRecord(check.structured)?.pending_testing_retest === true))) {
@@ -7470,30 +7590,36 @@ Goal runner — original request design and construction runtime
       return userContinued && records.map(event => event.type === 'agent_invoke_start' || event.type === 'harness_start').lastIndexOf(true)
         < records.map(event => event.type === 'run_start').lastIndexOf(true);
     };
-    if (options.sessionHandoff && sessionRequest) {
+    const writeHistory = (events = loadAuthoritativeEvents(eventsPath)) => [...ancestorEvents, ...events];
+    const writeConflicts = () => unresolvedPhaseWrites(projectRoot, writeHistory(), { feature: manifest.feature, frameworkRoot, runId: manifest.run_id });
+    if (sessionRequest && (options.sessionHandoff || argv['adopt-session-transport'])) {
       const invokeId = sessionRequest.request.invoke_id;
       const received = acceptedSessionReport(runDir, sessionRequest);
       if (received?.event.handoff_report && sessionRequest.request.pre_snapshot && sessionRequest.request.write_boundary) try {
         const saved = readHandoffMaterial<{ post_snapshot?: ReturnType<typeof capturePhaseInvocationSnapshot> }>(runDir, received.event.handoff_report);
         if (saved.post_snapshot) {
-          const delta = diffPhaseInvocationSnapshots(sessionRequest.request.pre_snapshot, saved.post_snapshot);
-          if (delta.kind === 'unverifiable') wait(sessionRequest.request.context.phase, `原session写入后像不可核实：${delta.reason}；恢复原件后继续，不运行正式工具。`);
-          if (delta.kind === 'changed') {
-            const records = loadAuthoritativeEvents(eventsPath);
-            recordAuthorRestorations(records, delta.changes, sessionRequest.request.context.phase, sessionRequest.request.invoke_id, goalEvents.emit);
-            const originals = authorWritePreimages(beforeAuthorInvocation(records, sessionRequest.request.invoke_id));
-            const writes = classifyPhaseInvocationChanges(sessionRequest.request.write_boundary, sessionRequest.request.context.phase, delta.changes,
-              { events: records, invokeId: sessionRequest.request.invoke_id });
-            const violations = writes.violations.filter(write => !originals.has(write.path) || originals.get(write.path) !== write.postSha256);
+          const records = loadAuthoritativeEvents(eventsPath);
+          const { context, write_boundary: boundary } = sessionRequest.request;
+          const windows = readSessionWriteWindows(runDir, sessionRequest, saved.post_snapshot, records)!;
+          if (windows.kind === 'unverifiable') wait(context.phase, `原会话写入时段不可核实：${windows.reason}；保全原件，等待核对。`);
+          else if (!context.phase.startsWith('design-repair-')) {
+            recordAuthorRestorations(writeHistory(records), windows.returned, context.phase, invokeId, goalEvents.emit);
+            const originals = authorWritePreimages(beforeAuthorInvocation(writeHistory(records), invokeId));
+            const writes = classifyPhaseInvocationChanges(boundary!, context.phase, windows.returned, { events: records, invokeId });
+            const violations = [...windows.beforeBinding.map(write => ({ ...write, ...resolvePhasePathOwnership(boundary!, write.path), violation: 'signed_input_drift', window: 'before_binding' })),
+              ...writes.violations.filter(write => !originals.has(write.path) || originals.get(write.path) !== write.postSha256)
+                .map(write => ({ ...write, window: windows.window }))];
             if (violations.length && !records.some(event => event.type === 'phase_write_violation' && event.invoke_id === invokeId)) {
-              goalEvents.emit({ type: 'phase_write_violation', phase: sessionRequest.request.context.phase, invoke_id: sessionRequest.request.invoke_id,
-                violations: violations.map(write => ({ path: write.path, how: write.how, owner: write.owner, violation: write.violation,
-                  pre_sha256: write.preSha256, post_sha256: write.postSha256, roles: write.roles })) });
+              goalEvents.emit({ type: 'phase_write_violation', phase: context.phase, invoke_id: invokeId,
+                violations: violations.map(write => ({ path: write.path, how: write.how, violation: write.violation, window: write.window,
+                  pre_sha256: write.preSha256, post_sha256: write.postSha256, ...('roles' in write ? { owner: 'owner' in write ? write.owner : undefined, roles: write.roles } : {}) })) });
             }
           }
         } else wait(sessionRequest.request.context.phase, '原session回报缺可信写入后像；恢复该归档后继续，不运行正式工具或猜测原写入。');
       } catch (error) { wait(sessionRequest.request.context.phase, `原session写入归档不能读取：${(error as Error).message}；恢复原件后继续，不运行正式工具。`); }
     }
+    const firstWriteReview = unresolvedWriteReviewPaths(writeConflicts());
+    if (!halted && firstWriteReview.length) wait('work-unit-author', `原交回不能采信，保全现场并由对应责任方核对：${firstWriteReview.join('、')}`, 'unauthorized_source_mutation');
     const consumeCompletedBoundaryHandoff = (): boolean => {
       if (!runControl) return false;
       const handoff = consumeHandoffAtBoundary(runControl.dir, runControl.token);
@@ -7584,14 +7710,16 @@ Goal runner — original request design and construction runtime
       options.onScopeRevision?.('applied');
     };
     // The normal resume/next source creates a proposal; only the existing revision writer appends it.
-    if (typeof argv['session-ref'] === 'string' && !['COMPLETED', 'CHAIN_SLICE_COMPLETED'].includes(String(findLastRunEnd(startupEvents)?.status))) {
+    if (!halted && typeof argv['session-ref'] === 'string' && !['COMPLETED', 'CHAIN_SLICE_COMPLETED'].includes(String(findLastRunEnd(startupEvents)?.status))) {
       reviseCurrentScope(familiesNow()[0] ?? String(chain[0] ?? 'coding'), argv['session-ref']);
     }
-    const lastAuthor = () => {
+    const lastAuthor = (includeTestingOnly = true) => {
       const history = loadAuthoritativeEvents(eventsPath);
       const start = [...history].reverse().find(event => event.type === 'agent_invoke_start' && event.invoke_id && event.phase
         && !event.phase.startsWith('initial-design-') && !event.phase.startsWith('design-repair-')
-        && workUnitExecutionRole({ phase: event.phase }, (event as Record<string, any>).purpose) === 'author');
+        && workUnitExecutionRole({ phase: event.phase }, (event as Record<string, any>).purpose) === 'author'
+        && (includeTestingOnly || !['testing-preparation', 'testing-evidence'].includes(
+          String((event as Record<string, unknown>).purpose ?? ''))));
       const end = start && history.slice(history.indexOf(start) + 1).find(event => event.type === 'agent_invoke_end' && event.invoke_id === start.invoke_id);
       return start && end && invocationCompleted({ ...end, exitCode: end.exit_code })
         ? { start, end, original: executionRequestForInvoke(runDir, start.invoke_id!) } : null;
@@ -7825,50 +7953,55 @@ Goal runner — original request design and construction runtime
       }
       let childExited = false;
       const started = Date.now();
+      const binding = phaseBindingCapture(context, original);
       progressPhase = label; progressSubstep = 'agent_invoke'; flushProgress();
       const result = await kernel.executeExecutor(context, attendedExecutor ?? new DetachedGoalPhaseExecutor(() => ({ plan, cwd: projectRoot, options: {
         dryRun, outputLogPath: path.join(dir, 'agent-output.log'), extraEnv: env,
         toolEventCapture: cap.capability?.tool_event_provenance ?? 'none', usageCapture: cap.capability?.usage_capture,
         ...(process.platform === 'win32' ? { containment: { runId: manifest.run_id, invokeId } } : {}),
+        beforeSpawn: binding.beforeSpawn,
         onActiveChild: ({ pid, kill }) => {
           activeAgentKill = async () => { await kill(); };
-          if (process.platform === 'win32') {
-            const bound = bindGuardianOrKill(pid, `${manifest.run_id}/${invokeId}`);
-            if (!bound.ok) throw new Error(bound.error);
-            goalEvents.emit({ type: 'agent_process_bound', phase: label, invoke_id: invokeId, run_id: manifest.run_id,
-              pid, started_at_ms: bound.identity.startedAtMs, executable: bound.identity.executable, token: `${manifest.run_id}/${invokeId}` });
-          }
+          const token = `${manifest.run_id}/${invokeId}`;
+          const bound = process.platform === 'win32' ? bindGuardianOrKill(pid, token) : null;
+          if (bound && !bound.ok) throw new Error(bound.error);
+          goalEvents.emit({ type: 'agent_process_bound', phase: label, invoke_id: invokeId, run_id: manifest.run_id, pid, token,
+            ...(bound?.ok ? { started_at_ms: bound.identity.startedAtMs, executable: bound.identity.executable } : {}), ...binding.fields() });
         },
         onChildExit: () => { childExited = true; activeAgentKill = null; },
       } }), injectedInvokeAgent ?? invokeAgentHeadless));
       activeAgentKill = null;
+      const post = capturePhaseInvocationSnapshot(boundary, snapshotOptions);
+      const records = loadAuthoritativeEvents(eventsPath);
+      const bound = original ? readPhaseBinding(runDir, original, records) : null;
+      const windows = phaseWriteWindows(pre, bound, post);
+      const writes = windows.kind === 'checked' ? classifyPhaseInvocationChanges(boundary, label, windows.returned, { events: records, invokeId }) : null;
+      const originalWrites = authorWritePreimages(writeHistory(history));
+      const violations = windows.kind === 'checked' && writes ? [
+        ...windows.beforeBinding.map(write => ({ ...write, ...resolvePhasePathOwnership(boundary, write.path), violation: 'signed_input_drift', window: 'before_binding' })),
+        ...writes.violations.filter(write => !originalWrites.has(write.path) || originalWrites.get(write.path) !== write.postSha256)
+          .map(write => ({ ...write, window: windows.window })),
+      ] : [];
+      const writeRejection = windows.kind === 'unverifiable' ? windows.reason : violations.length
+        ? `原交回不能采信，保全现场并由对应责任方核对：${[...new Set(violations.map(write => write.path))].join('、')}` : undefined;
       goalEvents.emit({ ...invocationEndFacts(result), type: 'agent_invoke_end', phase: label, invoke_id: invokeId, purpose, status: result.status,
-        exit_code: result.exitCode, command: result.command, duration_ms: result.duration_ms ?? Date.now() - started,
+        exit_code: writeRejection ? 1 : result.exitCode, ...(writeRejection ? { status: 'failed', write_evidence_rejected: writeRejection } : {}),
+        command: result.command, duration_ms: result.duration_ms ?? Date.now() - started,
         provider_session_id: result.provider_session_id, interrupted: result.interrupted, nativeSessionRebuildReason: result.nativeSessionRebuildReason,
         completion_observed: result.completion_observed, terminal_failure_observed: result.terminal_failure_observed,
         timed_out: result.timed_out, silent_killed: result.silent_killed, skipped: result.skipped, signal: result.signal,
         readonly_enforced: result.readonly_enforced, readonly_diagnostic: result.readonly_diagnostic,
         ...(result.spawn_error ? { spawn_error: result.spawn_error } : {}) });
       if (childExited) goalEvents.emit({ type: 'agent_process_settled', run_id: manifest.run_id, phase: label, invoke_id: invokeId, exit_code: result.exitCode });
-      const post = capturePhaseInvocationSnapshot(boundary, snapshotOptions);
-      const changes = diffPhaseInvocationSnapshots(pre, post);
-      const writes = changes.kind === 'changed' ? classifyPhaseInvocationChanges(boundary, label, changes.changes,
-        { events: loadAuthoritativeEvents(eventsPath), invokeId }) : null;
-      if (writes) {
-        const originalWrites = authorWritePreimages(history);
-        for (const write of writes.violations.filter(write => originalWrites.has(write.path) && originalWrites.get(write.path) === write.postSha256)) {
-          writes.allowed.push(write);
-        }
-        writes.violations = writes.violations.filter(write => !originalWrites.has(write.path) || originalWrites.get(write.path) !== write.postSha256);
-        if (writes.violations.length) {
-          goalEvents.emit({ type: 'phase_write_violation', phase: label, invoke_id: invokeId, violations: writes.violations.map(write => ({
-            path: write.path, how: write.how, owner: write.owner, violation: write.violation,
-            pre_sha256: write.preSha256, post_sha256: write.postSha256, roles: write.roles })) });
-        }
-      } else if (changes.kind === 'unverifiable') {
-        wait(label, `真实调用已交回，但写入观察不可核实：${changes.reason}；保留原调用与成果，恢复原观察后继续。`);
-        return null;
+      if (violations.length) goalEvents.emit({ type: 'phase_write_violation', phase: label, invoke_id: invokeId,
+        pre_snapshot: pre.sha256, post_snapshot: post.sha256, violations: violations.map(write => ({
+          path: write.path, how: write.how, violation: write.violation, window: write.window,
+          pre_sha256: write.preSha256, post_sha256: write.postSha256, ...('roles' in write ? { owner: 'owner' in write ? write.owner : undefined, roles: write.roles } : {}) })) });
+      if (writeRejection) {
+        if (!violations.length) { wait(label, writeRejection); return null; }
+        return { context, result: { ...result, status: 'failed', exitCode: 1, details: writeRejection }, invokeId, rebuild: false };
       }
+      if (writes) for (const write of writes.violations) writes.allowed.push(write);
       let machineEvidenceProcessed = false;
       if (role === 'author' && invocationCompleted(result) && (cap.capability?.tool_event_provenance ?? 'none') === 'structured_events') {
         try {
@@ -7903,7 +8036,7 @@ Goal runner — original request design and construction runtime
         wait(label, `真实调用的交回后像不可核实：${handedBack.failureReason}；恢复原观察后继续，不猜新工作条件。`);
         return null;
       }
-      if (original && verifierReport && context.workInput?.material.acceptanceReview && invocationCompleted(result) && !writes?.violations.length) {
+      if (original && verifierReport && context.workInput?.material.acceptanceReview && invocationCompleted(result)) {
         const observedReport = handedBack.entries.find(entry => entry.kind === 'file' && path.resolve(projectRoot, entry.path) === verifierReport);
         if (observedReport) {
           const bytes = fs.readFileSync(verifierReport);
@@ -7987,7 +8120,8 @@ Goal runner — original request design and construction runtime
       '当前全部未完项与真实证据：',
       ];
       return buildWorkUnitAuthorInput({ projectRoot, frameworkRoot, feature: manifest.feature, disposition: work.disposition,
-        instructions: parts, evaluation: work.evaluation, repairNotes: repairNotesInput, designDeclineFeedback, designDeclines });
+        instructions: parts, evaluation: { ...work.evaluation, disposition: work.disposition },
+        repairNotes: repairNotesInput, designDeclineFeedback, designDeclines });
     };
 
     if (entryAuthorization && entryAuthorization.mode !== 'goal_mode' && entryAuthorization.autonomyAuthorized !== true) {
@@ -8125,8 +8259,9 @@ Goal runner — original request design and construction runtime
         ] : []),
         '此调用只准备输入，不修改产品、验收、历史原件或手写执行结果。后续由同一运行器走正式构建、安装及适用复验。',
       ].join('\n');
+      const disposition = { ...work.disposition, problems: prepared.problems, completionBlocking: prepared.problems };
       const invoked = await invokeWork('work-unit-author', instruction, undefined, 'testing-preparation', false,
-        { material, evaluation: work.evaluation }, undefined, targets);
+        { material, evaluation: { ...work.evaluation, disposition } }, undefined, targets);
       return invoked === 3 ? 3 : !!invoked || halted;
     };
     const supplementTestingEvidence = async (work: ReturnType<typeof readWork>): Promise<boolean | 3> => {
@@ -8181,8 +8316,13 @@ Goal runner — original request design and construction runtime
       if (options.executionControls?.signal?.aborted || deadline && Date.parse(deadline) <= Date.now()) {
         wait('work-unit-author', deadline && Date.parse(deadline) <= Date.now() ? '用户明示时限已到；成果与未完项保留，时限未重置。' : '当前请求已取消；成果与未完项保留。'); break;
       }
-      const before = readWork();
-      const restoration = unrestoredAuthorWrites(projectRoot, loadAuthoritativeEvents(eventsPath));
+      const writes = writeHistory();
+      const writeReview = unresolvedWriteReviewPaths(writeConflicts());
+      if (writeReview.length) {
+        wait('work-unit-author', `原交回不能采信，保全现场并由对应责任方核对：${writeReview.join('、')}`, 'unauthorized_source_mutation');
+        break;
+      }
+      const restoration = unrestoredAuthorWrites(projectRoot, writes);
       if (restoration.size) {
         const instructions = `# 原工作单元 ${manifest.feature}\n${manifest.requirement ?? ''}\n`
           + buildPhaseWriteRecoveryContextBlock({ sourcePhase: 'work-unit-author', targetPhase: 'work-unit-author',
@@ -8193,8 +8333,9 @@ Goal runner — original request design and construction runtime
         if (!repaired || halted) break;
         continue;
       }
+      const before = readWork();
       if (workCompleted(before)) break;
-      const author = lastAuthor();
+      const author = lastAuthor(false);
       let designDeclineFeedback = '';
       let designDeclineCandidates: string[] = [];
       const preparation = testingPreparation(before);
@@ -8258,6 +8399,7 @@ Goal runner — original request design and construction runtime
           }
           if (returnedFeedback) { designDeclineFeedback = returnedFeedback; designDeclineCandidates = candidates; }
           else {
+            if (repaired.outcome === 'violation' && unrestoredAuthorWrites(projectRoot, writeHistory()).size) continue;
             if (repaired.outcome === 'published' && repaired.recovered || repaired.outcome === 'failed' && repaired.evaluation?.completed
               && repaired.evaluation.disposition.completionBlocking.some(problem => problem.action === 'repair')) continue;
             if (repaired.outcome === 'failed' && repaired.step !== 'declined' && latestProviderSessionCanRebuild(runDir, loadAuthoritativeEvents(eventsPath))) continue;
@@ -8297,13 +8439,14 @@ Goal runner — original request design and construction runtime
       if (before.evaluation.completed && !progress.reused && progress.evaluation === before.evaluation) completedEvaluations.push(before.evaluation);
       if (!author || newDriverHypothesis || designDeclineFeedback || repairs.length && !feedbackAwaitingEvaluation && !verificationPending) {
         const authorWork = preparation ? { ...before, disposition: { ...before.disposition,
-          problems: before.disposition.problems.filter(problem => !preparation.problems.includes(problem)) } } : before;
+          problems: before.disposition.problems.filter(problem => !preparation.problems.includes(problem)),
+          completionBlocking: before.disposition.completionBlocking.filter(problem => !preparation.problems.includes(problem)) } } : before;
         const prepared = await authorInstruction(authorWork, designDeclineFeedback, designDeclineCandidates);
         const invoked = await invokeWork('work-unit-author', prepared.instruction, undefined, undefined, explicitlyContinued, prepared.workInput);
         if (invoked === 3) return 3;
         if (!invoked || halted) break;
         if (invoked.rebuild) continue;
-        if (unrestoredAuthorWrites(projectRoot, loadAuthoritativeEvents(eventsPath)).size) continue;
+        if (writeConflicts().size) continue;
       }
       let executedCheck = false;
       let rebuildTransport = false;
@@ -8319,6 +8462,8 @@ Goal runner — original request design and construction runtime
         let current = readWork();
         if (!current.facts.phases.some(result => result.phase === family)) continue;
         const reviewConditions = checkWorkConditions(family, current);
+        const { acceptanceReviewConflictInstruction } =
+          require('./utils/acceptance-review-strength') as typeof import('./utils/acceptance-review-strength');
         let artifactRepair = current.independent.find(task => task.owner === family);
         let questions = family === 'review' ? current.acceptanceReview : [];
         let followupQuestions = false;
@@ -8331,9 +8476,13 @@ Goal runner — original request design and construction runtime
             .map(file => [file, sha256FileFull(path.resolve(projectRoot, file)) ?? '']));
           const deliveries = (question: typeof questions[number], digest: string) => calls.filter(call =>
             call.index > restart && call.context.workInput?.material.acceptanceReview?.[question.issue]?.includes(digest)
-            && question.files.every(file => call.evaluation.inputs[file]?.contentHash === questionInputs.get(file))).length;
+            && question.files.every(file => call.evaluation.inputs[file]?.contentHash === questionInputs.get(file)));
           questions = questions.flatMap(question => {
-            const remaining = question.digests.filter(digest => deliveries(question, digest) < 2);
+            const remaining = question.digests.filter(digest => {
+              const delivered = deliveries(question, digest);
+              return question.conflicting ? !delivered.some(call => call.context.workInput?.material.segments
+                .includes(acceptanceReviewConflictInstruction(question.issue, digest))) : delivered.length < 2;
+            });
             if (!remaining.length) return [];
             if (remaining.length === question.digests.length) return [question];
             const detail = asRecord(question.detail);
@@ -8341,7 +8490,7 @@ Goal runner — original request design and construction runtime
               ...detail, retests: detail.retests.filter((_, index) => remaining.includes(question.digests[index])),
             } : question.detail }];
           });
-          followupQuestions = questions.length > 0 && questions.every(question => question.digests.every(digest => deliveries(question, digest) > 0));
+          followupQuestions = questions.length > 0 && questions.every(question => question.digests.every(digest => deliveries(question, digest).length > 0));
           const problems = artifactRepair.problems.filter(problem => !requested.has(problem.id) || questions.some(question => question.issue === problem.id));
           if (!problems.length) {
             pausedIndependent.add(artifactRepair.file);
@@ -8366,15 +8515,47 @@ Goal runner — original request design and construction runtime
           const questionFiles = [...new Set(questions.flatMap(question => question.files))];
           const questionDigests: Record<string, string[]> = {};
           for (const question of questions) (questionDigests[question.issue] ??= []).push(...question.digests);
+          const conflictInstructions = questions.filter(question => question.conflicting).flatMap(question =>
+            question.digests.map(digest => acceptanceReviewConflictInstruction(question.issue, digest)));
+          const observed = reviewConditions.observation;
+          // The report is a checker input, not new work created by its own writer's previous output.
+          const writerInputs = Object.fromEntries(Object.entries(observed.inputs).filter(([file]) => file !== reportRel));
+          for (const file of questionFiles) {
+            const contentHash = sha256FileFull(path.resolve(projectRoot, file));
+            writerInputs[file] = { exists: contentHash !== null, contentHash: contentHash ?? '' };
+          }
+          const history = loadAuthoritativeEvents(eventsPath);
+          const calls = independentCalls(independent, history);
+          const previous = calls.at(-1);
           const { collectTestStrengthContext, collectNativeAcceptanceEvidence, independentVerificationContext } =
             require('./utils/verifier-material') as typeof import('./utils/verifier-material');
+          const { readIndependentReviewOutputs } = require('./utils/repair-candidates') as typeof import('./utils/repair-candidates');
+          const previousReview = family === 'review' && followupQuestions && !conflictInstructions.length
+            && !!previous && !reviewConditions.productChanged && !reviewConditions.scopeChanged
+            && compareRelatedInputSnapshots(previous.evaluation.inputs, writerInputs) === 'unchanged'
+            && independent.problems.every(problem => questions.some(question => question.issue === problem.id))
+            ? readIndependentReviewOutputs(projectRoot, manifest.feature, manifest.run_id)[0] : undefined;
+          const formatRepair = previousReview?.unreadable && questionFiles.every(previousReview.matchesCurrent)
+            && previousReview.originals[0] === path.join(runDir, previous!.original.reference.path)
+            && Object.entries(questionDigests).every(([issue, digests]) => digests.every(digest => previousReview.material[issue]?.includes(digest)))
+            ? previousReview : undefined;
           const reviewInputs = { ...current.input, phase: family, subjectId: null };
           const strengthTests = [...new Set(questions.filter(question => question.issue.startsWith('acceptance_test_strength_'))
             .flatMap(question => (question.detail as { files: string[] }).files))];
-          const evidence = questions.length ? independentVerificationContext({ actualDiff: null, currentEvidence: [
+          const evidence = questions.length && !formatRepair ? independentVerificationContext({ actualDiff: null, currentEvidence: [
             ...collectTestStrengthContext(reviewInputs), ...collectNativeAcceptanceEvidence({ ...reviewInputs, testSources: strengthTests }),
           ] }) : [];
-          const instruction = [
+          const instruction = formatRepair ? [
+            `仅补原独立审查的 YAML 表示，保留 ${reportRel} 的审查正文。本次沿用原签发材料和原结论，不重新审查或执行测试。`,
+            `原请求及交回：${formatRepair.originals.map(file => path.relative(projectRoot, file).replace(/\\/g, '/')).join('；')}。`,
+            formatRepair.reason,
+            ...formatRepair.unreadable!.diagnostics,
+            '把下列原表中已签发的条目重新排成完整 issue-verification YAML 数组，逐项保留 verdict、evidence、production_paths。evidence 使用 YAML 块标量 |，避免反引号和冒号破坏语法。无法无歧义还原时保留该项未决，交真实依据。',
+            ...Object.keys(questionDigests).map(issue => `| ${issue} | 原表同 ID 的结论与证据 |`),
+            '原表片段：',
+            formatRepair.unreadable!.fragment,
+            '本次只写指定审查报告；facts只读，不追加phase_delta: review。原执行证据由正式检查另核。',
+          ].join('\n') : [
             formatOnly
               ? `仅修补已有报告 ${reportRel} 的格式/引用问题：${independent.problems.map(problem => problem.detail).join('\n')}。保留产品发现与有效依据，结论按问题表如实修正；不重新进行整轮产品审查或重跑构建/测试，真实业务差额仍交原责任方。`
               : followupQuestions && independent.problems.every(problem => questions.some(question => question.issue === problem.id))
@@ -8393,6 +8574,7 @@ Goal runner — original request design and construction runtime
               '代码围栏语言标记逐字使用 issue-verification，字段逐字使用 issue；不要在块里添加下表之外的项目。',
               '| issue | 当前验收、测试与可用复验原件 |', '| --- | --- |',
               ...Object.keys(questionDigests).map(issue => '| ' + issue + ' | ' + JSON.stringify(questions.filter(question => question.issue === issue).map(question => question.detail)).replace(/\|/g, '&#124;') + ' |'),
+              ...conflictInstructions,
               'acceptance_test_strength_ 裁决当前源码的断言强度。evidence 用反引号包裹的仓根相对 path:line 引用测试及实际调用的生产路径，写出准确 it() 名和断言的数据来源。每条同时提供 production_paths 数组，逐个列出该结论实际依赖的已调用生产源码仓根相对路径。仅替身等从未调用生产代码时可给空数组。逐项区分替身和生产真值。refuted 表示确有对应实际断言；confirmed 表示不足，说明具体不足和原修复对象；unclear 表示连当前源码都不能裁定。尚未执行时仍按源码判断断言强度，另如实说明缺执行；框架独立核对执行原件。',
               ...(questions.some(question => (question.detail as { tests?: Array<{ candidate?: true }> }).tests?.some(test => test.candidate))
                 ? ['candidate: true 的 it() 来自当前共享 DAG。逐条核对本验收实际要求与候选断言，refuted 只点名确能证明该验收的完整 it() 名。']
@@ -8403,20 +8585,10 @@ Goal runner — original request design and construction runtime
             '本次只写指定审查报告；facts只读，不追加phase_delta: review，新事实写入本报告。不修改产品、测试、设计或正式机器结果，不替作者自签完成。',
             renderCurrentDisposition(current.disposition),
           ].join('\n');
-          const observed = readCurrentCheckObservation({ projectRoot, frameworkRoot, feature: manifest.feature, runId: manifest.run_id, phase: family });
-          // The report is a checker input, not new work created by its own writer's previous output.
-          const writerInputs = Object.fromEntries(Object.entries(observed.inputs).filter(([file]) => file !== reportRel));
-          for (const file of questionFiles) {
-            const contentHash = sha256FileFull(path.resolve(projectRoot, file));
-            writerInputs[file] = { exists: contentHash !== null, contentHash: contentHash ?? '' };
-          }
           const relevantChecks = current.results.filter(result => result.phase === family).map(result => ({ ...result,
             checks: result.checks.filter(check => check.affected_files?.some(file => path.resolve(projectRoot, file) === independent.file)) }));
           const disposition = resolveCurrentDisposition({ endpoint: 'request', phases: [], additionalProblems: independent.problems });
           const evaluation = { ...currentCompletionEvaluation({ ...current.input, chain: [family], currentResults: relevantChecks }, disposition), inputs: writerInputs };
-          const history = loadAuthoritativeEvents(eventsPath);
-          const calls = independentCalls(independent, history);
-          const previous = calls.at(-1);
           const checkedAt = history.map(event => event.type === 'harness_end' && event.phase === family
             && event.invoke_id === observed.end?.invoke_id && event.ts === observed.end?.ts).lastIndexOf(true);
           const continued = continuationAvailable();
@@ -8439,7 +8611,7 @@ Goal runner — original request design and construction runtime
           }
           if (!awaitingCheck) {
             const reviewed = await invokeWork(independent.owner, instruction, independent.file, independent.owner, continued,
-              { material: { purpose: independent.owner, segments: [instruction, writerInputs],
+              { material: { purpose: independent.owner, segments: [instruction, writerInputs, ...conflictInstructions],
                 ...(questions.length ? { acceptanceReview: questionDigests, acceptanceReviewFiles: questionFiles } : {}) }, evaluation });
             if (reviewed === 3) return 3;
             if (!reviewed || halted) break;

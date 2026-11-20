@@ -5,6 +5,7 @@ import {
   FORBIDDEN_STEP_ROOT_KEY_SET,
   PLANNED_STEP_ROOT_KEY_SET,
 } from './hylyre-planned-step-keys';
+import { readPlannedHylyreBack } from './planned-step-normalizer';
 
 export interface PlannedStepLintViolation {
   index: number;
@@ -100,6 +101,9 @@ export function validatePlannedStepObject(step: unknown, index: number): Planned
       rule_id: 'STEP-002',
       message: '即席 steps 禁止 start_app；冷启由 harness 负责',
     });
+  }
+  if (root === 'back' && !readPlannedHylyreBack(obj.back)) {
+    out.push({ index, rule_id: 'STEP-BACK', message: 'back 使用对象；系统返回用 {"back":{}}，边缘返回显式用 mode:swipe 和 LEFT/RIGHT；times 为正整数，height 为 0–1。' });
   }
   if (root === 'touch') {
     const tb = obj.touch;

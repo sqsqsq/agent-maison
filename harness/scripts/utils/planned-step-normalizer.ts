@@ -31,6 +31,25 @@ export interface NormalizedPlannedStep {
   disambiguated: boolean;
 }
 
+export type HylyreBackAction = { mode: 'key' } | { mode: 'swipe'; side: 'LEFT' | 'RIGHT' };
+
+/** The native Hypium back primitive supplies the screen edge, with key and RIGHT as defaults. */
+export function normalizeHylyreBack(value: { mode?: unknown; side?: unknown }): HylyreBackAction | null {
+  const mode = typeof value.mode === 'string' ? value.mode.trim().toLowerCase() : value.mode === undefined ? 'key' : value.mode;
+  if (['key', 'normal', ''].some(key => key === mode) && value.side === undefined) return { mode: 'key' };
+  const side = typeof value.side === 'string' ? value.side.trim().toUpperCase() : value.side === undefined ? 'RIGHT' : value.side;
+  return mode === 'swipe' && (side === 'LEFT' || side === 'RIGHT') ? { mode, side } : null;
+}
+
+export function readPlannedHylyreBack(payload: unknown): (HylyreBackAction & { times: number }) | null {
+  if (!isRecord(payload) || Object.keys(payload).some(key => !['mode', 'side', 'times', 'height'].includes(key))) return null;
+  const times = payload.times === undefined ? 1 : payload.times;
+  if (typeof times !== 'number' || !Number.isInteger(times) || times < 1) return null;
+  if (payload.height !== undefined && (typeof payload.height !== 'number' || !Number.isFinite(payload.height) || payload.height < 0 || payload.height > 1)) return null;
+  const action = normalizeHylyreBack(payload);
+  return action && { ...action, times };
+}
+
 export interface CanonicalSelectorNode {
   id: string;
   screenId: string;

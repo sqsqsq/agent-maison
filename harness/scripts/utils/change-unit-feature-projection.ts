@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { featureFilePath, loadArchitectureDsl, type ArchitectureDsl } from '../../config';
+import { featureDeviceTestPaths, featureFilePath, featuresDirPath, HYLYRE_DERIVED_PLAN_FILENAME, loadArchitectureDsl, type ArchitectureDsl } from '../../config';
 import { AdmittedModules, componentDependencyAllowed, resolveAdmittedModules } from './component-assets';
 import { TermFact, terminologyFacts } from './blueprint-discovery';
 import {
@@ -99,6 +99,7 @@ function checkConstructionRefs(
   phase: ProjectionPhase,
   role: 'implementation' | 'test' | 'verification',
   owner: string,
+  testing?: ReturnType<typeof featureDeviceTestPaths>,
 ): ChangeUnitProjectionIssue[] {
   const out: ChangeUnitProjectionIssue[] = [];
   const plannedAllowed = role === 'implementation' ? CONTRACT_FREEZE_PHASES.has(phase) : phase !== 'ut';
@@ -126,9 +127,26 @@ function checkConstructionRefs(
       out.push(issue('change_unit_mapping_path_invalid', (error as Error).message));
       continue;
     }
+    const absolute = path.resolve(projectRoot, normalized);
+    if (testing) {
+      const basename = path.basename(normalized);
+      const isTop = basename === path.basename(testing.topPlan.canonicalPath);
+      if (isTop || basename === HYLYRE_DERIVED_PLAN_FILENAME) {
+        const canonical = isTop ? testing.topPlan.canonicalPath : testing.stableDerivedPlan;
+        const current = isTop ? testing.topPlan.actualPath : canonical;
+        if (absolute === canonical || absolute === current) {
+          // These obligations are produced by testing after the UT phase. The testing consumer binds the run copy.
+          if (planned) continue;
+        } else if ((!isTop && planned) || absolute.startsWith(featuresDirPath(projectRoot) + path.sep) || absolute.startsWith(testing.reportsDir + path.sep)) {
+          const expected = path.relative(projectRoot, canonical).replace(/\\/g, '/');
+          const target = path.relative(projectRoot, path.dirname(testing.topPlan.canonicalPath)).replace(/\\/g, '/');
+          out.push(issue('change_unit_mapping_path_invalid', `${owner} 的 ${role} ref=${rawRef} 不属于目标 CU 的测试位置 ${target}；由原写方按实际验证语义重签，例如 planned:${expected}${symbol ? '#' + symbol : ''}。`));
+          continue;
+        }
+      }
+    }
     // A frozen planned path becomes checkable through its real file/symbol, not a contract rewrite.
     if (role === 'implementation' || (planned && plannedAllowed)) continue;
-    const absolute = path.resolve(projectRoot, normalized);
     if (!fs.existsSync(absolute) || !fs.statSync(absolute).isFile()) {
       out.push(issue('change_unit_mapping_file_missing', `${owner} 的 ${role} 文件不存在：${normalized}`));
       continue;
@@ -149,6 +167,7 @@ function checkIdMappings(
   mappings: BlueprintRecord[],
   phase: ProjectionPhase,
   projectRoot: string,
+  testing: ReturnType<typeof featureDeviceTestPaths>,
 ): ChangeUnitProjectionIssue[] {
   const key = `${kind}_id`;
   const expected = definitions.map(item => String(item[key] ?? '')).filter(Boolean).sort();
@@ -168,7 +187,7 @@ function checkIdMappings(
     }
     const owner = `${kind}:${String(mapping[key])}`;
     out.push(...checkConstructionRefs(projectRoot, implementationRefs, phase, 'implementation', owner));
-    out.push(...checkConstructionRefs(projectRoot, testRefs, phase, 'test', owner));
+    out.push(...checkConstructionRefs(projectRoot, testRefs, phase, 'test', owner, testing));
     for (const forbidden of ['description', 'purpose', 'verification_refs', 'provide_ids']) {
       if (Object.prototype.hasOwnProperty.call(mapping, forbidden)) {
         out.push(issue('change_unit_definition_copied', `${kind} mapping 不得复制/重定义 ${forbidden}。`));
@@ -183,6 +202,7 @@ function checkDesignMappings(
   mappings: BlueprintRecord[],
   phase: ProjectionPhase,
   projectRoot: string,
+  testing: ReturnType<typeof featureDeviceTestPaths>,
 ): ChangeUnitProjectionIssue[] {
   const expected = cu.design_refs;
   const out: ChangeUnitProjectionIssue[] = [];
@@ -205,7 +225,7 @@ function checkDesignMappings(
     }
     const owner = `design:${ref ? blueprintRefAddress(ref) : index}`;
     out.push(...checkConstructionRefs(projectRoot, implementationRefs, phase, 'implementation', owner));
-    out.push(...checkConstructionRefs(projectRoot, verificationRefs, phase, 'verification', owner));
+    out.push(...checkConstructionRefs(projectRoot, verificationRefs, phase, 'verification', owner, testing));
     for (const forbidden of ['description', 'target_state', 'delta', 'purpose']) {
       if (Object.prototype.hasOwnProperty.call(mapping, forbidden)) {
         out.push(issue('change_unit_definition_copied', `design mapping 不得复制/重定义 ${forbidden}。`));
@@ -587,10 +607,11 @@ export function changeUnitMappingIssues(
   cu: ChangeUnitArtifact,
   phase: ProjectionPhase,
 ): ChangeUnitProjectionIssue[] {
+  const testing = featureDeviceTestPaths(projectRoot, deriveChangeUnitFeatureId(cu.blueprint_id, cu.change_unit_id));
   return [
-    ...checkIdMappings('predicate', cu.target_predicates as unknown as ChangeUnitRecord[], records(section.predicate_mappings), phase, projectRoot),
-    ...checkIdMappings('provide', cu.provides as unknown as ChangeUnitRecord[], records(section.provide_mappings), phase, projectRoot),
-    ...checkDesignMappings(cu, records(section.design_ref_mappings), phase, projectRoot),
+    ...checkIdMappings('predicate', cu.target_predicates as unknown as ChangeUnitRecord[], records(section.predicate_mappings), phase, projectRoot, testing),
+    ...checkIdMappings('provide', cu.provides as unknown as ChangeUnitRecord[], records(section.provide_mappings), phase, projectRoot, testing),
+    ...checkDesignMappings(cu, records(section.design_ref_mappings), phase, projectRoot, testing),
   ];
 }
 

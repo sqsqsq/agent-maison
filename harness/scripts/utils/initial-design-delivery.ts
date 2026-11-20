@@ -11,6 +11,7 @@ import { featurePhasesFromWorkflow } from './phase-transition-policy';
 import { prepareDesignRequest, readDesignGoalOrigin, bindDesignRequestBlueprint, type PreparedDesignRequest } from './automatic-request';
 import { nativeFixedScale } from './request-intake';
 import { collectUnitScopeIds, collectDeviceScopeP0P1 } from './acceptance-layering';
+import { phaseWriteConflictProblems } from './phase-write-boundary';
 import { realProjectPath, isInsideProjectRoot } from './project-relative-path';
 import type { AcceptanceSpec } from './types';
 import { buildInitialDesignGoalManifest, isInitialDesignManifest, isRepeatedRequirement, deriveSuccessorRequirement,
@@ -18,17 +19,17 @@ import { buildInitialDesignGoalManifest, isInitialDesignManifest, isRepeatedRequ
   type UnattendedContract, type AdapterModelPin, type RunAdapterProvenance } from './goal-manifest';
 import { assertGoalRunAttachable, createGoalRun, decideRunContinuation, buildSupersedeAuditEvent, type RunContinuationDecision } from './goal-run-creation';
 import { ensureRunControl } from './goal-run-control';
-import { readLockRecord, isLockStale } from './goal-run-lock';
+import { FEATURE_LOCK_NAME, readLockRecord, isLockStale, tryAcquireLock, releaseLock } from './goal-run-lock';
 import { componentBlueprintPath, loadCanonicalBlueprint } from './component-blueprint-path';
 import { validateComponentBlueprint } from './component-blueprint-validator';
-import { enumerateCanonicalChangeUnits, asChangeUnitArtifact, deriveChangeUnitFeatureId, changeUnitPath } from './change-unit-path';
-import { diagnoseBlueprintSkillAuthority, diagnoseDesignAuthority, compareAuthoritativeContent } from './blueprint-skill-projection';
+import { enumerateCanonicalChangeUnits, asChangeUnitArtifact, deriveChangeUnitFeatureId, changeUnitPath, buildChangeUnitTestingLocationHint } from './change-unit-path';
+import { blueprintDeclaredAcceptanceIssues, diagnoseBlueprintSkillAuthority, diagnoseDesignAuthority, compareAuthoritativeContent } from './blueprint-skill-projection';
 import { resolveProbeFrameworkRoot } from '../../repo-layout';
 import { deriveChangeUnitReadySet } from './change-unit-ready-set';
 import { readChangeUnitDesignOwnership } from './change-unit-design-gate';
 import { deriveChangeUnitProgressionDecision, inspectActiveChangeUnitRuns } from './change-unit-progress-loop';
 import { profileHasDesignLens } from './blueprint-provider-boundary';
-import { loadEventsJsonlStrict, resolveEffectiveRunEnd } from './goal-runner-phase';
+import { loadAuthoritativeEvents, loadEventsJsonlStrict, resolveEffectiveRunEnd, type GoalRunEvent } from './goal-runner-phase';
 import { acceptedSessionReport, readHandoffMaterial, sessionReportInputPath, sessionExecutionForInvoke, type SessionExecutionReport } from './session-execution-handoff';
 import { readOriginalDeliveryActivity, readOriginalDeliveryRuns, resolveOriginalDeliveryExecution, currentOriginalDelivery, type DeliveryRunFacts } from './delivery-origin';
 import { independentQuestioningBlockers } from './blueprint-questioning';
@@ -126,26 +127,47 @@ export function initialDesignScopeActionIssues(projectRoot: string, feature: str
     ...(outside.length ? [`scope动作A越出原请求域D：${outside.join(', ')}。`] : [])];
 }
 
-export function findInitialDesignRun(input: Pick<InitialDesignRunInput, 'projectRoot' | 'feature'> & { requirement?: string; runId?: string }): InitialDesignGoalManifest | null {
+export class InitialDesignBirthBusy extends Error {
+  constructor() { super('[initial-design] 原请求正在创建；等待真实出生后接回同一 run。'); }
+}
+
+export function findInitialDesignRun(input: Pick<InitialDesignRunInput, 'projectRoot' | 'feature'> & { requirement?: string; runId?: string },
+  birthOwnerId?: string): InitialDesignGoalManifest | null {
   const directory = path.join(input.projectRoot, relFeaturesDir(input.projectRoot), input.feature, 'goal-runs');
-  const ids = input.runId ? [input.runId] : fs.existsSync(directory)
-    ? fs.readdirSync(directory, { withFileTypes: true }).filter(item => item.isDirectory() && !item.name.startsWith('.')).map(item => item.name).sort().reverse() : [];
-  for (const id of ids) {
-    const file = path.join(directory, id, 'manifest.json');
-    if (!fs.existsSync(file)) continue;
-    const raw: unknown = JSON.parse(fs.readFileSync(file, 'utf8'));
-    if (!raw || typeof raw !== 'object' || !('initial_design' in raw)) continue;
-    const loaded = loadGoalRunManifestFromRun(input.projectRoot, id, { feature: input.feature });
-    if (!isInitialDesignManifest(loaded)) continue;
-    const manifest = currentOriginalDelivery(input.projectRoot, loaded);
-    if (input.requirement && !isRepeatedRequirement(manifest.requirement, input.requirement)) {
-      if (input.runId) throw new Error('[initial-design] request differs from the bound original requirement');
-      continue;
+  const assertReadable = (): void => {
+    const lock = readLockRecord(path.join(directory, FEATURE_LOCK_NAME));
+    if (lock && !lock.run_id && lock.ownerId !== birthOwnerId && !isLockStale(lock)) throw new InitialDesignBirthBusy();
+  };
+  const lookup = (): InitialDesignGoalManifest | null => {
+    const ids = input.runId ? [input.runId] : fs.existsSync(directory)
+      ? fs.readdirSync(directory, { withFileTypes: true }).filter(item => item.isDirectory() && !item.name.startsWith('.')).map(item => item.name).sort().reverse() : [];
+    for (const id of ids) {
+      const file = path.join(directory, id, 'manifest.json');
+      if (!fs.existsSync(file)) continue;
+      const raw: unknown = JSON.parse(fs.readFileSync(file, 'utf8'));
+      if (!raw || typeof raw !== 'object' || !('initial_design' in raw)) continue;
+      const loaded = loadGoalRunManifestFromRun(input.projectRoot, id, { feature: input.feature });
+      if (!isInitialDesignManifest(loaded)) continue;
+      const manifest = currentOriginalDelivery(input.projectRoot, loaded);
+      if (input.requirement && !isRepeatedRequirement(manifest.requirement, input.requirement)) {
+        if (input.runId) throw new Error('[initial-design] request differs from the bound original requirement');
+        continue;
+      }
+      assertGoalRunAttachable(input.projectRoot, manifest);
+      return manifest;
     }
-    assertGoalRunAttachable(input.projectRoot, manifest);
-    return manifest;
+    return null;
+  };
+  assertReadable();
+  let manifest: InitialDesignGoalManifest | null;
+  try { manifest = lookup(); }
+  catch {
+    // A publisher can finish between the two reads of manifest and run_created.
+    assertReadable();
+    manifest = lookup();
   }
-  return null;
+  assertReadable();
+  return manifest;
 }
 
 export function prepareInitialDesignRun(input: InitialDesignRunInput): { manifest: InitialDesignGoalManifest; manifestPath: string; runDir: string; created: boolean; continuation?: RunContinuationDecision } {
@@ -224,13 +246,19 @@ export function prepareInitialDesignRun(input: InitialDesignRunInput): { manifes
   }, { projectRoot: input.projectRoot, featuresDir: relFeaturesDir(input.projectRoot) });
   initialDesignPhasePolicy(input.projectRoot, input.frameworkRoot, manifest);
   if (source) manifest.successor_of = source.run_id;
-  const born = createGoalRun({ projectRoot: input.projectRoot, manifest, chain: [], ...(continuation ? { continuation } : {}) });
-  const runDir = path.resolve(input.projectRoot, manifest.report_dir);
-  if (source) fs.appendFileSync(born.eventsPath, JSON.stringify({ ...buildSupersedeAuditEvent({ targetRunId: source.run_id, supersedingRunId: manifest.run_id,
-    ...(newCycle ? { deliveryCycleBoundary: source.run_id } : {}) }), ts: new Date().toISOString(), run_id: manifest.run_id }) + '\n');
-  ensureRunControl(runDir, manifest.run_id);
-  if (input.sessionRef) prepareDesignRequest({ ...initialDesignRequestOptions(input.projectRoot, input.frameworkRoot, manifest), sessionRef: input.sessionRef });
-  return { manifest, manifestPath: born.manifestPath, runDir, created: true, continuation };
+  const lockPath = featureFilePath(input.projectRoot, input.feature, path.join('goal-runs', FEATURE_LOCK_NAME));
+  const birthLock = previous ? null : tryAcquireLock(lockPath, { run_mode: 'authoritative' });
+  if (!previous && !birthLock) throw new InitialDesignBirthBusy();
+  try {
+    if (birthLock && findInitialDesignRun({ projectRoot: input.projectRoot, feature: input.feature }, birthLock.ownerId)) throw new InitialDesignBirthBusy();
+    const born = createGoalRun({ projectRoot: input.projectRoot, manifest, chain: [], ...(continuation ? { continuation } : {}) });
+    const runDir = path.resolve(input.projectRoot, manifest.report_dir);
+    if (source) fs.appendFileSync(born.eventsPath, JSON.stringify({ ...buildSupersedeAuditEvent({ targetRunId: source.run_id, supersedingRunId: manifest.run_id,
+      ...(newCycle ? { deliveryCycleBoundary: source.run_id } : {}) }), ts: new Date().toISOString(), run_id: manifest.run_id }) + '\n');
+    ensureRunControl(runDir, manifest.run_id);
+    if (input.sessionRef) prepareDesignRequest({ ...initialDesignRequestOptions(input.projectRoot, input.frameworkRoot, manifest), sessionRef: input.sessionRef });
+    return { manifest, manifestPath: born.manifestPath, runDir, created: true, continuation };
+  } finally { if (birthLock) releaseLock(lockPath, birthLock.ownerId); }
 }
 
 export interface InitialDesignObservation {
@@ -292,9 +320,10 @@ export function initialRequestWriteTargets(projectRoot: string, frameworkRoot: s
   })).map(file => path.relative(projectRoot, file).replace(/\\/g, '/'));
 }
 
-function initialRequestDisposition(projectRoot: string, frameworkRoot: string, request: NonNullable<InitialDesignObservation['request']>): CurrentDisposition {
+function initialRequestDisposition(projectRoot: string, frameworkRoot: string, request: NonNullable<InitialDesignObservation['request']>,
+  retainedProblems: readonly CurrentDispositionProblem[] = []): CurrentDisposition {
   const { prepared } = request;
-  const problems: CurrentDispositionProblem[] = [];
+  const problems: CurrentDispositionProblem[] = [...retainedProblems];
   const gap = (phase: string, detail: string): void => { problems.push({ phase, id: 'required_check_conclusion', action: 'repair', affects: 'completion', severity: 'BLOCKER', owner: '当前工作单元', detail }); };
   if (!prepared.intake || prepared.originGap) gap('component-design', prepared.originGap ?? '原请求来源/起始基线尚未核实');
   const excluded = new Set(prepared.intake?.control.excluded ?? []);
@@ -437,14 +466,16 @@ export function readInitialDesignDelivery(input: { projectRoot: string; framewor
     }
     writeBackAdmission(loaded.blueprint, { projectRoot: input.projectRoot, canonicalPath: blueprintPath });
     const denied = asRecord(asRecord(loaded.blueprint.review_summary)?.questioning)?.status === 'complete' ? independentQuestioningBlockers(loaded.blueprint) : [];
-    const blueprintIssues = validateComponentBlueprint(loaded.blueprint, { projectRoot: input.projectRoot, canonicalPath: blueprintPath });
+    const units = enumerateCanonicalChangeUnits(input.projectRoot, input.manifest.feature);
+    const blueprintIssues = [...validateComponentBlueprint(loaded.blueprint, { projectRoot: input.projectRoot, canonicalPath: blueprintPath }),
+      ...(!units.length && !fs.existsSync(candidatesPath)
+        ? blueprintDeclaredAcceptanceIssues(input.projectRoot, input.manifest.feature, loaded.blueprint) : [])];
     const disposition = resolveCurrentDisposition(readCurrentDispositionInput({ endpoint: 'design', projectRoot: input.projectRoot,
       blueprintPath, blueprint: loaded.blueprint, blueprintIssues, questioningFindings: denied,
       phase: 'component-design', providerState: input.providerState ?? 'unknown' }));
     const state = { ...base, blueprintIssues, disposition };
     const feedback = [...blueprintIssues.filter(issue => issue.severity === 'BLOCKER').map(issue => `${issue.id} ${issue.path}: ${issue.message}`),
       ...denied.map(item => `独立质询否定 ${String(item.scope_ref)}：${String(item.question)}；${String(item.answer ?? "")}；verification_refs=${JSON.stringify(item.verification_refs ?? [])}；由设计作者修复，原独立质询再核。`)];
-    const units = enumerateCanonicalChangeUnits(input.projectRoot, input.manifest.feature);
     const inspection = inspectActiveChangeUnitRuns(input.projectRoot, units.map(item => asChangeUnitArtifact(item.changeUnit)));
     if (inspection.active.length) {
       const readySet = deriveChangeUnitReadySet(input.projectRoot, input.manifest.feature);
@@ -665,6 +696,10 @@ export function initialDesignAuthorInstruction(input: { projectRoot: string; fra
       'impact-behavior-change判断的是最终用户在运行产品上可见或可操作的行为变化，不等同任何内部函数、公开API或部件状态变化。true会使testing入链并要求真实设备工具链；false仍保留验收设备层、性能待定和视觉定档的真实义务。工具缺失不是选择false的理由。依据该CU真实设计、源码与验收给完整判断、理由和实际来源；未知不能默认为false，也不复制root结论。必须整份生成候选，不手改hash。完成本职输入准备后由runtime严格验证、正式出生并施工。',
     ] : []),
     ...(observation.kind === 'decompose' ? ['同一次设计作者交回新CU候选及 construction_mapping：predicate_mappings、provide_mappings、design_ref_mappings 使用既有 contracts.change_unit 同形数组，逐项明确实际 implementation_refs 与 test_refs/verification_refs（未落盘可用 planned:）。不从 touches 或 AC ID 猜测测试文件；已有唯一明确设计映射可复用。consumer 接受 CU 后填真实 change_unit_ref，再由原 writer 整份校验并物化 Feature 契约；不需要额外作者调用补 sidecar。保留全部已有 canonical CU、蓝图及有效交付原件；现有CU内容修订交原正式设计发布事务。'] : []),
+    ...(observation.kind === 'decompose' ? [
+      '映射到框架 testing 计划时，用候选自己的 blueprint_id 与 change_unit_id 解析长期引用。CU 计划落在自身目录，施工映射只引用长期计划位置。',
+      buildChangeUnitTestingLocationHint(input.projectRoot, manifest.feature),
+    ] : []),
     observation.kind === 'questioning'
       ? questioningInstruction!
       : observation.kind === 'author'
@@ -702,13 +737,21 @@ export interface InitialDesignDeliveryProjection {
   event_count: number;
 }
 
+export function readInitialDesignWriteEvents(projectRoot: string, manifest: InitialDesignGoalManifest, current?: readonly GoalRunEvent[]): GoalRunEvent[] {
+  const prior = manifest.successor_of ? readOriginalDeliveryRuns(projectRoot, manifest)
+    .filter(run => isInitialDesignManifest(run.manifest) && run.manifest.run_id !== manifest.run_id)
+    .flatMap(run => run.events).sort((a, b) => String(a.ts).localeCompare(String(b.ts))) : [];
+  return [...prior, ...current ?? loadAuthoritativeEvents(path.resolve(projectRoot, manifest.report_dir, 'events.jsonl'))];
+}
+
 /** Root completion consumes the same design, CU and formal assembly facts as their own endpoints. */
 export function readInitialDesignCompletionDisposition(input: { projectRoot: string; frameworkRoot: string; manifest: InitialDesignGoalManifest;
   observation?: InitialDesignObservation }): CurrentDisposition {
   const observed = input.observation ?? readInitialDesignDelivery(input);
-  if (observed.request) return observed.kind === 'construction' ? initialRequestDisposition(input.projectRoot, input.frameworkRoot, observed.request)
-    : resolveCurrentDisposition({ endpoint: 'request', phases: [], additionalProblems: [{ phase: 'component-design', id: 'execution_scope', action: 'repair', affects: 'completion', severity: 'BLOCKER', owner: 'component-design', detail: observed.issues.join('；') }] });
-  const problems: CurrentDispositionProblem[] = [...(observed.disposition?.problems ?? [])];
+  const writes = phaseWriteConflictProblems(input.projectRoot, readInitialDesignWriteEvents(input.projectRoot, input.manifest));
+  if (observed.request) return observed.kind === 'construction' ? initialRequestDisposition(input.projectRoot, input.frameworkRoot, observed.request, writes)
+    : resolveCurrentDisposition({ endpoint: 'request', phases: [], additionalProblems: [...writes, { phase: 'component-design', id: 'execution_scope', action: 'repair', affects: 'completion', severity: 'BLOCKER', owner: 'component-design', detail: observed.issues.join('；') }] });
+  const problems: CurrentDispositionProblem[] = [...writes, ...(observed.disposition?.problems ?? [])];
   if (!observed.disposition) problems.push(...resolveCurrentDisposition(readCurrentDispositionInput({ endpoint: 'design', projectRoot: input.projectRoot,
     blueprintPath: observed.blueprintPath, blueprint: undefined, blueprintIssues: observed.blueprintIssues ?? [], phase: 'component-design' })).problems);
   const rejection = observed.candidateRejection;

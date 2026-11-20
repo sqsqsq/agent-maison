@@ -2,6 +2,7 @@ import { adoptInstallMetadataForExecutionReuse } from '../../profiles/hmos-app/h
 import { resolveManagedGoalInvocation, effectiveForceDevice } from './utils/managed-goal-invocation';
 import { executeCheck } from './utils/check-execution';
 import { resolveArtifactContent } from './utils/artifact-content';
+import { resolveContractFileReferences } from './utils/contract-reference-closure';
 import { DEVICE_SETUP_GUIDANCE, type DeviceSetupObservation } from './utils/device-unlock-helper';
 // ============================================================================
 // Testing 阶段脚本 Harness — check-testing.ts
@@ -43,6 +44,8 @@ import { projectAxisRequiredForRelease } from './utils/quality-axes';
 import { detectRepoLayout } from '../repo-layout';
 import {
   resolveFeatureArtifact,
+  featureDeviceTestPaths,
+  HYLYRE_DERIVED_PLAN_FILENAME,
   relFeatureArtifact,
   relFeatureFile,
   featureFilePath,
@@ -50,7 +53,7 @@ import {
   receiptDirPath,
   resolveHylyreToolConfig,
 } from '../config';
-import { extractTopPlanTestCasesForDeriveHint, buildCanonicalDeriveHintPayload, sameDeriveHintInputs, writeCanonicalDeriveHint } from './utils/test-plan-derive-hint';
+import { extractTopPlanTestCasesForDeriveHint, buildCanonicalDeriveHintPayload, writeCanonicalDeriveHint, compareDerivedPlanTcTable, compareDeriveHintSource, type TcFreshnessBaseline, type DerivePlanDifference } from './utils/test-plan-derive-hint';
 import {
   extractDerivedPlanCases,
   extractTcIdsFromPlanTable,
@@ -76,7 +79,6 @@ import {
   getColumnValues,
   extractMetadata,
   extractDeclaredVerdict,
-  MdTable,
 } from './utils/markdown-parser';
 import {
   isCapabilitySkipped,
@@ -221,6 +223,7 @@ import {
   evaluateP0SemanticCoverage,
   isCapabilityAbsenceCheck,
   resolveP0DeviceObligations,
+  resolveCheckpointAction,
   loadAcceptanceFlowsDoc,
   parsePlanTcEntries,
 } from './utils/p0-semantic-gates';
@@ -3873,6 +3876,7 @@ type DerivePlanDiagnostics = {
     | 'no_derived'
     | 'incomplete'
     | 'stale'
+    | 'runtime_inputs_unavailable'
     | 'extra_in_derived'
     | 'invalid_derived_steps'
     | 'invalid_derived_step_rules';
@@ -3886,6 +3890,8 @@ type DerivePlanDiagnostics = {
   source_plan_mtime_iso?: string;
   selected_derived_mtime_iso?: string;
   lint_violations?: Array<NavLintViolation | StepLintViolation>;
+  difference?: DerivePlanDifference;
+  identity_gaps?: ReturnType<typeof runP0IdentityInjection>['gaps'];
 };
 
 function absToProjectRel(projectRoot: string, abs: string): string {
@@ -3896,10 +3902,10 @@ function absToProjectRel(projectRoot: string, abs: string): string {
  * 派生计划缺失或不满足 SSOT 覆盖时写入 JSON，供 agent 生成/补齐 test-plan.hylyre.md。
  * @returns 绝对路径；写盘失败时返回 null
  */
-function writeDeriveHintFromPlanJson(ctx: CheckContext): string | null {
+function writeDeriveHintFromPlanJson(ctx: CheckContext, current?: ReturnType<typeof buildCanonicalDeriveHintPayload>): string | null {
   try {
     const hintPath = path.join(featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot), 'derive-hint-from-plan.json');
-    writeCanonicalDeriveHint(hintPath, buildCanonicalDeriveHintPayload(ctx.projectRoot, ctx.feature));
+    writeCanonicalDeriveHint(hintPath, current ?? buildCanonicalDeriveHintPayload(ctx.projectRoot, ctx.feature));
     return hintPath;
   } catch {
     return null;
@@ -3931,73 +3937,13 @@ function loadExecutionChannelDeclaration(
   return evaluateExecutionChannelDeclaration(raw, opts);
 }
 
-/**
- * 派生计划是否落后于顶层 TC 表。共同字段直接对账；会被翻译成 Hylyre JSON 的「测试步骤」
- * 则与既有 derive-hint-from-plan.json 的源 TC 快照对账，不新增文件/manifest。
- */
-interface TcFreshnessBaseline {
-  test_cases?: ReturnType<typeof extractTopPlanTestCasesForDeriveHint>;
-}
-
 export function derivedPlanStaleByTcTable(
   topRaw: string,
   derivedContent: string,
   baseline?: TcFreshnessBaseline | null,
   derivedAfterHint = true,
 ): boolean {
-  const topSection = getSectionContent(topRaw, '测试用例');
-  const derivedSection = getSectionContent(derivedContent, '测试用例清单') ?? getSectionContent(derivedContent, '测试用例');
-  const topTables = topSection ? extractTables(topSection) : [];
-  const derivedTables = derivedSection ? extractTables(derivedSection) : [];
-  if (topTables.length === 0) return false;
-  if (derivedTables.length === 0) return true;
-  const norm = (s: string): string => s.replace(/\s+/g, ' ').trim();
-  const hasColumns = (table: MdTable, groups: string[][]): boolean =>
-    groups.every(group => group.some(key => table.headers.some(header => header.includes(key))));
-  const sharedColumns = [
-    ['用例编号', '编号'], ['用例名称', '名称'], ['前置条件'], ['测试步骤', '步骤'],
-    ['预期结果'], ['优先级'], ['关联 AC', '关联验收标准', '关联'],
-  ];
-  if (!hasColumns(topTables[0], [...sharedColumns, ['执行通道', 'execution_channel']]) || !hasColumns(derivedTables[0], sharedColumns)) {
-    return true;
-  }
-
-  const top = new Map(extractTopPlanTestCasesForDeriveHint(topRaw).map(row => [row.tc_id, row]));
-  const derived = new Map(extractDerivedPlanCases(derivedContent).map(row => [row.tc_id, row]));
-  for (const [id, topRow] of top) {
-    const derivedRow = derived.get(id);
-    if (!derivedRow) continue; // TC 集合增删由 coverage gate 判
-    const common = [
-      [topRow.name, derivedRow.name],
-      [topRow.precondition, derivedRow.precondition],
-      [topRow.expected, derivedRow.expected],
-      [topRow.priority.toUpperCase(), derivedRow.priority.toUpperCase()],
-      [topRow.ac_ref.toUpperCase(), derivedRow.ac_ref.toUpperCase()],
-    ];
-    if (common.some(([a, b]) => norm(a) !== norm(b))) return true;
-  }
-
-  const source = baseline?.test_cases;
-  if (!Array.isArray(source)) return true; // 步骤已被翻译，缺源 TC 快照就无法比较，fail stale
-  if (!derivedAfterHint) return true; // hint 可刷新，但旧派生不能凭刷新 hint 被洗绿
-  const sourceFields = ['tc_id', 'name', 'precondition', 'steps_natural_language', 'expected', 'priority', 'ac_ref', 'execution_channel'] as const;
-  if (source.some(row => !row || sourceFields.some(key => typeof row[key] !== 'string'))) return true;
-  const sourceById = new Map(source.map(row => [row.tc_id.toUpperCase(), row]));
-  for (const [id, topRow] of top) {
-    const prior = sourceById.get(id);
-    if (!prior) continue; // TC 集合增删由 coverage gate 判
-    const behavior = [
-      [topRow.name, prior.name],
-      [topRow.precondition, prior.precondition],
-      [topRow.steps_natural_language, prior.steps_natural_language],
-      [topRow.expected, prior.expected],
-      [topRow.priority.toUpperCase(), prior.priority.toUpperCase()],
-      [topRow.ac_ref.toUpperCase(), prior.ac_ref.toUpperCase()],
-      [topRow.execution_channel.toLowerCase(), prior.execution_channel.toLowerCase()],
-    ];
-    if (behavior.some(([a, b]) => norm(a) !== norm(b))) return true;
-  }
-  return false;
+  return compareDerivedPlanTcTable(topRaw, derivedContent, baseline, derivedAfterHint) !== null;
 }
 
 /** plan 07a41ec6 T3：feature ui-spec 的 canonical 索引（无 ui-spec 时 by_text 不能映射身份，只认 by_id 字面）。 */
@@ -4069,7 +4015,8 @@ function collectAcceptanceActionBindings(ctx: CheckContext): AcceptanceActionBin
   const doc = loadAcceptanceFlowsDoc(ctx.projectRoot, ctx.feature, ctx.resolvedInputs ? ctx.featureSpec.acceptance ?? null : undefined);
   if (!doc) return [];
   return doc.criteria.flatMap(ac => {
-    const target = ac.checkpoint?.action?.target_element_id;
+    const action = resolveCheckpointAction(ac.checkpoint?.action);
+    const target = action?.kind === 'target' ? action.target : undefined;
     return typeof ac.id === 'string' && ac.id.trim() && typeof target === 'string' && target.trim()
       ? [{ ac_id: ac.id.trim(), target_element_id: target.trim() }]
       : [];
@@ -4200,8 +4147,7 @@ async function checkDeviceTestRunGate(
       ];
     }
 
-    const reportsBase = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot);
-    const topResolved = resolveFeatureArtifact(ctx.projectRoot, ctx.feature, 'test-plan.md');
+    const { reportsDir: reportsBase, topPlan: topResolved } = featureDeviceTestPaths(ctx.projectRoot, ctx.feature, ctx.frameworkRoot);
     const topPath = topResolved.actualPath;
     const topRaw = fs.existsSync(topPath) ? fs.readFileSync(topPath, 'utf-8') : '';
     const topIds = extractTcIdsFromPlanTable(topRaw);
@@ -4268,9 +4214,6 @@ async function checkDeviceTestRunGate(
       tcBaseline = null;
     }
     // 新鲜度按 TC 行行为内容对账；标题/说明/版本等表外散文不参与。
-    const stale = derivedPlanStaleByTcTable(topRaw, derivedContent, tcBaseline, derivedAfterHint) ||
-      !sameDeriveHintInputs(tcBaseline, buildCanonicalDeriveHintPayload(ctx.projectRoot, ctx.feature, topRaw));
-
     const hintBase: DerivePlanDiagnostics = {
       top_tc_ids: topIds,
       derived_tc_ids: derivedIds,
@@ -4314,8 +4257,11 @@ async function checkDeviceTestRunGate(
       ];
     }
 
-    if (stale) {
-      const hintPath = writeDeriveHintFromPlanJson(ctx);
+    const rowDifference = compareDerivedPlanTcTable(topRaw, derivedContent, tcBaseline, derivedAfterHint);
+    const canonicalHint = rowDifference ? undefined : buildCanonicalDeriveHintPayload(ctx.projectRoot, ctx.feature, topRaw);
+    const difference = rowDifference ?? compareDeriveHintSource(tcBaseline, canonicalHint);
+    if (difference) {
+      const hintPath = writeDeriveHintFromPlanJson(ctx, canonicalHint);
       const hintLine = hintPath ? `派生输入基线见 ${hintPath}；最新完整诊断见 structured.derive_hint。` : '';
       return [
         {
@@ -4324,8 +4270,8 @@ async function checkDeviceTestRunGate(
           description: desc,
           severity: 'BLOCKER',
           status: 'FAIL',
-          structured: { derive_hint: { ...hintBase, coverage_reason: 'stale' } },
-          details: `派生计划与顶层 test-plan.md 的 TC 行行为字段不一致，或关键列/源 TC 快照无法比较。请按最新 hint 重新派生后重试。\n${hintLine}`,
+          structured: { derive_hint: { ...hintBase, coverage_reason: 'stale', difference } },
+          details: `派生输入差异 ${difference.tc_id ?? ''} ${difference.field}（${difference.kind}）：顶层=${JSON.stringify(difference.top)}；已选派生=${JSON.stringify(difference.derived)}。按最新 hint 修正有差异的行。\n${hintLine}`,
         },
       ];
     }
@@ -4337,7 +4283,7 @@ async function checkDeviceTestRunGate(
     const { stepLint, selectorWarnings, navLint } = staticPlanGates;
     const stepBlockers = stepLint.violations.filter(v => v.severity === 'BLOCKER');
     if (stepBlockers.length > 0) {
-      const hintPath = writeDeriveHintFromPlanJson(ctx);
+      const hintPath = writeDeriveHintFromPlanJson(ctx, canonicalHint);
       const lines = stepBlockers.slice(0, 12).map(
         v => `  - [${v.rule_id}] ${v.tc_id}: ${v.message}${v.suggested_fix ? `（建议：${v.suggested_fix}）` : ''}`,
       );
@@ -4351,7 +4297,7 @@ async function checkDeviceTestRunGate(
           status: 'FAIL',
           structured: { derive_hint: { ...hintBase, coverage_reason: 'invalid_derived_step_rules', lint_violations: stepBlockers } },
           details: [
-            `派生 Hylyre 计划未通过步骤级静态门禁（${stepBlockers.length} 处，当前 lint 支持的规则集 STEP-001~007）：`,
+            `派生 Hylyre 计划未通过步骤级静态门禁（${stepBlockers.length} 处）：`,
             ...lines,
             stepBlockers.length > 12 ? `  …等共 ${stepBlockers.length} 处` : '',
             hintLine,
@@ -4415,6 +4361,15 @@ async function checkDeviceTestRunGate(
     // Static plan facts are independent of build/install/run. Keep this after all
     // static SSOT/lint/selector/nav checks so an install failure cannot hide an
     // already-invalid derived plan behind a whole-gate SKIP.
+    const injectionPreview = runP0IdentityInjection(ctx, derivedContent, topRaw);
+    if (injectionPreview.gaps.length > 0) {
+      return [{ id, category: 'structure', description: desc,
+        severity: 'BLOCKER', status: 'FAIL', failure_kind: 'plan_contract',
+        details: injectionPreview.gaps.map(gap => gap.message).join('\n'),
+        suggestion: '按所列 TC 和验收 ID 修正派生计划中的触发动作、起始屏断言或 selector 绑定，然后重新运行 testing 预检。',
+        structured: { derive_hint: { ...hintBase, coverage_reason: 'invalid_derived_steps', identity_gaps: injectionPreview.gaps } },
+      }];
+    }
     if (!hapHolder.installPassed && !hapHolder.installPending) {
       return [
         {
@@ -4424,7 +4379,8 @@ async function checkDeviceTestRunGate(
           severity: 'BLOCKER',
           status: 'SKIP',
           details: 'device_test.install 未 PASS（或未执行成功），跳过真机自动化执行；静态派生计划已独立校验。',
-          structured: { derive_hint: hintBase },
+          structured: { derive_hint: { ...hintBase, coverage_reason: 'runtime_inputs_unavailable',
+            difference: { kind: 'runtime_inputs', field: 'HAP install', top: '当前构建通过装机或完成有效复用', derived: '当前未通过装机' } } },
         },
       ];
     }
@@ -4460,9 +4416,9 @@ async function checkDeviceTestRunGate(
     // of the legacy runtime telemetry bridge. Only an old provider may enter
     // the bounded bridge path; native 0.4.0 must never be monkey-patched.
     const acceptanceFlows = loadAcceptanceFlowsDoc(ctx.projectRoot, ctx.feature, ctx.resolvedInputs ? ctx.featureSpec.acceptance ?? null : undefined);
-    const runtimeEvidenceRequired = Boolean(
-      resolveP0DeviceObligations(ctx.projectRoot, ctx.feature, acceptanceFlows).device.length > 0,
-    );
+    const obligations = resolveP0DeviceObligations(ctx.projectRoot, ctx.feature, acceptanceFlows);
+    const runtimeEvidenceRequired = obligations.device.length > 0;
+    const nativeReturnRequired = obligations.checkpoints.some(ac => resolveCheckpointAction(ac.checkpoint?.action)?.kind === 'back');
     if (runtimeEvidenceRequired) {
       let resolvedCapability: HylyreEvidenceCapability;
       try {
@@ -4481,7 +4437,7 @@ async function checkDeviceTestRunGate(
         };
       }
       hapHolder.hylyreEvidenceCapability = resolvedCapability;
-      if (resolvedCapability.mode === 'unsupported') {
+      if (resolvedCapability.mode === 'unsupported' || nativeReturnRequired && !resolvedCapability.native) {
         return [{
           id,
           category: 'structure',
@@ -4491,7 +4447,8 @@ async function checkDeviceTestRunGate(
           blocking_class: 'externalBlocked',
           failure_kind: 'capability_missing',
           details:
-            '【DEFERRED_CAPABILITY_MISSING】当前 device_test.run provider/profile 不支持 native CaseResult.steps[] 或受支持的 legacy bridge；' +
+            (nativeReturnRequired ? '【DEFERRED_CAPABILITY_MISSING】系统/边缘返回需要 native CaseResult.steps[]；'
+              : '【DEFERRED_CAPABILITY_MISSING】当前 device_test.run provider/profile 不支持 native CaseResult.steps[] 或受支持的 legacy bridge；') +
             `未启动真机内容执行。${resolvedCapability.reason}`,
           suggestion: '升级 Hylyre 至 native 最低版本并确认 ready meta 版本链一致后重跑 testing。',
         }];
@@ -4512,7 +4469,6 @@ async function checkDeviceTestRunGate(
     const coldRestartEnv = process.env.HARNESS_DEVICE_TEST_COLD_RESTART?.trim();
     const coldRestart =
       coldRestartEnv === '1' ? true : coldRestartEnv === '0' ? false : hylyreCfg.cold_restart_before_run;
-    const injectionPreview = runP0IdentityInjection(ctx, fs.readFileSync(path.resolve(derivedPath), 'utf-8'), topRaw);
     const deviceIdentity = resolveExecutionDeviceIdentity();
     const executionKeyInputs: ExecutionKeyInputs = {
       hap_sha256_full: hapHolder.installPending && hapHolder.hapPath ? computeHapSha256Full(hapHolder.hapPath) : hapHolder.hapSha256Full,
@@ -4616,7 +4572,7 @@ async function checkDeviceTestRunGate(
       }
       const adopted = reusable ?? failedInvocation!;
       hylyreOutDir = adopted.runDir;
-      runPlanPath = path.join(hylyreOutDir, 'test-plan.hylyre.md');
+      runPlanPath = path.join(hylyreOutDir, HYLYRE_DERIVED_PLAN_FILENAME);
       derivedPlanSha256AtStart = sha256File(runPlanPath);
       run = failedInvocation ? frozenFailure! : {
         executed: true,
@@ -4658,6 +4614,7 @@ async function checkDeviceTestRunGate(
       const freshRun = prepareFreshHylyreRunDir({
         reportsBase,
         sourceHylyrePlanAbsPath: path.resolve(derivedPath),
+        expectedSourceContent: derivedContent,
       });
       if (!freshRun.ok) {
         return [
@@ -5805,7 +5762,9 @@ export function checkUiEntryCoverage(ctx: CheckContext): CheckResult[] {
     ? buildAcceptanceIdPriorityMap(acceptance)
     : new Map<string, string>();
   const entryPriorities = buildEntryUiPriorityMap(spec, acPriorityMap);
-  const cov = evaluateUiEntryCoverage(spec, pick.selected.content, entryPriorities);
+  const refs = ctx.featureSpec.contracts && resolveContractFileReferences(ctx.projectRoot, ctx.featureSpec.contracts);
+  const sourceFiles = refs ? [...new Set([...refs.planned_files, ...refs.references.map(ref => ref.path)])] : [];
+  const cov = evaluateUiEntryCoverage(spec, pick.selected.content, entryPriorities, { projectRoot: ctx.projectRoot, files: sourceFiles });
 
   const results: CheckResult[] = [];
 
@@ -6174,7 +6133,9 @@ const checker: PhaseChecker = {
     // 契约错误会在烧掉一次真机 run 之后才被报出来，且期间只跑了合法子集，产出半份 trace。
     // decl.ok=false 时零设备动作，只产结构化 BLOCKER。
     results.push(...executeCheck(ctx, () => checkExecutionChannelDeclaration(ctx, plan), 'testing_execution_channel'));
-    results.push(...executeCheck(ctx, () => checkP0IdentityInjectionStatic(ctx, plan), 'p0_identity_injection'));
+    const identityResults = executeCheck(ctx, () => checkP0IdentityInjectionStatic(ctx, plan), 'p0_identity_injection');
+    results.push(...identityResults);
+    const identityBlocked = identityResults.find(r => isBlockingCheck(r));
     // R8：「TC 仅关联 unit 层 AC」同样是**计划契约错误**（这条 TC 不该存在于真机计划里），
     // 所以与通道声明并列前移到 build/install/device 之前裁决一次——跑完机再提示等于白烧一轮，
     // 而且 AI 会去改 UT / 改标 manual 绕路。分层结果只在这里算一次，后面不再重算。
@@ -6186,7 +6147,7 @@ const checker: PhaseChecker = {
     // 调用，因此照常完整重算——通道迁移的 BLOCKER 已由上面那条 check 独立记账，phase 仍然 FAIL，
     // 不需要顺手把只读重算也关掉（那会让历史 run 连诊断都跑不了）。
     const pipelinePlan = shouldRunDevicePipeline(
-      { ok: channelDeclaration.ok && !unitOnlyTcBlocked },
+      { ok: channelDeclaration.ok && !unitOnlyTcBlocked && !identityBlocked },
       Boolean(ctx.reportReconcileOnly),
     );
     const reportBeforeRebuild = pipelinePlan.reportOnly ? report : null;
@@ -6200,6 +6161,7 @@ const checker: PhaseChecker = {
         severity: 'BLOCKER',
         status: 'SKIP',
         details: [
+          ...(identityBlocked ? [identityBlocked.details] : []),
           ...(unitOnlyTcBlocked
             ? ['测试计划含仅关联 unit 层 AC 的用例，已在设备动作前停下（零设备调用）。\n' + unitOnlyTcBlocked.details]
             : []),
@@ -6208,7 +6170,9 @@ const checker: PhaseChecker = {
             : ['顶层 execution_channel 声明未闭合，已在任何 build/install/device 动作之前停下（零设备调用）。\n' +
                channelDeclaration.detail]),
         ].join('\n\n'),
-        suggestion: unitOnlyTcBlocked
+        ...(identityBlocked ? { structured: { derive_hint: { coverage_reason: 'invalid_derived_steps',
+          identity_gaps: (identityBlocked.structured as { gaps?: unknown } | undefined)?.gaps } } } : {}),
+        suggestion: identityBlocked ? identityBlocked.suggestion : unitOnlyTcBlocked
           ? '先按 plan_references_unit_layer_ac 保留原失败行为并修正覆盖去向；pure-unit 交 business-ut，实际 UI 关联适用验收后复验，再跑 testing。' +
             (channelDeclaration.ok ? '' : `同轮还须修好执行通道声明（${EXECUTION_CHANNEL_DOMAIN}）。`)
           : `先修好顶层 test-plan.md 的执行通道声明（${EXECUTION_CHANNEL_DOMAIN}）再跑 testing；harness 不按用例文字猜通道，也不会只跑"合法子集"。`,

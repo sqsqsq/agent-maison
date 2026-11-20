@@ -2081,6 +2081,19 @@ export function featurePhaseReportsDir(
   return path.join(frameworkRootLazy(), 'harness', 'reports', featureRelativePath(feature), phase);
 }
 
+export const HYLYRE_DERIVED_PLAN_FILENAME = 'test-plan.hylyre.md';
+
+export function hylyreDerivedPlanPath(reportsDir: string, runDirectory: string): string {
+  return path.join(reportsDir, runDirectory, 'hylyre', HYLYRE_DERIVED_PLAN_FILENAME);
+}
+
+/** The stable derived reference locates a CU's testing obligation; execution uses a selected run copy. */
+export function featureDeviceTestPaths(projectRoot: string, feature: string, frameworkRoot?: string) {
+  const topPlan = resolveFeatureArtifact(projectRoot, feature, 'test-plan.md');
+  const reportsDir = featurePhaseReportsDir(projectRoot, feature, 'testing', frameworkRoot);
+  return { topPlan, reportsDir, stableDerivedPlan: path.join(path.dirname(topPlan.canonicalPath), HYLYRE_DERIVED_PLAN_FILENAME) };
+}
+
 /** `featurePhaseReportsDir` 相对 `projectRoot` 的 POSIX 风格路径（用于日志 / summary）。 */
 export function relFeaturePhaseReportsDir(
   projectRoot: string,

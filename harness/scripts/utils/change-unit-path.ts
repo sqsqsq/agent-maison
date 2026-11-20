@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
-import { featuresDirPath, hasFeatureConstructionMarkers } from '../../config';
+import { featureDeviceTestPaths, featuresDirPath, hasFeatureConstructionMarkers, hylyreDerivedPlanPath } from '../../config';
 // M5A §4.3：身份 ↔ 物理路径的唯一 SSOT（零依赖 CJS）；本文件只做 re-export 与
 // 契约层校验，不另写 decoder/拼接实现（Hook 与 harness 同源，见 P2 tasks 8.4）。
 import {
@@ -62,6 +62,13 @@ export function changeUnitPath(projectRoot: string, blueprintId: string, changeU
 /** M5A §4.3 re-export：逻辑 featureId = `cu-` + base64url(blueprint_id \0 change_unit_id)。 */
 export function deriveChangeUnitFeatureId(blueprintId: string, changeUnitId: string): string {
   return encodeCuFeatureId(blueprintId, changeUnitId);
+}
+
+export function buildChangeUnitTestingLocationHint(projectRoot: string, blueprintId: string): string {
+  const slot = 'change-unit-id-placeholder';
+  const paths = featureDeviceTestPaths(projectRoot, deriveChangeUnitFeatureId(blueprintId, slot));
+  const rel = (file: string) => path.relative(projectRoot, file).replace(/\\/g, '/').split('/').map(part => part === slot ? '<change_unit_id>' : part).join('/');
+  return `按候选 artifact.change_unit_id 替换 <change_unit_id>。顶层测试计划长期引用 planned:${rel(paths.topPlan.canonicalPath)}；Hylyre 派生义务长期引用 planned:${rel(paths.stableDerivedPlan)}。执行输入在 ${rel(hylyreDerivedPlanPath(paths.reportsDir, '<轮次>'))}，由 testing 当轮选用与绑定。`;
 }
 
 export function parseChangeUnitFeatureId(featureId: string): { blueprintId: string; changeUnitId: string } {

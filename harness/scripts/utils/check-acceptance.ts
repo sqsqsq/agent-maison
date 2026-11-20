@@ -283,13 +283,22 @@ export function checkLegacyDeviceTestingTodoDeprecation(
 }
 
 /** Shared content checks for typed design inputs and their projected counterparts. */
+export function acceptanceLinkedUseCaseFailure(
+  item: { id: string; linked_flow?: string; linked_branch?: string; ut_layer?: string },
+  resolve: (id: string) => { branches: readonly { id: string }[] } | undefined,
+): string | undefined {
+  if (!item.linked_flow || !isUnitUtLayer(item.ut_layer)) return undefined;
+  const flow = resolve(item.linked_flow);
+  if (!flow || (item.linked_branch && !flow.branches.some(branch => branch.id === item.linked_branch))) {
+    return `${item.id}: linked_flow/linked_branch 无法解析（${item.linked_flow}${item.linked_branch ? '/' + item.linked_branch : ''}）`;
+  }
+}
+
 export function checkAcceptanceLinkedUseCases(ctx: CheckContext): CheckResult[] {
   const issues: string[] = [];
   for (const item of [...(ctx.featureSpec.acceptance?.criteria ?? []), ...(ctx.featureSpec.acceptance?.boundaries ?? [])]) {
-    if (item.linked_flow && isUnitUtLayer(item.ut_layer)) {
-      const flow = ctx.featureSpec.useCases?.use_cases.find(flow => flow.id === item.linked_flow);
-      if (!flow || (item.linked_branch && !flow.branches.some(branch => branch.id === item.linked_branch))) issues.push(`${item.id}: linked_flow/linked_branch 无法解析`);
-    }
+    const failure = acceptanceLinkedUseCaseFailure(item, id => ctx.featureSpec.useCases?.use_cases.find(flow => flow.id === id));
+    if (failure) issues.push(failure);
   }
   return [{ id: 'acceptance_use_cases_resolvable', description: '验收指向真实用例与分支', category: 'structure', severity: 'BLOCKER', status: issues.length ? 'FAIL' : 'PASS', details: issues.join('; ') || '验收用例引用可解析' }];
 }

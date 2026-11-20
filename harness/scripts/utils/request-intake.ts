@@ -19,7 +19,8 @@ const native = require('../../../agents/shared/native-request.cjs') as {
   toolCompletedBefore(tool: NativeTool, message: NativeMessage | number): boolean;
   isEditingTool(tool: NativeTool): boolean;
   readNativeSession(reference: string, projectRoot: string): NativeSession;
-  userControl(message: string): { exempt: boolean; session: boolean; revoke: boolean; fixed?: string; excluded: string[]; included: string[] };
+  userControl(message: string): { exempt: boolean; session: boolean; revoke: boolean; fixed?: string; excluded: string[]; included: string[];
+    transport?: 'attended' | 'unattended' };
   editedPaths(tools: NativeTool[]): string[];
   frontDoorLoaded(session: NativeSession, projectRoot: string, frameworkRoot: string): boolean;
   toolInput(tool: NativeTool): string;
@@ -33,7 +34,8 @@ export interface RequestIntake {
   user_messages?: Array<{ id: string; text: string; at?: string; line: number }>;
   boundary: { origin_user_id: string; explanation: string; source_line: number };
   front_door_loaded: boolean;
-  control: { exempt: boolean; scope: 'request' | 'session'; fixed?: DeliveryScale; excluded: string[]; sources: string[] };
+  control: { exempt: boolean; scope: 'request' | 'session'; fixed?: DeliveryScale; excluded: string[]; sources: string[];
+    transport?: { mode: 'attended' | 'unattended'; source: string } };
   facts: DeliveryFacts;
   policy: DeliveryPolicy;
   baseline: { base?: string; head: 'WORKTREE'; source: 'captured' | 'reflog' | 'unknown'; detail: string; initial_dirty: string[] | 'unknown'; preimages?: Record<string, { content: string; source_line: number }> };
@@ -179,6 +181,7 @@ export function readRequestIntake(options: { projectRoot: string; frameworkRoot:
   for (const message of session.messages.filter(message => message.role === 'user' && session.userControlVerified !== false)) {
     const change = native.userControl(message.text);
     const current = relatedUsers.has(message.id);
+    if (current && change.transport) control.transport = { mode: change.transport, source: `${session.file}#${message.id}` };
     if (change.revoke && (current || control.scope === 'session')) control = { ...control, exempt: false, sources: [...control.sources, `${session.file}#${message.id}`] };
     if (change.exempt && (change.session || current && boundaryMessage)) control = { ...control, exempt: true, scope: change.session ? 'session' : 'request', sources: [...control.sources, `${session.file}#${message.id}`] };
     if (current && (change.fixed || change.excluded.length)) control = { ...control, ...(change.fixed ? { fixed: scales[change.fixed] } : {}), excluded: [...new Set([...control.excluded, ...change.excluded])], sources: [...control.sources, `${session.file}#${message.id}`] };

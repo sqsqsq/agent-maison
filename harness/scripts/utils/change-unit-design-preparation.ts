@@ -177,6 +177,13 @@ export function acceptChangeUnitDecomposition(
       );
     }
   }
+  if (manifest && !enumerateCanonicalChangeUnits(projectRoot, blueprintId).length) {
+    const { readPendingCandidateAcceptanceBasis } = require('./design-repair-unattended') as typeof import('./design-repair-unattended');
+    const { assertPendingCandidateAcceptanceReferences } = require('./change-unit-provider-boundary') as typeof import('./change-unit-provider-boundary');
+    const blueprint = loadCanonicalBlueprint(projectRoot, blueprintId).blueprint;
+    const basis = readPendingCandidateAcceptanceBasis(path.resolve(projectRoot, manifest.report_dir), blueprint);
+    if (basis) assertPendingCandidateAcceptanceReferences(basis.baseline, blueprint, basis.original, candidates);
+  }
   const accepted = acceptChangeUnitCandidates(projectRoot, candidates);
   return {
     accepted,

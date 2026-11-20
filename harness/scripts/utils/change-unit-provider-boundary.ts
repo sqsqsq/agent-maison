@@ -61,6 +61,51 @@ export class ChangeUnitCandidateRejected extends Error {
   }
 }
 
+/** A published author revision can introduce new IDs on targets the original candidate already owns. */
+export function assertPendingCandidateAcceptanceReferences(
+  baseline: import('./component-blueprint-model').BlueprintRecord,
+  current: import('./component-blueprint-model').BlueprintRecord,
+  original: readonly ChangeUnitCandidate[],
+  candidates: readonly ChangeUnitCandidate[],
+): void {
+  const { resolveBlueprintTarget, stableAddressIndex } = require('./blueprint-addressing') as typeof import('./blueprint-addressing');
+  const { asRecord, asRecords } = require('./component-blueprint-model') as typeof import('./component-blueprint-model');
+  const { extractAcceptanceIdRefs } = require('./check-acceptance') as typeof import('./check-acceptance');
+  const acceptanceIds = (target: ReturnType<typeof asRecord>): string[] => {
+    const acceptance = asRecord(target?.acceptance);
+    return ['criteria', 'boundaries', 'performance'].flatMap(key => asRecords(acceptance?.[key]).flatMap(row =>
+      typeof row.id === 'string' && extractAcceptanceIdRefs(row.id).includes(row.id.toUpperCase()) ? [row.id.toUpperCase()] : []));
+  };
+  const oldIds = new Set([...stableAddressIndex(baseline).values()].flatMap(acceptanceIds));
+  const owners = new Map<string, Set<string>>();
+  for (const { artifact } of original) for (const ref of artifact.design_refs) {
+    let target;
+    try { target = resolveBlueprintTarget(current, ref.target); }
+    catch { continue; } // Identity and closure still go through the original consumer.
+    for (const id of acceptanceIds(target)) if (!oldIds.has(id)) {
+      const ids = owners.get(id) ?? new Set<string>();
+      ids.add(artifact.change_unit_id);
+      owners.set(id, ids);
+    }
+  }
+  const required = [...owners].filter(([, matches]) => matches.size === 1);
+  const missing = new Map<string, string[]>();
+  for (const [id, matches] of required) {
+    const [owner] = matches;
+    const artifact = candidates.find(row => row.artifact.change_unit_id === owner)?.artifact;
+    if (!artifact?.verification_refs.some(ref => extractAcceptanceIdRefs(ref).includes(id))) {
+      missing.set(owner, [...missing.get(owner) ?? [], id]);
+    }
+  }
+  if (missing.size) throw new ChangeUnitCandidateRejected('change_unit_candidate_design_rejected',
+    `蓝图已有新验收。由原分解写方在同一候选的 verification_refs 补齐：${[...missing]
+      .map(([id, refs]) => `${id} → ${refs.join('、')}`).join('；')}。保留当前蓝图及候选身份。`);
+  if (required.length && (candidates.length !== original.length || candidates.some(row =>
+    !original.some(prior => prior.artifact.change_unit_id === row.artifact.change_unit_id)))) {
+    throw new ChangeUnitCandidateRejected('change_unit_candidate_design_rejected', '当前候选补齐验收引用须保留原批次 CU 身份。');
+  }
+}
+
 /**
  * 唯一 consumer 校验原语：provider provenance → 目标路径 → 重复接受 → canonical schema/identity
  * → 设计闭包门。**只做校验、不落盘**，返回已校验的目标路径。

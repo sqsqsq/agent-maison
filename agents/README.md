@@ -62,11 +62,26 @@ framework/agents/
 - 作者始终使用该工作单元专用上下文；原生续接不可用时按当前事实重建并披露，不能回主会话代施工，独核仍独立；
 - 无人值守仍须通过 `external_runner.unattended` preflight。
 
-当前显式声明：Codex/Claude 支持阶段隔离，Codex 另声明原生 resume 与双向 handoff。其它 adapter 保持保守默认；claude/codex/cursor/codeagent/opencode/chrys/generic/deepseek-harness 的可命令会话均使用同一 next/report 请求与结果形状，不虚改 YAML 能力值。不能运行命令或配置无效时准确报告能力缺口。用户界面只显示“有人在场 / 无人值守”。
+Codex、Claude 与 DeepSeek Harness 声明原生 resume、阶段隔离和双向 handoff。八种 adapter 的可命令会话都走同一 `next/report` 请求与结果。用户界面只显示“有人在场 / 无人值守”。
 
 八个 adapter 先消费统一前门的同源外框和用户覆盖：特别简单走直接能力，小型经同协议短蓝图和原 request 完成适用工作，无 CU/独立设计质询/独立评审文件；中型/复杂及已有 CU 的共同入口适用于原始请求初始设计：同一 runtime 派作者、真实独立质询、检查与 CU 准入，再沿 P2 接正常 CU；不先要求主会话完成设计，不强依赖原生 Goal、`in_session_reconcile` 或模型 CLI 原生 resume。原生隔离/续接不可用须重建专用作者上下文并披露，不授权主会话施工；独立质询/verifier仍必需真实独立。后台仍以实际 headless/生存能力与原握手为准，缺能力不得声称已运行；本说明不扩大 adapter YAML 已声明能力。需求/可信授权/显式用户截止从原请求继承，activity如实累计，模板不自选 CU/phase 或把调用退出当任务完成。全部适用CU完成不代签原部件终点；同一root持续必要工作，消费原writer正式closure及真实装配/独核证据。
 
 schema、组合约束与 fallback 以 [`adapter-schema.yaml`](./adapter-schema.yaml) 和 [`goal-adapter-capability.ts`](../harness/scripts/utils/goal-adapter-capability.ts) 为准。
+
+无人值守以真实用户原话或既有确切运输选择为依据。后台握手确认前，观察原请求和进程绑定。确认后台无法启动，且同 adapter 能在当前会话运行已签专用执行命令时，按回执接续会话并维持其存活。原生可执行器、准确模型身份或必要权限缺失时，保留原 run 和签发，待同 adapter 的可用环境接回。各客户端的实际验证关注以下原件。
+
+| Adapter | 核对的入口与原件 |
+| --- | --- |
+| DeepSeek Harness | 精确 `DSH_SESSION_ID` 的真实用户消息和对应 profile。Windows 一次性 `headless` 前台会回收它启动的进程。回执要求保持前台时，程序仍执行原签发，按 `wait_command` 观察。使用具备持久运输的前台时，另核对退出后活性与交回。 |
+| Claude Code | 已配置存储内的准确 Claude 用户消息。用 `claude -p` 核对原生身份和受理，复用原 SID 时使用准确 `--resume`。 |
+| Codex | 精确线程索引下的用户 turn。用 `codex exec` 核对绑定和原生终态，测试命令宿主实际给出的后台生存边界。 |
+| OpenCode | 已物化前台 hook 或准确会话中的用户原件。用 `opencode run` 核对原生绑定和交回，原生续接缺失时由专用执行器重建。 |
+| Cursor | 当前读者能读历史包络。运输选择需有可核实的用户来源或明确启动选择，并在实际 Cursor 环境检查 `cursor-agent` 可用性。 |
+| CodeAgent | 核对 `.cac` 的真实原请求和 `codeagentcli`。原生续接缺失时按当前证据重建专用上下文。 |
+| Chrys | 可信入口传递运输选择，检查实际 `chrys run`、专用任务原件及后台握手。 |
+| generic | 由实际接入方提供可信用户选择及可执行 adapter 配置。按所接入的命令、原签原件和握手确认能力。 |
+
+协议回放检查请求、进程时段和交回。实际客户端的回放记录还须核对用户来源、原生进程、受理与正式终点。
 
 ## 关键设计
 

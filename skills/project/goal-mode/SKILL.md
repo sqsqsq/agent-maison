@@ -9,7 +9,7 @@
 - **有人在场**：主会话展示进度、转交插话和真实授权，启动返回的执行命令；业务工作始终由本单元专用作者上下文完成。
 - **无人值守**：同一单元、授权、作者上下文与完成规则，使用后台运输和通知。需要人处理的真实条件保全为可恢复等待。
 
-明确的“我会看着”或“后台继续 / --detach”直接映射，不重复确认；歧义才按 [goal.run_mode](../../reference/confirmation-registry.yaml) 澄清。主会话不接管施工，不因 adapter 缺原生 resume 就假称不能执行：能按准确 SID 续接就续接，不能时依当前原件重建专用上下文并披露边界，禁止 `--last`。必需质询/核验始终用真实独立上下文。
+前门从原始用户消息核对“我会看着”“不要后台”或“无人值守、后台继续”，返回唯一启动动作。显式 `--detach` 沿已有后台入口。核实用户明确要求同一完整交付无人值守后，后台和会话接续均可在原授权内自动修复设计。`--authorize-autonomy` 转交可信自主授权，运输继续遵从用户选择。主会话保留工作单元现有准确 SID，原生续接失效时由专用执行器根据当前原件重建上下文。独立质询和核验保持独立。
 
 ## 请求与授权
 
@@ -62,9 +62,11 @@ DSH 以 headless 启动，先加载前台模型来源配置层，再施加框架
 1. 先读 [host-harness-readiness](../../reference/host-harness-readiness.md)、[harness-cli-cwd](../../reference/harness-cli-cwd.md) 与 [personal-setup-gate](../../reference/personal-setup-gate.md)，采用实际 activeAdapter。
 2. 需要设备时走 [device-policy-gate](../../reference/device-policy-gate.md)；绝不要让用户把 PIN 发到对话里。PIN 只能由用户在真实 TTY 登记，不代输或猜解锁。`code=device_policy_unset` 才询问配置；非 JSON/命令失败保留真实错误，不冒充未配置。
 3. UI 任务按 [interactive-vision-canary](../../reference/interactive-vision-canary.md) 读取实际图像能力；缓存 SKIP、盲能力或 provider 缺失都不能伪造视觉通过。
-4. 有人在场由 `goal-mode-entry --prepare-run --run-mode attended` 创建/接回，随后 `--next / --report-result`。只执行返回的 `execute_command`，用同一 `observe_command` 观察、`interrupt_command` 停止准确 owner 绑定；不手拼 token、SID 或权限。后台由 `goal-runner --detach` 运输同一请求/结果。
+4. `goal-mode-entry --prepare-run --run-mode attended` 或 `--next` 读原任务的运输选择。确认无人值守时自动交给原 `goal-runner --detach`，原 run、CU、签发和截止继续有效，主会话按回执等待。有人在场时执行返回的完整 `execute_command`，用 `observe_command` 观察已绑定请求，用 `interrupt_command` 中断准确执行；交回后继续原 `next_command`。执行命令只启动已签专用执行器。后台确实无法启动且同 adapter 可以在会话内执行时，回执会给出前台接续并注明依赖会话存活。
 
 重复 execute/report 幂等，报告 `passed` 只是本次真实调用结果，正常退出/hook 放行也不裁决交付。未知外部任务先等待真实交回/退出或受控回收事实，不伪造 end；租约过期不证明已停止。条件恢复或用户明确继续后由公共入口接原请求，只补受影响部分；同条件自动重入不重复执行。已完成请求默认只读状态，不能因升级重新开工。
+
+原 run 推进期间，主会话只领取、运行或观察准确命令。受管文件的业务改动由已获写权的执行请求完成。前台看到 `FAIL` 时只等待或汇报。签发、原生进程绑定和交回在同一写界比较；快照只能说明改动发生的时段，冲突保全并由对应责任方核对。
 
 发现 framework 问题：不改消费者 `framework/` 发布件；登记具体问题与影响，继续所有不依赖它的授权工作，必需缺口交协调器保全等待，不命令整单 HALT。依赖只在 `framework/harness` 安装，不能在宿主根安装 runtime。
 

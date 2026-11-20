@@ -273,7 +273,24 @@ function appendTaggedStrengthReview(host: Host, context: any): void {
   fs.appendFileSync(report, '\n```issue-verification\n' + YAML.stringify(rows) + '```\n');
 }
 
+function bindControlledAuthor(host: Host, context: any): void {
+  const handoff = host.load('scripts/utils/session-execution-handoff');
+  const issued = handoff.readSessionExecution(context.runDir);
+  assert(issued && issued.request.context.attemptId === context.attemptId && issued.request.context.phase === context.phase);
+  assert.equal(issued.request.write_boundary.executionRole, 'author');
+  const binding = handoff.capturePhaseBinding(context.runDir, issued);
+  assert(binding, 'the controlled author needs the signed write-window preimage before writing');
+  const initial = handoff.readHandoffMaterial(context.runDir, binding);
+  assert(!initial.snapshot.failureReason);
+  assert.equal(initial.snapshot.sha256, issued.request.pre_snapshot.sha256, 'the fixture binds before it writes any input');
+  const owner = issued.request.context.owner;
+  fs.appendFileSync(path.join(context.runDir, 'events.jsonl'), JSON.stringify({ ts: new Date().toISOString(),
+    type: 'agent_process_bound', phase: context.phase, invoke_id: issued.request.invoke_id,
+    owner_id: owner.owner_id, owner_epoch: owner.epoch, binding_snapshot: binding }) + '\n');
+}
+
 function unitMaterials(host: Host, context: any, preserveContracts = false): void {
+  bindControlledAuthor(host, context);
   const feature = context.feature, rel = host.load('scripts/utils/feature-identity').featureRelativePath(feature);
   const specFile = host.load('config').featureFilePath(host.root, feature, 'spec/spec.md');
   writeHostFile(host.root, path.relative(host.root, specFile), '# Ledger calculation\n\n```yaml\nui_change: none\n```\n\n' + REQUIREMENT + '\n');
@@ -586,6 +603,7 @@ async function completeDelivery(medium = false, moduleRevision = false, acceptan
             path.resolve(dependency.path) === originalFile && dependency.exists && dependency.sha256)), 'the old binding must cover an existing contract artifact, not first materialization');
         }
         if (!acceptanceRevision || constructionAuthors === 1) unitMaterials(host, context, acceptanceRevision);
+        else bindControlledAuthor(host, context);
         if (acceptanceRevision) {
           const actions = host.load('scripts/utils/feature-track');
           const scope = host.load('scripts/utils/goal-run-creation').loadEffectiveExecutionScope(host.root, context.feature, context.runId);
