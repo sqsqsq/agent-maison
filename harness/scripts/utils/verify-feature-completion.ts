@@ -1495,9 +1495,8 @@ export function readCurrentDispositionInput(opts: CleanPassOptions | CurrentRequ
       const unreadable = verified ? verifier.verifierReportItemGaps({ projectRoot, feature, phase, frameworkRoot: opts.frameworkRoot,
         runId: opts.runId, currentSubject: subject, phaseIssues: current?.phaseIssues, diagnosisRequired,
         resolvedInputs: current?.resolvedInputs ?? (opts.resolvedInputs?.phase === phase ? opts.resolvedInputs : undefined),
-        unitEvidenceRequired: phase === 'ut' && opts.executionScope?.obligations.some(obligation =>
-          obligation.owner_phase === phase && obligation.kind === 'unit-evidence' && obligation.applicability === 'required'),
-        findingIds: openFindings.filter(finding => finding.verificationRequired).map(finding => finding.id) }, verified) : [];
+        unitEvidenceRequired: phase === 'ut' && strength.some(outcome => 'acceptance' in outcome),
+        findings: openFindings.filter(finding => finding.verificationRequired).map(finding => ({ id: finding.id, files: finding.files })) }, verified) : [];
       if (unreadable.length) {
         additionalProblems.push({ phase, id: 'attestation_present', action: 'verify',
           affects: 'completion', severity: 'BLOCKER', owner: phase, ...(report ? { files: [report] } : {}),

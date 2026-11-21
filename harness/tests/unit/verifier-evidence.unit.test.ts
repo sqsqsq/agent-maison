@@ -30,6 +30,8 @@ import {
   findSameMaterialVerifierEvidence,
   planVerifierItemReview,
   verdictReportTextWithOriginals,
+  readVerifierOriginalReference,
+  verifierReportItemGaps,
 } from '../../scripts/utils/verifier-evidence';
 import { buildVerifierMaterialView, writeVerifierMaterial } from '../../scripts/utils/verifier-material';
 import { assembleAIPrompt, generateScriptReport, readVerifierItemReviewPrompt } from '../../scripts/utils/report-generator';
@@ -630,10 +632,13 @@ const CASES: Array<{ name: string; fn: () => void }> = [
         'a partial report cannot erase a carried denial by omitting its row');
       assert(writeRunSummaryBase(root, script, FRAMEWORK_ROOT, writerOptions).next_action !== 'fill_receipt_then_sync_closure',
         'writer retry cannot short-circuit a thin current PASS');
-      fs.writeFileSync(publicPath, table + currentRow + `| ${kept!.id} | ${kept!.status} | ${kept!.severity} | ${kept!.evidence} |\n`
-        + renderResultBlock(issued.verifier_subject_id!, 'FAIL', 1));
+      const reference = readVerifierOriginalReference(kept!.evidence);
+      assert(!!reference, 'a carried row must record its own original report and line');
+      const carried = table + currentRow + `| ${kept!.id} | ${kept!.status} | ${kept!.severity} | 原依据仍有效 [原核验]( <${reference!.report}#L${reference!.line}> )。 |\n`
+        + renderResultBlock(issued.verifier_subject_id!, 'FAIL', 1);
+      fs.writeFileSync(publicPath, carried);
       assert(observe().some(problem => problem.action === 'repair') && !observe().some(problem => problem.action === 'verify'),
-        'a valid partial report advances the actual repair conclusion only');
+        'the same valid original reference still advances repair after changing Markdown spacing and explanatory words');
       const loaded = loadVerifierEvidence(root, FEATURE, PHASE, { frameworkRoot: FRAMEWORK_ROOT });
       assert(loaded.ok, 'the current public report remains the original short reply');
       if (!loaded.ok) return;
@@ -645,6 +650,56 @@ const CASES: Array<{ name: string; fn: () => void }> = [
         && inherited?.verdict === originalIssue.verdict && inherited?.evidence === originalIssue.evidence
         && verifierSemanticChecks(interpreted, PHASE, FEATURE).some(row => row.details === details),
       'the original acceptance rationale, denial and responsibility come directly from the matched report row');
+      const newEntry = { ...originalIssue, verdict: 'unclear', evidence: `${spec} | 当前独立判断需要额外已授权的反证。` };
+      fs.writeFileSync(publicPath, carried + '\n```issue-verification\n' + YAML.stringify([newEntry]) + '```\n');
+      const current = loadVerifierEvidence(root, FEATURE, PHASE, { frameworkRoot: FRAMEWORK_ROOT });
+      assert(current.ok, 'the new independent decision has the issued subject');
+      if (!current.ok) return;
+      const decisions = parseIssueVerificationBlock(verdictReportTextWithOriginals({ projectRoot: root, frameworkRoot: FRAMEWORK_ROOT,
+        feature: FEATURE, phase: PHASE, currentSubject: issued.verifier_subject_id }, current.evidence)).entries;
+      assert(decisions.length === 1 && decisions[0].verdict === 'unclear' && decisions[0].evidence === newEntry.evidence,
+        'the current explicit independent decision is authoritative for the named issue');
+    });
+  } },
+  { name: 'outstanding reviewer issue keeps its own answer requirement outside the template check IDs', fn: () => {
+    withClosureHost(({ root }) => {
+      const phase = 'review';
+      const reportsDir = featurePhaseReportsDir(root, FEATURE, phase, FRAMEWORK_ROOT);
+      fs.mkdirSync(reportsDir, { recursive: true });
+      const file = 'src/target.ts';
+      fs.mkdirSync(path.join(root, 'src'));
+      fs.writeFileSync(path.join(root, file), 'export const value = 12;\n');
+      fs.writeFileSync(path.resolve(reportsDir, '../review-report.md'), [
+        '# Review', '## 问题清单', '| 编号 | 严重程度 | 分类 | 涉及文件 | 修复建议 | 状态 |', '|---|---|---|---|---|---|',
+        `| CR-137 | MAJOR | 逻辑错误 | ${file} | Verify the recorded concrete value | 未关闭 |`, '## 结论', '**审查结论**: 不通过',
+      ].join('\n'));
+      const subject = fixtureSubjectId('opaque-review-issue');
+      const templateText = fs.readFileSync(path.join(FRAMEWORK_ROOT, 'harness/prompts/verify-review.md'), 'utf8');
+      const currentMaterial = buildVerifierMaterialView({ projectRoot: root, frameworkRoot: FRAMEWORK_ROOT, feature: FEATURE,
+        phase, gateFingerprint: null, phaseRuleText: 'review rules', templateText, checks: [], contextFiles: [{ label: file, content: 'export const value = 12;\n' }] });
+      writeVerifierMaterial(reportsDir, subject, currentMaterial);
+      const published = publishFixtureVerifierEvidence({ projectRoot: root, reportsDir, feature: FEATURE, phase, subjectId: subject, skipSummaryPatch: true });
+      const input = { projectRoot: root, frameworkRoot: FRAMEWORK_ROOT, feature: FEATURE, phase, currentSubject: subject,
+        findings: [{ id: 'CR-137', files: [file] }], currentMaterial, templateText };
+      const loaded = loadVerifierEvidenceForSubject(root, FEATURE, phase, subject, input);
+      assert(loaded.ok, 'historical transport PASS can be parsed');
+      if (!loaded.ok) return;
+      assert(verifierReportItemGaps(input, loaded.evidence).some(gap => gap.startsWith('CR-137：')), 'the actual unanswered issue blocks despite an otherwise valid thin PASS');
+      const selected = planVerifierItemReview(input).scope;
+      assert(selected.mode === 'partial' && selected.reviewIds.length === 2
+        && ['issue_accuracy', 'false_positive_rate'].every(id => selected.reviewIds.includes(id)),
+      'the existing review adjudication and its projection cover the concrete issue without reopening unrelated checks');
+      const reply = (evidence: string) => loaded.evidence.report_text + '\n```issue-verification\n' + YAML.stringify([{
+        issue: 'CR-137', verdict: 'confirmed', repair_owner: 'coding', evidence,
+      }]) + '```\n';
+      fs.writeFileSync(published.mdPath, reply('Generic confirmation with no actual reference.'));
+      const unsupported = loadVerifierEvidenceForSubject(root, FEATURE, phase, subject, input);
+      assert(unsupported.ok && verifierReportItemGaps(input, unsupported.evidence).some(gap => gap.startsWith('CR-137：')),
+        'a matching issue ID and a generic sentence do not certify the recorded issue');
+      fs.writeFileSync(published.mdPath, reply('`src/target.ts:1` Verify the recorded concrete value.'));
+      const answered = loadVerifierEvidenceForSubject(root, FEATURE, phase, subject, input);
+      assert(answered.ok && !verifierReportItemGaps(input, answered.evidence).some(gap => gap.startsWith('CR-137：')),
+        'the concrete current independent answer closes only this diagnosis gap');
     });
   } },
   { name: 'P2 C current material reuses a real FAIL and public baselines never hide it behind an older PASS', fn: () => {

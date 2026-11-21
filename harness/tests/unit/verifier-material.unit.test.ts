@@ -102,6 +102,82 @@ function countAcceptanceCollections<T>(run: () => T): { result: T; count: number
 
 const cases: Array<{ name: string; run: () => void }> = [
   {
+    name: 'phase verifier ignores unbound implementation changes outside Coding and Review but keeps real acceptance sources',
+    run: () => {
+      const root = mkProject(), frameworkRoot = path.resolve(__dirname, '../../..'), feature = FEATURE;
+      const priorBase = process.env.HARNESS_DIFF_BASE_REF;
+      const prefix = '02-Feature/Value/';
+      const source = prefix + 'src/main/ets/Value.ets', test = prefix + 'src/ohosTest/ets/test/Value.test.ets';
+      const modified = prefix + 'Unrelated.ets', retired = prefix + 'Retired.ets';
+      const oldName = prefix + 'OldName.ets', newName = prefix + 'NewName.ets';
+      const unbound = [modified, retired, oldName, newName];
+      const phases = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'];
+      const onlyBound = ['spec', 'plan', 'ut', 'testing'];
+      try {
+        const git = reviewRepo(root);
+        put(root, source, 'export function value() { return 42; }\n');
+        put(root, test, "it('uses the production value', 0, () => { expect(value()).assertEqual(42); });\n");
+        put(root, modified, 'export const unrelated = 1;\n');
+        put(root, retired, 'export const retired = "before A";\n');
+        put(root, oldName, 'export const renamed = true;\n');
+        put(root, `doc/features/${feature}/contracts.yaml`, YAML.stringify({ feature, files: [source, test],
+          modules: [{ name: 'Value', package_path: '02-Feature/Value' }] }));
+        put(root, `doc/features/${feature}/acceptance.yaml`, YAML.stringify({ feature, criteria: [{ id: 'AC-1', description: 'value is observable', ut_layer: 'unit' }] }));
+        git('add', '-A'); git('commit', '-qm', 'before unrelated work');
+        const first = git('rev-parse', 'HEAD');
+        put(root, retired, 'export const retired = "before B";\n');
+        git('add', retired); git('commit', '-qm', 'change the deleted preimage only');
+        const second = git('rev-parse', 'HEAD');
+        const loader = new SpecLoader(root, undefined, undefined, frameworkRoot);
+        const resolvedProfile = loadResolvedProfile(root, loadFrameworkConfig(root), frameworkRoot);
+        const common = { projectRoot: root, frameworkRoot, feature };
+        const raw = (phase: string) => buildVerifierMaterialView({ ...common, phase, gateFingerprint: null, phaseRuleText: 'rule',
+          templateText: 'template', checks: CHECKS, contextFiles: [] });
+        const assemble = (phase: string) => assembleVerifierPhasePrompt(path.join(frameworkRoot, 'harness'),
+          { kind: 'standalone', ...common, frameworkRel: '' }, loader,
+          { phase, feature, phaseRule: loader.loadPhaseRule(phase), featureSpec: loader.loadFeatureSpec(feature) },
+          buildScriptReport(phase, feature, root, []), { phaseIssues: null, goalBrief: null, resolvedProfile });
+        process.env.HARNESS_DIFF_BASE_REF = first;
+        const before = new Map(onlyBound.map(phase => [phase, assemble(phase)]));
+        put(root, modified, 'export const unrelated = 2;\n');
+        git('rm', '-q', retired);
+        git('mv', oldName, newName);
+        const updated = new Map(phases.map(phase => [phase, assemble(phase)]));
+        const withoutPrompt = new Map(phases.map(phase => [phase, raw(phase)]));
+        for (const phase of onlyBound) {
+          const { material, prompt } = updated.get(phase)!;
+          assert.equal(material.material_sha256, before.get(phase)!.material.material_sha256, phase);
+          assert(unbound.every(file => !prompt.includes(file) && !withoutPrompt.get(phase)!.files.some(entry => entry.path === file)), phase);
+          assert(material.files.some(file => file.path === test) && material.files.some(file => file.path === source), phase);
+        }
+        for (const phase of ['coding', 'review']) {
+          const { prompt } = updated.get(phase)!;
+          assert(prompt.includes('D: ' + retired) && prompt.includes(`R: ${oldName} -> ${newName}`) && prompt.includes('unrelated = 2'), phase);
+        }
+        process.env.HARNESS_DIFF_BASE_REF = second;
+        for (const phase of phases) {
+          const view = updated.get(phase)!.material, promptless = withoutPrompt.get(phase)!;
+          const unchanged = onlyBound.includes(phase);
+          const subject = createHash('sha256').update(phase).digest('hex');
+          writeVerifierMaterial(featurePhaseReportsDir(root, feature, phase, frameworkRoot), subject, view);
+          const opts = { ...common, phase, summary: { verifier_subject_id: subject } };
+          assert.equal(hasChangedVerifierMaterialInputs(opts), !unchanged, phase);
+          assert.equal(hasChangedVerifierMaterialInputs({ ...opts, checkFiles: false }), !unchanged, phase);
+          assert.deepEqual(diffVerifierMaterial(promptless, raw(phase)), unchanged ? [] : ['input_bindings'], phase);
+        }
+        put(root, test, "it('uses the production value', 0, () => { expect(value()).assertEqual(99); });\n");
+        for (const phase of onlyBound) {
+          const view = updated.get(phase)!.material;
+          assert(diffVerifierMaterial(view, assemble(phase).material).includes(test), phase);
+          assert(hasChangedVerifierMaterialInputs({ ...common, phase, summary: { verifier_subject_id: createHash('sha256').update(phase).digest('hex') } }), phase);
+        }
+      } finally {
+        if (priorBase === undefined) delete process.env.HARNESS_DIFF_BASE_REF; else process.env.HARNESS_DIFF_BASE_REF = priorBase;
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
     name: 'production verifier prompt reopens only an affected item and preserves the original WARN row',
     run: () => {
       const root = mkProject(), frameworkRoot = path.resolve(__dirname, '../../..'), feature = FEATURE, phase = 'review';

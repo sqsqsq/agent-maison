@@ -60,6 +60,11 @@ export type CurrentAcceptanceEvidenceInput = Pick<BuildVerifierMaterialInput,
   implementationChanges?: readonly StatusDiffEntry[] | null;
 };
 
+/** Coding and Review consume the ordinary implementation diff. Other phases follow their bound evidence. */
+export function verifierUsesImplementationChanges(phase: Phase): boolean {
+  return phase === 'coding' || phase === 'review';
+}
+
 /** Actual test sources and the existing weakening check are evidence for independent judgment, not a sufficiency verdict. */
 export function collectTestStrengthContext(input: CurrentAcceptanceEvidenceInput): ContextFileEntry[] {
   const out: ContextFileEntry[] = [];
@@ -75,7 +80,8 @@ export function collectTestStrengthContext(input: CurrentAcceptanceEvidenceInput
     const profile = loadResolvedProfile(input.projectRoot, loadFrameworkConfig(input.projectRoot), input.frameworkRoot);
     const spec = new SpecLoader(input.projectRoot, undefined, undefined, input.frameworkRoot).loadFeatureSpec(input.feature, input.resolvedInputs);
     const contracts = spec.contracts ?? { files: [], modules: [] };
-    const planned = implementationFiles(input.projectRoot, input.feature, contracts, runId, input.implementationChanges);
+    const planned = implementationFiles(input.projectRoot, input.feature, contracts, runId,
+      verifierUsesImplementationChanges(input.phase) ? input.implementationChanges : null);
     const coverage = loadCoverageEvidence(input.projectRoot, input.feature);
     const manifest = loadPhaseEvidenceManifest(input.projectRoot, input.feature, 'ut');
     const explicitTests = Object.values(input.resolvedInputs?.values ?? {}).flatMap(value => value.state === 'resolved'
@@ -476,9 +482,10 @@ function reviewInputBindingsSha256(projectRoot: string, inputs: ResolvedPhaseInp
 export class VerifierPreimagesUnavailable extends Error {}
 
 export function verifierInputBindingsSha256(input: Pick<BuildVerifierMaterialInput,
-  'projectRoot' | 'feature' | 'frameworkRoot' | 'resolvedInputs' | 'runId' | 'factsContext' | 'reviewChanges'>): string | undefined {
+  'projectRoot' | 'feature' | 'phase' | 'frameworkRoot' | 'resolvedInputs' | 'runId' | 'factsContext' | 'reviewChanges'>): string | undefined {
   const { projectRoot, feature, resolvedInputs } = input;
   const original = resolvedInputs && reviewInputBindingsSha256(projectRoot, resolvedInputs);
+  if (!verifierUsesImplementationChanges(input.phase)) return original;
   const subject = input.factsContext?.subject;
   const runId = input.runId ?? (subject && 'run_id' in subject ? subject.run_id : process.env.MAISON_GOAL_RUN_ID?.trim());
   const changes = input.reviewChanges !== undefined ? input.reviewChanges :

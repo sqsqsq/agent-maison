@@ -9,6 +9,7 @@ import {
 } from './repair-candidates';
 import { partitionConstructionFiles } from './repair-responsibility';
 import { diffVerifierMaterial, type VerifierMaterialView } from './verifier-material';
+import { parseResultBlock } from './verifier-subject';
 
 export interface VerifierItemScope {
   mode: 'full' | 'partial' | 'reuse';
@@ -41,7 +42,7 @@ function resolveBoundPath(raw: string, bound: ReadonlySet<string>): string | und
   return candidates.length === 1 ? candidates[0] : undefined;
 }
 
-function citesIssue(evidence: string, issue: string): boolean {
+export function citesIssue(evidence: string, issue: string): boolean {
   const escaped = issue.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return new RegExp(`(?:^|[^A-Za-z0-9_.-])${escaped}(?![A-Za-z0-9_.-])`).test(evidence);
 }
@@ -54,17 +55,19 @@ function readUniqueIssues(text: string): IssueVerificationEntry[] {
   return parsed.entries.filter(entry => !entry.invalid_reason && counts.get(entry.issue) === 1);
 }
 
+function rowAddressesIssue(row: VerifierSummaryRow, issue: string, phase: string): boolean {
+  return row.id === issue || citesIssue(row.evidence, issue)
+    || (phase === 'review' && row.id === 'issue_accuracy' && /^CR-[0-9]+$/.test(issue));
+}
+
+function issueReferences(issue: IssueVerificationEntry): string[] {
+  const evidence = issue.evidence ?? '';
+  const issueFile = /^\s*`?([^`|]+?)`?\s*\|/.exec(evidence)?.[1];
+  return [...evidenceLinePaths(evidence), ...(issueFile ? [issueFile.trim()] : []), ...(issue.production_paths ?? [])];
+}
+
 function rowReferences(row: VerifierSummaryRow, issues: IssueVerificationEntry[], phase: string): string[] {
-  const related = issues.filter(({ issue }) => row.id === issue || citesIssue(row.evidence, issue)
-    || (phase === 'review' && row.id === 'issue_accuracy' && /^CR-[0-9]+$/.test(issue)));
-  return [
-    ...evidenceLinePaths(row.evidence),
-    ...related.flatMap(issue => {
-      const evidence = issue.evidence ?? '';
-      const issueFile = /^\s*`?([^`|]+?)`?\s*\|/.exec(evidence)?.[1];
-      return [...evidenceLinePaths(evidence), ...(issueFile ? [issueFile.trim()] : []), ...(issue.production_paths ?? [])];
-    }),
-  ];
+  return [...evidenceLinePaths(row.evidence), ...issues.filter(({ issue }) => rowAddressesIssue(row, issue, phase)).flatMap(issueReferences)];
 }
 
 export function readVerifierUtSourcePaths(input: {
@@ -106,11 +109,26 @@ export function selectVerifierItemScope(input: {
   applicableIds: readonly string[];
   requiredIds?: readonly string[];
   recheckIds?: readonly string[];
+  recheckFindings?: readonly { id: string; files?: readonly string[] }[];
   /** Paths selected by the profile from the old binding and the applicable UT cases. */
   utSourcePaths?: Readonly<Record<string, readonly string[]>>;
 }): VerifierItemScope {
   const { previousMaterial, currentMaterial, previousReportText } = input;
-  const requiredIds = [...new Set([...(input.requiredIds ?? []), ...(input.recheckIds ?? [])])];
+  const findingChecks: string[] = [];
+  const findings = (input.recheckFindings ?? []).filter(finding => {
+    if (input.applicableIds.includes(finding.id)) {
+      findingChecks.push(finding.id);
+      return false;
+    }
+    if (currentMaterial?.phase === 'review' && /^CR-[0-9]+$/.test(finding.id) && input.applicableIds.includes('issue_accuracy')) {
+      findingChecks.push('issue_accuracy');
+      if (input.applicableIds.includes('false_positive_rate')) findingChecks.push('false_positive_rate');
+      return false;
+    }
+    return true;
+  });
+  const recheckIds = [...new Set([...(input.recheckIds ?? []), ...findingChecks])];
+  const requiredIds = [...new Set([...(input.requiredIds ?? []), ...recheckIds])];
   const applicableIds = new Set([...input.applicableIds, ...requiredIds]);
   const full: VerifierItemScope = { mode: 'full', requiredIds, reviewIds: [...applicableIds], reusedRows: [] };
   if (!previousMaterial || !currentMaterial || !previousReportText
@@ -124,24 +142,43 @@ export function selectVerifierItemScope(input: {
     ...currentMaterial.files.filter(file => oldFiles.get(file.path) !== file.sha256).map(file => file.path),
     ...previousMaterial.files.filter(file => !currentFiles.has(file.path)).map(file => file.path),
   ];
-  if (!changedPaths.length && !requiredIds.length) return { mode: 'reuse', requiredIds, reviewIds: [], reusedRows: [] };
+  if (!changedPaths.length && !requiredIds.length && !findings.length) {
+    return { mode: 'reuse', requiredIds, reviewIds: [], reusedRows: [] };
+  }
 
+  const oldResult = parseResultBlock(previousReportText);
   const rows = readVerifierSummaryRows(previousReportText);
   if (!rows) {
-    if (changedPaths.length || /^\s*\|\s*id\s*\|\s*status\b/im.test(previousReportText)) return full;
+    if (changedPaths.length || findings.length || oldResult?.verdict === 'FAIL'
+      || /^\s*\|\s*id\s*\|\s*status\b/im.test(previousReportText)) return full;
     return { mode: 'partial', requiredIds, reviewIds: requiredIds, reusedRows: [] };
   }
 
   const byId = new Map(rows.map(row => [row.id, row]));
-  const reviewIds = new Set(input.recheckIds);
+  const reviewIds = new Set(recheckIds);
   for (const id of requiredIds) {
     if (!byId.get(id)?.evidence) reviewIds.add(id);
   }
-  // Contradictory structured and table evidence cannot be used to carry a verdict forward.
-  for (const finding of verifierSemanticChecks(previousReportText, previousMaterial.phase, previousMaterial.feature)) {
-    const row = typeof finding.id === 'string' ? byId.get(finding.id) : undefined;
-    if (row && (finding.status !== row.status || String(finding.severity).toUpperCase() !== row.severity)) return full;
+  const blockers = new Set<string>();
+  for (const row of rows) {
+    const blocking = row.status === 'FAIL' && row.severity === 'BLOCKER';
+    const needsAnswer = row.status !== 'PASS' && !row.evidence;
+    if ((blocking || needsAnswer) && !applicableIds.has(row.id)) return full;
+    if (blocking) blockers.add(row.id);
+    if (needsAnswer) reviewIds.add(row.id);
   }
+  for (const finding of verifierSemanticChecks(previousReportText, previousMaterial.phase, previousMaterial.feature)) {
+    if (typeof finding.id !== 'string') continue;
+    const row = byId.get(finding.id);
+    const severity = String(finding.severity).toUpperCase();
+    if (row && (finding.status !== row.status || severity !== row.severity)) return full;
+    if (!row && (finding.status === 'FAIL' || finding.status === 'WARN' || finding.status === 'SKIP')) {
+      if (!applicableIds.has(finding.id)) return full;
+      reviewIds.add(finding.id);
+      if (finding.status === 'FAIL' && severity === 'BLOCKER') blockers.add(finding.id);
+    }
+  }
+  if (oldResult && oldResult.blocker_count !== blockers.size) return full;
 
   const bound = new Set(previousMaterial.files.filter(file => file.sha256 !== null).map(file => file.path));
   const issues = readUniqueIssues(previousReportText);
@@ -157,6 +194,19 @@ export function selectVerifierItemScope(input: {
   }
   for (const file of changedPaths) {
     const affected = [...refsById].filter(([, refs]) => refs.has(file));
+    if (!affected.length) return full;
+    for (const [id] of affected) reviewIds.add(id);
+  }
+  for (const finding of findings) {
+    const observed = rows.filter(row => applicableIds.has(row.id) && rowAddressesIssue(row, finding.id, currentMaterial.phase));
+    if (observed.length) {
+      for (const { id } of observed) reviewIds.add(id);
+      continue;
+    }
+    const oldIssue = issues.find(entry => entry.issue === finding.id);
+    const paths = [...(oldIssue ? issueReferences(oldIssue) : []), ...(finding.files ?? [])]
+      .map(file => resolveBoundPath(file, bound)).filter((file): file is string => !!file);
+    const affected = [...refsById].filter(([, refs]) => paths.some(file => refs.has(file)));
     if (!affected.length) return full;
     for (const [id] of affected) reviewIds.add(id);
   }

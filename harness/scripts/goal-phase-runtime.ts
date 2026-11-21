@@ -8702,11 +8702,10 @@ Goal runner — original request design and construction runtime
               && problem.action === 'verify' && problem.files?.some(file => path.resolve(projectRoot, file) === pendingReportPath));
             const qualification = { projectRoot, frameworkRoot, feature: manifest.feature, phase: family, runId: manifest.run_id,
               currentSubject: pendingSubject, resolvedInputs: boundVerifierInputs ?? bound.resolvedInputs, phaseIssues: bound.phaseIssues,
-              unitEvidenceRequired: family === 'ut' && current.input.executionScope?.obligations.some(obligation =>
-                obligation.owner_phase === family && obligation.kind === 'unit-evidence' && obligation.applicability === 'required'),
+              unitEvidenceRequired: family === 'ut' && current.facts.acceptanceStrength?.some(outcome => 'acceptance' in outcome),
               diagnosisRequired: summary.readiness_signals?.some(signal => signal.id === 'verifier_repair_diagnosis' && signal.status === 'incomplete'),
-              findingIds: problems.filter(problem => problem.action === 'verify' && problem.id.startsWith('open_finding:'))
-                .map(problem => problem.id.slice('open_finding:'.length)) };
+              findings: problems.filter(problem => problem.action === 'verify' && problem.id.startsWith('open_finding:'))
+                .map(problem => ({ id: problem.id.slice('open_finding:'.length), files: problem.files })) };
             let needsVerifier = hasPendingVerifier(problems);
             if (needsVerifier && restoreStageVerifierReport(runDir, request, pendingReportPath, pendingReport, qualification)) {
               current = readWork(boundVerifierInputs);
@@ -8724,8 +8723,12 @@ Goal runner — original request design and construction runtime
               });
               const formatFeedback = formatRepair ? '上次核验未交回可用对象，请按既有格式返回。' : '';
               const verificationWork = readWork(boundVerifierInputs);
+              const report = loadVerifierEvidence(projectRoot, manifest.feature, family, { frameworkRoot });
+              const unfinished = report.ok
+                ? [...new Set(verifierReportItemGaps(qualification, report.evidence).map(gap => gap.split('：', 1)[0]))].sort()
+                : [report.code];
               let itemFocus = '';
-              if (loadVerifierEvidence(projectRoot, manifest.feature, family, { frameworkRoot }).ok) {
+              if (report.ok) {
                 const material = readVerifierMaterialOrNull(path.dirname(pendingReportPath), pendingSubject);
                 const templatePath = workflowVerifierPrompt(workflow, family);
                 if (material && templatePath) {
@@ -8738,7 +8741,7 @@ Goal runner — original request design and construction runtime
               const instruction = `${itemFocus}独立核验当前原件；读取 request.prompt_path。本次补核范围以当前指令为准，完整回复原样写入 ${pendingReport}。不得修改实现、验收或正式机器结果。\n${renderCurrentDisposition(verificationWork.disposition)}\n${formatFeedback ? formatFeedback + '\n' : ''}${requestText}`;
               const invoked = await invokeWork(`${family}-verifier-format-repair`, instruction,
                 pendingReportPath, 'verifier_format_repair', continuationAvailable(), { material: { purpose: 'verifier_format_repair',
-                  segments: [dispositionFacts(verificationWork.disposition), canonicalRequestInput(request), ...(itemFocus ? [itemFocus] : []), formatFeedback] }, evaluation: verificationWork.evaluation });
+                  segments: [dispositionFacts(verificationWork.disposition, [family]), canonicalRequestInput(request), unfinished, formatFeedback] }, evaluation: verificationWork.evaluation });
               if (invoked === 3) return 3;
               if (!invoked || halted) break;
               if (invoked.rebuild) { rebuildTransport = true; break; }

@@ -786,7 +786,7 @@ export function buildCurrentVerifierDiagnosisContext(input: {
 }
 
 /** 候选生产与失败诊断同一判据；合法 refuted/unclear 不因 verdict 本身被重投。 */
-function reviewIssueDiagnosis(
+export function reviewIssueDiagnosis(
   row: ReviewIssueRow,
   entries: readonly IssueVerificationEntry[],
   context: Pick<ReviewDiagnosisContext, 'declinedFingerprints' | 'declinedIssues' | 'verifierSubjectCurrent' | 'sourcePhase'>,

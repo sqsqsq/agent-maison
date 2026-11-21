@@ -34,12 +34,13 @@ import * as path from 'path';
 import * as YAML from 'yaml';
 
 import { featureFilePath, featurePhaseReportsDir } from '../../config';
-import type { VerifierClosureRecord } from './types';
+import type { AcceptanceSpec, VerifierClosureRecord } from './types';
 import { readVerifierMaterialOrNull, verifierMaterialsEquivalent, type VerifierMaterialView } from './verifier-material';
 import { parseResultBlock, SUBJECT_ID_PATTERN, verifierReportMdFilename } from './verifier-subject';
 import type { ResolvedPhaseInputs } from './capability-resolution';
 import { computePromptSha256, parseVerifierRequest, verifierRequestFilename } from './verifier-request';
 import { realProjectPath } from './project-relative-path';
+import { isUnitUtLayer } from './acceptance-layering';
 
 export function verifierReportMdPath(reportsDir: string, subjectId: string): string {
   return path.join(reportsDir, verifierReportMdFilename(subjectId));
@@ -90,11 +91,11 @@ interface VerifierItemReviewInput extends LoadVerifierEvidenceOptions {
   templateText?: string;
   phaseIssues?: import('./repair-candidates').PhaseRepairIssues | null;
   /** Current, still unresolved findings handed to this independent reviewer. */
-  findingIds?: readonly string[];
+  findings?: readonly { id: string; files?: readonly string[] }[];
 }
 
 function verifierItemQuestions(input: VerifierItemReviewInput, applicableIds: readonly string[], report: VerifierEvidence | null): {
-  requiredIds: string[]; recheckIds: string[]; diagnostics: string[];
+  requiredIds: string[]; recheckIds: string[]; recheckFindings: NonNullable<VerifierItemReviewInput['findings']>; diagnostics: string[];
 } {
   const repairs = require('./repair-candidates') as typeof import('./repair-candidates');
   const { projectRoot, feature, phase, frameworkRoot, runId } = input;
@@ -102,13 +103,17 @@ function verifierItemQuestions(input: VerifierItemReviewInput, applicableIds: re
   const design = phase === 'spec' || phase === 'plan';
   const issues = design && report
     ? repairs.readVerifierSemanticIssues(projectRoot, feature, phase, text, report.md_path_rel, frameworkRoot, runId)
-    : input.phaseIssues === undefined && input.diagnosisRequired
+    : input.phaseIssues === undefined && (input.diagnosisRequired || input.findings?.length)
       ? repairs.readPhaseRepairIssues(projectRoot, feature, phase, { frameworkRoot, runId, subjectId: input.currentSubject ?? null }) : input.phaseIssues;
   const requiresDiagnosis = design || input.diagnosisRequired;
-  const diagnostics = requiresDiagnosis && report ? repairs.findUnreadableDiagnosisChecks(phase, text,
-    repairs.buildCurrentVerifierDiagnosisContext({ ...input, subjectId: input.currentSubject ?? null, phaseIssues: issues })) : [];
-  const obligations = input.resolvedInputs?.context.obligations;
-  const requiredUnitEvidence = phase === 'ut' && (input.unitEvidenceRequired || obligations?.['unit-evidence'] === 'required');
+  const diagnosisContext = (requiresDiagnosis || input.findings?.length) && report
+    ? repairs.buildCurrentVerifierDiagnosisContext({ ...input, subjectId: input.currentSubject ?? null, phaseIssues: issues }) : undefined;
+  const diagnostics = requiresDiagnosis && report ? repairs.findUnreadableDiagnosisChecks(phase, text, diagnosisContext) : [];
+  const acceptanceInput = input.resolvedInputs?.values.acceptance;
+  const acceptance = acceptanceInput?.state === 'resolved' ? acceptanceInput.value as AcceptanceSpec : undefined;
+  const unitCriteria = [...acceptance?.criteria ?? [], ...acceptance?.boundaries ?? [], ...acceptance?.performance ?? []];
+  const requiredUnitEvidence = phase === 'ut' && (input.unitEvidenceRequired
+    || input.resolvedInputs?.context.obligations['unit-evidence'] === 'required' && unitCriteria.some(item => isUnitUtLayer(item.ut_layer)));
   const unitIds = ['end_to_end_driving', 'business_assertion_value'];
   const explicit = repairs.verifierSemanticChecks(text, phase, feature).flatMap(row => typeof row.id === 'string'
     && Array.isArray(row.acceptance_ids) && row.acceptance_ids.length && Array.isArray(row.affected_files) && row.affected_files.length ? [row.id] : []);
@@ -120,13 +125,20 @@ function verifierItemQuestions(input: VerifierItemReviewInput, applicableIds: re
     if (phase === 'ut' && (input.diagnosisRequired || requiredUnitEvidence)) return unitIds;
     return [];
   });
-  const findingIds = input.findingIds?.filter(id => applicableIds.includes(id)) ?? [];
-  const answered = text && findingIds.length ? repairs.parseIssueVerificationBlock(text).entries : [];
-  const missingDecisions = findingIds.filter(id => !repairs.uniqueIssueVerification(answered, id));
+  const answered = text && input.findings?.length ? repairs.parseIssueVerificationBlock(text).entries : [];
+  const findings = (input.findings ?? []).filter(({ id }) => applicableIds.includes(id) || issues?.rows.some(row => row.id === id)
+    || answered.some(entry => entry.issue === id));
+  const findingIds = findings.map(finding => finding.id);
+  const missingDecisions = findings.flatMap(finding => {
+    const row = issues?.rows.find(item => item.id === finding.id);
+    const reason = row ? repairs.reviewIssueDiagnosis(row, answered, diagnosisContext ?? {})
+      : !repairs.uniqueIssueVerification(answered, finding.id) ? `${finding.id}：缺本轮逐条结论` : null;
+    return reason ? [{ finding, reason }] : [];
+  });
   const required = new Set([...explicit, ...findingIds, ...(design ? issues?.rows.map(row => row.id) ?? [] : []),
     ...(phase === 'ut' && (input.diagnosisRequired || requiredUnitEvidence) ? unitIds : [])]);
-  return { requiredIds: applicableIds.filter(id => required.has(id)), recheckIds: [...new Set([...diagnosedIds, ...missingDecisions])],
-    diagnostics: [...diagnostics, ...missingDecisions.map(id => `${id}：缺本轮逐条结论`)] };
+  return { requiredIds: applicableIds.filter(id => required.has(id)), recheckIds: [...new Set(diagnosedIds)],
+    recheckFindings: missingDecisions.map(item => item.finding), diagnostics: [...diagnostics, ...missingDecisions.map(item => item.reason)] };
 }
 
 /** Plan a request from public originals and the currently bound material, before it is dispatched. */
@@ -134,9 +146,12 @@ export function planVerifierItemReview(input: VerifierItemReviewInput & { curren
   const { selectVerifierItemScope, verifierTemplateCheckIds, readVerifierUtSourcePaths } = require('./verifier-item-scope') as typeof import('./verifier-item-scope');
   const { projectRoot, feature, phase, currentMaterial } = input;
   const exact = input.currentSubject ? loadVerifierEvidenceForSubject(projectRoot, feature, phase, input.currentSubject, input) : null;
-  const exactScopeIncomplete = exact?.ok && readIssuedVerifierItemScope(input, exact.evidence)
-    && verifierReportItemGaps(input, exact.evidence).length > 0;
-  const same = exact?.ok && !exactScopeIncomplete ? exact.evidence
+  const issued = exact?.ok ? readIssuedVerifierItemScope(input, exact.evidence) : null;
+  const repairs = require('./repair-candidates') as typeof import('./repair-candidates');
+  const rows = exact?.ok && issued ? repairs.readVerifierSummaryRows(exact.evidence.report_text) ?? [] : [];
+  const missingCarried = exact?.ok && issued && (issued.reusedRows.some(expected => !sameVerifierSummaryRow(expected, rows.find(row => row.id === expected.id)))
+    || carriedVerifierDetails(input, exact.evidence, issued.reusedRows).missing.length > 0);
+  const same = exact?.ok && !missingCarried ? exact.evidence
     : findPriorVerifierEvidence(projectRoot, feature, phase, { ...input, excludeSubject: input.currentSubject, material: currentMaterial });
   const previousReport = same ?? findPriorVerifierEvidence(projectRoot, feature, phase, { ...input, excludeSubject: input.currentSubject });
   const dir = resolveReportsDir(projectRoot, feature, phase, input.frameworkRoot);
@@ -144,6 +159,7 @@ export function planVerifierItemReview(input: VerifierItemReviewInput & { curren
   const applicableIds = verifierTemplateCheckIds(input.templateText);
   const previousText = previousReport ? verdictReportTextWithOriginals({ ...input, currentSubject: previousReport.subject_id }, previousReport) : null;
   const questions = verifierItemQuestions(input, applicableIds, previousReport && previousText !== null ? { ...previousReport, report_text: previousText } : null);
+  if (issued && !missingCarried) questions.requiredIds = [...new Set([...questions.requiredIds, ...issued.reviewIds])];
   return { previousReport, scope: selectVerifierItemScope({ previousMaterial, currentMaterial,
     previousReportText: previousText, applicableIds, ...questions,
     ...(phase === 'ut' && previousMaterial && previousReport ? { utSourcePaths: readVerifierUtSourcePaths({ ...input,
@@ -175,8 +191,7 @@ export function verifierReportItemGaps(input: VerifierItemReviewInput, evidence:
   const missing = [...requiredIds, ...scope?.reviewIds ?? []].filter(id => !rows.get(id)?.evidence.trim());
   const drift = scope?.reusedRows.flatMap(row => {
     const actual = rows.get(row.id);
-    return !actual || row.status !== actual.status || row.severity !== actual.severity || row.evidence !== actual.evidence
-      ? [`${row.id}：须保留已核实的原结论和依据`] : [];
+    return sameVerifierSummaryRow(row, actual) ? [] : [`${row.id}：须保留已核实的原结论和依据`];
   }) ?? [];
   if (scope && rows.size && [...rows.values()].filter(row => row.status === 'FAIL' && row.severity === 'BLOCKER').length !== evidence.blocker_count) {
     drift.push('终态 blocker_count 未包含当前及沿用的 BLOCKER FAIL');
@@ -208,9 +223,27 @@ function readIssuedVerifierItemScope(input: VerifierItemReviewInput, evidence: V
   } catch { return null; }
 }
 
+/** The reference to the original adjudication is independent of local Markdown wording. */
+export function readVerifierOriginalReference(evidence: string): { report: string; line: number; marker: string } | null {
+  const refs = [...evidence.matchAll(/\[原核验\]\(\s*(?:<([^<>\r\n]+)#L([1-9]\d*)>|([^\s<>()]+)#L([1-9]\d*))\s*\)/g)];
+  if (refs.length !== 1) return null;
+  const [marker, anglePath, angleLine, plainPath, plainLine] = refs[0];
+  return { report: anglePath ?? plainPath, line: Number(angleLine ?? plainLine), marker };
+}
+
+function sameVerifierSummaryRow(expected: import('./repair-candidates').VerifierSummaryRow,
+  actual?: import('./repair-candidates').VerifierSummaryRow): boolean {
+  if (!actual || expected.id !== actual.id || expected.status !== actual.status || expected.severity !== actual.severity) return false;
+  const original = readVerifierOriginalReference(expected.evidence);
+  if (!original) return expected.evidence.replace(/\s+/g, ' ').trim() === actual.evidence.replace(/\s+/g, ' ').trim();
+  const referenced = readVerifierOriginalReference(actual.evidence);
+  return referenced?.report === original.report && referenced.line === original.line;
+}
+
 function carriedVerifierDetails(input: VerifierItemReviewInput, evidence: VerifierEvidence,
   expected?: readonly import('./repair-candidates').VerifierSummaryRow[]) {
   const repairs = require('./repair-candidates') as typeof import('./repair-candidates');
+  const { citesIssue } = require('./verifier-item-scope') as typeof import('./verifier-item-scope');
   const { projectRoot, feature, phase, frameworkRoot } = input;
   const details = new Map<string, Record<string, unknown>>();
   const issues = new Map<string, ReturnType<typeof repairs.parseIssueVerificationBlock>['entries'][number]>();
@@ -220,20 +253,20 @@ function carriedVerifierDetails(input: VerifierItemReviewInput, evidence: Verifi
   const originals = new Map<string, LoadVerifierEvidenceResult>();
   const reports = resolveReportsDir(projectRoot, feature, phase, frameworkRoot);
   for (const row of rows) {
-    const link = /\s+\[原核验\]\(<([^>]+)#L([1-9]\d*)>\)$/.exec(row.evidence);
-    const priorId = link && /^verifier\.report\.([0-9a-f]{64})\.md$/.exec(path.posix.basename(link[1]))?.[1];
+    const link = readVerifierOriginalReference(row.evidence);
+    const priorId = link && /^verifier\.report\.([0-9a-f]{64})\.md$/.exec(path.posix.basename(link.report))?.[1];
     if (!link || !priorId || priorId === evidence.subject_id) continue;
-    const issued = expected?.some(item => item.id === row.id && item.status === row.status && item.severity === row.severity && item.evidence === row.evidence);
+    const issued = expected?.some(item => sameVerifierSummaryRow(item, row));
     if (expected && !issued) continue;
     if (!originals.has(priorId)) originals.set(priorId, loadVerifierEvidenceForSubject(projectRoot, feature, phase, priorId, { frameworkRoot }));
     const previous = originals.get(priorId)!;
-    if (!previous.ok || previous.evidence.md_path_rel !== link[1]) {
+    if (!previous.ok || previous.evidence.md_path_rel !== link.report) {
       if (issued) missing.push(`${row.id}：原独立核验报告不可读`);
       continue;
     }
     const original = previous.evidence.report_text;
-    const sourceRow = repairs.readVerifierSummaryRows(original)?.find(item => item.line === Number(link[2]) && item.id === row.id);
-    if (!sourceRow || sourceRow.status !== row.status || sourceRow.severity !== row.severity || sourceRow.evidence !== row.evidence.slice(0, link.index)) {
+    const sourceRow = repairs.readVerifierSummaryRows(original)?.find(item => item.line === link.line && item.id === row.id);
+    if (!sourceRow || sourceRow.status !== row.status || sourceRow.severity !== row.severity) {
       if (issued) missing.push(`${row.id}：找不到相同的原核验行`);
       continue;
     }
@@ -243,7 +276,7 @@ function carriedVerifierDetails(input: VerifierItemReviewInput, evidence: Verifi
     }
     const entries = repairs.parseIssueVerificationBlock(original).entries;
     for (const entry of entries) {
-      const referenced = entry.issue === row.id || sourceRow.evidence.includes(entry.issue)
+      const referenced = entry.issue === row.id || citesIssue(sourceRow.evidence, entry.issue)
         || phase === 'review' && row.id === 'issue_accuracy' && /^CR-[0-9]+$/.test(entry.issue);
       if (referenced && repairs.uniqueIssueVerification(entries, entry.issue)) issues.set(entry.issue, entry);
     }
@@ -277,25 +310,18 @@ function withCarriedVerifierDetails(input: VerifierItemReviewInput, evidence: Ve
   const repairs = require('./repair-candidates') as typeof import('./repair-candidates');
   let text = evidence.report_text;
   if (carried.details.size) {
-    text = text.replace(/```(?:yaml|yml)\s*\r?\n([\s\S]*?)```/g, (whole, block: string) => {
-      try {
-        const doc = YAML.parse(block);
-        const result = doc?.verification_result;
-        if (result?.phase !== input.phase || result.feature !== input.feature || !Array.isArray(result.checks)) return whole;
-        const checks = result.checks as ReadonlyArray<{ id: string } | null>;
-        const retained = checks.filter(item => !item || !carried.details.has(item.id));
-        if (retained.length === checks.length) return whole;
-        result.checks = retained;
-        return '```yaml\n' + YAML.stringify(doc) + '```';
-      } catch { return whole; }
-    });
-    text += '\n\n```yaml\n' + YAML.stringify({ verification_result: { phase: input.phase, feature: input.feature, checks: [...carried.details.values()] } }) + '```\n';
+    const declared = new Set(repairs.verifierSemanticChecks(text, input.phase, input.feature).map(item => item.id));
+    const missing = [...carried.details].filter(([id]) => !declared.has(id)).map(([, item]) => item);
+    if (missing.length) text += '\n\n```yaml\n' + YAML.stringify({ verification_result: { phase: input.phase, feature: input.feature, checks: missing } }) + '```\n';
   }
   if (carried.issues.size) {
     const match = /```issue-verification\s*\r?\n[\s\S]*?```/i.exec(text);
     const current = repairs.parseIssueVerificationBlock(text);
     if (match && !current.ok) return text;
-    const entries = [...current.entries.filter(entry => !carried.issues.has(entry.issue)), ...carried.issues.values()].map(({ invalid_reason, ...entry }) =>
+    const declared = new Set(current.entries.map(entry => entry.issue));
+    const missing = [...carried.issues].filter(([id]) => !declared.has(id)).map(([, entry]) => entry);
+    if (!missing.length) return text;
+    const entries = [...current.entries, ...missing].map(({ invalid_reason, ...entry }) =>
       invalid_reason ? { ...entry, verdict: 'invalid' } : entry);
     const block = '```issue-verification\n' + YAML.stringify(entries) + '```';
     text = match ? text.slice(0, match.index) + block + text.slice(match.index + match[0].length) : text + '\n\n' + block + '\n';

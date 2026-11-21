@@ -52,6 +52,7 @@ import {
   writeVerifierMaterial,
   computeMaterialSha256,
   verifierMaterialFileHash,
+  verifierUsesImplementationChanges,
   VerifierPreimagesUnavailable,
   type VerifierMaterialView,
 } from './scripts/utils/verifier-material';
@@ -3652,9 +3653,10 @@ export function assembleVerifierPhasePrompt(
     requirement: resolvedInputs?.values.requirement?.state === 'resolved' ? String(resolvedInputs.values.requirement.value) : undefined });
   const factsSubject = factsContext?.subject;
   const runId = process.env.MAISON_GOAL_RUN_ID?.trim() || (factsSubject && 'run_id' in factsSubject ? factsSubject.run_id : undefined);
-  const reviewChanges = phaseIsGlobal ? null : readImplementationReviewChanges(projectRoot, feature, {
+  const includeImplementationChanges = !phaseIsGlobal && verifierUsesImplementationChanges(phase);
+  const reviewChanges = includeImplementationChanges ? readImplementationReviewChanges(projectRoot, feature, {
     runId, frameworkRoot, resolvedInputs, modules: featureSpec.contracts?.modules ?? [],
-  });
+  }) : null;
   const contextFiles = collectContextFiles(specLoader, layout, phase, feature, featureSpec, { ...context, knowledge, reviewChanges, phaseIssues });
   const specContent = YAML.stringify(context.phaseRule);
   const templateText = loadVerifierPromptTemplate(harnessRoot, phase, resolvedProfile, options.verifierPromptRel);
@@ -3676,7 +3678,7 @@ export function assembleVerifierPhasePrompt(
   const { previousReport, scope } = itemReview;
   const previousMaterial = previousReport ? readVerifierMaterialOrNull(path.join(projectRoot, path.dirname(previousReport.md_path_rel)), previousReport.subject_id) : null;
   const reviewContext = independentVerificationContext({ previousReport, previousMaterial, currentMaterial: material,
-    actualDiff: reviewChanges !== null, partialReview: scope.mode === 'partial',
+    actualDiff: !includeImplementationChanges || reviewChanges !== null, partialReview: scope.mode === 'partial',
     affectedDependencies: Object.values(resolvedInputs?.values ?? {}).flatMap(value => value.state === 'resolved' ? value.binding.dependencies
       : value.attempts.flatMap(attempt => attempt.dependencies)),
     testStrengthCheck: scriptReport.checks.find(check => check.id === 'coding_existing_test_preserved') });
@@ -3776,10 +3778,11 @@ export function collectContextFiles(
   };
   const factsSubject = opts?.factsContext?.subject;
   const runId = process.env.MAISON_GOAL_RUN_ID?.trim() || (factsSubject && 'run_id' in factsSubject ? factsSubject.run_id : undefined);
-  const reviewChanges = opts?.reviewChanges !== undefined ? opts.reviewChanges
-    : featureScoped ? readImplementationReviewChanges(projectRoot, feature, {
+  const includeImplementationChanges = featureScoped && verifierUsesImplementationChanges(phase);
+  const reviewChanges = !includeImplementationChanges ? null : opts?.reviewChanges !== undefined ? opts.reviewChanges
+    : readImplementationReviewChanges(projectRoot, feature, {
       runId, frameworkRoot: layout.frameworkRoot, resolvedInputs, modules: featureSpec.contracts?.modules ?? [],
-    }) : null;
+    });
   const phaseIssues = opts?.phaseIssues === undefined
     ? readPhaseRepairIssues(projectRoot, feature, phase, { frameworkRoot: layout.frameworkRoot, runId }) : opts.phaseIssues;
   files.push(...collectCurrentAcceptanceEvidence({ projectRoot, feature, phase, frameworkRoot: layout.frameworkRoot, phaseIssues,
@@ -3793,7 +3796,7 @@ export function collectContextFiles(
     if (phaseIssues.diagnostics?.length) files.push({ label: '(verification reference gaps)', content: phaseIssues.diagnostics.join('\n') });
   }
   files.push(...repairDeclineContextFiles(projectRoot, feature, runId, layout.frameworkRoot));
-  files.push(...(opts?.actualChanges !== undefined ? opts.actualChanges ?? [] : reviewChanges?.contextFiles ?? []));
+  if (includeImplementationChanges) files.push(...(opts?.actualChanges !== undefined ? opts.actualChanges ?? [] : reviewChanges?.contextFiles ?? []));
   if (runId && featureScoped) {
     const { loadGoalManifestFromRun } = require('./scripts/utils/goal-manifest') as typeof import('./scripts/utils/goal-manifest');
     const manifest = loadGoalManifestFromRun(projectRoot, runId, { feature });

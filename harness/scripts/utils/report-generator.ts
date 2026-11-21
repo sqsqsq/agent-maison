@@ -386,7 +386,6 @@ function selectTemplateReviewSections(template: string, itemReview?: VerifierIte
 
 const ITEM_REVIEW_HEADING = '## 本轮复核范围';
 const ITEM_REVIEW_BLOCK = /^## 本轮复核范围\r?\n([\s\S]*?)\r?\n---\r?\n\r?\n/;
-const ORIGINAL_REVIEW_LINK = /\s*\[原核验\]\(<([^<>\r\n]+)#L([1-9]\d*)>\)$/;
 const FEATURE_ROOT_PLACEHOLDER = '{features_dir}/{feature_name}';
 
 function verifierFeatureRoot(projectRoot: string, feature: string): string {
@@ -408,27 +407,27 @@ export function renderVerifierItemReviewNotice(projectRoot: string, itemReview?:
     '下方模板只展开这些检查。完整汇总表保留本轮核出的行与下方已有独立依据的行。没有原行且本轮无核验义务的项不补写结论。',
     '沿用行保留原 status、severity、证据和来源。带原核验引用的旧非 PASS 明细、未决处置和责任由原报告承载，无需复抄。报告终态回显本轮 subject，计入所有有效的 BLOCKER FAIL（包括沿用行）。'];
   if (scope.reusedRows.length && previousReport) {
-    const { loadVerifierEvidenceForSubject } = require('./verifier-evidence') as typeof import('./verifier-evidence');
+    const { loadVerifierEvidenceForSubject, readVerifierOriginalReference } = require('./verifier-evidence') as typeof import('./verifier-evidence');
     const originals = new Map<string, VerifierEvidence | null>();
     const preserveInPlace = new Set<string>();
     const sourceRows = scope.reusedRows.map(row => {
-      const given = ORIGINAL_REVIEW_LINK.exec(row.evidence);
+      const given = readVerifierOriginalReference(row.evidence);
       let source = previousReport;
       let line = row.line;
-      const evidence = given ? row.evidence.slice(0, given.index) : row.evidence;
+      let evidence = given ? row.evidence.replace(given.marker, '').trim() : row.evidence;
       if (given) {
-        const subject = /^verifier\.report\.([0-9a-f]{64})\.md$/.exec(path.posix.basename(given[1]))?.[1];
-        if (subject && subject !== previousReport.subject_id && path.posix.dirname(given[1]) === path.posix.dirname(previousReport.md_path_rel)) {
+        const subject = /^verifier\.report\.([0-9a-f]{64})\.md$/.exec(path.posix.basename(given.report))?.[1];
+        if (subject && subject !== previousReport.subject_id && path.posix.dirname(given.report) === path.posix.dirname(previousReport.md_path_rel)) {
           if (!originals.has(subject)) {
             const loaded = loadVerifierEvidenceForSubject(projectRoot, previousReport.feature, previousReport.phase, subject);
             originals.set(subject, loaded.ok ? loaded.evidence : null);
           }
           const original = originals.get(subject);
-          const candidate = original && readVerifierSummaryRows(original.report_text)?.find(item => item.id === row.id && item.line === Number(given[2]));
-          if (original?.md_path_rel === given[1] && candidate && candidate.status === row.status && candidate.severity === row.severity
-            && candidate.evidence === evidence) {
+          const candidate = original && readVerifierSummaryRows(original.report_text)?.find(item => item.id === row.id && item.line === given.line);
+          if (original?.md_path_rel === given.report && candidate && candidate.status === row.status && candidate.severity === row.severity) {
             source = original;
             line = candidate.line;
+            evidence = candidate.evidence;
           }
         }
       }

@@ -2,7 +2,7 @@ import assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
 import { readVerifierSummaryRows } from '../../scripts/utils/repair-candidates';
-import { readVerifierUtSourcePaths, selectVerifierItemScope, verifierTemplateCheckIds } from '../../scripts/utils/verifier-item-scope';
+import { citesIssue, readVerifierUtSourcePaths, selectVerifierItemScope, verifierTemplateCheckIds } from '../../scripts/utils/verifier-item-scope';
 import type { VerifierMaterialView } from '../../scripts/utils/verifier-material';
 import type { UnitCaseResult } from '../run-unit';
 
@@ -34,6 +34,12 @@ function changed(...paths: string[]): VerifierMaterialView {
   };
 }
 
+function failedResult(blockers: number): string {
+  return '\n<!-- maison-verifier-result:v1 -->\n'
+    + `verifier_subject_id: ${'a'.repeat(64)}\nverdict: FAIL\nblocker_count: ${blockers}\n`
+    + '<!-- /maison-verifier-result:v1 -->\n';
+}
+
 const cases: Array<{ name: string; run(): void }> = [
   { name: '四列原件保留状态、严重度、证据及物理行，拒绝歧义但允许缺项', run: () => {
     const rows = readVerifierSummaryRows('## Summary\n\n' + report);
@@ -58,6 +64,24 @@ const cases: Array<{ name: string; run(): void }> = [
     assert.deepStrictEqual(scope.reviewIds, ['logic']);
     assert.deepStrictEqual(scope.reviewPaths, ['src/behavior.ets', 'contracts/acceptance.yaml']);
     assert.deepStrictEqual(scope.reusedRows, readVerifierSummaryRows(report)?.slice(1));
+  } },
+  { name: '局部复核补有归属的旧负面证据缺口，终态仍有无法归属的 BLOCKER 才全审', run: () => {
+    const input = { previousMaterial: material, currentMaterial: changed('src/behavior.ets'),
+      applicableIds: ['logic', 'contract', 'known_warn', 'optional'] };
+    const sections = report.replace('`src/boundary.ets:7`、`contracts/acceptance.yaml:30`', '')
+      + '| known_warn | WARN | MAJOR |  |\n';
+    const partial = selectVerifierItemScope({ ...input, previousReportText: sections + failedResult(1) });
+    assert.equal(partial.mode, 'partial');
+    assert.deepStrictEqual([...partial.reviewIds].sort(), ['contract', 'known_warn', 'logic']);
+    assert.equal(selectVerifierItemScope({ ...input, previousReportText: sections + failedResult(2) }).mode, 'full');
+
+    const detail = '\n```yaml\nverification_result:\n  phase: coding\n  feature: demo\n  checks:\n'
+      + '    - id: contract\n      status: FAIL\n      severity: BLOCKER\n      details: verify original contract\n```\n';
+    const incompleteTable = report.split('| contract |')[0] + detail + failedResult(1);
+    const knownBlocker = selectVerifierItemScope({ ...input, previousReportText: incompleteTable });
+    assert.equal(knownBlocker.mode, 'partial');
+    assert.deepStrictEqual([...knownBlocker.reviewIds].sort(), ['contract', 'logic']);
+    assert.equal(selectVerifierItemScope({ ...input, previousReportText: incompleteTable.replace('id: contract', 'id: unknown') }).mode, 'full');
   } },
   { name: '未引用的变动、新路径和无法归项的非路径变化一律完整核验', run: () => {
     const known = changed('src/behavior.ets');
@@ -92,6 +116,24 @@ const cases: Array<{ name: string; run(): void }> = [
       ...prior, previousReportText: report, requiredIds, recheckIds: ['logic'],
     }).reviewIds, ['logic']);
   } },
+  { name: '同材料的薄 Review 报告只补开放 CR 的裁决与投影，坏表或材料变化回全审', run: () => {
+    const previousMaterial = { ...material, phase: 'review' };
+    const input = {
+      previousMaterial, currentMaterial: previousMaterial, previousReportText: 'PASS',
+      applicableIds: ['contract', 'issue_accuracy', 'false_positive_rate'],
+      recheckFindings: [{ id: 'CR-021' }],
+    };
+    const thin = selectVerifierItemScope(input);
+    assert.equal(thin.mode, 'partial');
+    assert.deepStrictEqual(thin.reviewIds, ['issue_accuracy', 'false_positive_rate']);
+    const missing = selectVerifierItemScope({ ...input,
+      previousReportText: header + '| contract | PASS | BLOCKER | `src/boundary.ets:7` |\n' });
+    assert.equal(missing.mode, 'partial');
+    assert.deepStrictEqual(missing.reviewIds, thin.reviewIds);
+    assert.deepStrictEqual(missing.reusedRows.map(row => row.id), ['contract']);
+    assert.equal(selectVerifierItemScope({ ...input, previousReportText: report + '| contract | WARN | BLOCKER | conflict |\n' }).mode, 'full');
+    assert.equal(selectVerifierItemScope({ ...input, currentMaterial: { ...changed('src/behavior.ets'), phase: 'review' } }).mode, 'full');
+  } },
   { name: 'Review 按原逐条 issue 的证据和 production_paths 定位同次裁决', run: () => {
     const previousMaterial = { ...material, phase: 'review' };
     const previousReportText = header + '| issue_accuracy | WARN | BLOCKER | CR-001 待核 |\n'
@@ -108,6 +150,33 @@ const cases: Array<{ name: string; run(): void }> = [
       assert.deepStrictEqual(scope.reviewIds, ['issue_accuracy', 'false_positive_rate']);
       assert.deepStrictEqual(scope.reusedRows.map(row => row.id), ['contract']);
     }
+  } },
+  { name: '当前开放发现按原逐条和证据定位，前缀命中不得缩小复核', run: () => {
+    assert(citesIssue('复核（UT-1）和 UP-001', 'UT-1'));
+    assert(!citesIssue('复核（UT-10）和 UP-001', 'UT-1'));
+    const previousReportText = report.replace('src/behavior.ets:11`', 'src/behavior.ets:11` UT-10')
+      + '\n```issue-verification\n- issue: UP-001\n  verdict: unclear\n'
+      + '  production_paths: [src/boundary.ets]\n```\n';
+    const input = { previousMaterial: material, currentMaterial: material, previousReportText, applicableIds };
+    const related = selectVerifierItemScope({ ...input, recheckFindings: [{ id: 'UP-001' }] });
+    assert.equal(related.mode, 'partial');
+    assert.deepStrictEqual(related.reviewIds, ['contract']);
+    const unrelated = selectVerifierItemScope({ ...input, recheckFindings: [{ id: 'UT-1' }] });
+    assert.equal(unrelated.mode, 'full');
+    assert.deepStrictEqual(unrelated.reviewIds, applicableIds);
+    const direct = selectVerifierItemScope({ ...input, recheckFindings: [{ id: 'UT-10' }] });
+    assert.equal(direct.mode, 'partial');
+    assert.deepStrictEqual(direct.reviewIds, ['logic']);
+
+    const reviewMaterial = { ...material, phase: 'review' };
+    const review = selectVerifierItemScope({
+      previousMaterial: reviewMaterial, currentMaterial: reviewMaterial, recheckFindings: [{ id: 'CR-021' }],
+      previousReportText: header + '| issue_accuracy | WARN | BLOCKER | 其他发现待核 |\n'
+        + '| false_positive_rate | WARN | MAJOR | 0/1 |\n' + report.split('\n').slice(2).join('\n'),
+      applicableIds: ['issue_accuracy', 'false_positive_rate', ...applicableIds],
+    });
+    assert.equal(review.mode, 'partial');
+    assert.deepStrictEqual(review.reviewIds, ['issue_accuracy', 'false_positive_rate']);
   } },
   { name: '真实 S1 UT 逐项表保留端到端 FAIL，只对旧测试引用调用 profile 源码选择', run: () => {
     const projectRoot = path.join(frameworkRoot, 'harness/tests/fixtures/host-recovery-history/20261024-fe4512-s1');

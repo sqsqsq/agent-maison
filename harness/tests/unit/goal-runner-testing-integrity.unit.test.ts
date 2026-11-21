@@ -7682,7 +7682,7 @@ for (const iteration of [26, 28] as const) test(`5ea729d4 S2 i${iteration} produ
   }
 });
 
-for (const variant of ['corrected', 'still-bad', 'refuted', 'reentered', 'request-missing', 'request-mismatched'] as const) test(`repair1 R3 UT UNVERIFIED ${variant} uses D1 and budgeted bounded format recovery`, async () => {
+for (const variant of ['corrected', 'still-bad', 'refuted', 'reentered', 'request-missing', 'request-mismatched', 'thin-stable', 'thin-progress'] as const) test(`repair1 R3 UT UNVERIFIED ${variant} uses D1 and budgeted bounded format recovery`, async () => {
   const { root } = setupGoalRuntimeHost('codex');
   const feature = FEATURE;
   const { UT_REAL_ASSERTION_CHECK } = await import('./repair-candidates.unit.test');
@@ -7693,8 +7693,9 @@ for (const variant of ['corrected', 'still-bad', 'refuted', 'reentered', 'reques
     const checks = [{ id: 'ut_hvigor_build', category: 'structure', severity: 'BLOCKER', status: 'PASS', description: 'native compile complete', details: 'compile passed' },
       { ...UT_REAL_ASSERTION_CHECK, category: 'structure', description: '真实断言失败的生产格式器与归因' }] as CheckResult[];
     const plan = { mode: 'enabled' as const, reason: 'policy_required' as const, verifier_prompt: 'prompts/verify-ut.md', message: 'D1 existing declaration' };
-    const body = (valid: boolean) => '| id | status |\n|---|---|\n| end_to_end_driving | ' + (variant === 'refuted' ? 'FAIL' : 'PASS') + ' |\n'
-      + (valid ? '| business_assertion_value | PASS |\n' : '');
+    const table = '| id | status | severity | 证据 |\n|---|---|---|---|\n';
+    const body = (valid: boolean) => table + '| end_to_end_driving | ' + (variant === 'refuted' ? 'FAIL' : 'PASS') + ' | BLOCKER | 已核当前真实断言调用。 |\n'
+      + (valid ? '| business_assertion_value | PASS | BLOCKER | 已核当前断言与实际失败结果。 |\n' : '');
     const options: NonNullable<Parameters<typeof runGoalRuntimeChain>[1]> = {
       adapter: 'codex', freshStartPhase: 'spec' as const, freshEndPhase: 'ut', freshRequirement: 'verify existing assertions',
       onHarnessSummary: ({ phase }: { phase: string }) => {
@@ -7710,7 +7711,8 @@ for (const variant of ['corrected', 'still-bad', 'refuted', 'reentered', 'reques
         assert(summary.report_validity === 'UNVERIFIED', '不能用伪造 PASS 遮掉真实 UT summary 形状');
         subject = summary.verifier_subject_id!; reportRel = summary.verifier_report!;
         if (!fs.existsSync(path.join(root, reportRel))) {
-          writeFile(root, reportRel, body(variant === 'refuted') + renderResultBlock(subject, variant === 'refuted' ? 'FAIL' : 'PASS', variant === 'refuted' ? 1 : 0));
+          writeFile(root, reportRel, (variant === 'thin-progress' || variant === 'thin-stable' ? '语义一致性复核通过。\n' : body(variant === 'refuted'))
+            + renderResultBlock(subject, variant === 'refuted' ? 'FAIL' : 'PASS', variant === 'refuted' ? 1 : 0));
           summary = writeRunSummaryBase(root, report, REPO_ROOT, writerOptions);
         }
         if (variant !== 'refuted' && (gates === 1 || variant !== 'corrected')) assert(summary.next_action === 'run_verifier_for_repair', '格式缺项须 D1 诊断动作');
@@ -7722,9 +7724,15 @@ for (const variant of ['corrected', 'still-bad', 'refuted', 'reentered', 'reques
         assert(request?.phase === 'ut' && request.subject_id === subject, 'actual current UT request must reach its own independent provider');
         assert(request !== null && fs.readFileSync(path.resolve(root, request.prompt_path)).length > 0, 'the independent provider reads its bound actual prompt');
         corrections++;
+        if (variant === 'thin-stable') assert(corrections <= 2, 'unchanged semantic gaps must not buy a third verifier');
+        if (variant === 'thin-progress') assert(corrections <= 3, 'only the new real partial answer may buy one additional verifier');
         deliveries.push(verifierDeliveryInput(root, feature, ctx, request!.subject_id, 0));
         assert(!prompt.includes('Then run the existing') && Boolean(goalAttemptId), '子 Agent 不应重复跑 harness，仍须原 attempt 身份');
-        writeFile(root, reportRel, body(variant === 'corrected') + renderResultBlock(subject, 'PASS', 0));
+        if (variant === 'thin-stable' || variant === 'thin-progress' && corrections === 1) {
+          fs.appendFileSync(path.join(root, reportRel), '\n\n');
+        } else {
+          writeFile(root, reportRel, body(variant === 'corrected' || variant === 'thin-progress' && corrections === 3) + renderResultBlock(subject, 'PASS', 0));
+        }
       },
     };
     if (variant === 'request-missing' || variant === 'request-mismatched') options.onHarnessFailureWithoutSummary = ({ phase, attempt }) => {
@@ -7743,13 +7751,26 @@ for (const variant of ['corrected', 'still-bad', 'refuted', 'reentered', 'reques
       return `verifier request ${variant} after current summary publication`;
     };
     let probe = await runGoalRuntimeChain(root, options);
+    if (variant === 'thin-stable') {
+      assert(corrections === 2, `same subject and same two owed items must stop after the original bounded feedback, calls=${corrections}`);
+      assert(probe.events.some(event => event.type === 'phase_halt' && event.run_disposition === 'WAITING'), 'thin replies cannot close the real task');
+      const previous = executionRequestForInvoke(probe.reportDir, deliveries.at(-1)?.invokeId);
+      const { GoalPhaseRuntime } = await import('../../scripts/goal-phase-runtime');
+      assert(!!previous && !('status' in new GoalPhaseRuntime().prepareExecutionContext(previous!.request.context, true)),
+        'the same verifier work is available when the existing execution gate receives explicit continuation');
+    }
+    if (variant === 'thin-progress') {
+      assert(corrections === 3 && deliveries.every(delivery => delivery.subject === subject),
+        `a new real answer unlocks the remaining item on the same subject, calls=${corrections}`);
+    }
     if (variant === 'reentered') {
       assertFirstFormatOpportunity(deliveries, probe.events, subject);
       const beforeCalls = corrections;
       probe = await runGoalRuntimeChain(root, { ...options, noAutoForce: true });
       assert(corrections === beforeCalls && probe.invokedPhases.length === 0 && probe.harnessPhases.length === 0, 'UT unchanged ordinary reentry cannot buy another verifier or checker');
     }
-    assert(corrections === (variant === 'refuted' || variant === 'request-missing' || variant === 'request-mismatched' ? 0 : variant === 'corrected' ? 1 : 2), `UT ${variant} corrections=${corrections}`);
+    assert(corrections === (variant === 'refuted' || variant === 'request-missing' || variant === 'request-mismatched' ? 0
+      : variant === 'corrected' ? 1 : variant === 'thin-progress' ? 3 : 2), `UT ${variant} corrections=${corrections}`);
     completedVerifierInputs(deliveries, probe.events);
     if (variant === 'still-bad') assertFirstFormatOpportunity(deliveries, probe.events, subject);
     assert(probe.exitCode !== 0 && !probe.events.slice(probe.events.map(event => event.type).lastIndexOf('run_start')).some(event => event.type === 'run_end' && event.status === 'INTERRUPTED'), '真实失败必须准确退出而非异常/洗绿');
@@ -7759,7 +7780,7 @@ for (const variant of ['corrected', 'still-bad', 'refuted', 'reentered', 'reques
     const current = resolveCompletionDisposition({ projectRoot: root, frameworkRoot: REPO_ROOT, feature,
       runId: path.basename(probe.reportDir), chain: ['spec', 'plan', 'coding', 'review', 'ut'], endpoint: 'request' });
     assert(current.completionBlocking.some(problem => problem.id === 'open_finding:ut_product_assertion_failure'
-      && problem.action === 'repair' && problem.owner === 'coding') === (variant === 'corrected'),
+      && problem.action === 'repair' && problem.owner === 'coding') === (variant === 'corrected' || variant === 'thin-progress'),
       '实际共同候选消费者与逐项独核语义状态必须一致，旧summary投影不另作完成真源');
   } catch (error) {
     const dir = featurePhaseReportsDir(root, feature, 'ut');
