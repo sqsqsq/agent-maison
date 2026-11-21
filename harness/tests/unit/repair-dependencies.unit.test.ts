@@ -192,8 +192,9 @@ const cases: Array<{ name: string; run(): void }> = [
       const claimed = structuredClone(previous);
       const implementation = claimed.obligations.find(item => item.owner_phase === 'coding');
       assert(implementation);
-      implementation.satisfied_by = [{ phase: 'coding', run_id: holder,
-        evidence_manifest_aggregate: loadPhaseEvidenceManifest(root, feature, 'coding')!.manifest.aggregate_sha256 }];
+      const proof = { phase: 'coding', run_id: holder,
+        evidence_manifest_aggregate: loadPhaseEvidenceManifest(root, feature, 'coding')!.manifest.aggregate_sha256 };
+      implementation.satisfied_by = [proof];
       const findings = (currentPhasePass?: string) => executionScopeEvidenceFindings(root, feature, claimed,
         new Set([implementation.id]), holder, undefined, frameworkRoot, currentPhasePass);
       assert(findings().some(item => item.class === 'evidence'), 'the evidence reader also rejects the wrong producer');
@@ -204,7 +205,7 @@ const cases: Array<{ name: string; run(): void }> = [
       writeRunEvents(root, feature, holder, holderEvents);
       const committing = resolveCurrentScopeView({ ...options, currentPhase: 'coding', completedPhases: new Set(['coding']) });
       assert.equal(committing.reused_phases.find(item => item.phase === 'coding')?.evidence_refs[0].run_id, holder);
-      implementation.satisfied_by[0].evidence_manifest_aggregate = loadPhaseEvidenceManifest(root, feature, 'coding')!.manifest.aggregate_sha256;
+      proof.evidence_manifest_aggregate = loadPhaseEvidenceManifest(root, feature, 'coding')!.manifest.aggregate_sha256;
       assert.deepEqual(findings('coding'), []);
       writeRunEvents(root, feature, holder, [...holderEvents, accepted]);
       assert.equal(resolveCurrentScopeView(options).reused_phases.find(item => item.phase === 'coding')?.evidence_refs[0].run_id, holder);
