@@ -329,7 +329,8 @@ function* independentReviewInvocations(projectRoot: string, feature: string, run
   const { readExecutionRequestOriginal, acceptedSessionReport, readHandoffMaterial, sessionRunMaterialPath } = require('./session-execution-handoff') as typeof import('./session-execution-handoff');
   const { invocationCompleted } = require('./invocation-completion') as typeof import('./invocation-completion');
   const { workUnitExecutionRole } = require('./goal-phase-executor') as typeof import('./goal-phase-executor');
-  try { realProjectPath(projectRoot, path.relative(projectRoot, reportPath), 'independent review result'); }
+  const reportAbs = path.resolve(projectRoot, reportPath);
+  try { realProjectPath(projectRoot, path.relative(projectRoot, reportAbs), 'independent review result'); }
   catch { return; }
   for (const run of repairDeclineHistory(projectRoot, feature, runId).reverse()) {
     const runDir = featureFilePath(projectRoot, feature, 'goal-runs/' + run.run_id);
@@ -357,7 +358,7 @@ function* independentReviewInvocations(projectRoot: string, feature: string, run
         } catch { return null; }
       };
       if (inCurrentRoot(ctx.runDir) !== path.resolve(runDir)
-        || inCurrentRoot(request.write_boundary.verifierResultPath) !== path.resolve(reportPath)) continue;
+        || inCurrentRoot(request.write_boundary.verifierResultPath) !== reportAbs) continue;
       const relocated = path.resolve(sourceRoot) !== path.resolve(projectRoot);
       if (relocated) {
         // Only a signed original at the same run-relative location travels with an archived report.
@@ -382,7 +383,7 @@ function* independentReviewInvocations(projectRoot: string, feature: string, run
             observations?: Array<{ path: string; post_sha256?: string | null }> };
           return [...(observed.owned ?? []), ...(observed.observations ?? [])];
         });
-      const target = (file: string): boolean => inCurrentRoot(file) === path.resolve(reportPath);
+      const target = (file: string): boolean => inCurrentRoot(file) === reportAbs;
       const output = writes.filter(write => target(write.path)).at(-1);
       let accepted: { post_snapshot?: NonNullable<typeof request.pre_snapshot>; draft_outputs?: Record<string, string> } | undefined;
       let handedBack: ReturnType<typeof acceptedSessionReport> | undefined;
