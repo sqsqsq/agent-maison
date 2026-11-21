@@ -20,7 +20,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
-import { inferLegacyProjectRoot, isInsideProjectRoot, resolveDependencyPath } from './project-relative-path';
+import { inferLegacyProjectRoot, isInsideProjectRoot, realProjectPath, resolveDependencyPath, validateProjectRelativePath } from './project-relative-path';
 import { createHash } from 'crypto';
 import { extractTables, getSectionContent, extractDeclaredVerdict, extractReviewVerdict } from './markdown-parser';
 import type { CorrectionCategory } from './correction-routing';
@@ -326,42 +326,79 @@ export interface PhaseRepairIssues {
 
 function* independentReviewInvocations(projectRoot: string, feature: string, runId: string, reportPath: string) {
   const { featureFilePath } = require('../../config') as typeof import('../../config');
-  const { executionRequestForInvoke, acceptedSessionReport, readHandoffMaterial } = require('./session-execution-handoff') as typeof import('./session-execution-handoff');
+  const { readExecutionRequestOriginal, acceptedSessionReport, readHandoffMaterial, sessionRunMaterialPath } = require('./session-execution-handoff') as typeof import('./session-execution-handoff');
   const { invocationCompleted } = require('./invocation-completion') as typeof import('./invocation-completion');
   const { workUnitExecutionRole } = require('./goal-phase-executor') as typeof import('./goal-phase-executor');
+  try { realProjectPath(projectRoot, path.relative(projectRoot, reportPath), 'independent review result'); }
+  catch { return; }
   for (const run of repairDeclineHistory(projectRoot, feature, runId).reverse()) {
     const runDir = featureFilePath(projectRoot, feature, 'goal-runs/' + run.run_id);
+    try { realProjectPath(projectRoot, path.relative(projectRoot, runDir), 'independent review run'); }
+    catch { continue; }
     for (const start of [...run.events].reverse()) {
       if (start.type !== 'agent_invoke_start' || start.phase !== 'review' || !start.invoke_id) continue;
-      const original = executionRequestForInvoke(runDir, start.invoke_id);
-      const request = original?.request;
-      if (!request || request.context.feature !== feature || request.context.runId !== run.run_id
+      let original: ReturnType<typeof readExecutionRequestOriginal>;
+      try { original = readExecutionRequestOriginal(runDir, start.invoke_id, run.events); }
+      catch { continue; }
+      if (!original) continue;
+      const { request } = original;
+      const ctx = request.context;
+      if (ctx.feature !== feature || ctx.runId !== run.run_id || ctx.phase !== start.phase || request.invoke_id !== start.invoke_id
         || workUnitExecutionRole(request.context, request.purpose) !== 'verifier'
-        || !request.write_boundary?.verifierResultPath || !request.pre_snapshot
-        || path.resolve(projectRoot, request.write_boundary.verifierResultPath) !== path.resolve(projectRoot, reportPath)) continue;
+        || !request.write_boundary?.verifierResultPath || !request.pre_snapshot) continue;
+      const sourceRoot = ctx.projectRoot;
+      if (typeof sourceRoot !== 'string' || typeof ctx.runDir !== 'string') continue;
+      const sourcePath = path.win32.isAbsolute(sourceRoot) && !sourceRoot.startsWith('/') ? path.win32 : path.posix;
+      if (!sourcePath.isAbsolute(sourceRoot) || !sourcePath.isAbsolute(ctx.runDir)) continue;
+      const inCurrentRoot = (file: string): string | null => {
+        try {
+          const relative = sourcePath.isAbsolute(file) ? sourcePath.relative(sourceRoot, file) : file;
+          return path.resolve(projectRoot, validateProjectRelativePath(projectRoot, relative, 'independent review evidence'));
+        } catch { return null; }
+      };
+      if (inCurrentRoot(ctx.runDir) !== path.resolve(runDir)
+        || inCurrentRoot(request.write_boundary.verifierResultPath) !== path.resolve(reportPath)) continue;
+      const relocated = path.resolve(sourceRoot) !== path.resolve(projectRoot);
+      if (relocated) {
+        // Only a signed original at the same run-relative location travels with an archived report.
+        const issuer = original.event;
+        const reference = issuer.handoff_request;
+        if (!reference || !ctx.owner || reference.path !== original.reference.path || reference.sha256 !== original.reference.sha256
+          || issuer.phase !== start.phase || issuer.invoke_id !== start.invoke_id
+          || issuer.attempt_id !== ctx.attemptId || issuer.owner_id !== ctx.owner.owner_id || issuer.owner_epoch !== ctx.owner.epoch
+          || ctx.owner.run_id !== run.run_id || request.issued_at !== start.ts
+          || request.write_boundary.executionRole !== 'verifier'
+          || typeof request.write_boundary.projectRoot !== 'string'
+          || sourcePath.relative(sourceRoot, request.write_boundary.projectRoot) !== '') continue;
+      }
       const segment = run.events.slice(run.events.indexOf(start) + 1);
-      const end = segment.find(event => event.type === 'agent_invoke_end' && event.invoke_id === start.invoke_id);
+      const end = segment.find(event => event.type === 'agent_invoke_end' && event.phase === start.phase && event.invoke_id === start.invoke_id);
       if (!end || !invocationCompleted({ ...end, exitCode: end.exit_code })
         || segment.some(event => event.type === 'phase_write_violation' && event.invoke_id === start.invoke_id)) continue;
-      const writes = segment.filter(event => event.type === 'phase_write_observed' && event.invoke_id === start.invoke_id)
+      const writes = segment.filter(event => event.type === 'phase_write_observed' && event.invoke_id === start.invoke_id
+        && (!relocated || (event as Record<string, unknown>).pre_snapshot === request.pre_snapshot!.sha256))
         .flatMap(event => {
           const observed = event as GoalRunEvent & { owned?: Array<{ path: string; post_sha256?: string | null }>;
             observations?: Array<{ path: string; post_sha256?: string | null }> };
           return [...(observed.owned ?? []), ...(observed.observations ?? [])];
         });
-      const output = writes.filter(write => path.resolve(projectRoot, write.path) === path.resolve(projectRoot, reportPath)).at(-1);
+      const target = (file: string): boolean => inCurrentRoot(file) === path.resolve(reportPath);
+      const output = writes.filter(write => target(write.path)).at(-1);
       let accepted: { post_snapshot?: NonNullable<typeof request.pre_snapshot>; draft_outputs?: Record<string, string> } | undefined;
-      const handedBack = end.handoff_report ? acceptedSessionReport(runDir, original) : undefined;
-      try {
-        if (handedBack?.event.handoff_report) accepted = readHandoffMaterial(runDir, handedBack.event.handoff_report);
-      } catch { continue; }
+      let handedBack: ReturnType<typeof acceptedSessionReport> | undefined;
+      let archivePath: string;
       const archivedName = 'independent-' + path.basename(reportPath);
+      try {
+        handedBack = end.handoff_report ? acceptedSessionReport(runDir, original, run.events) : undefined;
+        if (handedBack?.event.handoff_report) accepted = readHandoffMaterial(runDir, handedBack.event.handoff_report);
+        archivePath = sessionRunMaterialPath(runDir, path.join(runDir, path.dirname(original.reference.path), archivedName));
+      } catch { continue; }
       const latestHash = output?.post_sha256 ?? (accepted
-        ? accepted.post_snapshot?.entries.find(item => path.resolve(projectRoot, item.path) === path.resolve(projectRoot, reportPath))?.sha256
+        ? accepted.post_snapshot?.entries.find(item => target(item.path))?.sha256
         : undefined);
       if (!latestHash) continue;
       const entries = new Map(request.pre_snapshot.entries.filter(item => item.kind === 'file')
-        .map(item => [path.resolve(projectRoot, item.path), item.sha256]));
+        .map(item => [inCurrentRoot(item.path), item.sha256]));
       const freshness = new Map<string, boolean>();
       const matchesCurrent = (file: string): boolean => {
         if (freshness.has(file)) return freshness.get(file)!;
@@ -375,7 +412,7 @@ function* independentReviewInvocations(projectRoot: string, feature: string, run
         return current;
       };
       yield { request, reportHash: latestHash, matchesCurrent, requestPath: path.join(runDir, original.reference.path),
-        archivePath: path.join(runDir, path.dirname(original.reference.path), archivedName), archived: accepted?.draft_outputs?.[archivedName],
+        archivePath, archived: accepted?.draft_outputs?.[archivedName],
         attendedArchive: handedBack?.event.handoff_report && path.join(runDir, handedBack.event.handoff_report.path) };
     }
   }

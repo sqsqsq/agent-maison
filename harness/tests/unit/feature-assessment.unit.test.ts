@@ -14,6 +14,7 @@ import * as path from 'path';
 import { clearFrameworkConfigCache, featureFilePath } from '../../config';
 import { assessFeature, type AssessedObligation, type FeatureAssessment } from '../../scripts/utils/feature-assessment';
 import { executionScopeEvidenceIssues, generateFeatureCompletion } from '../../scripts/utils/verify-feature-completion';
+import { readIndependentReviewOutputs } from '../../scripts/utils/repair-candidates';
 import { observeChangeUnitCompletion, resolveChangeUnitExpectedExecution } from '../../scripts/utils/change-unit-completion';
 import { asChangeUnitArtifact, loadCanonicalChangeUnit } from '../../scripts/utils/change-unit-path';
 import { validateChangeUnit } from '../../scripts/utils/change-unit-validator';
@@ -205,6 +206,33 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       assert(a.obligations.length > 0 && a.obligations.every(o => o.status === 'covered'), `${feature}：${brief(a)}`);
       assert.deepStrictEqual(a.blocking, []);
       assert.strictEqual(a.complete, true, `${feature}：${brief(a)}`);
+      if (feature !== SNAPSHOT_FLAT_FEATURE) continue;
+      assert(a.record.run_id);
+      const runId = a.record.run_id;
+      const runDir = featureFilePath(root, feature, `goal-runs/${runId}`);
+      const proof = readIndependentReviewOutputs(root, feature, runId).find(answer =>
+        answer.originals[0].startsWith(runDir + path.sep)
+        && answer.entries.some(entry => entry.issue === 'acceptance_test_strength_AC-2' && entry.verdict === 'refuted'));
+      assert(proof, 'the copied feature must read the actual signed review handback');
+      const [requestFile, archiveFile] = proof.originals;
+      const requestBytes = fs.readFileSync(requestFile);
+      try {
+        fs.appendFileSync(requestFile, '\n');
+        assert(!readIndependentReviewOutputs(root, feature, runId).some(answer => answer.originals.includes(requestFile)),
+          'a content-valid JSON copy with an altered signed digest must not authorize a verdict');
+      } finally { fs.writeFileSync(requestFile, requestBytes); }
+      const otherId = '20991231T235959Z-aabbcc';
+      const otherDir = featureFilePath(root, feature, `goal-runs/${otherId}`);
+      assert(!fs.existsSync(otherDir));
+      try {
+        for (const file of [path.join(runDir, 'events.jsonl'), requestFile, archiveFile]) {
+          const target = path.join(otherDir, path.relative(runDir, file));
+          fs.mkdirSync(path.dirname(target), { recursive: true });
+          fs.copyFileSync(file, target);
+        }
+        assert(!readIndependentReviewOutputs(root, feature, otherId).some(answer => answer.originals.some(file => file.startsWith(otherDir + path.sep))),
+          'the identical bytes and event cannot move to a different run identity');
+      } finally { fs.rmSync(otherDir, { recursive: true, force: true }); }
     }
     const sourceFile = path.join(root, 'src', 'ledger', 'LedgerFeature.ets');
     const sourceBytes = fs.readFileSync(sourceFile);
