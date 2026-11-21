@@ -174,7 +174,9 @@ export function executionScopeEvidenceFindings(projectRoot: string, feature: str
           const terminalOk = isCurrentRun || (!!terminal && ['CHAIN_SLICE_COMPLETED', 'COMPLETED'].includes(String(terminal.status)));
           const fresh = recomputePhaseEvidenceStaleness(projectRoot, feature, [ref.phase], freshnessOpts)[0];
           const identity = resolvePhaseRunIds(projectRoot, feature, [ref.phase]);
-          if (!terminalOk || identity.runIds[ref.phase] !== ref.run_id || !evidence?.integrityOk || evidence.manifest.aggregate_sha256 !== ref.evidence_manifest_aggregate || fresh.verdict !== 'fresh') push(obligation.id, 'reused evidence invalid', 'evidence');
+          const producer = identity.runIds[ref.phase] ?? (isCurrentRun
+            ? currentScopeProofRunId(projectRoot, feature, ref.phase, ref.run_id) : undefined);
+          if (!terminalOk || producer !== ref.run_id || !evidence?.integrityOk || evidence.manifest.aggregate_sha256 !== ref.evidence_manifest_aggregate || fresh.verdict !== 'fresh') push(obligation.id, 'reused evidence invalid', 'evidence');
         } catch { push(obligation.id, 'reused run missing/corrupt', 'evidence'); }
       }
     }
@@ -348,6 +350,12 @@ function readSummaryLattice(
       verdict: null, reportValidity: null, closureClosed: false, closureCommitted: false, closureCommittedAt: null, raw: null,
     };
   }
+}
+
+/** A qualified local phase proof can predate invocation events; a different declared producer still controls. */
+export function currentScopeProofRunId(projectRoot: string, feature: string, phase: string, currentRunId: string): string | undefined {
+  const declared = asRecord(readSummaryLattice(projectRoot, feature, phase).raw)?.run_id;
+  return declared === undefined || declared === currentRunId ? currentRunId : undefined;
 }
 
 export interface CleanPassOptions {

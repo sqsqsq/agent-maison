@@ -1107,7 +1107,8 @@ export function resolveCurrentScopeView(input: {
   const { birth, events, dependencies, history } = readScopeProofHistory({ ...input, currentPhasePass });
   const proofs = new Map<string, ScopeEvidenceRef>();
   const stale = new Set<string>();
-  const { resolveCompletionDisposition, applicableCheckFamilies, executionScopeEvidenceFindings, resolvePhaseRunIds } = require('./verify-feature-completion') as typeof import('./verify-feature-completion');
+  const { resolveCompletionDisposition, applicableCheckFamilies, executionScopeEvidenceFindings, resolvePhaseRunIds,
+    currentScopeProofRunId } = require('./verify-feature-completion') as typeof import('./verify-feature-completion');
   const scopeFindings = input.currentRunId ? executionScopeEvidenceFindings(projectRoot, feature, input.previous,
     undefined, input.currentRunId, undefined, frameworkRoot, undefined, input.authorityReaders, input.workflow, history) : undefined;
   const disposition = resolveCompletionDisposition({ projectRoot, feature, chain: applicableCheckFamilies(input.previous),
@@ -1136,18 +1137,19 @@ export function resolveCurrentScopeView(input: {
     else if (recorded.some(({ obligationId }) => invalidProofIds.has(obligationId))) stale.add(phase);
     else proofs.set(phase, recorded[0].ref);
   }
-  if (newProofs.size) {
-    const producerRuns: Record<string, string> = {};
+  if (input.currentRunId && newProofs.size) {
+    const producerRuns: Record<string, string | null> = {};
     try { Object.assign(producerRuns, resolvePhaseRunIds(projectRoot, feature, [...newProofs.keys()]).runIds); }
     catch {
       // A malformed invocation can invalidate one phase while other producers remain verifiable.
       for (const phase of newProofs.keys()) {
         try { Object.assign(producerRuns, resolvePhaseRunIds(projectRoot, feature, [phase]).runIds); }
-        catch { /* No verified producer for this phase. */ }
+        catch { producerRuns[phase] = null; }
       }
     }
     for (const [phase, aggregate] of newProofs) {
-      const producer = producerRuns[phase];
+      const observed = producerRuns[phase];
+      const producer = observed === undefined ? currentScopeProofRunId(projectRoot, feature, phase, input.currentRunId) : observed;
       if (producer) proofs.set(phase, { phase, run_id: producer, evidence_manifest_aggregate: aggregate });
       else stale.add(phase);
     }
