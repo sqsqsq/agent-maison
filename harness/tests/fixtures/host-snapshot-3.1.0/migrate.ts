@@ -129,81 +129,14 @@ function readSnapshotUtDecision(root: string, feature: string) {
   return { issue, verified, evidence, sourceFiles, testFile };
 }
 
-/** 模拟 Agent 的调查动作；基线资格仍由生产入口给出。 */
-export function researchSnapshotFacts(root: string, file: string, phase: string, admitted: FactsInvocationContext): void {
-  const prior = fs.readFileSync(file, 'utf8');
-  const { fm, body, error } = parseContextExploration(prior);
-  assert(!error, error);
-  const header: Record<string, unknown> = { ...fm };
-  const declared = Array.isArray(header.source_code_paths) ? header.source_code_paths.filter((source): source is string => typeof source === 'string') : [];
-  const row = (source: string, impact: string): string => {
-    const bytes = fs.readFileSync(path.join(root, source));
-    const text = bytes.includes(0) ? '二进制资源，按路径和内容哈希核对' : bytes.toString('utf8').split(/\r?\n/).find(line => line.trim()) ?? '(empty)';
-    return '| ' + source + ' | 当前原文：' + text.replace(/\|/g, '/') + ' | ' + impact + ' |';
-  };
-  if (admitted.baseline || admitted.first_phase !== phase) {
-    const delta = findPhaseDeltaSection(body, phase, true);
-    const registered = new Set([
-      ...declared,
-      ...extractTables(delta.content).filter(table => table.headers.some(title => /事实/.test(title))).flatMap(table => {
-        const column = table.headers.findIndex(title => /路径/.test(title));
-        return column < 0 ? [] : table.rows.map(cells => (cells[column] ?? '').replace(/`/g, '').trim());
-      }),
-    ].map(source => path.relative(root, path.resolve(root, source.replace(/\\/g, '/'))).replace(/\\/g, '/')));
-    const additional = admitted.source_paths.filter(source => !registered.has(source));
-    const rows = additional.filter(source => fs.existsSync(path.join(root, source)) && fs.statSync(path.join(root, source)).isFile())
-      .map(source => row(source, '核对本阶段新增输入'));
-    // 其它阶段的同路径不能代替当前阶段的调查；同阶段多节则按生产解析合并。
-    if (rows.length || !delta.content) fs.appendFileSync(file, '\n## phase_delta: ' + phase + '\n' + (rows.length
-      ? '| 路径 | 事实 | 影响 |\n|---|---|---|\n' + rows.join('\n') : 'none') + '\n');
-    return;
-  }
-  const sources = [...new Set([...declared, ...admitted.source_paths])]
-    .filter(source => { const abs = path.resolve(root, source); return abs.startsWith(root + path.sep) && fs.existsSync(abs) && fs.statSync(abs).isFile(); });
-  assert('feature' in admitted.subject && 'run_id' in admitted.subject, '快照迁移调查必须绑定实际 run');
-  Object.assign(header, { schema_version: '1.1', feature: admitted.subject.feature, run_id: admitted.subject.run_id, established_by: phase, source_code_paths: sources });
-  delete header.frozen_scope_fingerprint; delete header.request_sha256;
-  fs.writeFileSync(file, '---\n' + YAML.stringify(header) + '---\n## Code Facts\n| 路径 | 事实 | 影响 |\n|---|---|---|\n'
-    + sources.map(source => row(source, '核对当前实现输入')).join('\n') + '\n');
+function snapshotProject(s: Snapshot, feature: string) {
+  return { ...s, feature, module: feature === SNAPSHOT_CU_FEATURE ? 'ledger' : 'FinancialCard', modulePath: feature === SNAPSHOT_CU_FEATURE ? 'src/ledger' : '02-Feature/FinancialCard' };
 }
 
-/** 显式升级旧快照副本：只替代 agent/verifier 传输，harness、范围和完成核验都走生产。 */
-export async function migrateHostSnapshot(s: Snapshot, feature: string) {
-  clearFrameworkConfigCache();
-  const before = assessFeature(s.root, feature, { ...resolveChangeUnitExpectedExecution(s.root, feature), frameworkRoot: s.frameworkRoot });
-  assert(before.record.state === 'ok' && before.record.run_id, '旧完成原件必须仍可信并有 run 身份');
-  const sourceRun = before.record.run_id;
-  assert(!before.complete && before.obligations.some(o => o.owner_phase === 'review' && o.status === 'uncovered'), '必须真实识别旧 review gate 失效');
-  const projection = JSON.parse(fs.readFileSync(featureFilePath(s.root, feature, 'feature-completion.json'), 'utf8'));
-  const original = path.join(s.root, projection.original_path);
-  const originalHash = hash(original);
-  const manifest = JSON.parse(fs.readFileSync(featureFilePath(s.root, feature, `goal-runs/${sourceRun}/manifest.json`), 'utf8'));
-  assert(!readSnapshotUtDecision(s.root, feature).verified, 'the old snapshot cannot provide a current semantic PASS');
-  // 快照按契约排除了 .git；只在副本补测试仓库，不改旧 manifest/完成原件。
-  if (!fs.existsSync(path.join(s.root, '.git'))) {
-    git(s.root, ['init', '-q']);
-    fs.writeFileSync(path.join(s.root, '.gitignore'), 'framework/\nfake-deveco/\nbuild/\n');
-    git(s.root, ['add', '-A']);
-    // The new migration's honest pre-image is the captured current snapshot, including old weak UT cases.
-    git(s.root, ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'captured sources before migration repairs']);
-  }
-  let rebaselineTo: string | undefined;
-  try { execFileSync('git', ['cat-file', '-e', `${manifest.run_base_sha}^{commit}`], { cwd: s.root, stdio: 'ignore' }); }
-  catch { rebaselineTo = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: s.root, encoding: 'utf8' }).trim(); }
-  const owners = new Set(before.obligations.filter(o => o.applicability === 'required' && o.status === 'uncovered' && o.kind !== 'phase-result').map(o => o.owner_phase));
-  ensureFakeDeveco(s);
-  installSnapshotUtProvider(s.frameworkRoot);
-  const successorScope = resolveSuccessorExecutionScope(s.root, feature, resolveWorkflowSpec(s.root, { frameworkRoot: s.frameworkRoot }),
-    s.frameworkRoot, manifest.requirement, sourceRun, manifest.fidelity);
-  assert(successorScope?.phase_chain.length, 'the actual original request must have a nonempty current successor scope');
-  const chain = successorScope.phase_chain;
-  const p = { ...s, feature, module: feature === SNAPSHOT_CU_FEATURE ? 'ledger' : 'FinancialCard', modulePath: feature === SNAPSHOT_CU_FEATURE ? 'src/ledger' : '02-Feature/FinancialCard' };
-  const evidenceFiles = ['context/facts.md', 'acceptance.yaml', 'contracts.yaml', 'spec/spec.md'].map(file => featureFilePath(s.root, feature, file));
-  const probe = await runGoalRuntimeChain(s.root, {
-    frameworkRoot: s.frameworkRoot, featureId: feature, adapter: 'codex', realHarness: true,
-    testControl: { timeoutMs: 20 * 60_000, evidenceFiles },
-    supersede: [sourceRun], freshRequirement: manifest.requirement, rebaselineTo,
-    freshStartPhase: chain[0] as 'review', freshEndPhase: chain.at(-1), skipLegacySeal: true,
+export function snapshotVerifierHooks(s: Snapshot, feature: string, evidenceFiles: string[] = []):
+  Pick<NonNullable<Parameters<typeof runGoalRuntimeChain>[1]>, 'onOutOfChain' | 'onReview'> {
+  const p = snapshotProject(s, feature);
+  return {
     onOutOfChain: ctx => {
       const current = { ...p, runId: ctx.runId }, request = readDeliveredVerifierRequest(current, ctx);
       assert(request, `unexpected snapshot model request: ${ctx.phase}`);
@@ -275,6 +208,85 @@ export async function migrateHostSnapshot(s: Snapshot, feature: string) {
         issue: decision.issue, verdict, repair_owner: 'ut', evidence, production_paths: decision.sourceFiles,
       }]) + '```\n');
     },
+  };
+}
+
+/** 模拟 Agent 的调查动作；基线资格仍由生产入口给出。 */
+export function researchSnapshotFacts(root: string, file: string, phase: string, admitted: FactsInvocationContext): void {
+  const prior = fs.readFileSync(file, 'utf8');
+  const { fm, body, error } = parseContextExploration(prior);
+  assert(!error, error);
+  const header: Record<string, unknown> = { ...fm };
+  const declared = Array.isArray(header.source_code_paths) ? header.source_code_paths.filter((source): source is string => typeof source === 'string') : [];
+  const row = (source: string, impact: string): string => {
+    const bytes = fs.readFileSync(path.join(root, source));
+    const text = bytes.includes(0) ? '二进制资源，按路径和内容哈希核对' : bytes.toString('utf8').split(/\r?\n/).find(line => line.trim()) ?? '(empty)';
+    return '| ' + source + ' | 当前原文：' + text.replace(/\|/g, '/') + ' | ' + impact + ' |';
+  };
+  if (admitted.baseline || admitted.first_phase !== phase) {
+    const delta = findPhaseDeltaSection(body, phase, true);
+    const registered = new Set([
+      ...declared,
+      ...extractTables(delta.content).filter(table => table.headers.some(title => /事实/.test(title))).flatMap(table => {
+        const column = table.headers.findIndex(title => /路径/.test(title));
+        return column < 0 ? [] : table.rows.map(cells => (cells[column] ?? '').replace(/`/g, '').trim());
+      }),
+    ].map(source => path.relative(root, path.resolve(root, source.replace(/\\/g, '/'))).replace(/\\/g, '/')));
+    const additional = admitted.source_paths.filter(source => !registered.has(source));
+    const rows = additional.filter(source => fs.existsSync(path.join(root, source)) && fs.statSync(path.join(root, source)).isFile())
+      .map(source => row(source, '核对本阶段新增输入'));
+    // 其它阶段的同路径不能代替当前阶段的调查；同阶段多节则按生产解析合并。
+    if (rows.length || !delta.content) fs.appendFileSync(file, '\n## phase_delta: ' + phase + '\n' + (rows.length
+      ? '| 路径 | 事实 | 影响 |\n|---|---|---|\n' + rows.join('\n') : 'none') + '\n');
+    return;
+  }
+  const sources = [...new Set([...declared, ...admitted.source_paths])]
+    .filter(source => { const abs = path.resolve(root, source); return abs.startsWith(root + path.sep) && fs.existsSync(abs) && fs.statSync(abs).isFile(); });
+  assert('feature' in admitted.subject && 'run_id' in admitted.subject, '快照迁移调查必须绑定实际 run');
+  Object.assign(header, { schema_version: '1.1', feature: admitted.subject.feature, run_id: admitted.subject.run_id, established_by: phase, source_code_paths: sources });
+  delete header.frozen_scope_fingerprint; delete header.request_sha256;
+  fs.writeFileSync(file, '---\n' + YAML.stringify(header) + '---\n## Code Facts\n| 路径 | 事实 | 影响 |\n|---|---|---|\n'
+    + sources.map(source => row(source, '核对当前实现输入')).join('\n') + '\n');
+}
+
+/** 显式升级旧快照副本：只替代 agent/verifier 传输，harness、范围和完成核验都走生产。 */
+export async function migrateHostSnapshot(s: Snapshot, feature: string, deviceGate?: unknown) {
+  clearFrameworkConfigCache();
+  const before = assessFeature(s.root, feature, { ...resolveChangeUnitExpectedExecution(s.root, feature), frameworkRoot: s.frameworkRoot });
+  assert(before.record.state === 'ok' && before.record.run_id, '旧完成原件必须仍可信并有 run 身份');
+  const sourceRun = before.record.run_id;
+  assert(!before.complete && before.obligations.some(o => o.owner_phase === 'review' && o.status === 'uncovered'), '必须真实识别旧 review gate 失效');
+  const projection = JSON.parse(fs.readFileSync(featureFilePath(s.root, feature, 'feature-completion.json'), 'utf8'));
+  const original = path.join(s.root, projection.original_path);
+  const originalHash = hash(original);
+  const manifest = JSON.parse(fs.readFileSync(featureFilePath(s.root, feature, `goal-runs/${sourceRun}/manifest.json`), 'utf8'));
+  assert(!readSnapshotUtDecision(s.root, feature).verified, 'the old snapshot cannot provide a current semantic PASS');
+  // 快照按契约排除了 .git；只在副本补测试仓库，不改旧 manifest/完成原件。
+  if (!fs.existsSync(path.join(s.root, '.git'))) {
+    git(s.root, ['init', '-q']);
+    fs.writeFileSync(path.join(s.root, '.gitignore'), 'framework/\nfake-deveco/\nbuild/\n');
+    git(s.root, ['add', '-A']);
+    // The new migration's honest pre-image is the captured current snapshot, including old weak UT cases.
+    git(s.root, ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'captured sources before migration repairs']);
+  }
+  let rebaselineTo: string | undefined;
+  try { execFileSync('git', ['cat-file', '-e', `${manifest.run_base_sha}^{commit}`], { cwd: s.root, stdio: 'ignore' }); }
+  catch { rebaselineTo = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: s.root, encoding: 'utf8' }).trim(); }
+  const owners = new Set(before.obligations.filter(o => o.applicability === 'required' && o.status === 'uncovered' && o.kind !== 'phase-result').map(o => o.owner_phase));
+  ensureFakeDeveco(s);
+  installSnapshotUtProvider(s.frameworkRoot);
+  const successorScope = resolveSuccessorExecutionScope(s.root, feature, resolveWorkflowSpec(s.root, { frameworkRoot: s.frameworkRoot }),
+    s.frameworkRoot, manifest.requirement, sourceRun, manifest.fidelity);
+  assert(successorScope?.phase_chain.length, 'the actual original request must have a nonempty current successor scope');
+  const chain = successorScope.phase_chain;
+  const p = snapshotProject(s, feature);
+  const evidenceFiles = ['context/facts.md', 'acceptance.yaml', 'contracts.yaml', 'spec/spec.md'].map(file => featureFilePath(s.root, feature, file));
+  const probe = await runGoalRuntimeChain(s.root, {
+    frameworkRoot: s.frameworkRoot, featureId: feature, adapter: 'codex', realHarness: true, deviceGate,
+    testControl: { timeoutMs: 20 * 60_000, evidenceFiles },
+    supersede: [sourceRun], freshRequirement: manifest.requirement, rebaselineTo,
+    freshStartPhase: chain[0] as 'review', freshEndPhase: chain.at(-1), skipLegacySeal: true,
+    ...snapshotVerifierHooks(s, feature, evidenceFiles),
     onAuthor: (ctx, context) => {
       const current = { ...p, runId: ctx.runId };
       const facts = featureFilePath(s.root, feature, 'context/facts.md');

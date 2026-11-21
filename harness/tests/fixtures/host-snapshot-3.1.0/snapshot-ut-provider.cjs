@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const { createHash } = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const ts = require('typescript');
@@ -11,11 +12,14 @@ module.exports = async function runSnapshotUt(ctx, files, targetCases) {
   const declared = [];
   const results = [];
   const modules = new Map();
+  const sources = new Map();
   const load = (file, harness) => {
     if (modules.has(file)) return modules.get(file).exports;
     const mod = { exports: {} };
     modules.set(file, mod);
-    const { outputText } = ts.transpileModule(fs.readFileSync(file, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } });
+    const bytes = fs.readFileSync(file);
+    sources.set(path.relative(projectRoot, file).replace(/\\/g, '/'), createHash('sha256').update(bytes).digest('hex'));
+    const { outputText } = ts.transpileModule(bytes.toString('utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } });
     Function('require', 'exports', 'module', outputText)(name => {
       if (name === '@ohos/hypium') return harness;
       assert(name.startsWith('.'), `unexpected snapshot UT module ${name}`);
@@ -49,6 +53,13 @@ module.exports = async function runSnapshotUt(ctx, files, targetCases) {
   const original = path.join(featurePhaseReportsDir(projectRoot, feature, 'ut', frameworkRoot), 'snapshot-ut-execution.json');
   fs.mkdirSync(path.dirname(original), { recursive: true });
   fs.writeFileSync(original, JSON.stringify(results, null, 2) + '\n');
+  const input_sha256 = createHash('sha256').update(JSON.stringify({
+    sources: [...sources].sort(),
+    targets: declared.map(({ path, test }) => [path, test]).sort(),
+    acceptance: ctx.featureSpec?.acceptance ?? null,
+  })).digest('hex');
+  fs.appendFileSync(path.join(path.dirname(original), 'snapshot-ut-invocations.jsonl'),
+    JSON.stringify({ run_id: process.env.MAISON_GOAL_RUN_ID ?? null, input_sha256, cases: results }) + '\n');
   const success = results.length > 0 && results.every(row => row.status === 'PASS');
   return [{ id: 'ut_hvigor_test', category: 'structure', severity: 'BLOCKER', status: success ? 'PASS' : 'FAIL',
     description: 'Migration fixture UT execution', details: success ? 'Isolated business cases ran to completion under Node.' : 'See actual fixture execution failures.',

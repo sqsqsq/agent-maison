@@ -2,17 +2,17 @@ import assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
 import { loadWorkflowSpec, type WorkflowSpec } from '../../workflow-loader';
-import { clearFrameworkConfigCache, receiptDirPath, featurePhaseReportsDir } from '../../config';
+import { clearFrameworkConfigCache, receiptDirPath, featurePhaseReportsDir, featureFilePath } from '../../config';
 import { resolveExecutionScope, affectedScopePhases, authorizedScopePhases, scopeDependencyEdges, scopeProofHistory, projectScopeSchedule, effectiveScopeView } from '../../scripts/utils/execution-scope';
 import { checkUpstreamVerdictGate, readUpstreamPhaseView } from '../../scripts/utils/upstream-verdict-gate';
-import { resolvePhaseEvidenceManifest, writePhaseEvidenceManifest, phaseEvidenceManifestPath } from '../../scripts/utils/phase-evidence-manifest';
+import { loadPhaseEvidenceManifest, resolvePhaseEvidenceManifest, writePhaseEvidenceManifest, phaseEvidenceManifestPath } from '../../scripts/utils/phase-evidence-manifest';
 import { classifyCorrection, mapCategoryToPhase, mapCategoryToChainPhase } from '../../scripts/utils/correction-routing';
 import { setupGoalRuntimeHost } from './goal-runner-testing-integrity.unit.test';
 import type { InputBinding } from '../../scripts/utils/capability-resolution';
 import { setupRunlessProject } from './execution-scope.unit.test';
 import { ensureFeatureExecutionScopeFrozen, readFeatureFrozenScope } from '../../scripts/utils/feature-execution-scope';
 import { resolveCurrentScopeView } from '../../scripts/utils/feature-track';
-import { seedCleanCompletionChain, writeRunEvents } from '../utils/completion-chain-seed';
+import { seedCleanCompletionChain, successfulRunEvents, writeRunEvents } from '../utils/completion-chain-seed';
 import { collectPhaseCompletionIssues } from '../../scripts/utils/verify-feature-completion';
 import { resolveWorkflowSpec } from '../../workflow-loader';
 import type { ScopeHistoryEvent } from '../../scripts/utils/execution-scope';
@@ -85,7 +85,7 @@ const cases: Array<{ name: string; run(): void }> = [
       const source = path.join(f.root, 'src/demo/value.ts');
       writePhaseEvidenceManifest(f.root, resolvePhaseEvidenceManifest({ projectRoot: f.root, frameworkRoot: f.frameworkRoot, feature: f.feature, phase: 'coding', extraInputs: [source] }));
       seedCleanCompletionChain({ projectRoot: f.root, feature: f.feature, chain });
-      const initial: Array<Record<string, unknown>> = [{ type: 'run_start', chain },
+      const initial: Array<Record<string, unknown>> = [...successfulRunEvents(chain).filter(event => event.type !== 'run_end'),
         ...chain.map(phase => ({ type: 'phase_verdict', phase, verdict: 'PASS', action: 'advance' }))];
       const failed = [...initial, { type: 'phase_verdict', phase: 'plan', verdict: 'FAIL', action: 'retry' },
         { type: 'phase_halt', phase: 'plan', halt_reason: 'content_retry_exhausted' }];
@@ -127,6 +127,50 @@ const cases: Array<{ name: string; run(): void }> = [
       fs.appendFileSync(source, '\nexport const changed = true;\n');
       assert(resolveCurrentScopeView(options).phase_chain.includes('coding'), 'a genuine bound input change still rejects the old coding proof');
     } finally { fs.rmSync(f.root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+  } },
+  { name: 'scope refresh keeps inherited coding and review producers while attaching actual holder testing evidence', run() {
+    const chain = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'];
+    const f = setupRunlessProject({ chain });
+    const { root, frameworkRoot, feature } = f;
+    const source = '20260712T230000Z-aaaaaa', holder = '20260714T230000Z-bbbbbb';
+    try {
+      assert.equal(ensureFeatureExecutionScopeFrozen({ projectRoot: root, frameworkRoot, feature }).status, 'frozen');
+      seedCleanCompletionChain({ projectRoot: root, feature, chain, runId: source });
+      const currentWorkflow = resolveWorkflowSpec(root, { frameworkRoot });
+      const frozen = readFeatureFrozenScope(root, feature)!.execution_scope;
+      for (const obligation of frozen.obligations.filter(duty => duty.applicability === 'required'
+        && ['coding', 'review'].includes(duty.owner_phase))) {
+        const phase = obligation.owner_phase;
+        obligation.satisfied_by = [{ phase, run_id: source,
+          evidence_manifest_aggregate: loadPhaseEvidenceManifest(root, feature, phase)!.manifest.aggregate_sha256 }];
+      }
+      const previous = projectScopeSchedule(frozen, currentWorkflow);
+      seedCleanCompletionChain({ projectRoot: root, feature, chain: ['testing'], runId: holder, now: () => new Date('2026-07-15T00:00:00Z') });
+      const holderEvents = [
+        { type: 'run_start', ts: '2026-07-14T23:00:00Z' },
+        { type: 'phase_start', phase: 'testing', ts: '2026-07-14T23:01:00Z' },
+        { type: 'phase_verdict', phase: 'testing', verdict: 'PASS', action: 'advance', ts: '2026-07-15T00:00:01Z' },
+      ];
+      writeRunEvents(root, feature, holder, holderEvents);
+      const holderManifest = featureFilePath(root, feature, `goal-runs/${holder}/manifest.json`);
+      const savedHolder = JSON.parse(fs.readFileSync(holderManifest, 'utf8'));
+      fs.writeFileSync(holderManifest, JSON.stringify({ ...savedHolder, phase_chain: previous.phase_chain, execution_scope: previous }));
+      const view = () => resolveCurrentScopeView({ projectRoot: root, frameworkRoot, feature, workflow: currentWorkflow, previous,
+        currentRunId: holder, currentPhase: 'testing', completedPhases: new Set(['testing']) });
+      const refreshed = view();
+      for (const phase of ['coding', 'review']) {
+        assert.deepEqual(refreshed.reused_phases.find(item => item.phase === phase)?.evidence_refs,
+          previous.reused_phases.find(item => item.phase === phase)?.evidence_refs, 'unchanged inherited evidence belongs to its original run');
+        assert.equal(refreshed.reused_phases.find(item => item.phase === phase)?.evidence_refs[0].run_id, source);
+      }
+      assert.equal(refreshed.reused_phases.find(item => item.phase === 'testing')?.evidence_refs[0].run_id, holder);
+
+      writeRunEvents(root, feature, holder, [...holderEvents, { type: 'phase_start', phase: 'coding', ts: '2026-07-15T00:01:00Z' }]);
+      assert(view().phase_chain.includes('coding'), 'the same old bytes cannot qualify a different producer');
+      writeRunEvents(root, feature, holder, holderEvents);
+      fs.unlinkSync(phaseEvidenceManifestPath(root, feature, 'review'));
+      assert(view().phase_chain.includes('review'), 'missing inherited manifest still invalidates review');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
   } },
   { name: '原实现义务允许request必要验证；纯review request不能借队列/终点标签取得coding权限', run() {
     assert(authorizedScopePhases(scopeFor(['coding']), workflow).includes('ut'));
