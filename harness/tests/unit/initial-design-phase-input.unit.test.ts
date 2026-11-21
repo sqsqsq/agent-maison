@@ -74,14 +74,15 @@ function compactControlFixture(excludeReviewTesting=false){
   for(const file of ['src/value.js','tests/value.test.cjs',source])tool('Read',{file_path:path.join(root,file)},fs.readFileSync(path.join(root,file),'utf8'));
   add({type:'assistant',message:{role:'assistant',content:'本请求 original-medium 仅调整value。Q1=否；Q2=否；Q3=否；依赖结果=否；跨部件=否；预期明确=是；做法唯一=是。依据 src/value.js、requirements/value.txt。'}});
   const observations:Array<{script:string;args:string[];status:number|null;stdout:string;stderr:string}>=[];
-  const invoke=(script:string,args:string[],expectedInterruption?:string)=>{
+  type InvocationOptions = { expectedInterruption?: string; timeoutMs?: number };
+  const invoke=(script:string,args:string[],{expectedInterruption,timeoutMs=60_000}:InvocationOptions={})=>{
     const env:NodeJS.ProcessEnv={...process.env,CLAUDE_CONFIG_DIR:home,MAISON_GOAL_CHECKPOINT_DIR:path.join(root,'.trust'),TS_NODE_PROJECT:path.join(FRAMEWORK,'harness/tsconfig.json')};
     for(const key of Object.keys(env))if(/^MAISON_GOAL_(?!CHECKPOINT_DIR)/.test(key))delete env[key];
-    const result=withRuntimeTest({root,...(expectedInterruption?{expectedInterruption}:{})},()=>spawnSync(process.execPath,['-r',require.resolve('ts-node/register/transpile-only'),path.join(FRAMEWORK,'harness',script),'--project-root',root,...(script==='scripts/compile.ts'?[]:['--framework-root',frameworkRoot]),...args],{cwd:path.join(FRAMEWORK,'harness'),env,encoding:'utf8',timeout:60_000,windowsHide:true}));
+    const result=withRuntimeTest({root,...(expectedInterruption?{expectedInterruption}:{})},()=>spawnSync(process.execPath,['-r',require.resolve('ts-node/register/transpile-only'),path.join(FRAMEWORK,'harness',script),'--project-root',root,...(script==='scripts/compile.ts'?[]:['--framework-root',frameworkRoot]),...args],{cwd:path.join(FRAMEWORK,'harness'),env,encoding:'utf8',timeout:timeoutMs,windowsHide:true}));
     observations.push({script,args,status:result.status,stdout:result.stdout||'',stderr:result.stderr||''});
     assert(!result.error,String(result.error));return result;
   };
-  const next=(args:string[]=[],expectedInterruption?:string)=>invoke('scripts/goal-mode-entry.ts',['--feature',feature,'--run-id',runId,'--adapter','codex','--run-mode','attended','--authorize-autonomy',...args],expectedInterruption);
+  const next=(args:string[]=[],options?:InvocationOptions)=>invoke('scripts/goal-mode-entry.ts',['--feature',feature,'--run-id',runId,'--adapter','codex','--run-mode','attended','--authorize-autonomy',...args],options);
   const value=(result:ReturnType<typeof invoke>)=>{const line=result.stdout.trim().split(/\r?\n/).reverse().find(row=>row.startsWith('{'));assert(line,result.stderr+result.stdout);return JSON.parse(line);};
   return{root,frameworkRoot,feature,runId,requirement,source,input,base,home,nativeFile,originalRef,user,test,invoke,next,value,observations};
 }
@@ -331,7 +332,7 @@ for(const frame of ['small','trivial'] as const)cases.push({
     assert.equal(readInitialDesignRequest(f.root,f.frameworkRoot,manifest),undefined);
     const ordinary=f.value(f.next(['--next']));assert.equal(ordinary.request.path,old.request.path,'ordinary continuation silently selected a light frame');
     const fake=path.join(f.root,'pretend.jsonl');fs.copyFileSync(f.nativeFile,fake);
-    const rejected=f.next(['--next','--session-ref',fake+'#original-medium'],'原件不在已配置客户端的原生存储内');assert.notEqual(rejected.status,0,'non-native file acquired user authority');assert(rejected.stderr.includes('原生存储'),rejected.stderr);fs.rmSync(fake);
+    const rejected=f.next(['--next','--session-ref',fake+'#original-medium'],{expectedInterruption:'原件不在已配置客户端的原生存储内'});assert.notEqual(rejected.status,0,'non-native file acquired user authority');assert(rejected.stderr.includes('原生存储'),rejected.stderr);fs.rmSync(fake);
     const blueprint=featureFilePath(f.root,f.feature,'blueprint/component-blueprint.yaml');
     if(frame==='small')writePartialControlBlueprint(blueprint);
     const late=f.user('late-fixed',frame==='small'?'本次按小型处理。':'本次按特别简单处理。');
@@ -392,7 +393,9 @@ for(const frame of ['small','trivial'] as const)cases.push({
     assert(report.checks.some((check:any)=>check.id==='request_test_execution'&&check.status==='PASS'));
     assert(report.checks.some((check:any)=>check.id==='request_expectation_source'&&check.status==='PASS'));
     assert(fs.readFileSync(path.join(f.root,options.reportDir,'ut/native-test.log'),'utf8').includes('# pass 1'));
-    const returned=f.next(['--request',current.request.path,'--report-result',JSON.stringify({phase:active.context.phase,status:'passed',details:frame==='trivial'?'已实际修改原目标并执行Node语法及UT；原user明确未安排review/真机，交框架按原请求适用义务判定终点。':'实际修改原目标并执行Node语法及UT；独立review尚未做，不声称原请求完成。'})]);
+    // small 的最终交回还要签发下一作者请求，覆盖采集时这次 CLI 可能超过 60 秒。
+    const returned=f.next(['--request',current.request.path,'--report-result',JSON.stringify({phase:active.context.phase,status:'passed',details:frame==='trivial'?'已实际修改原目标并执行Node语法及UT；原user明确未安排review/真机，交框架按原请求适用义务判定终点。':'实际修改原目标并执行Node语法及UT；独立review尚未做，不声称原请求完成。'})],
+      frame==='small'?{timeoutMs:120_000}:undefined);
     assert.equal(returned.status,0,returned.stderr+returned.stdout);
     const history=eventRows(eventsFile);assert(!history.some(row=>row.type==='phase_write_violation'&&row.violations?.some((item:any)=>['src/value.js','src/aux.js','tests/value.test.cjs'].includes(item.path))),JSON.stringify(history.slice(-8)));
     assert(!history.some(row=>row.type==='agent_invoke_start'&&String(row.phase).includes('questioning')));
