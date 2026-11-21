@@ -50,7 +50,7 @@ import { computeGateFingerprint } from '../../scripts/utils/gate-fingerprint';
 import { finalizePhaseClosure, preparePhaseRepairFeedback } from '../../scripts/utils/phase-closure-finalizer';
 import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
 import { makeVerifierProject, reportsDirOf, rmDir, writeFile } from '../utils/verifier-project-fixture';
-import type { CheckContext, CheckResult, HarnessRunSummary, Phase, ScriptReport } from '../../scripts/utils/types';
+import type { CheckContext, CheckResult, HarnessRunSummary, Phase, ScriptReport, UseCaseBranch } from '../../scripts/utils/types';
 
 export interface UnitCaseResult {
   name: string;
@@ -1331,16 +1331,18 @@ function caseK_materializedUtPromptCountingRule(): void {
       '物化 prompt 缺 4B 第 2 条的适用范围限定——单断言用例仍会在 4B 第 2 条上挂一次',
     );
 
-    // ④ 流程类用例的既有硬要求与检查 4 第 2/3 条、4C 正文**原样在内**（D3 不许扩面）。
+    // ④ 流程类用例仍按 UseCaseBranch 的真实字段与原约束核验。
+    const phaseSequenceField: keyof UseCaseBranch = 'expected_phase_seq';
     for (const kept of [
       '覆盖**中间态与终态**',
-      'expected_phase_sequence',
+      `\`${phaseSequenceField}\` 与 \`expected_port_calls\` / \`not_called\``,
       '退化判定',
       'mock_plan_traceability',
       '回滚行为或 `not_called`',
     ]) {
       assert(onDisk.includes(kept), `物化 prompt 丢了必须保留的正文：${kept}`);
     }
+    assert(!onDisk.includes('expected_phase_sequence'), '物化 prompt 不得引用 schema 未声明的阶段序列字段');
   } finally {
     rmDir(root);
   }

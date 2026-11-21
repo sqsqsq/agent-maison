@@ -41,6 +41,7 @@ import type { ResolvedPhaseInputs } from './capability-resolution';
 import { computePromptSha256, parseVerifierRequest, verifierRequestFilename } from './verifier-request';
 import { realProjectPath } from './project-relative-path';
 import { isUnitUtLayer } from './acceptance-layering';
+import { isBlockingCheck } from './check-disposition';
 
 export function verifierReportMdPath(reportsDir: string, subjectId: string): string {
   return path.join(reportsDir, verifierReportMdFilename(subjectId));
@@ -193,7 +194,9 @@ export function verifierReportItemGaps(input: VerifierItemReviewInput, evidence:
     const actual = rows.get(row.id);
     return sameVerifierSummaryRow(row, actual) ? [] : [`${row.id}：须保留已核实的原结论和依据`];
   }) ?? [];
-  if (scope && rows.size && [...rows.values()].filter(row => row.status === 'FAIL' && row.severity === 'BLOCKER').length !== evidence.blocker_count) {
+  // The terminal blocker count describes the report before workspace disposition rules are applied.
+  if (scope && rows.size && [...rows.values()].filter(({ id, status, severity }) =>
+    isBlockingCheck({ id, status, severity }, [])).length !== evidence.blocker_count) {
     drift.push('终态 blocker_count 未包含当前及沿用的 BLOCKER FAIL');
   }
   return [...new Set([...diagnostics, ...missing, ...drift, ...carried.missing])];

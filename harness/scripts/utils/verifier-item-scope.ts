@@ -10,6 +10,7 @@ import {
 import { partitionConstructionFiles } from './repair-responsibility';
 import { diffVerifierMaterial, type VerifierMaterialView } from './verifier-material';
 import { parseResultBlock } from './verifier-subject';
+import { isBlockingCheck } from './check-disposition';
 
 export interface VerifierItemScope {
   mode: 'full' | 'partial' | 'reuse';
@@ -161,7 +162,7 @@ export function selectVerifierItemScope(input: {
   }
   const blockers = new Set<string>();
   for (const row of rows) {
-    const blocking = row.status === 'FAIL' && row.severity === 'BLOCKER';
+    const blocking = isBlockingCheck({ id: row.id, status: row.status, severity: row.severity }, []);
     const needsAnswer = row.status !== 'PASS' && !row.evidence;
     if ((blocking || needsAnswer) && !applicableIds.has(row.id)) return full;
     if (blocking) blockers.add(row.id);
@@ -175,7 +176,7 @@ export function selectVerifierItemScope(input: {
     if (!row && (finding.status === 'FAIL' || finding.status === 'WARN' || finding.status === 'SKIP')) {
       if (!applicableIds.has(finding.id)) return full;
       reviewIds.add(finding.id);
-      if (finding.status === 'FAIL' && severity === 'BLOCKER') blockers.add(finding.id);
+      if (isBlockingCheck({ id: finding.id, status: finding.status, severity }, [])) blockers.add(finding.id);
     }
   }
   if (oldResult && oldResult.blocker_count !== blockers.size) return full;

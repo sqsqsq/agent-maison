@@ -43,6 +43,8 @@
 
 以下是脚本 Harness (`check-testing.ts`) 的本轮结果。直接引用 `report_trace_reconciliation`、执行通道/完整性、结构检查和 `ui_entry_coverage` 的机器状态。`passed_check_ids` 中的检查已 PASS。计划选取、派生用例集合、章节、表头、状态枚举、导航步骤静态规则及报告与原生 trace 的逐条对账由脚本完成。
 
+执行通道由顶层 `test-plan.md` 的 `execution_channel` 声明。脚本已在 `testing_execution_channel`、`device_test_run` 和 `testing_case_execution_completeness` 中检查通道与执行事实。正式派生用例集合须与顶层 `channel=hylyre` 的用例集合完全相等；正式派生计划禁止登记 `explicit_skip_tc_ids`，显式跳过不能抵消覆盖缺口。按本轮机器结果引用这些结论。
+
 保留机器记录的 FAIL、未执行和覆盖缺口。缺失或不可用的证据明确记为未知，非 success 的设备结果和失败/阻塞用例保持原状；顶层回填 `testing/reports/trace.json` 不能替代本轮权威 trace。机器对账 PASS 只表示报告与 trace 一致。可按具体语义问题打开对应的原生执行片段和截图，无需重新全量对账。
 
 ```
