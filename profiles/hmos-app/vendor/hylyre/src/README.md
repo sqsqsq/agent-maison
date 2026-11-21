@@ -6,7 +6,7 @@
 - **Agent 默认如何用 Hylyre（不必每轮交代）**：[AGENTS.md](AGENTS.md) + [`.cursor/rules/hylyre.mdc`](.cursor/rules/hylyre.mdc)；MCP 一次性配置：[docs/cursor-mcp-setup.md](docs/cursor-mcp-setup.md)
 - **进度**：[docs/progress.md](docs/progress.md)
 - **输出契约（SSOT）**：`hylyre/contracts/`（`trace.json` / 测试报告章节与枚举）；确定性执行、selector 与证据说明见 [docs/deterministic-verification.md](docs/deterministic-verification.md)
-- **当前版本**：Hylyre **0.6.1**；修复正式 Markdown 计划的测试步骤列将 JSON 字符串中的字面 `<br/>` 改为空格，Shell/input 原文、转义及多步骤保持不变。0.6.0 常用设备操作及布尔过滤兼容说明见 [变更说明](CHANGELOG.md)；用法见 [常用设备操作](docs/common-device-operations.md)。Step Outcome Protocol v1、trace schema `0.4-p0` 与契约包保持不变。
+- **当前版本**：Hylyre **0.6.2**，修复 Windows 上 `session start` 启动后台设备会话时弹出终端窗口的问题。版本记录见 [变更说明](CHANGELOG.md)。
 
 与业务仓 [SimulatedWalletForHmos](https://github.com/sqsqsq/SimulatedWalletForHmos) 的 **framework** 为**单向输出**关系：本仓不引用其代码；兼容性别名通过 GitHub Actions `compat-framework.yml` **软提醒**（不阻塞主 CI）。
 

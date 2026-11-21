@@ -71,11 +71,8 @@ def run_session_start(
         "close_fds": True,
     }
     if sys.platform == "win32":
-        kwargs["creationflags"] = (
-            subprocess.DETACHED_PROCESS
-            | subprocess.CREATE_NEW_PROCESS_GROUP
-            | getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        )
+        # Windows ignores CREATE_NO_WINDOW when DETACHED_PROCESS is also set.
+        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
     else:
         kwargs["start_new_session"] = True
 

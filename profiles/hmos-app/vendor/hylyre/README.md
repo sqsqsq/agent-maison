@@ -23,7 +23,7 @@ vendor/hylyre/
 ```
 
 - `source.files[]` 逐文件声明 sha256；`tree_sha256` = 对「POSIX 路径升序的 `<path>\n<sha256>\n` 拼接串」整体 sha256。
-- 当前 vendored source：Hylyre `0.6.1`，314 文件，`source.tree_sha256 = bb0dbd365c178147a15d24f3a8edcd5b49224b2427e9213c2496adf7c30800f9`。冻结契约保持 `contracts_tree_sha256 = cc738c272324022d7ed559340e9c710f9b7f5f94aac62c5dd70042e827a21bae`。
+- 当前 vendored source：Hylyre `0.6.2`，314 文件，`source.tree_sha256 = 26d21cf6a0868313b5d20d17fd0d2a940dab4831387ddfe0c8506ccf38bc73a2`。冻结契约保持 `contracts_tree_sha256 = cc738c272324022d7ed559340e9c710f9b7f5f94aac62c5dd70042e827a21bae`。
 - schema 2 manifest 不声明 `wheel`；宿主完整性门只按 `source.files[]`、文件大小与 `source.tree_sha256` 验证实际源码树。
 - 源文件统一 **LF** 落盘并按 LF 字节计算 hash。本仓 `.gitattributes` 只约束 Maison 仓库自身的 checkout，且不进发布件；宿主 checkout 的行尾由宿主自己的 Git 属性决定（`framework/** -text`，见 `skills/reference/consumer-framework-boundary.md`「package identity 与完整性」）。被改成 CRLF 的源码树会在安装前门被拦下并点名行尾改写，不按归一化放行。
 - harness 对齐判定**按 manifest 声明清单**复算 tree hash——vendor 内意外杂物（如 `__pycache__`）不会假触发"发布件损坏"；「src 内未声明文件」的检测由 Hylyre `--verify` 负责。
