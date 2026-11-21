@@ -13,7 +13,7 @@ import { setupRunlessProject } from './execution-scope.unit.test';
 import { ensureFeatureExecutionScopeFrozen, readFeatureFrozenScope } from '../../scripts/utils/feature-execution-scope';
 import { resolveCurrentScopeView } from '../../scripts/utils/feature-track';
 import { seedCleanCompletionChain, successfulRunEvents, writeRunEvents } from '../utils/completion-chain-seed';
-import { collectPhaseCompletionIssues } from '../../scripts/utils/verify-feature-completion';
+import { collectPhaseCompletionIssues, executionScopeEvidenceFindings } from '../../scripts/utils/verify-feature-completion';
 import { resolveWorkflowSpec } from '../../workflow-loader';
 import type { ScopeHistoryEvent } from '../../scripts/utils/execution-scope';
 import type { CheckResult } from '../../scripts/utils/types';
@@ -170,6 +170,45 @@ const cases: Array<{ name: string; run(): void }> = [
       writeRunEvents(root, feature, holder, holderEvents);
       fs.unlinkSync(phaseEvidenceManifestPath(root, feature, 'review'));
       assert(view().phase_chain.includes('review'), 'missing inherited manifest still invalidates review');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+  } },
+  { name: 'a fresh legacy phase proof still needs a current issuer when its source run halted', run() {
+    const chain = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'];
+    const { root, frameworkRoot, feature } = setupRunlessProject({ chain });
+    const source = '20260712T230000Z-aaaaaa', holder = '20260713T000000Z-bbbbbb';
+    const start = { type: 'run_start', chain: ['testing'], ts: '2026-07-13T00:00:00Z' };
+    try {
+      assert.equal(ensureFeatureExecutionScopeFrozen({ projectRoot: root, frameworkRoot, feature }).status, 'frozen');
+      const previous = readFeatureFrozenScope(root, feature)!.execution_scope;
+      const currentWorkflow = resolveWorkflowSpec(root, { frameworkRoot });
+      const options = { projectRoot: root, frameworkRoot, feature, workflow: currentWorkflow, previous, currentRunId: holder };
+      seedCleanCompletionChain({ projectRoot: root, feature, chain, runId: source });
+      const accepted = { type: 'phase_verdict', phase: 'coding', verdict: 'PASS', action: 'advance' };
+      writeRunEvents(root, feature, source, [{ type: 'run_start', chain }, accepted, { type: 'run_end', status: 'HALTED' }]);
+      writeRunEvents(root, feature, holder, [start]);
+      assert.deepEqual(collectPhaseCompletionIssues({ ...options, chain: ['coding'], runId: holder }), [], 'the old result itself is fresh and accepted');
+      assert(resolveCurrentScopeView(options).phase_chain.includes('coding'), 'a holder with no current coding observation cannot borrow this result');
+
+      const claimed = structuredClone(previous);
+      const implementation = claimed.obligations.find(item => item.owner_phase === 'coding');
+      assert(implementation);
+      implementation.satisfied_by = [{ phase: 'coding', run_id: holder,
+        evidence_manifest_aggregate: loadPhaseEvidenceManifest(root, feature, 'coding')!.manifest.aggregate_sha256 }];
+      const findings = (currentPhasePass?: string) => executionScopeEvidenceFindings(root, feature, claimed,
+        new Set([implementation.id]), holder, undefined, frameworkRoot, currentPhasePass);
+      assert(findings().some(item => item.class === 'evidence'), 'the evidence reader also rejects the wrong producer');
+
+      seedCleanCompletionChain({ projectRoot: root, feature, chain, runId: holder, now: () => new Date('2026-07-13T00:05:00Z') });
+      const settled = chain.filter(phase => phase !== 'coding').map(phase => ({ ...accepted, phase }));
+      const holderEvents = [{ ...start, chain }, ...settled];
+      writeRunEvents(root, feature, holder, holderEvents);
+      const committing = resolveCurrentScopeView({ ...options, currentPhase: 'coding', completedPhases: new Set(['coding']) });
+      assert.equal(committing.reused_phases.find(item => item.phase === 'coding')?.evidence_refs[0].run_id, holder);
+      implementation.satisfied_by[0].evidence_manifest_aggregate = loadPhaseEvidenceManifest(root, feature, 'coding')!.manifest.aggregate_sha256;
+      assert.deepEqual(findings('coding'), []);
+      writeRunEvents(root, feature, holder, [...holderEvents, accepted]);
+      assert.equal(resolveCurrentScopeView(options).reused_phases.find(item => item.phase === 'coding')?.evidence_refs[0].run_id, holder);
+      assert.deepEqual(findings(), []);
     } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
   } },
   { name: '原实现义务允许request必要验证；纯review request不能借队列/终点标签取得coding权限', run() {

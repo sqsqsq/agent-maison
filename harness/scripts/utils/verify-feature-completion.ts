@@ -25,7 +25,7 @@ import type { WorkflowSpec } from '../../workflow-loader';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
-import { validateExecutionScope, executionScopeFingerprint, executionCompletionPhases, isExecutionSourceBasis, isEffectivePhasePass, scopeProofHistory, phaseEvidenceIsCurrent, acceptsDefinitionInputProof, type ExecutionScope } from './execution-scope';
+import { validateExecutionScope, executionScopeFingerprint, executionCompletionPhases, isExecutionSourceBasis, isEffectivePhasePass, scopeProofHistory, phaseEvidenceIsCurrent, acceptsDefinitionInputProof, type ExecutionScope, type ScopeHistoryEvent } from './execution-scope';
 import { loadGoalManifestFromRun, manifestIdentityFieldDigest } from './goal-manifest';
 import { assertGoalRunAttachable, loadFrozenExecutionScope, loadEffectiveExecutionScope, resolveEffectiveScopeSource, loadScopeRevisions, loadAuthoritativeRunEvents, eventsWithScopeRevocations, applyScopeRevisions, identityBaseline, normalizeRelatedPath } from './goal-run-creation';
 import { requiredSummaryCheckGaps, isRequiredCheckGap, resolveCurrentDisposition, phaseCompletionProblems, type CurrentDisposition, type CurrentDispositionInput, type CurrentDispositionAxisFact, type CurrentDispositionPhaseFact, type DispositionCheck } from './check-disposition';
@@ -170,12 +170,13 @@ export function executionScopeEvidenceFindings(projectRoot: string, feature: str
           const source = loadGoalManifestFromRun(projectRoot, ref.run_id, { feature });
           assertGoalRunAttachable(projectRoot, source);
           const isCurrentRun = currentRunId !== undefined && ref.run_id === currentRunId;
-          const terminal = resolveEffectiveRunEnd(loadEventsJsonl(path.join(projectRoot, source.report_dir, 'events.jsonl')));
+          const sourceEvents = loadEventsJsonl(path.join(projectRoot, source.report_dir, 'events.jsonl'));
+          const terminal = resolveEffectiveRunEnd(sourceEvents);
           const terminalOk = isCurrentRun || (!!terminal && ['CHAIN_SLICE_COMPLETED', 'COMPLETED'].includes(String(terminal.status)));
           const fresh = recomputePhaseEvidenceStaleness(projectRoot, feature, [ref.phase], freshnessOpts)[0];
           const identity = resolvePhaseRunIds(projectRoot, feature, [ref.phase]);
           const producer = identity.runIds[ref.phase] ?? (isCurrentRun
-            ? currentScopeProofRunId(projectRoot, feature, ref.phase, ref.run_id) : undefined);
+            ? currentScopeProofRunId(projectRoot, feature, ref.phase, ref.run_id, sourceEvents, currentPhasePass) : undefined);
           if (!terminalOk || producer !== ref.run_id || !evidence?.integrityOk || evidence.manifest.aggregate_sha256 !== ref.evidence_manifest_aggregate || fresh.verdict !== 'fresh') push(obligation.id, 'reused evidence invalid', 'evidence');
         } catch { push(obligation.id, 'reused run missing/corrupt', 'evidence'); }
       }
@@ -352,10 +353,13 @@ function readSummaryLattice(
   }
 }
 
-/** A qualified local phase proof can predate invocation events; a different declared producer still controls. */
-export function currentScopeProofRunId(projectRoot: string, feature: string, phase: string, currentRunId: string): string | undefined {
+/** An older phase proof may lack an invocation start, but still needs evidence of the current producer. */
+export function currentScopeProofRunId(projectRoot: string, feature: string, phase: string, currentRunId: string,
+  events: readonly ScopeHistoryEvent[], currentPhasePass?: string): string | undefined {
   const declared = asRecord(readSummaryLattice(projectRoot, feature, phase).raw)?.run_id;
-  return declared === undefined || declared === currentRunId ? currentRunId : undefined;
+  if (declared !== undefined) return declared === currentRunId ? currentRunId : undefined;
+  const acceptedHere = currentPhasePass === phase || events.some(event => event.phase === phase && isEffectivePhasePass(event));
+  return acceptedHere ? currentRunId : undefined;
 }
 
 export interface CleanPassOptions {

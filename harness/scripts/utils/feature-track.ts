@@ -1110,7 +1110,7 @@ export function resolveCurrentScopeView(input: {
   const { resolveCompletionDisposition, applicableCheckFamilies, executionScopeEvidenceFindings, resolvePhaseRunIds,
     currentScopeProofRunId } = require('./verify-feature-completion') as typeof import('./verify-feature-completion');
   const scopeFindings = input.currentRunId ? executionScopeEvidenceFindings(projectRoot, feature, input.previous,
-    undefined, input.currentRunId, undefined, frameworkRoot, undefined, input.authorityReaders, input.workflow, history) : undefined;
+    undefined, input.currentRunId, undefined, frameworkRoot, currentPhasePass, input.authorityReaders, input.workflow, history) : undefined;
   const disposition = resolveCompletionDisposition({ projectRoot, feature, chain: applicableCheckFamilies(input.previous),
     workflow: input.workflow, executionScope: input.previous, frameworkRoot, runId: input.currentRunId,
     pendingOwnerPhase: input.currentPhase, authorityReaders: input.authorityReaders, currentResults: input.currentResults, scopeFindings });
@@ -1149,7 +1149,7 @@ export function resolveCurrentScopeView(input: {
     }
     for (const [phase, aggregate] of newProofs) {
       const observed = producerRuns[phase];
-      const producer = observed === undefined ? currentScopeProofRunId(projectRoot, feature, phase, input.currentRunId) : observed;
+      const producer = observed === undefined ? currentScopeProofRunId(projectRoot, feature, phase, input.currentRunId, events) : observed;
       if (producer) proofs.set(phase, { phase, run_id: producer, evidence_manifest_aggregate: aggregate });
       else stale.add(phase);
     }
