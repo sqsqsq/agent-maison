@@ -497,6 +497,8 @@ for (const entry of ['foreground', 'detach', 'attended'] as const) {
         .filter(item => item.run_id === holder);
       const authorCount = () => goalRunEvents(s.root, holder, feature).filter(event =>
         event.type === 'agent_invoke_start' && (event.phase === 'work-unit-author' || event.phase === 'ut')).length;
+      const utChecks = () => goalRunEvents(s.root, holder, feature).filter(event => event.phase === 'ut'
+        && (event.type === 'harness_start' || event.type === 'harness_end'));
       const finishedUt = executions();
       const authors = authorCount();
       assert(finishedUt.length > 0, 'the holder must execute the actual UT provider');
@@ -521,14 +523,24 @@ for (const entry of ['foreground', 'detach', 'attended'] as const) {
       };
       assertDeviceProof();
       const before = runIds(s.root, feature).length;
+      const checks = utChecks();
+      const specEvidence = ['fidelity-intent.json', 'capability-snapshot.json'].map(name => {
+        const file = featureFilePath(s.root, feature, `spec/reports/${name}`);
+        return { file, bytes: fs.readFileSync(file) };
+      });
       const done = await requestVia(entry, s.root, {
-        frameworkRoot: s.frameworkRoot, featureId: feature, deviceGate, freshRequirement: requirement, freshStartPhase: 'ut', freshEndPhase: 'ut',
+        ...verification, realHarness: true, frameworkRoot: s.frameworkRoot, featureId: feature,
+        deviceGate, freshRequirement: requirement, freshStartPhase: 'ut', freshEndPhase: 'ut',
       });
       clearFrameworkConfigCache();
       assert.strictEqual(runIds(s.root, feature).length, before, '重新接入持有者，不新建 run');
       assert.deepStrictEqual(done.invokedPhases, [], 'reentry must reuse the completed original author instead of a cold UT author');
       assert.equal(authorCount(), authors, 'reentry must retain the existing UT author');
       assert.deepStrictEqual(executions(), finishedUt, 'reentry must retain the original actual UT execution');
+      assert.deepStrictEqual(utChecks(), checks, 'reentry must retain the completed UT harness result');
+      for (const { file, bytes } of specEvidence) {
+        assert(fs.readFileSync(file).equals(bytes), 'reentry must preserve the frozen Spec original: ' + file);
+      }
       assertDeviceProof();
       assert(fs.readFileSync(sourceOriginal).equals(sourceOriginalBytes), 'the source completion original must keep its original bytes');
       const status = String([...goalRunEvents(s.root, holder!, feature)].reverse().find(e => e.type === 'run_end')?.status ?? '');

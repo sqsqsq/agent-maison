@@ -7459,7 +7459,8 @@ Goal runner — original request design and construction runtime
         frameworkRoot,
         manifest,
         featuresDirRel: featuresDir,
-        chainStartsAtSpec: chain[0] === fullWorkflowChain[0],
+        // An empty effective scope uses the completion chain to finish the run, without assigning new Spec work.
+        chainStartsAtSpec: (effectiveBirthScope?.phase_chain ?? chain)[0] === 'spec',
         profileDir: loadResolvedProfile(projectRoot, cfg, frameworkRoot).profileDir,
         fidelityFromCli: Boolean(manifestArgv.fidelity),
       });
