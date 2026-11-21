@@ -64,7 +64,7 @@ todos:
 
 本阶段沿用现有整份材料复用和闭环语义。只改变提供材料的方式、重复工作及三个已证实场景的模板判定。
 
-**材料装配。** 在 `collectContextFiles`、增量上下文和 `assembleAIPrompt` 的交界处区分“被审内容”和“按需查阅的原件”。本阶段产物、实际变化、未关闭发现和支撑或推翻发现所需的具体证据保留内联。可按绑定定位的长源码、上游文档、历史原件和 facts 只展开本次需要的部分，余下给真实路径及必要定位。同一文件兼任两者时内联一次并沿用其来源。对由蓝图派生、给定 Git 基线读取或解析后才成立的值，只有路径能还原本轮所审内容时才用路径替代，否则保留解析值或原字节。使用现有绑定与物理 Feature 路径。[runner](../../harness/harness-runner.ts) · [报告装配](../../harness/scripts/utils/report-generator.ts)
+**材料装配。** 在 `collectContextFiles`、增量上下文和 `assembleAIPrompt` 的交界处区分“被审内容”和“按需查阅的原件”。本阶段产物、实际变化、未关闭发现和支撑或推翻发现所需的具体证据保留内联。可按绑定定位的长源码、上游文档和历史原件只展开本次需要的部分，余下给真实路径及必要定位。facts 按 `factsPhaseFingerprint` 的取材口径，展开首个 `phase_delta` 之前的基线和 `findPhaseDeltaSection` 选出的本阶段 delta，完整原件给路径。同一文件兼任两者时内联一次并沿用其来源。对由蓝图派生、给定 Git 基线读取或解析后才成立的值，只有路径能还原本轮所审内容时才用路径替代，否则保留解析值或原字节。使用现有绑定与物理 Feature 路径。[runner](../../harness/harness-runner.ts) · [报告装配](../../harness/scripts/utils/report-generator.ts) · [facts 投影](../../harness/scripts/utils/context-facts.ts)
 
 实际 diff、拒修账本和发现证据各从一个入口收集，在最终组合处按同一来源和同一内容合并。保留多个用途及可定位关系，拒修原文和反证完整可读。同路径的历史前像与当前内容分别保留。呈现去重后，按路径读取的原件仍进入材料绑定，改动仍可使结论失效。Coding 的 `context-images/` 清单直接来自本轮成功复制的图片，允许历史文件留存。
 
@@ -72,7 +72,7 @@ todos:
 
 - Testing 直接引用本轮 `report_trace_reconciliation` 和已有结构检查。保留 FAIL、未执行和覆盖缺口。独立判断继续核对用例是否证明原验收、截图是否支持结论、复测是否覆盖原失败行为。[Testing 模板](../../harness/prompts/verify-testing.md) · [机器对账](../../harness/scripts/check-testing.ts)
 - Coding 直接读取真实编译和 `can_claim_done`。取消检查 0 的二次判分，兼容现有报告中的 `coding_compile_gate`。机器已签发失败诊断时仍核具体业务、断言与责任方，独核不得签掉原产品 FAIL 或补造编译 PASS。[Coding 模板](../../harness/prompts/verify-coding.md)
-- Review 的 `issue_accuracy` 对未关闭的 BLOCKER/MAJOR 逐条核实，低严重度保留已有抽样边界。`false_positive_rate` 从同一批已核实条目的 `confirmed/refuted` 结果派生，分母仅含已判真的或已判假的条目，另列 `unclear` 和未抽查项。保留既有输出 ID 与逐条责任归属。在模板中只给误报统计保留数值分档，取消 `issue_accuracy` 对同一比例的第二次分档。[阶段规则](../../specs/phase-rules/review-rules.yaml) 中已有的语义职责继续适用，本项只改 [Review 模板](../../harness/prompts/verify-review.md)。产品处置继续看具体问题与影响。
+- Review 的 `issue_accuracy`（BLOCKER）对未关闭的 BLOCKER/MAJOR 逐条核实，低严重度沿用现有抽样边界。误报率为 `refuted / (confirmed + refuted)`，`unclear` 和未抽查项另列。分母大于零时只在 `issue_accuracy` 按原阈值分档。≤10% 为 PASS，>10% 且 ≤30% 为 WARN，>30% 为 FAIL。最后一档计入 `blocker_count`，本轮 verifier 总判 FAIL。分母为零时注明比例不可计算，保留原有空清单及待核处置。`false_positive_rate` 保留既有 MAJOR 输出 ID，从同次裁决展示误报数、已核实数和比例，表内 status 直接投影同次结果，不再按 20% 另判或派修。保留逐条责任归属，产品处置仍看具体问题与影响。本项只改模板，沿用现有阶段规则。[Review 模板](../../harness/prompts/verify-review.md) · [阶段规则](../../specs/phase-rules/review-rules.yaml)
 - 保留生产标题“本轮为独立问题诊断”。对齐 Coding、Review、Testing、UT 四份模板及 `verifier.md`，用 `npm --prefix harness run sync:codex-agents` 重新生成 Codex TOML。真实请求资格继续由生产解析器决定，提示文字只负责传达该决定。[生成端](../../harness/scripts/utils/report-generator.ts) · [角色源文件](../../agents/claude/templates/agents/verifier.md) · [生成脚本](../../harness/scripts/sync-codex-agent-templates.ts)
 
 **补格式。** 先消费已签发 request 原定路径的报告。身份一致、现有证据读取器及本次所需的正文诊断已能采信、当前发现也没有待核实的实质缺口，就直接 finalize/receipt，保留已有否决或返修。报告末尾空行不改变这些结论。判定只需要当前报告与现有义务，不要求另找一份文本逐字比对，诊断为空也不能单独证明当前报告合格。报告缺失或确须恢复时，只从同一 request 已有的真实 verifier 角色交回原件恢复到其原定路径，再走同一读取器。没有可采信原件，或者缺真实文件与行号、验收依据、责任归属或有效判断，沿现有入口一次补核具体缺口。重复恢复幂等，迟到的旧 subject 不覆盖当前报告，作者摘要和 prompt 内嵌引用不能签发语义结论。[Goal 派发](../../harness/scripts/goal-phase-runtime.ts) · [报告验真](../../harness/scripts/utils/verifier-evidence.ts) · [正文诊断](../../harness/scripts/utils/repair-candidates.ts)
@@ -89,23 +89,31 @@ todos:
 
 独立运行可切换 Git 比较基线。当前工作树完全相同，删除或重命名前的内容仍可能不同。现在 `(before <sha>) 路径` 是显示标签，材料构造跳过以括号开头的标签。按 P2 修复这个已复现的独立运行场景。现代 Goal 继续用该 run 固定的正式基线。[差异读取](../../harness/scripts/utils/diff-scope.ts) · [基线选择](../../harness/scripts/utils/git-diff.ts) · [材料](../../harness/scripts/utils/verifier-material.ts)
 
-从实际 diff 的 D/R 条目取得变更类型、旧路径、重命名目标（适用时）及基线原字节摘要，按稳定次序并入现有 `input_bindings_sha256` 的输入。保留原有输入绑定分量。独立运行缺少 `resolvedInputs` 但有 D/R 时也生成这一分量，无前像条目时保持原算法。在材料构建处消费同一真实 diff 和前像读数，显示标签不参与取证。签发时可传入刚读的结果，policy 关闭下以空 `contextFiles` 重算时仍从既有基线取得相同读数。二进制按原字节取摘要，无需将 Git SHA、时间戳或整个工作树绑进每一项。旧路径不冒充工作树现存文件。实际前像不可读时标明证据缺口，用现有核验路径恢复，不能按相同的空值证明等价。
+从实际 diff 的 D/R 条目取得变更类型、旧路径、重命名目标（适用时）及基线原字节摘要，按稳定次序并入现有 `input_bindings_sha256` 的输入。保留原有输入绑定分量。独立运行缺少 `resolvedInputs` 但有 D/R 时也生成这一分量，无前像条目时保持原算法。若前像改变而其余材料相同，`diffVerifierMaterial` 只报 `input_bindings`，没有可归属到旧检查项的变更路径。阶段三据此完整核验本阶段当前适用项。在材料构建处消费同一真实 diff 和前像读数，显示标签不参与取证。签发时可传入刚读的结果，policy 关闭下以空 `contextFiles` 重算时仍从既有基线取得相同读数。二进制按原字节取摘要，无需将 Git SHA、时间戳或整个工作树绑进每一项。旧路径不冒充工作树现存文件。实际前像不可读时标明证据缺口，用现有核验路径恢复，不能按相同的空值证明等价。
 
 签发、材料重算、同材料查找、policy 关闭时已有否决的判定，以及拒修论据追加后的重签，都须理解同一份已绑定材料。新旧 subject 的等价检查不能绕过前像差异。[请求身份](../../harness/scripts/utils/verifier-request.ts) · [复用及否决](../../harness/scripts/utils/verifier-evidence.ts)
 
 ## 5. 阶段三 · 按项复核与缺项补核
 
-范围只从**实际材料变化、验收引用和未关闭发现**推导。以既有公开报告、对应 material 和当前适用义务为输入。复用已存在的检查 ID、汇总表证据单元格、非 PASS 明细和 `issue-verification`。按文件、行、符号、AC/CR、事实与实际调用关系确定受影响项。某项证明依赖变更的契约或生产调用链时须复核。仅共享同一个未变需求文件，不足以把其余条目全部重开。11 月 20 日蓝图 i6/i8 回放中，输入不变时只剩一项，单改 `stack-cleanup-boundary.resolution` 选中 19 项。只借鉴保留旧答的做法，保持设计质询自身职责。[已有材料差异](../../harness/scripts/utils/verifier-material.ts) · [蓝图选择器](../../harness/scripts/utils/blueprint-questioning.ts)
+范围只从**实际材料变化、验收引用和未关闭发现**推导。把改动路径定位到旧检查项，只使用以下三类既有引用。
+
+1. 旧 Markdown 汇总表证据格中可解析的 `path:line`。
+2. 对应 `issue-verification` 条目已有的证据路径及 `production_paths`。
+3. UT 的 `utAcceptanceSourcePaths` 从旧的绑定材料和相应用例中选出的源码路径。它给出验收材料的源码范围。[UT 路径选择](../../profiles/hmos-app/harness/ut-host-impl.ts)
+
+只有每条改动路径都能由上述旧引用定位到受影响项，才进入局部复核。任一新增、修改、删除或重命名涉及的路径找不到对应旧项，就按“影响无法界定”完整核验当前适用项。例如，旧报告只引了调用方，而此次变动的是旧材料未引用的被调用文件，调用方字节相同也要完整核验。仅共享同一份未变需求文档不足以重开其他项，本实现不引入通用调用关系分析。11 月 20 日蓝图 i6/i8 回放中，输入不变时只剩一项，单改 `stack-cleanup-boundary.resolution` 选中 19 项。只借鉴保留旧答的做法，保持设计质询自身职责。[已有材料差异](../../harness/scripts/utils/verifier-material.ts) · [蓝图选择器](../../harness/scripts/utils/blueprint-questioning.ts)
+
+**旧报告的读取。** PASS 行在 Markdown 汇总表中。模板的 YAML 明细只列非 PASS 项，`verifierSemanticChecks` 读取该明细，`parseVerifierCheckStatus` 只提取指定检查的状态。实施时复用现有 Markdown 表格提取逻辑，补写按六阶段模板 `id / status / severity / 证据` 四列读取完整行的代码。进行按项复用时，若旧汇总表缺失、格式无法解析或行归属有歧义，回退完整核验当前适用项。表可读而仅缺某个必核项时，只补该项。读取器沿用现有报告格式。[现有读取逻辑](../../harness/scripts/utils/repair-candidates.ts)
 
 | 条件 | 本轮消费和输出 |
 |---|---|
 | 首审、上次公开原件/材料不可用、规则语义变化无法归到具体项，或实际影响无法界定 | 完整核验当前适用项。路径可读和工具绿灯单独不能证明业务已通过。 |
 | 同材料已有有效报告 | 按现有路径复用 PASS 或 FAIL。对当前确实需要逐项依据的义务，连同报告正文判断该项是否已有可用结论。 |
 | 变化能定位 | 提示只展开受影响的项及必要反证。未受影响项在原汇总表用原 status、severity 和证据单元格直接引用最初有效的公开报告及条目。保留非 PASS 依据、责任方和未决处置。最终报告仍回显当前 subject，只有独立审查能改变语义结论。 |
-| 有有效报告身份，部分适用项缺少可采信答案，包括只有一句 PASS 的报告 | 在本次已知必核集合内取缺项，一次补问，沿用其余有效行。没有可沿用项且本次必核集合覆盖全阶段时，自然按完整适用集合审。历史短报告仍可读，未被本次义务使用的行没有补表要求。 |
+| 同材料且已有有效报告身份，本轮有明确的补核义务（含薄 PASS） | 先确定本次适用的必核集合。表可读时只补缺少可采信答案的项，沿用其余有效行。只有一句 PASS 时没有旧行可供按项沿用，完整核验本次适用的必核集合。历史短报告无本轮逐项义务时仍按整份结果消费。 |
 | 同一开放发现再出现 | 依据和已定处置未变，引用原发现并保留责任方。已有否决继续生效。验收、实现或有效反证（含新的真实拒修论据）有变化时，只重新核它影响的结论。 |
 
-本轮必核集合取自现有义务已有的验收引用（含适用的 `acceptance_ids/affected_files`）、有逐条 `issue-verification` 要求的开放发现，以及实际差异能定位到的检查项。缺项只相对该集合判断；同材料、无新待核依据时直接使用既有有效结论。同一套范围和报告消费用于首次签发、同 subject 已有 PASS 的快捷路径、异 subject 等价复用、补核与回执/完成判断。计数仍由有效逐项结论决定，原汇总表列出各适用项不等于重新审读它们的全文。明确不适用仍按既有规则处理，已有真实失败或证据缺口不能靠汇总 PASS 清掉。把旧结论直接引用到原始依据，避免多轮复核形成逐份追读的报告链。[逐项解析](../../harness/scripts/utils/repair-candidates.ts) · [回执](../../harness/scripts/check-receipt.ts) · [完成判断](../../harness/scripts/utils/verify-feature-completion.ts)
+本轮必核集合取自现有义务已有的验收引用（含适用的 `acceptance_ids/affected_files`）、有逐条 `issue-verification` 要求的开放发现，以及实际差异能定位到的检查项。这些义务字段用于确定要回答的问题，把变更路径定位到旧项仍只用前述三类引用。缺项只相对本轮必核集合判断。同材料、无新待核依据时直接使用既有有效结论。同一套范围和报告消费用于首次签发、同 subject 已有 PASS 的快捷路径、异 subject 等价复用、补核与回执/完成判断。计数仍由有效逐项结论决定，原汇总表列出各适用项不等于重新审读它们的全文。明确不适用仍按既有规则处理，已有真实失败或证据缺口不能靠汇总 PASS 清掉。把旧结论直接引用到原始依据，避免多轮复核形成逐份追读的报告链。[逐项解析](../../harness/scripts/utils/repair-candidates.ts) · [回执](../../harness/scripts/check-receipt.ts) · [完成判断](../../harness/scripts/utils/verify-feature-completion.ts)
 
 ## 6. Adapter、兼容与不采用方案
 
@@ -138,4 +146,4 @@ todos:
 
 **工程验证。** 每轮开发执行 `npm run test:changed`。模板变动后定向执行 `npm --prefix harness run test:unit -- --filter verifier-production-routing`、`codex-adapter-verifier-template`、`verifier-material`、`verifier-evidence`、`verifier-semantic-handoff` 及消费迁移快照的相关用例（`feature-assessment`、`successor-exit-early` / `successor-exit-late` 中相关 case，按实际注册名筛选）。关键变异只在隔离副本临时施加，记录正确实现通过与变异命中目标断言的对应关系。一次收口时跑 `npm run test:daily` 和本计划的定向验收，复用同一输入已有结果。[套件注册](../../harness/tests/utils/unit-suite-registry.ts) · [旧宿主快照迁移](../../harness/tests/fixtures/host-snapshot-3.1.0/migrate.ts)
 
-**干净宿主联合验收。** 用已校验发布件集成到获准的干净宿主，以 `codex` 或 `claude` 启用阶段 verifier，同一真实业务需求从原起点到交付终点完整跑一次。记录框架版本/提交、宿主基线、需求、模型与 adapter、设备/工具条件、终点和剩余质量结论。把 `summary.verifier_request` 及 subject 与实际派发、交回或报告复用对应，分别计签发请求、实际模型调用（含补核重试）和复用命中。按作者、阶段 verifier、独立 Review、设计质询、视觉评审列时长，注明嵌套、重叠及缺失观测，墙钟按区间并集。token 有数据时区分总输入和缓存输入。开发回放与真宿主实测分别列证，覆盖四个结果后一次签收。阶段调用数、原始报告数和全角色累计时长各有各的分母，提速幅度以可比实测为准。
+**干净宿主联合验收。** 联合验收前先安排可实际签发阶段 verifier 的 `codex` 或 `claude` adapter。现用 DSH 的宿主在获准的干净验收副本中提前完成切换与配置。将已校验发布件集成到该副本，用同一真实业务需求从原起点到交付终点完整跑一次。记录框架版本/提交、宿主基线、需求、模型与 adapter、设备/工具条件、终点和剩余质量结论。把 `summary.verifier_request` 及 subject 与实际派发、交回或报告复用对应，分别计签发请求、实际模型调用（含补核重试）和复用命中。按作者、阶段 verifier、独立 Review、设计质询、视觉评审列时长，注明嵌套、重叠及缺失观测，墙钟按区间并集。token 有数据时区分总输入和缓存输入。开发回放与真宿主实测分别列证，覆盖四个结果后一次签收。阶段调用数、原始报告数和全角色累计时长各有各的分母，提速幅度以可比实测为准。
