@@ -145,7 +145,7 @@ export interface IssueVerificationEntry {
 
 const ISSUE_FENCE_RE = new RegExp(
   '```' + ISSUE_VERIFICATION_FENCE + '\\s*\\r?\\n([\\s\\S]*?)```',
-  'i',
+  'ig',
 );
 
 type IssueVerificationRead = {
@@ -157,10 +157,22 @@ type IssueVerificationRead = {
 
 function parseIssueVerificationYaml(fragment: string, normalize?: (rows: Array<Record<string, unknown>>) => unknown[]): IssueVerificationRead {
   const lineCounter = new YAML.LineCounter();
-  const doc = YAML.parseDocument(fragment, { lineCounter, prettyErrors: false });
+  let doc = YAML.parseDocument(fragment, { lineCounter, prettyErrors: false });
   if (doc.errors.length) {
     const lines = fragment.split(/\r?\n/);
-    return { ok: false, entries: [], reason: `${ISSUE_VERIFICATION_FENCE} YAML不可解析（${doc.errors.length} 项）`,
+    const first = doc.errors[0];
+    const index = lineCounter.linePos(first.pos[0]).line - 1;
+    const evidence = /^( +)(evidence:[ \t]+)([^\s"'|>\[\]{},&*!#?%@`][^\r\n]*)$/.exec(lines[index] ?? '');
+    const continuation = lines[index + 1]?.match(/^( +)\S/)?.[1].length ?? 0;
+    if (!normalize && evidence && continuation <= evidence[1].length
+      && doc.errors.every(error => error.code === 'BLOCK_AS_IMPLICIT_KEY' && lineCounter.linePos(error.pos[0]).line === index + 1)) {
+      // Read an unquoted single-line evidence value with a colon as the literal text it contains.
+      const repaired = [...lines];
+      repaired[index] = evidence[1] + evidence[2] + JSON.stringify(evidence[3]);
+      const parsed = YAML.parseDocument(repaired.join('\n'));
+      if (!parsed.errors.length) doc = parsed;
+    }
+    if (doc.errors.length) return { ok: false, entries: [], reason: `${ISSUE_VERIFICATION_FENCE} YAML不可解析（${doc.errors.length} 项）`,
       unreadable: { fragment, diagnostics: doc.errors.map(error => {
         const { line, col } = lineCounter.linePos(error.pos[0]);
         return `围栏内第 ${line} 行第 ${col} 列 ${error.code}：${error.message}\n${lines[line - 1]?.slice(0, 200) ?? ''}`;
@@ -204,9 +216,9 @@ function parseIssueVerificationYaml(fragment: string, normalize?: (rows: Array<R
  */
 export function parseIssueVerificationBlock(text: string): IssueVerificationRead {
   if (!text || !text.trim()) return { ok: false, entries: [], reason: 'verifier 报告为空' };
-  const m = ISSUE_FENCE_RE.exec(text);
-  if (!m) return { ok: false, entries: [], reason: `缺 ${ISSUE_VERIFICATION_FENCE} fenced 块` };
-  return parseIssueVerificationYaml(m[1]);
+  const blocks = [...text.matchAll(ISSUE_FENCE_RE)];
+  if (blocks.length !== 1) return { ok: false, entries: [], reason: `需要唯一 ${ISSUE_VERIFICATION_FENCE} fenced 块` };
+  return parseIssueVerificationYaml(blocks[0][1]);
 }
 
 export function uniqueIssueVerification(entries: readonly IssueVerificationEntry[], issue: string): IssueVerificationEntry | undefined {
@@ -1005,6 +1017,41 @@ function normalizeVerifierStatusCell(raw: string | undefined): VerifierCheckStat
  */
 function normalizeVerifierIdCell(raw: string | undefined): string {
   return (raw ?? '').replace(/[`*~\s]/g, '');
+}
+
+export interface VerifierSummaryRow {
+  id: string;
+  status: VerifierCheckStatus | 'SKIP';
+  severity: 'BLOCKER' | 'MAJOR' | 'MINOR' | 'INFO';
+  evidence: string;
+  line: number;
+}
+
+/** A readable four-column summary can have missing rows, but ownership of each row must be unique. */
+export function readVerifierSummaryRows(text: string): VerifierSummaryRow[] | null {
+  const tables = extractTables(text).filter(({ headers }) => {
+    const [id, status, severity, evidence] = headers.map(cell => cell.trim().toLowerCase());
+    return headers.length === 4 && id === 'id' && status === 'status' && severity === 'severity'
+      && /^(?:证据|evidence)(?:$|\s|[（(])/.test(evidence);
+  });
+  if (tables.length !== 1) return null;
+
+  const table = tables[0];
+  const rows: VerifierSummaryRow[] = [];
+  const seen = new Set<string>();
+  for (const [index, cells] of table.rows.entries()) {
+    if (cells.length !== 4) return null;
+    const [idCell, statusCell, severityCell, evidence] = cells;
+    const id = normalizeVerifierIdCell(idCell);
+    const status = normalizeVerifierStatusCell(statusCell) ??
+      (statusCell.replace(/[`*_~]/g, '').trim().toUpperCase() === 'SKIP' ? 'SKIP' : null);
+    const severity = severityCell.replace(/[`*_~]/g, '').trim().toUpperCase();
+    if (!/^[A-Za-z][A-Za-z0-9_.-]*$/.test(id) || seen.has(id) || !status
+      || (severity !== 'BLOCKER' && severity !== 'MAJOR' && severity !== 'MINOR' && severity !== 'INFO')) return null;
+    seen.add(id);
+    rows.push({ id, status, severity, evidence, line: table.lineNumber + index + 2 });
+  }
+  return rows;
 }
 
 export function parseVerifierCheckStatus(

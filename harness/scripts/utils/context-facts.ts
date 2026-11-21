@@ -54,8 +54,12 @@ export interface FactsInvocationContext {
   frozen_scope_fingerprint?: string;
 }
 
+function factsBaseline(raw: string): string {
+  return raw.replace(/\r\n/g, '\n').split(/^##\s*phase_delta:/m)[0].trimEnd();
+}
+
 export function factsBaselineFingerprint(raw: string): string {
-  return crypto.createHash('sha256').update(raw.replace(/\r\n/g, '\n').split(/^##\s*phase_delta:/m)[0].trimEnd()).digest('hex');
+  return crypto.createHash('sha256').update(factsBaseline(raw)).digest('hex');
 }
 
 export function isFactsEstablishingPhase(phase: string, context?: FactsInvocationContext): boolean {
@@ -92,12 +96,17 @@ export function findPhaseDeltaSection(body: string, phase: string, merge = false
   return { present: true, content: (m[1] ?? '').trim() };
 }
 
-/** Bind the baseline and this phase's delta, not later append-only investigation. */
-export function factsPhaseFingerprint(raw: string, phase: string): string {
+export function projectFactsForPhase(raw: string, phase: string): { baseline: string; delta: PhaseDeltaSection } {
   const { body, error } = parseContextExploration(raw);
   if (error) throw new Error(error);
+  return { baseline: factsBaseline(raw), delta: findPhaseDeltaSection(body, phase) };
+}
+
+/** Bind the baseline and this phase's delta, not later append-only investigation. */
+export function factsPhaseFingerprint(raw: string, phase: string): string {
+  const { baseline, delta } = projectFactsForPhase(raw, phase);
   return crypto.createHash('sha256').update(JSON.stringify([
-    factsBaselineFingerprint(raw), findPhaseDeltaSection(body, phase),
+    crypto.createHash('sha256').update(baseline).digest('hex'), delta,
   ])).digest('hex');
 }
 

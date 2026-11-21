@@ -136,6 +136,7 @@ const CORE_SUITES: UnitSuiteRegistration[] = [
   { id: 'verifier-evidence', modulePath: './unit/verifier-evidence.unit.test', layer: 'capability' },
   // plan a9d4e7c2 复评：verifier 生产端接线（模板解析/严格 request/二态分流/Stop hook 动作/候选锚定）
   { id: 'verifier-production-routing', modulePath: './unit/verifier-production-routing.unit.test' },
+  { id: 'verifier-item-scope', modulePath: './unit/verifier-item-scope.unit.test' },
   // plan a9d4e7c2 T2/T6：短 request 协议 + 证据身份绑定全套回归
   { id: 'profile-routing',  modulePath: './unit/profile-routing.unit.test' },
   { id: 'profile-personal-prerequisites', modulePath: './unit/profile-personal-prerequisites.unit.test' },

@@ -1,6 +1,6 @@
 # 真机测试阶段语义验证 — {feature_name}
 
-**当前独核资格与结果边界**：只消费机器实际签发的当前request/material，phase仅选择检查方法。带“本轮为产品失败诊断”时，按已给具体对象/原报告逐条独立核实；无关编译/设备/报告缺口不遮住其它可核实工作，缺实际对象仍保持未知。独核终态只表示本次语义核实，不继承产品raw FAIL或替代缺失执行；产品FAIL/unknown仍由共同完成处置保留。变化材料补核受影响项，原目标与完整拒修论据逐条保真，不能仅凭摘要、标签或历史PASS结案。
+**当前独核资格与结果边界**：只消费机器实际签发的当前 request/material，phase 只选择检查方法。有「本轮为独立问题诊断」一节时，按具体对象和原报告逐条核实；证据缺口记为未知，其他可核实的问题继续验证。独核终态只表示本次语义核实，产品 FAIL 和缺失执行由共同完成处置保留。补核保留原目标、完整拒修论据和相关反证，按本轮实证判断。
 
 > 自动生成于 {timestamp}
 > 本文件为 AI Harness 的 prompt，可发送给任意 AI 模型执行语义级验证。
@@ -41,7 +41,9 @@
 
 ## 四、脚本 Harness 检查结果
 
-以下是脚本 Harness (`check-testing.ts`) 已完成的确定性检查报告。你无需重复检查这些项目，但应参考其结果辅助语义判断：
+以下是脚本 Harness (`check-testing.ts`) 的本轮结果。直接引用 `report_trace_reconciliation`、执行通道/完整性、结构检查和 `ui_entry_coverage` 的机器状态。`passed_check_ids` 中的检查已 PASS。计划选取、派生用例集合、章节、表头、状态枚举、导航步骤静态规则及报告与原生 trace 的逐条对账由脚本完成。
+
+保留机器记录的 FAIL、未执行和覆盖缺口。缺失或不可用的证据明确记为未知，非 success 的设备结果和失败/阻塞用例保持原状；顶层回填 `testing/reports/trace.json` 不能替代本轮权威 trace。机器对账 PASS 只表示报告与 trace 一致。可按具体语义问题打开对应的原生执行片段和截图，无需重新全量对账。
 
 ```
 {script_report}
@@ -51,23 +53,16 @@
 
 ## 五、语义检查项（你的核心任务）
 
-请逐一完成以下 7 项语义检查。每项都有具体的评估方法和判定标准。
+逐项核对本轮适用的语义检查。判 BLOCKER 时指出受影响的真实验收、证据定位及放过的后果。
 
 ### 检查 7: 真机自动化消费 (device_test_run_consumption)
 
 - **严重等级**: BLOCKER（profile 将 `device_test.run` 声明为 BLOCKER 时） / SKIP（profile 声明 SKIP 时）
 - **评估方法**:
   1. 若 profile **`device_test.run`** 为 SKIP → 整项 SKIP
-  2. 检查派生可执行计划是否存在：`{features_dir}/{feature_name}/testing/reports/<某子目录>/hylyre/test-plan.hylyre.md`（选取规则以脚本为准：排除烟测占位，按 mtime 优先；非「字典序最新目录名」）
-  3. 检查派生计划是否含 **`## 测试用例清单`** 标题锚点 + 7 列表头固定顺序（与 Hylyre `plan_parse` / `agent-plan-a` 一致）
-  4. 检查顶层 `test-report.md` 是否含 **5 必填章节**：测试概览 / 测试执行结果 / 缺陷清单 / 通过率统计 / 结论
-  5. 检查「测试执行结果」表格的「执行状态」列只出现 **4 状态**：通过 / 失败 / 阻塞 / 跳过
-  6. 检查「结论」**verdict** 在 **3 枚举**内：达标 / 有条件达标 / 不达标
-  7. **必读 Hylyre trace 并全量对账**：定位 `testing/reports/<ts>/hylyre/trace.json`（与脚本 `report_trace_reconciliation` 同源，**禁止**使用顶层 `testing/reports/trace.json` 回填件）。**逐条**核对 `trace.cases[].id/status` 与顶层 `test-report.md`「测试执行结果」表一致；报告写「通过」但 trace 为「失败/阻塞」→ FAIL
-  8. **trace.outcome 硬规则**：常规完整执行验收若 `trace.outcome !== success`（含 partial/failed/aborted），不得把产品执行判为PASS；已签发诊断的独核终态依上方语义边界单独判断，不能借独核PASS清除原trace失败；报告结论=「达标」但 trace 非 success → FAIL
-  9. **TC 编号一致性（execution_channel SSOT）**：顶层 `test-plan.md` 每条 TC 声明唯一 **`execution_channel`**（`hylyre|visual|manual:<gap_class>|provider:<capability-id>`）；派生计划的 TC 集合须与顶层 `channel=hylyre` 的集合**完全相等**——多出即 extra、缺失即 missing，都是脚本级 BLOCKER，`derive-hint-from-plan.json` 会带 `missing_tc_ids`。**不要用 `explicit_skip_tc_ids` 与派生表做并集**：正式派生计划登记 `explicit_skip_tc_ids` 本身就是 BLOCKER。known manual gap / inactive provider 才是 `unsupported_gap`；裸/未知 manual、未登记或 active 无 producer 的 provider 在跑机前判 `invalid_test`。非 `hylyre` 通道不进派生表
-  11. **导航步骤静态门禁（NAV-001/002/003）**：脚本 `check-testing` 在真机 run 前校验派生表 JSON——禁止无 `area`/`at` 的横向 `swipe` 充当 Nav 返回；前序 TC 进入子页后、后续 TC 要求首页 Tab 时首步须 `back` 等。失败则 `coverage_reason=invalid_derived_steps`，须按 `derive-hint-from-plan.json` 的 `lint_violations` 与 `navigation_hint` **重新派生**（勿手改旧 timestamp 目录）
-  12. **多 UI 入口覆盖（语义）**：若 `use-cases.yaml` 中同一 `user_actions.calls` 有多个 `ui_bindings.ui` 入口，派生 Hylyre 计划须各入口至少一条带 `entry_ui` 的用例；P0 缺覆盖 → 与脚本 `ui_entry_coverage` 一致判 FAIL
+  2. 引用第四节机器结果和具体用例，判断实际执行的步骤和断言能否证明原来的 device/both 验收；同一业务动作有多个 UI 入口时，核实实际步骤是否从承诺的入口触发、是否验证对应的结果。
+  3. 核实报告引用的截图是否来自本轮相应步骤并支持界面、焦点或导航等结论；报告称已修复的缺陷，核实复测是否覆盖原失败行为及触发条件。
+  4. 已有机器失败和执行覆盖缺口引用原检查；独立发现用例、截图或复测无法证明承诺时，指出具体验收和应核实的原证据。
 
 ### 检查 1: 测试用例完整性 (test_case_completeness)
 
@@ -133,12 +128,8 @@
 - **严重等级**: BLOCKER
 - **评估方法**:
   1. 阅读测试计划中定义的「通过标准」（如 P0 100%、P1 ≥ 95%）
-  2. 阅读测试报告中的「通过率统计」
-  3. 验证：
-     - P0 通过率是否达到通过标准中定义的阈值
-     - 总体通过率是否达标
-     - 结论（达标/有条件达标/不达标）是否与数据一致
-     - **须与 Hylyre trace 一致**：若 `trace.outcome !== success` 或 trace 含失败/阻塞 case，结论不得为「达标」
+  2. 用本轮机器核对过的统计、执行结果和负面结论判断报告是否满足计划声明的 P0 及总体阈值；不重新计算逐条 trace 结果、通过率或枚举。
+  3. 核实「达标」或「有条件达标」的理由是否覆盖原验收，是否仍有待复测的失败或有效证据缺口；机器认定的未通过或未执行在原处置中保留。
   4. 若测试报告尚未生成，标为 WARN
 
 ### 检查 8: 视觉 diff 双向残差 (visual_diff_bidirectional)
@@ -157,7 +148,7 @@
 ### 检查 R: 跨产物引用核对 (reference_crosscheck)
 
 - **严重等级**: MAJOR
-- **评估方法**: 逐条核对本阶段产物里的跨文件引用——test-report 引述的结论、失败原因、截图路径 ↔ trace.json 与 device-screenshots 原文；「通过/失败」计数 ↔ trace 里的 case 状态。每条引用都要打开被引用的原文核对，不凭记忆、不凭上下文摘要。
+- **评估方法**: 对报告关于验收、失败原因和复测的实质引用，打开对应的原生运行片段或 device-screenshots 核证。用例状态、执行计数与 trace 的关系直接引用本轮 `report_trace_reconciliation`。
 - **判定标准**: 引用对象存在且含义一致 → PASS；个别引用漂移（行号/名称过期但对象仍可定位） → WARN；关键引用指向不存在或含义相反的对象 → FAIL
 - **证据**: 列出核对过的引用（`引用 → 原文位置`）与不一致项
 

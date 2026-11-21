@@ -7,6 +7,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as YAML from 'yaml';
 import { createHash } from 'crypto';
+import { execFileSync } from 'child_process';
 
 import { clearFrameworkConfigCache, featurePhaseReportsDir, relFeaturesDir, resolveFeatureArtifact, loadFrameworkConfig } from '../../config';
 import {
@@ -23,15 +24,22 @@ import {
   verifierMaterialsEquivalent,
   verifierMaterialFileMatchesCurrent,
   verifierMaterialFileHash,
+  VerifierPreimagesUnavailable,
 } from '../../scripts/utils/verifier-material';
+import { readImplementationReviewChanges } from '../../scripts/utils/diff-scope';
+import { buildVerifierRequest } from '../../scripts/utils/verifier-request';
 import { stableStringify } from '../../scripts/utils/phase-evidence-manifest';
 import type { ContextFileEntry } from '../../scripts/utils/types';
 import type { UnitCaseResult } from '../run-unit';
 import { copyC6HostReplay } from '../utils/c6-host-replay';
 import { SpecLoader } from '../../scripts/utils/spec-loader';
-import { collectContextFiles, writeRunSummaryBase } from '../../harness-runner';
+import { assembleVerifierPhasePrompt, collectContextFiles, refreshVerifierRequestContext, writeRunSummaryBase } from '../../harness-runner';
+import { assembleAIPrompt, buildScriptReport, failScriptReportWithFatalError, generateScriptReport, loadVerifierPromptTemplate, readVerifierItemReviewPrompt,
+  rebuildVerifierItemReviewPrompt } from '../../scripts/utils/report-generator';
+import { classifyFailureKind } from '../../scripts/utils/goal-failure-classifier';
+import { factsPhaseFingerprint, type FactsInvocationContext } from '../../scripts/utils/context-facts';
 import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
-import { readCurrentDispositionInput } from '../../scripts/utils/verify-feature-completion';
+import { hasChangedVerifierMaterialInputs, readCurrentDispositionInput } from '../../scripts/utils/verify-feature-completion';
 import { resolveCurrentDisposition } from '../../scripts/utils/check-disposition';
 import { resolveCapabilityResolutionEntryInput } from '../../scripts/utils/capability-resolution-entry-input';
 import { resolveCapabilityInputs } from '../../scripts/utils/capability-resolution';
@@ -47,7 +55,8 @@ import { setupRunlessProject } from './execution-scope.unit.test';
 import { ensureFeatureExecutionScopeFrozen } from '../../scripts/utils/feature-execution-scope';
 import { loadResolvedProfile } from '../../profile-loader';
 import { fixture as codingFixture } from './standalone-coding-review.unit.test';
-import { computeManifestIdentityFields, diffManifestIdentityFields } from '../../scripts/utils/goal-manifest';
+import { buildGoalManifestFromInput, computeManifestIdentityFields, diffManifestIdentityFields } from '../../scripts/utils/goal-manifest';
+import { createGoalRun } from '../../scripts/utils/goal-run-creation';
 import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
 
 const FEATURE = 'vm-fixture';
@@ -65,6 +74,18 @@ function put(root: string, rel: string, content: string): string {
   return abs;
 }
 
+function reviewRepo(root: string) {
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: root, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  put(root, 'framework.config.json', JSON.stringify({ schema_version: '1.1', project_profile: { name: 'hmos-app', sub_variant: 'app' },
+    architecture: { outer_layers: [{ id: '02-Feature', can_depend_on: [], intra_layer_deps: 'dag' }] } }));
+  git('init', '-q');
+  git('config', 'core.autocrlf', 'false');
+  git('config', 'user.name', 'Verifier Test');
+  git('config', 'user.email', 'test@example.test');
+  git('config', 'commit.gpgsign', 'false');
+  return git;
+}
+
 const CHECKS = [
   { id: 'a', status: 'PASS', severity: 'MAJOR' },
   { id: 'b', status: 'WARN', severity: 'MINOR' },
@@ -80,6 +101,294 @@ function countAcceptanceCollections<T>(run: () => T): { result: T; count: number
 }
 
 const cases: Array<{ name: string; run: () => void }> = [
+  {
+    name: 'production verifier prompt reopens only an affected item and preserves the original WARN row',
+    run: () => {
+      const root = mkProject(), frameworkRoot = path.resolve(__dirname, '../../..'), feature = FEATURE, phase = 'review';
+      const marker = '# Unchanged own review output';
+      const featureDir = `doc/features/${feature}`, touched = '02-Feature/Demo/changed.ets', unchanged = '02-Feature/Demo/stable.ets';
+      try {
+        const git = reviewRepo(root);
+        put(root, touched, 'export const changed = "first material";\n');
+        put(root, unchanged, 'export const stable = "separate review";\n');
+        put(root, featureDir + '/contracts.yaml', YAML.stringify({ feature, files: [touched, unchanged], modules: [] }));
+        const currentProduct = featureDir + '/review-report.md';
+        put(root, currentProduct, marker + '\n');
+        git('add', '-A'); git('commit', '-qm', 'source baseline');
+        const specLoader = new SpecLoader(root, undefined, undefined, frameworkRoot);
+        const harnessRoot = path.join(frameworkRoot, 'harness');
+        const reportsDir = featurePhaseReportsDir(root, feature, phase, frameworkRoot);
+        const resolvedProfile = loadResolvedProfile(root, loadFrameworkConfig(root), frameworkRoot);
+        const report = buildScriptReport(phase, feature, root, [
+          { id: 'fixture_structure', category: 'structure', description: 'Review product is readable', severity: 'BLOCKER', status: 'PASS', details: 'Fixture review product exists.' },
+        ]);
+        const verifierPromptRel = 'prompts/verify-review.md';
+        const produce = () => assembleVerifierPhasePrompt(harnessRoot, { kind: 'standalone', projectRoot: root, frameworkRoot, frameworkRel: '' },
+          specLoader, { phase, feature, phaseRule: specLoader.loadPhaseRule(phase), featureSpec: specLoader.loadFeatureSpec(feature) },
+          report, { phaseIssues: null, goalBrief: null, verifierPromptRel, resolvedProfile });
+        const sign = (material: ReturnType<typeof buildVerifierMaterialView>) => writeRunSummaryBase(root, report, frameworkRoot,
+          { verifierMaterial: material, verifierPlan: { mode: 'enabled', reason: 'policy_required', verifier_prompt: verifierPromptRel, message: 'fixture' } });
+        const first = produce();
+        assert.equal(first.itemReview.scope.mode, 'full');
+        const subject = sign(first.material).verifier_subject_id!;
+        assert(subject);
+        const initialOriginal = publishFixtureVerifierEvidence({ projectRoot: root, reportsDir, feature, phase, subjectId: subject,
+          reportText: ['| id | status | severity | 证据 |', '|---|---|---|---|',
+            `| fix_recommendation_actionable | PASS | MAJOR | \`${touched}:1\` existing fix target |`,
+            `| coding_rules_referenced | WARN | MINOR | \`${unchanged}:1\` retained | `.trimEnd(),
+            '', '\`\`\`yaml', YAML.stringify({ verification_result: { phase, feature, checks: [
+              { id: 'coding_rules_referenced', status: 'WARN', severity: 'MINOR', details: 'original warning', repair_owner: 'review' },
+            ] } }).trimEnd(), '\`\`\`'].join('\n'), skipSummaryPatch: true });
+        put(root, touched, 'export const changed = "second material";\n');
+        const second = produce();
+        assert.deepEqual(diffVerifierMaterial(first.material, second.material), [touched]);
+        assert.deepEqual(second.itemReview.scope.reviewIds, ['fix_recommendation_actionable']);
+        const focus = readVerifierItemReviewPrompt(second.prompt);
+        assert.deepEqual(focus?.reviewIds, ['fix_recommendation_actionable']);
+        assert.equal(focus?.reusedRows[0].status, 'WARN');
+        assert(focus?.reusedRows[0].evidence.includes(path.basename(initialOriginal.mdPath) + '#L4'));
+        assert(!second.prompt.includes('original warning'), 'an independently readable original avoids repeating old YAML details');
+        const originalDetails = fs.readFileSync(initialOriginal.mdPath, 'utf8');
+        assert(originalDetails.includes('repair_owner: review') && originalDetails.includes('original warning'));
+        assert(second.prompt.includes('### 检查 3:') && !second.prompt.includes('### 检查 6:'));
+        assert(second.prompt.includes('second material') && !second.prompt.includes(marker) && second.prompt.includes(currentProduct));
+
+        const restored = rebuildVerifierItemReviewPrompt(root, second.prompt,
+          loadVerifierPromptTemplate(harnessRoot, phase, resolvedProfile, verifierPromptRel),
+          { scope: { mode: 'full', requiredIds: [], reviewIds: [], reusedRows: [] }, previousReport: null });
+        assert(restored.includes('### 检查 6:') && !readVerifierItemReviewPrompt(restored), 'late evidence can restore full review from the bound template');
+        put(root, '02-Feature/Demo/unknown-dependency.ets', 'export const newInput = 1;\n');
+        assert.equal(produce().itemReview.scope.mode, 'full', 'an unassignable actual path requires full review');
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    },
+  },
+  {
+    name: 'Git deletion and rename preimages bind the subject across signing, empty context recompute and Goal baseline',
+    run: () => {
+      const root = mkProject(), frameworkRoot = path.resolve(__dirname, '../../..'), phase = 'review', feature = FEATURE;
+      const priorBase = process.env.HARNESS_DIFF_BASE_REF;
+      const oldPath = '02-Feature/Demo/archive.ets', newPath = '02-Feature/Demo/current.ets', deleted = '02-Feature/Demo/retired.bin';
+      const before = Array.from({ length: 40 }, (_, i) => `export const item${i} = ${i};`).join('\n') + '\n';
+      const priorBytes = Buffer.from([0, 0x80, 0xab, 0xff]);
+      try {
+        const git = reviewRepo(root);
+        put(root, oldPath, before + '// old declaration A\n');
+        fs.writeFileSync(path.join(root, deleted), priorBytes);
+        git('add', '-A'); git('commit', '-qm', 'first before state');
+        const a = git('rev-parse', 'HEAD');
+        put(root, oldPath, before + '// old declaration B\n');
+        git('add', '-A'); git('commit', '-qm', 'changed rename preimage');
+        const b = git('rev-parse', 'HEAD');
+        fs.writeFileSync(path.join(root, deleted), Buffer.from([0, 0x81, 0xab, 0xff]));
+        git('add', '-A'); git('commit', '-qm', 'changed deletion preimage');
+        const c = git('rev-parse', 'HEAD');
+        put(root, 'unrelated.txt', 'neutral file\n');
+        git('add', '-A'); git('commit', '-qm', 'unchanged reviewed preimages');
+        const d = git('rev-parse', 'HEAD');
+        const manifest = buildGoalManifestFromInput({ feature, run_id: 'verifier-preimage-goal', requirement: 'Use the reviewed transaction',
+          start_phase: 'coding', end_phase: 'review', unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: root });
+        createGoalRun({ projectRoot: root, manifest, chain: ['coding', 'review'] });
+        assert.equal(manifest.run_base_sha, d, 'Goal pins its real creation base');
+        git('mv', oldPath, newPath);
+        git('rm', '-q', deleted);
+        const resolved: ResolvedPhaseInputs = { phase, values: {}, artifacts: {},
+          context: { schema_version: '1.1', subject: { feature }, obligations: {}, required_outputs: [] } };
+        const baseInput = { projectRoot: root, frameworkRoot, feature, phase, gateFingerprint: null, phaseRuleText: 'rule',
+          templateText: 'template', checks: CHECKS };
+        const subject = (view: ReturnType<typeof buildVerifierMaterialView>) => buildVerifierRequest({
+          feature, phase, gate_fingerprint: null, source_commit_sha: null, worktree_digest: null, prompt_path: 'p.md',
+          prompt_sha256: 'f'.repeat(64), material_sha256: view.material_sha256,
+        }).subject_id;
+        for (const resolvedInputs of [undefined, resolved]) {
+          const build = (baseRef: string, readForPrompt = false, runId?: string) => {
+            process.env.HARNESS_DIFF_BASE_REF = baseRef;
+            const observed = readForPrompt ? readImplementationReviewChanges(root, feature, { frameworkRoot, resolvedInputs, runId }) : undefined;
+            return buildVerifierMaterialView({ ...baseInput, resolvedInputs, runId, reviewChanges: observed,
+              contextFiles: observed ? observed.contextFiles.filter(file => file.label.startsWith('(')) : [] });
+          };
+          const renameA = build(a), renameB = build(b), deletionC = build(c), unrelatedD = build(d);
+          for (const [left, right] of [[renameA, renameB], [renameB, deletionC]]) {
+            assert.deepEqual(diffVerifierMaterial(left, right), ['input_bindings']);
+            assert.notEqual(subject(left), subject(right));
+            assert(!verifierMaterialsEquivalent(left, right, root, resolvedInputs));
+          }
+          assert.equal(subject(deletionC), subject(unrelatedD), 'unrelated commit does not bind baseline SHA');
+          assert.equal(subject(build(d, true)), subject(unrelatedD), 'prompt-time and policy-off recompute consume the same raw preimages');
+          assert.equal(subject(build(a, true, manifest.run_id)), subject(unrelatedD), 'Goal ignores the standalone baseline override');
+          const paths = readImplementationReviewChanges(root, feature, { frameworkRoot, runId: manifest.run_id })!.preimages;
+          assert(paths.some(entry => entry.status === 'R' && entry.path === oldPath && entry.target === newPath));
+          assert(paths.some(entry => entry.status === 'D' && entry.path === deleted
+            && entry.sha256 === createHash('sha256').update(Buffer.from([0, 0x81, 0xab, 0xff])).digest('hex')));
+          assert(!unrelatedD.files.some(file => file.path === oldPath || file.path === deleted));
+        }
+        const harnessRoot = path.join(frameworkRoot, 'harness');
+        const gateFingerprint = computeGateFingerprint(frameworkRoot, phase);
+        const report = generateScriptReport(harnessRoot, phase, feature, root, [
+          { id: 'fixture_structure', category: 'structure', description: 'Review product is readable', severity: 'BLOCKER', status: 'PASS', details: 'Fixture review product exists.' },
+        ], frameworkRoot);
+        const material = buildVerifierMaterialView({ ...baseInput, gateFingerprint, checks: report.checks, contextFiles: [], runId: manifest.run_id });
+        const reportsDir = featurePhaseReportsDir(root, feature, phase, frameworkRoot);
+        put(root, path.relative(root, path.join(reportsDir, 'ai-prompt.md')), 'Review the fixed Goal Git baseline.\n');
+        const signed = writeRunSummaryBase(root, report, frameworkRoot,
+          { verifierMaterial: material, verifierPlan: { mode: 'enabled', reason: 'policy_required', verifier_prompt: 'prompts/verify-review.md', message: 'fixture' } });
+        assert(signed.verifier_subject_id);
+        const label = 'refusal-counterevidence.md', content = 'Retain the complete contrary argument after the original review.';
+        put(root, label, content);
+        const renewed = refreshVerifierRequestContext({ projectRoot: root, frameworkRoot, feature, phase, runId: manifest.run_id,
+          additionalContextFiles: [{ label, content }] });
+        assert(renewed?.verifier_subject_id && renewed.verifier_subject_id !== signed.verifier_subject_id);
+        const updated = readVerifierMaterialOrNull(reportsDir, renewed.verifier_subject_id);
+        assert.equal(updated?.input_bindings_sha256, material.input_bindings_sha256, 'appending new arguments carries the bound Git originals');
+        assert.deepEqual(diffVerifierMaterial(material, updated), ['+' + label]);
+        assert(fs.readFileSync(path.resolve(root, renewed.ai_prompt!), 'utf8').includes(content));
+      } finally {
+        if (priorBase === undefined) delete process.env.HARNESS_DIFF_BASE_REF; else process.env.HARNESS_DIFF_BASE_REF = priorBase;
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'Missing Git preimage cannot mint reusable material and restored blob recovers the same identity',
+    run: () => {
+      const root = mkProject(), frameworkRoot = path.resolve(__dirname, '../../..'), feature = FEATURE, phase = 'review';
+      const priorBase = process.env.HARNESS_DIFF_BASE_REF;
+      try {
+        const git = reviewRepo(root);
+        const removed = '02-Feature/Demo/withdrawn.ets';
+        put(root, removed, 'export const old = "retained original";\n');
+        git('add', '-A'); git('commit', '-qm', 'before delete');
+        process.env.HARNESS_DIFF_BASE_REF = git('rev-parse', 'HEAD');
+        const oid = git('rev-parse', 'HEAD:' + removed);
+        const blob = path.join(root, '.git', 'objects', oid.slice(0, 2), oid.slice(2));
+        const bytes = fs.readFileSync(blob);
+        git('rm', '-q', removed);
+        const build = () => buildVerifierMaterialView({ projectRoot: root, frameworkRoot, feature, phase, gateFingerprint: null,
+          phaseRuleText: 'rule', templateText: 'template', checks: CHECKS, contextFiles: [] });
+        const current = build();
+        const report = buildScriptReport(phase, feature, root, [
+          { id: 'fixture_structure', category: 'structure', description: 'Review product is readable', severity: 'BLOCKER', status: 'PASS', details: 'Fixture review product exists.' },
+        ]);
+        const reportsDir = featurePhaseReportsDir(root, feature, phase, frameworkRoot);
+        const prompt = path.join(reportsDir, 'ai-prompt.md');
+        const sign = (result: typeof report, material?: ReturnType<typeof buildVerifierMaterialView>) => writeRunSummaryBase(root, result, frameworkRoot, {
+          verifierMaterial: material,
+          verifierPlan: { mode: 'enabled', reason: 'policy_required', verifier_prompt: 'prompts/verify-review.md', message: 'fixture' },
+        });
+        put(root, path.relative(root, prompt), 'Current published verifier prompt\n');
+        const issued = sign(report, current);
+        assert(issued.verifier_request);
+        fs.unlinkSync(blob);
+        const observed = readImplementationReviewChanges(root, feature, { frameworkRoot });
+        assert(observed && observed.preimages.some(entry => entry.path === removed && entry.sha256 === null), 'a real D entry remains after the loose object is missing');
+        assert(observed.contextFiles.some(file => file.content.includes('证据缺口')));
+        const recheck = (summary: unknown) => hasChangedVerifierMaterialInputs({ projectRoot: root, frameworkRoot, feature, phase, summary });
+        assert(recheck(issued), 'the normal entry must not return a cached summary holding a stale independent request');
+        let lastGapSummary: unknown;
+        for (let attempt = 0; attempt < 2; attempt++) assert.throws(build, (error: unknown) => {
+          if (!(error instanceof VerifierPreimagesUnavailable)) return false;
+          assert(error.message.includes(removed));
+          const failure = failScriptReportWithFatalError(report, 'assemble_ai_prompt', error, frameworkRoot, 'verification_evidence_gap');
+          const summary = sign(failure);
+          assert.equal(summary.verifier_request, undefined);
+          assert(!fs.existsSync(prompt));
+          assert.equal(classifyFailureKind(summary), 'verification_evidence_gap');
+          assert.equal(failure.checks.find(check => check.id === 'runner_assemble_ai_prompt_failed')?.actionability, 'agent_fixable');
+          assert(!recheck(summary), 'the same known evidence gap can keep its current failed result without a new model request');
+          lastGapSummary = summary;
+          return true;
+        });
+        fs.writeFileSync(blob, bytes);
+        assert(recheck(lastGapSummary), 'restored real evidence bypasses the previously cached gap');
+        const restored = build();
+        assert.equal(restored.material_sha256, current.material_sha256);
+        put(root, path.relative(root, prompt), 'Verifier prompt after original recovery\n');
+        assert(sign(report, restored).verifier_request);
+        const crash = failScriptReportWithFatalError(report, 'assemble_ai_prompt', new TypeError('actual assembly bug'), frameworkRoot);
+        assert.equal(crash.checks.at(-1)?.failure_kind, 'framework_bug');
+        assert.equal(crash.checks.at(-1)?.actionability, 'human_only');
+      } finally {
+        if (priorBase === undefined) delete process.env.HARNESS_DIFF_BASE_REF; else process.env.HARNESS_DIFF_BASE_REF = priorBase;
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'S1 publication reads a Review original once and keeps purpose, facts delta and historical bytes',
+    run: () => {
+      const root = mkProject(), frameworkRoot = path.resolve(__dirname, '../../..'), phase = 'review';
+      const snapshot = path.join(frameworkRoot, 'harness/tests/fixtures/host-recovery-history/20261024-fe4512-s1');
+      const review = fs.readFileSync(path.join(snapshot, 'doc/features/bc-openCard-2/bank-card-opening-flow/review/review-report.md'), 'utf8');
+      const feature = FEATURE, featureDir = `doc/features/${feature}`;
+      const reportPath = featureDir + '/review-report.md';
+      const factsPath = featureDir + '/context/facts.md';
+      const facts = '---\nschema_version: "1.0"\n---\n\nShared original\n\n## phase_delta: coding\nEarlier investigation\n\n## phase_delta: review\nCurrent review facts\n';
+      try {
+        put(root, reportPath, review);
+        put(root, factsPath, facts);
+        const loader = new SpecLoader(root, undefined, undefined, frameworkRoot);
+        const layout = { kind: 'standalone' as const, projectRoot: root, frameworkRoot, frameworkRel: '' };
+        const resolvedInputs: ResolvedPhaseInputs = { phase, values: {}, artifacts: {},
+          context: { schema_version: '1.1', subject: { feature }, obligations: {}, required_outputs: ['review-report.md'] } };
+        const factsContext: FactsInvocationContext = { subject: { feature }, first_phase: 'spec', source_paths: [], required_input_snippets: [] };
+        for (const modern of [false, true]) {
+          const opts = modern ? { resolvedInputs, factsContext } : {};
+          const files = collectContextFiles(loader, layout, phase, feature, loader.loadFeatureSpec(feature, opts.resolvedInputs), opts);
+          assert.equal(files.filter(file => file.label === reportPath).length, 1);
+          const supplemental: ContextFileEntry[] = [
+            { label: reportPath, kind: 'path', content: '独立复核的当前 Review 原件' },
+            { label: reportPath, content: review },
+            { label: `(before genuine-prior) ${reportPath}`, content: 'Older baseline bytes' },
+          ];
+          const prompt = assembleAIPrompt(path.join(frameworkRoot, 'harness'), root, phase, feature, [...files, ...supplemental],
+            '{}', 'rule', undefined, undefined, frameworkRoot);
+          assert.equal(prompt.split('### ' + reportPath + '\n').length - 1, 1);
+          assert.equal(prompt.split('CR-001 已修复：').length - 1, 1, 'S1 report bytes must appear once even when also selected as a required output');
+          assert(prompt.includes('CR-002 已修复：') && prompt.includes('CR-003 已修复：'));
+          assert(prompt.includes('独立复核的当前 Review 原件') && prompt.includes('Older baseline bytes'));
+          if (modern) {
+            assert(prompt.includes('Shared original') && prompt.includes('Current review facts') && !prompt.includes('Earlier investigation'));
+            assert(prompt.includes(factsPath), 'the full facts original remains locatable');
+            const build = (): ReturnType<typeof buildVerifierMaterialView> => buildVerifierMaterialView({ ...opts, projectRoot: root, frameworkRoot,
+              feature, phase, gateFingerprint: null, phaseRuleText: 'rule', templateText: 'template', checks: CHECKS, contextFiles: files });
+            const initial = build();
+            assert.equal(initial.files.find(file => file.path === factsPath)?.sha256, factsPhaseFingerprint(facts, phase));
+            put(root, factsPath, facts + '\n## phase_delta: ut\nLater investigation\n');
+            assert.equal(build().material_sha256, initial.material_sha256);
+            put(root, factsPath, facts.replace('Current review facts', 'Changed current review facts'));
+            assert.deepEqual(diffVerifierMaterial(initial, build()), [factsPath]);
+          }
+        }
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    },
+  },
+  {
+    name: 'Coding tool-read lists only images copied from this resolved spec',
+    run: () => {
+      const root = mkProject(), frameworkRoot = path.resolve(__dirname, '../../..'), phase = 'coding';
+      const feature = FEATURE, featureDir = `doc/features/${feature}`;
+      const loader = new SpecLoader(root, undefined, undefined, frameworkRoot);
+      const render = (name: string) => {
+        const image = `${featureDir}/ux-reference/${name}.png`;
+        fs.mkdirSync(path.dirname(path.join(root, image)), { recursive: true });
+        fs.writeFileSync(path.join(root, image), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+        const spec = ['```yaml', 'ui_change: new_or_changed', 'visual_handoff:', '  kind: screenshot_pack',
+          '  authoritative_refs:', '    - id: current', `      path: ${image}`, '```'].join('\n');
+        const resolvedInputs: ResolvedPhaseInputs = { phase, values: {}, artifacts: { 'spec@1': spec },
+          context: { schema_version: '1.1', subject: { feature }, obligations: {}, required_outputs: [] } };
+        const files = collectContextFiles(loader, { kind: 'standalone', projectRoot: root, frameworkRoot, frameworkRel: '' }, phase,
+          feature, loader.loadFeatureSpec(feature, resolvedInputs), { resolvedInputs, adapterImageInput: 'tool_read' });
+        return assembleAIPrompt(path.join(frameworkRoot, 'harness'), root, phase, feature, files,
+          '{}', 'rule', undefined, undefined, frameworkRoot, { imageInput: 'tool_read' });
+      };
+      try {
+        assert(render('old-round').includes('- file: 00-old-round.png'));
+        const second = render('current-round');
+        const sidecars = path.join(featurePhaseReportsDir(root, feature, phase, frameworkRoot), 'context-images');
+        assert(fs.existsSync(path.join(sidecars, '00-old-round.png')), 'keep the historical image on disk');
+        assert(second.includes('- file: 00-current-round.png') && !second.includes('00-old-round.png'));
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    },
+  },
   {
     name: 'CU canonical blueprint material follows consumed content and preserves unchanged legacy whole-blueprint bindings',
     run: () => {

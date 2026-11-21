@@ -16,6 +16,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import * as YAML from 'yaml';
 
 import { clearFrameworkConfigCache, featurePhaseReportsDir, resolveReceiptFilePath } from '../../config';
 import { finalizePhaseClosure } from '../../scripts/utils/phase-closure-finalizer';
@@ -27,9 +28,13 @@ import {
   findPriorPassVerifierEvidence,
   findPriorVerifierEvidence,
   findSameMaterialVerifierEvidence,
+  planVerifierItemReview,
+  verdictReportTextWithOriginals,
 } from '../../scripts/utils/verifier-evidence';
 import { buildVerifierMaterialView, writeVerifierMaterial } from '../../scripts/utils/verifier-material';
-import { generateScriptReport } from '../../scripts/utils/report-generator';
+import { assembleAIPrompt, generateScriptReport, readVerifierItemReviewPrompt } from '../../scripts/utils/report-generator';
+import { resolveCompletionDisposition } from '../../scripts/utils/verify-feature-completion';
+import { parseIssueVerificationBlock, verifierSemanticChecks } from '../../scripts/utils/repair-candidates';
 import { writeRunSummaryBase } from '../../harness-runner';
 import {
   PHASE_REPORTS_OUTPUT_FILES,
@@ -568,6 +573,80 @@ export function caseB04V6_snapshotFallbackGuards(): void {
 }
 
 const CASES: Array<{ name: string; fn: () => void }> = [
+  { name: 'signed partial review retains unmodified denial through writer and completion', fn: () => {
+    withClosureHost(({ root, reportsDir }) => {
+      const oldId = fixtureSubjectId('partial-review-original');
+      const rules = 'controlled fixture phase rules';
+      const template = fs.readFileSync(path.join(FRAMEWORK_ROOT, 'harness', 'prompts', 'verify-spec.md'), 'utf8');
+      fs.mkdirSync(path.join(root, 'src'));
+      fs.writeFileSync(path.join(root, 'src/acceptance.ts'), 'export const acceptance = false;\n');
+      fs.writeFileSync(path.join(root, 'src/navigation.ts'), 'export const navigation = "/entry";\n');
+      const acceptance = `doc/features/${FEATURE}/acceptance.yaml`;
+      const spec = `doc/features/${FEATURE}/spec/spec.md`;
+      fs.writeFileSync(path.join(root, acceptance), 'criteria:\n  - id: AC-1\n    description: Validate the stored acceptance result.\n');
+      const checks = JSON.parse(fs.readFileSync(path.join(reportsDir, 'script-report.json'), 'utf8')).checks;
+      const script = generateScriptReport(path.join(FRAMEWORK_ROOT, 'harness'), PHASE, FEATURE, root, checks, FRAMEWORK_ROOT);
+      const currentMaterial = (phaseRuleText = rules) => buildVerifierMaterialView({
+        projectRoot: root, frameworkRoot: FRAMEWORK_ROOT, feature: FEATURE, phase: PHASE, gateFingerprint: null,
+        phaseRuleText, templateText: template, checks,
+        contextFiles: ['src/acceptance.ts', 'src/navigation.ts', acceptance, spec].map(label => ({ label, content: fs.readFileSync(path.join(root, label), 'utf8') })),
+      });
+      const table = '| id | status | severity | 证据 |\n|---|---|---|---|\n';
+      const details = `\`${acceptance}:2\` AC-1 要验证保存结论，\`${spec}:1\` 当前没有可执行的预期。`;
+      const suggestion = '由 spec 责任方补可执行预期。';
+      const originalIssue = { issue: 'acceptance_testable', verdict: 'confirmed', repair_owner: 'spec', evidence: `${spec} | ${details}；${suggestion}` };
+      const originalDetail = { id: 'acceptance_testable', status: 'FAIL', severity: 'BLOCKER', acceptance_ids: ['AC-1'], affected_files: [spec], details, suggestion };
+      writeVerifierMaterial(reportsDir, oldId, currentMaterial());
+      const original = publishFixtureVerifierEvidence({ projectRoot: root, reportsDir, feature: FEATURE, phase: PHASE, subjectId: oldId,
+        verdict: 'FAIL', blockerCount: 1, reportText: table + [
+          '| acceptance_testable | FAIL | BLOCKER | src/acceptance.ts:1 当前无法验证预期。 |',
+          '| scenario_to_page | PASS | MAJOR | src/navigation.ts:1 已定位入口。 |',
+        ].join('\n') + '\n\n```yaml\n' + YAML.stringify({ verification_result: { phase: PHASE, feature: FEATURE, checks: [originalDetail] } }) + '```\n'
+          + '\n```issue-verification\n' + YAML.stringify([originalIssue]) + '```\n', skipSummaryPatch: true });
+      const plan = (view = currentMaterial()) => planVerifierItemReview({ projectRoot: root, frameworkRoot: FRAMEWORK_ROOT,
+        feature: FEATURE, phase: PHASE, currentMaterial: view, templateText: template });
+      const unlocalized = plan(currentMaterial('rules changed while files stayed identical'));
+      assert(unlocalized.scope.mode === 'full' && unlocalized.scope.reviewIds.length > 2 && !unlocalized.scope.reusedRows.length,
+        'an actual rules-only change must review all applicable items even when every file digest is unchanged');
+      fs.writeFileSync(path.join(root, 'src/navigation.ts'), 'export const navigation = "/updated-entry";\n');
+      const view = currentMaterial();
+      const itemReview = plan(view);
+      assert(itemReview.scope.mode === 'partial' && itemReview.scope.reviewIds.join(',') === 'scenario_to_page',
+        'only the actual changed reference gets verification');
+      const prompt = assembleAIPrompt(path.join(FRAMEWORK_ROOT, 'harness'), root, PHASE, FEATURE, [], JSON.stringify(script),
+        rules, undefined, undefined, FRAMEWORK_ROOT, { templateText: template, itemReview });
+      const scope = readVerifierItemReviewPrompt(prompt);
+      const kept = scope?.reusedRows[0];
+      assert(!!kept && kept.status === 'FAIL' && kept.evidence.includes(path.basename(original.mdPath)), 'prompt must carry the original public denial');
+      const writerOptions = { verifierPlan: { mode: 'enabled' as const, reason: 'policy_required' as const,
+        verifier_prompt: 'prompts/verify-spec.md', message: 'real request for partial review' }, verifierMaterial: view };
+      const issued = writeRunSummaryBase(root, script, FRAMEWORK_ROOT, writerOptions);
+      const publicPath = path.join(root, issued.verifier_report!);
+      const observe = () => resolveCompletionDisposition({ projectRoot: root, frameworkRoot: FRAMEWORK_ROOT, feature: FEATURE, chain: [PHASE] })
+        .completionBlocking.filter(problem => problem.id === 'attestation_present');
+      const currentRow = '| scenario_to_page | PASS | MAJOR | src/navigation.ts:1 复核更新入口。 |\n';
+      fs.writeFileSync(publicPath, table + currentRow + renderResultBlock(issued.verifier_subject_id!, 'PASS', 0));
+      assert(observe().some(problem => problem.action === 'verify' && problem.detail.includes('acceptance_testable')),
+        'a partial report cannot erase a carried denial by omitting its row');
+      assert(writeRunSummaryBase(root, script, FRAMEWORK_ROOT, writerOptions).next_action !== 'fill_receipt_then_sync_closure',
+        'writer retry cannot short-circuit a thin current PASS');
+      fs.writeFileSync(publicPath, table + currentRow + `| ${kept!.id} | ${kept!.status} | ${kept!.severity} | ${kept!.evidence} |\n`
+        + renderResultBlock(issued.verifier_subject_id!, 'FAIL', 1));
+      assert(observe().some(problem => problem.action === 'repair') && !observe().some(problem => problem.action === 'verify'),
+        'a valid partial report advances the actual repair conclusion only');
+      const loaded = loadVerifierEvidence(root, FEATURE, PHASE, { frameworkRoot: FRAMEWORK_ROOT });
+      assert(loaded.ok, 'the current public report remains the original short reply');
+      if (!loaded.ok) return;
+      assert(!loaded.evidence.report_text.includes('issue-verification'), 'old evidence need not be copied into the new report');
+      const interpreted = verdictReportTextWithOriginals({ projectRoot: root, frameworkRoot: FRAMEWORK_ROOT,
+        feature: FEATURE, phase: PHASE, currentSubject: issued.verifier_subject_id }, loaded.evidence);
+      const inherited = parseIssueVerificationBlock(interpreted).entries[0];
+      assert(inherited?.issue === originalIssue.issue && inherited?.repair_owner === originalIssue.repair_owner
+        && inherited?.verdict === originalIssue.verdict && inherited?.evidence === originalIssue.evidence
+        && verifierSemanticChecks(interpreted, PHASE, FEATURE).some(row => row.details === details),
+      'the original acceptance rationale, denial and responsibility come directly from the matched report row');
+    });
+  } },
   { name: 'P2 C current material reuses a real FAIL and public baselines never hide it behind an older PASS', fn: () => {
     withHost(({ root, reportsDir }) => {
       const prior = fixtureSubjectId('p2-prior-pass'), failed = fixtureSubjectId('p2-prior-fail'), current = fixtureSubjectId('p2-current');

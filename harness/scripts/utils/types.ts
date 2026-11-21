@@ -86,6 +86,8 @@ export type Phase = string;
 export interface ContextFileEntry {
   label: string;
   content: string;
+  /** Other uses of this original, shown alongside its single inline copy. */
+  references?: string[];
   /** path：不内联正文，只给路径清单（verifier 需要时自行 Read；plan 07a41ec6 T7 prompt 瘦身） */
   kind?: 'text' | 'image' | 'path';
   /** 源图片绝对路径（kind=image 时） */

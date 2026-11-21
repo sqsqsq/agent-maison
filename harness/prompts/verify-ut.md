@@ -1,6 +1,6 @@
 # 业务级 UT 阶段语义验证 — {feature_name}（v2.1 · UseCase 去代码化）
 
-**当前独核资格与结果边界**：只消费机器实际签发的当前request/material，phase仅选择检查方法。带“本轮为产品失败诊断”时，按已给具体对象/原报告逐条独立核实；无关编译/设备/报告缺口不遮住其它可核实工作，缺实际对象仍保持未知。独核终态只表示本次语义核实，不继承产品raw FAIL或替代缺失执行；产品FAIL/unknown仍由共同完成处置保留。变化材料补核受影响项，原目标与完整拒修论据逐条保真，不能仅凭摘要、标签或历史PASS结案。
+**当前独核资格与结果边界**：只消费机器实际签发的当前 request/material，phase 只选择检查方法。有「本轮为独立问题诊断」一节时，按具体对象和原报告逐条核实；证据缺口记为未知，其他可核实的问题继续验证。独核终态只表示本次语义核实，产品 FAIL 和缺失执行由共同完成处置保留。补核保留原目标、完整拒修论据和相关反证，按本轮实证判断。
 
 核对本次承诺的测试层级与生产入口一致：UT 驱动可隔离的真实业务状态/异常；UI、焦点和导航栈交设备。both 的两层互补，不要求 UT 实例化 UI，也不能只测 helper 冒充流程通过。L3 候选回原责任方；option_a 不批准降低当前验收。仅核当前材料，不新增一轮设计或额外门禁。
 
@@ -42,7 +42,7 @@
 4. **源码变化按事实复核**：消费真实写入归因、前后像、契约/行为与风险；ut_no_src_mutation的既有风险分级不能被解释成“任何源码变化均违规”。合法实现/测试修复不因phase标签被否决；越权、削弱断言或掩盖失败仍保留具体必修。
 5. **独立判断**：核对完整原件和实际影响。helper名称、目录位置、private/public或barrel变化本身不证明违规；公共契约违约、无授权改动或弱化验收必须有具体依据，沿已声明检查项报告。
 6. **真实执行状态**：逐项读取编译/UT原件，不把tsc PASS当真实UT执行。必需执行失败或未发生仍未满足；独核不继承raw总体状态，也不以自己的PASS替代尚缺的执行证据。
-   > **例外（产品失败诊断请求）**：本 prompt 若带「本轮为产品失败诊断」一节，则 harness 已确认这是它主动签发的诊断请求——实际报告包含可独立核实的真实测试/产品对象与原证据；其它环境或执行缺口仍保留未知，不因同报存在便禁止本次可独立核对工作。此时**照常**逐项完成语义检查，尤其是 `end_to_end_driving` 与 `business_assertion_value` 这两项（它们的 PASS/FAIL 决定这次失败该回 coding 改产品还是回 UT 改测试）。`ut.run` 的产品执行 FAIL 由 harness 原样保留，**不由你的报告继承**：`summary.verdict` / `blocker_count` 只表示**本轮语义检查**的结论——你自己判出的 BLOCKER 级 FAIL 有几条就写几条，一条都没有就写 `PASS / 0`。把产品 FAIL 抄进终态并跳过这两项检查，只会让本该产生的回修候选整批消失。原生编译/执行约束在常规验证请求下不降低。
+   > 「本轮为独立问题诊断」列出已签发要核的对象。照常核实 `end_to_end_driving` 与 `business_assertion_value`，据此定位产品或测试责任。常规验证仍要求原生编译和执行。
 
 > 典型违规迹象（请特别留意）：
 > - 业务源码树（非测试目录）里新增了看似仅为 UT 服务的函数，但该函数**没有对应的 spec/plan 条目**；
@@ -89,11 +89,11 @@
 - **评估方法**:
   1. 读取每个 UseCase 的 `state_model.phases` 与 `state_model.fields`
   2. 对比 spec.md / plan.md 中的流程图与状态机描述
-  3. 逐个分支审查 `branches[].expected_phase_sequence`：
+  3. 逐个分支审查 `branches[].expected_phase_seq`：
      - 是否存在"多个分支共用一个过载态"（例如校验失败和短验失败都映射到 Failed 而未用 errorCode 区分）——可接受但需要 errorCode 字段扩展
      - 是否缺少必要的中间态（如 WaitingSms / Persisting / Verifying）
      - 终态是否区分清晰（Success / Failed 应单独存在）
-  4. 检查 `expected_phase_sequence` 列出的所有 phase 是否都在 `state_model.phases` 集合内
+  4. 检查 `expected_phase_seq` 列出的所有 phase 是否都在 `state_model.phases` 集合内
 
 - **输出**：每个 UseCase 的 `state_model` 质量 + 漏态列表
 
@@ -145,14 +145,14 @@
      - **命名入口驱动**：用例通过调用 `ui_bindings.user_actions.calls` 声明的命名函数（或 `coordinator` 的方法）驱动业务，而不是直接构造一个数据对象、绕过业务编排检查 Repository
      - **callLog / 调用序列断言**：对 data_boundary 替身（`SpyXxx` / `FakeXxx` / `StubXxx` / 原型替换）的 `callLog` 或 `called*` 计数断言至少出现 1 次
      - **状态多阶段断言**：对业务状态字段（`phase` / `errorCode` / 业务 model 的关键字段）做 `expect` 至少 2 次，且覆盖**中间态与终态**
-  2. 对比对应 branch 的 `expected_phase_sequence` 与 `expected_port_calls` / `not_called`：UT 的断言是否与之一致
+  2. 对比对应 branch 的 `expected_phase_seq` 与 `expected_port_calls` / `not_called`：UT 的断言是否与之一致
   3. 若 `use-cases.yaml` 不存在：退化判定——用例必须至少调用一个**真实业务函数**（而非仅 `expect(repo.getX().length).assertLargerThan(0)` 的单数据接口断言）
   4. 判定逻辑：
      - **适用的**各项全部成立 → PASS
      - **适用的**任一项不成立 → FAIL（BLOCKER）
      - 信息不足 → WARN
 
-- **反例**：`expect((await cardRepo.getCardList()).length).assertLargerThan(0)`（未驱动 coordinator/命名函数，单数据接口断言）→ FAIL
+- **反例**：`expect((await cardRepo.getCardList()).length).assertLargerThan(0)`（未驱动 coordinator/命名函数，单数据接口断言）→ FAIL。验收承诺完整业务序列时，分别测试各段只证明片段正确；若某段缺失、错序或产生错误中间态时整组测试仍通过，本项仍为 BLOCKER FAIL，即使片段均绿、源码看似正确。指出无法证明的验收、实际测试入口及断言位置。
 
 ### 检查 4B: 业务价值断言密度 (business_assertion_value) 【BLOCKER】
 
@@ -176,6 +176,7 @@
   3. 阅读 UT：切换分支时是否使用 mock-plan 宣言的 preset（或等价命名的 `whenXxx`），**避免**在 `it()` 内重新手写与 mock-plan `ts_expr` 不一致的大段字面量
   4. 若 mock-plan 有 preset 但 DAG/UT 从未引用对应依赖方法 → WARN 或 FAIL（视是否造成覆盖缺口）
   5. **新 DAG** 须在 `port_call_*` / `async_call` 上优先声明 `spy_preset` 引用 mock-plan；`mock_data` 仅过渡期兼容，新 feature **禁止**再往 DAG 堆无类型字面量（与 `mock-plan-schema.md` / `dag-schema.md` 一致）。
+  6. 对回传对象或异常文案的差异，先核实生产消费与 UT 断言。若生产忽略返回对象、统一将抛错映射为同一业务错误码，且 UT 已断言该码及相关验收，则 mock-plan 与 Spy 的文字差异仅作对齐披露。若改变实际消费的返回值、异常分支、DAG 约束或承诺断言，沿源码与用例说明受影响的契约和后果，按实际缺口判定。
 - **输出**：preset ↔ 分支 ↔ `it()` 映射表；缺口清单
 
 ### 检查 5: branch 语义覆盖 (branch_coverage_semantic)

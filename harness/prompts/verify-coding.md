@@ -1,6 +1,6 @@
 # Coding 阶段语义验证 — {feature_name}
 
-**当前独核资格与结果边界**：只消费机器实际签发的当前request/material，phase仅选择检查方法。带“本轮为产品失败诊断”时，按已给具体对象/原报告逐条独立核实；无关编译/设备/报告缺口不遮住其它可核实工作，缺实际对象仍保持未知。独核终态只表示本次语义核实，不继承产品raw FAIL或替代缺失执行；产品FAIL/unknown仍由共同完成处置保留。变化材料补核受影响项，原目标与完整拒修论据逐条保真，不能仅凭摘要、标签或历史PASS结案。
+**当前独核资格与结果边界**：只消费机器实际签发的当前 request/material，phase 只选择检查方法。有「本轮为独立问题诊断」一节时，按具体对象和原报告逐条核实；证据缺口记为未知，其他可核实的问题继续验证。独核终态只表示本次语义核实，产品 FAIL 和缺失执行由共同完成处置保留。补核保留原目标、完整拒修论据和相关反证，按本轮实证判断。
 
 实施边界：以原始需求及有效更正中的真实限制、公共接口/数据契约和阶段职责为准。files、预计模块、私有名字/位置不是逐项许可；合法重组不要求创建空壳或回签预测。必须看实际 diff（含新增、删除、重命名）及必要源码，核对自然语言中的明确禁止；预测外模块的必要性、影响与回归依据在报告中显著披露。真实越权、公共契约违约或漏实现仍 FAIL，不能靠披露或登记齐全放行。
 
@@ -25,18 +25,11 @@
 
 ---
 
-## 真实编译依据与普通核验边界
+## 真实编译依据
 
-> 以下约束适用于常规完整编码验收；机器已签发的产品失败诊断按上方资格边界逐项核实，不把产品FAIL抄作独核整体结论。违反任一条都应在最终报告的 `summary.verdict` 强制为 `FAIL`，并优先输出 `coding_compile_gate` 检查项。
+先读取第四节的 `coding_compile`（旧名 `coding_hvigor_build`）与 `coding_run_status`，以及同轮 `summary.json` 的 `run_statuses`（可读时）。直接消费机器的编译状态和 `can_claim_done`，脚本投影中的 `passed_check_ids` 表示对应检查已 PASS。旧报告的 `coding_compile_gate` 仍可读取，本轮不另列该项、不重复判分。
 
-1. **必须确认真实编译状态**：在评估任何其它语义检查项**之前**，先读取下方“四、脚本 Harness 检查结果”中的完整报告及同目录 `summary.json`（若存在）中的 `coding_run_status` / `run_statuses`。
-2. **脚本未通过则语义不得 PASS**：若 `coding_run_status` 的 details 含 `can_claim_done: NO`，或 `coding_compile` / `coding_hvigor_build`（二者为同一 capability 的 canonical / legacy id）为 **FAIL**，或为 **SKIP** 且 severity 为 BLOCKER → **`summary.verdict` 必须为 `FAIL`**。不得因「错误在其它模块 / 非本 feature scope」而判 PASS。
-3. **`coding_compile_gate`（BLOCKER）**：从脚本报告中摘录**第一条**编译错误（文件路径、行号、消息）；若 details 已列出「解析出 N 条 error」，取第一条。同时写明 `failure_kind`（如 `project_dependency_missing` / `project_dependency_undeclared` / `project_dependency_install_failed`）与 `summary.next_action`（若可读）。即使失败文件不在 `contracts.modules` 内，仍须 FAIL 并告知用户「全工程编译未通过，coding 阶段出口未满足」。
-4. **禁止用 verifier PASS 代替脚本 harness**：父agent在无实际合法request时不得调用本子agent；机器已签发的具体产品失败诊断不受脚本整体退出码的 blanket 禁止；若已被误调用，你只输出 `coding_compile_gate: FAIL` 与其余项 WARN，最终 verdict 仍为 FAIL。
-
-> 典型误读（须避免）：
-> - 脚本 `coding_compile` FAIL 但 contracts/业务语义「看起来对」→ 仍 FAIL；
-> - 「pre-existing 工程问题」→ 须向用户报告阻塞与 `next_action`，**不得**建议进入 code-review（Code Review）。
+机器报告编译 FAIL、BLOCKER SKIP 或 `can_claim_done: NO` 时，产品完成条件仍未满足，即使编译失败发生在其他模块。相关诊断中引用机器给出的第一条编译错误（路径、行号和消息）、`failure_kind` 及同轮 `summary.next_action`（如有），继续核实已签发对象的具体业务、断言和真实责任方。缺编译证据标明缺口。独核 PASS 不产生编译 PASS，也不改变产品完成处置。
 
 ---
 
@@ -68,18 +61,6 @@
 ---
 
 ## 五、语义检查项（你的核心任务）
-
-请**先**完成检查 0（`coding_compile_gate`），再完成其余语义检查。
-
-### 检查 0: 真实编译门禁 (coding_compile_gate)
-
-- **严重等级**: BLOCKER
-- **评估方法**:
-  1. 从第四节脚本报告中定位 `coding_run_status`、`coding_compile` / `coding_hvigor_build`
-  2. 若 `can_claim_done: NO` 或 compile 检查为 FAIL/SKIP(BLOCKER) → 本项 **FAIL**
-  3. 在 details 中写入：第一条编译错误（`file:line` + message）、`failure_kind`、`next_action` 摘要
-  4. 若 compile PASS 且 `can_claim_done: YES` → 本项 PASS
-- **注意**: 即使错误模块不在本 feature 的 `contracts.modules` 内，也不得 PASS
 
 ### 检查 1: 业务逻辑正确性 (business_logic_correctness)
 
@@ -113,14 +94,14 @@
   2. 逐一对比实际代码中的实现：
      - 类名是否一致
      - 方法名是否一致
-     - 参数列表（名称 + 类型）是否一致
+     - 参数类型、顺序和必选性是否符合公共调用契约；按名消费的参数名也须一致
      - 返回类型是否一致
      - async 标记是否一致
   3. 从 contracts.yaml 的 `data_models` 章节提取所有数据模型定义
   4. 逐一对比实际代码：
      - 字段名、类型、是否必填
      - enum 值是否一致
-  5. 标出每一处不一致的具体差异
+  5. 只按位置调用、类型与顺序一致的形参改名，记录对齐差异，不要求产品返工。判 BLOCKER 时指出真实受影响的调用或契约、定位及放过的后果。
 
 ### 检查 4: 组件 Props 一致性 (component_props_consistency)
 
@@ -205,7 +186,6 @@ PASS 项不写论证，证据一行即可；证据不足时给 WARN 并说明缺
 
 | id | severity |
 |---|---|
-| coding_compile_gate | BLOCKER |
 | business_logic_correctness | MAJOR |
 | error_handling_completeness | MAJOR |
 | interface_signature_consistency | BLOCKER |
@@ -239,7 +219,7 @@ verification_result:
       suggestion: |
         <修正建议：谁改、改哪个文件、改成什么>
   summary:
-    total: 11
+    total: 10
     pass: <PASS 数>
     fail: <FAIL 数>
     warn: <WARN 数>
@@ -260,7 +240,7 @@ verification_result:
 
 - **严重等级**: MAJOR
 - **评估方法**:
-  1. **用读图工具**逐个读取上下文 `context-images/` 下 sidecar 像素文件（禁止把 markdown 链接当已看图）
+  1. **用读图工具**逐个读取本轮提示清单明确列出的 sidecar 像素文件。目录中的历史图片不属于本轮；Markdown 链接不能作为已读图证据。
   2. 打开 ui-spec.yaml，对照实现代码与资源，逐区域报告：版面结构 / 品牌主题色 / 真实资产 vs 占位 / 文案逐字保真
   3. ui-spec `verified=unverified` 时：仅报告明显冲突，不宣称整体保真 PASS
 - **读图证据块（必填，可机读）**：结论中须含 fenced `read-image-evidence` 块，每条 `- file: <sidecar文件名>` + `observation: <关键观察>`（与 sidecar 清单一一对应）
@@ -274,7 +254,7 @@ verification_result:
 
 ## 八、注意事项
 
-1. **`coding_compile_gate` 优先于一切语义项**；脚本 compile FAIL 继续是产品 FAIL。`repair_diagnosis` 只核实当前提案与责任，终态块只数你自己的语义 BLOCKER，不得以诊断 PASS 覆盖脚本 FAIL。
+1. 编译与 `can_claim_done` 采用本轮机器结果。终态块只数本轮语义 BLOCKER FAIL。
 2. **不要重复脚本 Harness 已覆盖的检查**（文件存在性、分层合规、资源引用等）
 3. 若源代码文件缺失导致无法进行某项语义检查，将该检查标为 WARN 并说明原因
 4. 对于"暂不支持"类的占位功能，只要 Toast 正确弹出即视为 PASS

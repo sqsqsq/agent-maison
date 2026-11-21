@@ -16,6 +16,7 @@ import { reconcileGuardianOwnership, terminateGuardianProcessOnly, awaitGuardian
 import { defaultProcessProbe } from './device-session';
 import { invocationCompleted, invocationEndFacts } from './invocation-completion';
 import { modelMismatchInEvents } from './adapter-model';
+import { parseVerifierRequestFromInstruction, type VerifierRequest } from './verifier-request';
 
 export interface HandoffReference { path: string; sha256: string }
 export interface SessionExecutionReport { status: 'passed' | 'failed' | 'waiting'; phase: string; details?: string }
@@ -258,6 +259,49 @@ export function executionRequestForInvoke(runDir: string, invokeId?: string): Is
   if (!original) return null;
   if (original.event.type === 'phase_start' && original.event.handoff_request) return original;
   return path.resolve(original.request.context.runDir) === path.resolve(runDir) ? original : null;
+}
+
+/** A stage verifier may return the report through either existing work-unit transport. */
+export function* stageVerifierHandbacks(runDir: string, current: VerifierRequest, reportPath: string): Generator<{ bytes: Buffer; instruction?: string }> {
+  const events = sessionEvents(runDir);
+  const rejected = new Set(events.filter(event => event.type === 'phase_write_violation').map(event => event.invoke_id));
+  const phase = `${current.phase}-verifier-format-repair`;
+  const name = 'independent-' + path.basename(reportPath);
+  for (const end of [...events].reverse()) {
+    if (end.type !== 'agent_invoke_end' || end.phase !== phase || !end.invoke_id || rejected.has(end.invoke_id)
+      || !invocationCompleted({ ...end, exitCode: end.exit_code })) continue;
+    try {
+      const original = executionRequestForInvoke(runDir, end.invoke_id);
+      if (!original) continue;
+      const { request } = original;
+      const delivered = parseVerifierRequestFromInstruction(request.context.instruction);
+      if (request.purpose !== 'verifier_format_repair' || request.context.feature !== current.feature
+        || request.context.runId !== path.basename(runDir) || !request.pre_snapshot || request.write_boundary?.executionRole !== 'verifier'
+        || delivered?.subject_id !== current.subject_id || !request.write_boundary.verifierResultPath
+        || path.resolve(request.context.projectRoot, request.write_boundary.verifierResultPath) !== reportPath) continue;
+      const target = (file: string) => path.resolve(request.context.projectRoot, file) === reportPath;
+      const before = request.pre_snapshot.entries.find(entry => entry.kind === 'file' && target(entry.path));
+      let bytes: Buffer;
+      let observed: string | null | undefined;
+      if (end.handoff_report) {
+        const accepted = acceptedSessionReport(runDir, original, events);
+        if (!accepted?.event.handoff_report) continue;
+        const handback = readHandoffMaterial<SessionReportMaterial>(runDir, accepted.event.handoff_report);
+        const encoded = handback.draft_outputs?.[name];
+        if (!encoded) continue;
+        bytes = Buffer.from(encoded, 'base64');
+        observed = handback.post_snapshot?.entries.find(entry => entry.kind === 'file' && target(entry.path))?.sha256;
+      } else {
+        const write = events.find(event => event.type === 'phase_write_observed' && event.invoke_id === end.invoke_id
+          && !('producer' in event)) as (GoalRunEvent & { owned?: Array<{ path: string; post_sha256?: string | null }>;
+            observations?: Array<{ path: string; post_sha256?: string | null }> }) | undefined;
+        observed = [...write?.owned ?? [], ...write?.observations ?? []].find(entry => target(entry.path))?.post_sha256;
+        if (!observed) continue;
+        bytes = fs.readFileSync(inside(runDir, path.join(runDir, path.dirname(original.reference.path), name)));
+      }
+      if (observed && observed !== before?.sha256 && digest(bytes) === observed) yield { bytes, instruction: request.context.instruction };
+    } catch { /* An unreadable handback leaves the original verifier obligation pending. */ }
+  }
 }
 
 /** Stop only an exact existing native binding. Unknown external executions cannot be force-re-signed. */
@@ -521,7 +565,8 @@ export function acceptSessionExecution(input: {
       archiveDraft(name, path.join(runDir, 'design-repair', name));
     }
   }
-  if (!saved && boundary?.verifierResultPath && issued.request.context.workInput?.material.acceptanceReview) {
+  if (!saved && boundary?.verifierResultPath && (issued.request.context.workInput?.material.acceptanceReview
+    || issued.request.purpose === 'verifier_format_repair')) {
     const actual = path.resolve(boundary.projectRoot, boundary.verifierResultPath);
     const observed = post?.entries.find(entry => entry.kind === 'file' && path.resolve(boundary.projectRoot, entry.path) === actual);
     if (observed) {

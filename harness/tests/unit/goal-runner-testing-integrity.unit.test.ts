@@ -7494,6 +7494,18 @@ test('A4 pure framework gap waits after one real gate and reuses unchanged facts
   } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+function leaveOldVerifierAction(root: string, feature: string, phase: string): void {
+  const summaryPath = path.join(featurePhaseReportsDir(root, feature, phase, REPO_ROOT), 'summary.json');
+  const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf8'));
+  const proof = loadPhaseEvidenceManifest(root, feature, phase);
+  const output = proof?.manifest.outputs.find(entry => path.resolve(root, entry.path) === summaryPath);
+  assert(!!proof?.integrityOk && !!output && output.sha256 === sha256File(summaryPath), 'fixture must retain the real current checker binding');
+  fs.writeFileSync(summaryPath, JSON.stringify({ ...summary, next_action: 'run_verifier_then_receipt' }));
+  output!.sha256 = sha256File(summaryPath);
+  proof!.manifest.aggregate_sha256 = recomputeManifestAggregate(proof!.manifest);
+  writePhaseEvidenceManifest(root, proof!.manifest);
+}
+
 test('repair1 R1 disclosed visual MAJOR and valid defer complete a real run with release BLOCKED', async () => {
   const { root } = setupGoalRuntimeHost('codex');
   const feature = FEATURE;
@@ -7510,7 +7522,17 @@ test('repair1 R1 disclosed visual MAJOR and valid defer complete a real run with
     initializeFidelityRouting({ projectRoot: root, frameworkRoot: REPO_ROOT, feature, requirement: '尽量完成 UI，允许搜索区域延后',
       featuresDirRel: 'doc/features', executionIdentity: 'repair1', requirementProvenance: 'explicit_cli' });
     const functional: CheckResult = { id: 'spec_file_exists', category: 'structure', description: 'transport returned phase artifacts', details: 'test executor', severity: 'BLOCKER', status: 'PASS' };
+    let staleVerifierAction = false;
     const probe = await runGoalRuntimeChain(root, { adapter: 'codex', freshRequirement: '尽量完成 UI，允许搜索区域延后',
+      afterHarnessPass: ({ phase }) => {
+        if (phase !== 'review') return;
+        const summaryPath = featureFilePath(root, feature, 'review/reports/summary.json');
+        const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf8'));
+        assert(fs.existsSync(path.join(root, summary.verifier_report)), '旧动作覆盖之前须已有本 request 的公开报告');
+        fs.appendFileSync(path.join(root, summary.verifier_report), '\n\n');
+        leaveOldVerifierAction(root, feature, phase);
+        staleVerifierAction = true;
+      },
       onHarnessSummary: async ({ phase }) => {
         if (phase === 'review') {
           const ctx = { phase: 'review', feature, projectRoot: root, frameworkRoot: REPO_ROOT, phaseRule: { structure_checks: {}, traceability_checks: {} },
@@ -7540,7 +7562,8 @@ test('repair1 R1 disclosed visual MAJOR and valid defer complete a real run with
       JSON.stringify({ tail: probe.events.slice(-5), reviewSummary: fs.existsSync(reviewSummaryPath) ? JSON.parse(fs.readFileSync(reviewSummaryPath, 'utf8')) : null,
         current: resolveCompletionDisposition({ projectRoot: root, frameworkRoot: REPO_ROOT, feature, chain: ['review'], endpoint: 'request' }) }));
     assert(fs.existsSync(path.join(probe.reportDir, 'feature-completion.json')), '真实完成核验没有生成 completion');
-    assert(!probe.events.some(event => event.type === 'agent_invoke_start' && event.purpose === 'verifier_format_repair'), '普通 PASS 视觉披露不得被误发格式纠错');
+    assert(staleVerifierAction && !probe.events.some(event => event.type === 'agent_invoke_start' && event.purpose === 'verifier_format_repair'),
+      '本轮报告已经可消费。旧动作和末尾空行不应增加独立模型调用');
     assert(readExecutionActivity(probe.events).calls === probe.events.filter(event => event.type === 'agent_invoke_start').length,
       '视觉披露完成过程的实际模型调用必须仍计入原预算');
     const { collectCleanPassIssues } = await import('../../scripts/utils/verify-feature-completion');
@@ -7553,6 +7576,110 @@ test('repair1 R1 disclosed visual MAJOR and valid defer complete a real run with
     }
     assert(fs.readFileSync(featureFilePath(root, feature, 'review/review-report.md'), 'utf-8').includes('MAJOR: 1'), '原始统计被清零');
   } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+for (const iteration of [26, 28] as const) test(`5ea729d4 S2 i${iteration} production Goal verifier dispatch`, async () => {
+  const { copyC6HostReplay, readC6PlanVerifierReport } = await import('../utils/c6-host-replay');
+  const { buildVerifierRequest, parseVerifierRequestFromInstruction } = await import('../../scripts/utils/verifier-request');
+  const { parseIssueVerificationBlock, readVerifierSummaryRows } = await import('../../scripts/utils/repair-candidates');
+  const { stageVerifierHandbacks } = await import('../../scripts/utils/session-execution-handoff');
+  const { restoreStageVerifierReport } = await import('../../scripts/goal-phase-runtime');
+  const { assembleAIPrompt, loadVerifierPromptTemplate, readVerifierItemReviewPrompt } = await import('../../scripts/utils/report-generator');
+  const { buildVerifierMaterialView } = await import('../../scripts/utils/verifier-material');
+  const host = copyC6HostReplay();
+  const { root } = setupGoalRuntimeHost('codex');
+  const featureDir = `doc/features/${FEATURE}`;
+  const original = readC6PlanVerifierReport(host, iteration);
+  const completed = readC6PlanVerifierReport(host, 28);
+  const verifierPlan = { mode: 'enabled' as const, reason: 'policy_required' as const, verifier_prompt: 'prompts/verify-plan.md', message: 'S2 plan verifier replay' };
+  let reportPath = '', subject = '', done = '', transportCalls = 0;
+  let issuedRequest: ReturnType<typeof parseVerifierRequestFromInstruction>;
+  try {
+    const sources = ['plan/plan.md', 'acceptance.yaml', 'contracts.yaml', 'use-cases.yaml'].map(file => `${featureDir}/${file}`);
+    const production = ['OtpService.ets', 'BankCardOpeningService.ets'].map(file => `02-Feature/WalletMain/src/main/ets/domain/service/${file}`);
+    for (const file of [...sources, ...production]) {
+      const source = path.join(host.root, file.replace(featureDir, host.featureDir));
+      writeFile(root, file, fs.readFileSync(source, 'utf8'));
+    }
+    const moved = (read: typeof original, currentSubject: string) => read.text.split(host.featureDir).join(featureDir)
+      .split(host.feature).join(FEATURE).split(read.request.subject_id).join(currentSubject);
+    const requirement = 'Keep the existing OTP flow and verify the current acceptance-to-interface contract.';
+    const probe = await runGoalRuntimeChain(root, { adapter: 'codex', freshRequirement: requirement, testingGateChecks: () => [],
+      onHarnessSummary: ({ phase }) => {
+        if (phase !== 'plan') return null;
+        const checks: CheckResult[] = [{ id: 'scope_consistency_with_spec', category: 'traceability', description: 'Read the current plan',
+          severity: 'BLOCKER', status: 'PASS', details: fs.readFileSync(path.join(root, sources[0]), 'utf8').split('\n')[0] }];
+        const script = buildScriptReport('plan', FEATURE, root, checks);
+        script.assurance = 'full';
+        const rule = YAML.stringify(new SpecLoader(root, undefined, undefined, REPO_ROOT).loadPhaseRule('plan'));
+        const templateText = loadVerifierPromptTemplate(path.join(REPO_ROOT, 'harness'), 'plan', undefined, verifierPlan.verifier_prompt);
+        const contextFiles = [...sources, ...production].map(label => ({ label, content: fs.readFileSync(path.join(root, label), 'utf8') }));
+        assembleAIPrompt(path.join(REPO_ROOT, 'harness'), root, 'plan', FEATURE, contextFiles, JSON.stringify(script), rule,
+          undefined, undefined, REPO_ROOT, { templateText });
+        const verifierMaterial = buildVerifierMaterialView({ projectRoot: root, frameworkRoot: REPO_ROOT, feature: FEATURE,
+          phase: 'plan', gateFingerprint: null, phaseRuleText: rule, templateText, checks, contextFiles });
+        const writerOptions = { verifierPlan, verifierMaterial };
+        const summary = writeRunSummaryBase(root, script, REPO_ROOT, writerOptions);
+        reportPath = summary.verifier_report!;
+        subject = summary.verifier_subject_id!;
+        done = moved(completed, subject);
+        if (!fs.existsSync(path.join(root, reportPath))) writeFile(root, reportPath, moved(original, subject) + '\n\n');
+        return { checks, writerOptions };
+      },
+      afterHarnessPass: ({ phase }) => {
+        if (phase === 'plan') leaveOldVerifierAction(root, FEATURE, phase);
+      },
+      onOutOfChain: (ctx: AgentCtx) => {
+        assert(ctx.phase === 'plan-verifier-format-repair', 'the real runtime must dispatch a stage verifier');
+        transportCalls++;
+        const bound = parseVerifierRequestFromInstruction(ctx.prompt);
+        assert(bound?.subject_id === subject && bound.phase === 'plan', 'the verifier must receive the actual issued request');
+        issuedRequest = bound;
+        const original = executionRequestForInvoke(featureFilePath(root, FEATURE, `goal-runs/${ctx.runId}`), `${ctx.phase}-${ctx.goalAttemptId}`);
+        const itemReview = typeof readVerifierItemReviewPrompt === 'function' ? readVerifierItemReviewPrompt(original?.request.context.instruction ?? '') : null;
+        if (iteration === 26) {
+          assert(itemReview?.reviewIds.join(',') === 'acceptance_to_interface',
+            `i26 must supplement the specific inadequately supported finding; scope=${JSON.stringify(itemReview?.reviewIds)}`);
+        }
+        const rows = itemReview?.reusedRows.length ? readVerifierSummaryRows(done) : null;
+        const lines = done.split(/\r?\n/);
+        for (const carried of itemReview?.reusedRows ?? []) {
+          const row = rows?.find(candidate => candidate.id === carried.id);
+          assert(!!row, `the independent reply must preserve existing row ${carried.id}`);
+          lines[row!.line - 1] = `| ${carried.id} | ${carried.status} | ${carried.severity} | ${carried.evidence} |`;
+        }
+        writeFile(root, reportPath, lines.join('\n'));
+      },
+    });
+    const starts = probe.events.filter(event => event.type === 'agent_invoke_start' && event.phase === 'plan-verifier-format-repair');
+    const halts = probe.events.filter(event => event.type === 'phase_halt').map(event =>
+      ({ phase: event.phase, halt: event.halt_reason, detail: String(event.detail ?? event.reason ?? '').slice(0, 1400) }));
+    assert(transportCalls === (iteration === 28 ? 0 : 1), `i${iteration} real verifier transport count was ${transportCalls}: ${JSON.stringify(halts)}`);
+    assert(starts.length === transportCalls, 'transport count has a matching real started event');
+    const published = fs.readFileSync(path.join(root, reportPath), 'utf8');
+    assert(parseIssueVerificationBlock(published).entries.some(entry => entry.issue === 'acceptance_to_interface'
+      && entry.verdict === 'confirmed' && entry.repair_owner === 'plan'), 'the recorded product finding must remain open with the plan owner');
+    if (issuedRequest!) {
+      const target = path.join(root, reportPath);
+      const archive = [...stageVerifierHandbacks(probe.reportDir, issuedRequest, target)];
+      assert(archive.some(result => result.bytes.toString('utf8') === published), 'the actual verifier handback is reusable independently of the public file');
+      fs.unlinkSync(target);
+      const qualification = { projectRoot: root, frameworkRoot: REPO_ROOT, feature: FEATURE, phase: 'plan',
+        currentSubject: subject, runId: path.basename(probe.reportDir), diagnosisRequired: true };
+      const late = buildVerifierRequest({ ...issuedRequest, material_sha256: 'f'.repeat(64) });
+      assert(!restoreStageVerifierReport(probe.reportDir, late, target, reportPath, qualification) && !fs.existsSync(target),
+        'a closed verifier invocation for a different subject cannot fill this request');
+      assert(restoreStageVerifierReport(probe.reportDir, issuedRequest, target, reportPath, qualification)
+        && fs.readFileSync(target, 'utf8') === published, 'restore the actual same-request verifier bytes to the original path');
+      assert(!restoreStageVerifierReport(probe.reportDir, issuedRequest, target, reportPath, qualification),
+        'the restored report can be consumed again without another write or call');
+    }
+    console.log(`VERIFIER_S2_GOAL ${JSON.stringify({ iteration, transportCalls, starts: starts.length, subject, findingOwner: 'plan' })}`);
+  } finally {
+    clearFrameworkConfigCache();
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(host.root, { recursive: true, force: true });
+  }
 });
 
 for (const variant of ['corrected', 'still-bad', 'refuted', 'reentered', 'request-missing', 'request-mismatched'] as const) test(`repair1 R3 UT UNVERIFIED ${variant} uses D1 and budgeted bounded format recovery`, async () => {

@@ -22,19 +22,19 @@ overview: >-
 todos:
   - id: reduce-prompt-material
     content: 阶段一。按真实来源裁剪长材料，合并双入口，限定本轮图片，保留派生输入、拒修理由与反证。
-    status: pending
+    status: completed
   - id: reuse-machine-facts
     content: 阶段一。收编编译和 trace 机器结论、单次 Review 真假裁决与纯格式恢复，对齐诊断标题并校准三类差异的严重度。
-    status: pending
+    status: completed
   - id: bind-review-preimages
     content: 阶段二。让删除及重命名的真实旧内容进入现有材料身份，打通重算、等价复用和历史兼容。
-    status: pending
+    status: completed
   - id: recheck-affected-items
     content: 阶段三。按当前义务与真实变化选项，沿用有效逐项结论及其责任方，只补缺项，影响不明时完整核验。
-    status: pending
+    status: completed
   - id: unified-acceptance
     content: 统一验收。完成生产入口回放、关键变异、目标套件与日常全集，并在一个有阶段 verifier 的干净宿主完成分角色实测。
-    status: pending
+    status: in_progress
 ---
 
 # Verifier 减负与按项复核

@@ -68,7 +68,7 @@ import {
 } from './utils/multimodal-evidence-gate';
 import {
   loadVerifierEvidence,
-  findSameMaterialVerifierEvidence,
+  loadCurrentVerifierEvidenceForSubject,
   loadVerifierReportTextOrNull,
   readSummaryVerifierSubjectId,
   type VerifierEvidence,
@@ -679,6 +679,7 @@ function main(): void {
   // 回执手填字段无裁决权，只留兼容投影（与机器事实不符时降 WARN）。
   const vs = frontmatter.verifier_subagent ?? {};
   let verifierEvidence: VerifierEvidence | null = null;
+  let resolvedVerifierInputs: import('./utils/capability-resolution').ResolvedPhaseInputs | undefined;
   // plan 07a41ec6 T7：沿用既往 PASS 闭环时的登记（null = 当前 subject 自身已验真，闭环时清除旧登记）
   let verifierClosure: VerifierClosureRecord | null = null;
   if (verifierPlan.mode === 'disabled') {
@@ -729,19 +730,20 @@ function main(): void {
     const verifierSubjectId = readSummaryVerifierSubjectId(projectRoot, feature, phase, frameworkRoot);
     if (verifierSubjectId) {
       let loaded = loadVerifierEvidence(projectRoot, feature, phase, { frameworkRoot });
-      if (!loaded.ok && loaded.code === 'report_missing') {
-        let resolvedInputs: import('./utils/capability-resolution').ResolvedPhaseInputs | undefined;
+      const missingCurrent = !loaded.ok && loaded.code === 'report_missing';
+      if (missingCurrent || phase === 'ut') {
         try {
           const entry = require('./utils/capability-resolution-entry-input') as typeof import('./utils/capability-resolution-entry-input');
           const resolver = require('./utils/capability-resolution') as typeof import('./utils/capability-resolution');
           const input = entry.resolveCapabilityResolutionEntryInput({ projectRoot, frameworkRoot, feature, phase,
             featuresDir: relFeaturesDir(projectRoot), goalRunId: runId, goalAttemptId: process.env.MAISON_GOAL_ATTEMPT });
-          resolvedInputs = resolver.resolveCapabilityInputs({ projectRoot, frameworkRoot, feature, phase, track, ...input }).inputs;
+          resolvedVerifierInputs = resolver.resolveCapabilityInputs({ projectRoot, frameworkRoot, feature, phase, track, ...input }).inputs;
         } catch { /* Without original input facts, a legacy result cannot prove equivalence. */ }
-        const same = findSameMaterialVerifierEvidence(projectRoot, feature, phase, verifierSubjectId, { frameworkRoot, resolvedInputs });
-        if (same) {
-          loaded = { ok: true, evidence: same };
-          if (same.verdict === 'PASS') verifierClosure = { mode: 'completed_with_prior_review', reviewed_subject_id: same.subject_id,
+      }
+      if (missingCurrent) {
+        loaded = loadCurrentVerifierEvidenceForSubject(projectRoot, feature, phase, verifierSubjectId, { frameworkRoot, resolvedInputs: resolvedVerifierInputs });
+        if (loaded.ok && loaded.evidence.subject_id !== verifierSubjectId) {
+          if (loaded.evidence.verdict === 'PASS') verifierClosure = { mode: 'completed_with_prior_review', reviewed_subject_id: loaded.evidence.subject_id,
             current_subject_id: verifierSubjectId, current_material_not_reverified: [] };
         }
       }
@@ -1125,7 +1127,7 @@ function main(): void {
     }
     if (currentRunReadable) {
       const disposition = resolveCompletionDisposition({ projectRoot, frameworkRoot, feature, chain: [phase], runId, workflow: workflowSpecForPlan,
-        currentResults: [{ phase, summary: slimSummary, checks: readPhaseChecks(projectRoot, feature, phase, slimSummary) }] });
+        currentResults: [{ phase, summary: slimSummary, resolvedInputs: resolvedVerifierInputs, checks: readPhaseChecks(projectRoot, feature, phase, slimSummary) }] });
       const pending = phaseCompletionProblems(disposition, [phase]);
       if (pending.length) issues.push({ id: 'slim_summary_not_pass', severity: 'BLOCKER',
         message: '当前统一处置仍未满足：' + pending.map(problem => problem.id + ': ' + problem.detail).join('；') });
