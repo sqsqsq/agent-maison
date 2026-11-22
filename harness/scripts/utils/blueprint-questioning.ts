@@ -22,6 +22,7 @@ import { stableStringify } from './phase-evidence-manifest';
 import { resolveBlueprintReaderSource } from './blueprint-reader-guide';
 import { stableAddressIndex } from './blueprint-addressing';
 import { evaluateDerivedConclusionFreshness } from './derived-conclusion-freshness';
+import { componentBlueprintPath } from './component-blueprint-path';
 
 /** Compare declared evidence paths without opening them or treating a Windows drive as a URI scheme. */
 export function questioningEvidencePath(ref: string, projectRoot?: string): string | undefined {
@@ -295,15 +296,37 @@ export function selectQuestioningScopes(before: BlueprintRecord | undefined, cur
       if (owner && index.has(owner)) return index.get(owner);
     }
   };
+  const answerConsumers = new Map<string, Set<string>>();
+  const blueprintFile = projectRoot && nonEmptyString(before.blueprint_id)
+    ? questioningEvidencePath(componentBlueprintPath(projectRoot, before.blueprint_id), projectRoot) : undefined;
+  const noteAnswerConsumer = (ref: string, scope: string): void => {
+    const consumers = answerConsumers.get(ref) ?? new Set<string>();
+    consumers.add(scope);
+    answerConsumers.set(ref, consumers);
+  };
   for (const item of items) for (const ref of originalRefs(item)) {
-    if (!ref.startsWith('/') || ref.includes('#') || /:|^\/\//.test(ref) || ref.startsWith('/generated_graphs/')) continue;
-    const oldSource = resolveBlueprintReaderSource(before, ref);
-    const newSource = resolveBlueprintReaderSource(current, ref);
-    if (!!oldSource !== !!newSource) return [...required.keys()];
+    const scope = String(item.scope_ref);
+    if (authorityRefs.has(ref)) noteAnswerConsumer(ref, scope);
+    const fragment = ref.indexOf('#/');
+    const pointer = fragment !== -1 && blueprintFile && questioningEvidencePath(ref, projectRoot) === blueprintFile
+      ? ref.slice(fragment + 1) : ref;
+    if (!pointer.startsWith('/') || pointer.includes('#') || /:|^\/\//.test(pointer) || pointer.startsWith('/generated_graphs/')) continue;
+    const oldSource = resolveBlueprintReaderSource(before, pointer);
+    const newSource = resolveBlueprintReaderSource(current, pointer);
+    if (!!oldSource !== !!newSource) {
+      if (fragment === -1) return [...required.keys()];
+      affected.add(scope);
+    }
     if (!oldSource || !newSource) continue;
-    if (pointerOwner(before, ref, beforeAddresses) !== pointerOwner(current, ref, currentAddresses)) return [...required.keys()];
+    const owner = pointerOwner(before, pointer, beforeAddresses);
+    if (owner !== pointerOwner(current, pointer, currentAddresses)) {
+      if (fragment === -1) return [...required.keys()];
+      affected.add(scope);
+      continue;
+    }
     if (stableStringify(oldSource.value) !== stableStringify(newSource.value)) {
-      affected.add(String(item.scope_ref));
+      affected.add(scope);
+      if (owner && authorityRefs.has(owner)) noteAnswerConsumer(owner, scope);
     }
   }
   for (const dependency of changedDependencies) {
@@ -335,13 +358,14 @@ export function selectQuestioningScopes(before: BlueprintRecord | undefined, cur
     rawIds.get(raw)!.add(id);
   }
   const knownIds = new Set([...allIds, ...required.keys()]);
+  const stableReferences = new Set([...beforeAddresses.values(), ...currentAddresses.values()]);
   let unresolved = false;
-  const references = (value: unknown, doc: BlueprintRecord, resolvePointers = false): Set<string> => {
+  const references = (value: unknown, doc: BlueprintRecord, resolvePointers = false, precise = false): Set<string> => {
     const refs = new Set<string>();
     const visit = (input: unknown, field = '', depth = 0): void => {
       if (typeof input === 'string') {
-        const local = new Set([...input.matchAll(/(?:^|[^\p{L}\p{N}._:-])([a-z][a-z0-9_-]*:[\p{L}\p{N}][\p{L}\p{N}._:-]*)/gu)]
-          .map(match => normalizeReference(match[1])));
+        const local = new Set([...input.matchAll(/(?:^|[^\p{L}\p{N}._:-])([a-z][a-z0-9_-]*:[\p{L}\p{N}][\p{L}\p{N}._:-]*(?:\/[a-z][a-z0-9_-]*:[\p{L}\p{N}][\p{L}\p{N}._:-]*)*)/gu)]
+          .flatMap(match => precise ? [match[1]] : match[1].split('/')).map(normalizeReference));
         if (field === 'ref' || /_refs?$/.test(field) || ['decisions_and_gaps', 'needed_by', 'landing'].includes(field)) {
           const pointer = input.startsWith('/') ? input : '/' + input;
           if (resolvePointers && resolveBlueprintReaderSource(doc, pointer)) {
@@ -350,9 +374,11 @@ export function selectQuestioningScopes(before: BlueprintRecord | undefined, cur
             if (scope) {
               if (required.has(scope)) local.add(scope); else unresolved = true;
             } else {
+              const preciseOwner = precise && pointerOwner(doc, pointer, doc === before ? beforeAddresses : currentAddresses);
+              if (preciseOwner) local.add(preciseOwner);
               const parts = pointer.split('/');
-              let located = false;
-              for (let length = parts.length; length > 1; length--) {
+              let located = !!preciseOwner;
+              for (let length = parts.length; !located && length > 1; length--) {
                 const owner = asRecord(resolveBlueprintReaderSource(doc, parts.slice(0, length).join('/'))?.value);
                 const id = owner && Object.entries(owner).find(([key, value]) => key.endsWith('_id') && nonEmptyString(value));
                 if (id && knownIds.has(address(id[0], String(id[1])))) {
@@ -365,7 +391,7 @@ export function selectQuestioningScopes(before: BlueprintRecord | undefined, cur
             unresolved = true;
           } else if (/^(?:source|evidence|verification|knowledge)_refs?$/.test(field)
             && questioningEvidencePath(input) && /[\\/]|\.[A-Za-z0-9]+(?:#|:|$)/.test(input)) {
-            local.add('source:' + questioningEvidencePath(input));
+            local.add('source:' + questioningEvidencePath(input, projectRoot));
           }
           const matches = rawIds.get(input);
           const kind = field.replace(/_refs?$/, '').replace(/^(?:logical|external)_/, '').replace(/_/g, '-');
@@ -374,7 +400,7 @@ export function selectQuestioningScopes(before: BlueprintRecord | undefined, cur
           (typed?.length ? typed : matches)?.forEach(ref => local.add(ref));
           // These fields declare a design landing; slice ownership and asset/source references do not.
           if (resolvePointers && depth === 1 && ['landing', 'target_ref'].includes(field) && nonEmptyString(input)
-            && (![...local].some(ref => knownIds.has(ref)) || [...local].some(ref => !knownIds.has(ref)))) unresolved = true;
+            && (!local.size || [...local].some(ref => !knownIds.has(ref) && !(precise && stableReferences.has(ref))))) unresolved = true;
         }
         local.forEach(ref => refs.add(ref));
       } else if (Array.isArray(input)) input.forEach(child => visit(child, field, depth));
@@ -396,26 +422,81 @@ export function selectQuestioningScopes(before: BlueprintRecord | undefined, cur
     ids.set(ref, new Set([ref, ...identifiers(old.get(ref)), ...identifiers(next.get(ref))]));
   }
   if ([...changedAuthorities].some(ref => unresolvedRefs.has(ref))) return [...required.keys()];
-  // Authority rows can explicitly name their landing; retain both old and new scope references.
-  for (const ref of authorityRefs) {
-    for (const scope of required.keys()) if ([...ids.get(scope) ?? []].some(id => dependencies.get(ref)?.has(id))
-      || changedAuthorities.has(ref) && [...dependencies.get(ref) ?? []].some(source => source.startsWith('source:') && dependencies.get(scope)?.has(source))) {
-      dependencies.get(scope)!.add(ref);
-    }
-  }
   const consumers = new Map<string, Set<string>>();
-  for (const [ref, declared] of ids) consumers.set(ref, new Set([...dependencies]
-    .filter(([other, refs]) => other !== ref && [...refs].some(id => declared.has(id))).map(([other]) => other)));
-  const expand = (seeds: Iterable<string>, graph = consumers): Set<string> => {
+  for (const [ref, declared] of ids) if (!authorityRefs.has(ref)) consumers.set(ref, new Set([...dependencies]
+    .filter(([other, refs]) => other !== ref && !authorityRefs.has(other) && [...refs].some(id => declared.has(id))).map(([other]) => other)));
+  const expand = (seeds: Iterable<string>, graph: ReadonlyMap<string, Set<string>>): Set<string> => {
     const reached = new Set(seeds);
     for (const ref of reached) graph.get(ref)?.forEach(consumer => reached.add(consumer));
     return reached;
   };
-  for (const ref of changedAuthorities) if (![...expand([ref])].some(scope => required.has(scope))) return [...required.keys()];
-  // Ordinary scope edits keep their existing boundary; only changed authority seeds traverse global entries.
-  const scopeConsumers = new Map([...consumers].filter(([ref]) => !authorityRefs.has(ref))
-    .map(([ref, refs]) => [ref, new Set([...refs].filter(consumer => !authorityRefs.has(consumer)))]));
-  for (const ref of [...expand(changedBusiness, scopeConsumers), ...expand(changedAuthorities)]) if (required.has(ref)) affected.add(ref);
+  for (const ref of expand(changedBusiness, consumers)) if (required.has(ref)) affected.add(ref);
+  if (!changedAuthorities.size) return [...required.keys()].filter(ref => affected.has(ref));
+
+  // Reopening a view to review one member does not make its other members changed sources.
+  const memberAddress = /^(view:[^/]+)\/(node|flow):(.+)$/;
+  const splitView = (facts: Map<string, unknown>, index: Map<BlueprintRecord, string>) => {
+    const rows = new Map(facts);
+    for (const [ref, row] of facts) if (ref.startsWith('view:')) {
+      const { nodes: _nodes, runtime_data_flows: _flows, ...view } = asRecord(row) ?? {};
+      rows.set(ref, view);
+    }
+    for (const [row, address] of index) {
+      const member = memberAddress.exec(address);
+      if (!member) continue;
+      if (member[2] === 'flow') rows.delete(`flow:${member[3]}`);
+      rows.set(address, row);
+    }
+    return rows;
+  };
+  const preciseBefore = splitView(old, beforeAddresses), preciseAfter = splitView(next, currentAddresses);
+  const preciseRefs = new Map<string, Set<string>>();
+  for (const ref of new Set([...preciseBefore.keys(), ...preciseAfter.keys()])) {
+    const authority = authorityRefs.has(ref);
+    unresolved = false;
+    preciseRefs.set(ref, new Set([...references(preciseBefore.get(ref), before, authority, true),
+      ...references(preciseAfter.get(ref), current, authority, true)]));
+    if (unresolved && changedAuthorities.has(ref)) return [...required.keys()];
+  }
+  const identities = new Map([...preciseRefs.keys()].map(ref => {
+    const member = memberAddress.exec(ref);
+    return [ref, member ? [ref, `${member[2]}:${member[3]}`] : [ref]];
+  }));
+  const preciseGraph = new Map<string, Set<string>>();
+  for (const [ref, sources] of preciseRefs) {
+    const authority = authorityRefs.has(ref);
+    preciseGraph.set(ref, new Set([...preciseRefs].filter(([other, refs]) => other !== ref && (
+      (authority || !authorityRefs.has(other)) && identities.get(ref)!.some(id => refs.has(id))
+      || authority && !authorityRefs.has(other) && identities.get(other)!.some(id => sources.has(id))
+    )).map(([other]) => other)));
+  }
+  for (const ref of changedAuthorities) {
+    const reached = new Set<string>();
+    for (const entry of expand([ref], preciseGraph)) {
+      if (required.has(entry)) reached.add(entry);
+      for (const scope of answerConsumers.get(entry) ?? []) if (required.has(scope)) reached.add(scope);
+      const member = memberAddress.exec(entry);
+      if (!member) continue;
+      if (required.has(member[1])) reached.add(member[1]);
+      if (member[2] === 'flow' && required.has(`flow:${member[3]}`)) reached.add(`flow:${member[3]}`);
+    }
+    // A decision grounded in a specific implementation file has direct evidence consumers.
+    const codeSources = [old.get(ref), next.get(ref)].flatMap(value => {
+      const provenance = asRecord(asRecord(value)?.provenance);
+      const file = provenance?.source_kind === 'code' && nonEmptyString(provenance.source_ref)
+        ? questioningEvidencePath(provenance.source_ref, projectRoot) : undefined;
+      return file ? ['source:' + file] : [];
+    });
+    for (const scope of required.keys()) {
+      if (codeSources.some(source => dependencies.get(scope)?.has(source))) reached.add(scope);
+    }
+    // A shared document can locate an otherwise unplaced edit, but cannot expand a known landing.
+    if (!reached.size) for (const scope of required.keys()) {
+      if ([...dependencies.get(ref) ?? []].some(source => source.startsWith('source:') && dependencies.get(scope)?.has(source))) reached.add(scope);
+    }
+    if (!reached.size) return [...required.keys()];
+    for (const scope of reached) affected.add(scope);
+  }
   return [...required.keys()].filter(ref => affected.has(ref));
 }
 
@@ -435,9 +516,9 @@ export function renderQuestioningResultInstructions(blueprint: BlueprintRecord, 
     '',
     QUESTIONING_SCOPE_HEADING,
     ...scopes,
-    '只交回本轮实际复核的上述条目；未变项由机器沿原件复用，不复制整份旧回答。有具体新证据可重开其它scope，同时在answer及verification_refs给出新证据。用紧凑JSON返回，不写临时结果或复述完整材料。',
+    '只交回本轮实际复核的上述条目。对未列入范围的条目，由机器复用原件；同引一份未变的需求文档不能证明受影响。复核时用具体决定、稳定地址或精确字段指针标出实际依赖。有具体新证据可重开其它scope，同时在answer及verification_refs给出新证据。用紧凑JSON返回，不写临时结果或复述完整材料。',
     '用原需求逐项核对预期结果、独立验收 ID 和适用观察通道。以反例判断设计是否允许违反当前已授权行为，例如生产者交出的对象与消费者需要的本次对象不一致。失败返回落点依据原文及既有路由解释；参考图按既有来源核验并保留到施工/视觉验收。',
-    '同一适用通道可以承担不同义务。按原需求分别核对输入映射和默认值、生产写入与读回、外部界面与导航、时间上的可见变化、真实调用次数等适用义务。外部界面证据只覆盖界面可见或可操作结果；持久状态和调用次数各归可观察实际状态或调用的通道。不同 CU 的局部同号及多个目标共用同一完整定义可按实际消费范围保留。',
+    '同一通道可以承担不同义务。按原需求分别核对输入映射和默认值、生产写入与读回、外部界面与导航、可见时间变化和真实调用次数。逐项核对 P0 的动作和断言，多个 UI 义务可以共用同一动作，各自的预期结果须有可观察的断言。结果页出现可以证明导航；持久状态和调用次数须由能读取实际值的应用内测试承担，应用内测试即使在真机执行也归 unit。不同 CU 的局部同号及多个目标共用同一完整定义可按实际消费范围保留。',
     '当前义务遗漏或混写、证据通道无法观察所承诺的结果、产品设计存在实质矛盾或违反本次授权时，在对应 scope 给 blocker，写清原文或相冲突的设计出处、条目位置与实际后果。当前产品必须的生产者、接收者、触发、交接或清理尚不成立，也属于设计缺陷。当前必须裁决的需求或授权沿既有未决决定与权限处理。',
     '设计已明确义务、可观察通道及生产行为时，以设计原文完成 answered_with_evidence。具体测试 API/入口、注入与定位方式、样本数据/隔离/复位前置、用例步骤和断言强度交既有 CU 计划及施工后的独立核验；需要时在答复留一句交接说明。只有这些执行细节未定时不报 blocker 或 open_decision，也不声称测试已执行或义务已验证。远期决定沿原 owner、needed-by 和解除条件记录；其依赖未变时复用原结论。',
     ...(unchanged.length ? ['', '## verified_unchanged 视图', ...unchanged] : []),

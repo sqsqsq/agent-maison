@@ -46,7 +46,7 @@
 
 **CU-bound Feature**：若目标 Feature id 以 canonical `change_unit_ref` 派生，spec 只引用该 CU 的 purpose、target predicate/provide ID 和用户可见语义，不复制或改写 CU/蓝图定义；发现部件级 owner、主链或外部契约与蓝图冲突时停止并回 P1 调和，不在 Feature spec 用 TBD 补模。
 
-设计期已有 acceptance/contracts/use_cases 时直接消费 typed 推导输入并写本阶段 acceptance，正常交接不提前物化。P0 device/both 义务不依赖 linked_flow；UI 相关性沿有效 ui_change/需求判断，UI 义务缺 checkpoint 时由 spec 根据真实 ui-spec 补齐。linked_flow 只关联业务用例；flows 可选，声明才核屏链。spec 只补本职责的 checkpoint/屏幕流程等缺键，保留已有权威预期，通过原对齐与 P0 门；已有带来源戳文件也沿同一规则补充，不换戳绕过。缺内容才在本职责补设计，叙述文件仅按 required_outputs 产出。
+设计期已有 acceptance/contracts/use_cases 时直接消费 typed 推导输入并写本阶段 acceptance，正常交接不提前物化。P0 device/both 义务不依赖 linked_flow；UI 相关性沿有效 ui_change/需求判断。真实 UI 义务缺 checkpoint 时由 spec 根据真实 ui-spec 补齐；动作或断言观察不到蓝图承诺的值时，逐条记录差额，交独立 verifier 沿既有结构化发现回设计。linked_flow 只关联业务用例；flows 可选，声明才核屏链。spec 只补本职责的 checkpoint/屏幕流程等缺键，保留已有权威预期，通过原对齐与 P0 门；已有带来源戳文件也沿同一规则补充，不换戳绕过。缺内容才在本职责补设计，叙述文件仅按 required_outputs 产出。
 
 **入口兜底复核（M7 口径由统一前门取代）**：本 Skill 只处理已派生的 spec 职责，先核 [统一前门](../../../docs/operations/project-entry.md) 的原始请求与有效范围。特别简单不因“正式需求”标签补蓝图/spec；小型按短蓝图原 request 消费验收，不为阶段形式新增 spec/plan；中型/复杂及已有 CU 继续完整蓝图/CU 准入。若本请求需要完整设计而缺蓝图/CU，把具体设计缺口交回 `/component-design`，保留草稿与已有成果，不能由 spec 追认已施工代码。
 

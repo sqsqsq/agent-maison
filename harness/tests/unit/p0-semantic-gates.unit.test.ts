@@ -475,9 +475,13 @@ cases.push({ name: '7d2c49e8 P0 visible values require distinct ordered native a
       required_element_ids: ['remaining'],
       assertions: [{ element_id: 'remaining', exact_text: '9 seconds' }, { element_id: 'remaining', exact_text: '8 seconds' }],
     } }] };
-    const planMd = ['## 测试用例', '| 用例编号 | 用例名称 | 优先级 | 关联 AC |', '| --- | --- | --- | --- |', '| TC-001 | delayed submit | P0 | AC-1 |'].join('\n');
     const relativePlan = 'doc/features/p0-fixture/testing/reports/current/hylyre/test-plan.hylyre.md';
-    const evaluate = (values: string[], id = 'remaining') => {
+    const evaluate = (values: string[], id = 'remaining', anotherResult?: string) => {
+      const first = acceptance.criteria[0];
+      const scopedAcceptance = anotherResult ? { criteria: [first, { ...first, id: 'AC-2',
+        checkpoint: { ...first.checkpoint, assertions: [{ element_id: 'remaining', exact_text: anotherResult }] } }] } : acceptance;
+      const planMd = ['## 测试用例', '| 用例编号 | 用例名称 | 优先级 | 关联 AC |', '| --- | --- | --- | --- |',
+        `| TC-001 | delayed submit | P0 | ${scopedAcceptance.criteria.map(ac => ac.id).join(' / ')} |`].join('\n');
       const plan = [{ touch: { by_id: 'trigger' } }, { wait_for: { by_id: 'remaining', timeout: 5 } },
         ...values.map(value => ({ wait_for: { by_text: value, match: 'exact', index: 0, timeout: 5 } }))];
       writeFile(root, relativePlan, ['## 测试用例清单', '| 用例编号 | 用例名称 | 测试步骤 |',
@@ -492,7 +496,7 @@ cases.push({ name: '7d2c49e8 P0 visible values require distinct ordered native a
       }));
       const trace = { outcome: 'success', cases: [{ id: 'TC-001', execution: 'completed', verification: 'passed',
         evidence: 'complete', status: '通过', expected_check_mode: 'disabled_by_flag', steps }] };
-      const options = { ...inputs(root, {}, null, planMd), acceptance, derivedPlanPath: path.join(root, relativePlan),
+      const options = { ...inputs(root, {}, null, planMd), acceptance: scopedAcceptance, derivedPlanPath: path.join(root, relativePlan),
         trace, evidenceGate: { native: true } } as unknown as Parameters<typeof evaluateP0SemanticCoverage>[0];
       return evaluateP0SemanticCoverage(options)[0];
     };
@@ -502,6 +506,11 @@ cases.push({ name: '7d2c49e8 P0 visible values require distinct ordered native a
     assert.equal(evaluate(['9 seconds', '8 seconds'], 'unrelated').status, 'FAIL');
     const qualified = evaluate(['9 seconds', '8 seconds']);
     assert.equal(qualified.status, 'PASS', qualified.details);
+    const sharedAction = evaluate(['9 seconds', '8 seconds', '7 seconds'], 'remaining', '7 seconds');
+    assert.equal(sharedAction.status, 'PASS', sharedAction.details);
+    const missingSibling = evaluate(['9 seconds', '8 seconds'], 'remaining', '7 seconds');
+    assert.equal(missingSibling.status, 'FAIL');
+    assert.match(missingSibling.details ?? '', /AC-2/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 }});
 

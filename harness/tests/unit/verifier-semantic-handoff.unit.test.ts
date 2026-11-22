@@ -4,7 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as YAML from 'yaml';
 import { clearFrameworkConfigCache, featurePhaseReportsDir, resolveFeatureArtifact } from '../../config';
-import { readVerifierSemanticIssues, phaseIssuesForVerifierSubject, verifiedPhaseRepairIssues, verifiedPhaseDesignFindings, projectDesignFindingsIntoSummary, findUnreadableDiagnosisChecks } from '../../scripts/utils/repair-candidates';
+import { readVerifierSemanticIssues, phaseIssuesForVerifierSubject, verifiedPhaseRepairIssues, verifiedPhaseDesignFindings, readVerifiedPhaseDesignFindings, projectDesignFindingsIntoSummary, findUnreadableDiagnosisChecks } from '../../scripts/utils/repair-candidates';
 import { buildVerifierMaterialView, writeVerifierMaterial, collectCurrentAcceptanceEvidence, verifierMaterialFileMatchesCurrent } from '../../scripts/utils/verifier-material';
 import { verifierReportMdFilename } from '../../scripts/utils/verifier-subject';
 import { resolveCapabilityInputs } from '../../scripts/utils/capability-resolution';
@@ -21,6 +21,8 @@ import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixtu
 import { collectContextFiles } from '../../harness-runner';
 import { SpecLoader } from '../../scripts/utils/spec-loader';
 import { readCurrentDispositionInput } from '../../scripts/utils/verify-feature-completion';
+import { evaluateAcceptanceFlowStructure } from '../../scripts/utils/p0-semantic-gates';
+import { canProduceVerifierRequest } from '../../scripts/utils/verifier-plan';
 
 const frameworkRoot = path.resolve(__dirname, '../../..');
 const source = path.join(__dirname, '../fixtures/host-recovery-history/20261023/20261023T044016Z-fe4512/project');
@@ -167,6 +169,53 @@ const cases: Array<{ name: string; run(root: string): void }> = [
       assert.equal(issues?.rows.length ?? 0, 0);
       assert.equal(issues?.diagnostics?.length ?? 0, acceptance.length ? 1 : 0);
     }
+  } },
+  { name: '3bc1f4ed spec reports an unobservable acceptance result through the existing verified design-authority route', run(root) {
+    const acceptance = featureDir + '/acceptance.yaml';
+    const file = path.join(root, acceptance);
+    const authored = YAML.parse(fs.readFileSync(file, 'utf8'));
+    authored.source = 'derive.blueprint-acceptance@1';
+    delete authored.criteria.find((criterion: { id: string }) => criterion.id === 'AC-4').checkpoint;
+    fs.writeFileSync(file, YAML.stringify(authored));
+    const [structure] = evaluateAcceptanceFlowStructure(root, feature);
+    assert.equal(structure.status, 'FAIL');
+    assert.match(structure.details ?? '', /AC-4/);
+    const eligibility = canProduceVerifierRequest({ planMode: 'enabled', phase: 'spec', scriptVerdict: 'FAIL', checks: [structure],
+      reportValidity: 'PASS', hasBlockedCapability: false });
+    assert.equal(eligibility.kind, 'repair_diagnosis');
+    const original = fs.readFileSync(path.join(root, blueprint), 'utf8');
+    const line = original.split('\n').findIndex(row => /id:\s*AC-4\b/.test(row)) + 1;
+    assert(line > 0);
+    const report = '```yaml\n' + YAML.stringify({ verification_result: { phase: 'spec', feature, checks: [{
+      id: 'acceptance_testable', status: 'FAIL', severity: 'BLOCKER', acceptance_ids: ['AC-4'],
+      affected_files: [blueprint, acceptance],
+      details: '`' + blueprint + ':' + line + '`：结果页的可见断言能证明到达与展示，读不到原验收要求的实际持久化值。',
+      suggestion: '设计 owner 保留原结果，交能查询实际记录的应用内测试；界面结果保留设备断言。',
+    }] } }) + '```\n';
+    const proposal = readVerifierSemanticIssues(root, feature, 'spec', report, '(spec verifier)', frameworkRoot);
+    assert.equal(proposal?.rows.length, 1);
+    const body = (owner: string) => report + '\n```issue-verification\n' + YAML.stringify([{
+      issue: 'acceptance_testable', verdict: 'confirmed', repair_owner: owner,
+      evidence: 'component-blueprint.yaml acceptance.yaml | ' + proposal!.rows[0].summary,
+    }]) + '```\n';
+    const reports = featurePhaseReportsDir(root, feature, 'spec', frameworkRoot);
+    fs.mkdirSync(reports, { recursive: true });
+    fs.writeFileSync(path.join(reports, 'summary.json'), JSON.stringify({ report_validity: 'PASS' }));
+    const material = buildVerifierMaterialView({ projectRoot: root, frameworkRoot, feature, phase: 'spec', gateFingerprint: null,
+      phaseRuleText: '', templateText: '', checks: [], contextFiles: proposal!.evidenceFiles });
+    writeVerifierMaterial(reports, subject, material);
+    const publish = (owner: string) => publishFixtureVerifierEvidence({ projectRoot: root, reportsDir: reports, feature,
+      phase: 'spec', subjectId: subject, verdict: 'FAIL', reportText: body(owner) });
+    publish('spec');
+    assert.deepEqual(readVerifiedPhaseDesignFindings(root, frameworkRoot, feature, 'spec'), []);
+    publish('external');
+    const findings = readVerifiedPhaseDesignFindings(root, frameworkRoot, feature, 'spec');
+    assert.equal(findings.length, 1);
+    assert.equal(findings[0].check, 'spec:acceptance_testable');
+    assert.deepEqual(findings[0].artifacts, [blueprint]);
+    const summary = { blockers: [], blocker_count: 0, verdict: 'PASS' } as unknown as HarnessRunSummary;
+    projectDesignFindingsIntoSummary(summary, findings);
+    assert.equal(summary.blockers[0].repair_owner, 'external');
   } },
   { name: '7d9c2e41 existing material digest accepts original and identity-only CU but rejects real design change', run(root) {
     const resolvedInputs = resolveCapabilityInputs({ projectRoot: root, frameworkRoot, feature, phase: 'plan', track: 'full',

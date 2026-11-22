@@ -66,7 +66,7 @@ import { StringDecoder } from 'string_decoder';
 import * as YAML from 'yaml';
 import { randomUUID } from 'crypto';
 import { findInitialDesignRun, prepareInitialDesignRun, readInitialDesignDelivery, readInitialDesignCompletionDisposition, readInitialDesignWriteEvents, projectInitialDesignDelivery, initialDesignAuthorInstruction, initialDesignInvocationLabel, validateInitialDesignInvocation, prepareInitialDesignDraft, initialDesignRequestOptions, readInitialDesignRequest, initialRequestWriteTargets, initialDesignCandidateRejection, type InitialDesignObservation, type InitialDesignDeliveryProjection } from './utils/initial-design-delivery';
-import { readOriginalDeliveryActivity, originalDeliveryForManifest, resolveOriginalDeliveryExecution } from './utils/delivery-origin';
+import { readOriginalDeliveryActivity, readOriginalDeliveryRuns, originalDeliveryForManifest, resolveOriginalDeliveryExecution } from './utils/delivery-origin';
 import { writeCanonicalComponentClosure } from './check-component-closure';
 import { runChangeUnitProgression, buildChangeUnitGoalHandoff, buildChangeUnitGoalRequest, type ChangeUnitGoalHandoff } from './utils/change-unit-progress-loop';
 import { featureTrackDeclPath, resolveFeatureExecutionScope, prepareChangeUnitScopeInput, prepareFeatureScopeCandidate } from './utils/feature-track';
@@ -5541,7 +5541,9 @@ export class GoalPhaseRuntime {
         if (isInitialDesignManifest(prepared.manifest)) throw new Error('[initial-design] canonical CU unexpectedly entered initial design');
         child = prepared.manifest;
       }
-      if (child.delivery_origin?.feature !== manifest.feature || child.delivery_origin.run_id !== manifest.run_id) throw new Error('[initial-design] active CU belongs to another original request');
+      if (!readOriginalDeliveryRuns(projectRoot, manifest).some(run => run.manifest.feature === child.feature && run.manifest.run_id === child.run_id)) {
+        throw new Error('[initial-design] active CU belongs to another original request');
+      }
       if (liveFeatureLock(projectRoot, child.feature)) {
         childCode = 3;
         runConcluded = true;
@@ -7647,10 +7649,9 @@ Goal runner — original request design and construction runtime
           .filter(check => check.scope_revision_input);
         const proposals = proposed.flatMap(check => check.scope_revision_input ? [check.scope_revision_input] : []);
         const context = { projectRoot, frameworkRoot, feature: manifest.feature, requirement: manifest.requirement };
-        const { refreshOwnedAcceptanceScopeInput, assertScopeAcceptanceRevision } = require('./utils/feature-track') as typeof import('./utils/feature-track');
+        const { refreshOwnedAcceptanceScopeInput, assertScopeAcceptanceRevision, hasStaleContractsScopeProof } = require('./utils/feature-track') as typeof import('./utils/feature-track');
         const records = loadAuthoritativeEvents(eventsPath);
         const ownedAcceptance = refreshOwnedAcceptanceScopeInput({ ...context, runId: manifest.run_id, runDir }, previous, records);
-        if (ownedAcceptance && !userSessionRef) proposals.splice(0, proposals.length, ownedAcceptance);
         if (userSessionRef) {
           const proposal: ExecutionScopeInput = { request: { completion_target: previous.completion_target,
             requested_results: [...previous.requested_results], requested_phases: executionCompletionPhases(previous).length
@@ -7668,11 +7669,18 @@ Goal runner — original request design and construction runtime
             runId: manifest.run_id, currentDisposition: current.disposition });
           if (repair) proposals.push(repair.input);
         }
+        if (!proposals.length && ownedAcceptance) {
+          // A stale contract proof needs the official spec proposal even if generic invalidation could drop it first.
+          if (onlyCompatibleInputs && hasStaleContractsScopeProof(context, previous)) return;
+          if (onlyCompatibleInputs || !phaseCompletionProblems(current.disposition, [family]).length) proposals.push(ownedAcceptance);
+        }
         if (!proposals.length) {
           const refreshed = refreshScopeBindingInput(context, previous);
           if (refreshed) proposals.push(refreshed);
         }
-        const resolvesDefinition = previous.unresolved.some(gap => gap.owner === family);
+        const resolvesDefinition = previous.unresolved.some(gap => gap.owner === family)
+          || previous.obligations.some(fact => fact.owner_phase === family && fact.kind === 'design-context'
+            && fact.applicability === 'required' && !fact.satisfied_by?.length);
         if (!onlyCompatibleInputs && !proposals.length && completed.has(family) && (resolvesDefinition || previous.reused_phases.some(proof => proof.phase === family))) {
           const refreshed = resolveCurrentScopeView({ projectRoot, frameworkRoot, feature: manifest.feature, workflow, previous,
             currentRunId: manifest.run_id, completedPhases: completed, currentPhase: family, currentResults: current.results });
@@ -7683,12 +7691,22 @@ Goal runner — original request design and construction runtime
             ...(previous.control_edges ? { control_edges: structuredClone(previous.control_edges) } : {}),
           });
         }
-        const revision = resolveScopeRevisionProposal({ projectRoot, frameworkRoot, feature: manifest.feature, workflow, previous, proposals,
-          authorizedPhases: authorizedScopePhases(validateExecutionScope(manifest.execution_scope), workflow), completedPhases: completed,
-          currentPhase: family, currentRunId: manifest.run_id, requirement: manifest.requirement, currentResults: current.results, repairCandidates: candidates });
+        const authorizedPhases = authorizedScopePhases(validateExecutionScope(manifest.execution_scope), workflow);
+        const revision = (() => {
+          try {
+            return resolveScopeRevisionProposal({ projectRoot, frameworkRoot, feature: manifest.feature, workflow, previous, proposals,
+              authorizedPhases, completedPhases: completed, currentPhase: family, currentRunId: manifest.run_id, requirement: manifest.requirement,
+              currentResults: current.results, repairCandidates: candidates });
+          } catch (error) {
+            // The signed acceptance alone may still carry a stale plan proof. Let the current check supply its complete proposal.
+            if (onlyCompatibleInputs && ownedAcceptance && proposals[0] === ownedAcceptance) return null;
+            throw error;
+          }
+        })();
         if (!revision) return;
         assertGoalBoundary('scope_revised');
-        assertScopeAcceptanceRevision(context, previous, revision.scope, ownedAcceptance);
+        const checkedSpec = !userSessionRef && family === 'spec' && proposed[0]?.id === 'design_scope_facts' ? proposals[0] : undefined;
+        assertScopeAcceptanceRevision(context, previous, revision.scope, ownedAcceptance, checkedSpec);
         const control = readScopeRevisionUserControl(previous, revision.input, { projectRoot, feature: manifest.feature, runId: manifest.run_id, events: loadAuthoritativeEvents(eventsPath), completedPhases: completed }, revision.input.request.user_control);
         assertRevisionKeepsRequiredObligations(previous, revision.scope, control.allowedSubtractions);
         const recorded = loadScopeRevisions(loadAuthoritativeEvents(eventsPath), validateExecutionScope(manifest.execution_scope), { projectRoot, feature: manifest.feature, runId: manifest.run_id });
@@ -8576,6 +8594,7 @@ Goal runner — original request design and construction runtime
               ...Object.keys(questionDigests).map(issue => '| ' + issue + ' | ' + JSON.stringify(questions.filter(question => question.issue === issue).map(question => question.detail)).replace(/\|/g, '&#124;') + ' |'),
               ...conflictInstructions,
               'acceptance_test_strength_ 裁决当前源码的断言强度。evidence 用反引号包裹的仓根相对 path:line 引用测试及实际调用的生产路径，写出准确 it() 名和断言的数据来源。每条同时提供 production_paths 数组，逐个列出该结论实际依赖的已调用生产源码仓根相对路径。仅替身等从未调用生产代码时可给空数组。逐项区分替身和生产真值。refuted 表示确有对应实际断言；confirmed 表示不足，说明具体不足和原修复对象；unclear 表示连当前源码都不能裁定。尚未执行时仍按源码判断断言强度，另如实说明缺执行；框架独立核对执行原件。',
+              '验收承诺实际存储时，沿具名用例核对实际业务入口、生产存储驱动、隔离库及真实查询断言。对幂等结果，核对重复操作后的行数和记录身份。用例标签、内存替身、SQL 文本和结果页各只证明实际观察到的内容。',
               ...(questions.some(question => (question.detail as { tests?: Array<{ candidate?: true }> }).tests?.some(test => test.candidate))
                 ? ['candidate: true 的 it() 来自当前共享 DAG。逐条核对本验收实际要求与候选断言，refuted 只点名确能证明该验收的完整 it() 名。']
                 : []),

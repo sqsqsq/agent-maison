@@ -87,7 +87,7 @@ import { findInitialDesignRun, InitialDesignBirthBusy, prepareInitialDesignRun, 
 import { unresolvedPhaseWrites } from './utils/phase-write-boundary';
 import type { ProviderRef } from './utils/types';
 import { applyManifestCliOverrides, validateManifestCliOverrides, resolveVisualProviderCliSelection, resolveFinalVisualProviderPin, resolveFinalModelPin } from './utils/goal-manifest-cli';
-import { assertCanonicalDeliveryChild, originalDeliveryForManifest, resolveOriginalDeliveryExecution } from './utils/delivery-origin';
+import { assertCanonicalDeliveryChild, originalDeliveryForManifest, readOriginalDeliveryRuns, resolveOriginalDeliveryExecution } from './utils/delivery-origin';
 import { readRequestIntake, type RequestIntake } from './utils/request-intake';
 import { DEFAULT_GOAL_WAIT_TIMEOUT_MS, goalStatusWaitCommand } from './utils/goal-status-wait';
 export type { GoalModeInSessionOptions } from './utils/goal-phase-runtime';
@@ -579,8 +579,10 @@ function resolveOriginalDeliveryRequest(projectRoot: string, original: InitialDe
   const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as { context?: { feature?: string; runId?: string; runDir?: string } };
   if (!raw.context?.feature || !raw.context.runId) throw new Error('[session-handoff] invalid delivery request');
   const current = loadGoalRunManifestFromRun(projectRoot, raw.context.runId, { feature: raw.context.feature });
-  if (!(current.feature === original.feature && current.run_id === original.run_id)
-    && (current.delivery_origin?.feature !== original.feature || current.delivery_origin.run_id !== original.run_id)) throw new Error('[session-handoff] request belongs to another original delivery');
+  const inDelivery = isInitialDesignManifest(current)
+    ? current.feature === original.feature && current.run_id === original.run_id
+    : readOriginalDeliveryRuns(projectRoot, original).some(run => run.manifest.feature === current.feature && run.manifest.run_id === current.run_id);
+  if (!inDelivery) throw new Error('[session-handoff] request belongs to another original delivery');
   if (!isInitialDesignManifest(current)) assertCanonicalDeliveryChild(projectRoot, current.feature, original);
   const runDir = path.resolve(projectRoot, current.report_dir);
   if (path.resolve(raw.context.runDir ?? '') !== runDir) throw new Error('[session-handoff] delivery request location mismatch');
