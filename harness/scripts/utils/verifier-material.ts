@@ -102,7 +102,7 @@ export function collectTestStrengthContext(input: CurrentAcceptanceEvidenceInput
     const applicable = [...(spec.acceptance?.criteria ?? []), ...(spec.acceptance?.boundaries ?? [])].filter(item => item.ut_layer === 'unit' || item.ut_layer === 'both');
     if (!tests.length && !applicable.length && input.resolvedInputs?.context.obligations['unit-evidence'] !== 'required') return [];
     out.push({ label: '(test strength and applicable acceptance)', content: JSON.stringify({ acceptance: applicable, mappings: coverage?.feature === input.feature ? coverage.mappings : [],
-      guidance: '独立核验逐项读取真实用例、断言、失败路径与mock边界；标签/映射/工具PASS不是充分性结论。缺执行原件保留未知；设计里程碑不以尚未执行的未来测试冒充设计失败。' }, null, 2) });
+      guidance: '本轮检查项或已签发问题涉及这些验收时，核对真实用例、断言、失败路径与mock边界。标签/映射/工具PASS不足以证明断言够强。缺执行原件保留未知；设计里程碑不以尚未执行的未来测试冒充设计失败。' }, null, 2) });
     const sources = partitionConstructionFiles(input.projectRoot, profile.profileDir, { ...contracts, files: planned }).implementation;
     for (const file of [...new Set([...tests, ...sources])]) {
       const abs = path.resolve(input.projectRoot, file);
@@ -145,13 +145,16 @@ export function collectCurrentAcceptanceEvidence(input: CurrentAcceptanceEvidenc
     const { resolveCurrentHapSha256Full } = require('./actionable-evidence') as typeof import('./actionable-evidence');
     const reports = featurePhaseReportsDir(input.projectRoot, input.feature, 'testing', input.frameworkRoot);
     const pending = readPendingTestingRetests({ ...input, runId, currentHapSha256: resolveCurrentHapSha256Full(input.projectRoot, reports) });
-    if (pending.length) entries.push({ label: '(original failed behaviors awaiting equivalent retest)', content: JSON.stringify(pending.map(finding => ({
+    // The Testing attestation consumes these retest verdicts. Other stages may cite the same bound originals in their own findings.
+    if (input.phase === 'testing' && pending.length) entries.push({ label: '(original failed behaviors awaiting equivalent retest)', content: JSON.stringify(pending.map(finding => ({
       issue: `testing_failure_routing_${failureRouteSlug(finding.route.caseId, finding.route.stepIndex)}`,
       original_failure: finding.route, behavior: finding.behavior,
       trace: toPosixRel(input.projectRoot, finding.tracePath), plan: toPosixRel(input.projectRoot, finding.derivedPlanPath),
     })), null, 2) + '\n原发现按行为和原件定位，不按CR序号或用例名称等同。代码已改与行为已复验分别报告；删除、改号、换层、跳过或纯逻辑UT不能证明实际UI生命周期已修。用适用的新原生证据覆盖原触发与预期；如修正测试而换步骤，在原issue-verification逐条给refuted/confirmed/unclear并列原失败与新证据，不用摘要PASS代替。' });
     for (const finding of pending) for (const file of [finding.tracePath, finding.derivedPlanPath, ...finding.candidateEvidence]) entries.push({
-      label: toPosixRel(input.projectRoot, file), kind: 'path', content: 'Read原失败与适用候选复验的完整触发/预期；原失败仅为历史依据，新用例与断言是否等价须独立核实。' });
+      label: toPosixRel(input.projectRoot, file), kind: 'path', content: input.phase === 'testing'
+        ? 'Read原失败与适用候选复验的完整触发/预期；原失败仅为历史依据，新用例与断言是否等价须独立核实。'
+        : '本轮检查项或已签发问题引用时，Read原失败与适用候选复验的完整触发/预期。' });
   }
   return entries.length ? [{ label: '(current acceptance evidence)', content: '本次材料选择已完成；下列源码与真实原件供独立核验，缺执行仍保持未知。' },
     ...new Map(entries.map(entry => [entry.label + '\0' + entry.content, entry])).values()] : [];
@@ -727,7 +730,7 @@ export function independentVerificationContext(input: {
   if (Array.isArray(input.actualDiff)) out.push(...input.actualDiff);
   out.push(...(input.currentEvidence ?? []), ...(input.declineContext ?? []));
   if (!input.designQuestioning) out.push({ label: '(independent acceptance and refusal review)', content:
-    '核验验收→用例→真实断言、失败路径及mock与产品真值的关系。来源/覆盖标签和工具绿灯不证明断言充分。对结构化拒修逐项核原依据与反证，以原issue-verification返回confirmed/refuted/unclear；拒修本身不关闭问题。正文中的实质否定不能被总结PASS覆盖。' });
+    '围绕本轮检查项及已签发问题，核验相应验收、真实断言、失败路径及mock与产品真值的关系。来源/覆盖标签和工具绿灯不证明断言充分。对结构化拒修逐项核原依据与反证，以原issue-verification返回confirmed/refuted/unclear；拒修本身不关闭问题。正文中的实质否定不能被总结PASS覆盖。' });
   if (input.testStrengthCheck?.affected_files?.length) out.push({ label: '(current test strength verification)', content: JSON.stringify(input.testStrengthCheck, null, 2)
     + '\n在原issue-verification块以issue=coding_existing_test_preserved返回逐项裁决，evidence须包含全部当前文件与完整原details（可用YAML block scalar保留多行）。confirmed表示当前删弱/跳过致原验收不足；refuted表示已核实合理加强或真实重签后的期望且覆盖充分，不否认原文本差异；unclear/缺原件保留未知。即使文本原样保留，也须核外部fixture/data/mock是否弱化真值。' });
   return out;

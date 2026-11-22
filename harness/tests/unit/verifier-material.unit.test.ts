@@ -622,6 +622,40 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
+    name: '5ea729d4 only Testing receives device retest verdict requests while Spec keeps the bound originals',
+    run: () => {
+      const root = mkProject();
+      const frameworkRoot = path.resolve(__dirname, '../../..');
+      const retest = require('../../scripts/utils/testing-trace-gates') as typeof import('../../scripts/utils/testing-trace-gates');
+      const readPending = retest.readPendingTestingRetests;
+      try {
+        const trace = put(root, 'device/original-trace.json', 'recorded device failure');
+        const plan = put(root, 'device/original-plan.md', 'steps and expected result');
+        const candidate = put(root, 'device/retest-trace.json', 'recorded retest counterevidence');
+        retest.readPendingTestingRetests = () => [{
+          route: { caseId: 'TC-001', stepIndex: 4 } as ReturnType<typeof readPending>[number]['route'],
+          tracePath: trace, derivedPlanPath: plan, behavior: 'the original behavior still needs independent evidence',
+          acceptance: [], candidateEvidence: [candidate], reviewCandidates: [],
+        }];
+        for (const phase of ['spec', 'testing'] as const) {
+          const input = { projectRoot: root, frameworkRoot, feature: FEATURE, phase, runId: 'existing-run' };
+          const files = collectCurrentAcceptanceEvidence(input);
+          const prompt = assembleAIPrompt(path.join(frameworkRoot, 'harness'), root, phase, FEATURE, files, '{}', '',
+            undefined, undefined, frameworkRoot, { templateText: '{context_files}' });
+          const material = buildVerifierMaterialView({ ...input, gateFingerprint: null, phaseRuleText: '', templateText: '', checks: [], contextFiles: files });
+          for (const file of [trace, plan, candidate]) {
+            const relative = path.relative(root, file).replace(/\\/g, '/');
+            assert(prompt.includes(relative) && material.files.some(entry => entry.path === relative),
+              `${phase}: the existing trace, plan and retest counterevidence must remain navigable and bound`);
+          }
+          assert.equal(prompt.includes('testing_failure_routing_TC-001_s4'), phase === 'testing');
+          assert.equal(prompt.includes('在原issue-verification逐条给refuted/confirmed/unclear'), phase === 'testing');
+          assert.equal(prompt.includes('the original behavior still needs independent evidence'), phase === 'testing');
+        }
+      } finally { retest.readPendingTestingRetests = readPending; fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+    },
+  },
+  {
     name: 'P2 C incremental verification receives public originals, open findings and actual dependency changes without author-private state',
     run: () => {
       const root = mkProject();

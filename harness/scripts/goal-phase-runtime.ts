@@ -57,6 +57,17 @@ export function restoreStageVerifierReport(runDir: string, request: VerifierRequ
   } catch { /* Recovery can reuse a readable original; the current verification gap remains otherwise. */ }
   return false;
 }
+
+export function renderStageVerifierRepairInstruction(input: {
+  requestText: string; reportRel: string; diagnosis: string; itemFocus: string; formatFeedback: string;
+}): string {
+  const { requestText, reportRel, diagnosis, itemFocus, formatFeedback } = input;
+  return itemFocus + '读取 request.prompt_path，按已签发的原件独立核验。若本指令开头列出本轮复核范围，以该范围为准。'
+    + '跨阶段原件用于核对本阶段检查项和已签发问题的依据及反证，逐条裁决限于这些问题。'
+    + `完整回复原样写入 ${reportRel}。不得修改实现、验收或正式机器结果。\n`
+    + [diagnosis, formatFeedback, requestText].filter(Boolean).join('\n');
+}
+
 import { resumeIssuedSessionOwner } from './utils/goal-run-control';
 import { buildGuardianInvocation, resolveAgentCommand } from './utils/agent-containment';
 import { resolveTaskAutomationPolicy } from './utils/runtime-policy';
@@ -8722,20 +8733,22 @@ Goal runner — original request design and construction runtime
           const request = parseVerifierRequest(requestText);
           if (request && request.feature === manifest.feature && request.phase === family && request.subject_id === pendingSubject
             && pendingReportPath === verifierReportMdPath(featurePhaseReportsDir(projectRoot, manifest.feature, family, frameworkRoot), pendingSubject)) {
-            const hasPendingVerifier = (pending: typeof problems) => pending.some(problem => problem.id === 'attestation_present'
-              && problem.action === 'verify' && problem.files?.some(file => path.resolve(projectRoot, file) === pendingReportPath));
+            const findPendingVerifier = (pending: typeof problems) => pending.find(problem => problem.phase === request.phase
+              && problem.id === 'attestation_present' && problem.action === 'verify'
+              && problem.files?.some(file => path.resolve(projectRoot, file) === pendingReportPath));
             const qualification = { projectRoot, frameworkRoot, feature: manifest.feature, phase: family, runId: manifest.run_id,
               currentSubject: pendingSubject, resolvedInputs: boundVerifierInputs ?? bound.resolvedInputs, phaseIssues: bound.phaseIssues,
               unitEvidenceRequired: family === 'ut' && current.facts.acceptanceStrength?.some(outcome => 'acceptance' in outcome),
               diagnosisRequired: summary.readiness_signals?.some(signal => signal.id === 'verifier_repair_diagnosis' && signal.status === 'incomplete'),
-              findings: problems.filter(problem => problem.action === 'verify' && problem.id.startsWith('open_finding:'))
+              findings: problems.filter(problem => (problem.source_phase ?? problem.phase) === request.phase
+                && problem.action === 'verify' && problem.id.startsWith('open_finding:'))
                 .map(problem => ({ id: problem.id.slice('open_finding:'.length), files: problem.files })) };
-            let needsVerifier = hasPendingVerifier(problems);
-            if (needsVerifier && restoreStageVerifierReport(runDir, request, pendingReportPath, pendingReport, qualification)) {
+            let pendingVerifier = findPendingVerifier(problems);
+            if (pendingVerifier && restoreStageVerifierReport(runDir, request, pendingReportPath, pendingReport, qualification)) {
               current = readWork(boundVerifierInputs);
-              needsVerifier = hasPendingVerifier(phaseCompletionProblems(current.disposition, [family]));
+              pendingVerifier = findPendingVerifier(phaseCompletionProblems(current.disposition, [family]));
             }
-            if (needsVerifier) {
+            if (pendingVerifier) {
               const verifierHistory = loadAuthoritativeEvents(eventsPath);
               const formatRepair = verifierHistory.some(start => {
                 if (start.type !== 'agent_invoke_start' || !start.invoke_id || start.phase !== `${family}-verifier-format-repair`) return false;
@@ -8762,7 +8775,8 @@ Goal runner — original request design and construction runtime
                   itemFocus = renderer.renderVerifierItemReviewNotice(projectRoot, { ...itemReview, currentReportPath: pendingReport });
                 }
               }
-              const instruction = `${itemFocus}独立核验当前原件；读取 request.prompt_path。本次补核范围以当前指令为准，完整回复原样写入 ${pendingReport}。不得修改实现、验收或正式机器结果。\n${renderCurrentDisposition(verificationWork.disposition)}\n${formatFeedback ? formatFeedback + '\n' : ''}${requestText}`;
+              const instruction = renderStageVerifierRepairInstruction({ requestText, reportRel: pendingReport,
+                diagnosis: pendingVerifier.detail, itemFocus, formatFeedback });
               const invoked = await invokeWork(`${family}-verifier-format-repair`, instruction,
                 pendingReportPath, 'verifier_format_repair', continuationAvailable(), { material: { purpose: 'verifier_format_repair',
                   segments: [dispositionFacts(verificationWork.disposition, [family]), canonicalRequestInput(request), unfinished, formatFeedback] }, evaluation: verificationWork.evaluation });
@@ -8781,7 +8795,7 @@ Goal runner — original request design and construction runtime
             reviseCurrentScope(family);
             if (halted) break;
             if (consumeCompletedBoundaryHandoff()) return 0;
-            if (needsVerifier || !continuationAvailable()) continue;
+            if (pendingVerifier || !continuationAvailable()) continue;
             current = readWork();
           }
         }

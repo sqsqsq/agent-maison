@@ -7354,6 +7354,8 @@ for (const variant of ['corrected', 'still-bad', 'refuted', 'reentered', 'waitin
           const request = parseVerifierRequest(ctx.prompt.slice(ctx.prompt.lastIndexOf('\n{') + 1));
           assert(request?.phase === 'review' && request.subject_id === subject, 'the actual current verifier request must reach its independent transport');
           assert(ctx.prompt.replace(/\r\n/g, '\n').includes(renderVerifierRequest(request!).trimEnd()), 'independent transport must receive the complete current request');
+          assert(!/^\[(?:spec|plan|coding|review|ut|testing)\] .*；动作=/m.test(ctx.prompt),
+            'the stage verifier must not receive the work unit routing queue');
           const promptFile = path.resolve(root, request!.prompt_path);
           const promptBytes = fs.readFileSync(promptFile);
           assert(createHash('sha256').update(promptBytes).digest('hex') === request!.prompt_sha256, 'independent transport must read the actual bound prompt');
@@ -7633,13 +7635,21 @@ for (const iteration of [26, 28] as const) test(`5ea729d4 S2 i${iteration} produ
         assert(ctx.phase === 'plan-verifier-format-repair', 'the real runtime must dispatch a stage verifier');
         transportCalls++;
         const bound = parseVerifierRequestFromInstruction(ctx.prompt);
-        assert(bound?.subject_id === subject && bound.phase === 'plan', 'the verifier must receive the actual issued request');
+        if (!bound) throw new Error('the verifier must receive the actual issued request');
+        assert(bound.subject_id === subject && bound.phase === 'plan', 'the verifier must receive the actual issued subject');
         issuedRequest = bound;
         const original = executionRequestForInvoke(featureFilePath(root, FEATURE, `goal-runs/${ctx.runId}`), `${ctx.phase}-${ctx.goalAttemptId}`);
         const itemReview = typeof readVerifierItemReviewPrompt === 'function' ? readVerifierItemReviewPrompt(original?.request.context.instruction ?? '') : null;
         if (iteration === 26) {
           assert(itemReview?.reviewIds.join(',') === 'acceptance_to_interface',
             `i26 must supplement the specific inadequately supported finding; scope=${JSON.stringify(itemReview?.reviewIds)}`);
+          assert(ctx.prompt.includes('当前独立核验正文仍待补核：acceptance_to_interface'), 'the actual pending diagnosis must reach the verifier');
+          assert(!/^\[(?:spec|plan|coding|review|ut|testing)\] .*；动作=/m.test(ctx.prompt),
+            'stage recovery must not append the work unit routing queue to the scoped prompt');
+          const boundPrompt = fs.readFileSync(path.resolve(root, bound.prompt_path));
+          assert(createHash('sha256').update(boundPrompt).digest('hex') === bound.prompt_sha256
+            && boundPrompt.toString('utf8').includes('BankCardOpeningService.ets'),
+            'the selected request still carries the bound implementation evidence for the Plan finding');
         }
         const rows = itemReview?.reusedRows.length ? readVerifierSummaryRows(done) : null;
         const lines = done.split(/\r?\n/);
