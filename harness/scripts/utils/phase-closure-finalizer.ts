@@ -47,7 +47,8 @@ import {
   writeScopeRevisionInputToScriptReport,
   type RepairCandidateCheckInput,
 } from './repair-candidates';
-import { deriveVerifierClosureRecord, loadVerifierReportTextOrNull } from './verifier-evidence';
+import { deriveVerifierClosureRecord, loadCurrentVerifierEvidenceForSubject, verdictReportTextWithOriginals } from './verifier-evidence';
+import { collectCurrentAcceptanceEvidence } from './verifier-material';
 import {
   SUMMARY_ASSURANCE_SCHEMA_VERSIONS,
   SUMMARY_SCHEMA_VERSION_CURRENT,
@@ -633,7 +634,7 @@ export function hasStagedPhaseClosure(input: {
  *
  * 纪律：
  *   · 复用**同一个**共享实现 `buildSummaryRepairCandidates`，不新写一份组装逻辑；
- *   · verifier 正文取自 `loadVerifierReportTextOrNull`，此刻 summary 已是本轮定稿值，
+ *   · verifier 正文取自当前 subject 或同材料报告，此刻 summary 已是本轮定稿值，
  *     loader 按 summary 现值锚定，读到的必然是刚验真通过的那一份；
  *   · 读不到 script-report / 组装抛错 → 保留 base 已有候选，绝不清空（best-effort 事实层）。
  */
@@ -653,16 +654,24 @@ export function readCurrentPhaseRepairCandidates(
       checks?: Array<Record<string, unknown>>;
     };
     const checks = Array.isArray(scriptReport.checks) ? scriptReport.checks : [];
-    const verifierReportText = loadVerifierReportTextOrNull(
-      opts.projectRoot,
-      opts.feature,
-      String(opts.phase),
-      { frameworkRoot: opts.frameworkRoot, subjectId: base.verifier_subject_id, resolvedInputs: opts.resolvedInputs },
-    );
+    const phase = String(opts.phase);
+    const runId = opts.goalRunId?.trim() || base.run_id?.trim();
+    const subjectId = base.verifier_subject_id ?? null;
+    const loaded = subjectId ? loadCurrentVerifierEvidenceForSubject(opts.projectRoot, opts.feature, phase, subjectId,
+      { frameworkRoot: opts.frameworkRoot, resolvedInputs: opts.resolvedInputs }) : null;
+    const verifierReportText = loaded?.ok ? verdictReportTextWithOriginals({ ...opts, phase, runId,
+      currentSubject: subjectId ?? undefined }, loaded.evidence) : null;
     // verifier 无证据（能力 disabled，或该阶段本就不产 verifier 候选）→ 维持 base。
     if (!verifierReportText && opts.phase !== 'review') return base.repair_candidates;
-    const phaseIssues = phaseIssuesForVerifierSubject(opts.projectRoot, opts.feature, String(opts.phase),
-      base.verifier_subject_id ?? null, opts.frameworkRoot, undefined, opts.goalRunId?.trim() || base.run_id?.trim());
+    const currentEvidence = loaded?.ok && loaded.evidence.subject_id !== subjectId && (phase === 'spec' || phase === 'plan') ? (() => {
+      const phaseIssues = readPhaseRepairIssues(opts.projectRoot, opts.feature, phase,
+        { frameworkRoot: opts.frameworkRoot, subjectId: loaded.evidence.subject_id, runId });
+      return { phaseIssues, authorityReaders: opts.authorityReaders, acceptanceEvidence: collectCurrentAcceptanceEvidence({
+        ...opts, phase, subjectId, runId, phaseIssues,
+      }) };
+    })() : undefined;
+    const phaseIssues = phaseIssuesForVerifierSubject(opts.projectRoot, opts.feature, phase,
+      subjectId, opts.frameworkRoot, undefined, runId, currentEvidence);
     const reviewReportText = opts.phase === 'review' ? phaseIssues?.reportText ?? null : null;
     // 字段名必须是 `failure_kind`——`buildSummaryRepairCandidates` 的输入契约收的是它，
     // 内部才投影成 `classification`。这里若直接写 `classification`，机器归因会被**静默丢弃**

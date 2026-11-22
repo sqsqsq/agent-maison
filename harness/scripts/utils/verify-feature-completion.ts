@@ -25,7 +25,7 @@ import type { WorkflowSpec } from '../../workflow-loader';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
-import { validateExecutionScope, executionScopeFingerprint, executionCompletionPhases, isExecutionSourceBasis, isEffectivePhasePass, scopeProofHistory, phaseEvidenceIsCurrent, acceptsDefinitionInputProof, type ExecutionScope } from './execution-scope';
+import { validateExecutionScope, executionScopeFingerprint, executionCompletionPhases, isExecutionSourceBasis, isEffectivePhasePass, scopeProofHistory, phaseEvidenceIsCurrent, acceptsDefinitionInputProof, type ExecutionScope, type ScopeHistoryEvent } from './execution-scope';
 import { loadGoalManifestFromRun, manifestIdentityFieldDigest } from './goal-manifest';
 import { assertGoalRunAttachable, loadFrozenExecutionScope, loadEffectiveExecutionScope, resolveEffectiveScopeSource, loadScopeRevisions, loadAuthoritativeRunEvents, eventsWithScopeRevocations, applyScopeRevisions, identityBaseline, normalizeRelatedPath } from './goal-run-creation';
 import { requiredSummaryCheckGaps, isRequiredCheckGap, resolveCurrentDisposition, phaseCompletionProblems, type CurrentDisposition, type CurrentDispositionInput, type CurrentDispositionAxisFact, type CurrentDispositionPhaseFact, type DispositionCheck } from './check-disposition';
@@ -170,11 +170,14 @@ export function executionScopeEvidenceFindings(projectRoot: string, feature: str
           const source = loadGoalManifestFromRun(projectRoot, ref.run_id, { feature });
           assertGoalRunAttachable(projectRoot, source);
           const isCurrentRun = currentRunId !== undefined && ref.run_id === currentRunId;
-          const terminal = resolveEffectiveRunEnd(loadEventsJsonl(path.join(projectRoot, source.report_dir, 'events.jsonl')));
+          const sourceEvents = loadEventsJsonl(path.join(projectRoot, source.report_dir, 'events.jsonl'));
+          const terminal = resolveEffectiveRunEnd(sourceEvents);
           const terminalOk = isCurrentRun || (!!terminal && ['CHAIN_SLICE_COMPLETED', 'COMPLETED'].includes(String(terminal.status)));
           const fresh = recomputePhaseEvidenceStaleness(projectRoot, feature, [ref.phase], freshnessOpts)[0];
           const identity = resolvePhaseRunIds(projectRoot, feature, [ref.phase]);
-          if (!terminalOk || identity.runIds[ref.phase] !== ref.run_id || !evidence?.integrityOk || evidence.manifest.aggregate_sha256 !== ref.evidence_manifest_aggregate || fresh.verdict !== 'fresh') push(obligation.id, 'reused evidence invalid', 'evidence');
+          const producer = identity.runIds[ref.phase] ?? (isCurrentRun
+            ? currentScopeProofRunId(projectRoot, feature, ref.phase, ref.run_id, sourceEvents, currentPhasePass) : undefined);
+          if (!terminalOk || producer !== ref.run_id || !evidence?.integrityOk || evidence.manifest.aggregate_sha256 !== ref.evidence_manifest_aggregate || fresh.verdict !== 'fresh') push(obligation.id, 'reused evidence invalid', 'evidence');
         } catch { push(obligation.id, 'reused run missing/corrupt', 'evidence'); }
       }
     }
@@ -350,6 +353,15 @@ function readSummaryLattice(
   }
 }
 
+/** An older phase proof may lack an invocation start, but still needs evidence of the current producer. */
+export function currentScopeProofRunId(projectRoot: string, feature: string, phase: string, currentRunId: string,
+  events: readonly ScopeHistoryEvent[], currentPhasePass?: string): string | undefined {
+  const declared = asRecord(readSummaryLattice(projectRoot, feature, phase).raw)?.run_id;
+  if (declared !== undefined) return declared === currentRunId ? currentRunId : undefined;
+  const acceptedHere = currentPhasePass === phase || events.some(event => event.phase === phase && isEffectivePhasePass(event));
+  return acceptedHere ? currentRunId : undefined;
+}
+
 export interface CleanPassOptions {
   /** Same synchronous evidence read, supplied by the gate when it has just collected it. */
   actionableEvidence?: ActionableCollectResult;
@@ -394,14 +406,33 @@ export function applicableCheckFamilies(scope: ExecutionScope | undefined, expli
 }
 
 /** A changed reviewed input needs a fresh request; a newly arrived reply does not rerun its checker. */
-export function hasChangedVerifierMaterialInputs(opts: Pick<CleanPassOptions, 'projectRoot' | 'feature' | 'frameworkRoot' | 'authorityReaders'> & {
-  phase: string; summary: unknown;
+export function hasChangedVerifierMaterialInputs(opts: Pick<CleanPassOptions,
+  'projectRoot' | 'feature' | 'frameworkRoot' | 'authorityReaders' | 'resolvedInputs' | 'runId'> & {
+  phase: string; summary: unknown; factsContext?: import('./context-facts').FactsInvocationContext;
+  /** Disabled verifier policy can retain an old veto; only its reproducible binding is compared here. */
+  checkFiles?: boolean;
 }): boolean {
-  const subject = asRecord(opts.summary)?.verifier_subject_id;
-  if (typeof subject !== 'string') return false;
+  const summary = asRecord(opts.summary);
+  const subject = summary?.verifier_subject_id;
   const material = require('./verifier-material') as typeof import('./verifier-material');
-  const view = material.readVerifierMaterialOrNull(featurePhaseReportsDir(opts.projectRoot, opts.feature, opts.phase, opts.frameworkRoot), subject);
-  return !!view && view.files.some(file => !material.verifierMaterialFileMatchesCurrent({ ...opts, material: view, file: file.path }));
+  const view = typeof subject === 'string'
+    ? material.readVerifierMaterialOrNull(featurePhaseReportsDir(opts.projectRoot, opts.feature, opts.phase, opts.frameworkRoot), subject) : null;
+  const priorPreimageGap = Array.isArray(summary?.blockers) && summary.blockers.some((row: unknown) => {
+    const blocker = asRecord(row);
+    return blocker?.id === 'runner_assemble_ai_prompt_failed' && blocker.classification === 'verification_evidence_gap';
+  });
+  if (!view && !priorPreimageGap) return false;
+  if (priorPreimageGap && opts.checkFiles === false) return true;
+  try {
+    const bindings = material.verifierInputBindingsSha256(opts);
+    if (!view) return priorPreimageGap;
+    if (view.input_bindings_sha256 !== bindings && !material.verifierMaterialsEquivalent({ ...view, files: [] },
+      { ...view, schema: material.VERIFIER_MATERIAL_SCHEMA, files: [], input_bindings_sha256: bindings }, opts.projectRoot, opts.resolvedInputs)) return true;
+  } catch (error) {
+    if (!(error instanceof material.VerifierPreimagesUnavailable)) throw error;
+    return !!view;
+  }
+  return opts.checkFiles !== false && view.files.some(file => !material.verifierMaterialFileMatchesCurrent({ ...opts, material: view, file: file.path }));
 }
 
 /** An existing manifest binds completed raw results even before any phase is closed. */
@@ -433,7 +464,7 @@ export function readReusableCheckResult(opts: Pick<CleanPassOptions, 'projectRoo
       const inputs = new Set(loaded.manifest.inputs.map(entry => path.resolve(opts.projectRoot, entry.path)));
       if (current.dependencies.some(dep => !inputs.has(path.resolve(opts.projectRoot, dep.path)))) return null;
     }
-    return { phase: opts.phase, summary, checks: report.checks };
+    return { phase: opts.phase, summary, checks: report.checks, ...(opts.resolvedInputs ? { resolvedInputs: opts.resolvedInputs } : {}) };
   } catch { return null; }
 }
 
@@ -1060,6 +1091,12 @@ export function readCurrentDispositionInput(opts: CleanPassOptions | CurrentRequ
   const responsibility = { projectRoot, feature, frameworkRoot: opts.frameworkRoot ?? path.resolve(__dirname, '../../..'),
     runId: opts.runId, workflow: opts.workflow, executionScope: opts.executionScope, authorityReaders: opts.authorityReaders };
   const independent = new Map<string, import('./verifier-evidence').VerifierEvidence | null>();
+  const independentBody = (phase: string, subject: string, evidence: import('./verifier-evidence').VerifierEvidence): string => {
+    const verifier = require('./verifier-evidence') as typeof import('./verifier-evidence');
+    return verifier.verdictReportTextWithOriginals({ projectRoot, feature, phase, frameworkRoot: opts.frameworkRoot,
+      runId: opts.runId, currentSubject: subject, resolvedInputs: opts.currentResults?.find(result => result.phase === phase)?.resolvedInputs
+        ?? (opts.resolvedInputs?.phase === phase ? opts.resolvedInputs : undefined) }, evidence);
+  };
   const independentEvidence = (phase: string, subject: string): import('./verifier-evidence').VerifierEvidence | null => {
     const key = `${phase}:${subject}`;
     if (independent.has(key)) return independent.get(key)!;
@@ -1067,9 +1104,8 @@ export function readCurrentDispositionInput(opts: CleanPassOptions | CurrentRequ
     const resolvedInputs = opts.currentResults?.find(result => result.phase === phase)?.resolvedInputs
       ?? (opts.resolvedInputs?.phase === phase ? opts.resolvedInputs : undefined);
     const options = { frameworkRoot: opts.frameworkRoot, resolvedInputs };
-    const loaded = verifier.loadVerifierEvidenceForSubject(projectRoot, feature, phase, subject, options);
-    let result = loaded.ok ? loaded.evidence : loaded.code === 'report_missing'
-      ? verifier.findSameMaterialVerifierEvidence(projectRoot, feature, phase, subject, options) : null;
+    const loaded = verifier.loadCurrentVerifierEvidenceForSubject(projectRoot, feature, phase, subject, options);
+    let result = loaded.ok ? loaded.evidence : null;
     if (result) {
       const material = require('./verifier-material') as typeof import('./verifier-material');
       const view = material.readVerifierMaterialOrNull(featurePhaseReportsDir(projectRoot, feature, phase, opts.frameworkRoot), subject);
@@ -1330,8 +1366,8 @@ export function readCurrentDispositionInput(opts: CleanPassOptions | CurrentRequ
       }
     }
     const currentVerification = subject ? independentEvidence(source, subject) : null;
-    const responses = currentVerification
-      ? (require('./repair-candidates') as typeof import('./repair-candidates')).parseIssueVerificationBlock(currentVerification.report_text).entries : [];
+    const responses = currentVerification && subject
+      ? (require('./repair-candidates') as typeof import('./repair-candidates')).parseIssueVerificationBlock(independentBody(source, subject, currentVerification)).entries : [];
     return uniqueFindingObjects([...registered, ...diagnostics]).map(finding => {
       const response = responses.find(entry => entry.issue === finding.id && !entry.invalid_reason && entry.evidence?.trim());
       return { ...finding, source_phase: source, ...(response ? { detail: `${finding.detail}；当前独立核验=${response.verdict}；依据原文：${response.evidence}` } : {}) };
@@ -1391,7 +1427,7 @@ export function readCurrentDispositionInput(opts: CleanPassOptions | CurrentRequ
       if (evidence !== undefined) check = { ...check, evidence };
       if (check.id === 'coding_existing_test_preserved' && check.affected_files?.length) {
         const { testStrengthVerification, independentReviewTestStrength } = require('./repair-candidates') as typeof import('./repair-candidates');
-        const verification = verified ? testStrengthVerification({ check, verifierReportText: verified.report_text, verifierSubjectCurrent: true })
+        const verification = verified && subject ? testStrengthVerification({ check, verifierReportText: independentBody(phase, subject, verified), verifierSubjectCurrent: true })
           : independentReviewTestStrength({ projectRoot, feature, check,
             runId: opts.runId ?? (typeof asRecord(s.raw)?.run_id === 'string' ? asRecord(s.raw)!.run_id as string : undefined) });
         return { ...check, verification: verification ?? undefined,
@@ -1465,13 +1501,14 @@ export function readCurrentDispositionInput(opts: CleanPassOptions | CurrentRequ
       const summary = asRecord(s.raw);
       const report = typeof summary?.verifier_report === 'string' ? summary.verifier_report : undefined;
       const signals = summary?.readiness_signals;
-      const diagnosisRequired = Array.isArray(signals) && signals.some(signal =>
+      const diagnosisRequired = phase === 'spec' || phase === 'plan' || Array.isArray(signals) && signals.some(signal =>
         asRecord(signal)?.id === 'verifier_repair_diagnosis' && asRecord(signal)?.status === 'incomplete');
-      const repairs = require('./repair-candidates') as typeof import('./repair-candidates');
-      // The writer owns applicability; a newly arrived reply satisfies the same body validator without another tool run.
-      const unreadable = verified && diagnosisRequired ? repairs.findUnreadableDiagnosisChecks(phase, verified.report_text,
-        repairs.buildCurrentVerifierDiagnosisContext({ projectRoot, feature, phase, frameworkRoot: opts.frameworkRoot,
-          runId: opts.runId, subjectId: subject, phaseIssues: current?.phaseIssues })) : [];
+      const verifier = require('./verifier-evidence') as typeof import('./verifier-evidence');
+      const unreadable = verified ? verifier.verifierReportItemGaps({ projectRoot, feature, phase, frameworkRoot: opts.frameworkRoot,
+        runId: opts.runId, currentSubject: subject, phaseIssues: current?.phaseIssues, diagnosisRequired,
+        resolvedInputs: current?.resolvedInputs ?? (opts.resolvedInputs?.phase === phase ? opts.resolvedInputs : undefined),
+        unitEvidenceRequired: phase === 'ut' && strength.some(outcome => 'acceptance' in outcome),
+        findings: openFindings.filter(finding => finding.verificationRequired).map(finding => ({ id: finding.id, files: finding.files })) }, verified) : [];
       if (unreadable.length) {
         additionalProblems.push({ phase, id: 'attestation_present', action: 'verify',
           affects: 'completion', severity: 'BLOCKER', owner: phase, ...(report ? { files: [report] } : {}),

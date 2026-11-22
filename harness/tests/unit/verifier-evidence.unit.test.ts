@@ -16,6 +16,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import * as YAML from 'yaml';
 
 import { clearFrameworkConfigCache, featurePhaseReportsDir, resolveReceiptFilePath } from '../../config';
 import { finalizePhaseClosure } from '../../scripts/utils/phase-closure-finalizer';
@@ -27,9 +28,15 @@ import {
   findPriorPassVerifierEvidence,
   findPriorVerifierEvidence,
   findSameMaterialVerifierEvidence,
+  planVerifierItemReview,
+  verdictReportTextWithOriginals,
+  readVerifierOriginalReference,
+  verifierReportItemGaps,
 } from '../../scripts/utils/verifier-evidence';
 import { buildVerifierMaterialView, writeVerifierMaterial } from '../../scripts/utils/verifier-material';
-import { generateScriptReport } from '../../scripts/utils/report-generator';
+import { assembleAIPrompt, generateScriptReport, readVerifierItemReviewPrompt } from '../../scripts/utils/report-generator';
+import { resolveCompletionDisposition } from '../../scripts/utils/verify-feature-completion';
+import { parseIssueVerificationBlock, verifierSemanticChecks } from '../../scripts/utils/repair-candidates';
 import { writeRunSummaryBase } from '../../harness-runner';
 import {
   PHASE_REPORTS_OUTPUT_FILES,
@@ -568,6 +575,133 @@ export function caseB04V6_snapshotFallbackGuards(): void {
 }
 
 const CASES: Array<{ name: string; fn: () => void }> = [
+  { name: 'signed partial review retains unmodified denial through writer and completion', fn: () => {
+    withClosureHost(({ root, reportsDir }) => {
+      const oldId = fixtureSubjectId('partial-review-original');
+      const rules = 'controlled fixture phase rules';
+      const template = fs.readFileSync(path.join(FRAMEWORK_ROOT, 'harness', 'prompts', 'verify-spec.md'), 'utf8');
+      fs.mkdirSync(path.join(root, 'src'));
+      fs.writeFileSync(path.join(root, 'src/acceptance.ts'), 'export const acceptance = false;\n');
+      fs.writeFileSync(path.join(root, 'src/navigation.ts'), 'export const navigation = "/entry";\n');
+      const acceptance = `doc/features/${FEATURE}/acceptance.yaml`;
+      const spec = `doc/features/${FEATURE}/spec/spec.md`;
+      fs.writeFileSync(path.join(root, acceptance), 'criteria:\n  - id: AC-1\n    description: Validate the stored acceptance result.\n');
+      const checks = JSON.parse(fs.readFileSync(path.join(reportsDir, 'script-report.json'), 'utf8')).checks;
+      const script = generateScriptReport(path.join(FRAMEWORK_ROOT, 'harness'), PHASE, FEATURE, root, checks, FRAMEWORK_ROOT);
+      const currentMaterial = (phaseRuleText = rules) => buildVerifierMaterialView({
+        projectRoot: root, frameworkRoot: FRAMEWORK_ROOT, feature: FEATURE, phase: PHASE, gateFingerprint: null,
+        phaseRuleText, templateText: template, checks,
+        contextFiles: ['src/acceptance.ts', 'src/navigation.ts', acceptance, spec].map(label => ({ label, content: fs.readFileSync(path.join(root, label), 'utf8') })),
+      });
+      const table = '| id | status | severity | 证据 |\n|---|---|---|---|\n';
+      const details = `\`${acceptance}:2\` AC-1 要验证保存结论，\`${spec}:1\` 当前没有可执行的预期。`;
+      const suggestion = '由 spec 责任方补可执行预期。';
+      const originalIssue = { issue: 'acceptance_testable', verdict: 'confirmed', repair_owner: 'spec', evidence: `${spec} | ${details}；${suggestion}` };
+      const originalDetail = { id: 'acceptance_testable', status: 'FAIL', severity: 'BLOCKER', acceptance_ids: ['AC-1'], affected_files: [spec], details, suggestion };
+      writeVerifierMaterial(reportsDir, oldId, currentMaterial());
+      const original = publishFixtureVerifierEvidence({ projectRoot: root, reportsDir, feature: FEATURE, phase: PHASE, subjectId: oldId,
+        verdict: 'FAIL', blockerCount: 1, reportText: table + [
+          '| acceptance_testable | FAIL | BLOCKER | src/acceptance.ts:1 当前无法验证预期。 |',
+          '| scenario_to_page | PASS | MAJOR | src/navigation.ts:1 已定位入口。 |',
+        ].join('\n') + '\n\n```yaml\n' + YAML.stringify({ verification_result: { phase: PHASE, feature: FEATURE, checks: [originalDetail] } }) + '```\n'
+          + '\n```issue-verification\n' + YAML.stringify([originalIssue]) + '```\n', skipSummaryPatch: true });
+      const plan = (view = currentMaterial()) => planVerifierItemReview({ projectRoot: root, frameworkRoot: FRAMEWORK_ROOT,
+        feature: FEATURE, phase: PHASE, currentMaterial: view, templateText: template });
+      const unlocalized = plan(currentMaterial('rules changed while files stayed identical'));
+      assert(unlocalized.scope.mode === 'full' && unlocalized.scope.reviewIds.length > 2 && !unlocalized.scope.reusedRows.length,
+        'an actual rules-only change must review all applicable items even when every file digest is unchanged');
+      fs.writeFileSync(path.join(root, 'src/navigation.ts'), 'export const navigation = "/updated-entry";\n');
+      const view = currentMaterial();
+      const itemReview = plan(view);
+      assert(itemReview.scope.mode === 'partial' && itemReview.scope.reviewIds.join(',') === 'scenario_to_page',
+        'only the actual changed reference gets verification');
+      const prompt = assembleAIPrompt(path.join(FRAMEWORK_ROOT, 'harness'), root, PHASE, FEATURE, [], JSON.stringify(script),
+        rules, undefined, undefined, FRAMEWORK_ROOT, { templateText: template, itemReview });
+      const scope = readVerifierItemReviewPrompt(prompt);
+      const kept = scope?.reusedRows[0];
+      assert(!!kept && kept.status === 'FAIL' && kept.evidence.includes(path.basename(original.mdPath)), 'prompt must carry the original public denial');
+      const writerOptions = { verifierPlan: { mode: 'enabled' as const, reason: 'policy_required' as const,
+        verifier_prompt: 'prompts/verify-spec.md', message: 'real request for partial review' }, verifierMaterial: view };
+      const issued = writeRunSummaryBase(root, script, FRAMEWORK_ROOT, writerOptions);
+      const publicPath = path.join(root, issued.verifier_report!);
+      const observe = () => resolveCompletionDisposition({ projectRoot: root, frameworkRoot: FRAMEWORK_ROOT, feature: FEATURE, chain: [PHASE] })
+        .completionBlocking.filter(problem => problem.id === 'attestation_present');
+      const currentRow = '| scenario_to_page | PASS | MAJOR | src/navigation.ts:1 复核更新入口。 |\n';
+      fs.writeFileSync(publicPath, table + currentRow + renderResultBlock(issued.verifier_subject_id!, 'PASS', 0));
+      assert(observe().some(problem => problem.action === 'verify' && problem.detail.includes('acceptance_testable')),
+        'a partial report cannot erase a carried denial by omitting its row');
+      assert(writeRunSummaryBase(root, script, FRAMEWORK_ROOT, writerOptions).next_action !== 'fill_receipt_then_sync_closure',
+        'writer retry cannot short-circuit a thin current PASS');
+      const reference = readVerifierOriginalReference(kept!.evidence);
+      assert(!!reference, 'a carried row must record its own original report and line');
+      const carried = table + currentRow + `| ${kept!.id} | ${kept!.status} | ${kept!.severity} | 原依据仍有效 [原核验]( <${reference!.report}#L${reference!.line}> )。 |\n`
+        + renderResultBlock(issued.verifier_subject_id!, 'FAIL', 1);
+      fs.writeFileSync(publicPath, carried);
+      assert(observe().some(problem => problem.action === 'repair') && !observe().some(problem => problem.action === 'verify'),
+        'the same valid original reference still advances repair after changing Markdown spacing and explanatory words');
+      const loaded = loadVerifierEvidence(root, FEATURE, PHASE, { frameworkRoot: FRAMEWORK_ROOT });
+      assert(loaded.ok, 'the current public report remains the original short reply');
+      if (!loaded.ok) return;
+      assert(!loaded.evidence.report_text.includes('issue-verification'), 'old evidence need not be copied into the new report');
+      const interpreted = verdictReportTextWithOriginals({ projectRoot: root, frameworkRoot: FRAMEWORK_ROOT,
+        feature: FEATURE, phase: PHASE, currentSubject: issued.verifier_subject_id }, loaded.evidence);
+      const inherited = parseIssueVerificationBlock(interpreted).entries[0];
+      assert(inherited?.issue === originalIssue.issue && inherited?.repair_owner === originalIssue.repair_owner
+        && inherited?.verdict === originalIssue.verdict && inherited?.evidence === originalIssue.evidence
+        && verifierSemanticChecks(interpreted, PHASE, FEATURE).some(row => row.details === details),
+      'the original acceptance rationale, denial and responsibility come directly from the matched report row');
+      const newEntry = { ...originalIssue, verdict: 'unclear', evidence: `${spec} | 当前独立判断需要额外已授权的反证。` };
+      fs.writeFileSync(publicPath, carried + '\n```issue-verification\n' + YAML.stringify([newEntry]) + '```\n');
+      const current = loadVerifierEvidence(root, FEATURE, PHASE, { frameworkRoot: FRAMEWORK_ROOT });
+      assert(current.ok, 'the new independent decision has the issued subject');
+      if (!current.ok) return;
+      const decisions = parseIssueVerificationBlock(verdictReportTextWithOriginals({ projectRoot: root, frameworkRoot: FRAMEWORK_ROOT,
+        feature: FEATURE, phase: PHASE, currentSubject: issued.verifier_subject_id }, current.evidence)).entries;
+      assert(decisions.length === 1 && decisions[0].verdict === 'unclear' && decisions[0].evidence === newEntry.evidence,
+        'the current explicit independent decision is authoritative for the named issue');
+    });
+  } },
+  { name: 'outstanding reviewer issue keeps its own answer requirement outside the template check IDs', fn: () => {
+    withClosureHost(({ root }) => {
+      const phase = 'review';
+      const reportsDir = featurePhaseReportsDir(root, FEATURE, phase, FRAMEWORK_ROOT);
+      fs.mkdirSync(reportsDir, { recursive: true });
+      const file = 'src/target.ts';
+      fs.mkdirSync(path.join(root, 'src'));
+      fs.writeFileSync(path.join(root, file), 'export const value = 12;\n');
+      fs.writeFileSync(path.resolve(reportsDir, '../review-report.md'), [
+        '# Review', '## 问题清单', '| 编号 | 严重程度 | 分类 | 涉及文件 | 修复建议 | 状态 |', '|---|---|---|---|---|---|',
+        `| CR-137 | MAJOR | 逻辑错误 | ${file} | Verify the recorded concrete value | 未关闭 |`, '## 结论', '**审查结论**: 不通过',
+      ].join('\n'));
+      const subject = fixtureSubjectId('opaque-review-issue');
+      const templateText = fs.readFileSync(path.join(FRAMEWORK_ROOT, 'harness/prompts/verify-review.md'), 'utf8');
+      const currentMaterial = buildVerifierMaterialView({ projectRoot: root, frameworkRoot: FRAMEWORK_ROOT, feature: FEATURE,
+        phase, gateFingerprint: null, phaseRuleText: 'review rules', templateText, checks: [], contextFiles: [{ label: file, content: 'export const value = 12;\n' }] });
+      writeVerifierMaterial(reportsDir, subject, currentMaterial);
+      const published = publishFixtureVerifierEvidence({ projectRoot: root, reportsDir, feature: FEATURE, phase, subjectId: subject, skipSummaryPatch: true });
+      const input = { projectRoot: root, frameworkRoot: FRAMEWORK_ROOT, feature: FEATURE, phase, currentSubject: subject,
+        findings: [{ id: 'CR-137', files: [file] }], currentMaterial, templateText };
+      const loaded = loadVerifierEvidenceForSubject(root, FEATURE, phase, subject, input);
+      assert(loaded.ok, 'historical transport PASS can be parsed');
+      if (!loaded.ok) return;
+      assert(verifierReportItemGaps(input, loaded.evidence).some(gap => gap.startsWith('CR-137：')), 'the actual unanswered issue blocks despite an otherwise valid thin PASS');
+      const selected = planVerifierItemReview(input).scope;
+      assert(selected.mode === 'partial' && selected.reviewIds.length === 2
+        && ['issue_accuracy', 'false_positive_rate'].every(id => selected.reviewIds.includes(id)),
+      'the existing review adjudication and its projection cover the concrete issue without reopening unrelated checks');
+      const reply = (evidence: string) => loaded.evidence.report_text + '\n```issue-verification\n' + YAML.stringify([{
+        issue: 'CR-137', verdict: 'confirmed', repair_owner: 'coding', evidence,
+      }]) + '```\n';
+      fs.writeFileSync(published.mdPath, reply('Generic confirmation with no actual reference.'));
+      const unsupported = loadVerifierEvidenceForSubject(root, FEATURE, phase, subject, input);
+      assert(unsupported.ok && verifierReportItemGaps(input, unsupported.evidence).some(gap => gap.startsWith('CR-137：')),
+        'a matching issue ID and a generic sentence do not certify the recorded issue');
+      fs.writeFileSync(published.mdPath, reply('`src/target.ts:1` Verify the recorded concrete value.'));
+      const answered = loadVerifierEvidenceForSubject(root, FEATURE, phase, subject, input);
+      assert(answered.ok && !verifierReportItemGaps(input, answered.evidence).some(gap => gap.startsWith('CR-137：')),
+        'the concrete current independent answer closes only this diagnosis gap');
+    });
+  } },
   { name: 'P2 C current material reuses a real FAIL and public baselines never hide it behind an older PASS', fn: () => {
     withHost(({ root, reportsDir }) => {
       const prior = fixtureSubjectId('p2-prior-pass'), failed = fixtureSubjectId('p2-prior-fail'), current = fixtureSubjectId('p2-current');

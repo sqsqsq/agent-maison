@@ -32,7 +32,9 @@ import {
   quiesceRunOwner,
   releaseRunOwner,
 } from '../../scripts/utils/goal-run-control';
-import { assembleAIPrompt } from '../../scripts/utils/report-generator';
+import { assembleAIPrompt, projectScriptReportForPrompt } from '../../scripts/utils/report-generator';
+import { checkNegativeTestingVerdictClosure, checkReportTraceReconciliation, regenerateTestReport } from '../../scripts/check-testing';
+import { evaluateExecutionChannelDeclaration } from '../../scripts/utils/execution-channel';
 import {
   buildVerifierRequest,
   parseVerifierRequest,
@@ -48,7 +50,7 @@ import { computeGateFingerprint } from '../../scripts/utils/gate-fingerprint';
 import { finalizePhaseClosure, preparePhaseRepairFeedback } from '../../scripts/utils/phase-closure-finalizer';
 import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
 import { makeVerifierProject, reportsDirOf, rmDir, writeFile } from '../utils/verifier-project-fixture';
-import type { CheckResult, HarnessRunSummary, Phase, ScriptReport } from '../../scripts/utils/types';
+import type { CheckContext, CheckResult, HarnessRunSummary, Phase, ScriptReport, UseCaseBranch } from '../../scripts/utils/types';
 
 export interface UnitCaseResult {
   name: string;
@@ -981,11 +983,17 @@ function caseH_diagnosisEligibilityAndPromptNotice(): void {
       assert(!withNotice.includes('没有**其它 BLOCKER 级 FAIL/SKIP'), '诊断说明不得残留旧句"无 BLOCKER SKIP"');
       assert(withNotice.includes('其它 FAIL、SKIP、未解析输入以及设备/编译/工具缺口以原报告为准，仍须分别处理。'), '诊断不得将其它缺口当作已满足');
       assert(withNotice.includes('不能覆盖其它未解决的问题或缺失执行'), '对应待办的有效反证不能关闭其它未完项');
-      const verifyUtTpl = fs.readFileSync(path.join(HARNESS_ROOT, 'prompts', 'verify-ut.md'), 'utf-8');
-      assert(!verifyUtTpl.includes('且没有其它 BLOCKER FAIL/SKIP'), 'verify-ut.md 例外句不得残留旧句');
-      assert(verifyUtTpl.includes('无关编译/设备/报告缺口不遮住其它可核实工作，缺实际对象仍保持未知')
-        && verifyUtTpl.includes('产品FAIL/unknown仍由共同完成处置保留'),
-        '独核只处理当前实际对象，不能遮住其它可做工作或洗绿原FAIL/unknown');
+      const title = withNotice.match(/^## (本轮为[^\n]+诊断)$/m)?.[1];
+      assert(Boolean(title), '需从生产正文抽出诊断标题');
+      for (const phase of ['coding', 'review', 'testing', 'ut'] as const) {
+        const rendered = assembleAIPrompt(
+          HARNESS_ROOT, root, phase, 'demo', [], '{"checks":[]}', 'rule: {}',
+          undefined, undefined, FRAMEWORK_ROOT, { verifierPromptRel: `prompts/verify-${phase}.md` },
+        );
+        assert(rendered.includes(`「${title}」`), `${phase} 模板必须识别生产端的诊断标题`);
+        assert(!rendered.includes('本轮为产品失败诊断') && !rendered.includes('且没有其它 BLOCKER FAIL/SKIP'),
+          `${phase} 模板不能保留冲突的旧标题或旧资格`);
+      }
       const onDisk = fs.readFileSync(path.join(reportsDirOf(root, 'demo', 'review'), 'ai-prompt.md'), 'utf-8');
       assert(onDisk.includes('本轮为独立问题诊断'), '落盘的 ai-prompt.md 同样带说明（verifier 读的是磁盘原件）');
 
@@ -998,6 +1006,67 @@ function caseH_diagnosisEligibilityAndPromptNotice(): void {
       fs.rmSync(fakeHarness, { recursive: true, force: true });
       rmDir(root);
     }
+  }
+}
+
+function caseHistoricalMachineFactsInPrompt(): void {
+  const history = path.join(HARNESS_ROOT, 'tests', 'fixtures', 'host-recovery-history', '20261024-fe4512-s1');
+  const feature = 'bc-openCard-2/bank-card-opening-flow';
+  const capturedFeature = path.join(history, 'doc', 'features', feature);
+  const { root } = makeVerifierProject();
+  try {
+    const assemble = (phase: 'coding' | 'testing', report: ScriptReport) => assembleAIPrompt(
+      HARNESS_ROOT, root, phase, feature, [], JSON.stringify(projectScriptReportForPrompt(report), null, 2), '',
+      undefined, undefined, FRAMEWORK_ROOT, { verifierPromptRel: `prompts/verify-${phase}.md` },
+    );
+    const capturedCompile = JSON.parse(fs.readFileSync(
+      path.join(capturedFeature, 'coding', 'reports', 'script-report.json'), 'utf-8',
+    )) as ScriptReport;
+    const compilePrompt = assemble('coding', capturedCompile);
+    assert(
+      /"passed_check_ids": \[[^\]]*"coding_compile"[^\]]*"coding_run_status"/s.test(compilePrompt),
+      '实际编译及完成面板 PASS 均由机器提供',
+    );
+    assert(!/^\| coding_compile_gate \|/m.test(compilePrompt), '历史门禁 ID 仍可读，但新模板不能再次评分');
+
+    const runId = '20261024T175459Z-004';
+    const capturedTesting = path.join(capturedFeature, 'testing');
+    const run = path.join(reportsDirOf(root, feature, 'testing'), runId, 'hylyre');
+    fs.cpSync(path.join(capturedTesting, 'reports', runId, 'hylyre'), run, { recursive: true });
+    const testingPlan = fs.readFileSync(path.join(capturedTesting, 'test-plan.before-tc003.md'), 'utf-8');
+    writeFile(path.join(featureDir(root, feature), 'testing', 'test-plan.md'), testingPlan);
+    const ctx = {
+      phase: 'testing', feature, projectRoot: root, frameworkRoot: FRAMEWORK_ROOT,
+      phaseRule: { structure_checks: { report_trace_reconciliation: { description: 'trace reconciliation' } } },
+      resolvedProfile: { capabilities: {} },
+    } as unknown as CheckContext;
+    const pipeline = {
+      hapPath: null, installPassed: true, installExternallyBlocked: false, buildReused: false,
+      hylyreTracePath: path.join(run, 'trace.json'), deviceTestRunExecuted: true, installExecuted: false,
+      installOk: false, hapSha256Full: null,
+    };
+    const body = regenerateTestReport(ctx, pipeline, testingPlan, evaluateExecutionChannelDeclaration(testingPlan), []) ?? '';
+    assert(Boolean(body), '原冻结 trace 必须通过生产报告生成入口');
+    const reconcile = (report: string) => checkReportTraceReconciliation(ctx, report, pipeline);
+    const originalChecks = [...reconcile(body), ...checkNegativeTestingVerdictClosure(body)];
+    assert(originalChecks[0]?.status === 'PASS' && originalChecks[1]?.status === 'FAIL',
+      '真实失败 trace 对账一致，产品结论仍为 FAIL');
+    const originalPrompt = assemble('testing', scriptReportOf(feature, 'testing', root, originalChecks));
+    assert(
+      /"passed_check_ids": \[\s*"report_trace_reconciliation"/.test(originalPrompt)
+        && /"id": "negative_verdict_closure"[^}]*"status": "FAIL"/s.test(originalPrompt),
+      '机器对账 PASS 与已知产品 FAIL 须同时进入提示',
+    );
+    const altered = body.replace(/(^\| TC-003 \|.*?\| )失败( \|)/m, '$1通过$2');
+    assert(altered !== body, '对账反例必须改变原 TC-003 的报告结果');
+    const alteredPrompt = assemble('testing', scriptReportOf(feature, 'testing', root, reconcile(altered)));
+    assert(
+      /"id": "report_trace_reconciliation"[^}]*"status": "FAIL"/s.test(alteredPrompt)
+        && alteredPrompt.includes('TC-003：报告=通过，trace=失败'),
+      '把真实失败误报为通过时，提示保留机器 FAIL 与可定位原因',
+    );
+  } finally {
+    rmDir(root);
   }
 }
 
@@ -1262,16 +1331,18 @@ function caseK_materializedUtPromptCountingRule(): void {
       '物化 prompt 缺 4B 第 2 条的适用范围限定——单断言用例仍会在 4B 第 2 条上挂一次',
     );
 
-    // ④ 流程类用例的既有硬要求与检查 4 第 2/3 条、4C 正文**原样在内**（D3 不许扩面）。
+    // ④ 流程类用例仍按 UseCaseBranch 的真实字段与原约束核验。
+    const phaseSequenceField: keyof UseCaseBranch = 'expected_phase_seq';
     for (const kept of [
       '覆盖**中间态与终态**',
-      'expected_phase_sequence',
+      `\`${phaseSequenceField}\` 与 \`expected_port_calls\` / \`not_called\``,
       '退化判定',
       'mock_plan_traceability',
       '回滚行为或 `not_called`',
     ]) {
       assert(onDisk.includes(kept), `物化 prompt 丢了必须保留的正文：${kept}`);
     }
+    assert(!onDisk.includes('expected_phase_sequence'), '物化 prompt 不得引用 schema 未声明的阶段序列字段');
   } finally {
     rmDir(root);
   }
@@ -1438,6 +1509,7 @@ const CASES: Array<{ name: string; fn: () => void }> = [
   { name: 'F 控制台指引跟随 next_action：证据可复用时不得再要求重跑 verifier', fn: caseF_consoleGuidanceFollowsNextAction },
   { name: 'G D1 review 负面裁决：脚本 FAIL 仍签发诊断 request；报告写回后产 owner 候选，产品仍 FAIL/open', fn: caseG_reviewNegativeVerdictProducesDiagnosisRequest },
   { name: 'H D1 资格边界与诊断正文：混合失败/坏报告/环境归因零产物；ai-prompt 只在诊断分支附说明', fn: caseH_diagnosisEligibilityAndPromptNotice },
+  { name: 'S1 编译与设备对账事实经实际装配进入提示，测试产品 FAIL 和对账 FAIL 均保留', fn: caseHistoricalMachineFactsInPrompt },
   { name: 'I D3/D4 必需检查项缺失/冲突 → 报告格式修复出口，不落回"先修 blocker"、不指人改产品', fn: caseI_unreadableReportBodyKeepsFormatRepairExit },
   { name: 'J D2.5 外层重跑判据：owner 须 active 且带 attempt 身份；released/orphaned/quiescing 回落自跑', fn: caseJ_outerGoalRerunRequiresLiveOrchestration },
   { name: 'K V7（B05）：真实 verify-ut.md 物化后的整份 prompt 三处数量口径一致（数量不再是判据）', fn: caseK_materializedUtPromptCountingRule },

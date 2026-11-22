@@ -22,19 +22,19 @@ overview: >-
 todos:
   - id: reduce-prompt-material
     content: 阶段一。按真实来源裁剪长材料，合并双入口，限定本轮图片，保留派生输入、拒修理由与反证。
-    status: pending
+    status: completed
   - id: reuse-machine-facts
     content: 阶段一。收编编译和 trace 机器结论、单次 Review 真假裁决与纯格式恢复，对齐诊断标题并校准三类差异的严重度。
-    status: pending
+    status: completed
   - id: bind-review-preimages
     content: 阶段二。让删除及重命名的真实旧内容进入现有材料身份，打通重算、等价复用和历史兼容。
-    status: pending
+    status: completed
   - id: recheck-affected-items
     content: 阶段三。按当前义务与真实变化选项，沿用有效逐项结论及其责任方，只补缺项，影响不明时完整核验。
-    status: pending
+    status: completed
   - id: unified-acceptance
     content: 统一验收。完成生产入口回放、关键变异、目标套件与日常全集，并在一个有阶段 verifier 的干净宿主完成分角色实测。
-    status: pending
+    status: in_progress
 ---
 
 # Verifier 减负与按项复核
@@ -147,3 +147,24 @@ todos:
 **工程验证。** 每轮开发执行 `npm run test:changed`。模板变动后定向执行 `npm --prefix harness run test:unit -- --filter verifier-production-routing`、`codex-adapter-verifier-template`、`verifier-material`、`verifier-evidence`、`verifier-semantic-handoff` 及消费迁移快照的相关用例（`feature-assessment`、`successor-exit-early` / `successor-exit-late` 中相关 case，按实际注册名筛选）。关键变异只在隔离副本临时施加，记录正确实现通过与变异命中目标断言的对应关系。一次收口时跑 `npm run test:daily` 和本计划的定向验收，复用同一输入已有结果。[套件注册](../../harness/tests/utils/unit-suite-registry.ts) · [旧宿主快照迁移](../../harness/tests/fixtures/host-snapshot-3.1.0/migrate.ts)
 
 **干净宿主联合验收。** 联合验收前先安排可实际签发阶段 verifier 的 `codex` 或 `claude` adapter。现用 DSH 的宿主在获准的干净验收副本中提前完成切换与配置。将已校验发布件集成到该副本，用同一真实业务需求从原起点到交付终点完整跑一次。记录框架版本/提交、宿主基线、需求、模型与 adapter、设备/工具条件、终点和剩余质量结论。把 `summary.verifier_request` 及 subject 与实际派发、交回或报告复用对应，分别计签发请求、实际模型调用（含补核重试）和复用命中。按作者、阶段 verifier、独立 Review、设计质询、视觉评审列时长，注明嵌套、重叠及缺失观测，墙钟按区间并集。token 有数据时区分总输入和缓存输入。开发回放与真宿主实测分别列证，覆盖四个结果后一次签收。阶段调用数、原始报告数和全角色累计时长各有各的分母，提速幅度以可比实测为准。
+
+## 实施记录
+
+### 2026-11-21　签发者归属与中断重接
+
+| 位置 | 归因 | 触发场景与修正 |
+|---|---|---|
+| `feature-track.ts` 的 `resolveCurrentScopeView` | 验收发现的既有缺陷，修于 `954d5539` | 基线 `b32ca152` 在刷新 Testing 证明时，会把未变的 Coding、Review 证明也标为当前 run 签发。原件校验随即拒绝这两项，连带触发同输入的 UT 重跑。现按摘要和原件校验保留原签发者。A13 冷读与重接后，两份证明仍归源 run。[范围刷新](../../harness/scripts/utils/feature-track.ts) · [归属回归](../../harness/tests/unit/repair-dependencies.unit.test.ts) |
+| `verify-feature-completion.ts` 的当前证明读回 | 本次签发者修订引出的兼容回归，修于 `f5cd86a0`、`759e2891` | `954d5539` 将找不到阶段启动事件的合法当前证明判为过期。基线能接受的旧 `phase_verdict`、以及已由独立核验反驳并完成处置的原始 FAIL，都受到了影响。首次修正又可能把已停机 R0 的无署名证明归给从未执行该阶段的 R1。最终由写入与读回共用同一归属判断，核对明确的签发 run、本轮正在提交的通过结果或本轮有效的阶段结论。跨 run 仍须校验原签发者、成功终态和摘要。该文件对材料变化与缺项的消费分别对应 §4、§5。[完成判断](../../harness/scripts/utils/verify-feature-completion.ts) · [原始 FAIL 用例](../../harness/tests/unit/completion-tools.unit.test.ts) · [跨 run 反例](../../harness/tests/unit/repair-dependencies.unit.test.ts) |
+| `session-execution-handoff.ts` 的 `acceptSessionExecution`、`stageVerifierHandbacks` | §3 补格式所需的既有交回缺口，补于 `fd780cb6` | 原保存条件只覆盖带 `acceptanceReview` 的交回。阶段 verifier 已作答、公开报告需要恢复时，runner 需要能核对原答的签发者。现从会话交回或本地调用归档读取已有原件，核对同一 run、subject、verifier 角色、报告目标及实际写入摘要后再恢复。缺验收依据仍须派发独立核验。[交回原件](../../harness/scripts/utils/session-execution-handoff.ts) · [恢复入口](../../harness/scripts/goal-phase-runtime.ts) |
+| `goal-phase-runtime.ts` 的 `chainStartsAtSpec` | 验收发现的既有缺陷，修于 `33541b80` | 基线在持有者临近终态中断、实际待执行链已空时，用结算遍历的首项推断 Spec 有写权，重新生成了两份已冻结的保真度文件，导致同摘要的 AC-2 再跑一次。现用实际待执行链判断 Spec 的初始化责任。A13 三个公开入口都能接回同一持有者，真实 AC-2 执行次数维持一次。真实需求或档位变化仍按既有规则回 Spec。[Goal 前置](../../harness/scripts/goal-phase-runtime.ts) · [A13 三入口](../../harness/tests/unit/successor-exit.unit.test.ts) |
+
+### 证据格引用窄修与宿主计量
+
+对 §5 的证据格定位按旧材料中的文件绑定核实。行号和范围符用于读证，整文件引用也能定位检查项。已有目录限定的引用按其目录匹配，裸 `index.ets` 计入全部同名绑定。原报告 `10f95222` 中的 `data/model/*.ets` 指向六个绑定文件，其中任何一个变化都会重核这一行。[选域实现](../../harness/scripts/utils/verifier-item-scope.ts) · [两个漏审反例](../../harness/tests/unit/verifier-item-scope.unit.test.ts)
+
+35 个 subject 各自与原请求、材料配对，340 个证据格共有 612 次文件样引用。其中 489 次对应一个绑定，2 次对应多个同名绑定，1 次对应上述文件集合，另外 120 次在该 subject 的材料中无匹配。逐格、逐绑定改变单个文件摘要时，原实现在 22 格漏掉 36 个行与文件的关联，修订版在 18,597 次对照中漏选和多选均为 0。[历史报告及材料](../../harness/tests/fixtures/host-recovery-history)
+
+干净宿主联合验收另列因 `[原核验]` 来源链接丢失或指错而多出的模型调用。逐笔核对同一 subject 的签发指令、补问前原答、正式诊断和实际派发。原状态、严重度、证据正文及原报告行均可采信，补回正确链接即可消除全部待核缺口，才将该次调用归入链接开销。按 run 和调用身份去重，标出 phase、subject 与可核实的子调用。混合原因或缺失原答单列为未归因。干净宿主目前尚无业务运行样本，该数留待实测。
+
+统一验收完成并合入主干后，按合入提交与工作区状态核对、清理本计划创建的临时本地分支和工作树，保留可复验的验收原件。

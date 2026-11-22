@@ -344,8 +344,7 @@ cases.push(
     }),
   },
   {
-    // e7a2c4f1 §10.4④：contracts.files 里的 PNG 只列路径 + sha256，不按 UTF-8 解码内联进 prompt；.ets 照旧内联。
-    name: 'derive.codebase lists binary targets by path and sha256 without inlining bytes',
+    name: 'derive.codebase points to bound source and binary originals, preserving an older value when the path no longer restores it',
     run: () => project(root => {
       const fixture = modernFixture(root);
       const contractFile = path.join(fixture.framework, 'skills/feature/code-review/contract.yaml');
@@ -367,18 +366,20 @@ cases.push(
         { path: 'src/logo.png', sha256: sha, binary: true },
       ]), JSON.stringify(payload));
       const loader = new SpecLoader(root, undefined, undefined, fixture.framework);
-      const entry = collectContextFiles(loader, { kind: 'standalone', projectRoot: root, frameworkRoot: FRAMEWORK_ROOT, frameworkRel: '' }, 'review', 'demo', {} as never, { resolvedInputs: resolution.inputs })
-        .find(file => file.label === '(resolved input payload)');
-      assert(entry && entry.content.includes(sha) && entry.content.includes('src/logo.png') && !entry.content.includes('IHDR') && entry.content.includes('$$this.sheetVisible'), JSON.stringify(entry));
-      // 宿主事故出在「二进制内联 × `$` 替换」的**连接处**：同一解析结果经生产 `assembleAIPrompt`
-      // 拼成整份 prompt 后再断不变量 3/4（上面两步各锁一半）。
+      const collect = () => collectContextFiles(loader, { kind: 'standalone', projectRoot: root, frameworkRoot: FRAMEWORK_ROOT, frameworkRel: '' }, 'review', 'demo', {} as never, { resolvedInputs: resolution.inputs });
       const harnessRoot = path.join(FRAMEWORK_ROOT, 'harness');
-      const prompt = assembleAIPrompt(harnessRoot, root, 'review', 'demo', [entry!], '{}', 'spec', undefined, undefined, FRAMEWORK_ROOT);
+      const assemble = () => assembleAIPrompt(harnessRoot, root, 'review', 'demo', collect(), '{}', 'spec', undefined, undefined, FRAMEWORK_ROOT);
+      const bound = assemble();
+      assert(bound.includes('src/Page.ets') && !bound.includes(source.trim()), 'unchanged bound source must be Read by path');
+      assert(bound.includes('src/logo.png') && bound.includes(sha), 'binary source must retain path and raw-byte hash');
+      write(root, 'src/Page.ets', 'different current bytes');
+      const prompt = assemble();
       const heading = fs.readFileSync(path.join(harnessRoot, 'prompts', 'verify-review.md'), 'utf8').split('\n').find(line => line.startsWith('## '))!;
       assert(prompt.split(heading).length - 1 === 1, `模板主结构被复制：${heading}`);
       assert(!prompt.includes('IHDR') && !prompt.includes('�') && !Buffer.from(prompt, 'utf8').includes(png.subarray(0, 4)), '二进制被内联进整份 prompt');
-      assert(new RegExp(`path:\\s*src/logo\\.png\\s+sha256:\\s*${sha}\\s+binary:\\s*true`).test(prompt), '整份 prompt 缺 PNG 的相对路径 + sha 条目');
-      assert(prompt.includes('$$this.sheetVisible') && !/(^|[^$])\$this\.sheetVisible/.test(prompt), '整份 prompt 里 $$ 被改写');
+      assert(prompt.includes('src/logo.png') && prompt.includes(sha), '整份 prompt 缺 PNG 的相对路径 + sha 条目');
+      assert(prompt.includes('$$this.sheetVisible') && !prompt.includes('different current bytes')
+        && !/(^|[^$])\$this\.sheetVisible/.test(prompt), '不可还原的解析原值须原样内联');
     }),
   },
   {

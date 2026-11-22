@@ -1,12 +1,14 @@
 // 实际实现域与原需求范围共享判定。文件/模块预测只作线索；写入归属由阶段观察负责。
 import * as fs from 'fs';
 import * as path from 'path';
+import { createHash } from 'crypto';
 import { loadFrameworkConfig, getOuterLayerIds } from '../../config';
 import { loadCatalog, findModule } from './catalog-parser';
-import { diffChangedFilesWithStatus, resolveEffectiveDiffBaseline, readFileAtRef } from './git-diff';
+import { diffChangedFilesWithStatus, resolveEffectiveDiffBaseline, readFileAtRef, type StatusDiffEntry } from './git-diff';
 import { parseScope } from './scope-parser';
-import { validateProjectRelativePath } from './project-relative-path';
-import type { ContractsSpec } from './types';
+import { isInsideProjectRoot, validateProjectRelativePath } from './project-relative-path';
+import type { ContractsSpec, ContextFileEntry } from './types';
+import type { ResolvedPhaseInputs } from './capability-resolution';
 
 // --------------------------------------------------------------------------
 // 层级前缀与分类
@@ -175,15 +177,14 @@ export function resolveImplementationScope(projectRoot: string, feature: string,
 
 /** Actual changed files plus existing planning references; never persisted as another inventory. */
 export function implementationFiles(projectRoot: string, feature: string, contracts?: Pick<ContractsSpec, 'files' | 'modules'>,
-  runId?: string): string[] {
-  let diff: ReturnType<typeof diffChangedFilesWithStatus> | null = null;
-  try {
+  runId?: string, changes?: readonly StatusDiffEntry[] | null): string[] {
+  if (changes === undefined) try {
     const baseline = resolveEffectiveDiffBaseline(projectRoot, feature, runId);
-    if (baseline.available) diff = diffChangedFilesWithStatus({ projectRoot, baseRef: baseline.baseSha });
+    changes = baseline.available ? diffChangedFilesWithStatus({ projectRoot, baseRef: baseline.baseSha }).entries : null;
   } catch { /* Input-only consumers keep their readable references; the diff gate diagnoses an unavailable baseline. */ }
   const layerPrefixes = [...layerDirPrefixes(projectRoot), ...projectImplementationModules(projectRoot, contracts?.modules).map(module => toDirPrefix(module.package_path))];
   const files = new Set(contracts?.files ?? []);
-  for (const entry of diff?.entries ?? []) {
+  for (const entry of changes ?? []) {
     if (isUnderLayerDir(entry.path, layerPrefixes)) files.add(entry.path);
     if (entry.oldPath && isUnderLayerDir(entry.oldPath, layerPrefixes)) files.add(entry.oldPath);
   }
@@ -191,30 +192,64 @@ export function implementationFiles(projectRoot: string, feature: string, contra
     .filter(file => fs.existsSync(path.join(projectRoot, file)) && fs.statSync(path.join(projectRoot, file)).isFile()).sort();
 }
 
-/** Removed/renamed source stays available to semantic review without pretending it exists now. */
-export function readImplementationChangeContext(projectRoot: string, feature: string, runId?: string, modules: Array<{ name?: string; package_path?: string }> = []): import('./types').ContextFileEntry[] | null {
+export interface ImplementationReviewChanges {
+  entries: StatusDiffEntry[];
+  contextFiles: ContextFileEntry[];
+  preimages: Array<{ status: 'D' | 'R'; path: string; target?: string; sha256: string | null }>;
+}
+
+/** The presentation and identity use one observed diff and one read of each preimage. */
+export function readImplementationReviewChanges(projectRoot: string, feature: string, options: {
+  runId?: string; frameworkRoot?: string; resolvedInputs?: ResolvedPhaseInputs;
+  modules?: Array<{ name?: string; package_path?: string }>; preimagesOnly?: boolean;
+} = {}): ImplementationReviewChanges | null {
   try {
-    const baseline = resolveEffectiveDiffBaseline(projectRoot, feature, runId);
+    const baseline = resolveEffectiveDiffBaseline(projectRoot, feature, options.runId);
     if (!baseline.available) return null;
     const diff = diffChangedFilesWithStatus({ projectRoot, baseRef: baseline.baseSha });
-    if (!diff.executed) return null;
+    if (!diff.executed || !diff.baseSha) return null;
+    const candidates = options.preimagesOnly ? diff.entries.filter(entry => entry.status === 'D' || entry.status === 'R') : diff.entries;
+    if (!candidates.length) return { entries: [], contextFiles: [], preimages: [] };
+    const { decodeTextFile, SpecLoader } = require('./spec-loader') as typeof import('./spec-loader');
+    const modules = options.modules ?? new SpecLoader(projectRoot, undefined, undefined, options.frameworkRoot)
+      .loadFeatureSpec(feature, options.resolvedInputs).contracts?.modules;
     const prefixes = [...layerDirPrefixes(projectRoot), ...projectImplementationModules(projectRoot, modules).map(module => toDirPrefix(module.package_path))];
-    const entries = diff.entries.filter(entry => isUnderLayerDir(entry.path, prefixes)
+    const entries = candidates.filter(entry => isUnderLayerDir(entry.path, prefixes)
       || !!entry.oldPath && isUnderLayerDir(entry.oldPath, prefixes));
-    if (!entries.length) return [];
-    const result: import('./types').ContextFileEntry[] = [{ label: '(actual implementation changes)', kind: 'text',
-      content: '基线 diff 供审查，不直接证明由本阶段写入；归属以现有调用观察为准，不接管其它任务的既有改动。\n' + entries.map(entry => entry.status + ': ' + (entry.oldPath ? entry.oldPath + ' -> ' : '') + entry.path).join('\n') }];
+    const preimages: ImplementationReviewChanges['preimages'] = [];
+    const contextFiles: ContextFileEntry[] = [];
+    const root = fs.realpathSync(projectRoot);
+    if (entries.length && !options.preimagesOnly) contextFiles.push({ label: '(actual implementation changes)', kind: 'text',
+      content: '基线 diff 供审查，不直接证明由本阶段写入；归属以现有调用观察为准，不接管其它任务的既有改动。\n'
+        + entries.map(entry => entry.status + ': ' + (entry.oldPath ? entry.oldPath + ' -> ' : '') + entry.path).join('\n') });
     for (const entry of entries) {
       const prior = entry.status === 'D' ? entry.path : entry.oldPath;
-      if (!prior) continue;
-      const bytes = readFileAtRef(projectRoot, baseline.baseSha, prior);
-      if (!bytes || bytes.includes(0)) continue;
-      result.push({ label: '(before ' + baseline.baseSha + ') ' + prior, kind: 'text', content: bytes.toString('utf8') });
+      if (prior) {
+        const bytes = readFileAtRef(projectRoot, diff.baseSha, prior);
+        if (entry.status === 'D' || entry.status === 'R') preimages.push({ status: entry.status, path: prior,
+          ...(entry.status === 'R' ? { target: entry.path } : {}), sha256: bytes ? createHash('sha256').update(bytes).digest('hex') : null });
+        if (!options.preimagesOnly) contextFiles.push({ label: '(before ' + diff.baseSha + ') ' + prior, kind: 'text',
+          content: (bytes && decodeTextFile(bytes)) ?? (bytes ? '二进制旧原件，按此 Git 基线和路径核对。' : '基线旧原件不可读取，保留证据缺口。') });
+      }
+      if (entry.status === 'D' || options.preimagesOnly) continue;
+      const abs = path.resolve(projectRoot, entry.path);
+      try {
+        if (!isInsideProjectRoot(projectRoot, abs) || !isInsideProjectRoot(root, fs.realpathSync(abs))) throw new Error('source leaves project');
+        const content = decodeTextFile(fs.readFileSync(abs));
+        if (content === null) contextFiles.push({ label: entry.path, kind: 'path', content: '实际变更的二进制原件' });
+        else contextFiles.push({ label: entry.path, content, references: ['本轮实际变更'] });
+      } catch {
+        contextFiles.push({ label: '(implementation evidence gap)', content: entry.path + '：本轮实际变更原件不可读取。' });
+      }
     }
-    return result;
+    return { entries, contextFiles, preimages };
   } catch { return null; }
 }
 
-export function implementationChangeContext(projectRoot: string, feature: string, runId?: string, modules: Array<{ name?: string; package_path?: string }> = []): import('./types').ContextFileEntry[] {
+export function readImplementationChangeContext(projectRoot: string, feature: string, runId?: string, modules: Array<{ name?: string; package_path?: string }> = []): ContextFileEntry[] | null {
+  return readImplementationReviewChanges(projectRoot, feature, { runId, modules })?.contextFiles ?? null;
+}
+
+export function implementationChangeContext(projectRoot: string, feature: string, runId?: string, modules: Array<{ name?: string; package_path?: string }> = []): ContextFileEntry[] {
   return readImplementationChangeContext(projectRoot, feature, runId, modules) ?? [];
 }

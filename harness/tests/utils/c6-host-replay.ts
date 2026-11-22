@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { createHash } from 'crypto';
+import { parseVerifierRequestFromInstruction, type VerifierRequest } from '../../scripts/utils/verifier-request';
 
 /** Restore captured bytes only; callers own and record any execution/environment adaptation. */
 export function copyC6HostReplay(): { root: string; feature: string; runId: string; featureDir: string } {
@@ -30,4 +31,21 @@ export function copyC6HostReplay(): { root: string; feature: string; runId: stri
     }
     return { root, feature: 'cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93', runId: snapshot.run_id, featureDir: snapshot.feature };
   } catch (error) { fs.rmSync(root, { recursive: true, force: true }); throw error; }
+}
+
+/** i26 was overwritten, so recover the pre-repair Markdown from the exact command output that printed it. */
+export function readC6PlanVerifierReport(project: ReturnType<typeof copyC6HostReplay>, iteration: 26 | 28): {
+  request: VerifierRequest; relative: string; text: string;
+} {
+  const invocations = path.join(project.root, project.featureDir, 'goal-runs', project.runId, 'phases/plan-verifier-format-repair');
+  const invocation = fs.readdirSync(invocations).find(dir => dir.startsWith(`plan-verifier-format-repair-i${iteration}-`))!;
+  const request = parseVerifierRequestFromInstruction(fs.readFileSync(path.join(invocations, invocation, 'prompt.md'), 'utf8'))!;
+  assert.equal(request.feature, project.feature);
+  const relative = path.posix.join(project.featureDir, 'plan/reports', `verifier.report.${request.subject_id}.md`);
+  if (iteration === 28) return { request, relative, text: fs.readFileSync(path.join(project.root, relative), 'utf8') };
+  const printed = fs.readFileSync(path.join(invocations, invocation, 'agent-output.log'), 'utf8').split(/\r?\n/)[18];
+  const output: string = JSON.parse(printed).item.aggregated_output;
+  const original = output.match(/(\| id \| status \| severity \|[\s\S]*?<!-- \/maison-verifier-result:v1 -->\n)/);
+  assert(original, 'i26 pre-repair command output must contain the actual original report');
+  return { request, relative, text: original[1] };
 }

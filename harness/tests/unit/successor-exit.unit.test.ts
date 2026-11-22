@@ -22,14 +22,14 @@ import {
   featureFrozenScopePath, freezeFeatureExecutionScope, readFeatureFrozenScope, registerFeatureScopeTransfer, resolveSuccessorExecutionScope,
 } from '../../scripts/utils/feature-execution-scope';
 import { featureScopeCandidateFingerprint } from '../../scripts/utils/feature-track';
-import { loadPhaseEvidenceManifest } from '../../scripts/utils/phase-evidence-manifest';
+import { loadPhaseEvidenceManifest, sha256File } from '../../scripts/utils/phase-evidence-manifest';
 import { reconcileChangeUnitBlueprintRefs } from '../../scripts/utils/change-unit-design-preparation';
 import { resolveWorkflowSpec } from '../../workflow-loader';
 import { buildGoalManifestFromInput, mergeSuccessorRequirement, SUCCESSOR_REQUIREMENT_INCREMENT_MARKER, type GoalManifest } from '../../scripts/utils/goal-manifest';
 import { computeRequirementShaFromText, computeRunRequirementSha } from '../../scripts/utils/fidelity-shared';
 import { componentBlueprintPath } from '../../scripts/utils/component-blueprint-path';
 import { loadHostSnapshot, SNAPSHOT_CU_FEATURE, SNAPSHOT_FLAT_FEATURE } from '../fixtures/host-snapshot-3.1.0/generate';
-import { loadMigratedHostSnapshot } from '../fixtures/host-snapshot-3.1.0/migrate';
+import { loadMigratedHostSnapshot, migrateHostSnapshot, snapshotVerifierHooks } from '../fixtures/host-snapshot-3.1.0/migrate';
 import { goalRunEvents, requestVia, runGoalRuntimeChain } from './goal-runner-testing-integrity.unit.test';
 import { handWriteProjections } from './component-design-handoff.unit.test';
 import type { UnitCaseResult } from '../run-unit';
@@ -42,6 +42,10 @@ import type { CheckContext, CheckResult } from '../../scripts/utils/types';
 import type { CurrentDisposition } from '../../scripts/utils/check-disposition';
 import { preserveRuntimeTestEvidence } from '../utils/runtime-test-control';
 import { executionRequestForInvoke, sessionEvents } from '../../scripts/utils/session-execution-handoff';
+import { readCurrentUtCaseReport } from '../../scripts/utils/ut-execution-evidence';
+import { deviceEnvFor } from '../../scripts/utils/device-readiness-gate';
+import type { DeviceTestEvidenceDoc } from '../../scripts/utils/device-test-evidence-shared';
+import { loadVerifierEvidenceForSubject } from '../../scripts/utils/verifier-evidence';
 
 type Snapshot = ReturnType<typeof loadHostSnapshot>;
 const WORKFLOW_ORDER = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'];
@@ -439,48 +443,112 @@ cases.push(
 // plan 4e6fb3b6 §7.3 / A13：已有范围转交——持有者是一个中断的后继；重发同一请求（三个公开入口，不带技术旗标）即重新接入它，
 // 不再被出生范围解析以"范围已转交"拒绝。
 for (const entry of ['foreground', 'detach', 'attended'] as const) {
-  cases.push({ name: `migration baseline: P3 t5 A13 ${entry}：已有范围转交（持有者中断）→ 重发同一请求即重新接入持有者并完成，不需要技术旗标`, run: () => withCurrentSnapshot(SNAPSHOT_FLAT_FEATURE, async s => {
+  cases.push({ name: `migration baseline: P3 t5 A13 ${entry}：已有范围转交（持有者中断）→ 重发同一请求即重新接入持有者并完成，不需要技术旗标`, run: () => withSnapshot(async s => {
     const feature = SNAPSHOT_FLAT_FEATURE;
-    const source = readJson<{ run_id: string }>(completionOriginal(s, feature)).run_id;
-    freezeAndTransfer(s, feature, source);
-    fs.rmSync(featureFilePath(s.root, feature, 'ut/reports/phase-evidence-manifest.json'));
-    const requirement = readJson<{ requirement: string }>(runFile(s.root, feature, source, 'manifest.json')).requirement;
-    const fileSystem = require('fs') as { appendFileSync: typeof fs.appendFileSync };
-    const append = fileSystem.appendFileSync;
-    let interrupted = false;
-    let born: Awaited<ReturnType<typeof supersede>> | undefined;
-    fileSystem.appendFileSync = ((file: fs.PathOrFileDescriptor, bytes: string | Uint8Array, ...rest: unknown[]) => {
-      const text = String(bytes);
-      if (!interrupted && String(file).startsWith(featureFilePath(s.root, feature, 'goal-runs')) && String(file).endsWith('events.jsonl')
-        && text.includes('"type":"run_end"') && text.includes('"status":"CHAIN_SLICE_COMPLETED"')) {
-        interrupted = true;
-        throw new Error('injected crash before terminal commit');
-      }
-      return Reflect.apply(append, fs, [file, bytes, ...rest]);
-    }) as typeof fs.appendFileSync;
-    try {
-      born = await supersede(s, feature, source, ['ut'], {
-        testControl: { expectedInterruption: 'injected crash before terminal commit' }, failExecutorFor: () => false,
-      });
-    } finally { fileSystem.appendFileSync = append; }
-    assert(born);
-    const { successor: holder, error } = born;
-    assert(holder, `夹具：显式后继须出生：${error}`);
-    assert(interrupted, 'the real completed work must reach its terminal event commit');
-    assert.strictEqual(readFeatureFrozenScope(s.root, feature)?.transfers?.at(-1)?.run_id, holder, '夹具：范围已转交给中断的后继');
-    const finishedUt = goalRunEvents(s.root, holder!, feature).filter(event => event.type === 'harness_end' && event.phase === 'ut' && event.exit_code === 0);
-    assert.equal(finishedUt.length, 1, 'the interrupted holder already received one actual completed UT check');
-    const before = runIds(s.root, feature).length;
-    const done = await requestVia(entry, s.root, {
-      frameworkRoot: s.frameworkRoot, featureId: feature, freshRequirement: requirement, freshStartPhase: 'ut', freshEndPhase: 'ut',
+    const device = { serial: 'a13-holder-device', targetKind: 'physical' as const };
+    const deviceGate = ({ sessionId }: { sessionId: string }) => ({
+      env: deviceEnvFor(device, sessionId),
+      target: device,
+      notes: [],
     });
-    clearFrameworkConfigCache();
-    assert.strictEqual(runIds(s.root, feature).length, before, '重新接入持有者，不新建 run');
-    assert.deepStrictEqual(done.invokedPhases, [], 'reentry must reuse the completed original author instead of a cold UT author');
-    assert.equal(goalRunEvents(s.root, holder!, feature).filter(event => event.type === 'harness_end' && event.phase === 'ut' && event.exit_code === 0).length, 1,
-      'reentry must retain the original naturally completed UT rather than buying the same check again');
-    const status = String([...goalRunEvents(s.root, holder!, feature)].reverse().find(e => e.type === 'run_end')?.status ?? '');
-    assert(/COMPLETED/.test(status), `持有者须完成：${status}`);
+    const previousTarget = process.env.HARNESS_HDC_TARGET;
+    // Additional checks outside the frozen chain inherit the same controlled target as the holder.
+    process.env.HARNESS_HDC_TARGET = device.serial;
+    try {
+      // Exercise the normal device readiness and evidence handoff in one isolated host.
+      fs.appendFileSync(path.join(s.frameworkRoot, 'profiles/test-chain/profile.yaml'), '\ndevice_capabilities: [device_test.run]\n');
+      await migrateHostSnapshot(s, feature, deviceGate);
+      const sourceOriginal = completionOriginal(s, feature);
+      const sourceOriginalBytes = fs.readFileSync(sourceOriginal);
+      const source = readJson<{ run_id: string }>(sourceOriginal).run_id;
+      freezeAndTransfer(s, feature, source);
+      fs.rmSync(featureFilePath(s.root, feature, 'ut/reports/phase-evidence-manifest.json'));
+      const verification = snapshotVerifierHooks(s, feature);
+      const requirement = readJson<{ requirement: string }>(runFile(s.root, feature, source, 'manifest.json')).requirement;
+      const fileSystem = require('fs') as { appendFileSync: typeof fs.appendFileSync };
+      const append = fileSystem.appendFileSync;
+      let interrupted = false;
+      let born: Awaited<ReturnType<typeof supersede>> | undefined;
+      fileSystem.appendFileSync = ((file: fs.PathOrFileDescriptor, bytes: string | Uint8Array, ...rest: unknown[]) => {
+        const text = String(bytes);
+        if (!interrupted && String(file).startsWith(featureFilePath(s.root, feature, 'goal-runs')) && String(file).endsWith('events.jsonl')
+          && text.includes('"type":"run_end"') && text.includes('"status":"CHAIN_SLICE_COMPLETED"')) {
+          interrupted = true;
+          throw new Error('injected crash before terminal commit');
+        }
+        return Reflect.apply(append, fs, [file, bytes, ...rest]);
+      }) as typeof fs.appendFileSync;
+      try {
+        born = await supersede(s, feature, source, ['ut'], {
+          ...verification, deviceGate, realHarness: true, skipLegacySeal: true,
+          testControl: { expectedInterruption: 'injected crash before terminal commit' }, failExecutorFor: () => false,
+        });
+      } finally { fileSystem.appendFileSync = append; }
+      assert(born);
+      const { successor: holder, error } = born;
+      assert(holder, `夹具：显式后继须出生：${error}`);
+      assert(interrupted, `the real completed work must reach its terminal event commit: ${error ?? ''}`);
+      assert.strictEqual(readFeatureFrozenScope(s.root, feature)?.transfers?.at(-1)?.run_id, holder, '夹具：范围已转交给中断的后继');
+      const utReports = featurePhaseReportsDir(s.root, feature, 'ut', s.frameworkRoot);
+      const executions = () => fs.readFileSync(path.join(utReports, 'snapshot-ut-invocations.jsonl'), 'utf8')
+        .split('\n').filter(Boolean).map(line => JSON.parse(line) as {
+          run_id: string; input_sha256: string; cases: Array<{ test: string; status: string }>;
+        })
+        .filter(item => item.run_id === holder);
+      const authorCount = () => goalRunEvents(s.root, holder, feature).filter(event =>
+        event.type === 'agent_invoke_start' && (event.phase === 'work-unit-author' || event.phase === 'ut')).length;
+      const utChecks = () => goalRunEvents(s.root, holder, feature).filter(event => event.phase === 'ut'
+        && (event.type === 'harness_start' || event.type === 'harness_end'));
+      const finishedUt = executions();
+      const authors = authorCount();
+      assert(finishedUt.length > 0, 'the holder must execute the actual UT provider');
+      assert.equal(new Set(finishedUt.map(item => item.input_sha256)).size, finishedUt.length,
+        'the holder must execute identical UT inputs only once');
+      assert(finishedUt.every(item => item.cases.some(test => test.test.startsWith('[AC-2]') && test.status === 'PASS')),
+        'the actual AC-2 case must pass');
+      const execution = readCurrentUtCaseReport({ projectRoot: s.root, feature, frameworkRoot: s.frameworkRoot });
+      assert(execution?.passed.some(check => check.id.startsWith('[AC-2]') && execution.originals(check).length),
+        'the completed UT must carry its actual AC-2 case and bound execution original');
+      const summary = readJson<{ closure_status: string; verifier_subject_id: string }>(path.join(utReports, 'summary.json'));
+      assert.equal(summary.closure_status, 'closed', 'the original holder must close UT before the interrupted terminal event');
+      const verified = loadVerifierEvidenceForSubject(s.root, feature, 'ut', summary.verifier_subject_id, { frameworkRoot: s.frameworkRoot });
+      assert(verified.ok && verified.evidence.verdict === 'PASS', 'the holder must have an accepted independent UT verdict');
+      const assertDeviceProof = () => {
+        const proof = readJson<DeviceTestEvidenceDoc>(featureFilePath(s.root, feature, 'testing/reports/device-test-evidence.json'));
+        assert([source, holder].includes(proof.goal_run_id), 'the controlled device proof must belong to the source or holder');
+        assert.equal(proof.device_target.serial, device.serial);
+        assert.equal(proof.device_target.target_kind, device.targetKind);
+        assert(proof.artifact_binding, 'the device proof must bind its native trace');
+        assert.equal(sha256File(path.resolve(s.root, proof.artifact_binding.trace_path)), proof.artifact_binding.trace_sha256);
+      };
+      assertDeviceProof();
+      const before = runIds(s.root, feature).length;
+      const checks = utChecks();
+      const specEvidence = ['fidelity-intent.json', 'capability-snapshot.json'].map(name => {
+        const file = featureFilePath(s.root, feature, `spec/reports/${name}`);
+        return { file, bytes: fs.readFileSync(file) };
+      });
+      const done = await requestVia(entry, s.root, {
+        ...verification, realHarness: true, frameworkRoot: s.frameworkRoot, featureId: feature,
+        deviceGate, freshRequirement: requirement, freshStartPhase: 'ut', freshEndPhase: 'ut',
+      });
+      clearFrameworkConfigCache();
+      assert.strictEqual(runIds(s.root, feature).length, before, '重新接入持有者，不新建 run');
+      assert.deepStrictEqual(done.invokedPhases, [], 'reentry must reuse the completed original author instead of a cold UT author');
+      assert.equal(authorCount(), authors, 'reentry must retain the existing UT author');
+      assert.deepStrictEqual(executions(), finishedUt, 'reentry must retain the original actual UT execution');
+      assert.deepStrictEqual(utChecks(), checks, 'reentry must retain the completed UT harness result');
+      for (const { file, bytes } of specEvidence) {
+        assert(fs.readFileSync(file).equals(bytes), 'reentry must preserve the frozen Spec original: ' + file);
+      }
+      assertDeviceProof();
+      assert(fs.readFileSync(sourceOriginal).equals(sourceOriginalBytes), 'the source completion original must keep its original bytes');
+      const status = String([...goalRunEvents(s.root, holder!, feature)].reverse().find(e => e.type === 'run_end')?.status ?? '');
+      assert(/COMPLETED/.test(status), `持有者须完成：${status}`);
+    } finally {
+      if (previousTarget === undefined) delete process.env.HARNESS_HDC_TARGET;
+      else process.env.HARNESS_HDC_TARGET = previousTarget;
+    }
   }) });
 }
 

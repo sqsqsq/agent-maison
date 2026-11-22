@@ -14,6 +14,12 @@ import { formatReadImageEvidenceInstructions } from './read-image-evidence';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
+import * as YAML from 'yaml';
+import type { VerifierEvidence } from './verifier-evidence';
+import type { VerifierItemScope } from './verifier-item-scope';
+import { readVerifierSummaryRows, verifierSemanticChecks } from './repair-candidates';
+import { isInsideProjectRoot, validateProjectRelativePath } from './project-relative-path';
+import { featureRelativePath } from './feature-identity';
 
 import { featurePhaseReportsDir, relFeaturesDir } from '../../config';
 import {
@@ -204,17 +210,18 @@ export function failScriptReportWithFatalError(
   stage: 'assemble_ai_prompt' | 'generate_merged_report' | 'closure_finalization',
   err: Error,
   frameworkRoot?: string,
+  knownFailure?: 'verification_evidence_gap',
 ): ScriptReport {
   const fatal: CheckResult = {
     id: `runner_${stage}_failed`,
     category: 'structure',
-    description: `Harness runner 在 ${stage} 阶段抛出未捕获异常`,
+    description: knownFailure ? 'Verifier 所需的基线原件不可读取' : `Harness runner 在 ${stage} 阶段抛出未捕获异常`,
     severity: 'BLOCKER',
     status: 'FAIL',
-    details: `[Harness runner fatal] ${err.message}\n${err.stack ?? ''}`,
-    failure_kind: fatalFailureKindForStage(stage),
-    blocking_class: stage === 'closure_finalization' ? 'closure_finalization' : 'framework_bug',
-    actionability: 'human_only',
+    details: knownFailure ? err.message : `[Harness runner fatal] ${err.message}\n${err.stack ?? ''}`,
+    failure_kind: knownFailure ?? fatalFailureKindForStage(stage),
+    ...(knownFailure ? { actionability: 'agent_fixable' }
+      : { blocking_class: stage === 'closure_finalization' ? 'closure_finalization' : 'framework_bug', actionability: 'human_only' }),
   };
 
   const updated: ScriptReport = {
@@ -333,6 +340,128 @@ function formatRepairDiagnosisNotice(
   ].join('\n');
 }
 
+/** Coalesce one original used for several purposes and keep distinct versions readable. */
+export function mergeContextFiles(projectRoot: string, contextFiles: readonly ContextFileEntry[]): ContextFileEntry[] {
+  const grouped = new Map<string, ContextFileEntry[]>();
+  for (const file of contextFiles) {
+    const source = file.kind === 'image' && file.imagePath ? file.imagePath : file.label;
+    const physical = !source.startsWith('(');
+    const normalized = physical ? path.resolve(projectRoot, source.replace(/\\/g, '/')) : source;
+    const key = physical && process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+    const group = grouped.get(key) ?? [];
+    group.push(file);
+    grouped.set(key, group);
+  }
+  return [...grouped.values()].flatMap(group => {
+    const originals = group.filter(file => file.kind !== 'path');
+    const purposes = group.filter(file => file.kind === 'path').flatMap(file => [file.content, ...file.references ?? []]);
+    if (!originals.length) {
+      const [content = '', ...references] = new Set(purposes.filter(Boolean));
+      return [{ ...group[0], content, references }];
+    }
+    const copies = new Map<string, ContextFileEntry>();
+    for (const original of originals) {
+      const key = (original.kind ?? 'text') + '\0' + original.content;
+      const prior = copies.get(key);
+      copies.set(key, { ...original, references: [...new Set([...purposes, ...prior?.references ?? [], ...original.references ?? []].filter(Boolean))] });
+    }
+    return [...copies.values()];
+  });
+}
+
+export interface VerifierItemReview {
+  scope: VerifierItemScope;
+  previousReport: VerifierEvidence | null;
+  currentReportPath?: string;
+}
+
+function selectTemplateReviewSections(template: string, itemReview?: VerifierItemReview): string {
+  if (itemReview?.scope.mode !== 'partial') return template;
+  const reviewIds = new Set(itemReview.scope.reviewIds);
+  const sections = /^### [ \t]*检查[^\r\n]*[（(]([A-Za-z][\w.-]*)[）)][^\r\n]*\r?\n[\s\S]*?(?=^#{1,3}[ \t]|^---[ \t]*\r?$|(?![\s\S]))/gm;
+  const selected = template.replace(sections, (section, id: string) => reviewIds.has(id) ? section : '');
+  return reviewIds.has('visual_multimodal_parity') ? selected
+    : selected.replace(/^## 七-b、[^\r\n]*\r?\n[\s\S]*?(?=^## 八、)/m, '');
+}
+
+const ITEM_REVIEW_HEADING = '## 本轮复核范围';
+const ITEM_REVIEW_BLOCK = /^## 本轮复核范围\r?\n([\s\S]*?)\r?\n---\r?\n\r?\n/;
+const FEATURE_ROOT_PLACEHOLDER = '{features_dir}/{feature_name}';
+
+function verifierFeatureRoot(projectRoot: string, feature: string): string {
+  return path.posix.join(relFeaturesDir(projectRoot), featureRelativePath(feature));
+}
+
+export function readVerifierItemReviewPrompt(prompt: string) {
+  const block = ITEM_REVIEW_BLOCK.exec(prompt)?.[1];
+  if (!block) return null;
+  const selected = /^本轮逐项核验 (.+)。$/m.exec(block)?.[1] ?? '';
+  const reviewIds = [...selected.matchAll(/`([A-Za-z][\w.-]*)`/g)].map(match => match[1]);
+  return { reviewIds, reusedRows: readVerifierSummaryRows(block) ?? [] };
+}
+
+export function renderVerifierItemReviewNotice(projectRoot: string, itemReview?: VerifierItemReview): string {
+  if (itemReview?.scope.mode !== 'partial') return '';
+  const { scope, previousReport } = itemReview;
+  const sections = [ITEM_REVIEW_HEADING, '', `本轮逐项核验 ${scope.reviewIds.map(id => '\`' + id + '\`').join('、')}。`,
+    '下方模板只展开这些检查。完整汇总表保留本轮核出的行与下方已有独立依据的行。没有原行且本轮无核验义务的项不补写结论。',
+    '沿用行保留原 status、severity、证据和来源。带原核验引用的旧非 PASS 明细、未决处置和责任由原报告承载，无需复抄。报告终态回显本轮 subject，计入所有有效的 BLOCKER FAIL（包括沿用行）。'];
+  if (scope.reusedRows.length && previousReport) {
+    const { loadVerifierEvidenceForSubject, readVerifierOriginalReference } = require('./verifier-evidence') as typeof import('./verifier-evidence');
+    const originals = new Map<string, VerifierEvidence | null>();
+    const preserveInPlace = new Set<string>();
+    const sourceRows = scope.reusedRows.map(row => {
+      const given = readVerifierOriginalReference(row.evidence);
+      let source = previousReport;
+      let line = row.line;
+      let evidence = given ? row.evidence.replace(given.marker, '').trim() : row.evidence;
+      if (given) {
+        const subject = /^verifier\.report\.([0-9a-f]{64})\.md$/.exec(path.posix.basename(given.report))?.[1];
+        if (subject && subject !== previousReport.subject_id && path.posix.dirname(given.report) === path.posix.dirname(previousReport.md_path_rel)) {
+          if (!originals.has(subject)) {
+            const loaded = loadVerifierEvidenceForSubject(projectRoot, previousReport.feature, previousReport.phase, subject);
+            originals.set(subject, loaded.ok ? loaded.evidence : null);
+          }
+          const original = originals.get(subject);
+          const candidate = original && readVerifierSummaryRows(original.report_text)?.find(item => item.id === row.id && item.line === given.line);
+          if (original?.md_path_rel === given.report && candidate && candidate.status === row.status && candidate.severity === row.severity) {
+            source = original;
+            line = candidate.line;
+            evidence = candidate.evidence;
+          }
+        }
+      }
+      const reference = source.md_path_rel !== itemReview.currentReportPath ? ` [原核验](<${source.md_path_rel}#L${line}>)` : '';
+      if (!reference && row.status !== 'PASS') preserveInPlace.add(row.id);
+      return `| ${row.id} | ${row.status} | ${row.severity} | ${escapeMdCell(evidence)}${reference} |`;
+    });
+    sections.push('', '| id | status | severity | 证据 |', '|---|---|---|---|', ...sourceRows);
+    const details = verifierSemanticChecks(previousReport.report_text, previousReport.phase, previousReport.feature)
+      .filter(check => typeof check.id === 'string' && preserveInPlace.has(check.id));
+    if (details.length) sections.push('', '本次报告与下列原明细使用同一落点。改写时须保留这些明细及已有责任：', '', '\`\`\`yaml',
+      YAML.stringify(details).trimEnd(), '\`\`\`');
+  }
+  return sections.join('\n') + '\n\n---\n\n';
+}
+
+/** A late counterargument may reopen more checks. Restore them from the same bound template. */
+export function rebuildVerifierItemReviewPrompt(projectRoot: string, prompt: string, template: string, itemReview: VerifierItemReview,
+  feature = itemReview.previousReport?.feature): string {
+  const scoped = selectTemplateReviewSections(template, itemReview);
+  const sections = [
+    /^## 五、语义检查项[^\r\n]*\r?\n[\s\S]*?(?=^## 六、)/m,
+    /^## 七-b、[^\r\n]*\r?\n[\s\S]*?(?=^## 八、)/m,
+  ];
+  let text = prompt.replace(ITEM_REVIEW_BLOCK, '');
+  for (const section of sections) {
+    const raw = scoped.match(section)?.[0] ?? '';
+    const replacement = feature ? raw.split(FEATURE_ROOT_PLACEHOLDER).join(verifierFeatureRoot(projectRoot, feature)) : raw;
+    if (section.test(text)) text = text.replace(section, () => replacement);
+    else if (replacement && section === sections[1]) text = text.replace(/^## 八、/m, () => replacement + '## 八、');
+  }
+  return renderVerifierItemReviewNotice(projectRoot, itemReview) + text;
+}
+
 export function assembleAIPrompt(
   harnessRoot: string,
   projectRoot: string,
@@ -366,25 +495,42 @@ export function assembleAIPrompt(
     repairDiagnosis?: { failedCheckIds: readonly string[]; reason: string };
     /** plan 33784ed1 §3.3：目标简报渲染文本（renderGoalBrief 输出），追加在正文尾部；同一文本进材料摘要。 */
     goalBrief?: string;
+    itemReview?: VerifierItemReview;
+    /** Use the same resolved template read as the material builder and scope selector. */
+    templateText?: string;
   },
 ): string {
-  const template = loadVerifierPromptTemplate(harnessRoot, phase, resolvedProfile, options?.verifierPromptRel);
+  const template = selectTemplateReviewSections(options?.templateText
+    ?? loadVerifierPromptTemplate(harnessRoot, phase, resolvedProfile, options?.verifierPromptRel), options?.itemReview);
 
   const dir = ensureReportDir(projectRoot, feature, phase, frameworkRoot);
   const contextImageDir = path.join(dir, 'context-images');
-  let imageIdx = 0;
+  const sidecarNames: string[] = [];
 
-  const pathEntries = contextFiles.filter(cf => cf.kind === 'path');
-  const inlineSection = contextFiles
+  const scope = options?.itemReview?.scope;
+  const reviewPaths = new Set(scope?.mode === 'partial' ? scope.reviewPaths : []);
+  const merged = mergeContextFiles(projectRoot, contextFiles).map(file => {
+    if (!reviewPaths.size || file.kind === 'path' || file.kind === 'image' || file.label.startsWith('(')
+      || reviewPaths.has(file.label) || file.references?.includes('开放发现的直接依据')) return file;
+    const resolved = path.resolve(projectRoot, file.label);
+    if (path.isAbsolute(file.label)) return file;
+    try {
+      const relative = validateProjectRelativePath(projectRoot, file.label, 'verifier original');
+      if (!isInsideProjectRoot(fs.realpathSync(projectRoot), fs.realpathSync(resolved)) || fs.readFileSync(resolved, 'utf8') !== file.content) return file;
+      return { ...file, label: relative, kind: 'path' as const, content: '本轮范围内需要核对时 Read 原件' };
+    } catch { return file; }
+  });
+  const pathEntries = merged.filter(cf => cf.kind === 'path');
+  const inlineSection = merged
     .filter(cf => cf.kind !== 'path')
     .map(cf => {
       if (cf.kind === 'image' && cf.imagePath && fs.existsSync(cf.imagePath)) {
         fs.mkdirSync(contextImageDir, { recursive: true });
         const base = path.basename(cf.imagePath).replace(/[^\w.-]+/g, '_');
-        const sidecarName = `${String(imageIdx).padStart(2, '0')}-${base}`;
-        imageIdx++;
+        const sidecarName = `${String(sidecarNames.length).padStart(2, '0')}-${base}`;
         const sidecarAbs = path.join(contextImageDir, sidecarName);
         fs.copyFileSync(cf.imagePath, sidecarAbs);
+        sidecarNames.push(sidecarName);
         const sidecarRel = path.join('context-images', sidecarName).replace(/\\/g, '/');
         const mime = cf.mime ?? 'image/png';
         return [
@@ -394,12 +540,13 @@ export function assembleAIPrompt(
           '',
           `![${cf.label}](${sidecarRel})`,
           '',
-          cf.content.trim()
-            ? cf.content
-            : 'VL verifier 须读取 sidecar 像素文件对照 ui-spec（禁止把 data URI 当保真注入）。',
+          [cf.content || 'VL verifier 须读取 sidecar 像素文件对照 ui-spec（禁止把 data URI 当保真注入）。',
+            ...cf.references ?? []].join('\n\n'),
         ].join('\n');
       }
-      return `### ${cf.label}\n\n\`\`\`\n${cf.content}\n\`\`\``;
+      const references = cf.references?.map(reference => `> ${reference}`).join('\n') ?? '';
+      const content = cf.kind === 'image' ? '本轮图片原件不可读取。' : cf.content;
+      return [`### ${cf.label}`, references, `\`\`\`\n${content}\n\`\`\``].filter(Boolean).join('\n\n');
     })
     .join('\n\n');
   // plan 07a41ec6 T7：上游文档 / 源码不内联，只给路径清单——verifier 按需 Read，不全量通读。
@@ -408,25 +555,20 @@ export function assembleAIPrompt(
       ? [
           '### 按需读取的文件（未内联 · 需要核对时用 Read 按路径读取，不要全量通读）',
           '',
-          ...pathEntries.map(cf => `- \`${cf.label}\`${cf.content.trim() ? ` — ${cf.content.trim()}` : ''}`),
+          ...pathEntries.map(cf => [`- \`${cf.label}\``, [cf.content, ...cf.references ?? []].filter(Boolean).join('；')].filter(Boolean).join(' — ')),
         ].join('\n')
       : '';
   const contextSection = [inlineSection, pathSection].filter(s => s.length > 0).join('\n\n');
-  const sidecarNames: string[] = [];
-  if (fs.existsSync(contextImageDir)) {
-    for (const f of fs.readdirSync(contextImageDir).sort()) {
-      if (/\.(png|jpe?g|webp|gif)$/i.test(f)) sidecarNames.push(f);
-    }
-  }
 
   let tail = '';
   if (options?.repairDiagnosis) {
     tail += `\n\n---\n\n${formatRepairDiagnosisNotice(options.repairDiagnosis)}\n`;
   }
-  if (phase === 'coding' && options?.imageInput === 'tool_read') {
+  if (phase === 'coding' && options?.imageInput === 'tool_read'
+    && (scope?.mode !== 'partial' || scope.reviewIds.includes('visual_multimodal_parity'))) {
     tail +=
       '\n\n---\n\n## 多模态读图取证（tool_read · M3）\n\n' +
-      formatReadImageEvidenceInstructions(sidecarNames) +
+      (sidecarNames.length ? formatReadImageEvidenceInstructions(sidecarNames) : '本轮没有图片 sidecar，按模板保留视觉证据缺口。') +
       '\n';
   }
   if (lifecycleHookFragments && lifecycleHookFragments.length > 0) {
@@ -460,15 +602,15 @@ export function assembleAIPrompt(
       context_files: contextSection,
     };
     return template.replace(
-      /\{(spec_content|script_report|feature_name|phase|timestamp|features_dir|context_files)\}/g,
-      (_match, key: string) => values[key],
+      /\{features_dir\}\/\{feature_name\}|\{(spec_content|script_report|feature_name|phase|timestamp|features_dir|context_files)\}/g,
+      (_match, key: string | undefined) => key ? values[key] : verifierFeatureRoot(projectRoot, feature),
     ) + tail;
   };
 
   // plan a9d4e7c2 T4：这里曾经额外产出一份「规范化摘要」（把 {timestamp} 与
   // {script_report} 换成占位符）供 subject 派生，好让零改动重跑不换代。整套 canonical
   // 投影已随「稳定 subject」承诺一并裁撤——subject 现在直接哈希写盘的 ai-prompt.md 字节。
-  const assembled = fill(scriptReportJson, new Date().toISOString());
+  const assembled = renderVerifierItemReviewNotice(projectRoot, options?.itemReview) + fill(scriptReportJson, new Date().toISOString());
 
   const promptPath = path.join(dir, 'ai-prompt.md');
   fs.writeFileSync(promptPath, assembled, 'utf-8');

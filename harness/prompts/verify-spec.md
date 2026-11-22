@@ -112,12 +112,11 @@
 
 ### 检查 15: 保真档位与捕获完整性 (fidelity_capture_governance)
 
-- **严重等级**: BLOCKER（`fidelity_target: pixel_1to1` 时）
+- **严重等级**: BLOCKER（实际阻断确定的视觉契约、验收或授权时）
 - **评估方法**:
-  1. Visual Handoff yaml 是否声明 `fidelity_target` / `asset_acquisition_mode` / `fidelity_deferrals`（`pixel_1to1`/P0 的 defer 始终是未满足义务；legacy `human_signed`/`signed_by` 无 gate 权重，能力不足须走 capability defer）？
-  2. 是否产出 `spec/ref-elements.yaml`（参考图侧独立枚举）？`disposition: defer` 是否与 `fidelity_deferrals` 交叉一致？
-  3. 是否产出 `spec/asset-manifest.yaml`（`pixel_1to1` 联动 user_dir）？占位资产是否向用户显式说明？
-  4. ui-spec 是否含 `must_have_elements` / `semantic_role` / `color_ref` 等新字段？脚本 `capture_completeness` / `fidelity_deferrals` 若 FAIL → 本项 FAIL
+  1. 直接消费本轮机器认定的 `effective_fidelity`、`acceptance_strictness`（来源 `spec/reports/fidelity-intent.json`）及捕获/延后检查，包括 `capture_completeness`、`fidelity_deferrals_strict_contract` 与 `ref_elements_strict_defer`。保留机器失败和证据缺口。
+  2. 查 `spec/ref-elements.yaml` 中相关元素的真实处置。有效 `best_effort` 已登记的 `disposition: defer` 保留披露和债务，仅未补抄到另一处不能阻断或触发返工。核实占位资产是否向用户清楚披露。
+  3. 硬性视觉承诺仍按原验收执行。对照来源、`ui-spec` 和适用的资产，指出缺了哪个必需元素或改了何种授权、证据位置及放过的后果。补抄登记或 legacy `human_signed` / `signed_by` 不改变授权；能力不足沿已有 capability defer 路径处理。
 
 ### 检查 R: 跨产物引用核对 (reference_crosscheck)
 

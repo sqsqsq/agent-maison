@@ -936,14 +936,15 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     }
   } },
   { name: 'coding and review consume blueprint runtime with real planned targets and no narrative documents', run(f) {
-    const source = path.join(f.root, 'src/ledger/LedgerFeature.ets');
+    const target = 'src/ledger/LedgerFeature.ets';
+    const source = path.join(f.root, target);
     fs.mkdirSync(path.dirname(source), { recursive: true }); fs.writeFileSync(source, 'export class LedgerFeature { run(): number { return 42; } }\n');
     for (const materialized of [false, true]) {
       if (materialized) materializeBlueprintSkillInputs(f.root, f.feature, frameworkRoot);
       const contractsFile = resolveFeatureArtifact(f.root, f.feature, 'contracts.yaml').canonicalPath;
       fs.mkdirSync(path.dirname(contractsFile), { recursive: true }); fs.writeFileSync(contractsFile, YAML.stringify(planContracts(f)));
       for (const phase of ['coding', 'review']) {
-        const result = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot, feature: f.feature, phase, track: 'full', requirement: 'implement approved ledger refresh', testTargets: ['src/ledger/LedgerFeature.ets'], inputContext: { schema_version: '1.1', subject: { feature: f.feature }, obligations: { implementation: 'required', 'visual-evidence': 'not_applicable' }, required_outputs: [] } });
+        const result = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot, feature: f.feature, phase, track: 'full', requirement: 'implement approved ledger refresh', testTargets: [target], inputContext: { schema_version: '1.1', subject: { feature: f.feature }, obligations: { implementation: 'required', 'visual-evidence': 'not_applicable' }, required_outputs: [] } });
         assert.notEqual(result.report.assurance, 'blocked', JSON.stringify(result.report));
         assert.equal(result.report.capabilities.find(capability => capability.id === `capability_${phase}_visual_context`)?.state, 'not_applicable');
         const useCases = result.inputs!.values.use_cases;
@@ -957,7 +958,10 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
         assert(!checks.some(check => check.status === 'FAIL'), JSON.stringify(checks));
         assert(!checkDesignToCode(ctx).some(check => check.severity === 'BLOCKER' && check.status === 'SKIP'));
         const context = collectContextFiles(loader, { kind: 'standalone', projectRoot: f.root, frameworkRoot, frameworkRel: '' }, phase, f.feature, spec, { resolvedInputs: result.inputs });
-        assert(context.some(file => file.content.includes('publish snapshot')));
+        const contractsPath = path.relative(f.root, contractsFile).replace(/\\/g, '/');
+        assert(context.some(file => file.kind === 'path' && file.label === contractsPath), `${phase}: verifier must locate the bound construction contract`);
+        assert(fs.readFileSync(path.join(f.root, contractsPath), 'utf8').includes('publish snapshot'), 'the bound contract preserves the blueprint runtime step');
+        assert(context.some(file => file.kind === 'path' && file.label === target), `${phase}: verifier must locate the real planned implementation`);
         const missing = { ...ctx, featureSpec: { ...spec, contracts: { ...spec.contracts!, change_unit: undefined } } };
         assert(checkChangeUnitFeatureProjection(missing, phase as 'coding' | 'review').some(check => check.status === 'FAIL'));
       }

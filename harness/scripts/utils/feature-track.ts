@@ -1158,13 +1158,20 @@ export function resolveCurrentScopeView(input: {
   const { birth, events, dependencies, history } = readScopeProofHistory({ ...input, currentPhasePass });
   const proofs = new Map<string, ScopeEvidenceRef>();
   const stale = new Set<string>();
-  const { resolveCompletionDisposition, applicableCheckFamilies } = require('./verify-feature-completion') as typeof import('./verify-feature-completion');
+  const { resolveCompletionDisposition, applicableCheckFamilies, executionScopeEvidenceFindings, resolvePhaseRunIds,
+    currentScopeProofRunId } = require('./verify-feature-completion') as typeof import('./verify-feature-completion');
+  const scopeFindings = input.currentRunId ? executionScopeEvidenceFindings(projectRoot, feature, input.previous,
+    undefined, input.currentRunId, undefined, frameworkRoot, currentPhasePass, input.authorityReaders, input.workflow, history) : undefined;
   const disposition = resolveCompletionDisposition({ projectRoot, feature, chain: applicableCheckFamilies(input.previous),
     workflow: input.workflow, executionScope: input.previous, frameworkRoot, runId: input.currentRunId,
-    pendingOwnerPhase: input.currentPhase, authorityReaders: input.authorityReaders, currentResults: input.currentResults });
+    pendingOwnerPhase: input.currentPhase, authorityReaders: input.authorityReaders, currentResults: input.currentResults, scopeFindings });
   const actualResults = [...new Set(input.previous.obligations.filter(obligation => obligation.applicability !== 'not_applicable')
     .map(obligation => obligation.owner_phase))].filter(phase => !!loadPhaseEvidenceManifest(projectRoot, feature, phase));
   const candidates = new Set([...history.passed, ...input.completedPhases ?? [], ...input.previous.reused_phases.map(p => p.phase), ...actualResults]);
+  const invalidProofIds = new Set(scopeFindings?.filter(finding => finding.class === 'evidence').map(finding => finding.obligation_id));
+  const priorRefs = input.previous.obligations.flatMap(obligation => (obligation.satisfied_by ?? [])
+    .filter((ref): ref is ScopeEvidenceRef => !('input_id' in ref)).map(ref => ({ ref, obligationId: obligation.id })));
+  const newProofs = new Map<string, string>();
   for (const phase of candidates) {
     const evidence = loadPhaseEvidenceManifest(projectRoot, feature, phase);
     // 新发现交真实责任方处理；它不等于来源阶段的证明字节已经过期。
@@ -1173,7 +1180,30 @@ export function resolveCurrentScopeView(input: {
     if (!fresh) { stale.add(phase); continue; }
     const eligible = phaseEvidenceIsCurrent({ fresh: !!fresh, generatedAt: evidence?.manifest.generated_at,
       invalidatedAt: history.invalidatedAt.get(phase) });
-    if (eligible === true && evidence) proofs.set(phase, { phase, ...(input.currentRunId ? { run_id: input.currentRunId } : {}), evidence_manifest_aggregate: evidence.manifest.aggregate_sha256 });
+    if (eligible !== true || !evidence) continue;
+    const aggregate = evidence.manifest.aggregate_sha256;
+    if (!input.currentRunId) { proofs.set(phase, { phase, evidence_manifest_aggregate: aggregate }); continue; }
+    const recorded = priorRefs.filter(({ ref }) => ref.phase === phase && ref.evidence_manifest_aggregate === aggregate);
+    if (!recorded.length) newProofs.set(phase, aggregate);
+    else if (recorded.some(({ obligationId }) => invalidProofIds.has(obligationId))) stale.add(phase);
+    else proofs.set(phase, recorded[0].ref);
+  }
+  if (input.currentRunId && newProofs.size) {
+    const producerRuns: Record<string, string | null> = {};
+    try { Object.assign(producerRuns, resolvePhaseRunIds(projectRoot, feature, [...newProofs.keys()]).runIds); }
+    catch {
+      // A malformed invocation can invalidate one phase while other producers remain verifiable.
+      for (const phase of newProofs.keys()) {
+        try { Object.assign(producerRuns, resolvePhaseRunIds(projectRoot, feature, [phase]).runIds); }
+        catch { producerRuns[phase] = null; }
+      }
+    }
+    for (const [phase, aggregate] of newProofs) {
+      const observed = producerRuns[phase];
+      const producer = observed === undefined ? currentScopeProofRunId(projectRoot, feature, phase, input.currentRunId, events) : observed;
+      if (producer) proofs.set(phase, { phase, run_id: producer, evidence_manifest_aggregate: aggregate });
+      else stale.add(phase);
+    }
   }
   const definitionProofs = new Map<string, readonly InputBinding[]>();
   const legacyRoot = inferLegacyProjectRoot(projectRoot, input.previous);

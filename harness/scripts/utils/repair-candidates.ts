@@ -20,7 +20,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
-import { inferLegacyProjectRoot, isInsideProjectRoot, resolveDependencyPath } from './project-relative-path';
+import { inferLegacyProjectRoot, isInsideProjectRoot, realProjectPath, resolveDependencyPath, validateProjectRelativePath } from './project-relative-path';
 import { createHash } from 'crypto';
 import { extractTables, getSectionContent, extractDeclaredVerdict, extractReviewVerdict } from './markdown-parser';
 import type { CorrectionCategory } from './correction-routing';
@@ -145,7 +145,7 @@ export interface IssueVerificationEntry {
 
 const ISSUE_FENCE_RE = new RegExp(
   '```' + ISSUE_VERIFICATION_FENCE + '\\s*\\r?\\n([\\s\\S]*?)```',
-  'i',
+  'ig',
 );
 
 type IssueVerificationRead = {
@@ -157,10 +157,22 @@ type IssueVerificationRead = {
 
 function parseIssueVerificationYaml(fragment: string, normalize?: (rows: Array<Record<string, unknown>>) => unknown[]): IssueVerificationRead {
   const lineCounter = new YAML.LineCounter();
-  const doc = YAML.parseDocument(fragment, { lineCounter, prettyErrors: false });
+  let doc = YAML.parseDocument(fragment, { lineCounter, prettyErrors: false });
   if (doc.errors.length) {
     const lines = fragment.split(/\r?\n/);
-    return { ok: false, entries: [], reason: `${ISSUE_VERIFICATION_FENCE} YAML不可解析（${doc.errors.length} 项）`,
+    const first = doc.errors[0];
+    const index = lineCounter.linePos(first.pos[0]).line - 1;
+    const evidence = /^( +)(evidence:[ \t]+)([^\s"'|>\[\]{},&*!#?%@`][^\r\n]*)$/.exec(lines[index] ?? '');
+    const continuation = lines[index + 1]?.match(/^( +)\S/)?.[1].length ?? 0;
+    if (!normalize && evidence && continuation <= evidence[1].length
+      && doc.errors.every(error => error.code === 'BLOCK_AS_IMPLICIT_KEY' && lineCounter.linePos(error.pos[0]).line === index + 1)) {
+      // Read an unquoted single-line evidence value with a colon as the literal text it contains.
+      const repaired = [...lines];
+      repaired[index] = evidence[1] + evidence[2] + JSON.stringify(evidence[3]);
+      const parsed = YAML.parseDocument(repaired.join('\n'));
+      if (!parsed.errors.length) doc = parsed;
+    }
+    if (doc.errors.length) return { ok: false, entries: [], reason: `${ISSUE_VERIFICATION_FENCE} YAML不可解析（${doc.errors.length} 项）`,
       unreadable: { fragment, diagnostics: doc.errors.map(error => {
         const { line, col } = lineCounter.linePos(error.pos[0]);
         return `围栏内第 ${line} 行第 ${col} 列 ${error.code}：${error.message}\n${lines[line - 1]?.slice(0, 200) ?? ''}`;
@@ -204,9 +216,9 @@ function parseIssueVerificationYaml(fragment: string, normalize?: (rows: Array<R
  */
 export function parseIssueVerificationBlock(text: string): IssueVerificationRead {
   if (!text || !text.trim()) return { ok: false, entries: [], reason: 'verifier 报告为空' };
-  const m = ISSUE_FENCE_RE.exec(text);
-  if (!m) return { ok: false, entries: [], reason: `缺 ${ISSUE_VERIFICATION_FENCE} fenced 块` };
-  return parseIssueVerificationYaml(m[1]);
+  const blocks = [...text.matchAll(ISSUE_FENCE_RE)];
+  if (blocks.length !== 1) return { ok: false, entries: [], reason: `需要唯一 ${ISSUE_VERIFICATION_FENCE} fenced 块` };
+  return parseIssueVerificationYaml(blocks[0][1]);
 }
 
 export function uniqueIssueVerification(entries: readonly IssueVerificationEntry[], issue: string): IssueVerificationEntry | undefined {
@@ -314,42 +326,80 @@ export interface PhaseRepairIssues {
 
 function* independentReviewInvocations(projectRoot: string, feature: string, runId: string, reportPath: string) {
   const { featureFilePath } = require('../../config') as typeof import('../../config');
-  const { executionRequestForInvoke, acceptedSessionReport, readHandoffMaterial } = require('./session-execution-handoff') as typeof import('./session-execution-handoff');
+  const { readExecutionRequestOriginal, acceptedSessionReport, readHandoffMaterial, sessionRunMaterialPath } = require('./session-execution-handoff') as typeof import('./session-execution-handoff');
   const { invocationCompleted } = require('./invocation-completion') as typeof import('./invocation-completion');
   const { workUnitExecutionRole } = require('./goal-phase-executor') as typeof import('./goal-phase-executor');
+  const reportAbs = path.resolve(projectRoot, reportPath);
+  try { realProjectPath(projectRoot, path.relative(projectRoot, reportAbs), 'independent review result'); }
+  catch { return; }
   for (const run of repairDeclineHistory(projectRoot, feature, runId).reverse()) {
     const runDir = featureFilePath(projectRoot, feature, 'goal-runs/' + run.run_id);
+    try { realProjectPath(projectRoot, path.relative(projectRoot, runDir), 'independent review run'); }
+    catch { continue; }
     for (const start of [...run.events].reverse()) {
       if (start.type !== 'agent_invoke_start' || start.phase !== 'review' || !start.invoke_id) continue;
-      const original = executionRequestForInvoke(runDir, start.invoke_id);
-      const request = original?.request;
-      if (!request || request.context.feature !== feature || request.context.runId !== run.run_id
+      let original: ReturnType<typeof readExecutionRequestOriginal>;
+      try { original = readExecutionRequestOriginal(runDir, start.invoke_id, run.events); }
+      catch { continue; }
+      if (!original) continue;
+      const { request } = original;
+      const ctx = request.context;
+      if (ctx.feature !== feature || ctx.runId !== run.run_id || ctx.phase !== start.phase || request.invoke_id !== start.invoke_id
         || workUnitExecutionRole(request.context, request.purpose) !== 'verifier'
-        || !request.write_boundary?.verifierResultPath || !request.pre_snapshot
-        || path.resolve(projectRoot, request.write_boundary.verifierResultPath) !== path.resolve(projectRoot, reportPath)) continue;
+        || !request.write_boundary?.verifierResultPath || !request.pre_snapshot) continue;
+      const sourceRoot = ctx.projectRoot;
+      if (typeof sourceRoot !== 'string' || typeof ctx.runDir !== 'string') continue;
+      const sourcePath = path.win32.isAbsolute(sourceRoot) && !sourceRoot.startsWith('/') ? path.win32 : path.posix;
+      if (!sourcePath.isAbsolute(sourceRoot) || !sourcePath.isAbsolute(ctx.runDir)) continue;
+      const inCurrentRoot = (file: string): string | null => {
+        try {
+          const relative = sourcePath.isAbsolute(file) ? sourcePath.relative(sourceRoot, file) : file;
+          return path.resolve(projectRoot, validateProjectRelativePath(projectRoot, relative, 'independent review evidence'));
+        } catch { return null; }
+      };
+      if (inCurrentRoot(ctx.runDir) !== path.resolve(runDir)
+        || inCurrentRoot(request.write_boundary.verifierResultPath) !== reportAbs) continue;
+      const relocated = path.resolve(sourceRoot) !== path.resolve(projectRoot);
+      if (relocated) {
+        // Only a signed original at the same run-relative location travels with an archived report.
+        const issuer = original.event;
+        const reference = issuer.handoff_request;
+        if (!reference || !ctx.owner || reference.path !== original.reference.path || reference.sha256 !== original.reference.sha256
+          || issuer.phase !== start.phase || issuer.invoke_id !== start.invoke_id
+          || issuer.attempt_id !== ctx.attemptId || issuer.owner_id !== ctx.owner.owner_id || issuer.owner_epoch !== ctx.owner.epoch
+          || ctx.owner.run_id !== run.run_id || request.issued_at !== start.ts
+          || request.write_boundary.executionRole !== 'verifier'
+          || typeof request.write_boundary.projectRoot !== 'string'
+          || sourcePath.relative(sourceRoot, request.write_boundary.projectRoot) !== '') continue;
+      }
       const segment = run.events.slice(run.events.indexOf(start) + 1);
-      const end = segment.find(event => event.type === 'agent_invoke_end' && event.invoke_id === start.invoke_id);
+      const end = segment.find(event => event.type === 'agent_invoke_end' && event.phase === start.phase && event.invoke_id === start.invoke_id);
       if (!end || !invocationCompleted({ ...end, exitCode: end.exit_code })
         || segment.some(event => event.type === 'phase_write_violation' && event.invoke_id === start.invoke_id)) continue;
-      const writes = segment.filter(event => event.type === 'phase_write_observed' && event.invoke_id === start.invoke_id)
+      const writes = segment.filter(event => event.type === 'phase_write_observed' && event.invoke_id === start.invoke_id
+        && (!relocated || (event as Record<string, unknown>).pre_snapshot === request.pre_snapshot!.sha256))
         .flatMap(event => {
           const observed = event as GoalRunEvent & { owned?: Array<{ path: string; post_sha256?: string | null }>;
             observations?: Array<{ path: string; post_sha256?: string | null }> };
           return [...(observed.owned ?? []), ...(observed.observations ?? [])];
         });
-      const output = writes.filter(write => path.resolve(projectRoot, write.path) === path.resolve(projectRoot, reportPath)).at(-1);
+      const target = (file: string): boolean => inCurrentRoot(file) === reportAbs;
+      const output = writes.filter(write => target(write.path)).at(-1);
       let accepted: { post_snapshot?: NonNullable<typeof request.pre_snapshot>; draft_outputs?: Record<string, string> } | undefined;
-      const handedBack = end.handoff_report ? acceptedSessionReport(runDir, original) : undefined;
-      try {
-        if (handedBack?.event.handoff_report) accepted = readHandoffMaterial(runDir, handedBack.event.handoff_report);
-      } catch { continue; }
+      let handedBack: ReturnType<typeof acceptedSessionReport> | undefined;
+      let archivePath: string;
       const archivedName = 'independent-' + path.basename(reportPath);
+      try {
+        handedBack = end.handoff_report ? acceptedSessionReport(runDir, original, run.events) : undefined;
+        if (handedBack?.event.handoff_report) accepted = readHandoffMaterial(runDir, handedBack.event.handoff_report);
+        archivePath = sessionRunMaterialPath(runDir, path.join(runDir, path.dirname(original.reference.path), archivedName));
+      } catch { continue; }
       const latestHash = output?.post_sha256 ?? (accepted
-        ? accepted.post_snapshot?.entries.find(item => path.resolve(projectRoot, item.path) === path.resolve(projectRoot, reportPath))?.sha256
+        ? accepted.post_snapshot?.entries.find(item => target(item.path))?.sha256
         : undefined);
       if (!latestHash) continue;
       const entries = new Map(request.pre_snapshot.entries.filter(item => item.kind === 'file')
-        .map(item => [path.resolve(projectRoot, item.path), item.sha256]));
+        .map(item => [inCurrentRoot(item.path), item.sha256]));
       const freshness = new Map<string, boolean>();
       const matchesCurrent = (file: string): boolean => {
         if (freshness.has(file)) return freshness.get(file)!;
@@ -363,7 +413,7 @@ function* independentReviewInvocations(projectRoot: string, feature: string, run
         return current;
       };
       yield { request, reportHash: latestHash, matchesCurrent, requestPath: path.join(runDir, original.reference.path),
-        archivePath: path.join(runDir, path.dirname(original.reference.path), archivedName), archived: accepted?.draft_outputs?.[archivedName],
+        archivePath, archived: accepted?.draft_outputs?.[archivedName],
         attendedArchive: handedBack?.event.handoff_report && path.join(runDir, handedBack.event.handoff_report.path) };
     }
   }
@@ -774,7 +824,7 @@ export function buildCurrentVerifierDiagnosisContext(input: {
 }
 
 /** 候选生产与失败诊断同一判据；合法 refuted/unclear 不因 verdict 本身被重投。 */
-function reviewIssueDiagnosis(
+export function reviewIssueDiagnosis(
   row: ReviewIssueRow,
   entries: readonly IssueVerificationEntry[],
   context: Pick<ReviewDiagnosisContext, 'declinedFingerprints' | 'declinedIssues' | 'verifierSubjectCurrent' | 'sourcePhase'>,
@@ -1005,6 +1055,41 @@ function normalizeVerifierStatusCell(raw: string | undefined): VerifierCheckStat
  */
 function normalizeVerifierIdCell(raw: string | undefined): string {
   return (raw ?? '').replace(/[`*~\s]/g, '');
+}
+
+export interface VerifierSummaryRow {
+  id: string;
+  status: VerifierCheckStatus | 'SKIP';
+  severity: 'BLOCKER' | 'MAJOR' | 'MINOR' | 'INFO';
+  evidence: string;
+  line: number;
+}
+
+/** A readable four-column summary can have missing rows, but ownership of each row must be unique. */
+export function readVerifierSummaryRows(text: string): VerifierSummaryRow[] | null {
+  const tables = extractTables(text).filter(({ headers }) => {
+    const [id, status, severity, evidence] = headers.map(cell => cell.trim().toLowerCase());
+    return headers.length === 4 && id === 'id' && status === 'status' && severity === 'severity'
+      && /^(?:证据|evidence)(?:$|\s|[（(])/.test(evidence);
+  });
+  if (tables.length !== 1) return null;
+
+  const table = tables[0];
+  const rows: VerifierSummaryRow[] = [];
+  const seen = new Set<string>();
+  for (const [index, cells] of table.rows.entries()) {
+    if (cells.length !== 4) return null;
+    const [idCell, statusCell, severityCell, evidence] = cells;
+    const id = normalizeVerifierIdCell(idCell);
+    const status = normalizeVerifierStatusCell(statusCell) ??
+      (statusCell.replace(/[`*_~]/g, '').trim().toUpperCase() === 'SKIP' ? 'SKIP' : null);
+    const severity = severityCell.replace(/[`*_~]/g, '').trim().toUpperCase();
+    if (!/^[A-Za-z][A-Za-z0-9_.-]*$/.test(id) || seen.has(id) || !status
+      || (severity !== 'BLOCKER' && severity !== 'MAJOR' && severity !== 'MINOR' && severity !== 'INFO')) return null;
+    seen.add(id);
+    rows.push({ id, status, severity, evidence, line: table.lineNumber + index + 2 });
+  }
+  return rows;
 }
 
 export function parseVerifierCheckStatus(

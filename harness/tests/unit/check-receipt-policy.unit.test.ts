@@ -12,7 +12,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { spawnSync } from 'child_process';
+import { execFileSync, spawnSync } from 'child_process';
 import { runSyncClosureDetailed, tryValidateReceipt } from '../../scripts/utils/phase-state';
 // B05（plan 7b3e9a15）V8：sob 的闭环负例必须经**真实 writer** 再验 check-receipt——
 // 手写 summary 只能证明 check-receipt 一侧，恰好绕过 writer 的候选/next_action/字段三处。
@@ -441,6 +441,46 @@ function phaseOutputRelPath(root: string, phase: string, basename: string): stri
 }
 
 const cases: Array<{ name: string; run: () => void }> = [
+  {
+    name: 'V8 policy off retains a veto for identical D/R preimages and drops it when only the preimage changes',
+    run: () => {
+      const phase = 'review', { root } = buildProject(phase, { omitVerifier: true });
+      const priorBase = process.env.HARNESS_DIFF_BASE_REF;
+      const frameworkRoot = path.dirname(HARNESS_ROOT);
+      const report = passScriptReport(phase, root);
+      const git = (...args: string[]) => execFileSync('git', args, { cwd: root, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+      try {
+        const configFile = path.join(root, 'framework.config.json');
+        const config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+        config.architecture = { ...config.architecture, outer_layers: [{ id: '02-Feature', can_depend_on: [], intra_layer_deps: 'dag' }] };
+        fs.writeFileSync(configFile, JSON.stringify(config), 'utf8');
+        clearFrameworkConfigCache();
+        const removed = '02-Feature/Demo/before.ets';
+        fs.mkdirSync(path.dirname(path.join(root, removed)), { recursive: true });
+        fs.writeFileSync(path.join(root, removed), 'export const original = "A";\n', 'utf8');
+        git('add', '-A'); git('-c', 'commit.gpgsign=false', 'commit', '-qm', 'original A');
+        const a = git('rev-parse', 'HEAD');
+        fs.writeFileSync(path.join(root, removed), 'export const original = "B";\n', 'utf8');
+        git('add', removed); git('-c', 'commit.gpgsign=false', 'commit', '-qm', 'original B');
+        const b = git('rev-parse', 'HEAD');
+        git('rm', '-q', removed);
+        process.env.HARNESS_DIFF_BASE_REF = a;
+        const strict = writePolicyPacket(root, phase, report, { mode: 'enabled', reason: 'policy_required', verifier_prompt: 'prompts/verify-review.md', message: 'strict' });
+        assert(!!strict.verifier_subject_id, 'strict request must be signed');
+        publishFixtureVerifierEvidence({ projectRoot: root, reportsDir: featurePhaseReportsDir(root, 'demo', phase, frameworkRoot),
+          feature: 'demo', phase, subjectId: strict.verifier_subject_id!, verdict: 'FAIL', blockerCount: 1, skipSummaryPatch: true });
+        setEvidenceProfile(root, 'balanced');
+        const write = () => writeRunSummaryBase(root, report, frameworkRoot, { verifierPlan: goalBalancedPlan(phase) });
+        assert(write().verifier_subject_id === strict.verifier_subject_id, 'policy-off recompute with empty context must retain the same real veto');
+        process.env.HARNESS_DIFF_BASE_REF = b;
+        assert(!write().verifier_subject_id, 'the old veto addressed different old bytes even though the current working tree did not change');
+      } finally {
+        if (priorBase === undefined) delete process.env.HARNESS_DIFF_BASE_REF; else process.env.HARNESS_DIFF_BASE_REF = priorBase;
+        clearFrameworkConfigCache();
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
   { name: '38e5a7c2 disclosed process failure does not erase a real verifier veto', run() {
     const { root } = buildProject('review', { omitVerifier: true, claimedAttemptId: 'i8' });
     try {

@@ -291,6 +291,8 @@ export interface StatusDiffEntry {
 export interface StatusDiffResult {
   executed: boolean;
   baseRef: string;
+  /** Resolved commit used by the diff, including when the caller selected HEAD or another moving ref. */
+  baseSha?: string;
   entries: StatusDiffEntry[];
   error?: string;
 }
@@ -354,10 +356,11 @@ export function diffChangedFilesWithStatus(opts: {
     return { executed: false, baseRef, entries: [], error: `baseRef 不可达（不存在的 commit）：${baseRef}` };
   }
 
+  const baseSha = verify.stdout.trim();
   // base ↔ worktree：一次覆盖 committed + staged + unstaged
   const diff = spawnSync(
     'git',
-    ['diff', '--name-status', '-M', '-z', baseRef],
+    ['diff', '--name-status', '-M', '-z', baseSha],
     { windowsHide: true, cwd, shell: false, maxBuffer: 64 * 1024 * 1024 },
   );
   if (diff.status !== 0) {
@@ -386,7 +389,7 @@ export function diffChangedFilesWithStatus(opts: {
   }
 
   entries.sort((a, b) => a.path.localeCompare(b.path));
-  return { executed: true, baseRef, entries };
+  return { executed: true, baseRef, baseSha, entries };
 }
 
 export interface ListFilesAtRefResult {

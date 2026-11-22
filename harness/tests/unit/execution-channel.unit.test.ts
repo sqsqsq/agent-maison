@@ -31,6 +31,7 @@ import {
   shouldRunDevicePipeline,
 } from '../../scripts/check-testing';
 import { loadVerifierPromptTemplate } from '../../scripts/utils/report-generator';
+import { getSectionContent } from '../../scripts/utils/markdown-parser';
 import type { UnitCaseResult } from '../run-unit';
 
 const cases: Array<{ name: string; run: () => void }> = [];
@@ -477,11 +478,18 @@ test('发布指引：explicit_skip_tc_ids 只作禁令/legacy 只读，且没有
   }
 });
 
-test('verifier prompt：TC 一致性按 execution_channel 精确相等，不再要求与 explicit skip 做并集', () => {
-  const text = readGuide('harness/prompts/verify-testing.md');
+test('verifier prompt：直接消费通道、执行完整性及 trace 对账的机器结论', () => {
+  const text = loadVerifierPromptTemplate(path.join(REPO_ROOT, 'harness'), 'testing');
+  const machine = getSectionContent(text, '脚本 Harness 检查结果') ?? '';
   assert.ok(!/派生表\s*∪/.test(text), 'verify-testing.md 仍要求「派生表 ∪ explicit_skip_tc_ids」覆盖顶层 TC');
-  assert.ok(text.includes('execution_channel'), 'verify-testing.md 未按 execution_channel 对账');
-  assert.ok(text.includes('channel=hylyre'), 'verify-testing.md 未写明派生集合等于 channel=hylyre');
+  for (const check of ['testing_execution_channel', 'device_test_run', 'testing_case_execution_completeness', 'report_trace_reconciliation']) {
+    assert.ok(machine.includes(`\`${check}\``), `未引用机器检查 ${check}`);
+  }
+  assert.ok(machine.includes('顶层 `test-plan.md` 的 `execution_channel` 声明'), '须用顶层计划声明通道');
+  assert.ok(machine.includes('与顶层 `channel=hylyre` 的用例集合完全相等'), '须保留机器校验的精确集合契约');
+  assert.ok(machine.includes('禁止登记 `explicit_skip_tc_ids`') && machine.includes('显式跳过不能抵消覆盖缺口'),
+    '正式派生计划须保留跳过禁令及缺口结论');
+  assert.ok(machine.includes('直接引用') && machine.includes('无需重新全量对账'), '模型须消费机器结果，无需再做整份对账');
 });
 
 test('verifier prompt：视觉 G3 使用有效档位结论，minor 不豁免独立确定性失败', () => {
