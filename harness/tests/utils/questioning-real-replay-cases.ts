@@ -128,8 +128,16 @@ export function questioningRealReplayCases() {
       const changes = dependencies(root, before, current);
       assert.deepStrictEqual(changes, asRecords(recorded.changedDependencies).map(item => item.path));
       const selected = selectQuestioningScopes(before.blueprint, current.blueprint, before.previous, changes);
-      assert.deepStrictEqual(selected, expected.selected, 'exact selected scope identities regressed');
-      assert.deepStrictEqual(selected, recorded.selected, 'recorded final result is stale');
+      assert.deepStrictEqual(expected.selected, recorded.selected, 'historical assertions and original capture disagree');
+      const reused = first === 13 && revised === 15 || first === 15 && revised === 17 ? ['terminology:current_scope_items'] : [];
+      if (reused.length) {
+        const reason = expected.reasons[reused[0]];
+        assert.equal(reason.edge.kind, 'source', 'reuse removes the shared document edge');
+        const source = String(reason.edge.witness[1].value);
+        assert(!changes.includes(source), 'the shared requirements actually changed');
+        assert.deepStrictEqual(before.blueprint.discovery.facts, current.blueprint.discovery.facts, 'original terminology cites these facts');
+      }
+      assert.deepStrictEqual(selected, expected.selected.filter((scope: string) => !reused.includes(scope)), 'exact selected scope identities regressed');
       const required = [...requiredQuestioningScopes(current.blueprint).keys()];
       if (expected.fullFallback) {
         const fallback = expected.fullFallback;
@@ -153,7 +161,7 @@ export function questioningRealReplayCases() {
         const reason = expected.reasons[scope];
         verifyReason(scope, expected, before, current, changes, pending, oldFacts, newFacts);
         if (!selected.includes(scope)) {
-          assert.equal(reason.kind, 'retained', scope);
+          assert(reason.kind === 'retained' || reused.includes(scope), scope);
           assert.equal(stableStringify(oldFacts.get(scope)), stableStringify(newFacts.get(scope)), 'retained design fact changed: ' + scope);
           assert(!pending.includes(scope), 'retained a real unresolved finding: ' + scope);
           assert.equal(asRecords(before.previous.items).filter(item => item.scope_ref === scope).length, 1, 'retained result is not unique');

@@ -593,7 +593,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
     });
   },
 }, {
-  name: 'f3b8e6a1 prepared CU pipeline repeats root next without recreating or recounting its already signed child request',
+  name: 'f3b8e6a1 a same-cycle successor root reuses the existing CU and its already signed request',
   async run() {
     const hostFixture = require('./lifecycle-evolution.unit.test') as typeof import('./lifecycle-evolution.unit.test');
     const entry = require('../../scripts/goal-mode-entry') as typeof import('../../scripts/goal-mode-entry');
@@ -603,6 +603,8 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
     const origin = require('../../scripts/utils/delivery-origin') as typeof import('../../scripts/utils/delivery-origin');
     const runtime = require('../../scripts/goal-phase-runtime') as typeof import('../../scripts/goal-phase-runtime');
     const identity = require('../../scripts/utils/change-unit-path') as typeof import('../../scripts/utils/change-unit-path');
+    const locks = require('../../scripts/utils/goal-run-lock') as typeof import('../../scripts/utils/goal-run-lock');
+    const handoff = require('../../scripts/utils/session-execution-handoff') as typeof import('../../scripts/utils/session-execution-handoff');
     const requirement = '新增一笔账目后刷新账页并在重启后恢复余额';
     runtime.__testing_setInvokeAgent(async () => { throw new Error('A public next request must not launch a headless model.'); });
     runtime.__testing_setCanaryProbeInvoke(async () => { throw new Error('This prepared nonvisual pipeline must not launch a canary model.'); });
@@ -618,11 +620,17 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
         impact: { userVisibleBehaviorChange: false, reason: '既有账目领域函数，不含设备或UI目标', basisPaths: ['src/ledger/LedgerFeature.ets'] } });
       const prepared = entry.prepareGoalModeRun({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature,
         runId: 'pending-request-child', adapter: 'codex', requirement, deliveryOrigin: { feature: blueprint, run_id: original.run_id } });
+      const current = manifests.buildInitialDesignGoalManifest({ feature: blueprint, run_id: 'pending-request-current-root', adapter: 'codex', requirement,
+        initial_design: original.initial_design, unattended: UNATTENDED }, { projectRoot: host.root });
+      current.successor_of = original.run_id;
+      const successor = creation.createGoalRun({ projectRoot: host.root, manifest: current, chain: [] });
+      fs.appendFileSync(successor.eventsPath, JSON.stringify({ ts: new Date().toISOString(),
+        ...creation.buildSupersedeAuditEvent({ targetRunId: original.run_id, supersedingRunId: current.run_id }) }) + '\n');
       const control = { projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: blueprint, runId: original.run_id,
         adapter: 'codex', runMode: 'attended', authorization: { mode: 'goal_mode' as const, autonomyAuthorized: true } };
-      const controlProcess = (extra: Record<string, unknown> = {}): Record<string, any> => {
+      const controlProcess = (extra: Record<string, unknown> = {}, expectedInterruption?: string): Record<string, any> => {
         const program = `const path=require('path');const h=${JSON.stringify(host.harnessDir)};const rt=require(path.join(h,'scripts/goal-phase-runtime'));rt.__testing_setInvokeAgent(async()=>{throw Error('unexpected headless actor in a next/report control probe')});rt.__testing_setCanaryProbeInvoke(async()=>{throw Error('unexpected canary actor in a nonvisual control probe')});require(path.join(h,'scripts/goal-mode-entry')).runGoalModeSessionStep(${JSON.stringify({ ...control, ...extra })}).then(value=>console.log(JSON.stringify(value))).catch(error=>console.log(JSON.stringify({error:String(error)})));`;
-        const result = withRuntimeTest({ root: host.root }, () => spawnSync(process.execPath, ['-r', 'ts-node/register/transpile-only', '-e', program], { cwd: host.harnessDir,
+        const result = withRuntimeTest({ root: host.root, expectedInterruption }, () => spawnSync(process.execPath, ['-r', 'ts-node/register/transpile-only', '-e', program], { cwd: host.harnessDir,
           env: { ...process.env, MAISON_GOAL_CHECKPOINT_DIR: path.join(host.root, 'trust-cp') }, encoding: 'utf8', timeout: 90_000, windowsHide: true }));
         assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}\n${result.error ?? ''}`);
         return JSON.parse(result.stdout.trim());
@@ -630,12 +638,38 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
       const sourceHashes = Object.fromEntries(['scripts/goal-mode-entry.ts', 'scripts/goal-phase-runtime.ts', 'scripts/utils/session-execution-handoff.ts']
         .map(file => [file, createHash('sha256').update(fs.readFileSync(path.join(host.harnessDir, file))).digest('hex')]));
       console.log('[f3-pending-child-control-hashes]', JSON.stringify(sourceHashes));
+      const foreignRoots = ['unrelated-root', 'completed-cycle-boundary'];
+      for (const scenario of foreignRoots) {
+        const outside = manifests.buildInitialDesignGoalManifest({ feature: blueprint, run_id: scenario, adapter: 'codex', requirement,
+          initial_design: original.initial_design, unattended: UNATTENDED }, { projectRoot: host.root });
+        if (scenario === 'completed-cycle-boundary') outside.successor_of = original.run_id;
+        const birth = creation.createGoalRun({ projectRoot: host.root, manifest: outside, chain: [] });
+        if (outside.successor_of) fs.appendFileSync(birth.eventsPath, JSON.stringify({ ts: new Date().toISOString(),
+          ...creation.buildSupersedeAuditEvent({ targetRunId: original.run_id, supersedingRunId: outside.run_id, deliveryCycleBoundary: original.run_id }) }) + '\n');
+        const foreign = controlProcess({ runId: outside.run_id }, 'active CU belongs to another original request');
+        assert.match(String(foreign.error), /active CU belongs to another original request/, scenario);
+        assert.equal(origin.readOriginalDeliveryActivity(host.root, current)!.calls, 0);
+      }
+      const lockPath = path.join(prepared.runDir, '..', locks.FEATURE_LOCK_NAME);
+      const lock = locks.tryAcquireLock(lockPath, { run_id: prepared.manifest.run_id });
+      assert(lock);
+      try {
+        const busy = controlProcess();
+        assert.equal(busy.type, 'goal_session_result', JSON.stringify(busy));
+        assert.equal(busy.result.status, 'waiting');
+        assert.equal(origin.readOriginalDeliveryActivity(host.root, current)!.calls, 0);
+      } finally { locks.releaseLock(lockPath, lock.ownerId); }
       const first = controlProcess();
       assert.equal(first.type, 'phase_execute_request', JSON.stringify(first));
       assert.equal(first.run_id, prepared.manifest.run_id);
+      assert.equal(first.delivery_run_id, current.run_id);
       const reference = first.request as { path: string; sha256: string };
       const bytes = fs.readFileSync(reference.path);
       assert.equal(origin.readOriginalDeliveryActivity(host.root, original)!.calls, 1);
+      const copiedEntry = require(path.join(host.harnessDir, 'scripts/goal-mode-entry')) as typeof entry;
+      const report = { status: 'waiting' as const, phase: String(first.phase), details: '受控作者本轮等待，保留已签请求。' };
+      for (const runId of foreignRoots) await assert.rejects(() => copiedEntry.runGoalModeSessionStep({ ...control, runId, requestPath: reference.path, report }),
+        /request belongs to another original delivery/);
       const wrong = controlProcess({ requestPath: reference.path, report: { status: 'passed', phase: first.phase === 'ut' ? 'coding' : 'ut', details: 'Injected wrong phase; no actor has run.' } });
       assert.match(String(wrong.error), /invalid execution (?:phase|result)/, 'a wrong child report must be rejected before changing pending work');
       assert.deepEqual(fs.readFileSync(reference.path), bytes);
@@ -646,6 +680,13 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
       assert.equal(second.deadline, first.deadline);
       assert.deepEqual(fs.readFileSync(reference.path), bytes);
       assert.equal(origin.readOriginalDeliveryActivity(host.root, original)!.calls, 1, 'repeated root next cannot charge a phantom second child invocation');
+      const received = controlProcess({ requestPath: reference.path, report });
+      assert.equal(received.type, 'goal_session_result', JSON.stringify(received));
+      const issued = handoff.readSessionExecution(prepared.runDir, reference.path);
+      assert(issued);
+      const accepted = handoff.acceptedSessionReport(prepared.runDir, issued);
+      assert.equal(accepted?.event.handoff_report?.request_sha256, reference.sha256);
+      assert.equal(accepted?.report.status, 'waiting');
       for (const [file, hash] of Object.entries(sourceHashes)) assert.equal(createHash('sha256').update(fs.readFileSync(path.join(host.harnessDir, file))).digest('hex'), hash, 'all control processes must execute the same copied source version');
     }); } finally {
       runtime.__testing_setInvokeAgent(null); runtime.__testing_setCanaryProbeInvoke(null);
@@ -1705,6 +1746,7 @@ const dailyPrefixes = [
   "8f2c6b91 ",
   "f3b8e6a1 public preparation births a managed raw-request root",
   "f3b8e6a1 public next reuses the original signed design request",
+  "f3b8e6a1 a same-cycle successor root",
   "P2 M1 current initial Q denial and a completed no-op author return"
 ];
 export const listCaseGroups = () => unitCaseGroups(cases.map(test => test.name)).map(group => ({ ...group,

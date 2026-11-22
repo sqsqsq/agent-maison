@@ -289,7 +289,7 @@ function bindControlledAuthor(host: Host, context: any): void {
     owner_id: owner.owner_id, owner_epoch: owner.epoch, binding_snapshot: binding }) + '\n');
 }
 
-function unitMaterials(host: Host, context: any, preserveContracts = false): void {
+function unitMaterials(host: Host, context: any, preserveContracts = false, extraResearch: readonly string[] = []): void {
   bindControlledAuthor(host, context);
   const feature = context.feature, rel = host.load('scripts/utils/feature-identity').featureRelativePath(feature);
   const specFile = host.load('config').featureFilePath(host.root, feature, 'spec/spec.md');
@@ -327,16 +327,17 @@ function unitMaterials(host: Host, context: any, preserveContracts = false): voi
   assert(context.factsContext, 'the author must consume its actual admitted research context');
   if (!fs.existsSync(facts)) {
     assert(!context.factsContext.baseline, 'an absent prior facts original cannot become a new baseline');
-    const sources = [...new Set<string>([...context.factsContext.source_paths, SOURCE, TEST])]
+    const sources = [...new Set<string>([...context.factsContext.source_paths, SOURCE, TEST, ...extraResearch])]
       .filter(file => fs.existsSync(path.join(host.root, file)) && fs.statSync(path.join(host.root, file)).isFile());
     for (const file of sources) fs.readFileSync(path.join(host.root, file));
     writeHostFile(host.root, path.relative(host.root, facts), '---\n' + YAML.stringify({ schema_version: '1.1', feature, run_id: context.runId,
       established_by: context.factsContext.first_phase, ready_to_produce: true, has_blocker_coverage_risk: false, exploration_mode: 'sequential',
-      source_code_paths: sources, key_inputs_read: sources, files_inspected_count: sources.length, searches_performed_estimate: 1,
+      source_code_paths: sources, key_inputs_read: sources, files_inspected_count: sources.length, searches_performed_estimate: extraResearch.length ? 2 : 1,
       subagents_used: 'none', decisions_unlocked: ['ledger balance and recovery'] }) + '---\n## Code Facts\n');
   }
   researchSnapshotFacts(host.root, facts, context.factsContext.first_phase, context.factsContext);
-  for (const family of context.chain) if (family !== context.factsContext.first_phase) researchSnapshotFacts(host.root, facts, family, context.factsContext);
+  const families = new Set<string>([...context.chain, ...(extraResearch.length ? ['spec', 'plan'] : [])]);
+  for (const family of families) if (family !== context.factsContext.first_phase) researchSnapshotFacts(host.root, facts, family, context.factsContext);
 }
 
 function verifierReply(host: Host, context: any, phase: string): void {
@@ -508,10 +509,17 @@ function mediumSession(host: Host): string {
   return file + '#medium-user';
 }
 
-async function completeDelivery(medium = false, moduleRevision = false, acceptanceRevision = false): Promise<void> {
+async function completeDelivery(medium = false, moduleRevision = false, acceptanceRevision = false, scopeResign = false): Promise<void> {
   const previousHome = process.env.CLAUDE_CONFIG_DIR;
   try { return await withHost(async host => {
-    const control = prepare(host, medium ? 'daily-medium-single' : acceptanceRevision ? 'daily-acceptance-resign' : 'daily-design-complete', 'claude', medium ? mediumSession(host) : undefined);
+    const index = 'doc/component-index.yaml';
+    const extraResearch = scopeResign ? ['build-profile.json5', 'src/ledger/src/main/HostModule.ets', 'src/ledger/src/main/module.json5'] : [];
+    if (scopeResign) {
+      writeHostFile(host.root, index, '# Existing inventory\nschema_version: "1.0"\ncomponents: []\n');
+      writeHostFile(host.root, extraResearch[1], 'export const LEDGER_MODULE: string = "ledger";\n');
+      writeHostFile(host.root, extraResearch[2], '{ "module": { "name": "ledger", "type": "har" } }\n');
+    }
+    const control = prepare(host, medium ? 'daily-medium-single' : acceptanceRevision ? 'daily-acceptance-resign' : scopeResign ? 'daily-scope-resign' : 'daily-design-complete', 'claude', medium ? mediumSession(host) : undefined);
     let designAuthors = 0, constructionAuthors = 0, decompositionAuthors = 0, visualReissued = false;
     let acceptanceBefore = '', acceptanceIntermediate = '', acceptanceAfter = '', designRepairs = 0;
     let oldContractBindings: any[] = [], revisedContractFingerprint = '', revisedRunDir = '', revisedFeature = '';
@@ -554,6 +562,13 @@ async function completeDelivery(medium = false, moduleRevision = false, acceptan
         assert.equal(++designAuthors, 1, 'normal design returned unexpected author feedback: ' + context.instruction);
         const draft = blueprintDraft(host, false);
         if (moduleRevision) draft.design_views.find((view: any) => view.view_id === 'logical').nodes[0].contracts.modules = [];
+        if (scopeResign) {
+          draft.providers.find((provider: any) => provider.provider_id === 'component-assets').available = true;
+          for (const [factId, file] of [['old-source', SOURCE], ['old-test', TEST], ['old-index', index]]) {
+            draft.discovery.facts.push({ fact_id: factId, subject: file, value: read(host.root, file).trim(),
+              provenance: { ...draft.provenance, source_ref: file } });
+          }
+        }
         if (acceptanceRevision) draft.contracts[0].provenance.evidence_strength = 'observed';
         writeYaml(host.root, `doc/features/${BLUEPRINT}/blueprint/component-blueprint.yaml`, draft);
       }
@@ -601,8 +616,9 @@ async function completeDelivery(medium = false, moduleRevision = false, acceptan
           const originalFile = host.load('config').featureFilePath(host.root, context.feature, 'contracts.yaml');
           assert(fs.existsSync(originalFile) && oldContractBindings.some((binding: any) => binding.dependencies.some((dependency: any) =>
             path.resolve(dependency.path) === originalFile && dependency.exists && dependency.sha256)), 'the old binding must cover an existing contract artifact, not first materialization');
+          if (scopeResign) assertFrozenInputs(host, context);
         }
-        if (!acceptanceRevision || constructionAuthors === 1) unitMaterials(host, context, acceptanceRevision);
+        if (!acceptanceRevision || constructionAuthors === 1) unitMaterials(host, context, acceptanceRevision, extraResearch);
         else bindControlledAuthor(host, context);
         if (acceptanceRevision) {
           const actions = host.load('scripts/utils/feature-track');
@@ -636,6 +652,21 @@ async function completeDelivery(medium = false, moduleRevision = false, acceptan
               .find((prior: any) => prior.input_id === 'acceptance').content_fingerprint), 'semantic edits must not enter through the equivalent-dependency path');
           revisedRunDir = context.runDir;
         }
+        if (scopeResign) {
+          const scope = host.load('scripts/utils/goal-run-creation').loadEffectiveExecutionScope(host.root, context.feature, context.runId);
+          const acceptance = scope.obligations.find((fact: any) => fact.kind === 'acceptance-context').basis[0];
+          for (const dependency of [SOURCE, TEST, index]) assert(acceptance.dependencies.some((dep: any) => dep.path === path.resolve(host.root, dependency)
+            && dep.role === 'artifact' && dep.exists), 'acceptance must already observe ' + dependency);
+          const acceptanceFile = host.load('config').featureFilePath(host.root, context.feature, 'acceptance.yaml');
+          const adjusted = YAML.parse(fs.readFileSync(acceptanceFile, 'utf8'));
+          adjusted.criteria[0].requirement_ref = { source_path: 'requirements/ledger.md', snippet: REQUIREMENT };
+          writeYaml(host.root, path.relative(host.root, acceptanceFile), adjusted);
+          const prior = new Map(Object.keys(context.childEnv).map(key => [key, process.env[key]]));
+          try {
+            Object.assign(process.env, context.childEnv);
+            host.load('scripts/utils/component-assets').refreshComponentIndex(host.root, context.feature);
+          } finally { for (const [key, value] of prior) if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+        }
         if (moduleRevision) {
           const file = host.load('config').featureFilePath(host.root, context.feature, 'contracts.yaml');
           const contracts = YAML.parse(fs.readFileSync(file, 'utf8'));
@@ -659,7 +690,7 @@ async function completeDelivery(medium = false, moduleRevision = false, acceptan
             .every((item: any) => oldContractBindings.some((old: any) => old.content_fingerprint === item.content_fingerprint)), 'without the original producer validation there is no automatic semantic re-sign');
           revisedRunDir = context.runDir; revisedFeature = context.feature;
         }
-        if (!acceptanceRevision) assertFrozenInputs(host, context);
+        if (!acceptanceRevision && !scopeResign) assertFrozenInputs(host, context);
       } else if (phase === 'review') { unitReviewReport(host, context.feature); appendTaggedStrengthReview(host, context); }
       else if (phase.endsWith('-verifier-format-repair')) verifierReply(host, context, phase.replace(/-verifier-format-repair$/, ''));
       else assert.fail('unexpected production responsibility: ' + phase);
@@ -714,7 +745,43 @@ async function completeDelivery(medium = false, moduleRevision = false, acceptan
         fs.copyFileSync(path.join(control.prepared.runDir, 'events.jsonl'), path.join(dir, 'design-events.jsonl'));
       }
     }
-    if (moduleRevision) {
+    if (scopeResign) {
+      const events = host.load('scripts/utils/session-execution-handoff').sessionEvents(revisedRunDir);
+      const author = events.find((event: any) => event.type === 'phase_write_observed' && [SOURCE, TEST, '/acceptance.yaml', '/contracts.yaml']
+        .every(file => event.owned?.some((write: any) => write.path.endsWith(file) && write.pre_sha256 !== write.post_sha256)));
+      assert(author && events.some((event: any) => event.type === 'phase_write_observed' && event.invoke_id === author.invoke_id
+        && event.producer === 'component-index' && event.produced?.some((write: any) => write.path === index)));
+      const spec = events.findIndex((event: any) => event.type === 'phase_verdict' && event.phase === 'spec' && event.verdict === 'PASS');
+      const specRevision = events.findIndex((event: any) => event.type === 'scope_revised' && event.trigger?.check_id === 'owned_acceptance_binding');
+      assert(spec > events.indexOf(author) && specRevision > spec, 'the partial precheck must let formal spec check and preserve its full proposal');
+      const design = events[specRevision].execution_scope.obligations.find((fact: any) => fact.kind === 'design-context');
+      assert.equal(design.owner_phase, 'plan');
+      assert(!design.satisfied_by?.length, 'spec must carry forward plan responsibility with the obsolete contracts proof withdrawn');
+      const runId = path.basename(revisedRunDir);
+      const input = { projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: revisedFeature,
+        requirement: REQUIREMENT, runId, runDir: revisedRunDir };
+      const creation = host.load('scripts/utils/goal-run-creation');
+      const previous = creation.loadFrozenExecutionScope(host.root, revisedFeature, runId);
+      const { refreshOwnedAcceptanceScopeInput } = host.load('scripts/utils/feature-track');
+      assert(refreshOwnedAcceptanceScopeInput(input, previous, events), 'the unchanged postimages retain their signed provenance');
+      const indexPath = path.join(host.root, index), indexBytes = fs.readFileSync(indexPath);
+      try {
+        fs.appendFileSync(indexPath, '\n# Foreground overwrite after the framework producer\n');
+        assert(!refreshOwnedAcceptanceScopeInput(input, previous, events), 'a later foreground index write cannot use the earlier producer proof');
+      } finally { fs.writeFileSync(indexPath, indexBytes); }
+      const planEvidence = host.load('scripts/utils/phase-evidence-manifest').loadPhaseEvidenceManifest(host.root, revisedFeature, 'plan');
+      const effective = creation.resolveEffectiveScopeSource(host.root, revisedFeature, runId).scope;
+      const active = effective.obligations.find((fact: any) => fact.id === design.id);
+      assert(planEvidence?.integrityOk && active.satisfied_by?.some((proof: any) => proof.phase === 'plan' && proof.run_id === runId
+        && proof.evidence_manifest_aggregate === planEvidence.manifest.aggregate_sha256), 'the current closed plan is the contracts proof in the effective scope');
+      assert(events.some((event: any, at: number) => at > specRevision && event.type === 'phase_verdict' && event.phase === 'ut' && event.verdict === 'PASS'));
+      const resume = await control.entry.runGoalModeSessionStep(control.options);
+      assert.equal(resume.result.status, 'completed');
+      const afterResume = host.load('scripts/utils/session-execution-handoff').sessionEvents(revisedRunDir);
+      assert.deepEqual(afterResume.filter((event: any) => event.type === 'scope_revised' || event.type === 'agent_invoke_start'),
+        events.filter((event: any) => event.type === 'scope_revised' || event.type === 'agent_invoke_start'));
+    }
+    if (moduleRevision && !scopeResign) {
       const events = host.load('scripts/utils/session-execution-handoff').sessionEvents(revisedRunDir);
       const plan = events.findIndex((event: any, at: number) => event.type === 'phase_verdict' && event.phase === 'plan' && event.verdict === 'PASS'
         && events.slice(0, at).some((end: any) => end.type === 'harness_end' && end.phase === 'plan' && end.invoke_id === event.invoke_id && !end.timed_out));
@@ -842,6 +909,9 @@ const cases = [{
 }, {
   name: 'daily design: empty request reaches canonical CU completion with real TypeScript and Node assertions',
   run: () => completeDelivery(false, true),
+}, {
+  name: '3bc1f4ed daily design: signed source, tests and inventory preserve the spec proposal through plan and real Node assertions',
+  run: () => completeDelivery(false, true, false, true),
 }, {
   name: '7d2c49e8 managed runtime repairs closure, retains an omitted candidate, re-signs changed acceptance and runs the dependent check',
   run: () => completeDelivery(false, false, true),

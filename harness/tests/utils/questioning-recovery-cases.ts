@@ -328,11 +328,11 @@ export function questioningRecoveryCases() {
       before.quality_attributes[0].note = '不作为落点解析的说明'; current.quality_attributes[0].note = '不作为落点解析的说明';
       before.quality_attributes[0].needed_by = 'example:current'; current.quality_attributes[0].needed_by = 'example:current';
       before.quality_attributes[0].component_ref = 'asset:shared-widget'; current.quality_attributes[0].component_ref = 'asset:shared-widget';
-      expect(selectQuestioningScopes(before, current, previous), ['view:logical', 'app_lens:ui_refresh'], '切片归属、资产来源和备注不是未定位的设计落点');
+      expect(selectQuestioningScopes(before, current, previous), ['app_lens:ui_refresh'], '已定位落点不借同一未变来源扩大；切片归属、资产来源和备注不影响落点');
       for (const field of ['landing', 'target_ref']) {
         delete before.quality_attributes[0].landing; delete current.quality_attributes[0].landing;
         before.quality_attributes[0][field] = '/app_lens/ui_refresh'; current.quality_attributes[0][field] = '/app_lens/ui_refresh';
-        expect(selectQuestioningScopes(before, current, previous), ['view:logical', 'app_lens:ui_refresh'], `M1无内嵌ID的lens指针${field}绑定已有scope`);
+        expect(selectQuestioningScopes(before, current, previous), ['app_lens:ui_refresh'], `M1无内嵌ID的lens指针${field}绑定已有scope`);
         before.app_lens.unscoped_note = {}; current.app_lens.unscoped_note = {};
         before.quality_attributes[0][field] = '/app_lens/unscoped_note'; current.quality_attributes[0][field] = '/app_lens/unscoped_note';
         expect(selectQuestioningScopes(before, current, previous), [...requiredQuestioningScopes(current).keys()], 'M1可解析但没有实际scope的指针不能借同源弱边');
@@ -348,7 +348,7 @@ export function questioningRecoveryCases() {
       asRecords(before.design_views)[0].evidence_refs = ['doc/req.md'];
       (previous.items as BlueprintRecord[]).push({ ...asRecords(previous.items)[0], question_id: 'q-terminology', scope_kind: 'terminology', scope_ref: 'terminology:current_scope_items' });
       const current = clone(before); current.quality_attributes[0].requirement = 'new';
-      expect(selectQuestioningScopes(before, current, previous), ['view:logical', 'terminology:current_scope_items'], 'M1无ID的inputs来源指针绑定实际术语scope');
+      expect(selectQuestioningScopes(before, current, previous), ['terminology:current_scope_items'], 'M1无ID的inputs来源指针绑定实际术语scope');
       before.discovery.inputs.current_scope_items = []; current.discovery.inputs.current_scope_items = [];
       expect(selectQuestioningScopes(before, current, previous), [...requiredQuestioningScopes(current).keys()], 'M1inputs可解析但没有已存在术语scope则保守全量');
     }
@@ -363,7 +363,33 @@ export function questioningRecoveryCases() {
       asRecords(asRecords(before.design_views)[1].runtime_data_flows)[0].authority_refs = [shape.ref];
       const current = clone(before), nextContainer = shape.key === 'facts' ? current.discovery : current;
       nextContainer[shape.key][0].value = 'new';
-      expect(selectQuestioningScopes(before, current, previous), ['view:logical', 'view:runtime', 'flow:target-flow', 'app_lens:ui_refresh'], '真实有类型引用不能因下划线类型/中文ID丢失强消费边');
+      expect(selectQuestioningScopes(before, current, previous), ['view:runtime', 'flow:target-flow', 'app_lens:ui_refresh'], '真实有类型引用不能因下划线类型/中文ID丢失强消费边');
+    }
+    {
+      const { before, previous } = sample();
+      before.blueprint_id = 'ledger-app-blueprint';
+      before.design_views[0].nodes.push({ node_id: 'sibling' });
+      before.decisions_and_gaps.decisions = [{ decision_id: 'route', resolution: 'previous', target_ref: 'view:logical/node:logical-object', source_ref: 'doc/requirement.md' }];
+      before.design_views[1].runtime_data_flows[0].target_ref = 'view:logical/node:logical-object';
+      before.design_views[2].target_ref = 'view:logical/node:sibling';
+      before.app_lens.module_boundaries = { evidence_refs: ['doc/requirement.md'] };
+      const byScope = (ref: string) => asRecords(previous.items).find(item => item.scope_ref === ref)!;
+      byScope('app_lens:module_boundaries').evidence_refs = ['doc/requirement.md'];
+      byScope('view:scenarios').evidence_refs = ['/decisions_and_gaps/decisions/0/resolution'];
+      byScope('app_lens:feature_flags').evidence_refs = ['/decisions_and_gaps/decisions/0/target_ref'];
+      const current = clone(before);
+      current.decisions_and_gaps.decisions[0].resolution = 'revised';
+      const needed = ['view:logical', 'view:runtime', 'flow:target-flow', 'view:scenarios', 'app_lens:ui_refresh'];
+      expect(selectQuestioningScopes(before, current, previous), needed, '同视图未变兄弟节点、未变指针字段和共用文档可以复用');
+      expect(selectQuestioningScopes(before, current, previous, ['doc/requirement.md']), [...needed, 'app_lens:module_boundaries'],
+        '实际需求文件变化仍重开引用该文件的原答');
+      byScope('app_lens:lifecycle_triggers').evidence_refs = [
+        'doc/features/ledger-app-blueprint/blueprint/component-blueprint.yaml#/decisions_and_gaps/decisions/0/resolution',
+      ];
+      expect(selectQuestioningScopes(before, current, previous, [], path.join(FIXTURE_ROOT, 'valid')),
+        [...needed, 'app_lens:lifecycle_triggers'], '项目内蓝图文件引用的精确成员变化仍重开');
+      byScope('view:development').disposition = 'blocker';
+      expect(selectQuestioningScopes(before, current, previous), [...needed, 'view:development'], '独立实质质询仍重开');
     }
     {
       const { before, previous } = sample();

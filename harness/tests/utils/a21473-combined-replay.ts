@@ -388,9 +388,20 @@ export async function continueA21473CombinedReplay(input: { root: string; framew
     const assessment = load('scripts/utils/feature-assessment').assessFeature(root, feature, { frameworkRoot, ...expected });
     assert(assessment.complete && assessment.record.state === 'ok', JSON.stringify(assessment));
     assert(load('scripts/utils/change-unit-completion').hasSuccessfulTerminalChangeUnitRun(root, feature));
-    const delivery = load('scripts/utils/initial-design-delivery').projectInitialDesignDelivery({ projectRoot: root, frameworkRoot,
-      manifest: JSON.parse(fs.readFileSync(path.join(runDir, 'manifest.json'), 'utf8')) });
-    assert(delivery.complete, JSON.stringify(delivery));
+    const rootEvents = fs.readFileSync(path.join(runDir, 'events.jsonl'));
+    const rootEventRows = rootEvents.toString('utf8').trim().split('\n').map(line => JSON.parse(line));
+    const rootEnd = load('scripts/utils/goal-runner-phase').resolveEffectiveRunEnd(rootEventRows);
+    assert.equal(rootEnd?.run_id, runId);
+    assert.equal(rootEnd?.status, 'COMPLETED');
+    // The public step already computed this projection as part of sealing the root.
+    const delivery = JSON.parse(fs.readFileSync(path.join(runDir, 'goal-report.json'), 'utf8'));
+    assert.equal(delivery.kind, 'initial_design_delivery');
+    assert.equal(delivery.feature, BLUEPRINT);
+    assert.equal(delivery.run_id, step.run_id);
+    assert.equal(delivery.status, 'COMPLETED');
+    assert.equal(delivery.complete, true);
+    assert.equal(delivery.next_action, 'delivery_completed');
+    assert.equal(delivery.next_action, step.result.next_action);
     const disposition = load('scripts/utils/verify-feature-completion').resolveCompletionDisposition({ projectRoot: root, frameworkRoot,
       feature, runId: childManifest.run_id, chain, endpoint: 'request' });
     assert(disposition.completionEligible && !disposition.releaseReady, JSON.stringify(disposition));
@@ -406,24 +417,22 @@ export async function continueA21473CombinedReplay(input: { root: string; framew
     const finalBlueprint = YAML.parse(fs.readFileSync(path.join(root, canonical), 'utf8'));
     assertOriginalCriteria(finalBlueprint.design_views.find((view: any) => view.view_id === 'scenarios').nodes[0].acceptance.criteria,
       blueprintBefore.design_views.find((view: any) => view.view_id === 'scenarios').nodes[0].acceptance.criteria);
-    const questioningEvents = fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
     assertA21473QuestioningPreserved(finalBlueprint.review_summary.questioning.items, blueprintBefore.review_summary.questioning.items, reference => {
       const file = path.resolve(root, reference.path);
       assert(file.startsWith(root + path.sep), '质询原件必须在本隔离宿主内');
-      const start = questioningEvents.find(event => event.type === 'agent_invoke_start'
+      const start = rootEventRows.find(event => event.type === 'agent_invoke_start'
         && ['initial-design-questioning', 'design-repair-questioning'].includes(event.phase)
         && path.join(runDir, 'phases', event.phase, event.invoke_id, 'questioning-output.json') === file);
       assert(start, '新增出处必须属于本run的真实独立质询调用');
-      const original = load('scripts/utils/design-repair-unattended').readDesignQuestioningOriginal(runDir, start, questioningEvents);
+      const original = load('scripts/utils/design-repair-unattended').readDesignQuestioningOriginal(runDir, start, rootEventRows);
       assert(original?.completed && original.preSnapshot && original.postSnapshot, '新增出处须有完成与只读原件');
       assert.equal(load('scripts/utils/phase-write-boundary').diffPhaseInvocationSnapshots(original.preSnapshot, original.postSnapshot).kind, 'clean');
       const bytes = fs.readFileSync(file); assert.equal(bytes.toString('utf8'), original.output);
       return bytes;
     });
     assert.equal(fs.readFileSync(path.join(root, manifestBefore.requirement_source_files[0]), 'utf8'), sourceRequirement);
-    const rootEvents = fs.readFileSync(path.join(runDir, 'events.jsonl'));
     assert(rootEvents.subarray(0, input.historicalEvents.length).equals(input.historicalEvents));
-    const publications = rootEvents.toString().trim().split('\n').map(line => JSON.parse(line))
+    const publications = rootEventRows
       .filter(event => event.type === 'design_authority_repair' && event.stage === 'published');
     assert.equal(publications.length, 2); assert(publications.every(event => event.outcome === 'recovered'));
     assert.equal(knowledgeHandbacks, 1, 'knowledge is written only after the actual closure dispatch');

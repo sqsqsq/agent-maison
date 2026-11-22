@@ -92,6 +92,8 @@ OCR JSON 为文案/位置 ground truth，结构由需求文字推断，图标优
 
 P0 设备义务由 `priority=P0` 与 `ut_layer=device/both` 决定，不因没有 `linked_flow` 消失。有效 UI 需求须补真实 checkpoint；ui-spec 缺失是定义缺口，不能登记为能力缺口。`linked_flow` 只指业务用例，`flows` 屏链可选；声明时按 checkpoint 前后屏核验边覆盖与相邻关系，无需把用例名改成屏链名。
 
+逐项比对 `expected_result`、动作和可观察的断言。多个条目可以共用动作，只要每项结果均能由相应断言证明。若页面只能显示导航结果，而蓝图还要求核实应用内部值，记录验收 ID、当前 checkpoint 能证明的行为和缺证的值，沿已有设计责任链修订分层或拆开义务。单纯缺少真实 UI 定位由 spec 补齐。采用 `unit` 的应用内集成测试可以在设备上执行。
+
 
 `boundaries` 章节（从「异常/边界场景处理」提取）：`id`（BD-N）/`prd_exception`/`scenario`/`description`/`handling`/`expected_behavior`/`ut_layer`+`ut_focus`/`device_focus`（同上）。
 

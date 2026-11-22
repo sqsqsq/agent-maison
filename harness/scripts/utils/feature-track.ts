@@ -22,7 +22,7 @@ import type { FidelityTarget } from './fidelity-shared';
 import { validateChangeUnitFeatureProjection } from './change-unit-feature-projection';
 import { deriveChangeUnitFeatureId, loadCanonicalChangeUnit, parseChangeUnitFeatureId } from './change-unit-path';
 import { loadCanonicalBlueprint } from './component-blueprint-path';
-import { resolvePhasePathOwnership } from './phase-write-boundary';
+import { isProducedPhaseChange, resolvePhasePathOwnership } from './phase-write-boundary';
 import { readHandoffMaterial, type SessionExecutionRequest } from './session-execution-handoff';
 import { invocationCompleted } from './invocation-completion';
 import { asRecord, asRecords } from './component-blueprint-model';
@@ -37,7 +37,7 @@ import type { ChangeUnitArtifact } from './change-unit-model';
 
 import * as fs from 'fs';
 import * as YAML from 'yaml';
-import { featureArtifactPath, featureFilePath, featurePhaseReportsDir, relFeaturesDir, resolveFeatureArtifact } from '../../config';
+import { componentIndexPath, featureArtifactPath, featureFilePath, featurePhaseReportsDir, relFeaturesDir, resolveFeatureArtifact } from '../../config';
 import type { FeatureCompletion } from './verify-feature-completion';
 import { resolveFeatureTrack, type FeatureTrackDecl } from './runtime-policy';
 
@@ -729,21 +729,38 @@ function scopeWithRefreshedBindings(previous: ExecutionScope, facts: ExecutionSc
     facts, contract_fingerprints: [], ...(previous.control_edges ? { control_edges: structuredClone(previous.control_edges) } : {}) };
 }
 
-function scopeAcceptanceBinding(scope: ExecutionScope): InputBinding | undefined {
-  return scope.obligations.flatMap(fact => fact.basis).find(binding => binding.source.kind === 'artifact' && binding.source.artifact === 'acceptance@1');
+function artifactAcceptanceBindings(facts: ExecutionScopeInput['facts']): InputBinding[] {
+  return facts.flatMap(fact => fact.basis).filter(binding => binding.source.kind === 'artifact' && binding.source.artifact === 'acceptance@1');
+}
+
+export function hasStaleContractsScopeProof(ctx: { projectRoot: string; frameworkRoot: string; feature: string }, previous: ExecutionScope): boolean {
+  const legacyRoot = inferLegacyProjectRoot(ctx.projectRoot, previous);
+  return previous.obligations.some(fact => fact.kind === 'design-context' && fact.satisfied_by?.some(ref => 'input_id' in ref
+    && !verifySatisfiedByBinding(ctx.projectRoot, ctx.frameworkRoot, ctx.feature, fact.owner_phase, ref, legacyRoot).ok));
 }
 
 /** A proposal from an unrelated correction must not launder a changed acceptance file. */
 export function assertScopeAcceptanceRevision(ctx: { projectRoot: string; frameworkRoot: string; feature: string },
-  previous: ExecutionScope, next: ExecutionScope, owned: ExecutionScopeInput | undefined): void {
+  previous: ExecutionScope, next: ExecutionScope, owned: ExecutionScopeInput | undefined, checkedSpec?: ExecutionScopeInput): void {
   if (!ctx.feature.startsWith('cu-')) return;
-  const before = scopeAcceptanceBinding(previous);
+  const before = artifactAcceptanceBindings(previous.obligations)[0];
   if (!before) return;
-  const after = scopeAcceptanceBinding(next);
+  const after = artifactAcceptanceBindings(next.obligations)[0];
+  const legacyRoot = inferLegacyProjectRoot(ctx.projectRoot, previous);
+  const admitted = owned && artifactAcceptanceBindings(owned.facts)[0];
+  const matchesAdmitted = (binding: InputBinding): boolean => projectionContentEqual(admitted, {
+    ...binding, dependencies: binding.dependencies.map(dep => ({ ...dep, path: resolveDependencyPath(ctx.projectRoot, dep.path, legacyRoot) })),
+  });
+  if (admitted && checkedSpec) {
+    const checked = artifactAcceptanceBindings(checkedSpec.facts);
+    if (!checked.length || checked.some(binding => !matchesAdmitted(binding))) {
+      throw new Error('[execution-scope] spec 的验收提案与当前 CU 已签发交回的验收绑定不一致，责任方 spec');
+    }
+  }
   if (after && before.content_fingerprint === after.content_fingerprint) return;
-  if (after && owned?.facts.some(fact => fact.basis.some(binding => projectionContentEqual(binding, after)))) return;
+  if (after && admitted && matchesAdmitted(after)) return;
   try {
-    readBoundInput({ ...ctx, phase: 'spec', track: 'full' }, before, inferLegacyProjectRoot(ctx.projectRoot, previous));
+    readBoundInput({ ...ctx, phase: 'spec', track: 'full' }, before, legacyRoot);
   } catch {
     throw new Error('[execution-scope] 验收内容变化缺少当前 CU 已签发责任方的适用交回');
   }
@@ -779,11 +796,36 @@ function keepsAcceptanceCommitments(previous: AcceptanceSpec, current: unknown, 
   return true;
 }
 
+function matchesProducedComponentIndex(projectRoot: string, feature: string, events: readonly GoalRunEvent[],
+  relative: string, before: string | null, after: string | null): boolean {
+  const productions = new Map<string, { phase: string; before: unknown; after: unknown }>();
+  for (const event of events) {
+    const record = event as Record<string, unknown>;
+    if (event.type !== 'phase_write_observed' || !event.phase || !event.invoke_id
+      || record.feature !== feature || record.producer !== 'component-index') continue;
+    for (const row of asRecords(record.produced).filter(row => row.path === relative)) {
+      const first = productions.get(event.invoke_id);
+      productions.set(event.invoke_id, { phase: event.phase, before: first ? first.before : row.pre_sha256, after: row.post_sha256 });
+    }
+  }
+  let expected = before;
+  let advanced = false;
+  for (const [invokeId, production] of productions) {
+    if (!advanced && production.before !== expected) continue;
+    if (typeof production.after !== 'string' || !isProducedPhaseChange(projectRoot, production.phase,
+      { path: relative, how: expected === null ? 'added' : 'modified', preSha256: expected, postSha256: production.after },
+      { events, invokeId })) return false;
+    expected = production.after;
+    advanced = true;
+  }
+  return advanced && expected === after;
+}
+
 /** Rebind the admitted CU's acceptance after the exact authorized author settles, before requiring spec PASS. */
 export function refreshOwnedAcceptanceScopeInput(ctx: { projectRoot: string; frameworkRoot: string; feature: string; requirement?: string; runId: string; runDir: string },
   previous: ExecutionScope, events: readonly GoalRunEvent[]): ExecutionScopeInput | undefined {
   if (!ctx.feature.startsWith('cu-')) return undefined;
-  const prior = scopeAcceptanceBinding(previous);
+  const prior = artifactAcceptanceBindings(previous.obligations)[0];
   if (!prior) return undefined;
   const { projectRoot, frameworkRoot, feature, runId, runDir } = ctx;
   const legacyRoot = inferLegacyProjectRoot(projectRoot, previous);
@@ -805,6 +847,15 @@ export function refreshOwnedAcceptanceScopeInput(ctx: { projectRoot: string; fra
   const observed = createObservedSourceHashReader(projectRoot, feature, { frameworkRoot, runId, ownershipEvents: events, includeAuthorArtifacts: true });
   if (observed({ path: relative, role: 'input', sha256: before, exists: true }, 'scope')?.sha256 !== after) return undefined;
   try {
+    const observedSource = createObservedSourceHashReader(projectRoot, feature, { frameworkRoot, runId, ownershipEvents: events });
+    const designInputs = changedInputs.filter(dep => {
+      if (!isInsideProjectRoot(projectRoot, dep.path)) return true;
+      const relative = relPosix(projectRoot, dep.path);
+      const hash = sha256File(dep.path);
+      if (dep.path === componentIndexPath(projectRoot)) return !matchesProducedComponentIndex(projectRoot, feature, events, relative, dep.sha256, hash);
+      const source = observedSource({ path: relative, role: 'input', exists: dep.exists, sha256: dep.sha256 }, 'scope');
+      return !source || source.sha256 !== hash || source.exists !== fs.existsSync(dep.path);
+    });
     let expected = before;
     let originalRequest: SessionExecutionRequest | undefined;
     let last: { request: SessionExecutionRequest; start: GoalRunEvent } | undefined;
@@ -843,7 +894,7 @@ export function refreshOwnedAcceptanceScopeInput(ctx: { projectRoot: string; fra
     const { request, start } = last;
     const { blueprintId, changeUnitId } = parseChangeUnitFeatureId(feature);
     const unit = loadCanonicalChangeUnit(projectRoot, blueprintId, changeUnitId);
-    if (changedInputs.length) {
+    if (designInputs.length) {
       const blueprint = loadCanonicalBlueprint(projectRoot, blueprintId);
       const design = events.slice(0, events.indexOf(start)).filter(event => event.type === 'design_authority_repair') as Array<GoalRunEvent & {
         blueprint_id?: string; stage?: string; new_revision?: number; outcome?: string; failed_step?: string; signature?: string;
@@ -856,7 +907,7 @@ export function refreshOwnedAcceptanceScopeInput(ctx: { projectRoot: string; fra
       if (!attempt?.handoff_context || sha256File(path.join(runDir, 'design-repair/component-blueprint.yaml')) !== sha256File(blueprint.canonicalPath)) return undefined;
       const previousDesign = readHandoffMaterial<{ baseline: string; cu?: string }>(runDir, attempt.handoff_context);
       const original = new Map([[blueprint.canonicalPath, previousDesign.baseline], [unit.canonicalPath, previousDesign.cu]]);
-      if (changedInputs.some(dep => {
+      if (designInputs.some(dep => {
         const bytes = original.get(dep.path);
         const relative = path.relative(projectRoot, dep.path).replace(/\\/g, '/');
         return !bytes || createHash('sha256').update(Buffer.from(bytes, 'base64')).digest('hex') !== dep.sha256
