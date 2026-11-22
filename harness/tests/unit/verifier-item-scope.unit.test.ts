@@ -71,10 +71,13 @@ const cases: Array<{ name: string; run(): void }> = [
       files: [{ path: reviewPath, sha256: 'old' }, { path: 'spec/ui-spec.yaml', sha256: 'old' }] };
     const currentMaterial = { ...previousMaterial,
       files: [{ path: reviewPath, sha256: 'changed' }, previousMaterial.files[1]] };
-    for (const reference of ['`review/review-report.md`', 'review/review-report.md', '[审查原文](review/review-report.md#L86)']) {
+    const range = '`review/review-report.md:54–80`';
+    const combined = '`spec/ui-spec.yaml:585、review/review-report.md:54–80`';
+    for (const [coverage, reference] of [[range, '`review/review-report.md`'], [combined, 'review/review-report.md'],
+      [combined, '[审查原文](review/review-report.md#L86)']]) {
       const previousReportText = header
         + '| blocker_threshold | PASS | BLOCKER | `review/review-report.md:93` 对应不通过结论。 |\n'
-        + '| review_dimension_coverage | WARN | MAJOR | `spec/ui-spec.yaml:585、review/review-report.md:54–80` 覆盖架构、接口、异常、功能及视觉。 |\n'
+        + `| review_dimension_coverage | WARN | MAJOR | ${coverage} 覆盖架构、接口、异常、功能及视觉。 |\n`
         + `| coding_rules_referenced | WARN | MINOR | ${reference} 未明确引用具体规则 ID。 |\n`
         + '| reference_crosscheck | PASS | MAJOR | `spec/ui-spec.yaml:585` 与原文一致；排除 `../review/review-report.md`、`/review/review-report.md`、`C:\\review\\review-report.md` 及 `https://remote/review/review-report.md`。 |\n';
       const applicableIds = ['blocker_threshold', 'review_dimension_coverage', 'coding_rules_referenced', 'reference_crosscheck'];
@@ -84,7 +87,7 @@ const cases: Array<{ name: string; run(): void }> = [
       assert.deepStrictEqual(scope.reusedRows.map(row => row.id), ['reference_crosscheck']);
       const specChange = { ...previousMaterial, files: [previousMaterial.files[0], { path: 'spec/ui-spec.yaml', sha256: 'changed' }] };
       assert.deepStrictEqual(selectVerifierItemScope({ previousMaterial, currentMaterial: specChange, previousReportText,
-        applicableIds }).reviewIds, ['review_dimension_coverage', 'reference_crosscheck']);
+        applicableIds }).reviewIds, coverage === combined ? ['review_dimension_coverage', 'reference_crosscheck'] : ['reference_crosscheck']);
     }
   } },
   { name: '简名 index.ets 关联所有同名绑定，限定路径仍只关联其目标', run: () => {
@@ -93,7 +96,7 @@ const cases: Array<{ name: string; run(): void }> = [
     const account = '04-BusinessBase/AccountManager/src/main/ets/index.ets';
     const previousMaterial = { ...material, files: [phone, wallet, account, 'index.ets'].map(file => ({ path: file, sha256: 'old' })) };
     const previousReportText = header
-      + '| business_logic_correctness | PASS | MAJOR | `index.ets:26` 落实路由。 |\n'
+      + '| business_logic_correctness | PASS | MAJOR | `index.ets:24-41` 落实路由。 |\n'
       + `| spec_acceptance_to_code | PASS | MAJOR | \`${phone}:26\` 注册路由。 |\n`
       + `| reference_crosscheck | PASS | MAJOR | \`${wallet}:14\` 导出入口。 |\n`
       + '| route_registration | PASS | MAJOR | Phone/pages/index.ets:26–39，对应路由。 |\n'
