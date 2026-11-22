@@ -27,20 +27,91 @@ export function verifierTemplateCheckIds(text: string): string[] {
     .map(([id]) => id.replace(/[`*~]/g, '').trim()).filter(id => /^[A-Za-z][A-Za-z0-9_.-]*$/.test(id)) : [];
 }
 
-function evidenceLinePaths(evidence: string): string[] {
-  const quoted = [...evidence.matchAll(/`([^`\r\n]+?):[1-9]\d*(?=[`,.\-，])/g)].map(match => match[1]);
-  const bare = [...evidence.replace(/`[^`\r\n]*`/g, '').matchAll(/([^\s`'"<>()[\]，。；、：|]+\.[\w-]+):[1-9]\d*/g)]
-    .map(match => match[1].replace(/^.*(?:→|↔)/, ''));
-  return [...quoted, ...bare];
+type BoundPathResolver = (raw: string) => string[];
+
+function evidencePaths(evidence: string, resolvePath: BoundPathResolver): string[] {
+  const paths: string[] = [];
+  const addTokens = (text: string, inProse: boolean): void => {
+    // The binding is file-level. The path token ends before the report's line-range notation.
+    const tokens = text.match(/(?:[A-Za-z]:|[A-Za-z][A-Za-z0-9+.-]*:(?!\d))?[\p{L}\p{M}\p{N}._~%+@/\\-]+(?:\*\.[\w-]+)?/gu) ?? [];
+    for (const token of tokens) {
+      const file = token.replace(/\.+$/, '');
+      if (!path.posix.extname(file.replace(/\\/g, '/'))) continue;
+      const resolved = resolvePath(file);
+      if (!inProse || resolved.length) {
+        paths.push(...resolved);
+      } else {
+        // Chinese prose can abut a bare filename without spaces, e.g. 见BankConstants.ets。
+        const bare = file.replace(/^\p{Script=Han}+|\p{Script=Han}+$/gu, '');
+        if (bare !== file) paths.push(...resolvePath(bare));
+      }
+    }
+  };
+  const prose = evidence.replace(/`([^`\r\n]+)`|\[[^\]\r\n]*\]\(\s*(?:<([^>\r\n]+)>|([^\s)]+))[^)\r\n]*\)/g,
+    (_, code: string | undefined, enclosed: string | undefined, link: string | undefined) => {
+      if (code === undefined) {
+        // Only the link target identifies the file; the label is display text.
+        const target = (enclosed ?? link ?? '').split(/[?#]|[:：](?=\d)/, 1)[0];
+        paths.push(...resolvePath(target));
+      } else {
+        const content = code.trim();
+        // A literal path also covers spaces; scan the rest for additional files in the span.
+        const [file] = content.split(/#|[:：](?=\d)/, 1);
+        const literal = /^[A-Za-z]:/.test(content) ? [] : resolvePath(file.trimEnd());
+        paths.push(...literal);
+        addTokens(literal.length ? content.slice(file.length) : content, false);
+      }
+      return ' ';
+    });
+  addTokens(prose, true);
+  return paths;
 }
 
-function resolveBoundPath(raw: string, bound: ReadonlySet<string>): string | undefined {
-  const normalized = raw.replace(/\\/g, '/');
-  if (path.posix.isAbsolute(normalized) || /^[A-Za-z]:/.test(normalized) || normalized.split('/').includes('..')) return undefined;
-  const file = path.posix.normalize(normalized);
-  if (bound.has(file)) return file;
-  const candidates = [...bound].filter(candidate => candidate.endsWith('/' + file));
-  return candidates.length === 1 ? candidates[0] : undefined;
+function normalizedRelativePath(raw: string): string | undefined {
+  const slashed = raw.replace(/\\/g, '/');
+  if (!slashed || path.posix.isAbsolute(slashed) || /[:\0]/.test(slashed) || slashed.endsWith('/')
+    || slashed.split('/').includes('..')) return undefined;
+  return path.posix.normalize(slashed);
+}
+
+function boundPathResolver(bound: readonly string[]): BoundPathResolver {
+  const byName = new Map<string, string[]>();
+  for (const file of bound) {
+    if (normalizedRelativePath(file) !== file) continue;
+    const name = path.posix.basename(file);
+    const extension = path.posix.extname(name);
+    for (const key of extension ? [name, `*${extension}`] : [name]) {
+      const paths = byName.get(key) ?? [];
+      paths.push(file);
+      byName.set(key, paths);
+    }
+  }
+  return raw => {
+    const file = normalizedRelativePath(raw);
+    if (!file) return [];
+    const basename = path.posix.basename(file);
+    const candidates = byName.get(basename) ?? [];
+    if (basename.startsWith('*.')) {
+      // A directory wildcard cites only files immediately under that directory.
+      const directory = path.posix.dirname(file);
+      return directory === '.' ? [] : candidates.filter(candidate => {
+        const parent = path.posix.dirname(candidate);
+        return parent === directory || parent.endsWith('/' + directory);
+      });
+    }
+    if (file === basename) return candidates;
+    if (candidates.includes(file)) return [file];
+
+    // Reports can omit intermediate directories, e.g. Phone/pages/index.ets.
+    const directories = file.split('/').slice(0, -1);
+    return candidates.filter(candidate => {
+      let next = 0;
+      for (const segment of candidate.split('/').slice(0, -1)) {
+        if (segment === directories[next]) next++;
+      }
+      return next === directories.length;
+    });
+  };
 }
 
 export function citesIssue(evidence: string, issue: string): boolean {
@@ -61,14 +132,16 @@ function rowAddressesIssue(row: VerifierSummaryRow, issue: string, phase: string
     || (phase === 'review' && row.id === 'issue_accuracy' && /^CR-[0-9]+$/.test(issue));
 }
 
-function issueReferences(issue: IssueVerificationEntry): string[] {
+function issueReferences(issue: IssueVerificationEntry, resolvePath: BoundPathResolver): string[] {
   const evidence = issue.evidence ?? '';
   const issueFile = /^\s*`?([^`|]+?)`?\s*\|/.exec(evidence)?.[1];
-  return [...evidenceLinePaths(evidence), ...(issueFile ? [issueFile.trim()] : []), ...(issue.production_paths ?? [])];
+  return [...evidencePaths(evidence, resolvePath),
+    ...[...(issueFile ? [issueFile.trim()] : []), ...(issue.production_paths ?? [])].flatMap(resolvePath)];
 }
 
-function rowReferences(row: VerifierSummaryRow, issues: IssueVerificationEntry[], phase: string): string[] {
-  return [...evidenceLinePaths(row.evidence), ...issues.filter(({ issue }) => rowAddressesIssue(row, issue, phase)).flatMap(issueReferences)];
+function rowReferences(row: VerifierSummaryRow, issues: IssueVerificationEntry[], phase: string, resolvePath: BoundPathResolver): string[] {
+  return [...evidencePaths(row.evidence, resolvePath), ...issues.filter(({ issue }) => rowAddressesIssue(row, issue, phase))
+    .flatMap(issue => issueReferences(issue, resolvePath))];
 }
 
 export function readVerifierUtSourcePaths(input: {
@@ -89,13 +162,12 @@ export function readVerifierUtSourcePaths(input: {
       profile.profileDir, 'ut-host-impl',
     );
     if (!host?.utAcceptanceSourcePaths) return {};
-    const bound = new Set(material.files.filter(file => file.sha256 !== null).map(file => file.path));
-    const oldPaths = [...bound];
+    const oldPaths = material.files.filter(file => file.sha256 !== null && normalizedRelativePath(file.path) === file.path).map(file => file.path);
+    const resolvePath = boundPathResolver(oldPaths);
     const testFiles = new Set(partitionConstructionFiles(projectRoot, profile.profileDir, { files: oldPaths, modules: [] }).tests);
     const issues = readUniqueIssues(reportText);
     return Object.fromEntries(rows.flatMap(row => {
-      const tests = [...new Set(rowReferences(row, issues, phase).map(file => resolveBoundPath(file, bound))
-        .filter((file): file is string => !!file && testFiles.has(file)))];
+      const tests = [...new Set(rowReferences(row, issues, phase, resolvePath).filter(file => testFiles.has(file)))];
       return tests.length ? [[row.id, host.utAcceptanceSourcePaths(oldPaths, tests)]] : [];
     }));
   } catch {
@@ -181,17 +253,16 @@ export function selectVerifierItemScope(input: {
   }
   if (oldResult && oldResult.blocker_count !== blockers.size) return full;
 
-  const bound = new Set(previousMaterial.files.filter(file => file.sha256 !== null).map(file => file.path));
+  const resolvePath = boundPathResolver(previousMaterial.files.filter(file => file.sha256 !== null).map(file => file.path));
   const issues = readUniqueIssues(previousReportText);
   const refsById = new Map<string, Set<string>>();
   for (const row of rows) {
     if (!applicableIds.has(row.id)) continue;
     const references = [
-      ...rowReferences(row, issues, currentMaterial.phase),
-      ...(currentMaterial.phase === 'ut' ? input.utSourcePaths?.[row.id] ?? [] : []),
+      ...rowReferences(row, issues, currentMaterial.phase, resolvePath),
+      ...(currentMaterial.phase === 'ut' ? (input.utSourcePaths?.[row.id] ?? []).flatMap(resolvePath) : []),
     ];
-    refsById.set(row.id, new Set(references.map(reference => resolveBoundPath(reference, bound))
-      .filter((file): file is string => !!file)));
+    refsById.set(row.id, new Set(references));
   }
   for (const file of changedPaths) {
     const affected = [...refsById].filter(([, refs]) => refs.has(file));
@@ -205,8 +276,7 @@ export function selectVerifierItemScope(input: {
       continue;
     }
     const oldIssue = issues.find(entry => entry.issue === finding.id);
-    const paths = [...(oldIssue ? issueReferences(oldIssue) : []), ...(finding.files ?? [])]
-      .map(file => resolveBoundPath(file, bound)).filter((file): file is string => !!file);
+    const paths = [...(oldIssue ? issueReferences(oldIssue, resolvePath) : []), ...(finding.files ?? []).flatMap(resolvePath)];
     const affected = [...refsById].filter(([, refs]) => paths.some(file => refs.has(file)));
     if (!affected.length) return full;
     for (const [id] of affected) reviewIds.add(id);
