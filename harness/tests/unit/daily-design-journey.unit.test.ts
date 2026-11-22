@@ -757,6 +757,10 @@ async function completeDelivery(medium = false, moduleRevision = false, acceptan
       const design = events[specRevision].execution_scope.obligations.find((fact: any) => fact.kind === 'design-context');
       assert.equal(design.owner_phase, 'plan');
       assert(!design.satisfied_by?.length, 'spec must carry forward plan responsibility with the obsolete contracts proof withdrawn');
+      const planVerifier = events.findIndex((event: any) => event.type === 'agent_invoke_start' && event.phase === 'plan-verifier-format-repair');
+      assert(planVerifier > specRevision, 'the returned Plan check must reach its independent verifier');
+      assert.equal(events.slice(specRevision + 1, planVerifier).filter((event: any) => event.type === 'harness_end' && event.phase === 'plan').length,
+        1, 'a changed downstream facts baseline must not repeat the same Plan check');
       const runId = path.basename(revisedRunDir);
       const input = { projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: revisedFeature,
         requirement: REQUIREMENT, runId, runDir: revisedRunDir };

@@ -272,8 +272,8 @@ export function prepareExplicitRequest(options: { projectRoot: string; framework
 }
 
 export interface CapabilityResolutionEntryInputOptions {
-  /** Current design projection probe; never grants reusable phase facts. */
-  purpose?: 'design-authority-probe' | 'work-unit-author';
+  /** A bound verifier reads the formal check's admission without granting a live tool window. */
+  purpose?: 'design-authority-probe' | 'work-unit-author' | 'bound-verifier';
   authorityReaders?: IdentityNeutralDigestReaders;
   projectRoot: string;
   feature: string;
@@ -293,15 +293,15 @@ type FactsInvocationLookup = {
   authorityReaders?: IdentityNeutralDigestReaders;
 };
 
-/** Current formal-tool observation; it neither changes the old author's research nor persists another context. */
-export function loadFormalFactsObservation(options: FactsInvocationLookup): {
+/** Formal-tool observation against its signed author; it never changes the author's research. */
+export function loadFormalFactsObservation(options: FactsInvocationLookup, returned = false): {
   context: FactsInvocationContext; sources: Map<string, { sha256: string; written: boolean }>;
 } | undefined {
   try {
     if (!options.attemptId) return undefined;
     const tokenAt = process.argv.indexOf('--goal-gate-token');
     const token = `${options.runId}/harness/${options.phase}-${options.attemptId}`;
-    if (tokenAt < 0 || process.argv[tokenAt + 1] !== token) return undefined;
+    if (!returned && (tokenAt < 0 || process.argv[tokenAt + 1] !== token)) return undefined;
     const manifest = loadGoalManifestFromRun(options.projectRoot, options.runId, { feature: options.feature, featuresDir: options.featuresDir });
     const runDir = path.resolve(options.projectRoot, manifest.report_dir);
     const events = loadAuthoritativeEvents(path.join(runDir, 'events.jsonl'));
@@ -310,15 +310,28 @@ export function loadFormalFactsObservation(options: FactsInvocationLookup): {
       return row.type === 'harness_start' && row.phase === options.phase && row.invoke_id === `${options.phase}-${options.attemptId}`
         && row.process_role === 'harness' && row.run_id === options.runId && row.token === token
         && typeof row.started_at_ms === 'number' && Number.isFinite(row.started_at_ms) && !!row.executable
-        && (row.pid === process.pid || row.pid === process.ppid) ? index : -1;
+        && (returned ? typeof row.pid === 'number' && row.pid > 0 : row.pid === process.pid || row.pid === process.ppid) ? index : -1;
     }).filter(index => index >= 0).pop();
-    if (gateIndex === undefined || events.slice(gateIndex + 1).some(event => event.type === 'harness_end'
-      && event.invoke_id === events[gateIndex].invoke_id)) return undefined;
-    const { readRunControl, assertFencedOwner } = require('./goal-run-control') as typeof import('./goal-run-control');
-    const control = readRunControl(runDir, options.runId), owner = control?.owner;
-    if (!owner || owner.kind === 'session' && (!Number.isFinite(Date.parse(owner.lease_expires_at ?? ''))
-      || Date.parse(owner.lease_expires_at ?? '') <= Date.now())) return undefined;
-    assertFencedOwner(runDir, { run_id: options.runId, owner_id: owner.owner_id, epoch: owner.epoch }, 'formal_facts_observation');
+    if (gateIndex === undefined) return undefined;
+    const gate = events[gateIndex];
+    const later = events.slice(gateIndex + 1);
+    const end = later.find(event => event.type === 'harness_end' && event.invoke_id === gate.invoke_id);
+    if (returned) {
+      if (end?.timed_out !== false || typeof end.exit_code !== 'number' || !end.related_input_snapshot
+        || later.some(event => event.type === 'harness_start' && event.phase === options.phase)) return undefined;
+      const scoped = later.some(event => event.type === 'scope_revised') ? eventsWithScopeRevocations(manifest.execution_scope, events, undefined,
+        { projectRoot: options.projectRoot, feature: options.feature, runId: options.runId }) : events;
+      if (scoped.slice(scoped.indexOf(gate) + 1).some(event => event.type === 'phase_invalidated' && event.phase === options.phase
+        || event.type === 'phase_backtrack_requested' && (event.to_phase === options.phase
+          || ((event as { invalidated_phases?: string[] }).invalidated_phases ?? []).includes(options.phase)))) return undefined;
+    } else {
+      if (end) return undefined;
+      const { readRunControl, assertFencedOwner } = require('./goal-run-control') as typeof import('./goal-run-control');
+      const control = readRunControl(runDir, options.runId), owner = control?.owner;
+      if (!owner || owner.kind === 'session' && (!Number.isFinite(Date.parse(owner.lease_expires_at ?? ''))
+        || Date.parse(owner.lease_expires_at ?? '') <= Date.now())) return undefined;
+      assertFencedOwner(runDir, { run_id: options.runId, owner_id: owner.owner_id, epoch: owner.epoch }, 'formal_facts_observation');
+    }
     const history = events.slice(0, gateIndex);
     if (unresolvedPhaseWrites(options.projectRoot, history, { feature: options.feature, frameworkRoot: options.frameworkRoot, runId: options.runId }).size) return undefined;
     const { executionRequestForInvoke } = require('./session-execution-handoff') as typeof import('./session-execution-handoff');
@@ -337,7 +350,7 @@ export function loadFormalFactsObservation(options: FactsInvocationLookup): {
     });
     const anchor = records.find(record => record.original.context.attemptId === options.attemptId && record.completed
       && record.original.context.chain.includes(options.phase));
-    if (!anchor) return undefined;
+    if (!anchor || returned && anchor.start.phase !== 'work-unit-author') return undefined;
     if (anchor.start.phase === 'work-unit-author' && !anchor.original.context.factsContext?.baseline) {
       return completedFactsBaselineFromHistory({ ...options,
         featuresDir: options.featuresDir ?? relFeaturesDir(options.projectRoot), goalAttemptId: options.attemptId },
@@ -988,8 +1001,12 @@ export function resolveCapabilityResolutionEntryInput(
         first_phase: runFirstPhase ?? scope.phase_chain[0],
         source_paths: sourcePaths, required_input_snippets: [],
       };
-      const admitted = goalRunId && options.purpose !== 'design-authority-probe' ? loadFactsInvocationContext({ projectRoot: options.projectRoot, frameworkRoot, feature: options.feature,
-        phase: options.phase, runId: goalRunId, attemptId: options.goalAttemptId, featuresDir: options.featuresDir, authorityReaders: options.authorityReaders })
+      const factsLookup = { projectRoot: options.projectRoot, frameworkRoot, feature: options.feature,
+        phase: options.phase, runId: goalRunId, attemptId: options.goalAttemptId, featuresDir: options.featuresDir, authorityReaders: options.authorityReaders };
+      // A scope revision can revoke a phase proof while the same signed CU author still supplies its next formal check.
+      const returned = goalRunId && options.purpose === 'bound-verifier' ? loadFormalFactsObservation({ ...factsLookup, runId: goalRunId }, true) : undefined;
+      const admitted = goalRunId && options.purpose !== 'design-authority-probe' ? returned?.context
+        ?? loadFactsInvocationContext({ ...factsLookup, runId: goalRunId })
         ?? loadCompletedFactsBaseline(options, goalRunId, frameworkRoot)
         ?? loadSuccessorFactsBaseline(options, goalRunId, frameworkRoot) : undefined;
       if (admitted) {
@@ -1217,8 +1234,7 @@ export function resolveCapabilityResolutionEntryInput(
       ));
       const inventory = loadArtifactInventory(frameworkRoot);
       const outputObservation = goalRunId && admitted && ['spec', 'plan'].includes(options.phase)
-        ? loadFormalFactsObservation({ projectRoot: options.projectRoot, frameworkRoot, feature: options.feature, phase: options.phase,
-          runId: goalRunId, attemptId: options.goalAttemptId, featuresDir: options.featuresDir, authorityReaders: options.authorityReaders })
+        ? returned ?? loadFormalFactsObservation({ ...factsLookup, runId: goalRunId })
           ?? loadCompletedFactsObservation(options, goalRunId, frameworkRoot) : undefined;
       const writtenOutputs = indexed.phase.produces.filter(output => (inventory.artifacts.find(artifact => artifact.id === output.artifact)?.paths ?? [])
         .some(name => {

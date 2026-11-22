@@ -7855,8 +7855,7 @@ Goal runner — original request design and construction runtime
     const workCompleted = (work: ReturnType<typeof readWork>): boolean => work.disposition.completionEligible
       && !work.facts.phases.some(result => missingCheckOrigin(result.phase, work)
         || checkWorkConditions(result.phase, work).producerReturned);
-    const affectedCheck = (family: string, work: ReturnType<typeof readWork>, actor = lastAuthor()): boolean => {
-      const conditions = checkWorkConditions(family, work, actor);
+    const affectedCheck = (family: string, work: ReturnType<typeof readWork>, conditions = checkWorkConditions(family, work)): boolean => {
       if (conditions.observation.changed || conditions.productChanged || conditions.scopeChanged || conditions.producerReturned) return true;
       if (conditions.observation.returned) return false;
       if (missingCheckOrigin(family, work, conditions.observation)) return true;
@@ -8416,7 +8415,8 @@ Goal runner — original request design and construction runtime
           workInput: author?.original?.request.context.workInput };
         const refusal = deriveDesignDeclineFeedback(loadAuthoritativeEvents(eventsPath), candidates, actor);
         if (refusal.feedback) { designDeclineFeedback = refusal.feedback; designDeclineCandidates = candidates.filter(id => !refusal.delivered.includes(id)); }
-        else if (!refusal.delivered.length || !before.facts.phases.some(result => affectedCheck(result.phase, before, author))) {
+        else if (!refusal.delivered.length || !before.facts.phases.some(result =>
+          affectedCheck(result.phase, before, checkWorkConditions(result.phase, before, author)))) {
           const repaired = await runUnattendedDesignRepair({ projectRoot, frameworkRoot, feature: manifest.feature,
             designTarget: designRepairTarget(projectRoot, manifest.feature), phase, runId: manifest.run_id, reportDir: manifest.report_dir,
             requirement: manifest.requirement, brief, signature, heldFeatureLock: featureLock,
@@ -8463,7 +8463,8 @@ Goal runner — original request design and construction runtime
           { ...before.disposition, problems: repairs }) ?? repairs.every(problem => author.original!.request.context.instruction?.includes(
           renderWorkUnitAuthorFeedback({ projectRoot, frameworkRoot, feature: manifest.feature,
             disposition: { ...before.disposition, problems: [problem] } }))));
-      const verificationPending = !!author && before.facts.phases.some(result => affectedCheck(result.phase, before, author));
+      const verificationPending = !!author && before.facts.phases.some(result =>
+        affectedCheck(result.phase, before, checkWorkConditions(result.phase, before, author)));
       const authorAssessmentCompleted = before.evaluation.completed
         && repairs.every(problem => before.evaluation.checkFamilies?.includes(problem.source_phase ?? problem.phase))
         && !verificationPending;
@@ -8669,7 +8670,8 @@ Goal runner — original request design and construction runtime
         if (current.results.some(result => result.phase === family) && await awaitDeviceCondition(family, summary)) current = readWork();
         if (halted) break;
         let bound = current.results.find(result => result.phase === family);
-        let affected = affectedCheck(family, current);
+        const currentConditions = checkWorkConditions(family, current);
+        let affected = affectedCheck(family, current, currentConditions);
         let verifierInputsChanged = false;
         let boundVerifierInputs: ResolvedPhaseInputs | undefined;
         if (bound && !affected && summary) {
@@ -8679,8 +8681,10 @@ Goal runner — original request design and construction runtime
               featurePhaseReportsDir(projectRoot, manifest.feature, family, frameworkRoot), summary.verifier_subject_id) : null;
             let factsContext: import('./utils/context-facts').FactsInvocationContext | undefined;
             if (material?.input_bindings_sha256) {
-              const entry = resolveCapabilityResolutionEntryInput({ ...reviewOptions, featuresDir, goalRunId: manifest.run_id,
-                goalAttemptId: lastAuthor()?.original?.request.context.attemptId });
+              const observed = currentConditions.observation;
+              const checkedAttempt = observed.returned ? observed.start?.invoke_id?.slice(family.length + 1) : undefined;
+              const entry = resolveCapabilityResolutionEntryInput({ ...reviewOptions, featuresDir, goalRunId: manifest.run_id, purpose: 'bound-verifier',
+                goalAttemptId: checkedAttempt ?? lastAuthor()?.original?.request.context.attemptId });
               factsContext = entry.factsContext;
               boundVerifierInputs = resolveCapabilityInputs({ ...reviewOptions, track: goalTrack, ...entry }).inputs;
             }
