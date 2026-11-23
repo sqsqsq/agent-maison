@@ -64,6 +64,20 @@
 >
 > 修改任一 TC 的通道都改变计划 identity，必须经本计划 review，不得在派生或回灌时静默重写。
 
+当用例依赖持久数据时，在 `test_case_flow` 里注明每例的真实数据前置。人为可读的用例行说明所需状态与固定测试候选，并注明宿主允许的准备枚举。
+
+```yaml
+test_case_flow:
+  TC-001:
+    precondition: { kind: fresh_app, reset: fixture_reset, ready_by_id: fixture_candidate_unbound }
+  TC-002:
+    precondition: { kind: fresh_app, reset: restart }
+  TC-003:
+    precondition: { kind: after, tc: TC-001, ready_by_id: fixture_candidate_bound }
+```
+
+示例中的 TC-003 也需要在表格里声明 Hylyre 通道。应用实际读到对应测试数据时才显示 `ready_by_id`。每例用原生断言核验自身所需的数据。`after` 提供用例顺序及失败归因。
+
 ### 用例统计
 
 | 优先级 | 数量 | 说明 |

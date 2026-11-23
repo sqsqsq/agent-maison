@@ -20,7 +20,7 @@ import {
   type ProductSelection,
 } from '../product-selection';
 import { computeHapSha256Full } from '../build-fingerprint';
-import { evaluateDeviceTestBuildReuse } from '../device-test-build-reuse';
+import { DEVICE_TEST_BUILD_RESULT, evaluateDeviceTestBuildReuse, snapshotDeviceTestBuildInputs } from '../device-test-build-reuse';
 // plan d8c5f3a7 T4 接线：构建**当刻**把源码快照绑定到 HAP——抓 self-revert 的关键一环
 
 export const provider: CapabilityProvider = {
@@ -62,6 +62,7 @@ export interface DeviceTestBuildResult {
   productSelection?: ProductSelection;
   artifactValidation?: ReturnType<typeof detectStaleSignedSuspect>;
   hapSha256Full?: string | null;
+  buildInputsSha256?: string;
 }
 
 function writeBuildResultSummary(
@@ -69,7 +70,7 @@ function writeBuildResultSummary(
   payload: Record<string, unknown>,
 ): void {
   fs.mkdirSync(reportDir, { recursive: true });
-  const summaryPath = path.join(reportDir, 'device-test-build.result.json');
+  const summaryPath = path.join(reportDir, DEVICE_TEST_BUILD_RESULT);
   fs.writeFileSync(summaryPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf-8');
 }
 
@@ -181,26 +182,43 @@ export function runDeviceTestAppBuild(opts: DeviceTestBuildOptions): DeviceTestB
   });
   const resolvedProduct = selection.product!;
   const resolvedBuildMode = reuseDecision.resolvedBuildMode;
-  const hvigor = reuseDecision.reuse
+  const build = (forceFullBuild = reuseDecision.forceFullBuild) => runHvigorAssembleApp({
+    projectRoot: opts.projectRoot, harnessRoot: opts.harnessRoot, frameworkRoot: opts.frameworkRoot,
+    feature: opts.feature, phase: opts.phase, skipEnvVar,
+    product: resolvedProduct, buildMode: resolvedBuildMode,
+    daemon: false,
+    forceNoDaemon: forceFullBuild,
+    freezeDimensions: true,
+    logBasename: 'hvigor-app-build.log',
+    metaExtras: { productSelection: selection },
+  });
+  let reused = reuseDecision.reuse;
+  let reuseReason = reuseDecision.reason;
+  let hvigor = reused
     ? reusedHvigorStub(`复用 HAP（跳过 hvigor）：${reuseDecision.reason}`, reuseDecision.priorResult)
-    : runHvigorAssembleApp({
-        projectRoot: opts.projectRoot, harnessRoot: opts.harnessRoot, frameworkRoot: opts.frameworkRoot,
-        feature: opts.feature, phase: opts.phase, skipEnvVar,
-        product: resolvedProduct, buildMode: resolvedBuildMode,
-        daemon: false,
-        freezeDimensions: true,
-        logBasename: 'hvigor-app-build.log',
-        metaExtras: { productSelection: selection },
-      });
+    : build();
   // 构建后重新发现；不能回退到构建前路径。增量 UP-TO-DATE 无需晚于启动时间。
-  const discovery = discoverAppHapArtifacts(opts.projectRoot, resolvedProduct);
-  const artifactValidation = discovery.signedPath ? detectStaleSignedSuspect(discovery.signedPath) : undefined;
-  const processOk = reuseDecision.reuse || isDeviceTestBuildOk(hvigor);
+  const inspect = () => {
+    const discovery = discoverAppHapArtifacts(opts.projectRoot, resolvedProduct);
+    const artifactValidation = discovery.signedPath ? detectStaleSignedSuspect(discovery.signedPath) : undefined;
+    return { discovery, artifactValidation, sha256: artifactValidation?.status === 'valid' ? computeHapSha256Full(discovery.signedPath) : null };
+  };
+  let { discovery, artifactValidation, sha256: hapSha256Full } = inspect();
+  if (reused && (discovery.signedPath !== reuseDecision.hapPath || hapSha256Full !== reuseDecision.hapSha256Full)) {
+    reused = false;
+    reuseReason = '已核对的包在构建结果读回前发生变化，重新执行构建';
+    hvigor = build(true);
+    ({ discovery, artifactValidation, sha256: hapSha256Full } = inspect());
+  }
+  const processOk = reused || isDeviceTestBuildOk(hvigor);
   let hapPath = processOk && artifactValidation?.status === 'valid' ? discovery.signedPath : null;
-  const hapSha256Full = hapPath ? computeHapSha256Full(hapPath) : null;
   if (!hapSha256Full) hapPath = null;
   const hapMtimeMs = artifactValidation?.signedMtimeMs ?? null;
   const hapBuiltAt = hapMtimeMs === null ? null : new Date(hapMtimeMs).toISOString();
+  const postBuildInputs = hapPath && !reused
+    ? snapshotDeviceTestBuildInputs(opts.projectRoot, resolvedProduct, resolvedBuildMode)?.sha256
+    : reuseDecision.buildInputsSha256;
+  const buildInputsSha256 = hapPath && postBuildInputs === reuseDecision.buildInputsSha256 ? postBuildInputs : undefined;
   if (!hapPath) {
     const note = !processOk ? 'Hvigor 进程未通过，磁盘候选不能覆盖退出/超时/成功标记失败' : artifactValidation?.note ?? (discovery.signedPath
       ? 'signed HAP 内容摘要读取失败'
@@ -208,9 +226,9 @@ export function runDeviceTestAppBuild(opts: DeviceTestBuildOptions): DeviceTestB
     hvigor.diagnostics = [...(hvigor.diagnostics ?? []), note];
   }
   const result: DeviceTestBuildResult = {
-    hvigor, hapPath, resolvedProduct, resolvedBuildMode, reused: reuseDecision.reuse,
-    hapMtimeMs, hapBuiltAt, hapSha256Full: hapPath ? hapSha256Full : null,
-    inputsMaxMtimeMs: reuseDecision.inputsMaxMtimeMs, reuseReason: reuseDecision.reason,
+    hvigor, hapPath, resolvedProduct, resolvedBuildMode, reused,
+    hapMtimeMs, hapBuiltAt, hapSha256Full: hapPath ? hapSha256Full : null, buildInputsSha256,
+    inputsMaxMtimeMs: reuseDecision.inputsMaxMtimeMs, reuseReason,
     scannedDirs: discovery.scannedDirs, candidates: discovery.candidates, productSelection: selection,
     artifactValidation,
     staleSuspect: artifactValidation?.staleSuspect,

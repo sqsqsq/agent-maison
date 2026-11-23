@@ -9,6 +9,7 @@ import {
 } from '../../hvigor-runner';
 import { discoverOhosTestArtifacts, runOnDeviceUt } from '../../hdc-runner';
 import { runDeviceTestAppBuild } from '../../providers/device-test-build';
+import { evaluateDeviceTestBuildReuse } from '../../device-test-build-reuse';
 import { installCurrentBuildForAdhoc } from '../../../../../harness/scripts/utils/adhoc-repair-diagnosis';
 import { checkDeviceTestBuildGate } from '../../../../../harness/scripts/check-testing';
 import { loadFrameworkConfig, clearFrameworkConfigCache, featurePhaseReportsDir } from '../../../../../harness/config';
@@ -147,11 +148,91 @@ const cases: Array<{ name: string; run: () => void }> = [
     fs.unlinkSync(summary); app(root, { buildMode: 'release' }); assert.strictEqual(buildCount(root), 5);
     app(root, { feature: 'different-feature', buildMode: 'release' }); assert.strictEqual(buildCount(root), 6);
   }) },
-  { name: '源码仅 mtime 变更触发构建，合法 UP-TO-DATE 旧配对仍可采用', run: () => fixture(root => {
+  { name: '源码仅 mtime 变更可复用，真实字节改变后重新构建', run: () => fixture(root => {
     const signed = pair(root); olderInputs(root); assert(app(root).hapPath);
     const source = path.join(root, 'entry/src/main/module.json5'); const now = Date.now() / 1000; fs.utimesSync(source, now, now);
+    assert.strictEqual(app(root).reused, true);
+    write(source, '{"module":{"type":"entry","name":"updated"}}');
     const result = app(root); assert.strictEqual(result.reused, false); assert.strictEqual(result.hapPath, signed);
     assert.strictEqual(buildCount(root), 2);
+  }) },
+  { name: '正式构建出口忽略四个标准 HAR 的 UT profile 重写，实际配置变化仍执行 Hvigor', run: () => fixture(root => {
+    pair(root);
+    const buildProfile = path.join(root, 'build-profile.json5');
+    const catalog = JSON.parse(fs.readFileSync(buildProfile, 'utf8'));
+    const names = ['WalletMain', 'AccountManager', 'CommUI', 'CommFunc'];
+    write(path.join(root, 'hvigorfile.ts'), "import { appTasks } from '@ohos/hvigor-ohos-plugin';\nexport default {system: appTasks, plugins: []}");
+    for (const name of names) {
+      catalog.modules.push({ name, srcPath: `./${name}` });
+      write(path.join(root, name, 'src/main/module.json5'), '{"module":{"type":"har"}}');
+      write(path.join(root, name, 'oh-package.json5'), '{"version":"1.0.0"}');
+      write(path.join(root, name, 'hvigorfile.ts'), "import { harTasks } from '@ohos/hvigor-ohos-plugin';\nexport default {system: harTasks, plugins: []}");
+    }
+    write(buildProfile, JSON.stringify(catalog));
+    assert(app(root).hapPath);
+    assert.strictEqual(buildCount(root), 1);
+    const profile = ["export const HAR_VERSION = '1.0.0';", "export const BUILD_MODE_NAME = 'test';",
+      'export const DEBUG = true;', "export const TARGET_NAME = 'default';", 'export default class BuildProfile {',
+      ...['HAR_VERSION', 'BUILD_MODE_NAME', 'DEBUG', 'TARGET_NAME'].map(k => `  static readonly ${k} = ${k};`), '}'].join('\n');
+    for (const name of names) write(path.join(root, name, 'BuildProfile.ets'), profile);
+    assert.strictEqual(app(root).reused, true);
+    assert.strictEqual(buildCount(root), 1);
+    write(path.join(root, names[0], 'BuildProfile.ets'), profile.replace("'default'", "'other'"));
+    assert.strictEqual(app(root).reused, false);
+    assert.strictEqual(buildCount(root), 2);
+  }) },
+  { name: '正式构建仅跳过标准模块目标内与 SDK 原件相同的 UT staging 文件', run: () => fixture((root, install) => {
+    pair(root);
+    write(path.join(root, 'hvigorfile.ts'), "import { appTasks } from '@ohos/hvigor-ohos-plugin';\nexport default {system: appTasks, plugins: []}");
+    write(path.join(root, 'entry/hvigorfile.ts'), "import { hapTasks } from '@ohos/hvigor-ohos-plugin';\nexport default {system: hapTasks, plugins: []}");
+    const templateRoot = path.join(install, 'tools/hvigor/hvigor-ohos-plugin/node_modules/@ohos/coverage/res/template');
+    const templates = {
+      'ets/testability/TestAbility.ets': 'TestAbility_withKit.ets',
+      'ets/testability/pages/Index.ets': 'Index.ets',
+      'ets/testrunner/OpenHarmonyTestRunner.ets': 'OpenHarmonyTestRunner_mock.ets',
+      'resources/base/element/color.json': 'resources/base/element/color.json',
+      'resources/base/element/string.json': 'resources/base/element/string.json',
+      'resources/base/profile/test_pages.json': 'resources/base/profile/test_pages.json',
+    };
+    const stage = 'entry/.test/default/intermediates/src/ohosTest';
+    for (const [staged, template] of Object.entries(templates)) write(path.join(templateRoot, template), `SDK fixture ${staged}`);
+    assert(app(root).hapPath);
+    for (const [staged, template] of Object.entries(templates)) write(path.join(root, stage, staged), fs.readFileSync(path.join(templateRoot, template), 'utf8'));
+    assert.equal(app(root).reused, true);
+    assert.equal(buildCount(root), 1);
+    const reportDir = featurePhaseReportsDir(root, 'demo', 'testing', frameworkRoot);
+    const eligible = () => evaluateDeviceTestBuildReuse({ projectRoot: root, reportDir, product: 'demo' }).reuse;
+    for (const impostor of ['entry/.test/other/intermediates/src/ohosTest/ets/testability/TestAbility.ets',
+      'entry/src/.test/default/intermediates/src/ohosTest/ets/testability/TestAbility.ets', `${stage}/ets/Extra.ets`, 'entry/.cxx/input.c']) {
+      const file = path.join(root, impostor);
+      write(file, 'SDK fixture ets/testability/TestAbility.ets');
+      assert.equal(eligible(), false, impostor);
+      fs.unlinkSync(file);
+      assert.equal(eligible(), true, impostor);
+    }
+    write(path.join(root, stage, 'ets/testability/TestAbility.ets'), 'handwritten at the expected path');
+    assert.equal(eligible(), false);
+  }) },
+  { name: '真实资源字节变动保留 mtime 时显式禁用 Hvigor 增量，并防止 extraArgs 重新启用', run: () => fixture(root => {
+    const config = JSON.parse(fs.readFileSync(path.join(root, 'framework.config.json'), 'utf8'));
+    config.toolchain.hvigor.coding.extraArgs = ['--incremental'];
+    write(path.join(root, 'framework.config.json'), JSON.stringify(config)); clearFrameworkConfigCache();
+    pair(root);
+    const asset = path.join(root, 'entry/src/main/resources/rawfile/value.txt');
+    write(asset, 'A fixture resource');
+    assert(app(root).hapPath);
+    assert.equal(app(root).reused, true);
+    assert.equal(buildCount(root), 1);
+    const before = fs.statSync(asset);
+    write(asset, 'B fixture resource');
+    fs.utimesSync(asset, before.atime, before.mtime);
+    const rebuilt = app(root);
+    assert(rebuilt.hapPath && !rebuilt.reused);
+    assert.equal(buildCount(root), 2);
+    const actual = calls(root).at(-1)!;
+    assert(actual.includes('--no-incremental') && !actual.includes('--incremental'));
+    assert.equal(app(root).reused, true);
+    assert.equal(buildCount(root), 2);
   }) },
   { name: '所选 product 无包不跨 product；支持 outputs/default 和自定义 target', run: () => fixture(root => {
     pair(root, 'other'); assert.strictEqual(app(root).hapPath, null);
@@ -177,7 +258,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     const config = JSON.parse(fs.readFileSync(path.join(root, 'framework.config.json'), 'utf8'));
     config.toolchain.hvigor.coding.extraArgs = ['--daemon'];
     write(path.join(root, 'framework.config.json'), JSON.stringify(config)); clearFrameworkConfigCache();
-    pair(root); const result = app(root); const actual = calls(root)[0];
+    const result = app(root); const actual = calls(root)[0];
     assert(actual.includes('--no-daemon') && actual.includes('--incremental') && !actual.includes('--stop-daemon') && !actual.includes('--daemon'));
     const meta = JSON.parse(fs.readFileSync(path.resolve(result.hvigor.metaPath!), 'utf8'));
     assert(!('daemonStoppedBeforeBuild' in meta)); assert.deepStrictEqual(meta.daemonArgs, ['--no-daemon']);

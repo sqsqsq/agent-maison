@@ -7,6 +7,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { hylyreDerivedPlanPath } from '../../config';
 import { parse as parseYaml } from 'yaml';
+import { prereqsOf, readDeviceDataReadiness } from './test-case-flow';
 import { getSectionContent, extractTables, type MdTable } from './markdown-parser';
 import type { DeriveHintTestCaseRow } from './test-plan-derive-hint';
 import {
@@ -493,6 +494,64 @@ function lintResetPreamble(
     );
   }
   return out;
+}
+
+const FIXTURE_PARAMS = /^--ps [A-Za-z_][A-Za-z0-9_]{0,63} [A-Za-z0-9_-]{1,64}$/;
+
+export function lintDeviceDataReadiness(
+  topPlanMd: string,
+  derivedPlanMd: string,
+  hylyreTcIds: readonly string[],
+): StepLintViolation[] {
+  const { cases, issues } = readDeviceDataReadiness(topPlanMd);
+  const violations: StepLintViolation[] = [];
+  const issue = (tc_id: string, message: string): void => {
+    violations.push({ rule_id: 'STEP-003', severity: 'BLOCKER', tc_id, message,
+      suggested_fix: '按顶层 test_case_flow 与 derive hint 重新派生该用例的复位、原生数据断言与动作。' });
+  };
+  for (const { tc_id, message } of issues) issue(tc_id, message);
+  if (!cases.length) return violations;
+  const rows = extractDerivedPlanCases(derivedPlanMd);
+  const order = rows.map(row => row.tc_id);
+  const startsWithParams: Array<[string, string]> = [];
+  const observedSetup = new Set<string>();
+  const byCase = new Map(cases);
+  for (const [index, row] of rows.entries()) {
+    const steps = parsePlannedStepsFromCell(normalizePlannedStepsCell(row.steps_raw));
+    if (!steps.ok) continue; // Existing STEP-001 handles invalid steps.
+    const params = (steps.steps[1]?.start_app as { params?: unknown } | undefined)?.params;
+    if (typeof params === 'string' && params !== '') startsWithParams.push([row.tc_id, params]);
+    const pre = byCase.get(row.tc_id);
+    if (!pre) continue;
+    const wait = steps.steps[2]?.wait_for as Record<string, unknown> | undefined;
+    if (singleRootOf(steps.steps[0]) !== 'stop_app' || singleRootOf(steps.steps[1]) !== 'start_app'
+      || singleRootOf(steps.steps[2]) !== 'wait_for' || !wait
+      || Object.keys(wait).some(key => key !== 'by_id' && key !== 'timeout')
+      || typeof pre.ready_by_id !== 'string' || pre.ready_by_id.trim() === '' || wait.by_id !== pre.ready_by_id) {
+      issue(row.tc_id, '复位后须先通过顶层 ready_by_id 指定的原生数据断言，再执行导航或业务动作。');
+    }
+    if (pre.reset === 'fixture_reset') {
+      if (pre.kind !== 'fresh_app' || typeof params !== 'string' || !FIXTURE_PARAMS.test(params) || observedSetup.has(params)) {
+        issue(row.tc_id, 'fixture_reset 须由准备例首次使用宿主已声明的固定字符串枚举。');
+      } else observedSetup.add(params);
+    } else if (params !== undefined && params !== '') {
+      issue(row.tc_id, '数据读取用例须无准备参数启动。');
+    }
+    if (prereqsOf(pre).some(tc => hylyreTcIds.includes(tc) && !order.slice(0, index).includes(tc))) {
+      issue(row.tc_id, '顶层声明的 Hylyre 前序用例须排在本用例之前。');
+    }
+  }
+  for (const [tc] of cases) {
+    if (!hylyreTcIds.includes(tc) || order.filter(id => id === tc).length !== 1) {
+      issue(tc, '持久数据用例须在派生计划中唯一声明并使用 Hylyre 通道。');
+    }
+  }
+  for (const [tc, params] of startsWithParams) {
+    if (observedSetup.has(params) && byCase.get(tc)?.reset !== 'fixture_reset') {
+      issue(tc, '同一轮仅由声明 fixture_reset 的用例使用该准备参数。');
+    }
+  }
+  return violations;
 }
 
 export type LintHylyrePlanOptions = {

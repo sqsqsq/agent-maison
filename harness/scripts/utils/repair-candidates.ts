@@ -2080,6 +2080,15 @@ export function validateRepairCandidatesShape(value: unknown): string[] {
 /** 允许产出修订输入的来源阶段（写集越界类未注册归属，结构上到不了这里）。 */
 const SCOPE_REVISION_SOURCE_PHASES: ReadonlySet<string> = new Set(['coding', 'review', 'ut', 'testing']);
 
+export function repairCandidateCanReviseScope(candidate: RepairCandidate): boolean {
+  return SCOPE_REVISION_SOURCE_PHASES.has(candidate.source_phase)
+    && (candidate.files.length > 0 || candidate.category === 'coding');
+}
+
+export function scopeRepairReason(owner: string, candidate: RepairCandidate): string {
+  return `需要 ${owner} 裁决：${candidate.summary}`;
+}
+
 /** 候选类别 → 它要求的设计事实种类（review 归因 spec 时是验收定义）。 */
 export const SCOPE_REVISION_FACT_KIND: Readonly<Partial<Record<RepairOwnerCategory, string>>> = Object.freeze({
   plan: 'design-decision',
@@ -2099,16 +2108,13 @@ export interface ScopeRevisionInputContext {
 /**
  * 由已归属候选生成一条范围修订输入；无合格候选、无有效范围或无可核验绑定时返回 null。
  *
- * 幂等：提议里的设计事实按 id（`<kind>:<candidate.id>`）去重，全部已在有效范围内 → 返回 null，
- * 重跑同一阶段不会反复产出同一条提议。
+ * 已登记事实按 id（`<kind>:<candidate.id>`）原位更新。写入前由范围解析器判断是否需要重签。
  */
 export function scopeRevisionInputFromRepairCandidates(
   candidates: readonly RepairCandidate[],
   ctx: ScopeRevisionInputContext,
 ): { input: ExecutionScopeInput; candidateIds: string[] } | null {
-  const owned = candidates.filter(candidate =>
-    SCOPE_REVISION_SOURCE_PHASES.has(candidate.source_phase)
-    && (candidate.files.length > 0 || candidate.category === 'coding'));
+  const owned = candidates.filter(repairCandidateCanReviseScope);
   if (!owned.length) return null;
   const runId = ctx.runId ?? process.env.MAISON_GOAL_RUN_ID?.trim();
   /* eslint-disable @typescript-eslint/no-require-imports */
@@ -2170,7 +2176,7 @@ export function scopeRevisionInputFromRepairCandidates(
     const kind = SCOPE_REVISION_FACT_KIND[responsibility.category ?? candidate.category] ?? kinds[0];
     if (!kind) continue;
     const id = `${kind}:${candidate.id}`;
-    const priorFact = facts.find(fact => fact.id === id);
+    const priorIndex = facts.findIndex(fact => fact.id === id);
     let targets = [...candidate.files];
     let invalidated: string[] = [];
     if (responsibility.category === 'coding') {
@@ -2204,15 +2210,16 @@ export function scopeRevisionInputFromRepairCandidates(
     const resolved = sourceBindings.find(value => value.state === 'resolved' && value.binding.source.kind === 'derive'
       && value.binding.source.provider_id === (responsibility.category === 'verification' && kinds.includes('unit-evidence') ? 'derive.test-targets' : 'derive.codebase'));
     if (!resolved || resolved.state !== 'resolved') continue;
-    if (priorFact) facts.splice(facts.indexOf(priorFact), 1);
     for (const fact of facts) if (scope.obligations.some(obligation => obligation.id === fact.id && invalidated.includes(obligation.owner_phase))) delete fact.satisfied_by;
-    facts.push({
+    const fact = {
       id, kind, applicability: 'required',
       // 语义是「这项发现需要责任阶段裁决」，不是「机器已证明该扩展合理」——
       // OpenSpec 的 scenario 要求 reason 本身说清这一点，不能只转述候选摘要。
-      reason: `需要 ${phase} 裁决：${candidate.summary}`,
+      reason: scopeRepairReason(phase, candidate),
       basis: [resolved.binding],
-    });
+    } satisfies ExecutionScopeInput['facts'][number];
+    if (priorIndex === -1) facts.push(fact);
+    else facts[priorIndex] = fact;
     responsible.push(phase);
     candidateIds.push(candidate.id);
   }

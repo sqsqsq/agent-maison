@@ -15,6 +15,7 @@ import { EXECUTION_CHANNEL_DOMAIN } from './execution-channel';
 import { loadAcceptanceFlowsDoc, resolveCheckpointAction } from './p0-semantic-gates';
 import { extractDerivedPlanCases, FORMAL_BY_TEXT_MATCHES } from './derived-hylyre-plan';
 import { PLANNED_SELECTOR_DISAMBIGUATION_FIELDS } from './planned-step-normalizer';
+import { readDeviceDataReadiness } from './test-case-flow';
 
 export interface DeriveHintTestCaseRow {
   tc_id: string;
@@ -227,9 +228,12 @@ export function deriveHintSemanticInputs(value: unknown): unknown | null {
     allowed_step_roots: p.allowed_step_roots, forbidden_in_steps: p.forbidden_in_steps,
     step_shape_catalog: p.step_shape_catalog, wait_field_timing_ref: p.wait_field_timing_ref,
     acceptance_assertions: p.acceptance_assertions ?? [],
-    reset_preamble: reset.available
-      ? { available: true, bundle: reset.bundle, page_name: reset.page_name, position: reset.position, order: reset.order }
-      : { available: false },
+    reset_preamble: {
+      ...(reset.available
+        ? { available: true, bundle: reset.bundle, page_name: reset.page_name, position: reset.position, order: reset.order }
+        : { available: false }),
+      ...(reset.data_readiness ? { data_readiness: reset.data_readiness } : {}),
+    },
     execution_channel_policy: {
       domain: p.execution_channel_policy?.domain ?? EXECUTION_CHANNEL_DOMAIN,
       executable_channels: p.execution_channel_policy?.executable_channels ?? ['hylyre'],
@@ -304,10 +308,21 @@ export function buildCanonicalDeriveHintPayload(projectRoot: string, feature: st
       post_screen: cp.post_screen, required_element_ids: cp.required_element_ids, forbidden_element_ids: cp.forbidden_element_ids }];
   });
   const derivedInput = relative(hylyreDerivedPlanPath(reportsDir, '<轮次>'));
+  const base = buildStandardHylyreDerivePayloadBase(resolveHylyreResetIdentity(projectRoot));
+  const dataReadiness = readDeviceDataReadiness(raw).cases.map(([tc_id, pre]) => ({
+    tc_id, ready_by_id: pre.ready_by_id, ...(pre.reset === 'fixture_reset' ? { fixture_reset: true } : {}),
+  }));
 
   return {
     // t7a（plan e6a3c9f4）：统一基座（与 check-testing 自动 hint 同源，schema/知识块永不分叉）
-    ...buildStandardHylyreDerivePayloadBase(resolveHylyreResetIdentity(projectRoot)),
+    ...base,
+    ...(dataReadiness.length ? {
+      reset_preamble: {
+        ...(base.reset_preamble as object),
+        data_readiness: dataReadiness,
+        data_rule: '在对应 case 的 stop_app、start_app 后立即用 wait_for by_id 检查 ready_by_id。准备例使用宿主固定启动枚举，其余数据读取例无准备参数。每例由自己的原生断言决定能否执行后续动作。',
+      },
+    } : {}),
     feature,
     source: relative(resolved.actualPath),
     stable_derived_reference: relative(stableDerivedPlan),

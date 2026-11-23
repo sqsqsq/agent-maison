@@ -24,6 +24,7 @@ import { deriveChangeUnitFeatureId, loadCanonicalChangeUnit, parseChangeUnitFeat
 import { loadCanonicalBlueprint } from './component-blueprint-path';
 import { isProducedPhaseChange, resolvePhasePathOwnership } from './phase-write-boundary';
 import { readHandoffMaterial, type SessionExecutionRequest } from './session-execution-handoff';
+import { repairCandidateCanReviseScope, scopeRepairReason, SCOPE_REVISION_FACT_KIND, type RepairCandidate } from './repair-candidates';
 import { invocationCompleted } from './invocation-completion';
 import { asRecord, asRecords } from './component-blueprint-model';
 import type { GoalRunEvent } from './goal-runner-phase';
@@ -705,8 +706,9 @@ function candidateInput(
 export function refreshScopeBindingInput(ctx: { projectRoot: string; frameworkRoot: string; feature: string; requirement?: string },
   previous: ExecutionScope): ExecutionScopeInput | undefined {
   const legacyRoot = inferLegacyProjectRoot(ctx.projectRoot, previous);
+  const comparison = scopeAtProjectRoot(ctx.projectRoot, previous, legacyRoot);
   let changed = false;
-  const facts = structuredClone(previous.obligations);
+  const facts = structuredClone(comparison.obligations);
   const refresh = (binding: InputBinding, phase: string): InputBinding => {
     if (binding.source.kind === 'derive' && ['derive.codebase', 'derive.test-targets', ...DEPENDENCY_ONLY_PROVIDER_IDS].includes(binding.source.provider_id)) return binding;
     try { readBoundInput({ ...ctx, phase, track: 'full' }, binding, legacyRoot); } catch { return binding; }
@@ -719,7 +721,7 @@ export function refreshScopeBindingInput(ctx: { projectRoot: string; frameworkRo
     fact.basis = fact.basis.map(binding => refresh(binding, fact.owner_phase));
     fact.satisfied_by = fact.satisfied_by?.map(proof => 'input_id' in proof ? refresh(proof, fact.owner_phase) : proof);
   }
-  if (!changed || !hasNewSourcedFact(previous, facts, '')) return undefined;
+  if (!changed || !hasNewSourcedFact(comparison, facts, '')) return undefined;
   return scopeWithRefreshedBindings(previous, facts);
 }
 
@@ -1217,6 +1219,52 @@ export function resolveCurrentScopeView(input: {
   return effectiveScopeView({ birth, events, workflow: input.workflow, proofs, definitionProofs, stalePhases: [...stale], reopen: input.reopen, inputOwners: dependencies.inputOwners, inputEdges: dependencies.inputEdges });
 }
 
+function relocateScopeBindings(projectRoot: string, facts: ExecutionScopeInput['facts'], impact: ExecutionScope['request_impact'], legacyRoot?: string): void {
+  const relocate = (binding: InputBinding): void => {
+    for (const dependency of binding.dependencies) dependency.path = resolveDependencyPath(projectRoot, dependency.path, legacyRoot);
+  };
+  for (const fact of facts) {
+    fact.basis.forEach(relocate);
+    for (const proof of fact.satisfied_by ?? []) if ('input_id' in proof) relocate(proof);
+  }
+  impact?.basis.forEach(relocate);
+}
+
+/** A checkout move gives no new source. The signed historical scope stays on disk verbatim. */
+function scopeAtProjectRoot(projectRoot: string, scope: ExecutionScope, legacyRoot?: string): ExecutionScope {
+  if (!legacyRoot) return scope;
+  const copy = structuredClone(scope);
+  relocateScopeBindings(projectRoot, copy.obligations, copy.request_impact, legacyRoot);
+  return copy;
+}
+
+function repeatsOpenRepairScope(previous: ExecutionScope, resolved: ExecutionScope, candidates: readonly RepairCandidate[]): boolean {
+  const { obligations: prior, ...signedFields } = previous;
+  const { obligations: next, ...resolvedFields } = resolved;
+  if (executionScopeFingerprint(signedFields) !== executionScopeFingerprint(resolvedFields) || prior.length !== next.length) return false;
+  const byId = new Map(next.map(obligation => [obligation.id, obligation]));
+  if (byId.size !== next.length || new Set(prior.map(obligation => obligation.id)).size !== prior.length) return false;
+  const movable = new Set<string>();
+  for (const before of prior) {
+    const after = byId.get(before.id);
+    if (!after) return false;
+    const current = before.applicability === 'required' && !before.satisfied_by?.length && before.basis.length
+      ? candidates.filter(candidate => before.id === `${before.kind}:${candidate.id}`) : [];
+    const reason = current.some(candidate => after.reason === scopeRepairReason(before.owner_phase, candidate)) ? before.reason : after.reason;
+    if (executionScopeFingerprint(before) !== executionScopeFingerprint({ ...after, reason })) return false;
+    // The definition finding's codebase binding records what triggered the repair.
+    // Keep authority-bearing bindings and ordered execution targets in their original positions.
+    if (current.length && (before.kind === SCOPE_REVISION_FACT_KIND.spec || before.kind === SCOPE_REVISION_FACT_KIND.plan)
+      && before.basis.every(binding => binding.input_id === 'codebase' && binding.source.kind === 'derive'
+        && binding.source.provider_id === 'derive.codebase' && binding.dependencies.every(dependency => dependency.role === 'derive'))) movable.add(before.id);
+  }
+  return prior.every((before, index) => {
+    const after = next[index];
+    return before.id === after.id || movable.has(before.id) && movable.has(after.id)
+      && before.owner_phase === after.owner_phase && before.kind === after.kind;
+  });
+}
+
 export function resolveScopeRevisionProposal(input: {
   projectRoot: string;
   frameworkRoot: string;
@@ -1230,7 +1278,7 @@ export function resolveScopeRevisionProposal(input: {
    * `ExecutionScope` 没有 `requested_phases` 字段，故由调用方把冻结那一份链传进来。
    */
   authorizedPhases: readonly string[];
-  repairCandidates?: readonly import('./repair-candidates').RepairCandidate[];
+  repairCandidates?: readonly RepairCandidate[];
   completedPhases?: ReadonlySet<string>;
   currentPhase?: string;
   currentRunId?: string;
@@ -1246,17 +1294,10 @@ export function resolveScopeRevisionProposal(input: {
   const featureRecord = input.currentRunId ? undefined : readFeatureFrozenScope(projectRoot, feature);
   const birth = input.currentRunId ? loadFrozenExecutionScope(projectRoot, feature, input.currentRunId) : featureRecord?.execution_scope;
   const legacyRoot = inferLegacyProjectRoot(projectRoot, previous) ?? inferLegacyProjectRoot(projectRoot, birth);
-  const rebaseBinding = (binding: InputBinding): void => {
-    for (const dependency of binding.dependencies) dependency.path = resolveDependencyPath(projectRoot, dependency.path, legacyRoot);
-  };
-  // 只重定位本次提案副本；原事件与旧证明保留，以下仍逐条核验当前实际内容和证据。
-  for (const fact of proposal.facts) {
-    fact.basis.forEach(rebaseBinding);
-    for (const proof of fact.satisfied_by ?? []) if ('input_id' in proof) rebaseBinding(proof);
-  }
-  for (const binding of proposal.request.impact?.basis ?? []) rebaseBinding(binding);
-  const priorImpact = previous.request_impact ? structuredClone(previous.request_impact) : undefined;
-  for (const binding of priorImpact?.basis ?? []) rebaseBinding(binding);
+  // Resolve copied dependencies against the current checkout before re-reading their evidence.
+  relocateScopeBindings(projectRoot, proposal.facts, proposal.request.impact, legacyRoot);
+  const comparison = scopeAtProjectRoot(projectRoot, previous, legacyRoot);
+  const priorImpact = comparison.request_impact;
   proposal.contract_fingerprints = loadFeatureContracts(frameworkRoot).map(contractFingerprint);
   proposal.control_edges ??= structuredClone(previous.control_edges);
   if (proposal.request.completion_target !== previous.completion_target
@@ -1307,7 +1348,7 @@ export function resolveScopeRevisionProposal(input: {
   const revoked = new Set(scopeRevisionInvalidations(progress, { obligations: nextDuties }, order, undefined, workflow, readRepairDependencyContext(projectRoot, feature, workflow, progress, frameworkRoot)));
   for (const fact of proposal.facts) if (revoked.has(nextDuties.find(o => o.id === fact.id)!.owner_phase)) delete fact.satisfied_by;
   if (proposal.request.impact === null) throw new Error('[execution-scope] 影响判断为 null——请给出判断或不要携带该字段');
-  if (proposal.request.impact === undefined) proposal.request.impact = previous.request_impact;
+  if (proposal.request.impact === undefined) proposal.request.impact = structuredClone(priorImpact);
   const impactInherited = proposal.request.impact === undefined
     || (priorImpact !== undefined
       && executionScopeFingerprint(proposal.request.impact) === executionScopeFingerprint(priorImpact));
@@ -1343,7 +1384,12 @@ export function resolveScopeRevisionProposal(input: {
   const reopened = proposal.facts.some(fact => repairFactIds.has(fact.id)
     && !fact.satisfied_by?.length && progress.obligations.some(prior => prior.id === fact.id && prior.satisfied_by?.length));
   // A current trusted finding is new knowledge; its unchanged product file need not be rewritten to earn recovery.
-  if (!control.newSource && !hasNewSourcedFact(previous, proposal.facts, input.currentRunId ?? '') && !confirmedRepair && !reopened
-    && !previous.obligations.some(prior => prior.satisfied_by?.length && !progress.obligations.find(o => o.id === prior.id)?.satisfied_by?.length)) throw new Error('[execution-scope] revision requires new sourced facts');
+  if (!control.newSource && !hasNewSourcedFact(comparison, proposal.facts, input.currentRunId ?? '') && !confirmedRepair && !reopened
+    && !previous.obligations.some(prior => prior.satisfied_by?.length && !progress.obligations.find(o => o.id === prior.id)?.satisfied_by?.length)) {
+    const current = (input.repairCandidates ?? []).filter(candidate => repairCandidateCanReviseScope(candidate)
+      && (!input.currentPhase || candidate.source_phase === input.currentPhase));
+    if (repeatsOpenRepairScope(comparison, resolved, current)) return null;
+    throw new Error('[execution-scope] revision requires new sourced facts');
+  }
   return { scope: resolved, input: proposal };
 }
