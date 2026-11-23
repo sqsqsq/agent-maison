@@ -39,8 +39,6 @@ import { loadGoalCapability } from '../../scripts/utils/goal-adapter-capability'
 import {
   buildClosureVisualEvidenceBlock,
   buildPhasePrompt,
-  extractPriorFailureContext,
-  type SummaryJson,
 } from '../../scripts/goal-runner';
 import type { GoalManifest } from '../../scripts/utils/goal-manifest';
 import type { UnitCaseResult } from '../run-unit';
@@ -539,24 +537,6 @@ const cases: Array<{ name: string; run: () => void }> = [
   },
 ];
 
-const PRIOR_FAILURE_SUMMARY: SummaryJson = {
-  verdict: 'FAIL',
-  blockers: [
-    {
-      id: 'ut_hvigor_build',
-      classification: 'build_config_invalid',
-      details_excerpt: "Schema validate failed: property name 'applyToProducts' is invalid",
-      affected_files: ['01-Product/Phone/build-profile.json5'],
-      suggestion: '定位 build-profile.json5 的非法字段并修正；优先回退到起始提交版本。',
-    },
-    {
-      id: 'ut_no_src_mutation',
-      classification: 'unauthorized_src_mutation',
-      affected_files: ['01-Product/Phone/build-profile.json5'],
-    },
-  ],
-};
-
 const MINIMAL_MANIFEST = {
   feature: 'bc-openCard',
   requirement: '开卡流程',
@@ -564,19 +544,9 @@ const MINIMAL_MANIFEST = {
 
 cases.push(
   {
-    name: 'extractPriorFailureContext: 含 check id / 分类 / affected_files / suggestion',
-    run: () => {
-      const ctx = extractPriorFailureContext(PRIOR_FAILURE_SUMMARY);
-      assert(ctx.includes('Verdict: FAIL'), 'verdict');
-      assert(ctx.includes('ut_hvigor_build [build_config_invalid]'), 'check id + 分类');
-      assert(ctx.includes('build-profile.json5'), 'affected_files 透传');
-      assert(ctx.includes('优先回退'), 'suggestion 透传');
-    },
-  },
-  {
     name: 'buildPhasePrompt: 带 priorFailure (code_regression) 时注入回退指令',
     run: () => {
-      const prior = extractPriorFailureContext(PRIOR_FAILURE_SUMMARY);
+      const prior = 'ut_hvigor_build: build-profile.json5 字段无效';
       const prompt = buildPhasePrompt(
         MINIMAL_MANIFEST,
         FRAMEWORK_ROOT,

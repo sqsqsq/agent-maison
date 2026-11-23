@@ -255,7 +255,7 @@ framework 经历了多波演进。本节只做「为什么这样走」的回溯�
 **执行规则**：
 
 - 任何阶段开始前**必须完整读完**对应 SKILL.md + [`agent-behavioral-principles.md`](../skills/reference/agent-behavioral-principles.md)
-- 每阶段产物**必须通过**脚本 Harness + verifier 子 agent；默认 **11** 项 phase（5 全局 + 6 feature），见 [`operations/harness-runbook.md`](operations/harness-runbook.md)
+- 阶段产物通过脚本 Harness 及策略要求的独立核验；默认 **11** 项 phase（5 全局 + 6 feature），见 [`operations/harness-runbook.md`](operations/harness-runbook.md)
 - 产物归档：`doc/features/<feature>/`；Harness 报告默认 `doc/features/<feature>/<phase>/reports/`（`paths.reports_dir_pattern`）
 
 ### 2.3 三大支柱的细节
@@ -299,7 +299,7 @@ framework 经历了多波演进。本节只做「为什么这样走」的回溯�
 | 类型                                       | 特征                                  | 承担的检查                                                  |
 | ------------------------------------------ | ------------------------------------- | ----------------------------------------------------------- |
 | **脚本 Harness**（`check-*.ts`）           | 确定性、零误判、秒级反馈              | Schema / 一致性 / 符号禁用 / 覆盖率 / 真编译 / 真机执行    |
-| **AI Harness**（`verify-*.md`）            | 语义级、概率性、由独立 verifier 子 agent 执行 | 业务逻辑正确性 / 设计合理性 / 端到端驱动                |
+| **AI Harness**（`verify-*.md`）            | 语义级、概率性、由独立核验执行器处理 | 业务逻辑正确性 / 设计合理性 / 端到端驱动                |
 
 **跑法**：操作细节见 [`operations/harness-runbook.md`](operations/harness-runbook.md)。
 
@@ -507,7 +507,7 @@ Maison 在源仓完成 pack/release verify，交付 `framework-<semver>.zip`。�
 1. **Data-driven over LLM-driven**：adapter 拷贝、`render-agents-md.mjs` 占位符渲染、`merge-framework-config.mjs` 等已脚本化；`check-init.ts` 10 项体检 + init-diff Hallucination Ban 已 BLOCKER
 2. **三分区纪律**：受管文档划分 `<!-- framework:skeleton/data/narrative -->` 三区（skeleton/data 区 sha256 / 重渲染比对 —— 推进中）
 3. **正向 over 负向**：能用白名单 / "仅 X" 表达的不用"不要 X"
-4. **negation-diff verifier**：独立 verifier 子 agent 逐句比对极性词翻转（规划中）
+4. **negation-diff verifier**：独立核验上下文逐句比对极性词翻转（规划中）
 
 ### 3.7 过度架构化（v2 UseCase 翻车）
 

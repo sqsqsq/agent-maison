@@ -107,10 +107,10 @@ export function researchSessionUnit(root: string, context: { factsContext?: impo
   if (deltas) fs.appendFileSync(file, '\n' + deltas);
 }
 
-function modelVerifier(root: string, phase: string, current: any, upstreamVerification = ''): void {
+function modelVerifier(root: string, phase: string, current: any, draftPath: string, upstreamVerification = ''): void {
   assert(current.verifier_subject_id, 'the verifier model substitute requires a real current request');
   publishFixtureVerifierEvidence({ projectRoot: root, reportsDir: path.join(root, `doc/features/clamp/${phase}/reports`), feature: 'clamp', phase,
-    subjectId: current.verifier_subject_id,
+    subjectId: current.verifier_subject_id, draftPath,
     reportText: 'Explicit author/verifier model substitute; script/native outcomes remain authoritative.\n'
       + (phase === 'ut' ? '| id | status | severity | 证据 |\n|---|---|---|---|\n| end_to_end_driving | PASS | BLOCKER | node:test直接调用clamp，源码和测试输入与request相同 |\n| business_assertion_value | PASS | BLOCKER | AC-1/2/3各有两个原生相等断言，失败不被本语义替身改写 |\n' : '') + upstreamVerification + sessionNodeTestStrengthReply(root, phase, TEST_SOURCE),
     skipSummaryPatch: true });
@@ -191,7 +191,6 @@ export async function runGoal(root: string, mode: 'detached' | 'session', scenar
     assert(fs.existsSync(path.join(root, `doc/features/clamp/${phase}/reports/summary.json`)),
       `${phase} self-check did not publish its result: ${checked.error?.message ?? ''}\n${checked.stdout}\n${checked.stderr}`);
     let current = summary(root, phase);
-    let upstreamVerification = '';
     const tapFile = path.join(root, 'doc/features/clamp/ut/reports/node-tests.tap');
     const tap = phase === 'ut' && fs.existsSync(tapFile) ? fs.readFileSync(tapFile, 'utf8') : '';
     const nativeFailed = /# fail [1-9]/.test(tap);
@@ -204,16 +203,10 @@ export async function runGoal(root: string, mode: 'detached' | 'session', scenar
       fs.appendFileSync(path.join(root, 'doc/features/clamp/ut/testability-audit.md'), `\n## 问题清单\n| ID | 严重程度 | 分类 | 涉及文件 | 问题描述 | 修复建议 | 状态 |\n|---|---|---|---|---|---|---|\n| UP-CLAMP | MAJOR | 产品实现 | ${SOURCE} | \`${nativeLog}:${line}\` 与 \`${SOURCE}:1\` 表明实际clamp违反已批准AC-2/3；UT不拥有产品源码 | coding恢复既有夹取规格，保留当前测试和验收 | 未关闭 |\n`);
       // Existing authored upstream issues admit diagnosis without inventing DAG/interfaces or changing old SKIPs.
       checked = await invoke('--summary'); current = summary(root, phase);
-      upstreamVerification = modelIssueVerification(root);
       assert.equal(current.next_action, 'run_verifier_for_repair');
     }
     rawGap ||= current.verdict === 'INCOMPLETE';
     if (phase === 'ut' && nativeFailed) failedInputs.push(sha(read(root, SOURCE)) + ':' + sha(read(root, TEST)));
-    if (current.verifier_subject_id) {
-      modelVerifier(root, phase, current, upstreamVerification);
-      // The live unit can inspect native results and publish its requested reply.
-      // The runtime finalizes formal checks after that actual unit has handed back.
-    }
     return checked.status ?? 1;
   };
   const work = async (phase: string, fence?: any, extraEnv?: Record<string, string>, instruction?: string): Promise<number> => {
@@ -225,7 +218,12 @@ export async function runGoal(root: string, mode: 'detached' | 'session', scenar
       assert(readDeliveredVerifierRequest({ root, feature: 'clamp', frameworkRoot: path.join(root, 'framework'),
         harnessDir: path.join(root, 'framework/harness'), module: 'math', modulePath: 'src/math' },
       { phase, prompt: instruction ?? '', runId: 'session-cli' }));
-      modelVerifier(root, method, current, method === 'ut' ? modelIssueVerification(root, false) : '');
+      const issued = moduleAt(root, 'scripts/utils/session-execution-handoff')
+        .executionRequestForInvoke(path.join(root, 'doc/features/clamp/goal-runs/session-cli'));
+      assert.equal(issued?.request.context.phase, phase);
+      const draft = issued?.request.write_boundary?.verifierResultPath;
+      assert(draft, 'The independent model substitute must use the signed result path');
+      modelVerifier(root, method, current, path.resolve(root, draft), method === 'ut' ? modelIssueVerification(root, false) : '');
       return 0; // Chain-external model repair writes only its requested report, never a phase harness/receipt.
     }
     if (phase === 'review') {

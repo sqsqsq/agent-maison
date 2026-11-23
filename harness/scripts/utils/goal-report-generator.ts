@@ -40,7 +40,7 @@ export interface GoalReportMarkdownOptions {
 const PINNED_WARN_ID_RE = /visual|coverage|evidence|p0_|fidelity|flow_contract|attestation/i;
 
 /** P1#7（post-impl review）：从各 phase summary 收集 blocker.operator_note——受众分级的
- * operator 半边：不进 agent 回喂（extractPriorFailureContext 已排除），在此渲染给人看。 */
+ * operator 半边：不进 agent 回喂，在此渲染给人看。 */
 export function collectOperatorNotes(
   projectRoot: string,
   report: GoalReport,

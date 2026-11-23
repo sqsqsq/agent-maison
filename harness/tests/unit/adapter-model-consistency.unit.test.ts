@@ -4,7 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as zlib from 'zlib';
 import * as YAML from 'yaml';
-import { adapterModelBinding, parseAdapterModelBinding, decodeDshSession, readFrontendModelRequest, launchModelPin, assertModelReplay, rebindTaskModel, modelMismatchInEvents, nativeOpenCodeModelMismatch, nativeDshModelMismatch, freezeModelPin } from '../../scripts/utils/adapter-model';
+import { adapterModelBinding, parseAdapterModelBinding, decodeDshSession, readFrontendModelRequest, launchModelPin, launchStageVerifierModelPin, assertModelReplay, rebindTaskModel, modelMismatchInEvents, nativeOpenCodeModelMismatch, nativeDshModelMismatch, freezeModelPin } from '../../scripts/utils/adapter-model';
 import { defaultHeadlessInvokePlan, invokeAgentHeadless, buildAgentSpawnEnv, agentEventsLogPath, withFrozenModelArguments } from '../../scripts/utils/agent-invoke';
 import { buildGoalManifestFromInput, writeGoalManifest, computeManifestIdentityFields, type AdapterModelPin } from '../../scripts/utils/goal-manifest';
 import { GoalPhaseRuntime, parseGoalRuntimeArgs, buildDetachedChildArgv } from '../../scripts/goal-phase-runtime';
@@ -56,7 +56,129 @@ function fixture(adapterPin = pin) {
   return { root, runDir, manifest, context, emit, issue, cleanup: () => fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }) };
 }
 
+function setModelEnv(values: NodeJS.ProcessEnv): () => void {
+  const prior = Object.fromEntries(Object.keys(values).map(key => [key, process.env[key]]));
+  function apply(env: NodeJS.ProcessEnv) {
+    for (const [key, value] of Object.entries(env)) if (value === undefined) delete process.env[key]; else process.env[key] = value;
+  }
+  apply(values);
+  return () => apply(prior);
+}
+
 const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
+  name: 'stage verifier captures the current Claude shell tool main model and ignores old turns and sidechains',
+  run() {
+    const f = fixture();
+    const home = path.join(f.root, 'native-claude'), sid = 'stage-claude', endpoint = 'http://127.0.0.1:9000/v1';
+    const release = setModelEnv({ CLAUDE_CONFIG_DIR: home, CLAUDE_CODE_SESSION_ID: sid, CLAUDE_CODE_EFFORT_LEVEL: undefined,
+      ANTHROPIC_BASE_URL: undefined, CLAUDE_CODE_USE_BEDROCK: undefined, CLAUDE_CODE_USE_VERTEX: undefined, CLAUDE_CODE_USE_FOUNDRY: undefined });
+    try {
+      const source = path.join(home, 'settings.json'), file = path.join(home, 'projects', 'project-slug', sid + '.jsonl');
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(source, JSON.stringify({ env: { ANTHROPIC_BASE_URL: endpoint }, effortLevel: 'high' }));
+      const row = (type: string, content: unknown, extra: object = {}) => ({ sessionId: sid, cwd: f.root, type, message: { role: type, content }, ...extra });
+      const tool = (id: string, model: string, feature = 'model-test', extra: object = {}) => row('assistant', [], {
+        message: { role: 'assistant', model, content: [{ type: 'tool_use', id, name: 'PowerShell',
+          input: { command: `cd framework/harness && npx ts-node harness-runner.ts --execute-verifier --phase spec --feature "${feature}"` } }] }, ...extra });
+      const rows = [row('user', 'earlier'), tool('old', 'earlier-model'), row('user', [{ type: 'tool_result', tool_use_id: 'old' }]),
+        row('user', 'current'), tool('selected', 'claude-formal'), tool('sidechain', 'auxiliary-model', 'model-test', { isSidechain: true }),
+        tool('other-stage', 'another-model', 'different-feature')];
+      fs.writeFileSync(file, rows.map(record => JSON.stringify(record) + '\n').join('') + '{');
+      const selected = launchStageVerifierModelPin({ phase: 'spec', feature: 'model-test' }, 'claude', f.root);
+      assert.deepEqual(selected, { adapter: 'claude', value: 'claude-formal', provider: endpoint,
+        reasoning_effort: 'high', config_source: source, source: 'frontend' });
+      assertModelReplay(selected);
+      assert.throws(() => launchStageVerifierModelPin({ phase: 'plan', feature: 'model-test' }, 'claude', f.root), /原生主模型回合/);
+      assert.throws(() => launchStageVerifierModelPin({ phase: 'spec', feature: 'model-test' }, 'claude', frameworkRoot), /准确主 session/);
+      const releaseRoute = setModelEnv({ ANTHROPIC_BASE_URL: 'http://new-route.invalid' });
+      try {
+        assert.throws(() => launchStageVerifierModelPin({ phase: 'spec', feature: 'model-test' }, 'claude', f.root), /冲突的 provider/);
+        assert.equal(launchStageVerifierModelPin({ 'adapter-model': 'later-selection' }, 'claude', f.root, selected), selected);
+      } finally { releaseRoute(); }
+    } finally { release(); f.cleanup(); }
+  },
+}, {
+  name: 'stage verifier binds the live Codex turn and the provider from its exact thread metadata',
+  run() {
+    const f = fixture();
+    const home = path.join(f.root, 'native-codex'), sid = 'stage-codex', turn = 'active-turn';
+    const release = setModelEnv({ CODEX_HOME: home, CODEX_THREAD_ID: sid, CODEX_SESSION_ID: 'other-session', CODEX_TOOL_CALL_ID: 'not-flushed-yet' });
+    try {
+      const file = path.join(home, 'sessions', '2026', `rollout-${sid}.jsonl`);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      const context = (turn_id: string, model: string, effort: string) => ({ type: 'turn_context', payload: { turn_id, model, effort } });
+      const event = (type: string, turn_id: string) => ({ type: 'event_msg', payload: { type, turn_id } });
+      const rows = [{ type: 'session_meta', payload: { id: sid, cwd: f.root, model_provider: 'fixture-route' } },
+        event('task_started', 'ended-turn'), context('ended-turn', 'past-model', 'low'), event('task_complete', 'ended-turn'),
+        event('task_started', turn), context(turn, 'formal-model', 'xhigh')];
+      const write = () => fs.writeFileSync(file, rows.map(row => JSON.stringify(row) + '\n').join(''));
+      write();
+      assert.deepEqual(launchStageVerifierModelPin({}, 'codex', f.root), {
+        adapter: 'codex', value: 'formal-model', provider: 'fixture-route', reasoning_effort: 'xhigh',
+        config_source: path.join(home, 'config.toml'), source: 'frontend',
+      });
+      const args = { 'frontend-request-file': file, 'frontend-session-id': sid, 'frontend-request-id': turn };
+      assert.equal(launchStageVerifierModelPin(args, 'codex', f.root)?.value, 'formal-model');
+      rows.push(context(turn, 'conflicting-model', 'xhigh')); write();
+      assert.throws(() => launchStageVerifierModelPin(args, 'codex', f.root), /模型选择冲突/);
+      rows.pop();
+      rows.push(event('turn_aborted', turn)); write();
+      assert.throws(() => launchStageVerifierModelPin({}, 'codex', f.root), /唯一活动 turn/);
+    } finally { release(); f.cleanup(); }
+  },
+}, {
+  name: 'stage verifier captures the OpenCode current native export through its tool call',
+  run() {
+    const f = fixture();
+    const sid = 'ses_stageopencode', callId = 'stage-call', bin = path.join(f.root, 'bin');
+    const release = setModelEnv({ PATH: bin + path.delimiter + process.env.PATH, XDG_CONFIG_HOME: path.join(f.root, '.config'),
+      MAISON_OPENCODE_SESSION_ID: sid, MAISON_OPENCODE_CALL_ID: callId, OPENCODE_CONFIG: undefined,
+      OPENCODE_CONFIG_CONTENT: undefined, OPENCODE_CONFIG_DIR: undefined });
+    try {
+      fs.mkdirSync(bin);
+      const file = path.join(f.root, 'export.json'), script = path.join(bin, 'opencode-export.cjs');
+      const native = {
+        info: { id: sid, directory: f.root },
+        messages: [
+          { info: { id: 'msg-active-user', role: 'user', summary: { diffs: [] }, model: { providerID: 'fixture', modelID: 'current-model', variant: 'high' } } },
+          { info: { id: 'msg-active-assistant', role: 'assistant', parentID: 'msg-active-user' }, parts: [{ type: 'tool', callID: callId }] },
+          { info: { id: 'msg-other-user', role: 'user', model: { providerID: 'elsewhere', modelID: 'unrelated-model' } } },
+        ],
+      };
+      fs.writeFileSync(file, JSON.stringify(native));
+      fs.writeFileSync(script, `if (process.argv.slice(2).join(' ') !== 'export ${sid}') process.exit(7); process.stdout.write(require('fs').readFileSync(${JSON.stringify(file)}));`);
+      fs.writeFileSync(path.join(bin, process.platform === 'win32' ? 'opencode.cmd' : 'opencode'),
+        process.platform === 'win32' ? '@echo off\nnode "%~dp0opencode-export.cjs" %*\n' : '#!/bin/sh\nexec node "$(dirname "$0")/opencode-export.cjs" "$@"\n', { mode: 0o755 });
+      const selected = launchStageVerifierModelPin({}, 'opencode', f.root);
+      assert.deepEqual(selected, { adapter: 'opencode', value: 'fixture/current-model', provider: 'fixture', reasoning_effort: 'high',
+        config_source: path.join(f.root, '.config', 'opencode'), source: 'frontend' });
+      assert.deepEqual(launchStageVerifierModelPin({ 'frontend-request-file': file, 'frontend-session-id': sid,
+        'frontend-request-id': 'msg-active-user', 'adapter-model-config': selected?.config_source }, 'opencode', f.root), selected);
+      process.env.MAISON_OPENCODE_CALL_ID = 'wrong-call';
+      assert.throws(() => launchStageVerifierModelPin({}, 'opencode', f.root), /准确的主消息/);
+    } finally { release(); f.cleanup(); }
+  },
+}, {
+  name: 'stage verifier accepts CodeAgent native-route and Cursor explicit named selections',
+  run() {
+    const f = fixture();
+    const ownHome = path.join(f.root, 'native-codeagent');
+    const release = setModelEnv({ CODEAGENT3_CONFIG_DIR: ownHome, CLAUDE_CONFIG_DIR: path.join(f.root, 'other-claude'),
+      CLAUDE_CODE_SESSION_ID: 'other-claude', ANTHROPIC_BASE_URL: undefined, CLAUDE_CODE_USE_BEDROCK: undefined,
+      CLAUDE_CODE_USE_VERTEX: undefined, CLAUDE_CODE_USE_FOUNDRY: undefined });
+    try {
+      const nativeProject = path.join(f.root, '.cac'), endpoint = 'http://127.0.0.1:5555/v1';
+      fs.mkdirSync(nativeProject);
+      fs.writeFileSync(path.join(nativeProject, 'settings.local.json'), JSON.stringify({ env: { ANTHROPIC_BASE_URL: endpoint } }));
+      assert.equal(launchStageVerifierModelPin({}, 'codeagent', f.root), undefined);
+      assert.deepEqual(launchStageVerifierModelPin({ 'adapter-model': 'codeagent/formal-id' }, 'codeagent', f.root),
+        { adapter: 'codeagent', value: 'codeagent/formal-id', provider: endpoint, config_source: path.join(ownHome, 'settings.json') });
+      assert.deepEqual(launchStageVerifierModelPin({ 'adapter-model': 'cursor/formal-id' }, 'cursor', f.root),
+        { adapter: 'cursor', value: 'cursor/formal-id', provider: 'cursor' });
+      assert.throws(() => assertModelReplay(launchStageVerifierModelPin({ 'adapter-model': 'Auto' }, 'cursor', f.root)), /明确模型绑定/);
+    } finally { release(); f.cleanup(); }
+  },
+}, {
   name: 'followup DSH builtin official and account routes freeze by native version without profile declarations or model requests',
   run() {
     const f = fixture(), previous = { PATH: process.env.PATH, MODEL_TEST_DSH_VERSION: process.env.MODEL_TEST_DSH_VERSION };
@@ -110,7 +232,7 @@ throw Error('model invocation forbidden');`);
         { type: 'request/context', seq: 699, data: { provider: 'volcengine', model: 'volcengine/deepseek-v4.1-flash' } }];
       fs.writeFileSync(file, Buffer.concat(rows.map(row => (zlib as any).zstdCompressSync(Buffer.from(JSON.stringify(row) + '\n')))));
       Object.assign(process.env, { DSH_SESSION_ID: sid, DSH_HOME: path.join(f.root, 'native-home'), DSH_PROFILE_DIR: path.dirname(source) });
-      const selected = freezeModelPin(launchModelPin({}, 'deepseek-harness', f.root))!;
+      const selected = launchStageVerifierModelPin({}, 'deepseek-harness', f.root)!;
       assert.equal(selected.provider, 'volcengine'); assert.equal(selected.value, 'volcengine/deepseek-v4.1-flash');
       assert.equal(selected.reasoning_effort, 'high'); assert.equal(selected.config_source, source); assert.match(selected.route_identity!, /^[a-f0-9]{64}$/);
       assert.match(nativeDshModelMismatch({ ...selected, provider: 'wrong-route' }, sid, f.root, process.env, 7)!, /model_binding_mismatch/);

@@ -504,7 +504,7 @@ Enforcement: `harness/scripts/utils/phase-evidence-manifest.ts`, `harness/script
 
 ### Requirement: Verifier output is a terminal block plus an item table
 
-The verifier's answer SHALL consist of the versioned terminal block and one table of check id / verdict / one-line evidence / fix, with no prose sections.
+The verifier's answer SHALL include the phase template's item table and any applicable per-issue findings, followed by exactly one versioned terminal block.
 
 The terminal block SHALL carry exactly one meaning in both the ordinary and the diagnosis branch: `blocker_count` is the number of items in **this round's own semantic checks** whose severity is BLOCKER and whose status is FAIL; `verdict=PASS` if and only if `blocker_count` is zero. The block SHALL echo the current subject. `FAIL` with zero blockers and `PASS` with a non-zero count SHALL be rejected as invalid evidence.
 
@@ -512,12 +512,12 @@ Confirmed product defects SHALL NOT enter that count. A review report that accur
 
 Where the round is not a diagnosis request, the native compile and execution preconditions on the verifier SHALL be unchanged.
 
-Enforcement: `harness/prompts/verify-spec.md`, `harness/prompts/verify-plan.md`, `harness/prompts/verify-coding.md`, `harness/prompts/verify-review.md`, `harness/prompts/verify-ut.md`, `harness/prompts/verify-testing.md`, `agents/claude/templates/agents/verifier.md`, `harness/scripts/utils/verifier-evidence.ts`
+Enforcement: `harness/prompts/verify-spec.md`, `harness/prompts/verify-plan.md`, `harness/prompts/verify-coding.md`, `harness/prompts/verify-review.md`, `harness/prompts/verify-ut.md`, `harness/prompts/verify-testing.md`, `harness/prompts/verify-extensions.md`, `harness/scripts/utils/verifier-evidence.ts`
 
 #### Scenario: The report returned to the driver is short
 
 - **WHEN** a verifier finishes a phase with 12 checks
-- **THEN** its final message is the 12-row table and the terminal block only
+- **THEN** its final message contains the 12-row table and any required findings, with the terminal block last
 
 #### Scenario: An accurate report of a failing product is PASS / 0
 

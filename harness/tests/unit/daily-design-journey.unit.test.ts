@@ -89,7 +89,8 @@ async function withHost(run: (host: Host) => Promise<void>): Promise<void> {
     fs.copyFileSync(path.join(root, 'AGENTS.md'), path.join(root, 'CLAUDE.md'));
     writeHostFile(root, '.claude/commands/goal-mode.md', 'Read framework/skills/project/goal-mode/SKILL.md and follow it.\n');
     fs.mkdirSync(path.join(root, '.claude/agents'), { recursive: true });
-    for (const name of ['verifier.md', 'phase-executor.md']) fs.copyFileSync(path.join(framework.frameworkRoot, 'agents/claude/templates/agents', name), path.join(root, '.claude/agents', name));
+    fs.copyFileSync(path.join(framework.frameworkRoot, 'agents/claude/templates/agents/phase-executor.md'),
+      path.join(root, '.claude/agents/phase-executor.md'));
     writeYaml(root, 'doc/module-catalog.yaml', { schema_version: '1.0', modules: [{ name: 'ledger', layer: 'src', sub_layer: null, format: 'HAR', one_liner: '账目余额及恢复',
       responsibilities: ['账目余额'], NOT_responsible_for: ['UI', 'device'], typical_business_terms: ['账本'], easily_confused_with: [], key_exports: ['LedgerFeature'], entry_file: SOURCE }] });
     writeYaml(root, 'doc/glossary.yaml', { schema_version: '1.0', terms: [{ term: '账本', canonical_module: 'ledger', aliases: [], definition: '保存账目并计算余额' }] });
@@ -340,7 +341,10 @@ function unitMaterials(host: Host, context: any, preserveContracts = false, extr
   for (const family of families) if (family !== context.factsContext.first_phase) researchSnapshotFacts(host.root, facts, family, context.factsContext);
 }
 
-function verifierReply(host: Host, context: any, phase: string): void {
+function verifierReply(host: Host, context: any, phase: string, sample: {
+  testText: string; beforeText: string; testCount: number;
+  reviewIssues?: Array<{ issue: string; verdict: 'confirmed'; evidence: string }>;
+} = { testText: TEST_TEXT, beforeText: 'export {};\n', testCount: 2 }): void {
   const reports = host.load('config').featurePhaseReportsDir(host.root, context.feature, phase, host.frameworkRoot);
   const current = JSON.parse(fs.readFileSync(path.join(reports, 'summary.json'), 'utf8'));
   const script = JSON.parse(fs.readFileSync(path.join(reports, 'script-report.json'), 'utf8'));
@@ -367,29 +371,35 @@ function verifierReply(host: Host, context: any, phase: string): void {
   }
   if (['coding', 'review', 'ut'].includes(phase)) assert.equal(read(host.root, SOURCE), PRODUCT, 'the verifier must read the current implementation only after its author responsibility');
   if (phase === 'ut') {
-    assert.equal(read(host.root, TEST), TEST_TEXT, 'the verifier must inspect unchanged real assertions');
+    assert.equal(read(host.root, TEST), sample.testText, 'the verifier must inspect unchanged real assertions');
     const tap = fs.readFileSync(path.join(reports, 'node-tests.tap'), 'utf8');
-    assert.match(tap, /# tests 2/); assert.match(tap, /# fail 0/); assert.match(tap, /# skipped 0/);
+    assert(tap.split('\n').includes('# tests ' + sample.testCount)); assert.match(tap, /# fail 0/); assert.match(tap, /# skipped 0/);
   }
   let reply = '受控独立模型替身：已读当前真实request、material列出的可用文件与canonical蓝图/CU；按阶段核当前投影或实现，UT另读真实Node TAP，不改机器检查或完成结论。\n';
+  if (sample.reviewIssues?.length) reply += '\n```issue-verification\n' + YAML.stringify(sample.reviewIssues) + '```\n';
   const strength = phase === 'coding' && script.checks.find((check: any) => check.id === 'coding_existing_test_preserved' && check.affected_files?.includes(TEST));
   if (strength) {
-    assert.equal(read(host.root, TEST), TEST_TEXT, 'the independent model reads the unchanged current assertions');
+    assert.equal(read(host.root, TEST), sample.testText, 'the independent model reads the unchanged current assertions');
     const original = host.load('scripts/utils/repair-responsibility').codingTestPreservation({ projectRoot: host.root, feature: context.feature, runId: context.runId, file: TEST });
-    if (original.beforeText !== undefined) assert.equal(original.beforeText.trim(), 'export {};', 'the actual original had no tests to delete or weaken');
+    if (original.beforeText !== undefined) assert.equal(original.beforeText, sample.beforeText, 'the verifier must read the actual original assertions');
     else {
       const sessions = host.load('scripts/utils/session-execution-handoff');
       const author = sessions.sessionEvents(context.runDir).find((event: any) => event.type === 'agent_invoke_start' && event.phase === 'work-unit-author');
       const issued = author && sessions.executionRequestForInvoke(context.runDir, author.invoke_id);
       const before = issued?.request.pre_snapshot?.entries.find((entry: any) => entry.path === TEST && entry.kind === 'file');
-      assert.equal(before?.sha256, createHash('sha256').update('export {};\n').digest('hex'), 'the signed preimage must prove the original empty module');
+      assert.equal(before?.sha256, createHash('sha256').update(sample.beforeText).digest('hex'), 'the signed preimage must prove the original test bytes');
     }
     reply += '\n```issue-verification\n' + YAML.stringify([{ issue: 'coding_existing_test_preserved', verdict: 'refuted',
-      evidence: [TEST, strength.details, '已核实际前像仅为空模块，当前新增六条原生断言直接核 add/restore 余额与输入不变，没有删除或弱化既有断言。'].join(' | ') }]) + '```\n';
+      evidence: [TEST, strength.details, '已核实际测试前像；新增原生断言直接核 add/restore 余额与输入不变，保留原有断言。'].join(' | ') }]) + '```\n';
     assert.equal(host.load('scripts/utils/repair-candidates').testStrengthVerification({ check: strength, verifierReportText: reply, verifierSubjectCurrent: true })?.verdict, 'refuted');
   }
   if (phase === 'ut') reply += '| id | status | severity | 证据 |\n|---|---|---|---|\n| end_to_end_driving | PASS | BLOCKER | node:test直接调用LedgerFeature.add/restore |\n| business_assertion_value | PASS | BLOCKER | AC-1真实余额断言，失败保留原TAP |\n';
-  publishFixtureVerifierEvidence({ projectRoot: host.root, feature: context.feature, phase, reportsDir: reports, subjectId: current.verifier_subject_id, reportText: reply, skipSummaryPatch: true });
+  const execution = host.load('scripts/utils/session-execution-handoff').executionRequestForInvoke(context.runDir);
+  assert.equal(execution?.request.context.phase, context.phase, 'verifier uses its current signed execution');
+  const draft = execution?.request.write_boundary?.verifierResultPath;
+  assert(draft, 'verifier must return into its authorized invocation draft');
+  publishFixtureVerifierEvidence({ projectRoot: host.root, feature: context.feature, phase, reportsDir: reports,
+    subjectId: current.verifier_subject_id, draftPath: path.resolve(host.root, draft), reportText: reply, skipSummaryPatch: true });
 }
 
 function assertFrozenInputs(host: Host, context: any): void {
@@ -894,7 +904,27 @@ const cases = [{
         logical(doc).use_cases.use_cases[0].ui_bindings[0].user_actions[0].calls = ['LedgerFeature.add'];
         writeYaml(host.root, draft, doc);
       } else if (phase === 'design-repair-questioning') output = questioningReply(host, false, draft);
-      else assert.fail('undeclared extra responsibility: ' + phase);
+      else if (phase.endsWith('-verifier-format-repair')) {
+        const family = phase.replace(/-verifier-format-repair$/, '');
+        assert(['spec', 'plan', 'coding', 'review', 'ut'].includes(family), 'unexpected stage verifier: ' + family);
+        const reviewIssues: Array<{ issue: string; verdict: 'confirmed'; evidence: string }> = [];
+        if (family === 'review') {
+          const issues = host.load('scripts/utils/repair-candidates').readPhaseRepairIssues(host.root, context.feature, family,
+            { frameworkRoot: host.frameworkRoot, runId: context.runId });
+          const calls = logical(YAML.parse(read(host.root, canonical))).use_cases.use_cases[0].ui_bindings[0].user_actions[0].calls;
+          const facts = host.load('config').featureFilePath(host.root, context.feature, 'context/facts.md');
+          for (const row of issues?.rows ?? []) {
+            if (row.id === 'CR-001') assert(calls.some((value: string) => value.startsWith('NavPathStack.')));
+            else if (row.id === 'CR-011') {
+              const contents = fs.readFileSync(facts, 'utf8');
+              assert(contents.includes('真实Node用例数: 99') && !contents.includes('真实Node用例数: 3（'));
+              assert.equal(read(host.root, TEST), currentTests);
+            } else assert.fail('unexpected review finding: ' + row.id);
+            reviewIssues.push({ issue: row.id, verdict: 'confirmed', evidence: [...row.files, row.summary].join('；') });
+          }
+        }
+        verifierReply(host, context, family, { testText: currentTests, beforeText: existingTests, testCount: 3, reviewIssues });
+      } else assert.fail('undeclared extra responsibility: ' + phase);
       step = await report(host, control, step, output);
     }
     const observation = step.result?.status === 'waiting' ? host.load('scripts/utils/initial-design-delivery').readInitialDesignDelivery({
@@ -908,7 +938,9 @@ const cases = [{
     assert(designRepairs >= 1 && authorFindingDelivered && reviews >= 2, 'both design and author findings must close through their actual owners');
     const events = [...childDirs].flatMap(dir => host.load('scripts/utils/session-execution-handoff').sessionEvents(dir));
     assert(events.some((event: any) => event.type === 'phase_halt' && event.design_authority?.items.some((item: any) => item.basis.includes('CR-001'))));
-    assert(!events.some((event: any) => event.type === 'agent_invoke_start' && event.purpose === 'verifier'), 'no second verifier capability was enabled');
+    assert(events.some((event: any) => event.type === 'agent_invoke_start' && event.phase === 'plan-verifier-format-repair'
+      && event.purpose === 'verifier_format_repair'), 'DSH must run the issued Plan verification through the shared runtime');
+    assert(!events.some((event: any) => event.type === 'agent_invoke_start' && event.purpose === 'verifier'), 'the shared entry remains the only stage verifier dispatcher');
   }),
 }, {
   name: 'daily design: empty request reaches canonical CU completion with real TypeScript and Node assertions',

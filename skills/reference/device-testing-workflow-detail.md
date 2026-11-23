@@ -76,7 +76,7 @@
    - `<features_dir>/<feature>/device-testing/visual-diff.md`（由 harness 从 visual-diff.json 自动生成，含「采集完整性」节；**请勿手改**——所有结构化结论一律填进 JSON，md 每次采集后无条件从 JSON 再生并覆盖任何手写内容，门禁结论始终以 JSON 为准。曾出现 md 手写"6 屏 hash 均已唯一"而 JSON 实为 5 屏同 hash 的谎言——现已根治）
    - **T7 证据 rubric**（pixel_1to1 P0 pass 屏）：判 pass 前逐关键元素记录当前机器证据，是 pass 的举证责任而非凭总分自报。客观度量不足时使用当前、hash-bound 的 native/delegated 视觉证据；能力不可用则诚实 capability defer，证据无效则 FAIL/retry，不以人工确认兜底。
 4. **A/B/C 边界**：C 类动态交互不在静态参考图承诺内；B 类美术资产取决于素材供给。
-5. **回修（critic 自动迭代，plan c6d8f2b4 t9——替代旧"MVP 单轮+人工决定是否再迭代"）**：独立 critic（与实现者分离的上下文：交互态=Task verifier subagent，goal 态=独立 critic phase/prompt）产出 must_fix → coding 修 → 重采重判，**自动迭代直至 candidate-pass 或熔断**，不再每轮停下问人。must_fix 必须可执行可定位——带元素/区域+期望态的指令，关联具体 element_id 或区域 bbox；禁止「整体差异大/不够还原」这类无法回修的空话。
+5. **回修（critic 自动迭代，plan c6d8f2b4 t9——替代旧"MVP 单轮+人工决定是否再迭代"）**：独立 critic（通过当前视觉流程取得与实现者分离的 critic 上下文）产出 must_fix → coding 修 → 重采重判，**自动迭代直至 candidate-pass 或熔断**，不再每轮停下问人。must_fix 必须可执行可定位——带元素/区域+期望态的指令，关联具体 element_id 或区域 bbox；禁止「整体差异大/不够还原」这类无法回修的空话。
    - **candidate-pass 定义（五条件）**：无 BLOCKER/major defect + must_fix=[] + 必需 region_attest 与 critic 回执有效（**"必需"由是否有 delegated 视觉 provider 决定**——无 provider 时这两项不作要求，见下段） + T8/M1 无未处置命中（T8 布局树未接入的宿主按既有确定性信号集 T1/T4/T5/P1-C/dedup 计）+ advisory/minor 已枚举。critic 回执 `input_provenance=verified` 才能满足要求 verified 的发布策略；unverified 是否可继续只由现有 quality-axis/release policy 决定，不新增人工终审。**无 delegated 视觉 provider 时**（plan 07a41ec6 T10）：region_attest / critic 回执类证明不作要求（harness 按无 provider 场景 SKIP 并在 details 标 `[no_provider]`），几何事实用 `--measure` 取得，agent 实际看图后给普通视觉判断；content/style 未验证部分如实标 UNKNOWN，功能完成不因视觉证据不完整被阻止，release_readiness 如实保持。
    - **熔断（no-progress 指纹化，f7a3d9c2 起机器化）**：must_fix/defect 折算稳定指纹 `screen_id+defect_class+element/region+bbox_bucket` 比对集合（禁止自然语言字符串比对——同义改写会逃逸）。**（pixel_1to1）机器判定已接管**：每有效轮进 `device-testing/reports/visual-rounds.ledger.jsonl`（runner 机器盖戳，check 只读比对）——交互态 harness 直接写；goal 态执行者自检（有人在场与无人值守同一角色）先写本 run 的 journal，由 runtime 在正式 gate 前顺序收编入账本，正式 gate 自己那轮同状态即 duplicate；连续两有效轮指纹集相等且仍有 loop-actionable 残差 → BLOCKER `visual_diff_no_progress_fuse`（归因 `no_fix_attempt`=跑了没修 / `ineffective_fix`=修了没用）。见到该信号即熔断：停止改措辞重试，保留残差并诚实终止或由新 correction/successor run 继续；也**禁止未改码/未重建就原地重跑 harness 刷轮次**（同状态重跑被账本幂等吞掉，不算迭代）。**严禁删改 visual-rounds.ledger.jsonl**——goal 态 events 反向对账会以 `visual_ledger_integrity` 拦下，删账本≠空历史。指纹入账资格=每条 must_fix 有结构化 defect 锚定（`must_fix_refs` 逐条引用；T8 发现须以 `source.finding_id` 转录进 defects——门禁 `visual_diff_finding_transcription` 附可照抄模板）。
    - **candidate-pass 前不得请求质量确认**；确定性 fail 必须形成 repair 并重验，不得借“等用户/等 critic”拖延或签掉缺陷。
@@ -253,13 +253,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase testing --feature 
 
 优先读 `summary.json`，`testing_run_status.can_claim_done` 须为 `YES` 才能宣称阶段完成。
 
-**AI Harness**：harness 输出 verifier request 时，主动通过 Task 工具触发 `subagent_type: verifier`（全局入口 §4.1 明示授权），prompt 模板 `framework/harness/prompts/verify-testing.md`（测试用例完整性/步骤可重复性/预期结果具体性/NFR 覆盖/缺陷严重程度一致性/通过标准与结论一致性）。 原始 verifier 总判与当前工作分别读取：按[当前工作与验收证据](agents-entry-detail.md#当前工作与验收证据)消费统一处置。原总 PASS 不免除本阶段真正必修项，建议不因 MAJOR 标签升级；待核交原 verifier，已核必修交合法责任方。材料未变复用报告；历史 PASS 未覆盖当前相关材料时先补核，不能只凭 `completed_with_prior_review` 结束。
-
-**Task prompt = harness 写出的短 request JSON 整段**（plan a9d4e7c2）：verifier 能力启用时，`harness-runner` 会在结尾打印 `verifier.request.<subject>.json` 的路径，并把它记进 `summary.verifier_request`。把**那份 JSON 的完整正文**作为 Task prompt 投给 verifier——verifier 自己按其中的 `prompt_path` 读磁盘原件（`ai-prompt.md` 可达上百 KB，不过传输面）。不要投递 `ai-prompt.md` 全文、不要手抄或改写任何字段、不要在 JSON 前后附加说明：subject 由字段重算，抄错一处即失配 → 阶段不闭环。
-
-**报告由你写入，不是 verifier 写**（plan d2f7a9c4）：verifier 返回后，用 Write 把它的回复**原样全文**写进 `summary.verifier_report` 指向的路径（`<reports>/verifier.report.<subject>.md`），再跑 `check-receipt`。不摘要、不只贴终态块——正文里的发现是 repair candidates 与多模态审查的输入；只有终态块的报告能通过校验，却会把这些全部丢掉。
-
-**harness 没有输出 request 时先看 `summary.next_action`，别急着下结论**：①能力未启用（policy/workflow/profile 判定）→ 本阶段就没有 verifier 这一环，不要去找、不要补造，闭环也不要求它；②当前 adapter 未登记 `verifier_subagent`（起不了 verifier 子代理）→ 本阶段无此环，闭环照常进行，`check-receipt` 会以 WARN 如实标注 `not_reviewed`；③脚本尚未 PASS → 本轮**通常**刻意不产出 verifier 调用面，先修 BLOCKER 再说；**例外**是 `next_action=run_verifier_for_repair`——review 负面裁决与 UT 真实断言失败（`code_regression`）这两类已复现的可诊断产品失败，harness 会在脚本 FAIL 下照样签发 request，因为它们的回修候选本就依赖 verifier 逐条确认。照常投 request、原样写报告；**产品 FAIL 与 open 闭环状态不因此改变**，别在拿到逐条结论前改产品。
+**AI Harness**：按[独立阶段核验](agents-entry-detail.md#独立阶段核验)所列入口消费签发请求，方法模板 `framework/harness/prompts/verify-testing.md`（测试用例完整性/步骤可重复性/预期结果具体性/NFR 覆盖/缺陷严重程度一致性/通过标准与结论一致性）。 原始 verifier 总判与当前工作分别读取：按[当前工作与验收证据](agents-entry-detail.md#当前工作与验收证据)消费统一处置。原总 PASS 不免除本阶段真正必修项，建议不因 MAJOR 标签升级；待核交原 verifier，已核必修交合法责任方。材料未变复用报告；历史 PASS 未覆盖当前相关材料时先补核，不能只凭 `completed_with_prior_review` 结束。
 
 ## 阶段闭环判定（全局入口 §5.1）
 

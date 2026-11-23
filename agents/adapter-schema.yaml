@@ -435,37 +435,6 @@ optional_fields:
           模型回放旗标 token（如 `--model` / `-m`）——provider 的 model 必须真实进入该旗标。
           仅上述 profile_read_only_patch 组合可省略，以已冻结的公共模型绑定回放；其它机制仍必须给旗标。
 
-  verifier_subagent:
-    type: boolean | optional
-    default: false
-    description: |
-      可选（plan d2f7a9c4）。**只回答一个问题**：宿主实测过本 adapter 能不能派发
-      verifier 子 agent。与运行模式无关、与发布机制无关、与内核家族无关。
-
-      背景：verifier 的**调用**通道从来是 adapter 无关的——共享规则
-      （agents/shared/agent-bundle/templates/rules/framework-agent-execution.mdc §3）
-      对每个 adapter 都要求「Task 触发 subagent_type: verifier，prompt = request JSON
-      整段」，终态块契约写在 harness/prompts/verify-*.md 里随 ai-prompt.md 渲染。
-      本字段的前身 verifier_capability（transport/publisher/modes）描述的是**发布**
-      机制；报告改由调用方写出后，发布不再有 adapter 差异，那套矩阵整体删除。
-
-      运行时由 resolveVerifierPlan（harness/scripts/utils/verifier-plan.ts）消费，
-      经 resolveVerifierSubagentDeclared（adapter-catalog.ts）读取。禁止在 TypeScript
-      里另建 adapter 白名单、禁止按内核家族推断、禁止以「有 subagents 模板目录」或
-      「有 hooks 目录」推断——都会与本字段形成平行真源。
-
-      **入册纪律（BLOCKER）**：true 只登记**宿主实跑观测过**的 adapter。
-      共享规则文件被物化 ≠ 运行时会读取：opencode 明写 .opencode/rules/* 不被自动
-      加载，chrys 的 rules 是「引用可达」，generic 是任意外部 CLI。虚标会让每个阶段
-      走「report missing → 重跑 → 仍 missing」，正是本次要消除的失败形态。
-
-      缺省 / false = 无审查员。此时 resolveVerifierPlan 判
-      disabled / adapter_has_no_reviewer：不生成 request、不重跑，闭环不阻断，
-      check-receipt 以 WARN 披露 verifier 轴 not_reviewed（诚实标注，不冒充 PASS）。
-
-      已登记 true：claude、codeagent（SubagentStop 时代即实证）、codex（宿主 2026-09-05
-      确认每阶段起 verifier 子代理）。cursor / opencode / chrys / generic 未登记。
-
   user_confirmation:
     type: object | null
     description: |

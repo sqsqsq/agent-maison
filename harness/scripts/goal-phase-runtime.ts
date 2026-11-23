@@ -7,10 +7,15 @@ export { collectActionableDefects, resolveCurrentHapSha256Full, validateDeviceTe
 export type { ActionableDefect, UnverifiedDefect, ActionableCollectResult, DeviceTestCollectContext } from './utils/actionable-evidence';
 import { isDesignQuestioningWriteRecovery, pendingPublishedDesignRepair, readQuestioningBlueprintPreimage, restoreRejectedDesignQuestioning } from './utils/design-repair-unattended';
 import { resolveValidationOnlyEligibility } from './utils/goal-runner-phase';
-import { sessionExecutionDeadlineMs, sessionExecutionTransportInstructionSuffix, issueSessionExecution, writePhaseExecutionRequestMaterial, resignSessionExecution, readSessionExecution, inspectSessionExecutionBeforeRuntime, undeliveredSessionInvocation, executionRequestForInvoke, sessionExecutionForInvoke, sessionToolEventsLogPath, readHandoffMaterial, acceptedSessionReport, acceptSessionExecution, uncommittedSessionReport, sessionValidationOnlyEligibility, capturePhaseBinding, readPhaseBinding, readSessionWriteWindows, stageVerifierHandbacks, type HandoffReference, type IssuedSessionExecution, type SessionExecutionReport } from './utils/session-execution-handoff';
+import { sessionExecutionDeadlineMs, sessionExecutionTransportInstructionSuffix, issueSessionExecution, writePhaseExecutionRequestMaterial, resignSessionExecution, readSessionExecution, inspectSessionExecutionBeforeRuntime, undeliveredSessionInvocation, executionRequestForInvoke, sessionExecutionForInvoke, sessionToolEventsLogPath, readHandoffMaterial, acceptedSessionReport, acceptSessionExecution, uncommittedSessionReport, sessionValidationOnlyEligibility, readPhaseBinding, readSessionWriteWindows, type IssuedSessionExecution, type SessionExecutionReport } from './utils/session-execution-handoff';
 import { AttendedGoalPhaseExecutor, observeWorkUnitProviderSession, authorUnit, workUnitFeedbackDelivered, type WorkUnitInput } from './utils/goal-phase-executor';
 import { applyIndependentQuestioningOutput, independentQuestioningBlockers } from './utils/blueprint-questioning';
 import { validateComponentBlueprint } from './utils/component-blueprint-validator';
+import {
+  phaseBindingCapture, protectStageVerifierInputs, readSignedStageVerifier, resolveStageVerifierItemFocus, restoreStageVerifierReport,
+  renderStageVerifierRepairInstruction, spawnIndependentWorker, stageVerifierDraftPath,
+} from './utils/stage-verifier-execution';
+export { restoreStageVerifierReport, renderStageVerifierRepairInstruction } from './utils/stage-verifier-execution';
 import { invocationCompleted, invocationEndFacts, invocationWaitingDetail } from './utils/invocation-completion';
 
 function recoverableProviderSessionFailure(context: WorkUnitExecutionContext, result: Pick<GoalPhaseExecutorResult, 'nativeSessionRebuildReason'>): boolean {
@@ -35,48 +40,14 @@ function hasNewWorkConditions(facts: { returned: boolean; explicitlyContinued: b
   return !facts.returned || facts.explicitlyContinued || facts.materialChanged || facts.productChanged || facts.scopeChanged;
 }
 
-export function restoreStageVerifierReport(runDir: string, request: VerifierRequest, reportPath: string, reportRel: string,
-  qualification: Parameters<typeof verifierReportItemGaps>[0]): boolean {
-  try {
-    const target = readPhaseRecoveryFile(qualification.projectRoot, reportPath);
-    const { phase, feature, subject_id: currentSubject } = request;
-    const parse = (bytes: Buffer) => parseVerifierEvidenceText({ feature, phase, currentSubject, text: bytes.toString('utf8'),
-      mdAbs: reportPath, mdRel: reportRel });
-    const existing = target.bytes && parse(target.bytes);
-    if (existing?.ok && !verifierReportItemGaps(qualification, existing.evidence).length) return false;
-    for (const { bytes } of stageVerifierHandbacks(runDir, request, reportPath)) {
-      const original = parse(bytes);
-      if (!original.ok || existing?.ok && existing.evidence.verdict === 'FAIL' && original.evidence.verdict === 'PASS'
-        || verifierReportItemGaps(qualification, original.evidence).length) continue;
-      const temporary = `${target.actual}.runtime-${process.pid}.tmp`;
-      fs.writeFileSync(temporary, bytes, { flag: 'wx' });
-      try { fs.renameSync(temporary, target.actual); }
-      finally { if (fs.existsSync(temporary)) fs.unlinkSync(temporary); }
-      return true;
-    }
-  } catch { /* Recovery can reuse a readable original; the current verification gap remains otherwise. */ }
-  return false;
-}
-
-export function renderStageVerifierRepairInstruction(input: {
-  requestText: string; reportRel: string; diagnosis: string; itemFocus: string; formatFeedback: string;
-}): string {
-  const { requestText, reportRel, diagnosis, itemFocus, formatFeedback } = input;
-  return itemFocus + '读取 request.prompt_path，按已签发的原件独立核验。若本指令开头列出本轮复核范围，以该范围为准。'
-    + '跨阶段原件用于核对本阶段检查项和已签发问题的依据及反证，逐条裁决限于这些问题。'
-    + `完整回复原样写入 ${reportRel}。不得修改实现、验收或正式机器结果。\n`
-    + [diagnosis, formatFeedback, requestText].filter(Boolean).join('\n');
-}
-
 import { resumeIssuedSessionOwner } from './utils/goal-run-control';
 import { buildGuardianInvocation, resolveAgentCommand } from './utils/agent-containment';
 import { resolveTaskAutomationPolicy } from './utils/runtime-policy';
 import { createIdentityNeutralDigestReaders, type IdentityNeutralDigestReaders } from './utils/identity-neutral-digest';
-import { parseVerifierRequest, parseVerifierRequestFromInstruction, canonicalRequestInput, type VerifierRequest } from './utils/verifier-request';
+import { parseVerifierRequest, parseVerifierRequestFromInstruction, canonicalRequestInput } from './utils/verifier-request';
 import { validateProjectRelativePath, isInsideProjectRoot } from './utils/project-relative-path';
-import { loadVerifierEvidence, parseVerifierEvidenceText, planVerifierItemReview, verifierReportItemGaps, verifierReportMdPath } from './utils/verifier-evidence';
+import { loadVerifierEvidence, verifierDiagnosisRequired, verifierReportItemGaps } from './utils/verifier-evidence';
 import { readVerifierMaterialOrNull } from './utils/verifier-material';
-import { workflowVerifierPrompt } from './utils/verifier-plan';
 import { diffChangedFiles, resolveEffectiveDiffBaseline } from './utils/git-diff';
 import type { GoalRunEvent } from './utils/goal-runner-phase';
 import { executionCompletionPhases, resolveExecutionScope, executionScopeFingerprint, validateExecutionScope, assertRevisionKeepsRequiredObligations, readScopeRevisionUserControl, hasNewSourcedFact, affectedScopePhases, authorizedScopePhases, isEffectivePhasePass, type ExecutionScope, type ExecutionScopeInput } from './utils/execution-scope';
@@ -564,7 +535,6 @@ import {
   buildEffectiveBlockerSignature,
   classifyFailureKind,
   classifyTimedOutWithFreshBlockers,
-  resolveBlockerActionability,
   extractDeterministicAffectedFiles,
   extractContentRelatedFiles,
   extractIntegritySubtypes,
@@ -1332,76 +1302,6 @@ export function runRuntimeTelemetryPreflightGate(opts: {
  */
 export function resolveLastHaltReason(outcomes: GoalPhaseOutcome[]): string | undefined {
   return [...outcomes].reverse().find(o => o.halted && o.halt_reason)?.halt_reason;
-}
-
-/**
- * 把上一轮 harness summary 的 BLOCKER 证据压缩成可回喂给 fresh-context agent 的文本块。
- * 让重试/续跑的 agent 看到「上轮失败在哪、动了哪些文件、harness 给了什么修复建议」，
- * 避免在自己上一轮改坏的现场反复打补丁（goal 模式每轮 fresh context，否则跨轮失忆）。
- */
-export function extractPriorFailureContext(summary: SummaryJson): string {
-  const verdict = summary.verdict ?? 'FAIL';
-  // P0-4(b)：重试回喂只含 agent_fixable 条目。legacy human_only 不得被描述为签名队列；
-  // 它只能触发当前机器门禁重投影。operator_note
-  // 永不入回喂（P1-7 受众分级）。
-  const all = summary.blockers ?? [];
-  const parked = all.filter(b => resolveBlockerActionability(b) === 'human_only');
-  // post-impl review P2#8：严格 === 'agent_fixable'——toolchain_blocked 回喂只会诱导
-  // agent「修环境」（它修不了）；toolchain 走 operator 队列单列。
-  const toolchainParked = all.filter(b => resolveBlockerActionability(b) === 'toolchain_blocked');
-  const frameworkParked = all.filter(b => resolveBlockerActionability(b) === 'framework_blocked');
-  const feedable = all.filter(b => resolveBlockerActionability(b) === 'agent_fixable').slice(0, 4);
-  const lines: string[] = [];
-  for (const b of feedable) {
-    const id = b.id ?? '(unknown check)';
-    const kind = b.classification ?? '';
-    lines.push(kind ? `- ${id} [${kind}]` : `- ${id}`);
-    if (b.details_excerpt) {
-      lines.push(`  details: ${truncateOneLine(b.details_excerpt, 300)}`);
-    }
-    if (b.affected_files && b.affected_files.length > 0) {
-      lines.push(`  affected_files: ${b.affected_files.slice(0, 6).join(', ')}`);
-    }
-    if (b.suggestion) {
-      lines.push(`  suggestion: ${truncateOneLine(b.suggestion, 300)}`);
-    }
-  }
-  if (parked.length > 0) {
-    lines.push(
-      `- (legacy human-only classification; revalidate, do not sign) ${parked.map(b => b.id ?? '?').join(', ')}: ` +
-      're-run current machine gates and reproject to repair, capability-missing, or advisory; signatures and ordinary resume cannot change the verdict.',
-    );
-  }
-  if (toolchainParked.length > 0) {
-    lines.push(
-      `- (parked, environment/toolchain — do NOT attempt) ${toolchainParked.map(b => b.id ?? '?').join(', ')}: ` +
-      'these are environment failures queued for the operator; do not modify product code or artifacts to work around them.',
-    );
-  }
-  if (frameworkParked.length > 0) {
-    lines.push(
-      `- (parked, framework — do NOT attempt) ${frameworkParked.map(b => b.id ?? '?').join(', ')}: ` +
-      'framework implementation failed; product/artifact edits cannot repair it. Preserve the failure for source-framework repair.',
-    );
-  }
-  if (lines.length === 0) {
-    const meta = extractBlockingMeta(summary);
-    if (meta.failure_kind) lines.push(`- failure_kind: ${meta.failure_kind}`);
-  }
-  // D2（plan 3a7f9c12）：产品失败诊断轮——回喂必须给出可执行动作，否则 agent 只看到一串
-  // blocker 就去改产品，而这些失败恰恰要先由 verifier 逐条确认才知道该改哪儿。
-  if (summary.next_action === 'run_verifier_for_repair') {
-    lines.push(
-      '- next_action: run_verifier_for_repair — this product FAIL is diagnosable, and the harness issued a verifier ' +
-        'request despite the script FAIL. Do NOT edit product code yet.',
-      `  1) deliver ${summary.verifier_request ?? 'summary.verifier_request'} verbatim as the Task prompt to subagent_type=verifier;`,
-      `  2) write its reply verbatim to ${summary.verifier_report ?? 'summary.verifier_report'};`,
-      '  3) end this invocation and report the current FAIL plus those two paths — the outer runner re-runs the gate ' +
-        'harness and recomputes repair candidates. Do NOT re-run the harness yourself, and do NOT wait for candidates ' +
-        'or closure before returning (the product is still FAIL; the phase cannot close yet).',
-    );
-  }
-  return [`Verdict: ${verdict}`, ...lines].join('\n');
 }
 
 // ===========================================================================
@@ -4001,10 +3901,7 @@ async function runDetachLauncher(argv: minimist.ParsedArgs, runProbe?: (probe: s
   let spawnError: string | undefined;
   let child: ReturnType<typeof spawn> | undefined;
   try {
-    child = (injectedDetachSpawn ?? spawn)(process.execPath, ['-r', preloadPath, __filename, ...childArgs], {
-      detached: true, stdio: ['ignore', logFd, logFd], windowsHide: true, cwd: process.cwd(),
-      env: { ...sanitizeSpawnEnv(process.env).env, TS_NODE_PROJECT: path.resolve(__dirname, '../tsconfig.json') },
-    });
+    child = spawnIndependentWorker(__filename, childArgs, logFd, injectedDetachSpawn ?? undefined, preloadPath);
     child.once('error', error => { spawnError = error.message; });
     child.unref();
   } catch (error) {
@@ -4181,11 +4078,6 @@ function resolveEntryAuthorization(options: GoalPhaseRuntimeLaunchOptions, argv:
   return options.authorization ?? (argv['authorize-autonomy'] === true ? { mode: 'goal_mode' as const, autonomyAuthorized: true } : undefined);
 }
 
-function phaseBindingCapture(context: WorkUnitExecutionContext, original?: Pick<IssuedSessionExecution, 'request' | 'reference'>) {
-  let snapshot: HandoffReference | undefined;
-  return { beforeSpawn: () => { if (original) snapshot = capturePhaseBinding(context.runDir, original); },
-    fields: () => ({ owner_id: context.owner.owner_id, owner_epoch: context.owner.epoch, ...(snapshot ? { binding_snapshot: snapshot } : {}) }) };
-}
 
 function latestAcceptedExecutionUnconsumed(events: GoalRunEvent[], issued: IssuedSessionExecution): boolean {
   const last = [...events].reverse().find(event => ['run_start', 'run_end', 'agent_invoke_end'].includes(event.type ?? ''));
@@ -7934,6 +7826,10 @@ Goal runner — original request design and construction runtime
         resolveUtSourceRoots: tryLoadUtSourceRootResolver(resolvedProfile.profileDir) ?? undefined });
       boundary.immutableInputPaths = [...new Set([...(boundary.immutableInputPaths ?? []),
         ...workUnitProtectedRecordPaths(projectRoot, manifest.feature, runDir)])];
+      if (purpose === 'verifier_format_repair') {
+        const signed = readSignedStageVerifier({ projectRoot, frameworkRoot, feature: manifest.feature, phase: family });
+        if (signed) protectStageVerifierInputs(boundary, signed, verifierReport);
+      }
       const factsFile = label === 'work-unit-author' && !testingTargets && factsContext
         ? (require('./utils/context-facts') as typeof import('./utils/context-facts')).resolveFactsAbsPath(projectRoot, manifest.feature) : undefined;
       if (factsFile && factsContext) boundary.domains.push({
@@ -8724,27 +8620,23 @@ Goal runner — original request design and construction runtime
         }
         const problems = phaseCompletionProblems(current.disposition, [family]);
         if (bound && !affected && (!problems.length || problems.every(problem => problem.action === 'repair' || problem.action === 'disclose'))) continue;
-        if (bound && !affected && summary?.verifier_request && summary.verifier_report && summary.verifier_subject_id) {
-          const pendingRequest = summary.verifier_request;
-          const pendingReport = summary.verifier_report;
-          const pendingSubject = summary.verifier_subject_id;
-          const pendingReportPath = path.resolve(projectRoot, validateProjectRelativePath(projectRoot, pendingReport, 'verifier report'));
-          const requestText = fs.readFileSync(path.resolve(projectRoot, validateProjectRelativePath(projectRoot, pendingRequest, 'verifier request')), 'utf8');
-          const request = parseVerifierRequest(requestText);
-          if (request && request.feature === manifest.feature && request.phase === family && request.subject_id === pendingSubject
-            && pendingReportPath === verifierReportMdPath(featurePhaseReportsDir(projectRoot, manifest.feature, family, frameworkRoot), pendingSubject)) {
+        if (bound && !affected && summary?.verifier_request) {
+          const signed = readSignedStageVerifier({ projectRoot, frameworkRoot, feature: manifest.feature, phase: family }, summary);
+          if (signed) {
+            const { request, requestText, reportRel: pendingReport, reportPath: pendingReportPath } = signed;
+            const pendingSubject = request.subject_id;
             const findPendingVerifier = (pending: typeof problems) => pending.find(problem => problem.phase === request.phase
               && problem.id === 'attestation_present' && problem.action === 'verify'
               && problem.files?.some(file => path.resolve(projectRoot, file) === pendingReportPath));
             const qualification = { projectRoot, frameworkRoot, feature: manifest.feature, phase: family, runId: manifest.run_id,
               currentSubject: pendingSubject, resolvedInputs: boundVerifierInputs ?? bound.resolvedInputs, phaseIssues: bound.phaseIssues,
               unitEvidenceRequired: family === 'ut' && current.facts.acceptanceStrength?.some(outcome => 'acceptance' in outcome),
-              diagnosisRequired: summary.readiness_signals?.some(signal => signal.id === 'verifier_repair_diagnosis' && signal.status === 'incomplete'),
+              diagnosisRequired: verifierDiagnosisRequired(family, summary),
               findings: problems.filter(problem => (problem.source_phase ?? problem.phase) === request.phase
                 && problem.action === 'verify' && problem.id.startsWith('open_finding:'))
                 .map(problem => ({ id: problem.id.slice('open_finding:'.length), files: problem.files })) };
             let pendingVerifier = findPendingVerifier(problems);
-            if (pendingVerifier && restoreStageVerifierReport(runDir, request, pendingReportPath, pendingReport, qualification)) {
+            if (pendingVerifier && restoreStageVerifierReport(runDir, request, pendingReportPath, pendingReport, qualification, { retainIncomplete: true })) {
               current = readWork(boundVerifierInputs);
               pendingVerifier = findPendingVerifier(phaseCompletionProblems(current.disposition, [family]));
             }
@@ -8764,25 +8656,20 @@ Goal runner — original request design and construction runtime
               const unfinished = report.ok
                 ? [...new Set(verifierReportItemGaps(qualification, report.evidence).map(gap => gap.split('：', 1)[0]))].sort()
                 : [report.code];
-              let itemFocus = '';
-              if (report.ok) {
-                const material = readVerifierMaterialOrNull(path.dirname(pendingReportPath), pendingSubject);
-                const templatePath = workflowVerifierPrompt(workflow, family);
-                if (material && templatePath) {
-                  const renderer = require('./utils/report-generator') as typeof import('./utils/report-generator');
-                  const templateText = renderer.loadVerifierPromptTemplate(path.join(frameworkRoot, 'harness'), family, resolvedProfile, templatePath);
-                  const itemReview = planVerifierItemReview({ ...qualification, currentMaterial: material, templateText });
-                  itemFocus = renderer.renderVerifierItemReviewNotice(projectRoot, { ...itemReview, currentReportPath: pendingReport });
-                }
-              }
-              const instruction = renderStageVerifierRepairInstruction({ requestText, reportRel: pendingReport,
+              const itemFocus = resolveStageVerifierItemFocus(qualification, signed, workflow, resolvedProfile, report);
+              const draft = stageVerifierDraftPath(runDir, family, `${family}-verifier-format-repair-i${countAgentInvokeStarts(verifierHistory) + 1}`);
+              const instruction = renderStageVerifierRepairInstruction({ requestText, reportRel: path.relative(projectRoot, draft).replace(/\\/g, '/'),
                 diagnosis: pendingVerifier.detail, itemFocus, formatFeedback });
               const invoked = await invokeWork(`${family}-verifier-format-repair`, instruction,
-                pendingReportPath, 'verifier_format_repair', continuationAvailable(), { material: { purpose: 'verifier_format_repair',
+                draft, 'verifier_format_repair', continuationAvailable(), { material: { purpose: 'verifier_format_repair',
                   segments: [dispositionFacts(verificationWork.disposition, [family]), canonicalRequestInput(request), unfinished, formatFeedback] }, evaluation: verificationWork.evaluation });
               if (invoked === 3) return 3;
               if (!invoked || halted) break;
               if (invoked.rebuild) { rebuildTransport = true; break; }
+              const stillCurrent = readSignedStageVerifier({ projectRoot, frameworkRoot, feature: manifest.feature, phase: family });
+              if (stillCurrent?.request.subject_id === pendingSubject) {
+                restoreStageVerifierReport(runDir, request, pendingReportPath, pendingReport, qualification, { retainIncomplete: true });
+              }
               executedCheck = true;
             }
             const producer = phaseInvocationStart(loadAuthoritativeEvents(eventsPath), family);
@@ -9187,7 +9074,7 @@ Goal runner — original request design and construction runtime
 }
 
 // 仅作为 CLI 入口直接执行时自跑 main()；被单测 import（buildPhasePrompt /
-// extractPriorFailureContext）时不触发 CLI，避免解析 process.argv 与 process.exit。
+// 阶段运行时辅助函数）时不触发 CLI，避免解析 process.argv 与 process.exit。
 export function runGoalPhaseRuntimeProcessCli(): void {
   process.on('exit', () => {
     // Backstop for any JS-observable exit (crash, process.exit) that didn't already

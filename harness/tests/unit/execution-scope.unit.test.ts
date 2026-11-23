@@ -4162,6 +4162,72 @@ cases.push({ name: 'P1-T8 runless file and inline requirements reach the real sp
   }
 } });
 
+cases.push({ name: '9e46 standalone Spec restores its signed file requirement and rejects subsequent source drift', async run() {
+  const { root, frameworkRoot, feature } = setupRunlessProject({ chain: ['spec'], completionTarget: 'request' });
+  const stage = { projectRoot: root, frameworkRoot, feature, phase: 'spec' };
+  const runner = path.resolve(__dirname, '../../harness-runner.ts');
+  const tsNodeProject = path.resolve(__dirname, '../../tsconfig.json');
+  const requirementFile = 'requirements/request.md';
+  const requirement = '原始文件需求：验证 value。';
+  try {
+    fs.mkdirSync(path.join(root, 'requirements'));
+    fs.writeFileSync(path.join(root, requirementFile), requirement + '\n');
+    prepareFeatureScopeCandidate({ ...stage, completionTarget: 'request', requestedResults: ['verify value'],
+      requestedPhases: ['spec'], requirement, requirementSourceFiles: [requirementFile], overwrite: true,
+      impact: { userVisibleBehaviorChange: false, reason: '仅验证内部取值', basisPaths: ['src/demo/value.ts'] } });
+    const frozen = ensureFeatureExecutionScopeFrozen(stage);
+    assert.equal(frozen.status, 'frozen', JSON.stringify(frozen.checks));
+    const facts = featureFilePath(root, feature, 'context/facts.md');
+    fs.mkdirSync(path.dirname(facts), { recursive: true });
+    fs.writeFileSync(facts, '---\n' + YAML.stringify({ schema_version: '1.0', feature, established_by: 'spec',
+      source_code_paths: ['src/demo/value.ts'], ready_to_produce: true }) + '---\n# Original legacy facts\n');
+    const workflow = resolveWorkflowSpec(root, { frameworkRoot });
+    const { resolveFeaturePhaseCapabilityInput } = await import('../../scripts/utils/capability-resolution-entry-input');
+    const signer = resolveFeaturePhaseCapabilityInput({ ...stage, featuresDir: relFeaturesDir(root) }, workflow, { requirementFile });
+    const resolution = resolveCapabilityInputs({ ...stage, track: 'full', ...signer });
+    const { inputs: resolvedInputs } = resolution;
+    assert(!signer.codeTargets?.includes('src/demo/value.ts'), 'the first check has not admitted its own legacy facts yet');
+    assert.equal(resolvedInputs?.values.requirement?.state, 'resolved');
+    const { prepareFixtureVerifierMaterial } = await import('../helpers/goal-run-driver');
+    const report = generateScriptReport(path.join(frameworkRoot, 'harness'), 'spec', feature, root, [
+      { id: 'spec_file_exists', category: 'structure', description: 'Spec material checked', status: 'PASS', severity: 'BLOCKER', details: 'current spec read' },
+    ], frameworkRoot);
+    report.assurance = 'full';
+    report.capability_resolutions = resolution.report.capabilities;
+    const reports = featurePhaseReportsDir(root, feature, 'spec', frameworkRoot);
+    fs.mkdirSync(reports, { recursive: true });
+    fs.writeFileSync(path.join(reports, 'script-report.json'), JSON.stringify(report));
+    const options = prepareFixtureVerifierMaterial({ ...stage, report, options: {
+      verifierPlan: { mode: 'enabled', reason: 'policy_required', message: 'required', verifier_prompt: 'prompts/verify-spec.md' },
+      resolvedInputs, factsContext: signer.factsContext,
+    } });
+    const summary = writeRunSummaryBase(root, report, frameworkRoot, options);
+    assert(summary.verifier_request && summary.verifier_subject_id && summary.next_action === 'run_verifier_then_receipt', JSON.stringify(summary));
+    const { currentRequirementEvidenceSha } = await import('../../scripts/utils/phase-closure-finalizer');
+    const requirementSha = currentRequirementEvidenceSha({ ...stage, resolvedInputs });
+    writePhaseEvidenceManifest(root, resolvePhaseEvidenceManifest({ ...stage, resolvedInputs, factsContext: signer.factsContext, requirementSha }));
+    const afterOwnManifest = resolveFeaturePhaseCapabilityInput({ ...stage, featuresDir: relFeaturesDir(root) }, workflow);
+    assert(afterOwnManifest.codeTargets?.includes('src/demo/value.ts'),
+      'a new ordinary check would admit the now-published legacy facts: ' + JSON.stringify(afterOwnManifest.factsRebuildReason));
+    const invoke = () => spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'), runner,
+      '--execute-verifier', '--phase', 'spec', '--feature', feature, '--project-root', root, '--framework-root', frameworkRoot], {
+        cwd: root, timeout: 120000, encoding: 'utf8', windowsHide: true, env: {
+          ...process.env, TS_NODE_PROJECT: tsNodeProject, MAISON_GOAL_RUN_ID: '', MAISON_GOAL_ATTEMPT: '',
+        },
+      });
+    const first = invoke();
+    const waiting = first.stdout + first.stderr;
+    assert.notEqual(first.status, 0, waiting);
+    assert(/模型绑定|当前适配器无法运行独立核验/.test(waiting), waiting);
+    assert(!waiting.includes('已签材料已变化'), waiting);
+    fs.writeFileSync(path.join(root, requirementFile), '变更后的需求正文。\n');
+    const changed = invoke();
+    assert.notEqual(changed.status, 0);
+    assert(/input binding stale|已签材料已变化/.test(changed.stdout + changed.stderr), changed.stdout + changed.stderr);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(reports, 'summary.json'), 'utf8')).verifier_subject_id, summary.verifier_subject_id);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+} });
+
 cases.push({ name: '1804 real independent spec updates acceptance but leaves scope revision to its Goal owner', run() {
   const repo = path.resolve(__dirname, '../../..');
   const { root, frameworkRoot, feature } = setupRunlessProject({ chain: ['spec'], completionTarget: 'feature' });

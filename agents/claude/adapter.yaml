@@ -2,7 +2,7 @@ adapter_name: claude
 description: |
   Claude Code adapter——入口文件命名为 CLAUDE.md（与 AGENTS.md 同源），
   并为每个 Skill 生成 .claude/commands/<slash>.md 路由文件，另外生成一份
-  独立语义审查员 .claude/agents/verifier.md。slash 命令只做路由（跳到对应
+  专用阶段执行者 .claude/agents/phase-executor.md。slash 命令只做路由（跳到对应
   SKILL.md），不复述规则。
 
 agent_entry_file:
@@ -15,7 +15,7 @@ commands:
   subagents:
     target_dir: .claude/agents
     template_dir: templates/agents
-    update_policy: auto_overwrite               # verifier / phase-executor 为协议级子 agent 配置
+    update_policy: auto_overwrite               # phase-executor 为协议级子 agent 配置
 
 skill_bridge: null
 
@@ -43,13 +43,6 @@ hooks:
   template_dir: templates/hooks                 # 相对于 adapter 目录
   update_policy: auto_overwrite                 # Stop hook 等与 harness 契约绑定
 
-# verifier 子代理能力（plan d2f7a9c4）：只回答「能不能派发 verifier 子 agent」，与运行
-# 模式、发布机制无关。调用协议 adapter 无关（共享规则要求 Task 触发 subagent_type=verifier、
-# prompt = request JSON 整段；终态块契约在 harness/prompts/verify-*.md）；报告由**调用方**
-# 把 verifier 回复原样写入 summary.verifier_report，不再有 hook 发布这一环。
-# 本 adapter 自 .claude/agents/verifier.md 物化起即实证可派发。
-verifier_subagent: true
-
 instance_skill_bridge:
   commands_target_dir: .claude/commands
 
@@ -62,6 +55,9 @@ user_confirmation:
 image_input: tool_read
 
 deprecated_artifacts:
+  - path: agents/verifier.md
+    action: backup_delete
+    reason: "阶段独立核验统一由 runtime 执行，已退役受管角色模板"
   - path: rules/confirmation-ux.md
     action: backup_delete
     reason: "v4.0 起合并到 interaction-renderer.md"
@@ -143,7 +139,7 @@ notes: |
     component-design 统一设计入口、change-unit-progression / component-closure 施工与闭环入口、
     spec/plan/coding/code-review/business-ut/device-testing 六篇 feature skill、
     framework-init（framework-init.md）。个人 setup 无 slash，由阶段入口 `--ensure` 内联完成。
-  - **claude-kernel 家族模板 SSOT**（plan c7a9e2f4）：本目录 templates/ 的 agents/（verifier）、
+  - **claude-kernel 家族模板 SSOT**（plan c7a9e2f4）：本目录 templates/ 的 agents/（phase-executor）、
     hooks/、rules/、goal-condition.md 同时被 codeagent adapter 跨目录引用（agents/codeagent/
     adapter.yaml 以 `../claude/templates/...` 声明）——改动这些模板对两个 adapter 同时生效；
     commands/ 与 settings.json 例外（codeagent 自有副本/分叉，等值由

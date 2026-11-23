@@ -74,7 +74,8 @@ export function prepareSessionCliProject(root: string, adapter: 'claude' | 'code
     fs.copyFileSync(path.join(root, 'AGENTS.md'), path.join(root, 'CLAUDE.md'));
     write('.claude/commands/goal-mode.md', 'Read framework/skills/project/goal-mode/SKILL.md and follow it.\n');
     fs.mkdirSync(path.join(root, '.claude/agents'), { recursive: true });
-    for (const name of ['verifier.md', 'phase-executor.md']) fs.copyFileSync(path.join(frameworkRoot, 'agents/claude/templates/agents', name), path.join(root, '.claude/agents', name));
+    fs.copyFileSync(path.join(frameworkRoot, 'agents/claude/templates/agents/phase-executor.md'),
+      path.join(root, '.claude/agents/phase-executor.md'));
   } else write('.codex/skills/goal-mode/SKILL.md', '---\nname: goal-mode\ndescription: Maison goal entry\n---\nRead framework/skills/project/goal-mode/SKILL.md.\n');
   const isSmoke = reviewOnly;
   if (codingOnly) write('CLI-PROMPT.md', `读取 AGENTS.md、doc/requirement.md 和 framework/skills/project/goal-mode/SKILL.md。通过 goal-mode-entry --next / --report-result 消费 session-cli 的真实请求，只修 coding 编译并经正式检查及独立核验收口。不执行 review/ut，不签 Feature 完成。\n`);

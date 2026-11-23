@@ -16,7 +16,7 @@ framework/agents/
 │   ├── adapter.yaml
 │   └── templates/
 │       ├── commands/            ← 每个 slash 一个 *.md 模板
-│       ├── agents/              ← 子 agent 模板（如 verifier.md）
+│       ├── agents/              ← 子 agent 模板（如 phase-executor.md）
 │       ├── settings.json        ← 客户端配置（注册 Stop / PreToolUse hook）
 │       └── hooks/               ← Claude Code hook 脚本（Layer 3 物理拦截）
 ├── cursor/                      ← Cursor adapter（AGENTS.md + .cursor/skills/ 跳板 + .cursor/rules/）
@@ -25,7 +25,6 @@ framework/agents/
 └── codex/                       ← Codex CLI adapter（AGENTS.md + .codex/skills/ 跳板 + .codex/agents/ + goal_capability）
     ├── adapter.yaml
     └── templates/
-        └── agents/              ← 角色 toml（verifier.toml，由 claude verifier.md 渲染，勿手改）
 ├── chrys/                       ← Chrys agent adapter（AGENTS.md + .agents/ bundle + chrys run headless）
 │   ├── adapter.yaml
 │   └── templates/
@@ -123,12 +122,12 @@ schema、组合约束与 fallback 以 [`adapter-schema.yaml`](./adapter-schema.y
 | `adapter_name`（目录名） | 入口文件（`agent_entry_file.target_path`） | 典型额外产物 |
 |--------------------------|--------------------------------------------|--------------|
 | `generic` | `AGENTS.md` | `{paths.agent_bundle_root}/skills/` + `{paths.agent_bundle_root}/rules/`（根目录名由用户指定，如 `.agents`） |
-| `claude` | `CLAUDE.md` | `.claude/commands/*.md`、`.claude/agents/verifier.md`、`.claude/settings.json`、`.claude/hooks/*.mjs` |
+| `claude` | `CLAUDE.md` | `.claude/commands/*.md`、`.claude/agents/phase-executor.md`、`.claude/settings.json`、`.claude/hooks/*.mjs` |
 | `cursor` | `AGENTS.md` | `.cursor/skills/<skill>/SKILL.md`（16 份内置跳板）、`.cursor/rules/framework.mdc` |
-| `codex` | `AGENTS.md` | `.codex/skills/<skill>/SKILL.md`（bridge 跳板）、`.codex/rules/interaction-renderer.md`、`.codex/agents/verifier.toml`（生成物） |
+| `codex` | `AGENTS.md` | `.codex/skills/<skill>/SKILL.md`（bridge 跳板）、`.codex/rules/interaction-renderer.md` |
 | `chrys` | `AGENTS.md` | `.agents/skills/<skill>/SKILL.md`（bridge 跳板）、`.agents/rules/interaction-renderer.md` |
 | `opencode` | `AGENTS.md` | `.opencode/skill/<skill>/SKILL.md`（自有原生目录；bridge 跳板；技能自动注册为 slash）、`.opencode/rules/interaction-renderer.md`、`.opencode/plugins/maison-native-intake.js`（普通前台的来源/写前接线） |
-| `codeagent` | `AGENTS.md` | `.cac/commands/*.md`（自有副本，身份行=codeagent）、`.cac/agents/verifier.md`、`.cac/settings.json`（变量 `${CODEAGENT3_PROJECT_DIR}`）、`.cac/hooks/*.mjs`、`.cac/rules/*.md`（与 claude 共享模板） |
+| `codeagent` | `AGENTS.md` | `.cac/commands/*.md`（自有副本，身份行=codeagent）、`.cac/agents/phase-executor.md`、`.cac/settings.json`（变量 `${CODEAGENT3_PROJECT_DIR}`）、`.cac/hooks/*.mjs`、`.cac/rules/*.md`（与 claude 共享模板） |
 
 > **常见误写**：claude adapter **无** `.claude/commands/skills/` 目录；slash 在 `.claude/commands/`，Skill 正文 SSOT 在 `framework/skills/`。`.cursor/skills/` 式 skill 跳板是 **cursor** 专属。
 
@@ -235,12 +234,12 @@ DeepSeek Harness 使用 `deepseek-harness` adapter、自有 `.dsh/skills` 和共
 | adapter | 入口文件 | slash | skill 跳板 | rules | settings_file | hooks |
 |---------|---------|-------|-----------|-------|---------------|-------|
 | generic | AGENTS.md | — | `{agent_bundle_root}/skills/*`（bridge 薄跳板；inline 已废弃） | `{agent_bundle_root}/rules/*.mdc` | — | — |
-| claude  | CLAUDE.md | `.claude/commands/*.md` + `.claude/agents/verifier.md` | — | `.claude/rules/*.md` | `.claude/settings.json` | `.claude/hooks/*.mjs` |
+| claude  | CLAUDE.md | `.claude/commands/*.md` + `.claude/agents/phase-executor.md` | — | `.claude/rules/*.md` | `.claude/settings.json` | `.claude/hooks/*.mjs` |
 | cursor  | AGENTS.md | — | `.cursor/skills/<skill>/SKILL.md`（模板 SSOT：`shared/agent-bundle/templates/skills-bridge`） | `.cursor/rules/*.mdc` | — | — |
-| codex   | AGENTS.md | —（顶层 `subagents` → `.codex/agents/verifier.toml`，生成物） | `.codex/skills/<skill>/SKILL.md`（bridge 跳板） | `.codex/rules/interaction-renderer.md` | — | `.codex/hooks.json`（结构化 upsert；仅 PreToolUse 编辑守卫） |
+| codex   | AGENTS.md | — | `.codex/skills/<skill>/SKILL.md`（bridge 跳板） | `.codex/rules/interaction-renderer.md` | — | `.codex/hooks.json`（结构化 upsert；仅 PreToolUse 编辑守卫） |
 | chrys   | AGENTS.md | — | `.agents/skills/<skill>/SKILL.md`（bridge 跳板） | `.agents/rules/interaction-renderer.md` | — | — |
 | opencode | AGENTS.md | —（技能自动注册 slash） | `.opencode/skill/<skill>/SKILL.md`（自有原生目录；bridge 跳板） | `.opencode/rules/interaction-renderer.md` | — | `.opencode/plugins/maison-native-intake.js`（普通前台） |
-| codeagent | AGENTS.md | `.cac/commands/*.md`（自有副本）+ `.cac/agents/verifier.md`（共享模板） | — | `.cac/rules/*.md`（共享模板） | `.cac/settings.json` | `.cac/hooks/*.mjs`（共享模板） |
+| codeagent | AGENTS.md | `.cac/commands/*.md`（自有副本）+ `.cac/agents/phase-executor.md`（共享模板） | — | `.cac/rules/*.md`（共享模板） | `.cac/settings.json` | `.cac/hooks/*.mjs`（共享模板） |
 | deepseek-harness | AGENTS.md | —（原生技能入口） | `.dsh/skills/<skill>/SKILL.md`（共享薄跳板） | `.dsh/rules/`（按需引用） | — | — |
 
 ### 前门规则与真实客户端证据
@@ -278,51 +277,11 @@ Layer 3 合作式编辑/Stop 拦截能力（详见 `CLAUDE.md` §5.1；两者共
 - `hooks/check-phase-completion.mjs` 在主 agent 即将结束消息时按 CLAUDE.md §5.1 四条件物理拦截"假完成"；
 - `hooks/guard-framework-write.mjs` 在 PreToolUse 拦截对只读发布件 `framework/` 的编辑类写入。
 
-（verifier 报告的发布 hook 已随 plan d2f7a9c4 删除：报告由调用方写入 `summary.verifier_report`。）
+### 阶段独立核验
 
-### verifier 子代理声明（plan a9d4e7c2 / d2f7a9c4）
+适用性由 profile、workflow 和 evidence policy 决定。模型绑定与运输按实际客户端解析；需要核验但当前无法执行时，保留未完成及恢复条件。完整交付与单阶段入口、request 和报告交回均按[独立阶段核验](../skills/reference/agents-entry-detail.md#独立阶段核验)执行。
 
-verifier 不是每阶段必跑的仪式，而是按 workflow 声明 + evidence policy + **adapter 有没有审查员**
-动态启用的能力。adapter 侧的声明面是 `adapter.yaml` 的布尔 `verifier_subagent`，运行时由
-`resolveVerifierPlan` 解析为 `disabled | enabled` 二态，runner / check-receipt / Skill 指引共享
-同一结果。**三种运行模式（interactive / headless / goal）解析结果完全一致**。
-
-调用与报告协议 **adapter 无关**：
-
-1. runner 在 `summary.verifier_request` 写一份几十行的 request JSON，在 `summary.verifier_report`
-   写好报告落点；
-2. 调用方（phase executor / 主 agent）把那份 JSON **整段**作为 Task prompt 投给
-   `subagent_type: verifier`——共享规则 `framework-agent-execution.mdc` §3 对每个 adapter 都这么要求；
-3. verifier 按 `prompt_path` 自读磁盘原件，回复完整报告，末尾恰好一个终态块（契约写在 7 份
-   `harness/prompts/verify-*.md` 里，随 ai-prompt.md 渲染）；
-4. **调用方**把回复原样全文写入 `summary.verifier_report` 指向的路径，然后跑 check-receipt。
-
-写者只有一个，且不是 verifier 自己：verifier 保持只读工具集。闭环侧只校验三条——文件在、终态块
-回显的 subject 等于 `summary.verifier_subject_id`、verdict 与 blocker_count 一致。
-
-**codex 的审查员人设由 claude 的 `verifier.md` 渲染**（`.codex/agents/verifier.toml`，顶层 `subagents`
-声明 + `auto_overwrite`；`cd harness && npm run sync:codex-agents` 生成，等值由 unit test 守护）；
-其中 `sandbox_mode = "read-only"` **只是角色默认值**——Codex spawn_agent 会用父线程实时权限覆盖
-（goal 父进程为 danger-full-access），不构成隔离保证，不写盘靠正文硬性规则（plan 7b2e9d4c D1/D3）。
-
-**只登记宿主实跑观测过的 adapter**（入册纪律）：claude / codeagent / codex 已登记；
-cursor / opencode / chrys / generic / deepseek-harness 未登记。共享规则文件被物化 **不等于** 运行时会读取——opencode
-明写 `.opencode/rules/*` 不被自动加载，chrys 的 rules 是「引用可达」，generic 是任意外部 CLI。
-虚标会让每个阶段走「report missing → 重跑 → 仍 missing」。
-
-未登记 = 无审查员：plan 判 `disabled / adapter_has_no_reviewer`，**不生成 request、不重跑、不阻断**，
-check-receipt 以 WARN 如实披露 verifier 轴 `not_reviewed`。起不了子代理是环境事实，不是产物缺陷；
-阻断会让整条 full track 在该 adapter 上不可用。
-
-> **已删除（plan d2f7a9c4，不得恢复）**：`verifier_capability`（transport / publisher / modes 矩阵）、
-> SubagentStop hook `record-verifier-report.mjs` 及其在两份 settings.json 的注册、canonical
-> `verifier.report.<subject>.json`、结论指纹、conflict 状态机、bedside 旁路、`blocked` 态与
-> `verifier_provider_unavailable`。它们整体服务于「主 agent 不能伪造 PASS」这一个防篡改目标，
-> 而其 fail-closed 教条把「发布手续失败」判成「检查根本不存在」：宿主 bc-openCard-1 两轮无人值守
-> goal run 在 harness PASS、verifier 真跑且 PASS 的情况下仍 `closure_wall_repeated` 熔断；codex 等
-> 无 hook 的 adapter 自 2026-08-29 起被判 `blocked`、full track 事实不可用。放弃的准确性写在
-> plan d2f7a9c4「一、放弃的准确性」：报告可被伪造或事后修改而不被机器识别，兜底靠下游门禁与人。
-
+由 `framework-init` UPDATE 的 `cleanup-deprecated` 处理已退役受管角色 `.claude/agents/verifier.md`、`.cac/agents/verifier.md` 和 `.codex/agents/verifier.toml`。任务先在 `.framework-backup/<stamp>/` 按原路径备份，再删除该文件；其余角色与用户文件保留。
 
 `cursor` / `generic` adapter 暂无等价物理层，闭环依赖 Layer 1（CLAUDE.md §5.1 + §6.5）+ Layer 2
 （`framework/harness/templates/phase-completion-receipt.md` + `framework/harness/scripts/check-receipt.ts`）

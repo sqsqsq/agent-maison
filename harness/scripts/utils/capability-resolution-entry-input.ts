@@ -6,7 +6,9 @@ import type { IdentityNeutralDigestReaders } from './identity-neutral-digest';
 import type { PhaseInputContext } from './capability-resolution';
 import { isExecutionSourceBasis, executionCompletionPhases } from './execution-scope';
 import type { FactsInvocationContext } from './context-facts';
-import { loadGoalManifestFromRun } from './goal-manifest';
+import { loadGoalManifestFromRun, resolveRequirementInput } from './goal-manifest';
+import { featureRequirementBinding } from './feature-track';
+import type { WorkflowSpec } from '../../workflow-loader';
 import * as fs from 'fs';
 import { isUnderLayerDir, layerDirPrefixes } from './diff-scope';
 import * as path from 'path';
@@ -23,7 +25,7 @@ import { validateProjectRelativePath, isInsideProjectRoot, inferLegacyProjectRoo
 import { execFileSync } from 'child_process';
 import * as crypto from 'crypto';
 import { stableStringify } from './phase-evidence-manifest';
-import { readRunBoundContracts, projectSourceFileBinding } from './capability-resolution';
+import { readBoundInput, readRunBoundContracts, projectSourceFileBinding } from './capability-resolution';
 import { resolveEffectiveDiffBaseline } from './git-diff';
 import { diffChangedFilesWithStatus } from './git-diff';
 import { loadResolvedProfile } from '../../profile-loader';
@@ -274,6 +276,8 @@ export function prepareExplicitRequest(options: { projectRoot: string; framework
 export interface CapabilityResolutionEntryInputOptions {
   /** A bound verifier reads the formal check's admission without granting a live tool window. */
   purpose?: 'design-authority-probe' | 'work-unit-author' | 'bound-verifier';
+  /** Source selection from the current check before it published its own legacy facts proof. */
+  boundCodebaseSourceRefs?: readonly string[];
   authorityReaders?: IdentityNeutralDigestReaders;
   projectRoot: string;
   feature: string;
@@ -893,6 +897,38 @@ export function resolveFactsRebuildOwner(options: Pick<CapabilityResolutionEntry
   return isAuditedSuccessor(options.projectRoot, options.feature, record.run_id, manifest.run_id) ? manifest.phase_chain[0] : original;
 }
 
+/** The direct Spec checker and verifier read the same frozen requirement original. */
+export function resolveFeaturePhaseCapabilityInput(
+  options: CapabilityResolutionEntryInputOptions,
+  workflow: Pick<WorkflowSpec, 'schema_version'>,
+  explicit?: { requirement?: unknown; requirementFile?: unknown },
+): CapabilityResolutionEntryInput {
+  if (options.goalRunId?.trim() && explicit) {
+    throw new Error('Goal harness 的需求权威是已冻结 manifest；不得用 --requirement/--requirement-file 覆盖');
+  }
+  if (options.goalRunId?.trim() || options.phase !== 'spec' || workflow.schema_version !== '1.2') {
+    return resolveCapabilityResolutionEntryInput(options);
+  }
+  const { frameworkRoot, projectRoot, feature } = options;
+  const binding = featureRequirementBinding(projectRoot, feature);
+  const legacyRoot = inferLegacyProjectRoot(projectRoot, binding);
+  const sources = binding.dependencies.filter(dep => dep.exists).map(dep => resolveDependencyPath(projectRoot, dep.path, legacyRoot));
+  if (!explicit && sources.length !== 1) {
+    throw new Error('无 run inline/旧候选无法恢复原始需求正文；请用 --requirement 或 --requirement-file 提供签发时的原始需求。');
+  }
+  const { text, sources: requirementSourceFiles } = resolveRequirementInput(explicit
+    ? { projectRoot, ...explicit } : { projectRoot, requirementFile: sources[0] });
+  if (!text?.trim()) throw new Error('spec 阶段缺少原始需求正文');
+  readBoundInput({
+    frameworkRoot: frameworkRoot ?? path.resolve(__dirname, '../../..'), projectRoot, feature, phase: 'spec', track: 'full',
+    requirement: text,
+    // Legacy/inline candidates bind text only, even when this invocation reads it from a file.
+    requirementSourceFiles: binding.dependencies.length ? requirementSourceFiles : [],
+    inputContext: { schema_version: '1.1', subject: { feature }, obligations: {}, required_outputs: [] },
+  }, binding, legacyRoot);
+  return resolveCapabilityResolutionEntryInput({ ...options, requirement: text, requirementSourceFiles });
+}
+
 /**
  * The resolver receives only normalized, identity-bound entry input. Goal mode reads
  * the canonical run manifest; direct testing may provide an explicit adhoc fallback.
@@ -1067,7 +1103,10 @@ export function resolveCapabilityResolutionEntryInput(
               factsContext.first_phase = establishing;
             }
           } else {
-            const paths = Array.isArray(fm.source_code_paths) ? fm.source_code_paths.filter((p): p is string => typeof p === 'string') : [];
+            const boundSources = options.purpose === 'bound-verifier' && !goalRunId && establishing === options.phase
+              ? options.boundCodebaseSourceRefs?.map(file => path.resolve(options.projectRoot, file)) : undefined;
+            const paths = (Array.isArray(fm.source_code_paths) ? fm.source_code_paths.filter((p): p is string => typeof p === 'string') : [])
+              .filter(file => !boundSources || boundSources.includes(path.resolve(options.projectRoot, file)));
             const observedSourceHash = createObservedSourceHashReader(options.projectRoot, options.feature, semanticOptions);
             factsContext.baseline = { established_by: establishing, fingerprint: factsBaselineFingerprint(raw), dependencies: [...phaseEvidenceBusinessInputs(options.projectRoot, options.feature, evidence.manifest, semanticOptions), ...evidence.manifest.outputs].filter(entry => entry.facts_phase === undefined
               && (paths.includes(entry.path) || (entry.role === 'input' && entry.owner_phase !== options.phase))).map(entry => {

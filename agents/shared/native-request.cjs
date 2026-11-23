@@ -288,4 +288,4 @@ function productTarget(projectRoot, frameworkRoot, filePath, roots = [], explici
     || /(?:^|\/)(?:package|oh-package|module|build-profile|app)\.json5?$/.test(rel);
 }
 
-module.exports = { samePath, currentNativeSession, nativeStore, toolSucceeded, toolCompletedBefore, isEditingTool, readNativeSession, userControl, resolveTransportIntent, editedPaths, frontDoorLoaded, toolInput, unquote, productTarget };
+module.exports = { samePath, claudeSession, codexSession, currentNativeSession, nativeStore, toolSucceeded, toolCompletedBefore, isEditingTool, readNativeSession, userControl, resolveTransportIntent, editedPaths, frontDoorLoaded, toolInput, unquote, productTarget };

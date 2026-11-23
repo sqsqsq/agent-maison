@@ -169,12 +169,12 @@ doc/features/<feature>/
 | `script-report.json`    | CI / 程序                 | 自动化脚本判 PASS/FAIL                                  |
 | `summary.json`          | agent / CI / 调试          | 稳定读取 verdict、blockers、run_statuses、next_action，替代 grep 控制台 |
 | `merged-report.md`      | 人类                      | 排查"为什么 FAIL"                                       |
-| `ai-prompt.md`          | verifier 子 agent（自读） | 本轮要审的材料全文。**不作为 Task prompt 投递**——verifier 按 request 里的 `prompt_path` 自己 Read（可达上百 KB，刻意不走传输面）。仅在该 phase 的 verifier 能力 enabled 时生成 |
-| `verifier.request.<subject>.json` | 调用方（phase executor / 主 agent） | **唯一调用侧凭证**（几十行）：整段作为 Task prompt 投给 `subagent_type=verifier`。`subject_id` 由其余字段重算，手抄/改写/前后夹带即失配 |
-| `verifier.report.<subject>.md` | check-receipt / 全部机器消费者 | verifier 的**唯一机器真源**（plan d2f7a9c4）。**写者是调用方**：把 verifier 回复原样全文写到 `summary.verifier_report` 指向的这个路径（verifier 自己只读，不写盘）。文件**按 subject 分区**，`summary.verifier_subject_id` 单独决定当前证据是哪一份，旧 subject 的遗留文件不在任何读取面内、也不清理。校验只三条：文件在、终态块回显 subject 相符、verdict 与 blocker_count 自洽。**不进 evidence manifest、不进 closure attestation 哈希**——报告刻意不做防篡改，不能同时充当 stale 绊线 |
+| `ai-prompt.md` | 独立 verifier | 本轮材料原件，由 verifier 按 request 中的 `prompt_path` 读取 |
+| `verifier.request.<subject>.json` | 核验执行器 | 签发凭证。执行器投递原 JSON，可在前面附已签复核范围，字段保持原样 |
+| `verifier.report.<subject>.md` | check-receipt / 闭环执行器 | 写界及 subject 核对通过后，由 runtime 投影原答全文至 `summary.verifier_report`；终态块须回显 subject，结论须与 `blocker_count` 自洽。报告独立于 evidence manifest 和 closure attestation 哈希 |
 | `trace.json`            | harness 内部 / 调试       | 记录本次进入 phase 时的 git HEAD（供 `ut_no_src_mutation` 的 **git fallback 域**用；review 已正式闭环时该门禁基线=review closure attestation，不看 trace/HEAD） |
 
-> v2.8 起控制台默认只展开 `FAIL` / `WARN` / `BLOCKER-SKIP`。脚本 PASS 只表示结构级 harness 没有 BLOCKER 失败；阶段闭环 = 脚本 verdict PASS ∧ 全部 policy=required 的证据齐。verifier 是否 required 由 harness 的 verifier plan 决定（workflow 声明 + evidence policy + adapter 有无 `verifier_subagent`），二态：判 disabled 时不生成任何 verifier 产物、闭环也不要求；其中 `adapter_has_no_reviewer`（当前工具起不了 verifier 子代理）**照常闭环**并以 WARN 披露 `not_reviewed`。三种运行模式（interactive / headless / goal）解析结果完全一致。
+控制台默认展开 `FAIL`、`WARN` 与 `BLOCKER-SKIP`。闭环要求脚本 PASS 及所有必需证据。阶段核验适用性由 profile、workflow 与 evidence policy 统一解析；关闭策略只免除新增核验，当前同材料的有效否决仍生效。完整交付与单阶段按 NEXT 各由现有执行者派发，命令与模型来源见[独立阶段核验](../../skills/reference/agents-entry-detail.md#独立阶段核验)。
 
 `summary.json` 的稳定契约见 `framework/harness/schemas/summary.schema.json`。关键字段：
 

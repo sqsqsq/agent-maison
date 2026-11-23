@@ -65,7 +65,7 @@ notes: |
     启动轮从原生 shell 的 DSH_SESSION_ID/DSH_HOME/DSH_PROFILE_DIR 自动捕获，按准确 SID 取最后一个请求头；
     来源使用实际 profile，非秘密路由摘要保存在同一 pin，不能因路径相同而接受 endpoint 漂移。
     headless 加载前台模型来源配置层后施加框架补丁，每次调用前以最终 --dump-config 核对来源；不自动替代模型。
-    不声明 verifier、结构化 widget 或精确用量。
+    当前不声明结构化 widget 或精确用量。
   - 独立视觉复用公共模型绑定，模型来源 patch 后最后加载 visual-readonly-patch.yaml。
     视觉会话固定 read-only/never，仅保留读取工具；逐图成功 read_image 后才采信最后 final。
     2026-11-06 桌面 0.2.2-rc.1 已验证默认 deepseek-flash 图像路由；开发调用仍用全权限 patch。

@@ -795,17 +795,17 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
       const planLock = tryAcquireLock(featureLockPath(s, CU), { run_id: 'plan-in-flight' })!;
       const contractsFile = featureFilePath(s.root, feature, 'contracts.yaml');
       const before = cuBytes(s);
-      // 交错点：调和器为兄弟 feature 落锁文件的那一刻（第一次读取之后、重定写集之前），另一设计会话把蓝图升版，
-      // 同时 plan 写出新版 contracts。只拦这一次文件创建，不改任何生产行为。
+      // 交错点：调和器发布兄弟 feature 锁的那一刻（第一次读取之后、重定写集之前），另一设计会话把蓝图升版，
+      // 同时 plan 写出新版 contracts。只拦这一次排他发布，不改任何生产行为。
       const siblingLock = path.resolve(featureLockPath(s, SIBLING));
       // import * 的命名空间对象只读；补丁打在真实 fs 模块上（生产代码经 live binding 读到）。
       // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const realFs = require('fs') as { openSync: unknown };
-      const openSync = fs.openSync;
+      const realFs = require('fs') as typeof fs;
+      const linkSync = fs.linkSync;
       let interleaved = false;
       let planBytes: Buffer | undefined;
-      realFs.openSync = (file: fs.PathLike, ...rest: unknown[]) => {
-        if (!interleaved && path.resolve(String(file)) === siblingLock) {
+      realFs.linkSync = (source, destination) => {
+        if (!interleaved && path.resolve(String(destination)) === siblingLock) {
           interleaved = true;
           bumpBlueprint(s);
           const contracts = YAML.parse(fs.readFileSync(contractsFile, 'utf8'));
@@ -813,10 +813,10 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
           fs.writeFileSync(contractsFile, YAML.stringify(contracts));
           planBytes = fs.readFileSync(contractsFile);
         }
-        return (openSync as (...args: unknown[]) => number)(file, ...rest);
+        return linkSync(source, destination);
       };
       let result: ReturnType<typeof reconcileChangeUnitBlueprintRefs>;
-      try { result = reconcileChangeUnitBlueprintRefs(s.root, BLUEPRINT_ID); } finally { realFs.openSync = openSync; }
+      try { result = reconcileChangeUnitBlueprintRefs(s.root, BLUEPRINT_ID); } finally { realFs.linkSync = linkSync; }
       assert(interleaved && planBytes, '前提：交错已发生');
       assert(result.busy?.includes(RECONCILE_BUSY_HINT) && result.busy.includes(CU) && !result.bumped.length, JSON.stringify(result));
       assert.deepStrictEqual(cuBytes(s), before, '未持锁的 CU 不得被写');

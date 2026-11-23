@@ -15,7 +15,6 @@ import {
   SIGNATURE_HALT_KINDS,
   type GoalSummaryLike,
 } from '../../scripts/utils/goal-failure-classifier';
-import { extractPriorFailureContext } from '../../scripts/goal-runner';
 import { buildSummaryBlockers } from '../../scripts/utils/summary-blockers';
 
 export interface UnitCaseResult {
@@ -173,32 +172,6 @@ const cases: Array<{ name: string; run: () => void }> = [
       if (classifyFailureKind(S([{ id: 'some_unrelated_gate' }])) !== 'code_regression') {
         throw new Error('catch-all 被误扩大');
       }
-    },
-  },
-  {
-    name: '回喂过滤: 严格 ===agent_fixable——human/toolchain/framework 各自 parked，不进正文',
-    run: () => {
-      const text = extractPriorFailureContext({
-        verdict: 'FAIL',
-        blockers: [
-          { id: 'capture_completeness_external', details_excerpt: 'OCR 未覆盖行……', suggestion: '补建模' },
-          { id: 'fidelity_deferrals_human_sign', details_excerpt: '须真人签字', suggestion: '人签' },
-          { id: 'capture_completeness_external_ocr_unavailable', details_excerpt: 'OCR 引擎缺失', suggestion: '修环境' },
-          { id: 'checker_crash', classification: 'framework_bug', blocking_class: 'framework_internal', details_excerpt: 'TypeError secret', suggestion: '改产品绕过' },
-        ],
-      } as never);
-      if (!text.includes('capture_completeness_external')) throw new Error('agent_fixable 丢失');
-      if (!/legacy human-only classification; revalidate/.test(text)) throw new Error('legacy human_only 未标注重验');
-      if (/fidelity_deferrals_human_sign \[/.test(text) || text.includes('须真人签字')) {
-        throw new Error('human_only 详情不得进入回喂正文');
-      }
-      // post-impl review P2#8：toolchain_blocked 同样不得回喂（agent 修不了环境）
-      if (!/parked, environment\/toolchain/.test(text)) throw new Error('toolchain 未标注 parked');
-      if (text.includes('OCR 引擎缺失') || text.includes('修环境')) {
-        throw new Error('toolchain 详情不得进入回喂正文');
-      }
-      if (!/parked, framework/.test(text)) throw new Error('framework 未标注 parked');
-      if (text.includes('TypeError secret') || text.includes('改产品绕过')) throw new Error('framework 详情不得回喂 agent');
     },
   },
   {

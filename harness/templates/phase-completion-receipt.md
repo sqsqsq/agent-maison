@@ -7,7 +7,7 @@
 #
 # 字段来源：feature/phase = CLI；agent_model/agent_runtime = adapter 与环境；claimed_completion_at = 生成时刻；
 # claimed_completion_commit_sha = summary.source_commit_sha；claimed_attempt_id = closure 上下文投影（非 goal 留空）；
-# verifier_subagent = summary.verifier_report 指向的 verifier.report.<subject>.md；
+# verifier = 当前或经核实沿用的 verifier.report.<subject>.md；
 # testing_run_artifacts（仅 testing）= 权威 run 目录的 trace/report 与 app 快照缓存目录。
 
 receipt_schema: "2.1"
@@ -19,12 +19,9 @@ agent_runtime: "<adapter>"
 claimed_completion_at: "<ISO 8601，生成时刻>"
 claimed_completion_commit_sha: "<summary.source_commit_sha>"
 claimed_attempt_id: ""
-verifier_subagent:
-  invoked_via: "Task(subagent_type=verifier)"
-  prompt_template: "framework/harness/prompts/verify-<phase>.md"
+verifier:
   report_path: "<summary.verifier_report，即 doc/features/<feature>/<phase>/reports/verifier.report.<subject>.md 或空>"
   verdict: "<PASS | FAIL | 空>"
-  ran_at: ""
 testing_run_artifacts:
   hylyre_run_exit_code: 0
   hylyre_report_path: "<权威 run 的 hylyre/test-report.md>"

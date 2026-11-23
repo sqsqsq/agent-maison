@@ -72,7 +72,7 @@ function prepare(f: ReturnType<typeof fixture>) {
   const ctx = f.context('coding'), check = checkCodingExistingTestPreserved(ctx)[0];
   assert(check.affected_files?.includes(UT_BASELINE_TEST)); assert.equal(check.repair_owner, undefined);
   const plan = resolveVerifierPlan({ phase: 'coding', track: 'full', runtimeMode: 'goal', policy: { verifier: 'required' },
-    workflowVerifierPrompt: workflowVerifierPrompt(loadWorkflowSpec(FRAMEWORK_ROOT, 'obligation-driven'), 'coding'), adapterHasVerifierSubagent: true });
+    workflowVerifierPrompt: workflowVerifierPrompt(loadWorkflowSpec(FRAMEWORK_ROOT, 'obligation-driven'), 'coding') });
   const codingFile = path.join(FRAMEWORK_ROOT, 'harness/scripts/check-coding.ts');
   const producer = new Module(codingFile, module);
   producer.filename = codingFile;

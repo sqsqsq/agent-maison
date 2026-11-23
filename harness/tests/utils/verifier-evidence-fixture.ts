@@ -42,6 +42,7 @@ export interface PublishFixtureVerifierEvidenceOptions {
   echoSubjectId?: string;
   /** 不去动 summary.json（用于「subject 缺席」类负例） */
   skipSummaryPatch?: boolean;
+  draftPath?: string;
   /** 写进 summary 的 subject 与报告文件名不同（迟到 / 错位负例） */
   summarySubjectId?: string;
   /** 只写终态块、不写正文——复现「调用方没写全文」的坏形态 */
@@ -104,8 +105,8 @@ export function publishFixtureVerifierEvidence(
     ? `${block}\n`
     : `${body}\n${block}\n${opts.duplicateBlock ? `\n${block}\n` : ''}`;
 
-  const mdPath = path.join(opts.reportsDir, verifierReportMdFilename(subjectId));
-  fs.mkdirSync(opts.reportsDir, { recursive: true });
+  const mdPath = opts.draftPath ?? path.join(opts.reportsDir, verifierReportMdFilename(subjectId));
+  fs.mkdirSync(path.dirname(mdPath), { recursive: true });
   fs.writeFileSync(mdPath, text, 'utf-8');
 
   if (!opts.skipSummaryPatch) {

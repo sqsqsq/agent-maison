@@ -76,19 +76,21 @@
 
 检查PASS/closed不扩大原请求授权；完整交付按已有授权由同一协调器持续到原终点，不在phase边界重复确认或派冷作者。专项请求仍止于本次职责。确认与实际授权规则见 user-confirmation-ux §8。
 
-## §4.1 主 agent 与 verifier 子 agent 的职责切分（明示授权，反误读全文）
+## 独立阶段核验
 
-本节作者指该工作单元的专用作者；主会话只接入、观察和呈现。独立核验按实际request/material另启独立上下文，不继承作者SID，不写产品。正式报告由原writer接收，当前材料未变复用原结论；新拒修补入真实材料后再核，不重跑无影响工具。
+本节是全局入口 §4.1 的执行约定。阶段执行者有权按职责运行 `harness-runner.ts --phase <phase> --feature <feature>`，读取原脚本报告及 NEXT。完整交付由原 Goal 协调器推进，主会话只转交、观察和呈现。
 
-> 弱模型经常把"verifier 子 agent 执行 verify-*.md"误读为"任何 harness 类的事都不该主 agent 干"。本节是反误读的明示授权，BLOCKER 级，必须遵守：
+1. **完整交付**：作者遇到待核时交回脚本状态、原 request 路径及报告目标，保持当前材料供核验。有人在场时，主会话在已有 NEXT 请求上执行 `execute_command`，已绑定则用 `observe_command` 续等。无人值守由后台运行时持有同一次调用。独核拒绝时由协调器带原报告和发现交回原作者，按可用的原会话续作。
+2. **单阶段直跑**：NEXT 指示待核时，在当前任务授权内从客户端工具运行下列命令并等待交回。首次派发按[阶段核验的模型来源](stage-verifier-model.md)转交本轮模型。工具限时或断连后，重跑同一条命令即可续等；已绑定的调用使用原模型，已采纳的结果直接返回。无人值守的单阶段调用者使用同一入口。明确取消时在原命令追加 `--cancel-verifier`。用户明确要求恢复已取消或过期的原调用时，追加 `--resume-verifier <invoke_id>`。原任务截止已到时同时传入用户新授权的 `--user-deadline-at <UTC timestamp>`。
 
-1. **结构级 harness**（`framework/harness/harness-runner.ts`）：必须由主 agent 自己执行。它会自动调用 `hvigor` 编译、各阶段 `check-*.ts` 等，不得借口"等 verifier"或"等用户"跳过。主 agent 在阶段产物完成后，第一时间通过 Shell 工具运行该命令，读取退出码与报告文件。
-2. **语义级 verify**（`framework/harness/prompts/verify-*.md`）：在结构级 harness PASS 之后，由独立 verifier 子 agent 执行；该阶段执行者必须主动通过 Task 工具触发 verifier（`subagent_type: verifier`），不得仅"提示用户去跑"或"等用户启动"。**Task prompt = harness 写出的短 request JSON 整段**（plan a9d4e7c2）——`summary.verifier_request` 指向的 `verifier.request.<subject>.json` 就是唯一调用侧凭证，verifier 按其中的 `prompt_path` 自行 Read 磁盘原件（`ai-prompt.md` 可达上百 KB，不过传输面）；手抄、改写字段或在 JSON 前后附加说明 → subject 重算失配 → 阶段不闭环。**报告由你写，不是 verifier 写**（plan d2f7a9c4）：verifier 返回后，把它的回复**原样全文**写入 `summary.verifier_report` 指向的路径（不摘要、不只贴终态块——正文里的发现是 repair candidates 与多模态审查的输入），然后跑 check-receipt。**verifier 是按能力启用的**：harness 没有为该阶段输出 request 就是不适用（policy/workflow/profile 判定），既不要去找也不要补造，闭环不要求它。
-3. AGENTS.md 全文未禁止主 agent 调用 shell/执行命令；空白处一律按"允许"理解。若你以为某条规则限制了你执行命令，请先核对反假设条款。
-4. **生产型（会写/改文件的）子 agent 派发纪律**：framework 不禁止派发写码子 agent，但**不信任其报告**。派发 prompt 最低纪律——前置「先 Read 目标文件验证改造对象存在；不存在立即 STOP 报告，禁止善意改造」；后置「完成后运行自验命令」；报告要求「实际修改文件清单 + 自验命令输出，禁用"应该/可能"模糊词」。**子 agent 报告不构成任何闭环凭证**：主 agent 必须以 `git diff` 对账实际改动后才可声明完成；门禁/凭证责任不可下放（verifier 除外，见上文 2）。
-5. **环境能力判定纪律**：凡断言"环境缺少某工具链"（hvigor/SDK/设备等），必须先运行 framework 探测命令（`detect-deveco.ts --json` / `check-personal-setup.ts --ensure`）并在结论中引用其输出；禁止凭 `command -v`/PATH 检查自报「沙箱无 X」——**未探测 = 未知，不是没有**。遇 `HARNESS_PREFLIGHT` 能力缺口时按其双出口处置：修环境（默认）或经用户确认后诚实停止——停止不放行不绕过，环境修好后用原命令 resume 即可继续（goal 模式重新发起同一请求即重新接入原 run 并重检放行）。
-6. **唯一owner与专用上下文**：完整交付由同一GoalPhaseRuntime推进，会话用next/report，读取并执行原execute_command。每个root/CU/request保专用作者，缺SID时按当前原件重建并披露，不回主上下文施工。只传原件路径/sha和完整当前反馈，不手拼phase队列、不并行两入口推同一任务。--revalidate仅机械检查，不签完成。
-7. **子代理等待纪律**：verifier/phase-executor 同步等待，或先做无关工作；正式 gate 使用返回的时限与清理预留设置工具 timeout，允许等待同一宿主原生后台任务句柄终态。禁止 sleep、自造轮询/等待器和重复 report 催进度；verifier 未返回前不改其材料。按真实 NEXT 和请求原件执行，不读 framework 源码反推门禁。
+   ```bash
+   cd framework/harness && npx ts-node harness-runner.ts --execute-verifier --phase <phase> --feature <feature>
+   ```
+
+3. **签发和报告**：适用性由 profile、workflow 与 evidence policy 决定。签发既覆盖正常 PASS，也覆盖已有实质证据的诊断 FAIL（`run_verifier_for_repair`）。没有 request 时按 NEXT 恢复相关输入或执行条件。执行器先复用有效报告或可恢复原答，再派确有缺项的独立上下文；按原 request 的 `prompt_path` 让 verifier 读取材料，可在 request 前附已签复核范围。执行器在派发、绑定和交回时观察写界，只接收带当前 subject 的合规完整报告。越界报告拒收，实际文件改动交原责任方核对并恢复。作者不另派、不改核验材料、不手写正式报告。独核结论与产品脚本状态分别保留。
+4. **生产型子 agent**：派发时列出真实写界，要求先读取目标，目标不存在时交回缺口，完成后交回实际修改清单与自验命令输出。阶段执行者用 `git diff` 和工具结果对账；正式门禁交原 writer。
+5. **环境能力**：判定 hvigor、SDK 或设备缺口前，先运行对应探测（如 `detect-deveco.ts --json` 或 `check-personal-setup.ts --ensure`）并引用其结果。按 `HARNESS_PREFLIGHT` 处置并保留当前缺口，条件恢复后重进原请求。
+6. **同一 owner 与等待纪律**：保留准确的原请求、身份与 SID；原会话不可续时，由原协调器按原件恢复专用上下文。等待正式核验时使用请求的时限与清理预留设置工具 timeout，可先做无关工作。继续时用原执行或观察命令，禁止另建等待器或重复 report。 `--revalidate` 只进行机械重验。
 
 ### 当前工作与验收证据
 
@@ -177,7 +179,7 @@
    - quote 不出 = 该规则不存在 = 你必须执行该动作。
    - 严禁以"我假设"、"我理解"、"通常这类项目"、"为了安全起见"为由跳过工作流步骤。
    - 典型反例（已发生过）：声称"AGENTS.md 说我不能执行脚本"——但 AGENTS.md 从未写过此规则；这种"假设性自我设限"是软幻觉，违反一次即视为本次任务失败，必须立即承认并执行被跳过的动作。
-   - 与之相对：AGENTS.md §4.1 已明示授权主 agent 执行结构级 harness、调用 verifier 子 agent；被允许的事项不允许借口"我以为不能"绕过。
+   - 与之相对：AGENTS.md §4.1 已明示授权按当前职责执行结构级 harness 和独立核验入口；被允许的事项不允许借口"我以为不能"绕过。
    - **作用域澄清（v2.8 起）**：本条仅约束同一 cli 会话内的"假完成"行为。如果当前会话起始就不在某阶段流程中，只是看到了会话边界表描述的"跨会话遗留 state"提示，不属于本条的约束对象——此时 agent 应继续执行用户当前真实诉求，而不是接管旧任务。换言之：本条防的是"自己漏做了步骤还声称完成"，不是"上一会话留下的尾巴"。
 
 P0 device/both 验收若存在，spec 完整性检查需要可解析的 UI 相关性定义：在 spec.md 的 YAML 中声明 ui_change（非 UI 为 none，既有界面复用为 reuse_only），或在尚无 spec 时提供有效需求输入；ui-spec 文件是否存在不决定适用性。已有 checkpoint 即使界面只复用也继续核验。蓝图投影仅检查已声明内容，不前移 spec 才能补的定义义务。

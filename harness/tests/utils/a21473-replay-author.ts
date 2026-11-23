@@ -276,7 +276,7 @@ export function writeA21473ReplayAuthor(root: string, frameworkRoot: string, con
   assert.equal(runtimeIssues.length, 0, 'author runtime mappings: ' + JSON.stringify(runtimeIssues));
 }
 
-export function answerA21473Verifier(root: string, frameworkRoot: string, context: any): void {
+export function answerA21473Verifier(root: string, frameworkRoot: string, context: any, draftPath: string): string {
   const harnessDir = path.join(frameworkRoot, 'harness'), load = (file: string): any => require(path.join(harnessDir, file));
   const phase = context.phase.replace(/-verifier-format-repair$/, '');
   const reportsDir = load('config').featurePhaseReportsDir(root, context.feature, phase, frameworkRoot);
@@ -301,5 +301,6 @@ export function answerA21473Verifier(root: string, frameworkRoot: string, contex
       if (count>0 && /# fail 0\b/.test(tap) && /# skipped 0\b/.test(tap)) text += '| id | status | severity | 证据 |\n|---|---|---|---|\n| end_to_end_driving | PASS | BLOCKER | Node TAP '+count+'/'+count+'，直接执行OpenCardFlow与真实SQLite、OTP和路由断言 |\n| business_assertion_value | PASS | BLOCKER | 原AC/BD的实际返回值与持久化结果逐条断言，Native范围仍未验证 |\n';
     }
   }
-  publishFixtureVerifierEvidence({projectRoot:root,feature:context.feature,phase,reportsDir,subjectId:request.subject_id,reportText:text,skipSummaryPatch:true});
+  publishFixtureVerifierEvidence({projectRoot:root,feature:context.feature,phase,reportsDir,subjectId:request.subject_id,reportText:text,skipSummaryPatch:true,draftPath:path.resolve(root,draftPath)});
+  return load('scripts/utils/verifier-evidence').verifierReportMdPath(reportsDir, request.subject_id);
 }

@@ -148,7 +148,7 @@ function buildProject(phase: string, opts: ReceiptOpts): { root: string; sha: st
   const mode = opts.goalLedgerRunId ? 'goal' as const : 'interactive' as const;
   const plan = resolveVerifierPlan({ phase, track: 'full', runtimeMode: mode,
     policy: resolveEvidencePolicy('full', { ...goalCtx(phase), mode, can_prompt_user: mode === 'interactive' }, { evidence_profile: opts.evidenceProfile }),
-    workflowVerifierPrompt: workflowVerifierPrompt(workflow, phase), phaseDisabledByProfile: false, adapterHasVerifierSubagent: true, adapterName: 'claude' });
+    workflowVerifierPrompt: workflowVerifierPrompt(workflow, phase), phaseDisabledByProfile: false });
   const summary = writePolicyPacket(root, phase, passScriptReport(phase, root), plan, [], undefined, opts.goalLedgerRunId);
   if (!opts.omitVerifier && summary.verifier_subject_id) {
     publishFixtureVerifierEvidence({ projectRoot: root, reportsDir, feature: 'demo', phase, subjectId: summary.verifier_subject_id, skipSummaryPatch: true });
@@ -287,8 +287,6 @@ function goalBalancedPlan(phase: string) {
     policy,
     workflowVerifierPrompt: workflowVerifierPrompt(spec, phase),
     phaseDisabledByProfile: false,
-    adapterHasVerifierSubagent: true,
-    adapterName: 'claude',
   });
 }
 
@@ -373,8 +371,6 @@ function issueStrictSubject(
     policy: resolveEvidencePolicy('full', goalCtx(phase), {}),
     workflowVerifierPrompt: workflowVerifierPrompt(spec, phase),
     phaseDisabledByProfile: false,
-    adapterHasVerifierSubagent: true,
-    adapterName: 'claude',
   });
   assert(
     plan.mode === 'enabled' && plan.reason === 'policy_required',

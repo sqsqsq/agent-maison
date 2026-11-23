@@ -1500,10 +1500,8 @@ export function readCurrentDispositionInput(opts: CleanPassOptions | CurrentRequ
     if (subject) {
       const summary = asRecord(s.raw);
       const report = typeof summary?.verifier_report === 'string' ? summary.verifier_report : undefined;
-      const signals = summary?.readiness_signals;
-      const diagnosisRequired = phase === 'spec' || phase === 'plan' || Array.isArray(signals) && signals.some(signal =>
-        asRecord(signal)?.id === 'verifier_repair_diagnosis' && asRecord(signal)?.status === 'incomplete');
       const verifier = require('./verifier-evidence') as typeof import('./verifier-evidence');
+      const diagnosisRequired = verifier.verifierDiagnosisRequired(phase, summary);
       const unreadable = verified ? verifier.verifierReportItemGaps({ projectRoot, feature, phase, frameworkRoot: opts.frameworkRoot,
         runId: opts.runId, currentSubject: subject, phaseIssues: current?.phaseIssues, diagnosisRequired,
         resolvedInputs: current?.resolvedInputs ?? (opts.resolvedInputs?.phase === phase ? opts.resolvedInputs : undefined),

@@ -194,7 +194,7 @@ surveyed 过的 5 个层级方案：
 | --------------------- | ----------------------------------------------------- | ------------------------------------------------------- |
 | `trace.schema.json`   | 每次 AI 跑动产出结构化日志，反映痛点                  | `framework/harness/trace/trace.schema.json`             |
 | `gap-notes.template.md` | 人类给 AI 痛点填空模板                              | `framework/harness/trace/gap-notes.template.md`         |
-| verifier 子 agent      | 独立语义评审，防"自己验自己"                          | adapter 模板中的 verifier 定义（实例化路径见 `framework/agents/`）       |
+| 阶段 verifier          | 由独立上下文核实阶段材料                                 | `framework/harness/prompts/verify-*.md` 与签发的 request       |
 | 沙盒试金石            | 正反用例，复现事故和验证修复                          | `doc/features/*-litmus/`                                |
 
 ---

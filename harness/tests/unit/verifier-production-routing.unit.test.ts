@@ -17,6 +17,8 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { execFileSync, spawn } from 'child_process';
+import { setTimeout as delay } from 'timers/promises';
 
 import {
   buildNextLine,
@@ -24,7 +26,7 @@ import {
   outerGoalHarnessWillRerun,
   writeRunSummaryBase,
 } from '../../harness-runner';
-import { featureDir, clearFrameworkConfigCache } from '../../config';
+import { featureDir, clearFrameworkConfigCache, relFeaturesDir } from '../../config';
 import {
   casAcquireRunOwner,
   ensureRunControl,
@@ -48,8 +50,9 @@ import { resolveResumedBudget, loadAuthoritativeEvents } from '../../scripts/uti
 import { buildVerifierMaterialView } from '../../scripts/utils/verifier-material';
 import { computeGateFingerprint } from '../../scripts/utils/gate-fingerprint';
 import { finalizePhaseClosure, preparePhaseRepairFeedback } from '../../scripts/utils/phase-closure-finalizer';
-import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
+import { publishFixtureVerifierEvidence, renderResultBlock } from '../utils/verifier-evidence-fixture';
 import { makeVerifierProject, reportsDirOf, rmDir, writeFile } from '../utils/verifier-project-fixture';
+import { selectExecutionBlock, selectedExecutionBlocks, timeExecutionBlock } from '../utils/unit-case-selection';
 import type { CheckContext, CheckResult, HarnessRunSummary, Phase, ScriptReport, UseCaseBranch } from '../../scripts/utils/types';
 
 export interface UnitCaseResult {
@@ -339,39 +342,6 @@ function caseC_productionAndNextActionRouting(): void {
     }
   }
 
-  // ③ adapter 无审查员 → plan 判 disabled/adapter_has_no_reviewer：零 verifier 产物，
-  //    且**不得**产生任何阻断性 next_action。旧实现在这里判 blocked 并落
-  //    resolve_verifier_provider_then_rerun（spec 阶段甚至被投影成 device_ready_then_rerun_ut），
-  //    整条 full track 在无 hook 的 adapter 上因此不可用（plan d2f7a9c4 D4）。
-  {
-    const { root } = makeVerifierProject();
-    try {
-      const dir = reportsDirOf(root, 'demo', 'review');
-      fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(path.join(dir, 'ai-prompt.md'), '# prompt v1\n', 'utf-8');
-      const s = writeRunSummaryBase(root, scriptReportOf('demo', 'review', root, [OK_CHECK]), FRAMEWORK_ROOT, {
-        verifierPlan: {
-          mode: 'disabled' as const,
-          reason: 'adapter_has_no_reviewer' as const,
-          verifier_prompt: 'prompts/verify-review.md',
-          message: 'test-no-reviewer',
-        },
-      });
-      assert(!s.verifier_request, '无审查员时不得写 request（没人能消费它）');
-      assert(!s.verifier_subject_id && !s.ai_prompt, '无审查员时 verifier 字段整组缺席');
-      assert(
-        s.next_action === 'fill_receipt_then_sync_closure',
-        `无审查员 ∧ 脚本 PASS 应直奔闭环（如实披露而非阻断），实得 ${s.next_action}`,
-      );
-      assert(
-        !String(s.next_action).includes('device_ready') && !String(s.next_action).includes('provider'),
-        '缺审查员绝不能被投影成设备问题或 provider 阻断',
-      );
-    } finally {
-      rmDir(root);
-    }
-  }
-
   // ④ disabled ∧ 脚本 PASS → 零产物，且不得指人去跑一个不存在的 verifier
   {
     const { root } = makeVerifierProject();
@@ -639,11 +609,12 @@ function caseF_consoleGuidanceFollowsNextAction(): void {
     'demo',
   ).join('\n');
   assert(needVerifier.includes(withReq.verifier_request), '需要跑 verifier 时必须给出 request 路径');
-  assert(needVerifier.includes('投给 subagent_type=verifier'), '需要跑 verifier 时必须叫人投 request');
+  assert(needVerifier.includes('--execute-verifier'), '需要跑 verifier 时必须叫人投 request');
   // plan d2f7a9c4：报告由调用方写。指引必须同时给出**写到哪里**——只说"投 request"会让
   // verifier 跑完却没人落盘，闭环侧只看到 report_missing。
   assert(needVerifier.includes(withReq.verifier_report), '必须给出报告落盘路径');
-  assert(/原样|全文/.test(needVerifier), '必须要求原样全文写入，不能只说"写下来"');
+  const goal = buildPassGuidanceLines({ next_action: 'run_verifier_then_receipt', ...withReq }, plan, 'review', 'demo', true).join('\n');
+  assert(goal.includes('当前 Goal runtime') && goal.includes(withReq.verifier_request) && !goal.includes('--execute-verifier'), goal);
 
   // 关键：证据已可复用时**不得**再叫人投 request——这正是与材料寻址契约冲突的那句。
   const reuse = buildPassGuidanceLines(
@@ -653,7 +624,7 @@ function caseF_consoleGuidanceFollowsNextAction(): void {
     'demo',
   ).join('\n');
   assert(
-    !reuse.includes('投给 subagent_type=verifier'),
+    !reuse.includes('--execute-verifier'),
     '当前证据已验真可复用时，控制台不得再要求重跑 verifier（同 subject 重跑只会撞 conflict）',
   );
   assert(reuse.includes('无需重跑 verifier'), '应明说证据可复用');
@@ -677,17 +648,9 @@ function caseF_consoleGuidanceFollowsNextAction(): void {
     'demo',
   ).join('\n');
   assert(findings.includes('修改材料'), 'verifier FAIL 时应指向改材料');
-  assert(!findings.includes('投给 subagent_type=verifier'), 'verifier FAIL 时不得叫人对同 subject 重跑');
+  assert(!findings.includes('--execute-verifier'), 'verifier FAIL 时不得叫人对同 subject 重跑');
 
-  // adapter 无审查员走 disabled 分支：转述 plan 理由 + 直奔闭环。**不得**出现阻断话术。
-  const noReviewer = buildPassGuidanceLines(
-    { next_action: 'fill_receipt_then_sync_closure', verifier_request: undefined, verifier_subject_id: undefined },
-    { message: '当前 adapter 未登记 verifier_subagent' },
-    'review',
-    'demo',
-  ).join('\n');
-  assert(noReviewer.includes('未登记 verifier_subagent'), '无审查员时应转述 plan 的判定理由');
-  assert(noReviewer.includes('--sync-closure'), '无审查员时同样直奔闭环，不阻断');
+
 }
 
 // --------------------------------------------------------------------------
@@ -799,12 +762,12 @@ function caseG_reviewNegativeVerdictProducesDiagnosisRequest(): void {
     const nextLine = buildNextLine(s1, 'review', 'demo');
     assert(nextLine.includes(s1.verifier_request as string), `NEXT 须给 request 路径：${nextLine}`);
     assert(nextLine.includes(s1.verifier_report as string), `NEXT 须给报告落盘路径：${nextLine}`);
-    assert(nextLine.includes('harness-runner.ts --phase review'), `非 goal 须叫调用方自己重跑：${nextLine}`);
+    assert(nextLine.includes('harness-runner.ts --execute-verifier --phase review'), `非 goal 须等待独立核验：${nextLine}`);
     assert(!nextLine.includes('一轮修完全部'), `不得落回通用"先修 blocker"文案：${nextLine}`);
     // goal 外层会重跑时，必须明说"别自己再跑一次"（V7：agent 侧新增 harness 调用数为 0）。
     const goalLine = buildNextLine(s1, 'review', 'demo', { outerGoalRerun: true });
     assert(
-      goalLine.includes('外层') && !goalLine.includes('harness-runner.ts --phase review'),
+      goalLine.includes('当前 Goal runtime') && !goalLine.includes('--execute-verifier'),
       `goal 编排下不得再叫 agent 自跑 harness：${goalLine}`,
     );
 
@@ -1117,7 +1080,7 @@ function caseI_unreadableReportBodyKeepsFormatRepairExit(): void {
         `正文不可采信时不得落回"先修 blocker"，实得 ${s2.next_action}`,
       );
       const nextLine = buildNextLine(s2, 'review', 'demo');
-      assert(nextLine.includes('重写'), `NEXT 须给"按原始回复重写报告"的出口：${nextLine}`);
+      assert(nextLine.includes('原始回复恢复'), `NEXT 须给"按原始回复重写报告"的出口：${nextLine}`);
       assert(!nextLine.includes('一轮修完全部'), `不得把调用方指回修原始 blocker：${nextLine}`);
       assert(s2.verdict === 'FAIL' && s2.closure_status === 'open', '产品仍 FAIL/open');
     } finally {
@@ -1410,7 +1373,7 @@ function caseT1_legacyDeclineThroughDiskAndSummary(): void {
     assert(carried.verifier_subject_id === issued.verifier_subject_id && !carried.verifier_request, '确实进入 carried，无当前 request');
     assert((carried.repair_candidates ?? []).length === 0, '旧 subject 不得因行号归一重确认拒修项');
     const next = buildNextLine(carried, 'review', 'demo');
-    assert(next.includes('CR-001') && next.includes('未签发') && !next.includes('投给 subagent_type=verifier'), `NEXT 须如实保留不可达出口：${next}`);
+    assert(next.includes('CR-001') && next.includes('未签发') && !next.includes('--execute-verifier'), `NEXT 须如实保留不可达出口：${next}`);
     assert(carried.verdict === 'FAIL' && carried.closure_status === 'open', '旧负面结论不能洗绿');
     assert(fs.readFileSync(ledgerPath, 'utf8') === originalLedger && fs.readFileSync(eventsPath, 'utf8') === originalEvents, '消费不得迁移原账本/事件');
     assert(JSON.stringify(resolveResumedBudget(loadAuthoritativeEvents(eventsPath))) === originalBudget, '兼容不重置原预算');
@@ -1498,7 +1461,304 @@ function caseT1_reviewRowDiagnosisHasReachableExit(): void {
   } finally { rmDir(root); }
 }
 
-const CASES: Array<{ name: string; fn: () => void }> = [
+const stageVerifierAdapters = ['claude', 'codeagent', 'codex', 'deepseek-harness', 'cursor', 'opencode'] as const;
+
+async function caseStandaloneExecution(variant: 'pass' | 'resume' | 'machine-fail' | 'outside-write' | 'startup-recovery' | 'supplement' | 'cancelled' | 'expired' | 'tree-kill',
+  adapter: typeof stageVerifierAdapters[number] = 'cursor'): Promise<void> {
+  const { root } = makeVerifierProject();
+  try {
+    const framework = path.join(root, 'framework');
+    const configPath = path.join(root, 'framework.config.json');
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    config.agent_adapter = adapter;
+    config.active_workflow = 'spec-driven';
+    config.paths.state_file = 'doc/.current-phase.json';
+    fs.writeFileSync(configPath, JSON.stringify(config));
+    for (const dir of ['harness', 'agents', 'specs', 'profiles', 'skills', 'templates', 'docs', 'workflows']) {
+      const target = path.join(framework, dir);
+      if (fs.existsSync(target)) fs.renameSync(target, target + '-fixture');
+      fs.symlinkSync(path.join(FRAMEWORK_ROOT, dir), target, process.platform === 'win32' ? 'junction' : 'dir');
+    }
+
+    const phase = 'review';
+    const feature = 'demo';
+    const diagnostic = variant === 'machine-fail' || variant === 'supplement';
+    if (diagnostic) {
+      prepareReviewCodingDomain(root);
+      writeFile(path.join(root, 'doc/features/demo/review/review-report.md'), REVIEW_REPORT_NEGATIVE);
+    }
+    const reportsDir = reportsDirOf(root, feature, phase);
+    const checks = diagnostic ? [REPORT_VALIDITY_OK, NEGATIVE_VERDICT_CLOSURE_FAIL] : [OK_CHECK];
+    const report = scriptReportOf(feature, phase, root, checks);
+    const { resolveCapabilityResolutionEntryInput } = await import('../../scripts/utils/capability-resolution-entry-input');
+    const { resolveCapabilityInputs } = await import('../../scripts/utils/capability-resolution');
+    const entry = resolveCapabilityResolutionEntryInput({ projectRoot: root, frameworkRoot: framework, feature, phase,
+      featuresDir: relFeaturesDir(root) });
+    const resolvedInputs = resolveCapabilityInputs({ projectRoot: root, frameworkRoot: framework, feature, phase, track: 'full', ...entry }).inputs;
+    writeFile(path.join(reportsDir, 'script-report.json'), JSON.stringify(report));
+    const { prepareFixtureVerifierMaterial } = await import('../helpers/goal-run-driver');
+    const options = prepareFixtureVerifierMaterial({ projectRoot: root, frameworkRoot: FRAMEWORK_ROOT, report,
+      options: { verifierPlan: { mode: 'enabled', reason: 'policy_required', verifier_prompt: 'prompts/verify-review.md',
+        message: 'strict fixture' }, resolvedInputs, factsContext: entry.factsContext } });
+    const summary = writeRunSummaryBase(root, report, FRAMEWORK_ROOT, options);
+    const subject = summary.verifier_subject_id!;
+    assert(Boolean(subject), 'production checker writer must issue this request');
+    const { standaloneVerifierRunDir, sessionEvents } = await import('../../scripts/utils/session-execution-handoff');
+    const runDir = standaloneVerifierRunDir(reportsDir, subject);
+
+    const nativeDir = path.join(root, 'native-bin');
+    const script = path.join(nativeDir, 'cursor-fixture.cjs');
+    const release = path.join(root, 'native-release');
+    const nativeCalls = path.join(root, 'native-calls.jsonl');
+    const nativeBindingWaitMs = 120_000;
+    const interruptingWaiter = ['resume', 'cancelled', 'tree-kill'].includes(variant);
+    const waitForNativeBinding = async (): Promise<{ invoke_id: string; pid: number }> => {
+      const log = path.join(runDir, 'detach.log');
+      const until = Date.now() + nativeBindingWaitMs;
+      while (Date.now() < until) {
+        const bound = sessionEvents(runDir).find(event => event.type === 'agent_process_bound') as
+          { invoke_id?: string; pid?: number } | undefined;
+        if (bound?.invoke_id && bound.pid && fs.existsSync(nativeCalls)) return { invoke_id: bound.invoke_id, pid: bound.pid };
+        if (fs.existsSync(log) && fs.readFileSync(log, 'utf8').includes('[verifier]')) break;
+        await delay(100);
+      }
+      const detail = fs.existsSync(log) ? fs.readFileSync(log, 'utf8') : '';
+      throw new Error('the original verifier did not start with a native binding\n' + detail);
+    };
+    const anthropic = adapter === 'claude' || adapter === 'codeagent';
+    const model = adapter === 'opencode' ? 'fixture/fixture-model' : adapter === 'codex' ? 'gpt-6.1-sol'
+      : anthropic ? 'claude-opus-5-5' : 'fixture-model';
+    const provider = adapter === 'cursor' ? 'cursor' : adapter === 'codex' ? 'openai' : anthropic ? 'anthropic' : 'fixture';
+    const openCodeSource = path.join(root, 'native-home', '.config', 'opencode');
+    const dshSource = path.join(root, 'native-home', 'profiles', 'desktop', 'cordis.patch.yml');
+    const dshProviders = { fixture: { baseURL: 'https://fixture.invalid/v1', apiKeyEnv: 'FIXTURE_KEY',
+      models: [{ id: model, contextWindow: 1000, input: ['text'] }] } };
+    const dshRoute = { id: 'llm-pi-ai', config: { providers: dshProviders } };
+    if (adapter === 'deepseek-harness') writeFile(dshSource, JSON.stringify([dshRoute]));
+    if (adapter === 'opencode') writeFile(path.join(openCodeSource, 'opencode.json'), '{}');
+    const nativeConfig = path.join(root, 'native-home', adapter === 'codex' ? 'config.toml' : 'settings.json');
+    if (adapter === 'codex' || anthropic) writeFile(nativeConfig, adapter === 'codex' ? '' : '{}');
+    const modelOptions = adapter === 'cursor' ? [] : ['--adapter-model-config',
+      adapter === 'opencode' ? openCodeSource : adapter === 'deepseek-harness' ? dshSource : nativeConfig];
+    const binary = { cursor: 'cursor-agent', 'deepseek-harness': 'dsh', opencode: 'opencode', claude: 'claude', codeagent: 'codeagentcli', codex: 'codex' }[adapter];
+    const reportBody = (diagnostic ? REVIEW_VERIFIER_REPORT : '# 审查结论\n语义一致性复核通过。\n')
+      + renderResultBlock(subject, 'PASS', 0) + '\n';
+    const incomplete = '# 已有负面发现\n原答缺少问题逐项裁决。\n' + renderResultBlock(subject, 'FAIL', 1) + '\n';
+    const source = [
+      "const fs = require('fs'); const path = require('path');",
+      "if (process.argv.includes('--list-models')) { console.log('fixture-model'); process.exit(0); }",
+      "if (process.argv.includes('--dump-config')) { console.log(" + JSON.stringify(JSON.stringify([
+        { id: 'agent-default-model', config: { provider, model } },
+        { id: 'permission', config: { defaultPreset: 'danger-full-access' } }, dshRoute,
+      ])) + "); process.exit(0); }",
+      "if (process.argv.includes('debug')) { console.log('{}'); process.exit(0); }",
+      "if (process.argv.includes('models')) { console.log(" + JSON.stringify(JSON.stringify({ providerID: provider, id: 'fixture-model' }, null, 2))
+        + "); process.exit(0); }",
+      "if (process.argv.includes('app-server') || process.argv.includes('--input-format')) {",
+      "  const lines = require('readline').createInterface({ input: process.stdin });",
+      "  lines.on('line', line => { const request = JSON.parse(line);",
+      "    if (request.id === 0) console.log(JSON.stringify({id: 0, result: {}}));",
+      "    if (request.id === 1) console.log(JSON.stringify({id: 1, result: {data: [{model: " + JSON.stringify(model) + "}]}}));",
+      "    if (request.request_id === 'models') console.log(JSON.stringify({type: 'control_response', response: {request_id: 'models', response: {models: [{resolvedModel: " + JSON.stringify(model) + "}]}}}));",
+      "  });",
+      "} else {",
+      "let prompt = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', data => { prompt += data; });",
+      "process.stdin.on('end', () => {",
+      "  const request = JSON.parse(prompt.slice(prompt.lastIndexOf('\\n{') + 1));",
+      "  const target = prompt.match(/完整回复原样写入 (.+?)。/)[1];",
+      "  const material = fs.readFileSync(request.prompt_path, 'utf8'); if (!material.length) process.exit(2);",
+      "  const firstReply = !fs.existsSync(" + JSON.stringify(nativeCalls) + ");",
+      "  fs.appendFileSync(" + JSON.stringify(nativeCalls) + ", JSON.stringify({subject: request.subject_id, model: JSON.parse(process.env.MAISON_GOAL_MODEL_PIN).value}) + '\\n');",
+      "  const watchdog = setTimeout(() => process.exit(3), " + (interruptingWaiter ? nativeBindingWaitMs : 30000) + ");",
+      "  const clock = setInterval(() => { if (!fs.existsSync(" + JSON.stringify(release) + ")) return;",
+      "    clearInterval(clock); clearTimeout(watchdog);",
+      "    fs.writeFileSync(path.resolve(target), " + (variant === 'supplement' ? "(firstReply ? " + JSON.stringify(incomplete)
+        + " : " + JSON.stringify(reportBody) + ")" : JSON.stringify(reportBody)) + ");",
+      ...(variant === 'outside-write' ? ["    fs.writeFileSync(" + JSON.stringify(path.join(root, summary.verifier_report!))
+        + ", " + JSON.stringify(reportBody) + ");"] : []),
+      "    console.log(JSON.stringify(" + JSON.stringify(adapter === 'codex' ? { type: 'turn.completed' }
+        : { type: 'result', subtype: 'success', is_error: false, result: 'complete' }) + "));",
+      "  }, 30);",
+      "});",
+      "}",
+    ].join('\n');
+    writeFile(script, source);
+    if (process.platform === 'win32') {
+      writeFile(path.join(nativeDir, binary + '.cmd'), '@echo off\nset "_prog=node"\n"%_prog%" "%~dp0cursor-fixture.cjs" %*\n');
+    } else {
+      const shim = path.join(nativeDir, binary);
+      writeFile(shim, '#!/bin/sh\nexec "' + process.execPath + '" "' + script + '" "$@"\n');
+      fs.chmodSync(shim, 0o755);
+    }
+    const call = (model: string, timeout?: number, projectRoot = root, extra: string[] = [], onLaunch?: (pid: number) => void) => new Promise<{ code: number | null; output: string }>((resolve, reject) => {
+      const argv = ['-r', require.resolve('ts-node/register/transpile-only'), path.join(HARNESS_ROOT, 'harness-runner.ts'),
+        '--execute-verifier', '--project-root', projectRoot, '--phase', phase, '--feature', feature,
+        '--adapter-model', model, '--adapter-provider', provider, ...modelOptions,
+        ...(timeout ? ['--verifier-wait-timeout-ms', String(timeout)] : []), ...extra];
+      const child = spawn(process.execPath, argv, { cwd: HARNESS_ROOT, windowsHide: true,
+        stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, PATH: nativeDir + path.delimiter + process.env.PATH,
+          TS_NODE_PROJECT: path.join(HARNESS_ROOT, 'tsconfig.json'),
+          ...(anthropic ? { ANTHROPIC_BASE_URL: 'https://api.anthropic.com', CLAUDE_CODE_USE_BEDROCK: '0',
+            CLAUDE_CODE_USE_VERTEX: '0', CLAUDE_CODE_USE_FOUNDRY: '0' } : {}),
+        } });
+      if (child.pid) onLaunch?.(child.pid);
+      let output = '';
+      child.stdout.on('data', bytes => { output += bytes.toString(); });
+      child.stderr.on('data', bytes => { output += bytes.toString(); });
+      child.on('error', reject);
+      child.on('close', code => resolve({ code, output }));
+    });
+    if (variant === 'startup-recovery' || variant === 'expired') {
+      const { adapterModelBinding } = await import('../../scripts/utils/adapter-model');
+      const { stageVerifierDraftPath, writePhaseExecutionRequestMaterial } = await import('../../scripts/utils/session-execution-handoff');
+      const { readSignedStageVerifier, renderStageVerifierRepairInstruction, protectStageVerifierInputs } = await import('../../scripts/utils/stage-verifier-execution');
+      const { capturePhaseInvocationSnapshot, resolvePhaseWriteBoundary } = await import('../../scripts/utils/phase-write-boundary');
+      const stage = { projectRoot: root, frameworkRoot: framework, feature, phase };
+      const signed = readSignedStageVerifier(stage)!;
+      const label = phase + '-verifier-format-repair';
+      const invokeId = label + '-i1';
+      const draft = stageVerifierDraftPath(runDir, phase, invokeId);
+      const boundary = resolvePhaseWriteBoundary({ ...stage, executionRole: 'verifier', verifierResultPath: draft,
+        phaseOrder: [phase], track: 'full', profileDir: path.join(framework, 'profiles', 'generic'), productLayerDirs: ['app'] });
+      protectStageVerifierInputs(boundary, signed, draft);
+      const snapshotOptions = { runtimeExcluded: [runDir] };
+      fs.mkdirSync(runDir, { recursive: true });
+      writePhaseExecutionRequestMaterial({
+        context: { ...stage, phase: label, runId: subject, workflowId: 'spec-driven', track: 'full', chain: [phase],
+          attemptId: 'i1', owner: { run_id: subject, owner_id: 'prepared-original-owner', epoch: 1, kind: 'process' },
+          runDir, reportDir: path.relative(root, runDir), adapter, adapterModel: adapterModelBinding({ adapter, provider, value: model }),
+          ...(variant === 'expired' ? { user_deadline_at: new Date(Date.now() - 1000).toISOString() } : {}),
+          instruction: renderStageVerifierRepairInstruction({ requestText: signed.requestText, reportRel: path.relative(root, draft),
+            diagnosis: '', itemFocus: '', formatFeedback: '' }),
+          runtimeFacts: { receiptRequired: false, resume: false, successor: false }, childEnv: {} },
+        invokeId, chainPhase: phase, purpose: 'verifier_format_repair', issuedAt: new Date().toISOString(), gateTimeoutMs: 0, cleanupReserveMs: 0,
+        preSnapshot: capturePhaseInvocationSnapshot(boundary, snapshotOptions), writeBoundary: boundary, snapshotOptions,
+      });
+      fs.writeFileSync(release, '');
+      const extra: string[] = [];
+      if (variant === 'expired') {
+        const oldCommand = await call('changed-ui-choice');
+        const newDeadline = new Date(Date.now() + 180000).toISOString();
+        const missingConsent = await call('changed-ui-choice', undefined, root, ['--user-deadline-at', newDeadline]);
+        assert([oldCommand, missingConsent].every(call => call.output.includes('原任务截止已到') && call.code !== 0)
+          && !fs.existsSync(nativeCalls), JSON.stringify([oldCommand, missingConsent]));
+        extra.push('--resume-verifier', invokeId, '--user-deadline-at', newDeadline);
+      }
+      const result = await call('changed-ui-choice', undefined, root, extra);
+      const events = sessionEvents(runDir);
+      assert(result.output.includes('独立核验 PASS'), result.output);
+      assert(events.some(event => event.type === 'agent_invoke_end' && event.invoke_id === invokeId && event.interrupted === true)
+        && events.filter(event => event.type === 'agent_process_bound').length === 1, JSON.stringify(events));
+      assert(JSON.parse(fs.readFileSync(nativeCalls, 'utf8').trim()).model === model, 'recovered execution keeps the committed model');
+      return;
+    }
+    if (variant === 'tree-kill') {
+      let waiterPid: number | undefined;
+      const first = call(model, undefined, root, [], pid => { waiterPid = pid; });
+      const bound = await waitForNativeBinding();
+      assert(!!waiterPid, 'the test must know its own waiter PID to interrupt it');
+      if (process.platform === 'win32') {
+        execFileSync('taskkill.exe', ['/PID', String(waiterPid), '/T', '/F'], { windowsHide: true, encoding: 'utf8' });
+      } else process.kill(waiterPid!);
+      const stopped = await first;
+      assert(stopped.code !== 0, stopped.output);
+      const { isPidAlive } = await import('../../scripts/utils/goal-run-lock');
+      assert(isPidAlive(bound.pid), 'the original native process binding must survive the wait process tree');
+      const resumed = call('changed-ui-choice');
+      fs.writeFileSync(release, '');
+      const observed = await resumed;
+      const events = sessionEvents(runDir);
+      assert(observed.output.includes('独立核验 PASS') && events.filter(event => event.type === 'agent_process_bound').length === 1
+        && events.find(event => event.type === 'phase_verdict')?.invoke_id === bound.invoke_id, JSON.stringify({ observed, events }));
+      return;
+    }
+    if (variant === 'cancelled') {
+      const first = call(model);
+      const bound = await waitForNativeBinding();
+      const cancellation = await call(model, undefined, root, ['--cancel-verifier']);
+      const returned = await first;
+      const retry = await call('changed-ui-choice');
+      const stopped = sessionEvents(runDir);
+      const { isPidAlive } = await import('../../scripts/utils/goal-run-lock');
+      assert(!isPidAlive(bound.pid) && stopped.some(event => event.type === 'agent_invoke_end'
+        && event.invoke_id === bound.invoke_id && event.interrupted === true), JSON.stringify(stopped));
+      assert(cancellation.code !== 0 && returned.code !== 0 && retry.output.includes('已按用户指令取消')
+        && stopped.filter(event => event.type === 'agent_process_bound').length === 1
+        && !stopped.some(event => event.type === 'phase_verdict'), JSON.stringify({ cancellation, returned, retry, stopped }));
+      fs.writeFileSync(release, '');
+      const enabled = await call('changed-ui-choice', undefined, root, ['--resume-verifier', bound.invoke_id]);
+      const actual = sessionEvents(runDir);
+      assert(enabled.output.includes('独立核验 PASS') && actual.filter(event => event.type === 'agent_process_bound').length === 2,
+        JSON.stringify({ enabled, actual }));
+      return;
+    }
+    if (variant === 'supplement') {
+      fs.writeFileSync(release, '');
+      const first = await call(model);
+      const reportPath = path.join(root, summary.verifier_report!);
+      assert(first.code !== 0 && fs.readFileSync(reportPath, 'utf8') === incomplete
+        && !sessionEvents(runDir).some(event => event.type === 'phase_verdict'), first.output);
+      const second = await call('changed-ui-choice');
+      const history = sessionEvents(runDir);
+      assert(second.code !== 0 && second.output.includes('独立核验 PASS') && second.output.includes('CR-001')
+        && history.filter(event => event.type === 'agent_process_bound').length === 2
+        && history.filter(event => event.type === 'phase_verdict').length === 1, JSON.stringify({ second, history }));
+      assert(fs.readFileSync(reportPath, 'utf8') === reportBody, 'the complete supplement replaces its own incomplete predecessor');
+      return;
+    }
+    if (variant !== 'resume') {
+      fs.writeFileSync(release, '');
+      const result = await call(model);
+      const events = sessionEvents(runDir);
+      assert(fs.existsSync(nativeCalls) && JSON.parse(fs.readFileSync(nativeCalls, 'utf8').trim()).model === model, result.output);
+      assert(events.filter(event => event.type === 'agent_invoke_start').length === 1, JSON.stringify({ result, events }));
+      if (variant === 'pass') {
+        assert(events.filter(event => event.type === 'agent_process_bound').length === 1
+          && events.filter(event => event.type === 'phase_verdict' && event.verdict === 'PASS').length === 1
+          && result.output.includes('独立核验 PASS'), JSON.stringify({ result, events }));
+        return;
+      }
+      assert(result.code !== 0, result.output);
+      if (variant === 'machine-fail') {
+        assert(summary.verdict === 'FAIL' && summary.next_action === 'run_verifier_for_repair', JSON.stringify(summary));
+        assert(events.some(event => event.type === 'phase_verdict' && event.verdict === 'FAIL')
+          && result.output.includes('独立核验 PASS') && result.output.includes('CR-001') && result.output.includes('coding'), result.output);
+      } else {
+        assert(events.some(event => event.type === 'phase_write_violation') && !events.some(event => event.type === 'phase_verdict'), JSON.stringify(events));
+        assert(fs.existsSync(path.join(root, summary.verifier_report!)), 'the offending public write remains available as original evidence');
+        const { loadVerifierEvidence } = await import('../../scripts/utils/verifier-evidence');
+        const loaded = loadVerifierEvidence(root, feature, phase, { frameworkRoot: framework });
+        assert(!loaded.ok && loaded.code === 'report_unaccepted', JSON.stringify(loaded));
+      }
+      return;
+    }
+    const first = call('fixture-model');
+    const concurrentStart = call('fixture-model');
+    const original = await waitForNativeBinding();
+    const interrupted = await call('fixture-model', 750);
+    assert(interrupted.code === 2 && interrupted.output.includes(original.invoke_id), JSON.stringify(interrupted));
+    assert(!fs.existsSync(path.join(root, summary.verifier_report!)), 'waiting timeout precedes the native handback');
+    const alias = path.join(root, 'project-alias');
+    fs.symlinkSync(root, alias, process.platform === 'win32' ? 'junction' : 'dir');
+    const second = call('changed-ui-choice', undefined, alias);
+    const third = call('parallel-observer');
+    fs.writeFileSync(release, '');
+    const outcomes = await Promise.all([first, concurrentStart, second, third]);
+    assert(outcomes.every(item => item.output.includes('独立核验 PASS')), JSON.stringify(outcomes));
+    const events = sessionEvents(runDir);
+    assert(events.filter(event => event.type === 'agent_invoke_start').length === 1
+      && events.filter(event => event.type === 'phase_verdict').length === 1
+      && events.find(event => event.type === 'phase_verdict')?.invoke_id === original.invoke_id, JSON.stringify(events));
+    const native = fs.readFileSync(nativeCalls, 'utf8').trim().split(/\r?\n/).map(row => JSON.parse(row));
+    assert(native.length === 1 && native[0].subject === subject && native[0].model === 'fixture-model', JSON.stringify(native));
+    assert(fs.existsSync(path.join(root, summary.verifier_report!)), 'the original worker publishes the canonical report');
+  } finally {
+    clearFrameworkConfigCache();
+    rmDir(root);
+  }
+}
+
+const CASES: Array<{ name: string; fn: () => void | Promise<void> }> = [
   { name: 'T1 旧行号拒修真实事件/账本 load→summary→runtime 共享状态与原预算', fn: caseT1_legacyDeclineThroughDiskAndSummary },
   { name: 'T1 review 行级诊断只投已签发当前 request，合法 refuted/unclear 与混合资格分开', fn: caseT1_reviewRowDiagnosisHasReachableExit },
   { name: 'A workflow 声明的 verifier_prompt 决定实际装配的模板；缺文件明确失败、无 fallback', fn: caseA_declaredTemplateIsTheOneAssembled },
@@ -1512,18 +1772,33 @@ const CASES: Array<{ name: string; fn: () => void }> = [
   { name: 'S1 编译与设备对账事实经实际装配进入提示，测试产品 FAIL 和对账 FAIL 均保留', fn: caseHistoricalMachineFactsInPrompt },
   { name: 'I D3/D4 必需检查项缺失/冲突 → 报告格式修复出口，不落回"先修 blocker"、不指人改产品', fn: caseI_unreadableReportBodyKeepsFormatRepairExit },
   { name: 'J D2.5 外层重跑判据：owner 须 active 且带 attempt 身份；released/orphaned/quiescing 回落自跑', fn: caseJ_outerGoalRerunRequiresLiveOrchestration },
+  { name: '9e46 standalone CLI observes one original across interrupted wait and concurrent reentry', fn: () => caseStandaloneExecution('resume') },
+  { name: '9e46 standalone resumes an original saved before native startup', fn: () => caseStandaloneExecution('startup-recovery') },
+  { name: '9e46 standalone verifier outside write stays inadmissible after worker returns', fn: () => caseStandaloneExecution('outside-write') },
+  { name: '9e46 standalone supplement completes a bound incomplete FAIL exactly once', fn: () => caseStandaloneExecution('supplement') },
+  { name: '9e46 standalone cancelled original waits for explicit authorization before dispatch', fn: () => caseStandaloneExecution('cancelled') },
+  { name: '9e46 standalone expired original requires explicit new deadline', fn: () => caseStandaloneExecution('expired') },
+  ...stageVerifierAdapters.flatMap(adapter => (['pass', 'machine-fail'] as const).map(result => ({
+    name: '9e46 standalone adapter matrix ' + adapter + ' ' + result, fn: () => caseStandaloneExecution(result, adapter),
+  }))),
+  { name: '9e46 standalone native binding survives the OpenCode waiter process tree', fn: () => caseStandaloneExecution('tree-kill', 'opencode') },
   { name: 'K V7（B05）：真实 verify-ut.md 物化后的整份 prompt 三处数量口径一致（数量不再是判据）', fn: caseK_materializedUtPromptCountingRule },
 ];
 
 export async function runAll(): Promise<UnitCaseResult[]> {
   const results: UnitCaseResult[] = [];
   for (const c of CASES) {
+    if (!selectExecutionBlock(c.name)) continue;
+    const done = timeExecutionBlock(c.name);
     try {
-      c.fn();
+      await c.fn();
       results.push({ name: c.name, ok: true });
     } catch (err) {
       results.push({ name: c.name, ok: false, error: (err as Error).message });
-    }
+    } finally { done(); }
   }
   return results;
 }
+
+export const runSelectedCases = (selector?: string) => selectedExecutionBlocks(runAll, selector);
+export const listCaseGroups = async () => (await selectedExecutionBlocks(runAll, undefined, true)).groups;

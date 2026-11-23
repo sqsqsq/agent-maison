@@ -72,14 +72,17 @@ export function isLockStale(
   return heartbeatStale;
 }
 
+// Readers must only see a complete record, and the final name must never replace another owner.
+export function writeFileExclusiveAtomic(file: string, content: string): void {
+  const temporary = file + '.' + randomUUID() + '.tmp';
+  fs.writeFileSync(temporary, content, { encoding: 'utf8', flag: 'wx' });
+  try { fs.linkSync(temporary, file); }
+  finally { fs.unlinkSync(temporary); }
+}
+
 function writeLockFile(lockPath: string, record: LockRecord): void {
   fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-  const fd = fs.openSync(lockPath, 'wx');
-  try {
-    fs.writeFileSync(fd, JSON.stringify(record, null, 2) + '\n', 'utf-8');
-  } finally {
-    fs.closeSync(fd);
-  }
+  writeFileExclusiveAtomic(lockPath, JSON.stringify(record, null, 2) + '\n');
 }
 
 const MAX_LOCK_ACQUIRE_ATTEMPTS = 3;
@@ -144,6 +147,7 @@ export function tryAcquireLock(
   }
 
   if (isLockStale(existing, staleMs)) {
+    if (readLockRecord(lockPath)?.ownerId !== existing.ownerId) return null;
     try {
       fs.unlinkSync(lockPath);
     } catch {

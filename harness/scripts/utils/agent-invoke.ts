@@ -1858,6 +1858,7 @@ export async function invokeAgentHeadless(
       opts = { ...opts, extraEnv: { ...opts?.extraEnv, [MAISON_GOAL_MODEL_PIN_ENV]: plan.modelBinding! } };
       if (['claude', 'codeagent'].includes(pin.adapter) && pin.provider) {
         opts.extraEnv!.CLAUDE_CONFIG_DIR = path.dirname(pin.config_source!);
+        if (pin.adapter === 'codeagent') opts.extraEnv!.CODEAGENT3_CONFIG_DIR = path.dirname(pin.config_source!);
         assertClaudeModelRoute(pin, cwd, buildAgentSpawnEnv(process.env, opts.extraEnv, pin.adapter, plan.readonlyInvocation === true));
         opts.extraEnv!.ANTHROPIC_BASE_URL = pin.provider === 'anthropic' ? 'https://api.anthropic.com' : pin.provider;
       }

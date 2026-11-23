@@ -503,104 +503,37 @@ Enforcement: `harness/scripts/utils/agent-invoke.ts`, `agents/codeagent/adapter.
 - **THEN** `codeagent` returns `{ ok: true }` and `chrys` returns
   `adapter_headless_permission_unsupported` with the verification path
 
-### Requirement: The Claude adapter ships a phase-executor subagent template
+### Requirement: Claude and CodeAgent ship a dedicated author template
 
-`agents/claude/templates/agents/phase-executor.md` SHALL exist and be registered in the adapter's agents list with `update_policy: auto_overwrite`. The template SHALL give the subagent the full tool set, SHALL define its input as the minimal phase entry and SHALL instruct it to run the phase skill, the harness, the verifier when required and finalize, returning only the summary path and the terminal block.
+The shared `agents/claude/templates/agents/phase-executor.md` SHALL be materialized for Claude and CodeAgent with `update_policy: auto_overwrite`. The dedicated author SHALL perform work in its requested boundary and hand back the original outcomes. The coordinating runtime SHALL own dispatch, acceptance of independent verification, and formal closure.
 
-Enforcement: `agents/claude/adapter.yaml`, `agents/claude/templates/agents/phase-executor.md`
+Enforcement: `agents/claude/adapter.yaml`, `agents/codeagent/adapter.yaml`, `agents/claude/templates/agents/phase-executor.md`
 
-#### Scenario: Materialization installs the executor
+#### Scenario: Materialization installs the dedicated author
 
-- **WHEN** a consumer runs framework-init with the Claude adapter
-- **THEN** `.claude/agents/phase-executor.md` is materialized alongside `verifier.md`
+- **WHEN** a consumer runs framework-init with Claude or CodeAgent
+- **THEN** the current `phase-executor.md` SHALL be materialized to that adapter's managed agent directory
 
-### Requirement: An adapter declares whether it can run a verifier subagent
+### Requirement: Transport capability does not set phase verification applicability
 
-The adapter-side verifier declaration SHALL be a single boolean `verifier_subagent` in `agents/<adapter>/adapter.yaml`, meaning "a host run has been observed to dispatch a verifier subagent with this tool" — nothing about runtime mode, transport, or publication mechanism. A missing field SHALL mean `false`.
+The shared phase verifier plan SHALL derive applicability from the profile, workflow and effective evidence policy. A transport or model binding gap SHALL retain the outstanding verification obligation and disclose the actual recovery condition. The same issued request and report contract SHALL apply across adapters.
 
-Nothing else about the verifier is adapter-specific. The shared rule bundle instructs every adapter to dispatch `subagent_type: verifier` with the request JSON delivered verbatim, and the terminal-block contract lives in `harness/prompts/verify-*.md`, rendered into `ai-prompt.md` for whoever reads it. The only remaining question is whether the tool can run a subagent at all.
+#### Scenario: An adapter encountering a transport gap retains the obligation
 
-`true` SHALL NOT be pre-registered on the strength of a materialized rule file. A shared rule being written to disk does not prove the tool loads it: the opencode adapter documents that `.opencode/rules/*` is never auto-loaded, chrys treats its rules as reference-reachable only, and generic is an arbitrary external CLI. Registering those as capable would send every phase into "report missing → re-run → still missing", which is the failure shape this change exists to remove.
+- **WHEN** a full phase requires independent verification, a request is issued, and the current adapter cannot replay the chosen model
+- **THEN** the verifier obligation SHALL remain outstanding and the runtime SHALL expose the actual model replay limitation
 
-Capability SHALL NOT be re-derived from an adapter-name allowlist in TypeScript, from kernel family, from the presence of a subagents template directory, or from a hooks directory.
+### Requirement: UPDATE retires the old managed verifier roles
 
-Enforcement: `agents/adapter-schema.yaml`, `agents/claude/adapter.yaml`, `agents/codeagent/adapter.yaml`, `agents/codex/adapter.yaml`, `harness/scripts/utils/adapter-catalog.ts`, `harness/scripts/utils/verifier-plan.ts`
+New materialization SHALL omit the retired roles. An authorized UPDATE SHALL use `deprecated_artifacts` with `backup_delete` for the exact managed targets `.claude/agents/verifier.md`, `.cac/agents/verifier.md` and `.codex/agents/verifier.toml`. Other roles and user files SHALL remain intact.
 
-#### Scenario: An adapter with an observed subagent channel is capable in every mode
+Enforcement: `agents/claude/adapter.yaml`, `agents/codeagent/adapter.yaml`, `agents/codex/adapter.yaml`, `harness/scripts/utils/init-task-executor.ts`
 
-- **WHEN** an adapter declares `verifier_subagent: true` and a `full` phase resolves the evidence policy to `required`
-- **THEN** the plan SHALL be `enabled` in `interactive`, `headless` and `goal` alike, and the same request/report protocol SHALL apply in all three
+#### Scenario: UPDATE backs up the exact legacy artifact once
 
-#### Scenario: An undeclared adapter discloses rather than blocks
-
-- **WHEN** the active adapter carries no `verifier_subagent`, or declares it `false`
-- **THEN** the plan SHALL be `disabled` with reason `adapter_has_no_reviewer`, no request SHALL be issued, and the closure gate SHALL pass while disclosing `not_reviewed`
-
-#### Scenario: A materialized rule file is not a capability claim
-
-- **WHEN** an adapter receives the shared rule bundle that describes verifier dispatch but has no observed subagent run
-- **THEN** capability resolution SHALL still return `false`, and no heuristic over template directories or rule files SHALL override the declaration
-
-### Requirement: The verifier subagent dispatches on an issued request, not on a passing script gate
-
-The dispatch precondition carried by the verifier subagent template, the phase-executor template, the Stop hook guidance and the six feature Skills SHALL be "the harness issued a verifier request for this round", not "the script gate passed". The two coincide on every ordinary round; they differ exactly on the two diagnosable product failures the harness deliberately releases, and a precondition written as "script FAIL means never dispatch" makes the framework's own request undispatchable.
-
-The verifier's default handling of a failing script gate SHALL be unchanged: it collapses to the compile/run gate FAIL and does not grade the remaining items. That default SHALL be overridden only by the diagnosis section present in the assembled prompt, which the harness writes only when it issued the request itself. A round with no such section and no passing script gate SHALL still be treated as a protocol violation by the caller.
-
-Absence of a request SHALL keep its three existing meanings — capability not enabled, adapter without a reviewer, script not yet passing — and the dispatcher SHALL consult `summary.next_action` rather than inferring from the absence alone.
-
-No adapter capability declaration changes. `verifier_subagent` remains the single boolean, and the adapters that share `agents/claude/templates/agents` inherit the amended templates unchanged.
-
-Enforcement: `agents/claude/templates/agents/verifier.md`, `agents/claude/templates/agents/phase-executor.md`, `agents/claude/templates/hooks/check-phase-completion.mjs`, `agents/codeagent/adapter.yaml`, `skills/feature/*/SKILL.md`
-
-#### Scenario: A diagnosis request is dispatched despite the failing gate
-
-- **WHEN** `summary.next_action` is `run_verifier_for_repair` and `summary.verifier_request` is present
-- **THEN** the dispatcher SHALL deliver the request verbatim, write the reply verbatim to `summary.verifier_report`, and SHALL NOT edit product source before reading the per-issue conclusions
-
-#### Scenario: A failing gate with no request is still not dispatchable
-
-- **WHEN** the script gate fails and no request was issued
-- **THEN** the dispatcher SHALL fix the blockers and re-run, and SHALL NOT hand-write a request to reach the verifier
-
-#### Scenario: A shared-template adapter inherits the amended precondition
-
-- **WHEN** an adapter declares `template_dir: ../claude/templates/agents`
-- **THEN** its materialized verifier and phase-executor templates SHALL carry the same dispatch precondition with no adapter-specific text
-
-### Requirement: The Codex adapter ships a verifier subagent template rendered from the Claude verifier template
-
-`agents/codex/templates/agents/verifier.toml` SHALL exist and SHALL be declared in the codex adapter's subagent
-templates with `update_policy: auto_overwrite`, so that `framework-init` materializes it to `.codex/agents/verifier.toml`
-and re-aligns it on UPDATE.
-
-The file SHALL be a derivative, never a hand-maintained second copy of the verifier persona. It SHALL be produced by
-`renderCodexAgentToml` from `agents/claude/templates/agents/verifier.md`, which remains the single source of the
-verifier body. The renderer SHALL carry the frontmatter `description` and the whole body into TOML literal multi-line
-strings, and SHALL fail rather than guess: a frontmatter `name` other than `verifier`, a `tools` list reaching outside
-`{Read, Glob, Grep}`, or a `'''` sequence inside the description or the body SHALL each raise an error. Equivalence
-between the rendered result and the committed file SHALL be test-enforced, so that editing the Claude template without
-re-running the sync command fails the unit suite.
-
-The template SHALL declare `sandbox_mode = "read-only"` **as the role default only**. Codex applies the role
-configuration when spawning a subagent and then overwrites it with the parent thread's live permissions, and the
-Maison goal parent process runs with full access; the declaration therefore SHALL NOT be described, in the file, the
-adapter or the docs, as an isolation guarantee or as physical read-only enforcement. The "does not write" constraint
-SHALL be carried by the hard rules in the rendered instructions.
-
-Enforcement: `harness/scripts/utils/codex-agent-toml.ts`, `harness/scripts/sync-codex-agent-templates.ts`, `agents/codex/adapter.yaml`, `agents/codex/templates/agents/verifier.toml`, `harness/tests/unit/codex-adapter-verifier-template.unit.test.ts`
-
-#### Scenario: UPDATE backs up and overwrites a hand-written host file
-
-- **WHEN** a host that carries its own `.codex/agents/verifier.toml` runs framework-init UPDATE
-- **THEN** the old file SHALL be copied to `.framework-backup/<stamp>/.codex/agents/verifier.toml` and the target
-  SHALL become byte-identical to the framework template; a second run SHALL report the target unchanged and SHALL NOT
-  create another backup
-
-#### Scenario: An unsynced Claude template edit fails the suite
-
-- **WHEN** `agents/claude/templates/agents/verifier.md` is edited without re-running `npm run sync:codex-agents`
-- **THEN** the equivalence unit test SHALL FAIL, naming the rendered result and the committed file as different
+- **WHEN** an eligible managed verifier file exists in the host during UPDATE
+- **THEN** the original bytes SHALL be backed up under `.framework-backup/<stamp>/` before deletion
+- **AND** a repeat UPDATE SHALL leave the same backups and unrelated files intact
 
 ### Requirement: Adapter subagent templates may be declared at the adapter top level
 
@@ -614,10 +547,7 @@ Collection SHALL happen outside the `commands` block: an adapter whose agent has
 resolved source SHALL be visible in the per-file inspection origin so that a materialized target names the field it came
 from.
 
-Declaring a subagent template directory SHALL remain unrelated to `verifier_subagent`, which stays a standalone boolean
-about observed dispatch capability and SHALL NOT be inferred from the presence of a template directory.
-
-Enforcement: `agents/adapter-schema.yaml`, `agents/codex/adapter.yaml`, `harness/scripts/check-init.ts`, `harness/tests/unit/adapter-catalog-consistency.unit.test.ts`
+Enforcement: `agents/adapter-schema.yaml`, `harness/scripts/check-init.ts`, `harness/tests/unit/adapter-catalog-consistency.unit.test.ts`
 
 #### Scenario: A slashless adapter materializes its subagent template
 

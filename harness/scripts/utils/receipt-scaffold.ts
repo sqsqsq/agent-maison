@@ -47,7 +47,6 @@ export function receiptTemplatePath(): string {
 interface SummaryFacts {
   source_commit_sha?: string;
   verifier_subject_id?: string;
-  verifier_request?: string;
   verifier_closure?: { reviewed_subject_id?: string };
 }
 
@@ -59,7 +58,6 @@ function readSummaryFacts(projectRoot: string, feature: string, phase: string, f
     return {
       source_commit_sha: typeof raw.source_commit_sha === 'string' ? raw.source_commit_sha : undefined,
       verifier_subject_id: typeof raw.verifier_subject_id === 'string' ? raw.verifier_subject_id : undefined,
-      verifier_request: typeof raw.verifier_request === 'string' ? raw.verifier_request : undefined,
       verifier_closure:
         raw.verifier_closure && typeof raw.verifier_closure === 'object'
           ? (raw.verifier_closure as { reviewed_subject_id?: string })
@@ -92,7 +90,7 @@ export interface ReceiptProjectionFacts {
   claimed_completion_at: string;
   claimed_completion_commit_sha: string;
   claimed_attempt_id: string;
-  verifier: { report_path: string; verdict: string; prompt_template: string };
+  verifier: { report_path: string; verdict: string };
   testing_run_artifacts: null | {
     hylyre_run_exit_code: number;
     hylyre_report_path: string;
@@ -180,7 +178,6 @@ export function collectReceiptProjectionFacts(
     verifier: {
       report_path: reportPath,
       verdict,
-      prompt_template: `framework/harness/prompts/verify-${phase}.md`,
     },
     testing_run_artifacts: testing,
   };
@@ -200,12 +197,9 @@ export function renderReceiptProjection(f: ReceiptProjectionFacts): string {
     `claimed_completion_at: ${q(f.claimed_completion_at)}`,
     `claimed_completion_commit_sha: ${q(f.claimed_completion_commit_sha)}`,
     `claimed_attempt_id: ${q(f.claimed_attempt_id)}`,
-    'verifier_subagent:',
-    '  invoked_via: "Task(subagent_type=verifier)"',
-    `  prompt_template: ${q(f.verifier.prompt_template)}`,
+    'verifier:',
     `  report_path: ${q(f.verifier.report_path)}`,
     `  verdict: ${q(f.verifier.verdict)}`,
-    '  ran_at: ""',
   ];
   if (f.testing_run_artifacts) {
     const t = f.testing_run_artifacts;

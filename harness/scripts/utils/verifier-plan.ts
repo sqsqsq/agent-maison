@@ -5,26 +5,17 @@
 // off、runner 仍无条件装配 ai-prompt 与 subject、Skill 仍无条件要求四件套、
 // 全流程，于是「不适用」与「该有却缺失」被混成同一种 missing。
 //
-// 收口：verifier 降为**按 workflow/track/policy/adapter 能力动态启用的能力**。
-// 四个互不越权的问题只在这里解析一次，runner / check-receipt / Skill 指引 / hook
+// 收口：verifier 降为**按 workflow/track/policy动态启用的能力**。
+// 三个互不越权的问题只在这里解析一次，runner / check-receipt / Skill 指引 / hook
 // 恢复话术全部消费同一结果：
 //
 //   这个阶段是否存在？          → workflow + feature track（调用方已裁掉轨外 phase）
 //   这个阶段是否需要 verifier？ → workflow 的 verifier_prompt 声明 + evidence policy
-//   当前 adapter 有没有审查员？ → adapter 的布尔 verifier_subagent（宿主实测登记）
 //   本次报告属于哪个 run？      → verifier request 的 subject（见 verifier-request.ts）
 //
 // ─── 二态语义（plan d2f7a9c4：blocked 整体删除）─────────────────────────────
 //   disabled：不生成 ai-prompt / request / subject，不调用，不校验——**缺席即为零**；
 //   enabled ：生成 request 并执行 verifier。
-//
-// 曾经的第三态 blocked 表达的是「policy 要 verifier，但当前 adapter 发布不了」。报告改由
-// **调用方**写出后，发布不再有 adapter 差异，该态没有指称对象。剩下的唯一缺口是「这个工具
-// 起不了子代理」，按 disabled/adapter_has_no_reviewer 如实披露、不阻断闭环。
-//
-// **判定与运行模式无关**（本轮的病根）：旧口径下 adapter 能力门只作用于 interactive，而 hook
-// 在 goal/headless 一律落 bedside 不发布——两条规则交集为空，一次真跑通过的审查永远闭不了环，
-// 宿主两轮无人值守 run 因此熔断。此处不得再出现任何 runtimeMode 分支。
 //
 // ─── 两条不可让步的边界 ─────────────────────────────────────────────────────
 // 1. **声明在场即真源**：workflow 声明 `verifier_prompt` = 该 phase 具备 verifier 能力，
@@ -37,8 +28,7 @@
 
 import type { WorkflowSpec } from '../../workflow-loader';
 import type { EvidenceLevel, EvidencePolicy, FeatureTrack, RuntimeMode } from './runtime-policy';
-import { isCheckNotApplicable } from './types';
-import { isBlockingCheck, isRequiredCheckGap, resolveCurrentDisposition, renderCurrentDisposition, type CurrentDispositionPhaseFact } from './check-disposition';
+import { isRequiredCheckGap, resolveCurrentDisposition, renderCurrentDisposition, type CurrentDispositionPhaseFact } from './check-disposition';
 
 export type VerifierPlanMode = 'disabled' | 'enabled';
 
@@ -50,8 +40,6 @@ export type VerifierPlanReason =
   /** evidence policy 判 off（如 balanced 档的非保留 phase） */
   | 'policy_off'
   | 'policy_not_applicable'
-  /** 当前 adapter 未登记 verifier_subagent = 没有审查员（如实披露，不阻断） */
-  | 'adapter_has_no_reviewer'
   | 'policy_required'
   | 'policy_optional';
 
@@ -77,15 +65,11 @@ export interface ResolveVerifierPlanInput {
   /** workflow artifact 的 `verifier_prompt`；缺席 = 该 phase 不具备 verifier 能力。 */
   workflowVerifierPrompt?: string | null;
   phaseDisabledByProfile?: boolean;
-  /** adapter 的布尔 verifier_subagent；缺省 = 无审查员。 */
-  adapterHasVerifierSubagent?: boolean;
-  /** 仅用于话术。 */
-  adapterName?: string;
 }
 
 /**
- * 四问一次解析。**顺序即优先级**，任何调用方都不得插队或另判：
- *   profile 禁用 > workflow 未声明 > policy 不适用/off > adapter 无审查员 > 启用。
+ * 按阶段、workflow 与 policy 解析。**顺序即优先级**，任何调用方都不得插队或另判：
+ *   profile 禁用 > workflow 未声明 > policy 不适用/off > 启用。
  *
  * interactive / headless / goal 三种模式解析结果完全一致——**不得引入任何 mode 分支**。
  * runtimeMode 只进话术。
@@ -133,24 +117,11 @@ export function resolveVerifierPlan(input: ResolveVerifierPlanInput): VerifierPl
     };
   }
 
-  if (!input.adapterHasVerifierSubagent) {
-    return {
-      mode: 'disabled',
-      reason: 'adapter_has_no_reviewer',
-      verifier_prompt: prompt,
-      message:
-        `阶段 ${where}：当前 adapter${input.adapterName ? ` "${input.adapterName}"` : ''} 未登记 ` +
-        'verifier_subagent（agents/<adapter>/adapter.yaml），本工具起不了 verifier 子 agent。' +
-        '不生成 request、不重跑；闭环照常进行，verifier 轴如实记 not_reviewed 并披露——' +
-        '这是环境事实，不是产物缺陷。',
-    };
-  }
-
   return {
     mode: 'enabled',
     reason: level === 'required' ? 'policy_required' : 'policy_optional',
     verifier_prompt: prompt,
-    message: `阶段 ${where} 启用 verifier（policy=${level}，模板 ${prompt}）：生成 request 并由 verifier 子 agent 执行。`,
+    message: `阶段 ${where} 启用 verifier（policy=${level}，模板 ${prompt}）：按当前检查事实签发 request，交运行时独立核验。`,
   };
 }
 
@@ -179,7 +150,7 @@ export const REVIEW_NEGATIVE_CLOSURE_CHECK_IDS: ReadonlySet<string> = new Set([
   'conditional_pass_closure',
 ]);
 
-/** CheckResult 的最小只读形状（只取形状与一个纯谓词 isCheckNotApplicable；不依赖 capability-registry）。 */
+/** CheckResult 的最小只读形状（不依赖 capability-registry）。 */
 export interface VerifierEligibilityCheck {
   id: string;
   status: string;

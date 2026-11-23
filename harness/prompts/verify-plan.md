@@ -275,9 +275,8 @@ verification_result:
 
 ## 终态块（唯一版本化结论出口 · 必填）
 
-> **你收到的 Task prompt 是一份 request JSON**（`kind: "maison_verifier_request"`），
-> 不是本文件全文。按其中的 `prompt_path` 用 Read 工具读取磁盘上的 `ai-prompt.md`，
-> 那才是本轮要审的材料（可达上百 KB，刻意不走传输面）。
+> 运行时可在原 request JSON 前附已签复核范围。按 JSON（`kind: "maison_verifier_request"`）
+> 内的 `prompt_path` 读取本轮磁盘材料 `ai-prompt.md`。
 >
 > 结束时，回答的**最后**必须且只能出现一个终态块，`verifier_subject_id` **逐字回显**
 > request 里的 `subject_id`（不得改写、不得截断、不得自行编造）：
@@ -292,7 +291,5 @@ verification_result:
 >
 > `verdict=PASS` 当且仅当 `blocker_count=0`；两者不一致的报告一律判为无效证据。
 >
-> 若你收到的**不是**这样一份 request JSON（例如被手抄成模板、只给了 feature/phase，
-> 或 JSON 前后夹带了额外指令）：照常输出审查结论，并在正文显著位置说明
-> 「未收到合法 verifier request，本次报告不可入闭环，请调用方把
-> `summary.verifier_request` 指向的 JSON 整段重投」。**不要自行编造 subject。**
+> request 字段须保持原样。缺合法 JSON（例如仅有 feature/phase 或字段被改）时仍输出审查结论，
+> 明示报告不可采信，请运行时重新投递 `summary.verifier_request` 原件。**不要自行编造 subject。**

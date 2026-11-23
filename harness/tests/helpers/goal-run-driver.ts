@@ -614,7 +614,7 @@ async function runScenario(args: {
         if (scopeCheck) checks.push(scopeCheck);
         const report = reports.generateScriptReport(path.join(frameworkRoot, 'harness'), ph as import('../../scripts/utils/types').Phase, feat, pr, checks, frameworkRoot);
         const plan = verifier.resolveVerifierPlan({ phase: ph, track: 'full', runtimeMode: 'goal', policy: { verifier: 'required' },
-          workflowVerifierPrompt: verifier.workflowVerifierPrompt(workflows.loadWorkflowSpec(frameworkRoot, 'spec-driven'), ph), adapterHasVerifierSubagent: true });
+          workflowVerifierPrompt: verifier.workflowVerifierPrompt(workflows.loadWorkflowSpec(frameworkRoot, 'spec-driven'), ph) });
         const writerOptions = prepareFixtureVerifierMaterial({ projectRoot: pr, frameworkRoot, report, options: { verifierPlan: plan } });
         let summary = summaryWriter.writeRunSummaryBase(pr, report, frameworkRoot, writerOptions);
         if ((scenario === 'crash_scope_in_run' || scenario === 'successor_source_crash') && String(ph) === 'coding' && scopeCheck?.status === 'FAIL')

@@ -165,8 +165,9 @@ const cases: Array<{ name: string; run: () => void }> = [
       for (const f of commandFiles) {
         assert(targets.includes(`.cac/commands/${f}`), `.cac/commands/${f} 未进物化清单`);
       }
-      // 跨目录共享：verifier / hooks / rules
-      assert(targets.includes('.cac/agents/verifier.md'), 'verifier 共享模板未进清单');
+      // 跨目录共享：作者模板 / hooks / rules
+      assert(targets.includes('.cac/agents/phase-executor.md'), '作者共享模板未进清单');
+      assert(!targets.includes('.cac/agents/verifier.md'), '已退役核验角色不得继续物化');
       for (const hook of ['guard-framework-write.mjs', 'check-phase-completion.mjs']) {
         assert(targets.includes(`.cac/hooks/${hook}`), `.cac/hooks/${hook} 未进清单`);
       }

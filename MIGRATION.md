@@ -632,50 +632,19 @@ goal_capability:
 相关说明：[Skill 契约](docs/concepts/skill-contracts.md)、[调和循环](docs/concepts/reconcile-loop.md)、[Goal 运行手册](docs/operations/goal-mode-runbook.md)。
 ---
 
-### verifier 能力化、短 request 投递与 summary 1.3（Breaking，plan a9d4e7c2）
+### 3.1.0：阶段独立核验统一执行（plan 9e46c71a）
 
-**verifier 不再是每阶段必跑的仪式，而是按能力启用。** 一次解析 workflow 的 `verifier_prompt`
-声明、feature track、evidence policy 与 adapter 有没有审查员，得到二态之一
-（`blocked` 第三态已随 plan d2f7a9c4 删除，见下一节）：
+适用性由 profile、workflow 和 evidence policy 决定；模型或运输缺口保留待核义务。完整交付由原 Goal 协调器派核，单阶段按 NEXT 运行 `harness-runner.ts --execute-verifier --phase <phase> --feature <feature>`。现有 request、subject 与绑定报告按原契约读取，尚未交回的阶段可重进原入口。命令与前台模型来源见[独立阶段核验](skills/reference/agents-entry-detail.md#独立阶段核验)。
 
-- `disabled`：**缺席即为零**——不生成 `ai-prompt.md`、不生成 request、summary 不写
-  `verifier_subject_id` / `verifier_request` / `ai_prompt`，闭环也不要求 verifier 证据。
-  lite track 的 change/coding/exit、balanced 档的非保留 phase、profile 禁用的 phase、以及
-  workflow 未声明 `verifier_prompt` 的 phase 都在此列。**磁盘上残留的旧 prompt/request/report
-  永远不会重新激活已关闭的能力，也不需要你去清理。**
-- `enabled`：生成 `verifier.request.<subject>.json`，正常执行 verifier。
+`framework-init` UPDATE 将备份并删除已退役角色 `.claude/agents/verifier.md`、`.cac/agents/verifier.md`、`.codex/agents/verifier.toml`。可在 `.framework-backup/<stamp>/` 查原字节。当前回执投影为 `verifier.report_path` 和 `verifier.verdict`，旧回执字段仍可读。
 
-**adapter 侧需要动手的一处**：见下一节的 `verifier_subagent` 布尔字段。
+### 历史记录：verifier 能力化、短 request 与 summary 1.3（plan a9d4e7c2）
 
-**投递协议改为短 request JSON（Breaking）。** 旧规则「把 `ai-prompt.md` 全文原样投递给 Task」
-已删除：真实样张可达 177KB，往返有损且机器块之外零校验。新规则——
-
-1. 跑 `harness-runner`；启用时它会打印并记录 `summary.verifier_request`；
-2. 把那份 `verifier.request.<subject>.json` 的**完整 JSON 正文**作为 Task prompt 投给
-   `subagent_type=verifier`（不要投 `ai-prompt.md` 全文、不要手抄或改写字段、不要前后夹带说明）；
-3. verifier 按其中的 `prompt_path` 自行 Read 原件，结束时回显 `subject_id`；
-4. 跑 `check-receipt.ts`；
-5. 关环用 `harness-runner.ts --sync-closure --phase <phase> --feature <feature>`。
-
-**第 5 步的口径变了**：`subject` 按 `material_sha256` 审前材料视图寻址，`prompt_sha256` 只用于核对
-verifier 读取的磁盘原件，不参与 subject。重跑完整 harness 不会仅因模板时间戳换代 subject；
-closure-only 场景仍优先 `--sync-closure`，因为重跑脚本没有必要。
-
-**summary 升级到 1.3。** `ai_prompt` / `verifier_subject_id` / `verifier_request` 成为**条件字段**
-（仅 `enabled` 时在场）；`1.2` 仍可读，作为上一代闭环域。
-
-**存量产物怎么办：**
-
-- 已 closed 且 evidence manifest 仍 fresh 的阶段（含 1.2 代）走 grandfather，**零动作**；
-- 3.0.0 生成但**未闭环**的 subject/ai-prompt 不再继续发布：只需**重跑当前 phase 的 harness**
-  （分钟级）拿到新 request，再按上面五步走完即可。**不回退业务代码、不重写上游产物、
-  不从 spec 重走、也不要求提交。**
-- 下游发现缺陷时的正常回退不变：回责任上游改 → 重跑上游 harness/verifier/check-receipt →
-  下游因 freshness 变 stale → 从下游继续。不清空 feature。
+summary 1.3 把 `ai_prompt`、`verifier_subject_id`、`verifier_request` 改为条件字段。签发使用短 JSON，材料仍由 `prompt_path` 定位；subject 绑定材料视图，`prompt_sha256` 用来核对磁盘原件。已闭环的历史产物按原证据契约读取。
 
 ---
 
-### 3.0.0：verifier 报告即真源，SubagentStop 发布链整体删除（Breaking，plan d2f7a9c4）
+### 历史记录：3.0.0 verifier 报告即真源，SubagentStop 发布链整体删除（Breaking，plan d2f7a9c4）
 
 **病根**：verifier 结论此前必须由 SubagentStop hook 四方对账后发布成 canonical
 `verifier.report.<subject>.json`，check-receipt 只认这一份。而该 hook 在
@@ -709,7 +678,7 @@ generic 未登记（共享规则被物化不等于运行时会读取）。未登
 `verifier_report_sha256` / `verifier_result_sha256`，只留 `verifier_subject_id`，`schema_version`
 升 `1.2`（`1.0` / `1.1` 仍可读）。一份刻意不做防篡改的文件，不能同时充当「改了就 stale」的绊线。
 
-**升级动作（实例工程）：**
+**当时的升级动作（实例工程）：**
 
 1. 重新物化 `.claude/settings.json`（codeagent 为 `.cac/settings.json`）——`SubagentStop` 段已删除；
 2. `.claude/hooks/record-verifier-report.mjs`（`.cac/hooks/` 同）由 `/framework-init` UPDATE 的 S3 `cleanup-deprecated` 任务按 adapter 的 `deprecated_artifacts` 声明自动备份到 `.framework-backup/<stamp>/` 后删除，`.claude/settings.json` / `settings.local.json` 内的旧注册一并移除，结果进 run-log 的 `cleanup_results`；跳过该任务则不清理，无须手动删；
@@ -833,16 +802,6 @@ generic 未登记（共享规则被物化不等于运行时会读取）。未登
 |----|------|
 | **S1 探测** | `init-orchestrate.ts --scope project` 只读产出 `InitTaskPlan`（**零写盘**） |
 | **S2 计划批准** | `init.task_plan` + `init.materialized_adapters` 多选；手动模式用 `init.task_decision`（**禁止 Q1=y**） |
-### 3.0.x：Codex verifier 子代理模板收编（Breaking，plan 7b2e9d4c / openspec codex-verifier-subagent-template）
-
-宿主 `.codex/agents/verifier.toml` 一直是宿主 2026-05-25 手工提交带入的私产（Cursor 会话手写），framework 的 codex adapter 从未有过 agents 模板，两份宿主的内容都停在 5 月契约。3.0.x 起它被收编为受管模板：由 claude 的 `agents/claude/templates/agents/verifier.md` 渲染成 `agents/codex/templates/agents/verifier.toml`（`cd harness && npm run sync:codex-agents`；等值由 unit test 守护），随发布件下发。
-
-- **行为变化（Breaking）**：UPDATE 起 `.codex/agents/verifier.toml` 由 framework 模板**自动对齐**（顶层 `subagents` + `update_policy: auto_overwrite`）。**宿主手写版被无提示覆盖是预期行为**；旧文件先备份到 `.framework-backup/<stamp>/.codex/agents/verifier.toml`，需要旧话术就去备份里取。
-- **verifier 行为差异**：新模板按 request / `prompt_path` 契约工作——`ai-prompt.md` 是本轮权威指令，**不再自读** `verify-<phase>.md`、`verify-*.overlay.md` 与 `phase-rules/<phase>-rules.yaml`（旧 toml 每阶段都在白读三份文件），输出末尾恰好一个终态块（`verifier_subject_id` 逐字回显），并带上"收到的不是纯 request JSON 时声明不可入闭环"一节。
-- **`sandbox_mode = "read-only"` 只是角色默认值**，不是隔离保证：Codex 在 spawn_agent 时先套角色配置、再用**父线程实时权限覆盖**，Maison goal 的 codex 父进程恒为 `danger-full-access`，所以 goal 路径下 verifier 子线程是全权限。"不写盘"由模板正文的硬性规则承担，与 5 月以来的实际状态一致。
-- **宿主不应再手改该文件**：要改审查员人设，改 `agents/claude/templates/agents/verifier.md`、重跑 `npm run sync:codex-agents`、重新发布。
-- **未改动**：`verifier_subagent` 布尔语义与位置、claude / codeagent 的 `commands.subagents` 声明与模板、`harness/prompts/verify-*.md` 与 ai-prompt 装配、codex 的 hooks（Stop hook 不做、写守卫暂缓，裁决登记在 `agents/codex/adapter.yaml` notes）。
-
 | **S3 执行** | 枚举 decision JSON + context JSON（OS 临时目录绝对路径）→ `init-orchestrate --execute` → preflight + `executeInitPlan` |
 | **S4 摘要** | `buildRunSummary(run-log)` |
 

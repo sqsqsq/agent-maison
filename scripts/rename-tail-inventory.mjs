@@ -65,7 +65,6 @@ const PATH_ALLOWLIST = [
   /^skills\/project\/catalog-bootstrap\/SKILL\.md$/,
   /^specs\/feature-compat\.schema\.yaml$/,
   /^workflows\/README\.md$/,
-  /^agents\/claude\/templates\/agents\/verifier\.md$/,
   /^harness\/tests\//,
   /^profiles\/[^/]+\/harness\/tests\//,
   /^harness\/reports\//,

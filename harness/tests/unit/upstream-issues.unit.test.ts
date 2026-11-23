@@ -56,7 +56,7 @@ function writer(root: string, phase: Phase, checks: CheckResult[], disabled = fa
   const policy = resolveEvidencePolicy('full', { mode: 'goal', adapter: 'claude', phase, workflow: 'spec-driven', can_prompt_user: false, can_collect_usage: false }, {});
   const plan = resolveVerifierPlan({ phase, track: 'full', runtimeMode: 'goal', policy,
     workflowVerifierPrompt: workflowVerifierPrompt(loadWorkflowSpec(FW, 'spec-driven'), phase),
-    phaseDisabledByProfile: disabled, adapterHasVerifierSubagent: true, adapterName: 'claude' });
+    phaseDisabledByProfile: disabled });
   const dir = featurePhaseReportsDir(root, FEATURE, phase, FW);
   writeFile(path.join(dir, 'ai-prompt.md'), '# Current verifier materials\n');
   const proposals = readPhaseRepairIssues(root, FEATURE, phase);

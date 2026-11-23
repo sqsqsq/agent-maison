@@ -46,7 +46,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       const derive = buildNextLine({ verdict: 'FAIL', script_report: 'testing-script-report.json', blockers: [{ id: 'device_test_run', details_excerpt: '派生步骤非法' }] }, 'testing', 'f');
       assert.ok(derive.includes('testing-script-report.json') && derive.includes('device_test_run.structured.derive_hint') && derive.includes('hint 文件只保存源语义基线'), derive);
       const verifier = buildNextLine({ verdict: 'PASS', next_action: 'run_verifier_then_receipt', verifier_request: 'doc/features/f/coding/reports/verifier.request.abc.json' }, 'coding', 'f');
-      assert.ok(/整段投给 subagent_type=verifier/.test(verifier) && /verifier\.request\.abc\.json/.test(verifier), verifier);
+      assert.ok(verifier.includes('--execute-verifier --phase coding --feature f') && /verifier\.request\.abc\.json/.test(verifier), verifier);
       const closed = buildNextLine({ verdict: 'PASS', next_action: 'phase_closed_wait_user' }, 'coding', 'f');
       assert.ok(/已闭环/.test(closed) && /等待用户/.test(closed), closed);
       const receipt = buildNextLine({ verdict: 'PASS', next_action: 'fill_receipt_then_sync_closure' }, 'review', 'f');

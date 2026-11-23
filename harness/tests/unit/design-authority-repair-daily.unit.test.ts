@@ -609,24 +609,36 @@ const cases: Array<{ name: string; group: Group; run: () => Promise<void> }> = [
     for (const result of changed.derived_results ?? []) result.input_revision = changed.revision;
     write(doc.canonicalPath, changed);
     const lockPath = (id: string) => featureFilePath(root, deriveChangeUnitFeatureId(BLUEPRINT, id), path.join('goal-runs', FEATURE_LOCK_NAME));
-    const lent = tryAcquireLock(lockPath('ledger-refresh'), { run_id: 'actual-caller' }); assert(lent);
-    const nativeFs = require('fs') as typeof fs, open = fs.openSync; let injected = false;
+    const borrowedPath = lockPath('ledger-refresh'), contenderPath = lockPath('ledger-recovery');
+    const blueprintLock = path.join(featureFilePath(root, BLUEPRINT, ''), BLUEPRINT_RECONCILE_LOCK_NAME);
+    const lent = tryAcquireLock(borrowedPath, { run_id: 'actual-caller' }); assert(lent);
+    const borrowedBytes = fs.readFileSync(borrowedPath);
+    const nativeFs = require('fs') as typeof fs, link = fs.linkSync;
+    const competitor: { lock: ReturnType<typeof tryAcquireLock>; bytes?: Buffer } = { lock: null };
+    const options = { heldFeatureLocks: [{ path: borrowedPath, ownerId: lent.ownerId }] };
     try {
-      nativeFs.openSync = ((file: fs.PathLike, ...args: any[]) => {
-        if (!injected && path.resolve(String(file)) === path.resolve(lockPath('ledger-recovery'))) {
-          injected = true; throw Object.assign(new Error('controlled lock EACCES'), { code: 'EACCES' });
-        }
-        return (open as any)(file, ...args);
-      }) as typeof fs.openSync;
-      assert.throws(() => reconcileChangeUnitBlueprintRefs(root, BLUEPRINT, { heldFeatureLocks: [{ path: lockPath('ledger-refresh'), ownerId: lent.ownerId }] }), /EACCES/);
-    } finally { nativeFs.openSync = open; }
-    try {
-      assert(injected); assert(fs.existsSync(lockPath('ledger-refresh')));
-      assert(!fs.existsSync(path.join(featureFilePath(root, BLUEPRINT, ''), BLUEPRINT_RECONCILE_LOCK_NAME)));
-      for (const id of ['ledger-consumer', 'ledger-recovery', 'ledger-summary']) assert(!fs.existsSync(lockPath(id)));
-      const retry = reconcileChangeUnitBlueprintRefs(root, BLUEPRINT, { heldFeatureLocks: [{ path: lockPath('ledger-refresh'), ownerId: lent.ownerId }] });
+      nativeFs.linkSync = (source, destination) => {
+        if (competitor.lock || path.resolve(String(destination)) !== path.resolve(contenderPath)) return link(source, destination);
+        assert(fs.existsSync(blueprintLock) && fs.existsSync(lockPath('ledger-consumer')), 'the reconciler must already own both preceding locks');
+        nativeFs.linkSync = link;
+        competitor.lock = tryAcquireLock(contenderPath, { run_id: 'competing-caller' }); assert(competitor.lock);
+        competitor.bytes = fs.readFileSync(contenderPath);
+        throw Object.assign(new Error('controlled lock EACCES'), { code: 'EACCES' });
+      };
+      assert.throws(() => reconcileChangeUnitBlueprintRefs(root, BLUEPRINT, options), /EACCES/);
+      assert(competitor.lock && competitor.bytes);
+      assert.deepEqual(fs.readFileSync(borrowedPath), borrowedBytes, 'the borrowed lock stays owned by its caller');
+      assert.deepEqual(fs.readFileSync(contenderPath), competitor.bytes, 'the failed publication cannot remove a competing lock');
+      assert(!fs.existsSync(blueprintLock));
+      for (const id of ['ledger-consumer', 'ledger-summary']) assert(!fs.existsSync(lockPath(id)));
+      releaseLock(contenderPath, competitor.lock.ownerId);
+      const retry = reconcileChangeUnitBlueprintRefs(root, BLUEPRINT, options);
       assert(!retry.busy && retry.bumped.length === 4, JSON.stringify(retry));
-    } finally { releaseLock(lockPath('ledger-refresh'), lent.ownerId); }
+    } finally {
+      nativeFs.linkSync = link;
+      if (competitor.lock) releaseLock(contenderPath, competitor.lock.ownerId);
+      releaseLock(borrowedPath, lent.ownerId);
+    }
   }),
 }, {
   name: 'daily design runtime: copied canonical bytes cannot invent a publication transaction', group: 'runtime',

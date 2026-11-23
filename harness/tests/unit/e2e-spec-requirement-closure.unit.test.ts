@@ -122,11 +122,6 @@ function git(root: string, args: string[]): void {
 }
 
 /** 铺一个完整 spec 工程（PASS 所需：spec.md + acceptance + facts + source + git）。 */
-// plan d2f7a9c4: full-track spec needs an adapter that declares `verifier_subagent`.
-// `codeagent` does, and shares AGENTS.md as its entry file, so the personal-setup gate
-// stays satisfied by this scaffold. An adapter without the declaration resolves to
-// `disabled / adapter_has_no_reviewer` — closure still passes, carrying `not_reviewed`
-// (see the undeclared-adapter case below).
 function scaffoldFeature(root: string, adapter = 'codeagent'): void {
   fs.mkdirSync(path.join(root, 'doc', 'features', 'demo', 'spec'), { recursive: true });
   fs.writeFileSync(path.join(root, 'framework.config.json'), JSON.stringify({
@@ -523,10 +518,8 @@ const cases: Case[] = [
     },
   },
   {
-    name: 'E2E adapter 未登记 verifier_subagent：不签发 request，闭环照常并披露 not_reviewed',
+    name: 'E2E OpenCode 签发阶段核验，当前报告完整后才通过闭环',
     run: () => {
-      // plan d2f7a9c4 D4：起不了子代理是环境事实，不是产物缺陷。旧口径判 blocked →
-      // INCOMPLETE，整条 full track 在这些 adapter 上不可用（codex 08-29 起即如此）。
       const before = repoDocFeatures();
       const { root, harnessDir } = provisionFramework();
       try {
@@ -535,37 +528,32 @@ const cases: Case[] = [
           '--feature', 'demo', '--requirement', '设计账户页，含余额展示与转账入口。',
         ], root);
         assert(init.status === 0, `initializer 失败：${init.stderr}`);
-
-        const hr = runHarness(harnessDir, ['--phase', 'spec', '--feature', 'demo', '--summary'], root);
+        const report = runHarness(harnessDir, ['--phase', 'spec', '--feature', 'demo', '--summary'], root);
         const summary = readJson(root, 'doc/features/demo/spec/reports/summary.json');
-        assert(summary.verdict === 'PASS', `无审查员不得影响脚本结论：${hr.stdout}\n${hr.stderr}`);
-        assert(!summary.verifier_subject_id && !summary.verifier_request && !summary.verifier_report,
-          '无审查员时 verifier 字段整组缺席（不生成没人能消费的 request）');
-        const reportsDir = path.join(root, `doc/features/demo/spec/reports`);
-        assert(!fs.readdirSync(reportsDir).some((f) => f.startsWith('verifier.request.')),
-          '磁盘不得留下无人能消费的 request');
+        assert(summary.verdict === 'PASS', `脚本必须先 PASS：${report.stdout}\n${report.stderr}`);
+        const request = readJson(root, String(summary.verifier_request));
+        assert(request.subject_id === summary.verifier_subject_id &&
+          summary.next_action === 'run_verifier_then_receipt', '正式 request 与 summary 绑定，仍待核');
+        assert(fs.existsSync(path.join(root, String(request.prompt_path))), 'request 指向实际主提示');
 
+        const reportsDir = path.join(root, 'doc/features/demo/spec/reports');
         fs.writeFileSync(path.join(reportsDir, 'trace.json'), '{"trace": []}', 'utf-8');
-        const rc = run(harnessDir, 'check-receipt.ts', [
+        const check = () => run(harnessDir, 'check-receipt.ts', [
           '--feature', 'demo', '--phase', 'spec', '--project-root', root,
         ], root);
-        const out = `${rc.stdout}\n${rc.stderr}`;
-        assert(rc.status === 0, `无审查员应照常闭环，实得 ${rc.status}：${out}`);
-        assert(/not_reviewed/.test(out), `闭环记录必须如实披露 not_reviewed：${out}`);
-        // **控制台不算披露**（codex review P1）：run 结束就没了。持久面是 summary——
-        // D0 第 4 条要求"可以不复审，但不能把未复审描述成已 PASS"。
-        const closed = readJson(root, 'doc/features/demo/spec/reports/summary.json');
-        const signals = (closed.readiness_signals ?? []) as Array<{ id?: string; status?: string }>;
-        const notReviewed = signals.find((sig) => sig.id === 'verifier_not_reviewed');
-        assert(
-          Boolean(notReviewed),
-          `summary.readiness_signals 必须持久记录未审查事实，实得 ${JSON.stringify(signals)}`,
-        );
-        assert(
-          notReviewed?.status === 'unknown',
-          `未审查是"无结论"（unknown），不得标成 ready，也不得标成 incomplete（那会指人去完成一件完不成的事）；实得 ${notReviewed?.status}`,
-        );
-        assert(!/verifier_provider_unavailable/.test(out), `不得再报 provider 阻断：${out}`);
+        const missing = check();
+        assert(missing.status !== 0 && `${missing.stdout}\n${missing.stderr}`.includes('verifier_evidence_report_missing'),
+          '当前核验义务没有报告时不能闭环');
+        publishFixtureVerifierEvidence({
+          projectRoot: root, reportsDir, feature: 'demo', phase: 'spec',
+          subjectId: String(request.subject_id), skipSummaryPatch: true,
+        });
+        const verified = check();
+        assert(verified.status === 0, `当前核验交回后应通过：${verified.stdout}\n${verified.stderr}`);
+        const receipt = fs.readFileSync(path.join(root, 'doc/features/demo/spec/phase-completion-receipt.md'), 'utf-8');
+        assert(/^verifier:\n  report_path: .+\n  verdict: "PASS"$/m.test(receipt),
+          '当前回执必须投影实际报告及 PASS');
+        assert(!receipt.includes('invoked_via'), '当前回执不得记录历史命名 Task');
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
         assert(JSON.stringify(repoDocFeatures()) === JSON.stringify(before), 'E2E 不得新增 repo doc/features');

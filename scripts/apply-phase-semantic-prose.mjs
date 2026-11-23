@@ -50,7 +50,6 @@ const TARGETS = [
   'agents/shared/agent-bundle/templates/skills-bridge/coding/SKILL.md',
   'agents/claude/templates/commands/spec.md',
   'agents/claude/templates/commands/plan.md',
-  'agents/claude/templates/agents/verifier.md',
   'agents/claude/templates/rules/interaction-renderer.md',
   'agents/generic/templates/rules/interaction-renderer.md',
   'agents/shared/agent-bundle/templates/rules/framework.mdc',

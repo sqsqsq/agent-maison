@@ -4,6 +4,7 @@ import { createHash } from 'crypto';
 import type { WorkUnitExecutionContext } from './goal-phase-executor';
 import { featureFilePath, resolveFeatureArtifact } from '../../config';
 import { resolvePhasePathOwnership } from './phase-write-boundary';
+import { writeFileExclusiveAtomic } from './goal-run-lock';
 import { workUnitMayWritePath } from './repair-responsibility';
 import { assertFencedOwner, readRunControl, setSessionExecutionLease, type RunFenceToken } from './goal-run-control';
 import { loadEventsJsonlStrict, loadAuthoritativeEvents, resolveValidationOnlyEligibility, type GoalRunEvent } from './goal-runner-phase';
@@ -120,16 +121,10 @@ function immutableJson(runDir: string, file: string, value: unknown): HandoffRef
   inside(runDir, file);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const bytes = json(value);
-  if (fs.existsSync(file)) {
+  try { writeFileExclusiveAtomic(file, bytes); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
     if (fs.readFileSync(file, 'utf8') !== bytes) throw new Error('[session-handoff] immutable material conflict');
-  } else {
-    const tmp = `${file}.${process.pid}.tmp`;
-    let created = false;
-    try {
-      fs.writeFileSync(tmp, bytes, { encoding: 'utf8', flag: 'wx' });
-      created = true;
-      fs.renameSync(tmp, file);
-    } finally { if (created) fs.rmSync(tmp, { force: true }); }
   }
   return { path: path.relative(runDir, file).replace(/\\/g, '/'), sha256: digest(bytes) };
 }
@@ -243,6 +238,13 @@ export function readExecutionRequestOriginal(runDir: string, invokeId?: string, 
   if (!start?.invoke_id || !start.phase) return null;
   const signed = sessionExecutionForInvoke(runDir, start.invoke_id, events);
   if (signed) return signed;
+  if (start.handoff_request) {
+    const request = readHandoffMaterial<SessionExecutionRequest>(runDir, start.handoff_request);
+    if (request.invoke_id !== start.invoke_id || request.context.phase !== start.phase) {
+      throw new Error('[session-handoff] execution request identity mismatch');
+    }
+    return { request, event: start, reference: start.handoff_request };
+  }
   const directory = inside(runDir, path.join(runDir, 'phases', start.phase, start.invoke_id, 'request'));
   if (!fs.existsSync(path.dirname(directory))) return null;
   const files = fs.readdirSync(path.dirname(directory)).filter(file => /^request-e\d+\.json$/.test(file)).sort((a, b) => Number(b.match(/\d+/)![0]) - Number(a.match(/\d+/)![0]));
@@ -261,25 +263,64 @@ export function executionRequestForInvoke(runDir: string, invokeId?: string): Is
   return path.resolve(original.request.context.runDir) === path.resolve(runDir) ? original : null;
 }
 
+export function stageVerifierDraftPath(runDir: string, phase: string, invokeId: string): string {
+  return path.join(runDir, 'phases', phase + '-verifier-format-repair', invokeId, 'verdict.md');
+}
+
+export const standaloneVerifierRunDir = (reportsDir: string, subject: string): string => path.join(reportsDir, 'verifier-execution', subject);
+
+function stageVerifierDraftRequest(runDir: string, events: readonly GoalRunEvent[], start: GoalRunEvent,
+  current: Pick<VerifierRequest, 'feature' | 'phase' | 'subject_id'>, reportPath: string): SessionExecutionRequest | null {
+  if (start.type !== 'agent_invoke_start' || !start.invoke_id || start.phase !== current.phase + '-verifier-format-repair') return null;
+  const issued = readExecutionRequestOriginal(runDir, start.invoke_id, events);
+  const request = issued?.request;
+  if (!request || request.context.runId !== path.basename(runDir) || request.context.feature !== current.feature
+    || !request.write_boundary?.verifierResultPath
+    || path.resolve(request.context.projectRoot, request.write_boundary.verifierResultPath) !== stageVerifierDraftPath(runDir, current.phase, start.invoke_id)
+    || !request.pre_snapshot || !request.write_boundary.immutableInputPaths?.some(file => path.resolve(request.context.projectRoot, file) === reportPath)
+    || parseVerifierRequestFromInstruction(request.context.instruction)?.subject_id !== current.subject_id) return null;
+  return request;
+}
+
+/** A managed verifier may write its own draft. Only accepted handbacks or the pre-existing public bytes are consumable. */
+export function stageVerifierPublicReportQualified(runDirs: readonly string[], current: Pick<VerifierRequest, 'feature' | 'phase' | 'subject_id'>, reportPath: string, text: string): boolean {
+  const jobStarts = runDirs.flatMap(runDir => {
+    const events = sessionEvents(runDir);
+    const original = events.filter(start => start.type === 'agent_invoke_start' && start.phase === current.phase + '-verifier-format-repair')
+      .map(start => stageVerifierDraftRequest(runDir, events, start, current, reportPath)).find(
+        (request): request is SessionExecutionRequest => request !== null);
+    return original ? [{ runDir, original }] : [];
+  }).sort((a, b) => a.original.issued_at.localeCompare(b.original.issued_at));
+  if (!jobStarts.length) return true;
+  const first = jobStarts[0].original;
+  if (first.pre_snapshot?.entries.some(entry => entry.kind === 'file' && path.resolve(first.context.projectRoot, entry.path) === reportPath
+    && entry.sha256 === digest(text))) return true;
+  return jobStarts.some(({ runDir }) => [...stageVerifierHandbacks(runDir, current, reportPath)]
+    .some(({ bytes }) => bytes.toString('utf8') === text));
+}
+
 /** A stage verifier may return the report through either existing work-unit transport. */
-export function* stageVerifierHandbacks(runDir: string, current: VerifierRequest, reportPath: string): Generator<{ bytes: Buffer; instruction?: string }> {
+export function* stageVerifierHandbacks(runDir: string, current: Pick<VerifierRequest, 'feature' | 'phase' | 'subject_id'>, reportPath: string): Generator<{
+    bytes: Buffer; instruction?: string; publicPreimageSha256?: string;
+  }> {
   const events = sessionEvents(runDir);
   const rejected = new Set(events.filter(event => event.type === 'phase_write_violation').map(event => event.invoke_id));
   const phase = `${current.phase}-verifier-format-repair`;
-  const name = 'independent-' + path.basename(reportPath);
   for (const end of [...events].reverse()) {
     if (end.type !== 'agent_invoke_end' || end.phase !== phase || !end.invoke_id || rejected.has(end.invoke_id)
       || !invocationCompleted({ ...end, exitCode: end.exit_code })) continue;
     try {
-      const original = executionRequestForInvoke(runDir, end.invoke_id);
+      const original = readExecutionRequestOriginal(runDir, end.invoke_id, events);
       if (!original) continue;
       const { request } = original;
       const delivered = parseVerifierRequestFromInstruction(request.context.instruction);
       if (request.purpose !== 'verifier_format_repair' || request.context.feature !== current.feature
         || request.context.runId !== path.basename(runDir) || !request.pre_snapshot || request.write_boundary?.executionRole !== 'verifier'
-        || delivered?.subject_id !== current.subject_id || !request.write_boundary.verifierResultPath
-        || path.resolve(request.context.projectRoot, request.write_boundary.verifierResultPath) !== reportPath) continue;
-      const target = (file: string) => path.resolve(request.context.projectRoot, file) === reportPath;
+        || delivered?.subject_id !== current.subject_id || !request.write_boundary.verifierResultPath) continue;
+      const result = path.resolve(request.context.projectRoot, request.write_boundary.verifierResultPath);
+      if (result !== reportPath && result !== stageVerifierDraftPath(runDir, current.phase, end.invoke_id)) continue;
+      const name = 'independent-' + path.basename(result);
+      const target = (file: string) => path.resolve(request.context.projectRoot, file) === result;
       const before = request.pre_snapshot.entries.find(entry => entry.kind === 'file' && target(entry.path));
       let bytes: Buffer;
       let observed: string | null | undefined;
@@ -299,7 +340,11 @@ export function* stageVerifierHandbacks(runDir: string, current: VerifierRequest
         if (!observed) continue;
         bytes = fs.readFileSync(inside(runDir, path.join(runDir, path.dirname(original.reference.path), name)));
       }
-      if (observed && observed !== before?.sha256 && digest(bytes) === observed) yield { bytes, instruction: request.context.instruction };
+      const publicPreimage = request.pre_snapshot.entries.find(entry => entry.kind === 'file'
+        && path.resolve(request.context.projectRoot, entry.path) === reportPath);
+      if (observed && observed !== before?.sha256 && digest(bytes) === observed) yield {
+        bytes, instruction: request.context.instruction, publicPreimageSha256: publicPreimage?.sha256,
+      };
     } catch { /* An unreadable handback leaves the original verifier obligation pending. */ }
   }
 }
@@ -332,8 +377,9 @@ export function stopBoundExecution(runDir: string, issued: IssuedSessionExecutio
   return { stopped: true, completed: false };
 }
 
-export function nativeExecutionCompleted(runDir: string, issued: IssuedSessionExecution): boolean {
-  const settled = [...loadAuthoritativeEvents(path.join(runDir, 'events.jsonl'))].reverse().find(event => event.type === 'agent_process_settled'
+export function nativeExecutionCompleted(runDir: string, issued: IssuedSessionExecution,
+  events: readonly GoalRunEvent[] = loadAuthoritativeEvents(path.join(runDir, 'events.jsonl'))): boolean {
+  const settled = [...events].reverse().find(event => event.type === 'agent_process_settled'
     && event.invoke_id === issued.request.invoke_id) as Record<string, unknown> | undefined;
   if (settled) return invocationCompleted({ ...settled, exitCode: settled.exit_code });
   const stream = inside(runDir, path.join(runDir, path.dirname(issued.reference.path), 'agent-events.jsonl'));

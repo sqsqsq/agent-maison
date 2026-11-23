@@ -177,7 +177,7 @@ function buildSlimProject(opts: SlimOpts, currentRunId?: string): { root: string
         description: 'current receipt fixture source read', severity: 'BLOCKER', status: opts.summaryVerdict === 'FAIL' || !content.trim() ? 'FAIL' : 'PASS',
         details: `Read actual current source: ${source}`, affected_files: [source] }], FRAMEWORK_ROOT);
       const plan = resolveVerifierPlan({ phase: PHASE, track: 'full', runtimeMode: 'interactive', policy: { verifier: 'required' },
-        workflowVerifierPrompt: workflowVerifierPrompt(loadWorkflowSpec(FRAMEWORK_ROOT, 'spec-driven'), PHASE), adapterHasVerifierSubagent: true, adapterName: 'claude' });
+        workflowVerifierPrompt: workflowVerifierPrompt(loadWorkflowSpec(FRAMEWORK_ROOT, 'spec-driven'), PHASE) });
       const phaseRuleText = JSON.stringify(new SpecLoader(root, undefined, undefined, FRAMEWORK_ROOT).loadPhaseRule(PHASE));
       const contextFiles = [{ label: source, kind: 'path' as const, content }];
       assembleAIPrompt(HARNESS_ROOT, root, PHASE, 'demo', contextFiles, JSON.stringify(report), phaseRuleText, undefined, undefined,

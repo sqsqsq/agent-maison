@@ -124,9 +124,9 @@ function case1_hit(): void {
 }
 
 // --------------------------------------------------------------------------
-// 2. 四种失败：各自独立错误码，且恢复话术**只**指向重跑
+// 2. 失败错误码与原核验恢复指引
 // --------------------------------------------------------------------------
-function case2_failuresAllPointToRerun(): void {
+function case2_failuresPointToOriginalVerification(): void {
   withHost(({ root, reportsDir }) => {
     const subject = fixtureSubjectId('missing');
     // ① 报告不存在（verifier 没跑，或跑了但调用方没写下来）
@@ -178,11 +178,11 @@ function case2_failuresAllPointToRerun(): void {
       `实得 ${inconsistent.ok ? 'ok' : inconsistent.code}`,
     );
 
-    // **恢复动作唯一**：每条话术都必须指向重跑 verifier，且都不得指向"改回执/改报告"。
+    // 失败均交回同一核验入口恢复原答或补核。
     for (const r of [missing, noBlock, dupLoaded, mismatch, inconsistent]) {
       assert(!r.ok, 'should be failure');
       if (r.ok) continue;
-      assert(r.message.includes('投给 verifier'), `话术须指向重跑 verifier：${r.message}`);
+      assert(r.message.includes('NEXT') && r.message.includes('恢复原答或补核'), `话术须指向原核验恢复：${r.message}`);
       assert(!/改回执|手填/.test(r.message), `话术不得指向改文书：${r.message}`);
     }
   });
@@ -720,11 +720,25 @@ const CASES: Array<{ name: string; fn: () => void }> = [
     });
   } },
   { name: '① 命中：report_text 是报告全文（不是只剩终态块）', fn: case1_hit },
-  { name: '② 四类失败各自独立错误码，恢复话术只指向重跑 verifier', fn: case2_failuresAllPointToRerun },
+  { name: '② 错误码明确，恢复沿原核验入口', fn: case2_failuresPointToOriginalVerification },
   { name: '③ summary 无 subject = 本轮没有调用凭证', fn: case3_subjectAbsent },
   { name: '④ 仅同材料原件可复用；缺原件、真实变更或从未 PASS 均不沿用', fn: case4_priorPassReuse },
   { name: '⑤ 闭环后改报告不使 evidence manifest stale', fn: case5_reportNotInManifest },
   { name: '⑥ 终态块格式与生产渲染同源', fn: case6_blockFormatIsShared },
+  { name: '七份阶段模板接受已签复核范围并保留原 request 和终态契约', fn: () => {
+    const phases = ['spec', 'plan', 'coding', 'review', 'ut', 'testing', 'extensions'];
+    for (const phase of phases) {
+      const template = fs.readFileSync(path.join(FRAMEWORK_ROOT, 'harness', 'prompts', `verify-${phase}.md`), 'utf8');
+      assert(template.includes('原 request JSON 前附已签复核范围'), `${phase}: 已签复核范围须可读`);
+      for (const marker of [
+        'kind: "maison_verifier_request"', '`prompt_path`', 'request 字段须保持原样',
+        '最后**必须且只能出现一个终态块', 'verifier_subject_id: <request.subject_id',
+        'verdict: PASS | FAIL', 'blocker_count:', '`verdict=PASS` 当且仅当 `blocker_count=0`',
+        '<!-- maison-verifier-result:v1 -->', '<!-- /maison-verifier-result:v1 -->',
+      ]) assert(template.includes(marker), `${phase}: 缺少 ${marker}`);
+      assert(!template.includes('Task prompt') && !template.includes('JSON 前后夹带'), `${phase}: 旧投递要求`);
+    }
+  } },
   { name: '⑦ summary.verifier_report 是仓根相对路径，按它能找到报告', fn: case7_reportPointerIsRepoRelative },
   { name: '⑧ 回执投影从 MD 取 report_path/verdict，残留旧 JSON 不被采信', fn: case8_receiptProjectionReadsMarkdown },
   { name: '⑨ 重验账本按 MD 判复用；终态块坏 = 不可复用', fn: case9_revalidateLedgerReadsMarkdown },

@@ -35,6 +35,7 @@ interface ReceiptFrontmatter {
   feature?: string;
   phase?: string;
   script_harness?: { report_dir?: string };
+  verifier?: { report_path?: string };
   verifier_subagent?: { report_path?: string };
   trace_json?: { path?: string };
   self_check?: { q1_trace_json_abs_path?: string };
@@ -149,13 +150,14 @@ export function detectReceiptPathPatches(
     }
   }
 
-  const verifierPath = frontmatter.verifier_subagent?.report_path?.trim();
-  if (verifierPath) {
+  for (const field of ['verifier', 'verifier_subagent'] as const) {
+    const verifierPath = frontmatter[field]?.report_path?.trim();
+    if (!verifierPath) continue;
     const modernRel = resolveModernReportsRelForLegacyRef(
       projectRoot, feature, phase, verifierPath, frameworkRoot,
     );
     if (modernRel) {
-      patches.push({ field: 'verifier_subagent.report_path', from: verifierPath, to: modernRel });
+      patches.push({ field: `${field}.report_path`, from: verifierPath, to: modernRel });
     }
   }
 
@@ -252,6 +254,10 @@ function applyPatchToFrontmatter(frontmatter: ReceiptFrontmatter, patch: Receipt
     case 'trace_json.path':
       frontmatter.trace_json = frontmatter.trace_json ?? {};
       frontmatter.trace_json.path = patch.to;
+      break;
+    case 'verifier.report_path':
+      frontmatter.verifier = frontmatter.verifier ?? {};
+      frontmatter.verifier.report_path = patch.to;
       break;
     case 'verifier_subagent.report_path':
       frontmatter.verifier_subagent = frontmatter.verifier_subagent ?? {};

@@ -635,9 +635,9 @@ harness-runner 的 personal-setup 前置校验失败时 MUST 在退出前输出�
 
 ### Requirement: Receipt hard blocks dispatch by policy
 
-check-receipt 的 verifier / invoked_via / trace_json / context_exploration / self_check 硬必需块 MUST 先查 evidence policy：`required` 走现有校验；`off` 记 `skipped_by_policy` 不 FAIL；`optional` 缺失仅 WARN；lite feature MUST 整体返回 exit 0 + 顶层 `not_applicable` 机读标注。
+check-receipt 的 verifier / trace_json / context_exploration / self_check 硬必需块 MUST 先查 evidence policy：`required` 走现有校验；`off` 记 `skipped_by_policy` 不 FAIL；`optional` 缺失仅 WARN；lite feature MUST 整体返回 exit 0 + 顶层 `not_applicable` 机读标注。
 
-verifier 块 MUST 消费共享的 verifier plan 解析结果，而非自行按 `policy.verifier` 二分：`disabled` 记 `skipped_by_policy` / `not_applicable` 且 loader 不调用、报告与 request 均不要求，其中 `adapter_has_no_reviewer` MUST 记 `not_reviewed` 并以非阻断 WARN 披露；`enabled` 读当前 subject 的 `verifier.report.<subject>.md`，仅当终态块回显 `summary.verifier_subject_id` 且 verdict 与 blocker_count 自洽时接受。代际分派 MUST NOT 参与（plan d2f7a9c4：按 `summary.schema_version` 劈成两代会让能力被合法关闭读成这是旧件）。回执手填的 `invoked_via` / `report_path` / `verdict` MUST NOT 单独构成通过或失败条件。
+verifier 块 MUST 消费共享 verifier plan。disabled 记 `skipped_by_policy` / `not_applicable`，同材料已有的有效否决仍生效。enabled 时按当前 subject 或可验证等价材料读取完整报告，终态块的 subject 与结论必须自洽。历史回执字段只读兼容，不能跳过当前核验义务。
 
 #### Scenario: balanced 下 verifier off 的 receipt 通过
 - **WHEN** full×balanced 的 review phase receipt 无 verifier 节
@@ -2036,17 +2036,17 @@ Enforcement: `harness/scripts/check-ut.ts`, `harness/scripts/utils/mutation-auth
 
 ### Requirement: The verifier plan is resolved once and consumed by every stage
 
-Whether a phase runs a verifier SHALL be resolved by one shared function from four inputs — the workflow's `verifier_prompt` declaration, the feature track, the resolved evidence policy, and whether the active adapter declares `verifier_subagent` — producing exactly one of `disabled` or `enabled`. The runner's production path, the receipt gate and the Skill guidance SHALL all consume that single result; none of them SHALL re-derive applicability on its own.
+Whether a phase runs a verifier SHALL be resolved by one shared function from the profile, the workflow's `verifier_prompt` declaration and the effective track evidence policy, producing exactly one of `disabled` or `enabled`. The runner's production path, the receipt gate and the Skill guidance SHALL all consume that single result; none of them SHALL re-derive applicability on its own.
 
-Resolution order SHALL be fixed and SHALL NOT be reordered by any caller: profile-disabled phase, then absent workflow declaration, then evidence policy `not_applicable` / `off`, then absent adapter reviewer, then enabled.
+Resolution order SHALL be fixed and SHALL NOT be reordered by any caller: profile-disabled phase, then absent workflow declaration, then evidence policy `not_applicable` / `off`, then enabled.
 
-`disabled` SHALL mean **absent equals zero**: no `ai-prompt.md`, no request, no subject, no invocation, and no closure requirement. A workflow that does not declare `verifier_prompt` for a phase SHALL be `disabled` — that is "not applicable", not "missing", and a fallback template SHALL NOT be synthesized to fill the gap. Artifacts left on disk by an earlier `enabled` generation SHALL **never** re-activate a capability the resolver has judged `disabled`, and switching a phase from `enabled` to `disabled` SHALL NOT require deleting them.
+`disabled` SHALL mean **absent equals zero**: no new prompt, request, subject or invocation requirement. An existing verified negative result on the same material SHALL still apply. A workflow that does not declare `verifier_prompt` for a phase SHALL be `disabled` — that is "not applicable", not "missing", and a fallback template SHALL NOT be synthesized to fill the gap. Artifacts left on disk by an earlier `enabled` generation SHALL **never** re-activate a capability the resolver has judged `disabled`, and switching a phase from `enabled` to `disabled` SHALL NOT require deleting them.
 
-`enabled` SHALL mean the capability exists this round; whether a request is actually issued SHALL be a separate judgement made by the shared request-eligibility predicate, which covers both the ordinary `PASS` path and the two narrow diagnosable-failure shapes. Applicability and eligibility SHALL remain two questions with two answers: a phase may be `enabled` and still issue nothing.
+`enabled` SHALL mean the capability exists this round; whether a request is actually issued SHALL be a separate judgement made by the shared request-eligibility predicate, which covers both the ordinary `PASS` path and diagnosable failures with concrete current evidence. Applicability and eligibility SHALL remain two questions with two answers: a phase may be `enabled` and still issue nothing.
 
-The resolution SHALL be identical in `interactive`, `headless` and `goal`. There SHALL be no mode-conditional branch anywhere in verifier adjudication: the previous asymmetry — an adapter-capability gate that applied to `interactive` only, paired with a publication path that refused to publish under `goal` — produced an empty intersection in which a completed, passing review could never close a phase, and burned two unattended runs before anyone noticed.
+The applicability resolution SHALL be identical in `interactive`, `headless` and `goal`.
 
-There SHALL be no third state. A `blocked` outcome existed to express "policy demands a verifier that this adapter cannot publish"; with publication no longer adapter-specific, the only remaining gap is a tool that cannot dispatch a subagent, which is disclosed as `disabled` rather than raised as a failure.
+An enabled phase SHALL retain an outstanding obligation if the verifier cannot execute or return valid evidence.
 
 The resolution result SHALL NOT be persisted as a summary snapshot or any other parallel state.
 
@@ -2059,8 +2059,24 @@ Enforcement: `harness/scripts/utils/verifier-plan.ts`, `harness/harness-runner.t
 
 #### Scenario: An enabled phase can still issue nothing
 
-- **WHEN** the plan resolves `enabled` and the script gate fails outside the two diagnosable shapes
+- **WHEN** the plan resolves `enabled` and the script gate fails without concrete current evidence for diagnosis
 - **THEN** the plan SHALL remain `enabled`, no request SHALL be issued, and the closure gate SHALL keep treating the phase as one that owes a verifier once its script gate passes
+
+### Requirement: Goal and single-phase verification consume the same signed request
+
+Goal owns dispatch for its active work unit. Its attended driver SHALL execute or observe the original request, and its unattended runtime SHALL hold the original invocation. A standalone phase SHALL use the explicit `--execute-verifier` operation to execute and await the current request. Both entry points SHALL use the same input, write boundary and acceptance contract, and SHALL consume any valid current or equivalent result before a new dispatch.
+
+A standalone waiter SHALL be able to rejoin the original invocation without reselection of its bound model. The runtime SHALL read the original `prompt_path`, and MAY prepend the signed review scope to the unmodified JSON. It SHALL accept the full report only after checking its subject and write boundary. A diagnostic request produced from a failing gate does not turn the product result into a pass.
+
+#### Scenario: The waiter reconnects
+
+- **WHEN** a standalone waiter expires or disconnects while its original worker still owns the current request
+- **THEN** an identical invocation of the command SHALL observe the original bound execution and consume its accepted result without an additional model dispatch
+
+#### Scenario: A signed scope precedes the request
+
+- **WHEN** the runtime prepends the signed review scope to a verifier request
+- **THEN** the seven prompt templates SHALL allow that scope and SHALL still require the untouched request fields, exact subject echo, complete report and single terminal block
 
 ### Requirement: Reference-image receipt verification uses the runner's shared discovery denominator
 
@@ -2333,8 +2349,6 @@ When the current subject has no report but the phase holds any verified PASS rep
 
 When a phase is closed that way, the run-level phase archive SHALL archive the very report the closure relied on and SHALL mark it as reused. The archive SHALL resolve evidence by trying the current subject first and then `summary.verifier_closure.reviewed_subject_id`, taking the first evidence that passes the shared loader's verification; on the reuse path it SHALL copy that report under the archive's fixed report name and SHALL record that the archived evidence comes from a prior review. It MUST NOT record the phase as holding no trustworthy verifier conclusion while its own `summary.json` copy states the closure reused a prior PASS. Where the current subject has its own verified report, that evidence SHALL take precedence and SHALL NOT be marked reused; where the phase never obtained a PASS report, the archive SHALL keep no verifier evidence and no report file rather than falling back to a FAIL or absent report. The archived report name and the archived file set SHALL NOT change, and no new evidence validation state SHALL be introduced.
 
-When the plan is `disabled` for reason `adapter_has_no_reviewer`, the gate SHALL pass and SHALL disclose the verifier axis as `not_reviewed` in a non-blocking warning. A tool that cannot dispatch a subagent is an environment fact; refusing to close the phase over it makes the whole `full` track unusable on that adapter, while an honest disclosure keeps the closure record truthful.
-
 Hand-written receipt fields SHALL hold no adjudication authority; a mismatch with the machine fact SHALL be a warning, never a verdict.
 
 Enforcement: `harness/scripts/check-receipt.ts`, `harness/scripts/utils/phase-closure-finalizer.ts`, `harness/scripts/utils/verifier-evidence.ts`, `harness/scripts/utils/goal-phase-snapshot.ts`
@@ -2344,15 +2358,15 @@ Enforcement: `harness/scripts/check-receipt.ts`, `harness/scripts/utils/phase-cl
 - **WHEN** spec.md changed after a verified PASS and the dispatcher did not re-run the verifier
 - **THEN** the phase SHALL close with `completed_with_prior_review` and the summary SHALL list `spec.md` under `current_material_not_reverified`
 
-#### Scenario: An adapter without a reviewer closes with disclosure
+#### Scenario: An outstanding request cannot close without valid evidence
 
-- **WHEN** the active adapter declares no `verifier_subagent` and a `full` phase's script gate passes
-- **THEN** no request SHALL have been issued, the gate SHALL pass, and the verifier axis SHALL be recorded as `not_reviewed` with a non-blocking warning
+- **WHEN** a phase requires verification and the current transport does not return a valid report
+- **THEN** the verifier obligation SHALL remain outstanding with the actual recovery condition
 
 #### Scenario: An unreadable report is a re-run, not a closure wall
 
 - **WHEN** the report for the current subject is missing, carries zero or multiple terminal blocks, or contradicts its own blocker count
-- **THEN** the gate SHALL name that single failure and SHALL instruct the dispatcher to re-run the verifier and rewrite the report
+- **THEN** the gate SHALL name that single failure and SHALL instruct the responsible runtime to recover the original response or perform the affected verification
 
 #### Scenario: A reused prior review is archived with the phase
 

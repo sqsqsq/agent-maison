@@ -197,13 +197,13 @@ export function dumpPhase(p: RealChainProject, phase: string): string {
  * verifier 的回复本身也是确定性替身，报告须含**恰好一个**终态块
  * （verifier-evidence.ts:246-252）。subject 从盘上真 summary 读，**不改 summary 字节**（§4.4 第 5 条）。
  */
-export function publishVerifier(p: RealChainProject, phase: string): void {
+export function publishVerifier(p: RealChainProject, phase: string, draftPath?: string): void {
   const reportsDir = path.join(p.root, 'doc/features', featureRelativePath(p.feature), phase, 'reports');
   const s = readSummary(p, phase);
   const subjectId = s?.verifier_subject_id;
   if (!subjectId) return;
   publishFixtureVerifierEvidence({
-    projectRoot: p.root, reportsDir, feature: p.feature, phase, subjectId,
+    projectRoot: p.root, reportsDir, feature: p.feature, phase, subjectId, draftPath,
     reportText: `# verifier — ${p.feature} / ${phase}\n\n语义一致性复核通过。\n${codingTestStrengthReply(p, phase)}`,
     skipSummaryPatch: true,
   });

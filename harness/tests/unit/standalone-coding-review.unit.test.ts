@@ -271,7 +271,7 @@ async function currentReviewFinding(f: ReturnType<typeof fixture>, row: { id: st
   f.write(file, original);
   const report = generateScriptReport(path.join(frameworkRoot, 'harness'), 'review', 'demo', f.root, checks, frameworkRoot);
   const plan = resolveVerifierPlan({ phase: 'review', track: 'full', runtimeMode: 'goal', policy: { verifier: 'required' },
-    workflowVerifierPrompt: workflowVerifierPrompt(loadWorkflowSpec(frameworkRoot, 'obligation-driven'), 'review'), adapterHasVerifierSubagent: true });
+    workflowVerifierPrompt: workflowVerifierPrompt(loadWorkflowSpec(frameworkRoot, 'obligation-driven'), 'review') });
   const contextFiles = [file, row.files, 'src/demo/value.ts'].map(label => ({ label, kind: 'path' as const, content: fs.readFileSync(path.join(f.root, label), 'utf8') }));
   const rule = YAML.stringify(ctx.phaseRule);
   assembleAIPrompt(path.join(frameworkRoot, 'harness'), f.root, 'review', 'demo', contextFiles, JSON.stringify(report), rule, undefined, undefined, frameworkRoot,
@@ -633,7 +633,7 @@ fs.writeFileSync(${JSON.stringify(resultFile)},JSON.stringify(result?{context:re
     assert.equal(check.status, 'FAIL', 'text comparison cannot silently bless a new assertion');
     assert.equal(check.repair_owner, undefined, 'same-unit test authorship is not UT-only permission');
     const plan = resolveVerifierPlan({ phase: 'coding', track: 'full', runtimeMode: 'goal', policy: { verifier: 'required' },
-      workflowVerifierPrompt: workflowVerifierPrompt(loadWorkflowSpec(frameworkRoot, 'obligation-driven'), 'coding'), adapterHasVerifierSubagent: true });
+      workflowVerifierPrompt: workflowVerifierPrompt(loadWorkflowSpec(frameworkRoot, 'obligation-driven'), 'coding') });
     const report = generateScriptReport(path.join(frameworkRoot, 'harness'), 'coding', 'demo', f.root, [check], frameworkRoot);
     const gate = canProduceVerifierRequest({ planMode: plan.mode, phase: 'coding', scriptVerdict: report.summary.verdict,
       checks: report.checks, reportValidity: 'UNVERIFIED', hasBlockedCapability: false });

@@ -513,10 +513,14 @@ export function runSyncClosureDetailed(
   // 重签为 i8 才允许闭环（禁止任何迁移/改绑协议）。
   //
   // 非 goal 调用（harness-runner 的 --sync-closure 等）省略本参数即保持现状。
-  opts?: { goalIdentity?: { runId: string; attemptId: string; attemptPhase: string; modelPin?: string } },
+  opts?: { goalIdentity?: { runId: string; attemptId: string; attemptPhase: string; modelPin?: string };
+    resolvedInputs?: import('./capability-resolution').ResolvedPhaseInputs;
+    factsContext?: import('./context-facts').FactsInvocationContext;
+  },
 ): SyncClosureResult {
   try {
-    preparePhaseRepairFeedback({ projectRoot, frameworkRoot: frameworkRoot ?? path.resolve(harnessRoot, '..'), feature, phase });
+    preparePhaseRepairFeedback({ projectRoot, frameworkRoot: frameworkRoot ?? path.resolve(harnessRoot, '..'), feature, phase,
+      resolvedInputs: opts?.resolvedInputs });
   } catch (error) {
     const message = (error as Error).message;
     console.error(`❌ sync-closure: 修订反馈准备失败：${message}`);
@@ -540,6 +544,8 @@ export function runSyncClosureDetailed(
         frameworkRoot: frameworkRoot ?? path.resolve(harnessRoot, '..'),
         feature,
         phase,
+        resolvedInputs: opts?.resolvedInputs,
+        factsContext: opts?.factsContext,
         // **这里刻意不传 `goalRunId`**（plan b5c1e9d7 §8.7）。归属重建需要 run 身份，但
         // `goalRunId` 不是「只喂重建」的一个入参——`productionEvidence`
         //（`phase-closure-finalizer.ts` 的 `Boolean(opts.goalRunId?.trim()) || isGoalEnvironment()`）

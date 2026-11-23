@@ -25,7 +25,7 @@ import { clearFrameworkConfigCache } from '../../config';
 import { makeVerifierProject, FRAMEWORK_SOURCE_ROOT } from '../utils/verifier-project-fixture';
 import { fixture as requestFixture } from './request-entry.unit.test';
 import { prepareExplicitRequest } from '../../scripts/utils/capability-resolution-entry-input';
-import { runGoalRuntimeChain, setupGoalRuntimeHost, authorizeFixtureConstruction, seedSignalHost, writeCurrentSignals, currentSignalGateChecks, PRODUCT_FILE } from './goal-runner-testing-integrity.unit.test';
+import { runGoalRuntimeChain, setupGoalRuntimeHost, authorizeFixtureConstruction, seedSignalHost, writeCurrentSignals, currentSignalGateChecks, PRODUCT_FILE, draftForStageVerifier } from './goal-runner-testing-integrity.unit.test';
 import { computeDefectFingerprint } from '../../../profiles/hmos-app/harness/visual-diff-check';
 import { readRunControl } from '../../scripts/utils/goal-run-control';
 import type { WorkUnitExecutionContext } from '../../scripts/utils/goal-phase-executor';
@@ -59,7 +59,7 @@ export async function prepareSamePhaseRequiredWorkCase(executeAuthor?: (ctx: Par
   const YAML = await import('yaml');
   const { provisionRealChainProject, scaffoldRealChainHost, REAL_CHAIN_REQUIREMENT } = await import('../utils/real-chain-host');
   const { writeSpecMaterials, writePlanMaterials } = await import('./real-chain.unit.test');
-  const { parseVerifierRequest } = await import('../../scripts/utils/verifier-request');
+  const { parseVerifierRequestFromInstruction } = await import('../../scripts/utils/verifier-request');
   const { readVerifierSemanticIssues } = await import('../../scripts/utils/repair-candidates');
   const project = provisionRealChainProject();
   scaffoldRealChainHost(project);
@@ -91,6 +91,12 @@ export async function prepareSamePhaseRequiredWorkCase(executeAuthor?: (ctx: Par
         requireOrdering();
         return;
       }
+      // This author is reached only after the runtime publishes and consumes the independent answer.
+      if (observations.rawRequiredPass && !observations.closureBlocked) {
+        assert.throws(() => finalizePhaseClosure({ projectRoot: project.root, frameworkRoot: project.frameworkRoot,
+          feature: project.feature, phase: 'spec', goalRunId: ctx.runId, persistPhaseState: () => undefined }), /required_bank_order/);
+        observations.closureBlocked = true;
+      }
       observations.authorPrompts.push(ctx.prompt);
       if (executeAuthor) return executeAuthor(ctx);
       // 替身只消费收到的任务和原验收；缺送达就不会猜目标或替框架补实现。
@@ -100,7 +106,7 @@ export async function prepareSamePhaseRequiredWorkCase(executeAuthor?: (ctx: Par
       fs.appendFileSync(path.join(project.root, target), `\n${expected}\n`);
     },
     onOutOfChain: ctx => {
-      const request = parseVerifierRequest(ctx.prompt.slice(ctx.prompt.lastIndexOf('\n{') + 1));
+      const request = parseVerifierRequestFromInstruction(ctx.prompt);
       assert(request && request.feature === project.feature && request.phase === 'spec', 'original verifier consumes the actual current request');
       observations.verifierRequests.push(request!.subject_id);
       const summaryPath = path.join(featurePhaseReportsDir(project.root, project.feature, 'spec', project.frameworkRoot), 'summary.json');
@@ -119,13 +125,11 @@ export async function prepareSamePhaseRequiredWorkCase(executeAuthor?: (ctx: Par
       assert(!missing || issues?.rows.length, JSON.stringify({ issues, acceptance: doc }));
       const verification = missing ? `\`\`\`issue-verification\n- issue: required_bank_order\n  verdict: confirmed\n  repair_owner: spec\n  evidence: ${target} | ${issues!.rows[0].summary}\n\`\`\`\n` : '';
       publishFixtureVerifierEvidence({ projectRoot: project.root, reportsDir: path.dirname(summaryPath), feature: project.feature,
-        phase: 'spec', subjectId: request!.subject_id, reportText: text + verification, skipSummaryPatch: true });
+        phase: 'spec', subjectId: request!.subject_id, reportText: text + verification,
+        draftPath: draftForStageVerifier(ctx), skipSummaryPatch: true });
       if (missing) {
         const rawReport = JSON.parse(fs.readFileSync(path.join(path.dirname(summaryPath), 'script-report.json'), 'utf8'));
         observations.rawRequiredPass = rawReport.summary.verdict === 'PASS';
-        assert.throws(() => finalizePhaseClosure({ projectRoot: project.root, frameworkRoot: project.frameworkRoot,
-          feature: project.feature, phase: 'spec', goalRunId: ctx.runId, persistPhaseState: () => undefined }), /required_bank_order/);
-        observations.closureBlocked = true;
       }
     },
   };
@@ -147,9 +151,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
           const request = parseVerifierRequestFromInstruction(ctx.prompt); assert(request);
           deliveries.push({ subject: request.subject_id, prompt: ctx.prompt });
           if (mode !== 'valid-supplement' || deliveries.length === 1) {
-            const summary = JSON.parse(fs.readFileSync(path.join(project.root, 'doc/features', project.feature, 'spec/reports/summary.json'), 'utf8'));
-            const report = path.resolve(project.root, summary.verifier_report);
-            fs.writeFileSync(report, deliveries.length === 1 ? 'I checked it.' : '{ malformed at check-i2/report.json');
+            fs.writeFileSync(draftForStageVerifier(ctx), deliveries.length === 1 ? 'I checked it.' : '{ malformed at check-i2/report.json');
             return;
           }
           return originalVerifier(ctx);

@@ -223,7 +223,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'V4 subagents 二选一：顶层与 commands.subagents 不得同时声明；codex 顶层 auto_overwrite',
+    name: 'V4 subagents 二选一：顶层与 commands.subagents 不得同时声明；codex 退役空模板目录',
     run: () => {
       const agentsDir = path.join(REPO_FRAMEWORK_ROOT, 'agents');
       let sawCodex = false;
@@ -240,9 +240,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         assert(!(top && nested), `${ent.name}: subagents 不得同时声明在顶层与 commands 之下`);
         if (ent.name === 'codex') {
           sawCodex = true;
-          assert(!!top, 'codex 须在顶层声明 subagents');
-          assert(top!.target_dir === '.codex/agents', `codex subagents.target_dir=${top!.target_dir}`);
-          assert(top!.update_policy === 'auto_overwrite', `codex subagents.update_policy=${top!.update_policy}`);
+          assert(!top, 'codex 已退役唯一受管角色，移除空的 subagents 声明');
           assert(((cfg as { commands?: unknown }).commands ?? null) === null, 'codex commands 须保持 null');
         }
       }

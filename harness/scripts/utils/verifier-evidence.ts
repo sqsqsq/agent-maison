@@ -18,10 +18,7 @@
 // 任一不成立的**唯一**恢复动作是重跑 verifier 并重写报告——绝不指向"改文书"。
 //
 // ─── 单写者 ─────────────────────────────────────────────────────────────────
-// 写者是**派发 verifier 的那个 agent**（phase executor / 主 agent）：把 verifier 的回复
-// 原样写入 summary.verifier_report。verifier 子代理保持只读工具集、只负责回复。刻意不做
-// 「verifier 只回终态块 + 调用方兜底补写」——那会产出一份只有终态块、却能通过本 loader 的
-// 报告，repair candidates、WARN 与多模态审查正文全部丢失。
+// 独立核验执行者只写本调用结果。运行时验收后按 subject 发布完整原答；旧版报告仍走兼容读取。
 //
 // ─── 放弃的准确性（plan d2f7a9c4 一、放弃项）─────────────────────────────────
 // 报告可被伪造或事后修改而不被机器识别；同 subject 并发不再报 conflict。兜底靠下游阶段
@@ -52,6 +49,7 @@ export type VerifierEvidenceErrorCode =
   | 'subject_absent'
   /** 报告文件不存在——verifier 未跑，或跑了但调用方没把回复写下来 */
   | 'report_missing'
+  | 'report_unaccepted'
   /** 终态块缺失 / 多于一个 / 字段非法 */
   | 'block_unparseable'
   /** 终态块回显的 subject 不是当前 subject（迟到、错位，或被手改） */
@@ -169,6 +167,14 @@ export function planVerifierItemReview(input: VerifierItemReviewInput & { curren
 }
 
 /** An existing transport-level verdict can still owe a specific current semantic answer. */
+export function verifierDiagnosisRequired(phase: string, summary?: {
+  next_action?: unknown; readiness_signals?: unknown;
+} | null): boolean {
+  if (phase === 'spec' || phase === 'plan' || summary?.next_action === 'run_verifier_for_repair') return true;
+  return Array.isArray(summary?.readiness_signals) && summary.readiness_signals.some(signal =>
+    signal?.id === 'verifier_repair_diagnosis' && signal.status === 'incomplete');
+}
+
 export function verifierReportItemGaps(input: VerifierItemReviewInput, evidence: VerifierEvidence): string[] {
   const { readVerifierSummaryRows } = require('./repair-candidates') as typeof import('./repair-candidates');
   const { verifierTemplateCheckIds } = require('./verifier-item-scope') as typeof import('./verifier-item-scope');
@@ -202,6 +208,18 @@ export function verifierReportItemGaps(input: VerifierItemReviewInput, evidence:
   return [...new Set([...diagnostics, ...missing, ...drift, ...carried.missing])];
 }
 
+function verifierOriginalRunDirs(projectRoot: string, feature: string, phase: string, reportsDir: string, subject: string, runId?: string): string[] {
+  const { standaloneVerifierRunDir } = require('./session-execution-handoff') as typeof import('./session-execution-handoff');
+  const runsDir = featureFilePath(projectRoot, feature, 'goal-runs');
+  let siblings: fs.Dirent[] = [];
+  try { siblings = fs.readdirSync(runsDir, { withFileTypes: true }); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  const candidates = [...new Set([...(runId ? [runId] : []), ...siblings.filter(item => item.isDirectory()).map(item => item.name)])];
+  const phased = candidates.filter(id => /^[a-zA-Z0-9-]+$/.test(id)).map(id => path.join(runsDir, id))
+    .filter(dir => fs.existsSync(path.join(dir, 'phases', phase + '-verifier-format-repair')));
+  return [standaloneVerifierRunDir(reportsDir, subject), ...phased];
+}
+
 function readIssuedVerifierItemScope(input: VerifierItemReviewInput, evidence: VerifierEvidence) {
   if (input.currentSubject !== evidence.subject_id) return null;
   const { projectRoot, feature, phase, frameworkRoot } = input;
@@ -213,8 +231,7 @@ function readIssuedVerifierItemScope(input: VerifierItemReviewInput, evidence: V
     if (computePromptSha256(prompt) !== request.prompt_sha256) return null;
     const { readVerifierItemReviewPrompt } = require('./report-generator') as typeof import('./report-generator');
     const { stageVerifierHandbacks } = require('./session-execution-handoff') as typeof import('./session-execution-handoff');
-    if (input.runId) {
-      const runDir = featureFilePath(projectRoot, feature, `goal-runs/${input.runId}`);
+    for (const runDir of verifierOriginalRunDirs(projectRoot, feature, phase, reports, evidence.subject_id, input.runId)) {
       for (const handback of stageVerifierHandbacks(runDir, request, evidence.md_path_abs)) {
         if (handback.bytes.toString('utf8') !== evidence.report_text) continue;
         const scoped = handback.instruction ? readVerifierItemReviewPrompt(handback.instruction) : null;
@@ -332,13 +349,9 @@ function withCarriedVerifierDetails(input: VerifierItemReviewInput, evidence: Ve
   return text;
 }
 
-/** 恢复话术**唯一出处**：只指向重跑 verifier + 重写报告，绝不指向改文书。 */
+/** 恢复原交回或补核由同一核验入口负责。 */
 function rerunGuidance(): string {
-  return (
-    '恢复：把 summary.verifier_request 指向的 request JSON **整段**作为 Task prompt 投给 verifier' +
-    '（verifier 自行 Read 其中的 prompt_path），再把它的回复**原样**写入 summary.verifier_report ' +
-    '指向的路径，然后重跑本检查。'
-  );
+  return '恢复：按当前阶段 NEXT 交回或执行原核验请求，核验执行器恢复原答或补核并消费完整报告。';
 }
 
 /**
@@ -528,6 +541,15 @@ export function loadVerifierEvidenceForSubject(
     };
   }
 
+  try {
+    const { stageVerifierPublicReportQualified } = require('./session-execution-handoff') as typeof import('./session-execution-handoff');
+    const runDirs = verifierOriginalRunDirs(projectRoot, feature, phase, dir, currentSubject);
+    if (!stageVerifierPublicReportQualified(runDirs, { feature, phase, subject_id: currentSubject }, mdAbs, text)) {
+      return { ok: false, code: 'report_unaccepted', message: mdRel + ' 尚未由拥有该已签请求的运行时接收。' };
+    }
+  } catch (error) {
+    return { ok: false, code: 'report_unaccepted', message: mdRel + ' 的交回无法核实：' + (error as Error).message };
+  }
   return parseVerifierEvidenceText({ feature, phase, currentSubject, text, mdAbs, mdRel });
 }
 

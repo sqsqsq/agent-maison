@@ -116,11 +116,6 @@ export function prepareA21473ReplayEnvironment(root: string, frameworkRoot: stri
     write(root, 'AGENTS.md', '# Isolated development replay\n\nRead the preserved original requirement and the current signed request. Do not access the real host or devices.\n');
     fs.mkdirSync(path.join(root, "observations"), {recursive:true});
     fs.copyFileSync(path.join(__dirname, "../fixtures/a21473-node-replay/no-real-tools.cjs"), path.join(root, "observations/no-real-tools.cjs"));
-    fs.mkdirSync(path.join(root, '.codex/agents'), { recursive: true });
-    for (const name of ['phase-executor.toml', 'verifier.toml']) {
-      const file = path.join(frameworkRoot, 'agents/codex/templates/agents', name);
-      if (fs.existsSync(file)) fs.copyFileSync(file, path.join(root, '.codex/agents', name));
-    }
 }
 export async function continueA21473CombinedReplay(input: { root: string; frameworkRoot: string; harnessDir: string; initialStep: any; historicalEvents: Buffer; reportRoot: string; sourceHashes: Record<string, string> }): Promise<void> {
   const { root, frameworkRoot, harnessDir } = input;
@@ -338,15 +333,15 @@ export async function continueA21473CombinedReplay(input: { root: string; framew
         independentReviews.push({ runId: context.runId, invokeId: issued.request.invoke_id, material });
         writeA21473ReplayReview(root, frameworkRoot, context.feature, context);
       } else if (step.phase.endsWith('-verifier-format-repair')) {
+        assert.equal(load('scripts/utils/goal-phase-executor').workUnitExecutionRole(context, issued.request.purpose), 'verifier');
+        assert.equal(issued.request.write_boundary?.executionRole, 'verifier');
+        const draft = issued.request.write_boundary?.verifierResultPath;
+        assert(draft && path.basename(draft) === 'verdict.md', 'the signed stage verifier may write its invocation draft');
+        const report = answerA21473Verifier(root, frameworkRoot, context, draft);
         if (step.phase === 'review-verifier-format-repair') {
-          assert.equal(load('scripts/utils/goal-phase-executor').workUnitExecutionRole(context, issued.request.purpose), 'verifier');
-          assert.equal(issued.request.write_boundary?.executionRole, 'verifier');
-          const report = issued.request.write_boundary?.verifierResultPath;
-          assert(report && /verifier\.report\.[a-f0-9]+\.md$/.test(report), 'the actual review verifier is restricted to its original subject report');
           assert(!reviewAttestations.some(prior => prior.runId === context.runId && prior.report === report), 'an unchanged review subject cannot purchase another verification');
           reviewAttestations.push({ runId: context.runId, invokeId: issued.request.invoke_id, report });
         }
-        answerA21473Verifier(root, frameworkRoot, context);
       } else if (step.phase.startsWith('initial-design-scope-')) {
         const feature = load('scripts/utils/change-unit-path').deriveChangeUnitFeatureId(BLUEPRINT, UNIT);
         load('scripts/utils/feature-track').prepareFeatureScopeCandidate({ projectRoot: root, frameworkRoot, feature,

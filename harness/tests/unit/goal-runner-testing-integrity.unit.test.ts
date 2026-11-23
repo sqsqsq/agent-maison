@@ -2158,7 +2158,7 @@ async function currentRevalidateFixture() {
         if (/\.(?:ets|ts)$/.test(file)) assert(fs.readFileSync(path.resolve(cu.root, file)).length > 0, '实现核实不能批准空源码');
       }
       // Existing model-report writer only; production checks, summary, receipt and budget stay untouched.
-      publishVerifier({ ...cu, runId: ctx.runId }, request!.phase);
+      publishVerifier({ ...cu, runId: ctx.runId }, request!.phase, draftForStageVerifier(ctx));
     },
   };
   let first: RunProbe;
@@ -7217,6 +7217,11 @@ test('b7d2e9f4 §3.3 orphaned_session：只有出生事件的 run 挂着过期 s
   }
 });
 
+export function draftForStageVerifier(ctx: AgentCtx): string {
+  const target = ctx.prompt.match(/完整回复原样写入 ([^\n]+?)。/)?.[1];
+  assert(!!target, 'the test verifier must write to the original signed invocation destination');
+  return path.resolve(ctx.root, target!);
+}
 interface VerifierDeliveryInput { invokeId: string; subject: string; material: string; feedback: string; continuation: number }
 function verifierDeliveryInput(root: string, feature: string, ctx: AgentCtx, subject: string, continuation: number): VerifierDeliveryInput {
   const runDir = featureFilePath(root, feature, `goal-runs/${ctx.runId}`);
@@ -7370,7 +7375,7 @@ for (const variant of ['corrected', 'still-bad', 'refuted', 'reentered', 'waitin
             throw new Error('finite verifier callback ended before an invoke_end was recorded');
           }
           const stillBad = variant === 'still-bad' || variant === 'reentered' || variant === 'new-subject' || unfinished && !correctionAvailable;
-          writeFile(root, reportRel, verifierBody(!stillBad));
+          writeFile(root, path.relative(root, draftForStageVerifier(ctx)), verifierBody(!stillBad));
         },
       };
       let probe = await runGoalRuntimeChain(root, { ...options, testControl: variant === 'no-end-resumed'
@@ -7580,7 +7585,152 @@ test('repair1 R1 disclosed visual MAJOR and valid defer complete a real run with
   } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-for (const iteration of [26, 28] as const) test(`5ea729d4 S2 i${iteration} production Goal verifier dispatch`, async () => {
+for (const adapter of ['claude', 'codeagent', 'codex', 'deepseek-harness', 'cursor', 'opencode']) {
+  for (const mode of ['background', 'attended'] as const) {
+    for (const fail of [false, true]) test('9e46 Goal adapter matrix ' + adapter + ' ' + mode + ' ' + (fail ? 'machine-fail' : 'pass'), async () => {
+      const { root } = setupGoalRuntimeHost(adapter);
+      if (adapter === 'claude') fs.copyFileSync(path.join(root, 'AGENTS.md'), path.join(root, 'CLAUDE.md'));
+      const { STRUCTURED_BINARY_CANDIDATES } = await import('../../scripts/utils/agent-invoke');
+      const binary = STRUCTURED_BINARY_CANDIDATES[adapter][0];
+      const controlledBin = path.join(root, 'controlled-cli');
+      fs.mkdirSync(controlledBin);
+      const shim = path.join(controlledBin, binary + (process.platform === 'win32' ? '.cmd' : ''));
+      fs.writeFileSync(shim, process.platform === 'win32' ? '@echo off\necho controlled cli\n' : '#!/bin/sh\necho controlled cli\n',
+        { mode: 0o755 });
+      const originalPath = process.env.PATH;
+      process.env.PATH = controlledBin + path.delimiter + (originalPath ?? '');
+      const family = 'coding';
+      const { buildVerifierRequest, parseVerifierRequestFromInstruction } = await import('../../scripts/utils/verifier-request');
+      const { renderResultBlock } = await import('../utils/verifier-evidence-fixture');
+      const { loadVerifierEvidence } = await import('../../scripts/utils/verifier-evidence');
+      const { resolveVerifierPlan, workflowVerifierPrompt } = await import('../../scripts/utils/verifier-plan');
+      const { resolveEvidencePolicy } = await import('../../scripts/utils/runtime-policy');
+      const { stageVerifierHandbacks } = await import('../../scripts/utils/session-execution-handoff');
+      const subjects: string[] = [];
+      let original: ReturnType<typeof buildVerifierRequest> | undefined;
+      try {
+        const check: CheckResult = { id: 'controlled_contract_behavior', category: 'structure', description: 'Verified current product behavior',
+          details: fail ? 'Existing implementation returns the wrong result for this requirement' : 'Existing implementation returns the required result',
+          status: fail ? 'FAIL' : 'PASS', severity: 'BLOCKER',
+          ...(fail ? { failure_kind: 'code_regression', affected_files: [PRODUCT_FILE] } : {}) };
+        const workflow = resolveWorkflowSpec(root, { frameworkRoot: REPO_ROOT });
+        const modeContext = { mode: 'goal' as const, adapter, phase: family, workflow: workflow.name, can_prompt_user: false, can_collect_usage: false };
+        const verifierPlan = resolveVerifierPlan({ phase: family, track: 'full', runtimeMode: 'goal',
+          policy: resolveEvidencePolicy('full', modeContext, { evidence_profile: 'strict' }),
+          workflowVerifierPrompt: workflowVerifierPrompt(workflow, family), phaseDisabledByProfile: false });
+        const probe = await runGoalRuntimeChain(root, { adapter, freshStartPhase: family, freshEndPhase: family,
+          freshRequirement: '验证当前实现是否返回已约定的取值', ...(mode === 'attended'
+            ? { viaSessionStep: true, hostAuthorization: { mode: 'goal_mode' as const, autonomyAuthorized: true } } : {}),
+          onHarnessSummary: ({ phase }) => {
+            if (phase !== family) return null;
+            const report = buildScriptReport(phase, FEATURE, root, [check]);
+            report.assurance = 'full';
+            return { checks: [check], writerOptions: prepareFixtureVerifierMaterial({ projectRoot: root, frameworkRoot: REPO_ROOT,
+              report, options: { verifierPlan } }) };
+          },
+          onOutOfChain: ctx => {
+            if (ctx.phase !== family + '-verifier-format-repair') return;
+            const request = parseVerifierRequestFromInstruction(ctx.prompt);
+            assert(!!request && request.feature === FEATURE && request.phase === family, 'runtime gives the signed request to its verifier');
+            original = request!;
+            subjects.push(request!.subject_id);
+            fs.readFileSync(path.resolve(root, request!.prompt_path), 'utf8');
+            const conclusion = fail ? 'FAIL' as const : 'PASS' as const;
+            fs.writeFileSync(draftForStageVerifier(ctx), '# Controlled independent report\n'
+              + (fail ? '| product_behavior | FAIL | BLOCKER | Original implementation contradicts the checked contract at ' + PRODUCT_FILE + ' |\n'
+                : 'The current implementation matches the signed check.\n')
+              + renderResultBlock(request!.subject_id, conclusion, fail ? 1 : 0) + '\n');
+          },
+        });
+        const starts = probe.events.filter(event => event.type === 'agent_invoke_start' && event.phase === family + '-verifier-format-repair');
+        const evidence = loadVerifierEvidence(root, FEATURE, family, { frameworkRoot: REPO_ROOT });
+        assert(starts.length === 1 && subjects.length === 1 && evidence.ok && evidence.evidence.subject_id === subjects[0]
+          && evidence.evidence.verdict === (fail ? 'FAIL' : 'PASS'), JSON.stringify({ adapter, mode, fail, starts, subjects, evidence }));
+        if (!evidence.ok) throw new Error(evidence.message);
+        assert([...stageVerifierHandbacks(probe.reportDir, original!, evidence.evidence.md_path_abs)].length === 1,
+          'the common reader must find exactly one accepted independent original');
+        const summary = JSON.parse(fs.readFileSync(path.join(featurePhaseReportsDir(root, FEATURE, family, REPO_ROOT), 'summary.json'), 'utf8'));
+        if (fail) assert(summary.verdict === 'FAIL' && summary.closure_status === 'open', JSON.stringify(summary));
+      } finally {
+        if (originalPath === undefined) delete process.env.PATH;
+        else process.env.PATH = originalPath;
+        clearFrameworkConfigCache();
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    });
+  }
+}
+
+for (const mode of ['background', 'attended'] as const) test('9e46 Goal supplement preserves an incomplete FAIL for the next ' + mode + ' reviewer', async () => {
+  const { root } = setupGoalRuntimeHost('codex');
+  const family = 'review';
+  const { parseVerifierRequestFromInstruction } = await import('../../scripts/utils/verifier-request');
+  const { renderResultBlock } = await import('../utils/verifier-evidence-fixture');
+  const { loadVerifierEvidence } = await import('../../scripts/utils/verifier-evidence');
+  const { stageVerifierHandbacks } = await import('../../scripts/utils/session-execution-handoff');
+  const subjects: string[] = [];
+  let latest: NonNullable<ReturnType<typeof parseVerifierRequestFromInstruction>> | undefined;
+  try {
+    writeFile(root, 'doc/features/' + FEATURE + '/review/review-report.md', [
+      '# Review', '## 问题清单',
+      '| 编号 | 严重程度 | 分类 | 问题描述 | 涉及文件 | 修复建议 | 状态 |',
+      '|---|---|---|---|---|---|---|',
+      '| CR-9E46 | BLOCKER | 逻辑错误 | 当前输出错误 | ' + PRODUCT_FILE + ' | 修复既有返回值 | 未关闭 |',
+      '## 结论', '**审查结论**: 不通过', '',
+    ].join('\n'));
+    const checks: CheckResult[] = [
+      { id: 'conclusion_with_verdict', category: 'structure', description: 'Actual report verdict', details: '不通过', status: 'PASS', severity: 'BLOCKER' },
+      { id: 'negative_verdict_closure', category: 'structure', description: 'Actual product verdict', details: '审查结论＝不通过',
+        status: 'FAIL', severity: 'BLOCKER', failure_kind: 'negative_review_verdict', blocking_class: 'product_verdict' },
+    ];
+    const verifierPlan = { mode: 'enabled' as const, reason: 'policy_required' as const, message: 'strict', verifier_prompt: 'prompts/verify-review.md' };
+    const probe = await runGoalRuntimeChain(root, { adapter: 'codex', freshStartPhase: family, freshEndPhase: family,
+      freshRequirement: '核对产品当前返回值及原问题', ...(mode === 'attended'
+        ? { viaSessionStep: true, hostAuthorization: { mode: 'goal_mode' as const, autonomyAuthorized: true } } : {}),
+      onHarnessSummary: ({ phase }) => {
+        if (phase !== family) return null;
+        const report = buildScriptReport(phase, FEATURE, root, checks);
+        report.assurance = 'full';
+        return { checks, writerOptions: prepareFixtureVerifierMaterial({ projectRoot: root, frameworkRoot: REPO_ROOT,
+          report, options: { verifierPlan } }) };
+      },
+      onOutOfChain: ctx => {
+        if (ctx.phase !== family + '-verifier-format-repair') return;
+        latest = parseVerifierRequestFromInstruction(ctx.prompt) ?? undefined;
+        assert(!!latest, 'verifier has the original request');
+        subjects.push(latest!.subject_id);
+        const reportFile = featurePhaseReportsDir(root, FEATURE, family, REPO_ROOT);
+        const summary = JSON.parse(fs.readFileSync(path.join(reportFile, 'summary.json'), 'utf8'));
+        const second = subjects.length === 2;
+        if (second) {
+          const partial = fs.readFileSync(path.resolve(root, summary.verifier_report), 'utf8');
+          assert(partial.includes('当前原答缺少逐项核对'), 'the incomplete original is publicly available to this exact supplement');
+        }
+        const lines = second
+          ? ['# 原报告的独立补核', '| id | status | severity | 证据 |', '|---|---|---|---|',
+            '| issue_accuracy | PASS | BLOCKER | 核实 CR-9E46 的真实源码和原报告 |',
+            '| blocker_threshold | PASS | BLOCKER | 原问题仍阻断产品阶段 |', '',
+            '\`\`\`issue-verification', '- issue: CR-9E46', '  verdict: confirmed',
+            '  evidence: ' + PRODUCT_FILE + ' | 当前输出错误，修复既有返回值', '\`\`\`', '']
+          : ['# 当前原答缺少逐项核对', '产品报告中的缺口未完全复核。', ''];
+        fs.writeFileSync(draftForStageVerifier(ctx), lines.join('\n') + renderResultBlock(latest!.subject_id, second ? 'PASS' : 'FAIL', second ? 0 : 1) + '\n');
+      },
+    });
+    const evidence = loadVerifierEvidence(root, FEATURE, family, { frameworkRoot: REPO_ROOT });
+    assert(evidence.ok && evidence.evidence.verdict === 'PASS' && subjects.length === 2 && subjects[0] === subjects[1],
+      JSON.stringify({ mode, subjects, evidence, outcomes: probe.events.filter(event => event.type === 'phase_halt') }));
+    if (!evidence.ok) throw new Error(evidence.message);
+    const actual = [...stageVerifierHandbacks(probe.reportDir, latest!, evidence.evidence.md_path_abs)];
+    assert(actual.length === 2 && actual[0].publicPreimageSha256 === createHash('sha256').update(actual[1].bytes).digest('hex'),
+      'replacement matches the exact incomplete original and both handbacks remain available');
+  } finally {
+    clearFrameworkConfigCache();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+for (const [iteration, attached] of [[26, false], [28, false], [26, true]] as const) test(
+  '5ea729d4 S2 i' + iteration + ' production Goal verifier dispatch' + (attached ? ' attended' : ''), async () => {
   const { copyC6HostReplay, readC6PlanVerifierReport } = await import('../utils/c6-host-replay');
   const { buildVerifierRequest, parseVerifierRequestFromInstruction } = await import('../../scripts/utils/verifier-request');
   const { parseIssueVerificationBlock, readVerifierSummaryRows } = await import('../../scripts/utils/repair-candidates');
@@ -7607,6 +7757,7 @@ for (const iteration of [26, 28] as const) test(`5ea729d4 S2 i${iteration} produ
       .split(host.feature).join(FEATURE).split(read.request.subject_id).join(currentSubject);
     const requirement = 'Keep the existing OTP flow and verify the current acceptance-to-interface contract.';
     const probe = await runGoalRuntimeChain(root, { adapter: 'codex', freshRequirement: requirement, testingGateChecks: () => [],
+      ...(attached ? { viaSessionStep: true, hostAuthorization: { mode: 'goal_mode' as const, autonomyAuthorized: true } } : {}),
       onHarnessSummary: ({ phase }) => {
         if (phase !== 'plan') return null;
         const checks: CheckResult[] = [{ id: 'scope_consistency_with_spec', category: 'traceability', description: 'Read the current plan',
@@ -7658,7 +7809,7 @@ for (const iteration of [26, 28] as const) test(`5ea729d4 S2 i${iteration} produ
           assert(!!row, `the independent reply must preserve existing row ${carried.id}`);
           lines[row!.line - 1] = `| ${carried.id} | ${carried.status} | ${carried.severity} | ${carried.evidence} |`;
         }
-        writeFile(root, reportPath, lines.join('\n'));
+        writeFile(root, path.relative(root, draftForStageVerifier(ctx)), lines.join('\n'));
       },
     });
     const starts = probe.events.filter(event => event.type === 'agent_invoke_start' && event.phase === 'plan-verifier-format-repair');
@@ -7739,9 +7890,9 @@ for (const variant of ['corrected', 'still-bad', 'refuted', 'reentered', 'reques
         deliveries.push(verifierDeliveryInput(root, feature, ctx, request!.subject_id, 0));
         assert(!prompt.includes('Then run the existing') && Boolean(goalAttemptId), '子 Agent 不应重复跑 harness，仍须原 attempt 身份');
         if (variant === 'thin-stable' || variant === 'thin-progress' && corrections === 1) {
-          fs.appendFileSync(path.join(root, reportRel), '\n\n');
+          fs.writeFileSync(draftForStageVerifier(ctx), fs.readFileSync(path.join(root, reportRel), 'utf8') + '\n\n');
         } else {
-          writeFile(root, reportRel, body(variant === 'corrected' || variant === 'thin-progress' && corrections === 3) + renderResultBlock(subject, 'PASS', 0));
+          writeFile(root, path.relative(root, draftForStageVerifier(ctx)), body(variant === 'corrected' || variant === 'thin-progress' && corrections === 3) + renderResultBlock(subject, 'PASS', 0));
         }
       },
     };

@@ -139,24 +139,43 @@ export function verifyOpenCodeModelConfig(binary: string, pin: AdapterModelPin, 
   return undefined;
 }
 
-/** Compare only non-secret route metadata; credentials remain native and are never inspected. */
-export function assertClaudeModelRoute(pin: AdapterModelPin, cwd: string, env: NodeJS.ProcessEnv): void {
+const ANTHROPIC_ENDPOINT = 'https://api.anthropic.com';
+
+function claudeSettings(configSource: string, cwd: string, adapter = 'claude'): any[] {
+  const projectConfig = path.join(cwd, adapter === 'codeagent' ? '.cac' : '.claude');
+  return [configSource, path.join(projectConfig, 'settings.json'), path.join(projectConfig, 'settings.local.json')]
+    .filter(file => fs.existsSync(file)).map(file => readNativeJson(file));
+}
+
+/** Only route metadata is used; credential values stay in their original sources. */
+function claudeModelRoute(settings: any[], env: NodeJS.ProcessEnv): string {
   const routes = new Set<string>();
-  const inspect = (values: Record<string, unknown>): void => {
+  for (const values of [env, ...settings.map(setting => setting.env ?? {})]) {
     for (const [key, value] of Object.entries(values)) {
       if (/^CLAUDE_CODE_USE_(BEDROCK|VERTEX|FOUNDRY)$/i.test(key) && value && value !== '0' && value !== 'false') {
         throw modelSelectionWait('当前云 provider 的精确回放契约尚未验证');
       }
-      if (key.toUpperCase() === 'ANTHROPIC_BASE_URL' && typeof value === 'string' && value) routes.add(value);
+      if (key.toUpperCase() !== 'ANTHROPIC_BASE_URL' || typeof value !== 'string' || !value) continue;
+      let endpoint: URL;
+      try { endpoint = new URL(value); }
+      catch { throw modelSelectionWait('Claude 配置没有可核对的 API endpoint'); }
+      if (!['https:', 'http:'].includes(endpoint.protocol) || endpoint.username || endpoint.password || endpoint.search || endpoint.hash) {
+        throw modelSelectionWait('Claude API endpoint 含无法安全记录的参数');
+      }
+      routes.add(value);
     }
-  };
-  inspect(env);
-  for (const file of [pin.config_source!, path.join(cwd, '.claude/settings.json'), path.join(cwd, '.claude/settings.local.json')]) {
-    if (fs.existsSync(file)) inspect(JSON.parse(fs.readFileSync(file, 'utf8')).env ?? {});
   }
-  if (!routes.size) routes.add('https://api.anthropic.com');
-  const expected = pin.provider === 'anthropic' ? 'https://api.anthropic.com' : pin.provider;
-  if (routes.size !== 1 || !routes.has(expected!)) throw modelSelectionWait('Claude 前台配置来源与冻结 provider 不一致，不能将现有凭据改投另一 endpoint');
+  if (routes.size > 1) throw modelSelectionWait('Claude 前台配置包含互相冲突的 provider');
+  const endpoint = [...routes][0] ?? ANTHROPIC_ENDPOINT;
+  return endpoint === ANTHROPIC_ENDPOINT ? 'anthropic' : endpoint;
+}
+
+/** Compare only non-secret route metadata; credentials remain native and are never inspected. */
+export function assertClaudeModelRoute(pin: AdapterModelPin, cwd: string, env: NodeJS.ProcessEnv): void {
+  const provider = claudeModelRoute(claudeSettings(pin.config_source!, cwd, pin.adapter), env);
+  if ((pin.provider === ANTHROPIC_ENDPOINT ? 'anthropic' : pin.provider) !== provider) {
+    throw modelSelectionWait('Claude 前台配置来源与冻结 provider 不一致，不能将现有凭据改投另一 endpoint');
+  }
 }
 export function dshSourceMetadata(file: string, pin: AdapterModelPin): { provider: any; model: any; candidates: string[]; builtin?: boolean; baseURL?: unknown } {
   const entries = dshEntries(parseDshConfiguration(fs.readFileSync(file, 'utf8')));
@@ -221,29 +240,62 @@ function nativeSessionMetadata(record: any): any {
   return record?.data?.header ?? record?.data ?? record?.payload ?? record;
 }
 
+const nativeRequest = require('../../../agents/shared/native-request.cjs');
+
+function readNativeJson(file: string): any {
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); }
+  catch { throw modelSelectionWait('原生配置或会话原件无法读取'); }
+}
+
+function readJsonl(file: string): any[] {
+  const text = fs.readFileSync(file, 'utf8');
+  const lines = text.trimEnd().split(/\r?\n/);
+  return lines.flatMap((line, index) => {
+    if (!line.trim()) return [];
+    try { return [JSON.parse(line)]; }
+    catch {
+      if (index === lines.length - 1 && !text.endsWith('\n')) return [];
+      throw modelSelectionWait('原生会话原件无法解析');
+    }
+  });
+}
+
+function openCodeFrontendPin(native: any, input: { projectRoot: string; sessionId: string; requestId?: string; configSource?: string }, callId?: string): AdapterModelPin {
+  if (native.info?.id !== input.sessionId || native.info.parentID || typeof native.info.directory !== 'string'
+    || !nativeRequest.samePath(native.info.directory, input.projectRoot)) throw modelSelectionWait('前台原件不属于准确主 session / 项目');
+  let requestId = input.requestId;
+  if (callId) {
+    const messages = native.messages?.filter((row: any) => row.info?.role === 'assistant' && row.info.summary !== true
+      && row.parts?.some((part: any) => part.type === 'tool' && part.callID === callId));
+    if (messages?.length !== 1 || typeof messages[0].info.parentID !== 'string') throw modelSelectionWait('OpenCode 当前工具调用缺少准确的主消息');
+    requestId = messages[0].info.parentID;
+  }
+  const matches = native.messages?.filter((row: any) => row.info?.id === requestId
+    && ['user', 'assistant'].includes(row.info.role) && row.info.summary !== true
+    && !row.parts?.some((part: any) => part.type === 'compaction'));
+  const message = matches?.length === 1 ? matches[0].info : undefined;
+  const provider = message?.providerID ?? message?.model?.providerID, model = message?.modelID ?? message?.model?.modelID;
+  if (!provider || !model || !input.configSource) throw modelSelectionWait('OpenCode 准确消息的模型身份或前台原生配置目录缺失');
+  return normalizeAdapterModelPin({ adapter: 'opencode', provider, value: `${provider}/${model}`, source: 'frontend',
+    config_source: path.resolve(input.projectRoot, input.configSource), reasoning_effort: (message.model?.variant ?? message.variant) || undefined })!;
+}
+
 /** Reads one explicitly located native request, never lastUsed or a recent session. */
 export function readFrontendModelRequest(input: { adapter: string; projectRoot: string; file: string; sessionId: string; requestId?: string; configSource?: string }): AdapterModelPin {
   if (input.adapter === 'opencode') {
-    const native = JSON.parse(fs.readFileSync(input.file, 'utf8'));
-    if (native.info?.id !== input.sessionId || typeof native.info.directory !== 'string' || path.resolve(native.info.directory) !== path.resolve(input.projectRoot)) throw modelSelectionWait('前台原件不属于准确 session / 项目');
-    const message = native.messages?.find((row: any) => row.info?.id === input.requestId)?.info;
-    const provider = message?.providerID ?? message?.model?.providerID, model = message?.modelID ?? message?.model?.modelID;
-    if (!provider || !model || !input.configSource) throw modelSelectionWait('OpenCode 准确消息的模型身份或前台原生配置目录缺失');
-    return normalizeAdapterModelPin({ adapter: input.adapter, provider, value: `${provider}/${model}`, source: 'frontend',
-      config_source: path.resolve(input.projectRoot, input.configSource), ...((message.model?.variant ?? message.variant) ? { reasoning_effort: message.model?.variant ?? message.variant } : {}) })!;
+    return openCodeFrontendPin(readNativeJson(input.file), input);
   }
   let rows: any[];
   if (input.adapter === 'deepseek-harness') {
     rows = dshNative.readDshSession(input.file, { sessionId: input.sessionId, projectRoot: input.projectRoot, allowIncompleteTail: true }).rows;
   } else {
-    const bytes = fs.readFileSync(input.file);
-    const text = input.file.endsWith('.zstd') ? decodeDshSession(bytes) : bytes.toString('utf8');
-    rows = text.split(/\r?\n/).filter(Boolean).map(line => JSON.parse(line));
+    rows = readJsonl(input.file);
   }
   const header = rows.find(row => row.type === 'session' || row.type === 'session/header' || row.type === 'session_meta');
   const meta = nativeSessionMetadata(header);
   if ((meta?.id ?? meta?.sessionId ?? meta?.session_id) !== input.sessionId || typeof meta?.cwd !== 'string' || !meta.cwd
-    || path.resolve(meta.cwd) !== path.resolve(input.projectRoot)) {
+    || !nativeRequest.samePath(meta.cwd, input.projectRoot)
+    || input.adapter === 'codex' && (meta.parent_thread_id || meta.thread_source === 'subagent' || meta.source?.subagent)) {
     throw modelSelectionWait('前台原件不属于准确 session / 项目');
   }
   let config: any;
@@ -252,7 +304,13 @@ export function readFrontendModelRequest(input: { adapter: string; projectRoot: 
     const request = input.requestId === undefined ? headers.at(-1) : headers.find(row => String(row.seq) === input.requestId);
     config = request?.data?.header?.config;
   } else if (input.adapter === 'codex') {
-    config = rows.find(row => row.type === 'turn_context' && row.payload?.turn_id === input.requestId)?.payload;
+    const turns = rows.filter(row => row.type === 'turn_context' && row.payload?.turn_id === input.requestId);
+    if (turns.length) {
+      const snapshots = turns.map(row => ({ model: row.payload.model, provider: row.payload.provider ?? row.payload.model_provider ?? meta.model_provider,
+        effort: row.payload.reasoningEffort ?? row.payload.effort ?? row.payload.reasoning_effort }));
+      if (new Set(snapshots.map(snapshot => JSON.stringify(snapshot))).size !== 1) throw modelSelectionWait('Codex 本轮记录中的模型选择冲突');
+      config = snapshots[0];
+    }
   } else throw modelSelectionWait(`${input.adapter} 尚无可核实的启动轮原生请求读取契约，请明确指定模型`);
   if (!config?.model || !(config.provider ?? config.model_provider)) throw modelSelectionWait('准确启动轮缺少完整模型路由');
   return normalizeAdapterModelPin({ adapter: input.adapter, value: config.model, provider: config.provider ?? config.model_provider,
@@ -366,6 +424,136 @@ export function launchModelPin(argv: Record<string, any>, adapter: string, proje
   return freezeModelPin(normalizeAdapterModelPin({ ...base, source: undefined, route_identity: undefined, adapter, value,
     provider: argv['adapter-provider'] ?? base?.provider ?? (adapter === 'cursor' ? 'cursor' : adapter === 'opencode' && String(argv['adapter-model']).includes('/') ? String(argv['adapter-model']).split('/')[0] : undefined), reasoning_effort: argv['adapter-reasoning'] ?? base?.reasoning_effort,
     ...(config ? { config_source: config } : {}) }), projectRoot);
+}
+
+function claudeModelConfig(adapter: string, env: NodeJS.ProcessEnv): string {
+  const home = adapter === 'codeagent' ? env.CODEAGENT3_CONFIG_DIR ?? path.join(os.homedir(), '.cac')
+    : env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), '.claude');
+  return path.join(home, 'settings.json');
+}
+
+function claudeStageFrontendPin(argv: Record<string, any>, projectRoot: string, env: NodeJS.ProcessEnv): AdapterModelPin | undefined {
+  const sessionId = argv['frontend-session-id'] ?? env.CLAUDE_CODE_SESSION_ID;
+  if (!sessionId) return undefined;
+  if (env.CLAUDE_CODE_SESSION_ID && env.CLAUDE_CODE_SESSION_ID !== sessionId) throw modelSelectionWait('Claude 工具 shell 与前台 session ID 冲突');
+  const located = nativeRequest.claudeSession(sessionId, env);
+  const file = located.file;
+  if (!file || argv['frontend-request-file'] && !nativeRequest.samePath(path.resolve(projectRoot, argv['frontend-request-file']), file)) {
+    throw modelSelectionWait('Claude 当前主会话缺少可读原件');
+  }
+  const rows = readJsonl(file);
+  const root = rows.find(row => row.sessionId === sessionId && typeof row.cwd === 'string' && !row.isSidechain && !row.agentId)?.cwd;
+  if (!root || !nativeRequest.samePath(root, projectRoot)) throw modelSelectionWait('Claude 前台原件不属于准确主 session / 项目');
+  const target = (command: unknown): boolean => {
+    if (typeof command !== 'string' || !/(?:^|\s)--execute-verifier(?:\s|$)/.test(command)) return false;
+    const flag = (key: string) => new RegExp(`(?:^|\\s)--${key}\\s+["']?([^\\s"']+)`).exec(command)?.[1];
+    return flag('phase') === argv.phase && flag('feature') === argv.feature;
+  };
+  const requested = argv['frontend-request-id'];
+  const calls = new Map<string, any>();
+  for (const row of rows) {
+    if (row.sessionId !== sessionId || row.isSidechain || row.agentId) continue;
+    const parts = Array.isArray(row.message?.content) ? row.message.content : [];
+    if (row.type === 'user') {
+      const results = parts.filter((part: any) => part.type === 'tool_result');
+      if (results.length) for (const part of results) calls.delete(part.tool_use_id);
+      else if (!row.isMeta && (typeof row.message?.content === 'string' || parts.some((part: any) => part.type === 'text'))) calls.clear();
+    }
+    if (row.type !== 'assistant' || row.message?.role !== 'assistant') continue;
+    for (const part of parts) {
+      if (part.type === 'tool_use' && ['Bash', 'PowerShell'].includes(part.name) && target(part.input?.command)
+        && (!requested || requested === part.id || requested === row.uuid)) calls.set(part.id, row.message);
+    }
+  }
+  const models = new Map([...calls.values()].map(message => [JSON.stringify([message.model, message.effort ?? message.reasoning_effort]), message]));
+  if (models.size !== 1) throw modelSelectionWait('Claude 当前阶段命令缺少唯一可核对的原生主模型回合');
+  const message = models.values().next().value;
+  if (typeof message.model !== 'string' || message.model.startsWith('<')) throw modelSelectionWait('Claude 当前模型回合没有正式 ID');
+  const config = path.resolve(projectRoot, argv['adapter-model-config'] ?? claudeModelConfig('claude', env));
+  const settings = claudeSettings(config, projectRoot);
+  const effectiveEffort = env.CLAUDE_CODE_EFFORT_LEVEL ?? message.effort ?? message.reasoning_effort
+    ?? settings.slice().reverse().map(setting => setting.modelSettings?.[message.model]?.effortLevel ?? setting.effortLevel).find(Boolean);
+  return normalizeAdapterModelPin({ adapter: 'claude', source: 'frontend', value: message.model, provider: claudeModelRoute(settings, env),
+    config_source: config, reasoning_effort: ['auto', 'unset'].includes(effectiveEffort) ? undefined : effectiveEffort })!;
+}
+
+function codexStageFrontendPin(argv: Record<string, any>, projectRoot: string, env: NodeJS.ProcessEnv): AdapterModelPin | undefined {
+  const sessionId = argv['frontend-session-id'] ?? env.CODEX_THREAD_ID ?? env.CODEX_SESSION_ID;
+  if (!sessionId) return undefined;
+  if (env.CODEX_THREAD_ID && env.CODEX_THREAD_ID !== sessionId) throw modelSelectionWait('Codex 工具 shell 与前台 thread ID 冲突');
+  const file = nativeRequest.codexSession(sessionId, env).file ?? nativeCodexSessionFile(sessionId, env);
+  if (!file) throw modelSelectionWait('Codex 当前线程缺少可读原件');
+  let turnId = argv['frontend-request-id'];
+  if (!turnId) {
+    const active = new Set<string>();
+    let callTurn: string | undefined;
+    let current: string | undefined;
+    for (const row of readJsonl(file)) {
+      const data = row.payload;
+      if (row.type === 'event_msg' && typeof data?.turn_id === 'string') {
+        if (['task_started', 'turn_started'].includes(data.type)) {
+          active.add(data.turn_id);
+          current = data.turn_id;
+        }
+        if (['task_complete', 'turn_complete', 'turn_aborted'].includes(data.type)) {
+          active.delete(data.turn_id);
+          if (current === data.turn_id) current = undefined;
+        }
+      }
+      if (row.type === 'response_item' && ['function_call', 'custom_tool_call'].includes(data?.type)
+        && env.CODEX_TOOL_CALL_ID && data.call_id === env.CODEX_TOOL_CALL_ID) callTurn = data.turn_id ?? current;
+    }
+    // A shell can launch before its call item is flushed. The one active turn still owns this shell.
+    turnId = callTurn ?? (active.size === 1 ? active.values().next().value : undefined);
+  }
+  if (!turnId) throw modelSelectionWait('Codex 当前线程缺少唯一活动 turn');
+  return readFrontendModelRequest({ adapter: 'codex', projectRoot, file, sessionId, requestId: turnId,
+    configSource: argv['adapter-model-config'] ?? path.join(env.CODEX_HOME ?? path.join(os.homedir(), '.codex'), 'config.toml') });
+}
+
+function openCodeStageFrontendPin(argv: Record<string, any>, projectRoot: string, env: NodeJS.ProcessEnv): AdapterModelPin | undefined {
+  const sessionId = env.MAISON_OPENCODE_SESSION_ID;
+  const callId = env.MAISON_OPENCODE_CALL_ID;
+  if (!sessionId || !callId) return undefined;
+  if (!/^ses_[a-zA-Z0-9]+$/.test(sessionId)) throw modelSelectionWait('OpenCode 当前 shell 的 session ID 无效');
+  const executable = resolveHeadlessBinary(['opencode'])?.path;
+  if (!executable) throw modelSelectionWait('OpenCode 原生 session export 命令不可用');
+  const raw = readNativeModelMetadata(executable, ['export', sessionId], env, projectRoot);
+  const configSource = argv['adapter-model-config'] ?? path.join(env.XDG_CONFIG_HOME ?? path.join(os.homedir(), '.config'), 'opencode');
+  let native: any;
+  try { native = JSON.parse(raw); } catch { throw modelSelectionWait('OpenCode 当前 session export 无法解析'); }
+  const pin = openCodeFrontendPin(native, { projectRoot, sessionId, configSource }, callId);
+  if (['OPENCODE_CONFIG', 'OPENCODE_CONFIG_CONTENT', 'OPENCODE_CONFIG_DIR'].some(key => env[key])) {
+    throw modelSelectionWait('OpenCode 前台存在不能准确回放的额外配置层');
+  }
+  return pin;
+}
+
+/** Resolve only a first dispatch. A previous invocation's binding remains authoritative. */
+export function launchStageVerifierModelPin(argv: Record<string, any>, adapter: string, projectRoot: string, frozen?: AdapterModelPin): AdapterModelPin | undefined {
+  if (frozen) {
+    if (frozen.adapter !== adapter) throw modelSelectionWait('已冻结模型的 adapter 与本阶段执行者不一致');
+    return frozen;
+  }
+  const env = process.env;
+  const explicit = argv['adapter-model'] !== undefined;
+  const supplied = ['adapter-provider', 'adapter-reasoning'].some(key => argv[key] !== undefined);
+  if (supplied && !explicit) throw modelSelectionWait('显式路由或推理改选须提供正式模型 ID');
+  if (adapter === 'claude' && !explicit) return claudeStageFrontendPin(argv, projectRoot, env);
+  if (['claude', 'codeagent'].includes(adapter) && explicit) {
+    const config = path.resolve(projectRoot, argv['adapter-model-config'] ?? claudeModelConfig(adapter, env));
+    return launchModelPin({ ...argv, 'frontend-request-file': undefined, 'adapter-model-config': config,
+      'adapter-provider': argv['adapter-provider'] ?? claudeModelRoute(claudeSettings(config, projectRoot, adapter), env) }, adapter, projectRoot);
+  }
+  if (!argv['frontend-request-file']) {
+    if (adapter === 'codex' && (!explicit || argv['adapter-provider'] === undefined) && (env.CODEX_THREAD_ID || env.CODEX_SESSION_ID || argv['frontend-session-id'])) {
+      const frontend = codexStageFrontendPin(argv, projectRoot, env);
+      if (!explicit) return frontend;
+      return launchModelPin(argv, adapter, projectRoot, frontend);
+    }
+    if (adapter === 'opencode' && !explicit) return openCodeStageFrontendPin(argv, projectRoot, env);
+  }
+  return freezeModelPin(launchModelPin(argv, adapter, projectRoot), projectRoot);
 }
 
 export function assertModelReplay(pin?: AdapterModelPin, cwd = process.cwd(), env = process.env, deadline = Infinity): asserts pin is AdapterModelPin {

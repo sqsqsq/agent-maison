@@ -7,7 +7,6 @@ import {
 import type { HvigorRunResult, OnDeviceFailureEvidence } from '../../hvigor-runner';
 import { buildSummaryBlockers } from '../../../../../harness/scripts/utils/summary-blockers';
 import { classifyFailureKind } from '../../../../../harness/scripts/utils/goal-failure-classifier';
-import { extractPriorFailureContext } from '../../../../../harness/scripts/goal-runner';
 import type { CheckResult } from '../../../../../harness/scripts/utils/types';
 
 export interface UnitCaseResult {
@@ -48,10 +47,7 @@ function count(text: string, needle: string): number {
   return text.split(needle).length - 1;
 }
 
-// post-impl review P2#8（plan 7c4f2e9b）：诊断链验证面拆两半——toolchain_blocked 类
-// blocker 的诊断存活面在 **summary blocker excerpt**（operator/halt guidance 消费），
-// agent 重试回喂只保留 parked 行（agent 修不了环境，喂诊断只会诱导它「修环境」）。
-function priorContext(output: ReturnType<typeof buildUtHvigorTestFailDetails>): { prior: string; excerpt: string } {
+function summaryDiagnostic(output: ReturnType<typeof buildUtHvigorTestFailDetails>): { excerpt: string } {
   const check: CheckResult = {
     id: 'ut_hvigor_test',
     category: 'structure',
@@ -70,12 +66,11 @@ function priorContext(output: ReturnType<typeof buildUtHvigorTestFailDetails>): 
     () => undefined,
   );
   return {
-    prior: extractPriorFailureContext({ verdict: 'FAIL', blockers } as any),
     excerpt: blockers[0]?.details_excerpt ?? '',
   };
 }
 
-/** t1：与上方 priorContext 同款的 blockers 构造（buildSummaryBlockers 需三参） */
+/** t1：与上方 summaryDiagnostic 同款的 blockers 构造（buildSummaryBlockers 需三参） */
 function summaryBlockersOf(check: CheckResult): ReturnType<typeof buildSummaryBlockers> {
   return buildSummaryBlockers(
     [check],
@@ -508,14 +503,11 @@ const cases: Array<{ name: string; run: () => void }> = [
           }),
         },
       ]);
-      // 诊断在 operator 面（excerpt）存活；agent 回喂只见 parked 行（P2#8 新契约）
-      const signedCtx = priorContext(signed);
+      const signedCtx = summaryDiagnostic(signed);
       assert(signedCtx.excerpt.includes('signingConfigs 未配置'), signedCtx.excerpt);
       assert(signedCtx.excerpt.includes('自定义签名任务覆盖 ohosTest'), signedCtx.excerpt);
-      assert(!/parked, environment\/toolchain/.test(signedCtx.prior), signedCtx.prior);
-      assert(signedCtx.prior.includes('signingConfigs 未配置'), signedCtx.prior);
 
-      const unknown = priorContext(
+      const unknown = summaryDiagnostic(
         buildUtHvigorTestFailDetails([
           { module: 'A', result: result({ failedAt: 'hap_not_found' }) },
         ]),
@@ -530,7 +522,7 @@ const cases: Array<{ name: string; run: () => void }> = [
           testResult: { total: 1, passed: 0, failed: 1, skipped: 0, failures: [] },
         },
       );
-      const mixed = priorContext(
+      const mixed = summaryDiagnostic(
         buildUtHvigorTestFailDetails([
           {
             module: 'SignGap',
@@ -541,7 +533,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       );
       assert(mixed.excerpt.includes('多模块失败性质不同'), mixed.excerpt);
 
-      const heterogeneous = priorContext(
+      const heterogeneous = summaryDiagnostic(
         buildUtHvigorTestFailDetails([
           {
             module: 'SignGap',
@@ -556,7 +548,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert(heterogeneous.excerpt.includes('多模块工具链失败'), heterogeneous.excerpt);
       assert(heterogeneous.excerpt.includes('device_install_failed'), heterogeneous.excerpt);
 
-      const install = priorContext(
+      const install = summaryDiagnostic(
         buildUtHvigorTestFailDetails([
           {
             module: 'Install',

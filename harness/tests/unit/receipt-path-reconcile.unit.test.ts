@@ -108,7 +108,7 @@ function writeModernArtifacts(root: string): { traceRel: string; verifierRel: st
     description: 'Read the current isolated source before receipt reconciliation', severity: 'MAJOR', status: actual.trim() ? 'PASS' : 'FAIL',
     details: 'Read actual current source: ' + sourceFile, affected_files: [sourceFile] }], frameworkRoot);
   const plan = resolveVerifierPlan({ phase: 'review', track: 'full', runtimeMode: 'interactive', policy: { verifier: 'required' },
-    workflowVerifierPrompt: workflowVerifierPrompt(loadWorkflowSpec(frameworkRoot, 'spec-driven'), 'review'), adapterHasVerifierSubagent: true, adapterName: 'claude' });
+    workflowVerifierPrompt: workflowVerifierPrompt(loadWorkflowSpec(frameworkRoot, 'spec-driven'), 'review') });
   const rule = JSON.stringify(new SpecLoader(root, undefined, undefined, frameworkRoot).loadPhaseRule('review'));
   const contextFiles = [{ label: sourceFile, kind: 'path' as const, content: actual }];
   assembleAIPrompt(harnessRoot, root, 'review', 'demo', contextFiles, JSON.stringify(report), rule, undefined, undefined, frameworkRoot,
@@ -214,7 +214,14 @@ const cases: Array<{ name: string; run: () => void }> = [
         writeLegacyReceipt(root, sha);
         const candidates = scanReceiptPathReconcileCandidates(root);
         assert(candidates.length === 1, `expected 1 candidate, got ${candidates.length}`);
-        assert(candidates[0].patches.length >= 3, 'expected trace/verifier/report_dir patches');
+        assert(candidates[0].patches.some(patch => patch.field === 'verifier_subagent.report_path'), '兼容旧回执路径');
+        const receipt = path.join(root, candidates[0].receipt_path);
+        fs.writeFileSync(receipt, fs.readFileSync(receipt, 'utf8').replace('verifier_subagent:', 'verifier:'));
+        const [current] = scanReceiptPathReconcileCandidates(root);
+        assert(current?.patches.some(patch => patch.field === 'verifier.report_path'), '当前投影路径也可迁移');
+        applyReceiptPathReconcileCandidate(root, current);
+        assert(fs.readFileSync(receipt, 'utf8').includes('report_path: doc/features/demo/review/reports/verifier.report.md'),
+          '路径应更新为现代 reports 目录');
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }
