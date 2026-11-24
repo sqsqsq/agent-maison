@@ -1091,7 +1091,14 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
         returningToQuestioning = true;
       }
     }
-    const writeConflicts = unresolvedPhaseWrites(projectRoot, sessionEvents(runDir), { feature: input.feature, frameworkRoot, runId: input.runId });
+    const recordedWrites = sessionEvents(runDir);
+    const authority = { feature: input.feature, frameworkRoot, runId: input.runId };
+    const writeConflicts = isInitialDesignManifest(manifest)
+      ? (() => {
+        const { readInitialDesignWriteEvents, resolveInitialDesignWriteRecovery } = require('./initial-design-delivery') as typeof import('./initial-design-delivery');
+        return resolveInitialDesignWriteRecovery(projectRoot, manifest, readInitialDesignWriteEvents(projectRoot, manifest, recordedWrites), { authority }).conflicts;
+      })()
+      : unresolvedPhaseWrites(projectRoot, recordedWrites, authority);
     if (writeConflicts.size) {
       release();
       return { outcome: 'waiting', step: 'author',
