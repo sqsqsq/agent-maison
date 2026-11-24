@@ -13,10 +13,10 @@ import { loadFrameworkConfig, resolveFeatureArtifact } from '../../config';
 import { loadResolvedProfile } from '../../profile-loader';
 import { fingerprintDiscoverySources } from '../../scripts/utils/blueprint-discovery';
 import { currentScopeItems } from '../../scripts/utils/blueprint-requirement-traceability';
-import { loadCanonicalBlueprint } from '../../scripts/utils/component-blueprint-path';
+import { loadCanonicalBlueprint, resolveBlueprintCandidateRefFromLoaded } from '../../scripts/utils/component-blueprint-path';
 import { validateComponentClosureKnowledge } from '../../scripts/utils/component-closure-knowledge';
 import type { CheckContext, CheckResult } from '../../scripts/utils/types';
-import { BlueprintRecord, ComponentBlueprintRef, asRecord } from '../../scripts/utils/component-blueprint-model';
+import { BlueprintRecord, ComponentBlueprintRef, asRecord, asRecords } from '../../scripts/utils/component-blueprint-model';
 import { resolveComponentBlueprintRef } from '../../scripts/utils/component-blueprint-path';
 import { checkCanonicalChangeUnit } from '../../scripts/check-change-unit';
 import {
@@ -381,12 +381,41 @@ export async function runAll(): Promise<UnitCaseResult[]> {
   }));
 
   results.push(test('dangling design ref is rejected by the P1 resolver', () => {
-    const cu = validChangeUnit();
-    const ref = clone((cu.design_refs as ComponentBlueprintRef[])[0]);
-    ref.target.id = 'not-real';
-    cu.design_refs = [ref, ...(cu.design_refs as ComponentBlueprintRef[]).slice(1)];
-    const result = validateChangeUnitDesign(VALID_PROJECT, cu);
-    expectIssue(result.issues.map(item => item.id), 'change_unit_design_ref_unresolvable');
+    for (const wrongTarget of [{ id: 'not-real' }, { view_id: 'development' }]) {
+      const cu = validChangeUnit();
+      const ref = (cu.design_refs as ComponentBlueprintRef[])[0];
+      Object.assign(ref.target, wrongTarget);
+      const result = validateChangeUnitDesign(VALID_PROJECT, cu);
+      assert(result.issues.some(issue => issue.id === 'change_unit_design_ref_unresolvable' && issue.path === '$.design_refs[0]'), JSON.stringify(result));
+    }
+  }));
+
+  results.push(test('design gate respects unpublished resolver targets and rechecks authority on every call', () => {
+    withTempProject(projectRoot => {
+      const snapshot = loadCanonicalBlueprint(projectRoot, 'ledger-app-blueprint');
+      const draft = structuredClone(snapshot.blueprint);
+      const development = asRecords(draft.design_views).find(view => view.view_id === 'development')!;
+      development.nodes = [...asRecords(development.nodes), { ...asRecords(development.nodes)[0], node_id: 'unpublished-owner' }];
+      const cu = validChangeUnit();
+      const refs = cu.design_refs as ComponentBlueprintRef[];
+      const ref: ComponentBlueprintRef = { ...refs[0], target: { kind: 'node', view_id: 'development', id: 'unpublished-owner' } };
+      refs.push(ref);
+      const calls: unknown[] = [];
+      const candidate = validateChangeUnitDesign(projectRoot, cu, { resolveBlueprintRef(root, value) {
+        assert(root === projectRoot, 'custom resolver receives its original project root');
+        calls.push(value);
+        return resolveBlueprintCandidateRefFromLoaded(snapshot, draft, value);
+      } });
+      assert(candidate.verdict === 'constructable' && calls.length === refs.length + 1 && calls.at(-1) === ref, JSON.stringify(candidate));
+      expectIssue(validateChangeUnitDesign(projectRoot, cu).issues.map(issue => issue.id), 'change_unit_design_ref_unresolvable');
+      refs.pop();
+      assert(validateChangeUnitDesign(projectRoot, cu).verdict === 'constructable', 'unchanged canonical inputs should resolve');
+      const source = path.join(projectRoot, 'contracts/ledger-api.yaml');
+      fs.writeFileSync(source, fs.readFileSync(source, 'utf8').replace('type: decimal-string', 'type: string'));
+      assert(loadCanonicalBlueprint(projectRoot, 'ledger-app-blueprint').artifactSha256 === snapshot.artifactSha256, 'only the external authority changed');
+      const changed = validateChangeUnitDesign(projectRoot, cu);
+      assert(changed.issues.some(issue => issue.id === 'change_unit_blueprint_unresolvable' && issue.message.includes('blueprint_contract_authority_mismatch')), JSON.stringify(changed));
+    });
   }));
 
   results.push(test('unselected scenario remains checked context without becoming a delivery selection', () => {
@@ -419,6 +448,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
   results.push(test('blueprint hash/schema drift and invalidating construction facts route reconciliation', () => {
     withTempProject(projectRoot => {
       const blueprintPath = path.join(projectRoot, 'doc', 'features', 'ledger-app-blueprint', 'blueprint', 'component-blueprint.yaml');
+      assert(validateChangeUnitDesign(projectRoot, validChangeUnit()).verdict === 'constructable', 'first call validates the unchanged blueprint');
       fs.appendFileSync(blueprintPath, '\n# drift\n', 'utf8');
       const result = validateChangeUnitDesign(projectRoot, validChangeUnit());
       expectIssue(result.issues.map(item => item.id), 'change_unit_blueprint_unresolvable');

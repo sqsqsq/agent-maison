@@ -10,7 +10,7 @@ import {
   getId,
   nonEmptyString,
 } from './component-blueprint-model';
-import { resolveComponentBlueprintRef, loadCanonicalBlueprint, sha256Bytes } from './component-blueprint-path';
+import { resolveComponentBlueprintRef, resolveComponentBlueprintRefFromLoaded, loadCanonicalBlueprint, validateComponentBlueprintRefShape, sha256Bytes } from './component-blueprint-path';
 import { asChangeUnitArtifact, createChangeUnitRef, enumerateCanonicalChangeUnits } from './change-unit-path';
 import { deriveBlueprintDesignObligations } from './component-blueprint-obligations';
 import { stableJson } from './blueprint-discovery';
@@ -211,9 +211,16 @@ export function validateChangeUnitDesign(
   const issues: ChangeUnitIssue[] = changeUnitRuntimeRoleIssues(changeUnit);
   const explicitRefs = changeUnitRecords(changeUnit.design_refs) as unknown as ComponentBlueprintRef[];
   const explicitAddresses = explicitRefs.map(blueprintRefAddress);
+  const resolve = options.resolveBlueprintRef ?? resolveComponentBlueprintRef;
+  let snapshot: ReturnType<typeof loadCanonicalBlueprint> | undefined;
   let ownerResolution: ReturnType<typeof resolveComponentBlueprintRef>;
   try {
-    ownerResolution = (options.resolveBlueprintRef ?? resolveComponentBlueprintRef)(projectRoot, changeUnit.component_blueprint_ref);
+    if (options.resolveBlueprintRef) ownerResolution = resolve(projectRoot, changeUnit.component_blueprint_ref);
+    else {
+      const ref = validateComponentBlueprintRefShape(changeUnit.component_blueprint_ref);
+      snapshot = loadCanonicalBlueprint(projectRoot, ref.blueprint_id);
+      ownerResolution = resolveComponentBlueprintRef(projectRoot, ref, snapshot);
+    }
   } catch (error) {
     issues.push(changeUnitIssue(
       'change_unit_blueprint_unresolvable',
@@ -229,7 +236,8 @@ export function validateChangeUnitDesign(
     const ref = explicitRefs[index];
     if (!sameBlueprintIdentity(owner, ref)) continue;
     try {
-      (options.resolveBlueprintRef ?? resolveComponentBlueprintRef)(projectRoot, ref);
+      if (snapshot) resolveComponentBlueprintRefFromLoaded(snapshot, ref);
+      else resolve(projectRoot, ref);
     } catch (error) {
       issues.push(changeUnitIssue(
         'change_unit_design_ref_unresolvable',
