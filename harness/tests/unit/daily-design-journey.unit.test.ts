@@ -27,7 +27,8 @@ const REQUIREMENT = '新增账目后刷新余额，并可从保存的账目恢�
 const ADD_CASE = '[BRANCH-success][AC-1] ledger-refresh adds balance without mutating inputs';
 const RESTORE_CASE = '[BRANCH-success][AC-1] ledger-refresh restores saved arrays';
 const EVIDENCE_REFS = [ADD_CASE, RESTORE_CASE].map(name => `${TEST}#${name}`);
-const PRODUCT = 'export class LedgerFeature {\n  static add(entries: readonly number[], amount: number): { entries: number[]; balance: number } {\n    const next = [...entries, amount]; return { entries: next, balance: LedgerFeature.restore(next) };\n  }\n  static restore(saved: readonly number[]): number { return saved.reduce((a, b) => a + b, 0); }\n}\n';
+const PRODUCT = "import { LedgerRepository } from '../../LedgerRepository';\n"
+  + 'export class LedgerFeature {\n  static add(entries: readonly number[], amount: number): { entries: number[]; balance: number } {\n    const next = [...entries, amount]; return { entries: next, balance: LedgerFeature.restore(next) };\n  }\n  static restore(saved: readonly number[]): number { return LedgerRepository.balance(saved); }\n}\n';
 const TEST_TEXT = [
   "import { it } from 'node:test';",
   "import assert from 'node:assert/strict';",
@@ -76,7 +77,7 @@ async function withHost(run: (host: Host) => Promise<void>): Promise<void> {
     writeHostFile(root, 'requirements/ledger.md', '# REQ-LEDGER-REFRESH\n\n' + REQUIREMENT + '\n');
     writeYaml(root, CONTRACT, contractInput());
     writeHostFile(root, 'build-profile.json5', JSON.stringify({ app: { products: [{ name: 'node-test' }] }, modules: [] }));
-    writeHostFile(root, 'src/ledger/LedgerRepository.ts', 'export class LedgerRepository {}\n');
+    writeHostFile(root, BASELINE_SOURCE, 'export class LedgerRepository {\n  static balance(saved: readonly number[]): number { return saved.reduce((a, b) => a + b, 0); }\n}\n');
     writeHostFile(root, SOURCE, 'export class LedgerFeature {}\n');
     writeHostFile(root, TEST, 'export {};\n');
     writeHostFile(root, 'framework.config.json', JSON.stringify({ schema_version: '1.1', project_name: 'DailyDesignLedger', active_workflow: 'obligation-driven',
@@ -151,7 +152,7 @@ function blueprintDraft(host: Host, missing: boolean): any {
   logical.contracts = JSON.parse(JSON.stringify(readInput('contracts'))
     .split('src/ledger/LedgerFeature.ets').join(SOURCE).split('test/ledger/LedgerFeature.test.ets').join(TEST));
   logical.contracts.modules = [{ name: 'ledger', layer: 'src', package_path: 'src/ledger', format: 'HAR', change_type: 'modify' }];
-  logical.contracts.files = [SOURCE];
+  logical.contracts.files = [SOURCE, BASELINE_SOURCE];
   delete logical.contracts.change_unit;
   logical.use_cases = readInput('use-cases');
   logical.use_cases.use_cases[0].coordinator = 'LedgerFeature.add';
@@ -263,7 +264,7 @@ function taggedStrengthRows(host: Host, context: any): Array<{ issue: string; ve
   assert(testText.includes('expect(original).toEqual') && testText.includes('expect(result.balance).toEqual')
     && testText.includes('expect(LedgerFeature.restore(JSON.parse(JSON.stringify'));
   return [{ issue: questions[0], verdict: 'refuted', evidence: '`' + TEST + ':5` ' + testNames.join('；')
-    + ' 以当前 Node 用例实际调用 `' + SOURCE + ':2-5` 的生产 add/restore，断言余额、原数组未修改及从保存数组恢复。执行证据由原正式 UT 独立读取。',
+    + ' 以当前 Node 用例实际调用 `' + SOURCE + ':3-6` 的生产 add/restore，断言余额、原数组未修改及从保存数组恢复。执行证据由原正式 UT 独立读取。',
     production_paths: [SOURCE] }];
 }
 
@@ -615,7 +616,8 @@ async function completeDelivery(medium = false, moduleRevision = false, acceptan
         const feature = host.load('scripts/utils/change-unit-path').deriveChangeUnitFeatureId(BLUEPRINT, UNIT);
         host.load('scripts/utils/feature-track').prepareFeatureScopeCandidate({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature,
           completionTarget: 'feature', requestedResults: [REQUIREMENT], requestedPhases: ['plan', 'coding', 'ut'], requirement: REQUIREMENT, requirementSourceFiles: ['requirements/ledger.md'],
-          impact: { userVisibleBehaviorChange: false, reason: '账本内部纯TypeScript能力，不涉及UI或设备', basisPaths: [SOURCE] }, overwrite: true });
+          impact: { userVisibleBehaviorChange: false, reason: '纯账本余额计算，无新增设备行为',
+            basisPaths: [acceptanceRevision ? SOURCE : BASELINE_SOURCE] }, overwrite: true });
       } else if (phase === 'work-unit-author') {
         constructionAuthors++;
         assert(constructionAuthors <= (acceptanceRevision ? 2 : 1), 'construction received unexpected repair feedback: ' + context.instruction);
@@ -849,7 +851,7 @@ const cases = [{
         const feature = host.load('scripts/utils/change-unit-path').deriveChangeUnitFeatureId(BLUEPRINT, UNIT);
         host.load('scripts/utils/feature-track').prepareFeatureScopeCandidate({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature,
           completionTarget: 'feature', requestedResults: [REQUIREMENT], requestedPhases: ['plan', 'coding', 'review', 'ut'], requirement: REQUIREMENT,
-          requirementSourceFiles: ['requirements/ledger.md'], impact: { userVisibleBehaviorChange: false, reason: '既有内部调用声明，不新增界面', basisPaths: [SOURCE] }, overwrite: true });
+          requirementSourceFiles: ['requirements/ledger.md'], impact: { userVisibleBehaviorChange: false, reason: '复用现有纯账本余额计算，保持原内部调用，无新增设备行为', basisPaths: [BASELINE_SOURCE] }, overwrite: true });
       } else if (phase === 'work-unit-author') {
         authors++; childDirs.add(context.runDir);
         unitMaterials(host, { ...context, chain: context.chain.filter((family: string) => family !== 'review') });
@@ -1029,7 +1031,7 @@ const cases = [{
           const feature = host.load('scripts/utils/change-unit-path').deriveChangeUnitFeatureId(BLUEPRINT, UNIT);
           host.load('scripts/utils/feature-track').prepareFeatureScopeCandidate({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature,
             completionTarget: 'feature', requestedResults: [REQUIREMENT], requestedPhases: ['plan', 'coding', 'ut'], requirement: REQUIREMENT, requirementSourceFiles: ['requirements/ledger.md'],
-            impact: { userVisibleBehaviorChange: false, reason: '账本内部纯TypeScript能力，不涉及UI或设备', basisPaths: [SOURCE] }, overwrite: true });
+            impact: { userVisibleBehaviorChange: false, reason: '复用现有纯账本余额计算，保持原内部调用，无新增设备行为', basisPaths: [BASELINE_SOURCE] }, overwrite: true });
         } else assert.fail('unexpected design repair responsibility: ' + phase);
         step = await report(host, control, step, output);
       }
@@ -1076,7 +1078,7 @@ const cases = [{
         const feature = host.load('scripts/utils/change-unit-path').deriveChangeUnitFeatureId(BLUEPRINT, UNIT);
         host.load('scripts/utils/feature-track').prepareFeatureScopeCandidate({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature,
           completionTarget: 'feature', requestedResults: [REQUIREMENT], requestedPhases: ['plan', 'coding', 'ut'], requirement: REQUIREMENT, requirementSourceFiles: ['requirements/ledger.md'],
-          impact: { userVisibleBehaviorChange: false, reason: '账本内部纯TypeScript能力，不涉及UI或设备', basisPaths: [SOURCE] }, overwrite: true });
+          impact: { userVisibleBehaviorChange: false, reason: '复用现有纯账本余额计算，保持原内部调用，无新增设备行为', basisPaths: [BASELINE_SOURCE] }, overwrite: true });
       } else assert.fail('unexpected preparation responsibility: ' + step.phase);
       step = await report(host, control, step, output);
     }

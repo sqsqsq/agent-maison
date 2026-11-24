@@ -11,7 +11,7 @@ import { tryLoadUtHostImpl } from '../../profile-host-loader';
 import { UT_REAL_ASSERTION_CHECK } from './repair-candidates.unit.test';
 import { renderResultBlock } from '../utils/verifier-evidence-fixture';
 import { parseVerifierRequest } from '../../scripts/utils/verifier-request';
-import { asRecord } from '../../scripts/utils/component-blueprint-model';
+import { asRecord, asRecords } from '../../scripts/utils/component-blueprint-model';
 import { invocationCompleted } from '../../scripts/utils/invocation-completion';
 import assert from 'assert';
 import { readRepairDependencyContext, repairResponsibilityContext, resolveRepairResponsibility } from '../../scripts/utils/repair-responsibility';
@@ -524,7 +524,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
     for (const value of [null, {}, { schema_version: '9' }]) assert.throws(() => validateExecutionScope(value));
   } },
 ];
-async function runScopeScenario(mode: 'ut-l3-code' | 'ut-l3-spec' | 'ut-design-gap' | 'direct' | 'revision' | 'revision-cut' | 'revision-precut' | 'revision-revoke' | 'impact-first' | 'impact-reuse' | 'impact-null' | 'design-gap' | 'design-gap-revert' | 'spec-gap-revert' | 'detached' | 'detached-harness' | 'detached-explicit' | 'request-ut' | 'request-spec' | 'request-plan' | 'request-coding' | 'request-spec-invalid' | 'request-plan-invalid' | 'request-spec-cut' | 'request-plan-cut' | 'testing-fail' | 'testing-offline' | 'testing-manual' | 'unresolved', useDefault = false, missingMapping = false, continuousCoding: boolean | 'request' = false): Promise<void> {
+async function runScopeScenario(mode: 'ut-l3-code' | 'ut-l3-spec' | 'ut-design-gap' | 'direct' | 'revision' | 'revision-cut' | 'revision-precut' | 'revision-revoke' | 'impact-first' | 'impact-reuse' | 'impact-null' | 'design-gap' | 'design-gap-revert' | 'spec-gap-revert' | 'detached' | 'detached-harness' | 'detached-explicit' | 'request-ut' | 'request-spec' | 'request-plan' | 'request-coding' | 'request-spec-invalid' | 'request-plan-invalid' | 'request-spec-cut' | 'request-plan-cut' | 'testing-fail' | 'testing-offline' | 'testing-manual' | 'unresolved', useDefault = false, missingMapping = false, continuousCoding: boolean | 'request' = false, introducesUi = false): Promise<void> {
   const repo = path.resolve(__dirname, '../../..');
   const { root } = setupGoalRuntimeHost('codex');
   const frameworkRoot = path.join(root, 'framework');
@@ -579,8 +579,19 @@ async function runScopeScenario(mode: 'ut-l3-code' | 'ut-l3-spec' | 'ut-design-g
     const codeFile = path.join(root, (utL3 || continuousCoding === true || ['revision-revoke', 'design-gap', 'design-gap-revert'].includes(mode))
       ? 'src/ledger/ClosureFixture.ts' : '02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets');
     const codeRel = path.relative(root, codeFile).replace(/\\/g, '/');
-    const originalCode = fs.readFileSync(codeFile);
     const directUt = mode === 'direct' && !missingMapping;
+    const snapshotSource = path.posix.join(path.posix.dirname(codeRel), 'LedgerSnapshot.ets');
+    if (directUt) {
+      // This fixture's approved change is internal. Its general-purpose host seeds an ArkUI page.
+      fs.writeFileSync(codeFile, 'exports.refreshLedgerSnapshot = entries => entries;\n');
+      fs.writeFileSync(path.join(root, snapshotSource), 'exports.copyLedgerSnapshot = entries => entries.slice();\n');
+      const staged = spawnSync('git', ['add', '--', snapshotSource], { cwd: root, encoding: 'utf8' });
+      assert.equal(staged.status, 0, staged.stderr);
+      const baseline = spawnSync('git', ['commit', '-m', 'Seed internal ledger implementation for the direct scope', '--', codeRel, snapshotSource],
+        { cwd: root, encoding: 'utf8' });
+      assert.equal(baseline.status, 0, baseline.stderr);
+    }
+    const originalCode = fs.readFileSync(codeFile);
     const refreshIssue = 'acceptance_test_strength_AC-REFRESH';
     const refreshCase = '[AC-REFRESH] reads an independent current ledger snapshot';
     const refreshTest = '02-Feature/FinancialCard/src/ohosTest/ets/test/ScopeRefresh.test.ets';
@@ -598,7 +609,7 @@ async function runScopeScenario(mode: 'ut-l3-code' | 'ut-l3-spec' | 'ut-design-g
     // 补上真实写集，让候选的实现义务与契约授权有交集——链形状与批次 1 一致。
     {
       const declared = YAML.parse(fs.readFileSync(contractsFile, 'utf8'));
-      declared.files = directUt ? [codeRel, refreshTest] : [codeRel];
+      declared.files = directUt ? [codeRel, snapshotSource, refreshTest] : [codeRel];
       if (directUt) declared.modules = [{ name: 'FinancialCard', layer: '02-Feature', package_path: '02-Feature/FinancialCard' }];
       if (utL3 || continuousCoding === true || ['revision-revoke', 'design-gap', 'design-gap-revert'].includes(mode)) {
         // These modes exercise real authorized source edits, so the existing owner resolver needs the actual module location.
@@ -613,9 +624,9 @@ async function runScopeScenario(mode: 'ut-l3-code' | 'ut-l3-spec' | 'ut-design-g
     // `resolveArtifact` returns for acceptance@1/contracts@1/use-cases@1 (a SpecLoader-parsed
     // value), so a hand-built binding cannot survive the freeze-time `readBoundInput` re-resolve.
     // Reading it live also means design-gap / revision bindings reflect the file as it is *then*.
-    const liveBinding = (phase: string, id: string, requirement?: string): any => {
+    const liveBinding = (phase: string, id: string, requirement?: string, testTargets = [codeRel]): any => {
       const resolvedInputs = resolveCapabilityInputs({
-        projectRoot: root, frameworkRoot, feature, phase, track: 'full', testTargets: [codeRel],
+        projectRoot: root, frameworkRoot, feature, phase, track: 'full', testTargets,
         ...(requirement ? { requirement } : {}),
         inputContext: { schema_version: '1.1', subject: { feature }, obligations: {}, required_outputs: [] },
       });
@@ -651,7 +662,8 @@ async function runScopeScenario(mode: 'ut-l3-code' | 'ut-l3-spec' | 'ut-design-g
     // self-reported `device-evidence: not_applicable` fact. The basis points at the real product
     // file, which is inside contracts.files, so the relevance check passes.
     if (['direct'].includes(mode) || codingFirst) {
-      input.request.impact = { user_visible_behavior_change: false, reason: 'fixture impact requires unit verification only', basis: [codeBinding()] };
+      const admittedSource = directUt && !introducesUi ? liveBinding('plan', 'codebase', undefined, [snapshotSource]) : codeBinding();
+      input.request.impact = { user_visible_behavior_change: false, reason: 'fixture impact requires unit verification only', basis: [admittedSource] };
     }
     // `impact-reuse` is born WITH a judgement so the proposal below is a real correction; the
     // reused basis is what must be rejected. `impact-first` is born without one on purpose.
@@ -713,7 +725,8 @@ async function runScopeScenario(mode: 'ut-l3-code' | 'ut-l3-spec' | 'ut-design-g
     let revokedRevisionIndex: number | undefined;
     let detachedStarted = false;
     let recoveryMarker: string | undefined;
-    const refreshSource = 'exports.refreshLedgerSnapshot = entries => entries.slice();\n';
+    const refreshSource = "const { copyLedgerSnapshot } = require('./LedgerSnapshot.ets');\nexports.refreshLedgerSnapshot = entries => copyLedgerSnapshot(entries);\n"
+      + (introducesUi ? "exports.openLedger = NavDestination => NavDestination('ledger');\n" : '');
     const refreshTestSource = [
       "const { it } = require('node:test');",
       "const assert = require('node:assert/strict');",
@@ -727,7 +740,7 @@ async function runScopeScenario(mode: 'ut-l3-code' | 'ut-l3-spec' | 'ut-design-g
       '});', '',
     ].join('\n');
     const writeImplementation = () => {
-        if (directUt) { fs.writeFileSync(codeFile, refreshSource); return; }
+      if (directUt) { fs.writeFileSync(codeFile, refreshSource); return; }
         if (utL3 && designGap && !fs.readFileSync(codeFile, 'utf8').includes('repairedTestabilitySeam')) fs.appendFileSync(codeFile, '\nexport function repairedTestabilitySeam(): string[] { return []; }\n');
         if (continuousCoding && codingRegression && !fs.readFileSync(codeFile, 'utf8').includes('repairedOwnerRegression')) fs.appendFileSync(codeFile, '\nexport const repairedOwnerRegression = true;\n');
         // `design-gap-revert`：第一轮 coding 误改（触发 plan 裁决），plan 拒绝扩展契约后
@@ -1255,6 +1268,16 @@ async function runScopeScenario(mode: 'ut-l3-code' | 'ut-l3-spec' | 'ut-design-g
       probe = await execute();
     }
     if (probe.exitCode !== 0 && injected) probe = await execute();
+    if (introducesUi) {
+      assert(probe.events.some(event => event.type === 'phase_write_observed'
+        && asRecords(event.owned).some(write => write.path === codeRel && write.owner === 'coding')),
+      'the real same-run author must introduce the UI change under its source write grant');
+      const revised = probe.events.filter(event => event.type === 'scope_revised').map(event => validateExecutionScope(event.execution_scope))
+        .find(scope => scope.obligations.some(obligation => obligation.kind === 'device-evidence' && obligation.applicability !== 'not_applicable'));
+      assert(revised && !revised.request_impact,
+        'the signed current UI change must invalidate the old negative judgment before it can prune device work');
+      return;
+    }
     if (utL3) {
       assert.equal(probe.exitCode, 0, JSON.stringify(probe.events.slice(-6)));
       const checked = probe.harnessPhases;
@@ -1862,6 +1885,7 @@ for (const mode of ['direct', 'revision-cut', 'revision-precut', 'revision-revok
 });
 cases.push({ name: 'P7 Feature evidence cannot credit an unmapped CU goal', run: () => runScopeScenario('direct', false, true) });
 cases.push({ name: 'P7 new default creates real attended completion and CU credit without testing', run: () => runScopeScenario('direct', true) });
+cases.push({ name: '77105c47 inherited negative impact cannot prune a same-run authorized UI change', run: () => runScopeScenario('direct', true, false, false, true) });
 
 // ---------------------------------------------------------------------------
 // §4.4 D0.1 acceptance matrix — pure-resolver rows. These were developed as a
@@ -1887,6 +1911,13 @@ const facts = (over?: Partial<ResolvedScopeFacts>): ResolvedScopeFacts => ({
 
 cases.push({ name: 'acceptance unit layer keeps chain', run() { assert.deepStrictEqual(resolveExecutionScope(req(['coding'], 'feature'), wf, acc('unit')).phase_chain, ['coding', 'review', 'ut']); } });
 cases.push({ name: 'acceptance device layer keeps testing (missing impact must NOT downgrade required)', run() { assert.deepStrictEqual(resolveExecutionScope(req(['coding'], 'feature'), wf, acc('device')).phase_chain, ['coding', 'review', 'testing']); } });
+cases.push({ name: 'D0.1 a valid unchanged negative impact cannot cancel an accepted device obligation', run() {
+  const input = req(['coding'], 'feature');
+  input.request.impact = sourced(false, 'the original implementation does not need a device');
+  const resolved = resolveExecutionScope(input, wf, acc('device'), facts({ impact_basis: impactOk, impact_targets_available: true }));
+  assert.equal(resolved.obligations.find(obligation => obligation.kind === 'device-evidence')?.applicability, 'required');
+  assert(resolved.phase_chain.includes('testing'));
+} });
 cases.push({ name: 'D0.1 self-reported device not_applicable is recomputed from acceptance layering', run() {
   const i = req(['coding'], 'feature');
   i.facts.push({ id: 'device:self', kind: 'device-evidence', applicability: 'not_applicable', reason: 'self', basis: [] });
