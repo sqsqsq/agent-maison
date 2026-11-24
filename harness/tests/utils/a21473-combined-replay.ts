@@ -281,7 +281,7 @@ export async function continueA21473CombinedReplay(input: { root: string; framew
         assert.equal(fs.readFileSync(path.join(root, manifestBefore.requirement_source_files[0]), 'utf8'), sourceRequirement);
         output = JSON.stringify({ items: blueprintBefore.review_summary.questioning.items });
       } else if (step.phase === 'initial-design-questioning') {
-        assert(!restored && observedMixed && authors === 2, 'only the current design sources are rechecked during the framework wait');
+        assert(restored && observedMixed && authors === 2, 'the restored framework rechecks current design sources without another implementation author');
         assert.equal(++dependencyQuestioning, 1, 'unchanged design evidence cannot buy a duplicate source recheck');
         assert.equal(issued.request.write_boundary?.executionRole, 'verifier');
         const history = load('scripts/utils/session-execution-handoff').sessionEvents(runDir);
