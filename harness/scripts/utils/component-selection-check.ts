@@ -62,7 +62,7 @@ export function resolveComponentSelectionProjection(root: string, contracts: Con
     const before = findings.length;
     const declared = blueprintTargetComponents(root, blueprint, target, message => report('reconcile_blueprint', message));
     const targetFiles = asStrings(asRecord(target.contracts)?.files);
-    // Older accepted contracts carry the symbol for a route host whose blueprint names the exact evidence file.
+    // A legacy plan may supply the symbol only for the blueprint's own verified file, matching module and unique row. New candidates supply no legacy rows.
     if (!declared.length && findings.length === before) {
       const evidenceFiles = asStrings(target.verification_refs).filter(file => targetFiles.includes(file));
       const previous = legacyComponents.filter(component => evidenceFiles.includes(component.file) && componentLocation(component)

@@ -585,6 +585,9 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
       assert.deepEqual(asRecords(useCase?.data_boundaries)[0].methods, [{ name: method.name, params: method.params, returns, async: true }]);
       assert.deepEqual(boundary.methods, ['insertOpenedCard']);
     }
+    boundary.methods = [{ name: method.name, params: ['WalletCard'], returns: method.return, async: true }];
+    const compatible = selectBlueprintSkillContent(blueprint, unit);
+    assert.deepEqual(asRecords(asRecords(compatible.useCases?.use_cases).find(row => row.id === 'write-card')?.data_boundaries)[0].methods, boundary.methods);
     boundary.methods = [{ name: methodRef, returns: 'Promise<boolean>' }];
     assert.throws(() => selectBlueprintSkillContent(blueprint, unit), error => error instanceof BlueprintContentError
       && error.locations.some(location => location.target.id === ownerRef.target.id && location.field.endsWith('.return'))

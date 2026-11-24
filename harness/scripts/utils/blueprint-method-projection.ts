@@ -80,6 +80,9 @@ export function blueprintMethodProjection(blueprint: BlueprintRecord) {
           for (const [output, source] of [['params', 'params'], ['returns', 'return'], ['async', 'async']] as const) {
             const expected = definition.method[source];
             if (expected === undefined) continue;
+            const authored = old?.[output];
+            if (output === 'params' && Array.isArray(authored) && Array.isArray(expected)
+              && stableJson(authored) === stableJson(asRecords(expected).map(param => param.type))) continue;
             if (old?.[output] !== undefined && stableJson(old[output]) !== stableJson(expected)) {
               report({ message: `${definition.ref}: ${output} 显式声明 ${JSON.stringify(old[output])} 与接口定义 ${JSON.stringify(expected)} 冲突`,
                 locations: [location(address, `${field}.${output}`), { ...definition.location, field: `${definition.location.field}.${source}` }] });
