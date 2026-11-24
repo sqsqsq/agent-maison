@@ -783,7 +783,8 @@ export function readInitialDesignCompletionDisposition(input: { projectRoot: str
   const observed = input.observation ?? readInitialDesignDelivery(input);
   const { conflicts, review } = resolveInitialDesignWriteRecovery(input.projectRoot, input.manifest, readInitialDesignWriteEvents(input.projectRoot, input.manifest));
   if (review) conflicts.set(review.file, { ...review.violation, restorable: false });
-  const writes = describePhaseWriteConflicts(conflicts);
+  const writes = describePhaseWriteConflicts(conflicts).map(problem => review && problem.files?.includes(review.file)
+    ? { ...problem, detail: `框架将在可信来源恢复后重建评审展示：${review.file}${review.reason ? `；${review.reason}` : ''}。` } : problem);
   if (observed.request) return observed.kind === 'construction' ? initialRequestDisposition(input.projectRoot, input.frameworkRoot, observed.request, writes)
     : resolveCurrentDisposition({ endpoint: 'request', phases: [], additionalProblems: [...writes, { phase: 'component-design', id: 'execution_scope', action: 'repair', affects: 'completion', severity: 'BLOCKER', owner: 'component-design', detail: observed.issues.join('；') }] });
   const problems: CurrentDispositionProblem[] = [...writes, ...(observed.disposition?.problems ?? [])];

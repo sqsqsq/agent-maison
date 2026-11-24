@@ -630,7 +630,7 @@ export function acceptSessionExecution(input: {
       const writes = classifyPhaseInvocationChanges(boundary, report.phase, windows.returned, { events, invokeId: issued.request.invoke_id });
       const permitted = issued.request.snapshot_options?.ownedPrefixes?.map(file => file.replace(/\\/g, '/')) ?? [];
       const invocationStart = events.map(event => event.type === 'agent_invoke_start' && event.invoke_id === issued.request.invoke_id).lastIndexOf(true);
-      const restorations = authorWritePreimages(invocationStart < 0 ? events : events.slice(0, invocationStart));
+      const restorations = authorWritePreimages(invocationStart < 0 ? events : events.slice(0, invocationStart), boundary.projectRoot);
       const initialQuestioning = report.phase === 'initial-design-questioning' && boundary.executionRole === 'verifier';
       const outside = report.phase.startsWith('initial-design-') && !initialQuestioning && !boundary.domains.length
         ? writes.violations.filter(write => !permitted.some(file => write.path === file || write.path.startsWith(file + '/')))

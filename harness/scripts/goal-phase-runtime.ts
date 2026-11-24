@@ -4709,7 +4709,6 @@ export class GoalPhaseRuntime {
         const { conflicts, review } = resolveInitialDesignWriteRecovery(projectRoot, manifest, writeHistory(), { emit });
         const writeReview = unresolvedWriteReviewPaths(conflicts);
         if (writeReview.length) return conclude('unauthorized_source_mutation', `设计交回不能采信，保全现场并由对应责任方核对：${writeReview.join('、')}`);
-        if (review && !conflicts.size) return conclude('framework_bug', `框架评审展示尚未恢复：${review.file}；${review.reason ?? '等待来源恢复后重建'}。`);
         const restoration = new Map([...conflicts].filter(([, conflict]) => conflict.restorable).map(([file, conflict]) => [file, conflict.before]));
         const designEvents = history();
         const activeAttempt = [...designEvents].reverse().find(event => event.type === 'design_authority_repair'
@@ -4904,7 +4903,10 @@ export class GoalPhaseRuntime {
           if (continueRepair(repaired)) continue;
           return repairStop(repaired);
         }
-        if (observed.kind === 'questioning') materializeBlueprintReview(projectRoot, manifest.feature);
+        if (observed.kind === 'questioning') {
+          if (review) return conclude('execution_scope_unresolved', `框架评审展示尚未恢复：${review.file}；${review.reason ?? '等待来源恢复后重建'}。`);
+          materializeBlueprintReview(projectRoot, manifest.feature);
+        }
         const spent = readOriginalDeliveryActivity(projectRoot, manifest)!;
         const purpose = observed.kind === 'questioning' ? 'questioning' : 'author';
         if (observed.kind === 'author' && !observed.request && !restoration.size) prepareInitialDesignDraft({ projectRoot, blueprintId: manifest.feature,
@@ -7526,8 +7528,8 @@ Goal runner — original request design and construction runtime
           const windows = readSessionWriteWindows(runDir, sessionRequest, saved.post_snapshot, records)!;
           if (windows.kind === 'unverifiable') wait(context.phase, `原会话写入时段不可核实：${windows.reason}；保全原件，等待核对。`);
           else if (!context.phase.startsWith('design-repair-')) {
-            recordAuthorRestorations(writeHistory(records), windows.returned, context.phase, invokeId, goalEvents.emit);
-            const originals = authorWritePreimages(beforeAuthorInvocation(writeHistory(records), invokeId));
+            recordAuthorRestorations(writeHistory(records), windows.returned, context.phase, invokeId, goalEvents.emit, projectRoot);
+            const originals = authorWritePreimages(beforeAuthorInvocation(writeHistory(records), invokeId), projectRoot);
             const writes = classifyPhaseInvocationChanges(boundary!, context.phase, windows.returned, { events: records, invokeId });
             const violations = [...windows.beforeBinding.map(write => ({ ...write, ...resolvePhasePathOwnership(boundary!, write.path), violation: 'signed_input_drift', window: 'before_binding' })),
               ...writes.violations.filter(write => !originals.has(write.path) || originals.get(write.path) !== write.postSha256)
@@ -7936,7 +7938,7 @@ Goal runner — original request design and construction runtime
       const bound = original ? readPhaseBinding(runDir, original, records) : null;
       const windows = phaseWriteWindows(pre, bound, post);
       const writes = windows.kind === 'checked' ? classifyPhaseInvocationChanges(boundary, label, windows.returned, { events: records, invokeId }) : null;
-      const originalWrites = authorWritePreimages(writeHistory(history));
+      const originalWrites = authorWritePreimages(writeHistory(history), projectRoot);
       const violations = windows.kind === 'checked' && writes ? [
         ...windows.beforeBinding.map(write => ({ ...write, ...resolvePhasePathOwnership(boundary, write.path), violation: 'signed_input_drift', window: 'before_binding' })),
         ...writes.violations.filter(write => !originalWrites.has(write.path) || originalWrites.get(write.path) !== write.postSha256)
