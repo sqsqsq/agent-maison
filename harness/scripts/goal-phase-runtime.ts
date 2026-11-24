@@ -209,6 +209,7 @@ import { reduceRunState } from './utils/run-state-reducer';
 import { resolveFeatureTrack, LEGACY_FEATURE_PHASE_ORDER } from './utils/runtime-policy';
 import { loadAcceptanceFlowsDoc, resolveP0DeviceObligations } from './utils/p0-semantic-gates';
 import { loadFeatureTrackDecl } from './utils/feature-track';
+import { qualifiedManagedAuthorCheck } from './utils/managed-goal-invocation';
 import { mergeUsageIntoTraceFile } from './utils/usage-capture';
 import {
   buildGoalManifestFromInput,
@@ -7774,7 +7775,7 @@ Goal runner — original request design and construction runtime
       });
       const producerReturned = retestReviewReturned || family === 'testing' && ['testing-evidence', 'testing-preparation'].includes(actor?.original?.request.purpose ?? '')
         && authorAt > checkedAt;
-      const writes = actor && authorAt > checkedAt
+      const writes = actor && authorAt > checkedAt && observation.end?.author_tool_invoke_id !== actor.start.invoke_id
         ? authorWrites(actor).filter(write => write.roles?.some(role => role.kind === 'source')) : [];
       const paths = new Set(writes.map(write => path.resolve(projectRoot, write.path)));
       const evidence = observation.returned && writes.length ? loadPhaseEvidenceManifest(projectRoot, manifest.feature, family) : null;
@@ -7800,9 +7801,10 @@ Goal runner — original request design and construction runtime
         const events = loadAuthoritativeEvents(eventsPath);
         const producer = phaseInvocationStart(events, family);
         if (!producer) return true;
+        const start = observation?.start ?? [...events].reverse().find(event => event.type === 'harness_start' && event.phase === family && event.invoke_id);
+        if (start?.author_tool_invoke_id) return !events.some(event => event.type === 'phase_verdict' && event.invoke_id === start.invoke_id);
         if (producer.phase === 'work-unit-author') {
           if (observation) return !observation.end;
-          const start = [...events].reverse().find(event => event.type === 'harness_start' && event.phase === family && event.invoke_id);
           return !start || !events.slice(events.indexOf(start) + 1).some(event => event.type === 'harness_end'
             && event.phase === family && event.invoke_id === start.invoke_id);
         }
@@ -7814,8 +7816,8 @@ Goal runner — original request design and construction runtime
         || checkWorkConditions(result.phase, work).producerReturned);
     const affectedCheck = (family: string, work: ReturnType<typeof readWork>, conditions = checkWorkConditions(family, work)): boolean => {
       if (conditions.observation.changed || conditions.productChanged || conditions.scopeChanged || conditions.producerReturned) return true;
-      if (conditions.observation.returned) return false;
       if (missingCheckOrigin(family, work, conditions.observation)) return true;
+      if (conditions.observation.returned) return false;
       return work.facts.phases.some(result => result.phase === family && (result.lineage === 'stale' || result.lineage === 'missing'));
     };
     const commitVisualJournal = (attemptId: string, actor: NonNullable<ReturnType<typeof lastAuthor>>): boolean => {
@@ -8105,6 +8107,7 @@ Goal runner — original request design and construction runtime
       }
       const knowledgeInputs = [...new Set(work.input.chain.map(family => extensionInputsForPhase(projectRoot, family,
         { frameworkRoot, feature: manifest.feature, runId: manifest.run_id, requirement: manifest.requirement })).filter(Boolean))];
+      const authorChecks = work.input.chain.filter(family => ['coding', 'ut', 'testing'].includes(family));
       const parts = [
       `# 工作单元 ${manifest.feature}`,
       ...(scope ? [`本单元冻结交付目标：${scope.completion_target}`,
@@ -8115,6 +8118,11 @@ Goal runner — original request design and construction runtime
       `当前适用检查族：${work.input.chain.join(', ')}。这些是工具/方法，不是轮流启动作者的阶段。`,
       `阅读当前 ${relFeatureFile(projectRoot, manifest.feature, '')} 的权威输入、验收与契约，以及适用的 framework/skills/feature 方法。`,
       '你是本单元持续的专用作者。依真实授权完成设计细化、实现和测试源码，并按需调用框架检查；收到全部反馈后继续原上下文。',
+      ...(authorChecks.length ? [
+        ...authorChecks.map(phase => `在同一专用会话内运行 ${phase}：npm --prefix "${path.join(frameworkRoot, 'harness')}" run check -- --project-root "${projectRoot}" --framework-root "${frameworkRoot}" --feature "${manifest.feature}" --phase ${phase} --summary --author-tool`),
+        `在当前 run ${manifest.run_id} 的原作者执行上下文运行，保留框架注入的 MAISON_GOAL_RUN_ID、MAISON_GOAL_ATTEMPT 和 MAISON_GOAL_ATTEMPT_PHASE。`,
+        '根据实际工具结果修复当前有写权的对象，再运行受影响的检查。保留工具的原始结果，独立核验和完成仍由框架裁决。',
+      ] : []),
       '独立审查报告由框架派原审查职责处理；其中的未完项仍完整呈现供你理解，不要求实现作者自审自签。',
       '不要改 framework、原请求、正式结果/截图/核验原件或自签 PASS。共享设计/范围变更交原设计单元正式修订，不在本单元自授。',
       '设备安装、真机/截图及凭据操作必须使用框架工具和原设备门；不猜密码、不绕过门、不自行重置设备或读取秘密。',
@@ -8468,6 +8476,44 @@ Goal runner — original request design and construction runtime
         if (halted) break;
         let current = readWork();
         if (!current.facts.phases.some(result => result.phase === family)) continue;
+        const history = loadAuthoritativeEvents(eventsPath);
+        const toolStart = [...history].reverse().find(event => event.type === 'harness_start' && event.phase === family && event.invoke_id);
+        if (toolStart?.author_tool_invoke_id && !history.some(event => event.type === 'phase_verdict' && event.invoke_id === toolStart.invoke_id)
+          && current.results.some(result => result.phase === family && asRecord(result.summary)?.run_id === manifest.run_id)) {
+          const end = history.slice(history.indexOf(toolStart) + 1).find(event => event.type === 'harness_end' && event.invoke_id === toolStart.invoke_id);
+          const reportEvidence = loadPhaseEvidenceManifest(projectRoot, manifest.feature, family);
+          const original = reportEvidence?.integrityOk && end
+            ? qualifiedManagedAuthorCheck({ runDir, feature: manifest.feature, projectRoot, frameworkRoot }, toolStart, end, reportEvidence.fileSha256) : null;
+          const summary = original && readPhaseSummary(projectRoot, manifest.feature, family as FeaturePhase).summary;
+          const needsDevice = phaseRequiresDevice(family, resolvedProfile, current.input.executionScope);
+          const reconcileTesting = family === 'testing' && needsDevice;
+          const actor = summary && reconcileTesting ? lastAuthor() : null;
+          const device = end?.author_tool_device;
+          if (summary && original && end && end.verdict === summary.verdict
+            && (!needsDevice || device?.serial && device.target_kind)
+            && (!reconcileTesting || toolStart.ts && end.ts && actor?.start.invoke_id === original.request.invoke_id)) {
+            if (reconcileTesting && device && actor && !commitVisualJournal(original.request.context.attemptId, actor)) break;
+            if (reconcileTesting && device) {
+              const reportsDir = featurePhaseReportsDir(projectRoot, manifest.feature, family, frameworkRoot);
+              commitGateDeviceEvidenceProposal(projectRoot, manifest.feature, manifest.run_id, {
+                projectRoot, reportsDir, attemptId: original.request.context.attemptId, expectedTarget: device,
+                harnessWindow: { startMs: Date.parse(toolStart.ts!), endMs: Date.parse(end.ts!) },
+                currentHapSha256Full: resolveCurrentHapSha256Full(projectRoot, reportsDir),
+              });
+            }
+            goalEvents.emitPhaseVerdict({ phase: family, invoke_id: end.invoke_id!, verdict: summary.verdict,
+              harness_exit: end.exit_code ?? 1, stale_summary: false });
+            outcomes.push({ phase: family as FeaturePhase, verdict: summary.verdict as HarnessVerdict, halted: false, retries: 0 });
+            try { finalizePhaseClosure({ projectRoot, frameworkRoot, feature: manifest.feature, phase: family, goalRunId: manifest.run_id,
+              goalAttemptId: original.request.context.attemptId, factsContext: original.request.context.factsContext, persistPhaseState: () => undefined }); }
+            catch { /* An independent or incomplete result remains pending in the shared completion view. */ }
+            reviseCurrentScope(family);
+            if (halted) break;
+            if (consumeCompletedBoundaryHandoff()) return 0;
+            executedCheck = true;
+            current = readWork();
+          }
+        }
         const reviewConditions = checkWorkConditions(family, current);
         const { acceptanceReviewConflictInstruction } =
           require('./utils/acceptance-review-strength') as typeof import('./utils/acceptance-review-strength');
@@ -8643,7 +8689,7 @@ Goal runner — original request design and construction runtime
             let factsContext: import('./utils/context-facts').FactsInvocationContext | undefined;
             if (material?.input_bindings_sha256) {
               const observed = currentConditions.observation;
-              const checkedAttempt = observed.returned ? observed.start?.invoke_id?.slice(family.length + 1) : undefined;
+              const checkedAttempt = observed.returned ? observed.start?.attempt_id ?? observed.start?.invoke_id?.slice(family.length + 1) : undefined;
               const entry = resolveCapabilityResolutionEntryInput({ ...reviewOptions, featuresDir, goalRunId: manifest.run_id, purpose: 'bound-verifier',
                 goalAttemptId: checkedAttempt ?? lastAuthor()?.original?.request.context.attemptId });
               factsContext = entry.factsContext;

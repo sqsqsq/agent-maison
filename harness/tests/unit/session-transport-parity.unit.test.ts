@@ -17,7 +17,7 @@ import { researchSnapshotFacts } from '../fixtures/host-snapshot-3.1.0/migrate';
 import { parseContextExploration } from '../../scripts/utils/context-exploration';
 import type { UnitCaseResult } from '../run-unit';
 import { matchesUnitCase, startCaseTiming, type SelectedUnitCases, type UnitExecutionTiming } from '../utils/unit-case-selection';
-import { withRuntimeTest } from '../utils/runtime-test-control';
+import { preserveRuntimeTestEvidence, withRuntimeTest } from '../utils/runtime-test-control';
 
 const SOURCE = 'src/math/src/main/clamp.ts';
 const TEST = 'src/math/src/test/clamp.test.ts';
@@ -162,17 +162,19 @@ exports.utHostImpl.checkUtHvigorTest = (ctx, ...args) => {
 }
 
 interface GoalResult { root: string; failedInputs: string[]; invocations: string[]; rawGap: boolean }
-export async function runGoal(root: string, mode: 'detached' | 'session', scenario: 'repair' | 'gap' | 'transient' | 'daily-repair' | 'daily-compile-repair' | 'normal', resume = false): Promise<GoalResult> {
+export async function runGoal(root: string, mode: 'detached' | 'session', scenario: 'repair' | 'gap' | 'transient' | 'daily-repair' | 'daily-compile-repair' | 'normal' | 'author-tools' | 'author-tools-stale', resume = false): Promise<GoalResult> {
   const runtime = moduleAt(root, 'scripts/goal-phase-runtime');
   const entry = moduleAt(root, 'scripts/goal-mode-entry');
   const invocations: string[] = [], failedInputs: string[] = [];
   let codingCalls = 0, rawGap = false;
   let transientReturned = false;
   const repairsProduct = scenario === 'repair' || scenario === 'daily-repair';
-  const selfCheck = async (phase: string, fence?: any, extraEnv?: Record<string, string>): Promise<number> => {
+  let authorToolsRan = false;
+  const selfCheck = async (phase: string, fence?: any, extraEnv?: Record<string, string>, authorTool = false): Promise<number> => {
     const args = [path.join(root, 'framework/harness/node_modules/ts-node/dist/bin.js'), '--project', path.join(root, 'framework/harness/tsconfig.json'),
       path.join(root, 'framework/harness/harness-runner.ts'), '--project-root', root, '--phase', phase, '--feature', 'clamp'];
     if (fence) args.push('--goal-run-id', 'session-cli', '--goal-attempt-id', fence.attemptId, '--goal-owner-id', fence.owner.owner_id, '--goal-owner-epoch', String(fence.owner.epoch));
+    if (authorTool) args.push('--author-tool');
     const env = { ...process.env }; for (const key of Object.keys(env)) if (/^MAISON_(GOAL_|FEATURE)/i.test(key)) delete env[key];
     Object.assign(env, extraEnv ?? {}, { MAISON_GOAL_CHECKPOINT_DIR: path.join(root, '.trust') });
     const invoke = async (tail: string) => {
@@ -194,7 +196,7 @@ export async function runGoal(root: string, mode: 'detached' | 'session', scenar
     const tapFile = path.join(root, 'doc/features/clamp/ut/reports/node-tests.tap');
     const tap = phase === 'ut' && fs.existsSync(tapFile) ? fs.readFileSync(tapFile, 'utf8') : '';
     const nativeFailed = /# fail [1-9]/.test(tap);
-    if (phase === 'ut' && current.verdict === 'FAIL' && nativeFailed) {
+    if (!authorTool && phase === 'ut' && current.verdict === 'FAIL' && nativeFailed) {
       const nativeLog = 'doc/features/clamp/ut/reports/native-failure.tap';
       assert.match(tap, /# fail [1-9]/, 'upstream diagnosis must originate in actual native assertions');
       write(root, nativeLog, tap); // Retain the actual failed tool output; later real gate runs have their own timings.
@@ -228,6 +230,20 @@ export async function runGoal(root: string, mode: 'detached' | 'session', scenar
     }
     if (phase === 'review') {
       authorReview(root);
+      if (scenario === 'author-tools' || scenario === 'author-tools-stale') {
+        const rows = Object.keys(fence?.workInput?.material.acceptanceReview ?? {}).flatMap(issue => {
+          const ac = /^acceptance_test_strength_(AC-\d+)$/.exec(issue)?.[1];
+          if (!ac) return [];
+          const lines = read(root, TEST).split('\n');
+          const position = lines.findIndex(line => line.includes(`it('[${ac}]`) && line.includes('expect(clamp('));
+          assert(position >= 0 && read(root, SOURCE).includes('export function clamp('));
+          const name = /it\('([^']+)'/.exec(lines[position])![1];
+          return [{ issue, verdict: 'refuted', evidence: `\`${TEST}:${position + 1}\` ${name} 调用 \`${SOURCE}:1\` 的生产 clamp，与独立预期值比较。`,
+            production_paths: [SOURCE] }];
+        });
+        if (rows.length) fs.appendFileSync(path.join(root, 'doc/features/clamp/review/review-report.md'),
+          '\n```issue-verification\n' + YAML.stringify(rows) + '```\n');
+      }
       return 0; // The independent report writer does not run tools or rewrite author research.
     }
     if (phase === 'work-unit-author') {
@@ -252,12 +268,30 @@ export async function runGoal(root: string, mode: 'detached' | 'session', scenar
       assert(context && context.phase === phase && context.runId === 'session-cli', 'the author must consume its actual unit request');
       const methods = context.chain.filter((method: string) => ['coding', 'review', 'ut'].includes(method));
       for (const method of methods) {
-        if (method === 'coding') { codingCalls++; write(root, SOURCE, scenario === 'daily-compile-repair' ? (failedInputs.length ? GOOD : COMPILE_BAD) : repairsProduct && !resume && !failedInputs.includes(sha(BAD) + ':' + sha(TEST_SOURCE)) ? BAD : GOOD); }
+        if (method === 'coding' && !(scenario === 'author-tools-stale' && authorToolsRan)) { codingCalls++; write(root, SOURCE, scenario === 'daily-compile-repair' ? (failedInputs.length ? GOOD : COMPILE_BAD) : repairsProduct && !resume && !failedInputs.includes(sha(BAD) + ':' + sha(TEST_SOURCE)) ? BAD : GOOD); }
         if (method === 'review') authorReview(root);
         if (method === 'ut') authorUt(root);
         authorFacts(root, method);
       }
       researchSessionUnit(root, context);
+      if (scenario === 'author-tools' || scenario === 'author-tools-stale') {
+        const owner = mode === 'session' ? context : undefined;
+        const env = extraEnv ?? context.childEnv;
+        if (!authorToolsRan) {
+          write(root, SOURCE, BAD);
+          await selfCheck('ut', owner, env, true);
+          assert.match(fs.readFileSync(native, 'utf8'), /# fail [1-9]/, 'the author must see the actual native assertion failure before repairing');
+          failedInputs.push(sha(read(root, SOURCE)) + ':' + sha(read(root, TEST)));
+          write(root, SOURCE, GOOD);
+          await selfCheck('coding', owner, env, true);
+          await selfCheck('ut', owner, env, true);
+          assert.notEqual(summary(root, 'ut').closure_status, 'closed', 'the author tool must not close the independent UT obligation');
+          assert(!fs.existsSync(path.join(root, 'doc/features/clamp/feature-completion.json')), 'author tool cannot sign Feature completion');
+          if (scenario === 'author-tools-stale') write(root, SOURCE, GOOD + '// edited after the managed check\n');
+        }
+        authorToolsRan = true;
+        return 0;
+      }
       for (const method of methods) if (!['transient', 'daily-compile-repair', 'daily-repair'].includes(scenario) || scenario === 'daily-repair' && method === 'ut' && !priorNativeFailure)
         await selfCheck(method, mode === 'session' ? context : undefined, extraEnv ?? context.childEnv);
       return 0; // The model returned its artifacts; actual native failures remain formal tool evidence.
@@ -468,6 +502,62 @@ const cases: Array<{ name: string; run(): Promise<void> }> = [{
       if (priorTrust === undefined) delete process.env.MAISON_GOAL_CHECKPOINT_DIR; else process.env.MAISON_GOAL_CHECKPOINT_DIR = priorTrust;
       assert.equal(path.dirname(temp), path.resolve(os.tmpdir()));
       if (process.env.KEEP_PARITY_ROOT !== '1') fs.rmSync(temp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); else console.log('kept gap root', temp);
+    }
+  },
+}, {
+  name: '77105c47 active author runs native check failure and repair in one unit before independent closure',
+  async run() {
+    const temp = fs.mkdtempSync(path.join(os.tmpdir(), '77105-author-tools-'));
+    const root = path.join(temp, 'session');
+    try {
+      prepareSessionCliProject(root, 'claude', false); adaptNative(root);
+      const result = await runGoal(root, 'session', 'author-tools');
+      assert(result.failedInputs.includes(sha(BAD) + ':' + sha(TEST_SOURCE)));
+      const history = events(root);
+      const toolEnds = history.filter(event => event.type === 'harness_end' && event.author_tool_evidence_sha256);
+      const failed = toolEnds.find(event => event.phase === 'ut' && event.verdict === 'FAIL');
+      const passed = toolEnds.find(event => event.phase === 'ut' && event.verdict === 'PASS' && event.author_tool_invoke_id === failed?.author_tool_invoke_id);
+      assert(failed && passed && failed.author_tool_invoke_id, 'tool must record both real outcomes under one author request');
+      assert(history.some(event => event.type === 'phase_verdict' && event.invoke_id === passed.invoke_id), 'coordinator did not consume the real author tool result');
+      assert(history.some(event => event.type === 'agent_invoke_start' && event.phase === 'ut-verifier-format-repair'),
+        'closed UT result must still have a separate independent verifier');
+      for (const start of history.filter(event => event.type === 'harness_start' && event.phase === 'ut' && !event.author_tool_invoke_id)) {
+        const log = read(root, `doc/features/clamp/goal-runs/session-cli/phases/ut/${start.invoke_id}/harness-output.log`);
+        assert.match(log, /CHECK_RESULT retained_author_tool=ut/, 'coordinator reassembly must reuse identical native UT input');
+      }
+      assertFeatureCompleted(root, 'qualified author tools');
+    } catch (error) {
+      const runDir = path.join(root, 'doc/features/clamp/goal-runs/session-cli');
+      const files = [path.join(runDir, 'events.jsonl'), ...['coding', 'review', 'ut'].flatMap(phase =>
+        ['summary.json', 'script-report.json', 'phase-evidence-manifest.json'].map(file => path.join(root, 'doc/features/clamp', phase, 'reports', file))),
+        path.join(runDir, 'phases/ut/ut-i1/harness-output.log')];
+      console.log('AUTHOR_TOOL_ORIGINALS ' + preserveRuntimeTestEvidence([root], String(error), [], files));
+      throw error;
+    } finally {
+      if (process.env.KEEP_PARITY_ROOT !== '1') fs.rmSync(temp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+      else console.log('kept author-tool root', root);
+    }
+  },
+}, {
+  name: '77105c47 author tool result is discarded after its checked source changes',
+  async run() {
+    const temp = fs.mkdtempSync(path.join(os.tmpdir(), '77105-author-tools-stale-'));
+    const root = path.join(temp, 'session');
+    try {
+      prepareSessionCliProject(root, 'claude', false); adaptNative(root);
+      await runGoal(root, 'session', 'author-tools-stale');
+      const history = events(root);
+      const proof = history.find(event => event.type === 'harness_end' && event.phase === 'ut'
+        && event.verdict === 'PASS' && event.author_tool_evidence_sha256);
+      assert(proof, 'fixture did not publish a real historical author tool PASS');
+      assert(!history.some(event => event.type === 'phase_verdict' && event.invoke_id === proof.invoke_id),
+        'old author result was consumed after the code changed');
+      const changed = sha(GOOD + '// edited after the managed check\n');
+      assert(history.some(event => event.type === 'harness_end' && event.phase === 'ut' && !event.author_tool_invoke_id
+        && event.related_input_snapshot?.[SOURCE]?.contentHash === changed),
+        'changed production input was not run by the formal gate');
+    } finally {
+      fs.rmSync(temp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
   },
 }, {

@@ -107,7 +107,7 @@ import {
   intermediateRoundsJournalPath,
 } from './scripts/utils/intermediate-rounds-journal';
 import { deleteEnvKeyCaseInsensitive, runProcessIntegrityPreflight } from './scripts/utils/process-integrity';
-import { effectiveForceDevice } from './scripts/utils/managed-goal-invocation';
+import { beginManagedAuthorCheck, effectiveForceDevice, finishManagedAuthorCheck, managedAuthorCheckMatchesEvidence } from './scripts/utils/managed-goal-invocation';
 import { validateAttendedGoalContext } from './scripts/utils/attended-goal-context';
 import {
   resolveFidelityContextFromFeature,
@@ -384,7 +384,7 @@ const args = minimist(process.argv.slice(2), {
     'requirement', 'requirement-file', 'user-deadline-at', 'adapter-model', 'adapter-provider', 'adapter-reasoning', 'adapter-model-config',
     'frontend-request-file', 'frontend-session-id', 'frontend-request-id', 'verifier-worker-subject', 'verifier-worker-expected', 'verifier-wait-timeout-ms', 'resume-verifier',
   ],
-  boolean: ['list', 'help', 'verbose', 'clear-state', 'sync-closure', 'report-reconcile-only', 'force-device', 'revalidate', 'measure', 'summary', 'failures-only', 'skip-visual-handoff', 'skip-ui-spec', 'skip-visual-parity', 'correction-init', 'adhoc-correction', 'prepare-request', 'execute-verifier', 'cancel-verifier'],
+  boolean: ['list', 'help', 'verbose', 'clear-state', 'sync-closure', 'report-reconcile-only', 'force-device', 'revalidate', 'measure', 'summary', 'failures-only', 'skip-visual-handoff', 'skip-ui-spec', 'skip-visual-parity', 'correction-init', 'adhoc-correction', 'prepare-request', 'execute-verifier', 'cancel-verifier', 'author-tool'],
   alias: {
     p: 'phase',
     f: 'feature',
@@ -497,6 +497,7 @@ Harness — Spec/Harness 验证工具
   --adapter <adapter_name>      init 必选；须与 framework/agents/<adapter_name>/ 存在且含 adapter.yaml（其他阶段忽略）
   --goal-run-id <run_id>    attended phase context；须与下面三项成组传入
   --goal-attempt-id <id>    attended attempt identity（来自 phase_execute_request）
+  --author-tool            在当前签发的作者调用内记录正式构建、UT 或设备工具原件，独立核验仍由框架调度
   --goal-owner-id <id>      attended fenced session owner identity
   --goal-owner-epoch <n>    attended fenced session owner epoch
   -l, --list                列出可用的 Spec 文件
@@ -921,6 +922,15 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  const authorToolFlags = new Set(['phase', 'p', 'feature', 'f', 'project-root', 'framework-root', 'summary', 'author-tool',
+    'goal-run-id', 'goal-attempt-id', 'goal-owner-id', 'goal-owner-epoch']);
+  if (args['author-tool'] && (args._.length || Object.entries(args).some(([key, value]) => key !== '_'
+    && value !== undefined && value !== false && !authorToolFlags.has(key)))) {
+    throw new Error('--author-tool 使用当前签发的原检查参数，不可缩小范围或覆盖工作流。');
+  }
+  const managedAuthorCheck = args['author-tool']
+    ? beginManagedAuthorCheck({ projectRoot, feature, phase, frameworkRoot: resolvedFrameworkRoot }) : undefined;
+
   if (reportReconcileOnly && (phase !== 'testing' || feature === GLOBAL_FEATURE_SENTINEL)) {
     console.error('错误: --report-reconcile-only 仅适用于带 feature 的 testing 阶段');
     process.exit(1);
@@ -1203,7 +1213,21 @@ async function main(): Promise<void> {
     } else await prepareDeviceExecution();
   } else if (phase !== 'testing' && phase !== 'ut') await prepareDeviceExecution();
 
-  if (!phaseIsGlobal && !forceDevice && !reportReconcileOnly && !args['skip-ui-spec'] && !args['skip-visual-handoff'] && !args['skip-visual-parity']) {
+  let retainedAuthorReport: ScriptReport | undefined;
+  if (!phaseIsGlobal && !managedAuthorCheck && !forceDevice && !reportReconcileOnly && !args['skip-ui-spec'] && !args['skip-visual-handoff'] && !args['skip-visual-parity']) {
+    const runId = process.env.MAISON_GOAL_RUN_ID?.trim();
+    if (runId && args['goal-gate-token'] && ['coding', 'ut'].includes(phase)) {
+      const evidence = loadPhaseEvidenceManifest(projectRoot, feature, phase);
+      const device = phaseRequiresDevice(phase, resolvedProfile, devicePreparationScope) ? {
+        serial: process.env.HARNESS_HDC_TARGET, targetKind: process.env.MAISON_DEVICE_TARGET_KIND,
+      } : undefined;
+      const proof = evidence?.integrityOk && managedAuthorCheckMatchesEvidence({ projectRoot, frameworkRoot: resolvedFrameworkRoot,
+        feature, phase, runId, evidenceSha256: evidence.fileSha256, device });
+      if (proof && readReusableCheckResult({ projectRoot, feature, phase, frameworkRoot: resolvedFrameworkRoot,
+        runId })) {
+        retainedAuthorReport = JSON.parse(fs.readFileSync(path.join(featurePhaseReportsDir(projectRoot, feature, phase, resolvedFrameworkRoot), 'script-report.json'), 'utf8')) as ScriptReport;
+      }
+    }
     const reused = readReusableCheckResult({ projectRoot, feature, phase, frameworkRoot: resolvedFrameworkRoot,
       runId: process.env.MAISON_GOAL_RUN_ID?.trim(), resolvedInputs, factsContext,
       deviceRequired: phaseRequiresDevice(phase, resolvedProfile) || phaseHasNativeExecution(phase, resolvedProfile) });
@@ -1339,88 +1363,93 @@ async function main(): Promise<void> {
   }
 
   let checks: CheckResult[] = [...capabilityInputChecks];
-  if (projectScope) checks.push({ id: 'project_request_scope', category: 'structure', severity: 'MINOR', status: 'PASS', description: '本次项目请求范围（不代表校验通过）', details: JSON.stringify(projectScope), structured: { execution_scope: projectScope } });
-  // P0-7②：进程预加载注入自检（file-drift 对进程注入无感，须独立防线）。
-  checks.push(...runProcessIntegrityPreflight({ projectRoot, harnessDir: harnessRoot }));
-  checks.push(...(await emitLifecycle('pre_phase')));
-  checks.push(...(await emitLifecycle('pre_check', { checkScript: `check-${phase}.ts` })));
-  checks.push(...checkExtensionManifest(resolvedProfile.extensionBundle));
-  checks.push(...checkExtensionBindingProduces({
-    bundle: resolvedProfile.extensionBundle,
-    projectRoot,
-    phase,
-    slot: 'before_phase_work',
-  }));
-  checks.push(...checkExtensionBindingProduces({
-    bundle: resolvedProfile.extensionBundle,
-    projectRoot,
-    phase,
-    slot: 'before_phase_verify',
-  }));
+  if (retainedAuthorReport) {
+    checks = retainedAuthorReport.checks;
+    console.log('CHECK_RESULT retained_author_tool=' + phase);
+  } else {
+    if (projectScope) checks.push({ id: 'project_request_scope', category: 'structure', severity: 'MINOR', status: 'PASS', description: '本次项目请求范围（不代表校验通过）', details: JSON.stringify(projectScope), structured: { execution_scope: projectScope } });
+    // P0-7②：进程预加载注入自检（file-drift 对进程注入无感，须独立防线）。
+    checks.push(...runProcessIntegrityPreflight({ projectRoot, harnessDir: harnessRoot }));
+    checks.push(...(await emitLifecycle('pre_phase')));
+    checks.push(...(await emitLifecycle('pre_check', { checkScript: `check-${phase}.ts` })));
+    checks.push(...checkExtensionManifest(resolvedProfile.extensionBundle));
+    checks.push(...checkExtensionBindingProduces({
+      bundle: resolvedProfile.extensionBundle,
+      projectRoot,
+      phase,
+      slot: 'before_phase_work',
+    }));
+    checks.push(...checkExtensionBindingProduces({
+      bundle: resolvedProfile.extensionBundle,
+      projectRoot,
+      phase,
+      slot: 'before_phase_verify',
+    }));
 
-  // P0-2（plan d9b4f7e2 复审）：spec-loader 形状留痕升结构化 FAIL——归一化只防崩溃，
-  // "modules: {} 被归空后某门禁安静 PASS"属静默洗形状，此处兜底拦截（agent 可修：
-  // details 给期望形状与最小样例）。
-  if (context.featureSpec.shape_issues?.length) {
-    checks.push({
-      id: 'feature_spec_shape',
-      category: 'structure',
-      description: 'contracts/acceptance/use-cases 集合字段与根节点形状合法',
-      severity: 'BLOCKER',
-      status: 'FAIL',
-      details: context.featureSpec.shape_issues.join('\n'),
-      suggestion: '按 details 中的最小合法样例修正对应 YAML 字段形状后重跑；这是产物形状问题（agent 可修），非框架缺陷。',
-    });
-  }
+    // P0-2（plan d9b4f7e2 复审）：spec-loader 形状留痕升结构化 FAIL——归一化只防崩溃，
+    // "modules: {} 被归空后某门禁安静 PASS"属静默洗形状，此处兜底拦截（agent 可修：
+    // details 给期望形状与最小样例）。
+    if (context.featureSpec.shape_issues?.length) {
+      checks.push({
+        id: 'feature_spec_shape',
+        category: 'structure',
+        description: 'contracts/acceptance/use-cases 集合字段与根节点形状合法',
+        severity: 'BLOCKER',
+        status: 'FAIL',
+        details: context.featureSpec.shape_issues.join('\n'),
+        suggestion: '按 details 中的最小合法样例修正对应 YAML 字段形状后重跑；这是产物形状问题（agent 可修），非框架缺陷。',
+      });
+    }
 
-  checks.push(
-    ...(isPhaseDisabledByProfile(phase, resolvedProfile)
-      ? [
-          {
-            id: 'phase_disabled_by_profile',
-            category: 'structure' as const,
-            description: `阶段 ${phase} 已由 project_profile 禁用（跳过脚本规则集）`,
-            severity: 'MINOR' as const,
-            status: 'SKIP' as const,
-            details: `profile=${resolvedProfile.name}，参见 framework/profiles/${resolvedProfile.name}/profile.yaml phases_disabled`,
-          },
-        ]
-      : await runScriptHarness(harnessRoot, context)),
-  );
-
-  checks.push(...(await emitLifecycle('post_check', { checkScript: `check-${phase}.ts` })));
-
-  // 设备目标分类导致的 testing 结论封顶：与 checker 事实同账，参与 violations/报告/退出码。
-  // 由入口设备门产出（只有它知道 target_kind），不依赖 agent 自报。
-  if (deviceConclusionCap) checks.push(deviceConclusionCap);
-
-  const violations = checks.filter(
-    c => c.status === 'FAIL' && (c.severity === 'BLOCKER' || c.severity === 'MAJOR'),
-  );
-  for (const v of violations) {
     checks.push(
-      ...(await emitLifecycle('on_violation', {
-        violation: { ruleId: v.id, severity: v.severity, details: v.details ?? '' },
-      })),
+      ...(isPhaseDisabledByProfile(phase, resolvedProfile)
+        ? [
+            {
+              id: 'phase_disabled_by_profile',
+              category: 'structure' as const,
+              description: `阶段 ${phase} 已由 project_profile 禁用（跳过脚本规则集）`,
+              severity: 'MINOR' as const,
+              status: 'SKIP' as const,
+              details: `profile=${resolvedProfile.name}，参见 framework/profiles/${resolvedProfile.name}/profile.yaml phases_disabled`,
+            },
+          ]
+        : await runScriptHarness(harnessRoot, context)),
     );
-  }
 
-  checks.push(...(await emitLifecycle('pre_verifier')));
-  checks.push(...(await emitLifecycle('on_context_load')));
-  checks.push(...(await emitLifecycle('post_verifier')));
-  checks.push(...(await emitLifecycle('post_phase')));
+    checks.push(...(await emitLifecycle('post_check', { checkScript: `check-${phase}.ts` })));
 
-  if (capabilityReport) {
-    // Capability-owned CheckResults are the sole materialization of the immutable
-    // pre-check report. Runtime checker facts remain separate; duplicate IDs prove
-    // a checker attempted to contradict the contract and fail consumption.
-    checks.push(...capabilityResolutionChecks(capabilityReport));
-    assertCapabilityConsumption(capabilityReport, checks);
+    // 设备目标分类导致的 testing 结论封顶：与 checker 事实同账，参与 violations/报告/退出码。
+    // 由入口设备门产出（只有它知道 target_kind），不依赖 agent 自报。
+    if (deviceConclusionCap) checks.push(deviceConclusionCap);
+
+    const violations = checks.filter(
+      c => c.status === 'FAIL' && (c.severity === 'BLOCKER' || c.severity === 'MAJOR'),
+    );
+    for (const v of violations) {
+      checks.push(
+        ...(await emitLifecycle('on_violation', {
+          violation: { ruleId: v.id, severity: v.severity, details: v.details ?? '' },
+        })),
+      );
+    }
+
+    checks.push(...(await emitLifecycle('pre_verifier')));
+    checks.push(...(await emitLifecycle('on_context_load')));
+    checks.push(...(await emitLifecycle('post_verifier')));
+    checks.push(...(await emitLifecycle('post_phase')));
+
+    if (capabilityReport) {
+      // Capability-owned CheckResults are the sole materialization of the immutable
+      // pre-check report. Runtime checker facts remain separate; duplicate IDs prove
+      // a checker attempted to contradict the contract and fail consumption.
+      checks.push(...capabilityResolutionChecks(capabilityReport));
+      assertCapabilityConsumption(capabilityReport, checks);
+    }
   }
 
   // Step 3: 生成脚本报告
   console.log('\n📊 Step 3: 生成脚本报告...');
-  const scriptReport = generateScriptReport(harnessRoot, phase, feature, projectRoot, checks, resolvedFrameworkRoot, capabilityReport);
+  const scriptReport = retainedAuthorReport ?? generateScriptReport(harnessRoot, phase, feature, projectRoot, checks, resolvedFrameworkRoot, capabilityReport);
   // plan f7045213 §5：阶段结论在内存求值一次，控制台、verifier 资格、合并报告与 summary 写入器共用。
   const scriptPhaseVerdict = resolvePhaseVerdict(projectRoot, scriptReport, resolvedFrameworkRoot);
   printReportToConsole(scriptReport, {
@@ -1595,14 +1624,20 @@ async function main(): Promise<void> {
     );
   }
   // Bind real tool results, including FAIL, without requiring a phase receipt or closed state.
+  let authorToolEvidence: { manifestSha256: string; stablePaths: string[] } | undefined;
   if (!phaseIsGlobal && !closureFinalized) {
     try {
       const runId = process.env.MAISON_GOAL_RUN_ID?.trim() || runSummary.run_id?.trim();
       const requirementSha = currentRequirementEvidenceSha({ projectRoot, feature, runId, resolvedInputs });
       if (runId && requirementSha === null) throw new Error(`当前run无法绑定原始需求血缘（run=${runId}）`);
-      writePhaseEvidenceManifest(projectRoot, resolvePhaseEvidenceManifest({ projectRoot, feature, phase,
-      frameworkRoot: resolvedFrameworkRoot, resolvedInputs, factsContext, deviceTestEvidence: context.deviceTestEvidence,
-      requirementSha, extraInputs: executedEvidenceInputs(projectRoot, feature, phase, resolvedFrameworkRoot) })); }
+      const evidence = resolvePhaseEvidenceManifest({ projectRoot, feature, phase,
+        frameworkRoot: resolvedFrameworkRoot, resolvedInputs, factsContext, deviceTestEvidence: context.deviceTestEvidence,
+        requirementSha, extraInputs: executedEvidenceInputs(projectRoot, feature, phase, resolvedFrameworkRoot) });
+      const published = writePhaseEvidenceManifest(projectRoot, evidence);
+      if (managedAuthorCheck) {
+        authorToolEvidence = { manifestSha256: published.sha256, stablePaths: evidence.inputs.map(entry => entry.path) };
+      }
+    }
     catch (error) { console.warn(`检查原结果已保留；输入/证据绑定未完成，不能复用或据此签完成：${String(error)}`); }
   }
   if (!phaseIsGlobal) {
@@ -1671,7 +1706,16 @@ async function main(): Promise<void> {
 
   // D1.2（第四轮阻断 4）：收尾失败已写进失败报告，退出码也必须非零——只打印会让
   // 脚本调用方以 exit 0 溜过去。
-  process.exit(nextDisposition ? phaseCompletionProblems(nextDisposition, [phase]).length ? 1 : 0 : runSummary.verdict !== 'PASS' ? 1 : 0);
+  const exitCode = nextDisposition ? phaseCompletionProblems(nextDisposition, [phase]).length ? 1 : 0 : runSummary.verdict !== 'PASS' ? 1 : 0;
+  if (managedAuthorCheck && authorToolEvidence) {
+    const { readCurrentCheckObservation } = require('./scripts/utils/verify-feature-completion') as typeof import('./scripts/utils/verify-feature-completion');
+    const { inputs } = readCurrentCheckObservation({ projectRoot, feature, frameworkRoot: resolvedFrameworkRoot, phase, runId: managedAuthorCheck.actor.run_id });
+    finishManagedAuthorCheck(managedAuthorCheck, { ...authorToolEvidence, exitCode, verdict: runSummary.verdict, inputs, ...(process.env.HARNESS_HDC_TARGET ? {
+      device: { serial: process.env.HARNESS_HDC_TARGET ?? null, target_kind: process.env.MAISON_DEVICE_TARGET_KIND ?? null,
+        session_id: process.env.MAISON_DEVICE_SESSION_ID ?? null },
+    } : {}) });
+  }
+  process.exit(exitCode);
 }
 
 /**

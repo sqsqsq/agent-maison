@@ -198,6 +198,11 @@ export function resolvePhaseHarnessVerdict(input: PhaseVerdictResolveInput): Pha
 }
 
 export interface GoalRunEvent {
+  run_id?: string;
+  /** First-party harness executed inside an active author request. */
+  author_tool_invoke_id?: string;
+  author_tool_evidence_sha256?: string;
+  author_tool_device?: { serial: string | null; target_kind: string | null; session_id: string | null };
   provider_session_id?: string;
   interrupted?: boolean;
   command?: string;
@@ -306,6 +311,9 @@ export interface ResumedBudget {
 export function phaseInvocationStart(events: readonly GoalRunEvent[], phase: string, beforeMs = Number.POSITIVE_INFINITY): GoalRunEvent | undefined {
   const before = events.filter(event => Date.parse(event.ts ?? '') <= beforeMs);
   const gate = [...before].reverse().find(event => event.type === 'harness_start' && event.phase === phase && event.invoke_id);
+  const authorTool = gate?.author_tool_invoke_id
+    && before.find(event => event.type === 'agent_invoke_start' && event.invoke_id === gate.author_tool_invoke_id);
+  if (authorTool) return authorTool;
   const attempt = gate?.invoke_id?.slice(phase.length + 1);
   const unit = attempt && [...before].reverse().find(event => event.type === 'agent_invoke_start' && event.phase === 'work-unit-author'
     && event.invoke_id === `work-unit-author-${attempt}`);
