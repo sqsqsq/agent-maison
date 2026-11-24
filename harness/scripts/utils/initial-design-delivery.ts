@@ -24,7 +24,7 @@ import { FEATURE_LOCK_NAME, readLockRecord, isLockStale, tryAcquireLock, release
 import { componentBlueprintPath, loadCanonicalBlueprint } from './component-blueprint-path';
 import { validateComponentBlueprint } from './component-blueprint-validator';
 import { enumerateCanonicalChangeUnits, asChangeUnitArtifact, deriveChangeUnitFeatureId, changeUnitPath, buildChangeUnitTestingLocationHint } from './change-unit-path';
-import { blueprintDeclaredAcceptanceIssues, diagnoseBlueprintSkillAuthority, diagnoseDesignAuthority, compareAuthoritativeContent } from './blueprint-skill-projection';
+import { blueprintDeclaredAcceptanceIssues, diagnoseBlueprintSkillAuthority, diagnoseDesignAuthority } from './blueprint-skill-projection';
 import { resolveProbeFrameworkRoot } from '../../repo-layout';
 import { deriveChangeUnitReadySet } from './change-unit-ready-set';
 import { readChangeUnitDesignOwnership } from './change-unit-design-gate';
@@ -34,7 +34,7 @@ import { loadAuthoritativeEvents, loadEventsJsonlStrict, resolveEffectiveRunEnd,
 import { acceptedSessionReport, readHandoffMaterial, sessionReportInputPath, sessionExecutionForInvoke, type SessionExecutionReport } from './session-execution-handoff';
 import { readOriginalDeliveryActivity, readOriginalDeliveryRuns, resolveOriginalDeliveryExecution, currentOriginalDelivery, type DeliveryRunFacts } from './delivery-origin';
 import { independentQuestioningBlockers } from './blueprint-questioning';
-import { renderQuestioningResultInstructions, selectQuestioningScopes } from './blueprint-questioning';
+import { describeQuestioningChanges, renderQuestioningResultInstructions, selectQuestioningScopes } from './blueprint-questioning';
 import { extractProviderFinalText } from './codex-terminal-events';
 import { invocationCompleted } from './invocation-completion';
 import { dispositionFacts } from './goal-failure-classifier';
@@ -570,12 +570,8 @@ function previousDesignWork(input: { projectRoot: string; manifest: InitialDesig
       affectedDependencies = questioningDependencyChanges(input.projectRoot, current, previous?.preSnapshot, input.observation.blueprintPath, undefined, usable?.result ?? undefined);
       selectedScopes = selectQuestioningScopes(previous?.beforeDocument, current, usable?.result ?? undefined,
         affectedDependencies.map(item => isInsideProjectRoot(input.projectRoot, item.path) ? path.relative(input.projectRoot, item.path).replace(/\\/g, '/') : item.path), input.projectRoot);
-      if (previous) {
-        const difference = compareAuthoritativeContent(blueprintAuthorContent(YAML.parse(previous.beforeBlueprint)), blueprintAuthorContent(current));
-        actualDiff = [{ label: '(actual blueprint changes)', content: JSON.stringify({ state: difference.state,
-          locations: 'items' in difference ? difference.items.map(item => ({ id: item.id, field: item.field })) : [],
-          before: previous.beforeSource, current: input.observation.blueprintPath }) }];
-      }
+      if (previous?.beforeDocument) actualDiff = [{ label: '(actual blueprint changes)',
+        content: describeQuestioningChanges(previous.beforeDocument, current, previous.beforeSource, input.observation.blueprintPath) }];
     } catch { /* Missing originals retain full first-reading context. */ }
     parts.push(...independentVerificationContext({ designQuestioning: true, previousOriginal: previous
       ? { label: previous.source, kind: 'path', content: '上轮独立原件；只定向读取本轮范围的原结论及来源，未变项由机器保留。' } : null,

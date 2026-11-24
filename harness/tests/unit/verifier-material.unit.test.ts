@@ -50,7 +50,7 @@ import { readPhaseRepairIssues, verifierSemanticChecks } from '../../scripts/uti
 import { finalizePhaseClosure } from '../../scripts/utils/phase-closure-finalizer';
 import { computeGateFingerprint } from '../../scripts/utils/gate-fingerprint';
 import { phaseCompletionProblems } from '../../scripts/utils/check-disposition';
-import { createIndependentQuestioningResult, requiredQuestioningScopes, validateBlueprintQuestioning, independentQuestioningBlockers } from '../../scripts/utils/blueprint-questioning';
+import { createIndependentQuestioningResult, describeQuestioningChanges, requiredQuestioningScopes, selectQuestioningScopes, validateBlueprintQuestioning, independentQuestioningBlockers } from '../../scripts/utils/blueprint-questioning';
 import { setupRunlessProject } from './execution-scope.unit.test';
 import { ensureFeatureExecutionScopeFrozen } from '../../scripts/utils/feature-execution-scope';
 import { loadResolvedProfile } from '../../profile-loader';
@@ -544,6 +544,42 @@ const cases: Array<{ name: string; run: () => void }> = [
         fs.writeFileSync(file, JSON.stringify(copied)); assert.notEqual(hash(), unproven, 'no real birth/start evidence means no special projection');
         fs.writeFileSync(born, events);
       } finally { clearFrameworkConfigCache(); fs.rmSync(f.root, { recursive: true, force: true }); }
+    },
+  },
+  {
+    name: '77105c47 Q reopens acceptance and method consumers without pulling in unrelated view members',
+    run: () => {
+      const blueprint = {
+        blueprint_id: 'ledger', design_views: [
+          { view_id: 'development', applicability: 'applicable', evolution_impact: 'changed', nodes: [
+            { node_id: 'otp', acceptance: { criteria: [{ id: 'AC-4', description: '验证码满六位允许提交' }] },
+              contracts: { interfaces: [{ class: 'LedgerOtp', methods: [{ name: 'canSubmit', return: 'boolean' }] }] } },
+            { node_id: 'home', description: 'Shows existing cards', provenance: { source_kind: 'requirement', source_ref: 'request.md' } },
+          ] },
+          { view_id: 'runtime', applicability: 'applicable', evolution_impact: 'changed', runtime_data_flows: [
+            { flow_id: 'otp-entry', check: { calls: ['LedgerOtp.canSubmit'] }, verification_refs: ['AC-4'] },
+            { flow_id: 'home-read', design_refs: ['view:development/node:home'], provenance: { source_kind: 'requirement', source_ref: 'request.md' } },
+          ] },
+        ], relations: [], review_summary: { authored_by: 'author' },
+      };
+      const items = [...requiredQuestioningScopes(blueprint)].map(([ref, kind]) => ({ question: 'Is this scope sufficiently justified?', owner: 'design', scope_kind: kind,
+        scope_ref: ref, disposition: 'not_applicable', verification_refs: ['request:original'], provenance: { source_kind: 'requirement', source_ref: 'request.md', observed_at: '2026-10-29', evidence_strength: 'authoritative', extraction_method: 'read' } }));
+      const previous = createIndependentQuestioningResult({ providerId: 'independent', authoredBy: 'author', items });
+      const changed = structuredClone(blueprint);
+      const node = changed.design_views[0].nodes![0];
+      node.acceptance!.criteria[0].description += '。 ';
+      assert.deepEqual(selectQuestioningScopes(blueprint, changed, previous), []);
+      node.acceptance!.criteria[0].description = '验证码满五位允许提交';
+      const expected = ['view:development', 'view:runtime', 'flow:otp-entry'];
+      assert.deepEqual(selectQuestioningScopes(blueprint, changed, previous), expected);
+      node.acceptance!.criteria[0].description = '验证码满六位允许提交';
+      node.contracts!.interfaces[0].methods[0].return = 'number';
+      assert.deepEqual(selectQuestioningScopes(blueprint, changed, previous), expected);
+      node.acceptance!.criteria[0].description = '一万字说明'.repeat(2_000);
+      const diff = describeQuestioningChanges(blueprint, changed, 'before.yaml', 'current.yaml');
+      assert(Buffer.byteLength(diff, 'utf8') < 1_000);
+      assert(diff.includes('/design_views/0/nodes/0/acceptance/criteria/0/description') && diff.includes('view:development/node:otp'));
+      assert(diff.includes('before.yaml') && diff.includes('current.yaml'));
     },
   },
   {

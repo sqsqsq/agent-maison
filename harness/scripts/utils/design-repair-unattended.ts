@@ -20,10 +20,10 @@ import * as YAML from 'yaml';
 import { deriveBlueprintAdmission, currentBlueprintSliceId } from './blueprint-admission';
 import { evaluateCompletionProgress, compareRelatedInputSnapshots, type CompletionEvaluation, type ArtifactSnapshot } from './goal-failure-classifier';
 import { reconcileP1DerivedResults } from './blueprint-reconciliation';
-import { renderQuestioningResultInstructions, independentQuestioningBlockers, applyIndependentQuestioningOutput, parseIndependentQuestioningOutput, mergeIndependentQuestioningResult, normalizeQuestioningItems, readSignedQuestioningScopes, requiredQuestioningScopes, selectQuestioningScopes, validateBlueprintQuestioning, questioningEvidencePath } from './blueprint-questioning';
+import { describeQuestioningChanges, renderQuestioningResultInstructions, independentQuestioningBlockers, applyIndependentQuestioningOutput, parseIndependentQuestioningOutput, mergeIndependentQuestioningResult, normalizeQuestioningItems, readSignedQuestioningScopes, requiredQuestioningScopes, selectQuestioningScopes, validateBlueprintQuestioning, questioningEvidencePath } from './blueprint-questioning';
 import { resolveBlueprintReaderSource } from './blueprint-reader-guide';
 import { resolveBlueprintTarget } from './blueprint-addressing';
-import { blueprintDeclaredAcceptanceIssues, blueprintCandidateAuthorityFindings, blueprintSourceRefFiles, compareAuthoritativeContent, deriveBlueprintCandidateSkillInput, checkAuthoritativeContentAligned,
+import { blueprintDeclaredAcceptanceIssues, blueprintCandidateAuthorityFindings, blueprintSourceRefFiles, deriveBlueprintCandidateSkillInput, checkAuthoritativeContentAligned,
   type BlueprintProjectionKind, type DesignAuthorityFinding, type DesignRepairClass } from './blueprint-skill-projection';
 import {
   HeldFeatureLock,
@@ -945,15 +945,10 @@ function questioningPrompt(input: UnattendedDesignRepairInput, draftFile: string
   const selected = selectQuestioningScopes(previous?.beforeDocument, draft, usable.result ?? undefined,
     changedDependencies.map(item => isInsideProjectRoot(input.projectRoot, item.path) ? path.relative(input.projectRoot, item.path).replace(/\\/g, '/') : item.path), input.projectRoot);
   let actualDiff: import('./types').ContextFileEntry[] | null = null;
-  if (previous?.completed && previous.preSnapshot && previous.postSnapshot && diffPhaseInvocationSnapshots(previous.preSnapshot, previous.postSnapshot).kind === 'clean') {
-    try {
-      const before = asRecord(YAML.parse(previous.beforeBlueprint));
-      if (before) {
-        const difference = compareAuthoritativeContent(blueprintAuthorContent(before), blueprintAuthorContent(draft));
-        actualDiff = [{ label: '(actual unpublished design changes)', content: JSON.stringify({ state: difference.state,
-          locations: 'items' in difference ? difference.items.map(item => ({ id: item.id, field: item.field })) : [], before: previous.beforeSource, current: draftFile }) }];
-      }
-    } catch { /* A missing previous input never narrows independent verification. */ }
+  if (previous?.completed && previous.beforeDocument && previous.preSnapshot && previous.postSnapshot
+    && diffPhaseInvocationSnapshots(previous.preSnapshot, previous.postSnapshot).kind === 'clean') {
+    actualDiff = [{ label: '(actual unpublished design changes)',
+      content: describeQuestioningChanges(previous.beforeDocument, draft, previous.beforeSource, draftFile) }];
   }
   const publicContext = independentVerificationContext({ designQuestioning: true, previousOriginal: previous?.completed && previous.output
     ? { label: previous.source, kind: 'path', content: '上轮独立原件；只定向读取本轮范围的结论及来源，未变项由机器保留；不继承作者私有上下文。' } : null,

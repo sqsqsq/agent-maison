@@ -140,6 +140,58 @@ export function normalizeQuestioningItems(blueprint: BlueprintRecord, items: Blu
     && other.scope_ref === item.scope_ref && !emptyPlaceholder(other)));
 }
 
+const QUESTIONING_PROSE_FIELDS = new Set(['description', 'summary', 'rationale']);
+function questioningFact(value: unknown, field = ''): unknown {
+  if (typeof value === 'string' && QUESTIONING_PROSE_FIELDS.has(field)) {
+    return value.trim().replace(/(?<=[\p{L}\p{M}])。$|(?<!\S)([A-Za-z]+)\.$/u, '$1');
+  }
+  if (Array.isArray(value)) return value.map(item => questioningFact(item, field));
+  const record = asRecord(value);
+  return record ? Object.fromEntries(Object.entries(record).map(([key, item]) => [key, questioningFact(item, key)])) : value;
+}
+
+const sameQuestioningFact = (before: unknown, after: unknown, field?: string): boolean =>
+  stableStringify(questioningFact(before, field)) === stableStringify(questioningFact(after, field));
+
+/** Both paths lead to the original bytes. The prompt carries only enough of each change to locate it. */
+export function describeQuestioningChanges(before: BlueprintRecord, current: BlueprintRecord, beforeFile: string, currentFile: string): string {
+  const old = blueprintAuthorContent(before), next = blueprintAuthorContent(current);
+  const addresses = new Map<BlueprintRecord, string>();
+  for (const doc of [old, next]) {
+    try { for (const [address, row] of stableAddressIndex(doc)) if (row !== doc) addresses.set(row, address); }
+    catch { /* Absolute JSON pointers still locate ambiguous records. */ }
+  }
+  const locations: Array<{ at: string; owner?: string; before: string; after: string }> = [];
+  let truncated = false;
+  const excerpt = (value: unknown): string => {
+    if (value === undefined) return '（无）';
+    if (Array.isArray(value)) return `[${value.length} 项]`;
+    if (asRecord(value)) return '{…}';
+    const text = String(value);
+    return text.length > 96 ? text.slice(0, 96) + '…' : text;
+  };
+  const walk = (left: unknown, right: unknown, pointer: string, owner: string, field = ''): void => {
+    if (sameQuestioningFact(left, right, field)) return;
+    if (locations.length >= 24) { truncated = true; return; }
+    const l = asRecord(left), r = asRecord(right);
+    const address = r && addresses.get(r) || l && addresses.get(l) || owner;
+    if (l && r) {
+      for (const key of new Set([...Object.keys(l), ...Object.keys(r)])) {
+        walk(l[key], r[key], `${pointer}/${key.replace(/~/g, '~0').replace(/\//g, '~1')}`, address, key);
+      }
+    } else if (Array.isArray(left) && Array.isArray(right)) {
+      for (let index = 0; index < Math.max(left.length, right.length); index++) {
+        walk(left[index], right[index], `${pointer}/${index}`, address, field);
+      }
+    } else {
+      locations.push({ at: pointer || '/', ...(address ? { owner: address } : {}), before: excerpt(left), after: excerpt(right) });
+    }
+  };
+  walk(old, next, '', '');
+  return JSON.stringify({ state: locations.length ? 'drift' : 'aligned', locations, before: beforeFile, current: currentFile,
+    ...(truncated ? { more: '其余变更核对原件' } : {}) });
+}
+
 /** Scope facts and explicit references, rather than shared business nouns, establish the reuse boundary. */
 export function selectQuestioningScopes(before: BlueprintRecord | undefined, current: BlueprintRecord,
   previous?: BlueprintRecord, changedDependencies: readonly string[] = [], projectRoot?: string, revisitFindings = true): string[] {
@@ -189,7 +241,49 @@ export function selectQuestioningScopes(before: BlueprintRecord | undefined, cur
   };
   const old = facts(oldContent), next = facts(nextContent), affected = new Set<string>(), changedBusiness = new Set<string>();
   if (duplicateAuthority) return [...required.keys()];
-  for (const ref of old.keys()) if (!next.has(ref)) changedBusiness.add(ref);
+  // A member can reopen its own view's conclusion without changing the view shared by its siblings.
+  const memberAddress = /^(view:[^/]+)\/(node|flow):(.+)$/;
+  const splitView = (source: Map<string, unknown>) => {
+    const rows = new Map(source);
+    for (const [ref, row] of source) if (ref.startsWith('view:')) {
+      const { nodes, runtime_data_flows, ...view } = asRecord(row) ?? {};
+      if (nodes !== undefined && (!Array.isArray(nodes) || nodes.some(node => !nonEmptyString(node?.node_id)))) view.nodes = nodes;
+      if (runtime_data_flows !== undefined && (!Array.isArray(runtime_data_flows) || runtime_data_flows.some(flow => !nonEmptyString(flow?.flow_id)))) {
+        view.runtime_data_flows = runtime_data_flows;
+      }
+      rows.set(ref, view);
+      for (const node of asRecords(nodes)) if (nonEmptyString(node.node_id)) rows.set(`${ref}/node:${node.node_id}`, node);
+      for (const flow of asRecords(runtime_data_flows)) if (nonEmptyString(flow.flow_id)) {
+        rows.delete(`flow:${flow.flow_id}`);
+        rows.set(`${ref}/flow:${flow.flow_id}`, flow);
+      }
+    }
+    return rows;
+  };
+  const preciseBefore = splitView(old), preciseAfter = splitView(next);
+  const linkedFacts = (value: unknown): Map<string, BlueprintRecord> => {
+    const row = asRecord(value);
+    const facts = new Map<string, BlueprintRecord>();
+    for (const criterion of asRecords(asRecord(row?.acceptance)?.criteria)) {
+      if (nonEmptyString(criterion.id)) facts.set(`acceptance:${criterion.id}`, criterion);
+    }
+    for (const contract of asRecords(asRecord(row?.contracts)?.interfaces)) {
+      if (!nonEmptyString(contract.class)) continue;
+      for (const method of asRecords(contract.methods)) {
+        if (nonEmptyString(method.name)) facts.set(`method:${contract.class}.${method.name}`, method);
+      }
+    }
+    return facts;
+  };
+  const knownLinkedFacts = new Set<string>(), changedLinkedFacts = new Set<string>();
+  for (const ref of new Set([...preciseBefore.keys(), ...preciseAfter.keys()])) {
+    if (!authorityRefs.has(ref) && !sameQuestioningFact(preciseBefore.get(ref), preciseAfter.get(ref))) changedBusiness.add(ref);
+    const oldFacts = linkedFacts(preciseBefore.get(ref)), newFacts = linkedFacts(preciseAfter.get(ref));
+    for (const id of new Set([...oldFacts.keys(), ...newFacts.keys()])) {
+      knownLinkedFacts.add(id);
+      if (!sameQuestioningFact(oldFacts.get(id), newFacts.get(id))) changedLinkedFacts.add(id);
+    }
+  }
   const items = normalizeQuestioningItems(before, asRecords(previous.items));
   const invalid = validateBlueprintQuestioning({ ...before, review_summary: { ...asRecord(before.review_summary), questioning: previous } })
     .filter(error => error.id !== 'blueprint_admission_false_pass' && error.id !== 'blueprint_questioning_coverage_missing');
@@ -198,9 +292,6 @@ export function selectQuestioningScopes(before: BlueprintRecord | undefined, cur
   }));
   for (const ref of required.keys()) {
     const candidates = items.filter(item => item.scope_ref === ref);
-    if (!old.has(ref) || stableStringify(old.get(ref)) !== stableStringify(next.get(ref))) {
-      affected.add(ref); changedBusiness.add(ref);
-    }
     // Prior findings must be reconsidered, but only changed design facts propagate to their consumers.
     if (revisitFindings && (candidates.length !== 1 || candidates.some(item => item.disposition === 'blocker' || item.disposition === 'open_decision')
       || asRecords(previous.items).some((item, index) => invalidIndexes.has(index) && item.scope_ref === ref))) affected.add(ref);
@@ -220,7 +311,7 @@ export function selectQuestioningScopes(before: BlueprintRecord | undefined, cur
     for (const section of ['discovery', 'decisions_and_gaps']) if (asRecord(copy[section]) && !Object.keys(copy[section] as BlueprintRecord).length) delete copy[section];
     return copy;
   };
-  if (stableStringify(global(before)) !== stableStringify(global(current))) return [...required.keys()];
+  if (!sameQuestioningFact(global(before), global(current))) return [...required.keys()];
   const changedAuthorities = new Set<string>();
   for (const { section, key, id } of authorities) {
     const rows = (doc: BlueprintRecord): unknown => section ? asRecord(doc[section])?.[key] : doc[key];
@@ -233,20 +324,20 @@ export function selectQuestioningScopes(before: BlueprintRecord | undefined, cur
       if (new Set(ids).size !== ids.length) return [...required.keys()];
     }
     const refs = [...asRecords(oldRows), ...asRecords(nextRows)].map(row => address(id, String(row[id])));
-    for (const ref of refs) if (stableStringify(old.get(ref)) !== stableStringify(next.get(ref))) {
+    for (const ref of refs) if (!sameQuestioningFact(old.get(ref), next.get(ref))) {
       changedAuthorities.add(ref); changedBusiness.add(ref);
     }
   }
   const summary = (doc: BlueprintRecord): BlueprintRecord => {
     const copy = { ...asRecord(blueprintAuthorContent(doc).review_summary) }; delete copy.reader_guide; return copy;
   };
-  if (stableStringify(summary(before)) !== stableStringify(summary(current))) {
+  if (!sameQuestioningFact(summary(before), summary(current))) {
     for (const ref of required.keys()) if (ref.startsWith('view:')) { affected.add(ref); changedBusiness.add(ref); }
   }
   const oldGuide = asRecords(asRecord(asRecord(before.review_summary)?.reader_guide)?.sections);
   const newGuide = asRecords(asRecord(asRecord(current.review_summary)?.reader_guide)?.sections);
   for (let index = 0; index < Math.max(oldGuide.length, newGuide.length); index++) {
-    if (stableStringify(oldGuide[index]) === stableStringify(newGuide[index])) continue;
+    if (sameQuestioningFact(oldGuide[index], newGuide[index])) continue;
     let located = false;
     for (const [doc, section] of [[before, oldGuide[index]], [current, newGuide[index]]] as const) {
       for (const pointer of asStrings(section?.source_refs)) {
@@ -307,6 +398,7 @@ export function selectQuestioningScopes(before: BlueprintRecord | undefined, cur
   for (const item of items) for (const ref of originalRefs(item)) {
     const scope = String(item.scope_ref);
     if (authorityRefs.has(ref)) noteAnswerConsumer(ref, scope);
+    if ([ref, `acceptance:${ref}`, `method:${ref}`].some(id => changedLinkedFacts.has(id))) affected.add(scope);
     const fragment = ref.indexOf('#/');
     const pointer = fragment !== -1 && blueprintFile && questioningEvidencePath(ref, projectRoot) === blueprintFile
       ? ref.slice(fragment + 1) : ref;
@@ -324,7 +416,10 @@ export function selectQuestioningScopes(before: BlueprintRecord | undefined, cur
       affected.add(scope);
       continue;
     }
-    if (stableStringify(oldSource.value) !== stableStringify(newSource.value)) {
+    const oldAddress = asRecord(oldSource.value) && beforeAddresses.get(oldSource.value as BlueprintRecord);
+    const newAddress = asRecord(newSource.value) && currentAddresses.get(newSource.value as BlueprintRecord);
+    if (!sameQuestioningFact(oldAddress && preciseBefore.has(oldAddress) ? preciseBefore.get(oldAddress) : oldSource.value,
+      newAddress && preciseAfter.has(newAddress) ? preciseAfter.get(newAddress) : newSource.value, pointer.split('/').at(-1))) {
       affected.add(scope);
       if (owner && authorityRefs.has(owner)) noteAnswerConsumer(owner, scope);
     }
@@ -350,7 +445,7 @@ export function selectQuestioningScopes(before: BlueprintRecord | undefined, cur
       }
     }; visit(value); return ids;
   };
-  const allIds = new Set([...old.values(), ...next.values()].flatMap(value => [...identifiers(value)]));
+  const allIds = new Set([...knownLinkedFacts, ...[...old.values(), ...next.values()].flatMap(value => [...identifiers(value)])]);
   const rawIds = new Map<string, Set<string>>();
   for (const id of allIds) {
     const raw = id.slice(id.indexOf(':') + 1);
@@ -366,6 +461,7 @@ export function selectQuestioningScopes(before: BlueprintRecord | undefined, cur
       if (typeof input === 'string') {
         const local = new Set([...input.matchAll(/(?:^|[^\p{L}\p{N}._:-])([a-z][a-z0-9_-]*:[\p{L}\p{N}][\p{L}\p{N}._:-]*(?:\/[a-z][a-z0-9_-]*:[\p{L}\p{N}][\p{L}\p{N}._:-]*)*)/gu)]
           .flatMap(match => precise ? [match[1]] : match[1].split('/')).map(normalizeReference));
+        if (field === 'calls' && knownLinkedFacts.has(`method:${input}`)) local.add(`method:${input}`);
         if (field === 'ref' || /_refs?$/.test(field) || ['decisions_and_gaps', 'needed_by', 'landing'].includes(field)) {
           const pointer = input.startsWith('/') ? input : '/' + input;
           if (resolvePointers && resolveBlueprintReaderSource(doc, pointer)) {
@@ -409,47 +505,19 @@ export function selectQuestioningScopes(before: BlueprintRecord | undefined, cur
       }
     }; visit(value); return refs;
   };
-  const unresolvedRefs = new Set<string>();
   const dependencies = new Map<string, Set<string>>();
-  const ids = new Map<string, Set<string>>();
-  for (const ref of new Set([...old.keys(), ...next.keys()])) {
+  for (const ref of changedAuthorities.size ? new Set([...required.keys(), ...changedAuthorities]) : []) {
     const prior = items.filter(item => item.scope_ref === ref).map(item => ({ evidence_refs: item.evidence_refs,
       verification_refs: item.verification_refs, provenance: item.provenance }));
     unresolved = false;
     dependencies.set(ref, new Set([...references(old.get(ref), oldContent, authorityRefs.has(ref)), ...references(next.get(ref), nextContent, authorityRefs.has(ref)),
       ...[...references(prior, oldContent, true)].filter(source => authorityRefs.has(source) || source.startsWith('source:'))]));
-    if (unresolved) unresolvedRefs.add(ref);
-    ids.set(ref, new Set([ref, ...identifiers(old.get(ref)), ...identifiers(next.get(ref))]));
   }
-  if ([...changedAuthorities].some(ref => unresolvedRefs.has(ref))) return [...required.keys()];
-  const consumers = new Map<string, Set<string>>();
-  for (const [ref, declared] of ids) if (!authorityRefs.has(ref)) consumers.set(ref, new Set([...dependencies]
-    .filter(([other, refs]) => other !== ref && !authorityRefs.has(other) && [...refs].some(id => declared.has(id))).map(([other]) => other)));
   const expand = (seeds: Iterable<string>, graph: ReadonlyMap<string, Set<string>>): Set<string> => {
     const reached = new Set(seeds);
     for (const ref of reached) graph.get(ref)?.forEach(consumer => reached.add(consumer));
     return reached;
   };
-  for (const ref of expand(changedBusiness, consumers)) if (required.has(ref)) affected.add(ref);
-  if (!changedAuthorities.size) return [...required.keys()].filter(ref => affected.has(ref));
-
-  // Reopening a view to review one member does not make its other members changed sources.
-  const memberAddress = /^(view:[^/]+)\/(node|flow):(.+)$/;
-  const splitView = (facts: Map<string, unknown>, index: Map<BlueprintRecord, string>) => {
-    const rows = new Map(facts);
-    for (const [ref, row] of facts) if (ref.startsWith('view:')) {
-      const { nodes: _nodes, runtime_data_flows: _flows, ...view } = asRecord(row) ?? {};
-      rows.set(ref, view);
-    }
-    for (const [row, address] of index) {
-      const member = memberAddress.exec(address);
-      if (!member) continue;
-      if (member[2] === 'flow') rows.delete(`flow:${member[3]}`);
-      rows.set(address, row);
-    }
-    return rows;
-  };
-  const preciseBefore = splitView(old, beforeAddresses), preciseAfter = splitView(next, currentAddresses);
   const preciseRefs = new Map<string, Set<string>>();
   for (const ref of new Set([...preciseBefore.keys(), ...preciseAfter.keys()])) {
     const authority = authorityRefs.has(ref);
@@ -470,9 +538,9 @@ export function selectQuestioningScopes(before: BlueprintRecord | undefined, cur
       || authority && !authorityRefs.has(other) && identities.get(other)!.some(id => sources.has(id))
     )).map(([other]) => other)));
   }
-  for (const ref of changedAuthorities) {
+  const scopesReached = (seeds: Iterable<string>): Set<string> => {
     const reached = new Set<string>();
-    for (const entry of expand([ref], preciseGraph)) {
+    for (const entry of expand(seeds, preciseGraph)) {
       if (required.has(entry)) reached.add(entry);
       for (const scope of answerConsumers.get(entry) ?? []) if (required.has(scope)) reached.add(scope);
       const member = memberAddress.exec(entry);
@@ -480,6 +548,16 @@ export function selectQuestioningScopes(before: BlueprintRecord | undefined, cur
       if (required.has(member[1])) reached.add(member[1]);
       if (member[2] === 'flow' && required.has(`flow:${member[3]}`)) reached.add(`flow:${member[3]}`);
     }
+    return reached;
+  };
+  const businessSeeds = [...identities].filter(([, aliases]) => aliases.some(alias => changedBusiness.has(alias))).map(([ref]) => ref);
+  for (const [ref, sources] of preciseRefs) {
+    if ([...changedLinkedFacts].some(id => sources.has(id))) businessSeeds.push(ref);
+  }
+  for (const scope of scopesReached(businessSeeds)) affected.add(scope);
+  for (const ref of changedBusiness) if (required.has(ref)) affected.add(ref);
+  for (const ref of changedAuthorities) {
+    const reached = scopesReached([ref]);
     // A decision grounded in a specific implementation file has direct evidence consumers.
     const codeSources = [old.get(ref), next.get(ref)].flatMap(value => {
       const provenance = asRecord(asRecord(value)?.provenance);
