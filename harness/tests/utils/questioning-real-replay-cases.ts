@@ -5,7 +5,8 @@ import * as path from 'path';
 import { createHash } from 'crypto';
 import { gunzipSync } from 'zlib';
 import { clearFrameworkConfigCache } from '../../config';
-import { asRecord, asRecords, asStrings, BlueprintRecord } from '../../scripts/utils/component-blueprint-model';
+import { asRecord, asRecords, asStrings, blueprintAuthorContent, BlueprintRecord } from '../../scripts/utils/component-blueprint-model';
+import { stableAddressIndex } from '../../scripts/utils/blueprint-addressing';
 import { requiredQuestioningScopes, selectQuestioningScopes, validateBlueprintQuestioning } from '../../scripts/utils/blueprint-questioning';
 import { questioningDependencyChanges } from '../../scripts/utils/design-repair-unattended';
 import { stableStringify } from '../../scripts/utils/phase-evidence-manifest';
@@ -13,6 +14,59 @@ import { stableStringify } from '../../scripts/utils/phase-evidence-manifest';
 const DIRECTORY = path.resolve(__dirname, '../fixtures/host-recovery-history/20261115-design-recovery/scope-replays');
 const PAIRS = [[3, 5], [6, 8], [13, 15], [15, 17], [8, 10], [10, 13]] as const;
 type FixtureRecord = Record<string, any>;
+
+// The archived R3 range and facts remain immutable. Only these independently located edges differ today.
+const PRECISE_SCOPE_CHANGES: Record<string, { retainRelations?: string[]; recheck?: Array<{ lens: string; id: string; field: string; via?: string }> }> = {
+  '3:5': { recheck: [{ lens: 'process_recovery', id: 'BD-4', field: 'expected_behavior' }] },
+  '13:15': {
+    retainRelations: ['bank-catalog-realized', 'card-catalog-realized'],
+    recheck: [{ lens: 'process_recovery', id: 'BD-4', field: 'handling' }],
+  },
+  '15:17': {
+    retainRelations: ['bank-catalog-realized', 'card-catalog-realized', 'open-session-realized'],
+    recheck: [
+      { lens: 'ui_refresh', id: 'AC-11', field: 'verification_steps' },
+      { lens: 'feature_flags', id: 'AC-11', field: 'verification_steps', via: 'decision:decision-home-override-priority' },
+    ],
+  },
+  '8:10': {
+    retainRelations: ['bank-catalog-realized', 'card-catalog-realized', 'open-session-realized', 'app-deployed'],
+    recheck: [{ lens: 'data_producers_consumers', id: 'AC-8', field: 'expected_result', via: 'contract:card-store' }],
+  },
+  '10:13': {
+    retainRelations: ['bank-catalog-realized', 'card-catalog-realized', 'card-record-realized', 'open-session-realized',
+      'home-state-realized', 'app-deployed', 'rdb-deployed'],
+  },
+};
+
+function preciseScopeEdits(first: number, revised: number, before: BlueprintRecord, next: BlueprintRecord) {
+  const changes = PRECISE_SCOPE_CHANGES[`${first}:${revised}`];
+  const retain = (changes?.retainRelations ?? []).map(id => `relation:rel-${id}`);
+  const old = stableAddressIndex(blueprintAuthorContent(before));
+  const current = stableAddressIndex(blueprintAuthorContent(next));
+  for (const address of retain) {
+    const relation = old.get(address)!;
+    assert.equal(stableStringify(current.get(address)), stableStringify(relation), address);
+    for (const endpoint of [relation.from, relation.to]) {
+      assert(old.has(String(endpoint)), 'retained relation must locate both stable endpoints');
+      assert.equal(stableStringify(current.get(String(endpoint))), stableStringify(old.get(String(endpoint))), String(endpoint));
+    }
+  }
+  const recheck = (changes?.recheck ?? []).map(({ lens, id, field, via }) => {
+    const ref = `acceptance:${id}`;
+    const consumer = asRecord(asRecord(next.app_lens)?.[lens]);
+    assert(asStrings(consumer?.evidence_refs).includes(via ?? ref), lens);
+    if (via) assert(stableStringify(current.get(via)).includes(JSON.stringify(ref)), `${via} → ${ref}`);
+    const criterion = (index: typeof old) => {
+      const acceptance = asRecord(index.get('view:development/node:dev-add-card-result-page')?.acceptance);
+      return [...asRecords(acceptance?.criteria), ...asRecords(acceptance?.boundaries)].find(item => item.id === id);
+    };
+    assert(criterion(old)?.[field] !== undefined && criterion(current)?.[field] !== undefined, `${id}.${field}`);
+    assert.notEqual(stableStringify(criterion(old)?.[field]), stableStringify(criterion(current)?.[field]), `${id}.${field}`);
+    return `app_lens:${lens}`;
+  });
+  return { retain, recheck };
+}
 function readInputs() {
   const bytes = gunzipSync(fs.readFileSync(path.join(DIRECTORY, 'inputs.json.gz')));
   const evidence = JSON.parse(fs.readFileSync(path.join(DIRECTORY, 'sources-and-results.json'), 'utf8')) as FixtureRecord;
@@ -137,8 +191,11 @@ export function questioningRealReplayCases() {
         assert(!changes.includes(source), 'the shared requirements actually changed');
         assert.deepStrictEqual(before.blueprint.discovery.facts, current.blueprint.discovery.facts, 'original terminology cites these facts');
       }
-      assert.deepStrictEqual(selected, expected.selected.filter((scope: string) => !reused.includes(scope)), 'exact selected scope identities regressed');
       const required = [...requiredQuestioningScopes(current.blueprint).keys()];
+      const precise = preciseScopeEdits(first, revised, before.blueprint, current.blueprint);
+      reused.push(...precise.retain);
+      assert.deepStrictEqual(selected, required.filter(scope => precise.recheck.includes(scope) || expected.selected.includes(scope) && !reused.includes(scope)),
+        'exact selected scope identities regressed');
       if (expected.fullFallback) {
         const fallback = expected.fullFallback;
         assert.deepStrictEqual(selected, required, 'real unresolved authority must trigger full fallback');
@@ -165,7 +222,7 @@ export function questioningRealReplayCases() {
           assert.equal(stableStringify(oldFacts.get(scope)), stableStringify(newFacts.get(scope)), 'retained design fact changed: ' + scope);
           assert(!pending.includes(scope), 'retained a real unresolved finding: ' + scope);
           assert.equal(asRecords(before.previous.items).filter(item => item.scope_ref === scope).length, 1, 'retained result is not unique');
-        } else assert.notEqual(reason.kind, 'retained', scope);
+        } else assert(reason.kind !== 'retained' || precise.recheck.includes(scope), scope);
       }
     }),
   })), {
