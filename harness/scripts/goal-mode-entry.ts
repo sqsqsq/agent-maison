@@ -949,7 +949,7 @@ async function runGoalExecutionAction(options: Parameters<typeof runGoalModeSess
         const authority = { feature: manifest.feature, frameworkRoot: options.frameworkRoot, runId: manifest.run_id };
         const recovery = isInitialDesignManifest(manifest) ? resolveInitialDesignWriteRecovery(options.projectRoot, manifest, writeHistory, { authority }) : undefined;
         const conflicts = recovery?.conflicts ?? unresolvedPhaseWrites(options.projectRoot, writeHistory, authority);
-        if (recovery?.review && !conflicts.size && original.phase === 'initial-design-questioning') return { ...view(), status: 'waiting', status_line: foregroundWaiting,
+        if (recovery?.review && !recovery.review.readableForQuestioning && !conflicts.size && original.phase === 'initial-design-questioning') return { ...view(), status: 'waiting', status_line: foregroundWaiting,
           detail: `框架评审展示尚未恢复：${recovery.review.file}；通过 --next 接回并重建。` };
         if (conflicts.size && !(original.instruction?.includes('## Restore only your previous unauthorized writes')
           && [...conflicts].every(([file, conflict]) => conflict.restorable && original.instruction!.includes(`${file}: pre_sha256=${conflict.before ?? 'missing'}`)))) {

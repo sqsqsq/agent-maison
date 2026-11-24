@@ -762,7 +762,7 @@ export function readInitialDesignWriteEvents(projectRoot: string, manifest: Init
 }
 
 export function resolveInitialDesignWriteRecovery(projectRoot: string, manifest: InitialDesignGoalManifest, events: readonly GoalRunEvent[],
-  options: { emit?: (event: Record<string, unknown>) => void; authority?: Parameters<typeof unresolvedPhaseWrites>[2] } = {}) {
+  options: { emit?: (event: Record<string, unknown>) => void; forQuestioning?: boolean; authority?: Parameters<typeof unresolvedPhaseWrites>[2] } = {}) {
   const conflicts = unresolvedPhaseWrites(projectRoot, events, options.authority);
   const target = blueprintReviewPath(projectRoot, manifest.feature);
   const review = path.relative(projectRoot, target).replace(/\\/g, '/');
@@ -774,12 +774,14 @@ export function resolveInitialDesignWriteRecovery(projectRoot: string, manifest:
   try {
     const before = readPhaseRecoveryFile(projectRoot, target).bytes;
     let inspected = inspectBlueprintReview(projectRoot, manifest.feature);
-    if (options.emit && ['missing', 'stale'].includes(inspected.status) && !inspected.sourceGaps?.length) {
-      const materialized = materializeBlueprintReview(projectRoot, manifest.feature);
+    if (options.emit && ['missing', 'stale'].includes(inspected.status) && !inspected.hasSourceErrors
+      && (options.forQuestioning || !inspected.sourceGaps?.length)) {
+      const materialized = materializeBlueprintReview(projectRoot, manifest.feature, {}, { requireTrustedSources: true });
       if (materialized.status === 'failed') return { conflicts, review: { file: review, violation, reason: materialized.reason } };
       inspected = inspectBlueprintReview(projectRoot, manifest.feature);
     }
     if (inspected.status !== 'current' || inspected.sourceGaps?.length) return { conflicts, review: { file: review, violation,
+      readableForQuestioning: inspected.status === 'current' && !inspected.hasSourceErrors,
       reason: inspected.reason ?? (inspected.sourceGaps?.join('；') || inspected.status) } };
     if (options.emit) {
       const after = readPhaseRecoveryFile(projectRoot, target).bytes;

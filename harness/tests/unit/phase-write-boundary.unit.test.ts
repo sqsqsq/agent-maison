@@ -25,7 +25,7 @@ import { fixture as blueprintFixture } from './blueprint-skill-projection.unit.t
 import { emitHarnessPreflightGap, harnessPreflightPath } from '../../scripts/utils/capability-preflight';
 import { readRepairResponsibilityContracts, workUnitMayWritePath } from '../../scripts/utils/repair-responsibility';
 import { resolvePhaseEvidenceManifest, writePhaseEvidenceManifest } from '../../scripts/utils/phase-evidence-manifest';
-import { blueprintReviewPath, inspectBlueprintReview } from '../../scripts/utils/blueprint-review-materialization';
+import { blueprintReviewPath, inspectBlueprintReview, materializeBlueprintReview } from '../../scripts/utils/blueprint-review-materialization';
 import { resolveInitialDesignWriteRecovery } from '../../scripts/utils/initial-design-delivery';
 import type { InitialDesignGoalManifest } from '../../scripts/utils/goal-manifest';
 
@@ -142,6 +142,26 @@ export function runAll(): UnitCaseResult[] {
       const recover = () => resolveInitialDesignWriteRecovery(f.root, manifest, events, { emit: event => observed.push(event) });
       assert(recover().conflicts.has(relative(f.blueprintFile)), 'the author must restore the authoritative blueprint first');
       assert(fs.readFileSync(projection, 'utf8') === dirty && !observed.length, 'dirty sources cannot certify a recovery');
+      const revision = YAML.parse(blueprint.toString('utf8'));
+      revision.revision++;
+      fs.writeFileSync(f.blueprintFile, YAML.stringify(revision));
+      const reviewPrerequisite = (forQuestioning: boolean) => resolveInitialDesignWriteRecovery(f.root, manifest, [violation],
+        { emit: event => observed.push(event), forQuestioning });
+      assert(!reviewPrerequisite(false).review?.readableForQuestioning && fs.readFileSync(projection, 'utf8') === dirty,
+        'an unrelated responsibility does not need to regenerate a review with pending bindings');
+      const pending = reviewPrerequisite(true);
+      const current = inspectBlueprintReview(f.root, feature);
+      assert(!!pending.review?.readableForQuestioning && current.status === 'current' && !!current.sourceGaps?.length,
+        'the questioner can read a current projection of trusted sources that records pending owner pointers');
+      assert(!observed.length && fs.readFileSync(f.cuFile).equals(cu),
+        'the pending pointers and original write violation do not count as recovered');
+      assert(!!resolveInitialDesignWriteRecovery(f.root, manifest, [violation]).review?.readableForQuestioning,
+        'the foreground can verify the same projection without writing');
+      fs.writeFileSync(f.cuFile, 'unusable CU bytes');
+      materializeBlueprintReview(f.root, feature);
+      assert(inspectBlueprintReview(f.root, feature).status === 'current' && !reviewPrerequisite(true).review?.readableForQuestioning,
+        'a projection generated from broken authority cannot be used even when its rendering is current');
+      fs.writeFileSync(f.cuFile, cu);
       fs.writeFileSync(f.blueprintFile, blueprint);
       assert(!recover().review && inspectBlueprintReview(f.root, feature).status === 'current', 'rebuild must reach current without the old bytes');
       assert(fs.readFileSync(f.blueprintFile).equals(blueprint) && fs.readFileSync(f.cuFile).equals(cu), 'canonical facts retain their exact identity');

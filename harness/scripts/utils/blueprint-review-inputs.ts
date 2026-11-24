@@ -37,7 +37,7 @@ export interface BlueprintReviewInputs {
 }
 
 /** 展示逐项容错；严格枚举消费者继续使用 enumerateCanonicalChangeUnits。 */
-export function collectBlueprintReviewInputs(projectRoot: string, loaded: ReturnType<typeof loadCanonicalBlueprint>): BlueprintReviewInputs {
+export function collectBlueprintReviewInputs(projectRoot: string, loaded: ReturnType<typeof loadCanonicalBlueprint>): BlueprintReviewInputs & { hasSourceErrors: boolean } {
   const blueprintId = String(loaded.blueprint.blueprint_id);
   const identity = currentBlueprintIdentity(loaded);
   const units: ReviewChangeUnit[] = [];
@@ -113,7 +113,8 @@ export function collectBlueprintReviewInputs(projectRoot: string, loaded: Return
     if (item.binding === 'pending' && !item.retiredBy) sourceGaps.push(`${item.id}：owner 指针待升版；不承诺可以 carry-forward。`);
     sourceGaps.push(...item.errors.map(error => `${item.id} (${path.relative(projectRoot, item.canonicalPath).replace(/\\/g, '/')})：${relativeMessage(error)}`));
   }
-  return { units, sourceGaps, closureExists: fs.existsSync(loaded.canonicalPath.replace('component-blueprint.yaml', 'component-closure.md')),
+  const hasSourceErrors = retirementIssues.length > 0 || units.some(item => item.errors.length > 0);
+  return { units, sourceGaps, hasSourceErrors, closureExists: fs.existsSync(loaded.canonicalPath.replace('component-blueprint.yaml', 'component-closure.md')),
     questioning: collectReviewQuestioning(projectRoot, loaded.blueprint, loaded.canonicalPath, units.map(item => item.canonicalPath)),
     sourceRootRelative: path.relative(path.dirname(loaded.canonicalPath), projectRoot).replace(/\\/g, '/') };
 }

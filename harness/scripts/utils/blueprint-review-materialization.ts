@@ -39,7 +39,8 @@ export function summarizeBlueprintReviewResults(...results: Array<BlueprintRevie
 }
 
 /** 展示写入独立于设计/施工判定：任何失败均返回诊断，不抛入原事务。 */
-export function materializeBlueprintReview(projectRoot: string, blueprintId: string, context: ComponentBlueprintValidationContext = {}): BlueprintReviewResult {
+export function materializeBlueprintReview(projectRoot: string, blueprintId: string, context: ComponentBlueprintValidationContext = {},
+  options: { requireTrustedSources?: boolean } = {}): BlueprintReviewResult {
   if (isSmallBlueprintRequest(context)) return { path: blueprintReviewPath(projectRoot, blueprintId), status: 'not_applicable', writtenPaths: [], sourceGaps: [], reason: '小型请求只显示原蓝图摘要，不生成独立评审文档或完整准入。', rebuildCommand: '' };
   const target = blueprintReviewPath(projectRoot, blueprintId);
   const result: BlueprintReviewResult = { path: target, status: 'failed', writtenPaths: [], sourceGaps: [], rebuildCommand: blueprintReviewRebuildCommand(blueprintId) };
@@ -47,6 +48,7 @@ export function materializeBlueprintReview(projectRoot: string, blueprintId: str
   try {
     const source = loadBlueprintReviewSource(projectRoot, blueprintId);
     result.sourceGaps = source.inputs.sourceGaps;
+    if (options.requireTrustedSources && source.inputs.hasSourceErrors) throw new Error(source.inputs.sourceGaps.join('；'));
     const readableBytes = (file: string): Buffer | null => { try { return fs.readFileSync(file); } catch { return null; } };
     const bytes = source.inputs.units.map(item => item.sourceBytes ?? null);
     // 包括坏 CU 的原始字节与集合；不能只用有效摘要比较来忽略待绑定/历史内容的变化。
@@ -100,6 +102,7 @@ export function inspectBlueprintReview(projectRoot: string, blueprintId: string,
     const source = loadBlueprintReviewSource(projectRoot, blueprintId);
     const differences = fs.existsSync(target) ? blueprintReviewDifferences(fs.readFileSync(target, 'utf8'), source) : [];
     return { path: target, status: fs.existsSync(target) ? differences.length ? 'stale' : 'current' : 'missing', sourceGaps: source.inputs.sourceGaps,
+      hasSourceErrors: source.inputs.hasSourceErrors,
       reasons: differences, rebuildCommand: blueprintReviewRebuildCommand(blueprintId) };
   } catch (error) { return { path: target, status: 'unavailable', reason: (error as Error).message, rebuildCommand: blueprintReviewRebuildCommand(blueprintId) }; }
 }

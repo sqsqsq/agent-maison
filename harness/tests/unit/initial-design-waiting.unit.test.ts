@@ -7,11 +7,13 @@ import * as YAML from 'yaml';
 import { clearFrameworkConfigCache, featureFilePath } from '../../config';
 import { prepareGoalModeRun, runGoalModeSessionStep as runGoalModeSessionStepUnchecked } from '../../scripts/goal-mode-entry';
 import { GoalPhaseRuntime } from '../../scripts/goal-phase-runtime';
+import { DetachedGoalPhaseExecutor } from '../../scripts/utils/goal-phase-executor';
 import { buildInitialDesignGoalManifest, isInitialDesignManifest } from '../../scripts/utils/goal-manifest';
 import { createGoalRun } from '../../scripts/utils/goal-run-creation';
 import { readOriginalDeliveryActivity } from '../../scripts/utils/delivery-origin';
 import { asChangeUnitArtifact, deriveChangeUnitFeatureId, enumerateCanonicalChangeUnits, loadCanonicalChangeUnit } from '../../scripts/utils/change-unit-path';
 import { loadCanonicalBlueprint } from '../../scripts/utils/component-blueprint-path';
+import { blueprintReviewPath, inspectBlueprintReview } from '../../scripts/utils/blueprint-review-materialization';
 import { resolveBlueprintTarget } from '../../scripts/utils/blueprint-addressing';
 import { blueprintAuthorContent } from '../../scripts/utils/component-blueprint-model';
 import { deriveDesignPreparationReadiness } from '../../scripts/utils/change-unit-design-preparation';
@@ -47,8 +49,14 @@ async function waitingAuthorLeavesQuestioningReady(): Promise<void> {
     delete (blueprint.review_summary as Json).questioning;
     const requirement = '完成原账目刷新及恢复设计的独立核验。';
     const manifest = buildInitialDesignGoalManifest({ feature: BLUEPRINT_ID, run_id: 'waiting-author-ready-for-q', adapter: 'claude',
+      adapter_model_pin: { adapter: 'claude', value: 'claude-opus-5-5' },
       requirement, initial_design: { completion_target: 'feature', requested_results: [requirement], requested_phases: [] } }, { projectRoot: host.root });
     const born = createGoalRun({ projectRoot: host.root, manifest, chain: [] });
+    const review = blueprintReviewPath(host.root, manifest.feature);
+    fs.writeFileSync(review, 'stale damaged projection');
+    fs.appendFileSync(born.eventsPath, JSON.stringify({ type: 'phase_write_violation', phase: 'initial-design-decomposition', invoke_id: 'old-decomposition',
+      ts: new Date().toISOString(), violations: [{ path: path.relative(host.root, review).replace(/\\/g, '/'),
+        pre_sha256: 'e'.repeat(64), violation: 'outside_authority' }] }) + '\n');
     const options = { projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: manifest.feature, runId: manifest.run_id,
       adapter: 'claude', runMode: 'attended', sessionFallback: true, authorization };
     const author = await runGoalModeSessionStep(options) as Json;
@@ -57,8 +65,23 @@ async function waitingAuthorLeavesQuestioningReady(): Promise<void> {
     const next = await runGoalModeSessionStep({ ...options, requestPath: author.request.path,
       report: { status: 'waiting', phase: author.phase, details: '原作者暂不可用，已交回实际蓝图。' } }) as Json;
     assert.equal(next.phase, 'initial-design-questioning', JSON.stringify(next));
+    assert.equal(inspectBlueprintReview(host.root, manifest.feature).status, 'current');
+    assert.deepEqual((await runGoalModeSessionStep(options)).request, next.request, 'the original independent request is reused on repeated next');
+    const execute = DetachedGoalPhaseExecutor.prototype.execute;
+    let invoked = 0;
+    try {
+      DetachedGoalPhaseExecutor.prototype.execute = async function (context) {
+        invoked++;
+        assert.equal(context.phase, 'initial-design-questioning');
+        return { status: 'waiting', phase: context.phase, exitCode: 0, stdout: '', stderr: '', command: 'controlled-questioning' };
+      };
+      const received = await runGoalModeSessionStep({ ...options, action: 'execute', requestPath: next.request.path });
+      assert.equal(received.type, 'goal_session_report_received', String(received.detail ?? received.status));
+      assert.equal(invoked, 1);
+    } finally { DetachedGoalPhaseExecutor.prototype.execute = execute; }
     const records = events(path.dirname(born.manifestPath));
     assert(records.some(event => event.type === 'agent_invoke_end' && event.phase === author.phase && event.status === 'waiting'));
+    assert(records.some(event => event.type === 'phase_write_violation' && event.invoke_id === 'old-decomposition'));
     assert(!records.some(event => event.type === 'run_end' && event.status === 'COMPLETED'));
   });
 }

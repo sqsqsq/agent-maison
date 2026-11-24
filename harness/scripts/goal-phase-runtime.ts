@@ -4945,8 +4945,12 @@ export class GoalPhaseRuntime {
         const label = initialDesignInvocationLabel(observed);
         if (!observed.request && authorWaiting?.phase === label) return conclude('execution_scope_unresolved', authorWaiting.detail);
         if (observed.kind === 'questioning') {
-          if (review) return conclude('execution_scope_unresolved', `框架评审展示尚未恢复：${review.file}；${review.reason ?? '等待来源恢复后重建'}。`);
-          materializeBlueprintReview(projectRoot, manifest.feature);
+          if (review) {
+            const prepared = resolveInitialDesignWriteRecovery(projectRoot, manifest, writeHistory(), { emit, forQuestioning: true });
+            if (prepared.conflicts.size) continue;
+            if (prepared.review && !prepared.review.readableForQuestioning) return conclude('execution_scope_unresolved',
+              `框架评审展示尚未恢复：${prepared.review.file}；${prepared.review.reason ?? '等待来源恢复后重建'}。`);
+          } else materializeBlueprintReview(projectRoot, manifest.feature);
         }
         const spent = readOriginalDeliveryActivity(projectRoot, manifest)!;
         const purpose = observed.kind === 'questioning' ? 'questioning' : 'author';
