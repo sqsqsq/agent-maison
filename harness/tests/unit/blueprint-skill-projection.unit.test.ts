@@ -31,6 +31,7 @@ import { resolvePhaseEvidenceManifest, writePhaseEvidenceManifest } from '../../
 import { initializeFidelityRouting } from '../../scripts/utils/goal-preflight';
 import { spawnSync } from 'child_process';
 import { buildFeatureScopeCandidate, readScopeAcceptance, prepareChangeUnitScopeInput, prepareFeatureScopeCandidate, resolveFeatureExecutionScope } from '../../scripts/utils/feature-track';
+import { resolveSuccessorExecutionScope } from '../../scripts/utils/feature-execution-scope';
 import { checkAcceptanceContent } from '../../scripts/utils/check-acceptance';
 import { checkUseCaseSpecSchema } from '../../scripts/check-ut';
 import { diagnoseBlueprintContent } from '../../scripts/utils/component-blueprint-validator';
@@ -800,10 +801,28 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     assert.equal(prepared.scope.obligations.find(item => item.kind === 'device-evidence')?.applicability, 'required');
     const workflow = resolveWorkflowSpec(f.root, { frameworkRoot });
     assert.deepEqual(resolveFeatureExecutionScope(f.root, f.feature, workflow, frameworkRoot, requirement), prepared.scope);
+    const manifest = buildGoalManifestFromInput({ feature: f.feature, run_id: 'cu-impact-source', requirement,
+      execution_scope: prepared.scope, chain_override: prepared.scope.phase_chain }, { projectRoot: f.root });
+    createGoalRun({ projectRoot: f.root, frameworkRoot, manifest, chain: prepared.scope.phase_chain, resolveHead: () => 'f'.repeat(40) });
+    const successor = () => resolveSuccessorExecutionScope(f.root, f.feature, workflow, frameworkRoot, requirement, manifest.run_id)!;
+    assert.deepEqual(successor().request_impact, prepared.scope.request_impact);
     const negative = { ...prepared.candidate.request.impact!, user_visible_behavior_change: false, reason: 'No visible behavior change' };
     const valid = prepareFeatureScopeCandidate(prepareChangeUnitScopeInput({ ...request, inheritedImpact: negative }));
     assert.deepEqual(valid.candidate.request.impact, negative);
+    const negativeManifest = buildGoalManifestFromInput({ feature: f.feature, run_id: 'cu-negative-impact-source', requirement,
+      execution_scope: valid.scope, chain_override: valid.scope.phase_chain }, { projectRoot: f.root });
+    createGoalRun({ projectRoot: f.root, frameworkRoot, manifest: negativeManifest, chain: valid.scope.phase_chain, resolveHead: () => 'f'.repeat(40) });
+    const negativeSuccessor = () => resolveSuccessorExecutionScope(f.root, f.feature, workflow, frameworkRoot, requirement, negativeManifest.run_id)!;
+    assert.deepEqual(negativeSuccessor().request_impact, negative);
     fs.appendFileSync(source, '// changed input bytes\n');
+    const next = successor();
+    assert.equal(next.request_impact?.reason, inherited.reason);
+    assert.deepEqual(next.request_impact?.basis[0].source_refs, [implementation]);
+    assert.equal(next.request_impact?.basis[0].dependencies[0].sha256, sha(source).slice('sha256:'.length));
+    assert.equal(next.obligations.find(item => item.kind === 'device-evidence')?.applicability, 'required');
+    const conservative = negativeSuccessor();
+    assert.equal(conservative.request_impact, undefined);
+    assert.equal(conservative.obligations.find(item => item.kind === 'device-evidence')?.applicability, 'unknown');
     const stale = prepareFeatureScopeCandidate(prepareChangeUnitScopeInput({ ...request, inheritedImpact: negative }));
     assert.equal(stale.candidate.request.impact, undefined);
     assert.equal(stale.scope.obligations.find(item => item.kind === 'device-evidence')?.applicability, 'unknown');
@@ -812,6 +831,11 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     assert.throws(() => prepareFeatureScopeCandidate(prepareChangeUnitScopeInput({ ...request, impact: {
       userVisibleBehaviorChange: false, reason: negative.reason, basisPaths: [requirementFile],
     } })), /影响依据与本次范围无关/);
+    assert.throws(() => prepareFeatureScopeCandidate(prepareChangeUnitScopeInput({ ...request, impact: {
+      userVisibleBehaviorChange: true, reason: inherited.reason, basisPaths: [requirementFile],
+    } })), /影响依据与本次范围无关/, 'an explicit new judgment needs its own relevant basis');
+    fs.unlinkSync(source);
+    assert.throws(successor, /影响依据不可用/, 'another file must not substitute for a missing authority source');
   } },
   { name: 'f3b8e6a1 authority preparation: invalid canonical construction reaches the design diagnosis without a scope', run(f) {
     const doc = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));

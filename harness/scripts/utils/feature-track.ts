@@ -1105,7 +1105,10 @@ export function buildFeatureScopeCandidate(input: Omit<PrepareScopeCandidateInpu
     contract_fingerprints: loadFeatureContracts(frameworkRoot).map(contractFingerprint),
   };
   if (feature.startsWith('cu-') && candidate.request.impact) {
-    const verified = resolveChangeUnitImpactFacts(candidate, { ...ctx, requirement: requirementText, impactInherited: !!input.inheritedImpact && !input.impact });
+    // The new run needs current bytes even when the judgment came from an authorized prior run.
+    const inherited = !!input.inheritedImpact && !input.impact;
+    const verified = resolveChangeUnitImpactFacts(candidate, { ...ctx, requirement: requirementText,
+      impactInherited: inherited && candidate.request.impact.user_visible_behavior_change === false }, inherited);
     if (verified.inherited_impact_unusable) delete candidate.request.impact;
   }
   return candidate;
