@@ -37,6 +37,7 @@ import { resolveCheckDisposition } from './check-disposition';
 import { createIdentityNeutralDigestReaders, identityNeutralDigest, type IdentityNeutralDigestReaders } from './identity-neutral-digest';
 import { classifyGoalRunsDir } from './fidelity-shared';
 import { ArtifactSchemaError, resolveArtifactContent } from './artifact-content';
+import { blueprintMethodProjection, isBlueprintMethodRef, type BlueprintMethodIssue } from './blueprint-method-projection';
 
 export type BlueprintProjectionKind = 'acceptance' | 'contracts';
 /** Author-produced temporary mapping; canonical identity is filled by the accepting writer. */
@@ -427,6 +428,10 @@ export class BlueprintContentError extends Error {
   constructor(public readonly code: string, message: string, public readonly locations: DesignAuthorityLocation[] = []) { super(message); }
 }
 
+function methodContentError(issue: BlueprintMethodIssue): never {
+  throw new BlueprintContentError('authority_content_conflict', issue.message, issue.locations);
+}
+
 /** Prove only defects that cannot be resolved by selecting a different CU projection. */
 export function blueprintDeclaredAcceptanceIssues(projectRoot: string, feature: string, blueprint: BlueprintRecord): BlueprintIssue[] {
   let targets: Iterable<BlueprintRecord>;
@@ -542,9 +547,15 @@ export function mergeBlueprintTargetContent(selected: readonly BlueprintContentL
 
 /** Request designs share typed content with CU projection, without inventing a CU or canonical identity. */
 export function selectBlueprintRequestContent(blueprint: BlueprintRecord): { selected: BlueprintContentLocation[]; acceptance?: BlueprintRecord; contracts?: BlueprintRecord; useCases?: BlueprintRecord } {
+  const methods = blueprintMethodProjection(blueprint);
   const selected: BlueprintContentLocation[] = asRecords(blueprint.design_views).filter(view => view.view_id === 'development')
     .flatMap(view => asRecords(view.nodes).filter(node => node.acceptance !== undefined || node.contracts !== undefined || node.use_cases !== undefined)
-      .map(target => ({ ref: { blueprint_id: String(blueprint.blueprint_id ?? ''), target: { kind: 'node' as const, view_id: 'development', id: String(getId(target, 'node_id') ?? '') } }, target })));
+      .map(node => {
+        const ref = { blueprint_id: String(blueprint.blueprint_id ?? ''), target: { kind: 'node' as const, view_id: 'development', id: String(getId(node, 'node_id') ?? '') } };
+        const target = structuredClone(node);
+        methods.expand(target, blueprintRefAddress(ref), methodContentError);
+        return { ref, target };
+      }));
   return { selected, acceptance: mergeBlueprintTargetContent(selected, 'acceptance'), contracts: mergeBlueprintTargetContent(selected, 'contracts'), useCases: mergeBlueprintTargetContent(selected, 'use_cases') };
 }
 
@@ -586,9 +597,11 @@ export function selectBlueprintSkillContent(blueprint: BlueprintRecord, cu: Chan
   const attempt = <T>(read: () => T): T | undefined => {
     try { return read(); } catch (error) { if (!onError) throw error; onError(error); return undefined; }
   };
+  const methods = blueprintMethodProjection(blueprint);
   const selected = cu.design_refs.flatMap(ref => {
     const target = attempt(() => structuredClone(resolveBlueprintTarget(blueprint, ref.target)));
     if (!target) return [];
+    methods.expand(target, blueprintRefAddress(ref), issue => { attempt(() => methodContentError(issue)); });
     return [{ ref, target }];
   });
   const flows = selected.filter(({ ref }) => ref.target.kind === 'flow');
@@ -614,6 +627,10 @@ export function selectBlueprintSkillContent(blueprint: BlueprintRecord, cu: Chan
         else if (canonical(row[key]) !== canonical(value)) throw new BlueprintContentError('authority_content_conflict', `${ref.target.id}: ${field} 期望=${JSON.stringify(value)} 实际=${JSON.stringify(row[key])}`, location(field));
       };
       state.design_ref = structuredClone(ref);
+      const declaredFlow = methods.index.get(blueprintRefAddress(ref));
+      if (state.ordered_steps === undefined && asStrings(declaredFlow?.ordered_steps).some(isBlueprintMethodRef)) {
+        state.ordered_steps = structuredClone(flow.ordered_steps);
+      }
       fill(state, 'owner_ref', asRecord(flow.state_owner)?.ref);
       const contracts = [...new Set([...asStrings(flow.logical_contract_refs), ...asStrings(flow.external_contract_refs)])];
       if (state.contract_refs !== undefined && canonical([...asStrings(state.contract_refs)].sort()) === canonical([...contracts].sort())) state.contract_refs = contracts;

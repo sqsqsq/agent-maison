@@ -7,6 +7,8 @@ import { ownersForAddress } from './change-unit-addressing';
 import { blueprintRefAddress } from './change-unit-model';
 import { BlueprintReviewInputs, ReviewChangeUnit, reviewChangeUnitBindings } from './blueprint-review-inputs';
 import { BlueprintContentError, mergeBlueprintTargetContent, projectionContentEqual, projectionRowIdentity, selectBlueprintSkillContent, selectBlueprintRequestContent } from './blueprint-skill-projection';
+import { blueprintMethodProjection } from './blueprint-method-projection';
+import { blueprintTargetComponents, isUiComponent } from './component-assets';
 import type { ComponentBlueprintRef } from './component-blueprint-model';
 import { generateMermaidViewGraph, generateMermaidRelationGraph, generateMermaidPhaseGraph, generateMermaidModuleDependencyGraph, parseMermaidSubset, validateGeneratedBlueprintGraphs } from './blueprint-graph-generator';
 import { evaluateDerivedConclusionFreshness } from './derived-conclusion-freshness';
@@ -317,11 +319,24 @@ function acceptanceLinksFor(content: Pick<ReviewContent, 'address' | 'value'>[],
     return matches.map(match => designLink(`acceptance:${match.address}/${match.key}:${id}`, matches.length > 1 ? `${id}（${String(index.get(match.address)?.label ?? match.address.split(':').pop())}）` : id)).join('、') || raw;
   });
 }
-function readReviewContent(blueprint: BlueprintRecord): { content: ReviewContent[]; diagnostics: string[] } {
+function readReviewContent(blueprint: BlueprintRecord, methods: ReturnType<typeof blueprintMethodProjection>, projectRoot?: string): { content: ReviewContent[]; diagnostics: string[] } {
   const content: ReviewContent[] = []; const diagnostics: string[] = [];
   const seen = new Map<string, { address: string; row: unknown }>();
-  for (const [address, target] of stableAddressIndex(blueprint)) {
+  for (const [address, source] of methods.index) {
     if (address.startsWith('blueprint:')) continue; // 根 contracts 是外部接口集合，不是目标 typed contracts。
+    const target = structuredClone(source);
+    methods.expand(target, address, finding => diagnostics.push(`${finding.message} · ${finding.locations.map(({ target, field }) =>
+      [target.view_id, `${target.kind}:${target.id}`, field].filter(Boolean).join('/')).join(' ↔ ')}`));
+    if (address.startsWith('view:development/node:')) {
+      const priorIssues = diagnostics.length;
+      const components = blueprintTargetComponents(projectRoot, blueprint, target, message => diagnostics.push(`${address}: ${message}`));
+      if (components.length && diagnostics.length === priorIssues) {
+        const contracts = asRecord(target.contracts) ?? {};
+        const nonUi = asRecords(contracts.components).filter(component => !isUiComponent(component)
+          && component.asset_selection === undefined && (component.kind !== undefined || !isUiComponent(target)));
+        target.contracts = { ...contracts, components: [...nonUi, ...components] };
+      }
+    }
     for (const field of ['acceptance', 'contracts', 'use_cases'] as const) {
       if (target[field] === undefined) continue;
       const node = /^view:([^/]+)\/(node|flow):(.+)$/.exec(address); const other = /^(view|relation|decision|contract):(.+)$/.exec(address);
@@ -571,7 +586,8 @@ function readerSourceLinks(blueprint: BlueprintRecord, pointer: string): Array<{
   return [{ address, label: String(target?.label ?? target?.name ?? '设计来源') }];
 }
 
-function renderReaderBody(blueprint: BlueprintRecord, inputs: BlueprintReviewInputs, content: ReviewContent[], shownGraphs: Set<string>, display: BlueprintGraphDisplayInspection): string[] {
+function renderReaderBody(blueprint: BlueprintRecord, inputs: BlueprintReviewInputs, content: ReviewContent[], shownGraphs: Set<string>, display: BlueprintGraphDisplayInspection,
+  methods: ReturnType<typeof blueprintMethodProjection>): string[] {
   const guide = display.guide;
   const review = asRecord(blueprint.review_summary) ?? {};
   const views = asRecords(blueprint.design_views); const view = (id: string) => views.find(row => row.view_id === id);
@@ -618,7 +634,9 @@ function renderReaderBody(blueprint: BlueprintRecord, inputs: BlueprintReviewInp
     if (section === 'flows') for (const flow of flows) {
       out.push(`### ${text(flow.name ?? flow.flow_id)}`, '');
       if (flow.description !== undefined) paragraph(flow.description);
-      const steps = asStrings(flow.ordered_steps); if (steps.length) out.push(...steps.map((step, i) => `${i + 1}. ${text(step)}`), '');
+      const projected = structuredClone(flow);
+      methods.expand(projected, `view:runtime/flow:${String(flow.flow_id)}`, () => undefined);
+      const steps = asStrings(projected.ordered_steps); if (steps.length) out.push(...steps.map((step, i) => `${i + 1}. ${text(step)}`), '');
       else if (asRecords(flow.consumers).length) for (const consumer of asRecords(flow.consumers)) paragraph(consumer.consumption, prose(consumer.consumer_id));
       for (const graph of display.flowGraphs.get(String(flow.flow_id)) ?? []) out.push(...graphLines(graph));
     }
@@ -741,7 +759,8 @@ export function renderBlueprintReviewMarkdown(blueprint: BlueprintRecord, artifa
   const view = (id: string) => views.find(v => v.view_id === id); const current = inputs.units.filter(item => !item.retiredBy);
   const directUnits = directReviewUnits(inputs);
   const claimedBy = (address: string): string => ownersForAddress(directUnits, address).map(id => `${id}${current.find(item => item.id === id)?.binding === 'pending' ? '（待升版）' : ''}`).join('；') || '无 CU 直接引用';
-  const { content, diagnostics } = readReviewContent(blueprint); const typed = (field: ReviewContent['field']) => content.filter(item => item.field === field);
+  const methods = blueprintMethodProjection(blueprint);
+  const { content, diagnostics } = readReviewContent(blueprint, methods, context.projectRoot); const typed = (field: ReviewContent['field']) => content.filter(item => item.field === field);
   const acceptanceLinks = acceptanceLinksFor(typed('acceptance'), blueprint);
   let lastOrigin = '';
   const origin = (item: ReviewContent) => {
@@ -758,7 +777,7 @@ export function renderBlueprintReviewMarkdown(blueprint: BlueprintRecord, artifa
     `# ${text(review.title ?? blueprint.component_id)}`, '', anchor(`blueprint:${blueprint.blueprint_id}`)];
   if (guide.status !== 'current') lines.push(guide.status === 'missing' ? '> 尚未补写评审说明；正文按当前已有字段展示。' : '> 评审说明需更新；旧说明未作为当前方案展示，正文按当前已有字段展示。', '');
   lines.push('阅读入口：先阅读方案、旅程、关键流程和交付安排；类型、方法、完整分支与验收全文见同文档的[技术与追溯参考](#reference)。', '',
-    ...renderReaderBody(blueprint, inputs, content, shownGraphs, graphDisplay), '<a id="reference"></a>', '## 技术与追溯参考', '',
+    ...renderReaderBody(blueprint, inputs, content, shownGraphs, graphDisplay, methods), '<a id="reference"></a>', '## 技术与追溯参考', '',
     `部件 ${text(blueprint.component_id)} · 蓝图 ${text(blueprint.blueprint_id)} · revision ${text(blueprint.revision)} · 准入 ${text(enumText(admission?.status, DISPOSITIONS))}`, '',
     '本文根据 canonical 蓝图与当前施工单元确定性生成，文首保留精确来源身份。是否通过设计交接见 readiness；施工授权、映射与完成结论由原责任阶段确认。可选说明缺失或过期不改变这些结论。', '',
     '参考保留全部声明；不从名称、目录或数组顺序推断调用、依赖与未声明存储设计。正文的验收链接按来源目标与条目编号定位。', '',

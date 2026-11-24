@@ -23,6 +23,7 @@ import { validateCrossViewRelations } from './blueprint-cross-view';
 import { validateBlueprintQuestioning } from './blueprint-questioning';
 import { validateBlueprintAdmission } from './blueprint-admission';
 import { inspectGeneratedBlueprintGraphs } from './blueprint-graph-generator';
+import { validateBlueprintMethodProjection } from './blueprint-method-projection';
 import { validateBlueprintReconciliation } from './blueprint-reconciliation';
 import { validateEvolutionDecisions } from './blueprint-evolution-decisions';
 import { profileHasDesignLens, validateBlueprintProviders } from './blueprint-provider-boundary';
@@ -104,6 +105,7 @@ export function validateComponentBlueprintUpstream(
     ...validateRequirementTraceability(blueprint, context.projectRoot),
     ...validateBlueprintViews(blueprint),
     ...validateBlueprintContracts(blueprint, { projectRoot: context.projectRoot, sourceCache: context.sourceCache }),
+    ...validateBlueprintMethodProjection(blueprint),
     ...validateRuntimeDataFlows(blueprint),
     ...validateCrossViewRelations(blueprint),
     ...validateBlueprintQuestioning(blueprint),

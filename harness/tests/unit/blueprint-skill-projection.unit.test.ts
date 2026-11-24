@@ -4,9 +4,9 @@ import * as os from 'os';
 import * as path from 'path';
 import * as YAML from 'yaml';
 import { createHash } from 'crypto';
-import { deriveBlueprintSkillInput, deriveBlueprintCandidateSkillInput, materializeBlueprintSkillInputs, BlueprintProjectionPreparationError, designScopeRevisionChecks, checkTypedConstructionContent, checkAuthoritativeContentAligned, diagnoseBlueprintSkillAuthority, diagnoseDesignAuthority, selectBlueprintSkillContent, resolveChangeUnitConstructionInputs } from '../../scripts/utils/blueprint-skill-projection';
+import { deriveBlueprintSkillInput, deriveBlueprintCandidateSkillInput, materializeBlueprintSkillInputs, BlueprintContentError, BlueprintProjectionPreparationError, designScopeRevisionChecks, checkTypedConstructionContent, checkAuthoritativeContentAligned, diagnoseBlueprintSkillAuthority, diagnoseDesignAuthority, selectBlueprintSkillContent, resolveChangeUnitConstructionInputs } from '../../scripts/utils/blueprint-skill-projection';
 import { resolveBlueprintTarget } from '../../scripts/utils/blueprint-addressing';
-import { asRecord, type BlueprintRecord, type ComponentBlueprintRef } from '../../scripts/utils/component-blueprint-model';
+import { asRecord, asRecords, type BlueprintRecord, type ComponentBlueprintRef } from '../../scripts/utils/component-blueprint-model';
 import { resolveFeatureArtifact, clearFrameworkConfigCache, loadFrameworkConfig, loadArchitectureDsl } from '../../config';
 import { loadResolvedProfile } from '../../profile-loader';
 import { resolveCapabilityInputs, readBoundInput } from '../../scripts/utils/capability-resolution';
@@ -40,7 +40,7 @@ import { collectCleanPassIssues, readReusableCheckResult } from '../../scripts/u
 import type { UnitCaseResult } from '../run-unit';
 import { asChangeUnitArtifact, createChangeUnitRef, loadCanonicalChangeUnit } from '../../scripts/utils/change-unit-path';
 import { validateChangeUnitDesign, readChangeUnitDesignOwnership } from '../../scripts/utils/change-unit-design-gate';
-import { acceptChangeUnitCandidate, ChangeUnitCandidateRejected } from '../../scripts/utils/change-unit-provider-boundary';
+import { acceptChangeUnitCandidate, ChangeUnitCandidateRejected, type ChangeUnitCandidateInput } from '../../scripts/utils/change-unit-provider-boundary';
 import { initialDesignCandidateRejection } from '../../scripts/utils/initial-design-delivery';
 import { ownersForAddress } from '../../scripts/utils/change-unit-addressing';
 
@@ -558,6 +558,61 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
       assert.equal(error.designAuthority, undefined, '候选缺 mapping 不得错派蓝图作者');
       assert.equal(initialDesignCandidateRejection(observation, error, candidate.artifact.blueprint_id).kind, 'decompose');
     }
+  } },
+  { name: 'typed method is the single source for flow steps and use-case boundaries; explicit contradiction has both locations', run(f) {
+    const blueprint = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
+    const unit = asChangeUnitArtifact(loadCanonicalChangeUnit(f.root, 'ledger-app-blueprint', 'ledger-refresh').changeUnit);
+    const ownerRef = unit.design_refs.find(ref => ref.target.kind === 'node' && ref.target.view_id === 'development')!;
+    const flowRef = unit.design_refs.find(ref => ref.target.kind === 'flow')!;
+    const owner = resolveBlueprintTarget(blueprint, ownerRef.target);
+    const flow = resolveBlueprintTarget(blueprint, flowRef.target);
+    owner.provenance = { ...asRecord(owner.provenance), evidence_strength: 'authoritative' };
+    const method = { name: 'insertOpenedCard', params: [{ name: 'record', type: 'WalletCard' }], return: 'Promise<boolean>', async: true };
+    owner.contracts = { ...asRecord(owner.contracts), interfaces: [{ class: 'WalletCardRepository', methods: [method] }] };
+    const methodRef = `interface:view:development/node:${ownerRef.target.id}/WalletCardRepository#insertOpenedCard`;
+    const boundary: BlueprintRecord = { name: 'WalletCardRepository', type: 'WalletCardRepository', kind: 'storage', methods: ['insertOpenedCard'] };
+    flow.use_cases = { ...asRecord(flow.use_cases), use_cases: [{ id: 'write-card', data_boundaries: [boundary] }] };
+    flow.ordered_steps = [methodRef, '写入失败时保留原卡号并进入失败结果页'];
+    const state = asRecords(asRecord(flow.contracts)?.state_management)[0];
+    delete state.ordered_steps;
+    for (const returns of ['Promise<boolean>', 'Promise<WriteOutcome>']) {
+      method.return = returns;
+      const result = selectBlueprintSkillContent(blueprint, unit);
+      const steps = asRecords(result.contracts?.state_management)[0].ordered_steps as string[];
+      assert.deepEqual(steps, [`WalletCardRepository.insertOpenedCard(record: WalletCard): ${returns}`, '写入失败时保留原卡号并进入失败结果页']);
+      const useCase = asRecords(result.useCases?.use_cases).find(row => row.id === 'write-card');
+      assert.deepEqual(asRecords(useCase?.data_boundaries)[0].methods, [{ name: method.name, params: method.params, returns, async: true }]);
+      assert.deepEqual(boundary.methods, ['insertOpenedCard']);
+    }
+    boundary.methods = [{ name: methodRef, returns: 'Promise<boolean>' }];
+    assert.throws(() => selectBlueprintSkillContent(blueprint, unit), error => error instanceof BlueprintContentError
+      && error.locations.some(location => location.target.id === ownerRef.target.id && location.field.endsWith('.return'))
+      && error.locations.some(location => location.target.id === flowRef.target.id && location.field.endsWith('.returns')));
+  } },
+  { name: 'compact CU selections expand exact references in the official writer, while contradictions and absent landings fail', run(f) {
+    const contracts = planContracts(f);
+    const original = asChangeUnitArtifact(loadCanonicalChangeUnit(f.root, 'ledger-app-blueprint', 'ledger-refresh').changeUnit);
+    const artifact = { ...original, design_refs: original.design_refs.map(({ target }) => {
+      const mapping = contracts.change_unit.design_ref_mappings.find(row => JSON.stringify(row.design_ref.target) === JSON.stringify(target))!;
+      return { target, implementation_refs: mapping.implementation_refs, verification_refs: mapping.verification_refs };
+    }), touches: original.touches.map(row => ({ ...row, design_ref: { target: row.design_ref.target } })) };
+    const candidate: ChangeUnitCandidateInput = { providerId: 'candidate-fixture', artifact: { ...artifact, provenance: { ...artifact.provenance, extraction_method: 'candidate-fixture' } },
+      construction_mapping: { predicate_mappings: contracts.change_unit.predicate_mappings, provide_mappings: contracts.change_unit.provide_mappings } };
+    fs.unlinkSync(f.cuFile);
+    const source = JSON.stringify(candidate);
+    const conflicting = structuredClone(candidate);
+    conflicting.construction_mapping!.design_ref_mappings = [{ ...contracts.change_unit.design_ref_mappings[0], implementation_refs: ['planned:src/wrong.ets'] }];
+    assert.throws(() => acceptChangeUnitCandidate(f.root, conflicting), /artifact\.design_refs.*construction_mapping\.design_ref_mappings.*冲突/);
+    const unresolved = structuredClone(candidate);
+    delete (unresolved.artifact.design_refs[0] as { implementation_refs?: string[] }).implementation_refs;
+    assert.throws(() => acceptChangeUnitCandidate(f.root, unresolved), /缺施工\/验证落点/);
+    assert(!fs.existsSync(f.cuFile));
+    const accepted = acceptChangeUnitCandidate(f.root, candidate);
+    const result = new SpecLoader(f.root, undefined, undefined, frameworkRoot).loadFeatureSpec(f.feature).contracts!;
+    assert.deepEqual(accepted.changeUnit.design_refs, original.design_refs);
+    assert.deepEqual(result.change_unit!.design_ref_mappings, contracts.change_unit.design_ref_mappings);
+    assert.equal(result.change_unit!.change_unit_ref.artifact_sha256, accepted.artifactSha256);
+    assert.equal(JSON.stringify(candidate), source);
   } },
   { name: '4c8d73b1 component mapping precheck acceptance and Feature repair retain their original owners', async run(f) {
     const contracts = planContracts(f);

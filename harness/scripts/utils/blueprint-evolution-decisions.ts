@@ -112,8 +112,8 @@ export function validateEvolutionDecisions(blueprint: BlueprintRecord, projectRo
     }
   }
   if (index && development?.evolution_impact === 'changed') {
-    for (const component of blueprintUiComponents(blueprint)) {
-      const candidates = blueprintComponentDecisions(blueprint, component);
+    for (const component of blueprintUiComponents(blueprint, projectRoot)) {
+      const candidates = blueprintComponentDecisions(blueprint, component, projectRoot);
       if (candidates.length !== 1) out.push(issue('blueprint_asset_selection_missing', '$.decisions_and_gaps.decisions',
         `${component.file}#${component.name} 必须对应一个明确的选型决定（当前 ${candidates.length}）；可由所属节点的一条决定覆盖多个组件。`));
       else {

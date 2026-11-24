@@ -49,6 +49,7 @@ import { retiredChangeUnitIds } from './component-closure-inputs';
 import { blockerChangeUnitIssues, validateChangeUnit } from './change-unit-validator';
 import {
   ChangeUnitCandidate,
+  type ChangeUnitCandidateInput,
   ChangeUnitCandidateRejected,
   acceptChangeUnitCandidates,
   writeCanonicalChangeUnit,
@@ -150,7 +151,7 @@ export function changeUnitDecompositionFeedback(intake: RequestIntake, current: 
 export function acceptChangeUnitDecomposition(
   projectRoot: string,
   blueprintId: string,
-  candidates: readonly ChangeUnitCandidate[],
+  candidates: readonly ChangeUnitCandidateInput[],
 ): AcceptedDecomposition {
   const { findInitialDesignRun, initialDesignRequestOptions } = require('./initial-design-delivery') as typeof import('./initial-design-delivery');
   const frameworkRoot = resolveProbeFrameworkRoot(projectRoot);

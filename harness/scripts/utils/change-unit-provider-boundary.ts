@@ -2,6 +2,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
 import { ChangeUnitArtifact } from './change-unit-model';
+import { asRecord, type ComponentBlueprintRef } from './component-blueprint-model';
+import { stableJson } from './blueprint-discovery';
 import { changeUnitPath, deriveChangeUnitFeatureId, loadCanonicalChangeUnit, type LoadedChangeUnit } from './change-unit-path';
 import { loadCanonicalBlueprint } from './component-blueprint-path';
 import { resolveProbeFrameworkRoot } from '../../repo-layout';
@@ -49,6 +51,20 @@ export interface ChangeUnitCandidate {
   construction_mapping?: import('./blueprint-skill-projection').ChangeUnitConstructionMapping;
 }
 
+type CompactDesignSelection = Pick<ComponentBlueprintRef, 'target'> & {
+  implementation_refs?: string[];
+  verification_refs?: string[];
+};
+type ConstructionMapping = NonNullable<ChangeUnitCandidate['construction_mapping']>;
+
+export interface ChangeUnitCandidateInput extends Omit<ChangeUnitCandidate, 'artifact' | 'construction_mapping'> {
+  artifact: Omit<ChangeUnitArtifact, 'design_refs' | 'touches'> & {
+    design_refs: Array<ComponentBlueprintRef | CompactDesignSelection>;
+    touches: Array<Omit<ChangeUnitArtifact['touches'][number], 'design_ref'> & { design_ref: ComponentBlueprintRef | Pick<ComponentBlueprintRef, 'target'> }>;
+  };
+  construction_mapping?: Omit<ConstructionMapping, 'design_ref_mappings'> & { design_ref_mappings?: ConstructionMapping['design_ref_mappings'] };
+}
+
 export function dropUnacceptedChangeUnitCandidates(_candidates: readonly ChangeUnitCandidate[]): ChangeUnitCandidate[] {
   return [];
 }
@@ -61,12 +77,56 @@ export class ChangeUnitCandidateRejected extends Error {
   }
 }
 
+/** The candidate selects its target once. Canonical CU and Feature contracts keep their existing exact references. */
+export function expandChangeUnitCandidate(input: ChangeUnitCandidateInput): ChangeUnitCandidate {
+  const compact = (selection: unknown, allowed: string[]): selection is CompactDesignSelection => {
+    const record = asRecord(selection);
+    return !!asRecord(record?.target) && Object.keys(record!).every(key => allowed.includes(key));
+  };
+  const compactFields = ['target', 'implementation_refs', 'verification_refs'];
+  const author = input.artifact;
+  if (!asRecord(author?.component_blueprint_ref) || !Array.isArray(author?.design_refs)) return input as ChangeUnitCandidate;
+  const compactReferences = author.design_refs.some(selection => compact(selection, compactFields));
+  if (!compactReferences && !(Array.isArray(author.touches) && author.touches.some(touch => compact(touch?.design_ref, ['target'])))) return input as ChangeUnitCandidate;
+  const candidate = structuredClone(input);
+  const artifact = candidate.artifact;
+  const complete = (selection: Pick<ComponentBlueprintRef, 'target'>): ComponentBlueprintRef =>
+    ({ ...artifact.component_blueprint_ref, target: structuredClone(selection.target) });
+  const { construction_mapping: section, ...original } = candidate;
+  const existing = Array.isArray(section?.design_ref_mappings) ? section.design_ref_mappings : [];
+  const designRefs = artifact.design_refs.map((selection, index) => {
+    if (!compact(selection, compactFields)) return selection as ComponentBlueprintRef;
+    const ref = complete(selection);
+    if (!Object.prototype.hasOwnProperty.call(selection, 'implementation_refs') && !Object.prototype.hasOwnProperty.call(selection, 'verification_refs')) return ref;
+    const row = existing.findIndex(mapping => {
+      const source = asRecord(mapping?.design_ref);
+      return stableJson(source?.target ?? source) === stableJson(ref.target);
+    });
+    const prior = existing[row];
+    if (!prior) existing.push({ design_ref: ref, implementation_refs: selection.implementation_refs ?? [], verification_refs: selection.verification_refs ?? [] });
+    else for (const key of ['implementation_refs', 'verification_refs'] as const) {
+      if (!Object.prototype.hasOwnProperty.call(selection, key)) continue;
+      if (prior[key] === undefined) prior[key] = selection[key]!;
+      else if (stableJson(prior[key]) !== stableJson(selection[key])) throw new ChangeUnitCandidateRejected('change_unit_candidate_design_rejected',
+        `${artifact.change_unit_id}: artifact.design_refs[${index}].${key} 与 construction_mapping.design_ref_mappings[${row}].${key} 声明冲突`);
+    }
+    return ref;
+  });
+  const touches = Array.isArray(artifact.touches) ? artifact.touches.map(touch => compact(touch?.design_ref, ['target'])
+    ? { ...touch, design_ref: complete(touch.design_ref) } : touch) as ChangeUnitArtifact['touches'] : artifact.touches as ChangeUnitArtifact['touches'];
+  if (section && section.design_ref_mappings === undefined) section.design_ref_mappings = existing;
+  return { ...original, artifact: { ...artifact, design_refs: designRefs, touches },
+    ...(section ? { construction_mapping: section as ConstructionMapping } : compactReferences ? {
+      construction_mapping: { predicate_mappings: [], provide_mappings: [], design_ref_mappings: existing },
+    } : {}) };
+}
+
 /** A published author revision can introduce new IDs on targets the original candidate already owns. */
 export function assertPendingCandidateAcceptanceReferences(
   baseline: import('./component-blueprint-model').BlueprintRecord,
   current: import('./component-blueprint-model').BlueprintRecord,
-  original: readonly ChangeUnitCandidate[],
-  candidates: readonly ChangeUnitCandidate[],
+  original: readonly ChangeUnitCandidateInput[],
+  candidates: readonly ChangeUnitCandidateInput[],
 ): void {
   const { resolveBlueprintTarget, stableAddressIndex } = require('./blueprint-addressing') as typeof import('./blueprint-addressing');
   const { asRecord, asRecords } = require('./component-blueprint-model') as typeof import('./component-blueprint-model');
@@ -181,8 +241,9 @@ export function writeCanonicalChangeUnit(target: string, artifact: ChangeUnitArt
  */
 export function acceptChangeUnitCandidates(
   projectRoot: string,
-  candidates: readonly ChangeUnitCandidate[],
+  input: readonly ChangeUnitCandidateInput[],
 ) {
+  const candidates = input.map(expandChangeUnitCandidate);
   if (candidates.length === 0) {
     throw new ChangeUnitCandidateRejected(
       'change_unit_decomposition_empty',
@@ -260,6 +321,6 @@ export function acceptChangeUnitCandidates(
 }
 
 /** 单候选接受 = 批量接受的 1 元包装。不保留第二份校验/落盘实现。 */
-export function acceptChangeUnitCandidate(projectRoot: string, candidate: ChangeUnitCandidate) {
+export function acceptChangeUnitCandidate(projectRoot: string, candidate: ChangeUnitCandidateInput) {
   return acceptChangeUnitCandidates(projectRoot, [candidate])[0]!;
 }

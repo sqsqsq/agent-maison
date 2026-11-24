@@ -38,7 +38,7 @@ import { changeUnitDirectory, changeUnitPath, enumerateCanonicalChangeUnits, par
 import { LIVENESS_BEACON_FILENAME } from './liveness-beacon';
 import { componentBlueprintPath, loadCanonicalBlueprint, resolveComponentBlueprintRefFromLoaded, resolveBlueprintCandidateRefFromLoaded } from './component-blueprint-path';
 import type { ChangeUnitArtifact, ChangeUnitRef } from './change-unit-model';
-import { assertPendingCandidateAcceptanceReferences, ChangeUnitCandidateRejected, type ChangeUnitCandidate } from './change-unit-provider-boundary';
+import { assertPendingCandidateAcceptanceReferences, ChangeUnitCandidateRejected, expandChangeUnitCandidate, type ChangeUnitCandidate, type ChangeUnitCandidateInput } from './change-unit-provider-boundary';
 import type { ComponentBlueprintRef } from './component-blueprint-model';
 import { blueprintIdentityPointers, currentBlueprintIdentity } from './change-unit-blueprint-identity';
 import { validateChangeUnitDesign, readChangeUnitDesignOwnership } from './change-unit-design-gate';
@@ -1196,8 +1196,10 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
     const configBaseline = original.config ? Buffer.from(original.config, 'base64') : undefined;
     const originalArchitecture = configBaseline ? JSON.parse(configBaseline.toString('utf8')).architecture : undefined;
     if (batchDraftFile && !fs.existsSync(batchDraftFile)) fs.writeFileSync(batchDraftFile, original.pendingCandidates ? Buffer.from(original.pendingCandidates, 'base64') : '[]\n');
-    const pendingCandidates: ChangeUnitCandidate[] = original.pendingCandidates ? JSON.parse(Buffer.from(original.pendingCandidates, 'base64').toString('utf8')) : [];
+    const pendingInputs: ChangeUnitCandidateInput[] = original.pendingCandidates ? JSON.parse(Buffer.from(original.pendingCandidates, 'base64').toString('utf8')) : [];
+    const pendingCandidates = pendingInputs.map(expandChangeUnitCandidate);
     const pendingById = new Map(pendingCandidates.map(candidate => [candidate.artifact.change_unit_id, candidate]));
+    const pendingInputById = new Map(pendingInputs.map(candidate => [candidate.artifact.change_unit_id, candidate]));
     const pendingIds = new Set(pendingById.keys());
     const auxiliaryDrafts = [...(originalCu ? [cuDraftFile] : []), ...(batchDraftFile ? [batchDraftFile] : []), ...(configBaseline ? [architectureDraftFile] : [])];
     const authorDrafts = [draftFile, ...auxiliaryDrafts];
@@ -1220,20 +1222,21 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
         seen.add(id);
         const originalPending = pendingById.get(id);
         const loaded = pendingIds.has(id) ? undefined : loadCanonicalChangeUnit(projectRoot, blueprintId, id);
-        const candidate = asChangeUnitArtifact(artifact);
-        if (originalPending && canon(row) !== canon(originalPending) && !input.brief.items.some(finding => finding.artifacts.includes(
+        const normalized = expandChangeUnitCandidate(row as unknown as ChangeUnitCandidateInput);
+        const candidate = normalized.artifact;
+        if (originalPending && canon(row) !== canon(pendingInputById.get(id)) && canon(normalized) !== canon(originalPending) && !input.brief.items.some(finding => finding.artifacts.includes(
           path.relative(projectRoot, changeUnitPath(projectRoot, blueprintId, id)).replace(/\\/g, '/')))) {
           candidateEditsOutsideBrief = true;
           return structuredClone(originalPending);
         }
-        if (artifact.change_unit_id === changeUnitId && (!row.construction_mapping
+        if (artifact.change_unit_id === changeUnitId && (!normalized.construction_mapping
           || changeUnitPublicationContent(candidate) !== changeUnitPublicationContent(asChangeUnitArtifact(YAML.parse(fs.readFileSync(cuDraftFile, 'utf8')))))) {
           throw new AttemptFailure('author_scope', '主CU在批次中只可携带同一cuDraft的construction_mapping，不得重复给出另一套CU内容');
         }
         if (loaded && changeUnitPublicationContent(asChangeUnitArtifact(loaded.changeUnit)) !== changeUnitPublicationContent(candidate)) {
           resolveChangeUnitRefFromLoaded(loaded, { ...createChangeUnitRef(loaded), revision: candidate.revision });
         }
-        return { providerId: row.providerId, artifact: candidate, ...(row.construction_mapping ? { construction_mapping: row.construction_mapping as ChangeUnitCandidate['construction_mapping'] } : {}) };
+        return normalized;
       });
       return [...submitted, ...pendingCandidates.filter(candidate => !seen.has(candidate.artifact.change_unit_id)).map(candidate => structuredClone(candidate))];
     };

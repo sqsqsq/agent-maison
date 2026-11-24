@@ -683,6 +683,7 @@ export function initialDesignAuthorInstruction(input: { projectRoot: string; fra
     ...(observation.kind === 'author' ? [
       `本次必须实际编写或补齐 ${observation.blueprintPath}，不是只调查、写author-findings.md或报告尚未完成。已有发现是中间材料；完成必要定向核实后立即把本次真实设计写进schema蓝图，并按当前机器缺口继续修到本职可交接。`,
       '先完成原需求的当前切片、4+1视图、稳定义务、内部/外部契约与数据/导航/失败恢复闭环；不等另一位作者接手，不以尚待独立质询为停止写蓝图的理由。没有真实授权或必需事实时明确具体缺口，不编答案。',
+      '在所属节点的 typed contracts.interfaces 声明接口方法签名。流程 ordered_steps 可用 interface:view:development/node:<node_id>/<class>#<method>，业务分支写成功、重复和失败的去向。用例数据边界 methods 使用所属类下唯一的方法名或同一完整引用；验收保留可观察结果，独立 DTO 显式描述转换。',
       '从原需求提取当前切片的预期结果，每个需独立证据的行为给独立验收 ID、真实产品触发和可观察通道。结果页出现证明页面已到达；逐项说明 UI checkpoint 的元素或断言能观察哪个承诺，多个 UI 义务可以共用动作。应用内测试即使在真机执行也归 unit，可分别验证输入映射与默认值、生产持久化写入及实际读回、实际调用次数。跨层行为说明同一次对象的生产、交接、消费与清理；交回前核对同一 CU 的 ID，保留完整一致的共享定义。',
       'focus 写应观察的结果与通道。使用已核产品事实写适用 P0 检查点和逐字需求引用；具体测试 API、定位或注入方式、数据前置、可运行用例与断言强度在既有 CU 计划和原验证职责确定。缺测试时保留原义务并将执行留给该职责；先完成本轮产品设计与来源。',
     ] : []),
@@ -692,7 +693,7 @@ export function initialDesignAuthorInstruction(input: { projectRoot: string; fra
       `D（原阶段域）=[${initialDesignPhasePolicy(input.projectRoot, frameworkRoot, manifest).domain.join(',')}]；E（明确动作）=[${initialDesignPhasePolicy(input.projectRoot, frameworkRoot, manifest).explicit.join(',')}]。本CU动作A由你按原请求/已准入CU选择，必须保留E且只能取D内阶段。E空不等于没有交付责任；不可删显式testing，也不把域D全抄成用户明确要求。完整feature的验收、设备与视觉义务仍由原resolver全量派生，不列testing不会裁掉真实设备/视觉要求；不得因缺工具缩减原目标。`,
       'impact-behavior-change判断的是最终用户在运行产品上可见或可操作的行为变化，不等同任何内部函数、公开API或部件状态变化。true会使testing入链并要求真实设备工具链；false仍保留验收设备层、性能待定和视觉定档的真实义务。工具缺失不是选择false的理由。依据该CU真实设计、源码与验收给完整判断、理由和实际来源；未知不能默认为false，也不复制root结论。必须整份生成候选，不手改hash。完成本职输入准备后由runtime严格验证、正式出生并施工。',
     ] : []),
-    ...(observation.kind === 'decompose' ? ['同一次设计作者交回新CU候选及 construction_mapping：predicate_mappings、provide_mappings、design_ref_mappings 使用既有 contracts.change_unit 同形数组，逐项明确实际 implementation_refs 与 test_refs/verification_refs（未落盘可用 planned:）。不从 touches 或 AC ID 猜测测试文件；已有唯一明确设计映射可复用。consumer 接受 CU 后填真实 change_unit_ref，再由原 writer 整份校验并物化 Feature 契约；不需要额外作者调用补 sidecar。保留全部已有 canonical CU、蓝图及有效交付原件；现有CU内容修订交原正式设计发布事务。'] : []),
+    ...(observation.kind === 'decompose' ? ['同一次设计作者交回新 CU 候选。以 artifact.component_blueprint_ref 绑定当前蓝图；在 artifact.design_refs 逐条写 {target: {kind, view_id?, id}, implementation_refs, verification_refs}，工具从每条稳定目标展开原 design_ref_mappings 和精确蓝图身份。touches[].design_ref 可用 {target}。construction_mapping 填 predicate_mappings 与 provide_mappings，引用真实 implementation_refs 和 test_refs。保留旧完整映射时须与显式声明一致。未落盘文件可用 planned:；施工和测试落点按实际证据填写，有歧义交原作者核对。接受方填真实 change_unit_ref，再由原 writer 校验并物化 Feature 契约。保留全部已有 canonical CU、蓝图及有效交付原件；现有 CU 修订交原正式事务。'] : []),
     ...(observation.kind === 'decompose' ? [
       '映射到框架 testing 计划时，用候选自己的 blueprint_id 与 change_unit_id 解析长期引用。CU 计划落在自身目录，施工映射只引用长期计划位置。',
       buildChangeUnitTestingLocationHint(input.projectRoot, manifest.feature),

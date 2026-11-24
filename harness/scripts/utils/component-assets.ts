@@ -119,13 +119,13 @@ function declaredExistingPages(root: string, blueprint: BlueprintRecord, target:
 }
 
 /** Complete a target's existing declarations from its own identified component facts. */
-export function blueprintTargetComponents(root: string, blueprint: BlueprintRecord, target: BlueprintRecord, report: (message: string) => void): BlueprintRecord[] {
+export function blueprintTargetComponents(root: string | undefined, blueprint: BlueprintRecord, target: BlueprintRecord, report: (message: string) => void): BlueprintRecord[] {
   const fields = ['file', 'name', 'module', 'kind', 'decorator', 'linked_functions', 'state', 'props', 'events', 'children', 'nav_destinations', 'nav_destination', 'description', 'asset_selection'];
   const explicit = isUiComponent(target) && componentLocation(target)
     ? [Object.fromEntries(fields.filter(field => target[field] !== undefined).map(field => [field, target[field]]))] : [];
   const typed = asRecords(asRecord(target.contracts)?.components).filter(row => isUiComponent(row) || row.asset_selection !== undefined
     || row.kind === undefined && isUiComponent(target));
-  const standalone = [...explicit, ...declaredExistingPages(root, blueprint, target, typed, report)];
+  const standalone = [...explicit, ...(root ? declaredExistingPages(root, blueprint, target, typed, report) : [])];
   const identities = new Map([...standalone, ...typed].flatMap(row => {
     const id = componentLocation(row);
     return id ? [[id, row] as const] : [];
@@ -157,9 +157,9 @@ export function blueprintTargetComponents(root: string, blueprint: BlueprintReco
   return [...components.values()];
 }
 
-export function blueprintUiComponents(blueprint: BlueprintRecord): BlueprintRecord[] {
+export function blueprintUiComponents(blueprint: BlueprintRecord, root?: string): BlueprintRecord[] {
   const development = asRecords(blueprint.design_views).find(view => view.view_id === 'development');
-  const components = asRecords(development?.nodes).flatMap(node => [node, ...asRecords(asRecord(node.contracts)?.components)]).filter(isUiComponent);
+  const components = asRecords(development?.nodes).flatMap(node => blueprintTargetComponents(root, blueprint, node, () => undefined));
   return [...new Map(components.flatMap(component => {
     const key = componentLocation(component);
     return key ? [[key, component] as const] : [];
@@ -167,11 +167,13 @@ export function blueprintUiComponents(blueprint: BlueprintRecord): BlueprintReco
 }
 
 /** Select by the declared target relationship, never by a guessed name or the local selection value. */
-export function blueprintComponentDecisions(blueprint: BlueprintRecord, component: BlueprintRecord): BlueprintRecord[] {
+export function blueprintComponentDecisions(blueprint: BlueprintRecord, component: BlueprintRecord, root?: string): BlueprintRecord[] {
   const nodes = asRecords(asRecords(blueprint.design_views).find(view => view.view_id === 'development')?.nodes);
-  const exact = nodes.filter(node => node.file === component.file && node.name === component.name && isUiComponent(node));
-  const owners = exact.length ? exact : nodes.filter(node => asRecords(asRecord(node.contracts)?.components)
-    .some(item => item.file === component.file && item.name === component.name));
+  const key = componentLocation(component);
+  if (!key) return [];
+  const exact = nodes.filter(node => isUiComponent(node) && componentLocation(node) === key);
+  const owners = exact.length ? exact : nodes.filter(node => blueprintTargetComponents(root, blueprint, node, () => undefined)
+    .some(item => componentLocation(item) === key));
   const targets = new Set(owners.map(node => `view:development/node:${node.node_id}`));
   return asRecords(asRecord(blueprint.decisions_and_gaps)?.decisions)
     .filter(decision => decision.kind === 'component_asset_selection' && targets.has(String(decision.target_ref)));
