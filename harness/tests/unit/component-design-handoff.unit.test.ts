@@ -259,7 +259,7 @@ export function runAll(): UnitCaseResult[] {
         typed.components = [{ name: 'LedgerFeature', module: 'ledger', file: 'src/ledger/LedgerFeature.ets', kind: 'page', asset_selection: { resolution: 'custom', rationale } }];
         const development = asRecords(bp.design_views).find(view => view.view_id === 'development')!;
         const node = asRecords(development.nodes)[0]!;
-        node.kind = 'page';
+        Object.assign(node, { kind: 'page', file: 'src/ledger/LedgerFeature.ets', name: 'LedgerFeature' });
         const gaps = asRecord(bp.decisions_and_gaps)!;
         gaps.decisions = [...asRecords(gaps.decisions), { decision_id: 'asset-ledger-page', kind: 'component_asset_selection', target_ref: `view:development/node:${node.node_id}`, asset_resolution: 'custom', rationale, status: 'decided_with_authority', owner: 'ui-owner', verification_refs: ['src/ledger/LedgerFeature.ets'], provenance: { ...asRecord(bp.provenance), source_ref: relComponentIndex(root) } }];
         const provider = asRecords(bp.providers).find(item => item.provider_id === 'component-assets')!;
@@ -286,7 +286,8 @@ export function runAll(): UnitCaseResult[] {
       asRecords(section.design_ref_mappings).forEach(mapping => { mapping.implementation_refs = ['src/ledger/LedgerFeature.ets#LedgerFeature']; });
       const evaluate = (contracts: BlueprintRecord, phase: 'plan' | 'coding') => validateChangeUnitFeatureProjection(root, SNAPSHOT_CU_FEATURE, contracts as unknown as ContractsSpec, undefined, true, phase);
       assert(!evaluate(authored, 'plan').issues.length, `完整正常 plan 映射未通过：${JSON.stringify(evaluate(authored, 'plan').issues)}`);
-      section.design_ref_mappings = asRecords(section.design_ref_mappings).filter(mapping => asRecord(asRecord(mapping.design_ref)?.target)?.id !== 'asset-ledger-page');
+      const selectionMapping = asRecords(section.design_ref_mappings).find(mapping => asRecord(asRecord(mapping.design_ref)?.target)?.id === 'asset-ledger-page')!;
+      selectionMapping.implementation_refs = ['src/ledger/LedgerFeature.ets#WrongSymbol'];
       for (const phase of ['plan', 'coding'] as const) assert(evaluate(authored, phase).issues.some(item => item.id === 'component_asset_projection'), `${phase} 的组件映射门被 designOnly 修复削弱`);
       assert(!readiness.entersConstruction, '设计 readiness 启动施工');
     });
