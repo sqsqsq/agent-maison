@@ -661,7 +661,8 @@ export function resolveSuccessorExecutionScope(
     completionTarget: previous.completion_target,
     requestedResults: [...previous.requested_results],
     requestedPhases,
-    ...(impact && basisPaths.length ? { impact: { userVisibleBehaviorChange: impact.user_visible_behavior_change, reason: impact.reason, basisPaths } } : {}),
+    ...(impact && feature.startsWith('cu-') ? { inheritedImpact: impact }
+      : impact && basisPaths.length ? { impact: { userVisibleBehaviorChange: impact.user_visible_behavior_change, reason: impact.reason, basisPaths } } : {}),
     ...(requirement?.trim() ? { requirement } : {}),
   });
   // 需求血缘按 manifest.requirement 原文算（与 computeRunRequirementSha 同口径，不 trim）：需求未变即与源 run 相同、复用不受影响。

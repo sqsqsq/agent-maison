@@ -8,7 +8,7 @@ import { loadResolvedProfile } from '../../profile-loader';
 import { tryLoadUtSourceRootResolver } from '../../profile-host-loader';
 import { loadEffectiveExecutionScope, resolveEffectiveScopeSource } from './goal-run-creation';
 import { resolveExecutionScope, findSubtractedRequiredObligations, readScopeRevisionUserControl, applyScopeUserControl, type ExecutionScope, type ExecutionScopeInput } from './execution-scope';
-import { readScopeAcceptance, collectResolvedScopeFacts, recomputeDefinitionFacts, featureTrackDeclPath } from './feature-track';
+import { readScopeAcceptance, collectResolvedScopeFacts, resolveChangeUnitImpactFacts, recomputeDefinitionFacts, featureTrackDeclPath } from './feature-track';
 import { loadGoalManifestFromRun } from './goal-manifest';
 import { asRecord, asRecords, asStrings, getId, issue, type BlueprintIssue, type BlueprintRecord } from './component-blueprint-model';
 import { resolveBlueprintTarget, stableAddressIndex } from './blueprint-addressing';
@@ -259,7 +259,9 @@ export function designScopeRevisionChecks(ctx: CheckContext, checks: CheckResult
     requirement: runId ? loadGoalManifestFromRun(ctx.projectRoot, runId, { feature: ctx.feature }).requirement : undefined,
     impactInherited: true,
   };
-  let verifiedFacts = collectResolvedScopeFacts(proposal, factsContext);
+  // Budget the same prospective basis as the runtime without changing the stored producer proposal.
+  const sourceBudget = { ...proposal, request: { ...proposal.request } };
+  let verifiedFacts = resolveChangeUnitImpactFacts(sourceBudget, factsContext);
   let reopened = false;
   for (const fact of proposal.facts) {
     if (fact.kind === kind || !['acceptance-context', 'design-context'].includes(fact.kind) || !fact.satisfied_by) continue;
@@ -269,13 +271,14 @@ export function designScopeRevisionChecks(ctx: CheckContext, checks: CheckResult
     if (kept.length) fact.satisfied_by = kept; else delete fact.satisfied_by;
     reopened = true;
   }
-  if (reopened) verifiedFacts = collectResolvedScopeFacts(proposal, factsContext);
+  if (reopened) verifiedFacts = collectResolvedScopeFacts(sourceBudget,
+    sourceBudget.request.impact === proposal.request.impact ? factsContext : { ...factsContext, impactInherited: false });
   // Reading the new proposal still uses the strict binding reader. Dropping a
   // stale proof reopens its owner; it never declares the other definition done.
   const acceptance = ctx.phase === 'spec' && ctx.featureSpec.acceptance
     ? { value: ctx.featureSpec.acceptance, binding: resolved.binding }
     : readScopeAcceptance(ctx.projectRoot, proposal, { feature: ctx.feature, frameworkRoot: ctx.frameworkRoot });
-  const next = applyScopeUserControl(resolveExecutionScope(proposal, workflow, acceptance, verifiedFacts), workflow, control);
+  const next = applyScopeUserControl(resolveExecutionScope(sourceBudget, workflow, acceptance, verifiedFacts), workflow, control);
   if (findSubtractedRequiredObligations(scope, next, control.allowedSubtractions).length) {
     return [{ id: 'design_scope_facts', category: 'structure', severity: 'BLOCKER', status: 'FAIL', description: '设计修订不得静默删除冻结义务', details: '新验收与既有 required 义务冲突；返回 scope owner 澄清，不缩减本 run 责任', suggestion: '回到 scope owner 澄清验收变化，保留已冻结义务；正式需求变化沿既有 correction/successor 处理。' }];
   }

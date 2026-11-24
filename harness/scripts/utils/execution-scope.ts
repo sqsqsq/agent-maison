@@ -106,6 +106,8 @@ export interface ResolvedScopeFacts {
   fidelity: { state: 'missing' | 'corrupt' | 'valid'; selected_fidelity?: string; visual_requested: boolean; visual_acceptance_present?: boolean };
   /** Per-basis verdict for `request.impact.basis`: `ok` = binding verified, `related` = intersects the real targets. */
   impact_basis: Array<{ input_id: string; ok: boolean; related: boolean; detail: string }>;
+  /** A historical CU negative judgment lost its authority to prune device work. */
+  inherited_impact_unusable?: true;
   /** Per-binding verdict for every `obligation.basis` element (plan §4.1.0: both basis kinds covered). */
   basis: Array<{ obligation_id: string; input_id: string; ok: boolean; detail: string }>;
   /**
@@ -480,7 +482,8 @@ export function resolveExecutionScope(input: ExecutionScopeInput, workflow: Work
   // `completion_target=feature` additionally requires a sourced impact judgement before
   // device verification may be pruned. Missing impact => unknown (testing is NOT pruned).
   if (request.completion_target === 'feature') {
-    const impact = request.impact;
+    const impact = resolved?.inherited_impact_unusable ? undefined : request.impact;
+    if (resolved?.inherited_impact_unusable) delete request.impact;
     const device = derivations.get('device-evidence')!;
     // An empty target set is never evidence that the basis is "unrelated" — there was simply
     // nothing to compare against. Which of the two real problems it is depends on whether this
@@ -502,9 +505,9 @@ export function resolveExecutionScope(input: ExecutionScopeInput, workflow: Work
       if (typeof impact.user_visible_behavior_change !== 'boolean') fail('影响判断缺少 user_visible_behavior_change 布尔值');
       if (typeof impact.reason !== 'string' || !impact.reason.trim()) fail('影响判断缺少 reason');
       if (!Array.isArray(impact.basis) || !impact.basis.length) fail('影响判断缺少来源（basis 为空）');
-      for (const binding of impact.basis) {
-        const verdict = resolved.impact_basis.find(entry => entry.input_id === binding.input_id);
-        if (!verdict || !verdict.ok) fail(`影响依据不可用：${verdict?.detail ?? binding.input_id}`);
+      for (const [index, binding] of impact.basis.entries()) {
+        const verdict = resolved.impact_basis[index];
+        if (verdict?.input_id !== binding.input_id || !verdict.ok) fail(`影响依据不可用：${verdict?.detail ?? binding.input_id}`);
       }
       if (!resolved.impact_targets_available) {
         // (a) There *is* an implementation duty, so a declared write set must exist. Blame the
@@ -520,8 +523,7 @@ export function resolveExecutionScope(input: ExecutionScopeInput, workflow: Work
         usableImpact = undefined;
         missingImpactReason = '影响依据无可核验范围';
       } else {
-        for (const binding of impact.basis) {
-          const verdict = resolved.impact_basis.find(entry => entry.input_id === binding.input_id)!;
+        for (const verdict of resolved.impact_basis) {
           if (!verdict.related) fail(`影响依据与本次范围无关：${verdict.detail}`);
         }
       }

@@ -5410,19 +5410,9 @@ export class GoalPhaseRuntime {
         const implementation = deriveModifiableModules(projectRoot, decision.selected).length
           ? workflow.artifacts.find(artifact => artifact.obligation_provider_id === 'obligations.coding')?.id : undefined;
         const actions = implementation ? [implementation] : [];
-        const declaration = asRecord(loadFeatureTrackDecl(projectRoot, request.featureId));
-        const current = asRecord(asRecord(declaration?.execution_scope)?.request);
-        const originalImpact = asRecord(current?.impact) ?? asRecord(manifest.initial_design.impact);
-        const basis = Array.isArray(originalImpact?.basis) ? originalImpact!.basis : [];
-        const impactPaths = basis.flatMap(value => {
-          const binding = asRecord(value); return Array.isArray(binding?.dependencies)
-            ? binding!.dependencies.flatMap(dependency => typeof asRecord(dependency)?.path === 'string' ? [String(asRecord(dependency)!.path)] : []) : [];
-        });
-        const impact = typeof originalImpact?.user_visible_behavior_change === 'boolean' && typeof originalImpact.reason === 'string' && impactPaths.length
-          ? { userVisibleBehaviorChange: originalImpact.user_visible_behavior_change, reason: originalImpact.reason, basisPaths: impactPaths } : undefined;
         const prepared = prepareFeatureScopeCandidate(prepareChangeUnitScopeInput({ projectRoot, frameworkRoot, changeUnit: decision.selected,
           requirement: manifest.requirement ?? '', requirementSourceFiles: manifest.requirement_source_files,
-          requestedResults: [request.requirement], requestedPhases: actions, impact, overwrite: true }));
+          requestedResults: [request.requirement], requestedPhases: actions, inheritedImpact: manifest.initial_design.impact, overwrite: true }));
         const unresolved = prepared.scope.unresolved.map(item => item.reason);
         return { ...observation, kind: unresolved.length ? 'scope' : 'construction', issues: unresolved,
           scope: { feature: request.featureId, candidatePath, command: 'npm run check -- --feature ' + JSON.stringify(request.featureId) } };

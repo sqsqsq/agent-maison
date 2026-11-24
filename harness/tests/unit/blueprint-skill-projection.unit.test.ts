@@ -23,14 +23,14 @@ import type { ResolvedScopeFacts } from '../../scripts/utils/execution-scope';
 import { createGoalRun } from '../../scripts/utils/goal-run-creation';
 import { buildGoalManifestFromInput } from '../../scripts/utils/goal-manifest';
 import { resolveCapabilityResolutionEntryInput } from '../../scripts/utils/capability-resolution-entry-input';
-import type { WorkflowSpec } from '../../workflow-loader';
+import { resolveWorkflowSpec, type WorkflowSpec } from '../../workflow-loader';
 import { collectContextFiles, writeRunSummaryBase } from '../../harness-runner';
 import { generateScriptReport } from '../../scripts/utils/report-generator';
 import { executedEvidenceInputs } from '../../scripts/utils/phase-closure-finalizer';
 import { resolvePhaseEvidenceManifest, writePhaseEvidenceManifest } from '../../scripts/utils/phase-evidence-manifest';
 import { initializeFidelityRouting } from '../../scripts/utils/goal-preflight';
 import { spawnSync } from 'child_process';
-import { readScopeAcceptance, prepareChangeUnitScopeInput, prepareFeatureScopeCandidate } from '../../scripts/utils/feature-track';
+import { buildFeatureScopeCandidate, readScopeAcceptance, prepareChangeUnitScopeInput, prepareFeatureScopeCandidate, resolveFeatureExecutionScope } from '../../scripts/utils/feature-track';
 import { checkAcceptanceContent } from '../../scripts/utils/check-acceptance';
 import { checkUseCaseSpecSchema } from '../../scripts/check-ut';
 import { diagnoseBlueprintContent } from '../../scripts/utils/component-blueprint-validator';
@@ -672,6 +672,46 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     assert(next.candidate.request.requirement_basis, '未走原哈希绑定链');
     assert.deepEqual(next.candidate.request.requested_phases, args.requestedPhases);
     assert.equal(prepareFeatureScopeCandidate(args).state, 'unchanged', '同参数重复准备不幂等');
+  } },
+  { name: '77105c47 CU scope binds accepted UI targets and never renews a stale negative judgment', run(f) {
+    const requirement = 'Refresh the ledger using the approved design';
+    const requirementFile = 'requirements/ledger.md';
+    const implementation = 'src/ledger/LedgerFeature.ets';
+    const cuFile = YAML.parse(fs.readFileSync(f.cuFile, 'utf8'));
+    const doc = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
+    const target = cuFile.design_refs.find((ref: ComponentBlueprintRef) => ref.target.id === 'ledger-module');
+    const node = resolveBlueprintTarget(doc, target.target);
+    node.provenance = { ...asRecord(node.provenance), evidence_strength: 'authoritative' };
+    node.contracts = { ...asRecord(node.contracts), navigation: { config_files: [implementation] } };
+    fs.writeFileSync(f.blueprintFile, YAML.stringify(doc));
+    f.bind();
+    materializeBlueprintSkillInputs(f.root, f.feature, frameworkRoot);
+    const source = path.join(f.root, implementation);
+    fs.mkdirSync(path.dirname(source), { recursive: true });
+    fs.writeFileSync(source, 'export const LedgerFeature = 1;\n');
+    const inherited = buildFeatureScopeCandidate({ projectRoot: f.root, frameworkRoot, feature: 'root-request',
+      completionTarget: 'feature', requirement, requestedResults: [requirement], requestedPhases: ['spec'],
+      impact: { userVisibleBehaviorChange: true, reason: 'Visible ledger result', basisPaths: [requirementFile] } }).request.impact!;
+    const request = { projectRoot: f.root, frameworkRoot, changeUnit: asChangeUnitArtifact(YAML.parse(fs.readFileSync(f.cuFile, 'utf8'))),
+      requirement, requestedResults: [requirement], requestedPhases: ['coding'], overwrite: true };
+    const prepared = prepareFeatureScopeCandidate(prepareChangeUnitScopeInput({ ...request, inheritedImpact: inherited }));
+    assert.deepEqual(prepared.candidate.request.impact?.basis[0].source_refs, [implementation]);
+    assert.equal(prepared.candidate.request.impact?.reason, inherited.reason);
+    assert.equal(prepared.scope.obligations.find(item => item.kind === 'device-evidence')?.applicability, 'required');
+    const workflow = resolveWorkflowSpec(f.root, { frameworkRoot });
+    assert.deepEqual(resolveFeatureExecutionScope(f.root, f.feature, workflow, frameworkRoot, requirement), prepared.scope);
+    const negative = { ...prepared.candidate.request.impact!, user_visible_behavior_change: false, reason: 'No visible behavior change' };
+    const valid = prepareFeatureScopeCandidate(prepareChangeUnitScopeInput({ ...request, inheritedImpact: negative }));
+    assert.deepEqual(valid.candidate.request.impact, negative);
+    fs.appendFileSync(source, '// changed input bytes\n');
+    const stale = prepareFeatureScopeCandidate(prepareChangeUnitScopeInput({ ...request, inheritedImpact: negative }));
+    assert.equal(stale.candidate.request.impact, undefined);
+    assert.equal(stale.scope.obligations.find(item => item.kind === 'device-evidence')?.applicability, 'unknown');
+    const withoutSource = prepareFeatureScopeCandidate(prepareChangeUnitScopeInput({ ...request, inheritedImpact: { ...negative, basis: [] } }));
+    assert.equal(withoutSource.scope.obligations.find(item => item.kind === 'device-evidence')?.applicability, 'unknown');
+    assert.throws(() => prepareFeatureScopeCandidate(prepareChangeUnitScopeInput({ ...request, impact: {
+      userVisibleBehaviorChange: false, reason: negative.reason, basisPaths: [requirementFile],
+    } })), /影响依据与本次范围无关/);
   } },
   { name: 'f3b8e6a1 authority preparation: invalid canonical construction reaches the design diagnosis without a scope', run(f) {
     const doc = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));

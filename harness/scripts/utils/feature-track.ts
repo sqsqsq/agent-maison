@@ -2,7 +2,7 @@ import type { IdentityNeutralDigestReaders } from './identity-neutral-digest';
 import { executionCompletionPhases } from './execution-scope';
 import { readRepairDependencyContext, workUnitMayWritePath } from './repair-responsibility';
 import { phaseCompletionProblems, isBlockingCheck } from './check-disposition';
-import { resolveExecutionScope, readScopeRevisionUserControl, applyScopeUserControl, assertRevisionKeepsRequiredObligations, executionScopeFingerprint, effectiveScopeView, scopeProofHistory, phaseEvidenceIsCurrent, scopeRevisionInvalidations, authorizedScopePhases, acceptsDefinitionInputProof, EXECUTION_SOURCE_KINDS, OBLIGATION_PROVIDERS, type ScopeHistoryEvent, type ScopeEvidenceRef, type ExecutionScope, type ExecutionScopeInput, type ResolvedScopeFacts } from './execution-scope';
+import { resolveExecutionScope, readScopeRevisionUserControl, applyScopeUserControl, assertRevisionKeepsRequiredObligations, executionScopeFingerprint, effectiveScopeView, scopeProofHistory, phaseEvidenceIsCurrent, scopeRevisionInvalidations, authorizedScopePhases, acceptsDefinitionInputProof, EXECUTION_SOURCE_KINDS, OBLIGATION_PROVIDERS, type ScopeHistoryEvent, type ScopeEvidenceRef, type ScopeImpactJudgement, type ExecutionScope, type ExecutionScopeInput, type ResolvedScopeFacts } from './execution-scope';
 import { createHash } from 'crypto';
 import * as path from 'path';
 import type { WorkflowSpec } from '../../workflow-loader';
@@ -26,7 +26,10 @@ import { isProducedPhaseChange, resolvePhasePathOwnership } from './phase-write-
 import { readHandoffMaterial, type SessionExecutionRequest } from './session-execution-handoff';
 import { repairCandidateCanReviseScope, scopeRepairReason, SCOPE_REVISION_FACT_KIND, type RepairCandidate } from './repair-candidates';
 import { invocationCompleted } from './invocation-completion';
-import { asRecord, asRecords } from './component-blueprint-model';
+import { asRecord, asRecords, asStrings } from './component-blueprint-model';
+import { resolveBlueprintTarget } from './blueprint-addressing';
+import { normalizeContractFilePath } from './contract-reference-closure';
+import { isUiComponent } from './component-assets';
 import type { GoalRunEvent } from './goal-runner-phase';
 import type { ChangeUnitArtifact } from './change-unit-model';
 // ============================================================================
@@ -139,6 +142,8 @@ export function resolveFeatureExecutionScope(projectRoot: string, feature: strin
   // D0.1「不采信自报」扩到两个定义类 kind：候选里的 design-context / acceptance-context
   // 一律按来源重算，否则手写一条 unknown 就能伪造缺口、顶掉 §4.1.3 子情形 (a) 的 fail-closed。
   recomputeDefinitionFacts(raw.execution_scope, ctx, workflow);
+  const factsContext = { ...ctx, requirement: requirement?.trim() || undefined, manifestFidelity };
+  const facts = resolveChangeUnitImpactFacts(raw.execution_scope, factsContext);
   return resolveExecutionScope(
     raw.execution_scope,
     workflow,
@@ -146,7 +151,7 @@ export function resolveFeatureExecutionScope(projectRoot: string, feature: strin
     // requirement source: the real `--requirement` / `manifest.requirement`. Both birth entries
     // have one; the change-unit handoff projection has none, and **不编一份**——凭空拿
     // `requested_results` 当需求文本只会让每条 `derive.requirement` 绑定恒判 stale。
-    collectResolvedScopeFacts(raw.execution_scope, { ...ctx, requirement: requirement?.trim() || undefined, manifestFidelity }),
+    facts,
   );
 }
 
@@ -318,16 +323,15 @@ function verifySatisfiedByBinding(projectRoot: string, frameworkRoot: string, fe
  * Shared by Goal birth, the D1 first freeze, the checker-side revision budget and the
  * runtime revision — one fact vocabulary for all four.
  */
-export function collectResolvedScopeFacts(
-  input: ExecutionScopeInput,
-  ctx: { projectRoot: string; feature: string; frameworkRoot: string; currentRunId?: string; requirement?: string | null;
+type ScopeFactsContext = { projectRoot: string; feature: string; frameworkRoot: string; currentRunId?: string; requirement?: string | null;
     manifestFidelity?: FidelityTarget;
     /** requested_results may support the existing UI heuristic, but is not a fidelity requirement. */
     requirementIsFallback?: boolean;
     /** True when `request.impact` was inherited from the effective scope rather than supplied by
      *  this proposal — its basis is then a birth-time observation and its content is not re-compared. */
-    impactInherited?: boolean; currentPhasePass?: string },
-): ResolvedScopeFacts {
+    impactInherited?: boolean; currentPhasePass?: string };
+
+export function collectResolvedScopeFacts(input: ExecutionScopeInput, ctx: ScopeFactsContext): ResolvedScopeFacts {
   const { projectRoot, feature, frameworkRoot } = ctx;
   // plan b2d7f4e9 t4：候选/有效范围里的记录依赖可能写于另一个工程根，读侧按同一份记录推出的旧根重定位。
   const legacyRoot = inferLegacyProjectRoot(projectRoot, input) ?? (ctx.currentRunId ? (() => {
@@ -408,8 +412,10 @@ export function collectResolvedScopeFacts(
     ...(hasImplementation ? [] : [...targets.review_targets, ...targets.ut_targets]),
   ]);
 
-  const impact_basis = (input.request.impact?.basis ?? []).map(binding => {
-    const verdict = verifyBasisBinding(projectRoot, frameworkRoot, feature, binding, ctx.impactInherited === true, ctx.requirement, legacyRoot);
+  const inheritedCuNegative = ctx.impactInherited === true && feature.startsWith('cu-')
+    && input.request.impact?.user_visible_behavior_change === false;
+  const impact_basis = (Array.isArray(input.request.impact?.basis) ? input.request.impact.basis : []).map(binding => {
+    const verdict = verifyBasisBinding(projectRoot, frameworkRoot, feature, binding, ctx.impactInherited === true && !inheritedCuNegative, ctx.requirement, legacyRoot);
     // Relevance is computed here (not in the resolver) because it needs projectRoot to normalise
     // paths; `targets` above is carried through so the decision stays inspectable.
     const paths = binding.dependencies.map(relDep);
@@ -464,7 +470,54 @@ export function collectResolvedScopeFacts(
       satisfied_by.push({ obligation_id: fact.id, ref_index, ok: issues.length === 0, detail: issues.join('; ') || `${ref.phase}@${ref.run_id}: evidence verified` });
     });
   }
-  return { fidelity, impact_basis, basis, satisfied_by, targets, impact_targets_available: allowed.size > 0 };
+  return { fidelity, impact_basis, basis, satisfied_by, targets, impact_targets_available: allowed.size > 0,
+    ...(inheritedCuNegative && (!allowed.size || !impact_basis.length || impact_basis.some(entry => !entry.ok || !entry.related))
+      ? { inherited_impact_unusable: true } : {}) };
+}
+
+/** Rebind only an existing positive judgment to verified, explicitly mapped CU UI/route files. */
+export function resolveChangeUnitImpactFacts(input: ExecutionScopeInput, ctx: ScopeFactsContext, allowRebind = true): ResolvedScopeFacts {
+  const facts = collectResolvedScopeFacts(input, ctx);
+  const impact = input.request.impact;
+  if (!allowRebind || !ctx.feature.startsWith('cu-') || input.request.completion_target !== 'feature'
+    || impact?.user_visible_behavior_change !== true || !facts.impact_targets_available
+    || facts.impact_basis.length && facts.impact_basis.every(entry => entry.ok && entry.related)) return facts;
+
+  let paths: string[];
+  const { projectRoot, frameworkRoot, feature } = ctx;
+  const constructionContext = { projectRoot, frameworkRoot, feature };
+  try {
+    const source = candidateInput(constructionContext, 'plan', 'contracts');
+    if (!source) return facts;
+    const contracts = source.value as ContractsSpec;
+    if (authorityGapOf(ctx, 'contracts', source) || !contracts.change_unit) return facts;
+    const { blueprint } = loadCanonicalBlueprint(ctx.projectRoot, contracts.change_unit.change_unit_ref.blueprint_id);
+    const normalize = (file: string): string => normalizeContractFilePath(ctx.projectRoot, file, 'CU impact');
+    const writeSet = new Set((contracts.files ?? []).map(normalize));
+    const mapped = contracts.change_unit.design_ref_mappings.flatMap(({ design_ref: ref, implementation_refs }) => {
+      if (!['node', 'flow'].includes(ref.target.kind)) return [];
+      const target = resolveBlueprintTarget(blueprint, ref.target);
+      const local = asRecord(target.contracts);
+      const routes = new Set(asStrings(asRecord(local?.navigation)?.config_files).map(normalize));
+      const ui = [target, ...asRecords(local?.components)].filter(entry => isUiComponent(entry) || entry.kind === 'route')
+        .flatMap(entry => typeof entry.file === 'string' ? [{ file: normalize(entry.file), name: entry.name }] : []);
+      return implementation_refs.flatMap(landing => {
+        const [rawFile, symbol] = landing.replace(/^planned:/, '').split('#');
+        const file = normalize(rawFile);
+        return writeSet.has(file) && (routes.has(file) || ui.some(entry => entry.file === file && (!symbol || symbol === entry.name))) ? [file] : [];
+      });
+    });
+    paths = [...new Set(mapped)].filter(file => {
+      try { return fs.statSync(path.resolve(ctx.projectRoot, file)).isFile(); } catch { return false; }
+    }).sort();
+  } catch { return facts; } // The existing scope/plan checks own invalid construction inputs.
+  const binding = paths.length ? candidateBinding(constructionContext, 'plan', 'codebase', paths) : undefined;
+  if (!binding) return facts;
+  const rebound = { ...impact, basis: [binding] };
+  const next = collectResolvedScopeFacts({ ...input, request: { ...input.request, impact: rebound } }, { ...ctx, impactInherited: false });
+  if (!next.impact_basis.every(entry => entry.ok && entry.related)) return facts;
+  input.request.impact = rebound;
+  return next;
 }
 
 /** Re-read the selected acceptance source through P1; never scan history or write artifacts. */
@@ -495,6 +548,8 @@ export interface PrepareScopeCandidateInput {
   requestedPhases: string[];
   /** 之四：影响判断（含来源路径）；缺省 = 不给判断（device 义务保持 unknown）。 */
   impact?: { userVisibleBehaviorChange: boolean; reason: string; basisPaths: string[] };
+  /** Existing immutable judgment from the authorizing run; retain its digest until verified. */
+  inheritedImpact?: ScopeImpactJudgement;
   /**
    * 需求文本：与 `--prepare-run` 用的是同一份（视觉相关性由它判定）。缺省才回落
    * `requestedResults`——两处不同源会让候选与出生时的 visual 结论对不上。
@@ -517,13 +572,13 @@ export interface PrepareScopeCandidateResult {
   explanation: string;
 }
 
-/** Mechanical arguments for the existing candidate writer; no domain or impact inference. */
+/** Mechanical arguments for the existing candidate writer. */
 export function prepareChangeUnitScopeInput(input: {
   projectRoot: string; frameworkRoot: string; changeUnit: ChangeUnitArtifact;
   requirement: string; requirementSourceFiles?: string[];
   requestedResults: string[]; requestedPhases: string[];
   obligations?: ExecutionScope['obligations'];
-  impact?: PrepareScopeCandidateInput['impact']; overwrite?: boolean;
+  impact?: PrepareScopeCandidateInput['impact']; inheritedImpact?: ScopeImpactJudgement; overwrite?: boolean;
 }): PrepareScopeCandidateInput {
   return {
     projectRoot: input.projectRoot, frameworkRoot: input.frameworkRoot,
@@ -536,6 +591,7 @@ export function prepareChangeUnitScopeInput(input: {
       .filter(obligation => obligation.applicability === 'required' && !obligation.satisfied_by?.length)
       .map(obligation => obligation.owner_phase)])],
     ...(input.impact ? { impact: structuredClone(input.impact) } : {}),
+    ...(input.inheritedImpact ? { inheritedImpact: structuredClone(input.inheritedImpact) } : {}),
     ...(input.overwrite !== undefined ? { overwrite: input.overwrite } : {}),
   };
 }
@@ -721,8 +777,11 @@ export function refreshScopeBindingInput(ctx: { projectRoot: string; frameworkRo
     fact.basis = fact.basis.map(binding => refresh(binding, fact.owner_phase));
     fact.satisfied_by = fact.satisfied_by?.map(proof => 'input_id' in proof ? refresh(proof, fact.owner_phase) : proof);
   }
-  if (!changed || !hasNewSourcedFact(comparison, facts, '')) return undefined;
-  return scopeWithRefreshedBindings(previous, facts);
+  const candidate = scopeWithRefreshedBindings(previous, facts);
+  if (changed && hasNewSourcedFact(comparison, facts, '')) return candidate;
+  if (ctx.feature.startsWith('cu-') && previous.request_impact?.user_visible_behavior_change === false
+    && collectResolvedScopeFacts(candidate, { ...ctx, impactInherited: true }).inherited_impact_unusable) return candidate;
+  return undefined;
 }
 
 function scopeWithRefreshedBindings(previous: ExecutionScope, facts: ExecutionScopeInput['facts']): ExecutionScopeInput {
@@ -1040,11 +1099,15 @@ export function buildFeatureScopeCandidate(input: Omit<PrepareScopeCandidateInpu
       requirement_basis: requirementBinding,
       ...(input.impact && impactBasis
         ? { impact: { user_visible_behavior_change: input.impact.userVisibleBehaviorChange, reason: input.impact.reason, basis: [impactBasis] } }
-        : {}),
+        : input.inheritedImpact ? { impact: structuredClone(input.inheritedImpact) } : {}),
     },
     facts,
     contract_fingerprints: loadFeatureContracts(frameworkRoot).map(contractFingerprint),
   };
+  if (feature.startsWith('cu-') && candidate.request.impact) {
+    const verified = resolveChangeUnitImpactFacts(candidate, { ...ctx, requirement: requirementText, impactInherited: !!input.inheritedImpact && !input.impact });
+    if (verified.inherited_impact_unusable) delete candidate.request.impact;
+  }
   return candidate;
 }
 
@@ -1349,17 +1412,25 @@ export function resolveScopeRevisionProposal(input: {
   for (const fact of proposal.facts) if (revoked.has(nextDuties.find(o => o.id === fact.id)!.owner_phase)) delete fact.satisfied_by;
   if (proposal.request.impact === null) throw new Error('[execution-scope] 影响判断为 null——请给出判断或不要携带该字段');
   if (proposal.request.impact === undefined) proposal.request.impact = structuredClone(priorImpact);
+  // A stored pre-revision check can still carry the original request judgment after we have rebound it.
+  const birthImpact = birth?.request_impact && scopeAtProjectRoot(projectRoot, birth, legacyRoot).request_impact;
+  if (feature.startsWith('cu-') && proposal.request.impact && birthImpact
+    && executionScopeFingerprint(proposal.request.impact) === executionScopeFingerprint(birthImpact)) {
+    proposal.request.impact = structuredClone(priorImpact);
+  }
   const impactInherited = proposal.request.impact === undefined
     || (priorImpact !== undefined
       && executionScopeFingerprint(proposal.request.impact) === executionScopeFingerprint(priorImpact));
   if (!impactInherited && !(proposal.request.impact?.basis ?? []).some(binding => !previous.obligations.some(obligation => obligation.basis.some(prior => executionScopeFingerprint(prior) === executionScopeFingerprint(binding)))
-    && !(previous.request_impact?.basis ?? []).some(prior => executionScopeFingerprint(prior) === executionScopeFingerprint(binding)))) {
+    && !(priorImpact?.basis ?? []).some(prior => executionScopeFingerprint(prior) === executionScopeFingerprint(binding)))) {
     throw new Error('[execution-scope] impact correction requires its own new sourced basis');
   }
   const currentPhasePass = input.currentPhase && input.completedPhases?.has(input.currentPhase) ? input.currentPhase : undefined;
   const ctx = { projectRoot, feature, frameworkRoot, ...(input.currentRunId ? { currentRunId: input.currentRunId } : {}), ...(input.requirement ? { requirement: input.requirement } : {}), impactInherited, currentPhasePass };
   recomputeDefinitionFacts(proposal, { projectRoot, feature, frameworkRoot }, workflow, true);
-  let facts = collectResolvedScopeFacts(proposal, ctx);
+  const formerImpact = proposal.request.impact;
+  let facts = resolveChangeUnitImpactFacts(proposal, ctx, impactInherited);
+  const impactRebound = formerImpact !== proposal.request.impact;
   const stale = facts.satisfied_by.filter(entry => !entry.ok
     && !('input_id' in (proposal.facts.find(fact => fact.id === entry.obligation_id)?.satisfied_by?.[entry.ref_index] ?? { input_id: '' })));
   if (stale.length) {
@@ -1369,7 +1440,7 @@ export function resolveScopeRevisionProposal(input: {
       const kept = fact.satisfied_by.filter((_, index) => !drop.includes(index));
       if (kept.length) fact.satisfied_by = kept; else delete fact.satisfied_by;
     }
-    facts = collectResolvedScopeFacts(proposal, ctx);
+    facts = collectResolvedScopeFacts(proposal, impactRebound ? { ...ctx, impactInherited: false } : ctx);
   }
   const resolved = applyScopeUserControl(resolveExecutionScope(proposal, workflow, readScopeAcceptance(projectRoot, proposal, { feature, frameworkRoot }), facts), workflow, control);
   assertRevisionKeepsRequiredObligations(previous, resolved, control.allowedSubtractions);
@@ -1384,7 +1455,7 @@ export function resolveScopeRevisionProposal(input: {
   const reopened = proposal.facts.some(fact => repairFactIds.has(fact.id)
     && !fact.satisfied_by?.length && progress.obligations.some(prior => prior.id === fact.id && prior.satisfied_by?.length));
   // A current trusted finding is new knowledge; its unchanged product file need not be rewritten to earn recovery.
-  if (!control.newSource && !hasNewSourcedFact(comparison, proposal.facts, input.currentRunId ?? '') && !confirmedRepair && !reopened
+  if (!control.newSource && !impactRebound && !facts.inherited_impact_unusable && !hasNewSourcedFact(comparison, proposal.facts, input.currentRunId ?? '') && !confirmedRepair && !reopened
     && !previous.obligations.some(prior => prior.satisfied_by?.length && !progress.obligations.find(o => o.id === prior.id)?.satisfied_by?.length)) {
     const current = (input.repairCandidates ?? []).filter(candidate => repairCandidateCanReviseScope(candidate)
       && (!input.currentPhase || candidate.source_phase === input.currentPhase));
