@@ -855,6 +855,13 @@ const cases = [{
           completionTarget: 'feature', requestedResults: [REQUIREMENT], requestedPhases: ['plan', 'coding', 'review', 'ut'], requirement: REQUIREMENT,
           requirementSourceFiles: ['requirements/ledger.md'], impact: { userVisibleBehaviorChange: false, reason: '复用现有纯账本余额计算，保持原内部调用，无新增设备行为', basisPaths: [BASELINE_SOURCE] }, overwrite: true });
       } else if (phase === 'work-unit-author') {
+        if (childDirs.size && !childDirs.has(context.runDir)) {
+          const born = host.load('scripts/utils/goal-run-creation').loadFrozenExecutionScope(host.root, context.feature, context.runId);
+          assert.equal(born.request_impact?.user_visible_behavior_change, false, 'successor retains the original valid impact through the definition gap');
+          assert.deepEqual(born.request_impact.basis[0].source_refs, [BASELINE_SOURCE]);
+          assert.equal(born.obligations.find((obligation: any) => obligation.kind === 'device-evidence')?.applicability, 'unknown',
+            'a successor still waiting on current targets must not prune its device duty');
+        }
         authors++; childDirs.add(context.runDir);
         unitMaterials(host, { ...context, chain: context.chain.filter((family: string) => family !== 'review') });
         writeHostFile(host.root, TEST, currentTests);

@@ -39,7 +39,7 @@ import { deriveDesignPreparationReadiness } from '../../scripts/utils/change-uni
 import { inspectAcceptanceItem, inspectTypedConstructionContent, inspectUseCaseItem } from '../../scripts/utils/design-content-checks';
 import { collectCleanPassIssues, readReusableCheckResult } from '../../scripts/utils/verify-feature-completion';
 import type { UnitCaseResult } from '../run-unit';
-import { asChangeUnitArtifact, createChangeUnitRef, loadCanonicalChangeUnit } from '../../scripts/utils/change-unit-path';
+import { asChangeUnitArtifact, createChangeUnitRef, deriveChangeUnitFeatureId, loadCanonicalChangeUnit } from '../../scripts/utils/change-unit-path';
 import { validateChangeUnitDesign, readChangeUnitDesignOwnership } from '../../scripts/utils/change-unit-design-gate';
 import { acceptChangeUnitCandidate, ChangeUnitCandidateRejected, inspectChangeUnitCandidateBatch, matchesAcceptedChangeUnitCandidate, rebindQuestionedChangeUnitCandidates, type ChangeUnitCandidateInput } from '../../scripts/utils/change-unit-provider-boundary';
 import { loadCanonicalBlueprint } from '../../scripts/utils/component-blueprint-path';
@@ -858,6 +858,13 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     const successor = () => resolveSuccessorExecutionScope(f.root, f.feature, workflow, frameworkRoot, requirement, manifest.run_id)!;
     assert.deepEqual(successor().request_impact, prepared.scope.request_impact);
     const negative = { ...prepared.candidate.request.impact!, user_visible_behavior_change: false, reason: 'No visible behavior change' };
+    const prepareGap = (impact: typeof negative) => prepareFeatureScopeCandidate({
+      ...prepareChangeUnitScopeInput({ ...request, requestedPhases: ['spec', 'plan'], inheritedImpact: impact }),
+      feature: deriveChangeUnitFeatureId(request.changeUnit.blueprint_id, 'impact-gap'),
+    });
+    const gap = prepareGap(negative);
+    assert.deepEqual(gap.scope.request_impact, negative, 'a definition gap must retain the exact still-valid source');
+    assert.equal(gap.scope.obligations.find(item => item.kind === 'device-evidence')?.applicability, 'unknown');
     const valid = prepareFeatureScopeCandidate(prepareChangeUnitScopeInput({ ...request, inheritedImpact: negative }));
     assert.deepEqual(valid.candidate.request.impact, negative);
     const negativeManifest = buildGoalManifestFromInput({ feature: f.feature, run_id: 'cu-negative-impact-source', requirement,
@@ -866,6 +873,9 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     const negativeSuccessor = () => resolveSuccessorExecutionScope(f.root, f.feature, workflow, frameworkRoot, requirement, negativeManifest.run_id)!;
     assert.deepEqual(negativeSuccessor().request_impact, negative);
     fs.appendFileSync(source, '// changed input bytes\n');
+    const staleDuringGap = prepareGap(gap.scope.request_impact!);
+    assert.equal(staleDuringGap.scope.request_impact, undefined, 'a source that changes during the gap cannot be retained');
+    assert.equal(staleDuringGap.scope.obligations.find(item => item.kind === 'device-evidence')?.applicability, 'unknown');
     const next = successor();
     assert.equal(next.request_impact?.reason, inherited.reason);
     assert.deepEqual(next.request_impact?.basis[0].source_refs, [implementation]);

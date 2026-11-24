@@ -471,7 +471,9 @@ export function collectResolvedScopeFacts(input: ExecutionScopeInput, ctx: Scope
     });
   }
   return { fidelity, impact_basis, basis, satisfied_by, targets, impact_targets_available: allowed.size > 0,
-    ...(inheritedCuNegative && (!allowed.size || !impact_basis.length || impact_basis.some(entry => !entry.ok || !entry.related))
+    // A definition gap delays relevance. Keep the verified original judgment so the owner can
+    // check it again when targets exist; the resolver keeps device work unresolved meanwhile.
+    ...(inheritedCuNegative && (!impact_basis.length || impact_basis.some(entry => !entry.ok || (allowed.size > 0 && !entry.related)))
       ? { inherited_impact_unusable: true } : {}) };
 }
 
