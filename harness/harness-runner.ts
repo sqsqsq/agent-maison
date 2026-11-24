@@ -1285,8 +1285,12 @@ async function main(): Promise<void> {
     profileDir: resolvedProfile.profileDir,
     phaseIsGlobal,
   });
+  let nativeUtInputs: Parameters<NonNullable<CheckContext['bindNativeUtInputs']>>[0] | undefined;
   const context: CheckContext = {
     gateDeadlineMs: readGoalGateDeadlineMs(),
+    ...(managedAuthorCheck && phase === 'ut' ? {
+      bindNativeUtInputs: inputs => { nativeUtInputs = inputs; },
+    } : {}),
     prepareDeviceExecution: () => prepareDeviceExecution(true),
     module: args.module, term: args.term, packagePath: args['package-path'], docPath: args.path,
     resolvedInputs,
@@ -1632,7 +1636,8 @@ async function main(): Promise<void> {
       if (runId && requirementSha === null) throw new Error(`当前run无法绑定原始需求血缘（run=${runId}）`);
       const evidence = resolvePhaseEvidenceManifest({ projectRoot, feature, phase,
         frameworkRoot: resolvedFrameworkRoot, resolvedInputs, factsContext, deviceTestEvidence: context.deviceTestEvidence,
-        requirementSha, extraInputs: executedEvidenceInputs(projectRoot, feature, phase, resolvedFrameworkRoot) });
+        requirementSha, extraInputs: [...executedEvidenceInputs(projectRoot, feature, phase, resolvedFrameworkRoot), ...(nativeUtInputs?.paths ?? [])] });
+      nativeUtInputs?.assertCurrent(evidence.inputs);
       const published = writePhaseEvidenceManifest(projectRoot, evidence);
       if (managedAuthorCheck) {
         authorToolEvidence = { manifestSha256: published.sha256, stablePaths: evidence.inputs.map(entry => entry.path) };

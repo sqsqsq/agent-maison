@@ -162,7 +162,7 @@ exports.utHostImpl.checkUtHvigorTest = (ctx, ...args) => {
 }
 
 interface GoalResult { root: string; failedInputs: string[]; invocations: string[]; rawGap: boolean }
-export async function runGoal(root: string, mode: 'detached' | 'session', scenario: 'repair' | 'gap' | 'transient' | 'daily-repair' | 'daily-compile-repair' | 'normal' | 'author-tools' | 'author-tools-stale', resume = false): Promise<GoalResult> {
+export async function runGoal(root: string, mode: 'detached' | 'session', scenario: 'repair' | 'gap' | 'transient' | 'daily-repair' | 'daily-compile-repair' | 'normal' | 'author-tools' | 'author-tools-stale' | 'author-tools-race', resume = false): Promise<GoalResult> {
   const runtime = moduleAt(root, 'scripts/goal-phase-runtime');
   const entry = moduleAt(root, 'scripts/goal-mode-entry');
   const invocations: string[] = [], failedInputs: string[] = [];
@@ -230,7 +230,7 @@ export async function runGoal(root: string, mode: 'detached' | 'session', scenar
     }
     if (phase === 'review') {
       authorReview(root);
-      if (scenario === 'author-tools' || scenario === 'author-tools-stale') {
+      if (scenario === 'author-tools' || scenario === 'author-tools-stale' || scenario === 'author-tools-race') {
         const rows = Object.keys(fence?.workInput?.material.acceptanceReview ?? {}).flatMap(issue => {
           const ac = /^acceptance_test_strength_(AC-\d+)$/.exec(issue)?.[1];
           if (!ac) return [];
@@ -274,6 +274,19 @@ export async function runGoal(root: string, mode: 'detached' | 'session', scenar
         authorFacts(root, method);
       }
       researchSessionUnit(root, context);
+      if (scenario === 'author-tools-race') {
+        if (!authorToolsRan) {
+          await selfCheck('ut', mode === 'session' ? context : undefined, extraEnv ?? context.childEnv, true);
+          assert.match(fs.readFileSync(native, 'utf8'), /# fail 0/, 'the first real native UT passed before the intervening edit');
+          assert(read(root, TEST).includes('.toBe(9999)'), 'the test source changed after the native result');
+          const reports = path.join(root, 'doc/features/clamp/ut/reports');
+          assert(!fs.existsSync(path.join(reports, 'phase-evidence-manifest.json')), 'stale PASS must not publish a phase evidence manifest');
+          assert(!events(root).some(event => event.type === 'harness_end' && event.phase === 'ut' && event.author_tool_evidence_sha256));
+          write(root, TEST, TEST_SOURCE);
+          authorToolsRan = true;
+        }
+        return 0;
+      }
       if (scenario === 'author-tools' || scenario === 'author-tools-stale') {
         const owner = mode === 'session' ? context : undefined;
         const env = extraEnv ?? context.childEnv;
@@ -556,6 +569,37 @@ const cases: Array<{ name: string; run(): Promise<void> }> = [{
       assert(history.some(event => event.type === 'harness_end' && event.phase === 'ut' && !event.author_tool_invoke_id
         && event.related_input_snapshot?.[SOURCE]?.contentHash === changed),
         'changed production input was not run by the formal gate');
+    } finally {
+      fs.rmSync(temp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    }
+  },
+}, {
+  name: '77105c47 first managed UT cannot bind a PASS to test bytes changed during the check',
+  async run() {
+    const temp = fs.mkdtempSync(path.join(os.tmpdir(), '77105-author-tools-race-'));
+    const root = path.join(temp, 'session');
+    try {
+      prepareSessionCliProject(root, 'claude', false); adaptNative(root);
+      fs.appendFileSync(path.join(root, 'framework/profiles/generic/harness/ut-host-impl.js'), `
+const runBeforeRace = exports.utHostImpl.checkUtHvigorTest;
+exports.utHostImpl.checkUtHvigorTest = (ctx, ...args) => {
+  const result = runBeforeRace(ctx, ...args);
+  const marker = require('path').join(ctx.projectRoot, 'doc/features/clamp/ut/reports/first-ut-race-applied');
+  if (!require('fs').existsSync(marker) && result.some(row => row.id === 'ut_hvigor_test' && row.status === 'PASS')) {
+    const file = require('path').join(ctx.projectRoot, ${JSON.stringify(TEST)});
+    const previous = require('fs').readFileSync(file, 'utf8');
+    const changed = previous.replace('.toBe(0)', '.toBe(9999)');
+    require('assert/strict').notEqual(previous, changed);
+    require('fs').writeFileSync(file, changed);
+    require('fs').writeFileSync(marker, '');
+  }
+  return result;
+};
+`);
+      await runGoal(root, 'session', 'author-tools-race');
+      const history = events(root);
+      assert(history.some(event => event.type === 'harness_end' && event.phase === 'ut' && !event.author_tool_invoke_id),
+        'the coordinator must verify the current source after the stale check');
     } finally {
       fs.rmSync(temp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }

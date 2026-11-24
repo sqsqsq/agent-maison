@@ -19,6 +19,7 @@ import { executeCheck, executeCheckAsync } from './utils/check-execution';
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { createHash } from 'crypto';
 import * as YAML from 'yaml';
 import {
   PhaseChecker,
@@ -74,10 +75,13 @@ import { classifySourceDrift } from './utils/mutation-authorization';
 import { hasGoalExecutionSignal, resolveHarnessDiffBaseRef } from './utils/phase-state';
 import {
   tryLoadUtHostImpl,
+  tryLoadUtSourceRootResolver,
   getLastProfileHarnessLoadError,
   tryLoadDiffExcludeTestPathRegexes,
   type UtHostImpl,
 } from '../profile-host-loader';
+import { capturePhaseInvocationSnapshot } from './utils/phase-write-boundary';
+import { compareRelatedInputSnapshots, type ArtifactSnapshot } from './utils/goal-failure-classifier';
 import { resolveUtTemplateRef, type UtTemplateKey } from './utils/ut-template-paths';
 import { isUnitUtLayer, collectUnitScopeIds } from './utils/acceptance-layering';
 import { isSuiteEntryShimContent } from '../ut-suite-entry-shim';
@@ -2605,6 +2609,35 @@ export function loadUtCoverageTargets(ctx: CheckContext, host: UtHostImpl, goalR
   return { allUtFiles, partition, targetResolution };
 }
 
+function bindNativeUtInputs(ctx: CheckContext, host: UtHostImpl, selected: ReturnType<UtHostImpl['loadUtFiles']>): void {
+  if (!ctx.bindNativeUtInputs) return;
+  const read = (files: typeof selected): ArtifactSnapshot => {
+    const resolveRoots = tryLoadUtSourceRootResolver(ctx.resolvedProfile.profileDir);
+    const roots = resolveRoots?.(ctx.projectRoot, ctx.featureSpec.contracts?.modules ?? []);
+    if (files.length && !roots?.length) throw new Error('无法核实实际 UT 输入的源码根');
+    const protectedRoots = (roots ?? []).map(root => path.relative(ctx.projectRoot, root));
+    const helpers = capturePhaseInvocationSnapshot({ projectRoot: ctx.projectRoot, protectedRoots });
+    if (helpers.failureReason) throw new Error(helpers.failureReason);
+    // The profile's chosen files include their pre-compilation bytes. The same
+    // source roots also cover helpers imported by the native build.
+    return Object.fromEntries([
+      ...helpers.entries.map(entry => [entry.path, { exists: true, contentHash: entry.sha256 }]),
+      ...files.map(file => [file.path, { exists: true, contentHash: createHash('sha256').update(file.content).digest('hex') }]),
+    ]);
+  };
+  let before: ArtifactSnapshot;
+  try { before = read(selected); }
+  catch (error) { ctx.bindNativeUtInputs({ paths: [], assertCurrent: () => { throw error; } }); return; }
+  ctx.bindNativeUtInputs({ paths: Object.keys(before), assertCurrent: entries => {
+    const after = read(host.loadUtFiles(ctx));
+    const changed = (Object.keys(before).length > 0 || Object.keys(after).length > 0)
+      && compareRelatedInputSnapshots(before, after) !== 'unchanged';
+    if (changed || entries.some(entry => before[entry.path] && before[entry.path].contentHash !== entry.sha256)) {
+      throw new Error('实际 UT 源码或选集在检查期间变化，需按当前输入重新执行');
+    }
+  } });
+}
+
 /** Reconstruct review subjects from the same sources as the UT traceability checks. */
 export function readUtAcceptanceCases(ctx: CheckContext, utFiles: Array<{ path: string; content: string }>,
   dags: LoadedDagFile[], observed: CoverageEvidenceObservation) {
@@ -4374,6 +4407,7 @@ const checker: PhaseChecker = {
     const auditObservation = inspectTestabilityAudit(ctx);
     const mockPlanObservation = inspectMockPlan(ctx);
     const { allUtFiles, partition, targetResolution } = loadUtCoverageTargets(ctx, utHost);
+    bindNativeUtInputs(ctx, utHost, allUtFiles);
     const scopedUtFiles = partition.scoped;
     const mockPlanDoc = mockPlanObservation.status === 'loaded' ? mockPlanObservation.value : null;
     const auditRecordsEarly = auditObservation.status === 'loaded' ? auditObservation.value : [];

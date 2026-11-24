@@ -1057,6 +1057,11 @@ export interface RequestCheckContext extends Pick<FeatureCheckContext, 'phase' |
 export interface FeatureCheckContext {
   /** Deferred until keyed reuse has been decided; the existing device gate still owns real execution. */
   prepareDeviceExecution?: () => Promise<CheckResult | void>;
+  /** Recheck the actual native UT input set before publishing managed tool evidence. */
+  bindNativeUtInputs?: (inputs: {
+    paths: string[];
+    assertCurrent: (entries: ReadonlyArray<{ path: string; sha256: string | null }>) => void;
+  }) => void;
   /** 当前 gate 已授予的绝对截止；只传剩余时间，不授予写入/收口职责。 */
   gateDeadlineMs?: number;
   /** 同一 pipeline 的未提交 device evidence；仅预览引用，正式件由 runtime 提交。 */
