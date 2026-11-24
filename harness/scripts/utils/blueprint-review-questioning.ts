@@ -42,7 +42,7 @@ export function collectReviewQuestioning(projectRoot: string, blueprint: Bluepri
         const events = sessionEvents(runDir);
         for (const [order, start] of events.entries()) {
           if (start.type !== 'agent_invoke_start' || !['initial-design-questioning', 'design-repair-questioning'].includes(String(start.phase))) continue;
-          const original = readDesignQuestioningOriginal(runDir, start, events);
+          const original = readDesignQuestioningOriginal(runDir, start, events, projectRoot);
           if (!original?.completed) continue;
           const before = original.beforeDocument;
           if (!before || before.blueprint_id !== blueprint.blueprint_id || before.component_id !== blueprint.component_id) continue;

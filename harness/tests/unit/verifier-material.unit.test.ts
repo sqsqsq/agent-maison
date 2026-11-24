@@ -549,6 +549,7 @@ const cases: Array<{ name: string; run: () => void }> = [
   {
     name: '77105c47 Q reopens acceptance and method consumers without pulling in unrelated view members',
     run: () => {
+      const methodRef = 'interface:view:development/node:otp/LedgerOtp#canSubmit';
       const blueprint = {
         blueprint_id: 'ledger', design_views: [
           { view_id: 'development', applicability: 'applicable', evolution_impact: 'changed', nodes: [
@@ -557,8 +558,11 @@ const cases: Array<{ name: string; run: () => void }> = [
             { node_id: 'home', description: 'Shows existing cards', provenance: { source_kind: 'requirement', source_ref: 'request.md' } },
           ] },
           { view_id: 'runtime', applicability: 'applicable', evolution_impact: 'changed', runtime_data_flows: [
-            { flow_id: 'otp-entry', check: { calls: ['LedgerOtp.canSubmit'] }, verification_refs: ['AC-4'] },
+            { flow_id: 'otp-entry', ordered_steps: [{ interface_method_ref: methodRef }], verification_refs: ['AC-4'] },
             { flow_id: 'home-read', design_refs: ['view:development/node:home'], provenance: { source_kind: 'requirement', source_ref: 'request.md' } },
+          ] },
+          { view_id: 'scenarios', applicability: 'applicable', evolution_impact: 'changed', nodes: [
+            { node_id: 'submit-case', use_cases: { boundaries: [{ interface_method_ref: methodRef }] } },
           ] },
         ], relations: [], review_summary: { authored_by: 'author' },
       };
@@ -567,15 +571,16 @@ const cases: Array<{ name: string; run: () => void }> = [
       const previous = createIndependentQuestioningResult({ providerId: 'independent', authoredBy: 'author', items });
       const changed = structuredClone(blueprint);
       const node = changed.design_views[0].nodes![0];
-      node.acceptance!.criteria[0].description += '。 ';
+      assert('acceptance' in node && node.acceptance && 'contracts' in node && node.contracts);
+      node.acceptance.criteria[0].description += '。 ';
       assert.deepEqual(selectQuestioningScopes(blueprint, changed, previous), []);
-      node.acceptance!.criteria[0].description = '验证码满五位允许提交';
+      node.acceptance.criteria[0].description = '验证码满五位允许提交';
       const expected = ['view:development', 'view:runtime', 'flow:otp-entry'];
       assert.deepEqual(selectQuestioningScopes(blueprint, changed, previous), expected);
-      node.acceptance!.criteria[0].description = '验证码满六位允许提交';
-      node.contracts!.interfaces[0].methods[0].return = 'number';
-      assert.deepEqual(selectQuestioningScopes(blueprint, changed, previous), expected);
-      node.acceptance!.criteria[0].description = '一万字说明'.repeat(2_000);
+      node.acceptance.criteria[0].description = '验证码满六位允许提交';
+      node.contracts.interfaces[0].methods[0].return = 'number';
+      assert.deepEqual(selectQuestioningScopes(blueprint, changed, previous), [...expected, 'view:scenarios']);
+      node.acceptance.criteria[0].description = '一万字说明'.repeat(2_000);
       const diff = describeQuestioningChanges(blueprint, changed, 'before.yaml', 'current.yaml');
       assert(Buffer.byteLength(diff, 'utf8') < 1_000);
       assert(diff.includes('/design_views/0/nodes/0/acceptance/criteria/0/description') && diff.includes('view:development/node:otp'));

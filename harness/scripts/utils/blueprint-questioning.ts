@@ -261,7 +261,7 @@ export function selectQuestioningScopes(before: BlueprintRecord | undefined, cur
     return rows;
   };
   const preciseBefore = splitView(old), preciseAfter = splitView(next);
-  const linkedFacts = (value: unknown): Map<string, BlueprintRecord> => {
+  const linkedFacts = (address: string, value: unknown): Map<string, BlueprintRecord> => {
     const row = asRecord(value);
     const facts = new Map<string, BlueprintRecord>();
     for (const criterion of asRecords(asRecord(row?.acceptance)?.criteria)) {
@@ -270,7 +270,9 @@ export function selectQuestioningScopes(before: BlueprintRecord | undefined, cur
     for (const contract of asRecords(asRecord(row?.contracts)?.interfaces)) {
       if (!nonEmptyString(contract.class)) continue;
       for (const method of asRecords(contract.methods)) {
-        if (nonEmptyString(method.name)) facts.set(`method:${contract.class}.${method.name}`, method);
+        if (!nonEmptyString(method.name)) continue;
+        facts.set(`method:${contract.class}.${method.name}`, method);
+        facts.set(`interface:${address}/${contract.class}#${method.name}`, method);
       }
     }
     return facts;
@@ -278,7 +280,7 @@ export function selectQuestioningScopes(before: BlueprintRecord | undefined, cur
   const knownLinkedFacts = new Set<string>(), changedLinkedFacts = new Set<string>();
   for (const ref of new Set([...preciseBefore.keys(), ...preciseAfter.keys()])) {
     if (!authorityRefs.has(ref) && !sameQuestioningFact(preciseBefore.get(ref), preciseAfter.get(ref))) changedBusiness.add(ref);
-    const oldFacts = linkedFacts(preciseBefore.get(ref)), newFacts = linkedFacts(preciseAfter.get(ref));
+    const oldFacts = linkedFacts(ref, preciseBefore.get(ref)), newFacts = linkedFacts(ref, preciseAfter.get(ref));
     for (const id of new Set([...oldFacts.keys(), ...newFacts.keys()])) {
       knownLinkedFacts.add(id);
       if (!sameQuestioningFact(oldFacts.get(id), newFacts.get(id))) changedLinkedFacts.add(id);
@@ -459,7 +461,7 @@ export function selectQuestioningScopes(before: BlueprintRecord | undefined, cur
     const refs = new Set<string>();
     const visit = (input: unknown, field = '', depth = 0): void => {
       if (typeof input === 'string') {
-        const local = new Set([...input.matchAll(/(?:^|[^\p{L}\p{N}._:-])([a-z][a-z0-9_-]*:[\p{L}\p{N}][\p{L}\p{N}._:-]*(?:\/[a-z][a-z0-9_-]*:[\p{L}\p{N}][\p{L}\p{N}._:-]*)*)/gu)]
+        const local = knownLinkedFacts.has(input) ? new Set([input]) : new Set([...input.matchAll(/(?:^|[^\p{L}\p{N}._:-])([a-z][a-z0-9_-]*:[\p{L}\p{N}][\p{L}\p{N}._:-]*(?:\/[a-z][a-z0-9_-]*:[\p{L}\p{N}][\p{L}\p{N}._:-]*)*)/gu)]
           .flatMap(match => precise ? [match[1]] : match[1].split('/')).map(normalizeReference));
         if (field === 'calls' && knownLinkedFacts.has(`method:${input}`)) local.add(`method:${input}`);
         if (field === 'ref' || /_refs?$/.test(field) || ['decisions_and_gaps', 'needed_by', 'landing'].includes(field)) {
@@ -723,7 +725,7 @@ export function applyIndependentQuestioningOutput(
     const { sessionEvents } = require('./session-execution-handoff') as typeof import('./session-execution-handoff');
     const events = sessionEvents(runDir);
     const start = events.find(event => event.type === 'agent_invoke_start' && event.invoke_id === path.basename(invocationDir));
-    const original = start && readDesignQuestioningOriginal(runDir, start, events);
+    const original = start && readDesignQuestioningOriginal(runDir, start, events, projectRoot);
     const verified = original && reusableDesignQuestioning({ ...original, projectRoot, blueprintPath, blueprint });
     if (verified) questioning = verified;
   }

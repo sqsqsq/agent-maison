@@ -215,6 +215,7 @@ export function reusableDesignQuestioning(input: {
   providerId: string; completed: boolean; preSnapshot?: ReturnType<typeof capturePhaseInvocationSnapshot>;
   postSnapshot?: ReturnType<typeof capturePhaseInvocationSnapshot>; previous?: BlueprintRecord;
   previousBlueprint?: BlueprintRecord; previousSnapshot?: ReturnType<typeof capturePhaseInvocationSnapshot>; source?: string;
+  observedSnapshot?: ReturnType<typeof capturePhaseInvocationSnapshot>;
   /** Archived legacy write-in-place output, never a postimage sampled from current files. */
   afterBlueprint?: string;
   additionalInputs?: Readonly<Record<string, string>>;
@@ -241,7 +242,9 @@ export function reusableDesignQuestioning(input: {
     const changedDependencies = input.previousBlueprint ? questioningDependencyChanges(input.projectRoot, before, input.previousSnapshot,
       input.blueprintPath || componentBlueprintPath(input.projectRoot, String(before.blueprint_id)), input.preSnapshot, input.previous)
       .map(item => isInsideProjectRoot(input.projectRoot, item.path) ? path.relative(input.projectRoot, item.path).replace(/\\/g, '/') : item.path) : [];
-    const selected = selectQuestioningScopes(input.previousBlueprint, before, input.previous, changedDependencies, input.projectRoot);
+    // Replay the work requested in this original. Today's selector governs the next request.
+    const selected = input.signedScopes && input.previous && input.previousBlueprint && input.previousSnapshot ? [...input.signedScopes.keys()]
+      : selectQuestioningScopes(input.previousBlueprint, before, input.previous, changedDependencies, input.projectRoot);
     const result = mergeIndependentQuestioningResult(before, parsed, input.providerId, input.previous, selected,
       input.source ? { path: path.relative(input.projectRoot, input.source).replace(/\\/g, '/'),
         sha256: sha256Hex(fs.existsSync(input.source) ? fs.readFileSync(input.source) : Buffer.from(input.output)) } : undefined, input.signedScopes);
@@ -253,11 +256,16 @@ export function reusableDesignQuestioning(input: {
       'blueprint_questioning_unchanged_evidence_unrelated']);
     if (errors.some(issue => !local.has(issue.id) && !issue.path.includes('.items[')) || !asRecords(result.items).length) return null;
     if (independentQuestioningBlockers({ review_summary: { questioning: result } }).length) return result;
-    if (stableStringify(blueprintAuthorContent(before)) !== stableStringify(blueprintAuthorContent(input.blueprint))) return null;
+    if (stableStringify(blueprintAuthorContent(before)) !== stableStringify(blueprintAuthorContent(input.blueprint))
+      && selectQuestioningScopes(before, input.blueprint, result, [], input.projectRoot, false).length) return null;
     for (const file of businessKnowledgeFiles(input.projectRoot, input.blueprint)) {
       const relative = path.relative(input.projectRoot, file).replace(/\\/g, '/');
       const expected = input.preSnapshot.entries.find(entry => entry.path === relative && entry.kind === 'file');
-      if (!expected || !fs.existsSync(file) || sha256Hex(fs.readFileSync(file)) !== expected.sha256) return null;
+      if (!expected) return null;
+      const current = input.observedSnapshot
+        ? input.observedSnapshot.entries.find(entry => entry.path === relative && entry.kind === 'file')?.sha256
+        : fs.existsSync(file) ? sha256Hex(fs.readFileSync(file)) : undefined;
+      if (current !== expected.sha256) return null;
     }
     for (const [file, beforeText] of Object.entries(input.additionalInputs ?? {})) {
       if (compareRelatedInputSnapshots(designWorkSnapshot([file], { [file]: beforeText }), designWorkSnapshot([file])) !== 'unchanged') return null;
@@ -523,7 +531,7 @@ function repairQuestioningMaterials(projectRoot: string, runDir: string, start: 
 }
 
 /** Project the existing invocation originals; no Q validity record is written. */
-function questioningOriginal(runDir: string, start: GoalRunEvent, originalEvents?: readonly GoalRunEvent[]): {
+function questioningOriginal(runDir: string, start: GoalRunEvent, originalEvents?: readonly GoalRunEvent[], projectRoot?: string): {
   invokeId: string; beforeBlueprint: string; beforeSource: string; beforeDocument?: BlueprintRecord; output: string; source: string; completed: boolean; providerId: string;
   preSnapshot?: ReturnType<typeof capturePhaseInvocationSnapshot>; postSnapshot?: ReturnType<typeof capturePhaseInvocationSnapshot>;
   afterBlueprint?: string;
@@ -599,18 +607,29 @@ function questioningOriginal(runDir: string, start: GoalRunEvent, originalEvents
     }
     let previousBlueprint: BlueprintRecord | undefined, previousSnapshot: ReturnType<typeof capturePhaseInvocationSnapshot> | undefined;
     // Only partial returns need the earlier original chain; full legacy results retain their existing cost.
-    const root = issued?.request.write_boundary?.projectRoot;
+    const root = projectRoot ?? issued?.request.write_boundary?.projectRoot;
     const signedScopes = issued && issued.event.handoff_request?.sha256 === issued.reference.sha256 && issued.request.purpose === 'questioning'
       && issued.request.write_boundary?.executionRole === 'verifier'
       ? readSignedQuestioningScopes(issued.request.context.workInput?.material.segments) : undefined;
     const returned = doc && normalizeQuestioningItems(doc, asRecords(parseIndependentQuestioningOutput(output).items), signedScopes);
     if (root && doc && returned && [...requiredQuestioningScopes(doc).keys()].some(ref => returned.filter(item => item.scope_ref === ref).length !== 1)) {
-      for (const priorStart of [...events.slice(0, position)].reverse()) {
-        if (priorStart.type !== 'agent_invoke_start' || !['initial-design-questioning', designRepairInvokeLabel('questioning')].includes(String(priorStart.phase))) continue;
-        const prior = questioningOriginal(runDir, priorStart, events);
-        if (!prior?.completed || !prior.beforeDocument || prior.beforeDocument.blueprint_id !== doc.blueprint_id) continue;
-        const result = reusableDesignQuestioning({ ...prior, additionalInputs: {}, projectRoot: root, blueprintPath: '', blueprint: prior.beforeDocument });
-        if (result) { previous = result; previousBlueprint = prior.beforeDocument; previousSnapshot = prior.preSnapshot; break; }
+      const sources = [{ directory: runDir, records: events.slice(0, position) }];
+      if (initial && issued) {
+        const { isInitialDesignManifest, loadGoalRunManifestFromRun } = require('./goal-manifest') as typeof import('./goal-manifest');
+        const { readOriginalDeliveryRuns } = require('./delivery-origin') as typeof import('./delivery-origin');
+        const context = issued.request.context;
+        const manifest = loadGoalRunManifestFromRun(root, context.runId, { feature: context.feature });
+        if (isInitialDesignManifest(manifest) && manifest.successor_of) {
+          sources.push(...readOriginalDeliveryRuns(root, manifest).filter(run => isInitialDesignManifest(run.manifest) && run.manifest.run_id !== manifest.run_id)
+            .map(run => ({ directory: path.resolve(root, run.manifest.report_dir), records: run.events })));
+        }
+      }
+      for (const source of sources) {
+        const { original: prior, result } = latestUsableDesignQuestioning(source.directory,
+          ['initial-design-questioning', designRepairInvokeLabel('questioning')], root, source.records);
+        if (!prior?.beforeDocument || prior.beforeDocument.blueprint_id !== doc.blueprint_id || !result) continue;
+        previous = result; previousBlueprint = prior.beforeDocument; previousSnapshot = prior.preSnapshot;
+        break;
       }
     }
     return { invokeId: start.invoke_id, beforeBlueprint,
@@ -638,11 +657,12 @@ export function latestUsableDesignQuestioning(runDir: string, phases: readonly s
   const events = originalEvents ?? sessionEvents(runDir);
   for (const start of [...events].reverse()) {
     if (start.type !== 'agent_invoke_start' || !phases.includes(String(start.phase))) continue;
-    const original = questioningOriginal(runDir, start, events);
+    const original = questioningOriginal(runDir, start, events, projectRoot);
     if (!original?.completed) continue;
     try {
       const blueprint = asRecord(YAML.parse(original.beforeBlueprint));
-      const result = blueprint && reusableDesignQuestioning({ ...original, additionalInputs: {}, projectRoot, blueprintPath: '', blueprint });
+      const result = blueprint && reusableDesignQuestioning({ ...original, additionalInputs: {}, observedSnapshot: original.preSnapshot,
+        projectRoot, blueprintPath: '', blueprint });
       if (result) return { original, result, unavailable };
     } catch { /* An unusable return is not a new public Q baseline. */ }
     unavailable = true;

@@ -32,6 +32,37 @@ const frameworkRoot = path.resolve(__dirname, '../../..');
 type Json = Record<string, any>;
 const events = (runDir: string): Json[] => fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
 
+async function waitingAuthorLeavesQuestioningReady(): Promise<void> {
+  await withFreshCuHost(async host => {
+    seedLedgerQuestioningInput(host.root);
+    const canonical = loadCanonicalBlueprint(host.root, BLUEPRINT_ID);
+    const workspace = path.dirname(path.dirname(canonical.canonicalPath));
+    for (const unit of enumerateCanonicalChangeUnits(host.root, BLUEPRINT_ID)) {
+      const directory = path.dirname(unit.canonicalPath);
+      assert(path.resolve(directory).startsWith(path.resolve(workspace) + path.sep));
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+    fs.unlinkSync(canonical.canonicalPath);
+    const blueprint = canonical.blueprint;
+    delete (blueprint.review_summary as Json).questioning;
+    const requirement = '完成原账目刷新及恢复设计的独立核验。';
+    const manifest = buildInitialDesignGoalManifest({ feature: BLUEPRINT_ID, run_id: 'waiting-author-ready-for-q', adapter: 'claude',
+      requirement, initial_design: { completion_target: 'feature', requested_results: [requirement], requested_phases: [] } }, { projectRoot: host.root });
+    const born = createGoalRun({ projectRoot: host.root, manifest, chain: [] });
+    const options = { projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: manifest.feature, runId: manifest.run_id,
+      adapter: 'claude', runMode: 'attended', sessionFallback: true, authorization };
+    const author = await runGoalModeSessionStep(options) as Json;
+    assert.equal(author.phase, 'initial-design-author', JSON.stringify(author));
+    fs.writeFileSync(canonical.canonicalPath, YAML.stringify(blueprint));
+    const next = await runGoalModeSessionStep({ ...options, requestPath: author.request.path,
+      report: { status: 'waiting', phase: author.phase, details: '原作者暂不可用，已交回实际蓝图。' } }) as Json;
+    assert.equal(next.phase, 'initial-design-questioning', JSON.stringify(next));
+    const records = events(path.dirname(born.manifestPath));
+    assert(records.some(event => event.type === 'agent_invoke_end' && event.phase === author.phase && event.status === 'waiting'));
+    assert(!records.some(event => event.type === 'run_end' && event.status === 'COMPLETED'));
+  });
+}
+
 async function initialWaiting(): Promise<void> {
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'initial-waiting-'));
   const projectRoots: string[] = [];
@@ -315,12 +346,14 @@ async function normalQuestioningWaiting(): Promise<void> {
 
 const cases = [
   { name: 'f3b8e6a1 waiting: original session and executor pause once then a later entry can continue', run: initialWaiting },
+  { name: '77105c47 waiting author can hand back a real blueprint and let independent questioning proceed', run: waitingAuthorLeavesQuestioningReady },
   ...(['timeout', 'terminal-failure', 'transport'] as const).map(kind => ({ name: `d18f6c42 ${kind} invocation cannot establish a completed-content no-progress baseline`, run: () => unfinishedContentBaseline(kind) })),
   { name: 'f3b8e6a1 waiting: design author and independent questioning keep one open transaction across waiting', run: repairWaiting },
   { name: 'f3b8e6a1 waiting: normal questioning resumes its original transaction without replaying a successful author', run: normalQuestioningWaiting },
 ];
 export function getCases() { return cases; }
 const dailyPrefixes = [
+  "77105c47 waiting author",
   "d18f6c42 timeout invocation",
   "d18f6c42 terminal-failure invocation",
   "d18f6c42 transport invocation"
