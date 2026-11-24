@@ -18,6 +18,7 @@ const BLUEPRINT = 'ledger-app-blueprint';
 const UNIT = 'ledger-refresh';
 const SOURCE = 'src/ledger/src/main/LedgerFeature.ts';
 const BASELINE_SOURCE = 'src/ledger/LedgerRepository.ts';
+const BASELINE_PRODUCT = 'export class LedgerRepository {\n  static balance(saved: readonly number[]): number { return saved.reduce((a, b) => a + b, 0); }\n}\n';
 const TEST = 'src/ledger/src/test/LedgerFeature.test.ts';
 const MISSING = 'src/ledger/NotCreatedYet.ts';
 const FIXTURE = path.resolve(__dirname, '../fixtures/component-blueprint/valid');
@@ -77,7 +78,7 @@ async function withHost(run: (host: Host) => Promise<void>): Promise<void> {
     writeHostFile(root, 'requirements/ledger.md', '# REQ-LEDGER-REFRESH\n\n' + REQUIREMENT + '\n');
     writeYaml(root, CONTRACT, contractInput());
     writeHostFile(root, 'build-profile.json5', JSON.stringify({ app: { products: [{ name: 'node-test' }] }, modules: [] }));
-    writeHostFile(root, BASELINE_SOURCE, 'export class LedgerRepository {\n  static balance(saved: readonly number[]): number { return saved.reduce((a, b) => a + b, 0); }\n}\n');
+    writeHostFile(root, BASELINE_SOURCE, BASELINE_PRODUCT);
     writeHostFile(root, SOURCE, 'export class LedgerFeature {}\n');
     writeHostFile(root, TEST, 'export {};\n');
     writeHostFile(root, 'framework.config.json', JSON.stringify({ schema_version: '1.1', project_name: 'DailyDesignLedger', active_workflow: 'obligation-driven',
@@ -248,7 +249,8 @@ function decompose(host: Host, includeConstructionMapping = true): void {
 
 function unitReviewReport(host: Host, feature: string): void {
   const rel = host.load('scripts/utils/feature-identity').featureRelativePath(feature);
-  writeHostFile(host.root, `doc/features/${rel}/review/review-report.md`, '# 审查报告\n\n> **保证等级**: standard\n\n## 1. 审查范围\n- ' + SOURCE + '\n\n## 2. 审查维度\n契约、边界及恢复；真实编译与Node断言另由工具执行。\n\n## 3. 问题清单\n| 编号 | 分类 | 严重程度 | 问题描述 | 涉及文件 | 修复建议 |\n|---|---|---|---|---|---|\n\n## 4. 问题统计\n| 严重程度 | 数量 |\n|---|---|\n| BLOCKER | 0 |\n| MAJOR | 0 |\n| MINOR | 0 |\n\n## 5. 修复建议\n无新增建议。\n\n## 6. 结论\n**审查结论**: 通过\n');
+  assert.equal(read(host.root, BASELINE_SOURCE), BASELINE_PRODUCT, 'the independent review reads the unchanged balance helper');
+  writeHostFile(host.root, `doc/features/${rel}/review/review-report.md`, '# 审查报告\n\n> **保证等级**: standard\n\n## 1. 审查范围\n- ' + SOURCE + '\n- ' + BASELINE_SOURCE + '\n\n## 2. 审查维度\n契约、边界及恢复；真实编译与Node断言另由工具执行。\n\n## 3. 问题清单\n| 编号 | 分类 | 严重程度 | 问题描述 | 涉及文件 | 修复建议 |\n|---|---|---|---|---|---|\n\n## 4. 问题统计\n| 严重程度 | 数量 |\n|---|---|\n| BLOCKER | 0 |\n| MAJOR | 0 |\n| MINOR | 0 |\n\n## 5. 修复建议\n无新增建议。\n\n## 6. 结论\n**审查结论**: 通过\n');
 }
 
 function taggedStrengthRows(host: Host, context: any): Array<{ issue: string; verdict: string; evidence: string; production_paths: string[] }> {
