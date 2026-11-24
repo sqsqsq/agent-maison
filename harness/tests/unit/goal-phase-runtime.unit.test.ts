@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as YAML from 'yaml';
+import { throws } from 'node:assert/strict';
 import { prepareFeatureScopeCandidate, refreshScopeBindingInput } from '../../scripts/utils/feature-track';
 import { execFileSync } from 'child_process';
 import { loadWorkflowSpec } from '../../workflow-loader';
@@ -49,12 +50,27 @@ import { resolveGoalRunBaseline } from '../../scripts/utils/goal-run-baseline';
 import { resolveGoalRunHeadSha } from '../../scripts/utils/goal-run-creation';
 import { writeHandoffRequest } from '../../scripts/utils/goal-handoff';
 import { runGoalModeSessionStep as runGoalModeSessionStepUnchecked } from '../../scripts/goal-mode-entry';
-import { readSessionExecution, acceptedSessionReport } from '../../scripts/utils/session-execution-handoff';
+import { readSessionExecution, acceptedSessionReport, executionRequestForInvoke } from '../../scripts/utils/session-execution-handoff';
+import { beginManagedAuthorCheck } from '../../scripts/utils/managed-goal-invocation';
 import { withRuntimeTest, preserveRuntimeTestEvidence, type RuntimeTestControl } from '../utils/runtime-test-control';
 import { resolveCompletionDisposition } from '../../scripts/utils/verify-feature-completion';
 import { listDerivedHylyrePlanFiles } from '../../scripts/utils/derived-hylyre-plan';
 const runGoalModeSessionStep = (options: Parameters<typeof runGoalModeSessionStepUnchecked>[0], testControl: RuntimeTestControl = {}) =>
   withRuntimeTest({ root: options.projectRoot, ...testControl }, () => runGoalModeSessionStepUnchecked(options));
+
+function assertRestrictedTestingCannotStartAuthorTool(context: WorkUnitExecutionContext, purpose: string): void {
+  const original = executionRequestForInvoke(context.runDir)?.request;
+  assert(original?.purpose === purpose, `the signed request must have restricted purpose ${purpose}`);
+  assert(workUnitExecutionRole(original.context, original.purpose) === 'author', 'the restricted request still has the coarse author role');
+  const events = path.join(context.runDir, 'events.jsonl');
+  const before = fs.readFileSync(events, 'utf8');
+  const { projectRoot, frameworkRoot, feature } = context;
+  for (const phase of ['testing', 'ut'] as const) {
+    assert(context.chain.includes(phase), `the signed chain includes ${phase}, so role and chain alone cannot deny it`);
+    throws(() => beginManagedAuthorCheck({ projectRoot, frameworkRoot, feature, phase }), /本次职责不授权启动正式检查/);
+  }
+  assert(fs.readFileSync(events, 'utf8') === before, 'denial comes before any managed check starts');
+}
 
 
 export interface UnitCaseResult { name: string; ok: boolean; error?: string }
@@ -421,6 +437,7 @@ const cases: Case[] = [...semanticReviewCases, ...independentStrengthCases, {
             assert(++supplements === 1, 'unchanged evidence gaps must not buy repeated verifier work');
             assert(context.phase === 'testing' && context.childEnv.HARNESS_HDC_TARGET === 'fake-device', 'the signed original testing method retains the actual authorized target');
             assert(context.instruction?.includes('只补') && context.instruction.includes('失败页面必须实际到达原失败场景'), 'the actual producer receives the object and its evidence obligation');
+            assertRestrictedTestingCannotStartAuthorTool(context, 'testing-evidence');
             writeVisualDiff(root, [{ id: 'original-failure-page', verdict: 'pass', mustFix: [] }]);
           },
           onTestingHarness: () => {
@@ -466,6 +483,8 @@ const cases: Case[] = [...semanticReviewCases, ...independentStrengthCases, {
             assert(++calls === 1, 'the same preparation input may only be issued once');
             assert(context.instruction?.includes('TC-01') && context.instruction.includes('进程重启只复位进程'),
               'current structured TC and reset distinction must reach the original author');
+            assert(context.instruction?.includes('此调用只准备输入'), 'the original request delegates input preparation only');
+            assertRestrictedTestingCannotStartAuthorTool(context, 'testing-preparation');
             prepared = /派生文件只写 ([^\n]+?)。/.exec(context.instruction ?? '')?.[1] ?? '';
             assert(prepared.endsWith('test-plan.hylyre.md'), 'the original request must give the exact canonical preparation target');
             if (knownData) {

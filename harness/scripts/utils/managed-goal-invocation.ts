@@ -3,7 +3,7 @@ import * as path from 'path';
 import { randomUUID } from 'crypto';
 import { enumerateFeatures } from '../../config';
 import { loadGoalRunManifestFromRun } from './goal-manifest';
-import { executionRequestForInvoke } from './session-execution-handoff';
+import { executionRequestForInvoke, type SessionExecutionRequest } from './session-execution-handoff';
 import { loadAuthoritativeEvents, loadEventsJsonlStrict, type GoalRunEvent } from './goal-runner-phase';
 import { assertFencedOwner } from './goal-run-control';
 import { compareRelatedInputSnapshots, type ArtifactSnapshot } from './goal-failure-classifier';
@@ -56,21 +56,26 @@ export interface ManagedAuthorCheck {
   readonly inputs: ArtifactSnapshot;
 }
 
+function allowsManagedAuthorCheck({ context, purpose }: SessionExecutionRequest): boolean {
+  const { workUnitExecutionRole } = require('./goal-phase-executor') as typeof import('./goal-phase-executor');
+  return context.phase === 'work-unit-author' && (purpose === undefined || purpose === 'work-unit-author')
+    && workUnitExecutionRole(context, purpose) === 'author';
+}
+
 /** The harness process signs its own tool observation under the current author invocation. */
 export function beginManagedAuthorCheck(input: {
   projectRoot: string; frameworkRoot: string; feature: string; phase: string;
 }): ManagedAuthorCheck {
   const actor = resolveManagedGoalInvocation(input);
-  if (!actor || !['work-unit-author', 'testing'].includes(actor.phase) || !['coding', 'ut', 'testing'].includes(input.phase)) {
+  if (!actor || !['coding', 'ut', 'testing'].includes(input.phase)) {
     throw new Error('本检查需要当前已签发的工作单元作者及其原有构建、UT 或设备职责。');
   }
   const original = executionRequestForInvoke(actor.run_dir, actor.invoke_id)?.request;
-  const { workUnitExecutionRole } = require('./goal-phase-executor') as typeof import('./goal-phase-executor');
   if (!original || path.resolve(original.context.frameworkRoot) !== path.resolve(input.frameworkRoot)
-    || workUnitExecutionRole(original.context, original.purpose) !== 'author'
     || original.context.user_deadline_at && Date.parse(original.context.user_deadline_at) <= Date.now()) {
-    throw new Error('本检查的框架路径、作者职责或用户时限与原工作单元不符。');
+    throw new Error('本检查的框架路径或用户时限与原工作单元不符。');
   }
+  if (!allowsManagedAuthorCheck(original)) throw new Error('本次职责不授权启动正式检查。');
   for (const key of ['HARNESS_DEVICE_TEST_PRODUCT', 'HARNESS_DEVICE_TEST_BUILD_MODE', 'HARNESS_HDC_TARGET',
     'MAISON_DEVICE_TARGET_KIND', 'MAISON_DEVICE_SESSION_ID', 'MAISON_DEVICE_CREDENTIAL_REF', 'MAISON_DEVICE_ATTEMPT_FROZEN']) {
     const issued = original.context.childEnv?.[key];
@@ -119,9 +124,9 @@ export function qualifiedManagedAuthorCheck(input: { runDir: string; feature: st
   let original: ReturnType<typeof executionRequestForInvoke>;
   try { original = executionRequestForInvoke(input.runDir, start.author_tool_invoke_id); }
   catch { return null; }
-  const context = original?.request.context;
-  const { workUnitExecutionRole } = require('./goal-phase-executor') as typeof import('./goal-phase-executor');
-  if (!original || !context || workUnitExecutionRole(context, original.request.purpose) !== 'author' || context.feature !== input.feature
+  if (!original || !allowsManagedAuthorCheck(original.request)) return null;
+  const { context } = original.request;
+  if (context.feature !== input.feature
     || path.resolve(context.projectRoot) !== path.resolve(input.projectRoot) || path.resolve(context.frameworkRoot) !== path.resolve(input.frameworkRoot)
     || context.runId !== end.run_id || context.attemptId !== end.attempt_id
     || context.owner.owner_id !== end.owner_id || context.owner.epoch !== end.owner_epoch || !context.chain.includes(end.phase as never)) return null;
