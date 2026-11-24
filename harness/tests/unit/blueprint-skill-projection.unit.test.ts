@@ -593,6 +593,21 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     assert.throws(() => selectBlueprintSkillContent(blueprint, unit), error => error instanceof BlueprintContentError
       && error.locations.some(location => location.target.id === ownerRef.target.id && location.field.endsWith('.return'))
       && error.locations.some(location => location.target.id === flowRef.target.id && location.field.endsWith('.returns')));
+    asRecord(owner.provenance)!.evidence_strength = 'observed';
+    const diagnostics: unknown[] = [];
+    selectBlueprintSkillContent(blueprint, unit, error => diagnostics.push(error));
+    assert(diagnostics.some(error => error instanceof BlueprintContentError && error.message.includes(`${methodRef} 已有声明，缺少获准来源`)
+      && error.locations.some(location => location.target.id === ownerRef.target.id && location.field.includes('contracts.interfaces'))));
+  } },
+  { name: 'typed method lookup preserves the diagnostic boundary on duplicate stable addresses', run(f) {
+    const blueprint = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
+    const unit = asChangeUnitArtifact(loadCanonicalChangeUnit(f.root, 'ledger-app-blueprint', 'ledger-refresh').changeUnit);
+    const original = selectBlueprintSkillContent(blueprint, unit);
+    blueprint.decisions_and_gaps.decisions.push({ decision_id: 'duplicate-unselected' }, { decision_id: 'duplicate-unselected' });
+    const diagnostics: unknown[] = [];
+    const continued = selectBlueprintSkillContent(blueprint, unit, error => diagnostics.push(error));
+    assert(diagnostics.some(error => (error as { code?: string }).code === 'blueprint_address_duplicate'));
+    assert.deepEqual(continued.acceptance, original.acceptance);
   } },
   { name: 'compact CU selections expand exact references in the official writer, while contradictions and absent landings fail', run(f) {
     const contracts = planContracts(f);

@@ -8,6 +8,7 @@ interface BlueprintMethod {
   owner: string;
   file: unknown;
   method: BlueprintRecord;
+  authoritative: boolean;
   location: DesignAuthorityLocation;
 }
 
@@ -33,15 +34,17 @@ export function blueprintMethodProjection(blueprint: BlueprintRecord) {
     const [kind, ...id] = address.split(':');
     return { blueprint_id: blueprintId, target: view ? { kind: view[2], view_id: view[1], id: view[3] } : { kind, id: id.join(':') }, field };
   };
-  const methods: BlueprintMethod[] = [...index].filter(([, target]) => asRecord(target.provenance)?.evidence_strength === 'authoritative').flatMap(([address, target]) =>
+  const declared: BlueprintMethod[] = [...index].flatMap(([address, target]) =>
     asRecords(asRecord(target.contracts)?.interfaces).flatMap((api, apiIndex) => !nonEmptyString(api.class) ? [] :
-      asRecords(api.methods).flatMap((method, methodIndex) => !nonEmptyString(method.name) || !nonEmptyString(method.return) ? [] : [{
+      asRecords(api.methods).flatMap((method, methodIndex) => !nonEmptyString(method.name) ? [] : [{
         ref: blueprintMethodRef(address, String(api.class), method.name),
         owner: String(api.class),
         file: api.file,
         method,
+        authoritative: asRecord(target.provenance)?.evidence_strength === 'authoritative',
         location: location(address, `contracts.interfaces[${apiIndex}].methods[${methodIndex}]`),
       }])));
+  const methods = declared.filter(method => method.authoritative && nonEmptyString(method.method.return));
   const owners = new Set(methods.map(method => method.owner));
 
   const resolve = (ref: string, at: DesignAuthorityLocation, report: (issue: BlueprintMethodIssue) => void, owner?: unknown): BlueprintMethod | undefined => {
@@ -50,10 +53,12 @@ export function blueprintMethodProjection(blueprint: BlueprintRecord) {
     const distinct = new Set(matches.map(candidate => stableJson([candidate.owner, candidate.file, candidate.method.name,
       candidate.method.params, candidate.method.return, candidate.method.async])));
     if (matches.length === 1 || !exact && distinct.size === 1) return matches[0];
-    if (exact || matches.length > 1) report({
-      message: `方法 ${ref} ${matches.length ? '存在多个定义，请给出唯一节点/接口/方法引用' : '不存在或缺少 typed 返回类型'}`,
-      locations: [at, ...matches.map(candidate => candidate.location)],
-    });
+    if (!exact && !matches.length) return;
+    const sources = matches.length ? matches : declared.filter(candidate => candidate.ref === ref);
+    const reason = matches.length ? '存在多个定义，请给出唯一节点/接口/方法引用'
+      : !sources.length ? '不存在'
+      : sources.some(source => source.authoritative) ? '缺少 typed 返回类型' : '已有声明，缺少获准来源';
+    report({ message: `方法 ${ref} ${reason}`, locations: [at, ...sources.map(candidate => candidate.location)] });
   };
 
   const expand = (target: BlueprintRecord, address: string, report: (issue: BlueprintMethodIssue) => void): void => {

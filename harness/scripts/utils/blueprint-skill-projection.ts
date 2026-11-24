@@ -597,11 +597,11 @@ export function selectBlueprintSkillContent(blueprint: BlueprintRecord, cu: Chan
   const attempt = <T>(read: () => T): T | undefined => {
     try { return read(); } catch (error) { if (!onError) throw error; onError(error); return undefined; }
   };
-  const methods = blueprintMethodProjection(blueprint);
+  const methods = attempt(() => blueprintMethodProjection(blueprint));
   const selected = cu.design_refs.flatMap(ref => {
     const target = attempt(() => structuredClone(resolveBlueprintTarget(blueprint, ref.target)));
     if (!target) return [];
-    methods.expand(target, blueprintRefAddress(ref), issue => { attempt(() => methodContentError(issue)); });
+    methods?.expand(target, blueprintRefAddress(ref), issue => { attempt(() => methodContentError(issue)); });
     return [{ ref, target }];
   });
   const flows = selected.filter(({ ref }) => ref.target.kind === 'flow');
@@ -627,7 +627,7 @@ export function selectBlueprintSkillContent(blueprint: BlueprintRecord, cu: Chan
         else if (canonical(row[key]) !== canonical(value)) throw new BlueprintContentError('authority_content_conflict', `${ref.target.id}: ${field} 期望=${JSON.stringify(value)} 实际=${JSON.stringify(row[key])}`, location(field));
       };
       state.design_ref = structuredClone(ref);
-      const declaredFlow = methods.index.get(blueprintRefAddress(ref));
+      const declaredFlow = methods?.index.get(blueprintRefAddress(ref));
       if (state.ordered_steps === undefined && asStrings(declaredFlow?.ordered_steps).some(isBlueprintMethodRef)) {
         state.ordered_steps = structuredClone(flow.ordered_steps);
       }
