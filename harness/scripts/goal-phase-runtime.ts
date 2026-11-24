@@ -71,7 +71,7 @@ import * as path from 'path';
 import { StringDecoder } from 'string_decoder';
 import * as YAML from 'yaml';
 import { randomUUID } from 'crypto';
-import { findInitialDesignRun, prepareInitialDesignRun, readInitialDesignDelivery, readInitialDesignCompletionDisposition, readInitialDesignWriteEvents, projectInitialDesignDelivery, initialDesignAuthorInstruction, initialDesignInvocationLabel, validateInitialDesignInvocation, prepareInitialDesignDraft, initialDesignRequestOptions, readInitialDesignRequest, initialRequestWriteTargets, initialDesignCandidateRejection, type InitialDesignObservation, type InitialDesignDeliveryProjection } from './utils/initial-design-delivery';
+import { findInitialDesignRun, prepareInitialDesignRun, readInitialDesignDelivery, readInitialDesignCompletionDisposition, readInitialDesignWriteEvents, resolveInitialDesignWriteRecovery, projectInitialDesignDelivery, initialDesignAuthorInstruction, initialDesignInvocationLabel, validateInitialDesignInvocation, prepareInitialDesignDraft, initialDesignRequestOptions, readInitialDesignRequest, initialRequestWriteTargets, initialDesignCandidateRejection, type InitialDesignObservation, type InitialDesignDeliveryProjection } from './utils/initial-design-delivery';
 import { readOriginalDeliveryActivity, readOriginalDeliveryRuns, originalDeliveryForManifest, resolveOriginalDeliveryExecution } from './utils/delivery-origin';
 import { writeCanonicalComponentClosure } from './check-component-closure';
 import { runChangeUnitProgression, buildChangeUnitGoalHandoff, buildChangeUnitGoalRequest, type ChangeUnitGoalHandoff } from './utils/change-unit-progress-loop';
@@ -2894,8 +2894,8 @@ function beforeAuthorInvocation(events: readonly GoalRunEvent[], invokeId: strin
 }
 
 function recordAuthorRestorations(events: readonly GoalRunEvent[], changes: readonly PhaseInvocationChange[], phase: string, invokeId: string,
-  emit: (event: Record<string, unknown>) => void): void {
-  const originals = authorWritePreimages(beforeAuthorInvocation(events, invokeId));
+  emit: (event: Record<string, unknown>) => void, projectRoot?: string): void {
+  const originals = authorWritePreimages(beforeAuthorInvocation(events, invokeId), projectRoot);
   const restored = changes.filter(change => originals.has(change.path) && originals.get(change.path) === change.postSha256
     && !events.some(event => event.type === 'phase_write_observed' && event.invoke_id === invokeId
       && [...((event as Record<string, any>).observations ?? []), ...((event as Record<string, any>).owned ?? [])].some(row => row.path === change.path && row.post_sha256 === change.postSha256)));
@@ -4686,9 +4686,9 @@ export class GoalPhaseRuntime {
             const allowed = (issued.request.snapshot_options?.ownedPrefixes ?? []).map(prefix => prefix.replace(/\\/g, '/'));
             if (windows.kind === 'unverifiable') return conclude('unauthorized_source_mutation', `设计调用原写快照不可核实：${windows.reason}。`);
             const originalHistory = writeHistory(prior);
-            const originals = authorWritePreimages(beforeAuthorInvocation(originalHistory, latest.invoke_id));
+            const originals = authorWritePreimages(beforeAuthorInvocation(originalHistory, latest.invoke_id), projectRoot);
             const readonlyQuestioning = latest.phase === 'initial-design-questioning' && issued.request.write_boundary?.executionRole === 'verifier';
-            if (!readonlyQuestioning) recordAuthorRestorations(originalHistory, windows.returned, String(latest.phase), latest.invoke_id, emit);
+            if (!readonlyQuestioning) recordAuthorRestorations(originalHistory, windows.returned, String(latest.phase), latest.invoke_id, emit, projectRoot);
             const outside = windows.returned.filter(change => (readonlyQuestioning || !allowed.some(prefix => change.path === prefix || change.path.startsWith(prefix + '/')))
               && (!issued.request.write_boundary || !workUnitMayWritePath(issued.request.write_boundary, change.path))
               && (readonlyQuestioning || !originals.has(change.path) || originals.get(change.path) !== change.postSha256));
@@ -4706,8 +4706,11 @@ export class GoalPhaseRuntime {
             }
           }
         }
-        const writeReview = unresolvedWriteReviewPaths(unresolvedPhaseWrites(projectRoot, writeHistory()));
+        const { conflicts, review } = resolveInitialDesignWriteRecovery(projectRoot, manifest, writeHistory(), { emit });
+        const writeReview = unresolvedWriteReviewPaths(conflicts);
         if (writeReview.length) return conclude('unauthorized_source_mutation', `设计交回不能采信，保全现场并由对应责任方核对：${writeReview.join('、')}`);
+        if (review && !conflicts.size) return conclude('framework_bug', `框架评审展示尚未恢复：${review.file}；${review.reason ?? '等待来源恢复后重建'}。`);
+        const restoration = new Map([...conflicts].filter(([, conflict]) => conflict.restorable).map(([file, conflict]) => [file, conflict.before]));
         const designEvents = history();
         const activeAttempt = [...designEvents].reverse().find(event => event.type === 'design_authority_repair'
           && 'stage' in event && event.stage === 'attempted' && 'handoff_context' in event
@@ -4716,7 +4719,7 @@ export class GoalPhaseRuntime {
             && (later.stage === 'failed' && (later as Record<string, unknown>).failed_step !== 'no_progress_guard' || later.stage === 'published'
               && !('outcome' in later && later.outcome === 'unrecovered' && 'failed_step' in later && later.failed_step === 'reconcile'))));
         if (activeAttempt && 'handoff_context' in activeAttempt && 'signature' in activeAttempt
-          && !unrestoredAuthorWrites(projectRoot, writeHistory()).size) {
+          && !restoration.size) {
           if (!automaticDesignRepair) return conclude('execution_scope_unresolved', '原设计事务仍未完成；需要恢复本请求已有的自动修复授权后继续，不扩大授权。');
           const original = readHandoffMaterial<{ baseline: string; cu?: string; brief: DesignRepairBriefLike }>(runDir, activeAttempt.handoff_context as import('./utils/session-execution-handoff').HandoffReference);
           const cu = original.cu ? asRecord(YAML.parse(Buffer.from(original.cu, 'base64').toString('utf8'))) : null;
@@ -4758,7 +4761,7 @@ export class GoalPhaseRuntime {
             const violation = validateInitialDesignInvocation(latestPurpose, fs.readFileSync(beforeFile, 'utf8'), output);
             if (violation) return conclude('unauthorized_source_mutation', violation);
             if (latestPurpose === 'author' && latest.phase === 'initial-design-author' && !readInitialDesignRequest(projectRoot, frameworkRoot, manifest) && output && invocationCompleted({ ...latest, exitCode: latest.exit_code })
-              && !authorWritePreimages(beforeAuthorInvocation(writeHistory(prior), latest.invoke_id)).size
+              && !authorWritePreimages(beforeAuthorInvocation(writeHistory(), latest.invoke_id), projectRoot).size
               && fs.readFileSync(state.blueprintPath, 'utf8') === output) prepareInitialDesignDraft({ projectRoot, blueprintId: manifest.feature,
               sourceRefs: manifest.requirement_source_files?.length ? manifest.requirement_source_files
                 : [path.relative(projectRoot, path.join(runDir, 'manifest.json')).replace(/\\/g, '/') + '#requirement'],
@@ -4790,7 +4793,6 @@ export class GoalPhaseRuntime {
             issues: [...new Set([...observed.issues, requestPreparationIssue])] };
           observed = { ...feedback, disposition: readInitialDesignCompletionDisposition({ projectRoot, frameworkRoot, manifest, observation: feedback }) };
         }
-        const restoration = unrestoredAuthorWrites(projectRoot, writeHistory());
         if (!restoration.size && !observed.request && (observed.kind === 'author' || observed.kind === 'decompose') && !enumerateCanonicalChangeUnits(projectRoot, manifest.feature).length
           && !observed.progression?.activeRun && fs.existsSync(state.blueprintPath)) {
           try {
@@ -5137,8 +5139,8 @@ export class GoalPhaseRuntime {
           recordEnd(detail); return conclude('unauthorized_source_mutation', detail);
         }
         const originalHistory = writeHistory();
-        const originals = authorWritePreimages(beforeAuthorInvocation(originalHistory, invokeId));
-        if (purpose === 'author') recordAuthorRestorations(originalHistory, windows.returned, label, invokeId, emit);
+        const originals = authorWritePreimages(beforeAuthorInvocation(originalHistory, invokeId), projectRoot);
+        if (purpose === 'author') recordAuthorRestorations(originalHistory, windows.returned, label, invokeId, emit, projectRoot);
         const outside = windows.returned.filter(change => (purpose === 'questioning' || !snapshotOptions.ownedPrefixes.some(prefix => change.path === prefix || change.path.startsWith(prefix + '/')))
           && !workUnitMayWritePath(writeBoundary, change.path) && (purpose === 'questioning' || !originals.has(change.path) || originals.get(change.path) !== change.postSha256));
         const violations = [...windows.beforeBinding.map(change => ({ ...change, window: 'before_binding', violation: 'signed_input_drift' })),

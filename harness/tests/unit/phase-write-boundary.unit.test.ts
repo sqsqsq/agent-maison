@@ -25,6 +25,9 @@ import { fixture as blueprintFixture } from './blueprint-skill-projection.unit.t
 import { emitHarnessPreflightGap, harnessPreflightPath } from '../../scripts/utils/capability-preflight';
 import { readRepairResponsibilityContracts, workUnitMayWritePath } from '../../scripts/utils/repair-responsibility';
 import { resolvePhaseEvidenceManifest, writePhaseEvidenceManifest } from '../../scripts/utils/phase-evidence-manifest';
+import { blueprintReviewPath, inspectBlueprintReview } from '../../scripts/utils/blueprint-review-materialization';
+import { resolveInitialDesignWriteRecovery } from '../../scripts/utils/initial-design-delivery';
+import type { InitialDesignGoalManifest } from '../../scripts/utils/goal-manifest';
 
 const FRAMEWORK_ROOT = path.resolve(__dirname, '..', '..', '..');
 const FEATURE = 'owner-fixture';
@@ -111,6 +114,49 @@ function resolve(root: string, phaseOrder: readonly string[] = CHAIN, executionR
 
 export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
+
+  run(results, '77105c47 framework review recovery records only the projection after real sources recover', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'blueprint-review-recovery-'));
+    fs.cpSync(path.join(__dirname, '../fixtures/component-blueprint/valid'), root, { recursive: true });
+    const f = { root, blueprintFile: path.join(root, 'doc/features/ledger-app-blueprint/blueprint/component-blueprint.yaml'),
+      cuFile: path.join(root, 'doc/features/ledger-app-blueprint/ledger-refresh/change-unit.yaml') };
+    try {
+      const feature = path.basename(path.dirname(path.dirname(f.blueprintFile)));
+      const manifest = { feature } as InitialDesignGoalManifest;
+      const projection = blueprintReviewPath(f.root, feature);
+      const relative = (file: string) => path.relative(f.root, file).replace(/\\/g, '/');
+      const hash = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
+      const blueprint = fs.readFileSync(f.blueprintFile);
+      const cu = fs.readFileSync(f.cuFile);
+      const before = 'a'.repeat(64);
+      const conflict = (file: string, pre_sha256: string, ts = '2026-11-24T12:00:00Z') => ({
+        type: 'phase_write_violation' as const, phase: 'initial-design-decomposition', invoke_id: 'i17', ts,
+        violations: [{ path: relative(file), pre_sha256, violation: 'outside_authority' }],
+      });
+      const violation = conflict(projection, before);
+      const events = [violation, conflict(f.blueprintFile, hash(blueprint))];
+      const dirty = 'dirty projection';
+      fs.writeFileSync(projection, dirty);
+      fs.appendFileSync(f.blueprintFile, '\n# unauthorized change\n');
+      const observed: Record<string, unknown>[] = [];
+      const recover = () => resolveInitialDesignWriteRecovery(f.root, manifest, events, { emit: event => observed.push(event) });
+      assert(recover().conflicts.has(relative(f.blueprintFile)), 'the author must restore the authoritative blueprint first');
+      assert(fs.readFileSync(projection, 'utf8') === dirty && !observed.length, 'dirty sources cannot certify a recovery');
+      fs.writeFileSync(f.blueprintFile, blueprint);
+      assert(!recover().review && inspectBlueprintReview(f.root, feature).status === 'current', 'rebuild must reach current without the old bytes');
+      assert(fs.readFileSync(f.blueprintFile).equals(blueprint) && fs.readFileSync(f.cuFile).equals(cu), 'canonical facts retain their exact identity');
+      assert(observed.length === 1 && observed[0].type === 'phase_write_observed', 'record the framework recovery separately from the violation');
+      const other = path.join(f.root, 'doc/features/other/blueprint/component-blueprint.review.md');
+      write(f.root, relative(other), dirty);
+      fs.appendFileSync(f.blueprintFile, '\n# subsequent authorized change\n');
+      const history = [...events.filter(event => event === violation), conflict(other, before), ...observed] as Parameters<typeof unresolvedPhaseWrites>[1];
+      const unresolved = unresolvedPhaseWrites(f.root, history);
+      assert(!unresolved.has(relative(projection)) && unresolved.has(relative(other)), 'old recovery persists and cannot clear an unrelated same-named file');
+      fs.writeFileSync(projection, dirty);
+      assert(unresolvedPhaseWrites(f.root, [...history, conflict(projection, before, '2026-11-24T12:01:00Z')]).has(relative(projection)),
+        'a later violation creates a fresh recovery obligation');
+    } finally { fs.rmSync(f.root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+  });
 
   run(results, '3ec91fa7 externally changed phase output requires fresh exact proof from its declared owner', () => {
     const root = makeHost();

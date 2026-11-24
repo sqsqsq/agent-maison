@@ -83,7 +83,7 @@ import { validateMinimumAssurance } from './utils/skill-contract';
 import { loadGoalCapability, routeGoalCapability } from './utils/goal-adapter-capability';
 import { loadInertLegacyFidelityIntentSsot } from './utils/fidelity-shared';
 import { designDeliveryNextStep, DesignDeliveryPreparationRequired } from './utils/design-delivery-entry';
-import { findInitialDesignRun, InitialDesignBirthBusy, prepareInitialDesignRun, projectInitialDesignDelivery, initialDesignPhasePolicy, initialDesignRequestOptions, initialDesignScopeActionIssues, readInitialDesignWriteEvents } from './utils/initial-design-delivery';
+import { findInitialDesignRun, InitialDesignBirthBusy, prepareInitialDesignRun, projectInitialDesignDelivery, initialDesignPhasePolicy, initialDesignRequestOptions, initialDesignScopeActionIssues, readInitialDesignWriteEvents, resolveInitialDesignWriteRecovery } from './utils/initial-design-delivery';
 import { unresolvedPhaseWrites } from './utils/phase-write-boundary';
 import type { ProviderRef } from './utils/types';
 import { applyManifestCliOverrides, validateManifestCliOverrides, resolveVisualProviderCliSelection, resolveFinalVisualProviderPin, resolveFinalModelPin } from './utils/goal-manifest-cli';
@@ -946,7 +946,11 @@ async function runGoalExecutionAction(options: Parameters<typeof runGoalModeSess
         const writeHistory = isInitialDesignManifest(manifest) ? readInitialDesignWriteEvents(options.projectRoot, manifest, events)
           : [...readSupersededAncestorRuns({ projectRoot: options.projectRoot, featuresDir: relFeaturesDir(options.projectRoot), feature: manifest.feature,
               seedTargets: manifest.successor_of ? [manifest.successor_of] : [], currentEvents: events }).flatMap(run => run.events), ...events];
-        const conflicts = unresolvedPhaseWrites(options.projectRoot, writeHistory, { feature: manifest.feature, frameworkRoot: options.frameworkRoot, runId: manifest.run_id });
+        const authority = { feature: manifest.feature, frameworkRoot: options.frameworkRoot, runId: manifest.run_id };
+        const recovery = isInitialDesignManifest(manifest) ? resolveInitialDesignWriteRecovery(options.projectRoot, manifest, writeHistory, { authority }) : undefined;
+        const conflicts = recovery?.conflicts ?? unresolvedPhaseWrites(options.projectRoot, writeHistory, authority);
+        if (recovery?.review && !conflicts.size) return { ...view(), status: 'waiting', status_line: foregroundWaiting,
+          detail: `框架评审展示尚未恢复：${recovery.review.file}；通过 --next 接回并重建。` };
         if (conflicts.size && !(original.instruction?.includes('## Restore only your previous unauthorized writes')
           && [...conflicts].every(([file, conflict]) => conflict.restorable && original.instruction!.includes(`${file}: pre_sha256=${conflict.before ?? 'missing'}`)))) {
           return { ...view(), status: 'waiting', status_line: foregroundWaiting,

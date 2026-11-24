@@ -11,7 +11,8 @@ import { featurePhasesFromWorkflow } from './phase-transition-policy';
 import { prepareDesignRequest, readDesignGoalOrigin, bindDesignRequestBlueprint, type PreparedDesignRequest } from './automatic-request';
 import { nativeFixedScale } from './request-intake';
 import { collectUnitScopeIds, collectDeviceScopeP0P1 } from './acceptance-layering';
-import { phaseWriteConflictProblems } from './phase-write-boundary';
+import { describePhaseWriteConflicts, readPhaseRecoveryFile, unresolvedPhaseWrites } from './phase-write-boundary';
+import { blueprintReviewPath, inspectBlueprintReview, materializeBlueprintReview } from './blueprint-review-materialization';
 import { realProjectPath, isInsideProjectRoot } from './project-relative-path';
 import type { AcceptanceSpec } from './types';
 import { buildInitialDesignGoalManifest, isInitialDesignManifest, isRepeatedRequirement, deriveSuccessorRequirement,
@@ -744,11 +745,48 @@ export function readInitialDesignWriteEvents(projectRoot: string, manifest: Init
   return [...prior, ...current ?? loadAuthoritativeEvents(path.resolve(projectRoot, manifest.report_dir, 'events.jsonl'))];
 }
 
+export function resolveInitialDesignWriteRecovery(projectRoot: string, manifest: InitialDesignGoalManifest, events: readonly GoalRunEvent[],
+  options: { emit?: (event: Record<string, unknown>) => void; authority?: Parameters<typeof unresolvedPhaseWrites>[2] } = {}) {
+  const conflicts = unresolvedPhaseWrites(projectRoot, events, options.authority);
+  const target = blueprintReviewPath(projectRoot, manifest.feature);
+  const review = path.relative(projectRoot, target).replace(/\\/g, '/');
+  const violation = conflicts.get(review);
+  if (!violation) return { conflicts };
+  conflicts.delete(review);
+  if (conflicts.size) return { conflicts, review: { file: review, violation } };
+  let produced: Record<string, unknown> | undefined;
+  try {
+    const before = readPhaseRecoveryFile(projectRoot, target).bytes;
+    let inspected = inspectBlueprintReview(projectRoot, manifest.feature);
+    if (options.emit && ['missing', 'stale'].includes(inspected.status) && !inspected.sourceGaps?.length) {
+      const materialized = materializeBlueprintReview(projectRoot, manifest.feature);
+      if (materialized.status === 'failed') return { conflicts, review: { file: review, violation, reason: materialized.reason } };
+      inspected = inspectBlueprintReview(projectRoot, manifest.feature);
+    }
+    if (inspected.status !== 'current' || inspected.sourceGaps?.length) return { conflicts, review: { file: review, violation,
+      reason: inspected.reason ?? (inspected.sourceGaps?.join('；') || inspected.status) } };
+    if (options.emit) {
+      const after = readPhaseRecoveryFile(projectRoot, target).bytes;
+      if (!after) return { conflicts, review: { file: review, violation, reason: '展示文件在重建后缺失' } };
+      const hash = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
+      produced = { path: review, pre_sha256: before ? hash(before) : null, post_sha256: hash(after),
+        recovered_pre_sha256: violation.before, recovered_observed_at: violation.observedAt };
+    }
+  } catch (error) {
+    return { conflicts, review: { file: review, violation, reason: (error as Error).message } };
+  }
+  if (produced) options.emit?.({ type: 'phase_write_observed', phase: 'initial-design', producer: 'blueprint-review',
+    feature: manifest.feature, produced: [produced] });
+  return { conflicts };
+}
+
 /** Root completion consumes the same design, CU and formal assembly facts as their own endpoints. */
 export function readInitialDesignCompletionDisposition(input: { projectRoot: string; frameworkRoot: string; manifest: InitialDesignGoalManifest;
   observation?: InitialDesignObservation }): CurrentDisposition {
   const observed = input.observation ?? readInitialDesignDelivery(input);
-  const writes = phaseWriteConflictProblems(input.projectRoot, readInitialDesignWriteEvents(input.projectRoot, input.manifest));
+  const { conflicts, review } = resolveInitialDesignWriteRecovery(input.projectRoot, input.manifest, readInitialDesignWriteEvents(input.projectRoot, input.manifest));
+  if (review) conflicts.set(review.file, { ...review.violation, restorable: false });
+  const writes = describePhaseWriteConflicts(conflicts);
   if (observed.request) return observed.kind === 'construction' ? initialRequestDisposition(input.projectRoot, input.frameworkRoot, observed.request, writes)
     : resolveCurrentDisposition({ endpoint: 'request', phases: [], additionalProblems: [...writes, { phase: 'component-design', id: 'execution_scope', action: 'repair', affects: 'completion', severity: 'BLOCKER', owner: 'component-design', detail: observed.issues.join('；') }] });
   const problems: CurrentDispositionProblem[] = [...writes, ...(observed.disposition?.problems ?? [])];

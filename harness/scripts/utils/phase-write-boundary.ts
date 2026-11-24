@@ -462,7 +462,7 @@ interface RecordedPhaseWriteConflict {
   observedAt?: string;
 }
 
-function recordedPhaseWriteConflicts(events: readonly GoalRunEvent[]): Map<string, RecordedPhaseWriteConflict> {
+function recordedPhaseWriteConflicts(events: readonly GoalRunEvent[], projectRoot?: string): Map<string, RecordedPhaseWriteConflict> {
   const conflicts = new Map<string, RecordedPhaseWriteConflict>();
   const ownRecoveries = new Set((events as readonly Record<string, any>[]).filter(event => event.type === 'phase_backtrack_requested' && event.reason === 'phase_write_violation'
     && typeof event.invoke_id === 'string' && typeof event.from_phase === 'string' && event.from_phase === event.to_phase).map(event => event.invoke_id));
@@ -489,6 +489,16 @@ function recordedPhaseWriteConflicts(events: readonly GoalRunEvent[]): Map<strin
       }
     }
     if (event.type === 'phase_write_observed') {
+      if (projectRoot && event.phase === 'initial-design' && event.producer === 'blueprint-review'
+        && typeof event.feature === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(event.feature)) {
+        const { blueprintReviewPath } = require('./blueprint-review-materialization') as typeof import('./blueprint-review-materialization');
+        const review = normalizeRelative(projectRoot, blueprintReviewPath(projectRoot, event.feature));
+        const conflict = conflicts.get(review);
+        for (const row of Array.isArray(event.produced) ? event.produced : []) {
+          if (row?.path === review && conflict && conflict.before === row.recovered_pre_sha256 && conflict.observedAt === row.recovered_observed_at
+            && typeof row.post_sha256 === 'string' && /^[a-f0-9]{64}$/.test(row.post_sha256)) conflicts.delete(review);
+        }
+      }
       const owned = Array.isArray(event.owned) ? event.owned : [];
       for (const row of [...(Array.isArray(event.observations) ? event.observations : []), ...owned]) {
         const conflict = conflicts.get(row.path);
@@ -502,13 +512,13 @@ function recordedPhaseWriteConflicts(events: readonly GoalRunEvent[]): Map<strin
   return conflicts;
 }
 
-export function authorWritePreimages(events: readonly GoalRunEvent[]): Map<string, string | null> {
-  return new Map([...recordedPhaseWriteConflicts(events)].filter(([, conflict]) => conflict.restorable).map(([file, conflict]) => [file, conflict.before]));
+export function authorWritePreimages(events: readonly GoalRunEvent[], projectRoot?: string): Map<string, string | null> {
+  return new Map([...recordedPhaseWriteConflicts(events, projectRoot)].filter(([, conflict]) => conflict.restorable).map(([file, conflict]) => [file, conflict.before]));
 }
 
 export function unresolvedPhaseWrites(projectRoot: string, events: readonly GoalRunEvent[],
   authority?: { feature: string; frameworkRoot?: string; runId?: string }): Map<string, RecordedPhaseWriteConflict> {
-  return new Map([...recordedPhaseWriteConflicts(events)].filter(([file, conflict]) => {
+  return new Map([...recordedPhaseWriteConflicts(events, projectRoot)].filter(([file, conflict]) => {
     const absolute = path.resolve(projectRoot, file);
     if (!absolute.startsWith(path.resolve(projectRoot) + path.sep)) return true;
     if (!fs.existsSync(absolute)) return conflict.before !== null;
@@ -537,7 +547,11 @@ export function unresolvedWriteReviewPaths(conflicts: ReadonlyMap<string, Record
 }
 
 export function phaseWriteConflictProblems(projectRoot: string, events: readonly GoalRunEvent[], authority?: Parameters<typeof unresolvedPhaseWrites>[2]): CurrentDispositionProblem[] {
-  return [...unresolvedPhaseWrites(projectRoot, events, authority)].map(([file, conflict]) => ({ phase: 'scope', id: 'phase_write_violation',
+  return describePhaseWriteConflicts(unresolvedPhaseWrites(projectRoot, events, authority));
+}
+
+export function describePhaseWriteConflicts(conflicts: ReturnType<typeof unresolvedPhaseWrites>): CurrentDispositionProblem[] {
+  return [...conflicts].map(([file, conflict]) => ({ phase: 'scope', id: 'phase_write_violation',
     action: conflict.restorable ? 'repair' : 'verify', affects: 'completion', severity: 'BLOCKER', files: [file],
     detail: conflict.restorable ? `先恢复本单元作者自己尚未恢复的越权写入：${file}；pre_sha256=${conflict.before ?? 'missing'}`
       : `原交回的写入时段存在冲突，保全现场，由对应责任方核对原件：${file}` }));
