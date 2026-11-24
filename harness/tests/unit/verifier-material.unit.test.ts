@@ -550,19 +550,22 @@ const cases: Array<{ name: string; run: () => void }> = [
     name: '77105c47 Q reopens acceptance and method consumers without pulling in unrelated view members',
     run: () => {
       const methodRef = 'interface:view:development/node:otp/LedgerOtp#canSubmit';
+      const sameNamedMethod = 'interface:view:development/node:home/LedgerOtp#canSubmit';
       const blueprint = {
         blueprint_id: 'ledger', design_views: [
           { view_id: 'development', applicability: 'applicable', evolution_impact: 'changed', nodes: [
             { node_id: 'otp', acceptance: { criteria: [{ id: 'AC-4', description: '验证码满六位允许提交' }] },
               contracts: { interfaces: [{ class: 'LedgerOtp', methods: [{ name: 'canSubmit', return: 'boolean' }] }] } },
-            { node_id: 'home', description: 'Shows existing cards', provenance: { source_kind: 'requirement', source_ref: 'request.md' } },
+            { node_id: 'home', description: 'Shows existing cards', provenance: { source_kind: 'requirement', source_ref: 'request.md' },
+              contracts: { interfaces: [{ class: 'LedgerOtp', methods: [{ name: 'canSubmit', return: 'boolean' }] }] } },
           ] },
           { view_id: 'runtime', applicability: 'applicable', evolution_impact: 'changed', runtime_data_flows: [
-            { flow_id: 'otp-entry', ordered_steps: [{ interface_method_ref: methodRef }], verification_refs: ['AC-4'] },
-            { flow_id: 'home-read', design_refs: ['view:development/node:home'], provenance: { source_kind: 'requirement', source_ref: 'request.md' } },
+            { flow_id: 'otp-entry', ordered_steps: [methodRef], verification_refs: ['AC-4'] },
+            { flow_id: 'home-read', ordered_steps: [sameNamedMethod], design_refs: ['view:development/node:home'],
+              provenance: { source_kind: 'requirement', source_ref: 'request.md' } },
           ] },
           { view_id: 'scenarios', applicability: 'applicable', evolution_impact: 'changed', nodes: [
-            { node_id: 'submit-case', use_cases: { boundaries: [{ interface_method_ref: methodRef }] } },
+            { node_id: 'submit-case', use_cases: { use_cases: [{ data_boundaries: [{ methods: [methodRef] }] }] } },
           ] },
         ], relations: [], review_summary: { authored_by: 'author' },
       };

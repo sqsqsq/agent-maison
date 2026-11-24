@@ -23,6 +23,7 @@ import { resolveBlueprintReaderSource } from './blueprint-reader-guide';
 import { stableAddressIndex } from './blueprint-addressing';
 import { evaluateDerivedConclusionFreshness } from './derived-conclusion-freshness';
 import { componentBlueprintPath } from './component-blueprint-path';
+import { blueprintMethodRef } from './blueprint-method-projection';
 
 /** Compare declared evidence paths without opening them or treating a Windows drive as a URI scheme. */
 export function questioningEvidencePath(ref: string, projectRoot?: string): string | undefined {
@@ -272,7 +273,7 @@ export function selectQuestioningScopes(before: BlueprintRecord | undefined, cur
       for (const method of asRecords(contract.methods)) {
         if (!nonEmptyString(method.name)) continue;
         facts.set(`method:${contract.class}.${method.name}`, method);
-        facts.set(`interface:${address}/${contract.class}#${method.name}`, method);
+        facts.set(blueprintMethodRef(address, contract.class, method.name), method);
       }
     }
     return facts;

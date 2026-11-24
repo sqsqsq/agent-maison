@@ -84,7 +84,7 @@ import { loadCanonicalBlueprint, componentBlueprintPath } from './utils/componen
 import { asRecord, blueprintAuthorContent } from './utils/component-blueprint-model';
 import { materializeBlueprintReview } from './utils/blueprint-review-materialization';
 import { acceptChangeUnitDecomposition, deriveDesignPreparationReadiness } from './utils/change-unit-design-preparation';
-import type { ChangeUnitCandidate } from './utils/change-unit-provider-boundary';
+import { matchesAcceptedChangeUnitCandidate, rebindQuestionedChangeUnitCandidates, type ChangeUnitCandidateInput } from './utils/change-unit-provider-boundary';
 import { evaluateComponentClosure } from './utils/component-closure-validator';
 import { deriveChangeUnitBlockers } from './utils/change-unit-blockers';
 import { spawn, spawnSync } from 'child_process';
@@ -4805,14 +4805,15 @@ export class GoalPhaseRuntime {
             requestPreparationIssue = `原请求来源准备尚未完成：${String(error)}`;
           } finally { transaction.rollback(); }
         }
-        let observed = readInitialDesignDelivery({ projectRoot, frameworkRoot, manifest, ...questioningObservation() });
+        const currentQuestioning = questioningObservation();
+        let observed = readInitialDesignDelivery({ projectRoot, frameworkRoot, manifest, ...currentQuestioning });
         if (requestPreparationIssue && observed.request) {
           const feedback: InitialDesignObservation = { ...observed, kind: 'author',
             request: { ...observed.request, implementation: false },
             issues: [...new Set([...observed.issues, requestPreparationIssue])] };
           observed = { ...feedback, disposition: readInitialDesignCompletionDisposition({ projectRoot, frameworkRoot, manifest, observation: feedback }) };
         }
-        if (!restoration.size && !observed.request && (observed.kind === 'author' || observed.kind === 'decompose') && !enumerateCanonicalChangeUnits(projectRoot, manifest.feature).length
+        if (!restoration.size && !observed.request && !observed.candidateRejection && (observed.kind === 'author' || observed.kind === 'decompose') && !enumerateCanonicalChangeUnits(projectRoot, manifest.feature).length
           && !observed.progression?.activeRun && fs.existsSync(state.blueprintPath)) {
           try {
             const loaded = loadCanonicalBlueprint(projectRoot, manifest.feature);
@@ -4876,24 +4877,41 @@ export class GoalPhaseRuntime {
             break;
           }
         }
-        if (!observed.request && (observed.kind === 'decompose' || observed.kind === 'construction') && fs.existsSync(observed.candidatesPath)) {
-          const candidates: unknown = JSON.parse(fs.readFileSync(observed.candidatesPath, 'utf8'));
-          if (!Array.isArray(candidates)) throw new Error('[initial-design] candidates must be an array for the original consumer');
-          const canonical = enumerateCanonicalChangeUnits(projectRoot, manifest.feature);
-          const accepted = candidates.length > 0 && candidates.every(candidate => {
-            const artifact = asRecord(asRecord(candidate)?.artifact);
-            return artifact && canonical.some(unit => stableStringify(unit.changeUnit) === stableStringify(artifact));
-          });
+        if (!observed.request && !observed.candidateRejection && (observed.kind === 'decompose' || observed.kind === 'construction') && fs.existsSync(observed.candidatesPath)) {
           try {
-            if (accepted) {
-              try { fs.unlinkSync(observed.candidatesPath); } catch { /* Canonical acceptance is already authoritative. */ }
-            } else {
-            acceptChangeUnitDecomposition(projectRoot, manifest.feature, candidates as ChangeUnitCandidate[]);
-            try { fs.unlinkSync(observed.candidatesPath); } catch { /* Accepted canonical facts are authoritative; cleanup is advisory. */ }
-            continue;
+            const bytes = readPhaseRecoveryFile(projectRoot, observed.candidatesPath).bytes;
+            if (!bytes) continue;
+            const decoded: unknown = JSON.parse(bytes.toString('utf8'));
+            if (!Array.isArray(decoded)) throw new Error('候选文件须为 ChangeUnitCandidate[]。');
+            let candidates = decoded as ChangeUnitCandidateInput[];
+            const current = loadCanonicalBlueprint(projectRoot, manifest.feature);
+            const original = currentQuestioning.original;
+            const unchangedAtQuestioning = (file: string, content: Buffer): boolean => {
+              const relative = path.relative(projectRoot, file).replace(/\\/g, '/');
+              return !!original?.preSnapshot?.entries.some(entry => entry.kind === 'file' && entry.path === relative
+                && entry.sha256 === createHash('sha256').update(content).digest('hex'));
+            };
+            if (original && !observed.disposition?.completionBlocking.length
+              && candidates.some(candidate => asRecord(asRecord(candidate?.artifact)?.component_blueprint_ref)?.artifact_sha256 !== current.artifactSha256)) {
+              const before = Buffer.from(original.beforeBlueprint, 'utf8');
+              if (unchangedAtQuestioning(observed.blueprintPath, before) && unchangedAtQuestioning(observed.candidatesPath, bytes)) {
+                candidates = rebindQuestionedChangeUnitCandidates(before, current, candidates);
+              }
             }
-          }
-          catch (error) {
+            const accepted = candidates.length > 0 && candidates.every(candidate => matchesAcceptedChangeUnitCandidate(projectRoot, candidate));
+            if (!accepted) {
+              const published = acceptChangeUnitDecomposition(projectRoot, manifest.feature, candidates);
+              console.log('[initial-design] CU accepted ' + JSON.stringify({
+                ts: new Date().toISOString(), run_id: manifest.run_id, blueprint_id: manifest.feature,
+                change_units: published.accepted.map(unit => ({ change_unit_id: unit.changeUnit.change_unit_id,
+                  revision: unit.changeUnit.revision, artifact_sha256: unit.artifactSha256 })),
+              }));
+            }
+            try {
+              if (fs.readFileSync(observed.candidatesPath).equals(bytes)) fs.unlinkSync(observed.candidatesPath);
+            } catch { /* Accepted canonical facts are authoritative; cleanup is advisory. */ }
+            if (!accepted) continue;
+          } catch (error) {
             const feedback = initialDesignCandidateRejection(observed, error, manifest.feature);
             observed = { ...feedback, disposition: readInitialDesignCompletionDisposition({ projectRoot, frameworkRoot, manifest, observation: feedback }) };
           }

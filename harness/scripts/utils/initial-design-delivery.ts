@@ -47,7 +47,7 @@ import { resolveCurrentDisposition, type CurrentDisposition, type CurrentDisposi
 import { loadCanonicalComponentClosure } from './component-closure-path';
 import { validateComponentClosure } from './component-closure-validator';
 import { independentVerificationContext } from './verifier-material';
-import { ChangeUnitCandidateRejected } from './change-unit-provider-boundary';
+import { ChangeUnitCandidateRejected, inspectChangeUnitCandidateBatch } from './change-unit-provider-boundary';
 
 /** The caller places this existing writer outside the native invocation's attribution window. */
 export function prepareInitialDesignDraft(input: {
@@ -526,7 +526,22 @@ export function readInitialDesignDelivery(input: { projectRoot: string; framewor
       }
     }
     if (disposition.completionBlocking.some(problem => problem.action === 'repair')) return { ...state, kind: 'author', issues: feedback };
-    if (disposition.completionBlocking.length) return { ...state, kind: 'questioning', issues: feedback };
+    if (disposition.completionBlocking.length) {
+      if (!units.length && fs.existsSync(candidatesPath)) {
+        const precheck = inspectChangeUnitCandidateBatch({ projectRoot: input.projectRoot, blueprintId: input.manifest.feature, candidatesPath });
+        if (precheck.issues.length) {
+          const issues = precheck.issues.map(issue => {
+            const where = issue.locations?.map(({ target, field }) => `${target.view_id ? `view:${target.view_id}/` : ''}${target.kind}:${target.id}.${field}`);
+            return `${issue.code}${issue.change_unit_id ? ` [${issue.change_unit_id}]` : ''}：${issue.message}${where?.length ? `（${where.join('、')}）` : ''}`;
+          });
+          if (precheck.designAuthority?.length) return initialDesignCandidateRejection({ ...state, kind: 'author', issues: [] },
+            new ChangeUnitCandidateRejected(precheck.issues[0].code, issues.join('\n'), precheck.designAuthority), input.manifest.feature);
+          return { ...state, kind: precheck.issues.some(issue => issue.owner === 'blueprint') ? 'author' : 'decompose',
+            issues, candidateRejection: { code: precheck.issues[0].code, detail: issues.join('\n') } };
+        }
+      }
+      return { ...state, kind: 'questioning', issues: feedback };
+    }
     if (ownershipFindings.length) return { ...state, kind: 'author', issues: ownershipIssues.map(issue => issue.message),
       designRepair: { feature: input.manifest.feature, brief: { class: 'B2', items: ownershipFindings } } };
     return { ...state, kind: 'construction', progression, issues: progression.reasons };
@@ -658,6 +673,7 @@ export function initialDesignAuthorInstruction(input: { projectRoot: string; fra
   catch { /* A missing or malformed author draft still receives the machine-allocated ID. */ }
   const sources = (manifest.requirement_source_files ?? []).join('、') || `${manifest.report_dir}/manifest.json#requirement`;
   const schemas = ['app-component-blueprint.schema.json', 'runtime-data-flow.schema.json', 'change-unit.schema.json'];
+  const designPrecheck = `npm run check:change-unit -- --project-root ${JSON.stringify(input.projectRoot)} --blueprint ${JSON.stringify(manifest.feature)} --precheck --json`;
   const parts = [
     ...(questioning ? ['本职终点：完成当前蓝图的真实独立质询；先读评审正文，再核来源与当前设计。'] : [
       `原始正式需求：\n${manifest.requirement}`, `请求终点：${manifest.initial_design.completion_target}；${manifest.initial_design.requested_results.filter(result => result.trim() !== (manifest.requirement ?? '').trim()).join('；') || '完成上述原始需求的全部适用CU正式交付。'}`,
@@ -697,6 +713,9 @@ export function initialDesignAuthorInstruction(input: { projectRoot: string; fra
     ...(observation.kind === 'decompose' ? [
       '映射到框架 testing 计划时，用候选自己的 blueprint_id 与 change_unit_id 解析长期引用。CU 计划落在自身目录，施工映射只引用长期计划位置。',
       buildChangeUnitTestingLocationHint(input.projectRoot, manifest.feature),
+    ] : []),
+    ...((observation.kind === 'author' || observation.kind === 'decompose') ? [
+      `本会话内运行只读预检（cwd=${path.join(frameworkRoot, 'harness')}）：${designPrecheck}。已准备候选时加 --candidates ${JSON.stringify(observation.candidatesPath)}，一并修复归本责任方的 issues 并复验。ready_for_questioning 表示作者可修项已就绪；pending_questioning 由 runtime 签发真实独立质询，不要求作者证明其已通过。正式接收仍重读当前绑定并原子写出。`,
     ] : []),
     observation.kind === 'questioning'
       ? questioningInstruction!

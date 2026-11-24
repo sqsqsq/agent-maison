@@ -428,7 +428,8 @@ function prepareCandidateBatch(projectRoot: string, input: readonly ChangeUnitCa
 
 export function inspectChangeUnitCandidateBatch(input: {
   projectRoot: string; blueprintId: string; draftPath?: string; candidatesPath?: string;
-}): { ready_for_questioning: boolean; pending_questioning: boolean; issues: ChangeUnitPrecheckIssue[]; blueprint_identity?: ComponentBlueprintRef } {
+}): { ready_for_questioning: boolean; pending_questioning: boolean; issues: ChangeUnitPrecheckIssue[]; blueprint_identity?: ComponentBlueprintRef;
+  designAuthority?: ChangeUnitCandidateRejected['designAuthority'] } {
   const { projectRoot, blueprintId } = input;
   let owner: ChangeUnitPrecheckIssue['owner'] = 'blueprint';
   try {
@@ -448,8 +449,9 @@ export function inspectChangeUnitCandidateBatch(input: {
     const candidates: unknown = input.candidatesPath ? JSON.parse(fs.readFileSync(artifactPath(input.candidatesPath, 'change unit candidates'), 'utf8')) : [];
     if (!Array.isArray(candidates)) throw new Error('候选文件须为 JSON 数组 [{providerId, artifact, construction_mapping?}]');
     const result = prepareCandidateBatch(projectRoot, candidates as ChangeUnitCandidateInput[], { snapshot, draft: true });
+    const findings = result.errors.flatMap(error => error.designAuthority ?? []);
     return { ready_for_questioning: !result.issues.length, pending_questioning: result.pendingQuestioning,
-      issues: result.issues, blueprint_identity: rootRef };
+      issues: result.issues, blueprint_identity: rootRef, ...(findings.length ? { designAuthority: findings } : {}) };
   } catch (error) {
     return { ready_for_questioning: false, pending_questioning: true, issues: [
       { owner, code: error instanceof ChangeUnitCandidateRejected ? error.code : 'change_unit_candidate_schema_rejected', message: (error as Error).message },

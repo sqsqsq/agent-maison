@@ -21,6 +21,10 @@ export function isBlueprintMethodRef(value: unknown): value is string {
   return typeof value === 'string' && value.startsWith('interface:') && value.includes('#');
 }
 
+export function blueprintMethodRef(address: string, owner: string, method: string): string {
+  return `interface:${address}/${owner}#${method}`;
+}
+
 export function blueprintMethodProjection(blueprint: BlueprintRecord) {
   const index = stableAddressIndex(blueprint);
   const blueprintId = String(blueprint.blueprint_id ?? '');
@@ -32,7 +36,7 @@ export function blueprintMethodProjection(blueprint: BlueprintRecord) {
   const methods: BlueprintMethod[] = [...index].filter(([, target]) => asRecord(target.provenance)?.evidence_strength === 'authoritative').flatMap(([address, target]) =>
     asRecords(asRecord(target.contracts)?.interfaces).flatMap((api, apiIndex) => !nonEmptyString(api.class) ? [] :
       asRecords(api.methods).flatMap((method, methodIndex) => !nonEmptyString(method.name) || !nonEmptyString(method.return) ? [] : [{
-        ref: `interface:${address}/${api.class}#${method.name}`,
+        ref: blueprintMethodRef(address, String(api.class), method.name),
         owner: String(api.class),
         file: api.file,
         method,

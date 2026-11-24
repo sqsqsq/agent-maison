@@ -1598,7 +1598,7 @@ cases.push({
   },
 });
 
-for (const scenario of ['derived', 'source-gap', 'repair', 'no-progress', 'new-acceptance'] as const) cases.push({
+for (const scenario of ['derived', 'precheck', 'source-gap', 'repair', 'no-progress', 'new-acceptance'] as const) cases.push({
   name: `a920e013 public candidate ${scenario} keeps root ownership, original transaction and finite recovery`,
   async run() {
     const { withFreshCuHost } = require('./lifecycle-evolution.unit.test') as typeof import('./lifecycle-evolution.unit.test');
@@ -1621,7 +1621,7 @@ for (const scenario of ['derived', 'source-gap', 'repair', 'no-progress', 'new-a
       state.design_ref = `view:runtime/flow:${flowRef.target.id}`;
       for (const field of ['owner_ref', 'contract_refs', 'mutations', 'publications', 'subscriptions', 'consumers']) delete state[field];
       if (scenario === 'source-gap') delete (flow.consumers as any[])[0].update_ref;
-      else if (scenario !== 'derived') {
+      else if (scenario !== 'derived' && scenario !== 'precheck') {
         // The source flow is admitted; an explicitly conflicting mirror still needs its design owner.
         state.owner_ref = 'view:runtime/node:ledger-store';
       }
@@ -1632,7 +1632,8 @@ for (const scenario of ['derived', 'source-gap', 'repair', 'no-progress', 'new-a
       const mapping = structuredClone(contracts.change_unit); delete mapping.change_unit_ref;
       for (const canonical of identity.enumerateCanonicalChangeUnits(host.root, blueprint)) fs.unlinkSync(canonical.canonicalPath);
       const candidatesPath = path.join(path.dirname(f.blueprintFile), 'change-unit-candidates.json');
-      fs.writeFileSync(candidatesPath, JSON.stringify([{ providerId, artifact, construction_mapping: mapping }]) + '\n');
+      fs.writeFileSync(candidatesPath, JSON.stringify([{ providerId, artifact,
+        construction_mapping: scenario === 'precheck' ? { ...mapping, design_ref_mappings: [] } : mapping }]) + '\n');
       let pendingBytes = fs.readFileSync(candidatesPath);
       const manifest = manifests.buildInitialDesignGoalManifest({ feature: blueprint, run_id: `projection-${scenario}`, adapter: 'codex',
         requirement: '新增一笔账目后刷新账页并在重启后恢复余额',
@@ -1654,6 +1655,16 @@ for (const scenario of ['derived', 'source-gap', 'repair', 'no-progress', 'new-a
         assert(!handoff.sessionEvents(runDir).some(event => event.type === 'run_end' && 'run_wait_kind' in event && event.run_wait_kind === 'human'));
         return;
       }
+      if (scenario === 'precheck') {
+        assert.equal(result.phase, 'initial-design-decomposition', diagnostic(result));
+        assert.match(diagnostic(result), /ready_for_questioning/);
+        assert.equal(identity.enumerateCanonicalChangeUnits(host.root, blueprint).length, 0, '预检不得写部分 CU');
+        fs.writeFileSync(candidatesPath, JSON.stringify([{ providerId, artifact, construction_mapping: mapping }]) + '\n');
+        const requestPath = (result.request as { path: string }).path;
+        result = await withRuntimeTest({ root: host.root }, () => entry.runGoalModeSessionStep({ ...options, requestPath,
+          report: { status: 'passed', phase: String(result.phase), details: '已修复该候选的正式预检问题。' } }));
+        assert.equal(result.phase, 'initial-design-questioning', diagnostic(result));
+      }
       if (result.phase === 'initial-design-questioning') result = await reportFixtureQuestioning(options, result, runDir, f.blueprintFile);
       if (result.phase === 'initial-design-decomposition') {
         const requestPath = (result.request as { path: string }).path, issued = handoff.readSessionExecution(runDir, requestPath)!;
@@ -1666,9 +1677,20 @@ for (const scenario of ['derived', 'source-gap', 'repair', 'no-progress', 'new-a
         result = await withRuntimeTest({ root: host.root }, () => entry.runGoalModeSessionStep({ ...options, requestPath,
           report: { status: 'passed', phase: issued.request.context.phase, details: 'returned the candidate against the current admitted blueprint' } }));
       }
-      if (scenario === 'derived') {
-        assert(identity.enumerateCanonicalChangeUnits(host.root, blueprint).some(row => row.changeUnit.change_unit_id === artifact.change_unit_id), diagnostic(result));
-        assert.equal(handoff.sessionEvents(runDir).filter(event => event.type === 'agent_invoke_start' && String(event.phase).includes('decomposition')).length, 1, '唯一派生不重派候选');
+      if (scenario === 'derived' || scenario === 'precheck') {
+        const accepted = identity.enumerateCanonicalChangeUnits(host.root, blueprint).find(row => row.changeUnit.change_unit_id === artifact.change_unit_id);
+        assert(accepted, diagnostic(result));
+        assert.equal(handoff.sessionEvents(runDir).filter(event => event.type === 'agent_invoke_start' && String(event.phase).includes('decomposition')).length,
+          scenario === 'derived' ? 0 : 1,
+          '预检通过的候选按独立质询签发的前像重绑并正式接收，无需重新派作者');
+        assert(!fs.existsSync(candidatesPath), '正式接收以后清理原候选');
+        const prefix = '[initial-design] CU accepted ';
+        const milestones = fs.readFileSync(path.join(runDir, 'session-control.log'), 'utf8').split('\n')
+          .filter(line => line.startsWith(prefix)).map(line => JSON.parse(line.slice(prefix.length)));
+        assert.equal(milestones.length, 1, '只在原 writer 完整成功后记录一次里程碑');
+        assert.deepEqual(milestones[0].change_units, [{ change_unit_id: artifact.change_unit_id,
+          revision: accepted.changeUnit.revision, artifact_sha256: accepted.artifactSha256 }]);
+        assert(Number.isFinite(Date.parse(milestones[0].ts)) && milestones[0].ts.endsWith('Z'));
         return;
       }
       assert.equal(result.phase, 'design-repair-author', diagnostic(result));
