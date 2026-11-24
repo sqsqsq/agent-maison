@@ -26,9 +26,9 @@ import { isProducedPhaseChange, resolvePhasePathOwnership } from './phase-write-
 import { readHandoffMaterial, type SessionExecutionRequest } from './session-execution-handoff';
 import { repairCandidateCanReviseScope, scopeRepairReason, SCOPE_REVISION_FACT_KIND, type RepairCandidate } from './repair-candidates';
 import { invocationCompleted } from './invocation-completion';
-import { asRecord, asRecords, asStrings } from './component-blueprint-model';
+import { asRecord, asRecords } from './component-blueprint-model';
 import { resolveBlueprintTarget } from './blueprint-addressing';
-import { normalizeContractFilePath } from './contract-reference-closure';
+import { normalizeContractFilePath, resolveContractFileReferences, selectContractReferencePaths } from './contract-reference-closure';
 import { isUiComponent } from './component-assets';
 import type { GoalRunEvent } from './goal-runner-phase';
 import type { ChangeUnitArtifact } from './change-unit-model';
@@ -513,7 +513,8 @@ export function resolveChangeUnitImpactFacts(input: ExecutionScopeInput, ctx: Sc
         if (!['node', 'flow'].includes(ref.target.kind)) return [];
         const target = resolveBlueprintTarget(blueprint, ref.target);
         const local = asRecord(target.contracts);
-        const routes = new Set(asStrings(asRecord(local?.navigation)?.config_files).map(normalize));
+        const references = local && resolveContractFileReferences(projectRoot, local as unknown as ContractsSpec);
+        const routes = new Set(selectContractReferencePaths(references, 'navigation.config_files'));
         const ui = [target, ...asRecords(local?.components)].filter(entry => isUiComponent(entry) || entry.kind === 'route')
           .flatMap(entry => typeof entry.file === 'string' ? [{ file: normalize(entry.file), name: entry.name }] : []);
         return implementation_refs.flatMap(landing => {
