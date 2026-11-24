@@ -7645,10 +7645,8 @@ Goal runner — original request design and construction runtime
           if (onlyCompatibleInputs && hasStaleContractsScopeProof(context, previous)) return;
           if (onlyCompatibleInputs || !phaseCompletionProblems(current.disposition, [family]).length) proposals.push(ownedAcceptance);
         }
-        if (!proposals.length) {
-          const refreshed = refreshScopeBindingInput(context, previous);
-          if (refreshed) proposals.push(refreshed);
-        }
+        const compatibleRefresh = !proposals.length ? refreshScopeBindingInput(context, previous) : undefined;
+        if (compatibleRefresh) proposals.push(compatibleRefresh);
         const resolvesDefinition = previous.unresolved.some(gap => gap.owner === family)
           || previous.obligations.some(fact => fact.owner_phase === family && fact.kind === 'design-context'
             && fact.applicability === 'required' && !fact.satisfied_by?.length);
@@ -7669,8 +7667,8 @@ Goal runner — original request design and construction runtime
               authorizedPhases, completedPhases: completed, currentPhase: family, currentRunId: manifest.run_id, requirement: manifest.requirement,
               currentResults: current.results, repairCandidates: candidates });
           } catch (error) {
-            // The signed acceptance alone may still carry a stale plan proof. Let the current check supply its complete proposal.
-            if (onlyCompatibleInputs && ownedAcceptance && proposals[0] === ownedAcceptance) return null;
+            // A speculative refresh can still carry a stale producer proof. The original check and repair own that input.
+            if (compatibleRefresh || onlyCompatibleInputs && ownedAcceptance && proposals[0] === ownedAcceptance) return null;
             throw error;
           }
         })();
