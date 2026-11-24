@@ -95,7 +95,9 @@ App lens 的十个现有问题分别承接上述关切：module_boundaries/capab
 
 #### 完整调用设计与时序图
 
-1. **先写可投影调用设计**：在 runtime flow 承载的 `contracts.state_management[].ordered_steps` 逐条用字符串写明调用方、被调用方/操作、参数及结果、等待/回调、条件和失败处理。typed components/interfaces/data_models 与根 contracts 的 operation/DTO/errors/idempotency/table_schema 提供同源签名和存储事实；flow 的权威、发布、消费者及恢复说明补闭环。保留 flow.ordered_steps 时同次同步。不能只在 Mermaid 补设计，也不把 string[] 改对象或另造交互 DSL。
+方法签名在所属节点的 `contracts.interfaces[].methods[]` 声明。`ordered_steps` 可用 `interface:view:development/node:<node_id>/<class>#<method>` 引用，成功、重复与失败的去向另用步骤说明。用例 `data_boundaries[].methods` 可用所属类下唯一的方法名或同一完整引用。评审和施工投影展开参数、返回类型和异步声明。独立 DTO 保留字段和显式转换，验收保留用户可观察的结果。
+
+1. **先写可投影调用设计**。在 runtime flow 承载的 `contracts.state_management[].ordered_steps` 逐条用字符串写明调用方、被调用方、等待或回调、条件及结果去向。接口签名可按上文引用，typed 组件、数据模型和根契约提供存储及 DTO 事实。flow 的权威、发布、消费者及恢复说明补齐闭环。保留 `flow.ordered_steps` 时同步调用顺序和结果去向。步骤保持 `string[]`，Mermaid 根据已声明事实生成。
 2. **同次设计调用生成图**：设计 agent 据上述事实生成根 `generated_graphs` 的 `format: mermaid`、`source_view_id: runtime`、`graph_id/content/node_refs/relation_refs`。实现时序按一个界面步骤或一次跨层交互拆图、拆说明小节，不把从入口、选择、校验、保存到结果/完成的全过程称为“一件事”。一次保存可完整跨页面、业务对象、Repository、实际 helper/数据库并沿调用链返回，确认落库后才成功，不按每个方法或 ordered_step 机械拆图；成功完成与失败退出分别解释，可在同图用分支表示，不要求两张图。例子分为“打开验证码”“提交、保存并显示结果”“结果页点击完成后清栈、首页刷新”三个界面步骤，分别说明、配图；保存链本身不按层拆。调用返回是返回值或回调回到调用方，不包含用户之后点击完成引发的导航返回。每段写清触发、结果、前后交接、失败从哪个调用分叉及返回谁，保留等待、调用返回与完成/导航/实际消费者；完整调用事实仍留 ordered_steps 与参考。每张图使用既有 generated_graphs/derived_results，再由 guide 小节的 graph_ids 就近放置，不新增图字段或数量硬门。没有 helper 不造层数，异步/回调据实表达，双入口不画用户直连业务，也不把所有 navStack 调用归给 coordinator。中文角色、动作与消息意图在前，代码名必要时括注。
 3. **复用现有派生身份**：同 graph_id 对应既有 `derived_results.result_id`，以现有图派生 kind、input_revision/source_fingerprint/decision_fingerprint/status 绑定并复用 `evaluateDerivedConclusionFreshness`。node_refs 指向真实 flow 和参与对象的承载地址，可多角色共用一承载目标；数据库引用现有数据节点或根存储契约。relation_refs 只引用已有关系，可为空，不为每个箭头新增顶层 relation 或 closure 义务，不造 table: 地址、独立 mmd 真源、sequence_diagrams 或 interactions 字段/schema。
 4. **原 runtime/flow scope 独立质询**：逐段对照步骤、typed 签名/参数、根契约、恢复与用例，核调用者、返回、等待、关键分支及完成链与图一致。接口映射须与模型字段一致，不同图中的调用责任须一致，由原作者与既有质询核源；本批不新增机器语义检查。user_sequence/expected_port_calls/not_called 是核对材料，其自身不声明完整调用者与交错关系，renderer 不从它们猜箭头。parser/引用 PASS 仅证明可表达，不证明设计语义一致，不新增自动自然语言比较器。正常新设计默认交付此图；缺图不加机器门禁，也不能声称该项人读验收完整。
@@ -198,6 +200,18 @@ scenario 必须追到 logical/runtime/development 以及适用 deployment；runt
 
 ### 4. 质询、准入与调和
 
+#### 作者预检
+
+作者在原会话完成草案后从 `framework/harness` 运行以下只读检查。已有 CU 候选时追加 `--candidates "<候选文件>"`。
+
+```bash
+npm run check:change-unit -- --project-root "<宿主根>" --blueprint "<id>" --precheck --draft "<蓝图草案>" --json
+```
+
+依 `issues` 的责任和定位修复当前写集，再运行同一检查。`ready_for_questioning` 表示机器可判定的缺口已清，可交独立质询。正式接收按当时的精确绑定复验。
+
+#### 独立质询与准入
+
 - 派出独立质询前，原设计 agent 先完成可渲染事实/图草稿、说明及摘要，按 §5 执行 `--write-review --json`；不要求先通过含质询结果的完整准入。**主 agent 必须把材料位置及以下规则写进实际派发任务，不依赖质询者自行读取本指引**：不继承父上下文 YAML、设计事实摘要或父会话结论，首次先只读已生成首屏/正文答八问，正文止于“技术与追溯参考”入口，答完前不读同文档参考区、YAML 或需求原文；之后从 canonical YAML 派生原 scope，唯一覆盖每个 view/relation/runtime flow 和十个 App 根问题，逐项给出 evidence、disposition、frontier fingerprint、owner 和 verification refs；首次核源逐条对照本次适用原需求、有效人类裁决、最终设计与验收，并按 §1 证据核本次已有页面/入口对应，沿原报告引用原句/出处及对应设计/验收位置，不能以来源路径、scope 齐全或检查 PASS 代替满足原行为；质询者建议删除/收窄明示数据交接、跳转或清栈前，先引受影响原句及适用裁决、说明风险，并给兼顾原行为与约束的替代做法，无法兼顾或缺依据则沿已有未决决定/待确认说明，不直接删后闭项。
 - **派发任务还须转达每次修订后的复核顺序与范围**：作者每次修订并按摘要规则重渲后，该轮既有质询按机器从两份设计、引用输入和仍未关闭的阻断和未决项选出的 scope 复核，读相关正文及跨段消费者；首次仍完整阅读，不预判最后一轮，不只看 diff 或凭初稿记忆。保留旧意见及修法直接影响的原要求/验收复核，相关正文阅读核改过行为在导读、流程、恢复表、待补问题等各处一致，以及没有事实/授权依据的推断或待确认处理未冒充已调和、已定或已确认；需要依据时只定向查相关原文/事实/精确验收，不重做完整八问、全需求/全源码或架构评审。未修改且该轮已读的当前正文无需重读；复核后再改稿（包括根契约）并重渲，仍按同一规则复核。派发只传通用规则和材料位置，不塞目标样稿或本宿主答案，不新增文件、状态、强制调用轮次、评分或门禁。
 - 在同一批既有 scope 内按 §2 深度问题实读 4+1 与 typed 细节：核术语定义、存储安全/主键/升级、真实失败/中断、错误/跨会话幂等和质量结论，检查来源、共享继承/写集、本侧外部证据与验收关系；runtime/flow 逐段核完整调用、等待、返回、失败及完成链与 generated_graphs 一致。区分已有内容展示遗漏与真实设计缺失，不因标题齐全、parser PASS 或一段 summary 宣称充分；不新增平行 scope/缺字段门禁、不豁免既有检查。
@@ -215,6 +229,20 @@ designOnly 不调用依赖未来 plan.design_ref_mappings 的 componentProjectio
 组件索引文件在场时，CU 的 design_refs 须包含本 CU 显式选择的目标对应的全部 component_asset_selection 决定；普通依赖目标的选型不会变成本 CU 的交付认领。接受/readiness 返回缺失地址时，由设计 Agent 据原 message 修候选并重验，不让 plan 自行选型，也不由接受器自动补引用。
 
 供人评审的蓝图交付默认包含同目录 `component-blueprint.review.md`，仅定稿蓝图、尚无 CU 也适用；已有 canonical CU 同页展示需求、方案、职责、施工拆分、显式依赖、安全中间态、替代关系及风险验收。Maison 自动收集 CU，宿主无需自拼 CU 附件；不把 readiness、run 或完成状态写入设计正文。
+
+#### CU 候选输入
+
+候选文件是 `[{providerId, artifact, construction_mapping}]` JSON 数组。`artifact.component_blueprint_ref` 使用预检输出的 `blueprint_identity` 绑定当前蓝图，CU 其余字段沿用 `change-unit@1`。每个稳定目标在 `artifact.design_refs` 登记一次。下面是一条带施工及验证落点的设计引用。
+
+```json
+{
+  "target": { "kind": "node", "view_id": "development", "id": "d.example" },
+  "implementation_refs": ["planned:src/Example.ets#Example"],
+  "verification_refs": ["planned:test/Example.test.ets"]
+}
+```
+
+`touches[].design_ref` 可只写 `{target}`。`construction_mapping` 的 `predicate_mappings` 和 `provide_mappings` 填实际施工与测试引用。落点有歧义时由原作者核对实际证据。正式接收展开精确蓝图引用和原 `design_ref_mappings`，由 writer 填真实 `change_unit_ref` 并物化 Feature 契约。已有完整引用和映射仍可交回，两处显式声明须一致。设计得到的映射随候选交回，真实未决项按原边界交 plan。
 
 ### 按评审问题写说明
 

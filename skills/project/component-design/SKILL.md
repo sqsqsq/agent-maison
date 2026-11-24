@@ -91,18 +91,14 @@ npm run check:component-blueprint -- --project-root <宿主根> --blueprint <blu
 调用 [P1 蓝图内部工作流](../../reference/app-component-blueprint-workflow.md) 的既有流程，含组件资产读取、live 检索、decision 与 optional provider 可用性裁决；CU design_refs 引用选型，Feature 仅投影。术语确认（`spec.terminology`，写 `term:` 事实）与架构影响决策（`architecture_impact`，一条一项）在此裁决一次，spec/plan 只投影；changed development 节点须填获准模块 `module`。
 current-facts-discovery 前解析 `paths.conventions`（缺失用框架默认值）；文件存在时完整读取，只将适用条目交给既有 fact/provenance/decision 链。`conventions-knowledge` 未启用记 `available=false + not_applicable`，显式配置却不可读记 `unknown|degraded`，不得声称已消费。
 
-编写、质询或修订时按 [P1 工作流 §2](../../reference/app-component-blueprint-workflow.md#2-写入同一蓝图) 完成 4+1、七问与设计期 acceptance/contracts/use_cases，保留术语、存储、失败/中断、幂等与质量结论；在现有 ordered_steps 写清调用与结果去向，同次生成 generated_graphs 时序图。原设计 agent 完成可渲染草稿、图、说明与摘要后，先 `check:component-blueprint --write-review --json`，再派既有独立质询先读首屏/正文答八问、后核原 scope 与来源及图文一致；正文止于“技术与追溯参考”入口，八问作答前不读同文档参考区，之后再核参考/YAML；不提前读 YAML 或继承父上下文 YAML/设计摘要，作者一轮修订后重渲，派生身份同步刷新，详见 P1 §4/§5。App lens/质询用中文（代码/API 名可保留），原设计作者同次在已有临时交回明确施工映射候选，CU 接受后原 writer 填真实身份并在授权写界发布唯一 contracts.change_unit；只有真实未决项交 plan，不为转录新增模型调用；缺图或坏图不加 readiness 门，坏时序仅 WARN 并原位说明。完整路径的深度及条件式义务按实际影响展开，外框消费统一前门，保持同一蓝图协议；未触发义务按合法空集/不适用表达，不按行数压缩设计或凑空章节。
-
-方法签名在所属节点的 `contracts.interfaces[].methods[]` 声明。在 `ordered_steps` 用一条 `interface:view:development/node:<node_id>/<class>#<method>` 引用该签名，另写成功、重复和失败的去向。用例的 `data_boundaries[].methods` 可填写所属类下唯一的方法名，也可使用同一完整引用。评审和施工投影展开参数、返回类型和异步声明。独立 DTO 保留自己的字段及转换，验收描述用户可观察的结果。
-
-作者在原会话运行 `npm run check:change-unit -- --project-root <宿主根> --blueprint <id> --precheck --draft <蓝图草案> --json`，已有 CU 候选时加 `--candidates <候选文件>`。读取 `issues` 的责任与定位，修复当前写集内的缺口后复验。`ready_for_questioning` 表示当前内容可交独立质询。正式写入仍经既有接收事务对当前事实复验。
+按 [P1 工作流 §2](../../reference/app-component-blueprint-workflow.md#2-写入同一蓝图) 完成 4+1、七问、typed 设计和时序图。作者在原会话按[作者预检](../../reference/app-component-blueprint-workflow.md#作者预检)检查草案与已有候选，随后按 [P1 §4](../../reference/app-component-blueprint-workflow.md#4-质询准入与调和)渲染并交独立质询。App lens 和质询用中文，代码和 API 名可保留。
 
 作者从原始需求提取用户可观察结果；需求指定某个对象时，验收须区分本次对象正确与对象错误却看似成功，并连起产生、交接及消费依据，不在路由/日志暴露敏感完整值。失败返回按原文与既有路由说明本轮边界，原图沿来源交到施工/视觉验收。独立方对照原文用反例核对当前义务、观察通道和产品设计是否自洽，核上下游取得同一本次对象。测试入口、数据前置与断言强度沿既有 CU 和独立验收落实。修订只复核机器按设计变化、来源依赖及仍未关闭的阻断和未决项列出的范围，交回实际评过的条目；机器沿独立原件复用未变项，具体新证据可重开旧结论。checker 由原 owner 执行，评审读 UTF-8 结果与必要证据，不重复运行、转码或写临时结果；格式缺口局部返修，保留其它有效结论及真实否定。
 
 ### 3. 中型分解为 1 个、复杂分解为多个 canonical Change Unit（经 P2 设计准备子流程）
 
 仅在用户要求完成设计交接且尚无 canonical CU 时进行首次分解；已有 CU 直接复用并转第 4 步。
-**本 Skill 自身不写 canonical CU。** 仅调用 [P2 设计准备段](../change-unit-progression/SKILL.md)，不执行该 Skill 的施工流程。设计作者写 JSON 数组 `[{providerId, artifact}]` 到既有蓝图目录的 `<features_dir>/<blueprint_id>/blueprint/change-unit-candidates.json`（`<features_dir>` 从 `paths.features_dir` 解析）；蓝图工作区根不放临时件，材料归属见[边界细则](../../reference/consumer-framework-boundary.md#材料归属与临时文件清理)。然后在 `framework/harness` 调用公开 consumer 命令；受管运行由 runtime 消费该原接缝，`--accept-candidates` 相对路径按 `--project-root` 解析：
+本 Skill 调用 [P2 设计准备段](../change-unit-progression/SKILL.md) 交接设计。设计作者按 [CU 候选输入](../../reference/app-component-blueprint-workflow.md#cu-候选输入)编写 `<features_dir>/<blueprint_id>/blueprint/change-unit-candidates.json`，路径来自 `paths.features_dir`。受管运行经 runtime 接收，直接调用时在 `framework/harness` 执行下列命令。`--accept-candidates` 的相对路径按 `--project-root` 解析，临时件归属见[边界细则](../../reference/consumer-framework-boundary.md#材料归属与临时文件清理)。
 ```bash
 npm run check:change-unit -- --project-root <host> --blueprint <blueprint-id> --accept-candidates "<features_dir>/<blueprint_id>/blueprint/change-unit-candidates.json" --json
 npm run check:change-unit -- --project-root <host> --blueprint <blueprint-id> --readiness --json
