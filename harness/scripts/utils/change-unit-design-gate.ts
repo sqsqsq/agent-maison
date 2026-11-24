@@ -29,8 +29,8 @@ import {
 
 /** Whole-component ownership, using the same obligations and exact retirement as P3. No reference is written. */
 export function readChangeUnitDesignOwnership(projectRoot: string, blueprintId: string,
-  candidates: readonly ChangeUnitArtifact[] = [], blueprintOverride?: BlueprintRecord): ChangeUnitIssue[] {
-  const loadedBlueprint = loadCanonicalBlueprint(projectRoot, blueprintId);
+  candidates: readonly ChangeUnitArtifact[] = [], blueprintOverride?: BlueprintRecord,
+  loadedBlueprint = loadCanonicalBlueprint(projectRoot, blueprintId)): ChangeUnitIssue[] {
   const units = new Map(enumerateCanonicalChangeUnits(projectRoot, blueprintId).map(loaded =>
     [String(loaded.changeUnit.change_unit_id), { changeUnit: asChangeUnitArtifact(loaded.changeUnit), ref: createChangeUnitRef(loaded) }]));
   for (const candidate of candidates) {

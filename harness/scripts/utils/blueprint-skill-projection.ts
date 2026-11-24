@@ -893,13 +893,14 @@ export function blueprintCandidateAuthorityFindings(projectRoot: string, bluepri
 
 /** Current unpublished content diagnostics through the same consumer; never an input binding or publication. */
 export function deriveBlueprintCandidateSkillInput(projectRoot: string, feature: string, frameworkRoot: string, kind: BlueprintProjectionKind,
-  candidate: { blueprint: BlueprintRecord; changeUnit: ChangeUnitArtifact; architecture?: ArchitectureDsl; constructionMapping?: ChangeUnitConstructionMapping }): BlueprintSkillProjection {
+  candidate: { blueprint: BlueprintRecord; changeUnit: ChangeUnitArtifact; architecture?: ArchitectureDsl; constructionMapping?: ChangeUnitConstructionMapping;
+    blueprintSource?: ReturnType<typeof loadCanonicalBlueprint> }): BlueprintSkillProjection {
   const readers = createIdentityNeutralDigestReaders();
   const canonicalPath = changeUnitPath(projectRoot, candidate.changeUnit.blueprint_id, candidate.changeUnit.change_unit_id);
   const bytes = Buffer.from(YAML.stringify(candidate.changeUnit));
   const originalUnit = fs.existsSync(canonicalPath) ? loadCanonicalChangeUnit(projectRoot, candidate.changeUnit.blueprint_id, candidate.changeUnit.change_unit_id)
     : { canonicalPath, bytes, artifactSha256: 'sha256:' + crypto.createHash('sha256').update(bytes).digest('hex'), changeUnit: candidate.changeUnit };
-  const originalBlueprint = loadCanonicalBlueprint(projectRoot, candidate.changeUnit.blueprint_id);
+  const originalBlueprint = candidate.blueprintSource ?? loadCanonicalBlueprint(projectRoot, candidate.changeUnit.blueprint_id);
   readers.loadChangeUnit = (root, blueprint, unit) => blueprint === candidate.changeUnit.blueprint_id && unit === candidate.changeUnit.change_unit_id
     ? { ...originalUnit, changeUnit: { ...candidate.changeUnit } } : loadCanonicalChangeUnit(root, blueprint, unit);
   readers.blueprint = (_root, value) => resolveBlueprintCandidateRefFromLoaded(originalBlueprint, candidate.blueprint, value);

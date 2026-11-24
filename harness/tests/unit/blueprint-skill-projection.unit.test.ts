@@ -40,7 +40,8 @@ import { collectCleanPassIssues, readReusableCheckResult } from '../../scripts/u
 import type { UnitCaseResult } from '../run-unit';
 import { asChangeUnitArtifact, createChangeUnitRef, loadCanonicalChangeUnit } from '../../scripts/utils/change-unit-path';
 import { validateChangeUnitDesign, readChangeUnitDesignOwnership } from '../../scripts/utils/change-unit-design-gate';
-import { acceptChangeUnitCandidate, ChangeUnitCandidateRejected, type ChangeUnitCandidateInput } from '../../scripts/utils/change-unit-provider-boundary';
+import { acceptChangeUnitCandidate, ChangeUnitCandidateRejected, inspectChangeUnitCandidateBatch, matchesAcceptedChangeUnitCandidate, rebindQuestionedChangeUnitCandidates, type ChangeUnitCandidateInput } from '../../scripts/utils/change-unit-provider-boundary';
+import { loadCanonicalBlueprint } from '../../scripts/utils/component-blueprint-path';
 import { initialDesignCandidateRejection } from '../../scripts/utils/initial-design-delivery';
 import { ownersForAddress } from '../../scripts/utils/change-unit-addressing';
 
@@ -613,6 +614,47 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     assert.deepEqual(result.change_unit!.design_ref_mappings, contracts.change_unit.design_ref_mappings);
     assert.equal(result.change_unit!.change_unit_ref.artifact_sha256, accepted.artifactSha256);
     assert.equal(JSON.stringify(candidate), source);
+  } },
+  { name: 'read-only candidate precheck reaches machine readiness before independent questioning; exact questioning-only rebind goes through the ordinary writer', run(f) {
+    const final = loadCanonicalBlueprint(f.root, 'ledger-app-blueprint');
+    const draft = structuredClone(final.blueprint);
+    delete asRecord(draft.review_summary)!.questioning;
+    const draftFile = path.join(f.root, 'current-design-draft.yaml');
+    const before = Buffer.from(YAML.stringify(draft));
+    fs.writeFileSync(draftFile, before);
+    const original = asChangeUnitArtifact(loadCanonicalChangeUnit(f.root, 'ledger-app-blueprint', 'ledger-refresh').changeUnit);
+    const { change_unit_ref: _identity, ...mapping } = planContracts(f).change_unit;
+    const candidate = YAML.parse(YAML.stringify({ providerId: 'precheck-fixture', artifact: { ...original,
+      provenance: { ...original.provenance, extraction_method: 'precheck-fixture' } }, construction_mapping: mapping })
+      .split(final.artifactSha256).join(sha(draftFile))) as ChangeUnitCandidateInput;
+    const candidateFile = path.join(f.root, 'current-design-candidates.json');
+    const bytes = Buffer.from(JSON.stringify([candidate]));
+    fs.writeFileSync(candidateFile, bytes);
+    fs.unlinkSync(f.cuFile);
+    const check = () => inspectChangeUnitCandidateBatch({ projectRoot: f.root, blueprintId: 'ledger-app-blueprint', draftPath: draftFile, candidatesPath: candidateFile });
+    const ready = check();
+    assert(ready.ready_for_questioning && ready.pending_questioning, JSON.stringify(ready));
+    assert(!fs.existsSync(f.cuFile) && !resolveFeatureArtifact(f.root, f.feature, 'contracts.yaml').exists);
+    assert(fs.readFileSync(draftFile).equals(before) && fs.readFileSync(candidateFile).equals(bytes));
+    const bad = structuredClone(candidate);
+    bad.construction_mapping!.predicate_mappings = [];
+    bad.construction_mapping!.provide_mappings = [];
+    fs.writeFileSync(candidateFile, JSON.stringify([bad]));
+    const issues = check();
+    assert(!issues.ready_for_questioning && issues.pending_questioning, JSON.stringify(issues));
+    assert(issues.issues.some(issue => issue.owner === 'candidate' && issue.message.includes('predicate_id') && issue.message.includes('provide_id')), JSON.stringify(issues));
+    assert.throws(() => acceptChangeUnitCandidate(f.root, candidate), /artifact_sha256 bytes/);
+    const rebound = rebindQuestionedChangeUnitCandidates(before, final, [candidate])[0];
+    assert.deepEqual(rebindQuestionedChangeUnitCandidates(before, final, [rebound]), [rebound]);
+    const changed = structuredClone(final);
+    asRecord(changed.blueprint.review_summary)!.summary = '改变了已质询的设计';
+    assert.throws(() => rebindQuestionedChangeUnitCandidates(before, changed, [candidate]), /设计内容不一致/);
+    acceptChangeUnitCandidate(f.root, rebound);
+    assert(fs.existsSync(f.cuFile) && resolveFeatureArtifact(f.root, f.feature, 'contracts.yaml').exists);
+    assert(matchesAcceptedChangeUnitCandidate(f.root, rebound));
+    const changedLanding = structuredClone(rebound);
+    changedLanding.construction_mapping!.design_ref_mappings[0].verification_refs = ['planned:test/ledger/Alternate.test.ets'];
+    assert(!matchesAcceptedChangeUnitCandidate(f.root, changedLanding));
   } },
   { name: '4c8d73b1 component mapping precheck acceptance and Feature repair retain their original owners', async run(f) {
     const contracts = planContracts(f);

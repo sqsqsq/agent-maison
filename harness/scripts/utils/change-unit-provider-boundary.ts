@@ -1,14 +1,19 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
-import { ChangeUnitArtifact } from './change-unit-model';
-import { asRecord, type ComponentBlueprintRef } from './component-blueprint-model';
+import { createHash } from 'crypto';
+import { ChangeUnitArtifact, sameBlueprintIdentity } from './change-unit-model';
+import { asRecord, blueprintAuthorContent, type BlueprintRecord, type ComponentBlueprintRef } from './component-blueprint-model';
 import { stableJson } from './blueprint-discovery';
+import { blueprintIdentityPointers, currentBlueprintIdentity } from './change-unit-blueprint-identity';
 import { changeUnitPath, deriveChangeUnitFeatureId, loadCanonicalChangeUnit, type LoadedChangeUnit } from './change-unit-path';
-import { loadCanonicalBlueprint } from './component-blueprint-path';
+import { componentBlueprintPath, loadCanonicalBlueprint, resolveBlueprintCandidateRefFromLoaded, resolveComponentBlueprintRef } from './component-blueprint-path';
+import { validateComponentBlueprint, validateComponentBlueprintUpstream } from './component-blueprint-validator';
 import { resolveProbeFrameworkRoot } from '../../repo-layout';
 import { assertValidChangeUnit } from './change-unit-validator';
 import { validateChangeUnitDesign, readChangeUnitDesignOwnership } from './change-unit-design-gate';
+import { validateProjectRelativePath } from './project-relative-path';
+import type { BlueprintSkillProjection, DesignAuthorityLocation } from './blueprint-skill-projection';
 
 export type ChangeUnitProviderSeam = 'cu_decomposition' | 'relation_ready_analysis' | 'candidate_selection';
 
@@ -71,10 +76,52 @@ export function dropUnacceptedChangeUnitCandidates(_candidates: readonly ChangeU
 
 export class ChangeUnitCandidateRejected extends Error {
   constructor(public readonly code: string, message: string,
-    public readonly designAuthority?: import('./blueprint-skill-projection').DesignAuthorityFinding[]) {
+    public readonly designAuthority?: import('./blueprint-skill-projection').DesignAuthorityFinding[],
+    public readonly issues?: ChangeUnitPrecheckIssue[]) {
     super(message);
     this.name = 'ChangeUnitCandidateRejected';
   }
+}
+
+export interface ChangeUnitPrecheckIssue {
+  owner: 'blueprint' | 'candidate';
+  code: string;
+  message: string;
+  change_unit_id?: string;
+  locations?: DesignAuthorityLocation[];
+}
+
+interface CandidateAuthority {
+  snapshot: ReturnType<typeof loadCanonicalBlueprint>;
+  blueprint: BlueprintRecord;
+  resolve: typeof resolveComponentBlueprintRef;
+}
+
+function candidateProjection(projectRoot: string, candidate: ChangeUnitCandidate, authority?: CandidateAuthority): BlueprintSkillProjection {
+  const { deriveBlueprintCandidateSkillInput } = require('./blueprint-skill-projection') as typeof import('./blueprint-skill-projection');
+  const { artifact } = candidate;
+  const source = authority?.snapshot ?? loadCanonicalBlueprint(projectRoot, artifact.blueprint_id);
+  return deriveBlueprintCandidateSkillInput(projectRoot, deriveChangeUnitFeatureId(artifact.blueprint_id, artifact.change_unit_id), resolveProbeFrameworkRoot(projectRoot),
+    'contracts', { blueprint: authority?.blueprint ?? source.blueprint, blueprintSource: source, changeUnit: artifact, constructionMapping: candidate.construction_mapping });
+}
+
+/** A late cleanup may consume only a batch already written with the same CU and authored landings. */
+export function matchesAcceptedChangeUnitCandidate(projectRoot: string, input: ChangeUnitCandidateInput): boolean {
+  try {
+    const candidate = expandChangeUnitCandidate(input);
+    const { artifact } = candidate;
+    const existing = loadCanonicalChangeUnit(projectRoot, artifact.blueprint_id, artifact.change_unit_id);
+    if (stableJson(existing.changeUnit) !== stableJson(artifact)) return false;
+    if (!candidate.construction_mapping) return true;
+    const expected = candidateProjection(projectRoot, candidate);
+    if (expected.state !== 'resolved') return false;
+    const { resolveFeatureArtifact } = require('../../config') as typeof import('../../config');
+    const feature = deriveChangeUnitFeatureId(artifact.blueprint_id, artifact.change_unit_id);
+    const contracts = resolveFeatureArtifact(projectRoot, feature, 'contracts.yaml');
+    if (!contracts.exists) return false;
+    const actual = asRecord(YAML.parse(fs.readFileSync(contracts.actualPath, 'utf8')))?.change_unit;
+    return stableJson(actual) === stableJson(asRecord(expected.value)?.change_unit);
+  } catch { return false; }
 }
 
 /** The candidate selects its target once. Canonical CU and Feature contracts keep their existing exact references. */
@@ -119,6 +166,36 @@ export function expandChangeUnitCandidate(input: ChangeUnitCandidateInput): Chan
     ...(section ? { construction_mapping: section as ConstructionMapping } : compactReferences ? {
       construction_mapping: { predicate_mappings: [], provide_mappings: [], design_ref_mappings: existing },
     } : {}) };
+}
+
+/** The runtime supplies the exact draft and candidate bytes bound to the independent questioning request. */
+export function rebindQuestionedChangeUnitCandidates(beforeBlueprint: Buffer, current: ReturnType<typeof loadCanonicalBlueprint>,
+  candidates: readonly ChangeUnitCandidateInput[]): ChangeUnitCandidate[] {
+  const before = asRecord(YAML.parse(beforeBlueprint.toString('utf8')));
+  const rejected = (message: string) => new ChangeUnitCandidateRejected('change_unit_candidate_blueprint_mismatch', message);
+  if (!before || before.blueprint_id !== current.blueprint.blueprint_id || before.component_id !== current.blueprint.component_id
+    || before.revision !== current.blueprint.revision || stableJson(blueprintAuthorContent(before)) !== stableJson(blueprintAuthorContent(current.blueprint))) {
+    throw rejected('独立质询前像与当前蓝图设计内容不一致，请原作者核对当前候选和精确蓝图身份。');
+  }
+  const rootRef = { artifact: 'component-blueprint@1' as const, blueprint_id: String(before.blueprint_id), component_id: String(before.component_id),
+    target: { kind: 'blueprint' as const, id: String(before.blueprint_id) } };
+  const previous = { ...rootRef, ...currentBlueprintIdentity({ ...current, blueprint: before,
+    artifactSha256: 'sha256:' + createHash('sha256').update(beforeBlueprint).digest('hex') }) };
+  const identity = currentBlueprintIdentity(current);
+  const next = { ...rootRef, ...identity };
+  return candidates.map(input => {
+    const candidate = expandChangeUnitCandidate(structuredClone(input));
+    const owner = candidate.artifact.component_blueprint_ref;
+    if (!asRecord(owner)) throw rejected(`${candidate.artifact.change_unit_id}: 缺少候选蓝图绑定。`);
+    const refs = [...blueprintIdentityPointers(candidate.artifact as unknown as Record<string, unknown>),
+      ...(candidate.construction_mapping?.design_ref_mappings ?? []).map(row => asRecord(row.design_ref)).filter(ref => ref?.artifact !== undefined)];
+    const basis = sameBlueprintIdentity(owner, previous) ? previous : next;
+    if (refs.some(ref => !ref || !sameBlueprintIdentity(ref as unknown as ComponentBlueprintRef, basis))) {
+      throw rejected(`${candidate.artifact.change_unit_id}: 候选含未绑定到已质询前像或当前蓝图的引用，请原候选作者重验。`);
+    }
+    for (const ref of refs) Object.assign(ref!, identity);
+    return candidate;
+  });
 }
 
 /** A published author revision can introduce new IDs on targets the original candidate already owns. */
@@ -172,7 +249,7 @@ export function assertPendingCandidateAcceptanceReferences(
  *
  * 单候选与批量接受都必须经过它，避免两份会漂移的 provenance/schema/design 逻辑。
  */
-export function validateChangeUnitCandidate(projectRoot: string, candidate: ChangeUnitCandidate, existing?: LoadedChangeUnit): string {
+export function validateChangeUnitCandidate(projectRoot: string, candidate: ChangeUnitCandidate, existing?: LoadedChangeUnit, authority?: CandidateAuthority): string {
   const artifact = candidate.artifact;
   if (!artifact.provenance.extraction_method.includes(candidate.providerId)) {
     throw new ChangeUnitCandidateRejected(
@@ -189,20 +266,19 @@ export function validateChangeUnitCandidate(projectRoot: string, candidate: Chan
   }
   if (existing && path.resolve(target) !== path.resolve(existing.canonicalPath)) throw new ChangeUnitCandidateRejected('change_unit_candidate_blueprint_mismatch', '内容修订不得改变 CU/Feature identity 或目录。');
   try {
-    assertValidChangeUnit(artifact as unknown as Record<string, unknown>, { projectRoot, canonicalPath: target });
+    assertValidChangeUnit(artifact as unknown as Record<string, unknown>, { projectRoot, canonicalPath: target, resolveBlueprintRef: authority?.resolve });
   } catch (error) {
     throw new ChangeUnitCandidateRejected(
       'change_unit_candidate_schema_rejected',
       `候选 ${artifact.change_unit_id} 未通过 canonical 校验：${(error as Error).message}`,
     );
   }
-  const design = validateChangeUnitDesign(projectRoot, artifact as unknown as Record<string, unknown>);
+  const design = validateChangeUnitDesign(projectRoot, artifact as unknown as Record<string, unknown>, { resolveBlueprintRef: authority?.resolve });
   if (design.verdict !== 'constructable') {
-    const { blueprintCandidateAuthorityFindings, deriveBlueprintCandidateSkillInput } = require('./blueprint-skill-projection') as typeof import('./blueprint-skill-projection');
+    const { blueprintCandidateAuthorityFindings } = require('./blueprint-skill-projection') as typeof import('./blueprint-skill-projection');
     const failures = design.issues.map(issue => ({ codes: [issue.id], detail: issue.message, locations: issue.authority ? [issue.authority] : [] }));
     const designAuthority = blueprintCandidateAuthorityFindings(projectRoot, artifact.blueprint_id, { state: 'invalid', dependencies: [], failures });
-    const projection = deriveBlueprintCandidateSkillInput(projectRoot, deriveChangeUnitFeatureId(artifact.blueprint_id, artifact.change_unit_id), resolveProbeFrameworkRoot(projectRoot),
-      'contracts', { blueprint: loadCanonicalBlueprint(projectRoot, artifact.blueprint_id).blueprint, changeUnit: artifact, constructionMapping: candidate.construction_mapping });
+    const projection = candidateProjection(projectRoot, candidate, authority);
     for (const finding of blueprintCandidateAuthorityFindings(projectRoot, artifact.blueprint_id, projection)) {
       if (!designAuthority.some(prior => JSON.stringify(prior.locations) === JSON.stringify(finding.locations)
         && JSON.stringify(prior.codes) === JSON.stringify(finding.codes))) designAuthority.push(finding);
@@ -213,9 +289,172 @@ export function validateChangeUnitCandidate(projectRoot: string, candidate: Chan
         + (projection.state === 'invalid' ? '\n' + projection.failures?.filter(failure => !failure.codes.some(code => design.issues.some(issue => issue.id === code)))
           .map(failure => failure.detail).join('\n') : ''),
       designAuthority.length ? designAuthority : undefined,
+      [...design.issues.map(issue => ({ owner: issue.route === 'reconcile_blueprint' ? 'blueprint' as const : 'candidate' as const,
+        code: issue.id, message: issue.message, change_unit_id: artifact.change_unit_id, locations: issue.authority ? [issue.authority] : undefined })),
+      ...projectionIssues(projectRoot, artifact, projection)],
     );
   }
   return target;
+}
+
+function projectionIssues(projectRoot: string, artifact: ChangeUnitArtifact, projection: BlueprintSkillProjection): ChangeUnitPrecheckIssue[] {
+  if (projection.state === 'resolved') return [];
+  const { blueprintCandidateAuthorityFindings } = require('./blueprint-skill-projection') as typeof import('./blueprint-skill-projection');
+  const failures = projection.failures?.length ? projection.failures : [{ codes: projection.codes ?? [], detail: projection.detail ?? '缺少可消费的施工契约', locations: projection.locations ?? [] }];
+  return failures.map(failure => ({
+    owner: blueprintCandidateAuthorityFindings(projectRoot, artifact.blueprint_id, { ...projection, failures: [failure] }).length ? 'blueprint' : 'candidate',
+    code: failure.codes[0] ?? 'change_unit_candidate_design_rejected', message: failure.detail, change_unit_id: artifact.change_unit_id,
+    ...(failure.locations.length ? { locations: failure.locations } : {}),
+  }));
+}
+
+function candidateAuthority(projectRoot: string, snapshot: ReturnType<typeof loadCanonicalBlueprint>, draft: boolean): {
+  authority: CandidateAuthority; issues: ChangeUnitPrecheckIssue[]; pendingQuestioning: boolean;
+} {
+  const blueprint = draft ? structuredClone(snapshot.blueprint) : snapshot.blueprint;
+  if (draft) {
+    const { refreshBlueprintFingerprints } = require('./design-repair-unattended') as typeof import('./design-repair-unattended');
+    refreshBlueprintFingerprints(blueprint);
+  }
+  const context = { projectRoot, canonicalPath: snapshot.canonicalPath, sourceCache: new Map([[path.resolve(snapshot.canonicalPath), blueprint]]) };
+  const checks = draft ? validateComponentBlueprintUpstream(blueprint, context) : validateComponentBlueprint(blueprint, context);
+  const pendingQuestioning = draft || checks.some(issue => issue.id.startsWith('blueprint_questioning_'));
+  const issues: ChangeUnitPrecheckIssue[] = checks.filter(issue => issue.severity === 'BLOCKER' && !(draft && issue.id.startsWith('blueprint_questioning_')))
+    .map(issue => ({ owner: 'blueprint', code: issue.id, message: `${issue.path}: ${issue.message}` }));
+  return { authority: { snapshot, blueprint, resolve: (_root, ref) => resolveBlueprintCandidateRefFromLoaded(snapshot, blueprint, ref) }, issues, pendingQuestioning };
+}
+
+interface PreparedCandidateBatch {
+  candidates: ChangeUnitCandidate[];
+  targets: string[];
+  errors: ChangeUnitCandidateRejected[];
+  issues: ChangeUnitPrecheckIssue[];
+  authorities: Map<string, CandidateAuthority>;
+  pendingQuestioning: boolean;
+}
+
+/** Shared read-only preparation. Draft mode defers independent questioning and retains exact input bindings. */
+function prepareCandidateBatch(projectRoot: string, input: readonly ChangeUnitCandidateInput[], options?: {
+  snapshot: ReturnType<typeof loadCanonicalBlueprint>;
+  draft: boolean;
+}): PreparedCandidateBatch {
+  const prepared: PreparedCandidateBatch = { candidates: [], targets: [], errors: [], issues: [], authorities: new Map(), pendingQuestioning: false };
+  const authorityIssues = new Map<string, ChangeUnitPrecheckIssue[]>();
+  const authorityFor = (blueprintId: string): CandidateAuthority => {
+    const prior = prepared.authorities.get(blueprintId);
+    if (prior) return prior;
+    let snapshot: ReturnType<typeof loadCanonicalBlueprint>;
+    try { snapshot = options?.snapshot ?? loadCanonicalBlueprint(projectRoot, blueprintId); }
+    catch (error) {
+      const issues: ChangeUnitPrecheckIssue[] = [{ owner: 'blueprint', code: 'change_unit_blueprint_unresolvable', message: (error as Error).message }];
+      throw new ChangeUnitCandidateRejected('change_unit_candidate_schema_rejected', issues[0].message, undefined, issues);
+    }
+    if (snapshot.blueprint.blueprint_id !== blueprintId) throw new ChangeUnitCandidateRejected('change_unit_candidate_blueprint_mismatch', `候选归属 ${blueprintId}，与当前设计 ${String(snapshot.blueprint.blueprint_id)} 不一致。`);
+    const observed = candidateAuthority(projectRoot, snapshot, !!options?.draft);
+    prepared.issues.push(...observed.issues);
+    authorityIssues.set(blueprintId, observed.issues);
+    prepared.pendingQuestioning ||= observed.pendingQuestioning;
+    prepared.authorities.set(blueprintId, observed.authority);
+    return observed.authority;
+  };
+  if (options) authorityFor(String(options.snapshot.blueprint.blueprint_id));
+  if (!input.length && options?.draft) {
+    const id = String(options.snapshot.blueprint.blueprint_id);
+    const { blueprintDeclaredAcceptanceIssues } = require('./blueprint-skill-projection') as typeof import('./blueprint-skill-projection');
+    prepared.issues.push(...blueprintDeclaredAcceptanceIssues(projectRoot, id, authorityFor(id).blueprint).map(issue => ({
+      owner: 'blueprint' as const, code: issue.id, message: `${issue.path}: ${issue.message}`,
+    })));
+  }
+  const seen = new Set<string>();
+  for (const row of input) {
+    const candidateRecord = asRecord(row);
+    const candidateArtifact = asRecord(candidateRecord?.artifact);
+    const id = typeof candidateArtifact?.change_unit_id === 'string' ? candidateArtifact.change_unit_id : undefined;
+    try {
+      if (!id || typeof candidateRecord?.providerId !== 'string' || !candidateRecord.providerId.trim()
+        || typeof candidateArtifact?.blueprint_id !== 'string' || typeof asRecord(candidateArtifact.provenance)?.extraction_method !== 'string') {
+        throw new ChangeUnitCandidateRejected('change_unit_candidate_schema_rejected', '候选须含 providerId、artifact.blueprint_id、change_unit_id 及 provenance.extraction_method。');
+      }
+      if (seen.has(id)) throw new ChangeUnitCandidateRejected('change_unit_candidate_duplicate_in_batch', `同一批候选内 change_unit_id=${id} 重复。`);
+      seen.add(id);
+      const candidate = expandChangeUnitCandidate(row);
+      if (!candidate.artifact.provenance.extraction_method.includes(candidate.providerId)) {
+        throw new ChangeUnitCandidateRejected('change_unit_candidate_provider_provenance_missing',
+          `候选 ${id} 的 provenance.extraction_method 未记录 provider ${candidate.providerId}。`);
+      }
+      const authority = authorityFor(candidate.artifact.blueprint_id);
+      const target = validateChangeUnitCandidate(projectRoot, candidate, undefined, authority);
+      prepared.candidates.push(candidate);
+      prepared.targets.push(target);
+      if (candidate.construction_mapping) {
+        const projection = candidateProjection(projectRoot, candidate, authority);
+        if (projection.state !== 'resolved' || !projection.artifacts?.['acceptance@1']) {
+          const { blueprintCandidateAuthorityFindings } = require('./blueprint-skill-projection') as typeof import('./blueprint-skill-projection');
+          const design = blueprintCandidateAuthorityFindings(projectRoot, candidate.artifact.blueprint_id, projection);
+          const issues = projection.state === 'resolved' ? [{ owner: 'blueprint' as const, code: 'authority_content_missing', message: '候选选定目标缺少可消费的 typed acceptance', change_unit_id: id }]
+            : projectionIssues(projectRoot, candidate.artifact, projection);
+          throw new ChangeUnitCandidateRejected('change_unit_candidate_design_rejected', projection.detail ?? issues[0].message,
+            design.length ? design : undefined, issues);
+        }
+      }
+    } catch (error) {
+      const rejected = error instanceof ChangeUnitCandidateRejected ? error
+        : new ChangeUnitCandidateRejected('change_unit_candidate_design_rejected', (error as Error).message);
+      prepared.errors.push(rejected);
+      prepared.issues.push(...(rejected.issues ?? [{ owner: rejected.designAuthority?.length ? 'blueprint' : 'candidate',
+        code: rejected.code, message: rejected.message, change_unit_id: id }]));
+    }
+  }
+  for (const [blueprintId, authority] of prepared.authorities) {
+    const candidates = prepared.candidates.filter(candidate => candidate.artifact.blueprint_id === blueprintId);
+    if (!candidates.length) continue;
+    const ownership = readChangeUnitDesignOwnership(projectRoot, blueprintId, candidates.map(candidate => candidate.artifact), authority.blueprint, authority.snapshot);
+    if (!ownership.length) continue;
+    const issues = ownership.map(issue => ({ owner: 'candidate' as const, code: issue.id, message: issue.message }));
+    prepared.issues.push(...issues);
+    prepared.errors.push(new ChangeUnitCandidateRejected('change_unit_candidate_design_rejected',
+      ownership.map(issue => `${issue.id}: ${issue.message}`).join('\n'), undefined, issues));
+  }
+  const blueprintIssues = [...authorityIssues.values()].flat();
+  if (blueprintIssues.length && !options?.draft) {
+    const { blueprintCandidateAuthorityFindings } = require('./blueprint-skill-projection') as typeof import('./blueprint-skill-projection');
+    const findings = [...authorityIssues].flatMap(([blueprintId, issues]) => blueprintCandidateAuthorityFindings(projectRoot, blueprintId,
+      { state: 'invalid', dependencies: [], failures: issues.map(issue => ({ codes: ['change_unit_blueprint_reconciliation_required'], detail: issue.message, locations: [] })) }));
+    prepared.errors.unshift(new ChangeUnitCandidateRejected('change_unit_candidate_design_rejected',
+      blueprintIssues.map(issue => issue.message).join('\n'), findings, blueprintIssues));
+  }
+  return prepared;
+}
+
+export function inspectChangeUnitCandidateBatch(input: {
+  projectRoot: string; blueprintId: string; draftPath?: string; candidatesPath?: string;
+}): { ready_for_questioning: boolean; pending_questioning: boolean; issues: ChangeUnitPrecheckIssue[]; blueprint_identity?: ComponentBlueprintRef } {
+  const { projectRoot, blueprintId } = input;
+  let owner: ChangeUnitPrecheckIssue['owner'] = 'blueprint';
+  try {
+    const artifactPath = (file: string, label: string) =>
+      path.resolve(projectRoot, validateProjectRelativePath(projectRoot, path.relative(projectRoot, path.resolve(projectRoot, file)), label));
+    let snapshot: ReturnType<typeof loadCanonicalBlueprint>;
+    if (input.draftPath) {
+      const bytes = fs.readFileSync(artifactPath(input.draftPath, 'blueprint draft'));
+      const blueprint = asRecord(YAML.parse(bytes.toString('utf8')));
+      if (!blueprint || blueprint.blueprint_id !== blueprintId) throw new Error(`草案 blueprint_id 必须为 ${blueprintId}。`);
+      snapshot = { bytes, blueprint, canonicalPath: componentBlueprintPath(projectRoot, blueprintId),
+        artifactSha256: 'sha256:' + createHash('sha256').update(bytes).digest('hex') };
+    } else snapshot = loadCanonicalBlueprint(projectRoot, blueprintId);
+    const rootRef = { artifact: 'component-blueprint@1' as const, blueprint_id: blueprintId, component_id: String(snapshot.blueprint.component_id),
+      target: { kind: 'blueprint' as const, id: blueprintId }, ...currentBlueprintIdentity(snapshot) };
+    owner = 'candidate';
+    const candidates: unknown = input.candidatesPath ? JSON.parse(fs.readFileSync(artifactPath(input.candidatesPath, 'change unit candidates'), 'utf8')) : [];
+    if (!Array.isArray(candidates)) throw new Error('候选文件须为 JSON 数组 [{providerId, artifact, construction_mapping?}]');
+    const result = prepareCandidateBatch(projectRoot, candidates as ChangeUnitCandidateInput[], { snapshot, draft: true });
+    return { ready_for_questioning: !result.issues.length, pending_questioning: result.pendingQuestioning,
+      issues: result.issues, blueprint_identity: rootRef };
+  } catch (error) {
+    return { ready_for_questioning: false, pending_questioning: true, issues: [
+      { owner, code: error instanceof ChangeUnitCandidateRejected ? error.code : 'change_unit_candidate_schema_rejected', message: (error as Error).message },
+    ] };
+  }
 }
 
 /** 唯一写入原语：temp(wx) → rename。批量接受与蓝图指针原位升版（design-preparation）共用。 */
@@ -243,36 +482,15 @@ export function acceptChangeUnitCandidates(
   projectRoot: string,
   input: readonly ChangeUnitCandidateInput[],
 ) {
-  const candidates = input.map(expandChangeUnitCandidate);
-  if (candidates.length === 0) {
-    throw new ChangeUnitCandidateRejected(
-      'change_unit_decomposition_empty',
-      '设计准备子流程必须写出 1..N 个 canonical CU；零候选不构成一次接受。',
-    );
-  }
-  for (const candidate of candidates) {
-    if (fs.existsSync(changeUnitPath(projectRoot, candidate.artifact.blueprint_id, candidate.artifact.change_unit_id))) {
-      throw new ChangeUnitCandidateRejected('change_unit_candidate_already_exists', 'canonical CU 已存在；未完成活动单元经 reviseChangeUnitContent 修订，不得重复接受覆盖。');
-    }
-  }
-  const seen = new Set<string>();
-  const targets: string[] = [];
-  for (const candidate of candidates) {
-    const id = candidate.artifact.change_unit_id;
-    if (seen.has(id)) {
-      throw new ChangeUnitCandidateRejected(
-        'change_unit_candidate_duplicate_in_batch',
-        `同一批候选内 change_unit_id=${id} 重复。`,
-      );
-    }
-    seen.add(id);
-    targets.push(validateChangeUnitCandidate(projectRoot, candidate));
-  }
-  for (const blueprintId of new Set(candidates.map(candidate => candidate.artifact.blueprint_id))) {
-    const ownership = readChangeUnitDesignOwnership(projectRoot, blueprintId,
-      candidates.filter(candidate => candidate.artifact.blueprint_id === blueprintId).map(candidate => candidate.artifact));
-    if (ownership.length) throw new ChangeUnitCandidateRejected('change_unit_candidate_design_rejected',
-      ownership.map(issue => `${issue.id}: ${issue.message}`).join('\n'));
+  if (!input.length) throw new ChangeUnitCandidateRejected('change_unit_decomposition_empty', '设计准备子流程必须写出 1..N 个 canonical CU；零候选不构成一次接受。');
+  const prepared = prepareCandidateBatch(projectRoot, input);
+  if (prepared.errors.length) throw new ChangeUnitCandidateRejected(prepared.errors[0].code,
+    prepared.errors.map(error => error.message).join('\n'),
+    prepared.errors.some(error => error.designAuthority?.length) ? prepared.errors.flatMap(error => error.designAuthority ?? []) : undefined,
+    prepared.issues);
+  const { candidates, targets } = prepared;
+  for (const { snapshot } of prepared.authorities.values()) if (!fs.readFileSync(snapshot.canonicalPath).equals(snapshot.bytes)) {
+    throw new ChangeUnitCandidateRejected('change_unit_candidate_blueprint_mismatch', '候选准备期间蓝图已变化，请按当前绑定重验。');
   }
 
   const written: string[] = [];

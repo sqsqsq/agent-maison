@@ -57,12 +57,12 @@ function loadAuthoritySource(sourceRef: string, context: BlueprintContractValida
   if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
     throw new AuthoritySourceError('blueprint_contract_authority_source_invalid', `source_ref 越出项目根：${sourceRef}`);
   }
-  if (!fs.existsSync(absolute) || !fs.statSync(absolute).isFile()) {
-    throw new AuthoritySourceError('blueprint_contract_authority_source_unavailable', `权威来源不存在：${sourceRef}`);
-  }
   const cache = context.sourceCache ?? (context.sourceCache = new Map<string, unknown>());
   let document = cache.get(absolute);
   if (document === undefined) {
+    if (!fs.existsSync(absolute) || !fs.statSync(absolute).isFile()) {
+      throw new AuthoritySourceError('blueprint_contract_authority_source_unavailable', `权威来源不存在：${sourceRef}`);
+    }
     try {
       document = YAML.parse(fs.readFileSync(absolute, 'utf8'));
     } catch (error) {

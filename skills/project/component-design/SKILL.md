@@ -95,6 +95,8 @@ current-facts-discovery 前解析 `paths.conventions`（缺失用框架默认值
 
 方法签名在所属节点的 `contracts.interfaces[].methods[]` 声明。在 `ordered_steps` 用一条 `interface:view:development/node:<node_id>/<class>#<method>` 引用该签名，另写成功、重复和失败的去向。用例的 `data_boundaries[].methods` 可填写所属类下唯一的方法名，也可使用同一完整引用。评审和施工投影展开参数、返回类型和异步声明。独立 DTO 保留自己的字段及转换，验收描述用户可观察的结果。
 
+作者在原会话运行 `npm run check:change-unit -- --project-root <宿主根> --blueprint <id> --precheck --draft <蓝图草案> --json`，已有 CU 候选时加 `--candidates <候选文件>`。读取 `issues` 的责任与定位，修复当前写集内的缺口后复验。`ready_for_questioning` 表示当前内容可交独立质询。正式写入仍经既有接收事务对当前事实复验。
+
 作者从原始需求提取用户可观察结果；需求指定某个对象时，验收须区分本次对象正确与对象错误却看似成功，并连起产生、交接及消费依据，不在路由/日志暴露敏感完整值。失败返回按原文与既有路由说明本轮边界，原图沿来源交到施工/视觉验收。独立方对照原文用反例核对当前义务、观察通道和产品设计是否自洽，核上下游取得同一本次对象。测试入口、数据前置与断言强度沿既有 CU 和独立验收落实。修订只复核机器按设计变化、来源依赖及仍未关闭的阻断和未决项列出的范围，交回实际评过的条目；机器沿独立原件复用未变项，具体新证据可重开旧结论。checker 由原 owner 执行，评审读 UTF-8 结果与必要证据，不重复运行、转码或写临时结果；格式缺口局部返修，保留其它有效结论及真实否定。
 
 ### 3. 中型分解为 1 个、复杂分解为多个 canonical Change Unit（经 P2 设计准备子流程）

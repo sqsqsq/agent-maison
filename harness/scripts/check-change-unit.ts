@@ -11,7 +11,7 @@ import { validateChangeUnit } from './utils/change-unit-validator';
 import { validateChangeUnitDesign } from './utils/change-unit-design-gate';
 import { acceptChangeUnitDecomposition, deriveDesignPreparationReadiness, evaluateDesignPreparationEntry } from './utils/change-unit-design-preparation';
 import { deriveChangeUnitReadySet } from './utils/change-unit-ready-set';
-import { ChangeUnitCandidate, ChangeUnitCandidateRejected } from './utils/change-unit-provider-boundary';
+import { type ChangeUnitCandidateInput, ChangeUnitCandidateRejected, inspectChangeUnitCandidateBatch } from './utils/change-unit-provider-boundary';
 
 interface CliArgs {
   'project-root'?: string;
@@ -19,6 +19,9 @@ interface CliArgs {
   unit?: string;
   json?: boolean;
   'accept-candidates'?: string;
+  precheck?: boolean;
+  draft?: string;
+  candidates?: string;
   readiness?: boolean;
 }
 
@@ -36,19 +39,32 @@ export function checkCanonicalChangeUnit(projectRoot: string, blueprintId: strin
 
 function main(): void {
   const args = minimist<CliArgs>(process.argv.slice(2), {
-    string: ['project-root', 'blueprint', 'unit', 'accept-candidates'],
-    boolean: ['json', 'readiness'],
+    string: ['project-root', 'blueprint', 'unit', 'accept-candidates', 'draft', 'candidates'],
+    boolean: ['json', 'readiness', 'precheck'],
     default: { 'project-root': process.cwd(), json: false },
   });
   const acceptsCandidates = Object.prototype.hasOwnProperty.call(args, 'accept-candidates');
   const preparation = Boolean(args.readiness || acceptsCandidates);
   const unitGiven = Object.prototype.hasOwnProperty.call(args, 'unit');
-  if (!args.blueprint || (preparation && unitGiven) || (args.readiness && acceptsCandidates)
-    || (acceptsCandidates && !args['accept-candidates']) || (!preparation && !args.unit)) {
-    console.error('用法：check-change-unit --project-root <root> --blueprint <blueprint-id> (--unit <id> | --accept-candidates <file> | --readiness) [--json]');
+  const precheckFiles = ['draft', 'candidates'].filter(key => Object.prototype.hasOwnProperty.call(args, key));
+  if (!args.blueprint || (preparation && unitGiven) || (args.readiness && acceptsCandidates) || (args.precheck && (preparation || unitGiven))
+    || (acceptsCandidates && !args['accept-candidates']) || (!preparation && !args.unit && !args.precheck)
+    || precheckFiles.some(key => !args.precheck || !args[key as 'draft' | 'candidates'])) {
+    console.error('用法：check-change-unit --project-root <root> --blueprint <blueprint-id> (--unit <id> | --accept-candidates <file> | --readiness | --precheck [--draft <file>] [--candidates <file>]) [--json]');
     process.exit(2);
   }
   try {
+    if (args.precheck) {
+      const result = inspectChangeUnitCandidateBatch({ projectRoot: path.resolve(args['project-root']!), blueprintId: args.blueprint,
+        draftPath: args.draft, candidatesPath: args.candidates });
+      const status = result.ready_for_questioning ? 'READY_FOR_QUESTIONING' : 'REPAIR';
+      if (args.json) console.log(JSON.stringify({ status, ...result }, null, 2));
+      else {
+        console.log(result.ready_for_questioning ? '机器预检已就绪，正式准入仍需真实独立质询及原接收。' : '机器预检需要原责任方修复：');
+        for (const issue of result.issues) console.log(`  [${issue.owner}] ${issue.code}: ${issue.message}`);
+      }
+      process.exit(result.ready_for_questioning ? 0 : 1);
+    }
     if (preparation) {
       const projectRoot = path.resolve(args['project-root']!);
       const retry = ['npm', 'run', 'check:change-unit', '--', '--project-root', projectRoot, '--blueprint', args.blueprint, '--readiness', '--json'];
@@ -60,7 +76,7 @@ function main(): void {
         if (!Array.isArray(candidates)) throw new Error('候选文件须为 JSON 数组 [{providerId, artifact}]');
         const entry = evaluateDesignPreparationEntry(projectRoot, args.blueprint);
         if (!entry.canEnter) throw new Error(entry.reasons.join('; '));
-        const result = acceptChangeUnitDecomposition(projectRoot, args.blueprint, candidates as ChangeUnitCandidate[]);
+        const result = acceptChangeUnitDecomposition(projectRoot, args.blueprint, candidates as ChangeUnitCandidateInput[]);
         accepted = result.accepted.map(row => ({ change_unit_id: String(row.changeUnit.change_unit_id), canonical_path: row.canonicalPath, feature_id: deriveChangeUnitFeatureId(args.blueprint!, String(row.changeUnit.change_unit_id)) }));
         acceptanceReview = result.reviewDocument;
         try {
