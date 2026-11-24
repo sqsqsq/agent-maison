@@ -7,7 +7,7 @@ export { collectActionableDefects, resolveCurrentHapSha256Full, validateDeviceTe
 export type { ActionableDefect, UnverifiedDefect, ActionableCollectResult, DeviceTestCollectContext } from './utils/actionable-evidence';
 import { isDesignQuestioningWriteRecovery, pendingPublishedDesignRepair, readQuestioningBlueprintPreimage, restoreRejectedDesignQuestioning } from './utils/design-repair-unattended';
 import { resolveValidationOnlyEligibility } from './utils/goal-runner-phase';
-import { sessionExecutionDeadlineMs, sessionExecutionTransportInstructionSuffix, issueSessionExecution, writePhaseExecutionRequestMaterial, resignSessionExecution, readSessionExecution, inspectSessionExecutionBeforeRuntime, undeliveredSessionInvocation, executionRequestForInvoke, sessionExecutionForInvoke, sessionToolEventsLogPath, readHandoffMaterial, acceptedSessionReport, acceptSessionExecution, uncommittedSessionReport, sessionValidationOnlyEligibility, readPhaseBinding, readSessionWriteWindows, type IssuedSessionExecution, type SessionExecutionReport } from './utils/session-execution-handoff';
+import { sessionExecutionDeadlineMs, sessionExecutionTransportInstructionSuffix, issueSessionExecution, writePhaseExecutionRequestMaterial, resignSessionExecution, readSessionExecution, inspectSessionExecutionBeforeRuntime, undeliveredSessionInvocation, executionRequestForInvoke, readExecutionRequestOriginal, sessionExecutionForInvoke, sessionToolEventsLogPath, readHandoffMaterial, acceptedSessionReport, acceptSessionExecution, uncommittedSessionReport, sessionValidationOnlyEligibility, readPhaseBinding, readSessionWriteWindows, type IssuedSessionExecution, type SessionExecutionReport } from './utils/session-execution-handoff';
 import { AttendedGoalPhaseExecutor, observeWorkUnitProviderSession, authorUnit, workUnitFeedbackDelivered, type WorkUnitInput } from './utils/goal-phase-executor';
 import { applyIndependentQuestioningOutput, independentQuestioningBlockers } from './utils/blueprint-questioning';
 import { validateComponentBlueprint } from './utils/component-blueprint-validator';
@@ -7668,8 +7668,18 @@ Goal runner — original request design and construction runtime
         && (includeTestingOnly || !['testing-preparation', 'testing-evidence'].includes(
           String((event as Record<string, unknown>).purpose ?? ''))));
       const end = start && history.slice(history.indexOf(start) + 1).find(event => event.type === 'agent_invoke_end' && event.invoke_id === start.invoke_id);
-      return start && end && invocationCompleted({ ...end, exitCode: end.exit_code })
-        ? { start, end, original: executionRequestForInvoke(runDir, start.invoke_id!) } : null;
+      if (!start || !end || !invocationCompleted({ ...end, exitCode: end.exit_code })) return null;
+      const original = executionRequestForInvoke(runDir, start.invoke_id!);
+      if (!original && start.handoff_request) {
+        // A completed, digest-bound detached request can describe history after the checkout moves.
+        // Issue the current work through the normal author path instead of executing with its old context.
+        const historical = readExecutionRequestOriginal(runDir, start.invoke_id, history)?.request.context;
+        if (historical?.owner.kind === 'process' && historical.runId === manifest.run_id && historical.feature === manifest.feature
+          && historical.attemptId === start.attempt_id && historical.owner.owner_id === start.owner_id && historical.owner.epoch === start.owner_epoch
+          && path.resolve(historical.projectRoot) !== path.resolve(projectRoot)
+          && path.resolve(historical.projectRoot, manifest.report_dir) === path.resolve(historical.runDir)) return null;
+      }
+      return { start, end, original };
     };
     const authorWrites = (actor: NonNullable<ReturnType<typeof lastAuthor>>) => loadAuthoritativeEvents(eventsPath)
       .filter(event => event.type === 'phase_write_observed' && event.invoke_id === actor.start.invoke_id)
