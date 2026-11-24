@@ -230,6 +230,7 @@ export interface GoalRunEvent {
   /** E4：跨 attempt 累计统计（events.jsonl 回放，非内存计数）用——phase_verdict 已带的字段。 */
   blocker_signature?: string;
   halt_reason?: string;
+  run_wait_kind?: GoalPhaseOutcome['run_wait_kind'];
   /** 当前 integrity classification 或历史 subtype provenance（全 blocker 收集去重）。 */
   integrity_subtypes?: string[];
   advance_blocked?: boolean;

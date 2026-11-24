@@ -8,9 +8,9 @@ import { clearFrameworkConfigCache, featureFilePath } from '../../config';
 import { prepareGoalModeRun, runGoalModeSessionStep as runGoalModeSessionStepUnchecked } from '../../scripts/goal-mode-entry';
 import { GoalPhaseRuntime } from '../../scripts/goal-phase-runtime';
 import { DetachedGoalPhaseExecutor } from '../../scripts/utils/goal-phase-executor';
-import { buildInitialDesignGoalManifest, isInitialDesignManifest } from '../../scripts/utils/goal-manifest';
+import { buildInitialDesignGoalManifest, isInitialDesignManifest, type GoalRunManifest } from '../../scripts/utils/goal-manifest';
 import { createGoalRun } from '../../scripts/utils/goal-run-creation';
-import { readOriginalDeliveryActivity } from '../../scripts/utils/delivery-origin';
+import { deliveryExternalWait, readOriginalDeliveryActivity } from '../../scripts/utils/delivery-origin';
 import { asChangeUnitArtifact, deriveChangeUnitFeatureId, enumerateCanonicalChangeUnits, loadCanonicalChangeUnit } from '../../scripts/utils/change-unit-path';
 import { loadCanonicalBlueprint } from '../../scripts/utils/component-blueprint-path';
 import { blueprintReviewPath, inspectBlueprintReview } from '../../scripts/utils/blueprint-review-materialization';
@@ -33,6 +33,21 @@ const detail = '独立模型提供方暂不可用；解除条件：提供方恢�
 const frameworkRoot = path.resolve(__dirname, '../../..');
 type Json = Record<string, any>;
 const events = (runDir: string): Json[] => fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+
+async function externalContinuationIdentity(): Promise<void> {
+  const endedAt = '2026-11-24T12:00:00.000Z';
+  const end = { type: 'run_end', status: 'HALTED', halt_reason: 'executor_waiting', run_wait_kind: 'external', ts: endedAt } as const;
+  const stopped = { manifest: { run_id: 'child-a' } as GoalRunManifest, events: [end] };
+  const previous = deliveryExternalWait(stopped);
+  assert.deepEqual(previous, { runId: 'child-a', endedAt, eventIndex: 0 });
+  assert.equal(deliveryExternalWait({ ...stopped, events: [end, { type: 'run_start', ts: '2026-11-24T12:00:01.000Z' }] }), undefined,
+    'starting the previously waiting child spends the original continuation');
+  assert.equal(deliveryExternalWait({ ...stopped, events: [{ ...end, run_wait_kind: 'human' }] }), undefined);
+  assert.notDeepEqual(deliveryExternalWait({ ...stopped, manifest: { ...stopped.manifest, run_id: 'child-b' } }), previous);
+  assert.notDeepEqual(deliveryExternalWait({ ...stopped, events: [end, { ...end, ts: '2026-11-24T12:00:02.000Z' }] }), previous);
+  assert.notDeepEqual(deliveryExternalWait({ ...stopped, events: [end, { type: 'run_start', ts: endedAt }, { ...end }] }), previous,
+    'an external wait after a restart has a new identity even at the same recorded time');
+}
 
 async function waitingAuthorLeavesQuestioningReady(): Promise<void> {
   await withFreshCuHost(async host => {
@@ -65,6 +80,8 @@ async function waitingAuthorLeavesQuestioningReady(): Promise<void> {
     const next = await runGoalModeSessionStep({ ...options, requestPath: author.request.path,
       report: { status: 'waiting', phase: author.phase, details: '原作者暂不可用，已交回实际蓝图。' } }) as Json;
     assert.equal(next.phase, 'initial-design-questioning', JSON.stringify(next));
+    assert.equal(JSON.parse(fs.readFileSync(next.request.path, 'utf8')).context.runtimeFacts.externalChildWait, undefined,
+      'an ordinary next without an explicit continuation cannot send a forced child retry');
     assert.equal(inspectBlueprintReview(host.root, manifest.feature).status, 'current');
     assert.deepEqual((await runGoalModeSessionStep(options)).request, next.request, 'the original independent request is reused on repeated next');
     const execute = DetachedGoalPhaseExecutor.prototype.execute;
@@ -369,6 +386,7 @@ async function normalQuestioningWaiting(): Promise<void> {
 
 const cases = [
   { name: 'f3b8e6a1 waiting: original session and executor pause once then a later entry can continue', run: initialWaiting },
+  { name: '77105c47 external continuation binds the original stopped child and expires when it starts', run: externalContinuationIdentity },
   { name: '77105c47 waiting author can hand back a real blueprint and let independent questioning proceed', run: waitingAuthorLeavesQuestioningReady },
   ...(['timeout', 'terminal-failure', 'transport'] as const).map(kind => ({ name: `d18f6c42 ${kind} invocation cannot establish a completed-content no-progress baseline`, run: () => unfinishedContentBaseline(kind) })),
   { name: 'f3b8e6a1 waiting: design author and independent questioning keep one open transaction across waiting', run: repairWaiting },
@@ -377,6 +395,7 @@ const cases = [
 export function getCases() { return cases; }
 const dailyPrefixes = [
   "77105c47 waiting author",
+  "77105c47 external continuation",
   "d18f6c42 timeout invocation",
   "d18f6c42 terminal-failure invocation",
   "d18f6c42 transport invocation"

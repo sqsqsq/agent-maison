@@ -72,7 +72,8 @@ import { StringDecoder } from 'string_decoder';
 import * as YAML from 'yaml';
 import { randomUUID } from 'crypto';
 import { findInitialDesignRun, prepareInitialDesignRun, readInitialDesignDelivery, readInitialDesignCompletionDisposition, readInitialDesignWriteEvents, resolveInitialDesignWriteRecovery, projectInitialDesignDelivery, initialDesignAuthorInstruction, initialDesignInvocationLabel, validateInitialDesignInvocation, prepareInitialDesignDraft, initialDesignRequestOptions, readInitialDesignRequest, initialRequestWriteTargets, initialDesignCandidateRejection, type InitialDesignObservation, type InitialDesignDeliveryProjection } from './utils/initial-design-delivery';
-import { readOriginalDeliveryActivity, readOriginalDeliveryRuns, originalDeliveryForManifest, resolveOriginalDeliveryExecution } from './utils/delivery-origin';
+import { deliveryExternalWait, readOriginalDeliveryActivity, readOriginalDeliveryRuns, originalDeliveryForManifest, resolveOriginalDeliveryExecution,
+  type DeliveryExternalWait } from './utils/delivery-origin';
 import { writeCanonicalComponentClosure } from './check-component-closure';
 import { runChangeUnitProgression, buildChangeUnitGoalHandoff, buildChangeUnitGoalRequest, type ChangeUnitGoalHandoff } from './utils/change-unit-progress-loop';
 import { featureTrackDeclPath, resolveFeatureExecutionScope, prepareChangeUnitScopeInput, prepareFeatureScopeCandidate } from './utils/feature-track';
@@ -4923,9 +4924,12 @@ export class GoalPhaseRuntime {
             if (disposition.completionEligible) { emit({ type: 'run_end', status: 'COMPLETED', completion_target: 'request', session_started_at: new Date(sessionStart).toISOString() }); return 0; }
             observed = { ...observed, kind: 'author' };
           } else {
+          const externalChildWait = current?.request.context.phase === 'initial-design-questioning'
+            && currentQuestioning.original?.invokeId === current.request.invoke_id
+            ? current.request.context.runtimeFacts.externalChildWait : undefined;
           const next = await this.continueInitialDesignConstruction(manifest, projectRoot, frameworkRoot, argv, observed, token!, emit, conclude, () => {
             if (token) { releaseRunOwner(runDir, token); token = undefined; }
-          }, () => { releaseLock(lockPath, lock.ownerId); });
+          }, () => { releaseLock(lockPath, lock.ownerId); }, externalChildWait);
           if (typeof next === 'number') return next;
           observed = next;
           }
@@ -5050,6 +5054,18 @@ export class GoalPhaseRuntime {
         }
         const explicitlyContinued = resumeDesignWork;
         resumeDesignWork = false;
+        let externalChildWait: DeliveryExternalWait | undefined;
+        if (explicitlyContinued && this.options.sessionHandoff && purpose === 'questioning'
+          && previousEnd?.halt_reason === 'executor_waiting' && previousEnd.run_wait_kind === 'external' && previousEnd.ts) {
+          const end = Date.parse(previousEnd.ts);
+          const previousStart = [...prior].reverse().find(event => event.type === 'run_start' && event.ts && Date.parse(event.ts) <= end);
+          if (previousStart?.ts) {
+            const start = Date.parse(previousStart.ts);
+            const waits = spent.runs.map(deliveryExternalWait).filter((wait): wait is DeliveryExternalWait =>
+              !!wait && Date.parse(wait.endedAt) >= start && Date.parse(wait.endedAt) <= end);
+            if (waits.length === 1) externalChildWait = waits[0];
+          }
+        }
         const invokeId = `${label}-i${spent.calls + 1}`;
         const invocationDir = path.join(runDir, 'phases', label, invokeId);
         const checkerResultPath = path.join(invocationDir, 'checker-result.json');
@@ -5088,6 +5104,7 @@ export class GoalPhaseRuntime {
           runDir, reportDir: manifest.report_dir, adapter: manifest.adapter ?? 'generic', adapterModel: adapterModelBinding(manifest.adapter_model_pin),
           instruction: prompt, workInput: { material: { purpose, segments }, evaluation: currentDesignEvaluation },
           runtimeFacts: { receiptRequired: false, resume: !!argv.resume, successor: false,
+            ...(externalChildWait ? { externalChildWait } : {}),
             ...(observed.request?.prepared.intake?.baseline.base ? { runBaseSha: observed.request.prepared.intake.baseline.base } : {}) }, childEnv }, explicitlyContinued);
         if ('status' in prepared) {
           const detail = prepared.details ?? '等待原设计调用的真实交回。';
@@ -5421,7 +5438,7 @@ export class GoalPhaseRuntime {
 
   private async continueInitialDesignConstruction(manifest: InitialDesignGoalManifest, projectRoot: string, frameworkRoot: string, argv: minimist.ParsedArgs, observation: InitialDesignObservation, originalToken: RunFenceToken,
     emit: (event: Record<string, unknown>) => InitialDesignDeliveryProjection | undefined, stop: (reason: string, detail: string, disposition?: Record<string, unknown>) => number,
-    releaseOriginal: () => void, releaseController: () => void): Promise<number | InitialDesignObservation> {
+    releaseOriginal: () => void, releaseController: () => void, externalChildWait?: DeliveryExternalWait): Promise<number | InitialDesignObservation> {
     const decision = observation.progression;
     if (!decision) return observation;
     if (decision.action === 'ready_for_component_closure') {
@@ -5533,6 +5550,9 @@ export class GoalPhaseRuntime {
       }
       releaseOriginal();
       const childEvents = loadEventsJsonlStrict(path.join(childRunDir, 'events.jsonl')).events;
+      const currentExternalWait = externalChildWait?.runId === child.run_id ? deliveryExternalWait({ manifest: child, events: childEvents }) : undefined;
+      const sameExternalWait = externalChildWait && currentExternalWait && currentExternalWait.endedAt === externalChildWait.endedAt
+        && currentExternalWait.eventIndex === externalChildWait.eventIndex;
       const started = childEvents.some(event => event.type === 'run_start');
       const pending = prelude?.current ?? readSessionExecution(childRunDir);
       const resume = started && (!resolveEffectiveRunEnd(childEvents) || pending && !acceptedSessionReport(childRunDir, pending)
@@ -5544,7 +5564,7 @@ export class GoalPhaseRuntime {
         args: ['--feature', child.feature, ...childEntry, '--project-root', projectRoot, '--framework-root', frameworkRoot,
           '--runtime-executor', this.options.executor || this.options.sessionHandoff ? 'attended' : 'detached',
           '--runtime-owner', this.options.executor || this.options.sessionHandoff ? 'session' : 'process', ...inheritRunProcessArgs(argv),
-          ...(argv['force-resume'] ? ['--force-resume'] : []), ...(notes ? ['--repair-notes', notes] : [])] }, manifest);
+          ...(argv['force-resume'] || sameExternalWait ? ['--force-resume'] : []), ...(notes ? ['--repair-notes', notes] : [])] }, manifest);
       try { childCode = await runtime.run(); }
       finally { releaseController(); }
       return { status: childCode === 0 ? 'completed' as const : childCode === 3 ? 'paused' as const : 'failed' as const,

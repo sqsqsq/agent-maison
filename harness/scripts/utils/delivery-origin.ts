@@ -9,10 +9,18 @@ import { isPidAlive } from './goal-run-lock';
 import { readSessionExecution, acceptedSessionReport } from './session-execution-handoff';
 
 export interface DeliveryRunFacts { manifest: GoalRunManifest; events: GoalRunEvent[] }
+export interface DeliveryExternalWait { runId: string; endedAt: string; eventIndex: number }
 export interface DeliveryExecutionFacts extends DeliveryRunFacts {
   runDir: string;
   control: ReturnType<typeof readRunControl>;
   request: ReturnType<typeof readSessionExecution>;
+}
+
+export function deliveryExternalWait(run: DeliveryRunFacts): DeliveryExternalWait | undefined {
+  if (isInitialDesignManifest(run.manifest)) return undefined;
+  const end = resolveEffectiveRunEnd(run.events);
+  if (end?.status !== 'HALTED' || end.halt_reason !== 'executor_waiting' || end.run_wait_kind !== 'external' || !end.ts) return undefined;
+  return { runId: run.manifest.run_id, endedAt: end.ts, eventIndex: run.events.indexOf(end) };
 }
 
 /** Existing audited successors carry unfinished corrections; a completed-cycle boundary stays sealed. */

@@ -62,6 +62,8 @@ export interface WorkUnitExecutionContext {
     receiptRequired: boolean;
     resume: boolean;
     successor: boolean;
+    /** The stopped child already designated by the explicit continuation preceding this independent handoff. */
+    externalChildWait?: import('./delivery-origin').DeliveryExternalWait;
   }>;
   readonly childEnv: Readonly<Record<string, string>>;
 }
