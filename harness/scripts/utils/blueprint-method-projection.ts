@@ -92,6 +92,10 @@ export function blueprintMethodProjection(blueprint: BlueprintRecord) {
             const authored = old?.[output];
             if (output === 'params' && Array.isArray(authored) && Array.isArray(expected)
               && stableJson(authored) === stableJson(asRecords(expected).map(param => param.type))) continue;
+            // Older use cases name the resolved value of an explicitly async method.
+            if (output === 'returns' && old?.async === true && definition.method.async === true
+              && nonEmptyString(authored) && !/^Promise\s*</.test(authored.trim()) && typeof expected === 'string'
+              && /^Promise\s*<\s*([\s\S]+?)\s*>$/.exec(expected.trim())?.[1] === authored.trim()) continue;
             if (old?.[output] !== undefined && stableJson(old[output]) !== stableJson(expected)) {
               report({ message: `${definition.ref}: ${output} 显式声明 ${JSON.stringify(old[output])} 与接口定义 ${JSON.stringify(expected)} 冲突`,
                 locations: [location(address, `${field}.${output}`), { ...definition.location, field: `${definition.location.field}.${source}` }] });

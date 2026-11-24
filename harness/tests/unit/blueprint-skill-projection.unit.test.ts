@@ -609,6 +609,42 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     assert(diagnostics.some(error => (error as { code?: string }).code === 'blueprint_address_duplicate'));
     assert.deepEqual(continued.acceptance, original.acceptance);
   } },
+  { name: 'typed method projection preserves legacy async returns and reports real conflicts without losing independent content', run(f) {
+    const blueprint = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
+    const unit = asChangeUnitArtifact(loadCanonicalChangeUnit(f.root, 'ledger-app-blueprint', 'ledger-refresh').changeUnit);
+    const ownerRef = unit.design_refs.find(ref => ref.target.kind === 'node' && ref.target.view_id === 'development')!;
+    const flowRef = unit.design_refs.find(ref => ref.target.kind === 'flow')!;
+    const owner = resolveBlueprintTarget(blueprint, ownerRef.target);
+    const flow = resolveBlueprintTarget(blueprint, flowRef.target);
+    owner.provenance = { ...asRecord(owner.provenance), evidence_strength: 'authoritative' };
+    const load = { name: 'load', params: [], return: 'Promise<LedgerEntry[]>', async: true };
+    owner.contracts = { ...asRecord(owner.contracts), interfaces: [{ class: 'LedgerRepository', methods: [load, { name: 'count', params: [], return: 'number', async: false }] }] };
+    const short = { name: 'load', params: [], returns: 'LedgerEntry[]', async: true };
+    const boundary: BlueprintRecord = { name: 'repository', type: 'LedgerRepository', kind: 'storage', methods: [short, 'count'] };
+    flow.use_cases = { ...asRecord(flow.use_cases), use_cases: [{ id: 'read-entries', data_boundaries: [boundary] }] };
+    const projectedMethods = (result: ReturnType<typeof selectBlueprintSkillContent>) =>
+      asRecords(asRecords(result.useCases?.use_cases).find(row => row.id === 'read-entries')?.data_boundaries)[0].methods as BlueprintRecord[];
+    const ready = selectBlueprintSkillContent(blueprint, unit);
+    assert.deepEqual(projectedMethods(ready), [short, { name: 'count', params: [], returns: 'number', async: false }]);
+    for (const [authored, returnType, asynchronous] of [
+      [{ ...short, returns: 'DifferentEntry[]' }, load.return, true],
+      [{ ...short, async: false }, load.return, true],
+      [short, load.return, false],
+      [{ ...short, async: undefined }, load.return, true],
+      [{ ...short, returns: 'Promise<LedgerEntry[]>' }, 'Promise<Promise<LedgerEntry[]>>', true],
+    ] as const) {
+      load.return = returnType;
+      load.async = asynchronous;
+      boundary.methods = [authored, 'count'];
+      const errors: unknown[] = [];
+      const continued = selectBlueprintSkillContent(blueprint, unit, error => errors.push(error));
+      assert(errors.some(error => error instanceof BlueprintContentError
+        && error.locations.some(location => location.target.id === ownerRef.target.id && location.field.endsWith('.return'))
+        && error.locations.some(location => location.target.id === flowRef.target.id && location.field.endsWith('.returns'))));
+      assert.deepEqual(projectedMethods(continued), [{ ...authored, async: authored.async ?? asynchronous }, { name: 'count', params: [], returns: 'number', async: false }]);
+      assert.deepEqual(continued.acceptance, ready.acceptance);
+    }
+  } },
   { name: 'compact CU selections expand exact references in the official writer, while contradictions and absent landings fail', run(f) {
     const contracts = planContracts(f);
     const original = asChangeUnitArtifact(loadCanonicalChangeUnit(f.root, 'ledger-app-blueprint', 'ledger-refresh').changeUnit);
