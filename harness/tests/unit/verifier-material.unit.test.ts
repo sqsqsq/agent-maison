@@ -554,13 +554,15 @@ const cases: Array<{ name: string; run: () => void }> = [
       const blueprint = {
         blueprint_id: 'ledger', design_views: [
           { view_id: 'development', applicability: 'applicable', evolution_impact: 'changed', nodes: [
-            { node_id: 'otp', acceptance: { criteria: [{ id: 'AC-4', description: '验证码满六位允许提交' }] },
+            { node_id: 'otp', acceptance: { criteria: [{ id: 'AC-4', description: '验证码满六位允许提交' }],
+              boundaries: [{ id: 'BD-4', expected_result: '错误后仍可重发' }],
+              performance: [{ id: 'NFR-SUBMIT', threshold: 250 }] },
               contracts: { interfaces: [{ class: 'LedgerOtp', methods: [{ name: 'canSubmit', return: 'boolean' }] }] } },
             { node_id: 'home', description: 'Shows existing cards', provenance: { source_kind: 'requirement', source_ref: 'request.md' },
               contracts: { interfaces: [{ class: 'LedgerOtp', methods: [{ name: 'canSubmit', return: 'boolean' }] }] } },
           ] },
           { view_id: 'runtime', applicability: 'applicable', evolution_impact: 'changed', runtime_data_flows: [
-            { flow_id: 'otp-entry', ordered_steps: [methodRef], verification_refs: ['AC-4'] },
+            { flow_id: 'otp-entry', ordered_steps: [methodRef], verification_refs: ['AC-4', 'BD-4', 'NFR-SUBMIT'] },
             { flow_id: 'home-read', ordered_steps: [sameNamedMethod], design_refs: ['view:development/node:home'],
               provenance: { source_kind: 'requirement', source_ref: 'request.md' } },
           ] },
@@ -581,6 +583,12 @@ const cases: Array<{ name: string; run: () => void }> = [
       const expected = ['view:development', 'view:runtime', 'flow:otp-entry'];
       assert.deepEqual(selectQuestioningScopes(blueprint, changed, previous), expected);
       node.acceptance.criteria[0].description = '验证码满六位允许提交';
+      node.acceptance.boundaries[0].expected_result = '错误后需重开半模态';
+      assert.deepEqual(selectQuestioningScopes(blueprint, changed, previous), expected);
+      node.acceptance.boundaries[0].expected_result = '错误后仍可重发';
+      node.acceptance.performance[0].threshold = 500;
+      assert.deepEqual(selectQuestioningScopes(blueprint, changed, previous), expected);
+      node.acceptance.performance[0].threshold = 250;
       node.contracts.interfaces[0].methods[0].return = 'number';
       assert.deepEqual(selectQuestioningScopes(blueprint, changed, previous), [...expected, 'view:scenarios']);
       node.acceptance.criteria[0].description = '一万字说明'.repeat(2_000);

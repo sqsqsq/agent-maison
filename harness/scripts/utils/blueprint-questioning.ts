@@ -265,8 +265,9 @@ export function selectQuestioningScopes(before: BlueprintRecord | undefined, cur
   const linkedFacts = (address: string, value: unknown): Map<string, BlueprintRecord> => {
     const row = asRecord(value);
     const facts = new Map<string, BlueprintRecord>();
-    for (const criterion of asRecords(asRecord(row?.acceptance)?.criteria)) {
-      if (nonEmptyString(criterion.id)) facts.set(`acceptance:${criterion.id}`, criterion);
+    const acceptance = asRecord(row?.acceptance);
+    for (const item of ['criteria', 'boundaries', 'performance'].flatMap(key => asRecords(acceptance?.[key]))) {
+      if (nonEmptyString(item.id)) facts.set(`acceptance:${item.id}`, item);
     }
     for (const contract of asRecords(asRecord(row?.contracts)?.interfaces)) {
       if (!nonEmptyString(contract.class)) continue;
