@@ -23,7 +23,7 @@ import { checkUiEntryCoverage } from '../../scripts/check-testing';
 import { executeCheck } from '../../scripts/utils/check-execution';
 import { fixture as blueprintFixture } from './blueprint-skill-projection.unit.test';
 import { provisionFrameworkUnder } from '../utils/real-chain-host';
-import type { CheckContext, UseCasesSpec } from '../../scripts/utils/types';
+import type { CheckContext, ContractsSpec, UseCasesSpec } from '../../scripts/utils/types';
 import type { UnitCaseResult } from '../run-unit';
 
 const frameworkRoot = path.resolve(__dirname, '../../..');
@@ -194,6 +194,8 @@ const cases: Array<{ name: string; run(): void }> = [
   { name: 'fe4512 original blueprint and change unit derive canonical calls through the production projection', run() {
     const result = deriveBlueprintSkillInput(history, original().feature, frameworkRoot, 'contracts');
     assert.equal(result.state, 'resolved', result.detail);
+    const locations = (rows: ContractsSpec['components']) => rows.map(row => `${row.file}#${row.name}`).sort();
+    assert.deepEqual(locations((result.value as ContractsSpec).components), locations(read(featurePath + '/contracts.yaml').components));
     const useCases = result.artifacts?.['use-cases@1'] as UseCasesSpec;
     assert.deepEqual(useCases.use_cases[0].ui_bindings[0].user_actions[0].calls, ['openCardTypeSheet']);
     assert.equal(buildUiEntryBindings(useCases).length, 4);

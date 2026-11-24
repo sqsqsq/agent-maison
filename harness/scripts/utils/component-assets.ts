@@ -88,8 +88,13 @@ export function isBlueprintUiTarget(node: BlueprintRecord): boolean {
   return isUiComponent(node) || asRecords(asRecord(node.contracts)?.components).some(isUiComponent);
 }
 
-export function componentLocation(component: { file?: unknown; name?: unknown }): string | undefined {
-  if (nonEmptyString(component.file) && nonEmptyString(component.name)) return `${component.file}#${component.name}`;
+function declaredComponentName(component: { name?: unknown; class?: unknown }): unknown {
+  return component.name === undefined ? component.class : component.name;
+}
+
+export function componentLocation(component: { file?: unknown; name?: unknown; class?: unknown }): string | undefined {
+  const name = declaredComponentName(component);
+  if (nonEmptyString(component.file) && nonEmptyString(name)) return `${component.file}#${name}`;
 }
 
 /** Legacy page facts bind an extra in-scope file to a source-confirmed symbol. */
@@ -120,11 +125,18 @@ function declaredExistingPages(root: string, blueprint: BlueprintRecord, target:
 
 /** Complete a target's existing declarations from its own identified component facts. */
 export function blueprintTargetComponents(root: string | undefined, blueprint: BlueprintRecord, target: BlueprintRecord, report: (message: string) => void): BlueprintRecord[] {
+  const named = (row: BlueprintRecord): BlueprintRecord => {
+    if (row.name !== undefined && nonEmptyString(row.class) && row.name !== row.class) {
+      report(`${String(row.file)}: 组件 name=${String(row.name)} 与旧式 class=${row.class} 冲突`);
+    }
+    return row.name === undefined && nonEmptyString(row.class) ? { ...row, name: declaredComponentName(row) } : row;
+  };
   const fields = ['file', 'name', 'module', 'kind', 'decorator', 'linked_functions', 'state', 'props', 'events', 'children', 'nav_destinations', 'nav_destination', 'description', 'asset_selection'];
-  const explicit = isUiComponent(target) && componentLocation(target)
-    ? [Object.fromEntries(fields.filter(field => target[field] !== undefined).map(field => [field, target[field]]))] : [];
+  const direct = isUiComponent(target) ? named(target) : undefined;
+  const explicit = direct && componentLocation(direct)
+    ? [Object.fromEntries(fields.filter(field => direct[field] !== undefined).map(field => [field, direct[field]]))] : [];
   const typed = asRecords(asRecord(target.contracts)?.components).filter(row => isUiComponent(row) || row.asset_selection !== undefined
-    || row.kind === undefined && isUiComponent(target));
+    || row.kind === undefined && isUiComponent(target)).map(named);
   const standalone = [...explicit, ...(root ? declaredExistingPages(root, blueprint, target, typed, report) : [])];
   const identities = new Map([...standalone, ...typed].flatMap(row => {
     const id = componentLocation(row);
