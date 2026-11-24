@@ -138,6 +138,7 @@ export async function continueA21473CombinedReplay(input: { root: string; framew
     const options = { projectRoot: root, frameworkRoot, feature: BLUEPRINT, runId, adapter: 'codex', runMode: 'attended' as const,
       authorization: { mode: 'goal_mode' as const, autonomyAuthorized: true } };
     let step = input.initialStep, authors = 0, restored = false, observedMixed = false, childRunDir = '', knowledgeHandbacks = 0;
+    let dependencyQuestioning = 0;
     const productBoundary = { projectRoot: root, protectedRoots: ['01-Product', '02-Feature', '03-Core', '04-BusinessBase', '05-SystemBase'].filter(dir => fs.existsSync(path.join(root, dir))) };
     let successor: { runId: string; runDir: string; successorOf: string; productSha256: string } | undefined;
     let successorScopes: { original: ExecutionScope; final?: ExecutionScope } | undefined;
@@ -279,6 +280,31 @@ export async function continueA21473CombinedReplay(input: { root: string; framew
         assertOriginalCriteria(acceptance.criteria, blueprintBefore.design_views.find((view: any) => view.view_id === 'scenarios').nodes[0].acceptance.criteria);
         assert.equal(fs.readFileSync(path.join(root, manifestBefore.requirement_source_files[0]), 'utf8'), sourceRequirement);
         output = JSON.stringify({ items: blueprintBefore.review_summary.questioning.items });
+      } else if (step.phase === 'initial-design-questioning') {
+        assert(!restored && observedMixed && authors === 2, 'only the current design sources are rechecked during the framework wait');
+        assert.equal(++dependencyQuestioning, 1, 'unchanged design evidence cannot buy a duplicate source recheck');
+        assert.equal(issued.request.write_boundary?.executionRole, 'verifier');
+        const history = load('scripts/utils/session-execution-handoff').sessionEvents(runDir);
+        const reviewed = [...history].reverse().find((event: any) => event.type === 'agent_invoke_start' && event.phase === 'design-repair-questioning');
+        const original = load('scripts/utils/design-repair-unattended').readDesignQuestioningOriginal(runDir, reviewed, history, root);
+        assert(original?.completed && original.preSnapshot, 'the comparison starts from the prior real independent request');
+        for (const [file, material] of [
+          ['01-Product/Phone/src/main/ets/pages/index.ets', 'buildBankCardSelectionPage'],
+          ['04-BusinessBase/AccountManager/src/main/ets/domain/service/AccountService.ets', 'getMockPhone'],
+          ['doc/component-index.yaml', 'buildAddBankCardPage'],
+        ]) {
+          const current = fs.readFileSync(path.join(root, file));
+          assert(current.includes(material), file);
+          const sha256 = createHash('sha256').update(current).digest('hex');
+          assert(issued.request.pre_snapshot?.entries.some((entry: any) => entry.path === file && entry.sha256 === sha256), file);
+          assert(original.preSnapshot.entries.some((entry: any) => entry.path === file && entry.sha256 !== sha256), file);
+        }
+        const signed = load('scripts/utils/blueprint-questioning').readSignedQuestioningScopes(context.workInput?.material.segments);
+        for (const scope of ['view:runtime', 'view:development', 'relation:flow-development', 'app_lens:publication_subscription', 'terminology:current_scope_items']) {
+          assert(signed?.has(scope), `changed Phone source must recheck its actual consumer ${scope}`);
+        }
+        const current = YAML.parse(fs.readFileSync(path.join(root, canonical), 'utf8'));
+        output = JSON.stringify({ items: current.review_summary.questioning.items.filter((item: any) => signed?.has(item.scope_ref)) });
       } else if (step.phase === 'vision-canary') {
         output = 'CANNOT_SEE_IMAGE';
       } else if (step.phase === 'work-unit-author') {
