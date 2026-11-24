@@ -31,7 +31,7 @@ export function collectReviewQuestioning(projectRoot: string, blueprint: Bluepri
     ...changeUnitPaths.map(file => path.join(path.dirname(file), 'goal-runs'))]);
   if (![...directories].some(directory => fs.existsSync(directory))) return blueprintQuestioningFallback(blueprint);
   // The repair publisher imports materialization; load its shared evidence reader after module initialization.
-  const { readDesignQuestioningOriginal, reusableDesignQuestioning } = require('./design-repair-unattended') as typeof import('./design-repair-unattended');
+  const { openDesignQuestioningHistory, reusableDesignQuestioning } = require('./design-repair-unattended') as typeof import('./design-repair-unattended');
   const rounds: Array<{ time: string; order: number; blueprint: BlueprintRecord; result: BlueprintRecord; originals: string[] }> = [];
   for (const directory of directories) {
     if (!fs.existsSync(directory)) continue;
@@ -40,9 +40,10 @@ export function collectReviewQuestioning(projectRoot: string, blueprint: Bluepri
       const runDir = path.join(directory, entry.name);
       try {
         const events = sessionEvents(runDir);
+        const history = openDesignQuestioningHistory(runDir, events, projectRoot);
         for (const [order, start] of events.entries()) {
           if (start.type !== 'agent_invoke_start' || !['initial-design-questioning', 'design-repair-questioning'].includes(String(start.phase))) continue;
-          const original = readDesignQuestioningOriginal(runDir, start, events, projectRoot);
+          const original = history.read(start);
           if (!original?.completed) continue;
           const before = original.beforeDocument;
           if (!before || before.blueprint_id !== blueprint.blueprint_id || before.component_id !== blueprint.component_id) continue;

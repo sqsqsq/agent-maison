@@ -530,21 +530,50 @@ function repairQuestioningMaterials(projectRoot: string, runDir: string, start: 
   }));
 }
 
-/** Project the existing invocation originals; no Q validity record is written. */
-function questioningOriginal(runDir: string, start: GoalRunEvent, originalEvents?: readonly GoalRunEvent[], projectRoot?: string): {
+type QuestioningOriginal = {
   invokeId: string; beforeBlueprint: string; beforeSource: string; beforeDocument?: BlueprintRecord; output: string; source: string; completed: boolean; providerId: string;
   preSnapshot?: ReturnType<typeof capturePhaseInvocationSnapshot>; postSnapshot?: ReturnType<typeof capturePhaseInvocationSnapshot>;
   afterBlueprint?: string;
   previous?: BlueprintRecord; previousBlueprint?: BlueprintRecord;
   previousSnapshot?: ReturnType<typeof capturePhaseInvocationSnapshot>; additionalInputs: Record<string, string>;
   signedScopes?: ReturnType<typeof readSignedQuestioningScopes>;
-} | null {
+};
+
+interface QuestioningHistory {
+  events: readonly GoalRunEvent[];
+  before(position: number): QuestioningHistory;
+  read(start: GoalRunEvent): QuestioningOriginal | null;
+}
+
+/** Shares a fixed run history only within one synchronous read of original evidence. */
+export function openDesignQuestioningHistory(runDir: string, events: readonly GoalRunEvent[], projectRoot?: string): QuestioningHistory {
+  const prefixes = new Map<number, QuestioningHistory>();
+  function view(length: number): QuestioningHistory {
+    const existing = prefixes.get(length);
+    if (existing) return existing;
+    const originals = new Map<GoalRunEvent, QuestioningOriginal | null>();
+    const current: QuestioningHistory = {
+      events: length === events.length ? events : events.slice(0, length),
+      before: position => view(position < 0 ? Math.max(0, length + position) : position),
+      read(start) {
+        if (!originals.has(start)) originals.set(start, loadQuestioningOriginal(runDir, start, current, projectRoot));
+        return originals.get(start) ?? null;
+      },
+    };
+    prefixes.set(length, current);
+    return current;
+  }
+  return view(events.length);
+}
+
+/** Project the existing invocation originals; no Q validity record is written. */
+function loadQuestioningOriginal(runDir: string, start: GoalRunEvent, history: QuestioningHistory, projectRoot?: string): QuestioningOriginal | null {
   if (!start.invoke_id) return null;
   try {
     if (start.phase !== designRepairInvokeLabel('questioning') && start.phase !== 'initial-design-questioning') return null;
     const initial = start.phase === 'initial-design-questioning';
     const directory = path.join(runDir, 'phases', start.phase, start.invoke_id);
-    const events = originalEvents ?? sessionEvents(runDir);
+    const events = history.events;
     const session = sessionExecutionForInvoke(runDir, start.invoke_id, events);
     const issued = session ?? readExecutionRequestOriginal(runDir, start.invoke_id, events);
     const accepted = session && acceptedSessionReport(runDir, session, events);
@@ -613,7 +642,8 @@ function questioningOriginal(runDir: string, start: GoalRunEvent, originalEvents
       ? readSignedQuestioningScopes(issued.request.context.workInput?.material.segments) : undefined;
     const returned = doc && normalizeQuestioningItems(doc, asRecords(parseIndependentQuestioningOutput(output).items), signedScopes);
     if (root && doc && returned && [...requiredQuestioningScopes(doc).keys()].some(ref => returned.filter(item => item.scope_ref === ref).length !== 1)) {
-      const sources = [{ directory: runDir, records: events.slice(0, position) }];
+      const sources = [root === projectRoot ? history.before(position)
+        : openDesignQuestioningHistory(runDir, events.slice(0, position), root)];
       if (initial && issued) {
         const { isInitialDesignManifest, loadGoalRunManifestFromRun } = require('./goal-manifest') as typeof import('./goal-manifest');
         const { readOriginalDeliveryRuns } = require('./delivery-origin') as typeof import('./delivery-origin');
@@ -621,12 +651,12 @@ function questioningOriginal(runDir: string, start: GoalRunEvent, originalEvents
         const manifest = loadGoalRunManifestFromRun(root, context.runId, { feature: context.feature });
         if (isInitialDesignManifest(manifest) && manifest.successor_of) {
           sources.push(...readOriginalDeliveryRuns(root, manifest).filter(run => isInitialDesignManifest(run.manifest) && run.manifest.run_id !== manifest.run_id)
-            .map(run => ({ directory: path.resolve(root, run.manifest.report_dir), records: run.events })));
+            .map(run => openDesignQuestioningHistory(path.resolve(root, run.manifest.report_dir), run.events, root)));
         }
       }
       for (const source of sources) {
-        const { original: prior, result } = latestUsableDesignQuestioning(source.directory,
-          ['initial-design-questioning', designRepairInvokeLabel('questioning')], root, source.records);
+        const { original: prior, result } = latestQuestioningInHistory(source,
+          ['initial-design-questioning', designRepairInvokeLabel('questioning')], root);
         if (!prior?.beforeDocument || prior.beforeDocument.blueprint_id !== doc.blueprint_id || !result) continue;
         previous = result; previousBlueprint = prior.beforeDocument; previousSnapshot = prior.preSnapshot;
         break;
@@ -647,20 +677,28 @@ function questioningOriginal(runDir: string, start: GoalRunEvent, originalEvents
   } catch { return null; }
 }
 
+function questioningOriginal(runDir: string, start: GoalRunEvent, originalEvents?: readonly GoalRunEvent[], projectRoot?: string): QuestioningOriginal | null {
+  try { return openDesignQuestioningHistory(runDir, originalEvents ?? sessionEvents(runDir), projectRoot).read(start); }
+  catch { return null; }
+}
+
 export { questioningOriginal as readDesignQuestioningOriginal };
 
 /** Latest completed usable original, with unavailable returns kept out of public business context. */
-export function latestUsableDesignQuestioning(runDir: string, phases: readonly string[], projectRoot: string, originalEvents?: readonly GoalRunEvent[]): {
-  original: NonNullable<ReturnType<typeof questioningOriginal>> | null; result: BlueprintRecord | null; unavailable: boolean;
+export function latestUsableDesignQuestioning(runDir: string, phases: readonly string[], projectRoot: string, originalEvents?: readonly GoalRunEvent[]) {
+  return latestQuestioningInHistory(openDesignQuestioningHistory(runDir, originalEvents ?? sessionEvents(runDir), projectRoot), phases, projectRoot);
+}
+
+function latestQuestioningInHistory(history: QuestioningHistory, phases: readonly string[], projectRoot: string): {
+  original: QuestioningOriginal | null; result: BlueprintRecord | null; unavailable: boolean;
 } {
   let unavailable = false;
-  const events = originalEvents ?? sessionEvents(runDir);
-  for (const start of [...events].reverse()) {
+  for (const start of [...history.events].reverse()) {
     if (start.type !== 'agent_invoke_start' || !phases.includes(String(start.phase))) continue;
-    const original = questioningOriginal(runDir, start, events, projectRoot);
+    const original = history.read(start);
     if (!original?.completed) continue;
     try {
-      const blueprint = asRecord(YAML.parse(original.beforeBlueprint));
+      const blueprint = original.beforeDocument;
       const result = blueprint && reusableDesignQuestioning({ ...original, additionalInputs: {}, observedSnapshot: original.preSnapshot,
         projectRoot, blueprintPath: '', blueprint });
       if (result) return { original, result, unavailable };

@@ -35,7 +35,7 @@ import { resolvePhaseEvidenceManifest, writePhaseEvidenceManifest } from '../../
 import { readReusableCheckResult } from '../../scripts/utils/verify-feature-completion';
 import { blueprintSourceRefFiles } from '../../scripts/utils/blueprint-skill-projection';
 import { prepareInitialDesignDraft, readInitialDesignDelivery } from '../../scripts/utils/initial-design-delivery';
-import { reusableDesignQuestioning } from '../../scripts/utils/design-repair-unattended';
+import { openDesignQuestioningHistory, reusableDesignQuestioning } from '../../scripts/utils/design-repair-unattended';
 import { repairAdapter } from './design-authority-repair.unit.test';
 import { BLUEPRINT_ID, withFreshCuHost } from './lifecycle-evolution.unit.test';
 import { fixture, planContracts } from './blueprint-skill-projection.unit.test';
@@ -1507,6 +1507,18 @@ const timer=setInterval(()=>{const bound=process.platform!=='win32'||fs.readFile
     const merged = saved && reusableDesignQuestioning({ ...saved, projectRoot: host.root, blueprintPath: canonical.canonicalPath, blueprint: read(canonical.canonicalPath) });
     assert(merged && (merged.items as Document[]).length === items.length, '签发的局部返回未沿独立原件恢复完整清单');
     for (const item of merged.items as Document[]) assert(String(item.review_original.path).includes(selected.includes(item.scope_ref) ? second.request.invoke_id : first.request.invoke_id));
+
+    const settled = events();
+    const earlier = settled.find(event => event.type === 'agent_invoke_start' && event.invoke_id === first.request.invoke_id)!;
+    const refused = { ...earlier, type: 'phase_write_violation' as const };
+    const history = openDesignQuestioningHistory(runDir, [...settled, refused], host.root);
+    assert(history.before(settled.length).read(earlier)?.completed, 'the earlier prefix retains its original result');
+    assert.equal(history.read(earlier), null, 'a later refusal cannot reuse the earlier history interpretation');
+
+    const acceptance = settled.find(event => event.type === 'agent_invoke_end' && event.invoke_id === earlier.invoke_id)!;
+    const archive = path.resolve(runDir, acceptance.handoff_report!.path);
+    fs.appendFileSync(archive, ' ');
+    assert.equal(openDesignQuestioningHistory(runDir, settled, host.root).read(earlier), null, 'a fresh read must reject changed signed bytes');
     return;
   }
   if (mode === 'execute-request-large') {
