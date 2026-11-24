@@ -23,7 +23,7 @@ import { validateChangeUnit } from './change-unit-validator';
 import { checkChangeUnitFeatureProjection, validateChangeUnitFeatureProjection, changeUnitMappingIssues, deriveModifiableModules } from './change-unit-feature-projection';
 import { projectImplementationModules } from './diff-scope';
 import { loadCatalog } from './catalog-parser';
-import { projectComponentSelections, componentProjectionFindings } from './component-selection-check';
+import { projectComponentSelections, resolveComponentSelectionProjection } from './component-selection-check';
 import { resolveContractFileReferences, findUnplannedContractFileReferences, CONTRACT_FILE_REFERENCE_FIELDS } from './contract-reference-closure';
 import { acceptanceLinkedUseCaseFailure, checkAcceptanceContent, checkAcceptanceUtLayerComplete, checkAcceptanceDeviceFocusPresent, checkAcceptanceLinkedUseCases, extractAcceptanceIdRefs } from './check-acceptance';
 import { isInsideProjectRoot, existingProjectPathSpelling, inferLegacyProjectRoot, resolveDependencyPath } from './project-relative-path';
@@ -759,8 +759,14 @@ export function deriveBlueprintSkillInput(projectRoot: string, feature: string, 
     }
     const source = `derive.blueprint-${kind}:${loaded.artifactSha256}:${cu.component_blueprint_ref.artifact_sha256}`;
     const acceptance = bundle.acceptance;
-    const construction = kind === 'contracts' && bundle.contracts
-      ? attempt(() => projectComponentSelections(projectRoot, bundle.contracts as unknown as ContractsSpec, cu, resolveRef)) as unknown as BlueprintRecord | undefined : undefined;
+    const staged = kind === 'contracts' ? resolveFeatureArtifact(projectRoot, feature, 'contracts.yaml') : undefined;
+    const stagedContracts = staged?.exists && !authoredMapping
+      ? asRecord(YAML.parse(fs.readFileSync(staged.actualPath, 'utf8'))) : undefined;
+    const stageMapping = asRecord(stagedContracts?.change_unit);
+    const componentProjection = kind === 'contracts' && bundle.contracts
+      ? attempt(() => resolveComponentSelectionProjection(projectRoot, bundle.contracts as unknown as ContractsSpec, cu, resolveRef,
+        stageMapping ? asRecords(stagedContracts?.components) as unknown as ContractsSpec['components'] : [])) : undefined;
+    const construction = componentProjection?.contracts as unknown as BlueprintRecord | undefined;
     const useCases = bundle.useCases;
     for (const [field, value] of [['acceptance', acceptance], ['contracts', bundle.contracts], ['use_cases', useCases]] as const) {
       if (!value && selected.some(({ target }) => target[field] !== undefined)) fail([], `因 ${field} 来源内容不能确定合并，未能检查依赖该内容的投影；其余独立检查继续，不能签为通过。`);
@@ -805,15 +811,20 @@ export function deriveBlueprintSkillInput(projectRoot: string, feature: string, 
     }
     if (construction) {
       const contracts = parsed.contracts!;
-      const staged = resolveFeatureArtifact(projectRoot, feature, 'contracts.yaml');
-      const stageMapping = staged.exists && asRecord(asRecord(YAML.parse(fs.readFileSync(staged.actualPath, 'utf8')))?.change_unit);
       if (contracts.change_unit && (authoredMapping || !stageMapping)) {
         const mappingIssues = changeUnitMappingIssues(projectRoot, contracts.change_unit as unknown as BlueprintRecord, cu, 'plan');
         if (mappingIssues.length) fail(mappingIssues.map(issue => issue.id), 'plan/component-design: ' + mappingIssues.map(issue => issue.message).join('; '));
-        const selections = componentProjectionFindings(projectRoot, contracts, cu, resolveRef, 'blueprint');
-        if (selections.length) fail(selections.map(finding => finding.route === 'reconcile_blueprint'
-          ? 'change_unit_blueprint_reconciliation_required' : 'change_unit_design_mapping_incomplete'),
-        'plan/component-design: ' + selections.map(finding => finding.message).join('; '));
+      }
+      for (const finding of componentProjection?.findings ?? []) {
+        const blueprintOwned = finding.route === 'reconcile_blueprint';
+        if (!blueprintOwned && !authoredMapping && stageMapping) continue;
+        const locations: DesignAuthorityLocation[] = [];
+        const node = /^view:development\/node:(.+)$/.exec(finding.targetAddress ?? '');
+        if (blueprintOwned && node) locations.push({ blueprint_id: cu.blueprint_id,
+          target: { kind: 'node', view_id: 'development', id: node[1] }, field: 'contracts.components' });
+        if (blueprintOwned && finding.decision) locations.push({ blueprint_id: cu.blueprint_id, target: finding.decision, field: 'target_ref' });
+        fail(blueprintOwned ? 'change_unit_blueprint_reconciliation_required' : 'change_unit_design_mapping_incomplete',
+          finding.message, locations, !blueprintOwned);
       }
       const contentIssues = attempt(() => checkTypedConstructionContent(projectionContext).filter(check => check.status === 'FAIL')) ?? [];
       if (contentIssues.length) fail('authority_construction_content_incomplete', 'plan: ' + contentIssues.map(check => check.details).join('; '));

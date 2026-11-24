@@ -33,7 +33,7 @@ import { AcceptanceSpec, CheckContext, CheckResult, ContractsSpec } from './type
 import { validateChangeUnitEvolutionSeam } from './change-unit-evolution-seam';
 import { validateChangeUnitDesign } from './change-unit-design-gate';
 import { validateProjectRelativePath } from './project-relative-path';
-import { checkComponentSelections, componentProjectionFindings, projectComponentSelections } from './component-selection-check';
+import { checkComponentSelections, resolveComponentSelectionProjection } from './component-selection-check';
 
 type ProjectionPhase = 'plan' | 'coding' | 'review' | 'ut';
 
@@ -674,10 +674,10 @@ export function validateChangeUnitFeatureProjection(
     }
   }
   if (!options.designOnly) {
-    try { contracts = projectComponentSelections(projectRoot, contracts!, cu); }
-    catch (error) { issues.push(issue('component_asset_projection', `蓝图选型权威不可解析：${(error as Error).message}`, 'reconcile_blueprint')); }
-    issues.push(...changeUnitMappingIssues(projectRoot, asRecord(contracts!.change_unit)!, cu, phase));
-    issues.push(...componentProjectionFindings(projectRoot, contracts!, cu, options.resolveBlueprintRef)
+    const componentProjection = resolveComponentSelectionProjection(projectRoot, contracts!, cu, options.resolveBlueprintRef);
+    contracts = componentProjection.contracts;
+    issues.push(...changeUnitMappingIssues(projectRoot, asRecord(contracts.change_unit)!, cu, phase));
+    issues.push(...componentProjection.findings
       .map(finding => issue('component_asset_projection', finding.message, finding.route)));
   }
   const warnings: string[] = [];

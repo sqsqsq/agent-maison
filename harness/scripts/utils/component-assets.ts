@@ -6,7 +6,7 @@ import { loadResolvedProfile } from '../../profile-loader';
 import { tryLoadProfileHarnessModule } from '../../profile-host-loader';
 import { ModuleCard, loadCatalog } from './catalog-parser';
 import { validateProjectRelativePath } from './project-relative-path';
-import { asRecord, asRecords, type BlueprintRecord } from './component-blueprint-model';
+import { asRecord, asRecords, asStrings, nonEmptyString, type BlueprintRecord } from './component-blueprint-model';
 
 export const ASSET_RESOLUTIONS = ['reuse', 'configure', 'adapt', 'evolve', 'custom'] as const;
 export const STATIC_CHECKS = ['scalable_font_unit', 'no_hardcoded_hex_color', 'declared_touch_target'] as const;
@@ -88,10 +88,82 @@ export function isBlueprintUiTarget(node: BlueprintRecord): boolean {
   return isUiComponent(node) || asRecords(asRecord(node.contracts)?.components).some(isUiComponent);
 }
 
+export function componentLocation(component: { file?: unknown; name?: unknown }): string | undefined {
+  if (nonEmptyString(component.file) && nonEmptyString(component.name)) return `${component.file}#${component.name}`;
+}
+
+/** Legacy page facts bind an extra in-scope file to a source-confirmed symbol. */
+function declaredExistingPages(root: string, blueprint: BlueprintRecord, target: BlueprintRecord, typed: BlueprintRecord[], report: (message: string) => void): BlueprintRecord[] {
+  if (target.kind !== 'page') return [];
+  const files = new Set(asStrings(asRecord(target.contracts)?.files));
+  return asRecords(asRecord(blueprint.discovery)?.facts).flatMap(fact => {
+    const value = asRecord(fact.value);
+    const provenance = asRecord(fact.provenance);
+    if (!value || !String(fact.subject).startsWith('existing_page:') || !nonEmptyString(value.file) || !files.has(value.file)
+      || value.module !== target.module || value.file === target.file || typed.some(row => row.file === value.file && componentLocation(row))
+      || provenance?.evidence_strength !== 'authoritative' || provenance.source_ref !== value.file) return [];
+    const name = value.name ?? value.route;
+    try {
+      if (nonEmptyString(name)) {
+        const source = fs.readFileSync(path.join(root, validateProjectRelativePath(root, value.file, 'existing page fact')), 'utf8');
+        const profile = loadResolvedProfile(root, loadFrameworkConfig(root));
+        const host = tryLoadProfileHarnessModule<{ componentSourceSymbols?: (source: string) => string[] }>(profile.profileDir, 'component-extractor');
+        if (host?.componentSourceSymbols?.(source).filter(symbol => symbol === name).length === 1) {
+          return [{ file: value.file, name, kind: 'page', module: value.module }];
+        }
+      }
+    } catch { /* The owner can replace unreadable or ambiguous evidence with a typed declaration. */ }
+    report(`discovery.facts.${String(fact.fact_id)} (${value.file}): 缺少可确认的页面符号，请补 contracts.components.file/name`);
+    return [];
+  });
+}
+
+/** Complete a target's existing declarations from its own identified component facts. */
+export function blueprintTargetComponents(root: string, blueprint: BlueprintRecord, target: BlueprintRecord, report: (message: string) => void): BlueprintRecord[] {
+  const fields = ['file', 'name', 'module', 'kind', 'decorator', 'linked_functions', 'state', 'props', 'events', 'children', 'nav_destinations', 'nav_destination', 'description', 'asset_selection'];
+  const explicit = isUiComponent(target) && componentLocation(target)
+    ? [Object.fromEntries(fields.filter(field => target[field] !== undefined).map(field => [field, target[field]]))] : [];
+  const typed = asRecords(asRecord(target.contracts)?.components).filter(row => isUiComponent(row) || row.asset_selection !== undefined
+    || row.kind === undefined && isUiComponent(target));
+  const standalone = [...explicit, ...declaredExistingPages(root, blueprint, target, typed, report)];
+  const identities = new Map([...standalone, ...typed].flatMap(row => {
+    const id = componentLocation(row);
+    return id ? [[id, row] as const] : [];
+  }));
+  const components = new Map<string, BlueprintRecord>();
+  for (const row of [...standalone, ...typed]) {
+    const candidates = componentLocation(row) ? [row] : [...identities.values()].filter(known =>
+      (row.file === undefined || known.file === row.file) && (row.name === undefined || known.name === row.name));
+    if (candidates.length !== 1) {
+      report(`contracts.components.file/name 缺失或有歧义：${JSON.stringify({ file: row.file, name: row.name })}`);
+      continue;
+    }
+    const known = candidates[0];
+    const key = componentLocation(known)!;
+    const prior = components.get(key);
+    for (const field of ['module', 'kind'] as const) {
+      if (prior?.[field] !== undefined && row[field] !== undefined && prior[field] !== row[field]) {
+        report(`${key}: 目标与 contracts.components 的 ${field} 冲突（${String(prior[field])} / ${String(row[field])}）`);
+      }
+    }
+    const completed: BlueprintRecord = { ...prior, ...row, file: known.file, name: known.name };
+    completed.module ??= target.module;
+    completed.kind ??= target.kind;
+    components.set(key, completed);
+  }
+  for (const [key, component] of components) {
+    if (!nonEmptyString(component.module) || !nonEmptyString(component.kind)) report(`${key}: contracts.components 缺 module/kind`);
+  }
+  return [...components.values()];
+}
+
 export function blueprintUiComponents(blueprint: BlueprintRecord): BlueprintRecord[] {
   const development = asRecords(blueprint.design_views).find(view => view.view_id === 'development');
-  const components = asRecords(development?.nodes).flatMap(node => asRecords(asRecord(node.contracts)?.components)).filter(isUiComponent);
-  return [...new Map(components.map(component => [`${component.file}#${component.name}`, component])).values()];
+  const components = asRecords(development?.nodes).flatMap(node => [node, ...asRecords(asRecord(node.contracts)?.components)]).filter(isUiComponent);
+  return [...new Map(components.flatMap(component => {
+    const key = componentLocation(component);
+    return key ? [[key, component] as const] : [];
+  })).values()];
 }
 
 /** Select by the declared target relationship, never by a guessed name or the local selection value. */

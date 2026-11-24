@@ -113,6 +113,10 @@ function definitions(source: string): Array<{ symbol: string; kind: ComponentAss
   return out;
 }
 
+export function componentSourceSymbols(source: string): string[] {
+  return definitions(source).map(definition => definition.symbol);
+}
+
 export const extractComponents: ComponentExtractor = (root, card, arch, readSource) => {
   const packagePath = validateProjectRelativePath(root, `${card.layer}/${card.name}`, 'module-catalog module');
   const read = readSource ?? ((file: string) => {

@@ -2,121 +2,163 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { componentIndexPath, featurePhaseReportsDir, resolveFeatureArtifact, relComponentIndex, relComponentCatalog } from '../../config';
 import { CheckContext, CheckResult, ContractsSpec } from './types';
-import { blueprintComponentDecisions, blueprintUiComponents, componentDependencyAllowed, isUiComponent, readComponentIndex, readComponentCatalog, resolveAdmittedModules, scanComponentIndex, selectionShapeIssues } from './component-assets';
+import { blueprintComponentDecisions, blueprintTargetComponents, blueprintUiComponents, componentLocation, componentDependencyAllowed, isUiComponent, readComponentIndex, readComponentCatalog, resolveAdmittedModules, scanComponentIndex, selectionShapeIssues } from './component-assets';
 import { asChangeUnitArtifact, loadCanonicalChangeUnit, parseChangeUnitFeatureId } from './change-unit-path';
 import { componentResult } from './component-catalog-check';
 import { listFilesAtRef, readFileAtRef, readTraceStartCommit } from './git-diff';
 import { resolveHarnessDiffBaseRef } from './phase-state';
 import { parseScope } from './scope-parser';
 import { resolveComponentBlueprintRef } from './component-blueprint-path';
-import { ComponentBlueprintRef, asRecord, asRecords, asStrings, type BlueprintRecord } from './component-blueprint-model';
+import { ComponentBlueprintRef, asRecord, asStrings, type BlueprintRecord } from './component-blueprint-model';
 import { ChangeUnitArtifact, sameBlueprintIdentity, sameBlueprintTarget } from './change-unit-model';
-import { resolveBlueprintTarget, stableAddressIndex } from './blueprint-addressing';
+import { stableAddressIndex } from './blueprint-addressing';
 import { loadCatalog } from './catalog-parser';
 import { validateProjectRelativePath } from './project-relative-path';
 import { resolveGoalRunBaseline } from './goal-run-baseline';
 
-function selectionRefMatches(raw: string, component: ContractsSpec['components'][number], components: ContractsSpec['components']): boolean {
-  const [file, symbol] = raw.replace(/^planned:/, '').split('#');
-  return file === component.file && (symbol ? symbol === component.name : components.filter(c => c.file === file).length === 1);
+type ContractComponent = ContractsSpec['components'][number];
+
+function selectionLanding(raw: string): { file: string; symbol?: string } {
+  const landing = raw.replace(/^planned:/, '');
+  const hash = landing.indexOf('#');
+  return hash < 0 ? { file: landing } : { file: landing.slice(0, hash), symbol: landing.slice(hash + 1) };
 }
 
-/** Only fill mechanically determined projections; never overwrite a conflicting authored value. */
-export function projectComponentSelections(root: string, contracts: ContractsSpec, cu: ChangeUnitArtifact, resolveRef = resolveComponentBlueprintRef): ContractsSpec {
-  if (!fs.existsSync(componentIndexPath(root))) return contracts;
-  const blueprint = resolveRef(root, cu.component_blueprint_ref).blueprint;
-  return projectSelectionFacts(root, contracts, cu, blueprint);
+export interface ComponentProjectionFinding {
+  message: string;
+  route: 'repair_feature_mapping' | 'repair_change_unit' | 'reconcile_blueprint';
+  decision?: ComponentBlueprintRef['target'];
+  targetAddress?: string;
 }
 
-function projectSelectionFacts(root: string, contracts: ContractsSpec, cu: ChangeUnitArtifact, blueprint: BlueprintRecord): ContractsSpec {
-  const selectionIds = new Set(asRecords(asRecord(blueprint.decisions_and_gaps)?.decisions)
-    .filter(decision => decision.kind === 'component_asset_selection').map(decision => String(decision.decision_id)));
-  const projected = structuredClone(contracts);
-  for (const component of projected.components ?? []) {
-    if (!isUiComponent(component) && !component.asset_selection) continue;
-    const candidates = blueprintComponentDecisions(blueprint, component as unknown as Record<string, unknown>);
-    if (candidates.length !== 1) continue;
-    const decision = candidates[0];
-    const ref = cu.design_refs.find(ref => ref.target.kind === 'decision' && ref.target.id === decision.decision_id);
-    if (!ref || !['answered_with_evidence', 'decided_with_authority'].includes(String(decision.status))) continue;
-    const source = blueprintUiComponents(blueprint).find(item => item.file === component.file && item.name === component.name);
-    component.asset_selection ??= structuredClone(asRecord(source?.asset_selection) as typeof component.asset_selection) ?? { resolution: decision.asset_resolution as NonNullable<typeof component.asset_selection>['resolution'],
-      ...(typeof decision.component_ref === 'string' ? { component_ref: decision.component_ref } : {}),
-      ...(typeof decision.rationale === 'string' ? { rationale: decision.rationale } : {}) };
-    const section = projected.change_unit;
-    if (!section) continue;
-    const key = `${component.file}#${component.name}`;
-    const mapped = section.design_ref_mappings.some(mapping => mapping.design_ref.target.kind === 'decision' && selectionIds.has(mapping.design_ref.target.id)
-      && mapping.implementation_refs.some(raw => selectionRefMatches(raw, component, projected.components)));
-    if (mapped) continue;
-    const mapping = section.design_ref_mappings.find(mapping => sameBlueprintTarget(mapping.design_ref, ref));
-    if (mapping) continue; // An authored landing is a choice to validate, not an absent projection to complete.
-    const implementation = fs.existsSync(path.join(root, component.file)) ? key : `planned:${key}`;
-    section.design_ref_mappings.push({ design_ref: ref, implementation_refs: [implementation], verification_refs: asStrings(decision.verification_refs) });
-  }
-  return projected;
-}
-
-export interface ComponentProjectionFinding { message: string; route: 'repair_feature_mapping' | 'repair_change_unit' | 'reconcile_blueprint' }
-/** The caller keeps the cause/owner instead of flattening every failure into plan work. */
-export function componentProjectionFindings(root: string, contracts: ContractsSpec, cu: ChangeUnitArtifact, resolveRef = resolveComponentBlueprintRef,
-  origin: 'feature' | 'blueprint' = 'feature'): ComponentProjectionFinding[] {
-  if (!fs.existsSync(componentIndexPath(root))) return [];
+/** Project and check each explicitly selected decision against its own target. */
+export function resolveComponentSelectionProjection(root: string, contracts: ContractsSpec, cu: ChangeUnitArtifact,
+  resolveRef = resolveComponentBlueprintRef, legacyComponents = contracts.components ?? []): { contracts: ContractsSpec; findings: ComponentProjectionFinding[] } {
+  const findings: ComponentProjectionFinding[] = [];
+  if (!fs.existsSync(componentIndexPath(root))) return { contracts, findings };
   let blueprint: BlueprintRecord;
   let targets: Map<string, BlueprintRecord>;
   try {
     blueprint = resolveRef(root, cu.component_blueprint_ref).blueprint;
     targets = stableAddressIndex(blueprint);
-    contracts = projectSelectionFacts(root, contracts, cu, blueprint);
+  } catch (error) {
+    return { contracts, findings: [{ message: `蓝图选型权威不可解析：${(error as Error).message}`, route: 'reconcile_blueprint' }] };
   }
-  catch (error) { return [{ message: `蓝图选型权威不可解析：${(error as Error).message}`, route: 'reconcile_blueprint' }]; }
-  const errors: string[] = [];
-  const findings: ComponentProjectionFinding[] = [];
-  const components = contracts.components ?? [];
-  const mapped = new Set<ContractsSpec['components'][number]>();
-  for (const mapping of contracts.change_unit?.design_ref_mappings ?? []) {
-    const ref = mapping.design_ref;
-    if (!ref || ref.target?.kind !== 'decision' || !cu.design_refs.some(r => sameBlueprintTarget(r, ref))) continue;
-    try {
-      if (!sameBlueprintIdentity(ref, cu.component_blueprint_ref)) throw new Error(`${ref.target.id}: 映射身份与 canonical CU 不一致`);
-      const decision = asRecord(resolveBlueprintTarget(blueprint, ref.target));
-      if (decision?.kind !== 'component_asset_selection') continue;
-      const target = targets.get(String(decision.target_ref));
-      if (origin === 'blueprint' && components.length === 0 && target && isUiComponent(target) && !(typeof target.file === 'string' && typeof target.name === 'string')
-        && !asRecords(asRecord(target.contracts)?.components).some(component => typeof component.file === 'string' && typeof component.name === 'string')) {
-        findings.push({ route: 'reconcile_blueprint', message: `${ref.target.id}: 蓝图目标 ${String(decision.target_ref)} 缺少可消费的 contracts.components.file/name 声明；由蓝图责任方补齐，不从文件名猜符号。候选已有实现引用保留，声明齐备后再核对其 file#name 落点。` });
+  const projected = structuredClone(contracts);
+  const components = projected.components ?? [];
+  const decisions = cu.design_refs.flatMap(ref => {
+    if (ref.target.kind !== 'decision') return [];
+    const decision = targets.get(`decision:${ref.target.id}`);
+    if (decision?.kind !== 'component_asset_selection') return [];
+    const targetAddress = String(decision.target_ref);
+    const report = (route: ComponentProjectionFinding['route'], message: string) => {
+      findings.push({ route, message: `${ref.target.id} → ${targetAddress}: ${message}`, decision: ref.target, targetAddress });
+    };
+    const target = targets.get(targetAddress);
+    if (!target || !['answered_with_evidence', 'decided_with_authority'].includes(String(decision.status))) {
+      report('reconcile_blueprint', '选型目标或权责未闭合，请设计作者核对 target_ref 和决定状态');
+      return [];
+    }
+    const before = findings.length;
+    const declared = blueprintTargetComponents(root, blueprint, target, message => report('reconcile_blueprint', message));
+    const targetFiles = asStrings(asRecord(target.contracts)?.files);
+    // Older accepted contracts carry the symbol for a route host whose blueprint names the exact evidence file.
+    if (!declared.length && findings.length === before) {
+      const evidenceFiles = asStrings(target.verification_refs).filter(file => targetFiles.includes(file));
+      const previous = legacyComponents.filter(component => evidenceFiles.includes(component.file) && componentLocation(component)
+        && (isUiComponent(component) || component.asset_selection));
+      if (previous.length === 1 && previous[0].module === target.module) declared.push(previous[0] as unknown as BlueprintRecord);
+    }
+    if (!declared.length) report('reconcile_blueprint', '缺少可消费的 contracts.components.file/name 声明；请设计作者补齐目标符号');
+    const declarationComplete = findings.length === before;
+    const expected = new Map<string, ContractComponent>();
+    for (const row of declared) {
+      const key = componentLocation(row)!;
+      const matches = components.filter(component => componentLocation(component) === key || (!componentLocation(component)
+        && (component.file === undefined || component.file === row.file) && (component.name === undefined || component.name === row.name)));
+      if (matches.length > 1 || matches.some(component => !componentLocation(component) && declared.filter(item =>
+        (component.file === undefined || component.file === item.file) && (component.name === undefined || component.name === item.name)).length > 1)) {
+        report('reconcile_blueprint', `${key}: contracts.components 声明有歧义`);
+        continue;
       }
-      if (!['answered_with_evidence', 'decided_with_authority'].includes(String(decision.status))) findings.push({ route: 'reconcile_blueprint', message: `${ref.target.id}: 选型权责未闭合，不能进入 Feature 施工；新边回设计 owner，按当前请求授权正式裁决` });
-      let consumers = 0;
-      for (const component of components) {
-        const matches = asStrings(mapping.implementation_refs).some(raw => selectionRefMatches(raw, component, components));
-        if (!matches) continue;
-        consumers++;
-        if (mapped.has(component)) errors.push(`${component.file}#${component.name}: 多个选型 decision 映射同一组件`);
-        mapped.add(component);
-        const selection = component.asset_selection;
-        // 选型结论来自 decision；组件说明由其上游施工契约负责，不能再要求与总理由逐字相同。
-        if (!selection || selection.resolution !== decision.asset_resolution || selection.component_ref !== decision.component_ref) {
-          errors.push(`${component.file}#${component.name}: asset_selection 与蓝图 ${ref.target.id} 的选型结论不一致；`
-            + `期望 resolution=${decision.asset_resolution}, component_ref=${decision.component_ref ?? '(无)'}；`
-            + `实际 resolution=${selection?.resolution ?? '(缺失)'}, component_ref=${selection?.component_ref ?? '(无)'}`);
-        }
+      const component = matches[0] ?? {} as ContractComponent;
+      if (!matches.length) components.push(component);
+      for (const [field, value] of Object.entries(row)) {
+        if (field === 'asset_selection') continue;
+        const output = component as unknown as BlueprintRecord;
+        output[field] ??= structuredClone(value);
       }
-      if (!consumers) errors.push(`${ref.target.id}: 选型映射未命中 components.file#name`);
-    } catch (error) { errors.push((error as Error).message); }
+      expected.set(key, component);
+      const source = asRecord(row.asset_selection);
+      const selection = component.asset_selection;
+      const conflicts = (copy: BlueprintRecord | undefined) => copy && (copy.resolution !== undefined && copy.resolution !== decision.asset_resolution
+        || copy.component_ref !== undefined && copy.component_ref !== decision.component_ref);
+      if (conflicts(source)) report('reconcile_blueprint', `${key}: 蓝图 contracts.components.asset_selection 与选型结论不一致`);
+      if (conflicts(selection as unknown as BlueprintRecord | undefined) && !conflicts(source)) {
+        report('repair_feature_mapping', `${key}: asset_selection 与蓝图选型结论不一致（期望 resolution=${decision.asset_resolution}, component_ref=${decision.component_ref ?? '(无)'}）`);
+      }
+      component.asset_selection = { resolution: decision.asset_resolution as NonNullable<ContractComponent['asset_selection']>['resolution'],
+        ...(typeof decision.component_ref === 'string' ? { component_ref: decision.component_ref } : {}),
+        ...(typeof decision.rationale === 'string' ? { rationale: decision.rationale } : {}), ...source, ...selection };
+    }
+    return [{ ref, decision, targetFiles, declarationComplete, expected, report }];
+  });
+  if (components.length) projected.components = components;
+  const knownFiles = new Map<string, Set<string>>();
+  for (const component of [...components, ...blueprintUiComponents(blueprint)]) {
+    const key = componentLocation(component);
+    if (typeof component.file !== 'string' || !key) continue;
+    const known = knownFiles.get(component.file) ?? new Set<string>();
+    known.add(key);
+    knownFiles.set(component.file, known);
   }
-  findings.push(...errors.map(message => ({ message, route: 'repair_feature_mapping' as const })));
-  for (const component of components) if ((isUiComponent(component) || component.asset_selection) && !mapped.has(component)) {
-    const choices = blueprintComponentDecisions(blueprint, component as unknown as Record<string, unknown>);
-    const referenced = choices.length === 1 && cu.design_refs.some(ref => ref.target.kind === 'decision' && ref.target.id === choices[0].decision_id);
-    findings.push({ message: `${component.file}#${component.name}: 缺少 canonical CU 的 component_asset_selection decision 映射，不能在 Feature 自行选型`,
-      route: choices.length !== 1 ? 'reconcile_blueprint' : referenced ? 'repair_feature_mapping' : 'repair_change_unit' });
+  const section = projected.change_unit;
+  const declaredOwners = new Map<string, string>();
+  for (const { ref, decision, targetFiles, declarationComplete, expected, report } of decisions) {
+    for (const key of expected.keys()) {
+      const previous = declaredOwners.get(key);
+      if (previous) report('reconcile_blueprint', `${key}: 与 decision:${previous} 重复选型`);
+      else declaredOwners.set(key, ref.target.id);
+    }
+    if (!declarationComplete || !section || !expected.size) continue;
+    const mapping = section.design_ref_mappings.find(row => row.design_ref && sameBlueprintTarget(row.design_ref, ref));
+    if (!mapping) {
+      section.design_ref_mappings.push({ design_ref: ref,
+        implementation_refs: [...expected].map(([key, component]) => fs.existsSync(path.join(root, component.file)) ? key : `planned:${key}`),
+        verification_refs: asStrings(decision.verification_refs) });
+      continue;
+    }
+    if (!sameBlueprintIdentity(mapping.design_ref, cu.component_blueprint_ref)) {
+      report('repair_feature_mapping', '映射身份与 canonical CU 不一致');
+      continue;
+    }
+    const covered = new Set<string>();
+    for (const raw of asStrings(mapping.implementation_refs)) {
+      const { file, symbol } = selectionLanding(raw);
+      const entries = knownFiles.get(file);
+      const matched = symbol !== undefined ? `${file}#${symbol}` : entries?.size === 1 ? [...entries][0] : undefined;
+      if (matched && expected.has(matched)) covered.add(matched);
+      else if (entries?.size || !targetFiles.includes(file)) report('repair_feature_mapping',
+        `选型映射 ${raw} 未命中 components.file#name；此目标允许 ${[...expected.keys()].join('、')}`);
+    }
+    for (const key of expected.keys()) if (!covered.has(key)) report('repair_feature_mapping', `选型映射未覆盖 ${key}`);
   }
-  return findings;
+  for (const component of components) {
+    const key = componentLocation(component);
+    if (!key || !isUiComponent(component) && !component.asset_selection || declaredOwners.has(key)) continue;
+    const choices = blueprintComponentDecisions(blueprint, component as unknown as BlueprintRecord);
+    findings.push({ message: `${key}: 缺少 canonical CU 的 component_asset_selection decision 映射`,
+      route: choices.length === 1 ? 'repair_change_unit' : 'reconcile_blueprint' });
+  }
+  return { contracts: projected, findings };
+}
+
+export function projectComponentSelections(root: string, contracts: ContractsSpec, cu: ChangeUnitArtifact, resolveRef = resolveComponentBlueprintRef): ContractsSpec {
+  return resolveComponentSelectionProjection(root, contracts, cu, resolveRef).contracts;
 }
 
 export function componentProjectionErrors(root: string, contracts: ContractsSpec, cu: ChangeUnitArtifact): string[] {
-  return componentProjectionFindings(root, contracts, cu).map(finding => finding.message);
+  return resolveComponentSelectionProjection(root, contracts, cu).findings.map(finding => finding.message);
 }
 
 export function checkComponentSelections(ctx: CheckContext): CheckResult[] {

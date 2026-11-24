@@ -590,7 +590,7 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     uiTarget.kind = 'component'; delete (uiTarget.contracts as BlueprintRecord).components;
     const mixed = deriveBlueprintCandidateSkillInput(f.root, f.feature, frameworkRoot, 'contracts',
       { blueprint: missingDeclaration, changeUnit: cu, constructionMapping: mapping });
-    assert(mixed.codes?.includes('change_unit_blueprint_reconciliation_required') && mixed.codes.includes('change_unit_design_mapping_incomplete'), mixed.detail);
+    assert(mixed.codes?.includes('change_unit_blueprint_reconciliation_required') && !mixed.codes.includes('change_unit_design_mapping_incomplete'), mixed.detail);
     assert(mixed.detail?.includes('contracts.components.file/name'), 'missing blueprint declarations must identify their actual owner before guessing candidate symbols');
     mapping.design_ref_mappings.at(-1)!.implementation_refs = ['planned:src/ledger/LedgerPanel.ets#LedgerPanel'];
     const valid = candidate();

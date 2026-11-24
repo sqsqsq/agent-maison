@@ -260,7 +260,7 @@ function blueprintFixture(root: string) {
   const file = componentBlueprintPath(root, 'ledger-app-blueprint');
   const bp = YAML.parse(fs.readFileSync(file, 'utf8'));
   const view = bp.design_views.find((v: any) => v.view_id === 'development');
-  view.nodes[0].kind = 'page'; view.nodes[0].module = 'Feature';
+  Object.assign(view.nodes[0], { kind: 'page', module: 'Feature', file: '02-Feature/Feature/Page.ets', name: 'Page' });
   const decision = { decision_id: 'asset-row', kind: 'component_asset_selection', target_ref: `view:development/node:${view.nodes[0].node_id}`, asset_resolution: 'reuse', component_ref: ID,
     status: 'decided_with_authority', owner: 'ui-owner', verification_refs: ['02-Feature/Feature/Page.ets'], provenance: { ...bp.provenance, source_ref: relComponentIndex(root) } };
   bp.decisions_and_gaps.decisions.push(decision);
@@ -396,7 +396,7 @@ test('mechanical index → blueprint decision → CU refs → loader → plan/re
   for (const mapping of normalized.contracts!.change_unit!.design_ref_mappings) (mapping as any).implementation_refs = [42];
   assert(checkChangeUnitFeatureProjection(context(root, normalized.contracts!), 'plan').some(r => r.id === 'component_asset_projection' && r.status === 'FAIL'));
   normalized.contracts!.change_unit!.design_ref_mappings = [];
-  assert(checkChangeUnitFeatureProjection(context(root, normalized.contracts!), 'plan').some(r => r.id === 'component_asset_projection' && r.status === 'FAIL'));
+  assert(!checkChangeUnitFeatureProjection(context(root, normalized.contracts!), 'plan').some(r => r.id === 'component_asset_projection' && r.status === 'FAIL'));
   const review = loadBlueprintReviewSource(root, 'ledger-app-blueprint').markdown;
   for (const field of ['选型目标：', '选型结果：直接复用已有组件', `组件：${ID}`, '理由']) assert(review.includes(field), field);
   const output = path.join(path.dirname(file), 'component-blueprint.review.md'); write(root, path.relative(root, output), review);
@@ -486,7 +486,7 @@ test('20261016 真实蓝图/CU/契约：组件理由与总理由不互锁，已�
   for (const mutate of [
     (c: ContractsSpec) => { c.components[0].asset_selection!.resolution = 'reuse'; },
     (c: ContractsSpec) => { c.components[0].asset_selection!.component_ref = 'OtherUi/Index.ets#Small'; },
-    (c: ContractsSpec) => { c.change_unit!.design_ref_mappings = []; },
+    (c: ContractsSpec) => { c.change_unit!.design_ref_mappings.find(row => row.design_ref.target.id === 'phone-route-custom')!.implementation_refs = ['planned:01-Product/Phone/src/main/ets/pages/Index.ets#Other']; },
   ]) {
     const invalid = structuredClone(repaired); mutate(invalid);
     assert(componentProjectionErrors(root, invalid, cu).length > 0, '真实选型变化或缺映射仍拒绝');
@@ -549,9 +549,11 @@ test('R3 只修改出口也问责新增共享资产，定义未改/存量/私有
   assert.equal(fs.readFileSync(path.join(root, '04-BusinessBase/SharedUi/src/Private.ets'), 'utf8'), privateSource);
 }));
 
-test('R4 同名组件按 file#name 分别覆盖，缺映射和不一致均失败', () => setup(root => {
+test('R4 同名组件按目标和 file#name 分别覆盖，不允许交换同为 custom 的落点', () => setup(root => {
   generate(root); const { bp, file, view, decision } = blueprintFixture(root);
-  const otherNode = { ...view.nodes[0], node_id: 'other-page' }; view.nodes.push(otherNode);
+  decision.asset_resolution = 'custom'; Object.assign(decision, { rationale: '首页私有用途' });
+  delete (decision as { component_ref?: string }).component_ref;
+  const otherNode = { ...view.nodes[0], node_id: 'other-page', file: '02-Feature/Feature/OtherPage.ets' }; view.nodes.push(otherNode);
   const otherDecision = { ...decision, decision_id: 'asset-other', target_ref: 'view:development/node:other-page', asset_resolution: 'custom', rationale: '独立私有用途' } as any;
   delete otherDecision.component_ref; bp.decisions_and_gaps.decisions.push(otherDecision);
   write(root, path.relative(root, file), YAML.stringify(bp));
@@ -559,14 +561,18 @@ test('R4 同名组件按 file#name 分别覆盖，缺映射和不一致均失败
   const refs = [decision, otherDecision].map(d => ({ ...cu.component_blueprint_ref, target: { kind: 'decision', id: d.decision_id } }));
   cu.design_refs.push(...refs);
   const value = contracts();
+  value.components[0].asset_selection = { resolution: 'custom', rationale: '首页私有用途' };
   value.components.push({ ...value.components[0], file: '02-Feature/Feature/OtherPage.ets', asset_selection: { resolution: 'custom', rationale: otherDecision.rationale } });
   value.change_unit = { change_unit_ref: {} as any, predicate_mappings: [], provide_mappings: [], design_ref_mappings: refs.map((design_ref, i) => ({ design_ref, implementation_refs: [`${value.components[i].file}#Page`], verification_refs: [] })) };
   assert.deepEqual(componentProjectionErrors(root, value, cu), []);
-  value.components[1].asset_selection = value.components[0].asset_selection;
+  value.components[1].asset_selection = { resolution: 'reuse', component_ref: ID };
   assert(componentProjectionErrors(root, value, cu).some(e => e.includes('不一致')));
   value.components[1].asset_selection = { resolution: 'custom', rationale: otherDecision.rationale };
-  value.change_unit.design_ref_mappings.pop();
-  assert(componentProjectionErrors(root, value, cu).some(e => e.includes('OtherPage.ets#Page')));
+  const [first, second] = value.change_unit.design_ref_mappings;
+  [first.implementation_refs, second.implementation_refs] = [second.implementation_refs, first.implementation_refs];
+  const errors = componentProjectionErrors(root, value, cu);
+  assert(errors.some(e => e.includes('asset-row') && e.includes('OtherPage.ets#Page')), errors.join('\n'));
+  assert(errors.some(e => e.includes('asset-other') && e.includes('/Page.ets#Page')), errors.join('\n'));
 }));
 
 test('R5 小写全局 Builder 保留 unknown 交真实验证，真实无表面保持 NA', () => setup(root => {
