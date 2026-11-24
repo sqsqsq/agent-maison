@@ -138,7 +138,7 @@ export function qualifiedManagedAuthorCheck(input: { runDir: string; feature: st
     && invocationCompleted({ ...events[finished], exitCode: events[finished].exit_code }) ? original : null;
 }
 
-/** A normal check run can refresh independent material using the same proven native result. */
+/** A normal check run can refresh independent material using the same proven native PASS. */
 export function managedAuthorCheckMatchesEvidence(input: {
   projectRoot: string; frameworkRoot: string; feature: string; phase: string; runId: string; evidenceSha256: string;
   device?: { serial?: string; targetKind?: string };
@@ -147,8 +147,8 @@ export function managedAuthorCheckMatchesEvidence(input: {
   const runDir = path.resolve(input.projectRoot, manifest.report_dir);
   const events = loadAuthoritativeEvents(path.join(runDir, 'events.jsonl'));
   const end = [...events].reverse().find(event => event.type === 'harness_end' && event.phase === input.phase);
-  if (!end?.author_tool_invoke_id || end.author_tool_evidence_sha256 !== input.evidenceSha256) return false;
-  if (input.device && (!input.device.serial || !input.device.targetKind || end.verdict !== 'PASS'
+  if (!end?.author_tool_invoke_id || end.verdict !== 'PASS' || end.author_tool_evidence_sha256 !== input.evidenceSha256) return false;
+  if (input.device && (!input.device.serial || !input.device.targetKind
     || input.device.serial !== end.author_tool_device?.serial || input.device.targetKind !== end.author_tool_device?.target_kind)) return false;
   const start = events.find(event => event.type === 'harness_start' && event.invoke_id === end.invoke_id);
   if (!start || !qualifiedManagedAuthorCheck({ ...input, runDir }, start, end, input.evidenceSha256)) return false;

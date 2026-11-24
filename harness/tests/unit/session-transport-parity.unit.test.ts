@@ -162,7 +162,7 @@ exports.utHostImpl.checkUtHvigorTest = (ctx, ...args) => {
 }
 
 interface GoalResult { root: string; failedInputs: string[]; invocations: string[]; rawGap: boolean }
-export async function runGoal(root: string, mode: 'detached' | 'session', scenario: 'repair' | 'gap' | 'transient' | 'daily-repair' | 'daily-compile-repair' | 'normal' | 'author-tools' | 'author-tools-stale' | 'author-tools-race', resume = false): Promise<GoalResult> {
+export async function runGoal(root: string, mode: 'detached' | 'session', scenario: 'repair' | 'gap' | 'transient' | 'daily-repair' | 'daily-compile-repair' | 'normal' | 'author-tools' | 'author-tools-stale' | 'author-tools-race' | 'author-tools-gap', resume = false): Promise<GoalResult> {
   const runtime = moduleAt(root, 'scripts/goal-phase-runtime');
   const entry = moduleAt(root, 'scripts/goal-mode-entry');
   const invocations: string[] = [], failedInputs: string[] = [];
@@ -230,7 +230,7 @@ export async function runGoal(root: string, mode: 'detached' | 'session', scenar
     }
     if (phase === 'review') {
       authorReview(root);
-      if (scenario === 'author-tools' || scenario === 'author-tools-stale' || scenario === 'author-tools-race') {
+      if (scenario === 'author-tools' || scenario === 'author-tools-stale' || scenario === 'author-tools-race' || scenario === 'author-tools-gap') {
         const rows = Object.keys(fence?.workInput?.material.acceptanceReview ?? {}).flatMap(issue => {
           const ac = /^acceptance_test_strength_(AC-\d+)$/.exec(issue)?.[1];
           if (!ac) return [];
@@ -274,6 +274,16 @@ export async function runGoal(root: string, mode: 'detached' | 'session', scenar
         authorFacts(root, method);
       }
       researchSessionUnit(root, context);
+      if (scenario === 'author-tools-gap') {
+        if (!authorToolsRan && !resume) {
+          await selfCheck('ut', mode === 'session' ? context : undefined, extraEnv ?? context.childEnv, true);
+          assert.equal(summary(root, 'ut').verdict, 'INCOMPLETE');
+          const report = json(root, 'doc/features/clamp/ut/reports/script-report.json');
+          assert(report.checks.some((check: any) => check.failure_kind === 'framework_bug' && check.details.includes('native I/O unavailable')));
+          authorToolsRan = true;
+        }
+        return 0;
+      }
       if (scenario === 'author-tools-race') {
         if (!authorToolsRan) {
           await selfCheck('ut', mode === 'session' ? context : undefined, extraEnv ?? context.childEnv, true);
@@ -549,6 +559,38 @@ const cases: Array<{ name: string; run(): Promise<void> }> = [{
     } finally {
       if (process.env.KEEP_PARITY_ROOT !== '1') fs.rmSync(temp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
       else console.log('kept author-tool root', root);
+    }
+  },
+}, {
+  name: '77105c47 first formal UT runs after the author native environment recovers with the same inputs',
+  async run() {
+    const temp = fs.mkdtempSync(path.join(os.tmpdir(), '77105-author-tools-gap-'));
+    const root = path.join(temp, 'session');
+    try {
+      prepareSessionCliProject(root, 'claude', false); adaptNative(root);
+      write(root, 'native-gap', 'temporary native provider I/O fault');
+      const blocked = await runGoal(root, 'session', 'author-tools-gap');
+      assert(blocked.rawGap && summary(root, 'ut').verdict === 'INCOMPLETE');
+      fs.unlinkSync(path.join(root, 'native-gap'));
+      const continued = await runGoal(root, 'session', 'author-tools-gap', true);
+      assert(!continued.invocations.includes('work-unit-author'), 'recovery must resume the existing author assignment');
+      const history = events(root);
+      const gap = history.find(event => event.type === 'harness_end' && event.phase === 'ut' && event.author_tool_evidence_sha256);
+      assert(gap && gap.verdict === 'INCOMPLETE', 'the real author INCOMPLETE stays in the journal');
+      const start = history.find(event => event.type === 'harness_start' && event.phase === 'ut' && !event.author_tool_invoke_id);
+      assert(start, 'the first formal UT check must start');
+      const log = read(root, `doc/features/clamp/goal-runs/session-cli/phases/ut/${start.invoke_id}/harness-output.log`);
+      assert.doesNotMatch(log, /CHECK_RESULT retained_author_tool=ut/, 'the first formal check must execute native UT rather than retain INCOMPLETE');
+      assert(history.some(event => event.type === 'phase_verdict' && event.invoke_id === start.invoke_id && event.verdict === 'PASS'));
+      for (const [file, text] of [[SOURCE, GOOD], [TEST, TEST_SOURCE]]) {
+        assert.equal(gap.related_input_snapshot?.[file]?.contentHash, sha(text));
+        assert.equal(start.related_input_snapshot?.[file]?.contentHash, sha(text));
+      }
+      assert.match(read(root, 'doc/features/clamp/ut/reports/node-tests.tap'), /# fail 0/);
+      assertFeatureCompleted(root, 'recovered native author tool');
+    } finally {
+      if (process.env.KEEP_PARITY_ROOT !== '1') fs.rmSync(temp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+      else console.log('kept author-tool gap root', root);
     }
   },
 }, {
