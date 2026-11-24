@@ -476,7 +476,8 @@ export function collectResolvedScopeFacts(input: ExecutionScopeInput, ctx: Scope
 }
 
 /** Rebind only an existing positive judgment to verified, explicitly mapped CU UI/route files. */
-export function resolveChangeUnitImpactFacts(input: ExecutionScopeInput, ctx: ScopeFactsContext, allowRebind = true): ResolvedScopeFacts {
+export function resolveChangeUnitImpactFacts(input: ExecutionScopeInput, ctx: ScopeFactsContext, allowRebind = true,
+  priorScope?: ExecutionScope): ResolvedScopeFacts {
   const facts = collectResolvedScopeFacts(input, ctx);
   const impact = input.request.impact;
   if (!allowRebind || !ctx.feature.startsWith('cu-') || input.request.completion_target !== 'feature'
@@ -491,25 +492,40 @@ export function resolveChangeUnitImpactFacts(input: ExecutionScopeInput, ctx: Sc
     if (!source) return facts;
     const contracts = source.value as ContractsSpec;
     if (authorityGapOf(ctx, 'contracts', source) || !contracts.change_unit) return facts;
-    const { blueprint } = loadCanonicalBlueprint(ctx.projectRoot, contracts.change_unit.change_unit_ref.blueprint_id);
     const normalize = (file: string): string => normalizeContractFilePath(ctx.projectRoot, file, 'CU impact');
     const writeSet = new Set((contracts.files ?? []).map(normalize));
-    const mapped = contracts.change_unit.design_ref_mappings.flatMap(({ design_ref: ref, implementation_refs }) => {
-      if (!['node', 'flow'].includes(ref.target.kind)) return [];
-      const target = resolveBlueprintTarget(blueprint, ref.target);
-      const local = asRecord(target.contracts);
-      const routes = new Set(asStrings(asRecord(local?.navigation)?.config_files).map(normalize));
-      const ui = [target, ...asRecords(local?.components)].filter(entry => isUiComponent(entry) || entry.kind === 'route')
-        .flatMap(entry => typeof entry.file === 'string' ? [{ file: normalize(entry.file), name: entry.name }] : []);
-      return implementation_refs.flatMap(landing => {
-        const [rawFile, symbol] = landing.replace(/^planned:/, '').split('#');
-        const file = normalize(rawFile);
-        return writeSet.has(file) && (routes.has(file) || ui.some(entry => entry.file === file && (!symbol || symbol === entry.name))) ? [file] : [];
+    // A successor renews the exact grounded targets first, including non-UI implementation.
+    // A stale target that belonged to the prior run cannot be traded for another mapped file.
+    const original = priorScope?.request_impact?.basis;
+    const oldRoot = priorScope && inferLegacyProjectRoot(projectRoot, priorScope);
+    const oldPath = (dependency: { path: string }) => relPosix(projectRoot, resolveDependencyPath(projectRoot, dependency.path, oldRoot));
+    const originalPaths = original?.every(binding => binding.source.kind === 'derive' && binding.source.provider_id === 'derive.codebase'
+      && binding.dependencies.every(dep => dep.role === 'derive' && dep.exists && /^[0-9a-f]{64}$/.test(dep.sha256 ?? '')))
+      ? [...new Set(original.flatMap(binding => binding.dependencies.map(oldPath)))] : [];
+    const renewOriginal = originalPaths.length > 0 && originalPaths.every(file => writeSet.has(file));
+    const priorTargets = new Set(priorScope?.obligations.filter(fact => ['implementation', 'code-review', 'unit-evidence'].includes(fact.kind))
+      .flatMap(fact => fact.basis.flatMap(binding => binding.dependencies.filter(dep => dep.role === 'derive').map(oldPath))) ?? []);
+    if (!renewOriginal && originalPaths.some(file => priorTargets.has(file))) return facts;
+    if (renewOriginal) paths = originalPaths;
+    else {
+      const { blueprint } = loadCanonicalBlueprint(ctx.projectRoot, contracts.change_unit.change_unit_ref.blueprint_id);
+      const mapped = contracts.change_unit.design_ref_mappings.flatMap(({ design_ref: ref, implementation_refs }) => {
+        if (!['node', 'flow'].includes(ref.target.kind)) return [];
+        const target = resolveBlueprintTarget(blueprint, ref.target);
+        const local = asRecord(target.contracts);
+        const routes = new Set(asStrings(asRecord(local?.navigation)?.config_files).map(normalize));
+        const ui = [target, ...asRecords(local?.components)].filter(entry => isUiComponent(entry) || entry.kind === 'route')
+          .flatMap(entry => typeof entry.file === 'string' ? [{ file: normalize(entry.file), name: entry.name }] : []);
+        return implementation_refs.flatMap(landing => {
+          const [rawFile, symbol] = landing.replace(/^planned:/, '').split('#');
+          const file = normalize(rawFile);
+          return writeSet.has(file) && (routes.has(file) || ui.some(entry => entry.file === file && (!symbol || symbol === entry.name))) ? [file] : [];
+        });
       });
-    });
-    paths = [...new Set(mapped)].filter(file => {
-      try { return fs.statSync(path.resolve(ctx.projectRoot, file)).isFile(); } catch { return false; }
-    }).sort();
+      paths = [...new Set(mapped)].filter(file => {
+        try { return fs.statSync(path.resolve(ctx.projectRoot, file)).isFile(); } catch { return false; }
+      }).sort();
+    }
   } catch { return facts; } // The existing scope/plan checks own invalid construction inputs.
   const binding = paths.length ? candidateBinding(constructionContext, 'plan', 'codebase', paths) : undefined;
   if (!binding) return facts;
@@ -550,6 +566,8 @@ export interface PrepareScopeCandidateInput {
   impact?: { userVisibleBehaviorChange: boolean; reason: string; basisPaths: string[] };
   /** Existing immutable judgment from the authorizing run; retain its digest until verified. */
   inheritedImpact?: ScopeImpactJudgement;
+  /** The successor can renew concrete sources observed by its predecessor. */
+  priorScope?: ExecutionScope;
   /**
    * 需求文本：与 `--prepare-run` 用的是同一份（视觉相关性由它判定）。缺省才回落
    * `requestedResults`——两处不同源会让候选与出生时的 visual 结论对不上。
@@ -1108,7 +1126,7 @@ export function buildFeatureScopeCandidate(input: Omit<PrepareScopeCandidateInpu
     // The new run needs current bytes even when the judgment came from an authorized prior run.
     const inherited = !!input.inheritedImpact && !input.impact;
     const verified = resolveChangeUnitImpactFacts(candidate, { ...ctx, requirement: requirementText,
-      impactInherited: inherited && candidate.request.impact.user_visible_behavior_change === false }, inherited);
+      impactInherited: inherited && candidate.request.impact.user_visible_behavior_change === false }, inherited, input.priorScope);
     if (verified.inherited_impact_unusable) delete candidate.request.impact;
   }
   return candidate;

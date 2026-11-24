@@ -852,6 +852,34 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     fs.unlinkSync(source);
     assert.throws(successor, /影响依据不可用/, 'another file must not substitute for a missing authority source');
   } },
+  { name: '77105c47 successor renews the exact non-UI impact source and rejects its deletion', run(f) {
+    materializeBlueprintSkillInputs(f.root, f.feature, frameworkRoot);
+    const source = 'src/ledger/LedgerFeature.ets';
+    const sourceFile = path.join(f.root, source);
+    fs.mkdirSync(path.dirname(sourceFile), { recursive: true });
+    fs.writeFileSync(sourceFile, 'export const ledgerStorageVersion = 1;\n');
+    const requirement = 'Refresh the stored ledger result';
+    const cu = asChangeUnitArtifact(YAML.parse(fs.readFileSync(f.cuFile, 'utf8')));
+    const prepared = prepareFeatureScopeCandidate(prepareChangeUnitScopeInput({ projectRoot: f.root, frameworkRoot, changeUnit: cu,
+      requirement, requestedResults: [requirement], requestedPhases: ['coding'],
+      impact: { userVisibleBehaviorChange: true, reason: 'The stored result is user visible', basisPaths: [source] } }));
+    const manifest = buildGoalManifestFromInput({ feature: f.feature, run_id: 'cu-nonui-impact-source', requirement,
+      execution_scope: prepared.scope, chain_override: prepared.scope.phase_chain }, { projectRoot: f.root });
+    createGoalRun({ projectRoot: f.root, frameworkRoot, manifest, chain: prepared.scope.phase_chain, resolveHead: () => 'f'.repeat(40) });
+    const workflow = resolveWorkflowSpec(f.root, { frameworkRoot });
+    const successor = () => resolveSuccessorExecutionScope(f.root, f.feature, workflow, frameworkRoot, requirement, manifest.run_id)!;
+    fs.writeFileSync(sourceFile, 'export const ledgerStorageVersion = 2;\n');
+    const current = successor();
+    assert.deepEqual(current.request_impact?.basis[0].source_refs, [source]);
+    assert.equal(current.request_impact?.basis[0].dependencies[0].sha256, sha(sourceFile).slice('sha256:'.length));
+    assert.equal(current.request_impact?.reason, prepared.scope.request_impact?.reason);
+    assert.equal(current.obligations.find(item => item.kind === 'device-evidence')?.applicability, 'required');
+    fs.unlinkSync(sourceFile);
+    const otherTarget = path.join(f.root, 'test/ledger/LedgerFeature.test.ets');
+    fs.mkdirSync(path.dirname(otherTarget), { recursive: true });
+    fs.writeFileSync(otherTarget, '// another real file in the same write set\n');
+    assert.throws(successor, /影响依据不可用/);
+  } },
   { name: 'f3b8e6a1 authority preparation: invalid canonical construction reaches the design diagnosis without a scope', run(f) {
     const doc = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
     const cu = YAML.parse(fs.readFileSync(f.cuFile, 'utf8'));

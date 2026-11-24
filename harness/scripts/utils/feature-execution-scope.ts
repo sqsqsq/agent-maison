@@ -661,7 +661,7 @@ export function resolveSuccessorExecutionScope(
     completionTarget: previous.completion_target,
     requestedResults: [...previous.requested_results],
     requestedPhases,
-    ...(impact && feature.startsWith('cu-') ? { inheritedImpact: impact }
+    ...(impact && feature.startsWith('cu-') ? { inheritedImpact: impact, priorScope: previous }
       : impact && basisPaths.length ? { impact: { userVisibleBehaviorChange: impact.user_visible_behavior_change, reason: impact.reason, basisPaths } } : {}),
     ...(requirement?.trim() ? { requirement } : {}),
   });
