@@ -915,6 +915,7 @@ function buildHvigorTuningArgs(
 
   if (opts.parallel) args.push('--parallel');
   if (opts.incremental) args.push('--incremental');
+  else if (override?.incremental === false) args.push('--no-incremental');
   if (opts.analyze !== 'off') args.push(`--analyze=${opts.analyze}`);
 
   return args;
@@ -1578,7 +1579,9 @@ export function buildCodingHvigorArgs(
 ): string[] {
   const c = loadResolvedCodingConfig(projectRoot);
   const task = overrides?.task ?? c.task;
-  const extraArgs = (overrides?.extraArgs ?? c.extraArgs).filter(arg => overrides?.daemon !== false || arg !== '--daemon');
+  const extraArgs = (overrides?.extraArgs ?? c.extraArgs).filter(arg =>
+    !(arg === '--daemon' && (overrides?.daemon === false || overrides?.forceNoDaemon)) &&
+    !(overrides?.forceNoDaemon && /^--(?:no-)?incremental(?:=|$)/.test(arg)));
   const product = overrides?.product?.trim() || detectProduct(projectRoot);
   if (c.driver === 'assemble_app_project') {
     return buildAssembleAppArgs(projectRoot, task, extraArgs, {
@@ -2235,7 +2238,9 @@ export function buildAssembleAppArgs(
     '-p', `buildMode=${buildMode}`,
     ...buildHvigorTuningArgs(projectRoot, assembleOpts?.forceNoDaemon ? { daemon: false, incremental: false } :
       assembleOpts?.daemon === undefined ? undefined : { daemon: assembleOpts.daemon }),
-    ...(extraArgs ?? []).filter(arg => assembleOpts?.daemon !== false || arg !== '--daemon'),
+    ...(extraArgs ?? []).filter(arg =>
+      !(arg === '--daemon' && (assembleOpts?.daemon === false || assembleOpts?.forceNoDaemon)) &&
+      !(assembleOpts?.forceNoDaemon && /^--(?:no-)?incremental(?:=|$)/.test(arg))),
     ...(assembleOpts?.freezeDimensions ? ['-p', `product=${product}`, '-p', `buildMode=${buildMode}`] : []),
     task,
   ];

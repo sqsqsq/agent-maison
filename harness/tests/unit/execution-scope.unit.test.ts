@@ -4554,6 +4554,104 @@ cases.push({ name: 'B user-control: public next constructs the source proposal a
   } finally { native.restore(); fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
 } });
 
+cases.push({ name: 'B1 a formal repeated repair keeps its open obligations and does not require a fresh source', run() {
+  const { root, frameworkRoot, feature } = setupRunlessProject({ chain: ['plan', 'coding', 'review', 'ut'] });
+  try {
+    const configFile = path.join(root, 'framework.config.json');
+    const config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+    fs.writeFileSync(configFile, JSON.stringify({ ...config, project_profile: { name: 'hmos-app' } }));
+    clearFrameworkConfigCache();
+    ensureFeatureExecutionScopeFrozen({ projectRoot: root, frameworkRoot, feature });
+    const context = { projectRoot: root, frameworkRoot, feature };
+    const birth = featureEffectiveScope(readFeatureFrozenScope(root, feature)!);
+    const files = [path.relative(root, featureFilePath(root, feature, 'contracts.yaml')).replace(/\\/g, '/')];
+    const candidate = (id: string, summary: string) => ({ id, category: 'plan' as const, files,
+      summary, item_fingerprint: itemFingerprintOf(id, files, summary), source_phase: 'review' });
+    const first = [candidate('CR-1', 'first finding'), candidate('CR-2', 'second finding')];
+    const produced = scopeRevisionInputFromRepairCandidates(first, context);
+    assert(produced);
+    const resolve = (previous: ExecutionScope, proposal: ExecutionScopeInput, repairCandidates = first) => resolveScopeRevisionProposal({
+      ...context, workflow: resolveWorkflowSpec(root, { frameworkRoot }), previous, authorizedPhases: birth.phase_chain,
+      proposals: [proposal], repairCandidates, currentPhase: 'review',
+    });
+    const registration = resolve(birth, produced.input);
+    assert(registration, 'a sourced new repair must still be admitted');
+    appendFeatureScopeRevision({ ...context, nextScope: registration.scope, trigger: { phase: 'review' }, revisionInput: registration.input });
+    const previous = featureEffectiveScope(readFeatureFrozenScope(root, feature)!);
+    const newest = [candidate('CR-2', 'latest second finding'), candidate('CR-1', 'latest first finding')];
+    const refreshed = scopeRevisionInputFromRepairCandidates(newest, context);
+    assert(refreshed);
+    const ids = ['design-decision:CR-1', 'design-decision:CR-2'];
+    assert.deepEqual(refreshed.input.facts.filter(fact => ids.includes(fact.id)).map(fact => fact.id), ids);
+    assert(refreshed.input.facts.some(fact => fact.reason.endsWith(newest[0].summary)));
+    assert(previous.obligations.filter(fact => ids.includes(fact.id)).every(fact => !fact.satisfied_by));
+    const originalBytes = fs.readFileSync(featureFrozenScopePath(root, feature));
+    for (const [reason, order] of [[true, false], [false, true], [true, true]]) {
+      const proposal = structuredClone(refreshed.input);
+      const indexes = ids.map(id => proposal.facts.findIndex(fact => fact.id === id));
+      if (!reason) for (const index of indexes) {
+        const fact = proposal.facts[index];
+        fact.reason = previous.obligations.find(row => row.id === fact.id)!.reason;
+      }
+      if (order) [proposal.facts[indexes[0]], proposal.facts[indexes[1]]] = [proposal.facts[indexes[1]], proposal.facts[indexes[0]]];
+      assert.equal(resolve(previous, proposal, newest), null, `reason=${reason}, order=${order}`);
+      assert.deepEqual(fs.readFileSync(featureFrozenScopePath(root, feature)), originalBytes);
+    }
+
+    const targeted = (proposal: ExecutionScopeInput) => proposal.facts.find(fact => fact.id === ids[0])!;
+    const unqualified = structuredClone(refreshed.input);
+    targeted(unqualified).reason = 'unrelated reason';
+    assert.throws(() => resolve(previous, unqualified, newest), /revision requires new sourced facts/);
+    assert.throws(() => resolve(previous, refreshed.input, newest.map(item => ({ ...item, source_phase: 'spec' }))), /revision requires new sourced facts/);
+    const downgraded = structuredClone(refreshed.input);
+    targeted(downgraded).applicability = 'not_applicable';
+    assert.throws(() => resolve(previous, downgraded, newest), /不得删除或降级 required/);
+    const switched = structuredClone(refreshed.input);
+    targeted(switched).kind = 'acceptance-definition';
+    assert.throws(() => resolve(previous, switched, newest), /不得删除或降级 required/);
+    const duplicate = structuredClone(refreshed.input);
+    duplicate.facts.push(structuredClone(targeted(duplicate)));
+    assert.throws(() => resolve(previous, duplicate, newest), /义务字段或身份非法/);
+    const movedAuthority = structuredClone(refreshed.input);
+    const [authority, trigger] = ['design-context:candidate', ids[0]].map(id => movedAuthority.facts.findIndex(fact => fact.id === id));
+    assert(Math.min(authority, trigger) >= 0);
+    [movedAuthority.facts[authority], movedAuthority.facts[trigger]] = [movedAuthority.facts[trigger], movedAuthority.facts[authority]];
+    assert.throws(() => resolve(previous, movedAuthority, newest), /revision requires new sourced facts/, 'ordered authority positions must be compared');
+    const changedBasis = structuredClone(refreshed.input);
+    targeted(changedBasis).basis[0].content_fingerprint = 'f'.repeat(64);
+    assert(resolve(previous, changedBasis, newest), 'a changed source identity with verified dependency bytes is not a presentation-only repeat');
+    const actualSource = resolveCapabilityInputs({ ...context, phase: 'plan', track: 'full',
+      testTargets: [path.relative(root, featureFilePath(root, feature, 'plan.md'))],
+      inputContext: { schema_version: '1.1', subject: { feature }, obligations: {}, required_outputs: [] },
+    }).inputs?.values.codebase;
+    assert(actualSource?.state === 'resolved');
+    const differentSource = structuredClone(refreshed.input);
+    targeted(differentSource).basis = [actualSource.binding];
+    assert.deepEqual(resolve(previous, differentSource, newest)?.scope.obligations.find(fact => fact.id === ids[0])?.basis, [actualSource.binding]);
+    const changedRole = structuredClone(refreshed.input);
+    targeted(changedRole).basis[0].dependencies[0].role = 'artifact';
+    assert(resolve(previous, changedRole, newest), 'a changed source role must go through normal signing');
+    const badDependency = structuredClone(refreshed.input);
+    targeted(badDependency).basis[0].dependencies[0].sha256 = 'f'.repeat(64);
+    assert(resolve(previous, badDependency, newest), 'the historical trigger digest stays material to the signed identity');
+    const escapedBasis = structuredClone(refreshed.input);
+    targeted(escapedBasis).basis[0].dependencies[0].path = path.resolve(root, '../different-source.ts');
+    assert.throws(() => resolve(previous, escapedBasis, newest), /依据.*不可用|不在项目内/, 'escaped source must be checked');
+    const forgedProof = structuredClone(refreshed.input);
+    const definition = forgedProof.facts.find(fact => fact.id === 'design-context:candidate')!;
+    definition.satisfied_by = [{ ...structuredClone(definition.basis[0]), content_fingerprint: 'a'.repeat(64) }];
+    assert.throws(() => resolve(previous, forgedProof, newest), /满足依据.*核验失败|binding stale/, 'forged proof must be checked');
+    const forgedControl = structuredClone(refreshed.input);
+    forgedControl.request.user_control = { session_ref: 'invented', feature, run_id: 'invented' };
+    assert.throws(() => resolve(previous, forgedControl, newest), /原生|user control/);
+    const newCandidates = [...newest, candidate('CR-3', 'new finding')];
+    const addition = scopeRevisionInputFromRepairCandidates(newCandidates, context);
+    assert(addition);
+    const revised = resolve(previous, addition.input, newCandidates);
+    assert(revised?.scope.obligations.some(fact => fact.id === 'design-decision:CR-3'), 'a new real finding must still revise');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+} });
+
 type ScopeGroup = 'prepare-early' | 'prepare-late' | 'runtime';
 // prepare 各分支自备宿主；边界按一次完整计时分为三个近等成本段。
 function caseGroup(_name: string, index: number): ScopeGroup {

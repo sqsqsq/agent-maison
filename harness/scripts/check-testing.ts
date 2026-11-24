@@ -63,6 +63,7 @@ import {
   loadExplicitSkipTcIds,
   lintDerivedHylyrePlanSteps,
   lintHylyrePlanStepRules,
+  lintDeviceDataReadiness,
   prepareFreshHylyreRunDir,
   type NavLintViolation,
   type StepLintViolation,
@@ -2189,7 +2190,7 @@ function collectReportOnlyDerivedPlanStaticIssues(
   // 标题、措辞、版本号的改动不得触发重派生/跑机。
   void derivedPath;
 
-  const staticPlanGates = collectDeviceTestStaticPlanGates(ctx, pick.selected.content, topRaw);
+  const staticPlanGates = collectDeviceTestStaticPlanGates(ctx, pick.selected.content, topRaw, channelDecl.hylyre_tc_ids);
   const stepBlockers = staticPlanGates.stepLint.violations.filter(v => v.severity === 'BLOCKER');
   if (stepBlockers.length > 0) {
     issues.push(...stepBlockers.map(v => `[${v.rule_id}] ${v.tc_id}: ${v.message}`));
@@ -4027,6 +4028,7 @@ function collectDeviceTestStaticPlanGates(
   ctx: CheckContext,
   derivedContent: string,
   topPlanRaw: string,
+  hylyreTcIds: readonly string[],
 ): {
   stepLint: ReturnType<typeof lintHylyrePlanStepRules>;
   selectorWarnings: ReturnType<typeof lintDerivedPlanSelectorContract>;
@@ -4043,6 +4045,9 @@ function collectDeviceTestStaticPlanGates(
       })
     : [];
   const topCases = extractTopPlanTestCasesForDeriveHint(topPlanRaw);
+  const dataReadiness = lintDeviceDataReadiness(topPlanRaw, derivedContent, hylyreTcIds);
+  stepLint.violations.push(...dataReadiness);
+  stepLint.ok = stepLint.ok && dataReadiness.length === 0;
   const navLint = lintDerivedHylyrePlanSteps(derivedContent, topCases);
   return { stepLint, selectorWarnings, navLint };
 }
@@ -4279,7 +4284,7 @@ async function checkDeviceTestRunGate(
     // t7b（plan e6a3c9f4）：STEP 级静态门禁接入标准派生计划路径（与即席同强度）——
     // 非法根键/选择器形状/wait 误用在门禁层秒级拦下，不再只在真机执行时炸。
     // Static lint/selector/navigation facts are isolated from the runtime holder.
-    const staticPlanGates = collectDeviceTestStaticPlanGates(ctx, derivedContent, topRaw);
+    const staticPlanGates = collectDeviceTestStaticPlanGates(ctx, derivedContent, topRaw, runChannelDecl.hylyre_tc_ids);
     const { stepLint, selectorWarnings, navLint } = staticPlanGates;
     const stepBlockers = stepLint.violations.filter(v => v.severity === 'BLOCKER');
     if (stepBlockers.length > 0) {

@@ -18,39 +18,85 @@ export interface TestCasePrecondition {
   /** kind=after：多前置（任一失败即 BLOCKED） */
   tcs?: string[];
   reset?: 'restart' | 'clear_data' | 'fixture_reset';
+  /** Native anchor for the data this case must observe before it writes. */
+  ready_by_id?: string;
 }
 
 export type TestCaseFlow = Record<string, { precondition: TestCasePrecondition }>;
 
-/** 从 test-plan.md 提取顶层 test_case_flow YAML 块（```yaml 围栏内含 test_case_flow: 根键） */
-export function parseTestCaseFlowBlock(md: string): { flow: TestCaseFlow | null; error?: string } {
-  const fences = [...md.matchAll(/```ya?ml\r?\n([\s\S]*?)```/g)];
-  for (const f of fences) {
-    if (!/^\s*test_case_flow\s*:/m.test(f[1])) continue;
+interface ReadinessIssue {
+  tc_id: string;
+  message: string;
+}
+
+function readCaseFlow(md: string): { flow: TestCaseFlow | null; error?: string; readinessIssues: ReadinessIssue[] } {
+  const fences = /^[ \t]*```ya?ml[ \t]*\r?\n([\s\S]*?)(?:^([ \t]*```)[ \t]*(?=\r?$)|(?![\s\S]))/gm;
+  for (const [, body, close] of md.matchAll(fences)) {
+    const doc = YAML.parseDocument(body);
+    const root = doc.get('test_case_flow', true);
+    if (root === undefined) continue;
+    const declared: string[] = [];
+    const readinessIssues: ReadinessIssue[] = [];
+    if (YAML.isMap(root)) {
+      for (const { key, value } of root.items) {
+        if (!YAML.isScalar(key) || typeof key.value !== 'string' || !YAML.isMap(value)) continue;
+        const pre = value.get('precondition', true);
+        if (value.has('ready_by_id')) {
+          readinessIssues.push({ tc_id: key.value, message: 'ready_by_id 须写在本用例的 precondition 内。' });
+        } else if (YAML.isMap(pre) && pre.has('ready_by_id')) {
+          declared.push(key.value);
+        }
+      }
+    }
+    const invalid = (message: string) => ({
+      flow: null,
+      ...(close ? { error: message } : {}),
+      readinessIssues: [...readinessIssues, ...declared.map(tc_id => ({ tc_id, message }))],
+    });
+    if (!close) return invalid('持久数据前置要求闭合的 test_case_flow YAML 块。');
     try {
-      const parsed = YAML.parse(f[1]) as { test_case_flow?: unknown };
+      if (doc.errors.length) throw doc.errors[0];
+      const parsed = doc.toJS() as { test_case_flow?: unknown };
       const raw = parsed?.test_case_flow;
       if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-        return { flow: null, error: 'test_case_flow 须为以 tc_id 为 key 的映射' };
+        return invalid('test_case_flow 须为以 tc_id 为 key 的映射');
       }
       const flow: TestCaseFlow = {};
       for (const [tc, v] of Object.entries(raw as Record<string, unknown>)) {
         const rec = (v ?? {}) as { precondition?: unknown };
         const pre = rec.precondition as TestCasePrecondition | undefined;
         if (!pre || (pre.kind !== 'fresh_app' && pre.kind !== 'after')) {
-          return { flow: null, error: `test_case_flow['${tc}'].precondition.kind 须为 fresh_app|after` };
+          return invalid(`test_case_flow['${tc}'].precondition.kind 须为 fresh_app|after`);
         }
         flow[tc] = { precondition: pre };
       }
-      return { flow };
+      return { flow, readinessIssues };
     } catch (e) {
-      return { flow: null, error: `test_case_flow YAML 解析失败：${(e as Error).message}` };
+      return invalid(`test_case_flow YAML 解析失败：${(e as Error).message}`);
     }
   }
-  return { flow: null };
+  return { flow: null, readinessIssues: [] };
 }
 
-function prereqsOf(p: TestCasePrecondition): string[] {
+/** 从 test-plan.md 提取顶层 test_case_flow YAML 块。 */
+export function parseTestCaseFlowBlock(md: string): { flow: TestCaseFlow | null; error?: string } {
+  const { flow, error } = readCaseFlow(md);
+  return error ? { flow, error } : { flow };
+}
+
+/** Authored data checks belong to the top plan; the driver only receives ordinary steps. */
+export function readDeviceDataReadiness(md: string): {
+  cases: Array<[string, TestCasePrecondition]>;
+  issues: ReadinessIssue[];
+} {
+  const { flow, readinessIssues } = readCaseFlow(md);
+  const cases = Object.entries(flow ?? {})
+    .filter(([, { precondition }]) => Object.prototype.hasOwnProperty.call(precondition, 'ready_by_id'))
+    .map(([tc, { precondition }]): [string, TestCasePrecondition] => [tc, precondition]);
+  return { cases, issues: readinessIssues };
+}
+
+export function prereqsOf(p: TestCasePrecondition): string[] {
   if (p.kind !== 'after') return [];
   return [...(p.tc ? [p.tc] : []), ...(p.tcs ?? [])];
 }

@@ -103,7 +103,9 @@ export function parseBuildProfileTemplate(raw: string): ParsedTemplate | null {
     if (!(TEMPLATE_CONST_NAMES as readonly string[]).includes(name)) return null;
     if (consts[name as TemplateConstName] !== undefined) return null;
     let value = cm[2];
-    if (value.startsWith("'") || value.startsWith('"')) value = value.slice(1, -1);
+    const quoted = value.startsWith("'") || value.startsWith('"');
+    if (quoted === (name === 'DEBUG')) return null;
+    if (quoted) value = value.slice(1, -1);
     consts[name as TemplateConstName] = value;
     rest = rest.replace(cm[0], ' ');
   }
@@ -129,6 +131,7 @@ export function deriveExpectedTargetName(
   projectRoot: string,
   moduleSrcPath: string,
   product: string,
+  requireSelectedTarget = false,
 ): string | null {
   try {
     const bp = path.join(projectRoot, 'build-profile.json5');
@@ -136,10 +139,11 @@ export function deriveExpectedTargetName(
     const obj = parseProductJson5(fs.readFileSync(bp, 'utf-8')) as {
       modules?: Array<{ srcPath?: string; targets?: ModuleTargetEntry[] }>;
     };
-    const entry = (obj?.modules ?? []).find(
-      m => typeof m?.srcPath === 'string' && m.srcPath.replace(/^\.\//, '').trim() === moduleSrcPath,
+    const declared = (obj?.modules ?? []).filter(
+      m => typeof m?.srcPath === 'string' && m.srcPath.replace(/\\/g, '/').replace(/^\.\//, '').trim() === moduleSrcPath,
     );
-    if (!entry) return null;
+    const [entry] = declared;
+    if (!entry || requireSelectedTarget && declared.length !== 1) return null;
     const targets = Array.isArray(entry.targets) ? entry.targets : [];
     if (targets.length === 0) return 'default';
     const matched = targets.filter(
@@ -147,7 +151,8 @@ export function deriveExpectedTargetName(
     );
     if (matched.length === 1 && typeof matched[0].name === 'string') return matched[0].name;
     if (matched.length > 1) return null;
-    return targets.some(t => t?.name === 'default') ? 'default' : null;
+    return targets.some(t => t?.name === 'default' && (!requireSelectedTarget ||
+      t.applyToProducts === undefined || Array.isArray(t.applyToProducts) && t.applyToProducts.includes(product))) ? 'default' : null;
   } catch {
     return null;
   }
@@ -163,6 +168,67 @@ export function readModuleOhPackageVersion(projectRoot: string, moduleSrcPath: s
   } catch {
     return null;
   }
+}
+
+function usesStandardTasks(hvigorFile: string, task: 'appTasks' | 'hapTasks' | 'harTasks'): boolean {
+  const source = stripComments(fs.readFileSync(hvigorFile, 'utf-8'));
+  return new RegExp(`^\\s*import\\s*\\{\\s*${task}\\s*\\}\\s*from\\s*(['"])@ohos/hvigor-ohos-plugin\\1\\s*;?\\s*` +
+    `export\\s+default\\s*\\{\\s*system\\s*:\\s*${task}\\s*,\\s*plugins\\s*:\\s*\\[\\s*\\]\\s*,?\\s*\\}\\s*;?\\s*$`).test(source);
+}
+
+const OHOS_TEST_INTERMEDIATES: Readonly<Record<string, readonly string[]>> = {
+  'ets/testability/TestAbility.ets': ['TestAbility_withKit.ets', 'TestAbility.ets'],
+  'ets/testability/pages/Index.ets': ['Index.ets'],
+  'ets/testrunner/OpenHarmonyTestRunner.ets': ['OpenHarmonyTestRunner_mock.ets', 'OpenHarmonyTestRunner_nomock.ets', 'OpenHarmonyTestRunner.ets'],
+  'resources/base/element/color.json': ['resources/base/element/color.json'],
+  'resources/base/element/string.json': ['resources/base/element/string.json'],
+  'resources/base/profile/test_pages.json': ['resources/base/profile/test_pages.json'],
+};
+
+/** GenerateOhosTestTemplate copies these SDK files into a module's own test staging tree. */
+export function isRebuildableOhosTestIntermediate(projectRoot: string, moduleSrcPath: string, product: string,
+  target: string, file: string, bytes: Buffer, devecoRoot: string | null): boolean {
+  const templates = OHOS_TEST_INTERMEDIATES[file];
+  if (!devecoRoot || !Array.isArray(templates) || deriveExpectedTargetName(projectRoot, moduleSrcPath, product, true) !== target) return false;
+  try {
+    const moduleRoot = path.join(projectRoot, moduleSrcPath);
+    const descriptor = (rel: string) => (parseProductJson5(fs.readFileSync(path.join(moduleRoot, rel), 'utf8')) as {
+      module?: { type?: string; name?: string };
+    }).module;
+    const type = descriptor('src/main/module.json5')?.type;
+    const task = type === 'har' ? 'harTasks' : type === 'entry' || type === 'feature' ? 'hapTasks' : null;
+    if (!task || !descriptor('src/ohosTest/module.json5')?.name ||
+        !usesStandardTasks(path.join(projectRoot, 'hvigorfile.ts'), 'appTasks') ||
+        !usesStandardTasks(path.join(moduleRoot, 'hvigorfile.ts'), task)) return false;
+    const templateRoot = path.join(devecoRoot, 'tools/hvigor/hvigor-ohos-plugin/node_modules/@ohos/coverage/res/template');
+    return templates.some(template => {
+      const absolute = path.join(templateRoot, template);
+      return fs.existsSync(absolute) && fs.readFileSync(absolute).equals(bytes);
+    });
+  } catch { return false; }
+}
+
+/** The files here are overwritten by the standard HAR task before compiling the app. */
+export function isRebuildableHarBuildProfile(
+  projectRoot: string,
+  moduleSrcPath: string,
+  raw: string,
+  product: string,
+): boolean {
+  const template = parseBuildProfileTemplate(raw);
+  if (!template) return false;
+  const { consts } = template;
+  if (!['debug', 'release', 'test'].includes(consts.BUILD_MODE_NAME)) return false;
+  if (consts.DEBUG !== String(consts.BUILD_MODE_NAME !== 'release')) return false;
+  try {
+    const moduleRoot = path.join(projectRoot, moduleSrcPath);
+    if (!usesStandardTasks(path.join(projectRoot, 'hvigorfile.ts'), 'appTasks') ||
+        !usesStandardTasks(path.join(moduleRoot, 'hvigorfile.ts'), 'harTasks')) return false;
+    const module = parseProductJson5(fs.readFileSync(path.join(moduleRoot, 'src/main/module.json5'), 'utf-8')) as { module?: { type?: unknown } };
+    return module.module?.type === 'har' &&
+      consts.HAR_VERSION === readModuleOhPackageVersion(projectRoot, moduleSrcPath) &&
+      consts.TARGET_NAME === deriveExpectedTargetName(projectRoot, moduleSrcPath, product, true);
+  } catch { return false; }
 }
 
 /**

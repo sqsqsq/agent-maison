@@ -7563,6 +7563,7 @@ Goal runner — original request design and construction runtime
       runConcluded = true;
       return true;
     };
+    const scopeRevisionWait = '当前范围/证明重签尚未满足原请求与授权：';
     const reviseCurrentScope = (family: string, userSessionRef?: string, onlyCompatibleInputs = false): void => {
       const previous = scopeNow();
       if (!previous || !manifest.execution_scope) return;
@@ -7651,7 +7652,7 @@ Goal runner — original request design and construction runtime
         const recovery = detail.includes('request-scope revision cannot add phases')
           ? '该提案超出原request冻结范围；保留原提案与真实结果，取得新请求授权后沿正常请求准备/出生入口继续。原单元不得自授产品写权或扩大检查范围。'
           : '保留原提案和真实结果，修复所指输入后接原单元。';
-        wait(family, `当前范围/证明重签尚未满足原请求与授权：${detail}。${recovery}`, 'execution_scope_unresolved');
+        wait(family, `${scopeRevisionWait}${detail}。${recovery}`, 'execution_scope_unresolved');
         return;
       }
       options.onScopeRevision?.('applied');
@@ -7659,6 +7660,13 @@ Goal runner — original request design and construction runtime
     // The normal resume/next source creates a proposal; only the existing revision writer appends it.
     if (!halted && typeof argv['session-ref'] === 'string' && !['COMPLETED', 'CHAIN_SLICE_COMPLETED'].includes(String(findLastRunEnd(startupEvents)?.status))) {
       reviseCurrentScope(familiesNow()[0] ?? String(chain[0] ?? 'coding'), argv['session-ref']);
+    }
+    // Resume the interrupted check's revision before routing its remaining work to the owner.
+    if (!halted && findLastRunEnd(startupEvents)?.halt_reason === 'execution_scope_unresolved') {
+      const halt = [...startupEvents].reverse().find(event => event.type === 'phase_halt');
+      const reason = asRecord(halt)?.reason;
+      if (halt?.halt_reason === 'execution_scope_unresolved' && halt.phase && familiesNow().includes(halt.phase)
+        && typeof reason === 'string' && reason.startsWith(scopeRevisionWait)) reviseCurrentScope(halt.phase);
     }
     const lastAuthor = (includeTestingOnly = true) => {
       const history = loadAuthoritativeEvents(eventsPath);

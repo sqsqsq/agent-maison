@@ -3,12 +3,14 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
+import { createHash } from 'crypto';
 import { loadFrameworkConfig } from '../../../harness/config';
-import { discoverAppHapArtifacts, detectStaleSignedSuspect, type HapDiscoveryCandidate } from './hvigor-runner';
+import { buildChildEnv, describeHvigorEnvironment, discoverAppHapArtifacts, detectStaleSignedSuspect,
+  listBuildProfileModules, parseProductJson5, resolveDevEcoInstallRoot, type HapDiscoveryCandidate } from './hvigor-runner';
 import { resolveDeviceTestBuildMode } from './testing-build-conventions';
 import { computeHapSha256Full } from './build-fingerprint';
+import { isRebuildableHarBuildProfile, isRebuildableOhosTestIntermediate } from './generated-source-classifier';
 
-const SOURCE_FILE_RE = /\.(ets|ts|json5)$/i;
 const SKIP_DIR_NAMES = new Set([
   'build',
   'oh_modules',
@@ -54,8 +56,13 @@ export interface DeviceTestBuildReuseDecision {
   candidates?: HapDiscoveryCandidate[];
   artifactValidation?: ReturnType<typeof detectStaleSignedSuspect>;
   hapSha256Full?: string;
+  buildInputsSha256?: string;
+  /** The existing signed candidate has no matching input provenance to trust the incremental cache. */
+  forceFullBuild: boolean;
   priorResult?: Record<string, unknown>;
 }
+
+export const DEVICE_TEST_BUILD_RESULT = 'device-test-build.result.json';
 
 function envForceBuild(): boolean {
   const v = process.env.HARNESS_DEVICE_TEST_FORCE_BUILD?.trim().toLowerCase();
@@ -63,86 +70,207 @@ function envForceBuild(): boolean {
 }
 
 function outerLayerRoots(projectRoot: string): string[] {
-  const roots: string[] = [];
+  return (loadFrameworkConfig(projectRoot).architecture?.outer_layers ?? [])
+    .map(layer => layer.id?.trim()).filter(Boolean).map(id => path.join(projectRoot, id));
+}
+
+const ROOT_BUILD_INPUTS = ['AppScope', 'build-profile.json5', 'hvigorfile.ts', 'hvigorfile.js', 'hvigor',
+  'hvigorw', 'hvigorw.bat', 'local.properties', 'oh-package.json5', 'oh-package-lock.json5', '.ohpmrc',
+  'code-linter.json5', 'framework.config.json'];
+
+const PUBLIC_SIGNING_FIELDS = ['storeFile', 'keyAlias', 'signAlg', 'profile', 'certpath'];
+const OPAQUE_SIGNING_FIELDS = ['storePassword', 'keyPassword'];
+
+interface SigningConfig {
+  name?: string;
+  type?: string;
+  material?: Record<string, string>;
+}
+
+interface BuildProfile {
+  signingConfigs?: SigningConfig[];
+  app?: { products?: Array<{ name?: string; signingConfig?: string }>; signingConfigs?: SigningConfig[] };
+}
+
+function opaqueFilename(file: string): boolean {
+  const name = path.basename(file).toLowerCase();
+  return ['.ohpmrc', '.npmrc', '.netrc', '.envrc', 'local.properties'].includes(name) || /^\.env(?:\.|$)/.test(name) ||
+    /\.(?:p12|pfx|jks|jceks|bks|key|keystore|pkcs12|pkcs8|pem)$/.test(name);
+}
+
+function opaqueFileState(file: string): string {
+  // Observe replacement and writes, including ordinary writes that restore mtime, without opening the file.
+  const stat = fs.statSync(file, { bigint: true });
+  if (!stat.isFile() || stat.ino <= 0n || stat.ctimeNs <= 0n) throw new Error('Opaque input identity unavailable');
+  return [stat.dev, stat.ino, stat.size, stat.mode, stat.mtimeNs, stat.ctimeNs].join(':');
+}
+
+/** Byte identity of the selected application's inputs, independent of generated HAR rewrites. */
+export function snapshotDeviceTestBuildInputs(projectRoot: string, product: string, buildMode: 'debug' | 'release'):
+  { sha256: string; maxMtimeMs: number } | null {
   try {
-    const arch = loadFrameworkConfig(projectRoot).architecture;
-    for (const layer of arch?.outer_layers ?? []) {
-      const id = typeof layer?.id === 'string' ? layer.id.trim() : '';
-      if (id) roots.push(path.join(projectRoot, id));
-    }
-  } catch {
-    /* ignore */
-  }
-  roots.push(path.join(projectRoot, 'AppScope'));
-  const bp = path.join(projectRoot, 'build-profile.json5');
-  if (fs.existsSync(bp)) roots.push(bp);
-  const hp = path.join(projectRoot, 'hvigorfile.ts');
-  if (fs.existsSync(hp)) roots.push(hp);
-  return roots;
-}
+    const root = path.resolve(projectRoot);
+    const profileFile = path.join(root, 'build-profile.json5');
+    if (!fs.lstatSync(profileFile).isFile()) return null;
+    const devecoRoot = resolveDevEcoInstallRoot(root);
+    const modules = listBuildProfileModules(root);
+    const moduleRoots = new Map(modules.map(({ srcPath }) => [path.resolve(root, srcPath), srcPath.replace(/\\/g, '/')]));
+    const entryPoints = new Set([root, ...moduleRoots.keys()]);
+    const files = new Map<string, string>();
+    const visited = new Set<string>();
+    const profiles = new Map<string, BuildProfile>();
+    const opaqueStores = new Set<string>();
+    let maxMtimeMs = 0;
 
-function shouldSkipDir(name: string): boolean {
-  return SKIP_DIR_NAMES.has(name);
-}
+    const fileKey = (file: string) => process.platform === 'win32' ? file.toLowerCase() : file;
+    const opaque = (file: string): boolean => opaqueFilename(file) || opaqueStores.has(fileKey(file));
 
-/** 扫描参与打包的宿主源码，取最大 mtime（不含 doc/framework/测试计划）。 */
-export function computeDeviceTestInputsMaxMtimeMs(projectRoot: string): number {
-  let max = 0;
-  const roots = outerLayerRoots(projectRoot);
-
-  const visitFile = (abs: string): void => {
-    try {
-      const st = fs.statSync(abs);
-      if (st.isFile() && SOURCE_FILE_RE.test(abs)) {
-        if (st.mtimeMs > max) max = st.mtimeMs;
+    function readProfile(file: string): BuildProfile {
+      if (opaque(file) || !fs.lstatSync(file).isFile()) throw new Error('Build profile identity unavailable');
+      const profile = parseProductJson5(fs.readFileSync(file, 'utf8')) as BuildProfile;
+      for (const owner of [profile, profile.app]) {
+        if (!owner?.signingConfigs) continue;
+        owner.signingConfigs = owner.signingConfigs.map(config => {
+          const { name, type, material } = config;
+          if ((name !== undefined && typeof name !== 'string') || (type !== undefined && typeof type !== 'string') ||
+              Object.keys(config).some(key => !['name', 'type', 'material'].includes(key)) ||
+              Object.keys(material ?? {}).some(key => !PUBLIC_SIGNING_FIELDS.includes(key) && !OPAQUE_SIGNING_FIELDS.includes(key))) {
+            throw new Error('Signing configuration identity unavailable');
+          }
+          if (!material) return { name, type };
+          if ('storeFile' in material) {
+            if (typeof material.storeFile !== 'string' || !material.storeFile || /[$%]/.test(material.storeFile)) {
+              throw new Error('Opaque store location unavailable');
+            }
+            const store = path.resolve(root, material.storeFile);
+            opaqueStores.add(fileKey(store));
+            if (fs.existsSync(store)) opaqueStores.add(fileKey(fs.realpathSync(store)));
+          }
+          if (OPAQUE_SIGNING_FIELDS.some(key => key in material)) {
+            files.set(`signing-config-state:${path.relative(root, file)}`, opaqueFileState(file));
+          }
+          return { name, type, material: Object.fromEntries(PUBLIC_SIGNING_FIELDS
+            .filter(key => typeof material[key] === 'string').map(key => [key, material[key]])) };
+        });
       }
-    } catch {
-      /* ignore */
+      return profile;
     }
-  };
 
-  const walk = (dir: string, depth: number): void => {
-    if (depth > 24) return;
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return;
+    // Register declared store paths before traversing module directories, including extensionless stores.
+    for (const file of [profileFile, ...[...moduleRoots.keys()].map(dir => path.join(dir, 'build-profile.json5'))]) {
+      if (fs.existsSync(file)) profiles.set(file, readProfile(file));
     }
-    for (const ent of entries) {
-      const abs = path.join(dir, ent.name);
-      if (ent.isDirectory()) {
-        if (!shouldSkipDir(ent.name)) walk(abs, depth + 1);
-      } else if (ent.isFile()) {
-        visitFile(abs);
+
+    function walk(file: string, optional = false): void {
+      if (visited.has(file)) return;
+      visited.add(file);
+      let stat: fs.Stats;
+      try { stat = fs.lstatSync(file); }
+      catch (error) { if (optional && (error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error; }
+      const rel = path.relative(root, file).replace(/\\/g, '/');
+      if (opaque(file)) {
+        if (!stat.isDirectory()) files.set(rel, opaqueFileState(file));
+        return;
+      }
+      if (stat.isDirectory()) {
+        for (const name of fs.readdirSync(file)) {
+          if (entryPoints.has(file) && SKIP_DIR_NAMES.has(name)) continue;
+          if (name === '.git') continue;
+          walk(path.join(file, name));
+        }
+        return;
+      }
+      if (!stat.isFile()) throw new Error('Build input is not a regular file');
+      const basename = path.basename(file);
+      const data = basename === 'build-profile.json5'
+        ? JSON.stringify(profiles.get(file) ?? readProfile(file))
+        : fs.readFileSync(file);
+      const moduleSrcPath = moduleRoots.get(path.dirname(file));
+      if (path.basename(file) === 'BuildProfile.ets' && moduleSrcPath &&
+          isRebuildableHarBuildProfile(root, moduleSrcPath, data.toString('utf8'), product)) return;
+      const intermediate = /^(.+)\/\.test\/([^/]+)\/intermediates\/src\/ohosTest\/(.+)$/.exec(rel);
+      if (intermediate && Buffer.isBuffer(data)) {
+        const module = moduleRoots.get(path.resolve(root, intermediate[1]));
+        if (module && isRebuildableOhosTestIntermediate(root, module, product, intermediate[2], intermediate[3], data, devecoRoot)) return;
+      }
+      files.set(rel, `${stat.mode & 0o777}:${createHash('sha256').update(data).digest('hex')}`);
+      maxMtimeMs = Math.max(maxMtimeMs, stat.mtimeMs);
+      if (path.basename(file) === 'oh-package.json5') {
+        const manifest = parseProductJson5(data.toString('utf8')) as { dependencies?: Record<string, string> };
+        for (const [name, version] of Object.entries(manifest.dependencies ?? {})) {
+          if (typeof version !== 'string' || !/^(?:@[\w.-]+\/)?[\w.-]+$/.test(name) || name.split('/').some(n => n === '.' || n === '..')) continue;
+          const packageRoot = path.dirname(file);
+          const dependency = version.startsWith('file:')
+            ? path.resolve(packageRoot, version.slice('file:'.length))
+            : [packageRoot, root].map(base => path.join(base, 'oh_modules', name)).find(abs => fs.existsSync(abs));
+          if (!dependency) continue;
+          const actual = fs.realpathSync(dependency);
+          if (actual === root || fs.statSync(actual).isDirectory() && !fs.existsSync(path.join(actual, 'oh-package.json5'))) {
+            throw new Error('Build dependency is not a declared package');
+          }
+          files.set(`dependency:${rel}:${name}`, path.relative(root, actual).replace(/\\/g, '/'));
+          entryPoints.add(actual);
+          walk(actual);
+        }
       }
     }
-  };
 
-  for (const root of roots) {
-    if (!fs.existsSync(root)) continue;
-    const st = fs.statSync(root);
-    if (st.isFile()) {
-      visitFile(root);
-    } else if (st.isDirectory()) {
-      walk(root, 0);
+    const bp = profiles.get(profileFile);
+    if (!bp) return null;
+    const signing = bp.app?.products?.find(item => item.name === product)?.signingConfig;
+    if (signing) {
+      const selected = bp.app?.signingConfigs?.filter(config => config.name === signing);
+      if (selected?.length !== 1 || !selected[0].material) return null;
+      for (const property of ['certpath', 'profile', 'storeFile']) {
+        const file = selected[0].material[property];
+        if (typeof file !== 'string' || !file || /[$%]/.test(file)) return null;
+        const abs = path.resolve(root, file);
+        if (property === 'storeFile') {
+          files.set('signing:storeFile', opaqueFileState(abs));
+          continue;
+        }
+        const real = fs.realpathSync(abs);
+        const publicFormat = property === 'certpath' ? /\.(?:cer|crt)$/i : /\.(?:p7b|p7c)$/i;
+        if (!publicFormat.test(abs) || opaque(abs) || opaque(real) || !fs.statSync(real).isFile()) return null;
+        files.set(`signing:${property}`, createHash('sha256').update(fs.readFileSync(real)).digest('hex'));
+      }
     }
-  }
-  return max;
+    for (const entry of new Set([...ROOT_BUILD_INPUTS.map(p => path.join(root, p)), ...moduleRoots.keys(), ...outerLayerRoots(root)])) {
+      if (entry === root || !entry.startsWith(root + path.sep)) return null;
+      walk(entry, true);
+    }
+    const hvigorConfig = loadFrameworkConfig(root).toolchain?.hvigor;
+    const environment = describeHvigorEnvironment(buildChildEnv(root), root);
+    const dimensions = [product, buildMode, hvigorConfig, devecoRoot, environment];
+    const sorted = [...files].sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0);
+    return { sha256: createHash('sha256').update(JSON.stringify([dimensions, sorted])).digest('hex'), maxMtimeMs };
+  } catch { return null; }
 }
 
 export function evaluateDeviceTestBuildReuse(opts: DeviceTestBuildReuseInput): DeviceTestBuildReuseDecision {
   const resolvedProduct = opts.product;
   const resolvedBuildMode = resolveDeviceTestBuildMode(opts.buildMode);
-  const inputsMaxMtimeMs = computeDeviceTestInputsMaxMtimeMs(opts.projectRoot);
+  const snapshot = snapshotDeviceTestBuildInputs(opts.projectRoot, resolvedProduct, resolvedBuildMode);
+  const inputsMaxMtimeMs = snapshot?.maxMtimeMs ?? 0;
   const discovery = discoverAppHapArtifacts(opts.projectRoot, resolvedProduct);
   const candidate = discovery.signedPath;
   const validation = candidate ? detectStaleSignedSuspect(candidate) : undefined;
+  const sha = validation?.status === 'valid' ? computeHapSha256Full(candidate) : null;
   const hapMtimeMs = validation?.signedMtimeMs ?? null;
+  let prior: Record<string, unknown> | null = null;
+  try {
+    if (opts.reportDir) prior = JSON.parse(fs.readFileSync(path.join(opts.reportDir, DEVICE_TEST_BUILD_RESULT), 'utf-8'));
+  } catch { /* A legacy or missing record cannot attest to current input content. */ }
+  const sameBuild = candidate && prior?.buildSucceeded === true && prior.resolvedProduct === resolvedProduct &&
+    prior.resolvedBuildMode === resolvedBuildMode && typeof prior.hapPath === 'string' &&
+    path.resolve(prior.hapPath) === path.resolve(candidate);
+  const sameInputs = snapshot && sameBuild && prior?.buildInputsSha256 === snapshot.sha256;
   const base: DeviceTestBuildReuseDecision = {
     reuse: false, reason: '', hapPath: validation?.status === 'valid' ? candidate : null,
     hapMtimeMs, hapBuiltAt: hapMtimeMs === null ? null : new Date(hapMtimeMs).toISOString(),
     inputsMaxMtimeMs, resolvedProduct, resolvedBuildMode,
+    buildInputsSha256: snapshot?.sha256,
+    forceFullBuild: Boolean(candidate && (!sameInputs || !sha || prior?.hapSha256Full !== sha)),
     scannedDirs: discovery.scannedDirs, candidates: discovery.candidates,
     artifactValidation: validation,
     staleSuspect: validation?.staleSuspect,
@@ -153,22 +281,13 @@ export function evaluateDeviceTestBuildReuse(opts: DeviceTestBuildReuseInput): D
   if (envForceBuild()) return reject('HARNESS_DEVICE_TEST_FORCE_BUILD 已设置，强制执行 hvigor');
   if (!candidate) return reject('所选 product 未找到 signed 主 HAP');
   if (validation?.status !== 'valid') return reject(validation?.note ?? '配对产物未通过验证');
-  if (hapMtimeMs === null || inputsMaxMtimeMs > hapMtimeMs) return reject('业务源码更新（inputsMaxMtime > hapMtime），需执行构建');
-
-  let prior: Record<string, unknown>;
-  try {
-    if (!opts.reportDir) return reject('当前报告目录无成功构建记录，需执行构建');
-    prior = JSON.parse(fs.readFileSync(path.join(opts.reportDir, 'device-test-build.result.json'), 'utf-8'));
-  } catch {
-    return reject('当前成功构建记录缺失或不可读，需执行构建');
-  }
-  if (!prior || prior.buildSucceeded !== true || prior.resolvedProduct !== resolvedProduct ||
-      prior.resolvedBuildMode !== resolvedBuildMode || typeof prior.hapPath !== 'string' ||
-      path.resolve(prior.hapPath) !== path.resolve(candidate)) {
+  if (!snapshot) return reject('构建输入未能完整核实，需执行构建');
+  if (!prior) return reject('当前成功构建记录缺失或不可读，需执行构建');
+  if (!sameBuild) {
     return reject('原成功构建记录与当前包路径/product/buildMode 不匹配，需执行构建');
   }
-  const sha = computeHapSha256Full(candidate);
   if (!sha || prior.hapSha256Full !== sha) return reject('当前包内容摘要与原成功构建记录不匹配，需执行构建');
+  if (!sameInputs) return reject('构建输入内容变化或原记录缺少内容摘要，需执行构建');
   return { ...base, reuse: true, hapSha256Full: sha, priorResult: prior,
     reason: '已核对当前报告的成功记录、包路径/内容摘要、product/buildMode、源码新鲜度及配对产物，复用已有包' };
 }

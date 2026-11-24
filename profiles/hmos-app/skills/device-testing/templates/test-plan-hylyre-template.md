@@ -12,6 +12,8 @@
 > 某个用例缺少可得数据状态或稳定 selector 时，在交回中记录用例、验收 ID 和缺失条件，由原验证方核对。保留原断言和执行通道，等待正式工具生成执行结果。
 > 视觉导航单独交回 feature 下的 `device-testing/visual-diff-nav.json`。旧 `testing/visual-diff-nav.json` 可用于核对当前屏与到达步骤。
 
+顶层计划声明 `ready_by_id` 时，按其编排用例顺序并生成原生步骤。对应各例按 `reset_preamble` 停启，在执行导航或业务操作前以 `{"wait_for":{"by_id":"<ready_by_id>","timeout":10}}` 核验实际需要的数据。准备例的 `start_app.params` 携带宿主固定枚举，其余数据读取例无参启动。该原生断言控制本例剩余步骤。
+
 ## 测试用例清单
 
 <!-- ⚠️ 上方标题节为解析锚点，禁止删改层级语义 -->

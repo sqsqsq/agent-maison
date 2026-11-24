@@ -203,6 +203,10 @@ export function collectNativeAcceptanceEvidence(input: CurrentAcceptanceEvidence
     const abs = path.resolve(projectRoot, file);
     try {
       if (!isInsideProjectRoot(projectRoot, abs) || !isInsideProjectRoot(fs.realpathSync(projectRoot), fs.realpathSync(abs))) return null;
+      if (path.extname(abs).toLowerCase() === '.hap') {
+        const sha256 = sha256FileOrNull(abs);
+        return sha256 ? { label: toPosixRel(projectRoot, abs), kind: 'path', content: `HAP SHA-256 ${sha256}` } : null;
+      }
       const content = fs.readFileSync(abs, 'utf8');
       return content.length > 64_000 ? { label: toPosixRel(projectRoot, abs), kind: 'path', content: `${fs.statSync(abs).size} bytes; read the bound original evidence at this path` }
         : { label: toPosixRel(projectRoot, abs), content };

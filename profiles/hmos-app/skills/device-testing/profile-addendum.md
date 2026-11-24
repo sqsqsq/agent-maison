@@ -132,6 +132,7 @@
 ### 单会话导航纪律（`hylyre run --plan`）
 
 - **执行模型**：整条派生计划共享一次设备会话；harness 在计划开头预启一次；**用例之间不会自动清栈**。需要已知起始态的 case 在**首部**写恰好一组 `{"stop_app":{"bundle":B}}; {"start_app":{"bundle":B,"page_name":P}}`（B/P 逐字取 derive hint 的 `reset_preamble`，与 harness 预启同源，不得自拟；不得用 `clear_app`；其它位置一律 STEP-003 BLOCKER，整份计划不启动）。
+- **持久数据**：可在顶层 `test_case_flow` 用 `ready_by_id` 声明本例所需的数据状态，准备例另写 `reset: fixture_reset`。宿主固定测试存储，实际读到所需状态才呈现锚点。声明后，派生用例先按 `reset_preamble` 停启应用，再以 `wait_for by_id` 检查该锚点，随后才执行导航和业务动作。准备例传宿主固定枚举，其余读取例无参启动。该断言失败会停止本用例的后续步骤。顶层 `after` 描述用例顺序和失败归因，Hylyre 仍逐例执行。
 - **Nav 子页回 Tab**：必须用 `{"back":{}}` 或 `{"back":{"mode":"swipe","side":"RIGHT"}}`（Hypium `press_back` / `swipe_to_back`）。**禁止**用无 `area` / `at` / `scroll_target` 的 `swipe RIGHT`/`LEFT` 代替系统/Nav 返回（那是内容区滑动，无法 pop `NavPathStack`）。
 - **进入子页的 TC**：预期含「进入××页」时，若后续仍有要求「已在首页 Tab」的用例，本 TC 末步建议 `{"back":{}}` teardown，或让后续 TC 首步为 `back`。
 - **派生前必读**：`derive-hint-from-plan.json` 中每条 `test_cases[].navigation_hint`（`suggested_preamble_steps` / `forbidden_patterns`）。
