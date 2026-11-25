@@ -20,19 +20,19 @@ overview: >-
 todos:
   - id: extension-layout
     content: 建立按能力维度组织的扩展源码、清单和安装说明，更新目录分层及主包排除规则。
-    status: pending
+    status: completed
   - id: behavior-skill
     content: 实现独立 Skill、Schema 与模板，定义逐图依据、未观察和待决语义，只补本次请求涉及的内容。
-    status: pending
+    status: completed
   - id: wallet-example
     content: 落地含 12 个验收例子的四屏及流程样例、离线静态看图页和仓内 Schema 与引用单测。
-    status: pending
+    status: completed
   - id: blueprint-consumption
     content: 接通唯一触发指引和读写目录，核对宿主首轮蓝图消费，受管初设只要求一次。
-    status: pending
+    status: in_progress
   - id: acceptance-and-delivery
     content: 完成四个本机客户端各一次独立单屏短例、发布边界和仓库验收，交付 §5.1 逐行结果及样例对照口径。
-    status: pending
+    status: in_progress
 ---
 
 # UX 行为说明的独立提取与蓝图前消费
@@ -115,14 +115,16 @@ extensions/
 
 | 客户端 | 仓内声明 | 单屏短例要求 | 实际模型路由 | 图 3 是否看过、原因或证据 | 单屏 UX 产出位置、是否正确 |
 |---|---|---|---|---|---|
-| [Claude Code](../../agents/claude/adapter.yaml) | `tool_read` | 必跑一次 | 待测 | 待测 | 待测 |
-| [Codex](../../agents/codex/adapter.yaml) | 普通输入 `none`，独立 provider 有原生图片参数 | 必跑一次 | 待测 | 待测 | 待测 |
-| [OpenCode](../../agents/opencode/adapter.yaml) | 普通输入 `none`，独立 provider 有原生图片参数 | 必跑一次 | 待测 | 待测 | 待测 |
-| [DSH](../../agents/deepseek-harness/adapter.yaml) | 普通输入 `none`，独立 provider 使用图像路径 | 必跑一次，沿用现有能力 | 待测 | 待测 | 待测 |
+| [Claude Code](../../agents/claude/adapter.yaml) | `tool_read` | 必跑一次 | Claude.ai，`claude-opus-5-5` | 是。Read 返回图像，信用卡勾选态与区域命中。 | [首稿](../../../agent-maison-ux-behavior-spec-evidence/ad5c222f-short-cases-20261125/runs/claude/out/select_card_type.ux.yaml) 未通过入口 Schema，并拆成两行。[定向复测](../../../agent-maison-ux-behavior-spec-evidence/ad5c222f-short-cases-20261125/runs/claude-revised/out/select_card_type.ux.yaml) 通过 Schema 与单屏行为核验，附加的背景描述缺少对应元素 ID。 |
+| [Codex](../../agents/codex/adapter.yaml) | 普通输入 `none`，独立 provider 有原生图片参数 | 必跑一次 | ChatGPT，`gpt-6.1-sol` | 是。原生 `--image` 附件与产物里的信用卡勾选态、区域一致。 | [单屏稿](../../../agent-maison-ux-behavior-spec-evidence/ad5c222f-short-cases-20261125/runs/codex/out/select_card_type.ux.yaml) 通过。先前两个不可用模型的入口错误另记。 |
+| [OpenCode](../../agents/opencode/adapter.yaml) | 普通输入 `none`，独立 provider 有原生图片参数 | 必跑一次 | `volcengine/glm-5.3-flash` | 否。文件到达 read 工具，模型返回不支持图像输入。 | [单屏稿](../../../agent-maison-ux-behavior-spec-evidence/ad5c222f-short-cases-20261125/runs/opencode/out/bc-openCard-2.select_card_type.ux.yaml) 通过无图降级。图源已登记，未读图未用于规则依据。 |
+| [DSH](../../agents/deepseek-harness/adapter.yaml) | 普通输入 `none`，独立 provider 使用图像路径 | 必跑一次，沿用现有能力 | `volcengine/deepseek-v4.1-flash` | 是。本次 `read_image` 的成功结果与信用卡勾选态、区域一致。 | [单屏稿](../../../agent-maison-ux-behavior-spec-evidence/ad5c222f-short-cases-20261125/runs/dsh/out/bc-openCard-2.card-type-sheet.ux.yaml) 通过。 |
 | [Cursor](../../agents/cursor/adapter.yaml) | `multimodal: true` | 豁免 | — | 豁免 | 豁免 |
-| [Chrys](../../agents/chrys/adapter.yaml) | 普通输入 `none` | 本机不可运行时记未实测 | — | 未实测 | 未实测 |
-| [CodeAgent](../../agents/codeagent/adapter.yaml) | `tool_read` | 本机不可运行时记未实测 | — | 未实测 | 未实测 |
-| [Generic](../../agents/generic/adapter.yaml) | 普通输入 `none` | 本机不可运行时记未实测 | — | 未实测 | 未实测 |
+| [Chrys](../../agents/chrys/adapter.yaml) | 普通输入 `none` | 本机不可运行时记未实测 | — | 未实测，本机未找到 `chrys` | 未实测 |
+| [CodeAgent](../../agents/codeagent/adapter.yaml) | `tool_read` | 本机不可运行时记未实测 | — | 未实测，本机未找到 `codeagentcli` | 未实测 |
+| [Generic](../../agents/generic/adapter.yaml) | 普通输入 `none` | 本机不可运行时记未实测 | — | 未实测，本机未找到 `agent-cli` | 未实测 |
+
+2026-11-25 的四客户端原始输入、工具证据、CLI 尝试及首稿与修订稿的区分见[本机独立验收记录](../../../agent-maison-ux-behavior-spec-evidence/ad5c222f-short-cases-20261125/records/results.md)。Codex、DSH 的首稿通过修订后的 Schema，截图状态键沿用当时 Skill 的写法。
 
 ### 5.2 后续收益评估口径
 
