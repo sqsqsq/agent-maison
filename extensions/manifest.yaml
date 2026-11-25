@@ -1,0 +1,20 @@
+# 独立使用时分发完整 skills/ux-behavior-spec/；调用入口在其 SKILL.md。
+# 安装到既有宿主：复制 skills/ux-behavior-spec/ 到 paths.extension_dir（通常为
+# doc/extensions/）下同一相对位置；只将下方 Skill ID 去重合并到 provides.skills。
+# 保留宿主清单身份、已有 Skill（如 story）及其他配置。全新宿主按 /extension init 建立清单。
+#
+# 设计前接入：检查当前生效的 component-design knowledge。
+# - 无宿主声明且无生效的 profile 回退时，将 provides.skill_assets.component-design.knowledge
+#   指向扩展根相对路径 skills/ux-behavior-spec/reference/intake.md。
+# - 已有宿主知识文件时，保留文件与声明。在文件中追加一条相对链接，指向上面的 intake.md。
+# - 只有 profile 回退时，在宿主扩展内建一个指针文件，同时引用原生效的 profile 资产和 intake.md，
+#   再用同一 knowledge 键指向指针文件。保留两份原资料和原 profile 配置。
+# 重复接入时沿用已有指针。按 framework/skills/project/extension/SKILL.md 的原流程，
+# 在宿主的 framework/harness 对宿主根执行 extension verify，再 materialize，再 inspect。
+schema_version: "1.1"
+name: maison-optional-extensions
+version: "0.1.0"
+description: 可选 UX 行为交接能力的实例扩展源码
+provides:
+  skills:
+    - ux-behavior-spec

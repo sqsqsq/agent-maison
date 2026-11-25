@@ -12,6 +12,8 @@
 
 **发布内容**：`skills/` `specs/` `harness/` `profiles/` `agents/` `workflows/` `templates/` `docs/`、`README.md`、`MIGRATION.md`、根 `package.json`（经 sanitize 后）
 
+**可独立分发的可选实例扩展（不进主包）**：仓根 `extensions/` 按宿主 `doc/extensions/` 的维度组织。完整 Skill 目录可单独使用，宿主按清单注释选装。
+
 **开发工具（不进发布件）**：`.cursor/` `.claude/` `.codex/` `openspec/`、根 `scripts/`、`AGENTS.md`、`RELEASE-NOTES-v*.md`、`.gitignore`、`.npmignore`
 
 **排除规则 SSOT**：[`scripts/release-excludes.json`](scripts/release-excludes.json)

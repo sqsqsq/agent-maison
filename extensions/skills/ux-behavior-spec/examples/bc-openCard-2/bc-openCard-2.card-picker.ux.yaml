@@ -1,0 +1,89 @@
+format_version: "0.2"
+feature: bc-openCard-2
+screen: bank_card_picker
+title: 所选银行的名称
+presentation: full_screen
+flow: bc-openCard-2.flow.ux.yaml
+visual:
+  source: fig4
+  observation: observed
+  size_px: [1320, 2120]
+  bbox_format: normalized_xywh
+  depicted_state:
+    card_options: 图中有一张候选卡且已被选中。
+    consent_checkbox: 已勾选
+entry: {transition: open_card_picker}
+
+data:
+  cards:
+    source: 当前银行、当前卡种下的候选银行卡
+    provider: local_mock
+    count_per_bank_and_type: {min: 1, max: 2}
+    display_number: 仅露出前四位和后四位，中间用星号遮挡。
+    business_value: 所选卡的完整卡号
+    evidence: ["prd:22", "prd:32", fig4]
+state:
+  selected_card:
+    allowed_values_from: cards
+    max_selected: 1
+    initial: {status: open, question: 首次进入时，单卡或多卡分别是否预选？}
+    evidence: ["prd:22", fig4]
+  consent:
+    initial: {status: open, question: 首次进入时是否默认勾选协议？}
+    evidence: ["prd:22", fig4]
+
+elements:
+  back_button:
+    name: 返回
+    bbox: [0.036, 0.067, 0.091, 0.056]
+    role: button
+    on_tap: {question: return_from_picker}
+    evidence: [fig4, "prd:32"]
+  bank_title:
+    name: 银行名称
+    bbox: [0.144, 0.078, 0.285, 0.036]
+    role: text
+    content: 所选银行的名称
+    evidence: ["prd:32", fig4]
+  card_options:
+    name: 候选银行卡
+    bbox: [0.047, 0.225, 0.906, 0.099]
+    role: single_select
+    items_from: cards
+    row: {leading: 银行标志, content: 脱敏卡号, trailing: 单选标记}
+    on_select: {effect: set, state: selected_card, value: 所选的完整卡片}
+    evidence: ["prd:22", "prd:32", fig4]
+  consent_checkbox:
+    name: 协议勾选框
+    bbox: [0.047, 0.340, 0.048, 0.030]
+    role: checkbox
+    on_toggle: {effect: set, state: consent, value: 用户的勾选状态}
+    evidence: ["prd:22", fig4]
+  agreement_copy:
+    name: 协议文案
+    bbox: [0.109, 0.340, 0.812, 0.072]
+    role: text
+    documents_open_on_tap: false
+    copy_ref: fig4
+    evidence: ["prd:32", fig4]
+  next_button:
+    bbox: [0.350, 0.455, 0.300, 0.060]
+    role: button
+    label: 下一步
+    advance_when: [已选定一张候选卡, 已同意协议]
+    on_tap: {transition: open_sms}
+    evidence: ["prd:22", "prd:32", "prd:34", fig4]
+
+acceptance_examples:
+  - id: select_second_masked_card
+    scenario: "05"
+    given: 同一银行和卡种有两张候选卡，卡号前四位或后四位可区分。
+    when: {element: card_options, select: 第二张卡}
+    then: 两行的卡号都只显示前四后四，只有第二张被选中，当前仍是具体选卡页。继续办理时使用选定的第二张卡。
+    evidence: ["prd:22", "prd:32"]
+  - id: consent_controls_advancing
+    scenario: "06"
+    given: 已选一张卡，用操作将协议置为未勾选。
+    when: {elements: [consent_checkbox, next_button], action: 先尝试下一步，再勾选并点下一步。}
+    then: 前一次停留在本页，后一次打开所选卡的验证码半模态。
+    evidence: ["prd:22", "prd:34"]

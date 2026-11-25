@@ -1,0 +1,56 @@
+format_version: "0.2"
+feature: bc-openCard-2
+screen: card_result
+title: null
+presentation: full_screen
+flow: bc-openCard-2.flow.ux.yaml
+visual:
+  source: fig6
+  observation: observed
+  size_px: [1320, 2172]
+  bbox_format: normalized_xywh
+  depicted_state:
+    result_summary: {outcome: success, title: 添卡成功}
+entry: {transition: record_card}
+
+navigation:
+  back_arrow_visible: false
+  left_edge_swipe: stay
+  system_back: stay
+  only_exit_element: done_button
+  evidence: ["prd:26", "prd:36", fig6]
+elements:
+  result_summary:
+    name: 结果图标与提示
+    bbox: [0.198, 0.145, 0.604, 0.181]
+    role: status
+    source: 所选卡本次写入的实际结果
+    changes_with_result: [图标, 主文案, 提示小字]
+    failure_appearance: {status: open, question: 失败态的具体图标和逐字文案是什么？}
+    evidence: ["prd:24", "prd:26", "prd:36", fig6]
+  guide_image:
+    name: 支付引导插画
+    bbox: [0.324, 0.375, 0.419, 0.336]
+    role: illustration
+    appearance: 按参考图近似展示引导插画
+    evidence: ["prd:36", fig6]
+  nfc_activation:
+    name: 原图中的激活 NFC 区域
+    bbox: [0.036, 0.765, 0.928, 0.108]
+    scope: excluded
+    reason: 图 6 显示激活 NFC 区域，页面说明第 4 项明确本期省略。
+    evidence: ["prd:36", fig6]
+  done_button:
+    bbox: [0.036, 0.884, 0.928, 0.055]
+    role: button
+    label: 完成
+    on_tap: {transition: finish}
+    evidence: ["prd:26", "prd:36", fig6]
+
+acceptance_examples:
+  - id: result_follows_write_outcome
+    scenario: "10"
+    given: 分别以写入成功和写入失败进入本页。
+    when: {elements: [result_summary, nfc_activation, done_button], action: 查看图标、主文案和提示，再尝试左侧滑和系统返回，然后点完成。}
+    then: 两次展示分别表达本次成功或失败，两次均无返回箭头和 NFC 激活区域。侧滑和系统返回均停在结果页，点完成才退出本轮。
+    evidence: ["prd:26", "prd:36"]

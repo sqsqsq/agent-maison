@@ -1,0 +1,14 @@
+format_version: "0.2"
+feature: sample-feature
+title: 示例流程
+sources:
+  prd: 需求.md
+screens:
+  sample_screen: sample-screen.ux.yaml
+  confirmation_screen: confirmation-screen.ux.yaml
+transitions:
+  open_confirmation:
+    from_element: sample_screen.confirm_button
+    to: confirmation_screen
+    carry: [当前选择]
+    evidence: ["prd:3"]

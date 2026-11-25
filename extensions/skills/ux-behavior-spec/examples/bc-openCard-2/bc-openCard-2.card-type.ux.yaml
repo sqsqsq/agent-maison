@@ -1,0 +1,114 @@
+format_version: "0.2"
+feature: bc-openCard-2
+screen: card_type_sheet
+title: 选择卡类型
+presentation: bottom_sheet
+
+flow: bc-openCard-2.flow.ux.yaml
+# bbox 对应原图左上角 x、y、宽、高，四个值均为 0 到 1 的比例。
+visual:
+  source: fig3
+  observation: observed
+  size_px: [1320, 2120]
+  bbox_format: normalized_xywh
+  depicted_state:
+    card_type_options: {selected_type: debit}
+entry: {transition: pick_bank}
+
+data:
+  bank:
+    source: 上一页选中的银行记录
+    provider: local_mock
+    evidence: ["prd:30"]
+  supported_types:
+    source: 当前银行 mock 记录中的支持卡种
+    default_mock_values: [debit, credit]
+    evidence: ["prd:20", "prd:30"]
+  card_type_labels:
+    source: static_copy
+    value: {debit: 储蓄卡, credit: 信用卡}
+    evidence: [fig3, "prd:30"]
+state:
+  selected_type:
+    allowed_values_from: supported_types
+    max_selected: 1
+    initial: {status: open, owner: 产品与设计, question: 有两个卡种时默认选哪项？只有一个时是否自动选中？}
+    evidence: ["prd:20", fig3]
+
+elements:
+  bank_header:
+    name: 银行标志与名称
+    bbox: [0.036, 0.492, 0.928, 0.079]
+    group: bank_surface
+    display: {leading: 所选银行的标志, title: 所选银行的名称}
+    evidence: [fig3, "prd:30"]
+  card_type_options:
+    name: 卡种选项
+    bbox: [0.036, 0.571, 0.928, 0.152]
+    group: bank_surface
+    role: single_select
+    items_from: supported_types
+    row: {leading: 当前卡种的显示文案, trailing: radio, divider: line}
+    checked_when: {equals: [item, selected_type]}
+    on_select: {effect: set, state: selected_type, value: item}
+    evidence: [fig3, "prd:20", "prd:30"]
+  authorization_notice:
+    name: 实名信息授权说明
+    bbox: [0.036, 0.739, 0.928, 0.042]
+    role: text
+    copy_ref: fig3
+    recipient_bank_name: {status: inferred, from: 所选银行的名称}
+    evidence: [fig3, "prd:30"]
+  quick_pay_terms:
+    bbox: [0.144, 0.819, 0.221, 0.021]
+    label: 快捷支付服务协议
+    role: text
+    on_tap: {effect: none}
+    evidence: [fig3, "prd:30"]
+  unionpay_terms:
+    bbox: [0.390, 0.819, 0.330, 0.021]
+    label: 银联无卡自助消费授权协议
+    role: text
+    on_tap: {effect: none}
+    evidence: [fig3, "prd:30"]
+  continue_button:
+    bbox: [0.240, 0.881, 0.520, 0.057]
+    label: 同意并继续
+    role: button
+    enabled_when: {value: selected_type, is_member_of: supported_types}
+    on_tap: {transition: open_card_picker}
+    return_question: return_from_picker
+    evidence: [fig3, "prd:20", "prd:32", "prd:40", fig4]
+  close_button:
+    bbox: [0.872, 0.412, 0.092, 0.057]
+    label: 关闭
+    role: button
+    on_tap: {status: inferred, effect: dismiss, back_to: 发起半模态的页面}
+    evidence: [fig3]
+
+# 可独立核对的业务样例。待定默认值及仅从图上推断的行为不参与本组判定。
+acceptance_examples:
+  - id: only_supported_types_are_visible
+    scenario: "01"
+    given: {supported_types: [credit], entries: [add_bank_card, all_banks]}
+    when: 从两个入口分别选中该银行
+    then: {screen: card_type_sheet, element: card_type_options, visible_options: [credit], applies_to_both_entries: true}
+    evidence: ["prd:18", "prd:20", "prd:30"]
+  - id: switching_type_keeps_sheet_open
+    scenario: "02"
+    given: {supported_types: [debit, credit]}
+    when: {element: card_type_options, select_in_order: [debit, credit]}
+    then: 每次只选中当前卡种并停留在半模态。
+    evidence: ["prd:20", "prd:32"]
+  - id: both_agreements_are_display_text
+    scenario: "03"
+    given: {screen: card_type_sheet}
+    when: {tap_each: [quick_pay_terms, unionpay_terms]}
+    then: 两次点按后都停留在当前半模态，无协议页或弹层出现。
+    evidence: ["prd:30"]
+  - id: continue_opens_matching_cards
+    scenario: "04"
+    given: 备有不同银行的储蓄卡和信用卡，已选招商银行的信用卡。
+    when: {tap: continue_button}
+    then: {screen: bank_card_picker, title: 招商银行, visible_cards: 仅招商银行的信用卡}
+    evidence: ["prd:20", "prd:32"]
