@@ -200,6 +200,7 @@ export function dispatchRequestTargetProbe(
   projectRoot: string,
   tests: readonly string[],
   writes: readonly string[] = [],
+  inferCasesFromWrites = false,
 ): RequestTargetProbe {
   const empty = { gaps: [], registrationFiles: [], rejectedWrites: [] };
   const key: CapabilityKey = phase === 'ut' ? 'ut.run' : 'device_test.run';
@@ -218,7 +219,7 @@ export function dispatchRequestTargetProbe(
   if (mod.provider && !mod.provider.exports.includes('inspectRequestTargets')) return empty;
   const fn = mod['inspectRequestTargets'];
   if (typeof fn !== 'function') return empty;
-  const result = fn(projectRoot, tests, writes) as Partial<Record<keyof RequestTargetProbe, unknown>> | undefined;
+  const result = fn(projectRoot, tests, writes, inferCasesFromWrites) as Partial<Record<keyof RequestTargetProbe, unknown>> | undefined;
   const strings = (value: unknown): string[] => Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
   return { gaps: strings(result?.gaps), registrationFiles: strings(result?.registrationFiles), rejectedWrites: strings(result?.rejectedWrites),
     ...(Array.isArray(result?.caseFiles) ? { caseFiles: strings(result.caseFiles) } : {}) };

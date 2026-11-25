@@ -295,7 +295,7 @@ export function prepareAutomaticRequest(projectRoot: string, frameworkRoot: stri
   const tests = [...new Set(normalize(requestedTests.length ? requestedTests : originalTargets?.tests ?? []))];
   if (phase === 'ut' && !tests.length && allowed.length) {
     const profile = loadResolvedProfile(projectRoot, loadFrameworkConfig(projectRoot), frameworkRoot);
-    const inferred = dispatchRequestTargetProbe(profile, phase, projectRoot, [], allowed);
+    const inferred = dispatchRequestTargetProbe(profile, phase, projectRoot, [], allowed, true);
     tests.push(...(inferred.caseFiles ?? allowed));
   }
   const testSet = new Set([...tests, ...allowed]);

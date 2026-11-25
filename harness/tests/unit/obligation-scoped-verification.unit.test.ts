@@ -262,7 +262,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
   } },
   { name: 'probe and executor share one predicate', async run() {
     const utRun = require('../../../profiles/hmos-app/harness/providers/ut-run') as {
-      inspectRequestTargets: (root: string, tests: readonly string[]) => { gaps: string[] };
+      inspectRequestTargets: (root: string, tests: readonly string[], writes?: readonly string[]) => { gaps: string[]; rejectedWrites: string[] };
       runRequestTests: (ctx: unknown) => Promise<unknown>;
     };
     // 共用面只有「模块归属 / 载体」：源码内容校验（describe/it 数量、类名）不在其中，
@@ -274,6 +274,10 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
       fs.writeFileSync(path.join(root, 'entry/src/ohosTest/module.json5'), '{"module":{"name":"entry_test"}}');
       const missing = 'entry/src/ohosTest/ets/test/NotWrittenYet.test.ets';
       assert.deepStrictEqual(utRun.inspectRequestTargets(root, [missing]).gaps, [], '探测不得因文件不存在而报错或报 gap');
+      fs.writeFileSync(path.join(root, missing), "describe('unfinished group', () => {});\n");
+      const explicitlySelected = utRun.inspectRequestTargets(root, [missing], [missing]);
+      assert.deepStrictEqual(explicitlySelected.gaps, [], 'prepare 应允许显式选中待补齐的用例');
+      assert.deepStrictEqual(explicitlySelected.rejectedWrites, [], '施工前的组名及断言缺口留给执行时校验');
 
       // **行为断言**（不只看源码串）：同一个落点非法的目标，探测报 landing gap，执行器**用同一条文案拒绝**。
       const illegal = 'entry/src/test/Illegal.test.ets';

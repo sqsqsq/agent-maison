@@ -51,7 +51,19 @@ function hypiumClassNames(content: string): string[] {
   return [...content.matchAll(/\bdescribe\s*\(\s*(?:"((?:\\.|[^"\\\r\n])*)"|'((?:\\.|[^'\\\r\n])*)')/g)].map(match => match[1] ?? match[2]);
 }
 
-export function inspectRequestTargets(projectRoot: string, tests: readonly string[], writes: readonly string[] = []): RequestTargetProbe & {
+/** The old writer can infer a case when the caller supplied only write grants. */
+function isLegacyCaseCandidate(projectRoot: string, file: string, module: BuildProfileModuleEntry): boolean {
+  const absolute = path.resolve(projectRoot, file);
+  const stat = fs.statSync(absolute, { throwIfNoEntry: false });
+  if (!stat) return file.startsWith(path.posix.dirname(utModuleRegistrationPath(module.srcPath)) + '/') && file.endsWith('.test.ets');
+  if (!stat.isFile()) return false;
+  const content = fs.readFileSync(absolute, 'utf8');
+  return hypiumClassNames(content).length > 0 && extractUtItBlocks(content).length > 0;
+}
+
+export function inspectRequestTargets(
+  projectRoot: string, tests: readonly string[], writes: readonly string[] = [], inferCasesFromWrites = false,
+): RequestTargetProbe & {
   groups: Map<string, BuildProfileModuleEntry>;
   cases: Map<string, BuildProfileModuleEntry>;
   typedGaps: RequestTargetGap[];
@@ -71,7 +83,7 @@ export function inspectRequestTargets(projectRoot: string, tests: readonly strin
     } catch { /* The profile cannot assign a registration role to an unreadable or redirected file. */ }
     return undefined;
   };
-  for (const file of tests.length ? tests : writes) {
+  for (const file of inferCasesFromWrites ? writes : tests) {
     const matches = modules.filter(module => file.startsWith(`${module.srcPath}/src/ohosTest/`));
     if (matches.length !== 1) {
       typedGaps.push({ kind: 'landing', message: `capability:ut.run:${file} 不在任何已配置模块的 src/ohosTest/ 下（该 profile 的 UT 专项只执行该目录下的 Hypium 用例）` });
@@ -92,17 +104,7 @@ export function inspectRequestTargets(projectRoot: string, tests: readonly strin
       declaredEntries.set(file, module);
       continue;
     }
-    if (!tests.length) {
-      const absolute = path.resolve(projectRoot, file);
-      const stat = fs.statSync(absolute, { throwIfNoEntry: false });
-      if (stat) {
-        if (!stat.isFile()) continue;
-        const content = fs.readFileSync(absolute, 'utf8');
-        if (!hypiumClassNames(content).length || !extractUtItBlocks(content).length) continue;
-      } else if (!file.startsWith(path.posix.dirname(utModuleRegistrationPath(module.srcPath)) + '/') || !file.endsWith('.test.ets')) {
-        continue;
-      }
-    }
+    if (inferCasesFromWrites && !isLegacyCaseCandidate(projectRoot, file, module)) continue;
     cases.set(file, module);
     if (groups.has(module.name)) continue;
     groups.set(module.name, { name: module.name, srcPath: module.srcPath });
@@ -163,7 +165,8 @@ export async function runRequestTests(ctx: RequestCheckContext) {
   if (!groups.size) reject('no selected UT module');
   const selection = resolveProductSelection({ projectRoot: ctx.projectRoot, purpose: 'ut' });
   if (!selection.product) reject(summarizeUnresolvedCause(selection), 'project_build_environment_inconsistent');
-  const registrations = ctx.request.bindings.filter(binding => ctx.request.test_registrations?.includes(binding.path));
+  const registrationFiles = ctx.request.test_registrations;
+  const registrations = registrationFiles?.length ? ctx.request.bindings.filter(binding => registrationFiles.includes(binding.path)) : [];
   const inputs: ExecutionKeyInputs = {
     hap_sha256_full: null,
     derived_plan_sha256: sha256Text(JSON.stringify({ targets: [...inspected.cases.keys()], groups: [...groups.values()].map(group => ({ module: group.name, path: group.srcPath, classes: [...group.classes], count: group.count })), ...(registrations.length ? { registrations } : {}) })),
