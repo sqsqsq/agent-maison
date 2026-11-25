@@ -1152,12 +1152,20 @@ cases.push({
       fs.writeFileSync(blueprintPath, YAML.stringify(blueprint));
       const review = path.join(path.dirname(blueprintPath), 'component-blueprint.review.md');
       fs.writeFileSync(review, '# 设计\n## 方案\n正文\n<a id="reference"></a>\n## 技术与追溯参考\n参考\n');
+      const extensionRoot = path.join(directory, 'doc/extensions');
+      fs.mkdirSync(extensionRoot, { recursive: true });
+      const designText = '# 仅设计作者取得的完整宿主知识\n';
+      fs.writeFileSync(path.join(extensionRoot, 'intake.md'), designText);
+      fs.writeFileSync(path.join(extensionRoot, 'manifest.yaml'), YAML.stringify({
+        schema_version: '1.1', name: 'author-knowledge', provides: { skill_assets: { 'component-design': { knowledge: 'intake.md' } } },
+      }));
       for (const authorized of [false, true]) for (const kind of ['author', 'questioning'] as const) {
         const prompt = delivery.initialDesignAuthorInstruction({ projectRoot: directory, frameworkRoot, manifest,
           observation: { kind, blueprintPath, candidatesPath, issues: ['当前机器缺口'] }, autonomyAuthorized: authorized, deliveryRuns: [] });
         assert.equal(prompt.includes('本次控制入口已核实可信原请求'), authorized, 'default never and goal mode must not supply authority');
         for (const line of renderDesignAuthorityBoundary(kind)) assert.equal(prompt.includes(line), authorized);
         assert.equal(prompt.includes('§9 自动决议'), authorized);
+        assert.equal(prompt.includes(designText), kind === 'author');
         if (kind === 'questioning') {
           assert(!prompt.includes(requirement), 'first reader receives source locations, not original requirement text');
           assert(prompt.includes('doc/requirement.md') && prompt.includes('正文阅读后'));
@@ -1176,6 +1184,7 @@ cases.push({
         assert(prompt.includes('本次控制入口已核实可信原请求') && prompt.includes('§9 自动决议'));
         assert(prompt.includes('留痕只记入当前写集内既有设计材料，不另写phase账本'));
         assert(prompt.includes('只在本次签发写集内完成'));
+        assert(!prompt.includes(designText));
         assert(!prompt.includes('可补节点、选型、关系') && !prompt.includes('原文有不同表述时'));
       }
       const runDir = path.join(directory, manifest.report_dir);

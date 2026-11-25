@@ -22,6 +22,7 @@ import { resolveProbeFrameworkRoot } from '../repo-layout';
 import { deriveContentImpact } from './utils/content-impact';
 import { renderBlueprintReviewMarkdown } from './utils/blueprint-review-projection';
 import { loadFrameworkConfig } from '../config';
+import { assembleKnowledge, renderKnowledge } from './utils/knowledge-context';
 import { inspectBlueprintReview, materializeBlueprintReview } from './utils/blueprint-review-materialization';
 import { computeBlueprintReaderGuideSourceDigest, inspectBlueprintReaderGuide } from './utils/blueprint-reader-guide';
 import {
@@ -43,6 +44,7 @@ interface CliArgs {
   json?: boolean;
   'write-review'?: boolean;
   'reader-guide-digest'?: boolean;
+  'design-knowledge'?: boolean;
   'session-ref'?: string;
   'request-file'?: string;
   'report-dir'?: string;
@@ -247,19 +249,34 @@ export function prepareCanonicalBlueprintSource(projectRoot: string, blueprintId
 function main(): void {
   const args = minimist<CliArgs>(process.argv.slice(2), {
     string: ['project-root', 'blueprint', 'ref', 'materialization', 'projection', 'feedback', 'session-ref', 'request-file', 'report-dir', 'framework-root', 'requirement-source', 'target'],
-    boolean: ['json', 'write-review', 'reader-guide-digest', 'prepare-source'],
+    boolean: ['json', 'write-review', 'reader-guide-digest', 'design-knowledge', 'prepare-source'],
     default: { 'project-root': process.cwd(), json: false },
   });
   if (!args.blueprint) {
     console.error('用法：check-component-blueprint --project-root <root> --blueprint <blueprint-id> [--ref <json>]'
       + ' [--session-ref <native>#<user-id> | --request-file <component-design request>] [--report-dir <host-relative-dir>] [--target <file>] [--requirement-source <file>] [--prepare-source]'
-      + ' [--reader-guide-digest | --write-review | --materialization <path> | --projection <path> | --feedback <path>] [--json]');
+      + ' [--design-knowledge | --reader-guide-digest | --write-review | --materialization <path> | --projection <path> | --feedback <path>] [--json]');
     process.exit(2);
   }
   let prepared: ReturnType<typeof prepareDesignRequest> | undefined;
   let context: ComponentBlueprintValidationContext = {};
   const preparation = createDesignPreparationWrite();
   try {
+    if (args['design-knowledge']) {
+      if (args['write-review'] || args['reader-guide-digest'] || args.materialization || args.projection || args.feedback || args.ref
+        || args['session-ref'] || args['request-file'] || args['prepare-source'] || args['report-dir'] || args['requirement-source'] || args.target) {
+        throw new Error('--design-knowledge 是设计准备的独立只读模式。');
+      }
+      const projectRoot = path.resolve(args['project-root']!);
+      const canonicalPath = componentBlueprintPath(projectRoot, args.blueprint);
+      const frameworkRoot = args['framework-root'] ?? resolveProbeFrameworkRoot(projectRoot, __dirname);
+      const knowledge = assembleKnowledge({ projectRoot, frameworkRoot, subject: 'component-design', role: 'author' }, 'design-knowledge');
+      console.log(args.json ? JSON.stringify({ canonical_path: canonicalPath, knowledge }, null, 2)
+        : `蓝图位置：${canonicalPath}
+
+${renderKnowledge(knowledge)}`);
+      return;
+    }
     if (args['reader-guide-digest']) {
       if (args['write-review'] || args.materialization || args.projection || args.feedback || args.ref) throw new Error('--reader-guide-digest 是独立只读模式，不能与其它模式混用。');
       const loaded = loadCanonicalBlueprint(args['project-root']!, args.blueprint);

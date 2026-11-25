@@ -49,6 +49,16 @@ description: Create or continue component design using the unified request envel
 
 本节取代 M7“每项正式需求一律完整交接/不设档位”的现行适用范围，M7 历史裁决和已完成产物不改写。只使用同一蓝图协议，不恢复 lite 或新增可手填档位状态。
 
+## 设计作者的输入与交回位置
+
+新写或修订蓝图时，设计作者在 P1 事实发现和写作前取得本次生效的设计知识。受管初设已随作者指令交入时直接消费。直接调用时从 `framework/harness` 运行只读准备命令，使用本次的稳定 `blueprint_id`：
+
+```bash
+npm run check:component-blueprint -- --project-root "<宿主根>" --blueprint "<blueprint-id>" --design-knowledge --json
+```
+
+消费 `knowledge` 中的正文和与本次有关的引用。正文超出预算时按返回路径读原文。配置不可用时报告原诊断，两处均无可选资产时按原流程继续。把本次蓝图草稿写入返回的 `canonical_path`，上游材料目录仅作读取；需要可读评审稿时沿既有 `--write-review` 投影。只读查看或独立质询沿原职责读取已有设计。
+
 ## 支持范围（诚实声明）
 
 当前**只有 `hmos-app` / App component profile 具备 design lens**。为其它 component type
@@ -86,7 +96,7 @@ npm run check:component-blueprint -- --project-root <宿主根> --blueprint <blu
 
 先读项目根 AGENTS.md（Claude 为 CLAUDE.md）的「component-design 设计前知识」，按配置路径打开 catalog、glossary、architecture 及相关模块 CodeGraph；无图回源码。由需求原文 term/alias 发现的候选须带易混项、反例和关联画像，字面命中不代替消歧，无命中继续探索完整索引。大文件按原路径分批读，未读完如实说明。
 
-**可选设计知识**：先查当前 `paths.extension_dir` 下 manifest 的 `provides.skill_assets.component-design.knowledge`；存在则按扩展根相对路径安全解析并打开（沿 extension loader 的 safeResolve，禁止逃出扩展根）。未声明才查当前 profile `skills/skill-assets.yaml` 的 `assets.component-design.knowledge`，按 [asset 协议](../../README.md#profile-skill-asset-protocol) 解析。两处均未声明＝合法无此资产，如实说明；已声明不可读须披露，不静默回退。直接调用本 Skill 也执行此步骤，不能只依赖先前物化的 AGENTS 导航。原生知识、此文件及其引用原文仍走既有事实/权威链，不另存契约副本。
+可选设计知识沿[设计作者的准备入口](#设计作者的输入与交回位置)消费。装配按当前 extension 声明优先、profile 回退的 [asset 协议](../../README.md#profile-skill-asset-protocol) 解析。原生知识、设计知识及其引用原文沿既有事实与权威链使用。
 
 调用 [P1 蓝图内部工作流](../../reference/app-component-blueprint-workflow.md) 的既有流程，含组件资产读取、live 检索、decision 与 optional provider 可用性裁决；CU design_refs 引用选型，Feature 仅投影。术语确认（`spec.terminology`，写 `term:` 事实）与架构影响决策（`architecture_impact`，一条一项）在此裁决一次，spec/plan 只投影；changed development 节点须填获准模块 `module`。
 current-facts-discovery 前解析 `paths.conventions`（缺失用框架默认值）；文件存在时完整读取，只将适用条目交给既有 fact/provenance/decision 链。`conventions-knowledge` 未启用记 `available=false + not_applicable`，显式配置却不可读记 `unknown|degraded`，不得声称已消费。
