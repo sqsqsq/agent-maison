@@ -36,7 +36,7 @@ review 等待本职责修测试时，依真实 coding 输入和 requires/control
 正式 UT 有上游缺口时在既有 audit 的 YAML 之外写同款问题表，按[上游问题与拒修返回](../../reference/coding-workflow-detail.md#可选上游问题与拒修返回)引用当前证据、经原 verifier 核实后交 owner；保留真实 FAIL，收到拒修理由后修自身测试或补真实新事实。
 先读 `framework/profiles/<project_profile.name>/skills/business-ut/profile-addendum.md`。hmos 当前执行已配置模块 `src/ohosTest/` 下的 Hypium 用例；在首次写入前完成自动/显式载体准备，并直接消费返回的 `request_sha256`、`baseline`、`bindings`、`reportDir`、`factsPath`、`gaps`，不手算身份/哈希。
 测试载体或 `build-profile.json5` 配置缺失时先判断原授权：已覆盖所需工程改动就继续；未覆盖才先向用户说明具体改动与原因，得到认可后再做。能力未提供或缺口尚未解决时如实停在该处，不改投其它目录、不用其它模块的通过代替。
-载体处理后重新 prepare，再按返回落点写测试与套件注册；测试写入受 `allowed_test_writes` 限制。prepare 不执行测试，成功不能当作 UT PASS。
+载体处理后重新 prepare，用 `--test-target` 选择实际用例，按 profile 指引显式申请必要的同模块注册入口写入。只写返回的 `allowed_test_writes`，并检查注册入口和用例的绑定。预期来源逐条登记在实际用例上。prepare 只完成输入准备，UT PASS 以实际执行为准。
 任何需要编译或跑测试的校验一律经框架执行器（纯编译用 `npm run compile`，测试用专项 request CLI 或正式 `harness-runner --phase`）；不裸调 hvigor，也不引导用户去运行宿主自带脚本。确认工具链本身跑 `check-personal-setup.ts --json --ensure`；失败诊断先读同次 `hvigor-*.meta.json` 的 `envProbe`（`DEVECO_SDK_HOME_PATH` 本次实际取值 / `JAVA_HOME` / 变量**是否设置**——布尔为 true 不等于框架派生成功）与 `command`、`exitCode`，再读构建日志正文，重新解析出来的值只作辅助且须标为「当前值」，安装目录扫描第三顺位。
 需要真机执行时遵守 [device-policy-gate](../../reference/device-policy-gate.md)；设计用例不触发设备门。既有权限已经覆盖的动作不重复确认，PIN 不进入对话。
 失败时按 [编译与运行恢复](../../reference/business-ut-workflow-detail.md#step-75-ut-编译闭环) 定位测试/环境责任；独立请求仍使用原 request 命令，正式阶段才用 Feature 命令。真实产品缺陷保留失败，交实现职责；不改断言洗绿、不擅改产品。

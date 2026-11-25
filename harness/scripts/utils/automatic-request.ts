@@ -11,6 +11,19 @@ import { prepareBlueprintSourceItems } from './blueprint-discovery';
 import type { CurrentScopeItem } from './blueprint-requirement-traceability';
 import type { InitialDesignGoalManifest } from './goal-manifest';
 import type { ScopeUserControlSource } from './execution-scope';
+import type { AcceptanceSpec } from './types';
+import { collectRequestDeviceAcceptance } from './acceptance-layering';
+import { loadFrameworkConfig } from '../../config';
+import { loadResolvedProfile } from '../../profile-loader';
+import { dispatchRequestTargetProbe } from '../../capability-registry';
+
+/** Project original request obligations from the same acceptance and current product impact. */
+export function requestTestingScope(projectRoot: string, intake: RequestIntake | undefined, acceptance: AcceptanceSpec, acceptanceIds: readonly string[]) {
+  const excluded = intake?.control.exempt || intake?.control.excluded.includes('testing') || false;
+  const items = collectRequestDeviceAcceptance(acceptance, acceptanceIds);
+  const impacts = intake ? deriveContentImpact(projectRoot, intake).filter(item => item.verification_family === 'testing') : [];
+  return { excluded, items, impacts, required: !excluded && (items.length > 0 || impacts.length > 0) };
+}
 
 /** Canonical original Goal is an existing requirement source, never a second mutable request. */
 export function readDesignGoalOrigin(root: string, reference: string): { manifest: InitialDesignGoalManifest; reference: string; controls: ScopeUserControlSource[] } {
@@ -82,7 +95,7 @@ export function createDesignPreparationWrite(): { write: DesignPreparationWrite;
     },
   };
 }
-function retainRequestFailures(reportDir: string): void {
+export function retainRequestFailures(reportDir: string): void {
   for (const name of ['summary.json', 'script-report.json']) {
     const original = path.join(reportDir, name);
     if (!fs.existsSync(original)) continue;
@@ -96,7 +109,7 @@ function retainRequestFailures(reportDir: string): void {
 export interface DesignRequestOptions {
   projectRoot: string; frameworkRoot: string; blueprintId: string;
   sessionRef?: string; requestFile?: string; reportDir?: string; targets?: string[];
-  requirementSources?: string[]; readonly?: boolean;
+  requirementSources?: string[]; readonly?: boolean; captureInitialDirty?: boolean;
   write?: DesignPreparationWrite;
   originRequest?: string;
 }
@@ -123,13 +136,13 @@ export function prepareDesignRequest(options: DesignRequestOptions): PreparedDes
   let intake: RequestIntake | undefined, originGap = location.gap;
   if (location.sessionRef) try {
     intake = readRequestIntake({ projectRoot: root, frameworkRoot: options.frameworkRoot, sessionRef: location.sessionRef,
-      explicitTargets: options.targets ?? (previous?.targets as { files?: string[] } | undefined)?.files,
-      previous: previous?.intake_context as RequestIntake | undefined });
+      explicitTargets: options.targets ?? (previous?.intake_context as RequestIntake | undefined)?.explicit_targets ?? (previous?.targets as { files?: string[] } | undefined)?.files,
+      previous: previous?.intake_context as RequestIntake | undefined, captureInitialDirty: options.captureInitialDirty });
     if (!intake.targets.length && intake.source_reads.length) intake = readRequestIntake({ projectRoot: root, frameworkRoot: options.frameworkRoot,
       sessionRef: intake.session_ref, explicitTargets: intake.source_reads.filter(file => {
         const { isProductTarget } = require('./request-intake') as typeof import('./request-intake');
         return isProductTarget(root, options.frameworkRoot, file);
-      }), previous: previous?.intake_context as RequestIntake | undefined });
+      }), previous: intake });
   } catch (error) { originGap = String(error); }
   const fallbackId = crypto.createHash('sha256').update(options.blueprintId).digest('hex').slice(0, 16);
   const requestedDir = options.reportDir ?? (existingFile ? path.relative(root, path.dirname(existingFile)) : `doc/reports/request/${origin ? 'goal-' + crypto.createHash('sha256').update(origin.reference).digest('hex').slice(0, 16) : intake ? intakeIdentity(intake) : 'unverified-' + fallbackId}/component-design`);
@@ -141,7 +154,7 @@ export function prepareDesignRequest(options: DesignRequestOptions): PreparedDes
     if (previous.intake_context) {
       if (!intake) throw new Error('existing design request origin cannot be replaced by an unverified request');
       intake = readRequestIntake({ projectRoot: root, frameworkRoot: options.frameworkRoot, sessionRef: intake.session_ref,
-        explicitTargets: options.targets ?? (previous.targets as { files?: string[] } | undefined)?.files, previous: previous.intake_context as RequestIntake });
+        explicitTargets: options.targets ?? (previous.intake_context as RequestIntake).explicit_targets ?? (previous.targets as { files?: string[] } | undefined)?.files, previous: previous.intake_context as RequestIntake });
     }
   }
   if (!origin && typeof previous?.origin_request === 'string') origin = readDesignGoalOrigin(root, previous.origin_request);
@@ -162,7 +175,10 @@ export function prepareDesignRequest(options: DesignRequestOptions): PreparedDes
     if (!fs.existsSync(file) || !fs.statSync(file).isFile()) { sourceGaps.push(`需求原始输入尚不可读：${relative}`); continue; }
     if (!options.readonly && nativeInput && fs.readFileSync(file, 'utf8') !== nativeInput.text) publish(file, nativeInput.text);
     if (generated && intake && !nativeUsers.some(message => fs.readFileSync(file, 'utf8') === message.text)) sourceGaps.push(`稳定原文与已核user不一致：${relative}`);
-    else if (!generated && intake && !origin && !intake.source_reads.includes(relative) && !intake.user.text.includes(relative)) sourceGaps.push(`需求文件尚无本请求原文或调研关联：${relative}`);
+    else if (!generated && intake && !origin && !intake.source_reads.includes(relative) && !intake.user.text.includes(relative)) {
+      const related = intake.source_results?.filter(result => result.paths.includes(sourcePath)).map(result => result.detail) ?? [];
+      sourceGaps.push(`需求文件尚无本请求原文或调研关联：${relative}${related.length ? `（${related.join('；')}）` : ''}`);
+    }
     sourceRefs.push(relative);
   }
   // Preserve exact, immutable native input bytes; later user corrections add their own input,
@@ -225,11 +241,16 @@ export function bindDesignRequestBlueprint(options: { projectRoot: string; frame
 /** Only the original request JSON persists intake; no entry ticket, Feature or external state. */
 export function prepareAutomaticRequest(projectRoot: string, frameworkRoot: string, args: Record<string, unknown>, design?: { requestFile: string; blueprint?: PreparedRequest['blueprint']; sourceRefs: string[]; intake?: RequestIntake; requestedResult?: string }): { requestFile: string; reportDir: string } {
   if (!['review', 'ut', 'testing'].includes(String(args.phase))) throw new Error('automatic request supports review/ut/testing');
+  const requestedInputs = {
+    ...(typeof args.cases === 'string' ? { cases: args.cases } : {}),
+    ...(args.phase === 'testing' && typeof args['test-plan'] === 'string' ? { test_plan: args['test-plan'] } : {}),
+  };
   const targets = list(args.target);
   const location = resolveRequestSessionReference(typeof args['session-ref'] === 'string' ? args['session-ref'] : undefined, projectRoot);
   let intake: RequestIntake | undefined;
   let sourceGap = location.gap;
-  if (location.sessionRef) try { intake = readRequestIntake({ projectRoot, frameworkRoot, sessionRef: location.sessionRef, explicitTargets: targets }); }
+  if (location.sessionRef) try { intake = readRequestIntake({ projectRoot, frameworkRoot, sessionRef: location.sessionRef,
+    explicitTargets: targets.length ? targets : design?.intake?.explicit_targets, previous: design?.intake, captureInitialDirty: args['prepare-request'] === true }); }
   catch (error) { sourceGap = String(error); }
   if (!intake) {
     if (!targets.length && !list(args['test-target']).length) throw new Error('自动request需要原生 --session-ref 或局部显式 --target/--test-target；来源未核不能签完整通过');
@@ -240,7 +261,7 @@ export function prepareAutomaticRequest(projectRoot: string, frameworkRoot: stri
     const file = realProjectPath(projectRoot, path.relative(projectRoot, path.join(reportDir, 'request.json')), 'local request');
     const request = { schema_version: '1.0', phase, requested_result: '仅验证本次显式目标；原生用户来源、档位和完整diff归属未核',
       targets: { files: targets, tests: list(args['test-target']) }, baseline: { head: 'WORKTREE' },
-      inputs: typeof args.cases === 'string' ? { cases: args.cases } : {}, allowed_test_writes: list(args['allow-test-write']),
+      inputs: requestedInputs, allowed_test_writes: list(args['allow-test-write']),
       origin_gap: `${sourceGap ?? '客户端没有可消费的原生原件'}：局部能力结果保留，不签完整diff已对账或完整review PASS` };
     if (fs.existsSync(file)) {
       const old = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -252,7 +273,6 @@ export function prepareAutomaticRequest(projectRoot: string, frameworkRoot: stri
       const { prepareExplicitRequest } = require('./capability-resolution-entry-input') as typeof import('./capability-resolution-entry-input');
       prepareExplicitRequest({ projectRoot, frameworkRoot, phase, requestFile: path.relative(projectRoot, file), reportDir: path.relative(projectRoot, reportDir) });
     } catch (error) { if (old) fs.writeFileSync(file, old); else if (fs.existsSync(file)) fs.unlinkSync(file); throw error; }
-    retainRequestFailures(reportDir);
     return { requestFile: path.relative(projectRoot, file).replace(/\\/g, '/'), reportDir: path.relative(projectRoot, reportDir).replace(/\\/g, '/') };
   }
   const phase = String(args.phase);
@@ -262,21 +282,31 @@ export function prepareAutomaticRequest(projectRoot: string, frameworkRoot: stri
   if (fs.existsSync(file)) {
     previous = JSON.parse(fs.readFileSync(file, 'utf8'));
     if (!previous?.intake_context) throw new Error('自动request路径已有其它文件，不能覆盖');
-    intake = readRequestIntake({ projectRoot, frameworkRoot, sessionRef: intake.session_ref, explicitTargets: targets, previous: previous.intake_context as RequestIntake });
+    intake = readRequestIntake({ projectRoot, frameworkRoot, sessionRef: intake.session_ref,
+      explicitTargets: targets.length ? targets : design?.intake?.explicit_targets, previous: previous.intake_context as RequestIntake });
   }
   if (design?.intake) intake = { ...intake, control: design.intake.control, policy: design.intake.policy };
   if (intake.control.excluded.includes(phase)) throw new Error(`用户已明确排除${phase}，保留未执行，不以能力调用重加验证`);
+  if (phase === 'testing' && intake.control.exempt) throw new Error('本请求已明确豁免 Maison，未执行设备测试');
   const normalize = (files: string[]) => files.map(file => path.relative(projectRoot, realProjectPath(projectRoot, file, 'test target')).replace(/\\/g, '/'));
   const originalTargets = previous?.targets as { tests?: string[] } | undefined;
   const requestedTests = list(args['test-target']);
   const allowed = normalize(list(args['allow-test-write']).length ? list(args['allow-test-write']) : (previous?.allowed_test_writes as string[] | undefined) ?? []);
-  const tests = [...new Set([...normalize(requestedTests.length ? requestedTests : originalTargets?.tests ?? []), ...allowed])];
-  const testSet = new Set(tests);
+  const tests = [...new Set(normalize(requestedTests.length ? requestedTests : originalTargets?.tests ?? []))];
+  if (phase === 'ut' && !tests.length && allowed.length) {
+    const profile = loadResolvedProfile(projectRoot, loadFrameworkConfig(projectRoot), frameworkRoot);
+    const inferred = dispatchRequestTargetProbe(profile, phase, projectRoot, [], allowed);
+    tests.push(...(inferred.caseFiles ?? allowed));
+  }
+  const testSet = new Set([...tests, ...allowed]);
   const request = {
     schema_version: '1.0', phase, requested_result: design?.requestedResult ?? intake.user.text,
     targets: { files: intake.targets.filter(file => !testSet.has(file)), tests },
     baseline: { ...(intake.baseline.base ? { base: intake.baseline.base } : {}), head: 'WORKTREE' },
-    inputs: { ...((previous?.inputs as Record<string, string> | undefined) ?? {}), ...(typeof args.cases === 'string' ? { cases: args.cases } : {}) },
+    inputs: {
+      ...(phase === 'testing' && design?.blueprint ? { test_plan: path.relative(projectRoot, path.join(reportDir, 'test-plan.hylyre.md')).replace(/\\/g, '/') } : {}),
+      ...((previous?.inputs as Record<string, string> | undefined) ?? {}), ...requestedInputs,
+    },
     allowed_test_writes: allowed,
     intake_context: intake,
     ...(design ? { origin_request: path.relative(projectRoot, design.requestFile).replace(/\\/g, '/'), blueprint: design.blueprint, requirement_sources: design.sourceRefs } : {}),
@@ -292,37 +322,47 @@ export function prepareAutomaticRequest(projectRoot: string, frameworkRoot: stri
     if (old) fs.writeFileSync(file, old); else if (fs.existsSync(file)) fs.unlinkSync(file);
     throw error;
   }
-  retainRequestFailures(reportDir);
   return { requestFile: path.relative(projectRoot, file).replace(/\\/g, '/'), reportDir: path.relative(projectRoot, reportDir).replace(/\\/g, '/') };
 }
 
-/** Continue the original design request through the existing verification writer/provider. */
-export function prepareDesignVerificationRequest(projectRoot: string, frameworkRoot: string, args: Record<string, unknown>): { requestFile: string; reportDir: string } {
-  const file = realProjectPath(projectRoot, String(args['request-file']), 'design request');
+/** Reopen the verified original subject without writing a new request. */
+export function readDesignVerificationRequest(projectRoot: string, frameworkRoot: string, requestFile: string, options?: { phase?: string; targets?: string[] }) {
+  const file = realProjectPath(projectRoot, requestFile, 'design request');
   const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
   if (raw.phase !== 'component-design') throw new Error('original component-design request is required');
   const originalGoal = raw.origin_request ? readDesignGoalOrigin(projectRoot, raw.origin_request) : undefined;
   const blueprintId = raw.blueprint?.ref.blueprint_id ?? originalGoal?.manifest.feature;
   if (!blueprintId) throw new Error('original design request has no current design or original Goal');
-  const source = prepareDesignRequest({ projectRoot, frameworkRoot, blueprintId, requestFile: path.relative(projectRoot, file), readonly: true });
+  const source = prepareDesignRequest({ projectRoot, frameworkRoot, blueprintId, requestFile: path.relative(projectRoot, file), readonly: true, targets: options?.targets });
+  if (options?.phase === 'testing' && source.intake?.control.excluded.includes('testing')) throw new Error('用户已明确排除testing，本次未执行');
+  if (options?.phase === 'testing' && source.intake?.control.exempt) throw new Error('本请求已明确豁免 Maison，未执行设备测试');
   if (!source.intake || source.originGap) throw new Error(`original design source is not ready: ${source.originGap ?? 'missing native intake'}`);
   if (!['small', 'trivial'].includes(source.intake.policy.selected)) throw new Error('non-small or existing CU work must continue through its original design/Goal responsibility');
   if (source.intake.policy.selected === 'small' && !raw.blueprint) throw new Error('small request must bind its actual current blueprint');
   const { resolveComponentBlueprintRef } = require('./component-blueprint-path') as typeof import('./component-blueprint-path');
-  if (raw.blueprint && source.intake.policy.selected === 'small') resolveComponentBlueprintRef(projectRoot, raw.blueprint.ref, undefined, { requestIntake: source.intake, requestSourceItems: source.currentScopeItems });
+  const binding = source.intake.policy.selected === 'small' ? raw.blueprint as NonNullable<PreparedRequest['blueprint']> : undefined;
+  const blueprint = binding && resolveComponentBlueprintRef(projectRoot, binding.ref, undefined, { requestIntake: source.intake, requestSourceItems: source.currentScopeItems }).blueprint;
+  return { file, source, intake: source.intake, binding, blueprint, requestedResult: raw.requested_result as string };
+}
+
+/** Continue the original design request through the existing verification writer/provider. */
+export function prepareDesignVerificationRequest(projectRoot: string, frameworkRoot: string, args: Record<string, unknown>): { requestFile: string; reportDir: string } {
   const phase = String(args.phase);
+  const { file, source, intake, binding, requestedResult } = readDesignVerificationRequest(projectRoot, frameworkRoot, String(args['request-file']), { phase });
   return prepareAutomaticRequest(projectRoot, frameworkRoot, { ...args,
-    'session-ref': source.intake.session_ref, 'report-dir': typeof args['report-dir'] === 'string' ? args['report-dir'] : path.relative(projectRoot, path.join(source.reportDir, phase)) },
-  { requestFile: file, blueprint: source.intake.policy.selected === 'small' ? raw.blueprint : undefined, sourceRefs: source.sourceRefs, intake: source.intake, requestedResult: raw.requested_result });
+    'session-ref': intake.session_ref, 'report-dir': typeof args['report-dir'] === 'string' ? args['report-dir'] : path.relative(projectRoot, path.join(source.reportDir, phase)) },
+  { requestFile: file, blueprint: binding, sourceRefs: source.sourceRefs, intake, requestedResult });
 }
 
 /** Native author decisions plus current bytes actually read by the existing request parser. */
-export function materializeAutomaticFacts(prepared: PreparedRequest, projectRoot: string): void {
+export function materializeAutomaticFacts(prepared: PreparedRequest, projectRoot: string, resolvedInputs?: import('./capability-resolution').ResolvedPhaseInputs): void {
   const intake = prepared.intake_context;
   if (!intake && !prepared.origin_gap) return;
   if (fs.existsSync(prepared.factsPath) && fs.readFileSync(prepared.factsPath, 'utf8').includes(`request_sha256: ${prepared.request_sha256}`)) return;
   const files = [...new Set([...prepared.bindings.filter(binding => binding.exists).map(binding => binding.path), ...Object.entries(prepared.inputs).filter(([id, file]) => id !== 'review_report' && fs.existsSync(file)).map(([, file]) => path.relative(projectRoot, file).replace(/\\/g, '/'))])];
-  const observed = files.filter(file => prepared.sourceContents.some(source => source.path === file) || intake?.source_reads.includes(file));
+  const parsedInputs = new Set(Object.values(resolvedInputs?.values ?? {}).flatMap(input =>
+    input.state === 'resolved' ? input.binding.source_refs : []));
+  const observed = files.filter(file => parsedInputs.has(file) || prepared.sourceContents.some(source => source.path === file) || intake?.source_reads.includes(file));
   if (!observed.length) return;
   const record = { schema_version: '1.1', request_sha256: prepared.request_sha256, established_by: prepared.phase,
     ready_to_produce: files.every(file => observed.includes(file)), has_blocker_coverage_risk: false,
@@ -336,12 +376,12 @@ export function materializeAutomaticFacts(prepared: PreparedRequest, projectRoot
 export function automaticRequestChecks(intake: RequestIntake | undefined, projectRoot: string) {
   if (!intake) return [];
   const impacts = deriveContentImpact(projectRoot, intake);
-  const complete = !intake.gaps.length && !intake.attribution_unknown.length && intake.policy.selected !== 'unknown';
+  const complete = !intake.gaps.length && !intake.attribution_unknown.length && !intake.attribution_disclosures?.length && intake.policy.selected !== 'unknown';
   return [{ id: 'request_intake_reconciliation', category: 'structure' as const, severity: 'MINOR' as const,
     status: complete ? 'PASS' as const : 'WARN' as const,
-    description: '原请求来源、基线与内容对账（不是专项验证通过）',
-    details: JSON.stringify({ policy: intake.policy, gaps: intake.gaps, attribution_unknown: intake.attribution_unknown, content_impact: impacts,
-      }),
+    description: '原请求来源、基线与内容对账',
+    details: JSON.stringify({ policy: intake.policy, gaps: intake.gaps, attribution_unknown: intake.attribution_unknown,
+      attribution_disclosures: intake.attribution_disclosures, examined_paths: intake.targets, content_impact: impacts }),
     structured: { intake_context: intake, content_impact: impacts },
   }];
 }

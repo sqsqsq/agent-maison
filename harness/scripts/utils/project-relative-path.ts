@@ -135,7 +135,7 @@ export function realProjectPath(projectRoot: string, relative: string, label: st
   const safe = validateProjectRelativePath(projectRoot, relative, label);
   let parent = path.resolve(projectRoot, safe);
   const suffix: string[] = [];
-  while (!fs.existsSync(parent)) { suffix.unshift(path.basename(parent)); const next = path.dirname(parent); if (next === parent) throw new Error(`${label}: no existing ancestor`); parent = next; }
+  while (!fs.lstatSync(parent, { throwIfNoEntry: false })) { suffix.unshift(path.basename(parent)); const next = path.dirname(parent); if (next === parent) throw new Error(`${label}: no existing ancestor`); parent = next; }
   if (suffix.length && !fs.statSync(parent).isDirectory()) throw new Error(`${label}: parent is not a directory`);
   const actual = path.join(fs.realpathSync(parent), ...suffix);
   if (!isInsideProjectRoot(fs.realpathSync(projectRoot), actual)) throw new Error(`${label}: outside project through a link`);

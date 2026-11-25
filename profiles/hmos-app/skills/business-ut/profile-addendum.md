@@ -25,6 +25,10 @@
 
 正式路径取自 `contracts.yaml > modules[].package_path`，独立请求取自 prepare/target probe 的配置模块与授权测试目标。`cd framework/harness && harness-runner` 后 Write 前须 `cd <repo-root>`（见 `harness-cli-cwd.md` §2.5）。门禁：`harness_host_artifact_pollution`。
 
+专项 UT 用 `--test-target` 选择实际用例文件。需要补同模块 `src/ohosTest/ets/test/List.test.ets` 注册时，另传该文件的 `--allow-test-write`，并在 prepare 返回的授权列表确认后修改。注册入口导出 `testsuite` 并调用所选套件，注册字节参与输入核验。逐条登记预期来源和执行计数都针对实际用例。
+
+`describe` 的组名须是单引号或双引号包裹的字符串字面量。只允许 ASCII 字母、数字及 `._-`。例如 `bank_search_unit` 合法，`bank search unit` 中的空格会使专项执行失败。
+
 ### skill-assets.yaml 键
 
 本 skill 的 asset 键与相对路径**唯一声明**在机器清单 `framework/profiles/hmos-app/skills/skill-assets.yaml`（`assets.business-ut` 段）。根 `SKILL.md` 用 `` `profile-skill-asset:business-ut/<键>` `` 引用，解析规则见 `framework/skills/README.md` 的 “Profile skill asset protocol”。**本 addendum 不再罗列键与路径**，以清单为单一真相（SSOT），避免散文与清单漂移。

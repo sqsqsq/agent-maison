@@ -1513,6 +1513,10 @@ async function checkUtHvigorTestImpl(
   ];
 }
 
+export function utModuleRegistrationPath(modulePath: string): string {
+  return path.posix.join(modulePath.replace(/\\/g, '/'), 'src/ohosTest/ets/test/List.test.ets');
+}
+
 function checkTestRegistration(
   ctx: CheckContext,
   utFiles: Array<{ path: string }>,
@@ -1547,15 +1551,7 @@ function checkTestRegistration(
   const unregistered: string[] = [];
 
   for (const mod of contracts.modules) {
-    const listTestPath = path.join(
-      ctx.projectRoot,
-      mod.package_path,
-      'src',
-      'ohosTest',
-      'ets',
-      'test',
-      'List.test.ets',
-    );
+    const listTestPath = path.join(ctx.projectRoot, utModuleRegistrationPath(mod.package_path));
 
     if (!fs.existsSync(listTestPath)) {
       const modUtFiles = utFiles.filter(f => f.path.includes(mod.package_path));

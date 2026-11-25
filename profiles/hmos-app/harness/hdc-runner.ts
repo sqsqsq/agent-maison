@@ -1104,6 +1104,10 @@ export function installHap(hapPath: string): HdcInstallResult {
   return { ok, exitCode: ret.status ?? -1, durationMs: Date.now() - t0, output: out, diagnosis };
 }
 
+export function isHypiumClassName(name: string): boolean {
+  return /^[A-Za-z0-9_.-]+$/.test(name);
+}
+
 /**
  * `hdc shell aa test -b <bundle> -m <module> -s unittest <runner> -w <ms>`。
  * 触发 OpenHarmonyTestRunner 在设备上执行 hypium 测试，stdout 同步回流。
@@ -1124,7 +1128,7 @@ export function runAaTest(meta: OhosTestMetadata, testClasses?: string[], execut
     '-w', String(meta.testTimeoutMs),
   ];
   if (testClasses?.length) {
-    if (testClasses.some(name => !/^[A-Za-z0-9_.-]+$/.test(name))) throw new Error('unsupported Hypium class selector');
+    if (testClasses.some(name => !isHypiumClassName(name))) throw new Error('unsupported Hypium class selector');
     cmdParts.push('-s', 'class', testClasses.join(','));
   }
   // aa test 的整体 walltime 上界：每条用例 timeoutMs * 估算（最少 5 分钟）

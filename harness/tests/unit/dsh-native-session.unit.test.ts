@@ -119,12 +119,13 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>, s: ReturnT
     const mismatch = s.tool('edit', { file_path: 'src/value.js' }, 'updated'); mismatch.result.data.message.toolCallId = 'other';
     s.flush();
     const session = native.readNativeSession(s.file, f.root);
-    assert.equal(session.tools.length, 4); assert(native.toolSucceeded(session.tools[0]));
+    assert.equal(session.tools.length, 5); assert(native.toolSucceeded(session.tools[0]));
     assert.equal(session.tools[0].read.content, 'exports.value = 40;'); assert.equal(session.tools[0].read.complete, true); assert.equal(session.tools[0].read.exact, false);
     for (const tool of session.tools.slice(1)) assert(!native.toolSucceeded(tool));
-    assert(session.gaps.some((gap: string) => gap.includes('工具结果')));
+    assert.equal(session.tools.at(-1).completed, false);
+    assert.match(session.associations[0].detail, new RegExp(`seq=${mismatch.result.seq}.*ID=other.*seq=${mismatch.call.seq}`));
     s.flush(Buffer.from([0x28, 0xb5, 0x2f]));
-    assert.equal(native.readNativeSession(s.file, f.root).tools.length, 4);
+    assert.equal(native.readNativeSession(s.file, f.root).tools.length, 5);
     assert.throws(() => dsh.decodeDshSession(fs.readFileSync(s.file)));
     const tail = (zlib as any).zstdCompressSync(Buffer.from(JSON.stringify({ type: 'user/message', data: { id: 'not-yet-flushed', role: 'user', source: { kind: 'user' }, content: 'partial user' } }) + '\n'));
     const complete = dsh.decodeDshSession(Buffer.concat(s.rows.map(row => (zlib as any).zstdCompressSync(Buffer.from(JSON.stringify(row) + '\n')))));

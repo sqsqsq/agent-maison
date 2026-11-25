@@ -8,15 +8,18 @@ import { tryLoadProfileCodingHost, type ProjectCompileResult } from '../profile-
 import { detectRepoLayout, resolveProbeFrameworkRoot } from '../repo-layout';
 import { ensurePersonalSetup } from './utils/personal-setup-gate';
 import { standaloneReportDir } from './utils/standalone-report-dir';
-import { readRequestIntake, resolveRequestSessionReference, type RequestIntake } from './utils/request-intake';
+import { intakeIdentity, readRequestIntake, resolveRequestSessionReference, type RequestIntake } from './utils/request-intake';
 import { deriveContentImpact } from './utils/content-impact';
+import { readDesignVerificationRequest, requestTestingScope } from './utils/automatic-request';
+import { selectBlueprintRequestContent } from './utils/blueprint-skill-projection';
+import type { AcceptanceSpec } from './utils/types';
 import { checkArchitectureFiles } from './check-coding';
 import { SpecLoader } from './utils/spec-loader';
 import { loadPhaseRuleWithOverlays } from '../profile-loader';
 import { isBlockingCheck, isRequiredCheckGap } from './utils/check-disposition';
 import { realProjectPath } from './utils/project-relative-path';
 
-export function runCompile(options: { projectRoot: string; reportDir?: string; frameworkRoot?: string; sessionRef?: string; targets?: string[]; architectureOnly?: boolean }): ProjectCompileResult & { reportDir: string; intake?: RequestIntake; intakeGap?: string; contentImpact?: ReturnType<typeof deriveContentImpact>; architectureAnalyzed: number } {
+export function runCompile(options: { projectRoot: string; reportDir?: string; frameworkRoot?: string; sessionRef?: string; requestFile?: string; targets?: string[]; architectureOnly?: boolean }): ProjectCompileResult & { reportDir: string; intake?: RequestIntake; intakeGap?: string; contentImpact?: ReturnType<typeof deriveContentImpact>; next?: string[]; architectureAnalyzed: number } {
   const projectRoot = fs.realpathSync(options.projectRoot);
   const frameworkRoot = options.frameworkRoot ?? resolveProbeFrameworkRoot(projectRoot, __dirname);
   const resolvedProfile = loadResolvedProfile(projectRoot, loadFrameworkConfig(projectRoot), frameworkRoot);
@@ -26,10 +29,24 @@ export function runCompile(options: { projectRoot: string; reportDir?: string; f
   const host = tryLoadProfileCodingHost(resolvedProfile.profileDir);
   if (!options.architectureOnly && !host?.compileProject) throw new Error(`profile ${resolvedProfile.name} 尚未提供独立工程级编译`);
   let intake: RequestIntake | undefined;
-  const location = resolveRequestSessionReference(options.sessionRef, projectRoot);
-  let intakeGap = location.gap;
-  if (location.sessionRef) try { intake = readRequestIntake({ projectRoot, frameworkRoot, sessionRef: location.sessionRef, explicitTargets: options.targets }); }
-  catch (error) { intakeGap = String(error); }
+  let intakeGap: string | undefined;
+  let design: ReturnType<typeof readDesignVerificationRequest> | undefined;
+  if (options.requestFile) {
+    if (options.sessionRef) throw new Error('编译的 --request-file 已绑定原生来源');
+    design = readDesignVerificationRequest(projectRoot, frameworkRoot, options.requestFile, { targets: options.targets });
+    intake = design.intake;
+  } else {
+    const location = resolveRequestSessionReference(options.sessionRef, projectRoot);
+    intakeGap = location.gap;
+    if (location.sessionRef) try {
+      intake = readRequestIntake({ projectRoot, frameworkRoot, sessionRef: location.sessionRef, explicitTargets: options.targets });
+      const original = `doc/reports/request/${intakeIdentity(intake)}/component-design/request.json`;
+      if (intake.policy.selected === 'small' && fs.existsSync(path.resolve(projectRoot, original))) {
+        design = readDesignVerificationRequest(projectRoot, frameworkRoot, original, { targets: options.targets });
+        intake = design.intake;
+      }
+    } catch (error) { intakeGap = String(error); }
+  }
   const files = (intake?.targets ?? options.targets ?? []).map(file => path.relative(projectRoot, realProjectPath(projectRoot, file, 'architecture target')).replace(/\\/g, '/'));
   const architectureAnalyzed = files.filter(file => /\.(?:ets|[cm]?[jt]sx?)$/.test(file) && fs.existsSync(path.resolve(projectRoot, file)) && fs.statSync(path.resolve(projectRoot, file)).isFile()).length;
   if (intake?.control.excluded.includes(options.architectureOnly ? 'architecture' : 'compile')) throw new Error('用户已明确排除此能力；本次未执行');
@@ -48,24 +65,39 @@ export function runCompile(options: { projectRoot: string; reportDir?: string; f
   }
   if (options.architectureOnly && !files.length) throw new Error('架构检查需要本请求实际文件或显式 --target，不签空集通过');
   const contentImpact = intake ? deriveContentImpact(projectRoot, intake) : undefined;
-  fs.writeFileSync(path.join(reportDir, 'compile-report.json'), JSON.stringify({ ...result, architecture_analyzed: architectureAnalyzed, ...(intake ? { intake_context: intake, content_impact: contentImpact } : { intake_gap: intakeGap }), next: contentImpact?.map(impact => ({ kind: impact.kind, verification: impact.verification, verification_family: impact.verification_family, excluded_by_user: impact.excluded_by_user })) }, null, 2) + '\n');
-  return { ...result, reportDir, architectureAnalyzed, ...(intake ? { intake, contentImpact } : { intakeGap }) };
+  const acceptance = design?.blueprint && selectBlueprintRequestContent(design.blueprint).acceptance as unknown as AcceptanceSpec | undefined;
+  const device = acceptance && requestTestingScope(projectRoot, intake, acceptance, design!.binding!.acceptance_ids);
+  const requestFile = design && path.relative(projectRoot, design.file).replace(/\\/g, '/');
+  const families = new Set(contentImpact?.filter(impact => !impact.excluded_by_user).map(impact => impact.verification_family));
+  if (device?.required) families.add('testing');
+  const next = intake && !intake.control.exempt ? [...families].map(family => {
+    const project = `--project-root ${JSON.stringify(projectRoot)}`;
+    const origin = requestFile ? `--request-file ${JSON.stringify(requestFile)}` : `--session-ref ${JSON.stringify(intake.session_ref)}`;
+    if (family === 'architecture') return `npm run compile -- ${project} ${origin} --architecture-only`;
+    if (intake.policy.selected === 'small') return `npm run check -- ${project} --phase ${family} ${requestFile ? origin : '--request-file <原 component-design request_file>'} --prepare-request`;
+    return `npm run check:${family} -- ${project} ${origin}`;
+  }) : [];
+  fs.writeFileSync(path.join(reportDir, 'compile-report.json'), JSON.stringify({ ...result, architecture_analyzed: architectureAnalyzed,
+    ...(intake ? { intake_context: intake, content_impact: contentImpact } : {}), ...(intakeGap ? { intake_gap: intakeGap } : {}),
+    ...(device ? { device_acceptance_ids: device.items.map(item => item.id) } : {}),
+    next: contentImpact?.map(impact => ({ kind: impact.kind, verification: impact.verification, verification_family: impact.verification_family, excluded_by_user: impact.excluded_by_user })) }, null, 2) + '\n');
+  return { ...result, reportDir, architectureAnalyzed, ...(intake ? { intake, contentImpact, next } : {}), ...(intakeGap ? { intakeGap } : {}) };
 }
 
 export function main(argv = process.argv.slice(2)): number {
-  const args = minimist(argv, { string: ['project-root', 'report-dir', 'session-ref', 'target'], boolean: ['json', 'help', 'architecture-only'] });
+  const args = minimist(argv, { string: ['project-root', 'report-dir', 'session-ref', 'request-file', 'target'], boolean: ['json', 'help', 'architecture-only'] });
   if (args.help) {
-    console.log('npm run compile -- --project-root <宿主根> [--report-dir <宿主相对路径>] [--session-ref <原生transcript>#<原始user消息id>] [--target <项目相对路径>] [--architecture-only] [--json]\n执行当前工程构建/架构检查，不需要 Feature。原生来源缺失时只证明实际执行能力，不签完整请求对账。');
+    console.log('npm run compile -- --project-root <宿主根> [--report-dir <宿主相对路径>] [--session-ref <原生transcript>#<原始user消息id> | --request-file <原component-design request>] [--target <项目相对路径>] [--architecture-only] [--json]\n执行当前工程构建/架构检查，不需要 Feature。原生来源缺失时只证明实际执行能力，不签完整请求对账。');
     return 0;
   }
   try {
-    const unknown = Object.keys(args).filter(key => !['_', 'project-root', 'report-dir', 'json', 'help', 'session-ref', 'target', 'architecture-only'].includes(key));
+    const unknown = Object.keys(args).filter(key => !['_', 'project-root', 'report-dir', 'json', 'help', 'session-ref', 'request-file', 'target', 'architecture-only'].includes(key));
     if (unknown.length || args._.length) throw new Error(`不支持的编译参数：${[...unknown, ...args._].join(', ')}`);
     const projectRoot = path.resolve(args['project-root'] || detectRepoLayout(__dirname).projectRoot);
     const result = runCompile({
       projectRoot,
       reportDir: args['report-dir'],
-      sessionRef: args['session-ref'], targets: args.target ? [].concat(args.target) : undefined, architectureOnly: args['architecture-only'],
+      sessionRef: args['session-ref'], requestFile: args['request-file'], targets: args.target ? [].concat(args.target) : undefined, architectureOnly: args['architecture-only'],
     });
     const ok = (args['architecture-only'] ? result.architectureAnalyzed > 0 && result.checks.some(check => check.status === 'PASS') && !result.checks.some(check => check.status === 'WARN') : result.execution?.executed === true)
       && result.checks.length > 0 && !result.checks.some(check => isBlockingCheck(check) || isRequiredCheckGap(check));
@@ -77,8 +109,7 @@ export function main(argv = process.argv.slice(2)): number {
       logPath: run?.logPath, metaPath: run?.metaPath, reportDir: result.reportDir,
       failure_kind: check?.failure_kind, message: check?.details.split('\n')[0], suggestion: check?.suggestion,
       ...(result.intakeGap ? { intake_gap: result.intakeGap } : {}),
-      ...(result.intake ? { intake: result.intake, content_impact: result.contentImpact,
-        next: [...new Set(result.contentImpact?.filter(impact => !impact.excluded_by_user).map(impact => `npm run ${impact.verification_family === 'architecture' ? 'compile' : 'check:' + impact.verification_family} -- --project-root ${JSON.stringify(projectRoot)} --session-ref ${JSON.stringify(result.intake!.session_ref)}${impact.verification_family === 'architecture' ? ' --architecture-only' : ''}`))] } : {}),
+      ...(result.intake ? { intake: result.intake, content_impact: result.contentImpact, next: result.next } : {}),
     };
     if (args.json) console.log(JSON.stringify(summary, null, 2));
     else console.log(`${summary.status}: ${summary.message}\n日志：${summary.logPath ?? '(未执行)'}\n元数据：${summary.metaPath ?? '(无)'}${summary.suggestion ? `\n${summary.suggestion}` : ''}`);

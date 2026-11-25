@@ -115,9 +115,10 @@ function patchText(tool) {
   const call = /\btools\.apply_patch\(\s*("(?:\\.|[^"\\])*")\s*\)/.exec(tool.input);
   try { return call ? JSON.parse(call[1]) : ''; } catch { return ''; }
 }
-function isEditingTool(tool) {
-  return toolSucceeded(tool) && (/^(?:Write|Edit|MultiEdit|NotebookEdit|Delete)$/i.test(tool.name) || patchText(tool).startsWith('*** Begin Patch'));
+function isEditCall(tool) {
+  return /^(?:Write|Edit|MultiEdit|NotebookEdit|Delete)$/i.test(tool.name) || patchText(tool).startsWith('*** Begin Patch');
 }
+function isEditingTool(tool) { return toolSucceeded(tool) && isEditCall(tool); }
 
 /** Explicitly located session only; no newest-session search or cross-session index. */
 function readNativeSession(reference, projectRoot, context = {}) {
@@ -144,6 +145,24 @@ function readNativeSession(reference, projectRoot, context = {}) {
   const messages = [];
   const tools = [];
   const pending = new Map();
+  const associations = [];
+  const duplicate = new Set();
+  const addCall = (callId, tool) => {
+    if (typeof callId !== 'string' || !callId) return;
+    const previous = pending.get(callId);
+    if (previous) {
+      associations.push({ ...previous, detail: `原生调用 ID ${callId} 在行 ${previous.line} 与 ${tool.line} 重复` });
+      duplicate.add(callId);
+      tools.push({ ...previous, error: true });
+    }
+    pending.set(callId, { ...tool, origin: { store, callId } });
+  };
+  const addResult = (callId, result) => {
+    if (typeof callId !== 'string' || !callId) return;
+    const call = pending.get(callId);
+    if (call) { tools.push({ ...call, ...result, error: duplicate.has(callId) || result.error }); pending.delete(callId); }
+    else if (store !== 'cursor') associations.push({ line: result.resultLine, detail: `原生工具结果行 ${result.resultLine} 的调用 ID ${callId} 无对应调用` });
+  };
   let turn;
   let seq = 0;
   for (const row of rows) {
@@ -165,19 +184,17 @@ function readNativeSession(reference, projectRoot, context = {}) {
       const injected = store === 'codex' && role === 'user' && /^(?:# AGENTS\.md instructions(?: for(?:\s|$)|\r?\n|$)|<environment_context>)/.test(content.trim());
       if (content && !injected) messages.push({ id, role, text: content, at, line: seq, prompt_id: row.promptId });
       for (const item of Array.isArray(message?.content) ? message.content : []) {
-        if (item.type === 'tool_use') pending.set(item.id, { name: item.name, input: item.input, line: seq, at });
-        if (item.type === 'tool_result' && pending.has(item.tool_use_id)) {
-          tools.push({ ...pending.get(item.tool_use_id), output: typeof row.toolUseResult?.stdout === 'string' ? row.toolUseResult.stdout : text(item.content), error: item.is_error === true, read: fullRead(row), resultLine: seq }); pending.delete(item.tool_use_id);
-        }
+        if (item.type === 'tool_use') addCall(item.id, { name: item.name, input: item.input, line: seq, at, output: '', completed: false });
+        if (item.type === 'tool_result') addResult(item.tool_use_id, { output: typeof row.toolUseResult?.stdout === 'string' ? row.toolUseResult.stdout : text(item.content), error: item.is_error === true, read: fullRead(row), resultLine: seq, completed: true });
       }
     }
     if (row.type === 'response_item' && ['function_call', 'custom_tool_call'].includes(payload.type)) {
       let input = payload.arguments ?? payload.input;
       try { input = JSON.parse(input); } catch { /* Native custom calls contain source text. */ }
-      pending.set(payload.call_id, { name: payload.name, input, line: seq, at });
+      addCall(payload.call_id, { name: payload.name, input, line: seq, at, output: '', completed: false });
     }
-    if (row.type === 'response_item' && ['function_call_output', 'custom_tool_call_output'].includes(payload.type) && pending.has(payload.call_id)) {
-      tools.push({ ...pending.get(payload.call_id), output: plainToolOutput(text(payload.output)), error: resultFailed(payload), resultLine: seq }); pending.delete(payload.call_id);
+    if (row.type === 'response_item' && ['function_call_output', 'custom_tool_call_output'].includes(payload.type)) {
+      addResult(payload.call_id, { output: plainToolOutput(text(payload.output)), error: resultFailed(payload), resultLine: seq, completed: true });
     }
   }
   // Claude tool-result envelopes carry role=user but grant no new user instruction.
@@ -190,7 +207,9 @@ function readNativeSession(reference, projectRoot, context = {}) {
     if (originals.length === 1) request = originals[0];
   }
   if (!request) throw new Error('找不到定位的真实 user 消息');
-  return { file: fs.realpathSync(file), sessionId, cwd: fs.realpathSync(cwd), request, messages, tools,
+  if (store !== 'cursor') tools.push(...pending.values());
+  tools.sort((left, right) => left.line - right.line);
+  return { file: fs.realpathSync(file), sessionId, cwd: fs.realpathSync(cwd), request, messages, tools, associations,
     ...(store === 'cursor' ? { userControlVerified: false, gaps: ['Cursor历史格式已核；原生包装授权及线上hook对应未验，不授用户豁免或固定档位'] } : {}) };
 }
 
@@ -203,9 +222,14 @@ function userControl(message) {
   const exempt = !revoke && clauses.some(clause => /(?:不走|不用|跳过|绕过)\s*Maison|(?:do not|don't) use Maison/i.test(clause));
   const fixed = clauses.map(clause => /(?:按|使用|采用|指定(?:为)?)\s*(特别简单|小型|中型|复杂)(?:(?:流程|档|来做|执行|处理)|\s*$)/.exec(clause)?.[1]).filter(Boolean).at(-1);
   const excluded = clauses.flatMap(clause => [...clause.matchAll(/(?:不跑|跳过|不要运行|仅不执行)\s*(review|UT|单测|测试|真机|编译|架构检查)(?=\s*$|验证|检查)/gi)]).map(match => ({ review: 'review', ut: 'ut', 单测: 'ut', 测试: 'testing', 真机: 'testing', 编译: 'compile', 架构检查: 'architecture' })[match[1].toLowerCase()] ?? match[1]);
+  const only = clauses.map(clause => /^\s*(?:(?:本请求|本轮|本次|这次|请)\s*)*(?:仅|只)(?:(?:运行|执行|跑|做)\s*)?(UT|单测|编译)(?:\s*(?:检查|验证|即可))?\s*$/i.exec(clause)?.[1]).filter(Boolean).at(-1);
+  if (only) excluded.push('review', 'testing', 'architecture', only === '编译' ? 'ut' : 'compile');
   const included = clauses.flatMap(clause => [...clause.trim().matchAll(/^(?:(?:本请求|本轮|本次|这次)\s*)?(?:(?:现在|请)\s*){0,2}(?:(?:恢复|重新)\s*(?:(?:运行|执行|跑)\s*)?|(?:运行|执行|跑)\s*)(review|UT|单测|测试|真机|编译|架构检查)(?:测试|验证|检查)?\s*$/gi)]).map(match => ({ review: 'review', ut: 'ut', 单测: 'ut', 测试: 'testing', 真机: 'testing', 编译: 'compile', 架构检查: 'architecture' })[match[1].toLowerCase()] ?? match[1]);
+  if (only) included.push(only === '编译' ? 'compile' : 'ut');
+  const fullDiff = clauses.map(clause => /^(?:(?:本请求|本轮|本次|这次|请|需要|必须|要求)\s*)*(?:(无需|不需要|不用|不必|不要|跳过)\s*)?(?:(?:逐项\s*)?(?:核清|核对|对账|检查|确认)\s*)?(?:完整|全部|全量|整个)\s*(?:工作区\s*)?(?:diff|改动|变更|差异)\s*(?:归属|对账)\s*$/i.exec(clause.trim())).filter(Boolean).at(-1);
   const transport = resolveTransportIntent(message);
   return { exempt, session: exempt && /(?:本|整个|这次)会话|(?:this|whole) session/i.test(value), revoke, fixed, excluded, included,
+    ...(fullDiff ? { fullDiffAttribution: !fullDiff[1] } : {}),
     ...(transport ? { transport } : {}) };
 }
 
@@ -235,9 +259,9 @@ function resolveTransportIntent(message) {
 function toolInput(tool) {
   return typeof tool.input === 'string' ? tool.input : typeof tool.input?.cmd === 'string' ? tool.input.cmd : typeof tool.input?.command === 'string' ? tool.input.command : JSON.stringify(tool.input ?? {});
 }
-function editedPaths(tools) {
+function editedPaths(tools, candidates = false) {
   const files = new Set();
-  for (const tool of tools.filter(isEditingTool)) {
+  for (const tool of tools.filter(candidates ? isEditCall : isEditingTool)) {
     const input = tool.input ?? {};
     if (/^(?:Write|Edit|MultiEdit|NotebookEdit|Delete)$/i.test(tool.name)) {
       const file = input.file_path ?? input.path ?? input.target_file ?? input.notebook_path;
@@ -288,4 +312,4 @@ function productTarget(projectRoot, frameworkRoot, filePath, roots = [], explici
     || /(?:^|\/)(?:package|oh-package|module|build-profile|app)\.json5?$/.test(rel);
 }
 
-module.exports = { samePath, claudeSession, codexSession, currentNativeSession, nativeStore, toolSucceeded, toolCompletedBefore, isEditingTool, readNativeSession, userControl, resolveTransportIntent, editedPaths, frontDoorLoaded, toolInput, unquote, productTarget };
+module.exports = { samePath, claudeSession, codexSession, currentNativeSession, nativeStore, toolSucceeded, toolCompletedBefore, isEditingTool, isEditCall, readNativeSession, userControl, resolveTransportIntent, editedPaths, frontDoorLoaded, toolInput, unquote, productTarget };

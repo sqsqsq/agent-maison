@@ -380,7 +380,7 @@ const args = minimist(process.argv.slice(2), {
     'phase', 'feature', 'ai-report', 'adapter', 'workflow', 'adhoc-cases', 'correction-request',
     'q-requirement', 'q-contract', 'q-code', 'goal-run-id', 'goal-attempt-id',
     'goal-owner-id', 'goal-owner-epoch', 'from', 'screen',
-    'request-file', 'report-dir', 'project-root', 'framework-root', 'module', 'term', 'package-path', 'path', 'session-ref', 'target', 'test-target', 'allow-test-write', 'cases',
+    'request-file', 'report-dir', 'project-root', 'framework-root', 'module', 'term', 'package-path', 'path', 'session-ref', 'target', 'test-target', 'allow-test-write', 'cases', 'test-plan',
     'requirement', 'requirement-file', 'user-deadline-at', 'adapter-model', 'adapter-provider', 'adapter-reasoning', 'adapter-model-config',
     'frontend-request-file', 'frontend-session-id', 'frontend-request-id', 'verifier-worker-subject', 'verifier-worker-expected', 'verifier-wait-timeout-ms', 'resume-verifier',
   ],

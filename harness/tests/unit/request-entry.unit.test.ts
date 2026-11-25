@@ -77,7 +77,7 @@ export function facts(p: PreparedRequest, root: string) {
   const files = [...new Set([...p.bindings.filter(binding => binding.exists).map(binding => binding.path), ...Object.entries(p.inputs).filter(([id, file]) => id !== 'review_report' && fs.existsSync(file)).map(([, file]) => path.relative(root, file).replace(/\\/g, '/'))])];
   fs.writeFileSync(p.factsPath, '---\n' + YAML.stringify({ schema_version: '1.1', request_sha256: p.request_sha256, established_by: p.phase, ready_to_produce: true, has_blocker_coverage_risk: false, source_code_paths: files, key_inputs_read: files, files_inspected_count: files.length, searches_performed_estimate: Math.max(1, files.length), decisions_unlocked: ['checked selected behavior'], exploration_mode: 'sequential', change_intent: 'read_only', estimated_loc_delta: 0, single_function_scope: true }) + '---\n## Code Facts\n| 路径 | 事实 | 影响 |\n|---|---|---|\n' + files.map(file => `| ${file} | bound request input was read | inspect requested behavior |`).join('\n'));
 }
-function review(p: PreparedRequest, verdict = '通过') {
+export function review(p: PreparedRequest, verdict = '通过') {
   fs.writeFileSync(p.inputs.review_report, `# Review\n## 审查范围\nsrc/value.js\n## 审查方法\nRead source and compare selected baseline.\n## 问题清单\n无问题\n## 问题统计\n| 严重程度 | 数量 |\n|---|---|\n| BLOCKER | 0 |\n| MAJOR | 0 |\n| MINOR | 0 |\n| INFO | 0 |\n## 修复建议\n无\n## 结论\n**审查结论**: ${verdict}\n`);
 }
 const cases: Array<{ name: string; phase?: string; run(f: ReturnType<typeof fixture>): void }> = [
@@ -106,23 +106,52 @@ const cases: Array<{ name: string; phase?: string; run(f: ReturnType<typeof fixt
     const profileFile = path.join(f.framework, 'profiles/hmos-app/profile.yaml');
     const profile = YAML.parse(fs.readFileSync(profileFile, 'utf8')); profile.name = 'hmos-app'; fs.writeFileSync(profileFile, YAML.stringify(profile));
     profile.capabilities['coding.compile'] = { provider: 'node-syntax', severity: 'BLOCKER' }; fs.writeFileSync(profileFile, YAML.stringify(profile));
+    profile.capabilities['device_test.run'] = { provider: 'fixture-device', severity: 'BLOCKER' }; fs.writeFileSync(profileFile, YAML.stringify(profile));
+    fs.writeFileSync(path.join(f.framework, 'profiles/hmos-app/harness/providers/fixture-device.js'), `
+const fs=require('fs'),path=require('path'),assert=require('assert');
+const {extractDerivedPlanCases}=require(${JSON.stringify(path.join(repo, 'harness/scripts/utils/derived-hylyre-plan'))});
+exports.provider={id:'fixture-device',capability:'device_test.run',exports:['runRequestTests']};
+exports.runRequestTests=ctx=>{
+  assert.equal(ctx.resolvedInputs.values.cases.binding.source.provider_id,'derive.blueprint-acceptance');
+  assert(Array.isArray(ctx.resolvedInputs.values.cases.value.criteria));
+  const rows=extractDerivedPlanCases(ctx.resolvedInputs.values.test_plan.value);
+  fs.appendFileSync(path.join(ctx.reportDir,'call-count.log'),'called\\n');
+  const evidence=path.join(ctx.reportDir,'native-device.log'); fs.writeFileSync(evidence,'fixture native steps and expected result');
+  return {executed:true,total:rows.length,failed:0,evidence_paths:[evidence],checks:rows.map(row=>({
+    id:'request_device_native',category:'structure',severity:'BLOCKER',status:'PASS',description:'fixture device execution',details:row.tc_id,
+    affected_files:[path.relative(ctx.projectRoot,evidence).split(path.sep).join('/')],
+    structured:{request_device_case:{tc_id:row.tc_id,acceptance_ids:row.ac_ref.split(', '),expected:row.expected}}
+  }))};
+};`);
     fs.writeFileSync(path.join(f.framework, 'profiles/hmos-app/harness/coding-host-rules.js'), `const fs=require('fs'),path=require('path'),cp=require('child_process');exports.profileCodingHost={sourceFileSuffixes:['js'],runStructureChecks(){return[]},runTraceabilityChecks(){return[]},checkCodingCompile(){return[]},compileProject(ctx){const run=cp.spawnSync(process.execPath,['--check',path.join(ctx.projectRoot,'src/value.js')],{encoding:'utf8'});fs.writeFileSync(path.join(ctx.reportDir,'node-check.log'),run.stdout+run.stderr);return{checks:[{id:'coding_compile',category:'structure',severity:'BLOCKER',status:run.status===0?'PASS':'FAIL',description:'actual Node syntax',details:run.stdout+run.stderr}],execution:{executed:true,exitCode:run.status,command:'node --check src/value.js'}}}};`);
     const configFile = path.join(f.root, 'framework.config.json'), config = JSON.parse(fs.readFileSync(configFile, 'utf8')); config.project_profile.name = 'hmos-app'; fs.writeFileSync(configFile, JSON.stringify(config)); clearFrameworkConfigCache();
     const bpFile = 'doc/features/compact-value/blueprint/component-blueprint.yaml', requirement = 'requirements/value.txt';
     const user = '按小型处理：value 从41改为42。原需求见 requirements/value.txt，保留其它行为。';
     fs.mkdirSync(path.join(f.root, 'requirements')); fs.writeFileSync(path.join(f.root, requirement), user);
-    fs.writeFileSync(path.join(f.root, 'src/value.js'), 'exports.value = 41;\n');
-    const ut = "const test=require('node:test'),assert=require('node:assert/strict');\n// expectation: " + bpFile + "#AC-1\ntest('value',()=>assert.equal(require('../src/value.js').value,42));\n";
+    const sourceFile = path.join(f.root, 'src/value.js');
+    const sourceBefore = "exports.value = 41;\nfunction openBank(router) { if (router.ready) router.pushUrl('/bank'); }\n";
+    const sourceAfter = sourceBefore.replace('41', '42');
+    fs.writeFileSync(sourceFile, sourceBefore);
+    const ut = "const test=require('node:test'),assert=require('node:assert/strict');\n// expectation: " + bpFile + "#AC-1\ntest('value',()=>assert.equal(require('../src/value.js').value,42));\n// expectation: " + bpFile + "#AC-3\ntest('both value',()=>assert.equal(require('../src/value.js').value,42));\n// expectation: " + bpFile + "#NFR-LOOKUP\ntest('local lookup under 300 ms',()=>{ const start=process.hrtime.bigint(); void require('../src/value.js').value; assert(process.hrtime.bigint()-start<=300000000n); });\n";
     fs.writeFileSync(path.join(f.root, 'tests/value.test.cjs'), ut);
     const { prepareBlueprintSourceItems } = require('../../scripts/utils/blueprint-discovery') as typeof import('../../scripts/utils/blueprint-discovery');
     const items = prepareBlueprintSourceItems(f.root, [requirement], '2026-11-11T12:00:00Z'), provenance = items[0].provenance;
+    const boundary = { id: 'BD-1', priority: 'P2', description: 'empty result', scenario: 'search a term with no results',
+      handling: 'show the empty result', expected_behavior: 'Empty state is visible', ut_layer: 'device', device_focus: 'empty state label' };
+    const performance = { id: 'NFR-LOOKUP', description: 'Lookup latency', metric: 'Lookup p95', threshold: '<= 300', unit: 'ms',
+      ut_layer: 'both', ut_focus: 'local lookup latency', device_focus: 'observe repeated device lookups' };
     const bp = { artifact: 'component-blueprint@1', component_id: 'value', blueprint_id: 'compact-value', revision: 1, provenance,
       discovery: { inputs: { current_scope_items: items }, requirement_traceability: [{ item_id: items[0].item_id, blueprint_refs: ['view:development/node:value'] }] },
       design_views: [{ view_id: 'development', nodes: [{ node_id: 'value', owner: 'value-owner', current_state: 'value=41', target_state: 'value=42', provenance, verification_refs: ['AC-1'],
-        acceptance: { criteria: [{ id: 'AC-1', priority: 'P1', description: 'value returns42', testable: true, verification_steps: ['read value'], expected_result: '42', ut_layer: 'unit', ut_focus: 'value result' }] }, contracts: { files: ['src/value.js'] } }] }] };
+        acceptance: { criteria: [{ id: 'AC-1', priority: 'P1', description: 'value returns42', testable: true, verification_steps: ['read value'], expected_result: '42', ut_layer: 'unit', ut_focus: 'value result' }],
+          boundaries: [boundary], performance: [performance] }, contracts: { files: ['src/value.js'] } }] }] };
     const acceptance = bp.design_views[0].nodes[0].acceptance;
-    Object.assign(acceptance, { criteria: [...acceptance.criteria, { ...acceptance.criteria[0], id: 'AC-2', description: '设备显示当前value', ut_layer: 'device', device_focus: '实际设备显示42' }] });
-    bp.design_views[0].nodes[0].verification_refs.push('AC-2');
+    Object.assign(acceptance, { criteria: [...acceptance.criteria,
+      { ...acceptance.criteria[0], id: 'AC-2', description: '设备显示当前value', ut_layer: 'device', device_focus: '实际设备显示42' },
+      { ...acceptance.criteria[0], id: 'AC-3', description: '值在设备上刷新', ut_layer: 'both', device_focus: '刷新后界面仍显示42' },
+      { ...acceptance.criteria[0], id: 'AC-4', description: '打开后显示当前值', ut_layer: 'device', device_focus: '重新打开后显示42' },
+    ] });
+    bp.design_views[0].nodes[0].verification_refs.push('AC-2', 'AC-3', 'AC-4', boundary.id, performance.id);
     const { refreshBlueprintFingerprints } = require('../../scripts/utils/design-repair-unattended') as typeof import('../../scripts/utils/design-repair-unattended');
     refreshBlueprintFingerprints(bp); fs.mkdirSync(path.dirname(path.join(f.root, bpFile)), { recursive: true });
     fs.writeFileSync(path.join(f.root, '.gitignore'), 'framework/\n.native-fixture/\ndoc/reports/\n');
@@ -136,16 +165,22 @@ const cases: Array<{ name: string; phase?: string; run(f: ReturnType<typeof fixt
     fs.writeFileSync(path.join(f.root, bpFile), YAML.stringify(bp));
     for (const file of ['src/value.js', 'tests/value.test.cjs', requirement]) tool('Read', { file_path: path.join(f.root, file) }, fs.readFileSync(path.join(f.root, file), 'utf8'));
     add({ type: 'assistant', message: { role: 'assistant', content: '本请求仅调整value；Q1=否；Q2=否；Q3=否；依赖结果=否；跨部件=否；预期明确=是；做法唯一=是。依据 src/value.js、requirements/value.txt。' } });
-    tool('Edit', { file_path: path.join(f.root, 'src/value.js'), old_string: '41', new_string: '42' }, 'success'); fs.writeFileSync(path.join(f.root, 'src/value.js'), 'exports.value = 42;\n');
+    tool('Edit', { file_path: sourceFile, old_string: '41', new_string: '42' }, 'success'); fs.writeFileSync(sourceFile, sourceAfter);
     fs.mkdirSync(path.dirname(nativeFile), { recursive: true }); fs.writeFileSync(nativeFile, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
     const saved = process.env.CLAUDE_CONFIG_DIR; process.env.CLAUDE_CONFIG_DIR = home;
     const invoke = (script: string, args: string[]) => spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'), path.join(repo, 'harness', script), '--project-root', f.root, ...(script === 'scripts/compile.ts' ? [] : ['--framework-root', f.framework]), ...args], { cwd: path.join(repo, 'harness'), encoding: 'utf8', timeout: 60000, env: { ...process.env, TS_NODE_PROJECT: path.join(repo, 'harness/tsconfig.json') } });
     try {
       const design = invoke('scripts/check-component-blueprint.ts', ['--blueprint', 'compact-value', '--session-ref', nativeFile + '#short-user', '--target', 'src/value.js', '--requirement-source', requirement, '--report-dir', 'doc/reports/design', '--prepare-source', '--json']);
-      assert.equal(design.status, 0, design.stderr + design.stdout); let subject = JSON.parse(design.stdout).request_file;
-      assert.deepEqual(JSON.parse(fs.readFileSync(path.join(f.root, subject), 'utf8')).blueprint.acceptance_ids, ['AC-1', 'AC-2'], '原设计绑定仍须保完整验收，不能改协议缩成UT分母');
-      const compiled = invoke('scripts/compile.ts', ['--session-ref', nativeFile + '#short-user', '--target', 'src/value.js', '--report-dir', 'doc/reports/design-compile', '--json']);
+      assert.equal(design.status, 0, design.stderr + design.stdout);
+      const designOutput = JSON.parse(design.stdout);
+      let subject = designOutput.request_file;
+      const deviceIds = ['AC-2', 'AC-3', 'AC-4', boundary.id, performance.id];
+      assert.deepEqual(designOutput.next[0].acceptance_ids, deviceIds);
+      assert(designOutput.next[0].command.includes(subject));
+      assert.deepEqual(JSON.parse(fs.readFileSync(path.join(f.root, subject), 'utf8')).blueprint.acceptance_ids, ['AC-1', 'AC-2', 'AC-3', 'AC-4'], '原设计绑定仍须保完整验收，不能改协议缩成UT分母');
+      const compiled = invoke('scripts/compile.ts', ['--request-file', subject, '--target', 'src/value.js', '--report-dir', 'doc/reports/design-compile', '--json']);
       assert.equal(compiled.status, 0, compiled.stderr + compiled.stdout);
+      assert(JSON.parse(compiled.stdout).next.some((command: string) => command.includes('--phase testing') && command.includes(subject)));
       const compilation = JSON.parse(fs.readFileSync(path.join(f.root, 'doc/reports/design-compile/compile-report.json'), 'utf8'));
       assert(compilation.execution.executed && compilation.execution.command === 'node --check src/value.js' && compilation.architecture_analyzed === 1);
       const run = (phase: string, extra: string[] = []) => invoke('harness-runner.ts', ['--phase', phase, '--request-file', subject, ...extra]);
@@ -153,7 +188,78 @@ const cases: Array<{ name: string; phase?: string; run(f: ReturnType<typeof fixt
       const report = JSON.parse(fs.readFileSync(path.join(f.root, 'doc/reports/design/ut/script-report.json'), 'utf8'));
       assert(report.checks.some((check: CheckResult) => check.id === 'request_test_execution' && check.status === 'PASS'));
       assert(report.checks.some((check: CheckResult) => check.id === 'request_expectation_source' && check.status === 'PASS'));
-      assert(fs.readFileSync(path.join(f.root, 'doc/reports/design/ut/native-test.log'), 'utf8').includes('# pass 1'));
+      assert(fs.readFileSync(path.join(f.root, 'doc/reports/design/ut/native-test.log'), 'utf8').includes('# pass 3'));
+      const testPreparation = run('testing', ['--prepare-request']);
+      assert.equal(testPreparation.status, 0, testPreparation.stderr + testPreparation.stdout);
+      const device = JSON.parse(testPreparation.stdout);
+      assert.deepEqual(device.device_acceptance.map((item: { id: string }) => item.id), deviceIds);
+      assert.deepEqual(device.device_acceptance.at(-2).verification_steps, [boundary.scenario, boundary.handling]);
+      assert.deepEqual(device.device_acceptance.at(-1).verification_steps, [performance.device_focus]);
+      assert(!device.gaps.includes('inputs.cases'));
+      assert.equal(fs.existsSync(device.inputs.test_plan), false);
+      const plan = (refs: string) => ['## 测试用例清单', '', '| 用例编号 | 用例名称 | 测试步骤 | 预期结果 | 关联 AC |',
+        '|---|---|---|---|---|', '| TC-001 | value | {"wait_for":{"by_text":"42","match":"exact"}} | value 42 is visible | ' + refs + ' |'].join('\n');
+      const deviceReport = () => JSON.parse(fs.readFileSync(path.join(device.reportDir, 'script-report.json'), 'utf8'));
+      fs.writeFileSync(device.inputs.test_plan, plan('AC-2, AC-3, BD-1'));
+      const incompleteDevice = run('testing');
+      assert.notEqual(incompleteDevice.status, 0, incompleteDevice.stdout);
+      const perAc = (report: { checks: CheckResult[] }) => report.checks.filter(check => check.id === 'request_device_acceptance');
+      assert.deepEqual(perAc(deviceReport()).map(check => check.status), ['PASS', 'PASS', 'FAIL', 'PASS', 'FAIL'], JSON.stringify(deviceReport().checks));
+      assert.match(perAc(deviceReport())[2].details, /AC-4/);
+      assert.match(perAc(deviceReport()).at(-1)!.details, /NFR-LOOKUP/);
+      const alternate = 'doc/reports/design/testing/reused-test-plan.hylyre.md';
+      fs.writeFileSync(path.join(f.root, alternate), plan(deviceIds.join(', ')));
+      const tested = run('testing', ['--test-plan', alternate]); assert.equal(tested.status, 0, tested.stderr + tested.stdout);
+      const devicePass = deviceReport();
+      assert.deepEqual(perAc(devicePass).map(check => check.status), ['PASS', 'PASS', 'PASS', 'PASS', 'PASS']);
+      assert.deepEqual(perAc(devicePass).slice(-2).map(check => (check.structured as { expected_result: string }).expected_result),
+        [boundary.expected_behavior, 'Lookup p95: <= 300 ms']);
+      assert(perAc(devicePass).every(check => check.details.includes('TC-001') && check.affected_files?.some(file => file.endsWith('native-device.log'))));
+      assert.equal(devicePass.input_bindings.cases.source.provider_id, 'derive.blueprint-acceptance');
+      assert.equal(fs.readFileSync(path.join(device.reportDir, 'call-count.log'), 'utf8'), 'called\ncalled\n');
+      const native = require('../../../agents/shared/native-request.cjs') as { userControl(text: string): { excluded: string[] } };
+      for (const instruction of ['本次仅运行UT', '本请求只编译']) assert(native.userControl(instruction).excluded.includes('testing'));
+      add({ type: 'user', uuid: 'exclude-device', message: { role: 'user', content: '本次仅运行UT' } });
+      add({ type: 'assistant', message: { role: 'assistant', content: '继续原任务，原始user消息 short-user，仅按真实授权执行专项。' } });
+      fs.writeFileSync(nativeFile, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
+      const excludedDevice = run('testing');
+      assert.notEqual(excludedDevice.status, 0); assert.match(excludedDevice.stderr + excludedDevice.stdout, /排除testing/);
+      rows.splice(-2); fs.writeFileSync(nativeFile, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
+      const allCriteria = acceptance.criteria.slice();
+      acceptance.criteria.splice(1); bp.design_views[0].nodes[0].verification_refs.splice(1);
+      acceptance.performance.pop();
+      const rebind = () => {
+        bp.revision++;
+        refreshBlueprintFingerprints(bp); fs.writeFileSync(path.join(f.root, bpFile), YAML.stringify(bp));
+        return invoke('scripts/check-component-blueprint.ts', ['--blueprint', 'compact-value', '--session-ref', nativeFile + '#short-user', '--target', 'src/value.js', '--report-dir', 'doc/reports/design', '--prepare-source', '--json']);
+      };
+      bp.design_views[0].nodes[0].verification_refs.push(boundary.id);
+      const boundaryDesign = rebind();
+      assert.equal(boundaryDesign.status, 0, boundaryDesign.stderr + boundaryDesign.stdout);
+      assert.deepEqual(JSON.parse(boundaryDesign.stdout).next[0].acceptance_ids, [boundary.id]);
+      fs.writeFileSync(path.join(f.root, alternate), plan(boundary.id));
+      const boundaryOnly = run('testing'); assert.equal(boundaryOnly.status, 0, boundaryOnly.stderr + boundaryOnly.stdout);
+      assert.deepEqual(perAc(deviceReport()).map(check => [check.status, check.details]), [['PASS', 'BD-1 (device) 关联 TC-001=PASS']]);
+      acceptance.boundaries.pop(); bp.design_views[0].nodes[0].verification_refs.pop();
+      const unitDesign = rebind();
+      assert.equal(unitDesign.status, 0, unitDesign.stderr + unitDesign.stdout); assert.deepEqual(JSON.parse(unitDesign.stdout).next, []);
+      const unitOnly = run('testing'); assert.equal(unitOnly.status, 0, unitOnly.stderr + unitOnly.stdout);
+      assert.equal(JSON.parse(unitOnly.stdout).applicability, 'not_applicable');
+      assert.equal(fs.readFileSync(path.join(device.reportDir, 'call-count.log'), 'utf8'), 'called\ncalled\ncalled\n');
+      const { readRequestIntake } = require('../../scripts/utils/request-intake') as typeof import('../../scripts/utils/request-intake');
+      const unitIntake = readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: nativeFile + '#short-user' });
+      const { requestTestingScope } = require('../../scripts/utils/automatic-request') as typeof import('../../scripts/utils/automatic-request');
+      const unitScope = () => requestTestingScope(f.root, unitIntake, acceptance as unknown as import('../../scripts/utils/types').AcceptanceSpec, ['AC-1']);
+      assert(!unitScope().required, 'an unchanged navigation expression must not require device execution');
+      for (const changed of [sourceAfter.replace('/bank', '/banks'), sourceAfter.replace('router.ready', 'router.enabled')]) {
+        fs.writeFileSync(sourceFile, changed);
+        assert(unitScope().impacts.some(impact => impact.kind === 'route' && impact.state === 'required'));
+      }
+      fs.writeFileSync(sourceFile, sourceAfter);
+      acceptance.criteria.push(...allCriteria.slice(1)); acceptance.boundaries.push(boundary); acceptance.performance.push(performance);
+      bp.design_views[0].nodes[0].verification_refs.push(...deviceIds);
+      const restoreDesign = rebind();
+      assert.equal(restoreDesign.status, 0, restoreDesign.stderr + restoreDesign.stdout);
       const prep = run('review', ['--prepare-request']); assert.equal(prep.status, 0, prep.stderr + prep.stdout);
       review(JSON.parse(prep.stdout)); const reviewed = run('review'); assert.equal(reviewed.status, 0, reviewed.stderr + reviewed.stdout);
       bp.revision++;
@@ -178,7 +284,7 @@ const cases: Array<{ name: string; phase?: string; run(f: ReturnType<typeof fixt
       fs.writeFileSync(path.join(f.root, 'tests/value.test.cjs'), ut.replace('// expectation: ' + bpFile + '#AC-1', '// characterization'));
       assert.notEqual(run('ut', ['--test-target', 'tests/value.test.cjs']).status, 0, 'characterization冒充蓝图验收');
       fs.writeFileSync(path.join(f.root, 'tests/value.test.cjs'), ut);
-      const sourceFile = path.join(f.root, 'src/value.js'), sourceBeforeImpact = fs.readFileSync(sourceFile, 'utf8');
+      const sourceBeforeImpact = fs.readFileSync(sourceFile, 'utf8');
       fs.appendFileSync(sourceFile, "\nrequire('./unavailable-external-consumer');\n");
       tool('Edit', { file_path: sourceFile }, 'updated'); tool('Read', { file_path: sourceFile }, fs.readFileSync(sourceFile, 'utf8'));
       add({ type: 'assistant', message: { role: 'assistant', content: '本请求纠正当前影响：Q1=否；Q2=是；Q3=否；依赖结果=否；跨部件=否；预期明确=是；做法唯一=是。src/value.js 新增外部消费者不可用，无法验证该消费者。依据 src/value.js。' } });

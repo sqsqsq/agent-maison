@@ -109,6 +109,29 @@ export function collectDeviceScopeIds(acceptance: AcceptanceSpec): string[] {
   return ids;
 }
 
+interface RequestDeviceAcceptance {
+  id: string;
+  description: string;
+  ut_layer?: UtLayer;
+  device_focus?: string;
+  verification_steps: string[];
+  expected_result: string;
+}
+
+/** The canonical short blueprint also binds its boundaries and performance. Historical ID lists select only criteria. */
+export function collectRequestDeviceAcceptance(acceptance: AcceptanceSpec, acceptanceIds: readonly string[]): RequestDeviceAcceptance[] {
+  return [
+    ...(acceptance.criteria ?? []).filter(item => acceptanceIds.includes(item.id) && isDeviceUtLayer(item.ut_layer)),
+    ...(acceptance.boundaries ?? []).filter(item => isDeviceUtLayer(item.ut_layer)).map(item => ({
+      ...item, verification_steps: [item.scenario, item.handling], expected_result: item.expected_behavior,
+    })),
+    ...(acceptance.performance ?? []).filter(item => isDeviceUtLayer(item.ut_layer)).map(item => ({
+      ...item, verification_steps: Array.isArray(item.device_focus) ? item.device_focus : item.device_focus ? [item.device_focus] : [],
+      expected_result: `${item.metric}: ${item.threshold} ${item.unit}`,
+    })),
+  ];
+}
+
 export function hasUnknownPerformanceLayer(acceptance: AcceptanceSpec): boolean {
   return (acceptance.performance ?? []).some(item => !normalizeUtLayer(item.ut_layer)
     || ![item.id, item.metric, item.threshold, item.unit, item.description].every(hasNonEmptyFocus)

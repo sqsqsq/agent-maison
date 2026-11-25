@@ -933,8 +933,12 @@ export function resolveRequestInputs(projectRoot: string, frameworkRoot: string,
     let input = item;
     let adhocCases: string | undefined;
     if (request.phase === 'testing' && item.id === 'cases') {
-      input = { ...item, sources: [{ kind: 'derive', provider_id: 'derive.adhoc-cases' }] };
-      if (request.inputs.cases && fs.existsSync(request.inputs.cases)) adhocCases = fs.readFileSync(request.inputs.cases, 'utf8');
+      if (request.blueprint) {
+        input = { ...item, sources: item.sources.filter(source => source.kind === 'derive' && source.provider_id === 'derive.blueprint-acceptance') };
+      } else {
+        input = { ...item, sources: [{ kind: 'derive', provider_id: 'derive.adhoc-cases' }] };
+        if (request.inputs.cases && fs.existsSync(request.inputs.cases)) adhocCases = fs.readFileSync(request.inputs.cases, 'utf8');
+      }
     }
     resolveInput(input, { projectRoot, frameworkRoot, phase: request.phase, track: 'full', inputContext, request, requirement: request.requested_result, adhocCases }, new Map(), resolved);
     if (adhocCases && resolved.values[item.id]?.state === 'resolved') {
