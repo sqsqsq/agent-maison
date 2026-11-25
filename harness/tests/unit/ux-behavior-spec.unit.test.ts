@@ -37,6 +37,18 @@ function sourceFiles(file: string, doc: Fields): Map<string, string> {
     .map(([id, source]) => [id, path.resolve(path.dirname(file), String(source))]));
 }
 
+function assertObservationReferences(doc: Fields): void {
+  const visual = fields(doc.visual);
+  if (visual.observation !== 'unobserved') return;
+  visit(doc, (key, value) => {
+    const refs = key === 'evidence' ? list(value) : key === 'copy_ref' ? [value] : [];
+    for (const ref of refs) {
+      const id = String(ref).split(':', 1)[0];
+      assert(id !== visual.source, `未观察图源不可用作 ${key}：${String(ref)}`);
+    }
+  });
+}
+
 /** Verify the links in the portable example. The skill itself needs only the schema. */
 function assertSampleReferences(docs: Map<string, Fields>): void {
   const flowEntries = [...docs].filter(([, doc]) => doc.screens);
@@ -86,6 +98,7 @@ function assertSampleReferences(docs: Map<string, Fields>): void {
 
   const common = sourceFiles(flowFile, flow);
   for (const [file, doc] of docs) {
+    assertObservationReferences(doc);
     const sources = new Map([...common, ...sourceFiles(file, doc)]);
     for (const [id, source] of sources) {
       assert(fs.statSync(source).isFile(), `来源文件无法解析 ${id} → ${source}`);
@@ -189,19 +202,51 @@ export function runAll(): UnitCaseResult[] {
       multiScreen.entry = { trigger: '打开界面', evidence: ['prd:20'] };
       assert.notEqual(validateLiteSchema(multiScreen, schema).length, 0);
     },
-    '未观察时拒绝示例截图状态及截图坐标，保留文字也能通过': () => {
-      const doc = sampleCardType();
-      const visual = fields(doc.visual);
+    '未观察时保留原图来源、PRD 行为与待决，拒绝图像状态、坐标及依据': () => {
+      const docs = yamlFiles(sampleDir);
+      const [file, observed] = [...docs].find(([, doc]) => doc.screen === 'card_type_sheet')!;
+      const { format_version, feature, screen, title, flow, entry } = observed;
+      const visual = fields(observed.visual);
+      const cardTypeOptions: Fields = {
+        name: '卡种选项', role: 'single_select', items_from: 'supported_types',
+        row: { label: '当前卡种的显示文案' }, evidence: ['prd:20', 'prd:30'],
+      };
+      const agreement: Fields = {
+        name: '协议文案', role: 'text', on_tap: { effect: 'none' },
+        copy: { status: 'open', question: '协议全名及逐字文案是什么？' },
+        evidence: ['prd:30'],
+      };
+      const doc: Fields = {
+        format_version, feature, screen, title, flow, entry,
+        visual: { source: visual.source, observation: 'unobserved' },
+        data: { supported_types: { source: '所选银行支持的卡种', evidence: ['prd:20', 'prd:30'] } },
+        elements: {
+          card_type_options: cardTypeOptions,
+          agreement_copy: agreement,
+          continue_button: {
+            label: '同意并继续', on_tap: { transition: 'open_card_picker' },
+            evidence: ['prd:20', 'prd:32'],
+          },
+        },
+      };
+      docs.set(file, doc);
       const schema = schemaForSkill();
-      const bbox = fields(fields(doc.elements).card_type_options).bbox;
-      const { depicted_state } = visual;
-      doc.visual = { source: visual.source, observation: 'unobserved' };
-      for (const element of Object.values(fields(doc.elements))) delete fields(element).bbox;
       assert.deepEqual(validateLiteSchema(doc, schema), []);
-      fields(doc.visual).depicted_state = depicted_state;
+      assertSampleReferences(docs);
+
+      for (const ref of [String(visual.source), `${String(visual.source)}:协议区域`]) {
+        agreement.evidence = ['prd:30', ref];
+        assert.throws(() => assertSampleReferences(docs), /未观察图源不可用作 evidence/);
+        agreement.evidence = ['prd:30'];
+        agreement.copy_ref = ref;
+        assert.throws(() => assertSampleReferences(docs), /未观察图源不可用作 copy_ref/);
+        delete agreement.copy_ref;
+      }
+
+      fields(doc.visual).depicted_state = visual.depicted_state;
       assert.notEqual(validateLiteSchema(doc, schema).length, 0);
       delete fields(doc.visual).depicted_state;
-      fields(fields(doc.elements).card_type_options).bbox = bbox;
+      cardTypeOptions.bbox = fields(fields(observed.elements).card_type_options).bbox;
       assert.notEqual(validateLiteSchema(doc, schema).length, 0);
     },
   };
