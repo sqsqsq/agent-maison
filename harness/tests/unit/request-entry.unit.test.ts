@@ -81,6 +81,39 @@ export function review(p: PreparedRequest, verdict = '通过') {
   fs.writeFileSync(p.inputs.review_report, `# Review\n## 审查范围\nsrc/value.js\n## 审查方法\nRead source and compare selected baseline.\n## 问题清单\n无问题\n## 问题统计\n| 严重程度 | 数量 |\n|---|---|\n| BLOCKER | 0 |\n| MAJOR | 0 |\n| MINOR | 0 |\n| INFO | 0 |\n## 修复建议\n无\n## 结论\n**审查结论**: ${verdict}\n`);
 }
 const cases: Array<{ name: string; phase?: string; run(f: ReturnType<typeof fixture>): void }> = [
+  { name: 'ddcc7160 unit-only route impact keeps uncertain scope and skips isolated scalar edits', run(f) {
+    const { requestTestingScope } = require('../../scripts/utils/automatic-request') as typeof import('../../scripts/utils/automatic-request');
+    const file = 'src/value.js';
+    const acceptance = { criteria: [{ id: 'AC-1', ut_layer: 'unit' }] } as import('../../scripts/utils/types').AcceptanceSpec;
+    const scope = (before: string, after: string) => {
+      fs.writeFileSync(path.join(f.root, file), after);
+      const intake = { targets: [file], attribution_unknown: [], control: { exempt: false, excluded: [] },
+        baseline: { preimages: { [file]: { content: before, source_line: 1 } } },
+      } as unknown as import('../../scripts/utils/request-intake').RequestIntake;
+      return requestTestingScope(f.root, intake, acceptance, ['AC-1']);
+    };
+    for (const original of [
+      "exports.value = 41;\nfunction openBank(r) { r.pushUrl('/bank'); }",
+      "export const value = 41;\nfunction openBank(r) { r.pushUrl('/bank'); }",
+    ]) {
+      const result = scope(original, original.replace('41', '42'));
+      assert.equal(result.required, false);
+      assert.deepEqual(result.impacts, []);
+    }
+    for (const [original, from, to] of [
+      ["function search(r) { if (!r.keyword) return; r.pushUrl('/result'); }", '!r.keyword', 'r.keyword.length < 2'],
+      ["function search(r) { r.ready && r.pushUrl('/result'); }", 'r.ready', 'r.enabled'],
+      ["function search(r) { return r.ready ? r.pushUrl('/result') : null; }", 'r.ready', 'r.enabled'],
+      ["const PERMS = ['ohos.permission.CAMERA'];\nfunction check(agent, ctx) { agent.requestPermissionsFromUser(ctx, PERMS); }", "'ohos.permission.CAMERA'", "'ohos.permission.MICROPHONE'"],
+      ["const DEST = '/bank';\nfunction openBank(r) { r.pushUrl(DEST); }", "'/bank'", "'/result'"],
+      ["exports.dest = '/bank';\nfunction openBank(r) { r.pushUrl(exports.dest); }", "'/bank'", "'/result'"],
+      ["exports.dest = '/bank';\nconst router = require('./router'); router.pushUrl();", "'/bank'", "'/result'"],
+      ["function openBank(r) { if (r.ready) r.pushUrl('/bank'); }", "'/bank'", "'/result'"],
+    ]) {
+      const result = scope(original, original.replace(from, to));
+      assert(result.required && result.impacts.some(impact => impact.kind === 'route' && impact.state === 'unknown'), original);
+    }
+  } },
   { name: '3f8a6c21 request review retains concrete finding identities without inventing independent evidence', run(f) {
     const p = prepareExplicitRequest(f.options); facts(p, f.root); review(p, '不通过');
     const original = fs.readFileSync(p.inputs.review_report, 'utf8');
@@ -253,7 +286,8 @@ exports.runRequestTests=ctx=>{
       assert(!unitScope().required, 'an unchanged navigation expression must not require device execution');
       for (const changed of [sourceAfter.replace('/bank', '/banks'), sourceAfter.replace('router.ready', 'router.enabled')]) {
         fs.writeFileSync(sourceFile, changed);
-        assert(unitScope().impacts.some(impact => impact.kind === 'route' && impact.state === 'required'));
+        const scope = unitScope();
+        assert(scope.required && scope.impacts.some(impact => impact.kind === 'route'));
       }
       fs.writeFileSync(sourceFile, sourceAfter);
       acceptance.criteria.push(...allCriteria.slice(1)); acceptance.boundaries.push(boundary); acceptance.performance.push(performance);

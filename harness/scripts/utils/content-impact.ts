@@ -27,30 +27,55 @@ function codeTokens(source: string): string {
   return tokens.join('\0');
 }
 
-const DEVICE_CALL_NAMES = new Set(['pushPath', 'pushUrl', 'replacePath', 'navigate', 'requestPermissionsFromUser', 'checkAccessToken']);
+const DEVICE_CALL = /\b(?:pushPath|pushUrl|replacePath|navigate|requestPermissionsFromUser|checkAccessToken)\s*\(/;
 
-function deviceCallSignatures(file: string, text: string): string[] {
-  const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
-  const calls: string[] = [];
-  const visit = (node: ts.Node): void => {
-    if (ts.isCallExpression(node)) {
-      const expression = node.expression;
-      const name = ts.isPropertyAccessExpression(expression) ? expression.name.text : ts.isIdentifier(expression) ? expression.text : undefined;
-      if (name && DEVICE_CALL_NAMES.has(name)) {
-        const signature = [codeTokens(node.getText(source))];
-        let child: ts.Node = node;
-        for (let parent = child.parent; parent; child = parent, parent = parent.parent) {
-          if (ts.isIfStatement(parent) && child !== parent.expression) {
-            signature.push(child === parent.thenStatement ? 'then' : 'else', codeTokens(parent.expression.getText(source)));
-          }
-        }
-        calls.push(JSON.stringify(signature));
-      }
+function literalWrite(statement: ts.Statement) {
+  let name: string;
+  let value: ts.Expression | undefined;
+  let exported = false;
+  if (ts.isVariableStatement(statement) && (statement.declarationList.flags & ts.NodeFlags.Const) && statement.declarationList.declarations.length === 1) {
+    const declaration = statement.declarationList.declarations[0];
+    if (!ts.isIdentifier(declaration.name)) return;
+    name = declaration.name.text;
+    value = declaration.initializer;
+    exported = statement.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.ExportKeyword) ?? false;
+  } else if (ts.isExpressionStatement(statement) && ts.isBinaryExpression(statement.expression)) {
+    const { left, operatorToken, right } = statement.expression;
+    if (operatorToken.kind !== ts.SyntaxKind.EqualsToken || !ts.isPropertyAccessExpression(left)
+      || !ts.isIdentifier(left.expression) || left.expression.text !== 'exports') return;
+    name = left.name.text;
+    value = right;
+    exported = true;
+  } else return;
+  if (!value || (!ts.isStringLiteral(value) && !ts.isNumericLiteral(value)
+    && ![ts.SyntaxKind.TrueKeyword, ts.SyntaxKind.FalseKeyword, ts.SyntaxKind.NullKeyword].includes(value.kind))) return;
+  const text = statement.getText();
+  const start = statement.getStart();
+  return { name, exported, shape: [codeTokens(text.slice(0, value.getStart() - start)), codeTokens(text.slice(value.end - start))].join('\0') };
+}
+
+/** Suppress the existing device candidate only for isolated scalar changes we can prove locally. */
+function onlyUnreferencedScalarEdits(file: string, before: string, after: string): boolean {
+  const previous = ts.createSourceFile(file, before, ts.ScriptTarget.Latest, true).statements;
+  const current = ts.createSourceFile(file, after, ts.ScriptTarget.Latest, true).statements;
+  if (previous.length !== current.length) return false;
+  return previous.every((statement, index) => {
+    const updated = current[index];
+    if (codeTokens(statement.getText()) === codeTokens(updated.getText())) return true;
+    const originalWrite = literalWrite(statement);
+    const updatedWrite = literalWrite(updated);
+    if (!originalWrite || !updatedWrite || originalWrite.shape !== updatedWrite.shape) return false;
+    const { name, exported } = originalWrite;
+    const names = new Set([name, 'eval', 'Function', ...(exported ? ['exports', 'module', 'require'] : [])]);
+    function mayReferenceWrite(node: ts.Node): true | undefined {
+      if (ts.isWithStatement(node)
+        || exported && (node.kind === ts.SyntaxKind.ThisKeyword || node.kind === ts.SyntaxKind.ImportKeyword
+          || ts.isImportDeclaration(node) || ts.isImportEqualsDeclaration(node) || ts.isExportDeclaration(node))
+        || (ts.isIdentifier(node) || ts.isStringLiteralLike(node)) && names.has(node.text)) return true;
+      return ts.forEachChild(node, mayReferenceWrite);
     }
-    ts.forEachChild(node, visit);
-  };
-  visit(source);
-  return calls.sort();
+    return [previous, current].every(statements => statements.every((item, itemIndex) => itemIndex === index || !mayReferenceWrite(item)));
+  });
 }
 
 function changedKeys(left: unknown, right: unknown, prefix = ''): string[] {
@@ -94,9 +119,8 @@ export function deriveContentImpact(root: string, intake: RequestIntake): Conten
       if (stableStringify(previous.signatures) !== stableStringify(current.signatures)) add('interface', file, '真实导出名、参数/返回、成员或重导出关系改变', 'compile + ut：调用方同步及兼容验证');
       if (previous.unknown.length || current.unknown.length) add('interface', file, [...new Set([...previous.unknown, ...current.unknown])].join('；'), '作者核对动态/推断接口与仓外消费者', 'unknown');
       if (/\b(?:CREATE\s+TABLE|ALTER\s+TABLE|migration|migrate|RdbStore|RelationalStore)\b/i.test(before + after)) add('persistence', file, '持久化源码实际改变，字段含义/既有值变化需要原作者核对', 'ut：存量样本、升级与默认值', 'unknown');
-      if ([...DEVICE_CALL_NAMES].some(name => before.includes(name) || after.includes(name))
-        && stableStringify(deviceCallSignatures(file, before)) !== stableStringify(deviceCallSignatures(file, after))) {
-        add('route', file, '实际跳转/权限调用、参数或条件改变', 'testing：相关跳转/权限分支');
+      if ((DEVICE_CALL.test(before) || DEVICE_CALL.test(after)) && !onlyUnreferencedScalarEdits(file, before, after)) {
+        add('route', file, '源码变化可能影响同文件的跳转/权限调用', 'testing：相关跳转/权限分支', 'unknown');
       }
       add('behavior', file, '实际实现内容改变；按原用户预期核验金额、幂等及数据正确性等本次目标', 'review/ut：本请求针对性预期验证');
     }
