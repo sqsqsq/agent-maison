@@ -127,15 +127,17 @@ export function prepareDesignRequest(options: DesignRequestOptions): PreparedDes
   let origin = options.originRequest || typeof previous?.origin_request === 'string'
     ? readDesignGoalOrigin(root, options.originRequest ?? String(previous!.origin_request)) : undefined;
   if (previous && previous.phase !== 'component-design') throw new Error('design source must be the original component-design request');
+  let readonlyIntake: RequestIntake | undefined;
   if (previous && options.readonly) {
     const { prepareRequestInput } = require('./capability-resolution-entry-input') as typeof import('./capability-resolution-entry-input');
-    prepareRequestInput({ projectRoot: root, frameworkRoot: options.frameworkRoot, phase: 'component-design', requestFile: path.relative(root, existingFile!),
+    const parsed = prepareRequestInput({ projectRoot: root, frameworkRoot: options.frameworkRoot, phase: 'component-design', requestFile: path.relative(root, existingFile!),
       reportDir: options.reportDir ?? path.relative(root, path.dirname(existingFile!)) });
+    if (options.sessionRef === undefined && options.targets === undefined && !options.captureInitialDirty) readonlyIntake = parsed.intake_context;
   }
   const location = resolveRequestSessionReference(options.sessionRef ?? (previous?.intake_context as RequestIntake | undefined)?.session_ref, root);
   let intake: RequestIntake | undefined, originGap = location.gap;
   if (location.sessionRef) try {
-    intake = readRequestIntake({ projectRoot: root, frameworkRoot: options.frameworkRoot, sessionRef: location.sessionRef,
+    intake = readonlyIntake?.session_ref === location.sessionRef ? readonlyIntake : readRequestIntake({ projectRoot: root, frameworkRoot: options.frameworkRoot, sessionRef: location.sessionRef,
       explicitTargets: options.targets ?? (previous?.intake_context as RequestIntake | undefined)?.explicit_targets ?? (previous?.targets as { files?: string[] } | undefined)?.files,
       previous: previous?.intake_context as RequestIntake | undefined, captureInitialDirty: options.captureInitialDirty });
     if (!intake.targets.length && intake.source_reads.length) intake = readRequestIntake({ projectRoot: root, frameworkRoot: options.frameworkRoot,

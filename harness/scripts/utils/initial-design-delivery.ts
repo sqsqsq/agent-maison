@@ -362,8 +362,8 @@ function initialRequestDisposition(projectRoot: string, frameworkRoot: string, r
         && (check.structured as { acceptance_id?: string } | undefined)?.acceptance_id === item.id));
       if (missing.length) gap(phase, `短蓝图设备验收尚欠 ${missing.map(item => item.id).join('、')}；核 ${path.relative(projectRoot, reportFile)}`);
     }
-    const { readBoundInput, resolveRequestInputs } = require('./capability-resolution') as typeof import('./capability-resolution');
-    const context = resolveRequestInputs(projectRoot, frameworkRoot, input).context;
+    const { readBoundInput, requestPhaseInputContext } = require('./capability-resolution') as typeof import('./capability-resolution');
+    const context = requestPhaseInputContext(input.request_sha256);
     for (const binding of Object.values(summary.input_bindings ?? {})) readBoundInput({ projectRoot, frameworkRoot, phase, track: 'full', request: input, inputContext: context }, binding as never);
   } catch (error) {
     const ids = phase === 'testing' ? device?.items.map(item => item.id) : undefined;
@@ -809,14 +809,18 @@ export function resolveInitialDesignWriteRecovery(projectRoot: string, manifest:
   return { conflicts };
 }
 
+function initialDesignWriteProblems(projectRoot: string, manifest: InitialDesignGoalManifest): CurrentDispositionProblem[] {
+  const { conflicts, review } = resolveInitialDesignWriteRecovery(projectRoot, manifest, readInitialDesignWriteEvents(projectRoot, manifest));
+  if (review) conflicts.set(review.file, { ...review.violation, restorable: false });
+  return describePhaseWriteConflicts(conflicts).map(problem => review && problem.files?.includes(review.file)
+    ? { ...problem, detail: `框架将在可信来源恢复后重建评审展示：${review.file}${review.reason ? `；${review.reason}` : ''}。` } : problem);
+}
+
 /** Root completion consumes the same design, CU and formal assembly facts as their own endpoints. */
 export function readInitialDesignCompletionDisposition(input: { projectRoot: string; frameworkRoot: string; manifest: InitialDesignGoalManifest;
   observation?: InitialDesignObservation }): CurrentDisposition {
   const observed = input.observation ?? readInitialDesignDelivery(input);
-  const { conflicts, review } = resolveInitialDesignWriteRecovery(input.projectRoot, input.manifest, readInitialDesignWriteEvents(input.projectRoot, input.manifest));
-  if (review) conflicts.set(review.file, { ...review.violation, restorable: false });
-  const writes = describePhaseWriteConflicts(conflicts).map(problem => review && problem.files?.includes(review.file)
-    ? { ...problem, detail: `框架将在可信来源恢复后重建评审展示：${review.file}${review.reason ? `；${review.reason}` : ''}。` } : problem);
+  const writes = initialDesignWriteProblems(input.projectRoot, input.manifest);
   if (observed.request) return observed.kind === 'construction' ? initialRequestDisposition(input.projectRoot, input.frameworkRoot, observed.request, writes)
     : resolveCurrentDisposition({ endpoint: 'request', phases: [], additionalProblems: [...writes, { phase: 'component-design', id: 'execution_scope', action: 'repair', affects: 'completion', severity: 'BLOCKER', owner: 'component-design', detail: observed.issues.join('；') }] });
   const problems: CurrentDispositionProblem[] = [...writes, ...(observed.disposition?.problems ?? [])];
@@ -858,7 +862,10 @@ export function projectInitialDesignDelivery(input: { projectRoot: string; frame
   const events = loadEventsJsonlStrict(path.join(runDir, 'events.jsonl'));
   if (events.corruptLines.length) throw new Error('[initial-design] corrupt original request events');
   const observed = readInitialDesignDelivery({ projectRoot, frameworkRoot: input.frameworkRoot, manifest });
-  const currentDisposition = readInitialDesignCompletionDisposition({ ...input, manifest, observation: observed });
+  const currentDisposition = observed.request && observed.kind === 'construction' && observed.disposition
+    ? resolveCurrentDisposition({ endpoint: 'request', phases: [],
+      additionalProblems: [...initialDesignWriteProblems(projectRoot, manifest), ...observed.disposition.problems] })
+    : readInitialDesignCompletionDisposition({ ...input, manifest, observation: observed });
   const end = resolveEffectiveRunEnd(events.events);
   const disposition = end && 'run_disposition' in end && typeof end.run_disposition === 'string' ? end.run_disposition : undefined;
   const waitKind = end && 'run_wait_kind' in end && typeof end.run_wait_kind === 'string' ? end.run_wait_kind : undefined;
