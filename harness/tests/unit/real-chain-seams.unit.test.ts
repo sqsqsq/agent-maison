@@ -53,7 +53,7 @@ import {
   assertCurrentPhaseClosed,
   assertCurrentOwnerEvidence,
   dumpPhase,
-  publishVerifier,
+  signedVerifierDraftPath,
   publishRequestedVerifier,
   readDeliveredVerifierRequest,
   writeSpecMaterials,
@@ -1360,24 +1360,26 @@ function writeRc9bService(p: RealChainProject, fixed: boolean): void {
 }
 
 /** verify-ut.md 诊断口径的 verifier 报告：测试真在驱动业务、断言有业务价值。 */
-function publishRc9bUtVerifier(p: RealChainProject): void {
-  const subjectId = readSummary(p, 'ut')?.verifier_subject_id;
-  if (!subjectId) return;
-  publishFixtureVerifierEvidence({
-    projectRoot: p.root,
-    reportsDir: featurePhaseReportsDir(p.root, p.feature, 'ut', p.frameworkRoot),
-    feature: p.feature, phase: 'ut', subjectId,
-    reportText: [
-      `# verifier — ${p.feature} / ut`,
-      '',
-      '| id | status | severity | 证据 |',
-      '| --- | --- | --- | --- |',
-      `| end_to_end_driving | PASS | BLOCKER | [AC-1] 经 BankService.openCard 真实驱动开卡业务 |`,
-      `| business_assertion_value | PASS | BLOCKER | 空 id 不得开卡是业务规则断言，失败即产品缺陷 |`,
-      '',
-    ].join('\n'),
-    skipSummaryPatch: true,
-  });
+function rc9bUtStrengthReport(p: RealChainProject): string {
+  const source = fs.readFileSync(path.join(p.root, REAL_CHAIN_SERVICE), 'utf8').split(/\r?\n/);
+  const test = fs.readFileSync(path.join(p.root, REAL_CHAIN_TEST), 'utf8').split(/\r?\n/);
+  const method = source.findIndex(line => line.includes('openCard('));
+  const rejected = test.findIndex(line => line.includes("service.openCard('')"));
+  assert(method >= 0 && rejected >= 0 && test.some(line => line.includes("service.openCard('cmb')"))
+    && test.some(line => line.includes('expect(opened).assertTrue()')) && test.some(line => line.includes('expect(rejected).assertFalse()')),
+    'the independent UT decision requires the current openCard method and both business assertions');
+  const result = source.find(line => line.includes('Promise.resolve('));
+  assert(result, 'the bank fixture must expose the actual current return expression');
+  const reference = (file: string, line: number): string => '`' + file + ':' + (line + 1) + '`';
+  return [
+    `# verifier — ${p.feature} / ut`, '',
+    '| id | status | severity | 证据 |',
+    '| --- | --- | --- | --- |',
+    '| end_to_end_driving | PASS | BLOCKER | [AC-1] ' + reference(REAL_CHAIN_TEST, rejected) + ' 调用 '
+      + reference(REAL_CHAIN_SERVICE, method) + '。当前实现 ' + result!.trim() + ' |',
+    '| business_assertion_value | PASS | BLOCKER | ' + reference(REAL_CHAIN_TEST, rejected)
+      + ' 核对有效 id 成功、空 id 被拒绝，两项均驱动实际服务。 |', '',
+  ].join('\n');
 }
 
 /**
@@ -1469,6 +1471,9 @@ function unmarkedUtBlockerSkips(p: RealChainProject): string[] {
 export async function rc9bUtBacktrackThroughCoding(upstreamAudit = false): Promise<void> {
   await withProject(async (project, birthChain) => {
     const { authorHooks } = await import('./lifecycle-evolution.unit.test');
+    const { installSnapshotUtProvider, repairSnapshotUtProduct, snapshotVerifierHooks } = await import('../fixtures/host-snapshot-3.1.0/migrate');
+    installSnapshotUtProvider(project.frameworkRoot, { test: '[AC-1] 开卡入口', source: REAL_CHAIN_SERVICE });
+    const independent = snapshotVerifierHooks(project, project.feature);
     const repairId = upstreamAudit ? 'UP-UT-8A' : 'ut_product_assertion_failure';
     const repairFix = '修复 BankService.openCard 对空 id 的实现缺口';
     const repairs: Array<{ invokeId: string; fingerprint: string; index: number; summary: NonNullable<ReturnType<typeof readSummary>>;
@@ -1476,13 +1481,12 @@ export async function rc9bUtBacktrackThroughCoding(upstreamAudit = false): Promi
       preSourceHash: string; testHash: string; skips: string[] }> = [];
     let currentRepair = 0;
     const hasUpstreamGap = () => upstreamAudit && !fs.readFileSync(path.join(project.root, REAL_CHAIN_SERVICE), 'utf8').includes('!!id');
-    const publishAuditVerifier = (runId: string): void => {
-      const summary = readSummary(project, 'ut');
+    const auditReport = (runId: string): string => {
       const issues = readPhaseRepairIssues(project.root, project.feature, 'ut', { frameworkRoot: project.frameworkRoot, runId });
-      assert(!!issues?.rows[0], '本次 UT 调用身份必须读到可核实的上游问题行');
-      publishFixtureVerifierEvidence({ projectRoot: project.root, reportsDir: featurePhaseReportsDir(project.root, project.feature, 'ut', project.frameworkRoot),
-        feature: project.feature, phase: 'ut', subjectId: summary?.verifier_subject_id, skipSummaryPatch: true,
-        reportText: ['```issue-verification', `- issue: ${repairId}`, '  verdict: confirmed', `  evidence: BankService.ets | ${issues!.rows[0].summary}`, '```'].join('\n') });
+      const issue = issues?.rows[0];
+      if (!issue) throw new Error('本次 UT 调用身份必须读到可核实的上游问题行');
+      return ['```issue-verification', `- issue: ${repairId}`, '  verdict: confirmed',
+        `  evidence: BankService.ets | ${issue.summary}`, '```'].join('\n');
     };
     const hooks = authorHooks(project, {
       spec: (p, runId) => writeSpecMaterials(p, runId, { preserveUnchanged: true }),
@@ -1505,14 +1509,21 @@ export async function rc9bUtBacktrackThroughCoding(upstreamAudit = false): Promi
         ].join('\n'));
       },
       testing: writeTestPlan,
+    }, {
+      coding: p => repairSnapshotUtProduct(p.root, p.feature, 'coding'),
+      ut: p => repairSnapshotUtProduct(p.root, p.feature, 'ut'),
     });
     const probe = await runGoalRuntimeChain(project.root, {
       frameworkRoot: project.frameworkRoot, featureId: project.feature, realHarness: true, adapter: 'codex',
       freshStartPhase: birthChain[0] as 'spec', freshEndPhase: birthChain[birthChain.length - 1], freshRequirement: REAL_CHAIN_REQUIREMENT,
+      onReview: ctx => { hooks.onReview(ctx); independent.onReview?.(ctx); },
       onOutOfChain: ctx => {
         if (ctx.phase === 'ut-verifier-format-repair') {
-          assert(readDeliveredVerifierRequest(project, ctx)?.phase === 'ut', 'UT diagnosis must consume the actually delivered current request');
-          if (hasUpstreamGap()) publishAuditVerifier(ctx.runId); else publishRc9bUtVerifier(project);
+          const request = readDeliveredVerifierRequest(project, ctx);
+          if (request?.phase !== 'ut') throw new Error('UT diagnosis must consume the actually delivered current request');
+          publishFixtureVerifierEvidence({ projectRoot: project.root, reportsDir: featurePhaseReportsDir(project.root, project.feature, 'ut', project.frameworkRoot),
+            feature: project.feature, phase: 'ut', subjectId: request.subject_id, draftPath: signedVerifierDraftPath(project, ctx.runId, request),
+            skipSummaryPatch: true, reportText: hasUpstreamGap() ? auditReport(ctx.runId) : rc9bUtStrengthReport(project) });
         } else assert(publishRequestedVerifier(project, ctx), `unexpected model purpose: ${ctx.phase}`);
       },
       onAuthor: (ctx, context) => {

@@ -11,15 +11,16 @@ import { execFileSync } from 'child_process';
 import { clearFrameworkConfigCache, featureFilePath, featurePhaseReportsDir } from '../../../config';
 import { resolveWorkflowSpec } from '../../../workflow-loader';
 import { resolveSuccessorExecutionScope } from '../../../scripts/utils/feature-execution-scope';
+import { loadEffectiveExecutionScope } from '../../../scripts/utils/goal-run-creation';
 import { assessFeature } from '../../../scripts/utils/feature-assessment';
 import { resolveChangeUnitExpectedExecution } from '../../../scripts/utils/change-unit-completion';
-import { publishRequestedVerifier, readDeliveredVerifierRequest, writeSpecMaterials, writeCuSpecMaterials, writeTestPlan } from '../../unit/real-chain.unit.test';
+import { EMPTY_LEDGER_TEST, checksDisplayedBankRows, publishRequestedVerifier, readDeliveredVerifierRequest, signedVerifierDraftPath, writeSpecMaterials, writeCuSpecMaterials, writeTestPlan } from '../../unit/real-chain.unit.test';
 import { computeMaterialSha256, readVerifierMaterialOrNull, verifierMaterialFileMatchesCurrent } from '../../../scripts/utils/verifier-material';
-import { loadVerifierEvidenceForSubject } from '../../../scripts/utils/verifier-evidence';
+import { loadVerifierEvidenceForSubject, parseVerifierEvidenceText } from '../../../scripts/utils/verifier-evidence';
 import { publishFixtureVerifierEvidence } from '../../utils/verifier-evidence-fixture';
 import { runGoalRuntimeChain } from '../../unit/goal-runner-testing-integrity.unit.test';
 import { preserveRuntimeTestEvidence } from '../../utils/runtime-test-control';
-import { executionRequestForInvoke } from '../../../scripts/utils/session-execution-handoff';
+import { executionRequestForInvoke, stageVerifierHandbacks } from '../../../scripts/utils/session-execution-handoff';
 import { resolveCompletionDisposition } from '../../../scripts/utils/verify-feature-completion';
 import { codingTestPreservation } from '../../../scripts/utils/repair-responsibility';
 import { ensureFakeDeveco } from '../../unit/successor-exit.unit.test';
@@ -38,16 +39,20 @@ const ledgerTest = 'src/ledger/src/ohosTest/ets/test/LedgerFeature.test.ets';
 const bankCase = '[AC-2] 银行列表展示真实条目并过滤空值';
 const ledgerCase = '[BRANCH-success][AC-1] LedgerFeature.add 刷新消费者并恢复已提交记录';
 
-function installSnapshotUtProvider(frameworkRoot: string): void {
+export function installSnapshotUtProvider(frameworkRoot: string, injectedFailure?: { test: string; source: string }): void {
   const host = path.join(frameworkRoot, 'profiles/test-chain/harness/ut-host-impl.js');
   const modulePath = path.join(__dirname, 'snapshot-ut-provider.cjs');
   assert(fs.existsSync(modulePath), 'the isolated migration must have its runnable UT provider');
-  const assignment = 'exports.utHostImpl.checkUtHvigorTest = require(' + JSON.stringify(modulePath) + ');';
+  const execute = 'require(' + JSON.stringify(modulePath) + ')';
+  const provider = injectedFailure
+    ? '(ctx, files, targets) => ' + execute + '(ctx, files, targets, ' + JSON.stringify(injectedFailure) + ')'
+    : execute;
+  const assignment = 'exports.utHostImpl.checkUtHvigorTest = ' + provider + ';';
   if (!fs.readFileSync(host, 'utf8').includes(assignment)) fs.appendFileSync(host, '\n' + assignment + '\n');
 }
 
 /** The saved test-only legacy coverage required real repairs under the current semantic UT rules. */
-function repairSnapshotUtProduct(root: string, feature: string): void {
+export function repairSnapshotUtProduct(root: string, feature: string, phase?: 'coding' | 'ut'): void {
   const replace = (file: string, before: string, after: string): void => {
     const full = path.join(root, file);
     const text = fs.readFileSync(full, 'utf8').replace(/\r\n/g, '\n');
@@ -56,16 +61,20 @@ function repairSnapshotUtProduct(root: string, feature: string): void {
     fs.writeFileSync(full, text.replace(before, after));
   };
   if (feature === SNAPSHOT_FLAT_FEATURE) {
-    replace(cardRepo, 'return [];', "return ['cmb', ''];");
-    replace(cardService, 'export class BankService {', "import { BankRepository } from './BankRepository';\n\nexport class BankService {\n  listBankRows(): string[] { return new BankRepository().list().filter(id => id.length > 0); }");
-    replace(cardPage, "import { BankRepository } from './BankRepository';", "import { BankService } from './BankService';");
-    replace(cardPage, 'new BankRepository().list()', 'new BankService().listBankRows()');
-    replace(cardTest, "it('[AC-2] 银行列表展示',", `it('${bankCase}',`);
-    replace(cardTest,
-      "    const repo: BankRepository = new BankRepository();\n    const banks: string[] = repo.list();\n    expect(banks).not().assertNull();\n    expect(banks.length).assertEqual(0);",
-      "    const banks: string[] = new BankService().listBankRows();\n    expect(banks.length).assertEqual(1);\n    expect(banks[0]).assertEqual('cmb');");
-    replace(`doc/features/${feature}/ut/testability-audit.md`, `file: ${cardService}, symbol: openCard`, `file: ${cardService}, symbol: listBankRows`);
-    replace(`doc/features/${feature}/ut/testability-audit.md`, `file: ${cardRepo}, symbol: list`, `file: ${cardService}, symbol: openCard`);
+    if (phase !== 'ut') {
+      replace(cardRepo, 'return [];', "return ['cmb', ''];");
+      replace(cardService, 'export class BankService {', "import { BankRepository } from './BankRepository';\n\nexport class BankService {\n  listBankRows(): string[] { return new BankRepository().list().filter(id => id.length > 0); }");
+      replace(cardPage, "import { BankRepository } from './BankRepository';", "import { BankService } from './BankService';");
+      replace(cardPage, 'new BankRepository().list()', 'new BankService().listBankRows()');
+    }
+    if (phase !== 'coding') {
+      replace(cardTest, "it('[AC-2] 银行列表展示',", `it('${bankCase}',`);
+      replace(cardTest,
+        "    const repo: BankRepository = new BankRepository();\n    const banks: string[] = repo.list();\n    expect(banks).not().assertNull();\n    expect(banks.length).assertEqual(0);",
+        "    const banks: string[] = new BankService().listBankRows();\n    expect(banks.length).assertEqual(1);\n    expect(banks[0]).assertEqual('cmb');");
+      replace(`doc/features/${feature}/ut/testability-audit.md`, `file: ${cardService}, symbol: openCard`, `file: ${cardService}, symbol: listBankRows`);
+      replace(`doc/features/${feature}/ut/testability-audit.md`, `file: ${cardRepo}, symbol: list`, `file: ${cardService}, symbol: openCard`);
+    }
   } else {
     replace(ledgerSource, 'export class LedgerFeature {\n  private entries: number[] = [];\n  add(amount: number): number { this.entries.push(amount); return this.balance(); }\n  balance(): number { return this.entries.reduce((a, b) => a + b, 0); }', [
       'export interface LedgerStore { read(): number[]; commit(entries: number[]): void; }',
@@ -116,14 +125,17 @@ function readSnapshotUtDecision(root: string, feature: string) {
   const testFile = flat ? cardTest : ledgerTest;
   const reads = [testFile, ...sourceFiles].map(file => ({ file, text: fs.readFileSync(path.join(root, file), 'utf8') }));
   const [test, source, repo, page] = reads.map(read => read.text.replace(/\r\n/g, '\n'));
-  const verified = flat ? test.includes('new BankService().listBankRows()') && test.includes("expect(banks[0]).assertEqual('cmb')")
-    && test.includes('expect(banks.length).assertEqual(1)') && source.includes(".filter(id => id.length > 0)")
+  const verified = flat ? checksDisplayedBankRows(test) && source.includes(".filter(id => id.length > 0)")
     && repo.includes("return ['cmb', ''];") && page.includes('new BankService().listBankRows()') && page.includes('ForEach(this.banks')
     : test.includes("expect(ledger.phase).assertEqual('start')") && test.includes("expect(ledger.phase).assertEqual('done')")
       && test.includes('expect(ledger.add(120)).assertEqual(220)') && test.includes('expect(store.commitCount).assertEqual(1)')
       && test.includes('expect(consumer.balance()).assertEqual(220)') && test.includes('expect(new LedgerFeature(store).balance()).assertEqual(220)')
       && source.includes('this.store?.commit(this.entries)') && source.includes('this.store?.read() ?? this.entries');
-  const evidence = reads.map(({ file, text }) => `\`${file}:1-${text.trimEnd().split(/\r?\n/).length}\``).join('、') + `。${name}。` + (flat
+  // A new independent review binds the source it actually saw, including edits that keep line numbers stable.
+  const evidence = reads.map(({ file, text }) => {
+    const digest = crypto.createHash('sha256').update(text).digest('hex');
+    return `\`${file}:1-${text.trimEnd().split(/\r?\n/).length}\`（SHA-256 ${digest}）`;
+  }).join('、') + `。${name}。` + (flat
     ? verified ? '用例驱动页面同用的列表入口，验证真实源中的 cmb 被保留、无效条目被剔除。' : '现有用例未证明页面驱动的银行列表含可展示条目。'
     : verified ? '用例观察提交序列、既有消费者刷新和重新创建后的余额，三者读取同一保存原件。' : '现有用例未证明提交后消费者刷新与重新创建。');
   return { issue, verified, evidence, sourceFiles, testFile };
@@ -133,13 +145,16 @@ function snapshotProject(s: Snapshot, feature: string) {
   return { ...s, feature, module: feature === SNAPSHOT_CU_FEATURE ? 'ledger' : 'FinancialCard', modulePath: feature === SNAPSHOT_CU_FEATURE ? 'src/ledger' : '02-Feature/FinancialCard' };
 }
 
-export function snapshotVerifierHooks(s: Snapshot, feature: string, evidenceFiles: string[] = []):
+type ReturnedDrafts = Map<string, { phase: string; sha256: string }>;
+
+export function snapshotVerifierHooks(s: Snapshot, feature: string, evidenceFiles: string[] = [], returned?: ReturnedDrafts):
   Pick<NonNullable<Parameters<typeof runGoalRuntimeChain>[1]>, 'onOutOfChain' | 'onReview'> {
   const p = snapshotProject(s, feature);
   return {
     onOutOfChain: ctx => {
       const current = { ...p, runId: ctx.runId }, request = readDeliveredVerifierRequest(current, ctx);
       assert(request, `unexpected snapshot model request: ${ctx.phase}`);
+      const draftPath = signedVerifierDraftPath(current, ctx.runId, request);
       const reports = featurePhaseReportsDir(s.root, feature, request.phase, s.frameworkRoot);
       const material = readVerifierMaterialOrNull(reports, request.subject_id);
       assert(material && material.material_sha256 === request.material_sha256 && computeMaterialSha256(material) === request.material_sha256,
@@ -157,7 +172,7 @@ export function snapshotVerifierHooks(s: Snapshot, feature: string, evidenceFile
           ...['end_to_end_driving', 'business_assertion_value'].map(id => `| ${id} | ${status} | BLOCKER | ${decision.evidence} |`), '',
         ].join('\n');
         publishFixtureVerifierEvidence({ projectRoot: s.root, reportsDir: reports, feature, phase: request.phase, subjectId: request.subject_id,
-          skipSummaryPatch: true, verdict: decision.verified ? 'PASS' : 'FAIL', blockerCount: decision.verified ? 0 : 2, reportText });
+          draftPath, skipSummaryPatch: true, verdict: decision.verified ? 'PASS' : 'FAIL', blockerCount: decision.verified ? 0 : 2, reportText });
       } else if (request.phase === 'coding' && !diagnosis.ok) {
         const raw = JSON.parse(fs.readFileSync(path.join(reports, 'script-report.json'), 'utf8'));
         const check = raw.checks.find((item: { id: string }) => item.id === 'coding_existing_test_preserved');
@@ -169,19 +184,22 @@ export function snapshotVerifierHooks(s: Snapshot, feature: string, evidenceFile
           const original = codingTestPreservation({ projectRoot: s.root, feature, runId: ctx.runId, file: decision.testFile });
           assert(original.beforeText, 'the independent reviewer must compare against the captured original test bytes');
           assert(feature === SNAPSHOT_FLAT_FEATURE ? original.beforeText.includes('expect(banks.length).assertEqual(0)')
-            : original.beforeText.includes('expect(ledger.restore([45, 55])).assertEqual(100)'), 'the admitted old test must match the actual weaker scenario');
+            : original.beforeText === EMPTY_LEDGER_TEST || original.beforeText.includes('expect(ledger.restore([45, 55])).assertEqual(100)'),
+          'the captured pre-image must be the original empty ledger scaffold or its known prior assertions');
           const reportText = '```issue-verification\n' + YAML.stringify([{
             issue: check.id, verdict: decision.verified ? 'refuted' : 'confirmed', repair_owner: 'ut',
             evidence: `${check.details}\n${decision.evidence}`, production_paths: decision.sourceFiles,
           }]) + '```\n';
           publishFixtureVerifierEvidence({ projectRoot: s.root, reportsDir: reports, feature, phase: request.phase,
-            subjectId: request.subject_id, skipSummaryPatch: true, reportText });
+            subjectId: request.subject_id, draftPath, skipSummaryPatch: true, reportText });
         }
-      } else if (!diagnosis.ok) {
+      } else {
         assert(publishRequestedVerifier(current, ctx), 'only the actually delivered independent request may publish its reply');
       }
-      const accepted = loadVerifierEvidenceForSubject(s.root, feature, request.phase, request.subject_id, { frameworkRoot: s.frameworkRoot });
-      assert(accepted.ok, JSON.stringify(accepted));
+      const draft = parseVerifierEvidenceText({ feature, phase: request.phase, currentSubject: request.subject_id,
+        text: fs.readFileSync(draftPath, 'utf8'), mdAbs: draftPath, mdRel: path.relative(s.root, draftPath) });
+      assert(draft.ok, JSON.stringify(draft));
+      returned?.set(request.subject_id, { phase: request.phase, sha256: hash(draftPath) });
     },
     onReview: ctx => {
       const runDir = featureFilePath(s.root, feature, `goal-runs/${ctx.runId}`);
@@ -281,12 +299,13 @@ export async function migrateHostSnapshot(s: Snapshot, feature: string, deviceGa
   const chain = successorScope.phase_chain;
   const p = snapshotProject(s, feature);
   const evidenceFiles = ['context/facts.md', 'acceptance.yaml', 'contracts.yaml', 'spec/spec.md'].map(file => featureFilePath(s.root, feature, file));
+  const returned: ReturnedDrafts = new Map();
   const probe = await runGoalRuntimeChain(s.root, {
     frameworkRoot: s.frameworkRoot, featureId: feature, adapter: 'codex', realHarness: true, deviceGate,
     testControl: { timeoutMs: 20 * 60_000, evidenceFiles },
     supersede: [sourceRun], freshRequirement: manifest.requirement, rebaselineTo,
     freshStartPhase: chain[0] as 'review', freshEndPhase: chain.at(-1), skipLegacySeal: true,
-    ...snapshotVerifierHooks(s, feature, evidenceFiles),
+    ...snapshotVerifierHooks(s, feature, evidenceFiles, returned),
     onAuthor: (ctx, context) => {
       const current = { ...p, runId: ctx.runId };
       const facts = featureFilePath(s.root, feature, 'context/facts.md');
@@ -320,6 +339,14 @@ export async function migrateHostSnapshot(s: Snapshot, feature: string, deviceGa
     },
   });
   clearFrameworkConfigCache();
+  for (const [subject_id, { phase, sha256 }] of returned) {
+    const accepted = loadVerifierEvidenceForSubject(s.root, feature, phase, subject_id, { frameworkRoot: s.frameworkRoot });
+    assert(accepted.ok, JSON.stringify(accepted));
+    const publicReport = accepted.evidence.md_path_abs;
+    assert.equal(hash(publicReport), sha256);
+    assert([...stageVerifierHandbacks(probe.reportDir, { feature, phase, subject_id }, publicReport)]
+      .some(reply => crypto.createHash('sha256').update(reply.bytes).digest('hex') === sha256), 'public report needs the actual accepted handback');
+  }
   const after = assessFeature(s.root, feature, { ...resolveChangeUnitExpectedExecution(s.root, feature), frameworkRoot: s.frameworkRoot });
   assert.equal(hash(original), originalHash, '迁移不得改写旧 completion 原件');
   const failedPhase = [...probe.events].reverse().find(event => event.type === 'phase_verdict' && event.verdict !== 'PASS')?.phase;
@@ -331,6 +358,13 @@ export async function migrateHostSnapshot(s: Snapshot, feature: string, deviceGa
   assert.equal(probe.exitCode, 0, JSON.stringify({ events: probe.events.slice(-5), checks: failureChecks }));
   assert(after.complete, JSON.stringify({ record: after.record, obligations: after.obligations.filter(o => o.status === 'uncovered') }));
   assert(after.record.state === 'ok' && after.record.run_id, '新完成必须仍可信并有 run 身份');
+  if (feature === SNAPSHOT_CU_FEATURE) {
+    const deviceDuty = (scope: typeof successorScope | null | undefined) =>
+      scope?.obligations.find(fact => fact.kind === 'device-evidence')?.applicability;
+    assert.equal(deviceDuty(successorScope), 'not_applicable', 'the migrated domain CU keeps its grounded device exemption at birth');
+    assert.equal(deviceDuty(loadEffectiveExecutionScope(s.root, feature, after.record.run_id, s.frameworkRoot)), 'not_applicable');
+    assert(!probe.events.some(event => event.type === 'harness_start' && event.phase === 'testing'), 'migrating this domain CU must not dispatch Testing');
+  }
   if (owners.has('spec')) assert(probe.invokedPhases.includes('work-unit-author'), 'the actual dedicated author must repair invalid definitions before the real checks can qualify them');
   const successorRun = after.record.run_id;
   assert.notEqual(successorRun, sourceRun, '已完成后必须用新 run 生成新 completion');

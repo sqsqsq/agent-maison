@@ -5,7 +5,7 @@ const path = require('node:path');
 const ts = require('typescript');
 
 /** Execute the fixture's small ArkTS business modules and Hypium-style assertions under Node. */
-module.exports = async function runSnapshotUt(ctx, files, targetCases) {
+module.exports = async function runSnapshotUt(ctx, files, targetCases, injectedFailure) {
   const { projectRoot, frameworkRoot, feature } = ctx;
   const { featurePhaseReportsDir } = require(path.join(frameworkRoot, 'harness/config'));
   const { executedUtChecks } = require(path.join(frameworkRoot, 'harness/scripts/utils/ut-execution-evidence'));
@@ -61,8 +61,12 @@ module.exports = async function runSnapshotUt(ctx, files, targetCases) {
   fs.appendFileSync(path.join(path.dirname(original), 'snapshot-ut-invocations.jsonl'),
     JSON.stringify({ run_id: process.env.MAISON_GOAL_RUN_ID ?? null, input_sha256, cases: results }) + '\n');
   const success = results.length > 0 && results.every(row => row.status === 'PASS');
+  // Only the actual failed case that exercised the deliberately defective module can name it as a repair target.
+  const failedCase = injectedFailure && sources.has(injectedFailure.source)
+    && results.find(row => row.test === injectedFailure.test && row.status === 'FAIL');
   return [{ id: 'ut_hvigor_test', category: 'structure', severity: 'BLOCKER', status: success ? 'PASS' : 'FAIL',
     description: 'Migration fixture UT execution', details: success ? 'Isolated business cases ran to completion under Node.' : 'See actual fixture execution failures.',
-    ...(!success ? { failure_kind: 'code_regression' } : {}) },
+    ...(!success ? { failure_kind: 'code_regression' } : {}),
+    ...(failedCase ? { affected_files: [injectedFailure.source], details: failedCase.test + ': ' + failedCase.message } : {}) },
   ...executedUtChecks(projectRoot, declared, results.filter(row => row.status === 'PASS'), [original])];
 };

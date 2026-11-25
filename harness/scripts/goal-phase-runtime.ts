@@ -7748,11 +7748,39 @@ Goal runner — original request design and construction runtime
       }
       return { start, end, original };
     };
-    const authorWrites = (actor: NonNullable<ReturnType<typeof lastAuthor>>) => loadAuthoritativeEvents(eventsPath)
+    const authorWrites = (actor: NonNullable<ReturnType<typeof lastAuthor>>, history: readonly GoalRunEvent[] = loadAuthoritativeEvents(eventsPath)) => history
       .filter(event => event.type === 'phase_write_observed' && event.invoke_id === actor.start.invoke_id)
       .flatMap(event => [...(event as Record<string, any>).owned ?? [], ...(event as Record<string, any>).observations ?? []])
       .filter((write: any) => typeof write.path === 'string' && write.pre_sha256 !== write.post_sha256) as Array<{
         path: string; post_sha256: string | null; owner?: string | null; roles?: Array<{ kind: string }> }>;
+    const checkedRepairSource = (actor: NonNullable<ReturnType<typeof lastAuthor>>, problems: CurrentDisposition['problems'],
+      history: readonly GoalRunEvent[], checks: ReadonlyMap<string, ReturnType<typeof readCurrentCheckObservation>>): boolean => {
+      const returnedAt = history.findIndex(event => event.type === 'agent_invoke_end' && event.invoke_id === actor.start.invoke_id);
+      if (returnedAt < 0) return false;
+      const writes = authorWrites(actor, history).filter(write => write.owner && write.roles?.some(role => role.kind === 'source'));
+      if (!writes.length) return false;
+      return problems.some(problem => {
+        const phase = problem.source_phase ?? problem.phase;
+        const check = checks.get(phase);
+        const start = check?.start;
+        const end = check?.end;
+        if (!check?.returned || !start?.invoke_id || !end?.related_input_snapshot || !problem.files?.length) return false;
+        const startAt = history.findIndex(event => event.type === 'harness_start' && event.phase === phase
+          && event.invoke_id === start.invoke_id && event.ts === start.ts);
+        if (startAt < 0 || (startAt <= returnedAt && start.author_tool_invoke_id !== actor.start.invoke_id)) return false;
+        const endAt = history.findIndex((event, index) => index > startAt && event.type === 'harness_end'
+          && event.phase === phase && event.invoke_id === end.invoke_id && event.ts === end.ts);
+        if (endAt < 0 || !history.slice(endAt + 1).some(event => event.type === 'phase_verdict' && event.phase === phase
+          && event.invoke_id === end.invoke_id && (event.verdict === 'PASS' || event.verdict === 'FAIL'))) return false;
+        const inputs = end.related_input_snapshot;
+        const targets = new Set(problem.files.map(file => path.resolve(projectRoot, file)));
+        return writes.some(write => {
+          const seen = inputs[write.path];
+          return write.owner === problem.owner && targets.has(path.resolve(projectRoot, write.path)) && !!seen
+            && (write.post_sha256 === null ? !seen.exists : seen.exists && seen.contentHash === write.post_sha256);
+        });
+      });
+    };
     const independentCalls = (task: { owner: string; file: string }, history: readonly GoalRunEvent[]) => history.flatMap((start, index) => {
       if (start.type !== 'agent_invoke_start' || !start.invoke_id || start.phase !== task.owner) return [];
       const original = executionRequestForInvoke(runDir, start.invoke_id);
@@ -8454,8 +8482,12 @@ Goal runner — original request design and construction runtime
           { ...before.disposition, problems: repairs }) ?? repairs.every(problem => author.original!.request.context.instruction?.includes(
           renderWorkUnitAuthorFeedback({ projectRoot, frameworkRoot, feature: manifest.feature,
             disposition: { ...before.disposition, problems: [problem] } }))));
-      const verificationPending = !!author && before.facts.phases.some(result =>
-        affectedCheck(result.phase, before, checkWorkConditions(result.phase, before, author)));
+      const currentChecks = new Map<string, ReturnType<typeof readCurrentCheckObservation>>();
+      const verificationPending = !!author && before.facts.phases.some(result => {
+        const conditions = checkWorkConditions(result.phase, before, author);
+        currentChecks.set(result.phase, conditions.observation);
+        return affectedCheck(result.phase, before, conditions);
+      });
       const authorAssessmentCompleted = before.evaluation.completed
         && repairs.every(problem => before.evaluation.checkFamilies?.includes(problem.source_phase ?? problem.phase))
         && !verificationPending;
@@ -8470,7 +8502,9 @@ Goal runner — original request design and construction runtime
         wait('work-unit-author', `当前有效完成检查仍覆盖原暂停的同一反馈；成果保留，真实相关条件变化或用户明确继续后接回。\n${renderCurrentDisposition(before.disposition)}`, 'no_progress_guard'); break;
       }
       const progress = completionProgressFromHistory(before.evaluation, completedEvaluations, checkedFeedbackDelivered, !!author);
-      const feedbackAwaitingEvaluation = authorFeedbackDelivered && (!authorAssessmentCompleted || progress.reused);
+      // A completed check of the returned source can confirm a failed repair while overall acceptance is still open.
+      const feedbackAwaitingEvaluation = authorFeedbackDelivered && (!authorAssessmentCompleted || progress.reused)
+        && (verificationPending || !author || !checkedRepairSource(author, repairs, currentEvents, currentChecks));
       if (progress.halt) { wait(repairs.length ? 'work-unit-author' : before.independent[0]?.owner ?? 'work-unit-author',
         `已向当前责任方交付反馈且真实检查仍无验收改善，保全后可续暂停。\n${renderCurrentDisposition(before.disposition)}`, 'no_progress_guard'); break; }
       if (before.evaluation.completed && !progress.reused && progress.evaluation === before.evaluation) completedEvaluations.push(before.evaluation);

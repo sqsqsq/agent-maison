@@ -99,6 +99,59 @@ export function planContracts(f: ReturnType<typeof fixture>): ContractsSpec & { 
   } };
 }
 
+function checkCuImpactAfterOwnEdit(f: ReturnType<typeof fixture>, includePage: boolean): void {
+  const source = 'src/ledger/LedgerFeature.ets';
+  const page = 'src/ledger/pages/LedgerPage.ets';
+  const external = 'requirements/ledger.md';
+  const put = (file: string, text: string) => {
+    fs.mkdirSync(path.dirname(path.join(f.root, file)), { recursive: true });
+    fs.writeFileSync(path.join(f.root, file), text);
+  };
+  const unit = YAML.parse(fs.readFileSync(f.cuFile, 'utf8'));
+  if (includePage) {
+    const blueprint = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
+    const target = resolveBlueprintTarget(blueprint, unit.design_refs[0].target);
+    (target.contracts as ContractsSpec).files!.push(page);
+    fs.writeFileSync(f.blueprintFile, YAML.stringify(blueprint));
+    f.bind();
+    put(page, '@Component struct LedgerPage { build() {} }\n');
+  }
+  put(source, 'export const storageVersion = 1;\n');
+  assert(!fs.existsSync(path.join(f.root, 'test/ledger/LedgerFeature.test.ets')), 'the planned test need not exist when coding updates its own source');
+  materializeBlueprintSkillInputs(f.root, f.feature, frameworkRoot);
+  const requirement = 'Refresh internal ledger storage';
+  const prepared = prepareFeatureScopeCandidate(prepareChangeUnitScopeInput({
+    projectRoot: f.root, frameworkRoot, changeUnit: asChangeUnitArtifact(YAML.parse(fs.readFileSync(f.cuFile, 'utf8'))),
+    requirement, requestedResults: [requirement], requestedPhases: ['coding'],
+    impact: { userVisibleBehaviorChange: false, reason: 'Internal storage change', basisPaths: [source, external] },
+  }));
+  assert.equal(prepared.scope.obligations.find(fact => fact.kind === 'device-evidence')?.applicability, 'not_applicable');
+  const manifest = buildGoalManifestFromInput({ feature: f.feature, run_id: 'cu-own-edit', requirement,
+    execution_scope: prepared.scope, chain_override: prepared.scope.phase_chain }, { projectRoot: f.root });
+  createGoalRun({ projectRoot: f.root, frameworkRoot, manifest, chain: prepared.scope.phase_chain, resolveHead: () => 'f'.repeat(40) });
+  const workflow = resolveWorkflowSpec(f.root, { frameworkRoot });
+  const successor = () => resolveSuccessorExecutionScope(f.root, f.feature, workflow, frameworkRoot, requirement, manifest.run_id)!;
+  put(source, 'export const storageVersion = 2;\n');
+  const changed = successor();
+  const checkTesting = (scope: typeof changed) => {
+    assert.equal(scope.request_impact, undefined);
+    assert.equal(scope.obligations.find(fact => fact.kind === 'device-evidence')?.applicability, 'unknown');
+    assert(scope.unresolved.some(gap => gap.owner === 'testing' && gap.needed_by.includes('testing')));
+  };
+  if (includePage) checkTesting(changed);
+  else {
+    const impact = changed.request_impact;
+    assert(impact, 'the grounded internal change must retain the original judgment');
+    assert.equal(impact.user_visible_behavior_change, false);
+    assert.equal(impact.reason, prepared.scope.request_impact?.reason);
+    const observed = impact.basis.flatMap(binding => binding.dependencies);
+    assert(observed.some(dep => path.resolve(f.root, dep.path) === path.join(f.root, source) && dep.sha256 === sha(path.join(f.root, source)).slice(7)));
+    assert.equal(changed.obligations.find(fact => fact.kind === 'device-evidence')?.applicability, 'not_applicable');
+    fs.appendFileSync(path.join(f.root, external), '\nUpdated external behavior requirement.\n');
+    checkTesting(successor());
+  }
+}
+
 const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Promise<void> }> = [
   { name: '7d2c49e8 authoritative UI checkpoints and distinct app-test obligations project without inventing screen or requirement facts', run(f) {
     const doc = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
@@ -825,6 +878,8 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     assert.deepEqual(next.candidate.request.requested_phases, args.requestedPhases);
     assert.equal(prepareFeatureScopeCandidate(args).state, 'unchanged', '同参数重复准备不幂等');
   } },
+  { name: 'CU inherited impact keeps an internal write-set edit but still checks external dependencies', run: f => checkCuImpactAfterOwnEdit(f, false) },
+  { name: 'CU inherited impact returns the device duty to Testing when an unchanged page shares the write set', run: f => checkCuImpactAfterOwnEdit(f, true) },
   { name: '77105c47 CU scope binds accepted UI targets and never renews a stale negative judgment', run(f) {
     const requirement = 'Refresh the ledger using the approved design';
     const requirementFile = 'requirements/ledger.md';

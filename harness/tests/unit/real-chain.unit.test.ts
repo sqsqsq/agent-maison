@@ -37,18 +37,18 @@ import { runGoalRuntimeChain, requestVia, claudeReadEventLine, writeAgentEvents 
 import { clearFrameworkConfigCache, featureFilePath } from '../../config';
 import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
 import { parseVerifierRequest, renderVerifierRequest, type VerifierRequest } from '../../scripts/utils/verifier-request';
-import { parseResultBlock, RESULT_BLOCK_OPEN, RESULT_BLOCK_CLOSE, verifierReportMdFilename, normalizeEol } from '../../scripts/utils/verifier-subject';
+import { verifierReportMdFilename, normalizeEol } from '../../scripts/utils/verifier-subject';
+import { loadVerifierEvidenceForSubject } from '../../scripts/utils/verifier-evidence';
 import * as YAML from 'yaml';
 import { fixture as seedChangeUnitBlueprint } from './blueprint-skill-projection.unit.test';
 import { rewriteBlueprint } from './change-unit-progression.unit.test';
 import { validateComponentBlueprint } from '../../scripts/utils/component-blueprint-validator';
-import { deriveBlueprintSkillInput, classifyDesignAuthorityCodes } from '../../scripts/utils/blueprint-skill-projection';
+import { deriveBlueprintSkillInput, classifyDesignAuthorityCodes, materializeBlueprintSkillInputs, resolveChangeUnitConstructionInputs } from '../../scripts/utils/blueprint-skill-projection';
 import { validateChangeUnitFeatureProjection } from '../../scripts/utils/change-unit-feature-projection';
 import { resolveBlueprintTarget } from '../../scripts/utils/blueprint-addressing';
 import { asRecord, asRecords, type BlueprintRecord } from '../../scripts/utils/component-blueprint-model';
 import type { ContractsSpec } from '../../scripts/utils/types';
 import { featureRelativePath } from '../../scripts/utils/feature-identity';
-import { materializeBlueprintSkillInputs } from '../../scripts/utils/blueprint-skill-projection';
 import { prepareFeatureScopeCandidate } from '../../scripts/utils/feature-track';
 import { loadCanonicalChangeUnit, asChangeUnitArtifact, createChangeUnitRef, parseChangeUnitFeatureId } from '../../scripts/utils/change-unit-path';
 import { loadEffectiveExecutionScope, loadFrozenExecutionScope, assertGoalRunAttachable, loadLineageRunEvents } from '../../scripts/utils/goal-run-creation';
@@ -240,7 +240,8 @@ export function codingTestStrengthReply(p: RealChainProject, phase: string): str
         'the new unit criterion requires the actual repository call and its complete initial-state assertions');
       else assert(current.includes("service.openCard('cmb')") && current.includes("service.openCard('')")
         && current.includes('expect(opened).assertTrue()') && current.includes('expect(rejected).assertFalse()')
-        && current.includes('expect(banks.length).assertEqual(0)'), 'current card tests must preserve both real success/failure paths and list result');
+        && (current.includes('expect(banks.length).assertEqual(0)') || checksDisplayedBankRows(current)),
+      'current card tests must preserve both real success/failure paths and assert the list result');
     }
     strengthReply = '\n```issue-verification\n' + YAML.stringify([{ issue: strength.id, verdict: 'refuted',
       evidence: [...strength.affected_files, strength.details ?? '', '已读取真实前像与当前正文：原有用例/断言未删弱；新增用例实际调用当前业务入口并核对上述正反结果。'].join('\n') }]) + '```\n';
@@ -265,21 +266,37 @@ export function readDeliveredVerifierRequest(p: RealChainProject, ctx: { phase: 
   return request!;
 }
 
+export function checksDisplayedBankRows(test: string): boolean {
+  return test.includes('new BankService().listBankRows()') && test.includes('expect(banks.length).assertEqual(1)')
+    && test.includes("expect(banks[0]).assertEqual('cmb')");
+}
+
+/** The verifier owns the invocation draft; the runtime owns the public report for this subject. */
+export function signedVerifierDraftPath(p: RealChainProject, runId: string, request: VerifierRequest): string {
+  const issued = executionRequestForInvoke(featureFilePath(p.root, p.feature, `goal-runs/${runId}`))?.request;
+  const boundary = issued?.write_boundary;
+  if (issued?.purpose !== 'verifier_format_repair' || issued.context.feature !== p.feature || issued.context.runId !== runId
+    || issued.context.phase !== request.phase + '-verifier-format-repair' || !boundary?.verifierResultPath) {
+    throw new Error('Missing the verifier draft signed for the current invocation');
+  }
+  const publicReport = path.resolve(p.root, path.dirname(request.prompt_path), verifierReportMdFilename(request.subject_id));
+  const draft = path.resolve(p.root, boundary.verifierResultPath);
+  assert(draft !== publicReport && boundary.immutableInputPaths?.some(file => path.resolve(p.root, file) === publicReport),
+    'the public report must remain protected while the verifier writes its draft');
+  return draft;
+}
+
 /** Model boundary: consume the newly issued request and write only its verifier reply. */
 export function publishRequestedVerifier(p: RealChainProject, ctx: { phase: string; prompt: string; runId: string }): boolean {
   const request = readDeliveredVerifierRequest(p, ctx);
   if (!request) return false;
   p.runId = ctx.runId;
-  const reportsDir = path.dirname(path.join(p.root, request!.prompt_path));
-  const reportPath = path.join(reportsDir, verifierReportMdFilename(request!.subject_id));
-  if (fs.existsSync(reportPath)) {
-    const text = fs.readFileSync(reportPath, 'utf8');
-    const result = parseResultBlock(text);
-    assert(result, 'existing model reply must keep its actual terminal result');
-    publishFixtureVerifierEvidence({ projectRoot: p.root, reportsDir, feature: p.feature, phase: request!.phase,
-      subjectId: request!.subject_id, skipSummaryPatch: true, verdict: result!.verdict, blockerCount: result!.blocker_count,
-      reportText: text.slice(0, text.indexOf(RESULT_BLOCK_OPEN)) + text.slice(text.indexOf(RESULT_BLOCK_CLOSE) + RESULT_BLOCK_CLOSE.length) });
-  } else publishVerifier(p, request!.phase);
+  const draftPath = signedVerifierDraftPath(p, ctx.runId, request);
+  const prior = loadVerifierEvidenceForSubject(p.root, p.feature, request.phase, request.subject_id, { frameworkRoot: p.frameworkRoot });
+  if (prior.ok) {
+    // Rebuilding the result block would add blank lines and make unchanged feedback appear new.
+    fs.writeFileSync(draftPath, prior.evidence.report_text, 'utf8');
+  } else publishVerifier(p, request.phase, draftPath);
   return true;
 }
 
@@ -1385,6 +1402,7 @@ test('real-chain CU-bound 接缝：合成宿主上蓝图节点 module / 术语�
 // ---------------------------------------------------------------------------
 
 export const CU_SOURCE = 'src/ledger/LedgerFeature.ets';
+export const EMPTY_LEDGER_TEST = "import { describe } from '@ohos/hypium';\n\ndescribe('LedgerFeature', () => {\n});\n";
 export const CU_TEST = 'src/ledger/src/ohosTest/ets/test/LedgerFeature.test.ets';
 export const CU_REQUIREMENT = '新增一笔账目后刷新账页并在重启后恢复余额';
 const CU_READS = [CU_SOURCE, 'src/ledger/LedgerIntakeConsumer.ts', 'src/ledger/LedgerSourceSeam.ts', 'src/ledger/LedgerIntakeBypass.ts',
@@ -1419,7 +1437,7 @@ export function writeCuFacts(p: RealChainProject, phase: string): void {
  * 宿主前置（在 `scaffoldRealChainHost` 之后、git 提交之前调用）：落蓝图与 canonical CU、登记 catalog、
  * 生成 CU 的范围候选；阶段作者随后消费投影并产出实体。返回 CU 工程视图与出生链。
  */
-export function seedCuBoundHost(project: RealChainProject): { cu: RealChainProject; birthChain: string[] } {
+export function seedCuBoundHost(project: RealChainProject) {
   const f = seedChangeUnitBlueprint(project.root);
   const configFile = path.join(project.root, 'framework.config.json');
   const config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
@@ -1452,14 +1470,14 @@ export function seedCuBoundHost(project: RealChainProject): { cu: RealChainProje
   });
   clearFrameworkConfigCache();
   writeHostFile(project.root, CU_SOURCE, 'export class LedgerFeature {\n  balance(): number { return 0; }\n}\n');
-  writeHostFile(project.root, CU_TEST, "import { describe } from '@ohos/hypium';\n\ndescribe('LedgerFeature', () => {\n});\n");
+  writeHostFile(project.root, CU_TEST, EMPTY_LEDGER_TEST);
   const cu: RealChainProject = { ...project, feature: f.feature, module: 'ledger', modulePath: 'src/ledger', runId: undefined };
   const prepared = prepareFeatureScopeCandidate({
     projectRoot: project.root, frameworkRoot: project.frameworkRoot, feature: cu.feature, completionTarget: 'feature',
     requestedResults: ['账目刷新与恢复'], requestedPhases: ['plan', 'coding', 'review', 'ut'], requirement: CU_REQUIREMENT, overwrite: true,
     impact: { userVisibleBehaviorChange: false, reason: '只改账本领域服务，不改任何界面', basisPaths: [CU_SOURCE] },
   });
-  return { cu, birthChain: prepared.scope.phase_chain.map(String) };
+  return { cu, birthChain: prepared.scope.phase_chain.map(String), birthScope: prepared.scope };
 }
 
 export function writeCuSpecMaterials(p: RealChainProject): void {
@@ -1597,9 +1615,18 @@ export async function runDemoCardChain(project: RealChainProject, birthChain: st
 
 export async function runCuBoundChain(cu: RealChainProject, birthChain: string[]): ReturnType<typeof runGoalRuntimeChain> {
   const { authorHooks } = await import('./lifecycle-evolution.unit.test');
+  const { installSnapshotUtProvider, repairSnapshotUtProduct, snapshotVerifierHooks } = await import('../fixtures/host-snapshot-3.1.0/migrate');
+  installSnapshotUtProvider(cu.frameworkRoot);
+  const independent = snapshotVerifierHooks(cu, cu.feature);
+  const hooks = authorHooks(cu, { plan: p => {
+    materializeBlueprintSkillInputs(p.root, p.feature, p.frameworkRoot, undefined, 'plan');
+    writeCuFacts(p, 'plan');
+  }, coding: writeCuCodingMaterials, review: writeCuReviewMaterials, ut: writeCuUtMaterials },
+  { ut: p => repairSnapshotUtProduct(p.root, p.feature) });
   return runGoalRuntimeChain(cu.root, {
-    ...authorHooks(cu, { plan: writeCuPlanMaterials, coding: writeCuCodingMaterials, review: writeCuReviewMaterials, ut: writeCuUtMaterials }),
-    onOutOfChain: ctx => { assert(publishRequestedVerifier(cu, ctx), `unexpected model purpose: ${ctx.phase}`); },
+    ...hooks,
+    onOutOfChain: independent.onOutOfChain,
+    onReview: ctx => { hooks.onReview(ctx); independent.onReview?.(ctx); },
     frameworkRoot: cu.frameworkRoot,
     featureId: cu.feature,
     realHarness: true,
@@ -1912,18 +1939,27 @@ export function goalStatusFeatureLine(project: { root: string; harnessDir: strin
   return (r.stdout ?? '').split('\n').find(line => line.startsWith('feature_status=')) ?? `<no feature_status; exit=${r.status}> ${r.stderr ?? ''}`;
 }
 
-test('real-chain CU 绑定链：plan 生成当前映射与用例后经 coding→review→ut 真实 harness 到 feature completion', async () => {
+test('real-chain CU 绑定链：复用已准入的施工映射与用例，经 coding→review→ut 真实 harness 到 feature completion', async () => {
   const project = provisionRealChainProject();
   try {
     scaffoldRealChainHost(project);
-    const { cu, birthChain } = seedCuBoundHost(project);
-    assert(JSON.stringify(birthChain) === '["plan","coding","review","ut"]', `CU 出生链应包含真实 plan 映射义务：${JSON.stringify(birthChain)}`);
+    const { cu, birthChain, birthScope } = seedCuBoundHost(project);
+    const construction = resolveChangeUnitConstructionInputs(cu.root, cu.feature, cu.frameworkRoot);
+    assert(construction.contracts?.change_unit && construction.useCasesPresent && !construction.gap, construction.gap ?? 'CU construction proof missing');
+    const design = birthScope.obligations.find(obligation => obligation.kind === 'design-context');
+    assert(design?.applicability === 'required' && !!design.satisfied_by?.some(ref => 'input_id' in ref && ref.input_id === 'contracts'),
+      'the admitted contracts must already satisfy the Plan duty at birth');
+    assert(birthChain.join(',') === 'coding,review,ut', `unexpected CU birth chain: ${birthChain.join(',')}`);
     git(project.root, ['add', '-A']);
     git(project.root, ['commit', '-qm', 'seed change unit']);
     clearFrameworkConfigCache();
     const probe = await runCuBoundChain(cu, birthChain);
-    for (const phase of birthChain) {
-      assertCurrentOwnerEvidence(cu, phase);
+    const runId = path.basename(probe.reportDir);
+    const effective = loadEffectiveExecutionScope(cu.root, cu.feature, runId, cu.frameworkRoot);
+    assert(effective?.obligations.find(fact => fact.kind === 'device-evidence')?.applicability === 'not_applicable', 'the internal CU must retain its grounded device exemption');
+    assert(!probe.events.some(event => event.type === 'harness_start' && event.phase === 'testing'), 'internal ledger changes must not dispatch Testing');
+    for (const phase of ['plan', ...birthChain]) {
+      assertCurrentOwnerEvidence(cu, phase, runId);
     }
     const line = goalStatusFeatureLine(project, cu.feature);
     assert(line.startsWith('feature_status=FEATURE_COMPLETED (verify=VALID'), `CU 完成凭证未判 VALID：${line}`);
