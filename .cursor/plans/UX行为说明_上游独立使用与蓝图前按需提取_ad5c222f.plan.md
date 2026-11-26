@@ -115,16 +115,16 @@ extensions/
 
 | 客户端 | 仓内声明 | 单屏短例要求 | 实际模型路由 | 图 3 是否看过、原因或证据 | 单屏 UX 产出位置、是否正确 |
 |---|---|---|---|---|---|
-| [Claude Code](../../agents/claude/adapter.yaml) | `tool_read` | 必跑一次 | Claude.ai，`claude-opus-5-5` | 是。Read 返回图像，信用卡勾选态与区域命中。 | [首稿](../../../agent-maison-ux-behavior-spec-evidence/ad5c222f-short-cases-20261125/runs/claude/out/select_card_type.ux.yaml) 未通过入口 Schema，并拆成两行。[定向复测](../../../agent-maison-ux-behavior-spec-evidence/ad5c222f-short-cases-20261125/runs/claude-revised/out/select_card_type.ux.yaml) 通过 Schema 与单屏行为核验，附加的背景描述缺少对应元素 ID。 |
-| [Codex](../../agents/codex/adapter.yaml) | 普通输入 `none`，独立 provider 有原生图片参数 | 必跑一次 | ChatGPT，`gpt-6.1-sol` | 是。原生 `--image` 附件与产物里的信用卡勾选态、区域一致。 | [单屏稿](../../../agent-maison-ux-behavior-spec-evidence/ad5c222f-short-cases-20261125/runs/codex/out/select_card_type.ux.yaml) 通过。先前两个不可用模型的入口错误另记。 |
-| [OpenCode](../../agents/opencode/adapter.yaml) | 普通输入 `none`，独立 provider 有原生图片参数 | 必跑一次 | `volcengine/glm-5.3-flash` | 否。文件到达 read 工具，模型返回不支持图像输入。 | [单屏稿](../../../agent-maison-ux-behavior-spec-evidence/ad5c222f-short-cases-20261125/runs/opencode/out/bc-openCard-2.select_card_type.ux.yaml) 通过无图降级。图源已登记，未读图未用于规则依据。 |
-| [DSH](../../agents/deepseek-harness/adapter.yaml) | 普通输入 `none`，独立 provider 使用图像路径 | 必跑一次，沿用现有能力 | `volcengine/deepseek-v4.1-flash` | 是。本次 `read_image` 的成功结果与信用卡勾选态、区域一致。 | [单屏稿](../../../agent-maison-ux-behavior-spec-evidence/ad5c222f-short-cases-20261125/runs/dsh/out/bc-openCard-2.card-type-sheet.ux.yaml) 通过。 |
+| [Claude Code](../../agents/claude/adapter.yaml) | `tool_read` | 必跑一次 | Claude.ai，`claude-opus-5-5` | 是。Read 返回图像，信用卡勾选态与区域命中。 | [首稿](../../.codex/reports/ux-behavior-ad5c222f/standalone/ad5c222f-short-cases-20261125/runs/claude/out/select_card_type.ux.yaml) 未通过入口 Schema，并拆成两行。[定向复测](../../.codex/reports/ux-behavior-ad5c222f/standalone/ad5c222f-short-cases-20261125/runs/claude-revised/out/select_card_type.ux.yaml) 通过 Schema 与单屏行为核验，附加的背景描述缺少对应元素 ID。 |
+| [Codex](../../agents/codex/adapter.yaml) | 普通输入 `none`，独立 provider 有原生图片参数 | 必跑一次 | ChatGPT，`gpt-6.1-sol` | 是。原生 `--image` 附件与产物里的信用卡勾选态、区域一致。 | [单屏稿](../../.codex/reports/ux-behavior-ad5c222f/standalone/ad5c222f-short-cases-20261125/runs/codex/out/select_card_type.ux.yaml) 通过。先前两个不可用模型的入口错误另记。 |
+| [OpenCode](../../agents/opencode/adapter.yaml) | 普通输入 `none`，独立 provider 有原生图片参数 | 必跑一次 | `volcengine/glm-5.3-flash` | 否。文件到达 read 工具，模型返回不支持图像输入。 | [单屏稿](../../.codex/reports/ux-behavior-ad5c222f/standalone/ad5c222f-short-cases-20261125/runs/opencode/out/bc-openCard-2.select_card_type.ux.yaml) 通过无图降级。图源已登记，未读图未用于规则依据。 |
+| [DSH](../../agents/deepseek-harness/adapter.yaml) | 普通输入 `none`，独立 provider 使用图像路径 | 必跑一次，沿用现有能力 | `volcengine/deepseek-v4.1-flash` | 是。本次 `read_image` 的成功结果与信用卡勾选态、区域一致。 | [单屏稿](../../.codex/reports/ux-behavior-ad5c222f/standalone/ad5c222f-short-cases-20261125/runs/dsh/out/bc-openCard-2.card-type-sheet.ux.yaml) 通过。 |
 | [Cursor](../../agents/cursor/adapter.yaml) | `multimodal: true` | 豁免 | — | 豁免 | 豁免 |
 | [Chrys](../../agents/chrys/adapter.yaml) | 普通输入 `none` | 本机不可运行时记未实测 | — | 未实测，本机未找到 `chrys` | 未实测 |
 | [CodeAgent](../../agents/codeagent/adapter.yaml) | `tool_read` | 本机不可运行时记未实测 | — | 未实测，本机未找到 `codeagentcli` | 未实测 |
 | [Generic](../../agents/generic/adapter.yaml) | 普通输入 `none` | 本机不可运行时记未实测 | — | 未实测，本机未找到 `agent-cli` | 未实测 |
 
-2026-11-25 的四客户端原始输入、工具证据、CLI 尝试及首稿与修订稿的区分见[本机独立验收记录](../../../agent-maison-ux-behavior-spec-evidence/ad5c222f-short-cases-20261125/records/results.md)。Codex、DSH 的首稿通过修订后的 Schema，截图状态键沿用当时 Skill 的写法。
+2026-11-25 的四客户端原始输入、工具证据、CLI 尝试及首稿与修订稿的区分见[本机独立验收记录](../../.codex/reports/ux-behavior-ad5c222f/standalone/ad5c222f-short-cases-20261125/records/results.md)。Codex、DSH 的首稿通过修订后的 Schema，截图状态键沿用当时 Skill 的写法。
 
 ### 5.2 后续收益评估口径
 
@@ -136,38 +136,38 @@ extensions/
 
 ## 实施记录
 
-**2026-11-25，正常设计入口的定向修复获准。** 钱包原发布件 `517b63fe` 的两份隔离副本均通过扩展安装、物化和重复安装核验。有预制稿时，直接作者实际读取上游稿和两张图，交回原件目录下的 Markdown，将关闭时机同时写为固定步骤和待决。仅有原材料时，受管作者首轮交回正式蓝图，覆盖单卡和点击继续，但未提取 UX，并把返回保留卡种写成确定行为。两项首次结果均保留为未通过。[首轮终端与实际稿](../../../am-ad5c222f-hostqa/evidence/wallet-host-first-author-acceptance.md)
+**2026-11-25，正常设计入口的定向修复获准。** 钱包原发布件 `517b63fe` 的两份隔离副本均通过扩展安装、物化和重复安装核验。有预制稿时，直接作者实际读取上游稿和两张图，交回原件目录下的 Markdown，将关闭时机同时写为固定步骤和待决。仅有原材料时，受管作者首轮交回正式蓝图，覆盖单卡和点击继续，但未提取 UX，并把返回保留卡种写成确定行为。两项首次结果均保留为未通过。[首轮终端与实际稿](../../.codex/reports/ux-behavior-ad5c222f/wallet/first/evidence/wallet-host-first-author-acceptance.md)
 
-已签请求仅含根 Skill 路径与通用读取说明。现有知识装配器能解析已配置的 `component-design.knowledge`，首次受管作者签发没有把该资产交入。获准的改动限于让正常设计入口在写作前实际取得这份已生效的知识，复用现有解析、预算、出处、蓝图位置和作者写集。扩展继续选装，未配置的请求沿原路径，质询保持独立。[原签发审计](../../../am-ad5c222f-hostqa/evidence/managed.signed-instruction-audit.json)
+已签请求仅含根 Skill 路径与通用读取说明。现有知识装配器能解析已配置的 `component-design.knowledge`，首次受管作者签发没有把该资产交入。获准的改动限于让正常设计入口在写作前实际取得这份已生效的知识，复用现有解析、预算、出处、蓝图位置和作者写集。扩展继续选装，未配置的请求沿原路径，质询保持独立。[原签发审计](../../.codex/reports/ux-behavior-ad5c222f/wallet/first/evidence/managed.signed-instruction-audit.json)
 
 修订采用构建并校验的候选发布件，在新的隔离宿主对上述有稿、缺稿两种入口定向复验。按相同业务观察点核对新首轮实际交回，将新结果单列。独立单屏、原受管 run 和正式钱包现场的记录各自保留。
 
-**2026-11-25，接线已实现，钱包定向复验待放行。** `1b375f07` 将生效知识送入受管作者的指令及签发材料，直接入口用既有蓝图检查 CLI 的只读模式取得知识原文及正式蓝图位置。`5291896c` 将根 Skill 整理到现有 150 行预算，保留首次只读动作、正式落点和待决一致性说明。文档组 18 项通过，隔离钱包只读探测返回了配置原文和正确路径，独立代码复核通过。首次钱包失败原件已封存，[归档](../../../am-ad5c222f-hostrecheck/evidence/original-first-author-failures.zip) SHA256 为 `98bd8dfdf0c849d590cfcdaa50802121cedf41c6255dcb45b2b4df1d693ab12a`。
+**2026-11-25，接线已实现，钱包定向复验待放行。** `1b375f07` 将生效知识送入受管作者的指令及签发材料，直接入口用既有蓝图检查 CLI 的只读模式取得知识原文及正式蓝图位置。`5291896c` 将根 Skill 整理到现有 150 行预算，保留首次只读动作、正式落点和待决一致性说明。文档组 18 项通过，隔离钱包只读探测返回了配置原文和正确路径，独立代码复核通过。首次钱包失败原件已封存，[归档](../../.codex/reports/ux-behavior-ad5c222f/wallet/recheck/evidence/original-first-author-failures.zip) SHA256 为 `98bd8dfdf0c849d590cfcdaa50802121cedf41c6255dcb45b2b4df1d693ab12a`。
 
 正式门禁仍未通过。三工作进程完整日常在接线提交上为 5,668 项通过、2 项失败。根 Skill 的行数回归已定向修复。另一项为既有 P4 `a21473` 恢复回放。空闲窗口的单工作进程在 `5291896c` 再次触发同一 120 分钟用例上限，保全进度停在第 24 次调度。该次已无法放行，已停止余下重复用例。按需计划的 15 组亦含这个用例。正式候选和修订后的钱包业务首轮均未取得通过结果。[单进程超时原件](../../.codex/reports/ux-behavior-ad5c222f/w1-replay-timeout-5291896c/failure.json)
 
 临时检查包 SHA256 为 `860c567648aabfa5d47767f1a6a1018bf5835cd77a613c934e8cc720a55395d9`。1,275 项内容哈希、主包排除及同一 zip 的仓内消费者生命周期冒烟通过。该包的检查结果与正式候选资格分别记录，尚未用于两份新钱包副本。[本机验收与检视记录](../../.codex/reports/ux-behavior-ad5c222f/验收与检视.md)
 
-**2026-11-25 美东 19:26，钱包宿主定向复验。** 按需求方裁决，扩展专项直接使用上述已核验的 `5291896c` 检查包。两份全新的钱包副本均已完整安装同一 zip，并保留原 `story` 等扩展。原失败现场单独封存。[有稿宿主安装记录](../../../am-ad5c222f-hostrecheck/evidence/direct.integration.json) · [缺稿宿主安装记录](../../../am-ad5c222f-hostrecheck/evidence/managed.integration.json)
+**2026-11-25 美东 19:26，钱包宿主定向复验。** 按需求方裁决，扩展专项直接使用上述已核验的 `5291896c` 检查包。两份全新的钱包副本均已完整安装同一 zip，并保留原 `story` 等扩展。原失败现场单独封存。[有稿宿主安装记录](../../.codex/reports/ux-behavior-ad5c222f/wallet/recheck/evidence/direct.integration.json) · [缺稿宿主安装记录](../../.codex/reports/ux-behavior-ad5c222f/wallet/recheck/evidence/managed.integration.json)
 
-宿主原生命令 `/ux-behavior-spec` 由 Claude Code 从已物化桥接加载，在真实钱包材料上交回一份选卡类型屏 YAML。Schema、来源、单卡只显示一行、协议纯文本和继续动作均经核对。原图中的勾选态作为观察，业务默认值保持待定。[宿主扩展调用与核对](../../../am-ad5c222f-hostrecheck/extension-entry/evidence/result.md) · [实际产物](../../../am-ad5c222f-hostrecheck/extension-entry/out/bc-openCard-2-selectCardType.ux.yaml)
+宿主原生命令 `/ux-behavior-spec` 由 Claude Code 从已物化桥接加载，在真实钱包材料上交回一份选卡类型屏 YAML。Schema、来源、单卡只显示一行、协议纯文本和继续动作均经核对。原图中的勾选态作为观察，业务默认值保持待定。[宿主扩展调用与核对](../../.codex/reports/ux-behavior-ad5c222f/wallet/recheck/extension-entry/evidence/result.md) · [实际产物](../../.codex/reports/ux-behavior-ad5c222f/wallet/recheck/extension-entry/out/bc-openCard-2-selectCardType.ux.yaml)
 
-有预制稿时，正常设计首回读取三份上游稿及两张原图。单卡一行、切换留屏、点继续才带银行与卡种跨页、默认与返回待决均写入会话交回。首回没有在请求的蓝图目录写文件；同一会话补交时使用了 PRD 编号，实际写到另一蓝图目录。首回与补交分别记录。[有稿场次与实际蓝图](../../../am-ad5c222f-hostrecheck/evidence/direct-retest-summary.md)
+有预制稿时，正常设计首回读取三份上游稿及两张原图。单卡一行、切换留屏、点继续才带银行与卡种跨页、默认与返回待决均写入会话交回。首回没有在请求的蓝图目录写文件；同一会话补交时使用了 PRD 编号，实际写到另一蓝图目录。首回与补交分别记录。[有稿场次与实际蓝图](../../.codex/reports/ux-behavior-ad5c222f/wallet/recheck/evidence/direct-retest-summary.md)
 
-**钱包缺稿首轮促成两次扩展返修。** 已签发知识到达首作者后，旧指引仍让作者直接写蓝图并补定返回。修订 `0ecca16c` 明确先写、再回读 UX。另起的钱包首作者在蓝图骨架尚未改动时先写出流程稿和屏幕稿，随后写出正式蓝图。回读发现屏幕 YAML 有语法错、流程来源相对路径失效，并且有一条已写死的返回与待决问题冲突。额度在文件落盘后中断，此场保留为首轮失败。[缺稿首轮、产物和具体位置](../../../am-ad5c222f-intakeqa/evidence/revised-intake-retest-summary.md)
+**钱包缺稿首轮促成两次扩展返修。** 已签发知识到达首作者后，旧指引仍让作者直接写蓝图并补定返回。修订 `0ecca16c` 明确先写、再回读 UX。另起的钱包首作者在蓝图骨架尚未改动时先写出流程稿和屏幕稿，随后写出正式蓝图。回读发现屏幕 YAML 有语法错、流程来源相对路径失效，并且有一条已写死的返回与待决问题冲突。额度在文件落盘后中断，此场保留为首轮失败。[缺稿首轮、产物和具体位置](../../.codex/reports/ux-behavior-ad5c222f/wallet/intake/evidence/revised-intake-retest-summary.md)
 
 修订 `3b78e3a9` 在现有模板示范实际写出的屏幕、范围外页面、相对来源和未决返回，在回读时实际解析已写 YAML、核对文件引用。目标套件 5 项通过。两次返修的独立检视通过。[取用指引复核](../../.codex/reports/ux-behavior-ad5c222f/claude-review-5.conclusion.json) · [模板复核](../../.codex/reports/ux-behavior-ad5c222f/claude-review-6.conclusion.json)
 
-**2026-11-25 美东，`3b78e3a9` 钱包实测。** 钱包宿主沿用同一 `5291896c` framework 包，按需安装新版扩展。Claude 同版本额度已用尽，此次正常受管初设改用钱包支持的 Codex `gpt-6.1-sol/high`。原件目录只有需求和设计图。作者实际收到图 3、4 等原图，在 `ux-qa-managed-codex/blueprint/ux/` 先写卡种屏、目的页交接屏和流程，再写本次正式蓝图。三份稿均能解析，均通过宿主随附 Schema，来源和屏幕相对路径可打开。蓝图用元素 ID 核对银行卡种单选、单种一行、点继续携银行和卡种跨页，返回落点和选择恢复保持待决。[三份 UX 与来源核验](../../../am-ad5c222f-templateqa/evidence/managed.codex.authored-ux-validation.json) · [实际蓝图](../../../am-ad5c222f-templateqa/managed/doc/features/ux-qa-managed-codex/blueprint/component-blueprint.yaml) · [逐图回执](../../../am-ad5c222f-templateqa/evidence/managed.codex.native-image-evidence.json)
+**2026-11-25 美东，`3b78e3a9` 钱包实测。** 钱包宿主沿用同一 `5291896c` framework 包，按需安装新版扩展。Claude 同版本额度已用尽，此次正常受管初设改用钱包支持的 Codex `gpt-6.1-sol/high`。原件目录只有需求和设计图。作者实际收到图 3、4 等原图，在 `ux-qa-managed-codex/blueprint/ux/` 先写卡种屏、目的页交接屏和流程，再写本次正式蓝图。三份稿均能解析，均通过宿主随附 Schema，来源和屏幕相对路径可打开。蓝图用元素 ID 核对银行卡种单选、单种一行、点继续携银行和卡种跨页，返回落点和选择恢复保持待决。[三份 UX 与来源核验](../../.codex/reports/ux-behavior-ad5c222f/wallet/templates/evidence/managed.codex.authored-ux-validation.json) · [实际蓝图](../../.codex/reports/ux-behavior-ad5c222f/wallet/templates/managed/doc/features/ux-qa-managed-codex/blueprint/component-blueprint.yaml) · [逐图回执](../../.codex/reports/ux-behavior-ad5c222f/wallet/templates/evidence/managed.codex.native-image-evidence.json)
 
-这份受管草稿将一个拟新增的仓库方法/模型字段写进了面向产品的 `data.supported_types.source`。流程稿保留从选卡页返回的分歧，未另外登记点继续当下原半模态是否关闭。[实际屏幕稿](../../../am-ad5c222f-templateqa/managed/doc/features/ux-qa-managed-codex/blueprint/ux/card-type.screen.ux.yaml) · [实际流程稿](../../../am-ad5c222f-templateqa/managed/doc/features/ux-qa-managed-codex/blueprint/ux/card-type.flow.ux.yaml)
+这份受管草稿将一个拟新增的仓库方法/模型字段写进了面向产品的 `data.supported_types.source`。流程稿保留从选卡页返回的分歧，未另外登记点继续当下原半模态是否关闭。[实际屏幕稿](../../.codex/reports/ux-behavior-ad5c222f/wallet/templates/managed/doc/features/ux-qa-managed-codex/blueprint/ux/card-type.screen.ux.yaml) · [实际流程稿](../../.codex/reports/ux-behavior-ad5c222f/wallet/templates/managed/doc/features/ux-qa-managed-codex/blueprint/ux/card-type.flow.ux.yaml)
 
-同版宿主原生 DSH（`volcengine/deepseek-v4.1-flash`）实看图 3、4 并交回可解析的稿。首稿将点继续写成关闭半模态，两处 `copy_ref` 填成文案。单轮评审返修分开了前往选卡页和原半模态去留，保留初始选中待决，按原文明确选卡页同意协议前置；两个引用仍需产品交接复核。返修作者读过包内样例。首稿、对照与返修材料分别保存。上述场次验证取用和可追溯性，总工时或强弱模型收益仍按 §5.2 的同条件对照口径另测。[宿主原生首稿与核对](../../../am-ad5c222f-templateqa/native-out/report.md) · [一次返修的实际结果](../../../am-ad5c222f-templateqa/native-revision/report.md)
+同版宿主原生 DSH（`volcengine/deepseek-v4.1-flash`）实看图 3、4 并交回可解析的稿。首稿将点继续写成关闭半模态，两处 `copy_ref` 填成文案。单轮评审返修分开了前往选卡页和原半模态去留，保留初始选中待决，按原文明确选卡页同意协议前置；两个引用仍需产品交接复核。返修作者读过包内样例。首稿、对照与返修材料分别保存。上述场次验证取用和可追溯性，总工时或强弱模型收益仍按 §5.2 的同条件对照口径另测。[宿主原生首稿与核对](../../.codex/reports/ux-behavior-ad5c222f/wallet/templates/native-out/report.md) · [一次返修的实际结果](../../.codex/reports/ux-behavior-ad5c222f/wallet/templates/native-revision/report.md)
 
-受管 Codex 首作者于美东 20:18 交回指定目录的蓝图。原生线程收到完成事件，作者回执为 `passed`，内部观察另记退出码 1 和已收齐完成信号。以上三项业务结论来自实际文件核对。原有受管缺稿失败、有稿首回和本次受管首轮分别保留。[本次受管首轮总表](../../../am-ad5c222f-templateqa/evidence/result.md) · [原有缺稿首轮](../../../am-ad5c222f-hostrecheck/evidence/managed-retest-summary.md)
+受管 Codex 首作者于美东 20:18 交回指定目录的蓝图。原生线程收到完成事件，作者回执为 `passed`，内部观察另记退出码 1 和已收齐完成信号。以上三项业务结论来自实际文件核对。原有受管缺稿失败、有稿首回和本次受管首轮分别保留。[本次受管首轮总表](../../.codex/reports/ux-behavior-ad5c222f/wallet/templates/evidence/result.md) · [原有缺稿首轮](../../.codex/reports/ux-behavior-ad5c222f/wallet/recheck/evidence/managed-retest-summary.md)
 
 已交付样例、对照口径和客户端记录，钱包专项与标准包发布排除已核验。有稿直接入口首回未落盘、补交错用 PRD 编号，继续跟踪蓝图消费待办。验收交付仍在进行，待 P4 `a21473` 恢复回放超时解决后，补跑缺失验证并取得有效的日常全集结果。本次范围为专项修订和复验，正式候选另行安排。[发布排除核验](../../.codex/reports/ux-behavior-ad5c222f/pack-check-5291896c.json)
 
-产品交接副本按实测意见另行修订。同一原生 Codex 作者修正工作区写入环境后，只改外部副本的三份 UX。`supported_types` 现指当前银行支持的卡类型，继续动作携所选银行和卡种。确认当时原浮层是否关闭、从选卡页返回的落点、若回浮层是否保留选择分别为 `open`。三稿通过 Schema，六个相对来源、两个文案引用、元素与流转均能解析。受管首轮文件与原材料保留原字节。[可交给产品的卡种屏](../../../am-ad5c222f-templateqa/reviewed-handoff/doc/features/ux-qa-managed-codex/blueprint/ux/card-type.screen.ux.yaml) · [待决与流转](../../../am-ad5c222f-templateqa/reviewed-handoff/doc/features/ux-qa-managed-codex/blueprint/ux/card-type.flow.ux.yaml) · [实测复核](../../../am-ad5c222f-templateqa/evidence/reviewed-handoff.md)
+产品交接副本按实测意见另行修订。同一原生 Codex 作者修正工作区写入环境后，只改外部副本的三份 UX。`supported_types` 现指当前银行支持的卡类型，继续动作携所选银行和卡种。确认当时原浮层是否关闭、从选卡页返回的落点、若回浮层是否保留选择分别为 `open`。三稿通过 Schema，六个相对来源、两个文案引用、元素与流转均能解析。受管首轮文件与原材料保留原字节。[可交给产品的卡种屏](../../.codex/reports/ux-behavior-ad5c222f/wallet/templates/reviewed-handoff/doc/features/ux-qa-managed-codex/blueprint/ux/card-type.screen.ux.yaml) · [待决与流转](../../.codex/reports/ux-behavior-ad5c222f/wallet/templates/reviewed-handoff/doc/features/ux-qa-managed-codex/blueprint/ux/card-type.flow.ux.yaml) · [实测复核](../../.codex/reports/ux-behavior-ad5c222f/wallet/templates/evidence/reviewed-handoff.md)
 
-**2026-11-25 美东，有预制稿的直接入口复验通过。** 隔离钱包在修订 `db9fad02` 上使用原预制稿和原提示，宿主 Codex（`gpt-6.1-sol/medium`）直接调用 `/component-design ux-qa-direct`。作者首回已把正式蓝图写入本次请求的目录，蓝图内 ID 匹配，PRD 编号对应目录没有产生蓝图。蓝图保留单卡种一行、点继续才跨页及分别待决的浮层去留、返回和选择保留。完整蓝图检查仍有 Schema 和运行流程缺项，此件用于首轮设计走查。原首回失败保留。本轮扩展测试六项、文档检查十八项及计划默认校验通过，实际 DSH 反例的两处文案均被新 Schema 拒绝。本轮独立检视遇额度限制，尚无结论。仓库日常全集状态继续沿上条记录。[钱包首轮、实物与专项证据](../../../am-ad5c222f-idqa/evidence/result.md)
+**2026-11-25 美东，有预制稿的直接入口复验通过。** 隔离钱包在修订 `db9fad02` 上使用原预制稿和原提示，宿主 Codex（`gpt-6.1-sol/medium`）直接调用 `/component-design ux-qa-direct`。作者首回已把正式蓝图写入本次请求的目录，蓝图内 ID 匹配，PRD 编号对应目录没有产生蓝图。蓝图保留单卡种一行、点继续才跨页及分别待决的浮层去留、返回和选择保留。完整蓝图检查仍有 Schema 和运行流程缺项，此件用于首轮设计走查。原首回失败保留。本轮扩展测试六项、文档检查十八项及计划默认校验通过，实际 DSH 反例的两处文案均被新 Schema 拒绝。本轮独立检视遇额度限制，尚无结论。仓库日常全集状态继续沿上条记录。[钱包首轮、实物与专项证据](../../.codex/reports/ux-behavior-ad5c222f/wallet/direct-id/evidence/result.md)
