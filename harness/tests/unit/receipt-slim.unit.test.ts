@@ -1,3 +1,5 @@
+import { runUnitCases } from '../utils/unit-cases';
+import { testCliArgs } from '../utils/test-cli-args';
 // ============================================================================
 // receipt-slim.unit.test.ts — 瘦身回执（receipt_schema 2.0）端到端回归
 // （plan e6a3c9f4 t2 / openspec receipt-slim）
@@ -27,9 +29,8 @@ import { loadWorkflowSpec } from '../../workflow-loader';
 import { SpecLoader } from '../../scripts/utils/spec-loader';
 import { buildGoalManifestFromInput } from '../../scripts/utils/goal-manifest';
 import { createGoalRun } from '../../scripts/utils/goal-run-creation';
-import { resolvePhaseEvidenceManifest, writePhaseEvidenceManifest } from '../../scripts/utils/phase-evidence-manifest';
+import { phaseEvidenceManifestPath, resolvePhaseEvidenceManifest, writePhaseEvidenceManifest } from '../../scripts/utils/phase-evidence-manifest';
 import { computeRunRequirementSha } from '../../scripts/utils/fidelity-shared';
-import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
 
 export interface UnitCaseResult {
   name: string;
@@ -47,8 +48,7 @@ const PHASE = 'review'; // generic profile 未禁用、非 balanced 保留集—
 
 function initGit(root: string): string {
   spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: root, shell: false });
-  spawnSync('git', ['config', 'user.email', 'test@example.com'], { cwd: root, shell: false });
-  spawnSync('git', ['config', 'user.name', 'Test'], { cwd: root, shell: false });
+  fs.appendFileSync(path.join(root, '.git', 'config'), '\n[user]\n\tname = Test\n\temail = test@example.com\n[commit]\n\tgpgsign = false\n');
   spawnSync('git', ['add', '-A'], { cwd: root, shell: false });
   spawnSync('git', ['commit', '-q', '-m', 'baseline'], { cwd: root, shell: false });
   return spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf-8', shell: false }).stdout.trim();
@@ -75,9 +75,6 @@ interface SlimOpts {
   summaryRunId?: string;
   /** f9c2e6b4 t1：回执自报的 attempt 身份（省略 = 旧格式回执） */
   claimedAttemptId?: string;
-  /** Historical summary diagnostic available when Git could not be read. */
-  sentinelWorktreeDigest?: string;
-  dropGitDirBeforeValidate?: boolean;
   /** runner-owned-machine-facts 正例：写一条**旧 run** 的账本行（且不覆盖 registry gate）——
    *  账本是跨 run 累积留痕，不再拥有 closure 否决权 */
   staleLedgerFromPriorRun?: boolean;
@@ -197,7 +194,6 @@ function buildSlimProject(opts: SlimOpts, currentRunId?: string): { root: string
     // Faults are applied after the real writer, without replacing its raw checks or quality projection.
     if (opts.summaryFeature) summary.feature = opts.summaryFeature;
     if (opts.staleFingerprint) summary.gate_fingerprint = 'v9.9.9:deadbeef0000';
-    if (opts.sentinelWorktreeDigest) summary.worktree_digest = opts.sentinelWorktreeDigest;
     if (currentRunId && !opts.summaryRunId) delete summary.run_id;
     if (opts.dropRequiredKey) delete summary[opts.dropRequiredKey];
     if (opts.blockingWarnings === 'omit') delete summary.blocking_warnings;
@@ -246,11 +242,6 @@ function runCase(opts: SlimOpts, env?: Record<string, string | undefined>): Retu
   }
   if (opts.dirtyUnicodeAfter) {
     fs.writeFileSync(path.join(root, 'app', '中文 组件.ets'), 'const CN = 2;\n', 'utf-8');
-  }
-  if (opts.dropGitDirBeforeValidate) {
-    // rename 而非 rmSync：Windows 下 .git/objects pack 只读，rm 会 EPERM；rename 同样让
-    // git 视为非仓库（当前侧 digest=no-git + rev-parse HEAD 失败），fault injection 等效。
-    fs.renameSync(path.join(root, '.git'), path.join(root, '.git-off'));
   }
   if (opts.dirtyRootConfigAfter) {
     fs.writeFileSync(path.join(root, 'build-profile.json5'), '{ "app": { "sdk": "6.1" } }\n', 'utf-8');
@@ -368,12 +359,8 @@ const cases: Array<{ name: string; run: () => void }> = [
   {
     name: '实际输入回执：相关源码、中文含空格路径和已引用的构建输入变化分别拒收',
     run: () => {
-      for (const [options, input] of [
-        [{ dirtyUntrackedAfter: true }, 'app/untracked-src.ets'],
-        [{ dirtyUnicodeAfter: true, reviewUnicode: true }, 'app/中文 组件.ets'],
-        [{ dirtyRootConfigAfter: true }, 'build-profile.json5'],
-      ] as const) {
-        const result = runCase(options);
+      const result = runCase({ dirtyUntrackedAfter: true, dirtyUnicodeAfter: true, reviewUnicode: true, dirtyRootConfigAfter: true });
+      for (const input of ['app/untracked-src.ets', 'app/中文 组件.ets', 'build-profile.json5']) {
         assert(result.status === 'failed' && (result.message ?? '').includes(input), `${input}：${result.status} ${result.message}`);
       }
     },
@@ -381,10 +368,25 @@ const cases: Array<{ name: string; run: () => void }> = [
   {
     name: '实际输入回执：历史无 Git 摘要与当前无 Git 不妨碍核原报告',
     run: () => {
-      for (const options of [{ sentinelWorktreeDigest: 'no-git' }, { dropGitDirBeforeValidate: true }]) {
-        const result = runCase(options);
-        assert(result.status === 'passed', `当前原件绑定仍有效：${result.message}`);
-      }
+      const { root } = buildSlimProject({});
+      try {
+        const summaryPath = path.join(root, 'doc/features/demo', PHASE, 'reports/summary.json');
+        const manifestPath = phaseEvidenceManifestPath(root, 'demo', PHASE);
+        const summaryBytes = fs.readFileSync(summaryPath, 'utf8');
+        const manifestBytes = fs.readFileSync(manifestPath);
+        fs.writeFileSync(summaryPath, JSON.stringify({ ...JSON.parse(summaryBytes), worktree_digest: 'no-git' }));
+        writePhaseEvidenceManifest(root, resolvePhaseEvidenceManifest({ projectRoot: root, feature: 'demo', phase: PHASE,
+          frameworkRoot: FRAMEWORK_ROOT, extraInputs: ['app/untracked-src.ets', 'build-profile.json5'] }));
+        const cli = spawnSync(process.execPath, [...testCliArgs(path.join(HARNESS_ROOT, 'scripts/check-receipt.ts')),
+          '--feature', 'demo', '--phase', PHASE, '--project-root', root, '--skip-state-sync'], { cwd: HARNESS_ROOT, encoding: 'utf8', windowsHide: true });
+        assert(cli.status === 0, `历史无 Git 摘要仍可核原报告：${cli.stderr || cli.error?.message}`);
+
+        fs.writeFileSync(summaryPath, summaryBytes);
+        fs.writeFileSync(manifestPath, manifestBytes);
+        fs.renameSync(path.join(root, '.git'), path.join(root, '.git-off'));
+        const result = tryValidateReceipt(HARNESS_ROOT, root, PHASE, 'demo');
+        assert(result.status === 'passed', `当前无 Git 时原件绑定仍有效：${result.message}`);
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
     },
   },
   // ==========================================================================
@@ -649,19 +651,6 @@ const cases: Array<{ name: string; run: () => void }> = [
   },
 ];
 
-export function runSelectedCases(selector?: string) {
-  const out: UnitCaseResult[] = [];
-  const timings: UnitExecutionTiming[] = [];
-  for (const c of cases) {
-    if (!matchesUnitCase(c.name, selector)) continue;
-    const stop = startCaseTiming([c.name], timings);
-    try {
-      c.run();
-      out.push({ name: c.name, ok: true });
-    } catch (err) {
-      out.push({ name: c.name, ok: false, error: (err as Error).stack ?? (err as Error).message });
-    } finally { stop(); }
-  }
-  return selectedUnitCases(out, selector, timings);
+export function runAll(): UnitCaseResult[] {
+  return runUnitCases(cases);
 }
-export function runAll(): UnitCaseResult[] { return runSelectedCases().results; }

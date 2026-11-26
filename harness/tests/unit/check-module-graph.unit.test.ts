@@ -1,3 +1,4 @@
+import { runUnitCasesAsync } from '../utils/unit-cases';
 // ============================================================================
 // check-module-graph.unit.test.ts — module-graph 全局 phase 回归
 // ============================================================================
@@ -275,18 +276,5 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
 ];
 
 export async function runAll(): Promise<UnitCaseResult[]> {
-  const out: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      await c.run();
-      out.push({ name: c.name, ok: true });
-    } catch (e) {
-      out.push({
-        name: c.name,
-        ok: false,
-        error: e instanceof Error ? e.stack ?? e.message : String(e),
-      });
-    }
-  }
-  return out;
+  return runUnitCasesAsync(cases);
 }

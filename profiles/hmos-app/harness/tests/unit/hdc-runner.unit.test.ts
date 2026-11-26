@@ -1,3 +1,4 @@
+import { runUnitCases } from '../../../../../harness/tests/utils/unit-cases';
 // ============================================================================
 // hdc-runner.unit.test.ts — v2.3 P2 纯函数单元回归
 // ============================================================================
@@ -15,11 +16,7 @@
 //   把这些用裸 assert 圈住，DevEco 一旦升级把输出/命名改了，本测试立刻挂出来，
 //   倒逼 hdc-runner 同步升级。
 //
-// 用法：
-//   npx ts-node framework/harness/tests/run-unit.ts
-//   或 cd framework/harness && npm run test:unit
-//
-// 退出码：本文件本身不直接退出，由 run-unit.ts 汇总后决定。
+// 在源码仓根目录用 `npm test -- --filter hdc-runner` 排错。
 // ============================================================================
 
 import * as fs from 'fs';
@@ -802,14 +799,5 @@ const cases: Array<{ name: string; run: () => void }> = [
 ];
 
 export function runAll(): UnitCaseResult[] {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (e) {
-      results.push({ name: c.name, ok: false, error: (e as Error).message });
-    }
-  }
-  return results;
+  return runUnitCases(cases);
 }

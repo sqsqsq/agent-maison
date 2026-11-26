@@ -1,3 +1,4 @@
+import { runUnitCases } from '../../../../../harness/tests/utils/unit-cases';
 import { parseCaseDurationsFromLogAndTrace } from '../../device-test-timings';
 
 export interface UnitCaseResult {
@@ -89,14 +90,5 @@ uidriver.touch cost: 0.289s
 ];
 
 export function runAll(): UnitCaseResult[] {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (e) {
-      results.push({ name: c.name, ok: false, error: (e as Error).message });
-    }
-  }
-  return results;
+  return runUnitCases(cases);
 }

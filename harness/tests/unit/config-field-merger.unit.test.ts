@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 // ============================================================================
 // config-field-merger — 字段级"只补缺、不覆盖"合并器单测
 // ============================================================================
@@ -545,11 +546,13 @@ const cases: Array<{ name: string; run: () => void }> = [
 
 export function runAll(): UnitCaseResult[] {
   return cases.map(c => {
+    const endUnitCase = beginUnitCase(c.name);
+    if (!endUnitCase) return discoveryResult(c.name);
     try {
       c.run();
       return { name: c.name, ok: true };
     } catch (err) {
       return { name: c.name, ok: false, error: (err as Error).stack ?? (err as Error).message };
-    }
+    } finally { endUnitCase(); }
   });
 }

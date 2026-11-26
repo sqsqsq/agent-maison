@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 // mutation-backtrack.unit.test.ts — source drift is never trusted by a human pass key.
 
 import {
@@ -77,7 +78,9 @@ test('环境层：ut FAIL + device_locked 指引修环境而非改码', () => {
 
 export function runAll(): UnitCaseResult[] {
   return cases.map((c) => {
+    const endUnitCase = beginUnitCase(c.name);
+    if (!endUnitCase) return discoveryResult(c.name);
     try { c.run(); return { name: c.name, ok: true }; }
-    catch (err) { return { name: c.name, ok: false, error: (err as Error).stack ?? (err as Error).message }; }
+    catch (err) { return { name: c.name, ok: false, error: (err as Error).stack ?? (err as Error).message }; } finally { endUnitCase(); }
   });
 }

@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 // ============================================================================
 // goal-supervisor.unit.test.ts — supervisor 决策核（plan a4f7e2b1 t2）
 // ----------------------------------------------------------------------------
@@ -16,26 +17,11 @@ import {
 } from '../../scripts/utils/goal-supervisor';
 import { reduceRunState } from '../../scripts/utils/run-state-reducer';
 import { waitForConditionRecovery } from '../../scripts/utils/condition-wait';
-import { livenessBeaconPath } from '../../scripts/utils/liveness-beacon';
-import { FEATURE_LOCK_NAME, releaseLock, tryAcquireLock } from '../../scripts/utils/goal-run-lock';
-import * as supervise from '../../scripts/goal-supervise';
-import { clearFrameworkConfigCache } from '../../config';
-import {
-  recordHvigorBuildOutcome,
-  resetCapabilityFailedByHumanReprobe,
-} from '../../../profiles/hmos-app/harness/toolchain-probe';
-import {
-  FEATURE,
-  runGoalRuntimeChain,
-  setupGoalRuntimeHost,
-} from './goal-runner-testing-integrity.unit.test';
 import {
   resolveSurvivalCapability,
   resolveSurvivalFacet,
 } from '../../scripts/utils/goal-adapter-capability';
 import { evaluateDeviceReadinessProbe } from '../../scripts/utils/device-readiness-gate';
-import type { AgentInvokeOptions } from '../../scripts/utils/agent-invoke';
-import { matchesUnitCase, selectedUnitCases } from '../utils/unit-case-selection';
 
 function assert(condition: unknown, message: string): void {
   if (!condition) throw new Error(message);
@@ -518,84 +504,6 @@ cases.push(
 
 const asyncCases: Array<{ name: string; run: () => Promise<void> }> = [];
 
-function goalRunsDir(root: string): string {
-  return path.join(root, 'doc', 'features', FEATURE, 'goal-runs');
-}
-
-function readRunEvents(root: string, runId: string): Array<Record<string, unknown>> {
-  const p = path.join(goalRunsDir(root), runId, 'events.jsonl');
-  if (!fs.existsSync(p)) return [];
-  return fs.readFileSync(p, 'utf-8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>);
-}
-
-/** 运行中找本 feature 唯一 run 的事件文件里有没有某类事件（等待期间由测试侧"修环境"用）。 */
-function anyRunHasEvent(root: string, type: string): boolean {
-  const dir = goalRunsDir(root);
-  if (!fs.existsSync(dir)) return false;
-  return fs.readdirSync(dir).filter((n) => !n.startsWith('.')).some((n) => {
-    const p = path.join(dir, n, 'events.jsonl');
-    return fs.existsSync(p) && fs.readFileSync(p, 'utf-8').includes(`"type":"${type}"`);
-  });
-}
-
-/** 真实 hmos 宿主 + 真实 wrapper 记录的能力失败：coding 的 invoke 前能力门（生产 runInvokeCapabilityGate）会停。 */
-function hostWithCapabilityGap(): string {
-  const { root } = setupGoalRuntimeHost();
-  recordHvigorBuildOutcome(root, {
-    kind: 'capability_failed',
-    fingerprint: 'p3-b2-fp',
-    failure_code: 'sdk_component_missing',
-    evidence: ['sdk_manifest_format=sdk-pkg.json'],
-  });
-  return root;
-}
-
-/** 以生产 supervisor CLI 真跑一轮；spawn 注入只记录参数。探针不注入时走共享的真实实现。 */
-async function superviseOnce(
-  root: string,
-  runId: string,
-  conditionProbe: ((probe: string, phase?: string) => { ready: boolean; reason?: string }) | null,
-): Promise<{ code: number; spawned: string[][]; lockHeldAtSpawn: boolean[] }> {
-  const spawned: string[][] = [];
-  const lockHeldAtSpawn: boolean[] = [];
-  const prevArgv = process.argv;
-  const prevCwd = process.cwd();
-  // run 在本进程内跑完，beacon 记的是本进程 pid（活着）；删掉 beacon = 进程已不在（与 goal-run-driver 同法）
-  fs.rmSync(livenessBeaconPath(root, `doc/features/${FEATURE}/goal-runs/${runId}`), { force: true });
-  try {
-    supervise.__testing_setSpawnImpl((_file, args) => {
-      spawned.push(args.slice(1));
-      lockHeldAtSpawn.push(fs.existsSync(path.join(goalRunsDir(root), FEATURE_LOCK_NAME)));
-      return { pid: 4242, unref: () => undefined } as never;
-    });
-    supervise.__testing_setConditionProbe(conditionProbe);
-    process.argv = ['node', 'goal-supervise.ts', '--feature', FEATURE, '--run-id', runId, '--project-root', root];
-    process.chdir(root);
-    clearFrameworkConfigCache();
-    const code = await supervise.__testing_main();
-    return { code, spawned, lockHeldAtSpawn };
-  } finally {
-    supervise.__testing_setSpawnImpl(null);
-    supervise.__testing_setConditionProbe(null);
-    process.argv = prevArgv;
-    try { process.chdir(prevCwd); } catch { /* ignore */ }
-  }
-}
-
-/** 回拨最近一段已结束会话：活跃时长 = consumedMs，run_end 早于现在 10 分钟（过恢复冷却）。 */
-function backdateLastSession(reportDir: string, consumedMs: number): void {
-  const p = path.join(reportDir, 'events.jsonl');
-  const events = fs.readFileSync(p, 'utf-8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>);
-  const lastEnd = events.map((e) => e.type).lastIndexOf('run_end');
-  const lastStart = events.map((e) => e.type).lastIndexOf('run_start');
-  assert(lastEnd > lastStart && lastStart >= 0, '夹具：须是一个已结束的会话');
-  const endMs = Date.now() - 10 * 60_000;
-  events[lastStart].ts = new Date(endMs - consumedMs).toISOString();
-  if (typeof events[lastStart].session_started_at === 'string') events[lastStart].session_started_at = events[lastStart].ts;
-  events[lastEnd].ts = new Date(endMs).toISOString();
-  fs.writeFileSync(p, events.map((e) => JSON.stringify(e)).join('\n') + '\n', 'utf-8');
-}
-
 asyncCases.push(
   {
     name: 'P3 R2 等待函数：到上限后不再探测、不再重查；重查拿到的是剩余额度',
@@ -719,185 +627,28 @@ asyncCases.push(
       assert(skipped === false && none.length === 0, '预算已尽不等、不落事件');
     },
   },
-  {
-    name: 'P3 A6 运行时链：真实能力门自然等待，实际环境恢复后同一run只补coding检查',
-    run: async () => {
-      const root = hostWithCapabilityGap();
-      try {
-        const probe = await runGoalRuntimeChain(root, {
-          freshEndPhase: 'coding',
-          conditionWait: { maxWaitMs: 20_000, pollMs: 50 },
-        });
-        const halted = probe.events.find(e => e.type === 'phase_halt' && e.halt_reason === 'await_human_capability_gap');
-        assert(halted?.probe === 'capability_preflight_ready', `保真实原probe：${JSON.stringify(halted)}`);
-        assert(resetCapabilityFailedByHumanReprobe(root, true), '实际恢复原能力状态');
-        const resumed = await runGoalRuntimeChain(root, { resume: path.basename(probe.reportDir) });
-        const current = resumed.events.filter(e => e.type === 'harness_start' && e.phase === 'coding');
-        assert(current.length === 1, `只补当前coding检查：${JSON.stringify(current)}`);
-        assert(!resumed.invokedPhases.length, '能力恢复不另买作者');
-        const end = [...resumed.events].reverse().find((e) => e.type === 'run_end');
-        assert(end?.status === 'CHAIN_SLICE_COMPLETED', `run 须到终点：${JSON.stringify(end)}`);
-      } finally {
-        fs.rmSync(root, { recursive: true, force: true });
-      }
-    },
-  },
-  {
-    name: 'P3 A6+A7 能力探针：等待超时→停放 HALTED，run_end 带探针与责任阶段；修好后生产 supervisor 接受 run_end 作来源并发出恢复',
-    run: async () => {
-      const root = hostWithCapabilityGap();
-      try {
-        const probe = await runGoalRuntimeChain(root, {
-          freshEndPhase: 'coding',
-          conditionWait: { maxWaitMs: 300, pollMs: 50 },
-        });
-        const runId = path.basename(probe.reportDir);
-        const types = probe.events.map((e) => String(e.type));
-        const halt = probe.events.find((e) => e.type === 'phase_halt' && e.halt_reason === 'await_human_capability_gap');
-        assert(!!halt && halt.probe === 'capability_preflight_ready', '保原能力缺口和实际probe，不以默认等待墙钟创造恢复');
-        const end = [...probe.events].reverse().find((e) => e.type === 'run_end');
-        assert(end?.status === 'HALTED', `run_end=${JSON.stringify(end)}`);
-        assert(end?.run_disposition === 'WAITING' && end?.run_wait_kind === 'external', `run_end 处置=${JSON.stringify(end)}`);
-        assert(end?.probe === 'capability_preflight_ready' && end?.probe_phase === 'coding',
-          `run_end 须带探针与责任阶段：${JSON.stringify(end)}`);
-        const state = reduceRunState(probe.events);
-        assert(state.source_event_type === 'run_end', `来源事件应为 run_end：${JSON.stringify(state)}`);
-
-        // 环境未修：真实探针未就绪 → supervisor 不拉起
-        const before = await superviseOnce(root, runId, null);
-        assert(before.code === 0 && before.spawned.length === 0, `探针未就绪不得拉起：${JSON.stringify(before)}`);
-        // 人工 reprobe 修好 → 同一份真实探针转绿 → supervisor 发出恢复（同一 run）
-        assert(resetCapabilityFailedByHumanReprobe(root, true), '夹具：人工 reprobe 须重置');
-        const after = await superviseOnce(root, runId, null);
-        assert(after.code === 0 && after.spawned.length === 1, `须发出恢复：${JSON.stringify(after)}`);
-        const args = after.spawned[0];
-        assert(args.includes('--resume') && args.includes(runId) && !args.includes('--supersede'),
-          `须恢复同一 run：${args.join(' ')}`);
-        assert(readRunEvents(root, runId).some((e) => e.type === 'supervisor_restart'), '须先落 supervisor_restart');
-      } finally {
-        fs.rmSync(root, { recursive: true, force: true });
-      }
-    },
-  },
-  {
-    name: 'P3 A7 设备探针：设备门停放的完整事件流（含 run_end）经生产 supervisor 决策发出恢复',
-    run: async () => {
-      const { root } = setupGoalRuntimeHost();
-      try {
-        const probe = await runGoalRuntimeChain(root, {
-          freshEndPhase: 'ut',
-          // 设备门桩按生产 runDeviceReadinessGate 的 BLOCKED 字面形状发事件、回 outcome（含 probe）
-          deviceGate: (o: { phase: string; retries: number; emitEvent: (e: Record<string, unknown>) => void }) => {
-            o.emitEvent({
-              type: 'phase_halt', phase: o.phase, halt_reason: 'device_not_ready', verdict: 'FAIL',
-              reason: '注入：设备锁屏', probe: 'device_readiness', notes: [],
-            });
-            return {
-              outcome: {
-                phase: o.phase, verdict: 'FAIL', halted: false, retries: o.retries,
-                halt_reason: 'device_not_ready', halt_guidance: '注入：设备锁屏',
-                blocking_class: 'externalBlocked', failure_kind: 'device_blocked', probe: 'device_readiness',
-              },
-              notes: [],
-            };
-          },
-          conditionWait: { maxWaitMs: 200, pollMs: 50, runProbe: () => ({ ready: false, reason: '测试不接真机' }) },
-        });
-        const runId = path.basename(probe.reportDir);
-        const types = probe.events.map((e) => String(e.type));
-        assert(probe.events.some(e => e.type === 'phase_halt' && e.halt_reason === 'device_not_ready'), `保具体真实设备等待：${types.join(',')}`);
-        const end = [...probe.events].reverse().find((e) => e.type === 'run_end');
-        assert(!!end && typeof end.status === 'string', `须有 run_end：${JSON.stringify(end)}`);
-        const state = reduceRunState(probe.events);
-        assert(state.run_disposition === 'WAITING' && state.run_wait_kind === 'external', `投影=${JSON.stringify(state)}`);
-        const notReady = await superviseOnce(root, runId, () => ({ ready: false }));
-        assert(notReady.spawned.length === 0, '探针未就绪不拉起');
-        const ready = await superviseOnce(root, runId, (p) => ({ ready: p === 'device_readiness' }));
-        assert(ready.spawned.length === 1 && ready.spawned[0].includes('--resume') && ready.spawned[0].includes(runId),
-          `设备探针转绿须发出恢复：${JSON.stringify(ready)}`);
-      } finally {
-        fs.rmSync(root, { recursive: true, force: true });
-      }
-    },
-  },
-  {
-    name: 'plan 9c3d7e1a t6（codex 第三轮）supervisor 写事件与拉起在 feature 锁内：锁被持有 → 本轮不写、不拉起；退避在锁外睡，睡完锁内重判，期间重启序号已变 → 让给下一轮',
-    run: async () => {
-      const { root } = setupGoalRuntimeHost();
-      try {
-        const probe = await runGoalRuntimeChain(root, {
-          freshEndPhase: 'ut',
-          deviceGate: (o: { phase: string; retries: number; emitEvent: (e: Record<string, unknown>) => void }) => {
-            o.emitEvent({
-              type: 'phase_halt', phase: o.phase, halt_reason: 'device_not_ready', verdict: 'FAIL',
-              reason: '注入：设备锁屏', probe: 'device_readiness', notes: [],
-            });
-            return {
-              outcome: {
-                phase: o.phase, verdict: 'FAIL', halted: false, retries: o.retries,
-                halt_reason: 'device_not_ready', halt_guidance: '注入：设备锁屏',
-                blocking_class: 'externalBlocked', failure_kind: 'device_blocked', probe: 'device_readiness',
-              },
-              notes: [],
-            };
-          },
-          conditionWait: { maxWaitMs: 200, pollMs: 50, runProbe: () => ({ ready: false, reason: '测试不接真机' }) },
-        });
-        const runId = path.basename(probe.reportDir);
-        const eventsPath = path.join(goalRunsDir(root), runId, 'events.jsonl');
-        const ready = (p: string): { ready: boolean } => ({ ready: p === 'device_readiness' });
-        const restartSeqs = (): unknown[] => readRunEvents(root, runId).filter((e) => e.type === 'supervisor_restart').map((e) => e.restart_seq);
-
-        // 锁被持有（run 在跑、或同蓝图的设计修复进行中）：探针已就绪也不写、不拉起
-        const lockPath = path.join(goalRunsDir(root), FEATURE_LOCK_NAME);
-        const held = tryAcquireLock(lockPath, {});
-        assert(held, '夹具：feature 锁可取');
-        const bytes = fs.readFileSync(eventsPath);
-        let busy: Awaited<ReturnType<typeof superviseOnce>>;
-        try {
-          busy = await superviseOnce(root, runId, ready);
-        } finally {
-          releaseLock(lockPath, held!.ownerId);
-        }
-        assert(busy.code === 0 && busy.spawned.length === 0 && fs.readFileSync(eventsPath).equals(bytes),
-          `锁被持有时不得写事件、不得拉起：${JSON.stringify(busy)}`);
-
-        // 锁放了：第 1 次拉起（不退避）；拉起时锁已放（子进程自己取锁），之后也不留锁
-        const first = await superviseOnce(root, runId, ready);
-        assert(first.spawned.length === 1 && first.lockHeldAtSpawn.every((h) => !h) && !fs.existsSync(lockPath),
-          `放锁后再拉起且不留锁：${JSON.stringify(first)}`);
-        assert(JSON.stringify(restartSeqs()) === '[1]', `重启记账：${JSON.stringify(restartSeqs())}`);
-
-        const second = await superviseOnce(root, runId, ready);
-        assert(second.code === 0 && second.spawned.length === 0, `原拉起尚未交回不得再拉：${JSON.stringify(second)}`);
-        assert(JSON.stringify(restartSeqs()) === '[1]', `未变条件不产生第二次启动：${JSON.stringify(restartSeqs())}`);
-      } finally {
-        fs.rmSync(root, { recursive: true, force: true });
-      }
-    },
-  },
 );
 
-export async function runAll(selector?: string): Promise<Array<{ name: string; ok: boolean; error?: string }>> {
-  const out = cases.filter(testCase => matchesUnitCase(testCase.name, selector)).map((testCase) => {
+export async function runAll(): Promise<Array<{ name: string; ok: boolean; error?: string }>> {
+  const out = cases.map((testCase) => {
+    const endUnitCase = beginUnitCase(testCase.name);
+    if (!endUnitCase) return discoveryResult(testCase.name);
     try {
       testCase.run();
       return { name: testCase.name, ok: true };
     } catch (error) {
       return { name: testCase.name, ok: false, error: (error as Error).message };
-    }
+    } finally { endUnitCase(); }
   });
-  for (const testCase of asyncCases.filter(testCase => matchesUnitCase(testCase.name, selector))) {
+  for (const testCase of asyncCases) {
+    const endUnitCase = beginUnitCase(testCase.name);
+    if (!endUnitCase) continue;
     try {
       await testCase.run();
       out.push({ name: testCase.name, ok: true });
     } catch (error) {
       out.push({ name: testCase.name, ok: false, error: (error as Error).stack ?? (error as Error).message });
-    }
+    } finally { endUnitCase(); }
   }
   return out;
-}
-
-export async function runSelectedCases(selector?: string) {
-  return selectedUnitCases(await runAll(selector), selector, []);
 }

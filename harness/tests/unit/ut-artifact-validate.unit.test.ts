@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 // ============================================================================
 // ut-artifact-validate.unit.test.ts — UT 产物格式预校验
 // ============================================================================
@@ -212,11 +213,13 @@ export function runAll(): UnitCaseResult[] {
     { name: 'resolve path prefers cwd when file exists', fn: testResolvePathPrefersExistingCwd },
   ];
   return cases.map(({ name, fn }) => {
+    const endUnitCase = beginUnitCase(name);
+    if (!endUnitCase) return discoveryResult(name);
     try {
       fn();
       return { name, ok: true };
     } catch (e) {
       return { name, ok: false, error: e instanceof Error ? e.message : String(e) };
-    }
+    } finally { endUnitCase(); }
   });
 }

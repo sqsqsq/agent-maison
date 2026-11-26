@@ -1,3 +1,4 @@
+import { beginUnitCase } from '../utils/unit-cases';
 // f4b2c8e6 t3 — HarmonyOS 锁屏 parser：容器边界、originalText、几何与冷却隐私
 import * as crypto from 'crypto';
 import * as fs from 'fs';
@@ -14,8 +15,10 @@ import {
 import type { UnitCaseResult } from '../run-unit';
 
 function run(results: UnitCaseResult[], name: string, fn: () => void): void {
+  const endUnitCase = beginUnitCase(name);
+  if (!endUnitCase) return;
   try { fn(); results.push({ name, ok: true }); }
-  catch (err) { results.push({ name, ok: false, error: (err as Error).stack ?? String(err) }); }
+  catch (err) { results.push({ name, ok: false, error: (err as Error).stack ?? String(err) }); } finally { endUnitCase(); }
 }
 function assert(cond: boolean, msg: string): void { if (!cond) throw new Error(msg); }
 function assertEq<T>(actual: T, expected: T, label: string): void {

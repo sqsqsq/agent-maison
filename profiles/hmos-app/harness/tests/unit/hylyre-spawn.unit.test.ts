@@ -1,3 +1,4 @@
+import { runUnitCases } from '../../../../../harness/tests/utils/unit-cases';
 export const layer = 'capability' as const; // Actual native helper calls are part of this suite.
 import * as fs from 'fs';
 import * as os from 'os';
@@ -257,14 +258,5 @@ const cases: Array<{ name: string; run: () => void }> = [
 ];
 
 export function runAll(): UnitCaseResult[] {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (e) {
-      results.push({ name: c.name, ok: false, error: (e as Error).message });
-    }
-  }
-  return results;
+  return runUnitCases(cases);
 }

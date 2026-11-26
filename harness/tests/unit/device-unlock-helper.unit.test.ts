@@ -1,3 +1,4 @@
+import { beginUnitCase } from '../utils/unit-cases';
 // ============================================================================
 // device-unlock-helper.unit.test.ts — 解锁执行器的安全约束
 //                                     （openspec device-readiness-and-completion t6）
@@ -27,12 +28,14 @@ import { FakeCredentialProvider } from '../helpers/fake-credential-provider';
 import type { UnitCaseResult } from '../run-unit';
 
 function run(results: UnitCaseResult[], name: string, fn: () => void): void {
+  const endUnitCase = beginUnitCase(name);
+  if (!endUnitCase) return;
   try {
     fn();
     results.push({ name, ok: true });
   } catch (err) {
     results.push({ name, ok: false, error: (err as Error).stack ?? (err as Error).message });
-  }
+  } finally { endUnitCase(); }
 }
 function assert(cond: boolean, msg: string): void {
   if (!cond) throw new Error(msg);

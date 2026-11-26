@@ -1,3 +1,4 @@
+import { beginUnitCase } from '../utils/unit-cases';
 // ============================================================================
 // skills-device-policy-gate.unit.test.ts — 设备策略前置的**两模式覆盖**元门禁
 //                                          （openspec device-readiness-and-completion t5）
@@ -18,12 +19,14 @@ import { PHASE_CAPABILITY_MAP } from '../../scripts/utils/phase-personal-prerequ
 import type { UnitCaseResult } from '../run-unit';
 
 function run(results: UnitCaseResult[], name: string, fn: () => void): void {
+  const endUnitCase = beginUnitCase(name);
+  if (!endUnitCase) return;
   try {
     fn();
     results.push({ name, ok: true });
   } catch (err) {
     results.push({ name, ok: false, error: (err as Error).stack ?? (err as Error).message });
-  }
+  } finally { endUnitCase(); }
 }
 function assert(cond: boolean, msg: string): void {
   if (!cond) throw new Error(msg);

@@ -1,3 +1,4 @@
+import { runUnitCasesAsync } from '../utils/unit-cases';
 // Real tool deadline: bounded process cleanup and frozen output after return.
 import * as fs from 'fs';
 import * as os from 'os';
@@ -92,14 +93,5 @@ const cases: TestCase[] = [
 ];
 
 export async function runAll(): Promise<Array<{ name: string; ok: boolean; error?: string }>> {
-  const out: Array<{ name: string; ok: boolean; error?: string }> = [];
-  for (const testCase of cases) {
-    try {
-      await testCase.run();
-      out.push({ name: testCase.name, ok: true });
-    } catch (error) {
-      out.push({ name: testCase.name, ok: false, error: (error as Error).message });
-    }
-  }
-  return out;
+  return runUnitCasesAsync(cases);
 }

@@ -1,3 +1,4 @@
+import { runUnitCases } from '../../../../../harness/tests/utils/unit-cases';
 export const layer = 'capability' as const; // Actual native helper calls are part of this suite.
 /**
  * structure-ledger 单测（P1-4①，plan c9e2a7f4 子批B）：
@@ -321,14 +322,5 @@ test('production_entry_check_visual_parity_reaches_ledger_in_custom_features_dir
 });
 
 export function runAll(): UnitCaseResult[] {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (e) {
-      results.push({ name: c.name, ok: false, error: (e as Error).message });
-    }
-  }
-  return results;
+  return runUnitCases(cases);
 }

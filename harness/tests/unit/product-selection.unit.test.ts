@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 // ============================================================================
 // product-selection.unit.test.ts — 用户确认 product 机制（plan a7c3f9e2 t3）
 // ============================================================================
@@ -323,11 +324,13 @@ const cases: Array<{ name: string; run: () => void }> = [
 
 export function runAll(): UnitCaseResult[] {
   return cases.map(c => {
+    const endUnitCase = beginUnitCase(c.name);
+    if (!endUnitCase) return discoveryResult(c.name);
     try {
       c.run();
       return { name: c.name, ok: true };
     } catch (e) {
       return { name: c.name, ok: false, error: (e as Error).stack ?? (e as Error).message };
-    }
+    } finally { endUnitCase(); }
   });
 }

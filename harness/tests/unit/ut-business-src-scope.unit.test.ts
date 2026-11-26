@@ -1,3 +1,4 @@
+import { runUnitCases } from '../utils/unit-cases';
 // ============================================================================
 // UT 业务源码前缀推导（architecture DSL）
 // ============================================================================
@@ -93,14 +94,5 @@ const cases: Array<{ name: string; run: () => void }> = [
 ];
 
 export function runAll(): UnitCaseResult[] {
-  const out: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      out.push({ name: c.name, ok: true });
-    } catch (err) {
-      out.push({ name: c.name, ok: false, error: (err as Error).stack ?? String(err) });
-    }
-  }
-  return out;
+  return runUnitCases(cases);
 }

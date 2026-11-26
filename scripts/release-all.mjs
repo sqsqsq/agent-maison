@@ -2,7 +2,7 @@
 // release-all.mjs — 前台串联发布链路（见 .cursor/plans 的 a7c3e1f9 P4）。
 //
 // 目标：一条命令跑完发布，且
-//   - typecheck 只跑一次（含 tests；test:unit/test:fixtures 走 transpile-only，verify 传 --skip-typecheck）；
+//   - 根 npm test 内完成一次 typecheck（verify 传 --skip-typecheck）；
 //   - zip 只打一次（pack→verify --zip，verify 不再自 pack→extract）；
 //   - 失败不留残留：先 pack 到 staging，verify 通过后才 promote 到 dist/；任一步失败均清理 staging（try/finally）。
 //
@@ -129,8 +129,8 @@ function main() {
   // 1. plan 版本发布门禁（在研 plan 若含未完成 todo 会在此拦截）
   run(process.execPath, ['scripts/check-plan-version.mjs', '--release'], REPO_ROOT);
 
-  // npm test is the single complete test entry (typecheck + all unit/profile + fixtures).
-  run(process.execPath, [process.env.npm_execpath ?? path.join(path.dirname(process.execPath), 'node_modules/npm/bin/npm-cli.js'), 'test'], HARNESS);
+  // 根全量包含 typecheck、unit、profile、fixture 和根工具测试。
+  run(process.execPath, [process.env.npm_execpath ?? path.join(path.dirname(process.execPath), 'node_modules/npm/bin/npm-cli.js'), 'test'], REPO_ROOT);
 
   // 4–6. pack→verify→promote：staging 生命周期用 try/finally 兜住，任一步失败都清 staging（不留残留产物）
   fs.rmSync(stagingDir, { recursive: true, force: true });

@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../../../../../harness/tests/utils/unit-cases';
 export const layer = 'capability' as const; // Actual native helper calls are part of this suite.
 /**
  * visual-diff-ocr-gates 单测（T5 越界）：collectOutOfBoundsGlobalElements。
@@ -162,11 +163,13 @@ test('T1: OCR 失败 → 不误判，进 ocrUnavailable 降级', () => {
 
 export function runAll(): UnitCaseResult[] {
   return cases.map(c => {
+    const endUnitCase = beginUnitCase(c.name);
+    if (!endUnitCase) return discoveryResult(c.name);
     try {
       c.run();
       return { name: c.name, ok: true };
     } catch (err) {
       return { name: c.name, ok: false, error: err instanceof Error ? (err.stack ?? err.message) : String(err) };
-    }
+    } finally { endUnitCase(); }
   });
 }

@@ -1,3 +1,4 @@
+import { runUnitCases } from '../utils/unit-cases';
 import assert from 'assert';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -45,5 +46,13 @@ const cases: Array<{ name: string; run(root: string): void }> = [
   } },
 ];
 export function runAll(): UnitCaseResult[] {
-  return cases.map(test => { const root = fs.mkdtempSync(path.join(os.tmpdir(), 'blueprint-host-history-')); try { fs.cpSync(original, root, { recursive: true }); test.run(root); return { name: test.name, ok: true }; } catch (error) { return { name: test.name, ok: false, error: (error as Error).stack }; } finally { fs.rmSync(root, { recursive: true, force: true }); } });
+  return runUnitCases(cases.map(test => ({ name: test.name, run() {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'blueprint-host-history-'));
+    try {
+      fs.cpSync(original, root, { recursive: true });
+      test.run(root);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  } })));
 }

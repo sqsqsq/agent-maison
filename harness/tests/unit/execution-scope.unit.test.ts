@@ -1,32 +1,24 @@
-import { unitCaseGroups } from '../utils/unit-case-selection';
+import { runUnitCasesAsync } from '../utils/unit-cases';
+import { testCliArgs } from '../utils/test-cli-args';
 import { resolveValidationOnlyEligibility } from '../../scripts/utils/goal-runner-phase';
 import { writeRunSummaryBase } from '../../harness-runner';
 import { generateScriptReport } from '../../scripts/utils/report-generator';
 import { checkContractFileReferenceClosure } from '../../scripts/check-plan';
-import { checkUtUnsupportedTargetsHandled, checkUtTestabilityAuditPresent, inspectTestabilityAudit, checkUtCasePerUnitAc, inspectCoverageEvidence, loadUtCoverageTargets } from '../../scripts/check-ut';
-import { writeCoverageEvidence } from '../../scripts/utils/coverage-evidence';
-import { executedUtChecks } from '../../scripts/utils/ut-execution-evidence';
-import { readTaggedAcceptanceStrength } from '../../scripts/utils/acceptance-review-strength';
-import { tryLoadUtHostImpl } from '../../profile-host-loader';
 import { UT_REAL_ASSERTION_CHECK } from './repair-candidates.unit.test';
-import { renderResultBlock } from '../utils/verifier-evidence-fixture';
-import { parseVerifierRequest } from '../../scripts/utils/verifier-request';
-import { asRecord, asRecords } from '../../scripts/utils/component-blueprint-model';
-import { invocationCompleted } from '../../scripts/utils/invocation-completion';
 import assert from 'assert';
-import { readRepairDependencyContext, repairResponsibilityContext, resolveRepairResponsibility } from '../../scripts/utils/repair-responsibility';
+import { repairResponsibilityContext, resolveRepairResponsibility } from '../../scripts/utils/repair-responsibility';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
 import { spawnSync } from 'child_process';
 import { execFileSync } from 'child_process';
-import { runRuntimeTestChild, preserveRuntimeTestEvidence } from '../utils/runtime-test-control';
+import { runRuntimeTestChild, withRuntimeTest } from '../utils/runtime-test-control';
 import { ensureFeatureExecutionScopeFrozen, readFeatureFrozenScope, featureFrozenScopePath, featureEffectiveScope, appendFeatureScopeRevision, registerFeatureScopeTransfer, applyFeatureScopeRevisionsThenMaybeComplete } from '../../scripts/utils/feature-execution-scope';
 import { resolveEffectiveDiffBaseline } from '../../scripts/utils/git-diff';
 import { resolveBirthExecutionScope } from '../../scripts/utils/feature-execution-scope';
 import { resolveWorkflowSpec } from '../../workflow-loader';
 import { checkFactsArtifact, factsBaselineFingerprint } from '../../scripts/utils/context-facts';
-import { resolveFeatureTrack } from '../../scripts/utils/runtime-policy';
+import { resolveFeatureTrack, resolvePhaseChain } from '../../scripts/utils/runtime-policy';
 import { loadFeatureTrackDecl, resolveScopeRevisionProposal } from '../../scripts/utils/feature-track';
 import { freezeFeatureExecutionScope } from '../../scripts/utils/feature-execution-scope';
 import { resolveBirthScopeForManifest } from '../../scripts/utils/feature-execution-scope';
@@ -35,10 +27,8 @@ import { loadWorkflowSpec } from '../../workflow-loader';
 import { __testing_setInsideRecordWriteLock, __testing_setBeforeStaleLockReclaim, detectLiveFeatureLock } from '../../scripts/utils/feature-execution-scope';
 import { resolveChangeUnitExpectedExecution } from '../../scripts/utils/change-unit-completion';
 import { resolveCurrentDisposition } from '../../scripts/utils/check-disposition';
-import { readCurrentDispositionInput, readReusableCheckResult } from '../../scripts/utils/verify-feature-completion';
-import { researchSnapshotFacts } from '../fixtures/host-snapshot-3.1.0/migrate';
 import { tryAcquireLock, releaseLock } from '../../scripts/utils/goal-run-lock';
-import { buildGoalManifestFromInput } from '../../scripts/utils/goal-manifest';
+import { buildGoalManifestFromInput, resolveRequirementInput } from '../../scripts/utils/goal-manifest';
 import { createGoalRun } from '../../scripts/utils/goal-run-creation';
 import { runUiDiffWithinDeclaredFiles } from '../../scripts/utils/ui-scope-gate';
 import { featureTrackDeclPath } from '../../scripts/utils/feature-track';
@@ -52,28 +42,19 @@ import {
 import { writeReviewClosureAttestation } from '../../scripts/utils/closure-attestation';
 import { createHash } from 'crypto';
 import { stableStringify, loadPhaseEvidenceManifest } from '../../scripts/utils/phase-evidence-manifest';
-import { setupGoalRuntimeHost, runGoalRuntimeChain, fixtureReadDependencies } from './goal-runner-testing-integrity.unit.test';
-import { frameworkDeclaringTsSources, removeShimFramework } from './standalone-coding-review.unit.test';
-import { prepareFixtureVerifierMaterial } from '../helpers/goal-run-driver';
 import { designScopeRevisionChecks, checkTypedConstructionContent } from '../../scripts/utils/blueprint-skill-projection';
 import { resolvePhaseWriteBoundary, resolvePhasePathOwnership } from '../../scripts/utils/phase-write-boundary';
-import { readRunBoundContracts } from '../../scripts/utils/capability-resolution';
-import { checkChangeUnitFeatureProjection } from '../../scripts/utils/change-unit-feature-projection';
 import { clearFrameworkConfigCache, loadFrameworkConfig, featureFilePath, featurePhaseReportsDir, relFeaturesDir } from '../../config';
-import { loadResolvedProfile, loadPhaseRuleWithOverlays } from '../../profile-loader';
-import { deriveChangeUnitFeatureId, loadCanonicalChangeUnit, asChangeUnitArtifact } from '../../scripts/utils/change-unit-path';
-import { configureFeature } from './component-closure.unit.test';
+import { loadResolvedProfile } from '../../profile-loader';
 import { resolveCapabilityInputs, projectSourceFileBinding, type InputBinding } from '../../scripts/utils/capability-resolution';
-import { resolveCapabilityResolutionEntryInput, resolveFactsPhaseOwnedSources } from '../../scripts/utils/capability-resolution-entry-input';
+import { resolveCapabilityResolutionEntryInput, resolveFactsPhaseOwnedSources, resolveFeaturePhaseCapabilityInput } from '../../scripts/utils/capability-resolution-entry-input';
 import { SpecLoader } from '../../scripts/utils/spec-loader';
 import { buildSummaryRepairCandidates, collectReviewRepairCandidates, itemFingerprintOf, scopeRevisionInputFromRepairCandidates } from '../../scripts/utils/repair-candidates';
-import { prepareGoalModeRun } from '../../scripts/goal-mode-entry';
+import { prepareGoalModeRun, runGoalModeSessionStep } from '../../scripts/goal-mode-entry';
 import { runRevalidate, REVALIDATION_RECORD_FILE } from '../../scripts/utils/revalidate';
-import { resolveComponentClosureInputs } from '../../scripts/utils/component-closure-inputs';
-import { deriveComponentClosureObligations } from '../../scripts/utils/component-closure-obligations';
-import { buildChangeUnitGoalHandoff } from '../../scripts/utils/change-unit-progress-loop';
-import { observeChangeUnitCompletion } from '../../scripts/utils/change-unit-completion';
-import { generateFeatureCompletion, inspectCompletionRecord, verifyReusedExecutionScope, executionScopeEvidenceIssues } from '../../scripts/utils/verify-feature-completion';
+import { completedCheckResultsFromOutput, readCurrentDispositionInput, readPhaseChecks, generateFeatureCompletion, inspectCompletionRecord, verifyReusedExecutionScope, executionScopeEvidenceIssues } from '../../scripts/utils/verify-feature-completion';
+import { finalizePhaseClosure } from '../../scripts/utils/phase-closure-finalizer';
+import { writeReceiptProjection } from '../../scripts/utils/receipt-scaffold';
 import { assessFeature, assessmentReasons } from '../../scripts/utils/feature-assessment';
 
 /** plan b2d7f4e9：唯一评估入口 assessFeature 的 VALID/INVALID 投影（complete ⇔ VALID）。 */
@@ -83,20 +64,16 @@ function completionOf(opts: { projectRoot: string; feature: string; expectedChai
 }
 import { loadFrozenExecutionScope, loadEffectiveExecutionScope, resolveEffectiveScopeSource } from '../../scripts/utils/goal-run-creation';
 import { resolveUpstreamPhaseChain } from '../../scripts/utils/upstream-verdict-gate';
-import { featureRequirementBinding, readScopeAcceptance, collectResolvedScopeFacts, prepareFeatureScopeCandidate, featureScopeCandidateFingerprint } from '../../scripts/utils/feature-track';
+import { featureRequirementBinding, collectResolvedScopeFacts, prepareFeatureScopeCandidate, featureScopeCandidateFingerprint } from '../../scripts/utils/feature-track';
 import { uiSpecAbsPath } from '../../scripts/utils/ui-spec-shared';
-import { codingBasePath } from '../../scripts/utils/pass-snapshot';
-import { recomputePhaseEvidenceStaleness } from '../../scripts/utils/phase-evidence-manifest';
 import * as os from 'os';
-import type { AcceptanceSpec, CheckContext, CheckResult } from '../../scripts/utils/types';
+import type { AcceptanceSpec, CheckContext } from '../../scripts/utils/types';
 import { resolveExecutionScope, validateExecutionScope, executionScopeFingerprint, executionCompletionPhases, hasNoTestingObligation, readScopeRevisionUserControl, applyScopeUserControl, findSubtractedRequiredObligations, assertRevisionKeepsRequiredObligations, hasNewSourcedFact, effectiveScopeView, scopeProofHistory, projectScopeSchedule, affectedScopePhases, isExecutionSourceBasis, type ScopeHistoryEvent, type ExecutionScope, type ExecutionScopeInput, type ResolvedScopeFacts } from '../../scripts/utils/execution-scope';
-import { applyScopeRevisions, loadScopeRevisions, resolveRunBaseline, revokedPhasesByRevision, eventsWithScopeRevocations } from '../../scripts/utils/goal-run-creation';
-import { isClosureOnlyRetryPending, readExecutionActivity, loadAuthoritativeEvents } from '../../scripts/utils/goal-runner-phase';
-import { executionRequestForInvoke } from '../../scripts/utils/session-execution-handoff';
+import { applyScopeRevisions, resolveRunBaseline, revokedPhasesByRevision, eventsWithScopeRevocations } from '../../scripts/utils/goal-run-creation';
+import { isClosureOnlyRetryPending, loadAuthoritativeEvents } from '../../scripts/utils/goal-runner-phase';
 import { SCOPE_REVISION_FIELDS } from '../../scripts/utils/goal-manifest';
 import type { WorkflowSpec } from '../../workflow-loader';
 import type { UnitCaseResult } from '../run-unit';
-import { matchesUnitCase, selectedUnitCases, startCaseTiming, SelectedUnitCases, UnitExecutionTiming } from '../utils/unit-case-selection';
 
 const workflow: WorkflowSpec = {
   schema_version: '1.2', name: 'scoped', auto_chain: ['spec', 'plan', 'coding', 'review', 'ut', 'testing'],
@@ -211,120 +188,6 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
       const routing = initializeFidelityRouting({ ...ctx, requirement, manifestFidelity: 'pixel_1to1', featuresDirRel: 'doc/features', executionIdentity: `phase:${feature}:spec`, requirementProvenance: 'explicit_cli' });
       assert.equal(routing.routing.selected, 'pixel_1to1');
     } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
-  } },
-  { name: '38e5a7c2 host contracts first materialize in plan and reach coding through real scope revision', async run() {
-    const { root, frameworkRoot } = setupRunlessProject();
-    let evidenceFeature: string | undefined;
-    try {
-      const contractsRaw = fs.readFileSync(path.join(__dirname, '../fixtures/facts-plan-handoff/contracts.yaml'), 'utf8');
-      const useCasesRaw = fs.readFileSync(path.join(__dirname, '../fixtures/facts-plan-handoff/use-cases.yaml'), 'utf8');
-      const hostContracts = YAML.parse(contractsRaw);
-      const feature = hostContracts.feature as string;
-      evidenceFeature = feature;
-      fs.cpSync(path.join(__dirname, '../fixtures/facts-plan-handoff/project'), root, { recursive: true });
-      const configPath = path.join(root, 'framework.config.json');
-      const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-      config.materialized_adapters = ['generic'];
-      for (const layer of config.architecture.outer_layers) fs.mkdirSync(path.join(root, layer.id), { recursive: true });
-      fs.writeFileSync(configPath, JSON.stringify(config)); clearFrameworkConfigCache();
-      const deveco = path.join(root, 'fake-deveco');
-      fs.mkdirSync(path.join(deveco, 'tools/hvigor/bin'), { recursive: true });
-      fs.writeFileSync(path.join(deveco, 'tools/hvigor/bin', process.platform === 'win32' ? 'hvigorw.bat' : 'hvigorw'), 'fixture toolchain');
-      fs.writeFileSync(path.join(root, 'framework.local.json'), JSON.stringify({ schema_version: '1.0', agent_adapter: 'generic', toolchain: { devEcoStudio: { installPath: deveco } } }));
-      const inputSource = '02-Feature/WalletMain/src/main/ets/presentation/pages/AddBankCardPage.ets';
-      const contractFile = featureFilePath(root, feature, 'contracts.yaml');
-      assert(!fs.existsSync(contractFile));
-      const requirement = '补齐施工契约并实施';
-      const prepared = prepareFeatureScopeCandidate({ projectRoot: root, frameworkRoot, feature, completionTarget: 'feature', requestedResults: ['交付实现'], requestedPhases: ['plan','coding','review','ut'], requirement, overwrite: true,
-        impact: { userVisibleBehaviorChange: false, reason: '契约物化回归', basisPaths: [inputSource] } });
-      assert.equal(prepared.scope.phase_chain[0], 'plan');
-      execFileSync('git', ['init','-q'], { cwd: root }); fs.writeFileSync(path.join(root, '.gitignore'), 'framework\n');
-      execFileSync('git', ['add','.'], { cwd: root }); execFileSync('git', ['-c','user.name=F','-c','user.email=f@e.test','commit','-qm','base'], { cwd: root });
-      // This case starts from admitted run authority; initial CU design is outside the handoff under test.
-      const manifest = buildGoalManifestFromInput({ feature, run_id: '38e5a7c2-handoff', requirement, adapter: 'generic',
-        start_phase: 'plan', end_phase: prepared.scope.phase_chain.at(-1), chain_override: prepared.scope.phase_chain,
-        execution_scope: prepared.scope, budget: { max_total_turns: 3 }, unattended: { write_mode: 'full-access', approval_mode: 'never', max_turns: 20 } }, { projectRoot: root, featuresDir: 'doc/features' });
-      createGoalRun({ projectRoot: root, manifest, chain: prepared.scope.phase_chain });
-      assert(!fs.existsSync(contractFile), 'birth must not pre-seed contracts');
-      let runId = manifest.run_id, reachedCoding = false, planCalls = 0;
-      const boundary = () => resolvePhaseWriteBoundary({ projectRoot: root, frameworkRoot, feature, runId,
-        phaseOrder: ['spec','plan','coding','review','ut','testing'], track: 'full', profileDir: path.join(frameworkRoot,'profiles/hmos-app'), productLayerDirs: ['01-Product','02-Feature','04-BusinessBase'] });
-      const context = (phase: 'plan' | 'coding') => {
-        const bridge = resolveCapabilityResolutionEntryInput({ projectRoot: root, frameworkRoot, feature, phase, featuresDir: 'doc/features', goalRunId: runId });
-        const resolvedInputs = resolveCapabilityInputs({ projectRoot: root, frameworkRoot, feature, phase, track: 'full', ...bridge }).inputs!;
-        const loader = new SpecLoader(root, undefined, undefined, frameworkRoot);
-        const resolvedProfile = loadResolvedProfile(root, loadFrameworkConfig(root), frameworkRoot);
-        return { projectRoot: root, frameworkRoot, feature, phase, featureSpec: loader.loadFeatureSpec(feature, resolvedInputs), resolvedInputs, factsContext: bridge.factsContext,
-          resolvedProfile, phaseRule: loadPhaseRuleWithOverlays(phase, loader.loadPhaseRule(phase), resolvedProfile) } as never;
-      };
-      const outcome = await runGoalRuntimeChain(root, { frameworkRoot, featureId: feature, adapter: 'generic', resume: runId,
-        onAuthor: (ctx, admittedContext) => {
-          runId = ctx.runId;
-          if (loadEffectiveExecutionScope(root, feature, runId)!.phase_chain.includes('plan')) {
-          planCalls++;
-          if (planCalls === 1) assert(!fs.existsSync(contractFile)
-            || String(YAML.parse(fs.readFileSync(contractFile, 'utf8')).source).startsWith('derive.blueprint-contracts:'),
-            'only the actual plan preparation or this author may first materialize the approved contract');
-          assert.equal(resolvePhasePathOwnership(boundary(), path.relative(root, contractFile)).owner, 'plan');
-          fs.writeFileSync(contractFile, planCalls === 1 ? YAML.stringify({ ...hostContracts, interfaces: [{ class: 'BankCardRepository', file: inputSource, methods: [{ name: 'open', params: [], return: 'any' }] }] }) : contractsRaw);
-          fs.writeFileSync(featureFilePath(root, feature, 'use-cases.yaml'), useCasesRaw);
-          assert.equal(resolvePhasePathOwnership(boundary(), inputSource).owner, 'coding', 'existing product source retains its producer before construction is ready: ' + JSON.stringify({
-            planCalls, recorded: resolveEffectiveScopeSource(root, feature, runId)?.scope.obligations.map(o => [o.id, o.owner_phase, o.applicability, o.satisfied_by?.map(p => 'input_id' in p ? p.input_id : p.phase)]),
-            events: fs.readFileSync(featureFilePath(root, feature, `goal-runs/${runId}/events.jsonl`), 'utf8').trim().split('\n').map(line => JSON.parse(line))
-              .filter(e => e.type === 'scope_revised' || e.type === 'phase_verdict').map(e => ({ type: e.type, phase: e.phase, verdict: e.verdict, action: e.action, chain: e.execution_scope?.phase_chain })),
-          }));
-          assert.throws(() => readRunBoundContracts(root, frameworkRoot, feature, runId), /frozen construction contract missing|input binding stale/, 'known source ownership must not grant an unverified construction input');
-          }
-          const admitted = admittedContext.factsContext;
-          assert(admitted, 'the real unit author must read its signed facts admission');
-          assert.equal(admitted.first_phase, 'plan', 'the contract producer retains the immutable plan admission anchor');
-        },
-        onHarnessSummary: ({ phase }) => {
-          if (phase === 'coding') {
-            let read: ReturnType<typeof readRunBoundContracts>;
-            try { read = readRunBoundContracts(root, frameworkRoot, feature, runId); }
-            catch (error) {
-              if (!(error instanceof Error) || !/frozen construction contract missing|input binding stale/.test(error.message)) throw error;
-              const owner = resolvePhasePathOwnership(boundary(), path.relative(root, contractFile)).owner;
-              assert(owner === 'plan', 'the actual unbound construction artifact must retain its plan producer');
-              const checks: CheckResult[] = [{ id: 'capability_resolution_contract', category: 'structure', severity: 'BLOCKER', status: 'FAIL',
-                description: 'feature capability contract resolves before checker execution', details: error.message,
-                repair_owner: owner,
-                affected_files: [path.relative(root, contractFile).replace(/\\/g, '/')],
-                suggestion: '按本轮plan真实检查反馈修复施工契约，再复验原绑定。' }];
-              return { checks };
-            }
-            assert.deepStrictEqual(read.modules.map(m => m.name), hostContracts.modules.map((m: { name: string }) => m.name));
-            assert.equal(resolvePhasePathOwnership(boundary(), inputSource).owner, 'coding');
-            reachedCoding = true;
-          }
-          const ctx = context(phase as 'plan' | 'coding');
-          const checks = checkTypedConstructionContent(ctx).filter(c => c.id === 'construction_content_complete');
-          const revision = phase === 'plan' ? designScopeRevisionChecks(ctx, checks) : [];
-          return { checks: [...checks, ...revision] };
-        },
-      });
-      assert(reachedCoding, JSON.stringify(outcome.events.filter(e => ['phase_halt','phase_verdict','run_end'].includes(String(e.type)))
-        .map(e => ({ type: e.type, phase: e.phase, verdict: e.verdict, action: e.action, reason: e.reason, halt_reason: e.halt_reason }))));
-      assert.equal(planCalls, 2, 'real invalid construction must retry the plan owner before publishing');
-      assert(outcome.events.some(e => e.type === 'scope_revised' && (e.trigger as { phase?: string })?.phase === 'plan'));
-      assert(!outcome.events.some(e => e.type === 'phase_write_boundary_degraded'));
-      assert.equal(fs.readFileSync(contractFile, 'utf8'), contractsRaw, 'binding handoff must not rewrite the host contract');
-    } catch (error) {
-      const originals = [path.join(root, 'framework.config.json')];
-      if (evidenceFeature) {
-        for (const file of ['contracts.yaml', 'use-cases.yaml', 'acceptance.yaml', 'context/facts.md']) originals.push(featureFilePath(root, evidenceFeature, file));
-        for (const phase of ['spec', 'plan', 'coding', 'review', 'ut']) for (const name of ['summary.json', 'script-report.json', 'phase-evidence-manifest.json']) {
-          originals.push(path.join(featurePhaseReportsDir(root, evidenceFeature, phase, frameworkRoot), name));
-        }
-        const runDir = featureFilePath(root, evidenceFeature, 'goal-runs/38e5a7c2-handoff');
-        const issued = executionRequestForInvoke(runDir);
-        if (issued) originals.push(path.resolve(runDir, issued.reference.path));
-      }
-      const saved = preserveRuntimeTestEvidence([root], String(error), [], originals);
-      throw new Error(`${(error as Error).stack}\noriginals: ${saved}`);
-    }
-    finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
   } },
   { name: '38e5a7c2 rejected design decision keeps valid coding authority and facts ownership', run() {
     const { root, frameworkRoot, feature } = setupRunlessProject({ uiFile: true });
@@ -525,1385 +388,6 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
     for (const value of [null, {}, { schema_version: '9' }]) assert.throws(() => validateExecutionScope(value));
   } },
 ];
-async function runScopeScenario(mode: 'ut-l3-code' | 'ut-l3-spec' | 'ut-design-gap' | 'direct' | 'revision' | 'revision-cut' | 'revision-precut' | 'revision-revoke' | 'impact-first' | 'impact-reuse' | 'impact-null' | 'design-gap' | 'design-gap-revert' | 'spec-gap-revert' | 'detached' | 'detached-harness' | 'detached-explicit' | 'request-ut' | 'request-spec' | 'request-plan' | 'request-coding' | 'request-spec-invalid' | 'request-plan-invalid' | 'request-spec-cut' | 'request-plan-cut' | 'testing-fail' | 'testing-offline' | 'testing-manual' | 'unresolved', useDefault = false, missingMapping = false, continuousCoding: boolean | 'request' = false, introducesUi = false): Promise<void> {
-  const repo = path.resolve(__dirname, '../../..');
-  const { root } = setupGoalRuntimeHost('codex');
-  const originalCwd = process.cwd();
-  const frameworkRoot = path.join(root, 'framework');
-  const tsFramework = continuousCoding ? frameworkDeclaringTsSources() : undefined;
-  let preserveFailure: ((reason: string) => string) | undefined;
-  let restoreAppend: (() => void) | undefined;
-  try {
-    for (const dir of ['harness', 'profiles', 'agents', 'skills', 'specs', 'templates', 'docs']) fs.symlinkSync(path.join(dir === 'profiles' ? tsFramework ?? repo : repo, dir), path.join(frameworkRoot, dir), process.platform === 'win32' ? 'junction' : 'dir');
-    fs.copyFileSync(path.join(repo, 'package.json'), path.join(frameworkRoot, 'package.json'));
-    fs.copyFileSync(path.join(repo, 'workflows/spec-driven.workflow.yaml'), path.join(frameworkRoot, 'workflows/spec-driven.workflow.yaml'));
-    const source = YAML.parse(fs.readFileSync(path.join(repo, 'workflows/spec-driven.workflow.yaml'), 'utf8'));
-    source.schema_version = '1.2'; delete source.auto_chain_by_track;
-    source.artifacts = source.artifacts.filter((a: { id: string }) => !['change', 'exit'].includes(a.id));
-    for (const artifact of source.artifacts) { delete artifact.tracks; delete artifact.requires_by_track; artifact.obligation_provider_id = artifact.scope === 'global' ? 'obligations.project' : `obligations.${artifact.id}`; }
-    fs.writeFileSync(path.join(frameworkRoot, 'workflows/scoped.workflow.yaml'), YAML.stringify(source));
-    if (useDefault) fs.copyFileSync(path.join(repo, 'workflows/obligation-driven.workflow.yaml'), path.join(frameworkRoot, 'workflows/obligation-driven.workflow.yaml'));
-    const configPath = path.join(root, 'framework.config.json');
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf8')); config.active_workflow = useDefault ? 'obligation-driven' : 'scoped';
-    fs.writeFileSync(configPath, JSON.stringify(config)); clearFrameworkConfigCache();
-    const fixture = path.join(repo, 'harness/tests/fixtures/component-blueprint/valid');
-    fs.cpSync(fixture, root, { recursive: true });
-    // This bundled framework is a set of test junctions into the development repo.
-    // Git's untracked walk must stay inside the disposable consumer working tree.
-    fs.appendFileSync(path.join(root, '.git', 'info', 'exclude'), '\n/framework/\n');
-    const feature = deriveChangeUnitFeatureId('ledger-app-blueprint', 'ledger-refresh');
-    configureFeature(root, loadCanonicalChangeUnit(root, 'ledger-app-blueprint', 'ledger-refresh'));
-    if (missingMapping) {
-      const file = featureFilePath(root, feature, 'contracts.yaml');
-      const contract = YAML.parse(fs.readFileSync(file, 'utf8')); contract.change_unit.predicate_mappings = [];
-      fs.writeFileSync(file, YAML.stringify(contract));
-    }
-    const utL3 = mode === 'ut-l3-code' || mode === 'ut-l3-spec';
-    const utDesignGap = mode === 'ut-design-gap';
-    const designGapFamily = ['design-gap', 'design-gap-revert', 'ut-design-gap'].includes(mode);
-    // `spec-gap-revert`：与 design-gap-revert **同构**的 spec 归属闭环（需求 D0.3「review 归因
-    // spec 的用例同理」）。候选形态与 designGapFamily 一致（请求 coding/review/ut + 契约、验收、
-    // 实现事实 + 有来源 impact），区别只在触发者是 review 的 spec 归属发现。
-    const specGap = mode === 'spec-gap-revert' || mode === 'ut-l3-spec';
-    const codingFirst = designGapFamily || specGap || utL3;
-    if (mode === 'direct') {
-      fs.rmSync(featureFilePath(root, feature, 'spec/spec.md'), { force: true });
-      fs.rmSync(featureFilePath(root, feature, 'plan/plan.md'), { force: true });
-    }
-    const testingOnly = ['testing-fail', 'testing-offline', 'testing-manual'].includes(mode);
-    // R5（plan a9f3c7d2 第二笔）：`request-*` 家族＝单职责终点——只请求一个阶段、completion_target=request。
-    // 三个新模式（spec / plan / coding）**走生产候选生成入口** `--prepare-scope --completion-target request`，
-    // 不再手写候选；`request-ut` 保持 P8 原样（手造候选），两条路都必须得到单阶段链。
-    const requestOnly = mode.startsWith('request-');
-    const requestPhase = mode.startsWith('request-spec') ? 'spec' : mode.startsWith('request-plan') ? 'plan' : mode === 'request-coding' ? 'coding' : 'ut';
-    // `*-invalid` 反向变体：本阶段产出不合法（生产设计检查发不出修订），run 须如实 HALTED。
-    const invalidOutput = mode.endsWith('-invalid');
-    const preparedCandidate = requestOnly && mode !== 'request-ut';
-    const input = request(requestOnly ? [requestPhase] : testingOnly ? ['testing'] : ['direct'].includes(mode) || codingFirst ? ['coding', 'review', 'ut'] : ['spec'], requestOnly ? 'request' : 'feature');
-    const contractsFile = featureFilePath(root, feature, 'contracts.yaml');
-    const codeFile = path.join(root, (utL3 || continuousCoding === true || ['revision-revoke', 'design-gap', 'design-gap-revert'].includes(mode))
-      ? 'src/ledger/ClosureFixture.ts' : '02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets');
-    const codeRel = path.relative(root, codeFile).replace(/\\/g, '/');
-    const directUt = mode === 'direct' && !missingMapping;
-    const snapshotSource = path.posix.join(path.posix.dirname(codeRel), 'LedgerSnapshot.ets');
-    if (directUt) {
-      // This fixture's approved change is internal. Its general-purpose host seeds an ArkUI page.
-      fs.writeFileSync(codeFile, 'exports.refreshLedgerSnapshot = entries => entries;\n');
-      fs.writeFileSync(path.join(root, snapshotSource), 'exports.copyLedgerSnapshot = entries => entries.slice();\n');
-      const staged = spawnSync('git', ['add', '--', snapshotSource], { cwd: root, encoding: 'utf8' });
-      assert.equal(staged.status, 0, staged.stderr);
-      const baseline = spawnSync('git', ['commit', '-m', 'Seed internal ledger implementation for the direct scope', '--', codeRel, snapshotSource],
-        { cwd: root, encoding: 'utf8' });
-      assert.equal(baseline.status, 0, baseline.stderr);
-    }
-    const originalCode = fs.readFileSync(codeFile);
-    const refreshIssue = 'acceptance_test_strength_AC-REFRESH';
-    const refreshCase = '[AC-REFRESH] reads an independent current ledger snapshot';
-    const refreshTest = '02-Feature/FinancialCard/src/ohosTest/ets/test/ScopeRefresh.test.ets';
-    const refreshReport = featureFilePath(root, feature, 'review/review-report.md');
-    if (directUt) {
-      fs.mkdirSync(path.dirname(refreshReport), { recursive: true });
-      fs.writeFileSync(refreshReport, '# 待独立核验\n');
-    }
-    if (continuousCoding === true && specGap) {
-      const ref = featureFilePath(root, feature, 'spec/ref-elements.yaml'); fs.mkdirSync(path.dirname(ref), { recursive: true });
-      fs.writeFileSync(ref, 'elements: [{element_id: required-search, disposition: defer}]\n');
-    }
-    // 写集授权只认受信设计来源 `contracts.files`（第七轮阻断 1：候选自带的 implementation
-    // basis 是自报，不能当授权）。共享夹具的 contracts.yaml 不声明 files，**只在临时 root 里**
-    // 补上真实写集，让候选的实现义务与契约授权有交集——链形状与批次 1 一致。
-    {
-      const declared = YAML.parse(fs.readFileSync(contractsFile, 'utf8'));
-      declared.files = directUt ? [codeRel, snapshotSource, refreshTest] : [codeRel];
-      if (directUt) declared.modules = [{ name: 'FinancialCard', layer: '02-Feature', package_path: '02-Feature/FinancialCard' }];
-      if (utL3 || continuousCoding === true || ['revision-revoke', 'design-gap', 'design-gap-revert'].includes(mode)) {
-        // These modes exercise real authorized source edits, so the existing owner resolver needs the actual module location.
-        declared.modules = [{ name: 'ledger', layer: '02-Feature', package_path: 'src/ledger' }];
-      }
-      fs.writeFileSync(contractsFile, YAML.stringify(declared));
-    }
-    const contractsAtBirth = fs.readFileSync(contractsFile);
-    const useCasesAtBirth = fs.readFileSync(featureFilePath(root, feature, 'use-cases.yaml'));
-    // Every binding this fixture puts into a candidate is produced by the *production* resolver.
-    // Hand-computing `sha256(stableStringify(YAML.parse(raw)))` is a different contract from what
-    // `resolveArtifact` returns for acceptance@1/contracts@1/use-cases@1 (a SpecLoader-parsed
-    // value), so a hand-built binding cannot survive the freeze-time `readBoundInput` re-resolve.
-    // Reading it live also means design-gap / revision bindings reflect the file as it is *then*.
-    const liveBinding = (phase: string, id: string, requirement?: string, testTargets = [codeRel]): any => {
-      const resolvedInputs = resolveCapabilityInputs({
-        projectRoot: root, frameworkRoot, feature, phase, track: 'full', testTargets,
-        ...(requirement ? { requirement } : {}),
-        inputContext: { schema_version: '1.1', subject: { feature }, obligations: {}, required_outputs: [] },
-      });
-      const value = resolvedInputs.inputs?.values?.[id];
-      assert(value && value.state === 'resolved', `${phase}/${id} unresolved: ${JSON.stringify(value)}`);
-      return value.binding;
-    };
-    // D0.2 provenance：候选必须自带「为哪句需求而算」的需求绑定，和生产 `--prepare-scope`
-    // 生成的是同一形态（经生产 resolver，不手拼）。出生时会拿 `--requirement` 重解析比对。
-    input.request.requirement_basis = liveBinding('spec', 'requirement', 'fixture delivery');
-    const binding = liveBinding('plan', 'contracts');
-    input.facts.push({ id: 'design:cu', kind: 'design-context', applicability: 'required', reason: 'existing admitted CU construction projection', basis: [binding], satisfied_by: [binding] });
-    const codeBinding = () => liveBinding('plan', 'codebase');
-    // Any candidate that requests `coding` must carry the implementation duty together with its
-    // write-set source — that is the real shape, and it is what the freeze-time impact relevance
-    // check reads as the target set (this CU fixture's shared contracts.yaml declares no files).
-    if (['direct'].includes(mode) || codingFirst) {
-      input.facts.push({ id: 'implementation:source', kind: 'implementation', applicability: 'required', reason: 'authorized source edit', basis: [codeBinding()] });
-      // A Feature-target candidate must also declare where its acceptance comes from: D0.1 derives
-      // unit/device applicability from the acceptance layering, and a candidate that binds no
-      // acceptance source can only ever land `unknown` (it used to "pass" by self-reporting
-      // `device-evidence: not_applicable`, which is precisely the wash D0.1 stops).
-      // The shared CU fixture carries no acceptance content at all, so this scenario writes its
-      // own unit-layer acceptance into the *temp* project root (the shared fixture is untouched).
-      fs.writeFileSync(featureFilePath(root, feature, 'acceptance.yaml'),
-        directUt ? YAML.stringify({ criteria: [{ id: 'AC-REFRESH', priority: 'P1', ut_layer: 'unit', description: 'refresh ledger list',
-          expected_result: '读取最新账目并保留顺序，随后修改输入列表不改变已取得的快照' }] })
-          : 'criteria: [{id: AC-REFRESH, priority: P1, ut_layer: unit, desc: refresh ledger list, expected_result: list refreshed}]\n');
-      const acceptanceBinding = liveBinding('ut', 'acceptance');
-      input.facts.push({ id: 'acceptance:cu', kind: 'acceptance-context', applicability: 'required', reason: 'blueprint acceptance projection', basis: [acceptanceBinding], satisfied_by: [acceptanceBinding] });
-    }
-    // D0.1: pruning device verification needs a *sourced* impact judgement on the request, not a
-    // self-reported `device-evidence: not_applicable` fact. The basis points at the real product
-    // file, which is inside contracts.files, so the relevance check passes.
-    if (['direct'].includes(mode) || codingFirst) {
-      const admittedSource = directUt && !introducesUi ? liveBinding('plan', 'codebase', undefined, [snapshotSource]) : codeBinding();
-      input.request.impact = { user_visible_behavior_change: false, reason: 'fixture impact requires unit verification only', basis: [admittedSource] };
-    }
-    // `impact-reuse` is born WITH a judgement so the proposal below is a real correction; the
-    // reused basis is what must be rejected. `impact-first` is born without one on purpose.
-    if (['impact-reuse', 'impact-null'].includes(mode)) {
-      input.request.impact = { user_visible_behavior_change: false, reason: 'birth: no user-visible change', basis: [codeBinding()] };
-    }
-    if (testingOnly) {
-      // 设备失败夹具也必须有真实设备层验收；unknown 不应越过上游进入 testing。
-      fs.writeFileSync(featureFilePath(root, feature, 'acceptance.yaml'),
-        'criteria: [{id: AC-DEVICE, priority: P1, ut_layer: device, desc: refresh ledger on device, expected_result: list refreshed}]\n');
-      const acceptanceBinding = liveBinding('ut', 'acceptance');
-      input.facts.push({ id: 'acceptance:cu', kind: 'acceptance-context', applicability: 'required', reason: 'existing device acceptance', basis: [acceptanceBinding], satisfied_by: [acceptanceBinding] });
-    }
-    if (!['direct'].includes(mode) && !requestOnly && !codingFirst && !testingOnly) input.facts.push({ id: 'device:pending', kind: 'device-evidence', applicability: 'unknown', reason: 'spec will determine device acceptance', basis: [] });
-    if (preparedCandidate) {
-      // 三种模式的**真实前置**（plan §3 问题 5 前置表，按生产判定推演，不是随手摆的）：
-      //   · request-spec  ：验收缺失（正是本次要产出的）+ 设计来源可解析并已满足
-      //                     （plan-only 语义下 wantsImplementation=false ⇒ feature-track.ts:427 的 designAvailable=true），
-      //                     否则 execution-scope.ts:432 会把 plan 也加回 needed → 链变 [spec, plan]；
-      //   · request-plan  ：验收有效 + **确无可解析设计来源**（contracts 存在即算设计已满足，files: [] 不够）；
-      //   · request-coding：验收有效 + contracts 可解析 + 写集可绑定。
-      const acceptanceFile = featureFilePath(root, feature, 'acceptance.yaml');
-      const contractsPath = featureFilePath(root, feature, 'contracts.yaml');
-      if (mode.startsWith('request-spec')) fs.rmSync(acceptanceFile, { force: true });
-      else fs.writeFileSync(acceptanceFile, 'criteria: [{id: AC-REFRESH, priority: P1, ut_layer: unit, desc: refresh ledger list, expected_result: list refreshed}]\n');
-      if (mode.startsWith('request-plan')) fs.rmSync(contractsPath, { force: true });
-      // 候选由**生产入口**生成（不是手写进 feature.yaml）：完成终点、请求结果、请求动作三项输入由这里给，
-      // 绑定 / 指纹 / 义务派生全部由 prepareFeatureScopeCandidate 完成。
-      const prepareScope = spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'), path.join(repo, 'harness/scripts/goal-mode-entry.ts'),
-        '--prepare-scope', '--completion-target', 'request', '--requested-phases', requestPhase,
-        '--requested-results', 'requested-result', '--requirement', 'fixture delivery',
-        '--feature', feature, '--project-root', root, '--framework-root', frameworkRoot],
-        { cwd: root, encoding: 'utf8', timeout: 60000, env: { ...process.env, TS_NODE_PROJECT: path.join(repo, 'harness/tsconfig.json') } });
-      assert.equal(prepareScope.status, 0, prepareScope.stderr + prepareScope.stdout);
-      const projected = JSON.parse(prepareScope.stdout.slice(prepareScope.stdout.indexOf('{'))) as { phase_chain: string[] };
-      // 生产候选自己算出来的链就必须是单阶段——断言打在**生产投影**上，不是测试自己拼的。
-      assert.deepStrictEqual(projected.phase_chain, [requestPhase], prepareScope.stdout);
-    } else {
-      fs.writeFileSync(featureFilePath(root, feature, 'feature.yaml'), YAML.stringify({ execution_scope: input }));
-    }
-    if (mode === 'direct') assert.deepStrictEqual(buildChangeUnitGoalHandoff(root, asChangeUnitArtifact(loadCanonicalChangeUnit(root, 'ledger-app-blueprint', 'ledger-refresh').changeUnit)).expectedChain, [...(missingMapping ? ['plan'] : []), 'coding', 'review', 'ut']);
-    if (!mode.startsWith('detached')) {
-    const cli = runRuntimeTestChild({ root }, () => spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'), path.join(repo, 'harness/scripts/goal-mode-entry.ts'), '--prepare-run', '--run-mode', 'attended', '--adapter', 'codex', '--feature', feature, '--run-id', 'p2-attended', '--requirement', 'fixture delivery', '--project-root', root, '--framework-root', frameworkRoot], { cwd: root, encoding: 'utf8', timeout: 30000, env: { ...process.env, TS_NODE_PROJECT: path.join(repo, 'harness/tsconfig.json') } }));
-    assert.equal(cli.status, 0, cli.stderr + cli.stdout);
-    }
-    if (mode === 'direct') {
-      fs.writeFileSync(featureFilePath(root, feature, 'feature.yaml'), 'track: lite\nexecution_scope: {broken candidate');
-      source.auto_chain = [...source.auto_chain].reverse();
-      fs.writeFileSync(path.join(frameworkRoot, 'workflows/scoped.workflow.yaml'), YAML.stringify(source));
-    }
-    let injected = false;
-    let designGap = false;
-    let codingRegression = false;
-    const regressionReply = (phase: string): string => {
-      const fence = String.fromCharCode(96).repeat(3);
-      return phase === 'review' ? `${fence}issue-verification\n- issue: CR-CODING\n  verdict: confirmed\n  evidence: ${path.basename(codeFile)} | 补齐新验收所需实现\n${fence}\n`
-        : '| id | status |\n|---|---|\n| end_to_end_driving | PASS |\n| business_assertion_value | PASS |\n';
-    };
-    let revokedRevisionIndex: number | undefined;
-    let detachedStarted = false;
-    let recoveryMarker: string | undefined;
-    const refreshSource = "const { copyLedgerSnapshot } = require('./LedgerSnapshot.ets');\nexports.refreshLedgerSnapshot = entries => copyLedgerSnapshot(entries);\n"
-      + (introducesUi ? "exports.openLedger = NavDestination => NavDestination('ledger');\n" : '');
-    const refreshTestSource = [
-      "const { it } = require('node:test');",
-      "const assert = require('node:assert/strict');",
-      "const { refreshLedgerSnapshot } = require('../../../main/ets/AllBanksPage.ets');",
-      `it(${JSON.stringify(refreshCase)}, () => {`,
-      "  const entries = ['pending'];",
-      "  entries.push('posted');",
-      '  const snapshot = refreshLedgerSnapshot(entries);',
-      "  entries.push('later');",
-      "  assert.deepEqual(snapshot, ['pending', 'posted']);",
-      '});', '',
-    ].join('\n');
-    const writeImplementation = () => {
-      if (directUt) { fs.writeFileSync(codeFile, refreshSource); return; }
-        if (utL3 && designGap && !fs.readFileSync(codeFile, 'utf8').includes('repairedTestabilitySeam')) fs.appendFileSync(codeFile, '\nexport function repairedTestabilitySeam(): string[] { return []; }\n');
-        if (continuousCoding && codingRegression && !fs.readFileSync(codeFile, 'utf8').includes('repairedOwnerRegression')) fs.appendFileSync(codeFile, '\nexport const repairedOwnerRegression = true;\n');
-        // `design-gap-revert`：第一轮 coding 误改（触发 plan 裁决），plan 拒绝扩展契约后
-        // 第二轮 coding **把文件改回原字节**——这正是 §5.1.1a 要保护的闭环。
-        if (mode === 'design-gap-revert') { if (designGap) fs.writeFileSync(codeFile, originalCode); else if (!fs.readFileSync(codeFile, 'utf8').includes('// unjustified edit')) fs.appendFileSync(codeFile, '\n// unjustified edit\n'); return; }
-        if (mode === 'revision-revoke') {
-          if (!fs.readFileSync(codeFile, 'utf8').includes('function refreshLedgerSnapshot')) fs.appendFileSync(codeFile, '\nexport function refreshLedgerSnapshot(): string[] { return []; }\n');
-          return;
-        }
-        else if (['direct', 'design-gap'].includes(mode) && !fs.readFileSync(codeFile, 'utf8').includes('// authorized P2 implementation')) fs.appendFileSync(codeFile, '\n// authorized P2 implementation\n');
-    };
-
-    const writeTestabilityAudit = () => {
-        if (!utL3) return;
-        const acc = new SpecLoader(root, undefined, undefined, frameworkRoot).loadFeatureSpec(feature).acceptance!;
-        const fixed = fs.readFileSync(codeFile, 'utf8').includes('repairedTestabilitySeam');
-        const selected = mode === 'ut-l3-spec' && !acc.criteria[0].device_focus ? 'option_a' : 'option_b';
-        const audit = featureFilePath(root, feature, 'ut/testability-audit.md');
-        fs.mkdirSync(path.dirname(audit), { recursive: true });
-        fs.writeFileSync(audit, '```yaml\n' + YAML.stringify({ records: [{ acceptance_id: 'AC-REFRESH',
-          entry_point: { file: codeRel, symbol: 'refreshLedgerSnapshot' }, testability_level: fixed ? 'L1' : 'L3',
-          selected, verdict: fixed ? 'testable' : 'needs_seam', recommendation: { option_b: '补齐当前入口的最小接缝' } }] }) + '```\n');
-    };
-
-    const writeDesign = () => {
-        if (utDesignGap) fs.writeFileSync(featureFilePath(root, feature, 'use-cases.yaml'), useCasesAtBirth);
-        // `request-plan`：plan 阶段的真实产出就是设计契约——写出 contracts.yaml（含可核验写集），
-        // 让生产的 `designScopeRevisionChecks` 有真实绑定可发布。`invalid` 变体故意产出不合法内容。
-        if (!mode.startsWith('request-plan')) return;
-        // 反向变体：plan 产出**不合法**的设计契约（YAML 都解析不了）——生产的能力解析拿不到可用绑定，
-        // 设计检查因此发不出修订。拒绝发生在生产侧，不是夹具「不发」。
-        if (invalidOutput) { fs.writeFileSync(contractsFile, 'files: [ {broken\n'); return; }
-        fs.writeFileSync(contractsFile, YAML.stringify({ ...YAML.parse(contractsAtBirth.toString('utf8')), files: [codeRel] }));
-    };
-
-    const reviewImplementation = () => {
-        if (!continuousCoding) return;
-        const report = featureFilePath(root, feature, 'review/review-report.md');
-        fs.mkdirSync(path.dirname(report), { recursive: true });
-        if (!codingRegression) {
-          fs.writeFileSync(report, '# Review\n## 问题清单\n当前实现尚无本轮新增缺陷。\n## 结论\n**审查结论**: 通过\n');
-          return;
-        }
-        if (!fs.readFileSync(codeFile, 'utf8').includes('repairedOwnerRegression')) return;
-        // The finite reviewer reads the repaired implementation and closes its own former finding.
-        // A later raw PASS alone must never erase the saved negative review original.
-        fs.writeFileSync(report,
-          '# Review\n## 问题清单\n| 编号 | 严重程度 | 分类 | 涉及文件 | 修复建议 | 状态 |\n|---|---|---|---|---|---|\n'
-          + `| CR-CODING | MAJOR | 逻辑错误 | ${codeRel} | 已读实现repairedOwnerRegression，原缺陷已修复 | 已关闭 |\n## 结论\n**审查结论**: 通过\n`);
-    };
-
-    const writeAcceptance = () => {
-        if (mode === 'ut-l3-spec') {
-          const file = featureFilePath(root, feature, 'acceptance.yaml');
-          const acc = YAML.parse(fs.readFileSync(file, 'utf8'));
-          acc.criteria[0].device_focus = 'AC-REFRESH 真机页面表现；unit 业务义务继续保留';
-          fs.writeFileSync(file, YAML.stringify(acc));
-          return;
-        }
-
-        // `spec-gap-revert`：责任阶段 spec 重跑时**修复触发文件**（补上被 review 指出的缺口），
-        // 验收层级保持 unit——责任是补定义，不是把范围扩到设备验证。
-        if (specGap) {
-          if (continuousCoding === true) {
-            fs.writeFileSync(featureFilePath(root, feature, 'spec/ref-elements.yaml'), 'elements: [{element_id: required-search, disposition: implement}]\n');
-            return;
-          }
-          fs.writeFileSync(featureFilePath(root, feature, 'acceptance.yaml'),
-            'criteria: [{id: AC-REFRESH, priority: P1, ut_layer: unit, desc: refresh ledger list, expected_result: list refreshed}, {id: AC-EMPTY, priority: P1, ut_layer: unit, desc: refresh with no entries, expected_result: empty state}]' + String.fromCharCode(10));
-          return;
-        }
-        if (invalidOutput && requestOnly) { fs.writeFileSync(featureFilePath(root, feature, 'acceptance.yaml'), 'criteria: [{id: AC-BROKEN\n'); return; }
-        if (mode === 'revision-revoke' && designGap) {
-          fs.writeFileSync(featureFilePath(root, feature, 'acceptance.yaml'), 'criteria: [{id: AC-DEVICE, priority: P1, ut_layer: device, desc: new refreshLedgerSnapshot API returns the current ledger snapshot, expected_result: empty ledger returns an empty list}]' + String.fromCharCode(10));
-          return;
-        }
-        fs.writeFileSync(featureFilePath(root, feature, 'acceptance.yaml'), 'criteria: [{id: AC-DEVICE, priority: P1, ut_layer: device, desc: device verification}]' + String.fromCharCode(10));
-    };
-
-    const preserveRepairOriginals = (reason: string, events: readonly unknown[]): string => {
-      const runDir = featureFilePath(root, feature, 'goal-runs/p2-attended');
-      const originals = [codeFile, featureFilePath(root, feature, 'context/facts.md'),
-        featureFilePath(root, feature, 'feature-completion.json'), path.join(runDir, 'feature-completion.json'),
-        ...['contracts.yaml', 'acceptance.yaml', 'use-cases.yaml'].map(name => featureFilePath(root, feature, name)),
-        path.join(root, 'framework.config.json')];
-      const pointer = featureFilePath(root, feature, 'feature-completion.json');
-      if (fs.existsSync(pointer)) {
-        const value = asRecord(JSON.parse(fs.readFileSync(pointer, 'utf8')));
-        if (typeof value?.original_path === 'string') originals.push(path.resolve(root, value.original_path));
-      }
-      for (const phase of ['spec', 'plan', 'coding', 'review', 'ut']) for (const name of ['summary.json', 'script-report.json', 'phase-evidence-manifest.json']) {
-        originals.push(featureFilePath(root, feature, `${phase}/reports/${name}`));
-      }
-      const authors = events.map(event => asRecord(event)).filter(event => event?.type === 'agent_invoke_start' && event.phase === 'work-unit-author');
-      for (const event of authors.slice(-2)) if (typeof event?.invoke_id === 'string') {
-        const issued = executionRequestForInvoke(runDir, event.invoke_id);
-        if (issued) originals.push(path.resolve(runDir, issued.reference.path));
-      }
-      return preserveRuntimeTestEvidence([root], reason, [], originals);
-    };
-    preserveFailure = reason => preserveRepairOriginals(reason,
-      loadAuthoritativeEvents(featureFilePath(root, feature, 'goal-runs/p2-attended/events.jsonl')));
-    if (mode === 'revision-precut') {
-      const io = require('fs') as typeof import('fs'), append = io.appendFileSync;
-      const eventFile = featureFilePath(root, feature, 'goal-runs/p2-attended/events.jsonl');
-      io.appendFileSync = (...args: Parameters<typeof fs.appendFileSync>) => {
-        if (!injected && typeof args[0] === 'string' && path.resolve(args[0]) === path.resolve(eventFile) && typeof args[1] === 'string') {
-          let type: unknown; try { type = JSON.parse(args[1]).type; } catch { /* Other original writes remain untouched. */ }
-          if (type === 'scope_revised') {
-            const before = loadAuthoritativeEvents(eventFile);
-            assert(!before.some(event => event.type === 'scope_revised'), 'the original scope must remain unapplied at the cut');
-            assert(before.filter(event => event.type === 'agent_invoke_start').every(start => before.some(event => event.type === 'agent_invoke_end'
-              && event.invoke_id === start.invoke_id && invocationCompleted({ ...event, exitCode: event.exit_code }))), 'the cut requires genuinely returned native work');
-            assert(before.filter(event => event.type === 'harness_start').every(start => before.some(event => event.type === 'harness_end'
-              && event.invoke_id === start.invoke_id && typeof event.ts === 'string' && typeof start.ts === 'string' && event.ts >= start.ts)), 'the cut requires actual completed tools');
-            assert(loadPhaseEvidenceManifest(root, feature, 'spec')?.integrityOk, 'the real producer manifest must exist before its scope publication fails');
-            injected = true;
-            throw new Error('injected pre-persistence scope cut');
-          }
-        }
-        return append(...args);
-      };
-      restoreAppend = () => { io.appendFileSync = append; };
-    }
-    const execute = () => runGoalRuntimeChain(root, { frameworkRoot, featureId: feature, checkFactsAdmission: true, resume: mode.startsWith('detached') && !detachedStarted ? undefined : 'p2-attended', runId: 'p2-attended', freshStartPhase: 'spec', freshEndPhase: 'spec', skipLegacySeal: true, viaHostBridge: !mode.startsWith('detached'), viaRuntimeClass: mode.startsWith('detached'), adapter: 'codex',
-      testControl: !injected && (mode === 'revision-precut' || mode === 'revision-revoke' || mode.endsWith('-cut')) ? {
-        expectedInterruption: mode === 'revision-precut' ? 'injected pre-persistence scope cut'
-          : mode === 'revision-revoke' ? 'injected post-revocation cut' : 'injected revision cut:',
-      } : undefined,
-      launchCwd: ['successor', 'detached-harness', 'detached-explicit'].includes(mode) ? path.join(frameworkRoot, 'harness') : root,
-      launchArgs: mode === 'detached-explicit' ? ['--project-root', root, '--framework-root', frameworkRoot] : undefined,
-      // detached 分支不经 `--prepare-run` CLI，run 由这里直接创建：需求文本必须与候选
-      // `requirement_basis` 同源，否则出生时会按 D0.2 provenance 判 stale 拒绝——这正是
-      // 生产上「两步的 --requirement 不一致就不准出生」那条规则，夹具不得绕开。
-      ...(mode.startsWith('detached') ? { freshRequirement: 'fixture delivery' } : {}),
-      // design-gap also edits the file: the revision it then proposes must carry a *new* sourced
-      // fact (goal-phase-runtime.ts:9084), which an unchanged file cannot provide now that the
-      // birth candidate already binds the same codebase source.
-      onAuthor: (_ctx, context) => {
-        const current = loadEffectiveExecutionScope(root, feature, context.runId)!;
-        const acceptanceFile = featureFilePath(root, feature, 'acceptance.yaml');
-        const actualSpecGap = specGap && !utL3 && !continuousCoding && designGap && !fs.readFileSync(acceptanceFile, 'utf8').includes('AC-EMPTY');
-        if (mode !== 'unresolved' && (current.phase_chain.includes('spec') || actualSpecGap)) writeAcceptance();
-        if (current.phase_chain.includes('plan') || utDesignGap && designGap && !fs.existsSync(featureFilePath(root, feature, 'use-cases.yaml'))) writeDesign();
-        if (current.obligations.some(item => item.kind === 'implementation' && item.applicability === 'required') && context.runtimeFacts.runBaseSha) writeImplementation();
-        if (directUt && context.chain.includes('ut')) {
-          const testFile = path.join(root, refreshTest);
-          fs.mkdirSync(path.dirname(testFile), { recursive: true });
-          fs.writeFileSync(testFile, refreshTestSource);
-          writeCoverageEvidence(root, feature, { schema_version: '1.0', feature, primary_evidence_source: 'ut_tags',
-            sources: { ut_tags: [refreshTest] },
-            mappings: [{ scope_id: 'AC-REFRESH', scope_kind: 'acceptance_criterion', evidence_source: 'ut_tags', evidence_ref: refreshTest }] });
-        }
-        const signedFacts = context.factsContext;
-        assert(signedFacts, 'the unit author must consume its actual admitted facts context');
-        const admitted = resolveCapabilityResolutionEntryInput({ projectRoot: root, frameworkRoot, feature,
-          phase: signedFacts.first_phase, purpose: 'work-unit-author', featuresDir: relFeaturesDir(root),
-          goalRunId: context.runId, goalAttemptId: context.attemptId }).factsContext;
-        assert(admitted && admitted.first_phase === signedFacts.first_phase, 'current research must be admitted through the original immutable owner and request');
-        const factsFile = featureFilePath(root, feature, 'context/facts.md');
-        if (!fs.existsSync(factsFile)) {
-          assert(!admitted.baseline, 'a missing historical baseline cannot be recreated by the author fixture');
-          const read = admitted.source_paths.filter(file => fs.existsSync(path.join(root, file)) && fs.statSync(path.join(root, file)).isFile());
-          for (const file of read) fs.readFileSync(path.join(root, file));
-          fs.mkdirSync(path.dirname(factsFile), { recursive: true });
-          fs.writeFileSync(factsFile, '---\n' + YAML.stringify({ schema_version: '1.1', feature, run_id: context.runId,
-            established_by: admitted.first_phase, ready_to_produce: read.length === admitted.source_paths.length,
-            has_blocker_coverage_risk: read.length !== admitted.source_paths.length, exploration_mode: 'sequential',
-            source_code_paths: read, key_inputs_read: read, files_inspected_count: read.length, searches_performed_estimate: 0,
-            decisions_unlocked: ['read the actual source inputs of the current request'] }) + '---\n');
-        }
-        const actualSource = fs.readFileSync(codeFile), sourceHash = createHash('sha256').update(actualSource).digest('hex');
-        const sourceObservation = `已完整读取 ${codeRel} sha256=${sourceHash}`;
-        const alreadyRead = fs.readFileSync(factsFile, 'utf8').includes(sourceObservation);
-        if (!alreadyRead) researchSnapshotFacts(root, factsFile, admitted.first_phase, admitted);
-        for (const family of context.chain) if (family !== admitted.first_phase) researchSnapshotFacts(root, factsFile, family, admitted);
-        if (!alreadyRead) fs.appendFileSync(factsFile, `\n## phase_delta: ${admitted.first_phase}\n| 路径 | 事实 | 影响 |\n|---|---|---|\n| ${codeRel} | ${sourceObservation}；${actualSource.toString('utf8').trim().split(/\r?\n/).at(-1)!.replace(/\|/g, '/')} | 按实际当前源码重建本单元研究，原准入与baseline不改写 |\n`);
-      },
-      onReview: ctx => {
-        if (!directUt || !ctx.prompt.includes(`| ${refreshIssue} |`)) return;
-        assert(ctx.prompt.includes(refreshCase));
-        assert.equal(fs.readFileSync(codeFile, 'utf8'), refreshSource);
-        assert.equal(fs.readFileSync(path.join(root, refreshTest), 'utf8'), refreshTestSource);
-        fs.writeFileSync(refreshReport, '# 独立审查\n\n**审查结论**: 通过\n\n```issue-verification\n'
-          + YAML.stringify([{ issue: refreshIssue, verdict: 'refuted', production_paths: [codeRel],
-            evidence: `\`${refreshTest}:4\` 的 ${refreshCase} 实际调用 \`${codeRel}:1\`，断言新增账目被读出且后续修改不影响快照。` }]) + '```\n');
-      },
-      onHarnessSummary: ({ phase }) => {
-        if (requestOnly && phase === requestPhase && preparedCandidate && requestPhase !== 'coding') {
-          const runId = process.env.MAISON_GOAL_RUN_ID ?? 'p2-attended';
-          const bridge = resolveCapabilityResolutionEntryInput({ projectRoot: root, frameworkRoot, feature, phase,
-            featuresDir: relFeaturesDir(root), goalRunId: runId });
-          const resolvedInputs = resolveCapabilityInputs({ projectRoot: root, frameworkRoot, feature, phase, track: 'full', ...bridge }).inputs!;
-          const checks = designScopeRevisionChecks({
-            projectRoot: root, frameworkRoot, feature, phase,
-            featureSpec: new SpecLoader(root, undefined, undefined, frameworkRoot).loadFeatureSpec(feature, resolvedInputs),
-            resolvedInputs, factsContext: bridge.factsContext,
-          } as never, []);
-          const revision = checks.find(check => (check as { scope_revision_input?: unknown }).scope_revision_input);
-          if (invalidOutput) assert(!revision, '不合法产出仍被生产设计检查发成修订：' + JSON.stringify(checks));
-          else assert(revision, '生产设计检查未发布 scope_revision_input：' + JSON.stringify(checks));
-          return { checks };
-        }
-        if (directUt && phase === 'ut') {
-          const profile = loadResolvedProfile(root, loadFrameworkConfig(root), frameworkRoot);
-          const host = tryLoadUtHostImpl(profile.profileDir);
-          assert(host);
-          const loader = new SpecLoader(root, undefined, undefined, frameworkRoot);
-          const ctx = { projectRoot: root, frameworkRoot, feature, phase: 'ut', resolvedProfile: profile,
-            phaseRule: loader.loadPhaseRule('ut'), featureSpec: loader.loadFeatureSpec(feature) } as CheckContext;
-          const { targetResolution } = loadUtCoverageTargets(ctx, host, 'p2-attended');
-          const coverage = checkUtCasePerUnitAc(ctx, targetResolution.targetCaseView, inspectCoverageEvidence(ctx));
-          const log = execFileSync(process.execPath, ['--test', '--test-reporter=tap', refreshTest], { cwd: root, encoding: 'utf8' });
-          assert.match(log, /^# tests 1$/m);
-          assert.match(log, /^# skipped 0$/m);
-          const tap = featureFilePath(root, feature, 'ut/reports/refresh.tap');
-          fs.mkdirSync(path.dirname(tap), { recursive: true });
-          fs.writeFileSync(tap, log);
-          const passed = [...log.matchAll(/^ok \d+ - (.+)$/gm)].map(match => ({ suite: 'node:test', test: match[1] }));
-          const named = executedUtChecks(root, [{ path: refreshTest, test: refreshCase }], passed, [tap, refreshTest]);
-          assert.deepStrictEqual(named.map(check => check.id), [refreshCase]);
-          return { checks: [...fixtureReadDependencies(root, [...coverage, { id: 'ut_hvigor_test', category: 'structure',
-            description: 'Isolated fixture executes the actual ledger source via Node', severity: 'BLOCKER', status: 'PASS', details: log }], [codeRel, refreshTest]), ...named] };
-        }
-        if (mode === 'design-gap-revert' && phase === 'coding' && designGap && !fs.readFileSync(codeFile).equals(originalCode)) {
-          const bytes = fs.readFileSync(codeFile);
-          return { checks: [{ id: 'scope_spec_invalidated', category: 'structure', description: '保留原契约并撤回无依据的源码扩展', severity: 'BLOCKER', status: 'FAIL',
-            details: 'plan 已保留原冻结契约；当前源码仍带无依据改动，须由原单元作者恢复原允许内容后复验。', repair_owner: 'coding', affected_files: [codeRel],
-            structured: { source_attempt_dependencies: [{ path: codeRel, exists: true, sha256: createHash('sha256').update(bytes).digest('hex'), role: 'artifact' }] } }] };
-        }
-        if (specGap && !utL3 && !continuousCoding && phase === 'spec' && designGap) {
-          const file = featureFilePath(root, feature, 'acceptance.yaml'), bytes = fs.readFileSync(file);
-          if (!bytes.toString('utf8').includes('AC-EMPTY')) return { checks: [{ id: 'scope_spec_invalidated', category: 'structure',
-            description: '当前验收须实际覆盖刷新后的空列表分支', severity: 'BLOCKER', status: 'FAIL', details: '当前验收仍缺 AC-EMPTY；须按原已确认评审问题补齐定义后复验。',
-            structured: { source_attempt_dependencies: [{ path: path.relative(root, file).replace(/\\/g, '/'), exists: true,
-              sha256: createHash('sha256').update(bytes).digest('hex'), role: 'artifact' }] } }] };
-        }
-        if (phase === 'review') reviewImplementation();
-        if (phase === 'ut') writeTestabilityAudit();
-        if (utL3 && phase === 'ut') {
-          designGap = true;
-          const ctx = { projectRoot: root, frameworkRoot, feature, phaseRule: {},
-            featureSpec: new SpecLoader(root, undefined, undefined, frameworkRoot).loadFeatureSpec(feature) } as CheckContext;
-          const audit = inspectTestabilityAudit(ctx);
-          return { checks: [...checkUtTestabilityAuditPresent(ctx, audit), ...checkUtUnsupportedTargetsHandled(ctx, audit)] };
-        }
-
-        if (utDesignGap && (phase === 'ut' || continuousCoding && designGap && phase === 'plan')) {
-          const useCasesFile = featureFilePath(root, feature, 'use-cases.yaml');
-          if (!designGap) {
-            designGap = true;
-            fs.rmSync(useCasesFile, { force: true });
-          }
-          const checks = checkChangeUnitFeatureProjection({ projectRoot: root, frameworkRoot, feature, phaseRule: {},
-            featureSpec: new SpecLoader(root, undefined, undefined, frameworkRoot).loadFeatureSpec(feature) } as CheckContext, phase);
-          const defect = checks.find((check): check is CheckResult & { structured?: Record<string, unknown> } => check.id === 'change_unit_use_cases_required');
-          if (defect) {
-            assert(defect.status === 'FAIL' && (phase === 'plan' || defect.repair_owner === 'plan'), JSON.stringify(checks));
-            if (phase === 'plan') {
-              assert(!fs.existsSync(useCasesFile), 'the failed Plan producer must bind the actual missing file it read');
-              return { checks: [{ ...defect, structured: { ...defect.structured, source_attempt_dependencies: [{
-                path: path.relative(root, useCasesFile).replace(/\\/g, '/'), exists: false, sha256: null, role: 'artifact',
-              }] } }] };
-            }
-            return { checks: [defect] };
-          }
-          assert(fs.existsSync(useCasesFile), 'only an actually restored use-case can clear its real missing-definition check');
-        }
-
-        if (continuousCoding && !fs.readFileSync(codeFile, 'utf8').includes('repairedOwnerRegression')
-          && ((specGap && designGap && phase === 'review') || (utDesignGap && designGap && phase === 'ut') || (continuousCoding === 'request' && phase === 'ut'))) {
-          if (!codingRegression) {
-            if (continuousCoding !== 'request') {
-              const events = loadAuthoritativeEvents(featureFilePath(root, feature, 'goal-runs/p2-attended/events.jsonl'));
-              const returnedAt = events.map(event => event.type === 'agent_invoke_end' && event.phase === 'work-unit-author' && event.exit_code === 0).lastIndexOf(true);
-              const priorFailureAt = events.findIndex(event => event.type === 'harness_end' && event.phase === (utDesignGap ? 'ut' : 'review') && event.exit_code === 1);
-              const ownerCheckedAt = events.map(event => event.type === 'harness_end' && event.phase === (utDesignGap ? 'plan' : 'spec') && event.exit_code === 0).lastIndexOf(true);
-              const codingCheckedAt = events.map(event => event.type === 'harness_end' && event.phase === 'coding' && event.exit_code === 0).lastIndexOf(true);
-              const currentCoding = readReusableCheckResult({ projectRoot: root, frameworkRoot, feature, phase: 'coding', runId: 'p2-attended' });
-              const recordedScope = utDesignGap ? resolveEffectiveScopeSource(root, feature, 'p2-attended')!.scope : undefined;
-              const scopeIssues = recordedScope ? executionScopeEvidenceIssues(root, feature, recordedScope, undefined, 'p2-attended', undefined, frameworkRoot) : [];
-              const codingProblems = recordedScope ? resolveCurrentDisposition(readCurrentDispositionInput({ projectRoot: root, frameworkRoot, feature,
-                executionScope: recordedScope, runId: 'p2-attended', chain: ['coding'], currentResults: currentCoding ? [currentCoding] : [] }))
-                .completionBlocking.filter(problem => problem.phase === 'coding') : [];
-              assert(priorFailureAt >= 0 && returnedAt >= 0 && ownerCheckedAt > priorFailureAt && ownerCheckedAt > returnedAt
-                && codingCheckedAt > (utDesignGap ? priorFailureAt : ownerCheckedAt) && asRecord(currentCoding?.summary)?.verdict === 'PASS'
-                && scopeIssues.length === 0 && codingProblems.length === 0,
-                '新回归前必须有原失败后实际执行且对当前完整输入/失效时间仍合格的coding证明，旧报告或阶段排序不能代替资格核验：'
-                + JSON.stringify({ priorFailureAt, returnedAt, ownerCheckedAt, codingCheckedAt, scopeIssues, codingProblems }));
-            }
-            codingRegression = true;
-          }
-          const checks: CheckResult[] = phase === 'review' ? [
-            { id: 'conclusion_with_verdict', category: 'structure', description: 'report valid', severity: 'BLOCKER', status: 'PASS', details: '报告合法' },
-            { id: 'negative_verdict_closure', category: 'structure', description: 'functional regression', severity: 'BLOCKER', status: 'FAIL', details: '功能缺陷仍未修复' },
-          ] : [ { id: 'ut_hvigor_build', category: 'structure', description: 'compiled', severity: 'BLOCKER', status: 'PASS', details: '真实编译层的替身结果' },
-            { ...UT_REAL_ASSERTION_CHECK, category: 'structure', description: '生产格式器与归因的真实断言失败' } as CheckResult ];
-          const dir = featureFilePath(root, feature, `${phase}/reports`); fs.mkdirSync(dir, { recursive: true });
-          fs.writeFileSync(path.join(dir, 'ai-prompt.md'), 'Review current functional defect and actual assertion semantics.');
-          if (phase === 'review') fs.writeFileSync(featureFilePath(root, feature, 'review/review-report.md'),
-            `## 问题清单\n| 编号 | 严重程度 | 分类 | 涉及文件 | 修复建议 | 状态 |\n|---|---|---|---|---|---|\n| CR-CODING | MAJOR | 逻辑错误 | ${codeRel} | 补齐新验收所需实现 | 未关闭 |\n## 结论\n**审查结论**: 不通过`);
-          const plan = { mode: 'enabled' as const, reason: 'policy_required' as const, verifier_prompt: `prompts/verify-${phase}.md`, message: 'existing verifier path' };
-          const report = { phase, feature, timestamp: new Date().toISOString(), project_root: root, assurance: 'full', capability_resolutions: [], capability_resolution_contract_fingerprint: null,
-            checks, summary: { total: checks.length, pass: checks.length - 1, fail: 1, warn: 0, skip: 0, blockers: 1, verdict: 'FAIL' } } as import('../../scripts/utils/types').ScriptReport;
-          fs.writeFileSync(path.join(dir, 'script-report.json'), JSON.stringify(report));
-          const writerOptions = prepareFixtureVerifierMaterial({ projectRoot: root, frameworkRoot, report, options: { verifierPlan: plan } });
-          const summary = writeRunSummaryBase(root, report, frameworkRoot, writerOptions);
-          fs.writeFileSync(path.join(root, summary.verifier_report!), regressionReply(phase) + renderResultBlock(summary.verifier_subject_id!, 'PASS', 0));
-          if (phase === 'review') {
-            const responsibility = repairResponsibilityContext({ projectRoot: root, frameworkRoot, feature, runId: 'p2-attended', currentPhase: phase });
-            const targets = resolveRepairResponsibility({ ...responsibility, target: { files: [codeRel] } });
-            assert.equal(targets.owner, 'coding', JSON.stringify({ codeRel, targets, sourceDomains: responsibility.contracts?.domains.filter(domain => domain.kind === 'source') }));
-          }
-          return { checks, writerOptions };
-        }
-        if (continuousCoding && codingRegression && phase === 'review' && fs.readFileSync(codeFile, 'utf8').includes('repairedOwnerRegression')) {
-          const reviewOriginal = featureFilePath(root, feature, 'review/review-report.md');
-          assert(fs.existsSync(reviewOriginal), 'finite re-review requires its actual author original: ' + JSON.stringify({ mode,
-            starts: loadAuthoritativeEvents(featureFilePath(root, feature, 'goal-runs/p2-attended/events.jsonl'))
-              .filter(event => event.type === 'agent_invoke_start').map(event => [event.phase, event.invoke_id]),
-          }));
-          const reviewText = fs.readFileSync(reviewOriginal, 'utf8');
-          if (specGap) assert(reviewText.includes('CR-CODING') && reviewText.includes('已关闭'), '有限重审必须先更新原缺陷报告，不能用raw PASS抹旧FAIL');
-          // UT 来源没有 CR-CODING review 发现；独立重核实际新实现，不能虚构一条已关闭发现。
-          const reviewed = specGap ? reviewText : `已读取当前实现 ${codeRel}：\n${fs.readFileSync(codeFile, 'utf8')}\n原UT发现仍须回UT实际复验。`;
-          const checks: CheckResult[] = [
-            { id: 'conclusion_with_verdict', category: 'structure', description: 'finite reviewer read the repaired implementation', severity: 'BLOCKER', status: 'PASS', details: reviewed },
-            { id: 'negative_verdict_closure', category: 'structure', description: 'actual re-review preserves the original finding responsibility', severity: 'BLOCKER', status: 'PASS', details: reviewed },
-          ];
-          const report = generateScriptReport(path.join(frameworkRoot, 'harness'), 'review', feature, root, checks, frameworkRoot);
-          const writerOptions = prepareFixtureVerifierMaterial({ projectRoot: root, frameworkRoot, report, options: { verifierPlan: {
-            mode: 'enabled', reason: 'policy_required', verifier_prompt: 'prompts/verify-review.md', message: 'actual independent re-review' } } });
-          const summary = writeRunSummaryBase(root, report, frameworkRoot, writerOptions);
-          const { publishFixtureVerifierEvidence } = require('../utils/verifier-evidence-fixture') as typeof import('../utils/verifier-evidence-fixture');
-          publishFixtureVerifierEvidence({ projectRoot: root, reportsDir: featureFilePath(root, feature, 'review/reports'), feature, phase,
-            subjectId: summary.verifier_subject_id!, reportText: '# Independent re-review\n' + reviewed, skipSummaryPatch: true });
-          return { checks, writerOptions };
-        }
-        if (missingMapping && phase === 'plan') {
-          const checks = checkChangeUnitFeatureProjection({ projectRoot: root, frameworkRoot, feature, phaseRule: {},
-            featureSpec: new SpecLoader(root, undefined, undefined, frameworkRoot).loadFeatureSpec(feature) } as CheckContext, 'plan');
-          assert(checks.some(check => check.status === 'FAIL' && check.id === 'change_unit_predicate_mapping_missing'), JSON.stringify(checks));
-          return { checks };
-        }
-        // Three shapes of "not a new fact": a plain blocker, an offline device and a human-only
-        // verdict. None of them may produce a revision (D2.3: PASS/FAIL never drives scope).
-        if (mode === 'testing-fail') return { checks: [{ id: 'device_result_failed', category: 'structure', description: 'device evidence failed', severity: 'BLOCKER', status: 'FAIL', details: 'observed failure', suggestion: 'repair the actual failure' }] };
-        if (mode === 'testing-offline') return { checks: [{ id: 'device_available', category: 'structure', description: 'device is offline', severity: 'BLOCKER', status: 'FAIL', details: 'no device attached', failure_kind: 'device_offline', blocking_class: 'external_blocked', actionability: 'human_only', suggestion: 'attach a device' }] };
-        if (mode === 'testing-manual') return { checks: [{ id: 'device_result_manual', category: 'structure', description: 'verification needs a human', severity: 'BLOCKER', status: 'FAIL', details: 'manual verification required', failure_kind: 'manual_verification_required', actionability: 'human_only', suggestion: 'verify on a real device' }] };
-        // `revision-revoke`: a SECOND revision, proposed after spec already closed and revision #1
-        // attached its closure evidence. It withdraws that proof — the historical PASS must not be
-        // re-attached, and (combined with the cut below) must not survive recovery either.
-        if (mode === 'revision-revoke' && phase === 'spec' && designGap) {
-          const source = fs.readFileSync(codeFile, 'utf8');
-          const acceptance = featureFilePath(root, feature, 'acceptance.yaml');
-          const defined = fs.readFileSync(acceptance, 'utf8');
-          if (source.includes('refreshLedgerSnapshot') && !defined.includes('refreshLedgerSnapshot')) {
-            const revision = request(['spec', 'coding', 'review', 'ut', 'testing'], 'feature');
-            revision.facts.push(
-              { id: 'design:new-api', kind: 'design-decision', applicability: 'required', reason: '当前作者已实际增加公开接口', basis: [liveBinding('plan', 'codebase')] },
-              { id: 'acceptance-context:request:spec', kind: 'acceptance-context', applicability: 'required', reason: '新事实使已闭环的 spec 证据失效', basis: [liveBinding('ut', 'acceptance')] });
-            return { checks: [{ id: 'scope_spec_invalidated', category: 'structure', description: '新增真实API尚无当前验收定义', severity: 'BLOCKER', status: 'FAIL',
-              details: '源码已有refreshLedgerSnapshot，当前acceptance未覆盖该API的空列表行为。', repair_owner: 'spec',
-              affected_files: [path.relative(root, acceptance).split(path.sep).join('/')], scope_revision_input: revision }] };
-          }
-        }
-        if (mode === 'revision-revoke' && phase === 'coding' && !designGap) {
-          designGap = true;
-          assert(!fs.readFileSync(codeFile, 'utf8').includes('function refreshLedgerSnapshot'), 'the old spec proof must precede the actual new API');
-          return { checks: [{ id: 'scope_spec_invalidated', category: 'structure', description: '原请求的新增API尚未实现', severity: 'BLOCKER', status: 'FAIL',
-            details: '当前批准实现面尚无refreshLedgerSnapshot；先由原单元作者实际实现，再按真实源码补验收定义。', repair_owner: 'coding', affected_files: [codeRel] }] };
-        }
-        // `spec-gap-revert` 的触发者是 **review 的 spec 归属发现**：finding 指向 feature 自己的
-        // `acceptance.yaml`（`deriveCategoryFromFiles` 按路径域判 spec，且全部文件同域才产候选），
-        // verifier 逐条确认之后，**用生产函数**把候选变成修订输入——不手拼 revision。
-        if (specGap && !utL3 && phase === 'review' && !designGap) {
-          designGap = true;
-          const issueId = 'CR-SPEC-001';
-          const triggerRel = path.relative(root, featureFilePath(root, feature, continuousCoding === true ? 'spec/ref-elements.yaml' : 'acceptance.yaml')).split(String.fromCharCode(92)).join('/');
-          const fix = continuousCoding === true ? '必需搜索被错误登记 defer，需 spec 更正有效范围' : '验收缺少刷新后的空列表定义，需 spec 补';
-          const NL = String.fromCharCode(10);
-          const reviewReportText = [
-            '# Review 报告', '', '## 问题清单', '',
-            '| ID | 严重程度 | 分类 | 涉及文件 | 修复建议 | 状态 |', '|---|---|---|---|---|---|',
-            `| ${issueId} | MAJOR | 逻辑错误 | ${triggerRel} | ${fix} | 未关闭 |`, '',
-            '## 结论', '', '结论：不通过', '',
-          ].join(NL);
-          const verifierReportText = ['# Verifier 报告', '', '```issue-verification', `- issue: ${issueId}`, '  verdict: confirmed', `  evidence: ${triggerRel} ${fix}`, '```', ''].join(NL);
-          const candidates = buildSummaryRepairCandidates({ phase: 'review', reportValidity: 'PASS', reviewReportText, verifierReportText, checks: [] });
-          assert.deepStrictEqual(candidates.map(candidate => [candidate.id, candidate.category, candidate.source_phase]), [[issueId, 'spec', 'review']], JSON.stringify(candidates));
-          const produced = scopeRevisionInputFromRepairCandidates(candidates, { projectRoot: root, frameworkRoot, feature, runId: 'p2-attended' });
-          assert(produced, '生产函数没有从真实 spec 归属候选产出修订输入');
-          assert(produced!.input.facts.some(fact => fact.id === `acceptance-definition:${issueId}`), JSON.stringify(produced!.input.facts.map(fact => fact.id)));
-          return { checks: [{ id: 'issue_table_format', category: 'structure', description: 'review finding needs the spec owner', severity: 'BLOCKER', status: 'FAIL', details: fix, suggestion: 'return to spec owner', scope_revision_input: produced!.input }] };
-        }
-        if (utDesignGap || !designGapFamily || phase !== 'coding' || designGap) return null;
-        designGap = true;
-        // 触发走**真实归属链**（第八轮必修 2）：check-coding 的 `ui_diff_within_declared_files`
-        // 带机器归因 `ui_scope_violation` → 既有注册表判 plan → `buildSummaryRepairCandidates`
-        // → `scopeRevisionInputFromRepairCandidates` 产出修订输入。不再手拼 revision：
-        // 修订的 request / facts / 绑定全部由生产函数算，impact 由它自己从有效范围继承。
-        const violationDetails = `coding 改动超出 plan 冻结的 UI scope 白名单：${codeRel}`;
-        const codingCandidates = buildSummaryRepairCandidates({
-          responsibility: { projectRoot: root, frameworkRoot, feature, runId: 'p2-attended', currentPhase: 'coding' },
-          phase: 'coding', reportValidity: 'PASS', reviewReportText: null, verifierReportText: null,
-          checks: [{ id: 'ui_diff_within_declared_files', status: 'FAIL', severity: 'BLOCKER', details: violationDetails, failure_kind: 'ui_scope_violation', affected_files: [codeRel] }],
-        });
-        assert.deepStrictEqual(codingCandidates.map(candidate => [candidate.category, candidate.source_phase]), [['plan', 'coding']], JSON.stringify(codingCandidates));
-        assert(codingCandidates[0].files.some(file => file.endsWith('contracts.yaml')) && !codingCandidates[0].files.includes(codeRel), 'machine cause must target the plan producer, not the diagnosis source file');
-        const codingRevision = scopeRevisionInputFromRepairCandidates(codingCandidates, { projectRoot: root, frameworkRoot, feature, runId: 'p2-attended' });
-        assert(codingRevision, '真实 plan 归属候选没有产出修订输入');
-        assert(codingRevision!.input.facts.some(fact => fact.kind === 'design-decision'), JSON.stringify(codingRevision!.input.facts.map(fact => fact.id)));
-        assert(codingRevision!.input.request.requested_phases.includes('plan'), JSON.stringify(codingRevision!.input.request.requested_phases));
-        return { checks: [{ id: 'ui_diff_within_declared_files', category: 'structure', description: 'coding changed a file outside the frozen UI scope', severity: 'BLOCKER', status: 'FAIL', details: violationDetails, failure_kind: 'ui_scope_violation', suggestion: 'return to plan owner', scope_revision_input: codingRevision!.input }] };
-      },
-      onOutOfChain: continuousCoding ? ctx => {
-        const request = parseVerifierRequest(ctx.prompt.slice(ctx.prompt.lastIndexOf('\n{') + 1));
-        assert(request && request.feature === feature && ['review', 'ut'].includes(request.phase), '模型只响应实际当前返修核实request');
-        const summary = JSON.parse(fs.readFileSync(featureFilePath(root, feature, `${request.phase}/reports/summary.json`), 'utf8'));
-        assert.equal(summary.verifier_subject_id, request.subject_id, '不得回答旧subject');
-        fs.readFileSync(path.resolve(root, request.prompt_path), 'utf8');
-        fs.writeFileSync(path.resolve(root, summary.verifier_report), regressionReply(request.phase) + renderResultBlock(request.subject_id, 'PASS', 0));
-      } : undefined,
-      afterHarnessPass: ({ phase, runId }) => {
-        // `spec-gap-revert`：spec 修复了触发文件之后，必须把**真实验收输入**重新绑定到新内容
-        // ——这正是生产里 R3（`designScopeRevisionChecks`）经 spec 的 script-report 发布新设计
-        // 内容的那一步。§5.1.1a 的豁免只对**触发依据**那两个 kind 生效，真实设计输入一行不放宽，
-        // 所以不重绑就会（正确地）判 `input binding stale`、完不成。
-        if ((specGap || mode === 'revision-revoke' && designGap) && phase === 'spec') {
-          const freshAcceptance = liveBinding('ut', 'acceptance');
-          const current = loadEffectiveExecutionScope(root, feature, runId)!;
-          const revision = request(specGap ? ['coding', 'review', 'ut'] : ['coding', 'review', 'ut', 'testing'], 'feature');
-          revision.request.impact = input.request.impact;
-          revision.facts = current.obligations.map(obligation => {
-            const copy = structuredClone(obligation) as typeof revision.facts[number] & { satisfied_by?: unknown[] };
-            if (!obligation.basis.some(binding => binding.input_id === 'acceptance')) return copy;
-            copy.basis = [freshAcceptance];
-            if (copy.satisfied_by?.length) copy.satisfied_by = [freshAcceptance];
-            return copy;
-          }) as typeof revision.facts;
-          fs.writeFileSync(featureFilePath(root, feature, 'spec/reports/script-report.json'), JSON.stringify({ checks: [{ id: 'spec_scope_facts', status: 'PASS', scope_revision_input: revision }] }));
-          return;
-        }
-        if (phase !== 'spec' || ['direct', 'unresolved'].includes(mode) || requestOnly || codingFirst || testingOnly) return;
-        // spec just rewrote acceptance.yaml — take the binding from the production resolver so its
-        // fingerprint is the SpecLoader-parsed one the freeze-time re-resolve will recompute.
-        const fresh = liveBinding('ut', 'acceptance');
-        const revision = request(['coding', 'review', 'ut', 'testing'], 'feature');
-        revision.facts.push(...input.facts.filter(fact => fact.kind === 'design-context'),
-          { id: 'device:pending', kind: 'device-evidence', applicability: 'required', reason: 'spec produced device acceptance', basis: [fresh] });
-        // R4 反例（第七轮阻断 2）：修订输入里夹一条**手写的** acceptance-context unknown，
-        // 而验收产物此刻确实在场。它必须在 runtime 的修订路径上被按来源重算回 required；
-        // 否则会凭空造出一个 spec 缺口，把下游全部挂进 needed_by、链形状当场改变。
-        if (mode === 'revision' || mode === 'revision-cut') revision.facts.push({ id: 'acceptance-context:fake-gap', kind: 'acceptance-context', applicability: 'unknown', reason: '手写的假缺口', basis: [fresh], satisfied_by: [fresh] });
-        // `impact-first`: the effective scope has NO impact yet, so supplying one is a correction by
-        // definition — with its own new source it must be accepted (and must not crash on the
-        // missing old value). `impact-reuse`: a correction that reuses the birth basis while some
-        // OTHER fact is new — it must be rejected, credibility is not transferable.
-        if (mode === 'impact-first') {
-          // The impact is judged against a real target set, so the proposal declares the write set
-          // it is talking about (D0.1 rule (a): an implementation duty must name one).
-          revision.facts.push({ id: 'implementation:source', kind: 'implementation', applicability: 'required', reason: 'spec 指认的实现面', basis: [liveBinding('plan', 'codebase')] });
-          revision.request.impact = { user_visible_behavior_change: true, reason: 'spec found a user-visible change', basis: [liveBinding('plan', 'codebase')] };
-        }
-        if (mode === 'impact-reuse') revision.request.impact = { user_visible_behavior_change: true, reason: 'correction without its own source', basis: [liveBinding('plan', 'codebase')] };
-        // An explicit null is a malformed judgement, not an absent one: inheriting it silently would
-        // skip every structural check on a scope that already carries a valid judgement.
-        if (mode === 'impact-null') (revision.request as { impact?: unknown }).impact = null;
-        fs.writeFileSync(featureFilePath(root, feature, 'spec/reports/script-report.json'), JSON.stringify({ checks: [{ id: 'spec_scope_facts', status: 'PASS', scope_revision_input: revision }] }));
-      },
-      // D2: the only run-internal cut is 'revision applied'. `revision-precut` (interrupt BEFORE
-      // the revision is validated) is injected through onHarnessSummary, which fires earlier.
-      onScopeRevision: boundary => {
-        if (!recoveryMarker) {
-          recoveryMarker = codingBasePath(root, feature, 'p2-attended');
-          fs.mkdirSync(path.dirname(recoveryMarker), { recursive: true }); fs.writeFileSync(recoveryMarker, '{}');
-        }
-        // `*-cut`：修订已落盘、`run_end` 之前中断——resume 必须仍能判出本阶段已 PASS。
-        if (!injected && (mode === 'revision-cut' || mode.endsWith('-cut'))) { injected = true; throw new Error('injected revision cut: ' + boundary); }
-        // A proof-only publication can precede the actual source change. Cut at the real
-        // withdrawal of the closed Spec proof, never at a particular event count.
-        if (!injected && mode === 'revision-revoke') {
-          const sourceEvents = loadAuthoritativeEvents(featureFilePath(root, feature, 'goal-runs/p2-attended/events.jsonl'));
-          const birth = loadFrozenExecutionScope(root, feature, 'p2-attended')!;
-          const revisions = loadScopeRevisions(sourceEvents, birth), latest = revisions.at(-1);
-          const previous = revisions.at(-2)?.execution_scope ?? birth;
-          const withdrewSpec = latest && previous.obligations.some(obligation => obligation.owner_phase === 'spec'
-            && obligation.satisfied_by?.length && !latest.execution_scope.obligations.find(next => next.id === obligation.id)?.satisfied_by?.length);
-          const originalSpecAt = sourceEvents.findIndex(event => event.type === 'harness_end' && event.phase === 'spec' && event.exit_code === 0);
-          const changedSource = originalSpecAt >= 0 && sourceEvents.slice(originalSpecAt + 1).some(event => {
-            const owned = asRecord(event)?.owned;
-            return event.type === 'phase_write_observed' && Array.isArray(owned) && owned.some(value => {
-              const write = asRecord(value);
-              return write?.path === codeRel && write.pre_sha256 !== write.post_sha256;
-            });
-          });
-          if (latest && withdrewSpec && changedSource) {
-            revokedRevisionIndex = latest.revision_index;
-            injected = true; throw new Error('injected post-revocation cut');
-          }
-        }
-      },
-    });
-    let probe: Awaited<ReturnType<typeof execute>>;
-    try { probe = await execute(); } catch (error) {
-      if (!injected) {
-        try {
-          const events = loadAuthoritativeEvents(featureFilePath(root, feature, 'goal-runs/p2-attended/events.jsonl'));
-          console.log('SCOPE_UNIT_CAUGHT_DIAGNOSTIC ' + JSON.stringify({ mode, error: String(error),
-            authorCalls: events.filter(event => event.type === 'agent_invoke_start' && event.phase === 'work-unit-author').length,
-            lastEvents: events.slice(-5) }));
-          console.log('SCOPE_UNIT_ORIGINALS ' + preserveRepairOriginals('unexpected same-unit repair exception', events));
-        } catch (captureError) { console.warn('SCOPE_UNIT_PRESERVATION_FAILED ' + String(captureError)); }
-        throw error;
-      }
-      probe = await execute();
-    }
-    if (probe.exitCode !== 0 && injected) probe = await execute();
-    if (introducesUi) {
-      assert(probe.events.some(event => event.type === 'phase_write_observed'
-        && asRecords(event.owned).some(write => write.path === codeRel && write.owner === 'coding')),
-      'the real same-run author must introduce the UI change under its source write grant');
-      const revised = probe.events.filter(event => event.type === 'scope_revised').map(event => validateExecutionScope(event.execution_scope))
-        .find(scope => scope.obligations.some(obligation => obligation.kind === 'device-evidence' && obligation.applicability !== 'not_applicable'));
-      assert(revised && !revised.request_impact,
-        'the signed current UI change must invalidate the old negative judgment before it can prune device work');
-      return;
-    }
-    if (utL3) {
-      assert.equal(probe.exitCode, 0, JSON.stringify(probe.events.slice(-6)));
-      const checked = probe.harnessPhases;
-      assert(checked.filter(phase => phase === 'coding').length >= 2, JSON.stringify(checked));
-      assert(checked.lastIndexOf('ut') > checked.lastIndexOf('coding'), JSON.stringify(checked));
-      if (mode === 'ut-l3-spec') assert(checked.includes('spec') && probe.events.some(event => event.type === 'scope_revised'), '链外 spec 未实际验证');
-      assert.equal(new SpecLoader(root, undefined, undefined, frameworkRoot).loadFeatureSpec(feature).acceptance!.criteria[0].ut_layer, 'unit', '不得自批降低验收');
-      assert(fs.readFileSync(codeFile, 'utf8').includes('repairedTestabilitySeam'));
-      return;
-    }
-    if (continuousCoding) {
-      const events = probe.events;
-      const authorStarts = events.filter(event => event.type === 'agent_invoke_start' && event.phase === 'work-unit-author');
-      console.log('SCOPE_UNIT_DIAGNOSTIC ' + JSON.stringify({ mode, runId: 'p2-attended', exitCode: probe.exitCode,
-        authorCalls: authorStarts.length, authorIds: authorStarts.map(event => event.invoke_id),
-        sourceSha256: createHash('sha256').update(fs.readFileSync(codeFile)).digest('hex'),
-        lastEvents: events.slice(-5) }));
-      if (continuousCoding === true && probe.exitCode !== 0) {
-        console.log('SCOPE_UNIT_ORIGINALS ' + preserveRepairOriginals('current same-unit repair did not complete', events));
-      }
-      try {
-      if (continuousCoding === 'request') {
-        assert.notEqual(probe.exitCode, 0, 'request-only 不能获得 coding 权限');
-        assert(!events.some(event => event.type === 'scope_revised'), 'request-only 发生越权修订');
-        const refusal = events.find(event => event.type === 'phase_halt' && typeof event.halt_guidance === 'string'
-          && event.halt_guidance.includes('request-scope revision cannot add phases'));
-        assert(refusal && typeof refusal.halt_guidance === 'string' && refusal.halt_guidance.includes('新请求授权'), `须明确原授权拒绝与解除条件，不能以技术异常或任意非0放行：${JSON.stringify(events.slice(-5))}`);
-        assert(events.some(event => event.type === 'harness_end' && event.phase === 'ut' && event.exit_code === 1)
-          && events.some(event => event.type === 'phase_verdict' && event.phase === 'ut' && event.verdict === 'FAIL'), '真实UT失败须先留下其原检查与裁决，授权拒绝不能代签检查');
-        assert.equal(events.filter(event => event.type === 'run_end').at(-1)?.status, 'HALTED', '领域拒绝不能变uncaught_exception/INTERRUPTED');
-        assert(!events.some(event => event.type === 'harness_start' && event.phase === 'coding'), '请求范围外coding检查不能先运行后补拒绝');
-        assert(fs.readFileSync(codeFile).equals(originalCode), '原request没有产品coding写权，单元作者不得先改产品再补拒绝');
-        assert.equal(executionScopeFingerprint(loadEffectiveExecutionScope(root, feature, 'p2-attended')!),
-          executionScopeFingerprint(loadFrozenExecutionScope(root, feature, 'p2-attended')!), '拒绝后原冻结权限与义务不变');
-        return;
-      }
-      assert.equal(probe.exitCode, 0, JSON.stringify(events.slice(-5)));
-      assert(codingRegression && fs.readFileSync(codeFile, 'utf8').includes('repairedOwnerRegression'), 'coding 责任方没有真实修复：' + JSON.stringify({
-        codingRegression,
-        verdicts: events.filter(event => event.type === 'phase_verdict').map(event => ({ phase: event.phase, invoke_id: event.invoke_id,
-          verdict: event.verdict, action: event.action, recommendation: event.assess_recommendation })),
-        revisions: events.filter(event => event.type === 'scope_revised').map(event => ({ trigger: event.trigger,
-          chain: (event.execution_scope as ExecutionScope).phase_chain,
-          implementation: (event.execution_scope as ExecutionScope).obligations.filter(fact => fact.kind === 'implementation') })),
-        ut: ['summary.json', 'script-report.json'].map(name => {
-          const file = featureFilePath(root, feature, `ut/reports/${name}`);
-          return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : null;
-        }),
-      }));
-      assert.equal(events.filter(event => event.type === 'run_created').length, 1, '连续恢复建了另一个 run');
-      const revisions = events.filter(event => event.type === 'scope_revised');
-      assert.equal(new Set(revisions.map(event => executionScopeFingerprint(validateExecutionScope(event.execution_scope)))).size, revisions.length,
-        'a real scope or proof change is recorded once, never a repeated unchanged revision');
-      assert(revisions.every(event => (event.trigger as { check_id?: string })?.check_id !== 'node_options_injection'), 'repair trigger must identify its actual source');
-      const regressionFamily = specGap ? 'review' : 'ut';
-      const regressionFailedAt = events.map(event => event.type === 'harness_end' && event.phase === regressionFamily && event.exit_code === 1).lastIndexOf(true);
-      const repairStart = events.slice(regressionFailedAt + 1).find(event => event.type === 'agent_invoke_start' && event.phase === 'work-unit-author');
-      const repairRequest = typeof repairStart?.invoke_id === 'string'
-        ? executionRequestForInvoke(featureFilePath(root, feature, 'goal-runs/p2-attended'), repairStart.invoke_id) : null;
-      assert(regressionFailedAt >= 0 && repairRequest && repairRequest.request.context.instruction?.includes(specGap ? 'CR-CODING' : UT_REAL_ASSERTION_CHECK.id)
-        && repairRequest.request.context.factsContext?.source_paths.includes(codeRel), '真实新缺陷与原授权源码必须送回同run单元作者，不能用scope事件或旧报告代替');
-      const invokes = events.filter(event => event.type === 'agent_invoke_start');
-      assert(probe.harnessPhases.filter(phase => phase === 'coding').length >= 3, 'upstream repair and later real coding defect each require a valid current coding check');
-      assert(probe.harnessPhases.filter(phase => phase === 'review').length >= 3, 'each changed implementation must receive actual review checks, not another report author');
-      const expectedUtChecks = specGap ? 1 : 3;
-      assert(probe.harnessPhases.filter(phase => phase === 'ut').length >= expectedUtChecks,
-        `责任修复后必须实际复验UT，验证优先可复用已完成UT作者：${JSON.stringify({ authorInvokes: invokes.filter(event => event.phase === 'ut').length, harness: probe.harnessPhases })}`);
-      const sourceWrites = events.flatMap(event => {
-        const row = asRecord(event);
-        if (event.type !== 'phase_write_observed' || typeof event.invoke_id !== 'string' || !Array.isArray(row?.owned)) return [];
-        const invokeId = event.invoke_id;
-        return row.owned.flatMap(value => {
-          const written = asRecord(value);
-          return written?.path === codeRel && written.owner === 'coding' && typeof written.post_sha256 === 'string'
-            ? [{ invokeId, sha256: written.post_sha256 }] : [];
-        });
-      });
-      const latestSourceWrite = sourceWrites.at(-1);
-      assert(latestSourceWrite && latestSourceWrite.sha256 === createHash('sha256').update(fs.readFileSync(codeFile)).digest('hex'), '最终源码必须对应真实授权写入后像');
-      const finalCodingReturn = events.map(event => event.type === 'agent_invoke_end' && event.invoke_id === latestSourceWrite.invokeId).lastIndexOf(true);
-      const finalReviewCheck = events.map(event => event.type === 'harness_end' && event.phase === 'review' && event.exit_code === 0).lastIndexOf(true);
-      const finalUtCheck = events.map(event => event.type === 'harness_end' && event.phase === 'ut' && event.exit_code === 0).lastIndexOf(true);
-      assert(finalCodingReturn >= 0 && finalReviewCheck > finalCodingReturn, '最新实现交回后必须实际复核review，旧报告不能代替当前独立核验');
-      assert(finalCodingReturn >= 0 && finalUtCheck > finalCodingReturn, '最新实现交回后必须有真实成功UT检查，不能借旧作者或旧报告签完成');
-      assert.equal(new Set(invokes.map(event => event.invoke_id)).size, invokes.length, '每次实际调用ID必须唯一');
-      invokes.forEach((event, index) => {
-        if ((event as { purpose?: string }).purpose === 'verifier_format_repair') {
-          assert(typeof event.invoke_id === 'string', 'the actual verifier invocation must have its own string identity');
-          const issued = executionRequestForInvoke(featureFilePath(root, feature, 'goal-runs/p2-attended'), event.invoke_id);
-          assert(issued && issued.request.purpose === 'verifier_format_repair' && issued.request.context.phase === event.phase,
-            '独核必须保留它自己的真实签发身份');
-          assert(events.some(row => row.type === 'harness_start' && row.phase === issued.request.chain_phase),
-            '独核必须引用实际执行过的检查族，不能伪造缺席阶段作者');
-          assert.equal(Number(/-i(\d+)$/.exec(String(event.invoke_id))?.[1]), index + 1, '补核实际调用保留唯一全局调用序号');
-        } else assert.equal(Number(/-i(\d+)$/.exec(String(event.invoke_id))?.[1]), index + 1, '普通作者调用序号必须包含此前核实调用的全局消耗');
-      });
-      assert.equal(readExecutionActivity(events).calls, invokes.length, '连续修订遗漏真实调用审计');
-      assert.equal(events.filter(event => event.type === 'run_end').at(-1)?.status, 'CHAIN_SLICE_COMPLETED', '连续路径未完成');
-      const manifest = JSON.parse(fs.readFileSync(featureFilePath(root, feature, 'goal-runs/p2-attended/manifest.json'), 'utf8'));
-      assert.equal(manifest.successor_of, undefined, '连续修订改变 lineage');
-      assert.deepStrictEqual(manifest.execution_scope.phase_chain, loadFrozenExecutionScope(root, feature, 'p2-attended')!.phase_chain, '覆盖出生范围');
-      const actualCompletion = completionOf({ projectRoot: root, frameworkRoot, feature, expectedChain: ['coding', 'review', 'ut'], expectedTrack: 'full' });
-      assert.equal(actualCompletion.verdict, 'VALID', '实际 completion 消费无效：' + JSON.stringify(actualCompletion.reasons));
-      return;
-      } catch (error) {
-        try { console.log('SCOPE_UNIT_ASSERTION_ORIGINALS ' + preserveRepairOriginals('same-unit repair contract assertion failed', events)); }
-        catch (captureError) { console.warn('SCOPE_UNIT_PRESERVATION_FAILED ' + String(captureError)); }
-        throw error;
-      }
-    }
-    if (mode === 'unresolved') {
-      assert.notEqual(probe.exitCode, 0);
-      assert(probe.events.some(event => event.type === 'phase_halt' && event.halt_reason === 'execution_scope_unresolved'), 'unknown scope was mislabeled as framework failure');
-      assert(!fs.existsSync(featureFilePath(root, feature, 'feature-completion.json')));
-      return;
-    }
-    if (testingOnly) {
-      assert.notEqual(probe.exitCode, 0);
-      const birth = loadFrozenExecutionScope(root, feature, 'p2-attended')!;
-      assert.deepStrictEqual(birth.phase_chain, ['testing']);
-      // A failure, an offline device and a human-only verdict are not new facts: no revision event,
-      // and the effective scope is byte-identical to the birth scope.
-      assert(!probe.events.some(event => event.type === 'scope_revised'), 'a verdict produced a scope revision');
-      assert.equal(executionScopeFingerprint(loadEffectiveExecutionScope(root, feature, 'p2-attended')!), executionScopeFingerprint(birth), 'effective scope drifted without a revision');
-      assert(!fs.existsSync(featureFilePath(root, feature, 'feature-completion.json')));
-      return;
-    }
-    if (mode === 'impact-reuse' || mode === 'impact-null') {
-      // A correction that reuses a basis the frozen scope already carries, and an explicitly null
-      // judgement, are both rejected outright — neither may ride on the frozen scope's credibility.
-      assert.notEqual(probe.exitCode, 0, 'an illegal impact proposal was accepted');
-      const birth = loadFrozenExecutionScope(root, feature, 'p2-attended')!;
-      assert(!probe.events.some(event => event.type === 'scope_revised'), 'a rejected correction still wrote a revision');
-      assert.equal(executionScopeFingerprint(loadEffectiveExecutionScope(root, feature, 'p2-attended')!), executionScopeFingerprint(birth), 'effective scope drifted after a rejected correction');
-      return;
-    }
-    if (requestOnly) {
-      // 单职责终点四项断言（plan §3 问题 5）：① 只派发这一个阶段；② 不生成 Feature completion；
-      // ③ 冻结范围 completion_target=request 且链长 1；④ 范围外阶段没有被凭空造出 summary。
-      //
-      // **run 终局按模式二分，这是生产事实不是放水**：
-      //   · request-coding / request-ut —— 入链靠「实现义务 / 用户明确请求」标记，无定义缺口，run 正常 COMPLETED；
-      //   · request-spec / request-plan —— 这两个阶段**只能靠定义缺口入链**（`execution-scope.ts:432`：
-      //     缺口的 investigation owner 才会被加回 needed），缺口由该阶段的**真实产出**经生产的
-      //     `designScopeRevisionChecks` 发布修订来关闭（第二笔代码 review 必改 1 修的正是这条生产缺口：
-      //     此前 request 终点被排除在设计事实修订之外，单职责 spec/plan 在生产上**永远**到不了成功终局）。
-      //     `*-invalid` 变体是反向用例：本阶段产出不合法时仍须如实 HALTED，不得宣告成功。
-      // 终局取**最后一条** run_end：`*-cut` 的 events.jsonl 是同一个 run 的追加日志，
-      // 第一条 run_end 是中断那一段的 INTERRUPTED，取 first 会把 resume 的终局读错。
-      const lastRunEnd = () => [...probe.events].reverse().find(event => event.type === 'run_end');
-      if (invalidOutput) {
-        assert.notEqual(probe.exitCode, 0, '本阶段产出不合法时 run 不得宣告成功');
-        const halt = lastRunEnd() as { status?: string; halt_reason?: string } | undefined;
-        assert.equal(halt?.status, 'HALTED', JSON.stringify(probe.events.slice(-3)));
-        assert(!fs.existsSync(featureFilePath(root, feature, 'feature-completion.json')), 'HALTED 的请求不得留下 Feature completion');
-        return;
-      }
-      const diagnose = (): string => {
-        const current = loadEffectiveExecutionScope(root, feature, 'p2-attended');
-        return JSON.stringify({ chain: current?.phase_chain, unresolved: current?.unresolved,
-          obligations: current?.obligations.map(o => [o.id, o.applicability, o.owner_phase, !!o.satisfied_by?.length]) });
-      };
-      assert.equal(probe.exitCode, 0, diagnose() + ' :: ' + JSON.stringify(probe.events.slice(-2)));
-      // 成功终局用既有枚举，不另造状态；有效范围里不得再留 unresolved。
-      const runEnd = lastRunEnd() as { status?: string } | undefined;
-      assert.equal(runEnd?.status, 'CHAIN_SLICE_COMPLETED', JSON.stringify(probe.events.slice(-3)));
-      const effective = loadEffectiveExecutionScope(root, feature, 'p2-attended')!;
-      assert.deepStrictEqual(effective.unresolved, [], JSON.stringify(effective.unresolved));
-      assert.equal(effective.completion_target, 'request', JSON.stringify(effective));
-      // `*-cut`：这一段是 **resume**——修订已在上一段落盘、有效链已空，本段不得再派发任何阶段，
-      // 但仍须判出成功终局（必改 A：按空的有效链重建 outcomes 会把上一段的真实 PASS 丢掉）。
-      assert.deepStrictEqual(probe.invokedPhases, mode.endsWith('-cut') ? [] : ['work-unit-author']);
-      assert(probe.harnessPhases.every(phase => phase === requestPhase), 'single-request check families must stay within the original request');
-      if (mode.endsWith('-cut')) assert(injected, '中断点没被触发，这条用例没证明 resume');
-      assert(!fs.existsSync(featureFilePath(root, feature, 'feature-completion.json')), 'request created Feature completion');
-      const frozen = loadFrozenExecutionScope(root, feature, 'p2-attended')!;
-      assert.equal(frozen.completion_target, 'request', JSON.stringify(frozen));
-      assert.deepStrictEqual(frozen.phase_chain, [requestPhase], JSON.stringify(frozen.phase_chain));
-      // 原实现义务可纳入必要验证，但仍须有真实新来源；单职责定义/审查不因此扩权。
-      assert.throws(() => resolveScopeRevisionProposal({
-        projectRoot: root, frameworkRoot, feature, workflow: resolveWorkflowSpec(root, { frameworkRoot }),
-        proposals: [{ request: { completion_target: 'request', requested_results: frozen.requested_results, requested_phases: [requestPhase, 'testing'] }, facts: [], contract_fingerprints: [] }],
-        previous: frozen, authorizedPhases: frozen.phase_chain,
-      }), requestPhase === 'coding' ? /revision requires new sourced facts/ : /request-scope revision cannot add phases/);
-      if (requestPhase === 'coding') {
-        const verificationFile = '02-Feature/FinancialCard/src/ohosTest/ets/test/OriginalRequest.test.ets';
-        fs.mkdirSync(path.dirname(path.join(root, verificationFile)), { recursive: true });
-        fs.writeFileSync(path.join(root, verificationFile), 'export const verifiesOriginalImplementation = true;\n');
-        const resolved = resolveCapabilityInputs({ projectRoot: root, frameworkRoot, feature, phase: 'ut', track: 'full', testTargets: [verificationFile],
-          inputContext: { schema_version: '1.1', subject: { feature }, obligations: { 'unit-evidence': 'required' }, required_outputs: [] } });
-        const targets = Object.values(resolved.inputs!.values).find(value => value.state === 'resolved' && value.binding.source.kind === 'derive' && value.binding.source.provider_id === 'derive.test-targets');
-        assert(targets?.state === 'resolved');
-        const proposal = resolveScopeRevisionProposal({ projectRoot: root, frameworkRoot, feature, workflow: resolveWorkflowSpec(root, { frameworkRoot }),
-          proposals: [{ request: { completion_target: 'request', requested_results: frozen.requested_results, requested_phases: ['coding', 'ut'] },
-            facts: [...structuredClone(frozen.obligations), { id: 'unit-evidence:original-request', kind: 'unit-evidence', applicability: 'required', reason: 'verify original implementation', basis: [targets.binding] }], contract_fingerprints: [] }],
-          previous: frozen, authorizedPhases: frozen.phase_chain, currentRunId: 'p2-attended' });
-        assert(proposal, '真实新测试目标允许原实现请求补必要UT，不变成全Feature交付');
-        assert(proposal.scope.phase_chain.includes('ut'));
-        assert.equal(proposal.scope.completion_target, 'request');
-        const currentDisposition = resolveCurrentDisposition(readCurrentDispositionInput({ endpoint: 'request', projectRoot: root,
-          frameworkRoot, feature, executionScope: proposal.scope, chain: ['ut'] }));
-        const pendingVerification = currentDisposition.problems.find(problem => problem.phase === 'ut' && problem.affects === 'completion');
-        assert(pendingVerification, `the current view must retain the real missing UT verification: ${JSON.stringify(currentDisposition)}`);
-        const configPath = path.join(root, 'framework.config.json'), configBytes = fs.readFileSync(configPath);
-        try {
-          fs.writeFileSync(configPath, JSON.stringify({ ...JSON.parse(configBytes.toString('utf8')), phases_disabled: ['ut'] }));
-          clearFrameworkConfigCache();
-          assert(loadResolvedProfile(root, loadFrameworkConfig(root), frameworkRoot).phasesDisabled.has('ut'));
-          const target = { id: pendingVerification.id, source_phase: 'ut', category: 'verification' as const,
-            summary: pendingVerification.detail, files: [verificationFile],
-            item_fingerprint: itemFingerprintOf(pendingVerification.id, [verificationFile], pendingVerification.detail) };
-          assert.equal(scopeRevisionInputFromRepairCandidates([target], { projectRoot: root, frameworkRoot, feature, runId: 'p2-attended', currentDisposition }), null,
-            '原验证义务不能派出实例已禁用的正式工具能力；作者写权仍沿同单元判据');
-        } finally { fs.writeFileSync(configPath, configBytes); clearFrameworkConfigCache(); }
-      }
-      // 「再收一次尾」：拿**本 run 真实发布的那份提案**（生产 `designScopeRevisionChecks` 写进
-      // script-report 的原件，不是这里新拼的），在修订已应用、有效链已清空之后再重放一次。
-      // 必须走到既有 no-op（`feature-track.ts` 尾部指纹相等 → 返回 null），而不是被越权校验挡住：
-      // 授权边界是冻结链，用当前有效链会在判 no-op 之前就抛（必改 B 的可达反例）。
-      if (preparedCandidate && requestPhase !== 'coding') {
-        const published = JSON.parse(fs.readFileSync(featureFilePath(root, feature, `${requestPhase}/reports/script-report.json`), 'utf8')) as
-          { checks: Array<{ scope_revision_input?: ExecutionScopeInput }> };
-        const replayed = published.checks.find(check => check.scope_revision_input)!.scope_revision_input!;
-        const revisionsBefore = probe.events.filter(event => event.type === 'scope_revised').length;
-        // ctx 与 `goal-phase-runtime.ts:9142` 的修订调用点逐项同构（已完成阶段 / run 身份 / 需求文本）。
-        const replayCtx = { projectRoot: root, frameworkRoot, feature, workflow: resolveWorkflowSpec(root, { frameworkRoot }),
-          proposals: [replayed], authorizedPhases: frozen.phase_chain,
-          completedPhases: new Set([requestPhase]), currentRunId: 'p2-attended', requirement: 'fixture delivery' };
-        // ① 从**出生范围**重放：算出来必须还是同一份有效范围（指纹逐字相等）——第二次收尾不会
-        //    多出一份新范围，运行时按输入指纹去重（`goal-phase-runtime.ts:9421`）后自然不再落盘。
-        const replayFromBirth = resolveScopeRevisionProposal({ ...replayCtx, previous: frozen });
-        assert(!replayFromBirth || executionScopeFingerprint(replayFromBirth.scope) === executionScopeFingerprint(resolveEffectiveScopeSource(root, feature, 'p2-attended')!.scope), 'same recorded proposal is a no-op or returns its recorded scope, not a rewritten birth identity');
-        // ② 从**已应用后的有效范围**（链已空）再走一次：不得被越权校验挡住（必改 B 的可达反例），
-        //    且无论它算出什么都不许超出冻结链。
-        const replayFromEffective = resolveScopeRevisionProposal({ ...replayCtx, previous: effective });
-        assert(!replayFromEffective || replayFromEffective.scope.phase_chain.every(phase => frozen.phase_chain.includes(phase)),
-          '再收一次尾把范围扩出了冻结链：' + JSON.stringify(replayFromEffective?.scope.phase_chain));
-        // 重放是纯函数：既不新增 `scope_revised`，也不改变已落盘的有效范围。
-        assert.equal(probe.events.filter(event => event.type === 'scope_revised').length, revisionsBefore, '重放改动了修订数');
-        assert.equal(executionScopeFingerprint(loadEffectiveExecutionScope(root, feature, 'p2-attended')!), executionScopeFingerprint(effective), '重放改动了有效范围');
-      }
-      for (const skipped of ['spec', 'plan', 'coding', 'review', 'ut', 'testing'].filter(phase => phase !== requestPhase)) {
-        assert(!fs.existsSync(featureFilePath(root, feature, `${skipped}/reports/summary.json`)), `invented out-of-scope phase summary: ${skipped}`);
-      }
-      return;
-    }
-    if (missingMapping) {
-      assert.notEqual(probe.exitCode, 0, '缺施工映射仍完成 CU Goal');
-      assert(!fs.existsSync(featureFilePath(root, feature, 'feature-completion.json')), '缺施工映射仍签发 Feature completion');
-      assert.equal(completionOf({ projectRoot: root, feature, expectedChain: ['plan', 'coding', 'review', 'ut'], expectedTrack: 'full', frameworkRoot }).verdict, 'INVALID');
-      const completion = observeChangeUnitCompletion(root, asChangeUnitArtifact(loadCanonicalChangeUnit(root, 'ledger-app-blueprint', 'ledger-refresh').changeUnit));
-      assert.equal(completion.state, 'ABSENT', JSON.stringify(completion));
-      assert(probe.events.some(event => event.type === 'phase_verdict' && event.phase === 'plan' && event.verdict !== 'PASS'), 'plan 未保留真实映射失败');
-      return;
-    }
-    assert.equal(probe.exitCode, 0, JSON.stringify(probe.events.slice(-5)));
-    detachedStarted = true;
-    if (mode === 'direct') {
-      assert.deepStrictEqual(probe.invokedPhases.filter(phase => phase === 'work-unit-author'), ['work-unit-author']);
-      assert.deepStrictEqual(probe.harnessPhases, ['coding', 'review', 'ut', 'review']);
-      const independentReviews = probe.events.filter(event => event.type === 'agent_invoke_start' && event.phase === 'review');
-      assert.equal(independentReviews.length, 1, 'the first script review must not buy another independent invocation for unchanged material');
-      const review = independentReviews[0];
-      assert(typeof review.invoke_id === 'string');
-      const issued = executionRequestForInvoke(featureFilePath(root, feature, 'goal-runs/p2-attended'), review.invoke_id);
-      assert(issued?.request.purpose === 'review' && issued.request.context.instruction?.includes(`| ${refreshIssue} |`)
-        && issued.request.context.instruction.includes(refreshCase), 'the signed review must answer the actual assertion-strength question');
-      const toolPassedAt = probe.events.findIndex(event => event.type === 'phase_verdict' && event.phase === 'ut' && event.verdict === 'PASS');
-      const handbackAt = probe.events.findIndex(event => event.type === 'agent_invoke_end' && event.invoke_id === review.invoke_id && event.status === 'passed');
-      const recheckedAt = probe.events.map(event => event.type === 'phase_verdict' && event.phase === 'review' && event.verdict === 'PASS').lastIndexOf(true);
-      assert(toolPassedAt >= 0 && toolPassedAt < probe.events.indexOf(review) && handbackAt > probe.events.indexOf(review) && recheckedAt > handbackAt,
-        'a real UT result leads to an independent assertion verdict and its script recheck');
-      const strength = readTaggedAcceptanceStrength({ projectRoot: root, frameworkRoot, feature, runId: 'p2-attended',
-        executionScope: loadEffectiveExecutionScope(root, feature, 'p2-attended') }).find(row => row.issue === refreshIssue);
-      assert(strength?.passed && strength.verdict?.verdict === 'refuted', '当前具名执行与正式独立交回必须一起通过');
-      for (const skipped of ['spec', 'plan', 'testing']) assert(!fs.existsSync(featureFilePath(root, feature, `${skipped}/reports/summary.json`)), 'invented out-of-scope phase summary');
-    }
-    else {
-      if (mode === 'revision' || mode === 'revision-cut') {
-        // R4 反例的判据：手写的 unknown 被按来源重算回 required（验收此刻确实在场），
-        // 既不进 unresolved、也不凭空造出一个 spec 缺口把下游挂进 needed_by。
-        const effective = loadEffectiveExecutionScope(root, feature, 'p2-attended')!;
-        const fake = effective.obligations.find(o => o.id === 'acceptance-context:fake-gap')!;
-        assert.equal(fake.applicability, 'required', JSON.stringify(fake));
-        assert(!effective.unresolved.some(gap => gap.obligation_id === fake.id), JSON.stringify(effective.unresolved));
-      }
-      const sourceEvents = fs.readFileSync(featureFilePath(root, feature, 'goal-runs/p2-attended/events.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
-      // §3 问题 4: every handoff-era assertion migrated to its run-internal equivalent; none dropped.
-      const revisions = sourceEvents.filter(event => event.type === 'scope_revised');
-      // `spec-gap-revert` 有两条：① review 归因 spec 的修订；② spec 修复后重绑真实验收输入。
-      const proofPublications = mode === 'revision-precut' || mode === 'impact-first' || mode.startsWith('detached');
-      if (proofPublications || mode === 'revision-revoke') {
-        assert(revisions.length >= 1, 'the original pending proposal must actually be published');
-        assert.equal(new Set(revisions.map(event => executionScopeFingerprint(validateExecutionScope(event.execution_scope)))).size, revisions.length,
-          'the same scope/proof state cannot be republished');
-        const requested = revisions[0].revision_input.request.requested_phases as string[];
-        for (const revision of revisions) assert(requested.every(phase => revision.revision_input.request.requested_phases.includes(phase)),
-          'collecting real proofs cannot remove any original requested duty');
-      } else assert.equal(revisions.length, specGap ? 2 : 1, 'duplicate scope revision');
-      if (proofPublications) {
-        assert.equal(sourceEvents.filter(event => event.type === 'agent_invoke_start').length, 1,
-          'scope proof collection must retain the original single author');
-        for (const family of ['spec', 'coding', 'review', 'ut', 'testing']) {
-          assert.equal(sourceEvents.filter(event => event.type === 'harness_start' && event.phase === family).length, 1,
-            `a persistence retry must consume the real ${family} producer once, never purchase another tool over the same work`);
-        }
-      }
-      assert.equal(revisions[0].revision_index, 1, 'revision index must start at 1');
-      // design-gap revises the chain back to plan, so coding is legitimately dispatched TWICE;
-      // the revision mode never returns to spec, so spec stays at one.
-      // 提案验证前中断可复用已完成作者，补齐原gate/修订，不再购买同输入作者。
-      const sourcePhase = designGapFamily ? 'coding' : 'spec';
-      const sourceInvokes = sourceEvents.filter(event => event.type === 'harness_start' && event.phase === sourcePhase);
-      const expectedSourceInvokes = mode === 'revision-revoke' ? 3 : designGapFamily ? 2 : 1;
-      const sourceDiagnostic = 'revised scope did not validate its actual responsible producer: ' + JSON.stringify({
-        harness: probe.harnessPhases, acceptance: fs.readFileSync(featureFilePath(root, feature, 'acceptance.yaml'), 'utf8'),
-        events: sourceEvents.filter(event => ['scope_revised', 'agent_invoke_start', 'agent_invoke_end', 'harness_end', 'phase_verdict'].includes(event.type)),
-      });
-      if (mode === 'revision-revoke') {
-        assert(sourceInvokes.length >= expectedSourceInvokes, sourceDiagnostic);
-        const oldProofAt = sourceEvents.findIndex(event => event.type === 'harness_end' && event.phase === 'spec' && event.exit_code === 0);
-        const productSha = createHash('sha256').update(fs.readFileSync(codeFile)).digest('hex');
-        const newSourceAt = sourceEvents.findIndex((event, index) => index > oldProofAt && event.type === 'phase_write_observed'
-          && event.owned?.some((write: { path?: string; pre_sha256?: string; post_sha256?: string; roles?: Array<{ kind: string }> }) => write.path === codeRel
-            && write.pre_sha256 !== write.post_sha256 && write.post_sha256 === productSha && write.roles?.some(role => role.kind === 'source')));
-        const newDefinitionFailureAt = sourceEvents.findIndex((event, index) => index > newSourceAt && event.type === 'harness_end' && event.phase === 'spec' && event.exit_code === 1);
-        assert(oldProofAt >= 0 && newSourceAt > oldProofAt && newDefinitionFailureAt > newSourceAt,
-          'old spec proof must precede a real owned source change and its newly observed definition gap');
-      } else if (mode === 'design-gap-revert' || specGap && !continuousCoding) assert(sourceInvokes.length >= 2, sourceDiagnostic);
-      else assert.equal(sourceInvokes.length, expectedSourceInvokes, sourceDiagnostic);
-      if (expectedSourceInvokes > 1 || specGap && !continuousCoding) {
-        const completedChecks = sourceEvents.filter(event => event.type === 'harness_end' && event.phase === sourcePhase);
-        assert.equal(completedChecks.length, sourceInvokes.length, 'each current check must actually return');
-        for (let index = 1; index < sourceInvokes.length; index++) {
-          const start = sourceInvokes[index].ts, previousEnd = completedChecks[index - 1].ts, end = completedChecks[index].ts;
-          assert(typeof start === 'string' && typeof previousEnd === 'string' && typeof end === 'string', 'real check timestamps are required');
-          assert(Date.parse(start) > Date.parse(previousEnd) && Date.parse(end) > Date.parse(start),
-            'a current unit may keep its actor identity, but cannot replace another real tool execution with its old result');
-        }
-      }
-      if (mode === 'revision-precut') {
-        assert(injected, 'the pre-validation cut was never reached');
-        assert(loadPhaseEvidenceManifest(root, feature, 'spec')?.integrityOk, '原作者产出必须取得真实spec闭合证明');
-        assert.equal(recomputePhaseEvidenceStaleness(root, feature, ['spec'], { frameworkRoot })[0].verdict, 'fresh', '复用作者不等于复用过期证据');
-      }
-      const effective = loadEffectiveExecutionScope(root, feature, 'p2-attended')!;
-      assert.deepStrictEqual(effective.phase_chain, [], 'effective queue excludes duties proven by their later valid PASS; recorded revision queues remain immutable');
-      if (specGap) {
-        assert(effective.reused_phases.some(reuse => reuse.phase === 'spec'), '已修复的 spec 必须作为有效证据复用，不能丢责任');
-        assert(loadPhaseEvidenceManifest(root, feature, 'spec')?.integrityOk, 'spec 闭合证明必须有效');
-        assert.equal(recomputePhaseEvidenceStaleness(root, feature, ['spec'], { frameworkRoot })[0].verdict, 'fresh', 'spec 复用必须真实 fresh');
-      }
-      if (mode === 'revision-revoke') {
-        // The withdrawn proof is not re-attached; the phase returns to the chain; and — because the
-        // cut lands right after that revision — the re-run happens on RECOVERY, from events alone.
-        assert(typeof revokedRevisionIndex === 'number', 'the interruption must follow the actual Spec proof withdrawal');
-        const revokeAt = sourceEvents.findIndex(event => event.type === 'scope_revised' && event.revision_index === revokedRevisionIndex);
-        // Recovery does NOT depend on a second event: the cut lands immediately after the single
-        // `scope_revised` write, and the revoked phase is derived from that record's own content.
-        assert(!sourceEvents.some(event => event.type === 'phase_invalidated'), 'a second event was written next to the revision');
-        assert(sourceEvents.slice(revokeAt).some(event => event.type === 'harness_start' && event.phase === 'spec'), 'recovery reused the pre-revision spec PASS');
-        assert(injected, 'the post-revocation cut was never reached');
-        assert.deepStrictEqual(revokedPhasesByRevision(loadFrozenExecutionScope(root, feature, 'p2-attended')!, sourceEvents,
-          readRepairDependencyContext(root, feature, loadWorkflowSpec(frameworkRoot, 'scoped'), effective, frameworkRoot)).get(revokedRevisionIndex), ['spec', 'plan', 'coding', 'review', 'ut', 'testing'], 'the owner and actual consumed downstream invalidation comes from the same revision');
-        const specDuty = effective.obligations.find(o => o.id === 'acceptance-context:request:spec')!;
-        const currentDefinition = liveBinding('ut', 'acceptance');
-        assert(specDuty.satisfied_by?.some(ref => 'input_id' in ref && stableStringify(ref) === stableStringify(currentDefinition)),
-          'the repaired definition must carry its actual current registered InputBinding, never an old phase report or basis alone');
-        const currentSpecEnd = sourceEvents.slice(revokeAt).filter(event => event.type === 'harness_end' && event.phase === 'spec' && event.exit_code === 0).at(-1);
-        const currentSpecEvidence = loadPhaseEvidenceManifest(root, feature, 'spec');
-        assert(currentSpecEnd && currentSpecEvidence?.integrityOk
-          && Date.parse(currentSpecEvidence.manifest.generated_at) >= Date.parse(currentSpecEnd.ts), 'a new completed spec producer must publish its real current manifest');
-        assert.notDeepStrictEqual(revisions[1].execution_scope.obligations.find((o: { id: string }) => o.id === 'acceptance-context:request:spec').satisfied_by, specDuty.satisfied_by, 'the revocation and the re-attachment are the same record');
-      }
-      if (mode === 'impact-first') {
-        // First-time impact: no old value to compare against, and the new basis is its own source.
-        assert.equal(effective.request_impact?.user_visible_behavior_change, true, 'the first impact judgement was not carried into the scope');
-      }
-      const manifestNow = JSON.parse(fs.readFileSync(featureFilePath(root, feature, 'goal-runs/p2-attended/manifest.json'), 'utf8'));
-      // Birth values come from the run_created record itself (present for every mode, and the
-      // one thing a revision must never touch) rather than from a literal or a mutable manifest.
-      const born = sourceEvents.find(event => event.type === 'run_created');
-      assert(born, 'run_created missing');
-      assert.equal(manifestNow.end_phase, born.phase_chain.at(-1), 'birth end_phase was rewritten by a revision');
-      assert.deepStrictEqual(manifestNow.execution_scope.phase_chain, born.phase_chain, 'birth scope was rewritten by a revision');
-      assert.equal(manifestNow.successor_of, undefined, 'in-run revision created a successor lineage');
-      assert.equal(fs.readdirSync(featureFilePath(root, feature, 'goal-runs')).length, 1, 'in-run revision created a second run');
-      assert.equal(sourceEvents.filter(event => event.type === 'run_created').length, 1, 'duplicate run birth');
-      const revisionAt = sourceEvents.findIndex(event => event.type === 'scope_revised');
-      // A machine revision may need only new tool checks; actual native calls still retain their original audit identity.
-      const beforeRevision = sourceEvents.slice(0, revisionAt);
-      const turnsBefore = beforeRevision.filter(event => event.type === 'agent_invoke_start').length;
-      assert.equal(readExecutionActivity(beforeRevision).calls, turnsBefore);
-      const invokes = sourceEvents.filter(event => event.type === 'agent_invoke_start');
-      assert.deepStrictEqual(invokes.map(event => Number(/-i(\d+)$/.exec(String(event.invoke_id))?.[1])), invokes.map((_, index) => index + 1), '修订或恢复重置/复用了调用序号');
-      assert.equal(readExecutionActivity(sourceEvents).calls, invokes.length, '修订或恢复遗漏实际调用');
-      if (utDesignGap) {
-        assert.equal(sourceEvents.filter(event => event.type === 'harness_start' && event.phase === 'review').length, 2, 'new upstream plan work invalidates the old downstream review once');
-        const planChecks = sourceEvents.filter(event => event.type === 'harness_start' && event.phase === 'plan');
-        assert(planChecks.length > 0, '链外 plan 必须实际验证');
-        for (let index = 1; index < planChecks.length; index++) assert.notDeepStrictEqual(planChecks[index].related_input_snapshot,
-          planChecks[index - 1].related_input_snapshot, 'plan 只能因实际输入或可观察依据变化重验');
-        assert(probe.harnessPhases.filter(phase => phase === 'ut').length >= 2, '补齐定义后必须实际复验UT；已完成UT作者可复用');
-        const planCheckedAt = sourceEvents.map(event => event.type === 'harness_end' && event.phase === 'plan' && event.exit_code === 0).lastIndexOf(true);
-        const planOwnerReturnedAt = sourceEvents.slice(0, planCheckedAt).map(event => event.type === 'agent_invoke_end' && event.phase === 'work-unit-author' && event.exit_code === 0).lastIndexOf(true);
-        const firstUtFailedAt = sourceEvents.findIndex(event => event.type === 'harness_end' && event.phase === 'ut' && event.exit_code === 1);
-        const utRecheckedAt = sourceEvents.map(event => event.type === 'harness_end' && event.phase === 'ut' && event.exit_code === 0).lastIndexOf(true);
-        assert(firstUtFailedAt >= 0 && planOwnerReturnedAt >= 0 && planCheckedAt > firstUtFailedAt && planCheckedAt > planOwnerReturnedAt && utRecheckedAt > planCheckedAt,
-          '实际plan责任作者交回及plan新检查后须有成功UT检查，不能借旧报告完成');
-      }
-      if (mode === 'design-gap-revert') {
-        // §5.1.1a 的闭环：plan 拒绝扩展契约 → coding 撤回误改 → 责任阶段证据仍 fresh、完成仍 VALID。
-        // ① plan 没有扩大写集（契约文件字节未变）
-        assert(fs.readFileSync(contractsFile).equals(contractsAtBirth), 'plan widened the frozen write set');
-        // ② coding 把触发文件改回了原字节
-        assert(fs.readFileSync(codeFile).equals(originalCode), 'the unjustified edit was never reverted');
-        // ③ 历史触发摘要不再阻断（R-摘要豁免那一路）
-        const issues = executionScopeEvidenceIssues(root, feature, effective, undefined, 'p2-attended');
-        assert(!issues.some(issue => issue.includes('input binding stale')), issues.join('; '));
-        // ④ 责任阶段证据仍 fresh（R-目标收集那一路要防的后果）
-        assert.equal(recomputePhaseEvidenceStaleness(root, feature, ['plan'], { frameworkRoot })[0].verdict, 'fresh');
-        const planEvidence = loadPhaseEvidenceManifest(root, feature, 'plan');
-        assert(planEvidence?.integrityOk, 'plan evidence missing');
-        // 本行原为「触发文件不得作为当前输入进 plan 证据」。plan b5c1e9d7 §3.1 让 goal 的最终闭环
-        // 也按仓内冻结事实重建调用上下文之后，plan 的证据**确实**登记了它按实现义务读到的写集源码
-        // ——非 goal 路径（`harness-runner.ts`）本来就登记，原断言之所以成立，只是因为 goal 闭环
-        // 当时什么源码都不登记。本夹具里触发文件与写集文件是**同一个**，"没被当作当前目标"因此
-        // 不再可观测；R-摘要豁免那一路仍由 ③ 锁住，B4 要防的后果由上一行（撤回后仍 fresh）锁住。
-        // 这里改锁归属：登记进来就必须带责任阶段，否则实现阶段一动它上游又要 stale。
-        const triggerEntry = planEvidence!.manifest.inputs.find(entry => entry.path === codeRel);
-        assert(!triggerEntry || triggerEntry.owner_phase === 'coding',
-          `写集源码进了 plan 证据却没有责任归属：${JSON.stringify(triggerEntry)}`);
-      }
-      if (specGap) {
-        // §5.1.1a 的 spec 侧闭环：review 归因 spec → 同 run 修订 → spec 重跑修复触发文件 → 完成 VALID。
-        // ① 责任阶段确实重跑了（修订之后有 spec 的 invoke）
-        assert(sourceEvents.slice(revisionAt).some(event => event.type === 'harness_start' && event.phase === 'spec'), 'spec 修复后的真实检查没有重跑');
-        // ② 触发文件（acceptance.yaml）确实被修复了——字节与修订触发时不同
-        const acceptanceNow = fs.readFileSync(featureFilePath(root, feature, 'acceptance.yaml'), 'utf8');
-        assert(acceptanceNow.includes('AC-EMPTY'), '触发文件没有被责任阶段修复：' + acceptanceNow);
-        if (!continuousCoding) {
-          const actualFailure = sourceEvents.findIndex(event => event.type === 'harness_end' && event.phase === 'spec' && event.exit_code === 1);
-          const acceptanceRel = path.relative(root, featureFilePath(root, feature, 'acceptance.yaml')).replace(/\\/g, '/');
-          const acceptanceSha = createHash('sha256').update(acceptanceNow).digest('hex');
-          const actualRepair = sourceEvents.findIndex((event, index) => index > actualFailure && event.type === 'phase_write_observed'
-            && event.owned?.some((write: { path?: string; pre_sha256?: string; post_sha256?: string }) => write.path === acceptanceRel
-              && write.pre_sha256 !== write.post_sha256 && write.post_sha256 === acceptanceSha));
-          const actualPass = sourceEvents.findIndex((event, index) => index > actualRepair && event.type === 'harness_end' && event.phase === 'spec' && event.exit_code === 0);
-          assert(actualFailure >= 0 && actualRepair > actualFailure && actualPass > actualRepair,
-            'the real definition failure must precede the actual owner write and its successful current check');
-        }
-        // ③ 修订触发依据的历史摘要不再阻断完成（豁免按 kind：acceptance-definition）
-        const specIssues = executionScopeEvidenceIssues(root, feature, effective, undefined, 'p2-attended');
-        assert(!specIssues.some(issue => issue.includes('input binding stale')), specIssues.join('; '));
-        // ④ 修订事实确实是 acceptance-definition（spec 家族），不是被当成 design 归属
-        const trigger = effective.obligations.find(o => o.kind === 'acceptance-definition');
-        assert(trigger && trigger.owner_phase === 'spec', JSON.stringify(effective.obligations.map(o => [o.id, o.kind, o.owner_phase])));
-        // ⑤ 反例（时序）：缺口未处理时完不成——本 run 的终局必须发生在 spec 重跑**之后**，
-        // 而不是在修订落下的那一刻就收尾。
-        const specRerunAt = sourceEvents.findIndex((event, index) => index >= revisionAt && event.type === 'harness_start' && event.phase === 'spec');
-        const completedAt = sourceEvents.findIndex(event => event.type === 'run_end' && event.status === 'CHAIN_SLICE_COMPLETED');
-        assert(specRerunAt >= 0 && completedAt > specRerunAt, 'run 在 spec 修复缺口之前就收尾了');
-        // ⑥ 反例（结构）：责任阶段曾执行且在有效完成范围中；fresh 复用不能删除责任。
-        assert(executionCompletionPhases(effective).includes('spec'), '有效完成范围必须保留实际执行且 fresh 复用的 spec 责任');
-        // ⑦ 修复后的 acceptance.yaml 仍是 spec 的**正式证据输入**（§5.4 那一行的要点：它既是
-        // spec 的输入也是它的产出，同路径 input/output 合并为 both 后仍列入 inputs；
-        // 因此这里断言「在 inputs 里」，而**不是**照抄 plan 侧的「不含触发文件」）。
-        const specEvidence = loadPhaseEvidenceManifest(root, feature, 'spec');
-        assert(specEvidence?.integrityOk, 'spec evidence missing');
-        const acceptanceRel = path.relative(root, featureFilePath(root, feature, 'acceptance.yaml')).split(String.fromCharCode(92)).join('/');
-        assert(specEvidence!.manifest.inputs.some(entry => entry.path === acceptanceRel),
-          '修复后的验收文件没有作为 spec 的正式证据输入登记：' + JSON.stringify(specEvidence!.manifest.inputs.map(entry => entry.path)));
-      }
-      if (designGapFamily && !utDesignGap) {
-        assert(sourceEvents.some(event => event.type === 'phase_verdict' && event.phase === 'coding' && event.verdict !== 'PASS'), 'failure record was washed away');
-        assert(!sourceEvents.slice(0, revisionAt).some(event => event.type === 'run_end'), 'run was sealed before the revision');
-        assert.equal(sourceEvents.filter(event => event.type === 'run_end').at(-1).status, 'CHAIN_SLICE_COMPLETED', 'revised run did not reach a clean terminal');
-      }
-      const again = await execute(); assert.equal(again.invokedPhases.length, 0, 'completed run invoked again');
-      assert(recoveryMarker && !fs.existsSync(recoveryMarker), 'completed run leaked temporary recovery state');
-      // D2.6: the completion is cut from the EFFECTIVE scope, so a revision-count mismatch with the
-      // events (here: the record claims one revision fewer than the run actually applied) is INVALID.
-      const completionProjection = JSON.parse(fs.readFileSync(featureFilePath(root, feature, 'feature-completion.json'), 'utf8'));
-      const completionFile = path.join(root, completionProjection.original_path);
-      const completionBytes = fs.readFileSync(completionFile, 'utf8');
-      const completionRecord = JSON.parse(completionBytes);
-      assert.equal(completionRecord.scope_revision_count, revisions.length, 'completion did not record the applied revisions');
-      assert.equal(completionRecord.execution_scope_fingerprint, executionScopeFingerprint(resolveEffectiveScopeSource(root, feature, 'p2-attended')!.scope), 'completion identity must bind recorded revisions, not the live proof projection');
-      const writeCompletion = (record: unknown): void => {
-        const bytes = JSON.stringify(record);
-        fs.writeFileSync(completionFile, bytes);
-        fs.writeFileSync(featureFilePath(root, feature, 'feature-completion.json'), JSON.stringify({ ...completionProjection, original_sha256: createHash('sha256').update(bytes).digest('hex') }));
-      };
-      const completionVerdict = (): string => completionOf({ projectRoot: root, feature, expectedChain: executionCompletionPhases(effective), expectedTrack: 'full' }).verdict;
-      writeCompletion({ ...completionRecord, scope_revision_count: revisions.length - 1 });
-      assert.equal(completionVerdict(), 'INVALID', 'a revision-count mismatch was accepted');
-      // A 1.2 record MUST carry the count: a stripped field is a damaged certificate, not a zero.
-      const { scope_revision_count: _dropped, ...withoutCount } = completionRecord as Record<string, unknown>;
-      writeCompletion(withoutCount);
-      assert.equal(completionVerdict(), 'INVALID', 'a completion with no scope_revision_count was accepted');
-      fs.writeFileSync(completionFile, completionBytes);
-      fs.writeFileSync(featureFilePath(root, feature, 'feature-completion.json'), JSON.stringify(completionProjection));
-    }
-    const verified = completionOf({ projectRoot: root, feature, expectedChain: ['coding', 'review', 'ut'], expectedTrack: 'full' });
-    assert.equal(verified.verdict, 'VALID', JSON.stringify(verified));
-    const cu = loadCanonicalChangeUnit(root, 'ledger-app-blueprint', 'ledger-refresh');
-    const cuCompletion = observeChangeUnitCompletion(root, asChangeUnitArtifact(cu.changeUnit));
-    assert.equal(cuCompletion.state, 'VALID', JSON.stringify(cuCompletion));
-    assert.deepStrictEqual(cuCompletion.expectedChain, utDesignGap ? ['plan', 'coding', 'review', 'ut'] : mode === 'direct' ? ['coding', 'review', 'ut']
-      : designGapFamily ? ['plan', 'coding', 'review', 'ut']
-      : specGap ? ['spec', 'plan', 'coding', 'review', 'ut']
-      : mode === 'revision-revoke' ? ['plan', 'coding', 'review', 'ut', 'testing']
-      : ['spec', 'coding', 'review', 'ut', 'testing']);
-    if (mode === 'direct') {
-      // 已成功的同一 Feature 证据与 completion 原件仍在，缺映射不能借它们信用 CU。
-      const mappedBytes = fs.readFileSync(contractsFile);
-      try {
-        const unmapped = YAML.parse(mappedBytes.toString('utf8')); unmapped.change_unit.predicate_mappings = [];
-        fs.writeFileSync(contractsFile, YAML.stringify(unmapped));
-        const notCredited = observeChangeUnitCompletion(root, asChangeUnitArtifact(cu.changeUnit));
-        assert.equal(notCredited.state, 'INCOMPLETE', JSON.stringify(notCredited));
-        assert(notCredited.reasons.some(reason => reason.includes('mapping')), JSON.stringify(notCredited));
-      } finally { fs.writeFileSync(contractsFile, mappedBytes); }
-      assert.equal(observeChangeUnitCompletion(root, asChangeUnitArtifact(cu.changeUnit)).state, 'VALID', '恢复真实映射后未恢复原有 CU credit');
-      const previous = loadFrozenExecutionScope(root, feature, 'p2-attended')!;
-      const reuseInput = request(['coding', 'review', 'ut'], 'feature');
-      reuseInput.facts = previous.obligations.map(obligation => obligation.applicability !== 'required' ? obligation : ({ ...obligation, satisfied_by: obligation.satisfied_by ?? [{ phase: obligation.owner_phase, run_id: 'p2-attended', evidence_manifest_aggregate: loadPhaseEvidenceManifest(root, feature, obligation.owner_phase)!.manifest.aggregate_sha256 }] }));
-      // The reuse input must be resolved the way birth resolves it: D0.1 recomputes every evidence
-      // applicability from its sources, so replaying the frozen obligations without the acceptance
-      // binding and resolved facts would legitimately land them back on `unknown`.
-      reuseInput.request.impact = previous.request_impact;
-      const reused = resolveExecutionScope(reuseInput, workflow,
-        readScopeAcceptance(root, reuseInput, { feature, frameworkRoot }),
-        collectResolvedScopeFacts(reuseInput, { projectRoot: root, feature, frameworkRoot, requirement: 'fixture delivery', impactInherited: true }));
-      assert.deepStrictEqual(reused.phase_chain, []);
-      assert(verifyReusedExecutionScope(root, feature, reused).complete, 'fully reused Feature evidence did not validate');
-      const designBytes = fs.readFileSync(contractsFile);
-      // plan c4e7a9b2 B2：CU Feature 的登记证据按解析内容等价（与输入绑定同口径），只加注释不再是设计漂移——漂移须改内容。
-      fs.appendFileSync(contractsFile, '\nstale_design_contract: changed after validated execution\n');
-      // §4.1.4 on the PRODUCTION path: the reading layer re-resolves every `satisfied_by` binding,
-      // so a drifted design source is reported as not-ok and the freeze is refused — no hand-built
-      // verdict, both the binding and the drift are real.
-      const staleFacts = collectResolvedScopeFacts(reuseInput, { projectRoot: root, feature, frameworkRoot, requirement: 'fixture delivery', impactInherited: true });
-      assert(staleFacts.satisfied_by.some(entry => !entry.ok), JSON.stringify(staleFacts.satisfied_by));
-      assert.throws(() => resolveExecutionScope(reuseInput, workflow, undefined, staleFacts), /冻结时核验失败/);
-      assert.notEqual(completionOf({ projectRoot: root, feature, expectedChain: previous.phase_chain, expectedTrack: 'full' }).verdict, 'VALID', 'stale design contract accepted');
-      fs.writeFileSync(contractsFile, designBytes);
-      const codeBytes = fs.readFileSync(codeFile);
-      fs.appendFileSync(codeFile, '\n// changed after validated execution\n');
-      assert(!verifyReusedExecutionScope(root, feature, reused).complete, 'stale reused execution accepted');
-      fs.writeFileSync(codeFile, codeBytes);
-      assert(!verifyReusedExecutionScope(root, feature, { ...reused, requested_results: ['different result'] }).complete, 'old evidence silently satisfied a new goal');
-      assert.equal(fs.readdirSync(featureFilePath(root, feature, 'goal-runs')).length, 1, 'reuse created an empty run');
-      const projectionFile = featureFilePath(root, feature, 'feature-completion.json');
-      const projection = JSON.parse(fs.readFileSync(projectionFile, 'utf8'));
-      const original = path.join(root, projection.original_path);
-      const record = JSON.parse(fs.readFileSync(original, 'utf8'));
-      assert.equal(record.schema_version, '1.2');
-      assert.equal(record.execution_scope_fingerprint, executionScopeFingerprint(previous));
-      const originalBytes = fs.readFileSync(original, 'utf8');
-      for (const field of [{ execution_scope_fingerprint: '0'.repeat(64) }, { schema_version: '1.1' }]) {
-        const changed = JSON.stringify({ ...record, ...field }); fs.writeFileSync(original, changed);
-        fs.writeFileSync(projectionFile, JSON.stringify({ ...projection, schema_version: field.schema_version ?? record.schema_version, original_sha256: createHash('sha256').update(changed).digest('hex') }));
-        assert.equal(completionOf({ projectRoot: root, feature, expectedChain: previous.phase_chain, expectedTrack: 'full' }).verdict, 'INVALID');
-      }
-      fs.writeFileSync(original, originalBytes); fs.writeFileSync(projectionFile, JSON.stringify(projection));
-      record.chain = ['ut']; record.phases = record.phases.filter((phase: { phase: string }) => phase.phase === 'ut');
-      const bytes = JSON.stringify(record); fs.writeFileSync(original, bytes);
-      fs.writeFileSync(projectionFile, JSON.stringify({ ...projection, original_sha256: createHash('sha256').update(bytes).digest('hex') }));
-      assert.equal(completionOf({ projectRoot: root, feature, expectedChain: ['ut'], expectedTrack: 'full' }).verdict, 'INVALID', 'self-authored completion chain bypassed frozen scope');
-      const manifestFile = featureFilePath(root, feature, 'goal-runs/p2-attended/manifest.json');
-      const manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8')); delete manifest.execution_scope;
-      fs.writeFileSync(manifestFile, JSON.stringify(manifest));
-      assert.throws(() => loadFrozenExecutionScope(root, feature, 'p2-attended'), /出生摘要|scope/);
-    }
-  } catch (error) {
-    const saved = preserveFailure?.(String(error));
-    throw new Error(`${(error as Error).stack ?? String(error)}${saved ? `\noriginals: ${saved}` : ''}`);
-  } finally {
-    restoreAppend?.();
-    clearFrameworkConfigCache();
-    if (process.cwd() !== originalCwd) process.chdir(originalCwd);
-    const target = fs.realpathSync(root);
-    const relative = path.relative(fs.realpathSync(os.tmpdir()), target);
-    assert(/^gr-v23-[^\\/]+$/.test(relative), 'fixture cleanup escaped its temporary root');
-    try { fs.rmSync(target, { recursive: true, force: true, maxRetries: 6, retryDelay: 100 }); }
-    finally { if (tsFramework) removeShimFramework(tsFramework); }
-  }
-}
-function rejectImpactRevision(mode: 'impact-reuse' | 'impact-null'): void {
-  const { root, frameworkRoot, feature } = setupRunlessProject();
-  try {
-    const prepared = prepareFeatureScopeCandidate({ projectRoot: root, frameworkRoot, feature,
-      completionTarget: 'feature', requestedResults: ['value is 42'], requestedPhases: ['coding', 'review', 'ut'],
-      requirement: '把 value 改成 42', overwrite: true,
-      impact: { userVisibleBehaviorChange: false, reason: '内部取值', basisPaths: ['src/demo/value.ts'] } });
-    freezeFeatureExecutionScope({ projectRoot: root, feature, scope: prepared.scope,
-      candidateFingerprint: featureScopeCandidateFingerprint(root, feature) });
-    const original = fs.readFileSync(featureFrozenScopePath(root, feature));
-    const proposal = structuredClone(prepared.candidate);
-    const acceptance = featureFilePath(root, feature, 'acceptance.yaml');
-    const updatedAcceptance = YAML.parse(fs.readFileSync(acceptance, 'utf8'));
-    updatedAcceptance.criteria[0].expected_result = '43';
-    fs.writeFileSync(acceptance, YAML.stringify(updatedAcceptance));
-    const fresh = resolveCapabilityInputs({ projectRoot: root, frameworkRoot, feature, phase: 'ut', track: 'full',
-      inputContext: { schema_version: '1.1', subject: { feature }, obligations: {}, required_outputs: [] } }).inputs!.values.acceptance;
-    assert(fresh?.state === 'resolved');
-    assert(prepared.candidate.facts.some(fact => fact.basis.some(binding => binding.input_id === 'acceptance' && binding.content_fingerprint !== fresh.binding.content_fingerprint)), 'the real acceptance content fingerprint must change');
-    proposal.facts.push({ id: 'acceptance:new', kind: 'acceptance-context', applicability: 'required',
-      reason: 'another genuinely new input cannot authorize an unsourced impact correction', basis: [fresh.binding] });
-    assert(hasNewSourcedFact(prepared.scope, proposal.facts, ''), 'the rejection must not be explained by a lack of other new facts');
-    if (mode === 'impact-null') (proposal.request as { impact?: unknown }).impact = null;
-    else proposal.request.impact = { ...proposal.request.impact!, user_visible_behavior_change: true, reason: 'correction using the old impact basis' };
-    assert.throws(() => resolveScopeRevisionProposal({ projectRoot: root, frameworkRoot, feature,
-      workflow: resolveWorkflowSpec(root, { frameworkRoot }), proposals: [proposal], previous: prepared.scope,
-      authorizedPhases: prepared.scope.phase_chain, requirement: '把 value 改成 42' }),
-    mode === 'impact-null' ? /影响判断为 null/ : /impact correction requires its own new sourced basis/);
-    assert(fs.readFileSync(featureFrozenScopePath(root, feature)).equals(original), 'a rejected proposal changed frozen authority');
-  } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
-}
-for (const mode of ['direct', 'revision-cut', 'revision-precut', 'revision-revoke', 'impact-first', 'impact-reuse', 'impact-null', 'design-gap', 'design-gap-revert', 'spec-gap-revert', 'detached', 'detached-harness', 'detached-explicit', 'request-ut', 'request-spec', 'request-plan', 'request-coding', 'request-spec-invalid', 'request-plan-invalid', 'request-spec-cut', 'request-plan-cut', 'testing-fail', 'testing-offline', 'testing-manual', 'unresolved'] as const) cases.push({
-  name: (mode === 'impact-reuse' || mode === 'impact-null' ? 'scope revision direct: ' : 'real prepare CLI / bridge scope lifecycle: ') + mode
-    + (mode === 'design-gap' ? ' (contract expansion)' : mode === 'detached' ? ' (project-root launch)'
-      : mode === 'request-spec' || mode === 'request-plan' ? ' (definition request)' : ''),
-  run: () => mode === 'impact-reuse' || mode === 'impact-null' ? rejectImpactRevision(mode) : runScopeScenario(mode),
-});
-cases.push({ name: 'P7 Feature evidence cannot credit an unmapped CU goal', run: () => runScopeScenario('direct', false, true) });
-cases.push({ name: 'P7 new default creates real attended completion and CU credit without testing', run: () => runScopeScenario('direct', true) });
-cases.push({ name: '77105c47 inherited negative impact cannot prune a same-run authorized UI change', run: () => runScopeScenario('direct', true, false, false, true) });
-
 // ---------------------------------------------------------------------------
 // §4.4 D0.1 acceptance matrix — pure-resolver rows. These were developed as a
 // standalone probe and promoted here verbatim: they lock the anti-wash guarantees
@@ -2256,114 +740,6 @@ cases.push({ name: 'D2 baseline is frozen once by the first coding-bearing revis
   assert.throws(() => resolveRunBaseline(manifest, [revision(implementing, 1), revision(implementing, 2, 'a'.repeat(40))] as never[]), /未由首条/);
   // The value itself must be an exact SHA — the 40-hex rule is not skipped at the event layer.
   assert.throws(() => resolveRunBaseline(manifest, [revision(implementing, 1, 'not-a-sha')] as never[]), /sha|SHA/);
-} });
-
-cases.push({ name: 'D0.2 a real CU design does not need a predicted file inventory to prepare coding', async run() {
-  // §5.4「对 component-blueprint/valid 的 CU 生成候选 → prepare-run 直接可用」这一行，
-  // 此前只有手工拼候选的用例，没有走过 `prepareFeatureScopeCandidate` 的真实 CU 路径。
-  const repo = path.resolve(__dirname, '../../..');
-  const { root } = setupGoalRuntimeHost('codex');
-  const frameworkRoot = path.join(root, 'framework');
-  try {
-    for (const dir of ['harness', 'profiles', 'agents', 'skills', 'specs', 'templates', 'docs']) fs.symlinkSync(path.join(repo, dir), path.join(frameworkRoot, dir), process.platform === 'win32' ? 'junction' : 'dir');
-    fs.cpSync(path.join(repo, 'workflows'), path.join(frameworkRoot, 'workflows'), { recursive: true });
-    fs.copyFileSync(path.join(repo, 'package.json'), path.join(frameworkRoot, 'package.json'));
-    fs.cpSync(path.join(repo, 'harness/tests/fixtures/component-blueprint/valid'), root, { recursive: true });
-    const configFile = path.join(root, 'framework.config.json');
-    const config = JSON.parse(fs.readFileSync(configFile, 'utf8')); config.active_workflow = 'obligation-driven';
-    fs.writeFileSync(configFile, JSON.stringify(config)); clearFrameworkConfigCache();
-    configureFeature(root, loadCanonicalChangeUnit(root, 'ledger-app-blueprint', 'ledger-refresh'));
-    const feature = deriveChangeUnitFeatureId('ledger-app-blueprint', 'ledger-refresh');
-    const requirement = 'refresh the ledger list';
-    const generate = () => prepareFeatureScopeCandidate({
-      projectRoot: root, frameworkRoot, feature, completionTarget: 'feature',
-      requestedResults: ['ledger list refreshes'], requestedPhases: ['plan', 'coding', 'review', 'ut'],
-      requirement, overwrite: true,
-    });
-    // 文件预测缺席不等于设计缺失；验收仍须由 spec 补齐。
-    const gapped = generate();
-    assert.equal(gapped.candidate.facts.find(fact => fact.kind === 'design-context')!.applicability, 'required');
-    assert.equal(gapped.candidate.facts.find(fact => fact.kind === 'acceptance-context')!.applicability, 'unknown');
-    // 验收落盘后，不补文件预测也能冻结正常实施范围。
-    fs.writeFileSync(featureFilePath(root, feature, 'acceptance.yaml'),
-      'criteria: [{id: AC-REFRESH, priority: P1, ut_layer: unit, desc: refresh ledger list, expected_result: list refreshed}]' + String.fromCharCode(10));
-    const usable = generate();
-    assert.equal(usable.candidate.facts.find(fact => fact.kind === 'design-context')!.applicability, 'required');
-    assert(usable.candidate.facts.some(fact => fact.kind === 'implementation'), JSON.stringify(usable.candidate.facts));
-    assert(usable.scope.phase_chain.includes('coding'), JSON.stringify(usable.scope.phase_chain));
-    const prepared = prepareGoalModeRun({ projectRoot: root, frameworkRoot, feature, runId: 'p8-cu', adapter: 'codex', requirement });
-    assert.equal(prepared.manifest.run_id, 'p8-cu');
-    assert.deepStrictEqual(prepared.manifest.execution_scope!.phase_chain, usable.scope.phase_chain);
-  } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
-} });
-
-cases.push({ name: 'P7 two real CU runs retain distinct scopes and Component combination duties', async run() {
-  const repo = path.resolve(__dirname, '../../..');
-  const { root } = setupGoalRuntimeHost('codex');
-  const frameworkRoot = path.join(root, 'framework');
-  try {
-    for (const folder of ['harness', 'profiles', 'agents', 'skills', 'specs', 'templates', 'docs']) fs.symlinkSync(path.join(repo, folder), path.join(frameworkRoot, folder), process.platform === 'win32' ? 'junction' : 'dir');
-    fs.cpSync(path.join(repo, 'workflows'), path.join(frameworkRoot, 'workflows'), { recursive: true });
-    fs.copyFileSync(path.join(repo, 'package.json'), path.join(frameworkRoot, 'package.json'));
-    fs.cpSync(path.join(repo, 'harness/tests/fixtures/component-blueprint/valid'), root, { recursive: true });
-    const configFile = path.join(root, 'framework.config.json');
-    const config = JSON.parse(fs.readFileSync(configFile, 'utf8')); config.active_workflow = 'obligation-driven';
-    fs.writeFileSync(configFile, JSON.stringify(config)); clearFrameworkConfigCache();
-    const units = ['ledger-refresh', 'ledger-consumer'];
-    for (const [index, id] of units.entries()) {
-      const loaded = loadCanonicalChangeUnit(root, 'ledger-app-blueprint', id);
-      configureFeature(root, loaded);
-      const feature = deriveChangeUnitFeatureId('ledger-app-blueprint', id);
-      const phases = index === 0 ? ['coding', 'review', 'ut'] : ['coding', 'review', 'ut', 'testing'];
-      // 写集授权只认 `contracts.files`（第七轮阻断 1）：共享 CU 夹具不声明 files，
-      // **只在临时 root 里**补上真实写集（必须在解析 contracts 绑定之前，否则绑定当场就 stale）。
-      {
-        const contractsFile = featureFilePath(root, feature, 'contracts.yaml');
-        const declared = YAML.parse(fs.readFileSync(contractsFile, 'utf8'));
-        declared.files = ['02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets'];
-        fs.writeFileSync(contractsFile, YAML.stringify(declared));
-      }
-      const design = resolveCapabilityInputs({ projectRoot: root, frameworkRoot, feature, phase: 'plan', track: 'full', inputContext: { schema_version: '1.1', subject: { feature }, obligations: {}, required_outputs: [] } }).inputs!.values.contracts;
-      assert.equal(design.state, 'resolved'); if (design.state !== 'resolved') return;
-      // D0.1: a Feature-target candidate that requests coding must declare (a) where its acceptance
-      // comes from and (b) its write set — the shared CU fixture carries neither, so each unit writes
-      // its own acceptance into the TEMP root (shared fixture untouched) and binds the product file.
-      const codeRel = '02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets';
-      fs.writeFileSync(featureFilePath(root, feature, 'acceptance.yaml'), index === 0
-        ? 'criteria: [{id: AC-UNIT, priority: P1, ut_layer: unit, desc: unit verified behavior, expected_result: ok}]\n'
-        : 'criteria: [{id: AC-DEVICE, priority: P1, ut_layer: device, device_focus: on-device check, desc: device verified behavior, expected_result: ok}]\n');
-      const live = resolveCapabilityInputs({ projectRoot: root, frameworkRoot, feature, phase: 'plan', track: 'full', testTargets: [codeRel],
-        inputContext: { schema_version: '1.1', subject: { feature }, obligations: {}, required_outputs: [] } });
-      const liveOf = (id: string): any => { const v = live.inputs?.values?.[id]; assert(v && v.state === 'resolved', id + ': ' + JSON.stringify(v)); return v.binding; };
-      const candidate = request(phases, 'feature');
-      // D0.2 provenance：候选必须自带「为哪句需求而算」的绑定，且与本 run 出生的
-      // `--requirement`（这里是 CU id）同源，否则冻结时判 stale。
-      const requirementInput = resolveCapabilityInputs({ projectRoot: root, frameworkRoot, feature, phase: 'spec', track: 'full', requirement: id,
-        inputContext: { schema_version: '1.1', subject: { feature }, obligations: {}, required_outputs: [] } }).inputs?.values?.requirement;
-      assert(requirementInput && requirementInput.state === 'resolved', 'requirement: ' + JSON.stringify(requirementInput));
-      candidate.request.requirement_basis = requirementInput.binding as any;
-      candidate.facts.push({ id: 'design', kind: 'design-context', applicability: 'required', reason: 'approved construction', basis: [design.binding], satisfied_by: [design.binding] });
-      candidate.facts.push({ id: 'implementation', kind: 'implementation', applicability: 'required', reason: 'authorized source edit', basis: [liveOf('codebase')] });
-      candidate.facts.push({ id: 'acceptance', kind: 'acceptance-context', applicability: 'required', reason: 'unit acceptance', basis: [liveOf('acceptance')], satisfied_by: [liveOf('acceptance')] });
-      // Pruning device verification needs the sourced impact judgement, not a self-reported fact.
-      if (index === 0) candidate.request.impact = { user_visible_behavior_change: false, reason: 'unit validation covers this unit', basis: [liveOf('codebase')] };
-      fs.writeFileSync(featureFilePath(root, feature, 'feature.yaml'), YAML.stringify({ execution_scope: candidate }));
-      const runId = 'p7-' + id;
-      prepareGoalModeRun({ projectRoot: root, frameworkRoot, feature, runId, adapter: 'codex', requirement: id });
-      const result = await runGoalRuntimeChain(root, { frameworkRoot, featureId: feature, resume: runId, skipLegacySeal: true, viaHostBridge: true, adapter: 'codex' });
-      assert.equal(result.exitCode, 0, JSON.stringify(result.events.slice(-3)));
-      assert.deepStrictEqual(result.invokedPhases, ['work-unit-author']);
-      assert.deepStrictEqual(result.harnessPhases, phases);
-    }
-    for (const [index, id] of units.entries()) {
-      const observation = observeChangeUnitCompletion(root, asChangeUnitArtifact(loadCanonicalChangeUnit(root, 'ledger-app-blueprint', id).changeUnit));
-      assert.equal(observation.state, 'VALID', JSON.stringify(observation));
-      assert.equal(observation.expectedChain?.includes('testing'), index === 1);
-    }
-    const inputs = resolveComponentClosureInputs(root, 'ledger-app-blueprint');
-    assert(deriveComponentClosureObligations(root, inputs).some(o => o.required && o.evidence_level === 'integration_combination'), 'CU completion removed combination evidence');
-    assert(!fs.existsSync(featureFilePath(root, deriveChangeUnitFeatureId('ledger-app-blueprint', units[0]), 'testing/reports/summary.json')));
-  } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
 } });
 
 // ===========================================================================
@@ -2815,7 +1191,7 @@ cases.push({ name: 'P4 t5 rejected runless UT preserves the original run reports
     const originals = new Map(['script-report.json', 'summary.json', 'phase-evidence-manifest.json'].map(name =>
       [name, fs.readFileSync(path.join(reportsDir, name))]));
     const result = runRuntimeTestChild({ root }, () => spawnSync(process.execPath,
-      ['-r', require.resolve('ts-node/register/transpile-only'), path.join(repo, 'harness/harness-runner.ts'),
+      [...testCliArgs(path.join(repo, 'harness/harness-runner.ts')),
         '--phase', 'ut', '--feature', feature, '--project-root', root, '--framework-root', frameworkRoot],
       { cwd: root, encoding: 'utf8', timeout: 180000, env: { ...process.env,
         TS_NODE_PROJECT: path.join(repo, 'harness/tsconfig.json'), MAISON_GOAL_RUN_ID: '', MAISON_GOAL_ATTEMPT: '' } }));
@@ -2825,32 +1201,6 @@ cases.push({ name: 'P4 t5 rejected runless UT preserves the original run reports
     assert(!output.includes('schema mismatch'), 'authority rejection must not manufacture a second capability diagnosis');
     for (const [name, bytes] of originals) assert(fs.readFileSync(path.join(reportsDir, name)).equals(bytes), `${name} was overwritten`);
     assert(!fs.existsSync(featureFrozenScopePath(root, feature)));
-  } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
-} });
-
-cases.push({ name: 'revalidate under a run identity keeps out-of-scope phases out of the target set', run() {
-  // ②：run 权威（范围 = coding 起）、feature 目录无冻结记录（宿主 f829b8 形态）；范围外 plan 有 stale summary。
-  const { root, frameworkRoot, feature } = setupRunlessProject();
-  try {
-    execFileSync('git', ['init', '-q'], { cwd: root });
-    fs.writeFileSync(path.join(root, '.gitignore'), 'framework\n');
-    execFileSync('git', ['add', '.'], { cwd: root });
-    execFileSync('git', ['-c', 'user.name=F', '-c', 'user.email=f@e.test', 'commit', '-qm', 'base'], { cwd: root });
-    const prepared = prepareGoalModeRun({ projectRoot: root, frameworkRoot, feature, runId: 'rv-run', adapter: 'codex', requirement: '把 value 改成 42' });
-    const runChain = [...prepared.manifest.execution_scope!.phase_chain];
-    assert.deepStrictEqual(runChain, ['coding', 'review', 'ut']);
-    seedRunlessChain(root, feature, ['plan', ...runChain]);
-    // 范围外 plan 的 summary 在闭环后被改 → stale
-    const planSummary = path.join(featurePhaseReportsDir(root, feature, 'plan', frameworkRoot), 'summary.json');
-    fs.writeFileSync(planSummary, JSON.stringify({ ...JSON.parse(fs.readFileSync(planSummary, 'utf8')), note: 'edited' }));
-    assert.equal(recomputePhaseEvidenceStaleness(root, feature, ['plan'], { frameworkRoot })[0].verdict, 'stale', '前提：plan stale');
-    assert(recomputePhaseEvidenceStaleness(root, feature, runChain, { frameworkRoot }).every(s => s.verdict === 'fresh'), '前提：范围内 fresh');
-    const { code, out } = revalidateCaptured(root, frameworkRoot, feature, 'rv-run');
-    assert.equal(code, 0, out);
-    const record = JSON.parse(fs.readFileSync(featureFilePath(root, feature, REVALIDATION_RECORD_FILE), 'utf8'));
-    assert.deepStrictEqual(record.chain, runChain, JSON.stringify(record.chain));
-    assert.deepStrictEqual(record.targets, [], JSON.stringify(record.targets));
-    assert.equal(record.exit_code, 0);
   } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
 } });
 
@@ -3123,8 +1473,7 @@ cases.push({ name: '1804 real sync-closure closes its phase without signing new 
     fs.writeFileSync(path.join(reportsDir, 'trace.json'), JSON.stringify({ schema_version: '1.0.0', feature, phase: 'ut' }));
     const projectionAbs = featureFilePath(root, feature, 'feature-completion.json');
     assert(!fs.existsSync(projectionAbs), '前提：尚未生成完成投影');
-    const args = ['-r', require.resolve('ts-node/register/transpile-only'),
-      path.join(repo, 'harness/harness-runner.ts'), '--sync-closure', '--phase', 'ut', '--feature', feature,
+    const args = [...testCliArgs(path.join(repo, 'harness/harness-runner.ts')), '--sync-closure', '--phase', 'ut', '--feature', feature,
       '--project-root', root, '--framework-root', frameworkRoot];
     const runSync = () => spawnSync(process.execPath, args,
       { cwd: root, encoding: 'utf8', timeout: 180000, env: { ...process.env, TS_NODE_PROJECT: path.join(repo, 'harness/tsconfig.json'), MAISON_GOAL_RUN_ID: '' } });
@@ -3133,9 +1482,11 @@ cases.push({ name: '1804 real sync-closure closes its phase without signing new 
     assert(!JSON.parse(summaryBytes.toString()).closure_status && !JSON.parse(summaryBytes.toString()).closure_commit);
     assert(!loadPhaseEvidenceManifest(root, feature, 'ut'), 'the fixture must not pre-sign the missing phase evidence');
     fs.unlinkSync(reportFile);
-    const missing = runSync();
-    assert.notEqual(missing.status, 0, (missing.stdout ?? '') + (missing.stderr ?? ''));
-    assert(((missing.stdout ?? '') + (missing.stderr ?? '')).includes('required_check_conclusion'), 'a real missing result must remain a required-check gap');
+    const summary = JSON.parse(summaryBytes.toString());
+    const checks = readPhaseChecks(root, feature, 'ut', summary);
+    const disposition = resolveCurrentDisposition(readCurrentDispositionInput({ projectRoot: root, frameworkRoot, feature, chain: ['ut'],
+      currentResults: [{ phase: 'ut', summary, checks }] }));
+    assert(disposition.completionBlocking.some(problem => problem.id === 'required_check_conclusion' && problem.phase === 'ut'));
     assert.deepEqual(fs.readFileSync(summaryFile), summaryBytes, 'a missing result must not rewrite the old open summary');
     assert(!fs.existsSync(projectionAbs));
     fs.writeFileSync(reportFile, reportBytes);
@@ -3314,10 +1665,7 @@ cases.push({ name: 'D1 feature facts identity is checked even with a validated b
   } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
 } });
 
-cases.push({ name: 'D1 three real runless harness-runner phase calls freeze once and stay run-free', run() {
-  // 必修 2：**真实 CLI** 的无 run 三阶段链路。断言的是这条路径上属于 D1 的事实：
-  // 首次调用冻结、之后只读复用、全程不造 run、旧 track 不再门控 phase、候选漂移当场 BLOCKER。
-  // （阶段检查器本身的裁决不在本用例的判据里——那是各 checker 自己的验收。）
+cases.push({ name: 'D1 public runless Coding freezes once and keeps the modern phase selection', run() {
   const repo = path.resolve(__dirname, '../../..');
   const { root, frameworkRoot, feature } = setupRunlessProject();
   try {
@@ -3325,51 +1673,37 @@ cases.push({ name: 'D1 three real runless harness-runner phase calls freeze once
     fs.writeFileSync(path.join(root, '.gitignore'), 'framework\n');
     execFileSync('git', ['add', '.'], { cwd: root });
     execFileSync('git', ['-c', 'user.name=F', '-c', 'user.email=f@e.test', 'commit', '-qm', 'base'], { cwd: root });
-    // feature.yaml 残留 lite：现代权威在场后不得再按 lite 拒掉 review/ut（阻断 1 的真实形状）
-    const decl = YAML.parse(fs.readFileSync(featureTrackDeclPath(root, feature), 'utf8'));
+    const declPath = featureTrackDeclPath(root, feature);
+    const decl = YAML.parse(fs.readFileSync(declPath, 'utf8'));
     decl.track = 'lite';
-    fs.writeFileSync(featureTrackDeclPath(root, feature), YAML.stringify(decl));
-    const runPhase = (phase: string) => spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'),
-      path.join(repo, 'harness/harness-runner.ts'), '--phase', phase, '--feature', feature,
-      '--project-root', root, '--framework-root', frameworkRoot],
-      { cwd: root, encoding: 'utf8', timeout: 300000, env: { ...process.env, TS_NODE_PROJECT: path.join(repo, 'harness/tsconfig.json'), MAISON_GOAL_RUN_ID: '' } });
+    fs.writeFileSync(declPath, YAML.stringify(decl));
+    const frozenPath = featureFrozenScopePath(root, feature);
+    assert(!fs.existsSync(frozenPath), 'the first public check must start without a frozen scope');
+    const coding = spawnSync(process.execPath, [...testCliArgs(path.join(repo, 'harness/harness-runner.ts')),
+      '--phase', 'coding', '--feature', feature, '--project-root', root, '--framework-root', frameworkRoot],
+      { cwd: root, encoding: 'utf8', env: { ...process.env, TS_NODE_PROJECT: path.join(repo, 'harness/tsconfig.json'), MAISON_GOAL_RUN_ID: '' } });
+    const output = (coding.stdout ?? '') + (coding.stderr ?? '');
+    assert.equal(coding.error, undefined, output);
+    assert.notEqual(coding.status, null, output);
+    const frozen = readFeatureFrozenScope(root, feature);
+    assert(frozen, 'the public Coding check must freeze the feature scope: ' + output);
+    assert.equal(frozen.candidate_fingerprint, featureScopeCandidateFingerprint(root, feature));
 
-    const coding = runPhase('coding');
-    const combined = (result: ReturnType<typeof runPhase>) => (result.stdout ?? '') + (result.stderr ?? '');
-    // ① 首次调用冻结（**由真实 CLI 落盘**，不是测试直接调函数）
-    assert(fs.existsSync(featureFrozenScopePath(root, feature)), '真实 CLI 首次调用没有冻结 feature 范围：' + combined(coding));
-    const frozenAt = readFeatureFrozenScope(root, feature)!.frozen_at;
-    // ② 旧 track 不再门控：review / ut 不得被判成非法 phase
-    for (const phase of ['review', 'ut']) {
-      const result = runPhase(phase);
-      assert(!combined(result).includes('的合法集'), `phase ${phase} 仍被旧 track 门控：` + combined(result));
-    }
-    // ③ 之后每次只读复用，不重写记录
-    assert.equal(readFeatureFrozenScope(root, feature)!.frozen_at, frozenAt, '后续阶段调用重写了冻结记录');
-    // ④ 全程不造 run
-    assert(!fs.existsSync(featureFilePath(root, feature, 'goal-runs')), '无 run 路径造出了 goal-runs 目录');
-    assert(!fs.existsSync(featureFilePath(root, feature, 'feature-completion.json')), 'direct phase checks must not create Feature completion');
-    assert.equal(readFeatureFrozenScope(root, feature)!.revisions.length, 0, 'direct phase checks must not act as the scope runner');
-    // ⑤ 无身份调用在准入处拒绝漂移，不覆盖既有正式报告。
-    const reportPath = path.join(featurePhaseReportsDir(root, feature, 'coding', frameworkRoot), 'script-report.json');
-    const summaryPath = path.join(featurePhaseReportsDir(root, feature, 'coding', frameworkRoot), 'summary.json');
-    const originalReport = fs.readFileSync(reportPath), originalSummary = fs.readFileSync(summaryPath);
-    const drifted = YAML.parse(fs.readFileSync(featureTrackDeclPath(root, feature), 'utf8'));
-    drifted.execution_scope.request.requested_results = ['drifted'];
-    fs.writeFileSync(featureTrackDeclPath(root, feature), YAML.stringify(drifted));
-    const rejected = runPhase('coding');
-    assert.notEqual(rejected.status, 0, 'drifting runless input must be rejected');
-    assert(combined(rejected).includes('[execution_scope_frozen]'), combined(rejected));
-    assert(fs.readFileSync(reportPath).equals(originalReport) && fs.readFileSync(summaryPath).equals(originalSummary),
-      'a rejected runless caller must preserve the original current reports');
-    // Restore the original candidate, then transfer the unfinished legacy scope and existing reports.
-    fs.writeFileSync(featureTrackDeclPath(root, feature), YAML.stringify(decl));
-    const priorReport = fs.readFileSync(path.join(featurePhaseReportsDir(root, feature, 'coding', frameworkRoot), 'script-report.json'));
-    const handed = prepareGoalModeRun({ projectRoot: root, frameworkRoot, feature, adapter: 'generic', runId: '1804-legacy-transfer', requirement: '把 value 改成 42' });
-    assert.equal(readFeatureFrozenScope(root, feature)!.transfers!.at(-1)!.run_id, handed.manifest.run_id);
-    assert(fs.readFileSync(path.join(featurePhaseReportsDir(root, feature, 'coding', frameworkRoot), 'script-report.json')).equals(priorReport), 'formal transfer preserves the actual prior report bytes');
-    const rejoined = prepareGoalModeRun({ projectRoot: root, frameworkRoot, feature, adapter: 'generic', requirement: '把 value 改成 42' });
-    assert.equal(rejoined.manifest.run_id, handed.manifest.run_id, 'same unfinished delivery must rejoin instead of creating another active run');
+    const reportsDir = featurePhaseReportsDir(root, feature, 'coding', frameworkRoot);
+    const originals = [frozenPath, path.join(reportsDir, 'script-report.json'), path.join(reportsDir, 'summary.json')]
+      .map(file => ({ file, bytes: fs.readFileSync(file) }));
+    const reused = ensureFeatureExecutionScopeFrozen({ projectRoot: root, frameworkRoot, feature });
+    assert.equal(reused.status, 'reused', JSON.stringify(reused.checks));
+    assert.deepStrictEqual(reused.checks, []);
+    const workflow = resolveWorkflowSpec(root, { frameworkRoot });
+    const track = resolveFeatureTrack(loadFeatureTrackDecl(root, feature));
+    const allowed = resolvePhaseChain(workflow, track);
+    assert.equal(track, 'full');
+    assert(allowed.idSet.has('review') && allowed.idSet.has('ut'), JSON.stringify(allowed.featureOrdered));
+    for (const { file, bytes } of originals) assert(fs.readFileSync(file).equals(bytes), file + ' changed on reuse');
+    assert(!fs.existsSync(featureFilePath(root, feature, 'goal-runs')), 'runless checking must not create a run');
+    assert(!fs.existsSync(featureFilePath(root, feature, 'feature-completion.json')), 'direct phase checking must not sign Feature completion');
+    assert.equal(readFeatureFrozenScope(root, feature)!.revisions.length, 0, 'direct phase checking must not revise scope');
   } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
 } });
 
@@ -3377,7 +1711,7 @@ cases.push({ name: 'D1 a coding-only runless request is managed through the cand
   // plan 7e1d4b93 · R3 的生产路径用例。回答的是需求 §8 问题 1：coding-only 的不建 run
   // 请求里，「候选 → 首次阶段调用冻结 → 候选指纹核对」这条路真实成立到什么程度。
   //
-  // 三个独立 root 分别验证正常冻结、无权威拒绝、候选与源码先后顺序的观测边界。
+  // 公开入口拒绝缺候选，恢复后用同一冻结判定；另查候选晚于源码的输入。
   const repo = path.resolve(__dirname, '../../..');
   const runlessCodingOnly = () => setupRunlessProject({ chain: ['coding'], completionTarget: 'request' });
   /** `execution_scope` 是 feature.yaml 里的**字段**，不是文件——解析后删字段再写回。 */
@@ -3395,59 +1729,38 @@ cases.push({ name: 'D1 a coding-only runless request is managed through the cand
   };
   const runPhase = (root: string, frameworkRoot: string, feature: string, phase: string) => spawnSync(
     process.execPath,
-    ['-r', require.resolve('ts-node/register/transpile-only'), path.join(repo, 'harness/harness-runner.ts'),
+    [...testCliArgs(path.join(repo, 'harness/harness-runner.ts')),
       '--phase', phase, '--feature', feature, '--project-root', root, '--framework-root', frameworkRoot],
     { cwd: root, encoding: 'utf8', timeout: 300000, env: { ...process.env, TS_NODE_PROJECT: path.join(repo, 'harness/tsconfig.json'), MAISON_GOAL_RUN_ID: '' } },
   );
   const combined = (r: ReturnType<typeof runPhase>) => (r.stdout ?? '') + (r.stderr ?? '');
 
-  // ---- 场景 A：候选在场 → 首次阶段调用冻结、之后只读复用、全程不造 run ----
   {
     const { root, frameworkRoot, feature } = runlessCodingOnly();
     try {
       seedGit(root);
-      // ① 候选形状：coding-only + request 终点 ⇒ 单阶段链
-      const declared = YAML.parse(fs.readFileSync(featureTrackDeclPath(root, feature), 'utf8')) as { execution_scope?: unknown };
-      assert(declared.execution_scope, '前提：夹具应已由生产 prepareFeatureScopeCandidate 写出候选');
-      const first = runPhase(root, frameworkRoot, feature, 'coding');
-      // ③ 首次冻结由**真实 CLI** 落盘，且记录的候选指纹＝磁盘候选指纹
-      assert(fs.existsSync(featureFrozenScopePath(root, feature)), '真实 CLI 首次调用没有冻结 feature 范围：' + combined(first));
-      const record = readFeatureFrozenScope(root, feature)!;
-      assert.deepStrictEqual(record.execution_scope.phase_chain, ['coding'], JSON.stringify(record.execution_scope.phase_chain));
-      assert.equal(record.execution_scope.completion_target, 'request', JSON.stringify(record.execution_scope.completion_target));
-      assert.equal(record.candidate_fingerprint, featureScopeCandidateFingerprint(root, feature), '冻结记录的候选指纹与磁盘候选不一致');
-      // 之后只读复用，不重写记录
-      const frozenAt = record.frozen_at;
-      const reused = ensureFeatureExecutionScopeFrozen({ projectRoot: root, frameworkRoot, feature });
-      assert.equal(reused.status, 'reused', JSON.stringify(reused.checks));
-      assert.equal(readFeatureFrozenScope(root, feature)!.frozen_at, frozenAt, '后续阶段调用重写了冻结记录');
-      // ④ 全程不造 run
-      assert(!fs.existsSync(featureFilePath(root, feature, 'goal-runs')), '无 run 路径造出了 goal-runs 目录');
-    } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
-  }
-
-  // ---- 场景 B：没有候选 → 阶段根本跑不起来（「必须先经候选入口」的机器面）----
-  // 拒绝不能制造阶段证据，补回真实候选后同一 root 仍能正常冻结。
-  {
-    const { root, frameworkRoot, feature } = runlessCodingOnly();
-    try {
-      seedGit(root);
-      const candidate = fs.readFileSync(featureTrackDeclPath(root, feature));
+      const declPath = featureTrackDeclPath(root, feature);
+      const candidate = fs.readFileSync(declPath);
       dropCandidate(root, feature);
       const blocked = runPhase(root, frameworkRoot, feature, 'coding');
-      const reportPath = path.join(featurePhaseReportsDir(root, feature, 'coding', frameworkRoot), 'script-report.json');
-      const summaryPath = path.join(featurePhaseReportsDir(root, feature, 'coding', frameworkRoot), 'summary.json');
+      const reports = featurePhaseReportsDir(root, feature, 'coding', frameworkRoot);
       assert.equal(blocked.status, 1, combined(blocked));
       assert(combined(blocked).includes('execution_scope_frozen') && combined(blocked).includes('--prepare-scope'), combined(blocked));
-      assert(!fs.existsSync(reportPath) && !fs.existsSync(summaryPath), '没有权威的拒绝不得发布阶段报告');
+      assert(!fs.existsSync(path.join(reports, 'script-report.json')) && !fs.existsSync(path.join(reports, 'summary.json')), '没有权威的拒绝不得发布阶段报告');
       assert(!fs.existsSync(featureFrozenScopePath(root, feature)), '没有候选却冻结了范围');
-      fs.writeFileSync(featureTrackDeclPath(root, feature), candidate);
-      const recovered = runPhase(root, frameworkRoot, feature, 'coding');
-      assert(fs.existsSync(featureFrozenScopePath(root, feature)), '补回候选后不得被先前拒绝污染：' + combined(recovered));
+
+      fs.writeFileSync(declPath, candidate);
+      const recovered = ensureFeatureExecutionScopeFrozen({ projectRoot: root, frameworkRoot, feature });
+      assert.equal(recovered.status, 'frozen', JSON.stringify(recovered.checks));
+      const record = readFeatureFrozenScope(root, feature)!;
+      assert.deepStrictEqual(record.execution_scope.phase_chain, ['coding']);
+      assert.equal(record.execution_scope.completion_target, 'request');
+      assert.equal(record.candidate_fingerprint, featureScopeCandidateFingerprint(root, feature));
+      assert(!fs.existsSync(featureFilePath(root, feature, 'goal-runs')));
     } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
   }
 
-  // ---- 场景 C：**真正制造「候选晚于代码」** —— 删候选 → 改源码 → 生成候选 → 首次冻结 ----
+  // **真正制造「候选晚于代码」** —— 删候选 → 改源码 → 生成候选 → 首次冻结 ----
   // 这条的价值是把上限钉死：冻结记录里没有任何代码基线（feature-execution-scope.ts 的
   // FeatureFrozenScope 只有 frozen_at / candidate_fingerprint 等，没有 base_sha），无 run 的
   // diff 基线默认就是工作区，所以这个历史顺序在冻结入口处**完全不可见**。
@@ -3612,23 +1925,19 @@ cases.push({ name: 'D1 sync-closure and reconcile-only go through the same freez
   const repo = path.resolve(__dirname, '../../..');
   const { root, frameworkRoot, feature } = setupRunlessProject();
   try {
-    const cli = (...args: string[]) => spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'),
-      path.join(repo, 'harness/harness-runner.ts'), ...args, '--feature', feature, '--project-root', root, '--framework-root', frameworkRoot],
+    const cli = (...args: string[]) => spawnSync(process.execPath, [...testCliArgs(path.join(repo, 'harness/harness-runner.ts')), ...args, '--feature', feature, '--project-root', root, '--framework-root', frameworkRoot],
       { cwd: root, encoding: 'utf8', timeout: 180000, env: { ...process.env, TS_NODE_PROJECT: path.join(repo, 'harness/tsconfig.json'), MAISON_GOAL_RUN_ID: '' } });
     const out = (result: ReturnType<typeof cli>) => (result.stdout ?? '') + (result.stderr ?? '');
     // ① 首次直接 `--sync-closure`：冻结记录由这条入口落盘
     assert(!fs.existsSync(featureFrozenScopePath(root, feature)), '前提：尚未冻结');
     const first = cli('--sync-closure', '--phase', 'ut');
     assert(fs.existsSync(featureFrozenScopePath(root, feature)), 'sync-closure 入口没有走冻结入口：' + out(first));
-    // ② 候选漂移后：sync-closure 必须报 execution_scope_frozen 并退出，不基于旧冻结范围闭环
+    // 候选漂移后，reconcile-only 必须在生成结果之前走同一冻结检查。
     const decl = YAML.parse(fs.readFileSync(featureTrackDeclPath(root, feature), 'utf8'));
     decl.execution_scope.request.requested_results = ['drifted'];
     fs.writeFileSync(featureTrackDeclPath(root, feature), YAML.stringify(decl));
-    const drifted = cli('--sync-closure', '--phase', 'ut');
-    assert.notEqual(drifted.status, 0, 'sync-closure 在候选漂移下仍然继续了：' + out(drifted));
-    assert(out(drifted).includes('候选已变更而冻结范围未经修订'), out(drifted));
-    // ③ reconcile-only 同样被同一条检查拦住
     const reconcile = cli('--report-reconcile-only', '--phase', 'testing');
+    assert.equal(reconcile.status, 1, out(reconcile));
     assert(out(reconcile).includes('候选已变更而冻结范围未经修订'), out(reconcile));
   } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
 } });
@@ -3710,8 +2019,7 @@ cases.push({ name: 'D1 the real runtime refuses a manifest-carried scope that di
       execution_scope: birth,
       unattended: { write_mode: 'full-access', approval_mode: 'never', max_turns: 20 },
     }));
-    const runtime = runRuntimeTestChild({ root }, () => spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'),
-      path.join(repo, 'harness/scripts/goal-phase-runtime.ts'),
+    const runtime = runRuntimeTestChild({ root }, () => spawnSync(process.execPath, [...testCliArgs(path.join(repo, 'harness/scripts/goal-phase-runtime.ts')),
       '--feature', feature, '--adapter', 'generic', '--manifest', manifestPath, '--override-manifest',
       '--project-root', root, '--framework-root', frameworkRoot, '--foreground-ok'],
       { cwd: root, encoding: 'utf8', timeout: 180000, env: { ...process.env, TS_NODE_PROJECT: path.join(repo, 'harness/tsconfig.json') } }));
@@ -3825,8 +2133,7 @@ cases.push({ name: '1804 independent sync-closure does not consume a foreign req
     }, null, 2));
     const originalReport = fs.readFileSync(reportAbs);
     const frozenBytes = fs.readFileSync(featureFrozenScopePath(root, feature));
-    const cli = spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'),
-      path.join(repo, 'harness/harness-runner.ts'), '--sync-closure', '--phase', 'ut', '--feature', feature,
+    const cli = spawnSync(process.execPath, [...testCliArgs(path.join(repo, 'harness/harness-runner.ts')), '--sync-closure', '--phase', 'ut', '--feature', feature,
       '--project-root', root, '--framework-root', frameworkRoot],
       { cwd: root, encoding: 'utf8', timeout: 180000, env: { ...process.env, TS_NODE_PROJECT: path.join(repo, 'harness/tsconfig.json'), MAISON_GOAL_RUN_ID: '' } });
     const out = (cli.stdout ?? '') + (cli.stderr ?? '');
@@ -3859,8 +2166,7 @@ cases.push({ name: 'D1 a superseding successor is born from the source run, not 
     prepareGoalModeRun({ projectRoot: root, frameworkRoot, feature, runId: 'd1-src', adapter: 'generic', requirement: '把 value 改成 42' });
     assert.equal(readFeatureFrozenScope(root, feature)!.transfers?.at(-1)?.run_id, 'd1-src');
     const sourceBirth = loadFrozenExecutionScope(root, feature, 'd1-src')!;
-    const cli = runRuntimeTestChild({ root }, () => spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'),
-      path.join(repo, 'harness/scripts/goal-phase-runtime.ts'),
+    const cli = runRuntimeTestChild({ root }, () => spawnSync(process.execPath, [...testCliArgs(path.join(repo, 'harness/scripts/goal-phase-runtime.ts')),
       '--feature', feature, '--adapter', 'generic', '--supersede', 'd1-src', '--run-id', 'd1-succ',
       '--requirement', '把 value 改成 42', '--project-root', root, '--framework-root', frameworkRoot, '--foreground-ok', '--force'],
       { cwd: root, encoding: 'utf8', timeout: 180000, env: { ...process.env, TS_NODE_PROJECT: path.join(repo, 'harness/tsconfig.json') } }));
@@ -3904,7 +2210,7 @@ cases.push({ name: 'b2d7 t3 legacy single-value transferred_to reads as the only
 } });
 
 cases.push({ name: 'b2d7 t3 #15 runless completion: --supersede is refused toward revision; a revision then a fresh run is born from it', run() {
-  // feature 载体（record.run_id=null）没有 run 可 supersede：空值 / 不存在的 run 都拒绝并指向「先追加修订再起新 run」；
+  // feature 载体（record.run_id=null）没有 run 可 supersede：不存在的 run 被拒绝并指向「先追加修订再起新 run」；
   // 修订后新 run 出生读修订后的有效范围（既有 appendFeatureScopeRevision + resolveBirthExecutionScope，无生产改动）。
   const repo = path.resolve(__dirname, '../../..');
   const { root, frameworkRoot, feature } = setupRunlessProject();
@@ -3922,28 +2228,21 @@ cases.push({ name: 'b2d7 t3 #15 runless completion: --supersede is refused towar
     fs.mkdirSync(reportsDir, { recursive: true });
     fs.writeFileSync(path.join(reportsDir, 'trace.json'), JSON.stringify({ schema_version: '1.0.0', feature, phase: 'ut' }));
     const env = { ...process.env, TS_NODE_PROJECT: path.join(repo, 'harness/tsconfig.json'), MAISON_GOAL_RUN_ID: '' };
-    const sync = spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'),
-      path.join(repo, 'harness/harness-runner.ts'), '--sync-closure', '--phase', 'ut', '--feature', feature,
-      '--project-root', root, '--framework-root', frameworkRoot], { cwd: root, encoding: 'utf8', timeout: 180000, env });
-    assert.equal(sync.status, 0, (sync.stdout ?? '') + (sync.stderr ?? ''));
-    assert(!fs.existsSync(featureFilePath(root, feature, 'feature-completion.json')), 'new independent closure cannot write a legacy completion');
-    // Only this explicit historical fixture creates the old null-run record consumed below.
+    finalizePhaseClosure({ projectRoot: root, frameworkRoot, feature, phase: 'ut', persistPhaseState: () => {} });
     legacyFeatureCompletionFixture({ projectRoot: root, frameworkRoot, feature, phase: 'ut', workflowTrack: 'full' });
     const projection = JSON.parse(fs.readFileSync(featureFilePath(root, feature, 'feature-completion.json'), 'utf8')) as { original_path: string };
     assert.equal(JSON.parse(fs.readFileSync(path.join(root, projection.original_path), 'utf8')).run_id, null, '前提：feature 载体完成');
     const recordBytes = fs.readFileSync(featureFrozenScopePath(root, feature), 'utf8');
-    for (const target of ['', '20260101T000000Z-9h0st9']) {
-      const cli = runRuntimeTestChild({ root }, () => spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'),
-        path.join(repo, 'harness/scripts/goal-phase-runtime.ts'),
-        '--feature', feature, '--adapter', 'generic', '--supersede', target, '--requirement', '把 value 改成 42',
-        '--project-root', root, '--framework-root', frameworkRoot, '--foreground-ok', '--force'],
-        { cwd: root, encoding: 'utf8', timeout: 180000, env }));
-      const out = (cli.stdout ?? '') + (cli.stderr ?? '');
-      assert.notEqual(cli.status, 0, `--supersede ${JSON.stringify(target)} 未被拒绝：${out}`);
-      assert(out.includes('追加 feature 范围修订'), `拒绝未指向修订：${out}`);
-      const runsDir = featureFilePath(root, feature, 'goal-runs');
-      assert(!fs.existsSync(runsDir) || !fs.readdirSync(runsDir).some(id => fs.existsSync(path.join(runsDir, id, 'manifest.json'))), '拒绝后仍建了 run');
-    }
+    const target = '20260101T000000Z-9h0st9';
+    const cli = runRuntimeTestChild({ root }, () => spawnSync(process.execPath, [...testCliArgs(path.join(repo, 'harness/scripts/goal-phase-runtime.ts')),
+      '--feature', feature, '--adapter', 'generic', '--supersede', target, '--requirement', '把 value 改成 42',
+      '--project-root', root, '--framework-root', frameworkRoot, '--foreground-ok', '--force'],
+      { cwd: root, encoding: 'utf8', timeout: 180000, env }));
+    const out = (cli.stdout ?? '') + (cli.stderr ?? '');
+    assert.notEqual(cli.status, 0, `--supersede ${JSON.stringify(target)} 未被拒绝：${out}`);
+    assert(out.includes('追加 feature 范围修订'), `拒绝未指向修订：${out}`);
+    const runsDir = featureFilePath(root, feature, 'goal-runs');
+    assert(!fs.existsSync(runsDir) || !fs.readdirSync(runsDir).some(id => fs.existsSync(path.join(runsDir, id, 'manifest.json'))), '拒绝后仍建了 run');
     assert.equal(fs.readFileSync(featureFrozenScopePath(root, feature), 'utf8'), recordBytes);
     // 完成后修正：按当前输入追加一条修订（这里把 plan 加回链上）→ 新 run 出生读修订后的有效范围
     const effective = featureEffectiveScope(readFeatureFrozenScope(root, feature)!);
@@ -4124,89 +2423,74 @@ cases.push({ name: 'D1 a runless repair reopens its owner and cannot use old dow
   } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
 } });
 
-cases.push({ name: 'P1-T8 runless file and inline requirements reach the real spec harness without a text snapshot', run() {
+cases.push({ name: 'P1-T8 runless requirements retain original file binding and reject missing or stale input', run() {
   const repo = path.resolve(__dirname, '../../..');
-  const invoke = (root: string, argv: string[]) => spawnSync(process.execPath, [require.resolve('ts-node/dist/bin.js'), ...argv], {
-    cwd: root, encoding: 'utf8', timeout: 120000,
-    env: { ...process.env, TS_NODE_PROJECT: path.join(repo, 'harness/tsconfig.json'), MAISON_GOAL_RUN_ID: '' },
-  });
-  const prepare = (root: string, frameworkRoot: string, feature: string, requirementArgs: string[]) => invoke(root, [
-    path.join(repo, 'harness/scripts/goal-mode-entry.ts'), '--prepare-scope', '--completion-target', 'request',
-    '--requested-phases', 'spec', '--requested-results', 'verify requirement', '--feature', feature,
-    '--project-root', root, '--framework-root', frameworkRoot, '--overwrite', ...requirementArgs,
-  ]);
-  const harness = (root: string, frameworkRoot: string, feature: string, requirementArgs: string[] = []) => invoke(root, [
-    path.join(repo, 'harness/harness-runner.ts'), '--phase', 'spec', '--feature', feature,
-    '--project-root', root, '--framework-root', frameworkRoot, ...requirementArgs,
-  ]);
-  const capabilityState = (root: string, feature: string) => {
-    const summary = JSON.parse(fs.readFileSync(path.join(featurePhaseReportsDir(root, feature, 'spec'), 'summary.json'), 'utf8')) as { capability_resolutions?: Array<{ id: string; state: string }> };
-    return summary.capability_resolutions?.find(item => item.id === 'capability_spec_requirement')?.state;
+  type Project = ReturnType<typeof setupRunlessProject>;
+  type SourceInput = NonNullable<Parameters<typeof resolveFeaturePhaseCapabilityInput>[2]>;
+  const prepare = ({ root, frameworkRoot, feature }: Project, source: SourceInput) => {
+    const resolved = resolveRequirementInput({ projectRoot: root, ...source });
+    assert(resolved.text);
+    prepareFeatureScopeCandidate({ projectRoot: root, frameworkRoot, feature, completionTarget: 'request',
+      requestedPhases: ['spec'], requestedResults: ['verify requirement'], requirement: resolved.text,
+      requirementSourceFiles: resolved.sources, overwrite: true });
   };
+  const resolve = ({ root, frameworkRoot, feature }: Project, source?: SourceInput) => resolveFeaturePhaseCapabilityInput({
+    projectRoot: root, frameworkRoot, feature, phase: 'spec', featuresDir: relFeaturesDir(root),
+  }, resolveWorkflowSpec(root, { frameworkRoot }), source);
 
-  {
-    const { root, frameworkRoot, feature } = setupRunlessProject({ chain: ['spec'], completionTarget: 'request' });
-    try {
-      const req = path.join(root, 'requirements', 'request.md'); fs.mkdirSync(path.dirname(req), { recursive: true });
-      fs.writeFileSync(req, '原始文件需求：验证 value。\n');
-      const made = prepare(root, frameworkRoot, feature, ['--requirement-file', 'requirements/request.md']);
-      assert.equal(made.status, 0, made.stderr + made.stdout);
-      const binding = featureRequirementBinding(root, feature);
-      assert.equal(binding.dependencies.length, 1, JSON.stringify(binding));
-      assert(binding.source_refs.includes('requirements/request.md'), JSON.stringify(binding));
-      harness(root, frameworkRoot, feature);
-      assert.equal(capabilityState(root, feature), 'resolved', '文件需求应从冻结 binding 的原始 source 恢复');
-      fs.writeFileSync(req, '被换掉的需求\n');
-      const stale = harness(root, frameworkRoot, feature);
-      const report = fs.readFileSync(path.join(featurePhaseReportsDir(root, feature, 'spec'), 'script-report.json'), 'utf8');
-      assert.notEqual(stale.status, 0);
-      assert(/input binding stale|scope owner/.test(report), report);
-    } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
-  }
+  const file = setupRunlessProject({ chain: ['spec'], completionTarget: 'request' });
+  try {
+    const requirementFile = 'requirements/request.md';
+    const original = path.join(file.root, requirementFile);
+    fs.mkdirSync(path.dirname(original), { recursive: true });
+    fs.writeFileSync(original, '原始文件需求：验证 value。\n');
+    prepare(file, { requirementFile });
+    const binding = featureRequirementBinding(file.root, file.feature);
+    assert.equal(binding.dependencies.length, 1, JSON.stringify(binding));
+    assert(binding.source_refs.includes(requirementFile), JSON.stringify(binding));
+    const check = spawnSync(process.execPath, [...testCliArgs(path.join(repo, 'harness/harness-runner.ts')),
+      '--phase', 'spec', '--feature', file.feature, '--project-root', file.root, '--framework-root', file.frameworkRoot],
+      { cwd: file.root, encoding: 'utf8', env: { ...process.env, TS_NODE_PROJECT: path.join(repo, 'harness/tsconfig.json'), MAISON_GOAL_RUN_ID: '' } });
+    assert.equal(check.error, undefined);
+    assert.notEqual(check.status, null);
+    const summaryPath = path.join(featurePhaseReportsDir(file.root, file.feature, 'spec'), 'summary.json');
+    assert(fs.existsSync(summaryPath), check.stderr + check.stdout);
+    const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf8')) as { capability_resolutions: Array<{ id: string; state: string }> };
+    assert.equal(summary.capability_resolutions.find(row => row.id === 'capability_spec_requirement')?.state, 'resolved');
+    fs.writeFileSync(original, '被换掉的需求\n');
+    assert.throws(() => resolve(file), /input binding stale/);
+  } finally { fs.rmSync(file.root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
 
-  {
-    const { root, frameworkRoot, feature } = setupRunlessProject({ chain: ['spec'], completionTarget: 'request' });
-    try {
-      const inline = '原始 inline 需求：验证 value';
-      const made = prepare(root, frameworkRoot, feature, ['--requirement', inline]);
-      assert.equal(made.status, 0, made.stderr + made.stdout);
-      assert.equal(featureRequirementBinding(root, feature).dependencies.length, 0);
-      const missing = harness(root, frameworkRoot, feature);
-      assert.notEqual(missing.status, 0);
-      assert((missing.stdout + missing.stderr).includes('请用 --requirement 或 --requirement-file'), missing.stdout + missing.stderr);
-      const legacyFile = path.join(root, 'requirements', 'legacy-inline.md'); fs.mkdirSync(path.dirname(legacyFile), { recursive: true });
-      fs.writeFileSync(legacyFile, inline);
-      harness(root, frameworkRoot, feature, ['--requirement-file', 'requirements/legacy-inline.md']);
-      assert.equal(capabilityState(root, feature), 'resolved');
-      const changed = harness(root, frameworkRoot, feature, ['--requirement', '另一句需求']);
-      assert.notEqual(changed.status, 0);
-      assert(/input binding stale|scope owner/.test(fs.readFileSync(path.join(featurePhaseReportsDir(root, feature, 'spec'), 'script-report.json'), 'utf8')));
-    } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
-  }
+  const inline = setupRunlessProject({ chain: ['spec'], completionTarget: 'request' });
+  try {
+    const requirement = '原始 inline 需求：验证 value';
+    prepare(inline, { requirement });
+    assert.equal(featureRequirementBinding(inline.root, inline.feature).dependencies.length, 0);
+    assert.throws(() => resolve(inline), /请用 --requirement 或 --requirement-file/);
+    const requirementFile = 'requirements/legacy-inline.md';
+    const original = path.join(inline.root, requirementFile);
+    fs.mkdirSync(path.dirname(original), { recursive: true });
+    fs.writeFileSync(original, requirement);
+    assert.equal(resolve(inline, { requirementFile }).requirement, requirement);
+    assert.throws(() => resolve(inline, { requirement: '另一句需求' }), /input binding stale/);
+  } finally { fs.rmSync(inline.root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
 
-  {
-    const { root, frameworkRoot, feature } = setupRunlessProject({ chain: ['spec'], completionTarget: 'request' });
-    const externalRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'runless-external-requirement-'));
-    const externalFile = path.join(externalRoot, 'request.md');
-    try {
-      fs.writeFileSync(externalFile, '项目外原始需求：验证 value。\n');
-      const made = prepare(root, frameworkRoot, feature, ['--requirement-file', externalFile]);
-      assert.equal(made.status, 0, made.stderr + made.stdout);
-      assert.equal(featureRequirementBinding(root, feature).dependencies.length, 0, '项目外来源不得进入项目内冻结 dependency');
-      const missing = harness(root, frameworkRoot, feature);
-      assert.notEqual(missing.status, 0);
-      assert((missing.stdout + missing.stderr).includes('请用 --requirement 或 --requirement-file'), missing.stdout + missing.stderr);
-      const supplied = harness(root, frameworkRoot, feature, ['--requirement-file', externalFile]);
-      assert.equal(capabilityState(root, feature), 'resolved', supplied.stderr + supplied.stdout);
-      fs.writeFileSync(externalFile, '项目外另一句需求\n');
-      const changed = harness(root, frameworkRoot, feature, ['--requirement-file', externalFile]);
-      assert.notEqual(changed.status, 0);
-      assert(/input binding stale|scope owner/.test(fs.readFileSync(path.join(featurePhaseReportsDir(root, feature, 'spec'), 'script-report.json'), 'utf8')));
-    } finally {
-      fs.rmSync(externalRoot, { recursive: true, force: true });
-      fs.rmSync(root, { recursive: true, force: true });
-      clearFrameworkConfigCache();
-    }
+  const external = setupRunlessProject({ chain: ['spec'], completionTarget: 'request' });
+  const externalRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'runless-external-requirement-'));
+  try {
+    const requirementFile = path.join(externalRoot, 'request.md');
+    const requirement = '项目外原始需求：验证 value。';
+    fs.writeFileSync(requirementFile, requirement + '\n');
+    prepare(external, { requirementFile });
+    assert.equal(featureRequirementBinding(external.root, external.feature).dependencies.length, 0, '项目外来源不得进入项目内冻结 dependency');
+    assert.throws(() => resolve(external), /请用 --requirement 或 --requirement-file/);
+    assert.equal(resolve(external, { requirementFile }).requirement, requirement);
+    fs.writeFileSync(requirementFile, '项目外另一句需求\n');
+    assert.throws(() => resolve(external, { requirementFile }), /input binding stale/);
+  } finally {
+    fs.rmSync(externalRoot, { recursive: true, force: true });
+    fs.rmSync(external.root, { recursive: true, force: true });
+    clearFrameworkConfigCache();
   }
 } });
 
@@ -4231,13 +2515,12 @@ cases.push({ name: '9e46 standalone Spec restores its signed file requirement an
       frozen_scope_fingerprint: executionScopeFingerprint(featureEffectiveScope(frozen.record!)),
       source_code_paths: ['src/demo/value.ts'], ready_to_produce: true }) + '---\n# Original request facts\n');
     const workflow = resolveWorkflowSpec(root, { frameworkRoot });
-    const { resolveFeaturePhaseCapabilityInput } = await import('../../scripts/utils/capability-resolution-entry-input');
     const signer = resolveFeaturePhaseCapabilityInput({ ...stage, featuresDir: relFeaturesDir(root) }, workflow, { requirementFile });
     const resolution = resolveCapabilityInputs({ ...stage, track: 'full', ...signer });
     const { inputs: resolvedInputs } = resolution;
     assert(!signer.factsRebuildReason && signer.factsContext?.source_paths.includes('src/demo/value.ts'), JSON.stringify(signer.factsRebuildReason));
     assert.equal(resolvedInputs?.values.requirement?.state, 'resolved');
-    const { prepareFixtureVerifierMaterial } = await import('../helpers/goal-run-driver');
+    const { prepareFixtureVerifierMaterial } = await import('../utils/verifier-evidence-fixture');
     const report = generateScriptReport(path.join(frameworkRoot, 'harness'), 'spec', feature, root, [
       { id: 'spec_file_exists', category: 'structure', description: 'Spec material checked', status: 'PASS', severity: 'BLOCKER', details: 'current spec read' },
     ], frameworkRoot);
@@ -4258,17 +2541,14 @@ cases.push({ name: '9e46 standalone Spec restores its signed file requirement an
     const afterOwnManifest = resolveFeaturePhaseCapabilityInput({ ...stage, featuresDir: relFeaturesDir(root) }, workflow);
     assert(!afterOwnManifest.factsRebuildReason && afterOwnManifest.factsContext?.source_paths.includes('src/demo/value.ts'),
       'the signed request facts still resolve after publication: ' + JSON.stringify(afterOwnManifest.factsRebuildReason));
-    const invoke = () => spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'), runner,
+    const invoke = () => spawnSync(process.execPath, [...testCliArgs(runner),
       '--execute-verifier', '--phase', 'spec', '--feature', feature, '--project-root', root, '--framework-root', frameworkRoot], {
         cwd: root, timeout: 120000, encoding: 'utf8', windowsHide: true, env: {
           ...process.env, TS_NODE_PROJECT: tsNodeProject, MAISON_GOAL_RUN_ID: '', MAISON_GOAL_ATTEMPT: '',
         },
       });
-    const first = invoke();
-    const waiting = first.stdout + first.stderr;
-    assert.notEqual(first.status, 0, waiting);
-    assert(/模型绑定|当前适配器无法运行独立核验/.test(waiting), waiting);
-    assert(!waiting.includes('已签材料已变化'), waiting);
+    const implicit = resolveFeaturePhaseCapabilityInput({ ...stage, featuresDir: relFeaturesDir(root), purpose: 'bound-verifier' }, workflow);
+    assert.equal(implicit.requirement, requirement);
     fs.writeFileSync(path.join(root, requirementFile), '变更后的需求正文。\n');
     const changed = invoke();
     assert.notEqual(changed.status, 0);
@@ -4280,7 +2560,7 @@ cases.push({ name: '9e46 standalone Spec restores its signed file requirement an
 cases.push({ name: '1804 real independent spec updates acceptance but leaves scope revision to its Goal owner', run() {
   const repo = path.resolve(__dirname, '../../..');
   const { root, frameworkRoot, feature } = setupRunlessProject({ chain: ['spec'], completionTarget: 'feature' });
-  const runSpec = () => spawnSync(process.execPath, [require.resolve('ts-node/dist/bin.js'), path.join(repo, 'harness/harness-runner.ts'),
+  const runSpec = () => spawnSync(process.execPath, [...testCliArgs(path.join(repo, 'harness/harness-runner.ts'), [require.resolve('ts-node/dist/bin.js')]),
     '--phase', 'spec', '--feature', feature, '--project-root', root, '--framework-root', frameworkRoot,
     '--requirement', '把 value 改成 42'], { cwd: root, encoding: 'utf8', timeout: 120000,
     env: { ...process.env, TS_NODE_PROJECT: path.join(repo, 'harness/tsconfig.json'), MAISON_GOAL_RUN_ID: '' } });
@@ -4293,8 +2573,8 @@ cases.push({ name: '1804 real independent spec updates acceptance but leaves sco
     assert(candidate.scope.phase_chain.includes('spec'), JSON.stringify(candidate.scope.phase_chain));
     fs.writeFileSync(acceptancePath, YAML.stringify(initialAcceptance));
     assert(!fs.existsSync(featureFrozenScopePath(root, feature)), '前提：首次 harness 尚未冻结');
-    runSpec();
-    assert(fs.existsSync(featureFrozenScopePath(root, feature)), '真实 harness 首次调用没有在 acceptance 已在场时冻结');
+    const frozen = ensureFeatureExecutionScopeFrozen({ projectRoot: root, frameworkRoot, feature });
+    assert.equal(frozen.status, 'frozen', JSON.stringify(frozen.checks));
     const record = readFeatureFrozenScope(root, feature)!;
     const fingerprint = executionScopeFingerprint(featureEffectiveScope(record));
     const facts = featureFilePath(root, feature, path.join('context', 'facts.md')); fs.mkdirSync(path.dirname(facts), { recursive: true });
@@ -4304,23 +2584,28 @@ cases.push({ name: '1804 real independent spec updates acceptance but leaves sco
     const acceptance = YAML.parse(fs.readFileSync(acceptancePath, 'utf8')); acceptance.criteria[0].expected_result = '42';
     fs.writeFileSync(acceptancePath, YAML.stringify(acceptance));
     const corrected = runSpec();
-    assert.equal(corrected.status, 0, corrected.stderr + corrected.stdout);
+    assert.equal(corrected.status, 1, corrected.stderr + corrected.stdout);
+    const reports = featurePhaseReportsDir(root, feature, 'spec', frameworkRoot);
+    const scriptReport = JSON.parse(fs.readFileSync(path.join(reports, 'script-report.json'), 'utf8'));
+    const summary = JSON.parse(fs.readFileSync(path.join(reports, 'summary.json'), 'utf8'));
+    assert.equal(scriptReport.summary.verdict, 'PASS');
+    assert.equal(summary.verdict, 'PASS');
+    assert.equal(summary.next_action, 'run_verifier_then_receipt');
+    assert.equal(summary.closure_status, 'open');
+    const current = completedCheckResultsFromOutput(corrected.stdout).find(row => row.phase === 'spec');
+    assert(current && !current.evaluation.completed && !current.evaluation.disposition.completionEligible);
+    assert(current.evaluation.disposition.completionBlocking.some(problem => problem.phase === 'spec'
+      && problem.id === 'attestation_present' && problem.action === 'verify' && problem.owner === 'spec'));
+    const receipt = writeReceiptProjection(root, feature, 'spec');
+    assert(receipt.wrote, receipt.failure);
+    assert.throws(() => finalizePhaseClosure({ projectRoot: root, frameworkRoot, feature, phase: 'spec',
+      persistPhaseState: () => assert.fail('pending verification cannot publish phase state') }), /attestation_present/);
     const after = readFeatureFrozenScope(root, feature)!;
     assert.equal(after.revisions.length, 0, 'independent checks do not advance a full-delivery scope');
     assert.equal(executionScopeFingerprint(featureEffectiveScope(after)), fingerprint, 'the existing scope remains available for formal transfer');
     assert(!fs.existsSync(featureFilePath(root, feature, 'feature-completion.json')));
-    acceptance.criteria = [];
-    fs.writeFileSync(acceptancePath, YAML.stringify(acceptance));
-    const invalid = runSpec();
-    assert.notEqual(invalid.status, 0, '非法减空验收不得形成第二条修订');
-    assert.equal(readFeatureFrozenScope(root, feature)!.revisions.length, 0, 'independent invalid acceptance cannot revise orchestration');
   } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
 } });
-
-cases.push({ name: '4f L3 option_b 真实 checker→summary→runner 回 coding/review/UT', run: () => runScopeScenario('ut-l3-code') });
-cases.push({ name: '4f L3 option_a 补链外 spec 裁定且不降 unit，再由 coding 修复后回 UT', run: () => runScopeScenario('ut-l3-spec') });
-
-cases.push({ name: 'c6a3d918 UT real missing use-case restores chain-external plan in same run', run: () => runScopeScenario('ut-design-gap') });
 
 cases.push({ name: 'c6a3d918 unknown real design obligation holds its downstream until owner supplies it', run() {
   const wf: WorkflowSpec = { ...workflow, artifacts: workflow.artifacts.map(a => ({ ...a,
@@ -4336,10 +2621,6 @@ cases.push({ name: 'c6a3d918 unknown real design obligation holds its downstream
   assert.deepStrictEqual(repaired.phase_chain, ['coding', 'review', 'ut', 'testing']);
   assert.equal(repaired.requested_results.join(), result.requested_results.join());
 } });
-
-cases.push({ name: 'repair1 R2 review to spec then confirmed chain-external coding defect', run: () => runScopeScenario('spec-gap-revert', false, false, true) });
-cases.push({ name: 'repair1 R2 UT to plan then confirmed chain-external coding regression', run: () => runScopeScenario('ut-design-gap', false, false, true) });
-cases.push({ name: 'repair1 R2 request-only cannot add chain-external coding', run: () => runScopeScenario('request-ut', false, false, 'request') });
 
 // These pure rows model an already accepted definition input, not a product PASS.
 // File freshness and actual reader admission are covered by the real-file caller tests.
@@ -4436,7 +2717,6 @@ cases.push({ name: 'formal definition proof causal: caller maps cannot mint or s
     definitionProofs: new Map([['design:causal', [forged]]]), stalePhases: ['plan'] });
   assert.deepStrictEqual(reused.obligations.find(obligation => obligation.id === 'design:causal')!.satisfied_by, [accepted.ref], 'only the original registered ref may be consumed');
 } });
-
 
 /** Native-format fixture only; late process controls intentionally carry no Q answers or HEAD. */
 function nativeScopeControl(root: string, feature: string, runId: string) {
@@ -4569,7 +2849,7 @@ cases.push({ name: 'B user-control: public next constructs the source proposal a
     execFileSync('git', ['-c', 'user.name=Fixture', '-c', 'user.email=f@e.test', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'baseline'], { cwd: root });
     const prepared = prepareGoalModeRun({ projectRoot: root, frameworkRoot, feature, runId, adapter: 'codex', requirement: '把 value 改成 42' });
     const original = JSON.parse(fs.readFileSync(prepared.manifestPath, 'utf8'));
-    const invoke = (ref?: string) => spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'), path.join(repo, 'harness/scripts/goal-mode-entry.ts'),
+    const invoke = (ref?: string) => spawnSync(process.execPath, [...testCliArgs(path.join(repo, 'harness/scripts/goal-mode-entry.ts')),
       '--next', '--run-mode', 'attended', '--adapter', 'codex', '--feature', feature, '--run-id', runId, '--project-root', root, '--framework-root', frameworkRoot,
       ...(ref ? ['--session-ref', ref] : [])], { cwd: root, encoding: 'utf8', timeout: 45000,
       env: { ...process.env, CLAUDE_CONFIG_DIR: native.home, TS_NODE_PROJECT: path.join(repo, 'harness/tsconfig.json') } });
@@ -4578,24 +2858,9 @@ cases.push({ name: 'B user-control: public next constructs the source proposal a
     const revisions = events.filter(event => event.type === 'scope_revised') as Array<import('../../scripts/utils/goal-runner-phase').GoalRunEvent & { revision_input: ExecutionScopeInput; execution_scope: ExecutionScope }>;
     assert.equal(revisions.length, 1, first.stderr + first.stdout);
     assert.equal(revisions[0].revision_input.request.user_control?.run_id, runId); assert(!revisions[0].execution_scope.phase_chain.includes('testing'));
-    const second = invoke();
-    assert.equal(loadAuthoritativeEvents(eventsFile).filter(event => event.type === 'scope_revised').length, 1, second.stderr + second.stdout);
+    await withRuntimeTest({ root }, () => runGoalModeSessionStep({ projectRoot: root, frameworkRoot, feature, runId, adapter: 'codex', runMode: 'attended' }));
+    assert.equal(loadAuthoritativeEvents(eventsFile).filter(event => event.type === 'scope_revised').length, 1);
     assert(!loadEffectiveExecutionScope(root, feature, runId)!.phase_chain.includes('testing'));
-    // The next real user arrives in another native session after the accepted source was removed.
-    const nextSession = 'cccccccc-2222-4444-8888-dddddddddddd', nextNative = path.join(path.dirname(native.file), nextSession + '.jsonl');
-    fs.renameSync(native.file, native.file + '.moved');
-    fs.writeFileSync(nextNative, fs.readFileSync(native.file + '.moved', 'utf8').split('aaaaaaaa-1111-4444-8888-bbbbbbbbbbbb').join(nextSession));
-    assert(!fs.existsSync(native.file));
-    const restored = invoke(nextNative + '#restore');
-    assert.equal(loadAuthoritativeEvents(eventsFile).filter(event => event.type === 'scope_revised').length, 2, restored.stderr + restored.stdout);
-    assert(loadEffectiveExecutionScope(root, feature, runId)!.phase_chain.includes('testing'));
-    fs.appendFileSync(eventsFile, JSON.stringify({ type: 'phase_verdict', phase: 'testing', verdict: 'FAIL', action: 'halt', run_id: runId, ts: new Date().toISOString() }) + '\n');
-    const rejected = invoke(nextNative + '#skip-again');
-    const failedHistory = loadAuthoritativeEvents(eventsFile);
-    assert.equal(failedHistory.filter(event => event.type === 'scope_revised').length, 2, rejected.stderr + rejected.stdout);
-    assert(failedHistory.some(event => event.type === 'phase_verdict' && event.phase === 'testing' && event.verdict === 'FAIL'));
-    assert(loadEffectiveExecutionScope(root, feature, runId)!.phase_chain.includes('testing'), 'existing FAIL disappeared through a process override');
-
     const current = JSON.parse(fs.readFileSync(prepared.manifestPath, 'utf8'));
     assert.equal(current.requirement, original.requirement); assert.equal(current.run_base_sha, original.run_base_sha); assert.deepEqual(current.execution_scope, original.execution_scope);
     assert.equal(fs.readdirSync(featureFilePath(root, feature, 'goal-runs')).length, 1, 'control created another run');
@@ -4701,25 +2966,6 @@ cases.push({ name: 'B1 a formal repeated repair keeps its open obligations and d
   } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
 } });
 
-type ScopeGroup = 'prepare-early' | 'prepare-late' | 'runtime';
-// prepare 各分支自备宿主；边界按一次完整计时分为三个近等成本段。
-function caseGroup(_name: string, index: number): ScopeGroup {
-  return index < 21 ? 'prepare-early' : index < 37 ? 'prepare-late' : 'runtime';
+export function runAll(): Promise<UnitCaseResult[]> {
+  return runUnitCasesAsync(cases);
 }
-
-export async function runSelectedCases(selector?: string, group?: ScopeGroup): Promise<SelectedUnitCases> {
-  const results: UnitCaseResult[] = [];
-  const timings: UnitExecutionTiming[] = [];
-  for (const [index, test] of cases.entries()) {
-    if ((group && group !== caseGroup(test.name, index)) || !matchesUnitCase(test.name, selector)) continue;
-    const endTiming = startCaseTiming([test.name], timings);
-    try { await test.run(); results.push({ name: test.name, ok: true }); }
-    catch (error) { results.push({ name: test.name, ok: false, error: String(error) }); }
-    finally { endTiming(); }
-  }
-  return selectedUnitCases(results, selector, timings);
-}
-
-export async function runAll(): Promise<UnitCaseResult[]> { return (await runSelectedCases()).results; }
-
-export const listCaseGroups = (group?: ScopeGroup) => unitCaseGroups(cases.filter((c, i) => !group || group === caseGroup(c.name, i)).map(c => c.name));

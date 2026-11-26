@@ -1,6 +1,6 @@
 // reliability-metrics.unit.mjs — dev-only 单测（plan 1dbe4fa4 t1 / §3、§7 A2–A6、A10）
 //
-// 跑法：npm run release:check-plans-test（= node --test scripts/tests/*.unit.mjs）。
+// 由仓根 `npm test` 发现并执行。
 // 被测对象是入口 scripts/reliability-metrics.mjs（它再用 harness 的 ts-node 起采集器子进程），
 // 所以每个用例都走真实入口，不绕过 CLI 直接调 TS。
 //

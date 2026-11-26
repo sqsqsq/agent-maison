@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 // spec-requirement-provenance.unit.test.ts — plan c8e5b3f1 t1
 //
 // 阶段驱动 `/spec` 手动 L2 闭环：derive.requirement 候选链插入 fidelity-intent SSOT 段
@@ -563,11 +564,13 @@ const cases: Case[] = [
 
 export function runAll(): UnitCaseResult[] {
   return cases.map((c) => {
+    const endUnitCase = beginUnitCase(`spec-requirement-provenance: ${c.name}`);
+    if (!endUnitCase) return discoveryResult(`spec-requirement-provenance: ${c.name}`);
     try {
       c.run();
       return { name: `spec-requirement-provenance: ${c.name}`, ok: true };
     } catch (err) {
       return { name: `spec-requirement-provenance: ${c.name}`, ok: false, error: (err as Error).stack ?? (err as Error).message };
-    }
+    } finally { endUnitCase(); }
   });
 }

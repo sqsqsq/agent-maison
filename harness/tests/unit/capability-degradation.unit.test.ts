@@ -1,3 +1,4 @@
+import { runUnitCasesAsync } from '../utils/unit-cases';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -280,7 +281,6 @@ const cases: TestCase[] = [...fallbackAndInvalidCases,
   },
 ];
 
-
 function modernFixture(root: string, artifact = 'contracts@1', policy = 'fail'): { framework: string; context: PhaseInputContext; resolve: (context?: PhaseInputContext) => ReturnType<typeof resolveCapabilityInputs> } {
   const framework = path.join(root, 'maison');
   for (const relative of ['skills/feature', 'workflows', 'specs/artifact-schemas']) {
@@ -543,7 +543,6 @@ cases.push(
   },
 );
 
-
 cases.push({
   name: 'source file sets use canonical bindings and prove legacy order without accepting real drift',
   run: () => project(root => {
@@ -699,7 +698,5 @@ cases.push({
 });
 
 export async function runAll(): Promise<Array<{ name: string; ok: boolean; error?: string }>> {
-  const results = [];
-  for (const testCase of cases) { try { await testCase.run(); results.push({ name: testCase.name, ok: true }); } catch (error) { results.push({ name: testCase.name, ok: false, error: (error as Error).message }); } }
-  return results;
+  return runUnitCasesAsync(cases);
 }

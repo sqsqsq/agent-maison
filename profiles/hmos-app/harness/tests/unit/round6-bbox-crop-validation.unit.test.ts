@@ -1,3 +1,4 @@
+import { runUnitCases } from '../../../../../harness/tests/utils/unit-cases';
 export const layer = 'capability' as const; // Actual native helper calls are part of this suite.
 /**
  * round6 回归夹具单测（plan f2d8c4a6 · P0-A/B/C/E + P2）：
@@ -270,7 +271,7 @@ test('p0b_kind_classification', () => {
 
 // cursor/codex review：`profiles/hmos-app/harness/tests/unit/` 不在 `harness/node_modules`
 // 的祖先路径链上，裸 `require('yaml')` 恒 MODULE_NOT_FOUND，导致不设 NODE_PATH 时
-// `npm run test:unit` 从本 suite 起整进程崩溃、后续 suite 结果全部丢失（发版门禁若裸跑会炸）。
+// 测试加载该套件时会失败。
 // 改用 createRequire 锚定 harness 根（与 fidelity-shared.ts/ui-spec-shared.ts 加载 yaml
 // 的既有写法一致），不依赖调用方目录、不需要 NODE_PATH。
 const requireFromHarness = createRequire(path.resolve(__dirname, '../../../../../harness/harness-runner.ts'));
@@ -1338,14 +1339,5 @@ test('p1c_placement_degraded_not_silent', () => {
 });
 
 export function runAll(): UnitCaseResult[] {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (e) {
-      results.push({ name: c.name, ok: false, error: (e as Error).message });
-    }
-  }
-  return results;
+  return runUnitCases(cases);
 }

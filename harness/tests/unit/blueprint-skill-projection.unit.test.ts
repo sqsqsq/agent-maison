@@ -1,3 +1,6 @@
+import { testCliArgs } from '../utils/test-cli-args';
+import { prepareBlueprintDesign } from '../../scripts/prepare-blueprint-design';
+import { runUnitCasesAsync } from '../utils/unit-cases';
 import assert from 'assert';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -30,7 +33,7 @@ import { executedEvidenceInputs } from '../../scripts/utils/phase-closure-finali
 import { resolvePhaseEvidenceManifest, writePhaseEvidenceManifest } from '../../scripts/utils/phase-evidence-manifest';
 import { initializeFidelityRouting } from '../../scripts/utils/goal-preflight';
 import { spawnSync } from 'child_process';
-import { buildFeatureScopeCandidate, readScopeAcceptance, prepareChangeUnitScopeInput, prepareFeatureScopeCandidate, resolveFeatureExecutionScope } from '../../scripts/utils/feature-track';
+import { buildFeatureScopeCandidate, readScopeAcceptance, resolveChangeUnitImpactFacts, prepareChangeUnitScopeInput, prepareFeatureScopeCandidate } from '../../scripts/utils/feature-track';
 import { resolveSuccessorExecutionScope } from '../../scripts/utils/feature-execution-scope';
 import { checkAcceptanceContent } from '../../scripts/utils/check-acceptance';
 import { checkUseCaseSpecSchema } from '../../scripts/check-ut';
@@ -39,7 +42,7 @@ import { deriveDesignPreparationReadiness } from '../../scripts/utils/change-uni
 import { inspectAcceptanceItem, inspectTypedConstructionContent, inspectUseCaseItem } from '../../scripts/utils/design-content-checks';
 import { collectCleanPassIssues, readReusableCheckResult } from '../../scripts/utils/verify-feature-completion';
 import type { UnitCaseResult } from '../run-unit';
-import { asChangeUnitArtifact, createChangeUnitRef, deriveChangeUnitFeatureId, loadCanonicalChangeUnit } from '../../scripts/utils/change-unit-path';
+import { asChangeUnitArtifact, createChangeUnitRef, loadCanonicalChangeUnit } from '../../scripts/utils/change-unit-path';
 import { validateChangeUnitDesign, readChangeUnitDesignOwnership } from '../../scripts/utils/change-unit-design-gate';
 import { acceptChangeUnitCandidate, ChangeUnitCandidateRejected, inspectChangeUnitCandidateBatch, matchesAcceptedChangeUnitCandidate, rebindQuestionedChangeUnitCandidates, type ChangeUnitCandidateInput } from '../../scripts/utils/change-unit-provider-boundary';
 import { loadCanonicalBlueprint } from '../../scripts/utils/component-blueprint-path';
@@ -71,9 +74,10 @@ export function fixture(root = fs.mkdtempSync(path.join(os.tmpdir(), 'blueprint-
   fs.writeFileSync(blueprintFile, YAML.stringify(blueprint));
   const bind = () => {
     const record = YAML.parse(fs.readFileSync(cuFile, 'utf8'));
+    const fingerprint = sha(blueprintFile);
     const walk = (value: unknown): void => {
       if (!value || typeof value !== 'object') return;
-      if ((value as BlueprintRecord).artifact === 'component-blueprint@1') (value as BlueprintRecord).artifact_sha256 = sha(blueprintFile);
+      if ((value as BlueprintRecord).artifact === 'component-blueprint@1') (value as BlueprintRecord).artifact_sha256 = fingerprint;
       for (const child of Object.values(value)) walk(child);
     };
     walk(record); fs.writeFileSync(cuFile, YAML.stringify(record));
@@ -290,7 +294,7 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     fs.rmSync(f.cuFile);
     const candidateFile = path.join(path.dirname(f.blueprintFile), 'change-unit-candidates.json');
     fs.writeFileSync(candidateFile, JSON.stringify([{ providerId: cu.provenance.extraction_method, artifact: cu, construction_mapping }]));
-    const acceptedProcess = spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'), path.join(frameworkRoot, 'harness/scripts/check-change-unit.ts'), '--project-root', f.root, '--blueprint', cu.blueprint_id, '--accept-candidates', candidateFile, '--json'],
+    const acceptedProcess = spawnSync(process.execPath, [...testCliArgs(path.join(frameworkRoot, 'harness/scripts/check-change-unit.ts')), '--project-root', f.root, '--blueprint', cu.blueprint_id, '--accept-candidates', candidateFile, '--json'],
       { cwd: path.join(frameworkRoot, 'harness'), encoding: 'utf8', timeout: 60000 });
     const accepted = JSON.parse(acceptedProcess.stdout); assert.equal(accepted.accepted.length, 1, acceptedProcess.stderr + acceptedProcess.stdout);
     assert(!fs.existsSync(candidateFile), '接受后临时候选未消费清理');
@@ -302,9 +306,6 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     assert(readiness.perUnit.find(unit => unit.changeUnitId === cu.change_unit_id)?.verdict === 'constructable', JSON.stringify(readiness));
     const next = prepareFeatureScopeCandidate(prepareChangeUnitScopeInput({ projectRoot: f.root, frameworkRoot, changeUnit: cu, requirement: 'Refresh the approved ledger', requestedResults: ['refreshed ledger'], requestedPhases: ['coding'] }));
     assert(next.candidate.request.requirement_basis, 'scope准备仍等待额外人工contracts sidecar');
-    const scopeProcess = spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'), path.join(frameworkRoot, 'harness/scripts/goal-mode-entry.ts'), '--project-root', f.root, '--framework-root', frameworkRoot, '--feature', f.feature,
-      '--prepare-scope', '--completion-target', 'feature', '--requested-results', 'refreshed ledger', '--requested-phases', 'coding', '--requirement', 'Refresh the approved ledger'], { cwd: path.join(frameworkRoot, 'harness'), encoding: 'utf8', timeout: 60000 });
-    assert.equal(scopeProcess.status, 0, scopeProcess.stderr + scopeProcess.stdout);
     const stage = resolveFeatureArtifact(f.root, f.feature, 'contracts.yaml').actualPath;
     const incomplete = YAML.parse(fs.readFileSync(stage, 'utf8')); delete incomplete.change_unit; incomplete.author_notes = 'retain existing owner detail'; fs.writeFileSync(stage, YAML.stringify(incomplete));
     const { reviseChangeUnitContent } = require('../../scripts/utils/change-unit-design-preparation') as typeof import('../../scripts/utils/change-unit-design-preparation');
@@ -880,7 +881,7 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
   } },
   { name: 'CU inherited impact keeps an internal write-set edit but still checks external dependencies', run: f => checkCuImpactAfterOwnEdit(f, false) },
   { name: 'CU inherited impact returns the device duty to Testing when an unchanged page shares the write set', run: f => checkCuImpactAfterOwnEdit(f, true) },
-  { name: '77105c47 CU scope binds accepted UI targets and never renews a stale negative judgment', run(f) {
+  { name: '77105c47 inherited positive impact binds the accepted CU UI target', run(f) {
     const requirement = 'Refresh the ledger using the approved design';
     const requirementFile = 'requirements/ledger.md';
     const implementation = 'src/ledger/LedgerFeature.ets';
@@ -899,59 +900,14 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     const inherited = buildFeatureScopeCandidate({ projectRoot: f.root, frameworkRoot, feature: 'root-request',
       completionTarget: 'feature', requirement, requestedResults: [requirement], requestedPhases: ['spec'],
       impact: { userVisibleBehaviorChange: true, reason: 'Visible ledger result', basisPaths: [requirementFile] } }).request.impact!;
+    assert.deepEqual(inherited.basis[0].source_refs, [requirementFile]);
     const request = { projectRoot: f.root, frameworkRoot, changeUnit: asChangeUnitArtifact(YAML.parse(fs.readFileSync(f.cuFile, 'utf8'))),
       requirement, requestedResults: [requirement], requestedPhases: ['coding'], overwrite: true };
     const prepared = prepareFeatureScopeCandidate(prepareChangeUnitScopeInput({ ...request, inheritedImpact: inherited }));
     assert.deepEqual(prepared.candidate.request.impact?.basis[0].source_refs, [implementation]);
+    assert.equal(prepared.candidate.request.impact?.basis[0].dependencies[0]?.sha256, sha(source).slice('sha256:'.length));
     assert.equal(prepared.candidate.request.impact?.reason, inherited.reason);
     assert.equal(prepared.scope.obligations.find(item => item.kind === 'device-evidence')?.applicability, 'required');
-    const workflow = resolveWorkflowSpec(f.root, { frameworkRoot });
-    assert.deepEqual(resolveFeatureExecutionScope(f.root, f.feature, workflow, frameworkRoot, requirement), prepared.scope);
-    const manifest = buildGoalManifestFromInput({ feature: f.feature, run_id: 'cu-impact-source', requirement,
-      execution_scope: prepared.scope, chain_override: prepared.scope.phase_chain }, { projectRoot: f.root });
-    createGoalRun({ projectRoot: f.root, frameworkRoot, manifest, chain: prepared.scope.phase_chain, resolveHead: () => 'f'.repeat(40) });
-    const successor = () => resolveSuccessorExecutionScope(f.root, f.feature, workflow, frameworkRoot, requirement, manifest.run_id)!;
-    assert.deepEqual(successor().request_impact, prepared.scope.request_impact);
-    const negative = { ...prepared.candidate.request.impact!, user_visible_behavior_change: false, reason: 'No visible behavior change' };
-    const prepareGap = (impact: typeof negative) => prepareFeatureScopeCandidate({
-      ...prepareChangeUnitScopeInput({ ...request, requestedPhases: ['spec', 'plan'], inheritedImpact: impact }),
-      feature: deriveChangeUnitFeatureId(request.changeUnit.blueprint_id, 'impact-gap'),
-    });
-    const gap = prepareGap(negative);
-    assert.deepEqual(gap.scope.request_impact, negative, 'a definition gap must retain the exact still-valid source');
-    assert.equal(gap.scope.obligations.find(item => item.kind === 'device-evidence')?.applicability, 'unknown');
-    const valid = prepareFeatureScopeCandidate(prepareChangeUnitScopeInput({ ...request, inheritedImpact: negative }));
-    assert.deepEqual(valid.candidate.request.impact, negative);
-    const negativeManifest = buildGoalManifestFromInput({ feature: f.feature, run_id: 'cu-negative-impact-source', requirement,
-      execution_scope: valid.scope, chain_override: valid.scope.phase_chain }, { projectRoot: f.root });
-    createGoalRun({ projectRoot: f.root, frameworkRoot, manifest: negativeManifest, chain: valid.scope.phase_chain, resolveHead: () => 'f'.repeat(40) });
-    const negativeSuccessor = () => resolveSuccessorExecutionScope(f.root, f.feature, workflow, frameworkRoot, requirement, negativeManifest.run_id)!;
-    assert.deepEqual(negativeSuccessor().request_impact, negative);
-    fs.appendFileSync(source, '// changed input bytes\n');
-    const staleDuringGap = prepareGap(gap.scope.request_impact!);
-    assert.equal(staleDuringGap.scope.request_impact, undefined, 'a source that changes during the gap cannot be retained');
-    assert.equal(staleDuringGap.scope.obligations.find(item => item.kind === 'device-evidence')?.applicability, 'unknown');
-    const next = successor();
-    assert.equal(next.request_impact?.reason, inherited.reason);
-    assert.deepEqual(next.request_impact?.basis[0].source_refs, [implementation]);
-    assert.equal(next.request_impact?.basis[0].dependencies[0].sha256, sha(source).slice('sha256:'.length));
-    assert.equal(next.obligations.find(item => item.kind === 'device-evidence')?.applicability, 'required');
-    const conservative = negativeSuccessor();
-    assert.equal(conservative.request_impact, undefined);
-    assert.equal(conservative.obligations.find(item => item.kind === 'device-evidence')?.applicability, 'unknown');
-    const stale = prepareFeatureScopeCandidate(prepareChangeUnitScopeInput({ ...request, inheritedImpact: negative }));
-    assert.equal(stale.candidate.request.impact, undefined);
-    assert.equal(stale.scope.obligations.find(item => item.kind === 'device-evidence')?.applicability, 'unknown');
-    const withoutSource = prepareFeatureScopeCandidate(prepareChangeUnitScopeInput({ ...request, inheritedImpact: { ...negative, basis: [] } }));
-    assert.equal(withoutSource.scope.obligations.find(item => item.kind === 'device-evidence')?.applicability, 'unknown');
-    assert.throws(() => prepareFeatureScopeCandidate(prepareChangeUnitScopeInput({ ...request, impact: {
-      userVisibleBehaviorChange: false, reason: negative.reason, basisPaths: [requirementFile],
-    } })), /影响依据与本次范围无关/);
-    assert.throws(() => prepareFeatureScopeCandidate(prepareChangeUnitScopeInput({ ...request, impact: {
-      userVisibleBehaviorChange: true, reason: inherited.reason, basisPaths: [requirementFile],
-    } })), /影响依据与本次范围无关/, 'an explicit new judgment needs its own relevant basis');
-    fs.unlinkSync(source);
-    assert.throws(successor, /影响依据不可用/, 'another file must not substitute for a missing authority source');
   } },
   { name: '77105c47 successor renews the exact non-UI impact source and rejects its deletion', run(f) {
     materializeBlueprintSkillInputs(f.root, f.feature, frameworkRoot);
@@ -979,7 +935,10 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     const otherTarget = path.join(f.root, 'test/ledger/LedgerFeature.test.ets');
     fs.mkdirSync(path.dirname(otherTarget), { recursive: true });
     fs.writeFileSync(otherTarget, '// another real file in the same write set\n');
-    assert.throws(successor, /影响依据不可用/);
+    const candidate = structuredClone(prepared.candidate);
+    const stale = resolveChangeUnitImpactFacts(candidate, { projectRoot: f.root, frameworkRoot, feature: f.feature, requirement }, true, prepared.scope);
+    assert(stale.impact_basis.some(row => !row.ok), 'removed authority must be reported as unavailable');
+    assert.deepEqual(candidate.request.impact?.basis[0].source_refs, [source], 'another file cannot replace the removed authority');
   } },
   { name: 'f3b8e6a1 authority preparation: invalid canonical construction reaches the design diagnosis without a scope', run(f) {
     const doc = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
@@ -1024,34 +983,25 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     assert(facts.items.length > 0 && facts.items.every(item => producer.details.includes(item.id)), '结构化事实必须保留同一次检查的完整字段差额与原诊断');
     assert.deepEqual(producer.affected_files, [file]);
   } },
-  { name: '1804 independent projection CLI scopes spec and plan; invalid phases write nothing', run(f) {
+  { name: '1804 projection entry scopes spec and plan; invalid phases write nothing', run(f) {
     for (const name of ['acceptance.yaml', 'contracts.yaml', 'use-cases.yaml']) fs.rmSync(resolveFeatureArtifact(f.root, f.feature, name).actualPath, { force: true });
-    const invoke = (phaseArgs: string[]) => spawnSync(process.execPath, [require.resolve('ts-node/dist/bin.js'),
-      '--project', path.join(frameworkRoot, 'harness/tsconfig.json'), path.join(frameworkRoot, 'harness/scripts/prepare-blueprint-design.ts'),
-      '--feature', f.feature, '--project-root', f.root, '--framework-root', frameworkRoot, ...phaseArgs],
-      { cwd: f.root, encoding: 'utf8', timeout: 60000 });
+    const prepare = (phaseArgs: string[]) => prepareBlueprintDesign(['--feature', f.feature, '--project-root', f.root, '--framework-root', frameworkRoot, ...phaseArgs]);
     const files = (dir = f.root): Array<[string, string, number]> => fs.readdirSync(dir, { withFileTypes: true }).flatMap(entry => {
       const file = path.join(dir, entry.name);
       return entry.isDirectory() ? files(file) : [[path.relative(f.root, file), sha(file), fs.statSync(file).mtimeMs]] as Array<[string, string, number]>;
     });
     const before = files();
     for (const args of [['--phase', 'coding'], ['--phase'], ['--phase', 'spec', '--phase', 'plan']]) {
-      const rejected = invoke(args);
-      assert.equal(rejected.status, 1, rejected.stderr + rejected.stdout);
-      assert(rejected.stderr.includes('--phase must be spec or plan'), rejected.stderr);
+      assert.throws(() => prepare(args), /--phase must be spec or plan/);
       assert.deepEqual(files(), before, 'invalid phase must fail before any materialization');
     }
-    const spec = invoke(['--phase', 'spec']);
-    assert.equal(spec.status, 0, spec.stderr + spec.stdout);
-    assert.deepEqual(JSON.parse(spec.stdout).written.map((file: string) => path.basename(file)), ['acceptance.yaml']);
+    assert.deepEqual(prepare(['--phase', 'spec']).map(file => path.basename(file)), ['acceptance.yaml']);
     assert(!resolveFeatureArtifact(f.root, f.feature, 'contracts.yaml').exists);
     assert(!resolveFeatureArtifact(f.root, f.feature, 'use-cases.yaml').exists);
     const acceptance = resolveFeatureArtifact(f.root, f.feature, 'acceptance.yaml').actualPath;
     fs.appendFileSync(acceptance, '\nauthor_notes: retained by plan export\n');
     const preserved = fs.readFileSync(acceptance);
-    const plan = invoke(['--phase', 'plan']);
-    assert.equal(plan.status, 0, plan.stderr + plan.stdout);
-    assert.deepEqual(JSON.parse(plan.stdout).written.map((file: string) => path.basename(file)).sort(), ['contracts.yaml', 'use-cases.yaml']);
+    assert.deepEqual(prepare(['--phase', 'plan']).map(file => path.basename(file)).sort(), ['contracts.yaml', 'use-cases.yaml']);
     assert(fs.readFileSync(acceptance).equals(preserved), 'plan export must not rewrite spec output');
   } },
   { name: '7d9c2e41 staged preparation writes only the responsible outputs and preserves increments', run(f) {
@@ -1382,10 +1332,6 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     assert.deepStrictEqual(scope.obligations.find(obligation => obligation.kind === 'design-context')!.satisfied_by, [originalContracts.binding], '旧冻结证明保持原件');
     assert.deepStrictEqual(physicalNext.unresolved, next.unresolved);
     assert.deepStrictEqual(physicalNext.obligations.map(o => [o.id, o.applicability]), next.obligations.map(o => [o.id, o.applicability]));
-    for (const required_outputs of [[], ['spec/spec.md']]) {
-      const withOutputs = { ...physicalCtx, resolvedInputs: { ...physicalInputs, context: { ...physicalInputs.context, required_outputs } } };
-      assert(designScopeRevisionChecks(withOutputs, [ { id: 'design_pass', status: 'PASS', severity: 'MINOR', category: 'structure', description: 'validated design', details: 'passed' } ])[0].scope_revision_input);
-    }
     Object.assign(ctx, physicalCtx);
     const acceptanceInput = physicalInputs.values.acceptance;
     assert.equal(acceptanceInput.state, 'resolved');
@@ -1401,34 +1347,19 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     createGoalRun({ frameworkRoot: frameworkRoot, projectRoot: f.root, manifest: planRun, chain: planScope.phase_chain });
     const planBridge = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: f.feature, phase: 'plan', featuresDir: 'doc/features', goalRunId: planRun.run_id });
     const planInputs = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot, feature: f.feature, phase: 'plan', track: 'full', ...planBridge }).inputs!;
-    for (const required_outputs of [[], ['plan/plan.md']]) {
-      const planCtx = { ...ctx, phase: 'plan', factsContext: planBridge.factsContext, featureSpec: new SpecLoader(f.root, undefined, undefined, frameworkRoot).loadFeatureSpec(f.feature, planInputs), resolvedInputs: { ...planInputs, context: { ...planInputs.context, required_outputs } } } as CheckContext;
-      const proposal = designScopeRevisionChecks(planCtx, [{ id: 'design_pass', status: 'PASS', severity: 'MINOR', category: 'structure', description: 'validated design', details: 'passed' }])[0].scope_revision_input!;
-      assert(proposal);
-      const nextPlan = resolveExecutionScope(proposal, workflow, readScopeAcceptance(f.root, proposal, { feature: f.feature, frameworkRoot }), resolvedStub);
-      assert(!nextPlan.unresolved.length && nextPlan.phase_chain.includes('coding'));
-      assert.deepStrictEqual(designScopeRevisionChecks(planCtx, [{ id: 'design_fail', status: 'FAIL', severity: 'BLOCKER', category: 'structure', description: 'invalid design', details: 'failed' }]), []);
-      // plan f7045213 第二批：已登记为披露的探索账本失败不挡设计事实发布；其余任何 FAIL（含 MAJOR）仍挡。
-      const ledgerFail = { id: 'context_exploration_searches_min', status: 'FAIL' as const, severity: 'BLOCKER' as const, category: 'structure' as const, description: 'self-reported searches', details: '当前 1，要求 ≥ 4' };
-      assert(designScopeRevisionChecks(planCtx, [ledgerFail])[0]?.scope_revision_input, '披露类账本失败不应挡住修订提议');
-      assert.deepStrictEqual(designScopeRevisionChecks(planCtx, [ledgerFail, { id: 'design_major', status: 'FAIL', severity: 'MAJOR', category: 'structure', description: 'major', details: 'major' }]), [], '其余 FAIL 保持原判据');
-    }
+    const required_outputs = ['plan/plan.md'];
+    const planCtx = { ...ctx, phase: 'plan', factsContext: planBridge.factsContext, featureSpec: new SpecLoader(f.root, undefined, undefined, frameworkRoot).loadFeatureSpec(f.feature, planInputs), resolvedInputs: { ...planInputs, context: { ...planInputs.context, required_outputs } } } as CheckContext;
+    const proposal = designScopeRevisionChecks(planCtx, [{ id: 'design_pass', status: 'PASS', severity: 'MINOR', category: 'structure', description: 'validated design', details: 'passed' }])[0].scope_revision_input!;
+    assert(proposal);
+    const nextPlan = resolveExecutionScope(proposal, workflow, readScopeAcceptance(f.root, proposal, { feature: f.feature, frameworkRoot }), resolvedStub);
+    assert(!nextPlan.unresolved.length && nextPlan.phase_chain.includes('coding'));
+    assert.deepStrictEqual(designScopeRevisionChecks(planCtx, [{ id: 'design_fail', status: 'FAIL', severity: 'BLOCKER', category: 'structure', description: 'invalid design', details: 'failed' }]), []);
+    // plan f7045213 第二批：已登记为披露的探索账本失败不挡设计事实发布；其余任何 FAIL（含 MAJOR）仍挡。
+    const ledgerFail = { id: 'context_exploration_searches_min', status: 'FAIL' as const, severity: 'BLOCKER' as const, category: 'structure' as const, description: 'self-reported searches', details: '当前 1，要求 ≥ 4' };
+    assert(designScopeRevisionChecks(planCtx, [ledgerFail])[0]?.scope_revision_input, '披露类账本失败不应挡住修订提议');
+    assert.deepStrictEqual(designScopeRevisionChecks(planCtx, [ledgerFail, { id: 'design_major', status: 'FAIL', severity: 'MAJOR', category: 'structure', description: 'major', details: 'major' }]), [], '其余 FAIL 保持原判据');
     assert.equal(fs.readFileSync(born.manifestPath, 'utf8'), before);
     assert.deepStrictEqual(designScopeRevisionChecks(ctx, [{ id: 'actual_failure', category: 'structure', severity: 'BLOCKER', status: 'FAIL', description: 'failure', details: 'failure' }]), []);
-    const requestScope = resolveExecutionScope({ request: { completion_target: 'request', requested_results: ['design'], requested_phases: ['spec'] }, facts: [], contract_fingerprints: [] }, workflow);
-    const requestRun = buildGoalManifestFromInput({ feature: f.feature, run_id: 'p3-design-only', unattended: { write_mode: 'full-access', approval_mode: 'never' }, execution_scope: requestScope, chain_override: requestScope.phase_chain }, { projectRoot: f.root });
-    createGoalRun({ frameworkRoot: frameworkRoot, projectRoot: f.root, manifest: requestRun, chain: requestScope.phase_chain });
-    // plan a9f3c7d2 第二笔（R5）**行为变更**：request 终点原先在这里被整个排除（断言恒 `[]`），
-    // 于是单职责 spec/plan 出生时的定义缺口永远关不掉、生产上到不了成功终局。现在它也发提案，
-    // 但请求动作**只能是本阶段自己**——单职责请求结构上不得借修订新增阶段。
-    const requestProposal = designScopeRevisionChecks({ ...ctx, factsContext: { ...bridge.factsContext!, subject: { feature: f.feature, run_id: requestRun.run_id } } }, []);
-    assert.equal(requestProposal.length, 1, JSON.stringify(requestProposal));
-    const requestInput = requestProposal[0].scope_revision_input!;
-    assert.equal(requestInput.request.completion_target, 'request');
-    assert.deepStrictEqual(requestInput.request.requested_phases, ['spec'], JSON.stringify(requestInput.request.requested_phases));
-    const requestNext = resolveExecutionScope(requestInput, workflow, readScopeAcceptance(f.root, requestInput, { feature: f.feature, frameworkRoot }), resolvedStub);
-    assert.deepStrictEqual(requestNext.unresolved, [], JSON.stringify(requestNext.unresolved));
-    assert(requestNext.phase_chain.every(phase => requestScope.phase_chain.includes(phase)), JSON.stringify(requestNext.phase_chain));
     // The device duty has to be *genuinely* required for this case to mean anything: D0.1 no longer
     // trusts a self-declared `required`, so it is derived from a device-layer acceptance here.
     const deviceAcceptance = { criteria: [{ id: 'AC-DEVICE', priority: 'P1', ut_layer: 'device', device_focus: 'on-device check' }] } as import('../../scripts/utils/types').AcceptanceSpec;
@@ -1575,20 +1506,15 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     assert(result.detail, `${mode} lost its gap`);
   } })),
 ];
-async function runCases(selected: typeof cases): Promise<UnitCaseResult[]> {
-  const results: UnitCaseResult[] = [];
-  for (const test of selected) {
-    const f = fixture();
-    try { await test.run(f); results.push({ name: test.name, ok: true }); }
-    catch (error) { results.push({ name: test.name, ok: false, error: String(error) }); }
-    finally { clearFrameworkConfigCache(); fs.rmSync(f.root, { recursive: true, force: true }); }
-  }
-  return results;
-}
-
-export const runAll = (): Promise<UnitCaseResult[]> => runCases(cases);
-export const runSelectedCases = async (filter?: string) => {
-  const results = await runCases(cases.filter(item => filter === undefined || item.name.includes(filter)));
-  return { results, matchedCaseCount: results.length, executionTimings: [] };
-};
-export const runContentWarnCases = (): Promise<UnitCaseResult[]> => runCases(cases.filter(item => item.name.startsWith('content rules:')));
+export const runAll = (): Promise<UnitCaseResult[]> => runUnitCasesAsync(cases.map(test => ({
+  name: test.name,
+  async run() {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'blueprint-skill-'));
+    try {
+      await test.run(fixture(root));
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  },
+})));

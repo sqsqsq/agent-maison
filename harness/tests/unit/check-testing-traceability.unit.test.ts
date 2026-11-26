@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 // check-testing-traceability.unit.test.ts — c7e4a2d9 t1：acceptance_to_test_case P0 优先级对齐锚
 //
 // 冻结 acceptance.yaml 的 P0 优先级锚：ut_layer∈{device,both} 的每个 P0 AC 必须被至少一条
@@ -270,11 +271,13 @@ function unitLayerCases(): Case[] {
 
 export function runAll(): UnitCaseResult[] {
   return cases.map((c) => {
+    const endUnitCase = beginUnitCase(`check-testing-traceability: ${c.name}`);
+    if (!endUnitCase) return discoveryResult(`check-testing-traceability: ${c.name}`);
     try {
       c.run();
       return { name: `check-testing-traceability: ${c.name}`, ok: true };
     } catch (err) {
       return { name: `check-testing-traceability: ${c.name}`, ok: false, error: (err as Error).stack ?? (err as Error).message };
-    }
+    } finally { endUnitCase(); }
   });
 }

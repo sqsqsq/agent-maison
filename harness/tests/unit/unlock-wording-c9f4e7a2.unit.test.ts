@@ -1,3 +1,4 @@
+import { beginUnitCase } from '../utils/unit-cases';
 // ============================================================================
 // unlock-wording-c9f4e7a2.unit.test.ts — 解锁话术统一（事故修复四件套 plan c9f4e7a2 t3）
 // ----------------------------------------------------------------------------
@@ -103,12 +104,14 @@ function scanDirs(): string[] {
 export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
   const run = (name: string, fn: () => void): void => {
+    const endUnitCase = beginUnitCase(name);
+    if (!endUnitCase) return;
     try {
       fn();
       results.push({ name, ok: true });
     } catch (err) {
       results.push({ name, ok: false, error: (err as Error).stack ?? (err as Error).message });
-    }
+    } finally { endUnitCase(); }
   };
 
   run('t3 8 处出口：新语义锚点在位、旧绝对句不在', () => {

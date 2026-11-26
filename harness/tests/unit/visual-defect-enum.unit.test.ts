@@ -1,3 +1,4 @@
+import { runUnitCasesAsync } from '../utils/unit-cases';
 /**
  * visual-defect-enum — v1 缺陷枚举契约 + v2 边缘哨兵坐标对账。
  *   - validateVisualDiffJson：defects[] / edge_* 字段 schema（合法放行、各非法命中）；
@@ -409,14 +410,5 @@ test('v2 FP: 同内容仅设备比例缩放 → 拉伸抵消、哨兵静默（FP
 });
 
 export async function runAll(): Promise<UnitCaseResult[]> {
-  const out: UnitCaseResult[] = [];
-  for (const c of CASES) {
-    try {
-      await c.run();
-      out.push({ name: c.name, ok: true });
-    } catch (e) {
-      out.push({ name: c.name, ok: false, error: e instanceof Error ? (e.stack ?? e.message) : String(e) });
-    }
-  }
-  return out;
+  return runUnitCasesAsync(CASES);
 }

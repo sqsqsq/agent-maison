@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../../../../../harness/tests/utils/unit-cases';
 /**
  * crossModuleExportsFile 与入口 .ets basename 豁免规则（coding-host-rules）
  */
@@ -35,11 +36,13 @@ const cases: Array<{ name: string; run: () => void }> = [
 
 export function runAll(): UnitCaseResult[] {
   return cases.map((c) => {
+    const endUnitCase = beginUnitCase(c.name);
+    if (!endUnitCase) return discoveryResult(c.name);
     try {
       c.run();
       return { name: c.name, ok: true };
     } catch (err) {
       return { name: c.name, ok: false, error: (err as Error).stack ?? (err as Error).message };
-    }
+    } finally { endUnitCase(); }
   });
 }

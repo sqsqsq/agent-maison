@@ -1,3 +1,4 @@
+import { runUnitCases } from '../../../../../harness/tests/utils/unit-cases';
 // ============================================================================
 // hylyre-ensure-upgrade.unit.test.ts — vendor 对齐判定与发布件选型回归
 // schema 1（wheel）/ schema 2（源码树）双兼容矩阵；schema 2 fixture 按 Hylyre 需求
@@ -688,14 +689,5 @@ const cases: Case[] = [
 ];
 
 export function runAll(): UnitCaseResult[] {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (e) {
-      results.push({ name: c.name, ok: false, error: (e as Error).message });
-    }
-  }
-  return results;
+  return runUnitCases(cases);
 }

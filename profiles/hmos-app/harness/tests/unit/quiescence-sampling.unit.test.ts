@@ -1,3 +1,4 @@
+import { runUnitCases } from '../../../../../harness/tests/utils/unit-cases';
 export const layer = 'capability' as const; // Actual native helper calls are part of this suite.
 /**
  * quiescence-sampling 单测（t4a，plan f7a3d9c2）：静稳采样三态 + 布局签名 + approot 漂移
@@ -230,14 +231,5 @@ test('sampler_failure_is_error_not_unstable', () => {
 });
 
 export function runAll(): UnitCaseResult[] {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (e) {
-      results.push({ name: c.name, ok: false, error: (e as Error).message });
-    }
-  }
-  return results;
+  return runUnitCases(cases);
 }

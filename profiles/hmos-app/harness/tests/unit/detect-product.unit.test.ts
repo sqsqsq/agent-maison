@@ -1,3 +1,4 @@
+import { runUnitCases } from '../../../../../harness/tests/utils/unit-cases';
 // ============================================================================
 // detect-product.unit.test.ts — product 探测语义（plan a7c3f9e2 t5 重定义）
 // ============================================================================
@@ -261,14 +262,5 @@ const cases: Array<{ name: string; run: () => void }> = [
 ];
 
 export function runAll(): UnitCaseResult[] {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (e) {
-      results.push({ name: c.name, ok: false, error: (e as Error).message });
-    }
-  }
-  return results;
+  return runUnitCases(cases);
 }

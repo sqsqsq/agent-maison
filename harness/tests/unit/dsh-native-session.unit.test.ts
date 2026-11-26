@@ -1,3 +1,4 @@
+import { beginUnitCase } from '../utils/unit-cases';
 import assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -187,10 +188,12 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>, s: ReturnT
 export async function runAll(): Promise<UnitCaseResult[]> {
   const results: UnitCaseResult[] = [];
   for (const item of cases) {
+    const endUnitCase = beginUnitCase(item.name);
+    if (!endUnitCase) continue;
     const f = fixture('ut'), s = setup(f);
     try { clearFrameworkConfigCache(); item.run(f, s); results.push({ name: item.name, ok: true }); }
     catch (error) { results.push({ name: item.name, ok: false, error: (error as Error).stack }); }
-    finally { s.restore(); assert(f.root.startsWith(path.join(os.tmpdir(), 'maison-request-'))); fs.rmSync(f.root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+    finally { s.restore(); assert(f.root.startsWith(path.join(os.tmpdir(), 'maison-request-'))); fs.rmSync(f.root, { recursive: true, force: true }); clearFrameworkConfigCache();  endUnitCase(); }
   }
   return results;
 }

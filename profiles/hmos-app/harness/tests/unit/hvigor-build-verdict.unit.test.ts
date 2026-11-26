@@ -1,3 +1,4 @@
+import { runUnitCasesAsync } from '../../../../../harness/tests/utils/unit-cases';
 // ============================================================================
 // hvigor-build-verdict.unit.test.ts — 构建终态判据回归（plan a7c3f9e2 t1）
 // ============================================================================
@@ -299,10 +300,5 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
 ];
 
 export async function runAll(): Promise<UnitCaseResult[]> {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try { await c.run(); results.push({ name: c.name, ok: true }); }
-    catch (error) { results.push({ name: c.name, ok: false, error: (error as Error).stack ?? String(error) }); }
-  }
-  return results;
+  return runUnitCasesAsync(cases);
 }

@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 // effective-vision-context.unit.test.ts — 当前 run 视觉能力的最小回归
 // plan 8d2b4f60 D1：invoke 级 capability receipt 全链已删除；能力真值只有两级
 //（run 级 probe 金丝雀 / adapter 声明），override 是用户自我声明、**不是实测来源**。
@@ -99,11 +100,13 @@ test('遗留 vision 目录文件无论内容如何都不影响当前能力', () 
 
 export function runAll(): UnitCaseResult[] {
   return cases.map((c) => {
+    const endUnitCase = beginUnitCase(c.name);
+    if (!endUnitCase) return discoveryResult(c.name);
     try {
       c.run();
       return { name: c.name, ok: true };
     } catch (error) {
       return { name: c.name, ok: false, error: (error as Error).stack ?? String(error) };
-    }
+    } finally { endUnitCase(); }
   });
 }

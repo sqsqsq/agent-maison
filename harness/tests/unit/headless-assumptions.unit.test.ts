@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 // headless-assumptions.unit.test.ts — t1 决议账本（goal-fakepass-hardening）
 //
 // fixtures 直接取自 bc-openCard 事故现场的两种真实表格式：
@@ -148,6 +149,8 @@ const cases: Case[] = [
 
 export function runAll(): UnitCaseResult[] {
   return cases.map((c) => {
+    const endUnitCase = beginUnitCase(`headless-assumptions: ${c.name}`);
+    if (!endUnitCase) return discoveryResult(`headless-assumptions: ${c.name}`);
     try {
       c.run();
       return { name: `headless-assumptions: ${c.name}`, ok: true };
@@ -157,6 +160,6 @@ export function runAll(): UnitCaseResult[] {
         ok: false,
         error: (err as Error).stack ?? (err as Error).message,
       };
-    }
+    } finally { endUnitCase(); }
   });
 }

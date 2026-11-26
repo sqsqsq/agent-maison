@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 // ============================================================================
 // phase-state.unit.test.ts — 闭环态同步回归
 // ============================================================================
@@ -452,11 +453,13 @@ export function runAll(): UnitCaseResult[] {
     const runtime = fs.readFileSync(path.resolve(__dirname, '../../scripts/goal-phase-runtime.ts'), 'utf8');
     assert(runtime.includes("deleteEnvKeyCaseInsensitive(childEnv, 'MAISON_GOAL_GATE_DEADLINE_MS')"), '真实sender必须调用已验证的清洗器');
   } }, ...cases].map(c => {
+    const endUnitCase = beginUnitCase(c.name);
+    if (!endUnitCase) return discoveryResult(c.name);
     try {
       c.run();
       return { name: c.name, ok: true };
     } catch (err) {
       return { name: c.name, ok: false, error: (err as Error).stack ?? (err as Error).message };
-    }
+    } finally { endUnitCase(); }
   });
 }

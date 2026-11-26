@@ -1,3 +1,4 @@
+import { runUnitCases } from '../utils/unit-cases';
 // review-report-lint.unit.test.ts — plan 07a41ec6 T5：review 报告统计表自动回写 + 引用/计数 lint（WARN 提示）
 
 import assert from 'assert';
@@ -100,14 +101,5 @@ const cases: Array<{ name: string; run: () => void }> = [
 ];
 
 export function runAll(): UnitCaseResult[] {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (err) {
-      results.push({ name: c.name, ok: false, error: (err as Error).stack ?? (err as Error).message });
-    }
-  }
-  return results;
+  return runUnitCases(cases);
 }

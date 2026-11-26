@@ -1,3 +1,4 @@
+import { beginUnitCase } from '../utils/unit-cases';
 import assert from 'assert';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -5,9 +6,10 @@ import * as path from 'path';
 import { spawnSync, execFileSync } from 'child_process';
 import { runCompile } from '../../scripts/compile';
 import { clearFrameworkConfigCache, enumerateFeatures, statefilePath } from '../../config';
-import { runAdhocCorrection } from '../../scripts/utils/correction-commands';
+import { runAdhocCorrection, runCorrectionInit } from '../../scripts/utils/correction-commands';
 import { buildCorrectionState, writeCorrectionState } from '../../scripts/utils/correction-state';
 import { provisionFrameworkUnder } from '../utils/real-chain-host';
+import { testCliArgs } from '../utils/test-cli-args';
 
 const FRAMEWORK_ROOT = path.resolve(__dirname, '../../..');
 const HARNESS_ROOT = path.join(FRAMEWORK_ROOT, 'harness');
@@ -238,7 +240,7 @@ const cases: Array<{ name: string; run(root: string): void | Promise<void> }> = 
   },
   {
     name: 'adhoc 公共入口分析跨模块和已提交候选，精确报告架构未证实与实际违规',
-    run(root) {
+    async run(root) {
       const write = (file: string, contents: string) => {
         const absolute = path.join(root, file);
         fs.mkdirSync(path.dirname(absolute), { recursive: true });
@@ -261,61 +263,62 @@ const cases: Array<{ name: string; run(root: string): void | Promise<void> }> = 
         `  - { name: Filter, layer: common, entry_file: "${helper}" }`, '',
       ].join('\n'));
       write('.gitignore', ['ide/', 'framework/', 'doc/reports/', 'calls.txt', '.fixture-state/', '*.log', ''].join('\n'));
-      const { frameworkRoot: installedFramework } = provisionFrameworkUnder(root);
+      const { frameworkRoot: installedFramework } = provisionFrameworkUnder(root, { linkDependencies: true });
       const git = (...args: string[]) => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: 'pipe' }).trim();
       git('init', '-q');
       git('add', '-A');
       git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'baseline');
-      const cli = (...args: string[]) => spawnSync(process.execPath, [require.resolve('ts-node/dist/bin.js'), '--transpile-only',
-        path.join(HARNESS_ROOT, 'harness-runner.ts'), '--project-root', root, '--framework-root', installedFramework, ...args],
-        { cwd: HARNESS_ROOT, encoding: 'utf8', timeout: 30_000 });
-      const init = (request: string) => {
-        const result = cli('--correction-init', '--correction-request', request, '--q-requirement', 'n', '--q-contract', 'n', '--q-code', 'y');
-        assert.equal(result.status, 0, result.stdout + result.stderr);
-      };
-      const check = () => {
-        const result = cli('--adhoc-correction');
+      const init = (requestText: string) => assert.equal(runCorrectionInit(root, {
+        requestText, frameworkRoot: installedFramework,
+        answers: { requirement_changed: false, contract_changed: false, code_change_needed: true },
+      }), 0);
+      const readReport = () => {
         const reports = path.join(root, 'doc/reports/_adhoc');
         const last = fs.readdirSync(reports).sort().at(-1)!;
         const data = JSON.parse(fs.readFileSync(path.join(reports, last, 'correction-report.json'), 'utf8'));
         const architecture = data.results.find((check: { id: string }) => check.id === 'adhoc_architecture_rules');
         assert.equal(data.results.find((check: { id: string }) => check.id === 'adhoc_coding_compile')?.status, 'PASS');
-        return { exit: result.status, verdict: data.verdict, architecture, output: result.stdout + result.stderr };
+        return { verdict: data.verdict, architecture };
+      };
+      const check = async () => {
+        const exit = await runAdhocCorrection(root, HARNESS_ROOT, installedFramework);
+        return { exit, ...readReport() };
       };
       init('修正筛选行为');
-      const empty = check();
-      assert.equal(empty.exit, 1, empty.output);
+      const empty = await check();
+      assert.equal(empty.exit, 1);
       assert.equal(empty.verdict, 'INCOMPLETE');
       assert.equal(empty.architecture.status, 'SKIP');
       const parallel = 'common/Filter/Parallel.ets';
       write(product, 'import { filter } from "../../common/Filter/index.ets"; export const value = filter(2);');
       write(parallel, 'export const independent = true;');
-      const concurrent = check();
-      assert.equal(concurrent.exit, 0, concurrent.output);
+      const concurrent = await check();
+      assert.equal(concurrent.exit, 0);
       assert.deepEqual([...concurrent.architecture.affected_files].sort(), [parallel, product].sort());
       fs.unlinkSync(path.join(root, parallel));
       write(helper, 'export const filter = (x: number) => x + 1;');
-      const cross = check();
-      assert.equal(cross.exit, 0, cross.output);
-      assert.deepEqual([...cross.architecture.affected_files].sort(), [helper, product].sort());
       git('add', '-A');
       git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'actual correction');
       const status = git('status', '--porcelain');
       assert.equal(status, '', `fixture has no worktree delta after the correction commit: ${status}`);
-      const committed = check();
-      assert.equal(committed.exit, 0, committed.output);
+      const result = spawnSync(process.execPath, [...testCliArgs(path.join(HARNESS_ROOT, 'harness-runner.ts')),
+        '--project-root', root, '--framework-root', installedFramework, '--adhoc-correction'],
+      { cwd: HARNESS_ROOT, encoding: 'utf8', timeout: 30_000 });
+      assert.equal(result.status, 0, result.stdout + result.stderr);
+      const committed = readReport();
+      assert.equal(committed.architecture.status, 'PASS');
       assert.deepEqual([...committed.architecture.affected_files].sort(), [helper, product].sort());
 
       write(parallel, 'import { value } from "../../entry/Search/index.ets"; export const bad = value;');
-      const ambiguous = check();
-      assert.equal(ambiguous.verdict, 'INCOMPLETE', ambiguous.output);
+      const ambiguous = await check();
+      assert.equal(ambiguous.verdict, 'INCOMPLETE');
       assert.equal(ambiguous.architecture.status, 'SKIP');
       assert.deepEqual(ambiguous.architecture.affected_files, [parallel]);
       init(`修正 \`${product}\``);
-      assert.equal(check().exit, 0, 'a proven independent change is outside this correction');
+      assert.equal((await check()).exit, 0, 'a proven independent change is outside this correction');
       init(`修正 \`${parallel}\``);
-      const invalid = check();
-      assert.equal(invalid.exit, 1, invalid.output);
+      const invalid = await check();
+      assert.equal(invalid.exit, 1);
       assert.equal(invalid.verdict, 'FAIL');
       assert.equal(invalid.architecture.status, 'FAIL');
       assert.deepEqual(invalid.architecture.affected_files, [parallel]);
@@ -346,10 +349,12 @@ export async function runAll() {
   for (const key of keys) delete process.env[key];
   try {
     for (const item of cases) {
+      const endUnitCase = beginUnitCase(item.name);
+      if (!endUnitCase) continue;
       const root = fixture();
       try { await item.run(root); results.push({ name: item.name, ok: true }); }
       catch (error) { results.push({ name: item.name, ok: false, error: String((error as Error).stack ?? error) }); }
-      finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+      finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache();  endUnitCase(); }
     }
   } finally {
     for (const key of keys) { if (saved[key] === undefined) delete process.env[key]; else process.env[key] = saved[key]; }

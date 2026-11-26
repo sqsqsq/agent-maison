@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 // ============================================================================
 // testing-verdict-incomplete.unit.test.ts — testing 阶段「设备不可用→INCOMPLETE」终态
 // 对齐 UT 版（ut-verdict-incomplete），并落实 Codex P2：
@@ -13,7 +14,7 @@ import { executeCheck } from '../../scripts/utils/check-execution';
 import { writeRunSummaryBase } from '../../harness-runner';
 import { classifyFailureKind } from '../../scripts/utils/goal-failure-classifier';
 import { resolveCurrentDisposition } from '../../scripts/utils/check-disposition';
-import { setupGoalRuntimeHost } from './goal-runner-testing-integrity.unit.test';
+import { setupGoalRuntimeHost } from '../utils/existing-goal-delivery-fixture';
 import { clearFrameworkConfigCache } from '../../config';
 import type { CheckContext, CheckResult } from '../../scripts/utils/types';
 import type { UnitCaseResult } from '../run-unit';
@@ -99,11 +100,13 @@ export function runAll(): UnitCaseResult[] {
     { name: 'unclassified report/install SKIP keeps the legacy verdict and known device cause', fn: testUnclassifiedSkipPreservesLegacyVerdict },
   ];
   return cases.map(({ name, fn }) => {
+    const endUnitCase = beginUnitCase(name);
+    if (!endUnitCase) return discoveryResult(name);
     try {
       fn();
       return { name, ok: true };
     } catch (e) {
       return { name, ok: false, error: e instanceof Error ? e.message : String(e) };
-    }
+    } finally { endUnitCase(); }
   });
 }

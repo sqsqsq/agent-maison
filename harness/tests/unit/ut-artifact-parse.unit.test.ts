@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 // ============================================================================
 // ut-artifact-parse.unit.test.ts — testability-audit / mock-plan 解析
 // ============================================================================
@@ -372,12 +373,14 @@ export function runAll(): UnitCaseResult[] {
 }
 
 function run(name: string, fn: () => void): UnitCaseResult {
+  const endUnitCase = beginUnitCase(name);
+  if (!endUnitCase) return discoveryResult(name);
   try {
     fn();
     return { name, ok: true };
   } catch (e) {
     return { name, ok: false, error: (e as Error).message };
-  }
+  } finally { endUnitCase(); }
 }
 
 if (require.main === module) {

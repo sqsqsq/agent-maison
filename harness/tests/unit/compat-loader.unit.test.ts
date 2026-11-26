@@ -1,3 +1,4 @@
+import { runUnitCases } from '../utils/unit-cases';
 // ============================================================================
 // compat-loader.unit.test.ts — Feature compat.yaml 降级协议
 // ============================================================================
@@ -282,14 +283,5 @@ const cases: Case[] = [
 ];
 
 export function runAll(): UnitCaseResult[] {
-  const out: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      out.push({ name: c.name, ok: true });
-    } catch (e) {
-      out.push({ name: c.name, ok: false, error: (e as Error).message });
-    }
-  }
-  return out;
+  return runUnitCases(cases);
 }

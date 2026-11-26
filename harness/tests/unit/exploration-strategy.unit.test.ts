@@ -1,9 +1,9 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 // ============================================================================
 // exploration-strategy + fan-out-scanner unit tests
 // ============================================================================
 
 import assert from 'assert';
-import * as path from 'path';
 import {
   applySequentialMultiplier,
   classifyExplorationComplexity,
@@ -15,6 +15,7 @@ import {
 import { loadProfileExplorationSnippets } from '../../scripts/utils/context-exploration';
 import { detectRepoLayout } from '../../repo-layout';
 import type { ExplorationThresholds, PhaseRuleSpec } from '../../scripts/utils/types';
+import * as path from 'path';
 
 export interface UnitCaseResult {
   name: string;
@@ -200,11 +201,13 @@ const cases: Array<{ name: string; run: () => void }> = [
 
 export function runAll(): UnitCaseResult[] {
   return cases.map(c => {
+    const endUnitCase = beginUnitCase(c.name);
+    if (!endUnitCase) return discoveryResult(c.name);
     try {
       c.run();
       return { name: c.name, ok: true };
     } catch (err) {
       return { name: c.name, ok: false, error: (err as Error).stack ?? (err as Error).message };
-    }
+    } finally { endUnitCase(); }
   });
 }

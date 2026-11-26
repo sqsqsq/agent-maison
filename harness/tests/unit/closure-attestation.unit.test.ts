@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 // closure-attestation.unit.test.ts — t2 review 闭环源码快照（goal-fakepass-hardening）
 //
 // 覆盖面：五源 root discovery（含残余扫描=孤儿 fail-safe）、build-profile 宽容解析、
@@ -200,6 +201,8 @@ const cases: Case[] = [
 
 export function runAll(): UnitCaseResult[] {
   return cases.map((c) => {
+    const endUnitCase = beginUnitCase(`closure-attestation: ${c.name}`);
+    if (!endUnitCase) return discoveryResult(`closure-attestation: ${c.name}`);
     try {
       c.run();
       return { name: `closure-attestation: ${c.name}`, ok: true };
@@ -209,6 +212,6 @@ export function runAll(): UnitCaseResult[] {
         ok: false,
         error: (err as Error).stack ?? (err as Error).message,
       };
-    }
+    } finally { endUnitCase(); }
   });
 }

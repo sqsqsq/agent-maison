@@ -1,3 +1,4 @@
+import { runUnitCases } from '../utils/unit-cases';
 // visual-measure.unit.test.ts — plan 07a41ec6 T10：--measure 只测量不裁决（bounds/差值/重叠/间距/三轴/defect note 填充）
 
 import assert from 'assert';
@@ -154,14 +155,5 @@ const cases: Array<{ name: string; run: () => void }> = [
 ];
 
 export function runAll(): UnitCaseResult[] {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (err) {
-      results.push({ name: c.name, ok: false, error: (err as Error).stack ?? (err as Error).message });
-    }
-  }
-  return results;
+  return runUnitCases(cases);
 }

@@ -1,3 +1,4 @@
+import { runUnitCasesAsync } from '../utils/unit-cases';
 import { visualDiffNavConfigPath } from '../../../profiles/hmos-app/harness/visual-diff-nav';
 /**
  * visual-provider — 只读视觉 provider（plan ab072691）单测矩阵。
@@ -2574,7 +2575,7 @@ test('t4 spec观察处理全部15张未缓存参考图，失败不阻断，三�
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vp-sidecar-'));
   const transport = require('../../scripts/utils/visual-provider-invoke') as typeof import('../../scripts/utils/visual-provider-invoke');
   const originalInvoke = transport.invokeVisualProvider;
-  let available = false;
+  let rejectFirst = true;
   const calls: string[] = [];
   try {
     fs.writeFileSync(path.join(tmp, 'framework.config.json'), JSON.stringify({
@@ -2591,37 +2592,35 @@ test('t4 spec观察处理全部15张未缓存参考图，失败不阻断，三�
       assert.ok(fs.existsSync(image), '不可读取的图不应伪造provider输入');
       calls.push(image);
       const payload = JSON.stringify({ image_hashes: [hashImageFile(image)], observations: [{ region: 'all', fact: 'current ' + hashImageFile(image) }] });
-      return originalInvoke({ ...input, invokeAgent: async () => available
+      return originalInvoke({ ...input, invokeAgent: async () => !rejectFirst || image !== images[0]
         ? { exitCode: 0, stdout: JSON.stringify({ type: 'result', subtype: 'success', result: payload }), stderr: '', command: 'controlled native transport', completion_observed: true }
         : { exitCode: 1, stdout: '', stderr: 'controlled unavailable provider', command: 'controlled native transport', terminal_failure_observed: true } });
     };
     const input = { projectRoot: tmp, frameworkRoot: FRAMEWORK_ROOT, feature: 'feat', provider: { adapter: 'claude', model: 'm' },
       referenceImages: [...images, path.join(tmp, 'missing.png')], timeoutMs: 1_000 };
-    assert.deepStrictEqual(await produceVisualObservationSidecars(input), [], '整体失败只保无sidecar，不产假观察');
-    assert.deepStrictEqual(calls, images, '超过旧12张的真实图也必须逐张处理；缺图不猜造');
-    available = true;
+    const partial = await produceVisualObservationSidecars(input);
+    assert.deepStrictEqual(calls, images, '超过旧12张的图也必须逐张处理；缺图不猜造');
+    assert.strictEqual(partial.length, images.length - 1, '第一张调用失败不能阻止后续图落盘');
+    assert.ok(!partial.some(file => path.basename(file) === 'ref-0.visual.json'), '失败不能产生伪造观察');
+    rejectFirst = false;
     const produced = await produceVisualObservationSidecars(input);
     assert.strictEqual(produced.length, images.length, '恢复后所有真实参考图均产生实际sidecar');
-    assert.strictEqual(calls.length, images.length * 2);
+    assert.deepStrictEqual(calls.slice(images.length), [images[0]], '恢复只补失败的一张图');
     const before = new Map(produced.map(file => [file, fs.readFileSync(path.join(tmp, file), 'utf8')]));
     assert.deepStrictEqual(await produceVisualObservationSidecars(input), produced);
-    assert.strictEqual(calls.length, images.length * 2, '三元相同必须复用，不重买provider');
+    assert.strictEqual(calls.length, images.length + 1, '三元相同必须复用，不重买provider');
     await new Jimp(2, 2, 0xff00ffff).writeAsync(images[13]);
     await produceVisualObservationSidecars(input);
-    assert.strictEqual(calls.length, images.length * 2 + 1);
+    assert.strictEqual(calls.length, images.length + 2);
     assert.strictEqual(calls.at(-1), images[13], '真实改图只补该图');
     for (const file of produced) if (JSON.parse(before.get(file)!).source_image !== path.basename(images[13]))
       assert.strictEqual(fs.readFileSync(path.join(tmp, file), 'utf8'), before.get(file), '未变图原sidecar字节保留');
-    const nextProvider = { ...input, provider: { adapter: 'claude', model: 'm2' } };
-    await produceVisualObservationSidecars(nextProvider);
-    assert.strictEqual(calls.length, images.length * 3 + 1, 'provider变更使原观察材料不再复用');
-    const stale = path.join(tmp, produced[2]);
-    const doc = JSON.parse(fs.readFileSync(stale, 'utf8'));
-    doc.protocol_version = VISUAL_OBSERVATION_PROTOCOL_VERSION + 1;
-    fs.writeFileSync(stale, JSON.stringify(doc));
-    await produceVisualObservationSidecars(nextProvider);
-    assert.strictEqual(calls.length, images.length * 3 + 2, '只有协议不齐的实际sidecar需要重产');
-    assert.strictEqual(calls.at(-1), path.join(tmp, doc.source_image));
+    const unchanged = produced.find(file => path.basename(file) === 'ref-2.visual.json')!;
+    const doc = JSON.parse(fs.readFileSync(path.join(tmp, unchanged), 'utf8'));
+    const current = { imageHash: hashImageFile(images[2])!, provider: input.provider };
+    assert.ok(isVisualObservationReusable(doc, current));
+    assert.ok(!isVisualObservationReusable(doc, { ...current, provider: { adapter: 'claude', model: 'm2' } }));
+    assert.ok(!isVisualObservationReusable({ ...doc, protocol_version: VISUAL_OBSERVATION_PROTOCOL_VERSION + 1 }, current));
   } finally { transport.invokeVisualProvider = originalInvoke; clearFrameworkConfigCache(); fs.rmSync(tmp, { recursive: true, force: true }); }
 });
 
@@ -2651,7 +2650,6 @@ test('t5 接线纪律（源码锚定）：provider 评审显式 await、不塞�
     '排除判据须取 defect 的 provider 溯源',
   );
 });
-
 
 // plan b3d7e5a1 T5（codex P1）：全部屏都因整页参考图被排除时，provider 早退**之前**必须复位旧 provider 状态并落盘，
 // 否则旧 PASS/attest 会以"本轮没评"为名跨轮存活；同时不得调用 provider。
@@ -2843,14 +2841,5 @@ test('4e92 DSH consumes paired successful per-image reads, original stdout, and 
 });
 
 export async function runAll(): Promise<UnitCaseResult[]> {
-  const out: UnitCaseResult[] = [];
-  for (const c of CASES) {
-    try {
-      await c.run();
-      out.push({ name: c.name, ok: true });
-    } catch (e) {
-      out.push({ name: c.name, ok: false, error: e instanceof Error ? (e.stack ?? e.message) : String(e) });
-    }
-  }
-  return out;
+  return runUnitCasesAsync(CASES);
 }

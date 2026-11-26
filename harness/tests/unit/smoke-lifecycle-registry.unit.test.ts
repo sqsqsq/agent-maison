@@ -1,3 +1,4 @@
+import { beginUnitCase } from '../utils/unit-cases';
 // ============================================================================
 // smoke-lifecycle-registry.unit.test.ts — 整机 smoke 的**注册表**与 stage 接线
 //                                          （e5d8a2c4 T4 骨架）
@@ -14,7 +15,6 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { deriveRepoLayout } from '../helpers/goal-run-driver';
 import type { UnitCaseResult } from '../run-unit';
 
 const SMOKE_MODULE = path.resolve(__dirname, '..', '..', '..', 'scripts', 'smoke-consumer-lifecycle.mjs');
@@ -51,12 +51,14 @@ async function load(): Promise<SmokeModule> {
 }
 
 async function run(results: UnitCaseResult[], name: string, fn: () => Promise<void>): Promise<void> {
+  const endUnitCase = beginUnitCase(name);
+  if (!endUnitCase) return;
   try {
     await fn();
     results.push({ name, ok: true });
   } catch (e) {
     results.push({ name, ok: false, error: (e as Error).message });
-  }
+  } finally { endUnitCase(); }
 }
 
 export async function runAll(): Promise<UnitCaseResult[]> {
@@ -80,14 +82,12 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     assertEq(nine!.coveredBy, 'upgradeOverlay', '#9 必须指向 upgradeOverlay stage');
     assert(m.STAGES.some(s => s.id === 'upgradeOverlay'), 'upgradeOverlay stage 必须真实存在');
 
-    const four = m.CASE_REGISTRY.find(c => c.id === 4);
-    assert(four !== undefined, 'T2 5b 的 #4 必须在注册表');
-    assertEq(four!.status, 'covered', '#4 cache miss 行为已由整机 goal 覆盖');
-    assertEq(four!.coveredBy, 'goal', '#4 必须由真实 goal stage 覆盖');
-    const six = m.CASE_REGISTRY.find(c => c.id === 6);
-    assert(six !== undefined, 'T2 5c 的 #6 必须在注册表');
-    assertEq(six!.status, 'covered', '#6 原子失效 crash 窗已由整机 goal 覆盖');
-    assertEq(six!.coveredBy, 'goal', '#6 必须由真实 goal stage 覆盖');
+    for (const id of [3, 4, 5, 6, 7]) {
+      const item = m.CASE_REGISTRY.find(c => c.id === id);
+      assertEq(item?.status, 'retired', `#${id} 的旧剧本已退役`);
+      assert(item?.retiredReason?.includes('真实宿主任务'), `#${id} 须指明剩余验证来源`);
+      assert(item?.coveredBy === undefined, `#${id} 的冒烟覆盖声明须清除`);
+    }
 
     // 守门函数本身必须真的会拒——否则它只是个摆设
     let gap = false;
@@ -136,7 +136,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     const order = m.STAGES.map(s => s.id);
     assertEq(
       order.join('→'),
-      'install→depsHost→commit→clone→depsClone→upgradeOverlay→checkGlobal→goal',
+      'install→depsHost→commit→clone→depsClone→upgradeOverlay→checkGlobal',
       'stage 顺序即宿主真实时间线，乱序＝测了个别的东西',
     );
     // 初版把执行根绑死在 clone **之前**的副本上，clone 后只把路径当参数传进去检查，
@@ -145,7 +145,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
       order.indexOf('depsClone') > order.indexOf('clone'),
       'depsClone 必须在 clone 之后——它负责把执行根切到换机副本',
     );
-    for (const after of ['upgradeOverlay', 'checkGlobal', 'goal']) {
+    for (const after of ['upgradeOverlay', 'checkGlobal']) {
       assert(
         order.indexOf(after) > order.indexOf('depsClone'),
         `${after} 必须在 depsClone 之后，否则跑的仍是 clone 前的旧副本`,
@@ -194,41 +194,6 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     ]) {
       assert(!source.includes(forbidden), `smoke 不得残留 ${forbidden}`);
     }
-  });
-
-  await run(results, 'T4 goal driver 的 layout 按两根关系派生：嵌套＝consumer，外置＝standalone', async () => {
-    // codex 第十批 P1：driver 初版恒注入 `standalone` + `frameworkRel:''`。
-    // 单测形态（framework 在开发仓、宿主在临时目录）下它碰巧是对的，**覆盖不到**
-    // smoke 的真实组合；而伪装成 standalone 会跳过 consumer 专属的 RELEASE-MANIFEST
-    // 校验、并把 harnessPrefixRel 生成成 `harness` 而非 `framework/harness`。
-    // 这条纯结构断言就是补那个覆盖不到的洞——它不需要真跑 goal。
-    const consumer = deriveRepoLayout(
-      path.join(path.sep, 'tmp', 'clone'),
-      path.join(path.sep, 'tmp', 'clone', 'framework'),
-    );
-    assertEq(consumer.kind, 'consumer', 'framework 嵌在 projectRoot 内＝consumer 形态');
-    assertEq(consumer.frameworkRel, 'framework', 'frameworkRel 须是 posix 相对路径');
-
-    const standalone = deriveRepoLayout(
-      path.join(path.sep, 'tmp', 'host'),
-      path.join(path.sep, 'repo', 'agent-maison'),
-    );
-    assertEq(standalone.kind, 'standalone', '两根无包含关系＝standalone（单测形态）');
-    assertEq(standalone.frameworkRel, '', 'standalone 的 frameworkRel 恒空');
-
-    // 同一路径（理论上不会出现）也不得被当成嵌套而生成空 rel 的 consumer
-    const same = deriveRepoLayout(path.join(path.sep, 'x'), path.join(path.sep, 'x'));
-    assertEq(same.kind, 'standalone', 'projectRoot === frameworkRoot 不构成 consumer');
-
-    // **闭集边界**（codex 第十一批 P2）：`RepoLayout.frameworkRel` 契约只允许
-    // '' 或 'framework'（repo-layout.ts:17，且 :126 靠它反推 kind）。任意子目录都判
-    // consumer 会派生出 'cache/framework' 这种既有契约不支持的状态——悄悄扩大下游
-    // 值空间，与刚删掉的 `precondition_unmet` 兜底类同款。故须 fail-fast。
-    let threw = false;
-    try {
-      deriveRepoLayout(path.join(path.sep, 'host'), path.join(path.sep, 'host', 'cache', 'framework'));
-    } catch { threw = true; }
-    assert(threw, '非 `framework` 的内部嵌套必须抛，不得静默生成 frameworkRel="cache/framework"');
   });
 
   return results;

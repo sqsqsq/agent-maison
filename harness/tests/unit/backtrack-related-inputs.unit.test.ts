@@ -1,3 +1,4 @@
+import { beginUnitCase } from '../utils/unit-cases';
 import * as assert from 'assert';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -10,21 +11,29 @@ import type { UnitCaseResult } from '../run-unit';
 
 export function runAll(): UnitCaseResult[] {
   const cases: UnitCaseResult[] = [];
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'related-round-'));
-  const run = (name: string, body: () => void) => {
-    try { body(); cases.push({ name, ok: true }); }
-    catch (error) { cases.push({ name, ok: false, error: String(error) }); }
-  };
-  try {
+  let root!: string;
+  let first!: ArtifactSnapshot;
+  let both!: ArtifactSnapshot;
+  let write!: GoalRunEvent;
+  const A = 'src/A.ets', B = 'src/B.ets';
+  const start: GoalRunEvent = { type: 'phase_start', phase: 'coding', ts: '2026-10-01T00:00:00.000Z' };
+  const prepare = () => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'related-round-'));
     fs.mkdirSync(path.join(root, 'src'), { recursive: true });
     fs.writeFileSync(path.join(root, 'src/A.ets'), 'A');
     fs.writeFileSync(path.join(root, 'src/B.ets'), 'B');
-    const A = 'src/A.ets', B = 'src/B.ets';
-    const first = snapshotArtifacts(root, [A]);
-    const both = snapshotArtifacts(root, [A, B]);
-    const start: GoalRunEvent = { type: 'phase_start', phase: 'coding', ts: '2026-10-01T00:00:00.000Z' };
-    const write: GoalRunEvent = { type: 'phase_write_observed', phase: 'coding', ts: '2026-10-01T00:01:00.000Z',
+    first = snapshotArtifacts(root, [A]);
+    both = snapshotArtifacts(root, [A, B]);
+    write = { type: 'phase_write_observed', phase: 'coding', ts: '2026-10-01T00:01:00.000Z',
       owned: Object.entries(both).map(([path, value]) => ({ path, post_sha256: value.contentHash })) } as GoalRunEvent;
+  };
+  const run = (name: string, body: () => void) => {
+    const endUnitCase = beginUnitCase(name);
+    if (!endUnitCase) return;
+    try { if (!root) prepare(); body(); cases.push({ name, ok: true }); }
+    catch (error) { cases.push({ name, ok: false, error: String(error) }); } finally { endUnitCase(); }
+  };
+  try {
     const event = (snapshot?: unknown): GoalRunEvent => ({ type: 'phase_backtrack_requested', phase: 'testing',
       from_phase: 'testing', to_phase: 'coding', round_fingerprint: 'same-round', ts: '2026-10-01T00:02:00.000Z',
       ...(snapshot !== undefined ? { related_input_snapshot: snapshot } : {}), candidates: [{ files: [A] }], files: [A] } as GoalRunEvent);
@@ -154,6 +163,6 @@ export function runAll(): UnitCaseResult[] {
       assert.strictEqual(compare(old(resumed), snapshotArtifacts(root, [A]), resumed), 'changed');
       assert.strictEqual(compare(old(inherited), snapshotArtifacts(root, [A]), inherited), 'changed');
     });
-  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  } finally { if (root) fs.rmSync(root, { recursive: true, force: true }); }
   return cases;
 }

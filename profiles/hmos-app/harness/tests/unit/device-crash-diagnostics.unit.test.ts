@@ -1,3 +1,4 @@
+import { beginUnitCase } from '../../../../../harness/tests/utils/unit-cases';
 /**
  * device-crash-diagnostics.unit.test.ts — faultlog 集合差崩溃诊断（v23 F3）
  *
@@ -18,12 +19,14 @@ import {
 import type { UnitCaseResult } from '../../../../../harness/tests/run-unit';
 
 function run(results: UnitCaseResult[], name: string, fn: () => void): void {
+  const endUnitCase = beginUnitCase(name);
+  if (!endUnitCase) return;
   try {
     fn();
     results.push({ name, ok: true });
   } catch (err) {
     results.push({ name, ok: false, error: (err as Error).stack ?? (err as Error).message });
-  }
+  } finally { endUnitCase(); }
 }
 function assert(cond: boolean, msg: string): void {
   if (!cond) throw new Error(msg);

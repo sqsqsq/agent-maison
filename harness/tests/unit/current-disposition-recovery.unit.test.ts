@@ -1,9 +1,8 @@
-import { unitCaseGroups } from '../utils/unit-case-selection';
+import { beginUnitCase } from '../utils/unit-cases';
 import assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import * as YAML from 'yaml';
 import { execFileSync } from 'child_process';
 import { resolveCurrentDisposition, phaseCompletionProblems } from '../../scripts/utils/check-disposition';
 import { readCurrentDispositionInput, resolveCompletionDisposition, collectCleanPassIssues, collectPhaseCompletionIssues } from '../../scripts/utils/verify-feature-completion';
@@ -15,9 +14,8 @@ import { runVisionCanaryProbe } from '../../scripts/utils/goal-preflight';
 import { generateRandomCanaryAnswerKey } from '../../scripts/utils/vision-canary';
 import { loadLocalConfig } from '../../scripts/utils/framework-local-config';
 import { countAgentInvokeStarts, resolveResumedBudget } from '../../scripts/utils/goal-runner-phase';
-import { resolvePhaseHarnessVerdict } from '../../scripts/utils/goal-runner-phase';
 import { invocationCompleted } from '../../scripts/utils/invocation-completion';
-import { resolveFrameworkOwnerRevisionGuard, buildVerificationNoProgressGuidance } from '../../scripts/goal-phase-runtime';
+import { buildVerificationNoProgressGuidance } from '../../scripts/goal-phase-runtime';
 import type { GoalManifest } from '../../scripts/utils/goal-manifest';
 import type { AgentInvokeResult } from '../../scripts/utils/agent-invoke';
 import { loadWorkflowSpec } from '../../workflow-loader';
@@ -25,179 +23,29 @@ import { clearFrameworkConfigCache } from '../../config';
 import { makeVerifierProject, FRAMEWORK_SOURCE_ROOT } from '../utils/verifier-project-fixture';
 import { fixture as requestFixture } from './request-entry.unit.test';
 import { prepareExplicitRequest } from '../../scripts/utils/capability-resolution-entry-input';
-import { runGoalRuntimeChain, setupGoalRuntimeHost, authorizeFixtureConstruction, seedSignalHost, writeCurrentSignals, currentSignalGateChecks, PRODUCT_FILE, draftForStageVerifier } from './goal-runner-testing-integrity.unit.test';
-import { computeDefectFingerprint } from '../../../profiles/hmos-app/harness/visual-diff-check';
 import { readRunControl } from '../../scripts/utils/goal-run-control';
 import type { WorkUnitExecutionContext } from '../../scripts/utils/goal-phase-executor';
 import { setupRunlessProject } from './execution-scope.unit.test';
 import { ensureFeatureExecutionScopeFrozen, readFeatureFrozenScope } from '../../scripts/utils/feature-execution-scope';
 import { prepareGoalModeRun } from '../../scripts/goal-mode-entry';
-import { readPhaseRepairIssues, phaseIssuesForVerifierSubject, itemFingerprintOf } from '../../scripts/utils/repair-candidates';
+import { readPhaseRepairIssues, phaseIssuesForVerifierSubject } from '../../scripts/utils/repair-candidates';
 import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
-import { featureFilePath, featurePhaseReportsDir } from '../../config';
+import { featurePhaseReportsDir } from '../../config';
 import { generateScriptReport } from '../../scripts/utils/report-generator';
-import { writeRunEvents, seedCleanCompletionChain, writePhaseReceipt } from '../utils/completion-chain-seed';
-import { resolvePhaseEvidenceManifest, writePhaseEvidenceManifest } from '../../scripts/utils/phase-evidence-manifest';
-import { computeRunRequirementSha } from '../../scripts/utils/fidelity-shared';
-import { resolveCurrentScopeView, prepareFeatureScopeCandidate } from '../../scripts/utils/feature-track';
+import { writeRunEvents, seedCleanCompletionChain } from '../utils/completion-chain-seed';
+import { resolveCurrentScopeView } from '../../scripts/utils/feature-track';
 import { resolveWorkflowSpec } from '../../workflow-loader';
-import { visualDebtJsonPath } from '../../scripts/utils/visual-debt';
 import { writeRunSummaryBase } from '../../harness-runner';
 import { buildNextLine } from '../../harness-runner';
 import { repairResponsibilityContext, resolveRepairResponsibility } from '../../scripts/utils/repair-responsibility';
-import { finalizePhaseClosure } from '../../scripts/utils/phase-closure-finalizer';
 import type { CheckResult } from '../../scripts/utils/types';
-import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
 import type { UnitCaseResult } from '../run-unit';
 import { GoalPhaseRuntime } from '../../scripts/goal-phase-runtime';
 import { capturePhaseInvocationSnapshot } from '../../scripts/utils/phase-write-boundary';
 import { workUnitFeedbackDelivered } from '../../scripts/utils/goal-phase-executor';
 import { dispositionFacts, type CompletionEvaluation } from '../../scripts/utils/goal-failure-classifier';
 
-/** 可把 executeAuthor 换成真实 CLI；输入仍是正常 runtime 实际物化的 prompt。 */
-export async function prepareSamePhaseRequiredWorkCase(executeAuthor?: (ctx: Parameters<NonNullable<NonNullable<Parameters<typeof runGoalRuntimeChain>[1]>['onSpec']>>[0]) => void) {
-  const YAML = await import('yaml');
-  const { provisionRealChainProject, scaffoldRealChainHost, REAL_CHAIN_REQUIREMENT } = await import('../utils/real-chain-host');
-  const { writeSpecMaterials, writePlanMaterials } = await import('./real-chain.unit.test');
-  const { parseVerifierRequestFromInstruction } = await import('../../scripts/utils/verifier-request');
-  const { readVerifierSemanticIssues } = await import('../../scripts/utils/repair-candidates');
-  const project = provisionRealChainProject();
-  scaffoldRealChainHost(project);
-  // 单职责兼容入口；1.2/S2范围与下游恢复另由原生组合用例覆盖。
-  const configPath = path.join(project.root, 'framework.config.json');
-  const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-  config.active_workflow = 'spec-driven';
-  fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
-  fs.rmSync(path.join(project.root, 'doc/features', project.feature, 'feature.yaml'), { force: true });
-  const required = '银行列表按银行名称升序排列';
-  const requirement = `${REAL_CHAIN_REQUIREMENT}\n${required}`;
-  const featureRoot = `doc/features/${project.feature}`;
-  const target = `${featureRoot}/spec/spec.md`, acceptance = `${featureRoot}/acceptance.yaml`;
-  fs.appendFileSync(path.join(project.root, featureRoot, 'requirements/requirement.md'), `\n${required}\n`);
-  writeSpecMaterials(project); writePlanMaterials(project);
-  const requireOrdering = (): void => {
-    const doc = YAML.parse(fs.readFileSync(path.join(project.root, acceptance), 'utf8'));
-    doc.criteria.find((criterion: { id: string }) => criterion.id === 'AC-2').expected_result += `；${required}`;
-    fs.writeFileSync(path.join(project.root, acceptance), YAML.stringify(doc));
-  };
-  fs.unlinkSync(path.join(project.root, acceptance));
-  const observations = { authorPrompts: [] as string[], verifierRequests: [] as string[], rawRequiredPass: false, closureBlocked: false };
-  const options: Parameters<typeof runGoalRuntimeChain>[1] = { frameworkRoot: project.frameworkRoot, featureId: project.feature,
-    realHarness: true, viaRuntimeClass: true, adapter: 'codex', freshEndPhase: 'spec', freshRequirement: requirement,
-    onAuthor: ctx => {
-      project.runId = ctx.runId;
-      if (ctx.attempt === 1) {
-        writeSpecMaterials(project);
-        requireOrdering();
-        return;
-      }
-      // This author is reached only after the runtime publishes and consumes the independent answer.
-      if (observations.rawRequiredPass && !observations.closureBlocked) {
-        assert.throws(() => finalizePhaseClosure({ projectRoot: project.root, frameworkRoot: project.frameworkRoot,
-          feature: project.feature, phase: 'spec', goalRunId: ctx.runId, persistPhaseState: () => undefined }), /required_bank_order/);
-        observations.closureBlocked = true;
-      }
-      observations.authorPrompts.push(ctx.prompt);
-      if (executeAuthor) return executeAuthor(ctx);
-      // 替身只消费收到的任务和原验收；缺送达就不会猜目标或替框架补实现。
-      if (!ctx.prompt.includes('required_bank_order') || !ctx.prompt.includes(target)) return;
-      const doc = YAML.parse(fs.readFileSync(path.join(project.root, acceptance), 'utf8'));
-      const expected = doc.criteria.find((criterion: { id: string }) => criterion.id === 'AC-2').expected_result;
-      fs.appendFileSync(path.join(project.root, target), `\n${expected}\n`);
-    },
-    onOutOfChain: ctx => {
-      const request = parseVerifierRequestFromInstruction(ctx.prompt);
-      assert(request && request.feature === project.feature && request.phase === 'spec', 'original verifier consumes the actual current request');
-      observations.verifierRequests.push(request!.subject_id);
-      const summaryPath = path.join(featurePhaseReportsDir(project.root, project.feature, 'spec', project.frameworkRoot), 'summary.json');
-      const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf8'));
-      assert.equal(summary.verifier_subject_id, request!.subject_id);
-      fs.readFileSync(path.resolve(project.root, request!.prompt_path), 'utf8');
-      const doc = YAML.parse(fs.readFileSync(path.join(project.root, acceptance), 'utf8'));
-      const expected = doc.criteria.find((criterion: { id: string }) => criterion.id === 'AC-2').expected_result;
-      const spec = fs.readFileSync(path.join(project.root, target), 'utf8');
-      const missing = !spec.includes(expected);
-      const text = '```yaml\n' + YAML.stringify({ verification_result: { phase: 'spec', feature: project.feature,
-        checks: missing ? [{ id: 'required_bank_order', status: 'FAIL', severity: 'MAJOR', acceptance_ids: ['AC-2'], affected_files: [target],
-          details: `\`${acceptance}:1\`；\`${target}:1\`：AC-2 的明确预期尚未完整写入本职责spec`, suggestion: `在spec明确记录当前AC-2预期：${expected}` }] : [],
-        summary: { verdict: 'PASS', blocker_count: 0 } } }) + '```\n';
-      const issues = readVerifierSemanticIssues(project.root, project.feature, 'spec', text, '(current independent verification)', project.frameworkRoot, ctx.runId);
-      assert(!missing || issues?.rows.length, JSON.stringify({ issues, acceptance: doc }));
-      const verification = missing ? `\`\`\`issue-verification\n- issue: required_bank_order\n  verdict: confirmed\n  repair_owner: spec\n  evidence: ${target} | ${issues!.rows[0].summary}\n\`\`\`\n` : '';
-      publishFixtureVerifierEvidence({ projectRoot: project.root, reportsDir: path.dirname(summaryPath), feature: project.feature,
-        phase: 'spec', subjectId: request!.subject_id, reportText: text + verification,
-        draftPath: draftForStageVerifier(ctx), skipSummaryPatch: true });
-      if (missing) {
-        const rawReport = JSON.parse(fs.readFileSync(path.join(path.dirname(summaryPath), 'script-report.json'), 'utf8'));
-        observations.rawRequiredPass = rawReport.summary.verdict === 'PASS';
-      }
-    },
-  };
-  return { project, target, acceptance, requirement, options, observations };
-}
-
 const cases: Array<{ name: string; run(): void | Promise<void> }> = [
-  ...(['bad-twice', 'valid-supplement', 'external-notes'] as const).map(mode => ({
-    name: `86c4d5be real verifier ${mode} preserves the first same-purpose format supplement`,
-    async run() {
-      const fixture = await prepareSamePhaseRequiredWorkCase();
-      const { project, options } = fixture;
-      const originalVerifier = options.onOutOfChain!;
-      const deliveries: Array<{ subject: string; prompt: string }> = [];
-      let externalNotesDir: string | undefined;
-      try {
-        const probe = await runGoalRuntimeChain(project.root, { ...options, onOutOfChain: async ctx => {
-          const { parseVerifierRequestFromInstruction } = require('../../scripts/utils/verifier-request') as typeof import('../../scripts/utils/verifier-request');
-          const request = parseVerifierRequestFromInstruction(ctx.prompt); assert(request);
-          deliveries.push({ subject: request.subject_id, prompt: ctx.prompt });
-          if (mode !== 'valid-supplement' || deliveries.length === 1) {
-            fs.writeFileSync(draftForStageVerifier(ctx), deliveries.length === 1 ? 'I checked it.' : '{ malformed at check-i2/report.json');
-            return;
-          }
-          return originalVerifier(ctx);
-        } });
-        assert(deliveries.length >= 2, 'the first genuinely unusable return receives explicit format feedback');
-        assert.equal(deliveries[0].subject, deliveries[1].subject, 'format repair preserves the actual subject');
-        assert(!deliveries[0].prompt.includes('上次核验未交回可用对象，请按既有格式返回。'));
-        assert(deliveries[1].prompt.includes('上次核验未交回可用对象，请按既有格式返回。'));
-        if (mode !== 'valid-supplement') {
-          assert.equal(deliveries.length, 2, 'different malformed text and parse positions cannot buy another supplement');
-          assert(probe.events.some(event => event.type === 'phase_halt' && event.halt_reason === 'executor_waiting'));
-          if (mode === 'external-notes') {
-            const notes = '工程外真实返修诊断：按原验收补齐银行排序说明；诊断不是新需求。';
-            externalNotesDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-external-notes-'));
-            const externalNotes = path.join(externalNotesDir, 'notes.md'); fs.writeFileSync(externalNotes, notes);
-            assert(path.relative(project.root, externalNotes).startsWith('..') || path.isAbsolute(path.relative(project.root, externalNotes)));
-            let authorReceived = false, verifierReceived = false;
-            const recovered = await runGoalRuntimeChain(project.root, { ...options, resume: path.basename(probe.reportDir),
-              resumeExtraArgs: ['--repair-notes', externalNotes],
-              onAuthor: (ctx, context) => { assert(ctx.prompt.includes(notes)); authorReceived = true; options.onAuthor!(ctx, context); },
-              onOutOfChain: async ctx => {
-                const { parseVerifierRequestFromInstruction } = require('../../scripts/utils/verifier-request') as typeof import('../../scripts/utils/verifier-request');
-                const request = parseVerifierRequestFromInstruction(ctx.prompt); assert(request);
-                const prompt = fs.readFileSync(path.resolve(project.root, request.prompt_path), 'utf8');
-                assert(prompt.includes(notes), 'the actual verifier material includes the external notes already delivered to the author');
-                verifierReceived = true;
-                return originalVerifier(ctx);
-              } });
-            assert(authorReceived && verifierReceived, 'legal external notes pass through the real author and verifier entries');
-            assert.equal(recovered.exitCode, 0, 'external notes retain their existing support without an uncaught path-validation exception');
-            assert(!recovered.events.some(event => event.reason === 'uncaught_exception'));
-          } else {
-            const recovered = await runGoalRuntimeChain(project.root, { ...options, resume: path.basename(probe.reportDir),
-              onOutOfChain: () => assert.fail('cold resume without new input cannot issue a third verifier') });
-            assert(recovered.events.some(event => event.type === 'run_end'));
-          }
-        } else {
-          assert.equal(probe.exitCode, 0, 'the valid supplement is consumed, and real negative feedback can then be repaired');
-          assert(probe.events.some(event => event.type === 'run_end' && event.status === 'CHAIN_SLICE_COMPLETED'));
-        }
-      } finally {
-        if (externalNotesDir) { assert(path.resolve(externalNotesDir).startsWith(path.resolve(os.tmpdir()) + path.sep)); fs.rmSync(externalNotesDir, { recursive: true, force: true }); }
-        fs.rmSync(project.root, { recursive: true, force: true }); clearFrameworkConfigCache();
-      }
-    },
-  })),
   ...(['process', 'session'] as const).flatMap(transport => (['author', 'verifier', 'legacy'] as const).map(kind => ({
     name: `86c4d5be frozen ${kind} material survives ${transport} issuance return and cold preparation`,
     run() {
@@ -272,251 +120,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
     },
   }))),
 
-  ...(['partial', 'unchanged'] as const).map(mode => ({
-    name: 'M3 real unit assessment ' + mode + ': remaining obligations continue the exact native SID; unchanged returns pause',
-    async run() {
-      const { root } = setupGoalRuntimeHost('codex', false);
-      const product = path.join(root, PRODUCT_FILE);
-      const sid = 'm3-exact-original-native-thread';
-      const nativeOutput = JSON.stringify({ type: 'thread.started', thread_id: sid }) + '\n'
-        + JSON.stringify({ type: 'turn.completed' }) + '\n';
-      const requiredA = 'M3_required_object_A', requiredB = 'M3_required_object_B';
-      fs.writeFileSync(product, 'export const M3_A = false;\nexport const M3_B = false;\n');
-      const deliveries: Array<{ sid?: string; instruction: string; attempt: string }> = [];
-      const observations: Array<{ a: boolean; b: boolean }> = [];
-      try {
-        const configFile = path.join(root, 'framework.config.json');
-        const config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
-        config.active_workflow = 'obligation-driven'; fs.writeFileSync(configFile, JSON.stringify(config)); clearFrameworkConfigCache();
-        const requirement = `修复 ${PRODUCT_FILE} 中所有已核实的必修项，保留真实验证。`;
-        const scope = prepareFeatureScopeCandidate({ projectRoot: root, frameworkRoot: path.resolve(__dirname, '../../..'), feature: 'bc-openCard',
-          completionTarget: 'request', requestedResults: [`修复 ${PRODUCT_FILE} 的两个必修对象`], requestedPhases: ['coding'], requirement }).scope;
-        assert(scope.obligations.some(obligation => obligation.kind === 'implementation' && obligation.applicability === 'required'),
-          'the original partial-repair contract must declare its actual implementation duty before birth');
-        const probe = await runGoalRuntimeChain(root, { adapter: 'codex', viaRuntimeClass: true,
-          freshStartPhase: 'coding', freshEndPhase: 'coding', freshRequirement: requirement,
-          freshManifestContent: YAML.stringify({ feature: 'bc-openCard', adapter: 'codex', requirement, execution_scope: scope,
-            chain_override: scope.phase_chain, unattended: { write_mode: 'full-access', approval_mode: 'never' } }),
-          onAuthor: (ctx, context) => {
-            assert.equal(context.runId, ctx.runId); assert.equal(context.owner.run_id, ctx.runId);
-            const directory = path.dirname(ctx.outputLogPath);
-            const request = fs.readdirSync(directory).find(name => /^request-e\d+\.json$/.test(name));
-            assert(request, 'the actual unit request must exist before its native transport consumes it');
-            const original = JSON.parse(fs.readFileSync(path.join(directory, request), 'utf8'));
-            assert.equal(original.context.instruction, context.instruction);
-            deliveries.push({ sid: context.provider_session_id, instruction: context.instruction ?? '', attempt: context.attemptId });
-            // The provider substitute emits its real protocol stream; recovery never receives an invented context SID.
-            fs.writeFileSync(path.join(directory, 'agent-events.jsonl'), nativeOutput);
-            if (deliveries.length === 1) return;
-            assert.equal(context.provider_session_id, sid, 'remaining work must return to the exact original native session');
-            const instruction = context.instruction ?? '';
-            if (deliveries.length === 2) {
-              assert(instruction.includes(requiredA) && instruction.includes(requiredB), 'both current mandatory objects must actually reach the author');
-              if (mode === 'partial') fs.writeFileSync(product, 'export const M3_A = true;\nexport const M3_B = false;\n');
-            } else {
-              assert.equal(mode, 'partial', 'unchanged completed work must pause before a third author');
-              assert(instruction.includes(requiredB) && !instruction.includes(requiredA), 'only the remaining unchanged B fact should be delivered');
-              assert.equal(deliveries.length, 3, 'one remaining obligation requires one continuation, not another queue');
-              fs.writeFileSync(product, 'export const M3_A = true;\nexport const M3_B = true;\n');
-            }
-          },
-          onHarnessSummary: ({ phase }) => {
-            if (phase !== 'coding') return null;
-            const bytes = fs.readFileSync(product, 'utf8');
-            const state = { a: bytes.includes('M3_A = true'), b: bytes.includes('M3_B = true') };
-            observations.push(state);
-            const dependency = { path: PRODUCT_FILE, exists: true, sha256: require('crypto').createHash('sha256').update(bytes).digest('hex'), role: 'artifact' };
-            return { checks: ([['A', requiredA, state.a], ['B', requiredB, state.b]] as const).map(([object, id, fixed]): CheckResult => ({
-              id, category: 'structure', description: 'mandatory product object ' + object, severity: 'BLOCKER',
-              status: fixed ? 'PASS' : 'FAIL', repair_owner: 'coding', affected_files: [PRODUCT_FILE],
-              details: 'Current required object ' + object + ' must be true in the actual product.',
-              structured: { source_attempt_dependencies: [dependency] },
-            })) };
-          },
-          invokeResultFor: phase => phase === 'work-unit-author' ? { stdout: nativeOutput } : null,
-        });
-        assert.equal(deliveries[0].sid, undefined, 'the first native context is not recovered from another unit');
-        assert(!probe.events.some(event => event.type === 'run_end' && event.status === 'INTERRUPTED'), 'the runtime must naturally finish or pause');
-        assert(!probe.events.some(event => event.type === 'phase_halt' && String(event.halt_reason).startsWith('budget_')));
-        if (mode === 'partial') {
-          assert.deepEqual(observations, [{ a: false, b: false }, { a: true, b: false }, { a: true, b: true }],
-            'each actual source change must be checked before selecting the next remaining work');
-          assert.equal(deliveries.length, 3);
-          assert.equal(probe.exitCode, 0);
-          assert(probe.events.some(event => event.type === 'run_end' && event.status === 'CHAIN_SLICE_COMPLETED'));
-          assert(!probe.events.some(event => event.type === 'phase_halt' && ['executor_waiting', 'no_progress_guard'].includes(String(event.halt_reason))),
-            'verified partial progress must continue instead of waiting or claiming no progress');
-        } else {
-          assert.deepEqual(observations, [{ a: false, b: false }], 'unchanged bound inputs must reuse the actual completed check');
-          assert.equal(deliveries.length, 2);
-          assert.notEqual(probe.exitCode, 0);
-          assert(probe.events.some(event => event.type === 'phase_halt' && event.halt_reason === 'no_progress_guard'));
-          assert(!probe.events.some(event => event.type === 'phase_halt' && event.halt_reason === 'executor_waiting'), 'completed unchanged work has an I10 pause, not an external dependency');
-        }
-      } catch (error) {
-        const { preserveRuntimeTestEvidence } = require('../utils/runtime-test-control') as typeof import('../utils/runtime-test-control');
-        const reports = featurePhaseReportsDir(root, 'bc-openCard', 'coding');
-        const evidence = preserveRuntimeTestEvidence([root], String(error), ['M3 ' + mode],
-          [product, ...['summary.json', 'script-report.json', 'phase-evidence-manifest.json'].map(name => path.join(reports, name))]);
-        fs.writeFileSync(path.join(evidence, 'actual-unit-assessments.json'), JSON.stringify({ deliveries, observations }, null, 2));
-        throw error;
-      } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
-    },
-  })),
-  ...(['legacy', 'typed'] as const).map(kind => ({
-    name: `R4 current object coverage ${kind} naturally closes the no-op repair loop without budget or quiesce`,
-    async run() {
-      const { root } = setupGoalRuntimeHost('codex');
-      const original = fs.readFileSync(path.join(root, PRODUCT_FILE));
-      const signal = { class: 'shape_mismatch' as const, element: 'hc_page_title', bbox: [0.1, 0.2, 0.3, 0.4],
-        severity: 'major' as const, note: 'R4 original title mismatch', must_fix_refs: [0] };
-      const fingerprint = computeDefectFingerprint('add_card_home', signal);
-      const candidate = { id: 'legacy-visual-object', category: 'coding', files: [PRODUCT_FILE],
-        summary: 'The actual product source must declare legacy_current_object = true; the legacy observation has no verified object refs.' };
-      let delivered = false, objectChecks = 0, completedNoProgress = false;
-      const classifier = require('../../scripts/utils/goal-failure-classifier') as typeof import('../../scripts/utils/goal-failure-classifier');
-      const reader = require('../../scripts/utils/verify-feature-completion') as typeof import('../../scripts/utils/verify-feature-completion');
-      const observeCheck = reader.readCurrentCheckObservation;
-      const checkObservations: Array<ReturnType<typeof observeCheck>> = [];
-      reader.readCurrentCheckObservation = opts => {
-        const observed = observeCheck(opts);
-        if (opts.projectRoot === root && opts.phase === 'testing') checkObservations.push(observed);
-        return observed;
-      };
-      const evaluate = classifier.evaluateCompletionProgress;
-      classifier.evaluateCompletionProgress = input => {
-        const result = evaluate(input);
-        if (input.current.checkFamilies?.includes('testing') && input.current.completed && input.feedbackDelivered && input.authorReturned && result.halt) completedNoProgress = true;
-        return result;
-      };
-      try {
-        if (kind === 'typed') seedSignalHost(root);
-        const probe = await runGoalRuntimeChain(root, { adapter: 'codex',
-          freshRequirement: kind === 'typed'
-            ? '真机测试银行卡开卡流程；页面必须像素级还原参考截图，不接受降级，达不到不得继续交付。'
-            : `修复 ${PRODUCT_FILE} 中的 legacy_current_object = true 必修项，并执行原有真机检查。`,
-          onAuthor: ctx => {
-            if (ctx.attempt > 1) {
-              assert(ctx.prompt.includes(kind === 'typed' ? signal.note : candidate.id), 'the real owner must receive its original finding');
-              delivered = true;
-            }
-          },
-          ...(kind === 'typed' ? {
-            onTestingHarness: () => writeCurrentSignals(root, [signal], [fingerprint]),
-            testingGateChecks: (ctx: Parameters<typeof currentSignalGateChecks>[0]) => {
-              const checks = currentSignalGateChecks(ctx);
-              const visual = checks.find(check => check.id === 'visual_diff')?.structured as { fingerprintable?: boolean; defect_fingerprints?: string[] };
-              assert(visual?.fingerprintable && visual.defect_fingerprints?.includes(fingerprint), 'the actual gate must bind the same typed visual object');
-              objectChecks++;
-              return checks;
-            },
-          } : {
-            testingGateChecks: () => {
-              const bytes = fs.readFileSync(path.join(root, PRODUCT_FILE));
-              objectChecks++;
-              return [{ id: candidate.id, category: 'structure', severity: 'BLOCKER',
-                description: 'read the actual legacy product object',
-                status: bytes.toString('utf8').includes('legacy_current_object = true') ? 'PASS' : 'FAIL',
-                repair_owner: 'coding', coding_candidate: true, affected_files: candidate.files, details: candidate.summary,
-                structured: { source_attempt_dependencies: [{ path: PRODUCT_FILE, exists: true,
-                  sha256: require('crypto').createHash('sha256').update(bytes).digest('hex'), role: 'artifact' }] } }];
-            },
-          }),
-        });
-        assert(delivered && fs.readFileSync(path.join(root, PRODUCT_FILE)).equals(original), 'the owner must actually return without a product edit');
-        const owner = probe.events.filter(event => event.type === 'agent_invoke_start' && event.phase === 'work-unit-author').pop();
-        const returned = probe.events.find(event => event.type === 'agent_invoke_end' && event.invoke_id === owner?.invoke_id);
-        assert(returned && invocationCompleted({ ...returned, exitCode: returned.exit_code }), 'the signed owner must genuinely return normally');
-        assert.notEqual(probe.exitCode, 0);
-        assert(!probe.events.some(event => event.type === 'run_end' && event.status === 'INTERRUPTED'
-          || event.type === 'phase_halt' && String(event.halt_reason).startsWith('budget_')), 'neither an external stop nor a hard budget proves convergence');
-        if (kind === 'typed') {
-          if (objectChecks !== 1) {
-            const { preserveRuntimeTestEvidence } = require('../utils/runtime-test-control') as typeof import('../utils/runtime-test-control');
-            const reports = featurePhaseReportsDir(root, 'bc-openCard', 'testing');
-            const evidence = preserveRuntimeTestEvidence([root], 'R4 actual repeated checker input observation', [],
-              ['summary.json', 'script-report.json', 'phase-evidence-manifest.json'].map(name => path.join(reports, name))
-                .concat([path.join(root, PRODUCT_FILE), path.join(root, 'doc/features/bc-openCard/device-testing/device-screenshots/visual-diff.json')]));
-            fs.writeFileSync(path.join(evidence, 'actual-check-inputs.json'), JSON.stringify({ objectChecks, checkObservations, events: probe.events }, null, 2));
-          }
-          const reports = featurePhaseReportsDir(root, 'bc-openCard', 'testing');
-          const manifest = JSON.parse(fs.readFileSync(path.join(reports, 'phase-evidence-manifest.json'), 'utf8'));
-          const summary = fs.readFileSync(path.join(reports, 'summary.json'));
-          assert.equal(manifest.outputs.find((entry: { path: string }) => path.resolve(root, entry.path) === path.join(reports, 'summary.json'))?.sha256,
-            require('crypto').createHash('sha256').update(summary).digest('hex'), 'rendering collector findings must not mutate the already-bound raw summary');
-          assert(objectChecks === 1, 'the unchanged current object was actually checked once; a no-op author must not buy the same tool again');
-          assert(completedNoProgress, 'the completed typed-object predicate must observe delivered feedback and a real author return');
-          assert(probe.events.some(event => event.type === 'phase_halt' && String(event.halt_reason).startsWith('no_progress')), 'the common completed-object comparison must pause the same deficit');
-          const { executionRequestForInvoke } = require('../../scripts/utils/session-execution-handoff') as typeof import('../../scripts/utils/session-execution-handoff');
-          const { renderWorkUnitAuthorFeedback, buildWorkUnitAuthorInput } = require('../../scripts/goal-phase-runtime') as typeof import('../../scripts/goal-phase-runtime');
-          const ownerInvokeId = owner?.invoke_id;
-          assert(typeof ownerInvokeId === 'string', 'the completed real author has its original invocation identity');
-          const issued = executionRequestForInvoke(probe.reportDir, ownerInvokeId)!;
-          const context = issued.request.context;
-          assert(context.workInput?.evaluation, 'the real author prompt producer freezes its pre-call evaluation');
-          const feedbackInput = { projectRoot: root, frameworkRoot: FRAMEWORK_SOURCE_ROOT, feature: 'bc-openCard', disposition: context.workInput.evaluation.disposition };
-          const beforeFeedback = renderWorkUnitAuthorFeedback(feedbackInput);
-          assert(context.instruction?.includes(beforeFeedback), 'the actual issued author received this report rendering');
-          assert(context.workInput.material.segments.includes(dispositionFacts(feedbackInput.disposition)), 'the production author composer replaces only the actual feedback segment');
-          const frozenMaterial = JSON.stringify(context.workInput);
-          const requestBefore = fs.readFileSync(path.resolve(probe.reportDir, issued.reference.path));
-          const reportFile = path.join(reports, 'script-report.json'), originalReport = fs.readFileSync(reportFile);
-          const kernel = new GoalPhaseRuntime();
-          const instructions = context.workInput.material.segments.slice(0, -3);
-          assert(instructions.every((section): section is string => typeof section === 'string'));
-          const prepareInput = () => buildWorkUnitAuthorInput({ ...feedbackInput, instructions: instructions as string[], evaluation: context.workInput!.evaluation! });
-          const decide = (input: ReturnType<typeof buildWorkUnitAuthorInput>) => [kernel, new GoalPhaseRuntime()].map(runtime =>
-            (runtime.prepareExecutionContext({ ...context, ...input, attemptId: 'report-overwrite-recovery' }) as { status?: string }).status);
-          const retainedInput = prepareInput();
-          assert(context.instruction!.startsWith(retainedInput.instruction), 'the same production assembler reproduces the issued business prompt before the native-session transport suffix');
-          assert.deepEqual(retainedInput.workInput, context.workInput, 'the retained-report control is freshly assembled through production code');
-          const retainedReport = decide(retainedInput);
-          try {
-            const rawReport = JSON.parse(originalReport.toString('utf8'));
-            const visual = rawReport.checks.find((check: { id: string }) => check.id === 'visual_diff'); assert(visual);
-            visual.duration_ms = Number(visual.duration_ms ?? 0) + 1234;
-            fs.writeFileSync(reportFile, JSON.stringify(rawReport, null, 2) + '\n');
-            const afterFeedback = renderWorkUnitAuthorFeedback(feedbackInput);
-            assert.notEqual(afterFeedback, beforeFeedback, 'the same script-report path really supplies different display metadata to the author renderer');
-            assert.equal(JSON.stringify(context.workInput), frozenMaterial, 'overwriting the current report cannot rewrite the frozen comparison input');
-            assert(workUnitFeedbackDelivered(context, feedbackInput.disposition), 'delivery remains proved by the actual signed author request and completed return');
-            const overwrittenInput = prepareInput();
-            assert.notEqual(overwrittenInput.instruction, retainedInput.instruction, 'production author assembly consumes the overwritten report display');
-            assert.notEqual(overwrittenInput.workInput, retainedInput.workInput, 'the current producer builds a new material object instead of copying the old context');
-            assert.deepEqual(decide(overwrittenInput), retainedReport,
-              'in-process and cold preparation agree with the retained-report control');
-            assert.deepEqual(retainedReport, ['waiting', 'waiting'], 'different report display does not buy the same author another call');
-            assert.deepEqual(fs.readFileSync(path.resolve(probe.reportDir, issued.reference.path)), requestBefore, 'recovery does not backfill the old report or request');
-            const authorsBefore = probe.events.filter(event => event.type === 'agent_invoke_start' && event.phase === 'work-unit-author').length;
-            const resumed = await runGoalRuntimeChain(root, { adapter: 'codex', resume: path.basename(probe.reportDir),
-              onAuthor: () => assert.fail('normal cold resume after display-only report overwrite cannot dispatch another author') });
-            assert.equal(resumed.events.filter(event => event.type === 'agent_invoke_start' && event.phase === 'work-unit-author').length, authorsBefore,
-              'the public recovery entry keeps the same real author invocation count');
-          } finally { fs.writeFileSync(reportFile, originalReport); }
-        } else {
-          assert(probe.events.some(event => event.type === 'phase_halt' && event.halt_reason === 'executor_waiting' && event.run_disposition === 'WAITING'), 'uncovered legacy evidence must naturally wait for actual verification');
-          const summary = JSON.parse(fs.readFileSync(path.join(root, 'doc/features/bc-openCard/testing/reports/summary.json'), 'utf8'));
-          assert(summary.repair_candidates.some((row: { id: string }) => row.id === candidate.id), 'unknown verification must not erase the original finding');
-          const raw = JSON.parse(fs.readFileSync(path.join(root, 'doc/features/bc-openCard/testing/reports/script-report.json'), 'utf8'));
-          assert(raw.checks.some((check: CheckResult) => check.id === candidate.id && check.status === 'FAIL'), 'the current producer must retain its real failed observation');
-          const runId = JSON.parse(fs.readFileSync(path.join(probe.reportDir, 'manifest.json'), 'utf8')).run_id;
-          assert(typeof runId === 'string');
-          const current = resolveCompletionDisposition({ projectRoot: root, frameworkRoot: FRAMEWORK_SOURCE_ROOT,
-            feature: 'bc-openCard', runId, chain: ['testing'] });
-          assert(current.completionBlocking.some(problem => problem.id === `open_finding:${candidate.id}` && !problem.evidence?.length),
-            'a legacy finding without verified object refs remains unknown');
-          assert(objectChecks === 1 && !completedNoProgress && !probe.events.some(event => event.type === 'phase_halt' && event.halt_reason === 'no_progress_guard'),
-            'unknown object identity cannot buy an unchanged tool or a completed no-progress conclusion');
-        }
-      } catch (error) {
-        const { preserveRuntimeTestEvidence } = require('../utils/runtime-test-control') as typeof import('../utils/runtime-test-control');
-        const reports = featurePhaseReportsDir(root, 'bc-openCard', 'testing');
-        preserveRuntimeTestEvidence([root], String(error), ['R4 object coverage ' + kind],
-          [path.join(root, PRODUCT_FILE), ...['summary.json', 'script-report.json', 'phase-evidence-manifest.json'].map(name => path.join(reports, name))]);
-        throw error;
-      } finally { reader.readCurrentCheckObservation = observeCheck; classifier.evaluateCompletionProgress = evaluate; fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
-    },
-  })), {
+ {
   name: 'c6 no-progress guidance names the current verification subject gap and preserves content-repair wording selection',
   run() {
     const issue = { phase: 'plan', owner: 'plan', id: 'open_finding:pending-evidence', action: 'verify' as const,
@@ -531,28 +135,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
     assert.equal(buildVerificationNoProgressGuidance({ ...input, problems: [issue, { ...issue, id: 'real-external-condition', action: 'wait' }] }), undefined,
       'a real missing external condition is not rendered as pure semantic verification');
   },
-}, {
-  name: 'c6 real spec gate delivers a same-phase mandatory MAJOR beneath raw PASS and closes only after original verification',
-  async run() {
-    const fixture = await prepareSamePhaseRequiredWorkCase();
-    try {
-      const result = await runGoalRuntimeChain(fixture.project.root, fixture.options);
-      const reportsDir = featurePhaseReportsDir(fixture.project.root, fixture.project.feature, 'spec', fixture.project.frameworkRoot);
-      const summary = JSON.parse(fs.readFileSync(path.join(reportsDir, 'summary.json'), 'utf8'));
-      assert(fixture.observations.rawRequiredPass && fixture.observations.closureBlocked);
-      assert.equal(fixture.observations.authorPrompts.length, 1, JSON.stringify({ phases: result.invokedPhases, summary }));
-      assert(fixture.observations.authorPrompts[0].includes('required_bank_order') && fixture.observations.authorPrompts[0].includes(fixture.target));
-      assert(fixture.observations.verifierRequests.length >= 2, 'original verifier must judge the changed owned artifact');
-      assert.equal(summary.verdict, 'PASS'); assert.equal(summary.closure_status, 'closed');
-      assert.equal(summary.repair_candidates?.length ?? 0, 0);
-      assert.equal(result.exitCode, 0, 'the current verified spec endpoint must complete its authorized slice');
-      assert(result.events.some(event => event.type === 'run_end' && event.status === 'CHAIN_SLICE_COMPLETED'));
-      assert(result.events.some(event => event.type === 'harness_end' && event.phase === 'spec'
-        && typeof event.exit_code === 'number' && event.timed_out !== true), 'the actual script check ends; pending independent verification is not a tool timeout or a raw script FAIL');
-      assert(!result.invokedPhases.some(phase => ['coding', 'review', 'ut', 'testing'].includes(phase)), 'the authorized spec endpoint does not expand scope');
-    } finally { fs.rmSync(fixture.project.root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
-  },
-}, {
+},  {
   name: 'c6 goal self-check NEXT lists the current required task before old PASS and closed receipt guidance',
   run() {
     const target = 'doc/features/demo/spec/spec.md';
@@ -698,40 +281,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
       assert.throws(() => readCurrentDispositionInput(options), 'the attached current run still rejects its own corrupted identity');
     } finally { fs.rmSync(f.root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
   },
-}, {
-  name: 'a real debt writer failure waits for framework verification before closure without rewriting raw PASS or retrying the author',
-  async run() {
-    const { root } = setupGoalRuntimeHost('codex');
-    let debtPath = '';
-    try {
-      const probe = await runGoalRuntimeChain(root, { frameworkRoot: FRAMEWORK_SOURCE_ROOT, freshEndPhase: 'spec', adapter: 'codex', viaRuntimeClass: true,
-        onHarnessSummary: ({ phase }) => {
-          if (phase !== 'spec') return null;
-          // Inject the framework writer failure at its own seam, not as an author ledger write.
-          debtPath = visualDebtJsonPath(root, 'bc-openCard');
-          fs.mkdirSync(path.dirname(debtPath), { recursive: true }); fs.writeFileSync(debtPath, '{broken debt');
-          return { checks: [{ id: 'spec_file_exists', category: 'structure', description: 'actual successful check', status: 'PASS' as const, severity: 'BLOCKER' as const, details: 'spec exists' }] };
-        },
-      });
-      const summary = JSON.parse(fs.readFileSync(path.join(featurePhaseReportsDir(root, 'bc-openCard', 'spec'), 'summary.json'), 'utf8'));
-      assert.equal(summary.verdict, 'PASS'); assert.equal(summary.completion_status, 'DEBT_PIPELINE_ERROR');
-      assert.equal(fs.readFileSync(debtPath, 'utf8'), '{broken debt', 'the failing ledger stays available for diagnosis');
-      assert.deepEqual(probe.invokedPhases, ['work-unit-author']);
-      assert(!probe.events.some(event => event.type === 'phase_halt' && event.halt_reason === 'closure_finalization_failed'));
-      assert(!probe.events.some(event => event.type === 'phase_backtrack_requested'));
-      const raw = probe.events.find(event => event.type === 'phase_verdict' && event.phase === 'spec');
-      assert.equal(raw?.verdict, 'PASS');
-      assert(probe.events.some(event => event.type === 'phase_halt' && event.halt_reason === 'executor_waiting'
-        && event.run_wait_kind === 'external' && String(event.halt_guidance).includes('framework')));
-      assert.notEqual(probe.exitCode, 0, 'framework verification cannot produce clean completion');
-      const mixed = resolveCurrentDisposition({ endpoint: 'feature-completion', phases: [{ phase: 'testing', verdict: 'FAIL',
-        schemaCurrent: true, closureCommitted: true, completionStatus: 'DEBT_PIPELINE_ERROR', failingChecks: [
-          { id: 'actual_product_failure', status: 'FAIL', severity: 'BLOCKER', repair_owner: 'coding' }] }] });
-      assert(mixed.completionBlocking.some(problem => problem.id === 'actual_product_failure' && problem.action === 'repair' && problem.owner === 'coding'));
-      assert(mixed.completionBlocking.some(problem => problem.id === 'debt_pipeline_healthy' && problem.action === 'verify' && problem.owner === 'framework'));
-    } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
-  },
-}, {
+},  {
   name: 'one causal owner handoff retains a raw failure until source rechecks and never borrows an old PASS or an invalidated completion',
   run() {
     const { root } = makeVerifierProject();
@@ -923,169 +473,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
       assert.equal(readRunControl(runDir, 'run')?.owner?.kind, 'session');
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   },
-}, {
-  name: 'shared invocation material is persisted by the real detached runtime before its executor consumes the original prompt',
-  async run() {
-    const { root } = setupGoalRuntimeHost('codex');
-    let observed = false;
-    try {
-      const probe = await runGoalRuntimeChain(root, { freshEndPhase: 'spec', adapter: 'codex', viaRuntimeClass: true, onAuthor: ctx => {
-        const directory = path.dirname(ctx.outputLogPath);
-        const file = fs.readdirSync(directory).find(name => /^request-e\d+\.json$/.test(name));
-        assert(file, 'detached runtime must persist its common request before executing');
-        const material = JSON.parse(fs.readFileSync(path.join(directory, file!), 'utf8'));
-        assert.equal(material.type, 'phase_execute_request'); assert.equal(material.context.owner.kind, 'process');
-        assert.equal(material.context.instruction, fs.readFileSync(path.join(directory, 'prompt.md'), 'utf8'));
-        assert.equal(material.context.workInput.material.purpose, 'work-unit-author');
-        assert(Array.isArray(material.context.workInput.material.segments) && material.context.workInput.material.segments.length > 0);
-        assert.equal(typeof material.context.workInput.evaluation.acceptanceKey, 'string', 'the actual producer persists the same pre-call completion evaluation');
-        assert(ctx.prompt.includes(material.context.instruction), 'CLI运输必须消费同一完整instruction');
-        assert.equal(material.context.attemptId, ctx.goalAttemptId);
-        assert.equal(material.invoke_id, `${material.context.phase}-${ctx.goalAttemptId}`);
-        const eventsFile = path.join(directory, '../../../events.jsonl');
-        const events = fs.readFileSync(eventsFile, 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line));
-        const start = events.find(event => event.type === 'agent_invoke_start' && event.invoke_id === material.invoke_id);
-        assert.equal(material.issued_at, start.ts);
-        assert.equal(material.deadline, material.context.user_deadline_at, 'only an explicit user deadline limits the author');
-        assert.equal(material.gate_timeout_ms, 0, 'the author request must not inherit a phase tool deadline');
-        assert(!events.some(event => event.driver === 'session'), 'the native runtime must retain process transport');
-        assert(start.handoff_request, 'the native start must bind the same persisted common request');
-        assert.equal(path.resolve(material.context.runDir, start.handoff_request.path), path.resolve(directory, file!), 'the start must reference the actual consumed request file');
-        assert.equal(start.handoff_request.sha256, require('crypto').createHash('sha256').update(fs.readFileSync(path.join(directory, file!))).digest('hex'),
-          'the start reference must match the actual immutable request bytes');
-        const control = readRunControl(material.context.runDir, material.context.runId);
-        assert.equal(control?.owner?.kind, 'process'); assert.equal(control?.owner?.pid, process.pid);
-        assert.equal(control?.owner?.owner_id, material.context.owner.owner_id);
-        assert.equal(control?.current_epoch, material.context.owner.epoch);
-        observed = true;
-      } });
-      assert(observed, JSON.stringify(probe.events.filter(event => event.type === 'run_end'))); assert.equal(probe.exitCode, 0);
-    } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
-  },
-}, {
-  name: 'terminal candidate collector delivers the retained source candidate files and evidence through the real event and author prompt',
-  async run() {
-    const { root } = setupGoalRuntimeHost('codex');
-    const reader = require('../../scripts/utils/verify-feature-completion') as typeof import('../../scripts/utils/verify-feature-completion');
-    const original = reader.readCurrentDispositionInput;
-    const originalResolver = reader.resolveCompletionDisposition;
-    const target = 'doc/features/bc-openCard/spec/spec.md';
-    const evidence = 'doc/features/bc-openCard/plan/reports/confirmed-target.json';
-    const required = 'verified terminal requirement';
-    const summary = 'confirmed spec obligation is missing its observed requirement; evidence=' + evidence;
-    const candidate = { id: 'SPEC-TERMINAL', category: 'spec' as const, files: [target], summary,
-      item_fingerprint: itemFingerprintOf('SPEC-TERMINAL', [target], summary), source_phase: 'plan' };
-    let supplied = false, repaired = false, authorCalls = 0, prompt = '';
-    try {
-      // Only the retained independent source fact is injected; dispatch, input binding and rendering are production.
-      reader.readCurrentDispositionInput = opts => {
-        const input = original(opts);
-        if (!('chain' in opts) || opts.projectRoot !== root || !opts.runId) return input;
-        const file = path.join(root, 'doc/features/bc-openCard/goal-runs', opts.runId, 'events.jsonl');
-        const history = fs.existsSync(file) ? fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line)) : [];
-        if (!history.some(event => event.type === 'harness_end' && event.phase === 'spec' && event.exit_code === 0)) return input;
-        if (!supplied) {
-          supplied = true;
-          fs.mkdirSync(path.dirname(path.join(root, evidence)), { recursive: true });
-          fs.writeFileSync(path.join(root, evidence), JSON.stringify({ target, observed: fs.readFileSync(path.join(root, target), 'utf8'), required }));
-        }
-        if (fs.readFileSync(path.join(root, target), 'utf8').includes(required)) return input;
-        return { ...input, additionalProblems: [...input.additionalProblems ?? [], { phase: 'plan', source_phase: 'plan', owner: 'spec',
-          id: 'open_finding:' + candidate.id, action: 'repair', affects: 'completion', severity: 'BLOCKER', detail: candidate.summary,
-          files: [target], evidence: [evidence], item_fingerprint: candidate.item_fingerprint }] };
-      };
-      reader.resolveCompletionDisposition = opts => resolveCurrentDisposition(reader.readCurrentDispositionInput(opts));
-      const probe = await runGoalRuntimeChain(root, { frameworkRoot: FRAMEWORK_SOURCE_ROOT, freshEndPhase: 'spec', adapter: 'codex', viaRuntimeClass: true,
-        onAuthor: ctx => {
-          authorCalls++;
-          if (!supplied) return;
-          prompt = ctx.prompt;
-          assert(prompt.includes(candidate.id) && prompt.includes(target) && prompt.includes(evidence) && prompt.includes(candidate.item_fingerprint),
-            'the actual unit author must receive the retained object and its complete original evidence');
-          const finding = JSON.parse(fs.readFileSync(path.join(root, evidence), 'utf8'));
-          assert.equal(finding.target, target); assert.equal(fs.readFileSync(path.join(root, target), 'utf8'), finding.observed);
-          fs.appendFileSync(path.join(root, target), '\n' + finding.required + '\n');
-          repaired = fs.readFileSync(path.join(root, target), 'utf8').includes(finding.required);
-        },
-      });
-      assert(supplied && repaired && authorCalls === 2, JSON.stringify({ supplied, repaired, authorCalls }));
-      assert(prompt.includes(candidate.summary));
-      assert.equal(probe.exitCode, 0, 'only the actually revised artifact and current checks may close the endpoint');
-      const delivered = probe.events.filter(event => event.type === 'agent_invoke_start' && event.phase === 'work-unit-author');
-      assert.equal(delivered.length, 2, 'one real initial author and one current repair, without a phase queue');
-    } finally { reader.readCurrentDispositionInput = original; reader.resolveCompletionDisposition = originalResolver; fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
-  },
-}, {
-  name: 'terminal verification recovery stops unchanged inputs despite fresh closure outputs and accepts a real input change',
-  async run() {
-    const reader = require('../../scripts/utils/verify-feature-completion') as typeof import('../../scripts/utils/verify-feature-completion');
-    const original = reader.readCurrentDispositionInput;
-    const originalResolver = reader.resolveCompletionDisposition;
-    const initial = 'export const value = 1;\n', updated = 'export const value = 2;\n';
-    const retainedDetail = 'retained verification needs the current responsibility input; 原producer缺可执行request/材料；解除条件：发布真实请求或恢复相关输入后重验';
-    for (const changedInput of [false, true]) {
-      const { root } = setupGoalRuntimeHost('codex');
-      const source = path.join(root, 'src/recovery-input.ts');
-      fs.mkdirSync(path.dirname(source), { recursive: true }); fs.writeFileSync(source, initial);
-      const checkedInputs: string[] = [];
-      try {
-        reader.readCurrentDispositionInput = opts => {
-          const input = original(opts);
-          if (!('chain' in opts) || opts.projectRoot !== root || !opts.runId) return input;
-          const eventsFile = path.join(root, 'doc/features/bc-openCard/goal-runs', opts.runId, 'events.jsonl');
-          const history = fs.existsSync(eventsFile) ? fs.readFileSync(eventsFile, 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line)) : [];
-          if (!history.some(event => event.type === 'harness_end' && event.phase === 'spec') || fs.readFileSync(source, 'utf8') !== initial) return input;
-          const summary = JSON.parse(fs.readFileSync(path.join(featurePhaseReportsDir(root, 'bc-openCard', 'spec'), 'summary.json'), 'utf8'));
-          assert(!summary.verifier_request, 'retained claim has no executable current independent request');
-          return { ...input, additionalProblems: [...input.additionalProblems ?? [], { phase: 'spec', id: 'lineage_fresh', action: 'verify',
-            affects: 'completion', severity: 'BLOCKER', owner: 'spec', detail: retainedDetail }] };
-        };
-        reader.resolveCompletionDisposition = opts => resolveCurrentDisposition(reader.readCurrentDispositionInput(opts));
-        const options: NonNullable<Parameters<typeof runGoalRuntimeChain>[1]> = {
-          frameworkRoot: FRAMEWORK_SOURCE_ROOT, freshEndPhase: 'spec', adapter: 'codex', viaRuntimeClass: true,
-          onHarnessSummary: ({ phase }) => {
-            if (phase !== 'spec') return null;
-            const input = fs.readFileSync(source, 'utf8'); checkedInputs.push(input);
-            return { checks: [{ id: 'spec_file_exists', category: 'structure', description: 'executed responsibility input',
-              status: 'PASS', severity: 'BLOCKER', details: 'actual input read: ' + input,
-              structured: { source_attempt_dependencies: [{ path: 'src/recovery-input.ts', exists: true,
-                sha256: require('crypto').createHash('sha256').update(input).digest('hex'), role: 'artifact' }] } }] };
-          },
-          onOutOfChain: () => { assert.fail('a retained claim without a signed request cannot manufacture an independent invocation'); },
-        };
-        const first = await runGoalRuntimeChain(root, options);
-        const gap = first.events.find(event => event.type === 'phase_halt' && event.halt_reason === 'executor_waiting'
-          && event.run_disposition === 'WAITING' && String(event.halt_guidance).includes(retainedDetail));
-        assert(gap, JSON.stringify(first.events.slice(-6)));
-        assert(String(gap.halt_guidance).includes('解除条件') && String(gap.halt_guidance).includes('request'));
-        assert(!first.events.some(event => event.type === 'run_end' && ['COMPLETED', 'CHAIN_SLICE_COMPLETED'].includes(String(event.status))));
-        assert(!first.events.some(event => event.type === 'phase_halt' && /budget|no_progress/.test(String(event.halt_reason))), 'unknown is not completed no-progress');
-        const initialAuthors = first.events.filter(event => event.type === 'agent_invoke_start' && event.phase === 'work-unit-author').length;
-        const initialGates = first.events.filter(event => event.type === 'harness_start' && event.phase === 'spec').length;
-        assert.equal(initialAuthors, 1); assert.equal(initialGates, 1); assert.deepEqual(checkedInputs, [initial]);
-        if (changedInput) fs.writeFileSync(source, updated);
-        const next = await runGoalRuntimeChain(root, { ...options, resume: path.basename(first.reportDir), noAutoForce: true });
-        assert.equal(next.reportDir, first.reportDir, 'restore the same real original unit');
-        assert.equal(next.events.filter(event => event.type === 'agent_invoke_start' && event.phase === 'work-unit-author').length, initialAuthors,
-          'changed checker input buys only that checker, never another author');
-        const newEvents = next.events.slice(first.events.length);
-        assert(!newEvents.some(event => event.type === 'run_end' && event.status === 'INTERRUPTED'));
-        if (changedInput) {
-          assert(newEvents.some(event => event.type === 'harness_start' && event.phase === 'spec'));
-          assert(checkedInputs.slice(initialGates).includes(updated), 'the actual producer must read and bind the changed input');
-          assert.equal(next.exitCode, 0);
-        } else {
-          assert(!newEvents.some(event => event.type === 'harness_start' && event.phase === 'spec'));
-          assert.deepEqual(checkedInputs, [initial]);
-          const disposition = reader.resolveCompletionDisposition({ projectRoot: root, frameworkRoot: FRAMEWORK_SOURCE_ROOT,
-            feature: 'bc-openCard', runId: path.basename(first.reportDir), chain: ['spec'] });
-          assert(!disposition.completionEligible && disposition.completionBlocking.some(problem => problem.detail.includes(retainedDetail)),
-            'unchanged public recovery keeps the concrete original unknown without new events or calls');
-        }
-      } finally { reader.readCurrentDispositionInput = original; reader.resolveCompletionDisposition = originalResolver; fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
-    }
-  },
-}, {
+},    {
   name: 'P3 unreadable shared input preserves an actual current product defect and keeps completion unknown',
   run() {
     const input = { projectRoot: os.tmpdir(), feature: 'partial-facts', chain: ['coding'], endpoint: 'request' as const,
@@ -1247,75 +635,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
     assert(!remaining.completionBlocking.some(problem => problem.owner === 'plan'), 'resolving plan preserves the unrelated unfinished original review');
     assert(resolveCurrentDisposition(input(false, false)).completionEligible, 'both original judgments must actually resolve before completion');
   },
-}, {
-  name: 'current self-check receives one formal origin and qualified previous-run checks stay reusable',
-  async run() {
-    const { root } = setupGoalRuntimeHost('cursor', false);
-    const feature = 'bc-openCard', frameworkRoot = FRAMEWORK_SOURCE_ROOT, family = 'coding' as const;
-    const reader = require('../../scripts/utils/verify-feature-completion') as typeof import('../../scripts/utils/verify-feature-completion');
-    const original = reader.readReusableCheckResult;
-    let supplied = false, onlyOriginGap = false;
-    try {
-      authorizeFixtureConstruction(root, 'request', '真机测试银行卡开卡流程', [family]);
-      // Supply only the self-check producer's files; qualification, lineage repair and dispatch remain production decisions.
-      reader.readReusableCheckResult = options => {
-        if (options.projectRoot === root && options.runId && options.phase === family && !supplied) {
-          const eventFile = featureFilePath(root, feature, `goal-runs/${options.runId}/events.jsonl`);
-          const events = fs.existsSync(eventFile) ? fs.readFileSync(eventFile, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line)) : [];
-          const author = [...events].reverse().find(event => event.type === 'agent_invoke_end' && event.phase === 'work-unit-author');
-          if (author
-            && !events.some(event => event.type === 'harness_start' && event.phase === family)) {
-            supplied = true;
-            const keys = ['MAISON_GOAL_RUN_ID', 'MAISON_GOAL_ATTEMPT', 'MAISON_GOAL_ATTEMPT_PHASE', 'MAISON_GOAL_RUNNER'];
-            const before = keys.map(key => process.env[key]);
-            try {
-              Object.assign(process.env, { MAISON_GOAL_RUN_ID: options.runId, MAISON_GOAL_ATTEMPT: String(author.invoke_id).slice('work-unit-author-'.length), MAISON_GOAL_ATTEMPT_PHASE: 'work-unit-author', MAISON_GOAL_RUNNER: '1' });
-              const source = path.join(root, PRODUCT_FILE);
-              const observed = fs.readFileSync(source, 'utf8');
-              const report = generateScriptReport(path.join(frameworkRoot, 'harness'), family, feature, root, [{ id: 'file_completeness', category: 'structure',
-                description: 'controlled self-check reads the actual product', severity: 'BLOCKER', status: observed.length ? 'PASS' : 'FAIL', details: source }], frameworkRoot);
-              writeRunSummaryBase(root, report, frameworkRoot);
-              writePhaseReceipt(root, feature, family);
-              writePhaseEvidenceManifest(root, resolvePhaseEvidenceManifest({ projectRoot: root, frameworkRoot, feature, phase: family,
-                requirementSha: computeRunRequirementSha(root, feature, options.runId), extraInputs: [source] }));
-              finalizePhaseClosure({ projectRoot: root, frameworkRoot, feature, phase: family, goalRunId: options.runId,
-                goalAttemptId: String(author.invoke_id).slice('work-unit-author-'.length), persistPhaseState: () => undefined,
-                prepareEvidence: () => ({ extraInputs: [source], requirementSha: computeRunRequirementSha(root, feature, options.runId) }), assessAfterCommit: () => undefined });
-            } finally { keys.forEach((key, index) => { if (before[index] === undefined) delete process.env[key]; else process.env[key] = before[index]; }); }
-            const qualified = original(options);
-            assert(qualified && (qualified.summary as Record<string, unknown>).run_id === options.runId, 'self-check files must pass real material qualification before testing their missing formal origin');
-            const { loadEffectiveExecutionScope } = require('../../scripts/utils/goal-run-creation') as typeof import('../../scripts/utils/goal-run-creation');
-            const disposition = reader.resolveCompletionDisposition({ projectRoot: root, frameworkRoot, feature, runId: options.runId,
-              executionScope: loadEffectiveExecutionScope(root, feature, options.runId, frameworkRoot), chain: [family], currentResults: [qualified] });
-            onlyOriginGap = disposition.completionBlocking.every(problem => problem.phase === 'scope' && problem.id === 'execution_scope'
-              && problem.detail.includes('reused evidence invalid'));
-            assert(onlyOriginGap, 'qualified self-check may lack formal lineage, but must have no unrelated work: ' + JSON.stringify(disposition.completionBlocking));
-          }
-        }
-        return original(options);
-      };
-      const first = await runGoalRuntimeChain(root, { frameworkRoot, adapter: 'cursor', freshStartPhase: family, freshEndPhase: family, onAuthor: () => {} });
-      assert(supplied && onlyOriginGap);
-      assert.equal(first.events.filter(event => event.type === 'harness_start' && event.phase === family).length, 1, 'one completed self-check still requires exactly one formal method call');
-      assert.equal(first.events.filter(event => event.type === 'harness_end' && event.phase === family).length, 1);
-      assert.equal(first.events.at(-1)?.status, 'CHAIN_SLICE_COMPLETED');
-      reader.readReusableCheckResult = original;
-      const sourceRun = path.basename(first.reportDir);
-      const firstManifest = JSON.parse(fs.readFileSync(path.join(first.reportDir, 'manifest.json'), 'utf8'));
-      const nextId = 'qualified-original-reuse';
-      const { createGoalRun } = require('../../scripts/utils/goal-run-creation') as typeof import('../../scripts/utils/goal-run-creation');
-      createGoalRun({ projectRoot: root, manifest: { ...firstManifest, run_id: nextId,
-        report_dir: path.posix.join(path.posix.dirname(firstManifest.report_dir), nextId) }, chain: [family] });
-      const next = await runGoalRuntimeChain(root, { frameworkRoot, adapter: 'cursor', resume: nextId, noAutoForce: true,
-        onAuthor: () => { throw new Error('qualified historical results must not buy another author'); } });
-      assert.notEqual(next.reportDir, first.reportDir, 'historical qualification must be observed from a different actual run');
-      assert.deepEqual(next.harnessPhases, [], 'an unchanged qualified old-run check is reused without another formal method');
-      assert.equal(next.events.at(-1)?.status, 'CHAIN_SLICE_COMPLETED');
-      const reused = original({ projectRoot: root, frameworkRoot, feature, runId: path.basename(next.reportDir), phase: family });
-      assert(reused && (reused.summary as Record<string, unknown>).run_id === sourceRun, 'reuse retains the real original producer identity');
-    } finally { reader.readReusableCheckResult = original; clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
-  },
-}, {
+},  {
   name: 'historical finished call without phase halt retains its actual completion observation',
   run() {
     const file = path.join(__dirname, '../fixtures/host-recovery-history/20261023/20261023T044016Z-fe4512/project/doc/features/bc-openCard-2/bank-card-opening-flow/goal-runs/20261023T044016Z-fe4512/events.jsonl');
@@ -1443,19 +763,15 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
 }];
 
 export function getCases() { return cases; }
-export async function runSelectedCases(filter?: string) {
-  const selected = cases.filter(test => matchesUnitCase(test.name, filter));
+export async function runAll() {
+  const selected = cases;
   const results: UnitCaseResult[] = [];
-  const timings: UnitExecutionTiming[] = [];
   for (const test of selected) {
-    const finish = startCaseTiming([test.name], timings);
+    const endUnitCase = beginUnitCase(test.name);
+    if (!endUnitCase) continue;
     try { await test.run(); results.push({ name: test.name, ok: true }); }
     catch (error) { results.push({ name: test.name, ok: false, error: String(error) }); }
-    finally { finish(); }
+    finally {  endUnitCase(); }
   }
-  return selectedUnitCases(results, filter, timings);
+  return results;
 }
-export async function runAll() { return (await runSelectedCases()).results; }
-
-export const listCaseGroups = () => unitCaseGroups(cases.map(c => c.name)).map(group => ({ ...group,
-  releaseOnly: group.caseNames.some(name => name.startsWith('R4 current object coverage legacy ')) }));

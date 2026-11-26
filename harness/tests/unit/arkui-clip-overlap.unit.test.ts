@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 /**
  * arkui-clip-overlap — a1 ArkUI 防裁切/防叠帧/防重叠纯检测（低置信启发式）。
  * R1 Swiper/Grid 含 Image + 容器矮高度 → 裁切；R2 Swiper 多项可见 → 叠帧；
@@ -60,11 +61,13 @@ test('a1 干净: 普通 Column → 无命中', () => {
 
 export function runAll(): UnitCaseResult[] {
   return CASES.map(c => {
+    const endUnitCase = beginUnitCase(c.name);
+    if (!endUnitCase) return discoveryResult(c.name);
     try {
       c.run();
       return { name: c.name, ok: true };
     } catch (e) {
       return { name: c.name, ok: false, error: e instanceof Error ? (e.stack ?? e.message) : String(e) };
-    }
+    } finally { endUnitCase(); }
   });
 }

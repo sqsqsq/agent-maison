@@ -1,3 +1,4 @@
+import { runUnitCases } from '../utils/unit-cases';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -156,14 +157,5 @@ const cases: Array<{ name: string; run: () => void }> = [
 ];
 
 export async function runAll(): Promise<UnitCaseResult[]> {
-  const out: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      out.push({ name: c.name, ok: true });
-    } catch (err) {
-      out.push({ name: c.name, ok: false, error: (err as Error).message });
-    }
-  }
-  return out;
+  return runUnitCases(cases);
 }

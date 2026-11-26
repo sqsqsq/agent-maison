@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 import assert from 'assert';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
@@ -563,7 +564,6 @@ const cases: Array<{ name: string; run: () => void }> = [
 // plan 4e6fb3b6 §7.2 / A11：接续决策四种结果与六种变化（纯函数；run 由生产 createGoalRun 出生，停机事件经生产写盘层投影）
 // ---------------------------------------------------------------------------
 
-
 /** 与 goalEvents 写盘同一形状：ts + 事件；带 halt_reason 的事件经生产 withRunDisposition 补处置投影。 */
 function appendRunEvents(eventsPath: string, events: Array<Record<string, unknown>>): void {
   for (const event of events) fs.appendFileSync(eventsPath, `${JSON.stringify(withRunDisposition(event))}\n`, 'utf8');
@@ -823,7 +823,9 @@ cases.push(decisionCase('新writer退役全部旧配额；历史只读；同请�
 
 export function runAll(): UnitCaseResult[] {
   return cases.map(test => {
+    const endUnitCase = beginUnitCase(test.name);
+    if (!endUnitCase) return discoveryResult(test.name);
     try { test.run(); return { name: test.name, ok: true }; }
-    catch (error) { return { name: test.name, ok: false, error: (error as Error).stack ?? String(error) }; }
+    catch (error) { return { name: test.name, ok: false, error: (error as Error).stack ?? String(error) }; } finally { endUnitCase(); }
   });
 }

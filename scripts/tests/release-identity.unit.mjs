@@ -8,7 +8,7 @@
 //      harness/tests/unit/framework-integrity.unit.test.ts 覆盖：manifest 三字段 + sidecar
 //      声明的 manifest SHA 原样读取，legacy 缺字段只显示 unknown、不阻断。
 //
-// 跑法：npm run release:check-plans-test（= node --test scripts/tests/*.unit.mjs）
+// 由仓根 `npm test` 发现并执行。
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';

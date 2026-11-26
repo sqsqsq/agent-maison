@@ -1,3 +1,4 @@
+import { runUnitCasesAsync } from '../utils/unit-cases';
 // ============================================================================
 // derived-hylyre-plan.unit.test.ts — SSOT 覆盖 / 占位 / mtime 选派生回归
 // ============================================================================
@@ -782,18 +783,5 @@ export function runAll(): Promise<UnitCaseResult[]> {
 }
 
 async function runSync(): Promise<UnitCaseResult[]> {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      await c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (e) {
-      results.push({
-        name: c.name,
-        ok: false,
-        error: (e as Error).message,
-      });
-    }
-  }
-  return results;
+  return runUnitCasesAsync(cases);
 }

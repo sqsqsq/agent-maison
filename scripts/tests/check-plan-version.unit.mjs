@@ -3,10 +3,7 @@
 // 为什么放这里而不是 harness/tests：check-plan-version 是**仓根工具链**，
 // harness/ 是发布内容，dev-only 门禁的测试不得随包外发。
 //
-// 跑法：npm run release:check-plans-test（= node --test scripts/tests/*.unit.mjs）
-// 用 `release:` 前缀是为了走 sanitizePackageJson 的既有剥离规则（dc27f455 约定：dev-only
-// 顶层 script 一律 release: 前缀，避免泄漏进消费者 package.json——scripts/ 本身不随包）。
-// 注：Windows 上 `node --test <目录>` 会把目录当模块解析而报 MODULE_NOT_FOUND，故按文件/通配跑。
+// 由仓根 `npm test` 发现并执行。
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';

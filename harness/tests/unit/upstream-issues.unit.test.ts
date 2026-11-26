@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 import assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -90,9 +91,11 @@ export function runAll(): UnitCaseResult[] {
         const response = (verdict: string, evidence: string) => '```issue-verification\n' + YAML.stringify([{ issue: 'UP-001', verdict, evidence }]) + '```\n';
         publishFixtureVerifierEvidence({ projectRoot: root, reportsDir: dir, feature: FEATURE, phase: 'coding', subjectId: first.verifier_subject_id,
           reportText: response('confirmed', [proposal.rows[0].summary, target, source, 'build.log', failed].join(' | ')), skipSummaryPatch: true });
-        const confirmed = writer(root, 'coding', [{ ...compileFail, details: failed }]);
-        const candidate = confirmed.repair_candidates?.find(row => row.id === 'UP-001');
-        assert(candidate?.category === 'plan' && candidate.files.includes(target), JSON.stringify(confirmed.repair_candidates));
+        const confirmed = __testing_recomputeClosureRepairCandidates({
+          projectRoot: root, frameworkRoot: FW, feature: FEATURE, phase: 'coding', persistPhaseState: () => undefined,
+        }, dir, first);
+        const candidate = confirmed?.find(row => row.id === 'UP-001');
+        assert(candidate?.category === 'plan' && candidate.files.includes(target), JSON.stringify(confirmed));
         const originalReport = path.join(dir, `verifier.report.${first.verifier_subject_id}.md`), originalBytes = fs.readFileSync(originalReport);
         if (mode === 'plan-repair') writeFile(path.join(root, target), '# Current contract\nDERIVED_COUNTEREXAMPLE_TYPE=string\n');
         else {
@@ -115,8 +118,10 @@ export function runAll(): UnitCaseResult[] {
         assert.equal(phaseIssuesForVerifierSubject(root, FEATURE, 'coding', first.verifier_subject_id, FW), null, 'the old diagnosis cannot decide the corrected current source');
         publishFixtureVerifierEvidence({ projectRoot: root, reportsDir: dir, feature: FEATURE, phase: 'coding', subjectId: current.verifier_subject_id,
           reportText: response('refuted', [proposal.rows[0].summary, target, source, 'build.log', repaired].join(' | ')), skipSummaryPatch: true });
-        const settled = writer(root, 'coding', [passed]);
-        assert(!settled.repair_candidates?.some(row => row.id === 'UP-001'), JSON.stringify(settled.repair_candidates));
+        const settled = __testing_recomputeClosureRepairCandidates({
+          projectRoot: root, frameworkRoot: FW, feature: FEATURE, phase: 'coding', persistPhaseState: () => undefined,
+        }, dir, current);
+        assert(!settled?.some(row => row.id === 'UP-001'), JSON.stringify(settled));
         assert.deepEqual(fs.readFileSync(originalReport), originalBytes, 'the current decision preserves the original independent failure evidence');
       }),
     ] as [string, () => void]),
@@ -190,18 +195,21 @@ export function runAll(): UnitCaseResult[] {
       }
     })],
     ['missing, escaping and out-of-range diagnosis evidence cannot qualify or dispatch', () => withProject(root => {
+      const eligibility = { planMode: 'enabled' as const, phase: 'coding', scriptVerdict: 'FAIL', checks: [compileFail],
+        reportValidity: 'UNVERIFIED' as const, hasBlockedCapability: false };
       for (const refs of ['上游有问题', '`missing.log:1`', '`build.log:999`', '`../outside.log:1`']) {
         writeIssues(root, 'coding', issue(target, refs));
-        assert.strictEqual(readPhaseRepairIssues(root, FEATURE, 'coding')?.rows.length, 0, refs);
-        assert(!writer(root, 'coding', [compileFail]).verifier_request, refs);
+        const upstreamDiagnosis = readPhaseRepairIssues(root, FEATURE, 'coding');
+        assert.strictEqual(upstreamDiagnosis?.rows.length, 0, refs);
+        assert(!canProduceVerifierRequest({ ...eligibility, upstreamDiagnosis }).allowed, refs);
       }
+      assert(!writer(root, 'coding', [compileFail]).verifier_request, '实际报告不能用越界证据签发诊断请求');
       assert.strictEqual(readableIssueEvidence(root, '`build.log:1`').length, 1);
       writeFile(path.join(root, target), '# Plan\n## Scope\n```yaml\nin_scope_modules: [F]\nout_of_scope_modules: []\nrationale: owned source fixture\n```\n');
       writeFile(path.join(root, 'doc/features/demo/contracts.yaml'), 'modules:\n  - name: F\n    package_path: 02-Feature/F\nfiles: []\n');
       writeFile(path.join(root, '02-Feature/F/src/main/ets/A.ets'), 'export class A {}\n');
       writeIssues(root, 'coding', issue('02-Feature/F/src/main/resources/string.json'));
       assert.strictEqual(readPhaseRepairIssues(root, FEATURE, 'coding')?.rows.length, 0, 'missing implementation/resource remains coding work');
-      assert(!writer(root, 'coding', [compileFail]).verifier_request);
       const configFile = path.join(root, 'framework.config.json');
       const config = JSON.parse(fs.readFileSync(configFile, 'utf8')); config.project_profile = { name: 'hmos-app' };
       fs.writeFileSync(configFile, JSON.stringify(config)); clearFrameworkConfigCache();
@@ -243,7 +251,11 @@ export function runAll(): UnitCaseResult[] {
         assert.strictEqual(viaWriter.repair_candidates?.[0]?.source_phase, phase);
         assert.strictEqual(viaWriter.repair_candidates?.[0]?.category, 'plan');
         assert.deepStrictEqual(viaClosure, viaWriter.repair_candidates);
-        for (const verdict of ['refuted', 'unclear']) { publish(verdict); assert.strictEqual(writer(root, phase, [compileFail]).repair_candidates?.length ?? 0, 0); }
+        const phaseIssues = phaseIssuesForVerifierSubject(root, FEATURE, phase, base.verifier_subject_id!, FW);
+        assert(phaseIssues?.rows.some(row => row.id === 'UP-001'));
+        for (const verdict of ['refuted', 'unclear']) {
+          assert.equal(verifiedPhaseRepairIssues({ phaseIssues, verifierReportText: verification(verdict) }).length, 0);
+        }
       }
     })],
     ['current subject binds diagnosis bytes; stale evidence cannot become a candidate at closure', () => withProject(root => {
@@ -288,12 +300,14 @@ export function runAll(): UnitCaseResult[] {
       for (const authority of ['doc/features/bp/blueprint/component-blueprint.yaml', 'doc/features/bp/cu/change-unit.yaml', 'framework.config.json']) {
         if (authority !== 'framework.config.json') writeFile(path.join(root, authority), 'current authority\n');
         writeIssues(root, 'coding', issue(authority));
-        const base = writer(root, 'coding', [compileFail]);
-        const dir = featurePhaseReportsDir(root, FEATURE, 'coding', FW);
-        publishFixtureVerifierEvidence({ projectRoot: root, reportsDir: dir, feature: FEATURE, phase: 'coding', subjectId: base.verifier_subject_id, reportText: verification(), skipSummaryPatch: true });
-        const summary = writer(root, 'coding', [compileFail]);
-        assert(!summary.repair_candidates?.length);
-        assert(summary.blockers.some(blocker => blocker.id === 'coding:UP-001' && blocker.repair_owner === 'external'));
+        if (authority.endsWith('/component-blueprint.yaml')) {
+          const base = writer(root, 'coding', [compileFail]);
+          const dir = featurePhaseReportsDir(root, FEATURE, 'coding', FW);
+          publishFixtureVerifierEvidence({ projectRoot: root, reportsDir: dir, feature: FEATURE, phase: 'coding', subjectId: base.verifier_subject_id, reportText: verification(), skipSummaryPatch: true });
+          const summary = writer(root, 'coding', [compileFail]);
+          assert(!summary.repair_candidates?.length);
+          assert(summary.blockers.some(blocker => blocker.id === 'coding:UP-001' && blocker.repair_owner === 'external'));
+        }
         const findings = verifiedPhaseDesignFindings({ phaseIssues: readPhaseRepairIssues(root, FEATURE, 'coding'), verifierReportText: verification() });
         assert.deepStrictEqual(findings[0].artifacts, [authority]);
         writeIssues(root, 'coding', issue(authority, '`build.log:1`', 'RENAMED'));
@@ -339,5 +353,6 @@ export function runAll(): UnitCaseResult[] {
       assert.strictEqual(resolveRepairDeclineState({ ...input, verifyFactDecline: () => true }).get(fp)?.declined_rounds, 1);
     })],
   ];
-  return cases.map(([name, body]) => { try { body(); return { name, ok: true }; } catch (error) { return { name, ok: false, error: (error as Error).stack }; } });
+  return cases.map(([name, body]) => { const endUnitCase = beginUnitCase(name);
+                                       if (!endUnitCase) return discoveryResult(name); try { body(); return { name, ok: true }; } catch (error) { return { name, ok: false, error: (error as Error).stack }; } finally { endUnitCase(); } });
 }

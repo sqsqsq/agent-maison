@@ -1,3 +1,4 @@
+import { beginUnitCase } from '../utils/unit-cases';
 // ============================================================================
 // device-concurrency.unit.test.ts — **真实 Credential Manager** 上的并发与往返
 // ----------------------------------------------------------------------------
@@ -32,19 +33,6 @@ const IS_WIN = process.platform === 'win32';
 /** 本进程专属 serial——保证与用户真实凭据、与并发跑的其它测试进程都不冲突 */
 const TEST_SERIAL = `MAISON-TEST-${process.pid}`;
 
-function run(results: UnitCaseResult[], name: string, fn: () => void): void {
-  const label = IS_WIN ? name : `${name}（本平台非 Windows，跳过实际执行）`;
-  if (!IS_WIN && !/诚实边界/.test(name)) {
-    results.push({ name: label, ok: true });
-    return;
-  }
-  try {
-    fn();
-    results.push({ name: label, ok: true });
-  } catch (err) {
-    results.push({ name: label, ok: false, error: (err as Error).stack ?? (err as Error).message });
-  }
-}
 function assert(cond: boolean, msg: string): void {
   if (!cond) throw new Error(msg);
 }
@@ -124,10 +112,24 @@ if ([MaisonCleanup.Cred]::CredEnumerateW($env:MAISON_CLEANUP_FILTER, 0, [ref]$co
 
 export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
+  let prepared = false;
+  function run(name: string, fn: () => void): void {
+    if (!IS_WIN && !name.startsWith('诚实边界')) return;
+    const end = beginUnitCase(name);
+    if (!end) return;
+    try {
+      if (!prepared) { prepared = true; cleanup(); }
+      fn();
+      results.push({ name, ok: true });
+    } catch (error) {
+      results.push({ name, ok: false, error: error instanceof Error ? error.stack : String(error) });
+    } finally {
+      end();
+    }
+  }
   try {
-    cleanup();
 
-    run(results, '真实 CM：四个 P/Invoke 全通（Write / Read / Enumerate / Delete）', () => {
+    run('真实 CM：四个 P/Invoke 全通（Write / Read / Enumerate / Delete）', () => {
       const p = windowsCredentialProvider();
       assert(p.available(), 'Windows 上 provider 须可用');
       assert(isValidSerial(TEST_SERIAL), `测试 serial 须合规：${TEST_SERIAL}`);
@@ -157,7 +159,7 @@ export function runAll(): UnitCaseResult[] {
       assertEq(p.inspect(id).state, 'absent', 'remove 后应回到 absent');
     });
 
-    run(results, '真实 CM 跨进程 CAS：两个进程抢同一版本，**恰好一个赢**', () => {
+    run('真实 CM 跨进程 CAS：两个进程抢同一版本，**恰好一个赢**', () => {
       const p = windowsCredentialProvider();
       // 先确保该版本干净
       p.remove({ serial: TEST_SERIAL, version: 7 });
@@ -181,7 +183,7 @@ export function runAll(): UnitCaseResult[] {
       );
     });
 
-    run(results, '真实 CM：跨进程分配版本不撞号（机器级串行的最终效果）', () => {
+    run('真实 CM：跨进程分配版本不撞号（机器级串行的最终效果）', () => {
       const body = `
         const r = s.allocateCredentialVersion(${JSON.stringify(TEST_SERIAL)}, p);
         console.log('V=' + (r.ok ? r.version : 'ERR:' + r.reason));
@@ -192,7 +194,7 @@ export function runAll(): UnitCaseResult[] {
       assert(va !== vb, `两个项目不得分到同一版本（${va} vs ${vb}）`);
     });
 
-    run(results, '烧毁过的版本号**永不复用**（真实 CM 上验证）', () => {
+    run('烧毁过的版本号**永不复用**（真实 CM 上验证）', () => {
       const p = windowsCredentialProvider();
       const alloc = allocateCredentialVersion(TEST_SERIAL, p);
       assert(alloc.ok, `分配应成功：${alloc.ok ? '' : alloc.reason}`);
@@ -223,7 +225,7 @@ export function runAll(): UnitCaseResult[] {
       );
     });
 
-    run(results, '诚实边界：真机相关校准**未覆盖**（须宿主回归）', () => {
+    run('诚实边界：真机相关校准**未覆盖**（须宿主回归）', () => {
       // 不是断言功能，而是把"哪些没被门禁覆盖"写进测试输出，
       // 防止"全绿"被误读成"全部验证过"。openspec R17 保持同步。
       const uncovered = [
@@ -240,6 +242,6 @@ export function runAll(): UnitCaseResult[] {
 
     return results;
   } finally {
-    cleanup();
+    if (prepared) cleanup();
   }
 }

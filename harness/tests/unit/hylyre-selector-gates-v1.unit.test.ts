@@ -1,3 +1,4 @@
+import { runUnitCases } from '../utils/unit-cases';
 /**
  * hylyre-selector-gates-v1 — D1 运行时门。
  *
@@ -94,15 +95,6 @@ test('失败步骤不因 resolution 被洗白，也不因 resolution 被二次�
   assert.strictEqual(r.provenIdentitiesByCase.size, 0);
 });
 
-export function runAll(): Promise<UnitCaseResult[]> {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (e) {
-      results.push({ name: c.name, ok: false, error: e instanceof Error ? (e.stack ?? e.message) : String(e) });
-    }
-  }
-  return Promise.resolve(results);
+export async function runAll(): Promise<UnitCaseResult[]> {
+  return runUnitCases(cases);
 }

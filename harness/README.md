@@ -14,18 +14,13 @@ cd framework/harness && npm install
 
 | 命令 | 说明 |
 |------|------|
-| `npm test` | 正式发布完整全量：typecheck 一次 + 日常及扩展域全部有效 unit/profile 与 fixture；不按缓存裁剪 |
-| `npm run test:daily` | 日常全集与 typecheck；普通 plan 收口及候选测试门禁，不写正式 full/completeRun 证明 |
-| `npm run test:changed` | 日常域按需，保留旧红与源码真实依赖；缺基线最多扩大到日常全集，必选项只能加不能减 |
+| 源码仓根目录 `npm test` | 一次 typecheck，并行运行全部 unit、profile、有效 fixture 和根工具测试 |
+| 源码仓根目录 `npm test -- --filter <套件名>` | 本地按套件名的字面子串排错，零命中报错 |
 | `npm run check:spec` | spec 阶段（canonical） |
 | `npm run check:plan` | plan 阶段（canonical） |
 | `npm run check:global` | catalog + glossary + docs |
 
-以上测试入口用于源码仓。消费者发布件移除开发测试脚本，`framework/harness` 的 `npm test` 仍为 `check:global`。
-
-普通 Skill/发布文档正文改动选择实际文案、投影消费者和一条精确正常代表；机器声明、职责/权限/验收约束变化追加对应回归，混合 TS 改动取真实依赖并集。开发 plan/goal/OpenSpec 纯文字用相应校验及 diff/LF 检查。自然语言行为变化仍须依据实际 diff 追加必要短回归。
-
-`run-test-plan.ts` 的 `--daily` 与 `--full` 互斥。报告位于 `reports/test-run/`，标明 `changed`、`daily` 或 `full`；正式未执行或仍红单列。`--add` 可增加 suite 或打印的精确 group ID（含逗号的 ID 应整段引号传入），不升级本轮 scope，也不删除原必选组。
+每例从准备到清理最多 30 秒，整轮最多 30 分钟。开发验收使用无筛选的根命令，报告写入 `harness/reports/test-run/full.json`。`slowestCases` 列出最慢前 30 例，`additionalCasesOver10s` 补列其余超过 10 秒的用例。10 秒是排查阈值，单例硬限仍为 30 秒。消费者发布件的 `framework/harness` 下，`npm test` 运行 `check:global`。开发期 plan、goal 或 OpenSpec 纯文字改动使用相应校验及 diff/LF 检查。
 
 ## Legacy phase script alias
 

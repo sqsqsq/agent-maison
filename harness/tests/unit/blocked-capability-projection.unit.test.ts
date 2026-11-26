@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 // blocked-capability-projection.unit.test.ts — plan c8e5b3f1 t2
 //
 // blocked capability 可诊断投影 + mismatch 因果归因 + next_action + assess + merged-report。
@@ -534,7 +535,9 @@ const cases: Case[] = [
 
 export function runAll(): UnitCaseResult[] {
   return cases.map((c) => {
+    const endUnitCase = beginUnitCase(`blocked-capability-projection: ${c.name}`);
+    if (!endUnitCase) return discoveryResult(`blocked-capability-projection: ${c.name}`);
     try { c.run(); return { name: `blocked-capability-projection: ${c.name}`, ok: true }; }
-    catch (err) { return { name: `blocked-capability-projection: ${c.name}`, ok: false, error: (err as Error).stack ?? (err as Error).message }; }
+    catch (err) { return { name: `blocked-capability-projection: ${c.name}`, ok: false, error: (err as Error).stack ?? (err as Error).message }; } finally { endUnitCase(); }
   });
 }

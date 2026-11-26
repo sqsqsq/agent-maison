@@ -1,3 +1,4 @@
+import { beginUnitCase } from '../utils/unit-cases';
 // ============================================================================
 // device-test-backtrack.unit.test.ts — 真机缺陷回修接入（plan d9e4b7c1 T2）
 // ----------------------------------------------------------------------------
@@ -200,7 +201,6 @@ function setupFixture(): Fixture {
   return { root, reportsDir, tracePath, hapPath, hapSha: computeHapSha256Full(hapPath)! };
 }
 
-
 /**
  * plan e6b3f8d2 t3：**契约迁移器**——把 2026-07-29 采集的历史 kit 锚点（`maison:<feature>:
  * <screen>:<node>[-suffix]`）投影成新契约下的**裸 ui-spec node id**。
@@ -329,12 +329,14 @@ function writeEvidence(
 export function runAll(): UnitCaseResult[] {
   const cases: UnitCaseResult[] = [];
   const t = (name: string, fn: () => void): void => {
+    const endUnitCase = beginUnitCase(name);
+    if (!endUnitCase) return;
     try {
       fn();
       cases.push({ name, ok: true });
     } catch (e) {
       cases.push({ name, ok: false, error: (e as Error).stack ?? (e as Error).message });
-    }
+    } finally { endUnitCase(); }
   };
   const assert = (cond: boolean, msg: string): void => {
     if (!cond) throw new Error(msg);
@@ -484,7 +486,6 @@ export function runAll(): UnitCaseResult[] {
       `run 级环境失败应全 environment：${JSON.stringify(cs.map(c => c.classification))}`);
   });
 
-
   t('归因黄金 fixture：保留完整谓词；跨帧可观测状态优先；无 spec 文本仍是 test_contract', () => {
     const f = setupAttributionGoldenFixture();
     const fixtureDir = path.resolve(__dirname, '../../../profiles/hmos-app/harness/tests/fixtures/device-attribution');
@@ -577,7 +578,6 @@ export function runAll(): UnitCaseResult[] {
         `级联 ${cascade} 不得产出（根修好自然消失）`);
     }
   });
-
 
   t('collector physical 两类白名单（plan e6b3f8d2 t3：drift 已删）：只有 product_actionable/product_state 回 coding', () => {
     const f = setupFixture();

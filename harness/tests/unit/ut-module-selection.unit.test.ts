@@ -1,3 +1,4 @@
+import { beginUnitCase } from '../utils/unit-cases';
 // ============================================================================
 // ut-module-selection.unit.test.ts — selectUtModulesToCompile 回归
 // ----------------------------------------------------------------------------
@@ -1017,8 +1018,10 @@ export async function runAll(): Promise<UnitCaseResult[]> {
   ];
   const results: UnitCaseResult[] = [];
   for (const { name, fn } of cases) {
+    const endUnitCase = beginUnitCase(name);
+    if (!endUnitCase) continue;
     try { await fn(); results.push({ name, ok: true }); }
-    catch (e) { results.push({ name, ok: false, error: e instanceof Error ? e.message : String(e) }); }
+    catch (e) { results.push({ name, ok: false, error: e instanceof Error ? e.message : String(e) }); } finally { endUnitCase(); }
   }
   return results;
 }

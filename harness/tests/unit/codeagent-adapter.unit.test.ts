@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 // ============================================================================
 // codeagent-adapter.unit.test.ts — codeagent adapter（plan c7a9e2f4）
 // ============================================================================
@@ -375,11 +376,13 @@ const cases: Array<{ name: string; run: () => void }> = [
 
 export function runAll(): UnitCaseResult[] {
   return cases.map(c => {
+    const endUnitCase = beginUnitCase(c.name);
+    if (!endUnitCase) return discoveryResult(c.name);
     try {
       c.run();
       return { name: c.name, ok: true };
     } catch (e) {
       return { name: c.name, ok: false, error: (e as Error).stack ?? (e as Error).message };
-    }
+    } finally { endUnitCase(); }
   });
 }

@@ -1,3 +1,4 @@
+import { runUnitCases } from '../../../../../harness/tests/utils/unit-cases';
 /**
  * structured-findings 单测（t0/t2/t6b，plan f7a3d9c2）：
  * - finding_id 稳定性（emit 定稿、elements 顺序无关、bbox 桶内抖动不变 id）
@@ -1090,14 +1091,5 @@ test('t3_page_identity_three_states_frozen', () => {
 });
 
 export function runAll(): UnitCaseResult[] {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (e) {
-      results.push({ name: c.name, ok: false, error: (e as Error).message });
-    }
-  }
-  return results;
+  return runUnitCases(cases);
 }

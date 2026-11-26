@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 // p0-semantic-gates.unit.test.ts — t4/t5（goal-fakepass-hardening）
 //
 // 事故 fixture 全剧本：fast path 三连（TC-006 动作不指向 checkpoint 目标/TC-007 纯 wait）、
@@ -516,11 +517,13 @@ cases.push({ name: '7d2c49e8 P0 visible values require distinct ordered native a
 
 export function runAll(): UnitCaseResult[] {
   return cases.map((c) => {
+    const endUnitCase = beginUnitCase(`p0-semantic-gates: ${c.name}`);
+    if (!endUnitCase) return discoveryResult(`p0-semantic-gates: ${c.name}`);
     try {
       c.run();
       return { name: `p0-semantic-gates: ${c.name}`, ok: true };
     } catch (err) {
       return { name: `p0-semantic-gates: ${c.name}`, ok: false, error: (err as Error).stack ?? (err as Error).message };
-    }
+    } finally { endUnitCase(); }
   });
 }

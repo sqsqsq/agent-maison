@@ -1,3 +1,4 @@
+import { runUnitCasesAsync } from '../utils/unit-cases';
 // ============================================================================
 // hooks-config-upsert.unit.test.ts — G1b cursor hooks_config 结构化 upsert +
 // cursor 守卫壳协议 + enforcement tier 回归（plan e8f5a2c7）
@@ -453,14 +454,5 @@ export function runAll(): Promise<UnitCaseResult[]> {
 }
 
 async function run(): Promise<UnitCaseResult[]> {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      await c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (e) {
-      results.push({ name: c.name, ok: false, error: (e as Error).message });
-    }
-  }
-  return results;
+  return runUnitCasesAsync(cases);
 }

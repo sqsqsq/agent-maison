@@ -1,8 +1,0 @@
-{
-  "modules": [
-    {
-      "name": "Inbox",
-      "srcPath": "./02-Feature/Inbox"
-    }
-  ]
-}

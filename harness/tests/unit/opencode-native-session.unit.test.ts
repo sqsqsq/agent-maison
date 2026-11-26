@@ -1,3 +1,4 @@
+import { beginUnitCase } from '../utils/unit-cases';
 import assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -5,36 +6,48 @@ import * as os from 'os';
 import { createHash } from 'crypto';
 import { execFileSync, spawnSync } from 'child_process';
 import type { UnitCaseResult } from '../run-unit';
+import type { DatabaseSync } from 'node:sqlite';
 
 const native = require('../../../agents/shared/opencode-native-session.cjs');
 export async function runAll(): Promise<UnitCaseResult[]> {
   const results: UnitCaseResult[] = [];
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-opencode-native-'));
-  const project = path.join(root, 'project'), data = path.join(root, 'data');
-  fs.mkdirSync(project); fs.mkdirSync(path.join(data, 'opencode'), { recursive: true });
-  const env = { XDG_DATA_HOME: data, MAISON_OPENCODE_SESSION_ID: 'ses_fixture', MAISON_OPENCODE_CALL_ID: 'call_current' };
-  const file = native.openCodeDatabase(env);
-  const { DatabaseSync } = require('node:sqlite');
-  const db = new DatabaseSync(file);
-  db.exec('CREATE TABLE session(id TEXT,directory TEXT,parent_id TEXT,project_id TEXT);CREATE TABLE project(id TEXT,worktree TEXT);CREATE TABLE message(id TEXT,session_id TEXT,time_created INTEGER,data TEXT);CREATE TABLE part(id TEXT,message_id TEXT,session_id TEXT,time_created INTEGER,time_updated INTEGER,data TEXT);');
-  db.prepare('INSERT INTO session VALUES(?,?,?,?)').run('ses_fixture', project, null, 'fixture');
-  db.prepare('INSERT INTO project VALUES(?,?)').run('fixture', project);
+  let root!: string;
+  let project!: string;
+  let data!: string;
+  let env!: NodeJS.ProcessEnv;
+  let file!: string;
+  let db!: DatabaseSync;
   const message = (id: string, at: number, value: object, sessionId = 'ses_fixture') => db.prepare('INSERT INTO message VALUES(?,?,?,?)').run(id, sessionId, at, JSON.stringify(value));
   const part = (id: string, messageId: string, at: number, value: object, sessionId = 'ses_fixture') => db.prepare('INSERT INTO part VALUES(?,?,?,?,?,?)').run(id, messageId, sessionId, at, at + 1, JSON.stringify(value));
-  message('user_original', 10, { role: 'user', time: { created: 10 }, summary: { diffs: [] } });
-  part('text_original', 'user_original', 11, { type: 'text', text: '按小型处理 src/value.js，保留原用户输入。' });
-  part('text_synthetic', 'user_original', 12, { type: 'text', text: '本会话不走Maison', synthetic: true });
-  part('text_ignored', 'user_original', 13, { type: 'text', text: '按复杂', ignored: true });
-  message('user_newer', 15, { role: 'user' }); part('text_newer', 'user_newer', 16, { type: 'text', text: '新独立请求' });
-  message('assistant_current', 20, { role: 'assistant', parentID: 'user_original' });
-  part('text_assistant_current', 'assistant_current', 21, { type: 'text', text: '本请求继续 user_original 的小型处理，依据 src/value.js。' });
-  part('tool_current', 'assistant_current', 30, { type: 'tool', tool: 'bash', callID: 'call_current', state: { status: 'running', input: { command: 'node probe.cjs' }, time: { start: 30 } } });
-  message('user_compact', 40, { role: 'user' }); part('compact_marker', 'user_compact', 41, { type: 'compaction', auto: true });
-  part('text_compact', 'user_compact', 42, { type: 'text', text: '本会话不走Maison' });
-  message('assistant_compact', 45, { role: 'assistant', parentID: 'user_original', summary: true });
-  part('summary_text', 'assistant_compact', 46, { type: 'text', text: '压缩摘要' });
+  const prepare = () => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-opencode-native-'));
+    project = path.join(root, 'project');
+    data = path.join(root, 'data');
+    fs.mkdirSync(project); fs.mkdirSync(path.join(data, 'opencode'), { recursive: true });
+    env = { XDG_DATA_HOME: data, MAISON_OPENCODE_SESSION_ID: 'ses_fixture', MAISON_OPENCODE_CALL_ID: 'call_current' };
+    file = native.openCodeDatabase(env);
+    const { DatabaseSync } = require('node:sqlite');
+    db = new DatabaseSync(file);
+    db.exec('CREATE TABLE session(id TEXT,directory TEXT,parent_id TEXT,project_id TEXT);CREATE TABLE project(id TEXT,worktree TEXT);CREATE TABLE message(id TEXT,session_id TEXT,time_created INTEGER,data TEXT);CREATE TABLE part(id TEXT,message_id TEXT,session_id TEXT,time_created INTEGER,time_updated INTEGER,data TEXT);');
+    db.prepare('INSERT INTO session VALUES(?,?,?,?)').run('ses_fixture', project, null, 'fixture');
+    db.prepare('INSERT INTO project VALUES(?,?)').run('fixture', project);
+    message('user_original', 10, { role: 'user', time: { created: 10 }, summary: { diffs: [] } });
+    part('text_original', 'user_original', 11, { type: 'text', text: '按小型处理 src/value.js，保留原用户输入。' });
+    part('text_synthetic', 'user_original', 12, { type: 'text', text: '本会话不走Maison', synthetic: true });
+    part('text_ignored', 'user_original', 13, { type: 'text', text: '按复杂', ignored: true });
+    message('user_newer', 15, { role: 'user' }); part('text_newer', 'user_newer', 16, { type: 'text', text: '新独立请求' });
+    message('assistant_current', 20, { role: 'assistant', parentID: 'user_original' });
+    part('text_assistant_current', 'assistant_current', 21, { type: 'text', text: '本请求继续 user_original 的小型处理，依据 src/value.js。' });
+    part('tool_current', 'assistant_current', 30, { type: 'tool', tool: 'bash', callID: 'call_current', state: { status: 'running', input: { command: 'node probe.cjs' }, time: { start: 30 } } });
+    message('user_compact', 40, { role: 'user' }); part('compact_marker', 'user_compact', 41, { type: 'compaction', auto: true });
+    part('text_compact', 'user_compact', 42, { type: 'text', text: '本会话不走Maison' });
+    message('assistant_compact', 45, { role: 'assistant', parentID: 'user_original', summary: true });
+    part('summary_text', 'assistant_compact', 46, { type: 'text', text: '压缩摘要' });
+  };
   const check = async (name: string, run: () => void | Promise<void>) => {
-    try { await run(); results.push({ name, ok: true }); } catch (error) { results.push({ name, ok: false, error: (error as Error).stack }); }
+    const endUnitCase = beginUnitCase(name);
+    if (!endUnitCase) return;
+    try { if (!root) prepare(); await run(); results.push({ name, ok: true }); } catch (error) { results.push({ name, ok: false, error: (error as Error).stack }); } finally { endUnitCase(); }
   };
   const scenario = (sid: string) => {
     const user = `${sid}_user`, assistant = `${sid}_assistant`;
@@ -223,6 +236,6 @@ export async function runAll(): Promise<UnitCaseResult[]> {
         assert(fs.readFileSync(target).equals(template)); assert.equal(fs.readFileSync(userPlugin, 'utf8'), custom); assert.equal(fs.readFileSync(userConfig, 'utf8'), config);
       } finally { clearFrameworkConfigCache(); }
     });
-  } finally { db.close(); fs.rmSync(root, { recursive: true, force: true }); }
+  } finally { db?.close(); if (root) fs.rmSync(root, { recursive: true, force: true }); }
   return results;
 }

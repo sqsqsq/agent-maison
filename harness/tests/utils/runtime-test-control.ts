@@ -6,9 +6,6 @@ import type { UnitCaseResult } from '../run-unit';
 
 // R4 natural runs reached 18 minutes; a case can contain both seed and resume.
 export const TEST_RUN_TIMEOUT_MS = 45 * 60_000;
-export const TEST_CASE_TIMEOUT_MS = 90 * 60_000;
-export const TEST_SUITE_TIMEOUT_MS = 120 * 60_000;
-export const TEST_WORKER_CLOSE_TIMEOUT_MS = 60_000;
 
 export interface RuntimeTestControl {
   timeoutMs?: number;
@@ -21,10 +18,6 @@ interface Snapshot { dir: string; events: Buffer; control: Buffer }
 interface Failure { error: string; evidenceDir?: string; caseNames?: readonly string[] }
 const CONTROL_ENV = 'MAISON_TEST_CONTROL_DIR';
 let activeCase: string[] = [];
-
-export function sendTestControl(packet: Record<string, unknown>): void {
-  if (process.send && process.connected) process.send(packet, () => undefined);
-}
 function identifier(): string { return `${process.pid}-${process.hrtime.bigint()}`; }
 export function testTimeout(value: number | undefined, fallback: number): number {
   if (value === undefined) return fallback;
@@ -111,7 +104,6 @@ export function preserveRuntimeTestEvidence(roots: readonly string[], reason: st
 }
 export function recordRuntimeTestFailure(error: string, roots: readonly string[], caseNames: readonly string[] = activeCase,
   evidenceFiles: readonly string[] = [], output?: { stdout?: unknown; stderr?: unknown }): Failure {
-  sendTestControl({ type: 'test-runtime-failure', error, roots, caseNames, evidenceFiles });
   let evidenceDir: string;
   try { evidenceDir = preserveRuntimeTestEvidence(roots, error, caseNames, evidenceFiles, output); }
   catch (copyError) { evidenceDir = `preservation failed: ${String(copyError)}`; }
@@ -121,7 +113,7 @@ export function recordRuntimeTestFailure(error: string, roots: readonly string[]
   fs.writeFileSync(path.join(control, `${identifier()}.json`), JSON.stringify(failure));
   return failure;
 }
-export function runtimeTestFailures(control = process.env[CONTROL_ENV]): Failure[] {
+function runtimeTestFailures(control = process.env[CONTROL_ENV]): Failure[] {
   if (!control || !fs.existsSync(control)) return [];
   return fs.readdirSync(control).filter(name => name.endsWith('.json')).map(name => {
     let failure: Failure;
@@ -138,19 +130,19 @@ export function mergeRuntimeTestFailures(results: UnitCaseResult[], failures: re
       && row.name.startsWith('<suite-') && row.error?.includes(failure.error));
     if (!target) { target = { name: '<suite-runtime>', ok: false, infrastructure: true }; results.push(target); }
     target.ok = false;
-    target.infrastructure = true; // A selector must not filter away this case's driver failure.
+    target.infrastructure = true;
     for (const detail of [failure.error, ...(failure.evidenceDir ? [`originals: ${failure.evidenceDir}`] : [])]) {
       if (!target.error?.includes(detail)) target.error = target.error ? `${target.error}\n${detail}` : detail;
     }
   }
   return failures.length > 0;
 }
-export function beginTestCase(caseNames: string[], timeoutMs?: number): () => void {
-  const id = identifier(), previous = activeCase;
-  activeCase = caseNames;
-  sendTestControl({ type: 'test-case-start', id, caseNames, timeoutMs: testTimeout(timeoutMs, TEST_CASE_TIMEOUT_MS) });
-  return () => { activeCase = previous; sendTestControl({ type: 'test-case-end', id }); };
+export function setRuntimeTestCase(name: string): () => void {
+  const previous = activeCase;
+  activeCase = [name];
+  return () => { activeCase = previous; };
 }
+
 function runtimeReply(stdout: unknown): boolean {
   const text = Buffer.isBuffer(stdout) ? stdout.toString('utf8') : typeof stdout === 'string' ? stdout : '';
   const candidates = [text.trim(), text.slice(text.lastIndexOf('\n{') + 1).trim(), ...text.split(/\r?\n/)];
@@ -194,7 +186,7 @@ function unexpectedTermination(before: Snapshot[], root: string, value: unknown,
 
 /** One test-side entry for sync and async drivers. A settled WAITING/FAIL/yield is natural. */
 export function withRuntimeTest<T>(options: RuntimeTestControl & { root: string }, action: () => T): T {
-  const root = path.resolve(options.root), before = snapshots(root), id = identifier();
+  const root = path.resolve(options.root), before = snapshots(root);
   const evidenceFiles = (options.evidenceFiles ?? []).map(file => {
     const resolved = path.resolve(root, file);
     if (!within(root, resolved)) throw new Error(`test evidence file is outside fixture root: ${file}`);
@@ -202,12 +194,10 @@ export function withRuntimeTest<T>(options: RuntimeTestControl & { root: string 
   });
   const caseNames = [...activeCase];
   const timeoutMs = testTimeout(options.timeoutMs, TEST_RUN_TIMEOUT_MS);
-  sendTestControl({ type: 'test-run-start', id, root, timeoutMs, caseNames, evidenceFiles });
   let timedOut = false;
   const timer = setTimeout(() => {
     timedOut = true;
     recordRuntimeTestFailure(`test invocation timeout after ${timeoutMs}ms`, [root], caseNames, evidenceFiles);
-    sendTestControl({ type: 'test-run-timeout', id, root, caseNames });
     if (!process.send || !process.connected) {
       void import('../../scripts/utils/agent-invoke').then(async ({ killProcessTree }) => {
         await killProcessTree(process.pid); process.exit(1);
@@ -215,7 +205,7 @@ export function withRuntimeTest<T>(options: RuntimeTestControl & { root: string 
     }
   }, timeoutMs);
   const finish = (value: unknown, thrown?: unknown): void => {
-    clearTimeout(timer); sendTestControl({ type: 'test-run-end', id });
+    clearTimeout(timer);
     const unexpected = unexpectedTermination(before, root, value, thrown);
     const expected = options.expectedInterruption;
     const unmatched = unexpected.filter(error => !expected || !error.includes(expected));

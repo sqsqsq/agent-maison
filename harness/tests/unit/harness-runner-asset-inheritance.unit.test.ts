@@ -1,3 +1,4 @@
+import { beginUnitCase } from '../utils/unit-cases';
 // ============================================================================
 // harness-runner-asset-inheritance.unit.test.ts — plan a3f7c1d9 V1 / V11
 // ----------------------------------------------------------------------------
@@ -273,12 +274,14 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
 export async function runAll(): Promise<UnitCaseResult[]> {
   const results: UnitCaseResult[] = [];
   for (const c of cases) {
+    const endUnitCase = beginUnitCase(`harness-runner-asset-inheritance: ${c.name}`);
+    if (!endUnitCase) continue;
     try {
       await c.run();
       results.push({ name: `harness-runner-asset-inheritance: ${c.name}`, ok: true });
     } catch (err) {
       results.push({ name: `harness-runner-asset-inheritance: ${c.name}`, ok: false, error: (err as Error).stack ?? (err as Error).message });
-    }
+    } finally { endUnitCase(); }
   }
   return results;
 }

@@ -1,3 +1,4 @@
+import { runUnitCases } from '../utils/unit-cases';
 // ============================================================================
 // integration-tc-flow.unit.test.ts — S6 集成契约一致性 + TC DAG 回归
 // （visual-capability-truth S6 / P1-F·I）
@@ -213,14 +214,5 @@ test('production P0 injection preserves stop/start/readiness and adds identity a
 });
 
 export function runAll(): UnitCaseResult[] {
-  const out: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      out.push({ name: c.name, ok: true });
-    } catch (err) {
-      out.push({ name: c.name, ok: false, error: (err as Error).stack ?? (err as Error).message });
-    }
-  }
-  return out;
+  return runUnitCases(cases);
 }

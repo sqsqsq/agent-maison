@@ -22,15 +22,16 @@
 //   - 跳过 Step 4/5（AI prompt + merged report），只验 Step 3 result[]；
 //   - 自动 git init fixture tmpdir，使得 ut_no_src_mutation 等依赖 git 的规则能跑。
 //
-// 用法（被 run-tests.ts 调用）：
+// 用法（被测试 worker 调用）：
 //   const result = await runFixture('<abs>/.../profiles/hmos-app/harness/tests/fixtures/v2_2/ut_tsc_compiles_fail');
-//     或由 run-tests.ts 合并扫描的任一 **.../tests/fixtures/** 根（逻辑展示名锚定在同一后缀；禁止同名双份）。
+//     或由 统一发现合并扫描的任一 **.../tests/fixtures/** 根（逻辑展示名锚定在同一后缀；禁止同名双份）。
 // ============================================================================
 
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { spawnSync } from 'child_process';
+import { fixtureDisplayName } from './fixture-registry';
 import {
   Phase,
   CheckContext,
@@ -69,20 +70,6 @@ export interface ExpectedRule {
   details_includes?: string;
   /** 该规则**不应**出现在 result[] 中（用于"故意没触发"的反向断言） */
   must_be_absent?: boolean;
-}
-
-/**
- * fixture 可多根目录（见 run-tests.ts）；对外展示名与 filter 匹配的 key 均以路径中最后一次
- * `/tests/fixtures/` 之后的相对段为准（例：`v2_2/ut_tsc_compiles_pass`）。
- */
-export function fixtureDisplayName(fixtureDir: string): string {
-  const n = path.resolve(fixtureDir).replace(/\\/g, '/');
-  const needle = '/tests/fixtures/';
-  const idx = n.lastIndexOf(needle);
-  if (idx >= 0) return n.slice(idx + needle.length);
-  return path
-    .relative(path.resolve(__dirname, '..', 'fixtures'), fixtureDir)
-    .replace(/\\/g, '/');
 }
 
 /** EXPECTED.json 顶层 */

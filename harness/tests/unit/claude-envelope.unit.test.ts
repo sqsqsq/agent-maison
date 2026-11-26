@@ -1,3 +1,4 @@
+import { runUnitCases } from '../utils/unit-cases';
 // ============================================================================
 // claude-envelope.unit.test.ts — P0-1（plan 7c4f2e9b / visual-capability-truth 3.10）
 // stream-json 信封归一：终态 result 白名单 / init model / 判卷双路径 fail-closed
@@ -168,16 +169,7 @@ const cases: Array<{ name: string; run: () => void }> = [
 ];
 
 export function runAll(): UnitCaseResult[] {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (e) {
-      results.push({ name: c.name, ok: false, error: (e as Error).message });
-    }
-  }
-  return results;
+  return runUnitCases(cases);
 }
 
 if (require.main === module) {

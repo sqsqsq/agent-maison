@@ -1,3 +1,4 @@
+import { runUnitCases } from '../utils/unit-cases';
 // ============================================================================
 // worktree-digest.unit.test.ts — 产品工作区摘要（t2 v5，plan e6a3c9f4）
 // ----------------------------------------------------------------------------
@@ -139,14 +140,5 @@ const cases: Array<{ name: string; run: () => void }> = [
 ];
 
 export function runAll(): UnitCaseResult[] {
-  const out: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      out.push({ name: c.name, ok: true });
-    } catch (err) {
-      out.push({ name: c.name, ok: false, error: (err as Error).stack ?? (err as Error).message });
-    }
-  }
-  return out;
+  return runUnitCases(cases);
 }

@@ -1,4 +1,4 @@
-import { matchesUnitCase, selectedUnitCases } from '../utils/unit-case-selection';
+import { beginUnitCase } from '../utils/unit-cases';
 // ============================================================================
 // review-context.unit.test.ts — review 阶段缺上下文引导回归
 // ============================================================================
@@ -316,19 +316,19 @@ cases.push({ name: 'repair1 closure candidates reuse writer classification and s
   assertTrue(__testing_recomputeClosureRepairCandidates(opts, dir, withoutExisting) === undefined, '错 subject 不得重新产生候选');
 }) });
 
-async function executeCases(selector?: string): Promise<UnitCaseResult[]> {
+async function executeCases(): Promise<UnitCaseResult[]> {
   const out: UnitCaseResult[] = [];
   for (const c of cases) {
-    if (!matchesUnitCase(c.name, selector)) continue;
+    const endUnitCase = beginUnitCase(c.name);
+    if (!endUnitCase) continue;
     try {
       await c.run();
       out.push({ name: c.name, ok: true });
     } catch (err) {
       out.push({ name: c.name, ok: false, error: (err as Error).stack ?? (err as Error).message });
-    }
+    } finally { endUnitCase(); }
   }
   return out;
 }
 
 export const runAll = () => executeCases();
-export const runSelectedCases = async (selector?: string) => selectedUnitCases(await executeCases(selector), selector, []);

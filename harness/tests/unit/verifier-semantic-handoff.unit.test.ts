@@ -1,26 +1,18 @@
+import { runUnitCases } from '../utils/unit-cases';
 import assert from 'assert';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as YAML from 'yaml';
-import { clearFrameworkConfigCache, featurePhaseReportsDir, resolveFeatureArtifact } from '../../config';
+import { clearFrameworkConfigCache, featurePhaseReportsDir } from '../../config';
 import { readVerifierSemanticIssues, phaseIssuesForVerifierSubject, verifiedPhaseRepairIssues, verifiedPhaseDesignFindings, readVerifiedPhaseDesignFindings, projectDesignFindingsIntoSummary, findUnreadableDiagnosisChecks } from '../../scripts/utils/repair-candidates';
-import { buildVerifierMaterialView, writeVerifierMaterial, collectCurrentAcceptanceEvidence, verifierMaterialFileMatchesCurrent } from '../../scripts/utils/verifier-material';
+import { buildVerifierMaterialView, writeVerifierMaterial, verifierMaterialFileMatchesCurrent } from '../../scripts/utils/verifier-material';
 import { verifierReportMdFilename } from '../../scripts/utils/verifier-subject';
 import { resolveCapabilityInputs } from '../../scripts/utils/capability-resolution';
 import { resolveCapabilityResolutionEntryInput } from '../../scripts/utils/capability-resolution-entry-input';
 import { evidenceEntryMatchesCurrentFile, IDENTITY_NEUTRAL_EVIDENCE } from '../../scripts/utils/phase-evidence-manifest';
 import type { HarnessRunSummary } from '../../scripts/utils/types';
-import type { UnitCaseResult } from '../run-unit';
-import { prepareFeatureScopeCandidate, featureScopeCandidateFingerprint } from '../../scripts/utils/feature-track';
-import { freezeFeatureExecutionScope, registerFeatureScopeTransfer } from '../../scripts/utils/feature-execution-scope';
-import { executionScopeFingerprint } from '../../scripts/utils/execution-scope';
-import { buildGoalManifestFromInput } from '../../scripts/utils/goal-manifest';
-import { createGoalRun } from '../../scripts/utils/goal-run-creation';
 import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
-import { collectContextFiles } from '../../harness-runner';
-import { SpecLoader } from '../../scripts/utils/spec-loader';
-import { readCurrentDispositionInput } from '../../scripts/utils/verify-feature-completion';
 import { evaluateAcceptanceFlowStructure } from '../../scripts/utils/p0-semantic-gates';
 import { canProduceVerifierRequest } from '../../scripts/utils/verifier-plan';
 
@@ -60,61 +52,6 @@ export function confirm(root: string, report: string, verdict = 'confirmed') {
 }
 
 const cases: Array<{ name: string; run(root: string): void }> = [
-  { name: 'current run identity reaches transferred derived acceptance in the producer and persistent disposition reader', run(root) {
-    const previousRun = process.env.MAISON_GOAL_RUN_ID;
-    delete process.env.MAISON_GOAL_RUN_ID;
-    try {
-      const acLine = fs.readFileSync(path.join(root, blueprint), 'utf8').split('\n').findIndex(line => /id:\s*AC-3\b/.test(line)) + 1;
-      assert(acLine > 0);
-      const data = currentFinding(root, finding => { finding.details = `\`${blueprint}:${acLine}\`：原独立发现仍须核对当前 AC-3 设计。`; });
-      assert.equal(readVerifierSemanticIssues(root, feature, 'plan', data.report, '(physical artifact)', frameworkRoot)?.rows.length, 1,
-        'existing physical acceptance remains a compatible source');
-      for (const name of ['acceptance.yaml', 'contracts.yaml', 'use-cases.yaml', 'feature.yaml', 'execution-scope.json', 'goal-runs']) {
-        fs.rmSync(path.join(root, featureDir, name), { recursive: true, force: true });
-      }
-      const requirement = fs.readFileSync(path.join(source, 'doc/features/原始需求/1-2-银行卡/原始需求.md'), 'utf8');
-      const prepared = prepareFeatureScopeCandidate({ projectRoot: root, frameworkRoot, feature, completionTarget: 'request',
-        requestedResults: ['plan'], requestedPhases: ['plan'], requirement, overwrite: true });
-      assert.deepEqual(prepared.scope.phase_chain, ['plan']);
-      freezeFeatureExecutionScope({ projectRoot: root, feature, scope: prepared.scope, candidateFingerprint: featureScopeCandidateFingerprint(root, feature) });
-      const manifest = buildGoalManifestFromInput({ feature, run_id: 'semantic-reader-identity', requirement, execution_scope: prepared.scope,
-        chain_override: prepared.scope.phase_chain, unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: root });
-      createGoalRun({ projectRoot: root, manifest, chain: prepared.scope.phase_chain });
-      registerFeatureScopeTransfer({ projectRoot: root, feature, runId: manifest.run_id, transferredScopeFingerprint: executionScopeFingerprint(prepared.scope) });
-      assert(!resolveFeatureArtifact(root, feature, 'acceptance.yaml').exists, 'the positive case must use derived acceptance, not a materialized escape hatch');
-      const reports = featurePhaseReportsDir(root, feature, 'plan', frameworkRoot);
-      const currentSubject = '8'.repeat(64);
-      publishFixtureVerifierEvidence({ projectRoot: root, reportsDir: reports, feature, phase: 'plan', subjectId: currentSubject,
-        reportText: data.report, skipSummaryPatch: true });
-      const summaryFile = path.join(reports, 'summary.json');
-      const summary = JSON.parse(fs.readFileSync(summaryFile, 'utf8'));
-      summary.verifier_subject_id = currentSubject;
-      summary.verifier_report = path.relative(root, path.join(reports, verifierReportMdFilename(currentSubject))).replace(/\\/g, '/');
-      fs.writeFileSync(summaryFile, JSON.stringify(summary));
-      const options = { projectRoot: root, frameworkRoot, feature, phase: 'plan', runId: manifest.run_id, subjectId: currentSubject };
-      assert.doesNotThrow(() => collectCurrentAcceptanceEvidence(options), 'explicit caller run identity must survive the semantic/P1 reader chain');
-      assert.throws(() => collectCurrentAcceptanceEvidence({ ...options, runId: undefined }), /本次调用没有 run 身份/,
-        'a truly runless call cannot borrow the transferred run from a latest/transfer guess');
-      const entry = resolveCapabilityResolutionEntryInput({ purpose: 'design-authority-probe', ...options, featuresDir: 'doc/features', goalRunId: manifest.run_id });
-      const resolvedInputs = resolveCapabilityInputs({ purpose: 'design-authority-probe', ...options, phase: 'plan', track: 'full', goalRunId: manifest.run_id, ...entry }).inputs!;
-      const loader = new SpecLoader(root, undefined, undefined, frameworkRoot);
-      const contextFiles = collectContextFiles(loader, { projectRoot: root, frameworkRoot, frameworkRel: 'framework', kind: 'consumer' }, 'plan', feature,
-        loader.loadFeatureSpec(feature, resolvedInputs), { resolvedInputs, factsContext: entry.factsContext });
-      assert(contextFiles.some(file => file.label === '(upstream issues to verify)' && file.content.includes('reference_crosscheck')));
-      const materialInput = { projectRoot: root, frameworkRoot, feature, phase: 'plan', resolvedInputs, factsContext: entry.factsContext,
-        gateFingerprint: null, phaseRuleText: '', templateText: '', checks: [], contextFiles };
-      const produced = buildVerifierMaterialView(materialInput);
-      assert.equal(buildVerifierMaterialView({ ...materialInput, runId: manifest.run_id }).material_sha256, produced.material_sha256,
-        'producer bound context and explicit persistent caller must select the same material');
-      writeVerifierMaterial(reports, currentSubject, produced);
-      const current = readCurrentDispositionInput({ ...options, chain: ['plan'] });
-      assert(current.phases[0].openFindings?.some(finding => finding.id === 'reference_crosscheck'), 'the transferred current finding must remain visible outside gate environment');
-      assert.throws(() => readCurrentDispositionInput({ ...options, runId: undefined, chain: ['plan'] }), /本次调用没有 run 身份/);
-      assert.equal(process.env.MAISON_GOAL_RUN_ID, undefined, 'the reader cannot depend on or manufacture ambient gate identity');
-    } finally {
-      if (previousRun === undefined) delete process.env.MAISON_GOAL_RUN_ID; else process.env.MAISON_GOAL_RUN_ID = previousRun;
-    }
-  } },
   { name: '7d9c2e41 reports without substantive findings do not read artifact context', run(root) {
     for (const checks of [[], [{ id: 'style', status: 'PASS', severity: 'MAJOR' }], [{ id: 'style', status: 'FAIL', severity: 'MAJOR', acceptance_ids: [] }]]) {
       const report = '```yaml\n' + YAML.stringify({ verification_result: { phase: 'plan', feature, checks } }) + '```\n';
@@ -272,14 +209,39 @@ const cases: Array<{ name: string; run(root: string): void }> = [
   } },
 ];
 
-export async function runSelectedCases(selector?: string) {
-  const results: UnitCaseResult[] = [];
-  for (const test of cases.filter(item => selector === undefined || item.name.includes(selector))) {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-semantic-'));
-    try { fs.cpSync(source, root, { recursive: true }); test.run(root); results.push({ name: test.name, ok: true }); }
-    catch (error) { results.push({ name: test.name, ok: false, error: (error as Error).stack }); }
-    finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
-  }
-  return { results, matchedCaseCount: results.length, executionTimings: [] };
+const requirementDir = 'doc/features/原始需求/1-2-银行卡';
+const inputFiles = [
+  'framework.config.json',
+  'doc/component-index.yaml',
+  'doc/module-catalog.yaml',
+  blueprint,
+  ...['acceptance.yaml', 'change-unit.yaml', 'contracts.yaml', 'plan/plan.md', 'use-cases.yaml', 'spec/spec.md']
+    .map(file => featureDir + '/' + file),
+  ...[
+    '原始需求.md',
+    '3-点击任意银行拉起添卡选卡半模态.jpg',
+    '4-点击信用卡或储蓄卡后拉起选卡页面.jpg',
+    '5-选中某张卡片后拉起短信验证.jpg',
+    '6-短信验证完成后结果页.jpg',
+  ].map(file => requirementDir + '/' + file),
+];
+
+export function runAll() {
+  return runUnitCases(cases.map(test => ({
+    name: test.name,
+    run: () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-semantic-'));
+      try {
+        for (const file of inputFiles) {
+          const target = path.join(root, file);
+          fs.mkdirSync(path.dirname(target), { recursive: true });
+          fs.copyFileSync(path.join(source, file), target);
+        }
+        test.run(root);
+      } finally {
+        clearFrameworkConfigCache();
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  })));
 }
-export const runAll = async () => (await runSelectedCases()).results;

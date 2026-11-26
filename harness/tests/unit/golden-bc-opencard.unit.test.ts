@@ -1,3 +1,4 @@
+import { runUnitCases } from '../utils/unit-cases';
 // ============================================================================
 // golden-bc-opencard.unit.test.ts — 事故产物回放 golden（plan d8c5f3a7 T7a）
 // ----------------------------------------------------------------------------
@@ -142,9 +143,6 @@ interface UiSpecArtifact {
   assets?: Array<{ key?: string; acquisition?: string; placeholder?: boolean; resolved_path?: string }>;
 }
 interface AssetManifestArtifact { mode?: string; assets?: Array<{ key?: string; acquisition?: string; status?: string }> }
-interface VisualDiffArtifact {
-  screens?: Array<{ screen_id?: string; verdict?: string; score_floor?: number; screenshot_path?: string }>;
-}
 
 // ---------------------------------------------------------------------------
 // (A) 决策链正向：真需求原文 → 当前实现
@@ -320,16 +318,10 @@ test('golden(B) 反向：事故视觉债务里的素材占位项 → 当前口�
   //（visual_parity_asset_materialized 无条件 BLOCKER），不再经通用指标绕行，也不挂
   // needs_human 了事——该断言由 parity-check 单测承接。
 });
+interface VisualDiffArtifact {
+  screens?: Array<{ screen_id?: string; verdict?: string; score_floor?: number; screenshot_path?: string }>;
+}
 
 export function runAll(): UnitCaseResult[] {
-  const out: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      out.push({ name: c.name, ok: true });
-    } catch (err) {
-      out.push({ name: c.name, ok: false, error: (err as Error).stack ?? (err as Error).message });
-    }
-  }
-  return out;
+  return runUnitCases(cases);
 }

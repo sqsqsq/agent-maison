@@ -1,3 +1,4 @@
+import { beginUnitCase } from '../utils/unit-cases';
 // ============================================================================
 // scope-replan.unit.test.ts — plan 授权（closure-only 语义）+ 单条失效记录
 // 【pass snapshot 已退役 · runner-owned-machine-facts】原 B 组快照断言（head 退位/
@@ -33,12 +34,14 @@ const RUN_ID = 'run-scope-replan-1';
 const CHAIN = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'];
 
 function run(results: UnitCaseResult[], name: string, fn: () => void): void {
+  const endUnitCase = beginUnitCase(name);
+  if (!endUnitCase) return;
   try {
     fn();
     results.push({ name, ok: true });
   } catch (err) {
     results.push({ name, ok: false, error: (err as Error).stack ?? (err as Error).message });
-  }
+  } finally { endUnitCase(); }
 }
 
 function assert(condition: boolean, message: string): void {

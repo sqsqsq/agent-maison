@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 // behavior-switch-scan.unit.test.ts — t3 行为开关扫描
 //
 // 事故 fixture：BankAddConstants 形态（static readonly DEVICE_TEST_FAST_PATH = true）
@@ -82,11 +83,13 @@ const cases: Case[] = [
 
 export function runAll(): UnitCaseResult[] {
   return cases.map((c) => {
+    const endUnitCase = beginUnitCase(`behavior-switch-scan: ${c.name}`);
+    if (!endUnitCase) return discoveryResult(`behavior-switch-scan: ${c.name}`);
     try {
       c.run();
       return { name: `behavior-switch-scan: ${c.name}`, ok: true };
     } catch (err) {
       return { name: `behavior-switch-scan: ${c.name}`, ok: false, error: (err as Error).stack ?? (err as Error).message };
-    }
+    } finally { endUnitCase(); }
   });
 }

@@ -1,3 +1,4 @@
+import { beginUnitCase } from '../../../../../harness/tests/utils/unit-cases';
 export const layer = 'capability' as const; // Actual native helper calls are part of this suite.
 /**
  * 资产物化真图门禁单测（B + F 核心）：
@@ -70,12 +71,14 @@ function mkRoot(): string {
 export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
   const run = (name: string, fn: () => void) => {
+    const endUnitCase = beginUnitCase(name);
+    if (!endUnitCase) return;
     try {
       fn();
       results.push({ name, ok: true });
     } catch (e) {
       results.push({ name, ok: false, error: (e as Error).message });
-    }
+    } finally { endUnitCase(); }
   };
 
   run('readImageDimensions: PNG 头解析 W/H + 字节', () => {

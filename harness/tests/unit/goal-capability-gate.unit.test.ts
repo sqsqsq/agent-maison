@@ -1,3 +1,4 @@
+import { runUnitCases } from '../utils/unit-cases';
 // ============================================================================
 // goal-capability-gate.unit.test.ts — t3-min invoke 前能力 gate 集成回归
 // （plan e6a3c9f4 v5 / openspec capability-gap-preflight；codex 第四轮 P1）
@@ -329,14 +330,5 @@ const cases: Array<{ name: string; run: () => void }> = [
 ];
 
 export function runAll(): UnitCaseResult[] {
-  const out: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      out.push({ name: c.name, ok: true });
-    } catch (err) {
-      out.push({ name: c.name, ok: false, error: (err as Error).stack ?? (err as Error).message });
-    }
-  }
-  return out;
+  return runUnitCases(cases);
 }

@@ -59,26 +59,28 @@ Enforcement: `scripts/release-excludes.json`, `scripts/pack-release.mjs`, `scrip
 - **WHEN** `npm run release:pack` is executed
 - **THEN** consumer-facing documentation under `docs/` outside `docs/vendor/` SHALL still be present
 
-### Requirement: Candidate testing cannot replace formal release testing
+### Requirement: Candidate promotion verifies the build's full test evidence
 
-Candidate build SHALL execute the daily test gate, pack once, and verify and run
-consumer lifecycle smoke against that same zip. Candidate completion MUST NOT
-claim formal release qualification.
+Candidate build SHALL run the unfiltered root `npm test` once, then pack once,
+verify the zip and run consumer lifecycle smoke against the same zip. Build MUST
+verify equal start, end and packaging input identities and coverage of every
+released source file. It SHALL bind the passing full run and source identity to
+the candidate zip and in-zip manifest in the existing sidecar.
 
-Formal `release:all` MUST retain full testing. Candidate promotion MUST either
-reuse a passing full result and `completeRun` for the matching stable source
-snapshot, or execute the full gate on that matching source. Daily results and
-changed selection MUST NOT satisfy this requirement. Sanitized, LF-normalized
-source release contents MUST match the candidate contents; matching HEAD alone
-is insufficient. Promotion SHALL move the original candidate zip.
+Promotion SHALL verify the original build proof, the candidate and manifest
+identities, consumer golden, and the release plan gate before moving the original
+zip. Selected or older daily results and missing or mismatched build evidence
+require a new candidate. Promotion MUST NOT run the full test gate. Standalone
+`release:all` MUST run the same root test gate once before packing.
 
-#### Scenario: Daily candidate still needs formal proof
-- **WHEN** a candidate has passed daily tests, zip verification and consumer smoke
-- **THEN** promotion MUST still require matching full test proof and the existing formal gates
+#### Scenario: A candidate retains its original passing full proof
+- **WHEN** a candidate passes full testing at build, verifies, and passes same-zip consumer smoke and consumer golden
+- **THEN** promotion SHALL check the candidate's proof and current release plan gate
+- **AND** a failed release plan gate MAY mark the unchanged candidate eligible
 
-#### Scenario: Full proof has the wrong source
-- **WHEN** full results are unstable, incomplete or belong to a source whose release contents differ from the candidate
-- **THEN** promotion MUST reject that proof and MUST NOT move the candidate to a formal artifact
+#### Scenario: A candidate lacks matching build proof
+- **WHEN** the candidate has only daily results, incomplete proof or mismatched source or artifact identities
+- **THEN** promotion MUST reject it before moving the original zip and MUST NOT supplement its test results
 
 #### Scenario: Developer test scripts are sanitized
 - **WHEN** a consumer artifact is staged

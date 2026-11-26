@@ -1,3 +1,4 @@
+import { runUnitCasesAsync } from '../utils/unit-cases';
 import { bindControlledProcess, controlledModelBinding } from '../utils/controlled-model-process';
 // agent-invoke-settle.unit.test.ts — exit-first child settlement + pipe inheritance integration
 
@@ -1094,24 +1095,6 @@ process.stdin.on('end',()=>{
   },
 ];
 
-export async function runAgentInvokeSettleUnitTests(selector?: string): Promise<UnitCaseResult[]> {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases.filter(candidate => !selector || candidate.name.includes(selector))) {
-    try {
-      await c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (e) {
-      results.push({ name: c.name, ok: false, error: (e as Error).message });
-    }
-  }
-  return results;
-}
-
-export function runAll(): UnitCaseResult[] | Promise<UnitCaseResult[]> {
-  return runAgentInvokeSettleUnitTests();
-}
-
-export async function runSelectedCases(selector?: string) {
-  const results = await runAgentInvokeSettleUnitTests(selector);
-  return { results, matchedCaseCount: results.length, executionTimings: [] };
+export function runAll(): Promise<UnitCaseResult[]> {
+  return runUnitCasesAsync(cases);
 }

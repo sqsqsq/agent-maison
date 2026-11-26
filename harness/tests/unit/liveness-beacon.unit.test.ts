@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 // ============================================================================
 // liveness-beacon.unit.test.ts — run 级存活信标（plan a4f7e2b1 t1）
 // ----------------------------------------------------------------------------
@@ -176,11 +177,13 @@ const cases: TestCase[] = [
 
 export function runAll(): Array<{ name: string; ok: boolean; error?: string }> {
   return cases.map((testCase) => {
+    const endUnitCase = beginUnitCase(testCase.name);
+    if (!endUnitCase) return discoveryResult(testCase.name);
     try {
       testCase.run();
       return { name: testCase.name, ok: true };
     } catch (error) {
       return { name: testCase.name, ok: false, error: (error as Error).message };
-    }
+    } finally { endUnitCase(); }
   });
 }

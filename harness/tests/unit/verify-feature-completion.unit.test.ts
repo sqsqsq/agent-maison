@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 // verify-feature-completion.unit.test.ts — t8 完成凭证生成与唯一验证入口
 //
 // 覆盖面（openspec goal-runner delta + codex 终审剧本）：
@@ -5,16 +6,11 @@
 //   INVALID / 世界后变(artifact 改动 → 义务 uncovered·更晚 HALTED run → blocking) / supersedes 豁免。
 
 import assert from 'assert';
-import { computeRunRequirementSha } from '../../scripts/utils/fidelity-shared';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
 import { clearFrameworkConfigCache, featureFilePath, receiptDirPath, resolveFeatureArtifact } from '../../config';
-import {
-  resolvePhaseEvidenceManifest,
-  writePhaseEvidenceManifest,
-} from '../../scripts/utils/phase-evidence-manifest';
 import {
   FEATURE_COMPLETION_FILENAME,
   classifyCleanPassIssues,
@@ -33,9 +29,14 @@ import {
   writeRunEvents as seedWriteRunEvents,
 } from '../utils/completion-chain-seed';
 import { assessFeature, assessmentReasons } from '../../scripts/utils/feature-assessment';
-import type { Phase } from '../../scripts/utils/types';
 import { inferLegacyProjectRoot, isInsideProjectRoot, resolveDependencyPath } from '../../scripts/utils/project-relative-path';
 import type { UnitCaseResult } from '../run-unit';
+import type { Phase } from '../../scripts/utils/types';
+import {
+  resolvePhaseEvidenceManifest,
+  writePhaseEvidenceManifest,
+} from '../../scripts/utils/phase-evidence-manifest';
+import { computeRunRequirementSha } from '../../scripts/utils/fidelity-shared';
 
 const FEATURE = 'completion-fixture';
 const CHAIN = ['spec', 'plan'];
@@ -738,6 +739,8 @@ const cases: Case[] = [
 
 export function runAll(): UnitCaseResult[] {
   return cases.map((c) => {
+    const endUnitCase = beginUnitCase(`verify-feature-completion: ${c.name}`);
+    if (!endUnitCase) return discoveryResult(`verify-feature-completion: ${c.name}`);
     try {
       c.run();
       return { name: `verify-feature-completion: ${c.name}`, ok: true };
@@ -747,6 +750,6 @@ export function runAll(): UnitCaseResult[] {
         ok: false,
         error: (err as Error).stack ?? (err as Error).message,
       };
-    }
+    } finally { endUnitCase(); }
   });
 }

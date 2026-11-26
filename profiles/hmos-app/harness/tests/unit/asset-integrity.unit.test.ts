@@ -1,3 +1,4 @@
+import { runUnitCases } from '../../../../../harness/tests/utils/unit-cases';
 export const layer = 'capability' as const; // Actual native helper calls are part of this suite.
 // ============================================================================
 // asset-integrity.unit.test.ts — blind-visual-hardening d2 / P0-B
@@ -209,14 +210,5 @@ test('render-visibility：过小区域 → unknown（统计不稳定不硬判）
 });
 
 export function runAll(): UnitCaseResult[] {
-  const out: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      out.push({ name: c.name, ok: true });
-    } catch (err) {
-      out.push({ name: c.name, ok: false, error: (err as Error).stack ?? (err as Error).message });
-    }
-  }
-  return out;
+  return runUnitCases(cases);
 }

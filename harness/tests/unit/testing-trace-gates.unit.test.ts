@@ -1,3 +1,4 @@
+import { runUnitCasesAsync } from '../utils/unit-cases';
 /**
  * testing-trace-gates — unit tests for Hylyre outcome gate & report reconciliation.
  */
@@ -1646,14 +1647,5 @@ test('report-only：同 HAP 重装后可读已绑定的旧执行，缺记录/错
 });
 
 export async function runAll(): Promise<UnitCaseResult[]> {
-  const results: UnitCaseResult[] = [];
-  for (const c of CASES) {
-    try {
-      await c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (e) {
-      results.push({ name: c.name, ok: false, error: (e as Error).message });
-    }
-  }
-  return results;
+  return runUnitCasesAsync(CASES);
 }

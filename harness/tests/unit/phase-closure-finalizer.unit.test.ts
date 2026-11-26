@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 // ============================================================================
 // phase-closure-finalizer.unit.test.ts — summary 1.2 staged closure invariants
 // ============================================================================
@@ -24,7 +25,7 @@ import {
 } from '../../scripts/utils/phase-evidence-manifest';
 import { prepareFeatureScopeCandidate } from '../../scripts/utils/feature-track';
 import { buildGoalManifestFromInput } from '../../scripts/utils/goal-manifest';
-import { createGoalRun, loadEffectiveExecutionScope } from '../../scripts/utils/goal-run-creation';
+import { createGoalRun } from '../../scripts/utils/goal-run-creation';
 import { checkPlanAuthority } from '../../scripts/utils/scope-replan';
 import type { HarnessRunSummary, CheckResult, Phase } from '../../scripts/utils/types';
 import { generateScriptReport } from '../../scripts/utils/report-generator';
@@ -903,11 +904,13 @@ const cases: Case[] = [
 
 export function runAll(): UnitCaseResult[] {
   return cases.map((testCase) => {
+    const endUnitCase = beginUnitCase(testCase.name);
+    if (!endUnitCase) return discoveryResult(testCase.name);
     try {
       testCase.run();
       return { name: testCase.name, ok: true };
     } catch (error) {
       return { name: testCase.name, ok: false, error: (error as Error).message };
-    }
+    } finally { endUnitCase(); }
   });
 }

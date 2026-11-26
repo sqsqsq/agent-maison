@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -89,11 +90,13 @@ export function runAll(): UnitCaseResult[] {
     { name: 'report probed DAG directories when empty', fn: testReportsProbedDirsWhenNoCandidate },
   ];
   return cases.map(({ name, fn }) => {
+    const endUnitCase = beginUnitCase(name);
+    if (!endUnitCase) return discoveryResult(name);
     try {
       fn();
       return { name, ok: true };
     } catch (e) {
       return { name, ok: false, error: e instanceof Error ? e.message : String(e) };
-    }
+    } finally { endUnitCase(); }
   });
 }

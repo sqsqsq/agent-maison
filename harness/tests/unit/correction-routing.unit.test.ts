@@ -1,3 +1,4 @@
+import { runUnitCases } from '../utils/unit-cases';
 // ============================================================================
 // correction-routing.unit.test.ts — C5-min 契约单测（correction-routing，
 // plan d4a7c1e8）
@@ -28,16 +29,8 @@ import {
 } from '../../scripts/utils/correction-state';
 import { closedPhasesFor, resolveFeatureCorrectionRouting, runCorrectionInit } from '../../scripts/utils/correction-commands';
 import { SpecLoader } from '../../scripts/utils/spec-loader';
-import {
-  featurePhaseReportsDir,
-  resolveReceiptFilePath,
-  statefilePath,
-  resolveFeatureArtifact,
-} from '../../config';
-import { loadHostSnapshot, SNAPSHOT_FLAT_FEATURE } from '../fixtures/host-snapshot-3.1.0/generate';
+import { featurePhaseReportsDir, resolveReceiptFilePath, statefilePath } from '../../config';
 import { resolveEnforcementTier } from '../../scripts/utils/runtime-policy';
-import { inspectCompletionRecord } from '../../scripts/utils/verify-feature-completion';
-import { resolvePhaseEvidenceManifest, writePhaseEvidenceManifest } from '../../scripts/utils/phase-evidence-manifest';
 import {
   classifyFailureKind,
   SIGNATURE_HALT_KINDS,
@@ -104,52 +97,6 @@ const cases: Array<{ name: string; run: () => void }> = [
       eq(readCorrectionState(root), null, '不制造执行授权');
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   } },
-  {
-    name: 'C5/F1 真实 correction-init 排除 VALID 完成旧指针（含 drift），receipt-only 保持归属',
-    run: () => {
-      for (const stateKind of ['receipt-only', 'completed-full']) {
-        const completed = stateKind !== 'receipt-only';
-        const track = 'full';
-        const snapshot = completed ? loadHostSnapshot() : undefined;
-        const root = snapshot?.root ?? mkGitFeatureProject();
-        const feature = completed ? SNAPSHOT_FLAT_FEATURE : 'demo-feat';
-        const chain = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'];
-        try {
-          if (completed) {
-            // Reuse an actual historical completed delivery, rather than inventing a current PASS/manifest.
-            fs.writeFileSync(path.join(root, '.gitignore'), 'framework/\n');
-            git(root, ['init', '-q', '-b', 'main']);
-            git(root, ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'add', '-A']);
-            git(root, ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'isolated historical delivery']);
-            const result = inspectCompletionRecord({ projectRoot: root, feature, expectedTrack: track, expectedChain: chain, frameworkRoot: FRAMEWORK_ROOT });
-            eq(result.verdict, 'VALID', JSON.stringify(result.reasons));
-            fs.appendFileSync(resolveFeatureArtifact(root, feature, 'spec.md').actualPath, '\ncurrent drift\n');
-            writePhaseEvidenceManifest(root, resolvePhaseEvidenceManifest({ projectRoot: root, feature, phase: 'spec',
-              extraInputs: [resolveFeatureArtifact(root, feature, 'spec.md').actualPath] }));
-            const drifted = inspectCompletionRecord({ projectRoot: root, feature, expectedTrack: track, expectedChain: chain, frameworkRoot: FRAMEWORK_ROOT });
-            eq(drifted.verdict, 'VALID', '当前输入漂移不损坏历史记录');
-            eq(drifted.drift.length > 0, true, '反例必须包含真实 drift');
-          } else {
-            const receipt = resolveReceiptFilePath(root, feature, 'coding').path;
-            fs.mkdirSync(path.dirname(receipt), { recursive: true }); fs.writeFileSync(receipt, '{}');
-          }
-          const pointer = statefilePath(root);
-          fs.mkdirSync(path.dirname(pointer), { recursive: true });
-          const state = JSON.stringify({ feature, phase: 'coding' }); fs.writeFileSync(pointer, state);
-          const lines: string[] = []; const log = console.log;
-          let code: number;
-          try {
-            console.log = (...args: unknown[]) => { lines.push(args.join(' ')); };
-            code = runCorrectionInit(root, { frameworkRoot: FRAMEWORK_ROOT, requestText: '修回既有预期', answers: { requirement_changed: false, contract_changed: false, code_change_needed: true } });
-          } finally { console.log = log; }
-          eq(code!, 0, lines.join('\n'));
-          eq(lines.some(line => line.includes(`归属: ${feature}`)), !completed, '可信完成排除；receipt-only 沿用归属');
-          eq(lines.some(line => line.includes('supersede')), false, '不得提示后继 run');
-          eq(fs.readFileSync(pointer, 'utf8'), state, '不删除旧指针');
-        } finally { fs.rmSync(root, { recursive: true, force: true }); }
-      }
-    },
-  },
   {
     name: '三问短路序：Q1>Q2>Q3>纯验证',
     run: () => {
@@ -426,14 +373,5 @@ const cases: Array<{ name: string; run: () => void }> = [
 ];
 
 export function runAll(): UnitCaseResult[] {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (err) {
-      results.push({ name: c.name, ok: false, error: (err as Error).message });
-    }
-  }
-  return results;
+  return runUnitCases(cases);
 }

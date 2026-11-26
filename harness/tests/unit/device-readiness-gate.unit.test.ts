@@ -1,3 +1,4 @@
+import { beginUnitCase } from '../utils/unit-cases';
 // ============================================================================
 // device-readiness-gate.unit.test.ts — 设备就绪门三态/降级/死锁回归
 //                                      （openspec device-readiness-and-completion t3）
@@ -25,12 +26,14 @@ async function run(
   name: string,
   fn: () => void | Promise<void>,
 ): Promise<void> {
+  const endUnitCase = beginUnitCase(name);
+  if (!endUnitCase) return;
   try {
     await fn();
     results.push({ name, ok: true });
   } catch (err) {
     results.push({ name, ok: false, error: (err as Error).stack ?? (err as Error).message });
-  }
+  } finally { endUnitCase(); }
 }
 function assert(cond: boolean, msg: string): void {
   if (!cond) throw new Error(msg);

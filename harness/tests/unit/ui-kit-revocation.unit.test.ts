@@ -1,3 +1,4 @@
+import { beginUnitCase } from '../utils/unit-cases';
 // ============================================================================
 // ui-kit-revocation.unit.test.ts — 强制 Maison UI kit 撤销的**精确删除门槛**
 // （plan e6b3f8d2 t3 + t7）
@@ -20,12 +21,14 @@ import type { UnitCaseResult } from '../run-unit';
 const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
 
 function run(results: UnitCaseResult[], name: string, fn: () => void): void {
+  const endUnitCase = beginUnitCase(name);
+  if (!endUnitCase) return;
   try {
     fn();
     results.push({ name, ok: true });
   } catch (err) {
     results.push({ name, ok: false, error: (err as Error).stack ?? (err as Error).message });
-  }
+  } finally { endUnitCase(); }
 }
 function assert(cond: boolean, msg: string): void {
   if (!cond) throw new Error(msg);

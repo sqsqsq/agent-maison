@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 // ============================================================================
 // framework-init-current-turn — S4 的 turn/run 作用域回归（plan 33714d0c T6）
 // ============================================================================
@@ -222,11 +223,13 @@ const cases: Array<{ name: string; run: () => void }> = [
 
 export function runAll(): UnitCaseResult[] {
   return cases.map(testCase => {
+    const endUnitCase = beginUnitCase(testCase.name);
+    if (!endUnitCase) return discoveryResult(testCase.name);
     try {
       testCase.run();
       return { name: testCase.name, ok: true };
     } catch (error) {
       return { name: testCase.name, ok: false, error: (error as Error).stack ?? (error as Error).message };
-    }
+    } finally { endUnitCase(); }
   });
 }

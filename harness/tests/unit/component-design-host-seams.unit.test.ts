@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 // ============================================================================
 // component-design-host-seams.unit.test.ts — M7 三条 Story 类宿主接缝的仓内契约验收
 // ============================================================================
@@ -49,8 +50,10 @@ function assert(condition: unknown, message: string): asserts condition {
 }
 
 function test(name: string, run: () => void): UnitCaseResult {
+  const endUnitCase = beginUnitCase(name);
+  if (!endUnitCase) return discoveryResult(name);
   try { run(); return { name, ok: true }; }
-  catch (error) { return { name, ok: false, error: (error as Error).stack ?? (error as Error).message }; }
+  catch (error) { return { name, ok: false, error: (error as Error).stack ?? (error as Error).message }; } finally { endUnitCase(); }
 }
 
 function withProject(run: (projectRoot: string) => void): void {
@@ -498,7 +501,6 @@ export function runAll(): UnitCaseResult[] {
       '宿主适配指南未登记到 DOC_INVENTORY',
     );
   }));
-
 
   results.push(test('publication: blueprint, CU content and format rebuild causes are distinct; complete sources remain required', () => {
     withProject(root => {

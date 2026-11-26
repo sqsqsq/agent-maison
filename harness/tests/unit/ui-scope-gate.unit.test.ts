@@ -1,3 +1,4 @@
+import { beginUnitCase } from '../utils/unit-cases';
 // ============================================================================
 // ui-scope-gate.unit.test.ts — ui_diff_within_declared_files（c4e8b1d3 G1）
 // ----------------------------------------------------------------------------
@@ -46,12 +47,14 @@ const UNDECLARED = '01-Product/WalletMain/src/main/ets/pages/HomeTabPage.ets';
 const UNDECLARED_BY_CONTENT = '01-Product/WalletMain/src/main/ets/helpers/CardWidget.ets';
 
 function run(results: UnitCaseResult[], name: string, fn: () => void): void {
+  const endUnitCase = beginUnitCase(name);
+  if (!endUnitCase) return;
   try {
     fn();
     results.push({ name, ok: true });
   } catch (err) {
     results.push({ name, ok: false, error: (err as Error).stack ?? (err as Error).message });
-  }
+  } finally { endUnitCase(); }
 }
 function assert(cond: boolean, msg: string): void {
   if (!cond) throw new Error(msg);

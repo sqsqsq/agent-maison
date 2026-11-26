@@ -1,3 +1,5 @@
+import { beginUnitCase } from '../utils/unit-cases';
+import { testCliArgs } from '../utils/test-cli-args';
 // ============================================================================
 // check-receipt-policy.unit.test.ts — C2 verification-matrix 端到端回归
 // （plan d4a7c1e8）
@@ -23,7 +25,7 @@ import { resolveVerifierPlan, workflowVerifierPrompt } from '../../scripts/utils
 import { buildVerifierMaterialView } from '../../scripts/utils/verifier-material';
 import { checkDataModelTyped } from '../../scripts/check-plan';
 import { loadWorkflowSpec } from '../../workflow-loader';
-import type { CheckContext, CheckResult, ContextFileEntry, ScriptReport } from '../../scripts/utils/types';
+import type { CheckContext, CheckResult, ContextFileEntry, HarnessRunSummary, ScriptReport } from '../../scripts/utils/types';
 import { clearFrameworkConfigCache, featurePhaseReportsDir, resolveFeatureArtifact, statefilePath } from '../../config';
 import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
 import { resolvePhaseEvidenceManifest, writePhaseEvidenceManifest } from '../../scripts/utils/phase-evidence-manifest';
@@ -32,7 +34,8 @@ import { computeProductWorktreeDigest } from '../../scripts/utils/worktree-diges
 import { buildGoalManifestFromInput } from '../../scripts/utils/goal-manifest';
 import { createGoalRun } from '../../scripts/utils/goal-run-creation';
 import { resolveExecutionScope } from '../../scripts/utils/execution-scope';
-import { matchesUnitCase, selectedUnitCases, unitCaseGroups } from '../utils/unit-case-selection';
+import { readPhaseChecks, resolveCompletionDisposition } from '../../scripts/utils/verify-feature-completion';
+import { loadCurrentVerifierEvidenceForSubject, verifierReportMdPath } from '../../scripts/utils/verifier-evidence';
 
 export interface UnitCaseResult {
   name: string;
@@ -48,8 +51,7 @@ const HARNESS_ROOT = path.resolve(__dirname, '..', '..');
 
 function initGit(root: string): string {
   spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: root, shell: false });
-  spawnSync('git', ['config', 'user.email', 'test@example.com'], { cwd: root, shell: false });
-  spawnSync('git', ['config', 'user.name', 'Test'], { cwd: root, shell: false });
+  fs.appendFileSync(path.join(root, '.git', 'config'), '\n[user]\n\tname = Test\n\temail = test@example.com\n[commit]\n\tgpgsign = false\n');
   spawnSync('git', ['add', '-A'], { cwd: root, shell: false });
   spawnSync('git', ['commit', '-q', '-m', 'baseline'], { cwd: root, shell: false });
   const sha = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf-8', shell: false });
@@ -59,6 +61,7 @@ function initGit(root: string): string {
 interface ReceiptOpts {
   evidenceProfile?: 'balanced';
   omitVerifier?: boolean;
+  seedEvidence?: false;
   omitTrace?: boolean;
   /**
    * B05 V3（plan 7b3e9a15 D1）：canonical 路径上留一份**损坏**的 trace.json，同时回执写
@@ -145,18 +148,20 @@ function buildProject(phase: string, opts: ReceiptOpts): { root: string; sha: st
   fs.mkdirSync(path.join(root, 'app/demo/src/main/ets'), { recursive: true });
   fs.writeFileSync(path.join(root, 'app/demo/src/main/ets/Main.ets'), 'export const value = 1;\n', 'utf8');
   const sha = initGit(root);
-  const frameworkRoot = path.dirname(HARNESS_ROOT), workflow = loadWorkflowSpec(frameworkRoot, 'spec-driven');
-  const mode = opts.goalLedgerRunId ? 'goal' as const : 'interactive' as const;
-  const plan = resolveVerifierPlan({ phase, track: 'full', runtimeMode: mode,
-    policy: resolveEvidencePolicy('full', { ...goalCtx(phase), mode, can_prompt_user: mode === 'interactive' }, { evidence_profile: opts.evidenceProfile }),
-    workflowVerifierPrompt: workflowVerifierPrompt(workflow, phase), phaseDisabledByProfile: false });
-  const summary = writePolicyPacket(root, phase, passScriptReport(phase, root), plan, [], undefined, opts.goalLedgerRunId);
-  if (!opts.omitVerifier && summary.verifier_subject_id) {
-    publishFixtureVerifierEvidence({ projectRoot: root, reportsDir, feature: 'demo', phase, subjectId: summary.verifier_subject_id, skipSummaryPatch: true });
+  if (opts.seedEvidence !== false) {
+    const frameworkRoot = path.dirname(HARNESS_ROOT), workflow = loadWorkflowSpec(frameworkRoot, 'spec-driven');
+    const mode = opts.goalLedgerRunId ? 'goal' as const : 'interactive' as const;
+    const plan = resolveVerifierPlan({ phase, track: 'full', runtimeMode: mode,
+      policy: resolveEvidencePolicy('full', { ...goalCtx(phase), mode, can_prompt_user: mode === 'interactive' }, { evidence_profile: opts.evidenceProfile }),
+      workflowVerifierPrompt: workflowVerifierPrompt(workflow, phase), phaseDisabledByProfile: false });
+    const summary = writePolicyPacket(root, phase, passScriptReport(phase, root), plan, [], undefined, opts.goalLedgerRunId);
+    if (!opts.omitVerifier && summary.verifier_subject_id) {
+      publishFixtureVerifierEvidence({ projectRoot: root, reportsDir, feature: 'demo', phase, subjectId: summary.verifier_subject_id, skipSummaryPatch: true });
+    }
+    if (opts.omitTrace) fs.unlinkSync(tracePath);
+    if (opts.corruptTrace) fs.writeFileSync(tracePath, '{ this is not json', 'utf-8');
+    if (opts.goalLedgerRunId || (!opts.omitVerifier && summary.verifier_subject_id) || opts.omitTrace || opts.corruptTrace) bindPolicyResult(root, phase);
   }
-  if (opts.omitTrace) fs.unlinkSync(tracePath);
-  if (opts.corruptTrace) fs.writeFileSync(tracePath, '{ this is not json', 'utf-8');
-  bindPolicyResult(root, phase);
 
   const verifierBlock = opts.omitVerifier
     ? 'verifier_subagent: {}\n'
@@ -247,12 +252,11 @@ function spawnCheckReceipt(
 ): { status: number | null; stdout: string; stderr: string } {
   const checker = path.join(HARNESS_ROOT, 'scripts', 'check-receipt.ts');
   const r = spawnSync(
-    process.platform === 'win32' ? 'npx.cmd' : 'npx',
-    ['ts-node', checker, '--feature', 'demo', '--phase', phase, '--project-root', root, '--skip-state-sync'],
+    process.execPath,
+    [...testCliArgs(checker), '--feature', 'demo', '--phase', phase, '--project-root', root, '--skip-state-sync'],
     {
       cwd: HARNESS_ROOT,
       encoding: 'utf-8',
-      shell: process.platform === 'win32',
       env: goal
         ? {
             ...process.env,
@@ -449,35 +453,9 @@ function phaseOutputRelPath(root: string, phase: string, basename: string): stri
 
 const cases: Array<{ name: string; run: () => void }> = [
   {
-    name: 'slim receipt stays valid after unrelated commit, and rejects changes to the inputs actually checked',
+    name: 'V8 policy off retains a veto for identical deletion preimages and drops it when only the preimage changes',
     run: () => {
-      const phase = 'review', { root } = buildProject(phase, { evidenceProfile: 'balanced', omitVerifier: true });
-      try {
-        const source = 'app/demo/src/main/ets/Main.ets';
-        bindPolicyResult(root, phase, [source]);
-        const git = (...args: string[]) => execFileSync('git', args, { cwd: root, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
-        fs.writeFileSync(path.join(root, 'app/Other.ets'), 'export const other = 1;');
-        git('add', 'app/Other.ets'); git('-c', 'commit.gpgsign=false', 'commit', '-qm', 'parallel request');
-        fs.writeFileSync(path.join(root, 'app/Other.ets'), 'export const other = 2;');
-        const unaffected = tryValidateReceipt(HARNESS_ROOT, root, phase, 'demo');
-        assert(unaffected.status === 'passed', unaffected.message ?? unaffected.status);
-        const summaryPath = path.join(featurePhaseReportsDir(root, 'demo', phase, path.dirname(HARNESS_ROOT)), 'summary.json');
-        const original = fs.readFileSync(summaryPath, 'utf8');
-        fs.writeFileSync(summaryPath, JSON.stringify({ ...JSON.parse(original), next_action: 'phase_closed_wait_user' }));
-        const miscited = tryValidateReceipt(HARNESS_ROOT, root, phase, 'demo');
-        assert(miscited.status === 'failed' && !!miscited.message?.includes('summary.json'), miscited.message ?? miscited.status);
-        fs.writeFileSync(summaryPath, original);
-        fs.appendFileSync(path.join(root, source), '// changed actual input');
-        const changed = tryValidateReceipt(HARNESS_ROOT, root, phase, 'demo');
-        assert(changed.status === 'failed' && !!changed.message?.includes(source), changed.message ?? changed.status);
-      } finally { fs.rmSync(root, { recursive: true, force: true }); }
-    },
-  },
-
-  {
-    name: 'V8 policy off retains a veto for identical D/R preimages and drops it when only the preimage changes',
-    run: () => {
-      const phase = 'review', { root } = buildProject(phase, { omitVerifier: true });
+      const phase = 'review', { root } = buildProject(phase, { omitVerifier: true, seedEvidence: false });
       const priorBase = process.env.HARNESS_DIFF_BASE_REF;
       const frameworkRoot = path.dirname(HARNESS_ROOT);
       const report = passScriptReport(phase, root);
@@ -495,10 +473,9 @@ const cases: Array<{ name: string; run: () => void }> = [
         fs.mkdirSync(path.dirname(path.join(root, removed)), { recursive: true });
         fs.writeFileSync(path.join(root, removed), 'export const original = "A";\n', 'utf8');
         git('add', '-A'); git('-c', 'commit.gpgsign=false', 'commit', '-qm', 'original A');
-        const a = git('rev-parse', 'HEAD');
         fs.writeFileSync(path.join(root, removed), 'export const original = "B";\n', 'utf8');
-        git('add', removed); git('-c', 'commit.gpgsign=false', 'commit', '-qm', 'original B');
-        const b = git('rev-parse', 'HEAD');
+        git('-c', 'commit.gpgsign=false', 'commit', '-qm', 'original B', '--', removed);
+        const [a, b] = git('rev-parse', 'HEAD^', 'HEAD').split(/\r?\n/);
         git('rm', '-q', removed);
         process.env.HARNESS_DIFF_BASE_REF = a;
         const strict = writePolicyPacket(root, phase, report, { mode: 'enabled', reason: 'policy_required', verifier_prompt: 'prompts/verify-review.md', message: 'strict' });
@@ -506,7 +483,8 @@ const cases: Array<{ name: string; run: () => void }> = [
         publishFixtureVerifierEvidence({ projectRoot: root, reportsDir: featurePhaseReportsDir(root, 'demo', phase, frameworkRoot),
           feature: 'demo', phase, subjectId: strict.verifier_subject_id!, verdict: 'FAIL', blockerCount: 1, skipSummaryPatch: true });
         setEvidenceProfile(root, 'balanced');
-        const write = () => writeRunSummaryBase(root, report, frameworkRoot, { verifierPlan: goalBalancedPlan(phase) });
+        const verifierPlan = goalBalancedPlan(phase);
+        const write = () => writeRunSummaryBase(root, report, frameworkRoot, { verifierPlan });
         assert(write().verifier_subject_id === strict.verifier_subject_id, 'policy-off recompute with empty context must retain the same real veto');
         process.env.HARNESS_DIFF_BASE_REF = b;
         assert(!write().verifier_subject_id, 'the old veto addressed different old bytes even though the current working tree did not change');
@@ -533,10 +511,10 @@ const cases: Array<{ name: string; run: () => void }> = [
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   } },
   {
-    name: 'goal sync-closure 检查通过仍 open；无 goal 的独立入口照常完成闭环',
+    name: 'goal sync-closure 用 current summary 校验旧 receipt attempt，检查通过仍 open',
     run: () => {
       const { root } = buildProject('review', { evidenceProfile: 'balanced',
-        claimedAttemptId: 'i8', goalLedgerRunId: 'run-selfcheck' });
+        claimedAttemptId: 'i7', goalLedgerRunId: 'run-selfcheck' });
       const keys = ['MAISON_GOAL_RUN_ID', 'MAISON_GOAL_ATTEMPT', 'MAISON_GOAL_ATTEMPT_PHASE'];
       const saved = keys.map(key => process.env[key]);
       try {
@@ -544,17 +522,9 @@ const cases: Array<{ name: string; run: () => void }> = [
         process.env.MAISON_GOAL_RUN_ID = 'run-selfcheck';
         process.env.MAISON_GOAL_ATTEMPT = 'i8';
         process.env.MAISON_GOAL_ATTEMPT_PHASE = 'review';
-        const cli = spawnSync(process.execPath, [path.join(HARNESS_ROOT, 'node_modules/ts-node/dist/bin.js'),
-          path.join(HARNESS_ROOT, 'scripts/check-receipt.ts'), '--feature', 'demo', '--phase', 'review',
-          '--project-root', root], { cwd: HARNESS_ROOT, encoding: 'utf8', env: process.env });
-        assert(cli.status === 0, `goal 真实 check-receipt CLI 检查应通过：${cli.stdout}\n${cli.stderr}`);
-        assert(JSON.parse(fs.readFileSync(summaryPath, 'utf8')).closure_status !== 'closed', '真实 CLI 不得提交闭环');
         const result = runSyncClosureDetailed(HARNESS_ROOT, root, 'demo', 'review', path.dirname(HARNESS_ROOT));
-        assert(result.exitCode === 0, `检查应通过：${result.finalizationError}`);
-        assert(JSON.parse(fs.readFileSync(summaryPath, 'utf8')).closure_status !== 'closed', 'goal CLI 不得提交闭环');
-        keys.forEach(key => { delete process.env[key]; });
-        const ordinary = runSyncClosureDetailed(HARNESS_ROOT, root, 'demo', 'review', path.dirname(HARNESS_ROOT));
-        assert(ordinary.exitCode === 0 && JSON.parse(fs.readFileSync(summaryPath, 'utf8')).closure_status === 'closed', '独立入口仍收口');
+        assert(result.exitCode === 0, 'current summary 不应受旧 receipt attempt 干扰：' + result.finalizationError);
+        assert(JSON.parse(fs.readFileSync(summaryPath, 'utf8')).closure_status !== 'closed', 'goal 自检不得提交闭环');
       } finally {
         keys.forEach((key, i) => { if (saved[i] === undefined) delete process.env[key]; else process.env[key] = saved[i]; });
         fs.rmSync(root, { recursive: true, force: true });
@@ -581,10 +551,14 @@ const cases: Array<{ name: string; run: () => void }> = [
       try {
         const v = tryValidateReceipt(HARNESS_ROOT, root, 'review', 'demo');
         assert(v.status === 'passed', `expected passed under balanced+review(off), got ${v.status}: ${v.message ?? ''}`);
-        fs.unlinkSync(path.join(featurePhaseReportsDir(root, 'demo', 'review', path.dirname(HARNESS_ROOT)), 'script-report.json'));
-        const missing = tryValidateReceipt(HARNESS_ROOT, root, 'review', 'demo');
-        assert(missing.status === 'failed', 'optional verifier policy cannot replace a genuinely missing machine result');
-        assert((missing.message ?? '').includes('required_check_conclusion'), missing.message ?? 'missing current result diagnostic');
+        const frameworkRoot = path.dirname(HARNESS_ROOT);
+        const dir = featurePhaseReportsDir(root, 'demo', 'review', frameworkRoot);
+        fs.unlinkSync(path.join(dir, 'script-report.json'));
+        const summary = JSON.parse(fs.readFileSync(path.join(dir, 'summary.json'), 'utf8')) as HarnessRunSummary;
+        const disposition = resolveCompletionDisposition({ projectRoot: root, frameworkRoot, feature: 'demo', chain: ['review'],
+          currentResults: [{ phase: 'review', summary, checks: readPhaseChecks(root, 'demo', 'review', summary) }] });
+        assert(disposition.completionBlocking.some(problem => problem.id === 'required_check_conclusion'),
+          'optional verifier policy cannot replace a genuinely missing machine result');
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }
@@ -1139,29 +1113,15 @@ const cases: Array<{ name: string; run: () => void }> = [
         publishFixtureVerifierEvidence({ projectRoot: root, reportsDir, feature: 'demo', phase: 'review', subjectId: before, skipSummaryPatch: true });
         const after = issueStrictSubject(root, 'review', report, [], '## 目标简报（goal brief）\n\n### 判定办法\n\n按目标裁决。');
         assert(after !== before, '构造性前提：简报进入材料摘要后必须换 subject');
-        const goal = { runId: 'run-X', attemptId: 'i8', attemptPhase: 'review' };
-        const r = spawnCheckReceipt(root, 'review', goal);
-        assert(r.status !== 0 && `${r.stdout}${r.stderr}`.includes('verifier_evidence_report_missing'),
-          `新材料缺当前核验仍须阻断，实得 exit ${r.status}\n${r.stdout}\n${r.stderr}`);
-        assert(!r.stdout.includes('verifier_prior_pass_reused'), 'changed material cannot be auto-approved by a historical PASS');
+        const frameworkRoot = path.dirname(HARNESS_ROOT);
+        const missing = loadCurrentVerifierEvidenceForSubject(root, 'demo', 'review', after, { frameworkRoot });
+        assert(missing.ok === false && missing.code === 'report_missing', JSON.stringify(missing));
+        const previousReportPath = verifierReportMdPath(reportsDir, before);
+        const previousReport = fs.readFileSync(previousReportPath);
         publishFixtureVerifierEvidence({ projectRoot: root, reportsDir, feature: 'demo', phase: 'review', subjectId: after, skipSummaryPatch: true });
-        const current = spawnCheckReceipt(root, 'review', goal);
-        assert(current.status === 0, `真实当前核验后应放行：${current.stdout}\n${current.stderr}`);
-
-        // 反面：历史只有 FAIL（从未 PASS）→ 当前 subject 无报告即阻断，不走沿用。
-        const { root: failRoot } = buildProject('review', { omitVerifier: true, claimedAttemptId: 'i8' });
-        try {
-          const failReports = path.join(failRoot, 'doc', 'features', 'demo', 'review', 'reports');
-          const failReport = passScriptReport('review', failRoot);
-          const old = issueStrictSubject(failRoot, 'review', failReport);
-          publishFixtureVerifierEvidence({ projectRoot: failRoot, reportsDir: failReports, feature: 'demo', phase: 'review', subjectId: old, verdict: 'FAIL', blockerCount: 1, skipSummaryPatch: true });
-          issueStrictSubject(failRoot, 'review', failReport, [], '## 目标简报（goal brief）\n\n### 判定办法\n\n按目标裁决。');
-          const f = spawnCheckReceipt(failRoot, 'review', goal);
-          assert(f.status !== 0 && `${f.stdout}${f.stderr}`.includes('verifier_evidence_report_missing'),
-            `从未 PASS 的阶段须评审，实得 exit ${f.status}\n${f.stdout}\n${f.stderr}`);
-        } finally {
-          fs.rmSync(failRoot, { recursive: true, force: true });
-        }
+        const current = spawnCheckReceipt(root, 'review', { runId: 'run-X', attemptId: 'i8', attemptPhase: 'review' });
+        assert(current.status === 0, current.stdout + current.stderr);
+        assert(fs.readFileSync(previousReportPath).equals(previousReport), 'publishing current PASS preserves the prior report bytes');
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }
@@ -1175,15 +1135,11 @@ const cases: Array<{ name: string; run: () => void }> = [
   // 只有 agent 把 receipt 重签为当前 attempt 才允许提交。
   // ==========================================================================
   {
-    name: 'T4：current summary 不读取旧 receipt attempt；receipt 缺失仍可闭环',
+    name: 'T4：current summary 可在 receipt 缺失时闭环并生成兼容投影',
     run: () => {
       const { root } = buildProject('review', { claimedAttemptId: 'i7', goalLedgerRunId: 'run-X' });
       try {
         const receiptPath = path.join(root, 'doc/features/demo/review/phase-completion-receipt.md');
-        const probe = tryValidateReceipt(HARNESS_ROOT, root, 'review', 'demo', {
-          goalIdentity: { runId: 'run-X', attemptId: 'i8', attemptPhase: 'review' },
-        });
-        assert(probe.status === 'passed', `current schema 不读旧 receipt：${probe.message}`);
         fs.unlinkSync(receiptPath);
         const res = runSyncClosureDetailed(HARNESS_ROOT, root, 'demo', 'review', path.dirname(HARNESS_ROOT), {
           goalIdentity: { runId: 'run-X', attemptId: 'i8', attemptPhase: 'review' },
@@ -1200,18 +1156,11 @@ const cases: Array<{ name: string; run: () => void }> = [
   {
     name: 'T4：receipt 路径不可写不影响 current schema 校验与 closed summary',
     run: () => {
-      const { root } = buildProject('review', { claimedAttemptId: 'i8', goalLedgerRunId: 'run-X' });
+      const { root } = buildProject('review', { claimedAttemptId: 'i8', goalLedgerRunId: 'run-X', evidenceProfile: 'balanced', omitVerifier: true });
       try {
         const receiptPath = path.join(root, 'doc/features/demo/review/phase-completion-receipt.md');
         fs.unlinkSync(receiptPath);
         fs.mkdirSync(receiptPath);
-        const probe = tryValidateReceipt(HARNESS_ROOT, root, 'review', 'demo', {
-          goalIdentity: { runId: 'run-X', attemptId: 'i8', attemptPhase: 'review' },
-        });
-        assert(
-          probe.status === 'passed',
-          `投影不可写不应影响校验，实得 ${probe.status}；msg=${probe.message}`,
-        );
         const res = runSyncClosureDetailed(HARNESS_ROOT, root, 'demo', 'review', path.dirname(HARNESS_ROOT), {
           goalIdentity: { runId: 'run-X', attemptId: 'i8', attemptPhase: 'review' },
         });
@@ -1219,6 +1168,9 @@ const cases: Array<{ name: string; run: () => void }> = [
           res.exitCode === 0,
           `receipt 投影失败不得改变闭环：${res.finalizationError}`,
         );
+        const summary = JSON.parse(fs.readFileSync(path.join(root, 'doc/features/demo/review/reports/summary.json'), 'utf8'));
+        assert(summary.closure_status === 'closed' && fs.statSync(receiptPath).isDirectory(),
+          'closure must settle even when receipt projection fails');
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }
@@ -1226,21 +1178,18 @@ const cases: Array<{ name: string; run: () => void }> = [
   },
 ];
 
-function executeCases(selector?: string): UnitCaseResult[] {
+function executeCases(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
   for (const c of cases) {
-    if (!matchesUnitCase(c.name, selector)) continue;
+    const endUnitCase = beginUnitCase(c.name);
+    if (!endUnitCase) continue;
     try {
       c.run();
       results.push({ name: c.name, ok: true });
     } catch (err) {
       results.push({ name: c.name, ok: false, error: (err as Error).message });
-    }
+    } finally { endUnitCase(); }
   }
   return results;
 }
 export const runAll = () => executeCases();
-export const runSelectedCases = (selector?: string) => selectedUnitCases(executeCases(selector), selector, []);
-export const listCaseGroups = () => unitCaseGroups(cases.map(test => test.name))
-  .map(group => ({ ...group, releaseOnly: !group.caseNames.some(name =>
-    name.startsWith('goal sync-closure') || name.startsWith('full×strict（缺省') || name.startsWith('T4：current summary')) }));

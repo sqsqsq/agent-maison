@@ -11,15 +11,10 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-
 import { parseVerifierRequest, renderVerifierRequest, type VerifierRequest } from '../../scripts/utils/verifier-request';
-import {
-  normalizeEol,
-  RESULT_BLOCK_CLOSE,
-  RESULT_BLOCK_OPEN,
-  verifierReportMdFilename,
-} from '../../scripts/utils/verifier-subject';
+import { normalizeEol, RESULT_BLOCK_CLOSE, RESULT_BLOCK_OPEN, verifierReportMdFilename } from '../../scripts/utils/verifier-subject';
 
+/** 任意但形态合法的 64 hex subject（同一 seed 恒定，便于断言）。 */
 export function parseDeliveredFixtureRequest(
   currentRequestText: string, deliveredPrompt: string, expected: Pick<VerifierRequest, 'feature' | 'phase'>,
 ): VerifierRequest {
@@ -33,7 +28,6 @@ export function parseDeliveredFixtureRequest(
   return request;
 }
 
-/** 任意但形态合法的 64 hex subject（同一 seed 恒定，便于断言）。 */
 export function fixtureSubjectId(seed = 'fixture'): string {
   let out = '';
   for (let i = 0; out.length < 64; i++) {
@@ -129,4 +123,34 @@ export function publishFixtureVerifierEvidence(
   }
 
   return { subjectId, jsonPath: mdPath, mdPath };
+}
+
+export function prepareFixtureVerifierMaterial(input: {
+  projectRoot: string; frameworkRoot: string; report: import('../../scripts/utils/types').ScriptReport;
+  options: NonNullable<Parameters<typeof import('../../harness-runner').writeRunSummaryBase>[3]>;
+}): NonNullable<Parameters<typeof import('../../harness-runner').writeRunSummaryBase>[3]> {
+  const { projectRoot, frameworkRoot, report, options } = input;
+  if (options.verifierPlan?.mode !== 'enabled' || options.verifierMaterial) return options;
+  const modules = <T>(relative: string): T => require(path.join(frameworkRoot, relative)) as T;
+  const material = modules<typeof import('../../scripts/utils/verifier-material')>('harness/scripts/utils/verifier-material');
+  const generator = modules<typeof import('../../scripts/utils/report-generator')>('harness/scripts/utils/report-generator');
+  const evidence = modules<typeof import('../../scripts/utils/phase-evidence-manifest')>('harness/scripts/utils/phase-evidence-manifest');
+  const { SpecLoader } = modules<typeof import('../../scripts/utils/spec-loader')>('harness/scripts/utils/spec-loader');
+  const { computeGateFingerprint } = modules<typeof import('../../scripts/utils/gate-fingerprint')>('harness/scripts/utils/gate-fingerprint');
+  const YAML = require('yaml') as typeof import('yaml');
+  const runtime = evidence.createRuntimeArtifactPredicate({ projectRoot, frameworkRoot, feature: report.feature, phase: report.phase });
+  const actual = evidence.resolvePhaseEvidenceManifest({ projectRoot, frameworkRoot, feature: report.feature, phase: report.phase,
+    resolvedInputs: options.resolvedInputs, factsContext: options.factsContext });
+  const paths = [...new Set([...actual.inputs, ...actual.outputs].filter(file => file.exists && !runtime(file.path)).map(file => file.path))];
+  const contextFiles = paths.filter(file => fs.statSync(path.resolve(projectRoot, file)).isFile())
+    .map(file => ({ label: file, kind: 'path' as const, content: '' }));
+  const rule = YAML.stringify(new SpecLoader(projectRoot, undefined, undefined, frameworkRoot).loadPhaseRule(report.phase));
+  const harnessRoot = path.join(frameworkRoot, 'harness');
+  const verifierPromptRel = options.verifierPlan.verifier_prompt ?? undefined;
+  generator.assembleAIPrompt(harnessRoot, projectRoot, report.phase, report.feature, contextFiles, JSON.stringify(report), rule,
+    undefined, undefined, frameworkRoot, { verifierPromptRel });
+  return { ...options, verifierMaterial: material.buildVerifierMaterialView({ projectRoot, frameworkRoot,
+    feature: report.feature, phase: report.phase, checks: report.checks, contextFiles, phaseRuleText: rule,
+    gateFingerprint: computeGateFingerprint(frameworkRoot, report.phase), resolvedInputs: options.resolvedInputs, factsContext: options.factsContext,
+    templateText: generator.loadVerifierPromptTemplate(harnessRoot, report.phase, undefined, verifierPromptRel) }) };
 }

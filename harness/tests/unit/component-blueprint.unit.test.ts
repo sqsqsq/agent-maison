@@ -1,3 +1,5 @@
+import { testCliArgs } from '../utils/test-cli-args';
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -34,6 +36,7 @@ import { applyIndependentQuestioningOutput, independentQuestioningBlockers, requ
 import { isApplicableView, isChangedView } from '../../scripts/utils/blueprint-views';
 import { validateRuntimeDataFlows } from '../../scripts/utils/runtime-data-flow-check';
 import { checkCanonicalComponentBlueprint, resolveCliRefTarget, prepareCanonicalBlueprintSource } from '../../scripts/check-component-blueprint';
+import { bindDesignRequestBlueprint, prepareDesignRequest, RequestDesignReviewRequired } from '../../scripts/utils/automatic-request';
 import { clearSkillsIndexCache, listBuiltinSkillIds, resolveSkillPath } from '../../scripts/utils/resolve-skill-path';
 import { clearFrameworkConfigCache } from '../../config';
 import { blueprintReviewPath, materializeBlueprintReview, inspectBlueprintReview } from '../../scripts/utils/blueprint-review-materialization';
@@ -417,9 +420,10 @@ function smallBlueprint(projectRoot: string, fixed = true): { blueprint: Bluepri
 }
 
 function withPublicSmallBlueprint(run: (fixture: {
-  root: string; canonical: string; id: string; source: string; head: string; nativeFile: string;
+  root: string; canonical: string; id: string; source: string; nativeFile: string;
   cli: (args: string[], blueprintId?: string) => SpawnSyncReturns<string>;
   startRequest: (id: string) => void;
+  prepareBoundRequest: (reportDir: string) => { requestFile: string; sourceRefs: string[] };
 }) => void): void {
   withTempProject(root => {
     const { blueprint } = smallBlueprint(root), id = 'compact-cli', source = 'src/title.ts';
@@ -451,20 +455,38 @@ function withPublicSmallBlueprint(run: (fixture: {
     // The design is authored after the native request's actual initial HEAD/status observation.
     const canonical = componentBlueprintPath(root, id); fs.mkdirSync(path.dirname(canonical), { recursive: true }); fs.writeFileSync(canonical, YAML.stringify(blueprint));
     const framework = path.resolve(__dirname, '../../..');
-    const cli = (args: string[], blueprintId = id) => spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'), path.join(framework, 'harness/scripts/check-component-blueprint.ts'),
+    const cli = (args: string[], blueprintId = id) => spawnSync(process.execPath, [...testCliArgs(path.join(framework, 'harness/scripts/check-component-blueprint.ts')),
       '--project-root', root, '--framework-root', framework, '--blueprint', blueprintId, '--json', ...args], { cwd: path.join(framework, 'harness'), encoding: 'utf8', timeout: 60000,
       env: { ...process.env, CLAUDE_CONFIG_DIR: home, TS_NODE_PROJECT: path.join(framework, 'harness/tsconfig.json') } });
-    run({ root, canonical, id, source, head, nativeFile, cli, startRequest });
+    const prepareBoundRequest = (reportDir: string) => {
+      const options = { projectRoot: root, frameworkRoot: framework, blueprintId: id };
+      const prepared = prepareDesignRequest({ ...options, reportDir, targets: [source],
+        requirementSources: ['requirements/compact.md'], sessionRef: nativeFile + '#user-small' });
+      assert(!prepared.originGap, prepared.originGap ?? '意外缺少设计请求来源');
+      const requestFile = path.relative(root, prepared.requestFile).split(path.sep).join('/');
+      prepareCanonicalBlueprintSource(root, id, { requestIntake: prepared.intake, requestSourceItems: prepared.currentScopeItems }, { requestFile: prepared.requestFile });
+      assert(bindDesignRequestBlueprint({ ...options, requestFile }), '旧请求须绑定有效蓝图');
+      return { requestFile, sourceRefs: prepared.sourceRefs };
+    };
+    const originalHome = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = home;
+    try { run({ root, canonical, id, source, nativeFile, cli, startRequest, prepareBoundRequest }); }
+    finally {
+      if (originalHome === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+      else process.env.CLAUDE_CONFIG_DIR = originalHome;
+    }
   });
 }
 
 function test(name: string, run: () => void): UnitCaseResult {
+  const endUnitCase = beginUnitCase(name);
+  if (!endUnitCase) return discoveryResult(name);
   try {
     run();
     return { name, ok: true };
   } catch (error) {
     return { name, ok: false, error: (error as Error).stack ?? (error as Error).message };
-  }
+  } finally { endUnitCase(); }
 }
 
 export function runContentWarnCases(): UnitCaseResult[] {
@@ -582,8 +604,7 @@ export function runContentWarnCases(): UnitCaseResult[] {
       const expectedPath = '$.design_views[0].acceptance.boundaries[0]';
       const versionPath = `$.design_views[${runtimeIndex}].runtime_data_flows[0].use_cases.schema_version`;
       const harnessRoot = path.resolve(__dirname, '..', '..');
-      const invoke = (args: string[]) => spawnSync(process.execPath, [require.resolve('ts-node/dist/bin'), '--transpile-only',
-        path.join(harnessRoot, 'scripts/check-component-blueprint.ts'), '--project-root', projectRoot,
+      const invoke = (args: string[]) => spawnSync(process.execPath, [...testCliArgs(path.join(harnessRoot, 'scripts/check-component-blueprint.ts'), [require.resolve('ts-node/dist/bin'), '--transpile-only']), '--project-root', projectRoot,
         '--blueprint', 'ledger-app-blueprint', ...args], { cwd: harnessRoot, encoding: 'utf8' });
       const jsonCli = invoke(['--write-review', '--json']); const report = JSON.parse(jsonCli.stdout);
       assert(jsonCli.status === 0 && report.status === 'PASS', jsonCli.stdout + jsonCli.stderr);
@@ -605,7 +626,7 @@ export function runContentWarnCases(): UnitCaseResult[] {
 export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
 
-  results.push(test('B1 public checker prepares genuine design subject once and readonly ref reuses the same request without a CU or review file', () => withPublicSmallBlueprint(({ root, canonical, id, source, head, nativeFile, cli }) => {
+  results.push(test('B1 public checker prepares genuine design subject once and readonly ref reuses the same request without a CU or review file', () => withPublicSmallBlueprint(({ root, canonical, id, source, nativeFile, cli }) => {
     const first = cli(['--session-ref', nativeFile + '#user-small', '--target', source, '--requirement-source', 'requirements/compact.md', '--report-dir', 'doc/reports/short-design', '--prepare-source', '--write-review']);
     assert(first.status === 0, first.stderr + first.stdout);
     const output = JSON.parse(first.stdout), requestPath = path.join(root, output.request_file), request = JSON.parse(fs.readFileSync(requestPath, 'utf8'));
@@ -615,19 +636,21 @@ export function runAll(): UnitCaseResult[] {
     assert(fs.readdirSync(path.dirname(path.dirname(canonical))).length === 1, '小型创建了CU/其它设计物');
     const loaded = loadCanonicalBlueprint(root, id), ref: ComponentBlueprintRef = { artifact: 'component-blueprint@1', component_id: String(loaded.blueprint.component_id), blueprint_id: id, revision: Number(loaded.blueprint.revision), source_fingerprint: String(loaded.blueprint.source_fingerprint), artifact_sha256: loaded.artifactSha256, target: { kind: 'node', view_id: 'development', id: 'change' } };
     const before = [canonical, requestPath, ...output.source_refs.map((file: string) => path.join(root, file))].map(file => fs.readFileSync(file, 'utf8'));
-    const second = cli(['--request-file', output.request_file, '--ref', JSON.stringify(ref)]);
-    assert(second.status === 0, second.stderr + second.stdout);
-    const after = [canonical, requestPath, ...output.source_refs.map((file: string) => path.join(root, file))].map(file => fs.readFileSync(file, 'utf8'));
-    assert(JSON.stringify(before) === JSON.stringify(after), 'readonly重验改写了来源或canonical');
-    const broken = readYaml(canonical); delete asRecords(asRecord(asRecords(asRecords(broken.design_views)[0]!.nodes)[0]!.acceptance)!.criteria)[0]!.expected_result;
-    fs.writeFileSync(canonical, YAML.stringify(broken));
-    const rejected = cli(['--request-file', output.request_file]);
-    assert(rejected.status !== 0 && JSON.parse(rejected.stdout).status === 'FAIL', '同公共checker吞掉坏短验收');
+    const requestOptions = { projectRoot: root, frameworkRoot: path.resolve(__dirname, '../../..'), blueprintId: id, requestFile: output.request_file };
+    const readonly = prepareDesignRequest({ ...requestOptions, readonly: true });
+    assert(!readonly.originGap, readonly.originGap ?? '只读原请求须保留来源');
+    const context = { requestIntake: readonly.intake, requestSourceItems: readonly.currentScopeItems };
+    assert(resolveCliRefTarget(root, id, request.blueprint.ref, context), '原请求的只读蓝图绑定应保持有效');
+    assert(resolveCliRefTarget(root, id, ref, context), '指定的蓝图节点应保持可读');
+    const after = [canonical, requestPath, ...readonly.sourceRefs.map(file => path.join(root, file))].map(file => fs.readFileSync(file, 'utf8'));
+    assert(JSON.stringify(after) === JSON.stringify(before), 'readonly重验改写了来源或canonical');
     const repaired = loaded.blueprint; repaired.revision = Number(repaired.revision) + 1; refreshBlueprintFingerprints(repaired); fs.writeFileSync(canonical, YAML.stringify(repaired));
-    const stale = cli(['--request-file', output.request_file]);
-    assert(stale.status !== 0, 'readonly接受了旧revision绑定');
-    const rebound = cli(['--request-file', output.request_file, '--prepare-source']);
-    assert(rebound.status !== 0 && JSON.parse(rebound.stdout).status === 'REVIEW_REQUIRED', rebound.stderr + rebound.stdout);
+    let stale: unknown;
+    try { resolveCliRefTarget(root, id, ref, context); } catch (error) { stale = error; }
+    assert(stale instanceof ComponentBlueprintResolutionError && stale.message.includes('revision'), String(stale));
+    let rejected: unknown;
+    try { bindDesignRequestBlueprint(requestOptions); } catch (error) { rejected = error; }
+    assert(rejected instanceof RequestDesignReviewRequired, '修订后必须先独立复核：' + String(rejected));
     assert(JSON.parse(fs.readFileSync(requestPath, 'utf8')).blueprint.ref.revision === ref.revision, '待审核时原签发保留');
   })));
   for (const mode of ['other-request', 'admitted', 'cu', 'completed']) {
@@ -671,20 +694,15 @@ export function runAll(): UnitCaseResult[] {
       assert(!fs.existsSync(path.join(f.root, 'doc/reports/foreign-source/request.json')), `${mode}: 失败留下新request`);
     })));
   }
-  results.push(test('R2 public failed validation and ref exceptions roll back canonical and original request bindings', () => withPublicSmallBlueprint(f => {
-    const first = f.cli(['--session-ref', f.nativeFile + '#user-small', '--target', f.source, '--requirement-source', 'requirements/compact.md', '--report-dir', 'doc/reports/rollback', '--prepare-source']);
-    assert(first.status === 0, first.stderr + first.stdout);
-    const output = JSON.parse(first.stdout), requestPath = path.join(f.root, output.request_file), valid = readYaml(f.canonical);
-    for (const mode of ['invalid-content', 'invalid-ref']) {
-      const draft = clone(valid); delete draft.source_fingerprint; delete draft.decision_fingerprint;
-      if (mode === 'invalid-content') delete asRecords(asRecord(asRecords(asRecords(draft.design_views)[0]!.nodes)[0]!.acceptance)!.criteria)[0]!.expected_result;
-      fs.writeFileSync(f.canonical, YAML.stringify(draft));
-      const files = [f.canonical, requestPath, ...output.source_refs.map((file: string) => path.join(f.root, file))];
-      const before = files.map(file => fs.readFileSync(file));
-      const rejected = f.cli(['--request-file', output.request_file, '--prepare-source', ...(mode === 'invalid-ref' ? ['--ref', '{}'] : [])]);
-      assert(rejected.status !== 0 && JSON.parse(rejected.stdout).status === 'FAIL', `${mode}: ${rejected.stderr}${rejected.stdout}`);
-      assert(files.every((file, index) => fs.readFileSync(file).equals(before[index]!)), `${mode}: 失败/异常留下半写或丢原binding`);
-    }
+  results.push(test('R2 public ref exception rolls back canonical and original request bindings', () => withPublicSmallBlueprint(f => {
+    const prepared = f.prepareBoundRequest('doc/reports/rollback');
+    const draft = readYaml(f.canonical); delete draft.source_fingerprint; delete draft.decision_fingerprint;
+    fs.writeFileSync(f.canonical, YAML.stringify(draft));
+    const files = [f.canonical, path.join(f.root, prepared.requestFile), ...prepared.sourceRefs.map(file => path.join(f.root, file))];
+    const before = files.map(file => fs.readFileSync(file));
+    const rejected = f.cli(['--request-file', prepared.requestFile, '--prepare-source', '--ref', '{}']);
+    assert(rejected.status !== 0 && JSON.parse(rejected.stdout).status === 'FAIL', rejected.stderr + rejected.stdout);
+    assert(files.every((file, index) => fs.readFileSync(file).equals(before[index]!)), 'ref异常留下半写或丢原binding');
   })));
   results.push(test('R2 public first failed preparation removes its derived request and stable source without changing the draft', () => withPublicSmallBlueprint(f => {
     const draft = readYaml(f.canonical); delete draft.provenance; delete draft.source_fingerprint; delete draft.decision_fingerprint;
@@ -697,15 +715,14 @@ export function runAll(): UnitCaseResult[] {
     assert(fs.readFileSync(f.canonical).equals(before), '首次失败修改了原设计');
     assert(!fs.existsSync(path.join(report, 'request.json')) && (!fs.existsSync(report) || !fs.readdirSync(report).some(name => name.startsWith('user-'))), '首次失败留下request/source半写');
   })));
-  results.push(test('R2 public preparation accepts this request unfinished full shape without replacing business content', () => withPublicSmallBlueprint(f => {
-    const first = f.cli(['--session-ref', f.nativeFile + '#user-small', '--target', f.source, '--requirement-source', 'requirements/compact.md', '--report-dir', 'doc/reports/full-shape', '--prepare-source']);
-    assert(first.status === 0, first.stderr + first.stdout);
-    const output = JSON.parse(first.stdout), draft = readYaml(f.canonical), full = validBlueprint();
-    const request = path.join(f.root, output.request_file), signed = JSON.parse(fs.readFileSync(request, 'utf8')).blueprint;
+  results.push(test('R2 public preparation leaves the unfinished full shape and its signed request pending review', () => withPublicSmallBlueprint(f => {
+    const { requestFile } = f.prepareBoundRequest('doc/reports/full-shape');
+    const draft = readYaml(f.canonical), full = validBlueprint();
+    const request = path.join(f.root, requestFile), signed = JSON.parse(fs.readFileSync(request, 'utf8')).blueprint;
     for (const field of ['review_summary', 'decisions_and_gaps', 'relations', 'contracts', 'providers', 'app_lens', 'derived_results']) draft[field] ??= clone(full[field]);
     delete asRecord(draft.review_summary)!.admission;
     fs.writeFileSync(f.canonical, YAML.stringify(draft)); const business = JSON.stringify(draft.design_views);
-    const prepared = f.cli(['--request-file', output.request_file, '--prepare-source']);
+    const prepared = f.cli(['--request-file', requestFile, '--prepare-source']);
     assert(prepared.status !== 0 && JSON.parse(prepared.stdout).status === 'REVIEW_REQUIRED', prepared.stderr + prepared.stdout);
     assert(JSON.stringify(JSON.parse(fs.readFileSync(request, 'utf8')).blueprint) === JSON.stringify(signed), '待审保留原签发绑定');
     assert(JSON.stringify(readYaml(f.canonical).design_views) === business, '自有未完成full降档改掉业务内容');
@@ -817,7 +834,6 @@ export function runAll(): UnitCaseResult[] {
     assert(!validateComponentBlueprint(prepared, context).some(item => item.severity === 'BLOCKER'), '准备后短内容仍不可消费');
     assert(prepareCanonicalBlueprintSource(root, blueprintId, context, { requestFile }).length === 0, '同输入source准备重复写');
   })));
-
 
   results.push(...runContentWarnCases());
 
@@ -1026,8 +1042,7 @@ export function runAll(): UnitCaseResult[] {
       const target = path.join(path.dirname(filePath), 'component-blueprint.review.md');
       fs.rmSync(target, { force: true });
       const harnessRoot = path.resolve(__dirname, '..', '..');
-      const invoke = () => spawnSync(process.execPath, [require.resolve('ts-node/dist/bin'), '--transpile-only',
-        path.join(harnessRoot, 'scripts/check-component-blueprint.ts'), '--project-root', projectRoot,
+      const invoke = () => spawnSync(process.execPath, [...testCliArgs(path.join(harnessRoot, 'scripts/check-component-blueprint.ts'), [require.resolve('ts-node/dist/bin'), '--transpile-only']), '--project-root', projectRoot,
         '--blueprint', 'ledger-app-blueprint', '--write-review', '--json'], { cwd: harnessRoot, encoding: 'utf8' });
       for (const status of ['refreshed', 'current']) {
         const cli = invoke();
@@ -1085,8 +1100,7 @@ export function runAll(): UnitCaseResult[] {
       const expectedPath = `$.design_views[${asRecords(bp.design_views).indexOf(development)}].nodes[0].table_schema`;
       const expected = checkCanonicalComponentBlueprint(projectRoot, 'ledger-app-blueprint').issues;
       const harnessRoot = path.resolve(__dirname, '..', '..');
-      const invoke = (args: string[]) => spawnSync(process.execPath, [require.resolve('ts-node/dist/bin'), '--transpile-only',
-        path.join(harnessRoot, 'scripts/check-component-blueprint.ts'), '--project-root', projectRoot,
+      const invoke = (args: string[]) => spawnSync(process.execPath, [...testCliArgs(path.join(harnessRoot, 'scripts/check-component-blueprint.ts'), [require.resolve('ts-node/dist/bin'), '--transpile-only']), '--project-root', projectRoot,
         '--blueprint', 'ledger-app-blueprint', ...args], { cwd: harnessRoot, encoding: 'utf8' });
       const jsonCli = invoke(['--write-review', '--json']);
       const report = JSON.parse(jsonCli.stdout);
@@ -1123,8 +1137,7 @@ export function runAll(): UnitCaseResult[] {
       assert(omitted[0]!.message.includes(journey.graph_id) && omitted[0]!.message.includes(journey.label), '提醒缺图身份或中文名称');
       assert(!expected.some(item => item.id.startsWith('blueprint_generated_graph') && item.id !== 'blueprint_generated_graph_not_displayed'), '反例中的作者图必须合法');
       const harnessRoot = path.resolve(__dirname, '..', '..');
-      const invoke = (args: string[]) => spawnSync(process.execPath, [require.resolve('ts-node/dist/bin'), '--transpile-only',
-        path.join(harnessRoot, 'scripts/check-component-blueprint.ts'), '--project-root', projectRoot,
+      const invoke = (args: string[]) => spawnSync(process.execPath, [...testCliArgs(path.join(harnessRoot, 'scripts/check-component-blueprint.ts'), [require.resolve('ts-node/dist/bin'), '--transpile-only']), '--project-root', projectRoot,
         '--blueprint', 'ledger-app-blueprint', ...args], { cwd: harnessRoot, encoding: 'utf8' });
       const jsonCli = invoke(['--write-review', '--json']);
       assert(jsonCli.status === 0, jsonCli.stdout + jsonCli.stderr);

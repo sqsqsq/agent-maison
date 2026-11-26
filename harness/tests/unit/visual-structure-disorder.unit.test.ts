@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 /**
  * visual-structure-disorder — R2 硬出口（b2）。
  * 验证结构序新算法（分母=mapped.length + 有序 structList）：
@@ -75,11 +76,13 @@ test('R2 硬出口: 丢失区块（结构缺项）→ 判不过 (LCS=2/4)', () =
 
 export function runAll(): UnitCaseResult[] {
   return CASES.map(c => {
+    const endUnitCase = beginUnitCase(c.name);
+    if (!endUnitCase) return discoveryResult(c.name);
     try {
       c.run();
       return { name: c.name, ok: true };
     } catch (e) {
       return { name: c.name, ok: false, error: e instanceof Error ? (e.stack ?? e.message) : String(e) };
-    }
+    } finally { endUnitCase(); }
   });
 }

@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../../../../../harness/tests/utils/unit-cases';
 // ============================================================================
 // product-selection-t5.unit.test.ts — 单次解析贯穿全链 + 来源语义（plan a7c3f9e2 t5）
 // ============================================================================
@@ -310,11 +311,13 @@ const cases: Array<{ name: string; run: () => void }> = [
 
 export function runAll(): UnitCaseResult[] {
   return cases.map(c => {
+    const endUnitCase = beginUnitCase(c.name);
+    if (!endUnitCase) return discoveryResult(c.name);
     try {
       c.run();
       return { name: c.name, ok: true };
     } catch (e) {
       return { name: c.name, ok: false, error: (e as Error).stack ?? (e as Error).message };
-    }
+    } finally { endUnitCase(); }
   });
 }

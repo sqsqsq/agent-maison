@@ -1,3 +1,4 @@
+import { beginUnitCase } from '../utils/unit-cases';
 // ============================================================================
 // evolution-path-governance.unit.test.ts — M5A t4 机械证明补套件（plan e2a7c4b9 §7）
 // ============================================================================
@@ -13,7 +14,6 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { spawnSync, type SpawnSyncReturns } from 'child_process';
 
 import {
   enumerateFeatures,
@@ -23,7 +23,6 @@ import {
   resolveFeatureArtifact,
 } from '../../config';
 import { encodeCuFeatureId, featureRelativePath } from '../../scripts/utils/feature-identity';
-import { detectRepoLayout, frameworkAbs } from '../../repo-layout';
 import { loadCatalog } from '../../scripts/utils/catalog-parser';
 import { scanReceiptPathReconcileCandidates } from '../../scripts/utils/receipt-path-reconcile';
 import { resolveGoalReportDir } from '../../scripts/utils/goal-manifest';
@@ -33,6 +32,8 @@ import { loadVerifierEvidenceForSubject, verifierReportMdPath } from '../../scri
 // 3.0.0 verifier hook 协议（subject 绑定的 request/result 块）——H6/H7 走生产夹具，不手拼旧 payload
 import { makeVerifierProject, reportsDirOf, seedPhase } from '../utils/verifier-project-fixture';
 import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
+import { detectRepoLayout, frameworkAbs } from '../../repo-layout';
+import { spawnSync, type SpawnSyncReturns } from 'child_process';
 
 interface UnitCaseResult {
   name: string;
@@ -405,12 +406,14 @@ const CASES: Array<{ name: string; fn: () => void }> = [
 export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
   for (const c of CASES) {
+    const endUnitCase = beginUnitCase(c.name);
+    if (!endUnitCase) continue;
     try {
       c.fn();
       results.push({ name: c.name, ok: true });
     } catch (error) {
       results.push({ name: c.name, ok: false, error: (error as Error).message });
-    }
+    } finally { endUnitCase(); }
   }
   return results;
 }

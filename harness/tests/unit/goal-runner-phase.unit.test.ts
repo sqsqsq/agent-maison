@@ -1,3 +1,4 @@
+import { runUnitCases } from '../utils/unit-cases';
 // goal-runner-phase.unit.test.ts — summary freshness, resume, structured invoke
 
 import * as fs from 'fs';
@@ -7,6 +8,7 @@ import {
   resolveAutoChain,
   validateFeatureChainDag,
   DEFAULT_DEPENDENCY_POLICY,
+  resolveGoalRunStatus,
 } from '../../scripts/utils/phase-transition-policy';
 import { loadWorkflowSpec } from '../../workflow-loader';
 import {
@@ -32,9 +34,6 @@ import {
   collectLastCommittedVisualAttemptWindow,
   type GoalRunEvent,
 } from '../../scripts/utils/goal-runner-phase';
-import { buildSupersedeAuditEvent } from '../../scripts/utils/goal-run-creation';
-import { resolveGoalRunStatus } from '../../scripts/utils/phase-transition-policy';
-import type { GoalPhaseOutcome } from '../../scripts/utils/goal-report-generator';
 import { loadGoalCapability } from '../../scripts/utils/goal-adapter-capability';
 import {
   buildClosureVisualEvidenceBlock,
@@ -43,6 +42,8 @@ import {
 import type { GoalManifest } from '../../scripts/utils/goal-manifest';
 import type { UnitCaseResult } from '../run-unit';
 import { invocationCompleted, type InvocationCompletionFacts } from '../../scripts/utils/invocation-completion';
+import type { GoalPhaseOutcome } from '../../scripts/utils/goal-report-generator';
+import { buildSupersedeAuditEvent } from '../../scripts/utils/goal-run-creation';
 
 const REPO_ROOT = path.resolve(__dirname, '../../..');
 const FRAMEWORK_ROOT = REPO_ROOT;
@@ -606,7 +607,6 @@ cases.push(
   },
 );
 
-
 {
   const minute = 60_000;
   const origin = Date.parse('2026-10-23T08:00:00Z');
@@ -675,16 +675,7 @@ cases.push(
 }
 
 export function runAll(): UnitCaseResult[] {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (e) {
-      results.push({ name: c.name, ok: false, error: (e as Error).message });
-    }
-  }
-  return results;
+  return runUnitCases(cases);
 }
 
 if (require.main === module) {

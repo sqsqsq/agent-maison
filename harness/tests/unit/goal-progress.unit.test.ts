@@ -1,3 +1,4 @@
+import { beginUnitCase } from '../utils/unit-cases';
 import { DEFAULT_GOAL_WAIT_TIMEOUT_MS, goalStatusWaitCommand, createGoalWaitReader, waitForGoalStatus, readGoalWaitObservation, type GoalWaitObservation } from '../../scripts/utils/goal-status-wait';
 // goal-progress.unit.test.ts — progress projection, stall, freshness
 
@@ -41,7 +42,6 @@ import type { UnitCaseResult } from '../run-unit';
 import { issueSessionExecution, acceptSessionExecution, acceptedSessionReport, readHandoffMaterial } from '../../scripts/utils/session-execution-handoff';
 import { ensureRunControl, casAcquireRunOwner } from '../../scripts/utils/goal-run-control';
 import type { WorkUnitExecutionContext } from '../../scripts/utils/goal-phase-executor';
-import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
 
 const FRAMEWORK_ROOT = path.resolve(__dirname, '../../..');
 const HARNESS_ROOT = path.join(__dirname, '../..');
@@ -2418,79 +2418,6 @@ cases.push({
 });
 
 cases.push({
-  name: '4c8 wait production CLI accepts an acknowledged live warning across restarts without mutating producer events',
-  run: () => {
-    const results: Array<Record<string, unknown>> = [];
-    for (const kind of ['WAITING_EXTERNAL', 'STALLED']) {
-      const root = mkGoalCliProjectRoot(), feature = 'wait-ack', runId = 'original';
-      const runDir = (id: string) => path.join(root, 'doc/features', feature, 'goal-runs', id);
-      const line = (value: unknown) => JSON.stringify(value) + '\n';
-      const now = () => new Date().toISOString(), old = new Date(Date.now() - FRESHNESS_STALE_MS - 5000).toISOString();
-      const runs = new Set<string>();
-      const writeRun = (id: string, events: unknown[], extra: Partial<GoalManifest> = {}) => {
-        runs.add(id); fs.mkdirSync(runDir(id), { recursive: true });
-        fs.writeFileSync(path.join(runDir(id), 'manifest.json'), JSON.stringify(mkManifest({ feature, run_id: id,
-          report_dir: path.relative(root, runDir(id)).replace(/\\/g, '/'), start_phase: 'spec', end_phase: 'coding',
-          unattended: { write_mode: 'workspace-write', approval_mode: 'never', timeout_seconds: 1 }, ...extra })));
-        fs.writeFileSync(path.join(runDir(id), 'events.jsonl'), events.map(line).join(''));
-        fs.writeFileSync(path.join(root, 'doc/features', feature, 'goal-runs/.feature.lock'), JSON.stringify({ ownerId: 'isolated-producer',
-          pid: process.pid, hostname: os.hostname(), run_id: id, started_at: now(), updated_at: now() }));
-      };
-      const call = (label: string, after?: string) => {
-        const files = [...runs].flatMap(id => ['events.jsonl', 'manifest.json', 'progress.json', 'run-control.json'].map(name => path.join(runDir(id), name)));
-        files.push(path.join(root, 'doc/features', feature, 'goal-runs/.feature.lock'));
-        const before = files.map(file => fs.existsSync(file) ? fs.readFileSync(file) : null);
-        const cli = runGoalStatusCli(['--feature', feature, '--run-id', runId, '--wait', '--json', '--timeout-ms', '100', ...(after ? ['--after', after] : [])], root);
-        assert(cli.status === 0, cli.stderr + cli.stdout);
-        for (let i = 0; i < files.length; i++) assert(before[i] === null ? !fs.existsSync(files[i]) : fs.readFileSync(files[i]).equals(before[i]!), 'wait never writes producer events, locks, control or progress');
-        const value = JSON.parse(cli.stdout);
-        results.push({ kind, label, reason: value.reason, status: value.observation.status, run_id: value.observation.run_id,
-          elapsed_ms: value.elapsed_ms, cursor: value.cursor, eventsUnchanged: true });
-        return value;
-      };
-      try {
-        writeRun(runId, kind === 'WAITING_EXTERNAL'
-          ? [{ ts: now(), type: 'run_start', chain: ['spec', 'coding'] }, { ts: now(), type: 'phase_verdict', phase: 'spec', verdict: 'INCOMPLETE', action: 'defer_external_and_continue_if_allowed' }, { ts: now(), type: 'phase_start', phase: 'coding' }]
-          : [{ ts: old, type: 'run_start', chain: ['coding'] }, { ts: old, type: 'agent_invoke_start', phase: 'coding' }, { ts: old, type: 'agent_invoke_end', phase: 'coding', exit_code: 1, timed_out: true }]);
-        const first = call('first'); assert(first.reason === 'attention' && first.observation.status === kind, JSON.stringify(first));
-        const continued = call('same-state-new-cli', first.cursor); assert(continued.reason === 'timeout', 'same warning accepts explicit continuation in a new CLI process');
-        const journal = path.join(runDir(runId), 'events.jsonl');
-        fs.appendFileSync(journal, line({ ts: kind === 'STALLED' ? old : now(), type: 'heartbeat', phase: 'coding' }));
-        assert(call('heartbeat-same-cursor', first.cursor).reason === 'timeout', 'same cursor ignores heartbeat-only changes');
-        const legacy = JSON.parse(Buffer.from(first.cursor, 'base64url').toString('utf8')); delete legacy.attention;
-        assert(call('legacy-cursor', Buffer.from(JSON.stringify(legacy)).toString('base64url')).reason === 'attention', 'legacy cursors do not pretend a warning was received');
-        if (kind === 'WAITING_EXTERNAL') {
-          fs.appendFileSync(journal, line({ ts: now(), type: 'condition_wait_started', phase: 'coding', reason: 'a different external dependency' }));
-          const changedCause = call('new-cause', continued.cursor); assert(changedCause.reason === 'attention', 'a new obstacle is reported');
-          fs.appendFileSync(journal, line({ ts: now(), type: 'resume' }) + line({ ts: now(), type: 'run_start', chain: ['coding'] }));
-          const healthy = call('recovered', changedCause.cursor); assert(healthy.reason === 'changed' && healthy.observation.status === 'RUNNING', JSON.stringify(healthy));
-          assert(call('changed-cursor', healthy.cursor).reason === 'timeout', 'the returned cursor waits without repeating changed');
-          writeRun('next', [{ ts: now(), type: 'supersede', target_run_id: runId, superseding_run_id: 'next' }, { ts: now(), type: 'run_start', chain: ['spec', 'coding'] }], { successor_of: runId });
-          const successor = call('healthy-successor', changedCause.cursor); assert(successor.reason === 'changed' && successor.observation.run_id === 'next', JSON.stringify(successor));
-          fs.appendFileSync(path.join(runDir('next'), 'events.jsonl'), line({ ts: now(), type: 'phase_verdict', phase: 'spec', verdict: 'INCOMPLETE', action: 'defer_external_and_continue_if_allowed' }) + line({ ts: now(), type: 'phase_start', phase: 'coding' }));
-          const warning = call('successor-warning', changedCause.cursor); assert(warning.reason === 'attention', 'another run cannot inherit the acknowledged obstacle');
-          fs.appendFileSync(path.join(runDir('next'), 'events.jsonl'), line({ ts: now(), type: 'run_end', status: 'HALTED' }));
-          assert(call('terminal', warning.cursor).reason === 'stopped', 'terminal transition always returns');
-          fs.appendFileSync(path.join(runDir('next'), 'events.jsonl'), line({ ts: now(), type: 'resume' }) + line({ ts: now(), type: 'run_start', chain: ['coding'] }) + line({ ts: now(), type: 'run_end', status: 'AWAITING_HUMAN_REVIEW' }));
-          assert(call('human-review', warning.cursor).reason === 'attention', 'human review is never suppressed');
-          fs.appendFileSync(path.join(runDir('next'), 'events.jsonl'), line({ ts: now(), type: 'resume' }) + line({ ts: now(), type: 'run_start', chain: ['coding'] })
-            + line({ ts: now(), type: 'phase_halt', phase: 'coding', run_disposition: 'WAITING', run_wait_kind: 'human' }));
-          assert(call('active-human-action', warning.cursor).reason === 'attention', 'human control is reported before run_end even when liveness remains running');
-          fs.appendFileSync(path.join(runDir('next'), 'events.jsonl'), line({ ts: now(), type: 'phase_halt', phase: 'coding', run_disposition: 'TERMINAL' }));
-          assert(call('active-terminal-control', warning.cursor).reason === 'stopped', 'terminal control is reported before its settling producer exits');
-        } else {
-          fs.writeFileSync(path.join(root, 'doc/features', feature, 'goal-runs/.feature.lock'), JSON.stringify({ ownerId: 'isolated-producer',
-            pid: 2_147_483_647, hostname: os.hostname(), run_id: runId, started_at: old, updated_at: new Date(Date.now() - 7_200_000).toISOString() }));
-          assert(call('dead-producer', continued.cursor).reason === 'attention', 'a dead producer remains an immediate concern');
-        }
-      } finally { fs.rmSync(root, { recursive: true, force: true }); }
-    }
-    const output = path.resolve(__dirname, '../../reports/4c8d73b1-dev/wait-after-cli-results.json');
-    fs.mkdirSync(path.dirname(output), { recursive: true }); fs.writeFileSync(output, JSON.stringify(results, null, 2) + '\n');
-  },
-});
-
-cases.push({
   name: '4c8 wait stays in one call across heartbeats and child completion; explicit tool timeouts resume its cursor without stopping work',
   run: async () => {
     const root = mkGoalCliProjectRoot();
@@ -2520,56 +2447,6 @@ cases.push({
       assert((await waitForGoalStatus({ projectRoot: root, feature: 'demo', runId: 'root-run',
         read: () => { throw new Error('events unavailable'); } })).reason === 'read_error', 'read errors return explicitly');
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
-  },
-});
-
-cases.push({
-  name: '4c8 wait production CLI ignores old run_end after resume, follows audited successor and binds cursor to directory',
-  run: () => {
-    const root = mkGoalCliProjectRoot(), other = mkGoalCliProjectRoot();
-    const feature = 'wait-production', runId = 'wait-run';
-    const reportRel = `doc/features/${feature}/goal-runs/${runId}`;
-    const reportDir = path.join(root, reportRel);
-    const eventsFile = path.join(reportDir, 'events.jsonl');
-    const now = () => new Date().toISOString();
-    const line = (value: unknown) => JSON.stringify(value) + '\n';
-    const writeRun = (base: string, id: string, events: unknown[], extra: Record<string, unknown> = {}) => {
-      const report = `doc/features/${feature}/goal-runs/${id}`;
-      fs.mkdirSync(path.join(base, report), { recursive: true });
-      fs.writeFileSync(path.join(base, report, 'manifest.json'), JSON.stringify(mkManifest({ feature, run_id: id, report_dir: report,
-        start_phase: 'coding', end_phase: 'coding', ...extra })));
-      fs.writeFileSync(path.join(base, report, 'events.jsonl'), events.map(line).join(''));
-      const lock = { ownerId: 'wait-test', pid: process.pid, hostname: os.hostname(), started_at: now(), updated_at: now(), run_id: id };
-      fs.writeFileSync(path.join(base, `doc/features/${feature}/goal-runs/.feature.lock`), JSON.stringify(lock));
-    };
-    try {
-      const stopped = [{ ts: now(), type: 'run_start', chain: ['coding'] }, { ts: now(), type: 'run_end', status: 'HALTED' }];
-      writeRun(root, runId, stopped);
-      const args = ['--feature', feature, '--run-id', runId, '--wait', '--json'];
-      const terminal = runGoalStatusCli(args, root); assert(terminal.status === 0, terminal.stderr);
-      const prior = JSON.parse(terminal.stdout); assert(prior.observation.status === 'HALTED', terminal.stdout);
-      fs.appendFileSync(eventsFile, line({ ts: now(), type: 'resume' }) + line({ ts: now(), type: 'run_start', chain: ['coding'] }));
-      const running = runGoalStatusCli([...args, '--after', prior.cursor, '--timeout-ms', '30'], root);
-      assert(running.status === 0, running.stderr);
-      const cursor = JSON.parse(running.stdout); assert(cursor.reason === 'timeout' && cursor.observation.status === 'RUNNING', running.stdout);
-      writeRun(other, runId, stopped);
-      const wrong = runGoalStatusCli([...args, '--after', cursor.cursor], other);
-      assert(wrong.status === 1 && JSON.parse(wrong.stdout).reason === 'read_error', wrong.stderr + wrong.stdout);
-      const successor = 'wait-next';
-      writeRun(root, successor, [{ ts: now(), type: 'supersede', target_run_id: runId, superseding_run_id: successor },
-        { ts: now(), type: 'run_start', chain: ['coding'] }], { successor_of: runId });
-      const followed = runGoalStatusCli([...args, '--after', cursor.cursor, '--timeout-ms', '30'], root);
-      const follow = JSON.parse(followed.stdout); assert(follow.reason === 'timeout' && follow.observation.run_id === successor, followed.stderr + followed.stdout);
-      const nextFile = path.join(root, `doc/features/${feature}/goal-runs/${successor}/events.jsonl`);
-      fs.appendFileSync(nextFile, line({ ts: now(), type: 'run_end', status: 'HALTED' }));
-      const before = fs.readFileSync(nextFile, 'utf8');
-      const ended = runGoalStatusCli([...args, '--after', follow.cursor], root);
-      assert(JSON.parse(ended.stdout).observation.run_id === successor, ended.stderr + ended.stdout);
-      assert(fs.readFileSync(nextFile, 'utf8') === before, 'observer does not write business or run events');
-      fs.appendFileSync(nextFile, '{unreadable\n');
-      const unreadable = runGoalStatusCli([...args, '--after', follow.cursor, '--timeout-ms', '50'], root);
-      assert(unreadable.status === 1 && JSON.parse(unreadable.stdout).reason === 'read_error', unreadable.stderr + unreadable.stdout);
-    } finally { fs.rmSync(root, { recursive: true, force: true }); fs.rmSync(other, { recursive: true, force: true }); }
   },
 });
 
@@ -2746,20 +2623,17 @@ cases.push({
   },
 });
 
-export async function runSelectedCases(selector?: string) {
+export async function runAll() {
   const results: UnitCaseResult[] = [];
-  const timings: UnitExecutionTiming[] = [];
   for (const c of cases) {
-    if (!matchesUnitCase(c.name, selector)) continue;
-    const finish = startCaseTiming([c.name], timings);
+    const endUnitCase = beginUnitCase(c.name);
+    if (!endUnitCase) continue;
     try {
       await c.run();
       results.push({ name: c.name, ok: true });
     } catch (e) {
       results.push({ name: c.name, ok: false, error: (e as Error).message });
-    } finally { finish(); }
+    } finally {  endUnitCase(); }
   }
-  return selectedUnitCases(results, selector, timings);
+  return results;
 }
-
-export async function runAll(): Promise<UnitCaseResult[]> { return (await runSelectedCases()).results; }

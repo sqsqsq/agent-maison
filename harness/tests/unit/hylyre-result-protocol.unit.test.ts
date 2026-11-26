@@ -1,3 +1,4 @@
+import { runUnitCases } from '../utils/unit-cases';
 /**
  * hylyre-result-protocol — 统一 dispatch/typed boundary 与 D1 selector 判据。
  *
@@ -204,15 +205,6 @@ test('冻结包 bc-opencard-1 case：一根 failed + 未执行后缀 + policy sk
   }
 });
 
-export function runAll(): Promise<UnitCaseResult[]> {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (e) {
-      results.push({ name: c.name, ok: false, error: e instanceof Error ? (e.stack ?? e.message) : String(e) });
-    }
-  }
-  return Promise.resolve(results);
+export async function runAll(): Promise<UnitCaseResult[]> {
+  return runUnitCases(cases);
 }

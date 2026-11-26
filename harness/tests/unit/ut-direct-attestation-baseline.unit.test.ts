@@ -1,3 +1,4 @@
+import { runUnitCases } from '../utils/unit-cases';
 // ============================================================================
 // ut-direct-attestation-baseline.unit.test.ts — plan f3a9d2c7 T3
 // ----------------------------------------------------------------------------
@@ -632,16 +633,7 @@ cases.push(
 );
 
 export function runAll(): UnitCaseResult[] {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (e) {
-      results.push({ name: c.name, ok: false, error: (e as Error).message });
-    }
-  }
-  return results;
+  return runUnitCases(cases);
 }
 
 if (require.main === module) {

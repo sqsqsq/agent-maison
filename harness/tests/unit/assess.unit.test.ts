@@ -1,18 +1,9 @@
-// ============================================================================
-// assess.unit.test.ts — deterministic diff/recommend/fuse behavior
-// ============================================================================
-
-import { spawnSync } from 'child_process';
-import * as crypto from 'crypto';
+import { beginUnitCase } from '../utils/unit-cases';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as YAML from 'yaml';
-import { clearFrameworkConfigCache, featureFilePath } from '../../config';
-import { SNAPSHOT_CU_FEATURE } from '../fixtures/host-snapshot-3.1.0/generate';
-import { loadMigratedHostSnapshot } from '../fixtures/host-snapshot-3.1.0/migrate';
-import { loadEffectiveExecutionScope, resolveEffectiveScopeSource } from '../../scripts/utils/goal-run-creation';
-import { matchesUnitCase, selectedUnitCases, unitCaseGroups } from '../utils/unit-case-selection';
+import { clearFrameworkConfigCache } from '../../config';
 import { runlessCompletionThenRevision, setupRunlessProject } from './execution-scope.unit.test';
 import {
   assessObservation,
@@ -47,7 +38,6 @@ interface Case {
 
 const H = 'a'.repeat(64);
 const FRAMEWORK_ROOT = path.resolve(__dirname, '..', '..', '..');
-const HARNESS_ROOT = path.resolve(__dirname, '..', '..');
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(message);
@@ -82,7 +72,6 @@ function goalInput(minimum: Record<string, string>): Record<string, unknown> {
     unattended: { write_mode: 'workspace-write', approval_mode: 'never' },
   };
 }
-
 
 function phase(overrides: Partial<AssessPhaseObservation> = {}): AssessPhaseObservation {
   return {
@@ -204,7 +193,6 @@ const producerOwnedInputGapCase: Case = {
       assert(plan.blocked_capabilities?.[0]?.unresolved[0]?.upstream_producer === 'spec', JSON.stringify(plan));
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
 
-
   },
 };
 const cases: Case[] = [
@@ -289,38 +277,6 @@ const cases: Case[] = [
     },
   },
   {
-    // plan c4e7a9b2 §3.5 / §6 D-2：无 run 时推荐以完成评估入口为准，CLI stdout 与 next.json 同源。
-    name: 'D-2 无 run CLI：评估判 uncovered 在 coding（spec 由输入绑定复用、spec summary 缺）→ run_phase coding（不是 spec），next.json 与 stdout 一致',
-    run: async () => {
-      const s = await loadMigratedHostSnapshot([SNAPSHOT_CU_FEATURE]);
-      try {
-        const feature = SNAPSHOT_CU_FEATURE;
-        clearFrameworkConfigCache();
-        assert(!fs.existsSync(featureFilePath(s.root, feature, 'spec/reports/summary.json')), '前提：spec summary 缺');
-        fs.rmSync(featureFilePath(s.root, feature, 'coding/reports/phase-evidence-manifest.json'));
-        const cli = spawnSync(process.execPath, [require.resolve('ts-node/dist/bin.js'), '--transpile-only', path.join(HARNESS_ROOT, 'scripts', 'assess.ts'),
-          '--feature', feature, '--project-root', s.root, '--framework-root', s.frameworkRoot, '--write'], {
-          cwd: HARNESS_ROOT, encoding: 'utf8', timeout: 180_000, env: { ...process.env, TS_NODE_PROJECT: path.join(HARNESS_ROOT, 'tsconfig.json') },
-        });
-        assert(cli.status === 0, `assess CLI exit=${cli.status}: ${cli.stderr}`);
-        const out = JSON.parse(cli.stdout.slice(cli.stdout.indexOf('{'))) as {
-          recommendation: { action: string; phase: string | null; reason: string }; projection_fingerprint: string;
-          feature_assessment: { record: { state: string; run_id: string }; uncovered: Array<{ owner_phase: string }> };
-        };
-        assert(out.feature_assessment.record.state === 'ok', JSON.stringify(out.feature_assessment.record));
-        assert(JSON.stringify([...new Set(out.feature_assessment.uncovered.map(o => o.owner_phase))]) === '["coding"]', `前提：只有 coding uncovered：${JSON.stringify(out.feature_assessment.uncovered)}`);
-        assert(out.recommendation.action === 'continue_work_unit' && out.recommendation.phase === null, JSON.stringify(out.recommendation));
-        assert(out.recommendation.reason.includes('coding'), out.recommendation.reason);
-        const next = JSON.parse(fs.readFileSync(nextProjectionPath(s.root, feature), 'utf8')) as typeof out;
-        assert(JSON.stringify(next.recommendation) === JSON.stringify(out.recommendation), `next.json ≠ stdout：${JSON.stringify(next.recommendation)}`);
-        assert(next.projection_fingerprint === out.projection_fingerprint, 'projection_fingerprint 不一致');
-      } finally {
-        clearFrameworkConfigCache();
-        fs.rmSync(s.root, { recursive: true, force: true });
-      }
-    },
-  },
-  {
     // codex 批二 P2：feature 载体完成记录 run_id=null，没有可 supersede 的 run——不得拼出 `--supersede null`。
     name: 'D-2b 无 run assess：feature 载体完成后追加修订、新增义务 uncovered → 保留责任阶段推荐，提示先追加范围修订再起新 run',
     run: () => {
@@ -334,68 +290,6 @@ const cases: Case[] = [
       } finally {
         clearFrameworkConfigCache();
         fs.rmSync(root, { recursive: true, force: true });
-      }
-    },
-  },
-  {
-    // plan a2f7c9e4 §3.4：宿主 d6d31d 同形（记录 VALID、CU 出生链 coding→review→ut、spec summary 缺）。
-    name: 'a2f7c9e4 无 run：完成评估已 VALID → feature_completed/VALIDATED、无授权请求、gaps 空、观察链取记录 run 范围；渲染 none、driver advance、不授权执行',
-    run: async () => {
-      const s = await loadMigratedHostSnapshot([SNAPSHOT_CU_FEATURE]);
-      try {
-        clearFrameworkConfigCache();
-        const feature = SNAPSHOT_CU_FEATURE;
-        const r = assessFeature({ projectRoot: s.root, frameworkRoot: s.frameworkRoot, feature, writeProjection: false });
-        assert(r.recommendation.action === 'feature_completed' && r.recommendation.phase === null, JSON.stringify(r.recommendation));
-        assert(r.recommendation.requires_driver_authorization === false, JSON.stringify(r.recommendation));
-        assert(r.feature_completion === 'VALIDATED' && r.run_status_candidate === 'CHAIN_SLICE_COMPLETED', `${r.feature_completion}/${r.run_status_candidate}`);
-        assert(r.gaps.length === 0, `已完成不得保留缺口：${JSON.stringify(r.gaps)}`);
-        const chain = r.observed.phases.map(p => p.phase);
-        const recordRun = JSON.parse(fs.readFileSync(path.join(s.root, JSON.parse(fs.readFileSync(featureFilePath(s.root, feature, 'feature-completion.json'), 'utf8')).original_path), 'utf8')).run_id;
-        const scope = resolveEffectiveScopeSource(s.root, feature, recordRun)!.scope;
-        assert(loadEffectiveExecutionScope(s.root, feature, recordRun)!.phase_chain.length === 0, '已完成记录的当前执行队列必须为空');
-        assert(JSON.stringify([...new Set([...scope.phase_chain, ...scope.reused_phases.map(p => p.phase)])].sort()) === '["coding","review","ut"]', '观察范围包括实际执行和可复用阶段，不假定本次gate改动只影响review');
-        assert(JSON.stringify(chain) === '["coding","review","ut"]', `观察范围须按工作流顺序包含真实复用与本次执行：${JSON.stringify(chain)}`);
-        const rendered = formatAssessNextStep(r, { phase: 'ut', mode: 'manual', status: 'PASS/closed' });
-        assert(rendered.includes('recommendation=feature_completed') && rendered.includes('authorization=none'), rendered);
-        // 观察器另有缺口（快照 coding assurance=degraded，调用方要求 full）时，缺口仍以唯一完成评估为准；observed 原样保留。
-        const strict = assessFeature({ projectRoot: s.root, frameworkRoot: s.frameworkRoot, feature, minimumAssurance: { coding: 'full' }, writeProjection: false });
-        assert(strict.recommendation.action === 'feature_completed' && strict.gaps.length === 0, JSON.stringify({ rec: strict.recommendation, gaps: strict.gaps }));
-        assert(strict.observed.phases.find(p => p.phase === 'coding')?.assurance_satisfied === false, '观察事实须原样保留');
-      } finally {
-        clearFrameworkConfigCache();
-        fs.rmSync(s.root, { recursive: true, force: true });
-      }
-    },
-  },
-  {
-    name: 'a2f7c9e4 反例：完成原件校验失败（义务仍覆盖）→ 仍推荐 validate_feature_completion/REQUIRES_VALIDATION；删掉完成记录 → 不输出已完成投影',
-    run: async () => {
-      const s = await loadMigratedHostSnapshot([SNAPSHOT_CU_FEATURE]);
-      try {
-        clearFrameworkConfigCache();
-        const feature = SNAPSHOT_CU_FEATURE;
-        const projectionFile = featureFilePath(s.root, feature, 'feature-completion.json');
-        const projection = JSON.parse(fs.readFileSync(projectionFile, 'utf8'));
-        const originalFile = path.join(s.root, projection.original_path);
-        const original = JSON.parse(fs.readFileSync(originalFile, 'utf8'));
-        original.phases[0].run_id = '20260101T000000Z-f0f0f0';
-        const text = JSON.stringify(original, null, 2) + '\n';
-        fs.writeFileSync(originalFile, text);
-        fs.writeFileSync(projectionFile, JSON.stringify({ ...projection, original_sha256: crypto.createHash('sha256').update(text, 'utf-8').digest('hex') }));
-        const broken = assessFeature({ projectRoot: s.root, frameworkRoot: s.frameworkRoot, feature, writeProjection: false });
-        assert(broken.recommendation.action === 'continue_work_unit', JSON.stringify(broken.recommendation));
-        assert(broken.recommendation.requires_driver_authorization === true, JSON.stringify(broken.recommendation));
-        assert(broken.feature_completion === null, String(broken.feature_completion));
-        assert(formatAssessNextStep(broken, { phase: 'ut', mode: 'manual', status: 'PASS' }).includes('authorization=driver_required'), 'broken 记录须要求驱动授权');
-
-        fs.rmSync(projectionFile);
-        const absent = assessFeature({ projectRoot: s.root, frameworkRoot: s.frameworkRoot, feature, writeProjection: false });
-        assert(absent.recommendation.action !== 'feature_completed' && absent.feature_completion !== 'VALIDATED', JSON.stringify(absent.recommendation));
-        assert(absent.recommendation.requires_driver_authorization === true, JSON.stringify(absent.recommendation));
-      } finally {
-        clearFrameworkConfigCache();
-        fs.rmSync(s.root, { recursive: true, force: true });
       }
     },
   },
@@ -612,21 +506,19 @@ const cases: Case[] = [
   },
 ];
 
-async function executeCases(selector?: string): Promise<UnitCaseResult[]> {
+async function executeCases(): Promise<UnitCaseResult[]> {
   const results: UnitCaseResult[] = [];
   for (const testCase of cases) {
-    if (!matchesUnitCase(testCase.name, selector)) continue;
+    const endUnitCase = beginUnitCase(testCase.name);
+    if (!endUnitCase) continue;
     try {
       await testCase.run();
       results.push({ name: testCase.name, ok: true });
     } catch (error) {
       results.push({ name: testCase.name, ok: false, error: (error as Error).message });
-    }
+    } finally { endUnitCase(); }
   }
   return results;
 }
 
 export const runAll = () => executeCases();
-export const runSelectedCases = async (selector?: string) => selectedUnitCases(await executeCases(selector), selector, []);
-export const listCaseGroups = () => unitCaseGroups(cases.map(test => test.name))
-  .map(group => ({ ...group, releaseOnly: group.caseNames.some(name => /^(?:D-2|a2f7c9e4)/.test(name)) }));

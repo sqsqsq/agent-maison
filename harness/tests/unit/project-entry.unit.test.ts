@@ -1,3 +1,4 @@
+import { beginUnitCase } from '../utils/unit-cases';
 import assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -122,10 +123,12 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
 export async function runAll(): Promise<UnitCaseResult[]> {
   const results: UnitCaseResult[] = [];
   for (const test of cases) {
+    const endUnitCase = beginUnitCase(test.name);
+    if (!endUnitCase) continue;
     const f = fixture();
     try { clearFrameworkConfigCache(); await test.run(f); results.push({ name: test.name, ok: true }); }
     catch (error) { results.push({ name: test.name, ok: false, error: (error as Error).stack }); }
-    finally { fs.rmSync(f.root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+    finally { fs.rmSync(f.root, { recursive: true, force: true }); clearFrameworkConfigCache();  endUnitCase(); }
   }
   return results;
 }

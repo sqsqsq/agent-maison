@@ -1,3 +1,4 @@
+import { beginUnitCase } from '../utils/unit-cases';
 // ============================================================================
 // visual-handoff.unit.test.ts — check-spec Visual Handoff 白盒回归
 // ============================================================================
@@ -98,12 +99,14 @@ function mkTmp(): string {
 export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
   const run = (name: string, fn: () => void) => {
+    const endUnitCase = beginUnitCase(name);
+    if (!endUnitCase) return;
     try {
       fn();
       results.push({ name, ok: true });
     } catch (e) {
       results.push({ name, ok: false, error: (e as Error).message });
-    }
+    } finally { endUnitCase(); }
   };
 
   run('no_ui_yaml_and_no_prd_section_returns_empty_array', () => {

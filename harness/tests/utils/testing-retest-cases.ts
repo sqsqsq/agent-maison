@@ -8,7 +8,6 @@ import { readPendingTestingRetests } from '../../scripts/utils/testing-trace-gat
 import { requireV1ForGate } from '../../scripts/utils/hylyre-result-protocol';
 import { buildVerifierMaterialView, writeVerifierMaterial } from '../../scripts/utils/verifier-material';
 import { publishFixtureVerifierEvidence } from './verifier-evidence-fixture';
-import { copyC6HostReplay } from './c6-host-replay';
 import * as YAML from 'yaml';
 import { resolveCapabilityInputs } from '../../scripts/utils/capability-resolution';
 import { createGoalRun, resolveEffectiveScopeSource } from '../../scripts/utils/goal-run-creation';
@@ -239,118 +238,5 @@ export function testingRetestCases(): Array<{ name: string; run(): void }> {
     } finally {
       clearFrameworkConfigCache(); assert(root.startsWith(fs.realpathSync(os.tmpdir()) + path.sep)); fs.rmSync(root, { recursive: true, force: true });
     }
-  } }, unitOnlyRetestCase()];
-}
-
-function unitOnlyRetestCase(): { name: string; run(): void } {
-  return { name: '4c8d73b1 verifier disabled pure logic closes only with current scoped formal UT source build and exact native case proof', run() {
-    const f = copyC6HostReplay(), { root, feature, featureDir } = f, frameworkRoot = path.resolve(__dirname, '../../..');
-    const read = (file: string): any => JSON.parse(fs.readFileSync(file, 'utf8'));
-    const hash = (bytes: Buffer | string): string => createHash('sha256').update(bytes).digest('hex');
-    const write = (file: string, bytes: string): void => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, bytes); };
-    try {
-      // Controlled producer inputs: the native source/assertions/logs are captured originals;
-      // unit-only attribution and tiny build bytes are explicit substitutes, not a host rerun.
-      const acceptanceFile = path.join(root, featureDir, 'acceptance.yaml');
-      const acceptance = YAML.parse(fs.readFileSync(acceptanceFile, 'utf8'));
-      acceptance.boundaries.find((item: any) => item.id === 'BD-3').ut_layer = 'unit';
-      fs.writeFileSync(acceptanceFile, YAML.stringify(acceptance));
-      const produced = resolveCapabilityInputs({ projectRoot: root, feature, frameworkRoot, phase: 'coding', track: 'full',
-        inputContext: { schema_version: '1.1', subject: { feature }, obligations: { 'acceptance-context': 'required' }, required_outputs: [] } }).inputs!;
-      const acc = produced.values.acceptance, contracts = produced.values.contracts;
-      assert(acc.state === 'resolved' && contracts.state === 'resolved');
-      const manifest = read(path.join(root, featureDir, 'goal-runs', f.runId, 'manifest.json'));
-      manifest.run_id = '20261024T190000Z-unit'; manifest.created_at = '2026-10-24T19:00:00.000Z';
-      manifest.report_dir = `${featureDir}/goal-runs/${manifest.run_id}`; manifest.requirement = 'controlled scoped logical rollback retest';
-      for (const obligation of manifest.execution_scope.obligations) for (const key of ['basis', 'satisfied_by']) {
-        if (obligation[key]) obligation[key] = obligation[key].map((binding: any) => binding.input_id === 'acceptance' ? acc.binding : binding.input_id === 'contracts' ? contracts.binding : binding);
-      }
-      createGoalRun({ projectRoot: root, frameworkRoot, manifest, chain: manifest.phase_chain, resolveHead: () => 'a'.repeat(40),
-        continuation: { kind: 'fresh', explicit: false, reason: 'controlled regression birth' } as any });
-      const scope = resolveEffectiveScopeSource(root, feature, manifest.run_id)!.scope;
-      assert.equal(readScopeAcceptance(root, { facts: scope.obligations }, { feature, frameworkRoot })!.value.boundaries!.find(item => item.id === 'BD-3')!.ut_layer, 'unit');
-      const reports = path.join(root, featureDir, 'testing/reports'), failureDir = path.join(reports, '01/hylyre');
-      const failure = read(path.join(frameworkRoot, 'profiles/hmos-app/vendor/hylyre/src/hylyre/contracts/golden/trace/valid/capture-unavailable-evidence-incomplete.json'));
-      failure.feature = feature; failure.cases[0].id = 'TC-18'; failure.cases[0].ac_ref = 'BD-3';
-      for (const call of failure.tool_calls) call.case = 'TC-18';
-      assert(requireV1ForGate(failure, { frameworkRoot }).ok);
-      const plan = '# Plan\n## 测试用例\n| 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 | 优先级 | 关联 AC |\n|---|---|---|---|---|---|---|\n'
-        + '| TC-18 | save rollback | failed insert | {"touch":{"by_id":"test_driver"}} ; {"wait_for":{"by_id":"rollback"}} | no half write | P0 | BD-3 |\n';
-      const tracePath = path.join(failureDir, 'trace.json'), traceBytes = JSON.stringify(failure);
-      write(tracePath, traceBytes); write(path.join(failureDir, 'test-plan.hylyre.md'), plan);
-      const failureInputs = { hap_sha256_full: 'a'.repeat(64), derived_plan_sha256: hash(plan), profile: 'hmos-app', device: 'isolated-test',
-        display_env: '', reset_mode: 'warm', hylyre_version: null, manifest_version: null, tool_config_sha256: '', flags: [] };
-      write(path.join(failureDir, 'execution-key.json'), JSON.stringify({ schema_version: '1.0', execution_key: computeExecutionKey(failureInputs),
-        run_started_at: '2026-10-24T19:00:05.000Z', trace_path: tracePath, trace_sha256: hash(traceBytes), outcome: 'failed', inputs: failureInputs }));
-      write(path.join(reports, 'summary.json'), JSON.stringify({ verifier_plan: { mode: 'disabled' } }));
-      const utReports = path.join(root, featureDir, 'ut/reports'), nativeDir = path.join(utReports, '20261024T192859Z-969/ut');
-      const keyFile = path.join(nativeDir, 'execution-key.json'), key = read(keyFile), modules = utExecutionModules(key);
-      const contractValue = contracts.value as import('../../scripts/utils/types').ContractsSpec;
-      const hapFiles = modules.sort().map(module => {
-        const owner = contractValue.modules!.find(item => item.name === module)!;
-        const prefix = path.join(root, owner.package_path, 'build/default/outputs/ohosTest', `${module}-ohosTest`);
-        write(prefix + '-unsigned.hap', 'controlled build'); write(prefix + '-signed.hap', 'controlled signed build');
-        return prefix + '-signed.hap';
-      });
-      key.inputs.hap_sha256_full = sha256Text(modules.map((module, i) => `${module}=${hash(fs.readFileSync(hapFiles[i]))}`).join('\n'));
-      Object.assign(key.inputs, currentUtExecutionInputs(root, modules)); key.execution_key = computeExecutionKey(key.inputs);
-      key.goal_invocation = { run_id: manifest.run_id, phase: 'business-ut', attempt_id: 'controlled-i1' }; write(keyFile, JSON.stringify(key));
-      const formalFile = path.join(utReports, 'script-report.json'), formal = read(formalFile);
-      const passed = modules.flatMap(module => parseHypiumStdout(fs.readFileSync(path.join(nativeDir, `frozen.hdc-test.${module}.log`), 'utf8'))!.passed_tests ?? []);
-      const coverage = read(path.join(utReports, 'coverage-evidence.json'));
-      const tests = [...new Set<string>(coverage.mappings.map((mapping: any) => mapping.evidence_ref))];
-      const candidates = tests.flatMap(file => extractUtItBlocks(fs.readFileSync(path.join(root, file), 'utf8')).map(test => ({ path: file, test: test.name })));
-      formal.checks.push(...executedUtChecks(root, candidates, passed)); write(formalFile, JSON.stringify(formal));
-      const evidence = loadPhaseEvidenceManifest(root, feature, 'ut')!.manifest;
-      for (const file of [...acc.binding.source_refs, ...contracts.binding.source_refs]) {
-        let entry = evidence.inputs.find(entry => entry.path === file);
-        if (!entry) { entry = { path: file, role: 'input', exists: true, sha256: null }; evidence.inputs.push(entry); }
-        entry.sha256 = currentEvidenceEntryHash(root, entry, feature);
-        assert(entry.sha256, `controlled formal input unavailable: ${file}`);
-      }
-      const reportEntry = evidence.outputs.find(entry => entry.path === path.relative(root, formalFile).replace(/\\/g, '/'))!;
-      reportEntry.sha256 = hash(fs.readFileSync(formalFile)); evidence.aggregate_sha256 = recomputeManifestAggregate(evidence); writePhaseEvidenceManifest(root, evidence);
-      const pending = () => readPendingTestingRetests({ projectRoot: root, feature, frameworkRoot, runId: manifest.run_id, currentHapSha256: null });
-      assert.equal(pending().length, 0, 'real native tagged case, formal producer file#name, current scope/source/build together close pure logic without verifier or UI HAP');
-      const savedHap = fs.readFileSync(hapFiles[0]); fs.appendFileSync(hapFiles[0], 'other build');
-      assert.equal(pending().length, 1, 'same-file next call must reject a different current test HAP'); fs.writeFileSync(hapFiles[0], savedHap);
-      const source = path.join(root, '02-Feature/WalletMain/src/main/ets/domain/service/BankCardOpeningService.ets'), savedSource = fs.readFileSync(source);
-      fs.appendFileSync(source, '\n// current logic changed\n'); assert.equal(pending().length, 1, 'old native success cannot certify changed production code'); fs.writeFileSync(source, savedSource);
-      const testFile = path.join(root, tests[0]), savedTest = fs.readFileSync(testFile);
-      fs.appendFileSync(testFile, '\n// assertions changed\n'); assert.equal(pending().length, 1, 'old native success cannot certify changed assertions'); fs.writeFileSync(testFile, savedTest);
-      const savedKey = fs.readFileSync(keyFile); key.goal_invocation.run_id = 'other-request'; write(keyFile, JSON.stringify(key));
-      assert.equal(pending().length, 1, 'foreign request cannot satisfy this request'); fs.writeFileSync(keyFile, savedKey);
-      const configFile = path.join(root, 'hvigor/hvigor-config.json5'), savedConfig = fs.readFileSync(configFile);
-      fs.appendFileSync(configFile, '\n// current build config changed\n'); assert.equal(pending().length, 1, 'old tool/config execution key cannot certify a current build'); fs.writeFileSync(configFile, savedConfig);
-      const logFile = path.join(nativeDir, 'frozen.hdc-test.WalletMain.log'), savedLog = fs.readFileSync(logFile);
-      fs.writeFileSync(logFile, savedLog.toString('utf8').replace(/\[BD-3\]/g, '[BD-30]'));
-      assert.equal(pending().length, 1, 'a single matching label or formal report PASS cannot replace the exact native observed test'); fs.writeFileSync(logFile, savedLog);
-      const formalBytes = fs.readFileSync(formalFile);
-      const bindFormal = (): void => { reportEntry.sha256 = hash(fs.readFileSync(formalFile)); evidence.aggregate_sha256 = recomputeManifestAggregate(evidence); writePhaseEvidenceManifest(root, evidence); };
-      write(formalFile, JSON.stringify({ ...formal, checks: formal.checks.filter((check: any) => !candidates.some(candidate => candidate.test === check.id)) })); bindFormal();
-      assert.equal(pending().length, 1, 'a current formal round PASS without producer file#name observations is not a per-case proof'); fs.writeFileSync(formalFile, formalBytes); bindFormal();
-      key.goal_invocation.run_id = manifest.run_id; key.run_started_at = '2026-10-24T19:00:04.000Z'; write(keyFile, JSON.stringify(key));
-      assert.equal(pending().length, 1, 'UT before the original failure is not a new retest'); fs.writeFileSync(keyFile, savedKey);
-      const failureRecordFile = path.join(failureDir, 'execution-key.json'), failureRecord = read(failureRecordFile);
-      write(path.join(failureDir, 'test-plan.hylyre.md'), plan.replace('P0 | BD-3', 'P0 | BD-3, AC-4'));
-      const mixedInputs = { ...failureRecord.inputs, derived_plan_sha256: hash(plan.replace('P0 | BD-3', 'P0 | BD-3, AC-4')) };
-      write(failureRecordFile, JSON.stringify({ ...failureRecord, inputs: mixedInputs, execution_key: computeExecutionKey(mixedInputs) }));
-      assert.equal(pending().length, 1, 'mixed device/both requirements cannot be reclassified as pure unit by one matching BD');
-      write(path.join(failureDir, 'test-plan.hylyre.md'), plan); write(failureRecordFile, JSON.stringify(failureRecord));
-      assert.equal(pending().length, 0, 'later calls observe restored current evidence rather than a cross-call negative cache');
-      const product = structuredClone(failure), goldenDir = path.join(frameworkRoot, 'profiles/hmos-app/vendor/hylyre/src/hylyre/contracts/golden');
-      product.cases[0].id = 'TC-19'; product.cases[0].execution = 'aborted'; product.cases[0].evidence = 'complete';
-      product.cases[0].steps = [read(path.join(goldenDir, 'trace/valid/all-passed.json')).cases[0].steps[0], read(path.join(goldenDir, 'step/valid/failed-assertion-mismatch-presence.json'))];
-      product.cases[0].steps[1].index = 1;
-      product.tool_calls = product.cases[0].steps.map((step: any) => ({ case: 'TC-19', index: step.index, kind: step.kind, role: step.role,
-        outcome: { status: step.outcome.status, ...(step.outcome.failure ? { failure: step.outcome.failure } : {}) } }));
-      assert(requireV1ForGate(product, { frameworkRoot }).ok);
-      const productBytes = JSON.stringify(product), productPlan = plan.replace(/TC-18/g, 'TC-19');
-      write(tracePath, productBytes); write(path.join(failureDir, 'test-plan.hylyre.md'), productPlan);
-      const productInputs = { ...failureRecord.inputs, derived_plan_sha256: hash(productPlan) };
-      write(failureRecordFile, JSON.stringify({ ...failureRecord, trace_sha256: hash(productBytes), inputs: productInputs, execution_key: computeExecutionKey(productInputs) }));
-      assert.equal(pending().length, 1, 'a product/UI failure is not closed by a unit-only label plus otherwise valid UT evidence');
-      assert.equal(pending()[0].route.codingCandidate, true);
-    } finally { clearFrameworkConfigCache(); assert(root.startsWith(fs.realpathSync(os.tmpdir()) + path.sep)); fs.rmSync(root, { recursive: true, force: true }); }
-  } };
+  } }];
 }

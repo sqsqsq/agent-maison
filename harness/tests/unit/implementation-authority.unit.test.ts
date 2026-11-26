@@ -1,3 +1,4 @@
+import { runUnitCasesAsync } from '../utils/unit-cases';
 import assert from 'assert';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -40,8 +41,9 @@ async function withProject(run: (ctx: CheckContext) => void | Promise<void>): Pr
       paths: { features_dir: 'doc/features' } }));
     write(root, resource, '{"string":[]}');
     write(root, '02-Feature/AccountManager/src/main/ets/Account.ets', 'export class Account {}');
-    git(root, 'init', '-q'); git(root, 'config', 'user.name', 'test'); git(root, 'config', 'user.email', 'test@test');
-    git(root, 'config', 'commit.gpgsign', 'false'); git(root, 'add', '-A'); git(root, 'commit', '-qm', 'base');
+    git(root, 'init', '-q');
+    git(root, 'add', '-A');
+    git(root, '-c', 'user.name=test', '-c', 'user.email=test@test', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'base');
     clearFrameworkConfigCache();
     const contracts: ContractsSpec = { feature, source: 'test', version: '1.0', module_dependencies: {}, data_models: [], interfaces: [], components: [], files: [page], modules: [{ name: 'WalletMain', package_path: modulePath, layer: '02-Feature', format: 'HAR', change_type: 'modify' }] };
     await run({ projectRoot: root, frameworkRoot, feature, phase: 'coding', phaseRule: {},
@@ -116,9 +118,16 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     const routeFile = `${modulePath}/src/main/resources/base/profile/route_map.json`;
     const route = { name: 'CardPage', pageSourceFile: 'src/main/ets/pages/CardPage.ets', buildFunction: 'CardPageBuilder' };
     const gate = () => profileCodingHost.runStructureChecks(ctx, []).find(check => check.id === 'page_registration')!;
-    write(ctx.projectRoot, routeFile, JSON.stringify({ routerMap: [route] })); assert.equal(gate().status, 'PASS', gate().details);
-    write(ctx.projectRoot, routeFile, JSON.stringify({ routerMap: [{ ...route, buildFunction: 'MissingBuilder' }] })); assert.equal(gate().status, 'FAIL');
-    write(ctx.projectRoot, routeFile, '{"routerMap":[]}'); assert.equal(gate().status, 'FAIL');
+    write(ctx.projectRoot, routeFile, JSON.stringify({ routerMap: [route] }));
+    const registered = gate();
+    assert.equal(registered.status, 'PASS', registered.details);
+    const unregisteredPage = `${modulePath}/src/main/ets/pages/Unregistered.ets`;
+    write(ctx.projectRoot, unregisteredPage, '@Component struct Unregistered { build() { NavDestination() {} } }');
+    write(ctx.projectRoot, routeFile, JSON.stringify({ routerMap: [{ ...route, buildFunction: 'MissingBuilder' }] }));
+    const invalid = gate();
+    assert.equal(invalid.status, 'FAIL');
+    assert(invalid.details.includes(`${page} 的注册 builder 不存在：MissingBuilder`), invalid.details);
+    assert(invalid.details.includes(`${unregisteredPage} 未在实际 module.json5 引用的路由配置中注册`), invalid.details);
   }) },
   { name: 'a missing navigation declaration does not obscure a real unreadable registration file', run: () => withProject(ctx => {
     write(ctx.projectRoot, page, '@Entry @Component struct CardPage { build() { NavDestination() {} } }');
@@ -154,10 +163,5 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
 ];
 
 export async function runAll(): Promise<Array<{ name: string; ok: boolean; error?: string }>> {
-  const results = [];
-  for (const test of cases) {
-    try { await test.run(); results.push({ name: test.name, ok: true }); }
-    catch (error) { results.push({ name: test.name, ok: false, error: (error as Error).stack ?? String(error) }); }
-  }
-  return results;
+  return runUnitCasesAsync(cases);
 }

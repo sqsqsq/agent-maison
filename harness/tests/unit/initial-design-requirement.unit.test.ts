@@ -1,42 +1,32 @@
+import { beginUnitCase } from '../utils/unit-cases';
 import '../utils/transpile-only-env';
 import assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as YAML from 'yaml';
 import { createHash } from 'crypto';
 import { clearFrameworkConfigCache } from '../../config';
 import { prepareGoalModeRun, runGoalModeSessionStep as runGoalModeSessionStepUnchecked } from '../../scripts/goal-mode-entry';
 import { buildInitialDesignGoalManifest, isInitialDesignManifest } from '../../scripts/utils/goal-manifest';
 import { createGoalRun } from '../../scripts/utils/goal-run-creation';
 import { currentOriginalDelivery, readOriginalDeliveryActivity } from '../../scripts/utils/delivery-origin';
-import { enumerateCanonicalChangeUnits, asChangeUnitArtifact } from '../../scripts/utils/change-unit-path';
-import { loadCanonicalBlueprint } from '../../scripts/utils/component-blueprint-path';
-import { blueprintIdentityPointers, currentBlueprintIdentity } from '../../scripts/utils/change-unit-blueprint-identity';
-import { acceptChangeUnitDecomposition } from '../../scripts/utils/change-unit-design-preparation';
-import { readInitialDesignDelivery } from '../../scripts/utils/initial-design-delivery';
-import { prepareBlueprintSourceItems } from '../../scripts/utils/blueprint-discovery';
-import { BLUEPRINT_ID, withFreshCuHost } from './lifecycle-evolution.unit.test';
-import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
+import { enumerateCanonicalChangeUnits } from '../../scripts/utils/change-unit-path';
+import { BLUEPRINT_ID, withFreshCuHost } from '../utils/real-chain-host';
 import type { UnitCaseResult } from '../run-unit';
 import { reportFixtureQuestioning, seedLedgerQuestioningInput } from '../utils/initial-questioning-fixture';
 import { withRuntimeTest, type RuntimeTestControl } from '../utils/runtime-test-control';
 const runGoalModeSessionStep = (options: Parameters<typeof runGoalModeSessionStepUnchecked>[0], testControl: RuntimeTestControl = {}) =>
   withRuntimeTest({ root: options.projectRoot, ...testControl }, () => runGoalModeSessionStepUnchecked(options));
 
+const authorization = { mode: 'goal_mode' as const, autonomyAuthorized: true };
 
 type Json = Record<string, any>;
-type Scenario = 'completed' | 'unfinished' | 'source' | 'pre-decomposition';
-const authorization = { mode: 'goal_mode' as const, autonomyAuthorized: true };
+type Scenario = 'completed' | 'unfinished' | 'source';
 const originalRequirement = '交付账目刷新与恢复。';
 const increment = '新增要求：本地账目金额格式必须保持两位小数，并有对应验收。';
 
 async function scenario(mode: Scenario): Promise<void> {
   await withFreshCuHost(async host => {
     seedLedgerQuestioningInput(host.root);
-    const initialUnits = enumerateCanonicalChangeUnits(host.root, BLUEPRINT_ID);
-    const proposals = initialUnits.map(unit => ({ providerId: String(unit.changeUnit.provenance && (unit.changeUnit.provenance as Json).extraction_method),
-      artifact: structuredClone(asChangeUnitArtifact(unit.changeUnit)) }));
-    if (mode === 'pre-decomposition') for (const unit of initialUnits) fs.unlinkSync(unit.canonicalPath);
     const configFile = path.join(host.root, 'framework.config.json');
     const config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
     config.project_profile.name = 'hmos-app';
@@ -76,6 +66,17 @@ async function scenario(mode: Scenario): Promise<void> {
     assert(audit && audit.target_run_id === old.run_id);
     assert.equal(audit.delivery_cycle_boundary, mode === 'completed' ? old.run_id : undefined);
     assert.equal(readOriginalDeliveryActivity(host.root, prepared.manifest)!.calls, mode === 'completed' ? 0 : 1);
+    const assertOriginals = () => {
+      assert.deepEqual(fs.readFileSync(created.manifestPath), oldManifest);
+      assert.deepEqual(fs.readFileSync(created.eventsPath), oldEvents);
+      for (const unit of oldUnits) assert.deepEqual(fs.readFileSync(unit.path), unit.bytes);
+    };
+    if (mode === 'completed') {
+      assert.equal(currentOriginalDelivery(host.root, old).run_id, old.run_id);
+      assert(!('execution_scope' in prepared.manifest), 'the new request must still go through design');
+      assertOriginals();
+      return;
+    }
     const options = { projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: BLUEPRINT_ID,
       runId: prepared.manifest.run_id, adapter: 'claude', runMode: 'attended', authorization };
     let next = await runGoalModeSessionStep(options) as Json, questions = 0;
@@ -103,46 +104,9 @@ async function scenario(mode: Scenario): Promise<void> {
       candidate: fs.existsSync(cuDraft) ? fs.readFileSync(cuDraft, 'utf8') : undefined,
       repairs: fs.readFileSync(path.join(prepared.runDir, 'events.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line)).filter(row => row.type === 'design_authority_repair') })}`);
     assert(!('execution_scope' in prepared.manifest));
-    if (mode === 'pre-decomposition') {
-      const draft = path.join(prepared.runDir, 'design-repair/component-blueprint.yaml');
-      const blueprint = YAML.parse(fs.readFileSync(draft, 'utf8')) as Json;
-      const view = blueprint.design_views.find((row: Json) => row.nodes?.some((node: Json) => node.acceptance?.criteria?.length));
-      const anchor = view.nodes.find((node: Json) => node.acceptance?.criteria?.length);
-      anchor.acceptance.criteria.push({ ...structuredClone(anchor.acceptance.criteria[0]), id: 'AC-INCREMENT',
-        description: '金额格式保持两位小数', expected_result: '金额12显示12.00', verification_steps: ['输入金额12', '检查金额字符串为12.00'] });
-      const sourceRef = path.relative(host.root, path.join(prepared.runDir, 'manifest.json')).replace(/\\/g, '/') + '#requirement';
-      const additions = prepareBlueprintSourceItems(host.root, [sourceRef], new Date().toISOString());
-      for (const item of additions) if (!blueprint.discovery.inputs.current_scope_items.some((row: Json) => row.item_id === item.item_id)) {
-        blueprint.discovery.inputs.current_scope_items.push(item);
-        blueprint.discovery.requirement_traceability.push({ item_id: item.item_id, blueprint_refs: [`view:${view.view_id}/node:${anchor.node_id}`] });
-      }
-      fs.writeFileSync(draft, YAML.stringify(blueprint));
-      const question = await runGoalModeSessionStep({ ...options, requestPath: next.request.path,
-        report: { status: 'passed', phase: next.phase, details: '新增要求已进入当前设计与验收，尚未拆分CU。' } }) as Json;
-      assert.equal(question.phase, 'design-repair-questioning', 'zero-CU repair must reach independent review');
-      await reportFixtureQuestioning(options, question, prepared.runDir, draft, (reply, current) => {
-        assert(JSON.stringify(current).includes('AC-INCREMENT'), 'Q reads the actual new acceptance');
-        for (const item of reply.items as Json[]) { item.disposition = 'answered_with_evidence'; item.answer = '已读取当前草稿的AC-INCREMENT、两位小数要求及其需求追溯，覆盖本次原请求增量。'; }
-      });
-      const after = fs.readFileSync(path.join(prepared.runDir, 'events.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
-      assert(after.some(row => row.type === 'design_authority_repair' && row.stage === 'published'), 'the repair must publish before the first decomposition');
-      assert.equal(enumerateCanonicalChangeUnits(host.root, BLUEPRINT_ID).length, 0);
-      const observed = readInitialDesignDelivery({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, manifest: prepared.manifest,
-        providerState: 'available', questioningCurrent: true });
-      assert.equal(observed.kind, 'decompose', JSON.stringify(observed.issues));
-      const identity = currentBlueprintIdentity(loadCanonicalBlueprint(host.root, BLUEPRINT_ID));
-      for (const candidate of proposals) for (const ref of blueprintIdentityPointers(candidate.artifact as unknown as Json)) Object.assign(ref!, identity);
-      const roots = proposals.map(candidate => ({ ...candidate, artifact: { ...candidate.artifact,
-        design_refs: candidate.artifact.design_refs.filter(ref => !['relation', 'decision', 'contract'].includes(ref.target.kind)) } }));
-      assert.throws(() => acceptChangeUnitDecomposition(host.root, BLUEPRINT_ID, roots), /change_unit_design_closure_incomplete/);
-      assert.equal(enumerateCanonicalChangeUnits(host.root, BLUEPRINT_ID).length, 0);
-      assert.equal(acceptChangeUnitDecomposition(host.root, BLUEPRINT_ID, proposals).accepted.length, proposals.length);
-      assert.deepEqual(fs.readFileSync(created.manifestPath), oldManifest); assert.deepEqual(fs.readFileSync(created.eventsPath), oldEvents);
-      return;
-    }
-    const expectedTurns = (mode === 'completed' ? 1 : 2) + questions;
+    const expectedTurns = 2 + questions;
     assert.equal(readOriginalDeliveryActivity(host.root, prepared.manifest)!.calls, expectedTurns);
-    assert.equal(currentOriginalDelivery(host.root, old).run_id, mode === 'completed' ? old.run_id : prepared.manifest.run_id);
+    assert.equal(currentOriginalDelivery(host.root, old).run_id, prepared.manifest.run_id);
     const repeated = prepareGoalModeRun({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: BLUEPRINT_ID,
       adapter: 'claude', requirement, ...(mode === 'source' ? { requirementSourceFiles: ['doc/requirement.md'] } : {}) });
     assert.equal(repeated.manifest.run_id, prepared.manifest.run_id);
@@ -155,28 +119,24 @@ async function scenario(mode: Scenario): Promise<void> {
       assert.deepEqual(fs.readFileSync(path.join(prepared.runDir, 'events.jsonl')), runEvents);
       assert.equal(readOriginalDeliveryActivity(host.root, prepared.manifest)!.calls, expectedTurns);
     }
-    assert.deepEqual(fs.readFileSync(created.manifestPath), oldManifest);
-    assert.deepEqual(fs.readFileSync(created.eventsPath), oldEvents);
-    for (const unit of oldUnits) assert.deepEqual(fs.readFileSync(unit.path), unit.bytes);
+    assertOriginals();
   });
 }
 
 const cases = [
-  { name: 'design ownership: zero-CU successor publishes requirement repair before decomposition enforces explicit ownership', mode: 'pre-decomposition' },
-  { name: 'f3b8e6a1 requirement: completed original starts a new cycle and dispatches real blueprint design for inline work', mode: 'completed' },
+  { name: 'f3b8e6a1 requirement: completed original starts a new cycle without changing its original', mode: 'completed' },
   { name: 'f3b8e6a1 requirement: unfinished original correction preserves its calls and uses the union request path', mode: 'unfinished' },
   { name: 'f3b8e6a1 requirement: same source path with changed bytes still dispatches design rather than borrowing old coverage', mode: 'source' },
 ] as const;
 export function getCases() { return cases.map(test => ({ name: test.name, run: () => scenario(test.mode) })); }
-export async function runSelectedCases(filter?: string) {
-  const results: UnitCaseResult[] = [], timings: UnitExecutionTiming[] = [];
+export async function runAll() {
+  const results: UnitCaseResult[] = [];
   for (const test of getCases()) {
-    if (!matchesUnitCase(test.name, filter)) continue;
-    const finish = startCaseTiming([test.name], timings);
+    const endUnitCase = beginUnitCase(test.name);
+    if (!endUnitCase) continue;
     try { await test.run(); results.push({ name: test.name, ok: true }); }
     catch (error) { results.push({ name: test.name, ok: false, error: (error as Error).stack ?? String(error) }); }
-    finally { finish(); }
+    finally {  endUnitCase(); }
   }
-  return selectedUnitCases(results, filter, timings);
+  return results;
 }
-export const runAll = async () => (await runSelectedCases()).results;

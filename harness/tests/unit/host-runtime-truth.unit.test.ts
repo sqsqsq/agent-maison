@@ -1,3 +1,4 @@
+import { runUnitCasesAsync } from '../utils/unit-cases';
 // ============================================================================
 // host-runtime-truth.unit.test.ts — plan c4e8a1f7
 // 宿主运行边界真值：实际 CLI 选择、guardian 投影、硬失败共享分类、canary 判卷 SSOT、
@@ -54,7 +55,7 @@ import {
   resolveClosureReadRequirement,
   main as goalMain,
 } from '../../scripts/goal-runner';
-import { setupMinimalHost } from '../helpers/goal-run-driver';
+import { setupMinimalHost } from '../utils/existing-goal-delivery-fixture';
 import { inferRepoLayout } from '../../repo-layout';
 import { clearFrameworkConfigCache } from '../../config';
 import { writeLocalConfig } from '../../scripts/utils/framework-local-config';
@@ -1343,16 +1344,7 @@ function readEvents(reportDir: string): Array<Record<string, unknown>> {
 }
 
 export async function runAll(): Promise<UnitCaseResult[]> {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      await c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (e) {
-      results.push({ name: c.name, ok: false, error: (e as Error).message });
-    }
-  }
-  return results;
+  return runUnitCasesAsync(cases);
 }
 
 if (require.main === module) {

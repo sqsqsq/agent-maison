@@ -1,3 +1,4 @@
+import { beginUnitCase } from '../utils/unit-cases';
 import { resolveValidationOnlyEligibility } from '../../scripts/utils/goal-runner-phase';
 // ============================================================================
 // goal-runner-repair-convergence.unit.test.ts — adjudicated-repair-loop M1
@@ -72,7 +73,6 @@ const legacyCandidate = (fp: string) => ({
   item_fingerprint: fp,
   source_phase: 'review',
 });
-
 
 // plan c4e7a9b2 t2（A2）夹具：候选生成读授权过滤后的有效视图（宿主 ae92d8 add_card_result 形态）。
 // plan 1dbe4fa4 t2：自 runAll 内移到顶层并导出，供 reliability-scenarios S5 复用；行为不变。
@@ -471,8 +471,7 @@ export function runAll(): UnitCaseResult[] {
   // plan e7a2c4f1 §3.5（G26）：第二档（账本/形状）失败不得触发 phase_backtrack_requested。
   // 档位在**候选生产点**收口：证据不可消费（obligation 的 repair_owner ≠ coding）不再
   // 产出回退交接候选；责任方与责任文件仍由 repair_owner / affected_files → blocker →
-  // classifyFailureKind 如实披露。真实 runtime 接线（发不发 phase_backtrack_requested /
-  // 回退目标 / 阶段预算）另见 goal-runner-testing-integrity 的 P3-T14/T14b/T14c。
+  // classifyFailureKind 如实披露。
   // ------------------------------------------------------------------------
   const excerpt = (text: string, max: number): string => (text ?? '').slice(0, max);
   const noClassification = (): string | undefined => undefined;
@@ -547,7 +546,6 @@ export function runAll(): UnitCaseResult[] {
     assert(geometryKind === 'visual_gap', `半模态几何缺陷须归 visual_gap，实际 ${geometryKind}`);
     assert(!(geometrySummary.blockers ?? []).some(b => (b as { repair_owner?: string }).repair_owner),
       '半模态几何缺陷是一档产品真值：没有 evidence-block 责任方，回退资格不得被裁掉');
-
 
   });
 
@@ -676,12 +674,14 @@ export function runAll(): UnitCaseResult[] {
 
   // 标准执行模式：逐条执行并捕获异常（不可只登记 ok:true——那是假 PASS）
   for (const c of cases) {
+    const endUnitCase = beginUnitCase(c.name);
+    if (!endUnitCase) continue;
     try {
       c.run();
       results.push({ name: c.name, ok: true });
     } catch (err) {
       results.push({ name: c.name, ok: false, error: (err as Error).message });
-    }
+    } finally { endUnitCase(); }
   }
   return results;
 }

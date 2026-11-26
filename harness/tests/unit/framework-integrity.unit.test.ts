@@ -1,3 +1,4 @@
+import { runUnitCasesAsync } from '../utils/unit-cases';
 /**
  * framework package identity — runtime Git/hash gate 已退场（plan c3d8e1f6）。
  * 本套件只覆盖非阻断 identity 与通用 EOL helper，并反向锁死 Git/check writer 不得复活。
@@ -148,14 +149,5 @@ test('通用 EOL helper 保留：CRLF 与孤立 CR 统一为 LF', () => {
 });
 
 export async function runAll(): Promise<UnitCaseResult[]> {
-  const out: UnitCaseResult[] = [];
-  for (const c of CASES) {
-    try {
-      await c.run();
-      out.push({ name: c.name, ok: true });
-    } catch (e) {
-      out.push({ name: c.name, ok: false, error: e instanceof Error ? (e.stack ?? e.message) : String(e) });
-    }
-  }
-  return out;
+  return runUnitCasesAsync(CASES);
 }

@@ -1,3 +1,4 @@
+import { runUnitCasesAsync } from '../utils/unit-cases';
 // ============================================================================
 // negative-verdict-gate.unit.test.ts — blind-visual-hardening d1 切片一
 // ============================================================================
@@ -268,15 +269,6 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
 
 export function runAll(): Promise<UnitCaseResult[]> {
   return (async () => {
-    const out: UnitCaseResult[] = [];
-    for (const c of cases) {
-      try {
-        await c.run();
-        out.push({ name: c.name, ok: true });
-      } catch (err) {
-        out.push({ name: c.name, ok: false, error: (err as Error).stack ?? (err as Error).message });
-      }
-    }
-    return out;
-  })();
+  return runUnitCasesAsync(cases);
+})();
 }

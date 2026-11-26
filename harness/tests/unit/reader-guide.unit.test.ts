@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 import assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -135,4 +136,5 @@ const cases: Array<{ name: string; run(): void }> = [
     } finally { fs.rmSync(f.root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
   } },
 ];
-export function runAll(): UnitCaseResult[] { return cases.map(test => { try { test.run(); return { name: test.name, ok: true }; } catch (error) { return { name: test.name, ok: false, error: (error as Error).stack }; } }); }
+export function runAll(): UnitCaseResult[] { return cases.map(test => { const endUnitCase = beginUnitCase(test.name);
+                                                                        if (!endUnitCase) return discoveryResult(test.name); try { test.run(); return { name: test.name, ok: true }; } catch (error) { return { name: test.name, ok: false, error: (error as Error).stack }; } finally { endUnitCase(); } }); }

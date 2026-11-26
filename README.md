@@ -140,9 +140,9 @@ npx ts-node harness-runner.ts --phase <phase> [--feature <feature-name>]
 
 初始化时由 framework-init S3（`harness-install` 任务）自动完成 `npm install`，此处仅作手动说明。
 
-**Framework 自身回归**（**仅源仓**；发布件 `npm test` 为 `check:global`）：每轮开发执行 `npm run test:changed` 日常域按需计划；普通 plan 收口执行 `npm run test:daily` 日常全集及 typecheck；正式发布执行 `npm test`，包含 **日常与扩展域全部 unit/profile + 全部有效 fixture + typecheck**。日常失败仍须修复，不能靠移到正式域豁免。含 `INPUT/`/`CMD.json` 的契约基线分列在 [`profiles/hmos-app/harness/tests/fixtures/`](profiles/hmos-app/harness/tests/fixtures) 与 [`profiles/generic/harness/tests/fixtures/`](profiles/generic/harness/tests/fixtures)；入口脚本 [harness/tests/run-tests.ts](harness/tests/run-tests.ts)。
+**Framework 自身回归**。源码仓每轮开发、plan 收口和发布在仓根执行 `npm test`，完成一次 typecheck，并行运行所有 unit、profile、有效 fixture 和根工具测试。单例上限 30 秒，整轮上限 30 分钟。契约 fixture 分列在 [hmos-app](profiles/hmos-app/harness/tests/fixtures) 与 [generic](profiles/generic/harness/tests/fixtures)。本地可用 `npm test -- --filter <套件名>` 排错，筛选不写全量证明。消费者发布件的 `npm test` 仍运行 `check:global`。
 
-`npm run candidate:build` 用日常全集构建中间候选，并校验同一 zip、执行消费者 lifecycle smoke。`npm run release:all` 保留正式完整测试；`candidate:promote` 仅在相同发布内容的稳定来源完整全量通过、consumer golden 与发布 plan 门禁成立后移动同一 zip。候选构建后请保留受测来源；主干已有后续改动时，可传 `--source-root <保留副本>`，不能仅凭相同 HEAD 复用脏树结果。详见[发布清单](docs/operations/release-checklist.md)。
+`npm run candidate:build` 在稳定来源通过根全量，再校验和冒烟同一 zip，证据写入候选 sidecar。`candidate:promote` 核对原构建全量、同一 zip、consumer golden 和发布 plan 门禁。若缺少同源全量证明，重新构建候选。主干已进入下一版本时可用 `--source-root <保留来源>` 选择候选版本及对应发布门禁。详见[发布清单](docs/operations/release-checklist.md)。
 
 catalog-bootstrap 的全局 phase（无 `--feature`）示例：
 

@@ -1,3 +1,4 @@
+import { runUnitCases } from '../utils/unit-cases';
 /**
  * Hylyre Phase 0 契约冻结包的**落位自证**（plan a6c4e9f2 T7a / M1 第一步）。
  *
@@ -116,15 +117,6 @@ test('M1 消费入口所需的契约资产齐备', () => {
   }
 });
 
-export function runAll(): Promise<UnitCaseResult[]> {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (e) {
-      results.push({ name: c.name, ok: false, error: e instanceof Error ? (e.stack ?? e.message) : String(e) });
-    }
-  }
-  return Promise.resolve(results);
+export async function runAll(): Promise<UnitCaseResult[]> {
+  return runUnitCases(cases);
 }

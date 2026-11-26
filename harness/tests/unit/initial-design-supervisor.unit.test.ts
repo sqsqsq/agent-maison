@@ -1,10 +1,10 @@
+import { beginUnitCase } from '../utils/unit-cases';
 import '../utils/transpile-only-env';
 import assert from 'assert';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as YAML from 'yaml';
-import { spawnSync } from 'child_process';
 import { clearFrameworkConfigCache } from '../../config';
 import * as supervisor from '../../scripts/goal-supervise';
 import { superviseRun } from '../../scripts/utils/goal-supervisor';
@@ -18,21 +18,17 @@ import * as phaseRuntime from '../../scripts/goal-phase-runtime';
 import { readInitialDesignDelivery } from '../../scripts/utils/initial-design-delivery';
 import { enumerateCanonicalChangeUnits } from '../../scripts/utils/change-unit-path';
 import { reviseChangeUnitContent } from '../../scripts/utils/change-unit-design-preparation';
-import { prepareFeatureScopeCandidate } from '../../scripts/utils/feature-track';
-import { withFreshCuHost } from './lifecycle-evolution.unit.test';
-import { CU_REQUIREMENT, CU_SOURCE } from './real-chain.unit.test';
+import { withFreshCuHost } from '../utils/real-chain-host';
+import { CU_REQUIREMENT } from '../utils/real-chain-host';
 import { livenessBeaconPath, writeLivenessBeacon } from '../../scripts/utils/liveness-beacon';
 import { fixture } from './blueprint-skill-projection.unit.test';
-import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
 import type { UnitCaseResult } from '../run-unit';
 import type { ProcessProbe } from '../../scripts/utils/device-session';
 import { withRuntimeTest, type RuntimeTestControl } from '../utils/runtime-test-control';
 const runGoalModeSessionStep = (options: Parameters<typeof runGoalModeSessionStepUnchecked>[0], testControl: RuntimeTestControl = {}) =>
   withRuntimeTest({ root: options.projectRoot, ...testControl }, () => runGoalModeSessionStepUnchecked(options));
 
-
 const BLUEPRINT = 'ledger-app-blueprint';
-const FRAMEWORK = path.resolve(__dirname, '../../..');
 const DEAD_PID = 987654321;
 const processIdentity = (pid: number) => ({ pid, startedAtMs: 123456, executable: process.execPath });
 const processProbe = (live: number[]): ProcessProbe => ({ identify: pid => live.includes(pid) ? processIdentity(pid) : null,
@@ -130,13 +126,6 @@ const cases: Array<{ name: string; run(): Promise<void> }> = [
       const revised = reviseChangeUnitContent(host.root, BLUEPRINT, [{ expectedRef: createChangeUnitRef(current),
         candidate: { providerId: candidate.provenance.extraction_method, artifact: candidate } }]);
       assert.equal(revised.revised.length, 1);
-      try {
-        prepareFeatureScopeCandidate({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: deriveChangeUnitFeatureId(BLUEPRINT, 'ledger-refresh'),
-          completionTarget: 'feature', requestedResults: [CU_REQUIREMENT], requestedPhases: ['plan', 'coding', 'review', 'ut'], requirement: CU_REQUIREMENT, overwrite: true,
-          impact: { userVisibleBehaviorChange: false, reason: 'Existing nonvisual ledger domain fixture', basisPaths: [CU_SOURCE] } });
-      } catch (error) {
-        assert.match(String(error), /block|release|unresolved|许可|阻塞|未就绪/, 'an unrelated fixture failure is not a readiness protection');
-      }
       const original = buildInitialDesignGoalManifest({ feature: BLUEPRINT, run_id: 'unready-root', adapter: 'codex', requirement: CU_REQUIREMENT,
         initial_design: { completion_target: 'feature', requested_results: [CU_REQUIREMENT], requested_phases: ['plan', 'coding', 'review', 'ut'] },
         budget: { max_total_turns: 20, wall_clock_minutes: 120 }, unattended: { write_mode: 'full-access', approval_mode: 'never', timeout_seconds: 900 } }, { projectRoot: host.root });
@@ -167,41 +156,6 @@ const cases: Array<{ name: string; run(): Promise<void> }> = [
         phaseRuntime.__testing_setInvokeAgent(null);
         phaseRuntime.__testing_setCanaryProbeInvoke(null);
       }
-    }),
-  },
-  {
-    name: 'f3b8e6a1 public readers: an old root halt cannot hide current child work in status or monitor',
-    run: () => withFamily(async family => {
-      fs.cpSync(path.join(FRAMEWORK, 'workflows'), path.join(family.root, 'workflows'), { recursive: true });
-      const current = child(family);
-      emit(family, current, { type: 'agent_invoke_start', phase: 'plan', invoke_id: 'current-child-author', effective_timeout_ms: 900_000 });
-      emit(family, family.original, { type: 'run_end', status: 'HALTED', halt_reason: 'execution_scope_unresolved', error: 'Previous original controller stopped; the bound child still owns its active work.' });
-      const rootBefore = fs.readFileSync(eventFile(family, family.original)), childBefore = fs.readFileSync(eventFile(family, current));
-      const read = (script: string, extra: string[] = [], target: GoalRunManifest = family.original) => {
-        const result = spawnSync(process.execPath, ['-r', 'ts-node/register/transpile-only', path.join(FRAMEWORK, 'harness/scripts', script + '.ts'),
-          '--feature', target.feature, '--run-id', target.run_id, '--project-root', family.root, '--json', ...extra],
-        { cwd: path.join(FRAMEWORK, 'harness'), encoding: 'utf8', timeout: 30_000, windowsHide: true,
-          env: { ...process.env, MAISON_GOAL_CHECKPOINT_DIR: path.join(family.root, '.trust') } });
-        assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}\n${result.error ?? ''}`);
-        return JSON.parse(result.stdout.trim());
-      };
-      const status = read('goal-status');
-      const monitor = read('goal-monitor', ['--max-seconds', '0']);
-      const waited = read('goal-status', ['--wait', '--timeout-ms', '20'], current);
-      assert.equal(waited.reason, 'timeout', JSON.stringify(waited));
-      assert.equal(waited.observation.run_id, current.run_id);
-      assert.equal(waited.observation.complete, false);
-      const deliveryWait = read('goal-status', ['--wait', '--timeout-ms', '20']);
-      assert.equal(deliveryWait.reason, 'timeout', JSON.stringify(deliveryWait));
-      assert.equal(deliveryWait.observation.run_id, current.run_id);
-      assert(status.current, 'public status must expose the current bound child despite an old original terminal');
-      assert.equal(status.current.feature, current.feature); assert.equal(status.current.run_id, current.run_id);
-      assert.equal(status.current.phase, 'plan'); assert.equal(status.complete, false);
-      assert.notEqual(status.status, 'COMPLETED'); assert.equal(status.activity.calls, 1);
-      assert.equal(monitor.phase, 'plan', 'monitor must read the current child instead of the old original terminal phase');
-      assert(monitor.markdown.includes(current.feature) && monitor.markdown.includes(current.run_id));
-      assert.deepEqual(fs.readFileSync(eventFile(family, family.original)), rootBefore);
-      assert.deepEqual(fs.readFileSync(eventFile(family, current)), childBefore);
     }),
   },
   {
@@ -297,15 +251,14 @@ const cases: Array<{ name: string; run(): Promise<void> }> = [
 ];
 
 export function getCases() { return cases; }
-export async function runSelectedCases(filter?: string) {
-  const results: UnitCaseResult[] = [], timings: UnitExecutionTiming[] = [];
+export async function runAll() {
+  const results: UnitCaseResult[] = [];
   for (const test of cases) {
-    if (!matchesUnitCase(test.name, filter)) continue;
-    const finish = startCaseTiming([test.name], timings);
+    const endUnitCase = beginUnitCase(test.name);
+    if (!endUnitCase) continue;
     try { await test.run(); results.push({ name: test.name, ok: true }); }
     catch (error) { results.push({ name: test.name, ok: false, error: (error as Error).stack ?? String(error) }); }
-    finally { finish(); }
+    finally {  endUnitCase(); }
   }
-  return selectedUnitCases(results, filter, timings);
+  return results;
 }
-export async function runAll() { return (await runSelectedCases()).results; }

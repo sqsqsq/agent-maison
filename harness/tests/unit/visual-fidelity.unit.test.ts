@@ -1,4 +1,4 @@
-import { matchesUnitCase, selectedUnitCases } from '../utils/unit-case-selection';
+import { beginUnitCase } from '../utils/unit-cases';
 // ============================================================================
 // visual-fidelity.unit.test.ts — 视觉保真 review 修复回归
 // ============================================================================
@@ -14,8 +14,10 @@ import { checkUiSpecFidelityGate } from '../../../profiles/hmos-app/harness/spec
 import {
   __testing_setVisualDiffOcrFn,
   checkVisualDiff,
+  isTierDowngradedResidual,
   validateVisualDiffJson,
   hashScreenshotFile,
+  type VisualDiffScreenEntry,
   type VisualDiffStructuredPayload,
 } from '../../../profiles/hmos-app/harness/visual-diff-check';
 import { appendVisualRound, evaluateVisualRound, visualRoundsLedgerPath } from '../../scripts/utils/visual-rounds-ledger';
@@ -186,7 +188,7 @@ function writeHeaderOnlyPng(outPath: string, w: number, h: number): void {
   fs.writeFileSync(outPath, Buffer.concat([sig, ihdr, iend]));
 }
 
-function executeCases(selector?: string): UnitCaseResult[] {
+function executeCases(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
   // plan 07a41ec6 T10③：无 delegated 视觉 provider 时 region_attest / critic 回执类证明按 SKIP 处理。
   // 本套件校验的是这些证明在 **provider 在场** 时的判据，故整套声明一个测试 provider（名字刻意不与任何回执 adapter 相同）。
@@ -201,13 +203,14 @@ function executeCases(selector?: string): UnitCaseResult[] {
     else process.env[MAISON_GOAL_VISUAL_PROVIDER_MODEL_ENV] = prevProviderModel;
   };
   const run = (name: string, fn: () => void) => {
-    if (!matchesUnitCase(name, selector)) return;
+    const endUnitCase = beginUnitCase(name);
+    if (!endUnitCase) return;
     try {
       fn();
       results.push({ name, ok: true });
     } catch (e) {
       results.push({ name, ok: false, error: (e as Error).message });
-    }
+    } finally { endUnitCase(); }
   };
 
   run('gate_collect_x_markers', () => {
@@ -4331,7 +4334,7 @@ function executeCases(selector?: string): UnitCaseResult[] {
   run('6644ea45 T3/T4/T5 soft: missing anchor, blocker, T8-sourced major, verdict=fail all stay tier one', () => {
     if (!isJimpAvailable()) return;
     withoutVisualProvider(() => {
-      const cases: Array<{ label: string; override: (i: number) => Record<string, unknown> }> = [
+      const cases: Array<{ label: string; override: (i: number) => Record<string, unknown>; checkGate?: true }> = [
         // T3a：未锚定纯文本 must_fix（缺 by_id 锚点）与锚定 major 并存——纯文本条目读不出 severity，保守不降
         { label: 'T3a 未锚定 must_fix', override: (i) => (i === 0 ? {
           must_fix: ['cts_close 改为 tonal 圆形按钮', '缺 by_id 锚点 cts_close'],
@@ -4349,7 +4352,7 @@ function executeCases(selector?: string): UnitCaseResult[] {
           ],
         } : {}) },
         // T4：合法 T8 来源对象的 major（finding_id / signal 非空）
-        { label: 'T4 T8 源 major', override: (i) => (i === 0 ? {
+        { label: 'T4 T8 源 major', checkGate: true, override: (i) => (i === 0 ? {
           defects: [{
             class: 'shape_mismatch', element: 'cts_close', bbox: [0.85, 0.02, 0.1, 0.05], severity: 'major', note: 'T8 转录',
             must_fix_refs: [0], source: { producer: 'T8', finding_id: 'fb1cts', signal: 'B1_layout_group_divergent' },
@@ -4358,8 +4361,16 @@ function executeCases(selector?: string): UnitCaseResult[] {
         // T5：verdict=fail 且只有自报 major
         { label: 'T5 verdict=fail', override: (i) => (i === 0 ? { verdict: 'fail' } : {}) },
       ];
-      for (const c of cases) {
-        withI11(c.override, (root) => {
+      withI11(undefined, (root) => {
+        const diffPath = path.join(root, 'doc/features/bank-card/device-testing/device-screenshots/visual-diff.json');
+        const report = JSON.parse(fs.readFileSync(diffPath, 'utf8')) as { screens: VisualDiffScreenEntry[] };
+        const original = report.screens.find(screen => screen.screen_id === 'card_type_sheet');
+        if (!original || !isTierDowngradedResidual(original, false)) throw new Error('对照：已锚定的自报 major 应降级');
+        for (const c of cases) {
+          const screen = { ...original, ...c.override(0) };
+          if (isTierDowngradedResidual(screen, false)) throw new Error(`${c.label}：生产档位判定不得降级`);
+          if (!c.checkGate) continue;
+          fs.writeFileSync(diffPath, JSON.stringify({ ...report, screens: report.screens.map(entry => entry === original ? screen : entry) }));
           const gate = runTieringCheck(root, jdgOcrOk, I11_SOFT);
           const downgraded = gate.structured?.downgraded_screens ?? [];
           if (downgraded.includes('card_type_sheet')) throw new Error(`${c.label}：不得降级：${JSON.stringify(downgraded)}`);
@@ -4371,8 +4382,8 @@ function executeCases(selector?: string): UnitCaseResult[] {
           if (debt.entries.some(e => e.id === 'debt:visual_diff:card_type_sheet')) {
             throw new Error(`${c.label}：一档屏不走降级入账：${JSON.stringify(debt.entries)}`);
           }
-        });
-      }
+        }
+      });
     });
   });
 
@@ -6428,4 +6439,3 @@ function executeCases(selector?: string): UnitCaseResult[] {
 }
 
 export const runAll = () => executeCases();
-export const runSelectedCases = (selector?: string) => selectedUnitCases(executeCases(selector), selector, []);

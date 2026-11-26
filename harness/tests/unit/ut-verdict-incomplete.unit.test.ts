@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 // ============================================================================
 // ut-verdict-incomplete.unit.test.ts — INCOMPLETE verdict 判定
 // ============================================================================
@@ -82,11 +83,13 @@ export function runAll(): UnitCaseResult[] {
     { name: 'PASS when no blockers', fn: testPassWhenNoBlockers },
   ];
   return cases.map(({ name, fn }) => {
+    const endUnitCase = beginUnitCase(name);
+    if (!endUnitCase) return discoveryResult(name);
     try {
       fn();
       return { name, ok: true };
     } catch (e) {
       return { name, ok: false, error: e instanceof Error ? e.message : String(e) };
-    }
+    } finally { endUnitCase(); }
   });
 }

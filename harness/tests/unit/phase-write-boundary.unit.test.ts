@@ -1,3 +1,4 @@
+import { beginUnitCase } from '../utils/unit-cases';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -39,12 +40,14 @@ function assert(condition: boolean, message: string): void {
 }
 
 function run(results: UnitCaseResult[], name: string, fn: () => void): void {
+  const endUnitCase = beginUnitCase(name);
+  if (!endUnitCase) return;
   try {
     fn();
     results.push({ name, ok: true });
   } catch (error) {
     results.push({ name, ok: false, error: (error as Error).stack ?? String(error) });
-  }
+  } finally { endUnitCase(); }
 }
 
 function write(root: string, rel: string, content: string): void {

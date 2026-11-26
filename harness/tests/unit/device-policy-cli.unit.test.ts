@@ -1,3 +1,4 @@
+import { beginUnitCase } from '../utils/unit-cases';
 // ============================================================================
 // device-policy-cli.unit.test.ts — 策略检查/登记 CLI 的授权边界
 //                                  （openspec ... t6）
@@ -16,12 +17,14 @@ import type { UnitCaseResult } from '../run-unit';
 const tmpRoots: string[] = [];
 
 function run(results: UnitCaseResult[], name: string, fn: () => void): void {
+  const endUnitCase = beginUnitCase(name);
+  if (!endUnitCase) return;
   try {
     fn();
     results.push({ name, ok: true });
   } catch (err) {
     results.push({ name, ok: false, error: (err as Error).stack ?? (err as Error).message });
-  }
+  } finally { endUnitCase(); }
 }
 function assert(cond: boolean, msg: string): void {
   if (!cond) throw new Error(msg);
@@ -105,12 +108,14 @@ const frozenDeps = (
 export async function runAll(): Promise<UnitCaseResult[]> {
   const results: UnitCaseResult[] = [];
   async function runAsync(name: string, fn: () => Promise<void>): Promise<void> {
+    const endUnitCase = beginUnitCase(name);
+    if (!endUnitCase) return;
     try {
       await fn();
       results.push({ name, ok: true });
     } catch (err) {
       results.push({ name, ok: false, error: (err as Error).stack ?? (err as Error).message });
-    }
+    } finally { endUnitCase(); }
   }
   try {
 

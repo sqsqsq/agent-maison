@@ -1,3 +1,4 @@
+import { runUnitCasesAsync } from '../utils/unit-cases';
 /**
  * plan a7c3e9d2 t3：goal 作者 prompt 注入 extension knowledge 索引。
  *  t2 buildPhasePrompt 注入位与读取指令（formatter 本身由 extension-runtime 套件覆盖）
@@ -21,7 +22,7 @@ import {
   extensionInputsForPhase,
   main as goalMain,
 } from '../../scripts/goal-runner';
-import { setupMinimalHost } from '../helpers/goal-run-driver';
+import { setupMinimalHost } from '../utils/existing-goal-delivery-fixture';
 import { inferRepoLayout } from '../../repo-layout';
 import { clearFrameworkConfigCache } from '../../config';
 import { withRuntimeTest } from '../utils/runtime-test-control';
@@ -257,16 +258,7 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
 ];
 
 export async function runAll(): Promise<UnitCaseResult[]> {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      await c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (e) {
-      results.push({ name: c.name, ok: false, error: (e as Error).message });
-    }
-  }
-  return results;
+  return runUnitCasesAsync(cases);
 }
 
 if (require.main === module) {

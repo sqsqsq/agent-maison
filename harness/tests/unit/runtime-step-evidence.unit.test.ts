@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 // runtime-step-evidence.unit.test.ts — P0 runtime fidelity evidence matrix
 
 import * as fs from 'fs';
@@ -388,12 +389,14 @@ const cases: Array<{ name: string; run: () => void }> = [
 
 export function runAll(): UnitCaseResult[] {
   return cases.map(test => {
+    const endUnitCase = beginUnitCase(test.name);
+    if (!endUnitCase) return discoveryResult(test.name);
     try {
       test.run();
       return { name: test.name, ok: true };
     } catch (error) {
       return { name: test.name, ok: false, error: (error as Error).message };
-    }
+    } finally { endUnitCase(); }
   });
 }
 

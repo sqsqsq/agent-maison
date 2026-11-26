@@ -1,3 +1,4 @@
+import { runUnitCases } from '../utils/unit-cases';
 // ============================================================================
 // check-disposition.unit.test.ts — 处置函数、判定谓词与开发期静态守卫（plan f7045213 §3、§10）
 // ----------------------------------------------------------------------------
@@ -546,14 +547,5 @@ cases.push({ name: 'refuted test preservation and disclosed ledger failures do n
 } });
 
 export function runAll(): UnitCaseResult[] {
-  const out: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      out.push({ name: c.name, ok: true });
-    } catch (err) {
-      out.push({ name: c.name, ok: false, error: (err as Error).stack ?? (err as Error).message });
-    }
-  }
-  return out;
+  return runUnitCases(cases);
 }

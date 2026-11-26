@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 // ============================================================================
 // ut-file-scope.unit.test.ts — partitionUtFiles 双集合回归
 // ============================================================================
@@ -191,11 +192,13 @@ export function runAll(): UnitCaseResult[] {
     { name: 'same local AC id does not expand current feature scope', fn: testSameLocalAcDoesNotExpandGitScope },
   ];
   return cases.map(({ name, fn }) => {
+    const endUnitCase = beginUnitCase(name);
+    if (!endUnitCase) return discoveryResult(name);
     try {
       fn();
       return { name, ok: true };
     } catch (e) {
       return { name, ok: false, error: e instanceof Error ? e.message : String(e) };
-    }
+    } finally { endUnitCase(); }
   });
 }

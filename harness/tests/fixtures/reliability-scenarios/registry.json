@@ -1,6 +1,8 @@
 {
   "schema": "reliability-scenario-registry/1",
   "plan": "1dbe4fa4",
+  "retired_by": "4bd95a70",
+  "retirement_note": "场景剧本与运行入口已退役。原场景、出处和基线保留为历史记录，当前宿主结果由真实宿主上的需求运行观察。",
   "note": "baseline 是报告不是断言对象；assertion 三值见 plan §4.3：baseline_met=基线已满足期望、correct_stop=期望本身是正确失败/暂停/交还、gap_only=基线未达期望只打印差距。；baseline_p1 = P1（plan 1dbe4fa4）记录的基线，原样保留为历史；baseline = 最近一次补行为断言的 plan 收口时的实测（S5、S6、S7、S13 由 plan 33784ed1 批三记录；S1、S2 codex 支、S8、S9、S12 由 plan 4e6fb3b6 批三记录，这些分支原先的 baseline 改名 baseline_p1 保留为历史）。；baseline_p4 = P4（plan f7045213）批三 t6 收口时 13 场景全量复跑的实测，与 baseline 并列记录；baseline 与 baseline_p1 原样保留为历史。；baseline_p5 = P5（plan 3abca824）第二批后半 t6 收口时 13 场景全量复跑的实测，与 baseline、baseline_p4 并列记录；已有字段原样保留。",
   "scenarios": [
     {

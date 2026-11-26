@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 // ============================================================================
 // context-facts.unit.test.ts — C4 Context Facts Gate 直接单测（codex review 采纳）
 // ============================================================================
@@ -477,7 +478,6 @@ exploration_mode: sequential
     },
   },];
 
-
 function modernFactsCase(request: boolean, sourceCount = 6, phase = request ? 'review' : 'coding'): void {
   const dir = mkProject();
   try {
@@ -634,11 +634,13 @@ cases.push(
 
 export function runAll(): UnitCaseResult[] {
   return cases.map((c) => {
+    const endUnitCase = beginUnitCase(c.name);
+    if (!endUnitCase) return discoveryResult(c.name);
     try {
       c.run();
       return { name: c.name, ok: true };
     } catch (err) {
       return { name: c.name, ok: false, error: (err as Error).stack ?? (err as Error).message };
-    }
+    } finally { endUnitCase(); }
   });
 }

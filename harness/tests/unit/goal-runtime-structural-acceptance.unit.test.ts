@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -300,11 +301,13 @@ const cases: Case[] = [
 
 export function runAll(): UnitCaseResult[] {
   return cases.map(test => {
+    const endUnitCase = beginUnitCase(test.name);
+    if (!endUnitCase) return discoveryResult(test.name);
     try {
       test.run();
       return { name: test.name, ok: true };
     } catch (error) {
       return { name: test.name, ok: false, error: (error as Error).stack ?? String(error) };
-    }
+    } finally { endUnitCase(); }
   });
 }

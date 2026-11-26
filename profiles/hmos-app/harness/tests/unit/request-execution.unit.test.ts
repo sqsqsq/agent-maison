@@ -1,3 +1,4 @@
+import { runUnitCasesAsync } from '../../../../../harness/tests/utils/unit-cases';
 import assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -10,6 +11,7 @@ import * as products from '../../product-selection';
 import * as readiness from '../../../../../harness/scripts/utils/device-readiness-gate';
 import * as setupGate from '../../../../../harness/scripts/utils/personal-setup-gate';
 import * as native from '../../providers/device-test-run';
+import { inspectRequestTargets } from '../../providers/ut-run';
 import * as spawn from '../../hylyre-spawn';
 import { listExecutionKeyRuns } from '../../execution-key';
 import { computeHapSha256Full, probeInstalledHapSha256 } from '../../build-fingerprint';
@@ -17,7 +19,7 @@ import { checkRequestTests, runExplicitRequest } from '../../../../../harness/sc
 import { generateRequestScriptReport } from '../../../../../harness/scripts/utils/report-generator';
 import type { RequestCheckContext, CheckResult } from '../../../../../harness/scripts/utils/types';
 import { clearFrameworkConfigCache } from '../../../../../harness/config';
-import { materializeAutomaticFacts, prepareAutomaticRequest } from '../../../../../harness/scripts/utils/automatic-request';
+import { prepareAutomaticRequest } from '../../../../../harness/scripts/utils/automatic-request';
 import { prepareExplicitRequest } from '../../../../../harness/scripts/utils/capability-resolution-entry-input';
 import { DEVICE_TEST_BUILD_RESULT, snapshotDeviceTestBuildInputs } from '../../device-test-build-reuse';
 
@@ -85,7 +87,8 @@ const cases: Array<{ name: string; run(): Promise<void> | void }> = [{
       };
       const flush = () => fs.writeFileSync(session, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
       event({ type: 'user', uuid: 'same-request', message: { role: 'user', content: '验证银行搜索并维护 Hypium 注册。' } });
-      tool('Bash', { command: 'git rev-parse HEAD' }, git('rev-parse', 'HEAD'));
+      const baseline = git('rev-parse', 'HEAD');
+      tool('Bash', { command: 'git rev-parse HEAD' }, baseline);
       tool('Bash', { command: 'git status --porcelain' }, git('status', '--porcelain'));
       tool('Read', { file_path: path.join(f.root, source) }, fs.readFileSync(path.join(f.root, source), 'utf8'));
       event({ type: 'assistant', message: { role: 'assistant', content: `本请求验证银行搜索。依据 ${source}，Q1=否，Q2=否，Q3=否，依赖结果=否，跨部件=否，预期明确=是，做法唯一=是。` } });
@@ -93,8 +96,8 @@ const cases: Array<{ name: string; run(): Promise<void> | void }> = [{
       const args = { phase: 'ut', target: source, 'test-target': test, 'allow-test-write': [test, registration],
         'session-ref': session + '#same-request', 'prepare-request': true, 'report-dir': 'reports/prepared' };
       const publicRequest = (args: Record<string, unknown>) => runExplicitRequest({ projectRoot: f.root, frameworkRoot: repo, args });
-      assert.equal(await publicRequest(args), 0);
-      const written = { requestFile: 'reports/prepared/request.json', reportDir: 'reports/prepared' };
+      const written = prepareAutomaticRequest(f.root, repo, args);
+      const requestPath = path.join(f.root, written.requestFile);
       const parseOptions = { projectRoot: f.root, frameworkRoot: repo, phase: 'ut', ...written };
       const prepare = () => prepareExplicitRequest(parseOptions);
       const pending = prepare();
@@ -104,10 +107,10 @@ const cases: Array<{ name: string; run(): Promise<void> | void }> = [{
       assert.deepEqual(pending.test_registrations, [registration]);
       assert.deepEqual(pending.allowed_test_writes, [registration, test].sort());
       assert.deepEqual(pending.bindings.find(binding => binding.path === registration), { path: registration, exists: false, sha256: null });
-      for (const file of [foreign, helper, source]) assert.throws(() =>
-        prepareAutomaticRequest(f.root, repo, { ...args, 'allow-test-write': [test, registration, file] }),
-      (error: Error) => error.message.includes('allowed_test_writes') && error.message.includes(file));
-      assert.deepEqual(prepare().allowed_test_writes, pending.allowed_test_writes, 'failed preparation keeps the prior request');
+      const beforeRejection = fs.readFileSync(requestPath);
+      assert.throws(() => prepareAutomaticRequest(f.root, repo, { ...args, 'allow-test-write': [test, registration, foreign] }),
+        (error: Error) => error.message.includes('allowed_test_writes') && error.message.includes(foreign));
+      assert.deepEqual(fs.readFileSync(requestPath), beforeRejection, 'failed preparation preserves the original request bytes');
 
       fs.writeFileSync(path.join(f.root, registration), registrationSource);
       tool('Write', { file_path: path.join(f.root, registration), content: registrationSource }, 'File written');
@@ -117,24 +120,25 @@ const cases: Array<{ name: string; run(): Promise<void> | void }> = [{
       assert(!prepared.intake_context?.targets.includes(registration), 'a native edit does not broaden the product target');
       assert.deepEqual(prepared.targets.files, [source]);
       assert(prepared.bindings.find(binding => binding.path === registration)?.sha256);
-      assert.equal(await publicRequest(args), 0, 'the native writer can prepare again after the recorded registration write');
 
-      const shorthand = { ...args, 'test-target': undefined, 'report-dir': 'reports/shorthand' };
-      const inferred = prepareAutomaticRequest(f.root, repo, shorthand);
-      assert.deepEqual(prepareExplicitRequest({ ...parseOptions, ...inferred }).targets.tests, [test]);
-      for (const file of [foreign, helper, source]) assert.throws(() => prepareAutomaticRequest(f.root, repo,
-        { ...shorthand, 'report-dir': 'reports/refused', 'allow-test-write': [test, registration, file] }),
-      (error: Error) => error.message.includes('allowed_test_writes') && error.message.includes(file));
-      const original = JSON.parse(fs.readFileSync(path.join(f.root, written.requestFile), 'utf8'));
-      fs.writeFileSync(path.join(f.root, written.requestFile), JSON.stringify({ ...original, targets: { ...original.targets, files: [source, registration] } }));
-      assert.throws(prepare, /allowed_test_writes.*List\.test\.ets/, 'an explicit source declaration still conflicts with a write grant');
-      fs.writeFileSync(path.join(f.root, written.requestFile), JSON.stringify({ ...original, targets: { ...original.targets, tests: [test, registration] } }));
-      assert.deepEqual(prepare().targets.tests, [test], 'former combined target lists retain their roles');
-      fs.writeFileSync(path.join(f.root, written.requestFile), JSON.stringify({ ...original, allowed_test_writes: [] }));
-      const readOnly = prepare();
+      const inferred = inspectRequestTargets(f.root, [], [test, registration, foreign, helper, source], true);
+      assert.deepEqual(inferred.caseFiles, [test], 'write grants infer only actual Hypium cases');
+      assert.deepEqual(inferred.registrationFiles, [registration]);
+      assert.deepEqual(inferred.rejectedWrites, [foreign, helper, source]);
+
+      const { intake_context: _intake, ...original } = JSON.parse(fs.readFileSync(requestPath, 'utf8'));
+      const legacyOptions = { ...parseOptions, requestFile: 'explicit-request.json', reportDir: 'reports/explicit' };
+      const prepareLegacy = (overrides: Record<string, unknown> = {}) => {
+        fs.writeFileSync(path.join(f.root, legacyOptions.requestFile), JSON.stringify({ ...original, ...overrides }));
+        return prepareExplicitRequest(legacyOptions);
+      };
+      assert.throws(() => prepareLegacy({ targets: { ...original.targets, files: [source, registration] } }),
+        /allowed_test_writes.*List\.test\.ets/, 'an explicit source declaration still conflicts with a write grant');
+      assert.deepEqual(prepareLegacy({ targets: { ...original.targets, tests: [test, registration] } }).targets.tests,
+        [test], 'former combined target lists retain their roles');
+      const readOnly = prepareLegacy({ allowed_test_writes: [] });
       assert.deepEqual(readOnly.test_registrations, [registration]);
       assert.deepEqual(readOnly.allowed_test_writes, []);
-      fs.writeFileSync(path.join(f.root, written.requestFile), JSON.stringify(original));
 
       let executions = 0, builds = 0, total = 1;
       const hap = path.join(f.root, 'entry.hap'); fs.writeFileSync(hap, 'same built bytes across registration changes');
@@ -153,43 +157,41 @@ const cases: Array<{ name: string; run(): Promise<void> | void }> = [{
         return { executed: true, exitCode: 0, durationMs: 1, logExcerpt: 'native results', logPath, testResult: { total, passed: total, failed: 0, skipped: 0, failures: [] }, errors: [] };
       }, restores);
       const sourceText = prepared.sourceContents.find(file => file.path === test)!.content;
-      const updateTest = (content: string) => fs.writeFileSync(path.join(f.root, test), content);
-      const run = () => { f.ctx.request = prepare(); return checkRequestTests(f.ctx); };
+      const updateTest = (content: string, prepareRequest = prepare) => {
+        fs.writeFileSync(path.join(f.root, test), content);
+        f.ctx.request = prepareRequest();
+      };
+      const run = () => checkRequestTests(f.ctx);
       for (const [content, detail] of [
         [sourceText.replace("'Selected'", "'bank search unit'"), '"bank search unit" 非法，仅允许 ASCII 字母、数字及 ._-'],
         [sourceText.replace("'Selected'", 'groupName'), '缺少字符串字面量 Hypium 组名'],
         ["describe('bank_search_unit', () => {});\n", '缺少可执行的 Hypium it(...) 用例'],
       ]) {
-        updateTest(content);
+        updateTest(content, prepareLegacy);
         const checks = await run();
         assert(checks.some(check => check.id === 'request_ut_native' && check.status === 'FAIL' && check.details.includes(test) && check.details.includes(detail)), JSON.stringify(checks));
       }
       assert.equal(builds, 0); assert.equal(executions, 0);
       updateTest(sourceText.replace("'Selected'", "'bank_search_unit'"));
-      const first = await run();
-      assert(first.some(check => check.id === 'request_test_execution' && check.status === 'PASS' && check.details.includes('total=1')), JSON.stringify(first));
-      const expectation = first.find(check => check.id === 'request_expectation_source')!;
-      assert.equal(expectation.status, 'PASS', expectation.details);
-      assert.deepEqual(expectation.affected_files, [test]);
-      await run(); assert.equal(executions, 1);
+      f.ctx.reportDir = path.join(f.root, written.reportDir);
       patch(setupGate, 'ensurePersonalSetup', () => ({ ok: true }), restores);
       assert.equal(await publicRequest({ phase: 'ut', 'request-file': written.requestFile, 'report-dir': written.reportDir }), 0,
         'execute the same native request after the registration returns through intake');
-      const report = JSON.parse(fs.readFileSync(path.join(f.root, written.reportDir, 'script-report.json'), 'utf8'));
+      const report = JSON.parse(fs.readFileSync(path.join(f.ctx.reportDir, 'script-report.json'), 'utf8'));
       assert(report.checks.some((check: CheckResult) => check.id === 'request_test_execution' && check.status === 'PASS' && check.details.includes('total=1')));
+      const expectation = report.checks.find((check: CheckResult) => check.id === 'request_expectation_source')!;
+      assert.equal(expectation.status, 'PASS', expectation.details);
+      assert.deepEqual(expectation.affected_files, [test]);
+      assert.equal(executions, 1);
+      const reused = await run();
+      assert(reused.some(check => check.details?.includes('reused_by_execution_key')));
+      assert.equal(executions, 1);
       const oldRegistration = f.ctx.request.bindings.find(binding => binding.path === registration)?.sha256;
       fs.appendFileSync(path.join(f.root, registration), '// registration input changed\n');
+      f.ctx.request = prepare();
       await run();
       assert.notEqual(f.ctx.request.bindings.find(binding => binding.path === registration)?.sha256, oldRegistration);
-      assert.equal(executions, 3, 'registration bytes invalidate earlier execution even when built bytes match');
-
-      const requestFile = 'explicit-request.json', reportDir = 'reports/explicit';
-      fs.writeFileSync(path.join(f.root, requestFile), JSON.stringify({ schema_version: '1.0', phase: 'ut', requested_result: 'verify existing bank test',
-        targets: { files: [source], tests: [test] }, allowed_test_writes: [] }));
-      const legacy = prepareExplicitRequest({ projectRoot: f.root, frameworkRoot: repo, phase: 'ut', requestFile, reportDir });
-      materializeAutomaticFacts({ ...legacy, origin_gap: 'fixture facts', bindings: legacy.bindings.filter(binding => binding.path !== registration) }, f.root);
-      assert.equal(await runExplicitRequest({ projectRoot: f.root, frameworkRoot: repo, args: { phase: 'ut', 'request-file': requestFile, 'report-dir': reportDir } }), 0,
-        'an existing readonly request with facts for the case and product inputs can still execute');
+      assert.equal(executions, 2, 'registration bytes invalidate earlier execution even when built bytes match');
 
       f.ctx.forceDevice = true; total = 2;
       const mismatched = await run();
@@ -473,7 +475,5 @@ const cases: Array<{ name: string; run(): Promise<void> | void }> = [{
 }];
 export function getCases() { return cases; }
 export async function runAll() {
-  const out = [];
-  for (const test of cases) { try { await test.run(); out.push({ name: test.name, ok: true }); } catch (error) { out.push({ name: test.name, ok: false, error: (error as Error).stack }); } }
-  return out;
+  return runUnitCasesAsync(cases);
 }

@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 import assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -7,7 +8,7 @@ import { resolveExecutionScope, affectedScopePhases, authorizedScopePhases, scop
 import { checkUpstreamVerdictGate, readUpstreamPhaseView } from '../../scripts/utils/upstream-verdict-gate';
 import { loadPhaseEvidenceManifest, resolvePhaseEvidenceManifest, writePhaseEvidenceManifest, phaseEvidenceManifestPath } from '../../scripts/utils/phase-evidence-manifest';
 import { classifyCorrection, mapCategoryToPhase, mapCategoryToChainPhase } from '../../scripts/utils/correction-routing';
-import { setupGoalRuntimeHost } from './goal-runner-testing-integrity.unit.test';
+import { setupGoalRuntimeHost } from '../utils/existing-goal-delivery-fixture';
 import type { InputBinding } from '../../scripts/utils/capability-resolution';
 import { setupRunlessProject } from './execution-scope.unit.test';
 import { ensureFeatureExecutionScopeFrozen, readFeatureFrozenScope } from '../../scripts/utils/feature-execution-scope';
@@ -301,4 +302,5 @@ const cases: Array<{ name: string; run(): void }> = [
     } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
   } },
 ];
-export function runAll(): UnitCaseResult[] { return cases.map(test => { try { test.run(); return { name: test.name, ok: true }; } catch (error) { return { name: test.name, ok: false, error: error instanceof Error ? error.stack : String(error) }; } }); }
+export function runAll(): UnitCaseResult[] { return cases.map(test => { const endUnitCase = beginUnitCase(test.name);
+                                                                        if (!endUnitCase) return discoveryResult(test.name); try { test.run(); return { name: test.name, ok: true }; } catch (error) { return { name: test.name, ok: false, error: error instanceof Error ? error.stack : String(error) }; } finally { endUnitCase(); } }); }

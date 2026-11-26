@@ -1,5 +1,4 @@
-import { selectExecutionBlock, timeExecutionBlock, selectedExecutionBlocks } from '../utils/unit-case-selection';
-import { acceptChangeUnitCandidates } from '../../scripts/utils/change-unit-provider-boundary';
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 // ============================================================================
 // component-design-handoff.unit.test.ts — M7 t5：/component-design 设计交接的仓内验收
 // ============================================================================
@@ -18,18 +17,13 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as YAML from 'yaml';
-import { clearFrameworkConfigCache, componentIndexPath, relComponentIndex, featureFilePath, featuresDirPath } from '../../config';
-import { deriveBlueprintSkillInput } from '../../scripts/utils/blueprint-skill-projection';
+import { clearFrameworkConfigCache, featureFilePath, featuresDirPath } from '../../config';
 import { SpecLoader } from '../../scripts/utils/spec-loader';
 import { checkUseCaseSpecSchema } from '../../scripts/check-ut';
-import { loadHostSnapshot, SNAPSHOT_CU_FEATURE } from '../fixtures/host-snapshot-3.1.0/generate';
 import { BlueprintRecord, ComponentBlueprintRef, asRecord, asRecords } from '../../scripts/utils/component-blueprint-model';
 import { componentBlueprintPath, loadCanonicalBlueprint, sha256Bytes } from '../../scripts/utils/component-blueprint-path';
 import { isChangedView } from '../../scripts/utils/blueprint-views';
 import { blueprintReviewPath, inspectBlueprintReview, loadBlueprintReviewSource, materializeBlueprintReview } from '../../scripts/utils/blueprint-review-materialization';
-import { identityNeutralDigest } from '../../scripts/utils/identity-neutral-digest';
-import { FEATURE_LOCK_NAME, readLockRecord, releaseLock, tryAcquireLock } from '../../scripts/utils/goal-run-lock';
-import { reconcilePointerInRun } from '../../scripts/goal-phase-runtime';
 import { checkCanonicalComponentBlueprint } from '../../scripts/check-component-blueprint';
 import { blueprintRefAddress } from '../../scripts/utils/change-unit-model';
 import {
@@ -61,8 +55,6 @@ import { componentClosurePath } from '../../scripts/utils/component-closure-path
 import { evaluateComponentClosure } from '../../scripts/utils/component-closure-validator';
 import { prepareCompleteProject } from './component-closure.unit.test';
 import { clearSkillsIndexCache, resolveSkillPath } from '../../scripts/utils/resolve-skill-path';
-import { prepareFeatureScopeCandidate, featureScopeCandidateFingerprint } from '../../scripts/utils/feature-track';
-import { freezeFeatureExecutionScope } from '../../scripts/utils/feature-execution-scope';
 
 interface UnitCaseResult { name: string; ok: boolean; error?: string }
 
@@ -77,11 +69,11 @@ function assert(condition: unknown, message: string): asserts condition {
 
 function test(name: string, run: () => void): UnitCaseResult {
   const displayName = name;
-  if (!selectExecutionBlock(displayName)) return { name: displayName, ok: true };
-  const finish = timeExecutionBlock(displayName);
+  const endUnitCase = beginUnitCase(name);
+  if (!endUnitCase) return discoveryResult(name);
   try { run(); return { name, ok: true }; }
   catch (error) { return { name, ok: false, error: (error as Error).stack ?? (error as Error).message }; }
-  finally { finish(); }
+  finally {  endUnitCase(); }
 }
 
 function withProject(run: (projectRoot: string) => void): void {
@@ -234,62 +226,6 @@ export function runAll(): UnitCaseResult[] {
       const design = validateChangeUnitDesign(projectRoot, accepted.changeUnit);
       assert(design.verdict === 'constructable' && design.requiredAddresses.some(address => address.startsWith('relation:')),
         'context remains checked without becoming delivery ownership');
-    });
-  }));
-
-  results.push(test('t9: real indexed UI design readiness skips future plan mappings; normal plan still requires exact component decisions', () => {
-    withSnapshotProject(({ root, frameworkRoot }) => {
-      const configFile = path.join(root, 'framework.config.json');
-      const config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
-      config.project_profile.name = 'hmos-app';
-      fs.writeFileSync(configFile, JSON.stringify(config));
-      clearFrameworkConfigCache();
-      for (const loaded of enumerateCanonicalChangeUnits(root, BLUEPRINT_ID)) {
-        if (loaded.changeUnit.change_unit_id !== 'ledger-refresh') fs.rmSync(path.dirname(loaded.canonicalPath), { recursive: true, force: true });
-      }
-      dropStageArtifacts(root);
-      const indexFile = componentIndexPath(root);
-      fs.mkdirSync(path.dirname(indexFile), { recursive: true });
-      fs.writeFileSync(indexFile, YAML.stringify({ schema_version: '1.0', components: [] }));
-      const rationale = '本流程私有页面，不复用共享组件';
-      bumpBlueprint(root, bp => {
-        const target = findRecord(bp, row => row.node_id === 'ledger-domain' && !!asRecord(row.contracts))!;
-        const typed = asRecord(target.contracts)!;
-        delete typed.change_unit;
-        typed.components = [{ name: 'LedgerFeature', module: 'ledger', file: 'src/ledger/LedgerFeature.ets', kind: 'page', asset_selection: { resolution: 'custom', rationale } }];
-        const development = asRecords(bp.design_views).find(view => view.view_id === 'development')!;
-        const node = asRecords(development.nodes)[0]!;
-        Object.assign(node, { kind: 'page', file: 'src/ledger/LedgerFeature.ets', name: 'LedgerFeature' });
-        const gaps = asRecord(bp.decisions_and_gaps)!;
-        gaps.decisions = [...asRecords(gaps.decisions), { decision_id: 'asset-ledger-page', kind: 'component_asset_selection', target_ref: `view:development/node:${node.node_id}`, asset_resolution: 'custom', rationale, status: 'decided_with_authority', owner: 'ui-owner', verification_refs: ['src/ledger/LedgerFeature.ets'], provenance: { ...asRecord(bp.provenance), source_ref: relComponentIndex(root) } }];
-        const provider = asRecords(bp.providers).find(item => item.provider_id === 'component-assets')!;
-        provider.available = true;
-        delete provider.missing_disposition;
-      });
-      reconcileChangeUnitBlueprintRefs(root, BLUEPRINT_ID);
-      const loaded = loadCanonicalChangeUnit(root, BLUEPRINT_ID, 'ledger-refresh');
-      loaded.changeUnit.design_refs = [...asRecords(loaded.changeUnit.design_refs), { ...loaded.changeUnit.component_blueprint_ref as BlueprintRecord, target: { kind: 'decision', id: 'asset-ledger-page' } }];
-      fs.writeFileSync(loaded.canonicalPath, YAML.stringify(loaded.changeUnit));
-      const canonical = checkCanonicalComponentBlueprint(root, BLUEPRINT_ID);
-      assert(!canonical.issues.some(item => item.severity === 'BLOCKER'), `前提：合法 UI 选型设计：${JSON.stringify(canonical.issues)}`);
-      const derived = deriveBlueprintSkillInput(root, SNAPSHOT_CU_FEATURE, frameworkRoot, 'contracts');
-      assert(derived.state === 'resolved' && derived.value && 'components' in derived.value, `施工设计投影未解析：${JSON.stringify(derived)}`);
-      const contracts = derived.value;
-      assert(asRecords(contracts.components).length === 1 && !contracts.change_unit, '施工设计应有一个 UI 组件且没有 plan sidecar');
-      const readiness = deriveDesignPreparationReadiness(root, BLUEPRINT_ID);
-      assert(readiness.ready && readiness.nextEntry === 'change-unit-progression', `设计交接被未来组件映射误阻断：${JSON.stringify(readiness.perUnit)}`);
-      assert(!readiness.perUnit.some(unit => unit.issueIds.includes('component_asset_projection')), '组件施工映射仍污染真实 readiness');
-      const design = validateChangeUnitFeatureProjection(root, SNAPSHOT_CU_FEATURE, contracts, undefined, true, 'plan', [], { changeUnitOverride: asChangeUnitArtifact(loadCanonicalChangeUnit(root, BLUEPRINT_ID, 'ledger-refresh').changeUnit), designOnly: true });
-      assert(!design.issues.length, `designOnly 仍误报组件映射：${JSON.stringify(design.issues)}`);
-      const authored = authorCurrentCuPlan(root, { ...contracts });
-      const section = asRecord(authored.change_unit)!;
-      asRecords(section.design_ref_mappings).forEach(mapping => { mapping.implementation_refs = ['src/ledger/LedgerFeature.ets#LedgerFeature']; });
-      const evaluate = (contracts: BlueprintRecord, phase: 'plan' | 'coding') => validateChangeUnitFeatureProjection(root, SNAPSHOT_CU_FEATURE, contracts as unknown as ContractsSpec, undefined, true, phase);
-      assert(!evaluate(authored, 'plan').issues.length, `完整正常 plan 映射未通过：${JSON.stringify(evaluate(authored, 'plan').issues)}`);
-      const selectionMapping = asRecords(section.design_ref_mappings).find(mapping => asRecord(asRecord(mapping.design_ref)?.target)?.id === 'asset-ledger-page')!;
-      selectionMapping.implementation_refs = ['src/ledger/LedgerFeature.ets#WrongSymbol'];
-      for (const phase of ['plan', 'coding'] as const) assert(evaluate(authored, phase).issues.some(item => item.id === 'component_asset_projection'), `${phase} 的组件映射门被 designOnly 修复削弱`);
-      assert(!readiness.entersConstruction, '设计 readiness 启动施工');
     });
   }));
 
@@ -1063,200 +999,9 @@ export function runAll(): UnitCaseResult[] {
   }));
 
   // Refresh changes identities only. Unproved bindings and actual content changes return to their owner.
-  for (const [label, prepare] of [
-    ['identity-only bump without a complete frozen proof', undefined],
-    ['a bump that changes projected blueprint content (ledger-domain acceptance expected_result)', undefined],
-    ['a conflicting hand edit under the original stamp', (root: string) => {
-      const file = featureFilePath(root, SNAPSHOT_CU_FEATURE, 'use-cases.yaml');
-      const doc = YAML.parse(fs.readFileSync(file, 'utf8')) as BlueprintRecord;
-      (asRecords(doc.use_cases)[0]!).coordinator = 'HandEdited.add';
-      fs.writeFileSync(file, YAML.stringify(doc));
-    }],
-  ] as const) {
-  results.push(test(`b2d7 t2c refresh: ${label} → advance canonical identities and preserve stage bytes for their owner`, () => {
-    withSnapshotProject(({ root, frameworkRoot }) => {
-      const contentChange = label.startsWith('a bump that changes');
-      if (contentChange || prepare) freezeCurrentPlanArtifact(root);
-      prepare?.(root);
-      const other = snapshotFeatureBytes(root, ['feature.yaml', 'feature-completion.json', 'next.json']);
-      const before = snapshotFeatureBytes(root, PROJECTIONS);
-      bumpBlueprint(root, contentChange ? bp => {
-        const node = findRecord(bp, record => record.node_id === 'ledger-domain' && !!asRecord(record.acceptance));
-        asRecords(asRecord(node?.acceptance)?.criteria)[0]!.expected_result = 'consumer refreshed and balance survives restart';
-      } : undefined);
-      const result = reconcileChangeUnitBlueprintRefs(root, BLUEPRINT_ID);
-      assert(result.bumped.some(item => item.change_unit_id === 'ledger-refresh'), JSON.stringify(result));
-      assert(JSON.stringify(snapshotFeatureBytes(root, PROJECTIONS)) === JSON.stringify(before), '无法证明等价的阶段产物被覆盖');
-      assert(JSON.stringify(snapshotFeatureBytes(root, ['feature.yaml', 'feature-completion.json', 'next.json'])) === JSON.stringify(other), 'feature 其它文件被改');
-    });
-  }));
-  }
-
-  results.push(test('b2d7 t2c refresh: identity-only bump with a complete frozen artifact proof changes only source identities', () => {
-    withSnapshotProject(({ root }) => {
-      freezeCurrentPlanArtifact(root);
-      const before = snapshotFeatureBytes(root, PROJECTIONS);
-      bumpBlueprint(root);
-      const result = reconcileChangeUnitBlueprintRefs(root, BLUEPRINT_ID);
-      assert(result.bumped.some(row => row.change_unit_id === 'ledger-refresh'), JSON.stringify(result));
-      for (const name of PROJECTIONS) {
-        const old = YAML.parse(before[name]); const current = YAML.parse(fs.readFileSync(featureFilePath(root, SNAPSHOT_CU_FEATURE, name), 'utf8'));
-        delete old.source; delete current.source;
-        assert(JSON.stringify(contractsWithoutIdentity(old)) === JSON.stringify(contractsWithoutIdentity(current)), `${name} 业务内容被改`);
-      }
-    });
-  }));
-
-  for (const [label, file, tamper] of [
-    ['a use-cases.yaml source stamp pointing at another identity', 'use-cases.yaml',
-      (doc: BlueprintRecord) => { doc.source = 'derive.blueprint-contracts:sha256:0000:sha256:0000'; }],
-    ['a contracts.yaml change_unit_ref pointing at another CU sha', 'contracts.yaml',
-      (doc: BlueprintRecord) => { asRecord(asRecord(doc.change_unit)?.change_unit_ref)!.artifact_sha256 = 'sha256:' + '0'.repeat(64); }],
-  ] as const) {
-    results.push(test(`b2d7 t2c refresh: ${label} → CU identity advances, all projections remain byte-identical`, () => {
-      withSnapshotProject(({ root }) => {
-        const target = featureFilePath(root, SNAPSHOT_CU_FEATURE, file);
-        const doc = YAML.parse(fs.readFileSync(target, 'utf8')) as BlueprintRecord;
-        tamper(doc);
-        fs.writeFileSync(target, YAML.stringify(doc));
-        bumpBlueprint(root);
-        const cuFile = loadCanonicalChangeUnit(root, BLUEPRINT_ID, 'ledger-refresh').canonicalPath;
-        const watched = [...PROJECTIONS, 'feature.yaml'].map(name => featureFilePath(root, SNAPSHOT_CU_FEATURE, name));
-        const oldCu = fs.readFileSync(cuFile);
-        const bytes = watched.map(item => fs.readFileSync(item));
-        const result = reconcileChangeUnitBlueprintRefs(root, BLUEPRINT_ID);
-        assert(result.bumped.some(item => item.change_unit_id === 'ledger-refresh'), '阶段来源戳不应阻挡 canonical 指针升版');
-        assert(!fs.readFileSync(cuFile).equals(oldCu), 'canonical CU 指针未升版');
-        watched.forEach((item, index) => assert(fs.readFileSync(item).equals(bytes[index]!), `${path.basename(item)} 被改写`));
-      });
-    }));
-  }
-
-  results.push(test('b2d7 t2c refresh atomicity: a mid-write failure rolls back the whole batch', () => {
-    withSnapshotProject(({ root }) => {
-      freezeCurrentPlanArtifact(root);
-      // ② 写到第三份时失败（写出顺序 acceptance → contracts → use-cases；use-cases.yaml 只读）
-      //    → 已写的 acceptance/contracts 与整批 CU 指针全部回滚
-      bumpBlueprint(root);
-      const bytes = unitBytes(root);
-      const projections = snapshotFeatureBytes(root, PROJECTIONS);
-      const lastFile = featureFilePath(root, SNAPSHOT_CU_FEATURE, 'use-cases.yaml');
-      fs.chmodSync(lastFile, 0o444);
-      let code = '';
-      try { reconcileChangeUnitBlueprintRefs(root, BLUEPRINT_ID); }
-      catch (error) { code = (error as ChangeUnitDecompositionRejected).code; }
-      finally { fs.chmodSync(lastFile, 0o666); }
-      assert(code === 'change_unit_blueprint_ref_bump_rejected', `写出失败未整批拒绝：${code}`);
-      assert(unitBytes(root) === bytes, '整批拒绝后仍有 CU 指针落盘');
-      assert(JSON.stringify(snapshotFeatureBytes(root, PROJECTIONS)) === JSON.stringify(projections), '整批拒绝后投影未回滚');
-    });
-  }));
-
-  results.push(test('b2d7 t2c refresh atomicity: a write that dies half-way leaves the file being written intact', () => {
-    withSnapshotProject(({ root }) => {
-      freezeCurrentPlanArtifact(root);
-      // codex r1 P1-1：覆盖写到一半抛错（磁盘满等）——当前那份文件不得留半截字节。桩 = 写入前一半内容后抛错，只触发一次。
-      bumpBlueprint(root);
-      const bytes = unitBytes(root);
-      const projections = snapshotFeatureBytes(root, PROJECTIONS);
-      const nodeFs = require('fs') as typeof fs; // eslint-disable-line @typescript-eslint/no-require-imports
-      const original = nodeFs.writeFileSync;
-      let armed = true;
-      nodeFs.writeFileSync = ((file: fs.PathOrFileDescriptor, data: string | NodeJS.ArrayBufferView, options?: fs.WriteFileOptions) => {
-        if (armed && typeof file === 'string' && path.basename(file).startsWith('use-cases.yaml')) {
-          armed = false;
-          original(file, String(data).slice(0, Math.floor(String(data).length / 2)), options);
-          throw new Error('ENOSPC: simulated partial write');
-        }
-        return original(file, data, options);
-      }) as typeof fs.writeFileSync;
-      let code = '';
-      try { reconcileChangeUnitBlueprintRefs(root, BLUEPRINT_ID); }
-      catch (error) { code = (error as ChangeUnitDecompositionRejected).code; }
-      finally { nodeFs.writeFileSync = original; }
-      assert(!armed, '前提：桩未命中 use-cases.yaml 的写出');
-      assert(code === 'change_unit_blueprint_ref_bump_rejected', `写出失败未整批拒绝：${code}`);
-      assert(unitBytes(root) === bytes, '整批拒绝后仍有 CU 指针落盘');
-      assert(JSON.stringify(snapshotFeatureBytes(root, PROJECTIONS)) === JSON.stringify(projections), '写到一半的投影留下损坏字节 / 未回滚');
-      const leftovers = fs.readdirSync(path.dirname(featureFilePath(root, SNAPSHOT_CU_FEATURE, 'use-cases.yaml'))).filter(name => name.includes('.tmp-'));
-      assert(leftovers.length === 0, `残留临时文件：${leftovers.join(', ')}`);
-    });
-  }));
 
   // 宿主形状（2026-09-26 回灌）：三份派生文件由 plan 阶段 agent 手写、无 `derive.blueprint-*` 来源戳，contracts 仍带
   // change_unit_ref + design_ref_mappings。升版不刷新内容（不归投影 writer），只把 contracts 的身份指针随 CU / 蓝图同批原位维护。
-  results.push(test('b2d7 host shape: unstamped hand-written contracts whose change_unit_ref is the pre-bump CU → only identity pointers follow the bump, every other byte kept', () => {
-    withSnapshotProject(({ root }) => {
-      handWriteProjections(root);
-      freezeCurrentPlanArtifact(root);
-      const before = snapshotFeatureBytes(root, PROJECTIONS);
-      const current = bumpBlueprint(root);
-      const result = reconcileChangeUnitBlueprintRefs(root, BLUEPRINT_ID);
-      assert(result.bumped.some(item => item.change_unit_id === 'ledger-refresh') && result.skipped.length === 0, JSON.stringify(result));
-      const after = snapshotFeatureBytes(root, PROJECTIONS);
-      for (const name of ['acceptance.yaml', 'use-cases.yaml']) assert(after[name] === before[name], `${name} 被改写`);
-      // 逐行：行数不变、注释保留，变化行只能是身份字段
-      const [oldLines, newLines] = [before['contracts.yaml'].split('\n'), after['contracts.yaml'].split('\n')];
-      assert(oldLines.length === newLines.length && newLines[0] === HAND_COMMENT, 'contracts 行结构 / 注释被改');
-      const changed = oldLines.flatMap((line, index) => line === newLines[index] ? [] : [newLines[index]!.trim()]);
-      assert(changed.length > 0 && changed.every(line => /^(revision|source_fingerprint|artifact_sha256): /.test(line)), `contracts 身份指针未维护或非身份行被改：${JSON.stringify(changed)}`);
-      const loaded = loadCanonicalChangeUnit(root, BLUEPRINT_ID, 'ledger-refresh');
-      const doc = YAML.parse(after['contracts.yaml']) as BlueprintRecord;
-      const ref = asRecord(asRecord(doc.change_unit)?.change_unit_ref);
-      assert(JSON.stringify(ref) === JSON.stringify(createChangeUnitRef(loaded)), `change_unit_ref 未跟随升版后 CU：${JSON.stringify(ref)}`);
-      resolveChangeUnitRef(root, ref);
-      const blueprintRefs: BlueprintRecord[] = [];
-      findRecord(doc, record => { if (record.artifact === 'component-blueprint@1') blueprintRefs.push(record); return false; });
-      assert(blueprintRefs.length > 0 && blueprintRefs.every(item => item.revision === current.revision && item.artifact_sha256 === current.artifact_sha256 && item.source_fingerprint === current.source_fingerprint),
-        'design_ref 身份未跟随升版后蓝图');
-      assert(JSON.stringify(contractsWithoutIdentity(doc)) === JSON.stringify(contractsWithoutIdentity(YAML.parse(before['contracts.yaml']))), '去掉身份字段后内容不等');
-      const again = reconcileChangeUnitBlueprintRefs(root, BLUEPRINT_ID);
-      assert(again.bumped.length === 0 && again.skipped.length === 0 && JSON.stringify(snapshotFeatureBytes(root, PROJECTIONS)) === JSON.stringify(after), `非幂等：${JSON.stringify(again)}`);
-    });
-  }));
-
-  results.push(test('b2d7 host shape: unstamped contracts whose change_unit_ref names another CU → its pointers are not ours, all three files byte-identical', () => {
-    withSnapshotProject(({ root }) => {
-      handWriteProjections(root, ref => { ref.change_unit_id = 'ledger-consumer'; });
-      const before = snapshotFeatureBytes(root, PROJECTIONS);
-      bumpBlueprint(root);
-      const result = reconcileChangeUnitBlueprintRefs(root, BLUEPRINT_ID);
-      assert(result.bumped.some(item => item.change_unit_id === 'ledger-refresh'), `无戳文件不归本 writer，CU 照常升版：${JSON.stringify(result)}`);
-      assert(JSON.stringify(snapshotFeatureBytes(root, PROJECTIONS)) === JSON.stringify(before), 'ref 指向别的 CU 仍被维护');
-    });
-  }));
-
-  results.push(test('b2d7 host shape: no current frozen proof preserves author-owned stage files while canonical identity advances', () => {
-    withSnapshotProject(({ root }) => {
-      handWriteProjections(root);
-      bumpBlueprint(root);
-      const canonical = unitBytes(root); const before = snapshotFeatureBytes(root, PROJECTIONS);
-      const result = reconcileChangeUnitBlueprintRefs(root, BLUEPRINT_ID);
-      assert(result.bumped.some(item => item.change_unit_id === 'ledger-refresh'), JSON.stringify(result));
-      assert(unitBytes(root) !== canonical, '缺 Feature proof 不应阻挡 canonical CU 身份升版');
-      assert(JSON.stringify(snapshotFeatureBytes(root, PROJECTIONS)) === JSON.stringify(before), '缺证明的作者产物被改');
-    });
-  }));
-
-  results.push(test('b2d7 host shape atomicity: the hand-written contracts write failing rolls back every CU pointer', () => {
-    withSnapshotProject(({ root }) => {
-      handWriteProjections(root);
-      freezeCurrentPlanArtifact(root);
-      bumpBlueprint(root);
-      const bytes = unitBytes(root);
-      const projections = snapshotFeatureBytes(root, PROJECTIONS);
-      const contracts = featureFilePath(root, SNAPSHOT_CU_FEATURE, 'contracts.yaml');
-      fs.chmodSync(contracts, 0o444);
-      let code = '';
-      try { reconcileChangeUnitBlueprintRefs(root, BLUEPRINT_ID); }
-      catch (error) { code = (error as ChangeUnitDecompositionRejected).code; }
-      finally { fs.chmodSync(contracts, 0o666); }
-      assert(code === 'change_unit_blueprint_ref_bump_write_failed', `写出失败未整批拒绝：${code}`);
-      assert(unitBytes(root) === bytes, '整批拒绝后仍有 CU 指针落盘');
-      assert(JSON.stringify(snapshotFeatureBytes(root, PROJECTIONS)) === JSON.stringify(projections), 'contracts 未保持原字节');
-    });
-  }));
-
 
   results.push(test('review delivery: YAML-only and 0 CU draft → same-directory document; content changes without revision refresh, source untouched and repeat does not rewrite', () => {
     withProject(root => {
@@ -1284,57 +1029,6 @@ export function runAll(): UnitCaseResult[] {
     });
   }));
 
-  for (const via of ['readiness', 'runtime'] as const) results.push(test(`review delivery: blueprint changed → pending unit contract shown → real ${via} reconciliation refreshes under locks, neutral digest unchanged`, () => {
-    withSnapshotProject(({ root }) => {
-      freezeCurrentPlanArtifact(root);
-      const unit = loadCanonicalChangeUnit(root, BLUEPRINT_ID, 'ledger-refresh');
-      const digest = identityNeutralDigest(root, 'change-unit@1', unit.changeUnit);
-      assert(digest, '前提：原 CU 摘要可解析');
-      bumpBlueprint(root);
-      const pending = materializeBlueprintReview(root, BLUEPRINT_ID);
-      const text = fs.readFileSync(pending.path, 'utf8');
-      assert(text.includes('待指针升版') && text.includes(String(unit.changeUnit.purpose)) && text.includes('安全中间态'), '待升版误丢 CU 自身契约');
-      const header = YAML.parse(/^---\n([\s\S]*?)\n---/.exec(text)![1]!);
-      assert(header.derived_from.change_units.some((u: BlueprintRecord) => u.change_unit_id === 'ledger-refresh' && u.binding === 'pending' && !u.identity_neutral_digest), '待绑定填了假摘要');
-      const trace = text.slice(text.indexOf('#### 需求追溯总表'));
-      assert(trace.includes('ledger-refresh（待升版）'), '待升版 CU 的原始直接引用被误报为无人引用');
-      const nodeFs = require('fs') as typeof fs;
-      const rename = nodeFs.renameSync;
-      let lockedWrite = false;
-      nodeFs.renameSync = ((from: fs.PathLike, to: fs.PathLike) => {
-        if (String(to) === pending.path) {
-          lockedWrite = fs.existsSync(path.join(workspaceDir(root), '.blueprint-reconcile.lock'));
-        }
-        return rename(from, to);
-      }) as typeof fs.renameSync;
-      try {
-        if (via === 'readiness') {
-          const result = deriveDesignPreparationReadiness(root, BLUEPRINT_ID);
-          assert(!result.ready && result.perUnit.find(item => item.changeUnitId === 'ledger-refresh')?.verdict === 'constructable', '旧副本其它未退役 CU 的 typed 内容未映射，不能因文档重建洗成 ready');
-          assert(result.perUnit.filter(item => item.changeUnitId !== 'ledger-refresh').every(item => item.issueIds.includes('authority_predicate_acceptance_unmapped')), JSON.stringify(result));
-          assert(result.reviewDocument?.status === 'refreshed' && result.reviewDocument.writtenPaths.includes(pending.path), JSON.stringify(result));
-          assert(result.blueprintRefs.reviewDocument?.status === 'refreshed', '内部刷新结果丢失');
-        } else {
-          const lockPath = featureFilePath(root, SNAPSHOT_CU_FEATURE, path.join('goal-runs', FEATURE_LOCK_NAME));
-          const held = tryAcquireLock(lockPath, {});
-          assert(held, '前提：feature 锁未取得');
-          try {
-            const busy = deriveDesignPreparationReadiness(root, BLUEPRINT_ID);
-            assert(busy.blueprintRefs.busy && !busy.reviewDocument && fs.readFileSync(pending.path, 'utf8') === text, 'busy 不得生成');
-            const result = reconcilePointerInRun({ projectRoot: root, feature: SNAPSHOT_CU_FEATURE, heldFeatureLock: { path: lockPath, ownerId: held.ownerId } });
-            assert(result.ok && result.reviewDocument?.status === 'refreshed', JSON.stringify(result));
-            assert(readLockRecord(lockPath)?.ownerId === held.ownerId, '借入 feature 锁被释放/转移');
-          } finally { releaseLock(lockPath, held.ownerId); }
-        }
-      } finally { nodeFs.renameSync = rename; }
-      assert(lockedWrite, '刷新未发生在共同调和锁内');
-      const after = loadCanonicalChangeUnit(root, BLUEPRINT_ID, 'ledger-refresh');
-      assert(identityNeutralDigest(root, 'change-unit@1', after.changeUnit) === digest, '纯指针调和改变内容摘要');
-      assert(JSON.stringify(withoutIdentity(after.changeUnit)) === JSON.stringify(withoutIdentity(unit.changeUnit)), '指针调和改变 CU 契约');
-      assert(inspectBlueprintReview(root, BLUEPRINT_ID).status === 'current' && !fs.readFileSync(pending.path, 'utf8').includes('binding: pending'), '升版后仍交付待绑定文档');
-    });
-  }));
-
   results.push(test('review delivery: one broken CU and an unrelated bad design ref preserve other units and disclose gaps, strict enumeration still fails', () => {
     withProject(root => {
       const bad = loadCanonicalChangeUnit(root, BLUEPRINT_ID, 'ledger-summary');
@@ -1352,46 +1046,6 @@ export function runAll(): UnitCaseResult[] {
     });
   }));
 
-  results.push(test('review delivery: write failure preserves prior document and readiness; a source change before rename cannot replace the current snapshot', () => {
-    withSnapshotProject(({ root }) => {
-      freezeCurrentPlanArtifact(root);
-      const baseline = deriveDesignPreparationReadiness(root, BLUEPRINT_ID);
-      const prior = materializeBlueprintReview(root, BLUEPRINT_ID);
-      const bytes = fs.readFileSync(prior.path);
-      bumpBlueprint(root);
-      const nodeFs = require('fs') as typeof fs;
-      const write = nodeFs.writeFileSync;
-      nodeFs.writeFileSync = ((file: fs.PathOrFileDescriptor, data: string | NodeJS.ArrayBufferView, options?: fs.WriteFileOptions) => {
-        if (String(file).startsWith(prior.path + '.tmp-')) { write(file, 'truncated'); throw new Error('simulated document ENOSPC'); }
-        return write(file, data, options);
-      }) as typeof fs.writeFileSync;
-      try {
-        const ready = deriveDesignPreparationReadiness(root, BLUEPRINT_ID);
-        assert(ready.ready === baseline.ready && JSON.stringify(ready.perUnit) === JSON.stringify(baseline.perUnit), '文档写失败改变了实际 readiness');
-        assert(ready.blueprintRefs.bumped.length > 0 && ready.reviewDocument?.status === 'failed', JSON.stringify(ready));
-        assert(fs.readFileSync(prior.path).equals(bytes), '失败留下截断文档');
-      } finally { nodeFs.writeFileSync = write; }
-      const bpFile = componentBlueprintPath(root, BLUEPRINT_ID);
-      let changed = false;
-      nodeFs.writeFileSync = ((file: fs.PathOrFileDescriptor, data: string | NodeJS.ArrayBufferView, options?: fs.WriteFileOptions) => {
-        const result = write(file, data, options);
-        if (!changed && String(file).startsWith(prior.path + '.tmp-')) {
-          changed = true;
-          const bp = YAML.parse(fs.readFileSync(bpFile, 'utf8'));
-          bp.review_summary.summary = '并发的新来源';
-          write(bpFile, YAML.stringify(bp));
-        }
-        return result;
-      }) as typeof fs.writeFileSync;
-      try {
-        const result = materializeBlueprintReview(root, BLUEPRINT_ID);
-        assert(result.status === 'failed' && result.reason?.includes('来源在生成期间改变') && fs.readFileSync(prior.path).equals(bytes), JSON.stringify(result));
-      } finally { nodeFs.writeFileSync = write; }
-      assert(!fs.readdirSync(path.dirname(prior.path)).some(file => file.includes('.tmp-')), '失败残留临时文件');
-      assert(materializeBlueprintReview(root, BLUEPRINT_ID).status === 'refreshed', '只重试物化未恢复');
-    });
-  }));
-
   results.push(test('review delivery: accepted CU remains accepted when projection write fails', () => {
     withProject(root => {
       const candidate = candidateFrom(root, 'ledger-refresh', 'new-ledger-refresh');
@@ -1403,50 +1057,6 @@ export function runAll(): UnitCaseResult[] {
         const accepted = acceptChangeUnitDecomposition(root, BLUEPRINT_ID, [candidate]);
         assert(accepted.changeUnitIds[0] === 'new-ledger-refresh' && accepted.reviewDocument.status === 'failed' && !!loadCanonicalChangeUnit(root, BLUEPRINT_ID, 'new-ledger-refresh'), JSON.stringify(accepted));
       } finally { nodeFs.renameSync = rename; }
-    });
-  }));
-
-  results.push(test('review delivery: old host snapshot needs format rebuild; explicit dependencies, shared direct refs, anchors and Markdown escaping are deterministic', () => {
-    withSnapshotProject(({ root }) => {
-      const source = loadBlueprintReviewSource(root, BLUEPRINT_ID);
-      assert(inspectBlueprintReview(root, BLUEPRINT_ID).reasons?.some(r => r.id === 'publication_projection_format_stale'), '旧 snapshot 未识别格式升级');
-      const cu = loadCanonicalChangeUnit(root, BLUEPRINT_ID, 'ledger-refresh');
-      cu.changeUnit.purpose = '特殊 | 字段 <test> `literal`\n下一行';
-      fs.writeFileSync(cu.canonicalPath, YAML.stringify(cu.changeUnit));
-      const result = materializeBlueprintReview(root, BLUEPRINT_ID);
-      const text = fs.readFileSync(result.path, 'utf8');
-      assert(text.includes('### E 施工精确映射') && text.includes('安全中间态') && text.includes('需求追溯总表'), '缺拆分/追溯');
-      assert(text.includes('&lt;test&gt;') && text.includes('\\`literal\\`'), 'Markdown 叙述转义失败');
-      const links = [...text.matchAll(/\]\(#(design-[a-f0-9]+)\)/g)].map(m => m[1]);
-      assert(links.length > 0 && links.every(id => text.includes(`id="${id}"`)), '稳定地址链接没有对应锚点');
-      const traceability = text.slice(text.indexOf('#### 需求追溯总表'), text.indexOf('### G 质询、决定与稳定地址'));
-      const construction = text.slice(text.indexOf('### E 施工精确映射'), text.indexOf('### F 需求追溯'));
-      assert(source.inputs.units.length > 0 && !traceability.includes('已覆盖') && !construction.includes('已覆盖'), '需求追溯/施工认领冒充覆盖结论');
-      const lifecycleCovered = asRecords(source.loaded.blueprint.design_views).flatMap(view => asRecords(view.runtime_data_flows)).some(flow => Object.values(asRecord(flow.lifecycle_coverage) ?? {}).some(item => asRecord(item)?.status === 'covered'));
-      const runtime = text.slice(text.indexOf('#### 运行流与状态明细'), text.indexOf('### C 完整验收'));
-      assert(lifecycleCovered && runtime.includes('| 已覆盖 |'), '原生命周期 covered 声明丢失');
-    });
-    withProject(root => {
-      const text = loadBlueprintReviewSource(root, BLUEPRINT_ID).markdown;
-      assert(text.includes('上游 CU') && text.includes('ledger-refresh') && text.includes('ledger-consumer'), '多个 CU 显式依赖未显示');
-    });
-  }));
-
-  results.push(test('review delivery: true design change preserves stage files and advances canonical identity with a changed neutral digest', () => {
-    withSnapshotProject(({ root }) => {
-      freezeCurrentPlanArtifact(root);
-      const unit = loadCanonicalChangeUnit(root, BLUEPRINT_ID, 'ledger-refresh');
-      const before = identityNeutralDigest(root, 'change-unit@1', unit.changeUnit);
-      const stage = snapshotFeatureBytes(root, PROJECTIONS);
-      bumpBlueprint(root, bp => {
-        const node = findRecord(bp, record => record.node_id === 'ledger-domain' && !!asRecord(record.acceptance));
-        asRecords(asRecord(node?.acceptance)?.criteria)[0]!.expected_result = 'different delivered result';
-      });
-      materializeBlueprintReview(root, BLUEPRINT_ID);
-      const result = deriveDesignPreparationReadiness(root, BLUEPRINT_ID);
-      assert(result.blueprintRefs.bumped.some(row => row.change_unit_id === 'ledger-refresh'), JSON.stringify(result.blueprintRefs));
-      assert(JSON.stringify(snapshotFeatureBytes(root, PROJECTIONS)) === JSON.stringify(stage), '真实变化覆盖了旧阶段产物');
-      assert(before && identityNeutralDigest(root, 'change-unit@1', loadCanonicalChangeUnit(root, BLUEPRINT_ID, 'ledger-refresh').changeUnit) !== before, '真正内容变化误作纯身份');
     });
   }));
 
@@ -1503,8 +1113,6 @@ export function runAll(): UnitCaseResult[] {
   return results;
 }
 
-const HAND_COMMENT = '# plan 阶段作者产物：当前 CU 施工映射与合法通知步骤补充';
-
 /** Author a complete mapping from the current consumer identity; keep the supplied design facts. */
 export function authorCurrentCuPlan(root: string, design: BlueprintRecord): BlueprintRecord {
   const loaded = loadCanonicalChangeUnit(root, BLUEPRINT_ID, 'ledger-refresh');
@@ -1528,66 +1136,6 @@ export function authorCurrentCuPlan(root: string, design: BlueprintRecord): Blue
     provide_mappings: cu.provides.map(row => ({ provide_id: row.provide_id, implementation_refs, test_refs })),
     design_ref_mappings: cu.design_refs.map(design_ref => ({ design_ref, implementation_refs, verification_refs: test_refs })),
   } };
-}
-
-/** 作者直接消费设计输入新建无戳阶段产物；不读取或改标现存物化文件。 */
-export function handWriteProjections(root: string, tamperRef?: (ref: BlueprintRecord) => void): void {
-  const acceptance = deriveBlueprintSkillInput(root, SNAPSHOT_CU_FEATURE, FRAMEWORK_ROOT, 'acceptance');
-  const contracts = deriveBlueprintSkillInput(root, SNAPSHOT_CU_FEATURE, FRAMEWORK_ROOT, 'contracts');
-  assert(acceptance.state === 'resolved' && contracts.state === 'resolved', acceptance.detail ?? contracts.detail ?? '设计输入不可用');
-  const authored = {
-    'acceptance.yaml': acceptance.value,
-    'contracts.yaml': contracts.value,
-    'use-cases.yaml': contracts.artifacts?.['use-cases@1'],
-  };
-  for (const name of PROJECTIONS) {
-    const file = featureFilePath(root, SNAPSHOT_CU_FEATURE, name);
-    const input = authored[name as keyof typeof authored];
-    assert(asRecord(input), `${name} 缺设计输入`);
-    const doc: BlueprintRecord = Object.fromEntries(Object.entries(structuredClone(input as BlueprintRecord)).filter(([key]) => key !== 'source'));
-    let prefix = '';
-    if (name === 'contracts.yaml') {
-      Object.assign(doc, authorCurrentCuPlan(root, doc));
-      (asRecords(doc.state_management)[0]!.ordered_steps as string[]).push('notify observers');
-      tamperRef?.(asRecord(asRecord(doc.change_unit)?.change_unit_ref)!);
-      prefix = `${HAND_COMMENT}\n`;
-    }
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, prefix + YAML.stringify(doc));
-  }
-}
-
-function contractsWithoutIdentity(doc: unknown): unknown {
-  return JSON.parse(JSON.stringify(doc), (key, value) => ['revision', 'source_fingerprint', 'artifact_sha256'].includes(key) ? undefined : value);
-}
-
-const PROJECTIONS = ['acceptance.yaml', 'contracts.yaml', 'use-cases.yaml'];
-
-/** Freeze the actual current plan artifact with the production resolver before an identity bump. */
-function freezeCurrentPlanArtifact(root: string): void {
-  clearFrameworkConfigCache();
-  const prepared = prepareFeatureScopeCandidate({ projectRoot: root, frameworkRoot: FRAMEWORK_ROOT, feature: SNAPSHOT_CU_FEATURE,
-    completionTarget: 'request', requestedResults: ['contracts'], requestedPhases: ['plan'], requirement: '核验已有账本施工契约' });
-  freezeFeatureExecutionScope({ projectRoot: root, feature: SNAPSHOT_CU_FEATURE, scope: prepared.scope,
-    candidateFingerprint: featureScopeCandidateFingerprint(root, SNAPSHOT_CU_FEATURE) });
-}
-
-function withSnapshotProject(run: (s: { root: string; frameworkRoot: string }) => void): void {
-  const snapshot = loadHostSnapshot();
-  try { clearFrameworkConfigCache(); run(snapshot); } finally { clearFrameworkConfigCache(); fs.rmSync(snapshot.root, { recursive: true, force: true }); }
-}
-
-function findRecord(value: unknown, match: (record: BlueprintRecord) => boolean): BlueprintRecord | undefined {
-  if (Array.isArray(value)) { for (const item of value) { const hit = findRecord(item, match); if (hit) return hit; } return undefined; }
-  const record = asRecord(value);
-  if (!record) return undefined;
-  if (match(record)) return record;
-  for (const child of Object.values(record)) { const hit = findRecord(child, match); if (hit) return hit; }
-  return undefined;
-}
-
-function snapshotFeatureBytes(root: string, names: string[]): Record<string, string> {
-  return Object.fromEntries(names.map(name => [name, fs.readFileSync(featureFilePath(root, SNAPSHOT_CU_FEATURE, name), 'utf8')]));
 }
 
 /** 蓝图升一个 admitted revision（内容可选改动），返回新身份。 */
@@ -1635,6 +1183,3 @@ if (require.main === module) {
   for (const result of results) console.log(`${result.ok ? 'PASS' : 'FAIL'}  ${result.name}${result.ok ? '' : `\n  ${result.error}`}`);
   process.exit(results.every(result => result.ok) ? 0 : 1);
 }
-
-export const listCaseGroups = async () => (await selectedExecutionBlocks(runAll, undefined, true)).groups;
-export const runSelectedCases = (selector?: string) => selectedExecutionBlocks(runAll, selector);

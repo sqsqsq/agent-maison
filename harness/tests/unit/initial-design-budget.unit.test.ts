@@ -1,4 +1,4 @@
-import { unitCaseGroups } from '../utils/unit-case-selection';
+import { beginUnitCase } from '../utils/unit-cases';
 import '../utils/transpile-only-env';
 import assert from 'assert';
 import * as fs from 'fs';
@@ -18,9 +18,7 @@ import { deriveChangeUnitFeatureId, loadCanonicalChangeUnit, enumerateCanonicalC
 import { validateChangeUnit } from '../../scripts/utils/change-unit-validator';
 import { prepareFeatureScopeCandidate } from '../../scripts/utils/feature-track';
 import { fixture } from './blueprint-skill-projection.unit.test';
-import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
 import type { UnitCaseResult } from '../run-unit';
-
 
 const FRAMEWORK = path.resolve(__dirname, '../../..');
 const BLUEPRINT = 'ledger-app-blueprint';
@@ -253,17 +251,14 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
 ];
 
 export function getCases() { return cases; }
-export async function runSelectedCases(filter?: string) {
-  const results: UnitCaseResult[] = [], timings: UnitExecutionTiming[] = [];
+export async function runAll() {
+  const results: UnitCaseResult[] = [];
   for (const test of cases) {
-    if (!matchesUnitCase(test.name, filter)) continue;
-    const finish = startCaseTiming([test.name], timings);
+    const endUnitCase = beginUnitCase(test.name);
+    if (!endUnitCase) continue;
     try { await test.run(); results.push({ name: test.name, ok: true }); }
     catch (error) { results.push({ name: test.name, ok: false, error: (error as Error).stack ?? String(error) }); }
-    finally { finish(); }
+    finally {  endUnitCase(); }
   }
-  return selectedUnitCases(results, filter, timings);
+  return results;
 }
-export async function runAll() { return (await runSelectedCases()).results; }
-
-export const listCaseGroups = () => unitCaseGroups(cases.map(c => c.name));
