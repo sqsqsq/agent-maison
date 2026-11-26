@@ -9,6 +9,7 @@ import * as YAML from 'yaml';
 import { clearFrameworkConfigCache } from '../../config';
 import { loadInstanceExtensions } from '../../extension-loader';
 import { detectRepoLayout } from '../../repo-layout';
+import { ensureConsumerFrameworkTree } from '../utils/layout-test-helper';
 import { changeExtension, withExtensionWrite, type ExtensionMutation } from '../../scripts/utils/extension-lifecycle';
 import { inspectExtensionRequest } from '../../scripts/utils/extension-requests';
 import { acceptSessionExecution, capturePhaseBinding, writePhaseExecutionRequestMaterial } from '../../scripts/utils/session-execution-handoff';
@@ -199,6 +200,7 @@ const cases = [
       const manifest = path.join(extensionDir, 'manifest.yaml');
       const original = '# 宿主原清单\nschema_version: "1.0"\nname: host\n';
       write(manifest, original);
+      ensureConsumerFrameworkTree(project);
       write(path.join(project, 'framework/specs/instance-extension-manifest.schema.yaml'), YAML.stringify({
         schema_version: '1.1',
         root_object: { properties: { schema_version: { enum: ['1.0', '1.1'] } } },

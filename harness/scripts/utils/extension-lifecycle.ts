@@ -8,6 +8,7 @@ import { loadFrameworkConfig } from '../../config';
 import {
   extensionSkillIdsForBridge, loadInstanceExtensions, loadInstanceExtensionSource, validateExtensionManifestRoot,
 } from '../../extension-loader';
+import { harnessRootFromLayout, inferRepoLayout } from '../../repo-layout';
 import { scanExtensionSkills } from './instance-skill-bridge';
 import { activeExtensionRequests, activeExtensionResourceRequests } from './extension-requests';
 import { releaseLock, tryAcquireLock } from './goal-run-lock';
@@ -49,9 +50,13 @@ function digest(bytes: Buffer): string {
 }
 
 export function targetExtensionFrameworkRoot(projectRoot: string, invokingFrameworkRoot: string): string {
-  const integrated = path.join(projectRoot, 'framework');
-  if (fs.lstatSync(integrated, { throwIfNoEntry: false })) return integrated;
-  return fs.existsSync(path.join(projectRoot, 'harness', 'harness-runner.ts')) ? projectRoot : invokingFrameworkRoot;
+  try {
+    const layout = inferRepoLayout(projectRoot);
+    if (layout.kind === 'consumer' || fs.existsSync(path.join(harnessRootFromLayout(layout), 'harness-runner.ts'))) {
+      return layout.frameworkRoot;
+    }
+  } catch { /* An external test or project can explicitly supply its framework without a local tree. */ }
+  return invokingFrameworkRoot;
 }
 
 function verifyTargetManifestSupport(frameworkRoot: string): void {
