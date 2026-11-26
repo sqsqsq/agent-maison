@@ -12,7 +12,7 @@ import { writeLocalConfig } from '../../scripts/utils/framework-local-config';
 import { loadGoalManifestDefinition, isInitialDesignManifest, buildInitialDesignGoalManifest } from '../../scripts/utils/goal-manifest';
 import { prepareInitialDesignRun, projectInitialDesignDelivery, initialDesignRequestOptions, readInitialDesignRequest } from '../../scripts/utils/initial-design-delivery';
 import { fixture as requestFixture } from './request-entry.unit.test';
-import { readSessionExecution, type SessionExecutionRequest } from '../../scripts/utils/session-execution-handoff';
+import { executionRequestForInvoke, readSessionExecution, type SessionExecutionRequest } from '../../scripts/utils/session-execution-handoff';
 import { workUnitMayWritePath } from '../../scripts/utils/repair-responsibility';
 import { enumerateCanonicalChangeUnits } from '../../scripts/utils/change-unit-path';
 import { withFreshCuHost } from './lifecycle-evolution.unit.test';
@@ -184,13 +184,48 @@ const cases:Array<{name:string;run():Promise<void>}>= [{
     assert.equal(session.start_phase,'spec');assert.equal(session.end_phase,'testing');assert.deepEqual(fs.readFileSync(sessionInput),inputBefore);
     const backendInput=definition(root,'backend-entry'),backendBefore=fs.readFileSync(backendInput);let calls=0;
     const exit=await withRuntimeTest({ root: root }, () => new GoalPhaseRuntime({args:['--manifest',backendInput,'--project-root',root,'--framework-root',FRAMEWORK,'--foreground-ok','--authorize-autonomy'],authorization,
-      executor:{async execute(context){calls++;assert.equal(context.phase,'initial-design-author');assert(context.instruction?.includes(requirement));return {status:'waiting',phase:context.phase,details:'受控运输仅证明原始输入出生，不产生设计或通过结果。',exitCode:0,stdout:'',stderr:'',command:'bounded-phase-input-observer'};}}}).run());
+      executor:{async execute(context){calls++;assert.equal(context.phase,'initial-design-author');assert(context.instruction?.includes(requirement));assert(!context.instruction?.includes('## Knowledge inputs'));return {status:'waiting',phase:context.phase,details:'受控运输仅证明原始输入出生，不产生设计或通过结果。',exitCode:0,stdout:'',stderr:'',command:'bounded-phase-input-observer'};}}}).run());
     assert.equal(calls,1);assert.notEqual(exit,0);
     const runs=featureFilePath(root,'backend-entry','goal-runs');const ids=fs.readdirSync(runs).filter(id=>!id.startsWith('.'));assert.equal(ids.length,1);
     const backend=json(path.join(runs,ids[0],'manifest.json'));assert(isInitialDesignManifest(backend));
     assert.deepEqual(backend.initial_design.requested_phases,[]);assert.equal(backend.start_phase,'spec');assert.equal(backend.end_phase,'testing');
     assert.deepEqual(fs.readFileSync(backendInput),backendBefore);
     for(const manifest of [session,backend])for(const field of ['execution_scope','phase_chain','chain_override','run_base_sha'] as const)assert.equal(manifest[field],undefined,field);
+  });},
+},{
+  name:'managed initial author freezes only the effective design knowledge in the actual request and keeps the blueprint write boundary',
+  async run(){await withEmpty(async root=>{
+    const feature='design-knowledge-input';
+    const source='doc/extensions/knowledge/design.md';
+    const body='# 真正由宿主提供的设计文本\n按原需求保留默认值决策与正式交接。\n';
+    fs.mkdirSync(path.dirname(path.join(root,source)),{recursive:true});
+    fs.writeFileSync(path.join(root,source),body,'utf8');
+    fs.writeFileSync(path.join(root,'doc/extensions/manifest.yaml'),YAML.stringify({
+      schema_version:'1.1',name:'installed-design-knowledge',provides:{skill_assets:{'component-design':{knowledge:'knowledge/design.md'}}},
+    }));
+    const input=definition(root,feature);let calls=0;
+    const exit=await withRuntimeTest({root},()=>new GoalPhaseRuntime({
+      args:['--manifest',input,'--project-root',root,'--framework-root',FRAMEWORK,'--foreground-ok','--authorize-autonomy'],authorization,
+      executor:{async execute(context){
+        calls++;
+        const issued=executionRequestForInvoke(context.runDir,context.attemptId);
+        assert(issued,'原作者执行前须真实签发请求');
+        assert.equal(issued.request.context.phase,'initial-design-author');
+        assert.equal(issued.request.context.instruction,context.instruction);
+        assert(context.instruction?.includes(body));
+        assert(context.instruction?.includes(source));
+        const material=context.workInput?.material;
+        assert.deepEqual(issued.request.context.workInput?.material,material);
+        const segments=material?.segments as unknown[] | undefined;
+        const delivered=segments?.filter(segment=>typeof segment==='string'&&segment.includes(body));
+        assert.equal(delivered?.length,1);
+        assert(String(delivered?.[0]).includes(source));
+        assert.deepEqual(issued.request.snapshot_options?.ownedPrefixes,[`doc/features/${feature}/blueprint`]);
+        assert.equal(fs.readFileSync(path.join(root,source),'utf8'),body);
+        return {status:'waiting',phase:context.phase,exitCode:0,stdout:'',stderr:'',command:'design-knowledge-observer'};
+      }},
+    }).run());
+    assert.equal(calls,1);assert.notEqual(exit,0);
   });},
 },{
   name:'new roots preserve explicit requested work while historical phase bounds do not restrict the unit author',

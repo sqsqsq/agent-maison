@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'self' file:; style-src 'unsafe-inline'; img-src blob:">
+<title>UX 行为看图核对</title>
+<style>
+:root { color-scheme: light; font: 16px/1.55 system-ui, sans-serif; color: #132d31; background: #eef3f1; }
+* { box-sizing: border-box; }
+body { max-width: 76rem; margin: auto; padding: 2rem clamp(1rem, 3vw, 3rem); }
+h1, h2, h3, p { margin: 0 0 .75rem; }
+a { color: #085f66; }
+a:focus-visible, summary:focus-visible, label:focus-within { outline: 3px solid #961d43; outline-offset: 3px; }
+.controls { display: flex; flex-wrap: wrap; gap: .65rem; margin: 1rem 0; }
+.controls label { display: flex; flex-wrap: wrap; gap: .55rem; align-items: center; padding: .5rem .75rem; border: 1px solid #73938f; border-radius: .5rem; background: #fff; }
+input { max-width: 100%; }
+.index { display: flex; flex-wrap: wrap; gap: .55rem 1.25rem; padding: 0; margin: .5rem 0 1.5rem; }
+article { margin: 1rem 0; padding: clamp(.8rem, 2vw, 1.5rem); border-radius: .75rem; background: #fff; }
+.layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 1.4rem; align-items: start; }
+figure { margin: 0; }
+.picture { position: relative; }
+.picture img { display: block; width: 100%; height: auto; }
+.box { position: absolute; border: 2px solid #007882; text-decoration: none; background: rgb(0 120 130 / .07); }
+.box:hover, .box:focus-visible { border-color: #961d43; background: rgb(150 29 67 / .18); z-index: 1; }
+.mark { display: inline-grid; place-items: center; min-width: 1.35rem; height: 1.35rem; padding: 0 .22rem; border-radius: .2rem; color: #fff; background: #085f66; font-size: .78rem; font-weight: 700; vertical-align: text-top; }
+.box .mark { position: absolute; top: -2px; left: -2px; box-shadow: 0 0 0 1px white; }
+figcaption, #status { margin-top: .5rem; color: #365559; }
+.note { padding: .7rem; border-left: 3px solid #a16d15; background: #fff6df; }
+details { margin: .5rem 0; border: 1px solid #cbdcd9; border-radius: .4rem; padding: .55rem .75rem; }
+details:target { border-color: #085f66; outline: 2px solid #085f66; }
+summary { cursor: pointer; }
+summary code { overflow-wrap: anywhere; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; font: .89rem/1.55 ui-monospace, monospace; background: #f1f6f5; padding: .75rem; }
+@media (max-width: 47rem) { .layout { grid-template-columns: 1fr; } }
+</style>
+<script src="js-yaml-5.5.0.umd.min.js"></script>
+</head>
+<body>
+<header>
+  <h1>UX 行为看图核对</h1>
+  <p>选择包含 <code>*.ux.yaml</code> 和来源文件的目录。文件有更新时重新选择即可。</p>
+  <div class="controls">
+    <label>选目录 <input id="directory" type="file" webkitdirectory multiple></label>
+    <label>选相关文件 <input id="files" type="file" multiple></label>
+  </div>
+  <p id="status" role="status"></p>
+</header>
+<nav id="index" class="index" aria-label="文档目录"></nav>
+<main id="contents"></main>
+<script>
+const status = document.getElementById('status');
+const contents = document.getElementById('contents');
+const index = document.getElementById('index');
+const blobs = [];
+let selection = 0;
+
+function create(tag, text, cssClass) {
+  const node = document.createElement(tag);
+  if (text !== undefined) node.textContent = text;
+  if (cssClass) node.className = cssClass;
+  return node;
+}
+
+function link(label, href) {
+  const anchor = create('a', label);
+  anchor.href = href;
+  return anchor;
+}
+
+function blobUrl(file) {
+  const url = URL.createObjectURL(file);
+  blobs.push(url);
+  return url;
+}
+
+function localPath(file) {
+  return file.webkitRelativePath || file.name;
+}
+
+function findFile(files, ref, from) {
+  if (typeof ref !== 'string' || !ref || /^(?:\/|[A-Za-z][A-Za-z0-9+.-]*:)|\\/.test(ref)) return;
+  const path = localPath(from).split('/').slice(0, -1);
+  const minDepth = from.webkitRelativePath ? 1 : 0;
+  for (const segment of ref.split('/')) {
+    if (!segment || segment === '.') continue;
+    if (segment === '..') {
+      if (path.length > minDepth) path.pop();
+      else if (from.webkitRelativePath) return;
+    } else path.push(segment);
+  }
+  const match = files.filter(file => from.webkitRelativePath
+    ? localPath(file) === path.join('/')
+    : file.name === path.at(-1));
+  if (match.length === 1) return match[0];
+}
+
+function details(label, value, id) {
+  const box = create('details');
+  if (id) box.id = id;
+  const summary = create('summary');
+  summary.append(label);
+  box.append(summary, create('pre', jsyaml.dump(value).trim()));
+  return box;
+}
+
+function entries(object) {
+  return object && typeof object === 'object' && !Array.isArray(object) ? Object.entries(object) : [];
+}
+
+function sourcesFor(entry, flow) {
+  return new Map([flow, entry].filter(Boolean).flatMap(item =>
+    entries(item.data.sources).map(([id, ref]) => [id, {ref, from: item.file}])));
+}
+
+function showSources(container, sources, files) {
+  if (!sources.size) return;
+  const panel = create('details');
+  const list = create('ul');
+  panel.append(create('summary', '来源'), list);
+  for (const [id, {ref, from}] of sources) {
+    const file = findFile(files, ref, from);
+    const row = create('li', id + ' · ');
+    if (file) {
+      const url = /\.(?:jpe?g|png|webp|gif|avif|bmp)$/i.test(file.name)
+        ? blobUrl(file)
+        : blobUrl(new Blob([file], {type: 'text/plain;charset=utf-8'}));
+      const source = link(ref, url);
+      source.target = '_blank';
+      source.rel = 'noopener';
+      row.append(source);
+    } else row.append(String(ref) + '（未选中此文件，或同名文件无法定位）');
+    list.append(row);
+  }
+  container.append(panel);
+}
+
+function validBbox(value) {
+  if (!Array.isArray(value) || value.length !== 4 ||
+      !value.every(n => Number.isFinite(n) && n >= 0 && n <= 1)) return false;
+  const [x, y, width, height] = value;
+  return width > 0 && height > 0 && x + width <= 1 && y + height <= 1;
+}
+
+function showScreen(article, entry, docs, files) {
+  const data = entry.data;
+  const flow = docs.find(document => document.file === findFile(files, data.flow, entry.file) && document.data.screens);
+  const sources = sourcesFor(entry, flow);
+  const visual = data.visual;
+  const source = sources.get(visual?.source);
+  const image = source && findFile(files, source.ref, source.from);
+  const layout = create('div', undefined, 'layout');
+  const figure = create('figure');
+  const rules = create('div');
+  let picture;
+  if (visual?.observation === 'observed' && image && /\.(?:jpe?g|png|webp|gif|avif|bmp)$/i.test(image.name)) {
+    picture = create('div', undefined, 'picture');
+    const bitmap = create('img');
+    bitmap.src = blobUrl(image);
+    bitmap.alt = image.name;
+    if (Array.isArray(visual.size_px) && visual.size_px.length === 2) {
+      [bitmap.width, bitmap.height] = visual.size_px;
+    }
+    picture.append(bitmap);
+    figure.append(picture, create('figcaption', image.name));
+  } else {
+    const note = visual?.observation === 'unobserved' ? '本稿未观察截图。' + (visual.reason || '')
+      : visual?.observation === 'observed' ? '已记录观察。请选择图源文件以显示编号。'
+      : '本稿没有截图观察。';
+    figure.append(create('p', note, 'note'));
+  }
+  const elements = create('div');
+  for (const [position, [id, element]] of entries(data.elements).entries()) {
+    const ref = data.screen + '.' + id;
+    const name = element?.name || element?.label || id;
+    const anchor = entry.id + '-' + position;
+    const label = create('span', name + ' · ');
+    label.append(create('code', ref));
+    const detail = details(label, element, anchor);
+    elements.append(detail);
+    if (picture && visual.bbox_format === 'normalized_xywh' && validBbox(element?.bbox)) {
+      const number = String(position + 1);
+      label.prepend(create('span', number, 'mark'), ' ');
+      const frame = link('', '#' + anchor);
+      frame.className = 'box';
+      frame.setAttribute('aria-label', number + ' · ' + name);
+      frame.append(create('span', number, 'mark'));
+      const [x, y, width, height] = element.bbox.map(value => (value * 100) + '%');
+      Object.assign(frame.style, {left: x, top: y, width, height});
+      frame.addEventListener('click', () => { detail.open = true; });
+      picture.append(frame);
+    }
+  }
+  rules.append(create('h3', '元素与规则'), elements);
+  const otherRules = Object.fromEntries(entries(data).filter(([key]) =>
+    !['format_version', 'feature', 'title', 'screen', 'flow', 'elements', 'visual', 'sources', 'acceptance_examples'].includes(key)));
+  if (entries(otherRules).length) rules.append(details('屏幕规则和待决', otherRules));
+  if (visual?.observation === 'observed' && visual.depicted_state) {
+    rules.append(details('截图示例状态', visual.depicted_state));
+  }
+  if (data.acceptance_examples) rules.append(details('验收例子', data.acceptance_examples));
+  showSources(rules, sources, files);
+  layout.append(figure, rules);
+  article.append(layout);
+}
+
+function showFlow(article, entry, docs, files) {
+  const data = entry.data;
+  const list = create('ul');
+  for (const [id, ref] of entries(data.screens)) {
+    const row = create('li');
+    const match = docs.find(item => item.file === findFile(files, ref, entry.file) && item.data.screen === id);
+    row.append(match ? link(match.data.title || id, '#' + match.id) : id + '（未选中此屏幕文件）');
+    list.append(row);
+  }
+  article.append(list, details('跨页流转', data.transitions));
+  if (data.open_questions) article.append(details('跨页待决', data.open_questions));
+  if (data.acceptance_examples) article.append(details('验收例子', data.acceptance_examples));
+  showSources(article, sourcesFor(entry), files);
+}
+
+async function readSelection(files) {
+  const request = ++selection;
+  const yamls = files.filter(file => file.name.endsWith('.ux.yaml'));
+  const loaded = await Promise.all(yamls.map(async (file, position) => {
+    try {
+      const data = jsyaml.load(await file.text());
+      if (data?.format_version !== '0.2' || (!data.screen && !data.screens)) {
+        throw new Error('需要 UX 0.2 屏幕或流程文档');
+      }
+      return {file, data, id: 'doc-' + position};
+    } catch (error) {
+      return {file, error: error.message};
+    }
+  }));
+  if (request !== selection) return;
+  for (const url of blobs.splice(0)) URL.revokeObjectURL(url);
+  contents.replaceChildren();
+  index.replaceChildren();
+  const docs = loaded.filter(item => item.data);
+  status.textContent = yamls.length ? '已读取 ' + docs.length + ' 份 UX 文档。' : '所选内容没有 *.ux.yaml。';
+  for (const item of loaded.filter(document => document.error)) {
+    contents.append(create('p', localPath(item.file) + ' · ' + item.error, 'note'));
+  }
+  const readingOrder = new Set();
+  for (const flow of docs.filter(item => item.data.screens)) {
+    readingOrder.add(flow);
+    for (const [id, ref] of entries(flow.data.screens)) {
+      const screen = docs.find(item => item.file === findFile(files, ref, flow.file) && item.data.screen === id);
+      if (screen) readingOrder.add(screen);
+    }
+  }
+  for (const entry of docs) readingOrder.add(entry);
+  for (const entry of readingOrder) {
+    const title = entry.data.title || entry.data.screen || entry.file.name;
+    const article = create('article');
+    article.id = entry.id;
+    article.append(create('h2', title));
+    index.append(link(title, '#' + entry.id));
+    if (entry.data.screen) showScreen(article, entry, docs, files);
+    else showFlow(article, entry, docs, files);
+    contents.append(article);
+  }
+}
+
+for (const id of ['directory', 'files']) {
+  document.getElementById(id).addEventListener('change', event => {
+    const files = [...event.target.files];
+    event.target.value = '';
+    if (files.length) readSelection(files);
+  });
+}
+</script>
+</body>
+</html>

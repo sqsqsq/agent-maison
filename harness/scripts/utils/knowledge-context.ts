@@ -128,6 +128,8 @@ export function renderExtensionKnowledgeRoutes(bundle: ExtensionBundle, root: st
   return lines.join('\n');
 }
 
+const DESIGN_KNOWLEDGE_UNDECLARED = 'component-design knowledge：未声明可选资产（extension → profile）。';
+
 /** 可选 key：不在根 Skill 使用会被 docs 当必填的 asset marker。 */
 export function resolveDesignKnowledge(context: KnowledgeContext, bundle: ExtensionBundle, layout: RepoLayout, profile: string): { path?: string; notice?: string } {
   if (bundle.errors.length) return { notice: 'component-design knowledge：extension manifest 不可用，不能视为未声明或回退 profile。' };
@@ -135,13 +137,13 @@ export function resolveDesignKnowledge(context: KnowledgeContext, bundle: Extens
   const hasExtension = Boolean(bundle.skillAssetAbsPaths['component-design']?.knowledge);
   if (!hasExtension && !loaded.ok) return { notice: 'component-design knowledge：profile 清单不可读：' + loaded.errors.join('；') };
   const hasProfile = Boolean(loaded.manifest?.assets['component-design']?.knowledge);
-  if (!hasExtension && !hasProfile) return { notice: 'component-design knowledge：未声明可选资产（extension → profile）。' };
+  if (!hasExtension && !hasProfile) return { notice: DESIGN_KNOWLEDGE_UNDECLARED };
   const result = resolveSkillAssetPath(context.projectRoot, profile,
     loaded.manifest ?? { schema_version: '1.0', profile, assets: {} }, 'component-design', 'knowledge', layout, bundle.skillAssetAbsPaths);
   return result.ok ? { path: result.absPath } : { notice: result.error };
 }
 
-export function assembleKnowledge(context: KnowledgeContext): KnowledgeAssembly {
+export function assembleKnowledge(context: KnowledgeContext, only?: 'design-knowledge'): KnowledgeAssembly {
   const root = context.projectRoot;
   const frameworkRoot = context.frameworkRoot ?? inferRepoLayout(root).frameworkRoot;
   const layout: RepoLayout = { projectRoot: root, frameworkRoot, frameworkRel: relative(root, frameworkRoot), kind: root === frameworkRoot ? 'standalone' : 'consumer' };
@@ -175,6 +177,15 @@ export function assembleKnowledge(context: KnowledgeContext): KnowledgeAssembly 
       return undefined;
     }
   };
+  const addDesignKnowledge = () => {
+    const asset = resolveDesignKnowledge(context, bundle, layout, profile);
+    if (asset.path) add('design-knowledge', asset.path, 'P1 discovery 前读取；只引用原文，不扩大 authority', read(asset.path));
+    if (asset.notice && (only === undefined || asset.notice !== DESIGN_KNOWLEDGE_UNDECLARED)) out.notices.push(asset.notice);
+  };
+  if (only === 'design-knowledge') {
+    addDesignKnowledge();
+    return out;
+  }
   for (const source of NATIVE_KNOWLEDGE) {
     if (!context.staticOnly && context.role === 'verifier') {
       if (source.kind === 'conventions' && context.phase !== 'review') continue;
@@ -193,11 +204,7 @@ export function assembleKnowledge(context: KnowledgeContext): KnowledgeAssembly 
     }
   }
   const design = context.skill === 'component-design' || context.subject === 'component-design';
-  if (design) {
-    const asset = resolveDesignKnowledge(context, bundle, layout, profile);
-    if (asset.path) add('design-knowledge', asset.path, 'P1 discovery 前读取；只引用原文，不扩大 authority', read(asset.path));
-    if (asset.notice) out.notices.push(asset.notice);
-  }
+  if (design) addDesignKnowledge();
   for (const entry of selectExtensionPhaseKnowledge(bundle, context.phase ?? '', { includeBound: true })) {
     const audienceMatch = selectExtensionPhaseKnowledge(bundle, context.phase ?? '').some(item => item.path === entry.path);
     const slots = Object.entries(bundle.phaseBindings[context.phase ?? ''] ?? {}).filter(([, bindings]) => bindings?.some(binding => binding.kind === 'knowledge' && binding.ref === entry.path)).map(([slot]) => slot);

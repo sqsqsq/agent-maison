@@ -1,0 +1,77 @@
+format_version: "0.2"
+feature: bc-openCard-2
+screen: sms_verification
+title: 输入验证码
+presentation: bottom_sheet
+flow: bc-openCard-2.flow.ux.yaml
+visual:
+  source: fig5
+  observation: observed
+  size_px: [1320, 2120]
+  bbox_format: normalized_xywh
+  depicted_state:
+    phone_notice: 前三位、四个星号、后四位
+    next_button: 数字键盘已展开，下一步按钮可见，输入为空时置灰。
+entry: {transition: open_sms}
+
+actions:
+  send_and_start_timer:
+    steps:
+      - {effect: 模拟发送验证码, count: 1}
+      - {effect: 开始倒计时, seconds: 60}
+    evidence: ["prd:24", "prd:34"]
+on_open:
+  action: send_and_start_timer
+  times_per_open: 1
+  evidence: ["prd:24", "prd:34"]
+
+elements:
+  close_button:
+    name: 关闭
+    bbox: [0.872, 0.194, 0.092, 0.057]
+    role: button
+    on_tap: {status: inferred, effect: 关闭本半模态}
+    evidence: [fig5]
+  phone_notice:
+    name: 接收验证码的手机号
+    bbox: [0.072, 0.285, 0.700, 0.050]
+    role: text
+    source: 当前账号的模拟手机号
+    evidence: ["prd:34", fig5]
+  verification_input:
+    name: 短信验证码输入框
+    bbox: [0.070, 0.367, 0.641, 0.058]
+    role: input
+    accepts: 数字
+    max_length: 6
+    valid_when: 恰好六位数字，本期接受任意这样的组合。
+    evidence: ["prd:24", "prd:34", fig5]
+  resend_button:
+    name: 倒计时与重新发送
+    bbox: [0.746, 0.374, 0.187, 0.044]
+    role: button
+    states:
+      counting: {when: 剩余秒数大于零, label: "{剩余秒数} 秒后重试", enabled: false}
+      ready: {when: 倒计时归零, label: 重新发送, enabled: true, on_tap: {action: send_and_start_timer}}
+    evidence: ["prd:24", "prd:34", fig5]
+  next_button:
+    bbox: [0.036, 0.476, 0.928, 0.061]
+    role: button
+    label: 下一步
+    enabled_when: verification_input 的内容是六位数字
+    on_tap: {transition: record_card}
+    evidence: ["prd:24", "prd:34", fig5]
+
+acceptance_examples:
+  - id: first_send_and_resend
+    scenario: "07"
+    given: 新打开验证码半模态，模拟发送次数从零计数。
+    when: {element: resend_button, action: 观察首次发送，在倒计时中尝试点按，归零后再点一次。}
+    then: 打开即发送一次并开始 60 秒倒计时，中途点按次数仍为一。归零后点按才产生第二次发送并重启 60 秒倒计时。
+    evidence: ["prd:24", "prd:34"]
+  - id: any_six_digits
+    scenario: "08"
+    given: 使用可识别手机号的模拟账号，打开验证码半模态，并使用一个以零开头的六位模拟验证码。
+    when: {elements: [phone_notice, verification_input, next_button], action: 核对手机号提示，尝试输入非数字，逐位输入数字至五位、六位，再点下一步。}
+    then: 提示的手机号对应当前账号。输入框仅接纳数字，五位时下一步禁用，六位时可提交所选卡。
+    evidence: ["prd:24", "prd:34"]

@@ -1,0 +1,40 @@
+format_version: "0.2"
+feature: sample-feature
+screen: sample_screen
+title: 示例界面
+# 示例稿在 ux/，原件在与 ux/ 同级的 requirements/。路径从本稿所在目录起算。
+# 与流程模板配用时，把本稿另存为 sample-screen.ux.yaml，以 flow: sample-flow.ux.yaml 替换本稿 sources。
+# 入口用 entry: {transition: open_choices}，确认按钮用 on_tap: {transition: open_confirmation}。
+sources:
+  prd: ../requirements/需求.md
+  screenshot: ../requirements/界面.png
+visual:
+  source: screenshot
+  observation: unobserved
+  reason: 本轮未收到图像。
+entry:
+  trigger: 打开设置中的选项面板
+  evidence: ["prd:2"]
+data:
+  supported_options:
+    source: 当前账户的可用选项
+    evidence: ["prd:3"]
+elements:
+  choice_options:
+    name: 可用选项
+    role: single_select
+    items_from: supported_options
+    row: {label: 当前选项的名称, trailing: radio}
+    on_select: {effect: 只选中当前项}
+    evidence: ["prd:3"]
+  confirm_button:
+    label: 确认
+    role: button
+    on_tap: {effect: 保存当前选择}
+    evidence: ["prd:3"]
+acceptance_examples:
+  - id: confirm_choice
+    given: 当前列出两个可用选项
+    when: {elements: [choice_options, confirm_button], action: 选择第二项并确认}
+    then: 保存第二项
+    evidence: ["prd:3"]

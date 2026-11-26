@@ -158,14 +158,43 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
       assert(fs.readFileSync(path.join(root, 'AGENTS.md'), 'utf8').includes('未声明可选资产'));
       const docs = validateProfileSkillAssetsForProject(root, { kind: 'standalone', projectRoot: root, frameworkRoot, frameworkRel: '' });
       assert(docs.ok, docs.errors.join('\n'));
-      put(root, 'custom/extensions/knowledge/design.md', '# design fact\n须脱敏日志。');
+      const prepare = (...extra: string[]) => cli(root, 'scripts/check-component-blueprint.ts',
+        ['--project-root', root, '--framework-root', frameworkRoot, '--blueprint', 'fresh-design', '--design-knowledge', '--json', ...extra]);
+      const withoutAsset = prepare();
+      assert.equal(withoutAsset.status, 0, withoutAsset.stderr + withoutAsset.stdout);
+      const expectedPath = path.join(root, 'doc/features/fresh-design/blueprint/component-blueprint.yaml');
+      const absent = JSON.parse(withoutAsset.stdout);
+      assert.equal(absent.canonical_path, expectedPath);
+      assert.deepEqual(absent.knowledge.entries, []);
+      assert.deepEqual(absent.knowledge.notices, []);
+      const designPath = 'custom/extensions/knowledge/design.md';
+      const designText = '# design fact\n须脱敏日志。\n[原指引](intake.md)\n';
+      put(root, designPath, designText);
+      put(root, 'custom/extensions/knowledge/intake.md', '实际宿主设计原文。\n');
       put(root, 'custom/extensions/manifest.yaml', 'schema_version: "1.1"\nname: knowledge-test\nprovides:\n  skill_assets:\n    component-design:\n      knowledge: knowledge/design.md\n');
       materializeExtensions(root, frameworkRoot);
       for (const file of ['AGENTS.md', 'CLAUDE.md']) assert(fs.readFileSync(path.join(root, file), 'utf8').includes('custom/extensions/knowledge/design.md'));
       const view = assembleKnowledge({ projectRoot: root, frameworkRoot, skill: 'component-design' });
       assert(renderKnowledge(view).includes('须脱敏日志'));
-      assert(inspectInstanceExtensions(root, frameworkRoot).rows.some(row => row.source === 'custom/extensions/knowledge/design.md' && row.consumer.includes('P1 discovery')));
-      assert(!fs.existsSync(path.join(root, 'doc/features')));
+      assert(inspectInstanceExtensions(root, frameworkRoot).rows.some(row => row.source === designPath && row.consumer.includes('P1 discovery')));
+      const selected = prepare();
+      assert.equal(selected.status, 0, selected.stderr + selected.stdout);
+      const direct = JSON.parse(selected.stdout);
+      assert.equal(direct.canonical_path, expectedPath);
+      assert.equal(direct.knowledge.entries.length, 1);
+      assert.equal(direct.knowledge.entries[0].path, designPath);
+      assert.equal(direct.knowledge.entries[0].content, designText);
+      const pointer = assembleKnowledge({ projectRoot: root, frameworkRoot, subject: 'component-design', inlineBudgetChars: 0 }, 'design-knowledge');
+      assert.equal(pointer.entries.length, 1);
+      assert.equal(pointer.entries[0].path, designPath);
+      assert.equal(pointer.entries[0].content, undefined);
+      const mixed = prepare('--write-review');
+      assert.equal(mixed.status, 1, mixed.stderr + mixed.stdout);
+      assert(!fs.existsSync(path.join(root, 'doc/features')), '设计前只读查询不能创建蓝图或审阅材料');
+      fs.unlinkSync(path.join(root, designPath));
+      const unreadable = assembleKnowledge({ projectRoot: root, frameworkRoot, subject: 'component-design' }, 'design-knowledge');
+      assert(unreadable.notices.length);
+      assert.equal(unreadable.entries.length, 0);
     } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
   } },
   { name: 'typed and legacy verifier collectors share actual knowledge and source fingerprints', run() {

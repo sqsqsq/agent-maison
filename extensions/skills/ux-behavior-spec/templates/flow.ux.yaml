@@ -1,0 +1,34 @@
+# 假定稿件为 ux/sample-flow.ux.yaml，原件和截图在与 ux/ 同级的 requirements/。
+format_version: "0.2"
+feature: sample-feature
+title: 选项确认流程
+sources:
+  prd: ../requirements/需求.md
+  screenshot: ../requirements/界面.png
+screens:
+  sample_screen: sample-screen.ux.yaml
+# 只为已写出的 UX 文件填写 screens。借用的范围外页面在这里登记。
+existing_screens:
+  settings_screen: {title: 设置, evidence: ["prd:2"]}
+  confirmation_screen: {title: 确认页, evidence: ["prd:3"]}
+transitions:
+  open_choices:
+    from: [settings_screen]
+    trigger: 在设置页打开选项面板
+    to: sample_screen
+    evidence: ["prd:2"]
+  open_confirmation:
+    from_element: sample_screen.confirm_button
+    to: confirmation_screen
+    carry: [当前选择]
+    return_question: back_from_confirmation
+    evidence: ["prd:3"]
+# 返回落点未裁定时记录在这里，待裁定后再写确定的返回流转。
+open_questions:
+  back_from_confirmation:
+    status: open
+    elements: [sample_screen.confirm_button]
+    questions:
+      - 从确认页返回时回到选项面板还是设置页？
+      - 如果回到选项面板，是否保留本次选择？
+    evidence: ["prd:2", "prd:3"]

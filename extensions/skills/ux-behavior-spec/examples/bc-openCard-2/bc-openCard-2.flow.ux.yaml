@@ -1,0 +1,90 @@
+# 从这里阅读。四屏以“屏幕 ID.元素 ID”互引。来源与屏幕路径相对于本文件。
+format_version: "0.2"
+feature: bc-openCard-2
+title: 银行卡开卡
+status: product_draft
+sources:
+  prd: sources/开卡原始需求.md
+  entry_prd: sources/银行卡入口原始需求.md
+  fig3: sources/3-点击任意银行拉起添卡选卡半模态.jpg
+  fig4: sources/4-点击信用卡或储蓄卡后拉起选卡页面.jpg
+  fig5: sources/5-选中某张卡片后拉起短信验证.jpg
+  fig6: sources/6-短信验证完成后结果页.jpg
+screens:
+  card_type_sheet: bc-openCard-2.card-type.ux.yaml
+  bank_card_picker: bc-openCard-2.card-picker.ux.yaml
+  sms_verification: bc-openCard-2.sms.ux.yaml
+  card_result: bc-openCard-2.result.ux.yaml
+existing_screens:
+  add_card_entry: {title: 添加卡片, evidence: ["entry_prd:16", "prd:26"]}
+  add_bank_card: {title: 添加银行卡, evidence: ["entry_prd:16", "prd:30"]}
+  all_banks: {title: 全部银行, evidence: ["prd:18", "prd:30"]}
+  wallet_home: {title: 钱包首页, evidence: ["prd:26"]}
+
+transitions:
+  pick_bank:
+    from: [add_bank_card, all_banks]
+    trigger: 选择银行行
+    to: card_type_sheet
+    carry: [所选银行]
+    evidence: ["prd:16", "prd:18", "prd:30"]
+  open_card_picker:
+    from_element: card_type_sheet.continue_button
+    to: bank_card_picker
+    carry: [所选银行, 所选卡种]
+    trigger_note: 按需求规格第 3 条和页面说明第 2 项，先选择卡种，再点继续。图 4 的文件名只用来定位设计画面。
+    return_question: return_from_picker
+    evidence: ["prd:20", "prd:32", fig4]
+  open_sms:
+    from_element: bank_card_picker.next_button
+    to: sms_verification
+    carry: [所选的具体银行卡]
+    evidence: ["prd:22", "prd:32", "prd:34"]
+  record_card:
+    from_element: sms_verification.next_button
+    effect: 将所选银行卡的完整资料保存到钱包本地卡库，根据本次写入结果决定开卡成功或失败。
+    business_record: [完整卡号, 卡片类别, 银行名称, 储蓄或信用卡种, 添加时间, 华为支付开通状态, 银联手机闪付开通状态, 交易记录]
+    to: card_result
+    carry: [本次写入结果, 所选卡的完整卡号]
+    applies_to: [写入成功, 写入失败]
+    evidence: ["prd:24", "prd:34", "prd:36"]
+  finish:
+    from_element: card_result.done_button
+    exit_scope: 从添加银行卡页起，到结果页止，本轮经过的全部开卡页面与半模态。
+    after_exit: 再按返回无法重入本轮开卡过程。本轮之前的导航历史按宿主原有规则处理。
+    outcomes:
+      success: {to: wallet_home, carry: [所选卡的完整卡号]}
+      failure: {to: add_card_entry}
+    scope_note: 本期成功落点按需求规格第 6 条取钱包首页。页面说明第 4 项提到的卡详情页在规格中已明确为后续版本。
+    evidence: ["prd:26", "prd:36", "prd:40", "prd:41", "entry_prd:16"]
+
+open_questions:
+  return_from_picker:
+    status: open
+    owner: 产品与 UX 设计
+    elements: [card_type_sheet.continue_button, bank_card_picker.back_button]
+    questions:
+      - 点击“同意并继续”后，原卡种半模态是否关闭？
+      - 从具体选卡页按返回或用系统返回时，回到卡种半模态还是发起它的银行列表？两个入口是否一致？
+      - 返回或重新打开半模态时，刚才选的卡种是否保留？
+    evidence: ["prd:20", "prd:32", fig3, fig4]
+
+acceptance_examples:
+  - id: persistence_result_reaches_result_screen
+    scenario: "09"
+    given: 分别让所选卡片写入成功、写入失败。
+    when: {tap: sms_verification.next_button, with: 任意有效六位数字}
+    then: 两次都进入结果页，收到相应结果与同一张卡的完整卡号。成功时读回保存的完整卡资料。
+    evidence: ["prd:22", "prd:24"]
+  - id: finish_success_returns_home
+    scenario: "11"
+    given: 本轮从全部银行入口选了一张银行卡并成功开卡。
+    when: {tap: card_result.done_button}
+    then: 钱包首页收到该卡的完整卡号。按返回不会重现本轮开卡页。
+    evidence: ["prd:26", "prd:36"]
+  - id: finish_failure_returns_to_entry
+    scenario: "12"
+    given: 本轮从添加银行卡入口选了一张银行卡并且写入失败。
+    when: {tap: card_result.done_button}
+    then: 回到“添加卡片”入口。用户可从这里重新选择“银行卡”进入添加银行卡页，按返回也不会重现上次开卡过程。
+    evidence: ["prd:26", "prd:36", "entry_prd:16"]

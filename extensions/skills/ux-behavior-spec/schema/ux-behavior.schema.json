@@ -1,0 +1,218 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "UX 行为说明 0.2",
+  "type": "object",
+  "required": ["format_version", "feature", "title"],
+  "properties": {
+    "format_version": { "const": "0.2" },
+    "feature": { "$ref": "#/$defs/id" },
+    "title": { "type": ["string", "null"] },
+    "sources": { "$ref": "#/$defs/sources" },
+    "acceptance_examples": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/example" }
+    }
+  },
+  "oneOf": [
+    { "$ref": "#/$defs/screen" },
+    { "$ref": "#/$defs/flow" }
+  ],
+  "$defs": {
+    "text": { "type": "string", "minLength": 1 },
+    "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$" },
+    "source_path": {
+      "type": "string",
+      "pattern": "^(?![/\\\\]|[A-Za-z][A-Za-z0-9+.-]*:)[^\\\\]+$"
+    },
+    "ux_path": {
+      "allOf": [
+        { "$ref": "#/$defs/source_path" },
+        { "pattern": "\\.ux\\.yaml$" }
+      ]
+    },
+    "sources": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/$defs/id" },
+      "additionalProperties": { "$ref": "#/$defs/source_path" }
+    },
+    "source_ref": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*(?::.+)?$" },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/source_ref" }
+    },
+    "element_ref": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*\\.[A-Za-z0-9][A-Za-z0-9_-]*$"
+    },
+    "bbox": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": { "type": "number", "minimum": 0, "maximum": 1 }
+    },
+    "visual": {
+      "type": "object",
+      "required": ["source", "observation"],
+      "properties": {
+        "source": { "$ref": "#/$defs/id" },
+        "observation": { "enum": ["observed", "unobserved"] },
+        "reason": { "$ref": "#/$defs/text" },
+        "size_px": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": { "type": "integer", "minimum": 1 }
+        },
+        "bbox_format": { "const": "normalized_xywh" },
+        "depicted_state": { "type": "object", "minProperties": 1 }
+      },
+      "additionalProperties": false,
+      "if": { "properties": { "observation": { "const": "unobserved" } } },
+      "then": {
+        "not": {
+          "anyOf": [
+            { "required": ["size_px"] },
+            { "required": ["bbox_format"] },
+            { "required": ["depicted_state"] }
+          ]
+        }
+      }
+    },
+    "element": {
+      "type": "object",
+      "required": ["evidence"],
+      "anyOf": [
+        { "required": ["name"] },
+        { "required": ["label"] }
+      ],
+      "properties": {
+        "name": { "$ref": "#/$defs/text" },
+        "label": { "$ref": "#/$defs/text" },
+        "bbox": { "$ref": "#/$defs/bbox" },
+        "copy_ref": { "$ref": "#/$defs/source_ref" },
+        "evidence": { "$ref": "#/$defs/evidence" },
+        "design": {
+          "type": "object",
+          "required": ["source", "node"],
+          "properties": {
+            "source": { "$ref": "#/$defs/id" },
+            "node": { "$ref": "#/$defs/text" }
+          }
+        },
+        "on_tap": {
+          "type": "object",
+          "properties": {
+            "transition": { "$ref": "#/$defs/id" },
+            "to": { "$ref": "#/$defs/id" },
+            "question": { "$ref": "#/$defs/id" }
+          }
+        }
+      }
+    },
+    "example": {
+      "type": "object",
+      "required": ["id", "given", "when", "then", "evidence"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "given": { "type": ["string", "object", "array"] },
+        "when": { "type": ["string", "object", "array"] },
+        "then": { "type": ["string", "object", "array"] },
+        "evidence": { "$ref": "#/$defs/evidence" }
+      }
+    },
+    "screen": {
+      "required": ["screen", "elements"],
+      "not": { "anyOf": [{ "required": ["screens"] }, { "required": ["transitions"] }] },
+      "anyOf": [{ "required": ["sources"] }, { "required": ["flow"] }],
+      "properties": {
+        "screen": { "$ref": "#/$defs/id" },
+        "flow": { "$ref": "#/$defs/ux_path" },
+        "visual": { "$ref": "#/$defs/visual" },
+        "entry": {
+          "type": "object",
+          "properties": {
+            "transition": { "$ref": "#/$defs/id" },
+            "trigger": { "type": ["string", "object", "array"] },
+            "evidence": { "$ref": "#/$defs/evidence" }
+          }
+        },
+        "elements": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "$ref": "#/$defs/id" },
+          "additionalProperties": { "$ref": "#/$defs/element" }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "required": ["flow"] },
+          "then": { "properties": { "entry": { "required": ["transition"] } } },
+          "else": {
+            "properties": {
+              "entry": {
+                "required": ["trigger", "evidence"],
+                "not": { "required": ["transition"] }
+              }
+            }
+          }
+        }
+      ],
+      "if": {
+        "required": ["visual"],
+        "properties": {
+          "visual": {
+            "required": ["bbox_format"],
+            "properties": { "observation": { "const": "observed" } }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "elements": { "additionalProperties": { "not": { "required": ["bbox"] } } }
+        }
+      }
+    },
+    "flow": {
+      "required": ["sources", "screens", "transitions"],
+      "not": { "anyOf": [{ "required": ["screen"] }, { "required": ["elements"] }] },
+      "properties": {
+        "screens": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "$ref": "#/$defs/id" },
+          "additionalProperties": { "$ref": "#/$defs/ux_path" }
+        },
+        "transitions": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "$ref": "#/$defs/id" },
+          "additionalProperties": { "$ref": "#/$defs/transition" }
+        }
+      }
+    },
+    "transition": {
+      "type": "object",
+      "required": ["evidence"],
+      "properties": {
+        "from": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/id" } },
+        "from_element": { "$ref": "#/$defs/element_ref" },
+        "to": { "$ref": "#/$defs/id" },
+        "evidence": { "$ref": "#/$defs/evidence" },
+        "outcomes": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "object",
+            "required": ["to"],
+            "properties": { "to": { "$ref": "#/$defs/id" } }
+          }
+        }
+      },
+      "anyOf": [{ "required": ["from"] }, { "required": ["from_element"] }],
+      "oneOf": [{ "required": ["to"] }, { "required": ["outcomes"] }]
+    }
+  }
+}

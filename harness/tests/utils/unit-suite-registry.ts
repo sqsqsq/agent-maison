@@ -429,6 +429,7 @@ const CORE_SUITES: UnitSuiteRegistration[] = [
   { id: 'receipt-slim', modulePath: './unit/receipt-slim.unit.test', releaseOnly: true },
   { id: 'capability-preflight', modulePath: './unit/capability-preflight.unit.test' },
   { id: 'lite-json-schema', modulePath: './unit/lite-json-schema.unit.test' },
+  { id: 'ux-behavior-spec', modulePath: './unit/ux-behavior-spec.unit.test' },
   { id: 'worktree-digest', modulePath: './unit/worktree-digest.unit.test' },
   { id: 'goal-capability-gate', modulePath: './unit/goal-capability-gate.unit.test' },
   { id: 'negative-verdict-gate', modulePath: './unit/negative-verdict-gate.unit.test' },

@@ -1,5 +1,5 @@
 {
-  "excludeRootDirs": [".cursor", ".claude", ".codex", "openspec", ".git", "dist", "scripts", "temp", "framework"],
+  "excludeRootDirs": [".cursor", ".claude", ".codex", "openspec", ".git", "dist", "scripts", "extensions", "temp", "framework"],
   "excludeGlobs": [
     "AGENTS.md",
     "RELEASE-NOTES-v*.md",

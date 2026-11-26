@@ -47,6 +47,7 @@ import { resolveCurrentDisposition, type CurrentDisposition, type CurrentDisposi
 import { loadCanonicalComponentClosure } from './component-closure-path';
 import { validateComponentClosure } from './component-closure-validator';
 import { independentVerificationContext } from './verifier-material';
+import { assembleKnowledge, renderKnowledge } from './knowledge-context';
 import { ChangeUnitCandidateRejected, inspectChangeUnitCandidateBatch } from './change-unit-provider-boundary';
 
 /** The caller places this existing writer outside the native invocation's attribution window. */
@@ -684,6 +685,9 @@ export function initialDesignAuthorInstruction(input: { projectRoot: string; fra
   catch { /* A missing or malformed author draft still receives the machine-allocated ID. */ }
   const sources = (manifest.requirement_source_files ?? []).join('、') || `${manifest.report_dir}/manifest.json#requirement`;
   const schemas = ['app-component-blueprint.schema.json', 'runtime-data-flow.schema.json', 'change-unit.schema.json'];
+  const designKnowledge = observation.kind === 'author'
+    ? assembleKnowledge({ projectRoot: input.projectRoot, frameworkRoot, subject: 'component-design', role: 'author' }, 'design-knowledge')
+    : undefined;
   const designPrecheck = `npm run check:change-unit -- --project-root ${JSON.stringify(input.projectRoot)} --blueprint ${JSON.stringify(manifest.feature)} --precheck --json`;
   const parts = [
     ...(questioning ? ['本职终点：完成当前蓝图的真实独立质询；先读评审正文，再核来源与当前设计。'] : [
@@ -706,6 +710,8 @@ export function initialDesignAuthorInstruction(input: { projectRoot: string; fra
     '按原P1范围处理当前交付切片：稳定义务、可观察通道和真实内部/外部契约从原需求及工程事实取得。',
     questioning ? '本次独立质询只读；只通过结果运输返回本次JSON原件，不写蓝图或其它工程文件。'
       : `本次唯一作者写集：${observation.scope?.candidatePath ?? (observation.kind === 'decompose' ? observation.candidatesPath : path.dirname(observation.blueprintPath))}。范围候选仅经现有prepare-scope命令生成。不得写产品源码、测试、framework或其它Feature/CU；不自行签机器准入、receipt、events或完成。`,
+    ...(designKnowledge && (designKnowledge.entries.length || designKnowledge.notices.length)
+      ? [renderKnowledge(designKnowledge)] : []),
     ...prior.lines,
     ...(observation.kind === 'author' ? [
       `本次必须实际编写或补齐 ${observation.blueprintPath}，不是只调查、写author-findings.md或报告尚未完成。已有发现是中间材料；完成必要定向核实后立即把本次真实设计写进schema蓝图，并按当前机器缺口继续修到本职可交接。`,
