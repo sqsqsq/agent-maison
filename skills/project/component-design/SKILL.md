@@ -49,8 +49,9 @@ description: Create or continue component design using the unified request envel
 
 本节取代 M7“每项正式需求一律完整交接/不设档位”的现行适用范围，M7 历史裁决和已完成产物不改写。只使用同一蓝图协议，不恢复 lite 或新增可手填档位状态。
 
-- **设计写入前准备**。新写或修订蓝图的作者在 P1 事实发现和写作前取得生效知识。受管初设直接消费指令中的材料。直接新写或修订以 `/component-design <blueprint-id>` 的实参或已准备请求正式绑定的 `blueprint_id` 为准；无参沿既有请求准备与绑定取得 ID，文件名、PRD 名和稿件正文均不可代替。在 `framework/harness` 用该 ID 执行只读命令 `npm run check:component-blueprint -- --project-root "<宿主根>" --blueprint "<blueprint-id>" --design-knowledge --json`。
-- **读入与交回**。按 [asset 协议](../../README.md#profile-skill-asset-protocol) 优先用 extension 声明，未声明才回退 profile。读取返回的 `knowledge` 正文及适用引用，超预算按路径读原文。配置异常报告原诊断，无可选资产沿原流程。首次交回本次设计前，将草稿实际写入由该蓝图 ID 定位的 `canonical_path`，上游材料保持只读，人读稿沿 `--write-review` 投影。同一待决项在流程、用例和验收中保持待决，取得有依据的裁定后再写为确定步骤或预期。
+- **设计写入前准备**。新写或修订蓝图时，在 P1 事实发现及首次写作前执行。受管作者使用本次签发的 `extension_preparation`、知识正文与来源。直接作者在 `framework/harness` 运行 `npm run check:component-blueprint -- --project-root "<宿主根>" --blueprint "<blueprint-id>" --prepare-design`。ID 取调用实参，或传入 `--request-file <已准备请求>` 使用正式绑定。已知本地需求及 UX 稿分别传 `--requirement-source <项目相对文件>`、`--ux-source <项目相对*.ux.yaml>`，每项可重复。用户说本次别提取时传 `--skip-extension-action ux-behavior-spec:fill-missing`。纯查看沿原只读路径，也可用兼容查询 `--design-knowledge`。
+- **读取与取用**。按返回的知识正文及引用核源。超内联预算时按路径分段读取；适用稿先核对需求范围、屏、流转及原始出处。仅在准备发放了 `fill-missing`、本次涉及相应 UI 行为、用户允许且缺适用稿时，打开绑定的 Skill 并在指定蓝图目录的 `ux/` 先写稿、解析回读，然后把适用的 `屏幕ID.元素ID` 引用到用例和验收。AI 推导稿按证据强度记录，待决项沿用例、流程及验收保持待决，原需求和上游稿只读。缺依赖时按具体诊断交回。
+- **实际交回**。用已绑定 ID 定位 `canonical_path` 并写入本次正式草稿。对参加本次处理的绑定，在已有作者交回中保留一行 `extension-result: {"ability":"能力ID","binding":"绑定ID","status":"read|reused|generated|skipped|failed","artifacts":["项目相对路径"],"reason":"本次真实结果或原因"}`，并指出已引用的元素。受管会话传入原交回的 `details`。小型请求沿原 checker，完整蓝图人读稿沿 `--write-review`。
 
 ## 支持范围（诚实声明）
 

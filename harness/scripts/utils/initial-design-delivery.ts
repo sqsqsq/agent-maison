@@ -47,7 +47,7 @@ import { resolveCurrentDisposition, type CurrentDisposition, type CurrentDisposi
 import { loadCanonicalComponentClosure } from './component-closure-path';
 import { validateComponentClosure } from './component-closure-validator';
 import { independentVerificationContext } from './verifier-material';
-import { assembleKnowledge, renderKnowledge } from './knowledge-context';
+import { prepareDesignExtensions, renderDesignExtensionPreparation } from './design-extension-preparation';
 import { ChangeUnitCandidateRejected, inspectChangeUnitCandidateBatch } from './change-unit-provider-boundary';
 
 /** The caller places this existing writer outside the native invocation's attribution window. */
@@ -652,6 +652,14 @@ function questioningReadingInstruction(blueprintPath: string, recheck: boolean, 
 }
 
 export function initialDesignAuthorInstruction(input: { projectRoot: string; frameworkRoot: string; manifest: InitialDesignGoalManifest; observation: InitialDesignObservation; autonomyAuthorized: boolean; deliveryRuns?: readonly DeliveryRunFacts[]; material?: unknown[]; checkerResultPath?: string }): string {
+  const { manifest, observation, frameworkRoot, projectRoot } = input;
+  const request = observation.request;
+  const prepareDesign = observation.kind === 'author' && (!request || request.frame === 'small' && !request.implementation);
+  const designPreparation = prepareDesign ? prepareDesignExtensions({ projectRoot, frameworkRoot, blueprintId: manifest.feature,
+    requirement: manifest.requirement, requirementSources: request?.prepared.sourceRefs ?? manifest.requirement_source_files,
+    ...(request ? { requestFile: path.relative(projectRoot, request.prepared.requestFile).replace(/\\/g, '/') } : {}) }) : undefined;
+  const designMaterial = designPreparation ? renderDesignExtensionPreparation(designPreparation) : undefined;
+  if (designPreparation?.extension_preparation) input.material?.push({ extension_preparation: designPreparation.extension_preparation, knowledge: designPreparation.knowledge });
   if (input.observation.request) {
     const { request } = input.observation, relative = (file: string) => path.relative(input.projectRoot, file).replace(/\\/g, '/');
     const requestFile = relative(request.prepared.requestFile), reportDir = relative(request.prepared.reportDir);
@@ -664,6 +672,7 @@ export function initialDesignAuthorInstruction(input: { projectRoot: string; fra
       `原request：${requestFile}；原始业务来源：${request.prepared.sourceRefs.join('、')}。不得手改request的来源/基线/控制字段。`,
       request.implementation ? `在同一作者窗口实现并验证本请求；当前真实目标：${initialRequestWriteTargets(input.projectRoot, input.frameworkRoot, input.observation).join('、')}。沿原写界，不改framework、原run/其它请求或清理历史。`
         : `只在本请求自己的 ${input.observation.blueprintPath} 完成目标/来源、可执行验收ID、已知文件、必要局部选择四项。保留已有业务内容；不填admission，不要求完整视图、独立Q/CU或评审文档。`,
+      ...(designMaterial ? [designMaterial] : []),
       request.frame === 'small' ? `小型校验/重绑：npm run check:component-blueprint -- --project-root ${JSON.stringify(input.projectRoot)} --blueprint ${JSON.stringify(input.manifest.feature)} --request-file ${JSON.stringify(requestFile)} --prepare-source --json` : '特别简单不强制蓝图；保留旧材料，直接实现并调用本请求适用能力。',
       `实际编译：npm run compile -- --project-root ${JSON.stringify(input.projectRoot)} --session-ref ${JSON.stringify(request.prepared.intake?.session_ref ?? '')} --report-dir ${JSON.stringify(reportDir + '/compile')} --json`,
       `review/UT沿原request：npm run check -- --project-root ${JSON.stringify(input.projectRoot)} --phase <review|ut|testing> --request-file ${JSON.stringify(requestFile)}。UT用真实--test-target/--allow-test-write与canonical路径#AC-ID；必要testing仍须实际执行。固定小型/特别简单不等于排除验证，既有FAIL不能标PASS。`,
@@ -671,7 +680,6 @@ export function initialDesignAuthorInstruction(input: { projectRoot: string; fra
       `当前未完：${input.observation.issues.join('；')}。缺原件/基线时明确origin_gap，可保留局部工具结果，不伪造完整请求通过。`,
     ].join('\n\n');
   }
-  const { manifest, observation, frameworkRoot } = input;
   const questioning = observation.kind === 'questioning';
   const designRole = questioning || observation.kind === 'author';
   const prior = previousDesignWork(input);
@@ -685,9 +693,6 @@ export function initialDesignAuthorInstruction(input: { projectRoot: string; fra
   catch { /* A missing or malformed author draft still receives the machine-allocated ID. */ }
   const sources = (manifest.requirement_source_files ?? []).join('、') || `${manifest.report_dir}/manifest.json#requirement`;
   const schemas = ['app-component-blueprint.schema.json', 'runtime-data-flow.schema.json', 'change-unit.schema.json'];
-  const designKnowledge = observation.kind === 'author'
-    ? assembleKnowledge({ projectRoot: input.projectRoot, frameworkRoot, subject: 'component-design', role: 'author' }, 'design-knowledge')
-    : undefined;
   const designPrecheck = `npm run check:change-unit -- --project-root ${JSON.stringify(input.projectRoot)} --blueprint ${JSON.stringify(manifest.feature)} --precheck --json`;
   const parts = [
     ...(questioning ? ['本职终点：完成当前蓝图的真实独立质询；先读评审正文，再核来源与当前设计。'] : [
@@ -710,8 +715,7 @@ export function initialDesignAuthorInstruction(input: { projectRoot: string; fra
     '按原P1范围处理当前交付切片：稳定义务、可观察通道和真实内部/外部契约从原需求及工程事实取得。',
     questioning ? '本次独立质询只读；只通过结果运输返回本次JSON原件，不写蓝图或其它工程文件。'
       : `本次唯一作者写集：${observation.scope?.candidatePath ?? (observation.kind === 'decompose' ? observation.candidatesPath : path.dirname(observation.blueprintPath))}。范围候选仅经现有prepare-scope命令生成。不得写产品源码、测试、framework或其它Feature/CU；不自行签机器准入、receipt、events或完成。`,
-    ...(designKnowledge && (designKnowledge.entries.length || designKnowledge.notices.length)
-      ? [renderKnowledge(designKnowledge)] : []),
+    ...(designMaterial ? [designMaterial] : []),
     ...prior.lines,
     ...(observation.kind === 'author' ? [
       `本次必须实际编写或补齐 ${observation.blueprintPath}，不是只调查、写author-findings.md或报告尚未完成。已有发现是中间材料；完成必要定向核实后立即把本次真实设计写进schema蓝图，并按当前机器缺口继续修到本职可交接。`,
@@ -747,7 +751,7 @@ export function initialDesignAuthorInstruction(input: { projectRoot: string; fra
     `当前职责=${observation.kind}。${questioning && input.checkerResultPath ? `当前机器缺口见 ${input.checkerResultPath}。` : `问题：\n${observation.issues.join('\n')}`}`,
   ];
   // Historical prose is reading context; candidates and actual dependencies are observed separately.
-  input.material?.push(...parts.filter(part => !prior.lines.includes(part)).map(part =>
+  input.material?.push(...parts.filter(part => part !== designMaterial && !prior.lines.includes(part)).map(part =>
     part === parts.at(-1) && observation.disposition ? dispositionFacts(observation.disposition)
       : part === questioningInstruction ? readingMaterial : part), { formatRepair: prior.formatRepair === true });
   return parts.join('\n\n');

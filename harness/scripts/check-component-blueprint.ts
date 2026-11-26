@@ -24,7 +24,7 @@ import { renderBlueprintReviewMarkdown } from './utils/blueprint-review-projecti
 import { selectBlueprintRequestContent } from './utils/blueprint-skill-projection';
 import type { AcceptanceSpec } from './utils/types';
 import { loadFrameworkConfig } from '../config';
-import { assembleKnowledge, renderKnowledge } from './utils/knowledge-context';
+import { prepareDesignExtensions, renderDesignExtensionPreparation } from './utils/design-extension-preparation';
 import { inspectBlueprintReview, materializeBlueprintReview } from './utils/blueprint-review-materialization';
 import { computeBlueprintReaderGuideSourceDigest, inspectBlueprintReaderGuide } from './utils/blueprint-reader-guide';
 import {
@@ -47,6 +47,9 @@ interface CliArgs {
   'write-review'?: boolean;
   'reader-guide-digest'?: boolean;
   'design-knowledge'?: boolean;
+  'prepare-design'?: boolean;
+  'ux-source'?: string | string[];
+  'skip-extension-action'?: string | string[];
   'session-ref'?: string;
   'request-file'?: string;
   'report-dir'?: string;
@@ -248,37 +251,57 @@ export function prepareCanonicalBlueprintSource(projectRoot: string, blueprintId
   return [file];
 }
 
+const argumentList = (value?: string | string[]): string[] | undefined => typeof value === 'string' ? [value] : value;
+
 function main(): void {
   const args = minimist<CliArgs>(process.argv.slice(2), {
-    string: ['project-root', 'blueprint', 'ref', 'materialization', 'projection', 'feedback', 'session-ref', 'request-file', 'report-dir', 'framework-root', 'requirement-source', 'target'],
-    boolean: ['json', 'write-review', 'reader-guide-digest', 'design-knowledge', 'prepare-source'],
+    string: ['project-root', 'blueprint', 'ref', 'materialization', 'projection', 'feedback', 'session-ref', 'request-file', 'report-dir', 'framework-root', 'requirement-source', 'target', 'ux-source', 'skip-extension-action'],
+    boolean: ['json', 'write-review', 'reader-guide-digest', 'design-knowledge', 'prepare-design', 'prepare-source'],
     default: { 'project-root': process.cwd(), json: false },
   });
-  if (!args.blueprint) {
+  if (!args.blueprint && !(args['prepare-design'] && args['request-file'])) {
     console.error('用法：check-component-blueprint --project-root <root> --blueprint <blueprint-id> [--ref <json>]'
       + ' [--session-ref <native>#<user-id> | --request-file <component-design request>] [--report-dir <host-relative-dir>] [--target <file>] [--requirement-source <file>] [--prepare-source]'
       + ' [--design-knowledge | --reader-guide-digest | --write-review | --materialization <path> | --projection <path> | --feedback <path>] [--json]');
+    console.error('设计前准备：--prepare-design [--blueprint <blueprint-id>] [--request-file <已准备请求>] [--requirement-source <path>] [--ux-source <path>] [--skip-extension-action <能力ID:绑定ID>]');
     process.exit(2);
   }
   let prepared: ReturnType<typeof prepareDesignRequest> | undefined;
   let context: ComponentBlueprintValidationContext = {};
   const preparation = createDesignPreparationWrite();
   try {
-    if (args['design-knowledge']) {
+    if (args['design-knowledge'] || args['prepare-design']) {
+      const lookupOnly = Boolean(args['design-knowledge']);
       if (args['write-review'] || args['reader-guide-digest'] || args.materialization || args.projection || args.feedback || args.ref
-        || args['session-ref'] || args['request-file'] || args['prepare-source'] || args['report-dir'] || args['requirement-source'] || args.target) {
-        throw new Error('--design-knowledge 是设计准备的独立只读模式。');
+        || args['session-ref'] || args['prepare-source'] || args['report-dir'] || args.target
+        || lookupOnly && (args['prepare-design'] || args['request-file'] || args['requirement-source'] || args['ux-source'] || args['skip-extension-action'])) {
+        throw new Error('--design-knowledge / --prepare-design 是独立只读模式。');
       }
       const projectRoot = path.resolve(args['project-root']!);
-      const canonicalPath = componentBlueprintPath(projectRoot, args.blueprint);
       const frameworkRoot = args['framework-root'] ?? resolveProbeFrameworkRoot(projectRoot, __dirname);
-      const knowledge = assembleKnowledge({ projectRoot, frameworkRoot, subject: 'component-design', role: 'author' }, 'design-knowledge');
-      console.log(args.json ? JSON.stringify({ canonical_path: canonicalPath, knowledge }, null, 2)
-        : `蓝图位置：${canonicalPath}
-
-${renderKnowledge(knowledge)}`);
+      const requestFile = args['request-file'];
+      const request = requestFile ? asRecord(JSON.parse(fs.readFileSync(realProjectPath(projectRoot, requestFile, 'component-design request'), 'utf8'))) : undefined;
+      const boundId = asRecord(asRecord(request?.blueprint)?.ref)?.blueprint_id;
+      if (args.blueprint && boundId !== undefined && boundId !== args.blueprint) throw new Error('准备的蓝图 ID 必须与原 request 正式绑定一致。');
+      const blueprintId = args.blueprint ?? (typeof boundId === 'string' && boundId);
+      if (!blueprintId) throw new Error('缺少 --blueprint 或原 request 正式绑定的蓝图 ID。');
+      const original = requestFile ? prepareDesignRequest({ projectRoot, frameworkRoot, blueprintId, requestFile, readonly: true }) : undefined;
+      const requirementSources = (argumentList(args['requirement-source']) ?? []).map(source => {
+        const [file, ...fragment] = source.split('#');
+        const absolute = realProjectPath(projectRoot, file, 'requirement source');
+        if (!fs.statSync(absolute).isFile()) throw new Error('需求来源必须是文件：' + file);
+        return [path.relative(projectRoot, absolute).replace(/\\/g, '/'), ...fragment].join('#');
+      });
+      const result = prepareDesignExtensions({ projectRoot, frameworkRoot, blueprintId, lookupOnly, requestFile,
+        requirement: original?.intake?.user.text,
+        requirementSources: [...original?.sourceRefs ?? [], ...requirementSources],
+        uxSources: argumentList(args['ux-source']), skipActions: argumentList(args['skip-extension-action']) });
+      console.log(args.json ? JSON.stringify(result, null, 2)
+        : `蓝图位置：${result.canonical_path}\n\n${renderDesignExtensionPreparation(result)}`);
       return;
     }
+    if (args['ux-source'] || args['skip-extension-action']) throw new Error('--ux-source / --skip-extension-action 只用于 --prepare-design。');
+    if (!args.blueprint) throw new Error('缺少 --blueprint');
     if (args['reader-guide-digest']) {
       if (args['write-review'] || args.materialization || args.projection || args.feedback || args.ref) throw new Error('--reader-guide-digest 是独立只读模式，不能与其它模式混用。');
       const loaded = loadCanonicalBlueprint(args['project-root']!, args.blueprint);
@@ -320,10 +343,9 @@ ${renderKnowledge(knowledge)}`);
     const wantsContext = Boolean(args['session-ref'] || args['request-file'] || args['prepare-source'] || args['report-dir'] || args.target || shortShaped);
     if (wantsContext) {
       if (!profileHasDesignLens(loadFrameworkConfig(root).project_profile.name)) throw new ComponentBlueprintResolutionError('blueprint_design_lens_unsupported', '当前profile没有已支持的design lens。');
-      const list = (value?: string | string[]): string[] | undefined => typeof value === 'string' ? [value] : value;
       prepared = prepareDesignRequest({ projectRoot: root, frameworkRoot: args['framework-root'] ?? resolveProbeFrameworkRoot(root, __dirname),
         blueprintId: args.blueprint, sessionRef: args['session-ref'], requestFile: args['request-file'], reportDir: args['report-dir'],
-        targets: list(args.target), requirementSources: list(args['requirement-source']), readonly: readonlyDesign,
+        targets: argumentList(args.target), requirementSources: argumentList(args['requirement-source']), readonly: readonlyDesign,
         captureDirtyAtPrepare: !readonlyDesign, write: preparation.write });
       context = { requestIntake: prepared.intake, requestSourceItems: prepared.currentScopeItems };
       if (args['prepare-source'] && !prepared.originGap) prepareCanonicalBlueprintSource(root, args.blueprint, context,

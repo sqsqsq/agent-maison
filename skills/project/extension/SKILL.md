@@ -1,51 +1,38 @@
 ---
 name: extension
-description: 管理实例侧 doc/extensions：初始化、检视、添加声明、全 adapter 物化、校验与调整。用于接入业务 Skill、知识、hooks、capability、phase rule overlay、skill assets、MCP action 与 Feature phase binding。
+description: 从本地目录安装、启用、停用、卸载或检视实例扩展。支持手动 Skill、设计前知识与动作、Feature 贡献、hooks 和 M7 接缝。
 ---
 
 # Extension（实例扩展管理）
 
-| 注入面 | 生效时机 | 强制力 |
-|---|---|---|
-| extension skill | 用户 `/<bridgeId>` 或 AGENTS.md 路由 | agent 侧 |
-| hooks `.md` / `.mjs` | harness run 的 8 个内部事件；fragment 下一轮可见 | `.mjs` 失败进入 CheckResult |
-| phase_rules_overlays | phase 规则合并时 | harness 强制 |
-| capabilities | 能力裁决 / 降级时 | harness 强制 |
-| skill_assets | 对应 Skill 消费时 | harness 强制 |
-| knowledge（audience 路由） | phase → 作者/prepare/verifier；AGENTS/CLAUDE 展示 global 与 phase 静态路由 | 文本指令 + inspect 证据 |
-| phase_bindings 三槽位 | Feature phase 动笔前 / 校验前 / 校验后关环前 | 文本指令或既有 check / receipt 门禁 |
-| mcp_actions | 绑定槽位内由 agent 调用，produces 落项目内 | 产物校验进入既有 CheckResult |
-| story 类接入（M7 三接缝） | `/component-design` 前产出 materialization，之后消费 publication / 产出 feedback | `check:component-blueprint --materialization/--feedback` fail-closed |
+通过当前 Agent 的项目命令、Skill 或根项目指引进入。具名命令和用户同义说法共用以下操作。当前项目的配置与原请求写权继续生效。
 
-强度只认三档：`available`（声明与入口可用）、`scheduled`（已绑定时机）、`evidenced`（有可验证产物或检查结果）。`trace.tool_calls` 仅是审计线索，不单独证明完成。
-
-项目请求的输入、原生入口与停止点见 [project-entry](../../../docs/operations/project-entry.md)；仅执行本次授权职责，不由本 Skill 自行启动后继。
-
-## 入口与意图
-
-`/extension` 不暴露一组需要记忆的子命令。先根据用户原话归入一个意图，再调用同一确定性 CLI：
+在宿主的 `framework/harness` 工作目录中调用：
 
 ```bash
-cd framework/harness
-npx ts-node scripts/extension.ts --project-root <宿主工程根> --action <init|inspect|materialize|verify> --json
+npx ts-node scripts/extension.ts <操作及其参数> --project-root "<宿主工程根>" --json
 ```
 
-- `init`：仅补齐缺失 skeleton；已有文件不覆盖。
-- `inspect`：首屏展示 manifest、bundle、桥接和产物的纯派生表；不写状态。
-- `add` / `bind`：编辑 `doc/extensions/manifest.yaml` 与其引用的项目内文件，然后立即 `verify`。
-- `materialize`：只读项目级 `materialized_adapters[]`，全量幂等刷新桥接与 AGENTS/CLAUDE 入口；不读个人 `agent_adapter`。
-- `verify`：运行 CLI，并再跑 `npx ts-node harness-runner.ts --phase extensions --feature _global`。
-- `adjust`：根据 inspect / verify 的精确 finding 修改唯一真源，再 materialize；不直接修生成物。
+| 具名操作 | 用户说法示例 | 处理 |
+| --- | --- | --- |
+| `install <本地目录> [能力ID]` | 从这个目录安装 UX 行为说明 | 初始化缺失骨架，导入选中能力，校验并刷新项目已接入的入口。展示手动入口、自动绑定及不可用原因。 |
+| `enable <能力ID> [绑定ID]` | 以后让蓝图在缺稿时自动提取 UX | 示例对应 `enable ux-behavior-spec fill-missing`。省略绑定 ID 启用整项能力。 |
+| `disable <能力ID> [绑定ID]` | 以后关闭自动提取，保留手动 UX | 示例对应 `disable ux-behavior-spec fill-missing`。省略绑定 ID 时停用整项的手动和自动参与。 |
+| `uninstall <能力ID>` | 卸掉已装的 UX | 卸载仍在使用原签发资源的请求须等待原请求交回。返回请求 ID 和保留路径。 |
+| `inspect [能力ID]` | 现在能在哪儿用 | 只读展示当前可用性、绑定时点、入口和缺口。用户问上次时加 `--request <请求ID或项目相对请求路径>`，读本次真实原件并说明证据缺口。 |
 
-## add / bind 纪律
+裸入口展示当前检视和常用说法。能力译名先用检视解析成稳定 ID。作用范围、能力和本地来源明确时，直接调用对应 CLI。一次性「这次别提取」交给本次作者准备，不调用项目级 `disable`。
 
-1. 先 `inspect`，确认已有 manifest 与目录事实。
-2. 只写 manifest 支持的域：`skills`、`knowledge`、`hooks`、`capabilities`、`skill_assets`、`phase_rules_overlays`、`mcp_actions`、`phase_bindings`。
-3. 新增 Skill 时同时创建 `skills/<id>/SKILL.md` 并在 `provides.skills[]` 声明；1.1 起未声明目录不物化。
-4. `phase_bindings` 只管 Feature phases，只有 `before_phase_work`、`before_phase_verify`、`after_phase_verify_before_close`；没有 `before_component_design`。设计前置输入由扩展 Skill 自身流程承载。
-   phase 名必须来自 active workflow 的 Feature scope（Feature phase 集）；global phase 与拼错的 slug 都会失败。
-5. `/component-design` 前的可选知识用 `provides.skill_assets.component-design.knowledge: knowledge/<文件>.md`，由共享装配和根 Skill 在 P1 discovery 前真实读取；extension 优先于 profile 同 key，两处都未声明合法，不发明 audience。资料正文可引用已有项目内权威源，不复制契约。
-6. 每次编辑后 `verify`，通过后再 `materialize` 并复查 `inspect`。
+安装读取含清单的本地目录。宿主持久选择统一写入 `paths.extension_dir/manifest.yaml`。重装保留既有宿主开关，新出现的自动绑定保持关闭并列出供选择。同名宿主文件、已修改副本和项目手写资料按结果说明保留。扩展后续执行读取已安装资源。
+
+检视区分 `available`（依赖具备）、`scheduled`（按支持时点绑定）和 `evidenced`（真实交付或检查的证据）。用户问实际参与时核对对应请求交付、交回和产物。旧稿存在仅供定位。纯文案直修按该原请求交付。
+
+## 维护操作及手写声明
+
+- `init / materialize / verify` 仍可用原 `--action` 参数。初始化仅补缺失；物化按项目 `materialized_adapters[]` 刷新生成入口；校验也由 `harness-runner.ts --phase extensions --feature _global` 消费。
+- 手工维护时先检视，编辑清单和它引用的项目内资源，再校验和物化。现有 Feature phase bindings、knowledge、hooks、MCP actions、capabilities 和 skill assets 继续按原消费方工作。
+- 新设计前贡献可绑定 `component-design.before_discovery@1`。旧 `provides.skill_assets.component-design.knowledge` 沿用 extension 优先于 profile 的规则。发布件支持的时点、许可资源、诊断和验收口径见 [实例扩展协议](../../../docs/evolution/extension-protocol-v1.md)。
+- 根项目入口与分流见 [project-entry](../../../docs/operations/project-entry.md)。
 
 ## MCP 与 M7 红线
 
@@ -58,4 +45,4 @@ npx ts-node scripts/extension.ts --project-root <宿主工程根> --action <init
 
 ## 生成物保护
 
-扩展 bridge 带 ownership 标记。只有“标记存在且内容仍等于规范渲染”的文件可覆盖或清理；标记内容漂移只报告不动；无标记文件不接管。`manifest.yaml` 与扩展 Skill 源始终是 SSOT。
+扩展 bridge 按 ownership 标记和上次生成指纹处理。当前内容仍匹配时可刷新或清理。已改写或宿主自有文件保留并报告。`manifest.yaml` 与扩展 Skill 源始终是 SSOT。

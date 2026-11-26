@@ -64,17 +64,17 @@ const relative = (root: string, file: string): string => path.relative(root, fil
 
 /** 路由的唯一视图；1.0 声明可检视，不自动获得 1.1 audience。 */
 export function extensionKnowledgeRoutes(bundle: ExtensionBundle | undefined, root: string) {
-  if (!bundle || bundle.errors.length) return [];
+  if (!bundle?.manifestUsable) return [];
   return bundle.knowledge.map(entry => ({
     entry,
     path: relative(root, entry.absPath),
-    routed: bundle.manifestVersion === '1.1',
-    audience: entry.audience === 'global' ? ['global'] : entry.legacy ? bundle.featurePhases : entry.audience,
+    routed: bundle.manifestVersion !== '1.0' && entry.audience !== 'none',
+    audience: entry.audience === 'global' ? ['global'] : entry.audience === 'none' ? [] : entry.legacy ? bundle.featurePhases : entry.audience,
   }));
 }
 
 export function selectExtensionPhaseKnowledge(bundle: ExtensionBundle | undefined, phase: string, opts?: { includeBound?: boolean }): ExtensionKnowledgeEntry[] {
-  if (!bundle || bundle.manifestVersion !== '1.1' || bundle.errors.length || !bundle.featurePhases.includes(phase)) return [];
+  if (!bundle?.manifestUsable || bundle.manifestVersion === '1.0' || !bundle.featurePhases.includes(phase)) return [];
   const entries = bundle.knowledge.filter(item => item.legacy || (Array.isArray(item.audience) && item.audience.includes(phase)));
   if (opts?.includeBound) for (const bindings of Object.values(bundle.phaseBindings[phase] ?? {})) {
     for (const binding of bindings ?? []) {
@@ -86,7 +86,7 @@ export function selectExtensionPhaseKnowledge(bundle: ExtensionBundle | undefine
 }
 
 export function renderExtensionPhaseInputs(bundle: ExtensionBundle | undefined, phase: string, root: string): string {
-  if (!bundle || bundle.manifestVersion !== '1.1' || bundle.errors.length || !bundle.featurePhases.includes(phase)) return '';
+  if (!bundle?.manifestUsable || bundle.manifestVersion === '1.0' || !bundle.featurePhases.includes(phase)) return '';
   const knowledge = selectExtensionPhaseKnowledge(bundle, phase);
   const slots = bundle.phaseBindings[phase] ?? {};
   if (!knowledge.length && !Object.keys(slots).length) return '';
@@ -101,9 +101,11 @@ export function renderExtensionPhaseInputs(bundle: ExtensionBundle | undefined, 
     lines.push(`### ${slot}`, '');
     for (const item of slots[slot]!) {
       const action = item.kind === 'mcp' ? bundle.mcpActions[item.ref] : undefined;
+      const skill = item.kind === 'skill' ? bundle.bindings.find(binding => binding.enabled && !binding.legacy
+        && binding.phase === phase && binding.slot === slot && binding.resource === 'skill' && binding.ref === item.ref) : undefined;
       lines.push(action
         ? '- mcp `' + item.ref + '` → tool `' + action.tool + '`; ' + action.usage + '; produces: ' + action.produces.map(value => '`' + value + '`').join(', ')
-        : `- ${item.kind} ` + '`' + item.ref + '`');
+        : `- ${item.kind} ` + '`' + item.ref + '`' + (skill?.absPath ? ' → `' + relative(root, skill.absPath) + '`' : ''));
     }
     lines.push('');
   }
@@ -118,7 +120,7 @@ export function renderExtensionKnowledgeRoutes(bundle: ExtensionBundle, root: st
     lines.push('### 实例知识路由', '', '| 路径 | audience / 读取时机 | 摘要 |', '|---|---|---|');
     for (const row of rows) lines.push(`| [${row.path}](${row.path}) | ${row.audience.join(', ')} | ${row.entry.summary || '—'} |`);
   }
-  if (bundle.manifestVersion === '1.1' && !bundle.errors.length) {
+  if (bundle.manifestUsable && bundle.manifestVersion !== '1.0') {
     for (const [phase, slots] of Object.entries(bundle.phaseBindings)) {
       if (!slots.before_phase_work?.length) continue;
       lines.push('', '- `' + phase + '` 动笔前：先按 `' + relative(root, bundle.manifestPath!) + '` 处理 '
@@ -128,11 +130,13 @@ export function renderExtensionKnowledgeRoutes(bundle: ExtensionBundle, root: st
   return lines.join('\n');
 }
 
+export const DESIGN_PREPARATION_AT = 'component-design.before_discovery@1';
+
 const DESIGN_KNOWLEDGE_UNDECLARED = 'component-design knowledge：未声明可选资产（extension → profile）。';
 
 /** 可选 key：不在根 Skill 使用会被 docs 当必填的 asset marker。 */
 export function resolveDesignKnowledge(context: KnowledgeContext, bundle: ExtensionBundle, layout: RepoLayout, profile: string): { path?: string; notice?: string } {
-  if (bundle.errors.length) return { notice: 'component-design knowledge：extension manifest 不可用，不能视为未声明或回退 profile。' };
+  if (!bundle.manifestUsable) return { notice: 'component-design knowledge：extension manifest 不可用，不能视为未声明或回退 profile。' };
   const loaded = loadSkillAssetsManifest(context.projectRoot, profile, layout);
   const hasExtension = Boolean(bundle.skillAssetAbsPaths['component-design']?.knowledge);
   if (!hasExtension && !loaded.ok) return { notice: 'component-design knowledge：profile 清单不可读：' + loaded.errors.join('；') };
@@ -151,7 +155,8 @@ export function assembleKnowledge(context: KnowledgeContext, only?: 'design-know
   const profile = context.profileName ?? config?.project_profile.name ?? 'hmos-app';
   const bundle = context.extensionBundle ?? loadInstanceExtensions(root, context.paths?.extension_dir ?? config?.paths.extension_dir, { frameworkRoot });
   const out: KnowledgeAssembly = { entries: [], notices: [], extensionInstructions: renderExtensionPhaseInputs(bundle, context.phase ?? '', root) };
-  if (bundle.errors.length) out.notices.push('extension 输入不可用：' + bundle.errors.map(error => `${error.code}: ${error.message}`).join('；'));
+  if (bundle.errors.length) out.notices.push((bundle.manifestUsable ? 'extension 局部输入不可用：' : 'extension 清单不可用：')
+    + bundle.errors.map(error => `${error.code}: ${error.message}`).join('；'));
   // global 材料由各自现有 collector 提供；不混入 Feature 知识，也不关闭自定义 global verifier。
   if (context.subject === 'global') return out;
   let budget = Math.max(0, context.inlineBudgetChars ?? 16_000);
@@ -162,7 +167,7 @@ export function assembleKnowledge(context: KnowledgeContext, only?: 'design-know
     let available = false;
     try { available = fs.statSync(absolute).isFile(); } catch { /* 只披露；原 checker 决定缺失的处置 */ }
     const entry: KnowledgeEntry = { kind, path: file, purpose, available };
-    if (content && !context.staticOnly) {
+    if (content !== undefined && !context.staticOnly) {
       if (content.length <= budget) { entry.content = content; budget -= content.length; }
       else entry.purpose += '；正文超过内联预算，须按原路径分批读取，未声称读完';
     }
@@ -184,6 +189,11 @@ export function assembleKnowledge(context: KnowledgeContext, only?: 'design-know
   };
   if (only === 'design-knowledge') {
     addDesignKnowledge();
+    for (const binding of bundle.bindings) {
+      if (binding.enabled && binding.at === DESIGN_PREPARATION_AT && binding.kind === 'knowledge' && binding.absPath) {
+        add('extension', binding.absPath, `设计背景 ${binding.ability}:${binding.id}；按原需求范围引用`, read(binding.absPath));
+      }
+    }
     return out;
   }
   for (const source of NATIVE_KNOWLEDGE) {
@@ -205,10 +215,20 @@ export function assembleKnowledge(context: KnowledgeContext, only?: 'design-know
   }
   const design = context.skill === 'component-design' || context.subject === 'component-design';
   if (design) addDesignKnowledge();
-  for (const entry of selectExtensionPhaseKnowledge(bundle, context.phase ?? '', { includeBound: true })) {
-    const audienceMatch = selectExtensionPhaseKnowledge(bundle, context.phase ?? '').some(item => item.path === entry.path);
-    const slots = Object.entries(bundle.phaseBindings[context.phase ?? ''] ?? {}).filter(([, bindings]) => bindings?.some(binding => binding.kind === 'knowledge' && binding.ref === entry.path)).map(([slot]) => slot);
-    add('extension', entry.absPath, (entry.summary || '实例知识') + (audienceMatch ? '' : '；仅在 ' + slots.join(' / ') + ' 原槽位读取，此处只导航，不提前执行'));
+  const nativeAuthorKnowledge = context.role === 'author' && context.subject === 'feature'
+    ? bundle.bindings.filter(binding => binding.enabled && !binding.legacy && binding.at === 'feature.before_phase_work@1'
+      && binding.phase === context.phase && binding.kind === 'knowledge')
+    : [];
+  const phase = context.phase ?? '';
+  const phaseAudiencePaths = new Set(selectExtensionPhaseKnowledge(bundle, phase).map(item => item.path));
+  for (const entry of selectExtensionPhaseKnowledge(bundle, phase, { includeBound: true })) {
+    const delivered = nativeAuthorKnowledge.filter(item => item.absPath === entry.absPath);
+    if (delivered.length) {
+      add('extension', entry.absPath, '动笔前的实例知识 ' + delivered.map(item => `${item.ability}:${item.id}`).join('、'), read(entry.absPath));
+      continue;
+    }
+    const slots = Object.entries(bundle.phaseBindings[phase] ?? {}).filter(([, bindings]) => bindings?.some(binding => binding.kind === 'knowledge' && binding.ref === entry.path)).map(([slot]) => slot);
+    add('extension', entry.absPath, (entry.summary || '实例知识') + (phaseAudiencePaths.has(entry.path) ? '' : '；仅在 ' + slots.join(' / ') + ' 原槽位读取，此处只导航，不提前执行'));
   }
   let skill = context.skill;
   if (!skill && context.phase) {
@@ -316,7 +336,7 @@ export function renderKnowledge(assembly: KnowledgeAssembly, inline = true): str
   const lines = ['## Knowledge inputs', '', '动笔前读取适用原文；索引/候选不是事实确认或已读证明。维护写入须沿原授权与时点，不在 run 内擅自刷新图谱。', ''];
   for (const entry of assembly.entries) {
     lines.push('- `' + entry.path + '` — ' + entry.purpose + (entry.available ? '' : '（文件缺失 / 未启用；不声称已消费）'));
-    if (inline && entry.content) lines.push('', entry.content, '');
+    if (inline && entry.content !== undefined) lines.push('', entry.content, '');
   }
   for (const notice of assembly.notices) lines.push('- ' + notice);
   if (assembly.extensionInstructions) lines.push('', assembly.extensionInstructions);

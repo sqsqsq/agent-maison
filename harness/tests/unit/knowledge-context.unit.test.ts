@@ -5,6 +5,7 @@ import * as path from 'path';
 import * as YAML from 'yaml';
 import { spawnSync, execFileSync } from 'child_process';
 import { assembleKnowledge, knowledgeContextFiles, renderKnowledge } from '../../scripts/utils/knowledge-context';
+import { prepareDesignExtensions } from '../../scripts/utils/design-extension-preparation';
 import { clearFrameworkConfigCache, featureFilePath, featurePhaseReportsDir } from '../../config';
 import { collectContextFiles } from '../../harness-runner';
 import { resolveCapabilityInputs } from '../../scripts/utils/capability-resolution';
@@ -195,6 +196,48 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
       const unreadable = assembleKnowledge({ projectRoot: root, frameworkRoot, subject: 'component-design' }, 'design-knowledge');
       assert(unreadable.notices.length);
       assert.equal(unreadable.entries.length, 0);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+  } },
+  { name: '5247db24 direct design prepares old background and new UX inputs without dispatching a disabled or lookup-only action', run() {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'extension-direct-design-'));
+    try {
+      const config = seed(root); config.project_profile = { name: 'hmos-app' };
+      put(root, 'framework.config.json', JSON.stringify(config)); clearFrameworkConfigCache();
+      const extension = path.join(frameworkRoot, 'extensions');
+      const manifest = YAML.parse(fs.readFileSync(path.join(extension, 'manifest.yaml'), 'utf8'));
+      manifest.provides.skill_assets = { 'component-design': { knowledge: 'knowledge/host-design.md' } };
+      manifest.bindings['ux-behavior-spec']['fill-missing'].enabled_by_default = false;
+      manifest.bindings['ux-behavior-spec'].broken = { at: 'harness.on_context_loda@1', phase: 'spec', kind: 'knowledge',
+        ref: 'knowledge/host-design.md', enabled_by_default: true };
+      put(root, 'custom/extensions/manifest.yaml', YAML.stringify(manifest));
+      put(root, 'custom/extensions/knowledge/host-design.md', '独立宿主背景：卡类型决策来自业务数据。');
+      const skillRel = 'skills/ux-behavior-spec';
+      fs.cpSync(path.join(extension, skillRel), path.join(root, 'custom/extensions', skillRel), { recursive: true });
+      const prd = 'doc/inputs/requirements.md', ux = 'doc/inputs/card-type.ux.yaml';
+      const sample = path.join(extension, skillRel, 'examples/bc-openCard-2');
+      put(root, prd, '只支持信用卡时只显示信用卡一行。');
+      put(root, ux, fs.readFileSync(path.join(sample, 'bc-openCard-2.card-type.ux.yaml'), 'utf8'));
+      fs.copyFileSync(path.join(sample, 'sources/3-点击任意银行拉起添卡选卡半模态.jpg'), path.join(root, 'doc/inputs/card.jpg'));
+      const actual = cli(root, 'scripts/check-component-blueprint.ts', ['--project-root', root, '--framework-root', frameworkRoot,
+        '--blueprint', 'approved-id', '--prepare-design', '--requirement-source', prd, '--json']);
+      assert.equal(actual.status, 0, actual.stderr + actual.stdout);
+      const output = JSON.parse(actual.stdout);
+      assert.equal(output.canonical_path, path.join(root, 'doc/features/approved-id/blueprint/component-blueprint.yaml'));
+      assert.deepEqual(output.extension_preparation.bindings.map((binding: { id: string }) => binding.id), ['read-upstream']);
+      assert.deepEqual(output.extension_preparation.reference_images, ['doc/inputs/card.jpg']);
+      assert.equal(output.knowledge.entries[0].content, '独立宿主背景：卡类型决策来自业务数据。');
+      assert(output.knowledge.entries.find((entry: { path: string }) => entry.path === ux).content.includes('card_type_sheet'));
+      assert(output.knowledge.notices.some((entry: string) => entry.includes('on_context_loda')));
+      const pointer = prepareDesignExtensions({ projectRoot: root, frameworkRoot, blueprintId: 'approved-id', requirementSources: [prd], inlineBudgetChars: 0 });
+      assert.equal(pointer.extension_preparation?.bindings[0].delivery, 'pointer');
+      assert.equal(pointer.knowledge.entries.find(entry => entry.path === ux)?.content, undefined);
+      manifest.bindings['ux-behavior-spec']['fill-missing'].enabled_by_default = true;
+      put(root, 'custom/extensions/manifest.yaml', YAML.stringify(manifest));
+      const lookup = prepareDesignExtensions({ projectRoot: root, frameworkRoot, blueprintId: 'approved-id', lookupOnly: true });
+      assert.equal(lookup.extension_preparation, undefined);
+      const skipped = prepareDesignExtensions({ projectRoot: root, frameworkRoot, blueprintId: 'approved-id', skipActions: ['ux-behavior-spec:fill-missing'] });
+      assert.deepEqual(skipped.extension_preparation?.skipped, ['ux-behavior-spec:fill-missing']);
+      assert(!fs.existsSync(path.join(root, 'doc/features')));
     } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
   } },
   { name: 'typed and legacy verifier collectors share actual knowledge and source fingerprints', run() {

@@ -1,6 +1,6 @@
 ---
 name: extension
-description: 实例扩展初始化、检视、声明、全 adapter 物化、校验与调整
+description: 从本地安装、启用、停用、卸载或检视实例扩展。支持同义自然语言
 ---
 
 # 跳板文件
