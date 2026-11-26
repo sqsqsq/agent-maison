@@ -239,6 +239,7 @@ export type PhaseWriteWindow = 'before_binding' | 'execution_window' | 'unverifi
 
 interface ExtensionManagementWindow {
   projectRoot: string;
+  phase: 'initial-design-author' | 'work-unit-author';
   events: readonly GoalRunEvent[];
   invokeId: string;
   owner: Pick<import('./goal-run-control').RunFenceToken, 'owner_id' | 'epoch'>;
@@ -257,7 +258,7 @@ export function phaseWriteWindows(pre: PhaseInvocationSnapshot, binding: PhaseIn
     if (diff?.kind !== 'changed') return [];
     if (!extensionManagement) return diff.changes;
     return diff.changes.filter(change => change.how === 'type-changed'
-      || !isProducedPhaseChange(extensionManagement.projectRoot, 'initial-design-author', change,
+      || !isProducedPhaseChange(extensionManagement.projectRoot, extensionManagement.phase, change,
         extensionManagement, { window, owner: extensionManagement.owner }));
   };
   const window = binding ? 'execution_window' : 'unverified';

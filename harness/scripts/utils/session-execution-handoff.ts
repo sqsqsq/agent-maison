@@ -515,9 +515,11 @@ export function readSessionWriteWindows(runDir: string, issued: IssuedSessionExe
   if (!issued.request.pre_snapshot) return null;
   try {
     const { request } = issued;
+    const { phase, projectRoot, owner } = request.context;
+    const authorPhase = (phase === 'initial-design-author' && request.purpose === 'author')
+      || (phase === 'work-unit-author' && !request.purpose && request.write_boundary?.executionRole === 'author');
     return phaseWriteWindows(request.pre_snapshot!, readPhaseBinding(runDir, issued, events), post,
-      request.context.phase === 'initial-design-author' && request.purpose === 'author'
-        ? { projectRoot: request.context.projectRoot, events, invokeId: request.invoke_id, owner: request.context.owner } : undefined);
+      authorPhase ? { projectRoot, events, invokeId: request.invoke_id, owner, phase } : undefined);
   }
   catch (error) { return { kind: 'unverifiable' as const, reason: (error as Error).message }; }
 }

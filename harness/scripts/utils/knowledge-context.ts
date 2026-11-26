@@ -65,7 +65,7 @@ const relative = (root: string, file: string): string => path.relative(root, fil
 /** 路由的唯一视图；1.0 声明可检视，不自动获得 1.1 audience。 */
 export function extensionKnowledgeRoutes(bundle: ExtensionBundle | undefined, root: string) {
   if (!bundle?.manifestUsable) return [];
-  return bundle.knowledge.map(entry => ({
+  return bundle.knowledge.filter(entry => entry.legacy || !Array.isArray(entry.audience) || entry.audience.length > 0).map(entry => ({
     entry,
     path: relative(root, entry.absPath),
     routed: bundle.manifestVersion !== '1.0' && entry.audience !== 'none',
@@ -113,6 +113,18 @@ export function renderExtensionPhaseInputs(bundle: ExtensionBundle | undefined, 
   return lines.join('\n').trimEnd();
 }
 
+export function featureExtensionBindingSegment(bundle: ExtensionBundle | undefined, phase: string, root: string, knowledge: KnowledgeAssembly) {
+  const bindings = bundle?.bindings.flatMap(binding => {
+    if (!binding.enabled || binding.phase !== phase || binding.at !== 'feature.before_phase_work@1' || !binding.kind) return [];
+    const file = binding.absPath ? relative(root, binding.absPath) : undefined;
+    const { source, ability, id, at, kind, ref } = binding;
+    const entry = knowledge.entries.find(item => item.path === file);
+    const delivery = kind === 'action' ? 'action' : entry?.content === undefined ? 'pointer' : 'inline';
+    return [{ source, ability, id, at, kind, ref, phase, delivery, ...(file ? { path: file } : {}) }];
+  });
+  return bindings?.length ? { extension_feature_bindings: bindings } : undefined;
+}
+
 export function renderExtensionKnowledgeRoutes(bundle: ExtensionBundle, root: string): string {
   const rows = extensionKnowledgeRoutes(bundle, root).filter(row => row.routed);
   const lines: string[] = [];
@@ -137,6 +149,9 @@ const DESIGN_KNOWLEDGE_UNDECLARED = 'component-design knowledge：未声明可�
 /** 可选 key：不在根 Skill 使用会被 docs 当必填的 asset marker。 */
 export function resolveDesignKnowledge(context: KnowledgeContext, bundle: ExtensionBundle, layout: RepoLayout, profile: string): { path?: string; notice?: string } {
   if (!bundle.manifestUsable) return { notice: 'component-design knowledge：extension manifest 不可用，不能视为未声明或回退 profile。' };
+  const invalid = bundle.errors.find(error => error.code === 'provides_skill_assets'
+    || error.ability === 'component-design' && (error.bindingId === 'knowledge' || error.code === 'skill_assets_bucket'));
+  if (invalid) return { notice: 'component-design knowledge：' + invalid.message };
   const loaded = loadSkillAssetsManifest(context.projectRoot, profile, layout);
   const hasExtension = Boolean(bundle.skillAssetAbsPaths['component-design']?.knowledge);
   if (!hasExtension && !loaded.ok) return { notice: 'component-design knowledge：profile 清单不可读：' + loaded.errors.join('；') };
