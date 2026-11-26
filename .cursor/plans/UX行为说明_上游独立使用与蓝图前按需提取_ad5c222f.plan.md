@@ -32,7 +32,7 @@ todos:
     status: in_progress
   - id: acceptance-and-delivery
     content: 完成四个本机客户端各一次独立单屏短例、发布边界和仓库验收，交付 §5.1 逐行结果及样例对照口径。
-    status: in_progress
+    status: completed
 ---
 
 # UX 行为说明的独立提取与蓝图前消费
@@ -147,3 +147,25 @@ extensions/
 正式门禁仍未通过。三工作进程完整日常在接线提交上为 5,668 项通过、2 项失败。根 Skill 的行数回归已定向修复。另一项为既有 P4 `a21473` 恢复回放。空闲窗口的单工作进程在 `5291896c` 再次触发同一 120 分钟用例上限，保全进度停在第 24 次调度。该次已无法放行，已停止余下重复用例。按需计划的 15 组亦含这个用例。正式候选和修订后的钱包业务首轮均未取得通过结果。[单进程超时原件](../../.codex/reports/ux-behavior-ad5c222f/w1-replay-timeout-5291896c/failure.json)
 
 临时检查包 SHA256 为 `860c567648aabfa5d47767f1a6a1018bf5835cd77a613c934e8cc720a55395d9`。1,275 项内容哈希、主包排除及同一 zip 的仓内消费者生命周期冒烟通过。该包的检查结果与正式候选资格分别记录，尚未用于两份新钱包副本。[本机验收与检视记录](../../.codex/reports/ux-behavior-ad5c222f/验收与检视.md)
+
+**2026-11-25 美东 19:26，钱包宿主定向复验。** 按需求方裁决，扩展专项直接使用上述已核验的 `5291896c` 检查包。两份全新的钱包副本均已完整安装同一 zip，并保留原 `story` 等扩展。原失败现场单独封存。[有稿宿主安装记录](../../../am-ad5c222f-hostrecheck/evidence/direct.integration.json) · [缺稿宿主安装记录](../../../am-ad5c222f-hostrecheck/evidence/managed.integration.json)
+
+宿主原生命令 `/ux-behavior-spec` 由 Claude Code 从已物化桥接加载，在真实钱包材料上交回一份选卡类型屏 YAML。Schema、来源、单卡只显示一行、协议纯文本和继续动作均经核对。原图中的勾选态作为观察，业务默认值保持待定。[宿主扩展调用与核对](../../../am-ad5c222f-hostrecheck/extension-entry/evidence/result.md) · [实际产物](../../../am-ad5c222f-hostrecheck/extension-entry/out/bc-openCard-2-selectCardType.ux.yaml)
+
+有预制稿时，正常设计首回读取三份上游稿及两张原图。单卡一行、切换留屏、点继续才带银行与卡种跨页、默认与返回待决均写入会话交回。首回没有在请求的蓝图目录写文件；同一会话补交时使用了 PRD 编号，实际写到另一蓝图目录。首回与补交分别记录。[有稿场次与实际蓝图](../../../am-ad5c222f-hostrecheck/evidence/direct-retest-summary.md)
+
+**钱包缺稿首轮促成两次扩展返修。** 已签发知识到达首作者后，旧指引仍让作者直接写蓝图并补定返回。修订 `0ecca16c` 明确先写、再回读 UX。另起的钱包首作者在蓝图骨架尚未改动时先写出流程稿和屏幕稿，随后写出正式蓝图。回读发现屏幕 YAML 有语法错、流程来源相对路径失效，并且有一条已写死的返回与待决问题冲突。额度在文件落盘后中断，此场保留为首轮失败。[缺稿首轮、产物和具体位置](../../../am-ad5c222f-intakeqa/evidence/revised-intake-retest-summary.md)
+
+修订 `3b78e3a9` 在现有模板示范实际写出的屏幕、范围外页面、相对来源和未决返回，在回读时实际解析已写 YAML、核对文件引用。目标套件 5 项通过。两次返修分别经实际 Claude Code CLI（`claude-opus-5-5`）检视通过。[取用指引复核](../../.codex/reports/ux-behavior-ad5c222f/claude-review-5.conclusion.json) · [模板复核](../../.codex/reports/ux-behavior-ad5c222f/claude-review-6.conclusion.json)
+
+**2026-11-25 美东，`3b78e3a9` 钱包实测。** 钱包宿主沿用同一 `5291896c` framework 包，按需安装新版扩展。Claude 同版本额度已用尽，此次正常受管初设改用钱包支持的 Codex `gpt-6.1-sol/high`。原件目录只有需求和设计图。作者实际收到图 3、4 等原图，在 `ux-qa-managed-codex/blueprint/ux/` 先写卡种屏、目的页交接屏和流程，再写本次正式蓝图。三份稿均能解析，均通过宿主随附 Schema，来源和屏幕相对路径可打开。蓝图用元素 ID 核对银行卡种单选、单种一行、点继续携银行和卡种跨页，返回落点和选择恢复保持待决。[三份 UX 与来源核验](../../../am-ad5c222f-templateqa/evidence/managed.codex.authored-ux-validation.json) · [实际蓝图](../../../am-ad5c222f-templateqa/managed/doc/features/ux-qa-managed-codex/blueprint/component-blueprint.yaml) · [逐图回执](../../../am-ad5c222f-templateqa/evidence/managed.codex.native-image-evidence.json)
+
+这份受管草稿将一个拟新增的仓库方法/模型字段写进了面向产品的 `data.supported_types.source`。流程稿保留从选卡页返回的分歧，未另外登记点继续当下原半模态是否关闭。[实际屏幕稿](../../../am-ad5c222f-templateqa/managed/doc/features/ux-qa-managed-codex/blueprint/ux/card-type.screen.ux.yaml) · [实际流程稿](../../../am-ad5c222f-templateqa/managed/doc/features/ux-qa-managed-codex/blueprint/ux/card-type.flow.ux.yaml)
+
+同版宿主原生 DSH（`volcengine/deepseek-v4.1-flash`）实看图 3、4 并交回可解析的稿。首稿将点继续写成关闭半模态，两处 `copy_ref` 填成文案。单轮评审返修分开了前往选卡页和原半模态去留，保留初始选中待决，按原文明确选卡页同意协议前置；两个引用仍需产品交接复核。返修作者读过包内样例。首稿、对照与返修材料分别保存。上述场次验证取用和可追溯性，总工时或强弱模型收益仍按 §5.2 的同条件对照口径另测。[宿主原生首稿与核对](../../../am-ad5c222f-templateqa/native-out/report.md) · [一次返修的实际结果](../../../am-ad5c222f-templateqa/native-revision/report.md)
+
+受管 Codex 首作者于美东 20:18 交回指定目录的蓝图。原生线程收到完成事件，作者回执为 `passed`，内部观察另记退出码 1 和已收齐完成信号。以上三项业务结论来自实际文件核对。原有受管缺稿失败、有稿首回和本次受管首轮分别保留。[本次受管首轮总表](../../../am-ad5c222f-templateqa/evidence/result.md) · [原有缺稿首轮](../../../am-ad5c222f-hostrecheck/evidence/managed-retest-summary.md)
+
+本次已交付样例、对照口径、客户端记录和钱包专项验收。按需求方指定范围，验收交付状态据宿主实测记录。有稿直接入口首回未落盘、补交错用 PRD 编号，保留在蓝图消费待办的实施记录中。
+
+产品交接副本按实测意见另行修订。同一原生 Codex 作者修正工作区写入环境后，只改外部副本的三份 UX。`supported_types` 现指当前银行支持的卡类型，继续动作携所选银行和卡种。确认当时原浮层是否关闭、从选卡页返回的落点、若回浮层是否保留选择分别为 `open`。三稿通过 Schema，六个相对来源、两个文案引用、元素与流转均能解析。受管首轮文件与原材料保留原字节。[可交给产品的卡种屏](../../../am-ad5c222f-templateqa/reviewed-handoff/doc/features/ux-qa-managed-codex/blueprint/ux/card-type.screen.ux.yaml) · [待决与流转](../../../am-ad5c222f-templateqa/reviewed-handoff/doc/features/ux-qa-managed-codex/blueprint/ux/card-type.flow.ux.yaml) · [实测复核](../../../am-ad5c222f-templateqa/evidence/reviewed-handoff.md)
