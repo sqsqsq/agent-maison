@@ -14,7 +14,8 @@ import {
 } from './materialize-agent-bundle-skills';
 import { resolveSkillPathOrNull } from './resolve-skill-path';
 import { isClaudeKernelAdapter } from './types';
-import { validateProjectRelativePath } from './project-relative-path';
+import { realProjectPath } from './project-relative-path';
+import { ordinaryFile, ordinaryPath, removeExtensionFile, writeExtensionFileAtomic, type ObserveExtensionWrite } from './extension-files';
 
 export interface ExtensionSkillScanRow {
   sourceSlug: string;
@@ -74,14 +75,15 @@ export function scanExtensionSkills(
   extensionDirRel = 'doc/extensions',
   declaredSkillIds?: readonly string[],
 ): ExtensionSkillScanRow[] {
-  let rel: string;
+  let extRoot: string;
+  let skillsRoot: string;
   try {
-    rel = validateProjectRelativePath(projectRoot, extensionDirRel, 'paths.extension_dir');
+    extRoot = realProjectPath(projectRoot, extensionDirRel, 'paths.extension_dir');
+    if (!fs.existsSync(extRoot)) return [];
+    skillsRoot = realProjectPath(extRoot, 'skills', 'extension skills');
   } catch {
     return [];
   }
-  const extRoot = path.join(projectRoot, ...rel.split('/').filter(Boolean));
-  const skillsRoot = path.join(extRoot, 'skills');
   if (!fs.existsSync(skillsRoot) || !fs.statSync(skillsRoot).isDirectory()) {
     return [];
   }
@@ -96,7 +98,9 @@ export function scanExtensionSkills(
     if (!SAFE_TOKEN.test(sourceSlug)) {
       continue;
     }
-    const skillMdAbs = path.join(skillsRoot, sourceSlug, 'SKILL.md');
+    let skillMdAbs: string;
+    try { skillMdAbs = realProjectPath(extRoot, `skills/${sourceSlug}/SKILL.md`, 'extension skill'); }
+    catch { continue; }
     if (!fs.existsSync(skillMdAbs) || !fs.statSync(skillMdAbs).isFile()) {
       continue;
     }
@@ -413,7 +417,7 @@ function canonicalOwnedBridge(
 }
 
 function directBridgeCandidates(base: string, kind: ExtensionBridgeKind): string[] {
-  if (!fs.existsSync(base) || !fs.statSync(base).isDirectory()) return [];
+  if (!fs.lstatSync(base, { throwIfNoEntry: false })?.isDirectory()) return [];
   if (kind === 'command') {
     return fs.readdirSync(base, { withFileTypes: true })
       .filter(entry => entry.isFile() && entry.name.endsWith('.md'))
@@ -423,7 +427,7 @@ function directBridgeCandidates(base: string, kind: ExtensionBridgeKind): string
   for (const entry of fs.readdirSync(base, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
     const candidate = path.join(base, entry.name, 'SKILL.md');
-    if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) out.push(candidate);
+    if (fs.lstatSync(candidate, { throwIfNoEntry: false })?.isFile()) out.push(candidate);
   }
   return out;
 }
@@ -462,17 +466,24 @@ export function inspectInstanceSkillBridgeArtifacts(options: {
   };
   if (stubDir) {
     const base = path.join(repoRoot, ...stubDir.replace(/\\/g, '/').split('/').filter(Boolean));
-    roots.push({ base, kind: 'skill_stub' });
+    try { ordinaryPath(repoRoot, stubDir, 'instance extension bridge'); roots.push({ base, kind: 'skill_stub' }); }
+    catch { /* Linked roots are not owned bridge locations. */ }
     for (const target of targets) add(path.join(base, target.bridgeId, 'SKILL.md'), 'skill_stub', target.bridgeId, target.skillMdRepoRel);
   }
   if (bridgeCfg?.commands_target_dir) {
     const base = path.join(repoRoot, ...bridgeCfg.commands_target_dir.replace(/\\/g, '/').split('/').filter(Boolean));
-    roots.push({ base, kind: 'command' });
+    try { ordinaryPath(repoRoot, bridgeCfg.commands_target_dir, 'instance extension bridge'); roots.push({ base, kind: 'command' }); }
+    catch { /* Linked roots are not owned bridge locations. */ }
     for (const target of targets) add(path.join(base, `${target.bridgeId}.md`), 'command', target.bridgeId, target.skillMdRepoRel);
   }
   const out: InstanceBridgeArtifactInspection[] = [];
   for (const [absPath, item] of expected) {
     const targetRel = path.relative(repoRoot, absPath).replace(/\\/g, '/');
+    try { ordinaryFile(repoRoot, targetRel); }
+    catch {
+      out.push({ adapter: agentAdapter, bridgeId: item.ownership.bridgeId, sourceRel: item.ownership.sourceRel, path: targetRel, state: 'unowned' });
+      continue;
+    }
     if (!fs.existsSync(absPath)) {
       out.push({ adapter: agentAdapter, bridgeId: item.ownership.bridgeId, sourceRel: item.ownership.sourceRel, path: targetRel, state: 'missing' });
       continue;
@@ -511,6 +522,7 @@ export function emitInstanceSkillBridge(options: {
   extensionDirRel?: string;
   reserved?: Set<string>;
   declaredSkillIds?: readonly string[];
+  observeWrite?: ObserveExtensionWrite;
 }): EmitInstanceSkillBridgeResult {
   const { repoRoot, frameworkDir, agentAdapter } = options;
   const warnings: string[] = [];
@@ -557,7 +569,14 @@ export function emitInstanceSkillBridge(options: {
 
   const safeWrite = (absPath: string, body: string) => {
     const rel = path.relative(repoRoot, absPath).replace(/\\/g, '/');
-    if (fs.existsSync(absPath)) {
+    try { ordinaryFile(repoRoot, rel); }
+    catch {
+      untouchedFiles.push(rel);
+      warnings.push(`[instance-skill-bridge] 保留无法安全物化的路径：${rel}`);
+      return;
+    }
+    const exists = fs.existsSync(absPath);
+    if (exists) {
       const current = fs.readFileSync(absPath, 'utf8');
       if (current === body) return;
       const ownership = readOwnership(current);
@@ -578,14 +597,14 @@ export function emitInstanceSkillBridge(options: {
         return;
       }
     }
-    fs.mkdirSync(path.dirname(absPath), { recursive: true });
-    fs.writeFileSync(absPath, body, 'utf8');
+    writeExtensionFileAtomic(absPath, body, !exists, options.observeWrite);
     filesWritten.push(rel);
   };
 
   if (skillStubDir) {
     const base = path.join(repoRoot, ...skillStubDir.replace(/\\/g, '/').split('/').filter(Boolean));
-    candidateRoots.push({ base, kind: 'skill_stub' });
+    try { ordinaryPath(repoRoot, skillStubDir, 'instance extension bridge'); candidateRoots.push({ base, kind: 'skill_stub' }); }
+    catch { warnings.push(`[instance-skill-bridge] 保留无法安全清理的目录：${skillStubDir}`); }
     for (const t of targets) {
       const stubPath = path.join(base, t.bridgeId, 'SKILL.md');
       addExpected(stubPath, 'skill_stub', t.bridgeId, t.skillMdRepoRel);
@@ -594,7 +613,8 @@ export function emitInstanceSkillBridge(options: {
 
   if (bridgeCfg?.commands_target_dir) {
     const base = path.join(repoRoot, ...bridgeCfg.commands_target_dir.replace(/\\/g, '/').split('/').filter(Boolean));
-    candidateRoots.push({ base, kind: 'command' });
+    try { ordinaryPath(repoRoot, bridgeCfg.commands_target_dir, 'instance extension bridge'); candidateRoots.push({ base, kind: 'command' }); }
+    catch { warnings.push(`[instance-skill-bridge] 保留无法安全清理的目录：${bridgeCfg.commands_target_dir}`); }
     for (const t of targets) {
       const cmdPath = path.join(base, `${t.bridgeId}.md`);
       addExpected(cmdPath, 'command', t.bridgeId, t.skillMdRepoRel);
@@ -623,7 +643,7 @@ export function emitInstanceSkillBridge(options: {
         warnings.push(`[instance-skill-bridge] 孤儿 ownership 文件内容已漂移，保留不动：${rel}`);
         continue;
       }
-      fs.unlinkSync(absPath);
+      removeExtensionFile(absPath, options.observeWrite);
       if (kind === 'skill_stub') {
         const parent = path.dirname(absPath);
         if (fs.readdirSync(parent).length === 0) fs.rmdirSync(parent);

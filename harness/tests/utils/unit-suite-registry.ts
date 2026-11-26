@@ -308,6 +308,7 @@ const CORE_SUITES: UnitSuiteRegistration[] = [
   { id: 'usage-capture', modulePath: './unit/usage-capture.unit.test' },
   { id: 'check-receipt-policy', modulePath: './unit/check-receipt-policy.unit.test' },
   { id: 'compat-loader', modulePath: './unit/compat-loader.unit.test' },
+  { id: 'extension-lifecycle', modulePath: './unit/extension-lifecycle.unit.test' },
   { id: 'extension-loader', modulePath: './unit/extension-loader.unit.test' },
   { id: 'extension-management', modulePath: './unit/extension-management.unit.test' },
   { id: 'extension-runtime', modulePath: './unit/extension-runtime.unit.test' },

@@ -197,7 +197,7 @@ export function buildAgentsTemplateVars(
     COMPONENT_INDEX_PATH: String(paths.component_index ?? cfgPaths.component_index ?? DEFAULT_PATHS.component_index),
     COMPONENT_CATALOG_PATH: String(paths.component_catalog ?? cfgPaths.component_catalog ?? DEFAULT_PATHS.component_catalog),
     FEATURES_DIR: String(paths.features_dir ?? cfgPaths.features_dir ?? 'doc/features'),
-    EXTENSION_SKILL_SECTION: [formatExtensionSkillSectionMarkdown(targets, bundle.manifestVersion === '1.1'),
+    EXTENSION_SKILL_SECTION: [formatExtensionSkillSectionMarkdown(targets, extensionSkillIdsForBridge(bundle) !== undefined),
       renderExtensionKnowledgeRoutes(bundle, opts.projectRoot)].filter(Boolean).join('\n\n'),
     COMPONENT_DESIGN_KNOWLEDGE: renderKnowledge(assembleKnowledge({ projectRoot: opts.projectRoot, frameworkRoot: opts.frameworkRoot,
       skill: 'component-design', subject: 'component-design', role: 'author', staticOnly: true,

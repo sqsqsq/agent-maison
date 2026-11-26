@@ -1,6 +1,8 @@
 #!/usr/bin/env node
+import { createHash } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
+import { parseArgs } from 'util';
 import * as YAML from 'yaml';
 
 import { loadFrameworkConfigWithSources } from '../config';
@@ -8,41 +10,24 @@ import { extensionSkillIdsForBridge, loadInstanceExtensions } from '../extension
 import { detectRepoLayout } from '../repo-layout';
 import { emitInstanceSkillBridge } from './utils/instance-skill-bridge';
 import { formatExtensionInspection, inspectInstanceExtensions } from './utils/extension-inspect';
+import { activeExtensionRequests, inspectExtensionRequest, recordExtensionManagementWrites } from './utils/extension-requests';
+import { changeExtension, extensionLocation, withExtensionWrite } from './utils/extension-lifecycle';
+import { ordinaryFile, relativeExtensionPath, writeExtensionFileAtomic, type ObserveExtensionWrite } from './utils/extension-files';
 import { assertNoUnreplacedPlaceholders, buildAgentsTemplateVars, renderAgentsTemplate } from './utils/template-renderer';
-import { validateProjectRelativePath } from './utils/project-relative-path';
 
-type Action = 'init' | 'inspect' | 'materialize' | 'verify';
-
-function arg(name: string): string | undefined {
-  const index = process.argv.indexOf(name);
-  return index >= 0 ? process.argv[index + 1] : undefined;
-}
-
-function toolVisibility(): Record<string, boolean> {
-  const out: Record<string, boolean> = {};
-  for (const [flag, visible] of [['--tool-visible', true], ['--tool-missing', false]] as const) {
-    const value = arg(flag);
-    for (const id of value?.split(',').map(item => item.trim()).filter(Boolean) ?? []) out[id] = visible;
-  }
-  return out;
-}
+const ACTIONS = ['init', 'inspect', 'materialize', 'verify', 'install', 'enable', 'disable', 'uninstall'] as const;
+type Action = (typeof ACTIONS)[number];
 
 function adaptersFromProject(projectRoot: string): string[] {
   const raw = loadFrameworkConfigWithSources(projectRoot).projectRaw;
   if (!Array.isArray(raw?.materialized_adapters)) return [];
   return [...new Set(raw.materialized_adapters
-    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    .filter((value): value is string => typeof value === 'string' && /^[a-z0-9_-]+$/.test(value.trim()))
     .map(value => value.trim()))];
 }
 
-function extensionRoot(projectRoot: string): string {
-  const config = loadFrameworkConfigWithSources(projectRoot).config;
-  const rel = config.paths?.extension_dir ?? 'doc/extensions';
-  return path.resolve(projectRoot, validateProjectRelativePath(projectRoot, rel, 'paths.extension_dir'));
-}
-
 export function initExtension(projectRoot: string, frameworkDir: string): string[] {
-  const root = extensionRoot(projectRoot);
+  const { root } = extensionLocation(projectRoot, frameworkDir);
   const templateRoot = path.join(frameworkDir, 'skills', 'project', 'extension', 'templates', 'extension-skeleton');
   const copies = [
     ['manifest.yaml.template', 'manifest.yaml'],
@@ -52,16 +37,54 @@ export function initExtension(projectRoot: string, frameworkDir: string): string
   ];
   const written: string[] = [];
   for (const [sourceRel, targetRel] of copies) {
-    const target = path.join(root, ...targetRel.split('/'));
+    const target = ordinaryFile(root, targetRel);
     if (fs.existsSync(target)) continue;
     fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.copyFileSync(path.join(templateRoot, ...sourceRel.split('/')), target);
-    written.push(path.relative(projectRoot, target).replace(/\\/g, '/'));
+    fs.copyFileSync(path.join(templateRoot, ...sourceRel.split('/')), target, fs.constants.COPYFILE_EXCL);
+    written.push(relativeExtensionPath(projectRoot, target));
   }
   return written;
 }
 
-function materializeEntryFiles(projectRoot: string, frameworkDir: string, adapters: string[]): string[] {
+const ENTRY_SECTIONS = ['EXTENSION_SKILL_SECTION', 'COMPONENT_DESIGN_KNOWLEDGE'] as const;
+type EntrySection = (typeof ENTRY_SECTIONS)[number];
+type EntrySections = Record<EntrySection, string>;
+const entryDigest = (text: string): string => createHash('sha256').update(text).digest('hex');
+
+function entryStart(key: EntrySection): string {
+  return `<!-- agent-maison:instance-extension:${key} `;
+}
+
+function entryEnd(key: EntrySection): string {
+  return `<!-- /agent-maison:instance-extension:${key} -->`;
+}
+
+function markedEntry(key: EntrySection, body: string): string {
+  return `${entryStart(key)}${entryDigest(body)} -->\n${body}\n${entryEnd(key)}`;
+}
+
+function entryWithSection(current: string, key: EntrySection, previous: string, body: string): string | undefined {
+  const prefix = entryStart(key);
+  const suffix = entryEnd(key);
+  const start = current.indexOf(prefix);
+  if (start >= 0) {
+    const contentStart = current.indexOf('\n', start) + 1;
+    const end = current.indexOf('\n' + suffix, contentStart);
+    const header = current.slice(start, contentStart - 1);
+    if (contentStart === 0 || end < 0
+      || header !== `${prefix}${entryDigest(current.slice(contentStart, end))} -->`) return undefined;
+    return current.slice(0, start) + markedEntry(key, body) + current.slice(end + suffix.length + 1);
+  }
+  const position = previous ? current.indexOf(previous) : -1;
+  if (position >= 0 && position === current.lastIndexOf(previous)) {
+    return current.slice(0, position) + markedEntry(key, body) + current.slice(position + previous.length);
+  }
+  return body && (key === 'EXTENSION_SKILL_SECTION' || previous !== body)
+    ? current + (current.endsWith('\n') ? '\n' : '\n\n') + markedEntry(key, body) + '\n'
+    : current;
+}
+
+function materializeEntryFiles(projectRoot: string, frameworkDir: string, adapters: string[], priorSections?: EntrySections, observeWrite?: ObserveExtensionWrite) {
   const sources = loadFrameworkConfigWithSources(projectRoot);
   const template = fs.readFileSync(path.join(frameworkDir, 'templates', 'AGENTS.md.template'), 'utf8');
   const targets = new Set<string>();
@@ -72,52 +95,117 @@ function materializeEntryFiles(projectRoot: string, frameworkDir: string, adapte
     const entry = yaml.agent_entry_file as Record<string, unknown> | undefined;
     if (typeof entry?.target_path === 'string' && entry.target_path.trim()) targets.add(entry.target_path.trim());
   }
-  const written: string[] = [];
+  const entryFilesWritten: string[] = [];
+  const entryFilesRetained: string[] = [];
   for (const target of targets) {
-    const rendered = renderAgentsTemplate(template, buildAgentsTemplateVars(sources.projectRaw ?? {}, {
-      entryFile: target, projectRoot, frameworkRoot: frameworkDir,
-    }));
-    assertNoUnreplacedPlaceholders(rendered, '/extension materialize');
-    const targetAbs = path.resolve(projectRoot, target);
-    fs.mkdirSync(path.dirname(targetAbs), { recursive: true });
-    if (!fs.existsSync(targetAbs) || fs.readFileSync(targetAbs, 'utf8') !== rendered) {
-      fs.writeFileSync(targetAbs, rendered, 'utf8');
-      written.push(target.replace(/\\/g, '/'));
+    const vars = buildAgentsTemplateVars(sources.projectRaw ?? {}, { entryFile: target, projectRoot, frameworkRoot: frameworkDir });
+    const abs = ordinaryFile(projectRoot, target);
+    const current = fs.existsSync(abs) ? fs.readFileSync(abs, 'utf8') : undefined;
+    let rendered = current;
+    if (current === undefined) {
+      for (const key of ENTRY_SECTIONS) vars[key] = markedEntry(key, vars[key].trim());
+      rendered = renderAgentsTemplate(template, vars);
+      assertNoUnreplacedPlaceholders(rendered, '/extension materialize');
+    } else {
+      rendered = current;
+      for (const key of ENTRY_SECTIONS) {
+        const body = vars[key].trim();
+        const updated = entryWithSection(rendered, key, priorSections?.[key].trim() ?? body, body);
+        if (updated !== undefined) rendered = updated;
+        else if (!entryFilesRetained.includes(target)) entryFilesRetained.push(target);
+      }
+    }
+    if (current !== rendered) {
+      writeExtensionFileAtomic(abs, rendered, current === undefined, observeWrite);
+      entryFilesWritten.push(target);
     }
   }
-  return written;
+  return { entryFilesWritten, entryFilesRetained };
 }
 
-export function materializeExtensions(projectRoot: string, frameworkDir: string): Record<string, unknown> {
+export function materializeExtensions(projectRoot: string, frameworkDir: string, priorSections?: EntrySections,
+  observeWrite?: ObserveExtensionWrite): Record<string, unknown> {
   const adapters = adaptersFromProject(projectRoot);
-  if (adapters.length === 0) throw new Error('framework.config.json.materialized_adapters[] 必须非空');
+  if (adapters.length === 0 && priorSections === undefined) throw new Error('framework.config.json.materialized_adapters[] 必须非空');
   const extensionDirRel = loadFrameworkConfigWithSources(projectRoot).config.paths?.extension_dir;
   const bundle = loadInstanceExtensions(projectRoot, extensionDirRel, { frameworkRoot: frameworkDir });
-  if (bundle.errors.length > 0) throw new Error(`extension manifest 非法：${bundle.errors.map(error => error.code).join(', ')}`);
+  if (!bundle.manifestUsable) throw new Error(`extension manifest 非法：${bundle.errors.map(error => error.code).join(', ')}`);
+  if (adapters.length === 0) return { adapters, entryFilesWritten: [], entryFilesRetained: [], bridges: [] };
   const bridges = adapters.map(adapter => ({ adapter, ...emitInstanceSkillBridge({
     repoRoot: projectRoot, frameworkDir, agentAdapter: adapter,
-    extensionDirRel,
+    extensionDirRel, observeWrite,
     declaredSkillIds: extensionSkillIdsForBridge(bundle),
   }) }));
-  return { adapters, entryFilesWritten: materializeEntryFiles(projectRoot, frameworkDir, adapters), bridges };
+  return { adapters, ...materializeEntryFiles(projectRoot, frameworkDir, adapters, priorSections, observeWrite), bridges };
+}
+
+function toolVisibility(visible?: string, missing?: string): Record<string, boolean> {
+  return Object.fromEntries([[visible, true], [missing, false]].flatMap(([flag, enabled]) => typeof flag === 'string'
+    ? flag.split(',').map(item => item.trim()).filter(Boolean).map(item => [item, enabled as boolean])
+    : []));
 }
 
 function main(): void {
-  const layout = detectRepoLayout(__dirname);
-  const projectRoot = path.resolve(arg('--project-root') ?? layout.projectRoot);
-  const action = (arg('--action') ?? 'inspect') as Action;
-  const json = process.argv.includes('--json');
-  if (!['init', 'inspect', 'materialize', 'verify'].includes(action)) {
-    throw new Error(`--action 仅支持 init|inspect|materialize|verify，收到 ${action}`);
+  const argv = parseArgs({ options: {
+    action: { type: 'string' }, 'project-root': { type: 'string' }, source: { type: 'string' },
+    ability: { type: 'string' }, binding: { type: 'string' }, request: { type: 'string' }, json: { type: 'boolean' },
+    'tool-visible': { type: 'string' }, 'tool-missing': { type: 'string' },
+  }, allowPositionals: true });
+  const values = argv.values;
+  const positional = [...argv.positionals];
+  const selectedAction = values.action ?? positional.shift() ?? 'inspect';
+  if (!ACTIONS.includes(selectedAction as Action)) throw new Error(`extension 操作仅支持 ${ACTIONS.join('|')}，收到 ${selectedAction}`);
+  const action = selectedAction as Action;
+  const source = action === 'install' ? values.source ?? positional.shift() : values.source;
+  const ability = values.ability ?? positional.shift();
+  const binding = action === 'enable' || action === 'disable' ? values.binding ?? positional.shift() : values.binding;
+  if (positional.length || (source && action !== 'install') || (binding && action !== 'enable' && action !== 'disable')
+    || (values.request && action !== 'inspect') || (ability && ['init', 'materialize', 'verify'].includes(action))) {
+    throw new Error('extension 操作参数与用法不匹配');
   }
+
+  if (action !== 'inspect' && action !== 'verify' && (process.env.MAISON_GOAL_RUN_ID?.trim() || process.env.MAISON_GOAL_ATTEMPT?.trim())) {
+    throw new Error('受管 Goal 作者只能检视或校验扩展，持久开关请从宿主管理入口操作');
+  }
+
+  const layout = detectRepoLayout(__dirname);
+  const frameworkDir = layout.frameworkRoot;
+  const projectRoot = path.resolve(values['project-root'] ?? layout.projectRoot);
+  const inspectOptions = { toolVisibility: toolVisibility(values['tool-visible'], values['tool-missing']), ability };
   let mutation: Record<string, unknown> | undefined;
-  if (action === 'init') mutation = { filesWritten: initExtension(projectRoot, layout.frameworkRoot) };
-  if (action === 'materialize') mutation = materializeExtensions(projectRoot, layout.frameworkRoot);
-  const inspection = inspectInstanceExtensions(projectRoot, layout.frameworkRoot, { toolVisibility: toolVisibility() });
-  if (json) process.stdout.write(`${JSON.stringify({ action, mutation, inspection }, null, 2)}\n`);
+  if (action === 'init') mutation = withExtensionWrite(projectRoot, frameworkDir, () => ({ filesWritten: initExtension(projectRoot, frameworkDir) }));
+  if (action === 'materialize') mutation = withExtensionWrite(projectRoot, frameworkDir, () => materializeExtensions(projectRoot, frameworkDir));
+  if (action === 'install' || action === 'enable' || action === 'disable' || action === 'uninstall') {
+    mutation = withExtensionWrite(projectRoot, frameworkDir, () => {
+      const sources = loadFrameworkConfigWithSources(projectRoot);
+      const priorSections = buildAgentsTemplateVars(sources.projectRaw ?? {}, {
+        entryFile: 'AGENTS.md', projectRoot, frameworkRoot: frameworkDir,
+      }) as EntrySections;
+      const run = (observeWrite?: ObserveExtensionWrite) => {
+        const result = changeExtension(action, {
+          projectRoot, frameworkRoot: frameworkDir, source, ability, binding, observeWrite,
+          activeRequests: (ability, source) => activeExtensionRequests(projectRoot, ability, source),
+        });
+        if (result.requestIds?.length) {
+          process.exitCode = 1;
+          return { ...result, message: '等待已有请求交回后重试卸载。' };
+        }
+        return {
+          ...result,
+          ...(action === 'install' ? { skeletonFilesWritten: initExtension(projectRoot, frameworkDir) } : {}),
+          materialization: materializeExtensions(projectRoot, frameworkDir, priorSections, observeWrite),
+        };
+      };
+      return action === 'enable' || action === 'disable' ? recordExtensionManagementWrites(projectRoot, run) : run();
+    });
+  }
+  const inspection = inspectInstanceExtensions(projectRoot, frameworkDir, inspectOptions);
+  const request = values.request ? inspectExtensionRequest(projectRoot, values.request, ability) : undefined;
+  if (values.json) process.stdout.write(`${JSON.stringify({ action, mutation, inspection, request }, null, 2)}\n`);
   else {
     if (mutation) process.stdout.write(`${JSON.stringify(mutation, null, 2)}\n\n`);
     process.stdout.write(`${formatExtensionInspection(inspection)}\n`);
+    if (request) process.stdout.write(`\n${JSON.stringify(request, null, 2)}\n`);
   }
   if (action === 'verify' && inspection.manifestErrors.length > 0) process.exitCode = 1;
 }
