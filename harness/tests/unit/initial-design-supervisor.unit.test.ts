@@ -18,9 +18,8 @@ import * as phaseRuntime from '../../scripts/goal-phase-runtime';
 import { readInitialDesignDelivery } from '../../scripts/utils/initial-design-delivery';
 import { enumerateCanonicalChangeUnits } from '../../scripts/utils/change-unit-path';
 import { reviseChangeUnitContent } from '../../scripts/utils/change-unit-design-preparation';
-import { prepareFeatureScopeCandidate } from '../../scripts/utils/feature-track';
 import { withFreshCuHost } from '../utils/real-chain-host';
-import { CU_REQUIREMENT, CU_SOURCE } from '../utils/real-chain-host';
+import { CU_REQUIREMENT } from '../utils/real-chain-host';
 import { livenessBeaconPath, writeLivenessBeacon } from '../../scripts/utils/liveness-beacon';
 import { fixture } from './blueprint-skill-projection.unit.test';
 import type { UnitCaseResult } from '../run-unit';
@@ -127,13 +126,6 @@ const cases: Array<{ name: string; run(): Promise<void> }> = [
       const revised = reviseChangeUnitContent(host.root, BLUEPRINT, [{ expectedRef: createChangeUnitRef(current),
         candidate: { providerId: candidate.provenance.extraction_method, artifact: candidate } }]);
       assert.equal(revised.revised.length, 1);
-      try {
-        prepareFeatureScopeCandidate({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: deriveChangeUnitFeatureId(BLUEPRINT, 'ledger-refresh'),
-          completionTarget: 'feature', requestedResults: [CU_REQUIREMENT], requestedPhases: ['plan', 'coding', 'review', 'ut'], requirement: CU_REQUIREMENT, overwrite: true,
-          impact: { userVisibleBehaviorChange: false, reason: 'Existing nonvisual ledger domain fixture', basisPaths: [CU_SOURCE] } });
-      } catch (error) {
-        assert.match(String(error), /block|release|unresolved|许可|阻塞|未就绪/, 'an unrelated fixture failure is not a readiness protection');
-      }
       const original = buildInitialDesignGoalManifest({ feature: BLUEPRINT, run_id: 'unready-root', adapter: 'codex', requirement: CU_REQUIREMENT,
         initial_design: { completion_target: 'feature', requested_results: [CU_REQUIREMENT], requested_phases: ['plan', 'coding', 'review', 'ut'] },
         budget: { max_total_turns: 20, wall_clock_minutes: 120 }, unattended: { write_mode: 'full-access', approval_mode: 'never', timeout_seconds: 900 } }, { projectRoot: host.root });

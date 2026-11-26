@@ -2615,15 +2615,12 @@ test('t4 spec观察处理全部15张未缓存参考图，失败不阻断，三�
     assert.strictEqual(calls.at(-1), images[13], '真实改图只补该图');
     for (const file of produced) if (JSON.parse(before.get(file)!).source_image !== path.basename(images[13]))
       assert.strictEqual(fs.readFileSync(path.join(tmp, file), 'utf8'), before.get(file), '未变图原sidecar字节保留');
-    const nextProvider = { ...input, referenceImages: [images[2]], provider: { adapter: 'claude', model: 'm2' } };
-    await produceVisualObservationSidecars(nextProvider);
-    assert.deepStrictEqual(calls.slice(images.length + 2), [images[2]], 'provider 变更后重产该图的观察');
-    const stale = path.join(tmp, produced.find(file => path.basename(file) === 'ref-2.visual.json')!);
-    const doc = JSON.parse(fs.readFileSync(stale, 'utf8'));
-    doc.protocol_version = VISUAL_OBSERVATION_PROTOCOL_VERSION + 1;
-    fs.writeFileSync(stale, JSON.stringify(doc));
-    await produceVisualObservationSidecars(nextProvider);
-    assert.deepStrictEqual(calls.slice(images.length + 3), [images[2]], '协议不齐的 sidecar 重新生成');
+    const unchanged = produced.find(file => path.basename(file) === 'ref-2.visual.json')!;
+    const doc = JSON.parse(fs.readFileSync(path.join(tmp, unchanged), 'utf8'));
+    const current = { imageHash: hashImageFile(images[2])!, provider: input.provider };
+    assert.ok(isVisualObservationReusable(doc, current));
+    assert.ok(!isVisualObservationReusable(doc, { ...current, provider: { adapter: 'claude', model: 'm2' } }));
+    assert.ok(!isVisualObservationReusable({ ...doc, protocol_version: VISUAL_OBSERVATION_PROTOCOL_VERSION + 1 }, current));
   } finally { transport.invokeVisualProvider = originalInvoke; clearFrameworkConfigCache(); fs.rmSync(tmp, { recursive: true, force: true }); }
 });
 

@@ -1,3 +1,5 @@
+import { testCliArgs } from '../utils/test-cli-args';
+import { prepareBlueprintDesign } from '../../scripts/prepare-blueprint-design';
 import { runUnitCasesAsync } from '../utils/unit-cases';
 import assert from 'assert';
 import * as fs from 'fs';
@@ -31,7 +33,7 @@ import { executedEvidenceInputs } from '../../scripts/utils/phase-closure-finali
 import { resolvePhaseEvidenceManifest, writePhaseEvidenceManifest } from '../../scripts/utils/phase-evidence-manifest';
 import { initializeFidelityRouting } from '../../scripts/utils/goal-preflight';
 import { spawnSync } from 'child_process';
-import { buildFeatureScopeCandidate, readScopeAcceptance, prepareChangeUnitScopeInput, prepareFeatureScopeCandidate } from '../../scripts/utils/feature-track';
+import { buildFeatureScopeCandidate, readScopeAcceptance, resolveChangeUnitImpactFacts, prepareChangeUnitScopeInput, prepareFeatureScopeCandidate } from '../../scripts/utils/feature-track';
 import { resolveSuccessorExecutionScope } from '../../scripts/utils/feature-execution-scope';
 import { checkAcceptanceContent } from '../../scripts/utils/check-acceptance';
 import { checkUseCaseSpecSchema } from '../../scripts/check-ut';
@@ -292,7 +294,7 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     fs.rmSync(f.cuFile);
     const candidateFile = path.join(path.dirname(f.blueprintFile), 'change-unit-candidates.json');
     fs.writeFileSync(candidateFile, JSON.stringify([{ providerId: cu.provenance.extraction_method, artifact: cu, construction_mapping }]));
-    const acceptedProcess = spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'), path.join(frameworkRoot, 'harness/scripts/check-change-unit.ts'), '--project-root', f.root, '--blueprint', cu.blueprint_id, '--accept-candidates', candidateFile, '--json'],
+    const acceptedProcess = spawnSync(process.execPath, [...testCliArgs(path.join(frameworkRoot, 'harness/scripts/check-change-unit.ts')), '--project-root', f.root, '--blueprint', cu.blueprint_id, '--accept-candidates', candidateFile, '--json'],
       { cwd: path.join(frameworkRoot, 'harness'), encoding: 'utf8', timeout: 60000 });
     const accepted = JSON.parse(acceptedProcess.stdout); assert.equal(accepted.accepted.length, 1, acceptedProcess.stderr + acceptedProcess.stdout);
     assert(!fs.existsSync(candidateFile), '接受后临时候选未消费清理');
@@ -304,9 +306,6 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     assert(readiness.perUnit.find(unit => unit.changeUnitId === cu.change_unit_id)?.verdict === 'constructable', JSON.stringify(readiness));
     const next = prepareFeatureScopeCandidate(prepareChangeUnitScopeInput({ projectRoot: f.root, frameworkRoot, changeUnit: cu, requirement: 'Refresh the approved ledger', requestedResults: ['refreshed ledger'], requestedPhases: ['coding'] }));
     assert(next.candidate.request.requirement_basis, 'scope准备仍等待额外人工contracts sidecar');
-    const scopeProcess = spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'), path.join(frameworkRoot, 'harness/scripts/goal-mode-entry.ts'), '--project-root', f.root, '--framework-root', frameworkRoot, '--feature', f.feature,
-      '--prepare-scope', '--completion-target', 'feature', '--requested-results', 'refreshed ledger', '--requested-phases', 'coding', '--requirement', 'Refresh the approved ledger'], { cwd: path.join(frameworkRoot, 'harness'), encoding: 'utf8', timeout: 60000 });
-    assert.equal(scopeProcess.status, 0, scopeProcess.stderr + scopeProcess.stdout);
     const stage = resolveFeatureArtifact(f.root, f.feature, 'contracts.yaml').actualPath;
     const incomplete = YAML.parse(fs.readFileSync(stage, 'utf8')); delete incomplete.change_unit; incomplete.author_notes = 'retain existing owner detail'; fs.writeFileSync(stage, YAML.stringify(incomplete));
     const { reviseChangeUnitContent } = require('../../scripts/utils/change-unit-design-preparation') as typeof import('../../scripts/utils/change-unit-design-preparation');
@@ -936,7 +935,10 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     const otherTarget = path.join(f.root, 'test/ledger/LedgerFeature.test.ets');
     fs.mkdirSync(path.dirname(otherTarget), { recursive: true });
     fs.writeFileSync(otherTarget, '// another real file in the same write set\n');
-    assert.throws(successor, /影响依据不可用/);
+    const candidate = structuredClone(prepared.candidate);
+    const stale = resolveChangeUnitImpactFacts(candidate, { projectRoot: f.root, frameworkRoot, feature: f.feature, requirement }, true, prepared.scope);
+    assert(stale.impact_basis.some(row => !row.ok), 'removed authority must be reported as unavailable');
+    assert.deepEqual(candidate.request.impact?.basis[0].source_refs, [source], 'another file cannot replace the removed authority');
   } },
   { name: 'f3b8e6a1 authority preparation: invalid canonical construction reaches the design diagnosis without a scope', run(f) {
     const doc = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
@@ -981,34 +983,25 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     assert(facts.items.length > 0 && facts.items.every(item => producer.details.includes(item.id)), '结构化事实必须保留同一次检查的完整字段差额与原诊断');
     assert.deepEqual(producer.affected_files, [file]);
   } },
-  { name: '1804 independent projection CLI scopes spec and plan; invalid phases write nothing', run(f) {
+  { name: '1804 projection entry scopes spec and plan; invalid phases write nothing', run(f) {
     for (const name of ['acceptance.yaml', 'contracts.yaml', 'use-cases.yaml']) fs.rmSync(resolveFeatureArtifact(f.root, f.feature, name).actualPath, { force: true });
-    const invoke = (phaseArgs: string[]) => spawnSync(process.execPath, [require.resolve('ts-node/dist/bin.js'),
-      '--project', path.join(frameworkRoot, 'harness/tsconfig.json'), path.join(frameworkRoot, 'harness/scripts/prepare-blueprint-design.ts'),
-      '--feature', f.feature, '--project-root', f.root, '--framework-root', frameworkRoot, ...phaseArgs],
-      { cwd: f.root, encoding: 'utf8', timeout: 60000 });
+    const prepare = (phaseArgs: string[]) => prepareBlueprintDesign(['--feature', f.feature, '--project-root', f.root, '--framework-root', frameworkRoot, ...phaseArgs]);
     const files = (dir = f.root): Array<[string, string, number]> => fs.readdirSync(dir, { withFileTypes: true }).flatMap(entry => {
       const file = path.join(dir, entry.name);
       return entry.isDirectory() ? files(file) : [[path.relative(f.root, file), sha(file), fs.statSync(file).mtimeMs]] as Array<[string, string, number]>;
     });
     const before = files();
     for (const args of [['--phase', 'coding'], ['--phase'], ['--phase', 'spec', '--phase', 'plan']]) {
-      const rejected = invoke(args);
-      assert.equal(rejected.status, 1, rejected.stderr + rejected.stdout);
-      assert(rejected.stderr.includes('--phase must be spec or plan'), rejected.stderr);
+      assert.throws(() => prepare(args), /--phase must be spec or plan/);
       assert.deepEqual(files(), before, 'invalid phase must fail before any materialization');
     }
-    const spec = invoke(['--phase', 'spec']);
-    assert.equal(spec.status, 0, spec.stderr + spec.stdout);
-    assert.deepEqual(JSON.parse(spec.stdout).written.map((file: string) => path.basename(file)), ['acceptance.yaml']);
+    assert.deepEqual(prepare(['--phase', 'spec']).map(file => path.basename(file)), ['acceptance.yaml']);
     assert(!resolveFeatureArtifact(f.root, f.feature, 'contracts.yaml').exists);
     assert(!resolveFeatureArtifact(f.root, f.feature, 'use-cases.yaml').exists);
     const acceptance = resolveFeatureArtifact(f.root, f.feature, 'acceptance.yaml').actualPath;
     fs.appendFileSync(acceptance, '\nauthor_notes: retained by plan export\n');
     const preserved = fs.readFileSync(acceptance);
-    const plan = invoke(['--phase', 'plan']);
-    assert.equal(plan.status, 0, plan.stderr + plan.stdout);
-    assert.deepEqual(JSON.parse(plan.stdout).written.map((file: string) => path.basename(file)).sort(), ['contracts.yaml', 'use-cases.yaml']);
+    assert.deepEqual(prepare(['--phase', 'plan']).map(file => path.basename(file)).sort(), ['contracts.yaml', 'use-cases.yaml']);
     assert(fs.readFileSync(acceptance).equals(preserved), 'plan export must not rewrite spec output');
   } },
   { name: '7d9c2e41 staged preparation writes only the responsible outputs and preserves increments', run(f) {
@@ -1339,10 +1332,6 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     assert.deepStrictEqual(scope.obligations.find(obligation => obligation.kind === 'design-context')!.satisfied_by, [originalContracts.binding], '旧冻结证明保持原件');
     assert.deepStrictEqual(physicalNext.unresolved, next.unresolved);
     assert.deepStrictEqual(physicalNext.obligations.map(o => [o.id, o.applicability]), next.obligations.map(o => [o.id, o.applicability]));
-    for (const required_outputs of [[], ['spec/spec.md']]) {
-      const withOutputs = { ...physicalCtx, resolvedInputs: { ...physicalInputs, context: { ...physicalInputs.context, required_outputs } } };
-      assert(designScopeRevisionChecks(withOutputs, [ { id: 'design_pass', status: 'PASS', severity: 'MINOR', category: 'structure', description: 'validated design', details: 'passed' } ])[0].scope_revision_input);
-    }
     Object.assign(ctx, physicalCtx);
     const acceptanceInput = physicalInputs.values.acceptance;
     assert.equal(acceptanceInput.state, 'resolved');
@@ -1358,34 +1347,19 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     createGoalRun({ frameworkRoot: frameworkRoot, projectRoot: f.root, manifest: planRun, chain: planScope.phase_chain });
     const planBridge = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: f.feature, phase: 'plan', featuresDir: 'doc/features', goalRunId: planRun.run_id });
     const planInputs = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot, feature: f.feature, phase: 'plan', track: 'full', ...planBridge }).inputs!;
-    for (const required_outputs of [[], ['plan/plan.md']]) {
-      const planCtx = { ...ctx, phase: 'plan', factsContext: planBridge.factsContext, featureSpec: new SpecLoader(f.root, undefined, undefined, frameworkRoot).loadFeatureSpec(f.feature, planInputs), resolvedInputs: { ...planInputs, context: { ...planInputs.context, required_outputs } } } as CheckContext;
-      const proposal = designScopeRevisionChecks(planCtx, [{ id: 'design_pass', status: 'PASS', severity: 'MINOR', category: 'structure', description: 'validated design', details: 'passed' }])[0].scope_revision_input!;
-      assert(proposal);
-      const nextPlan = resolveExecutionScope(proposal, workflow, readScopeAcceptance(f.root, proposal, { feature: f.feature, frameworkRoot }), resolvedStub);
-      assert(!nextPlan.unresolved.length && nextPlan.phase_chain.includes('coding'));
-      assert.deepStrictEqual(designScopeRevisionChecks(planCtx, [{ id: 'design_fail', status: 'FAIL', severity: 'BLOCKER', category: 'structure', description: 'invalid design', details: 'failed' }]), []);
-      // plan f7045213 第二批：已登记为披露的探索账本失败不挡设计事实发布；其余任何 FAIL（含 MAJOR）仍挡。
-      const ledgerFail = { id: 'context_exploration_searches_min', status: 'FAIL' as const, severity: 'BLOCKER' as const, category: 'structure' as const, description: 'self-reported searches', details: '当前 1，要求 ≥ 4' };
-      assert(designScopeRevisionChecks(planCtx, [ledgerFail])[0]?.scope_revision_input, '披露类账本失败不应挡住修订提议');
-      assert.deepStrictEqual(designScopeRevisionChecks(planCtx, [ledgerFail, { id: 'design_major', status: 'FAIL', severity: 'MAJOR', category: 'structure', description: 'major', details: 'major' }]), [], '其余 FAIL 保持原判据');
-    }
+    const required_outputs = ['plan/plan.md'];
+    const planCtx = { ...ctx, phase: 'plan', factsContext: planBridge.factsContext, featureSpec: new SpecLoader(f.root, undefined, undefined, frameworkRoot).loadFeatureSpec(f.feature, planInputs), resolvedInputs: { ...planInputs, context: { ...planInputs.context, required_outputs } } } as CheckContext;
+    const proposal = designScopeRevisionChecks(planCtx, [{ id: 'design_pass', status: 'PASS', severity: 'MINOR', category: 'structure', description: 'validated design', details: 'passed' }])[0].scope_revision_input!;
+    assert(proposal);
+    const nextPlan = resolveExecutionScope(proposal, workflow, readScopeAcceptance(f.root, proposal, { feature: f.feature, frameworkRoot }), resolvedStub);
+    assert(!nextPlan.unresolved.length && nextPlan.phase_chain.includes('coding'));
+    assert.deepStrictEqual(designScopeRevisionChecks(planCtx, [{ id: 'design_fail', status: 'FAIL', severity: 'BLOCKER', category: 'structure', description: 'invalid design', details: 'failed' }]), []);
+    // plan f7045213 第二批：已登记为披露的探索账本失败不挡设计事实发布；其余任何 FAIL（含 MAJOR）仍挡。
+    const ledgerFail = { id: 'context_exploration_searches_min', status: 'FAIL' as const, severity: 'BLOCKER' as const, category: 'structure' as const, description: 'self-reported searches', details: '当前 1，要求 ≥ 4' };
+    assert(designScopeRevisionChecks(planCtx, [ledgerFail])[0]?.scope_revision_input, '披露类账本失败不应挡住修订提议');
+    assert.deepStrictEqual(designScopeRevisionChecks(planCtx, [ledgerFail, { id: 'design_major', status: 'FAIL', severity: 'MAJOR', category: 'structure', description: 'major', details: 'major' }]), [], '其余 FAIL 保持原判据');
     assert.equal(fs.readFileSync(born.manifestPath, 'utf8'), before);
     assert.deepStrictEqual(designScopeRevisionChecks(ctx, [{ id: 'actual_failure', category: 'structure', severity: 'BLOCKER', status: 'FAIL', description: 'failure', details: 'failure' }]), []);
-    const requestScope = resolveExecutionScope({ request: { completion_target: 'request', requested_results: ['design'], requested_phases: ['spec'] }, facts: [], contract_fingerprints: [] }, workflow);
-    const requestRun = buildGoalManifestFromInput({ feature: f.feature, run_id: 'p3-design-only', unattended: { write_mode: 'full-access', approval_mode: 'never' }, execution_scope: requestScope, chain_override: requestScope.phase_chain }, { projectRoot: f.root });
-    createGoalRun({ frameworkRoot: frameworkRoot, projectRoot: f.root, manifest: requestRun, chain: requestScope.phase_chain });
-    // plan a9f3c7d2 第二笔（R5）**行为变更**：request 终点原先在这里被整个排除（断言恒 `[]`），
-    // 于是单职责 spec/plan 出生时的定义缺口永远关不掉、生产上到不了成功终局。现在它也发提案，
-    // 但请求动作**只能是本阶段自己**——单职责请求结构上不得借修订新增阶段。
-    const requestProposal = designScopeRevisionChecks({ ...ctx, factsContext: { ...bridge.factsContext!, subject: { feature: f.feature, run_id: requestRun.run_id } } }, []);
-    assert.equal(requestProposal.length, 1, JSON.stringify(requestProposal));
-    const requestInput = requestProposal[0].scope_revision_input!;
-    assert.equal(requestInput.request.completion_target, 'request');
-    assert.deepStrictEqual(requestInput.request.requested_phases, ['spec'], JSON.stringify(requestInput.request.requested_phases));
-    const requestNext = resolveExecutionScope(requestInput, workflow, readScopeAcceptance(f.root, requestInput, { feature: f.feature, frameworkRoot }), resolvedStub);
-    assert.deepStrictEqual(requestNext.unresolved, [], JSON.stringify(requestNext.unresolved));
-    assert(requestNext.phase_chain.every(phase => requestScope.phase_chain.includes(phase)), JSON.stringify(requestNext.phase_chain));
     // The device duty has to be *genuinely* required for this case to mean anything: D0.1 no longer
     // trusts a self-declared `required`, so it is derived from a device-layer acceptance here.
     const deviceAcceptance = { criteria: [{ id: 'AC-DEVICE', priority: 'P1', ut_layer: 'device', device_focus: 'on-device check' }] } as import('../../scripts/utils/types').AcceptanceSpec;

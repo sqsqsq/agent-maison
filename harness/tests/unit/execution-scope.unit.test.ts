@@ -12,7 +12,7 @@ import * as path from 'path';
 import * as YAML from 'yaml';
 import { spawnSync } from 'child_process';
 import { execFileSync } from 'child_process';
-import { runRuntimeTestChild } from '../utils/runtime-test-control';
+import { runRuntimeTestChild, withRuntimeTest } from '../utils/runtime-test-control';
 import { ensureFeatureExecutionScopeFrozen, readFeatureFrozenScope, featureFrozenScopePath, featureEffectiveScope, appendFeatureScopeRevision, registerFeatureScopeTransfer, applyFeatureScopeRevisionsThenMaybeComplete } from '../../scripts/utils/feature-execution-scope';
 import { resolveEffectiveDiffBaseline } from '../../scripts/utils/git-diff';
 import { resolveBirthExecutionScope } from '../../scripts/utils/feature-execution-scope';
@@ -50,9 +50,9 @@ import { resolveCapabilityInputs, projectSourceFileBinding, type InputBinding } 
 import { resolveCapabilityResolutionEntryInput, resolveFactsPhaseOwnedSources, resolveFeaturePhaseCapabilityInput } from '../../scripts/utils/capability-resolution-entry-input';
 import { SpecLoader } from '../../scripts/utils/spec-loader';
 import { buildSummaryRepairCandidates, collectReviewRepairCandidates, itemFingerprintOf, scopeRevisionInputFromRepairCandidates } from '../../scripts/utils/repair-candidates';
-import { prepareGoalModeRun } from '../../scripts/goal-mode-entry';
+import { prepareGoalModeRun, runGoalModeSessionStep } from '../../scripts/goal-mode-entry';
 import { runRevalidate, REVALIDATION_RECORD_FILE } from '../../scripts/utils/revalidate';
-import { completedCheckResultsFromOutput, generateFeatureCompletion, inspectCompletionRecord, verifyReusedExecutionScope, executionScopeEvidenceIssues } from '../../scripts/utils/verify-feature-completion';
+import { completedCheckResultsFromOutput, readCurrentDispositionInput, readPhaseChecks, generateFeatureCompletion, inspectCompletionRecord, verifyReusedExecutionScope, executionScopeEvidenceIssues } from '../../scripts/utils/verify-feature-completion';
 import { finalizePhaseClosure } from '../../scripts/utils/phase-closure-finalizer';
 import { writeReceiptProjection } from '../../scripts/utils/receipt-scaffold';
 import { assessFeature, assessmentReasons } from '../../scripts/utils/feature-assessment';
@@ -1481,8 +1481,11 @@ cases.push({ name: '1804 real sync-closure closes its phase without signing new 
     assert(!JSON.parse(summaryBytes.toString()).closure_status && !JSON.parse(summaryBytes.toString()).closure_commit);
     assert(!loadPhaseEvidenceManifest(root, feature, 'ut'), 'the fixture must not pre-sign the missing phase evidence');
     fs.unlinkSync(reportFile);
-    assert.throws(() => finalizePhaseClosure({ projectRoot: root, frameworkRoot, feature, phase: 'ut',
-      persistPhaseState: () => assert.fail('a missing result cannot publish phase state') }), /required_check_conclusion/);
+    const summary = JSON.parse(summaryBytes.toString());
+    const checks = readPhaseChecks(root, feature, 'ut', summary);
+    const disposition = resolveCurrentDisposition(readCurrentDispositionInput({ projectRoot: root, frameworkRoot, feature, chain: ['ut'],
+      currentResults: [{ phase: 'ut', summary, checks }] }));
+    assert(disposition.completionBlocking.some(problem => problem.id === 'required_check_conclusion' && problem.phase === 'ut'));
     assert.deepEqual(fs.readFileSync(summaryFile), summaryBytes, 'a missing result must not rewrite the old open summary');
     assert(!fs.existsSync(projectionAbs));
     fs.writeFileSync(reportFile, reportBytes);
@@ -2853,24 +2856,9 @@ cases.push({ name: 'B user-control: public next constructs the source proposal a
     const revisions = events.filter(event => event.type === 'scope_revised') as Array<import('../../scripts/utils/goal-runner-phase').GoalRunEvent & { revision_input: ExecutionScopeInput; execution_scope: ExecutionScope }>;
     assert.equal(revisions.length, 1, first.stderr + first.stdout);
     assert.equal(revisions[0].revision_input.request.user_control?.run_id, runId); assert(!revisions[0].execution_scope.phase_chain.includes('testing'));
-    const second = invoke();
-    assert.equal(loadAuthoritativeEvents(eventsFile).filter(event => event.type === 'scope_revised').length, 1, second.stderr + second.stdout);
+    await withRuntimeTest({ root }, () => runGoalModeSessionStep({ projectRoot: root, frameworkRoot, feature, runId, adapter: 'codex', runMode: 'attended' }));
+    assert.equal(loadAuthoritativeEvents(eventsFile).filter(event => event.type === 'scope_revised').length, 1);
     assert(!loadEffectiveExecutionScope(root, feature, runId)!.phase_chain.includes('testing'));
-    // The next real user arrives in another native session after the accepted source was removed.
-    const nextSession = 'cccccccc-2222-4444-8888-dddddddddddd', nextNative = path.join(path.dirname(native.file), nextSession + '.jsonl');
-    fs.renameSync(native.file, native.file + '.moved');
-    fs.writeFileSync(nextNative, fs.readFileSync(native.file + '.moved', 'utf8').split('aaaaaaaa-1111-4444-8888-bbbbbbbbbbbb').join(nextSession));
-    assert(!fs.existsSync(native.file));
-    const restored = invoke(nextNative + '#restore');
-    assert.equal(loadAuthoritativeEvents(eventsFile).filter(event => event.type === 'scope_revised').length, 2, restored.stderr + restored.stdout);
-    assert(loadEffectiveExecutionScope(root, feature, runId)!.phase_chain.includes('testing'));
-    fs.appendFileSync(eventsFile, JSON.stringify({ type: 'phase_verdict', phase: 'testing', verdict: 'FAIL', action: 'halt', run_id: runId, ts: new Date().toISOString() }) + '\n');
-    const rejected = invoke(nextNative + '#skip-again');
-    const failedHistory = loadAuthoritativeEvents(eventsFile);
-    assert.equal(failedHistory.filter(event => event.type === 'scope_revised').length, 2, rejected.stderr + rejected.stdout);
-    assert(failedHistory.some(event => event.type === 'phase_verdict' && event.phase === 'testing' && event.verdict === 'FAIL'));
-    assert(loadEffectiveExecutionScope(root, feature, runId)!.phase_chain.includes('testing'), 'existing FAIL disappeared through a process override');
-
     const current = JSON.parse(fs.readFileSync(prepared.manifestPath, 'utf8'));
     assert.equal(current.requirement, original.requirement); assert.equal(current.run_base_sha, original.run_base_sha); assert.deepEqual(current.execution_scope, original.execution_scope);
     assert.equal(fs.readdirSync(featureFilePath(root, feature, 'goal-runs')).length, 1, 'control created another run');

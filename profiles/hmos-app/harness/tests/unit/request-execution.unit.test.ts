@@ -171,23 +171,25 @@ const cases: Array<{ name: string; run(): Promise<void> | void }> = [{
       }
       assert.equal(builds, 0); assert.equal(executions, 0);
       updateTest(sourceText.replace("'Selected'", "'bank_search_unit'"));
-      const first = await run();
-      assert(first.some(check => check.id === 'request_test_execution' && check.status === 'PASS' && check.details.includes('total=1')), JSON.stringify(first));
-      const expectation = first.find(check => check.id === 'request_expectation_source')!;
-      assert.equal(expectation.status, 'PASS', expectation.details);
-      assert.deepEqual(expectation.affected_files, [test]);
-      await run(); assert.equal(executions, 1);
+      f.ctx.reportDir = path.join(f.root, written.reportDir);
       patch(setupGate, 'ensurePersonalSetup', () => ({ ok: true }), restores);
       assert.equal(await publicRequest({ phase: 'ut', 'request-file': written.requestFile, 'report-dir': written.reportDir }), 0,
         'execute the same native request after the registration returns through intake');
-      const report = JSON.parse(fs.readFileSync(path.join(f.root, written.reportDir, 'script-report.json'), 'utf8'));
+      const report = JSON.parse(fs.readFileSync(path.join(f.ctx.reportDir, 'script-report.json'), 'utf8'));
       assert(report.checks.some((check: CheckResult) => check.id === 'request_test_execution' && check.status === 'PASS' && check.details.includes('total=1')));
+      const expectation = report.checks.find((check: CheckResult) => check.id === 'request_expectation_source')!;
+      assert.equal(expectation.status, 'PASS', expectation.details);
+      assert.deepEqual(expectation.affected_files, [test]);
+      assert.equal(executions, 1);
+      const reused = await run();
+      assert(reused.some(check => check.details?.includes('reused_by_execution_key')));
+      assert.equal(executions, 1);
       const oldRegistration = f.ctx.request.bindings.find(binding => binding.path === registration)?.sha256;
       fs.appendFileSync(path.join(f.root, registration), '// registration input changed\n');
       f.ctx.request = prepare();
       await run();
       assert.notEqual(f.ctx.request.bindings.find(binding => binding.path === registration)?.sha256, oldRegistration);
-      assert.equal(executions, 3, 'registration bytes invalidate earlier execution even when built bytes match');
+      assert.equal(executions, 2, 'registration bytes invalidate earlier execution even when built bytes match');
 
       f.ctx.forceDevice = true; total = 2;
       const mismatched = await run();

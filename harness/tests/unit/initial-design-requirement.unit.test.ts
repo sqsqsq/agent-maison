@@ -66,6 +66,17 @@ async function scenario(mode: Scenario): Promise<void> {
     assert(audit && audit.target_run_id === old.run_id);
     assert.equal(audit.delivery_cycle_boundary, mode === 'completed' ? old.run_id : undefined);
     assert.equal(readOriginalDeliveryActivity(host.root, prepared.manifest)!.calls, mode === 'completed' ? 0 : 1);
+    const assertOriginals = () => {
+      assert.deepEqual(fs.readFileSync(created.manifestPath), oldManifest);
+      assert.deepEqual(fs.readFileSync(created.eventsPath), oldEvents);
+      for (const unit of oldUnits) assert.deepEqual(fs.readFileSync(unit.path), unit.bytes);
+    };
+    if (mode === 'completed') {
+      assert.equal(currentOriginalDelivery(host.root, old).run_id, old.run_id);
+      assert(!('execution_scope' in prepared.manifest), 'the new request must still go through design');
+      assertOriginals();
+      return;
+    }
     const options = { projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: BLUEPRINT_ID,
       runId: prepared.manifest.run_id, adapter: 'claude', runMode: 'attended', authorization };
     let next = await runGoalModeSessionStep(options) as Json, questions = 0;
@@ -93,9 +104,9 @@ async function scenario(mode: Scenario): Promise<void> {
       candidate: fs.existsSync(cuDraft) ? fs.readFileSync(cuDraft, 'utf8') : undefined,
       repairs: fs.readFileSync(path.join(prepared.runDir, 'events.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line)).filter(row => row.type === 'design_authority_repair') })}`);
     assert(!('execution_scope' in prepared.manifest));
-    const expectedTurns = (mode === 'completed' ? 1 : 2) + questions;
+    const expectedTurns = 2 + questions;
     assert.equal(readOriginalDeliveryActivity(host.root, prepared.manifest)!.calls, expectedTurns);
-    assert.equal(currentOriginalDelivery(host.root, old).run_id, mode === 'completed' ? old.run_id : prepared.manifest.run_id);
+    assert.equal(currentOriginalDelivery(host.root, old).run_id, prepared.manifest.run_id);
     const repeated = prepareGoalModeRun({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: BLUEPRINT_ID,
       adapter: 'claude', requirement, ...(mode === 'source' ? { requirementSourceFiles: ['doc/requirement.md'] } : {}) });
     assert.equal(repeated.manifest.run_id, prepared.manifest.run_id);
@@ -108,14 +119,12 @@ async function scenario(mode: Scenario): Promise<void> {
       assert.deepEqual(fs.readFileSync(path.join(prepared.runDir, 'events.jsonl')), runEvents);
       assert.equal(readOriginalDeliveryActivity(host.root, prepared.manifest)!.calls, expectedTurns);
     }
-    assert.deepEqual(fs.readFileSync(created.manifestPath), oldManifest);
-    assert.deepEqual(fs.readFileSync(created.eventsPath), oldEvents);
-    for (const unit of oldUnits) assert.deepEqual(fs.readFileSync(unit.path), unit.bytes);
+    assertOriginals();
   });
 }
 
 const cases = [
-  { name: 'f3b8e6a1 requirement: completed original starts a new cycle and dispatches real blueprint design for inline work', mode: 'completed' },
+  { name: 'f3b8e6a1 requirement: completed original starts a new cycle without changing its original', mode: 'completed' },
   { name: 'f3b8e6a1 requirement: unfinished original correction preserves its calls and uses the union request path', mode: 'unfinished' },
   { name: 'f3b8e6a1 requirement: same source path with changed bytes still dispatches design rather than borrowing old coverage', mode: 'source' },
 ] as const;

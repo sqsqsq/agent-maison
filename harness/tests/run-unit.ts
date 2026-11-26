@@ -5,7 +5,7 @@ import { performance } from 'node:perf_hooks';
 import * as path from 'node:path';
 import { collectSuites, filterSuites } from './utils/unit-suite-registry';
 import type { InputSnapshot } from './utils/test-input-snapshot';
-import { discoverCases, mapQueued, ProcessSupervisor, runDiscoveredSuite, superviseProcess } from './utils/unit-suite-processes';
+import { discoverCases, mapQueued, ProcessSupervisor, runDiscoveredSuite, summarizeCaseTimings, superviseProcess } from './utils/unit-suite-processes';
 
 export interface UnitCaseResult {
   name: string;
@@ -88,11 +88,12 @@ export async function main(args: string[]): Promise<void> {
     const ok = registered > 0 && !failed && !missed && !missingResults && !infrastructureFailed && inputSnapshot?.id === endingSnapshot?.id;
     const discoveryMs = discoveries.reduce((sum, item) => sum + item.workMs, 0);
     const executionMs = runs.reduce((sum, run) => sum + (run?.workMs ?? 0), 0);
+    const { ranked, slowestCases, additionalCasesOver10s } = summarizeCaseTimings(runs.flatMap(run => run?.caseTimings ?? []));
     const report = {
       ok, inputSnapshot, endingSnapshot, suites: suites.length, workers, wallMs: wallMs(), buildMs: build.elapsedMs,
       registered, executed, passed, failed, missed, missingResults, skipped, timedOut, infrastructureFailed,
       workMs: discoveryMs + executionMs, discoveryMs, executionMs,
-      longestCaseMs: Math.max(0, ...runs.map(run => run?.longestCaseMs ?? 0)),
+      longestCaseMs: slowestCases[0]?.elapsedMs ?? 0, caseTimingCount: ranked.length, slowestCases, additionalCasesOver10s,
     };
     if (filter === undefined) {
       await fs.mkdir(path.dirname(REPORT), { recursive: true });
@@ -109,6 +110,8 @@ export async function main(args: string[]): Promise<void> {
         await fs.rm(pending, { force: true });
       }
     }
+    const visibleTimings = filter === undefined ? [...slowestCases, ...additionalCasesOver10s] : ranked;
+    for (const timing of visibleTimings) console.log(`[CASE-TIMING] ${JSON.stringify(timing)}`);
     console.log(`[RESULT] ${ok ? 'PASS' : 'FAIL'}; ${registered} registered, ${executed} completed, ${passed} passed, ${failed} failed, ${missed} incomplete, ${missingResults} missing results, ${timedOut} timed out, ${infrastructureFailed} suite errors; wall=${(report.wallMs / 1000).toFixed(3)}s`);
     if (!ok) process.exitCode = 1;
   } finally {

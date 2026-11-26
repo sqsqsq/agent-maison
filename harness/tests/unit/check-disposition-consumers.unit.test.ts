@@ -35,11 +35,14 @@ import { applyCompatDowngrade } from '../../compat-loader';
 import { resolvePhaseVerdict, writeRunSummaryBase } from '../../harness-runner';
 import { classifyFailureKind, shouldHaltNoProgress } from '../../scripts/utils/goal-failure-classifier';
 import { buildCurrentAttemptFailureProjection } from '../../scripts/goal-phase-runtime';
-import { buildGoalManifestFromInput } from '../../scripts/utils/goal-manifest';
+import { buildGoalManifestFromInput, loadGoalManifestFromRun } from '../../scripts/utils/goal-manifest';
+import { resolveCapabilityResolutionEntryInput } from '../../scripts/utils/capability-resolution-entry-input';
+import { resolveCapabilityInputs } from '../../scripts/utils/capability-resolution';
+import { checkFactsArtifact } from '../../scripts/utils/context-facts';
 import { createGoalRun } from '../../scripts/utils/goal-run-creation';
 import { __testing_buildTestingRunStatusResult } from '../../scripts/check-testing';
 import { validateLiteSchema } from '../../scripts/utils/lite-json-schema';
-import { featureFilePath, featurePhaseReportsDir, clearFrameworkConfigCache } from '../../config';
+import { featureFilePath, featurePhaseReportsDir, clearFrameworkConfigCache, relFeaturesDir } from '../../config';
 import { ensureFeatureExecutionScopeFrozen, featureEffectiveScope } from '../../scripts/utils/feature-execution-scope';
 import { executionScopeFingerprint } from '../../scripts/utils/execution-scope';
 import { buildCorrectionState, writeCorrectionState } from '../../scripts/utils/correction-state';
@@ -132,9 +135,7 @@ const REVIEW_REPORT_CLEAN = REVIEW_REPORT_STATS_BROKEN.replace(
  * 先由生产冻结入口取得 facts 指纹，再走真实 Review CLI 验证披露与正式退出码。
  * 默认 facts 满足全部可核实的探索门。
  */
-function runReviewCli(report: string, facts: Record<string, unknown> = {}): {
-  cli: ReturnType<typeof runCli>; summary: HarnessRunSummary | null; script: ScriptReport | null; cleanup: () => void;
-} {
+function prepareRunlessReview(report: string, facts: Record<string, unknown> = {}) {
   const { root, frameworkRoot, feature } = setupRunlessProject({ chain: ['review'], completionTarget: 'feature' });
   const reportPath = featureFilePath(root, feature, path.join('review', 'review-report.md'));
   fs.mkdirSync(path.dirname(reportPath), { recursive: true });
@@ -152,10 +153,16 @@ function runReviewCli(report: string, facts: Record<string, unknown> = {}): {
     ready_to_produce: true, has_blocker_coverage_risk: false, source_code_paths: sources, key_inputs_read: sources, files_inspected_count: 5,
     searches_performed_estimate: 4, decisions_unlocked: ['review value'], exploration_mode: 'sequential', ...facts,
   }) + '---\n## Code Facts\n| 路径 | 事实 | 影响 |\n|---|---|---|\n' + sources.map(s => `| ${s} | readable | review target |`).join('\n') + '\n\n## phase_delta: review\nreviewed\n');
+  return { root, frameworkRoot, feature, factsPath, args, cleanup: () => { rmDir(root); clearFrameworkConfigCache(); } };
+}
+
+function runReviewCli(report: string, facts: Record<string, unknown> = {}) {
+  const fixture = prepareRunlessReview(report, facts);
+  const { root, frameworkRoot, feature, args, cleanup } = fixture;
   const cli = runCli(root, args);
   const dir = featurePhaseReportsDir(root, feature, 'review', frameworkRoot);
   const read = <T>(name: string): T | null => (fs.existsSync(path.join(dir, name)) ? JSON.parse(fs.readFileSync(path.join(dir, name), 'utf-8')) as T : null);
-  return { cli, summary: read<HarnessRunSummary>('summary.json'), script: read<ScriptReport>('script-report.json'), cleanup: () => { rmDir(root); clearFrameworkConfigCache(); } };
+  return { cli, summary: read<HarnessRunSummary>('summary.json'), script: read<ScriptReport>('script-report.json'), cleanup };
 }
 
 // ---------------------------------------------------------------------------
@@ -457,44 +464,34 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
   {
     name: '第二批 披露：schema_version_present 经真实 CLI（catalog、glossary）——结论与退出码由 FAIL/1 变为 PASS/0，失败进披露清单',
     run: () => {
-      for (const phase of ['catalog', 'glossary'] as const) {
-        const { root, frameworkRoot } = setupRunlessProject({ chain: ['coding'] });
-        try {
-          fs.mkdirSync(path.join(root, 'doc'), { recursive: true });
-          fs.writeFileSync(path.join(root, 'doc/module-catalog.yaml'), `schema_version: "${phase === 'catalog' ? '' : '1.0'}"\nmodules: []\n`);
-          if (phase === 'glossary') fs.writeFileSync(path.join(root, 'doc/glossary.yaml'), 'schema_version: ""\nterms: []\n');
-          seedGit(root);
-          const runId = 'global-context-other-feature';
-          const manifest = buildGoalManifestFromInput({ feature: 'runless', adapter: 'generic', requirement: 'value is 42', unattended: false,
-            start_phase: 'coding', end_phase: 'coding' }, { projectRoot: root, runId });
-          createGoalRun({ projectRoot: root, manifest, chain: ['coding'] });
-          const goalEnv = { MAISON_GOAL_RUN_ID: runId, MAISON_GOAL_ATTEMPT: 'i1', MAISON_GOAL_ATTEMPT_PHASE: 'coding', MAISON_GOAL_HEADLESS: '1' };
-          let baseline: HarnessRunSummary | undefined;
-          const contexts: Array<{ name: string; feature: string; env: Record<string, string> }> = [{ name: 'plain', feature: '_global', env: {} },
-            { name: 'other-feature-goal', feature: '_global', env: goalEnv },
-            { name: 'global-staging-alias', feature: 'catalog-staging', env: {} }];
-          for (const context of contexts) {
-            const args = ['--phase', phase, '--project-root', root, '--framework-root', frameworkRoot,
-              ...(context.feature === '_global' ? [] : ['--feature', context.feature])];
-            const summaryPath = path.join(featurePhaseReportsDir(root, context.feature, phase, frameworkRoot), 'summary.json');
-            fs.rmSync(summaryPath, { force: true });
-            const cli = runCli(root, args, context.env);
-            const out = cli.out;
-            assert(/FAIL \[BLOCKER\] schema_version_present/.test(out), `前提：检查照常产出原始 FAIL（${phase}/${context.name}）：${out}`);
-            assert.strictEqual(cli.status, 0, `${phase}/${context.name}：global 不得借他 Feature 的 Goal 身份读取 Feature 材料\n${out}`);
-            assert(out.includes('Verdict: PASS'), `${phase}：控制台结论\n${out}`);
-            const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf-8')) as HarnessRunSummary;
-            assert.strictEqual(summary.verdict, 'PASS');
-            assert.deepStrictEqual(summary.disclosed_failures?.map(d => d.id), ['schema_version_present'], `${phase}: ${JSON.stringify(summary.disclosed_failures)}`);
-            if (baseline) assert.deepStrictEqual({ next: summary.next_action, closure: summary.closure_status, blockers: summary.blockers },
-              { next: baseline.next_action, closure: baseline.closure_status, blockers: baseline.blockers }, `${phase}/${context.name}: 原 global 动作与异常语义不变`);
-            else baseline = summary;
-          }
-          const wrongFeature = runCli(root, ['--phase', 'coding', '--feature', 'not-the-run-feature', '--project-root', root, '--framework-root', frameworkRoot], goalEnv);
-          assert.notEqual(wrongFeature.status, 0, 'ordinary Feature cannot borrow a different Feature run identity');
-          assert(wrongFeature.out.includes('[goal-manifest]'), wrongFeature.out);
-        } finally { rmDir(root); clearFrameworkConfigCache(); }
-      }
+      const { root, frameworkRoot } = setupRunlessProject({ chain: ['coding'] });
+      try {
+        const catalog = path.join(root, 'doc/module-catalog.yaml');
+        const glossary = path.join(root, 'doc/glossary.yaml');
+        fs.writeFileSync(catalog, 'schema_version: "1.0"\nmodules: []\n');
+        fs.writeFileSync(glossary, 'schema_version: "1.0"\nterms: []\n');
+        seedGit(root);
+        const runId = 'global-context-other-feature';
+        const manifest = buildGoalManifestFromInput({ feature: 'runless', adapter: 'generic', requirement: 'value is 42', unattended: false,
+          start_phase: 'coding', end_phase: 'coding' }, { projectRoot: root, runId });
+        createGoalRun({ projectRoot: root, manifest, chain: ['coding'] });
+        const goalEnv = { MAISON_GOAL_RUN_ID: runId, MAISON_GOAL_ATTEMPT: 'i1', MAISON_GOAL_ATTEMPT_PHASE: 'coding', MAISON_GOAL_HEADLESS: '1' };
+        assert.throws(() => loadGoalManifestFromRun(root, runId, { feature: 'not-the-run-feature' }), /\[goal-manifest\].*未找到 run manifest/);
+        const staging = 'catalog-staging';
+        for (const [phase, file, payload] of [['catalog', catalog, 'modules: []\n'], ['glossary', glossary, 'terms: []\n']] as const) {
+          fs.writeFileSync(file, 'schema_version: ""\n' + payload);
+          const cli = runCli(root, ['--phase', phase, '--project-root', root, '--framework-root', frameworkRoot, '--feature', staging], goalEnv);
+          assert(/FAIL \[BLOCKER\] schema_version_present/.test(cli.out), phase + ': ' + cli.out);
+          assert.strictEqual(cli.status, 0, cli.out);
+          assert(cli.out.includes('Verdict: PASS'), cli.out);
+          const summaryPath = path.join(featurePhaseReportsDir(root, staging, phase, frameworkRoot), 'summary.json');
+          const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf-8')) as HarnessRunSummary;
+          assert.strictEqual(summary.verdict, 'PASS');
+          assert.deepStrictEqual(summary.disclosed_failures?.map(d => d.id), ['schema_version_present']);
+          assert.strictEqual(summary.blocker_count, 0);
+          fs.writeFileSync(file, 'schema_version: "1.0"\n' + payload);
+        }
+      } finally { rmDir(root); clearFrameworkConfigCache(); }
     },
   },
   {
@@ -513,35 +510,38 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         assert.deepStrictEqual(ledger.summary?.disclosed_failures?.map(d => d.id).sort(), ['context_exploration_searches_min', 'context_exploration_subagents_used']);
         assert.strictEqual(ledger.summary?.completion_status, 'COMPLETE_WITH_GAPS');
       } finally { ledger.cleanup(); }
-      const version = runReviewCli(REVIEW_REPORT_CLEAN, { schema_version: '1.0' });
+      const legacy = prepareRunlessReview(REVIEW_REPORT_CLEAN);
       try {
-        assert.notStrictEqual(version.cli.status, 0, '链首建立阶段仍被拦住');
-        assert(version.cli.out.includes('context_exploration_facts_input_context'), `按事实调用契约拒收，不能误导为修改capability contract：\n${version.cli.out}`);
-      } finally { version.cleanup(); }
+        const { root, frameworkRoot, feature, factsPath } = legacy;
+        const entry = resolveCapabilityResolutionEntryInput({ projectRoot: root, frameworkRoot, feature,
+          phase: 'review', featuresDir: relFeaturesDir(root) });
+        const { inputs: resolvedInputs } = resolveCapabilityInputs({ projectRoot: root, frameworkRoot, feature, phase: 'review', track: 'full', ...entry });
+        assert(entry.factsContext && !entry.factsContext.baseline && resolvedInputs,
+          'review is the establishing phase and has no signed facts baseline');
+        const oldFacts = fs.readFileSync(factsPath, 'utf8').replace(/^schema_version: .+$/m, 'schema_version: "1.0"');
+        fs.writeFileSync(factsPath, oldFacts);
+        const checks = checkFactsArtifact(root, feature, 'review', { frameworkRoot, factsContext: entry.factsContext, resolvedInputs });
+        assert(checks.some(check => check.id === 'context_exploration_facts_input_context' && check.status === 'FAIL'
+          && check.details.includes('未验证的旧schema')), JSON.stringify(checks));
+      } finally { legacy.cleanup(); }
     },
   },
   {
-    // plan 3abca824 t4（A7）：review 是首个实际建立阶段、无 baseline；每次只触发一条候选原始 FAIL。
-    // delta 缺节、空节的公开入口证据在 real-chain-seams RC-8c / RC-8d（goal 真实链路，plan 为非建立阶段）。
     name: 'P5 第二批 披露：自报文件数、未列解锁决策经真实 CLI review 进披露清单并保留独立核验义务',
     run: () => {
-      for (const [label, overrides, id] of [
-        ['文件数', { files_inspected_count: 1 }, 'context_exploration_files_inspected_min'],
-        ['decisions', { decisions_unlocked: [] }, 'context_exploration_decisions_unlocked'],
-      ] as const) {
-        const r = runReviewCli(REVIEW_REPORT_CLEAN, overrides);
-        try {
-          const raw = (r.script?.checks ?? []).filter(c => c.status === 'FAIL').map(c => `${c.id}/${c.severity}`).sort();
-          assert.deepStrictEqual(raw, [`${id}/BLOCKER`], `${label} 前提：完整检查结果里只有这一条原始 FAIL\n${r.cli.out}`);
-          assert.strictEqual(r.cli.status, 1, `${label}：独立核验待补\n${r.cli.out}`);
-          assert(r.cli.out.includes('Verdict: PASS'), `${label}：控制台结论\n${r.cli.out}`);
-          assert.strictEqual(r.summary?.verdict, 'PASS', label);
-          assert.strictEqual(r.summary?.closure_status, 'open', label);
-          assert.strictEqual(r.summary?.next_action, 'run_verifier_then_receipt', label);
-          assert.deepStrictEqual(r.summary?.disclosed_failures?.map(d => d.id), [id], label);
-          assert.strictEqual(r.summary?.completion_status, 'COMPLETE_WITH_GAPS', label);
-        } finally { r.cleanup(); }
-      }
+      const ids = ['context_exploration_decisions_unlocked', 'context_exploration_files_inspected_min'];
+      const r = runReviewCli(REVIEW_REPORT_CLEAN, { files_inspected_count: 1, decisions_unlocked: [] });
+      try {
+        const raw = (r.script?.checks ?? []).filter(c => c.status === 'FAIL').map(c => c.id + '/' + c.severity).sort();
+        assert.deepStrictEqual(raw, ids.map(id => id + '/BLOCKER'), r.cli.out);
+        assert.strictEqual(r.cli.status, 1, r.cli.out);
+        assert(r.cli.out.includes('Verdict: PASS'), r.cli.out);
+        assert.strictEqual(r.summary?.verdict, 'PASS');
+        assert.strictEqual(r.summary?.closure_status, 'open');
+        assert.strictEqual(r.summary?.next_action, 'run_verifier_then_receipt');
+        assert.deepStrictEqual(r.summary?.disclosed_failures?.map(d => d.id).sort(), ids);
+        assert.strictEqual(r.summary?.completion_status, 'COMPLETE_WITH_GAPS');
+      } finally { r.cleanup(); }
     },
   },
   {

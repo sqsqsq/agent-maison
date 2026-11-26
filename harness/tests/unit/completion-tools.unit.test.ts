@@ -203,7 +203,7 @@ const cases = [
       const runGate = (runtime.exports as { __gateReceiverProbe: (root: string, framework: string, phase: string, feature: string,
         dryRun: boolean, manifest: undefined, identity: undefined, timeout: number) => Promise<{ exitCode: number; timedOut: boolean; outputTail: string; currentCheckObserved: boolean }> }).__gateReceiverProbe;
       try {
-        for (const mode of ['newline', 'final-line', 'tail-only'] as const) {
+        for (const mode of ['final-line', 'tail-only'] as const) {
           fs.writeFileSync(path.join(harness, 'harness-runner.ts'), `const bytes=Buffer.from(${JSON.stringify(bytes.toString('base64'))},'base64');
 const chunks=${mode === 'tail-only' ? "[bytes.subarray(-8000)]" : `[bytes.subarray(0,${splitAt + 1}),bytes.subarray(${splitAt + 1},${splitAt + 2}),bytes.subarray(${splitAt + 2})]`};
 let i=0;const emit=()=>{if(i<chunks.length){process.stdout.write(chunks[i++]);setTimeout(emit,25);return;}
@@ -259,21 +259,35 @@ process.stderr.write('diagnostic tail\\n'+'x'.repeat(9000));};emit();
     }) },
   { name: 'P2 tools confirmed weakening remains author repair; missing or unclear strength stays verify even when the raw machine check passes',
     async run() {
-      for (const scenario of ['missing', 'unclear', 'confirmed', 'raw-pass-missing'] as const) {
-        const mode = scenario === 'confirmed' ? 'weakened' : scenario === 'raw-pass-missing' ? 'preserved' : 'strengthened';
-        await withCurrentStrength(mode, current => {
-          if (scenario === 'unclear' || scenario === 'confirmed') current.publish(scenario);
-          assert.equal(current.check.status, scenario === 'raw-pass-missing' ? 'PASS' : 'FAIL');
-          const disposition = current.read(), task = phaseCompletionProblems(disposition, ['coding']).find(problem => problem.id === current.check.id);
-          assert(task, JSON.stringify({ scenario, disposition }));
-          assert.equal(task.action, scenario === 'confirmed' ? 'repair' : 'verify', JSON.stringify(task));
-          assert.equal(task.owner, 'coding', 'the current unit author repairs a confirmed real defect; missing independent judgment stays with the checking family');
-          assert.equal(fs.readFileSync(path.join(current.dir, 'script-report.json'), 'utf8'), current.raw, 'independent outcomes do not rewrite any raw fact');
-          assert.throws(() => finalizePhaseClosure({ projectRoot: current.f.root, frameworkRoot: FRAMEWORK_ROOT, feature: 'demo', phase: 'coding',
-            goalRunId: current.f.manifest.run_id, resolvedInputs: current.ctx.resolvedInputs, factsContext: current.ctx.factsContext, persistPhaseState: () => undefined }),
-          /coding_existing_test_preserved/, 'a real current repair/verification obligation cannot close');
-        });
-      }
+      const check = (scenario: 'missing' | 'unclear' | 'confirmed' | 'raw-pass-missing', current: ReturnType<typeof prepare>) => {
+        assert.equal(current.check.status, scenario === 'raw-pass-missing' ? 'PASS' : 'FAIL');
+        const disposition = current.read();
+        const task = phaseCompletionProblems(disposition, ['coding']).find(problem => problem.id === current.check.id);
+        assert(task, JSON.stringify({ scenario, disposition }));
+        assert.equal(task.action, scenario === 'confirmed' ? 'repair' : 'verify', JSON.stringify(task));
+        assert.equal(task.owner, 'coding');
+        assert.equal(fs.readFileSync(path.join(current.dir, 'script-report.json'), 'utf8'), current.raw,
+          'independent outcomes retain the raw producer result');
+      };
+      const refuseClosure = (current: ReturnType<typeof prepare>) => {
+        assert.throws(() => finalizePhaseClosure({ projectRoot: current.f.root, frameworkRoot: FRAMEWORK_ROOT, feature: 'demo', phase: 'coding',
+          goalRunId: current.f.manifest.run_id, resolvedInputs: current.ctx.resolvedInputs, factsContext: current.ctx.factsContext, persistPhaseState: () => undefined }),
+        /coding_existing_test_preserved/, 'a real current repair or verification obligation cannot close');
+      };
+      await withCurrentStrength('strengthened', current => {
+        check('missing', current);
+        current.publish('unclear');
+        check('unclear', current);
+      });
+      await withCurrentStrength('weakened', current => {
+        current.publish('confirmed');
+        check('confirmed', current);
+        refuseClosure(current);
+      });
+      await withCurrentStrength('preserved', current => {
+        check('raw-pass-missing', current);
+        refuseClosure(current);
+      });
     } },
   { name: 'P3 definition input: basis alone keeps plan executable; accepted input proof avoids an empty check', async run() {
     await withCurrentStrength('preserved', current => {

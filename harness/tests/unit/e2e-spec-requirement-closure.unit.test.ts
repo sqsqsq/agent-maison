@@ -1,4 +1,5 @@
 import { beginUnitCase } from '../utils/unit-cases';
+import { testCliArgs } from '../utils/test-cli-args';
 // 消费者扩展在 spec harness 入口的两种失败判定。
 
 import * as fs from 'fs';
@@ -40,12 +41,7 @@ function provisionFramework(): { root: string; harnessDir: string } {
   // junction node_modules（Windows Only；避免复制 88MB）
   const nmLink = path.join(harness, 'node_modules');
   const nmTarget = path.join(FRAMEWORK_ROOT, 'harness', 'node_modules');
-  if (process.platform === 'win32') {
-    const r = spawnSync('cmd', ['/c', 'mklink', '/J', nmLink, nmTarget]);
-    assert(r.status === 0, `junction node_modules 失败：${r.stderr}`);
-  } else {
-    fs.symlinkSync(nmTarget, nmLink, 'dir');
-  }
+  fs.symlinkSync(nmTarget, nmLink, process.platform === 'win32' ? 'junction' : 'dir');
   // framework 资产 + 根 package.json（gate fingerprint 需要）
   for (const d of ['skills', 'workflows', 'specs', 'profiles', 'templates', 'agents']) {
     copyDir(path.join(FRAMEWORK_ROOT, d), path.join(fw, d));
@@ -59,9 +55,9 @@ function runHarness(
   args: string[],
 ): { status: number; stdout: string; stderr: string } {
   const r = spawnSync(
-    process.platform === 'win32' ? 'npx.cmd' : 'npx',
-    ['ts-node', path.join(harnessDir, 'harness-runner.ts'), ...args],
-    { cwd: harnessDir, encoding: 'utf-8', shell: process.platform === 'win32' },
+    process.execPath,
+    [...testCliArgs(path.join(harnessDir, 'harness-runner.ts')), ...args],
+    { cwd: harnessDir, encoding: 'utf-8', windowsHide: true },
   );
   return { status: r.status ?? -1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
 }
@@ -128,11 +124,6 @@ function scaffoldFeature(root: string, adapter = 'codeagent'): void {
   ].join('\n'), 'utf-8');
   fs.writeFileSync(path.join(root, '.gitignore'), 'framework/\n', 'utf-8');
   git(root, ['init', '-q', '-b', 'main']);
-  git(root, ['config', 'user.email', 'e2e@test']);
-  git(root, ['config', 'user.name', 'e2e']);
-  git(root, ['config', 'commit.gpgsign', 'false']);
-  git(root, ['add', '-A']);
-  git(root, ['commit', '-qm', 'baseline']);
 }
 
 function readJson(root: string, rel: string): Record<string, unknown> {
@@ -157,7 +148,7 @@ const cases: Case[] = [
           '      - { kind: mcp, ref: verify-action }', '',
         ].join('\n'), 'utf-8');
         git(root, ['add', '-A']);
-        git(root, ['commit', '-qm', 'extension fixture']);
+        git(root, ['-c', 'user.email=e2e@test', '-c', 'user.name=e2e', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'extension fixture']);
         const result = runHarness(harnessDir, ['--phase', 'spec', '--feature', 'demo', '--summary']);
         assert(result.status !== 0, `required produces 缺失应失败：${result.stdout}`);
         const report = readJson(root, 'doc/features/demo/spec/reports/script-report.json') as {
@@ -187,7 +178,7 @@ const cases: Case[] = [
           '      - { kind: mcp, ref: verify-action }', '',
         ].join('\n'), 'utf-8');
         git(root, ['add', '-A']);
-        git(root, ['commit', '-qm', 'invalid extension fixture']);
+        git(root, ['-c', 'user.email=e2e@test', '-c', 'user.name=e2e', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'invalid extension fixture']);
         const result = runHarness(harnessDir, ['--phase', 'spec', '--feature', 'demo', '--summary']);
         assert(result.status !== 0, `invalid manifest 应失败：${result.stdout}`);
         const report = readJson(root, 'doc/features/demo/spec/reports/script-report.json') as {

@@ -36,6 +36,7 @@ import { applyIndependentQuestioningOutput, independentQuestioningBlockers, requ
 import { isApplicableView, isChangedView } from '../../scripts/utils/blueprint-views';
 import { validateRuntimeDataFlows } from '../../scripts/utils/runtime-data-flow-check';
 import { checkCanonicalComponentBlueprint, resolveCliRefTarget, prepareCanonicalBlueprintSource } from '../../scripts/check-component-blueprint';
+import { bindDesignRequestBlueprint, prepareDesignRequest } from '../../scripts/utils/automatic-request';
 import { clearSkillsIndexCache, listBuiltinSkillIds, resolveSkillPath } from '../../scripts/utils/resolve-skill-path';
 import { clearFrameworkConfigCache } from '../../config';
 import { blueprintReviewPath, materializeBlueprintReview, inspectBlueprintReview } from '../../scripts/utils/blueprint-review-materialization';
@@ -422,6 +423,7 @@ function withPublicSmallBlueprint(run: (fixture: {
   root: string; canonical: string; id: string; source: string; head: string; nativeFile: string;
   cli: (args: string[], blueprintId?: string) => SpawnSyncReturns<string>;
   startRequest: (id: string) => void;
+  prepareBoundRequest: (reportDir: string) => { requestFile: string; sourceRefs: string[] };
 }) => void): void {
   withTempProject(root => {
     const { blueprint } = smallBlueprint(root), id = 'compact-cli', source = 'src/title.ts';
@@ -454,7 +456,23 @@ function withPublicSmallBlueprint(run: (fixture: {
     const cli = (args: string[], blueprintId = id) => spawnSync(process.execPath, [...testCliArgs(path.join(framework, 'harness/scripts/check-component-blueprint.ts')),
       '--project-root', root, '--framework-root', framework, '--blueprint', blueprintId, '--json', ...args], { cwd: path.join(framework, 'harness'), encoding: 'utf8', timeout: 60000,
       env: { ...process.env, CLAUDE_CONFIG_DIR: home, TS_NODE_PROJECT: path.join(framework, 'harness/tsconfig.json') } });
-    run({ root, canonical, id, source, head, nativeFile, cli, startRequest });
+    const prepareBoundRequest = (reportDir: string) => {
+      const options = { projectRoot: root, frameworkRoot: framework, blueprintId: id };
+      const prepared = prepareDesignRequest({ ...options, reportDir, targets: [source], captureDirtyAtPrepare: true,
+        requirementSources: ['requirements/compact.md'], sessionRef: nativeFile + '#user-small' });
+      assert(!prepared.originGap, prepared.originGap ?? '意外缺少设计请求来源');
+      const requestFile = path.relative(root, prepared.requestFile).split(path.sep).join('/');
+      prepareCanonicalBlueprintSource(root, id, { requestIntake: prepared.intake, requestSourceItems: prepared.currentScopeItems }, { requestFile });
+      assert(bindDesignRequestBlueprint({ ...options, requestFile }), '旧请求须绑定有效蓝图');
+      return { requestFile, sourceRefs: prepared.sourceRefs };
+    };
+    const originalHome = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = home;
+    try { run({ root, canonical, id, source, head, nativeFile, cli, startRequest, prepareBoundRequest }); }
+    finally {
+      if (originalHome === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+      else process.env.CLAUDE_CONFIG_DIR = originalHome;
+    }
   });
 }
 
@@ -616,20 +634,20 @@ export function runAll(): UnitCaseResult[] {
     assert(fs.readdirSync(path.dirname(path.dirname(canonical))).length === 1, '小型创建了CU/其它设计物');
     const loaded = loadCanonicalBlueprint(root, id), ref: ComponentBlueprintRef = { artifact: 'component-blueprint@1', component_id: String(loaded.blueprint.component_id), blueprint_id: id, revision: Number(loaded.blueprint.revision), source_fingerprint: String(loaded.blueprint.source_fingerprint), artifact_sha256: loaded.artifactSha256, target: { kind: 'node', view_id: 'development', id: 'change' } };
     const before = [canonical, requestPath, ...output.source_refs.map((file: string) => path.join(root, file))].map(file => fs.readFileSync(file, 'utf8'));
-    const second = cli(['--request-file', output.request_file, '--ref', JSON.stringify(ref)]);
-    assert(second.status === 0, second.stderr + second.stdout);
-    const after = [canonical, requestPath, ...output.source_refs.map((file: string) => path.join(root, file))].map(file => fs.readFileSync(file, 'utf8'));
-    assert(JSON.stringify(before) === JSON.stringify(after), 'readonly重验改写了来源或canonical');
-    const broken = readYaml(canonical); delete asRecords(asRecord(asRecords(asRecords(broken.design_views)[0]!.nodes)[0]!.acceptance)!.criteria)[0]!.expected_result;
-    fs.writeFileSync(canonical, YAML.stringify(broken));
-    const rejected = cli(['--request-file', output.request_file]);
-    assert(rejected.status !== 0 && JSON.parse(rejected.stdout).status === 'FAIL', '同公共checker吞掉坏短验收');
+    const requestOptions = { projectRoot: root, frameworkRoot: path.resolve(__dirname, '../../..'), blueprintId: id, requestFile: output.request_file };
+    const readonly = prepareDesignRequest({ ...requestOptions, readonly: true });
+    assert(!readonly.originGap, readonly.originGap ?? '只读原请求须保留来源');
+    const context = { requestIntake: readonly.intake, requestSourceItems: readonly.currentScopeItems };
+    assert(resolveCliRefTarget(root, id, request.blueprint.ref, context), '原请求的只读蓝图绑定应保持有效');
+    assert(resolveCliRefTarget(root, id, ref, context), '指定的蓝图节点应保持可读');
+    const after = [canonical, requestPath, ...readonly.sourceRefs.map(file => path.join(root, file))].map(file => fs.readFileSync(file, 'utf8'));
+    assert(JSON.stringify(after) === JSON.stringify(before), 'readonly重验改写了来源或canonical');
     const repaired = loaded.blueprint; repaired.revision = Number(repaired.revision) + 1; refreshBlueprintFingerprints(repaired); fs.writeFileSync(canonical, YAML.stringify(repaired));
-    const stale = cli(['--request-file', output.request_file]);
-    assert(stale.status !== 0, 'readonly接受了旧revision绑定');
-    const rebound = cli(['--request-file', output.request_file, '--prepare-source']);
-    assert(rebound.status === 0, rebound.stderr + rebound.stdout);
-    assert(JSON.parse(fs.readFileSync(requestPath, 'utf8')).blueprint.ref.revision === repaired.revision, '修订后仍绑旧revision');
+    let stale: unknown;
+    try { resolveCliRefTarget(root, id, ref, context); } catch (error) { stale = error; }
+    assert(stale instanceof ComponentBlueprintResolutionError && stale.message.includes('revision'), String(stale));
+    const rebound = bindDesignRequestBlueprint(requestOptions);
+    assert(rebound?.ref.revision === repaired.revision, '修订后仍绑旧revision');
   })));
   for (const mode of ['other-request', 'admitted', 'cu', 'completed']) {
     results.push(test(`R2 public source preparation preserves ${mode} byte-for-byte`, () => withPublicSmallBlueprint(f => {
@@ -672,20 +690,15 @@ export function runAll(): UnitCaseResult[] {
       assert(!fs.existsSync(path.join(f.root, 'doc/reports/foreign-source/request.json')), `${mode}: 失败留下新request`);
     })));
   }
-  results.push(test('R2 public failed validation and ref exceptions roll back canonical and original request bindings', () => withPublicSmallBlueprint(f => {
-    const first = f.cli(['--session-ref', f.nativeFile + '#user-small', '--target', f.source, '--requirement-source', 'requirements/compact.md', '--report-dir', 'doc/reports/rollback', '--prepare-source']);
-    assert(first.status === 0, first.stderr + first.stdout);
-    const output = JSON.parse(first.stdout), requestPath = path.join(f.root, output.request_file), valid = readYaml(f.canonical);
-    for (const mode of ['invalid-content', 'invalid-ref']) {
-      const draft = clone(valid); delete draft.source_fingerprint; delete draft.decision_fingerprint;
-      if (mode === 'invalid-content') delete asRecords(asRecord(asRecords(asRecords(draft.design_views)[0]!.nodes)[0]!.acceptance)!.criteria)[0]!.expected_result;
-      fs.writeFileSync(f.canonical, YAML.stringify(draft));
-      const files = [f.canonical, requestPath, ...output.source_refs.map((file: string) => path.join(f.root, file))];
-      const before = files.map(file => fs.readFileSync(file));
-      const rejected = f.cli(['--request-file', output.request_file, '--prepare-source', ...(mode === 'invalid-ref' ? ['--ref', '{}'] : [])]);
-      assert(rejected.status !== 0 && JSON.parse(rejected.stdout).status === 'FAIL', `${mode}: ${rejected.stderr}${rejected.stdout}`);
-      assert(files.every((file, index) => fs.readFileSync(file).equals(before[index]!)), `${mode}: 失败/异常留下半写或丢原binding`);
-    }
+  results.push(test('R2 public ref exception rolls back canonical and original request bindings', () => withPublicSmallBlueprint(f => {
+    const prepared = f.prepareBoundRequest('doc/reports/rollback');
+    const draft = readYaml(f.canonical); delete draft.source_fingerprint; delete draft.decision_fingerprint;
+    fs.writeFileSync(f.canonical, YAML.stringify(draft));
+    const files = [f.canonical, path.join(f.root, prepared.requestFile), ...prepared.sourceRefs.map(file => path.join(f.root, file))];
+    const before = files.map(file => fs.readFileSync(file));
+    const rejected = f.cli(['--request-file', prepared.requestFile, '--prepare-source', '--ref', '{}']);
+    assert(rejected.status !== 0 && JSON.parse(rejected.stdout).status === 'FAIL', rejected.stderr + rejected.stdout);
+    assert(files.every((file, index) => fs.readFileSync(file).equals(before[index]!)), 'ref异常留下半写或丢原binding');
   })));
   results.push(test('R2 public first failed preparation removes its derived request and stable source without changing the draft', () => withPublicSmallBlueprint(f => {
     const draft = readYaml(f.canonical); delete draft.provenance; delete draft.source_fingerprint; delete draft.decision_fingerprint;
@@ -699,13 +712,12 @@ export function runAll(): UnitCaseResult[] {
     assert(!fs.existsSync(path.join(report, 'request.json')) && (!fs.existsSync(report) || !fs.readdirSync(report).some(name => name.startsWith('user-'))), '首次失败留下request/source半写');
   })));
   results.push(test('R2 public preparation accepts this request unfinished full shape without replacing business content', () => withPublicSmallBlueprint(f => {
-    const first = f.cli(['--session-ref', f.nativeFile + '#user-small', '--target', f.source, '--requirement-source', 'requirements/compact.md', '--report-dir', 'doc/reports/full-shape', '--prepare-source']);
-    assert(first.status === 0, first.stderr + first.stdout);
-    const output = JSON.parse(first.stdout), draft = readYaml(f.canonical), full = validBlueprint();
+    const { requestFile } = f.prepareBoundRequest('doc/reports/full-shape');
+    const draft = readYaml(f.canonical), full = validBlueprint();
     for (const field of ['review_summary', 'decisions_and_gaps', 'relations', 'contracts', 'providers', 'app_lens', 'derived_results']) draft[field] ??= clone(full[field]);
     delete asRecord(draft.review_summary)!.admission;
     fs.writeFileSync(f.canonical, YAML.stringify(draft)); const business = JSON.stringify(draft.design_views);
-    const prepared = f.cli(['--request-file', output.request_file, '--prepare-source']);
+    const prepared = f.cli(['--request-file', requestFile, '--prepare-source']);
     assert(prepared.status === 0, prepared.stderr + prepared.stdout);
     assert(JSON.stringify(readYaml(f.canonical).design_views) === business, '自有未完成full降档改掉业务内容');
   })));

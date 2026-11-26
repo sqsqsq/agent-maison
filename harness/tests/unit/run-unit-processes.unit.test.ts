@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { mapQueued, runDiscoveredSuite, superviseProcess } from '../utils/unit-suite-processes';
+import { mapQueued, runDiscoveredSuite, summarizeCaseTimings, superviseProcess, type CaseTiming } from '../utils/unit-suite-processes';
 import { runUnitCasesAsync } from '../utils/unit-cases';
 
 export function runAll() {
@@ -19,6 +19,20 @@ export function runAll() {
       });
       assert.deepEqual(started, ['first', 'second', 'third']);
       assert.deepEqual(results, started);
+    } },
+    { name: 'timing report retains every case over ten seconds beyond the longest thirty', run() {
+      const measured: CaseTiming[] = Array.from({ length: 32 }, (_, index) => ({
+        suite: 'suite', name: String(index), elapsedMs: 10_000 + index, outcome: 'completed',
+      }));
+      const report = summarizeCaseTimings(measured);
+      assert.equal(report.slowestCases.length, 30);
+      assert.deepEqual(report.slowestCases[0], measured[31]);
+      assert.deepEqual(report.slowestCases.at(-1), measured[2]);
+      assert.deepEqual(report.additionalCasesOver10s, [measured[1]]);
+      assert.deepEqual(report.ranked.at(-1), measured[0]);
+      assert.equal(measured[0].elapsedMs, 10_000);
+      const ties = [measured[0], { ...measured[0], name: 'tie' }];
+      assert.deepEqual(summarizeCaseTimings(ties).ranked, ties);
     } },
     { name: 'external deadline kills synchronous hangs and does not reset at case start', async run() {
       const supervisor = { root: os.tmpdir(), signal: new AbortController().signal };
@@ -49,8 +63,18 @@ export function runAll() {
           assert.equal(run.executed, 1);
           assert.equal(run.missed, 1);
           assert.equal(run.missingResults, 2);
+          assert.deepEqual(run.caseTimings.map(({ suite, name, outcome }) => [suite, name, outcome]), [
+            ['blocked', 'done', 'completed'], ['blocked', 'blocked', 'timed-out'],
+          ]);
+          assert(run.caseTimings[1].elapsedMs >= 1_500);
           assert.match(run.error!, /blocked.*timed out after 1500ms/);
         }
+
+        const modulePath = path.join(root, 'done.unit.mjs');
+        await fs.writeFile(modulePath, "import { test } from 'node:test'; test('done', () => { setTimeout(() => {}, 50); });");
+        const settled = await runDiscoveredSuite({ id: 'done', modulePath, kind: 'root' }, supervisor, ['done']);
+        assert.equal(settled.error, undefined);
+        assert.deepEqual(settled.caseTimings, [{ suite: 'done', name: 'done', elapsedMs: settled.workMs, outcome: 'completed' }]);
       } finally {
         await fs.rm(root, { recursive: true, force: true });
       }

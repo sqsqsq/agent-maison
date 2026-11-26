@@ -669,18 +669,18 @@ export function runAll(): UnitCaseResult[] {
   results.push(test('every authored closure field diverging from recomputation is caught, and stale input fingerprint cannot pass', () => {
     withProject(projectRoot => {
       const expected = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', evaluationOptions()).closure;
-      const fieldBreaks: Array<{ issue: string; tamper: (closure: ComponentClosureArtifact) => void }> = [
+      const fieldBreaks: Array<{ field: keyof ComponentClosureArtifact; issue: string; tamper: (closure: ComponentClosureArtifact) => void }> = [
         {
-          issue: 'component_closure_blueprint_binding_mismatch',
+          field: 'component_blueprint_ref', issue: 'component_closure_blueprint_binding_mismatch',
           tamper: closure => { closure.component_blueprint_ref = { ...closure.component_blueprint_ref, revision: Number(closure.component_blueprint_ref.revision) + 1 }; },
         },
-        { issue: 'component_closure_input_manifest_mismatch', tamper: closure => { closure.inputs = { ...closure.inputs, change_units: [] }; } },
-        { issue: 'component_closure_provider_observation_mismatch', tamper: closure => { closure.provider_observations = []; } },
-        { issue: 'component_closure_coverage_mismatch', tamper: closure => { closure.coverage_rows = closure.coverage_rows.slice(1); } },
-        { issue: 'component_closure_knowledge_mismatch', tamper: closure => { closure.knowledge_writeback_refs = []; } },
-        { issue: 'component_closure_degradation_mismatch', tamper: closure => { closure.degradations = []; } },
+        { field: 'inputs', issue: 'component_closure_input_manifest_mismatch', tamper: closure => { closure.inputs = { ...closure.inputs, change_units: [] }; } },
+        { field: 'provider_observations', issue: 'component_closure_provider_observation_mismatch', tamper: closure => { closure.provider_observations = []; } },
+        { field: 'coverage_rows', issue: 'component_closure_coverage_mismatch', tamper: closure => { closure.coverage_rows = closure.coverage_rows.slice(1); } },
+        { field: 'knowledge_writeback_refs', issue: 'component_closure_knowledge_mismatch', tamper: closure => { closure.knowledge_writeback_refs = []; } },
+        { field: 'degradations', issue: 'component_closure_degradation_mismatch', tamper: closure => { closure.degradations = []; } },
         {
-          issue: 'component_closure_gap_mismatch',
+          field: 'gaps', issue: 'component_closure_gap_mismatch',
           tamper: closure => {
             closure.gaps = [...closure.gaps, {
               gap_id: 'authored-fake-gap',
@@ -694,16 +694,17 @@ export function runAll(): UnitCaseResult[] {
             } as unknown as ComponentClosureArtifact['gaps'][number]];
           },
         },
-        { issue: 'component_closure_verdict_mismatch', tamper: closure => { closure.verdict = 'PASS'; } },
+        { field: 'verdict', issue: 'component_closure_verdict_mismatch', tamper: closure => { closure.verdict = 'PASS'; } },
       ];
-      for (const fieldBreak of fieldBreaks) {
-        const tampered = clone(expected);
-        fieldBreak.tamper(tampered);
-        expectIssue(validateComponentClosure(tampered, projectRoot, 'ledger-app-blueprint', evaluationOptions()).issues, fieldBreak.issue);
+      const tampered = clone(expected);
+      for (const { tamper } of fieldBreaks) tamper(tampered);
+      tampered.input_fingerprint = 'sha256:' + '0'.repeat(64);
+      const { issues } = validateComponentClosure(tampered, projectRoot, 'ledger-app-blueprint', evaluationOptions());
+      for (const { issue, field } of fieldBreaks) {
+        assert(issues.some(row => row.id === issue && row.path === '$.' + field), issue + ' missing for ' + field);
       }
-      const stale = clone(expected);
-      stale.input_fingerprint = `sha256:${'0'.repeat(64)}`;
-      expectIssue(validateComponentClosure(stale, projectRoot, 'ledger-app-blueprint', evaluationOptions()).issues, 'component_closure_input_fingerprint_stale');
+      assert(issues.some(row => row.id === 'component_closure_input_fingerprint_stale' && row.path === '$.input_fingerprint'),
+        '旧输入指纹必须给出独立的精确路径');
     });
   }));
 

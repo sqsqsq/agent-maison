@@ -32,7 +32,8 @@ import { collectCleanPassIssues, executionScopeEvidenceIssues } from '../../scri
 import { resolveCurrentDisposition } from '../../scripts/utils/check-disposition';
 import { loadPhaseEvidenceManifest, recomputePhaseEvidenceStaleness, resolvePhaseEvidenceManifest as resolvePhaseEvidenceManifestActual, writePhaseEvidenceManifest } from '../../scripts/utils/phase-evidence-manifest';
 import { computeRunRequirementSha, computeRequirementShaFromText } from '../../scripts/utils/fidelity-shared';
-import coding, { checkCodingExistingTestPreserved } from '../../scripts/check-coding';
+import coding, { checkCodingExistingTestPreserved, checkDiffWithinScope } from '../../scripts/check-coding';
+import { runUiDiffWithinDeclaredFiles } from '../../scripts/utils/ui-scope-gate';
 import { generateScriptReport, assembleAIPrompt, loadVerifierPromptTemplate } from '../../scripts/utils/report-generator';
 import { buildVerifierMaterialView, collectTestStrengthContext } from '../../scripts/utils/verifier-material';
 import { loadVerifierEvidence } from '../../scripts/utils/verifier-evidence';
@@ -588,16 +589,15 @@ const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; ex
       if (entry.factsRebuildReason) assert(entry.factsRebuildReason.includes('src/demo/value.ts'), entry.factsRebuildReason);
       const resolved = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'coding', track: 'full', ...entry });
       assert.notEqual(resolved.report.assurance, 'blocked', JSON.stringify(resolved.report));
-      const checks = checkFactsArtifact(f.root, 'demo', 'coding', { frameworkRoot: fw, factsContext: entry.factsContext, resolvedInputs: resolved.inputs });
-      const report = generateScriptReport(path.join(fw, 'harness'), 'coding', 'demo', f.root, checks, fw, resolved.report);
-      assert.equal(report.summary.verdict, 'PASS', JSON.stringify(report.checks));
-      assert.deepStrictEqual(entry.factsContext?.baseline, before.factsContext.baseline, 'independent entry does not replace old SHA with current bytes');
-      assert(checks.some(check => check.id === 'context_exploration_facts_source_stale' && check.status === 'WARN'), JSON.stringify(checks));
-      assert(checks.some(check => check.id === 'context_exploration_facts_scope_coverage' && check.status === 'WARN' && check.details.includes('src/demo/new.ts')), JSON.stringify(checks));
+      assert.deepStrictEqual(entry.factsContext?.baseline, before.factsContext.baseline, 'independent entry retains the old SHA');
       const actualContext = { ...f.context('coding', ''), frameworkRoot: fw, resolvedInputs: resolved.inputs, factsContext: entry.factsContext,
         featureSpec: new SpecLoader(f.root, undefined, undefined, fw).loadFeatureSpec('demo', resolved.inputs) };
       const actual = await coding.check(actualContext);
-      assert.equal(generateScriptReport(path.join(fw, 'harness'), 'coding', 'demo', f.root, actual, fw, resolved.report).summary.verdict, 'PASS', JSON.stringify(actual.filter(check => check.status === 'FAIL')));
+      assert.equal(generateScriptReport(path.join(fw, 'harness'), 'coding', 'demo', f.root, actual, fw, resolved.report).summary.verdict, 'PASS',
+        JSON.stringify(actual.filter(check => check.status === 'FAIL')));
+      assert(actual.some(check => check.id === 'context_exploration_facts_source_stale' && check.status === 'WARN'), JSON.stringify(actual));
+      assert(actual.some(check => check.id === 'context_exploration_facts_scope_coverage' && check.status === 'WARN' && check.details.includes('src/demo/new.ts')),
+        JSON.stringify(actual));
     } finally { if (priorRun === undefined) delete process.env.MAISON_GOAL_RUN_ID; else process.env.MAISON_GOAL_RUN_ID = priorRun; removeShimFramework(fw); clearFrameworkConfigCache(); }
   } },
   { name: 't5 completed source chain re-admits a new invoke; broken observations and authority stay strict', run(f) {
@@ -663,10 +663,11 @@ const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; ex
       const badEvidence = JSON.parse(evidenceText); badEvidence.inputs[0].sha256 = '0'.repeat(64);
       fs.writeFileSync(evidencePath, JSON.stringify(badEvidence)); reject('a valid source chain does not waive manifest integrity');
       fs.writeFileSync(evidencePath, evidenceText);
-      beginFactsInvocation(f, fw, 'coding', f.manifest.run_id, 'i2');
-      const current = entry();
+      const current = beginFactsInvocation(f, fw, 'coding', f.manifest.run_id, 'i2');
+      const factsContext = loadFactsInvocationContext({ projectRoot: f.root, feature: 'demo', phase: 'coding', runId: f.manifest.run_id, attemptId: 'i2' });
+      assert(factsContext?.baseline);
       const inputs = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'coding', track: 'full', ...current }).inputs!;
-      const checks = checkFactsArtifact(f.root, 'demo', 'coding', { frameworkRoot: fw, factsContext: current.factsContext, resolvedInputs: inputs, goalAttemptId: 'i2' });
+      const checks = checkFactsArtifact(f.root, 'demo', 'coding', { frameworkRoot: fw, factsContext, resolvedInputs: inputs, goalAttemptId: 'i2' });
       assert(!checks.some(check => check.status === 'FAIL'), 'the actual gate must consume the new exact current start: ' + JSON.stringify(checks));
     } finally { removeShimFramework(fw); clearFrameworkConfigCache(); }
   } },
@@ -776,14 +777,13 @@ const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; ex
       const factsPath = path.join(f.root, 'doc/features/demo/context/facts.md');
       fs.writeFileSync(factsPath, fs.readFileSync(factsPath, 'utf8').replace('source_code_paths:\n  - src/demo/value.ts',
         `source_code_paths:\n  - src/demo/value.ts\n  - ${resource}\n  - doc/features/demo/acceptance.yaml\n  - build-profile.json5`));
-      const initial = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'coding', featuresDir: 'doc/features', goalRunId: f.manifest.run_id });
-      const owners = initial.factsContext!.source_owners!;
+      priorResearchBaseline(f, fw);
+      const admitted = beginFactsInvocation(f, fw, 'coding', f.manifest.run_id, 'i1');
+      const owners = admitted.factsContext!.source_owners!;
       assert.equal(owners[resource], 'coding', `写边界内的产品资源必须归 coding：${JSON.stringify(owners)}`);
       for (const file of ['doc/features/demo/acceptance.yaml', 'doc/features/demo/contracts.yaml', 'doc/features/demo/context/facts.md', 'build-profile.json5']) {
         assert.equal(owners[file], undefined, `${file} 不归 coding 写边界，不得拿到 owner：${JSON.stringify(owners)}`);
       }
-      priorResearchBaseline(f, fw);
-      beginFactsInvocation(f, fw, 'coding', f.manifest.run_id, 'i1');
       const gate = () => {
         const entry = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'coding', featuresDir: 'doc/features', goalRunId: f.manifest.run_id, goalAttemptId: 'i1' });
         const inputs = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'coding', track: 'full', ...entry }).inputs!;
@@ -929,9 +929,12 @@ const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; ex
     const boundary = resolvePhaseWriteBoundary({ projectRoot: f.root, frameworkRoot, feature: 'demo', runId: f.manifest.run_id, phaseOrder: ['coding'], track: 'full', profileDir: f.profileDir, productLayerDirs: ['src'] });
     assert(!boundary.unresolvedSourcePhases.includes('coding'));
     f.write('src/demo/resources/base/media/unapproved.svg', '<svg xmlns="http://www.w3.org/2000/svg"/>');
-    assert.equal((await coding.check(f.context('coding'))).find(check => check.id === 'ui_diff_within_declared_files')?.status, 'PASS');
-    f.write('src/demo/unapproved.ts', 'export const extra = 1;'); f.git('add', 'src'); f.git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'changed source');
-    assert.equal((await coding.check(f.context('coding'))).find(check => check.id === 'diff_within_scope')?.status, 'PASS');
+    assert.equal(runUiDiffWithinDeclaredFiles({ projectRoot: f.root, frameworkRoot, feature: 'demo',
+      runId: f.manifest.run_id, resolvedInputs: f.context('coding').resolvedInputs }).status, 'PASS');
+    f.write('src/demo/unapproved.ts', 'export const extra = 1;');
+    f.git('add', 'src');
+    f.git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'changed source');
+    assert.equal(checkDiffWithinScope(f.context('coding'))[0].status, 'PASS');
     f.write('src/demo/value.ts', 'export const value: number = "wrong";');
     assert.equal((await coding.check(f.context('coding'))).find(check => check.id === 'coding_compile')?.status, 'FAIL');
   } },

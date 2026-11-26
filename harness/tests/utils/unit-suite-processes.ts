@@ -43,6 +43,8 @@ interface Watchdog {
   label(label: string): void;
 }
 
+class ProcessDeadlineError extends Error {}
+
 export async function superviseProcess(args: string[], options: ProcessOptions): Promise<{ stdout: string; elapsedMs: number }> {
   const { signal } = options.supervisor;
   signal.throwIfAborted();
@@ -73,7 +75,7 @@ export async function superviseProcess(args: string[], options: ProcessOptions):
         }
         try { child.kill('SIGKILL'); } catch { /* Already exited. */ }
       } catch (recoveryError) {
-        failure = new Error(error.message + '\nworker termination failed: ' + String(recoveryError));
+        error.message += '\nworker termination failed: ' + String(recoveryError);
       } finally {
         // Closing parent IPC can prevent Node from ever emitting the combined close event.
         child.unref();
@@ -84,7 +86,7 @@ export async function superviseProcess(args: string[], options: ProcessOptions):
 
   const expired = (): boolean => {
     if (performance.now() < deadline || failure) return false;
-    cancelled(new Error(`${label} timed out after ${options.limit}ms`));
+    cancelled(new ProcessDeadlineError(`${label} timed out after ${options.limit}ms`));
     return true;
   };
   const arm = (): void => {
@@ -170,6 +172,22 @@ export function verifyCaseResults(
   return { passed, failed, missed: missing.length, ...(errors.length ? { error: errors.join('\n') } : {}) };
 }
 
+export interface CaseTiming {
+  suite: string;
+  name: string;
+  elapsedMs: number;
+  outcome: 'completed' | 'timed-out' | 'interrupted';
+}
+
+export function summarizeCaseTimings(timings: readonly CaseTiming[]) {
+  const ranked = [...timings].sort((a, b) => b.elapsedMs - a.elapsedMs);
+  return {
+    ranked,
+    slowestCases: ranked.slice(0, 30),
+    additionalCasesOver10s: ranked.slice(30).filter(timing => timing.elapsedMs > 10_000),
+  };
+}
+
 export interface SuiteRun {
   expected: readonly string[];
   rows: UnitCaseResult[];
@@ -181,6 +199,7 @@ export interface SuiteRun {
   timedOut: number;
   workMs: number;
   longestCaseMs: number;
+  caseTimings: CaseTiming[];
   error?: string;
 }
 
@@ -191,9 +210,9 @@ async function runOne(suite: Suite, supervisor: ProcessSupervisor, expected: rea
   let packet: CaseResultPacket | undefined;
   let active: string | undefined;
   const completed: string[] = [];
-  let longestCaseMs = 0;
+  const caseTimings: CaseTiming[] = [];
   let caseStarted = started;
-  let finalCaseStarted: number | undefined;
+  let timedOut = false;
   let error: string | undefined;
   try {
     const processResult = await superviseProcess([COMPILED_ENTRY, WORKER, suite.kind, suite.modulePath, expected ? 'run' : 'discover'], {
@@ -217,15 +236,15 @@ async function runOne(suite: Suite, supervisor: ProcessSupervisor, expected: rea
         if (event.type === 'start' && active === undefined) {
           active = name;
         } else if (event.type === 'end' && active === name) {
-          longestCaseMs = Math.max(longestCaseMs, performance.now() - caseStarted);
+          const ended = performance.now();
+          caseTimings.push({ suite: suite.id, name, elapsedMs: ended - caseStarted, outcome: 'completed' });
           completed.push(name);
           active = undefined;
           const next = expected[completed.length];
           if (next !== undefined) {
-            caseStarted = performance.now();
+            caseStarted = ended;
             watchdog.next(`[${suite.id}] ${next}`);
           } else {
-            finalCaseStarted = caseStarted;
             watchdog.label(`[${suite.id}] ${name} (cleanup)`);
           }
         } else {
@@ -236,17 +255,30 @@ async function runOne(suite: Suite, supervisor: ProcessSupervisor, expected: rea
     if (!expected && suite.kind === 'root' && processResult.stdout.trim()) throw new Error(`unexpected native execution during discovery:\n${processResult.stdout}`);
     if (!packet || !Array.isArray(packet.names) || !Array.isArray(packet.results)) throw new Error('worker exited without a complete result');
   } catch (failure) {
+    timedOut = failure instanceof ProcessDeadlineError;
     error = failure instanceof Error ? failure.message : String(failure);
   } finally {
     try { await fs.rm(temp, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); }
     catch (failure) { error = [error, `worker cleanup failed: ${String(failure)}`].filter(Boolean).join('\n'); }
   }
-  if (finalCaseStarted !== undefined) {
-    const elapsed = performance.now() - finalCaseStarted;
-    longestCaseMs = Math.max(longestCaseMs, elapsed);
-    if (elapsed >= limit && !error) error = `[${suite.id}] ${expected?.at(-1)} (cleanup) timed out after ${limit}ms`;
+  const finished = performance.now();
+  if (expected?.length) {
+    const elapsed = finished - caseStarted;
+    const nextCase = expected[completed.length];
+    if (nextCase === undefined) {
+      // The final case owns worker shutdown and temporary-directory cleanup.
+      const finalCase = caseTimings[caseTimings.length - 1];
+      if (elapsed >= limit && !timedOut) {
+        timedOut = true;
+        error = [error, `[${suite.id}] ${expected?.at(-1)} (cleanup) timed out after ${limit}ms`].filter(Boolean).join('\n');
+      }
+      finalCase.elapsedMs = elapsed;
+      finalCase.outcome = timedOut ? 'timed-out' : error ? 'interrupted' : 'completed';
+    } else if (error) {
+      caseTimings.push({ suite: suite.id, name: nextCase, elapsedMs: elapsed, outcome: timedOut ? 'timed-out' : 'interrupted' });
+    }
   }
-  return { packet, error, completed, longestCaseMs, workMs: performance.now() - started };
+  return { packet, error, completed, timedOut, caseTimings, workMs: finished - started };
 }
 
 export async function discoverCases(suite: Suite, supervisor: ProcessSupervisor): Promise<string[]> {
@@ -270,8 +302,10 @@ export async function runDiscoveredSuite(
     executed: run.completed.length,
     missed: expected.length - run.completed.length,
     missingResults: checked.missed,
-    timedOut: run.error?.includes(`timed out after ${limit}ms`) ? 1 : 0,
-    workMs: run.workMs, longestCaseMs: run.longestCaseMs,
+    timedOut: Number(run.timedOut),
+    workMs: run.workMs,
+    longestCaseMs: run.caseTimings.reduce((max, item) => Math.max(max, item.elapsedMs), 0),
+    caseTimings: run.caseTimings,
     error: [run.error, checked.error].filter(Boolean).join('\n') || undefined,
   };
 }

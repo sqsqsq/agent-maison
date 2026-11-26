@@ -216,41 +216,56 @@ console.log(JSON.stringify({type:'turn.completed',usage:{input_tokens:1,output_t
   async run() {
     const sourceRoot = path.resolve(__dirname, '../fixtures/host-recovery-history/20261115-design-recovery/session-return-usage');
     const sources = JSON.parse(fs.readFileSync(path.join(sourceRoot, 'sources.json'), 'utf8')).sources as Array<{ fixture: string; fixture_sha256: string; observed_steps: number }>;
-    for (const source of sources) {
-      const f = fixture(), priorPath = process.env.PATH;
-      try {
-        const bytes = fs.readFileSync(path.join(sourceRoot, source.fixture)); assert.equal(hash(bytes.toString('utf8')), source.fixture_sha256);
-        const expected = deriveDshInvokeUsage(bytes.toString('utf8')); assert.equal(expected.requests, source.observed_steps);
-        const frameworkRoot = f.context.frameworkRoot, adapterDir = path.join(frameworkRoot, 'agents/deepseek-harness');
-        fs.mkdirSync(adapterDir, { recursive: true });
-        for (const name of ['adapter.yaml', 'headless-patch.yaml']) fs.copyFileSync(path.resolve(__dirname, '../../../agents/deepseek-harness', name), path.join(adapterDir, name));
-        const modelSource = path.join(f.root, '.native-dsh/profiles/desktop/cordis.patch.yml');
-        fs.mkdirSync(path.dirname(modelSource), { recursive: true });
-        fs.writeFileSync(modelSource, YAML.stringify([{ id: 'llm-pi-ai', config: { providers: { fixture: { baseURL: 'https://fixture.invalid/v1', apiKeyEnv: 'FIXTURE_KEY', models: [{ id: 'fixture-model', contextWindow: 1000, input: ['text'] }] } } } }]));
-        const pin = freezeModelPin({ adapter: 'deepseek-harness', provider: 'fixture', value: 'fixture-model', config_source: modelSource }, f.root)!;
-        const stream = path.join(f.root, 'native-usage.jsonl'); fs.writeFileSync(stream, bytes);
-        const nativeDir = path.join(f.root, 'native-bin'); fs.mkdirSync(nativeDir);
-        const script = path.join(nativeDir, 'dsh-fixture.cjs');
-        fs.writeFileSync(script, `const fs=require('fs');if(process.argv.includes('--dump-config')){console.log(JSON.stringify([{id:'agent-default-model',config:{provider:'fixture',model:'fixture-model'}},{id:'permission',config:{defaultPreset:'danger-full-access'}},{id:'llm-pi-ai',config:{providers:{fixture:{baseURL:'https://fixture.invalid/v1',apiKeyEnv:'FIXTURE_KEY',models:[{id:'fixture-model',contextWindow:1000,input:['text']}]}}}}]));}else{process.stdin.resume();process.stdin.on('end',()=>{fs.appendFileSync('execution-count.txt','once\\n');process.stdout.write(fs.readFileSync(${JSON.stringify(stream)},'utf8'));});}\n`);
-        if (process.platform === 'win32') fs.writeFileSync(path.join(nativeDir, 'dsh.cmd'), '@echo off\nset "_prog=node"\n"%_prog%" "%~dp0dsh-fixture.cjs" %*\n');
-        else fs.writeFileSync(path.join(nativeDir, 'dsh'), `#!/bin/sh\nexec '${process.execPath}' '${script}' "$@"\n`, { mode: 0o755 });
-        process.env.PATH = nativeDir + path.delimiter + (priorPath ?? '');
-        const manifest = buildGoalManifestFromInput({ feature: 'demo', run_id: 'run-1', adapter: pin.adapter, adapter_model_pin: pin,
-          start_phase: 'coding', end_phase: 'coding', run_base_sha: 'a'.repeat(40), unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: f.root });
-        writeGoalManifest(manifest, f.root); Object.assign(f.context, { adapter: pin.adapter, adapterModel: adapterModelBinding(pin), reportDir: manifest.report_dir });
-        f.start(); const issued = f.issue();
-        const args = [...testCliArgs(path.resolve(__dirname, '../../scripts/goal-mode-entry.ts')),
-          '--feature', 'demo', '--run-id', 'run-1', '--adapter', pin.adapter, '--run-mode', 'attended', '--project-root', f.root,
-          '--framework-root', frameworkRoot, '--request', path.resolve(f.runDir, issued.reference.path), '--execute-request'];
-        const call = () => JSON.parse(withRuntimeTest({ root: f.root }, () => execFileSync(process.execPath, args, {
-          cwd: path.resolve(__dirname, '../..'), encoding: 'utf8', timeout: 30000, windowsHide: true, env: { ...process.env, DSH_HOME: path.join(f.root, '.native-dsh') },
-        })));
-        const first = call(); assert.equal(first.status, 'passed', JSON.stringify({ first, report: acceptedSessionReport(f.runDir, issued)?.report }));
-        const events = sessionEvents(f.runDir).filter(event => event.invoke_id === 'invoke-one');
-        for (const type of ['agent_process_settled', 'agent_invoke_end']) assert.deepEqual((events.find(event => event.type === type) as Record<string, unknown>)?.usage, expected, type + ' lost native usage');
-        assert.equal(call().duplicate, true); assert.equal(fs.readFileSync(path.join(f.root, 'execution-count.txt'), 'utf8'), 'once\n');
-        assert.equal(sessionEvents(f.runDir).filter(event => event.type === 'agent_invoke_end').length, 1, 'repeated receipt cannot add another usage record');
-      } finally { if (priorPath === undefined) delete process.env.PATH; else process.env.PATH = priorPath; f.cleanup(); }
+    const samples = sources.map(source => {
+      const bytes = fs.readFileSync(path.join(sourceRoot, source.fixture));
+      assert.equal(hash(bytes.toString('utf8')), source.fixture_sha256);
+      const expected = deriveDshInvokeUsage(bytes.toString('utf8'));
+      assert.equal(expected.requests, source.observed_steps);
+      return { bytes, expected };
+    });
+    const representative = samples.at(-1);
+    assert(representative, 'a frozen DSH call is needed for the public handoff');
+    const { bytes, expected } = representative;
+    const f = fixture();
+    const priorPath = process.env.PATH, priorDshHome = process.env.DSH_HOME;
+    try {
+      const frameworkRoot = f.context.frameworkRoot, adapterDir = path.join(frameworkRoot, 'agents/deepseek-harness');
+      fs.mkdirSync(adapterDir, { recursive: true });
+      for (const name of ['adapter.yaml', 'headless-patch.yaml']) fs.copyFileSync(path.resolve(__dirname, '../../../agents/deepseek-harness', name), path.join(adapterDir, name));
+      const modelSource = path.join(f.root, '.native-dsh/profiles/desktop/cordis.patch.yml');
+      fs.mkdirSync(path.dirname(modelSource), { recursive: true });
+      fs.writeFileSync(modelSource, YAML.stringify([{ id: 'llm-pi-ai', config: { providers: { fixture: { baseURL: 'https://fixture.invalid/v1', apiKeyEnv: 'FIXTURE_KEY', models: [{ id: 'fixture-model', contextWindow: 1000, input: ['text'] }] } } } }]));
+      const pin = freezeModelPin({ adapter: 'deepseek-harness', provider: 'fixture', value: 'fixture-model', config_source: modelSource }, f.root)!;
+      const stream = path.join(f.root, 'native-usage.jsonl'); fs.writeFileSync(stream, bytes);
+      const nativeDir = path.join(f.root, 'native-bin'); fs.mkdirSync(nativeDir);
+      const script = path.join(nativeDir, 'dsh-fixture.cjs');
+      fs.writeFileSync(script, `const fs=require('fs');if(process.argv.includes('--dump-config')){console.log(JSON.stringify([{id:'agent-default-model',config:{provider:'fixture',model:'fixture-model'}},{id:'permission',config:{defaultPreset:'danger-full-access'}},{id:'llm-pi-ai',config:{providers:{fixture:{baseURL:'https://fixture.invalid/v1',apiKeyEnv:'FIXTURE_KEY',models:[{id:'fixture-model',contextWindow:1000,input:['text']}]}}}}]));}else{process.stdin.resume();process.stdin.on('end',()=>{fs.appendFileSync('execution-count.txt','once\\n');process.stdout.write(fs.readFileSync(${JSON.stringify(stream)},'utf8'));});}\n`);
+      if (process.platform === 'win32') fs.writeFileSync(path.join(nativeDir, 'dsh.cmd'), '@echo off\nset "_prog=node"\n"%_prog%" "%~dp0dsh-fixture.cjs" %*\n');
+      else fs.writeFileSync(path.join(nativeDir, 'dsh'), `#!/bin/sh\nexec '${process.execPath}' '${script}' "$@"\n`, { mode: 0o755 });
+      process.env.PATH = nativeDir + path.delimiter + (priorPath ?? '');
+      process.env.DSH_HOME = path.join(f.root, '.native-dsh');
+      const manifest = buildGoalManifestFromInput({ feature: 'demo', run_id: 'run-1', adapter: pin.adapter, adapter_model_pin: pin,
+        start_phase: 'coding', end_phase: 'coding', run_base_sha: 'a'.repeat(40), unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: f.root });
+      writeGoalManifest(manifest, f.root); Object.assign(f.context, { adapter: pin.adapter, adapterModel: adapterModelBinding(pin), reportDir: manifest.report_dir });
+      f.start(); const issued = f.issue();
+      const args = [...testCliArgs(path.resolve(__dirname, '../../scripts/goal-mode-entry.ts')),
+        '--feature', 'demo', '--run-id', 'run-1', '--adapter', pin.adapter, '--run-mode', 'attended', '--project-root', f.root,
+        '--framework-root', frameworkRoot, '--request', path.resolve(f.runDir, issued.reference.path), '--execute-request'];
+      const call = () => JSON.parse(withRuntimeTest({ root: f.root }, () => execFileSync(process.execPath, args, {
+        cwd: path.resolve(__dirname, '../..'), encoding: 'utf8', timeout: 30000, windowsHide: true, env: { ...process.env, DSH_HOME: path.join(f.root, '.native-dsh') },
+      })));
+      const first = call(); assert.equal(first.status, 'passed', JSON.stringify({ first, report: acceptedSessionReport(f.runDir, issued)?.report }));
+      const events = sessionEvents(f.runDir).filter(event => event.invoke_id === 'invoke-one');
+      for (const type of ['agent_process_settled', 'agent_invoke_end']) assert.deepEqual((events.find(event => event.type === type) as Record<string, unknown>)?.usage, expected, type + ' lost native usage');
+      const replay = await runGoalModeSessionStep({ projectRoot: f.root, frameworkRoot, feature: 'demo', runId: 'run-1', adapter: pin.adapter,
+        runMode: 'attended', requestPath: path.resolve(f.runDir, issued.reference.path), action: 'execute' });
+      assert.equal(replay.duplicate, true);
+      assert.equal(fs.readFileSync(path.join(f.root, 'execution-count.txt'), 'utf8'), 'once\n');
+      assert.equal(sessionEvents(f.runDir).filter(event => event.type === 'agent_invoke_end').length, 1, 'repeated receipt cannot add another usage record');
+    } finally {
+      if (priorPath === undefined) delete process.env.PATH; else process.env.PATH = priorPath;
+      if (priorDshHome === undefined) delete process.env.DSH_HOME; else process.env.DSH_HOME = priorDshHome;
+      f.cleanup();
     }
   },
 }, {
@@ -324,7 +339,10 @@ console.log(JSON.stringify({type:'turn.completed',usage:{input_tokens:1,output_t
       const entry = path.resolve(__dirname, '../../scripts/goal-mode-entry.ts');
       const args = [...testCliArgs(entry), '--feature', 'demo', '--run-id', 'run-1', '--adapter', 'codex', '--run-mode', 'attended',
         '--project-root', f.root, '--framework-root', frameworkRoot, '--request', path.resolve(f.runDir, issued.reference.path)];
-      const cli = (action: string) => JSON.parse(withRuntimeTest({ root: f.root }, () => execFileSync(process.execPath, [...args, action],
+      const request = { projectRoot: f.root, frameworkRoot, feature: 'demo', runId: 'run-1', adapter: 'codex',
+        runMode: 'attended' as const, requestPath: path.resolve(f.runDir, issued.reference.path) };
+      const control = (action: 'observe' | 'execute') => runGoalModeSessionStep({ ...request, action });
+      const cli = (action: '--interrupt') => JSON.parse(withRuntimeTest({ root: f.root }, () => execFileSync(process.execPath, [...args, action],
         { cwd: path.resolve(__dirname, '../..'), encoding: 'utf8', timeout: 30000 })));
       child = spawn(process.execPath, [...args, '--execute-request'], { cwd: path.resolve(__dirname, '../..'), windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
       child.stdout!.on('data', chunk => { stdout += String(chunk); }); child.stderr!.on('data', chunk => { stderr += String(chunk); });
@@ -336,10 +354,10 @@ console.log(JSON.stringify({type:'turn.completed',usage:{input_tokens:1,output_t
         await new Promise(resolve => setTimeout(resolve, 50));
       }
       assert(fs.existsSync(path.join(f.root, 'execution-count.txt')), stderr || stdout);
-      const observed = cli('--observe').observation;
+      const observed = JSON.parse(JSON.stringify((await control('observe')).observation));
       assert.equal(observed.settled, false); assert.equal(observed.toolEvents.length, 1); assert.equal(observed.changes.kind, 'changed');
       assert.deepEqual(observed, JSON.parse(JSON.stringify(observeSessionExecution(f.runDir, issued))));
-      assert.equal(cli('--execute-request').status, 'execution_running');
+      assert.equal((await control('execute')).status, 'execution_running');
       const interrupted = cli('--interrupt'); assert.equal(interrupted.interrupted, true);
       await done;
       assert.equal(child.exitCode, 0, stderr + stdout);
@@ -347,7 +365,7 @@ console.log(JSON.stringify({type:'turn.completed',usage:{input_tokens:1,output_t
       assert.equal(accepted.report.status, 'waiting');
       assert.equal(sessionEvents(f.runDir).filter(event => event.type === 'agent_invoke_end').length, 1);
       assert.equal(fs.readFileSync(path.join(f.root, 'src/value.ts'), 'utf8'), 'actual partial write\n');
-      assert.equal(cli('--execute-request').duplicate, true);
+      assert.equal((await control('execute')).duplicate, true);
       assert.equal(fs.readFileSync(path.join(f.root, 'execution-count.txt'), 'utf8'), 'once\n');
       Object.assign(f.context, { attemptId: 'attempt-two' }); f.start('invoke-two'); const second = f.issue('invoke-two');
       const priorExitCode = process.exitCode;

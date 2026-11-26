@@ -146,7 +146,9 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     s.tool('pwsh', { command: 'Get-Location; git diff --stat | Out-String' }, 'done');
     s.flush();
     const args = ['--phase', 'ut', '--session-ref', s.ref, '--target', 'src/value.js', '--test-target', 'tests/value.test.cjs', '--prepare-request'];
-    const prep = prepareAutomaticRequest(f.root, f.framework, { phase: 'ut', 'session-ref': s.ref, target: 'src/value.js', 'test-target': 'tests/value.test.cjs' });
+    const prepare = () => prepareAutomaticRequest(f.root, f.framework, { phase: 'ut', 'session-ref': s.ref,
+      target: 'src/value.js', 'test-target': 'tests/value.test.cjs' });
+    const prep = prepare();
     const requestFile = path.join(f.root, prep.requestFile);
     const previous = JSON.parse(fs.readFileSync(requestFile, 'utf8')).intake_context;
     assert.match(previous.baseline.dirty_digests[file], /^[0-9a-f]{64}$/);
@@ -179,9 +181,9 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     assert.match(readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, previous: legacy.intake_context }).attribution_disclosures![0].reason, /写前摘要证实/);
     delete legacy.intake_context.baseline.dirty_digests;
     fs.writeFileSync(requestFile, JSON.stringify(legacy));
-    const historical = cli(f, args);
-    assert.equal(historical.status, 0, historical.stdout + historical.stderr);
-    const old = JSON.parse(historical.stdout).intake_context;
+    const historical = prepare();
+    assert.equal(historical.requestFile, prep.requestFile);
+    const old = JSON.parse(fs.readFileSync(requestFile, 'utf8')).intake_context;
     assert.equal(old.baseline.dirty_digests?.[file], undefined);
     assert.deepEqual(old.attribution_disclosures.map((item: { path: string }) => item.path), [file]);
     s.rows.splice(-2);
@@ -734,8 +736,9 @@ for (let i=0;i<11;i++) test('case ' + i, () => assert.equal(require('../src/valu
     const first = JSON.parse(routed.stdout); assert(first.executed); assert(first.next.some((command: string) => command.includes('check:testing'))); assert(!first.next.some((command: string) => command.includes('check:ut')));
     s.add({ type: 'user', uuid: 'no-device', message: { role: 'user', content: '本请求不跑真机' } });
     s.add({ type: 'assistant', message: { role: 'assistant', content: '继续原任务，原始user消息 user-1，按当前验证范围。' } }); s.flush();
-    const limited = compileCli(); assert.equal(limited.status, 0, limited.stdout + limited.stderr);
-    assert(!JSON.parse(limited.stdout).next.some((command: string) => command.includes('check:testing')));
+    const limited = runCompile({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: s.ref, targets: ['src/routes.json'] });
+    assert(limited.execution?.executed);
+    assert(!limited.next?.some(command => command.includes('check:testing')));
     s.add({ type: 'user', uuid: 'restore-ut', message: { role: 'user', content: '现在运行UT' } });
     s.add({ type: 'assistant', message: { role: 'assistant', content: '继续原任务，原始user消息 user-1，仅恢复明确指定的UT。' } }); s.flush();
     const restored = readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: s.ref });

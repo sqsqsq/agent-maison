@@ -20,7 +20,7 @@ cd framework/harness && npm install
 | `npm run check:plan` | plan 阶段（canonical） |
 | `npm run check:global` | catalog + glossary + docs |
 
-每例从准备到清理最多 30 秒，整轮最多 30 分钟。开发验收使用无筛选的根命令，报告写入 `harness/reports/test-run/full.json`。消费者发布件的 `framework/harness` 下，`npm test` 运行 `check:global`。开发期 plan、goal 或 OpenSpec 纯文字改动使用相应校验及 diff/LF 检查。
+每例从准备到清理最多 30 秒，整轮最多 30 分钟。开发验收使用无筛选的根命令，报告写入 `harness/reports/test-run/full.json`。`slowestCases` 列出最慢前 30 例，`additionalCasesOver10s` 补列其余超过 10 秒的用例。10 秒是排查阈值，单例硬限仍为 30 秒。消费者发布件的 `framework/harness` 下，`npm test` 运行 `check:global`。开发期 plan、goal 或 OpenSpec 纯文字改动使用相应校验及 diff/LF 检查。
 
 ## Legacy phase script alias
 

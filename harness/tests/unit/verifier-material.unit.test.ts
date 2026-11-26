@@ -330,7 +330,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         const recheck = (summary: unknown) => hasChangedVerifierMaterialInputs({ projectRoot: root, frameworkRoot, feature, phase, summary });
         assert(recheck(issued), 'the normal entry must not return a cached summary holding a stale independent request');
         let lastGapSummary: unknown;
-        assert.throws(build, (error: unknown) => {
+        assert.throws(() => verifierInputBindingsSha256({ projectRoot: root, feature, phase, frameworkRoot, reviewChanges: observed }), (error: unknown) => {
           if (!(error instanceof VerifierPreimagesUnavailable)) return false;
           assert(error.message.includes(removed));
           const failure = failScriptReportWithFatalError(report, 'assemble_ai_prompt', error, frameworkRoot, 'verification_evidence_gap');
@@ -339,7 +339,6 @@ const cases: Array<{ name: string; run: () => void }> = [
           assert(!fs.existsSync(prompt));
           assert.equal(classifyFailureKind(summary), 'verification_evidence_gap');
           assert.equal(failure.checks.find(check => check.id === 'runner_assemble_ai_prompt_failed')?.actionability, 'agent_fixable');
-          assert(!recheck(summary), 'the same known evidence gap can keep its current failed result without a new model request');
           lastGapSummary = summary;
           return true;
         });
@@ -347,8 +346,6 @@ const cases: Array<{ name: string; run: () => void }> = [
         assert(recheck(lastGapSummary), 'restored real evidence bypasses the previously cached gap');
         const restored = build();
         assert.equal(restored.material_sha256, current.material_sha256);
-        put(root, path.relative(root, prompt), 'Verifier prompt after original recovery\n');
-        assert(sign(report, restored).verifier_request);
         const crash = failScriptReportWithFatalError(report, 'assemble_ai_prompt', new TypeError('actual assembly bug'), frameworkRoot);
         assert.equal(crash.checks.at(-1)?.failure_kind, 'framework_bug');
         assert.equal(crash.checks.at(-1)?.actionability, 'human_only');

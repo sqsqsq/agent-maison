@@ -32,7 +32,7 @@ export async function junctionSessionCli(): Promise<void> {
   const root = path.join(container, 'actual project'), alias = path.join(container, 'alias project');
   const previousTrust = process.env.MAISON_GOAL_CHECKPOINT_DIR;
   try {
-    prepareSessionCliProject(root, 'claude', false);
+    prepareSessionCliProject(root, 'claude', false, false, { linkDependencies: true });
     fs.symlinkSync(root, alias, process.platform === 'win32' ? 'junction' : 'dir');
     const runRelative = 'doc/features/clamp/goal-runs/session-cli';
     const runDir = path.join(root, runRelative), aliasRun = path.join(alias, runRelative);
@@ -61,6 +61,8 @@ export async function junctionSessionCli(): Promise<void> {
     assert(!events.some(event => event.type === 'agent_invoke_end' || event.type === 'harness_start'));
   } finally {
     if (fs.existsSync(alias)) fs.unlinkSync(alias);
+    const dependencies = path.join(root, 'framework/harness/node_modules');
+    if (fs.existsSync(dependencies) && fs.lstatSync(dependencies).isSymbolicLink()) fs.unlinkSync(dependencies);
     if (previousTrust === undefined) delete process.env.MAISON_GOAL_CHECKPOINT_DIR; else process.env.MAISON_GOAL_CHECKPOINT_DIR = previousTrust;
     fs.rmSync(container, { recursive: true, force: true });
   }
