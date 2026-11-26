@@ -29,7 +29,7 @@ todos:
     status: completed
   - id: blueprint-consumption
     content: 接通唯一触发指引和读写目录，核对宿主首轮蓝图消费，受管初设只要求一次。
-    status: in_progress
+    status: completed
   - id: acceptance-and-delivery
     content: 完成四个本机客户端各一次独立单屏短例、发布边界和仓库验收，交付 §5.1 逐行结果及样例对照口径。
     status: in_progress
@@ -169,3 +169,5 @@ extensions/
 已交付样例、对照口径和客户端记录，钱包专项与标准包发布排除已核验。有稿直接入口首回未落盘、补交错用 PRD 编号，继续跟踪蓝图消费待办。验收交付仍在进行，待 P4 `a21473` 恢复回放超时解决后，补跑缺失验证并取得有效的日常全集结果。本次范围为专项修订和复验，正式候选另行安排。[发布排除核验](../../.codex/reports/ux-behavior-ad5c222f/pack-check-5291896c.json)
 
 产品交接副本按实测意见另行修订。同一原生 Codex 作者修正工作区写入环境后，只改外部副本的三份 UX。`supported_types` 现指当前银行支持的卡类型，继续动作携所选银行和卡种。确认当时原浮层是否关闭、从选卡页返回的落点、若回浮层是否保留选择分别为 `open`。三稿通过 Schema，六个相对来源、两个文案引用、元素与流转均能解析。受管首轮文件与原材料保留原字节。[可交给产品的卡种屏](../../../am-ad5c222f-templateqa/reviewed-handoff/doc/features/ux-qa-managed-codex/blueprint/ux/card-type.screen.ux.yaml) · [待决与流转](../../../am-ad5c222f-templateqa/reviewed-handoff/doc/features/ux-qa-managed-codex/blueprint/ux/card-type.flow.ux.yaml) · [实测复核](../../../am-ad5c222f-templateqa/evidence/reviewed-handoff.md)
+
+**2026-11-25 美东，有预制稿的直接入口复验通过。** 隔离钱包在修订 `db9fad02` 上使用原预制稿和原提示，宿主 Codex（`gpt-6.1-sol/medium`）直接调用 `/component-design ux-qa-direct`。作者首回已把正式蓝图写入本次请求的目录，蓝图内 ID 匹配，PRD 编号对应目录没有产生蓝图。蓝图保留单卡种一行、点继续才跨页及分别待决的浮层去留、返回和选择保留。完整蓝图检查仍有 Schema 和运行流程缺项，此件用于首轮设计走查。原首回失败保留。本轮扩展测试六项、文档检查十八项及计划默认校验通过，实际 DSH 反例的两处文案均被新 Schema 拒绝。本轮独立检视遇额度限制，尚无结论。仓库日常全集状态继续沿上条记录。[钱包首轮、实物与专项证据](../../../am-ad5c222f-idqa/evidence/result.md)
